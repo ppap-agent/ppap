@@ -5,7 +5,7 @@ from pathlib import Path
 
 import psycopg
 import pytest
-from ppap_core.db import connect
+from product.db import connect
 from psycopg.errors import ReadOnlySqlTransaction
 
 RELEASE = runpy.run_path(str(Path(__file__).resolve().parents[3] / "deploy/tke/release-current.py"))

@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from ppap_application import validate_file
+from worker.intake import validate_file
 
 
 def test_real_legacy_excel_is_checked_through_the_shared_loader() -> None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ppap_core.types import PpapDocumentType
+from audit.kinds import PpapDocumentType
 
 _CONTROL_PLAN = Path(__file__).resolve().parents[3] / "assets" / "poc测试" / "poc规则" / "10规则-控制计划.docx"
 _MARKDOWN = _CONTROL_PLAN.parent / "markdown" / (_CONTROL_PLAN.name + ".md")
@@ -28,7 +28,7 @@ class NoModelRewrite:
 
 
 def test_control_plan_rule_doc_parses_to_eleven_rules() -> None:
-    from ppap_application.rule_processing import parse_rule_file
+    from worker.intake import parse_rule_file
 
     parsed = parse_rule_file(_CONTROL_PLAN.name, _CONTROL_PLAN.read_bytes(), document_type="控制计划", ai=NoModelRewrite())
     assert parsed["type"] == PpapDocumentType.CONTROL_PLAN.get_type_name()

@@ -20,7 +20,7 @@ Live Deep 另加 overlay，不改默认 unpublished Silo 合同：
 
 ```sh
 docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/deep-live.yaml up --no-build -d --wait
-PPAP_DEEP_CONTROLLER_SOCKET=/tmp/ppap-deep/controller.sock python -m ppap_deep
+PPAP_DEEP_CONTROLLER_SOCKET=/tmp/ppap-deep/controller.sock python -m agent
 ```
 
 `deep-live.yaml` 把 `/tmp/ppap-deep` 挂进 Worker/API 的 `/run/ppap-deep`，并把 Silo 映射到 `127.0.0.1:9000` 给 host Controller 取冻结文件。Worker 仍然没有 Docker 控制接口。Controller 缺席时 Deep 轮次失败，不回退 Standard。

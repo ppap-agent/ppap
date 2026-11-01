@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ppap_docops.excel.loader import load_excel_workbook
+from documents.excel.loader import load_excel_workbook
 
 
 def test_legacy_xls_workbook_remains_loadable() -> None:

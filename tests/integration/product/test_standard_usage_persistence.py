@@ -15,17 +15,17 @@ from unittest.mock import patch
 
 import httpx
 import pytest
+from api import create_app
+from api import web_contract as wc
+from audit.engine.checkers.client import AIClient
+from audit.usage import get_current_request_id, get_token_tracker
 from docx import Document
 from fastapi.testclient import TestClient
 from PIL import Image
-from ppap_api import create_app
-from ppap_api import web_contract as wc
-from ppap_application import build_product_store
-from ppap_core.settings import Settings, get_settings
-from ppap_core.token_tracker import get_current_request_id, get_token_tracker
-from ppap_excel_audit_engine.checkers.client import AIClient
-from ppap_worker import process_claimed
+from product import build_product_store
+from product.settings import Settings, get_settings
 from pydantic import TypeAdapter
+from worker import process_claimed
 
 
 @pytest.fixture

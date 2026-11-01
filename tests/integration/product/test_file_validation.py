@@ -6,12 +6,12 @@ from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
 import pytest
+from api import create_app
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
-from ppap_api import create_app
-from ppap_application import build_product_store
-from ppap_core.settings import Settings
-from ppap_worker import process_claimed
+from product import build_product_store
+from product.settings import Settings
+from worker import process_claimed
 
 
 @pytest.fixture
@@ -56,7 +56,7 @@ def test_precheck_is_recoverable_without_creating_an_audit(validation_system):
     assert client.post("/file-validations", json=body).json() == accepted.json()
     claimed = worker.claim_job("precheck-worker")
     assert claimed.kind == "file_validation"
-    with patch("ppap_excel_audit_engine.checkers.client.AIClient", side_effect=AssertionError("precheck_must_not_call_model")):
+    with patch("audit.engine.checkers.client.AIClient", side_effect=AssertionError("precheck_must_not_call_model")):
         process_claimed(worker, claimed, "precheck-worker")
     recovered = client.get(f"/file-validations/{request_id}")
     assert recovered.status_code == 200

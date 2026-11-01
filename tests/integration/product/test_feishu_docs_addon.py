@@ -9,12 +9,12 @@ from unittest.mock import patch
 
 import httpx
 import pytest
+from api import create_app
 from fastapi.testclient import TestClient
-from ppap_api import create_app
-from ppap_core.feishu import TOKEN_URL, USER_INFO_URL, exchange_host_code
-from ppap_core.fixtures import RULE_A
-from ppap_core.settings import Settings
-from ppap_worker import process_claimed
+from product.feishu import TOKEN_URL, USER_INFO_URL, exchange_host_code
+from product.fixtures import RULE_A
+from product.settings import Settings
+from worker import process_claimed
 
 
 def _clean_env(**extra: str):

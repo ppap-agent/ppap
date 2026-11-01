@@ -18,12 +18,12 @@ class RuleParseDatabaseTests(unittest.TestCase):
         self.rule_body = sample_rule_body_factory
 
     def test_idempotent_acceptance_unknown_lease_late_result_and_current_source_authorization(self):
+        from api import create_app
         from fastapi.testclient import TestClient
-        from ppap_api import create_app
-        from ppap_core.db import connect
-        from ppap_core.settings import Settings
-        from ppap_product_store import AuthStore
-        from ppap_worker import process_claimed
+        from product.db import connect
+        from product.settings import Settings
+        from product.store import AuthStore
+        from worker import process_claimed
 
         self.schema.require_postgres()
         database = "ppap_rule_parse_" + uuid.uuid4().hex[:12]
@@ -70,7 +70,7 @@ class RuleParseDatabaseTests(unittest.TestCase):
             self.assertEqual(api.get_rule_parse(alice, job.id)["status"], "unknown")
             self.assertIsNone(worker.claim_job("second"))
             self.assertEqual(accept()["status"], "unknown")
-            with patch("ppap_excel_audit_engine.checkers.client.AIClient", side_effect=AssertionError("unexpected external model call")):
+            with patch("audit.engine.checkers.client.AIClient", side_effect=AssertionError("unexpected external model call")):
                 process_claimed(worker, job, "owner")
             result = api.get_rule_parse(alice, job.id)
             self.assertEqual(result["status"], "succeeded")

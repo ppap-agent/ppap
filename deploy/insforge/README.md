@@ -60,8 +60,8 @@ InsForge PostgreSQL cluster
 ├─ InsForge own database/schemas
 └─ ppap
    ├─ ppap_migrator
-   ├─ ppap_api
-   └─ ppap_worker
+   ├─ api
+   └─ worker
 ```
 
 `PPAP_PG_HOST=postgres` on `insforge-network`. Bootstrap user/password are InsForge `POSTGRES_USER` / `POSTGRES_PASSWORD`. Then:

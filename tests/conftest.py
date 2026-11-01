@@ -27,27 +27,29 @@ from uuid import uuid4
 import httpx
 import pytest
 import uvicorn
+from agent.auditor import SemanticRuntime
+from agent.execution.guest import CompileManifest, Manifest, execute, execute_compilation
+from agent.run import Controller, UnixControllerServer
+from agent.source import authorize_execution, object_file_source
+from api import create_app
+from audit.document_tools import TableReader
+from audit.evidence import EvidenceBudget
+from audit.models import RulePlan
+from audit.protocol import CompileSpec
+from audit.trace import AuditTrace, evaluate_audit
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
-from ppap_api import create_app
-from ppap_application import build_product_store
-from ppap_core.db import connect
-from ppap_core.files import ObjectExists, ObjectMissing, ObjectTooLarge
-from ppap_core.identity import SESSION_COOKIE
-from ppap_core.mcp import SCOPES, pkce_challenge
-from ppap_core.settings import ISOLATED_DEV_SECRET, Settings
-from ppap_deep.auditor import SemanticRuntime
-from ppap_deep.controller import Controller, UnixControllerServer
-from ppap_deep.semantic.document_tools import TableReader
-from ppap_deep.semantic.evidence import EvidenceBudget
-from ppap_deep.semantic.guest import CompileManifest, Manifest, execute, execute_compilation
-from ppap_deep.semantic.models import RulePlan
-from ppap_deep.semantic.protocol import CompileSpec
-from ppap_deep.semantic.trace import AuditTrace, evaluate_audit
-from ppap_deep.source import authorize_execution, object_file_source
-from ppap_product_store import AuthStore
-from ppap_worker import process_claimed
+from product import build_product_store
+from product.db import connect
+from product.files import ObjectExists, ObjectMissing, ObjectTooLarge
+from product.identity import SESSION_COOKIE
+from product.mcp import SCOPES, pkce_challenge
+from product.settings import ISOLATED_DEV_SECRET, Settings
+from product.storage import S3Objects
+from product.store import AuthStore
 from psycopg import sql
+from worker import process_claimed
+from worker.deep_controller import open_store
 
 
 def pytest_addoption(parser):
@@ -128,7 +130,7 @@ def ocr_transport_diagnostics(monkeypatch, caplog):
     """Observe real requests without reading bodies, URLs, headers or trace info."""
     logger = logging.getLogger("tests.ocr_transport")
     caplog.set_level(logging.INFO, logger=logger.name)
-    caplog.set_level(logging.INFO, logger="ppap_pdf_to_excel.vision.cell_ocr")
+    caplog.set_level(logging.INFO, logger="documents.ocr.cell_ocr")
     original = httpx.AsyncClient.send
     original_close = httpx.AsyncClient.aclose
     original_read = httpx.Response.aread
@@ -726,17 +728,25 @@ def deep_feedback_env(tmp_path, monkeypatch, request):
             else:
                 execute(inputs, work, model, deadline)
 
-    import ppap_core.storage
+    import product.storage
 
     class S3:
         def get_object(self, **kw):
             return {"Body": BytesIO(store.objects.get(kw["Key"]))}
 
-    monkeypatch.setattr(ppap_core.storage, "s3_client", lambda *_a, **_kw: S3())
+    monkeypatch.setattr(product.storage, "s3_client", lambda *_a, **_kw: S3())
     socket_dir = tempfile.TemporaryDirectory(prefix="pd-feedback-", dir="/tmp")
     request.addfinalizer(socket_dir.cleanup)
     socket = str(Path(socket_dir.name) / "c.sock")
-    server = UnixControllerServer(socket, Controller(SemanticRuntime(Guest(), store.objects), object_file_source(settings), executor_revision=revision, authorize=authorize_execution(settings)))
+    server = UnixControllerServer(
+        socket,
+        Controller(
+            SemanticRuntime(Guest(), store.objects),
+            object_file_source(settings, connect=connect, objects=S3Objects(settings)),
+            executor_revision=revision,
+            authorize=authorize_execution(settings, connect=connect, open_store=open_store),
+        ),
+    )
     server.start()
     request.addfinalizer(server.close)
     settings.deep_controller_socket = socket

@@ -9,11 +9,11 @@ import uuid
 from unittest.mock import patch
 
 import pytest
+from api import create_app
+from audit.rule_profile import RULE_PROFILE_V2, RULE_PROFILE_V3
 from fastapi.testclient import TestClient
-from ppap_api import create_app
-from ppap_core.rule_profile import RULE_PROFILE_V2, RULE_PROFILE_V3
-from ppap_core.settings import Settings
-from ppap_worker import process_claimed
+from product.settings import Settings
+from worker import process_claimed
 
 
 def _item() -> dict:

@@ -20,28 +20,28 @@ def test_production_context_keeps_runtime_files_and_excludes_research(local_outp
             "packages/example/pyproject.toml",
             "packages/example/src/module.py",
             "packages/example/src/test_support.py",
-            "packages/ppap_deep/src/ppap_deep/semantic/document_tools.py",
-            "packages/ppap_deep/src/ppap_deep/semantic/skill/SKILL.md",
-            "packages/ppap_deep/src/ppap_deep/semantic/skill/references/commands.md",
-            "services/api/src/module.py",
+            "packages/audit/src/audit/document_tools.py",
+            "packages/agent/src/agent/skill/SKILL.md",
+            "packages/agent/src/agent/skill/references/commands.md",
+            "apps/api/src/module.py",
             ".env.example",
         ]
         excluded = [
             "tests/root.py",
             "packages/example/tests/test_module.py",
-            "services/api/tests/test_api.py",
+            "apps/api/tests/test_api.py",
             "apps/web/tests/test_web.ts",
-            "packages/ppap_deep/prototypes/typed_evidence_holes/cases.py",
-            "packages/ppap_deep/prototypes/typed_evidence_holes/test_local_grok_runner.py",
-            "packages/ppap_deep/prototypes/typed_evidence_holes/oracle/expected.json",
+            "packages/agent/prototypes/typed_evidence_holes/cases.py",
+            "packages/agent/prototypes/typed_evidence_holes/test_local_grok_runner.py",
+            "packages/agent/prototypes/typed_evidence_holes/oracle/expected.json",
             ".env",
         ]
         if local_output:
             excluded.extend(
                 [
-                    "packages/ppap_deep/prototypes/typed_evidence_holes/output/run/model-inputs.jsonl",
-                    "packages/ppap_deep/prototypes/typed_evidence_holes/output/run/inputs/customer.xlsx",
-                    "packages/ppap_deep/prototypes/typed_evidence_holes/output/run/code/guest.py",
+                    "packages/agent/prototypes/typed_evidence_holes/output/run/model-inputs.jsonl",
+                    "packages/agent/prototypes/typed_evidence_holes/output/run/inputs/customer.xlsx",
+                    "packages/agent/prototypes/typed_evidence_holes/output/run/code/guest.py",
                 ]
             )
         for name in kept + excluded:

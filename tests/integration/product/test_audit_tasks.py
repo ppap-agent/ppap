@@ -10,18 +10,18 @@ from datetime import datetime, timedelta, timezone
 import httpx
 import psycopg
 import pytest
+from api import create_app
+from api import web_contract as wc
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
-from ppap_api import create_app
-from ppap_api import web_contract as wc
-from ppap_application import build_product_store
-from ppap_core.feishu import UserTokens
-from ppap_core.fixtures import RULE_A, USER_ALICE, USER_BOB
-from ppap_core.identity import SESSION_COOKIE
-from ppap_core.settings import Settings
-from ppap_worker import process_claimed
+from product import build_product_store
+from product.feishu import UserTokens
+from product.fixtures import RULE_A, USER_ALICE, USER_BOB
+from product.identity import SESSION_COOKIE
+from product.settings import Settings
 from psycopg.types.json import Jsonb
 from pydantic import TypeAdapter
+from worker import process_claimed
 
 
 @pytest.fixture

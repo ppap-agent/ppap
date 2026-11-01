@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import pytest
 from fastmcp import Client
-from ppap_core.db import connect
+from product.db import connect
 from psycopg.types.json import Jsonb
 
 from .conftest import change_payload

@@ -21,7 +21,7 @@
 主要运行路径：
 
 ```text
-apps/web -> services/api -> PostgreSQL / object storage -> services/worker -> packages
+apps/web -> apps/api -> PostgreSQL / object storage -> apps/worker -> packages
 ```
 
 ## 当前四个验收结果

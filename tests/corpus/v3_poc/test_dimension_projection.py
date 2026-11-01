@@ -3,10 +3,10 @@
 import unittest
 from pathlib import Path
 
-from ppap_application import run_round_from_bytes
-from ppap_core.audits import RoundInput, RoundWork
-from ppap_core.rule_coverage import COVERAGE_MAPPED
-from ppap_excel_audit_engine.checkers.rule_declarations import declarations_for_target, freeze_target_rule_execution
+from audit.audits import RoundInput, RoundWork
+from audit.engine.checkers.rule_declarations import declarations_for_target, freeze_target_rule_execution
+from audit.rule_coverage import COVERAGE_MAPPED
+from product import run_round_from_bytes
 
 REPO = Path(__file__).resolve().parents[3]
 

@@ -14,15 +14,20 @@ from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
-import ppap_deep
-import ppap_worker
+import agent
 import pytest
-from fastapi.testclient import TestClient
-from openpyxl import Workbook
-from ppap_api import create_app
-from ppap_api import web_contract as wc
-from ppap_application import build_product_store
-from ppap_core.audits import (
+import worker
+from agent.auditor import SemanticRuntime
+from agent.client import DeepClient, DeepError
+from agent.execution.guest import CompileManifest, Manifest, execute_compilation
+from agent.execution.guest import execute as execute_guest
+from agent.mapping import passing_response, spec_from_work
+from agent.protocol import ExecuteRequest, RequestEnvelope
+from agent.run import Controller, ScriptedRuntime, UnixControllerServer
+from agent.source import authorize_execution, object_file_source
+from api import create_app
+from api import web_contract as wc
+from audit.audits import (
     ANALYSIS_DEEP,
     ANALYSIS_STANDARD,
     DEEP_PROTOCOL_REVISION,
@@ -34,24 +39,22 @@ from ppap_core.audits import (
     job_payload,
     request_fingerprint,
 )
-from ppap_core.capabilities import report
-from ppap_core.feishu import UserTokens
-from ppap_core.fixtures import RULE_A, RULE_B
-from ppap_core.identity import SESSION_COOKIE
-from ppap_core.settings import Settings
-from ppap_deep.auditor import SemanticRuntime
-from ppap_deep.client import DeepClient, DeepError
-from ppap_deep.controller import Controller, ScriptedRuntime, UnixControllerServer
-from ppap_deep.mapping import passing_response, spec_from_work
-from ppap_deep.protocol import ExecuteRequest, RequestEnvelope
-from ppap_deep.semantic.guest import CompileManifest, Manifest, execute_compilation
-from ppap_deep.semantic.guest import execute as execute_guest
-from ppap_deep.semantic.models import RulePlan
-from ppap_deep.semantic.protocol import CompileSpec
-from ppap_deep.semantic.trace import AuditTrace
-from ppap_deep.source import authorize_execution, object_file_source
-from ppap_worker import process_claimed
+from audit.models import RulePlan
+from audit.protocol import CompileSpec
+from audit.trace import AuditTrace
+from fastapi.testclient import TestClient
+from openpyxl import Workbook
+from product import build_product_store
+from product.capabilities import report
+from product.db import connect
+from product.feishu import UserTokens
+from product.fixtures import RULE_A, RULE_B
+from product.identity import SESSION_COOKIE
+from product.settings import Settings
+from product.storage import S3Objects
 from pydantic import TypeAdapter, ValidationError
+from worker import process_claimed
+from worker.deep_controller import open_store
 
 
 def _clean_env(**extra: str):
@@ -94,9 +97,9 @@ class DeepProtocolTests(unittest.TestCase):
 
     def test_package_does_not_use_docker_socket(self):
         blob = ""
-        for path in Path(ppap_deep.__file__).resolve().parent.rglob("*.py"):
+        for path in Path(agent.__file__).resolve().parent.rglob("*.py"):
             blob += path.read_text()
-        blob += Path(ppap_worker.__file__).read_text()
+        blob += Path(worker.__file__).read_text()
         self.assertNotIn("/var/run/docker.sock", blob)
         self.assertNotIn("docker.sock", blob)
         self.assertNotIn("from docker", blob)
@@ -184,7 +187,7 @@ class DeepModeTests(unittest.TestCase):
 
         # Substitute only the external S3 SDK. Authorization and object lookup use
         # production callbacks with the real database and Worker role.
-        sdk_patch = patch("ppap_core.storage.s3_client")
+        sdk_patch = patch("product.storage.s3_client")
         self.s3 = sdk_patch.start().return_value
         self.addCleanup(sdk_patch.stop)
         self.s3.get_object.side_effect = lambda **kwargs: {"Body": BytesIO(self.store.objects.get(kwargs["Key"]))}
@@ -198,9 +201,9 @@ class DeepModeTests(unittest.TestCase):
             path,
             Controller(
                 runtime if runtime is not None else ScriptedRuntime(execute),
-                object_file_source(self.settings),
+                object_file_source(self.settings, connect=connect, objects=S3Objects(self.settings)),
                 executor_revision=revision or self.settings.deep_execution_revision(),
-                authorize=authorize_execution(self.settings),
+                authorize=authorize_execution(self.settings, connect=connect, open_store=open_store),
             ),
         )
         server.start()
@@ -232,8 +235,8 @@ class DeepModeTests(unittest.TestCase):
         work = self.store.round_work(round_id)
         self.assertEqual(work.analysis_mode, ANALYSIS_DEEP)
         self.assertTrue(work.inputs[0].sha256)
-        with patch("ppap_worker.evaluate_round", side_effect=AssertionError("standard path")):
-            with patch("ppap_worker.engine_runner", side_effect=AssertionError("standard engine")):
+        with patch("worker.evaluate_round", side_effect=AssertionError("standard path")):
+            with patch("worker.engine_runner", side_effect=AssertionError("standard engine")):
                 claimed = self.store.claim_job("deep-worker")
                 result = process_claimed(self.store, claimed, "deep-worker")
         self.assertEqual(result["note"], "deep_audit")
@@ -497,8 +500,8 @@ class DeepModeTests(unittest.TestCase):
         target = self._upload("report.xlsx", b"target-bytes")
         round_id = self._accept_deep(target, key="deep-unavailable")
         with (
-            patch("ppap_worker.evaluate_round", side_effect=AssertionError("standard path")),
-            patch("ppap_worker.engine_runner", side_effect=AssertionError("standard engine")),
+            patch("worker.evaluate_round", side_effect=AssertionError("standard path")),
+            patch("worker.engine_runner", side_effect=AssertionError("standard engine")),
             patch("subprocess.Popen", side_effect=AssertionError("local runtime")) as start_process,
         ):
             claimed = self.store.claim_job("deep-worker")
@@ -596,7 +599,7 @@ class DeepModeTests(unittest.TestCase):
         round_id = self._accept_deep(target, key="deep-revision")
         frozen = self.settings.deep_execution_revision()
         self.settings.deep_executor_revision = "ppap-deep-v999"
-        with patch("ppap_worker.evaluate_round", side_effect=AssertionError("standard path")):
+        with patch("worker.evaluate_round", side_effect=AssertionError("standard path")):
             claimed = self.store.claim_job("deep-worker")
             result = process_claimed(self.store, claimed, "deep-worker")
         self.assertEqual(result["findings"], [])

@@ -2,9 +2,9 @@
 
 from pathlib import Path
 
-from ppap_deep.semantic.document_tools import snapshot
-from ppap_deep.semantic.evidence import resolve
-from ppap_deep.semantic.models import WordCell
+from audit.document_tools import snapshot
+from audit.evidence import resolve
+from audit.models import WordCell
 
 
 def cell(data, table, row, column):

@@ -6,11 +6,11 @@ import os
 import uuid
 
 import pytest
-from ppap_application import build_product_store
-from ppap_core.db import connect
-from ppap_core.files import ObjectExists, ObjectMissing, ObjectTooLarge
-from ppap_core.settings import ISOLATED_DEV_SECRET, Settings
-from ppap_product_store import AuthStore
+from product import build_product_store
+from product.db import connect
+from product.files import ObjectExists, ObjectMissing, ObjectTooLarge
+from product.settings import ISOLATED_DEV_SECRET, Settings
+from product.store import AuthStore
 from psycopg import sql
 from psycopg.rows import dict_row
 
@@ -130,8 +130,8 @@ def auth_store_factory():
 
 @pytest.fixture
 def mcp_app(auth_store_factory):
-    from ppap_api import create_app
-    from ppap_core.fixtures import APP_ID
+    from api import create_app
+    from product.fixtures import APP_ID
 
     settings = Settings(mcp_enabled=True, feishu_app_id=APP_ID, usage_charge_enabled=False)
     store = auth_store_factory(settings)

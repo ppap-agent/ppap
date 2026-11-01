@@ -10,12 +10,12 @@ import unittest
 from unittest.mock import patch
 
 import pytest
-from ppap_api import create_app
-from ppap_core.audits import ClaimedJob
-from ppap_core.fixtures import TENANT_A
-from ppap_core.logs import LOGGER, JsonFormatter, bind, emit, new_request_id, reset, round_id_from_path
-from ppap_core.settings import Settings
-from ppap_worker import process_claimed
+from api import create_app
+from audit.audits import ClaimedJob
+from product.fixtures import TENANT_A
+from product.logs import LOGGER, JsonFormatter, bind, emit, new_request_id, reset, round_id_from_path
+from product.settings import Settings
+from worker import process_claimed
 
 
 def _clean_env(**extra: str):

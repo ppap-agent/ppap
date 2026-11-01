@@ -10,12 +10,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PYTHON = ROOT / ".venv" / "bin" / "python"
-IMPORTS = "import ppap_api, ppap_application, ppap_core, ppap_corpus_contracts, ppap_deep, ppap_docops, ppap_excel_audit_engine, ppap_pdf_to_excel, ppap_product_store, ppap_vision, ppap_worker"
+IMPORTS = "import api, product, corpus_contracts, agent, audit, documents, audit.engine, product.store, worker"
 
 
 class PackagingTests(unittest.TestCase):
     def test_deep_toolchain_version_matches_runtime_identity(self):
-        from ppap_core.deep_policy import GROK_VERSION
+        from audit.policy import GROK_VERSION
 
         package = json.loads((ROOT / "deploy/deep/package.json").read_text())
         lock = json.loads((ROOT / "deploy/deep/package-lock.json").read_text())
@@ -52,7 +52,7 @@ class PackagingTests(unittest.TestCase):
                 str(ROOT / "pyproject.toml"),
                 "--collect-only",
                 "-q",
-                str(ROOT / "packages/ppap_pdf_to_excel/tests"),
+                str(ROOT / "packages/documents/tests"),
             ],
             cwd="/tmp",
             env=env,

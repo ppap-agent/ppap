@@ -163,10 +163,10 @@ jobs:
             pnpm install --frozen-lockfile
           )
           git show --format= --check HEAD -- . ':!assets' ':!tests/corpus/fixtures'
-          uv run --no-sync python -m compileall -q packages services tests scripts
-          uv run --no-sync ruff check packages services tests scripts
-          if ! uv run --no-sync ruff format --check packages services tests scripts; then
-            uv run --no-sync ruff format --diff packages services tests scripts
+          uv run --no-sync python -m compileall -q packages apps/api apps/worker apps/mcp-client tests scripts
+          uv run --no-sync ruff check packages apps/api apps/worker apps/mcp-client tests scripts
+          if ! uv run --no-sync ruff format --check packages apps/api apps/worker apps/mcp-client tests scripts; then
+            uv run --no-sync ruff format --diff packages apps/api apps/worker apps/mcp-client tests scripts
             exit 1
           fi
           uv run --no-sync mypy --no-incremental

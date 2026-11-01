@@ -10,8 +10,8 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 import httpx
 import pytest
 import uvicorn
-from ppap_api import create_app
-from ppap_core.mcp import pkce_challenge
+from api import create_app
+from product.mcp import pkce_challenge
 
 playwright = pytest.importorskip("playwright.sync_api")
 

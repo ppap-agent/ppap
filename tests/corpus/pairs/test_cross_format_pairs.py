@@ -4,14 +4,14 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from ppap_corpus_contracts.cross_format import (
+from corpus_contracts.cross_format import (
     classify_pair_rules,
     discover_v2_cross_format_pairs,
 )
-from ppap_corpus_contracts.cross_format_baseline import KNOWN_PAIR_DIVERGENCES
-from ppap_corpus_contracts.execution_outcome import MISSING_OUTCOME
-from ppap_corpus_contracts.v2_assets_shared import build_cases
-from ppap_corpus_contracts.v2_observe import collect_v2_rule_outcomes
+from corpus_contracts.cross_format_baseline import KNOWN_PAIR_DIVERGENCES
+from corpus_contracts.execution_outcome import MISSING_OUTCOME
+from corpus_contracts.v2_assets_shared import build_cases
+from corpus_contracts.v2_observe import collect_v2_rule_outcomes
 
 
 def pytest_generate_tests(metafunc: Any) -> None:

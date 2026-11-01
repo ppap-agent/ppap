@@ -6,18 +6,16 @@
 
 | Package | Owns |
 |---|---|
-| `ppap_application` | 跨 core / engine / store 的 application orchestration 与 composition boundaries |
-| `ppap_core` | typed settings、数据库/对象存储基础能力、共享产品类型、审核 contracts/types |
-| `ppap_corpus_contracts` | Corpus regression domain（ExecutionOutcome、baseline、oracle reconciliation）；仅开发/测试 authority，不是产品 runtime API |
-| `ppap_deep` | 独立 Deep 执行协议、UDS client、Controller；把冻结 round 转成 bounded spec 再写回 findings。`python -m ppap_deep` 是 Controller 进程，拥有 gVisor guest；Worker 只连 UDS |
-| `ppap_docops` | 文档抽取、转换、文件工具 |
-| `ppap_excel_audit_engine` | 规则检查器与 worker audit runtime |
-| `ppap_ocr_adapter` | OCR providers |
-| `ppap_pdf_to_excel` | PDF → Excel |
-| `ppap_product_store` | API / Worker 共用的 product PostgreSQL persistence implementation |
-| `ppap_vision` | 图像、印章/签名检测 |
+| `product` | 跨 core / engine / store 的 application orchestration 与 composition boundaries |
+| `product` | 产品状态：文件、规则、轮次、配置、存储 |
+| `audit` | 审核内核：规则、逻辑文档、证据、求值、手写检查 |
+| `corpus_contracts` | Corpus regression domain（ExecutionOutcome、baseline、oracle reconciliation）；仅开发/测试 authority，不是产品 runtime API |
+| `agent` | 独立 Deep 执行协议、UDS client、Controller；把冻结 round 转成 bounded spec 再写回 findings。`python -m agent` 是 Controller 进程，拥有 gVisor guest；Worker 只连 UDS |
+| `documents` | 物理文档读取、定位和局部呈现。Excel、Word、PDF、图像、OCR 与 PDF 转换都在这个包内，不判定审核结果 |
+| `audit.engine` | 规则检查器与 worker audit runtime |
+| `product.store` | API / Worker 共用的 product PostgreSQL persistence implementation |
 
-Worker 调用 `ppap_excel_audit_engine.app_runtime.run_audit_engine`。#11 飞书 parity 仍由对应 Issue 拥有。
+Worker 调用 `audit.engine.app_runtime.run_audit_engine`。#11 飞书 parity 仍由对应 Issue 拥有。
 
 审核引擎和完整 regression 资产的迁移合同由 #3 拥有；具体 legacy baseline 不在本文件重复。
 

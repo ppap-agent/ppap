@@ -15,7 +15,7 @@ RUN set -eux; \
       i=$((i + 1)); \
     done; \
     rm -rf /var/lib/apt/lists/*
-COPY packages/ppap_docops/native/legacy_doc_sandbox.c /tmp/legacy_doc_sandbox.c
+COPY packages/documents/native/legacy_doc_sandbox.c /tmp/legacy_doc_sandbox.c
 RUN gcc -O2 -Wall -Wextra -Werror /tmp/legacy_doc_sandbox.c -o /usr/local/bin/ppap-local-converter-sandbox
 
 FROM python:3.12-slim-bookworm
@@ -59,7 +59,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     rm -f /tmp/ppap-requirements.txt
 
 COPY packages /app/packages
-COPY services /app/services
+COPY apps/api /app/apps/api
+COPY apps/worker /app/apps/worker
+COPY apps/mcp-client /app/apps/mcp-client
 COPY deploy/app/entrypoint.sh /app/entrypoint.sh
 RUN --mount=type=cache,target=/root/.cache/uv \
     set -eux; \
@@ -67,8 +69,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1 uv sync --frozen --no-dev --no-editable; \
     uv pip check --python /app/.venv/bin/python; \
     cd /; \
-    /app/.venv/bin/python -c "import ppap_api, ppap_application, ppap_core, ppap_excel_audit_engine, ppap_product_store, ppap_worker"; \
-    /app/.venv/bin/python -c "from ppap_core.settings import Settings; from ppap_deep.source import authorize_execution; assert callable(authorize_execution(Settings()))"
+    /app/.venv/bin/python -c "import api, product, audit.engine, worker"; \
+    /app/.venv/bin/python -c "from product.settings import Settings; from product.db import connect; from worker.deep_controller import open_store; from agent.source import authorize_execution; assert callable(authorize_execution(Settings(), connect=connect, open_store=open_store))"
 
 ARG PPAP_BUILD_SHA=
 ARG PPAP_SERVICE=api

@@ -10,7 +10,7 @@
 
 URL 模式进入同一个审核工作区，URL 中的 mcpRuleChange 只是提议引用。正常登录并核对后，网页沿用同一业务操作 ID 提交；打开 URL 或协议 accept 本身不保存。客户端读回实际产品回执。无 Elicitation 能力时返回工作区入口；没有 Tasks 时使用 MRTR/应用读回。关闭交互不会默认选择候选或取消已受理审核。
 
-解释确认绑定问题内容指纹、范围、规则修订和操作身份，过期提议必须重新核对。说明可仅保存、保存并分析，或移除后明确重算；机器结果和人工复核分别保留。业务合同见 [Deep 产品设计](../packages/ppap_deep/PRODUCT.md)。本地 wire 与真实 PostgreSQL/Worker/guest 测试只证明上述实现，不代表所有第三方宿主兼容或真实模型准确率。
+解释确认绑定问题内容指纹、范围、规则修订和操作身份，过期提议必须重新核对。说明可仅保存、保存并分析，或移除后明确重算；机器结果和人工复核分别保留。业务合同见 [Deep 产品设计](../packages/agent/PRODUCT.md)。本地 wire 与真实 PostgreSQL/Worker/guest 测试只证明上述实现，不代表所有第三方宿主兼容或真实模型准确率。
 
 ## 服务与授权
 
@@ -73,7 +73,7 @@ URL 导入同样绑定文件回执。首次调用 `import_url(request_id=A, url=
 
 ### 本地 stdio 适配器
 
-`packages/ppap_mcp_client` 是可独立安装的 Python 3.12 包，不依赖 PPAP 数据库、审核引擎或 API 包。它通过 FastMCP 代理远程工具、Resources 和 Prompts，并增加三个本地工具：
+`apps/mcp-client` 是可独立安装的 Python 3.12 包，不依赖 PPAP 数据库、审核引擎或 API 包。它通过 FastMCP 代理远程工具、Resources 和 Prompts，并增加三个本地工具：
 
 - `local_file_roots`：读取用户配置的目录和传输上限。
 - `local_upload_file`：读取允许目录中的文件，固定字节快照和 SHA-256，创建文件或新版本，传输、固化，并按参数进行预校验。上传成功与预校验结果分别返回。
@@ -82,16 +82,16 @@ URL 导入同样绑定文件回执。首次调用 `import_url(request_id=A, url=
 从已核对的仓库版本安装。以下命令在仓库根目录执行，约束文件从同一版本的 `uv.lock` 导出：
 
 ```sh
-uv export --locked --package ppap-mcp-client --no-dev --no-emit-workspace --no-hashes --output-file /tmp/ppap-mcp-client-constraints.txt
-uv tool install --python 3.12 --constraints /tmp/ppap-mcp-client-constraints.txt ./packages/ppap_mcp_client
-ppap-mcp-client --help
+uv export --locked --package mcp-client --no-dev --no-emit-workspace --no-hashes --output-file /tmp/mcp-client-constraints.txt
+uv tool install --python 3.12 --constraints /tmp/mcp-client-constraints.txt ./apps/mcp-client
+mcp-client --help
 ```
 
-在支持 stdio 的 MCP 客户端中，将启动命令设为已安装的 `ppap-mcp-client` 的绝对路径。参数示例：
+在支持 stdio 的 MCP 客户端中，将启动命令设为已安装的 `mcp-client` 的绝对路径。已有安装仍从 `ppap-mcp-client` 数据目录读取加密凭据。参数示例：
 
 ```json
 {
-  "command": "/absolute/path/to/ppap-mcp-client",
+  "command": "/absolute/path/to/mcp-client",
   "args": [
     "--server", "https://ppap.icoastline.com/ppap/mcp",
     "--directory", "/absolute/path/to/PPAP-files"
@@ -114,7 +114,7 @@ ppap-mcp-client --help
 以下参数已核对 Codex CLI 0.163.0 的实际命令帮助。需要本地文件上传和下载时，先按上节安装适配器，再配置 stdio 服务；将示例中的程序和文件目录改为实际绝对路径：
 
 ```sh
-codex mcp add ppap-files -- /absolute/path/to/ppap-mcp-client \
+codex mcp add ppap-files -- /absolute/path/to/mcp-client \
   --server https://ppap.icoastline.com/ppap/mcp \
   --directory /absolute/path/to/PPAP-files \
   --profile codex

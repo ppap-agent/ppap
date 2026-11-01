@@ -4,10 +4,10 @@ from pathlib import Path
 from typing import Any, List
 
 import pytest
+from corpus_contracts.baseline_exceptions import classify_v2_baseline_outcomes
+from corpus_contracts.v2_assets_shared import APP_ROOT, FileCase, build_cases
+from corpus_contracts.v2_observe import collect_v2_rule_outcomes, format_v2_rule_outcome
 from dotenv import load_dotenv
-from ppap_corpus_contracts.baseline_exceptions import classify_v2_baseline_outcomes
-from ppap_corpus_contracts.v2_assets_shared import APP_ROOT, FileCase, build_cases
-from ppap_corpus_contracts.v2_observe import collect_v2_rule_outcomes, format_v2_rule_outcome
 
 load_dotenv(APP_ROOT / ".env")
 

@@ -20,16 +20,16 @@ from uuid import uuid4
 import httpx
 import pytest
 import uvicorn
+from api import create_app
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 from fastmcp import Client
 from fastmcp.client.auth import OAuth
 from fastmcp.client.transports import StdioTransport, StreamableHttpTransport
+from mcp_client.__main__ import bridge
+from mcp_client.auth import SharedOAuth, encrypted_store
+from mcp_client.files import LocalFiles
 from openpyxl import Workbook
-from ppap_api import create_app
-from ppap_mcp_client.__main__ import bridge
-from ppap_mcp_client.auth import SharedOAuth, encrypted_store
-from ppap_mcp_client.files import LocalFiles
 
 URL = "http://127.0.0.1:8080/mcp"
 
@@ -276,8 +276,8 @@ async def test_cli_stdio_process_http_transfer_and_process_restart(mcp_app, tmp_
         source.write_bytes(workbook_bytes())
         launcher = tmp_path / "controlled_keychain.py"
         launcher.write_text(
-            "import os\nfrom pathlib import Path\nimport ppap_mcp_client.__main__ as cli\n"
-            "from ppap_mcp_client.auth import encrypted_store\n"
+            "import os\nfrom pathlib import Path\nimport mcp_client.__main__ as cli\n"
+            "from mcp_client.auth import encrypted_store\n"
             "cli.user_data_path = lambda _: Path(os.environ['PPAP_TEST_DATA'])\n"
             "cli.secure_store = lambda directory: encrypted_store(directory, os.environ['PPAP_TEST_KEY'].encode())\n"
             "cli.main()\n"

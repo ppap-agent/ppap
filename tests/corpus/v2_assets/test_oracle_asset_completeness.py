@@ -1,4 +1,4 @@
-from ppap_corpus_contracts.v2_assets_shared import APP_ROOT, build_cases
+from corpus_contracts.v2_assets_shared import APP_ROOT, build_cases
 
 
 def test_canonical_v2_required_variants_reconcile() -> None:

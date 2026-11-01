@@ -12,10 +12,10 @@ from http.cookiejar import CookieJar
 from io import BytesIO
 from uuid import uuid4
 
+from agent.client import DEEP_REQUEST_TIMEOUT
 from openpyxl import Workbook
-from ppap_core.db import connect
-from ppap_core.settings import Settings
-from ppap_deep.client import DEEP_REQUEST_TIMEOUT
+from product.db import connect
+from product.settings import Settings
 
 LIVE = os.environ.get("PPAP_DEEP_LIVE", "").strip() == "1"
 API = os.environ.get("PPAP_PUBLIC_API_URL", "http://127.0.0.1:8080").rstrip("/")

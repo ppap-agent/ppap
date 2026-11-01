@@ -7,14 +7,14 @@ import uuid
 from unittest.mock import patch
 
 import pytest
+from api import create_app
+from api.web_contract import Round
 from fastapi.testclient import TestClient
-from ppap_api import create_app
-from ppap_api.web_contract import Round
-from ppap_application import build_product_store
-from ppap_core.fixtures import RULE_A
-from ppap_core.settings import Settings
-from ppap_worker import process_claimed
+from product import build_product_store
+from product.fixtures import RULE_A
+from product.settings import Settings
 from pydantic import TypeAdapter
+from worker import process_claimed
 
 
 @pytest.fixture

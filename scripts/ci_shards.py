@@ -35,10 +35,16 @@ class Target:
 
 def discover_modules() -> list[Target]:
     targets = []
-    for base in (ROOT / "packages", ROOT / "services"):
-        for tests in sorted(base.glob("*/tests")):
-            if any(tests.rglob("test_*.py")):
-                targets.append(Target(tests.parent.name, base.name == "services", tests.relative_to(ROOT).as_posix()))
+    for tests in sorted((ROOT / "packages").glob("*/tests")):
+        if any(tests.rglob("test_*.py")):
+            targets.append(Target(tests.parent.name, False, tests.relative_to(ROOT).as_posix()))
+    for name in ("api", "worker", "mcp-client"):
+        tests = ROOT / "apps" / name / "tests"
+        if any(tests.rglob("test_*.py")):
+            targets.append(Target(name, name in {"api", "worker"}, tests.relative_to(ROOT).as_posix()))
+    corpus_tests = ROOT / "tests/corpus/contracts/tests"
+    if any(corpus_tests.rglob("test_*.py")):
+        targets.append(Target("corpus-contracts", False, corpus_tests.relative_to(ROOT).as_posix()))
     if not targets:
         raise RuntimeError("no Python owner test directories discovered")
     return targets
@@ -117,7 +123,7 @@ def run_target(target: Target, suite: str, project: str) -> None:
         with_postgres(command, project)
     else:
         run(command)
-    if suite == "distributions" and target.name == "ppap-product-store":
+    if suite == "distributions" and target.name == "product":
         # Preserve the original missing-dependency negative control.
         run([sys.executable, "scripts/validate_distribution.py", "--prove-missing-dependency"])
 

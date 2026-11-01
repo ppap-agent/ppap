@@ -21,8 +21,8 @@ class AuditDatabaseCase(unittest.TestCase):
         self.rule_body = sample_rule_body_factory
 
     def setUp(self):
-        from ppap_application import build_product_store
-        from ppap_core.settings import Settings
+        from product import build_product_store
+        from product.settings import Settings
 
         self.schema.require_postgres()
         self.database = "ppap_bindings_" + uuid.uuid4().hex[:12]
@@ -70,9 +70,9 @@ class NativeEntryDatabaseTests(AuditDatabaseCase):
     def test_native_entry_keeps_the_frozen_task_after_authenticated_edition_selection(self):
         from urllib.parse import parse_qs, urlsplit
 
+        from api import create_app
         from fastapi.testclient import TestClient
-        from ppap_api import create_app
-        from ppap_core.identity import SESSION_COOKIE
+        from product.identity import SESSION_COOKIE
 
         self.settings.feishu_app_id = "cli_test"
         self.settings.feishu_app_secret = "test-secret"
@@ -98,9 +98,9 @@ class NativeEntryDatabaseTests(AuditDatabaseCase):
 
 class AuditBindingDatabaseTests(AuditDatabaseCase):
     def test_unsupported_worker_job_is_failed_not_successful_delivery(self):
-        from ppap_core.db import connect
-        from ppap_product_store import AuthStore
-        from ppap_worker import process_claimed
+        from product.db import connect
+        from product.store import AuthStore
+        from worker import process_claimed
 
         job_id = str(uuid.uuid4())
         with connect(self.settings, "migrator") as conn:
@@ -123,9 +123,9 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
         self.assertIsNone(worker.claim_job("unsupported-job-test"))
 
     def test_support_reads_current_session_and_does_not_create_audit_or_usage_records(self):
+        from api import create_app
         from fastapi.testclient import TestClient
-        from ppap_api import create_app
-        from ppap_core.identity import SESSION_COOKIE
+        from product.identity import SESSION_COOKIE
 
         self.settings.support_phone = "+00 000 000"
         client = TestClient(create_app(settings=self.settings, auth_store=self.store))
@@ -144,14 +144,14 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
     def test_worker_persists_one_unreadable_file_error_without_losing_other_frozen_file_results(self):
         from io import BytesIO
 
+        from api.audit_routes import register_audit_routes
+        from api.web_contract import Round
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
         from openpyxl import Workbook
-        from ppap_api.audit_routes import register_audit_routes
-        from ppap_api.web_contract import Round
-        from ppap_application import build_product_store
-        from ppap_worker import process_claimed
+        from product import build_product_store
         from pydantic import TypeAdapter
+        from worker import process_claimed
 
         workbook = Workbook()
         workbook.active.append(["控制计划", "☑批量生产"])
@@ -192,10 +192,10 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
         self.assertEqual(client.get(f"/rounds/{accepted['id']}?read_view=true").json(), observed)
 
     def test_manual_coverage_review_round_trip_preserves_machine_facts_and_rejects_stale_or_outside_input(self):
+        from api.audit_routes import register_audit_routes
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
-        from ppap_api.audit_routes import register_audit_routes
-        from ppap_application import build_product_store
+        from product import build_product_store
 
         target, reference = self.upload("review.xlsx"), self.upload("context.pdf")
         rule = self.store.publish_rule(self.alice, "人工核对要求", self.rule_body(), reference.id)
@@ -234,11 +234,11 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
         self.assertEqual(client.put(path + "/reviews", json={**body, "version": 1}).status_code, 403)
 
     def test_round_reader_uses_frozen_versions_without_creating_a_task_or_changing_the_round(self):
+        from api.audit_routes import register_audit_routes
+        from api.web_contract import Round
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
-        from ppap_api.audit_routes import register_audit_routes
-        from ppap_api.web_contract import Round
-        from ppap_core.fixtures import RULE_A
+        from product.fixtures import RULE_A
         from pydantic import TypeAdapter
 
         target, reference = self.upload("historical.txt"), self.upload("reference.txt")
@@ -271,7 +271,7 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
         self.assertEqual(client.get(path + "?read_view=true").status_code, 403)
 
     def test_resumable_drafts_keep_origin_and_respect_grants(self):
-        from ppap_core.fixtures import RULE_A
+        from product.fixtures import RULE_A
 
         file = self.upload("draft.txt")
         items = [{"file_version_id": file.id, "role": "target", "rule_version_id": RULE_A}]
@@ -293,7 +293,7 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
         self.assertEqual(self.store.list_drafts(self.alice), [])
 
     def test_each_target_keeps_its_rule_snapshot_through_replay_and_explicit_resubmit(self):
-        from ppap_core.fixtures import RULE_A
+        from product.fixtures import RULE_A
 
         first, second, reference = [self.upload(name) for name in ("a.xlsx", "b.xlsx", "context.pdf")]
         rule = self.store.publish_rule(self.alice, "客户规则", self.rule_body(), reference.id)
@@ -321,7 +321,7 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
         self.assertEqual(next(item for item in next_round["inputs"] if item["file_version_id"] == second.id)["rule"]["body"], changed)
 
     def test_same_key_concurrent_acceptance_and_conflicts_check_bindings_roles_and_round_access(self):
-        from ppap_core.fixtures import RULE_A
+        from product.fixtures import RULE_A
 
         first, reference = self.upload("a.xlsx"), self.upload("context.xlsx")
         items = [{"file_version_id": first.id, "role": "target", "rule_version_id": RULE_A}, {"file_version_id": reference.id, "role": "reference"}]
@@ -374,7 +374,7 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
         self.assertEqual(replay["id"], accepted[0]["id"])
 
     def test_missing_target_rule_reference_rule_and_foreign_rule_are_rejected(self):
-        from ppap_core.fixtures import RULE_A, RULE_B
+        from product.fixtures import RULE_A, RULE_B
 
         first = self.upload("a.xlsx")
         draft = self.draft([{"file_version_id": first.id, "role": "target"}])
@@ -393,9 +393,9 @@ class AuditBindingUpgradeTests(AuditDatabaseCase):
     previous_schema = True
 
     def test_upgrade_copies_frozen_head_not_current_rule_and_preserves_results(self):
-        from ppap_core.audits import request_fingerprint
-        from ppap_core.files import sha256_bytes, version_object_key
-        from ppap_core.fixtures import RULE_A
+        from audit.audits import request_fingerprint
+        from product.files import sha256_bytes, version_object_key
+        from product.fixtures import RULE_A
         from psycopg.types.json import Jsonb
 
         target, reference = str(uuid.uuid4()), str(uuid.uuid4())
@@ -449,7 +449,7 @@ class AuditBindingUpgradeTests(AuditDatabaseCase):
 class AuditDisplayDatabaseTests(AuditDatabaseCase):
     @staticmethod
     def card_action(body):
-        from ppap_core.feishu import CardAction
+        from product.feishu import CardAction
 
         event = body["event"]
         return CardAction(event["operator"]["tenant_key"], event["operator"]["open_id"], event["action"]["value"]["notification_id"], event["context"]["open_message_id"])
@@ -460,10 +460,10 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         return store.process_task_confirmation(claimed, "card-confirmer", usage_policy=usage_policy)
 
     def prepared_card_confirmation(self, *, sent=True):
+        from api import create_app
         from fastapi.testclient import TestClient
-        from ppap_api import create_app
-        from ppap_application import build_product_store
-        from ppap_core.fixtures import APP_ID
+        from product import build_product_store
+        from product.fixtures import APP_ID
 
         self.settings.feishu_app_id = APP_ID
         self.settings.feishu_verification_token = "callback-test-verification"
@@ -486,8 +486,8 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         return files, task, api_store, client, body
 
     def test_feishu_card_confirms_the_exact_task_and_replays_without_creating_another_round(self):
+        from api import create_app
         from fastapi.testclient import TestClient
-        from ppap_api import create_app
 
         files, task, api_store, client, body = self.prepared_card_confirmation()
         response = client.post("/integrations/feishu/events", json=body)
@@ -514,7 +514,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
     def test_feishu_card_rejects_forged_or_forwarded_callbacks_and_current_permission_revocation(self):
         from copy import deepcopy
 
-        from ppap_core.db import connect
+        from product.db import connect
 
         _, task, api_store, client, body = self.prepared_card_confirmation()
         bob, carol = (self.store.principal_for_fixture(name) for name in ("bob", "carol"))
@@ -579,9 +579,9 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(api_store.list_rounds(self.alice), [])
 
     def test_feishu_card_and_web_confirmation_compete_for_one_round(self):
+        from api import create_app
         from fastapi.testclient import TestClient
-        from ppap_api import create_app
-        from ppap_core.identity import SESSION_COOKIE
+        from product.identity import SESSION_COOKIE
 
         _, task, api_store, client, body = self.prepared_card_confirmation()
         web = TestClient(create_app(settings=self.settings, auth_store=api_store))
@@ -619,8 +619,8 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertIsNone(api_store.claim_task_notification("must-not-resend"))
 
     def test_card_confirmation_queue_survives_store_recreation_and_fences_an_expired_claim(self):
-        from ppap_application import build_product_store
-        from ppap_core.db import connect
+        from product import build_product_store
+        from product.db import connect
 
         _, task, store, _, body = self.prepared_card_confirmation()
         action = self.card_action(body)
@@ -650,7 +650,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
 
     def test_concurrent_card_clicks_share_one_durable_confirmation_or_report_database_unknown(self):
         import psycopg
-        from ppap_core.db import connect
+        from product.db import connect
 
         _, task, store, _, body = self.prepared_card_confirmation()
         action = self.card_action(body)
@@ -681,8 +681,8 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
     def test_slow_quota_does_not_hold_card_callback_and_repeated_clicks_do_not_duplicate_usage(self):
         from unittest.mock import patch
 
-        from ppap_api.notifications import dispatch_task_confirmation
-        from ppap_core.feishu_usage import PartnerAiItem
+        from api.notifications import dispatch_task_confirmation
+        from product.feishu_usage import PartnerAiItem
 
         _, task, store, client, body = self.prepared_card_confirmation()
         self.settings.usage_charge_enabled = True
@@ -699,8 +699,8 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         first = client.post("/integrations/feishu/events", json=body)
         self.assertEqual(first.json()["toast"]["type"], "info")
         with (
-            patch("ppap_api.notifications.tenant_access_token", return_value="test-token"),
-            patch("ppap_api.notifications.query_tenant_ai_item", side_effect=lambda *_args, **_kwargs: slow_quota(None)),
+            patch("api.notifications.tenant_access_token", return_value="test-token"),
+            patch("api.notifications.query_tenant_ai_item", side_effect=lambda *_args, **_kwargs: slow_quota(None)),
         ):
             with ThreadPoolExecutor(max_workers=2) as pool:
                 processing = pool.submit(dispatch_task_confirmation, store, Mock(), self.settings, "slow-card")
@@ -720,7 +720,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertIsNone(store.claim_task_confirmation("no-second-charge"))
 
     def test_explicit_quota_rejection_is_durable_and_does_not_requeue_on_another_click(self):
-        from ppap_core.feishu_usage import PartnerAiItem
+        from product.feishu_usage import PartnerAiItem
 
         _, task, store, _, body = self.prepared_card_confirmation()
         self.settings.usage_charge_enabled = True
@@ -758,7 +758,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(store.list_usage_events(self.alice), [])
 
     def test_card_confirmation_rechecks_resource_permission_after_queue_commit(self):
-        from ppap_core.db import connect
+        from product.db import connect
 
         files, task, store, _, body = self.prepared_card_confirmation()
         store.enqueue_task_confirmation(self.card_action(body))
@@ -792,7 +792,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         from unittest.mock import patch
 
         import psycopg
-        from ppap_application import build_product_store
+        from product import build_product_store
 
         _, task, store, _, body = self.prepared_card_confirmation()
         pending = store.enqueue_task_confirmation(self.card_action(body))
@@ -821,9 +821,9 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
     def test_distinct_zip_collections_keep_separate_intents_and_unknown_does_not_block_the_other(self):
         from urllib.parse import parse_qs, urlsplit
 
-        from ppap_application import build_product_store
-        from ppap_core.fixtures import APP_ID
-        from ppap_worker import process_claimed
+        from product import build_product_store
+        from product.fixtures import APP_ID
+        from worker import process_claimed
 
         self.settings.feishu_app_id = APP_ID
         _, task, worker, _, _ = self.prepared_query_task(documents=(("first.xlsx", "A_ONLY_017"), ("second.xlsx", "B_ONLY_029"), ("third.xlsx", "C_ONLY_031")))
@@ -863,9 +863,9 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
     def test_ready_zip_notifies_once_even_when_completion_notification_is_off(self):
         from urllib.parse import parse_qs, urlsplit
 
-        from ppap_application import build_product_store
-        from ppap_core.fixtures import APP_ID
-        from ppap_worker import process_claimed
+        from product import build_product_store
+        from product.fixtures import APP_ID
+        from worker import process_claimed
 
         self.settings.feishu_app_id = APP_ID
         task, worker, completed, command, package = self.prepared_report_package()
@@ -907,9 +907,9 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
 
     def test_missing_feishu_credentials_do_not_consume_the_notification_intent(self):
         import httpx
-        from ppap_api.notifications import dispatch_task_notification
-        from ppap_application import build_product_store
-        from ppap_core.fixtures import APP_ID
+        from api.notifications import dispatch_task_notification
+        from product import build_product_store
+        from product.fixtures import APP_ID
 
         self.settings.feishu_app_id = APP_ID
         self.settings.feishu_app_secret = ""
@@ -922,9 +922,9 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual((job.payload["stage"], job.attempt), ("confirmation", 1))
 
     def test_simultaneous_pdf_endings_queue_one_truthful_completion_and_close_the_switch_at_dispatch(self):
-        from ppap_application import build_product_store
-        from ppap_core.fixtures import APP_ID
-        from ppap_worker import process_claimed
+        from product import build_product_store
+        from product.fixtures import APP_ID
+        from worker import process_claimed
 
         self.settings.feishu_app_id = APP_ID
         _, task, worker, _, _ = self.prepared_query_task(documents=(("first.xlsx", "A_ONLY_017"), ("second.xlsx", "B_ONLY_029")))
@@ -967,9 +967,9 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertIsNone(api_store.claim_task_notification("third-notifier"))
 
     def test_notification_rechecks_source_access_before_dispatch(self):
-        from ppap_application import build_product_store
-        from ppap_core.db import connect
-        from ppap_core.fixtures import APP_ID
+        from product import build_product_store
+        from product.db import connect
+        from product.fixtures import APP_ID
 
         self.settings.feishu_app_id = APP_ID
         files, task, _ = self.prepared_display_task(confirm=False)
@@ -985,9 +985,9 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         import json
 
         import httpx
-        from ppap_api.notifications import dispatch_task_notification
-        from ppap_application import build_product_store
-        from ppap_core.fixtures import APP_ID
+        from api.notifications import dispatch_task_notification
+        from product import build_product_store
+        from product.fixtures import APP_ID
 
         self.settings.feishu_app_id = APP_ID
         self.settings.feishu_app_secret = "notification-test-secret"
@@ -1022,9 +1022,9 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         import json
 
         import httpx
-        from ppap_api.notifications import dispatch_task_notification
-        from ppap_application import build_product_store
-        from ppap_core.fixtures import APP_ID
+        from api.notifications import dispatch_task_notification
+        from product import build_product_store
+        from product.fixtures import APP_ID
 
         self.settings.feishu_app_id = APP_ID
         self.settings.feishu_app_secret = "notification-test-secret"
@@ -1055,9 +1055,9 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(old.attempt, 1, "the scoped sender must not claim historical work")
 
     def test_notification_takeover_fences_old_sender_and_unknown_is_never_reclaimed(self):
-        from ppap_application import build_product_store
-        from ppap_core.db import connect
-        from ppap_core.fixtures import APP_ID
+        from product import build_product_store
+        from product.db import connect
+        from product.fixtures import APP_ID
 
         self.settings.feishu_app_id = APP_ID
         _, task, _ = self.prepared_display_task(confirm=False)
@@ -1078,8 +1078,8 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertTrue(api_store.get_task_notification(self.alice, task["id"])["enabled"])
 
     def test_completion_switch_does_not_suppress_started_notification_or_allow_unknown_replay(self):
-        from ppap_application import build_product_store
-        from ppap_core.fixtures import APP_ID
+        from product import build_product_store
+        from product.fixtures import APP_ID
 
         self.settings.feishu_app_id = APP_ID
         _, task, worker = self.prepared_display_task(complete_audit=False)
@@ -1113,10 +1113,10 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertIsNone(api_store.claim_task_notification("notifier-c"))
 
     def test_completion_notification_setting_is_private_persistent_and_revisioned(self):
+        from api.audit_routes import register_audit_routes
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
-        from ppap_api.audit_routes import register_audit_routes
-        from ppap_application import build_product_store
+        from product import build_product_store
 
         _, task, _ = self.prepared_display_task(complete_audit=False)
         api_store = build_product_store(self.settings, objects=self.store.objects, role="api")
@@ -1142,8 +1142,8 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(client.get(path).status_code, 403)
 
     def test_archive_keeps_provider_identity_and_exact_history_reference(self):
-        from ppap_api.web_contract import AuditArchivePage, AuditHistoryDetail
-        from ppap_core.feishu_drive import ImportedMaterial
+        from api.web_contract import AuditArchivePage, AuditHistoryDetail
+        from product.feishu_drive import ImportedMaterial
         from pydantic import TypeAdapter
 
         def imported(token):
@@ -1200,7 +1200,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(refreshed[0]["document_id"], other_doc["document_id"])
         self.assertGreater(refreshed[0]["updated_at"], refreshed[1]["updated_at"])
         self.assertEqual(self.display_client.get("/audit-archive", params={"customer": "更正客户"}).json()["total"], 1)
-        from ppap_core.db import connect
+        from product.db import connect
 
         with connect(self.settings, "migrator") as conn:
             conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (first.file_id, self.alice.user_id))
@@ -1237,7 +1237,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
     def test_task_list_reads_summaries_without_building_result_details(self):
         from unittest.mock import patch
 
-        from ppap_core.db import connect
+        from product.db import connect
 
         files, task, _ = self.prepared_display_task()
         expected = self.store.get_audit_task(self.alice, task["id"])
@@ -1333,7 +1333,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
     def test_file_read_shares_authorization_and_version_connection_and_honors_revocation(self):
         from unittest.mock import patch
 
-        from ppap_core.db import connect
+        from product.db import connect
 
         files, task, _ = self.prepared_display_task()
         file = files[0]
@@ -1355,7 +1355,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(self.store.read_file_version(self.alice, file.file_id, file.id, round_id=task["round_id"]), file)
 
     def test_usage_links_the_paid_file_to_its_own_history_and_keeps_fee_when_access_is_revoked(self):
-        from ppap_core.db import connect
+        from product.db import connect
 
         self.settings.feishu_ai_item_id = "test-item"
         first = self.upload("同名.xlsx")
@@ -1397,10 +1397,10 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(self.store.list_usage_events(self.alice), before)
 
     def prepared_display_task(self, files=None, *, analysis_mode="standard", complete_audit=True, per_file_rules=False, confirm=True):
+        from api.audit_routes import register_audit_routes
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
-        from ppap_api.audit_routes import register_audit_routes
-        from ppap_application import build_product_store
+        from product import build_product_store
 
         self.settings.usage_charge_enabled = False
         worker = build_product_store(self.settings, objects=self.store.objects, role="worker")
@@ -1536,7 +1536,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(self.store.get_audit_task(self.alice, task["id"])["files"][0]["display_info"]["revision"], 0)
 
     def test_display_requires_current_review_access_but_saved_receipt_remains_readable(self):
-        from ppap_core.db import connect
+        from product.db import connect
 
         files, task, _worker = self.prepared_display_task()
         path = f"/audit-tasks/{task['id']}"
@@ -1562,7 +1562,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(self.display_client.get(path + "/display-info/" + command["request_id"]).status_code, 403)
 
     def test_display_does_not_expand_private_task_ownership_or_accept_other_frozen_inputs(self):
-        from ppap_core.db import connect
+        from product.db import connect
 
         files, task, _worker = self.prepared_display_task()
         path = f"/audit-tasks/{task['id']}"
@@ -1621,7 +1621,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(self.display_client.get(f"/audit-tasks/{first['id']}").json()["files"][0]["display_info"], receipt["info"])
 
     def test_display_save_waiting_on_revoked_review_permission_cannot_commit(self):
-        from ppap_core.db import connect
+        from product.db import connect
 
         files, task, _worker = self.prepared_display_task()
         path = f"/audit-tasks/{task['id']}"
@@ -1656,12 +1656,12 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         from pathlib import Path
         from tempfile import TemporaryDirectory
 
+        from agent.auditor import product_response, semantic_inputs
+        from agent.mapping import product_result, spec_from_work
+        from audit.audits import DEEP_PROTOCOL_REVISION
+        from audit.document_tools import snapshot
+        from audit.protocol import ResultBundle
         from openpyxl import Workbook
-        from ppap_core.audits import DEEP_PROTOCOL_REVISION
-        from ppap_deep.auditor import product_response, semantic_inputs
-        from ppap_deep.mapping import product_result, spec_from_work
-        from ppap_deep.semantic.document_tools import snapshot
-        from ppap_deep.semantic.protocol import ResultBundle
 
         versions, contents = [], {}
         for filename, value in documents:
@@ -1778,7 +1778,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         pdf_job = worker.claim_job("pdf-render")
         self.assertEqual(pdf_job.kind, "report_pdf")
         self.assertEqual(self.display_client.get(path).json()["files"][0]["audit"]["report"]["state"], "generating")
-        from ppap_worker import process_claimed
+        from worker import process_claimed
 
         process_claimed(worker, pdf_job, "pdf-render")
         finished = self.display_client.get(path).json()
@@ -1816,7 +1816,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(self.display_client.get(pdf_path, params=query).status_code, 401)
 
     def test_missing_verification_mark_preserves_machine_pass_and_generates_pdf(self):
-        from ppap_worker import process_claimed
+        from worker import process_claimed
 
         _version, task, worker, _job, _result = self.prepared_query_task(verified=False)
         path = f"/audit-tasks/{task['id']}"
@@ -1835,7 +1835,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(self.store.list_usage_events(self.alice), [])
 
     def test_long_pdf_filename_preserves_the_pdf_suffix(self):
-        from ppap_worker import process_claimed
+        from worker import process_claimed
 
         _version, task, worker, _job, _result = self.prepared_query_task(documents=(("A" * 250 + ".xlsx", "P-1"),))
         pdf_job = worker.claim_job("long-pdf-name")
@@ -1846,7 +1846,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
 
     def test_two_frozen_file_reports_keep_their_own_sources_rules_and_download_identity(self):
         import pymupdf
-        from ppap_worker import process_claimed
+        from worker import process_claimed
 
         _version, task, worker, _job, _result = self.prepared_query_task(documents=(("first.xlsx", "A_ONLY_017"), ("second.xlsx", "B_ONLY_029")))
         path = f"/audit-tasks/{task['id']}"
@@ -1877,7 +1877,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertIsNone(worker.claim_job("two-pdfs"))
 
     def prepared_report_package(self, *, accept=True):
-        from ppap_worker import process_claimed
+        from worker import process_claimed
 
         _version, task, worker, _job, _result = self.prepared_query_task(documents=(("same.xlsx", "A_ONLY_017"), ("same.xlsx", "B_ONLY_029")))
         for _ in range(2):
@@ -1902,9 +1902,9 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         from urllib.parse import parse_qs, urlsplit
         from zipfile import ZipFile
 
-        from ppap_application import build_product_store
-        from ppap_core.fixtures import APP_ID
-        from ppap_worker import process_claimed
+        from product import build_product_store
+        from product.fixtures import APP_ID
+        from worker import process_claimed
 
         self.settings.feishu_app_id = APP_ID
         first, _worker, _completed, first_command, _ = self.prepared_report_package(accept=False)
@@ -1959,8 +1959,8 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(self.store.list_usage_events(self.alice), [])
 
     def test_archive_zip_rechecks_every_task_and_recovers_only_the_same_frozen_collection(self):
-        from ppap_core.db import connect
-        from ppap_worker import process_claimed
+        from product.db import connect
+        from worker import process_claimed
 
         first, _worker, _completed, first_command, _ = self.prepared_report_package(accept=False)
         second, worker, _completed, second_command, _ = self.prepared_report_package(accept=False)
@@ -2005,11 +2005,11 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         from datetime import datetime, timedelta, timezone
 
         import httpx
+        from api import create_app
         from fastapi.testclient import TestClient
-        from ppap_api import create_app
-        from ppap_application import build_product_store
-        from ppap_core.feishu import UserTokens
-        from ppap_core.identity import SESSION_COOKIE
+        from product import build_product_store
+        from product.feishu import UserTokens
+        from product.identity import SESSION_COOKIE
 
         task, _worker, completed, package_command, _ = self.prepared_report_package(accept=False)
         self.settings.feishu_app_id, self.settings.feishu_app_secret = self.alice.app_id, "test-secret"
@@ -2096,11 +2096,11 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         from datetime import datetime, timedelta, timezone
 
         import httpx
+        from api import create_app
         from fastapi.testclient import TestClient
-        from ppap_api import create_app
-        from ppap_application import build_product_store
-        from ppap_core.feishu import UserTokens
-        from ppap_core.identity import SESSION_COOKIE
+        from product import build_product_store
+        from product.feishu import UserTokens
+        from product.identity import SESSION_COOKIE
 
         task, worker, completed, command, _ = self.prepared_report_package(accept=False)
         self.settings.feishu_app_id, self.settings.feishu_app_secret = self.alice.app_id, "test-secret"
@@ -2217,7 +2217,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         import json
 
         import httpx
-        from ppap_core.db import connect
+        from product.db import connect
 
         uploading, release = threading.Event(), threading.Event()
         uploads, sends = [], []
@@ -2269,7 +2269,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         from email.policy import default
 
         import httpx
-        from ppap_worker import process_claimed
+        from worker import process_claimed
 
         uploads, sends = [], []
 
@@ -2418,7 +2418,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         from io import BytesIO
         from zipfile import ZipFile
 
-        from ppap_worker import process_claimed
+        from worker import process_claimed
 
         task, worker, completed, command, package = self.prepared_report_package()
         task_path, reports, request_id = f"/audit-tasks/{task['id']}", command["reports"], command["request_id"]
@@ -2479,7 +2479,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         from io import BytesIO
         from zipfile import ZipFile
 
-        from ppap_worker import process_claimed
+        from worker import process_claimed
 
         task, worker, completed, command, package = self.prepared_report_package()
         old = worker.claim_job("zip-recovery-old")
@@ -2519,7 +2519,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(self.store.list_usage_events(self.alice), [])
 
     def test_zip_alias_recoveries_compete_for_one_attempt_and_stale_failures_cannot_restart_it(self):
-        from ppap_worker import process_claimed
+        from worker import process_claimed
 
         _task, worker, _completed, command, package = self.prepared_report_package()
         alias_id = str(uuid.uuid4())
@@ -2594,8 +2594,8 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(self.store.list_usage_events(self.alice), [])
 
     def test_zip_recovery_cannot_rebind_the_package_or_silently_replace_a_frozen_pdf(self):
-        from ppap_core.files import ObjectMissing
-        from ppap_worker import process_claimed
+        from product.files import ObjectMissing
+        from worker import process_claimed
 
         _task, worker, _completed, command, package = self.prepared_report_package()
         old = worker.claim_job("zip-original-failed")
@@ -2619,7 +2619,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertIsNone(worker.claim_job("no-pdf-regeneration"))
 
     def test_lost_zip_write_reply_and_a_new_request_cannot_rebuild_the_failed_collection(self):
-        from ppap_worker import process_claimed
+        from worker import process_claimed
 
         task, worker, completed, command, package = self.prepared_report_package()
         objects = worker.objects
@@ -2651,8 +2651,8 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(self.store.list_usage_events(self.alice), [])
 
     def test_one_unreadable_pdf_fails_only_its_package_preparation_and_does_not_publish_a_partial_zip(self):
-        from ppap_core.files import ObjectMissing
-        from ppap_worker import process_claimed
+        from product.files import ObjectMissing
+        from worker import process_claimed
 
         task, worker, completed, command, _package = self.prepared_report_package()
         objects = worker.objects
@@ -2681,7 +2681,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         from io import BytesIO
         from unittest.mock import patch
 
-        from ppap_worker import process_claimed
+        from worker import process_claimed
 
         task, worker, completed, command, _package = self.prepared_report_package()
 
@@ -2704,8 +2704,8 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
     def test_concurrent_zip_requests_share_one_frozen_work_and_old_generation_cannot_publish(self):
         import threading
 
-        from ppap_core.db import connect
-        from ppap_worker import process_claimed
+        from product.db import connect
+        from worker import process_claimed
 
         task, worker, _completed, command, _package = self.prepared_report_package(accept=False)
         barrier = threading.Barrier(2)
@@ -2735,7 +2735,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertIsNone(worker.claim_job("no-duplicate-zip"))
 
     def test_failed_pdf_can_be_explicitly_regenerated_without_reopening_or_reauditing_the_task(self):
-        from ppap_worker import process_claimed
+        from worker import process_claimed
 
         version, task, worker, _job, _result = self.prepared_query_task()
         path = f"/audit-tasks/{task['id']}"
@@ -2776,7 +2776,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(self.store.list_usage_events(self.alice), [])
 
     def test_concurrent_pdf_recovery_and_late_attempt_cannot_schedule_or_publish_twice(self):
-        from ppap_worker import process_claimed
+        from worker import process_claimed
 
         version, task, worker, _job, _result = self.prepared_query_task()
         first = worker.claim_job("pdf-failed")
@@ -2854,7 +2854,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
     def test_lost_object_write_reply_retains_a_private_object_but_never_publishes_a_report(self):
         from unittest.mock import patch
 
-        from ppap_worker import process_claimed
+        from worker import process_claimed
 
         _version, task, worker, _job, _result = self.prepared_query_task()
         original = self.display_client.get(f"/rounds/{task['round_id']}").json()
@@ -2875,9 +2875,9 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertIsNone(worker.claim_job("not-retried"))
 
     def test_a_late_pdf_attempt_cannot_replace_the_published_artifact(self):
-        from ppap_core.db import connect
-        from ppap_docops.audit_pdf import render_audit_pdf
-        from ppap_worker import process_claimed
+        from documents.audit_pdf import render_audit_pdf
+        from product.db import connect
+        from worker import process_claimed
 
         version, task, worker, _job, _result = self.prepared_query_task()
         old = worker.claim_job("pdf-old")
@@ -2907,12 +2907,12 @@ class UsageAcceptanceTests(AuditDatabaseCase):
         self.settings.feishu_free_trial_quota_points = 700
 
     def accepted(self, draft, key=None):
-        from ppap_core.feishu_usage import PartnerAiItem
+        from product.feishu_usage import PartnerAiItem
 
         return self.store.accept_draft(self.alice, draft, key or draft, usage_policy=lambda actor: PartnerAiItem(True, 1, True))
 
     def prepared(self):
-        from ppap_core.fixtures import RULE_A
+        from product.fixtures import RULE_A
 
         target, reference = self.upload("target.xlsx"), self.upload("reference.pdf")
         return self.draft(
@@ -2923,12 +2923,12 @@ class UsageAcceptanceTests(AuditDatabaseCase):
         )
 
     def test_usage_page_groups_file_allocations_and_preserves_tenant_ledger_without_granting_history(self):
+        from api.audit_routes import register_audit_routes
+        from api.web_contract import AuditUsagePage
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
-        from ppap_api.audit_routes import register_audit_routes
-        from ppap_api.web_contract import AuditUsagePage
-        from ppap_core.db import connect
-        from ppap_core.fixtures import RULE_A
+        from product.db import connect
+        from product.fixtures import RULE_A
         from pydantic import TypeAdapter
 
         first, second = self.upload("费用核对.xlsx"), self.upload("另一份.pdf")
@@ -2995,10 +2995,10 @@ class UsageAcceptanceTests(AuditDatabaseCase):
         from unittest.mock import patch
 
         import psycopg
+        from api.audit_routes import register_audit_routes
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
-        from ppap_api.audit_routes import register_audit_routes
-        from ppap_core.db import connect
+        from product.db import connect
 
         self.settings.feishu_free_trial_quota_points = 0
         draft = self.prepared()
@@ -3011,7 +3011,7 @@ class UsageAcceptanceTests(AuditDatabaseCase):
         register_audit_routes(app, self.store, lambda request: self.alice, Mock())
         client = TestClient(app)
         observed = datetime(2026, 11, 4, tzinfo=timezone.utc)
-        with patch("ppap_product_store.store._now", return_value=observed):
+        with patch("product.store.store._now", return_value=observed):
             before = client.get("/audit-usage?range=all").json()
             claim = self.store.claim_usage_report(self.alice, event["id"])
             self.assertTrue(self.store.settle_usage_external(self.alice, event["id"], claim, "confirmed", "usage-report-ack"))
@@ -3041,7 +3041,7 @@ class UsageAcceptanceTests(AuditDatabaseCase):
         self.assertNotEqual(ledger[0]["external_confirmed_at"], settled["entries"][0]["debited_at"])
 
     def test_verified_debit_cannot_be_claimed_for_another_usage_report(self):
-        from ppap_core.db import connect
+        from product.db import connect
 
         self.settings.feishu_free_trial_quota_points = 0
         draft = self.prepared()
@@ -3052,7 +3052,7 @@ class UsageAcceptanceTests(AuditDatabaseCase):
         self.assertIsNone(self.store.claim_usage_report(self.alice, event["id"]))
 
     def test_late_unknown_usage_report_cannot_erase_independent_debit_evidence(self):
-        from ppap_core.db import connect
+        from product.db import connect
 
         self.settings.feishu_free_trial_quota_points = 0
         draft = self.prepared()
@@ -3071,10 +3071,10 @@ class UsageAcceptanceTests(AuditDatabaseCase):
         self.assertEqual(page["summary"]["pending_points"]["value"], 0)
 
     def test_usage_page_keeps_legacy_aggregate_visible_without_fabricating_file_charges(self):
+        from api.audit_routes import register_audit_routes
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
-        from ppap_api.audit_routes import register_audit_routes
-        from ppap_core.db import connect
+        from product.db import connect
 
         with connect(self.settings, "migrator") as conn:
             conn.execute(
@@ -3094,7 +3094,7 @@ class UsageAcceptanceTests(AuditDatabaseCase):
         self.assertEqual(self.store.list_usage_events(self.alice)[0]["consumed_points"], 1200)
 
     def test_each_target_has_its_own_usage_slices(self):
-        from ppap_core.fixtures import RULE_A
+        from product.fixtures import RULE_A
 
         first, second = self.upload("first.xlsx"), self.upload("second.xlsx")
         draft = self.draft(
@@ -3118,10 +3118,10 @@ class UsageAcceptanceTests(AuditDatabaseCase):
         from datetime import datetime, timedelta, timezone
 
         import httpx
+        from api import create_app
         from fastapi.testclient import TestClient
-        from ppap_api import create_app
-        from ppap_core.feishu import UserTokens
-        from ppap_core.identity import SESSION_COOKIE
+        from product.feishu import UserTokens
+        from product.identity import SESSION_COOKIE
 
         self.settings.feishu_free_trial_quota_points = 0
         draft = self.prepared()

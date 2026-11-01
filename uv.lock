@@ -9,19 +9,32 @@ resolution-markers = [
 
 [manifest]
 members = [
+    "agent",
+    "api",
+    "audit",
+    "corpus-contracts",
+    "documents",
+    "mcp-client",
     "ppap",
-    "ppap-api",
-    "ppap-application",
-    "ppap-core",
-    "ppap-corpus-contracts",
-    "ppap-deep",
-    "ppap-docops",
-    "ppap-excel-audit-engine",
-    "ppap-mcp-client",
-    "ppap-pdf-to-excel",
-    "ppap-product-store",
-    "ppap-vision",
-    "ppap-worker",
+    "product",
+    "worker",
+]
+
+[[package]]
+name = "agent"
+version = "0.1.0"
+source = { editable = "packages/agent" }
+dependencies = [
+    { name = "audit" },
+    { name = "documents" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "audit", editable = "packages/audit" },
+    { name = "documents", editable = "packages/documents" },
+    { name = "pydantic", specifier = ">=2.10.6" },
 ]
 
 [[package]]
@@ -56,6 +69,39 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/a9/d2/f4d173e22df740bc37b1db102b386ba719b66e95b0f0d751f556b387e6d2/anyio-4.15.1.tar.gz", hash = "sha256:9f28306018cbd6d329e64a36d58256edff76dd996fe423bc957326e578b82a94", size = 276966 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/12/b8/4bd346e22b28902df4d651910f5242c28d84e4a5c2435ca5c3f797ed7e2e/anyio-4.15.1-py3-none-any.whl", hash = "sha256:6152fdbbf9a77fdec97731721bebf7c4c44f7c29b424b0065826173efc7ed101", size = 132079 },
+]
+
+[[package]]
+name = "api"
+version = "0.1.0"
+source = { editable = "apps/api" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "fastmcp" },
+    { name = "httpx" },
+    { name = "mcp" },
+    { name = "pillow" },
+    { name = "product" },
+    { name = "pydantic" },
+    { name = "python-multipart" },
+    { name = "starlette" },
+    { name = "uvicorn" },
+    { name = "worker" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.115.8" },
+    { name = "fastmcp", specifier = ">=3,<4" },
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "mcp", specifier = ">=1.26,<2" },
+    { name = "pillow", specifier = ">=10.1.0" },
+    { name = "product", editable = "packages/product" },
+    { name = "pydantic", specifier = ">=2.10.6" },
+    { name = "python-multipart", specifier = ">=0.0.20" },
+    { name = "starlette", specifier = ">=0.45.3" },
+    { name = "uvicorn", specifier = ">=0.34.0" },
+    { name = "worker", editable = "apps/worker" },
 ]
 
 [[package]]
@@ -109,6 +155,31 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/9a/8e/82a0fe20a541c03148528be8cac2408564a6c9a0cc7e9171802bc1d26985/attrs-26.1.0.tar.gz", hash = "sha256:d03ceb89cb322a8fd706d4fb91940737b6642aa36998fe130a9bc96c985eff32", size = 952055 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/64/b4/17d4b0b2a2dc85a6df63d1157e028ed19f90d4cd97c36717afef2bc2f395/attrs-26.1.0-py3-none-any.whl", hash = "sha256:c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309", size = 67548 },
+]
+
+[[package]]
+name = "audit"
+version = "0.1.0"
+source = { editable = "packages/audit" }
+dependencies = [
+    { name = "documents" },
+    { name = "openai" },
+    { name = "openpyxl" },
+    { name = "pandas" },
+    { name = "pillow" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "documents", editable = "packages/documents" },
+    { name = "openai" },
+    { name = "openpyxl" },
+    { name = "pandas" },
+    { name = "pillow", specifier = ">=10.2.0" },
+    { name = "pydantic", specifier = ">=2.10.6" },
+    { name = "pydantic-settings", specifier = ">=2.12.0" },
 ]
 
 [[package]]
@@ -276,6 +347,27 @@ wheels = [
 ]
 
 [[package]]
+name = "corpus-contracts"
+version = "0.1.0"
+source = { editable = "tests/corpus/contracts" }
+dependencies = [
+    { name = "audit" },
+    { name = "documents" },
+    { name = "httpx" },
+    { name = "pandas" },
+    { name = "product" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "audit", editable = "packages/audit" },
+    { name = "documents", editable = "packages/documents" },
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "pandas", specifier = ">=2.1.4" },
+    { name = "product", editable = "packages/product" },
+]
+
+[[package]]
 name = "cryptography"
 version = "50.0.2"
 source = { registry = "https://pypi.org/simple" }
@@ -365,6 +457,43 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/e0/4d/f332313098c1de1b2d2ff91cf2674415cc7cddab2ca1b01ae29774bd5fdf/docstring_parser-0.18.0.tar.gz", hash = "sha256:292510982205c12b1248696f44959db3cdd1740237a968ea1e2e7a900eeb2015", size = 29341 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a7/5f/ed01f9a3cdffbd5a008556fc7b2a08ddb1cc6ace7effa7340604b1d16699/docstring_parser-0.18.0-py3-none-any.whl", hash = "sha256:b3fcbed555c47d8479be0796ef7e19c2670d428d72e96da63f3a40122860374b", size = 22484 },
+]
+
+[[package]]
+name = "documents"
+version = "0.1.0"
+source = { editable = "packages/documents" }
+dependencies = [
+    { name = "httpx" },
+    { name = "numpy" },
+    { name = "olefile" },
+    { name = "openai" },
+    { name = "opencv-python-headless" },
+    { name = "openpyxl" },
+    { name = "pandas" },
+    { name = "pillow" },
+    { name = "pymupdf" },
+    { name = "python-docx" },
+    { name = "python-pptx" },
+    { name = "requests" },
+    { name = "xlrd" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.24.0" },
+    { name = "numpy", specifier = ">=1.26.0,<2" },
+    { name = "olefile", specifier = ">=0.47" },
+    { name = "openai", specifier = ">=1.95.0" },
+    { name = "opencv-python-headless", specifier = ">=4.9.0.80" },
+    { name = "openpyxl", specifier = ">=3.1.2" },
+    { name = "pandas", specifier = ">=2.1.4" },
+    { name = "pillow", specifier = ">=10.2.0" },
+    { name = "pymupdf", specifier = ">=1.26.0" },
+    { name = "python-docx", specifier = ">=1.1.0" },
+    { name = "python-pptx", specifier = ">=0.6.23" },
+    { name = "requests", specifier = ">=2.31.0" },
+    { name = "xlrd", specifier = ">=1.2.0" },
 ]
 
 [[package]]
@@ -825,6 +954,35 @@ wheels = [
 ]
 
 [[package]]
+name = "mcp-client"
+version = "0.1.0"
+source = { editable = "apps/mcp-client" }
+dependencies = [
+    { name = "anyio" },
+    { name = "cryptography" },
+    { name = "fastmcp" },
+    { name = "filelock" },
+    { name = "httpx" },
+    { name = "keyring" },
+    { name = "mcp" },
+    { name = "platformdirs" },
+    { name = "py-key-value-aio", extra = ["filetree"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "anyio", specifier = ">=4,<5" },
+    { name = "cryptography", specifier = ">=43" },
+    { name = "fastmcp", specifier = ">=3.4,<3.5" },
+    { name = "filelock", specifier = ">=3.20,<4" },
+    { name = "httpx", specifier = ">=0.28,<1" },
+    { name = "keyring", specifier = ">=25,<26" },
+    { name = "mcp", specifier = ">=1.30,<2" },
+    { name = "platformdirs", specifier = ">=4,<5" },
+    { name = "py-key-value-aio", extras = ["filetree"], specifier = ">=0.4,<0.5" },
+]
+
+[[package]]
 name = "mdurl"
 version = "0.1.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1078,15 +1236,15 @@ name = "ppap"
 version = "0.0.0"
 source = { virtual = "." }
 dependencies = [
-    { name = "ppap-api" },
-    { name = "ppap-worker" },
+    { name = "api" },
+    { name = "worker" },
 ]
 
 [package.dev-dependencies]
 dev = [
+    { name = "corpus-contracts" },
+    { name = "mcp-client" },
     { name = "mypy" },
-    { name = "ppap-corpus-contracts" },
-    { name = "ppap-mcp-client" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pyyaml" },
@@ -1099,15 +1257,15 @@ e2e = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ppap-api", editable = "services/api" },
-    { name = "ppap-worker", editable = "services/worker" },
+    { name = "api", editable = "apps/api" },
+    { name = "worker", editable = "apps/worker" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "corpus-contracts", editable = "tests/corpus/contracts" },
+    { name = "mcp-client", editable = "apps/mcp-client" },
     { name = "mypy", specifier = ">=1.7.1" },
-    { name = "ppap-corpus-contracts", editable = "packages/ppap_corpus_contracts" },
-    { name = "ppap-mcp-client", editable = "packages/ppap_mcp_client" },
     { name = "pytest", specifier = "==7.4.3" },
     { name = "pytest-asyncio", specifier = "==0.21.1" },
     { name = "pyyaml", specifier = "==6.0.3" },
@@ -1119,68 +1277,14 @@ e2e = [
 ]
 
 [[package]]
-name = "ppap-api"
+name = "product"
 version = "0.1.0"
-source = { editable = "services/api" }
+source = { editable = "packages/product" }
 dependencies = [
-    { name = "fastapi" },
-    { name = "fastmcp" },
-    { name = "httpx" },
-    { name = "mcp" },
-    { name = "pillow" },
-    { name = "ppap-application" },
-    { name = "ppap-core" },
-    { name = "ppap-product-store" },
-    { name = "pydantic" },
-    { name = "python-multipart" },
-    { name = "starlette" },
-    { name = "uvicorn" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "fastapi", specifier = ">=0.115.8" },
-    { name = "fastmcp", specifier = ">=3,<4" },
-    { name = "httpx", specifier = ">=0.28.1" },
-    { name = "mcp", specifier = ">=1.26,<2" },
-    { name = "pillow", specifier = ">=10.1.0" },
-    { name = "ppap-application", editable = "packages/ppap_application" },
-    { name = "ppap-core", editable = "packages/ppap_core" },
-    { name = "ppap-product-store", editable = "packages/ppap_product_store" },
-    { name = "pydantic", specifier = ">=2.10.6" },
-    { name = "python-multipart", specifier = ">=0.0.20" },
-    { name = "starlette", specifier = ">=0.45.3" },
-    { name = "uvicorn", specifier = ">=0.34.0" },
-]
-
-[[package]]
-name = "ppap-application"
-version = "0.1.0"
-source = { editable = "packages/ppap_application" }
-dependencies = [
-    { name = "ppap-core" },
-    { name = "ppap-docops" },
-    { name = "ppap-excel-audit-engine" },
-    { name = "ppap-product-store" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "ppap-core", editable = "packages/ppap_core" },
-    { name = "ppap-docops", editable = "packages/ppap_docops" },
-    { name = "ppap-excel-audit-engine", editable = "packages/ppap_excel_audit_engine" },
-    { name = "ppap-product-store", editable = "packages/ppap_product_store" },
-]
-
-[[package]]
-name = "ppap-core"
-version = "0.1.0"
-source = { editable = "packages/ppap_core" }
-dependencies = [
+    { name = "audit" },
     { name = "boto3" },
     { name = "botocore" },
     { name = "httpx" },
-    { name = "openpyxl" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -1188,232 +1292,13 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "audit", editable = "packages/audit" },
     { name = "boto3", specifier = ">=1.36.16" },
     { name = "botocore", specifier = ">=1.36.16" },
     { name = "httpx", specifier = ">=0.28.1" },
-    { name = "openpyxl", specifier = ">=3.1.2" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2.6" },
     { name = "pydantic", specifier = ">=2.10.6" },
     { name = "pydantic-settings", specifier = ">=2.12.0" },
-]
-
-[[package]]
-name = "ppap-corpus-contracts"
-version = "0.1.0"
-source = { editable = "packages/ppap_corpus_contracts" }
-dependencies = [
-    { name = "httpx" },
-    { name = "pandas" },
-    { name = "ppap-core" },
-    { name = "ppap-docops" },
-    { name = "ppap-excel-audit-engine" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "httpx", specifier = ">=0.28.1" },
-    { name = "pandas", specifier = ">=2.1.4" },
-    { name = "ppap-core", editable = "packages/ppap_core" },
-    { name = "ppap-docops", editable = "packages/ppap_docops" },
-    { name = "ppap-excel-audit-engine", editable = "packages/ppap_excel_audit_engine" },
-]
-
-[[package]]
-name = "ppap-deep"
-version = "0.1.0"
-source = { editable = "packages/ppap_deep" }
-dependencies = [
-    { name = "ppap-core" },
-    { name = "ppap-docops" },
-    { name = "ppap-product-store" },
-    { name = "pydantic" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "ppap-core", editable = "packages/ppap_core" },
-    { name = "ppap-docops", editable = "packages/ppap_docops" },
-    { name = "ppap-product-store", editable = "packages/ppap_product_store" },
-    { name = "pydantic", specifier = ">=2.10.6" },
-]
-
-[[package]]
-name = "ppap-docops"
-version = "0.1.0"
-source = { editable = "packages/ppap_docops" }
-dependencies = [
-    { name = "httpx" },
-    { name = "olefile" },
-    { name = "openpyxl" },
-    { name = "pandas" },
-    { name = "pillow" },
-    { name = "ppap-core" },
-    { name = "pymupdf" },
-    { name = "python-docx" },
-    { name = "python-pptx" },
-    { name = "requests" },
-    { name = "xlrd" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "httpx", specifier = ">=0.24.0" },
-    { name = "olefile", specifier = ">=0.47" },
-    { name = "openpyxl", specifier = ">=3.1.2" },
-    { name = "pandas", specifier = ">=2.1.4" },
-    { name = "pillow", specifier = ">=10.2.0" },
-    { name = "ppap-core", editable = "packages/ppap_core" },
-    { name = "pymupdf", specifier = ">=1.26.0" },
-    { name = "python-docx", specifier = ">=1.1.0" },
-    { name = "python-pptx", specifier = ">=0.6.23" },
-    { name = "requests", specifier = ">=2.31.0" },
-    { name = "xlrd", specifier = ">=1.2.0" },
-]
-
-[[package]]
-name = "ppap-excel-audit-engine"
-version = "0.1.0"
-source = { editable = "packages/ppap_excel_audit_engine" }
-dependencies = [
-    { name = "openai" },
-    { name = "openpyxl" },
-    { name = "pandas" },
-    { name = "pillow" },
-    { name = "ppap-core" },
-    { name = "ppap-docops" },
-    { name = "ppap-pdf-to-excel" },
-    { name = "ppap-vision" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "openai" },
-    { name = "openpyxl" },
-    { name = "pandas" },
-    { name = "pillow" },
-    { name = "ppap-core", editable = "packages/ppap_core" },
-    { name = "ppap-docops", editable = "packages/ppap_docops" },
-    { name = "ppap-pdf-to-excel", editable = "packages/ppap_pdf_to_excel" },
-    { name = "ppap-vision", editable = "packages/ppap_vision" },
-]
-
-[[package]]
-name = "ppap-mcp-client"
-version = "0.1.0"
-source = { editable = "packages/ppap_mcp_client" }
-dependencies = [
-    { name = "anyio" },
-    { name = "cryptography" },
-    { name = "fastmcp" },
-    { name = "filelock" },
-    { name = "httpx" },
-    { name = "keyring" },
-    { name = "mcp" },
-    { name = "platformdirs" },
-    { name = "py-key-value-aio", extra = ["filetree"] },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "anyio", specifier = ">=4,<5" },
-    { name = "cryptography", specifier = ">=43" },
-    { name = "fastmcp", specifier = ">=3.4,<3.5" },
-    { name = "filelock", specifier = ">=3.20,<4" },
-    { name = "httpx", specifier = ">=0.28,<1" },
-    { name = "keyring", specifier = ">=25,<26" },
-    { name = "mcp", specifier = ">=1.30,<2" },
-    { name = "platformdirs", specifier = ">=4,<5" },
-    { name = "py-key-value-aio", extras = ["filetree"], specifier = ">=0.4,<0.5" },
-]
-
-[[package]]
-name = "ppap-pdf-to-excel"
-version = "0.1.0"
-source = { editable = "packages/ppap_pdf_to_excel" }
-dependencies = [
-    { name = "numpy" },
-    { name = "openai" },
-    { name = "opencv-python-headless" },
-    { name = "openpyxl" },
-    { name = "ppap-core" },
-    { name = "ppap-docops" },
-    { name = "pymupdf" },
-    { name = "requests" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "numpy", specifier = ">=1.26.0,<2" },
-    { name = "openai", specifier = ">=1.95.0" },
-    { name = "opencv-python-headless", specifier = ">=4.9.0.80" },
-    { name = "openpyxl", specifier = ">=3.1.2" },
-    { name = "ppap-core", editable = "packages/ppap_core" },
-    { name = "ppap-docops", editable = "packages/ppap_docops" },
-    { name = "pymupdf", specifier = ">=1.26.0" },
-    { name = "requests", specifier = ">=2.31.0" },
-]
-
-[[package]]
-name = "ppap-product-store"
-version = "0.1.0"
-source = { editable = "packages/ppap_product_store" }
-dependencies = [
-    { name = "ppap-core" },
-    { name = "psycopg", extra = ["binary"] },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "ppap-core", editable = "packages/ppap_core" },
-    { name = "psycopg", extras = ["binary"], specifier = ">=3.2.6" },
-]
-
-[[package]]
-name = "ppap-vision"
-version = "0.1.0"
-source = { editable = "packages/ppap_vision" }
-dependencies = [
-    { name = "httpx" },
-    { name = "numpy" },
-    { name = "opencv-python-headless" },
-    { name = "pillow" },
-    { name = "ppap-core" },
-    { name = "pymupdf" },
-    { name = "requests" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "httpx", specifier = ">=0.24.0" },
-    { name = "numpy", specifier = ">=1.24.0" },
-    { name = "opencv-python-headless", specifier = ">=4.9.0.80" },
-    { name = "pillow", specifier = ">=10.2.0" },
-    { name = "ppap-core", editable = "packages/ppap_core" },
-    { name = "pymupdf", specifier = ">=1.26.0" },
-    { name = "requests", specifier = ">=2.31.0" },
-]
-
-[[package]]
-name = "ppap-worker"
-version = "0.1.0"
-source = { editable = "services/worker" }
-dependencies = [
-    { name = "ppap-application" },
-    { name = "ppap-core" },
-    { name = "ppap-deep" },
-    { name = "ppap-docops" },
-    { name = "ppap-excel-audit-engine" },
-    { name = "ppap-product-store" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "ppap-application", editable = "packages/ppap_application" },
-    { name = "ppap-core", editable = "packages/ppap_core" },
-    { name = "ppap-deep", editable = "packages/ppap_deep" },
-    { name = "ppap-docops", editable = "packages/ppap_docops" },
-    { name = "ppap-excel-audit-engine", editable = "packages/ppap_excel_audit_engine" },
-    { name = "ppap-product-store", editable = "packages/ppap_product_store" },
 ]
 
 [[package]]
@@ -2063,6 +1948,25 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ed/b8/7eb904583ea2090b329f50487e6f8dc58eb558712b9f3c16f289f0be668e/websockets-17.3-pp312-pypy312_pp80-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:4e7b5d23ef144b32645d97bd99f382c4394c443395f45fe1576786838d26e308", size = 217828 },
     { url = "https://files.pythonhosted.org/packages/79/36/f54b4a1cd9456ca0a65a76d77d181621433793aca633dfeed214748ff4f0/websockets-17.3-pp312-pypy312_pp80-win_amd64.whl", hash = "sha256:13eace1b315345ebac5b27821f5dcce24e5cf9976ab18f79e00a59bdd67e5d19", size = 306301 },
     { url = "https://files.pythonhosted.org/packages/d7/b0/3f01fcb3406662f6deb1e3e72b34dd0979e993991c0b7435a9e12bc14f02/websockets-17.3-py3-none-any.whl", hash = "sha256:dc2b495a92b3971966bf102e73589f950db3ec1ca6713265355ce7771d97b199", size = 212375 },
+]
+
+[[package]]
+name = "worker"
+version = "0.1.0"
+source = { editable = "apps/worker" }
+dependencies = [
+    { name = "agent" },
+    { name = "audit" },
+    { name = "documents" },
+    { name = "product" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent", editable = "packages/agent" },
+    { name = "audit", editable = "packages/audit" },
+    { name = "documents", editable = "packages/documents" },
+    { name = "product", editable = "packages/product" },
 ]
 
 [[package]]

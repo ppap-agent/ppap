@@ -1,0 +1,252 @@
+"""PSW disposition rules must use reported facts, not the model verdict."""
+
+import json
+import unittest
+from datetime import date
+
+from audit.engine.checkers.psw_visual_evidence import (
+    PSW_RULE_PROMPTS,
+    PswVisualRuleEvaluator,
+    decide_disposition_visual_rule,
+)
+
+_TODAY = date(2026, 10, 2)
+
+
+def test_only_visual_psw_rules_have_visual_prompts() -> None:
+    assert set(PSW_RULE_PROMPTS) == {3, 5, 7, 8, 9, 10}
+
+
+def _observation(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "disposition_visible": True,
+        "approved_checked": False,
+        "conditional_checked": False,
+        "rejected_checked": False,
+        "approval_date": "",
+        "comments_present": False,
+    }
+    payload.update(overrides)
+    return payload
+
+
+class ConditionalVisualDecisionTests(unittest.TestCase):
+    def test_no_checked_option_is_ng_before_the_date_branch(self) -> None:
+        status, suggestions = decide_disposition_visual_rule(9, _observation(), today=_TODAY)
+        self.assertEqual(status, "NG")
+        self.assertIn("需且仅需勾选一个选项", suggestions)
+
+    def test_rule_10_uses_the_same_selection_gate(self) -> None:
+        status, suggestions = decide_disposition_visual_rule(10, _observation(), today=_TODAY)
+        self.assertEqual(status, "NG")
+        self.assertIn("需且仅需勾选一个选项", suggestions)
+
+    def test_approved_only_skips_the_conditional_checks(self) -> None:
+        payload = _observation(approved_checked=True)
+        self.assertEqual(decide_disposition_visual_rule(9, payload, today=_TODAY)[0], "PASS")
+        self.assertEqual(decide_disposition_visual_rule(10, payload, today=_TODAY)[0], "PASS")
+
+    def test_rejected_only_skips_the_conditional_checks(self) -> None:
+        payload = _observation(rejected_checked=True)
+        self.assertEqual(decide_disposition_visual_rule(9, payload, today=_TODAY)[0], "PASS")
+        self.assertEqual(decide_disposition_visual_rule(10, payload, today=_TODAY)[0], "PASS")
+
+    def test_two_checked_options_are_ng(self) -> None:
+        payload = _observation(approved_checked=True, conditional_checked=True, approval_date="2026-10-01")
+        status, suggestions = decide_disposition_visual_rule(9, payload, today=_TODAY)
+        self.assertEqual(status, "NG")
+        self.assertIn("需且仅需勾选一个选项", suggestions)
+
+    def test_missing_disposition_field_is_ng(self) -> None:
+        status, suggestions = decide_disposition_visual_rule(9, _observation(disposition_visible=False), today=_TODAY)
+        self.assertEqual(status, "NG")
+        self.assertIn("未找到", suggestions)
+
+    def test_conditional_date_inside_92_days_passes(self) -> None:
+        payload = _observation(conditional_checked=True, approval_date="2026年7月2日")
+        self.assertEqual(decide_disposition_visual_rule(9, payload, today=_TODAY)[0], "PASS")
+
+    def test_conditional_date_outside_92_days_is_ng(self) -> None:
+        payload = _observation(conditional_checked=True, approval_date="2026-07-01")
+        status, suggestions = decide_disposition_visual_rule(9, payload, today=_TODAY)
+        self.assertEqual(status, "NG")
+        self.assertIn("超出3个月", suggestions)
+
+    def test_conditional_without_a_date_is_ng(self) -> None:
+        payload = _observation(conditional_checked=True, approval_date="")
+        status, suggestions = decide_disposition_visual_rule(9, payload, today=_TODAY)
+        self.assertEqual(status, "NG")
+        self.assertIn("无法识别条件批准日期", suggestions)
+
+    def test_conditional_comments_follow_the_same_gate(self) -> None:
+        present = _observation(conditional_checked=True, comments_present=True)
+        absent = _observation(conditional_checked=True, comments_present=False)
+        self.assertEqual(decide_disposition_visual_rule(10, present, today=_TODAY)[0], "PASS")
+        status, suggestions = decide_disposition_visual_rule(10, absent, today=_TODAY)
+        self.assertEqual(status, "NG")
+        self.assertIn("补充评论", suggestions)
+
+    def test_unreadable_checkbox_is_unable_not_a_business_ng(self) -> None:
+        payload = _observation()
+        del payload["rejected_checked"]
+        status, suggestions = decide_disposition_visual_rule(9, payload, today=_TODAY)
+        self.assertEqual(status, "UNABLE")
+        self.assertIn("无法判断", suggestions)
+
+    def test_missing_conditional_date_observation_is_not_a_missing_document_date(self) -> None:
+        payload = _observation(conditional_checked=True)
+        del payload["approval_date"]
+        self.assertEqual(decide_disposition_visual_rule(9, payload, today=_TODAY)[0], "UNABLE")
+        self.assertEqual(decide_disposition_visual_rule(9, _observation(conditional_checked=True, approval_date=None), today=_TODAY)[0], "UNABLE")
+        self.assertEqual(decide_disposition_visual_rule(9, _observation(conditional_checked=True), today=_TODAY)[0], "NG")
+
+    def test_missing_conditional_comments_observation_is_not_an_empty_comment(self) -> None:
+        payload = _observation(conditional_checked=True)
+        del payload["comments_present"]
+        self.assertEqual(decide_disposition_visual_rule(10, payload, today=_TODAY)[0], "UNABLE")
+        self.assertEqual(decide_disposition_visual_rule(10, _observation(conditional_checked=True), today=_TODAY)[0], "NG")
+
+    def test_known_nonconformity_is_decisive_without_unrelated_unknown_facts(self) -> None:
+        for payload in (
+            _observation(disposition_visible=False, approved_checked=None, conditional_checked=None, rejected_checked=None),
+            _observation(approved_checked=True, conditional_checked=True, rejected_checked=None),
+            _observation(approved_checked=True, dimensional_checked=False),
+        ):
+            with self.subTest(payload=payload):
+                self.assertEqual(decide_disposition_visual_rule(8, payload, today=_TODAY)[0], "NG")
+
+    def test_unreadable_disposition_is_not_a_known_missing_field(self) -> None:
+        self.assertEqual(decide_disposition_visual_rule(8, _observation(disposition_visible=None), today=_TODAY)[0], "UNABLE")
+        self.assertEqual(decide_disposition_visual_rule(8, _observation(disposition_visible=False), today=_TODAY)[0], "NG")
+
+
+class DispositionVisualEvaluatorTests(unittest.TestCase):
+    def test_rule_8_empty_disposition_overrides_model_pass(self) -> None:
+        # Required corpus PDF ef838f02, page 2: submission results are checked,
+        # but all three warrant disposition boxes are empty.
+        def analyze(**_kwargs: object) -> str:
+            return json.dumps(
+                {
+                    "classification": "认可情况检查",
+                    "item": "认可情况检查",
+                    "priority": "P0",
+                    "status": "PASS",
+                    "suggestions": "提交结果均已勾选",
+                    **_observation(),
+                    "dimensional_checked": True,
+                    "appearance_checked": True,
+                    "material_functional_checked": True,
+                    "statistical_checked": True,
+                    "requirements_yes_checked": True,
+                }
+            )
+
+        result = PswVisualRuleEvaluator(analyze).evaluate(8, ["image"], today=_TODAY)
+        self.assertEqual(result.status, "NG")
+        self.assertIn("需且仅需勾选一个选项", result.suggestions)
+
+    def test_rule_8_model_verdict_without_observations_cannot_pass(self) -> None:
+        def analyze(**_kwargs: object) -> str:
+            return json.dumps({"classification": "认可情况检查", "item": "认可情况检查", "priority": "P0", "status": "PASS", "suggestions": ""})
+
+        result = PswVisualRuleEvaluator(analyze).evaluate(8, ["image"], today=_TODAY)
+        self.assertEqual(result.status, "UNABLE")
+        self.assertIn("无法判断", result.suggestions)
+
+    def test_rule_8_approved_requires_each_submission_checkbox(self) -> None:
+        fields = ("dimensional_checked", "appearance_checked", "material_functional_checked", "statistical_checked", "requirements_yes_checked")
+        complete = {**_observation(approved_checked=True), **dict.fromkeys(fields, True)}
+        self.assertEqual(decide_disposition_visual_rule(8, complete, today=_TODAY)[0], "PASS")
+        for field in fields:
+            with self.subTest(field=field):
+                status, suggestions = decide_disposition_visual_rule(8, {**complete, field: False}, today=_TODAY)
+                self.assertEqual(status, "NG")
+                self.assertIn("提交结果勾选不完整", suggestions)
+                missing = dict(complete)
+                del missing[field]
+                self.assertEqual(decide_disposition_visual_rule(8, missing, today=_TODAY)[0], "UNABLE")
+                self.assertEqual(decide_disposition_visual_rule(8, {**complete, field: None}, today=_TODAY)[0], "UNABLE")
+
+    def test_rule_8_conditional_and_rejected_defer_to_their_own_rules(self) -> None:
+        for field in ("conditional_checked", "rejected_checked"):
+            with self.subTest(field=field):
+                self.assertEqual(decide_disposition_visual_rule(8, _observation(**{field: True}), today=_TODAY)[0], "PASS")
+
+    def test_rule_8_missing_unreadable_or_multiple_dispositions_cannot_pass(self) -> None:
+        for payload, expected in (
+            (_observation(disposition_visible=False), "NG"),
+            (_observation(approved_checked=None), "UNABLE"),
+            (_observation(approved_checked=True, conditional_checked=True), "NG"),
+        ):
+            with self.subTest(payload=payload):
+                self.assertEqual(decide_disposition_visual_rule(8, payload, today=_TODAY)[0], expected)
+
+    def test_rule_8_uses_complete_observations_even_if_model_says_ng(self) -> None:
+        seen: dict[str, str] = {}
+
+        def analyze(**kwargs: object) -> str:
+            seen["prompt"] = str(kwargs["user_prompt"])
+            return json.dumps(
+                {
+                    "status": "NG",
+                    **_observation(approved_checked=True),
+                    "dimensional_checked": True,
+                    "appearance_checked": True,
+                    "material_functional_checked": True,
+                    "statistical_checked": True,
+                    "requirements_yes_checked": True,
+                }
+            )
+
+        result = PswVisualRuleEvaluator(analyze).evaluate(8, ["image"], today=_TODAY)
+        self.assertEqual(result.status, "PASS")
+        self.assertEqual(result.suggestions, "规则8检查通过")
+        self.assertIn("不要判断通过或不通过", seen["prompt"])
+        self.assertNotIn('"status"', seen["prompt"])
+
+    def test_model_pass_without_facts_does_not_pass(self) -> None:
+        def analyze(**_kwargs: object) -> str:
+            return json.dumps({"status": "PASS", "suggestions": "未勾选条件批准，所以通过"})
+
+        result = PswVisualRuleEvaluator(analyze).evaluate(9, ["image"], today=_TODAY)
+        self.assertEqual(result.status, "UNABLE")
+        self.assertIn("无法判断", result.suggestions)
+
+    def test_model_pass_with_empty_checks_is_overridden(self) -> None:
+        seen: dict[str, str] = {}
+
+        def analyze(**kwargs: object) -> str:
+            seen["prompt"] = str(kwargs["user_prompt"])
+            return json.dumps(
+                {
+                    "status": "PASS",
+                    "suggestions": "未勾选条件批准，所以通过",
+                    **_observation(),
+                }
+            )
+
+        result = PswVisualRuleEvaluator(analyze).evaluate(9, ["image"], today=_TODAY)
+        self.assertEqual(result.status, "NG")
+        self.assertIn("需且仅需勾选一个选项", result.suggestions)
+        self.assertIn("不要判断通过或不通过", seen["prompt"])
+        self.assertNotIn('"status"', seen["prompt"])
+
+    def test_other_visual_rules_still_accept_the_model_status(self) -> None:
+        def analyze(**_kwargs: object) -> str:
+            return json.dumps(
+                {
+                    "classification": "提交原因检查",
+                    "item": "提交原因检查",
+                    "priority": "P0",
+                    "status": "Pass",
+                    "suggestions": "",
+                }
+            )
+
+        result = PswVisualRuleEvaluator(analyze).evaluate(7, ["image"], today=_TODAY)
+        self.assertEqual(result.status, "PASS")
+        self.assertEqual(result.suggestions, "规则7检查通过")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -9,8 +9,8 @@ import shutil
 import sqlite3
 from pathlib import Path
 
-from ppap_docops.excel.loader import load_excel_workbook
-from ppap_pdf_to_excel.vision.cache import VISION_CACHE_VERSION
+from documents.excel.loader import load_excel_workbook
+from documents.ocr.cache import VISION_CACHE_VERSION
 
 
 def export(cache: Path, source: Path, destination: Path) -> int:
