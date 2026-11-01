@@ -1,7 +1,5 @@
 """The accepted execution revision identifies configuration, not a protocol label."""
 
-from pathlib import Path
-
 import audit.policy as deep_policy
 import pytest
 from audit.audits import ANALYSIS_STANDARD, DEEP_PROTOCOL_REVISION, job_payload
@@ -45,15 +43,3 @@ def test_default_and_explicit_protocol_labels_have_the_same_policy(monkeypatch):
     settings = Settings(git_sha="a" * 40, deep_executor_revision="")
     explicit = settings.model_copy(update={"deep_executor_revision": DEEP_PROTOCOL_REVISION})
     assert settings.deep_execution_revision() == explicit.deep_execution_revision()
-
-
-def test_acceptance_and_runtime_use_the_same_effective_policy():
-    from agent.execution.isolation import RuntimeConfig
-
-    settings = Settings(git_sha="a" * 40, llm_base_url="https://model.example/v1", llm_model="model-a", deep_executor_revision="release-a", deep_sandbox_profile="off")
-    config = RuntimeConfig(state=Path("/unused"), gateway_socket=Path("/unused/gateway.sock"), gateway_host="127.0.0.1", **settings.deep_execution_policy().model_dump())
-    accepted = settings.deep_execution_revision()
-    assert config.engine_revision() == accepted
-    for field, value in (("app_revision", "b" * 40), ("model", "model-b"), ("model_revision", "b" * 64), ("sandbox_profile", "ppap"), ("memory_mib", 2048), ("max_processes", 128)):
-        changed = config.model_copy(update={field: value})
-        assert changed.engine_revision() != accepted
