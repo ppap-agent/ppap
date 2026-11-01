@@ -552,7 +552,7 @@ spec:
               memory: 2Gi
           readinessProbe:
             exec:
-              command: ["python", "-m", "ppap_deep.readiness"]
+              command: ["python", "-m", "agent.readiness"]
             periodSeconds: 5
             timeoutSeconds: 3
         - name: worker
@@ -606,7 +606,7 @@ spec:
                 fi
                 sleep 1
               done
-              exec python -m ppap_worker.main
+              exec python -m worker.main
           volumeMounts:
             - name: deep-sock
               mountPath: /run/ppap-deep

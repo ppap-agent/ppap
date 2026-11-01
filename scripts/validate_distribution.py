@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DEV_ONLY_MEMBERS = {"ppap-corpus-contracts"}
+DEV_ONLY_MEMBERS = {"corpus-contracts"}
 TEST_RUNNERS = {"pytest", "pytest-asyncio"}
 
 
@@ -56,7 +56,7 @@ def workspace_members() -> dict[str, Member]:
             path=path,
             import_name=import_name,
             tests=path / "tests",
-            postgres=relative.startswith("services/"),
+            postgres=relative in {"apps/api", "apps/worker"},
             dependencies=tuple(dependency_name(spec) for spec in project["project"].get("dependencies", [])),
         )
     return rows
@@ -212,17 +212,17 @@ def assert_wheel_install(target: str) -> None:
 
 def prove_missing_dependency_fails() -> None:
     """Removing a real workspace dependency must break the isolated wheel import."""
-    source = ROOT / "packages/ppap_product_store"
+    source = ROOT / "packages/product"
     with tempfile.TemporaryDirectory(prefix="ppap-missing-dep-") as raw:
         work = Path(raw)
-        mutated = work / "ppap_product_store"
+        mutated = work / "product"
         shutil.copytree(source, mutated)
         pyproject = mutated / "pyproject.toml"
         text = pyproject.read_text()
-        required = '    "ppap-core",\n'
-        source_rule = "\n[tool.uv.sources]\nppap-core = { workspace = true }\n"
+        required = '    "audit",\n'
+        source_rule = "audit = { workspace = true }\n"
         if required not in text or source_rule not in text:
-            raise RuntimeError("ppap-product-store dependency fixture changed")
+            raise RuntimeError("product dependency fixture changed")
         pyproject.write_text(text.replace(required, "").replace(source_rule, ""))
 
         wheelhouse = work / "wheelhouse"
@@ -242,7 +242,7 @@ def prove_missing_dependency_fails() -> None:
             env=clean_env(),
         )
         completed = subprocess.run(
-            [str(python), "-c", "import ppap_product_store"],
+            [str(python), "-c", "import product"],
             cwd="/tmp",
             env=clean_env(),
             check=False,
@@ -250,8 +250,8 @@ def prove_missing_dependency_fails() -> None:
             text=True,
         )
         diagnostic = completed.stdout + completed.stderr
-        if completed.returncode == 0 or "ppap_core" not in diagnostic:
-            raise RuntimeError("removing ppap-core did not fail the isolated product-store import as expected\n" + diagnostic)
+        if completed.returncode == 0 or "No module named 'audit'" not in diagnostic:
+            raise RuntimeError("removing audit did not fail the isolated product import as expected\n" + diagnostic)
 
 
 def discover() -> None:

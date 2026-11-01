@@ -4,8 +4,8 @@ version = "0.0.0"
 description = "PPAP product"
 requires-python = ">=3.12"
 dependencies = [
-    "ppap-api",
-    "ppap-worker",
+    "api",
+    "worker",
 ]
 
 [dependency-groups]
@@ -13,8 +13,8 @@ dev = [
     "pytest==7.4.3",
     "pytest-asyncio==0.21.1",
     "pyyaml==6.0.3",
-    "ppap-corpus-contracts",
-    "ppap-mcp-client",
+    "corpus-contracts",
+    "mcp-client",
     "ruff>=0.14.13,<0.15.0",
     "mypy>=1.7.1",
 ]
@@ -28,33 +28,25 @@ package = false
 
 [tool.uv.workspace]
 members = [
-    "packages/ppap_application",
-    "packages/ppap_core",
-    "packages/ppap_deep",
-    "packages/ppap_docops",
-    "packages/ppap_excel_audit_engine",
-    "packages/ppap_pdf_to_excel",
-    "packages/ppap_product_store",
-    "packages/ppap_vision",
-    "services/api",
-    "services/worker",
-    "packages/ppap_corpus_contracts",
-    "packages/ppap_mcp_client",
+    "packages/product",
+    "packages/agent",
+    "packages/audit",
+    "packages/documents",
+    "apps/api",
+    "apps/worker",
+    "apps/mcp-client",
+    "tests/corpus/contracts",
 ]
 
 [tool.uv.sources]
-ppap-application = { workspace = true }
-ppap-core = { workspace = true }
-ppap-deep = { workspace = true }
-ppap-docops = { workspace = true }
-ppap-excel-audit-engine = { workspace = true }
-ppap-pdf-to-excel = { workspace = true }
-ppap-product-store = { workspace = true }
-ppap-vision = { workspace = true }
-ppap-api = { workspace = true }
-ppap-worker = { workspace = true }
-ppap-corpus-contracts = { workspace = true }
-ppap-mcp-client = { workspace = true }
+product = { workspace = true }
+agent = { workspace = true }
+audit = { workspace = true }
+documents = { workspace = true }
+api = { workspace = true }
+worker = { workspace = true }
+corpus-contracts = { workspace = true }
+mcp-client = { workspace = true }
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"
@@ -86,19 +78,15 @@ python_version = "3.12"
 explicit_package_bases = true
 ignore_missing_imports = true
 warn_unused_configs = true
-files = ["packages", "services"]
-exclude = ["tests/", "migrations/", "__pycache__/"]
+files = ["packages", "apps/api", "apps/worker", "apps/mcp-client", "tests/corpus/contracts/src"]
+exclude = ["tests/(?!corpus/contracts/src)", "migrations/", "__pycache__/"]
 mypy_path = [
-    "packages/ppap_application/src",
-    "packages/ppap_core/src",
-    "packages/ppap_corpus_contracts/src",
-    "packages/ppap_deep/src",
-    "packages/ppap_docops/src",
-    "packages/ppap_excel_audit_engine/src",
-    "packages/ppap_pdf_to_excel/src",
-    "packages/ppap_product_store/src",
-    "packages/ppap_vision/src",
-    "packages/ppap_mcp_client/src",
-    "services/api/src",
-    "services/worker/src",
+    "packages/product/src",
+    "tests/corpus/contracts/src",
+    "packages/agent/src",
+    "packages/audit/src",
+    "packages/documents/src",
+    "apps/api/src",
+    "apps/worker/src",
+    "apps/mcp-client/src",
 ]

@@ -407,7 +407,7 @@ def test_full_checks_only_when_runtime_risk_is_present(change):
     def run(*args):
         if change == "unknown":
             raise RuntimeError("source not available")
-        return (files.get(change, "services/api/src/ppap_api/routes.py") + "\n").encode()
+        return (files.get(change, "apps/api/src/api/routes.py") + "\n").encode()
 
     with patch.dict(operation.__globals__, {"kube": kube, "run": run}):
         reason = operation(docs, SHA, change == "forced")

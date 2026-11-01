@@ -1,6 +1,6 @@
 # PPAP Excel Audit Engine
 
-Applies to `packages/ppap_excel_audit_engine/`. Product entry is the repository root `AGENTS.md`. Engine/corpus parity is owned by [#3](https://github.com/ppap-agent/ppap/issues/3).
+Applies to `packages/audit/`. Product entry is the repository root `AGENTS.md`. Engine/corpus parity is owned by [#3](https://github.com/ppap-agent/ppap/issues/3).
 
 ## Must follow
 

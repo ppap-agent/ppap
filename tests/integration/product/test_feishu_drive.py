@@ -10,10 +10,10 @@ from unittest.mock import patch
 
 import httpx
 import pytest
+from api import create_app
 from fastapi.testclient import TestClient
-from ppap_api import create_app
-from ppap_core.feishu import UserTokens
-from ppap_core.feishu_drive import (
+from product.feishu import UserTokens
+from product.feishu_drive import (
     RETRY_SLEEP_MS,
     Attempt,
     FetchPlan,
@@ -23,10 +23,10 @@ from ppap_core.feishu_drive import (
     import_drive_material,
     retry,
 )
-from ppap_core.fixtures import RULE_A
-from ppap_core.identity import SESSION_COOKIE
-from ppap_core.settings import Settings
-from ppap_worker import process_claimed
+from product.fixtures import RULE_A
+from product.identity import SESSION_COOKIE
+from product.settings import Settings
+from worker import process_claimed
 
 
 def _clean_env(**extra: str):

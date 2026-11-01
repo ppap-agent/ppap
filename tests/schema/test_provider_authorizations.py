@@ -5,11 +5,11 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from ppap_application import build_product_store
-from ppap_core.db import connect
-from ppap_core.fixtures import APP_ID
-from ppap_core.identity import ProviderAuthError, token_hash
-from ppap_core.settings import Settings
+from product import build_product_store
+from product.db import connect
+from product.fixtures import APP_ID
+from product.identity import ProviderAuthError, token_hash
+from product.settings import Settings
 from psycopg.errors import InsufficientPrivilege
 
 

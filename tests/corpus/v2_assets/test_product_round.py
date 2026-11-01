@@ -5,16 +5,15 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from ppap_application import run_round_from_bytes
-from ppap_core.rule_profile import RULE_PROFILE_V2
-from ppap_corpus_contracts.baseline_exceptions import ObservedRuleOutcome, classify_v2_baseline_outcomes
-from ppap_corpus_contracts.execution_outcome import (
+from audit.rule_profile import RULE_PROFILE_V2
+from corpus_contracts.baseline_exceptions import ObservedRuleOutcome, classify_v2_baseline_outcomes
+from corpus_contracts.execution_outcome import (
     EXECUTION_FAILURE,
     EXECUTION_RESULT,
     MISSING_RULE,
     ExecutionOutcome,
 )
-from ppap_corpus_contracts.product_round import (
+from corpus_contracts.product_round import (
     MATCH,
     SETUP_FAILURE,
     STATUS_MISMATCH,
@@ -24,10 +23,11 @@ from ppap_corpus_contracts.product_round import (
     execute_product_round,
     format_verdicts,
 )
-from ppap_corpus_contracts.product_round import (
+from corpus_contracts.product_round import (
     MISSING_RULE as VERDICT_MISSING,
 )
-from ppap_corpus_contracts.v2_assets_shared import FileCase, build_cases_from_long_feedback
+from corpus_contracts.v2_assets_shared import FileCase, build_cases_from_long_feedback
+from product import run_round_from_bytes
 
 _REPO = Path(__file__).resolve().parents[3]
 

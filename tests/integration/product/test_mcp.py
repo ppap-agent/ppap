@@ -16,15 +16,15 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from api import create_app
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
-from ppap_api import create_app
-from ppap_application import build_product_store
-from ppap_core.feishu import UserTokens
-from ppap_core.fixtures import APP_ID, RULE_A
-from ppap_core.identity import ProviderAuthError
-from ppap_core.mcp import SCOPES, pkce_challenge
-from ppap_worker import process_claimed
+from product import build_product_store
+from product.feishu import UserTokens
+from product.fixtures import APP_ID, RULE_A
+from product.identity import ProviderAuthError
+from product.mcp import SCOPES, pkce_challenge
+from worker import process_claimed
 
 
 def connection(client, store, *, person="alice", scopes="identity:read files:read files:write audits:read", exchange_now=True, browser_session=None):
@@ -206,7 +206,7 @@ def test_url_import_reads_original_version_and_recovers_without_replacing_conten
     source = "https://imports.example.test/source.xlsx?signature=controlled-private-value"
     original_bytes = b"original captured bytes"
     remote_bytes, fetches, failures = [original_bytes], [], []
-    monkeypatch.setattr("ppap_core.files.public_addresses", lambda host, port: ("93.184.216.34",))
+    monkeypatch.setattr("product.files.public_addresses", lambda host, port: ("93.184.216.34",))
 
     def provider(request):
         assert request.method == "GET" and request.url.host == "93.184.216.34"
@@ -293,7 +293,7 @@ def test_overlapping_url_resume_observes_one_import_without_starting_a_second_fe
     _, store = mcp_app
     entered, release = threading.Event(), threading.Event()
     fetches = []
-    monkeypatch.setattr("ppap_core.files.public_addresses", lambda host, port: ("93.184.216.34",))
+    monkeypatch.setattr("product.files.public_addresses", lambda host, port: ("93.184.216.34",))
 
     def provider(request):
         fetches.append(request.url.path)
@@ -327,7 +327,7 @@ def test_rejected_url_source_is_failed_and_cannot_be_resumed(mcp_app, monkeypatc
     _, store = mcp_app
     fetches = []
     if redirect:
-        monkeypatch.setattr("ppap_core.files.public_addresses", lambda host, port: ("93.184.216.34",))
+        monkeypatch.setattr("product.files.public_addresses", lambda host, port: ("93.184.216.34",))
 
     def provider(request):
         fetches.append(request.url.path)
@@ -1002,7 +1002,7 @@ def test_mcp_report_delivery_freezes_approved_sources_and_retries_only_failed(mc
 
                 monkeypatch.setattr(app.state.mcp_gateway, "request", edit_before_share)
             elif edit_at == "after_capture":
-                from ppap_product_store.report_sharing import ReportShareStore
+                from product.store.report_sharing import ReportShareStore
 
                 original_accept = ReportShareStore.accept
 
@@ -1085,7 +1085,7 @@ def test_external_report_uses_approved_content_at_effect_boundary(mcp_app, monke
 
                 monkeypatch.setattr(app.state.mcp_gateway, "request", edit_after_gateway_check)
             elif tool == "create_feishu_report":
-                from ppap_api import report_routes
+                from api import report_routes
 
                 original_blocks = report_routes.report_blocks
 
@@ -1096,16 +1096,16 @@ def test_external_report_uses_approved_content_at_effect_boundary(mcp_app, monke
 
                 monkeypatch.setattr(report_routes, "report_blocks", edit_after_materialization)
             else:
-                import ppap_api
+                import api
 
-                original_write = ppap_api.write_round_history
+                original_write = api.write_round_history
 
                 def edit_after_read(http, access_token, file_token, body, return_url):
                     captured_rounds.append(body)
                     edit()
                     return original_write(http, access_token, file_token, body, return_url)
 
-                monkeypatch.setattr(ppap_api, "write_round_history", edit_after_read)
+                monkeypatch.setattr(api, "write_round_history", edit_after_read)
 
             result = call(client, token, tool, **arguments)
             assert len(edits) == 1
@@ -1573,7 +1573,7 @@ def test_shared_provider_binding_rejects_foreign_user_even_with_valid_foreign_cr
             conn.execute("UPDATE product.mcp_grants SET provider_authorization_id=%s WHERE client_id=%s", (foreign_owner, cid))
         assert rpc(client, tokens["access_token"], "tools/list").status_code == 401
         with store._conn() as conn:
-            from ppap_core.identity import token_hash
+            from product.identity import token_hash
 
             conn.execute("UPDATE product.sessions SET provider_authorization_id=%s WHERE token_hash=%s", (foreign_owner, token_hash(alice)))
         assert client.get("/me").status_code == 401

@@ -11,7 +11,7 @@ import uuid
 from urllib.parse import parse_qs, urljoin, urlsplit
 
 from openpyxl import Workbook
-from ppap_core.fixtures import RULE_A
+from product.fixtures import RULE_A
 
 from .conftest import isolated_dev_login
 

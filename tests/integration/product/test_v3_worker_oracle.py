@@ -8,20 +8,20 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from fastapi.testclient import TestClient
-from ppap_api import create_app
-from ppap_core.rule_profile import RULE_PROFILE_V3
-from ppap_core.settings import Settings, get_settings
-from ppap_corpus_contracts.acceptance_report import load_acceptance_report, write_acceptance_report
-from ppap_corpus_contracts.poc_oracle import POC_SEQ_TO_DOC_TYPE, build_bundle_map, load_poc_cases
-from ppap_corpus_contracts.product_round import (
+from api import create_app
+from audit.rule_profile import RULE_PROFILE_V3
+from corpus_contracts.acceptance_report import load_acceptance_report, write_acceptance_report
+from corpus_contracts.poc_oracle import POC_SEQ_TO_DOC_TYPE, build_bundle_map, load_poc_cases
+from corpus_contracts.product_round import (
     MATCH,
     compare_file,
     engine_rule_body,
     failing_verdicts,
     format_verdicts,
 )
-from ppap_worker import process_claimed
+from fastapi.testclient import TestClient
+from product.settings import Settings, get_settings
+from worker import process_claimed
 
 _REPO = Path(__file__).resolve().parents[3]
 _OCR_CACHE = _REPO / "tests" / "corpus" / "fixtures" / "ocr_cache"

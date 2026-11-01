@@ -16,15 +16,15 @@ from io import BytesIO
 from unittest.mock import patch
 
 import pytest
+from api import create_app
+from api import web_contract as wc
 from docx import Document, oxml
 from fastapi.testclient import TestClient
 from PIL import Image
-from ppap_api import create_app
-from ppap_api import web_contract as wc
-from ppap_application import build_product_store
-from ppap_core.settings import Settings
-from ppap_worker import process_claimed
+from product import build_product_store
+from product.settings import Settings
 from pydantic import TypeAdapter
+from worker import process_claimed
 
 
 @pytest.fixture
@@ -280,7 +280,7 @@ def test_psw_docx_upload_parse_publish_and_worker_result_keep_v3_frozen(native_d
         calls.append(request)
         return visual_provider_response(request)
 
-    monkeypatch.setattr("ppap_excel_audit_engine.checkers.client.AIClient.image_analysis_completion", visual)
+    monkeypatch.setattr("audit.engine.checkers.client.AIClient.image_analysis_completion", visual)
     target, rule, frozen = parse_publish_and_accept(client, worker, "零件提交保证书.docx", content, body)
     job = worker.claim_job("psw-word-audit")
     assert job is not None and job.kind == "audit" and job.round_id == frozen["id"]

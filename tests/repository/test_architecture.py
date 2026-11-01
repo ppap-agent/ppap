@@ -20,9 +20,9 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-PRODUCTION_ROOTS = ("packages", "services")
+PRODUCTION_ROOTS = ("packages", "apps")
 ROOT_TEST_GROUPS = {"repository", "schema", "corpus", "integration", "e2e", "live"}
-GUEST_ENV = ROOT / "packages/ppap_deep/src/ppap_deep/isolation/container.py"
+GUEST_ENV = ROOT / "packages/agent/src/agent/isolation/container.py"
 FORBIDDEN_IMPORT = re.compile(r"^(?:from|import)\s+(?:tests(?:\.|\s|$)|test_|store_fixture\b|sample_rule\b|memory_objects\b|conftest\b)")
 SYS_PATH = re.compile(r"sys\.path\.(?:insert|append|extend)\s*\(")
 
@@ -60,6 +60,9 @@ def _member_dirs() -> set[Path]:
     for base in PRODUCTION_ROOTS:
         for project in (ROOT / base).glob("*/pyproject.toml"):
             found.add(project.parent)
+    corpus = ROOT / "tests/corpus/contracts/pyproject.toml"
+    if corpus.is_file():
+        found.add(corpus.parent)
     return found
 
 
@@ -137,8 +140,8 @@ class ArchitectureTests(unittest.TestCase):
             self.assertFalse((member / import_name).exists())
         self.assertNotIn("optional-dependencies", root.get("project", {}))
         dev = root["dependency-groups"]["dev"]
-        self.assertIn("ppap-corpus-contracts", dev)
-        self.assertNotIn("ppap-corpus-contracts", root["project"]["dependencies"])
+        self.assertIn("corpus-contracts", dev)
+        self.assertNotIn("corpus-contracts", root["project"]["dependencies"])
         self.assertNotIn("pytest", root["dependency-groups"]["e2e"])
 
     def test_production_dependency_graph_is_acyclic_and_owner_directed(self):
@@ -161,25 +164,27 @@ class ArchitectureTests(unittest.TestCase):
         for name in sorted(graph):
             visit(name)
 
-        self.assertNotIn("ppap-excel-audit-engine", graph["ppap-core"])
-        self.assertNotIn("ppap-api", graph["ppap-worker"])
-        self.assertIn("ppap-product-store", graph["ppap-api"])
-        self.assertIn("ppap-product-store", graph["ppap-worker"])
-        self.assertIn("ppap-product-store", graph["ppap-deep"])
-        self.assertNotIn("ppap-api", graph["ppap-deep"])
-        self.assertIn("ppap-application", graph["ppap-api"])
-        self.assertIn("ppap-application", graph["ppap-worker"])
+        self.assertNotIn("ppap-core", graph)
+        self.assertNotIn("api", graph["worker"])
+        self.assertNotIn("product", graph["audit"])
+        self.assertNotIn("audit", graph["documents"])
+        self.assertNotIn("documents", graph["product"])
+        self.assertIn("product", graph["api"])
+        self.assertIn("worker", graph["api"])
+        self.assertIn("product", graph["worker"])
+        self.assertNotIn("product", graph["agent"])
+        self.assertIn("audit", graph["agent"])
+        self.assertNotIn("api", graph["agent"])
 
-        core_source = "\n".join(path.read_text() for path in (ROOT / "packages/ppap_core/src/ppap_core").glob("*.py"))
-        worker_source = "\n".join(path.read_text() for path in (ROOT / "services/worker/src/ppap_worker").glob("*.py"))
-        store_source = "\n".join(path.read_text() for path in (ROOT / "packages/ppap_product_store/src/ppap_product_store").glob("*.py"))
-        self.assertNotIn("ppap_excel_audit_engine", core_source)
-        self.assertNotIn("ppap_api", worker_source)
-        self.assertNotIn("ppap_excel_audit_engine", store_source)
-        self.assertNotIn("ppap_deep", store_source)
+        worker_source = "\n".join(path.read_text() for path in (ROOT / "apps/worker/src/worker").glob("*.py"))
+        store_source = "\n".join(path.read_text() for path in (ROOT / "packages/product/src/product/store").glob("*.py"))
+        self.assertFalse((ROOT / "packages/ppap_core").exists())
+        self.assertNotRegex(worker_source, r"(?m)^(?:from api\b|import api\b)")
+        self.assertNotIn("audit.engine", store_source)
+        self.assertNotIn("agent", store_source)
 
         legacy_orm_imports = []
-        for path in (ROOT / "packages/ppap_excel_audit_engine/src").rglob("*.py"):
+        for path in (ROOT / "packages/audit/src").rglob("*.py"):
             for node in ast.walk(ast.parse(path.read_text())):
                 if isinstance(node, ast.Import):
                     modules = [alias.name for alias in node.names]
@@ -225,7 +230,8 @@ class ArchitectureTests(unittest.TestCase):
                         offenders.append(f"dynamic test loader in {rel}: {token}")
             if "tests" not in rel.parts or path.name.startswith("conftest"):
                 continue
-            if "__init__.py" in rel.parts and "tests" in rel.parts:
+            library = rel.parts[:4] == ("tests", "corpus", "contracts", "src")
+            if "__init__.py" in rel.parts and "tests" in rel.parts and not library:
                 offenders.append(f"tests package marker {rel}")
             for line in text.splitlines():
                 stripped = line.strip()
@@ -246,14 +252,14 @@ class ArchitectureTests(unittest.TestCase):
                 if token in text:
                     offenders.append(f"{path.relative_to(ROOT)}: {token}")
         self.assertEqual(offenders, [])
-        self.assertFalse((ROOT / "services/api/tests/store_fixture.py").exists())
-        self.assertFalse((ROOT / "services/worker/tests/store_fixture.py").exists())
+        self.assertFalse((ROOT / "apps/api/tests/store_fixture.py").exists())
+        self.assertFalse((ROOT / "apps/worker/tests/store_fixture.py").exists())
         self.assertFalse((ROOT / "tests/integration/product/store_fixture.py").exists())
         self.assertFalse((ROOT / "tests/schema/memory_objects.py").exists())
         self.assertFalse((ROOT / "tests/schema/sample_rule.py").exists())
 
     def test_corpus_contract_tests_follow_their_owner(self):
-        owner = ROOT / "packages/ppap_corpus_contracts/tests"
+        owner = ROOT / "tests/corpus/contracts/tests"
         self.assertTrue((owner / "test_execution_outcome.py").is_file())
         self.assertTrue((owner / "test_baseline_exceptions.py").is_file())
         self.assertTrue((owner / "test_cross_format_contract.py").is_file())
@@ -263,8 +269,8 @@ class ArchitectureTests(unittest.TestCase):
         corpus_conftest = (ROOT / "tests/corpus/conftest.py").read_text()
         self.assertNotIn("BASELINE_XFAIL_IDS", corpus_conftest)
         self.assertNotIn("pytest.mark.xfail", corpus_conftest)
-        core_tests = "\n".join(path.read_text() for path in (ROOT / "packages/ppap_core/tests").glob("test_*.py"))
-        self.assertNotIn("ppap_excel_audit_engine", core_tests)
+        moved_core_tests = "\n".join(path.read_text() for path in (ROOT / "packages/product/tests").glob("test_settings_priority.py"))
+        self.assertNotIn("audit.engine", moved_core_tests)
 
     def test_corpus_pairs_and_psw_have_physical_suite_ownership(self):
         for suite in ("pairs", "psw"):
@@ -286,7 +292,7 @@ class ArchitectureTests(unittest.TestCase):
         self.assertIn("ghcr.io/astral-sh/uv:0.9.26", app)
         self.assertIn("uv sync --frozen --no-dev --no-editable", app)
         self.assertIn("cd /;", app)
-        self.assertIn("import ppap_api, ppap_application, ppap_core, ppap_excel_audit_engine, ppap_product_store, ppap_worker", app)
+        self.assertIn("import api, product, audit.engine, worker", app)
         # Only hash-checked prefetch may precede the authoritative frozen sync.
         prefetch = "uv pip install --python /app/.venv/bin/python --require-hashes --no-deps -r /tmp/ppap-requirements.txt"
         export = "uv export --quiet --frozen --no-dev --no-editable --no-emit-workspace"
@@ -297,7 +303,8 @@ class ArchitectureTests(unittest.TestCase):
         workspace = "uv sync --frozen --no-dev --no-editable;"
         self.assertLess(app.index(prefetch), app.index(dependencies))
         self.assertLess(app.index(dependencies), app.index("COPY packages /app/packages"))
-        self.assertLess(app.index("COPY services"), app.index(workspace))
+        self.assertLess(app.index("COPY apps/api /app/apps/api"), app.index(workspace))
+        self.assertLess(app.index("COPY apps/worker /app/apps/worker"), app.index(workspace))
         # Both install layers must keep downloaded archives outside the image.
         installs = [step for step in app.split("\nRUN ")[1:] if "uv sync" in step]
         self.assertTrue(installs)
@@ -314,7 +321,7 @@ class ArchitectureTests(unittest.TestCase):
             # Production code and deployment configuration own installed
             # imports. Research runners have separate frozen helper roots and
             # are excluded from images by the native container-context tests.
-            if relative.parts[0] not in {"deploy", "packages", "services"}:
+            if relative.parts[0] not in {"deploy", "packages", "apps"}:
                 continue
             if relative.parts[0] in PRODUCTION_ROOTS and "src" not in relative.parts:
                 continue

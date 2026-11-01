@@ -28,13 +28,13 @@ PDF 委托器通过既有执行结束钩子主动关闭委托工作簿并清理�
 
 - **logic / unit**：稳定规则和数据不变量。
 - **corpus regression**：完整 engine parity；baseline 原有 failure 不属于 migration regression。
-- **integration**：数据库、对象存储、Worker、授权和必要外部接口。Deep 的受理、版本、fencing 与传输边界由 `tests/integration/product/test_deep_mode.py` 验证；语义 guest 与容器权限/模型 grant 的确定性逻辑由 `packages/ppap_deep/tests/test_deep_runtime.py`、`packages/ppap_deep/tests/test_deep_semantic.py`、`packages/ppap_deep/tests/test_deep_isolation.py` 验证。脚本化 runtime 只证明协议，不证明真实审核。同文件的局部计划失败用例使用实际 semantic guest，经 Product API／Worker／真实 PostgreSQL 与 UDS，核对当前任务和冻结历史的逐条结果、原件及独立文件的报告入队；模型、S3 边界受控，薄进程内适配不证明容器隔离、模型质量、飞书档案身份或 PDF 生成完成。`tests/live/test_deep_isolated.py` 使用独立 `ppap-deep` 容器、真实 Grok 和模型，但仅是玩具 XLSX 的真实模型协议 smoke，不是客户 A1–A12 样例验收；它不进入默认 merge contract。
+- **integration**：数据库、对象存储、Worker、授权和必要外部接口。Deep 的受理、版本、fencing 与传输边界由 `tests/integration/product/test_deep_mode.py` 验证；语义 guest 与容器权限/模型 grant 的确定性逻辑由 `packages/agent/tests/test_deep_runtime.py`、`packages/agent/tests/test_deep_semantic.py`、`packages/agent/tests/test_deep_isolation.py` 验证。脚本化 runtime 只证明协议，不证明真实审核。同文件的局部计划失败用例使用实际 semantic guest，经 Product API／Worker／真实 PostgreSQL 与 UDS，核对当前任务和冻结历史的逐条结果、原件及独立文件的报告入队；模型、S3 边界受控，薄进程内适配不证明容器隔离、模型质量、飞书档案身份或 PDF 生成完成。`tests/live/test_deep_isolated.py` 使用独立 `ppap-deep` 容器、真实 Grok 和模型，但仅是玩具 XLSX 的真实模型协议 smoke，不是客户 A1–A12 样例验收；它不进入默认 merge contract。
 
-`packages/ppap_deep/tests/test_deep_client.py` 使用真实 UDS 验证未送达请求的显式恢复，以及分片响应、发送背压中的总时限与取消。外部 peer 受控；不调用模型，也不证明 provider 已取消或执行域已清理。总时限从调用开始计算，帧内读写不能重置预算；已发送请求超时不等于未执行，客户端不自动重发。
+`packages/agent/tests/test_deep_client.py` 使用真实 UDS 验证未送达请求的显式恢复，以及分片响应、发送背压中的总时限与取消。外部 peer 受控；不调用模型，也不证明 provider 已取消或执行域已清理。总时限从调用开始计算，帧内读写不能重置预算；已发送请求超时不等于未执行，客户端不自动重发。
 
-`packages/ppap_deep/tests/test_deep_controller.py` 验证公开 Controller 的读取取消及真实 UDS 入帧边界：当前对象读取返回后，取消会停止后续读取与 Runtime 派发；不承诺撤销已在途读取。服务端 `request_timeout` 从接收连接开始约束整份入站帧，片段不续期，同时保留 socket 的空闲超时；它不是 Deep 审核的执行时限。超时后正常请求仍可派发；已接收但晚于 close 才登记的连接不能启动授权或读取。测试控制对象存储、外部 peer 及 OS accept 返回时序，使用实际未配置 Runtime 检查派发边界，不提供模型质量、PG 或强隔离证明。现有 `DeepExecutionQueue.tla` 不覆盖这些读取阶段，本批没有新增 TLC、完整 shutdown 或生命周期证明。
+`packages/agent/tests/test_deep_controller.py` 验证公开 Controller 的读取取消及真实 UDS 入帧边界：当前对象读取返回后，取消会停止后续读取与 Runtime 派发；不承诺撤销已在途读取。服务端 `request_timeout` 从接收连接开始约束整份入站帧，片段不续期，同时保留 socket 的空闲超时；它不是 Deep 审核的执行时限。超时后正常请求仍可派发；已接收但晚于 close 才登记的连接不能启动授权或读取。测试控制对象存储、外部 peer 及 OS accept 返回时序，使用实际未配置 Runtime 检查派发边界，不提供模型质量、PG 或强隔离证明。现有 `DeepExecutionQueue.tla` 不覆盖这些读取阶段，本批没有新增 TLC、完整 shutdown 或生命周期证明。
 
-Controller 原件读取与 guest 暂存复用 `ppap_deep.limits` 中的文件数和总字节上限。超出文件数时不读对象；逐对象读取使用剩余字节预算，超限停止后续读取及 Runtime 派发，返回既有 `deep_budget_exhausted`。S3 有界读取不依赖声明大小正确，短读会继续，响应流在成功或失败后关闭。对应 Controller／Core storage 测试仅控制外部存储与小额测试预算，不分配大文件。该提前检查不代表资料已能装入执行环境：暂存还包括规则、缓存及清单，原暂存总量检查继续保留；不是新增用户上传配额，也不证明进程树内存或在途读取取消。
+Controller 原件读取与 guest 暂存复用 `agent.execution.budget` 中的文件数和总字节上限。超出文件数时不读对象；逐对象读取使用剩余字节预算，超限停止后续读取及 Runtime 派发，返回既有 `deep_budget_exhausted`。S3 有界读取不依赖声明大小正确，短读会继续，响应流在成功或失败后关闭。对应 Controller／Core storage 测试仅控制外部存储与小额测试预算，不分配大文件。该提前检查不代表资料已能装入执行环境：暂存还包括规则、缓存及清单，原暂存总量检查继续保留；不是新增用户上传配额，也不证明进程树内存或在途读取取消。
 
 `test_deep_partial_failure.py` 使用真实 XLSX，经 Controller、`SemanticRuntime`、进程内真实 guest 和输出校验，验证一套计划持续失败不会丢弃独立文件；共享失败规则的所有条款保留为 ERR，冻结目标不删除，全部失败也不能变成空 PASS。模型返回的 RulePlan 结构不符同样进入原有的一次有界修复，仍无效则只标记对应规则失败；原 deadline、用量与独立文件保留，不把预算、超时、模型协议或未分类异常变成局部成功。结构校验反馈只包含固定说明，不保存 Pydantic 错误中的模型原文。仅模型响应和对象存储受控，薄 runtime 不证明容器隔离、真实模型质量或 Worker／数据库发布。主机拒绝错身份、缺项、重叠分区及失败条款的伪造业务结果；有效计划可缓存，失败计划不缓存，所有模型尝试保留用量。
 
@@ -45,7 +45,7 @@ Controller 原件读取与 guest 暂存复用 `ppap_deep.limits` 中的文件数
 `test_deep_gateway_cancellation.py` 经公开 grant UDS／loopback HTTP 撤销一个执行的授权：provider 在响应头、正文或终态回执之后保持静默，撤权主动中断其已连接 socket，handler 清理后下一独立执行可继续。测试只替换外部 HTTPS 适配，实际 socket 读取／关闭、共享锁和记账运行；分别核对撤权前的未知消费或有效回执，以及下一执行的独立用量，不重发原请求。关闭本地连接不证明 provider 已取消或未收费。`DeepGatewayRevocation.tla` 是一个撤权执行与一个等待执行的有限 focused obligation；不假设 provider 必定响应，只对本地中断、清理及下一执行的调度施加弱公平，`-dependent` 保留取消错误地依赖新数据的反例。它不证明完整 refinement、毫秒时限、DNS／TCP／TLS 建连、重发 grant、过期回收、崩溃恢复或内核隔离。
 
 缓存用例在同一入口执行真实 XLSX → `SemanticRuntime` → `ContainerRuntime` → guest 解析、计划／结果验证和产品转换。进程替身在测试进程内调用真实 guest，模型 StageRunner／HTTPS 和对象存储为外部边界替身，不证明实际 Grok、S3 耐久性或 guest 权限隔离。两份目标共用规则，新 submission 复用有效 snapshot／plan 但重新审核；缓存中的无害解析注记区分实际复用与重新解析，错误摘要／计划 revision 分别重新解析／编译。原 submission 再读不执行新审核，gateway 记录的受控请求数与用量同步核对。这是执行与缓存合同，不是客户判定质量或生产费用证据；现有单 execution 的 Replay 模型不覆盖跨 submission 缓存。
-- **E2E**：少量关键客户路径和跨栈边界，覆盖当前上传、历史轮次、原件与人工复核；各入口区分受控交互和真实服务证据，不据此宣称全部客户流程完成。飞书 Drive 导入与文档关联文件的确定性回归在 `tests/integration/product/test_feishu_drive.py` 与 `services/api/tests/test_feishu_doc_links.py`（mocked Open API）。docs-addon 宿主登录到普通 round 的确定性回归在 `tests/integration/product/test_feishu_docs_addon.py`（mocked host code + Open API）。客户路径 `/addon`、`/audit-files` 与 `/usage` 由 nginx 自己检查：`nginx -t` 加上容器内的路由请求，在 `tests/repository/test_web_server.py`。Web 只调 Product API 的仓库边界、helper、路由、reducer 与 public-config 都由 `apps/web` 的 `pnpm test` 拥有；跨栈黑盒浏览器行为由 Python Playwright（`tests.e2e`）拥有。InsForge overlay 的 **static config contract** 由 `node deploy/insforge/verify-config.mjs` 拥有：Compose 语法与插值交给 `docker compose config`，再检查 Compose 无法知道的少量 PPAP invariant。**live native lifecycle** 是 `bash deploy/insforge/smoke-local.sh`（`@insforge/cli local start/status/db query/stop`），只在 InsForge 相关 path 变化、手动 `workflow_dispatch` 或每周 schedule 上运行。
+- **E2E**：少量关键客户路径和跨栈边界，覆盖当前上传、历史轮次、原件与人工复核；各入口区分受控交互和真实服务证据，不据此宣称全部客户流程完成。飞书 Drive 导入与文档关联文件的确定性回归在 `tests/integration/product/test_feishu_drive.py` 与 `apps/api/tests/test_feishu_doc_links.py`（mocked Open API）。docs-addon 宿主登录到普通 round 的确定性回归在 `tests/integration/product/test_feishu_docs_addon.py`（mocked host code + Open API）。客户路径 `/addon`、`/audit-files` 与 `/usage` 由 nginx 自己检查：`nginx -t` 加上容器内的路由请求，在 `tests/repository/test_web_server.py`。Web 只调 Product API 的仓库边界、helper、路由、reducer 与 public-config 都由 `apps/web` 的 `pnpm test` 拥有；跨栈黑盒浏览器行为由 Python Playwright（`tests.e2e`）拥有。InsForge overlay 的 **static config contract** 由 `node deploy/insforge/verify-config.mjs` 拥有：Compose 语法与插值交给 `docker compose config`，再检查 Compose 无法知道的少量 PPAP invariant。**live native lifecycle** 是 `bash deploy/insforge/smoke-local.sh`（`@insforge/cli local start/status/db query/stop`），只在 InsForge 相关 path 变化、手动 `workflow_dispatch` 或每周 schedule 上运行。
 
 规则排列组合留在低层，不复制到 E2E。页面与历史轮次的读取经已授权的 Product API 验证；Worker 只用于驱动队列，不以 Worker 角色读取仅供 API 的页面元数据。
 
@@ -82,14 +82,14 @@ CI 依赖 capability，而不是 Ubuntu/Debian 或 `sudo`：
 
 ## 当前可运行入口
 
-Single-owner Python tests 与 production owner co-locate：`packages/*/tests` 或 `services/*/tests`。根 `tests/` 只承载 system-level authority：`repository`、`schema`、`corpus`、`integration`、`e2e`、`live`。CI 直接消费这些物理 owner，不维护第二套 test manifest。pytest 不以 `pythonpath` 注入仓库根；production import 只来自 uv workspace 安装后的 packaging metadata。每个 production owner 使用统一 `src/<import_package>/` layout。
+Single-owner Python tests 与 production owner co-locate：`packages/*/tests`、`apps/api/tests`、`apps/worker/tests` 或 `apps/mcp-client/tests`。根 `tests/` 只承载 system-level authority：`repository`、`schema`、`corpus`、`integration`、`e2e`、`live`。CI 直接消费这些物理 owner，不维护第二套 test manifest。pytest 不以 `pythonpath` 注入仓库根；production import 只来自 uv workspace 安装后的 packaging metadata。每个 production owner 使用统一 `src/<import_package>/` layout。
 
 默认 merge contract 以 **required** groups 为准，不把“是否 deterministic”当成入 Gate 的条件。默认 `Tests` workflow 每个 PR 都运行：
 
 - **Web**：`apps/web` typecheck / test / lint / build，以及 `tests/e2e/test_*_preview.py` 的受控 UI 回归。CI 启动本候选的显式预览服务，端口占用时由 Vite 选取空闲端口，并读取实际 loopback 监听地址；未发现测试或浏览器执行失败均使此 required job 失败。预览测试只证明 UI/DTO 交互，不证明真实审核、收费或飞书外部效果。
 - **Repository contract**：`tests/repository`，加上 `docker compose config`、`docker buildx bake --check` / `--print`、固定的 `actionlint`、canonical TKE Kustomize render 的 kubeconform，以及 InsForge static config contract。Python ruff lint、format 和 mypy 也在这个 job 里，不另开 workflow。TKE CI 与 `apply-current.sh` 共用 `deploy/tke/render-current.sh`；edition proxy ConfigMap 由 `configMapGenerator` 从唯一的 `edition-proxy.conf` 生成。pytest 只保留原生工具不知道的 PPAP rendered-object policy。
-- **Python modules**：CI 发现每一个含 `test_*.py` 的 `packages/*/tests` 和 `services/*/tests`，各自一个 pytest 进程。API 与 Worker 不共享进程。需要 PostgreSQL 的只有 `services/*/tests`。纯 Corpus contract tests 位于 `packages/ppap_corpus_contracts/tests`，由同一物理 owner discovery 自动纳入。
-- **Distribution closure**：对每个 production workspace member 单独构建 wheel 和其声明的 workspace transitive wheels；在 `/tmp` clean venv 中显式安装这些 wheels，并用 `uv.lock` 约束 registry dependency 版本。从非仓库 cwd import 后再运行该 owner tests。这个 job 不执行 root `uv sync`、不使用 editable install、`PYTHONPATH` 或 `sys.path` bootstrap。删除 `ppap-product-store → ppap-core` 的真实 dependency declaration 有单独 mutation proof，必须使 isolated import fail closed。
+- **Python modules**：CI 发现每一个含 `test_*.py` 的 `packages/*/tests`、`apps/api/tests`、`apps/worker/tests` 和 `apps/mcp-client/tests`，各自一个 pytest 进程。API 与 Worker 不共享进程。需要 PostgreSQL 的只有 `apps/api/tests` 和 `apps/worker/tests`。纯 Corpus contract tests 位于 `tests/corpus/contracts/tests`，由同一物理 owner discovery 自动纳入。
+- **Distribution closure**：对每个 production workspace member 单独构建 wheel 和其声明的 workspace transitive wheels；在 `/tmp` clean venv 中显式安装这些 wheels，并用 `uv.lock` 约束 registry dependency 版本。从非仓库 cwd import 后再运行该 owner tests。这个 job 不执行 root `uv sync`、不使用 editable install、`PYTHONPATH` 或 `sys.path` bootstrap。删除 `product → audit` 的真实 dependency declaration 有单独 mutation proof，必须使 isolated import fail closed。
 - **Schema**：`tests/schema`，继续使用 real PostgreSQL。Empty、previous、重复 apply、`schema_migrations` 顺序和故意失败 migration 都通过 production `migrations/apply.sh` runner 验证；numbered filenames 是唯一 ordering authority。
 - **Corpus**：Excel / PDF / scanned / Pairs / V3 / PSW format matrix；Pairs 以 `tests/corpus/pairs`、PSW 以 `tests/corpus/psw` 作为物理 suite authority，新 `test_*.py` 无需修改 workflow；PSW 继续使用 purpose-built worker-derived container。Corpus 是 CI Gate 的 required child：cache miss 时可以调用真实 OCR / model，这不把它变成 live 或 optional。默认 V3 dataset / expected XLSX 缺失或解析后无有效 case 时 fail closed，不 skip。进入 required V3 的 case 必须至少有一条人工 PASS/NG expectation；零断言 case fail closed。V2 每个 required variant 在执行前对账 oracle 选中的全部 case 与真实 asset；任一缺失或歧义映射失败，不跳过部分样本。V2 baseline exception 与 PDF↔Excel Pairs 共用同一个 `ExecutionOutcome`（status / execution_class / 可选 diagnostic_code）；比较整个 structured outcome，不把任意 ERR 当成同一行为。已知 mismatch 消失则要求清理 record。V2 PDF↔Excel pairs 按 oracle 文件 stem 自动配对，在 pair+rule 粒度比较；已知格式分歧写入 structured baseline，不是第二套 human oracle。新的、改变的或已愈合的 divergence 失败；aggregate 一致性百分比不是 merge gate。配对歧义或发现不到任何 pair 时 fail closed。Excel / PDF / scanned 不重复执行 pair suite。V2 对照行只从 JSON 报告读取：缺少 JSON，或某一行缺字段，就 fail closed；不恢复旧 baseline 脚本。
 - **Product integration**：`tests/integration/product` + canonical single bake + `tests/integration/runtime` + Python Playwright `tests/e2e`。V3 POC oracle 还走 API 显式规则版本和 Worker，并写出同源 JSON／Markdown 报告；不调用旧 analysis API，也不使用 `matchedRuleId`。
@@ -117,7 +117,7 @@ Standard 的 `run_round_from_bytes` 用独立、执行后即清理的跟踪范�
 独立栈可通过 `deploy/isolated-dev/compose.yaml` 加 `v3-live.yaml` 启动；沿用 Bake，不改生产入口。确认 API／Worker 均为本次固定 SHA 后，显式调用：
 
 ```sh
-uv run --no-sync python -m ppap_corpus_contracts.live_poc \
+uv run --no-sync python -m corpus_contracts.live_poc \
   --api http://127.0.0.1:8080 --candidate-sha <full-candidate-sha> \
   --isolated-login --output /tmp/ppap-v3-live-new-run
 ```
@@ -129,7 +129,7 @@ Standard 使用受理返回的 `StandardExecutionPolicy` 验证配置结构、�
 可重复传入 `--bundle 'Aries Spoiler' --bundle 'POC测试样本'`，精确选择 `build_bundle_map` 中已有的完整文件组；不按文件或规则拆组。省略参数仍执行全部 8 组，显式选择全部 8 组也记为 `scope=full`；其他选择记为 `scope=subset`。报告的 `selected_bundles` 与 `denominators.full/selected` 明确列出总计及所选的组数、文件数、规则数。子集全部对齐只返回 `SUBSET_PROVEN` 和成功退出码，不返回完整 `PROVEN`，不代表完整 corpus 或产品验收。无效、空或重复选择在登录及任何 HTTP 请求之前失败。组名可用以下纯离线命令查看，不会启动审核：
 
 ```sh
-uv run --no-sync python -c 'from ppap_corpus_contracts.poc_oracle import build_bundle_map, load_poc_cases; print("\n".join(sorted(build_bundle_map(load_poc_cases()))))'
+uv run --no-sync python -c 'from corpus_contracts.poc_oracle import build_bundle_map, load_poc_cases; print("\n".join(sorted(build_bundle_map(load_poc_cases()))))'
 ```
 
 已有 isolated-dev 授权可通过 `PPAP_LIVE_COOKIE` 注入，不在参数、日志或报告中保存。命令只接受独立栈，先核对完整 27 样例／8 组／220 预期及选择，再检查候选、收费策略。完整运行发布 5 份原始 DOCX；子集只上传和发布所选组需要的规则 DOCX，仍核对原文、出处与发布版本，再逐组明确绑定并受理，不从检查器生成规则。每组仅 accept 一次，响应丢失只 GET 同一 Draft 的 Round，失败或超时不重新受理。输出目录必须不存在，避免误用同一命令重跑；小批次选择也不构成额外 Live 或付费调用授权。
@@ -151,9 +151,9 @@ Repository contract：
 ```sh
 uv sync --locked
 git show --format= --check HEAD -- . ':!assets' ':!tests/corpus/fixtures'
-uv run --no-sync python -m compileall -q packages services tests
-uv run --no-sync ruff check packages services tests scripts
-uv run --no-sync ruff format --check packages services tests scripts
+uv run --no-sync python -m compileall -q packages apps/api apps/worker apps/mcp-client tests
+uv run --no-sync ruff check packages apps/api apps/worker apps/mcp-client tests scripts
+uv run --no-sync ruff format --check packages apps/api apps/worker apps/mcp-client tests scripts
 uv run --no-sync mypy --no-incremental
 node deploy/insforge/verify-config.mjs
 docker compose -f deploy/isolated-dev/compose.yaml config --quiet >/dev/null
@@ -170,7 +170,7 @@ Distribution closure（这是 distribution correctness proof；root `uv sync` �
 
 ```sh
 python3 scripts/validate_distribution.py --discover
-python3 scripts/validate_distribution.py --member ppap-core
+python3 scripts/validate_distribution.py --member audit
 python3 scripts/validate_distribution.py --prove-missing-dependency
 ```
 
@@ -179,21 +179,21 @@ service distribution 的 owner tests 与普通 service module job 一样，需�
 Python module groups：
 
 ```sh
-# One pytest process per physical owner. CI discovers every packages/*/tests and services/*/tests.
-uv run --no-sync pytest packages/ppap_application/tests
-uv run --no-sync pytest packages/ppap_core/tests
-uv run --no-sync pytest packages/ppap_corpus_contracts/tests
-uv run --no-sync pytest packages/ppap_deep/tests
-uv run --no-sync pytest packages/ppap_excel_audit_engine/tests
+# One pytest process per physical owner. CI discovers every packages/*/tests, apps/api/tests, apps/worker/tests, and apps/mcp-client/tests.
+uv run --no-sync pytest packages/product/tests
+uv run --no-sync pytest packages/product/tests/test_settings_priority.py packages/audit/tests/test_token_tracker.py
+uv run --no-sync pytest tests/corpus/contracts/tests
+uv run --no-sync pytest packages/agent/tests
+uv run --no-sync pytest packages/audit/tests
 uv run --no-sync pytest packages/ppap_ocr_adapter/tests
-uv run --no-sync pytest packages/ppap_product_store/tests
+uv run --no-sync pytest packages/product/tests
 
 export COMPOSE_PROJECT_NAME=ppap-api
 docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
 docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
-uv run --no-sync pytest services/api/tests
+uv run --no-sync pytest apps/api/tests
 export COMPOSE_PROJECT_NAME=ppap-worker
-uv run --no-sync pytest services/worker/tests
+uv run --no-sync pytest apps/worker/tests
 docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 ```
 
@@ -304,7 +304,7 @@ Deep gateway 将业务完成与 provider 用量回执分开：`response.complete
 
 组织内测试资产和可访问环境按 [AGENTS.md](../AGENTS.md) 的默认规则直接使用。
 
-`tests/integration/product/test_rules.py` 通过真实 Excel/Word 提取与模拟外部 LLM 验证规则解析，再通过 Product API / Worker 验证受理、预览、发布、版本不变与来源授权。`packages/ppap_excel_audit_engine/tests/test_rule_ai_client.py` 验证每调用超时、零自动重试及错误日志脱敏。真实 PostgreSQL 契约在 `tests/schema/`：CI 用 `pytest tests/schema` 收集全部 `test_*.py`，共用 isolated-dev PostgreSQL fixture。其中包括 empty/previous schema 升级、规则解析的并发受理/租约/迟到完成/来源授权、审核绑定与用量分配。新增同类测试放到该目录即可进入 schema CI。`tests/e2e/test_web_rules.py` 读取 Web `runtime-config.json` 中的 API 地址，再通过隔离登录接口建立测试会话；不假定静态 Web 提供 `/api` 代理。从当前审核要求入口使用结构化规则文件走真实上传、提取、人工编辑和保存；再用全新浏览器会话重访只读版本，并下载核对原件。它不证明真实飞书登录。`tests/e2e/test_rule_interactions.py` 在浏览器 API 边界控制迟到响应，验证整页操作互斥、刷新只读、显式重跑，以及 `deep_offered` 对审核模式控件的门控。这些测试不调用外部模型服务。
+`tests/integration/product/test_rules.py` 通过真实 Excel/Word 提取与模拟外部 LLM 验证规则解析，再通过 Product API / Worker 验证受理、预览、发布、版本不变与来源授权。`packages/audit/tests/test_rule_ai_client.py` 验证每调用超时、零自动重试及错误日志脱敏。真实 PostgreSQL 契约在 `tests/schema/`：CI 用 `pytest tests/schema` 收集全部 `test_*.py`，共用 isolated-dev PostgreSQL fixture。其中包括 empty/previous schema 升级、规则解析的并发受理/租约/迟到完成/来源授权、审核绑定与用量分配。新增同类测试放到该目录即可进入 schema CI。`tests/e2e/test_web_rules.py` 读取 Web `runtime-config.json` 中的 API 地址，再通过隔离登录接口建立测试会话；不假定静态 Web 提供 `/api` 代理。从当前审核要求入口使用结构化规则文件走真实上传、提取、人工编辑和保存；再用全新浏览器会话重访只读版本，并下载核对原件。它不证明真实飞书登录。`tests/e2e/test_rule_interactions.py` 在浏览器 API 边界控制迟到响应，验证整页操作互斥、刷新只读、显式重跑，以及 `deep_offered` 对审核模式控件的门控。这些测试不调用外部模型服务。
 
 原生上传预检查的读取失败用例也在 `test_rule_interactions.py`：一份文件读取失败不取消另一份可审文件；重新读取只查询同一个已知检查工作，不新建检查、审核任务或受理。
 
@@ -369,9 +369,9 @@ PDF/ZIP 的 MCP 恢复回归由 Worker 保存明确失败，再经用户确认�
 
 `ProviderRefresh.tla` 是共享飞书续期的独立 Safety 检查：两个授权身份、各两代令牌、一个浏览器和两个客户端。模型保留 claim 与结果之间的丢失、延迟及新登录；检查每代最多一次刷新、结果不写入另一授权。正向为 20 个状态、深度 6；重复 claim、未知后重试、错误 owner 的故障配置分别在深度 3、4、4 违反预期不变量。没有公平性、状态约束、对称缩减或覆盖；静止状态不作死锁，不证明最终续期或真实服务商行为。模型中的 claim 包含外部发送边界；实现允许重试的连接建立失败必须证明请求尚未发送。新登录使用不同凭据；相同凭据别名的唯一性由数据库约束和实际测试负责。
 
-MCP 集成测试通过真实 PostgreSQL/HTTP 与受控飞书响应，验证 Web/多个客户端共享一次续期、未知状态跨 API 实例保留、过期 claim 不重试、旧响应与新登录隔离、同凭据并发归属，以及续期期间撤权仍生效。`services/api/tests/test_login_recovery.py` 区分连接建立失败与读超时/无效响应；后者不能假装可以重用旧刷新令牌。`tests/schema/test_provider_authorizations.py` 从旧 schema 迁移有数据的会话和 MCP 委托，核对精确绑定、歧义拒绝、未知结果保留、重复迁移及 Worker 无权读取。这些结果不代替真实飞书续期与现网迁移、回滚验收。
+MCP 集成测试通过真实 PostgreSQL/HTTP 与受控飞书响应，验证 Web/多个客户端共享一次续期、未知状态跨 API 实例保留、过期 claim 不重试、旧响应与新登录隔离、同凭据并发归属，以及续期期间撤权仍生效。`apps/api/tests/test_login_recovery.py` 区分连接建立失败与读超时/无效响应；后者不能假装可以重用旧刷新令牌。`tests/schema/test_provider_authorizations.py` 从旧 schema 迁移有数据的会话和 MCP 委托，核对精确绑定、歧义拒绝、未知结果保留、重复迁移及 Worker 无权读取。这些结果不代替真实飞书续期与现网迁移、回滚验收。
 
-`packages/ppap_mcp_client/tests` 检查本地 200 MiB 边界、快照、目录与符号链接约束、摘要、下载中断及并发覆盖、加密凭据重开、缺失密钥、未知刷新恢复，以及真实另一进程持有锁和退出后的恢复。分包验证通过 `uv run --no-sync python scripts/validate_distribution.py --member ppap-mcp-client` 在全新环境安装非 editable wheel 后运行这些测试。
+`apps/mcp-client/tests` 检查本地 200 MiB 边界、快照、目录与符号链接约束、摘要、下载中断及并发覆盖、加密凭据重开、缺失密钥、未知刷新恢复，以及真实另一进程持有锁和退出后的恢复。分包验证通过 `uv run --no-sync python scripts/validate_distribution.py --member mcp-client` 在全新环境安装非 editable wheel 后运行这些测试。
 
 `tests/integration/product/test_mcp_client.py` 使用锁定的 FastMCP/MCP SDK，走实际 OAuth 发现、DCR、PKCE、续期和 PPAP API/PG。受控浏览器身份完成授权选择，独立认证对象竞争续期，丢弃刷新响应验证旧令牌不重放；创建文件、传输、固化三个响应丢失点均通过原请求恢复。代理检查工具、Resources、Prompts、独立版本、预校验及跨委托下载拒绝。另一个用例启动真实回环 HTTP 服务和独立 stdio 适配器进程，经过 CLI 参数处理完成上传、退出、重启续期和下载。系统钥匙串及真实浏览器交互在这些用例中受控；对象存储为内存边界，不能据此声称客户应用、飞书、生产存储或现网部署已经验收。客户端锁与恢复测试对应单代最多一次刷新和未知不重试的局部义务，不构成对完整系统的形式化 refinement 证明。
 
@@ -388,9 +388,9 @@ Run 40059336983 中 Product API/PG 289 项、生产 runtime 4 项、正常 E2E 1
 
 ### CR-01：以 Responses 多模态统一 PDF fallback，移除重复 OCR 管线
 
-针对 `catalog/engineering/context-reduce/SKILL.md` 的审查，明确发现历史 Paddle 布局分析 → 本地表格裁图 → Gemma 二次视觉 Tagging → HTML 的重复解析层，让一份 PDF 必须维护多个来源的中间结构。当前唯一的 PDF fallback 位于 `ppap_pdf_to_excel/vision/{local,cache,page,client}.py`，由统一 PDF pipeline 直接调用：每页渲染 PNG，用配置的 OCR/产品 Responses 模型端点提交 `input_image`，以严格 JSON Schema 读回表格行、可验证的合并单元格范围、普通正文和印章文字。合并范围必须落在表格边界内，不得覆盖独立非空证据；保留真实合并范围后写入 XLSX，正文及印章写为 HTML（所有模型文字 HTML 转义）。没有可靠扫描网格的页面每页一次 Responses 请求；有可靠网格的扫描页按下文的固定单元格路径读取。每份 PDF 最多 2 个在途请求；旧 Paddle 布局客户端、裁图/二次 Gemma processor 与 tag prompt 不再是当前执行路径。
+针对 `catalog/engineering/context-reduce/SKILL.md` 的审查，明确发现历史 Paddle 布局分析 → 本地表格裁图 → Gemma 二次视觉 Tagging → HTML 的重复解析层，让一份 PDF 必须维护多个来源的中间结构。当前唯一的 PDF fallback 位于 `packages/documents/src/documents/ocr/{local,cache,page,client}.py`，由统一 PDF pipeline 直接调用：每页渲染 PNG，用配置的 OCR/产品 Responses 模型端点提交 `input_image`，以严格 JSON Schema 读回表格行、可验证的合并单元格范围、普通正文和印章文字。合并范围必须落在表格边界内，不得覆盖独立非空证据；保留真实合并范围后写入 XLSX，正文及印章写为 HTML（所有模型文字 HTML 转义）。没有可靠扫描网格的页面每页一次 Responses 请求；有可靠网格的扫描页按下文的固定单元格路径读取。每份 PDF 最多 2 个在途请求；旧 Paddle 布局客户端、裁图/二次 Gemma processor 与 tag prompt 不再是当前执行路径。
 
-为避免把旧 Paddle 识别结果误认为新模型证据，缓存以模型名及 `responses_multimodal_v2` 版本重新生成 file identity，只缓存完整、有效、可读取的输出。模型拒绝、API 超时、JSON 不符合 schema、无图像证据均明确失败，绝不凭空判为 PASS。显式 `OCR_ADAPTER_MODE=remote` 的远程兼容 API 已归入 `ppap_pdf_to_excel/remote.py`；默认 `auto/local` 的 PDF 路径只保留一套本地视觉转换，不改变原来的手工 linegrid 优先次序。
+为避免把旧 Paddle 识别结果误认为新模型证据，缓存以模型名及 `responses_multimodal_v2` 版本重新生成 file identity，只缓存完整、有效、可读取的输出。模型拒绝、API 超时、JSON 不符合 schema、无图像证据均明确失败，绝不凭空判为 PASS。显式 `OCR_ADAPTER_MODE=remote` 的远程兼容 API 已归入 `packages/documents/src/documents/conversion/remote.py`；默认 `auto/local` 的 PDF 路径只保留一套本地视觉转换，不改变原来的手工 linegrid 优先次序。
 
 外部模型会接收 PDF 页面内容，属于既有客户文档出站处理边界；只发送到配置的可信 Responses 服务，使用 `store=False`，不在日志中写页面文本、图像或密钥。CI 本地单元测试 mock 模型接口，真实远程模型可用性和输出质量需由完整 Corpus/PSW baseline 再验证。若模型能力不支持严格 schema，必须报错并确认端点能力，而不是退回旧 OCR 静默通过。
 
@@ -404,7 +404,7 @@ Run #40119017530 的确定性失败包括 `test_ci_heartbeat.py` 的 Ruff 导入
 
 PDF/V3 的 19-BLANC 控制计划规则 4 曾返回 `NG`：第 13 行存在特殊特性分类，但产品/过程列为空。本次增强多模态结构化输入，只允许模型声明在 PDF 上真实可见的跨行或跨列合并单元格；验证不重叠、不越界且不覆盖独立非空证据，随后将合并范围写回生成的 XLSX，使审核规则能够像处理原始 Excel 一样读取合并单元格上的锚点内容。**不修改 PASS/NG oracle，不把空字段推断为已填。** 原样本是否恢复 PASS 必须由新 CI 验证。
 
-PDF 的长耗时堆栈指向 `ppap_excel_audit_engine/checkers/client.py` 的视觉模型 Responses HTTP，而非 xdist 或新 `vision_service.py` 进程池。视觉审核现在每次请求最长等待 120 秒并禁用 SDK/应用层重试；超时保持显式错误，不重放已经接收但回复未知的请求，也不凭空写入 PASS。文本模型调用继续保持既有行为。Web Preview 保留双 worker，但 Node 控制器每 30 秒输出心跳；Product DB 集成测试加上 `-vv`、Python faulthandler 与 30 秒心跳，避免 Runner 长时间没有输出时无法判断是否仍在运行。日志不写入原始用户文件或模型输出。
+PDF 的长耗时堆栈指向 `audit.engine/checkers/client.py` 的视觉模型 Responses HTTP，而非 xdist 或新 `vision_service.py` 进程池。视觉审核现在每次请求最长等待 120 秒并禁用 SDK/应用层重试；超时保持显式错误，不重放已经接收但回复未知的请求，也不凭空写入 PASS。文本模型调用继续保持既有行为。Web Preview 保留双 worker，但 Node 控制器每 30 秒输出心跳；Product DB 集成测试加上 `-vv`、Python faulthandler 与 30 秒心跳，避免 Runner 长时间没有输出时无法判断是否仍在运行。日志不写入原始用户文件或模型输出。
 
 后续验收必须检查同一 HEAD 下 Repository、Core wheel、V3 Corpus、V2 PDF 和 E2E 的完整结果以及 CI Gate，区分确定性逻辑回归与 self-hosted Runner 错误状态；不能借由恢复旧 Paddle 路径或调整 oracle 让检查变绿。
 
@@ -431,7 +431,7 @@ Corpus PDF/V3/PSW 和 Product integration 通过原测试、逐例即时错误�
 
 ### 2026-10-25：Responses PDF 合并范围的源证据与快速取消
 
-`ppap_pdf_to_excel/vision/page.py` 对每两页构建一组共享 event loop 的异步 Responses 调用；任一页的模型结果无效，即取消另一在途请求并等待其网络客户端关闭。PDF 页面渲染仍在所属线程进行，最多两个在途请求，不修改产品 E2E 或 PDF Corpus 的 pytest worker 设置。客户端取消不等于供应商没有处理或计费；不自动重试超时或无效输出。
+`packages/documents/src/documents/ocr/page.py` 对每两页构建一组共享 event loop 的异步 Responses 调用；任一页的模型结果无效，即取消另一在途请求并等待其网络客户端关闭。PDF 页面渲染仍在所属线程进行，最多两个在途请求，不修改产品 E2E 或 PDF Corpus 的 pytest worker 设置。客户端取消不等于供应商没有处理或计费；不自动重试超时或无效输出。
 
 对模型产生的“合并区域覆盖非空单元格”冲突，保留原有 fail-closed validator。只有 PDF 原生矢量边框解析能够定位唯一表格、行列尺寸一致、至少三个独立原文证据跨越两行两列严格匹配，并且修复后的每一个 merge 仍符合非空单元格保护时，才采用确定性绘制边界纠正模型的 `merges`。保留模型已有全部单元格文字，不补写缺失内容。对扫描图片、无可提取物理表格边界、表格匹配不唯一、边界解析失败或独立文本证据不吻合的情况保持 `responses_invalid_schema`，不得静默删除冲突 merge、猜测业务字段或更改 PASS/NG oracle。
 
@@ -440,7 +440,7 @@ Corpus PDF/V3/PSW 和 Product integration 通过原测试、逐例即时错误�
 
 ### 扫描件的 source-grounded 图像网格与定点文字识别
 
-`ppap_pdf_to_excel/vision/raster.py` 在 PyMuPDF 未提取到原生矢量表格时分析已渲染的页面 PNG。使用 OpenCV 自适应阈值与水平／垂直形态学定位封闭物理单元格；每个区域必须有四边支持，并且能构成完整、无重叠的逻辑网格。表头与正文可以有不同列宽；粗线或双线只在有实际线条像素支持时合并为同一边界，不推测缺失数据格。直接提取失败时，仅对具有明确凸四边形外框、轻微倾斜的页面做透视校正，保留整页内容，并将同一校正图像用于网格和裁图识别；原件不变。页面仍限制为 1200 万像素，逻辑网格最多 4096 格；密集真实表格不再被原 400 格上限拒绝。边界不完整、分区重叠或存在未覆盖区域时仍拒绝，不按模型的 `merges` 猜测。
+`packages/documents/src/documents/ocr/raster.py` 在 PyMuPDF 未提取到原生矢量表格时分析已渲染的页面 PNG。使用 OpenCV 自适应阈值与水平／垂直形态学定位封闭物理单元格；每个区域必须有四边支持，并且能构成完整、无重叠的逻辑网格。表头与正文可以有不同列宽；粗线或双线只在有实际线条像素支持时合并为同一边界，不推测缺失数据格。直接提取失败时，仅对具有明确凸四边形外框、轻微倾斜的页面做透视校正，保留整页内容，并将同一校正图像用于网格和裁图识别；原件不变。页面仍限制为 1200 万像素，逻辑网格最多 4096 格；密集真实表格不再被原 400 格上限拒绝。边界不完整、分区重叠或存在未覆盖区域时仍拒绝，不按模型的 `merges` 猜测。
 
 有可靠物理网格时直接使用 `vision/cell_ocr.py`，不先让模型生成整页表格 JSON 再等待 merge 冲突。每个物理单元格都裁成图像，在图像**之外**加唯一 ID。每批最多 64 格，按实际裁图宽度紧凑排成一张 PNG，不把小单元格统一放大、填充为 1024 像素宽长条；逐批生成，避免先为整页创建所有裁图。三个真实代表批次在原 32 格范围内由 466–573 万像素降至 59–108 万；使用 64 格后两页的请求数由 18/23 次降至 9/12 次。输出使用本批固定 ID 字符串到文字的闭合映射：JSON Schema 将每个 ID 列为必填属性并禁止其他属性，运行时仍核对完整集合与文字类型。JSON 解码拒绝重复键，不能让后一个值覆盖已返回的证据；不再用允许任意数量元素的 `(id,text)` 对象数组。模型不能重定义位置、边界或合并范围，响应乱序按 ID 归位。扫描渲染保留主要原始图像的分辨率，最多 3 倍页面缩放、1200 万像素；不能先缩小文字再通过放大裁图声称恢复字符。所有物理单元格均保留精确 ID 校验。缩减输入或固定输出结构本身不证明供应商延迟与文字质量，仍需真实 Corpus/Product 门禁。
 

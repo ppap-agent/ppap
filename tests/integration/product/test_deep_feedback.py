@@ -6,11 +6,11 @@ import json
 from uuid import uuid4
 
 import pytest
+from api import create_app
 from fastapi.testclient import TestClient
-from ppap_api import create_app
-from ppap_application import build_product_store
-from ppap_core.identity import SESSION_COOKIE
-from ppap_worker import process_claimed
+from product import build_product_store
+from product.identity import SESSION_COOKIE
+from worker import process_claimed
 
 from .conftest import EXPLANATION, change_payload
 

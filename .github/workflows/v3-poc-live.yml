@@ -45,7 +45,7 @@ jobs:
           set -euo pipefail
           : "${PADDLE_OCR_URL:?canonical PDF sample needs a real Paddle endpoint, not only cached OCR}"
           uv sync --locked
-          uv run --no-sync pytest packages/ppap_corpus_contracts/tests
+          uv run --no-sync pytest tests/corpus/contracts/tests
           docker buildx bake api worker --load
           for service in api worker; do
             revision=$(docker image inspect "ppap-$service:$PPAP_BUILD_SHA" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
@@ -64,7 +64,7 @@ jobs:
         working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         run: |
           set -euo pipefail
-          timeout 120m uv run --no-sync python -m ppap_corpus_contracts.live_poc \
+          timeout 120m uv run --no-sync python -m corpus_contracts.live_poc \
             --api "$PPAP_LIVE_API" --candidate-sha "$PPAP_BUILD_SHA" \
             --isolated-login --output "$RUNNER_TEMP/ppap-v3-live-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
       - name: Upload JSON and Markdown, including incomplete proof

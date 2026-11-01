@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import pytest
-from ppap_application import run_round_from_bytes
-from ppap_core.rule_profile import RULE_PROFILE_V3
-from ppap_corpus_contracts.poc_oracle import POC_SEQ_TO_DOC_TYPE, build_bundle_map, load_poc_cases
-from ppap_corpus_contracts.product_round import (
+from audit.rule_profile import RULE_PROFILE_V3
+from corpus_contracts.poc_oracle import POC_SEQ_TO_DOC_TYPE, build_bundle_map, load_poc_cases
+from corpus_contracts.product_round import (
     compare_file,
     execute_product_round,
     failing_verdicts,
     format_verdicts,
 )
+from product import run_round_from_bytes
 
 
 @pytest.mark.usefixtures("ocr_transport_diagnostics")

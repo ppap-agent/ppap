@@ -6,10 +6,10 @@ from threading import Barrier
 from uuid import uuid4
 
 import pytest
+from api import create_app
 from fastapi.testclient import TestClient
-from ppap_api import create_app
-from ppap_application import build_product_store
-from ppap_core.settings import Settings
+from product import build_product_store
+from product.settings import Settings
 from psycopg.types.json import Jsonb
 
 

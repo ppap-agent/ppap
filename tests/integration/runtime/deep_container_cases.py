@@ -21,19 +21,19 @@ from unittest.mock import patch
 from urllib.parse import urlsplit
 from uuid import uuid4
 
+from agent.auditor import SemanticRuntime
+from agent.execution.gateway import local_gateway
+from agent.execution.guest import CompileManifest, Manifest, execute, execute_compilation
+from agent.execution.isolation.container import ContainerRuntime, RuntimeConfig
+from agent.protocol import ExecuteRequest, FrozenFile
+from agent.run import ExecutionContext
+from audit.audits import DEEP_PROTOCOL_REVISION
+from audit.models import RulePlan
+from audit.policy import GROK_VERSION
+from audit.protocol import ControllerFault, DocumentRef, RuleRef, SnapshotSpec, SubmissionSpec
+from audit.trace import AuditTrace, evaluate_audit
 from openpyxl import Workbook
-from ppap_core.audits import DEEP_PROTOCOL_REVISION
-from ppap_core.deep_policy import GROK_VERSION
-from ppap_core.files import ObjectExists, ObjectMissing, ObjectTooLarge
-from ppap_deep.auditor import SemanticRuntime
-from ppap_deep.controller import ExecutionContext
-from ppap_deep.isolation.container import ContainerRuntime, RuntimeConfig
-from ppap_deep.isolation.model_gateway import local_gateway
-from ppap_deep.protocol import ExecuteRequest, FrozenFile
-from ppap_deep.semantic.guest import CompileManifest, Manifest, execute, execute_compilation
-from ppap_deep.semantic.models import RulePlan
-from ppap_deep.semantic.protocol import ControllerFault, DocumentRef, RuleRef, SnapshotSpec, SubmissionSpec
-from ppap_deep.semantic.trace import AuditTrace, evaluate_audit
+from product.files import ObjectExists, ObjectMissing, ObjectTooLarge
 
 COMPLETED_EVENT = b'data: {"type":"response.completed","response":{"usage":{"input_tokens":3,"output_tokens":5}}}\n\n'
 

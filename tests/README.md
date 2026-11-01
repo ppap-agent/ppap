@@ -39,7 +39,7 @@ Distribution closure:
 
 ```sh
 python3 scripts/validate_distribution.py --discover
-python3 scripts/validate_distribution.py --member ppap-core
+python3 scripts/validate_distribution.py --member audit
 python3 scripts/validate_distribution.py --prove-missing-dependency
 ```
 
@@ -47,13 +47,13 @@ Python module groups:
 
 ```sh
 # One pytest process per physical owner. CI discovers every packages/*/tests and services/*/tests.
-uv run --no-sync pytest packages/ppap_application/tests
-uv run --no-sync pytest packages/ppap_core/tests
-uv run --no-sync pytest packages/ppap_corpus_contracts/tests
-uv run --no-sync pytest packages/ppap_deep/tests
-uv run --no-sync pytest packages/ppap_excel_audit_engine/tests
+uv run --no-sync pytest packages/product/tests
+uv run --no-sync pytest packages/product/tests/test_settings_priority.py packages/audit/tests/test_token_tracker.py
+uv run --no-sync pytest tests/corpus/contracts/tests
+uv run --no-sync pytest packages/agent/tests
+uv run --no-sync pytest packages/audit/tests
 uv run --no-sync pytest packages/ppap_ocr_adapter/tests
-uv run --no-sync pytest packages/ppap_product_store/tests
+uv run --no-sync pytest packages/product/tests
 ```
 
 API and Worker each need the real isolated-dev PostgreSQL fixture, in separate processes:
@@ -62,9 +62,9 @@ API and Worker each need the real isolated-dev PostgreSQL fixture, in separate p
 export COMPOSE_PROJECT_NAME=ppap-api
 docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
 docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
-uv run --no-sync pytest services/api/tests
+uv run --no-sync pytest apps/api/tests
 export COMPOSE_PROJECT_NAME=ppap-worker
-uv run --no-sync pytest services/worker/tests
+uv run --no-sync pytest apps/worker/tests
 docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 ```
 

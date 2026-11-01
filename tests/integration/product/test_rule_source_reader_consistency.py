@@ -2,12 +2,12 @@
 
 from pathlib import Path
 
+from audit.document_tools import snapshot
+from audit.evidence import resolve
+from audit.models import WordCell
 from docx import Document
 from docx.oxml import OxmlElement
-from ppap_application.rule_sources import rule_sources
-from ppap_deep.semantic.document_tools import snapshot
-from ppap_deep.semantic.evidence import resolve
-from ppap_deep.semantic.models import WordCell
+from worker.intake.rule_sources import rule_sources
 
 
 def assert_source_matches(path, table, row, column):

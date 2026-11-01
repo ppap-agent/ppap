@@ -105,7 +105,7 @@ verifyCompose(
 const remoteEnv = {
   ...selected,
   PPAP_REMOTE_PG_DATABASE: 'ppap',
-  PPAP_REMOTE_PG_API_USER: 'ppap_api',
+  PPAP_REMOTE_PG_API_USER: 'api',
   PPAP_REMOTE_PG_API_PASSWORD: 'secret',
   PPAP_REMOTE_TENANT_ALLOWLIST: '',
   PPAP_REMOTE_DEEP_CUSTOMER_ENABLED: 'false',

@@ -24,7 +24,7 @@ psql -d postgres -v ON_ERROR_STOP=1 -f migrations/bootstrap.sql
 PPAP_PG_DATABASE=ppap PGUSER=ppap_migrator PGPASSWORD='<password>' sh migrations/apply.sh
 ```
 
-`bootstrap.sql` creates least-privilege roles (`ppap_migrator`, `ppap_api`, `ppap_worker`) and the application database from `PPAP_PG_*` environment variables. Compose, InsForge, TKE, and Schema CI all execute the same `apply.sh` path. Empty → latest、previous → latest、repeated apply、history ordering and fail-closed behavior are verified against real PostgreSQL by `pytest tests/schema`.
+`bootstrap.sql` creates least-privilege roles (`ppap_migrator`, `api`, `worker`) and the application database from `PPAP_PG_*` environment variables. Compose, InsForge, TKE, and Schema CI all execute the same `apply.sh` path. Empty → latest、previous → latest、repeated apply、history ordering and fail-closed behavior are verified against real PostgreSQL by `pytest tests/schema`.
 
 Rules:
 

@@ -4,12 +4,12 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
-from ppap_application import parse_rule_file, run_round_from_bytes
-from ppap_application.rule_sources import rule_sources
-from ppap_core.audits import RoundInput, RoundWork
-from ppap_corpus_contracts.poc_oracle import POC_SEQ_TO_DOC_TYPE, load_poc_cases
-from ppap_corpus_contracts.product_round import compare_file, engine_rule_body, failing_verdicts, format_verdicts
-from ppap_excel_audit_engine.checkers.rule_declarations import freeze_target_rule_execution
+from audit.audits import RoundInput, RoundWork
+from audit.engine.checkers.rule_declarations import freeze_target_rule_execution
+from corpus_contracts.poc_oracle import POC_SEQ_TO_DOC_TYPE, load_poc_cases
+from corpus_contracts.product_round import compare_file, engine_rule_body, failing_verdicts, format_verdicts
+from product import parse_rule_file, run_round_from_bytes
+from worker.intake.rule_sources import rule_sources
 
 RULE_ROOT = Path(__file__).resolve().parents[3] / "assets" / "poc测试" / "poc规则"
 SOURCES = {

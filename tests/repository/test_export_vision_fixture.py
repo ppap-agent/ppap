@@ -6,8 +6,8 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from documents.ocr.cache import VISION_CACHE_VERSION
 from openpyxl import Workbook
-from ppap_pdf_to_excel.vision.cache import VISION_CACHE_VERSION
 
 from scripts.export_vision_fixture import export
 

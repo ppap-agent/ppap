@@ -362,8 +362,8 @@ def database_sql(*, full: bool = False) -> bytes:
 
 LIVE_PROBE = """
 import json,socket,sys
-from ppap_core.settings import load_settings
-from ppap_core.db import connect
+from product.settings import load_settings
+from product.db import connect
 sha=sys.argv[1]
 with connect(load_settings(),'api') as c:
     c.execute('SET TRANSACTION READ ONLY')
@@ -372,7 +372,7 @@ print(json.dumps({'worker_heartbeat':True}))
 """
 DEEP_PROBE = """
 import socket,json
-from ppap_deep.client import read_frame,write_frame
+from agent.client import read_frame,write_frame
 with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as c:
     c.settimeout(10)
     c.connect('/run/ppap-deep/controller.sock')
@@ -492,7 +492,9 @@ def full_check_reason(objects: list[dict], sha: str, forced: bool) -> str | None
         return "source comparison unavailable"
     for name in changed:
         parts = Path(name).parts
-        source = len(parts) > 3 and parts[0] in {"packages", "services"} and parts[2] in {"src", "tests"}
+        source = len(parts) > 3 and parts[2] in {"src", "tests"} and (
+            parts[0] in {"packages", "services"} or (parts[0] == "apps" and parts[1] in {"api", "worker", "mcp-client"})
+        )
         web = name.startswith(("apps/web/src/", "apps/web/public/"))
         reference = name.startswith(("tests/", "docs/")) or Path(name).name in {"README.md", "AGENTS.md"}
         # Release pins are derived configuration. Compare the actual live/desired

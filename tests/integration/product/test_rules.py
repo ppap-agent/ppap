@@ -50,7 +50,7 @@ def excel_rule():
 
 class RuleParsingTests(unittest.TestCase):
     def test_excel_rules_use_real_extraction_and_preserve_metadata(self):
-        from ppap_application import parse_rule_file
+        from worker.intake import parse_rule_file
 
         ai = FakeRuleAI()
         body = parse_rule_file("控制计划规则.xlsx", excel_rule(), ai=ai)
@@ -63,7 +63,7 @@ class RuleParsingTests(unittest.TestCase):
 
     def test_word_rules_use_the_actual_word_extractor(self):
         from docx import Document
-        from ppap_application import parse_rule_file
+        from worker.intake import parse_rule_file
 
         document = Document()
         document.add_paragraph("控制计划规则：必须填写零件号")
@@ -76,8 +76,8 @@ class RuleParsingTests(unittest.TestCase):
         self.assertIn("控制计划规则：必须填写零件号", ai.requests[-1]["user_prompt"])
 
     def test_json_import_and_parse_failures_do_not_make_empty_professional_rules(self):
-        from ppap_application import parse_rule_file
-        from ppap_core.rules import RuleParseError
+        from worker.intake import parse_rule_file
+        from product.rules import RuleParseError
 
         ai = FakeRuleAI()
         self.assertEqual(parse_rule_file("rules.json", json.dumps(rule_body()).encode(), ai=ai), rule_body())
@@ -88,8 +88,8 @@ class RuleParsingTests(unittest.TestCase):
                     parse_rule_file("控制计划.md", b"rules", ai=FakeRuleAI(response))
 
     def test_long_input_is_not_silently_truncated(self):
-        from ppap_application import parse_rule_file
-        from ppap_core.rules import RuleParseError
+        from worker.intake import parse_rule_file
+        from product.rules import RuleParseError
 
         ai = FakeRuleAI()
         with self.assertRaisesRegex(RuleParseError, "rule_document_too_long"):
@@ -105,9 +105,9 @@ class RuleApiTests(unittest.TestCase):
         self.auth_store = auth_store_factory
 
     def setUp(self):
+        from api import create_app
         from fastapi.testclient import TestClient
-        from ppap_api import create_app
-        from ppap_core.settings import Settings
+        from product.settings import Settings
 
         env = {key: value for key, value in os.environ.items() if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))}
         self.env = patch.dict(os.environ, env, clear=True)
@@ -116,7 +116,7 @@ class RuleApiTests(unittest.TestCase):
         self.store = self.auth_store(self.settings)
         self.store.seed_isolated_dev()
         self.ai = FakeRuleAI()
-        self.ai_boundary = patch("ppap_excel_audit_engine.checkers.client.AIClient", return_value=self.ai)
+        self.ai_boundary = patch("audit.engine.checkers.client.AIClient", return_value=self.ai)
         self.ai_boundary.start()
         self.client = TestClient(create_app(self.settings, lambda _: {"state": "ok"}, lambda _: {"state": "ok"}, self.store))
         self.login("alice")
@@ -150,7 +150,7 @@ class RuleApiTests(unittest.TestCase):
         return self.client.post("/rules/parse", json={"request_id": request_id or str(uuid.uuid4()), "source_file_id": source["file_id"], "source_file_version_id": source["id"], **fields})
 
     def finish_parse(self, source):
-        from ppap_worker import process_claimed
+        from worker import process_claimed
 
         accepted = self.submit_parse(source)
         self.assertEqual(accepted.status_code, 202)
@@ -268,7 +268,7 @@ class RuleApiTests(unittest.TestCase):
         self.assertEqual(self.client.get("/rules").json()["rules"], before)
 
     def test_json_type_conflict_is_recoverable_with_the_same_original(self):
-        from ppap_worker import process_claimed
+        from worker import process_claimed
 
         content = json.dumps(rule_body()).encode()
         source = self.upload("rules.json", content)
@@ -315,7 +315,7 @@ class RuleApiTests(unittest.TestCase):
         self.assertEqual(self.ai.requests, [])
 
     def test_same_request_resumes_one_job_and_unknown_is_not_automatically_reexecuted(self):
-        from ppap_worker import process_claimed
+        from worker import process_claimed
 
         source = self.upload()
         request_id = str(uuid.uuid4())
@@ -375,7 +375,7 @@ class FileAnalysisAI:
 
 class FileAnalysisApiTests(RuleApiTests):
     def test_analysis_job_uses_existing_file_authorization_and_result_storage(self):
-        from ppap_worker import process_claimed
+        from worker import process_claimed
 
         source = self.upload()
         published = self.client.post("/rules", json={"title": "控制计划规则", "body": rule_body(), "source_file_version_id": source["id"]})

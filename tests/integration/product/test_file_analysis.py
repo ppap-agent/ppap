@@ -2,8 +2,9 @@ import io
 import json
 import unittest
 
-from ppap_application import analyze_file, latest_rule_versions
-from ppap_core.rule_matching import RuleMatchingAIService
+from product.rules import latest_rule_versions
+from worker.intake import analyze_file
+from product.rule_matching import RuleMatchingAIService
 
 
 def excel_rule():

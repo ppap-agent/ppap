@@ -12,30 +12,32 @@ from threading import Thread
 from typing import Any
 
 import pytest
-from openpyxl import load_workbook
-from ppap_core.contracts import (
+from audit.contracts import (
     AuditInput,
     AuditResultItem,
-    ConversionArtifact,
-    FileRef,
     RuleInput,
 )
-from ppap_core.types import PpapDocumentType
-from ppap_corpus_contracts.psw_cross_format_regression import (
+from audit.engine import run_audit
+from audit.engine.app_runtime import _AppAuditRuntime, run_audit_engine
+from audit.checkers.v2.psw_excel_agent import PswExcelAgent
+from audit.engine.checkers.client import AIClient
+from audit.engine.rule_engine import Table
+from audit.kinds import PpapDocumentType
+from corpus_contracts.psw_cross_format_regression import (
     DifferenceKind,
     PswAuditSnapshot,
     compare_psw_snapshots,
 )
-from ppap_docops.word import (
+from documents.contracts import (
+    ConversionArtifact,
+    FileRef,
+)
+from documents.word import (
     WordTableBlock,
     convert_legacy_doc_to_docx,
     extract_docx_structure,
 )
-from ppap_excel_audit_engine import run_audit
-from ppap_excel_audit_engine.app_runtime import _AppAuditRuntime, run_audit_engine
-from ppap_excel_audit_engine.checkers.agents.psw_excel_agent import PswExcelAgent
-from ppap_excel_audit_engine.checkers.client import AIClient
-from ppap_excel_audit_engine.rule_engine import Table
+from openpyxl import load_workbook
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _PAIR_ROOT = _REPO_ROOT / "assets" / "V2.0测试" / "模拟测试文件V2-01" / "16-零件提交保证书" / "16-零件提交保证书-上海亚大"
@@ -286,14 +288,14 @@ def test_real_doc_and_its_converted_docx_have_equivalent_results_and_release_tem
 
 
 def test_psw_xlsx_product_round_keeps_engine_statuses() -> None:
-    from ppap_application import run_round_from_bytes
-    from ppap_core.rule_profile import RULE_PROFILE_V2
-    from ppap_corpus_contracts.product_round import (
+    from audit.rule_profile import RULE_PROFILE_V2
+    from corpus_contracts.product_round import (
         MATCH,
         compare_file,
         engine_rule_body,
         execute_product_round,
     )
+    from product import run_round_from_bytes
 
     xlsx_path = _PAIR_ROOT.with_suffix(".xlsx")
     doc_type = PpapDocumentType.PSW.get_type_name()
@@ -321,10 +323,10 @@ def test_psw_xlsx_product_round_keeps_engine_statuses() -> None:
 
 
 def test_psw_pdf_visual_rules_match_the_xlsx_product_round() -> None:
-    from ppap_application import run_round_from_bytes
-    from ppap_core.rule_profile import RULE_PROFILE_V2
-    from ppap_core.settings import get_settings
-    from ppap_corpus_contracts.product_round import EXECUTION_FAILURE, MATCH, SETUP_FAILURE, compare_file, execute_product_round
+    from audit.rule_profile import RULE_PROFILE_V2
+    from corpus_contracts.product_round import EXECUTION_FAILURE, MATCH, SETUP_FAILURE, compare_file, execute_product_round
+    from product import run_round_from_bytes
+    from product.settings import get_settings
 
     settings = get_settings()
     if not (settings.OPENAI_API_KEY.strip() and settings.MODEL_NAME.strip()):

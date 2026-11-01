@@ -15,11 +15,13 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --uid 10001 --create-home --shell /usr/sbin/nologin audit
 COPY --from=grok /grok /usr/local/bin/grok
-COPY packages/ppap_deep/src /app/packages/ppap_deep/src
-RUN mkdir -p /opt/ppap \
- && ln -s /app/packages/ppap_deep/src/ppap_deep/semantic /opt/ppap/semantic
+COPY packages/audit/src /app/packages/audit/src
+COPY packages/agent/src /app/packages/agent/src
+RUN mkdir -p /opt/agent \
+ && ln -s /app/packages/audit/src/audit /opt/agent/semantic \
+ && ln -s /app/packages/agent/src/agent/skill /opt/agent/skill
 RUN /usr/local/bin/grok --version \
  && /usr/bin/setpriv --help >/dev/null \
  && /usr/bin/prlimit --help >/dev/null \
  && /usr/bin/setpriv --reuid=10001 --regid=10001 --clear-groups -- \
-      python /opt/ppap/semantic/document_tools.py --help >/dev/null
+      python /opt/agent/semantic/document_tools.py --help >/dev/null

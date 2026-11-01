@@ -12,13 +12,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from api import create_app
 from fastapi.testclient import TestClient
-from ppap_api import create_app
-from ppap_application import build_product_store
-from ppap_core.fixtures import RULE_A, USER_BOB
-from ppap_core.settings import Settings
-from ppap_worker import process_claimed
+from product import build_product_store
+from product.fixtures import RULE_A, USER_BOB
+from product.settings import Settings
 from psycopg import errors, sql
+from worker import process_claimed
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -472,7 +472,7 @@ class AuditFlowTests(unittest.TestCase):
         stale = first
         later = self.store.claim_job("w2")
         self.assertIsNone(later)
-        from ppap_core.audits import ClaimedJob
+        from audit.audits import ClaimedJob
 
         stale_write = ClaimedJob(stale.id, stale.kind, stale.payload, stale.attempt, stale.round_id)
         self._execute(
@@ -605,9 +605,9 @@ class AuditFlowTests(unittest.TestCase):
         self.assertEqual([row["id"] for row in bob_list], [round_id])
 
     def test_selected_rule_items_are_frozen_in_confirmed_order(self):
-        from ppap_core.contracts import AuditEvidence, AuditResultItem, EvidenceSource
-        from ppap_excel_audit_engine import app_runtime
-        from ppap_excel_audit_engine.checkers.rule_declarations import declarations_for_target
+        from audit.contracts import AuditEvidence, AuditResultItem, EvidenceSource
+        from audit.engine import app_runtime
+        from audit.engine.checkers.rule_declarations import declarations_for_target
 
         self._login("alice")
         source = self._upload("rules.json", b"{}")
@@ -678,11 +678,11 @@ class PresenceEvaluationTests(unittest.TestCase):
                 "-c",
                 """
 import sys
-from ppap_core.audits import RoundInput, RoundWork, evaluate_round
+from audit.audits import RoundInput, RoundWork, evaluate_round
 work = RoundWork('r1', 't1', [RoundInput('target', 'f1', 'v1', 'a.xlsx', 'ready',
     rule_version_id='rule-1', rule_title='资料就绪', rule_body={'kind': 'presence'})])
 assert evaluate_round(work)['findings'][0]['status'] == 'PASS'
-assert 'ppap_excel_audit_engine' not in sys.modules
+assert 'audit.engine' not in sys.modules
 """,
             ],
             cwd=ROOT,
@@ -699,10 +699,10 @@ assert 'ppap_excel_audit_engine' not in sys.modules
                 "-c",
                 """
 import sys
-from ppap_worker import run_claimed_job
+from worker import run_claimed_job
 result = run_claimed_job("audit", {"round_id": "abc"})
 assert result["note"] == "round_audit"
-assert "ppap_excel_audit_engine.app_runtime" not in sys.modules
+assert "audit.engine.app_runtime" not in sys.modules
 """,
             ],
             cwd=ROOT,

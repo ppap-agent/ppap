@@ -8,7 +8,7 @@ import time
 import urllib.request
 
 import psycopg
-from ppap_deep.client import read_frame, write_frame
+from agent.client import read_frame, write_frame
 
 
 def verify(sha: str, worker: str) -> dict:

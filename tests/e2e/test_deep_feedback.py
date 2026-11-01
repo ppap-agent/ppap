@@ -17,8 +17,8 @@ from uuid import uuid4
 
 import pytest
 import uvicorn
-from ppap_core.db import connect
-from ppap_core.identity import SESSION_COOKIE
+from product.db import connect
+from product.identity import SESSION_COOKIE
 from psycopg.types.json import Jsonb
 
 ROOT = Path(__file__).resolve().parents[2]

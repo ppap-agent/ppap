@@ -11,7 +11,7 @@ from pathlib import Path
 import cv2
 import fitz
 import numpy as np
-from ppap_pdf_to_excel.vision import cell_ocr, page, raster
+from documents.ocr import cell_ocr, page, raster
 
 
 def test_real_dense_control_plan_pages_have_complete_physical_cell_partitions(monkeypatch):

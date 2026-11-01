@@ -28,16 +28,16 @@ def test_shards_cover_every_discovered_target_exactly_once(discover):
 
 def test_python_discovery_keeps_dev_only_owner_and_service_postgres():
     targets = {target.name: target for target in discover_modules()}
-    assert targets["ppap_corpus_contracts"].tests == "packages/ppap_corpus_contracts/tests"
+    assert targets["corpus-contracts"].tests == "tests/corpus/contracts/tests"
     assert targets["api"].postgres and targets["worker"].postgres
     assert all(target.tests for target in targets.values())
 
 
 def test_distribution_discovery_keeps_separate_clean_wheel_contract():
     targets = {target.name: target for target in discover_distributions()}
-    assert "ppap-corpus-contracts" not in targets
-    assert "ppap-product-store" in targets
-    assert targets["ppap-api"].postgres and targets["ppap-worker"].postgres
+    assert "corpus-contracts" not in targets
+    assert "product" in targets
+    assert targets["api"].postgres and targets["worker"].postgres
 
 
 def test_reject_invalid_partition_sizes_and_duplicate_targets():

@@ -10,17 +10,17 @@ from unittest.mock import patch
 
 import httpx
 import pytest
+from api import create_app
+from audit.audits import RoundInput, findings_from_engine_results
+from audit.contracts import AuditEvidence, AuditResultItem, EvidenceDiagnostic, EvidenceSource
 from fastapi.testclient import TestClient
-from ppap_api import create_app
-from ppap_core.audits import RoundInput, findings_from_engine_results
-from ppap_core.contracts import AuditEvidence, AuditResultItem, EvidenceDiagnostic, EvidenceSource
-from ppap_core.feishu import UserTokens
-from ppap_core.feishu_writeback import FeishuWritebackError, comment_text, history_text, report_blocks, structured_blocks, writeback_state
-from ppap_core.fixtures import RULE_A
-from ppap_core.identity import SESSION_COOKIE
-from ppap_core.settings import Settings
-from ppap_core.writeback_targets import normalize_external_ref, public_target
-from ppap_worker import process_claimed
+from product.feishu import UserTokens
+from product.feishu_writeback import FeishuWritebackError, comment_text, history_text, report_blocks, structured_blocks, writeback_state
+from product.fixtures import RULE_A
+from product.identity import SESSION_COOKIE
+from product.settings import Settings
+from product.writeback_targets import normalize_external_ref, public_target
+from worker import process_claimed
 
 
 def _clean_env(**extra: str):
