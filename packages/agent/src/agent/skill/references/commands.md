@@ -20,9 +20,6 @@ view 输出 JSONL。第一行为来源、请求范围、当前 offset、total_re
 ## 正式求值
 
 ```sh
-python -m audit.audit_tools evaluate execution.json --out evaluation.json
-python -m audit.audit_tools view evaluation.json --offset 0 --limit 8
-python -m audit.audit_tools view evaluation.json --need <question-id>
 ```
 
 默认从工作目录读取 documents.json、plans.json、targets.json，可用同名参数指定路径。输出完整 report、observations 和 needs。标准输出只含数量及至多 8 个问题 ID；view 显示必要局部上下文。answers 只回答这些 ID，改绑定或版本后须重算。缺回答是未知，协议错误不是零差异。
@@ -34,7 +31,7 @@ python -m audit.document_tools bind documents.json --binding binding.json --out 
 python -m audit.document_tools query --table records=scratch/bound.json --queries queries.json --out scratch/results.json
 ```
 
-Binding 的唯一 schema 见 [执行证书](execution-trace.md)。bind 保留完整物理范围、父子表头路径、原始值、字段状态和 typed citation；排除行与未知行角色属于 use.scopes，不在 Binding 中。
+bind 的结果只作为读取观察。bind 保留完整物理范围、父子表头路径、原始值、字段状态和 typed citation；排除行与未知行角色属于 use.scopes，不在 Binding 中。
 
 SQL 表包含 row_id、原字段、states_json、evidence_json、scope_state。引用含中文、空格或引号的列时使用 SQL 双引号。SQLite 类型转换、NULL、INNER JOIN 和空集聚合不能替代审核的类型、完整源集合或未知合同。错误、过滤后的零行和未物化的查询都不是完成证据。辅助结果不改变缓存程序，也不成为第二份报告。
 

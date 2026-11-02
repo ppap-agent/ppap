@@ -391,6 +391,12 @@ class PdfBlockLocator(TypedDict):
     block: int
 
 
+class PdfPageLocator(TypedDict):
+    kind: Literal["pdf_page"]
+    page: int
+    region: NotRequired[list[int | float | None]]
+
+
 class PdfCellLocator(TypedDict):
     __pydantic_config__ = ConfigDict(extra="forbid")  # type: ignore[misc]
 
@@ -412,7 +418,7 @@ class DocxCellLocator(TypedDict):
     column: int
 
 
-SemanticLocator = XlsxCellLocator | XlsxRangeLocator | PdfBlockLocator | PdfCellLocator | DocxParagraphLocator | DocxCellLocator
+SemanticLocator = XlsxCellLocator | XlsxRangeLocator | PdfBlockLocator | PdfPageLocator | PdfCellLocator | DocxParagraphLocator | DocxCellLocator
 
 
 class SemanticSource(TypedDict):
@@ -429,14 +435,25 @@ class SemanticScope(TypedDict):
     unknown: int
 
 
+class SemanticDiagnostic(TypedDict):
+    code: str
+    stage: Literal["conversion", "structure", "visual", "evaluation"]
+    severity: Literal["info", "warning", "error"]
+    message: str
+
+
 class SemanticEvidence(TypedDict):
     rule_version_id: str
     clause_id: str
     rule_text: str
-    scope: SemanticScope
     sources: list[SemanticSource]
+    scope: NotRequired[SemanticScope]
     diagnostic: NotRequired[str]
     rule_source_file_version_id: NotRequired[str]
+    verification_scope: NotRequired[str]
+    binding: NotRequired[str]
+    evidence_incomplete: NotRequired[bool]
+    diagnostics: NotRequired[list[SemanticDiagnostic]]
 
 
 class EvidenceSource(TypedDict):
@@ -492,6 +509,7 @@ class RuleCoverageItem(TypedDict):
     rule_version_id: NotRequired[str]
     rule_item_id: NotRequired[str]
     proof_kind: NotRequired[Literal["query", "semantic"]]
+    verification_scope: NotRequired[str]
     category: NotRequired[str]
     priority: NotRequired[str | None]
     reason: NotRequired[str]
@@ -506,6 +524,7 @@ class Coverage(TypedDict, total=False):
     locator_gap: bool
     rule_items: NotRequired[list[RuleCoverageItem]]
     verification: NotRequired[dict[str, str | int] | None]
+    clarifications: NotRequired[list[dict[str, Any]]]
 
 
 class RoundProgress(TypedDict):
@@ -768,6 +787,7 @@ class AuditClauseEvaluation(TypedDict):
     scope: SemanticScope | None
     scope_notice: str | None
     evidence: list[AuditEvidenceReference]
+    verification_scope: NotRequired[str | None]
     review_item_key: NotRequired[str]
     review: NotRequired[Review | None]
 

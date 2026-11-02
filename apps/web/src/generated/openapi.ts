@@ -1821,6 +1821,8 @@ export interface components {
             scope: components["schemas"]["SemanticScope"] | null;
             /** Scope Notice */
             scope_notice: string | null;
+            /** Verification Scope */
+            verification_scope?: string | null;
         };
         /**
          * AuditCompletionEstimate
@@ -1863,7 +1865,7 @@ export interface components {
             /** Location Gap */
             location_gap: string | null;
             /** Locator */
-            locator: components["schemas"]["XlsxCellLocator"] | components["schemas"]["XlsxRangeLocator"] | components["schemas"]["PdfBlockLocator"] | components["schemas"]["PdfCellLocator"] | components["schemas"]["DocxParagraphLocator"] | components["schemas"]["DocxCellLocator"] | null;
+            locator: components["schemas"]["XlsxCellLocator"] | components["schemas"]["XlsxRangeLocator"] | components["schemas"]["PdfBlockLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["PdfCellLocator"] | components["schemas"]["DocxParagraphLocator"] | components["schemas"]["DocxCellLocator"] | null;
             /**
              * Rendition
              * @enum {string}
@@ -2861,6 +2863,10 @@ export interface components {
         Coverage: {
             /** Checked */
             checked?: string[];
+            /** Clarifications */
+            clarifications?: {
+                [key: string]: unknown;
+            }[];
             /** Locator Gap */
             locator_gap?: boolean;
             /** Rule Items */
@@ -3280,6 +3286,18 @@ export interface components {
             /** Row */
             row: number;
         };
+        /** PdfPageLocator */
+        PdfPageLocator: {
+            /**
+             * Kind
+             * @constant
+             */
+            kind: "pdf_page";
+            /** Page */
+            page: number;
+            /** Region */
+            region?: (number | null)[];
+        };
         /** PresenceRuleBody */
         PresenceRuleBody: {
             /**
@@ -3677,6 +3695,8 @@ export interface components {
              * @enum {string}
              */
             status?: "PASS" | "NG" | "ERR" | "UNABLE" | "NA";
+            /** Verification Scope */
+            verification_scope?: string;
         };
         /** RuleDetail */
         RuleDetail: {
@@ -3795,21 +3815,46 @@ export interface components {
             /** Types */
             types: string[];
         };
+        /** SemanticDiagnostic */
+        SemanticDiagnostic: {
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "info" | "warning" | "error";
+            /**
+             * Stage
+             * @enum {string}
+             */
+            stage: "conversion" | "structure" | "visual" | "evaluation";
+        };
         /** SemanticEvidence */
         SemanticEvidence: {
+            /** Binding */
+            binding?: string;
             /** Clause Id */
             clause_id: string;
             /** Diagnostic */
             diagnostic?: string;
+            /** Diagnostics */
+            diagnostics?: components["schemas"]["SemanticDiagnostic"][];
+            /** Evidence Incomplete */
+            evidence_incomplete?: boolean;
             /** Rule Source File Version Id */
             rule_source_file_version_id?: string;
             /** Rule Text */
             rule_text: string;
             /** Rule Version Id */
             rule_version_id: string;
-            scope: components["schemas"]["SemanticScope"];
+            scope?: components["schemas"]["SemanticScope"];
             /** Sources */
             sources: components["schemas"]["SemanticSource"][];
+            /** Verification Scope */
+            verification_scope?: string;
         };
         /** SemanticScope */
         SemanticScope: {
@@ -3829,7 +3874,7 @@ export interface components {
             /** Filename */
             filename: string;
             /** Locator */
-            locator: components["schemas"]["XlsxCellLocator"] | components["schemas"]["XlsxRangeLocator"] | components["schemas"]["PdfBlockLocator"] | components["schemas"]["PdfCellLocator"] | components["schemas"]["DocxParagraphLocator"] | components["schemas"]["DocxCellLocator"];
+            locator: components["schemas"]["XlsxCellLocator"] | components["schemas"]["XlsxRangeLocator"] | components["schemas"]["PdfBlockLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["PdfCellLocator"] | components["schemas"]["DocxParagraphLocator"] | components["schemas"]["DocxCellLocator"];
             /**
              * Role
              * @enum {string}

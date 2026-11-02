@@ -30,6 +30,12 @@ def _clause_result(round: dict, version_id: str, clause_id: str) -> tuple[dict |
             continue
         if locator.get("file_version_id") == version_id and str(locator.get("rule_item_id")) == clause_id or finding.get("item_key") in keys:
             findings.append(finding)
+    if len(coverage) == 1 and coverage[0].get("item_key"):
+        paired = [item for item in findings if item.get("item_key") == coverage[0]["item_key"]]
+        if len(paired) == 1:
+            return coverage[0], paired[0], None
+        if len(paired) > 1:
+            return None, None, "本条要求对应多个机器结果，需核对原始审核记录。"
     if len(coverage) > 1 or len(findings) > 1:
         return None, None, "本条要求对应多个机器结果，需核对原始审核记录。"
     return coverage[0] if coverage else None, findings[0] if findings else None, None
@@ -53,23 +59,9 @@ def _legacy_evidence(finding: dict | None, version_id: str) -> list[dict]:
 
 
 def _typed_locator(locator: object) -> dict | None:
-    if not isinstance(locator, dict):
-        return None
-    schemas: dict[str, dict[str, type]] = {
-        "xlsx_cell": {"sheet": str, "cell": str},
-        "xlsx_range": {"sheet": str, "start": str, "end": str},
-        "pdf_block": {"page": int, "block": int},
-        "pdf_cell": {"page": int, "row": int, "column": int},
-        "docx_paragraph": {"paragraph": int},
-        "docx_cell": {"table": int, "row": int, "column": int},
-    }
-    kind = locator.get("kind")
-    fields = schemas.get(kind) if isinstance(kind, str) else None
-    if not fields or any(type(locator.get(key)) is not expected or expected is str and not locator[key].strip() or expected is int and locator[key] < 0 for key, expected in fields.items()):
-        return None
-    if kind == "pdf_cell" and (set(locator) != {"kind", *fields} or any(locator[key] < 1 for key in fields)):
-        return None
-    return {"kind": locator["kind"], **{key: locator[key] for key in fields}}
+    from audit.models import public_locator
+
+    return public_locator(locator)
 
 
 def _evidence(round: dict, finding: dict | None, version_id: str, rule_id: str, clause_id: str) -> tuple[list[dict], dict | None, str | None]:
@@ -108,38 +100,7 @@ def _evidence(round: dict, finding: dict | None, version_id: str, rule_id: str, 
 
 
 def _verified(round: dict, coverage: dict | None, finding: dict | None, rule_id: str, rule: dict, evidence: list[dict], scope: dict | None, notice: str | None) -> bool:
-    validation = (round.get("coverage") or {}).get("verification")
-    if not isinstance(validation, dict) or not coverage or not finding or not scope or notice or not evidence:
-        return False
-    locator = finding.get("locator") or {}
-    semantic = locator.get("semantic") or {}
-    return (
-        round.get("analysis_mode") == "deep"
-        and round.get("executor") == "ppap-deep"
-        and validation.get("method") == "host_source_trace_v1"
-        and validation.get("round_id") == round["id"]
-        and bool(round.get("result_job_id"))
-        and validation.get("job_id") == round["result_job_id"]
-        and type(validation.get("attempt")) is int
-        and validation["attempt"] == round["result_attempt"]
-        and isinstance(round.get("executor_revision"), str)
-        and bool(round["executor_revision"])
-        and validation.get("executor_revision") == round["executor_revision"]
-        and isinstance(validation.get("semantic_engine_revision"), str)
-        and re.fullmatch(r"[a-f0-9]{64}", validation["semantic_engine_revision"]) is not None
-        and coverage.get("coverage") == "executed"
-        and coverage.get("rule_version_id") == rule_id
-        and locator.get("file_version_id") == coverage.get("file_version_id")
-        and str(locator.get("rule_item_id")) == str(rule["id"])
-        and str(coverage.get("rule_item_id")) == str(rule["id"])
-        and coverage.get("item_key") == finding["item_key"] == f"{coverage.get('file_version_id')}:rule:{rule['id']}"
-        and coverage.get("status") == finding["status"]
-        and coverage.get("rule_to_check") == rule["rule_to_check"] == finding.get("item") == semantic.get("rule_text")
-        and coverage.get("proof_kind") in {"query", "semantic"}
-        and all(source["locator"] is not None for source in evidence)
-        and (finding["status"] != "PASS" or scope["total"] > 0 and scope["checked"] == scope["total"] and scope["unknown"] == 0)
-    )
-
+    return False
 
 def _check(round: dict, version_id: str, rule_id: str, rule: dict, file_failed: bool = False) -> dict:
     finished = round["execution"] == "completed"
@@ -149,7 +110,33 @@ def _check(round: dict, version_id: str, rule_id: str, rule: dict, file_failed: 
         finding["item_key"] = rule["id"]
     evidence, scope, evidence_notice = _evidence(round, finding, version_id, rule_id, str(rule["id"]))
     verified = _verified(round, coverage, original, rule_id, rule, evidence, scope, notice or evidence_notice)
+    semantic = ((finding or {}).get("locator") or {}).get("semantic") if isinstance(finding, dict) else None
+    verification_scope = (coverage or {}).get("verification_scope") if isinstance(coverage, dict) else None
+    if not isinstance(verification_scope, str) and isinstance(semantic, dict) and isinstance(semantic.get("verification_scope"), str):
+        verification_scope = semantic["verification_scope"]
     scope_gap = f"检查范围说明：已检查 {scope['checked']}/{scope['total']}，未知 {scope['unknown']}。" if scope and (scope["unknown"] or scope["checked"] < scope["total"]) else None
+    checker_notice = "这是固定程序的执行结果，不是 trace 证明。" if verification_scope == "checker_execution" else None
+    performed = semantic.get("checks_performed") if isinstance(semantic, dict) else None
+    if checker_notice and type(performed) is int and performed >= 0:
+        checker_notice = f"{checker_notice}已执行 {performed} 次断言。"
+    diagnostics = semantic.get("diagnostics") if isinstance(semantic, dict) else None
+    if checker_notice and isinstance(diagnostics, list):
+        parts: list[str] = []
+        for item in diagnostics:
+            if not isinstance(item, dict):
+                continue
+            code = str(item.get("code") or "").strip()
+            message = str(item.get("message") or "").strip()
+            if code and message:
+                parts.append(f"{code}：{message}")
+            elif code or message:
+                parts.append(code or message)
+        if parts:
+            checker_notice = f"{checker_notice}诊断：{'；'.join(parts)}。"
+    basis = semantic.get("empty_scope_basis") if isinstance(semantic, dict) else None
+    suggestions = str((finding or {}).get("suggestions") or "") if isinstance(finding, dict) else ""
+    if checker_notice and isinstance(basis, str) and basis and basis not in checker_notice and basis not in suggestions:
+        checker_notice = f"{checker_notice}空范围依据：{basis}。"
     return {
         "rule_item": rule,
         "execution": "failed"
@@ -160,16 +147,29 @@ def _check(round: dict, version_id: str, rule_id: str, rule: dict, file_failed: 
         "coverage": "executed" if finding else (coverage or {}).get("coverage", "unsupported") if finished else "mapped",
         "finding": finding,
         "evidence_verified": verified,
+        "verification_scope": verification_scope if isinstance(verification_scope, str) else None,
         "scope": scope,
-        "scope_notice": notice or evidence_notice or scope_gap or ("请核对原件中的证据和检查范围。" if finding and not verified else None) or ((coverage or {}).get("reason") if not finding else None),
+        "scope_notice": _join_notices(notice, evidence_notice, scope_gap, checker_notice)
+        or ("请核对原件中的证据和检查范围。" if finding and not verified else None)
+        or ((coverage or {}).get("reason") if not finding else None),
         "evidence": evidence,
         **({"review_item_key": original["item_key"] if original else f"coverage:{version_id}:{rule['id']}"} if original or coverage and coverage.get("coverage") != "executed" else {}),
         "review": deepcopy((original or coverage or {}).get("review")),
     }
 
 
+def _join_notices(*items: object) -> str | None:
+    """Keep every distinct notice. A location gap must not hide checker diagnostics."""
+    notices: list[str] = []
+    for item in items:
+        if not isinstance(item, str) or not item or item in notices:
+            continue
+        notices.append(item)
+    return "".join(notices) if notices else None
+
+
 def _counts(checks: list[dict]) -> dict:
-    counts = {"pass_count": 0, "ng_count": 0, "unknown_count": 0, "not_covered_count": 0, "error_count": 0}
+    counts = {"pass_count": 0, "ng_count": 0, "na_count": 0, "unknown_count": 0, "not_covered_count": 0, "error_count": 0}
     for check in checks:
         if check["execution"] in {"queued", "running"}:
             continue
@@ -178,9 +178,10 @@ def _counts(checks: list[dict]) -> dict:
             counts["error_count"] += 1
         elif check["coverage"] != "executed":
             counts["not_covered_count"] += 1
-        elif finding and finding["status"] in {"PASS", "NG", "NA"}:
-            if finding["status"] != "NA":
-                counts["pass_count" if finding["status"] == "PASS" else "ng_count"] += 1
+        elif finding and finding["status"] == "NA":
+            counts["na_count"] += 1
+        elif finding and finding["status"] in {"PASS", "NG"}:
+            counts["pass_count" if finding["status"] == "PASS" else "ng_count"] += 1
         else:
             counts["unknown_count"] += 1
     return counts
@@ -221,7 +222,7 @@ def file_round_audit(round: dict, frozen: dict) -> dict:
     file_has_error = finished and (file_failed or any(check["execution"] == "failed" for check in checks) or any(finding["status"] == "ERR" for finding in unmapped))
     counts = _counts(checks)
     complete = report_eligible(checks, file_has_error, unmapped)
-    conclusion = ("NG" if counts["ng_count"] else "PASS" if complete else "UNKNOWN") if finished else None
+    conclusion = ("NG" if counts["ng_count"] else "PASS" if complete and counts["pass_count"] else "UNKNOWN") if finished else None
     summary: dict | None = None
     if complete:
         not_applicable = sum(check["finding"]["status"] == "NA" for check in checks)

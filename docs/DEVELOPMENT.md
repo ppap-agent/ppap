@@ -207,7 +207,7 @@ V3.1 的 `/audit` 与 `/__audit-native` 共用 `audit.html → src/audit/native-
 
 P5 与历史阅读器的“记录人工复核”复用 `PUT /rounds/{id}/reviews`，保存原始记录键、已读版本、判断、理由、建议及本轮冻结引用。响应丢失先读回；未知请求在当前页面内跨弹窗／文件切换保留，只允许核对后显式重试相同内容。版本冲突需明确采用服务器版本再编辑；刷新后以服务器记录为准，不承诺恢复未提交输入。保存成功使旧任务读取失效，再读取当前 Task／Round；人工记录不改写机器结果或报告资格。
 
-Deep 已通过主机来源／trace 校验的新结果以 `host_source_trace_v1` 随 coverage 保存；共享文件投影核对 Round、job、attempt、executor revision、规则正文与条款结果关联后，才显示已验证依据。旧结果、Standard 位置文字、人工判断和不匹配的验证记录不被提升为已验证证据。按 #163 最新 D1，证据标记不决定 PASS/NG：实际检查器结果仍照实展示，定位和范围缺口单独提示。Schema 测试用实际 XLSX 解析和受控 query proof 经过既有完成事务验证读回，不调用模型、不证明客户审核质量。
+Deep checker 结果不写入 `host_source_trace_v1`。共享文件投影的 `evidence_verified` 为 false。按 #163 最新 D1，证据标记不决定 PASS/NG：实际检查器结果仍照实展示，定位和范围缺口单独提示。
 
 新 Task 的完整审核结果自动进入现有 `report_pdf` 队列，Worker 用 PyMuPDF 生成带中文与冻结来源位置的逐文件 PDF，再以当前 attempt 发布对象元信息。P5 与 PDF 共用实际条款结果的计数总结；可选证据缺失只作信息提示，不改变 PASS/NG，不另调用模型生成结论或编造整改建议。下载文件名按 Unicode 字符限制为 255 字符，缩短来源名称时保留 `-审核报告.pdf` 后缀；名称不是报告身份。`/__audit-native` 的现有 P6 通过完整 Task/Round/FileVersion/result-attempt/report/artifact 引用下载；仍按当前 Task 与原件权限鉴权，不代表组织报告分享政策已获批。明确关闭业务计费的环境允许创建人显式恢复失败 PDF：复用同一报告与冻结输入，以新生成 attempt 发布；回执丢失只读取原请求，不重审、不重开已完成 Task。计费启用时拒绝新的恢复请求，已受理回执仍可读，不据此确定 D4 收费政策。飞书及独立档案仍未接通；不把旧整轮飞书报告当成此 PDF。`FileAuditReports.tla` 是三份输入、两次生成尝试的有限 Safety 模型，五个故障配置分别检查迟到发布、输入错绑、不符合报告资格的输入、过早完成与恢复重开任务；不保证请求回执、对象存储响应、最终完成或自动清理。
 
@@ -277,6 +277,6 @@ V3.1 原有“联系我们”浮层通过已登录的 `GET /support` 读取服�
 
 ### Deep 本机反馈验收
 
-`uv run --no-sync pytest tests/integration/product/test_deep_feedback.py tests/integration/product/test_deep_feedback_contract.py tests/integration/product/test_mcp_deep_feedback.py --local-postgres -q` 使用真实本地 PG、生产迁移、API、Worker、guest 和 parser/evaluator。`uv run --no-sync pytest tests/e2e/test_deep_feedback.py --local-postgres -q` 再启动实际 Web/API 及浏览器。MCP 用独立客户端连接真实回环 HTTP，并覆盖重新建立 API、存储连接和客户端后的读回。共享系统 fixture 由根 `tests/conftest.py` 的 pytest 生命周期提供，owner 测试保留自身的受控模型输入。仅外部模型、身份供应商、浏览器身份 SDK 和 S3 边界使用明确测试输入。
+`uv run --no-sync pytest tests/integration/product/test_deep_feedback_contract.py --local-postgres -q` 使用真实本地 PG、生产迁移和 API，检查规则变更操作回执。它不执行 RulePlan，也不代替 checker 审核。
 
 `--local-postgres` 创建并清理本次独占的临时 cluster，不接入默认或共享开发数据库。默认寻找 PATH 上的 postgres，macOS 备用为 Homebrew postgresql@17；可用 PPAP_TEST_PG_BIN 指定包含 postgres/initdb/pg_ctl/psql 的完整 server 目录。libpq 只有客户端工具，不足以创建 cluster。无需 Docker；依赖缺失会失败，不以 skip 验收。

@@ -4,22 +4,25 @@ from __future__ import annotations
 
 
 def discover_declared_rules(agent_cls: type[object]) -> tuple[tuple[str, str], ...]:
-    """Return rule method names and descriptions in numeric rule order."""
-    methods: list[tuple[int, str, str]] = []
+    """Return decorated checks. Numbered rule methods keep their existing order."""
+    numbered: list[tuple[int, str, str]] = []
+    named: list[tuple[str, str]] = []
     for name in dir(agent_cls):
-        if not name.startswith("rule_"):
-            continue
-        method = getattr(agent_cls, name)
+        method = getattr(agent_cls, name, None)
         description = getattr(method, "__rule_description__", None)
         if description is None:
             continue
-        try:
-            rule_no = int(name.split("_")[1])
-        except ValueError:
-            continue
-        methods.append((rule_no, name, str(description)))
-    methods.sort(key=lambda item: item[0])
-    return tuple((name, description) for _number, name, description in methods)
+        text = str(description)
+        if name.startswith("rule_"):
+            try:
+                numbered.append((int(name.split("_")[1]), name, text))
+                continue
+            except ValueError:
+                pass
+        named.append((name, text))
+    numbered.sort(key=lambda item: item[0])
+    named.sort(key=lambda item: item[0])
+    return tuple((name, description) for _number, name, description in numbered) + tuple(named)
 
 
 def _agent_for_target(doc_type: str, filename: str, rule_profile: str) -> type[object] | None:

@@ -525,15 +525,17 @@ def find_section_group_markers(
     *,
     scan_columns: tuple[int, ...],
     marker_map: Mapping[str, tuple[str, ...]],
+    conflicts: list[tuple[int, str, tuple[str, ...]]] | None = None,
 ) -> tuple[tuple[int, str], ...]:
     normalized_map = {canonical_value: _normalize_compact_aliases(aliases) for canonical_value, aliases in marker_map.items()}
     markers: list[tuple[int, str]] = []
 
-    def _resolve_marker_value(cell_text: str) -> str | None:
+    def _resolve_marker_value(cell_text: str) -> tuple[str | None, tuple[str, ...]]:
         best_value: str | None = None
         best_rank = 0
         best_alias_len = 0
         ambiguous = False
+        tied: list[str] = []
         for canonical_value, aliases in normalized_map.items():
             value_rank = 0
             value_alias_len = 0
@@ -551,12 +553,17 @@ def find_section_group_markers(
                 best_value = canonical_value
                 best_rank = value_rank
                 best_alias_len = value_alias_len
+                tied = [canonical_value]
                 ambiguous = False
             elif (value_rank, value_alias_len) == (best_rank, best_alias_len):
                 ambiguous = True
+                if best_value and best_value not in tied:
+                    tied.append(best_value)
+                if canonical_value not in tied:
+                    tied.append(canonical_value)
         if ambiguous:
-            return None
-        return best_value
+            return None, tuple(tied)
+        return best_value, ()
 
     for row in range(1, ws.max_row + 1):
         matched_value: str | None = None
@@ -564,7 +571,9 @@ def find_section_group_markers(
             text = _read_compact_cell_text(ops, ws, row, col)
             if not text:
                 continue
-            matched_value = _resolve_marker_value(text)
+            matched_value, tied = _resolve_marker_value(text)
+            if tied and conflicts is not None:
+                conflicts.append((row, text, tied))
             if matched_value is not None:
                 break
         if matched_value is not None:

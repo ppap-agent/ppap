@@ -52,6 +52,7 @@ class AuditResult(BaseModel):
     status: str
     suggestions: str
     evidence: Optional[AuditEvidence] = None
+    checks_performed: Optional[int] = None
 
 
 def _load_file_bytes(file_url: str) -> tuple[bytes, str]:
@@ -78,11 +79,15 @@ class _AppAuditRuntime(AuditRuntime):
         file_ref: FileRef,
         *,
         enable_cache: bool = True,
+        spec: Any = None,
+        doc_type: object | None = None,
     ) -> Any:
-        return convert_pdf_to_excel_auto(
-            file_ref,
-            enable_cache=enable_cache,
-        )
+        extra: dict[str, Any] = {}
+        if spec is not None:
+            extra["spec"] = spec
+        if doc_type is not None:
+            extra["doc_type"] = doc_type
+        return convert_pdf_to_excel_auto(file_ref, enable_cache=enable_cache, **extra)
 
     def render_pdf_images(self, file_url: str, *, render_all_pages: bool = True) -> list[str]:
         file_content, file_type = _load_file_bytes(file_url)

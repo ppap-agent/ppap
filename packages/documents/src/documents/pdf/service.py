@@ -438,4 +438,13 @@ def _build_diagnostics(page_count: int, groups: list[GroupExtraction]) -> dict[s
         "strategy_modes": [group.strategy.value for group in groups],
         "group_errors": [group.error_message for group in groups if group.error_message],
         "group_diagnostics": [diag for group in groups for diag in group.group_diagnostics],
+        "original_pages": [
+            {
+                "page": page.page_index + 1,
+                "success": page.success,
+                "region": None if page.table_region is None else [None if value is None else round(float(value), 2) for value in page.table_region],
+                "error": page.error_message,
+            }
+            for page in page_results
+        ],
     }

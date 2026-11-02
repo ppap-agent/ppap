@@ -11,6 +11,16 @@ from .contracts import Decision, RuleResource, SheetModel
 from .excel_ops import DefaultExcelOps
 
 DEFAULT_NG_COLLECTION_TOPN = 5
+MAX_CELL_READS = 32
+
+
+def _column_name(column: int) -> str:
+    letters = ""
+    number = column
+    while number > 0:
+        number, remainder = divmod(number - 1, 26)
+        letters = chr(65 + remainder) + letters
+    return letters or "A"
 
 
 class GuardStop(Exception):
@@ -97,6 +107,8 @@ class RuleContext:
         workbook: Any,
         resource: RuleResource,
         source_path: str | None = None,
+        *,
+        file_version_id: str = "",
     ) -> None:
         self._ops = DefaultExcelOps() if ops is None else ops
         self._workbook = workbook
@@ -112,6 +124,26 @@ class RuleContext:
         self._collect_ng_topn = DEFAULT_NG_COLLECTION_TOPN
         self._collected_ng_messages: list[str] = []
         self._collected_ng_seen: set[str] = set()
+        self._execution_count = 0
+        self._quantifier: str | None = None
+        self._scope_marked_complete = False
+        self._scans_finished = 0
+        self._scans_partial = 0
+        self._scan_counts: list[tuple[int, bool]] = []
+        self._witness = False
+        self._unresolved: list[str] = []
+        self._unresolved_seen: set[str] = set()
+        self._cells: list[tuple[str, str, int, int]] = []
+        self._cell_index: set[tuple[str, str, int, int]] = set()
+        self._cell_excerpts: dict[tuple[str, str, int, int], str] = {}
+        self._cells_truncated = False
+        self._questions: list[dict[str, Any]] = []
+        self._empty_scope: tuple[str, str] | None = None
+        self._build_notes: list[tuple[str, str, str]] = []
+        self._build_seen: set[tuple[str, str, str]] = set()
+        self._file_version_id = str(file_version_id or "").strip()
+        self._workbook_versions: dict[int, str] = {}
+        self._version_workbooks: dict[str, Any] = {}
 
     @property
     def resource(self) -> RuleResource:
@@ -141,11 +173,265 @@ class RuleContext:
     def collected_ng_messages(self) -> list[str]:
         return list(self._collected_ng_messages)
 
+    @property
+    def execution_count(self) -> int:
+        return self._execution_count
+
+    def record_execution(self) -> None:
+        self._execution_count += 1
+
+    def bind_workbook(self, workbook: Any, file_version_id: str) -> None:
+        """Attribute later Fluent reads of this workbook to one file version."""
+        version = str(file_version_id or "").strip()
+        if not version or workbook is None:
+            return
+        self._workbook_versions[id(workbook)] = version
+        self._version_workbooks[version] = workbook
+
+    def version_for_worksheet(self, worksheet: Any) -> str:
+        workbook = getattr(worksheet, "parent", None)
+        if workbook is not None and id(workbook) in self._workbook_versions:
+            return self._workbook_versions[id(workbook)]
+        if workbook is self._workbook:
+            return self._file_version_id
+        return ""
+
+    def note_cell(self, sheet: str, row: int, column: int, *, file_version_id: str = "", excerpt: str | None = None) -> None:
+        """Remember one cell that exists on a bound workbook. The caller cannot supply the excerpt."""
+        del excerpt
+        title = str(sheet or "").strip()
+        version = str(file_version_id or "").strip() or self._file_version_id
+        if not title or type(row) is not int or type(column) is not int or row < 1 or column < 1 or not version:
+            return
+        workbook = self._version_workbooks.get(version)
+        if workbook is None:
+            return
+        try:
+            worksheet = workbook[title]
+        except Exception:
+            return
+        if row > int(getattr(worksheet, "max_row", 0) or 0) or column > int(getattr(worksheet, "max_column", 0) or 0):
+            return
+        merged = self._ops.get_detailed_merge_info(worksheet, row, column)
+        source = worksheet.cell(row=merged.min_row, column=merged.min_col) if merged else worksheet.cell(row=row, column=column)
+        if getattr(source, "data_type", None) == "e":
+            self.note_unresolved("单元格内容无法读取，不能当成已知值")
+            stored = ""
+        else:
+            value = getattr(source, "value", None)
+            stored = "" if value is None else str(value).replace("\n", " ").replace("\r", " ").strip()[:500]
+        key = (version, title, row, column)
+        if key in self._cell_index:
+            return
+        version_count = sum(1 for item in self._cells if item[0] == version)
+        if version_count >= MAX_CELL_READS:
+            for index, item in enumerate(self._cells):
+                if item[0] != version:
+                    continue
+                dropped = self._cells.pop(index)
+                self._cell_index.discard(dropped)
+                self._cell_excerpts.pop(dropped, None)
+                self._cells_truncated = True
+                break
+        self._cell_index.add(key)
+        self._cells.append(key)
+        self._cell_excerpts[key] = stored
+
+    def cell_excerpt(self, version: str, sheet: str, row: int, column: int) -> str:
+        return self._cell_excerpts.get((version, sheet, row, column), "")
+
+    def cell_reads(self) -> tuple[tuple[str, str, int, int], ...]:
+        return tuple(self._cells)
+
+    def cell_reads_truncated(self) -> bool:
+        return self._cells_truncated
+
+    def require_all(self) -> None:
+        """PASS needs the whole required range and every necessary judgment."""
+        self._quantifier = "all"
+
+    def require_one(self) -> None:
+        """One valid witness can PASS. That is not a full scan."""
+        self._quantifier = "one"
+
+    @property
+    def quantifier(self) -> str | None:
+        return self._quantifier
+
+    def mark_scope_complete(self) -> None:
+        self._scope_marked_complete = True
+        self.record_execution()
+
+    def note_scan_finished(self, finished: bool) -> None:
+        if finished:
+            self._scans_finished += 1
+            return
+        self._scans_partial += 1
+        self.note_unresolved("扫描未完成，未扫描部分不能当成已检查")
+
+    def note_scan(self, *, yielded: int, finished: bool) -> None:
+        """Record one row scan. A finished scan of no rows is an empty range."""
+        self._scan_counts.append((yielded, finished))
+        self.note_scan_finished(finished)
+
+    def finished_scans_yielded_nothing(self) -> bool:
+        if not self._scan_counts or any(not finished for _yielded, finished in self._scan_counts):
+            return False
+        return all(yielded == 0 for yielded, _finished in self._scan_counts)
+
+    def has_scanned_row(self) -> bool:
+        """A yielded row means the range was not empty, even without an assertion."""
+        return any(yielded > 0 for yielded, _finished in self._scan_counts)
+
+    def finished_scan_scope(self) -> dict[str, int] | None:
+        """Rows from one finished scan. Another scan may overlap, so the counts cannot be added."""
+        if len(self._scan_counts) != 1 or not self._scan_counts[0][1]:
+            return None
+        total = self._scan_counts[0][0]
+        return {"total": total, "checked": total, "unknown": 0}
+
+    def empty_range_confirmed(self) -> bool:
+        """No yielded row and no unfinished scan. No scan at all is still an explicit empty declaration."""
+        return not self.has_scanned_row() and all(finished for _yielded, finished in self._scan_counts)
+
+    def scope_is_complete(self) -> bool:
+        if self._scans_partial:
+            return False
+        if self._scope_marked_complete:
+            return True
+        return self._scans_finished > 0
+
+    def has_partial_scan(self) -> bool:
+        return self._scans_partial > 0
+
+    def mark_witness(self) -> None:
+        self._witness = True
+        self.record_execution()
+
+    def has_witness(self) -> bool:
+        return self._witness
+
+    def note_unresolved(self, message: str) -> None:
+        text = str(message or "").strip()
+        if not text or text in self._unresolved_seen:
+            return
+        self._unresolved_seen.add(text)
+        self._unresolved.append(text)
+
+    def has_unresolved(self) -> bool:
+        return bool(self._unresolved)
+
+    def unresolved_summary(self) -> str:
+        if not self._unresolved:
+            return ""
+        total = len(self._unresolved)
+        topn = self._collect_ng_topn if self._collect_ng_topn > 0 else DEFAULT_NG_COLLECTION_TOPN
+        shown = "；".join(self._unresolved[:topn])
+        text = f"未解问题：{shown}"
+        if total > topn:
+            text += f"（其余{total - topn}条省略）"
+        return text
+
+    def questions(self) -> tuple[dict[str, Any], ...]:
+        return tuple(self._questions)
+
+    def read_sources(self) -> list[dict[str, Any]]:
+        """Cells this check has read so far. A question keeps this set when the result is built."""
+        return self._question_sources()
+
+    def record_empty_scope(self, status: str, basis: str) -> None:
+        """Keep an explicit empty-range result. This does not count as an assertion."""
+        normalized = str(status or "").strip().upper()
+        text = str(basis or "").strip()
+        if normalized not in {"PASS", "NA", "UNABLE"} or not text:
+            raise ValueError("空范围需要明确状态和非空依据")
+        self._empty_scope = (normalized, text)
+
+    def empty_scope(self) -> tuple[str, str] | None:
+        return self._empty_scope
+
+    def ask(self, question_id: str, question: str, candidates: tuple[tuple[str, str, str], ...] | list[tuple[str, str, str]]) -> None:
+        """Record one user interpretation. This does not choose an answer or allow PASS."""
+        qid = str(question_id or "").strip()
+        text = str(question or "").strip()
+        if not qid or not text:
+            raise ValueError("问题需要编号和内容")
+        parsed: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            if len(candidate) != 3:
+                raise ValueError("每个候选需要编号、名称和解释")
+            cid, label, explanation = (str(part or "").strip() for part in candidate)
+            if not cid or not label or not explanation or cid in seen:
+                raise ValueError("候选编号、名称和解释都不能为空，且编号不能重复")
+            seen.add(cid)
+            parsed.append({"id": cid, "label": label, "explanation": explanation})
+        if len(parsed) < 2:
+            raise ValueError("待确认解释至少需要两个候选")
+        current = next((item for item in self._questions if item["id"] == qid), None)
+        if current is not None:
+            if current["question"] != text or current["candidates"] != parsed:
+                raise ValueError("同一问题的含义不一致")
+            return
+        self._questions.append({"id": qid, "question": text, "candidates": parsed, "sources": self._question_sources()})
+        self.note_unresolved(text)
+
+    def _question_sources(self) -> list[dict[str, Any]]:
+        sources: list[dict[str, Any]] = []
+        for version, sheet, row, column in self._cells:
+            cell = _column_name(column) + str(row)
+            sources.append(
+                {
+                    "document_id": version or self._file_version_id,
+                    "locator": {"kind": "xlsx_cell", "sheet": sheet, "cell": cell},
+                    "excerpt": self.cell_excerpt(version, sheet, row, column),
+                }
+            )
+        return sources
+
+    def note_build(self, *, kind: str, location: str, basis: str) -> None:
+        """Keep a shared build fact. This is not an assertion and does not change status."""
+        kind_text = str(kind or "").strip()
+        location_text = str(location or "").strip()
+        basis_text = str(basis or "").strip()
+        if kind_text not in {"conflict", "exclusion"} or not location_text or not basis_text:
+            return
+        item = (kind_text, location_text, basis_text)
+        if item in self._build_seen:
+            return
+        self._build_seen.add(item)
+        self._build_notes.append(item)
+
+    def build_notes(self) -> tuple[tuple[str, str, str], ...]:
+        return tuple(self._build_notes)
+
+    def note_search(self, *, found: bool, exhausted: bool, label: str) -> None:
+        """A search miss is not confirmed absence unless the range was exhausted."""
+        self.record_execution()
+        if found or exhausted:
+            return
+        self.note_unresolved(f"{label}搜索未完成，不能确认不存在")
+
     def enable_ng_collection(self, topn: int) -> None:
         self._collect_ng_enabled = True
         self._collect_ng_topn = topn if isinstance(topn, int) and topn > 0 else DEFAULT_NG_COLLECTION_TOPN
         self._collected_ng_messages.clear()
         self._collected_ng_seen.clear()
+        self._execution_count = 0
+        self._quantifier = None
+        self._scope_marked_complete = False
+        self._scans_finished = 0
+        self._scans_partial = 0
+        self._scan_counts.clear()
+        self._witness = False
+        self._unresolved.clear()
+        self._unresolved_seen.clear()
+        self._cells.clear()
+        self._cell_index.clear()
+        self._cell_excerpts.clear()
+        self._cells_truncated = False
+        self._questions.clear()
+        self._empty_scope = None
 
     def record_ng(self, message: str) -> None:
         if not self._collect_ng_enabled:
@@ -371,6 +657,7 @@ class RuleContext:
             scan_columns.append(column.header_col)
 
         marker_map = {value.canonical_value: value.aliases for value in group_spec.values}
+        conflicts: list[tuple[int, str, tuple[str, ...]]] = []
 
         try:
             markers = resolver.find_section_group_markers(
@@ -378,11 +665,20 @@ class RuleContext:
                 section.ws,
                 scan_columns=tuple(scan_columns),
                 marker_map=marker_map,
+                conflicts=conflicts,
             )
         except Exception as exc:
             self._fail(
                 Decision.ERR,
                 f"逻辑分区定位异常[{canonical_name}]: {exc}",
+            )
+
+        for row_number, text, values in conflicts:
+            joined = "、".join(values)
+            self.note_build(
+                kind="conflict",
+                location=f"{section.ws.title}!{row_number}",
+                basis=f"“{text}”同时匹配{joined}，不作为分区标记",
             )
 
         if not markers:

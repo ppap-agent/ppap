@@ -22,6 +22,8 @@ class AuditRuntime(Protocol):
         file_ref: FileRef,
         *,
         enable_cache: bool = True,
+        spec: Any = None,
+        doc_type: object | None = None,
     ) -> ConversionArtifact: ...
 
     def render_pdf_images(self, file_url: str, *, render_all_pages: bool = True) -> list[str]: ...

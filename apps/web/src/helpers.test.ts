@@ -82,6 +82,8 @@ test('sourceLocation formats each semantic locator kind', () => {
   assert.equal(sourceLocation(range), '控制计划!A1:C3')
   assert.equal(sourceLocation(pdf), '第 2 页 · 文本块 4')
   assert.equal(sourceLocation(pdfCell), '第 3 页 · 表格行 12 · 列 4')
+  const pdfPage: SemanticSource = {...file, filename: 'a.pdf', locator: {kind: 'pdf_page', page: 4, region: [null, 10.5, null, 80.25]}, excerpt: 'x'}
+  assert.equal(sourceLocation(pdfPage), '第 4 页 · 区域 未定, 10.5, 未定, 80.25')
   assert.equal(sourceLocation(paragraph), '段落 7')
   assert.equal(sourceLocation(table), '表格 1 · 行 3 · 列 2')
 })

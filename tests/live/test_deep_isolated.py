@@ -170,6 +170,6 @@ class LiveDeepRoundTests(unittest.TestCase):
                 (round_id,),
             ).fetchone()
         self.assertIsNotNone(diagnostic)
-        self.assertEqual(diagnostic[0]["note"], "deep_semantic_audit")
+        self.assertEqual(diagnostic[0]["note"], "deep_checker_audit")
         self.assertGreater(diagnostic[0]["usage"]["input_tokens"], 0)
         self.assertGreater(diagnostic[0]["usage"]["output_tokens"], 0)

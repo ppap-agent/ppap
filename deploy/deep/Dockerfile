@@ -11,15 +11,17 @@ RUN npm ci --ignore-scripts --registry=https://registry.npmjs.org \
 FROM ${PPAP_APP_IMAGE}
 USER root
 RUN apt-get update \
- && apt-get install -y --no-install-recommends util-linux \
+ && apt-get install -y --no-install-recommends bash util-linux \
  && rm -rf /var/lib/apt/lists/* \
- && useradd --uid 10001 --create-home --shell /usr/sbin/nologin audit
+ && useradd --uid 10001 --create-home --shell /bin/bash audit
 COPY --from=grok /grok /usr/local/bin/grok
 COPY packages/audit/src /app/packages/audit/src
 COPY packages/agent/src /app/packages/agent/src
-RUN mkdir -p /opt/agent \
+COPY packages/documents/src/documents/pdf /app/packages/documents/src/documents/pdf
+RUN mkdir -p /opt/agent/documents \
  && ln -s /app/packages/audit/src/audit /opt/agent/semantic \
- && ln -s /app/packages/agent/src/agent/skill /opt/agent/skill
+ && ln -s /app/packages/agent/src/agent/skill /opt/agent/skill \
+ && ln -s /app/packages/documents/src/documents/pdf /opt/agent/documents/pdf
 RUN /usr/local/bin/grok --version \
  && /usr/bin/setpriv --help >/dev/null \
  && /usr/bin/prlimit --help >/dev/null \

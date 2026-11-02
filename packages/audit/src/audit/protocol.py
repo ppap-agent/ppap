@@ -9,8 +9,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 
 from pydantic import AwareDatetime, Field, TypeAdapter, model_validator
 
-from .models import Artifact, AuditReport, Locator, RulePlan
-from .trace import AuditTrace
+from .models import Artifact, Locator
 
 Sha256 = Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
 FileFormat = Literal[".xlsx", ".xlsm", ".xls", ".docx", ".pdf"]
@@ -209,52 +208,11 @@ class RecoveryRecord(Artifact):
     failed_rules: dict[str, CompileFailureRecord] = Field(default_factory=dict, max_length=32)
     snapshot_digests: dict[str, Sha256] = Field(default_factory=dict, max_length=64)
     plan_digests: dict[str, Sha256] = Field(default_factory=dict, max_length=32)
-    trace: AuditTrace | None = None
-    trace_sha256: Sha256 | None = None
-
     @model_validator(mode="after")
-    def exact_usage_and_trace(self) -> RecoveryRecord:
+    def exact_usage(self) -> RecoveryRecord:
         if set(self.usage) != {"input_tokens", "output_tokens", "tool_calls", "completed_tool_calls", "compactions", "model_requests"}:
             raise ValueError("Invalid recovery usage")
-        digest = (
-            hashlib.sha256(json.dumps(self.trace.model_dump(mode="json"), ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
-            if self.trace is not None
-            else None
-        )
-        if digest != self.trace_sha256:
-            raise ValueError("Recovery candidate digest mismatch")
         return self
-
-
-class ResultBundle(Artifact):
-    execution_id: UUID
-    semantic_engine_revision: Sha256
-    documents: dict[str, dict[str, Any]]
-    rule_sources: dict[str, dict[str, Any]]
-    plans: dict[str, RulePlan]
-    failed_rules: dict[str, CompileFailureRecord] = Field(default_factory=dict, max_length=32)
-    report: AuditReport
-    trace: AuditTrace
-    input_tokens: int = Field(default=0, ge=0, strict=True)
-    output_tokens: int = Field(default=0, ge=0, strict=True)
-    model_requests: int = Field(default=0, ge=0, strict=True)
-    tool_calls: int = Field(default=0, ge=0, strict=True)
-    completed_tool_calls: int = Field(default=0, ge=0, strict=True)
-    compactions: int = Field(default=0, ge=0, strict=True)
-
-
-class CompileBundle(Artifact):
-    execution_id: UUID
-    semantic_engine_revision: Sha256
-    rule_sources: dict[str, dict[str, Any]]
-    plans: dict[str, RulePlan]
-    failed_rules: dict[str, CompileFailureRecord] = Field(default_factory=dict, max_length=32)
-    input_tokens: int = Field(default=0, ge=0, strict=True)
-    output_tokens: int = Field(default=0, ge=0, strict=True)
-    model_requests: int = Field(default=0, ge=0, strict=True)
-    tool_calls: int = Field(default=0, ge=0, strict=True)
-    completed_tool_calls: int = Field(default=0, ge=0, strict=True)
-    compactions: int = Field(default=0, ge=0, strict=True)
 
 
 class HealthRequest(Artifact):
@@ -288,6 +246,4 @@ class Response(Artifact):
     code: ErrorCode | None = None
     ready: bool | None = None
     engine_revision: Sha256 | None = None
-    result: ResultBundle | None = None
-    compile_result: CompileBundle | None = None
     snapshot_result: SnapshotBundle | None = None

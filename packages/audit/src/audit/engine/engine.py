@@ -45,11 +45,50 @@ def _execute_agent(
     if runtime is not None:
         setattr(agent, "runtime", runtime)
     try:
+        checks = getattr(agent, "checks", None)
+        if checks is not None:
+            items: list[AuditResultItem] = []
+            for checker in checks:
+                rule_item = getattr(checker, "rule_item", None)
+                clause_id = str(getattr(rule_item, "id", "") or "").strip()
+                try:
+                    result = checker.check()
+                    if result is None:
+                        items.append(
+                            AuditResultItem(
+                                classification="规则审核",
+                                item=clause_id or (rule_input.type or "Unknown"),
+                                priority=str(getattr(rule_item, "priority", "") or "") or "P0",
+                                status="ERR",
+                                suggestions=f"条款 {clause_id} 没有返回结果" if clause_id else "检查没有返回结果",
+                                clause_id=clause_id or None,
+                            )
+                        )
+                        continue
+                    items.append(AuditResultItem.model_validate(result.model_dump()))
+                except Exception as exc:
+                    if not clause_id:
+                        raise
+                    detail = f"{type(exc).__name__}: {exc}".replace("\n", " ")[:500]
+                    category = str(getattr(rule_item, "category", "") or "")
+                    text = str(getattr(rule_item, "rule_to_check", "") or "")
+                    items.append(
+                        AuditResultItem(
+                            classification="规则审核",
+                            item=category or text or f"条款 {clause_id}",
+                            priority=str(getattr(rule_item, "priority", "") or "") or "P0",
+                            status="ERR",
+                            suggestions=f"条款 {clause_id} 技术失败: {detail}",
+                            clause_id=clause_id,
+                        )
+                    )
+            return items
+
         checker_count = len(getattr(agent, "rule_checkers", []) or [])
         if checker_count == 0:
             checker_count = len(rule_input.rules)
 
-        items: list[AuditResultItem] = []
+        items = []
         for index in range(checker_count):
             result = agent.check(index)
             if result is not None:

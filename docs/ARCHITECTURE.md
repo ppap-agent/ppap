@@ -48,44 +48,19 @@ PostgreSQL 中 `product` 保存产品事实，`engine` 保存执行任务/尝试
 
 Worker 用短数据库事务 claim 工作（含过期 `leased` 重试，同一 round 只增加 attempt），事务外执行，并用当前 attempt/claim 提交结果。技术重试不创建新产品轮次；用户主动重审才创建新轮次。
 
-Worker 在一个边界按冻结的 `analysis_mode` 路由：`standard` 走本仓 in-repo engine；`deep` 只通过 bounded UDS 调用独立 Controller。Deep 整次执行失败时写回结构化 failure 并将 job/round 标为 failed，不伪造业务判定，**不得静默回退 Standard**。某套规则计划经有界修复仍校验失败时，只将绑定该规则的全部条款记为 ERR，其他可用计划继续使用原冻结资料；不删除 target、不重新受理、不重置总预算。结果包以有效计划与绑定冻结身份的失败记录共同覆盖原规则集合，失败计划不进入共享缓存；取消、预算或整体协议故障不因此转为局部成功。Controller 协议 `extra=forbid`，不接受 host path、command、mount、image 或 env；Worker 不持有 Docker socket。`PPAP_DEEP_CONTROLLER_SOCKET` 只表示 Deep capability 是否配置；Core `/ready` 仍只探 PostgreSQL 与对象存储。
+Worker 在一个边界按冻结的 `analysis_mode` 路由：`standard` 走本仓 in-repo engine；`deep` 只通过 bounded UDS 调用独立 Controller。Deep 整次执行失败时写回结构化 failure 并将 job/round 标为 failed，不伪造业务判定，**不得静默回退 Standard**。取消、预算或整体协议故障不转为局部成功。Controller 协议 `extra=forbid`，不接受 host path、command、mount、image 或 env；Worker 不持有 Docker socket。`PPAP_DEEP_CONTROLLER_SOCKET` 只表示 Deep capability 是否配置；Core `/ready` 仍只探 PostgreSQL 与对象存储。
 
 Controller 进程是 `python -m agent`。生产工厂要求显式设置 `PPAP_DEEP_RUNTIME=container-only`，并将 `PPAP_DEEP_SANDBOX_PROFILE` 设为 `off` 或 `ppap`，没有默认 process/checker 后端。`SemanticRuntime` 消费冻结的有效规则和文件版本，通过 `ContainerRuntime` 与可信模型 gateway 执行；guest 命令、模型 endpoint 和 provider key 不来自 Worker RPC。`off` 是降权容器执行，不保证独立文件系统或 egress 隔离，不能称为 gVisor/VM。具体运行与限制见 [Deep 部署说明](../deploy/deep/README.md)；启动或 UDS 可用不证明审核质量或强隔离。
 
-产品先复用既有编译入口，每次仅提交一份规则及其计划缓存；该运行清理后，才准备供应商文档。审核运行只接受已验证计划或明确的编译失败记录，不能回退到现场编译或改写基础计划。各阶段沿用同一截止时间，并从整次请求与 token 额度扣除前序已确认用量；缓存命中可以是零模型调用。技术编译身份包含本轮身份，业务计划缓存仍按规则与引擎修订复用。运行镜像排除研究 prototype、测试预期和实验输出。
+`ContainerRuntime` 上没有恢复来源的新轮次，按本次生效规则、附录、文件版本和角色开发固定 checker，然后只执行该产物。关联文件以冻结版本、sha256 和角色进入 `GroupContextInput`；digest 不包含宿主路径。已经固定的目标不再开发。恢复 checker 尝试时重放固定程序，并读回已确认的模型用量。上一尝试用量未知时，后续 attempt 即使不带 `resume_attempt` 也不再开发，并拒绝新的模型请求，不交付空的通过。没有 checker 产物的尝试明确失败。checker 结果不使用 `host_source_trace_v1`，`evidence_verified` 为 false。程序可执行、可重放也不证明语义正确。运行镜像排除研究 prototype、测试预期和实验输出。
 
 规则检查、模型推断和文档抽取可以替换实现，但不能改变产品输入版本、授权和结果语义。只有真实当前需求证明价值时才新增服务、框架或隔离层。
 
-Deep 的核心目标设计见 [规则约束下的文档理解与反馈](../packages/agent/DESIGN.md)，未来产品架构、UI 与 MCP 见 [Deep 产品设计](../packages/agent/PRODUCT.md)：业务输入只有 `rules + documents`，已确认附录包含在 rules 中；RulePlan 中的 ontology 引导生成逻辑文档，用户确认通过更新明确输入进入后续计算。目标是持续的审核工作区，Web 与原生 MCP 平等调用同一个 Audit Application；界面、确认方式、协议和部署均可重构，业务事实与审核语义保持单一拥有者。当前已实现基于明确对象粒度、身份属性、逻辑对象及类型化 Hole 的首个反馈闭环。原生 snapshot 保持无损，逻辑物化按规则所需字段读取；跨行或一行多对象必须有明确来源和覆盖。尚不因此宣称任意布局和规则均能被模型正确解释。
+Deep 的核心目标设计见 [规则约束下的文档理解与反馈](../packages/agent/DESIGN.md)，未来产品架构、UI 与 MCP 见 [Deep 产品设计](../packages/agent/PRODUCT.md)：业务输入只有 `rules + documents`，已确认附录包含在 rules 中。当前计算是按本次规则和文件开发并执行固定 checker。目标是持续的审核工作区，Web 与原生 MCP 平等调用同一个 Audit Application；界面、确认方式、协议和部署均可重构，业务事实与审核语义保持单一拥有者。原生 snapshot 保持无损。尚不因此宣称任意布局和规则均能被模型正确解释。
 
 反馈应用复用现有审核轮次、队列和结果存储。`product.deep_rule_changes` 只拥有同一工作区内的规则变更操作回执；工作区身份复用根轮次。一个操作按已读修订保存附录，并可在同一事务受理新输入计算；技术 attempt 与新业务计算分开。Web 与 `/mcp/deep` 共用 `read_deep_feedback/apply_rule_change/read_rule_change`，迟到结果仍只属于其原轮次。问题指纹约束实际内容与来源；附录分别记录被解释原件和精确的目标文件／条款配对，同名条款不会隐式扩大范围。客户端会话不构成业务依据。确认记录可导出，默认无人工 gold 和训练资格。
 
-Deep 当前使用一个纯求值入口：模型提交物理 `Binding`、每条缓存程序的集合用途，以及宿主提出的局部语义问题的答案；宿主读取完整声明范围，执行条件、量词、关系和比较，生成观察、计数与公开报告。宿主从已验证程序派生 obligations 的潜在集合／字段需求和 initial-execution 未完成候选；模型逐步补全，求值仍只使用原程序和实际执行证书。初始候选不表示完成。失败时沿用既有执行产物存储保留经验证的计划、可解析候选及真实用量；只有显式指定同一 Job 最近且用量已确认的 attempt 才恢复，恢复前重新核对完整输入、来源和候选。恢复沿用 UTC 截止及累计已知用量；未知用量阻止新增模型请求。模型授权与最终用量快照在同一控制边界关闭，缺失授权或关闭失败不能成为零用量成功。候选结论始终由同一宿主重新求值，不能作为失败执行的最终结果。候选自报的文件 SHA 或自身摘要不能证明原生值；宿主使用同一受限读取器从当前冻结原件独立解析，核对值、状态、布局及完整集合，校验也覆盖普通结果进入快照缓存的路径。规则程序只读取冻结规则，按租户、规则来源及引擎修订缓存；文档位置、行成员资格和答案不进入规则缓存。编译 schema 区分文件结构前提、当前行适用条件及行值／关系要求；列存在不能作为行值非空的证明。Binding 保留所有物理行，排除和未知行角色随用途确定。同一工序标题可以参与覆盖，同时不属于特性明细。
-
-Ontology 关系由规则程序明确引用，区分同一实例与一般关联。显式逻辑分组保存成员来源及公开依据，字段投影保留未分配给其他对象的原始观察。文档限定解释修订记录在原 `AuditTrace`，统一求值时校验并派生有效计划，只允许粒度澄清和身份增强；原审核义务保持不变，待比较属性及同源别名不能作为新增身份筛掉违规，来源独立性复用实际观察和原件合并锚点校验。基础 `bundle.plans` 继续作为规则缓存，执行修订不进入该缓存，也不增加产品状态表或新的求值入口。
-
-
-关系计算按匹配要求取证：any 在原生或已回答的语义证据足够后跳过无关配对，并如实保留搜索未完整；all/one_to_one 保留完整候选及重复、共享目标检查。同上下文有效但已不影响结果的答案保留可重放状态，真正失效的答案仍被拒绝。目标范围未知进入对应叶子的三值结果，再参与布尔组合；源总体覆盖仍独立必需。数值 10/10.0 采用同一数值域，文本编号和布尔值保留类型。模型只处理绑定和必要语义缺口，不再抄写 QueryProof/SemanticProof 逐行结果。缺答案或范围产生 UNABLE；已知独立违规仍可 NG。合并布局按行边界建立索引，物理范围仍保留全部声明行列。宿主工作或局部问题超过资源上限时返回 RESOURCE_LIMIT，不触发结构修复；不能通过删列或删行绕过上限。可选引用与计算采用独立预算，缺引用不改业务结果，也不单独触发修复。StageRunner 只保留 `run`：真实执行器写入结果文件，经严格完成回执、JSON 和 schema 校验后返回类型化产物。执行语义由注入的单一指南拥有，不另维护第二份 Python 长提示或备用直接结构化输出协议。接口见 [执行证书](../packages/agent/src/agent/skill/references/execution-trace.md)。宿主只能证明声明程序和范围的重放，不能独立证明规则理解、关联身份或表头映射正确。
-
-```mermaid
-flowchart LR
-    R[冻结生效规则] --> C[现有 Grok-build 编译与构造反例检查]
-    C --> P[缓存结构、行值和关系程序]
-    P --> W[推导字段需求与未完成候选]
-    W --> B
-    D[冻结文档] --> V[按文件 ID 查看局部布局]
-    V --> B[保留全行的物理绑定]
-    D --> E[统一求值内核]
-    B --> U[按用途声明集合成员]
-    P --> E
-    U --> E
-    E --> Q[局部语义问题]
-    Q --> G[现有 Grok-build StageRunner]
-    G --> A[有来源的局部回答]
-    A --> E
-    E --> T[宿主观察与公开报告]
-    E --> F[资源上限返回执行错误]
-```
+当前执行入口只开发并执行固定 checker。宿主只能证明程序和范围的重放，不能独立证明规则理解、关联身份或表头映射正确。
 
 Deep 的受理端和执行端以 `audit.policy.DeepExecutionPolicy` 共用实际配置身份，不只比较同名版本标签。它是纯配置值，不启动 Controller、不存密钥、不增加策略 registry；实际 `RuntimeConfig` 继承相同字段及摘要计算。新受理在现有 Round/job 事务固定摘要，执行时由真实 runtime 再核对；旧策略不可用时明确失败，显式新轮次才采用新策略。Standard 不计算 Deep 策略，历史读取也不依赖当前配置。
 

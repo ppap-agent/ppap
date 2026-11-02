@@ -193,39 +193,39 @@ def _attempt_manual_linegrid(
     output_path: str,
     *,
     spec: PdfSpec,
-) -> dict[str, object] | None:
+) -> tuple[dict[str, object] | None, dict[str, object] | None]:
     try:
         result = docops_convert_pdf_to_excel(
             source,
             output_path,
             spec=spec,
         )
+        observed = dict(getattr(result, "diagnostics", None) or {})
         result_output_path = getattr(result, "output_path", None)
         result_success = getattr(result, "success", None)
         if result_output_path == output_path and os.path.exists(output_path):
-            return None
+            return None, observed
         if result_success is True and os.path.exists(output_path):
-            return None
+            return None, observed
 
         result_error = getattr(result, "error_message", None)
-        result_diag = getattr(result, "diagnostics", None)
         return {
             "error_code": ERROR_MANUAL_LINEGRID_FAILED,
             "error": str(result_error or "manual linegrid conversion failed"),
-            "pdf_v2_diagnostics": result_diag,
-        }
+            "pdf_v2_diagnostics": observed,
+        }, observed
     except PdfConversionError as exc:
         return {
             "error_code": ERROR_MANUAL_LINEGRID_FAILED,
             "error": exc.message,
             "pdf_v2_error_code": exc.code,
             "pdf_v2_diagnostics": exc.diagnostics,
-        }
+        }, dict(exc.diagnostics or {})
     except Exception as exc:
         return {
             "error_code": ERROR_MANUAL_LINEGRID_EXCEPTION,
             "error": str(exc),
-        }
+        }, None
 
 
 def _build_attempt(backend: str, *, success: bool, error_code: str = "", elapsed_ms: int = 0) -> dict[str, object]:
@@ -343,12 +343,15 @@ def convert_pdf_to_excel_auto(
     *,
     enable_cache: bool = True,
     doc_type: object | None = None,
+    spec: PdfSpec | None = None,
 ) -> ConversionArtifact:
     """Convert PDF to local xlsx path using fixed backend order."""
     conversion_started_at = time.perf_counter()
     ref = _to_file_ref(file_ref)
     resolved_doc_type = _normalize_doc_type(doc_type)
-    if resolved_doc_type is not None:
+    if spec is not None:
+        profile_name, manual_linegrid_spec, profile_doc_seq = "task", spec, None
+    elif resolved_doc_type is not None:
         profile_name, manual_linegrid_spec = _resolve_manual_linegrid_spec(resolved_doc_type)
         profile_doc_seq = None
     else:
@@ -359,6 +362,7 @@ def convert_pdf_to_excel_auto(
         "conversion_attempts": [],
         "fallback_ocr_triggered": False,
         "manual_linegrid_spec_label": profile_name,
+        "task_spec": spec is not None,
         "resolved_doc_type": resolved_doc_type or "",
         "conversion_profile_name": profile_name,
         "conversion_profile_doc_seq": profile_doc_seq,
@@ -451,11 +455,13 @@ def convert_pdf_to_excel_auto(
             os.close(fd)
             temp_files.append(temp_xlsx)
 
-            manual_error = _attempt_manual_linegrid(
+            manual_error, manual_diagnostics = _attempt_manual_linegrid(
                 pdf_path,
                 temp_xlsx,
                 spec=manual_linegrid_spec,
             )
+            if manual_diagnostics:
+                diagnostics["pdf_v2_diagnostics"] = manual_diagnostics
             elapsed_ms = _elapsed_ms(attempt_started_at)
             diagnostics["manual_linegrid_elapsed_ms"] = elapsed_ms
 

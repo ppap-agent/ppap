@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -69,6 +70,91 @@ def flow_workbook() -> Workbook:
     sheet.title = "过程流程图"
     sheet.append(["工序名称", "操作描述", "产品特殊特性", "产品特性类别", "过程特殊特性", "过程特性类别", "制造", "运输", "存储", "检验", "返工", "报废"])
     return workbook
+
+
+def test_customer_rule_id_still_runs_the_positional_builtin_check(tmp_path):
+    from audit.contracts import AuditInput, RuleInput
+    from audit.engine.engine import run_audit
+    from audit.kinds import PpapDocumentType
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "过程流程图"
+    for label, value in [
+        ("零件号", "P001"),
+        ("零件名称", "part"),
+        ("项目车型", "model"),
+        ("供应商名称", "supplier"),
+        ("代码", None),
+        ("编制日期", "2026-01-01"),
+        ("修订日期", None),
+        ("版本", "A"),
+        ("团队", "team"),
+    ]:
+        sheet.append([label, value])
+    path = saved_file(tmp_path, "target.xlsx", workbook).file_url
+    rules = RuleInput(
+        rule_id="confirmed-process-rules",
+        rule_profile="v3",
+        type=PpapDocumentType.PROCESS_FLOW_CHART.get_type_name(),
+        rules=[{"id": "6", "category": "完整入料要求", "rule_to_check": "识别工序名称列"}],
+    )
+
+    results = run_audit(AuditInput(audit_id="target", file_url=path), rules)
+
+    assert results[0].status == "NG"
+    assert "代码字段" in results[0].suggestions
+    assert "没有对应的检查入口" not in results[0].suggestions
+    assert "不在本次生效规则中" not in results[0].suggestions
+
+
+def test_parent_row_exclusion_is_kept_for_the_later_check(tmp_path):
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "过程流程图"
+    sheet.append(["工序号", "工序名称", "操作描述"])
+    sheet.append(["10", "父工序", "父操作"])
+    sheet.append(["10.1", "子工序", "子操作"])
+    agent = ProcessFlowChartExcelAgent(
+        saved_file(tmp_path, "target.xlsx", workbook),
+        RuleInput(
+            rule_id="confirmed-process-rules",
+            rule_profile="v3",
+            type=ProcessFlowChartExcelAgent.DOC_TYPE.get_type_name(),
+            rules=[{"id": str(index), "category": "local_excel_check", "rule_to_check": f"规则 {index}"} for index in range(1, 6)],
+        ),
+    )
+    try:
+        parent_check = agent.check(3)
+        later_check = agent.check(4)
+    finally:
+        agent.close()
+    assert parent_check is not None and parent_check.status == "PASS"
+    assert later_check is not None
+    notes = agent._shared_rule_context.build_notes()
+    assert ("exclusion", "过程流程图!2", "父行已有子工序，不单独作为工序成员") in notes
+    assert "父行已有子工序" not in (parent_check.suggestions or "")
+
+
+def test_an_ambiguous_group_marker_is_kept_and_not_selected():
+    from audit.engine.rule_engine.excel_ops import DefaultExcelOps
+    from audit.engine.rule_engine.resolver import find_section_group_markers
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "分组"
+    sheet["A1"] = "相同"
+    conflicts: list[tuple[int, str, tuple[str, ...]]] = []
+    markers = find_section_group_markers(
+        DefaultExcelOps(),
+        sheet,
+        scan_columns=(1,),
+        marker_map={"左": ("相同",), "右": ("相同",)},
+        conflicts=conflicts,
+    )
+    workbook.close()
+    assert markers == ()
+    assert conflicts == [(1, "相同", ("左", "右"))]
 
 
 def test_flow_header_requires_code_and_revision_date(tmp_path):
@@ -221,3 +307,65 @@ def test_flow_cross_file_check_uses_current_file_and_ignores_characteristic_head
     assert "缺少过程流程图" not in result.suggestions
     assert "External Projection" in result.suggestions
     assert "特性描述：特性值" not in result.suggestions
+
+
+def test_flow_cross_file_agreement_can_pass_after_the_rows_are_compared(tmp_path):
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "过程流程图"
+    sheet.append(["产品特殊特性", "产品特性类别", "过程特殊特性", "过程特性类别"])
+    sheet.append(["External Projection：预防性防错", "法律法规", None, None])
+    characteristics = Workbook()
+    sheet = characteristics.active
+    sheet.title = "特殊特性清单"
+    sheet.append(["特性分类", "特性描述", "特性值", "特殊特性种类"])
+    sheet.append(["产品", "External Projection", "预防性防错", "法律法规"])
+    related = saved_file(tmp_path, "characteristics.xlsx", characteristics).model_copy(update={"file_metadata": {"file_version_id": "related-version"}})
+    group = GroupContextInput(by_doc_type={"过程特殊特性清单": [related]}, by_audit_id={related.audit_id: related})
+
+    result = check_workbook(tmp_path, ProcessFlowChartExcelAgent, workbook, 9, group)
+
+    assert result.status == "PASS"
+    assert result.checks_performed == 1
+    assert "零断言" not in result.suggestions
+    assert result.evidence is not None
+    located = [json.loads(source.locator) for source in result.evidence.sources]
+    assert any(item["sheet"] == "过程流程图" and item["cell"] == "A2" for item in located)
+    assert any(item["sheet"] == "特殊特性清单" and item["file_version_id"] == "related-version" for item in located)
+
+
+def test_related_characteristic_workbook_is_closed_after_the_check(tmp_path, monkeypatch):
+    from audit.checkers.v3 import process_flow_chart_excel_agent as flow_agent
+
+    closed: list[object] = []
+    real_load = flow_agent._load_workbook_auto
+
+    def spy(file_url: str):
+        workbook = real_load(file_url)
+        original = workbook.close
+
+        def close() -> None:
+            closed.append(workbook)
+            original()
+
+        workbook.close = close
+        return workbook
+
+    monkeypatch.setattr(flow_agent, "_load_workbook_auto", spy)
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "过程流程图"
+    sheet.append(["产品特殊特性", "产品特性类别", "过程特殊特性", "过程特性类别"])
+    sheet.append(["External Projection：预防性防错", "法律法规", None, None])
+    characteristics = Workbook()
+    sheet = characteristics.active
+    sheet.title = "特殊特性清单"
+    sheet.append(["特性分类", "特性描述", "特性值", "特殊特性种类"])
+    sheet.append(["产品", "External Projection", "预防性防错", "法律法规"])
+    related = saved_file(tmp_path, "characteristics.xlsx", characteristics)
+    group = GroupContextInput(by_doc_type={"过程特殊特性清单": [related]}, by_audit_id={related.audit_id: related})
+
+    result = check_workbook(tmp_path, ProcessFlowChartExcelAgent, workbook, 9, group)
+
+    assert result.status == "PASS"
+    assert closed

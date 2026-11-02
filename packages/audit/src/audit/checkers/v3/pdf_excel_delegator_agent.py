@@ -33,6 +33,13 @@ from .xir_assembly_issue_agent import XirAssemblyIssueAgent
 logger = logging.getLogger(__name__)
 
 
+def _has_original_pages(artifact: Any) -> bool:
+    diagnostics = getattr(artifact, "diagnostics", None) or {}
+    nested = diagnostics.get("pdf_v2_diagnostics") if isinstance(diagnostics, dict) else None
+    pages = nested.get("original_pages") if isinstance(nested, dict) else None
+    return isinstance(pages, list) and any(isinstance(page, dict) for page in pages)
+
+
 class PdfExcelDelegatorAgent(PDFAgent):
     """Generic PDF delegator that proxies checks to a target Excel agent."""
 
@@ -102,6 +109,9 @@ class PdfExcelDelegatorAgent(PDFAgent):
             slots = self._resolve_success_slots(len(excel_checkers))
             self.rule_checkers = [self.excel_agent.check] * slots
             self.agent_rules = excel_rules[:slots] if excel_rules else [f"{self.document_type_name}-规则{i + 1}" for i in range(slots)]
+            bound = getattr(self.excel_agent, "checks", None)
+            if bound:
+                self.checks = tuple(self._with_pdf_evidence_check(item) for item in bound)
             logger.debug(
                 "%s delegated to %s with %d slots",
                 type(self).__name__,
@@ -119,6 +129,37 @@ class PdfExcelDelegatorAgent(PDFAgent):
             self.rule,
             group_context=self.group_context,
         )
+
+    def check(self, ith: int) -> Optional[AuditResult]:
+        bound = getattr(self, "checks", None)
+        if bound and 0 <= ith < len(bound):
+            return bound[ith].check()
+        return self._apply_pdf_evidence(super().check(ith))
+
+    def _with_pdf_evidence_check(self, checker: Any) -> Any:
+        from audit.engine.checkers.rule_check import RuleCheck
+
+        delegator = self
+
+        def run() -> Any:
+            return delegator._apply_pdf_evidence(checker.check())
+
+        return RuleCheck(checker.rule_item, run, binding_error=getattr(checker, "binding_error", None))
+
+    def _apply_pdf_evidence(self, result: Optional[AuditResult]) -> Optional[AuditResult]:
+        artifact = self.conversion_artifact
+        delegate = self.excel_agent
+        if result is None or artifact is None or delegate is None or not _has_original_pages(artifact):
+            return result
+        decorate = getattr(delegate, "_with_source_evidence", None)
+        if not callable(decorate):
+            return result
+        previous = getattr(delegate, "_conversion_artifact", None)
+        delegate._conversion_artifact = artifact
+        try:
+            return decorate(result)
+        finally:
+            delegate._conversion_artifact = previous
 
     def close(self) -> None:
         """Close the delegated workbook before removing conversion files."""
@@ -210,6 +251,9 @@ class PdfExcelDelegatorAgent(PDFAgent):
         return results
 
     async def run(self) -> list[AuditResult]:
+        bound = getattr(self, "checks", None)
+        if bound:
+            return [checker.check() for checker in bound]
         if self.excel_agent:
             logger.debug(
                 "%s delegated run() to %s",

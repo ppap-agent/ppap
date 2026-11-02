@@ -119,7 +119,7 @@ MCP 客户端 / MCP Apps ──────┘          │              rules +
 
 MCP 与 Web 直接使用同一应用语义。MCP 不必穿过为某个网页设计的 HTTP 路由；Web 也不必通过 MCP 才能调用核心。共享的是身份与对象授权、输入组装、规则变更、运行、反馈和结果，而非某个运输协议或框架。
 
-Audit Application 拥有工作区内的输入、运行和反馈事实；Deep Core 只对明确的 rules + documents 计算。规则正文与已确认附录属于 rules，ontology 与逻辑文档仍是中间产物。客户端会话、历史聊天和协议能力不是隐藏的业务输入。
+Audit Application 拥有工作区内的输入、运行和反馈事实；Deep Core 只对明确的 rules + documents 计算。规则正文与已确认附录属于 rules。当前计算产物是固定 checker，不是 ontology 或逻辑文档。客户端会话、历史聊天和协议能力不是隐藏的业务输入。
 
 工作区是统一的产品上下文，替代重复的任务/反馈视图，不在旧业务事实旁再建一套同样的台账。模块可以同进程部署，也可以按执行隔离、负载和发布需要拆分；当前进程边界不是原则。无论部署怎样变化，审核输入、确认与结果只有一个业务拥有者。
 
@@ -197,7 +197,7 @@ URL 跳转后，页面可以直接提交同一应用操作并显示真实保存/
 
 ## 9. 重构基线与落地边界
 
-本节表格保留设计时基线 `3b4c66c9` 的迁移对照。当前已有规则附录、逻辑对象、类型化 Hole 和 Web/MCP 的首个实际反馈闭环；准备入口为 `/audit?prepareDeep=1`。当前运行边界与验证方法见 [ARCHITECTURE](../../docs/ARCHITECTURE.md) 和 [DEVELOPMENT](../../docs/DEVELOPMENT.md)，不以此声称任意规则、布局或真实模型准确率均已验证。
+本节表格保留设计时基线 `3b4c66c9` 的迁移对照。当前 Deep 计算是固定 checker。规则附录和 Web/MCP 反馈操作仍在；准备入口为 `/audit?prepareDeep=1`。当前运行边界与验证方法见 [ARCHITECTURE](../../docs/ARCHITECTURE.md) 和 [DEVELOPMENT](../../docs/DEVELOPMENT.md)，不以此声称任意规则、布局或真实模型准确率均已验证。
 
 | 已核对现状 | 到目标的实质差距 |
 |---|---|
@@ -210,7 +210,7 @@ URL 跳转后，页面可以直接提交同一应用操作并显示真实保存/
 
 主要源码入口：[mcp_tools.py](../../apps/api/src/api/mcp_tools.py)、[mcp_server.py](../../apps/api/src/api/mcp_server.py)、[mcp_gateway.py](../../apps/api/src/api/mcp_gateway.py)、[auditor.py](src/agent/auditor.py)、[intake.tsx](../../apps/web/src/audit/intake.tsx)、[workspace.tsx](../../apps/web/src/audit/workspace.tsx)、[review-content.tsx](../../apps/web/src/audit/review-content.tsx)。
 
-当前 `/mcp/deep` 使用窄协议适配，并与 Web 共用规则变更应用操作。回环 HTTP 验收使用独立客户端、真实 OAuth、PostgreSQL、Worker、guest 和求值器；只在模型、身份供应商和对象存储边界使用受控输入。外部宿主兼容及真实模型理解质量分别验证。
+当前 `/mcp/deep` 使用窄协议适配，并与 Web 共用规则变更应用操作。Deep 执行使用固定 checker。外部宿主兼容及真实模型理解质量分别验证。
 
 迁移可以保留兼容入口，但目标只保留一套业务语义和事实。替换旧路径时一起迁移调用者、权限校验与测试，不让兼容层成为永久的第二套产品。
 
@@ -230,4 +230,4 @@ URL 跳转后，页面可以直接提交同一应用操作并显示真实保存/
 
 体验评估同时看判断质量和用户负担：澄清前后未知比例、需要用户决定的问题数、重复确认次数、找到原文的操作数、完成一次纠正的时间、误应用范围、重试与 token 用量。局部确认不自动成为整轮审核 gold。
 
-实现与验收沿用现有 owner：`tests/e2e/test_deep_feedback.py` 验证真实浏览器旅程，`tests/integration/product/test_mcp_deep_feedback.py` 验证独立 HTTP 客户端与能力组合。候选提交、实际命令、数量与证据边界记录在 #223–#225；测试回答不作为人工确认或训练金标。外部 host 对协议、Tasks、Elicitation 与 Apps 的支持仍按实际操作验证。
+依赖已删除 RulePlan guest 的浏览器和 MCP 反馈旅程测试已移除。规则变更回执仍由 `tests/integration/product/test_deep_feedback_contract.py` 检查。测试回答不作为人工确认或训练金标。外部 host 对协议、Tasks、Elicitation 与 Apps 的支持仍按实际操作验证。

@@ -2,7 +2,7 @@
 
 本文定义目标设计；当前行为以源码和测试为准。**Deep 根据本次 rules 和文件，开发、试跑并交付一组可独立执行的 checker。** 原 checker、资源类型和 Fluent API 是直接使用的实现基础。允许重构职责和接口，已有算法与有效行为继续保留。
 
-产品语义沿用 [PRODUCT 的产品约束](PRODUCT.md#8-必须保持的产品事实)，部署与授权沿用 [ARCHITECTURE 的执行边界](../../docs/ARCHITECTURE.md#执行)。本文拥有新的审核核心目标；架构文档中的旧 RulePlan / trace 路径说明当前实现，实施时再同步。
+产品语义沿用 [PRODUCT 的产品约束](PRODUCT.md#8-必须保持的产品事实)，部署与授权沿用 [ARCHITECTURE 的执行边界](../../docs/ARCHITECTURE.md#执行)。本文拥有审核核心目标。当前实现是固定 checker，不是 RulePlan / AuditTrace。
 
 ## 1. 任务接口
 
@@ -154,7 +154,7 @@ Agent 可以按原规则纠正实现。仍有合理歧义或需要改变业务�
 
 生成代码只在现有受控 guest 中运行。宿主控制输入、框架、预算、超时和输出；文档与模型访问通过原运行时及网关。正式结果必须来自固定产物的实际执行，不能以 Agent 手写 JSON 代替。
 
-宿主核对输入及产物身份、条款完整性、来源与运行记录。**程序可执行、可重放不证明语义正确。** 当前 trace 专用的 `host_source_trace_v1` 验证标签及覆盖判定不能直接套到 Python 结果；产品映射须说明实际验证范围，历史结果保留原含义。
+宿主核对输入及产物身份、条款完整性、来源与运行记录。**程序可执行、可重放不证明语义正确。** `host_source_trace_v1` 不能表示 Python checker 已验证；产品映射的 `evidence_verified` 为 false。
 
 产品确认、授权、输入版本、轮次与尝试、人工复核及恢复操作继续遵守开头引用的合同。Deep 只将实际诊断和待确认问题接入现有通路。
 
@@ -169,7 +169,7 @@ Agent 可以按原规则纠正实现。仍有合理歧义或需要改变业务�
 | [声明发现](../audit/src/audit/engine/checkers/rule_declarations.py) 与 [规则覆盖](../audit/src/audit/rule_coverage.py) | 改为明确条款绑定，迁移后移除无消费者的索引与固定编号限制 |
 | [资源模型](../audit/src/audit/engine/rule_engine/contracts.py) 与 [Fluent 实现](../audit/src/audit/engine/rule_engine/fluent.py) | 直接复用资源、解析、扫描及断言；在原上下文增加实际执行记录，按需补诊断 |
 | [文档能力](../documents/src/documents) 与 [PDF 配置](../documents/src/documents/pdf/spec.py) | 复用格式处理、预设和提取结果，接收任务配置并保留来源映射 |
-| [证据读取](../audit/src/audit/evidence.py)、[定位与候选](../audit/src/audit/models.py)、[局部观察](../audit/src/audit/checker_tools.py)、[问题与回答](../audit/src/audit/holes.py) | 保留可用类型及校验；与旧 AST 耦合时抽出原实现，解除问题定位对 AST 路径的强制依赖 |
+| [证据读取](../audit/src/audit/evidence.py)、[定位与候选](../audit/src/audit/models.py)、[局部观察](../audit/src/audit/checker_tools.py) | 保留 snapshot、定位和窄字段观察。旧 Hole 模块已无消费者，不再保留。 |
 | [AuditRuntime](../audit/src/audit/engine/runtime.py) 与 [执行环境](src/agent/execution) | 复用能力注入、隔离、网关、预算和反馈；调整 guest 的开发与执行载荷 |
 | [auditor](src/agent/auditor.py)、[协议](src/agent/protocol.py) 与 [skill](src/agent/skill) | 编排 adapt / execute，保存固定程序，将操作指南改为原框架上的 checker 开发指南 |
 | 现有 product 结果及反馈映射 | 接入执行结果、问题和验证含义；沿用原业务存储与操作 |

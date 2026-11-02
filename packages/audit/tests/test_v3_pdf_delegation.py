@@ -3,7 +3,7 @@ import gc
 from pathlib import Path
 
 import pytest
-from audit.checkers.v3.pdf_excel_delegator_agent import ControlPlanPdfExcelDelegatorAgent
+from audit.checkers.v3.pdf_excel_delegator_agent import ControlPlanPdfExcelDelegatorAgent, ProcessFlowChartPdfExcelDelegatorAgent
 from audit.contracts import (
     AuditInput,
     GroupContextInput,
@@ -127,3 +127,51 @@ def test_pdf_cross_file_check_uses_the_submitted_group(tmp_path, operation, expe
     assert result is not None
     assert result.status == expected_status
     assert str(flow_path) in runtime.loaded_paths
+
+
+def test_process_flow_pdf_keeps_the_original_page_on_the_delegated_result(tmp_path):
+    path = tmp_path / "converted.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "过程流程图"
+    sheet.append(["工序名称"])
+    sheet.append(["焊接"])
+    workbook.save(path)
+    workbook.close()
+    runtime = ConversionRuntime(
+        ConversionArtifact(
+            success=True,
+            xlsx_path=str(path),
+            diagnostics={"pdf_v2_diagnostics": {"original_pages": [{"page": 4, "success": True, "region": [1, 2, 3, 4], "error": None}]}},
+        )
+    )
+    with bind_runtime(runtime):
+        agent = ProcessFlowChartPdfExcelDelegatorAgent(
+            AuditInput(audit_id="flow", file_url="flow.pdf", file_metadata={"file_version_id": "pdf-version"}),
+            RuleInput(
+                rule_id="flow-rule",
+                rule_profile="v3",
+                type="过程流程图",
+                rules=[{"id": "1", "category": "表头字段完整性检查", "rule_to_check": "表头字段要完整"}],
+            ),
+        )
+        result = agent.check(0)
+
+    assert result is not None
+    assert result.evidence is not None
+    assert result.evidence.sources[0].locator == "file:pdf-version;page:4;region:[1, 2, 3, 4]"
+    assert result.status in {"NG", "UNABLE", "PASS"}
+    assert agent.checks
+    bound = agent.checks[0].check()
+    assert bound.clause_id == "1"
+    assert bound.evidence is not None
+    assert bound.evidence.sources[0].locator == "file:pdf-version;page:4;region:[1, 2, 3, 4]"
+    ran = asyncio.run(agent.run())
+    assert [item.clause_id for item in ran] == [item.rule_item.id for item in agent.checks]
+    assert ran[0].evidence is not None
+    assert ran[0].evidence.sources[0].locator == "file:pdf-version;page:4;region:[1, 2, 3, 4]"
+    last = agent.check(len(agent.checks) - 1)
+    assert last is not None
+    assert last.clause_id == agent.checks[-1].rule_item.id
+    assert last.evidence is not None
+    assert last.evidence.sources[0].locator == "file:pdf-version;page:4;region:[1, 2, 3, 4]"

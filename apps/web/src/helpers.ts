@@ -13,12 +13,19 @@ export function findingShortTitle(item: Finding, fallbackNumber: number) {
   return `${fallbackNumber} · ${item.classification || '条款'}`
 }
 
+function pdfPageLocation(page: number, region?: Array<number | null>) {
+  if (!region) return `第 ${page} 页`
+  const box = region.map(value => value == null ? '未定' : String(value)).join(', ')
+  return `第 ${page} 页 · 区域 ${box}`
+}
+
 export function sourceLocation(source: Pick<SemanticSource, 'locator'>) {
   const place = source.locator
   if (place.kind === 'xlsx_cell') return `${place.sheet}!${place.cell}`
   if (place.kind === 'xlsx_range') return `${place.sheet}!${place.start}:${place.end}`
   if (place.kind === 'pdf_block') return `第 ${place.page} 页 · 文本块 ${place.block}`
   if (place.kind === 'pdf_cell') return `第 ${place.page} 页 · 表格行 ${place.row} · 列 ${place.column}`
+  if (place.kind === 'pdf_page') return pdfPageLocation(place.page, place.region)
   if (place.kind === 'docx_paragraph') return `段落 ${place.paragraph}`
   return `表格 ${place.table} · 行 ${place.row} · 列 ${place.column}`
 }

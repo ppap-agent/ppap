@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any
+from typing import Any, Literal
 
 from . import resolver
 from .context import (
@@ -37,6 +37,22 @@ def _text_exact_match(
     return actual == expected_text
 
 
+@dataclass(frozen=True, slots=True)
+class Observation:
+    """One read. Zero and False stay known values. Blank is not confirmed absence."""
+
+    state: Literal["known", "blank", "missing", "unresolved"]
+    value: Any = None
+
+
+def classify_cell(value: Any) -> Observation:
+    if value is None:
+        return Observation("blank", None)
+    if isinstance(value, str) and not value.strip():
+        return Observation("blank", None)
+    return Observation("known", value)
+
+
 def _value_is_non_empty(value: Any, column_spec: Any, resource_tokens: Any) -> bool:
     lowered = _RecordMixin._normalize_text(value)
     if not lowered:
@@ -57,6 +73,32 @@ def _anchored_cell(ctx: RuleContext, ws: Any, row_index: int, col_index: int) ->
     if merged:
         return ws.cell(row=merged.min_row, column=merged.min_col)
     return ws.cell(row=row_index, column=col_index)
+
+
+def _remember_cell(ctx: RuleContext, ws: Any, cell: Any) -> Any:
+    unreadable = getattr(cell, "data_type", None) == "e"
+    if unreadable:
+        ctx.note_unresolved("单元格内容无法读取，不能当成已知值")
+    version = ctx.version_for_worksheet(ws)
+    workbook = getattr(ws, "parent", None)
+    if workbook is not ctx.workbook and not version:
+        return cell
+    value = getattr(cell, "value", None)
+    ctx.note_cell(
+        str(getattr(ws, "title", "") or ""),
+        int(getattr(cell, "row", 0) or 0),
+        int(getattr(cell, "column", 0) or 0),
+        file_version_id=version,
+        excerpt=None if unreadable else _format_evidence_value(value),
+    )
+    return cell
+
+
+def _observe_cell(ctx: RuleContext, ws: Any, cell: Any) -> Observation:
+    remembered = _remember_cell(ctx, ws, cell)
+    if getattr(remembered, "data_type", None) == "e":
+        return Observation("unresolved", getattr(remembered, "value", None))
+    return classify_cell(getattr(remembered, "value", None))
 
 
 def _normalize_marker_text(value: Any) -> str:
@@ -107,6 +149,7 @@ class _RecordMixin:
         return value in _RecordMixin._token_set(tokens)
 
     def value(self, column_name: str, compact: bool = False) -> Any:
+        self.ctx.record_execution()
         raw = self.cell(column_name).value
         if not compact:
             return raw
@@ -194,9 +237,16 @@ class Row(_RecordMixin):
             )
         return self
 
+    def observation(self, column_name: str) -> Observation:
+        self.ctx.record_execution()
+        column = self._resolved_column(column_name, strict=False)
+        if column is None:
+            return Observation("missing", None)
+        return _observe_cell(self.ctx, self.ws, _anchored_cell(self.ctx, self.ws, self.row_index, column.header_col))
+
     def cell(self, column_name: str) -> Any:
         column = self.columns[column_name]
-        return _anchored_cell(self.ctx, self.ws, self.row_index, column.header_col)
+        return _remember_cell(self.ctx, self.ws, _anchored_cell(self.ctx, self.ws, self.row_index, column.header_col))
 
     def _resolved_column(self, column_name: str, *, strict: bool = True) -> ResolvedColumn | None:
         column = self.columns.get(column_name)
@@ -326,18 +376,34 @@ class Field:
         return self.ctx.resource.fields[self.field_name]
 
     def exists(self) -> bool:
+        self.ctx.record_execution()
         return self.resolved is not None
 
+    def observation(self) -> Observation:
+        self.ctx.record_execution()
+        if self.resolved is None or self.resolved.value_row is None or self.resolved.value_col is None:
+            return Observation("missing", None)
+        return _observe_cell(
+            self.ctx,
+            self.resolved.ws,
+            _anchored_cell(self.ctx, self.resolved.ws, self.resolved.value_row, self.resolved.value_col),
+        )
+
     def value(self, compact: bool = False) -> Any:
+        self.ctx.record_execution()
         if self.resolved is None:
             return "" if compact else None
         if self.resolved.value_row is None or self.resolved.value_col is None:
             return "" if compact else None
-        raw = _anchored_cell(
+        raw = _remember_cell(
             self.ctx,
             self.resolved.ws,
-            self.resolved.value_row,
-            self.resolved.value_col,
+            _anchored_cell(
+                self.ctx,
+                self.resolved.ws,
+                self.resolved.value_row,
+                self.resolved.value_col,
+            ),
         ).value
         if not compact:
             return raw
@@ -616,18 +682,25 @@ class Section:
             return False
 
         start_row = max(column.data_start_row for column in scan_columns.values()) if direction == "down" else min(column.data_start_row for column in scan_columns.values())
-        for row_index in resolver.iter_anchor_rows(
-            self.ctx.ops,
-            section_spec,
-            self.resolved.ws,
-            anchor_col=anchor_col.header_col,
-            start_row=start_row,
-            anchor_is_filled=lambda row_idx: _anchor_filled(row_idx, anchor_col),
-            stop_row_predicate=(_row_hits_stop_marker if normalized_stop_markers else None),
-        ):
-            if _row_is_repeated_header(row_index):
-                continue
-            yield Row(self.ctx, self.resolved.ws, columns, row_index, self.resolved)
+        finished = False
+        yielded = 0
+        try:
+            for row_index in resolver.iter_anchor_rows(
+                self.ctx.ops,
+                section_spec,
+                self.resolved.ws,
+                anchor_col=anchor_col.header_col,
+                start_row=start_row,
+                anchor_is_filled=lambda row_idx: _anchor_filled(row_idx, anchor_col),
+                stop_row_predicate=(_row_hits_stop_marker if normalized_stop_markers else None),
+            ):
+                if _row_is_repeated_header(row_index):
+                    continue
+                yielded += 1
+                yield Row(self.ctx, self.resolved.ws, columns, row_index, self.resolved)
+            finished = True
+        finally:
+            self.ctx.note_scan(yielded=yielded, finished=finished)
 
     def rows(
         self,
@@ -723,14 +796,19 @@ class Cell:
     col_index: int
 
     def _raw_value(self) -> Any:
-        return _anchored_cell(
+        return _remember_cell(
             self.ctx,
             self.ws,
-            self.row_index,
-            self.col_index,
+            _anchored_cell(
+                self.ctx,
+                self.ws,
+                self.row_index,
+                self.col_index,
+            ),
         ).value
 
     def value(self, compact: bool = False) -> Any:
+        self.ctx.record_execution()
         raw = self._raw_value()
         if not compact:
             return raw
@@ -751,6 +829,7 @@ class Cell:
         return self.ctx.ops.is_filled(self._raw_value())
 
     def exact(self, expected: str, *, case_insensitive: bool = True, compact: bool = False) -> bool:
+        self.ctx.record_execution()
         return _text_exact_match(
             self._raw_value(),
             expected,

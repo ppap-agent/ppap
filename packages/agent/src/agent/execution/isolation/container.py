@@ -27,6 +27,7 @@ from audit.policy import GROK_VERSION, GUEST_UID, DeepExecutionPolicy
 from audit.protocol import CompileSpec, ControllerFault, GuestFault, SnapshotSpec, SubmissionSpec
 from pydantic import Field
 
+from agent.checker_spec import CheckerJobSpec
 from agent.execution.budget import MAX_INPUT_FILES, MAX_INPUT_TOTAL
 from agent.execution.gateway import grant_request
 from agent.execution.guest_model import ModelBudgetError, ModelGrant
@@ -118,6 +119,7 @@ def _drain_stderr(pipe, tail: bytearray, *, max_reads: int | None = 16) -> None:
 
 class ContainerRuntime:
     usage_source = "provider"
+    adapts_checkers = True
 
     def __init__(self, config: RuntimeConfig) -> None:
         if not _running_in_container():
@@ -418,7 +420,7 @@ class ContainerRuntime:
 
     def run(
         self,
-        spec: SubmissionSpec | CompileSpec | SnapshotSpec,
+        spec: SubmissionSpec | CompileSpec | SnapshotSpec | CheckerJobSpec,
         inputs: Path,
         work: Path,
         deadline: float,
@@ -451,7 +453,7 @@ class ContainerRuntime:
                 raise ControllerFault("ISOLATION_UNAVAILABLE")
             if cancelled.is_set() or time.monotonic() >= deadline:
                 raise ControllerFault("CANCELLED" if cancelled.is_set() else "MODEL_TIMEOUT")
-            model_operation = isinstance(spec, (SubmissionSpec, CompileSpec))
+            model_operation = isinstance(spec, (SubmissionSpec, CompileSpec)) or (isinstance(spec, CheckerJobSpec) and spec.operation == "adapt-checker")
             saved = self.journal / (runtime_id.hex + ".json")
             if model_operation and saved.exists():
                 write_json(work / "result" / "bundle.json", read_json(self.journal, (saved.name,), MAX_OUTPUT))
@@ -520,29 +522,7 @@ class ContainerRuntime:
 
     @staticmethod
     def _export_candidate(run: Path, destination: Path) -> None:
-        """Copy only a bounded certificate; the host must validate it again."""
-        from audit.protocol import ResultBundle
-
-        try:
-            value = read_json(run / "work", ("candidate.json",), MAX_OUTPUT)
-            candidate = ResultBundle.model_validate(value)
-            # A killed guest cannot execute its finally block. Recover the
-            # last readable stage certificate before deleting its work root.
-            from audit.trace import AuditTrace
-
-            for parts in (("audit-repair", "execution.json"), ("audit", "execution.json"), ("audit", "candidate-execution.json")):
-                try:
-                    trace = AuditTrace.model_validate(read_json(run / "work", parts, MAX_OUTPUT))
-                except (OSError, ValueError):
-                    continue
-                candidate.trace = trace
-                break
-            token = read_json(run / "grant", ("model.json",), 8192).get("token", "")
-            if token and token in candidate.model_dump_json():
-                return
-            write_json(destination / "candidate.json", candidate.model_dump(mode="json"))
-        except (OSError, ValueError, TypeError):
-            pass
+        return
 
     @staticmethod
     def _diagnostic(run: Path, destination: Path, code: str, *, usage: dict | None = None) -> None:

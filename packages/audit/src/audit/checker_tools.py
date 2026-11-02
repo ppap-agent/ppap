@@ -9,15 +9,16 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal
 
 from pydantic import Field
 
-from audit.bindings import Binding, BindingScope
+from audit.bindings import Binding, BindingScope, binding_scope, row_claims
 from audit.document_tools import TableReader, col_number, save
+from audit.document_tools import TableReader as _SnapshotReader
 from audit.evidence import EvidenceBudget, cell_locator
-from audit.models import Artifact, Citation, RulePlan, Scalar
-from audit.trace import AuditTrace, evaluate_audit
+from audit.models import Artifact, Citation, Predicate, Scalar
+from audit.values import predicate_result
 
 
 class NonEmptyCheck(Artifact):
@@ -76,8 +77,14 @@ def _citation(binding: Binding, source_format: str, row: int, column: int) -> Ci
     return Citation(document_id=binding.document_id, locator=cell_locator(source_format, binding.table, row, column))
 
 
+def _local_predicate(check: FieldCheck) -> Predicate:
+    if isinstance(check, NonEmptyCheck):
+        return Predicate(field=check.field, op="not_empty")
+    return Predicate(field=check.field, op="ge", value=check.minimum)
+
+
 def check_fields(snapshot: dict[str, Any], request: CheckRequest) -> CheckOutput:
-    """Replay two simple predicates; never infer binding or rule equivalence."""
+    """Replay two simple predicates from the frozen table. This does not build a RulePlan or AuditTrace."""
     binding = request.binding
     source = snapshot.get("source")
     if not isinstance(source, dict) or source.get("format") not in {".xlsx", ".xlsm", ".xls", ".docx", ".pdf"}:
@@ -86,82 +93,83 @@ def check_fields(snapshot: dict[str, Any], request: CheckRequest) -> CheckOutput
         raise ValueError("Binding source version mismatch")
     if len({check.id for check in request.checks}) != len(request.checks):
         raise ValueError("Duplicate local check identity")
-    table = next((item for item in snapshot.get("tables", []) if item.get("id") == binding.table), None)
+    table = next((item for item in snapshot.get("tables", []) if isinstance(item, dict) and item.get("id") == binding.table), None)
     if table is None:
         raise ValueError("Binding table missing")
+    budget = EvidenceBudget()
+    binding_scope(binding, snapshot, budget)
+    scope = request.scope or BindingScope(binding_id=binding.id)
+    if scope.binding_id != binding.id:
+        raise ValueError("Local check scope must reference its own binding")
+    excluded = row_claims(scope.excluded_rows, binding, table, snapshot, budget)
+    unresolved = row_claims(scope.unresolved_rows, binding, table, snapshot, budget)
+    if excluded & unresolved:
+        raise ValueError("A row cannot be both excluded and unresolved")
     results: list[LocalCheckResult] = []
     for check in request.checks:
         if check.field not in binding.columns and check.field not in binding.field_holes:
             raise ValueError("Checked field is absent from reviewed binding")
         if isinstance(check, NumericAtLeastCheck) and source["format"] == ".docx":
             raise ValueError("Numeric checker requires typed Excel values")
-        predicate = (
-            {"kind": "value_test", "field": check.field, "op": "not_empty"} if isinstance(check, NonEmptyCheck) else {"kind": "value_test", "field": check.field, "op": "ge", "value": check.minimum}
-        )
-        plan = RulePlan.model_validate(
-            {
-                "source_sha256": "local-condition",
-                "plan_revision": "0" * 64,
-                "rules": [
-                    {
-                        "id": check.id,
-                        "source_locator": {"kind": "published_clause", "clause_id": check.id},
-                        "program": {"kind": "records", "source": "records", "quantifier": "forall", "require": predicate},
-                        "empty_scope_status": "UNABLE",
-                        "empty_scope_basis": "A local predicate does not prove an empty business scope.",
-                    }
-                ],
-            }
-        )
-        scope = request.scope or BindingScope(binding_id=binding.id)
-        if scope.binding_id != binding.id:
-            raise ValueError("Local check scope must reference its own binding")
-        trace = AuditTrace.model_validate(
-            {
-                "bindings": [binding.model_dump(mode="json")],
-                "uses": [{"audit_id": binding.document_id, "rule_id": check.id, "inputs": {"records": {"kind": "bound", "scopes": [scope.model_dump(mode="json")]}}}],
-            }
-        )
-        budget = EvidenceBudget()
-        evaluated = evaluate_audit(trace, {binding.document_id: snapshot}, {binding.document_id: plan}, budget=budget)
-        aggregate = evaluated.report.checks[0]
-        status, total, checked, unknown = aggregate.status, aggregate.total, aggregate.checked, aggregate.unknown
-        failures = set()
+        predicate = _local_predicate(check)
+        column = col_number(binding.columns[check.field]) if check.field in binding.columns else None
+        outcomes: dict[int, bool | None] = {}
+        unknown_rows: list[int] = []
+        failures: set[int] = set()
+        total = binding.last_row - binding.first_row + 1
+        predicate_reader = _SnapshotReader(table, EvidenceBudget())
+        for row in range(binding.first_row, binding.last_row + 1):
+            if row in excluded:
+                continue
+            if column is None or row in unresolved:
+                outcomes[row] = None
+                unknown_rows.append(row)
+                continue
+            item = predicate_reader.cell(row, column)
+            if item.get("state") != "known":
+                outcomes[row] = None
+                unknown_rows.append(row)
+                continue
+            value = predicate_result(predicate, item.get("value"))
+            outcomes[row] = value
+            if value is False:
+                failures.add(row)
+            elif value is None:
+                unknown_rows.append(row)
+        applicable = total - len(excluded)
+        unknown = len(unknown_rows)
+        if failures:
+            status: Literal["PASS", "NG", "UNABLE"] = "NG"
+        elif unknown or applicable == 0:
+            status = "UNABLE"
+        else:
+            status = "PASS"
         violations: list[CellObservation] = []
         unknown_examples: list[CellObservation] = []
-        unknown_rows: list[int] = []
-        column = col_number(binding.columns[check.field]) if check.field in binding.columns else None
         reader: TableReader | None = None
-        unresolved_scope_rows = {entry.row for entry in scope.unresolved_rows}
-        for fact in evaluated.observations:
-            if fact["role"] == "excluded" or fact["record"] is None:
-                continue
-            row = fact["record"]["row"]
-            if fact["value"] is False:
-                failures.add(row)
-            elif fact["value"] is None:
-                unknown_rows.append(row)
-            examples = violations if fact["value"] is False else unknown_examples
-            if column is None or fact["value"] is True or len(examples) >= 64:
+        for row, value in outcomes.items():
+            examples = violations if value is False else unknown_examples if value is None else None
+            if examples is None or column is None or len(examples) >= 64:
                 continue
             if reader is None:
-                reader = TableReader(table, budget)
+                reader = TableReader(table, EvidenceBudget())
             item = reader.cell(row, column)
-            observation = CellObservation(
-                row=row,
-                citation=_citation(binding, source["format"], row, column),
-                value=item["value"],
-                state=item["state"] if fact["value"] is False else "unresolved_scope" if row in unresolved_scope_rows else item["state"],
+            examples.append(
+                CellObservation(
+                    row=row,
+                    citation=_citation(binding, source["format"], row, column),
+                    value=item["value"],
+                    state=item["state"] if value is False else "unresolved_scope" if row in unresolved else item["state"],
+                )
             )
-            examples.append(observation)
         results.append(
             LocalCheckResult(
                 id=check.id,
                 kind=check.kind,
                 field=check.field,
-                local_condition_status=cast(Literal["PASS", "NG", "UNABLE"], status),
+                local_condition_status=status,
                 total=total,
-                checked=checked,
+                checked=total - unknown,
                 unknown=unknown,
                 violations_count=len(failures),
                 violation_rows=sorted(failures),

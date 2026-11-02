@@ -21,7 +21,7 @@ from agent.execution.guest_model import ModelBudgetError
 from agent.execution.isolation.container import ContainerRuntime, RuntimeConfig
 from agent.execution.isolation.progress import Progress
 from audit.policy import GROK_VERSION
-from audit.protocol import CompileSpec, ControllerFault, ResultBundle, SnapshotSpec
+from audit.protocol import CompileSpec, ControllerFault, SnapshotSpec
 
 
 class GatewayGrantTests(unittest.TestCase):
@@ -365,6 +365,29 @@ class GatewayGrantTests(unittest.TestCase):
             grants.authorize(token, {"model": "test-model", "input": "three", "max_output_tokens": 1}, 1)
         self.assertTrue(grants.usage(execution_id)["budget_exhausted"])
 
+    def test_gateway_forwards_shell_web_and_hosted_tools(self) -> None:
+        grants = Grants("test-model")
+        accepted = {
+            "model": "test-model",
+            "input": "tools",
+            "max_output_tokens": 10,
+            "tools": [
+                {"type": "function", "name": "run_terminal_command"},
+                {"type": "custom", "name": "local"},
+                {"type": "web_search"},
+                {"type": "x_search"},
+                {"type": "code_interpreter"},
+            ],
+        }
+        grants.authorize(grants.issue(uuid4()), accepted, 100)
+        self.assertEqual(accepted["tools"][0]["name"], "run_terminal_command")
+        with self.assertRaisesRegex(ValueError, "Invalid model tool"):
+            grants.authorize(
+                grants.issue(uuid4()),
+                {"model": "test-model", "input": "other", "max_output_tokens": 10, "tools": ["bash"]},
+                100,
+            )
+
     def test_audit_grant_preserves_compile_token_and_request_consumption(self) -> None:
         grants = Grants("test-model", requests=2, input_tokens=100, output_tokens=30)
         compile_id = uuid4()
@@ -574,35 +597,7 @@ class ContainerBoundaryTests(unittest.TestCase):
             runtime.config = SimpleNamespace(gateway_socket=root / "gateway.sock")
             runtime.journal = root / "journal"
             execution_id = uuid4()
-            bundle = ResultBundle.model_validate(
-                {
-                    "execution_id": str(execution_id),
-                    "semantic_engine_revision": "0" * 64,
-                    "documents": {},
-                    "rule_sources": {},
-                    "plans": {},
-                    "report": {
-                        "checks": [
-                            {
-                                "audit_id": "file-1",
-                                "rule_id": "R1",
-                                "status": "UNABLE",
-                                "reason": "No reliable evidence",
-                                "total": 1,
-                                "checked": 0,
-                                "unknown": 1,
-                                "evidence": [],
-                                "diagnostic": "budget_exhausted",
-                            }
-                        ]
-                    },
-                    "trace": {
-                        "bindings": [],
-                        "uses": [{"audit_id": "file-1", "rule_id": "R1", "inputs": {"source": {"kind": "unresolved", "reason": "No reliable evidence", "diagnostic": "budget_exhausted"}}}],
-                    },
-                }
-            )
-            (run / "work" / "result" / "bundle.json").write_text(bundle.model_dump_json())
+            (run / "work" / "result" / "bundle.json").write_text(json.dumps({"kept": True}))
             usage = {"completed_requests": 42, "input_tokens": 4_025_240, "output_tokens": 89_857, "uncertain": False, "in_flight": False, "budget_exhausted": True}
             with patch("agent.execution.isolation.container.grant_request", return_value=usage):
                 runtime._export(run, root / "work", True, execution_id, time.monotonic() + 2, threading.Event())

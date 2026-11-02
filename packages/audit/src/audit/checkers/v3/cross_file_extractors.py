@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import unicodedata
-from typing import Dict, Iterable, List, Optional
+from typing import Callable, Dict, Iterable, List, Optional
 
 from documents.contracts import FileRef
 from documents.conversion import load_workbook_auto as load_workbook_pipeline
@@ -175,6 +175,7 @@ def extract_rows_from_workbook(
     workbook: Workbook,
     field_aliases: Dict[str, List[str]],
     required_fields: Optional[Iterable[str]] = None,
+    note_cell: Optional[Callable[[str, int, int], None]] = None,
 ) -> List[Dict[str, str]]:
     def _format_numeric_by_cell_pattern(raw_value: object, number_format: object) -> str:
         if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
@@ -276,5 +277,8 @@ def extract_rows_from_workbook(
         if field_value_keys and all(value in header_value_keys for value in field_value_keys):
             continue
         empty_row_count = 0
+        if callable(note_cell):
+            for column in best_columns.values():
+                note_cell(str(best_sheet.title), row, column)
         rows.append(item)
     return rows

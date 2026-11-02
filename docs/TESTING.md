@@ -28,7 +28,7 @@ PDF 委托器通过既有执行结束钩子主动关闭委托工作簿并清理�
 
 - **logic / unit**：稳定规则和数据不变量。
 - **corpus regression**：完整 engine parity；baseline 原有 failure 不属于 migration regression。
-- **integration**：数据库、对象存储、Worker、授权和必要外部接口。Deep 的受理、版本、fencing 与传输边界由 `tests/integration/product/test_deep_mode.py` 验证；语义 guest 与容器权限/模型 grant 的确定性逻辑由 `packages/agent/tests/test_deep_runtime.py`、`packages/agent/tests/test_deep_semantic.py`、`packages/agent/tests/test_deep_isolation.py` 验证。脚本化 runtime 只证明协议，不证明真实审核。同文件的局部计划失败用例使用实际 semantic guest，经 Product API／Worker／真实 PostgreSQL 与 UDS，核对当前任务和冻结历史的逐条结果、原件及独立文件的报告入队；模型、S3 边界受控，薄进程内适配不证明容器隔离、模型质量、飞书档案身份或 PDF 生成完成。`tests/live/test_deep_isolated.py` 使用独立 `ppap-deep` 容器、真实 Grok 和模型，但仅是玩具 XLSX 的真实模型协议 smoke，不是客户 A1–A12 样例验收；它不进入默认 merge contract。
+- **integration**：数据库、对象存储、Worker、授权和必要外部接口。Deep 的受理、版本、fencing 与传输边界由 `tests/integration/product/test_deep_mode.py` 验证；checker 与容器权限/模型 grant 的确定性逻辑由 `packages/agent/tests/test_checker_program.py`、`packages/agent/tests/test_deep_semantic.py`、`packages/agent/tests/test_deep_isolation.py` 验证。脚本化 runtime 只证明协议，不证明真实审核。`tests/live/test_deep_isolated.py` 使用独立 `ppap-deep` 容器、真实 Grok 和模型，但仅是玩具 XLSX 的真实模型协议 smoke，不是客户 A1–A12 样例验收；它不进入默认 merge contract。
 
 `packages/agent/tests/test_deep_client.py` 使用真实 UDS 验证未送达请求的显式恢复，以及分片响应、发送背压中的总时限与取消。外部 peer 受控；不调用模型，也不证明 provider 已取消或执行域已清理。总时限从调用开始计算，帧内读写不能重置预算；已发送请求超时不等于未执行，客户端不自动重发。
 
@@ -36,15 +36,12 @@ PDF 委托器通过既有执行结束钩子主动关闭委托工作簿并清理�
 
 Controller 原件读取与 guest 暂存复用 `agent.execution.budget` 中的文件数和总字节上限。超出文件数时不读对象；逐对象读取使用剩余字节预算，超限停止后续读取及 Runtime 派发，返回既有 `deep_budget_exhausted`。S3 有界读取不依赖声明大小正确，短读会继续，响应流在成功或失败后关闭。对应 Controller／Core storage 测试仅控制外部存储与小额测试预算，不分配大文件。该提前检查不代表资料已能装入执行环境：暂存还包括规则、缓存及清单，原暂存总量检查继续保留；不是新增用户上传配额，也不证明进程树内存或在途读取取消。
 
-`test_deep_partial_failure.py` 使用真实 XLSX，经 Controller、`SemanticRuntime`、进程内真实 guest 和输出校验，验证一套计划持续失败不会丢弃独立文件；共享失败规则的所有条款保留为 ERR，冻结目标不删除，全部失败也不能变成空 PASS。模型返回的 RulePlan 结构不符同样进入原有的一次有界修复，仍无效则只标记对应规则失败；原 deadline、用量与独立文件保留，不把预算、超时、模型协议或未分类异常变成局部成功。结构校验反馈只包含固定说明，不保存 Pydantic 错误中的模型原文。仅模型响应和对象存储受控，薄 runtime 不证明容器隔离、真实模型质量或 Worker／数据库发布。主机拒绝错身份、缺项、重叠分区及失败条款的伪造业务结果；有效计划可缓存，失败计划不缓存，所有模型尝试保留用量。
-
 `tests/integration/runtime/test_runtime.py` 在同 SHA 的交付 Worker 镜像中运行 `deep_container_cases.py`，验证公开 `ContainerRuntime.run` 的排队超时、取消和执行位释放。真实 Linux、构造器、锁及文件准备/清理不替换；外部 guest 进程受控，版本探针使用测试程序，不调用 Grok 或模型，不证明语义质量或强隔离。`DeepExecutionQueue.tla` 只检查一个占用者与一个等待者：即使占用者不结束，到期/取消仍能响应；正向配置检查允许时钟和等待线程持续获得调度时的终结性质，`-unbounded` 配置保留响应依赖占用者释放的反例。它不证明毫秒级时限、运行中取消、整个进程树清理或完整系统 refinement。
 
 同一 native 入口还通过真实本地 gateway（Unix grant 控制／loopback HTTP）验证执行包读回、同 execution 并发合并、已消费后失败不重放、未知 provider 完成状态以及显式新 submission。仅 HTTPS provider 与 guest 进程受控；原生锁、journal、attempt、gateway 记账及目录不替换。runtime 重建与重复 recover 使用同一保留状态、在上一 guest 已终结后执行，不等于进程中途崩溃、丢卷或跨节点恢复。journal 输出仍须经过业务验证，不作为实际审核质量或报告完成证明。`DeepExecutionReplay.tla` 是两个调用共享一个冻结 execution 的有限 Safety 检查；race／failure／result 配置分别保留不加锁、重放失败 attempt、忽略既存输出的反例，不证明完整 refinement、最终完成或外部平台幂等。
 
 `test_deep_gateway_cancellation.py` 经公开 grant UDS／loopback HTTP 撤销一个执行的授权：provider 在响应头、正文或终态回执之后保持静默，撤权主动中断其已连接 socket，handler 清理后下一独立执行可继续。测试只替换外部 HTTPS 适配，实际 socket 读取／关闭、共享锁和记账运行；分别核对撤权前的未知消费或有效回执，以及下一执行的独立用量，不重发原请求。关闭本地连接不证明 provider 已取消或未收费。`DeepGatewayRevocation.tla` 是一个撤权执行与一个等待执行的有限 focused obligation；不假设 provider 必定响应，只对本地中断、清理及下一执行的调度施加弱公平，`-dependent` 保留取消错误地依赖新数据的反例。它不证明完整 refinement、毫秒时限、DNS／TCP／TLS 建连、重发 grant、过期回收、崩溃恢复或内核隔离。
 
-缓存用例在同一入口执行真实 XLSX → `SemanticRuntime` → `ContainerRuntime` → guest 解析、计划／结果验证和产品转换。进程替身在测试进程内调用真实 guest，模型 StageRunner／HTTPS 和对象存储为外部边界替身，不证明实际 Grok、S3 耐久性或 guest 权限隔离。两份目标共用规则，新 submission 复用有效 snapshot／plan 但重新审核；缓存中的无害解析注记区分实际复用与重新解析，错误摘要／计划 revision 分别重新解析／编译。原 submission 再读不执行新审核，gateway 记录的受控请求数与用量同步核对。这是执行与缓存合同，不是客户判定质量或生产费用证据；现有单 execution 的 Replay 模型不覆盖跨 submission 缓存。
 - **E2E**：少量关键客户路径和跨栈边界，覆盖当前上传、历史轮次、原件与人工复核；各入口区分受控交互和真实服务证据，不据此宣称全部客户流程完成。飞书 Drive 导入与文档关联文件的确定性回归在 `tests/integration/product/test_feishu_drive.py` 与 `apps/api/tests/test_feishu_doc_links.py`（mocked Open API）。docs-addon 宿主登录到普通 round 的确定性回归在 `tests/integration/product/test_feishu_docs_addon.py`（mocked host code + Open API）。客户路径 `/addon`、`/audit-files` 与 `/usage` 由 nginx 自己检查：`nginx -t` 加上容器内的路由请求，在 `tests/repository/test_web_server.py`。Web 只调 Product API 的仓库边界、helper、路由、reducer 与 public-config 都由 `apps/web` 的 `pnpm test` 拥有；跨栈黑盒浏览器行为由 Python Playwright（`tests.e2e`）拥有。InsForge overlay 的 **static config contract** 由 `node deploy/insforge/verify-config.mjs` 拥有：Compose 语法与插值交给 `docker compose config`，再检查 Compose 无法知道的少量 PPAP invariant。**live native lifecycle** 是 `bash deploy/insforge/smoke-local.sh`（`@insforge/cli local start/status/db query/stop`），只在 InsForge 相关 path 变化、手动 `workflow_dispatch` 或每周 schedule 上运行。
 
 规则排列组合留在低层，不复制到 E2E。页面与历史轮次的读取经已授权的 Product API 验证；Worker 只用于驱动队列，不以 Worker 角色读取仅供 API 的页面元数据。
@@ -294,7 +291,7 @@ PPAP_DEEP_LIVE=1 uv run --no-sync pytest tests/live/test_deep_isolated.py
 docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/deep-live.yaml down -v --remove-orphans
 ```
 
-Overlay 显式设置 `PPAP_DEEP_EXECUTOR_REVISION=ppap-deep-v2`、`PPAP_DEEP_RUNTIME=container-only`、`PPAP_DEEP_SANDBOX_PROFILE=off`。旧内核的 `off` 不提供强文件系统或出口网络隔离；只允许此容器级模式，不要声称是 gVisor。此 live 协议 smoke 上传玩具但有效的 XLSX 与已发布规则，要求带实际单元格证据的语义结果和已记录的模型用量；固定 checker、脚本 guest 或仅有 PASS 状态都不算审核证明。客户 A1–A12 仍须另用真实样例验收。默认 isolated-dev 仍不发布 Silo 端口，remote-dev 的现有配置不受此 overlay 影响。
+Overlay 显式设置 `PPAP_DEEP_EXECUTOR_REVISION=ppap-deep-v2`、`PPAP_DEEP_RUNTIME=container-only`、`PPAP_DEEP_SANDBOX_PROFILE=off`。旧内核的 `off` 不提供强文件系统或出口网络隔离；只允许此容器级模式，不要声称是 gVisor。此 live 协议 smoke 上传玩具但有效的 XLSX 与已发布规则，要求带实际单元格证据的 checker 结果、`deep_checker_audit` 注记和已记录的模型用量。仅有 PASS 状态不算审核证明。客户 A1–A12 仍须另用真实样例验收。默认 isolated-dev 仍不发布 Silo 端口，remote-dev 的现有配置不受此 overlay 影响。
 
 模型 grant 的默认额度是 4,000,000 输入 token、100,000 输出 token、128 次请求和 40 分钟。输入额度按提供方返回的已确认累计用量停止后续请求，不是严格的费用硬上限：加密推理历史无法在请求前准确计数，故最多一笔受 8 MiB 请求体上限约束的在途请求可能令输入用量超额。输出请求按剩余额度限制；用量缺失即关闭 grant，不把请求字节误记为 token。单测验证这些边界；live smoke 仍需记录真实提供方用量。本轮开发已获授权可依据实测提高这些上限，但每次调整仍须保留有限额度并说明原因和实际用量，不以无限重跑替代修复。CETUS 完整规则实测触及原 1,600,000 输入额度后提高至当前值；后续联合审核在原 20 分钟截止时仍未执行完毕，因此时长提高至 40 分钟。这不是新的完成率保证。
 

@@ -115,8 +115,9 @@ class Grants:
             if body.get("previous_response_id") or body.get("conversation") or body.get("background"):
                 raise ValueError("Stateful provider requests are disabled")
             tools = body.get("tools", [])
-            if not isinstance(tools, list) or any(not isinstance(tool, dict) or tool.get("type") not in {"function", "custom"} for tool in tools):
-                raise ValueError("Provider-side tools are disabled")
+            # Grok decides the tool set. Do not drop shell, web, or any other tool type here.
+            if not isinstance(tools, list) or any(not isinstance(tool, dict) for tool in tools):
+                raise ValueError("Invalid model tool")
             remaining_output = lease.output_budget - lease.output_tokens
             requested = body.get("max_output_tokens", min(self.per_request_output_tokens, remaining_output))
             if type(requested) is not int or requested < 1:

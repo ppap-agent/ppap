@@ -1652,105 +1652,60 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(loaded["display_edit_access"]["state"], "denied")
 
     def prepared_query_task(self, *, verified=True, documents=(("控制计划.xlsx", "P-1"),)):
+        del verified
         from io import BytesIO
-        from pathlib import Path
-        from tempfile import TemporaryDirectory
+        import json
 
-        from agent.auditor import product_response, semantic_inputs
-        from agent.mapping import product_result, spec_from_work
+        from agent.mapping import checker_response, product_result, spec_from_work
         from audit.audits import DEEP_PROTOCOL_REVISION
-        from audit.document_tools import snapshot
-        from audit.protocol import ResultBundle
+        from audit.contracts import AuditEvidence, AuditResultItem, EvidenceSource
         from openpyxl import Workbook
 
-        versions, contents = [], {}
+        versions = []
         for filename, value in documents:
             workbook = Workbook()
             workbook.active.append(["零件号"])
             workbook.active.append([value])
             content = BytesIO()
             workbook.save(content)
-            version = self.store.create_staging(self.alice, filename, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", len(content.getvalue()))
-            self.store.put_blob(version, content.getvalue())
-            version = self.store.finalize_version(version)
-            versions.append(version)
-            contents[version.id] = content.getvalue()
+            workbook.close()
+            raw = content.getvalue()
+            version = self.store.create_staging(self.alice, filename, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", len(raw))
+            self.store.put_blob(version, raw)
+            versions.append(self.store.finalize_version(version))
         _files, task, worker = self.prepared_display_task(versions, analysis_mode="deep", complete_audit=False, per_file_rules=len(versions) > 1)
         job = worker.claim_job("verified-query")
         work = worker.round_work(task["round_id"])
         spec = spec_from_work(work, job.payload["executor"], job.payload["executor_revision"], DEEP_PROTOCOL_REVISION).model_copy(update={"job_id": job.id, "attempt": job.attempt})
-        submission, packets = semantic_inputs(spec, spec.executor_revision)
-        with TemporaryDirectory() as directory:
-            sources, rule_sources = {}, {}
-            for version in versions:
-                target_path = Path(directory) / (version.id + ".xlsx")
-                target_path.write_bytes(contents[version.id])
-                sources[version.id] = snapshot(target_path)
-            for rule in submission.rules:
-                rule_path = Path(directory) / (rule.rule_id + ".json")
-                rule_path.write_bytes(packets[rule.rule_id])
-                rule_sources[rule.rule_id] = snapshot(rule_path)
-        bundle = ResultBundle.model_validate(
-            {
-                "execution_id": str(submission.execution_id),
-                "semantic_engine_revision": spec.executor_revision,
-                "documents": sources,
-                "rule_sources": rule_sources,
-                "plans": {
-                    rule.rule_id: {
-                        "source_sha256": rule.sha256,
-                        "plan_revision": rule.plan_revision,
-                        "ontology": {"entities": [{"id": "records", "grain": "每条零件记录", "attributes": {"part_number": "string"}, "identity": ["part_number"]}]},
-                        "rules": [
-                            {
-                                "id": "1",
-                                "source_locator": {"kind": "published_clause", "clause_id": "1"},
-                                "program": {"kind": "records", "source": "records", "quantifier": "forall", "require": {"kind": "value_test", "field": "part_number", "op": "not_empty"}},
-                                "empty_scope_status": "UNABLE",
-                                "empty_scope_basis": "无正文不认定通过",
-                            }
-                        ],
-                    }
-                    for rule in submission.rules
-                },
-                "report": {
-                    "checks": [
-                        {
-                            "audit_id": version.id,
-                            "rule_id": "1",
-                            "status": "PASS",
-                            "reason": f"正文零件号 {value} 已填写",
-                            "total": 1,
-                            "checked": 1,
-                            "unknown": 0,
-                            "evidence": [{"document_id": version.id, "locator": {"kind": "xlsx_cell", "sheet": "Sheet", "cell": "A2"}}],
-                        }
-                        for version, (_filename, value) in zip(versions, documents, strict=True)
-                    ]
-                },
-                "trace": {
-                    "bindings": [
-                        {
-                            "id": "body-" + version.id,
-                            "document_id": version.id,
-                            "source_sha256": version.sha256,
-                            "table": "Sheet",
-                            "header_rows": [1],
-                            "first_row": 2,
-                            "last_row": 2,
-                            "columns": {"part_number": "A"},
-                            "mapping_basis": "首行零件号列",
-                            "boundary_basis": "正文只有第二行",
-                        }
-                        for version in versions
+        executed = []
+        for target, (_filename, value) in zip((item for item in spec.files if item.role == "target"), documents, strict=True):
+            locator = json.dumps({"kind": "xlsx_cell", "sheet": "Sheet", "cell": "A2", "file_version_id": target.file_version_id}, ensure_ascii=False)
+            executed.append(
+                (
+                    target,
+                    [
+                        AuditResultItem(
+                            classification="基本信息",
+                            item="必须填写零件号",
+                            priority="P0",
+                            status="PASS",
+                            suggestions="",
+                            clause_id="1",
+                            checks_performed=1,
+                            scope={"total": 1, "checked": 1, "unknown": 0},
+                            evidence=AuditEvidence(
+                                required="structure",
+                                used="structure",
+                                source_format="xlsx",
+                                prepared_format="xlsx",
+                                sources=(EvidenceSource(kind="structure", locator=locator, excerpt=value),),
+                            ),
+                        )
                     ],
-                    "uses": [{"audit_id": version.id, "rule_id": "1", "inputs": {"records": {"kind": "bound", "scopes": [{"binding_id": "body-" + version.id}]}}} for version in versions],
-                },
-            }
-        )
-        result = product_result(product_response(spec, bundle, submission), work)
-        if not verified:
-            result["coverage"].pop("verification")
+                )
+            )
+        result = product_result(checker_response(spec, executed, usage={"input_tokens": 1, "output_tokens": 1}, usage_source="controlled"), work)
+        self.assertIsNone(result["coverage"].get("verification"))
         self.assertTrue(worker.complete_job(job, "verified-query", result))
         return versions[0], task, worker, job, result
 
@@ -1761,7 +1716,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(current.status_code, 200)
         audit = current.json()["files"][0]["audit"]
         self.assertEqual((audit["conclusion"], audit["counts"]["pass_count"]), ("PASS", 1))
-        self.assertTrue(audit["checks"][0]["evidence_verified"])
+        self.assertFalse(audit["checks"][0]["evidence_verified"])
         self.assertEqual(audit["checks"][0]["evidence"][0]["excerpt"], "P-1")
         self.assertEqual(audit["summary"]["text"], "已审核 1 项要求：满足 1 项，不符合 0 项，不适用 0 项。")
         historical = self.display_client.get(f"/rounds/{task['round_id']}?read_view=true").json()

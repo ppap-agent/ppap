@@ -173,6 +173,8 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
     """过程流程图Excel文件专用审核代理"""
 
     DOC_TYPE = PpapDocumentType.PROCESS_FLOW_CHART
+    CLAUSE_BOUND_CHECKS = True
+    POSITIONAL_CLAUSE_CHECKS = True
     EXPECTED_RULE_CATEGORIES = (
         "表头字段完整性检查",
         "产品特殊特性及类别填写逻辑校验",
@@ -208,7 +210,13 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
         value_keys = [normalize_key(value) for value in values if normalize_key(value)]
         return bool(value_keys) and all(value in _RULE9_PFD_HEADER_VALUE_KEYS for value in value_keys)
 
-    def _extract_rule9_scl_rows(self) -> tuple[list[dict[str, str]], str]:
+    def _note_extracted_cells(self, ctx: RuleContext, file_version_id: str):
+        def note(sheet: str, row: int, column: int) -> None:
+            ctx.note_cell(sheet, row, column, file_version_id=file_version_id)
+
+        return note
+
+    def _extract_rule9_scl_rows(self, ctx: RuleContext) -> tuple[list[dict[str, str]], str]:
         related_files = self.get_related_files(PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST)
         if not related_files:
             return [], "缺少特殊特性清单，请补充"
@@ -219,25 +227,33 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
             if not file_url:
                 return [], "特殊特性清单文件无法读取"
             workbook = _load_workbook_auto(file_url)
+            try:
+                if self._find_special_characteristic_list_worksheet(workbook) is None:
+                    return [], "未找到特殊特性清单表"
 
-            if self._find_special_characteristic_list_worksheet(workbook) is None:
-                return [], "未找到特殊特性清单表"
+                metadata = getattr(related, "file_metadata", {}) or {}
+                version = str(metadata.get("file_version_id") or getattr(related, "audit_id", "") or "")
+                ctx.bind_workbook(workbook, version)
+                extracted_rows = extract_rows_from_workbook(
+                    workbook=workbook,
+                    field_aliases=_RULE9_SCL_FIELD_ALIASES,
+                    required_fields=("char_class", "char_description", "char_value", "special_type"),
+                    note_cell=self._note_extracted_cells(ctx, version),
+                )
+                if not extracted_rows:
+                    return [], "特殊特性清单无法识别必要特性列结构"
 
-            extracted_rows = extract_rows_from_workbook(
-                workbook=workbook,
-                field_aliases=_RULE9_SCL_FIELD_ALIASES,
-                required_fields=("char_class", "char_description", "char_value", "special_type"),
-            )
-            if not extracted_rows:
-                return [], "特殊特性清单无法识别必要特性列结构"
-
-            rows.extend(row for row in extracted_rows if self._is_valid_rule9_scl_row(row))
+                rows.extend(row for row in extracted_rows if self._is_valid_rule9_scl_row(row))
+            finally:
+                close = getattr(workbook, "close", None)
+                if callable(close):
+                    close()
 
         if not rows:
             return [], "特殊特性清单未提取到有效特性项"
         return rows, ""
 
-    @rule("表头字段完整性检查")
+    @rule("表头字段完整性检查", clause_id="1")
     def rule_1(self, ctx: RuleContext) -> tuple[str, str]:
         """
         规则1：识别“过程流程图”中是否包含“零件号”、“零件名称”、“项目车型”、“供应商名称”、“代码”、“编制日期”、“修订日期”、“版本”、“团队”字段
@@ -269,7 +285,7 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
 
         return "PASS", ""
 
-    @rule("产品特殊特性及类别填写逻辑校验")
+    @rule("产品特殊特性及类别填写逻辑校验", clause_id="2")
     def rule_2(self, ctx: RuleContext) -> tuple[str, str]:
         """
         规则2：识别“过程流程图”中是否包含“产品特殊特性”“产品特性类别”两列；
@@ -296,7 +312,7 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
                 )
         return "PASS", ""
 
-    @rule("过程特殊特性及类别填写逻辑校验")
+    @rule("过程特殊特性及类别填写逻辑校验", clause_id="3")
     def rule_3(self, ctx: RuleContext) -> tuple[str, str]:
         """
         规则3：识别“过程流程图”中是否包含“过程特殊特性”“过程特性类别”两列；
@@ -323,7 +339,7 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
                 )
         return "PASS", ""
 
-    @rule("工序名称与操作描述填写逻辑校验")
+    @rule("工序名称与操作描述填写逻辑校验", clause_id="4")
     def rule_4(self, ctx: RuleContext) -> tuple[str, str]:
         """
         规则4：识别“工序名称”、“操作描述”两列是否存在，有一列不存在则不通过，否则继续识别；
@@ -345,6 +361,11 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
             if not row.is_present("工序名称"):
                 continue
             if "工序号" in columns and _is_parent_process_row(rows, index, "工序号", "工序名称"):
+                ctx.note_build(
+                    kind="exclusion",
+                    location=f"{row.sheet_title}!{row.row_index}",
+                    basis="父行已有子工序，不单独作为工序成员",
+                )
                 continue
             if not row.is_present("操作描述"):
                 return (
@@ -366,7 +387,7 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
                 )
         return "PASS", ""
 
-    @rule("工序名称与图例填写逻辑校验")
+    @rule("工序名称与图例填写逻辑校验", clause_id="5")
     def rule_5(self, ctx: RuleContext) -> tuple[str, str]:
         """
         规则5：识别“工序名称”、“制造”、“运输”、“存储”、“检验”、“返工”、“报废”七列是否存在，有一列不存在则不通过，否则继续识别；
@@ -411,6 +432,11 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
                 "工序定义-工序号",
                 "工序定义-工序名称",
             ):
+                ctx.note_build(
+                    kind="exclusion",
+                    location=f"{row.sheet_title}!{row.row_index}",
+                    basis="父行已有子工序，不单独作为工序成员",
+                )
                 continue
 
             def has_process_definition(_value: object, current_row: Any = row) -> bool:
@@ -424,7 +450,7 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
 
         return "PASS", ""
 
-    @rule("起始工序拆解完整性识别")
+    @rule("起始工序拆解完整性识别", clause_id="6")
     def rule_6(self, ctx: RuleContext) -> tuple[str, str]:
         process_names = _process_name_values(ctx)
         if any(_is_start_inspection_process(value) for value in process_names):
@@ -434,7 +460,7 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
         samples = "；".join(f"工序“{value}”" for value in process_names[:6])
         return "NG", f"工序名称列下未识别到进料检验、来料/进货检验或IQC内容（候选：{samples}）。"
 
-    @rule("最终工序拆解完整性识别")
+    @rule("最终工序拆解完整性识别", clause_id="7")
     def rule_7(self, ctx: RuleContext) -> tuple[str, str]:
         process_names = _process_name_values(ctx)
         if any(_is_final_shipment_process(value) for value in process_names):
@@ -443,7 +469,7 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
             return "NG", "工序名称列未识别到有效工序。"
         return "NG", "工序名称列中未包含出货/发运、FQC或OQC内容。"
 
-    @rule("返工/返修工序检验环节识别")
+    @rule("返工/返修工序检验环节识别", clause_id="8")
     def rule_8(self, ctx: RuleContext) -> tuple[str, str]:
         table = Table(ctx)
         sheets = table.find_sheets("过程流程图")
@@ -471,17 +497,18 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
                 return "NG", f"工序“{process_name}”命中返工/返修语义，但下一行不是检验或重检。"
         return "PASS", ""
 
-    @rule("跨文件一致性审核（PFD与特殊特性清单）")
+    @rule("跨文件一致性审核（PFD与特殊特性清单）", clause_id="9")
     def rule_9(self, ctx: RuleContext) -> tuple[str, str]:
         pfd_rows = extract_rows_from_workbook(
             workbook=ctx.workbook,
             field_aliases=_RULE9_PFD_FIELD_ALIASES,
             required_fields=tuple(_RULE9_PFD_FIELD_ALIASES),
+            note_cell=self._note_extracted_cells(ctx, self._file_version_label()),
         )
         if not pfd_rows:
             return "NG", "PFD表无法识别特殊特性列结构。"
 
-        scl_rows, error = self._extract_rule9_scl_rows()
+        scl_rows, error = self._extract_rule9_scl_rows(ctx)
         if error:
             return "NG", error
 
@@ -512,6 +539,7 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
             if key and key not in pfd_keys:
                 missing_items.append(evidence)
 
+        ctx.record_execution()
         if missing_items:
             return "NG", f"特殊特性清单项目未在过程流程图覆盖：{_display_values(missing_items)}。"
         return "PASS", ""

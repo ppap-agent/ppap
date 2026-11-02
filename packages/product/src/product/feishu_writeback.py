@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import cast
 
 from audit.audits import ERR, EXEC_COMPLETED, FINDING_STATUSES, NA, NG, PASS, TARGET, UNABLE
+from audit.models import public_locator
 from audit.rule_coverage import REASON_MANUAL_ONLY, REASON_UNSUPPORTED, unsupported_item_note
 
 from product.feishu_drive import OPEN_API
@@ -138,21 +139,9 @@ def _semantic_source_valid(source: dict, inputs: dict[str, dict]) -> bool:
     item = inputs.get(version)
     if item is None or source.get("filename") != item.get("original_filename") or source.get("role") != item.get("role"):
         return False
-    locator = source.get("locator")
-    required = {
-        "xlsx_cell": ("sheet", "cell"),
-        "xlsx_range": ("sheet", "start", "end"),
-        "docx_paragraph": ("paragraph",),
-        "docx_cell": ("table", "row", "column"),
-        "pdf_block": ("page", "block"),
-        "pdf_cell": ("page", "row", "column"),
-    }
-    if not isinstance(locator, dict):
+    if public_locator(source.get("locator")) is None or not isinstance(source.get("excerpt"), str):
         return False
-    kind = locator.get("kind")
-    if kind == "pdf_cell" and (set(locator) != {"kind", *required[kind]} or any(type(locator.get(field)) is not int or locator[field] < 1 for field in required[kind])):
-        return False
-    return isinstance(kind, str) and kind in required and all(locator.get(field) is not None for field in required[kind]) and isinstance(source.get("excerpt"), str)
+    return True
 
 
 def writeback_state(round_body: dict) -> str:
@@ -310,6 +299,8 @@ def _source_location(locator: dict) -> str:
         return f"{locator['sheet']}!{locator['cell']}"
     if kind == "xlsx_range":
         return f"{locator['sheet']}!{locator['start']}:{locator['end']}"
+    if kind == "pdf_page":
+        return f"第 {locator['page']} 页"
     if kind == "pdf_block":
         return f"第 {locator['page']} 页 · 文本块 {locator['block']}"
     if kind == "pdf_cell":

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import math
 from string import Formatter
 from typing import Annotated, Any, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from pydantic_core import PydanticCustomError
 
 
@@ -59,6 +60,59 @@ class PublishedClause(Artifact):
 
 
 Locator = Annotated[ExcelCell | ExcelRange | WordParagraph | WordCell | PdfBlock | PdfCell | PublishedClause, Field(discriminator="kind")]
+
+_PUBLIC_LOCATORS = {
+    "xlsx_cell": ExcelCell,
+    "xlsx_range": ExcelRange,
+    "docx_paragraph": WordParagraph,
+    "docx_cell": WordCell,
+    "pdf_block": PdfBlock,
+    "pdf_cell": PdfCell,
+}
+
+
+def _finite_coordinate(value: object) -> bool:
+    if value is None:
+        return True
+    if type(value) is bool or type(value) not in {int, float}:
+        return False
+    return type(value) is int or math.isfinite(value)
+
+
+def _pdf_page(value: dict) -> dict | None:
+    page = value.get("page")
+    if type(page) is not int or page < 1:
+        return None
+    allowed = {"kind", "page"}
+    parsed: dict = {"kind": "pdf_page", "page": page}
+    if "region" in value:
+        region = value.get("region")
+        if (
+            not isinstance(region, list)
+            or len(region) != 4
+            or any(not _finite_coordinate(item) for item in region)
+        ):
+            return None
+        parsed["region"] = list(region)
+        allowed.add("region")
+    if set(value) != allowed:
+        return None
+    return parsed
+
+
+def public_locator(value: object) -> dict | None:
+    """Return one publishable original location, or nothing when it cannot be resolved."""
+    if not isinstance(value, dict):
+        return None
+    if value.get("kind") == "pdf_page":
+        return _pdf_page(value)
+    model = _PUBLIC_LOCATORS.get(value.get("kind")) if isinstance(value.get("kind"), str) else None
+    if model is None:
+        return None
+    try:
+        return model.model_validate(value).model_dump()
+    except ValidationError:
+        return None
 Scalar: TypeAlias = str | int | float | bool | None
 Diagnostic: TypeAlias = Literal["parser_unknown", "unresolved_relation", "visual_only_evidence", "budget_exhausted", "unsupported_structure", "rule_ambiguity"]
 
@@ -320,76 +374,6 @@ class Ontology(Artifact):
         if any(relation.source not in entities or relation.target not in entities for relation in self.relationships):
             raise ValueError("Relationship endpoint is not a declared entity")
         return self
-
-
-class RulePlan(Artifact):
-    source_sha256: str
-    plan_revision: str = Field(pattern=r"^[a-f0-9]{64}$")
-    rules: list[PlannedRule] = Field(min_length=1)
-    ontology: Ontology = Field(default_factory=Ontology)
-    # Copied from the frozen effective rule by the host, never inferred from chat.
-    appendix: list[dict[str, Any]] = Field(default_factory=list, max_length=256)
-
-    @model_validator(mode="after")
-    def ontology_programs(self) -> "RulePlan":
-        entities = {entity.id: entity for entity in self.ontology.entities}
-        if not entities:
-            return self  # Existing row programs use their original physical grain.
-
-        def fields(entity: str | None, names: list[str]) -> None:
-            if entity not in entities or not set(names) <= entities[entity].attributes.keys():
-                raise ValueError("Program attribute outside declared ontology")
-
-        def visit(node: Expr | None, current: str | None) -> None:
-            if node is None:
-                return
-            if isinstance(node, ValueTest):
-                fields(current, [node.field])
-            elif isinstance(node, (ColumnExists, CollectionExists)):
-                fields(node.input, [node.field] if isinstance(node, ColumnExists) else [])
-            elif isinstance(node, (All, AnyOf, Not)):
-                for child in node.items if isinstance(node, (All, AnyOf)) else [node.item]:
-                    visit(child, current)
-            elif isinstance(node, Judge):
-                if current is not None:
-                    fields(current, node.fields)
-                for entity in node.inputs:
-                    fields(entity, [])
-            elif isinstance(node, Related):
-                fields(current, node.source_key.fields + [comparison.source_field for comparison in node.comparisons])
-                fields(node.target, node.target_key.fields + [comparison.target_field for comparison in node.comparisons])
-                relation = next((relation for relation in self.ontology.relationships if relation.id == node.relationship_id), None)
-                if relation is None:
-                    raise ValueError("Program relationship must reference a declared ontology relationship")
-                if relation.source != current or relation.target != node.target:
-                    raise ValueError("Program relationship direction outside declared ontology")
-                if relation.kind == "same_instance" and (entities[relation.source].identity != node.source_key.fields or entities[node.target].identity != node.target_key.fields):
-                    raise ValueError("Same-instance relationship keys must equal the ordered entity identity")
-                if relation.kind == "same_instance" and any(key.separator is not None or key.template is not None for key in (node.source_key, node.target_key)):
-                    raise ValueError("Same-instance identity uses component tuples, not a string projection")
-                visit(node.target_when, node.target)
-
-        for rule in self.rules:
-            program = rule.program
-            source = program.source if isinstance(program, RecordsProgram) else None
-            if isinstance(program, RecordsProgram):
-                fields(program.source, [])
-                visit(program.when, program.source)
-            visit(program.precondition, None)
-            visit(program.require, source)
-        return self
-
-
-class CompiledOntology(Ontology):
-    """A new compiled plan must state its object grain and identity."""
-
-    entities: list[EntityConcept] = Field(min_length=1, max_length=64)
-
-
-class CompiledRulePlan(RulePlan):
-    # RulePlan remains the common replay model for hand-built unit programs.
-    # The real compiler/cache boundary has no implicit physical-row ontology.
-    ontology: CompiledOntology
 
 
 class Citation(Artifact):

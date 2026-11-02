@@ -16,6 +16,7 @@ class RuleInput(BaseModel):
     rule_profile: str = "v2"
     type: Optional[str] = None
     rules: List[Dict[str, Any]] = Field(default_factory=list)
+    appendix: List[Dict[str, Any]] = Field(default_factory=list)
     customers: List[str] = Field(default_factory=list)
     models: List[str] = Field(default_factory=list)
     parts: List[str] = Field(default_factory=list)
@@ -84,6 +85,7 @@ class EvidenceSource(BaseModel):
 
     kind: Literal["structure", "visual"]
     locator: str
+    excerpt: str = Field(default="", max_length=500)
 
 
 class AuditEvidence(BaseModel):
@@ -108,3 +110,8 @@ class AuditResultItem(BaseModel):
     status: str
     suggestions: str
     evidence: Optional[AuditEvidence] = None
+    clause_id: Optional[str] = None
+    checks_performed: Optional[int] = None
+    empty_scope_basis: Optional[str] = None
+    scope: Optional[dict[str, int]] = None
+    clarifications: list[dict[str, Any]] = Field(default_factory=list)

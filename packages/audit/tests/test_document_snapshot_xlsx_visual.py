@@ -10,8 +10,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import pytest
 from audit.document_tools import ParserLimitError, ReadLimits, TableReader, _print_view, bind, effective, snapshot
 from audit.evidence import EvidenceBudget, cell_locator, resolve
-from audit.models import ExcelRange, RulePlan
-from audit.trace import AuditTrace, derive_report
+from audit.models import ExcelRange
 from audit.validation import validate_snapshot
 from openpyxl import Workbook
 
@@ -244,39 +243,6 @@ def test_visual_unknown_cannot_become_a_native_fact_in_snapshot_validation(tmp_p
     assert visual["content_observed"] is False
 
 
-def test_visual_blank_survives_binding_and_rule_evaluation_as_unable(tmp_path):
-    observed = snapshot(workbook(tmp_path))
-    binding = {
-        "id": "body",
-        "document_id": "target",
-        "source_sha256": observed["source"]["sha256"],
-        "table": "Process",
-        "header_rows": [1],
-        "first_row": 2,
-        "last_row": 2,
-        "columns": {"field": "B"},
-        "mapping_basis": "Column B is the declared field.",
-        "boundary_basis": "Row 2 is the declared body.",
-    }
-    assert bind(observed, binding)["records"][0]["states"]["field"] == "unknown_visual_evidence"
-    plan = RulePlan.model_validate(
-        {
-            "source_sha256": "a" * 64,
-            "plan_revision": "b" * 64,
-            "rules": [
-                {
-                    "id": "R",
-                    "source_locator": {"kind": "published_clause", "clause_id": "R"},
-                    "program": {"kind": "records", "source": "records", "quantifier": "forall", "require": {"kind": "value_test", "field": "field", "op": "not_empty"}},
-                    "empty_scope_status": "UNABLE",
-                    "empty_scope_basis": "No empty scope exception.",
-                }
-            ],
-        }
-    )
-    trace = AuditTrace.model_validate({"bindings": [binding], "uses": [{"audit_id": "target", "rule_id": "R", "inputs": {"records": {"kind": "bound", "scopes": [{"binding_id": "body"}]}}}]})
-    check = derive_report(trace, {"target": observed}, {"target": plan}).checks[0]
-    assert (check.status, check.total, check.checked, check.unknown, check.diagnostic) == ("UNABLE", 1, 0, 1, "visual_only_evidence")
 
 
 def test_zero_height_line_is_an_unresolved_visual_source(tmp_path):
@@ -659,60 +625,3 @@ def test_explicit_object_field_native_reread_cannot_bypass_visual_budget():
     assert selected[0]["states"]["field"] == "known"
 
 
-def test_identity_provenance_indexes_visual_sources_once_with_the_same_budget():
-    from audit.refinement import validate_identity_provenance
-
-    document, visual = visual_budget_document()
-    raw = {
-        "source_sha256": "rule",
-        "plan_revision": "a" * 64,
-        "ontology": {
-            "entities": [{"id": name, "grain": "One item", "attributes": {"id": "string", "extra": "string", "classification": "string"}, "identity": ["id"]} for name in ("items", "other")],
-            "relationships": [{"id": "same", "kind": "same_instance", "source": "items", "target": "other", "meaning": "Corresponding items"}],
-        },
-        "rules": [
-            {
-                "id": "R",
-                "source_locator": {"kind": "published_clause", "clause_id": "R"},
-                "empty_scope_status": "UNABLE",
-                "empty_scope_basis": "No empty scope exception.",
-                "program": {
-                    "kind": "records",
-                    "source": "items",
-                    "quantifier": "forall",
-                    "require": {
-                        "kind": "related",
-                        "relationship_id": "same",
-                        "target": "other",
-                        "source_key": {"fields": ["id"]},
-                        "target_key": {"fields": ["id"]},
-                        "match": "one_to_one",
-                        "comparisons": [{"source_field": "classification", "target_field": "classification", "mode": "exact"}],
-                    },
-                },
-            }
-        ],
-    }
-    original = RulePlan.model_validate(raw)
-    refined_raw = deepcopy(raw)
-    for entity in refined_raw["ontology"]["entities"]:
-        entity["identity"].append("extra")
-    for side in ("source_key", "target_key"):
-        refined_raw["rules"][0]["program"]["require"][side]["fields"].append("extra")
-    refined = RulePlan.model_validate(refined_raw)
-    records = [
-        {
-            "states": {"classification": "known", "extra": "known"},
-            "evidence": {
-                field: {"citation": {"document_id": "target", "locator": {"kind": "xlsx_cell", "sheet": "Process", "cell": f"{column}{row}"}}}
-                for field, column in (("extra", "B"), ("classification", "C"))
-            },
-        }
-        for row in range(2, 130)
-    ]
-    budget = EvidenceBudget(remaining=15000)
-    validate_identity_provenance(original, refined, "items", records, {"target": document}, budget)
-    assert visual.reads <= 15000 - budget.remaining
-    assert all(not record.get("identity_unresolved_fields") for record in records)
-    with pytest.raises(ValueError, match="budget"):
-        validate_identity_provenance(original, refined, "items", records, {"target": document}, EvidenceBudget(remaining=1000))
