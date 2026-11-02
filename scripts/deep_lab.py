@@ -17,6 +17,8 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "output"
 HOME = ROOT / ".grok"
+MODEL = "grok-4.7"
+EFFORT = "xhigh"
 
 
 def _env(name: str) -> str:
@@ -26,23 +28,16 @@ def _env(name: str) -> str:
     return value
 
 
-def ensure_home() -> None:
-    """Create the shared home once. Do not overwrite an existing config."""
-    HOME.mkdir(mode=0o700, exist_ok=True)
-    (HOME / "skills").mkdir(exist_ok=True)
-    config = HOME / "config.toml"
-    if config.exists():
-        return
-    model = _env("LLM_MODEL")
+def _config_text() -> str:
     base_url = _env("LLM_BASE_URL")
     key = _env("LLM_API_KEY")
-    text = (
+    return (
         "[models]\n"
-        f"default = {json.dumps(model)}\n"
-        'default_reasoning_effort = "low"\n'
-        f"[model.{json.dumps(model)}]\n"
-        f"model = {json.dumps(model)}\n"
-        f"name = {json.dumps(model)}\n"
+        f"default = {json.dumps(MODEL)}\n"
+        f"default_reasoning_effort = {json.dumps(EFFORT)}\n"
+        f"[model.{json.dumps(MODEL)}]\n"
+        f"model = {json.dumps(MODEL)}\n"
+        f"name = {json.dumps(MODEL)}\n"
         f"base_url = {json.dumps(base_url)}\n"
         'api_backend = "responses"\n'
         f"api_key = {json.dumps(key)}\n"
@@ -50,7 +45,16 @@ def ensure_home() -> None:
         "[cli]\nauto_update = false\n"
         "[memory]\nenabled = false\n"
     )
-    config.write_text(text)
+
+
+def ensure_home() -> None:
+    """Create the shared home only when it has no config. Never replace an existing model menu."""
+    HOME.mkdir(mode=0o700, exist_ok=True)
+    (HOME / "skills").mkdir(exist_ok=True)
+    config = HOME / "config.toml"
+    if config.exists():
+        return
+    config.write_text(_config_text())
     config.chmod(0o600)
 
 
@@ -59,7 +63,7 @@ def _role(seq: str) -> str:
     return kind.value[1] if kind is not None else seq
 
 
-def prepare(recipe: str, bundle: str, file_name: str) -> tuple[Path, dict[str, str]]:
+def prepare(recipe: str, bundle: str, file_name: str, effort: str) -> tuple[Path, dict[str, str]]:
     template = ROOT / "recipes" / recipe / "prompt.md"
     if not template.is_file():
         raise SystemExit(f"missing recipe {template}")
@@ -73,7 +77,7 @@ def prepare(recipe: str, bundle: str, file_name: str) -> tuple[Path, dict[str, s
         raise SystemExit(f"{file_name} matched {len(selected)} files in {bundle}")
     case = selected[0]
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    work = OUTPUT / recipe / bundle / f"{case.file_seq}-{case.file_path.stem}" / stamp
+    work = OUTPUT / recipe / effort / bundle / f"{case.file_seq}-{case.file_path.stem}" / stamp
     files = work / "files"
     files.mkdir(parents=True)
     copied: dict[str, str] = {}
@@ -92,6 +96,8 @@ def prepare(recipe: str, bundle: str, file_name: str) -> tuple[Path, dict[str, s
         json.dumps(
             {
                 "recipe": recipe,
+                "model": MODEL,
+                "reasoning_effort": effort,
                 "bundle": bundle,
                 "target": case.file_name,
                 "seq": case.file_seq,
@@ -107,7 +113,7 @@ def prepare(recipe: str, bundle: str, file_name: str) -> tuple[Path, dict[str, s
     return work, expected
 
 
-def run_grok(work: Path) -> int:
+def run_grok(work: Path, effort: str) -> int:
     grok = shutil.which("grok")
     if grok is None:
         raise SystemExit("grok is not on PATH")
@@ -127,9 +133,9 @@ def run_grok(work: Path) -> int:
         "--prompt-file",
         str(work / "prompt.txt"),
         "--model",
-        _env("LLM_MODEL"),
+        MODEL,
         "--reasoning-effort",
-        os.environ.get("OPENAI_REASONING_EFFORT", "low").strip() or "low",
+        effort,
         "--output-format",
         "streaming-messages-json",
         "--max-turns",
@@ -184,6 +190,7 @@ def main() -> None:
     parser.add_argument("--seq", default="11")
     parser.add_argument("--file", default="")
     parser.add_argument("--all", action="store_true")
+    parser.add_argument("--effort", default=EFFORT, choices=["xhigh", "high", "medium", "low"])
     args = parser.parse_args()
     load_dotenv(ROOT / ".env")
     ensure_home()
@@ -192,14 +199,18 @@ def main() -> None:
     for index, case in enumerate(selected, start=1):
         print(f"[{index}/{len(selected)}] {case.bundle_id} {case.file_name}", flush=True)
         try:
-            work, expected = prepare(args.recipe, case.bundle_id, case.file_name)
-            code = run_grok(work)
+            work, expected = prepare(args.recipe, case.bundle_id, case.file_name, args.effort)
+            code = run_grok(work, args.effort)
+            report = score(work, expected)
+            row = {
+                "bundle": case.bundle_id,
+                "file": case.file_name,
+                "work": str(work),
+                "match": report["match"],
+                "exit": code,
+            }
             if code != 0:
-                row = {"bundle": case.bundle_id, "file": case.file_name, "work": str(work), "match": False, "error": f"exit {code}"}
-                print(json.dumps(row, ensure_ascii=False), flush=True)
-            else:
-                report = score(work, expected)
-                row = {"bundle": case.bundle_id, "file": case.file_name, "work": str(work), "match": report["match"]}
+                row["error"] = report.get("error") or f"exit {code}"
         except subprocess.TimeoutExpired:
             row = {"bundle": case.bundle_id, "file": case.file_name, "match": False, "error": "timeout"}
             print(json.dumps(row, ensure_ascii=False), flush=True)
@@ -208,8 +219,15 @@ def main() -> None:
             print(json.dumps(row, ensure_ascii=False), flush=True)
         summary.append(row)
     matched = sum(1 for row in summary if row["match"])
-    totals = {"recipe": args.recipe, "cases": len(summary), "matched": matched, "results": summary}
-    destination = OUTPUT / args.recipe / "summary.json"
+    totals = {
+        "recipe": args.recipe,
+        "effort": args.effort,
+        "model": MODEL,
+        "cases": len(summary),
+        "matched": matched,
+        "results": summary,
+    }
+    destination = OUTPUT / args.recipe / args.effort / "summary.json"
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(json.dumps(totals, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps({"cases": len(summary), "matched": matched, "summary": str(destination)}, ensure_ascii=False), flush=True)
