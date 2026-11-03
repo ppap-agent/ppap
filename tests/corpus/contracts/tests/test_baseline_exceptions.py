@@ -120,3 +120,13 @@ def test_recorded_behaviors_are_unique_locations() -> None:
         assert item.location not in seen
         seen.add(item.location)
         assert item.expected_status != item.actual.status
+
+
+def test_approved_stamp_differences_accept_only_observed_business_or_unknown_results():
+    for filename in ("16-零件提交保证书-继峰.pdf", "16-零件提交保证书-继峰 - 无边框.pdf"):
+        for status in ("NG", "UNABLE"):
+            assert classify_v2_baseline_outcomes(filename, "pdf", {3: _obs("PASS", O(status))}) == (frozenset(), frozenset(), frozenset())
+        _, drifted, _ = classify_v2_baseline_outcomes(filename, "pdf", {3: _obs("PASS", O("ERR"))})
+        assert drifted == {3}
+        new, _, _ = classify_v2_baseline_outcomes(filename, "pdf", {3: _obs("PASS", O("NG")), 5: _obs("PASS", O("UNABLE"))})
+        assert new == {5}
