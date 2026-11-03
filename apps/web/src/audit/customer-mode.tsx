@@ -48,6 +48,7 @@ export function CustomerMode({value, options, adapter, onChange, onInitialDefaul
       <Button variant="ghost" disabled={!current || saving || !canSave} onClick={() => setConfirming(true)}>设为企业默认</Button>
     </div>
     <p className="text-sm text-muted-foreground">本次切换只影响当前任务。{current && `企业默认：${presetCustomers.find(option => option.value === current.customer_preference)?.label || '自动识别'}。`}</p>
+    {!current && !message && <p role="status" className="text-sm">正在读取企业默认，或请选择本次审核客户。</p>}
     {message && <p role="status" className="text-sm">{message}<Button variant="link" onClick={() => setReadRevision(revision => revision + 1)}>重新读取企业默认</Button></p>}
     <Dialog open={confirming} onOpenChange={open => {if (!saving) setConfirming(open)}}><DialogContent><DialogHeader><DialogTitle>更改企业默认客户？</DialogTitle><DialogDescription>设为{choices.find(option => option.value === value)?.label || '自动识别'}，仅影响本企业以后新建的任务。已有任务和历史结果保持原客户模式。</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" disabled={saving} onClick={() => setConfirming(false)}>取消</Button><Button disabled={saving} onClick={() => void save()}>{saving ? '保存中…' : '确认更改'}</Button></DialogFooter></DialogContent></Dialog>
   </div>

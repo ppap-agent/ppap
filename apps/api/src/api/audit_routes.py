@@ -226,7 +226,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
         if denied:
             return denied
         try:
-            return JSONResponse(store.end_unmatched_task(principal, task_id, cast(int, body.get("expected_revision")), body.get("removals", [])))
+            return JSONResponse(store.end_unmatched_task(principal, task_id, cast(int, body.get("expected_revision")), body.get("removals", []), body.get("unselected_file_version_ids")))
         except (KeyError, ValueError) as exc:
             return fail(exc)
 

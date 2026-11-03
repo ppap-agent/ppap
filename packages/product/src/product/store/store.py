@@ -2462,7 +2462,7 @@ class AuthStore:
                 for row in rows
             ]
 
-    def end_unmatched_task(self, principal: Principal, task_id: str, expected_revision: int, removals: list) -> dict:
+    def end_unmatched_task(self, principal: Principal, task_id: str, expected_revision: int, removals: list, unselected_file_version_ids: list | None = None) -> dict:
         with self._conn() as conn, conn.transaction():
             draft = self._recognition_owner(conn, principal, task_id, lock=True)
             if type(expected_revision) is not int or expected_revision < 0:
@@ -2472,12 +2472,23 @@ class AuthStore:
             task = self._recognition_public(conn, principal, task_id)
             if not isinstance(removals, list):
                 raise ValueError("invalid_removal_reason")
+            unselected = set()
+            if unselected_file_version_ids is not None and not isinstance(unselected_file_version_ids, list):
+                raise ValueError("invalid_task_selection")
+            for raw_id in unselected_file_version_ids or []:
+                vid = _as_uuid(str(raw_id or ""))
+                row = next((row for row in task["files"] if row["file"]["id"] == vid), None)
+                if not vid or vid in unselected or not row or row["selection"] not in {"selected", "unselected"}:
+                    raise ValueError("invalid_task_selection")
+                if task["completion_reason"] and row["selection"] != "unselected":
+                    raise ValueError("task_input_locked")
+                unselected.add(vid)
             removed: dict[str, str] = {}
             for raw in removals:
                 if not isinstance(raw, dict):
                     raise ValueError("invalid_removal_reason")
                 vid, reason = _as_uuid(str(raw.get("file_version_id") or "")), raw.get("removal_reason")
-                if not vid or vid in removed or not isinstance(reason, str) or not reason.strip() or len(reason) > 500:
+                if not vid or vid in removed or vid in unselected or not isinstance(reason, str) or not reason.strip() or len(reason) > 500:
                     raise ValueError("invalid_removal_reason")
                 row = next((row for row in task["files"] if row["file"]["id"] == vid), None)
                 if task["completion_reason"] and row and row["selection"] != "removed":
@@ -2487,9 +2498,11 @@ class AuthStore:
                 removed[vid] = reason.strip()
             if task["completion_reason"] == "no_matching_rules":
                 return task
-            selected = [row for row in task["files"] if row["selection"] == "selected"]
-            if task["state"] != "pending_confirm" or not selected or any(row["match"]["state"] not in {"unmatched", "reference"} for row in selected):
+            selected = [row for row in task["files"] if row["selection"] == "selected" and row["file"]["id"] not in unselected]
+            if task["state"] != "pending_confirm" or any((row["match"] or {}).get("state") not in {"unmatched", "reference"} for row in selected):
                 raise ValueError("task_not_zero_match")
+            for vid in unselected:
+                conn.execute("UPDATE product.draft_items SET selection = 'unselected', removal_reason = NULL WHERE draft_id = %s AND file_version_id = %s", (task_id, vid))
             for vid, reason in removed.items():
                 conn.execute("UPDATE product.draft_items SET selection = 'removed', removal_reason = %s WHERE draft_id = %s AND file_version_id = %s", (reason, task_id, vid))
             conn.execute("UPDATE product.audit_drafts SET task_completion_reason = 'no_matching_rules', updated_at = now() WHERE id = %s", (task_id,))

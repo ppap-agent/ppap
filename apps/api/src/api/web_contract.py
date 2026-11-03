@@ -1130,6 +1130,7 @@ class AuditRecognitionRead(TypedDict):
 
 
 class AuditTaskEndRequest(TypedDict):
+    unselected_file_version_ids: NotRequired[list[str]]
     expected_revision: int
     removals: NotRequired[list[AuditTaskRemoval]]
 

@@ -149,3 +149,21 @@ class AuditIntakeClosureTests(unittest.TestCase):
             expect(page.get_by_role("checkbox", name="选择 PFMEA.xlsx", exact=True)).not_to_be_checked()
             expect(page.get_by_role("heading", name="等待预检查 · 1 份", exact=True)).to_be_visible()
             browser.close()
+
+
+    def test_all_unselected_targets_can_end_without_another_recognition(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(PREVIEW + "/preview/audit.html?scene=with-reference")
+            page.get_by_role("button", name="使用三类文件示例", exact=True).click()
+            page.get_by_role("button", name="开始识别", exact=True).click()
+            expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
+            page.get_by_role("button", name="上一步", exact=True).click()
+            page.get_by_role("checkbox", name="全选可审核文件", exact=True).uncheck()
+            expect(page.get_by_role("button", name="开始识别", exact=True)).to_have_count(0)
+            page.get_by_role("button", name="结束任务", exact=True).click()
+            expect(page.get_by_role("heading", name="任务已结束", exact=True)).to_be_visible()
+            expect(page.get_by_text("未选择待审文件，未开始审核", exact=True)).to_be_visible()
+            expect(page.get_by_text("未产生审核费用，也没有生成报告。", exact=True)).to_be_visible()
+            browser.close()

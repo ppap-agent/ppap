@@ -2092,3 +2092,40 @@ def test_failed_and_unknown_recognition_are_not_definitive_zero_matches(task_sys
     assert "private provider" not in json.dumps(failed)
     assert client.post(path + "/end", json={"expected_revision": 0}).status_code == 409
     assert client.get("/rounds").json()["rounds"] == []
+
+
+def test_user_can_end_after_unselecting_all_matched_targets(task_system):
+    client, worker = task_system
+    file = checked_file(client, worker)
+    publish_rule(client, file)
+    task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [file]}).json()
+    process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=MetadataAI())
+    path = f"/audit-tasks/{task['id']}"
+    assert client.get(path).json()["files"][0]["match"]["state"] == "matched"
+    assert client.post(path + "/end", json={"expected_revision": 0}).status_code == 409
+    command = {"expected_revision": 0, "unselected_file_version_ids": [file["file_version_id"]]}
+    ended = client.post(path + "/end", json=command)
+    assert ended.status_code == 200, ended.text
+    assert ended.json()["state"] == "completed"
+    assert ended.json()["files"][0]["selection"] == "unselected"
+    assert ended.json()["round_id"] is None
+    assert ended.json()["estimated_points"] == 0
+    assert client.post(path + "/end", json=command).json() == ended.json()
+    assert client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).status_code == 409
+    assert client.get("/rounds").json()["rounds"] == []
+    assert client.get("/usage").json()["events"] == []
+
+
+def test_zero_target_end_rejects_foreign_or_stale_selection_intent(task_system):
+    client, worker = task_system
+    file = checked_file(client, worker)
+    publish_rule(client, file)
+    task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [file]}).json()
+    process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=MetadataAI())
+    path = f"/audit-tasks/{task['id']}"
+    for ids in ([str(uuid.uuid4())], [file["file_version_id"], file["file_version_id"]], "not-a-list"):
+        rejected = client.post(path + "/end", json={"expected_revision": 0, "unselected_file_version_ids": ids})
+        assert rejected.status_code in {400, 409}
+    assert client.post(path + "/end", json={"expected_revision": 1, "unselected_file_version_ids": [file["file_version_id"]]}).status_code == 409
+    assert client.get(path).json()["files"][0]["selection"] == "selected"
+    assert client.get(path).json()["state"] == "pending_confirm"
