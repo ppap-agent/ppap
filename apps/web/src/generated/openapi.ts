@@ -5126,6 +5126,8 @@ export interface operations {
                         /** Removal Reason */
                         removal_reason: string;
                     }[];
+                    /** Unselected File Version Ids */
+                    unselected_file_version_ids?: string[];
                 } & {
                     [key: string]: unknown;
                 };

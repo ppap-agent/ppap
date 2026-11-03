@@ -68,7 +68,9 @@ def task_notification_card(task: dict, stage: str, web_url: str, report_package:
         if counts and len(counts) == len(targets):
             blocks.append(_counts_text({key: sum(value[key] for value in counts) for key in counts[0]}))
         if task.get("completion_reason") == "no_matching_rules":
-            blocks.append("没有匹配到生效规则，未开始审核，未生成正式报告。")
+            selected = [row for row in files if row.get("selection") == "selected"]
+            reason = "未选择待审文件" if not selected else "仅保留比对资料" if all((row.get("match") or {}).get("state") == "reference" for row in selected) else "没有匹配到生效规则"
+            blocks.append(reason + "，未开始审核，未生成正式报告。")
         for row in targets:
             audit = row.get("audit") or {}
             conclusion = {"PASS": "符合", "NG": "不符合"}.get(audit.get("conclusion") or "", "无正式结论")
