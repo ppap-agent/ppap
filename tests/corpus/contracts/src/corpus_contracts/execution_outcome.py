@@ -14,7 +14,7 @@ EXECUTION_RESULT = "result"
 EXECUTION_FAILURE = "execution_failure"
 MISSING_RULE = "missing_rule"
 
-VALID_STATUSES = frozenset({"PASS", "NG", "ERR"})
+VALID_STATUSES = frozenset({"PASS", "NG", "UNABLE", "ERR"})
 VALID_EXECUTION_CLASSES = frozenset({EXECUTION_RESULT, EXECUTION_FAILURE, MISSING_RULE})
 
 
