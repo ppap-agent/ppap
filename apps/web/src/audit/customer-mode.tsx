@@ -12,7 +12,7 @@ export type CustomerDefaultAdapter = {
 }
 const presetCustomers = [{value: 'UAES', label: 'UAES（联电）'}, {value: '理想', label: '理想'}, {value: '蔚来', label: '蔚来'}]
 
-export function CustomerMode({value, options, adapter, onChange, onInitialDefault, onRefresh}: {value: string; options: {value: string; label: string}[]; adapter: CustomerDefaultAdapter; onChange: (value: string) => void; onInitialDefault: (value: string) => void; onRefresh?: () => void}) {
+export function CustomerMode({value, ready, options, adapter, onChange, onInitialDefault, onRefresh}: {value: string; ready: boolean; options: {value: string; label: string}[]; adapter: CustomerDefaultAdapter; onChange: (value: string) => void; onInitialDefault: (value: string) => void; onRefresh?: () => void}) {
   const [current, setCurrent] = useState<CustomerDefault | null>(null)
   const [confirming, setConfirming] = useState(false), [saving, setSaving] = useState(false)
   const [message, setMessage] = useState(''), [readRevision, setReadRevision] = useState(0)
@@ -44,7 +44,7 @@ export function CustomerMode({value, options, adapter, onChange, onInitialDefaul
   return <div className="grid gap-2">
     <Label htmlFor="audit-customer">审核客户</Label>
     <div className="flex flex-wrap items-center gap-2">
-      <Select value={value} onValueChange={onChange} onOpenChange={open => {if (open) onRefresh?.()}}><SelectTrigger id="audit-customer" className="w-56"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="auto">自动识别</SelectItem>{choices.map(option => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select>
+      <Select value={ready ? value : ''} onValueChange={onChange} onOpenChange={open => {if (open) onRefresh?.()}}><SelectTrigger id="audit-customer" className="w-56"><SelectValue placeholder="请选择本次审核客户"/></SelectTrigger><SelectContent><SelectItem value="auto">自动识别</SelectItem>{choices.map(option => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select>
       <Button variant="ghost" disabled={!current || saving || !canSave} onClick={() => setConfirming(true)}>设为企业默认</Button>
     </div>
     <p className="text-sm text-muted-foreground">本次切换只影响当前任务。{current && `企业默认：${presetCustomers.find(option => option.value === current.customer_preference)?.label || '自动识别'}。`}</p>
