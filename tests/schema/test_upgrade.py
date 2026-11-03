@@ -53,11 +53,32 @@ class SchemaUpgradeTests(unittest.TestCase):
             self.assertEqual(executed, versions)
             self.assertEqual(self.schema.applied(empty), versions)
 
+            tenant_id = str(uuid.uuid4())
+            self.schema.require(
+                self.schema.psql(
+                    self.schema.migrator_user(),
+                    self.schema.migrator_password(),
+                    empty,
+                    "-c",
+                    "INSERT INTO product.tenants (id, provider, external_key, display_name, default_customer_preference, customer_preference_revision) "
+                    f"VALUES ('{tenant_id}', 'feishu', 'default-replay', 'Replay', 'UAES', 7)",
+                ),
+                "save customer default before migration replay",
+            )
             second_apply = self.schema.apply(empty)
             self.schema.require(second_apply, "re-apply empty")
             repeated = [line.removeprefix("applying ") for line in (second_apply.stdout or b"").decode().splitlines() if line.startswith("applying ")]
             self.assertEqual(repeated, versions)
             self.assertEqual(self.schema.applied(empty), versions)
+            default = self.schema.psql(
+                self.schema.migrator_user(),
+                self.schema.migrator_password(),
+                empty,
+                "-Atc",
+                f"SELECT default_customer_preference, customer_preference_revision FROM product.tenants WHERE id = '{tenant_id}'",
+            )
+            self.schema.require(default, "read customer default after migration replay")
+            self.assertEqual(default.stdout.strip(), b"UAES|7")
 
             for name in versions[:-1]:
                 self.schema.require(

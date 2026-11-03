@@ -28,7 +28,7 @@ def _declarations(item: RoundInput) -> tuple[tuple[str, str], ...]:
     from audit.engine.checkers.rule_declarations import declarations_for_target
 
     body = item.rule_body or {}
-    return declarations_for_target(body.get("type") or "", item.filename, body.get("rule_profile") or "v2")
+    return declarations_for_target(body.get("type") or "", item.filename, body.get("rule_profile") or "v2", preset_key=body.get("preset_key"), preset_customer=(body.get("customers") or [None])[0])
 
 
 def _rule_execution(item: RoundInput) -> dict | None:
@@ -55,6 +55,8 @@ def builtin_rule_input(item: RoundInput) -> RuleInput:
     return RuleInput(
         rule_id=item.rule_version_id,
         rule_profile=body.get("rule_profile") or "v2",
+        preset_key=body.get("preset_key"),
+        preset_source_sha256=body.get("preset_source_sha256"),
         type=body.get("type") or "",
         rules=builtin_rules,
         customers=list(body.get("customers") or []),

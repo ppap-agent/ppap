@@ -172,7 +172,7 @@ class PreparationHTTP:
                 "number": "PPAP-恢复-001",
                 "state": "matching",
                 "analysis_mode": "standard",
-                "customer_preference": None,
+                "customer_preference": body["customer_preference"],
                 "source_draft_id": self.draft["id"],
                 "round_id": None,
                 "completion_reason": None,
@@ -188,6 +188,7 @@ class PreparationHTTP:
                         "removal_reason": row["removal_reason"],
                         "validation_id": row["validation_id"],
                         "validation": {"state": "valid", "reasons": []},
+                        **({"reference_only": True} if row.get("reference_only") else {}),
                         "match": None,
                     }
                     for row in body["files"]
@@ -537,4 +538,25 @@ def test_explicit_auto_selection_can_continue_while_default_read_is_pending():
         expect(page.get_by_text("本次切换只影响当前任务。企业默认：UAES（联电）。", exact=True)).to_be_visible()
         expect(choice).to_contain_text("自动识别")
         assert server.default_writes == []
+        browser.close()
+
+
+def test_v4_reference_choice_reaches_preparation_and_recognition():
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        server = PreparationHTTP()
+        server.customer_default = {"customer_preference": "蔚来", "revision": 0}
+        server.install(page)
+        page.goto(WEB + "/tasks/new")
+        expect(page.get_by_role("combobox", name="审核客户", exact=True)).to_contain_text("蔚来")
+        page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "特殊特性清单.xlsx", "mimeType": "application/octet-stream", "buffer": b"original"})
+        role = page.get_by_role("combobox", name="特殊特性清单.xlsx 本轮用途", exact=True)
+        role.click()
+        page.get_by_role("option", name="比对资料 · 不单独审核或收费", exact=True).click()
+        expect(role).to_contain_text("比对资料")
+        page.get_by_role("button", name="开始识别", exact=True).click()
+        expect(page.get_by_role("heading", name="正在识别文件与匹配规则", exact=True)).to_be_visible()
+        assert server.task_commands[0]["files"][0]["reference_only"] is True
+        assert server.draft["upload_preparation"]["files"][0]["reference_only"] is True
         browser.close()

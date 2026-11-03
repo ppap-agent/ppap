@@ -237,6 +237,9 @@ class AuthStore:
                 ).fetchone()
                 if existing:
                     user_id, tenant_id, role, name = existing
+                    from product.rules import install_customer_presets
+
+                    install_customer_presets(conn, str(tenant_id))
                     return Principal(str(user_id), str(tenant_id), provider, app_id, tenant_key, subject, role, name)
                 tenant_id = cast(
                     tuple[Any, ...],
@@ -266,6 +269,9 @@ class AuthStore:
                     """,
                     (user_id, tenant_id),
                 )
+                from product.rules import install_customer_presets
+
+                install_customer_presets(conn, str(tenant_id))
                 return Principal(str(user_id), str(tenant_id), provider, app_id, tenant_key, subject, "member", display_name)
 
     def create_session(self, principal: Principal, tokens: UserTokens | None = None, ttl_seconds: int = 43200) -> str:
@@ -1376,7 +1382,8 @@ class AuthStore:
             replacement = row.get("replacement_of_file_version_id")
             inherited = predecessor["inputs"].get(replacement or row["file_version_id"]) if predecessor else None
             reference_only = row.get("reference_only", False)
-            if reference_only and (not inherited or inherited["role"] != "reference" or preferred):
+            v4_reference = bool(customer and any(rule.get("rule_profile") == "v4" and customer.casefold() in {name.casefold() for name in rule.get("customers") or []} for rule in candidates))
+            if reference_only and (preferred or not (v4_reference or inherited and inherited["role"] == "reference")):
                 raise ValueError("invalid_reference_binding")
             reuse = bool(inherited and (reference_only or preferred and preferred == inherited["rule_id"]))
             if row["selection"] == "selected" and reuse and not reference_only and predecessor is not None and customer != predecessor["customer_preference"]:
@@ -1394,6 +1401,7 @@ class AuthStore:
                     "document_type": "",
                     "candidate_rules": [chosen] if chosen else candidates,
                     "customer_preference": customer,
+                    "reference_only": reference_only,
                     "matching_scope": "customer_document_type",
                 }
                 if replacement:
@@ -2307,7 +2315,7 @@ class AuthStore:
                     **({"preferred_rule_version_id": str(row["rule_version_id"])} if row["rule_version_id"] else {}),
                     **({"replacement_of_file_version_id": replacement} if replacement else {}),
                     **({"rule_options": self._reaudit_rule_options(original_rules.get(replacement or vid), available_rules)} if original_rules else {}),
-                    **({"reference_only": True} if draft["predecessor_id"] and row["role"] == "reference" else {}),
+                    **({"reference_only": True} if row["role"] == "reference" and (draft["predecessor_id"] or (row["analysis_payload"] or {}).get("reference_only")) else {}),
                 }
             )
         selected = [row for row in files if row["selection"] == "selected"]
@@ -2653,6 +2661,10 @@ class AuthStore:
                 predecessor = _as_uuid(predecessor_id) if predecessor_id else None
                 if predecessor_id and (not predecessor or not self._rule_for_tenant(conn, predecessor, principal.tenant_id)):
                     raise KeyError("missing")
+                if predecessor:
+                    previous = self._rule_for_tenant(conn, predecessor, principal.tenant_id)
+                    if previous and (previous[2] or {}).get("rule_profile") == "v4":
+                        raise ValueError("product_preset_required")
                 conn.execute(
                     """
                     INSERT INTO product.rule_versions

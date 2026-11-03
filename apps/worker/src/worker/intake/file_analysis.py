@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import html
 import json
+import re
 from pathlib import Path
 
 from audit.kinds import PpapDocumentType
 from product.rules import document_types, latest_rule_versions
 
 
-def analyze_file(filename: str, content: bytes, rules: list[dict], *, ai=None, customer_preference: str | None = None, scoped: bool = False) -> dict:
+def analyze_file(filename: str, content: bytes, rules: list[dict], *, ai=None, customer_preference: str | None = None, scoped: bool = False, reference_only: bool = False) -> dict:
     """Recognize a file; scoped tasks supply their already-frozen current candidates."""
     from audit.engine.checkers.client import AIClient
     from audit.engine.checkers.prompts import PromptManager
@@ -62,6 +64,10 @@ def analyze_file(filename: str, content: bytes, rules: list[dict], *, ai=None, c
             notices.append("metadata_extraction_failed")
 
     candidates = [rule for rule in (rules if scoped else latest_rule_versions(rules)) if rule.get("kind") == "engine"]
+    selected_customer = (customer_preference or "").strip().casefold()
+    customer_presets = [rule for rule in candidates if rule.get("rule_profile") == "v4" and selected_customer in {value.casefold() for value in rule.get("customers") or []}]
+    v4_mode = bool(scoped and customer_presets)
+    candidates = [rule for rule in candidates if rule.get("rule_profile") != "v4"] + (customer_presets if v4_mode else [])
     inferred = PpapDocumentType.infer_from_signals(filename=filename, content=excerpt[:2000], min_margin=1 if scoped else 0)
     if scoped and excerpt.strip() and "metadata_extraction_failed" not in notices:
         evidence = PpapDocumentType.rank_from_signals(filename=filename, content=excerpt[:2000])
@@ -84,16 +90,31 @@ def analyze_file(filename: str, content: bytes, rules: list[dict], *, ai=None, c
                     raise ValueError("invalid_document_classification")
             except Exception:
                 notices.append("document_classification_failed")
+    explicit_customers = set()
+    if v4_mode:
+        aliases = {"uaes": "uaes", "联电": "uaes", "理想": "理想", "理想汽车": "理想", "蔚来": "蔚来", "nio": "蔚来"}
+        customer_text = html.unescape(re.sub(r"<[^>]+>", "\n", excerpt))
+        for match in re.finditer(r"(?:审核客户|客户|customer)\s*[:：]?\s*(UAES|联电|理想汽车|理想|蔚来|NIO)(?=\s|$|[，,;；/])", customer_text, re.IGNORECASE):
+            explicit_customers.add(aliases[match.group(1).casefold()])
+    customer_conflict = bool(explicit_customers - {selected_customer})
     matched_id = None
     ambiguous_ids: list[str] = []
     matching = "unmatched"
     if scoped and any(notice in notices for notice in ("document_text_unavailable", "empty_document_text", "metadata_extraction_failed", "document_classification_failed")):
         matching = "failed"
-    elif scoped and inferred == PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST:
+    elif customer_conflict:
+        matching = "failed"
+        notices.append("matching_customer_conflict")
+    elif scoped and reference_only:
+        matching = "reference"
+    elif scoped and inferred == PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST and not v4_mode:
         matching = "reference"
     elif scoped:
         customers = tuple(dict.fromkeys(value.strip().casefold() for value in (customer_preference, metadata["customer"]) if value and value.strip()))
         typed_rules = [rule for rule in candidates if inferred != PpapDocumentType.UNKNOWN and PpapDocumentType.from_string(rule.get("type") or "") == inferred]
+        preset_typed = [rule for rule in typed_rules if rule.get("rule_profile") == "v4"]
+        if preset_typed:
+            typed_rules = preset_typed
         scoped_rules = [rule for rule in typed_rules if isinstance(rule.get("customers"), list) and any(isinstance(value, str) and value.strip() for value in rule["customers"])]
         unrestricted = [rule for rule in typed_rules if rule.get("customer_scope") == "all" and not rule.get("customers")]
         for customer in customers or (None,):

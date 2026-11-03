@@ -150,7 +150,6 @@ class AuditIntakeClosureTests(unittest.TestCase):
             expect(page.get_by_role("heading", name="等待预检查 · 1 份", exact=True)).to_be_visible()
             browser.close()
 
-
     def test_all_unselected_targets_can_end_without_another_recognition(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

@@ -166,6 +166,8 @@ def _legacy_doc_quality_results(
         doc_type,
         "converted.docx",
         rule_input.rule_profile,
+        preset_key=rule_input.preset_key,
+        preset_customer=rule_input.customers[0] if len(rule_input.customers) == 1 else None,
     )
     declared_rules = tuple(description for _method, description in discover_declared_rules(agent_cls)) if agent_cls is not None else ()
     if not declared_rules:
@@ -210,7 +212,13 @@ def _legacy_doc_conversion_error_results(
     doc_type = PpapDocumentType.from_string(rule_input.type or "")
     if doc_type != PpapDocumentType.PSW:
         raise error
-    agent_cls = resolve_engine_agent_class(doc_type, "converted.docx", rule_input.rule_profile)
+    agent_cls = resolve_engine_agent_class(
+        doc_type,
+        "converted.docx",
+        rule_input.rule_profile,
+        preset_key=rule_input.preset_key,
+        preset_customer=rule_input.customers[0] if len(rule_input.customers) == 1 else None,
+    )
     declared_rules = tuple(description for _method, description in discover_declared_rules(agent_cls)) if agent_cls is not None else ()
     results: list[AuditResult] = []
     for index, description in enumerate(declared_rules, start=1):

@@ -84,6 +84,8 @@ def normalize_rule_body(value: dict) -> dict:
         profile = normalize_rule_profile(raw_profile)
     except ValueError:
         raise ValueError("invalid_rule_profile") from None
+    if profile == "v4":
+        raise ValueError("product_preset_required")
     raw_rules = value.get("rules")
     if not isinstance(raw_rules, list) or not raw_rules:
         raise ValueError("empty_rules")
@@ -184,3 +186,37 @@ def rule_title(value) -> str:
     if not isinstance(value, str) or not value.strip() or len(value) > 200:
         raise ValueError("invalid_rule_title")
     return value.strip()
+
+
+def install_customer_presets(conn, tenant_id: str) -> None:
+    """Idempotently publish product-owned inputs into the existing rule table.
+
+    Source revisions create new immutable versions. User uploads cannot replace
+    these rows or become their successors through the publication API.
+    """
+    from audit.presets import customer_presets, preset_rule_body
+    from psycopg.types.json import Jsonb
+
+    conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("customer-presets:" + tenant_id,))
+    existing = conn.execute(
+        """SELECT id, body FROM product.rule_versions
+           WHERE tenant_id = %s AND body->>'rule_profile' = 'v4'
+           ORDER BY created_at DESC, id DESC""",
+        (tenant_id,),
+    ).fetchall()
+    by_id = {str(row[0]): row[1] for row in existing}
+    predecessors: dict[str, str] = {}
+    for identifier, body in existing:
+        predecessors.setdefault(body.get("preset_key"), str(identifier))
+    for preset in customer_presets():
+        rule_id = str(uuid.uuid5(uuid.UUID(str(tenant_id)), f"v4:{preset.entry_id}:{preset.source_sha256}"))
+        body = preset_rule_body(preset.customer, preset.entry_id)
+        if rule_id in by_id:
+            if by_id[rule_id] != body:
+                raise ValueError("preset_registration_conflict")
+            continue
+        conn.execute(
+            """INSERT INTO product.rule_versions (id, tenant_id, title, body, predecessor_id, case_context)
+               VALUES (%s, %s, %s, %s, %s, %s)""",
+            (rule_id, tenant_id, preset.title, Jsonb(body), predecessors.get(preset.entry_id), Jsonb({"origin": "product_preset", "source_path": preset.source_path})),
+        )

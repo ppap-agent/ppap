@@ -100,6 +100,7 @@ def process_file_job(store, claimed, ident, ai=None) -> dict:
                         ai=ai,
                         customer_preference=payload.get("customer_preference"),
                         scoped=scoped,
+                        reference_only=bool(payload.get("reference_only")),
                     )
                 )
                 result["source_file_version_id"] = version.id

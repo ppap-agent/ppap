@@ -66,9 +66,14 @@ def test_catalog_uses_current_tenant_published_rules_not_rule_files_or_history(a
         client.cookies.set(SESSION_COOKIE, store.create_session(principal))
         clients.append(client)
     first, second = clients
+
+    def custom_choices(result):
+        return [row for row in result["customers"] if row["customer_id"] not in {"uaes", "理想", "蔚来"}]
+
     try:
         empty = first.get("/audit-customers").json()
-        assert empty == {"customers": []}
+        assert {row["customer_id"] for row in empty["customers"]} == {"uaes", "理想", "蔚来"}
+        assert custom_choices(empty) == []
 
         def publish(client, customers, kind, predecessor=None):
             content = b"test rule source"
@@ -83,7 +88,7 @@ def test_catalog_uses_current_tenant_published_rules_not_rule_files_or_history(a
 
         publish(second, ["其他企业客户"], "控制计划")
         old = publish(first, ["旧客户"], "控制计划")
-        assert first.get("/audit-customers").json()["customers"] == [{"customer_id": "旧客户", "name": "旧客户"}]
+        assert custom_choices(first.get("/audit-customers").json()) == [{"customer_id": "旧客户", "name": "旧客户"}]
         publish(first, ["Customer A"], "过程流程图", old)
         publish(first, [" customer a ", "Customer A"], "Control plan")
         publish(first, ["Customer A"], "过程流程图")
@@ -91,13 +96,13 @@ def test_catalog_uses_current_tenant_published_rules_not_rule_files_or_history(a
         publish(first, ["DFMEA only"], "设计失效模式及后果分析")
         result = first.get("/audit-customers")
         assert result.headers["cache-control"] == "private, no-store"
-        customers = result.json()["customers"]
+        customers = custom_choices(result.json())
         assert len(customers) == 2
         assert customers[0]["customer_id"] == "customer a"
         assert customers[0]["name"].casefold() == "customer a"
         assert set(customers[0]) == {"customer_id", "name"}
         assert customers[1] == {"customer_id": "dfmea only", "name": "DFMEA only"}
-        assert second.get("/audit-customers").json()["customers"] == [{"customer_id": "其他企业客户", "name": "其他企业客户"}]
+        assert custom_choices(second.get("/audit-customers").json()) == [{"customer_id": "其他企业客户", "name": "其他企业客户"}]
         library = first.get("/rule-library")
         assert library.headers["cache-control"] == "private, no-store"
         versions = library.json()["versions"]

@@ -114,6 +114,14 @@ def run_audit(
     if compatibility_error is not None:
         raise ValueError(compatibility_error)
 
+    if rule_input.rule_profile == "v4":
+        from audit.presets import preset_rule
+
+        customer = rule_input.customers[0] if len(rule_input.customers) == 1 else ""
+        preset = preset_rule(customer, rule_input.preset_key)
+        if rule_input.preset_source_sha256 != preset.source_sha256:
+            return _error_result(rule_input, "preset_source_version_mismatch")
+
     doc_type = get_document_type_from_rule(rule_input)
     if doc_type is None:
         return _error_result(
@@ -125,6 +133,8 @@ def run_audit(
         doc_type,
         audit_input.file_url,
         rule_input.rule_profile,
+        preset_key=rule_input.preset_key,
+        preset_customer=rule_input.customers[0] if len(rule_input.customers) == 1 else None,
     )
     if agent_cls is None:
         return _error_result(
