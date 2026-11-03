@@ -24,11 +24,13 @@ PDF 委托器通过既有执行结束钩子主动关闭委托工作簿并清理�
 
 ## 测试层级
 
+根目录 `tests/` 只包含下面列明的系统测试组，以及共享数据目录 `tests/fixtures/`。后者保存固定测试输入，不放 Python 测试或辅助代码；测试仍由各自 owner 管理。仓库脚本使用普通模块导入；仓库检查使用 `uv run --no-sync python -m pytest tests/repository`，不使用动态加载器或修改 `sys.path`。
+
 `test_standard_policy.py` 检查 Standard 非敏感配置身份、选项等价与密钥排除。Product `test_standard_execution_policy.py` 复用真实 API／PostgreSQL／Worker，验证受理、配置变化后的终态拒绝、原请求重放、旧标签兼容及历史读回；presence fixture 只隔离执行配置合同，不证明模型质量。`StandardExecutionPolicy.tla` 是两个轮次、两个进程配置的有限 Safety 模型：正向 162 个状态；移除执行守卫与重放覆盖分别触发 `ExecutedAcceptedPolicy` 和 `FrozenHistory`。它假设一个执行进程内配置不热更新，不证明数据库持久性、外部工具版本、模型质量、缓存来源或整个系统 refinement。
 
 - **logic / unit**：稳定规则和数据不变量。
 - **corpus regression**：完整 engine parity；baseline 原有 failure 不属于 migration regression。
-- **integration**：数据库、对象存储、Worker、授权和必要外部接口。Deep 的受理、版本、fencing 与传输边界由 `tests/integration/product/test_deep_mode.py` 验证；checker 与容器权限/模型 grant 的确定性逻辑由 `packages/agent/tests/test_checker_program.py`、`packages/agent/tests/test_deep_semantic.py`、`packages/agent/tests/test_deep_isolation.py` 验证。脚本化 runtime 只证明协议，不证明真实审核。`tests/live/test_deep_isolated.py` 使用独立 `ppap-deep` 容器、真实 Grok 和模型，但仅是玩具 XLSX 的真实模型协议 smoke，不是客户 A1–A12 样例验收；它不进入默认 merge contract。
+- **integration**：数据库、对象存储、Worker、授权和必要外部接口。Deep 的受理、版本、fencing 与传输边界由 `tests/integration/product/test_deep_mode.py` 验证；checker 与容器权限/模型 grant 的确定性逻辑由 `packages/agent/tests/test_checker_program.py`、`packages/agent/tests/test_deep_semantic.py`、`packages/agent/tests/test_deep_isolation.py` 验证。脚本化 runtime 只证明协议，不证明真实审核。`tests/live/test_deep_isolated.py` 使用独立 `ppap-deep` 容器、真实 Pi 和模型，但仅是玩具 XLSX 的真实模型协议 smoke，不是客户 A1–A12 样例验收；它不进入默认 merge contract。
 
 `packages/agent/tests/test_deep_client.py` 使用真实 UDS 验证未送达请求的显式恢复，以及分片响应、发送背压中的总时限与取消。外部 peer 受控；不调用模型，也不证明 provider 已取消或执行域已清理。总时限从调用开始计算，帧内读写不能重置预算；已发送请求超时不等于未执行，客户端不自动重发。
 
@@ -36,7 +38,7 @@ PDF 委托器通过既有执行结束钩子主动关闭委托工作簿并清理�
 
 Controller 原件读取与 guest 暂存复用 `agent.execution.budget` 中的文件数和总字节上限。超出文件数时不读对象；逐对象读取使用剩余字节预算，超限停止后续读取及 Runtime 派发，返回既有 `deep_budget_exhausted`。S3 有界读取不依赖声明大小正确，短读会继续，响应流在成功或失败后关闭。对应 Controller／Core storage 测试仅控制外部存储与小额测试预算，不分配大文件。该提前检查不代表资料已能装入执行环境：暂存还包括规则、缓存及清单，原暂存总量检查继续保留；不是新增用户上传配额，也不证明进程树内存或在途读取取消。
 
-`tests/integration/runtime/test_runtime.py` 在同 SHA 的交付 Worker 镜像中运行 `deep_container_cases.py`，验证公开 `ContainerRuntime.run` 的排队超时、取消和执行位释放。真实 Linux、构造器、锁及文件准备/清理不替换；外部 guest 进程受控，版本探针使用测试程序，不调用 Grok 或模型，不证明语义质量或强隔离。`DeepExecutionQueue.tla` 只检查一个占用者与一个等待者：即使占用者不结束，到期/取消仍能响应；正向配置检查允许时钟和等待线程持续获得调度时的终结性质，`-unbounded` 配置保留响应依赖占用者释放的反例。它不证明毫秒级时限、运行中取消、整个进程树清理或完整系统 refinement。
+`tests/integration/runtime/test_runtime.py` 在同 SHA 的交付 Worker 镜像中运行 `deep_container_cases.py`，验证公开 `ContainerRuntime.run` 的排队超时、取消和执行位释放。真实 Linux、构造器、锁及文件准备/清理不替换；外部 guest 进程受控，版本探针使用测试程序，不调用 Pi 或模型，不证明语义质量或强隔离。`DeepExecutionQueue.tla` 只检查一个占用者与一个等待者：即使占用者不结束，到期/取消仍能响应；正向配置检查允许时钟和等待线程持续获得调度时的终结性质，`-unbounded` 配置保留响应依赖占用者释放的反例。它不证明毫秒级时限、运行中取消、整个进程树清理或完整系统 refinement。
 
 同一 native 入口还通过真实本地 gateway（Unix grant 控制／loopback HTTP）验证执行包读回、同 execution 并发合并、已消费后失败不重放、未知 provider 完成状态以及显式新 submission。仅 HTTPS provider 与 guest 进程受控；原生锁、journal、attempt、gateway 记账及目录不替换。runtime 重建与重复 recover 使用同一保留状态、在上一 guest 已终结后执行，不等于进程中途崩溃、丢卷或跨节点恢复。journal 输出仍须经过业务验证，不作为实际审核质量或报告完成证明。`DeepExecutionReplay.tla` 是两个调用共享一个冻结 execution 的有限 Safety 检查；race／failure／result 配置分别保留不加锁、重放失败 attempt、忽略既存输出的反例，不证明完整 refinement、最终完成或外部平台幂等。
 
@@ -458,3 +460,7 @@ Corpus PDF/V3/PSW 和 Product integration 通过原测试、逐例即时错误�
 真实四页扫描件的几何回归位于 `tests/corpus/v3_poc/test_scanned_geometry.py`，验证原图分辨率、完整无重叠物理格分区及原件字节不变；owner 测试只用合成扫描件，覆盖倾斜的 480 格表格和破损外框拒绝，不读取根目录 corpus。该无网络验证只证明几何、绑定和请求成本，不替代真实文字识别和 oracle 验收。单次 Responses 请求超时记 `responses_timeout`，整页 180 秒预算耗尽才记 `raster_cell_timeout`；取消继续传播，不自动重试。两类前缀均经过 local adapter 和统一 pipeline 保留，不再被改成笼统的 `ocr_exception`；失败只记录格数、PNG 字节数、耗时及异常类型，不记录原件/响应文字，也不发布缓存。
 
 `tests/conftest.py` 对现有 V3 oracle 门禁提供只读 HTTPX 阶段诊断：保留原请求、响应和 trace callback，记录请求序号、最后的网络阶段及事件、耗时和异常类型。响应体中止时另记状态码、已下载字节、数字格式的声明长度和 JSON/事件流/其他分类，区分读取与关闭；不记录 URL、原始 header、trace info 或正文，也不触发额外请求。预览测试仅在失败时收集最近 3 页的 DOM 计数及每页最多 12 条脚本/资源事件；只保留同源代码资源路径，去掉查询参数，不记录页面文字、异常消息或控制台正文。诊断不能把供应商不响应或未复现的浏览器启动失败判成已修复。
+
+`packages/agent/tests/test_pi_runner.py` 验证 Pi 的终态、文件回执、预算和环境隔离。`deploy/deep/pi-runner.test.mjs` 运行真实 Pi 1.5.0 SDK，使用本地受控 Responses 服务检查文件写入、缓存 token 计数、请求前轮次上限、HTTP 失败不重试和截断不能成功；Deep 镜像构建必须通过这些测试。这些离线测试不证明真实模型审核质量。
+
+`DeploymentConfiguration.tla` 是三个进程及一次配置替换的有限 Safety 检查：正向 30 个状态、深度 9；旧配置错误验收反例在深度 3 违反 `LoadedConfiguration`。它不证明 Kubernetes 最终滚动完成、数据库持久性或外部模型质量。发布测试检查配置摘要触发模板变化、生效配置读回及旧进程拒绝；执行策略测试检查 effort 变化和无密钥策略计算。

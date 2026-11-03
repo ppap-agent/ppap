@@ -23,6 +23,9 @@ data:
   PPAP_S3_REGION: us-east-1
   PPAP_S3_BUCKET: ppap-objects
   LLM_MODEL: grok-4.6
+  PPAP_DEEP_LLM_BASE_URL: https://api.trustedtunnel.app/backend-api/codex
+  PPAP_DEEP_LLM_MODEL: gpt-6.1-sol
+  PPAP_DEEP_REASONING_EFFORT: medium
   OPENAI_REASONING_EFFORT: low
   FEISHU_APP_ID: cli_a961a27719b81cc9
   FEISHU_AI_ITEM_ID: OpenApp_Lcoastline_PPAPAuditAgent
@@ -528,11 +531,11 @@ spec:
                 secretKeyRef:
                   name: ppap-current
                   key: PPAP_S3_SECRET_KEY
-            - name: LLM_API_KEY
+            - name: PPAP_DEEP_LLM_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: ppap-current
-                  key: LLM_API_KEY
+                  name: ppap-current-deep-model-v1
+                  key: PPAP_DEEP_LLM_API_KEY
             - name: LLM_BASE_URL
               valueFrom:
                 secretKeyRef:

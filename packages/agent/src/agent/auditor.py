@@ -564,6 +564,7 @@ class SemanticRuntime:
         original_name = str((audit_file.file_metadata or {}).get("original_filename") or audit_file.file_url or "")
         manifest = CheckerManifest(
             operation=operation,
+            reasoning_effort=getattr(getattr(self.runtime, "config", None), "reasoning_effort", "medium"),
             spec=job,
             document=staged_document_name(original_name),
             audit_id=audit_file.audit_id,

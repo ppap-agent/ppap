@@ -20,7 +20,7 @@ from agent.execution.gateway import DuplicateInference, Grants, grant_request, l
 from agent.execution.guest_model import ModelBudgetError
 from agent.execution.isolation.container import ContainerRuntime, RuntimeConfig
 from agent.execution.isolation.progress import Progress
-from audit.policy import GROK_VERSION
+from audit.policy import PI_VERSION
 from audit.protocol import CompileSpec, ControllerFault, SnapshotSpec
 
 
@@ -515,12 +515,12 @@ class GatewayGrantTests(unittest.TestCase):
 
 
 class ContainerBoundaryTests(unittest.TestCase):
-    def test_runtime_requires_the_pinned_grok_version(self) -> None:
+    def test_runtime_requires_the_pinned_pi_version(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             packages = root / "packages"
             packages.mkdir()
-            executables = {name: root / name for name in ("python", "grok", "setpriv", "prlimit")}
+            executables = {name: root / name for name in ("python", "pi", "setpriv", "prlimit")}
             for path in executables.values():
                 path.touch()
             config = RuntimeConfig(
@@ -533,16 +533,16 @@ class ContainerBoundaryTests(unittest.TestCase):
                 sandbox_profile="off",
                 python_executable=executables["python"],
                 pythonpath=packages,
-                grok_executable=executables["grok"],
+                agent_executable=executables["pi"],
                 setpriv_executable=executables["setpriv"],
                 prlimit_executable=executables["prlimit"],
             )
             versions = [
-                (f"grok {GROK_VERSION} (test-build)\n", 0, True),
-                ("grok 1.0.40 (old-build)\n", 0, False),
-                ("grok 1.0.71 (wrong-build)\n", 0, False),
-                ("grok 1.0.700 (wrong-build)\n", 0, False),
-                (f"grok {GROK_VERSION} (test-build)\n", 1, False),
+                (f"{PI_VERSION}\n", 0, True),
+                ("1.4.0\n", 0, False),
+                ("1.5.1\n", 0, False),
+                ("1.5.00\n", 0, False),
+                (f"{PI_VERSION}\n", 1, False),
             ]
             with patch("agent.execution.isolation.container._running_in_container", return_value=True):
                 for output, returncode, accepted in versions:
@@ -554,9 +554,9 @@ class ContainerBoundaryTests(unittest.TestCase):
                             runtime = ContainerRuntime(config)
                             self.assertEqual(runtime.engine_revision(), config.engine_revision())
                         else:
-                            with self.assertRaisesRegex(ValueError, f"Verified Grok {GROK_VERSION} is required"):
+                            with self.assertRaisesRegex(ValueError, f"Verified Pi {PI_VERSION} is required"):
                                 ContainerRuntime(config)
-                        self.assertEqual(version.call_args.args[0], [str(executables["grok"]), "--version"])
+                        self.assertEqual(version.call_args.args[0], [str(executables["pi"]), "--version"])
 
     def test_diagnostic_only_retains_canonical_local_request_uuid(self) -> None:
         caller_id = "12345678-1234-4abc-8def-123456789abc"

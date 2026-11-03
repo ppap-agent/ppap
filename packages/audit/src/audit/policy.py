@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from audit.audits import DEEP_PROTOCOL_REVISION
 
 GUEST_UID = 10001
-GROK_VERSION = "1.0.70"
+PI_VERSION = "1.5.0"
 
 
 class DeepExecutionPolicy(BaseModel):
@@ -20,6 +20,7 @@ class DeepExecutionPolicy(BaseModel):
     model: str = Field(min_length=1, max_length=128)
     model_revision: str = Field(pattern=r"^[a-f0-9]{64}$")
     app_revision: str = Field(pattern=r"^[a-f0-9]{40}$")
+    reasoning_effort: Literal["xhigh", "high", "medium", "low"] = "medium"
     sandbox_profile: Literal["off", "ppap"]
     memory_mib: int = Field(default=1536, ge=512, le=4096, strict=True)
     max_processes: int = Field(default=256, ge=16, le=1024, strict=True)
@@ -31,12 +32,17 @@ class DeepExecutionPolicy(BaseModel):
             "app_revision": self.app_revision,
             "model": self.model,
             "model_revision": self.model_revision,
+            "reasoning_effort": self.reasoning_effort,
             "sandbox": self.sandbox_profile,
             "memory_mib": self.memory_mib,
             "max_processes": self.max_processes,
             "executor_label": self.executor_label,
             "uid": GUEST_UID,
-            "grok_version": GROK_VERSION,
+            "pi_version": PI_VERSION,
             "semantic_contract": "rule-logical-document-v10",
         }
         return hashlib.sha256(json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+    def runtime_identity(self) -> dict[str, str]:
+        """Public execution identity; credentials and endpoints are excluded."""
+        return {"agent": "pi", "agent_version": PI_VERSION, "model": self.model, "reasoning_effort": self.reasoning_effort, "executor_revision": self.engine_revision()}

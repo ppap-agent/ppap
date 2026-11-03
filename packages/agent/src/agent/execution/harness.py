@@ -21,7 +21,8 @@ def runtime_from_env(settings, objects):
     policy = settings.deep_execution_policy()
     if policy.sandbox_profile != profile:
         raise ValueError("Deep runtime profile differs from the configured execution policy")
-    with local_gateway(state / "gateway.sock", upstream=settings.llm_base_url, model=settings.llm_model, provider_key=settings.llm_api_key) as gateway:
+    base_url, model, api_key = settings.deep_model_config()
+    with local_gateway(state / "gateway.sock", upstream=base_url, model=model, provider_key=api_key) as gateway:
         runtime = ContainerRuntime(RuntimeConfig(state=state, gateway_socket=gateway.socket_path, gateway_host="127.0.0.1", **policy.model_dump()))
         runtime.recover()
         yield SemanticRuntime(runtime, objects)

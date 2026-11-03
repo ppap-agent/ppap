@@ -23,7 +23,7 @@ from typing import Any
 from urllib.parse import urlsplit
 from uuid import UUID, uuid5
 
-from audit.policy import GROK_VERSION, GUEST_UID, DeepExecutionPolicy
+from audit.policy import GUEST_UID, PI_VERSION, DeepExecutionPolicy
 from audit.protocol import CompileSpec, ControllerFault, GuestFault, SnapshotSpec, SubmissionSpec
 from pydantic import Field
 
@@ -46,7 +46,7 @@ class RuntimeConfig(DeepExecutionPolicy):
     gateway_host: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9.-]{0,252}$")
     python_executable: Path = Path("/app/.venv/bin/python")
     pythonpath: Path = Path("/app/.venv/lib/python3.12/site-packages")
-    grok_executable: Path = Path("/usr/local/bin/grok")
+    agent_executable: Path = Path("/usr/local/bin/ppap-pi")
     setpriv_executable: Path = Path("/usr/bin/setpriv")
     prlimit_executable: Path = Path("/usr/bin/prlimit")
 
@@ -124,20 +124,20 @@ class ContainerRuntime:
     def __init__(self, config: RuntimeConfig) -> None:
         if not _running_in_container():
             raise ValueError("ContainerRuntime requires root inside a Linux container")
-        for path in (config.state, config.gateway_socket, config.python_executable, config.pythonpath, config.grok_executable, config.setpriv_executable, config.prlimit_executable):
+        for path in (config.state, config.gateway_socket, config.python_executable, config.pythonpath, config.agent_executable, config.setpriv_executable, config.prlimit_executable):
             if not path.is_absolute():
                 raise ValueError("Runtime paths must be absolute")
-        if not config.pythonpath.is_dir() or any(not path.is_file() for path in (config.python_executable, config.grok_executable, config.setpriv_executable, config.prlimit_executable)):
+        if not config.pythonpath.is_dir() or any(not path.is_file() for path in (config.python_executable, config.agent_executable, config.setpriv_executable, config.prlimit_executable)):
             raise ValueError("Guest Python runtime is unavailable")
         version = subprocess.run(
-            [str(config.grok_executable), "--version"],
-            env={"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/tmp", "GROK_DISABLE_AUTOUPDATER": "1"},
+            [str(config.agent_executable), "--version"],
+            env={"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/tmp", "PI_OFFLINE": "1", "PI_TELEMETRY": "0"},
             capture_output=True,
             timeout=10,
             check=False,
         )
-        if version.returncode != 0 or not version.stdout.decode(errors="replace").startswith(f"grok {GROK_VERSION} "):
-            raise ValueError(f"Verified Grok {GROK_VERSION} is required")
+        if version.returncode != 0 or version.stdout.decode(errors="replace").strip() != PI_VERSION:
+            raise ValueError(f"Verified Pi {PI_VERSION} is required")
         self.config = config
         self.config.state.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.config.state.chmod(0o711)
@@ -153,7 +153,7 @@ class ContainerRuntime:
         return self.config.engine_revision()
 
     def ready(self, operation: str = "audit") -> bool:
-        if self.degraded or not self.config.python_executable.is_file() or not self.config.grok_executable.is_file():
+        if self.degraded or not self.config.python_executable.is_file() or not self.config.agent_executable.is_file():
             return False
         return operation == "snapshot" or self.config.gateway_socket.is_socket()
 
@@ -541,7 +541,7 @@ class ContainerRuntime:
             outer = None
         stages = []
         for stage in sorted((run / "work").iterdir())[:32]:
-            if not stage.is_dir() or stage.is_symlink() or stage.name in {"result", "grok-home"}:
+            if not stage.is_dir() or stage.is_symlink() or stage.name in {"result", "grok-home", "pi-home"}:
                 continue
             facts: dict = {"stage": stage.name}
             tool_names = []

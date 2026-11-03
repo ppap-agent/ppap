@@ -1,4 +1,4 @@
-"""Grok process adapter confined to the guest image; no application credentials."""
+"""Model process adapters confined to the guest; no application credentials."""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ def sandbox_profile() -> str:
     isolation = os.environ.get("PPAP_GUEST_ISOLATION")
     if isolation == "gvisor":
         if os.getuid() != 10001 or not Path("/proc/gvisor/kernel_is_gvisor").is_file():
-            raise ModelProtocolError("Grok requires the configured outer isolation")
+            raise ModelProtocolError("Model runner requires the configured outer isolation")
         return "off"
     if isolation == "container-only":
         profile = os.environ.get("PPAP_GUEST_SANDBOX")
@@ -118,7 +118,7 @@ def read_checker_draft(work: Path, schema: type[T], terminal: dict[str, Any] | N
     return drafted
 
 
-class GrokRunner:
+class ModelRunner:
     def __init__(self, grant: dict[str, Any]) -> None:
         self.grant = ModelGrant.model_validate(grant)
         url = urlsplit(self.grant.base_url)
@@ -170,6 +170,13 @@ class GrokRunner:
         except (OSError, ValueError) as error:
             raise ModelProtocolError("Missing or invalid stage artifact") from error
         return schema.model_validate(output)
+
+    def _run(self, work: Path, prompt: str, deadline: float, *, reasoning_effort: ReasoningEffort) -> dict[str, Any]:
+        raise NotImplementedError
+
+
+class GrokRunner(ModelRunner):
+    """Legacy adapter retained for the local Grok research tools."""
 
     def _run(
         self,
@@ -322,4 +329,112 @@ class GrokRunner:
             setattr(self, name, getattr(self, name) + value)
         if self.input_tokens + self.output_tokens > grant.max_total_tokens:
             raise ModelBudgetError("Model token budget exhausted")
+        return terminal
+
+
+class PiRunner(ModelRunner):
+    """Fixed Pi SDK process with the same artifact and execution-grant contract."""
+
+    def _run(self, work: Path, prompt: str, deadline: float, *, reasoning_effort: ReasoningEffort) -> dict[str, Any]:
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Model deadline exceeded")
+        remaining_tokens = self.grant.max_total_tokens - self.input_tokens - self.output_tokens
+        if self.remaining_turns <= 0 or remaining_tokens <= 0:
+            raise ModelBudgetError("Model budget exhausted")
+        sandbox_profile()
+        stage_turns = min(self.grant.max_turns, self.remaining_turns)
+        self.remaining_turns -= stage_turns
+        home = work / "pi-home"
+        home.mkdir(mode=0o700)
+        (work / "prompt.txt").write_text(prompt, encoding="utf-8")
+        config = {
+            "home": str(home),
+            "prompt": str(work / "prompt.txt"),
+            "base_url": self.grant.base_url,
+            "token": self.grant.token,
+            "model": self.grant.model,
+            "reasoning_effort": reasoning_effort,
+            "max_turns": stage_turns,
+            "max_tokens": remaining_tokens,
+        }
+        request = home / "request.json"
+        request.write_text(json.dumps(config), encoding="utf-8")
+        request.chmod(0o600)
+        env = {
+            "PATH": "/usr/local/bin:/usr/bin:/bin",
+            "HOME": str(home),
+            "LANG": "C.UTF-8",
+            "PI_CODING_AGENT_DIR": str(home),
+            "PI_OFFLINE": "1",
+            "PI_TELEMETRY": "0",
+            "SSL_CERT_FILE": "/etc/ssl/certs/ca-certificates.crt",
+            "SSL_CERT_DIR": "/etc/ssl/certs",
+        }
+        if pythonpath := os.environ.get("PYTHONPATH"):
+            env["PYTHONPATH"] = pythonpath
+        with (work / "stdout.jsonl").open("xb") as stdout, (work / "stderr.log").open("xb") as stderr:
+            separate_session = os.environ.get("PPAP_GUEST_ISOLATION") != "container-only"
+            process = subprocess.Popen(
+                ["/usr/local/bin/ppap-pi", str(request)],
+                cwd=work,
+                env=env,
+                stdout=stdout,
+                stderr=stderr,
+                start_new_session=separate_session,
+            )
+            try:
+                while process.poll() is None:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("Model stage deadline exceeded")
+                    if stdout.tell() > 16 * 1024 * 1024 or stderr.tell() > 1024 * 1024:
+                        raise ModelProtocolError("Model log limit exceeded")
+                    time.sleep(0.05)
+            finally:
+                if separate_session:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                elif process.poll() is None:
+                    process.kill()
+                process.wait()
+        terminal = None
+        try:
+            output = read_regular(work, ("stdout.jsonl",), 16 * 1024 * 1024)
+        except ValueError:
+            raise ModelProtocolError("Invalid model output stream") from None
+        for line in output.split(b"\n"):
+            if not line:
+                continue
+            try:
+                event = json.loads(line, object_pairs_hook=unique_object, parse_constant=reject_constant)
+            except ValueError:
+                raise ModelProtocolError("Invalid Pi event") from None
+            if isinstance(event, dict) and event.get("type") == "result":
+                if terminal is not None:
+                    raise ModelProtocolError("Duplicate terminal model result")
+                terminal = event
+        if terminal is None:
+            raise ModelProtocolError("Missing terminal model result")
+        usage = terminal.get("usage")
+        if not isinstance(usage, dict):
+            raise ModelProtocolError("Invalid token usage")
+        for name in ("input_tokens", "output_tokens"):
+            value = usage.get(name)
+            if type(value) is not int or value < 0:
+                raise ModelProtocolError("Invalid token usage")
+            setattr(self, name, getattr(self, name) + value)
+        for name in ("tool_calls", "completed_tool_calls", "compactions"):
+            value = terminal.get(name)
+            if type(value) is not int or value < 0:
+                raise ModelProtocolError("Invalid Pi metrics")
+            setattr(self, name, getattr(self, name) + value)
+        turns = terminal.get("num_turns")
+        if type(turns) is not int or not 0 <= turns <= stage_turns:
+            raise ModelProtocolError("Invalid Pi turn usage")
+        self.remaining_turns += stage_turns - turns
+        if terminal.get("budget_exhausted") or self.input_tokens + self.output_tokens > self.grant.max_total_tokens:
+            raise ModelBudgetError("Model budget exhausted")
+        if process.returncode != 0 or terminal.get("stop_reason") != "end_turn" or terminal.get("is_error") is not False or terminal.get("subtype") != "success":
+            raise ModelProtocolError("Model stage failed")
         return terminal

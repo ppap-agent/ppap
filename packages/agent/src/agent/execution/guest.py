@@ -92,7 +92,7 @@ def parse_source(inputs: Path, work: Path, spec: SnapshotSpec) -> SnapshotBundle
 
 
 def run_entrypoint(inputs: Path, work: Path, credentials: Path) -> None:
-    from agent.execution.guest_model import GrokRunner
+    from agent.execution.guest_model import PiRunner
 
     manifest = read_json(inputs, ("manifest.json",), 1024 * 1024)
     if manifest.get("operation") == "snapshot":
@@ -105,7 +105,7 @@ def run_entrypoint(inputs: Path, work: Path, credentials: Path) -> None:
         return
     # Runtime owns these fixed mountpoints; there are no CLI path/command overrides.
     grant = read_json(credentials, ("model.json",), 16384)
-    runner = GrokRunner(grant)
+    runner = PiRunner(grant)
     if manifest.get("operation") == "adapt-checker":
         from agent.checker_program import run_adapt_manifest
 

@@ -15,17 +15,17 @@ IMPORTS = "import api, product, corpus_contracts, agent, audit, documents, audit
 
 class PackagingTests(unittest.TestCase):
     def test_deep_toolchain_version_matches_runtime_identity(self):
-        from audit.policy import GROK_VERSION
+        from audit.policy import PI_VERSION
 
         package = json.loads((ROOT / "deploy/deep/package.json").read_text())
         lock = json.loads((ROOT / "deploy/deep/package-lock.json").read_text())
-        name = "@xai-official/grok"
-        self.assertEqual(package["dependencies"][name], GROK_VERSION)
-        self.assertEqual(lock["packages"][""]["dependencies"][name], GROK_VERSION)
+        name = "@earendil-works/pi-coding-agent"
+        self.assertEqual(package["dependencies"][name], PI_VERSION)
+        self.assertEqual(lock["packages"][""]["dependencies"][name], PI_VERSION)
         for key, entry in lock["packages"].items():
             if key.startswith("node_modules/" + name):
                 with self.subTest(package=key):
-                    self.assertEqual(entry["version"], GROK_VERSION)
+                    self.assertEqual(entry["version"], PI_VERSION)
 
     def test_imports_and_owner_collection_ignore_cwd(self):
         self.assertTrue(PYTHON.is_file(), PYTHON)

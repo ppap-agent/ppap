@@ -6,12 +6,12 @@ from audit.audits import ANALYSIS_STANDARD, DEEP_PROTOCOL_REVISION, job_payload
 from product.settings import Settings
 
 
-def test_pinned_grok_upgrade_changes_the_frozen_execution_revision(monkeypatch):
-    assert deep_policy.GROK_VERSION == "1.0.70"
+def test_pinned_pi_upgrade_changes_the_frozen_execution_revision(monkeypatch):
+    assert deep_policy.PI_VERSION == "1.5.0"
     policy = deep_policy.DeepExecutionPolicy(model="test-model", model_revision="0" * 64, app_revision="a" * 40, sandbox_profile="off")
     current = policy.engine_revision()
     with monkeypatch.context() as legacy:
-        legacy.setattr(deep_policy, "GROK_VERSION", "1.0.40")
+        legacy.setattr(deep_policy, "PI_VERSION", "1.4.0")
         assert policy.engine_revision() != current
     assert policy.engine_revision() == current
 
@@ -43,3 +43,27 @@ def test_default_and_explicit_protocol_labels_have_the_same_policy(monkeypatch):
     settings = Settings(git_sha="a" * 40, deep_executor_revision="")
     explicit = settings.model_copy(update={"deep_executor_revision": DEEP_PROTOCOL_REVISION})
     assert settings.deep_execution_revision() == explicit.deep_execution_revision()
+
+
+def test_deep_model_override_is_complete_and_independent_of_standard():
+    settings = Settings(
+        git_sha="a" * 40,
+        llm_base_url="https://standard.example/v1",
+        llm_model="standard",
+        llm_api_key="standard-key",
+        deep_llm_base_url="https://deep.example/backend-api/codex",
+        deep_llm_model="deep",
+        deep_llm_api_key="deep-key",
+    )
+    revision = settings.deep_execution_revision()
+    assert settings.deep_model_config() == ("https://deep.example/backend-api/codex", "deep", "deep-key")
+    assert settings.deep_execution_policy().model == "deep"
+    assert settings.llm_api_key == "standard-key" and settings.llm_model == "standard"
+    assert settings.model_copy(update={"deep_llm_api_key": "rotated"}).deep_execution_revision() == revision
+    assert settings.model_copy(update={"llm_model": "other-standard"}).deep_execution_revision() == revision
+    assert settings.model_copy(update={"deep_llm_model": "other-deep"}).deep_execution_revision() != revision
+    without_key = settings.model_copy(update={"deep_llm_api_key": ""})
+    assert without_key.deep_execution_revision() == revision
+    with pytest.raises(ValueError, match="credential is unavailable"):
+        without_key.deep_model_config()
+    assert settings.model_copy(update={"deep_reasoning_effort": "high"}).deep_execution_revision() != revision

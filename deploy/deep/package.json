@@ -1,8 +1,8 @@
 {
   "name": "ppap-deep-guest",
   "private": true,
-  "description": "Lockfile authority for the Deep guest Grok package. The decompressed executable pin stays in verify-grok.mjs.",
+  "description": "Pinned Pi SDK for the Deep guest.",
   "dependencies": {
-    "@xai-official/grok": "1.0.70"
+    "@earendil-works/pi-coding-agent": "1.5.0"
   }
 }

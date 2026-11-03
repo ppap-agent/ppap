@@ -187,7 +187,10 @@ def test_deploy_owns_gates_fixed_render_and_readback(tmp_path, fault, full):
     migrations.mkdir()
     (migrations / "0001_start.sql").write_text("SQL")
     config = {"PPAP_BUILD_SHA": SHA, "PPAP_WEB_URL": "https://ppap.example"}
-    objects = [{"kind": "ConfigMap", "metadata": {"name": "ppap-current"}, "data": config}, {"kind": "Deployment", "metadata": {"name": "ppap-current-worker"}}]
+    objects = [
+        {"kind": "ConfigMap", "metadata": {"name": "ppap-current"}, "data": config},
+        {"kind": "Deployment", "metadata": {"name": "ppap-current-worker"}, "spec": {"template": {"metadata": {"annotations": {RELEASE["CONFIG_ANNOTATION"]: "digest"}}}}},
+    ]
     events = []
     digests = []
 
@@ -283,6 +286,8 @@ def test_live_readback_cannot_report_success_for_wrong_target_or_state(tmp_path,
         "database": {"migrations": []},
         "resources": {},
         "full_check": full,
+        "configuration_digests": dict.fromkeys(owners.values(), "digest"),
+        "execution_configuration": {},
     }
     (tmp_path / "target.json").write_text(json.dumps(target))
 
@@ -303,13 +308,15 @@ def test_live_readback_cannot_report_success_for_wrong_target_or_state(tmp_path,
                 {
                     "items": [
                         {
-                            "metadata": {},
+                            "metadata": {"name": owner + "-pod", "annotations": {RELEASE["CONFIG_ANNOTATION"]: "digest"}},
                             "spec": {"containers": [{"name": c, "image": IMAGES[c]} for c in names]},
                             "status": {"containerStatuses": [{"name": c, "imageID": "wrong" if fault == "pod-image" else CONFIGS[c], "ready": True, "restartCount": 0} for c in names]},
                         }
                     ]
                 }
             ).encode()
+        if args[-1] in {"product.execution_config", "--configuration"}:
+            return json.dumps({"agent": "pi", "model": "model", "reasoning_effort": "medium", "executor_revision": SHA}).encode()
         return b'{"worker_heartbeat":true,"deep_socket":true}'
 
     def public(base, path, **kwargs):
@@ -503,3 +510,51 @@ def test_queued_build_waits_for_source_metadata_without_dispatching(tmp_path):
     with patch.dict(operation.__globals__, {"cloud": cloud}), patch.object(RELEASE["time"], "sleep", side_effect=waits.append):
         assert operation(SHA, tmp_path, 2) == IMAGES
     assert waits == [15]
+
+
+def test_model_configuration_changes_roll_process_templates_but_not_web():
+    import copy
+
+    stamp = RELEASE["RENDER"]["stamp_configuration"]
+    config = {"PPAP_PUBLIC_API_URL": "https://api.example", "PPAP_DEEP_LLM_MODEL": "first"}
+    objects = [{"kind": "ConfigMap", "metadata": {"name": "ppap-current"}, "data": config}]
+    for name in {"ppap-current-api", "ppap-current-worker", "ppap-current-web"}:
+        objects.append({"kind": "Deployment", "metadata": {"name": name}, "spec": {"template": {"spec": {"containers": []}}}})
+    first = RELEASE["configuration_digests"](stamp(copy.deepcopy(objects)))
+    config["PPAP_DEEP_LLM_MODEL"] = "second"
+    second = RELEASE["configuration_digests"](stamp(copy.deepcopy(objects)))
+    assert first["ppap-current-api"] != second["ppap-current-api"]
+    assert first["ppap-current-worker"] != second["ppap-current-worker"]
+    assert first["ppap-current-web"] == second["ppap-current-web"]
+
+
+@pytest.mark.parametrize("config", [{"PPAP_DEEP_LLM_MODEL": "model"}, {"PPAP_DEEP_REASONING_EFFORT": "invalid"}, {"PPAP_DEEP_LLM_MODEL": "model", "PPAP_DEEP_LLM_BASE_URL": "http://plain.example"}])
+def test_invalid_model_configuration_is_rejected_before_apply(config):
+    with pytest.raises(ValueError):
+        RELEASE["validate_model_configuration"](config)
+
+
+@pytest.mark.parametrize("fault", [None, "source", "image", "unknown-setting"])
+def test_config_only_release_requires_same_source_images_and_supported_keys(fault):
+    import copy
+
+    operation = RELEASE["full_check_reason"]
+    config = {"PPAP_BUILD_SHA": SHA, "PPAP_DEEP_LLM_MODEL": "new"}
+    previous_config = {**config, "PPAP_DEEP_LLM_MODEL": "old"}
+    if fault == "source":
+        previous_config["PPAP_BUILD_SHA"] = "d" * 40
+    if fault == "unknown-setting":
+        config["unknown-setting"] = "changed"
+    spec = {"replicas": 1, "template": {"metadata": {"annotations": {RELEASE["CONFIG_ANNOTATION"]: "new"}}, "spec": {"containers": [{"name": "api", "image": IMAGES["api"]}]}}}
+    previous = copy.deepcopy(spec)
+    previous["template"]["metadata"]["annotations"][RELEASE["CONFIG_ANNOTATION"]] = "old"
+    if fault == "image":
+        previous["template"]["spec"]["containers"][0]["image"] = IMAGES["api"].replace("b" * 64, "e" * 64)
+    deployment = {
+        "metadata": {"generation": 1, "annotations": {"kubectl.kubernetes.io/last-applied-configuration": json.dumps({"spec": previous})}},
+        "spec": previous,
+        "status": {"observedGeneration": 1, "replicas": 1, "readyReplicas": 1, "updatedReplicas": 1},
+    }
+    docs = [{"kind": "ConfigMap", "metadata": {"name": "ppap-current"}, "data": config}, {"kind": "Deployment", "metadata": {"name": "ppap-current-api"}, "spec": spec}]
+    with patch.dict(operation.__globals__, {"kube": lambda *args: json.dumps({"data": previous_config} if args[1] == "configmap" else deployment).encode(), "run": lambda *args: b""}):
+        assert (operation(docs, SHA, False) is None) is (fault is None)
