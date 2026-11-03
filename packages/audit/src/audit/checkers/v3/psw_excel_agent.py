@@ -88,12 +88,14 @@ class PswExcelAgent(ExcelAgent):
         *,
         rule_no: int,
         phase: RuleEvidencePhase,
+        ctx: RuleContext | None = None,
     ) -> AuditResult:
         return finalize_excel_psw_result(
             super()._finalize_audit_result(
                 result,
                 rule_no=rule_no,
                 phase=phase,
+                ctx=ctx,
             ),
             audit=self.audit_file,
             rule_no=rule_no,

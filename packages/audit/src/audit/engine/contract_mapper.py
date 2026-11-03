@@ -31,6 +31,7 @@ def to_rule_input(value: Any) -> RuleInput:
         rule_profile=normalize_rule_profile(getattr(value, "rule_profile", "v2")),
         type=str(getattr(value, "type", "") or ""),
         rules=list(getattr(value, "rules", []) or []),
+        appendix=list(getattr(value, "appendix", []) or []),
         customers=list(getattr(value, "customers", []) or []),
         models=list(getattr(value, "models", []) or []),
         parts=list(getattr(value, "parts", []) or []),

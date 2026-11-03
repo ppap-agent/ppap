@@ -27,17 +27,26 @@ def test_runtime_audit_adapter_preserves_the_file_identity_and_values(contract_i
 
 
 @pytest.mark.parametrize("contract_input", [False, True], ids=["attribute-input", "contract-input"])
-def test_runtime_rule_adapter_preserves_the_version_scope_and_normalized_profile(contract_input):
+@pytest.mark.parametrize(
+    "appendix",
+    [None, [], [{"id": "confirmed-four", "text": "工序编号允许前导零", "scope": {"document_id": "file-version-two", "rule_ids": ["1"]}}]],
+    ids=["absent-appendix", "empty-appendix", "confirmed-appendix"],
+)
+def test_runtime_rule_adapter_preserves_the_version_scope_and_normalized_profile(contract_input, appendix):
     expected = {
         "rule_id": "rule-version-four",
         "rule_profile": "v3",
         "type": "控制计划",
         "rules": [{"id": "1", "rule_to_check": "检查工序"}],
+        "appendix": appendix or [],
         "customers": ["客户甲", "客户乙"],
         "models": ["车型甲"],
         "parts": ["P-001", "P-002"],
     }
-    source = RuleInput(**expected) if contract_input else SimpleNamespace(**{**expected, "rule_profile": " V3 "})
+    values = dict(expected)
+    if appendix is None:
+        values.pop("appendix")
+    source = RuleInput(**values) if contract_input else SimpleNamespace(**{**values, "rule_profile": " V3 "})
 
     result = to_rule_input(source)
 
