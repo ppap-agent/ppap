@@ -82,8 +82,10 @@ from audit.checkers.v3 import (
     V3_OVERLAY_EXCEL_AGENTS,
     V3_OVERLAY_PDF_AGENTS,
 )
+from audit.checkers.v4.li_auto.special_characteristics import LiAutoSpecialCharacteristicsAgent
+from audit.checkers.v4.uaes.special_characteristics import UaesSpecialCharacteristicsAgent
 from audit.kinds import PpapDocumentType
-from audit.rule_profile import RULE_PROFILE_V2, RULE_PROFILE_V3, normalize_rule_profile
+from audit.rule_profile import RULE_PROFILE_V2, RULE_PROFILE_V3, RULE_PROFILE_V4, normalize_rule_profile
 
 EXCEL_EXTENSIONS = {".xlsx", ".xls", ".xlsm"}
 PDF_EXTENSIONS = {".pdf"}
@@ -215,8 +217,25 @@ def resolve_engine_agent_class(
     doc_type: PpapDocumentType,
     file_url: str,
     rule_profile: str = RULE_PROFILE_V2,
+    *,
+    preset_key: str | None = None,
+    preset_customer: str | None = None,
 ) -> Optional[type[Any]]:
     profile = normalize_rule_profile(rule_profile)
+    if profile == RULE_PROFILE_V4:
+        from audit.presets import preset_document_type, preset_rule
+
+        preset = preset_rule(preset_customer, preset_key)
+        expected_type = PpapDocumentType.from_string(preset_document_type(preset))
+        if doc_type != expected_type:
+            raise ValueError("preset_document_type_mismatch")
+        if (preset.customer, preset.entry_id) == ("UAES", "U12") and _resolve_audit_file_kind(file_url) in {_AuditFileKind.EXCEL, _AuditFileKind.PDF}:
+            return UaesSpecialCharacteristicsAgent
+        if (preset.customer, preset.entry_id) == ("理想", "L12") and _resolve_audit_file_kind(file_url) in {_AuditFileKind.EXCEL, _AuditFileKind.PDF}:
+            return LiAutoSpecialCharacteristicsAgent
+        # V3 dimension checks implement NIO measurement coordinates. Li Auto's
+        # dimensional/non-dimensional inspection semantics are the V2 checks.
+        profile = RULE_PROFILE_V2 if (preset.customer, preset.entry_id) == ("理想", "L01") else RULE_PROFILE_V3
     file_kind = _resolve_audit_file_kind(file_url)
     primary_map = _pick_agent_map(file_kind, V2_EXCEL_AGENTS, V2_PDF_AGENTS, V2_DOCX_AGENTS)
     if primary_map is None:

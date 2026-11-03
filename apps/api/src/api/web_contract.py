@@ -145,6 +145,8 @@ class RuleItem(TypedDict):
 
 
 class EngineRuleBody(TypedDict):
+    preset_key: NotRequired[str]
+    preset_source_sha256: NotRequired[str]
     appendix: NotRequired[list[dict[str, Any]]]
     kind: Literal["engine"]
     type: str
