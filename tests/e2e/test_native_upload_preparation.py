@@ -516,3 +516,25 @@ def test_pending_default_cannot_silently_create_an_auto_customer_upload():
         expect(page.get_by_role("checkbox", name="选择 资料.xlsx", exact=True)).to_be_checked()
         assert server.preparation_creates[0]["upload_preparation"]["customer_preference"] == "UAES"
         browser.close()
+
+
+def test_explicit_auto_selection_can_continue_while_default_read_is_pending():
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        server = PreparationHTTP()
+        server.install(page)
+        pending = []
+        page.route("**/api/audit-customers/default", lambda route: pending.append(route))
+        page.goto(WEB + "/tasks/new")
+        choice = page.get_by_role("combobox", name="审核客户", exact=True)
+        expect(choice).to_contain_text("请选择本次审核客户")
+        choice.click()
+        page.get_by_role("option", name="自动识别", exact=True).click()
+        expect(page.get_by_role("button", name="选择本地文件", exact=True)).to_be_enabled()
+        expect(choice).to_contain_text("自动识别")
+        pending.pop().fulfill(json={"customer_preference": "UAES", "revision": 3})
+        expect(page.get_by_text("本次切换只影响当前任务。企业默认：UAES（联电）。", exact=True)).to_be_visible()
+        expect(choice).to_contain_text("自动识别")
+        assert server.default_writes == []
+        browser.close()
