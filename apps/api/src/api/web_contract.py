@@ -795,11 +795,13 @@ class AuditClauseEvaluation(TypedDict):
 class AuditResultCounts(TypedDict):
     """Terminal checks only: failed/ERR, uncovered, unknown, then verified PASS/NG.
 
-    Categories are exclusive; queued/running and verified NA do not add counts.
+    Categories are exclusive; queued/running checks do not add counts.
+    Older saved projections can omit the verified NA count.
     """
 
     pass_count: int
     ng_count: int
+    na_count: NotRequired[int]
     unknown_count: int
     not_covered_count: int
     error_count: int
