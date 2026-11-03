@@ -28,6 +28,7 @@ def test_frozen_rule_identity_profile_and_scope_reach_the_checker_without_changi
     assert checker_input.model_dump(exclude={"rules"}) == {
         "rule_id": "confirmed-rules-v4",
         "rule_profile": expected,
+        "appendix": [],
         "type": "PFMEA",
         "customers": ["客户甲", "客户乙"],
         "models": ["车型甲"],
