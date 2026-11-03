@@ -124,3 +124,27 @@ def test_nio_pfmea_controlled_template_keeps_source_fields_and_scoring_sheets_se
     result = run_round_from_bytes(RoundWork("round", "tenant", [target]), {"version": content.getvalue()})
     # No PFD is provided: the five independent clauses must still execute.
     assert [row["status"] for row in result["findings"]] == ["PASS"] * 5 + ["UNABLE"] * 2, [(row["status"], row["suggestions"]) for row in result["findings"]]
+
+
+def test_li_auto_equipment_template_metadata_cannot_replace_a_missing_device_supplier():
+    import io
+
+    from audit.audits import RoundInput, RoundWork
+    from audit.engine.checkers.rule_declarations import freeze_target_rule_execution
+    from audit.presets import preset_rule_body
+    from openpyxl import load_workbook
+    from product import run_round_from_bytes
+
+    source = ROOT / "assets/PPAP PRD v3.7/客户归类模板与规则_备份/模板/理想/APQP-设备开发验收清单.xlsx"
+    for missing_supplier, expected in [(False, "PASS"), (True, "NG")]:
+        book = load_workbook(source)
+        sheet = book["设备开发验收清单"]
+        if missing_supplier:
+            sheet["D6"] = None
+        content = io.BytesIO()
+        book.save(content)
+        book.close()
+        body = preset_rule_body("理想", "L13")
+        target = RoundInput("target", "file", "version", "设备清单.xlsx", "ready", rule_version_id="li-l13", rule_body=body, rule_execution=freeze_target_rule_execution(body, "设备清单.xlsx"))
+        result = run_round_from_bytes(RoundWork("round", "tenant", [target]), {"version": content.getvalue()})
+        assert result["findings"][0]["status"] == expected, result["findings"][0]["suggestions"]
