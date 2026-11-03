@@ -13,7 +13,7 @@ from documents.contracts import ConversionArtifact
 from documents.pdf import PdfSpec
 from openpyxl import Workbook
 
-PROGRAM = '''
+PROGRAM = """
 from audit.checkers.v3.excel_agent import ExcelAgent, rule
 from audit.engine.rule_engine import RuleContext, Table
 from audit.kinds import PpapDocumentType
@@ -50,7 +50,7 @@ class TaskAudit(ExcelAgent):
 
 def create_audit(audit_file, rule, group_context=None):
     return TaskAudit(audit_file, rule, group_context)
-'''
+"""
 
 
 def save_workbook(path: Path, builder) -> None:
@@ -264,9 +264,7 @@ def test_pdf_unresolvable_region_keeps_the_page_and_does_not_pass(tmp_path: Path
     ]
     assert [item.code for item in result.evidence.diagnostics] == ["region_unresolved", "region_unresolved"]
 
-    bad_page = artifact.model_copy(
-        update={"diagnostics": {"pdf_v2_diagnostics": {"original_pages": [{"page": "３", "success": True, "region": [0, 0, 1, 1]}]}}}
-    )
+    bad_page = artifact.model_copy(update={"diagnostics": {"pdf_v2_diagnostics": {"original_pages": [{"page": "３", "success": True, "region": [0, 0, 1, 1]}]}}})
     agent._conversion_artifact = None
     agent._workbook_cache = None
     runtime.artifact = bad_page
@@ -525,3 +523,79 @@ def test_task_pdf_spec_keeps_original_page_map(monkeypatch, tmp_path: Path) -> N
     assert artifact.success is True
     assert artifact.diagnostics["task_spec"] is True
     assert artifact.diagnostics["pdf_v2_diagnostics"]["original_pages"][0]["page"] == 2
+
+
+def test_related_pdf_cache_keeps_file_identity_and_resets_per_check(tmp_path: Path, monkeypatch) -> None:
+    from audit.engine.rule_engine import Table
+
+    target = tmp_path / "target.xlsx"
+    workbook = Workbook()
+    workbook.active.title = "过程流程图"
+    workbook.active["A1"] = "target"
+    workbook.save(target)
+    workbook.close()
+    related = tmp_path / "related.xlsx"
+    workbook = Workbook()
+    workbook.active["A1"] = "related"
+    workbook.save(related)
+    workbook.close()
+    artifact = ConversionArtifact(
+        success=True,
+        xlsx_path=str(related),
+        strategy_used="manual_linegrid",
+        diagnostics={"pdf_v2_diagnostics": {"original_pages": [{"page": 2, "success": False, "error": "未读取完"}]}},
+    )
+    runtime = RecordingRuntime(artifact)
+
+    class Audit(ExcelAgent):
+        CLAUSE_BOUND_CHECKS = True
+        PDF_SPECS = {"related-version": PdfSpec()}
+
+        @rule("关联文件", clause_id="A")
+        def check_related(self, ctx):
+            book = self.load_related_pdf("related-version")
+            ctx.bind_workbook(book, "related-version")
+            ctx.note_cell(book.active.title, 1, 1, file_version_id="related-version")
+            ctx.record_execution()
+            assert book.active["A1"].value == "related"
+            return "PASS", "关联单元格已读"
+
+        @rule("本文件", clause_id="B")
+        def check_target(self, ctx):
+            assert Table(ctx).sheet("过程流程图").cell(1, 1).value() == "target"
+            return "PASS", "本文件已读"
+
+    reference = AuditInput(audit_id="ref", file_url=str(tmp_path / "ref.pdf"), file_metadata={"file_version_id": "related-version"})
+    agent = Audit(
+        AuditInput(audit_id="target", file_url=str(target), file_metadata={"file_version_id": "target-version"}),
+        RuleInput(
+            rule_id="rule",
+            rule_profile="v3",
+            type=PpapDocumentType.PROCESS_FLOW_CHART.get_type_name(),
+            rules=[
+                {"id": "A", "category": "关联文件", "rule_to_check": "关联文件"},
+                {"id": "B", "category": "本文件", "rule_to_check": "本文件"},
+            ],
+        ),
+        GroupContextInput(by_audit_id={"ref": reference}),
+    )
+    # The controlled boundary is conversion only; both checks use the real context and finalizer.
+    from documents.excel import load_excel_workbook
+
+    runtime.load_workbook_auto = lambda ref: load_excel_workbook(ref.location)
+    with bind_runtime(runtime):
+        first = agent.checks[0].check()
+        cached = agent._related_pdf_cache["related-version"][1]
+        second = agent.checks[1].check()
+        again = agent.checks[0].check()
+    assert first.status == again.status == "UNABLE"
+    assert any(source.locator.startswith("file:related-version;page:2") for source in first.evidence.sources)
+    assert not any(source.locator.startswith("file:target-version;page:") for source in first.evidence.sources)
+    assert second.status == "PASS"
+    assert "related-version" not in str(second.evidence.sources)
+    assert agent._related_pdf_cache["related-version"][1] is cached
+    closed = []
+    monkeypatch.setattr(cached, "close", lambda: closed.append(True))
+    agent.close()
+    assert closed == [True]
+    assert not agent._related_pdf_cache

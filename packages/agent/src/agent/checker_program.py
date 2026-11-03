@@ -67,11 +67,11 @@ class CheckerManifest(BaseModel):
     file_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     file_version_id: str = ""
     role: str = Field(min_length=1)
-    appendix: list[dict[str, Any]] = Field(default_factory=list)
     group_context: dict[str, Any] | None = None
     related_documents: dict[str, str] = Field(default_factory=dict)
     prior_files: dict[str, str] | None = None
     artifact: CheckerArtifact | None = None
+    reasoning_effort: Literal["xhigh", "high", "medium", "low"] = "medium"
 
 
 def encoded(value: object) -> bytes:
@@ -174,17 +174,19 @@ def group_context_for_spec(spec: ExecuteRequest) -> GroupContextInput | None:
         if type_name:
             by_doc_type.setdefault(type_name, []).append(audit)
         clauses = [clause for clause in body.get("rules", []) if isinstance(clause, dict)] if isinstance(body.get("rules"), list) else []
-        clause_ids = {str(clause.get("id") or "").strip() for clause in clauses}
-        raw_appendix = body.get("appendix") if isinstance(body.get("appendix"), list) else []
-        appendix = applicable_appendix(raw_appendix, file_version_id=item.file_version_id, clause_ids=clause_ids)
-        if clauses or appendix:
-            rules_by_id[item.file_version_id] = RuleInput(
+        raw_appendix = body.get("appendix")
+        rule = scoped_rule(
+            RuleInput(
                 rule_id=item.rule_version_id or item.file_version_id,
                 rule_profile=str(body.get("rule_profile") or "v3"),
                 type=body.get("type") if isinstance(body.get("type"), str) else None,
                 rules=clauses,
-                appendix=appendix,
-            )
+                appendix=[entry for entry in raw_appendix if isinstance(entry, dict)] if isinstance(raw_appendix, list) else [],
+            ),
+            file_version_id=item.file_version_id,
+        )
+        if rule.rules or rule.appendix:
+            rules_by_id[item.file_version_id] = rule
     return GroupContextInput(task_group_id=spec.round_id, by_audit_id=by_audit_id, by_doc_type=by_doc_type, rules_by_id=rules_by_id)
 
 
@@ -202,31 +204,25 @@ def verified_related_bytes(spec: ExecuteRequest, files: dict[str, bytes]) -> dic
     return payload
 
 
-def applicable_appendix(appendix: list[dict[str, Any]] | None, *, file_version_id: str, clause_ids: set[str]) -> list[dict[str, Any]]:
-    """Keep confirmed appendix entries that apply to this file and these clauses."""
+def scoped_rule(rule: RuleInput, *, file_version_id: str) -> RuleInput:
+    """Bind the rule's confirmed appendix to this file and its effective clauses."""
+    clause_ids = {item["id"] for item in _clauses(rule)}
     selected: list[dict[str, Any]] = []
-    for item in appendix or []:
-        if not isinstance(item, dict):
-            continue
+    for item in rule.appendix:
         scope = item.get("scope")
         if not isinstance(scope, dict):
             selected.append(item)
             continue
         if _appendix_scope_applies(scope, file_version_id, clause_ids):
             selected.append(item)
-    return selected
+    return rule.model_copy(update={"appendix": selected})
 
 
 def _appendix_scope_applies(scope: dict[str, Any], file_version_id: str, clause_ids: set[str]) -> bool:
     """A partial scope still restricts. It must not leak to another file or clause."""
     targets = scope.get("rule_targets")
     if isinstance(targets, list):
-        return any(
-            isinstance(target, dict)
-            and str(target.get("document_id") or "") == file_version_id
-            and str(target.get("rule_id") or "") in clause_ids
-            for target in targets
-        )
+        return any(isinstance(target, dict) and str(target.get("document_id") or "") == file_version_id and str(target.get("rule_id") or "") in clause_ids for target in targets)
     restricted = False
     document_ok = True
     rule_ok = True
@@ -249,12 +245,12 @@ def input_digest(
     *,
     file_sha256: str,
     role: str,
-    appendix: list[dict[str, Any]] | None = None,
     group_context: GroupContextInput | None = None,
 ) -> str:
     """Identity of this execution input. A rule ID alone is not enough."""
+    rule = scoped_rule(rule, file_version_id=str((audit_file.file_metadata or {}).get("file_version_id") or audit_file.audit_id))
     payload = {
-        "appendix": appendix or [],
+        "appendix": rule.appendix,
         "file_sha256": file_sha256,
         "file_version_id": str((audit_file.file_metadata or {}).get("file_version_id") or ""),
         "related": _related(group_context),
@@ -326,14 +322,13 @@ def _checked_digest(
     *,
     file_sha256: str,
     role: str,
-    appendix: list[dict[str, Any]] | None,
     group_context: GroupContextInput | None,
 ) -> str:
     if not role.strip():
         raise DeepError("deep_input_invalid")
     if hashlib.sha256(file_bytes).hexdigest() != file_sha256:
         raise DeepError("deep_integrity_mismatch")
-    return input_digest(audit_file, rule, file_sha256=file_sha256, role=role, appendix=appendix, group_context=group_context)
+    return input_digest(audit_file, rule, file_sha256=file_sha256, role=role, group_context=group_context)
 
 
 def store_observation(objects: Objects, key: str, observations: list[str]) -> str:
@@ -381,12 +376,13 @@ def adapt(
     runner: ProgramRunner,
     work: Path,
     deadline: float,
-    appendix: list[dict[str, Any]] | None = None,
     objects: Objects | None = None,
     artifact_prefix: str | None = None,
     prior: CheckerArtifact | None = None,
+    reasoning_effort: str = "medium",
 ) -> CheckerArtifact:
-    digest = _checked_digest(audit_file, rule, file_bytes, file_sha256=file_sha256, role=role, appendix=appendix, group_context=group_context)
+    rule = scoped_rule(rule, file_version_id=str((audit_file.file_metadata or {}).get("file_version_id") or audit_file.audit_id))
+    digest = _checked_digest(audit_file, rule, file_bytes, file_sha256=file_sha256, role=role, group_context=group_context)
     prior_files = {name: content.decode("utf-8") for name, content in prior.files.items()} if prior is not None else None
     observations: list[str] = []
     try:
@@ -400,8 +396,8 @@ def adapt(
             work=work,
             deadline=deadline,
             prior_files=prior_files,
-            appendix=appendix,
             observations=observations,
+            reasoning_effort=reasoning_effort,
         )
     except ModelProtocolError as exc:
         raise DeepError("deep_model_protocol") from exc
@@ -426,9 +422,9 @@ def execute(
     role: str,
     executor_revision: str,
     work: Path,
-    appendix: list[dict[str, Any]] | None = None,
 ) -> list[AuditResultItem]:
-    digest = _checked_digest(audit_file, rule, file_bytes, file_sha256=file_sha256, role=role, appendix=appendix, group_context=group_context)
+    rule = scoped_rule(rule, file_version_id=str((audit_file.file_metadata or {}).get("file_version_id") or audit_file.audit_id))
+    digest = _checked_digest(audit_file, rule, file_bytes, file_sha256=file_sha256, role=role, group_context=group_context)
     if artifact.input_digest != digest or artifact.executor_revision != executor_revision:
         raise DeepError("deep_output_identity_mismatch")
     try:
@@ -476,6 +472,7 @@ def _staged_manifest(manifest: CheckerManifest, file_bytes: bytes, related_bytes
     for audit_id, item in items.items():
         metadata = item.file_metadata or {}
         expected = str(metadata.get("sha256") or "")
+        raw: bytes | None
         if audit_id == manifest.audit_id:
             raw = file_bytes
             name = manifest.document
@@ -514,7 +511,7 @@ def _bound_group_context(inputs: Path, manifest: CheckerManifest) -> GroupContex
     root = inputs.resolve()
     for audit_id, name in manifest.related_documents.items():
         raw = read_regular(inputs, (name,), MAX_DOCUMENT_BYTES)
-        metadata = (_context_items(context)[audit_id].file_metadata or {})
+        metadata = _context_items(context)[audit_id].file_metadata or {}
         expected = str(metadata.get("sha256") or "")
         path = (inputs / name).resolve()
         if path.parent != root or not expected or hashlib.sha256(raw).hexdigest() != expected:
@@ -557,11 +554,7 @@ def load_manifest(inputs: Path) -> tuple[CheckerManifest, AuditInput, RuleInput,
         file_url=str(inputs / manifest.document),
         file_metadata={"file_version_id": manifest.file_version_id, "sha256": manifest.file_sha256, "role": manifest.role},
     )
-    rule = RuleInput.model_validate(manifest.rule)
-    if manifest.appendix and rule.appendix != manifest.appendix:
-        if rule.appendix:
-            raise CheckerProgramError("附录与规则不一致")
-        rule = rule.model_copy(update={"appendix": manifest.appendix})
+    rule = scoped_rule(RuleInput.model_validate(manifest.rule), file_version_id=manifest.file_version_id or manifest.audit_id)
     group_context = _bound_group_context(inputs, manifest)
     return manifest, audit_file, rule, group_context, raw
 
@@ -575,7 +568,6 @@ def run_adapt_manifest(inputs: Path, work: Path, runner: ProgramRunner, deadline
         rule,
         file_sha256=manifest.file_sha256,
         role=manifest.role,
-        appendix=manifest.appendix,
         group_context=group_context,
     )
     if digest != manifest.spec.input_digest:
@@ -590,7 +582,7 @@ def run_adapt_manifest(inputs: Path, work: Path, runner: ProgramRunner, deadline
         work=work,
         deadline=deadline,
         prior_files=manifest.prior_files,
-        appendix=manifest.appendix,
+        reasoning_effort=manifest.reasoning_effort,
     )
 
 
@@ -603,7 +595,6 @@ def run_execute_manifest(inputs: Path, work: Path) -> list[AuditResultItem]:
         rule,
         file_sha256=manifest.file_sha256,
         role=manifest.role,
-        appendix=manifest.appendix,
         group_context=group_context,
     )
     if digest != manifest.spec.input_digest or manifest.artifact.input_digest != digest:

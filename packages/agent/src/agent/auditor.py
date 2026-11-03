@@ -23,6 +23,18 @@ from agent.run import ExecutionContext
 from agent.tools import ParserLimitError
 
 MAX_BUNDLE_BYTES = 16 * 1024 * 1024
+FAULTS = {
+    "INPUT_INTEGRITY_ERROR": "deep_integrity_mismatch",
+    "PARSER_LIMIT": "deep_parser_limit",
+    "MODEL_TIMEOUT": "deep_timeout",
+    "MODEL_PROTOCOL_ERROR": "deep_model_protocol",
+    "OUTPUT_VALIDATION_ERROR": "deep_output_invalid",
+    "EVIDENCE_VALIDATION_ERROR": "deep_output_invalid",
+    "RESOURCE_LIMIT": "deep_budget_exhausted",
+    "CANCELLED": "deep_cancelled",
+    "ISOLATION_UNAVAILABLE": "deep_runtime_unavailable",
+    "CONTROLLER_UNAVAILABLE": "deep_runtime_unavailable",
+}
 
 
 class Objects(Protocol):
@@ -170,7 +182,6 @@ class SemanticRuntime:
         file_bytes: bytes,
         *,
         role: str,
-        appendix: list[dict] | None,
         group_context: GroupContextInput | None,
     ) -> CheckerArtifact | None:
         from agent.checker_program import input_digest
@@ -180,7 +191,6 @@ class SemanticRuntime:
             rule,
             file_sha256=hashlib.sha256(file_bytes).hexdigest(),
             role=role,
-            appendix=appendix,
             group_context=group_context,
         )
         try:
@@ -287,17 +297,18 @@ class SemanticRuntime:
                 raise DeepError("deep_integrity_mismatch")
             if not isinstance(clauses, list) or not clauses:
                 raise DeepError("deep_rules_empty")
-            raw_appendix = body.get("appendix") if isinstance(body.get("appendix"), list) else []
-            clause_ids = {str(clause.get("id") or "").strip() for clause in clauses if isinstance(clause, dict)}
-            from agent.checker_program import applicable_appendix
+            raw_appendix = body.get("appendix")
+            from agent.checker_program import scoped_rule
 
-            appendix = applicable_appendix(raw_appendix, file_version_id=item.file_version_id, clause_ids=clause_ids)
-            rule = RuleInput(
-                rule_id=item.rule_version_id or item.file_version_id,
-                rule_profile=str(body.get("rule_profile") or "v3"),
-                type=body.get("type"),
-                rules=list(clauses),
-                appendix=list(appendix),
+            rule = scoped_rule(
+                RuleInput(
+                    rule_id=item.rule_version_id or item.file_version_id,
+                    rule_profile=str(body.get("rule_profile") or "v3"),
+                    type=body.get("type"),
+                    rules=list(clauses),
+                    appendix=[entry for entry in raw_appendix if isinstance(entry, dict)] if isinstance(raw_appendix, list) else [],
+                ),
+                file_version_id=item.file_version_id,
             )
             audit_file = AuditInput(
                 audit_id=item.file_version_id,
@@ -307,7 +318,7 @@ class SemanticRuntime:
             )
             fixed: CheckerArtifact | None = None
             try:
-                fixed = self._load_fixed_artifact(spec, audit_file, rule, raw, role=item.role, appendix=appendix, group_context=group_context)
+                fixed = self._load_fixed_artifact(spec, audit_file, rule, raw, role=item.role, group_context=group_context)
                 prior_program = None
                 if fixed is None:
                     from agent.checker_program import checker_program_key, input_digest
@@ -317,15 +328,15 @@ class SemanticRuntime:
                         rule,
                         file_sha256=hashlib.sha256(raw).hexdigest(),
                         role=item.role,
-                        appendix=appendix,
                         group_context=group_context,
                     )
                     remembered = self._read_start_artifact(spec, checker_program_key(spec.tenant_id, spec.executor_revision, current))
                     if remembered is not None and remembered.input_digest != current:
                         raise DeepError("deep_output_identity_mismatch")
                     prior_program = None if remembered is not None else self._load_checker_start(spec, rule)
-                    if remembered is not None or (prior_program is not None and prior_program.input_digest == current):
-                        fixed = remembered or prior_program
+                    candidate = remembered or prior_program
+                    if candidate is not None and candidate.input_digest == current:
+                        fixed = candidate
                         self._put(f"{self._attempt_prefix(spec)}/checkers/{current}.json", fixed.model_dump(mode="json"))
                         prior_program = None
                 if fixed is None:
@@ -337,7 +348,6 @@ class SemanticRuntime:
                         role=item.role,
                         context=context,
                         group_context=group_context,
-                        appendix=appendix,
                         related_bytes=related_bytes,
                         prior=prior_program,
                         operation="adapt-checker",
@@ -354,7 +364,6 @@ class SemanticRuntime:
                     role=item.role,
                     context=context,
                     group_context=group_context,
-                    appendix=appendix,
                     related_bytes=related_bytes,
                     operation="execute-checker",
                     artifact=fixed,
@@ -375,7 +384,7 @@ class SemanticRuntime:
         if not published:
             raise DeepError("deep_output_invalid")
         source = getattr(self.runtime, "usage_source", "unknown")
-        usage_source = "controlled" if source == "controlled" else "provider" if source == "provider" else "unknown"
+        usage_source: Literal["unknown", "provider", "controlled"] = "controlled" if source == "controlled" else "provider" if source == "provider" else "unknown"
         response = checker_response(spec, executed, usage=usage, usage_source=usage_source)
         self._remember_checker_usage(spec, response)
         return response
@@ -404,17 +413,18 @@ class SemanticRuntime:
                 if partial:
                     raise DeepError("deep_rules_empty")
                 return None
-            raw_appendix = body.get("appendix") if isinstance(body.get("appendix"), list) else []
-            clause_ids = {str(clause.get("id") or "").strip() for clause in clauses if isinstance(clause, dict)}
-            from agent.checker_program import applicable_appendix
+            raw_appendix = body.get("appendix")
+            from agent.checker_program import scoped_rule
 
-            appendix = applicable_appendix(raw_appendix, file_version_id=item.file_version_id, clause_ids=clause_ids)
-            rule = RuleInput(
-                rule_id=item.rule_version_id or item.file_version_id,
-                rule_profile=str(body.get("rule_profile") or "v3"),
-                type=body.get("type"),
-                rules=list(clauses),
-                appendix=list(appendix),
+            rule = scoped_rule(
+                RuleInput(
+                    rule_id=item.rule_version_id or item.file_version_id,
+                    rule_profile=str(body.get("rule_profile") or "v3"),
+                    type=body.get("type"),
+                    rules=list(clauses),
+                    appendix=[entry for entry in raw_appendix if isinstance(entry, dict)] if isinstance(raw_appendix, list) else [],
+                ),
+                file_version_id=item.file_version_id,
             )
             audit_file = AuditInput(
                 audit_id=item.file_version_id,
@@ -422,24 +432,24 @@ class SemanticRuntime:
                 file_metadata={"file_version_id": item.file_version_id, "sha256": item.sha256, "role": item.role},
                 project_id=spec.tenant_id or "default",
             )
-            digest = input_digest(audit_file, rule, file_sha256=item.sha256, role=item.role, appendix=appendix, group_context=group_context)
+            digest = input_digest(audit_file, rule, file_sha256=item.sha256, role=item.role, group_context=group_context)
             try:
                 stored = self.objects.get(f"{self._attempt_prefix(spec)}/checkers/{digest}.json", max_bytes=MAX_BUNDLE_BYTES)
             except (ObjectMissing, ObjectTooLarge):
                 if not partial:
                     return None
-                prepared.append((item, None, audit_file, rule, raw, appendix))
+                prepared.append((item, None, audit_file, rule, raw))
                 continue
             artifact = CheckerArtifact.model_validate(json.loads(stored))
             if artifact.input_digest != digest or artifact.executor_revision != spec.executor_revision:
                 raise DeepError("deep_output_identity_mismatch")
             found = True
-            prepared.append((item, artifact, audit_file, rule, raw, appendix))
+            prepared.append((item, artifact, audit_file, rule, raw))
         if not found:
             return None
         related_bytes = verified_related_bytes(spec, files)
         executed: list[tuple] = []
-        for item, artifact, audit_file, rule, raw, appendix in prepared:
+        for item, artifact, audit_file, rule, raw in prepared:
             if artifact is None:
                 executed.append((item, []))
                 continue
@@ -453,7 +463,6 @@ class SemanticRuntime:
                     role=item.role,
                     context=context,
                     group_context=group_context,
-                    appendix=appendix,
                     related_bytes=related_bytes,
                 )
             except DeepError as exc:
@@ -473,7 +482,6 @@ class SemanticRuntime:
         role: str,
         context: ExecutionContext,
         group_context: GroupContextInput | None = None,
-        appendix: list[dict] | None = None,
         prior: CheckerArtifact | None = None,
         related_bytes: dict[str, bytes] | None = None,
     ) -> CheckerArtifact:
@@ -485,7 +493,6 @@ class SemanticRuntime:
             role=role,
             context=context,
             group_context=group_context,
-            appendix=appendix,
             prior=prior,
             operation="adapt-checker",
             related_bytes=related_bytes,
@@ -505,7 +512,6 @@ class SemanticRuntime:
         role: str,
         context: ExecutionContext,
         group_context: GroupContextInput | None = None,
-        appendix: list[dict] | None = None,
         related_bytes: dict[str, bytes] | None = None,
     ) -> list[AuditResultItem]:
         bundle = self._checker_job(
@@ -516,7 +522,6 @@ class SemanticRuntime:
             role=role,
             context=context,
             group_context=group_context,
-            appendix=appendix,
             operation="execute-checker",
             artifact=artifact,
             related_bytes=related_bytes,
@@ -533,13 +538,12 @@ class SemanticRuntime:
         role: str,
         context: ExecutionContext,
         group_context: GroupContextInput | None,
-        appendix: list[dict] | None,
         operation: Literal["adapt-checker", "execute-checker"],
         prior: CheckerArtifact | None = None,
         artifact: CheckerArtifact | None = None,
         related_bytes: dict[str, bytes] | None = None,
     ) -> CheckerProgramBundle:
-        from agent.checker_program import CheckerManifest, input_digest, write_manifest
+        from agent.checker_program import CheckerManifest, input_digest, scoped_rule, write_manifest
         from agent.execution.checker_guest import CheckerProgramError
         from agent.execution.guest_model import ModelProtocolError
 
@@ -547,13 +551,9 @@ class SemanticRuntime:
         if spec.executor_revision != revision:
             raise DeepError("executor_revision_mismatch")
         file_sha256 = hashlib.sha256(file_bytes).hexdigest()
-        from agent.checker_program import applicable_appendix
-
         version_id = str((audit_file.file_metadata or {}).get("file_version_id") or audit_file.audit_id)
-        clause_ids = {str(item.get("id") or "").strip() for item in rule.rules if isinstance(item, dict)}
-        appendix = applicable_appendix(appendix, file_version_id=version_id, clause_ids=clause_ids)
-        rule = rule.model_copy(update={"appendix": appendix})
-        digest = input_digest(audit_file, rule, file_sha256=file_sha256, role=role, appendix=appendix, group_context=group_context)
+        rule = scoped_rule(rule, file_version_id=version_id)
+        digest = input_digest(audit_file, rule, file_sha256=file_sha256, role=role, group_context=group_context)
         if artifact is not None and (artifact.input_digest != digest or artifact.executor_revision != revision):
             raise DeepError("deep_output_identity_mismatch")
         job = CheckerJobSpec(execution_id=UUID(int=0), operation=operation, input_digest=digest, executor_revision=revision)
@@ -571,7 +571,6 @@ class SemanticRuntime:
             file_sha256=file_sha256,
             file_version_id=version_id,
             role=role,
-            appendix=appendix or [],
             group_context=group_context.model_dump(mode="json") if group_context is not None else None,
             prior_files={name: content.decode("utf-8") for name, content in prior.files.items()} if prior is not None else None,
             artifact=artifact,
@@ -620,4 +619,3 @@ class SemanticRuntime:
 
                 store_observation(self.objects, f"{artifact_prefix}/checkers/{digest}.trials.json", bundle.observations)
         return bundle
-

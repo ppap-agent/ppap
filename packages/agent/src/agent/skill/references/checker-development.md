@@ -1,6 +1,13 @@
 # 检查
 
-按本次生效条款和目标文件编写检查。不要手写审核结果。
+按本次生效条款和目标文件开发任务专用检查。正式结果来自程序执行。
+
+1. 有 `current-checker.py` / `current-resources.py` 时，先复制为本轮的 `checker.py` / `resources.py`，避免中断丢失起点。然后读取 `reference-checker.py` 的相关原方法和 `reference-resources.json`（若存在）。用 `template-checker.py` 的任务类继承原 checker；优先调用语义相符的父类方法和辅助函数。原编号与本次条款身份分开。
+2. 若有 `current-checker.py` / `current-resources.py`，它们是最近候选，包含失败或局部试跑版本。结合本次诊断继续修改这些源码。
+3. 写入 `checker.py` 和必要的 `resources.py`。按每个实际条款绑定一个入口；模板的 `declared_rules()` 只选择本次方法，保留父类辅助能力。
+4. 尽早写出可试跑候选，再按缺口检查原件。提交试跑回执。阅读执行反馈，修复资源、扫描或判断错误。全部条款跑完并核对规则后，再提交同一程序以固定。
+
+原源码是经验依据；本次条款和文件决定适用性。源数据只读。教学与开发只使用提供的规则、文件和实现；测试预期、其他实验评分和历史最终判定不参与生成。
 
 检查写入 `checker.py`，并提供 `create_audit(audit_file, rule, group_context=None)`。它返回带 `checks` 和 `close()` 的审核对象。需要本次文件自己的资源时，再写 `resources.py`。
 
@@ -31,7 +38,9 @@
 - `from audit.engine.rule_engine.contracts import RuleResource`
 - `from documents.pdf import PdfSpec`
 
-PPAP 预设也从 `documents.pdf` 导入，例如 `PPAP_8_PROCESS_FLOW_CHART_SPEC`。PDF 审核把预设赋给类属性 `PDF_SPEC`。
+同一文档类型的 PDF 可以有不同版式。不要按文档类型或文件名选择预设。预设是其他文件的例子，不是本文件的版式。
+
+目标 PDF 必须把 spec 赋给类属性 `PDF_SPEC`。关联 PDF 写入类属性 `PDF_SPECS`，键是 `file_version_id`，并用 `self.load_related_pdf(file_version_id)` 打开，再调用 `ctx.bind_workbook` 记录来源。开发期间可以修订 spec；`template-pdf-spec.py` 只提供候选。配置变化后重新转换并完整试跑。没有可用文字网格，或转换后定位不完整时，保持 `UNABLE`，不要改成 `PASS`。
 
 `resources.py` 定义 `RESOURCE`，并由 `ExcelAgent(..., resource=RESOURCE)` 传入。任务资源与该文档类型的注册表资源进入同一个 `ctx.resource`。同名项以任务资源为准。试跑出现「未定义数据区规范」时，按目标文件的实际表名和列名写资源。尖括号只是占位，不能原样执行：
 
@@ -66,5 +75,5 @@ RESOURCE = RuleResource(
 - `{"completed":true,"artifact":"checker.py"}`：运行全部生效条款。
 - `{"completed":true,"artifact":"checker.py","clauses":["条款ID"]}`：只运行这些条款。局部试跑不能固定程序。
 - 修改 `resources.py`，或修改条款方法以外的共享函数后，下一次运行全部生效条款。
-- 覆盖全部条款后，若判断符合本次条款，再次提交同一程序且不要带 `clauses`。这表示固定。
-- 不要把已完成条款的 NG、UNABLE 或 NA 改成 PASS。可执行只说明程序跑完，不说明业务判断正确。
+- 覆盖全部条款后，先看已有诊断和候选；只对未解决的依据补读。若判断符合本次条款，再次提交同一程序且不要带 `clauses`。成功结束的模型轮和相同程序一起构成固定提交；中断、预算耗尽时留下的文件只是候选。不要只为风格、注释或导入顺序重写已核对的候选。
+- 修复读取或实现错误后，可以依据新的执行证据改变判定，并说明原因。业务标准仍以本次规则为准。可执行只说明程序跑完，不说明业务判断正确。

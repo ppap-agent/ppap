@@ -277,6 +277,10 @@ uv run --no-sync pytest tests/e2e
 docker compose -f deploy/isolated-dev/compose.yaml down -v
 ```
 
+`packages/agent/tests/test_checker_adaptation.py` 通过实际人工 checker、原资源模型和 Fluent API 验证当前条款装配、旧程序诊断、失败候选连续修订及电子版 PDF 的配置修复。受控 developer 只替换模型生成，不替换文档转换、条款执行或结果收集。`test_checker_coverage.py` 验证关联 PDF 的版本来源、缓存及每项诊断隔离。`tests/repository/test_deep_lab.py` 拒绝重复、漏项和空结果造成的假评分。
+
+真实开发实验用 [DEVELOPMENT 的本地命令](DEVELOPMENT.md#本地-deep-checker-实验)。原 POC 文件保持原人工 oracle；工作表改名和表格下移副本用于布局适配验证。需要先确认旧程序确实失败，才能用修复结果证明适配能力。`--source` 指定新文件后不沿用旧 oracle，只验证开发、执行及独立进程重放，再按原件核对实际判断。原生电子版 PDF 与扫描件的证据分开；后者不在这轮验收范围。重放一致不证明规则理解正确。
+
 Live Deep 会调用付费模型。先在仓库根目录的 `.env` 配置 `LLM_API_KEY`、HTTPS `LLM_BASE_URL` 和 `LLM_MODEL`。以下命令构建专用 amd64 Deep 镜像，Controller 留在容器内，Worker/API 只通过 UDS 访问；无需 gVisor、Docker socket 或宿主机 Grok 配置：
 
 ```sh
