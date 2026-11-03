@@ -292,7 +292,12 @@ uv run --no-sync python scripts/deep_lab.py --recipe checker --seq 11 --effort h
   --variant shifted-table --prior /absolute/path/to/artifact.json
 uv run --no-sync python scripts/deep_lab.py --recipe checker --seq 11 --effort high \
   --source /absolute/path/to/electronic.pdf
+uv run --no-sync python scripts/deep_lab.py --recipe checker --seq 11 --effort high \
+  --source /absolute/path/to/fixed.xlsx --rules /absolute/path/to/rule-input.json \
+  --expected /absolute/path/to/expected.json --prior /absolute/path/to/artifact.json
 ```
+
+规则变化实验使用 `--rules` 提供完整 `RuleInput` JSON，条款 ID 可保持不变而正文变化。`--expected` 是独立的 `{条款ID: 状态}` JSON，只由宿主评分读取，不复制到模型开发目录。修改规则后默认停用原 corpus 答案；未提供独立预期时明确不评分。规则随本次输入保存，迁移目录后的重放使用同一规则。各场景保持源文件字节、版本身份及参考资料不变，用旧产物先诊断再适配；条款数量变化同时检查缺项、重复和多余结果。
 
 `shifted-table` 保留首行标题，将第 2 行起的表格与合并区域下移 20 行；拒绝含公式或跨越该边界的合并单元格，避免改变业务含义。`renamed-sheet` 则只修改工作表名。两种变体均使用副本，不改变原件与规则。每轮模型交互默认最多 128 次，可用 `--max-turns` 调整，总开发时间上限仍为 40 分钟。`--source` 将所选规则应用到新文件，并明确停止沿用原文件的人工评分；执行与重放仍必须成功。每次运行在 `output/checker/` 下保留候选、诊断、`artifact.json`、`execution.json`、独立进程的 `replay.json` 及可用的原 oracle 评分。模型只能用规则、原件和实现作适配依据；不能读取评分预期。重放过程不继承模型凭据，输入移到新目录，完整结果须一致。CLI 运行退出失败时，汇总不能按评分相同计为成功。
 

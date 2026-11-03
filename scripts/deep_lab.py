@@ -235,11 +235,18 @@ def _checker_context(bundle: str, work: Path, copied: dict[str, str]):
             }
         )
 
+    rules = {item.file_name: _rule_input(item) for item in cases}
+    override = work / "rules.json"
+    if override.exists():
+        from audit.contracts import RuleInput
+
+        payload = json.loads(override.read_text())
+        rules[payload["target"]] = RuleInput.model_validate(payload["rule"])
     return context.model_copy(
         update={
             "by_doc_type": {key: [bound(item) for item in rows] for key, rows in context.by_doc_type.items()},
             "by_audit_id": {key: bound(item) for key, item in context.by_audit_id.items()},
-            "rules_by_id": {item.file_name: _rule_input(item) for item in cases},
+            "rules_by_id": rules,
         }
     )
 
@@ -388,6 +395,8 @@ def replay_checker(work: Path) -> int:
     artifact = CheckerArtifact.model_validate_json((work / "artifact.json").read_bytes())
     replay_work = work / "replay"
     replay_work.mkdir()
+    if (work / "rules.json").exists():
+        shutil.copy2(work / "rules.json", replay_work / "rules.json")
     for relative in case["files"].values():
         destination = replay_work / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -430,7 +439,7 @@ def score(work: Path, expected: dict[str, str] | None) -> dict:
     if not path.is_file():
         report = {"match": False, "error": "no result.json", "checks": []}
     elif expected is None:
-        report = {"match": None, "scored": False, "checks": [], "reason": "new source has no oracle"}
+        report = {"match": None, "scored": False, "checks": [], "reason": "changed input has no independent oracle"}
     else:
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
@@ -475,6 +484,8 @@ def main() -> None:
     parser.add_argument("--all", action="store_true")
     parser.add_argument("--source", type=Path, help="Adapt the selected rules to a new file; do not reuse its old oracle")
     parser.add_argument("--prior", type=Path, help="Fixed checker artifact to diagnose and adapt to the new input")
+    parser.add_argument("--rules", type=Path, help="Explicit RuleInput JSON for one checker case; disables the corpus oracle")
+    parser.add_argument("--expected", type=Path, help="Independent clause/status JSON used only for host scoring")
     parser.add_argument("--variant", choices=["original", "renamed-sheet", "shifted-table"], default="original")
     parser.add_argument("--effort", default=EFFORT, choices=["xhigh", "high", "medium", "low"])
     parser.add_argument("--max-turns", type=int, default=128, help="Model turns per checker development stage (1-128)")
@@ -486,6 +497,8 @@ def main() -> None:
     load_dotenv(ROOT / ".env")
     ensure_home()
     selected = _selected(args.bundle, args.seq, args.file, args.all)
+    if (args.rules or args.expected) and (args.recipe != "checker" or len(selected) != 1):
+        raise SystemExit("--rules/--expected require one checker case")
     if (args.prior or args.source or args.variant != "original") and (args.recipe != "checker" or len(selected) != 1):
         raise SystemExit("--prior/--source/--variant require one checker case")
     summary = []
@@ -493,6 +506,14 @@ def main() -> None:
         print(f"[{index}/{len(selected)}] {case.bundle_id} {case.file_name}", flush=True)
         try:
             work, expected = prepare(args.recipe, case.bundle_id, case.file_name, args.effort, variant=args.variant, source=args.source)
+            if args.rules:
+                from audit.contracts import RuleInput
+
+                rule = RuleInput.model_validate_json(args.rules.read_bytes())
+                (work / "rules.json").write_text(json.dumps({"target": case.file_name, "rule": rule.model_dump(mode="json")}, ensure_ascii=False))
+                expected = None
+            if args.expected:
+                expected = json.loads(args.expected.read_text())
             if args.recipe == "checker":
                 code = run_checker(work, case.bundle_id, case.file_name, args.effort, prior_path=args.prior, max_turns=args.max_turns)
             else:
