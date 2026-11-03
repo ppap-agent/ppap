@@ -7,6 +7,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -261,6 +262,7 @@ class _CheckerRunner:
         self.output_tokens = 0
 
     def run(self, work: Path, prompt: str, schema, deadline: float, *, reasoning_effort: str):
+        from agent.client import DeepError
         from agent.execution.guest_model import ModelProtocolError, read_checker_draft
 
         if time.monotonic() >= deadline:
@@ -274,6 +276,13 @@ class _CheckerRunner:
         self.output_tokens += usage[1]
         if terminal is None:
             raise ModelProtocolError(f"model terminal receipt missing (exit {code})")
+        # Provider failures cannot be repaired by revising checker code. Preserve any
+        # candidate on disk, but stop before the development loop requests confirmation.
+        if terminal.get("is_error") is True or code != 0:
+            errors = terminal.get("errors")
+            for message in errors if isinstance(errors, list) else []:
+                if isinstance(message, str) and (match := re.search(r'"http_status"\s*:\s*([45]\d{2})\b|API error \(status ([45]\d{2})\b', message)):
+                    raise DeepError(f"deep_model_http_{match.group(1) or match.group(2)}")
         return read_checker_draft(work, schema, terminal)
 
 
@@ -528,7 +537,8 @@ def main() -> None:
                 "exit": code,
             }
             if code != 0:
-                row["error"] = report.get("error") or f"exit {code}"
+                failure = work / "checker-error.txt"
+                row["error"] = failure.read_text(encoding="utf-8").splitlines()[0] if failure.is_file() else report.get("error") or f"exit {code}"
         except subprocess.TimeoutExpired:
             row = {"bundle": case.bundle_id, "file": case.file_name, "match": False, "error": "timeout"}
             print(json.dumps(row, ensure_ascii=False), flush=True)

@@ -299,6 +299,22 @@ uv run --no-sync python scripts/deep_lab.py --recipe checker --seq 11 --effort h
 
 规则变化实验使用 `--rules` 提供完整 `RuleInput` JSON，条款 ID 可保持不变而正文变化。`--expected` 是独立的 `{条款ID: 状态}` JSON，只由宿主评分读取，不复制到模型开发目录。修改规则后默认停用原 corpus 答案；未提供独立预期时明确不评分。规则随本次输入保存，迁移目录后的重放使用同一规则。各场景保持源文件字节、版本身份及参考资料不变，用旧产物先诊断再适配；条款数量变化同时检查缺项、重复和多余结果。
 
+真实特殊特性清单的复杂规则变体保存在 `tests/fixtures/deep_lab/real_rule_changes/`，使用默认 Blanc Spoiler 样本和原参考文件，不传 `--source`。先运行基线，再用其 `artifact.json` 适配各变体；每次仅一条 `R1`，以排除条款数量变化的干扰：
+
+```bash
+uv run --no-sync python scripts/deep_lab.py --recipe checker --effort high \
+  --rules tests/fixtures/deep_lab/real_rule_changes/baseline.json \
+  --expected tests/fixtures/deep_lab/real_rule_changes/baseline-expected.json
+uv run --no-sync python scripts/deep_lab.py --recipe checker --effort high \
+  --rules tests/fixtures/deep_lab/real_rule_changes/scope.json \
+  --expected tests/fixtures/deep_lab/real_rule_changes/scope-expected.json \
+  --prior /absolute/path/to/baseline/artifact.json
+```
+
+其他变体为 `exception`、`empty_unknown`、`empty_required`、`missing_unknown`、`missing_required`，预期文件均为同名加 `-expected.json`。预期依据是原件第 4、5 行；缺参考场景沿用同一资料组，其中没有年度禁用物质检测报告。更换样本或参考文件后必须先重新确认预期，不能直接沿用本组答案。
+
 `shifted-table` 保留首行标题，将第 2 行起的表格与合并区域下移 20 行；拒绝含公式或跨越该边界的合并单元格，避免改变业务含义。`renamed-sheet` 则只修改工作表名。两种变体均使用副本，不改变原件与规则。每轮模型交互默认最多 128 次，可用 `--max-turns` 调整，总开发时间上限仍为 40 分钟。`--source` 将所选规则应用到新文件，并明确停止沿用原文件的人工评分；执行与重放仍必须成功。每次运行在 `output/checker/` 下保留候选、诊断、`artifact.json`、`execution.json`、独立进程的 `replay.json` 及可用的原 oracle 评分。模型只能用规则、原件和实现作适配依据；不能读取评分预期。重放过程不继承模型凭据，输入移到新目录，完整结果须一致。CLI 运行退出失败时，汇总不能按评分相同计为成功。
+
+模型终态明确报告服务 HTTP 错误时，实验以 `deep_model_http_<状态码>` 停止，保留已有候选，汇总保留该错误而非仅报告缺少结果。候选不能当作已固定产物；额度或服务恢复后显式重新运行未完成场景。
 
 这是本地质量实验，使用本地 Grok 进程；不证明产品 guest 隔离或生产端到端行为。固定执行只使用原生读取与明确的 `PdfSpec`，不自动转入 OCR。
