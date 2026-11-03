@@ -176,6 +176,8 @@ def extract_rows_from_workbook(
     field_aliases: Dict[str, List[str]],
     required_fields: Optional[Iterable[str]] = None,
     note_cell: Optional[Callable[[str, int, int], None]] = None,
+    *,
+    sheets: Optional[Iterable[Worksheet]] = None,
 ) -> List[Dict[str, str]]:
     def _format_numeric_by_cell_pattern(raw_value: object, number_format: object) -> str:
         if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
@@ -210,7 +212,7 @@ def extract_rows_from_workbook(
     best_columns: Dict[str, int] = {}
     best_alias_priority: Dict[str, int] = {}
 
-    for ws in workbook.worksheets:
+    for ws in sheets if sheets is not None else workbook.worksheets:
         row_limit = min(_HEADER_SCAN_ROWS, ws.max_row)
         col_limit = min(_HEADER_SCAN_COLS, ws.max_column)
         for row in range(1, row_limit + 1):
