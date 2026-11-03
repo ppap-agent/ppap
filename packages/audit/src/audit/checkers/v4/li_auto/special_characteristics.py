@@ -7,7 +7,7 @@ from types import MappingProxyType
 
 from audit.checkers.v2.process_special_characteristic_agent import ProcessSpecialCharacteristicAgent as CcscChecks
 from audit.checkers.v3.excel_agent import ExcelAgent, rule
-from audit.engine.rule_engine import RuleContext, Table, get_doc_resource_by_doc_type
+from audit.engine.rule_engine import Row, RuleContext, Table, get_doc_resource_by_doc_type
 from audit.kinds import PpapDocumentType
 
 _BASE = get_doc_resource_by_doc_type(PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST)
@@ -22,7 +22,6 @@ _RESOURCE = replace(_BASE, sections=MappingProxyType(_SECTIONS))
 class LiAutoSpecialCharacteristicsAgent(ExcelAgent):
     DOC_TYPE = PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST
     rule_1 = CcscChecks.rule_1
-    rule_3 = CcscChecks.rule_3
 
     def __init__(self, audit_file, rule_input, group_context=None):
         super().__init__(audit_file, rule_input, group_context=group_context, resource=_RESOURCE)
@@ -38,3 +37,20 @@ class LiAutoSpecialCharacteristicsAgent(ExcelAgent):
         if not rows:
             return "UNABLE", "没有有效的过程/流程步骤，尚不能核实逐行要求。"
         return CcscChecks.rule_2(self, ctx)
+
+    @rule("高风险行必须有预防措施")
+    def rule_3(self, ctx: RuleContext) -> tuple[str, str]:
+        scanned = 0
+        for sheet in Table(ctx).find_sheets("主表"):
+            section = sheet.section("主数据区")
+            columns = section.columns("现有管理方式风险评估", "高风险管理项预防措施")
+            # L12 clause 3 applies to every risk row. A missing process step
+            # must not remove that row from the scope of the risk requirement.
+            start = max(column.data_start_row for column in columns.values())
+            for index in range(start, sheet.ws.max_row + 1):
+                row = Row(ctx, sheet.ws, columns, index, section.resolved)
+                scanned += 1
+                if row.exact("现有管理方式风险评估", "高风险", compact=True):
+                    row.expect("高风险管理项预防措施", context="理想高风险行")
+        ctx.note_scan(yielded=scanned, finished=True)
+        return ("PASS", "") if scanned else ("UNABLE", "未找到风险评估数据行，尚不能核实高风险措施。")

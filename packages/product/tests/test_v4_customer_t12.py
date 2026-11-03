@@ -30,7 +30,9 @@ def test_uaes_material_identity_and_characteristic_values(missing, expected):
     assert result["coverage"]["unchecked"] == []
 
 
-@pytest.mark.parametrize(("missing", "expected"), [(None, ["PASS", "PASS", "PASS"]), ("supplier", ["NG", "PASS", "PASS"]), ("risk", ["PASS", "PASS", "NG"])])
+@pytest.mark.parametrize(
+    ("missing", "expected"), [(None, ["PASS", "PASS", "PASS"]), ("supplier", ["NG", "PASS", "PASS"]), ("risk", ["PASS", "PASS", "NG"]), ("risk_without_step", ["PASS", "PASS", "NG"])]
+)
 def test_li_auto_ccsc_uses_its_own_fields_and_high_risk_rule(missing, expected):
     book = Workbook()
     sheet = book.active
@@ -45,6 +47,8 @@ def test_li_auto_ccsc_uses_its_own_fields_and_high_risk_rule(missing, expected):
     for index in (*range(1, 10), 18, 19):
         sheet.merge_cells(start_row=3, end_row=4, start_column=index, end_column=index)
     sheet.append(["10 压装", "衬套", "定位", "孔径", "检验", "产品", 10, 9.9, 10.1] + ["适用"] * 8 + ["高风险", None if missing == "risk" else "定位防错"])
+    if missing == "risk_without_step":
+        sheet.append([None] * 17 + ["高风险", None])
     content = io.BytesIO()
     book.save(content)
     book.close()
