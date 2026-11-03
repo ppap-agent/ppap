@@ -9,6 +9,7 @@ import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Self
+from urllib.parse import urlsplit
 
 from openai import AsyncOpenAI
 from openai import OpenAI as BaseOpenAI
@@ -68,6 +69,10 @@ class _InvalidAIResponseError(RuntimeError):
     """Raised when AI response schema is incomplete and may be transient."""
 
 
+def _uses_codex_transport(settings: Any) -> bool:
+    return urlsplit(getattr(settings, "OPENAI_BASE_URL", "")).path.rstrip("/").endswith("/backend-api/codex")
+
+
 async def _bounded_visual_request(settings: Any, kwargs: dict[str, Any], timeout: float) -> Any:
     """Use cancellation to bound an entire provider response, not one socket read."""
     async with asyncio.timeout(timeout):
@@ -76,6 +81,9 @@ async def _bounded_visual_request(settings: Any, kwargs: dict[str, Any], timeout
             base_url=settings.OPENAI_BASE_URL or None,
             max_retries=0,
         ) as client:
+            if _uses_codex_transport(settings):
+                async with client.responses.stream(**kwargs) as stream:
+                    return await stream.get_final_response()
             return await client.responses.create(**kwargs)
 
 
@@ -310,6 +318,9 @@ class AIClient:
                         # Only real SDK clients take the cancellable transport path.
                         # Lightweight injected test clients preserve their public stub API.
                         response = _run_bounded_visual_sync(self.settings, request_kwargs, request_timeout)
+                    elif _uses_codex_transport(self.settings):
+                        with request_client.responses.stream(**request_kwargs) as stream:
+                            response = stream.get_final_response()
                     else:
                         response = request_client.responses.create(**request_kwargs)
                 except Exception:
@@ -393,6 +404,10 @@ class AIClient:
             kwargs["text"] = {"format": text_format}
         if self.extra_body is not None:
             kwargs["extra_body"] = self.extra_body
+        if _uses_codex_transport(self.settings):
+            # The Codex endpoint requires SSE and rejects sampling parameters.
+            kwargs.pop("temperature", None)
+            kwargs.pop("top_p", None)
         return kwargs
 
     def structured_completion(

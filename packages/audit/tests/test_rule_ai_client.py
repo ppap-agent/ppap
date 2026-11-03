@@ -393,3 +393,90 @@ def test_bounded_visual_request_from_running_event_loop_uses_isolated_loop():
         response = asyncio.run(inside_event_loop())
     assert response.output_text == "verified"
     assert closed == [True]
+
+
+def test_codex_visual_transport_streams_and_preserves_final_receipt():
+    import asyncio
+    from unittest.mock import patch
+
+    from audit.engine.checkers import client as module
+
+    calls = []
+    receipt = SimpleNamespace(status="completed", output_text="verified", usage=SimpleNamespace(input_tokens=9, output_tokens=5))
+
+    class Stream:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def get_final_response(self):
+            return receipt
+
+    class Responses:
+        def stream(self, **kwargs):
+            calls.append(kwargs)
+            return Stream()
+
+    class Client:
+        responses = Responses()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+    settings = SimpleNamespace(OPENAI_API_KEY="unit-test-token", OPENAI_BASE_URL="https://example.invalid/backend-api/codex")
+    client = RuleAIClientTests().client(SDK())
+    client.settings.OPENAI_BASE_URL = settings.OPENAI_BASE_URL
+    kwargs = client._build_request_kwargs([{"role": "user", "content": "inspect"}], 1000, 0.1)
+    assert "temperature" not in kwargs
+    assert kwargs["max_output_tokens"] == 1000
+    with patch.object(module, "AsyncOpenAI", return_value=Client()):
+        result = asyncio.run(module._bounded_visual_request(settings, kwargs, 1))
+    assert result is receipt
+    assert calls == [kwargs]
+
+
+def test_codex_visual_stream_is_closed_when_total_budget_expires():
+    import asyncio
+    from unittest.mock import patch
+
+    from audit.engine.checkers import client as module
+
+    closed = []
+    calls = []
+
+    class Stream:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            closed.append(True)
+
+        async def get_final_response(self):
+            await asyncio.sleep(30)
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            closed.append(True)
+
+        def stream(self, **kwargs):
+            calls.append(kwargs)
+            return Stream()
+
+        @property
+        def responses(self):
+            return self
+
+    settings = SimpleNamespace(OPENAI_API_KEY="unit-test-token", OPENAI_BASE_URL="https://example.invalid/backend-api/codex/")
+    with patch.object(module, "AsyncOpenAI", return_value=Client()):
+        with unittest.TestCase().assertRaises(TimeoutError):
+            asyncio.run(module._bounded_visual_request(settings, {"model": "test"}, 0.02))
+    assert len(calls) == 1
+    assert closed == [True, True]
