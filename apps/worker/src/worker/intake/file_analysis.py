@@ -94,7 +94,7 @@ def analyze_file(filename: str, content: bytes, rules: list[dict], *, ai=None, c
     if v4_mode:
         aliases = {"uaes": "uaes", "联电": "uaes", "理想": "理想", "理想汽车": "理想", "蔚来": "蔚来", "nio": "蔚来"}
         customer_text = html.unescape(re.sub(r"<[^>]+>", "\n", excerpt))
-        for match in re.finditer(r"(?:审核客户|客户|customer)\s*[:：]?\s*(UAES|联电|理想汽车|理想|蔚来|NIO)(?=\s|$|[，,;；/])", customer_text, re.IGNORECASE):
+        for match in re.finditer(r"(?:审核客户|客户(?:名称|名)?|customer(?:\s+name)?)\s*[:：]?\s*(UAES|联电|理想汽车|理想|蔚来|NIO)(?=\s|$|[，,;；/])", customer_text, re.IGNORECASE):
             explicit_customers.add(aliases[match.group(1).casefold()])
     customer_conflict = bool(explicit_customers - {selected_customer})
     matched_id = None

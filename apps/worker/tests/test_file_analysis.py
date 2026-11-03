@@ -291,9 +291,10 @@ def test_malformed_classification_is_a_safe_failure(classification) -> None:
     assert (result["matched_rule_id"], result["matching_status"], result["notices"]) == (None, "failed", ["document_classification_failed"])
 
 
-def test_v4_customer_conflict_uses_explicit_file_facts_not_a_models_guess():
+@pytest.mark.parametrize("label", ["客户", "客户名称", "审核客户", "客户名", "Customer", "Customer Name"])
+def test_v4_customer_conflict_uses_explicit_file_facts_not_a_models_guess(label):
     presets = [rule("nio-cp", ["蔚来"], rule_profile="v4"), rule("li-cp", ["理想"], rule_profile="v4")]
-    conflict = analyze_file("控制计划.xlsx", workbook_bytes(("客户", "理想"), ("文件类型", "控制计划")), presets, ai=MetadataAI({"customer": "蔚来"}), customer_preference="蔚来", scoped=True)
+    conflict = analyze_file("控制计划.xlsx", workbook_bytes((label, "理想"), ("文件类型", "控制计划")), presets, ai=MetadataAI({"customer": "蔚来"}), customer_preference="蔚来", scoped=True)
     assert conflict["matching_status"] == "failed"
     assert conflict["matched_rule_id"] is None
     assert "matching_customer_conflict" in conflict["notices"]
