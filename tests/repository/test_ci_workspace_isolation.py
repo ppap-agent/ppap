@@ -1,61 +1,39 @@
-"""Guard CI checkout isolation across the co-located self-hosted runner instances."""
+"""GitHub-hosted jobs use ephemeral workspaces and explicit capability checks."""
 
-from __future__ import annotations
-
-import os
-import subprocess
 from pathlib import Path
 
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
-CHECKOUT = ".ci-checkouts/${{ runner.name }}"
-OWNER = "${{ github.workspace }}/" + CHECKOUT
 
 
-def workspace_jobs():
+def workflows():
     for path in sorted((ROOT / ".github/workflows").glob("*.yml")):
-        workflow = yaml.safe_load(path.read_text())
-        for name, job in workflow["jobs"].items():
-            steps = job.get("steps", [])
-            if any(step.get("uses", "").startswith("actions/checkout@") or "working-directory" in step for step in steps):
-                yield f"{path.name}:{name}", steps
+        yield path, yaml.safe_load(path.read_text())
 
 
-def assert_owned(path, root=OWNER):
-    assert isinstance(path, str) and (path == root or path.startswith(root + "/")), path
-    assert ".." not in path[len(root) :].split("/"), path
+def test_all_actions_use_github_hosted_runners():
+    jobs = [(path.name, name, job) for path, workflow in workflows() for name, job in workflow["jobs"].items()]
+    assert jobs
+    for workflow, name, job in jobs:
+        assert job["runs-on"] == "ubuntu-24.04", (workflow, name)
 
 
-def test_all_owner_jobs_use_a_bounded_runner_checkout():
-    jobs = list(workspace_jobs())
-    assert jobs, "No workspace jobs found"
-    for name, steps in jobs:
-        assert any(step.get("uses", "").startswith("actions/checkout@") for step in steps), name
-        assert any(step.get("run") == "bash scripts/ci_assert_worktree.sh" for step in steps), name
-        for step in steps:
-            if step.get("uses", "").startswith("actions/checkout@"):
-                assert step["with"]["path"] == CHECKOUT, name
-                assert step["with"]["persist-credentials"] is False, name
-            if "run" in step:
-                assert_owned(step.get("working-directory"))
-
-
-def test_node_paths_and_preview_stay_inside_unique_checkout():
-    for _name, steps in workspace_jobs():
-        corepack_cache = [line for step in steps for line in step.get("run", "").splitlines() if "COREPACK_HOME=" in line]
-        if any("corepack enable" in step.get("run", "") for step in steps):
-            assert corepack_cache
-        for line in corepack_cache:
-            assert all(part in line for part in ("$RUNNER_TEMP/", "${GITHUB_RUN_ID}", "${GITHUB_JOB}"))
-        for step in steps:
-            uses, inputs = step.get("uses", ""), step.get("with", {})
-            if uses.startswith("actions/setup-node@"):
-                assert_owned(inputs["node-version-file"], CHECKOUT)
-            if uses.startswith("astral-sh/setup-uv@"):
-                assert_owned(inputs["working-directory"])
-                if "cache-dependency-glob" in inputs:
-                    assert inputs["cache-dependency-glob"] == "uv.lock"
+def test_hosted_jobs_use_native_checkout_without_shared_runner_paths():
+    for path, workflow in workflows():
+        assert ".ci-checkouts" not in path.read_text()
+        for job in workflow["jobs"].values():
+            for step in job.get("steps", []):
+                uses, inputs = step.get("uses", ""), step.get("with", {})
+                if uses.startswith("actions/checkout@"):
+                    assert "path" not in inputs
+                    assert inputs["persist-credentials"] is False
+                if uses.startswith("actions/setup-node@"):
+                    assert inputs["node-version-file"] == ".node-version"
+                if uses.startswith("astral-sh/setup-uv@"):
+                    assert inputs.get("working-directory", "${{ github.workspace }}") == "${{ github.workspace }}"
+                if "COREPACK_HOME=" in step.get("run", ""):
+                    assert "$RUNNER_TEMP/" in step["run"]
 
 
 def test_docker_preflight_requires_supported_runtime_tools():
@@ -64,31 +42,3 @@ def test_docker_preflight_requires_supported_runtime_tools():
     assert "docker info --format" in script
     assert "docker compose version" in script
     assert "docker buildx version" in script
-
-
-def test_worktree_guard_accepts_only_the_current_runners_physical_directory(tmp_path):
-    workspace = tmp_path / "workspace"
-    owner = workspace / ".ci-checkouts/cursor"
-    neighbor = workspace / ".ci-checkouts/cursor-ppap"
-    for directory in (owner, neighbor):
-        directory.mkdir(parents=True)
-        subprocess.run(["git", "init", "--quiet", str(directory)], check=True)
-    script = ROOT / "scripts/ci_assert_worktree.sh"
-
-    def run(directory, name, run_id):
-        return subprocess.run(
-            ["bash", str(script)],
-            cwd=directory,
-            env={**os.environ, "GITHUB_WORKSPACE": str(workspace), "RUNNER_NAME": name, "GITHUB_RUN_ID": run_id},
-            capture_output=True,
-            text=True,
-        ).returncode
-
-    assert run(owner, "cursor", "old-run") == 0
-    assert run(owner, "cursor", "new-run") == 0
-    assert run(neighbor, "cursor-ppap", "new-run") == 0
-    assert run(owner, "cursor-ppap", "new-run") != 0
-    assert run(workspace, "cursor", "new-run") != 0
-    alias = workspace / ".ci-checkouts/alias"
-    alias.symlink_to(owner, target_is_directory=True)
-    assert run(alias, "alias", "new-run") != 0

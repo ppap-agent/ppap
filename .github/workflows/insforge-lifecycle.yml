@@ -19,7 +19,7 @@ on:
       - .node-version
   # Weekly: `local start` fetches upstream setup.sh and runtime images, so
   # pinning @insforge/cli@0.2.8 does not freeze that stack. One run per week
-  # is low-frequency enough for this self-hosted runner.
+  # catches upstream changes without starting a stack on every PR.
   schedule:
     - cron: "27 3 * * 1"
 
@@ -33,26 +33,22 @@ permissions:
 jobs:
   smoke:
     name: Native CLI smoke
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          path: .ci-checkouts/${{ runner.name }}
-      - name: Assert runner-owned worktree
-        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
-        run: bash scripts/ci_assert_worktree.sh
       - name: Assert Docker
-        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
+        working-directory: ${{ github.workspace }}
         run: bash scripts/ci_assert_docker.sh
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version-file: .ci-checkouts/${{ runner.name }}/.node-version
+          node-version-file: .node-version
           package-manager-cache: false
       - name: Local start, status, db query, stop
-        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
+        working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
           bash deploy/insforge/smoke-local.sh
