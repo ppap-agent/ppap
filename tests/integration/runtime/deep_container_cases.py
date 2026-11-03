@@ -356,6 +356,5 @@ class ContainerJournalTests(unittest.TestCase):
         self.assertEqual(self.provider.request.call_count, 2)
 
 
-
 if __name__ == "__main__":
     unittest.main()

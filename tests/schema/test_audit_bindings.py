@@ -1653,8 +1653,8 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
 
     def prepared_query_task(self, *, verified=True, documents=(("控制计划.xlsx", "P-1"),)):
         del verified
-        from io import BytesIO
         import json
+        from io import BytesIO
 
         from agent.mapping import checker_response, product_result, spec_from_work
         from audit.audits import DEEP_PROTOCOL_REVISION

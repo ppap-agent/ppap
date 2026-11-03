@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from string import Formatter
-from typing import Annotated, Any, Literal, TypeAlias
+from typing import Annotated, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from pydantic_core import PydanticCustomError
@@ -61,7 +61,7 @@ class PublishedClause(Artifact):
 
 Locator = Annotated[ExcelCell | ExcelRange | WordParagraph | WordCell | PdfBlock | PdfCell | PublishedClause, Field(discriminator="kind")]
 
-_PUBLIC_LOCATORS = {
+_PUBLIC_LOCATORS: dict[str, type[Artifact]] = {
     "xlsx_cell": ExcelCell,
     "xlsx_range": ExcelRange,
     "docx_paragraph": WordParagraph,
@@ -76,7 +76,7 @@ def _finite_coordinate(value: object) -> bool:
         return True
     if type(value) is bool or type(value) not in {int, float}:
         return False
-    return type(value) is int or math.isfinite(value)
+    return type(value) is int or math.isfinite(cast(float, value))
 
 
 def _pdf_page(value: dict) -> dict | None:
@@ -87,11 +87,7 @@ def _pdf_page(value: dict) -> dict | None:
     parsed: dict = {"kind": "pdf_page", "page": page}
     if "region" in value:
         region = value.get("region")
-        if (
-            not isinstance(region, list)
-            or len(region) != 4
-            or any(not _finite_coordinate(item) for item in region)
-        ):
+        if not isinstance(region, list) or len(region) != 4 or any(not _finite_coordinate(item) for item in region):
             return None
         parsed["region"] = list(region)
         allowed.add("region")
@@ -106,13 +102,16 @@ def public_locator(value: object) -> dict | None:
         return None
     if value.get("kind") == "pdf_page":
         return _pdf_page(value)
-    model = _PUBLIC_LOCATORS.get(value.get("kind")) if isinstance(value.get("kind"), str) else None
+    kind = value.get("kind")
+    model = _PUBLIC_LOCATORS.get(kind) if isinstance(kind, str) else None
     if model is None:
         return None
     try:
         return model.model_validate(value).model_dump()
     except ValidationError:
         return None
+
+
 Scalar: TypeAlias = str | int | float | bool | None
 Diagnostic: TypeAlias = Literal["parser_unknown", "unresolved_relation", "visual_only_evidence", "budget_exhausted", "unsupported_structure", "rule_ambiguity"]
 

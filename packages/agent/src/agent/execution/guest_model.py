@@ -9,7 +9,7 @@ import subprocess
 import time
 from collections import Counter
 from pathlib import Path
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal, TypeVar, cast
 from urllib.parse import urlsplit
 
 from audit.models import Artifact
@@ -134,8 +134,10 @@ class ModelRunner:
         self.compactions = 0
         self.remaining_turns = self.grant.max_total_turns
 
-    def run(self, work: Path, prompt: str, schema: type[T], deadline: float, *, reasoning_effort: ReasoningEffort) -> T:
+    def run(self, work: Path, prompt: str, schema: type[T], deadline: float, *, reasoning_effort: str) -> T:
         """Let the agent finish file work before it emits a small terminal receipt."""
+        if reasoning_effort not in {"xhigh", "high", "medium", "low"}:
+            raise ModelProtocolError("Invalid reasoning effort")
         checker_stage = "entrypoint" in schema.model_fields and "files" in schema.model_fields
         artifact = "checker.py" if checker_stage else "execution.json"
         if (work / artifact).exists() or (work / artifact).is_symlink():
@@ -152,7 +154,7 @@ class ModelRunner:
                 "A receipt without a complete execution.json fails the stage."
             )
         try:
-            terminal = self._run(work, artifact_prompt, deadline, reasoning_effort=reasoning_effort)
+            terminal = self._run(work, artifact_prompt, deadline, reasoning_effort=cast(ReasoningEffort, reasoning_effort))
         except ModelProtocolError:
             if not checker_stage:
                 raise

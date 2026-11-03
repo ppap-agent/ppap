@@ -108,6 +108,7 @@ class TaskRoundViewTests(unittest.TestCase):
         self.assertIn("page_location_failed：第3页未能定位表格", check["scope_notice"])
         self.assertIn("已执行 1 次断言", check["scope_notice"])
         self.assertFalse(check["evidence_verified"])
+
     def test_pdf_cell_is_preserved_in_task_and_historical_evidence(self):
         for page, row, column in ((1, 1, 1), (3, 12, 4)):
             with self.subTest(page=page, row=row, column=column):
@@ -132,9 +133,7 @@ class TaskRoundViewTests(unittest.TestCase):
         locator = {"kind": "pdf_page", "page": 3, "region": [0, 12, 400, 700]}
         round["findings"][0]["status"] = "UNABLE"
         round["coverage"]["rule_items"][0]["status"] = "UNABLE"
-        round["findings"][0]["locator"]["semantic"]["sources"] = [
-            {"file_version_id": "version-a", "kind": "structure", "locator": locator}
-        ]
+        round["findings"][0]["locator"]["semantic"]["sources"] = [{"file_version_id": "version-a", "kind": "structure", "locator": locator}]
         audit = task_round_view(task_input(), round)["files"][0]["audit"]
         check = audit["checks"][0]
         self.assertEqual(check["evidence"][0]["locator"], locator)
@@ -147,7 +146,6 @@ class TaskRoundViewTests(unittest.TestCase):
         self.assertEqual(partial_check["evidence"][0]["locator"], partial)
         self.assertIsNone(partial_check["evidence"][0]["location_gap"])
         self.assertEqual(check["finding"]["status"], "UNABLE")
-
 
     def test_checker_cells_from_both_files_stay_visible_without_trace_verification(self):
         round = verified_round("NG")
@@ -234,11 +232,7 @@ class TaskRoundViewTests(unittest.TestCase):
             }
 
         ready = body({"kind": "pdf_page", "page": 3, "region": [0, 12, 400, 700]})
-        report_text = "\n".join(
-            element["text_run"]["content"]
-            for block in report_blocks(ready)
-            for element in (block.get("text") or block.get("bullet") or {}).get("elements", [])
-        )
+        report_text = "\n".join(element["text_run"]["content"] for block in report_blocks(ready) for element in (block.get("text") or block.get("bullet") or {}).get("elements", []))
         self.assertEqual(writeback_state(ready), "ready")
         self.assertIn("第 3 页", report_text)
         self.assertNotIn("审核结果：PASS", report_text)

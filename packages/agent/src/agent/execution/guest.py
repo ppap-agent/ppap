@@ -72,6 +72,7 @@ class PlanValidationError(ValueError):
         self.schema_errors = schema_errors or []
         super().__init__(message)
 
+
 def parse_source(inputs: Path, work: Path, spec: SnapshotSpec) -> SnapshotBundle:
     if spec.execution_id != spec.expected_execution_id():
         raise ValueError("Snapshot execution mismatch")
