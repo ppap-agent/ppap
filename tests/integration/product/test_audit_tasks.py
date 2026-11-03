@@ -37,13 +37,14 @@ def task_system(auth_store_factory):
     client.close()
 
 
-def checked_file(client, worker, name="控制计划.xlsx", document_type="控制计划"):
-    stream = io.BytesIO()
-    book = Workbook()
-    book.active.append([document_type, "测试客户", "零件号 P-1"])
-    book.save(stream)
-    book.close()
-    content = stream.getvalue()
+def checked_file(client, worker, name="控制计划.xlsx", document_type="控制计划", *, content=None):
+    if content is None:
+        stream = io.BytesIO()
+        book = Workbook()
+        book.active.append([document_type, "测试客户", "零件号 P-1"])
+        book.save(stream)
+        book.close()
+        content = stream.getvalue()
     version = client.post("/files", json={"original_filename": name, "byte_size": len(content)}).json()
     path = f"/files/{version['file_id']}/versions/{version['id']}"
     assert client.put(path + "/blob", content=content).status_code == 200
@@ -2174,4 +2175,83 @@ def test_v4_t12_explicit_reference_remains_free_and_restores_its_role(auth_store
     assert client.post(path + "/end", json={"expected_revision": 0}).status_code == 200
     assert client.get("/rounds").json()["rounds"] == []
     assert client.get("/usage").json()["events"] == []
+    client.close()
+
+
+def test_v4_nio_pair_keeps_frozen_dual_original_evidence_through_worker_and_api(auth_store_factory):
+    settings = Settings(usage_charge_enabled=False, feishu_app_id="v4-nio-pair")
+    store = auth_store_factory(settings)
+    principal = store.upsert_feishu_identity("v4-pair-" + uuid.uuid4().hex, "owner")
+    client = TestClient(create_app(settings, auth_store=store))
+    client.cookies.set(SESSION_COOKIE, store.create_session(principal))
+    worker = build_product_store(settings, objects=store.objects, role="worker")
+
+    def content(sheet_name, rows):
+        book = Workbook()
+        book.active.title = sheet_name
+        for row in rows:
+            book.active.append(row)
+        stream = io.BytesIO()
+        book.save(stream)
+        book.close()
+        return stream.getvalue()
+
+    identity = [["零件号", "P12345", "版本", "A"], ["客户名称", "蔚来"]]
+    target = checked_file(
+        client,
+        worker,
+        "PFMEA.xlsx",
+        content=content(
+            "PFMEA",
+            identity
+            + [
+                ["过程步骤", "特殊特性", "过程项功能", "失效影响", "严重度", "现行探测控制", "探测度"],
+                ["10 成型", "KPC", "内部：压装 客户工厂：装车 最终用户：乘坐", "内部：返工（4） 客户工厂：返工（6） 最终用户：异响（5）", 6, "检查（6）", 6],
+            ],
+        ),
+    )
+    reference = checked_file(
+        client,
+        worker,
+        "过程流程图.xlsx",
+        content=content(
+            "过程流程图",
+            identity
+            + [
+                ["工序号", "工序名称", "产品特殊特性", "产品特性类别", "过程特殊特性", "过程特性类别"],
+                [10, "成型", "孔径", "CC", "温度", "SC"],
+            ],
+        ),
+    )
+    accepted = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": "蔚来", "files": [target, {**reference, "reference_only": True}]})
+    assert accepted.status_code == 202, accepted.text
+    path = "/audit-tasks/" + accepted.json()["id"]
+    for _ in range(2):
+        process_claimed(worker, worker.claim_job("nio-recognize"), "nio-recognize", rule_ai=MetadataAI())
+    recognized = client.get(path).json()
+    assert recognized["files"][0]["match"]["rule"]["body"]["preset_key"] == "N02"
+    assert recognized["files"][1]["match"]["state"] == "reference"
+    assert recognized["estimated_points"] == 500
+    confirmed = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0})
+    assert confirmed.status_code == 201, confirmed.text
+    round_id = confirmed.json()["round_id"]
+    job = worker.claim_job("nio-audit")
+    assert job.kind == "audit"
+    process_claimed(worker, job, "nio-audit")
+    frozen = client.get("/rounds/" + round_id).json()
+    cross = [finding for finding in frozen["findings"] if ":rule:N02:7:" in finding["item_key"]][0]
+    assert cross["status"] == "NG"
+    sources = cross["locator"]["evidence"]["sources"]
+    locators = [json.loads(source["locator"]) for source in sources]
+    assert {locator["file_version_id"] for locator in locators} == {target["file_version_id"], reference["file_version_id"]}
+    assert any(source["excerpt"] == "KPC" for source in sources)
+    assert any(source["excerpt"] == "CC" for source in sources)
+    assert all(locator["kind"] == "xlsx_cell" for locator in locators)
+    restored = client.get(path).json()
+    assert restored["round_id"] == round_id and restored["input_revision"] == 0
+    assert client.get("/rounds/" + round_id).json() == frozen
+    other = store.upsert_feishu_identity("v4-pair-other-" + uuid.uuid4().hex, "owner")
+    client.cookies.set(SESSION_COOKIE, store.create_session(other))
+    assert client.get("/rounds/" + round_id).status_code == 403
+    assert client.get(path).status_code == 403
     client.close()

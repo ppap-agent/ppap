@@ -120,3 +120,51 @@ def test_provided_but_unreadable_pair_is_an_execution_error(reference):
     findings, _ = execute(pfmea(), [reference])
     assert [findings[index]["status"] for index in [5, 6]] == ["ERR", "ERR"]
     assert all(findings[index]["status"] == "PASS" for index in range(5))
+
+
+def test_auxiliary_pfd_table_cannot_supply_the_comparison_rows():
+    from openpyxl import load_workbook
+
+    book = load_workbook(io.BytesIO(pfd()))
+    sheet = book.create_sheet("评分数据库", 0)
+    sheet.append(["工序号", "工序名称", "产品特殊特性", "产品特性类别", "过程特殊特性", "过程特性类别"])
+    sheet.append([999, "无关工序", "宽度", "CC", "压力", "SC"])
+    findings, _ = execute(pfmea(), [serialized(book)])
+    assert [findings[index]["status"] for index in [5, 6]] == ["PASS", "PASS"]
+    sources = findings[5]["locator"]["evidence"]["sources"]
+    assert "评分数据库" not in {json.loads(row["locator"])["sheet"] for row in sources}
+
+
+def test_process_number_and_name_keep_their_field_boundary():
+    from openpyxl import load_workbook
+
+    book = load_workbook(io.BytesIO(pfd()))
+    book.active["A4"] = 1
+    book.active["B4"] = "0 成型"
+    findings, _ = execute(pfmea(), [serialized(book)])
+    assert findings[5]["status"] == "NG"
+
+
+def test_another_process_with_the_same_name_cannot_change_a_verified_pair():
+    from openpyxl import load_workbook
+
+    book = load_workbook(io.BytesIO(pfmea()))
+    sheet = book["PFMEA"]
+    sheet.append(["20 成型", None, "内部：压装 客户工厂：装车 最终用户：乘坐", "内部：返工（4） 客户工厂：返工（6） 最终用户：异响（5）", 6, "检查（6）", 6])
+    findings, _ = execute(serialized(book), [pfd()])
+    assert findings[5]["status"] == findings[6]["status"] == "PASS"
+
+
+@pytest.mark.parametrize("duplicate_main", [False, True], ids=["identity-on-auxiliary-only", "multiple-main-sheets"])
+def test_pair_identity_and_rows_must_belong_to_one_confirmed_main_sheet(duplicate_main):
+    from openpyxl import load_workbook
+
+    book = load_workbook(io.BytesIO(pfd()))
+    if duplicate_main:
+        book.copy_worksheet(book.active)
+    else:
+        book.active["B1"] = None
+        auxiliary = book.create_sheet("辅助说明")
+        auxiliary.append(["零件号", "P12345", "版本", "A"])
+    findings, _ = execute(pfmea(), [serialized(book)])
+    assert [findings[index]["status"] for index in [5, 6]] == ["UNABLE", "UNABLE"]
