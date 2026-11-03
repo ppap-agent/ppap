@@ -177,17 +177,59 @@ def valid_draft() -> dict:
     return {"entrypoint": "checker:create_audit", "files": {"checker.py": VALID_PROGRAM}}
 
 
+@pytest.mark.parametrize(
+    "code,expected",
+    [
+        ("INPUT_INTEGRITY_ERROR", "deep_integrity_mismatch"),
+        ("MODEL_TIMEOUT", "deep_timeout"),
+        ("MODEL_PROTOCOL_ERROR", "deep_model_protocol"),
+        ("RESOURCE_LIMIT", "deep_budget_exhausted"),
+        ("ISOLATION_UNAVAILABLE", "deep_runtime_unavailable"),
+        ("CANCELLED", "deep_cancelled"),
+    ],
+)
+def test_checker_runtime_fault_keeps_its_product_failure_code(tmp_path: Path, code: str, expected: str) -> None:
+    from audit.protocol import ControllerFault
+
+    class FailingRuntime(IsolatedRuntime):
+        def run(self, *args, **kwargs):
+            raise ControllerFault(code)
+
+    path = tmp_path / "target.xlsx"
+    raw = workbook_bytes(path)
+    host = SemanticRuntime(FailingRuntime(ScriptedDeveloper([])), MemoryObjects(), timeout=30)
+    with pytest.raises(DeepError) as caught:
+        host.adapt_checker(request(), audit_file(path), rules(), raw, role="target", context=ExecutionContext())
+    assert caught.value.code == expected
+
+
 def test_input_digest_includes_file_version_and_role_not_only_the_rule_id(tmp_path: Path) -> None:
     path = tmp_path / "target.xlsx"
     raw = workbook_bytes(path)
     target = audit_file(path)
-    rule = rules()
-    base = input_digest(target, rule, file_sha256=hashlib.sha256(raw).hexdigest(), role="target", appendix=[{"id": "note-1", "text": "空值不是通过"}])
-    other_file = input_digest(target, rule, file_sha256=hashlib.sha256(b"other-bytes").hexdigest(), role="target", appendix=[{"id": "note-1", "text": "空值不是通过"}])
-    other_role = input_digest(target, rule, file_sha256=hashlib.sha256(raw).hexdigest(), role="reference", appendix=[{"id": "note-1", "text": "空值不是通过"}])
+    rule = rules().model_copy(update={"appendix": [{"id": "note-1", "text": "空值不是通过"}]})
+    base = input_digest(target, rule, file_sha256=hashlib.sha256(raw).hexdigest(), role="target")
+    other_file = input_digest(target, rule, file_sha256=hashlib.sha256(b"other-bytes").hexdigest(), role="target")
+    other_role = input_digest(target, rule, file_sha256=hashlib.sha256(raw).hexdigest(), role="reference")
     assert base != other_file
     assert base != other_role
     assert rule.rule_id == "same-rule"
+
+
+def test_rule_appendix_content_and_removal_change_the_input_identity(tmp_path: Path) -> None:
+    target = audit_file(tmp_path / "target.xlsx")
+    original = rules()
+    confirmed = original.model_copy(update={"appendix": [{"id": "note-1", "text": "空值不是通过"}]})
+    edited = confirmed.model_copy(update={"appendix": [{"id": "note-1", "text": "只检查指定工序"}]})
+    removed = confirmed.model_copy(update={"appendix": []})
+
+    def digest(rule: RuleInput) -> str:
+        return input_digest(target, rule, file_sha256="a" * 64, role="target")
+
+    assert digest(confirmed) != digest(original)
+    assert digest(edited) != digest(confirmed)
+    assert digest(removed) != digest(confirmed)
+    assert digest(removed) == digest(original)
 
 
 def test_deep_adapts_a_checker_then_executes_only_the_fixed_program(tmp_path: Path) -> None:
@@ -1071,7 +1113,8 @@ def test_appendix_for_another_file_or_clause_does_not_enter_this_checker(tmp_pat
     )
     developer = ScriptedDeveloper([{"entrypoint": "checker:create_audit", "files": {"checker.py": program}}])
     host = SemanticRuntime(IsolatedRuntime(developer), MemoryObjects(), timeout=30)
-    artifact = host.adapt_checker(request(), audit_file(path), rules(), raw, role="target", context=ExecutionContext(), appendix=appendix)
+    rule = rules().model_copy(update={"appendix": appendix})
+    artifact = host.adapt_checker(request(), audit_file(path), rule, raw, role="target", context=ExecutionContext())
 
     assert "本文件口径" in developer.prompts[0]
     assert "别的文件口径" not in developer.prompts[0]
@@ -1079,8 +1122,11 @@ def test_appendix_for_another_file_or_clause_does_not_enter_this_checker(tmp_pat
     assert "只限制了别的文件" not in developer.prompts[0]
     assert "只限制了别的条款" not in developer.prompts[0]
     assert "空目标列表" not in developer.prompts[0]
-    results = host.execute_checker(request(), artifact, audit_file(path), rules(), raw, role="target", context=ExecutionContext(), appendix=appendix)
+    results = host.execute_checker(request(), artifact, audit_file(path), rule, raw, role="target", context=ExecutionContext())
     assert results[0].suggestions == "mine"
+    scoped = rule.model_copy(update={"appendix": [appendix[0]]})
+    assert artifact.input_digest == input_digest(audit_file(path), scoped, file_sha256=hashlib.sha256(raw).hexdigest(), role="target")
+    assert rule.appendix == appendix
 
 
 def test_a_related_pdf_page_keeps_its_file_and_an_unknown_file_cannot_pass() -> None:
@@ -1283,6 +1329,7 @@ def test_confirmed_appendix_enters_development_and_execution(tmp_path: Path) -> 
     path = tmp_path / "target.xlsx"
     raw = workbook_bytes(path)
     appendix = [{"id": "note-1", "text": "空值不是通过"}]
+    rule = rules().model_copy(update={"appendix": appendix})
     program = VALID_PROGRAM.replace(
         'return "UNABLE", "未确定工序范围"',
         'return "UNABLE", self.rule.appendix[0]["text"]',
@@ -1292,11 +1339,10 @@ def test_confirmed_appendix_enters_development_and_execution(tmp_path: Path) -> 
     artifact = host.adapt_checker(
         request(),
         audit_file(path),
-        rules(),
+        rule,
         raw,
         role="target",
         context=ExecutionContext(),
-        appendix=appendix,
     )
 
     assert "本次已确认附录" in developer.prompts[0]
@@ -1306,14 +1352,59 @@ def test_confirmed_appendix_enters_development_and_execution(tmp_path: Path) -> 
         request(),
         artifact,
         audit_file(path),
-        rules(),
+        rule,
         raw,
         role="target",
         context=ExecutionContext(),
-        appendix=appendix,
     )
     assert results[0].status == "UNABLE"
     assert results[0].suggestions == "空值不是通过"
+    for changed_appendix in ([{"id": "note-1", "text": "只检查指定工序"}], []):
+        changed = rule.model_copy(update={"appendix": changed_appendix})
+        with pytest.raises(DeepError) as caught:
+            host.execute_checker(request(), artifact, audit_file(path), changed, raw, role="target", context=ExecutionContext())
+        assert caught.value.code == "deep_output_identity_mismatch"
+    assert host.runtime.operations == ["adapt-checker", "execute-checker"]
+
+
+def test_direct_checker_api_scopes_the_same_appendix_for_prompt_identity_and_execution(tmp_path: Path) -> None:
+    from agent.checker_program import adapt, execute
+
+    path = tmp_path / "target.xlsx"
+    raw = workbook_bytes(path)
+    target = audit_file(path)
+    confirmed = {"id": "mine", "content": "本文件口径", "scope": {"rule_targets": [{"document_id": "version-1", "rule_id": "R4"}]}}
+    unrelated = {"id": "other", "content": "别的文件口径", "scope": {"document_ids": ["other-version"]}}
+    rule = rules().model_copy(update={"appendix": [confirmed, unrelated]})
+    program = VALID_PROGRAM.replace(
+        'return "UNABLE", "未确定工序范围"',
+        'return "UNABLE", "|".join(item["content"] for item in self.rule.appendix) or "无确认附录"',
+    )
+    developer = ScriptedDeveloper([{"entrypoint": "checker:create_audit", "files": {"checker.py": program}}])
+    args = dict(file_bytes=raw, file_sha256=hashlib.sha256(raw).hexdigest(), role="target", executor_revision=REVISION)
+    artifact = adapt(target, rule, runner=developer, work=tmp_path / "adapt", deadline=10**12, **args)
+    assert "本文件口径" in developer.prompts[0]
+    assert "别的文件口径" not in developer.prompts[0]
+    scoped = rule.model_copy(update={"appendix": [confirmed]})
+    assert artifact.input_digest == input_digest(target, scoped, file_sha256=args["file_sha256"], role="target")
+    result = execute(artifact, target, scoped, work=tmp_path / "execute", **args)[0]
+    assert result.status == "UNABLE"
+    assert result.suggestions == "本文件口径"
+
+    for changed_appendix in ([{**confirmed, "content": "修改本文件口径"}], []):
+        changed = rule.model_copy(update={"appendix": changed_appendix})
+        with pytest.raises(DeepError) as caught:
+            execute(artifact, target, changed, work=tmp_path / "changed", **args)
+        assert caught.value.code == "deep_output_identity_mismatch"
+
+    removed = rule.model_copy(update={"appendix": []})
+    fresh = ScriptedDeveloper([{"entrypoint": "checker:create_audit", "files": {"checker.py": program}}])
+    replacement = adapt(target, removed, runner=fresh, work=tmp_path / "removed", deadline=10**12, **args)
+    assert "本次已确认附录" not in fresh.prompts[0]
+    result = execute(replacement, target, removed, work=tmp_path / "removed-execute", **args)[0]
+    assert result.status == "UNABLE"
+    assert result.suggestions == "无确认附录"
+    assert rule.appendix == [confirmed, unrelated]
 
 
 def test_development_prompt_names_framework_modules_and_hides_acceptance_samples(tmp_path: Path) -> None:

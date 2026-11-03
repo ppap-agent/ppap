@@ -562,7 +562,6 @@ def _prompt(
     prior: dict[str, str] | None,
     audit_file: AuditInput,
     group_context: GroupContextInput | None,
-    appendix: list[dict[str, Any]] | None = None,
     *,
     feedback_kind: str | None = None,
     layout: PdfLayout | None = None,
@@ -582,7 +581,7 @@ def _prompt(
     preview = _development_previews(audit_file, group_context, None if layout is None else layout.previews)
     if preview:
         parts.extend(["", preview])
-    confirmed = list(appendix or [])
+    confirmed = rule.appendix
     if confirmed:
         parts.extend(["", "本次已确认附录。它是规则的一部分，不是上次结论或系统建议：", _encoded(confirmed).decode()])
     if prior:
@@ -819,7 +818,6 @@ def develop_checker(
     work: Path,
     deadline: float,
     prior_files: dict[str, str] | None = None,
-    appendix: list[dict[str, Any]] | None = None,
     observations: list[str] | None = None,
     reasoning_effort: str = "medium",
 ) -> CheckerArtifact:
@@ -892,7 +890,7 @@ def develop_checker(
         try:
             draft = runner.run(
                 stage,
-                _prompt(rule, feedback, prior_files if trial == 0 else None, audit_file, group_context, appendix, feedback_kind=feedback_kind, layout=layout, starting_point=starting_point),
+                _prompt(rule, feedback, prior_files if trial == 0 else None, audit_file, group_context, feedback_kind=feedback_kind, layout=layout, starting_point=starting_point),
                 CheckerDraft,
                 deadline,
                 reasoning_effort=reasoning_effort,
