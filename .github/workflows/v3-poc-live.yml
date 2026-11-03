@@ -16,9 +16,9 @@ jobs:
       COMPOSE_PROJECT_NAME: ppap-v3-live-${{ github.run_id }}-${{ github.run_attempt }}
       PPAP_TEST_POSTGRES_PORT: "0"
       PPAP_API_HOST_PORT: "0"
-      LLM_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      LLM_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
-      LLM_MODEL: ${{ secrets.MODEL_NAME }}
+      LLM_API_KEY: ${{ secrets.CI_LLM_API_KEY }}
+      LLM_BASE_URL: ${{ secrets.CI_LLM_BASE_URL }}
+      LLM_MODEL: ${{ secrets.CI_LLM_MODEL }}
       PADDLE_OCR_URL: ${{ secrets.PADDLE_OCR_URL }}
       PADDLE_TOKEN: ${{ secrets.PADDLE_TOKEN }}
       OCR_OPENAI_API_KEY: ${{ secrets.OCR_OPENAI_API_KEY }}

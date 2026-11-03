@@ -149,6 +149,14 @@ def _process_name_values(ctx: RuleContext) -> list[str]:
     values = []
     for sheet in Table(ctx).find_sheets("过程流程图"):
         cells = sheet.scan_non_empty(row_min=1, row_max=sheet.ws.max_row, col_min=1, col_max=sheet.ws.max_column)
+        # Error cells are unknown observations, not matching process names or headers.
+        known_cells = []
+        for cell in cells:
+            merged = ctx.ops.get_detailed_merge_info(cell.ws, cell.row_index, cell.col_index)
+            source = cell.ws.cell(row=merged.min_row if merged else cell.row_index, column=merged.min_col if merged else cell.col_index)
+            if getattr(source, "data_type", None) != "e":
+                known_cells.append(cell)
+        cells = known_cells
         columns: dict[int, int] = {}
         for header in cells:
             if header.exact("工序名称", compact=True):
@@ -452,8 +460,10 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
 
     @rule("起始工序拆解完整性识别", clause_id="6")
     def rule_6(self, ctx: RuleContext) -> tuple[str, str]:
+        ctx.require_one()
         process_names = _process_name_values(ctx)
         if any(_is_start_inspection_process(value) for value in process_names):
+            ctx.mark_witness()
             return "PASS", ""
         if not process_names:
             return "NG", "工序名称列未识别到有效工序。"
@@ -462,8 +472,10 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
 
     @rule("最终工序拆解完整性识别", clause_id="7")
     def rule_7(self, ctx: RuleContext) -> tuple[str, str]:
+        ctx.require_one()
         process_names = _process_name_values(ctx)
         if any(_is_final_shipment_process(value) for value in process_names):
+            ctx.mark_witness()
             return "PASS", ""
         if not process_names:
             return "NG", "工序名称列未识别到有效工序。"

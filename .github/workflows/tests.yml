@@ -342,9 +342,9 @@ jobs:
         working-directory: ${{ github.workspace }}
         if: ${{ matrix.mode == 'pytest' }}
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
-          MODEL_NAME: ${{ secrets.MODEL_NAME }}
+          OPENAI_API_KEY: ${{ secrets.CI_LLM_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.CI_LLM_BASE_URL }}
+          MODEL_NAME: ${{ secrets.CI_LLM_MODEL }}
           PADDLE_OCR_URL: ${{ secrets.PADDLE_OCR_URL }}
           PADDLE_TOKEN: ${{ secrets.PADDLE_TOKEN }}
           OCR_OPENAI_API_KEY: ${{ secrets.OCR_OPENAI_API_KEY }}
@@ -379,9 +379,9 @@ jobs:
         if: ${{ matrix.mode == 'psw' }}
         env:
           PPAP_BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
-          MODEL_NAME: ${{ secrets.MODEL_NAME }}
+          OPENAI_API_KEY: ${{ secrets.CI_LLM_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.CI_LLM_BASE_URL }}
+          MODEL_NAME: ${{ secrets.CI_LLM_MODEL }}
           PADDLE_OCR_URL: ${{ secrets.PADDLE_OCR_URL }}
           PADDLE_TOKEN: ${{ secrets.PADDLE_TOKEN }}
           OCR_OPENAI_API_KEY: ${{ secrets.OCR_OPENAI_API_KEY }}
@@ -471,9 +471,9 @@ jobs:
         env:
           COMPOSE_PROJECT_NAME: ${{ env.PPAP_COMPOSE_TEST }}
           PPAP_TEST_POSTGRES_PORT: "0"
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
-          MODEL_NAME: ${{ secrets.MODEL_NAME }}
+          OPENAI_API_KEY: ${{ secrets.CI_LLM_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.CI_LLM_BASE_URL }}
+          MODEL_NAME: ${{ secrets.CI_LLM_MODEL }}
           OCR_OPENAI_API_KEY: ${{ secrets.OCR_OPENAI_API_KEY }}
           OCR_OPENAI_BASE_URL: ${{ secrets.OCR_OPENAI_BASE_URL }}
           OCR_MODEL_NAME: ${{ secrets.OCR_MODEL_NAME }}

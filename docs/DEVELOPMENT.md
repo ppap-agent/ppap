@@ -319,3 +319,5 @@ uv run --no-sync python scripts/deep_lab.py --recipe checker --effort high \
 模型终态明确报告服务 HTTP 错误时，实验以 `deep_model_http_<状态码>` 停止，保留已有候选，汇总保留该错误而非仅报告缺少结果。候选不能当作已固定产物；额度或服务恢复后显式重新运行未完成场景。
 
 这是本地质量实验，默认使用本地 Pi 进程和现有短期授权网关；不证明产品 guest 隔离或生产端到端行为。固定执行只使用原生读取与明确的 `PdfSpec`，不自动转入 OCR。
+
+GitHub Actions 的外部模型测试使用 `CI_LLM_API_KEY`、`CI_LLM_BASE_URL` 和 `CI_LLM_MODEL` 三项仓库 Secret，与生产 Standard 配置分开。当前 CI 使用已授权的 Codex Responses 服务，避免调用已耗尽额度的 Grok；真实模型用量仍属于测试运行，不以缓存伪造模型成功。

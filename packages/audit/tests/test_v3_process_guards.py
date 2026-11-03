@@ -369,3 +369,29 @@ def test_related_characteristic_workbook_is_closed_after_the_check(tmp_path, mon
 
     assert result.status == "PASS"
     assert closed
+
+
+@pytest.mark.parametrize(("rule_number", "witness"), [(6, "IQC"), (7, "OQC")])
+def test_process_existence_uses_known_witness_despite_an_unrelated_cell_error(tmp_path, rule_number, witness):
+    workbook = flow_workbook()
+    workbook.active.append([witness])
+    workbook.active["Z2"] = "#N/A"
+    result = check_workbook(tmp_path, ProcessFlowChartExcelAgent, workbook, rule_number)
+    assert result.status == "PASS"
+
+
+@pytest.mark.parametrize("rule_number", [6, 7])
+def test_process_existence_cannot_pass_without_a_known_witness(tmp_path, rule_number):
+    workbook = flow_workbook()
+    workbook.active.append(["#N/A"])
+    result = check_workbook(tmp_path, ProcessFlowChartExcelAgent, workbook, rule_number)
+    assert result.status != "PASS"
+
+
+@pytest.mark.parametrize(("rule_number", "witness"), [(6, "IQC"), (7, "OQC")])
+def test_error_typed_process_label_is_not_a_known_witness(tmp_path, rule_number, witness):
+    workbook = flow_workbook()
+    workbook.active.append([witness])
+    workbook.active["A2"].data_type = "e"
+    result = check_workbook(tmp_path, ProcessFlowChartExcelAgent, workbook, rule_number)
+    assert result.status != "PASS"
