@@ -15,6 +15,9 @@ WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
 
 class PreparationHTTP:
     def __init__(self, lose_prepare_reply=False, lose_task_reply=False):
+        self.customer_default = {"customer_preference": None, "revision": 0}
+        self.default_writes = []
+        self.lose_default_reply = False
         self.lose_prepare_reply = lose_prepare_reply
         self.lose_task_reply = lose_task_reply
         self.fail_draft_read = False
@@ -50,6 +53,18 @@ class PreparationHTTP:
                     "identity": {"provider": "feishu", "app_id": "app", "tenant_key": "tenant", "subject": "owner"},
                 }
             )
+        elif path == "/audit-customers/default":
+            if method == "PUT":
+                self.default_writes.append(copy.deepcopy(body))
+                assert body["confirmed"] is True
+                if body["expected_revision"] != self.customer_default["revision"]:
+                    route.fulfill(status=409, json={"error": "customer_default_conflict"})
+                    return
+                self.customer_default = {"customer_preference": body["customer_preference"], "revision": body["expected_revision"] + 1}
+                if self.lose_default_reply:
+                    route.abort("failed")
+                    return
+            route.fulfill(json=self.customer_default)
         elif path == "/audit-customers":
             route.fulfill(json={"customers": []})
         elif path == "/drafts" and method == "POST":
@@ -438,4 +453,44 @@ def test_prepared_ordinary_task_resolves_an_explicit_candidate_in_the_same_task(
         assert len(http.task_commands) == 2 and len(http.preparation_creates) == 1
         assert http.task_commands[0]["request_id"] != http.task_commands[1]["request_id"]
         assert len(http.creates) == len(http.blobs) == 1 and errors == []
+        browser.close()
+
+
+def test_customer_mode_keeps_task_selection_separate_from_confirmed_default():
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page(viewport={"width": 390, "height": 844})
+        server = PreparationHTTP()
+        server.customer_default = {"customer_preference": "UAES", "revision": 2}
+        server.install(page)
+        page.goto(WEB + "/tasks/new")
+        choice = page.get_by_role("combobox", name="审核客户", exact=True)
+        expect(choice).to_contain_text("UAES（联电）")
+        choice.click()
+        page.get_by_role("option", name="理想", exact=True).click()
+        expect(choice).to_contain_text("理想")
+        assert server.default_writes == []
+        page.get_by_role("button", name="设为企业默认", exact=True).click()
+        dialog = page.get_by_role("dialog", name="更改企业默认客户？")
+        expect(dialog).to_contain_text("仅影响本企业以后新建的任务")
+        dialog.get_by_role("button", name="取消", exact=True).click()
+        assert server.default_writes == []
+        expect(choice).to_contain_text("理想")
+        page.get_by_role("button", name="设为企业默认", exact=True).click()
+        page.get_by_role("button", name="确认更改", exact=True).click()
+        expect(page.get_by_role("status")).to_contain_text("已保存企业默认")
+        assert server.default_writes == [{"customer_preference": "理想", "expected_revision": 2, "confirmed": True}]
+        choice.click()
+        page.get_by_role("option", name="蔚来", exact=True).click()
+        server.lose_default_reply = True
+        page.get_by_role("button", name="设为企业默认", exact=True).click()
+        page.get_by_role("button", name="确认更改", exact=True).click()
+        expect(page.get_by_role("status")).to_contain_text("保存结果待核对")
+        expect(page.get_by_text("本次切换只影响当前任务。企业默认：蔚来。", exact=True)).to_be_visible()
+        assert len(server.default_writes) == 2
+        choice.click()
+        page.get_by_role("option", name="自动识别", exact=True).click()
+        page.get_by_role("button", name="重新读取企业默认", exact=True).click()
+        expect(choice).to_contain_text("自动识别")
+        assert len(server.default_writes) == 2
         browser.close()

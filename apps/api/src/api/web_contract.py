@@ -1412,6 +1412,17 @@ class AuditCustomer(TypedDict):
     name: str
 
 
+class AuditCustomerDefault(TypedDict):
+    customer_preference: Literal["UAES", "理想", "蔚来"] | None
+    revision: int
+
+
+class AuditCustomerDefaultRequest(TypedDict):
+    customer_preference: Literal["UAES", "理想", "蔚来"] | None
+    expected_revision: int
+    confirmed: Literal[True]
+
+
 class AuditCustomerCatalog(TypedDict):
     """Customers with current published rules in the requesting tenant."""
 

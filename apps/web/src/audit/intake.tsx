@@ -49,12 +49,15 @@ import {TaskSwitcher} from './task-switcher'
 import {Skeleton} from '../components/ui/skeleton'
 import {createUploadPreparation, describeUploads, preparationFiles, restoreUploads, type PreparationAdapter, type UploadPreparation} from './upload-preparation'
 
+import {CustomerMode, type CustomerDefaultAdapter} from './customer-mode'
+
 export type AuditTask = components['schemas']['AuditTask']
 export type AuditTaskFile = components['schemas']['AuditTaskFile']
 export type AuditIntakeAdapter = AuditAcceptanceAdapter & AuditRecognitionAdapter & UploadAdapter & {
   preparation?: PreparationAdapter
   samples?: () => AuditTaskFile[]
   drive?: DrivePickerSource
+  customerDefaults?: CustomerDefaultAdapter
   customers?: {value: string; label: string}[]
   deepOffered?: boolean
   notifications?: AuditNotificationAdapter
@@ -153,7 +156,10 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const stepRef = useRef(step)
   function setStep(next: typeof step) {stepRef.current = next; setStepState(next)}
   const [mode, setMode] = useState<AuditTask['analysis_mode']>('standard')
-  const [customer, setCustomer] = useState('auto')
+  const [customer, setCustomerState] = useState('auto')
+  const customerInitialized = useRef(Boolean(readAuditRoute(new URL(location.href)).taskId || new URL(location.href).searchParams.has('uploadDraft')))
+  function setCustomer(value: string) {customerInitialized.current = true; setCustomerState(value)}
+  function initializeCustomer(value: string) {if (!customerInitialized.current) {customerInitialized.current = true; setCustomerState(value)}}
   const [predecessorId, setPredecessorId] = useState<string>()
   function chooseReplacement(fileId: string, originalId: string) {
     setFiles(rows => {
@@ -386,7 +392,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     if (!keepSurface) retainAuditAddress()
     if (window.parent !== window && !keepSurface) window.parent.postMessage({type: 'ppap-audit-task', task: id, report: null}, location.origin)
   }
-  function newTask() {restoreEpoch.current += 1; setRecovery(null); retainDraft(); clearReads(); activeTaskId.current = null; activeUploadDraftId.current = crypto.randomUUID(); setPreparationStatus({id: null, phase: 'idle', message: ''}); setFiles([]); setTask(null); setLocalFiles([]); setStep('upload'); setMode('standard'); setCustomer('auto'); setPredecessorId(undefined); setError(''); setSheet(false); taskAddress(null)}
+  function newTask() {restoreEpoch.current += 1; setRecovery(null); retainDraft(); clearReads(); activeTaskId.current = null; activeUploadDraftId.current = crypto.randomUUID(); setPreparationStatus({id: null, phase: 'idle', message: ''}); setFiles([]); setTask(null); setLocalFiles([]); setStep('upload'); setMode('standard'); customerInitialized.current = false; setCustomerState('auto'); setPredecessorId(undefined); setError(''); setSheet(false); taskAddress(null)}
   function taskResultsAddress() {
     const url = new URL(location.href)
     url.searchParams.delete('report'); url.searchParams.delete('packageRequest')
@@ -493,7 +499,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
       if (params.has('uploadDraft') && preparation.current) {setTask(null); setFiles([]); setStep('upload'); setError(''); void readPreparation(draftId, true); return}
       if (recognition.get(draftId)) recognitionTargets.current.set(draftId, {epoch: draftEpoch.current, uploadId: draftId})
       if (saved) uploads.restore(saved.uploads)
-      setTask(null); setFiles(structuredClone(saved?.files ?? [])); setMode(saved?.mode ?? 'standard'); setCustomer(saved?.customer ?? 'auto'); setStep(saved?.step ?? 'upload'); setError('')
+      setTask(null); setFiles(structuredClone(saved?.files ?? [])); setMode(saved?.mode ?? 'standard'); if (saved) setCustomer(saved.customer); else {customerInitialized.current = false; setCustomerState('auto')} setStep(saved?.step ?? 'upload'); setError('')
       setPredecessorId(saved?.predecessorId)
     }
   }
@@ -754,7 +760,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
         {!task && preparationStatus.id === activeUploadDraftId.current && preparationStatus.phase === 'error' && <Alert variant="destructive"><AlertTitle>上传准备待核对</AlertTitle><AlertDescription><p>{preparationStatus.message}</p><div className="mt-3 flex flex-wrap gap-2"><Button variant="outline" onClick={() => void readPreparation(activeUploadDraftId.current!)}>读取准备记录</Button>{preparationStatus.conflict && <Button variant="outline" onClick={() => {retainDraft(); void readPreparation(activeUploadDraftId.current!, true)}}>载入已保存资料</Button>}</div></AlertDescription></Alert>}
         <fieldset hidden={preparationStatus.id === activeUploadDraftId.current && preparationStatus.phase === 'reading'} disabled={inputLocked || preparingReaudit} className="min-w-0 space-y-6">
         <header className="flex flex-wrap items-start justify-between gap-4"><div className="space-y-2"><h1 className="text-2xl font-semibold tracking-tight">{step === 'upload' ? '上传 PPAP 文件' : step === 'check' ? '核对本次文件' : task?.state === 'matching' ? '正在识别文件与匹配规则' : '确认每份文件的审核规则'}</h1><p className="text-muted-foreground">{step === 'match' ? '识别每份文件适配规则，未匹配文件无法进入审核' : '选择收到的文件，核对后开始审核。'}</p></div></header>
-        {step !== 'match' && <div className="flex flex-wrap items-end justify-between gap-4"><div className="flex flex-wrap items-end gap-2">{step === 'upload' && <div className="grid gap-2"><Label htmlFor="audit-customer">客户（可选）</Label><Select value={customer} onValueChange={value => {setCustomer(value); setFiles(rows => rows.map(row => ({...row, preferred_rule_version_id: undefined})))}} onOpenChange={open => {if (open) onRefreshCustomers?.()}}><SelectTrigger id="audit-customer" className="w-56"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="auto">自动识别客户</SelectItem>{(adapter.customers ?? []).map(option => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select></div>}<Button asChild variant="ghost"><a href={TEMPLATE_GUIDE_URL} target="_blank" rel="noopener noreferrer">查看模板<ExternalLink aria-hidden="true"/></a></Button><Button asChild variant="ghost"><a href={TEMPLATE_CONTACT_URL} target="_blank" rel="noopener noreferrer">模板反馈<ExternalLink aria-hidden="true"/></a></Button></div>{step === 'check' && <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => input.current?.click()}><Plus/>继续添加文件</Button>{driveButton}</div>}</div>}
+        {step !== 'match' && <div className="flex flex-wrap items-end justify-between gap-4"><div className="flex flex-wrap items-end gap-2">{step === 'upload' && (adapter.customerDefaults ? <CustomerMode key={draftEpoch.current} value={customer} options={adapter.customers ?? []} adapter={adapter.customerDefaults} onInitialDefault={initializeCustomer} onRefresh={onRefreshCustomers} onChange={value => {setCustomer(value); setFiles(rows => rows.map(row => ({...row, preferred_rule_version_id: undefined})))}}/> : <div className="grid gap-2"><Label htmlFor="audit-customer">客户（可选）</Label><Select value={customer} onValueChange={value => {setCustomer(value); setFiles(rows => rows.map(row => ({...row, preferred_rule_version_id: undefined})))}} onOpenChange={open => {if (open) onRefreshCustomers?.()}}><SelectTrigger id="audit-customer" className="w-56"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="auto">自动识别客户</SelectItem>{(adapter.customers ?? []).map(option => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select></div>)}<Button asChild variant="ghost"><a href={TEMPLATE_GUIDE_URL} target="_blank" rel="noopener noreferrer">查看模板<ExternalLink aria-hidden="true"/></a></Button><Button asChild variant="ghost"><a href={TEMPLATE_CONTACT_URL} target="_blank" rel="noopener noreferrer">模板反馈<ExternalLink aria-hidden="true"/></a></Button></div>{step === 'check' && <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => input.current?.click()}><Plus/>继续添加文件</Button>{driveButton}</div>}</div>}
         <input ref={input} type="file" className="sr-only" aria-label="选择审核文件" multiple accept=".xlsx,.xls,.xlsm,.doc,.docx,.pdf" onChange={event => {receive(Array.from(event.target.files || [])); event.target.value = ''}}/>
         {step === 'upload' && <section className="space-y-5"><div className="flex flex-col items-center gap-4 rounded-lg border border-dashed px-4 py-12 text-center" data-dragging={dragging} onDragOver={event => {event.preventDefault(); setDragging(true)}} onDragLeave={() => setDragging(false)} onDrop={event => {event.preventDefault(); setDragging(false); receive(Array.from(event.dataTransfer.files))}}><UploadCloud className="size-8 text-muted-foreground"/><h2 className="text-base font-medium">拖入本地文件</h2><p className="text-muted-foreground">Excel、Word、PDF · 单份最大 200 MB</p><div className="flex flex-wrap justify-center gap-2"><Button onClick={() => input.current?.click()}>选择本地文件</Button>{driveButton}</div></div>{adapter.samples && <div className="flex flex-wrap items-center justify-between gap-3"><Button variant="outline" onClick={() => {setFiles(rows => [...rows, ...adapter.samples!()]); setStep('check')}}>使用三类文件示例<ArrowRight/></Button></div>}</section>}
         {step === 'upload' && (active.length > 0 || uploads.rows.some(row => !row.removed)) && <section className="flex flex-wrap items-center justify-between gap-4 border-t pt-5"><div className="space-y-1"><h2 className="font-medium">已选 {selectedUploadCount} 个文件</h2><p className="text-sm text-muted-foreground">继续上传或从飞书选择后，将自动返回文件确认</p></div><Button variant="outline" onClick={() => setStep('check')}>查看已选文件<ArrowRight/></Button></section>}

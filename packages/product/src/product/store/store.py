@@ -2496,6 +2496,38 @@ class AuthStore:
             self._queue_task_notification(conn, task_id, "completed")
             return self._recognition_public(conn, principal, task_id)
 
+    def customer_default(self, principal: Principal) -> dict:
+        """Read a member's tenant preference without changing any task input."""
+        with self._conn() as conn:
+            row = conn.execute(
+                """SELECT t.default_customer_preference, t.customer_preference_revision
+                   FROM product.tenants t JOIN product.memberships m ON m.tenant_id = t.id
+                   WHERE t.id = %s AND m.user_id = %s""",
+                (principal.tenant_id, principal.user_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError("access_denied")
+            return {"customer_preference": row[0], "revision": row[1]}
+
+    def set_customer_default(self, principal: Principal, customer, expected_revision, confirmed) -> dict:
+        """Compare-and-swap one tenant default; lost replies are recovered by readback."""
+        if customer not in (None, "UAES", "理想", "蔚来") or type(expected_revision) is not int or expected_revision < 0 or confirmed is not True:
+            raise ValueError("invalid_customer_default")
+        with self._conn() as conn, conn.transaction():
+            row = conn.execute(
+                """UPDATE product.tenants t SET default_customer_preference = %s,
+                       customer_preference_revision = customer_preference_revision + 1
+                   WHERE t.id = %s AND t.customer_preference_revision = %s
+                     AND EXISTS (SELECT 1 FROM product.memberships m WHERE m.tenant_id = t.id AND m.user_id = %s)
+                   RETURNING default_customer_preference, customer_preference_revision""",
+                (customer, principal.tenant_id, expected_revision, principal.user_id),
+            ).fetchone()
+            if row is None:
+                if not conn.execute("SELECT 1 FROM product.memberships WHERE tenant_id = %s AND user_id = %s", (principal.tenant_id, principal.user_id)).fetchone():
+                    raise KeyError("access_denied")
+                raise ValueError("customer_default_conflict")
+            return {"customer_preference": row[0], "revision": row[1]}
+
     def list_rules(self, tenant_id: str) -> list[dict]:
         with self._conn() as conn:
             return self._list_rules(conn, tenant_id)

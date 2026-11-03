@@ -66,6 +66,33 @@ def register_rule_routes(app: FastAPI, store, principal_of, require_file_read):
             return JSONResponse({"error": "unauthenticated"}, status_code=401, headers=headers)
         return JSONResponse(customer_catalog(store, principal.tenant_id), headers=headers)
 
+    @app.get("/audit-customers/default", response_model=wc.AuditCustomerDefault)
+    def read_customer_default(request: Request):
+        headers = {"Cache-Control": "private, no-store"}
+        principal = principal_of(request)
+        if not principal:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401, headers=headers)
+        try:
+            return JSONResponse(store.customer_default(principal), headers=headers)
+        except KeyError:
+            return JSONResponse({"error": "access_denied"}, status_code=403, headers=headers)
+
+    @app.put("/audit-customers/default", response_model=wc.AuditCustomerDefault, openapi_extra=wc.openapi_body(wc.AuditCustomerDefaultRequest))
+    def update_customer_default(request: Request, body: Any = Body(...)):
+        headers = {"Cache-Control": "private, no-store"}
+        principal = principal_of(request)
+        if not principal:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401, headers=headers)
+        if not isinstance(body, dict) or set(body) != {"customer_preference", "expected_revision", "confirmed"}:
+            return JSONResponse({"error": "invalid_customer_default"}, status_code=400, headers=headers)
+        try:
+            result = store.set_customer_default(principal, body["customer_preference"], body["expected_revision"], body["confirmed"])
+            return JSONResponse(result, headers=headers)
+        except KeyError:
+            return JSONResponse({"error": "access_denied"}, status_code=403, headers=headers)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409 if str(exc) == "customer_default_conflict" else 400, headers=headers)
+
     @app.get("/rule-types", response_model=wc.RuleTypes)
     def rules_types(request: Request):
         if not principal_of(request):

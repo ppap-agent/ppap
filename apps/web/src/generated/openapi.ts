@@ -72,6 +72,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/audit-customers/default": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Customer Default */
+        get: operations["read_customer_default_audit_customers_default_get"];
+        /** Update Customer Default */
+        put: operations["update_customer_default_audit_customers_default_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit-report-packages": {
         parameters: {
             query?: never;
@@ -1853,6 +1871,13 @@ export interface components {
         AuditCustomerCatalog: {
             /** Customers */
             customers: components["schemas"]["AuditCustomer"][];
+        };
+        /** AuditCustomerDefault */
+        AuditCustomerDefault: {
+            /** Customer Preference */
+            customer_preference: ("UAES" | "理想" | "蔚来") | null;
+            /** Revision */
+            revision: number;
         };
         /** AuditEvidenceReference */
         AuditEvidenceReference: {
@@ -4115,6 +4140,69 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuditCustomerCatalog"];
+                };
+            };
+        };
+    };
+    read_customer_default_audit_customers_default_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditCustomerDefault"];
+                };
+            };
+        };
+    };
+    update_customer_default_audit_customers_default_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * Confirmed
+                     * @constant
+                     */
+                    confirmed: true;
+                    /** Customer Preference */
+                    customer_preference: ("UAES" | "理想" | "蔚来") | null;
+                    /** Expected Revision */
+                    expected_revision: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditCustomerDefault"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

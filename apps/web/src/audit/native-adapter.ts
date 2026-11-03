@@ -107,6 +107,11 @@ async function readFrozenBlob(path: string, expected: Pick<components['schemas']
   }, `读取${label}超时，请重新读取。`)
 }
 
+export const nativeCustomerDefaultAdapter = {
+  read: () => request<components['schemas']['AuditCustomerDefault']>('/audit-customers/default'),
+  save: (customer: components['schemas']['AuditCustomerDefault']['customer_preference'], revision: number) => request<components['schemas']['AuditCustomerDefault']>('/audit-customers/default', 'PUT', {customer_preference: customer, expected_revision: revision, confirmed: true}),
+}
+
 export const readAuditCustomers = () => request<components['schemas']['AuditCustomerCatalog']>('/audit-customers')
 
 export const nativeSupportAdapter: AuditSupportAdapter = {
@@ -234,6 +239,7 @@ export function createNativeAuditAdapter(options: {deepOffered: boolean; custome
       read: id => request(`${taskPath(id)}/notification`),
       save: (id, enabled, revision) => request(`${taskPath(id)}/notification`, 'PUT', {enabled, expected_revision: revision}),
     },
+    customerDefaults: nativeCustomerDefaultAdapter,
     customers: options.customers.map(name => ({value: name, label: name})),
     drive: {...options.personalDriveUpload ? {rootFolder: () => request<components['schemas']['DriveFile']>('/integrations/feishu/root-folder')} : {}, async list({folderToken, pageToken} = {}) {
       try {return await request(`/integrations/feishu/files?${new URLSearchParams({...folderToken ? {folder_token: folderToken} : {}, ...pageToken ? {page_token: pageToken} : {}})}`)}
