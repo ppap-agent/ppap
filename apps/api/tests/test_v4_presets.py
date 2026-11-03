@@ -45,7 +45,7 @@ def test_customer_upload_cannot_mint_or_replace_product_presets(auth_store_facto
     principal = store.upsert_feishu_identity("preset-authority-" + uuid.uuid4().hex, "member")
     client = TestClient(create_app(store.settings, auth_store=store))
     client.cookies.set(SESSION_COOKIE, store.create_session(principal))
-    preset = next(rule for rule in client.get("/rules").json()["rules"] if rule["rule_profile"] == "v4")
+    preset = next(rule for rule in client.get("/rules").json()["rules"] if rule["rule_profile"] == "v4" and rule["type"] == "过程特殊特性清单")
     original = client.get("/rules/" + preset["id"]).json()["body"]
     content = b"customer rule source"
     version = client.post("/files", json={"original_filename": "rules.md", "byte_size": len(content), "content_type": "text/markdown"}).json()
