@@ -72,6 +72,7 @@ class CheckerManifest(BaseModel):
     related_documents: dict[str, str] = Field(default_factory=dict)
     prior_files: dict[str, str] | None = None
     artifact: CheckerArtifact | None = None
+    reasoning_effort: Literal["xhigh", "high", "medium", "low"] = "medium"
 
 
 def encoded(value: object) -> bytes:
@@ -221,12 +222,7 @@ def _appendix_scope_applies(scope: dict[str, Any], file_version_id: str, clause_
     """A partial scope still restricts. It must not leak to another file or clause."""
     targets = scope.get("rule_targets")
     if isinstance(targets, list):
-        return any(
-            isinstance(target, dict)
-            and str(target.get("document_id") or "") == file_version_id
-            and str(target.get("rule_id") or "") in clause_ids
-            for target in targets
-        )
+        return any(isinstance(target, dict) and str(target.get("document_id") or "") == file_version_id and str(target.get("rule_id") or "") in clause_ids for target in targets)
     restricted = False
     document_ok = True
     rule_ok = True
@@ -385,6 +381,7 @@ def adapt(
     objects: Objects | None = None,
     artifact_prefix: str | None = None,
     prior: CheckerArtifact | None = None,
+    reasoning_effort: str = "medium",
 ) -> CheckerArtifact:
     digest = _checked_digest(audit_file, rule, file_bytes, file_sha256=file_sha256, role=role, appendix=appendix, group_context=group_context)
     prior_files = {name: content.decode("utf-8") for name, content in prior.files.items()} if prior is not None else None
@@ -402,6 +399,7 @@ def adapt(
             prior_files=prior_files,
             appendix=appendix,
             observations=observations,
+            reasoning_effort=reasoning_effort,
         )
     except ModelProtocolError as exc:
         raise DeepError("deep_model_protocol") from exc
@@ -514,7 +512,7 @@ def _bound_group_context(inputs: Path, manifest: CheckerManifest) -> GroupContex
     root = inputs.resolve()
     for audit_id, name in manifest.related_documents.items():
         raw = read_regular(inputs, (name,), MAX_DOCUMENT_BYTES)
-        metadata = (_context_items(context)[audit_id].file_metadata or {})
+        metadata = _context_items(context)[audit_id].file_metadata or {}
         expected = str(metadata.get("sha256") or "")
         path = (inputs / name).resolve()
         if path.parent != root or not expected or hashlib.sha256(raw).hexdigest() != expected:
@@ -591,6 +589,7 @@ def run_adapt_manifest(inputs: Path, work: Path, runner: ProgramRunner, deadline
         deadline=deadline,
         prior_files=manifest.prior_files,
         appendix=manifest.appendix,
+        reasoning_effort=manifest.reasoning_effort,
     )
 
 

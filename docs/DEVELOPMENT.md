@@ -280,3 +280,20 @@ V3.1 原有“联系我们”浮层通过已登录的 `GET /support` 读取服�
 `uv run --no-sync pytest tests/integration/product/test_deep_feedback_contract.py --local-postgres -q` 使用真实本地 PG、生产迁移和 API，检查规则变更操作回执。它不执行 RulePlan，也不代替 checker 审核。
 
 `--local-postgres` 创建并清理本次独占的临时 cluster，不接入默认或共享开发数据库。默认寻找 PATH 上的 postgres，macOS 备用为 Homebrew postgresql@17；可用 PPAP_TEST_PG_BIN 指定包含 postgres/initdb/pg_ctl/psql 的完整 server 目录。libpq 只有客户端工具，不足以创建 cluster。无需 Docker；依赖缺失会失败，不以 skip 验收。
+
+
+### 本地 Deep checker 实验
+
+`scripts/deep_lab.py` 使用已有人工 checker、资源定义及 Fluent API 开发任务程序。先验证 Excel，再验证电子版 PDF；扫描版暂不纳入本轮。模型配置沿用本地 `.grok/config.toml`，不要提交该配置或实验日志。
+
+```sh
+uv run --no-sync python scripts/deep_lab.py --recipe checker --seq 11 --effort high
+uv run --no-sync python scripts/deep_lab.py --recipe checker --seq 11 --effort high \
+  --variant shifted-table --prior /absolute/path/to/artifact.json
+uv run --no-sync python scripts/deep_lab.py --recipe checker --seq 11 --effort high \
+  --source /absolute/path/to/electronic.pdf
+```
+
+`shifted-table` 保留首行标题，将第 2 行起的表格与合并区域下移 20 行；拒绝含公式或跨越该边界的合并单元格，避免改变业务含义。`renamed-sheet` 则只修改工作表名。两种变体均使用副本，不改变原件与规则。每轮模型交互默认最多 128 次，可用 `--max-turns` 调整，总开发时间上限仍为 40 分钟。`--source` 将所选规则应用到新文件，并明确停止沿用原文件的人工评分；执行与重放仍必须成功。每次运行在 `output/checker/` 下保留候选、诊断、`artifact.json`、`execution.json`、独立进程的 `replay.json` 及可用的原 oracle 评分。模型只能用规则、原件和实现作适配依据；不能读取评分预期。重放过程不继承模型凭据，输入移到新目录，完整结果须一致。CLI 运行退出失败时，汇总不能按评分相同计为成功。
+
+这是本地质量实验，使用本地 Grok 进程；不证明产品 guest 隔离或生产端到端行为。固定执行只使用原生读取与明确的 `PdfSpec`，不自动转入 OCR。

@@ -11,11 +11,12 @@ import os
 from collections import Counter
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Callable, List, Literal, NamedTuple, Optional, Tuple, cast
+from typing import Any, Callable, List, Literal, Mapping, NamedTuple, Optional, Tuple, cast
 from urllib.parse import unquote, urlparse
 
-from documents.contracts import FileRef
+from documents.contracts import ConversionArtifact, FileRef
 from documents.excel import load_excel_workbook
+from documents.pdf import PdfSpec
 from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
 
@@ -51,7 +52,7 @@ RuleEvidencePhase = Literal["decision", "guard", "error"]
 class _DeclaredClause(NamedTuple):
     clause_id: str
     description: str
-    index: int
+    method_index: int
 
 
 def rule(description: str, clause_id: str | None = None) -> Callable[[Any], Any]:
@@ -178,7 +179,9 @@ class ExcelAgent(BaseAgent):
 
         # Cached workbook – loaded once, reused across all rule checks.
         self._workbook_cache: Optional[Workbook] = None
-        self._conversion_artifact = None
+        self._related_pdf_cache: dict[str, tuple[ConversionArtifact, Workbook | None]] = {}
+        self._related_conversion_artifacts: dict[str, ConversionArtifact] = {}
+        self._conversion_artifact: ConversionArtifact | None = None
         self._doc_type = self._resolve_resource_doc_type()
         registered = get_doc_resource_by_doc_type(self._doc_type) if self._doc_type is not None else None
         self._rule_resource = merge_rule_resources(registered, resource)
@@ -301,10 +304,15 @@ class ExcelAgent(BaseAgent):
 
     def close(self) -> None:
         self._close_cached_workbook()
+        for _, workbook in self._related_pdf_cache.values():
+            if workbook is not None:
+                workbook.close()
+        self._related_pdf_cache.clear()
+        self._related_conversion_artifacts.clear()
 
     def __del__(self) -> None:
         try:
-            self._close_cached_workbook()
+            self.close()
         except Exception:
             pass
 
@@ -414,7 +422,7 @@ class ExcelAgent(BaseAgent):
                 checks.append(problem)
                 by_clause.setdefault(clause.clause_id, problem)
                 continue
-            check = self._executable_check(item, clause.index)
+            check = self._executable_check(item, clause.method_index)
             checks.append(check)
             by_clause[clause.clause_id] = check
         self.checks = tuple(checks)
@@ -434,8 +442,8 @@ class ExcelAgent(BaseAgent):
 
         def bind_declaration(clause_id: str, check: RuleCheck) -> None:
             for candidate in declared:
-                if candidate.clause_id == clause_id and declaration[candidate.index] is None:
-                    declaration[candidate.index] = check
+                if candidate.clause_id == clause_id and declaration[candidate.method_index] is None:
+                    declaration[candidate.method_index] = check
 
         for item in items:
             if not item.id:
@@ -457,21 +465,21 @@ class ExcelAgent(BaseAgent):
                 bind_declaration(item.id, problem)
                 continue
             clause = declared_by_id[item.id]
-            check = self._executable_check(item, clause.index)
+            check = self._executable_check(item, clause.method_index)
             checks.append(check)
             by_clause[item.id] = check
-            declaration[clause.index] = check
+            declaration[clause.method_index] = check
 
         input_ids = {item.id for item in items if item.id}
         for clause in declared:
-            if declaration[clause.index] is not None:
+            if declaration[clause.method_index] is not None:
                 continue
             if not clause.clause_id:
                 problem = self._problem_check(self._synthetic_item(clause), "检查入口缺少条款 ID")
             elif clause.clause_id in input_ids:
                 existing = by_clause.get(clause.clause_id)
                 if existing is not None:
-                    declaration[clause.index] = existing
+                    declaration[clause.method_index] = existing
                 continue
             elif method_counts[clause.clause_id] > 1:
                 problem = self._problem_check(self._synthetic_item(clause), f"条款 {clause.clause_id} 绑定了多个检查入口")
@@ -480,7 +488,7 @@ class ExcelAgent(BaseAgent):
             checks.append(problem)
             if clause.clause_id:
                 by_clause.setdefault(clause.clause_id, problem)
-            declaration[clause.index] = problem
+            declaration[clause.method_index] = problem
 
         aligned: list[RuleCheck] = []
         for clause, bound in zip(declared, declaration, strict=True):
@@ -594,13 +602,12 @@ class ExcelAgent(BaseAgent):
 
     def _load_pdf_workbook(self, file_url: str) -> Workbook:
         from documents.conversion import convert_pdf_to_excel_auto
-        from documents.pdf import PdfSpec
 
         from audit.engine.runtime import get_runtime
 
         spec = getattr(type(self), "PDF_SPEC", None)
-        if spec is not None and not isinstance(spec, PdfSpec):
-            raise TypeError("PDF_SPEC must be a PdfSpec")
+        if spec is not None:
+            self._require_pdf_spec(spec, "PDF_SPEC")
         runtime = get_runtime()
         file_ref = FileRef(location=file_url)
         if runtime is not None:
@@ -616,6 +623,70 @@ class ExcelAgent(BaseAgent):
         self._workbook_cache = workbook
         return workbook
 
+    def load_related_pdf(self, file_version_id: str) -> Workbook:
+        """Convert one related PDF with the spec Deep fixed for that file version."""
+        version = str(file_version_id or "").strip()
+        if not version:
+            raise ValueError("关联 PDF 缺少 file_version_id")
+        item = self._related_file(version)
+        if item is None:
+            raise ValueError(f"关联 PDF 不在本次资料中: {version}")
+        file_url = str(item.file_url or "")
+        if not file_url.lower().split("?", 1)[0].endswith(".pdf"):
+            raise ValueError(f"关联文件不是 PDF: {version}")
+        specs = getattr(type(self), "PDF_SPECS", None)
+        if not isinstance(specs, Mapping) or version not in specs:
+            raise ValueError(f"关联 PDF 缺少 PDF_SPECS[{version}]")
+        self._require_pdf_spec(specs[version], f"PDF_SPECS[{version}]")
+        cached = self._related_pdf_cache.get(version)
+        if cached is None:
+            try:
+                artifact, workbook = self._convert_pdf(file_url, specs[version])
+            except PdfSourceError as exc:
+                artifact, workbook = exc.artifact, None
+            self._related_pdf_cache[version] = (artifact, workbook)
+        else:
+            artifact, workbook = cached
+        self._related_conversion_artifacts[version] = artifact
+        if workbook is None:
+            raise PdfSourceError(artifact)
+        return workbook
+
+    def _related_file(self, version: str) -> AuditInput | None:
+        context = self.group_context
+        if context is None:
+            return None
+        for item in context.by_audit_id.values():
+            metadata = item.file_metadata or {}
+            if str(metadata.get("file_version_id") or item.audit_id) == version:
+                return item
+        return None
+
+    def _require_pdf_spec(self, spec: object, label: str) -> None:
+        from documents.pdf import PdfSpec, validate_pdf_spec
+
+        if not isinstance(spec, PdfSpec):
+            raise TypeError(f"{label} must be a PdfSpec")
+        validate_pdf_spec(spec)
+
+    def _convert_pdf(self, file_url: str, spec: PdfSpec) -> tuple[ConversionArtifact, Workbook]:
+        from documents.conversion import convert_pdf_to_excel_auto
+
+        from audit.engine.runtime import get_runtime
+
+        runtime = get_runtime()
+        file_ref = FileRef(location=file_url)
+        if runtime is not None:
+            artifact = runtime.convert_pdf_to_excel(file_ref, spec=spec, doc_type=self._doc_type)
+        else:
+            artifact = convert_pdf_to_excel_auto(file_ref, spec=spec, doc_type=self._doc_type)
+        if not artifact.success or not artifact.xlsx_path:
+            raise PdfSourceError(artifact)
+        workbook = load_excel_workbook(artifact.xlsx_path)
+        if not isinstance(workbook, Workbook):
+            raise TypeError(f"Expected openpyxl Workbook, got {type(workbook).__name__}")
+        return artifact, workbook
+
     def _check_sources(self, evidence: AuditEvidence | None) -> tuple[EvidenceSource, ...]:
         """Keep fluent cell reads. Conversion pages do not replace them."""
         if evidence is None:
@@ -627,24 +698,52 @@ class ExcelAgent(BaseAgent):
                 kept.append(source)
         return tuple(kept)
 
-    def _with_source_evidence(self, result: AuditResult) -> AuditResult:
-        artifact = self._conversion_artifact
-        if artifact is None:
-            return result
+    def _conversion_blocks(self, artifact: object) -> tuple[bool, str]:
+        from documents.contracts import ConversionArtifact
+
+        if not isinstance(artifact, ConversionArtifact):
+            return False, ""
+        if conversion_blocks_pass(artifact):
+            note = "预算用尽，不能判为通过。" if budget_exhausted(artifact) else "原件定位或转换未完成，不能判为通过"
+            return True, note
         evidence = evidence_from_conversion(artifact, file_version_id=self._file_version_label())
-        reads = self._check_sources(result.evidence)
-        diagnostics = evidence.diagnostics
-        if result.evidence is not None and any(item.code == "read_locations_truncated" for item in result.evidence.diagnostics):
-            diagnostics = diagnostics + tuple(item for item in result.evidence.diagnostics if item.code == "read_locations_truncated")
-        if reads or diagnostics != evidence.diagnostics:
-            evidence = evidence.model_copy(update={"sources": evidence.sources + reads, "diagnostics": diagnostics})
+        if any(item.severity == "error" for item in evidence.diagnostics):
+            return True, "原件定位或转换未完成，不能判为通过"
+        return False, ""
+
+    def _with_source_evidence(self, result: AuditResult) -> AuditResult:
+        artifacts = [item for item in [self._conversion_artifact, *self._related_conversion_artifacts.values()] if item is not None]
+        if not artifacts:
+            return result
+        evidence = result.evidence
         status = result.status
         suggestions = result.suggestions
-        location_gap = conversion_blocks_pass(artifact) or any(item.severity == "error" for item in diagnostics)
-        if status == "PASS" and location_gap:
-            status = "UNABLE"
-            note = "预算用尽，不能判为通过。" if budget_exhausted(artifact) else "原件定位或转换未完成，不能判为通过"
-            suggestions = f"{suggestions}；{note}" if suggestions else note
+        primary = self._conversion_artifact
+        if primary is not None:
+            evidence = evidence_from_conversion(primary, file_version_id=self._file_version_label())
+            reads = self._check_sources(result.evidence)
+            diagnostics = evidence.diagnostics
+            if result.evidence is not None and any(item.code == "read_locations_truncated" for item in result.evidence.diagnostics):
+                diagnostics = diagnostics + tuple(item for item in result.evidence.diagnostics if item.code == "read_locations_truncated")
+            if reads or diagnostics != evidence.diagnostics:
+                evidence = evidence.model_copy(update={"sources": evidence.sources + reads, "diagnostics": diagnostics})
+        for version, artifact in self._related_conversion_artifacts.items():
+            related = evidence_from_conversion(artifact, file_version_id=version)
+            if evidence is None:
+                evidence = related
+            else:
+                evidence = evidence.model_copy(
+                    update={
+                        "sources": evidence.sources + related.sources,
+                        "diagnostics": evidence.diagnostics + related.diagnostics,
+                        "conversion_strategies": tuple(dict.fromkeys(evidence.conversion_strategies + related.conversion_strategies)),
+                    }
+                )
+        for artifact in artifacts:
+            blocked, note = self._conversion_blocks(artifact)
+            if status == "PASS" and blocked:
+                status = "UNABLE"
+                suggestions = f"{suggestions}；{note}" if suggestions else note
         return result.model_copy(update={"status": status, "suggestions": suggestions, "evidence": evidence})
 
     def rule_ctx(self, workbook: Any) -> RuleContext:
@@ -705,12 +804,7 @@ class ExcelAgent(BaseAgent):
             return "ERR", normalized_message
 
         if not ctx.has_collected_ng():
-            if (
-                normalized_status == "PASS"
-                and type(self).CLAUSE_BOUND_CHECKS
-                and not ctx.questions()
-                and ctx.finished_scans_yielded_nothing()
-            ):
+            if normalized_status == "PASS" and type(self).CLAUSE_BOUND_CHECKS and not ctx.questions() and ctx.finished_scans_yielded_nothing():
                 empty_scope = ctx.empty_scope()
                 if empty_scope is not None:
                     return self._apply_scope(empty_scope[0], empty_scope[1], ctx)
@@ -766,13 +860,7 @@ class ExcelAgent(BaseAgent):
         if status == "PASS" and ctx.quantifier == "all":
             if not ctx.scope_is_complete():
                 empty_scope = ctx.empty_scope()
-                if (
-                    empty_scope is not None
-                    and empty_scope[0] == "PASS"
-                    and ctx.empty_range_confirmed()
-                    and not ctx.questions()
-                    and not ctx.has_unresolved()
-                ):
+                if empty_scope is not None and empty_scope[0] == "PASS" and ctx.empty_range_confirmed() and not ctx.questions() and not ctx.has_unresolved():
                     return "PASS", empty_scope[1]
                 return "UNABLE", self._scope_text("范围不完整，不能判为通过。", ctx)
             if ctx.has_unresolved():
@@ -782,12 +870,7 @@ class ExcelAgent(BaseAgent):
                 return "UNABLE", self._scope_text("含义未确认，不能判为通过。", ctx)
             if not ctx.has_witness():
                 empty_scope = ctx.empty_scope()
-                if (
-                    empty_scope is not None
-                    and empty_scope[0] == "PASS"
-                    and ctx.empty_range_confirmed()
-                    and not ctx.has_unresolved()
-                ):
+                if empty_scope is not None and empty_scope[0] == "PASS" and ctx.empty_range_confirmed() and not ctx.has_unresolved():
                     return "PASS", empty_scope[1]
                 return "UNABLE", self._scope_text("没有有效见证，不能判为通过。", ctx)
             if not ctx.scope_is_complete() and "未完成全量扫描" not in message:
@@ -834,7 +917,7 @@ class ExcelAgent(BaseAgent):
                     excerpt=ctx.cell_excerpt(version, sheet, row, column),
                 )
             )
-        diagnostics = ()
+        diagnostics: tuple[EvidenceDiagnostic, ...] = ()
         if ctx.cell_reads_truncated():
             diagnostics = (
                 EvidenceDiagnostic(
@@ -850,8 +933,8 @@ class ExcelAgent(BaseAgent):
         return AuditEvidence(
             required="structure",
             used="structure",
-            source_format=source_format,
-            prepared_format=prepared_format,
+            source_format=cast(Literal["xlsx", "xls", "xlsm", "pdf", "docx", "doc"], source_format),
+            prepared_format=cast(Literal["xlsx", "xls", "xlsm", "pdf", "docx"], prepared_format),
             sources=tuple(sources),
             diagnostics=diagnostics,
         )
@@ -891,6 +974,7 @@ class ExcelAgent(BaseAgent):
             )
 
         # 加载工作簿并执行规则检查
+        self._related_conversion_artifacts.clear()
         ctx: RuleContext | None = None
         try:
             workbook = self._load_workbook()
@@ -915,12 +999,7 @@ class ExcelAgent(BaseAgent):
             )
             empty_scope = ctx.empty_scope() if type(self).CLAUSE_BOUND_CHECKS else None
             empty_basis = None
-            if (
-                empty_scope is not None
-                and result == empty_scope[0]
-                and not ctx.has_scanned_row()
-                and (ctx.execution_count == 0 or ctx.finished_scans_yielded_nothing())
-            ):
+            if empty_scope is not None and result == empty_scope[0] and not ctx.has_scanned_row() and (ctx.execution_count == 0 or ctx.finished_scans_yielded_nothing()):
                 empty_basis = empty_scope[1]
 
             item = self.agent_rules[rule_no - 1] if rule_no <= len(self.agent_rules) else f"[{self.document_type_name}]规则检查-{rule_no}"
@@ -945,7 +1024,8 @@ class ExcelAgent(BaseAgent):
             )
 
         except PdfSourceError as exc:
-            self._conversion_artifact = exc.artifact
+            if not any(item is exc.artifact for item in self._related_conversion_artifacts.values()):
+                self._conversion_artifact = exc.artifact
             item = self.agent_rules[rule_no - 1] if 0 < rule_no <= len(self.agent_rules) else f"[{self.document_type_name}]规则检查-{rule_no}"
             return self._finalize_audit_result(
                 AuditResult(

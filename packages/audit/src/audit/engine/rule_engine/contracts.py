@@ -17,6 +17,7 @@ MarkerSource = int | str
 class Decision(str, Enum):
     NG = "NG"
     ERR = "ERR"
+    UNABLE = "UNABLE"
     IGNORE = "IGNORE"
 
 

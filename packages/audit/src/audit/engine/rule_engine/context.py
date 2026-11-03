@@ -33,6 +33,8 @@ class GuardStop(Exception):
 
     @property
     def status(self) -> str:
+        if self.decision == Decision.UNABLE:
+            return "UNABLE"
         return "ERR" if self.decision == Decision.ERR else "NG"
 
 

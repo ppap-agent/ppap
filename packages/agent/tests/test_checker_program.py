@@ -7,7 +7,7 @@ from agent.checker_program import input_digest
 from agent.checker_spec import CheckerArtifact
 from agent.client import DeepError
 from agent.execution.guest_model import ModelProtocolError
-from agent.protocol import ExecuteRequest
+from agent.protocol import ExecuteRequest, FrozenFile
 from agent.run import ExecutionContext
 from audit.contracts import AuditInput, RuleInput
 from audit.kinds import PpapDocumentType
@@ -276,9 +276,8 @@ def create_audit(audit_file, rule, group_context=None):
 def test_recomputing_an_observation_is_a_new_calculation() -> None:
     import json
 
-    from audit.storage_errors import ObjectExists
-
     from agent.checker_program import store_observation
+    from audit.storage_errors import ObjectExists
 
     class Once:
         def __init__(self) -> None:
@@ -303,7 +302,6 @@ def test_recomputing_an_observation_is_a_new_calculation() -> None:
     assert recomputed["observations"] == observation
     assert recomputed["computation_id"]
     assert first not in store.items or store.items[first] == store.items[first]
-
 
 
 def test_two_failed_trials_can_still_be_confirmed(tmp_path: Path) -> None:
@@ -462,10 +460,9 @@ def test_execute_checker_rejects_identity_changes_before_running(tmp_path: Path)
 
 
 def test_a_swapped_program_does_not_execute_under_the_same_input_digest(tmp_path: Path) -> None:
-    from pydantic import ValidationError
-
     from agent.checker_spec import program_digest
     from agent.execution.checker_guest import CheckerProgramError, execute_fixed_checker
+    from pydantic import ValidationError
 
     path = tmp_path / "target.xlsx"
     raw = workbook_bytes(path)
@@ -671,9 +668,7 @@ def test_a_pending_question_cannot_reach_the_product_as_pass_or_not_applicable()
     assert passed.findings[0].status == "UNABLE"
     assert "含义未确认，不能判为通过" in passed.findings[0].suggestions
     assert passed.coverage.clarifications[0]["id"] == "stamp"
-    assert passed.coverage.clarifications[0]["sources"] == [
-        {"document_id": "version-1", "locator": {"kind": "xlsx_cell", "sheet": "过程流程图", "cell": "A2"}, "excerpt": "焊接"}
-    ]
+    assert passed.coverage.clarifications[0]["sources"] == [{"document_id": "version-1", "locator": {"kind": "xlsx_cell", "sheet": "过程流程图", "cell": "A2"}, "excerpt": "焊接"}]
 
     skipped = mapped("NA")
     assert skipped.findings[0].status == "UNABLE"
@@ -1180,9 +1175,7 @@ def test_pdf_page_and_region_reach_the_product_finding_without_trace_verificatio
     source = response.findings[0].locator["semantic"]["sources"][0]
     assert source["file_version_id"] == "version-1"
     assert source["locator"] == {"kind": "pdf_page", "page": 3, "region": [0, 12, 400, 700]}
-    partial = evidence.model_copy(
-        update={"sources": (EvidenceSource(kind="structure", locator="file:version-1;page:4;region:[null, 10.5, null, 80.25]"),), "diagnostics": ()}
-    )
+    partial = evidence.model_copy(update={"sources": (EvidenceSource(kind="structure", locator="file:version-1;page:4;region:[null, 10.5, null, 80.25]"),), "diagnostics": ()})
     partial_result = result.model_copy(update={"evidence": partial, "suggestions": "已定位原件区域"})
     partial_response = checker_response(request().model_copy(update={"files": [frozen]}), [(frozen, [partial_result])])
     assert partial_response.findings[0].locator["semantic"]["sources"][0]["locator"] == {
@@ -1194,9 +1187,7 @@ def test_pdf_page_and_region_reach_the_product_finding_without_trace_verificatio
     assert response.findings[0].locator["semantic"]["diagnostics"][0]["code"] == "page_location_failed"
     assert response.findings[0].locator["semantic"]["sources"][0]["excerpt"] == ""
     assert response.coverage.verification is None
-    valued = evidence.model_copy(
-        update={"sources": (EvidenceSource(kind="structure", locator="file:version-1;page:3;region:[0, 12, 400, 700]", excerpt="0"),)}
-    )
+    valued = evidence.model_copy(update={"sources": (EvidenceSource(kind="structure", locator="file:version-1;page:3;region:[0, 12, 400, 700]", excerpt="0"),)})
     valued_result = result.model_copy(update={"evidence": valued, "status": "NG", "suggestions": "原值为 0", "checks_performed": 1})
     valued_response = checker_response(request().model_copy(update={"files": [frozen]}), [(frozen, [valued_result])])
     assert valued_response.findings[0].locator["semantic"]["sources"][0]["excerpt"] == "0"
@@ -1223,45 +1214,69 @@ def test_pdf_page_and_region_reach_the_product_finding_without_trace_verificatio
         assert "原件定位不在本次冻结文件中" in bad_response.findings[0].suggestions
 
 
-def test_a_pdf_target_keeps_its_suffix_inside_the_checker(tmp_path: Path) -> None:
+def test_a_pdf_without_text_does_not_start_the_model(tmp_path: Path) -> None:
     path = tmp_path / "source.pdf"
     raw = b"%PDF-1.4\n"
     path.write_bytes(raw)
-    program = """
-from audit.contracts import AuditResultItem
-
-class Item:
-    def __init__(self):
-        self.id = "R4"
-        self.category = "R4"
-        self.rule_to_check = "R4"
-        self.priority = "P1"
-
-class Check:
-    def __init__(self, audit_file):
-        self.rule_item = Item()
-        self.audit_file = audit_file
-    def check(self):
-        return AuditResultItem(classification="规则审核", item="R4", priority="P1", status="UNABLE", suggestions=self.audit_file.file_url, clause_id="R4")
-
-def create_audit(audit_file, rule, group_context=None):
-    class Audit:
-        checks = (Check(audit_file),)
-        def close(self):
-            return None
-    return Audit()
-"""
-    developer = ScriptedDeveloper([{"entrypoint": "checker:create_audit", "files": {"checker.py": program}}])
+    developer = ScriptedDeveloper([valid_draft()])
     host = SemanticRuntime(IsolatedRuntime(developer), MemoryObjects(), timeout=30)
     target = audit_file(path)
     artifact = host.adapt_checker(request(), target, rules(), raw, role="target", context=ExecutionContext())
 
-    assert "target.pdf" in developer.prompts[0]
-    assert str(path) not in developer.prompts[0]
+    assert developer.calls == 0
     results = host.execute_checker(request(), artifact, target, rules(), raw, role="target", context=ExecutionContext())
     assert results[0].status == "UNABLE"
-    assert results[0].suggestions.endswith("target.pdf")
+    assert "没有可用文字网格" in results[0].suggestions
     assert str(path) not in results[0].suggestions
+
+
+def test_a_preset_is_known_only_from_its_own_markers() -> None:
+    from agent.execution.checker_guest import _known_preset
+
+    assert _known_preset("过程流程图") is None
+    assert _known_preset("控制计划 零件号 工序") is None
+    matched = _known_preset("全功能检验报告")
+    assert matched is not None
+    assert matched[0] == "PPAP_1_DIMENSION_MEASUREMENT_REPORT_SPEC"
+
+
+def test_a_text_pdf_is_not_assigned_a_preset_by_document_type(tmp_path: Path) -> None:
+    import fitz
+
+    path = tmp_path / "plan.pdf"
+    document = fitz.open()
+    page = document.new_page()
+    page.insert_text((72, 72), "Control plan layout is not a preset")
+    document.save(path)
+    document.close()
+    raw = path.read_bytes()
+
+    class Stop:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+            self.input_tokens = 0
+            self.output_tokens = 0
+
+        def run(self, work: Path, prompt: str, schema, deadline: float, *, reasoning_effort: str):
+            del deadline, reasoning_effort
+            self.prompts.append(prompt)
+            assert "entrypoint" in schema.model_fields
+            candidate = (work / "template-pdf-spec.py").read_text()
+            assert "PdfSpec()" in candidate
+            assert "PPAP_" not in candidate
+            raise ModelProtocolError("stop")
+
+    developer = Stop()
+    host = SemanticRuntime(IsolatedRuntime(developer), MemoryObjects(), timeout=30)
+    with pytest.raises(DeepError) as caught:
+        host.adapt_checker(request(), audit_file(path), rules(), raw, role="target", context=ExecutionContext())
+
+    assert caught.value.code == "deep_model_protocol"
+    prompt = developer.prompts[0]
+    assert "不要按文档类型或文件名选择预设" in prompt
+    assert "PPAP_" not in prompt
+    assert "Control plan layout is not a preset" in prompt
+    assert str(path) not in prompt
 
 
 def test_confirmed_appendix_enters_development_and_execution(tmp_path: Path) -> None:
@@ -1312,7 +1327,7 @@ def test_development_prompt_names_framework_modules_and_hides_acceptance_samples
     assert "from audit.checkers.v3.excel_agent import ExcelAgent, rule" in prompt
     assert "from audit.engine.rule_engine.fluent import Table" in prompt
     assert "from documents.pdf import PdfSpec" in prompt
-    assert "PPAP_8_PROCESS_FLOW_CHART_SPEC" in prompt
+    assert "不要按文档类型或文件名选择预设" in prompt
     assert "/opt/agent/" not in prompt
     assert "tests/corpus" not in prompt
     assert str(path) not in prompt
@@ -1412,8 +1427,12 @@ def test_development_prompt_previews_a_related_workbook_and_a_pdf(tmp_path: Path
             self.output_tokens = 0
 
         def run(self, work: Path, prompt: str, schema, deadline: float, *, reasoning_effort: str):
-            del work, schema, deadline, reasoning_effort
+            del schema, deadline, reasoning_effort
             self.prompts.append(prompt)
+            template = (work / "template-pdf-spec.py").read_text(encoding="utf-8")
+            assert "related-pdf" in template
+            assert "没有可用文字网格" in template
+            assert "PPAP_" not in template
             raise ModelProtocolError("stop")
 
     developer = Stop()
@@ -1438,6 +1457,68 @@ def test_development_prompt_previews_a_related_workbook_and_a_pdf(tmp_path: Path
     assert "不要把这里的单元格记到目标文件" in prompt
     assert "关联文件 related-pdf，角色 reference" in prompt
     assert "这是 PDF。这里没有单元格预览。" in prompt
+    assert "# PDF 资源适配" in prompt
+    assert "template-pdf-spec.py" in prompt
+
+
+def test_related_pdf_requires_the_spec_for_its_file_version(tmp_path: Path) -> None:
+    from audit.checkers.v3.excel_agent import ExcelAgent
+    from audit.contracts import GroupContextInput
+    from documents.pdf import PdfSpec, StitchSpec
+
+    path = tmp_path / "target.xlsx"
+    workbook_bytes(path)
+    group = GroupContextInput(
+        by_audit_id={
+            "cp": AuditInput(audit_id="cp", file_url=str(tmp_path / "cp.pdf"), file_metadata={"file_version_id": "cp-1"}),
+        }
+    )
+    missing = ExcelAgent(audit_file(path), rules(), group)
+    with pytest.raises(ValueError, match=r"PDF_SPECS\[cp-1\]"):
+        missing.load_related_pdf("cp-1")
+
+    class Bad(ExcelAgent):
+        PDF_SPECS = {"cp-1": PdfSpec(stitch=StitchSpec(large_y_gap_ratio=2))}
+
+    with pytest.raises(ValueError, match="large_y_gap_ratio"):
+        Bad(audit_file(path), rules(), group).load_related_pdf("cp-1")
+
+
+def test_a_pdf_target_must_declare_its_own_spec(tmp_path: Path) -> None:
+    from agent.execution.checker_guest import CheckerTrialError, run_program
+
+    source = "\n".join(
+        [
+            "from audit.checkers.v3.excel_agent import ExcelAgent, rule",
+            "class TaskAudit(ExcelAgent):",
+            "    CLAUSE_BOUND_CHECKS = True",
+            "    @rule('标题', clause_id='1')",
+            "    def check_clause(self, ctx):",
+            "        del ctx",
+            "        return 'PASS', 'ok'",
+            "def create_audit(audit_file, rule, group_context=None):",
+            "    return TaskAudit(audit_file, rule, group_context)",
+        ]
+    )
+    pdf = tmp_path / "plan.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    audit = AuditInput(audit_id="plan.pdf", file_url=str(pdf), file_metadata={"file_version_id": "plan-1"})
+    rule = RuleInput(rule_id="plan", rules=[{"id": "1", "category": "标题", "rule_to_check": "有标题"}])
+    with pytest.raises(CheckerTrialError, match="PDF_SPEC"):
+        run_program({"checker.py": source.encode()}, tmp_path / "program", audit, rule, None)
+
+
+def test_a_related_pdf_gap_cannot_remain_pass(tmp_path: Path) -> None:
+    from audit.checkers.v3.excel_agent import ExcelAgent
+    from audit.contracts import AuditResultItem
+    from documents.contracts import ConversionArtifact
+
+    path = tmp_path / "target.xlsx"
+    workbook_bytes(path)
+    agent = ExcelAgent(audit_file(path), rules(), None)
+    agent._related_conversion_artifacts["related-1"] = ConversionArtifact(success=False)
+    updated = agent._with_source_evidence(AuditResultItem(classification="规则审核", item="条款", priority="P0", status="PASS", suggestions="看起来通过"))
+    assert updated.status == "UNABLE"
 
 
 def test_an_unchanged_template_is_not_fixed(tmp_path: Path) -> None:
@@ -1457,6 +1538,7 @@ def test_an_unchanged_template_is_not_fixed(tmp_path: Path) -> None:
             self.prompts.append(prompt)
             template = work / "template-checker.py"
             assert template.is_file()
+            assert not (work / "template-pdf-spec.py").exists()
             assert not (work / "checker.py").exists()
             if self.calls == 1:
                 return schema.model_validate({"entrypoint": "checker:create_audit", "files": {"checker.py": template.read_text(encoding="utf-8")}})
@@ -1470,7 +1552,8 @@ def test_an_unchanged_template_is_not_fixed(tmp_path: Path) -> None:
 
     assert caught.value.code == "deep_model_protocol"
     assert developer.calls == 2
-    assert "条款 R4 没有对应的检查入口" in developer.prompts[1]
+    assert "PDF 的观察与表格建模" not in developer.prompts[0]
+    assert "模板尚未实现本次条款" in developer.prompts[1]
     assert host.objects.items == {}
 
 
@@ -1655,7 +1738,7 @@ def create_audit(audit_file, rule, group_context=None):
     assert "条款 B1 试跑失败" in developer.prompts[1]
     assert "缺原件位置 page:4" in developer.prompts[1]
     assert "B2|UNABLE" in developer.prompts[1]
-    assert "已完成条款的 NG、UNABLE 或 NA 不要改成 PASS" in developer.prompts[1]
+    assert "修复读取或实现错误后，按同一规则重新判断" in developer.prompts[1]
     assert "这些结果只说明程序跑完，不说明业务判断正确。" in developer.prompts[2]
     assert "B1|UNABLE" in developer.prompts[2]
     assert "B2|UNABLE" in developer.prompts[2]
@@ -1699,9 +1782,40 @@ def test_review_can_read_the_current_program_before_confirming(tmp_path: Path) -
 
     assert developer.calls == 2
     assert developer.current == VALID_PROGRAM
-    assert "current-checker.py" not in developer.prompt
+    assert "current-checker.py" in developer.prompt
     assert "R4|UNABLE" in developer.prompt
     assert artifact.files["checker.py"] == VALID_PROGRAM.encode()
+
+
+def test_develop_checker_forwards_reasoning_effort(tmp_path: Path) -> None:
+    from agent.execution.checker_guest import develop_checker
+
+    path = tmp_path / "target.xlsx"
+    workbook_bytes(path)
+    seen: list[str] = []
+
+    class EffortDeveloper:
+        input_tokens = 0
+        output_tokens = 0
+
+        def run(self, work: Path, prompt: str, schema, deadline: float, *, reasoning_effort: str):
+            del work, prompt, deadline
+            seen.append(reasoning_effort)
+            return schema.model_validate(valid_draft())
+
+    develop_checker(
+        audit_file=audit_file(path),
+        rule=rules(),
+        group_context=None,
+        digest="c" * 64,
+        executor_revision=REVISION,
+        runner=EffortDeveloper(),
+        work=tmp_path / "adapt",
+        deadline=10**12,
+        reasoning_effort="high",
+    )
+
+    assert seen == ["high", "high"]
 
 
 def test_a_failed_revision_does_not_fix_the_unconfirmed_program(tmp_path: Path) -> None:
@@ -1784,6 +1898,7 @@ def test_the_last_successful_trial_is_not_fixed_without_confirmation(tmp_path: P
         rule_body=body,
     )
     spec = request().model_copy(update={"files": [frozen]})
+
     class StopBeforeConfirmation:
         def __init__(self) -> None:
             self.calls = 0
@@ -1838,7 +1953,10 @@ def create_audit(audit_file, rule, group_context=None):
             return None
     return Audit()
 """
-    fixed = partial_program.replace('raise RuntimeError("B should wait")', 'return AuditResultItem(classification="规则审核", item="B", priority="P1", status="NA", suggestions="B不适用", clause_id="B")')
+    fixed = partial_program.replace(
+        'raise RuntimeError("B should wait")',
+        'return AuditResultItem(classification="规则审核", item="B", priority="P1", status="NA", suggestions="B不适用", clause_id="B")',
+    )
     rule = RuleInput(
         rule_id="same-rule",
         rule_profile="v3",
@@ -1941,8 +2059,9 @@ def create_audit(audit_file, rule, group_context=None):
     return Audit()
 """
     narrowed = shared.replace(
-        "        return AuditResultItem(classification=\"规则审核\", item=self.rule_item.id, priority=\"P1\", status=\"UNABLE\", suggestions=\"已看过\", clause_id=self.rule_item.id)",
-        "        if self.rule_item.id == \"B\":\n            raise RuntimeError(\"B should wait\")\n        return AuditResultItem(classification=\"规则审核\", item=\"A\", priority=\"P1\", status=\"UNABLE\", suggestions=\"只看了A\", clause_id=\"A\")",
+        '        return AuditResultItem(classification="规则审核", item=self.rule_item.id, priority="P1", status="UNABLE", suggestions="已看过", clause_id=self.rule_item.id)',
+        '        if self.rule_item.id == "B":\n            raise RuntimeError("B should wait")\n'
+        '        return AuditResultItem(classification="规则审核", item="A", priority="P1", status="UNABLE", suggestions="只看了A", clause_id="A")',
     )
     rule = RuleInput(
         rule_id="same-rule",
@@ -2134,8 +2253,9 @@ def create_audit(audit_file, rule, group_context=None):
 """
     revised = first.replace("初稿", "修订后仍只试跑 A").replace('raise RuntimeError("B")', 'raise RuntimeError("B")')
     revised = revised.replace(
-        "return AuditResultItem(classification=\"规则审核\", item=self.rule_item.id, priority=\"P1\", status=\"UNABLE\", suggestions=\"修订后仍只试跑 A\", clause_id=self.rule_item.id)",
-        "if self.rule_item.id == \"B\":\n            raise RuntimeError(\"B should wait\")\n        return AuditResultItem(classification=\"规则审核\", item=\"A\", priority=\"P1\", status=\"NG\", suggestions=\"修订后仍只试跑 A\", clause_id=\"A\")",
+        'return AuditResultItem(classification="规则审核", item=self.rule_item.id, priority="P1", status="UNABLE", suggestions="修订后仍只试跑 A", clause_id=self.rule_item.id)',
+        'if self.rule_item.id == "B":\n            raise RuntimeError("B should wait")\n'
+        '        return AuditResultItem(classification="规则审核", item="A", priority="P1", status="NG", suggestions="修订后仍只试跑 A", clause_id="A")',
     )
     rule = RuleInput(
         rule_id="same-rule",

@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import copy
+import hashlib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -16,7 +20,7 @@ from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "output"
-HOME = ROOT / ".grok"
+LAB_HOME = ROOT / ".grok"
 MODEL = "grok-4.7"
 EFFORT = "xhigh"
 
@@ -49,9 +53,9 @@ def _config_text() -> str:
 
 def ensure_home() -> None:
     """Create the shared home only when it has no config. Never replace an existing model menu."""
-    HOME.mkdir(mode=0o700, exist_ok=True)
-    (HOME / "skills").mkdir(exist_ok=True)
-    config = HOME / "config.toml"
+    LAB_HOME.mkdir(mode=0o700, exist_ok=True)
+    (LAB_HOME / "skills").mkdir(exist_ok=True)
+    config = LAB_HOME / "config.toml"
     if config.exists():
         return
     config.write_text(_config_text())
@@ -63,9 +67,9 @@ def _role(seq: str) -> str:
     return kind.value[1] if kind is not None else seq
 
 
-def prepare(recipe: str, bundle: str, file_name: str, effort: str) -> tuple[Path, dict[str, str]]:
+def prepare(recipe: str, bundle: str, file_name: str, effort: str, *, variant: str = "original", source: Path | None = None) -> tuple[Path, dict[str, str] | None]:
     template = ROOT / "recipes" / recipe / "prompt.md"
-    if not template.is_file():
+    if recipe != "checker" and not template.is_file():
         raise SystemExit(f"missing recipe {template}")
     grouped = build_bundle_map(load_poc_cases())
     cases = grouped[bundle]
@@ -87,15 +91,50 @@ def prepare(recipe: str, bundle: str, file_name: str, effort: str) -> tuple[Path
             destination = files / f"{item.file_seq}-{item.file_path.name}"
         shutil.copy2(item.file_path, destination)
         copied[item.file_name] = str(destination.relative_to(work))
-    target = copied[case.file_name]
-    related = "\n".join(f"- {_role(item.file_seq)}: {copied[item.file_name]}" for item in cases if item.file_name != case.file_name)
-    rules = "\n".join(f"{index}. {case.expected[index].rule_desc}" for index in sorted(case.expected))
-    prompt = template.read_text(encoding="utf-8").format(target=target, related=related or "无", rules=rules)
-    (work / "prompt.txt").write_text(prompt, encoding="utf-8")
+    if source is not None:
+        destination = files / ("input-" + source.name)
+        shutil.copy2(source, destination)
+        previous = work / copied[file_name]
+        if previous != destination:
+            previous.unlink()
+        copied[file_name] = str(destination.relative_to(work))
+    if variant in {"renamed-sheet", "shifted-table"}:
+        from openpyxl import load_workbook
+
+        target_path = work / copied[case.file_name]
+        if target_path.suffix.lower() not in {".xlsx", ".xlsm"}:
+            raise SystemExit("layout variants require an Excel target")
+        workbook = load_workbook(target_path)
+        for index, sheet in enumerate(workbook.worksheets, 1):
+            if variant == "renamed-sheet":
+                sheet.title = f"供应商资料{index}"
+                continue
+            if any(cell.data_type == "f" for row in sheet for cell in row):
+                raise SystemExit("shifted-table requires formula-free input")
+            merges = [copy.copy(merged) for merged in sheet.merged_cells.ranges]
+            if any(merged.min_row < 2 <= merged.max_row for merged in merges):
+                raise SystemExit("shifted-table cannot split a merged cell at row 2")
+            for merged in merges:
+                sheet.unmerge_cells(str(merged))
+            sheet.insert_rows(2, 20)
+            for merged in merges:
+                if merged.min_row >= 2:
+                    merged.shift(row_shift=20)
+                sheet.merge_cells(str(merged))
+        workbook.save(target_path)
+        workbook.close()
+    if recipe != "checker":
+        target = copied[case.file_name]
+        related = "\n".join(f"- {_role(item.file_seq)}: {copied[item.file_name]}" for item in cases if item.file_name != case.file_name)
+        rules = "\n".join(f"{index}. {case.expected[index].rule_desc}" for index in sorted(case.expected))
+        prompt = template.read_text(encoding="utf-8").format(target=target, related=related or "无", rules=rules)
+        (work / "prompt.txt").write_text(prompt, encoding="utf-8")
     (work / "case.json").write_text(
         json.dumps(
             {
                 "recipe": recipe,
+                "variant": variant,
+                "source_override": str(source.resolve()) if source else None,
                 "model": MODEL,
                 "reasoning_effort": effort,
                 "bundle": bundle,
@@ -110,15 +149,15 @@ def prepare(recipe: str, bundle: str, file_name: str, effort: str) -> tuple[Path
         encoding="utf-8",
     )
     expected = {str(index): case.expected[index].status for index in sorted(case.expected)}
-    return work, expected
+    return work, None if source else expected
 
 
-def run_grok(work: Path, effort: str) -> int:
+def run_grok(work: Path, effort: str, *, max_turns: int = 16, timeout: float = 900) -> int:
     grok = shutil.which("grok")
     if grok is None:
         raise SystemExit("grok is not on PATH")
     env = os.environ.copy()
-    env["GROK_HOME"] = str(HOME)
+    env["GROK_HOME"] = str(LAB_HOME)
     env["GROK_MEMORY"] = "0"
     env["GROK_DISABLE_AUTOUPDATER"] = "1"
     venv_bin = ROOT / ".venv" / "bin"
@@ -139,26 +178,269 @@ def run_grok(work: Path, effort: str) -> int:
         "--output-format",
         "streaming-messages-json",
         "--max-turns",
-        "16",
+        str(max_turns),
         "--sandbox",
         "off",
         "--permission-mode",
         "bypassPermissions",
     ]
     with (work / "stdout.jsonl").open("xb") as stdout, (work / "stderr.log").open("xb") as stderr:
-        completed = subprocess.run(command, cwd=work, env=env, stdout=stdout, stderr=stderr, timeout=900)
-    return completed.returncode
+        process = subprocess.Popen(command, cwd=work, env=env, stdout=stdout, stderr=stderr, start_new_session=True)
+        try:
+            return process.wait(timeout=timeout)
+        finally:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
 
 
-def score(work: Path, expected: dict[str, str]) -> dict:
+def _rule_input(case):
+    from audit.contracts import RuleInput
+
+    kind = POC_SEQ_TO_DOC_TYPE.get(case.file_seq)
+    return RuleInput(
+        rule_id=case.file_name,
+        rule_profile="v3",
+        type=kind.get_type_name() if kind is not None else None,
+        rules=[
+            {
+                "id": str(index),
+                "category": "",
+                "priority": "P0",
+                "rule_to_check": case.expected[index].rule_desc,
+                "type_of_rule": "",
+            }
+            for index in sorted(case.expected)
+        ],
+    )
+
+
+def _checker_context(bundle: str, work: Path, copied: dict[str, str]):
+    grouped = build_bundle_map(load_poc_cases())
+    cases = grouped[bundle]
+    context = build_group_context_for_bundle(cases)
+
+    def bound(item):
+        return item.model_copy(
+            update={
+                "file_url": str((work / copied[item.audit_id]).resolve()),
+                "file_metadata": {
+                    **(item.file_metadata or {}),
+                    "file_version_id": item.audit_id,
+                    "original_filename": Path(copied[item.audit_id]).name,
+                    "sha256": hashlib.sha256((work / copied[item.audit_id]).read_bytes()).hexdigest(),
+                },
+            }
+        )
+
+    return context.model_copy(
+        update={
+            "by_doc_type": {key: [bound(item) for item in rows] for key, rows in context.by_doc_type.items()},
+            "by_audit_id": {key: bound(item) for key, item in context.by_audit_id.items()},
+            "rules_by_id": {item.file_name: _rule_input(item) for item in cases},
+        }
+    )
+
+
+class _CheckerRunner:
+    """Host grok for one development trial. Does not use the Linux container runtime."""
+
+    def __init__(self, effort: str, max_turns: int = 128) -> None:
+        self.effort = effort
+        self.max_turns = max_turns
+        self.input_tokens = 0
+        self.output_tokens = 0
+
+    def run(self, work: Path, prompt: str, schema, deadline: float, *, reasoning_effort: str):
+        from agent.execution.guest_model import ModelProtocolError, read_checker_draft
+
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Model deadline exceeded")
+        (work / "prompt.txt").write_text(prompt, encoding="utf-8")
+        timeout = max(1.0, min(2400.0, deadline - time.monotonic()))
+        code = run_grok(work, reasoning_effort, max_turns=self.max_turns, timeout=timeout)
+        terminal = _terminal(work / "stdout.jsonl")
+        usage = _usage(work / "stdout.jsonl")
+        self.input_tokens += usage[0]
+        self.output_tokens += usage[1]
+        if terminal is None:
+            raise ModelProtocolError(f"model terminal receipt missing (exit {code})")
+        return read_checker_draft(work, schema, terminal)
+
+
+def _terminal(path: Path) -> dict | None:
+    if not path.is_file():
+        return None
+    found = None
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and obj.get("type") == "result":
+            found = obj
+    return found
+
+
+def _usage(path: Path) -> tuple[int, int]:
+    usage = _result_field(path, "usage")
+    if not isinstance(usage, dict):
+        return 0, 0
+    return int(usage.get("input_tokens") or 0), int(usage.get("output_tokens") or 0)
+
+
+def _result_field(path: Path, key: str):
+    return (_terminal(path) or {}).get(key)
+
+
+def _execution_revision() -> str:
+    hasher = hashlib.sha256()
+    for package in ("agent", "audit", "documents"):
+        for path in sorted((ROOT / "packages" / package / "src").rglob("*")):
+            if path.is_file() and path.suffix in {".py", ".md"}:
+                hasher.update(str(path.relative_to(ROOT)).encode())
+                hasher.update(path.read_bytes())
+    return "lab-" + hasher.hexdigest()
+
+
+def run_checker(work: Path, bundle: str, file_name: str, effort: str, *, prior_path: Path | None = None, max_turns: int = 128) -> int:
+    from agent.checker_program import adapt, execute
+    from agent.checker_spec import CheckerArtifact
+    from agent.client import DeepError
+
+    revision = _execution_revision()
+    prior = CheckerArtifact.model_validate_json(prior_path.read_bytes()) if prior_path is not None else None
+    copied = json.loads((work / "case.json").read_text(encoding="utf-8"))["files"]
+    context = _checker_context(bundle, work, copied)
+    audit_file = context.by_audit_id[file_name]
+    rule = context.rules_by_id[file_name]
+    raw = Path(audit_file.file_url).read_bytes()
+    deadline = time.monotonic() + 40 * 60
+    try:
+        artifact = adapt(
+            audit_file,
+            rule,
+            context,
+            file_bytes=raw,
+            file_sha256=hashlib.sha256(raw).hexdigest(),
+            role=_role(json.loads((work / "case.json").read_text(encoding="utf-8"))["seq"]),
+            executor_revision=revision,
+            runner=_CheckerRunner(effort, max_turns),
+            work=work,
+            deadline=deadline,
+            reasoning_effort=effort,
+            prior=prior,
+        )
+        (work / "artifact.json").write_text(artifact.model_dump_json(indent=2), encoding="utf-8")
+        results = execute(
+            artifact,
+            audit_file,
+            rule,
+            context,
+            file_bytes=raw,
+            file_sha256=hashlib.sha256(raw).hexdigest(),
+            role=_role(json.loads((work / "case.json").read_text(encoding="utf-8"))["seq"]),
+            executor_revision=revision,
+            work=work / "execute",
+        )
+    except (DeepError, TimeoutError, OSError) as exc:
+        detail = str(exc.__cause__) if exc.__cause__ is not None else str(exc)
+        (work / "checker-error.txt").write_text(f"{type(exc).__name__}: {exc}\n{detail}", encoding="utf-8")
+        return 1
+    full = [item.model_dump(mode="json") for item in results]
+    (work / "execution.json").write_text(
+        json.dumps(
+            {
+                "executor_revision": revision,
+                "input_digest": artifact.input_digest,
+                "program_digest": artifact.program_digest,
+                "results": full,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    replay = subprocess.run(
+        [sys.executable, str(Path(__file__).resolve()), "--replay", str(work)],
+        cwd=ROOT,
+        env={key: value for key, value in os.environ.items() if key in {"PATH", "PYTHONPATH", "LANG", "TMPDIR"}},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if replay.returncode:
+        (work / "replay-error.txt").write_text(replay.stderr[-4000:], encoding="utf-8")
+
+    payload = {"checks": [{"id": str(item.clause_id), "status": str(item.status).upper(), "reason": item.suggestions} for item in results if str(item.clause_id or "").strip()]}
+    (work / "result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return replay.returncode
+
+
+def replay_checker(work: Path) -> int:
+    """Reload saved bytes in a fresh process with relocated input files and no model grant."""
+    from agent.checker_program import execute
+    from agent.checker_spec import CheckerArtifact
+
+    case = json.loads((work / "case.json").read_text(encoding="utf-8"))
+    artifact = CheckerArtifact.model_validate_json((work / "artifact.json").read_bytes())
+    replay_work = work / "replay"
+    replay_work.mkdir()
+    for relative in case["files"].values():
+        destination = replay_work / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(work / relative, destination)
+    context = _checker_context(case["bundle"], replay_work, case["files"])
+    target = context.by_audit_id[case["target"]]
+    raw = Path(target.file_url).read_bytes()
+    results = execute(
+        artifact,
+        target,
+        context.rules_by_id[case["target"]],
+        context,
+        file_bytes=raw,
+        file_sha256=hashlib.sha256(raw).hexdigest(),
+        role=_role(case["seq"]),
+        executor_revision=_execution_revision(),
+        work=replay_work / "execute",
+    )
+    full = [item.model_dump(mode="json") for item in results]
+    first = json.loads((work / "execution.json").read_text(encoding="utf-8"))
+    matched = first["results"] == full
+    (work / "replay.json").write_text(
+        json.dumps(
+            {
+                "replay_matches": matched,
+                "program_digest": artifact.program_digest,
+                "input_digest": artifact.input_digest,
+                "results": full,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return 0 if matched else 1
+
+
+def score(work: Path, expected: dict[str, str] | None) -> dict:
     path = work / "result.json"
     if not path.is_file():
         report = {"match": False, "error": "no result.json", "checks": []}
+    elif expected is None:
+        report = {"match": None, "scored": False, "checks": [], "reason": "new source has no oracle"}
     else:
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-            actual = {str(item["id"]): str(item["status"]).upper() for item in payload["checks"]}
-        except (OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            items = payload["checks"]
+            if not isinstance(items, list) or not expected:
+                raise ValueError("empty expectation or invalid checks")
+            actual = {str(item["id"]): str(item["status"]).upper() for item in items}
+            if len(actual) != len(items):
+                raise ValueError("duplicate clause result")
+        except (OSError, UnicodeError, ValueError, KeyError, TypeError) as exc:
             report = {"match": False, "error": type(exc).__name__, "checks": []}
         else:
             rows = []
@@ -186,27 +468,42 @@ def _selected(bundle: str, seq: str, file_name: str, run_all: bool):
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--recipe", default="basic")
+    parser.add_argument("--replay", type=Path, help="Replay a saved checker run without a model")
     parser.add_argument("--bundle", default="Blanc Spoiler-有特殊特性清单")
     parser.add_argument("--seq", default="11")
     parser.add_argument("--file", default="")
     parser.add_argument("--all", action="store_true")
+    parser.add_argument("--source", type=Path, help="Adapt the selected rules to a new file; do not reuse its old oracle")
+    parser.add_argument("--prior", type=Path, help="Fixed checker artifact to diagnose and adapt to the new input")
+    parser.add_argument("--variant", choices=["original", "renamed-sheet", "shifted-table"], default="original")
     parser.add_argument("--effort", default=EFFORT, choices=["xhigh", "high", "medium", "low"])
+    parser.add_argument("--max-turns", type=int, default=128, help="Model turns per checker development stage (1-128)")
     args = parser.parse_args()
+    if not 1 <= args.max_turns <= 128:
+        raise SystemExit("--max-turns must be between 1 and 128")
+    if args.replay is not None:
+        raise SystemExit(replay_checker(args.replay.resolve()))
     load_dotenv(ROOT / ".env")
     ensure_home()
     selected = _selected(args.bundle, args.seq, args.file, args.all)
+    if (args.prior or args.source or args.variant != "original") and (args.recipe != "checker" or len(selected) != 1):
+        raise SystemExit("--prior/--source/--variant require one checker case")
     summary = []
     for index, case in enumerate(selected, start=1):
         print(f"[{index}/{len(selected)}] {case.bundle_id} {case.file_name}", flush=True)
         try:
-            work, expected = prepare(args.recipe, case.bundle_id, case.file_name, args.effort)
-            code = run_grok(work, args.effort)
+            work, expected = prepare(args.recipe, case.bundle_id, case.file_name, args.effort, variant=args.variant, source=args.source)
+            if args.recipe == "checker":
+                code = run_checker(work, case.bundle_id, case.file_name, args.effort, prior_path=args.prior, max_turns=args.max_turns)
+            else:
+                code = run_grok(work, args.effort)
             report = score(work, expected)
             row = {
                 "bundle": case.bundle_id,
                 "file": case.file_name,
                 "work": str(work),
-                "match": report["match"],
+                "match": None if report["match"] is None else report["match"] and code == 0,
+                "executed": code == 0,
                 "exit": code,
             }
             if code != 0:
@@ -219,20 +516,22 @@ def main() -> None:
             print(json.dumps(row, ensure_ascii=False), flush=True)
         summary.append(row)
     matched = sum(1 for row in summary if row["match"])
+    succeeded = all(row.get("executed") and row["match"] is not False for row in summary)
     totals = {
         "recipe": args.recipe,
         "effort": args.effort,
         "model": MODEL,
+        "max_turns": args.max_turns,
         "cases": len(summary),
         "matched": matched,
+        "executed": sum(bool(row.get("executed")) for row in summary),
         "results": summary,
     }
     destination = OUTPUT / args.recipe / args.effort / "summary.json"
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(json.dumps(totals, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps({"cases": len(summary), "matched": matched, "summary": str(destination)}, ensure_ascii=False), flush=True)
-    if matched != len(summary):
-        raise SystemExit(1)
+    raise SystemExit(0 if succeeded else 1)
 
 
 if __name__ == "__main__":

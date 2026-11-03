@@ -7,22 +7,27 @@ import importlib.util
 import sys
 import time
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 from typing import Any, Protocol, TypeVar
 from uuid import UUID, uuid4
 
 from audit.contracts import AuditInput, AuditResultItem, GroupContextInput, RuleInput
+from audit.engine.runtime import bind_runtime
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from agent.checker_spec import CheckerArtifact, CheckerJobSpec, CheckerProgramBundle, program_digest
+from agent.execution.checker_context import write_starting_point
+from agent.execution.checker_runtime import CheckerRuntime
 from agent.execution.guest_model import ModelProtocolError
 
 T = TypeVar("T", bound=BaseModel)
 MAX_TRIALS = 6
 MAX_FILE_BYTES = 256 * 1024
 GUIDE = Path(__file__).resolve().parents[1] / "skill" / "references" / "checker-development.md"
-TEMPLATE = Path(__file__).resolve().parents[1] / "skill" / "references" / "checker-template.py"
+PDF_GUIDE = Path(__file__).resolve().parents[1] / "skill" / "references" / "pdf-reading.md"
 
 
 class CheckerProgramError(ValueError):
@@ -46,6 +51,9 @@ class CheckerDraft(BaseModel):
     entrypoint: str = Field(pattern=r"^checker:create_audit$")
     files: dict[str, str]
     clauses: list[str] = Field(default_factory=list)
+    # A typed runner may submit a draft directly. File readers must distinguish
+    # explicit completion from files recovered after an interrupted model call.
+    submitted: bool = True
 
 
 def _encoded(value: object) -> bytes:
@@ -87,43 +95,42 @@ def _validate_source(files: dict[str, str]) -> dict[str, bytes]:
     return encoded
 
 
-def _drop_task_path(directory: Path) -> None:
-    try:
-        sys.path.remove(str(directory))
-    except ValueError:
-        pass
+def _load_module(name: str, path: Path) -> ModuleType:
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None:
+        raise CheckerTrialError(f"无法加载 {path.name}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    # Execute the submitted bytes, even when a directory is reused within the
+    # filesystem timestamp resolution. Cached .pyc files are not program inputs.
+    exec(compile(path.read_bytes(), str(path), "exec"), module.__dict__)
+    return module
 
 
-def _load_factory(directory: Path) -> tuple[Callable, str]:
+def _load_factory(directory: Path) -> tuple[Callable, str, ModuleType | None]:
     module_name = f"ppap_task_checker_{uuid4().hex}"
-    sys.modules.pop("resources", None)
-    sys.path.insert(0, str(directory))
+    previous_resource = sys.modules.pop("resources", None)
     try:
-        spec = importlib.util.spec_from_file_location(module_name, directory / "checker.py")
-        if spec is None or spec.loader is None:
-            raise CheckerTrialError("无法加载 checker.py")
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[module_name] = module
-        spec.loader.exec_module(module)
+        if (directory / "resources.py").is_file():
+            _load_module("resources", directory / "resources.py")
+        module = _load_module(module_name, directory / "checker.py")
         factory = getattr(module, "create_audit", None)
         if not callable(factory):
             raise CheckerTrialError("程序缺少 create_audit")
     except CheckerTrialError:
-        sys.modules.pop(module_name, None)
-        sys.modules.pop("resources", None)
-        _drop_task_path(directory)
+        _release_module(module_name, previous_resource)
         raise
     except Exception as exc:
-        sys.modules.pop(module_name, None)
-        sys.modules.pop("resources", None)
-        _drop_task_path(directory)
+        _release_module(module_name, previous_resource)
         raise CheckerTrialError(f"程序无法加载: {type(exc).__name__}: {exc}") from None
-    return factory, module_name
+    return factory, module_name, previous_resource
 
 
-def _release_module(module_name: str) -> None:
+def _release_module(module_name: str, previous_resource: ModuleType | None) -> None:
     sys.modules.pop(module_name, None)
     sys.modules.pop("resources", None)
+    if previous_resource is not None:
+        sys.modules["resources"] = previous_resource
 
 
 def _fault_detail(exc: Exception) -> str:
@@ -159,68 +166,71 @@ def run_program(
     only_clauses: list[str] | None = None,
 ) -> list[AuditResultItem]:
     directory.mkdir(parents=True, exist_ok=True)
+    if "resources.py" not in files:
+        (directory / "resources.py").unlink(missing_ok=True)
     for name, content in files.items():
         target = directory / name
         if target.name != name:
             raise CheckerTrialError("程序路径无效")
         target.write_bytes(content)
-    factory, module_name = _load_factory(directory)
-    audit = None
-    try:
+    with bind_runtime(CheckerRuntime()):
+        factory, module_name, previous_resource = _load_factory(directory)
+        audit = None
         try:
-            audit = factory(audit_file, rule, group_context)
-        except TypeError:
-            audit = factory(audit_file, rule)
-        checks = getattr(audit, "checks", None)
-        if not checks:
-            raise CheckerTrialError("程序没有检查项。类必须设置 CLAUSE_BOUND_CHECKS = True，并用 @rule 的 clause_id 绑定每个生效条款。")
-        results: list[AuditResultItem] = []
-        selected = set(only_clauses) if only_clauses is not None else None
-        ran = False
-        for checker in checks:
-            clause_id = str(getattr(getattr(checker, "rule_item", None), "id", "") or "").strip()
-            if selected is not None and clause_id not in selected:
-                continue
-            ran = True
-            binding_error = str(getattr(checker, "binding_error", "") or "").strip()
-            if binding_error and not isolate_faults:
-                clause_id = str(getattr(getattr(checker, "rule_item", None), "id", "") or "").strip() or "?"
-                raise CheckerTrialError(f"条款 {clause_id} 绑定错误: {binding_error}; {_result_brief(results)}")
             try:
-                result = checker.check()
-                if result is None:
-                    result = _missing_clause_result(checker)
-                results.append(AuditResultItem.model_validate(result.model_dump()))
-            except CheckerTrialError:
-                raise
-            except (AttributeError, ValidationError) as exc:
-                if isolate_faults:
-                    results.append(_fault_result(checker, exc))
+                audit = factory(audit_file, rule, group_context)
+            except TypeError:
+                audit = factory(audit_file, rule)
+            _require_authored_pdf_spec(audit, audit_file)
+            checks = getattr(audit, "checks", None)
+            if not checks:
+                raise CheckerTrialError("程序没有检查项。类必须设置 CLAUSE_BOUND_CHECKS = True，并用 @rule 的 clause_id 绑定每个生效条款。")
+            results: list[AuditResultItem] = []
+            selected = set(only_clauses) if only_clauses is not None else None
+            ran = False
+            for checker in checks:
+                clause_id = str(getattr(getattr(checker, "rule_item", None), "id", "") or "").strip()
+                if selected is not None and clause_id not in selected:
                     continue
-                clause_id = str(getattr(getattr(checker, "rule_item", None), "id", "") or "").strip() or "?"
-                raise CheckerTrialError(f"条款 {clause_id} 检查结果无效: {_fault_detail(exc)}; {_result_brief(results)}") from None
-            except Exception as exc:
-                if isolate_faults:
-                    results.append(_fault_result(checker, exc))
-                    continue
-                clause_id = str(getattr(getattr(checker, "rule_item", None), "id", "") or "").strip() or "?"
-                raise CheckerTrialError(f"条款 {clause_id} 试跑失败: {_fault_detail(exc)}; {_result_brief(results)}") from None
-        if selected is not None and not ran:
-            raise CheckerTrialError(f"局部试跑没有命中检查入口: {', '.join(only_clauses or [])}")
-        return results
-    except CheckerTrialError:
-        raise
-    except Exception as exc:
-        raise CheckerTrialError(f"试跑失败: {type(exc).__name__}: {exc}") from None
-    finally:
-        close = getattr(audit, "close", None)
-        if callable(close):
-            try:
-                close()
-            except Exception:
-                pass
-        _release_module(module_name)
-        _drop_task_path(directory)
+                ran = True
+                binding_error = str(getattr(checker, "binding_error", "") or "").strip()
+                if binding_error and not isolate_faults:
+                    clause_id = str(getattr(getattr(checker, "rule_item", None), "id", "") or "").strip() or "?"
+                    raise CheckerTrialError(f"条款 {clause_id} 绑定错误: {binding_error}; {_result_brief(results)}")
+                try:
+                    result = checker.check()
+                    if result is None:
+                        result = _missing_clause_result(checker)
+                    results.append(AuditResultItem.model_validate(result.model_dump()))
+                except CheckerTrialError:
+                    raise
+                except (AttributeError, ValidationError) as exc:
+                    if isolate_faults:
+                        results.append(_fault_result(checker, exc))
+                        continue
+                    clause_id = str(getattr(getattr(checker, "rule_item", None), "id", "") or "").strip() or "?"
+                    raise CheckerTrialError(f"条款 {clause_id} 检查结果无效: {_fault_detail(exc)}; {_result_brief(results)}") from None
+                except Exception as exc:
+                    if isolate_faults:
+                        results.append(_fault_result(checker, exc))
+                        continue
+                    clause_id = str(getattr(getattr(checker, "rule_item", None), "id", "") or "").strip() or "?"
+                    raise CheckerTrialError(f"条款 {clause_id} 试跑失败: {_fault_detail(exc)}; {_result_brief(results)}") from None
+            if selected is not None and not ran:
+                raise CheckerTrialError(f"局部试跑没有命中检查入口: {', '.join(only_clauses or [])}")
+            return results
+        except CheckerTrialError:
+            raise
+        except Exception as exc:
+            raise CheckerTrialError(f"试跑失败: {type(exc).__name__}: {exc}") from None
+        finally:
+            close = getattr(audit, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+            _release_module(module_name, previous_resource)
 
 
 def _result_brief(results: list[AuditResultItem]) -> str:
@@ -387,11 +397,17 @@ def _workbook_preview(file_url: str, *, max_sheets: int = 2, max_rows: int = 6) 
     return "\n".join(lines)[:2000]
 
 
-def _development_previews(audit_file: AuditInput, group_context: GroupContextInput | None) -> str:
+def _development_previews(
+    audit_file: AuditInput,
+    group_context: GroupContextInput | None,
+    converted: Mapping[str, str] | None = None,
+) -> str:
     """Preview the target and related files. Related cells stay on their own file."""
     blocks: list[str] = []
-    target_version = str((audit_file.file_metadata or {}).get("file_version_id") or audit_file.audit_id)
-    target = _workbook_preview(str(audit_file.file_url or ""))
+    converted_paths = converted or {}
+    target_version = _file_version(audit_file)
+    target_path = converted_paths.get(target_version) or str(audit_file.file_url or "")
+    target = _workbook_preview(target_path)
     if target:
         blocks.append(f"目标文件 {target_version}\n{target}")
     if group_context is not None:
@@ -401,7 +417,8 @@ def _development_previews(audit_file: AuditInput, group_context: GroupContextInp
                 blocks.append("还有更多关联文件，预览没有列出。")
                 break
             item = group_context.by_audit_id[audit_id]
-            preview = _workbook_preview(str(item.file_url or ""), max_sheets=1, max_rows=4)
+            version = _file_version(item)
+            preview = _workbook_preview(converted_paths.get(version) or str(item.file_url or ""), max_sheets=1, max_rows=4)
             if not preview:
                 continue
             role = str((item.file_metadata or {}).get("role") or "")
@@ -411,7 +428,7 @@ def _development_previews(audit_file: AuditInput, group_context: GroupContextInp
 
 
 def _input_view(audit_file: AuditInput, group_context: GroupContextInput | None) -> dict[str, object]:
-    related: list[dict[str, str]] = []
+    related: list[dict[str, object]] = []
     if group_context is not None:
         for audit_id in sorted(group_context.by_audit_id):
             item = group_context.by_audit_id[audit_id]
@@ -501,7 +518,7 @@ def _partial_feedback(clause_ids: list[str], results: list[AuditResultItem]) -> 
         (
             f"本次已有结果的条款：{', '.join(clause_ids)}",
             _result_brief(results),
-            "不要把已完成条款的 NG、UNABLE 或 NA 改成 PASS。",
+            "修复读取或实现错误后可以改变判定；业务标准仍以本次条款为准。",
         )
     )
 
@@ -534,7 +551,7 @@ def _review_feedback(results: list[AuditResultItem]) -> str:
             "上次试跑结果：",
             _result_brief(results),
             "这些结果只说明程序跑完，不说明业务判断正确。",
-            "不要把已完成条款的 NG、UNABLE 或 NA 改成 PASS。",
+            "修复读取或实现错误后可以改变判定；业务标准仍以本次条款为准。",
         )
     )
 
@@ -548,10 +565,13 @@ def _prompt(
     appendix: list[dict[str, Any]] | None = None,
     *,
     feedback_kind: str | None = None,
+    layout: PdfLayout | None = None,
+    starting_point: str = "",
 ) -> str:
     guide = GUIDE.read_text(encoding="utf-8")
     parts = [
         guide,
+        starting_point,
         "",
         "本次生效条款：",
         _encoded({"rules": rule.model_dump(mode="json")["rules"]}).decode(),
@@ -559,7 +579,7 @@ def _prompt(
         "本次文件：",
         _encoded(_input_view(audit_file, group_context)).decode(),
     ]
-    preview = _development_previews(audit_file, group_context)
+    preview = _development_previews(audit_file, group_context, None if layout is None else layout.previews)
     if preview:
         parts.extend(["", preview])
     confirmed = list(appendix or [])
@@ -572,9 +592,220 @@ def _prompt(
     elif feedback and feedback_kind == "partial":
         parts.extend(["", feedback])
     elif feedback:
-        parts.extend(["", "上次试跑失败：", feedback[:2000], "已完成条款的 NG、UNABLE 或 NA 不要改成 PASS。"])
+        parts.extend(["", "上次试跑失败：", feedback[:6000], "修复读取或实现错误后，按同一规则重新判断；保留修订依据。"])
     parts.extend(["", "NG、UNABLE 和 NA 可以是最终结果。不要为了让全部条款变成 PASS 而修改判断。"])
+    if layout is not None:
+        parts.extend(["", PDF_GUIDE.read_text(encoding="utf-8"), "", layout.instructions])
     return "\n".join(parts)
+
+
+def _require_authored_pdf_spec(audit: object, audit_file: AuditInput) -> None:
+    """A Deep program must name the target PDF layout. Presets are not applied implicitly."""
+    if not _is_pdf(str(audit_file.file_url or "")):
+        return
+    defined = type(audit).__dict__.get("PDF_SPEC", None)
+    if defined is None:
+        raise CheckerTrialError("目标 PDF 缺少类属性 PDF_SPEC。不要依赖自动预设。")
+    from documents.pdf import PdfSpec, validate_pdf_spec
+
+    if not isinstance(defined, PdfSpec):
+        raise CheckerTrialError("PDF_SPEC 必须是 PdfSpec")
+    try:
+        validate_pdf_spec(defined)
+    except ValueError as exc:
+        raise CheckerTrialError(f"PDF_SPEC 不合法: {exc}") from None
+
+
+def _is_pdf(file_url: str) -> bool:
+    return str(file_url or "").lower().split("?", 1)[0].endswith(".pdf")
+
+
+NO_TEXT_REASON = "PDF 没有可用文字网格，不能审核"
+
+
+@dataclass
+class PdfLayout:
+    snippet: str
+    previews: dict[str, str]
+    instructions: str
+
+
+def _file_version(audit_file: AuditInput) -> str:
+    return str((audit_file.file_metadata or {}).get("file_version_id") or audit_file.audit_id)
+
+
+def _pdf_documents(audit_file: AuditInput, group_context: GroupContextInput | None) -> list[tuple[str, str, bool]]:
+    found: list[tuple[str, str, bool]] = []
+    if _is_pdf(str(audit_file.file_url or "")):
+        found.append((_file_version(audit_file), str(audit_file.file_url or ""), True))
+    if group_context is None:
+        return found
+    for audit_id in sorted(group_context.by_audit_id):
+        item = group_context.by_audit_id[audit_id]
+        if item.audit_id == audit_file.audit_id or not _is_pdf(str(item.file_url or "")):
+            continue
+        found.append((_file_version(item), str(item.file_url or ""), False))
+    return found
+
+
+def _pdf_text(path: str) -> str:
+    file = Path(path)
+    if not file.is_file():
+        return ""
+    try:
+        from documents.extractors.pdf import PDFExtractor
+
+        pages = PDFExtractor().extract_pages_text(file.read_bytes())
+    except Exception:
+        return ""
+    return "\n".join(page.strip() for page in pages if page and page.strip())
+
+
+def _preset_catalog() -> tuple[tuple[str, Any], ...]:
+    import documents.pdf as pdf
+
+    found: list[tuple[str, Any]] = []
+    for name in sorted(dir(pdf)):
+        if not name.startswith("PPAP_") or not name.endswith("_SPEC"):
+            continue
+        value = getattr(pdf, name)
+        if isinstance(value, pdf.PdfSpec):
+            found.append((name, value))
+    return tuple(found)
+
+
+def _known_preset(text: str) -> tuple[str, Any] | None:
+    """A preset is known only when its own markers occur in this file. Document type is not used."""
+    from documents.pdf._grouping import _matches_rule, _normalize_rule, _normalize_text
+
+    normalized = _normalize_text(text)
+    if not normalized:
+        return None
+    matches: list[tuple[str, Any]] = []
+    for name, spec in _preset_catalog():
+        rules = spec.grouping.section_rules
+        markers = tuple(marker.strip() for marker in spec.grouping.title_markers if marker.strip())
+        rule_match = False
+        for rule in rules:
+            normalized_rule = _normalize_rule(rule)
+            tokens = normalized_rule.any_of + normalized_rule.all_of
+            if not _matches_rule(normalized, normalized_rule):
+                continue
+            if any(len(token) >= 4 and token in normalized for token in tokens):
+                rule_match = True
+                break
+        marker_match = bool(markers) and all(len(_normalize_text(marker)) >= 4 and _normalize_text(marker) in normalized for marker in markers)
+        if rules and not rule_match:
+            continue
+        if markers and not marker_match:
+            continue
+        if not rules and not markers:
+            continue
+        matches.append((name, spec))
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def _safe_stem(version: str) -> str:
+    cleaned = "".join(char if char.isalnum() or char in "-_" else "_" for char in version)[:80]
+    return cleaned or "pdf"
+
+
+def _workbook_has_value(path: Path) -> bool:
+    from openpyxl import load_workbook
+
+    book = load_workbook(path, read_only=True, data_only=False)
+    try:
+        for sheet in book.worksheets:
+            for row in sheet.iter_rows(max_row=200, max_col=40, values_only=True):
+                if any(cell not in (None, "") for cell in row):
+                    return True
+    finally:
+        book.close()
+    return False
+
+
+def _convert_grid(path: str, spec: Any, work: Path, version: str) -> tuple[bool, str, str | None]:
+    """Convert with the given spec only. Do not fall back to OCR or a document-type preset."""
+    from documents.pdf import convert_pdf_to_excel
+
+    destination = work / "converted" / f"{_safe_stem(version)}.xlsx"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        convert_pdf_to_excel(path, str(destination), spec=spec)
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}", None
+    if not destination.is_file() or not _workbook_has_value(destination):
+        return False, "转换后没有可用表格", None
+    return True, "", str(destination)
+
+
+def _unable_checker(reason: str) -> str:
+    """Use the existing single-check contract without opening an unreadable PDF."""
+    return f"""from audit.contracts import AuditResultItem, RuleItem
+from audit.engine.checkers.rule_check import RuleCheck
+from documents.pdf import PdfSpec
+
+class TaskAudit:
+    PDF_SPEC = PdfSpec()
+    def __init__(self, audit_file, rule, group_context=None):
+        self.checks = tuple(RuleCheck(RuleItem.model_validate({{"category": "", "rule_to_check": "", "type_of_rule": "", **row}}), lambda row=row: AuditResultItem(
+            classification="规则审核", item=row.get("category") or row.get("rule_to_check") or row["id"],
+            priority=row.get("priority") or "P0", status="UNABLE", suggestions={reason!r}, clause_id=row["id"],
+        )) for row in rule.rules)
+    def close(self):
+        pass
+
+def create_audit(audit_file, rule, group_context=None):
+    return TaskAudit(audit_file, rule, group_context)
+"""
+
+
+def _prepare_pdf_layout(
+    audit_file: AuditInput,
+    group_context: GroupContextInput | None,
+    work: Path,
+) -> PdfLayout | None:
+    """Native observations and suggested specs; the checker loop can revise both."""
+    documents = _pdf_documents(audit_file, group_context)
+    if not documents:
+        return None
+    previews: dict[str, str] = {}
+    notes: list[str] = []
+    lines = ["from documents.pdf import PdfSpec", "", "SPECS = {}"]
+    for version, path, is_target in documents:
+        text = _pdf_text(path)
+        if not text.strip():
+            if is_target:
+                raise _TargetUnread(NO_TEXT_REASON)
+            note = f"{version} 没有可用文字网格。依赖它且未能读取的条款保持 UNABLE。"
+            notes.append(note)
+            lines.append(f"# {note}")
+            continue
+        notes.append(f"文件 {version} 的原生文字预览（最多 6000 字，非完整范围）：\n{text[:6000]}")
+        preset = _known_preset(text)
+        if preset is None:
+            lines.append(f"SPECS[{version!r}] = PdfSpec()  # 初始配置，按这份原件修订")
+            continue
+        ok, detail, preview = _convert_grid(path, preset[1], work, version)
+        if ok and preview is not None:
+            previews[version] = preview
+            lines.extend([f"from documents.pdf import {preset[0]}", f"SPECS[{version!r}] = {preset[0]}"])
+        else:
+            lines.append(f"SPECS[{version!r}] = PdfSpec()")
+            notes.append(f"{version} 的候选预设转换失败：{detail[:500]}")
+    notes.append("预设只由文件自身标记提供候选；不要按文档类型或文件名选择预设。非空表格不证明列、范围和原件映射正确。")
+    snippet = "\n".join(lines) + "\n"
+    return PdfLayout(
+        snippet=snippet,
+        previews=previews,
+        instructions="PDF 配置与 checker 在同一个循环中修订。template-pdf-spec.py 是候选；修改资源后重新转换并完整试跑。\n" + "\n\n".join(notes),
+    )
+
+
+class _TargetUnread(CheckerTrialError):
+    """The target PDF has no usable text grid. Do not start or continue the checker model."""
 
 
 def develop_checker(
@@ -590,7 +821,10 @@ def develop_checker(
     prior_files: dict[str, str] | None = None,
     appendix: list[dict[str, Any]] | None = None,
     observations: list[str] | None = None,
+    reasoning_effort: str = "medium",
 ) -> CheckerArtifact:
+    if reasoning_effort not in {"xhigh", "high", "medium", "low"}:
+        raise CheckerProgramError("不支持的 reasoning effort")
     _clause_ids(rule)
     spec = CheckerJobSpec(execution_id=UUID(int=0), operation="adapt-checker", input_digest=digest, executor_revision=executor_revision)
     execution_id = spec.expected_execution_id()
@@ -602,6 +836,7 @@ def develop_checker(
     accepted_brief: str | None = None
     accepted_questions: list[str] = []
     previous_files: dict[str, str] | None = None
+    latest_files: dict[str, str] | None = prior_files
 
     def seal(encoded_files: dict[str, bytes], requests: int) -> CheckerArtifact:
         artifact = CheckerArtifact(input_digest=digest, executor_revision=executor_revision, entrypoint="checker:create_audit", files=encoded_files)
@@ -625,27 +860,48 @@ def develop_checker(
         )
         return artifact
 
+    try:
+        layout = _prepare_pdf_layout(audit_file, group_context, work)
+    except _TargetUnread as exc:
+        encoded = _validate_source({"checker.py": _unable_checker(str(exc))})
+        run_program(encoded, work / "unable-program", audit_file, rule, group_context)
+        return seal(encoded, 0)
+    if prior_files:
+        try:
+            prior_results = run_program(_validate_source(prior_files), work / "prior-trial", audit_file, rule, group_context)
+            _require_coverage(prior_results, rule)
+            feedback = "旧程序在本次输入上的诊断（尚未确认，仍须核对本次规则和文件）：\n" + _result_brief(prior_results)
+        except CheckerProgramError as exc:
+            feedback = str(exc)
+        feedback_kind = "failure"
+        previous_files = dict(prior_files)
+
     for trial in range(MAX_TRIALS):
         if time.monotonic() >= deadline:
             raise TimeoutError("Deep deadline exceeded")
         stage = work / f"trial-{trial}"
         stage.mkdir(parents=True, exist_ok=True)
-        if accepted_files is not None:
-            for name, source in accepted_files.items():
+        if latest_files is not None:
+            for name, source in latest_files.items():
                 (stage / f"current-{name}").write_text(source, encoding="utf-8")
-        (stage / "template-checker.py").write_text(TEMPLATE.read_text(encoding="utf-8"), encoding="utf-8")
+        starting_point = write_starting_point(stage, audit_file, rule)
+        if latest_files is not None:
+            starting_point += "\n先读取 current-checker.py 和 current-resources.py（若存在）。这是最近候选，按下面诊断继续修改；它尚未固定。"
+        if layout is not None:
+            (stage / "template-pdf-spec.py").write_text(layout.snippet, encoding="utf-8")
         try:
             draft = runner.run(
                 stage,
-                _prompt(rule, feedback, prior_files, audit_file, group_context, appendix, feedback_kind=feedback_kind),
+                _prompt(rule, feedback, prior_files if trial == 0 else None, audit_file, group_context, appendix, feedback_kind=feedback_kind, layout=layout, starting_point=starting_point),
                 CheckerDraft,
                 deadline,
-                reasoning_effort="medium",
+                reasoning_effort=reasoning_effort,
             )
         except ModelProtocolError:
             if accepted_encoded is None:
                 raise
             raise CheckerProgramError("确认轮没有返回程序，不能固定") from None
+        latest_files = dict(draft.files)
         try:
             selection = _trial_selection(list(draft.clauses), rule)
         except CheckerTrialError as exc:
@@ -659,12 +915,14 @@ def develop_checker(
             feedback_kind = "failure"
             last_error = exc
             continue
-        if selection is None and accepted_files is not None and draft.files == accepted_files and accepted_encoded is not None:
+        if draft.submitted and selection is None and accepted_files is not None and draft.files == accepted_files and accepted_encoded is not None:
             return seal(accepted_encoded, trial + 1)
         if _resources_changed(previous_files, draft.files) or _shared_definition_changed(previous_files, draft.files):
             selection = None
         previous_files = dict(draft.files)
         try:
+            if draft.files.get("checker.py") == (stage / "template-checker.py").read_text(encoding="utf-8"):
+                raise CheckerTrialError("模板尚未实现本次条款，不能固定")
             encoded = _validate_source(draft.files)
             results = run_program(
                 encoded,

@@ -344,10 +344,12 @@ def convert_pdf_to_excel_auto(
     enable_cache: bool = True,
     doc_type: object | None = None,
     spec: PdfSpec | None = None,
+    allow_ocr: bool = True,
 ) -> ConversionArtifact:
     """Convert PDF to local xlsx path using fixed backend order."""
     conversion_started_at = time.perf_counter()
     ref = _to_file_ref(file_ref)
+    backends = PDF_CONVERSION_BACKEND_SEQUENCE if allow_ocr else (BACKEND_MANUAL_LINEGRID,)
     resolved_doc_type = _normalize_doc_type(doc_type)
     if spec is not None:
         profile_name, manual_linegrid_spec, profile_doc_seq = "task", spec, None
@@ -358,7 +360,7 @@ def convert_pdf_to_excel_auto(
         profile_name, manual_linegrid_spec, profile_doc_seq = _resolve_manual_linegrid_profile(ref.location)
     diagnostics: dict[str, object] = {
         "location": ref.location,
-        "conversion_backend_order": list(PDF_CONVERSION_BACKEND_SEQUENCE),
+        "conversion_backend_order": list(backends),
         "conversion_attempts": [],
         "fallback_ocr_triggered": False,
         "manual_linegrid_spec_label": profile_name,
@@ -420,7 +422,7 @@ def convert_pdf_to_excel_auto(
     first_error_code = ""
     last_error: dict[str, object] = {}
 
-    for idx, backend in enumerate(PDF_CONVERSION_BACKEND_SEQUENCE):
+    for idx, backend in enumerate(backends):
         attempt_started_at = time.perf_counter()
 
         if backend == BACKEND_OCR:
@@ -488,7 +490,7 @@ def convert_pdf_to_excel_auto(
         if not first_error_code:
             first_error_code = str(last_error.get("error_code", "") or "")
 
-    final_backend = PDF_CONVERSION_BACKEND_SEQUENCE[-1]
+    final_backend = backends[-1]
     diagnostics["conversion_attempts"] = attempts
     diagnostics["conversion_backend"] = final_backend
     diagnostics["final_strategy_used"] = final_backend

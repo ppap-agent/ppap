@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field, ValidationError
 from agent.execution.secure_files import read_json, read_regular, reject_constant, unique_object
 
 T = TypeVar("T", bound=BaseModel)
-ReasoningEffort = Literal["xhigh", "medium", "low"]
+ReasoningEffort = Literal["xhigh", "high", "medium", "low"]
 # Research runners still import this allow-list. The product runner must not pass it:
 # --tools removes every built-in that is not named.
 GROK_TOOL_ALIASES = ("Read", "Bash", "Write", "TaskOutput", "TaskStop")
@@ -86,17 +86,36 @@ def _with_trial_clauses(drafted: T | None, receipt: object) -> T | None:
     """Attach a named trial set. A malformed set must not become a full run."""
     if not isinstance(receipt, dict) or "clauses" not in receipt:
         return drafted
-    if (
-        drafted is None
-        or receipt.get("completed") is not True
-        or receipt.get("artifact") != "checker.py"
-        or set(receipt) - {"completed", "artifact", "clauses"}
-    ):
+    if drafted is None or receipt.get("completed") is not True or receipt.get("artifact") != "checker.py" or set(receipt) - {"completed", "artifact", "clauses"}:
         raise ModelProtocolError("Invalid artifact completion receipt")
     raw = receipt["clauses"]
     if not isinstance(raw, list) or not raw or any(not isinstance(item, str) or not item.strip() for item in raw):
         raise ModelProtocolError("invalid trial clauses")
     return drafted.model_copy(update={"clauses": [item.strip() for item in raw]})
+
+
+def read_checker_draft(work: Path, schema: type[T], terminal: dict[str, Any] | None = None) -> T:
+    """Both the lab and isolated runner read exactly the submitted program bytes."""
+    drafted = _draft_from_program_files(work, schema)
+    raw_receipt = (terminal or {}).get("result", "")
+    narrative_completion = False
+    try:
+        receipt = json.loads(raw_receipt, object_pairs_hook=unique_object, parse_constant=reject_constant)
+    except (ValueError, TypeError):
+        receipt = None
+        if isinstance(raw_receipt, str) and raw_receipt.lstrip().startswith(("{", "[")):
+            raise ModelProtocolError("Invalid checker receipt") from None
+        narrative_completion = isinstance(raw_receipt, str) and bool(raw_receipt.strip())
+    if isinstance(receipt, dict) and "clauses" in receipt:
+        drafted = _with_trial_clauses(drafted, receipt)
+    if drafted is None:
+        subtype = str((terminal or {}).get("subtype") or "missing_artifact")
+        raise ModelProtocolError(f"checker.py missing or invalid ({subtype})")
+    if "submitted" in schema.model_fields:
+        valid_receipt = isinstance(receipt, dict) and receipt.get("completed") is True and receipt.get("artifact") == "checker.py" and not set(receipt) - {"completed", "artifact", "clauses"}
+        submitted = (terminal or {}).get("subtype") == "success" and (terminal or {}).get("is_error") is not True and (valid_receipt or narrative_completion)
+        drafted = drafted.model_copy(update={"submitted": submitted})
+    return drafted
 
 
 class GrokRunner:
@@ -137,23 +156,13 @@ class GrokRunner:
         except ModelProtocolError:
             if not checker_stage:
                 raise
-            drafted = _draft_from_program_files(work, schema)
-            if drafted is None:
-                raise
-            return drafted
+            return read_checker_draft(work, schema)
+        if checker_stage:
+            return read_checker_draft(work, schema, terminal)
         try:
             receipt = json.loads(terminal.get("result", ""), object_pairs_hook=unique_object, parse_constant=reject_constant)
         except (ValueError, TypeError):
             receipt = None
-        if checker_stage:
-            drafted = _draft_from_program_files(work, schema)
-            if isinstance(receipt, dict) and "clauses" in receipt:
-                drafted = _with_trial_clauses(drafted, receipt)
-            if isinstance(receipt, dict) and receipt == {"completed": True, "artifact": "checker.py"} and drafted is not None:
-                return drafted
-            if drafted is not None:
-                return drafted
-            raise ModelProtocolError("Invalid artifact completion receipt")
         if not isinstance(receipt, dict) or receipt.get("completed") is not True or receipt != {"completed": True, "artifact": artifact}:
             raise ModelProtocolError("Invalid artifact completion receipt")
         try:
