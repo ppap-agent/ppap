@@ -74,6 +74,7 @@ class Controller:
         protocol_revision: str = DEEP_PROTOCOL_REVISION,
         authorize: Callable[[ExecuteRequest], None] | None = None,
         readiness: Callable[[], bool] | None = None,
+        configuration: dict[str, str] | None = None,
     ):
         self.runtime = runtime
         self.file_source = file_source
@@ -81,6 +82,7 @@ class Controller:
         self.protocol_revision = str(protocol_revision or "").strip() or DEEP_PROTOCOL_REVISION
         self.authorize = authorize
         self.readiness = readiness
+        self.configuration = dict(configuration) if configuration is not None else None
 
     def handle(self, spec: ExecuteRequest, context: ExecutionContext | None = None) -> ExecuteResponse:
         context = context or ExecutionContext()
@@ -146,6 +148,8 @@ class Controller:
         return result
 
     def handle_raw(self, payload: dict, context: ExecutionContext | None = None) -> dict:
+        if payload == {"op": "configuration"} and self.configuration is not None:
+            return {"op": "configuration", "configuration": dict(self.configuration)}
         if payload == {"op": "ready"}:
             # Local observation only: never authorize, read files, or execute work.
             try:

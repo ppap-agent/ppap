@@ -23,8 +23,9 @@ from uuid import uuid4
 from agent.execution.gateway import local_gateway
 from agent.execution.guest import Manifest
 from agent.execution.isolation.container import ContainerRuntime, RuntimeConfig
-from audit.policy import GROK_VERSION
+from audit.policy import PI_VERSION
 from audit.protocol import ControllerFault, DocumentRef, RuleRef, SnapshotSpec, SubmissionSpec
+
 COMPLETED_EVENT = b'data: {"type":"response.completed","response":{"usage":{"input_tokens":3,"output_tokens":5}}}\n\n'
 
 
@@ -51,9 +52,9 @@ def request_model(work: Path, *, incomplete_response: bool = False, request_inpu
 
 
 def make_runtime(root: Path) -> ContainerRuntime:
-    grok = root / "grok-version"
-    grok.write_text(f"#!/bin/sh\necho 'grok {GROK_VERSION} test-only'\n")
-    grok.chmod(0o700)
+    pi = root / "pi-version"
+    pi.write_text(f"#!/bin/sh\necho '{PI_VERSION}'\n")
+    pi.chmod(0o700)
     return ContainerRuntime(
         RuntimeConfig(
             state=root / "state",
@@ -63,7 +64,7 @@ def make_runtime(root: Path) -> ContainerRuntime:
             model_revision="0" * 64,
             app_revision="0" * 40,
             sandbox_profile="off",
-            grok_executable=grok,
+            agent_executable=pi,
         )
     )
 
@@ -353,7 +354,6 @@ class ContainerJournalTests(unittest.TestCase):
             self.assertEqual(still_failed.exception.code, "MODEL_PROTOCOL_ERROR")
             spawn.assert_not_called()
         self.assertEqual(self.provider.request.call_count, 2)
-
 
 
 if __name__ == "__main__":

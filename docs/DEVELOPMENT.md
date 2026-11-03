@@ -11,6 +11,7 @@
 配置值按显式 `Settings(...)` 参数、进程环境、显式指定的 dotenv 文件、默认值依次取值。代码字段名和环境变量别名遵循同一优先级；显式 `False`、空字符串、空来源列表不能被较低优先级的值替换。`pydantic-settings` 最低为 2.12.0，以使用其别名合并修复；不在本项目另建配置合并层。
 
 - Secret 只通过本地 gitignored `.env`、GitHub Secrets 或部署 Secret 注入。
+- Deep 可独立设置 `PPAP_DEEP_LLM_BASE_URL`、`PPAP_DEEP_LLM_MODEL`、`PPAP_DEEP_LLM_API_KEY`，base URL 与 model 必须同时提供；专用 API key 只给 Controller。API、Worker 和 Controller 使用相同的非敏感策略；未设置时沿用 `LLM_*`。这些覆盖值不改变 Standard 模型。Pi 通过现有 Responses 网关使用短期执行授权，真实 provider key 不进入 guest。
 - 已提交的 `.env.dev` 填 isolated-dev Settings 默认值；[`.env.production`](../.env.production) 填生产仍可沿用的默认值，口令、S3 endpoint、公开 URL 和 LLM 留空。生产不能沿用 isolated-dev 口令和 `http://127.0.0.1:9000`。
 - 生产 compose 用 Docker Compose 的 `--env-file` 注入。CI fixture 是 `deploy/compose.env.example`。真实部署把填好密钥的文件交给同一个 `--env-file`。`init-db` 读取 bootstrap/migrator 口令，先用 `psql` 执行 `migrations/bootstrap.sql`，再通过 `sh /migrations/apply.sh` 按 `NNNN_*.sql` 文件名顺序执行 product migrations；`init-bucket` 用 Silo `mcli` 确保对象桶。API/Worker 只插值各自拥有的字段（含选定的 `PPAP_PG_HOST`/`PPAP_PG_PORT`，以及 API 的飞书变量），不含 bootstrap/migrator 或对方角色口令。
 - isolated-dev Compose 默认关闭业务收费，避免无飞书授权的浏览器流程测试调用真实计费；需要验证收费时显式设置 `PPAP_USAGE_CHARGE_ENABLED=true` 并提供额度接口。此默认值不改变生产 Compose 或 Settings 的收费政策。
@@ -146,9 +147,9 @@ CI 以项目原生 metadata / lockfile 为 authority，不再另写一套安装�
 
   第三方依赖先仅凭根 metadata/lockfile 安装（`--no-install-workspace`），再复制源码并安装非 editable 工作区包；两步共用 BuildKit uv cache mount，下载缓存不进入镜像层。`.dockerignore` 排除各层测试目录，测试改动不影响生产构建缓存。缓存跨云效 runner 的复用由构建平台决定，不能保证 cache mount 在新 runner 上仍存在；现有 inline layer cache 保留。
 - `deploy/web/Dockerfile` 的 `node:22-alpine` 与 `deploy/isolated-dev/web-dev.yaml` 的 `node:22-bookworm` 仍写在镜像 tag 里。
-- `deploy/deep/package.json` 与 `package-lock.json` 拥有 `@xai-official/grok@1.0.70`。镜像用 `npm ci` 安装，`npm audit signatures` 校验 registry 签名，`verify-grok.mjs` 只固定解压后的 guest 二进制。运行时版本检查与执行修订使用 `audit.policy.GROK_VERSION`，须与部署依赖版本一致。
+- `deploy/deep/package.json` 与 `package-lock.json` 固定 `@earendil-works/pi-coding-agent@1.5.0`。Deep 镜像使用固定 digest 的 Node.js 22.22.0、`npm ci --ignore-scripts` 和 `npm audit signatures`，并执行 `pi-runner.test.mjs` 的离线协议测试。运行时版本检查与执行修订使用 `audit.policy.PI_VERSION`，须与部署依赖版本一致。
 
-CI 依赖 capability，而不是发行版。workflow 可以安装 uv/Python、Node、Corepack/pnpm 和项目依赖；不得用 `sudo` / `apt` / `yum` / `apk` / `systemctl` 修复 runner，也不得安装或启动 Docker。Python modules 的 services variant、Schema、Corpus PSW、Product integration 和 InsForge lifecycle 要求 runner 已提供 Docker Engine、Compose 和 Buildx；缺任一能力时 fail-fast 输出 `runner does not satisfy ppap-docker capability`。Web、无 PostgreSQL 的 Python modules 和普通 Corpus 不要求 Docker。Repository contract 需要 Docker Engine、Compose 和 Buildx：`docker compose config`、`docker buildx bake --check`/`--print`、nginx 黑盒、Kustomize 与 kubeconform。`actionlint` 1.7.7 检查 workflow 语法。InsForge static config 仍由 `verify-config.mjs` 调用 `docker compose config`。live InsForge lifecycle 需要 `local start` 使用的 runtime Docker capability，只在 InsForge 相关 path、手动 dispatch 或每周 schedule 上运行。LLM / Feishu readiness 是真实外部 probe，手动 dispatch 或每周 schedule，不进 `CI Gate`。Product integration 对同一 `PPAP_BUILD_SHA` 只 `docker buildx bake` 一次，生产 runtime/backup 与 isolated-dev E2E 复用这些镜像（E2E 使用 `compose up --no-build`）。PSW 是 Corpus matrix 的 purpose-built container variant，单独 `docker buildx bake worker` 后从 worker 派生测试镜像。CI Compose 使用 `ppap-ci-<purpose>-<run_id>-<run_attempt>` 作为 project name，cleanup 在独立 `if: always()` step。现有 Compose stack 仍 bind-mount 仓库内 `migrations/`，因此 services、Schema、Product integration 和 InsForge lifecycle 需要 Docker daemon 能看到 runner 使用的同一份仓库路径。后续若把 Ruff、Pyright 或 Vite 收进来，直接调用原生 CLI，不另起 PPAP dispatcher。
+所有 GitHub Actions 使用 GitHub 托管的 `ubuntu-24.04` runner，每个 job 使用默认的临时 checkout。CI 不依赖自托管主机、共享 checkout 或 runner 名称。CI 依赖 capability，而不是发行版。workflow 可以安装 uv/Python、Node、Corepack/pnpm 和项目依赖；不得用 `sudo` / `apt` / `yum` / `apk` / `systemctl` 修复 runner，也不得安装或启动 Docker。Python modules 的 services variant、Schema、Corpus PSW、Product integration 和 InsForge lifecycle 要求 runner 已提供 Docker Engine、Compose 和 Buildx；缺任一能力时 fail-fast 输出 `runner does not satisfy ppap-docker capability`。Web、无 PostgreSQL 的 Python modules 和普通 Corpus 不要求 Docker。Repository contract 需要 Docker Engine、Compose 和 Buildx：`docker compose config`、`docker buildx bake --check`/`--print`、nginx 黑盒、Kustomize 与 kubeconform。`actionlint` 1.7.7 检查 workflow 语法。InsForge static config 仍由 `verify-config.mjs` 调用 `docker compose config`。live InsForge lifecycle 需要 `local start` 使用的 runtime Docker capability，只在 InsForge 相关 path、手动 dispatch 或每周 schedule 上运行。LLM / Feishu readiness 是真实外部 probe，手动 dispatch 或每周 schedule，不进 `CI Gate`。Product integration 对同一 `PPAP_BUILD_SHA` 只 `docker buildx bake` 一次，生产 runtime/backup 与 isolated-dev E2E 复用这些镜像（E2E 使用 `compose up --no-build`）。PSW 是 Corpus matrix 的 purpose-built container variant，单独 `docker buildx bake worker` 后从 worker 派生测试镜像。CI Compose 使用 `ppap-ci-<purpose>-<run_id>-<run_attempt>` 作为 project name，cleanup 在独立 `if: always()` step。现有 Compose stack 仍 bind-mount 仓库内 `migrations/`，因此 services、Schema、Product integration 和 InsForge lifecycle 需要 Docker daemon 能看到 runner 使用的同一份仓库路径。后续若把 Ruff、Pyright 或 Vite 收进来，直接调用原生 CLI，不另起 PPAP dispatcher。
 
 Product integration 的 runtime/backup 与 E2E 通过 `bash scripts/run-compose-tests.sh <pytest-directory> <compose-options>` 启动：先由 Docker 分配 loopback 临时端口，再固定实际端口并同步 API/Web 的公开地址后执行测试，备份恢复仍使用同一组地址。`PPAP_API_HOST_PORT`、`PPAP_WEB_HOST_PORT` 只控制宿主映射，默认仍为 `8080`/`4173`；脚本不清理其他任务或常驻服务，workflow 保留失败诊断及本任务的 `always()` 清理。
 
@@ -284,7 +285,7 @@ V3.1 原有“联系我们”浮层通过已登录的 `GET /support` 读取服�
 
 ### 本地 Deep checker 实验
 
-`scripts/deep_lab.py` 使用已有人工 checker、资源定义及 Fluent API 开发任务程序。先验证 Excel，再验证电子版 PDF；扫描版暂不纳入本轮。模型配置沿用本地 `.grok/config.toml`，不要提交该配置或实验日志。
+`scripts/deep_lab.py` 使用已有人工 checker、资源定义及 Fluent API 开发任务程序。先验证 Excel，再验证电子版 PDF；扫描版暂不纳入本轮。默认使用 Pi 1.5.0，并从本地 `.env` 的完整 `PPAP_DEEP_LLM_*` 配置读取模型与认证；未提供覆盖时沿用 `LLM_*`。先运行 `npm ci --ignore-scripts --prefix deploy/deep`，Node.js 必须至少为 22.19。只有显式 `--runner grok` 才使用旧 `.grok/config.toml`。不要提交认证配置或实验日志。
 
 ```sh
 uv run --no-sync python scripts/deep_lab.py --recipe checker --seq 11 --effort high
@@ -317,4 +318,6 @@ uv run --no-sync python scripts/deep_lab.py --recipe checker --effort high \
 
 模型终态明确报告服务 HTTP 错误时，实验以 `deep_model_http_<状态码>` 停止，保留已有候选，汇总保留该错误而非仅报告缺少结果。候选不能当作已固定产物；额度或服务恢复后显式重新运行未完成场景。
 
-这是本地质量实验，使用本地 Grok 进程；不证明产品 guest 隔离或生产端到端行为。固定执行只使用原生读取与明确的 `PdfSpec`，不自动转入 OCR。
+这是本地质量实验，默认使用本地 Pi 进程和现有短期授权网关；不证明产品 guest 隔离或生产端到端行为。固定执行只使用原生读取与明确的 `PdfSpec`，不自动转入 OCR。
+
+GitHub Actions 的外部模型测试使用 `CI_LLM_API_KEY`、`CI_LLM_BASE_URL` 和 `CI_LLM_MODEL` 三项仓库 Secret，与生产 Standard 配置分开。当前 CI 使用已授权的 Codex Responses 服务，避免调用已耗尽额度的 Grok；真实模型用量仍属于测试运行，不以缓存伪造模型成功。

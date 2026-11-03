@@ -45,6 +45,7 @@ def main() -> int:
                 executor_revision=revision,
                 authorize=authorize_execution(settings, connect=connect, open_store=open_store),
                 readiness=runtime.ready,
+                configuration=settings.deep_execution_policy().runtime_identity(),
             ),
             request_timeout=DEEP_REQUEST_TIMEOUT,
         )

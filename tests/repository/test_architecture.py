@@ -22,6 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 PRODUCTION_ROOTS = ("packages", "apps")
 ROOT_TEST_GROUPS = {"repository", "schema", "corpus", "integration", "e2e", "live"}
+ROOT_TEST_DATA_DIRS = {"fixtures"}
 GUEST_ENV = ROOT / "packages/agent/src/agent/execution/isolation/container.py"
 FORBIDDEN_IMPORT = re.compile(r"^(?:from|import)\s+(?:tests(?:\.|\s|$)|test_|store_fixture\b|sample_rule\b|memory_objects\b|conftest\b)")
 SYS_PATH = re.compile(r"sys\.path\.(?:insert|append|extend)\s*\(")
@@ -89,6 +90,7 @@ class ArchitectureTests(unittest.TestCase):
                 services = _compose_config(ROOT / "deploy/isolated-dev/compose.yaml", env={"PPAP_USAGE_CHARGE_ENABLED": value})["services"]
                 for service in ("api", "worker"):
                     self.assertEqual(services[service]["environment"].get("PPAP_USAGE_CHARGE_ENABLED"), expected)
+                    self.assertFalse(bool(services[service]["environment"].get("PPAP_DEEP_LLM_API_KEY")), "Deep provider credential belongs only to Controller")
         production = _compose_config(ROOT / "deploy/compose.yaml", ROOT / "deploy/compose.env.example", env={"PPAP_USAGE_CHARGE_ENABLED": "true"})["services"]
         self.assertEqual(production["api"]["environment"]["PPAP_USAGE_CHARGE_ENABLED"], "true")
 
@@ -207,9 +209,11 @@ class ArchitectureTests(unittest.TestCase):
         self.assertFalse((ROOT / "tests" / "common").exists())
         self.assertFalse((ROOT / "tests" / "utils").exists())
 
-    def test_root_tests_are_system_groups_only(self):
+    def test_root_tests_have_only_system_groups_and_shared_data(self):
         groups = {path.name for path in (ROOT / "tests").iterdir() if path.is_dir() and path.name != "__pycache__"}
-        self.assertEqual(groups, ROOT_TEST_GROUPS)
+        self.assertEqual(groups, ROOT_TEST_GROUPS | ROOT_TEST_DATA_DIRS)
+        for name in ROOT_TEST_DATA_DIRS:
+            self.assertEqual(list((ROOT / "tests" / name).rglob("*.py")), [], "Shared fixture directories contain data, not Python test code")
 
     def test_tests_do_not_import_each_other_or_mutate_sys_path(self):
         offenders = []

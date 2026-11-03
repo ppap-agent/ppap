@@ -2285,11 +2285,14 @@ export interface components {
          * AuditResultCounts
          * @description Terminal checks only: failed/ERR, uncovered, unknown, then verified PASS/NG.
          *
-         *     Categories are exclusive; queued/running and verified NA do not add counts.
+         *     Categories are exclusive; queued/running checks do not add counts.
+         *     Older saved projections can omit the verified NA count.
          */
         AuditResultCounts: {
             /** Error Count */
             error_count: number;
+            /** Na Count */
+            na_count?: number;
             /** Ng Count */
             ng_count: number;
             /** Not Covered Count */

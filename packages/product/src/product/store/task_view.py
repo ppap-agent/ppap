@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from copy import deepcopy
 
 
@@ -101,6 +100,7 @@ def _evidence(round: dict, finding: dict | None, version_id: str, rule_id: str, 
 
 def _verified(round: dict, coverage: dict | None, finding: dict | None, rule_id: str, rule: dict, evidence: list[dict], scope: dict | None, notice: str | None) -> bool:
     return False
+
 
 def _check(round: dict, version_id: str, rule_id: str, rule: dict, file_failed: bool = False) -> dict:
     finished = round["execution"] == "completed"

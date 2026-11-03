@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from typing import Literal, cast
 
 from audit.audits import REFERENCE, TARGET, RoundWork
@@ -80,7 +81,8 @@ def _merge_clarifications(results: list, file_version_id: str, existing: list[di
             qid = str(raw.get("id") or "").strip()
             question = str(raw.get("question") or "").strip()
             candidates = raw.get("candidates")
-            raw_sources = raw.get("sources") if isinstance(raw.get("sources"), list) else []
+            raw_sources = raw.get("sources")
+            raw_sources = raw_sources if isinstance(raw_sources, list) else []
             sources = [item for item in (_question_source(source, known_versions) for source in raw_sources) if item is not None]
             if not qid or not question or not isinstance(candidates, list) or len(candidates) < 2:
                 continue
@@ -184,8 +186,8 @@ def checker_response(
             bucket = grouped.get(clause_id, [])
             index = consumed.get(clause_id, 0)
             consumed[clause_id] = index + 1
-            result = bucket[index] if index < len(bucket) else None
-            status, suggestions, evidence_incomplete, sources = _checker_finding(result, file_version_id=target.file_version_id, file_facts=file_facts)
+            matched_result = bucket[index] if index < len(bucket) else None
+            status, suggestions, evidence_incomplete, sources = _checker_finding(matched_result, file_version_id=target.file_version_id, file_facts=file_facts)
             locator_gap = locator_gap or evidence_incomplete or not sources
             item_key = unique_item_key(f"{target.file_version_id}:rule:{clause_id}")
             semantic = {
@@ -197,23 +199,23 @@ def checker_response(
             }
             if evidence_incomplete:
                 semantic["evidence_incomplete"] = True
-            performed = getattr(result, "checks_performed", None) if result is not None else None
+            performed = getattr(matched_result, "checks_performed", None) if matched_result is not None else None
             if type(performed) is int and performed >= 0:
                 semantic["checks_performed"] = performed
-            basis = str(getattr(result, "empty_scope_basis", "") or "").strip() if result is not None else ""
+            basis = str(getattr(matched_result, "empty_scope_basis", "") or "").strip() if matched_result is not None else ""
             if basis:
                 semantic["empty_scope_basis"] = basis
-            scope = _finished_scan_scope(result)
+            scope = _finished_scan_scope(matched_result)
             if scope is not None:
                 semantic["scope"] = scope
-            if result and result.evidence is not None:
-                semantic["diagnostics"] = [item.model_dump() for item in result.evidence.diagnostics]
+            if matched_result and matched_result.evidence is not None:
+                semantic["diagnostics"] = [item.model_dump() for item in matched_result.evidence.diagnostics]
             findings.append(
                 DeepFinding(
                     item_key=item_key,
                     classification=str(clause.get("category") or "客户规则"),
                     item=str(clause.get("rule_to_check") or clause_id),
-                    priority=str(clause.get("priority") or (result.priority if result else "P1")),
+                    priority=str(clause.get("priority") or (matched_result.priority if matched_result else "P1")),
                     status=status,
                     suggestions=suggestions,
                     locator={
@@ -236,7 +238,7 @@ def checker_response(
                     "category": str(clause.get("category") or "客户规则"),
                     "rule_to_check": clause.get("rule_to_check") or "",
                     "item_key": item_key,
-                    "coverage": "executed" if result is not None else "execution_error",
+                    "coverage": "executed" if matched_result is not None else "execution_error",
                     "status": status,
                     "verification_scope": "checker_execution",
                     **({"checks_performed": performed} if type(performed) is int and performed >= 0 else {}),
@@ -422,7 +424,7 @@ def _finished_scan_scope(result) -> dict[str, int] | None:
     return {"total": total, "checked": checked, "unknown": unknown}
 
 
-def _checker_finding(result, *, file_version_id: str, file_facts: dict[str, tuple[str, str]]) -> tuple[str, str, bool, list[dict]]:
+def _checker_finding(result, *, file_version_id: str, file_facts: Mapping[str, tuple[str, str]]) -> tuple[Literal["PASS", "NG", "ERR", "UNABLE", "NA"], str, bool, list[dict]]:
     if result is None:
         return "ERR", "本项未执行，不能判为通过。", True, []
     allowed = {"PASS", "NG", "ERR", "UNABLE", "NA"}
@@ -466,10 +468,10 @@ def _checker_finding(result, *, file_version_id: str, file_facts: dict[str, tupl
             note = "原件定位不在本次冻结文件中，不能判为通过。"
             if note not in suggestions:
                 suggestions = f"{suggestions}；{note}" if suggestions else note
-    return status, suggestions, incomplete, sources
+    return cast(Literal["PASS", "NG", "ERR", "UNABLE", "NA"], status), suggestions, incomplete, sources
 
 
-def _public_source(source, *, fallback_version: str, file_facts: dict[str, tuple[str, str]]) -> dict | None:
+def _public_source(source, *, fallback_version: str, file_facts: Mapping[str, tuple[str, str]]) -> dict | None:
     """Publish only a typed locator for a file that belongs to this round."""
     locator = source.locator
     if not isinstance(locator, str):
@@ -563,7 +565,7 @@ def _typed_json_locator(locator: str) -> dict | None:
         return None
     for key, expected in fields.items():
         item = value.get(key)
-        if type(item) is not expected or expected is str and not item.strip() or expected is int and item < 1:
+        if type(item) is not expected or expected is str and not cast(str, item).strip() or expected is int and cast(int, item) < 1:
             return None
     if kind == "xlsx_cell" and not _excel_ref(value.get("cell")):
         return None

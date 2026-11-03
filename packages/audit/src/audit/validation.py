@@ -7,6 +7,7 @@ from typing import Any
 
 from .evidence import EvidenceBudget
 
+
 def _validate_xlsx_visuals(table: dict[str, Any], budget: EvidenceBudget) -> None:
     from .document_tools import _XLSX_COORDINATE_MAX, _XLSX_COORDINATE_MIN, _archive_target, _regions_overlap, _xlsx_anchor_range, col_number
 
@@ -168,5 +169,3 @@ def validate_snapshot(snapshot: dict[str, Any], sha256: str, file_format: str) -
         from .pdf_tables import validate_pdf_tables
 
         validate_pdf_tables(snapshot)
-
-

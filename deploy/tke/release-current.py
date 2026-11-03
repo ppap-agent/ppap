@@ -37,6 +37,9 @@ run = PRELOAD["command"]
 kube = PRELOAD["kube"]
 require_images = PRELOAD["release_images"]
 native_objects = PRELOAD["native_objects"]
+RENDER = runpy.run_path(str(HERE / "render-current.py"))
+CONFIG_ANNOTATION = RENDER["CONFIG_ANNOTATION"]
+MODEL_CONFIGURATION_KEYS = {"PPAP_DEEP_LLM_BASE_URL", "PPAP_DEEP_LLM_MODEL", "PPAP_DEEP_REASONING_EFFORT"}
 
 
 class ReleaseError(ValueError):
@@ -417,9 +420,29 @@ def stable_resources() -> dict:
     return result
 
 
+def validate_model_configuration(config: dict[str, str]) -> None:
+    """Reject malformed configuration before any production mutation."""
+    endpoint, model = config.get("PPAP_DEEP_LLM_BASE_URL", "").strip(), config.get("PPAP_DEEP_LLM_MODEL", "").strip()
+    require(bool(endpoint) == bool(model), "Deep endpoint and model must be configured together")
+    if endpoint:
+        url = urllib.parse.urlsplit(endpoint)
+        require(url.scheme == "https" and bool(url.hostname) and not any((url.username, url.password, url.query, url.fragment)), "Deep endpoint must be HTTPS without credentials or query parameters")
+        require(0 < len(model) <= 128, "Deep model is invalid")
+    require(config.get("PPAP_DEEP_REASONING_EFFORT", "medium") in {"low", "medium", "high", "xhigh"}, "Deep reasoning effort is invalid")
+
+
+def configuration_digests(objects: list[dict]) -> dict[str, str]:
+    return {
+        obj["metadata"]["name"]: obj["spec"]["template"]["metadata"]["annotations"][CONFIG_ANNOTATION]
+        for obj in objects
+        if obj.get("kind") == "Deployment" and obj["metadata"]["name"] in set(PRELOAD["OWNERS"].values())
+    }
+
+
 def verify(attempt: Path) -> None:
     expected = json.loads((attempt / "target.json").read_text())
     sha, images, configs = expected["sha"], expected["images"], expected["configs"]
+    identities = []
     for owner in set(PRELOAD["OWNERS"].values()):
         deployment = json.loads(kube("get", "deployment", owner, "-o", "json"))
         status = deployment["status"]
@@ -435,6 +458,7 @@ def verify(attempt: Path) -> None:
         pods = [p for p in json.loads(kube("get", "pods", "-l", selector, "-o", "json"))["items"] if not p["metadata"].get("deletionTimestamp")]
         require(len(pods) == replicas, "unexpected live replica count")
         for pod in pods:
+            require(pod["metadata"].get("annotations", {}).get(CONFIG_ANNOTATION) == expected["configuration_digests"][owner], "Pod configuration digest differs from the release")
             statuses = {s["name"]: s for s in pod["status"].get("containerStatuses", [])}
             for container in pod["spec"]["containers"]:
                 name = container["name"]
@@ -445,6 +469,16 @@ def verify(attempt: Path) -> None:
                 require(
                     actual["imageID"] in {images[name], "docker-pullable://" + images[name], configs[name], "containerd://" + configs[name]}, "actual image ID differs from verified registry identity"
                 )
+                if name in {"api", "worker", "deep"}:
+                    identity = json.loads(
+                        kube("exec", "-i", pod["metadata"]["name"], "-c", name, "--", "python", "-m", "product.execution_config", data=json.dumps(expected["execution_configuration"]).encode())
+                    )
+                    require(isinstance(identity, dict) and identity.get("agent") == "pi", "Execution configuration readback is invalid")
+                    if name == "deep":
+                        loaded = json.loads(kube("exec", "-i", pod["metadata"]["name"], "-c", name, "--", "python", "-m", "agent.readiness", "--configuration"))
+                        require(loaded == identity, "Controller loaded another execution policy")
+                    identities.append(identity)
+    require(len(identities) == 3 and all(identity == identities[0] for identity in identities), "API, Worker and Controller execution policies differ")
     base = expected["base"]
     require(json.loads(public(base, "/ppap/version"))["git_sha"] == sha, "public API version differs")
     require(json.loads(public(base, "/build-identity.json", current=True))["git_sha"] == sha, "public Web version differs")
@@ -459,8 +493,9 @@ def verify(attempt: Path) -> None:
         # Concurrent legitimate writes require reconciliation, not a corruption claim.
         require(after == expected["database"], "database/queue changed during full checks; reconcile before claiming preservation")
         require(stable_resources() == expected["resources"], "non-target resources changed; reconcile before completion")
-    (attempt / "verified.json").write_text(json.dumps({"sha": sha, "images": images, "verified": True, "full_check": full}, indent=2))
+    (attempt / "verified.json").write_text(json.dumps({"sha": sha, "images": images, "verified": True, "full_check": full, "execution_configuration": identities[0]}, indent=2))
     print(f"Live API/Web/Worker/Deep, schema and default legacy verified at {sha}; full checks: {full}.", flush=True)
+    print("Effective Deep configuration: " + json.dumps(identities[0], sort_keys=True), flush=True)
 
 
 def dry_run(path: Path, objects: list[dict]) -> bool:
@@ -481,9 +516,12 @@ def full_check_reason(objects: list[dict], sha: str, forced: bool) -> str | None
         return "requested"
     live = json.loads(kube("get", "configmap", "ppap-current", "-o", "json"))["data"]
     desired = next(obj["data"] for obj in objects if obj.get("kind") == "ConfigMap" and obj["metadata"]["name"] == "ppap-current")
-    if {k: v for k, v in live.items() if k != "PPAP_BUILD_SHA"} != {k: v for k, v in desired.items() if k != "PPAP_BUILD_SHA"}:
+    changed_configuration = {key for key in live.keys() | desired.keys() if key != "PPAP_BUILD_SHA" and live.get(key) != desired.get(key)}
+    if changed_configuration - MODEL_CONFIGURATION_KEYS:
         return "application configuration changed"
     previous = live.get("PPAP_BUILD_SHA", "")
+    if changed_configuration and previous != sha:
+        return "model configuration and application source changed together"
     if not re.fullmatch(r"[0-9a-f]{40}", previous):
         return "live source unknown"
     try:
@@ -492,9 +530,7 @@ def full_check_reason(objects: list[dict], sha: str, forced: bool) -> str | None
         return "source comparison unavailable"
     for name in changed:
         parts = Path(name).parts
-        source = len(parts) > 3 and parts[2] in {"src", "tests"} and (
-            parts[0] in {"packages", "services"} or (parts[0] == "apps" and parts[1] in {"api", "worker", "mcp-client"})
-        )
+        source = len(parts) > 3 and parts[2] in {"src", "tests"} and (parts[0] in {"packages", "services"} or (parts[0] == "apps" and parts[1] in {"api", "worker", "mcp-client"}))
         web = name.startswith(("apps/web/src/", "apps/web/public/"))
         reference = name.startswith(("tests/", "docs/")) or Path(name).name in {"README.md", "AGENTS.md"}
         # Release pins are derived configuration. Compare the actual live/desired
@@ -524,8 +560,19 @@ def full_check_reason(objects: list[dict], sha: str, forced: bool) -> str | None
             if any(old_images.get(c["name"]) != c["image"] for c in obj["spec"]["template"]["spec"]["containers"] if c["name"] in COMPONENTS):
                 return "image changed without a source change"
         target_spec = json.loads(json.dumps(obj["spec"]))
+        if changed_configuration:
+            actual_images = {c["name"]: c["image"] for c in current["spec"]["template"]["spec"]["containers"] if c["name"] in COMPONENTS}
+            if any(actual_images.get(c["name"]) != c["image"] for c in target_spec["template"]["spec"]["containers"] if c["name"] in COMPONENTS):
+                return "model configuration requires unchanged images"
         for spec in (previous_spec, target_spec):
+            annotations = spec["template"].get("metadata", {}).get("annotations", {})
+            annotations.pop(CONFIG_ANNOTATION, None)
             for container in spec["template"]["spec"]["containers"]:
+                if container["name"] == "deep":
+                    for item in container.get("env", []):
+                        ref = item.get("valueFrom", {}).get("secretKeyRef", {})
+                        if item.get("name") == "PPAP_DEEP_LLM_API_KEY" and re.fullmatch(r"ppap-current-deep-model-v[1-9][0-9]*", ref.get("name", "")) and ref.get("key") == "PPAP_DEEP_LLM_API_KEY":
+                            ref["name"] = "ppap-current-deep-model-version"
                 if container["name"] in COMPONENTS:
                     container["image"] = container["image"].split("/", 1)[0]  # Registry changes still require full checks.
         if previous_spec != target_spec:
@@ -540,6 +587,7 @@ def deploy(attempt: Path, *, full_check: bool = False) -> None:
     require(bool(images), "no application release in canonical render")
     config = next(obj["data"] for obj in objects if obj.get("kind") == "ConfigMap" and obj["metadata"]["name"] == "ppap-current")
     sha = config["PPAP_BUILD_SHA"]
+    validate_model_configuration(config)
     tested_source(sha)
     pins, configs = registry_images(sha, images)
     # Old unregistry SHA tags remain accepted for rollback, but cannot skip identity/startup checks.
@@ -577,6 +625,8 @@ def deploy(attempt: Path, *, full_check: bool = False) -> None:
         "full_check": full,
         "resources": stable_resources() if full else None,
         "render_digest": digest(rendered),
+        "execution_configuration": config,
+        "configuration_digests": configuration_digests(objects),
     }
     (attempt / "target.json").write_text(json.dumps(target, indent=2))
     if not dry_run(render_path, objects):

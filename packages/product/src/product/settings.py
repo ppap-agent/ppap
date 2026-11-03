@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     llm_base_url: str = Field(default="", alias="LLM_BASE_URL")
     llm_model: str = Field(default="", alias="LLM_MODEL")
 
+    deep_llm_api_key: str = Field(default="", alias="PPAP_DEEP_LLM_API_KEY")
+    deep_llm_base_url: str = Field(default="", alias="PPAP_DEEP_LLM_BASE_URL")
+    deep_llm_model: str = Field(default="", alias="PPAP_DEEP_LLM_MODEL")
+    deep_reasoning_effort: Literal["xhigh", "high", "medium", "low"] = Field(default="medium", alias="PPAP_DEEP_REASONING_EFFORT")
+
     feishu_app_id: str = Field(default="", alias="FEISHU_APP_ID")
     feishu_app_secret: str = Field(default="", alias="FEISHU_APP_SECRET")
     feishu_notifications_enabled: bool = Field(default=False, alias="PPAP_FEISHU_NOTIFICATIONS_ENABLED")
@@ -185,12 +190,34 @@ class Settings(BaseSettings):
     def get_allowed_extensions(self) -> list[str]:
         return [ext.strip() for ext in self.ALLOWED_EXTENSIONS.split(",")]
 
+    def deep_model_policy(self) -> tuple[str, str]:
+        """Resolve non-secret model identity without requiring provider credentials."""
+        values = (self.deep_llm_base_url.strip(), self.deep_llm_model.strip())
+        if any(values):
+            if not all(values):
+                raise ValueError("Deep model override requires base URL and model")
+            return values
+        return self.llm_base_url.strip(), self.llm_model.strip()
+
+    def deep_model_config(self) -> tuple[str, str, str]:
+        """Only the Controller resolves and validates the matching credential."""
+        base_url, model = self.deep_model_policy()
+        overridden = bool(self.deep_llm_base_url.strip() or self.deep_llm_model.strip())
+        if self.deep_llm_api_key.strip() and not overridden:
+            raise ValueError("Deep credential requires an explicit Deep base URL and model")
+        key = self.deep_llm_api_key if overridden else self.llm_api_key
+        if not key.strip():
+            raise ValueError("Deep model credential is unavailable")
+        return base_url, model, key
+
     def deep_execution_policy(self) -> DeepExecutionPolicy:
+        base_url, model = self.deep_model_policy()
         return DeepExecutionPolicy.model_validate(
             {
                 "app_revision": self.git_sha,
-                "model": self.llm_model,
-                "model_revision": hashlib.sha256((self.llm_base_url + "\n" + self.llm_model).encode()).hexdigest(),
+                "model": model,
+                "reasoning_effort": self.deep_reasoning_effort,
+                "model_revision": hashlib.sha256((base_url + "\n" + model).encode()).hexdigest(),
                 "sandbox_profile": self.deep_sandbox_profile,
                 **({"executor_label": self.deep_executor_revision.strip()} if self.deep_executor_revision.strip() else {}),
             }

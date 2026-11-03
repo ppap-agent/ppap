@@ -57,3 +57,9 @@ def test_pass_does_not_keep_diagnostic() -> None:
         result=_Result("PASS", "psw.pdf.conversion_failed"),
     )
     assert outcome == ExecutionOutcome("PASS", EXECUTION_RESULT)
+
+
+def test_unable_result_preserves_unknown_status_without_becoming_pass() -> None:
+    outcome = outcome_from_agent_rule(rule_index=1, agent_rule_count=3, result=_Result("UNABLE"))
+    assert outcome == ExecutionOutcome("UNABLE", EXECUTION_RESULT)
+    assert outcome.status not in {"PASS", "NG"}

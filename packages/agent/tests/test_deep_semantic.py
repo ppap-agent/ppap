@@ -63,11 +63,6 @@ FIELD_DOCUMENT = {
 
 
 class SemanticBoundaryTests(unittest.TestCase):
-
-
-
-
-
     def test_excel_temporal_values_are_json_safe_without_losing_precision(self) -> None:
         from openpyxl import Workbook
 
@@ -84,12 +79,6 @@ class SemanticBoundaryTests(unittest.TestCase):
         self.assertEqual(cells["A1"], {"value": "09:15:30.125000", "state": "known"})
         self.assertEqual(cells["B1"]["value"], "2026-09-26T00:00:00")
         self.assertEqual(cells["C1"]["value"], "2026-09-26T09:15:00")
-
-
-
-
-
-
 
     def test_checker_program_files_survive_a_missing_receipt(self) -> None:
         from agent.execution.checker_guest import CheckerDraft
@@ -165,7 +154,6 @@ class SemanticBoundaryTests(unittest.TestCase):
                 with self.subTest(receipt=receipt), patch.object(runner, "_run", side_effect=finish_file):
                     with self.assertRaisesRegex(ModelProtocolError, "trial clauses|completion receipt"):
                         runner.run(work, "develop", CheckerDraft, 9999999999.0, reasoning_effort="medium")
-
 
     def test_narrow_field_checks_keep_typed_source_and_unknowns(self) -> None:
         result = check_fields(FIELD_DOCUMENT, CheckRequest.model_validate(field_check_request()))
@@ -377,7 +365,6 @@ class SemanticBoundaryTests(unittest.TestCase):
                 GrokRunner(grant)
             GrokRunner({**grant, "base_url": "https://example.test/v1"})
 
-
     def test_container_runner_does_not_start_or_kill_its_own_process_group(self) -> None:
         grant = {"base_url": "http://127.0.0.1:12345/v1", "token": "x" * 32, "model": "test", "max_turns": 2, "wall_seconds": 10}
         with patch.dict(os.environ, {"PPAP_GUEST_ISOLATION": "container-only", "PPAP_GUEST_SANDBOX": "off"}, clear=True):
@@ -420,8 +407,6 @@ class SemanticBoundaryTests(unittest.TestCase):
                 with patch("agent.execution.guest_model.Path.is_file", return_value=False):
                     with self.assertRaises(ModelProtocolError):
                         sandbox_profile()
-
-
 
     def test_published_source_cannot_omit_effective_clause(self) -> None:
         clause = {"id": "R1", "rule_to_check": "First"}

@@ -1,13 +1,9 @@
 """Native XLSX formula descriptors remain readable without inventing a cache."""
 
-import json
 from xml.etree import ElementTree as ET
 from zipfile import ZIP_DEFLATED, ZipFile
 
-import pytest
-from audit.document_tools import snapshot
 from openpyxl import Workbook
-from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
 
 
 def workbook(tmp_path, formula, cached):
@@ -37,5 +33,3 @@ def workbook(tmp_path, formula, cached):
             for name, data in entries.items():
                 archive.writestr(name, data)
     return path
-
-

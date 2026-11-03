@@ -26,7 +26,7 @@ def test_live_readiness_tracks_runtime_degraded_and_missing_tools():
             gateway.bind(str(root / "gateway"))
             # Observe the real readiness method without starting a privileged guest.
             runtime = object.__new__(ContainerRuntime)
-            runtime.config = SimpleNamespace(python_executable=tool, grok_executable=tool, gateway_socket=root / "gateway")
+            runtime.config = SimpleNamespace(python_executable=tool, agent_executable=tool, gateway_socket=root / "gateway")
             runtime.degraded = False
             semantic = SemanticRuntime(runtime, None)
             controller = Controller(UnconfiguredRuntime(), forbidden, authorize=forbidden, readiness=semantic.ready)
@@ -83,3 +83,14 @@ def test_silent_listener_times_out_without_retry():
             finally:
                 done.set()
                 thread.join(2)
+
+
+def test_configuration_observation_is_a_frozen_non_secret_startup_identity():
+    identity = {"agent": "pi", "agent_version": "1.5.0", "model": "model", "reasoning_effort": "medium", "executor_revision": "a" * 64}
+    controller = Controller(UnconfiguredRuntime(), forbidden, authorize=forbidden, configuration=identity)
+    identity["model"] = "later"
+    observed = controller.handle_raw({"op": "configuration"})
+    assert observed["configuration"]["model"] == "model"
+    observed["configuration"]["model"] = "caller mutation"
+    assert controller.handle_raw({"op": "configuration"})["configuration"]["model"] == "model"
+    assert controller.handle_raw({"op": "configuration", "command": "anything"})["code"] == "deep_protocol_invalid"

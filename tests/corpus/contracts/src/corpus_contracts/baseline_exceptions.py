@@ -1,4 +1,4 @@
-"""Known V2 oracle mismatches from ppap-agent@53a5bd2b.
+"""Known V2 oracle mismatches, including explicitly accepted model differences.
 
 This is not a second expected-status oracle. The human CSV remains the only
 PASS/NG authority. Each record freezes one observed baseline behavior at a
@@ -32,6 +32,7 @@ class BaselineRuleBehavior:
     rule_index: int
     expected_status: str
     actual: ExecutionOutcome
+    alternatives: frozenset[ExecutionOutcome] = frozenset()
 
     @property
     def location(self) -> tuple[str, str, int]:
@@ -43,7 +44,7 @@ def _norm_status(value: str) -> str:
 
 
 def behavior_matches(known: BaselineRuleBehavior, observed: ObservedRuleOutcome) -> bool:
-    return _norm_status(known.expected_status) == _norm_status(observed.expected_status) and known.actual.semantic == observed.actual.semantic
+    return _norm_status(known.expected_status) == _norm_status(observed.expected_status) and observed.actual in {known.actual, *known.alternatives}
 
 
 def classify_v2_baseline_outcomes(
@@ -77,6 +78,7 @@ def B(
     diagnostic_code: str | None = None,
     *,
     execution_class: str | None = None,
+    alternatives: tuple[str, ...] = (),
 ) -> BaselineRuleBehavior:
     actual = O(actual_status, execution_class, diagnostic_code)
     return BaselineRuleBehavior(
@@ -85,6 +87,7 @@ def B(
         rule_index=rule_index,
         expected_status=_norm_status(expected_status),
         actual=actual,
+        alternatives=frozenset(O(status) for status in alternatives),
     )
 
 
@@ -93,6 +96,10 @@ def B(
 # Product EvidenceDiagnostic codes may be stored on ExecutionOutcome when stable.
 BASELINE_RULE_BEHAVIORS: frozenset[BaselineRuleBehavior] = frozenset(
     {
+        # Issue #240: accepted gpt-6.1-sol stamp-recognition differences.
+        # The original CSV PASS stays authoritative; actual NG is not a PASS.
+        B("16-零件提交保证书-继峰.pdf", "pdf", 3, "PASS", "NG", alternatives=("UNABLE",)),
+        B("16-零件提交保证书-继峰 - 无边框.pdf", "pdf", 3, "PASS", "NG", alternatives=("UNABLE",)),
         B("1-全功能检验报告_巨一.pdf", "pdf", 3, "PASS", "NG"),
         B("10-控制计划-常州新泉.pdf", "pdf", 5, "NG", "PASS"),
         B("11-过程特殊特性清单-上海大亚.pdf", "pdf", 3, "PASS", "NG"),

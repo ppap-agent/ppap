@@ -243,8 +243,6 @@ def test_visual_unknown_cannot_become_a_native_fact_in_snapshot_validation(tmp_p
     assert visual["content_observed"] is False
 
 
-
-
 def test_zero_height_line_is_an_unresolved_visual_source(tmp_path):
     observed = snapshot(workbook(tmp_path, [anchor(first=(2, 2), last=(2, 4))]))
     assert observed["tables"][0]["visual_evidence"][0]["range"] is None
@@ -623,5 +621,3 @@ def test_explicit_object_field_native_reread_cannot_bypass_visual_budget():
     selected, _excluded = scoped_records(materialized, binding, scope, document, EvidenceBudget(remaining=30000))
     assert selected[0]["values"]["field"] is None
     assert selected[0]["states"]["field"] == "known"
-
-

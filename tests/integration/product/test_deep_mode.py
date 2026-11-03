@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import os
 import shutil
 import tempfile
 import unittest
-import uuid
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
@@ -23,7 +20,6 @@ from agent.protocol import ExecuteRequest, RequestEnvelope
 from agent.run import Controller, ScriptedRuntime, UnixControllerServer
 from agent.source import authorize_execution, object_file_source
 from api import create_app
-from api import web_contract as wc
 from audit.audits import (
     ANALYSIS_DEEP,
     ANALYSIS_STANDARD,
@@ -37,8 +33,6 @@ from audit.audits import (
     request_fingerprint,
 )
 from fastapi.testclient import TestClient
-from openpyxl import Workbook
-from product import build_product_store
 from product.capabilities import report
 from product.db import connect
 from product.feishu import UserTokens
@@ -46,7 +40,7 @@ from product.fixtures import RULE_A, RULE_B
 from product.identity import SESSION_COOKIE
 from product.settings import Settings
 from product.storage import S3Objects
-from pydantic import TypeAdapter, ValidationError
+from pydantic import ValidationError
 from worker import process_claimed
 from worker.deep_controller import open_store
 
@@ -244,7 +238,6 @@ class DeepModeTests(unittest.TestCase):
         self.assertEqual(diagnostic["executor"], EXECUTOR_DEEP)
         self.assertIsNone(loaded["failure"])
         self.assertEqual(diagnostic["usage"], {})
-
 
     def test_runtime_unavailable_does_not_fall_back_to_standard(self):
         self._login()

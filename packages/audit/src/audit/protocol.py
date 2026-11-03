@@ -208,6 +208,7 @@ class RecoveryRecord(Artifact):
     failed_rules: dict[str, CompileFailureRecord] = Field(default_factory=dict, max_length=32)
     snapshot_digests: dict[str, Sha256] = Field(default_factory=dict, max_length=64)
     plan_digests: dict[str, Sha256] = Field(default_factory=dict, max_length=32)
+
     @model_validator(mode="after")
     def exact_usage(self) -> RecoveryRecord:
         if set(self.usage) != {"input_tokens", "output_tokens", "tool_calls", "completed_tool_calls", "compactions", "model_requests"}:
