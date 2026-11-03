@@ -83,6 +83,7 @@ from audit.checkers.v3 import (
     V3_OVERLAY_PDF_AGENTS,
 )
 from audit.checkers.v4.li_auto.special_characteristics import LiAutoSpecialCharacteristicsAgent
+from audit.checkers.v4.nio.pfmea import NioPfmeaAgent
 from audit.checkers.v4.uaes.special_characteristics import UaesSpecialCharacteristicsAgent
 from audit.kinds import PpapDocumentType
 from audit.rule_profile import RULE_PROFILE_V2, RULE_PROFILE_V3, RULE_PROFILE_V4, normalize_rule_profile
@@ -233,6 +234,8 @@ def resolve_engine_agent_class(
             return UaesSpecialCharacteristicsAgent
         if (preset.customer, preset.entry_id) == ("理想", "L12") and _resolve_audit_file_kind(file_url) in {_AuditFileKind.EXCEL, _AuditFileKind.PDF}:
             return LiAutoSpecialCharacteristicsAgent
+        if (preset.customer, preset.entry_id) == ("蔚来", "N02") and _resolve_audit_file_kind(file_url) in {_AuditFileKind.EXCEL, _AuditFileKind.PDF}:
+            return NioPfmeaAgent
         # V3 dimension checks implement NIO measurement coordinates. Li Auto's
         # dimensional/non-dimensional inspection semantics are the V2 checks.
         profile = RULE_PROFILE_V2 if (preset.customer, preset.entry_id) == ("理想", "L01") else RULE_PROFILE_V3
