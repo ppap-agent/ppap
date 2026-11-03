@@ -30,10 +30,10 @@ def _identity(value) -> str:
     return "".join(normalize_text(value).split()).casefold()
 
 
-def _label(ctx, workbook, labels, version):
+def _label(ctx, workbook, labels, version, *, sheets=None):
     values = set()
     keys = {_identity(label) for label in labels}
-    for sheet in workbook.worksheets:
+    for sheet in sheets if sheets is not None else workbook.worksheets:
         if any(token in sheet.title.casefold() for token in ("履历", *_NON_DATA_SHEETS)):
             continue
         for cells in sheet.iter_rows(max_row=min(sheet.max_row, 40), max_col=min(sheet.max_column, 80)):
@@ -83,6 +83,12 @@ def _dimensions(value):
     return result if set(result) == set(_DIMENSIONS) else {}
 
 
+def _step_key(value):
+    text = normalize_text(value)
+    match = re.fullmatch(r"((?:OP)?\d+(?:[.-]\d+)*)\s+(.+)", text, re.IGNORECASE)
+    return (_identity(match.group(1)), _identity(match.group(2))) if match else ("", _identity(text))
+
+
 def _score(value):
     text = normalize_text(value)
     return int(float(text)) if re.fullmatch(r"(?:[1-9]|10)(?:\.0+)?", text) else None
@@ -92,11 +98,18 @@ class NioPfmeaAgent(ExcelAgent):
     DOC_TYPE = PpapDocumentType.PFMEA
     CLAUSE_BOUND_CHECKS = True
 
-    def _target_rows(self, ctx, *fields):
+    @staticmethod
+    def _target_sheets(ctx):
         sheets = [sheet for sheet in ctx.workbook.worksheets if "pfmea" in sheet.title.casefold() and not any(token in sheet.title.casefold() for token in _NON_DATA_SHEETS)]
         if len(sheets) != 1:
             raise GuardStop(Decision.UNABLE, "无法唯一确定PFMEA表。")
-        return _rows(ctx, ctx.workbook, {field: _FIELDS[field] for field in fields}, fields, self.audit_file.audit_id, sheets=sheets)
+        return sheets
+
+    def _target_label(self, ctx, labels):
+        return _label(ctx, ctx.workbook, labels, self.audit_file.audit_id, sheets=self._target_sheets(ctx))
+
+    def _target_rows(self, ctx, *fields):
+        return _rows(ctx, ctx.workbook, {field: _FIELDS[field] for field in fields}, fields, self.audit_file.audit_id, sheets=self._target_sheets(ctx))
 
     @staticmethod
     def _pass(ctx):
@@ -106,7 +119,7 @@ class NioPfmeaAgent(ExcelAgent):
     @rule("NIO表头字段必填", clause_id="1")
     def rule_1(self, ctx: RuleContext):
         for labels in [("公司名称",), ("车型项目",), ("零件名称",), ("零件号", "零件编号"), ("制造地址",), ("PFMEA开始日期",), ("PFMEA修订日期",), ("跨职能团队",)]:
-            if not _label(ctx, ctx.workbook, labels, self.audit_file.audit_id):
+            if not self._target_label(ctx, labels):
                 return "NG", f"缺少或未填写{labels[0]}。"
         return self._pass(ctx)
 
@@ -132,8 +145,8 @@ class NioPfmeaAgent(ExcelAgent):
             dates.append(date)
         if not dates:
             return "UNABLE", "履历中没有有效日期。"
-        start = normalize_excel_date(_label(ctx, ctx.workbook, ("PFMEA开始日期",), self.audit_file.audit_id))
-        revision = normalize_excel_date(_label(ctx, ctx.workbook, ("PFMEA修订日期",), self.audit_file.audit_id))
+        start = normalize_excel_date(self._target_label(ctx, ("PFMEA开始日期",)))
+        revision = normalize_excel_date(self._target_label(ctx, ("PFMEA修订日期",)))
         if start is None or revision is None:
             return "UNABLE", "PFMEA日期无法可靠解析。"
         return self._pass(ctx) if (start, revision) == (dates[0], dates[-1]) else ("NG", "PFMEA开始/修订日期与履历首/末有效日期不一致。")
@@ -180,52 +193,54 @@ class NioPfmeaAgent(ExcelAgent):
         related = candidates[0]
         workbook = _load_workbook_auto(related.file_url)
         try:
+            sheets = [sheet for sheet in workbook.worksheets if "过程流程图" in sheet.title and not any(token in sheet.title for token in _NON_DATA_SHEETS)]
+            if len(sheets) != 1:
+                raise GuardStop(Decision.UNABLE, "无法唯一确定对端过程流程图表。")
             ctx.bind_workbook(workbook, related.audit_id)
-            part = _label(ctx, ctx.workbook, ("零件号", "零件编号"), self.audit_file.audit_id)
-            other = _label(ctx, workbook, ("零件号", "零件编号"), related.audit_id)
+            part = self._target_label(ctx, ("零件号", "零件编号"))
+            other = _label(ctx, workbook, ("零件号", "零件编号"), related.audit_id, sheets=sheets)
             if not part or not other or _identity(part) != _identity(other):
                 raise GuardStop(Decision.UNABLE, "两份原件的零件号缺失或不一致，尚不能配对。")
-            for source, version in [(ctx.workbook, self.audit_file.audit_id), (workbook, related.audit_id)]:
-                customer = _label(ctx, source, ("客户", "客户名称", "Customer", "Customer Name"), version)
+            for source, version, scope in [(ctx.workbook, self.audit_file.audit_id, self._target_sheets(ctx)), (workbook, related.audit_id, sheets)]:
+                customer = _label(ctx, source, ("客户", "客户名称", "Customer", "Customer Name"), version, sheets=scope)
                 if customer and _identity(customer) not in {"蔚来", "nio"}:
                     raise GuardStop(Decision.UNABLE, "原件客户标识与本轮蔚来模式冲突，需另开任务或确认。")
-            revision = _label(ctx, ctx.workbook, ("版本", "版本号", "修订版次"), self.audit_file.audit_id)
-            other_revision = _label(ctx, workbook, ("版本", "版本号", "修订版次"), related.audit_id)
+            revision = self._target_label(ctx, ("版本", "版本号", "修订版次"))
+            other_revision = _label(ctx, workbook, ("版本", "版本号", "修订版次"), related.audit_id, sheets=sheets)
             if (revision or other_revision) and (not revision or not other_revision or _identity(revision) != _identity(other_revision)):
                 raise GuardStop(Decision.UNABLE, "关联文件版本不一致或缺失，尚不能配对。")
-            if not any("过程流程图" in sheet.title for sheet in workbook.worksheets):
-                raise GuardStop(Decision.UNABLE, "对端未找到可确认的过程流程图表。")
-            yield workbook, related.audit_id
+            yield workbook, related.audit_id, sheets
         finally:
             workbook.close()
 
     @rule("NIO流程逐项一致", clause_id="6")
     def rule_6(self, ctx: RuleContext):
         target = self._target_rows(ctx, "step")
-        steps = {_identity(row["step"]) for row in target if row["step"]}
-        with self._pfd(ctx) as (workbook, version):
-            for row in _rows(ctx, workbook, PFD_FIELD_ALIASES, ("operation_no", "operation_name"), version):
+        steps = {_step_key(row["step"]) for row in target if row["step"]}
+        with self._pfd(ctx) as (workbook, version, sheets):
+            for row in _rows(ctx, workbook, PFD_FIELD_ALIASES, ("operation_no", "operation_name"), version, sheets=sheets):
                 combined = " ".join([row.get("operation_no", ""), row.get("operation_name", "")]).strip()
-                if combined and _identity(combined) not in steps:
+                if combined and (_identity(row.get("operation_no", "")), _identity(row.get("operation_name", ""))) not in steps:
                     return "NG", f"PFD工序“{combined}”未在PFMEA过程步骤中体现。"
         return self._pass(ctx)
 
     @rule("NIO特性必须同为CC或SC", clause_id="7")
     def rule_7(self, ctx: RuleContext):
         target = self._target_rows(ctx, "step", "characteristic")
-        with self._pfd(ctx) as (workbook, version):
-            for row in _rows(ctx, workbook, PFD_FIELD_ALIASES, ("operation_name", "product_char_type", "process_char_type"), version):
+        with self._pfd(ctx) as (workbook, version, sheets):
+            for row in _rows(ctx, workbook, PFD_FIELD_ALIASES, ("operation_name", "product_char_type", "process_char_type"), version, sheets=sheets):
                 expected = {normalize_text(row.get(key, "")).upper() for key in ("product_char_type", "process_char_type")} & {"CC", "SC"}
                 if not expected:
                     continue
                 name = _identity(row["operation_name"])
-                # A step may have its own operation number, but the name must
-                # match as a whole after that prefix, never a substring.
-                matches = [
-                    entry
-                    for entry in target
-                    if re.sub(r"^\d+(?:[.-]\d+)*\s+", "", normalize_text(entry["step"])) and _identity(re.sub(r"^\d+(?:[.-]\d+)*\s+", "", normalize_text(entry["step"]))) == name
-                ]
-                if not matches or any(normalize_text(entry["characteristic"]).upper() not in {"CC", "SC"} for entry in matches):
+                number = _identity(row.get("operation_no", ""))
+                matches = [entry for entry in target if _step_key(entry["step"]) == (number, name)] if number else []
+                if not matches:
+                    by_name = [entry for entry in target if _step_key(entry["step"])[1] == name]
+                    identities = {_step_key(entry["step"]) for entry in by_name}
+                    if len(identities) > 1:
+                        return "UNABLE", "同名工序有多个编号，尚不能确定特性对端。"
+                    matches = by_name if not number or identities == {("", name)} else []
+                if not matches or not any(normalize_text(entry["characteristic"]).upper() in {"CC", "SC"} for entry in matches):
                     return "NG", f"PFD工序“{row['operation_name']}”的CC/SC特性未在PFMEA对应步骤体现。"
         return self._pass(ctx)
