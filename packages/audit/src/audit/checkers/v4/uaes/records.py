@@ -18,7 +18,8 @@ class UaesPackagingAgent(UaesSourceAgent):
     @rule("包装方案标题与六个内容块")
     def rule_1(self):
         facts = self.native()
-        for phrase in ("包装方案", "零件基础信息", "供应商基础信息", "包装设计的基本要求", "针对该零件包装的特殊要求", "包装方案信息", "包装材料清单"):
+        facts.require_title("包装方案")
+        for phrase in ("零件基础信息", "供应商基础信息", "包装设计的基本要求", "针对该零件包装的特殊要求", "包装方案信息", "包装材料清单"):
             facts.require_text(phrase)
         return "PASS", "已读取包装方案标题及原规则要求的六个内容块。"
 
