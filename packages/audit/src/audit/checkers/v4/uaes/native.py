@@ -359,16 +359,40 @@ class UaesSourceAgent(BaseAgent):
             raise UnknownFact("当前批次没有关联资料，需补充同零件的独立原件。")
         if self.group_context.unavailable_files:
             raise OSError("当前批次有已提供但无法读取的关联资料。")
-        candidates = []
+        typed_ids = {item.audit_id for items in self.group_context.by_doc_type.values() for item in items}
+        candidates = {
+            item.audit_id: item
+            for kind, items in self.group_context.by_doc_type.items()
+            if any(key(term) in key(kind) for term in terms)
+            for item in items
+            if item.audit_id != self.audit_file.audit_id
+        }
         for item in self.group_context.by_audit_id.values():
             if item.audit_id == self.audit_file.audit_id:
                 continue
-            filename = str(item.file_metadata.get("original_filename", Path(item.file_url).name))
-            if any(key(term) in key(filename) for term in terms):
-                candidates.append(item)
+            if item.audit_id in typed_ids:
+                continue
+            # An unclassified reference can still carry the required source.
+            # Read its own title; an upload name or a body reference is not identity.
+            title_reads: list[str] = []
+            original = NativeFacts(item.file_url, item.audit_id, lambda _locator, value, *_: title_reads.append(str(value)))
+            for term in terms:
+                titles = [str(table["id"]) for table in original.data.get("tables", [])]
+                if any(key(term) in key(title) and not any(word in key(title) for word in ("参考", "参照", "不是", "非", "填写", "说明")) for title in titles):
+                    candidates[item.audit_id] = item
+                    break
+                try:
+                    title_reads.clear()
+                    original.require_title(term)
+                except UnknownFact:
+                    continue
+                if any(any(word in key(value) for word in ("参考", "参照", "不是", "非")) for value in title_reads):
+                    continue
+                candidates[item.audit_id] = item
+                break
         if len(candidates) != 1:
             raise UnknownFact("当前批次缺少唯一关联原件，需补充或确认候选，不能任取一份。")
-        item = candidates[0]
+        item = next(iter(candidates.values()))
         if not self.audit_file.project_id or self.audit_file.project_id != item.project_id:
             raise UnknownFact("关联原件项目身份尚未确认一致。")
         other = NativeFacts(item.file_url, item.audit_id, self.witness)
