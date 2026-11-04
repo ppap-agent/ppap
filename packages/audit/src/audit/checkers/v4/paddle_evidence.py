@@ -246,17 +246,24 @@ class PaddleShadowSession:
                 if reused:
                     attempt = self._attempts[key]
                 else:
+                    from documents.ocr.paddle import build_evidence
+
+                    # Opening/hashing the source and loading the parser can
+                    # consume the remaining budget. Check after both, before
+                    # reserving or dispatching any external work.
+                    began = time.monotonic()
+                    stopped = self._stopped()
+                    remaining = self.deadline - time.monotonic()
+                    if stopped or remaining <= 0:
+                        return self._record(target, "error", stopped or "deadline_exceeded")
                     if self.request_count >= self.max_requests:
                         return self._record(target, "error", "request_budget_exhausted")
                     # Reservation and the eventual result (including failure)
                     # stay in this task, preventing another rule from resending.
                     self.request_count += 1
-                    began = time.monotonic()
                     self._attempts[key] = _PageAttempt(None, "request_incomplete", 0)
                     try:
-                        from documents.ocr.paddle import build_evidence
-
-                        raw = self.service.analyze_page(agent.audit_file.file_url, target.page_number, timeout=max(0.001, self.deadline - time.monotonic()))
+                        raw = self.service.analyze_page(agent.audit_file.file_url, target.page_number, timeout=remaining)
                         stopped = self._stopped() or self._identity(agent, target)
                         if stopped:
                             attempt = _PageAttempt(None, stopped, time.monotonic() - began)
