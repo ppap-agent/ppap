@@ -41,7 +41,7 @@ class LiAutoPswAgent(NativeFacts, PswExcelAgent):
 
     @staticmethod
     def _delivery_sheets(workbook):
-        return [sheet for sheet in workbook.worksheets if any(name in sheet.title for name in ("生产件批准交付物文件清单", "生产件批准提交清单"))]
+        return [sheet for sheet in workbook.worksheets if any(name in sheet.title for name in ("生产件批准交付物文件清单", "生产件批准提交清单", "PSW交付物清单"))]
 
     @rule("生产件批准交付物文件清单附件检查")
     def rule_1(self, ctx):
@@ -91,6 +91,14 @@ class LiAutoPswAgent(NativeFacts, PswExcelAgent):
         finally:
             for workbook in opened:
                 workbook.close()
+
+    @rule("印章及授权声明检查")
+    def rule_3(self, ctx):
+        return "UNABLE", "尚未核实章面文字及部门章授权中的公司章；图像形状或红色区域不能证明本条通过。"
+
+    @rule("签字与盖章完整性检查")
+    def rule_5(self, ctx):
+        return "UNABLE", "尚未分别核实实际授权签名与盖章；同一印章不能同时充当签名证据。"
 
     @rule("条件批准日期时效检查")
     def rule_9(self, ctx):

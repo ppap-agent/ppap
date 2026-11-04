@@ -5,10 +5,10 @@ from types import MappingProxyType
 
 from audit.checkers.v3.excel_agent import rule
 from audit.checkers.v3.plant_capacity_evaluation_agent import PlantCapacityEvaluationAgent
-from audit.engine.rule_engine import Table, get_doc_resource_by_doc_type
+from audit.engine.rule_engine import Decision, GuardStop, Row, Table, get_doc_resource_by_doc_type
 from audit.kinds import PpapDocumentType
 
-from .facts import NativeFacts, columns_present, data_rows, number, precheck_fact, sheet_present
+from .facts import NativeFacts, columns_present, number, precheck_fact, sheet_present
 
 _BASE = get_doc_resource_by_doc_type(PpapDocumentType.PLANT_CAPACITY_EVALUATION_REPORT)
 assert _BASE is not None
@@ -48,7 +48,7 @@ class LiAutoPlantCapacityAgent(NativeFacts, PlantCapacityEvaluationAgent):
     @rule("风险评估与措施一致性校验")
     def rule_3(self, ctx):
         keys = ("SOP+1达成风险", "SOP+2达成风险", "SOP+3达成风险")
-        rows = data_rows(ctx, "主表", "产能数据区", keys)
+        rows = self._calculated_rows(ctx, keys)
         if any(str(row.value(key)).strip() in {"中风险", "高风险"} for row in rows for key in keys):
             block = Table(ctx).field_block("头部字段区")
             block.expect("产能评估总体结论", "后续措施", context="中高风险处理")
@@ -57,12 +57,28 @@ class LiAutoPlantCapacityAgent(NativeFacts, PlantCapacityEvaluationAgent):
         return "PASS", "风险与处理措施已核对。"
 
     def _calculated_rows(self, ctx, names):
-        return data_rows(ctx, "主表", "产能数据区", names)
+        result = []
+        for sheet in Table(ctx).find_sheets("主表"):
+            section = sheet.section("产能数据区")
+            columns = section.columns(*names, optional=() if "线体/工序类别" in names else ("线体/工序类别",))
+            for index in range(max(column.data_start_row for column in columns.values()), sheet.ws.max_row + 1):
+                if any(sheet.ws.cell(index, column.header_col).value is not None for column in columns.values()):
+                    result.append(Row(ctx, sheet.ws, columns, index, section.resolved))
+        ctx.note_scan(yielded=len(result), finished=True)
+        if not result:
+            raise GuardStop(Decision.UNABLE, "没有可核实的产能业务行。")
+        return result
+
+    @staticmethod
+    def _ratio(value):
+        text = str(value).strip()
+        return number(text[:-1]) / number(100) if text.endswith("%") else number(value)
 
     @rule("良率计算逻辑校验")
     def rule_4(self, ctx):
         for row in self._calculated_rows(ctx, ("良率", "合格品数", "产出数量")):
-            actual, qualified, output = (number(row.value(key)) for key in ("良率", "合格品数", "产出数量"))
+            actual = self._ratio(row.value("良率"))
+            qualified, output = (number(row.value(key)) for key in ("合格品数", "产出数量"))
             if output == 0:
                 return "UNABLE", "产出数量为0，尚不能计算良率。"
             if abs(actual - qualified / output) > number("1e-10"):
@@ -84,7 +100,8 @@ class LiAutoPlantCapacityAgent(NativeFacts, PlantCapacityEvaluationAgent):
     def rule_6(self, ctx):
         keys = ("线体/工序预估月度产能", "单线体/工序总产出JPH", "现有线体数", "班次/天", "每班净利用时间（h）", "每月标准工作天数", "累积良率")
         for row in self._calculated_rows(ctx, keys):
-            actual, *factors = (number(row.value(key)) for key in keys)
+            actual = number(row.value(keys[0]))
+            factors = [self._ratio(row.value(key)) if key == "累积良率" else number(row.value(key)) for key in keys[1:]]
             expected = number(1)
             for factor in factors:
                 expected *= factor

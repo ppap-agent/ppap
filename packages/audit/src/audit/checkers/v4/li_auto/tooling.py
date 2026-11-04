@@ -1,8 +1,12 @@
 """L10 checks the nine source columns and actual photo placements."""
 
+import re
+import unicodedata
+
 from audit.checkers.v3.excel_agent import rule
 from audit.checkers.v3.tooling_approval_agent import ToolingApprovalAgent
-from audit.engine.rule_engine import Table
+from audit.document_tools import effective
+from audit.engine.rule_engine import Decision, GuardStop, Sheet, Table
 
 from .facts import NativeFacts, columns_present, data_rows, image_regions, precheck_fact
 
@@ -19,20 +23,90 @@ class LiAutoToolingAgent(NativeFacts, ToolingApprovalAgent):
             row.expect(*_COLUMNS, context="理想模具工艺类型")
         return "PASS", ""
 
+    @staticmethod
+    def _label_key(value):
+        return "".join(unicodedata.normalize("NFKC", str(value if value is not None else "")).split()).casefold()
+
+    def _column_targets(self, ctx, name):
+        aliases = {self._label_key(value) for value in ctx.resource.columns[name].aliases}
+        all_aliases = {self._label_key(alias) for spec in ctx.resource.columns.values() for alias in spec.aliases}
+        targets, known_structure = [], False
+        for ws in ctx.workbook.worksheets:
+            if any(marker in ws.title for marker in ("说明", "指南", "履历")):
+                continue
+            matches, known_columns = [], set()
+            for cells in ws.iter_rows(max_row=min(ws.max_row, 80)):
+                for cell in cells:
+                    label = self._label_key(cell.value)
+                    if label in all_aliases:
+                        known_columns.add(cell.column)
+                    if label in aliases:
+                        matches.append(cell)
+            known_structure = known_structure or len(known_columns) >= 2
+            if not matches:
+                continue
+            if len(matches) != 1:
+                raise GuardStop(Decision.UNABLE, f"{name}存在多个候选区段，尚不能确认各数据行归属。")
+            header = matches[0]
+            ctx.note_cell(ws.title, header.row, header.column)
+            merged = ctx.ops.get_detailed_merge_info(ws, header.row, header.column)
+            first = (merged.max_row if merged else header.row) + 1
+            end = ws.max_row
+            footer_aliases = {self._label_key(alias) for field_name in ("编制字段", "审核字段") for alias in ctx.resource.fields[field_name].aliases}
+            for cells in ws.iter_rows(min_row=first):
+                if any(self._label_key(cell.value) in footer_aliases for cell in cells):
+                    end = min(end, cells[0].row - 1)
+                    break
+            targets.append((ws, header.column, first, end, known_columns))
+        if not targets:
+            raise GuardStop(Decision.NG if known_structure else Decision.UNABLE, f"未定位到{name}列。")
+        return targets
+
+    def _column_values(self, ctx, name):
+        count = 0
+        for ws, column, first, last, business_columns in self._column_targets(ctx, name):
+            for index in range(first, last + 1):
+                if not any(ws.cell(index, col).value is not None for col in business_columns):
+                    continue
+                source = self.native_tables.get(ws.title)
+                if source and effective(source, index, column)["state"].startswith("unknown"):
+                    raise GuardStop(Decision.UNABLE, f"{name}单元格含未读取的公式、图形或错误值。")
+                value = Sheet(ctx, ws).cell(index, column).value()
+                count += 1
+                yield value
+        ctx.note_scan(yielded=count, finished=True)
+        if not count:
+            raise GuardStop(Decision.UNABLE, f"{name}没有可核实的业务数据行。")
+
+    @rule("模具设计尺寸格式检查")
+    def rule_3(self, ctx):
+        for value in self._column_values(ctx, "模具设计尺寸"):
+            text = unicodedata.normalize("NFKC", str(value if value is not None else ""))
+            if re.fullmatch(r"\d+(?:\.\d+)?×\d+(?:\.\d+)?×\d+(?:\.\d+)?", text.strip()) is None:
+                return "NG", "模具设计尺寸须为数字×数字×数字。"
+        return "PASS", "每个尺寸值均符合长×宽×高格式。"
+
     @rule("实物照片列检查")
     def rule_4(self, ctx):
-        found = False
-        for sheet in Table(ctx).find_sheets("模具验收报告"):
-            section = sheet.section("模具验收主数据区")
-            columns = section.columns("实物照片")
-            column = columns["实物照片"]
-            source = self.native_tables.get(sheet.title)
+        for ws, column, first, last, _ in self._column_targets(ctx, "实物照片"):
+            source = self.native_tables.get(ws.title)
             if source is None:
                 return "UNABLE", "尚不能从原件确认照片列中的图像。"
-            for region, _ in image_regions(self, source):
-                if region[3] >= column.header_col >= region[1] and region[2] >= column.data_start_row:
+            found = False
+            for region, _image in image_regions(self, source):
+                if region[3] >= column >= region[1] and region[2] >= first and region[0] <= last:
+                    ctx.note_cell(ws.title, region[0], region[1], excerpt="此位置有原件中可解码的嵌入图像对象；本条只核实图片存在，不认证照片内容。")
                     found = True
-        return ("PASS", "") if found else ("UNABLE", "未取得可核实的照片列图像，需核对原件。")
+            if not found:
+                return "UNABLE", "照片列尚未取得可核实的图像，需核对原件。"
+        return "PASS", "每份已定位报告的照片列均有图像对象。"
+
+    @rule("实物确认列内容检查")
+    def rule_6(self, ctx):
+        for value in self._column_values(ctx, "实物确认"):
+            if self._label_key(value) not in {"有", "无"}:
+                return "NG", "实物确认只允许有或无。"
+        return "PASS", "实物确认取值已逐行核实。"
 
     @rule("编制与审核字段检查")
     def rule_5(self, ctx):
