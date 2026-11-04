@@ -366,14 +366,9 @@ def pfmea_precheck(audit, preset_key, group=None):
     operations["R23"] = r23
 
     def pfd_rows():
-        if not group:
-            raise UnknownFact("缺比对文件《过程流程图》，需提交方补交同零件原件。")
-        peers = group.get_files_by_type(PpapDocumentType.PROCESS_FLOW_CHART)
-        if not peers:
-            raise UnknownFact("缺比对文件《过程流程图》，需提交方补交同零件原件。")
-        if len(peers) != 1:
-            raise UnknownFact("存在多个过程流程图候选，需确认原件，未任取文件。")
-        peer = SourceFacts(peers[0])
+        from audit.precheck_pairs import peer as related_original
+
+        peer = related_original(group, PpapDocumentType.PROCESS_FLOW_CHART)
         aliases = {
             "number": {"工序号", "工序编号", "过程编号", "过程步骤编号"},
             "name": {"工序名称", "过程名称", "操作名称"},
@@ -464,8 +459,6 @@ def pfmea_precheck(audit, preset_key, group=None):
             observed = facts.observe(preset_key + ":" + identifier, execute)
             if "按S02关闭" in observed["message"]:
                 observed.update(status="not_checked", code="S02")
-            if observed["message"].startswith("缺比对文件"):
-                observed.update(status="not_checked", code="S04")
             result.append(observed)
         else:
             related = {"R17": "过程流程图", "R18": "过程流程图", "R19": "特殊特性清单", "R20": "采购件质量计划", "R21": "三大文件", "R22": "三大文件履历"}.get(identifier)

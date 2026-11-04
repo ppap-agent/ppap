@@ -67,8 +67,8 @@ def cross_operations(facts, customer, group):
         return "已逐项核实同零件原件的" + str(checked) + "项重要特性覆盖" + ("及标记一致性。" if not is_pgqp else "。")
 
     def trio():
-        pfd = peer(group, PpapDocumentType.PROCESS_FLOW_CHART)
-        cp = peer(group, PpapDocumentType.CONTROL_PLAN)
+        pfd = peer(group, PpapDocumentType.PROCESS_FLOW_CHART, required=customer != "UAES")
+        cp = peer(group, PpapDocumentType.CONTROL_PLAN, required=False)
         pfd_table = table(pfd, _PROCESS, required=("number", "name"))
         cp_table = table(cp, _PROCESS, required=("number", "name"))
         for other, located in [(pfd, pfd_table), (cp, cp_table)]:

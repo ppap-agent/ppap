@@ -18,8 +18,9 @@ class UnknownFact(ValueError):
 class StateFact(UnknownFact):
     """A proven scope/peer state, distinct from an execution or reading failure."""
 
-    def __init__(self, code, message):
+    def __init__(self, code, message, *, warning_codes=()):
         self.code = code
+        self.warning_codes = tuple(warning_codes)
         self.status = "handoff" if code == "S03" else "not_checked"
         super().__init__(message)
 
@@ -96,6 +97,7 @@ class SourceFacts:
     def observe(self, source_id, operation, *, default_message="已核实原件中的本项准备事实。"):
         self.sources = []
         status, code, message = "satisfied", None, default_message
+        warning_codes = ()
         try:
             result = operation()
             if isinstance(result, str):
@@ -106,6 +108,7 @@ class SourceFacts:
             status, code, message = "defect", exc.code, str(exc)
         except StateFact as exc:
             status, code, message = exc.status, exc.code, str(exc)
+            warning_codes = exc.warning_codes
         except UnknownFact as exc:
             status, message = "unknown", str(exc)
         except Exception:
@@ -117,6 +120,7 @@ class SourceFacts:
             "source_id": source_id,
             "status": status,
             "code": code,
+            "warning_codes": list(warning_codes),
             "message": message,
             "certainty": "confirmed" if status == "defect" else "unknown",
             "critical": bool(code and code.startswith("B")),

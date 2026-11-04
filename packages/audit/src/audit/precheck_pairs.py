@@ -14,12 +14,20 @@ def identity(value, *, numeric_zeros=False):
     return str(int(text)) if numeric_zeros and text.isdecimal() else text
 
 
-def peer(group, *kinds):
+def peer(group, *kinds, customer_owned=False, required=True):
     if group is None:
-        raise StateFact("S04", "缺比对文件《" + str(kinds[0]) + "》，须补交同零件原件。")
+        raise UnknownFact("未提供本次冻结关联集合，尚不能确定是否缺少对端。")
     candidates = {audit.audit_id: audit for kind in kinds for audit in group.get_files_by_type(kind)}
     if not candidates:
-        raise StateFact("S04", "缺比对文件《" + str(kinds[0]) + "》，须补交同零件原件。")
+        typed = {audit.audit_id for entries in group.by_doc_type.values() for audit in entries}
+        if any(audit_id not in typed for audit_id in group.by_audit_id):
+            raise UnknownFact("本批仍有类别未识别的可及原件，不能因文件名或类型未定判缺对端。")
+        if not required:
+            raise StateFact("S02", "本客户未要求本项可选对端；本批没有可比较的三文件集合，本项关闭，不要求补件。")
+        code = "S04-C" if customer_owned else "S04-S"
+        title = kinds[0].get_type_name() if hasattr(kinds[0], "get_type_name") else str(kinds[0])
+        message = "缺比对文件《" + title + "》；" + ("请向客户索取受控资料，不计供应商缺件。" if customer_owned else "请供应商确认并补充同零件原件（W01 缺件提示）；本项未执行，不阻断。")
+        raise StateFact(code, message, warning_codes=() if customer_owned else ("W01",))
     if len(candidates) != 1:
         raise UnknownFact("关联原件有多个候选，须确认配对，未任取文件。")
     return SourceFacts(next(iter(candidates.values())))
