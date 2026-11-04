@@ -1,0 +1,107 @@
+"""L17 warranty checks with calendar-month approval expiry."""
+
+import calendar
+from datetime import datetime
+
+from audit.checkers.v3.cross_file_extractors import _load_workbook_auto
+from audit.checkers.v3.excel_agent import rule
+from audit.checkers.v3.psw_excel_agent import PswExcelAgent
+from audit.checkers.v4.pfmea_local import _identity, _label, _rows
+from audit.engine.checkers.docx_workbook_agent import StructuredDocxWorkbookMixin
+from audit.engine.checkers.psw_docx_evidence import PswDocxEvidenceMixin
+from audit.engine.rule_engine import Table
+
+from .facts import NativeFacts
+
+
+class LiAutoPswAgent(NativeFacts, PswExcelAgent):
+    EXPECTED_RULE_CATEGORIES = (
+        "生产件批准交付物文件清单附件检查",
+        "重量字段格式检查",
+        "印章及授权声明检查",
+        "供应商名称格式检查",
+        "签字与盖章完整性检查",
+        "关键字段非空检查",
+        "提交原因选项检查",
+        "认可情况及结果勾选检查",
+        "条件批准日期时效检查",
+        "条件批准补充评论检查",
+    )
+    PRECHECK_METHODS = {"L17:6:c9ac5fd9716f43cdb8ff": "rule_6"}
+
+    @staticmethod
+    def _delivery_sheets(workbook):
+        return [sheet for sheet in workbook.worksheets if any(name in sheet.title for name in ("生产件批准交付物文件清单", "生产件批准提交清单"))]
+
+    @rule("生产件批准交付物文件清单附件检查")
+    def rule_1(self, ctx):
+        candidates = []
+        opened = []
+        local = self._delivery_sheets(ctx.workbook)
+        if local:
+            candidates.append((ctx.workbook, self.audit_file.audit_id, local))
+        try:
+            if not local and self.group_context:
+                if self.group_context.unavailable_files:
+                    raise OSError("本轮关联原件读取失败，不能核实唯一交付物清单。")
+                for ref in self.group_context.by_audit_id.values():
+                    if ref.audit_id == self.audit_file.audit_id:
+                        continue
+                    workbook = _load_workbook_auto(ref.file_url)
+                    opened.append(workbook)
+                    sheets = self._delivery_sheets(workbook)
+                    if sheets:
+                        candidates.append((workbook, ref.audit_id, sheets))
+            if len(candidates) != 1 or len(candidates[0][2]) != 1:
+                return "UNABLE", "缺少唯一生产件批准交付物文件清单，需确认本轮原件。"
+            workbook, version, sheets = candidates[0]
+            ctx.bind_workbook(workbook, version)
+            for original, original_version, scope in [(ctx.workbook, self.audit_file.audit_id, None), (workbook, version, sheets)]:
+                customer = _label(ctx, original, ("客户", "客户名称", "Customer", "Customer Name"), original_version, sheets=scope)
+                if customer and _identity(customer) not in {"理想", "理想汽车", "liauto", "li"}:
+                    return "UNABLE", "原件客户与本轮理想模式冲突，不能配对。"
+            if workbook is not ctx.workbook:
+                own_part = _label(ctx, ctx.workbook, ("理想汽车零件号", "零件号", "零件编号"), self.audit_file.audit_id)
+                other_part = _label(ctx, workbook, ("理想汽车零件号", "零件号", "零件编号"), version, sheets=sheets)
+                if not own_part or not other_part or _identity(own_part) != _identity(other_part):
+                    return "UNABLE", "保证书与交付物清单零件号缺失或不一致，不能配对。"
+                own_revision = _label(ctx, ctx.workbook, ("工程更改版本", "版本", "版本号"), self.audit_file.audit_id)
+                other_revision = _label(ctx, workbook, ("工程更改版本", "版本", "版本号"), version, sheets=sheets)
+                if (own_revision or other_revision) and (not own_revision or not other_revision or _identity(own_revision) != _identity(other_revision)):
+                    return "UNABLE", "保证书与交付物清单版本缺失或不一致。"
+            rows = _rows(ctx, workbook, {"item": ["项目", "交付物", "提交项目"], "attachment": ["附件"]}, ("item", "attachment"), version, sheets=sheets)
+            checked = 0
+            for row in rows:
+                if not row["item"] or _identity(row["item"]) == _identity("零件认证相关"):
+                    continue
+                checked += 1
+                if not row["attachment"]:
+                    return "NG", "交付物清单业务行的附件未填写。"
+            return ("PASS", "已核实交付物附件。") if checked else ("UNABLE", "清单没有可核实的业务行。")
+        finally:
+            for workbook in opened:
+                workbook.close()
+
+    @rule("条件批准日期时效检查")
+    def rule_9(self, ctx):
+        main_sheet = Table(ctx).sheet("PSW主表")
+        disposition, _, row = self._resolve_warrant_disposition(main_sheet, self._checked_controls(main_sheet))
+        if disposition in {"missing_field", "invalid_selection"}:
+            return "NG", "认可情况缺失或勾选不唯一。"
+        if disposition != "conditional":
+            return "PASS", "本条条件未触发。"
+        if row is None:
+            return "UNABLE", "不能定位条件批准日期。"
+        approved = self._extract_conditional_approval_date(main_sheet, row)
+        if approved is None:
+            return "UNABLE", "条件批准日期不可可靠读取。"
+        today = datetime.now().date()
+        offset = today.year * 12 + today.month - 1 - 3
+        year, month = divmod(offset, 12)
+        month += 1
+        earliest = today.replace(year=year, month=month, day=min(today.day, calendar.monthrange(year, month)[1]))
+        return ("PASS", "条件批准日期在三个日历月内。") if earliest <= approved <= today else ("NG", "条件批准日期不在当前日期之前的三个日历月内。")
+
+
+class LiAutoPswDocxAgent(PswDocxEvidenceMixin, StructuredDocxWorkbookMixin, LiAutoPswAgent):
+    """Read Word original evidence through the existing structured adapter."""
