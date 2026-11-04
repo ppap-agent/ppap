@@ -439,8 +439,8 @@ class UaesSourceAgent(BaseAgent):
         if own_revision in placeholders or peer_revision in placeholders or own_revision != peer_revision:
             raise UnknownFact("关联原件版本不一致，需确认适用版本。")
         if require_name:
-            names = ("零件名称", "物料名称", "part name")
-            if key(self.native().field(names)) != key(other.field(names)):
+            part_name_aliases = ("零件名称", "物料名称", "part name")
+            if key(self.native().field(part_name_aliases)) != key(other.field(part_name_aliases)):
                 raise MissingFact("同项目同零件编号原件的零件名称不一致。")
         return other
 
