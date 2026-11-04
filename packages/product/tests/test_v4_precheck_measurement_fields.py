@@ -2,6 +2,7 @@
 
 import json
 
+import pytest
 from audit.checkers.v4.nio.measurement import NioMeasurementAgent
 from audit.contracts import AuditInput, RuleInput
 from audit.precheck_sources import l1_criteria
@@ -167,3 +168,54 @@ def test_nio_proven_empty_form_differs_from_unreadable_formula_row(tmp_path):
 def test_nio_unassigned_real_samples_are_not_a_proven_empty_template(tmp_path):
     facts = execute(tmp_path, extra=lambda book: setattr(book["Surface"]["A3"], "value", None))
     assert facts["M-06"]["status"] == "unknown", facts["M-06"]
+
+
+@pytest.mark.parametrize("blank", [None, " "])
+def test_nio_blank_point_id_is_required_but_not_duplicate_key(tmp_path, blank):
+    def erase_ids(book):
+        book["Surface"]["A3"] = blank
+        book["Surface"]["A4"] = blank
+
+    facts = execute(tmp_path, duplicate=True, extra=erase_ids)
+    assert facts["C-05"]["status"] == "unknown", facts["C-05"]
+    assert (facts["M-05"]["status"], facts["M-05"]["code"]) == ("defect", "W02")
+    assert facts["M-06"]["status"] == "unknown", facts["M-06"]
+    assert facts["M-06"]["code"] != "B04"
+
+
+def test_nio_actual_assigned_duplicate_ids_remain_b03(tmp_path):
+    facts = execute(tmp_path, duplicate=True)
+    assert (facts["C-05"]["status"], facts["C-05"]["code"]) == ("defect", "B03")
+    assert facts["M-06"]["status"] == "satisfied"
+
+
+def test_nio_one_real_assigned_row_can_establish_nonempty_data_with_orphan_warning(tmp_path):
+    facts = execute(tmp_path, duplicate=True, extra=lambda book: setattr(book["Surface"]["A4"], "value", None))
+    assert facts["C-05"]["status"] == "satisfied", facts["C-05"]
+    assert (facts["M-05"]["status"], facts["M-05"]["code"]) == ("defect", "W02")
+    assert facts["M-06"]["status"] == "satisfied", facts["M-06"]
+
+
+def test_nio_uncalculated_point_id_is_unknown_not_missing_or_duplicate(tmp_path):
+    facts = execute(tmp_path, extra=lambda book: setattr(book["Surface"]["A3"], "value", '="P01"'))
+    for identity in ("C-05", "M-05", "M-06"):
+        assert facts[identity]["status"] == "unknown", facts[identity]
+
+
+def test_nio_blank_id_with_uncalculated_sample_is_not_empty_template(tmp_path):
+    facts = execute(tmp_path, samples=["=1+1", 0, 0, 0, 0], extra=lambda book: setattr(book["Surface"]["A3"], "value", None))
+    assert facts["M-06"]["status"] == "unknown", facts["M-06"]
+    assert facts["M-06"]["code"] != "B04"
+
+
+def test_nio_numeric_zero_id_and_zero_samples_are_present_original_values(tmp_path):
+    facts = execute(tmp_path, samples=[0, 0, 0, 0, 0], centering=0, range_value=0, extra=lambda book: setattr(book["Surface"]["A3"], "value", 0))
+    for identity in ("C-05", "M-05", "M-06"):
+        assert facts[identity]["status"] == "satisfied", facts[identity]
+
+
+@pytest.mark.parametrize("placeholder", ["/", "NA"])
+def test_nio_placeholder_point_id_does_not_establish_effective_data(tmp_path, placeholder):
+    facts = execute(tmp_path, extra=lambda book: setattr(book["Surface"]["A3"], "value", placeholder))
+    assert facts["M-06"]["status"] == "unknown", facts["M-06"]
+    assert facts["M-06"]["code"] != "B04"
