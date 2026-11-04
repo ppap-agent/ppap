@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -80,10 +81,13 @@ def test_client_rejects_unsafe_endpoint(endpoint):
 
 
 def test_workbook_preserves_spans_and_never_executes_ocr_formulas(pdf, tmp_path):
-    directory = tmp_path / "evaluation"
+    root = tmp_path / "evaluations"
     old_bytes = pdf.read_bytes()
-    stats = paddle.evaluate_pdf(pdf, directory, response=response())
-    assert stats == paddle.PaddleOCRStats(pages=1, tables=1, text_blocks=1, seals=1)
+    stats = paddle.evaluate_pdf(pdf, root, response=response())
+    directory = stats.output_dir
+    assert directory.parent == root.resolve()
+    assert directory.name.startswith("paddle-")
+    assert (stats.pages, stats.tables, stats.text_blocks, stats.seals) == (1, 1, 1, 1)
     assert pdf.read_bytes() == old_bytes
     assert {item.name for item in directory.iterdir()} == {"tables.xlsx", "evidence.json", "response.json"}
     workbook = load_workbook(directory / "tables.xlsx")
@@ -121,8 +125,8 @@ def test_layout_detection_preserves_unreadable_seal_without_ocr_text(pdf, tmp_pa
     assert evidence["pages"][0]["seals"][0]["text_status"] == "unreadable"
     assert evidence["pages"][0]["seals"][0]["bbox"] == [20, 30, 200, 230]
     stats = paddle.evaluate_pdf(pdf, tmp_path / "seal-only", response=result)
-    assert stats == paddle.PaddleOCRStats(pages=1, tables=0, text_blocks=0, seals=1)
-    workbook = load_workbook(tmp_path / "seal-only" / "tables.xlsx")
+    assert (stats.pages, stats.tables, stats.text_blocks, stats.seals) == (1, 0, 0, 1)
+    workbook = load_workbook(stats.output_dir / "tables.xlsx")
     try:
         assert list(workbook["OCR_Text"].values) == [("Page", "Type", "Content"), (1, "seal", "检测到印章（内容未识别）")]
     finally:
@@ -205,7 +209,7 @@ def test_cross_page_tables_remain_separate_without_guessed_join(tmp_path):
         page["prunedResult"]["table_res_list"] = [{"pred_html": "<table><tr><td>序号</td><td>值</td></tr><tr><td>1</td><td>OK</td></tr></table>"}]
     stats = paddle.evaluate_pdf(source, tmp_path / "cross-page", response=result)
     assert stats.tables == 2
-    workbook = load_workbook(tmp_path / "cross-page" / "tables.xlsx")
+    workbook = load_workbook(stats.output_dir / "tables.xlsx")
     try:
         assert workbook.sheetnames == ["Table_1", "Table_2", "OCR_Text"]
         assert list(workbook["Table_1"].values) == list(workbook["Table_2"].values)
@@ -240,28 +244,76 @@ def test_cli_replay_requires_no_model_or_network(pdf, tmp_path, monkeypatch, cap
     saved.write_text(json.dumps(response(), ensure_ascii=False), encoding="utf-8")
     monkeypatch.delenv("PADDLE_OCR_URL", raising=False)
     monkeypatch.setattr(client.requests, "post", lambda *_a, **_kw: (_ for _ in ()).throw(AssertionError("network forbidden")))
-    monkeypatch.setattr("sys.argv", ["paddle", "--pdf", str(pdf), "--out-dir", str(tmp_path / "replay"), "--response-json", str(saved)])
+    root = tmp_path / "replays"
+    monkeypatch.setattr("sys.argv", ["paddle", "--pdf", str(pdf), "--out-root", str(root), "--response-json", str(saved)])
     main()
-    assert (tmp_path / "replay" / "tables.xlsx").exists()
-    assert "tables=1" in capsys.readouterr().out
+    outputs = list(root.glob("paddle-*/tables.xlsx"))
+    assert len(outputs) == 1
+    output = capsys.readouterr().out
+    assert "tables=1" in output
+    assert f"output_dir={outputs[0].parent}" in output
 
 
-def test_existing_output_directory_and_failed_export_do_not_overwrite(pdf, tmp_path, monkeypatch):
-    destination = tmp_path / "existing"
-    destination.mkdir()
-    (destination / "keep.txt").write_text("original")
-    with pytest.raises(FileExistsError):
-        paddle.evaluate_pdf(pdf, destination, response=response())
-    assert (destination / "keep.txt").read_text() == "original"
+def test_existing_output_root_is_reused_and_failed_export_is_cleaned(pdf, tmp_path, monkeypatch):
+    root = tmp_path / "results"
+    root.mkdir()
+    (root / "keep.txt").write_text("original")
+    first = paddle.evaluate_pdf(pdf, root, response=response())
+    assert first.output_dir.is_dir()
+    assert (root / "keep.txt").read_text() == "original"
 
     def fail_save(*_args, **_kwargs):
         raise OSError("simulated disk failure")
 
     monkeypatch.setattr(export.Workbook, "save", fail_save)
     with pytest.raises(OSError, match="simulated"):
-        paddle.evaluate_pdf(pdf, tmp_path / "not-published", response=response())
-    assert not (tmp_path / "not-published").exists()
-    assert list(tmp_path.glob(".paddle-*")) == []
+        paddle.evaluate_pdf(pdf, root, response=response())
+    assert {item.name for item in root.iterdir()} == {"keep.txt", first.output_dir.name}
+    assert list(root.glob(".paddle-*")) == []
+
+
+def test_parallel_runs_share_output_root_without_collisions(pdf, tmp_path):
+    root = tmp_path / "concurrent"
+    original = pdf.read_bytes()
+
+    def run(_):
+        return paddle.evaluate_pdf(pdf, root, response=response()).output_dir
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        outputs = list(pool.map(run, range(16)))
+
+    assert len(set(outputs)) == 16
+    assert all(path.parent == root.resolve() and path.name.startswith("paddle-") for path in outputs)
+    assert all({item.name for item in path.iterdir()} == {"tables.xlsx", "evidence.json", "response.json"} for path in outputs)
+    assert list(root.glob(".paddle-*")) == []
+    assert pdf.read_bytes() == original
+
+
+def test_reserved_run_name_collision_retries_without_overwrite(pdf, tmp_path, monkeypatch):
+    root = tmp_path / "results"
+    existing = root / ("paddle-" + "a" * 32)
+    existing.mkdir(parents=True)
+    (existing / "keep.txt").write_text("untouched")
+    candidates = iter(["a" * 32, "b" * 32])
+    monkeypatch.setattr(export.secrets, "token_hex", lambda _count: next(candidates))
+
+    result = paddle.evaluate_pdf(pdf, root, response=response())
+    assert result.output_dir == root / ("paddle-" + "b" * 32)
+    assert (existing / "keep.txt").read_text() == "untouched"
+    assert (result.output_dir / "tables.xlsx").exists()
+    assert list(root.glob(".paddle-*")) == []
+
+
+def test_publish_failure_does_not_leave_a_reserved_directory(pdf, tmp_path, monkeypatch):
+    root = tmp_path / "results"
+
+    def fail_publish(*_args, **_kwargs):
+        raise OSError("simulated rename failure")
+
+    monkeypatch.setattr(export.os, "rename", fail_publish)
+    with pytest.raises(OSError, match="simulated rename failure"):
+        paddle.evaluate_pdf(pdf, root, response=response())
+    assert not list(root.iterdir())
 
 
 def test_empty_evidence_is_not_exported(pdf, tmp_path):
