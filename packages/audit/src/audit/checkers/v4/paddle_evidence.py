@@ -280,6 +280,7 @@ class PaddleShadowSession:
 
     def _consume(self, target: ShadowTarget, kind: str, attempt: _PageAttempt, reused: bool, labels: tuple[str, ...]) -> ShadowObservation:
         from audit.checkers.v4.uaes.native import header
+        from audit.pdf_tables import valid_pdf_bbox
 
         value = attempt.evidence or {}
         pages = value.get("pages", [])
@@ -292,10 +293,8 @@ class PaddleShadowSession:
         for item in value.get("diagnostics", []):
             diagnostics.append(EvidenceDiagnostic(code=str(item.get("code", "paddle.element.invalid")), stage="structure", severity="warning", message="本页部分OCR元素不可用；其他已确认事实保留。"))
 
-        def add(fact: dict[str, Any], item: dict[str, Any], index: int) -> None:
-            if not item.get("pdf_bbox"):
-                return
-            locator = {
+        def locate(item: dict[str, Any], index: int, element: str) -> dict[str, Any]:
+            return {
                 "kind": "pdf_region",
                 "page": target.page_number,
                 "file_version_id": target.file_version_id,
@@ -307,15 +306,80 @@ class PaddleShadowSession:
                 "element_index": index,
                 "region_index": item.get("region_index"),
                 "recognition_index": item.get("recognition_index"),
-                "element": "seal" if kind == "seal" else "table",
+                "element": element,
             }
+
+        def add(fact: dict[str, Any], item: dict[str, Any], index: int) -> bool:
+            if not item.get("pdf_bbox"):
+                return False
+            locator = locate(item, index, "seal" if kind == "seal" else "table")
             facts.append(fact)
             sources.append(EvidenceSource(kind="visual", locator=json.dumps(locator, separators=(",", ":")), excerpt=str(fact.get("value", " ".join(fact.get("text", []))))[:500]))
+            return True
+
+        def region_fragments(seal: dict[str, Any], seal_index: int) -> list[dict[str, Any]]:
+            # Page OCR inside a detected region is a separate observation. It
+            # does not identify the ink origin or complete the seal wording.
+            frame = page.get("frame") or {}
+            width, height = frame.get("pdf_width"), frame.get("pdf_height")
+            bounds = seal.get("pdf_bbox")
+            if not valid_pdf_bbox(bounds, width, height):
+                return []
+            words: dict[int, dict[str, Any]] = {}
+            ambiguous = set()
+            for word in page.get("texts", []):
+                if word.get("type") != "ocr_word" or word.get("source") != "paddle_overall_ocr" or type(word.get("index")) is not int or word["index"] < 0:
+                    continue
+                if word["index"] in words:
+                    ambiguous.add(word["index"])
+                words[word["index"]] = word
+            linked = seal.get("supplemental_text_indices", [])
+            if not isinstance(linked, list):
+                return []
+            fragments = []
+            for word_index in dict.fromkeys(index for index in linked if type(index) is int and index >= 0):
+                word = words.get(word_index)
+                if word is None or word_index in ambiguous or not isinstance(word.get("text"), str) or not word["text"].strip():
+                    continue
+                word_bounds = word.get("pdf_bbox")
+                if not isinstance(word_bounds, list) or not valid_pdf_bbox(word_bounds, width, height):
+                    continue
+                owners = [
+                    candidate
+                    for candidate in page.get("seals", [])
+                    if candidate.get("detected") is True
+                    and valid_pdf_bbox(candidate.get("pdf_bbox"), width, height)
+                    and candidate["pdf_bbox"][0] <= word_bounds[0]
+                    and candidate["pdf_bbox"][1] <= word_bounds[1]
+                    and candidate["pdf_bbox"][2] >= word_bounds[2]
+                    and candidate["pdf_bbox"][3] >= word_bounds[3]
+                ]
+                if len(owners) != 1 or owners[0] is not seal:
+                    continue
+                fragments.append(
+                    {
+                        "source": "paddle_overall_ocr",
+                        "index": word_index,
+                        "text": word["text"],
+                        "page": target.page_number,
+                        "pdf_bbox": word_bounds,
+                        "coordinate_system": "pdf_points_unrotated",
+                        "association": "geometric_containment_only",
+                    }
+                )
+                locator = locate(word, word_index, "ocr_word")
+                locator.update(source="paddle_overall_ocr", seal_index=seal_index, association="geometric_containment_only")
+                sources.append(EvidenceSource(kind="visual", locator=json.dumps(locator, separators=(",", ":")), excerpt=word["text"][:500]))
+            return fragments
 
         if kind == "seal":
             for index, seal in enumerate(page.get("seals", [])):
                 if seal.get("detected") is True:
-                    add({"detected": True, "text": seal.get("recognized_text", []), "text_status": seal.get("text_status", "unreadable")}, seal, index)
+                    fact = {"detected": True, "text": seal.get("recognized_text", []), "text_status": seal.get("text_status", "unreadable")}
+                    if add(fact, seal, index):
+                        fragments = region_fragments(seal, index)
+                        if fragments:
+                            fact["region_text_fragments"] = fragments
         else:
             for index, table in enumerate(page.get("tables", [])):
                 for row_number, row in enumerate(table.get("rows", []), 1):
