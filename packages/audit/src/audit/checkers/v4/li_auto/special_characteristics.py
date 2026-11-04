@@ -20,6 +20,8 @@ _RESOURCE = replace(_BASE, sections=MappingProxyType(_SECTIONS))
 
 
 class LiAutoSpecialCharacteristicsAgent(ExcelAgent):
+    EXPECTED_RULE_CATEGORIES = ("关键字段完整性检查", "CCSC结构与逐行必填", "高风险行必须有预防措施")
+    PRECHECK_METHODS = {"L12:1:c437062e97210ecb39ba": "rule_1", "L12:2:9344878425e7576fad48": "rule_2"}
     DOC_TYPE = PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST
     rule_1 = CcscChecks.rule_1
 

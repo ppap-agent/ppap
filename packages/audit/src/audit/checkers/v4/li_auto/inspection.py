@@ -1,0 +1,117 @@
+"""L01 shares inspection parsing but never treats an unparsed range as passed."""
+
+from audit.checkers.v2.dimension_measurement_excel_agent import (
+    DimensionMeasurementExcelAgent,
+    _is_doc01_sequence_number,
+    _iter_doc01_main_sections,
+    _observe_doc01_row,
+)
+from audit.checkers.v3.excel_agent import rule
+from audit.engine.checkers.dimension_measurement_policy import check_duplicates, check_tolerance, is_strict_ok_text
+from audit.engine.rule_engine import Decision, GuardStop
+from audit.kinds import PpapDocumentType
+
+from .facts import NativeFacts, compact
+
+
+class LiAutoInspectionAgent(NativeFacts):
+    EXPECTED_RULE_CATEGORIES = (
+        "标题识别检查",
+        "重要度标记检查",
+        "尺寸区数值公差带检查",
+        "检查方法/工具列检查",
+        "尺寸区同行重复值检查",
+        "非尺寸数据检查",
+        "尺寸区OK数据方法匹配检查",
+        "关键字段识别检查",
+    )
+    DOC_TYPE = PpapDocumentType.DIMENSION_MEASUREMENT_REPORT
+    rule_1 = DimensionMeasurementExcelAgent.rule_1
+    rule_2 = DimensionMeasurementExcelAgent.rule_2
+    rule_8 = DimensionMeasurementExcelAgent.rule_8
+
+    @staticmethod
+    def _inspection_rows(ctx, required):
+        rows = []
+        for section in _iter_doc01_main_sections(ctx):
+            columns = section.columns(*required, optional=("序号", "检查项目"))
+            for row in section.rows_from(columns):
+                if row.is_header():
+                    continue
+                if "序号" in columns and not _is_doc01_sequence_number(row.value("序号")):
+                    continue
+                if "检查项目" in columns and not row.is_present("检查项目"):
+                    continue
+                rows.append((row, columns))
+        if not rows:
+            raise GuardStop(Decision.UNABLE, "未取得可核实的检查数据行。")
+        return rows
+
+    @rule("尺寸区数值公差带检查")
+    def rule_3(self, ctx):
+        checked = 0
+        for row, columns in self._inspection_rows(ctx, ("检查数据", "判定标准", "判定结果")):
+            observation = _observe_doc01_row(row, columns)
+            if observation.section_group != "尺寸":
+                continue
+            if not observation.raw_measurements:
+                return "NG", "尺寸行缺少检查数据。"
+            decision = check_tolerance(observation.standard_text, observation.raw_measurements, observation.result_text, observation.method_text)
+            if decision.status == "NG":
+                return "NG", decision.reason
+            if not decision.numeric_checked:
+                return "UNABLE", "本行尚未完成数值公差核对，不能按通用通过处理。"
+            checked += 1
+        return ("PASS", "") if checked else ("NA", "没有适用的尺寸数值行。")
+
+    @rule("检查方法/工具列检查")
+    def rule_4(self, ctx):
+        for row, _columns in self._inspection_rows(ctx, ("供方检查方法/检查工具",)):
+            value = compact(row.value("供方检查方法/检查工具"))
+            if not value:
+                return "UNABLE", "检查方法/工具未填写，尚不能核实该项。"
+            if "/" in value or "或" in value:
+                return "NG", "检查方法/工具不得包含斜线或“或”。"
+        return "PASS", ""
+
+    @rule("尺寸区同行重复值检查")
+    def rule_5(self, ctx):
+        checked = 0
+        for row, columns in self._inspection_rows(ctx, ("检查数据", "判定结果")):
+            observation = _observe_doc01_row(row, columns)
+            if observation.section_group != "尺寸":
+                continue
+            if not observation.raw_measurements:
+                return "UNABLE", "尺寸行没有可比较的数据。"
+            decision = check_duplicates(observation.raw_measurements)
+            if decision.status == "NG":
+                return "NG", decision.reason
+            checked += 1
+        return ("PASS", "") if checked else ("NA", "没有适用尺寸行。")
+
+    @rule("非尺寸数据检查")
+    def rule_6(self, ctx):
+        checked = 0
+        for row, columns in self._inspection_rows(ctx, ("检查数据", "判定结果")):
+            if row.group("区域") != "非尺寸":
+                continue
+            values = row.values_between("检查数据", "判定结果")
+            if not values:
+                return "NG", "非尺寸行没有检查数据。"
+            checked += 1
+            if any(not is_strict_ok_text(value) for value in values):
+                return "NG", "非尺寸数据只接受OK或合格。"
+        return ("PASS", "") if checked else ("UNABLE", "未取得非尺寸数据。")
+
+    @rule("尺寸区OK数据方法匹配检查")
+    def rule_7(self, ctx):
+        applied = False
+        for row, columns in self._inspection_rows(ctx, ("检查数据", "判定结果", "供方检查方法/检查工具")):
+            observation = _observe_doc01_row(row, columns)
+            if observation.section_group != "尺寸":
+                continue
+            if any(compact(value).casefold() == "ok" for value in observation.raw_measurements):
+                applied = True
+                if compact(observation.method_text) not in {"通止规", "菲林尺", "卡板"}:
+                    return "NG", "尺寸检查数据出现OK时，方法须为通止规、菲林尺或卡板。"
+        return ("PASS", "") if applied else ("NA", "没有尺寸OK定性数据。")
