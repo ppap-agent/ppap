@@ -469,7 +469,25 @@ def execute(checker, entry="N01"):
         return done(ctx)
 
     def m06(ctx):
-        actual_rows = rows(ctx, "测量偏差值", "Centering", optional=("IQG",))
+        try:
+            actual_rows = rows(ctx, "测量偏差值", "Centering", optional=("IQG",))
+        except GuardStop as exc:
+            if "没有有效测点行" in exc.message and not ctx.has_unresolved():
+                sections = checker._sections(ctx, "测点号", "测量偏差值", "Centering", optional=("IQG",))
+                if sections:
+                    for sheet, _section, columns in sections:
+                        for name in columns:
+                            _section.header_cell(name).value()
+                        first = max(column.data_start_row for column in columns.values())
+                        stop = columns["IQG" if "IQG" in columns else "Centering"].header_col
+                        for row_index in range(first, sheet.ws.max_row + 1):
+                            for column_index in range(columns["测量偏差值"].header_col, stop):
+                                value = sheet.cell(row_index, column_index).value()
+                                if value is not None and str(value).strip():
+                                    raise GuardStop(Decision.UNABLE, "已有原始样本但无测点归属；不能把未知行归属判成空白模板。")
+                    ctx.mark_scope_complete()
+                    return "NG", "业务表头已定位且数据区没有实际测点行；不是读取未知。"
+            raise
         real = 0
         for _sheet, row, columns in actual_rows:
             identity = str(row.value("测点号") or "")
