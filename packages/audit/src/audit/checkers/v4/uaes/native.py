@@ -348,6 +348,9 @@ class UaesSourceAgent(BaseAgent):
                 sources=tuple(self._evidence_sources),
                 diagnostics=(EvidenceDiagnostic(code="uaes_source_fact", stage="evaluation", severity="info", message="客户原始条款的实际执行结果；未知事实未转为通过。"),),
             )
+        from audit.checkers.v4.paddle_evidence import observe_shadow
+
+        observe_shadow(self, self.rule_checkers[ith].__name__)
         return AuditResultItem(classification=self.agent_rules[ith], item=self.agent_rules[ith], status=status, suggestions=message, priority="P0", evidence=evidence, checks_performed=completed)
 
     def visual_pdf(self, fields: dict[str, str]):
