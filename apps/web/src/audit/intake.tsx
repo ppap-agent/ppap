@@ -718,8 +718,8 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     return () => {window.clearTimeout(timer); window.clearInterval(poll); document.removeEventListener('visibilitychange', visible); controller?.abort(); listEpoch.current += 1}
   }, [query, filter, surface])
   const shownTasks = summaries.filter(row => (surface === 'workbench' || filter === 'all' || row.state === filter) && `${row.number} ${row.files.map(file => file.file.original_filename).join(' ')}`.toLowerCase().includes(query.toLowerCase()))
-  // Detail/revisit summaries remain cached; a successful list owns its membership.
-  const workbenchTasks = taskList.readScope === taskListScope ? shownTasks.filter(row => taskList.ids.includes(row.id)) : shownTasks
+  // Only a complete list can exclude cached detail/revisit summaries.
+  const workbenchTasks = taskList.readScope === taskListScope && taskList.next === null ? shownTasks.filter(row => taskList.ids.includes(row.id)) : shownTasks
   function showSurface(value: ProductSurface) {
     setSheet(false)
     setNavigationSheet(false)
