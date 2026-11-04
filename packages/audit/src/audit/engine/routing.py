@@ -235,10 +235,11 @@ def resolve_engine_agent_class(
         if doc_type != expected_type:
             raise ValueError("preset_document_type_mismatch")
         extension = get_file_extension_from_url(str(file_url)).lower()
+        checker: type[Any] | None = None
         if preset.customer == "UAES":
-            checker: type[Any] | None = uaes_checkers.CLASS_BY_ENTRY.get(preset.entry_id)
-            return checker if checker and extension in checker.SUPPORTED_EXTENSIONS else None
-        if preset.customer == "理想":
+            candidate = uaes_checkers.CLASS_BY_ENTRY.get(preset.entry_id)
+            checker = candidate if candidate and extension in candidate.SUPPORTED_EXTENSIONS else None
+        elif preset.customer == "理想":
             carrier_map = (
                 li_auto_checkers.EXCEL_AGENTS
                 if extension in EXCEL_EXTENSIONS
@@ -248,10 +249,11 @@ def resolve_engine_agent_class(
                 if extension in PDF_EXTENSIONS
                 else {}
             )
-            return carrier_map.get(preset.entry_id)
-        if preset.customer == "蔚来":
+            checker = carrier_map.get(preset.entry_id)
+        elif preset.customer == "蔚来" and extension in EXCEL_EXTENSIONS | PDF_EXTENSIONS:
             checker = {"N01": NioMeasurementAgent, "N02": NioPfmeaAgent, "N03": NioControlPlanAgent, "N04": NioSpecialCharacteristicsAgent, "N05": NioProcessFlowAgent}.get(preset.entry_id)
-            return checker if extension in EXCEL_EXTENSIONS | PDF_EXTENSIONS else None
+        if checker is not None:
+            return checker
         profile = RULE_PROFILE_V3
     file_kind = _resolve_audit_file_kind(file_url)
     primary_map = _pick_agent_map(file_kind, V2_EXCEL_AGENTS, V2_PDF_AGENTS, V2_DOCX_AGENTS)

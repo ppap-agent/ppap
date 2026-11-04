@@ -77,3 +77,49 @@ def test_customer_resolver_never_borrows_another_customer_identity():
         resolve_engine_agent_class(kind, "source.xlsx", "v4", preset_key="N04", preset_customer="UAES")
     with pytest.raises(ValueError, match="preset_document_type_mismatch"):
         resolve_engine_agent_class(PpapDocumentType.CONTROL_PLAN, "source.xlsx", "v4", preset_key="N04", preset_customer="蔚来")
+
+
+def test_missing_v4_carrier_selects_generic_v3_without_falsely_mapping_customer_clauses():
+    from audit.checkers.v3.equipment_list_docx_agent import EquipmentListDocxAgent
+    from audit.engine.checkers.rule_declarations import freeze_target_rule_execution
+    from audit.engine.routing import resolve_engine_agent_class
+    from audit.kinds import PpapDocumentType
+    from audit.presets import preset_rule_body
+
+    assert resolve_engine_agent_class(PpapDocumentType.EQUIPMENT_LIST, "equipment.docx", "v4", preset_key="L13", preset_customer="理想") is EquipmentListDocxAgent
+    frozen = freeze_target_rule_execution(preset_rule_body("理想", "L13"), "equipment.docx")
+    assert frozen["checker"]["profile"] == "v3"
+    assert frozen["checker"]["class"] == "audit.checkers.v3.equipment_list_docx_agent.EquipmentListDocxAgent"
+    assert all(row["coverage"] == "unsupported" for row in frozen["items"])
+
+
+def test_missing_v4_and_v3_carrier_selects_v2_then_none_when_none_is_available(monkeypatch):
+    from audit.checkers.v2.equipment_list_docx_agent import EquipmentListDocxAgent
+    from audit.engine import routing
+    from audit.engine.checkers.rule_declarations import freeze_target_rule_execution
+    from audit.kinds import PpapDocumentType
+    from audit.presets import preset_rule_body
+
+    kind = PpapDocumentType.EQUIPMENT_LIST
+    monkeypatch.delitem(routing.V3_OVERLAY_DOCX_AGENTS, kind)
+    assert routing.resolve_engine_agent_class(kind, "equipment.docx", "v4", preset_key="L13", preset_customer="理想") is EquipmentListDocxAgent
+    monkeypatch.delitem(routing.V2_DOCX_AGENTS, kind)
+    assert routing.resolve_engine_agent_class(kind, "equipment.docx", "v4", preset_key="L13", preset_customer="理想") is None
+    frozen = freeze_target_rule_execution(preset_rule_body("理想", "L13"), "equipment.docx")
+    assert frozen["checker"]["class"] is None and frozen["checker"]["profile"] is None
+    assert all(row["coverage"] == "unsupported" for row in frozen["items"])
+
+
+def test_registered_customer_checker_failure_does_not_select_a_generic_checker(monkeypatch):
+    from audit.engine import routing
+    from audit.kinds import PpapDocumentType
+
+    class FailingChecker:
+        def check(self):
+            raise OSError("original unavailable")
+
+    monkeypatch.setitem(routing.li_auto_checkers.EXCEL_AGENTS, "L13", FailingChecker)
+    selected = routing.resolve_engine_agent_class(PpapDocumentType.EQUIPMENT_LIST, "equipment.xlsx", "v4", preset_key="L13", preset_customer="理想")
+    assert selected is FailingChecker
+    with pytest.raises(OSError, match="original unavailable"):
+        selected().check()
