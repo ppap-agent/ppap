@@ -95,3 +95,19 @@ def seal_evidence(pruned: dict, regions: list[dict], page_no: int, *, diagnostic
             }
         )
     return result
+
+
+def link_region_words(seals: list[dict], texts: list[dict], page_no: int, diagnostics: list[dict]) -> None:
+    """Link located partial words to a unique region, never certify stamp ink."""
+    for seal in seals:
+        seal["supplemental_text_indices"] = []
+    located = [seal for seal in seals if seal.get("detected") is True and seal.get("source") == "paddle_layout" and seal.get("pdf_bbox")]
+    for word in texts:
+        if word.get("source") != "paddle_overall_ocr" or not word.get("pdf_bbox"):
+            continue
+        bounds = word["pdf_bbox"]
+        owners = [seal for seal in located if seal["pdf_bbox"][0] <= bounds[0] and seal["pdf_bbox"][1] <= bounds[1] and bounds[2] <= seal["pdf_bbox"][2] and bounds[3] <= seal["pdf_bbox"][3]]
+        if len(owners) == 1:
+            owners[0]["supplemental_text_indices"].append(word["index"])
+        elif len(owners) > 1:
+            diagnostic(diagnostics, element="seal", page=page_no, index=word["index"], message="PaddleOCR overall word is contained in multiple seal regions", outcome="unknown")

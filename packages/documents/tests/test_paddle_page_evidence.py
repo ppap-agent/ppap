@@ -408,3 +408,104 @@ def test_ambiguous_seal_text_binding_has_unknown_diagnostic(source):
     assert all(s["recognized_text"] == [] for s in seals if s["source"] == "paddle_layout")
     binding = [d for d in evidence["diagnostics"] if d["element"] == "seal"]
     assert binding and all(d["outcome"] == "unknown" for d in binding)
+
+
+def test_overall_words_survive_build_and_export_without_becoming_full_seal_text(source, tmp_path):
+    from documents.ocr.paddle import evaluate_pdf
+
+    raw = page_result()
+    pruned = raw["layoutParsingResults"][0]["prunedResult"]
+    pruned["layout_det_res"]["boxes"] = [{"label": "seal", "coordinate": [400, 200, 600, 350]}]
+    pruned["seal_res_list"] = [{"rec_texts": ["章", "$", "用"]}]
+    pruned["overall_ocr_res"] = {
+        "rec_texts": ["仅供理想使用", "公司名称（公司章）", "部门"],
+        "rec_boxes": [[20, 20, 180, 40], [390, 190, 610, 215], [450, 240, 510, 280]],
+        "rec_polys": [[[20, 20], [180, 20], [180, 40], [20, 40]], [[390, 190], [610, 190], [610, 215], [390, 215]], [[450, 240], [510, 240], [510, 280], [450, 280]]],
+        "rec_scores": [0.9, 0.99, 0.999311],
+    }
+    raw["ocrResults"] = [{"prunedResult": pruned["overall_ocr_res"]}]
+    pruned["table_res_list"] = [{"pred_html": "<table><tr><td colspan='2'"}]
+
+    evidence = build_evidence(raw, page_count=1, pdf_path=source, source_pages=[2])
+    words = [item for item in evidence["pages"][0]["texts"] if item.get("source") == "paddle_overall_ocr"]
+    assert [(word["index"], word["text"]) for word in words] == [(0, "仅供理想使用"), (1, "公司名称（公司章）"), (2, "部门")]
+    assert words[2]["type"] == "ocr_word" and words[2]["score"] == 0.999311
+    assert words[2]["bbox"] == [450, 240, 510, 280]
+    assert words[2]["polygon"] == pruned["overall_ocr_res"]["rec_polys"][2]
+    assert words[2]["pdf_bbox"] == [225, 120, 255, 140]
+    seal = evidence["pages"][0]["seals"][0]
+    assert seal["recognized_text"] == ["章", "$", "用"]
+    assert seal["supplemental_text_indices"] == [2]
+    assert "专用章" not in json.dumps(evidence, ensure_ascii=False)
+    stats = evaluate_pdf(source, tmp_path / "overall-replay", response=raw, page_number=2)
+    saved = json.loads((stats.output_dir / "evidence.json").read_text())
+    assert stats.status == "partial" and "tables.xlsx" not in stats.artifacts
+    assert json.loads((stats.output_dir / "response.json").read_text()) == raw
+    assert any(item.get("source") == "paddle_overall_ocr" and item["text"] == "部门" for item in saved["pages"][0]["texts"])
+    assert saved["pages"][0]["seals"][0]["supplemental_text_indices"] == [2]
+
+
+def test_overall_word_in_two_seal_regions_is_preserved_without_assignment(source):
+    raw = page_result()
+    pruned = raw["layoutParsingResults"][0]["prunedResult"]
+    pruned["layout_det_res"]["boxes"].append({"label": "seal", "coordinate": [25, 45, 95, 115]})
+    pruned["overall_ocr_res"] = {"rec_texts": ["部门"], "rec_boxes": [[30, 60, 70, 90]]}
+    evidence = build_evidence(raw, page_count=1, pdf_path=source, source_pages=[1])
+    page = evidence["pages"][0]
+    assert any(word.get("source") == "paddle_overall_ocr" and word["text"] == "部门" for word in page["texts"])
+    assert all(seal["supplemental_text_indices"] == [] for seal in page["seals"])
+    assert any(item["element"] == "seal" and item["outcome"] == "unknown" for item in evidence["diagnostics"])
+
+
+@pytest.mark.parametrize("bounds", [None, [30, 60, 900, 410]])
+def test_unlocated_overall_word_is_preserved_without_seal_assignment(source, bounds):
+    raw = page_result()
+    raw["layoutParsingResults"][0]["prunedResult"]["overall_ocr_res"] = {"rec_texts": ["部门"], "rec_boxes": [bounds]}
+    page = build_evidence(raw, page_count=1, pdf_path=source, source_pages=[1])["pages"][0]
+    word = next(item for item in page["texts"] if item.get("source") == "paddle_overall_ocr")
+    assert word["text"] == "部门" and word["pdf_bbox"] is None
+    assert all(seal["supplemental_text_indices"] == [] for seal in page["seals"])
+
+
+def test_overall_word_polygon_can_locate_it_without_a_redundant_box(source):
+    raw = page_result()
+    raw["layoutParsingResults"][0]["prunedResult"]["overall_ocr_res"] = {"rec_texts": ["部门"], "rec_polys": [[[30, 60], [70, 60], [70, 90], [30, 90]]]}
+    page = build_evidence(raw, page_count=1, pdf_path=source, source_pages=[1])["pages"][0]
+    word = next(item for item in page["texts"] if item.get("source") == "paddle_overall_ocr")
+    assert word["index"] == 0 and word["pdf_bbox"] == [15, 30, 35, 45]
+    assert page["seals"][0]["supplemental_text_indices"] == [0]
+
+
+@pytest.mark.parametrize("geometry", ["bad_box", "conflict", "bad_polygon"])
+def test_bad_overall_word_geometry_is_local_and_cannot_lend_a_location(source, geometry):
+    raw = page_result()
+    first_box = [70, 60, 30, 90] if geometry == "bad_box" else [30, 60, 70, 90]
+    first_polygon = [[300, 60], [370, 60], [370, 90], [300, 90]] if geometry == "conflict" else [[30, 60], [70, 60], [70, 90], [30, 90]]
+    if geometry == "bad_polygon":
+        first_polygon[0][0] = float("nan")
+    raw["layoutParsingResults"][0]["prunedResult"]["overall_ocr_res"] = {
+        "rec_texts": ["unlocated", "部门"],
+        "rec_boxes": [first_box, [35, 65, 65, 85]],
+        "rec_polys": [first_polygon, [[35, 65], [65, 65], [65, 85], [35, 85]]],
+    }
+    page = build_evidence(raw, page_count=1, pdf_path=source, source_pages=[1])["pages"][0]
+    words = {item["index"]: item for item in page["texts"] if item.get("source") == "paddle_overall_ocr"}
+    assert words[0]["text"] == "unlocated" and words[0]["pdf_bbox"] is None
+    assert words[1]["text"] == "部门" and words[1]["pdf_bbox"] is not None
+    assert page["seals"][0]["recognized_text"] == ["ARCHIVE"]
+    assert page["seals"][0]["supplemental_text_indices"] == [1]
+
+
+@pytest.mark.parametrize("overall", ["bad", {"rec_texts": "not-an-array"}, {"rec_texts": [42, "部门"], "rec_boxes": [[30, 60, 70, 90]]}])
+def test_malformed_overall_words_do_not_discard_other_text_or_seals(source, overall):
+    raw = page_result()
+    raw["layoutParsingResults"][0]["prunedResult"]["overall_ocr_res"] = overall
+    evidence = build_evidence(raw, page_count=1, pdf_path=source, source_pages=[1])
+    assert evidence["status"] == "partial"
+    page = evidence["pages"][0]
+    assert any(item["text"] == "ARCHIVE" for item in page["texts"])
+    assert page["seals"][0]["recognized_text"] == ["ARCHIVE"]
+    assert page["seals"][0]["supplemental_text_indices"] == []
+    if isinstance(overall, dict) and isinstance(overall.get("rec_texts"), list):
+        word = next(item for item in page["texts"] if item.get("source") == "paddle_overall_ocr")
+        assert word["index"] == 1 and word["text"] == "部门" and word["pdf_bbox"] is None
