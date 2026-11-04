@@ -135,8 +135,10 @@ def checker_fact(agent, source_id, check, *, code="W02"):
     ctx, status, message = None, "unknown", "本项尚未核实。"
     try:
         ctx = agent.rule_ctx(agent._load_workbook())
+        ctx.enable_ng_collection(topn=agent._resolve_ng_collection_topn())
         observed = check(ctx)
         decision, message = observed if isinstance(observed, tuple) else ("PASS", "已核实原件准备事实。")
+        decision, message = agent._finalize_rule_result(status=decision, message=message, ctx=ctx)
         if ctx.has_unresolved():
             decision, message = "UNABLE", "存在不可读取单元格；本项尚未核实。"
         status = {"PASS": "satisfied", "NG": "defect", "ERR": "error", "UNABLE": "unknown", "NA": "not_checked"}.get(decision, "unknown")

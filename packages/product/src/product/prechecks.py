@@ -7,7 +7,7 @@ import json
 import uuid
 
 from audit.engine.checkers.rule_declarations import freeze_target_rule_execution
-from audit.precheck_sources import required_structure, structure_source
+from audit.precheck_sources import l1_criteria, l1_spec, required_structure, structure_source
 
 from product.standard_policy import config_digest
 
@@ -42,6 +42,8 @@ def frozen_precheck_input(task: dict, tenant_id: str, policy: dict) -> dict:
                 "rule": rule,
                 "rule_execution": execution,
                 "required_structure": list(required_structure((body or {}).get("preset_key") or "")),
+                "precheck_criteria": list(l1_criteria((body or {}).get("preset_key") or "")),
+                "precheck_spec": l1_spec((body or {}).get("preset_key") or ""),
             }
         )
     customers = {customer for row in files for customer in ((row.get("rule") or {}).get("body") or {}).get("customers", []) if ((row.get("rule") or {}).get("body") or {}).get("rule_profile") == "v4"}
@@ -133,10 +135,12 @@ def render_precheck_record(receipt: dict) -> bytes:
         observed = by_version.get(version) or {}
         checker = observed.get("checker") or (file.get("rule_execution") or {}).get("checker") or {}
         rule = file.get("rule") or {}
+        spec = file.get("precheck_spec") or source.get("precheck_source") or {}
         parts += [
             f"<h2>{escape(file['file']['original_filename'])}</h2>",
             f"<p>文件版本：{escape(version)}<br>角色：{escape(file['role'])}<br>规则：{escape(rule.get('title'))}（{escape(rule.get('id'))}）"
             f"<br>实际 Checker：{escape(checker.get('profile'))} {escape(checker.get('class'))}</p>",
+            f"<p>预检判定源：{escape(spec.get('source'))}<br>源文件摘要：{escape(spec.get('source_sha256'))}</p>",
             "<table><thead><tr><th>检查事实</th><th>状态与原因</th><th>来源与下一步</th></tr></thead><tbody>",
         ]
         for fact in observed.get("facts") or []:
