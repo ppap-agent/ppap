@@ -1,5 +1,7 @@
 """PFMEA scoring facts and explicit customer characteristic reconciliation."""
 
+import re
+
 from audit.checkers.v3.excel_agent import rule
 
 from .native import UaesSourceAgent, UnknownFact, blank, key, number
@@ -9,9 +11,14 @@ class UaesPfmeaAgent(UaesSourceAgent):
     @rule("经验教训的实际输入引用")
     def rule_1(self):
         facts = self.native()
-        for text in ("历史问题", "客户抱怨", "过往失效案例", "类似产品问题"):
-            if facts.contains(text):
-                return "PASS", "PFMEA存在经验教训输入引用：" + text
+        for value, locator in facts.observations():
+            for term in ("历史问题", "客户抱怨", "过往失效案例", "类似产品问题"):
+                if term not in value or any(word in value for word in ("例如", "示例", "请填写", "填写指南")):
+                    continue
+                detail = re.sub(r"[\W_]", "", value.split(term, 1)[1])
+                if len(detail) >= 4:
+                    self.witness(locator, value)
+                    return "PASS", "PFMEA存在实际经验教训引用：" + value
         raise UnknownFact("尚不能确认经验教训有实际案例输入；仅有经验教训栏标题不能证明已引用。")
 
     @rule("逐行SOD整数及后果控制一致性")

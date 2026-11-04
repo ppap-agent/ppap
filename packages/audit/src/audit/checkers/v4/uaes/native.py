@@ -123,6 +123,19 @@ class NativeFacts:
                 return True
         return False
 
+    def require_title(self, text: str):
+        for value, locator in self.observations():
+            kind = locator.get("kind")
+            address = str(locator.get("cell", ""))
+            eligible = kind in {"xlsx_cell", "xls_cell"} and bool(re.search(r"[1-5]$", address)) and int(re.sub(r"^[A-Z]+", "", address) or "0") <= 5
+            eligible = eligible or kind == "docx_paragraph" and locator.get("paragraph", 99) <= 3
+            eligible = eligible or kind == "docx_cell" and int(locator.get("row", 99)) <= 3
+            eligible = eligible or kind == "pdf_block" and locator.get("page") == 1 and locator.get("block", 99) <= 3
+            if eligible and key(text) in key(value):
+                self.witness(locator, value, self.version)
+                return
+        raise UnknownFact("尚不能从原件标题位置确认“" + text + "”，正文提及不能代替文件标题。")
+
     def require_text(self, text: str):
         if self.contains(text):
             return
@@ -271,7 +284,12 @@ class UaesSourceAgent(BaseAgent):
         )
         if source not in self._evidence_sources:
             self._evidence_sources.append(source)
-            self._evidence_sources = self._evidence_sources[-100:]
+            if len(self._evidence_sources) > 100:
+                versions = [json.loads(item.locator)["file_version_id"] for item in self._evidence_sources]
+                redundant = next((index for index, identity in enumerate(versions[:-1]) if versions.count(identity) > 1), None)
+                if redundant is None:
+                    raise UnknownFact("关联原件数量超出证据预算，不能丢失一份原件位置后判为通过。")
+                self._evidence_sources.pop(redundant)
 
     def native(self):
         if self._native is None:

@@ -49,6 +49,7 @@ def structural_facts(agent):
     if entry == "U09":
         phrases = ("包装方案", "零件基础信息", "供应商基础信息", "包装设计的基本要求", "针对该零件包装的特殊要求", "包装方案信息", "包装材料清单")
         checks = {f"{entry}:S{i}": text(value) for i, value in enumerate(phrases, 1)}
+        checks["U09:S1"] = lambda: facts().require_title("包装方案")
     elif entry == "U11":
         checks = {"U11:S1": text("工程更改一览表")}
         aliases = [("项目", "项目名称", "项目代号"), ("零件号", "物料编号", "零件编号"), ("变更内容简述", "变更内容", "更改内容"), ("变更原因", "更改原因"), ("时间", "变更日期", "更改日期", "日期")]
