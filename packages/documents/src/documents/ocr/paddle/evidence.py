@@ -10,7 +10,7 @@ import fitz
 
 from .client import PaddleOCRFormatError, page_dimensions, require_pages
 from .layout import diagnostic, page_layouts
-from .seals import seal_evidence
+from .seals import link_region_words, seal_evidence
 from .tables import recognize_tables
 
 
@@ -95,6 +95,7 @@ def build_evidence(result: dict, *, page_count: int, pdf_path: str | Path | None
         for element, items in (("layout", layout["regions"]), ("text", layout["texts"]), ("table", page_tables), ("seal", seals)):
             for item in items:
                 _locate(item, frames[page_index], diagnostics, element=element, page=original_page)
+        link_region_words(seals, layout["texts"], original_page, diagnostics)
         pages.append(
             {
                 "page": original_page,
