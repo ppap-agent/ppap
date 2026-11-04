@@ -176,6 +176,114 @@ def test_title_referring_to_another_document_does_not_establish_source_identity(
     assert result["status"] == "unknown" and result["code"] is None
 
 
+@pytest.mark.parametrize(
+    "mention", ["比对特殊特性清单", "核对特殊特性清单", "请补充特殊特性清单", "特殊特性清单需要另行提供", "Compare Process special characteristic list", "特殊特性清单 V1 missing"]
+)
+def test_main_document_reference_text_cannot_supply_its_own_missing_counterpart(tmp_path, mention):
+    from openpyxl import load_workbook
+
+    target = original(tmp_path, "target")
+    book = load_workbook(target.file_url)
+    book.active["C1"] = mention
+    book.save(target.file_url)
+    book.close()
+    observed = facts(target, "U07", GroupContextInput())["characteristics"]
+    assert observed["status"] == "not_checked" and observed["code"] == "S04-S", observed
+
+
+def test_reference_field_value_is_not_a_standalone_source_title(tmp_path):
+    from openpyxl import load_workbook
+
+    reference = original(tmp_path, "reference")
+    book = load_workbook(reference.file_url)
+    book.active.insert_rows(1)
+    book.active["A1"], book.active["B1"] = "比对文件", "特殊特性清单"
+    book.save(reference.file_url)
+    book.close()
+    observed = facts(original(tmp_path, "target"), "U07", GroupContextInput(by_audit_id={"reference": reference}))["characteristics"]
+    assert observed["status"] == "unknown", observed
+
+
+@pytest.mark.parametrize(
+    "title", ["特殊特性清单", "APQP-特殊特性清单", "P12345 特殊特性清单", "特殊特性清单 V2.1", "Process special characteristic list", "特殊特性清单（Process special characteristic list）"]
+)
+def test_actual_standalone_titles_and_document_codes_are_not_filename_requirements(tmp_path, title):
+    from openpyxl import load_workbook
+
+    reference = original(tmp_path, "reference")
+    book = load_workbook(reference.file_url)
+    book.active.insert_rows(1)
+    book.active["A1"] = title
+    book.active.merge_cells("A1:D1")
+    book.save(reference.file_url)
+    book.close()
+    observed = facts(original(tmp_path, "target"), "U07", GroupContextInput(by_audit_id={"reference": reference}))["characteristics"]
+    assert observed["status"] == "satisfied", observed
+
+
+@pytest.mark.parametrize("label", ["文件名称", "Document title"])
+def test_explicit_own_title_field_can_identify_a_merged_title(tmp_path, label):
+    from openpyxl import load_workbook
+
+    reference = original(tmp_path, "reference")
+    book = load_workbook(reference.file_url)
+    book.active.insert_rows(1)
+    book.active["A1"], book.active["B1"] = label, "特殊特性清单"
+    book.active.merge_cells("B1:D1")
+    book.save(reference.file_url)
+    book.close()
+    observed = facts(original(tmp_path, "target"), "U07", GroupContextInput(by_audit_id={"reference": reference}))["characteristics"]
+    assert observed["status"] == "satisfied", observed
+
+
+@pytest.mark.parametrize(
+    "entry,name,title",
+    [
+        ("U08", "pfmea", "潜在过程失效模式及后果分析"),
+        ("U08", "pgqp1", "Purchased Goods Quality Plan PGQP1"),
+        ("U05", "kappa", "Kappa分析记录"),
+        ("U01", "bubble", "Bubble drawing"),
+        ("L17", "delivery-list", "PSW交付物清单"),
+    ],
+)
+def test_original_title_aliases_remain_available(tmp_path, entry, name, title):
+    # Use a title cell for names longer than Excel's sheet-name limit.
+    from openpyxl import load_workbook
+
+    customer = "理想" if entry.startswith("L") else "UAES"
+    reference = original(tmp_path, "reference", customer=customer)
+    book = load_workbook(reference.file_url)
+    book.active.insert_rows(1)
+    book.active["A1"] = title
+    book.save(reference.file_url)
+    book.close()
+    observed = facts(original(tmp_path, "target", customer=customer), entry, GroupContextInput(by_audit_id={"reference": reference}))[name]
+    assert observed["status"] == "satisfied", observed
+
+
+def test_typed_original_does_not_need_a_recognized_untyped_title(tmp_path):
+    reference = original(tmp_path, "reference", title="供应商自定义表名")
+    group = GroupContextInput(by_doc_type={T.PROCESS_SPECIAL_CHARACTERISTIC_LIST.get_type_name(): [reference]})
+    assert facts(original(tmp_path, "target"), "U07", group)["characteristics"]["status"] == "satisfied"
+
+
+def test_psw_title_is_not_its_delivery_list_title(tmp_path):
+    target = original(tmp_path, "target", title="Part submission warrant", customer="理想")
+    observed = facts(target, "L17", GroupContextInput())["delivery-list"]
+    assert observed["status"] == "not_checked" and observed["code"] == "S04-S"
+
+
+@pytest.mark.parametrize("surface", ["paragraphs", "pages"])
+@pytest.mark.parametrize("text,expected", [("特殊特性清单", True), ("比对特殊特性清单", False), ("比对文件：\n特殊特性清单", False), ("特殊特性清单需要另行提供", False)])
+def test_native_text_blocks_require_a_complete_title(surface, text, expected):
+    from types import SimpleNamespace
+
+    from audit.precheck_dependencies import _has_title
+
+    data = {"paragraphs": [{"text": text}]} if surface == "paragraphs" else {"pages": [{"blocks": [{"text": text}]}]}
+    assert _has_title(SimpleNamespace(data=data), ("特殊特性清单",)) is expected
+
+
 def test_material_drawing_pair_requires_the_source_project_identity(tmp_path):
     from openpyxl import load_workbook
 
