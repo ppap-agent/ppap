@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore", populate_by_name=True, case_sensitive=True, env_file=None)
 
     profile: Literal["isolated-dev", "remote-dev", "production"] = Field(default="isolated-dev", alias="PPAP_PROFILE")
+    precheck_gate_enforced: bool = Field(default=False, alias="PPAP_PRECHECK_GATE_ENFORCED")
     git_sha: str = Field(default="", alias="PPAP_BUILD_SHA")
 
     llm_api_key: str = Field(default="", alias="LLM_API_KEY")

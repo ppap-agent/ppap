@@ -1,0 +1,980 @@
+{
+  "source": "PPAP-00-A_客户与文件类型覆盖矩阵_路由表_v1.7.md",
+  "source_sha256": "fd6028f5103bf388301ff8d243d01f9568514238209f8838b7f745cd7e701701",
+  "entries": {
+    "U09": [
+      {
+        "id": "U09:S1",
+        "criterion": "文件标题含「包装方案」",
+        "source_clause": "1",
+        "outcome": "缺 → `B05`（标题是唯一身份承载）"
+      },
+      {
+        "id": "U09:S2",
+        "criterion": "内容含「零件基础信息」块",
+        "source_clause": "1",
+        "outcome": "缺 → `W01`（不承载关键字段）"
+      },
+      {
+        "id": "U09:S3",
+        "criterion": "内容含「供应商基础信息」块",
+        "source_clause": "1",
+        "outcome": "缺 → `W01`"
+      },
+      {
+        "id": "U09:S4",
+        "criterion": "内容含「包装设计的基本要求」块",
+        "source_clause": "1",
+        "outcome": "缺 → `W01`"
+      },
+      {
+        "id": "U09:S5",
+        "criterion": "内容含「针对该零件包装的特殊要求」块",
+        "source_clause": "1",
+        "outcome": "缺 → `W01`"
+      },
+      {
+        "id": "U09:S6",
+        "criterion": "内容含「包装方案信息」块",
+        "source_clause": "1",
+        "outcome": "缺 → `W01`"
+      },
+      {
+        "id": "U09:S7",
+        "criterion": "内容含「包装材料清单」块",
+        "source_clause": "1",
+        "outcome": "缺 → `W01`"
+      }
+    ],
+    "U10": [
+      {
+        "id": "U10:S1",
+        "criterion": "文件含**受控章**（受控标识）",
+        "source_clause": "1",
+        "outcome": "缺 → `B05`（受控状态是唯一判定对象）"
+      }
+    ],
+    "U11": [
+      {
+        "id": "U11:S1",
+        "criterion": "含「工程更改一览表」",
+        "source_clause": "1",
+        "outcome": "缺 → `B05`"
+      },
+      {
+        "id": "U11:S2",
+        "criterion": "该表含字段/列：项目",
+        "source_clause": "1",
+        "outcome": "缺列 → `B05`"
+      },
+      {
+        "id": "U11:S3",
+        "criterion": "该表含字段/列：零件号",
+        "source_clause": "1",
+        "outcome": "缺列 → `B05`"
+      },
+      {
+        "id": "U11:S4",
+        "criterion": "该表含字段/列：变更内容简述",
+        "source_clause": "1",
+        "outcome": "缺列 → `B05`"
+      },
+      {
+        "id": "U11:S5",
+        "criterion": "该表含字段/列：变更原因",
+        "source_clause": "1",
+        "outcome": "缺列 → `B05`"
+      },
+      {
+        "id": "U11:S6",
+        "criterion": "该表含字段/列：时间",
+        "source_clause": "1",
+        "outcome": "缺列 → `B05`"
+      }
+    ],
+    "U12": [
+      {
+        "id": "U12:S1",
+        "criterion": "含「物料名称」字段且内容非空",
+        "source_clause": "1",
+        "outcome": "缺字段 → `B05`；空 → `W02`"
+      },
+      {
+        "id": "U12:S2",
+        "criterion": "含「物料编号」字段且内容非空",
+        "source_clause": "1",
+        "outcome": "缺字段 → `B05`；空 → `W02`"
+      },
+      {
+        "id": "U12:S3",
+        "criterion": "含列：编号 / 序号",
+        "source_clause": "2",
+        "outcome": "缺列 → `B05`"
+      },
+      {
+        "id": "U12:S4",
+        "criterion": "含列：产品特性 / 过程特性 / 特殊特性名称",
+        "source_clause": "2",
+        "outcome": "缺列 → `B05`"
+      },
+      {
+        "id": "U12:S5",
+        "criterion": "含列：特性及公差 / 特性值",
+        "source_clause": "2",
+        "outcome": "缺列 → `B05`"
+      },
+      {
+        "id": "U12:S6",
+        "criterion": "含列：特性类型 / 特性类别",
+        "source_clause": "2",
+        "outcome": "缺列 → `B05`"
+      },
+      {
+        "id": "U12:S7",
+        "criterion": "S3 有值时，S4/S5/S6 同行内容均非空",
+        "source_clause": "2",
+        "outcome": "空 → `W02`"
+      }
+    ],
+    "U13": [
+      {
+        "id": "U13:S1",
+        "criterion": "提交文件为**图片格式**（可打开、非损坏）",
+        "source_clause": "1",
+        "outcome": "非图片 → `B03`；损坏 → `B01`"
+      },
+      {
+        "id": "U13:S2",
+        "criterion": "报告须附提示「需人工确认样品照片是否符合要求」",
+        "source_clause": "1",
+        "outcome": "未附 → 报告不合格"
+      }
+    ],
+    "U14": [
+      {
+        "id": "U14:S1",
+        "criterion": "文件含**受控章**（受控标识）",
+        "source_clause": "1",
+        "outcome": "缺 → `B05`"
+      }
+    ],
+    "U15": [
+      {
+        "id": "U15:S1",
+        "criterion": "含「流转记录」区域",
+        "source_clause": "1",
+        "outcome": "缺 → `B05`"
+      },
+      {
+        "id": "U15:S2",
+        "criterion": "含「试装结论」区域",
+        "source_clause": "1",
+        "outcome": "缺 → `B05`"
+      },
+      {
+        "id": "U15:S3",
+        "criterion": "含「检验结论」区域",
+        "source_clause": "1",
+        "outcome": "缺 → `B05`"
+      },
+      {
+        "id": "U15:S4",
+        "criterion": "流转记录含「流程结束」与「流程完成」两项",
+        "source_clause": "2",
+        "outcome": "缺 → `W01`（流程完整性，非字段承载）"
+      },
+      {
+        "id": "U15:S5",
+        "criterion": "试装结论已勾选「通过」",
+        "source_clause": "3",
+        "outcome": "未勾选/未通过 → `S03`（结论方向属正式审核）"
+      },
+      {
+        "id": "U15:S6",
+        "criterion": "检验结论已勾选「合格」",
+        "source_clause": "4",
+        "outcome": "未勾选/不合格 → `S03`"
+      }
+    ],
+    "U16": [
+      {
+        "id": "U16:S1",
+        "criterion": "文件含关键工序标记（`K` / `K1…` / `★` / `◆` / 加粗 / 底色 / 虚框 任一形式）",
+        "source_clause": "1",
+        "outcome": "无任何标记 → `B05`"
+      },
+      {
+        "id": "U16:S2",
+        "criterion": "产品特性 / 过程特性列中特殊特性有符号标注（`CC` / `SC` / `YC` / `YS` / `★` 等）",
+        "source_clause": "1",
+        "outcome": "全部无标注 → `B05`"
+      },
+      {
+        "id": "U16:S3",
+        "criterion": "含**图例或注释**定义关键标识含义（如「K 表示关键过程」）",
+        "source_clause": "1",
+        "outcome": "有符号无解释 → `W01`"
+      },
+      {
+        "id": "U16:S4",
+        "criterion": "工序活动以**标准化图形符号**表达（非纯文字框 / 文字列表）",
+        "source_clause": "2",
+        "outcome": "纯文字 → `B05`"
+      },
+      {
+        "id": "U16:S5",
+        "criterion": "图例覆盖全部使用符号",
+        "source_clause": "2",
+        "outcome": "不完整 → `W01`"
+      },
+      {
+        "id": "U16:S6",
+        "criterion": "同一活动类型全图同一符号（无同义混用）",
+        "source_clause": "2",
+        "outcome": "混用 → `W03`"
+      },
+      {
+        "id": "U16:S7",
+        "criterion": "检验类活动（进货 / 过程 / 最终 / 巡检 / 自检）以检验符号表达",
+        "source_clause": "2",
+        "outcome": "无法识别 → `W03`"
+      },
+      {
+        "id": "U16:S8",
+        "criterion": "文件含**受控章**",
+        "source_clause": "3",
+        "outcome": "缺 → `B05`"
+      }
+    ],
+    "U17": [
+      {
+        "id": "U17:S1",
+        "criterion": "含字段：零件名称、客户零件号、图纸号、供应商零件号、工程更改级别、日期、其他工程更改、日期",
+        "source_clause": "1",
+        "outcome": "缺任一项 → `B05`；空 → `W02`"
+      },
+      {
+        "id": "U17:S2",
+        "criterion": "含「安全及政府条例」选项组，且**有且仅有一项**被勾选",
+        "source_clause": "1",
+        "outcome": "未勾选/多选 → `W02`"
+      },
+      {
+        "id": "U17:S3",
+        "criterion": "含「供方制造厂资料」与「买方资料」两个区域",
+        "source_clause": "2",
+        "outcome": "缺 → `B05`"
+      },
+      {
+        "id": "U17:S4",
+        "criterion": "供方制造厂资料下含「公司名称」且非空",
+        "source_clause": "2",
+        "outcome": "缺/空 → `B05` / `W02`"
+      },
+      {
+        "id": "U17:S5",
+        "criterion": "买方资料下含「采购方及部门」「采购方代码」「应用」且非空",
+        "source_clause": "2",
+        "outcome": "缺 → `B05`；空 → `W02`"
+      },
+      {
+        "id": "U17:S6",
+        "criterion": "含「是否报告了受客户关注的材料信息」选项组，且仅一项被勾选",
+        "source_clause": "2",
+        "outcome": "同上 S2"
+      },
+      {
+        "id": "U17:S7",
+        "criterion": "含「以 IMDS 或者其它客户格式递交」字段且非空",
+        "source_clause": "2",
+        "outcome": "缺/空 → `B05` / `W02`"
+      },
+      {
+        "id": "U17:S8",
+        "criterion": "含「供方代表签字」字段，且为**手写签** + 文件含**印章**",
+        "source_clause": "3",
+        "outcome": "缺字段 → `B05`；非手写/无印章 → `W03`"
+      },
+      {
+        "id": "U17:S9",
+        "criterion": "含「提交原因」选项组，且至少一项被勾选；若勾「其它----请说明」则旁注非空",
+        "source_clause": "4",
+        "outcome": "未勾选 → `W02`；勾其它但未说明 → `W02`"
+      },
+      {
+        "id": "U17:S10",
+        "criterion": "含「要求提交的等级」选项组，且**有且仅有一项**被勾选",
+        "source_clause": "5",
+        "outcome": "未勾选/多选 → `W02`"
+      }
+    ],
+    "U18": [
+      {
+        "id": "U18:S1",
+        "criterion": "含「供应商零件追溯」表",
+        "source_clause": "1",
+        "outcome": "缺 → `B05`"
+      },
+      {
+        "id": "U18:S2",
+        "criterion": "表内「基本信息」区域有内容",
+        "source_clause": "1",
+        "outcome": "空 → `W01`"
+      },
+      {
+        "id": "U18:S3",
+        "criterion": "表内「分供方追溯」区域有内容",
+        "source_clause": "1",
+        "outcome": "空 → `W01`"
+      },
+      {
+        "id": "U18:S4",
+        "criterion": "表内「生产过程追溯」区域有内容",
+        "source_clause": "1",
+        "outcome": "空 → `W01`"
+      },
+      {
+        "id": "U18:S5",
+        "criterion": "表内「交付追溯」区域有内容",
+        "source_clause": "1",
+        "outcome": "空 → `W01`"
+      },
+      {
+        "id": "U18:S6",
+        "criterion": "表内「追溯状态总结」区域有内容",
+        "source_clause": "1",
+        "outcome": "空 → `W01`"
+      }
+    ],
+    "U19": [
+      {
+        "id": "U19:S1",
+        "criterion": "封面含表格，「否决 / Reject」列为可判定列",
+        "source_clause": "1",
+        "outcome": "缺列 → `B05`"
+      },
+      {
+        "id": "U19:S2",
+        "criterion": "封面含「UAES 批准的前提/备注」栏且文字可读",
+        "source_clause": "1",
+        "outcome": "缺/不可读 → `B05` / `W05`"
+      },
+      {
+        "id": "U19:S3",
+        "criterion": "「完全认可」路径下：组长（Team Leader）、审核（Checked by）、批准（Approved by）三处签名 + 日期齐全",
+        "source_clause": "1",
+        "outcome": "缺 → `W01`（签名属形式要件）"
+      },
+      {
+        "id": "U19:S4",
+        "criterion": "S3 三处日期**递增**（组长 ≤ 审核 ≤ 批准）",
+        "source_clause": "1",
+        "outcome": "颠倒 → `W06`（内部不自洽，不影响方向）"
+      },
+      {
+        "id": "U19:S5",
+        "criterion": "「条件认可 / 偏差认可」路径下：存在同零件编号 + 同零件名称的**偏差认可汇总清单**（独立文件或表）",
+        "source_clause": "1",
+        "outcome": "缺 → `W01`，写明「缺比对文件《偏差认可汇总清单》」"
+      },
+      {
+        "id": "U19:S6",
+        "criterion": "该清单含字段：零件号、偏差项、UAES 评估确认、是否需要偏差",
+        "source_clause": "1",
+        "outcome": "缺列 → `B05`"
+      },
+      {
+        "id": "U19:S7",
+        "criterion": "封面整改承诺最晚期限与清单内备注日期**一致**",
+        "source_clause": "1",
+        "outcome": "不一致 → `W06`，并提示「封面条件认可时间与偏差汇总清单承诺时间不一致，请复核」"
+      },
+      {
+        "id": "U19:S8",
+        "criterion": "「否决」列标记（打×/勾）仅作**交叉校验**，以备注文字为首要依据",
+        "source_clause": "1",
+        "outcome": "二者冲突 → `W06`"
+      }
+    ],
+    "L09": [
+      {
+        "id": "L09:S1",
+        "criterion": "含「检具清单」表",
+        "source_clause": "1",
+        "outcome": "缺 → `B05`"
+      },
+      {
+        "id": "L09:S2",
+        "criterion": "含「检具认可报告」表",
+        "source_clause": "1",
+        "outcome": "缺 → `B05`"
+      },
+      {
+        "id": "L09:S3",
+        "criterion": "检具认可报告中「除备注外」内容非空",
+        "source_clause": "1",
+        "outcome": "全空 → `B05`（整块不可用）"
+      },
+      {
+        "id": "L09:S4",
+        "criterion": "检具清单「零件号」列有值时，同行「除备注外」其余列非空",
+        "source_clause": "1",
+        "outcome": "空 → `W02`"
+      },
+      {
+        "id": "L09:S5",
+        "criterion": "检具清单**标题前缀为车型代号**（如「W04项目检具清单」）",
+        "source_clause": "2",
+        "outcome": "无前缀 → `W03`（写法不规范）"
+      },
+      {
+        "id": "L09:S6",
+        "criterion": "「所附文件」区若有「不合格」「非完成」勾选，则「结论」区必须非空",
+        "source_clause": "3",
+        "outcome": "空 → `W02`"
+      }
+    ],
+    "L10": [
+      {
+        "id": "L10:S1",
+        "criterion": "含字段「零件供应商名称」且非空",
+        "source_clause": "1",
+        "outcome": "缺 → `B05`；空 → `W02`"
+      },
+      {
+        "id": "L10:S2",
+        "criterion": "含字段「提交日期」且非空",
+        "source_clause": "1",
+        "outcome": "缺 → `B05`；空 → `W02`"
+      },
+      {
+        "id": "L10:S3",
+        "criterion": "含列：工艺类型",
+        "source_clause": "2",
+        "outcome": "缺列 → `B05`"
+      },
+      {
+        "id": "L10:S4",
+        "criterion": "含列：一级分总成零件名称",
+        "source_clause": "2",
+        "outcome": "缺列 → `B05`"
+      },
+      {
+        "id": "L10:S5",
+        "criterion": "含列：分总成组件或分序模具名称",
+        "source_clause": "2",
+        "outcome": "缺列 → `B05`"
+      },
+      {
+        "id": "L10:S6",
+        "criterion": "含列：模具制造供应商",
+        "source_clause": "2",
+        "outcome": "缺列 → `B05`"
+      },
+      {
+        "id": "L10:S7",
+        "criterion": "含列：模具存放地点",
+        "source_clause": "2",
+        "outcome": "缺列 → `B05`"
+      },
+      {
+        "id": "L10:S8",
+        "criterion": "含列：零件质量评估",
+        "source_clause": "2",
+        "outcome": "缺列 → `B05`"
+      },
+      {
+        "id": "L10:S9",
+        "criterion": "含列：模具分供方及实物 VS 数据&标准验收",
+        "source_clause": "2",
+        "outcome": "缺列 → `B05`"
+      },
+      {
+        "id": "L10:S10",
+        "criterion": "含列：模具量产性能评估",
+        "source_clause": "2",
+        "outcome": "缺列 → `B05`"
+      },
+      {
+        "id": "L10:S11",
+        "criterion": "含列：模具维保评估",
+        "source_clause": "2",
+        "outcome": "缺列 → `B05`"
+      },
+      {
+        "id": "L10:S12",
+        "criterion": "含列「模具设计尺寸」，且填写格式为**长×宽×高**（数字×数字×数字）",
+        "source_clause": "3",
+        "outcome": "缺列 → `B05`；格式不符 → `W03`"
+      },
+      {
+        "id": "L10:S13",
+        "criterion": "含列「实物照片」，且该列有图片",
+        "source_clause": "4",
+        "outcome": "缺列 → `B05`；无图 → `W01`"
+      },
+      {
+        "id": "L10:S14",
+        "criterion": "含字段「编制」「审核」且均非空",
+        "source_clause": "5",
+        "outcome": "缺 → `B05`；空 → `W02`"
+      },
+      {
+        "id": "L10:S15",
+        "criterion": "含列「实物确认」，取值 ∈ {有, 无}",
+        "source_clause": "6",
+        "outcome": "缺列 → `B05`；越界 → `W03`"
+      }
+    ],
+    "L11": [
+      {
+        "id": "L11:S1",
+        "criterion": "含表头字段：零件号、零件名称、项目车型、供应商名称、代码、编制日期、版本、团队",
+        "source_clause": "1",
+        "outcome": "缺任一项 → `B05`；空 → `W02`"
+      },
+      {
+        "id": "L11:S2",
+        "criterion": "含**两个**「特性类别」列",
+        "source_clause": "2、3",
+        "outcome": "不足两列 → `B05`"
+      },
+      {
+        "id": "L11:S3",
+        "criterion": "第一个特性类别列取值 ∈ {`【G】`, `【Z】`} 时，同行「产品特殊特性」非空",
+        "source_clause": "2",
+        "outcome": "空 → `W02`"
+      },
+      {
+        "id": "L11:S4",
+        "criterion": "第二个特性类别列取值 ∈ {`【G】`, `【Z】`} 时，同行「过程特殊特性」非空",
+        "source_clause": "3",
+        "outcome": "空 → `W02`"
+      },
+      {
+        "id": "L11:S5",
+        "criterion": "含列「工序名称」「操作描述」，且工序名称有值时操作描述非空",
+        "source_clause": "4",
+        "outcome": "缺列 → `B05`；空 → `W02`"
+      },
+      {
+        "id": "L11:S6",
+        "criterion": "含七列：工序名称、制造、运输、存储、检验、返工、报废",
+        "source_clause": "5、6",
+        "outcome": "缺任一列 → `B05`"
+      },
+      {
+        "id": "L11:S7",
+        "criterion": "工序名称有值时，上述六类活动列**至少一列**非空",
+        "source_clause": "5、6",
+        "outcome": "全空 → `W06`"
+      },
+      {
+        "id": "L11:S8",
+        "criterion": "六类活动列的有内容单元格之间**存在连线**",
+        "source_clause": "6",
+        "outcome": "无连线 → `W06`（版式表达，不影响取数）"
+      }
+    ],
+    "L12": [
+      {
+        "id": "L12:S1",
+        "criterion": "含「零件 CCSC 特性管理清单」表",
+        "source_clause": "1",
+        "outcome": "缺 → `B05`"
+      },
+      {
+        "id": "L12:S2",
+        "criterion": "含字段：零件名称、零件号、供应商名称、供应商编码，且均非空",
+        "source_clause": "1",
+        "outcome": "缺 → `B05`；空 → `W02`"
+      },
+      {
+        "id": "L12:S3",
+        "criterion": "含列：过程/流程步骤、部件(来料检时涉及)、客户要求/功能要求、特性名称、检验岗位、产品/过程特性分类、名义值/规格中心值、规格下限、规格上限、T1-特性监控方法",
+        "source_clause": "2",
+        "outcome": "缺任一列 → `B05`"
+      },
+      {
+        "id": "L12:S4",
+        "criterion": "「T1-特性监控方法」下含 8 子列：测量设备、测量方式、防错控制、检查控制、抽样频率、SPC 监控、SPC 线上管理计划时间、说明（关键要求/操作参数等）",
+        "source_clause": "2",
+        "outcome": "缺任一子列 → `B05`"
+      },
+      {
+        "id": "L12:S5",
+        "criterion": "「过程/流程步骤」有值时，S3 其余列 + S4 八子列同行均非空",
+        "source_clause": "2",
+        "outcome": "空 → `W02`"
+      },
+      {
+        "id": "L12:S6",
+        "criterion": "含列「现有管理方式风险评估」「高风险管理项预防措施」",
+        "source_clause": "3",
+        "outcome": "缺 → `B05`"
+      },
+      {
+        "id": "L12:S7",
+        "criterion": "风险列取值为「高风险」时，同行预防措施非空",
+        "source_clause": "3",
+        "outcome": "空 → `W02`"
+      }
+    ],
+    "L13": [
+      {
+        "id": "L13:S1",
+        "criterion": "含「设备开发/验收清单」表",
+        "source_clause": "1",
+        "outcome": "缺 → `B05`"
+      },
+      {
+        "id": "L13:S2",
+        "criterion": "含列「产线/工序」「设备开发」",
+        "source_clause": "1",
+        "outcome": "缺 → `B05`"
+      },
+      {
+        "id": "L13:S3",
+        "criterion": "「设备开发」下含 7 子列：设备、供应商、设备型号、利旧设备数量、新采购设备数量、设备通用情况、计划到位时间",
+        "source_clause": "1",
+        "outcome": "缺任一 → `B05`"
+      },
+      {
+        "id": "L13:S4",
+        "criterion": "产线/工序有值时，7 子列同行均非空",
+        "source_clause": "1",
+        "outcome": "空 → `W02`"
+      },
+      {
+        "id": "L13:S5",
+        "criterion": "含「设备验收」列，其下含子列：验收结果、整改措施、整改计划",
+        "source_clause": "2",
+        "outcome": "缺 → `B05`"
+      },
+      {
+        "id": "L13:S6",
+        "criterion": "产线/工序有值时，验收结果非空",
+        "source_clause": "2",
+        "outcome": "空 → `W02`"
+      },
+      {
+        "id": "L13:S7",
+        "criterion": "验收结果为「不通过」或「条件通过」时，整改措施与整改计划均非空",
+        "source_clause": "2",
+        "outcome": "空 → `W02`"
+      },
+      {
+        "id": "L13:S8",
+        "criterion": "表头区含「车型」且非空（**v1.7 新增**，身份字段补录）",
+        "source_clause": "模板实测 r4",
+        "outcome": "缺 → `B05`；空 → `W02`"
+      },
+      {
+        "id": "L13:S9",
+        "criterion": "表头区含「零件名称」「零件号」且非空（同上）",
+        "source_clause": "模板实测 r4",
+        "outcome": "缺 → `B05`；空 → `W02`"
+      },
+      {
+        "id": "L13:S10",
+        "criterion": "表头区含「供应商」且非空（同上）",
+        "source_clause": "模板实测 r4",
+        "outcome": "缺 → `B05`；空 → `W02`"
+      }
+    ],
+    "L14": [
+      {
+        "id": "L14:S1",
+        "criterion": "含「零件产能评估表」表",
+        "source_clause": "1",
+        "outcome": "缺 → `B05`"
+      },
+      {
+        "id": "L14:S2",
+        "criterion": "含字段：零件名称、零件号、供应商名称、供应商编码、产能评估总体结论，且均非空",
+        "source_clause": "1",
+        "outcome": "缺 → `B05`；空 → `W02`"
+      },
+      {
+        "id": "L14:S3",
+        "criterion": "含列「线体/工序类别」，有值时同行所有列非空",
+        "source_clause": "2",
+        "outcome": "空 → `W02`"
+      },
+      {
+        "id": "L14:S4",
+        "criterion": "含列：SOP+1 / SOP+2 / SOP+3 达成风险、产能评估总体结论、后续措施",
+        "source_clause": "3",
+        "outcome": "缺 → `B05`"
+      },
+      {
+        "id": "L14:S5",
+        "criterion": "三风险列出现「中风险 / 高风险」时，总体结论含「条件通过 / 未通过」且后续措施非空",
+        "source_clause": "3",
+        "outcome": "不满足 → `W06`"
+      },
+      {
+        "id": "L14:S6",
+        "criterion": "含列：良率、合格品数、产出数量，且良率 = 合格品数 ÷ 产出数量",
+        "source_clause": "4",
+        "outcome": "缺列 → `B05`；算不平 → `B06`"
+      },
+      {
+        "id": "L14:S7",
+        "criterion": "含列：单线体/工序总产出 JPH、产出数量、净利用时间、参与测试线体数量，且 JPH = 产出数量 ÷ 净利用时间 ÷ 参与测试线体数量",
+        "source_clause": "5",
+        "outcome": "缺列 → `B05`；算不平 → `B06`"
+      },
+      {
+        "id": "L14:S8",
+        "criterion": "含七列：线体/工序预估月度产能、单线体/工序总产出 JPH、现有线体数、班次/天、每班净利用时间、每月标准工作天数、累积良率，且月度产能 = JPH × 现有线体数 × 班次/天 × 每班净利用时间 × 每月标准工作天数 × 累积良率",
+        "source_clause": "6",
+        "outcome": "缺列 → `B05`；算不平 → `B06`"
+      }
+    ],
+    "L15": [
+      {
+        "id": "L15:S1",
+        "criterion": "含「项目问题清单」表，含字段：车型、供应商名称、零件编号、零件名称，且均非空",
+        "source_clause": "1",
+        "outcome": "缺 → `B05`；空 → `W02`"
+      },
+      {
+        "id": "L15:S2",
+        "criterion": "四个「是否完全关闭」字段（过程审核 / 检验体系审核 / 供应商追溯体系评审 / 其他专项）任一为「No」时，「问题描述」列须存在内容非空行",
+        "source_clause": "2",
+        "outcome": "无内容行 → `W01`（缺问题登记，非结构缺失）"
+      },
+      {
+        "id": "L15:S3",
+        "criterion": "问题描述有值时，同行「对应措施」「时间节点」「负责人」均非空",
+        "source_clause": "3",
+        "outcome": "空 → `W02`"
+      },
+      {
+        "id": "L15:S4",
+        "criterion": "问题描述有值时，同行四个风险列（整车/总成功/性能性、SOP+3 产能风险、安全性、法律法规风险）取值为「Yes」或「No」",
+        "source_clause": "4",
+        "outcome": "越界 → `W03`"
+      },
+      {
+        "id": "L15:S5",
+        "criterion": "「时间节点」晚于当前时间",
+        "source_clause": "3",
+        "outcome": "早于 → `S03`（逾期属整改有效性，移交正式审核）"
+      }
+    ],
+    "L16": [
+      {
+        "id": "L16:S1",
+        "criterion": "含字段「质量等级」，取值 ∈ {关键件、重要件、一般件}",
+        "source_clause": "1",
+        "outcome": "缺 → `B05`；越界 → `W03`"
+      },
+      {
+        "id": "L16:S2",
+        "criterion": "「试验项目」为 ELV 试验 / 禁限用 / EMC 试验 时，「测试频率」= 每两年",
+        "source_clause": "2",
+        "outcome": "不符 → `W03`（写法/取值口径）"
+      },
+      {
+        "id": "L16:S3",
+        "criterion": "其他试验项目时，「测试频率」∈ {每年, 每半年}",
+        "source_clause": "2",
+        "outcome": "不符 → `W03`"
+      },
+      {
+        "id": "L16:S4",
+        "criterion": "供应商名称必填，格式为「供应商代码-供应商全称」（如 `3DA-宁波均胜汽车安全系统有限公司`）",
+        "source_clause": "3",
+        "outcome": "缺/空 → `W02`；格式不符 → `W03`"
+      },
+      {
+        "id": "L16:S5",
+        "criterion": "含列「样本数量」，内容含阿拉伯数字（如 `3`、`3pcs`、`3件/次`）",
+        "source_clause": "4",
+        "outcome": "缺列 → `B05`；无数字 → `W03`"
+      },
+      {
+        "id": "L16:S6",
+        "criterion": "「试验要求栏」含三列：试验项目、试验要求、试验标准/方法，且均非空",
+        "source_clause": "5",
+        "outcome": "缺 → `B05`；空 → `W02`"
+      },
+      {
+        "id": "L16:S7",
+        "criterion": "含字段「车型」且非空",
+        "source_clause": "6",
+        "outcome": "缺 → `B05`；空 → `W02`"
+      }
+    ],
+    "L17": [
+      {
+        "id": "L17:S1",
+        "criterion": "含「生产件批准交付物文件清单」表，「除零件认证相关行」外其余行「附件」列均非空",
+        "source_clause": "1",
+        "outcome": "空 → `W01`（缺附件为缺项）"
+      },
+      {
+        "id": "L17:S2",
+        "criterion": "含字段「重量」，取值为数值且保留**小数点后四位**",
+        "source_clause": "2",
+        "outcome": "缺 → `B05`；格式不符 → `W03`"
+      },
+      {
+        "id": "L17:S3",
+        "criterion": "含印章；印章文字末两字为「公司」则直接满足",
+        "source_clause": "3",
+        "outcome": "无印章 → `W03`"
+      },
+      {
+        "id": "L17:S4",
+        "criterion": "印章末两字非「公司」时，须含「部门章授权声明」表且表内有公司章",
+        "source_clause": "3",
+        "outcome": "缺表/无公司章 → `W03`"
+      },
+      {
+        "id": "L17:S5",
+        "criterion": "「供应商名称/供应商代码」格式为「总公司名称/代码」",
+        "source_clause": "4",
+        "outcome": "不符 → `W03`"
+      },
+      {
+        "id": "L17:S6",
+        "criterion": "「经授权的供方代表签字」与「盖章」**缺一不可**",
+        "source_clause": "5",
+        "outcome": "缺 → `W03`"
+      },
+      {
+        "id": "L17:S7",
+        "criterion": "15 字段非空：零件名称、理想汽车零件号、供方料号、图纸号、模具穴号、工程更改版本、版本日期、重量(kg)、供应商名称/供应商代码、街道地址、城市、省、国家、顾客名称、设计开发、采购工程、PTC",
+        "source_clause": "6",
+        "outcome": "缺字段 → `B05`；空 → `W02`"
+      },
+      {
+        "id": "L17:S8",
+        "criterion": "「提交原因」区至少一项被选中，或「其他-请在下方说明」下内容非空",
+        "source_clause": "7",
+        "outcome": "均无 → `W02`"
+      },
+      {
+        "id": "L17:S9",
+        "criterion": "含「认可情况」字段，且**有且仅有一项**被勾选",
+        "source_clause": "8",
+        "outcome": "缺 → `B05`；多选/未选 → `W02`"
+      },
+      {
+        "id": "L17:S10",
+        "criterion": "勾「批准」时，「提交结果」四项（尺寸测量、外观标准、材料和功能试验、统计过程数据）均被勾选，且「这些结果均满足所有图纸和规范要求」有选项被勾选",
+        "source_clause": "8",
+        "outcome": "未勾齐 → `W02`"
+      },
+      {
+        "id": "L17:S11",
+        "criterion": "勾「条件批准」时，文件右下角日期在**当前日期 3 个月内**",
+        "source_clause": "9",
+        "outcome": "超期 → `W06`（时效状态，非结构）"
+      },
+      {
+        "id": "L17:S12",
+        "criterion": "勾「条件批准」时，补充评论内容非空",
+        "source_clause": "10",
+        "outcome": "空 → `W02`"
+      }
+    ],
+    "N04": [
+      {
+        "id": "N04:S1",
+        "criterion": "「特殊特性清单」表**标题前有产品编号**",
+        "source_clause": "1",
+        "outcome": "无 → `W03`（写法规范）"
+      },
+      {
+        "id": "N04:S2",
+        "criterion": "含列：零件编号、零件名称、特性分类、特性描述、特性值、特性类别、特殊特性种类、控制方法（制造过程）、防错方案描述、频次、样本数",
+        "source_clause": "2",
+        "outcome": "缺任一列 → `B05`"
+      },
+      {
+        "id": "N04:S3",
+        "criterion": "零件编号、零件名称非空",
+        "source_clause": "2",
+        "outcome": "空 → `W02`"
+      },
+      {
+        "id": "N04:S4",
+        "criterion": "S3 成立时，其余 9 列同行均非空",
+        "source_clause": "2",
+        "outcome": "空 → `W02`"
+      }
+    ],
+    "N05": [
+      {
+        "id": "N05:S1",
+        "criterion": "含「过程流程图」表",
+        "source_clause": "1",
+        "outcome": "缺 → `B05`"
+      },
+      {
+        "id": "N05:S2",
+        "criterion": "含 9 表头字段：零件号、零件名称、项目车型、供应商名称、代码、编制日期、**修订日期**、版本、团队，且均非空",
+        "source_clause": "1",
+        "outcome": "缺 → `B05`；空 → `W02`"
+      },
+      {
+        "id": "N05:S3",
+        "criterion": "含「产品特殊特性」「产品特性类别」两列；类别非空时特性非空",
+        "source_clause": "2",
+        "outcome": "缺列 → `B05`；空 → `W02`"
+      },
+      {
+        "id": "N05:S4",
+        "criterion": "含「过程特殊特性」「过程特性类别」两列；类别非空时特性非空",
+        "source_clause": "3",
+        "outcome": "缺列 → `B05`；空 → `W02`"
+      },
+      {
+        "id": "N05:S5",
+        "criterion": "含「工序名称」「操作描述」，工序名称有值时操作描述非空",
+        "source_clause": "4",
+        "outcome": "缺列 → `B05`；空 → `W02`"
+      },
+      {
+        "id": "N05:S6",
+        "criterion": "含七列：工序名称、制造、运输、存储、检验、返工、报废",
+        "source_clause": "5",
+        "outcome": "缺任一 → `B05`"
+      },
+      {
+        "id": "N05:S7",
+        "criterion": "工序名称有值时，六类活动列至少一列非空",
+        "source_clause": "5",
+        "outcome": "全空 → `W06`"
+      },
+      {
+        "id": "N05:S8",
+        "criterion": "起始工序：工序名称列含「进料检验」或「IQC」",
+        "source_clause": "6",
+        "outcome": "无 → `W01`（工序拆解完整性）"
+      },
+      {
+        "id": "N05:S9",
+        "criterion": "最终工序：工序名称列含「出货」「FQC」「OQC」",
+        "source_clause": "7",
+        "outcome": "无 → `W01`"
+      },
+      {
+        "id": "N05:S10",
+        "criterion": "出现「返工」「返修」时，**下一行为**「检验」或「重检」",
+        "source_clause": "8",
+        "outcome": "不符 → `W06`"
+      },
+      {
+        "id": "N05:S11",
+        "criterion": "跨文件：与特殊特性清单逐项对齐（`特性分类`+`特殊特性种类`+`特性描述`+`特性值` → `【产品/过程】【类别】`+特性）",
+        "source_clause": "9",
+        "outcome": "缺对端 → `W01`；对不上 → 按总纲 10.3 定归属"
+      }
+    ]
+  }
+}

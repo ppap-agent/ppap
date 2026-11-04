@@ -79,6 +79,7 @@ from product.identity import (
     new_token,
     token_hash,
 )
+from product.logs import emit
 from product.rules import FILE_PREPARATION_KINDS, customer_scope, latest_rule_versions, normalize_rule_body, rule_parse_request, rule_parse_view, rule_title
 from product.settings import Settings
 from product.storage import S3Objects
@@ -1025,11 +1026,15 @@ class AuthStore:
     def accept_file_analysis(self, principal, request_id, source_file_id, source_file_version_id) -> dict:
         return self._accept_file_job(principal, request_id, source_file_id, source_file_version_id, "file_analysis")
 
-    def accept_file_validation(self, principal, request_id, source_file_id, source_file_version_id) -> dict:
-        return self._accept_file_job(principal, request_id, source_file_id, source_file_version_id, "file_validation")
+    def accept_file_validation(self, principal, request_id, source_file_id, source_file_version_id, scope=None) -> dict:
+        return self._accept_file_job(principal, request_id, source_file_id, source_file_version_id, "file_validation", validation_scope=scope)
 
-    def _accept_file_job(self, principal, request_id, source_file_id, source_file_version_id, kind, document_type="") -> dict:
+    def _accept_file_job(self, principal, request_id, source_file_id, source_file_version_id, kind, document_type="", *, validation_scope=None) -> dict:
         job_id, payload = rule_parse_request(request_id, source_file_id, source_file_version_id, document_type)
+        if validation_scope is not None:
+            if kind != "file_validation" or validation_scope != {"customer_preference": "UAES", "preset_key": "U13"}:
+                raise ValueError("invalid_validation_scope")
+            payload["scope"] = dict(validation_scope)
         with self._conn() as conn:
             with conn.transaction():
                 prepared = self._prepared_items(conn, principal, [{"file_version_id": payload["source_file_version_id"], "role": "reference"}])
@@ -1353,6 +1358,7 @@ class AuthStore:
 
     def _recognition_inputs(self, conn, principal, task_id, files, customer, revision, request_id=None, fingerprint=None) -> None:
         prepared = self._prepared_items(conn, principal, [{"file_version_id": row["file_version_id"], "role": "reference"} for row in files])
+        validation_scopes = {}
         for row, source in zip(files, prepared):
             if row["selection"] == "removed" and row["validation_id"] is None:
                 continue
@@ -1361,6 +1367,9 @@ class AuthStore:
                 raise ValueError("precheck_required")
             if row["selection"] != "removed" and (validation["status"] != "succeeded" or (validation.get("result") or {}).get("state") != "valid"):
                 raise ValueError("precheck_required")
+            validation_scopes[row["file_version_id"]] = validation.get("scope")
+            if row["selection"] != "removed" and validation.get("scope") and (customer != "UAES" or validation["scope"] != {"customer_preference": "UAES", "preset_key": "U13"}):
+                raise ValueError("validation_scope_mismatch")
         all_rules = self.list_rules(principal.tenant_id)
         candidates = latest_rule_versions(all_rules)
         draft = self._recognition_owner(conn, principal, task_id)
@@ -1403,6 +1412,7 @@ class AuthStore:
                     "customer_preference": customer,
                     "reference_only": reference_only,
                     "matching_scope": "customer_document_type",
+                    "validation_scope": validation_scopes.get(row["file_version_id"]),
                 }
                 if replacement:
                     payload["replacement_of_file_version_id"] = replacement
@@ -1457,6 +1467,177 @@ class AuthStore:
                 queued = self._task_confirmation_receipt(conn, principal, task_id, request_id=_as_uuid(request_id))
                 task["acceptance"] = queued or {"request_id": _as_uuid(request_id), "state": "pending", "reason": None}
             return task
+
+    def _precheck_receipt(self, row, *, current_revision: int | None = None) -> dict:
+        payload = row[1]
+        return {
+            "id": str(row[0]),
+            "task_id": payload["task_id"],
+            "input_revision": payload["input_revision"],
+            "current": current_revision == payload["input_revision"],
+            "status": "unknown" if row[2] == "leased" and row[4] else row[2],
+            "input": payload,
+            "result": row[3] if row[2] in {"succeeded", "failed"} else None,
+            "created_at": row[5].isoformat(),
+            "updated_at": row[6].isoformat(),
+        }
+
+    def _current_task_precheck(self, conn, task_id: str, tenant_id: str, revision: int) -> dict | None:
+        row = conn.execute(
+            """SELECT id, payload, status, result, lease_until < now(), created_at, updated_at
+               FROM engine.jobs WHERE tenant_id = %s AND kind = 'task_precheck'
+                 AND payload->>'task_id' = %s AND payload->>'input_revision' = %s
+                 AND payload->>'execution_revision' = %s ORDER BY created_at DESC, id DESC LIMIT 1""",
+            (tenant_id, task_id, str(revision), self.settings.standard_execution_policy().engine_revision()),
+        ).fetchone()
+        return self._precheck_receipt(row, current_revision=revision) if row else None
+
+    def _queue_task_precheck(self, conn, principal: Principal, task: dict, *, retry_key: str | None = None) -> dict | None:
+        from product.prechecks import frozen_precheck_input, precheck_identity
+
+        v4_customers = {
+            customer
+            for row in task["files"]
+            for customer in (((row.get("match") or {}).get("rule") or {}).get("body") or {}).get("customers", [])
+            if ((((row.get("match") or {}).get("rule") or {}).get("body") or {}).get("rule_profile") == "v4")
+        }
+        if task["customer_preference"] not in {"UAES", "理想", "蔚来"} and not v4_customers:
+            return None
+        if task["state"] == "matching":
+            raise ValueError("task_not_ready")
+        payload = frozen_precheck_input(task, principal.tenant_id, self.settings.standard_execution_policy().model_dump(mode="json"))
+        identifier = precheck_identity(payload)
+        previous = conn.execute(
+            "SELECT id, status FROM engine.jobs WHERE tenant_id = %s AND kind = 'task_precheck' AND payload = %s ORDER BY created_at DESC, id DESC LIMIT 1", (principal.tenant_id, Jsonb(payload))
+        ).fetchone()
+        if previous:
+            identifier = str(previous[0])
+            if retry_key and previous[1] in {"failed", "cancelled"}:
+                identifier = str(uuid.uuid5(uuid.UUID(precheck_identity(payload)), "retry:" + retry_key))
+        conn.execute(
+            """INSERT INTO engine.jobs (id, tenant_id, kind, payload, status)
+                     VALUES (%s, %s, 'task_precheck', %s, 'queued') ON CONFLICT (id) DO NOTHING""",
+            (identifier, principal.tenant_id, Jsonb(payload)),
+        )
+        row = conn.execute(
+            "SELECT id, payload, status, result, lease_until < now(), created_at, updated_at FROM engine.jobs WHERE id = %s AND tenant_id = %s AND kind = 'task_precheck'",
+            (identifier, principal.tenant_id),
+        ).fetchone()
+        if not row or row[1] != payload:
+            raise ValueError("precheck_identity_conflict")
+        return self._precheck_receipt(row, current_revision=task["input_revision"])
+
+    def _queue_recognized_precheck(self, conn, task_id: str) -> None:
+        # Worker reads only preparation columns. It does not impersonate a user
+        # or acquire access to sessions, identities, grants or manual reviews.
+        conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("recognition:" + task_id,))
+        draft = conn.execute("SELECT tenant_id, input_revision, customer_preference, analysis_mode FROM product.audit_drafts WHERE id = %s", (task_id,)).fetchone()
+        if not draft:
+            return
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """SELECT i.file_version_id, i.selection, i.role, f.file_id, f.tenant_id, f.original_filename,
+                f.content_type, f.byte_size, f.sha256, f.object_key, f.status, j.payload, j.result, j.status AS job_status
+                FROM product.draft_items i JOIN product.file_versions f ON f.id = i.file_version_id
+                LEFT JOIN engine.jobs j ON j.id = i.analysis_job_id WHERE i.draft_id = %s ORDER BY i.position, i.file_version_id""",
+                (task_id,),
+            )
+            rows = cur.fetchall()
+        files = []
+        for row in rows:
+            match = None
+            if row["selection"] == "selected":
+                payload, result = row["payload"] or {}, row["result"] or {}
+                if row["job_status"] in {"queued", "leased"}:
+                    return
+                bound = self._analysis_snapshot_bound(payload, result, task_id, draft[1], str(row["file_version_id"]))
+                state = result.get("matching_status") if bound and row["job_status"] == "succeeded" else "failed"
+                match = {
+                    "state": state,
+                    "document_type": result.get("document_type") if bound else None,
+                    "metadata": result.get("metadata") or {"customer": None, "model": None, "part": None, "part_number": None},
+                    "gaps": result.get("notices") or (["rule_matching_failed"] if state == "failed" else []),
+                    "rule": None,
+                }
+                if state == "matched":
+                    candidate = next((rule for rule in payload.get("candidate_rules", []) if rule["id"] == result.get("matched_rule_id")), None)
+                    if candidate:
+                        stored_rule = conn.execute("SELECT id, title, body FROM product.rule_versions WHERE id = %s AND tenant_id = %s", (candidate["id"], draft[0])).fetchone()
+                        if stored_rule:
+                            match["rule"] = {"id": str(stored_rule[0]), "title": stored_rule[1], "body": stored_rule[2]}
+                    else:
+                        match.update(state="failed", gaps=["matching_snapshot_invalid"])
+            version = self._version_from_row(
+                (row["file_version_id"], *(row[key] for key in ("file_id", "tenant_id", "original_filename", "content_type", "byte_size", "sha256", "object_key", "status")))
+            )
+            files.append({"file": version.public(), "selection": row["selection"], "match": match, "reference_only": row["role"] == "reference"})
+        task = {"id": task_id, "input_revision": draft[1], "customer_preference": draft[2], "analysis_mode": draft[3], "state": "pending_confirm", "files": files}
+        principal = Principal("", str(draft[0]), "", "", "", "", "")
+        self._queue_task_precheck(conn, principal, task)
+
+    def request_task_precheck(self, principal: Principal, task_id: str, request_id, expected_revision) -> dict:
+        from product.standard_policy import config_digest
+
+        key = _as_uuid(request_id)
+        if not key or type(expected_revision) is not int or expected_revision < 0:
+            raise ValueError("invalid_precheck_request")
+        with self._conn() as conn, conn.transaction():
+            conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("precheck-request:" + key,))
+            draft = self._recognition_owner(conn, principal, task_id, lock=True)
+            prior = conn.execute("SELECT tenant_id, kind, payload FROM engine.jobs WHERE id = %s", (key,)).fetchone()
+            if prior:
+                if str(prior[0]) != principal.tenant_id or prior[1] != "task_precheck_request" or prior[2].get("task_id") != task_id:
+                    raise KeyError("missing")
+                if prior[2].get("input_revision") != expected_revision:
+                    raise ValueError("idempotency_conflict")
+                return self._read_task_precheck(conn, principal, task_id, prior[2]["snapshot_id"], draft["input_revision"])
+            if draft["input_revision"] != expected_revision:
+                raise ValueError("task_revision_conflict")
+            receipt = self._queue_task_precheck(conn, principal, self._recognition_public(conn, principal, task_id), retry_key=key)
+            if receipt is None:
+                raise ValueError("precheck_not_available")
+            operation = {"task_id": task_id, "input_revision": expected_revision, "snapshot_id": receipt["id"], "input_fingerprint": config_digest(receipt["input"])}
+            created = conn.execute(
+                "INSERT INTO engine.jobs (id, tenant_id, kind, payload, status) VALUES (%s, %s, 'task_precheck_request', %s, 'succeeded') ON CONFLICT (id) DO NOTHING RETURNING id",
+                (key, principal.tenant_id, Jsonb(operation)),
+            ).fetchone()
+            if not created:
+                raise ValueError("idempotency_conflict")
+            return receipt
+
+    def _read_task_precheck(self, conn, principal: Principal, task_id: str, snapshot_id: str, revision: int) -> dict:
+        if not _as_uuid(snapshot_id):
+            raise KeyError("missing")
+        row = conn.execute(
+            """SELECT id, payload, status, result, lease_until < now(), created_at, updated_at FROM engine.jobs
+                              WHERE id = %s AND tenant_id = %s AND kind = 'task_precheck' AND payload->>'task_id' = %s""",
+            (snapshot_id, principal.tenant_id, task_id),
+        ).fetchone()
+        if not row:
+            raise KeyError("missing")
+        self._prepared_items(conn, principal, [{"file_version_id": item["file"]["id"], "role": "reference"} for item in row[1]["files"]])
+        receipt = self._precheck_receipt(row, current_revision=revision)
+        current = self._current_task_precheck(conn, task_id, principal.tenant_id, revision)
+        receipt["current"] = bool(current and current["id"] == receipt["id"])
+        return receipt
+
+    def get_task_precheck(self, principal: Principal, task_id: str, snapshot_id: str) -> dict:
+        with self._conn() as conn, conn.transaction():
+            conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            draft = self._recognition_owner(conn, principal, task_id)
+            return self._read_task_precheck(conn, principal, task_id, snapshot_id, draft["input_revision"])
+
+    def list_task_prechecks(self, principal: Principal, task_id: str) -> dict:
+        with self._conn() as conn, conn.transaction():
+            conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            draft = self._recognition_owner(conn, principal, task_id)
+            rows = conn.execute(
+                """SELECT id, payload, status, result, lease_until < now(), created_at, updated_at FROM engine.jobs
+                                 WHERE tenant_id = %s AND kind = 'task_precheck' AND payload->>'task_id' = %s ORDER BY created_at DESC, id DESC""",
+                (principal.tenant_id, task_id),
+            ).fetchall()
+            records = [self._read_task_precheck(conn, principal, task_id, str(row[0]), draft["input_revision"]) for row in rows]
+            return {"snapshots": records}
 
     def _notification_preference(self, conn, draft: dict) -> dict:
         row = conn.execute(
@@ -2311,6 +2492,7 @@ class AuthStore:
                     "removal_reason": row["removal_reason"],
                     **({"validation_id": str(row["validation_job_id"])} if row["validation_job_id"] else {}),
                     "validation": checked,
+                    **({"validation_scope": validation["scope"]} if validation.get("scope") else {}),
                     "match": match,
                     **({"preferred_rule_version_id": str(row["rule_version_id"])} if row["rule_version_id"] else {}),
                     **({"replacement_of_file_version_id": replacement} if replacement else {}),
@@ -2338,6 +2520,7 @@ class AuthStore:
             "completion_reason": draft["task_completion_reason"],
             "estimated_points": None if matching or any(row["match"]["state"] == "failed" for row in selected) else sum(row["match"]["state"] == "matched" for row in selected) * 500,
         }
+        task["precheck"] = self._current_task_precheck(conn, task_id, principal.tenant_id, draft["input_revision"])
         if draft["predecessor_id"]:
             task["predecessor_id"] = str(draft["predecessor_id"])
             previous = conn.execute(
@@ -3365,7 +3548,8 @@ class AuthStore:
             row = conn.execute(
                 """UPDATE engine.jobs SET lease_until = now() + interval '30 seconds', updated_at = now()
                 WHERE id = %s AND attempt = %s AND lease_owner = %s AND status = 'leased'
-                  AND (kind <> 'audit' OR COALESCE(payload->>'analysis_mode', 'standard') <> 'deep' OR lease_until > now()) RETURNING id""",
+                  AND (kind <> 'audit' OR COALESCE(payload->>'analysis_mode', 'standard') <> 'deep' OR lease_until > now())
+                  AND (kind <> 'task_precheck' OR lease_until > now()) RETURNING id""",
                 (claimed.id, claimed.attempt, worker_ident),
             ).fetchone()
             return row is not None
@@ -3404,12 +3588,13 @@ class AuthStore:
                         result = CASE WHEN kind = ANY(%s) THEN %s ELSE result END
                     WHERE id = %s AND attempt = %s AND lease_owner = %s AND status = 'leased'
                       AND (kind <> 'audit' OR COALESCE(payload->>'analysis_mode', 'standard') <> 'deep' OR lease_until > now())
+                      AND (kind <> 'task_precheck' OR lease_until > now())
                     RETURNING id
                     """,
                     (
                         "succeeded" if outcome == "succeeded" else "failed",
-                        [*FILE_PREPARATION_KINDS, "report_pdf", "report_zip"],
-                        Jsonb(result) if claimed.kind in {*FILE_PREPARATION_KINDS, "report_pdf", "report_zip"} else None,
+                        [*FILE_PREPARATION_KINDS, "report_pdf", "report_zip", "task_precheck"],
+                        Jsonb(result) if claimed.kind in {*FILE_PREPARATION_KINDS, "report_pdf", "report_zip", "task_precheck"} else None,
                         claimed.id,
                         claimed.attempt,
                         worker_ident,
@@ -3441,6 +3626,11 @@ class AuthStore:
                         ).fetchone()
                     ):
                         self._queue_task_notification(conn, task_id, "confirmation")
+                        try:
+                            with conn.transaction():
+                                self._queue_recognized_precheck(conn, task_id)
+                        except Exception as exc:
+                            emit("task_precheck_not_queued", task_id=task_id, error_type=type(exc).__name__)
                     if task_id and claimed.kind == "report_pdf" and not claimed.payload.get("regeneration_request_id"):
                         self._queue_finished_notification(conn, task_id, claimed.payload["source_round_id"])
                     if task_id and claimed.kind == "report_zip" and outcome == "succeeded":
@@ -4115,6 +4305,38 @@ class AuthStore:
                     or any((row["match"] or {}).get("state") not in {"matched", "reference", "unmatched"} or row["validation"]["state"] != "valid" for row in selected)
                 ):
                     raise ValueError("task_not_ready")
+                if not existing:
+                    v4_customers = {
+                        customer
+                        for row in selected
+                        for customer in ((row["match"].get("rule") or {}).get("body") or {}).get("customers", [])
+                        if (((row["match"].get("rule") or {}).get("body") or {}).get("rule_profile") == "v4")
+                    }
+                    if len(v4_customers) > 1 or v4_customers and owned["customer_preference"] and v4_customers != {owned["customer_preference"]}:
+                        raise ValueError("customer_scope_conflict")
+                    for row in selected:
+                        scope = row.get("validation_scope")
+                        rule_body = ((row.get("match") or {}).get("rule") or {}).get("body") or {}
+                        if scope and row["match"]["state"] != "reference" and (owned["customer_preference"] != "UAES" or rule_body.get("rule_profile") != "v4" or rule_body.get("preset_key") != "U13"):
+                            raise ValueError("validation_scope_mismatch")
+                    if self.settings.precheck_gate_enforced:
+                        from product.prechecks import blocked_targets, frozen_precheck_input
+
+                        receipt = task.get("precheck")
+                        blocked = set()
+                        if receipt and receipt["status"] == "succeeded":
+                            frozen = frozen_precheck_input(task, principal.tenant_id, self.settings.standard_execution_policy().model_dump(mode="json"))
+                            if frozen == receipt["input"]:
+                                blocked = blocked_targets(frozen, receipt["result"])
+                        if blocked:
+                            selected = [row for row in selected if row["file"]["id"] not in blocked]
+                            if not any(row["match"]["state"] == "matched" for row in selected):
+                                raise ValueError("precheck_blocked")
+                            for version_id in blocked:
+                                conn.execute(
+                                    "UPDATE product.draft_items SET selection = 'removed', removal_reason = %s WHERE draft_id = %s AND file_version_id = %s",
+                                    ("预检已确认的阻断缺陷，需修正后重新提交", source_draft_id, version_id),
+                                )
                 items = [
                     {
                         "file_version_id": row["file"]["id"],
