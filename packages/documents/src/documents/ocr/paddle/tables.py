@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from contextlib import nullcontext
 from html.parser import HTMLParser
 from pathlib import Path
@@ -34,12 +35,12 @@ class TableHTML(HTMLParser):
             self.count += 1
             self.in_table = True
         elif self.in_table and tag == "tr":
-            if self.row is not None:
-                raise PaddleOCRFormatError("Nested table rows are invalid")
+            self._finish_row()
             self.row = []
         elif self.row is not None and tag in {"td", "th"}:
-            if self.cell is not None:
-                raise PaddleOCRFormatError("Nested table cells are invalid")
+            self._finish_cell()
+            if any(not re.fullmatch(r"[A-Za-z_:][-A-Za-z0-9_:.]*", name) for name, _ in attrs):
+                raise PaddleOCRFormatError("PaddleOCR table HTML is incomplete")
             attrs_by_name = dict(attrs)
             spans = []
             for name, limit in (("rowspan", MAX_TABLE_ROWS), ("colspan", MAX_TABLE_COLS)):
@@ -60,25 +61,35 @@ class TableHTML(HTMLParser):
         if self.cell is not None:
             self.parts.append(data)
 
-    def handle_endtag(self, tag: str) -> None:
-        if tag in {"td", "th"} and self.cell is not None:
-            if self.row is None:
-                raise PaddleOCRFormatError("PaddleOCR table cell is outside a row")
-            text = "".join(self.parts).strip()
-            if len(text) > MAX_CELL_CHARS:
-                raise PaddleOCRFormatError("PaddleOCR cell exceeds Excel size limit")
-            self.row.append((text, *self.cell))
-            self.cell = None
-        elif tag == "tr" and self.row is not None:
-            if self.cell is not None:
-                raise PaddleOCRFormatError("PaddleOCR table contains unfinished cells")
+    def _finish_cell(self) -> None:
+        if self.cell is None:
+            return
+        if self.row is None:
+            raise PaddleOCRFormatError("PaddleOCR table cell is outside a row")
+        text = "".join(self.parts).strip()
+        if len(text) > MAX_CELL_CHARS:
+            raise PaddleOCRFormatError("PaddleOCR cell exceeds Excel size limit")
+        self.row.append((text, *self.cell))
+        self.cell = None
+        self.parts = []
+
+    def _finish_row(self) -> None:
+        self._finish_cell()
+        if self.row is not None:
             self.rows.append(self.row)
             self.row = None
             if len(self.rows) > MAX_TABLE_ROWS:
                 raise PaddleOCRFormatError("PaddleOCR table exceeds row limit")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"td", "th"}:
+            self._finish_cell()
+        elif tag in {"tr", "tbody", "thead", "tfoot"}:
+            self._finish_row()
         elif tag == "table" and self.in_table:
-            if self.row is not None or self.cell is not None:
-                raise PaddleOCRFormatError("PaddleOCR table HTML is incomplete")
+            # HTML permits omitted cell / row end tags here; the table itself
+            # must still close. Do not invent missing cells or span coverage.
+            self._finish_row()
             self.in_table = False
 
     def to_grid(self) -> tuple[list[list[str]], list[tuple[int, int, int, int]]]:
@@ -132,7 +143,9 @@ def _candidate_bbox(table: dict) -> list[float] | None:
 
 
 def _native_rows(page: fitz.Page, bounds: list[float] | None, image_size: tuple[float, float]) -> list[list[str]] | None:
-    if bounds is None:
+    if bounds is None or page.rotation:
+        # Rotated source regions require an explicit rotation-aware extraction;
+        # keep Paddle's page geometry instead of guessing a native crop.
         return None
     iw, ih = image_size
     if iw <= 0 or ih <= 0:
@@ -161,7 +174,7 @@ def _native_rows(page: fitz.Page, bounds: list[float] | None, image_size: tuple[
         rows.append(values)
     if len(rows) > MAX_TABLE_ROWS or max(map(len, rows)) > MAX_TABLE_COLS or len(rows) * max(map(len, rows)) > MAX_TABLE_CELLS:
         raise PaddleOCRFormatError("Native table exceeds dimension limits")
-    if len({len(row) for row in rows}) != 1:
+    if len({len(row) for row in rows}) != 1 or not any(cell.strip() for row in rows for cell in row):
         return None
     return rows
 
@@ -183,50 +196,89 @@ def _bind_recognitions(regions: list[dict], recognized: list[dict]) -> tuple[dic
                     candidates.append((score, region["index"], i))
     candidates.sort(reverse=True)
     for score, region_id, index in candidates:
-        if region_id not in assignments and index not in consumed:
-            equally_best = [x for x in candidates if x[1] == region_id and abs(x[0] - score) < 1e-9]
-            if len(equally_best) == 1:
-                assignments[region_id] = index
-                consumed.add(index)
+        if region_id in assignments or index in consumed:
+            continue
+        # A best match must be unique from both directions; tied regions must
+        # not acquire another region's recognized text based on list order.
+        region_scores = [x[0] for x in candidates if x[1] == region_id]
+        recognition_scores = [x[0] for x in candidates if x[2] == index]
+        if score != max(region_scores) or score != max(recognition_scores):
+            continue
+        if sum(abs(value - score) < 1e-9 for value in region_scores) == 1 and sum(abs(value - score) < 1e-9 for value in recognition_scores) == 1:
+            assignments[region_id] = index
+            consumed.add(index)
     return assignments, consumed
 
 
-def recognize_tables(pdf_path: str | Path | None, result: dict, layouts: list[dict]) -> list[dict]:
+def recognize_tables(
+    pdf_path: str | Path | None,
+    result: dict,
+    layouts: list[dict],
+    *,
+    diagnostics: list[dict] | None = None,
+    source_pages: list[int] | None = None,
+) -> list[dict]:
+    """Extract independent tables; diagnostics isolate failures when requested."""
     tables: list[dict] = []
     page_sizes = result.get("dataInfo", {}).get("pages", [])
+
+    def failed(error: PaddleOCRFormatError, page: int, region: int | None, recognition: int | None) -> None:
+        if diagnostics is None:
+            raise error
+        diagnostics.append({"code": "paddle.table.invalid", "stage": "structure", "element": "table", "message": str(error), "page": page, "region_index": region, "recognition_index": recognition})
+
     with fitz.open(pdf_path) if pdf_path is not None else nullcontext(None) as pdf:
         for page_index, entry in enumerate(layouts):
+            page_no = source_pages[page_index] if source_pages is not None else page_index + 1
             pruned = result["layoutParsingResults"][page_index]["prunedResult"]
-            raw_tables = blocks(pruned, "table_res_list")
+            try:
+                raw_tables = blocks(pruned, "table_res_list")
+            except PaddleOCRFormatError as error:
+                failed(error, page_no, None, None)
+                continue
             recognized = []
             for index, item in enumerate(raw_tables):
-                if not isinstance(item, dict) or not isinstance(item.get("pred_html"), str):
-                    raise PaddleOCRFormatError("PaddleOCR table is missing pred_html")
-                recognized.append({"index": index, "bbox": _candidate_bbox(item), "html": item["pred_html"]})
+                try:
+                    if not isinstance(item, dict) or not isinstance(item.get("pred_html"), str):
+                        raise PaddleOCRFormatError("PaddleOCR table is missing pred_html")
+                    recognized.append({"index": index, "bbox": _candidate_bbox(item), "html": item["pred_html"]})
+                except PaddleOCRFormatError as error:
+                    failed(error, page_no, None, index)
             regions = [region for region in entry["regions"] if region["label"] == "table"]
             match, consumed = _bind_recognitions(regions, recognized)
             dims = page_sizes[page_index] if isinstance(page_sizes, list) and len(page_sizes) > page_index else {}
             if not isinstance(dims, dict):
-                raise PaddleOCRFormatError("PaddleOCR page metadata is invalid")
-            # Only use source-bound image dimensions for the PDF coordinate conversion.
+                failed(PaddleOCRFormatError("PaddleOCR page metadata is invalid"), page_no, None, None)
+                continue
             width, height = dims.get("width"), dims.get("height")
-            size = (float(width), float(height)) if type(width) in (int, float) and type(height) in (int, float) else None
+            size = (float(width), float(height)) if isinstance(width, (int, float)) and not isinstance(width, bool) and isinstance(height, (int, float)) and not isinstance(height, bool) else None
             for region in regions:
-                native = _native_rows(pdf[page_index], region["bbox"], size) if pdf is not None and size is not None else None
                 target = match.get(region["index"])
-                if native is not None:
-                    rows, merges, source = native, [], "native_pdf"
-                elif target is not None:
-                    rows, merges = parse_table(recognized[target]["html"])
-                    source = "paddle_html"
-                else:
-                    raise PaddleOCRFormatError("PaddleOCR detected a table but omitted its recognition")
-                tables.append({"page": page_index + 1, "region_index": region["index"], "recognition_index": target, "bbox": region["bbox"], "source": source, "rows": rows, "merges": merges})
+                recognition_index = recognized[target]["index"] if target is not None else None
+                try:
+                    native = _native_rows(pdf[page_no - 1], region["bbox"], size) if pdf is not None and size is not None else None
+                    if native is not None:
+                        rows = native
+                        merges: list[tuple[int, int, int, int]] = []
+                        source = "native_pdf"
+                    elif target is not None:
+                        rows, merges = parse_table(recognized[target]["html"])
+                        source = "paddle_html"
+                    else:
+                        raise PaddleOCRFormatError("PaddleOCR detected a table but omitted its recognition")
+                    tables.append({"page": page_no, "region_index": region["index"], "recognition_index": recognition_index, "bbox": region["bbox"], "source": source, "rows": rows, "merges": merges})
+                except PaddleOCRFormatError as error:
+                    failed(error, page_no, region["index"], recognition_index)
             for index, item in enumerate(recognized):
                 if index in consumed:
                     continue
-                if regions and item["bbox"] is None:
-                    raise PaddleOCRFormatError("PaddleOCR table cannot be spatially matched")
-                rows, merges = parse_table(item["html"])
-                tables.append({"page": page_index + 1, "region_index": None, "recognition_index": index, "bbox": item["bbox"], "source": "paddle_html_unlocated", "rows": rows, "merges": merges})
+                try:
+                    if regions and item["bbox"] is None:
+                        raise PaddleOCRFormatError("PaddleOCR table cannot be spatially matched")
+                    if regions and item["bbox"] is not None and any(region["bbox"] is not None and iou(region["bbox"], item["bbox"]) > 0 for region in regions):
+                        raise PaddleOCRFormatError("PaddleOCR table geometry is ambiguous")
+                    rows, merges = parse_table(item["html"])
+                    tables.append({"page": page_no, "region_index": None, "recognition_index": item["index"], "bbox": item["bbox"], "source": "paddle_html_unlocated", "rows": rows, "merges": merges})
+                except PaddleOCRFormatError as error:
+                    failed(error, page_no, None, item["index"])
     return tables
