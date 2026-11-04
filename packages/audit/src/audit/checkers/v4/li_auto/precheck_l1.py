@@ -202,10 +202,17 @@ def _unknown(message):
 
 def _fact_list(agent, entry, operations, *, states=None):
     facts = L1Facts(agent.audit_file)
+    if entry in {"L01", "L02", "L03"}:
+        from .precheck_inspection_validation import operations as remaining_operations
+    else:
+        from .precheck_materials_msa_capacity import operations as remaining_operations
+    remaining = remaining_operations(agent, entry, facts)
     result = []
     for item in l1_criteria(entry):
         identity = item["criterion_id"]
-        if states and identity in states:
+        if identity in remaining:
+            result.append(facts.observe(item["id"], remaining[identity]))
+        elif states and identity in states:
             code, message, status = states[identity]
             result.append(state_fact(item["id"], code, message, status=status))
         elif identity in operations:
