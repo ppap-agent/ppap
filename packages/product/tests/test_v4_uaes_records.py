@@ -117,3 +117,19 @@ def test_materials_only_pairs_current_unique_matching_originals(tmp_path, varian
         import json
 
         assert {json.loads(source.locator)["file_version_id"] for source in result.evidence.sources} == {"清单.xlsx", "图纸.xlsx"}
+
+
+def test_l2_precheck_reports_individual_source_facts_with_no_false_certification(tmp_path):
+    book = Workbook()
+    sections = ["包装方案", "零件基础信息", "供应商基础信息", "包装设计的基本要求", "针对该零件包装的特殊要求", "包装方案信息", "包装材料清单"]
+    for phrase in sections:
+        book.active.append([phrase])
+    path = tmp_path / "packaging.xlsx"
+    book.save(path)
+    book.close()
+    body = preset_rule_body("UAES", "U09")
+    agent = UaesPackagingAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput(rule_id="rules", **{key: value for key, value in body.items() if key != "kind"}))
+    facts = agent.precheck()
+    assert {fact["id"] for fact in facts} == {f"U09:S{i}" for i in range(1, 8)}
+    assert all(fact["status"] == "satisfied" and fact["evidence"]["sources"] for fact in facts)
+    assert all(fact["certified"] is False for fact in facts)

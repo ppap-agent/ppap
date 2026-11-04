@@ -1,0 +1,21 @@
+"""Original UAES assets are references, never golden correct reports."""
+
+from pathlib import Path
+
+from audit.checkers.v4.uaes.inspection import UaesInspectionAgent
+from audit.contracts import AuditInput, RuleInput
+from audit.presets import preset_rule_body
+
+
+def test_original_uaes_inspection_reference_has_ten_not_three_measurement_columns():
+    root = Path(__file__).resolve().parents[4]
+    path = next((root / "assets").rglob("F-PU-207_样品检验报告*"))
+    body = preset_rule_body("UAES", "U01")
+    agent = UaesInspectionAgent(AuditInput(audit_id="original-reference", file_url=str(path)), RuleInput(rule_id="source", **{key: value for key, value in body.items() if key != "kind"}))
+    result = agent.check(0)
+    # The source clause requires 3 or a multiple of 3. The actual offline
+    # reference has F:O =10; its existence must not manufacture a golden PASS.
+    assert result.status == "NG", result.suggestions
+    assert "10" in result.suggestions
+    assert "多产线/多模穴" in result.suggestions
+    assert result.evidence.sources

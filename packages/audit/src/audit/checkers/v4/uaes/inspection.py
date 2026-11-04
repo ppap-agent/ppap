@@ -16,7 +16,11 @@ class UaesInspectionAgent(UaesSourceAgent):
         facts = self.native()
         table = facts.table((title,))
         row, columns = facts.columns(
-            table, {"requirement": ("要求", "要求值", "技术要求", "Requirements"), "actual": ("供应商实测结果", "供应商实测值", "Supplier Actual Measurement Results", "实测值")}
+            table,
+            {
+                "requirement": ("要求", "要求值", "技术要求", "Requirements"),
+                "actual": ("供应商实测结果", "供应商实测值", "Supplier Actual Measurement Results", "Actual-Value Supplier/供应商实测值/Actual-Value Customer 客户实测值", "实测值"),
+            },
         )
         actual = columns["actual"]
         reader = facts.readers[table["id"]]
@@ -46,6 +50,13 @@ class UaesInspectionAgent(UaesSourceAgent):
             # Only a true overall result column can establish OK. Separate
             # blank OK/NOT OK columns require the actual mark to be decoded.
             _result_row, result_columns = facts.columns(table, {"result": ("结果", "判定", "评价", "Evaluation")})
+            result_column = result_columns["result"]
+            reader = facts.readers[table["id"]]
+            separate_marks = key(reader.cell(_result_row + 1, result_column).get("value")) == "ok" and key(reader.cell(_result_row + 1, result_column + 1).get("value")).rstrip(".") in {
+                "notok",
+                "nok",
+                "ng",
+            }
             count = 0
             for row in range(start + 1, table["rows"] + 1):
                 value = facts.cell(table, row, requirement)
@@ -56,7 +67,21 @@ class UaesInspectionAgent(UaesSourceAgent):
                 if any(term in str(value) for term in ("供应商负责人", "Supplier responsible", "编制", "批准")):
                     break
                 count += 1
-                result = facts.cell(table, row, result_columns["result"])
+                result = facts.cell(table, row, result_column)
+                if separate_marks:
+                    rejected = facts.cell(table, row, result_column + 1)
+
+                    def mark(value):
+                        return bool(re.fullmatch(r"[×xX☑✓√✔]", str(value or "").strip()))
+
+                    if mark(rejected):
+                        return "NG", f"{title}第{row}行实际选中了NOT OK。"
+                    if mark(result) and blank(rejected):
+                        result = "OK"
+                    elif blank(result) and blank(rejected):
+                        raise UnknownFact("报告OK/NOT OK两栏没有可确认的实际选择。")
+                    else:
+                        raise UnknownFact("报告结果选择符号无法可靠识别或多选。")
                 if key(result) != "ok":
                     if blank(result):
                         raise UnknownFact("报告结果栏未能确认实际OK选择，不能以空OK标签通过。")
