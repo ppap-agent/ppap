@@ -70,7 +70,7 @@ uv run --no-sync pytest packages/documents/tests/test_paddle.py \
 
 ### 审核侧影子消费
 
-唯一接入点为 `audit.checkers.v4.paddle_evidence` 的显式任务作用域。没有作用域时不请求 Paddle；作用域只记录补充观察，不修改正式 `AuditResultItem`。首批消费者来自现有 UAES U08：条款 `U08:3` 的印章事实和 `U08:7` 的零件号字段，使用既有条款绑定，不另建 Paddle 审核规则。
+唯一接入点为 `audit.checkers.v4.paddle_evidence` 的显式任务作用域。没有作用域时不请求 Paddle；作用域只记录补充观察，不修改正式 `AuditResultItem`。消费者包括现有 UAES U08 的印章事实和零件号字段、UAES U17 的印章及基础信息中的零件号子集，以及 V2/V3 PSW 和 V4 L17 PDF 回退的印章及零件号子集。使用既有条款绑定，不另建 Paddle 审核规则；字段子集不代表整条规则已经核实。
 
 下面只演示本地已授权原件的影子提取，不执行正式视觉审核、模型或数据库操作。生产调用方仍须先完成租户/对象授权，并提供本轮冻结的文件版本、规则和明确页号；本地示例标识不能冒充生产实体。
 
@@ -113,9 +113,42 @@ with paddle_shadow_scope(session):
 print(session.request_count, [(o.state, o.reason, o.reused) for o in session.observations])
 ```
 
-这里的 30/40 秒只是示例操作预算，不是服务 SLA。应根据本次任务的剩余时间和服务实测明确设置。`request_count` 是预留的页级派发次数，可能因发送前验证而不产生 HTTP；核对真实调用量应观察传输边界。超时后远端可能仍在处理，既不宣称已取消，也不自动重发。
+这里的 30/40 秒只是示例操作预算，不是服务 SLA。应根据本次任务的剩余时间和服务实测明确设置。Paddle 客户端的总墙钟预算覆盖源文件准备、连接和完整响应体；慢速持续返回也不能无限占用读取。原生读取结束后再次检查截止、取消和来源，预算已耗尽则不派发。同步 reader 从异步调用方使用时仍等待有界操作关闭本地连接后返回，不是后台逃逸任务。`request_count` 是预留的页级派发次数，可能因发送前验证而不产生 HTTP；核对真实调用量应观察传输边界。超时后远端可能仍在处理，既不宣称已取消，也不自动重发。
 
 同一作用域内，同源 SHA/页结果（含失败）复用；原生已充分确认零件号时该字段跳过 OCR。请求数、剩余时限、来源变化和取消均受控；关闭作用域后不接纳新的权威事实。作用域锁只串行化本任务，**不是多 Worker 的全局服务容量限制**。当前没有自动 Worker 或生产开关；正式启用前还需在既有调度边界确认服务容量。
+
+PSW 可改用下列输入和调用，其余原件、服务及授权变量沿用上例。`psw_shadow_clause_id()` 将实际 profile、冻结规则版本、源条款 ID/内容和执行槽位绑定在一起；不要手工猜测条款编号。这个本地载体只供影子事实读取，避免构造正式 PDF Checker 时触发已有转换流程。
+
+```python
+from types import SimpleNamespace
+from audit.checkers.v4.paddle_evidence import psw_shadow_clause_id
+
+rule = RuleInput(rule_id="local-frozen-L17", **preset_rule_body("理想", "L17"))
+inputs = SimpleNamespace(
+    audit_file=AuditInput(
+        audit_id=version, file_url=str(source), project_id=project,
+        file_metadata={"file_version_id": version},
+    ),
+    rule=rule,
+)
+targets = [
+    ShadowTarget(version, source_sha, psw_shadow_clause_id(rule, slot), original_page)
+    for slot in (3, 6, 9)
+]
+session = PaddleShadowSession(
+    service, project_id=project, targets=targets,
+    max_requests=1, deadline_seconds=90,
+)
+with paddle_shadow_scope(session):
+    session.observe_psw(inputs, 3)  # 印章检测及已返回的文字
+    session.observe_psw(inputs, 6)  # 仅零件号字段；原生充分时跳过
+    session.observe_psw(inputs, 9)  # 实际勾选尚未支持，记录未知且不发请求
+print(session.request_count, [(o.state, o.reason, o.reused) for o in session.observations])
+```
+
+V2/V3 使用各自已经冻结的 PSW `RuleInput`。现有 PSW `check()` 和 UAES U17 的 hook 只在显式作用域内追加影子观察；调用正式 Checker 时，其原有模型调用仍会执行。上面的 `observe_psw()` 示例只读取补充事实，不执行正式判断、模型或数据库操作。章检测、已返回的可读文字和满足业务条款分别表达；`known` 不代表 PASS，也不保证完整章文已读到。缺少检测仍为未知，不能证明无章；预印文字、签名和实际勾选不能凭附近文字补成已核实。
+
+整体 OCR 的逐词文字保留在已有页证据中，与印章专用识别文字分别记录。只有完整位于一个可信章区域内、且关联唯一的词，才可作为该区域的局部补充；相交、靠近或文字像“公司章”均不足以归章。补充词保留来源、原始索引与坐标，不与专用识别结果拼成“完整章文”，也不证明该词必然来自章的油墨。真实服务没有返回的文字保持未知。
 
 离线工程验收：
 

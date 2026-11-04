@@ -2,9 +2,13 @@
 
 测试保护当前行为，不维护第二套产品状态。
 
-Paddle 按需证据由 Issue #246 拥有：`packages/documents/tests/test_paddle.py` 与 `test_paddle_page_evidence.py` 检查单页传输、原件定位、局部失败及产物；`packages/audit/tests/test_paddle_shadow.py` 通过现有 Checker 检查原生优先、同页成功/失败复用、预算、来源与取消边界。新增测试只隔离外部 Paddle 请求，不访问真实 OCR 或模型。真实单页合同、印章/表格效果及服务负载须另行明确执行并如实报告，不能由 fixture 或有限状态模型代替。
+Paddle 按需证据由 Issue #246 拥有：`packages/documents/tests/test_paddle.py` 与 `test_paddle_page_evidence.py` 检查单页传输、原件定位、局部失败及产物；慢流、响应头/响应体停滞还通过本地 HTTP 验证总墙钟预算、连接关闭和零重试。`packages/audit/tests/test_paddle_shadow.py` 通过现有 U08/U17、V2/V3 PSW 与 V4 L17 PDF 回退 Checker 检查正式完整结果不变、原生优先、同页成功/失败复用、实际规则来源绑定、预算与取消边界，包括原生读取耗尽预算后不派发。新增测试只隔离外部 Paddle 请求，不访问真实 OCR 或模型。真实单页合同、印章/表格效果及服务负载须另行明确执行并如实报告，不能由 fixture 或有限状态模型代替。
 
 影子观察与正式结果分别验收：启用本地影子作用域前后，已有 Checker 的完整结果保持相同；默认不创建作用域、不发生 Paddle 调用。位置或配对不确定保留未知，解析/传输失败保留技术诊断；局部失败不能清空其他已知事实。
+
+影子测试同时隔离正式 Checker 构造阶段的外部转换边界。V2 与 V3 需分别核对实际入口，不能假设二者都只经过绑定的 Runtime。该测试模块对 requests 和同步/异步 HTTPX 外发加护栏，并在用例结束时检查尝试记录，避免生产代码捕获网络异常后让用例假通过。
+
+现有 PSW corpus 的视觉对比仍验证原有 LLM 路径，不证明 Paddle 已具备相同能力。Paddle 真实验收须先标明原件 SHA、原始页、人工可确认区域及文字，再明确执行单页请求；分别核对检测、返回文字和缺失内容。含章的原件、空白章框和预印说明应区分；单章成功不补证多章、完整不可读章、签名真实性或实际勾选。原生字段已充分时不为制造 OCR 正向结果强制请求。
 
 迁移 baseline 的具体 Git revision 和当前观察结果只由 owning Issue 保存：
 - engine/corpus parity：[#3](https://github.com/ppap-agent/ppap/issues/3)
