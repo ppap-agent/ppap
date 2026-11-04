@@ -190,7 +190,10 @@ def test_material_drawing_pair_requires_the_source_project_identity(tmp_path):
     assert result["status"] == "unknown" and result["code"] is None
 
 
-@pytest.mark.parametrize("field,value", [("part", "待确认"), ("part", "none"), ("part", "-"), ("part", "工程更改版本"), ("part", "ＴＢＤ"), ("revision", "版本号"), ("revision", "待确认"), ("project", "待确认")])
+@pytest.mark.parametrize(
+    "field,value",
+    [("part", "待确认"), ("part", "none"), ("part", "-"), ("part", "工程更改版本"), ("part", "ＴＢＤ"), ("revision", "版本号"), ("revision", "待确认"), ("project", "待确认")],
+)
 def test_equal_unknown_identity_does_not_establish_dependency_availability(tmp_path, field, value):
     target = original(tmp_path, "target", **{field: value})
     reference = original(tmp_path, "reference", title="过程流程图", **{field: value})
