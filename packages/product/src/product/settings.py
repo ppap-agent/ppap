@@ -93,7 +93,6 @@ class Settings(BaseSettings):
 
     # Checker/OCR names kept from the migrated engine. Product code still reads llm_*.
     DEFAULT_OCR_OPENAI_BASE_URL: ClassVar[str] = "https://gateway.ai.cloudflare.com/v1/b1a6ed92ee3fad00dcbb1e3e57327c02/openrouter/openrouter/v1"
-    DEFAULT_OCR_MODEL_NAME: ClassVar[str] = "google/gemma-3-27b-it:free"
     APP_NAME: str = "PPAP"
     APP_VERSION: str = "0.1.0"
     APP_GIT_SHA: str = "unknown"
@@ -282,7 +281,10 @@ class Settings(BaseSettings):
         return (self.OCR_OPENAI_BASE_URL or self.OPENAI_BASE_URL or self.DEFAULT_OCR_OPENAI_BASE_URL).strip()
 
     def get_ocr_model_name(self) -> str:
-        return (self.OCR_MODEL_NAME or self.MODEL_NAME or self.DEFAULT_OCR_MODEL_NAME).strip()
+        model = (self.OCR_MODEL_NAME or self.MODEL_NAME).strip()
+        if not model:
+            raise ValueError("OCR model is not configured: set OCR_MODEL_NAME or LLM_MODEL")
+        return model
 
     def get_ocr_paddle_url(self) -> str:
         return self.PADDLE_OCR_URL.strip()
