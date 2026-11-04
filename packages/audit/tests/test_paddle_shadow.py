@@ -378,3 +378,213 @@ def test_field_follows_the_label_merge_extent_without_skipping_unmerged_blanks(t
     else:
         assert observed.facts == ()
         assert observed.evidence.sources == ()
+
+
+def psw_rules(profile="v2"):
+    from audit.presets import preset_rule_body
+
+    if profile == "v4":
+        return RuleInput(rule_id="frozen-psw-rule", **preset_rule_body("理想", "L17"))
+    return RuleInput(
+        rule_id="frozen-psw-rule",
+        rule_profile=profile,
+        type="零件提交保证书",
+        rules=[{"id": f"original-clause-{i}", "category": f"PSW条款{i}", "rule_to_check": f"冻结PSW条款{i}", "type_of_rule": "image"} for i in range(1, 11)],
+    )
+
+
+def psw_targets(path, rule, numbers=(3, 6)):
+    from audit.checkers.v4.paddle_evidence import psw_shadow_clause_id
+
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    return [ShadowTarget("frozen-version", digest, psw_shadow_clause_id(rule, number), 2) for number in numbers]
+
+
+class PswRuntime:
+    """Only external conversion/model boundaries are controlled in this test."""
+
+    def __init__(self):
+        self.prompt_calls = []
+
+    def convert_pdf_to_excel(self, file_ref, **kwargs):
+        from documents.contracts import ConversionArtifact
+
+        return ConversionArtifact(success=False, diagnostics={"error_code": "controlled_missing_grid"})
+
+    def render_pdf_images(self, file_url, **kwargs):
+        return ["eA=="]
+
+    def run_image_prompt(self, **kwargs):
+        self.prompt_calls.append(kwargs)
+        return json.dumps({"status": "UNABLE"})
+
+
+def psw_agent(path, rule):
+    from audit.engine.routing import resolve_engine_agent_class
+    from audit.kinds import PpapDocumentType
+
+    cls = resolve_engine_agent_class(PpapDocumentType.PSW, str(path), rule.rule_profile, preset_key=rule.preset_key, preset_customer="理想" if rule.preset_key else None)
+    return cls(AuditInput(audit_id="frozen-version", file_url=str(path), project_id="project-a"), rule)
+
+
+@pytest.mark.parametrize("profile", ["v2", "v3", "v4"])
+def test_existing_psw_checkers_shadow_preserves_formal_result_and_reuses_page(tmp_path, profile):
+    from audit.engine.runtime import bind_runtime
+
+    path, rule, runtime = source(tmp_path), psw_rules(profile), PswRuntime()
+    service = Service()
+    with bind_runtime(runtime):
+        checker = psw_agent(path, rule)
+        baseline = [checker.check(2).model_dump(), checker.check(5).model_dump()]
+        formal_calls = len(runtime.prompt_calls)
+        session = PaddleShadowSession(service, project_id="project-a", targets=psw_targets(path, rule))
+        with paddle_shadow_scope(session):
+            actual = [checker.check(2).model_dump(), checker.check(5).model_dump()]
+    assert actual == baseline
+    assert len(runtime.prompt_calls) == formal_calls * 2
+    assert session.request_count == len(service.calls) == 1
+    assert [item.state for item in session.observations] == ["known", "known"]
+    assert [item.reused for item in session.observations] == [False, True]
+    assert session.observations[1].facts[0]["value"] == "P-42"
+    assert all(json.loads(item.locator)["page"] == 2 for observation in session.observations for item in observation.evidence.sources)
+
+
+@pytest.mark.parametrize("profile", ["v2", "v3", "v4"])
+def test_psw_native_part_number_is_sufficient_without_paddle(tmp_path, profile):
+    from audit.engine.runtime import bind_runtime
+
+    path, rule = source(tmp_path, text="理想汽车零件号：P-NATIVE"), psw_rules(profile)
+    service = Service()
+    with bind_runtime(PswRuntime()):
+        checker = psw_agent(path, rule)
+    session = PaddleShadowSession(service, project_id="project-a", targets=psw_targets(path, rule, (6,)))
+    with paddle_shadow_scope(session):
+        observation = session.observe_psw(checker, 6)
+    assert session.request_count == 0 and service.calls == []
+    assert observation.state == "skipped" and observation.reason == "native_sufficient"
+
+
+@pytest.mark.parametrize("number", [5, 7, 8, 9, 10])
+def test_psw_unsupported_signature_and_selection_facts_are_unknown_without_dispatch(tmp_path, number):
+    from audit.engine.runtime import bind_runtime
+
+    path, rule, service = source(tmp_path), psw_rules(), Service()
+    with bind_runtime(PswRuntime()):
+        checker = psw_agent(path, rule)
+    session = PaddleShadowSession(service, project_id="project-a", targets=psw_targets(path, rule, (number,)))
+    with paddle_shadow_scope(session):
+        observation = session.observe_psw(checker, number)
+    assert service.calls == [] and session.request_count == 0
+    assert observation.state == "unknown" and observation.reason == "unsupported_visual_fact"
+    assert observation.evidence.sources == () and observation.facts == ()
+
+
+def test_psw_rule_nine_formal_result_is_unchanged_and_shadow_does_not_add_model_calls(tmp_path):
+    from audit.engine.runtime import bind_runtime
+
+    path, rule, runtime, service = source(tmp_path), psw_rules(), PswRuntime(), Service()
+    with bind_runtime(runtime):
+        checker = psw_agent(path, rule)
+        baseline = checker.check(8).model_dump()
+        session = PaddleShadowSession(service, project_id="project-a", targets=psw_targets(path, rule, (9,)))
+        with paddle_shadow_scope(session):
+            actual = checker.check(8).model_dump()
+    assert actual == baseline
+    assert len(runtime.prompt_calls) == 2
+    assert service.calls == [] and session.request_count == 0
+    assert session.observations[0].state == "unknown"
+
+
+def test_psw_failed_page_attempt_is_not_repeated_by_the_field_consumer(tmp_path):
+    from audit.engine.runtime import bind_runtime
+
+    path, rule, service = source(tmp_path), psw_rules(), Service(TimeoutError)
+    with bind_runtime(PswRuntime()):
+        checker = psw_agent(path, rule)
+    session = PaddleShadowSession(service, project_id="project-a", targets=psw_targets(path, rule))
+    with paddle_shadow_scope(session):
+        first = session.observe_psw(checker, 3)
+        second = session.observe_psw(checker, 6)
+    assert session.request_count == len(service.calls) == 1
+    assert [first.state, second.state] == ["error", "error"]
+    assert second.reused
+
+
+@pytest.mark.parametrize("change", ["rule_id", "rule_profile", "clause_body", "document_type", "preset_key"])
+def test_psw_late_result_cannot_be_attributed_to_changed_frozen_rules(tmp_path, change):
+    from audit.engine.runtime import bind_runtime
+
+    path, rule = source(tmp_path), psw_rules()
+    with bind_runtime(PswRuntime()):
+        checker = psw_agent(path, rule)
+
+    class ChangingRule(Service):
+        def analyze_page(self, path, page, *, timeout=None):
+            raw = super().analyze_page(path, page, timeout=timeout)
+            if change == "clause_body":
+                rule.rules[2]["rule_to_check"] = "different frozen clause"
+            elif change == "document_type":
+                rule.type = "控制计划"
+            elif change == "preset_key":
+                rule.preset_key = "U08"
+            else:
+                setattr(rule, change, "another-rule" if change == "rule_id" else "v3")
+            return raw
+
+    session = PaddleShadowSession(ChangingRule(), project_id="project-a", targets=psw_targets(path, rule, (3,)))
+    with paddle_shadow_scope(session):
+        observation = session.observe_psw(checker, 3)
+    assert session.request_count == 1
+    assert observation.state == "error" and observation.reason == "rule_version_mismatch"
+    assert observation.evidence.sources == ()
+
+
+def test_uaes_psw_existing_checker_consumes_selected_stamp_and_field_shadows(tmp_path):
+    from audit.checkers.v4.paddle_evidence import psw_shadow_clause_id
+    from audit.checkers.v4.uaes.warrant import UaesWarrantAgent
+    from audit.presets import preset_rule_body
+
+    path = source(tmp_path)
+    rule = RuleInput(rule_id="frozen-uaes-psw", **preset_rule_body("UAES", "U17"))
+    checker = UaesWarrantAgent(AuditInput(audit_id="frozen-version", file_url=str(path), project_id="project-a"), rule)
+    baseline = [checker.check(0).model_dump(), checker.check(2).model_dump()]
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    selected = [ShadowTarget("frozen-version", digest, psw_shadow_clause_id(rule, number), 2) for number in (1, 3)]
+    service = Service()
+    session = PaddleShadowSession(service, project_id="project-a", targets=selected)
+    with paddle_shadow_scope(session):
+        actual = [checker.check(0).model_dump(), checker.check(2).model_dump()]
+    assert actual == baseline
+    assert session.request_count == len(service.calls) == 1
+    assert [item.state for item in session.observations] == ["known", "known"]
+
+
+@pytest.mark.parametrize("known", [False, True])
+@pytest.mark.parametrize("change", ["deadline", "cancel", "source"])
+def test_native_read_must_revalidate_the_scope_before_skip_or_dispatch(tmp_path, monkeypatch, known, change):
+    from audit.checkers.v4 import paddle_evidence as module
+    from audit.checkers.v4.uaes.native import NativeFacts, UnknownFact
+
+    path, service, clock = source(tmp_path), Service(), [0.0]
+    cancelled = [False]
+    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
+
+    def delayed_native(self, labels):
+        if change == "deadline":
+            clock[0] = 11
+        elif change == "cancel":
+            cancelled[0] = True
+        else:
+            path.write_bytes(path.read_bytes() + b"\n")
+        if known:
+            return "P-NATIVE"
+        raise UnknownFact("native field unconfirmed")
+
+    monkeypatch.setattr(NativeFacts, "field", delayed_native)
+    session = PaddleShadowSession(service, project_id="project-a", targets=targets(path), deadline_seconds=10, cancelled=lambda: cancelled[0])
+    with paddle_shadow_scope(session):
+        observation = session.observe(agent(path), "rule_6")
+    assert service.calls == [] and session.request_count == 0
+    assert observation.state == "error"
+    assert observation.reason == {"deadline": "deadline_exceeded", "cancel": "cancelled", "source": "source_changed"}[change]
+    assert observation.evidence.sources == ()
