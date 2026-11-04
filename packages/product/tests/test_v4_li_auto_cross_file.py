@@ -8,7 +8,7 @@ from audit.audits import RoundInput, RoundWork
 from audit.checkers.v4.pfmea_local import pair_identity
 from audit.engine.checkers.rule_declarations import freeze_target_rule_execution
 from audit.presets import preset_rule, preset_rule_body
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from product import run_round_from_bytes
 
 
@@ -186,3 +186,34 @@ def test_pair_identity_preserves_real_part_punctuation_and_leading_zeros(part):
 @pytest.mark.parametrize("label", ["零件号：", "项目代号", "UAES项目编号", "工程更改版本", "Part No."])
 def test_pair_identity_rejects_copied_source_labels(label):
     assert pair_identity(label) is None
+
+
+def embedded_warranty(*, main_part="P123", main_revision="A", main_project="X1", metadata=None, attachment="尺寸报告.pdf"):
+    book = load_workbook(io.BytesIO(warranty(part=main_part, revision=main_revision)))
+    book.active.append(["车型项目", main_project])
+    sheet = book.create_sheet("生产件批准交付物文件清单")
+    for name, value in (metadata or {}).items():
+        sheet.append([name, value])
+    sheet.append(["项目", "附件"])
+    sheet.append(["尺寸报告", attachment])
+    return serialized(book)
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [{"零件号": "OTHER"}, {"零件号": "无"}, {"零件号": "零件名称"}, {"版本": "B"}, {"版本": "版本号"}, {"版本": "无"}, {"车型项目": "X2"}, {"车型项目": "待定"}, {"零件号": None}, {"版本": None}],
+)
+def test_embedded_delivery_cannot_override_warranty_identity(metadata):
+    findings, _ = execute("L17", embedded_warranty(metadata=metadata), [])
+    assert findings[preset_rule("理想", "L17").clauses[0].id]["status"] == "UNABLE"
+
+
+@pytest.mark.parametrize("metadata", [None, {"零件号": "P123", "版本": "A", "车型项目": "X1"}])
+def test_embedded_delivery_inherits_identity_only_when_not_separately_declared(metadata):
+    findings, _ = execute("L17", embedded_warranty(metadata=metadata), [])
+    assert findings[preset_rule("理想", "L17").clauses[0].id]["status"] == "PASS"
+
+
+def test_embedded_delivery_missing_attachment_is_still_defect():
+    findings, _ = execute("L17", embedded_warranty(attachment=None), [])
+    assert findings[preset_rule("理想", "L17").clauses[0].id]["status"] == "NG"

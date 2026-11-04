@@ -93,19 +93,33 @@ class LiAutoPswAgent(NativeFacts, PswExcelAgent):
                 return "UNABLE", "缺少唯一生产件批准交付物文件清单，需确认本轮原件。"
             workbook, version, sheets = candidates[0]
             ctx.bind_workbook(workbook, version)
-            for original, original_version, scope in [(ctx.workbook, self.audit_file.audit_id, None), (workbook, version, sheets)]:
+            embedded = workbook is ctx.workbook
+            main_sheets = [sheet for sheet in ctx.workbook.worksheets if sheet not in local] if embedded else ctx.workbook.worksheets
+            for original, original_version, scope in [(ctx.workbook, self.audit_file.audit_id, main_sheets), (workbook, version, sheets)]:
                 customer = _label(ctx, original, ("客户", "客户名称", "Customer", "Customer Name"), original_version, sheets=scope)
                 if customer and _identity(customer) not in {"理想", "理想汽车", "liauto", "li"}:
                     return "UNABLE", "原件客户与本轮理想模式冲突，不能配对。"
-            if workbook is not ctx.workbook:
-                own_part = _label(ctx, ctx.workbook, ("理想汽车零件号", "零件号", "零件编号"), self.audit_file.audit_id)
-                other_part = _label(ctx, workbook, ("理想汽车零件号", "零件号", "零件编号"), version, sheets=sheets)
-                if not pair_identity(own_part) or pair_identity(own_part) != pair_identity(other_part):
-                    return "UNABLE", "保证书与交付物清单零件号缺失或不一致，不能配对。"
-                own_revision = _label(ctx, ctx.workbook, ("工程更改版本", "版本", "版本号"), self.audit_file.audit_id)
-                other_revision = _label(ctx, workbook, ("工程更改版本", "版本", "版本号"), version, sheets=sheets)
-                if (own_revision or other_revision) and (not pair_identity(own_revision) or pair_identity(own_revision) != pair_identity(other_revision)):
-                    return "UNABLE", "保证书与交付物清单版本缺失或不一致。"
+            fields = [
+                (("理想汽车零件号", "零件号", "零件编号"), True),
+                (("工程更改版本", "版本", "版本号"), False),
+                (("项目名称", "车型项目", "项目编号", "项目代号", "项目标识", "UAES项目编号"), False),
+            ]
+            for labels, required in fields:
+                own = _label(ctx, ctx.workbook, labels, self.audit_file.audit_id, sheets=main_sheets)
+                other = _label(ctx, workbook, labels, version, sheets=sheets)
+                declared = any(
+                    _identity(cell.value).rstrip(":：") in {_identity(label) for label in labels}
+                    for sheet in sheets
+                    for row in sheet.iter_rows(max_row=min(sheet.max_row, 40), max_col=min(sheet.max_column, 80))
+                    for cell in row
+                )
+                # An embedded checklist may inherit the warrant's identity only
+                # when it has no separate declaration of that identity field.
+                if embedded and not declared:
+                    other = own
+                if required or own or other or (embedded and declared):
+                    if not pair_identity(own) or pair_identity(own) != pair_identity(other):
+                        return "UNABLE", "保证书与交付物清单零件号、项目或版本缺失或不一致，不能配对。"
             rows = _rows(ctx, workbook, {"item": ["项目", "交付物", "提交项目"], "attachment": ["附件"]}, ("item", "attachment"), version, sheets=sheets)
             checked = 0
             for row in rows:
