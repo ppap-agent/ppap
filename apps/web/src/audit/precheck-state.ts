@@ -2,7 +2,7 @@ import type {components} from '../generated/openapi.ts'
 
 type Task = components['schemas']['AuditTask']
 export type PrecheckReceipt = components['schemas']['PrecheckReceipt']
-export type PrecheckFact = {id: string; status: string; message: string; nextStep: string; code: string; evidence: {locator: string; excerpt: string}[]}
+export type PrecheckFact = {id: string; status: string; message: string; nextStep: string; code: string; certainty: string; critical: boolean; certified: boolean; evidence: {locator: string; excerpt: string}[]}
 export type PreparationAction = 'ready' | 'process' | 'confirm'
 export const preparationLabels = {ready: '可审核', process: '需要处理', confirm: '需要确认'} as const
 const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
@@ -16,7 +16,7 @@ export function precheckFacts(snapshot: PrecheckReceipt | null | undefined, vers
   if (!Array.isArray(row?.facts)) return []
   return row.facts.map(record).map(fact => ({
     id: string(fact.id), status: string(fact.status) || 'unknown', message: string(fact.message) || '本项尚未核实。',
-    nextStep: string(fact.next_step), code: string(fact.code),
+    nextStep: string(fact.next_step), code: string(fact.code), certainty: string(fact.certainty), critical: fact.critical === true, certified: fact.certified === true,
     evidence: Array.isArray(record(fact.evidence).sources) ? (record(fact.evidence).sources as unknown[]).map(record).map(source => ({locator: string(source.locator), excerpt: string(source.excerpt)})) : [],
   }))
 }
@@ -25,12 +25,18 @@ export function preparationAction(file: Task['files'][number], facts: PrecheckFa
   if (file.validation.state === 'invalid') return 'process'
   if (file.validation.state !== 'valid') return 'confirm'
   const match = file.match
-  if (match?.state === 'unmatched' && match.gaps.some(gap => ['matching_document_type_rules_missing', 'matching_customer_rules_missing', 'no_available_rules'].includes(gap))) return 'process'
+  if (match?.gaps.some(gap => ['matching_customer_required', 'matching_customer_conflict', 'matching_document_type_required', 'ambiguous_available_rules', 'matching_rules_customer_unassigned', 'matching_snapshot_invalid', 'matching_result_unknown'].includes(gap))) return 'confirm'
+  if (match?.state === 'unmatched' && match.document_type && match.gaps.some(gap => ['matching_document_type_rules_missing', 'matching_customer_rules_missing', 'no_available_rules'].includes(gap))) return 'process'
   if (!match || !['matched', 'reference'].includes(match.state) || match.state === 'matched' && !match.rule) return 'confirm'
-  // A technical failure, missing coverage or visual uncertainty is never a
-  // supplier defect or a new client-side gate. The server owns acceptance.
-  if (facts.some(fact => fact.status === 'defect')) return 'process'
-  if (facts.some(fact => !['satisfied', 'handoff'].includes(fact.status) && !(fact.status === 'not_checked' && ['S01', 'S02'].includes(fact.code)))) return 'confirm'
+  // Preparation actions are not an acceptance gate. Ordinary warnings,
+  // missing implementation and execution failures remain visible details.
+  if (facts.some(fact => fact.code === 'B03' && ['unknown', 'defect'].includes(fact.status))) return 'confirm'
+  if (facts.some(fact => fact.status === 'defect' && fact.certainty === 'confirmed' && fact.critical && ['B01', 'B02', 'B04', 'B05', 'B06'].includes(fact.code) && fact.evidence.some(source => {
+    try {
+      const locator = record(JSON.parse(source.locator))
+      return locator.file_version_id === file.file.id && Boolean(source.excerpt.trim()) && Boolean(locator.cell || locator.range || locator.page)
+    } catch {return false}
+  }))) return 'process'
   return 'ready'
 }
 
