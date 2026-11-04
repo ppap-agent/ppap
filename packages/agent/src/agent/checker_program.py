@@ -16,7 +16,7 @@ from agent.checker_spec import CheckerArtifact, CheckerJobSpec
 from agent.client import DeepError
 from agent.execution.checker_guest import CheckerProgramError, ProgramRunner, develop_checker, execute_fixed_checker
 from agent.execution.guest_model import ModelProtocolError
-from agent.protocol import ExecuteRequest
+from agent.protocol import ExecuteRequest, FrozenFile
 
 MAX_DOCUMENT_BYTES = 32 * 1024 * 1024
 
@@ -78,33 +78,6 @@ def encoded(value: object) -> bytes:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
 
 
-def _clauses(rule: RuleInput) -> list[dict[str, Any]]:
-    clauses: list[dict[str, Any]] = []
-    for raw in rule.rules:
-        if isinstance(raw, dict):
-            clauses.append(
-                {
-                    "id": str(raw.get("id") or "").strip(),
-                    "category": str(raw.get("category") or ""),
-                    "priority": raw.get("priority"),
-                    "rule_to_check": str(raw.get("rule_to_check") or ""),
-                    "type_of_rule": str(raw.get("type_of_rule") or ""),
-                }
-            )
-            continue
-        item = raw.model_dump(mode="json") if isinstance(raw, BaseModel) else dict(raw)
-        clauses.append(
-            {
-                "id": str(item.get("id") or "").strip(),
-                "category": str(item.get("category") or ""),
-                "priority": item.get("priority"),
-                "rule_to_check": str(item.get("rule_to_check") or ""),
-                "type_of_rule": str(item.get("type_of_rule") or ""),
-            }
-        )
-    return clauses
-
-
 def _context_items(group_context: GroupContextInput) -> dict[str, AuditInput]:
     """One identity per audit ID. by_audit_id wins when both maps carry the same ID."""
     found: dict[str, AuditInput] = {}
@@ -136,28 +109,44 @@ def _related(group_context: GroupContextInput | None) -> list[dict[str, Any]]:
             "role": str(metadata.get("role") or ""),
         }
         rule = group_context.rules_by_id.get(audit_id)
-        if rule is not None and (rule.rules or rule.appendix):
-            entry["rule_id"] = rule.rule_id
-            entry["rules"] = _clauses(rule)
-            entry["appendix"] = list(rule.appendix)
+        entry["original_filename"] = str(metadata.get("original_filename") or "")
+        entry["v4_source_type"] = metadata.get("v4_source_type")
+        if rule is not None:
+            entry["rule"] = rule.model_dump(mode="json")
         related.append(entry)
     return related
 
 
+def rule_for_file(item: FrozenFile) -> RuleInput:
+    """Keep the complete frozen rule; only scope confirmed appendices to this file."""
+    body = item.rule_body or {}
+    try:
+        rule = RuleInput.model_validate({**body, "rule_id": item.rule_version_id or item.file_version_id, "rule_profile": body.get("rule_profile") or "v3"})
+        if rule.rule_profile == "v4":
+            from audit.presets import validate_preset_source
+
+            validate_preset_source(rule.model_dump(mode="json"))
+    except ValueError as exc:
+        raise DeepError("deep_input_invalid") from exc
+    return scoped_rule(rule, file_version_id=item.file_version_id)
+
+
 def group_context_for_spec(spec: ExecuteRequest) -> GroupContextInput | None:
-    """Reference files visible to every fixed checker. Host paths are not included."""
-    references = [item for item in spec.files if item.role == "reference"]
-    if not references:
+    """Every frozen group file is readable; role controls which files are audited."""
+    if not spec.files:
         return None
-    target_ids = {item.file_version_id for item in spec.files if item.role == "target"}
-    if len({item.file_version_id for item in references}) != len(references) or any(item.file_version_id in target_ids for item in references):
+    if len({item.file_version_id for item in spec.files}) != len(spec.files):
         raise DeepError("deep_input_invalid")
     by_audit_id: dict[str, AuditInput] = {}
     by_doc_type: dict[str, list[AuditInput]] = {}
     rules_by_id: dict[str, RuleInput] = {}
-    for item in references:
-        body = item.rule_body if isinstance(item.rule_body, dict) else {}
-        rule_type = body.get("type")
+    for item in spec.files:
+        rule = rule_for_file(item)
+        source_type = None
+        if rule.rule_profile == "v4":
+            from audit.presets import validate_preset_source
+
+            source_type = validate_preset_source(rule.model_dump(mode="json")).source_type
         audit = AuditInput(
             audit_id=item.file_version_id,
             file_url=item.filename,
@@ -166,27 +155,15 @@ def group_context_for_spec(spec: ExecuteRequest) -> GroupContextInput | None:
                 "sha256": item.sha256,
                 "role": item.role,
                 "original_filename": item.filename,
+                **({"v4_source_type": source_type} if source_type else {}),
             },
             project_id=spec.tenant_id or "default",
         )
         by_audit_id[item.file_version_id] = audit
-        type_name = cross_file_doc_type_name(filename=item.filename, rule_type=rule_type if isinstance(rule_type, str) and rule_type.strip() else None)
+        type_name = rule.type if source_type and source_type.startswith("E") else cross_file_doc_type_name(filename=item.filename, rule_type=rule.type)
         if type_name:
             by_doc_type.setdefault(type_name, []).append(audit)
-        clauses = [clause for clause in body.get("rules", []) if isinstance(clause, dict)] if isinstance(body.get("rules"), list) else []
-        raw_appendix = body.get("appendix")
-        rule = scoped_rule(
-            RuleInput(
-                rule_id=item.rule_version_id or item.file_version_id,
-                rule_profile=str(body.get("rule_profile") or "v3"),
-                type=body.get("type") if isinstance(body.get("type"), str) else None,
-                rules=clauses,
-                appendix=[entry for entry in raw_appendix if isinstance(entry, dict)] if isinstance(raw_appendix, list) else [],
-            ),
-            file_version_id=item.file_version_id,
-        )
-        if rule.rules or rule.appendix:
-            rules_by_id[item.file_version_id] = rule
+        rules_by_id[item.file_version_id] = rule
     return GroupContextInput(task_group_id=spec.round_id, by_audit_id=by_audit_id, by_doc_type=by_doc_type, rules_by_id=rules_by_id)
 
 
@@ -206,7 +183,7 @@ def verified_related_bytes(spec: ExecuteRequest, files: dict[str, bytes]) -> dic
 
 def scoped_rule(rule: RuleInput, *, file_version_id: str) -> RuleInput:
     """Bind the rule's confirmed appendix to this file and its effective clauses."""
-    clause_ids = {item["id"] for item in _clauses(rule)}
+    clause_ids = {str(item.get("id") or "").strip() for item in rule.rules}
     selected: list[dict[str, Any]] = []
     for item in rule.appendix:
         scope = item.get("scope")
@@ -250,15 +227,13 @@ def input_digest(
     """Identity of this execution input. A rule ID alone is not enough."""
     rule = scoped_rule(rule, file_version_id=str((audit_file.file_metadata or {}).get("file_version_id") or audit_file.audit_id))
     payload = {
-        "appendix": rule.appendix,
         "file_sha256": file_sha256,
         "file_version_id": str((audit_file.file_metadata or {}).get("file_version_id") or ""),
         "related": _related(group_context),
+        "context_types": {kind: sorted(item.audit_id for item in rows) for kind, rows in group_context.by_doc_type.items()} if group_context is not None else {},
+        "unavailable_files": group_context.unavailable_files if group_context is not None else {},
         "role": role,
-        "rule_id": rule.rule_id,
-        "rule_profile": rule.rule_profile,
-        "rules": _clauses(rule),
-        "type": rule.type,
+        "rule": rule.model_dump(mode="json"),
     }
     return hashlib.sha256(encoded(payload)).hexdigest()
 
@@ -281,11 +256,8 @@ def checker_start_prefix(tenant_id: str, executor_revision: str, rule: RuleInput
     """Directory of start programs for the same rule content. A newer file must recheck the latest one."""
     tenant = hashlib.sha256(tenant_id.encode()).hexdigest()
     identity = {
-        "clauses": _clauses(rule),
         "executor_revision": executor_revision,
-        "profile": rule.rule_profile,
-        "rule_version_id": rule.rule_id,
-        "type": rule.type,
+        "rule": rule.model_dump(mode="json"),
     }
     digest = hashlib.sha256(encoded(identity)).hexdigest()
     return f"deep/{tenant}/{executor_revision}/checker-starts/{digest}"
@@ -303,6 +275,9 @@ def checker_type_start_prefix(tenant_id: str, executor_revision: str, rule: Rule
         "executor_revision": executor_revision,
         "profile": rule.rule_profile,
         "type": rule.type,
+        "customers": rule.customers,
+        "preset_key": rule.preset_key,
+        "preset_source_sha256": rule.preset_source_sha256,
     }
     digest = hashlib.sha256(encoded(identity)).hexdigest()
     return f"deep/{tenant}/{executor_revision}/checker-type-starts/{digest}"
@@ -556,6 +531,12 @@ def load_manifest(inputs: Path) -> tuple[CheckerManifest, AuditInput, RuleInput,
     )
     rule = scoped_rule(RuleInput.model_validate(manifest.rule), file_version_id=manifest.file_version_id or manifest.audit_id)
     group_context = _bound_group_context(inputs, manifest)
+    if group_context is not None and manifest.audit_id in group_context.by_audit_id:
+        target = group_context.by_audit_id[manifest.audit_id]
+        metadata = target.file_metadata
+        if metadata.get("file_version_id") != manifest.file_version_id or metadata.get("sha256") != manifest.file_sha256 or metadata.get("role") != manifest.role:
+            raise CheckerProgramError("目标文件与上下文身份不一致")
+        audit_file = target
     return manifest, audit_file, rule, group_context, raw
 
 

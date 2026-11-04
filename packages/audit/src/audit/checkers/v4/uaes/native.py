@@ -19,6 +19,7 @@ from audit.checkers.v4.pfmea_local import pair_identity
 from audit.contracts import AuditEvidence, AuditResultItem, EvidenceDiagnostic, EvidenceSource
 from audit.document_tools import ReadLimits, TableReader, snapshot, source_title_location
 from audit.engine.checkers.rule_declarations import discover_declared_rules
+from audit.engine.rule_engine.context import GuardStop
 from audit.evidence import EvidenceBudget, cell_locator
 
 
@@ -321,14 +322,19 @@ class UaesSourceAgent(BaseAgent):
 
     def check(self, ith):
         self._evidence_sources = []
+        completed = 0
         try:
             status, message = self.rule_checkers[ith]()
             if status == "PASS" and not self._evidence_sources:
                 status, message = "UNABLE", "未取得可追溯的原件事实，不能判为通过。"
+            completed = int(status in {"PASS", "NG", "NA"})
         except UnknownFact as exc:
             status, message = "UNABLE", str(exc)
         except MissingFact as exc:
             status, message = "NG", str(exc)
+            completed = 1
+        except GuardStop as exc:
+            status, message = exc.status, exc.message
         except Exception as exc:
             status, message = "ERR", f"原件读取或检查执行失败（{type(exc).__name__}），尚未取得业务结论。"
         suffix = Path(self.audit_file.file_url).suffix.lower().lstrip(".")
@@ -342,7 +348,7 @@ class UaesSourceAgent(BaseAgent):
                 sources=tuple(self._evidence_sources),
                 diagnostics=(EvidenceDiagnostic(code="uaes_source_fact", stage="evaluation", severity="info", message="客户原始条款的实际执行结果；未知事实未转为通过。"),),
             )
-        return AuditResultItem(classification=self.agent_rules[ith], item=self.agent_rules[ith], status=status, suggestions=message, priority="P0", evidence=evidence)
+        return AuditResultItem(classification=self.agent_rules[ith], item=self.agent_rules[ith], status=status, suggestions=message, priority="P0", evidence=evidence, checks_performed=completed)
 
     def visual_pdf(self, fields: dict[str, str]):
         """Read original PDF facts through the shared bounded visual reader."""

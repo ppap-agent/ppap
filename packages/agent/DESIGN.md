@@ -30,10 +30,23 @@ audit = create_audit(audit_file, rule, group_context)
 try:
     results = [checker.check() for checker in audit.checks]
 finally:
-    audit.close()
+    if callable(close := getattr(audit, "close", None)):
+        close()
 ```
 
 Audit 共享工作簿、转换结果和只读解析缓存；每次 `check()` 独立收集断言、问题和证据。单项可以重跑，不能继承上次状态。独立入口不保证任意实现可并行，首条路径可顺序执行。
+
+### V4 的复用入口
+
+Deep 保留完整 `RuleInput`：`rule_profile`、`preset_key`、`preset_source_sha256`、`customers/models/parts`、类型、正文和生效附录。从冻结轮次构建输入、guest manifest、开发提示、固定执行和恢复重放使用同一合同。输入摘要包含完整规则与整组文件身份；客户和预置来源也参与旧程序起点的选择，避免跨客户借用起点。
+
+V4 通过现有 Resolver 选择客户及载体的 checker，再提供原源码、资源和源码条款绑定作为开发上下文。预置来源校验只确认客户、预置键、类型和源码摘要；当前条款可以修订。原预置条款的严格认证仍由 `validate_preset_body` 执行，Deep 的任务产物不继承该认证。条款 ID 相同不代表正文或附录未变，模型仍须逐条核对算法。
+
+`GroupContextInput` 包含本轮全部冻结文件，包括其他目标文件。角色决定执行与产品处理，不限制关联读取；guest 只使用已校验摘要的冻结字节，并保留 `v4_source_type`、项目身份与关联规则。E 类来源保持其独立类型，T12 可以是目标或参考。规则客户列表表示适用范围，不能代替原件客户字段的观察。
+
+蔚来、理想等 `ExcelAgent` 子类继续复用资源注入、`RuleContext` 和 Fluent API。UAES 原生子类保留 `NativeFacts`、字段/表头别名、关联核对和 `check(ith)`；任务方法无 `ctx` 参数，`bind_native_checks` 用原 `RuleCheck` 按显式条款 ID 调用该入口。它只绑定任务类自己声明的方法，条款增删、重排不会隐式执行继承的原条款。`check(ith)` 独立收集证据并记录本次规则求值是否完成；未知与技术错误不记为已完成。无来源的 PASS 继续降为 UNABLE。宿主在对象提供 `close()` 时调用它。
+
+UAES 的电子 PDF 可沿用原生文字块读取；只有表格转换路径要求 `PdfSpec`。共享 V4 视觉读取经过 `AuditRuntime`，在 Deep 固定执行中缺少可重放观察时保持 UNABLE。已有 Standard 的模型能力继续由其运行时提供。
 
 ### 程序产物与开发入口
 
@@ -88,7 +101,7 @@ def execute(
 
 | 层次 | 决定什么 | 现有基础与待补内容 |
 |---|---|---|
-| Ontology | 实体、属性含义及类型、身份、关系和值域 | `audit.models` 已有 `EntityConcept`、`RelationshipConcept`、`Ontology`；当前 checker 路径未消费它们。复用适用定义，按需要补值域、作用范围与来源/版本 |
+| Ontology | 实体、属性含义及类型、身份、关系和值域 | 待实现；从现有资源定义和用户确认的含义中提取，按实际消费者需要定义值域、作用范围与来源/版本 |
 | Projection | 文档表示哪些概念；一条记录的粒度、成员判定、分组、属性归属和关系 | 复用 checker 的对象构建经验、`SectionModel` 及分组能力；待补明确的概念引用与投影约定 |
 | Layout binding | sheet、区域、列、字段、合并格、PDF 页区及读取方式 | 直接使用 `RuleResource`、`SheetModel`、`SectionModel`、`ColumnModel`、`FieldModel`、`PdfSpec` 和原 resolver；缺少的绑定信息加在原类型中 |
 | Check | 对上述对象执行本次规则的义务 | 继续使用 `RuleCheck.check() -> AuditResultItem` 和原 Fluent API，不把业务判定移到文档解析器 |
@@ -289,12 +302,15 @@ Agent 可以按原规则纠正实现。仍有合理歧义或需要改变业务�
 | 能力 | 当前状态 | 仍需实现或验证 |
 |---|---|---|
 | 任务专用 checker、动态条款数量、资源注入与原 Fluent API | 已实现，受控测试覆盖绑定、完整性、诊断、修订及固定执行 | 更广规则与文件的语义正确性需分别验证 |
+| V4 规则输入、客户 Resolver、整组上下文与 UAES 逐条调用 | 已实现；受控 runner 与合成 Excel/PDF 文件覆盖多目标关联、条款增删与重排、资源适配、证据隔离、guest 执行和重放 | 尚未用真实模型验证 V4 多客户开发成功率；尚未完成容器与产品端到端验收，视觉观察固定仍待实现 |
 | 规则内容变化使旧产物失效 | 已实现正文及生效附录等输入摘要；附录统一入口，修改/移除后的旧产物拒绝执行，可作新适配起点 | 明确提供新旧规则差异；扩大规则语义的反例覆盖 |
 | Excel 诊断、布局适配与重放 | 已有真实模型的原表和移位表验证 | 局部样本不证明任意布局或新规则成功率 |
 | 电子版 PDF 配置、执行与重放 | 已有真实模型实验；结果未用独立人工预期评分 | 审核准确性未据此验收；扫描版仍不在本轮范围 |
 | 严格形式解释及同源回译 | 待实现；已有部分谓词/组合类型可复用 | 歧义候选、用户预览、程序遵循解释及反例验证 |
 | Ontology projection / layout binding | 已有概念类型、资源模型和有效人工算法；尚未连成此语义合同 | 语义引用、身份/值域及其范围/版本、确认后的输入固定 |
 | 用户确认与新轮次 | 已有附录保存/移除、作用范围、回执及保存并分析合同 | 新语义候选与形式化接入后的 checker → 产品 → 新 checker 完整旅程验证 |
+
+前端与 MCP 消费经过 `checker_response` / `product_result` 映射的结果、覆盖和澄清问题；`CheckerArtifact` 的程序文件与试跑记录仍是内部执行产物，没有面向用户的程序查看接口。现有前端读取冻结轮次和同一反馈服务，统一 `/mcp` 可启动 Deep、读取结果与问题、确认规则修改并显式重审，复用现有网页确认回执和反馈业务事务。以上结果合同测试不等于浏览器、真实模型和 MCP 客户端的完整联调。
 
 规则变化通过 `--source fixed.xlsx --rules rule-input.json --expected expected.json --prior artifact.json` 实测。`--rules` 接收完整 `RuleInput`，冻结本次规则，并取消原样本预期；`--expected` 是宿主独立评分输入，不提供给模型。适配与异地重放均读取冻结规则。预期必须先独立确定，不能从生成代码推导；新旧代码都能运行不是验收标准。命令见 [DEVELOPMENT](../../docs/DEVELOPMENT.md)。
 

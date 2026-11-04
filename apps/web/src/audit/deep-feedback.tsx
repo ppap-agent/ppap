@@ -41,13 +41,9 @@ export function DeepFeedback({roundId, files, rules, renderOriginal, adapter = n
   const [loading, setLoading] = useState(false), [saving, setSaving] = useState(false)
   const [pending, setPending] = useState(() => pendingOperation(roundId))
   const [receipt, setReceipt] = useState<RuleChangeReceipt | null>(null)
-  const [proposal, setProposal] = useState<RuleChangeRequest | null>(null)
-  const [proposalError, setProposalError] = useState(''), [proposalReading, setProposalReading] = useState(false), [proposalReadRevision, setProposalReadRevision] = useState(0)
   const [notice, setNotice] = useState('')
   const generation = useRef(0), toggle = useRef<HTMLButtonElement>(null)
   const view = storedView?.round_id === roundId ? storedView : null
-  const proposalId = new URL(location.href).searchParams.get('mcpRuleChange')
-  const needsProposal = Boolean(proposalId && !proposal)
   const read = useCallback(async () => {
     const token = ++generation.current
     setLoading(true)
@@ -61,18 +57,6 @@ export function DeepFeedback({roundId, files, rules, renderOriginal, adapter = n
     finally {if (token === generation.current) setLoading(false)}
   }, [adapter, roundId])
   useEffect(() => {void read(); return () => {generation.current++}}, [read])
-  useEffect(() => {
-    if (!proposalId) return
-    let active = true
-    setProposalReading(true); setProposalError(''); setProposal(null)
-    void adapter.readProposal(roundId, proposalId).then(value => {
-      if (!active) return
-      if (value.round_id !== roundId) throw new Error('拟提交的修改不属于此审核。')
-      setProposal(value.change)
-      if (value.change.question_id) setSelected(value.change.question_id)
-    }).catch(cause => {if (active) setProposalError(message(cause))}).finally(() => {if (active) setProposalReading(false)})
-    return () => {active = false}
-  }, [adapter, roundId, proposalId, proposalReadRevision])
   useEffect(() => {if (view) onBasisChanged?.(view.input_changed || view.current_round_id !== roundId)}, [view, roundId, onBasisChanged])
   useEffect(() => {
     if (!view?.results.some(result => result.current && ['queued', 'running'].includes(result.execution))) return
@@ -80,23 +64,16 @@ export function DeepFeedback({roundId, files, rules, renderOriginal, adapter = n
     return () => clearInterval(timer)
   }, [view?.results, read])
 
-  const question = view?.clarifications.find(row => row.id === (proposal?.question_id || selected)) ?? (proposal?.question_id ? undefined : view?.clarifications[0])
-  const proposalExpired = Boolean(proposal && view && (proposal.expected_revision !== view.revision || proposal.question_id && !view.clarifications.some(row => row.id === proposal.question_id && row.fingerprint === proposal.expected_question_fingerprint)))
-  const proposalAction = Boolean(proposal && !proposal.content)
+  const question = view?.clarifications.find(row => row.id === selected) ?? view?.clarifications[0]
   const analysisTargets = view?.results.find(result => result.current)?.inputs.filter(input => input.role === 'target').map(input => files.find(file => file.id === input.file_version_id)?.original_filename || String(input.original_filename || '本次待审文件')) || []
   async function accepted(saved: RuleChangeReceipt) {
     setReceipt(saved); setPending(null); keepOperation(roundId, null)
-    setProposal(null)
-    const url = new URL(location.href)
-    if (url.searchParams.has('mcpRuleChange')) {url.searchParams.delete('mcpRuleChange'); writeAuditAddress(url)}
     setNotice(saved.analysis_round_id ? '解释已保存，新输入已进入分析。下方会显示实际分析结果。' : '说明已保存，尚未开始新的分析。')
     await read()
   }
   async function apply(change: Change) {
     if (!view || view.round_id !== roundId || pending || saving) return
-    if (needsProposal) {setError('拟提交的修改尚未读取，请先核对原操作内容。'); return}
-    if (proposalExpired) {setError('拟提交的修改已过期，请从原入口读取当前问题后再确认。'); return}
-    const input: RuleChangeRequest = {...change, operation_id: proposal?.operation_id || crypto.randomUUID(), expected_revision: proposal?.expected_revision ?? view.revision}
+    const input: RuleChangeRequest = {...change, operation_id: crypto.randomUUID(), expected_revision: view.revision}
     setPending(input.operation_id); keepOperation(roundId, input.operation_id); setSaving(true); setNotice(''); setError('')
     try {await accepted(await adapter.apply(roundId, input, view.workspace_id))}
     catch (cause) {
@@ -119,11 +96,6 @@ export function DeepFeedback({roundId, files, rules, renderOriginal, adapter = n
     } catch (cause) {if (inaccessible(cause)) setView(null); setError(`${message(cause)} 原操作仍待核对。`)}
     finally {setSaving(false)}
   }
-  useEffect(() => {
-    if (!proposal || !view) return
-    const saved = view.operations.find(operation => operation.operation_id === proposal.operation_id)
-    if (saved) void accepted(saved)
-  }, [proposal, view])
   function close() {setOpen(false); toggle.current?.focus()}
 
   return <section aria-label="解释与重新分析" className="min-w-0 border-b" data-feedback-state={saving ? 'saving' : pending ? 'unknown' : receipt ? 'saved' : 'ready'}>
@@ -135,16 +107,13 @@ export function DeepFeedback({roundId, files, rules, renderOriginal, adapter = n
       <div className="space-y-3 px-6 empty:hidden max-sm:px-4">
         {error && <Alert variant="destructive"><AlertTitle>{pending ? '操作结果待核对' : '解释暂未更新'}</AlertTitle><AlertDescription><p>{error}</p>{pending && <Button variant="outline" disabled={saving} onClick={() => void recover()}>读取原操作</Button>}</AlertDescription></Alert>}
         {notice && <Alert><Check/><AlertTitle>{receipt?.analysis_round_id ? '已保存并受理新分析' : '说明已保存'}</AlertTitle><AlertDescription>{notice} 确认解释不保证审核通过。</AlertDescription></Alert>}
-        {proposal && <Alert><AlertTitle>核对拟提交的规则修改</AlertTitle><AlertDescription>这是从原入口带来的修改建议。请核对下方的实际内容、文件范围及是否重新分析；只有你明确提交后才会应用。</AlertDescription></Alert>}
-        {needsProposal && <Alert><AlertTitle>{proposalReading ? '正在读取拟提交的修改' : '拟提交的修改尚未读取'}</AlertTitle><AlertDescription><p>{proposalError || '原操作尚未提交；读取后才能核对内容并确认。'}</p><Button variant="outline" disabled={proposalReading} onClick={() => setProposalReadRevision(value => value + 1)}>重新读取拟提交修改</Button></AlertDescription></Alert>}
-        {proposalExpired && <Alert variant="destructive"><AlertTitle>拟提交的修改已过期</AlertTitle><AlertDescription>依据或问题已经改变，请从原入口读取当前问题后再确认。</AlertDescription></Alert>}
         {pending && !error && <p role="status" className="text-sm text-muted-foreground">{saving ? '正在保存明确修改…' : '原操作结果待核对。'}{!saving && <Button variant="link" onClick={() => void recover()}>读取原操作</Button>}</p>}
       </div>
       {view && <>
-        {view.input_changed && <div className="space-y-3 px-6 py-3 text-sm max-sm:px-4"><p role="status">说明已保存。下方结果使用此前输入，新的依据尚未产生分析结果。</p><p className="text-xs text-muted-foreground">重新分析范围：本工作区全部待审文件{analysisTargets.length > 0 && `（${analysisTargets.length} 份）：${analysisTargets.join('、')}`}。</p><Button variant={question || proposal ? 'outline' : 'default'} disabled={saving || Boolean(pending) || needsProposal} onClick={() => void apply({intent: 'save_and_analyze', confirmation_source: 'user'})}>按已保存说明开始分析</Button></div>}
+        {view.input_changed && <div className="space-y-3 px-6 py-3 text-sm max-sm:px-4"><p role="status">说明已保存。下方结果使用此前输入，新的依据尚未产生分析结果。</p><p className="text-xs text-muted-foreground">重新分析范围：本工作区全部待审文件{analysisTargets.length > 0 && `（${analysisTargets.length} 份）：${analysisTargets.join('、')}`}。</p><Button variant={question ? 'outline' : 'default'} disabled={saving || Boolean(pending)} onClick={() => void apply({intent: 'save_and_analyze', confirmation_source: 'user'})}>按已保存说明开始分析</Button></div>}
         {view.appendix.length > 0 && <details className="mx-6 my-4 border-b pb-4 text-sm max-sm:mx-4"><summary className="cursor-pointer font-medium">本次已确认说明（{view.appendix.length}）</summary><div className="mt-3 space-y-3">{view.appendix.map(entry => <ConfirmedExplanation key={entry.id} entry={entry} files={files}/>)}</div></details>}
         {view.clarifications.length > 1 && <nav aria-label="待确认解释" className="flex flex-wrap gap-2 px-6 py-3 max-sm:px-4">{view.clarifications.map((row, at) => <Button key={row.id} variant={row.id === question?.id ? 'secondary' : 'ghost'} aria-pressed={row.id === question?.id} onClick={() => setSelected(row.id)}>解释 {at + 1}<span className="max-w-44 truncate">{row.question}</span></Button>)}</nav>}
-        {proposal && proposalAction ? <section aria-label="核对拟执行操作" className="space-y-4 px-6 py-5 max-sm:px-4"><h3 className="font-semibold">{proposal.remove_appendix_ids?.length ? '移除已确认说明' : '按当前已保存依据开始分析'}</h3>{proposal.remove_appendix_ids?.map(id => <div key={id}>{view.appendix.find(entry => entry.id === id) ? <ConfirmedExplanation entry={view.appendix.find(entry => entry.id === id)!} files={files}/> : <p className="text-sm">这条说明已不可读取，请从原入口重新核对。</p>}</div>)}<p className="text-sm text-muted-foreground">{proposal.intent === 'save_and_analyze' ? `重新分析范围：本工作区全部待审文件${analysisTargets.length ? `（${analysisTargets.length} 份）：${analysisTargets.join('、')}` : ''}。` : '本次仅保存修改，不开始新的分析。'}</p><Button disabled={saving || Boolean(pending) || proposalExpired || needsProposal} onClick={() => void apply({remove_appendix_ids: proposal.remove_appendix_ids, intent: proposal.intent, confirmation_source: 'user'})}>{proposal.remove_appendix_ids?.length ? proposal.intent === 'save_and_analyze' ? '移除说明并重新分析' : '仅移除说明' : '开始分析'}</Button></section> : question ? <DeepQuestion key={question.id + question.fingerprint + (proposal?.operation_id || '')} initialChange={proposal?.question_id === question.id ? proposal : null} question={question} results={view.results} rules={rules} files={files} analysisTargets={analysisTargets} roundId={roundId} renderOriginal={renderOriginal} disabled={saving || Boolean(pending) || proposalExpired || needsProposal} onApply={change => void apply(change)} onClose={close}/> : proposal?.scope ? <DeepQuestion key={proposal.operation_id} initialChange={proposal} question={{id: '', input_id: '', fingerprint: '', kind: 'rule_change', question: '核对本次规则修改', document_ids: proposal.scope.document_ids, rule_ids: proposal.scope.rule_ids, candidates: [], sources: [], scope: proposal.scope}} rules={rules} files={files} analysisTargets={analysisTargets} roundId={roundId} renderOriginal={renderOriginal} disabled={saving || Boolean(pending) || proposalExpired || needsProposal} onApply={change => void apply(change)} onClose={close}/> : <div className="px-6 pb-5 text-sm text-muted-foreground max-sm:px-4">已生成的判断和原件仍可在下方查看。未解决的内容不会被默认判为通过。</div>}
+        {question ? <DeepQuestion key={question.id + question.fingerprint} question={question} results={view.results} rules={rules} files={files} analysisTargets={analysisTargets} roundId={roundId} renderOriginal={renderOriginal} disabled={saving || Boolean(pending)} onApply={change => void apply(change)} onClose={close}/> : <div className="px-6 pb-5 text-sm text-muted-foreground max-sm:px-4">已生成的判断和原件仍可在下方查看。未解决的内容不会被默认判为通过。</div>}
         {view.current_round_id !== roundId && <section aria-label="新输入分析" className="space-y-3 border-t px-6 py-5 max-sm:px-4"><h3 className="font-semibold">新输入的分析</h3><p className="text-sm text-muted-foreground">{view.input_changed ? '新说明已保存，下方计算尚未采用这次修改。' : '已采用确认后的规则说明。此前判断保留在下方，不作为新输入的当前结论。'}</p><Button variant="outline" onClick={() => void read()} disabled={loading}>读取新分析结果</Button><DeepResults view={view} files={files}/></section>}
       </>}
     </div>
@@ -157,10 +126,10 @@ function ConfirmedExplanation({entry, files}: {entry: DeepFeedbackView['appendix
   return <article className="space-y-2 border-l-2 pl-3 text-sm"><p className="whitespace-pre-wrap">{entry.content}</p><div aria-label="说明作用范围" className="space-y-1 text-xs text-muted-foreground"><p>含义所在文件：{entry.scope.document_ids.map(filename).join('、')}</p><p>适用审核要求：{entry.scope.rule_targets ? entry.scope.rule_targets.map(target => `${filename(target.document_id)} · ${target.rule_id}`).join('、') : entry.scope.rule_ids.join('、')}</p></div></article>
 }
 
-function DeepQuestion({question, initialChange, results = [], rules, files, analysisTargets, roundId, renderOriginal, disabled, onApply, onClose}: {question: Question; initialChange?: RuleChangeRequest | null; results?: DeepFeedbackView['results']; rules: FeedbackRule[]; files: FileVersion[]; analysisTargets: string[]; roundId: string; renderOriginal?: OriginalRenderer; disabled: boolean; onApply: (change: Change) => void; onClose: () => void}) {
-  const scope = initialChange?.scope ?? question.scope
-  const [candidate, setCandidate] = useState(initialChange?.candidate_id || (initialChange?.content ? '__custom' : '')), [content, setContent] = useState(initialChange?.content || '')
-  const [kind, setKind] = useState<NonNullable<RuleChangeRequest['kind']>>(initialChange?.kind || 'interpretation')
+function DeepQuestion({question, results = [], rules, files, analysisTargets, roundId, renderOriginal, disabled, onApply, onClose}: {question: Question; results?: DeepFeedbackView['results']; rules: FeedbackRule[]; files: FileVersion[]; analysisTargets: string[]; roundId: string; renderOriginal?: OriginalRenderer; disabled: boolean; onApply: (change: Change) => void; onClose: () => void}) {
+  const scope = question.scope
+  const [candidate, setCandidate] = useState(''), [content, setContent] = useState('')
+  const [kind, setKind] = useState<NonNullable<RuleChangeRequest['kind']>>('interpretation')
   const [documents, setDocuments] = useState<string[]>(scope.document_ids)
   const [expanded, setExpanded] = useState<string[]>(['0', '1'])
   const [visited, setVisited] = useState<string[]>(['0', '1'])
@@ -181,7 +150,7 @@ function DeepQuestion({question, initialChange, results = [], rules, files, anal
   function submit(intent: RuleChangeRequest['intent']) {
     if (!canSubmit) return
     const exact = candidates.find(row => row.id === candidate && row.explanation.trim() === content.trim())
-    onApply({...(question.id ? {question_id: question.id, expected_question_fingerprint: question.fingerprint} : {}), ...(exact && kind !== 'standard_change' ? {candidate_id: candidate} : {}), ...(initialChange?.remove_appendix_ids ? {remove_appendix_ids: initialChange.remove_appendix_ids} : {}), kind, content: content.trim(), scope: {...scope, document_ids: documents}, intent, confirmation_source: 'user'})
+    onApply({...(question.id ? {question_id: question.id, expected_question_fingerprint: question.fingerprint} : {}), ...(exact && kind !== 'standard_change' ? {candidate_id: candidate} : {}), kind, content: content.trim(), scope: {...scope, document_ids: documents}, intent, confirmation_source: 'user'})
   }
   return <div className="grid min-w-0 min-[1100px]:grid-cols-[minmax(0,1.4fr)_minmax(20rem,1fr)]">
     <section aria-label="待确认问题的原件对照" className="min-w-0 border-b p-6 max-sm:p-4 min-[1100px]:border-r min-[1100px]:border-b-0">

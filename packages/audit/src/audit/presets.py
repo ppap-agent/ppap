@@ -87,13 +87,19 @@ def preset_rule_body(customer: str, entry_id: str) -> dict:
     }
 
 
-def validate_preset_body(body: dict) -> CustomerPreset:
+def validate_preset_source(body: dict) -> CustomerPreset:
+    """Validate source identity, without certifying a task's effective clauses."""
     customers = body.get("customers")
     if not isinstance(customers, list) or len(customers) != 1:
         raise ValueError("invalid_preset_source")
     preset = preset_rule(customers[0], body.get("preset_key"))
     if body.get("preset_source_sha256") != preset.source_sha256 or body.get("type") != preset_document_type(preset):
         raise ValueError("invalid_preset_source")
+    return preset
+
+
+def validate_preset_body(body: dict) -> CustomerPreset:
+    preset = validate_preset_source(body)
     expected = {clause.id: clause.text for clause in preset.clauses}
     actual = body.get("rules")
     if not isinstance(actual, list) or len(actual) != len(expected) or any(not isinstance(row, dict) for row in actual):

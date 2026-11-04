@@ -1600,3 +1600,78 @@ def test_pending_usage_uses_owner_mcp_authority_after_browser_logout(mcp_app, se
         assert pending[0][1].access_token == "access-payer-reauthorized"
         assert client.post("/oauth/revoke", data={"client_id": cid, "token": tokens["access_token"]}).status_code == 200
         assert list(store.pending_usage_sessions(APP_ID)) == []
+
+
+def test_deep_uses_one_mcp_confirmation_save_reanalysis_and_readback(mcp_app, monkeypatch):
+    app, store = mcp_app
+    monkeypatch.setattr(store.settings, "git_sha", "a" * 40)
+    with TestClient(app, base_url="http://127.0.0.1:8080") as client:
+        _, tokens, _ = connection(client, store, scopes=" ".join(SCOPES))
+        token = tokens["access_token"]
+        file, _ = upload(client, token)
+        rule = store.publish_rule(
+            store.principal_for_fixture("alice"),
+            "Deep rule",
+            {"kind": "engine", "type": "控制计划", "rules": [{"id": "R1", "category": "identity", "rule_to_check": "Part number must be present", "type_of_rule": "table"}]},
+            file["id"],
+        )
+        draft = client.post("/drafts", json={"analysis_mode": "deep", "items": [{"file_version_id": file["id"], "role": "target", "rule_version_id": rule["id"]}]}).json()
+        configured = client.put(f"/drafts/{draft['id']}", json={"analysis_mode": "deep", "items": [{"file_version_id": file["id"], "role": "target", "rule_version_id": rule["id"]}]})
+        assert configured.status_code == 200, configured.text
+        accepted = client.post(f"/drafts/{draft['id']}/accept", json={"idempotency_key": str(uuid4())})
+        assert accepted.status_code == 201, accepted.text
+        rid = accepted.json()["id"]
+        feedback = call(client, token, "read_audit", round_id=rid)
+        assert feedback["status"] == "ok", feedback
+        view = feedback["data"]["value"]
+        clause = view["results"][0]["inputs"][0]["rule"]["body"]["rules"][0]["id"]
+        body = {
+            "operation_id": str(uuid4()),
+            "expected_revision": view["revision"],
+            "intent": "save_only",
+            "kind": "interpretation",
+            "content": "Use the part number in column B",
+            "scope": {"document_ids": [file["id"]], "rule_ids": [clause]},
+        }
+        pending = call(client, token, "apply_rule_change", round_id=rid, body=body)
+        approve(client, pending)
+        assert call(client, token, "get_rule_change", round_id=rid, operation_id=body["operation_id"])["data"]["value"] is None
+        saved = call(client, token, "apply_rule_change", round_id=rid, body=body)
+        assert saved["status"] == "ok", saved
+        assert saved["data"]["analysis_round_id"] is None
+        assert call(client, token, "apply_rule_change", round_id=rid, body=body)["data"] == saved["data"]
+        analysis = {"round_id": rid, "operation_id": str(uuid4()), "expected_revision": saved["data"]["revision"]}
+        approve(client, call(client, token, "start_analysis", **analysis))
+        gateway = app.state.mcp_gateway
+        original_request = gateway.request
+
+        responses = []
+
+        async def lost_reply(*args, **kwargs):
+            response = await original_request(*args, **kwargs)
+            if args[1] == "POST" and args[2].endswith("/rule-changes"):
+                responses.append((response.status_code, response.json()))
+                raise TimeoutError("controlled response loss after commit")
+            return response
+
+        monkeypatch.setattr(gateway, "request", lost_reply)
+        uncertain = call(client, token, "start_analysis", **analysis)
+        assert uncertain["status"] == "unknown"
+        assert responses and responses[0][0] == 200, responses
+        receipt = call(client, token, "get_rule_change", round_id=rid, operation_id=analysis["operation_id"])["data"]["value"]
+        assert receipt["analysis_round_id"] != rid
+        assert receipt["analysis_state"] == "queued"
+        monkeypatch.setattr(gateway, "request", original_request)
+        assert call(client, token, "start_analysis", **analysis)["status"] == "running"
+        after = call(client, token, "read_audit", round_id=rid)["data"]["value"]
+        assert len(after["results"]) == 2
+        assert after["current_round_id"] == receipt["analysis_round_id"]
+        assert call(client, token, "get_round", round_id=rid)["data"]["value"]["id"] == rid
+        # A confirmed snapshot cannot authorize a subsequently changed basis.
+        stale = {**body, "operation_id": str(uuid4()), "expected_revision": after["revision"]}
+        approve(client, call(client, token, "apply_rule_change", round_id=rid, body=stale))
+        external = {**stale, "operation_id": str(uuid4()), "content": "A different confirmed explanation"}
+        assert client.post(f"/audit-rounds/{rid}/rule-changes", json=external).status_code == 200
+        rejected = call(client, token, "apply_rule_change", round_id=rid, body=stale)
+        assert rejected["error"] == "confirmation_content_changed"
+        assert call(client, token, "get_rule_change", round_id=rid, operation_id=stale["operation_id"])["data"]["value"] is None

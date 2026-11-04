@@ -6,8 +6,10 @@ from typing import Any, Literal
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from product.mcp import McpError
+from product.mcp import Delegation, McpError
 from pydantic import BaseModel, ConfigDict, Field
+
+from api.mcp_confirmation import require_approved_source
 
 
 class FeedbackRuleTarget(BaseModel):
@@ -75,11 +77,6 @@ class RuleChangeRequest(BaseModel):
     confirmation_source: Literal["user", "synthetic"] = "user"
 
 
-class McpRuleChangeProposal(BaseModel):
-    round_id: str
-    change: RuleChangeRequest
-
-
 class RuleChangeReceipt(BaseModel):
     operation_id: str
     workspace_id: str
@@ -133,15 +130,22 @@ def register_deep_feedback_routes(app: FastAPI, store, principal_of, quota_for) 
 
     @app.post("/audit-rounds/{round_id}/rule-changes", response_model=RuleChangeReceipt)
     def apply(round_id: str, body: RuleChangeRequest, request: Request):
-        return call(
-            request,
-            lambda principal: store.apply_rule_change(
+        def apply_change(principal):
+            delegated = request.scope.get("ppap.delegation")
+            if isinstance(delegated, Delegation):
+                delegated.require("audits:read")
+                delegated.require("audits:execute" if body.intent == "save_and_analyze" else "audits:write")
+                if body.content or body.remove_appendix_ids:
+                    delegated.require("rules:write")
+                require_approved_source(request, f"/audit-rounds/{round_id}/deep-feedback", DeepFeedbackView.model_validate(store.read_deep_feedback(principal, round_id)).model_dump(mode="json"))
+            return store.apply_rule_change(
                 principal,
                 round_id,
                 body.model_dump(exclude_none=True),
                 usage_policy=quota_for(request, principal) if body.intent == "save_and_analyze" and store.settings.usage_charge_enabled else None,
-            ),
-        )
+            )
+
+        return call(request, apply_change)
 
     @app.get("/audit-rounds/{round_id}/rule-changes/{operation_id}", response_model=RuleChangeReceipt | None)
     def operation(round_id: str, operation_id: str, request: Request):
@@ -150,13 +154,3 @@ def register_deep_feedback_routes(app: FastAPI, store, principal_of, quota_for) 
     @app.get("/audit-rounds/{round_id}/deep-feedback/export")
     def export(round_id: str, request: Request):
         return call(request, lambda principal: store.export_deep_feedback(principal, round_id))
-
-    @app.get("/audit-rounds/{round_id}/mcp-rule-changes/{transport_id}", response_model=McpRuleChangeProposal)
-    def proposal(round_id: str, transport_id: str, request: Request):
-        def read_proposal(principal):
-            adapter = getattr(app.state, "mcp_deep_adapter", None)
-            if adapter is None:
-                return JSONResponse({"error": "mcp_not_available"}, status_code=503)
-            return adapter.proposal(principal, round_id, transport_id)
-
-        return call(request, read_proposal)
