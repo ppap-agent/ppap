@@ -37,44 +37,33 @@
 
 本地开发也可作为现网的本地客户端：本地 Web 通过产品 API 使用同一份真实数据；需要验证未部署的服务代码时，本地候选 API 可连接现网 PostgreSQL、对象存储与飞书。浏览器不直连数据库，租户与对象授权仍由 API 执行。共享数据不代表新旧代码或 Schema 自动兼容，连接前须核对候选所需接口与数据库结构；这种联调不运行初始化、迁移、测试重置或额外 Worker。写入仍是真实业务操作，不能因入口在本地而视作模拟；会产生收费、通知或审核受理的动作须按本次联调范围控制。
 
-## PaddleOCR 历史能力独立评测（不接入产品）
+## PaddleOCR 独立验证（极简、无 LLM）
 
-代码位于 `packages/documents/src/documents/ocr/paddle/`。这是一套显式调用的 PP-StructureV3 OCR 实验工具，不导入/修改 `documents.conversion.pipeline`、`documents.ocr.page`、`documents.ocr.client`、`documents.ocr.cache`，不触发 Responses/Gemma 模型调用、不使用生产 SQLite 或默认审核工作流，也不改变 `OCR_ADAPTER_MODE`。
+入口是 `packages/documents/src/documents/ocr/paddle/`，不接入 `documents.conversion.pipeline`、Responses/Grok/Codex、审核规则、OCR SQLite 缓存或生产路由。无新依赖，无自动模型调用。
 
-使用本地或明确授权的 PaddleOCR `/layout-parsing` 服务：
+默认仅处理**本地 PDF**，调用历史 PP-StructureV3 `/layout-parsing` API。输出目录必须是不存在的新路径；成功后一次性发布 `tables.xlsx`、`evidence.json` 和 `response.json`，失败不发布部分产物。原始 PDF 永不修改。
 
 ```sh
 export PADDLE_OCR_URL="http://127.0.0.1:8080/layout-parsing"
-export PADDLE_TOKEN="..."  # 无认证可不设置；也支持 PADDLE_OCR_TOKEN
-
+export PADDLE_TOKEN="..."  # 可选；也可使用 PADDLE_OCR_TOKEN
 uv run --no-sync python -m documents.ocr.paddle \
   --pdf "/path/to/source.pdf" \
-  --xlsx "/tmp/paddle.xlsx" \
-  --html "/tmp/paddle.html" \
-  --evidence-json "/tmp/paddle-evidence.json" \
-  --raw-json "/tmp/paddle-response.json" \
-  --seal-crop-dir "/tmp/paddle-seals" \
-  --non-table-dir "/tmp/paddle-nontable"
+  --out-dir "/tmp/paddle-eval-1"
 ```
 
-不调用服务的离线回放（`--response-json` 接受原始 HTTP JSON 或其中的 `result`）：
+完全离线、不会发出模型或 PaddleOCR 网络请求的回放：
 
 ```sh
 uv run --no-sync python -m documents.ocr.paddle \
   --pdf "/path/to/source.pdf" \
-  --response-json "/path/to/response.json" \
-  --xlsx "/tmp/replayed.xlsx" \
-  --evidence-json "/tmp/replayed-evidence.json"
+  --response-json "/tmp/paddle-eval-1/response.json" \
+  --out-dir "/tmp/paddle-replay-1"
 uv run --no-sync pytest packages/documents/tests/test_paddle.py
 ```
 
-支持历史本地文件和显式远程 PDF 输入（把 `--pdf` 换成 `--pdf-url`，远程下载限额、禁止重定向并在调用结束后清理）；离线回放只接受本地 PDF，保证不调用网络。
+`evidence.json` 按页保留布局标签、原始坐标与文本来源、表格内容及合并单元格、印章位置与识别文字。**检测到但未识别文字的印章**保留为 `unreadable`，不等于不存在；Excel 中明确标注“检测到印章（内容未识别）”。表格先尝试带几何区域的原生 PDF 提取，再回退 PaddleOCR HTML 识别。每页表格独立输出，不凭重复表头猜测跨页合并。
 
-恢复范围：Paddle 表格/文本/印章响应，所有布局区域和文本坐标，非文字可识别的印章存在证据，印章与文字的有限空间匹配，印章区域裁剪、标题触发的表格剔除预览，Paddle HTML 单元格及合并范围，原生 PDF 裁剪区域表格提取回退、跨页连续表格候选及可选合并、结构化 JSON、XLSX、HTML。结构化 JSON 包含每个来源的页码和索引，读不出的内容必须保留未知而不是凭空补全。
-
-跨页合并必须显式增加 `--join-continuations`，仅针对重复表头且列数一致的候选；原始逐页 JSON 仍保留。该启发式不足以证明两个表格在业务上相关，所以不能直接用于生产审核判定。
-
-此工具不恢复 Gemma 的视觉推理（复选框、手写、复杂分栏判断）；那些历史 Prompt 的正常链路可达性有限，且当前模型的实际质量尚未验证。PaddleOCR 也不证明印章真实、签名合规或业务审核 PASS。完整真实识别能力须由操作者用同源 PDF、OCR API 回执及人工样本另行验收。默认单元测试仅受控/离线，不产生外部付费调用。
+为保持 KISS，移除了旧 Gemma 辅助图像拼接、PDF URL 下载、印章图像裁剪、跨页自动拼接、多出口配置与 HTML 生成。工具不推断复选框勾选、手写签名或印章真实性，必须用真实 PDF 和 PaddleOCR 响应单独验证识别效果。
 
 ## 当前命令
 

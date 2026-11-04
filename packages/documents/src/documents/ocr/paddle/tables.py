@@ -1,4 +1,4 @@
-"""Paddle HTML tables, native PDF crop fallback and conservative page binding."""
+"""Paddle HTML table grids and native PDF table fallback."""
 
 from __future__ import annotations
 
@@ -208,9 +208,11 @@ def recognize_tables(pdf_path: str | Path | None, result: dict, layouts: list[di
             dims = page_sizes[page_index] if isinstance(page_sizes, list) and len(page_sizes) > page_index else {}
             if not isinstance(dims, dict):
                 raise PaddleOCRFormatError("PaddleOCR page metadata is invalid")
-            width, height = float(dims.get("width") or 1654), float(dims.get("height") or 2339)
+            # Only use source-bound image dimensions for the PDF coordinate conversion.
+            width, height = dims.get("width"), dims.get("height")
+            size = (float(width), float(height)) if type(width) in (int, float) and type(height) in (int, float) else None
             for region in regions:
-                native = _native_rows(pdf[page_index], region["bbox"], (width, height)) if pdf is not None else None
+                native = _native_rows(pdf[page_index], region["bbox"], size) if pdf is not None and size is not None else None
                 target = match.get(region["index"])
                 if native is not None:
                     rows, merges, source = native, [], "native_pdf"
@@ -228,37 +230,3 @@ def recognize_tables(pdf_path: str | Path | None, result: dict, layouts: list[di
                 rows, merges = parse_table(item["html"])
                 tables.append({"page": page_index + 1, "region_index": None, "recognition_index": index, "bbox": item["bbox"], "source": "paddle_html_unlocated", "rows": rows, "merges": merges})
     return tables
-
-
-def continuation_candidates(tables: list[dict]) -> list[dict]:
-    """Report only repeat-header, equal-column continuations; never silently join."""
-    links = []
-    for index, (left, right) in enumerate(zip(tables, tables[1:]), 1):
-        if left["page"] + 1 != right["page"]:
-            continue
-        a, b = left["rows"], right["rows"]
-        if a and b and len(a[0]) > 1 and a[0] == b[0] and any(text.strip() for text in a[0]):
-            if all(len(row) == len(a[0]) for row in a + b):
-                links.append({"from_page": left["page"], "to_page": right["page"], "from_table": index, "to_table": index + 1, "reason": "repeated_header", "proposed": True})
-    return links
-
-
-def joined_tables(evidence: dict) -> list[dict]:
-    """Optional conservative cross-page join. Never change the source evidence."""
-    original = [table for page in evidence["pages"] for table in page["tables"]]
-    links = {link["to_table"]: link for link in evidence["continuation_candidates"] if link["reason"] == "repeated_header"}
-    assembled = []
-    for index, table in enumerate(original, 1):
-        link = links.get(index)
-        if link is None:
-            assembled.append({**table, "rows": [list(row) for row in table["rows"]], "merges": list(table["merges"])})
-            continue
-        if link["from_table"] != index - 1 or not assembled:
-            raise PaddleOCRFormatError("Broken cross-page continuation evidence")
-        current = assembled[-1]
-        if current["merges"] or table["merges"]:
-            assembled.append({**table, "rows": [list(row) for row in table["rows"]], "merges": list(table["merges"])})
-            continue
-        current["rows"].extend([list(row) for row in table["rows"][1:]])
-        current.setdefault("continuation_pages", []).append(table["page"])
-    return assembled
