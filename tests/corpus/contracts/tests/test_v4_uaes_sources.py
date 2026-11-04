@@ -19,3 +19,14 @@ def test_original_uaes_inspection_reference_has_ten_not_three_measurement_column
     assert "10" in result.suggestions
     assert "多产线/多模穴" in result.suggestions
     assert result.evidence.sources
+
+
+def test_original_uaes_measurement_example_is_not_real_supplier_data():
+    from audit.checkers.v4.uaes.precheck_l1 import Facts, _mcr_records
+
+    root = Path(__file__).resolve().parents[4]
+    path = next((root / "assets").rglob("F-PU-166*"))
+    facts = Facts(AuditInput(audit_id="offline-reference", file_url=str(path)))
+    observed = facts.observe("U02:M-06", lambda: _mcr_records(facts))
+    assert observed["status"] == "defect"
+    assert observed["code"] == "B04"

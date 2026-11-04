@@ -8,6 +8,11 @@ _COUNTING = ("人工", "目视", "目测", "通止规", "塞规", "塞尺")
 
 
 class UaesMsaAgent(UaesSourceAgent):
+    def precheck(self):
+        from .precheck_l1 import precheck_msa
+
+        return precheck_msa(self)
+
     PLAN = ("测量系统分析计划", "MSA计划表")
 
     @rule("MSA计划逐编号行除备注外内容完整")
