@@ -17,7 +17,7 @@ from typing import Any, cast
 from audit.checkers.v2.base_agent import BaseAgent
 from audit.checkers.v4.pfmea_local import pair_identity
 from audit.contracts import AuditEvidence, AuditResultItem, EvidenceDiagnostic, EvidenceSource
-from audit.document_tools import ReadLimits, TableReader, snapshot
+from audit.document_tools import ReadLimits, TableReader, snapshot, source_title_location
 from audit.engine.checkers.rule_declarations import discover_declared_rules
 from audit.evidence import EvidenceBudget, cell_locator
 
@@ -143,6 +143,19 @@ class NativeFacts:
         if self.has_unread_content():
             raise UnknownFact(f"未能从可读取原件确认“{text}”，图像或未知内容仍需核对。")
         raise MissingFact(f"原件缺少“{text}”。")
+
+    def require_source_title(self, aliases):
+        location = source_title_location(self.data, aliases)
+        if location is None:
+            raise UnknownFact("原件尚未定位到明确的关联文件标题，正文引用不能代替对端身份。")
+        if "row" in location:
+            table = next(table for table in self.data["tables"] if table["id"] == location["table"])
+            self.cell(table, location["row"], location["column"])
+        elif location.get("kind") == "docx_paragraph":
+            self.witness(location, self.data["paragraphs"][location["paragraph"] - 1]["text"], self.version)
+        elif location.get("kind") == "pdf_block":
+            page = next(page for page in self.data["pages"] if page["page"] == location["page"])
+            self.witness(location, page["blocks"][location["block"] - 1]["text"], self.version)
 
     def tables(self, title: tuple[str, ...] = ()):
         available = [table for table in self.data.get("tables", []) if not any(word in key(table["id"]) for word in ("填写指南", "填表说明", "填写说明", "评分", "準則", "准则", "数据库"))]
@@ -390,22 +403,12 @@ class UaesSourceAgent(BaseAgent):
             # A broad type (for example MSA) does not identify its Kappa/GRR
             # subtype. An unclassified reference can also carry the source.
             # Read its own title; an upload name or a body reference is not identity.
-            title_reads: list[str] = []
-            original = NativeFacts(item.file_url, item.audit_id, lambda _locator, value, *_: title_reads.append(str(value)))
-            for term in terms:
-                titles = [str(table["id"]) for table in original.data.get("tables", [])]
-                if any(key(term) in key(title) and not any(word in key(title) for word in ("参考", "参照", "不是", "非", "填写", "说明")) for title in titles):
-                    candidates[item.audit_id] = item
-                    break
-                try:
-                    title_reads.clear()
-                    original.require_title(term)
-                except UnknownFact:
-                    continue
-                if any(any(word in key(value) for word in ("参考", "参照", "不是", "非")) for value in title_reads):
-                    continue
-                candidates[item.audit_id] = item
-                break
+            original = NativeFacts(item.file_url, item.audit_id, self.witness)
+            try:
+                original.require_source_title(terms)
+            except UnknownFact:
+                continue
+            candidates[item.audit_id] = item
         if len(candidates) != 1:
             raise UnknownFact("当前批次缺少唯一关联原件，需补充或确认候选，不能任取一份。")
         item = next(iter(candidates.values()))
