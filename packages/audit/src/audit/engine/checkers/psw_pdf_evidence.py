@@ -324,6 +324,9 @@ class PswPdfEvidenceMixin:
 
         if result is not None:
             host.log_audit_result(result, ith)
+        from audit.checkers.v4.paddle_evidence import observe_psw_shadow
+
+        observe_psw_shadow(self, rule_no)
         return result
 
     async def run(self) -> list[AuditResult]:

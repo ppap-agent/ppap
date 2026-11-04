@@ -19,9 +19,22 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from audit.contracts import AuditEvidence, EvidenceDiagnostic, EvidenceSource
+from audit.contracts import AuditEvidence, EvidenceDiagnostic, EvidenceSource, RuleInput
 
 PART_NUMBER_LABELS = ("零件号", "零件号/最新更改水平")
+PSW_PART_NUMBER_LABELS = (*PART_NUMBER_LABELS, "客户零件号", "理想汽车零件号")
+
+
+def psw_shadow_clause_id(rule: RuleInput, rule_no: int) -> str:
+    """Bind a selected PSW fact to its actual frozen source clause and slot."""
+    if isinstance(rule_no, bool) or not isinstance(rule_no, int) or not 1 <= rule_no <= len(rule.rules):
+        raise ValueError("A source PSW rule slot is required")
+    item = rule.rules[rule_no - 1]
+    if not rule.rule_id or not isinstance(item.get("id"), str) or not item["id"].strip():
+        raise ValueError("A frozen rule version and source clause ID are required")
+    source = {"clause": item, "document_type": rule.type, "preset_key": rule.preset_key}
+    digest = hashlib.sha256(json.dumps(source, ensure_ascii=False, sort_keys=True, allow_nan=False).encode()).hexdigest()
+    return "psw:" + json.dumps([rule.rule_profile, rule.rule_id, rule_no, item["id"], digest], ensure_ascii=False, separators=(",", ":"))
 
 
 class PageService(Protocol):
@@ -110,6 +123,8 @@ class PaddleShadowSession:
 
         if agent.audit_file.project_id != self.project_id:
             return "scope_mismatch"
+        if target.clause_id.startswith("psw:") and target.clause_id not in {psw_shadow_clause_id(agent.rule, i) for i in range(1, len(agent.rule.rules) + 1)}:
+            return "rule_version_mismatch"
         if (id(self.service), getattr(self.service, "endpoint", None), getattr(self.service, "timeout", None)) != self._service_identity:
             return "service_changed"
         version = agent.audit_file.file_metadata.get("file_version_id", target.file_version_id)
@@ -131,7 +146,7 @@ class PaddleShadowSession:
 
     def _record(self, target, state, reason, *, facts=(), sources=(), diagnostics=(), reused=False, elapsed=0) -> ShadowObservation:
         with self._publication:
-            if state == "known":
+            if state in {"known", "skipped"}:
                 stopped = self._stopped()
                 if stopped:
                     state, reason, facts, sources = "error", stopped, (), ()
@@ -159,29 +174,73 @@ class PaddleShadowSession:
 
     def observe(self, agent, method: str) -> ShadowObservation | None:
         from audit.checkers.v4.uaes.bindings import BINDINGS
+
+        clause: str | None
+        kind: str | None
+        labels: tuple[str, ...]
+        if agent.rule.preset_key == "U17":
+            clauses = [c for c, m in BINDINGS["v4"].items() if c.startswith("U17:") and m == method]
+            slots = [i for i, item in enumerate(agent.rule.rules, 1) if item.get("id") in clauses]
+            if len(slots) != 1:
+                return None
+            try:
+                clause = psw_shadow_clause_id(agent.rule, slots[0])
+            except (TypeError, ValueError):
+                return None
+            kind = {"rule_3": "seal", "rule_1": "part_number"}.get(method)
+            labels = PSW_PART_NUMBER_LABELS
+        elif agent.rule.preset_key == "U08" and method in {"rule_3", "rule_6"}:
+            clauses = [c for c, m in BINDINGS["v4"].items() if c.startswith("U08:") and m == method]
+            clause = next((t.clause_id for t in self.targets if t.file_version_id == agent.audit_file.audit_id and t.clause_id in clauses), None)
+            kind = "seal" if method == "rule_3" else "part_number"
+            labels = PART_NUMBER_LABELS
+        else:
+            return None
+        target = next((t for t in self.targets if t.file_version_id == agent.audit_file.audit_id and t.clause_id == clause), None)
+        return self._observe(agent, target, kind, labels) if target else None
+
+    def observe_psw(self, agent, rule_no: int) -> ShadowObservation | None:
+        """Observe selected PSW facts without invoking the formal model path."""
+        from audit.kinds import PpapDocumentType
+
+        if PpapDocumentType.from_string(agent.rule.type or "") != PpapDocumentType.PSW:
+            return None
+        if agent.rule.rule_profile == "v4" and agent.rule.preset_key != "L17":
+            return None
+        try:
+            clause = psw_shadow_clause_id(agent.rule, rule_no)
+        except (TypeError, ValueError):
+            return None
+        target = next((t for t in self.targets if t.file_version_id == agent.audit_file.audit_id and t.clause_id == clause), None)
+        kind = {3: "seal", 6: "part_number"}.get(rule_no)
+        return self._observe(agent, target, kind, PSW_PART_NUMBER_LABELS) if target else None
+
+    def _observe(self, agent, target: ShadowTarget, kind: str | None, labels: tuple[str, ...]) -> ShadowObservation:
         from audit.checkers.v4.uaes.native import NativeFacts, UnknownFact
 
-        if agent.rule.preset_key != "U08" or method not in {"rule_3", "rule_6"}:
-            return None
-        clauses = [c for c, m in BINDINGS["v4"].items() if c.startswith("U08:") and m == method]
-        target = next((t for t in self.targets if t.file_version_id == agent.audit_file.audit_id and t.clause_id in clauses), None)
-        if target is None:
-            return None
         with self._lock:
             try:
                 stopped = self._stopped() or self._identity(agent, target)
                 if stopped:
                     return self._record(target, "error", stopped)
-                if method == "rule_6":
+                if kind is None:
+                    return self._record(target, "unknown", "unsupported_visual_fact")
+                if kind == "part_number":
                     # A separate native reader avoids consuming the formal
                     # Checker's witness/table budgets or changing its result.
                     native = NativeFacts(agent.audit_file.file_url, target.file_version_id, lambda *a, **k: None)
                     try:
-                        native.field(PART_NUMBER_LABELS)
+                        native.field(labels)
                     except UnknownFact:
                         pass
                     else:
-                        return self._record(target, "skipped", "native_sufficient")
+                        stopped = self._stopped() or self._identity(agent, target)
+                        return self._record(target, "error", stopped) if stopped else self._record(target, "skipped", "native_sufficient")
+                # Native parsing can consume the remaining budget or race a
+                # cancellation/source change. Recheck before reserving work.
+                stopped = self._stopped() or self._identity(agent, target)
+                if stopped:
+                    return self._record(target, "error", stopped)
                 key = (target.source_sha256, target.page_number)
                 reused = key in self._attempts
                 if reused:
@@ -215,11 +274,11 @@ class PaddleShadowSession:
                 stopped = self._stopped() or self._identity(agent, target)
                 if stopped or attempt.error:
                     return self._record(target, "error", stopped or attempt.error, reused=reused, elapsed=attempt.elapsed_seconds)
-                return self._consume(target, method, attempt, reused)
+                return self._consume(target, kind, attempt, reused, labels)
             except Exception:
                 return self._record(target, "error", "source_unavailable")
 
-    def _consume(self, target: ShadowTarget, method: str, attempt: _PageAttempt, reused: bool) -> ShadowObservation:
+    def _consume(self, target: ShadowTarget, kind: str, attempt: _PageAttempt, reused: bool, labels: tuple[str, ...]) -> ShadowObservation:
         from audit.checkers.v4.uaes.native import header
 
         value = attempt.evidence or {}
@@ -241,18 +300,19 @@ class PaddleShadowSession:
                 "page": target.page_number,
                 "file_version_id": target.file_version_id,
                 "source_sha256": target.source_sha256,
+                "clause_id": target.clause_id,
                 "engine": value.get("engine"),
                 "bbox": item["pdf_bbox"],
                 "coordinate_system": "pdf_points_unrotated",
                 "element_index": index,
                 "region_index": item.get("region_index"),
                 "recognition_index": item.get("recognition_index"),
-                "element": "seal" if method == "rule_3" else "table",
+                "element": "seal" if kind == "seal" else "table",
             }
             facts.append(fact)
             sources.append(EvidenceSource(kind="visual", locator=json.dumps(locator, separators=(",", ":")), excerpt=str(fact.get("value", " ".join(fact.get("text", []))))[:500]))
 
-        if method == "rule_3":
+        if kind == "seal":
             for index, seal in enumerate(page.get("seals", [])):
                 if seal.get("detected") is True:
                     add({"detected": True, "text": seal.get("recognized_text", []), "text_status": seal.get("text_status", "unreadable")}, seal, index)
@@ -260,7 +320,7 @@ class PaddleShadowSession:
             for index, table in enumerate(page.get("tables", [])):
                 for row_number, row in enumerate(table.get("rows", []), 1):
                     for column, text in enumerate(row[:-1]):
-                        if not header(text, PART_NUMBER_LABELS):
+                        if not header(text, labels):
                             continue
                         merged = next((span for span in table.get("merges", []) if span[0] <= row_number <= span[2] and span[1] <= column + 1 <= span[3]), None)
                         # Merges use one-based inclusive columns. The first
@@ -272,8 +332,8 @@ class PaddleShadowSession:
                 # Conflicting alternatives remain unresolved rather than
                 # lending one candidate to an authoritative field.
                 return self._record(target, "unknown", "field_ambiguous", diagnostics=diagnostics, reused=reused, elapsed=attempt.elapsed_seconds)
-        kind = "seal" if method == "rule_3" else "table"
-        failed = not facts and any(d.get("element") == kind and d.get("outcome", "error") != "unknown" for d in value.get("diagnostics", []))
+        element = "seal" if kind == "seal" else "table"
+        failed = not facts and any(d.get("element") == element and d.get("outcome", "error") != "unknown" for d in value.get("diagnostics", []))
         return self._record(
             target,
             "known" if facts else "error" if failed else "unknown",
@@ -307,3 +367,9 @@ def observe_shadow(agent, method: str) -> None:
     session = _CURRENT.get()
     if session is not None:
         session.observe(agent, method)
+
+
+def observe_psw_shadow(agent, rule_no: int) -> None:
+    session = _CURRENT.get()
+    if session is not None:
+        session.observe_psw(agent, rule_no)
