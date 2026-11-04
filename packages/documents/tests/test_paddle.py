@@ -362,8 +362,6 @@ def test_non_table_preview_reconstructs_untabled_content(tmp_path):
 
 
 def test_remote_url_stream_bound_and_cleanup(tmp_path, monkeypatch):
-    from documents.ocr.paddle.client import downloaded_pdf
-
     source = _pdf(tmp_path)
     pdf_bytes = source.read_bytes()
     visited = []
