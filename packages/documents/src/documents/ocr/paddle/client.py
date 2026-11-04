@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import base64
-import tempfile
-from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
 from urllib.parse import urlsplit
 
 import fitz
@@ -82,33 +79,3 @@ class PaddleStructureService:
         result = body.get("result")
         require_pages(result, page_count)
         return result
-
-
-@contextmanager
-def downloaded_pdf(url: str) -> Iterator[Path]:
-    """Explicit, bounded remote-PDF input; never called by production routes."""
-    parsed = urlsplit(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password or parsed.fragment:
-        raise ValueError("Remote PDF URL must be plain HTTP(S) without embedded credentials")
-    limit = parse_file_size(max_file_size())
-    with tempfile.TemporaryDirectory(prefix="paddle-ocr-url-") as directory:
-        path = Path(directory) / "input.pdf"
-        try:
-            with requests.get(url, stream=True, timeout=300, allow_redirects=False) as response:
-                response.raise_for_status()
-                if response.status_code >= 300:
-                    raise PaddleOCRFormatError("Remote PDF redirects are not followed")
-                declared = response.headers.get("Content-Length")
-                if declared is not None and int(declared) > limit:
-                    raise PaddleOCRFormatError("Remote PDF exceeds maximum size")
-                total = 0
-                with path.open("wb") as file:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        total += len(chunk)
-                        if total > limit:
-                            raise PaddleOCRFormatError("Remote PDF exceeds maximum size")
-                        file.write(chunk)
-        except requests.RequestException as exc:
-            raise PaddleOCRFormatError(f"Remote PDF fetch failed ({type(exc).__name__})") from None
-        validate_pdf(path)
-        yield path

@@ -8,7 +8,7 @@ from pathlib import Path
 from .client import require_pages
 from .layout import page_layouts
 from .seals import seal_evidence
-from .tables import continuation_candidates, recognize_tables
+from .tables import recognize_tables
 
 
 def build_evidence(result: dict, *, page_count: int, pdf_path: str | Path | None = None) -> dict:
@@ -31,5 +31,4 @@ def build_evidence(result: dict, *, page_count: int, pdf_path: str | Path | None
         "engine": "paddleocr_ppstructure_v3",
         "source_sha256": hashlib.sha256(Path(pdf_path).read_bytes()).hexdigest() if pdf_path is not None else None,
         "pages": pages,
-        "continuation_candidates": continuation_candidates(tables),
     }

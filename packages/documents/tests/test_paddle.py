@@ -1,4 +1,4 @@
-"""Historical PaddleOCR HTTP capability is explicit, isolated and testable offline."""
+"""Isolated historical PaddleOCR capability and safe local artifact contract."""
 
 from __future__ import annotations
 
@@ -10,391 +10,266 @@ from types import SimpleNamespace
 import fitz
 import pytest
 from documents.ocr import paddle
-from documents.ocr.paddle import cli, client
+from documents.ocr.paddle import client, export
+from documents.ocr.paddle.__main__ import main
 from openpyxl import load_workbook
 
 
-def _pdf(tmp_path: Path, pages: int = 1) -> Path:
-    path = tmp_path / "source.pdf"
-    with fitz.open() as pdf:
+@pytest.fixture
+def pdf(tmp_path: Path) -> Path:
+    return make_pdf(tmp_path)
+
+
+def make_pdf(directory: Path, pages: int = 1) -> Path:
+    source = directory / "source.pdf"
+    with fitz.open() as document:
         for _ in range(pages):
-            pdf.new_page()
-        pdf.save(path)
-    return path
+            document.new_page()
+        document.save(source)
+    return source
 
 
-def _result(*, pages: int = 1) -> dict:
+def response(pages: int = 1) -> dict:
     return {
         "result": {
-            "dataInfo": {"pages": [{"width": 1654, "height": 2339}] * pages},
+            "dataInfo": {"pages": [{"width": 595, "height": 842} for _ in range(pages)]},
             "layoutParsingResults": [
-                {
-                    "prunedResult": {
-                        "table_res_list": [
-                            {
-                                "pred_html": '<html><body><table><tr><th colspan="2">标题</th><th>金额</th></tr>'
-                                '<tr><td rowspan="2">=2+2</td><td>A&amp;B</td><td>10</td></tr>'
-                                '<tr><td>第二行</td><td>20</td></tr></table></body></html>'
-                            }
-                        ],
-                        "parsing_res_list": [
-                            {"block_label": "text", "block_content": "<private & source>"},
-                            {"block_label": "table", "block_content": "ignore table duplicate"},
-                        ],
-                        "seal_res_list": [{"rec_texts": ["签章", "已盖章"]}],
-                    }
-                }
-                for _ in range(pages)
+                {"prunedResult": {
+                    "table_res_list": [{"pred_html": (
+                        '<table><tr><th colspan="2">标题</th><th>金额</th></tr>'
+                        '<tr><td rowspan="2">=2+2</td><td>A&amp;B</td><td>10</td></tr>'
+                        '<tr><td>第二行</td><td>20</td></tr></table>'
+                    )}],
+                    "parsing_res_list": [
+                        {"block_label": "text", "block_content": "=HYPERLINK(\"bad\")", "block_bbox": [10, 10, 300, 50]},
+                        {"block_label": "table", "block_content": "table-duplicate"},
+                    ],
+                    "seal_res_list": [{"rec_texts": ["签章", "已盖章"]}],
+                }} for _ in range(pages)
             ],
         }
     }
 
 
-def test_client_sends_historical_ppstructure_contract_with_token(tmp_path, monkeypatch):
-    source = _pdf(tmp_path)
-    sent = []
+def test_client_uses_exact_historical_paddle_parameters(pdf, monkeypatch):
+    calls = []
 
     def post(url, *, json, headers, timeout):
-        sent.append((url, json, headers, timeout))
-        return SimpleNamespace(raise_for_status=lambda: None, json=lambda: _result())
+        calls.append((url, json, headers, timeout))
+        return SimpleNamespace(raise_for_status=lambda: None, json=lambda: response())
 
     monkeypatch.setattr(client.requests, "post", post)
-    result = paddle.PaddleStructureService("http://127.0.0.1:8080/layout-parsing", token="top-secret").analyze_full_pdf(source)
-    assert result == _result()["result"]
-    assert len(sent) == 1
-    url, payload, headers, timeout = sent[0]
-    assert url == "http://127.0.0.1:8080/layout-parsing"
-    assert base64.b64decode(payload["file"]) == source.read_bytes()
+    result = paddle.PaddleStructureService("https://paddle.example/layout-parsing", token="secret").analyze_full_pdf(pdf)
+    assert result == response()["result"]
+    url, payload, headers, timeout = calls.pop()
+    assert not calls
+    assert url == "https://paddle.example/layout-parsing"
+    assert base64.b64decode(payload["file"]) == pdf.read_bytes()
     assert payload["fileType"] == 0
-    assert payload["useTableRecognition"] is True
     assert payload["useSealRecognition"] is True
-    assert headers["Authorization"] == "token top-secret"
+    assert payload["useTableRecognition"] is True
+    assert payload["useChartRecognition"] is False
+    assert headers["Authorization"] == "token secret"
     assert timeout == 300
 
 
-def test_offline_export_keeps_spans_unicode_text_and_prevents_excel_formulas(tmp_path, monkeypatch):
-    source = _pdf(tmp_path)
+@pytest.mark.parametrize("endpoint", ["", "ftp://example.test", "https://user:password@example.test", "https://example.test/#fragment"])
+def test_client_rejects_unsafe_endpoint(endpoint):
+    with pytest.raises(ValueError):
+        paddle.PaddleStructureService(endpoint)
 
-    def no_network(*args, **kwargs):
-        raise AssertionError("Offline replay must not call network")
 
-    monkeypatch.setattr(client.requests, "post", no_network)
-    xlsx = tmp_path / "recognized.xlsx"
-    html = tmp_path / "recognized.html"
-    stats = paddle.evaluate_pdf(source, xlsx_path=xlsx, html_path=html, response=_result())
+def test_workbook_preserves_spans_and_never_executes_ocr_formulas(pdf, tmp_path):
+    directory = tmp_path / "evaluation"
+    old_bytes = pdf.read_bytes()
+    stats = paddle.evaluate_pdf(pdf, directory, response=response())
     assert stats == paddle.PaddleOCRStats(pages=1, tables=1, text_blocks=1, seals=1)
-    wb = load_workbook(xlsx)
+    assert pdf.read_bytes() == old_bytes
+    assert {item.name for item in directory.iterdir()} == {"tables.xlsx", "evidence.json", "response.json"}
+    workbook = load_workbook(directory / "tables.xlsx")
     try:
-        assert wb.sheetnames == ["Table_1", "OCR_Text"]
-        sheet = wb["Table_1"]
-        assert {str(merge) for merge in sheet.merged_cells.ranges} == {"A1:B1", "A2:A3"}
-        assert sheet["C1"].value == "金额"
-        assert sheet["B2"].value == "A&B"
-        assert sheet["B3"].value == "第二行"
-        assert sheet["A2"].value == "=2+2"
-        assert sheet["A2"].data_type == "s"
-        assert list(wb["OCR_Text"].values) == [
+        assert workbook.sheetnames == ["Table_1", "OCR_Text"]
+        table = workbook["Table_1"]
+        assert {str(span) for span in table.merged_cells.ranges} == {"A1:B1", "A2:A3"}
+        assert table["A2"].value == "=2+2"
+        assert table["A2"].data_type == "s"
+        assert table["B2"].value == "A&B"
+        rows = list(workbook["OCR_Text"].values)
+        assert rows == [
             ("Page", "Type", "Content"),
-            (1, "text", "<private & source>"),
+            (1, "text", '=HYPERLINK("bad")'),
             (1, "seal", "签章 已盖章"),
         ]
+        assert workbook["OCR_Text"]["C2"].data_type == "s"
     finally:
-        wb.close()
-    assert "&lt;private &amp; source&gt;" in html.read_text(encoding="utf-8")
-    assert "ignore table duplicate" not in html.read_text(encoding="utf-8")
+        workbook.close()
+    evidence = json.loads((directory / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["engine"] == "paddleocr_ppstructure_v3"
+    assert len(evidence["source_sha256"]) == 64
+    assert evidence["pages"][0]["tables"][0]["source"] == "paddle_html_unlocated"
+    assert json.loads((directory / "response.json").read_text(encoding="utf-8")) == response()["result"]
 
 
-def test_pdf_page_truncation_fails_closed_before_writing(tmp_path):
-    source = _pdf(tmp_path, pages=2)
-    output = tmp_path / "unpublished.xlsx"
-    with pytest.raises(paddle.PaddleOCRFormatError, match="incomplete PDF page set"):
-        paddle.evaluate_pdf(source, xlsx_path=output, response=_result())
-    assert not output.exists()
-
-
-@pytest.mark.parametrize(
-    "markup",
-    [
-        "",
-        "<table><tr><td colspan='0'>x</td></tr></table>",
-        "<table><tr><td rowspan='2'>x</td></tr></table>",
-        "<table><tr><td>x</td></tr>",
-        "<table><tr><td>x</td></tr></table><table><tr><td>y</td></tr></table>",
-    ],
-)
-def test_invalid_table_html_never_publishes_workbook(tmp_path, markup):
-    source = _pdf(tmp_path)
-    response = _result()
-    response["result"]["layoutParsingResults"][0]["prunedResult"]["table_res_list"][0]["pred_html"] = markup
-    destination = tmp_path / "bad.xlsx"
-    with pytest.raises(paddle.PaddleOCRFormatError):
-        paddle.evaluate_pdf(source, xlsx_path=destination, response=response)
-    assert not destination.exists()
-
-
-def test_empty_or_incorrect_api_response_fails_without_publish(tmp_path, monkeypatch):
-    source = _pdf(tmp_path)
-    output = tmp_path / "no.xlsx"
-    returned = SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"result": {"layoutParsingResults": []}})
-    monkeypatch.setattr(client.requests, "post", lambda *args, **kwargs: returned)
-    with pytest.raises(paddle.PaddleOCRFormatError):
-        paddle.evaluate_pdf(source, xlsx_path=output, endpoint="https://paddle.example/layout-parsing")
-    assert not output.exists()
-
-
-def test_text_only_page_creates_excel_without_mislabeling_it_as_a_table(tmp_path):
-    source = _pdf(tmp_path)
-    response = _result()
-    page = response["result"]["layoutParsingResults"][0]["prunedResult"]
-    page["table_res_list"] = []
-    stats = paddle.evaluate_pdf(source, xlsx_path=tmp_path / "text.xlsx", response=response)
-    assert stats.tables == 0
-    book = load_workbook(tmp_path / "text.xlsx")
+def test_layout_detection_preserves_unreadable_seal_without_ocr_text(pdf, tmp_path):
+    result = response()["result"]
+    pruned = result["layoutParsingResults"][0]["prunedResult"]
+    pruned["table_res_list"] = []
+    pruned["parsing_res_list"] = []
+    pruned["seal_res_list"] = []
+    pruned["layout_det_res"] = {"boxes": [{"label": "seal", "coordinate": [20, 30, 200, 230]}]}
+    evidence = paddle.build_evidence(result, page_count=1, pdf_path=pdf)
+    assert evidence["pages"][0]["seals"][0]["text_status"] == "unreadable"
+    assert evidence["pages"][0]["seals"][0]["bbox"] == [20, 30, 200, 230]
+    stats = paddle.evaluate_pdf(pdf, tmp_path / "seal-only", response=result)
+    assert stats == paddle.PaddleOCRStats(pages=1, tables=0, text_blocks=0, seals=1)
+    workbook = load_workbook(tmp_path / "seal-only" / "tables.xlsx")
     try:
-        assert book.sheetnames == ["OCR_Text"]
+        assert list(workbook["OCR_Text"].values) == [("Page", "Type", "Content"), (1, "seal", "检测到印章（内容未识别）")]
     finally:
-        book.close()
+        workbook.close()
 
 
-def test_bad_endpoint_never_sends_credentials():
-    for value in ("", "ftp://server/layout-parsing", "https://name:password@server/layout-parsing", "https://server/#fragment"):
-        with pytest.raises(ValueError):
-            paddle.PaddleStructureService(value)
-
-
-def test_cli_offline_json_replay(tmp_path, monkeypatch, capsys):
-    source = _pdf(tmp_path)
-    payload = tmp_path / "result.json"
-    payload.write_text(json.dumps(_result(), ensure_ascii=False), encoding="utf-8")
-    output = tmp_path / "cli.xlsx"
-    monkeypatch.delenv("PADDLE_OCR_URL", raising=False)
-    monkeypatch.setattr("sys.argv", ["paddle", "--pdf", str(source), "--response-json", str(payload), "--xlsx", str(output)])
-    monkeypatch.setattr(client.requests, "post", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("offline means no network")))
-    cli.main()
-    assert output.exists()
-    assert "tables=1" in capsys.readouterr().out
-
-
-def test_detected_but_missing_recognized_table_fails_closed(tmp_path):
-    source = _pdf(tmp_path)
-    response = _result()
-    page = response["result"]["layoutParsingResults"][0]["prunedResult"]
-    page["table_res_list"] = []
-    page["layout_det_res"] = {"boxes": [{"label": "table", "coordinate": [0, 0, 10, 10]}]}
-    with pytest.raises(paddle.PaddleOCRFormatError, match="omitted its recognition"):
-        paddle.evaluate_pdf(source, xlsx_path=tmp_path / "missing.xlsx", response=response)
-    assert not (tmp_path / "missing.xlsx").exists()
-
-
-def test_detected_unreadable_seal_keeps_region_and_crops(tmp_path):
-    from documents.ocr.paddle.evidence import build_evidence
-
-    source = _pdf(tmp_path)
-    data = _result()["result"]
-    page = data["layoutParsingResults"][0]["prunedResult"]
-    page["seal_res_list"] = []
-    page["layout_det_res"] = {"boxes": [{"label": "seal", "coordinate": [100, 100, 380, 380]}]}
-    evidence = build_evidence(data, page_count=1, pdf_path=source)
-    assert evidence["pages"][0]["seals"] == [{
-        "page": 1, "detected": True, "bbox": [100.0, 100.0, 380.0, 380.0],
-        "text_status": "unreadable", "recognized_text": [], "source": "paddle_layout", "region_index": 0, "recognition_index": None,
-    }]
-    directory = tmp_path / "seal-crops"
-    paddle.evaluate_pdf(source, response=data, xlsx_path=tmp_path / "unreadable.xlsx", html_path=tmp_path / "unreadable.html", seal_crop_dir=directory)
-    assert list(directory.glob("*.png"))
-    assert "检测到印章" in (tmp_path / "unreadable.html").read_text(encoding="utf-8")
-
-
-def test_multiple_seals_keep_location_and_spatial_text_assignment():
-    from documents.ocr.paddle.evidence import build_evidence
-
-    data = _result()["result"]
-    page = data["layoutParsingResults"][0]["prunedResult"]
-    page["layout_det_res"] = {"boxes": [
-        {"label": "seal", "coordinate": [50, 50, 200, 210]},
-        {"label": "seal", "coordinate": [400, 420, 600, 610]},
+def test_multiple_seals_match_text_by_position_without_array_order(pdf):
+    result = response()["result"]
+    pruned = result["layoutParsingResults"][0]["prunedResult"]
+    pruned["layout_det_res"] = {"boxes": [
+        {"label": "seal", "coordinate": [30, 30, 200, 230]},
+        {"label": "seal", "coordinate": [250, 250, 450, 470]},
     ]}
-    page["seal_res_list"] = [
-        {"rec_texts": ["右章"], "bbox": [450, 460, 560, 550]},
-        {"rec_texts": ["左章"], "bbox": [80, 80, 170, 160]},
+    pruned["seal_res_list"] = [
+        {"rec_texts": ["右侧"], "bbox": [300, 300, 420, 420]},
+        {"rec_texts": ["左侧"], "bbox": [60, 60, 160, 170]},
     ]
-    seals = build_evidence(data, page_count=1)["pages"][0]["seals"]
-    assert [s["recognized_text"] for s in seals] == [["左章"], ["右章"]]
-    assert [s["recognition_index"] for s in seals] == [1, 0]
+    seals = paddle.build_evidence(result, page_count=1, pdf_path=pdf)["pages"][0]["seals"]
+    assert [item["recognized_text"] for item in seals] == [["左侧"], ["右侧"]]
+    assert [item["recognition_index"] for item in seals] == [1, 0]
 
 
-def test_page_layout_preserves_indices_and_semantic_types():
-    from documents.ocr.paddle.evidence import build_evidence
+def test_page_layout_preserves_labels_coordinates_and_source_indexes():
+    result = response()["result"]
+    pruned = result["layoutParsingResults"][0]["prunedResult"]
+    pruned["layout_det_res"] = {"boxes": [{"label": "paragraph_title", "coordinate": [5, 15, 300, 55]}]}
+    pruned["parsing_res_list"] = [
+        {"block_label": "footer", "block_content": "底部", "block_bbox": [5, 600, 300, 620]},
+        {"block_label": "paragraph_title", "block_content": "标题", "block_bbox": [5, 15, 300, 55]},
+        {"block_label": "text", "block_content": "正文", "block_bbox": [5, 100, 300, 140]},
+    ]
+    page = paddle.build_evidence(result, page_count=1)["pages"][0]
+    assert [(item["index"], item["type"]) for item in page["texts"]] == [
+        (1, "paragraph_title"), (2, "text"), (0, "footer")
+    ]
+    assert page["regions"][0]["bbox"] == [5, 15, 300, 55]
 
-    data = _result()["result"]
-    page = data["layoutParsingResults"][0]["prunedResult"]
-    page["layout_det_res"] = {"boxes": [
-        {"label": "paragraph_title", "coordinate": [40, 10, 500, 80]},
-        {"label": "header", "coordinate": [40, 1, 500, 9]},
-        {"label": "footer", "coordinate": [40, 400, 500, 500]},
+
+def test_multiple_tables_use_spatial_matching_not_array_position():
+    result = response()["result"]
+    pruned = result["layoutParsingResults"][0]["prunedResult"]
+    pruned["layout_det_res"] = {"boxes": [
+        {"label": "table", "coordinate": [30, 30, 180, 180]},
+        {"label": "table", "coordinate": [280, 280, 490, 490]},
     ]}
-    page["parsing_res_list"] = [
-        {"block_label": "footer", "block_content": "底部", "block_bbox": [5, 450, 200, 480]},
-        {"block_label": "paragraph_title", "block_content": "标题", "block_bbox": [5, 20, 200, 40]},
-        {"block_label": "text", "block_content": "正文", "block_bbox": [5, 90, 200, 120]},
+    pruned["table_res_list"] = [
+        {"pred_html": "<table><tr><td>右</td></tr></table>", "cell_box_list": [[320, 330, 450, 450]]},
+        {"pred_html": "<table><tr><td>左</td></tr></table>", "cell_box_list": [[60, 60, 160, 160]]},
     ]
-    evidence = build_evidence(data, page_count=1)
-    assert [item["type"] for item in evidence["pages"][0]["texts"]] == ["paragraph_title", "text", "footer"]
-    assert [item["index"] for item in evidence["pages"][0]["texts"]] == [1, 2, 0]
-    assert [item["label"] for item in evidence["pages"][0]["regions"]] == ["paragraph_title", "header", "footer"]
-
-
-def test_multiple_tables_spatial_matching_ignores_provider_array_order():
-    from documents.ocr.paddle.evidence import build_evidence
-
-    data = _result()["result"]
-    p = data["layoutParsingResults"][0]["prunedResult"]
-    p["layout_det_res"] = {"boxes": [
-        {"label": "table", "coordinate": [50, 50, 400, 400]},
-        {"label": "table", "coordinate": [600, 600, 1000, 1000]},
-    ]}
-    p["table_res_list"] = [
-        {"pred_html": "<table><tr><td>右表</td></tr></table>", "cell_box_list": [[700, 700, 900, 900]]},
-        {"pred_html": "<table><tr><td>左表</td></tr></table>", "cell_box_list": [[100, 100, 300, 300]]},
-    ]
-    tables = build_evidence(data, page_count=1)["pages"][0]["tables"]
-    assert [table["rows"][0][0] for table in tables] == ["左表", "右表"]
+    tables = paddle.build_evidence(result, page_count=1)["pages"][0]["tables"]
+    assert [table["rows"][0][0] for table in tables] == ["左", "右"]
     assert [table["recognition_index"] for table in tables] == [1, 0]
 
 
-def test_native_pdf_table_fallback_on_missing_paddle_html(tmp_path):
-    from documents.ocr.paddle.evidence import build_evidence
-
-    path = tmp_path / "ruled.pdf"
+def test_native_pdf_table_fallback(tmp_path):
+    source = tmp_path / "ruled.pdf"
     with fitz.open() as document:
         page = document.new_page(width=400, height=300)
         for x in (20, 140, 300):
             page.draw_line((x, 20), (x, 180))
         for y in (20, 100, 180):
             page.draw_line((20, y), (300, y))
-        page.insert_text((30, 70), "ALPHA", fontsize=12)
-        page.insert_text((150, 70), "BETA", fontsize=12)
-        page.insert_text((30, 150), "GAMMA", fontsize=12)
-        page.insert_text((150, 150), "DELTA", fontsize=12)
-        document.save(path)
-    with fitz.open(path) as pdf:
-        assert len(pdf[0].find_tables().tables) == 1
-    result = _result()["result"]
+        for x, y, value in ((30, 70, "ALPHA"), (150, 70, "BETA"), (30, 150, "GAMMA"), (150, 150, "DELTA")):
+            page.insert_text((x, y), value, fontsize=12)
+        document.save(source)
+    result = response()["result"]
     result["dataInfo"]["pages"] = [{"width": 400, "height": 300}]
-    page = result["layoutParsingResults"][0]["prunedResult"]
-    page["table_res_list"] = []
-    page["layout_det_res"] = {"boxes": [{"label": "table", "coordinate": [20, 20, 300, 180]}]}
-    evidence = build_evidence(result, page_count=1, pdf_path=path)
-    assert evidence["pages"][0]["tables"][0]["source"] == "native_pdf"
-    assert evidence["pages"][0]["tables"][0]["rows"] == [["ALPHA", "BETA"], ["GAMMA", "DELTA"]]
+    pruned = result["layoutParsingResults"][0]["prunedResult"]
+    pruned["table_res_list"] = []
+    pruned["layout_det_res"] = {"boxes": [{"label": "table", "coordinate": [20, 20, 300, 180]}]}
+    table = paddle.build_evidence(result, page_count=1, pdf_path=source)["pages"][0]["tables"][0]
+    assert table["source"] == "native_pdf"
+    assert table["rows"] == [["ALPHA", "BETA"], ["GAMMA", "DELTA"]]
 
 
-def test_continuation_is_opt_in_without_overwriting_source_evidence(tmp_path):
-    from documents.ocr.paddle.evidence import build_evidence
-
-    source = _pdf(tmp_path, pages=2)
-    raw = _result(pages=2)["result"]
-    for page in raw["layoutParsingResults"]:
-        page["prunedResult"]["table_res_list"] = [{"pred_html": "<table><tr><td>序号</td><td>值</td></tr><tr><td>1</td><td>ok</td></tr></table>"}]
-    evidence = build_evidence(raw, page_count=2)
-    assert evidence["continuation_candidates"] == [{
-        "from_page": 1, "to_page": 2, "from_table": 1, "to_table": 2, "reason": "repeated_header", "proposed": True,
-    }]
-    paddle.evaluate_pdf(source, xlsx_path=tmp_path / "separate.xlsx", response=raw)
-    paddle.evaluate_pdf(source, xlsx_path=tmp_path / "joined.xlsx", response=raw, join_continuations=True)
-    original = load_workbook(tmp_path / "separate.xlsx")
-    joined = load_workbook(tmp_path / "joined.xlsx")
+def test_cross_page_tables_remain_separate_without_guessed_join(tmp_path):
+    source = make_pdf(tmp_path, pages=2)
+    result = response(pages=2)
+    for page in result["result"]["layoutParsingResults"]:
+        page["prunedResult"]["table_res_list"] = [{"pred_html": "<table><tr><td>序号</td><td>值</td></tr><tr><td>1</td><td>OK</td></tr></table>"}]
+    stats = paddle.evaluate_pdf(source, tmp_path / "cross-page", response=result)
+    assert stats.tables == 2
+    workbook = load_workbook(tmp_path / "cross-page" / "tables.xlsx")
     try:
-        assert len(original.sheetnames) == 3
-        assert len(joined.sheetnames) == 2
-        assert list(joined["Table_1"].values) == [("序号", "值"), ("1", "ok"), ("1", "ok")]
+        assert workbook.sheetnames == ["Table_1", "Table_2", "OCR_Text"]
+        assert list(workbook["Table_1"].values) == list(workbook["Table_2"].values)
     finally:
-        original.close()
-        joined.close()
+        workbook.close()
 
 
-def test_structured_json_and_raw_replay_do_not_call_network(tmp_path, monkeypatch):
-    source = _pdf(tmp_path)
-    response = _result()
-    input_json = tmp_path / "offline.json"
-    input_json.write_text(json.dumps(response, ensure_ascii=False), encoding="utf-8")
-    out_json = tmp_path / "evidence.json"
-    raw_json = tmp_path / "raw.json"
-    monkeypatch.setattr(client.requests, "post", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("No network in offline replay")))
-    monkeypatch.setattr("sys.argv", [
-        "paddle", "--pdf", str(source), "--xlsx", str(tmp_path / "result.xlsx"),
-        "--response-json", str(input_json), "--evidence-json", str(out_json),
-        "--raw-json", str(raw_json),
-    ])
-    cli.main()
-    result = json.loads(out_json.read_text(encoding="utf-8"))
-    assert result["engine"] == "paddleocr_ppstructure_v3"
-    assert len(result["source_sha256"]) == 64
-    assert len(result["pages"]) == 1
-    assert json.loads(raw_json.read_text(encoding="utf-8")) == response["result"]
-
-
-def test_pdf_experiment_never_overwrites_source(tmp_path):
-    source = _pdf(tmp_path)
-    expected = source.read_bytes()
-    with pytest.raises(ValueError):
-        paddle.evaluate_pdf(source, xlsx_path=source, response=_result())
-    assert source.read_bytes() == expected
-
-
-def test_non_table_preview_reconstructs_untabled_content(tmp_path):
-    source = _pdf(tmp_path)
-    data = _result()["result"]
-    data["dataInfo"]["pages"] = [{"width": 595, "height": 842}]
-    page = data["layoutParsingResults"][0]["prunedResult"]
-    page["layout_det_res"] = {"boxes": [
-        {"label": "paragraph_title", "coordinate": [20, 10, 500, 50]},
-        {"label": "table", "coordinate": [20, 150, 580, 650]},
-    ]}
-    output = tmp_path / "non-table"
-    paddle.evaluate_pdf(source, xlsx_path=tmp_path / "result.xlsx", response=data, non_table_dir=output)
-    from PIL import Image
-
-    files = list(output.glob("*.png"))
-    assert len(files) == 1
-    with Image.open(files[0]) as image:
-        assert image.width > 0 and 0 < image.height < 842
-
-
-def test_remote_url_stream_bound_and_cleanup(tmp_path, monkeypatch):
-    source = _pdf(tmp_path)
-    pdf_bytes = source.read_bytes()
-    visited = []
-
-    class Response:
-        status_code = 200
-        headers = {"Content-Length": str(len(pdf_bytes))}
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
-        def raise_for_status(self):
-            return None
-
-        def iter_content(self, chunk_size):
-            yield pdf_bytes[:20]
-            yield pdf_bytes[20:]
-
-    def get(url, **kwargs):
-        visited.append((url, kwargs))
-        return Response()
-
-    monkeypatch.setattr(client.requests, "get", get)
-    with client.downloaded_pdf("https://example.test/file.pdf") as local:
-        assert local.read_bytes() == pdf_bytes
-        downloaded_path = local
-    assert not downloaded_path.exists()
-    assert len(visited) == 1
-    assert visited[0][1]["allow_redirects"] is False
-    monkeypatch.setattr("documents.ocr.paddle.client.parse_file_size", lambda _: 1)
+@pytest.mark.parametrize("markup", [
+    "", "<table><tr><td colspan='0'>x</td></tr></table>",
+    "<table><tr><td rowspan='2'>x</td></tr></table>",
+    "<table><tr><td>x</td></tr>",
+    "<table><tr><td>x</td></tr></table><table><tr><td>y</td></tr></table>",
+])
+def test_invalid_table_html_never_publishes_partial_output(pdf, tmp_path, markup):
+    result = response()
+    result["result"]["layoutParsingResults"][0]["prunedResult"]["table_res_list"][0]["pred_html"] = markup
+    target = tmp_path / "invalid"
     with pytest.raises(paddle.PaddleOCRFormatError):
-        with client.downloaded_pdf("https://example.test/file.pdf"):
-            pass
+        paddle.evaluate_pdf(pdf, target, response=result)
+    assert not target.exists()
+
+
+def test_incomplete_page_response_rejects_before_publishing(tmp_path):
+    source = make_pdf(tmp_path, pages=2)
+    with pytest.raises(paddle.PaddleOCRFormatError, match="incomplete PDF page set"):
+        paddle.evaluate_pdf(source, tmp_path / "missing-page", response=response())
+    assert not (tmp_path / "missing-page").exists()
+
+
+def test_cli_replay_requires_no_model_or_network(pdf, tmp_path, monkeypatch, capsys):
+    saved = tmp_path / "saved.json"
+    saved.write_text(json.dumps(response(), ensure_ascii=False), encoding="utf-8")
+    monkeypatch.delenv("PADDLE_OCR_URL", raising=False)
+    monkeypatch.setattr(client.requests, "post", lambda *_a, **_kw: (_ for _ in ()).throw(AssertionError("network forbidden")))
+    monkeypatch.setattr("sys.argv", ["paddle", "--pdf", str(pdf), "--out-dir", str(tmp_path / "replay"), "--response-json", str(saved)])
+    main()
+    assert (tmp_path / "replay" / "tables.xlsx").exists()
+    assert "tables=1" in capsys.readouterr().out
+
+
+def test_existing_output_directory_and_failed_export_do_not_overwrite(pdf, tmp_path, monkeypatch):
+    destination = tmp_path / "existing"
+    destination.mkdir()
+    (destination / "keep.txt").write_text("original")
+    with pytest.raises(FileExistsError):
+        paddle.evaluate_pdf(pdf, destination, response=response())
+    assert (destination / "keep.txt").read_text() == "original"
+
+    def fail_save(*_args, **_kwargs):
+        raise OSError("simulated disk failure")
+
+    monkeypatch.setattr(export.Workbook, "save", fail_save)
+    with pytest.raises(OSError, match="simulated"):
+        paddle.evaluate_pdf(pdf, tmp_path / "not-published", response=response())
+    assert not (tmp_path / "not-published").exists()
+    assert list(tmp_path.glob(".paddle-*")) == []
+
+
+def test_empty_evidence_is_not_exported(pdf, tmp_path):
+    result = response()
+    pruned = result["result"]["layoutParsingResults"][0]["prunedResult"]
+    pruned["table_res_list"] = []
+    pruned["parsing_res_list"] = []
+    pruned["seal_res_list"] = []
+    with pytest.raises(paddle.PaddleOCRFormatError, match="no recognized evidence"):
+        paddle.evaluate_pdf(pdf, tmp_path / "empty", response=result)
+    assert not (tmp_path / "empty").exists()
