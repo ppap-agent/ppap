@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import base64
 import json
+import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Thread
 
 import fitz
-import httpx
 import pytest
 from documents.ocr import paddle
-from documents.ocr.paddle import client, export
+from documents.ocr.paddle import export
 from documents.ocr.paddle.__main__ import main
 from openpyxl import load_workbook
 
@@ -58,30 +61,52 @@ def response(pages: int = 1) -> dict:
 
 
 def test_client_uses_exact_historical_paddle_parameters(pdf, monkeypatch):
-    calls = []
-    real_client = httpx.AsyncClient
+    calls, commands = [], []
+    real_popen = subprocess.Popen
 
-    def post(request):
-        calls.append((str(request.url), json.loads(request.content), request.headers, request.extensions["timeout"]["read"]))
-        return httpx.Response(200, json=response())
+    def child(argv, **kwargs):
+        commands.append(argv)
+        assert kwargs["stdin"] == subprocess.PIPE and kwargs["stdout"] == subprocess.PIPE and kwargs["stderr"] == subprocess.DEVNULL
+        return real_popen(argv, **kwargs)
 
-    def transport(**kwargs):
-        assert kwargs["follow_redirects"] is False
-        return real_client(transport=httpx.MockTransport(post), **kwargs)
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            calls.append((origin + self.path, json.loads(self.rfile.read(int(self.headers["Content-Length"]))), self.headers))
+            body = json.dumps(response()).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
 
-    monkeypatch.setattr(client.httpx, "AsyncClient", transport)
-    result = paddle.PaddleStructureService("https://paddle.example/layout-parsing", token="secret").analyze_full_pdf(pdf)
+        def log_message(self, *_args):
+            pass
+
+    monkeypatch.setattr(subprocess, "Popen", child)
+    with ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
+        origin = f"http://127.0.0.1:{server.server_port}"
+        endpoint = origin + "/layout-parsing"
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        service = paddle.PaddleStructureService(endpoint, token="secret")
+        try:
+            result = service.analyze_full_pdf(pdf)
+        finally:
+            server.shutdown()
+            thread.join(timeout=1)
     assert result == response()["result"]
-    url, payload, headers, timeout = calls.pop()
+    url, payload, headers = calls.pop()
     assert not calls
-    assert url == "https://paddle.example/layout-parsing"
+    assert url == endpoint
     assert base64.b64decode(payload["file"]) == pdf.read_bytes()
     assert payload["fileType"] == 0
     assert payload["useSealRecognition"] is True
     assert payload["useTableRecognition"] is True
     assert payload["useChartRecognition"] is False
     assert headers["Authorization"] == "token secret"
-    assert 299 < timeout <= 300
+    assert service.timeout == 300
+    assert len(commands) == 1 and commands[0][:2] == [sys.executable, "-c"]
+    assert "secret" not in " ".join(commands[0]) and not thread.is_alive()
 
 
 @pytest.mark.parametrize("endpoint", ["", "ftp://example.test", "https://user:password@example.test", "https://example.test/#fragment"])
@@ -266,7 +291,7 @@ def test_cli_replay_requires_no_model_or_network(pdf, tmp_path, monkeypatch, cap
     saved = tmp_path / "saved.json"
     saved.write_text(json.dumps(response(), ensure_ascii=False), encoding="utf-8")
     monkeypatch.delenv("PADDLE_OCR_URL", raising=False)
-    monkeypatch.setattr(client.httpx, "AsyncClient", lambda *_a, **_kw: (_ for _ in ()).throw(AssertionError("network forbidden")))
+    monkeypatch.setattr(subprocess, "Popen", lambda *_a, **_kw: (_ for _ in ()).throw(AssertionError("network forbidden")))
     root = tmp_path / "replays"
     monkeypatch.setattr("sys.argv", ["paddle", "--pdf", str(pdf), "--out-root", str(root), "--response-json", str(saved)])
     main()
@@ -434,7 +459,7 @@ def test_ambiguous_table_geometry_is_not_assigned_by_iteration_order():
 
 def test_cli_live_requires_selected_page_before_any_request(pdf, tmp_path, monkeypatch):
     monkeypatch.setenv("PADDLE_OCR_URL", "https://paddle.example/layout-parsing")
-    monkeypatch.setattr(client.httpx, "AsyncClient", lambda *_a, **_kw: pytest.fail("network must not be attempted"))
+    monkeypatch.setattr(subprocess, "Popen", lambda *_a, **_kw: pytest.fail("network must not be attempted"))
     monkeypatch.setattr("sys.argv", ["paddle", "--pdf", str(pdf), "--out-root", str(tmp_path / "no-page")])
     with pytest.raises(SystemExit) as caught:
         main()
@@ -444,7 +469,7 @@ def test_cli_live_requires_selected_page_before_any_request(pdf, tmp_path, monke
 
 def test_live_export_requires_page_instead_of_sending_full_document(tmp_path, monkeypatch):
     source = make_pdf(tmp_path, pages=2)
-    monkeypatch.setattr(client.httpx, "AsyncClient", lambda *_a, **_kw: pytest.fail("network must not be attempted"))
+    monkeypatch.setattr(subprocess, "Popen", lambda *_a, **_kw: pytest.fail("network must not be attempted"))
     with pytest.raises(ValueError, match="explicit page_number"):
         paddle.evaluate_pdf(source, tmp_path / "no-page", endpoint="https://paddle.example/layout-parsing")
     assert not (tmp_path / "no-page").exists()
