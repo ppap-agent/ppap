@@ -356,3 +356,27 @@ def test_ending_with_no_selected_targets_does_not_call_the_old_snapshot_current(
     assert client.get(path).json()["precheck"] is None
     assert client.post(path + "/end", json=command).json() == ended.json()
     assert client.get("/rounds").json()["rounds"] == []
+
+
+def test_export_stays_frozen_when_customer_mode_and_later_precheck_change(system):
+    client, worker, admin, _ = system
+    path, file = task(system)
+    process_claimed(worker, worker.claim_job("initial-precheck"), "initial-precheck")
+    old = client.get(path).json()["precheck"]
+    old_path = path + "/prechecks/" + old["id"]
+    exported = client.get(old_path + "/report")
+    assert exported.status_code == 200
+    body = {"request_id": str(uuid.uuid4()), "task_id": path.split("/")[-1], "expected_revision": 0, "analysis_mode": "standard", "customer_preference": "UAES", "files": [file]}
+    revised = client.post("/audit-tasks", json=body)
+    assert revised.status_code == 202, revised.text
+    process_claimed(worker, worker.claim_job("changed-recognition"), "changed-recognition", rule_ai=Recognition())
+    current = client.get(path).json()["precheck"]
+    assert current["id"] != old["id"] and current["input"]["customer_preference"] == "UAES"
+    process_claimed(worker, worker.claim_job("changed-precheck"), "changed-precheck")
+    assert client.get(old_path + "/report").content == exported.content
+    assert client.get(old_path).json()["input"] == old["input"]
+    assert client.get(old_path).json()["current"] is False
+    assert client.get(path + "/prechecks/" + current["id"] + "/report").content != exported.content
+    with admin._conn() as conn:
+        assert conn.execute("SELECT count(*) FROM product.audit_rounds").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM product.usage_events").fetchone()[0] == 0
