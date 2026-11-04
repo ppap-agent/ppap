@@ -62,7 +62,7 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             browser = playwright.chromium.launch()
             page = browser.new_page(viewport={"width": 1440, "height": 960})
             page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task")
-            overview = page.get_by_role("region", name="全部文件概览", exact=True)
+            expect(page.get_by_role("region", name="全部文件概览", exact=True)).to_be_visible()
             expect(page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button")).to_have_count(3)
             expect(page.get_by_role("region", name="审核详情", exact=True)).to_have_count(0)
             page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button").first.click()
