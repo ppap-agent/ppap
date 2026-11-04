@@ -96,6 +96,8 @@ python3 deploy/tke/release-current.py build <full-source-sha> --run-id <run-id>
 
 The script verifies the successful run's actual source, four emitted digests, private TCR access, manifest/config hashes, platform, revision label and baked SHA. Only then does it update the four immutable image pins and `PPAP_BUILD_SHA` in `current.yaml`. Review and commit that diff in the authorized PR. A later configuration commit does not change the application source identity. Build never applies Kubernetes objects.
 
+Yunxiao pulls Docker Hub base images through `docker.m.daocloud.io` using Bake named contexts. The context keys retain the exact Dockerfile image versions and any existing digest; GHCR tool images and the Deep-to-Worker build dependency are unchanged. This changes base-image transport only: builds still run in Yunxiao and publish to private TCR. A mirror failure stops the build rather than switching the release provider. When a Docker Hub `FROM` reference changes, update its matching context in `yunxiao.yaml`.
+
 For backup, run the same entrypoint **on the unregistry build host** with the selected commit and existing local Docker registry access:
 
 ```sh

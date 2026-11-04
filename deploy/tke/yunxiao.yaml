@@ -63,8 +63,19 @@ stages:
                 # JSON tag overrides also work on the runner's older Buildx (no tags+=).
                 python3 - <<'PY'
                 import json, os
+                # Named contexts change only base-image transport. Keep the
+                # Dockerfile versions/digests and the Deep -> Worker target edge.
+                bases = {
+                    'api': ['python:3.12-slim-bookworm'],
+                    'worker': ['python:3.12-slim-bookworm'],
+                    'web': ['node:22-alpine', 'nginx:1.27-alpine'],
+                    'deep': ['node:22.22.0-bookworm-slim@sha256:dd9d21971ec4395903fa6143c2b9267d048ae01ca6d3ea96f16cb30df6187d94'],
+                }
                 targets = {
-                    component: {'tags': [os.environ['PPAP_IMAGE_PREFIX'] + component + ':' + tag for tag in (os.environ['PPAP_BUILD_SHA'], 'build-cache')]}
+                    component: {
+                        'tags': [os.environ['PPAP_IMAGE_PREFIX'] + component + ':' + tag for tag in (os.environ['PPAP_BUILD_SHA'], 'build-cache')],
+                        'contexts': {base: 'docker-image://docker.m.daocloud.io/library/' + base for base in bases[component]},
+                    }
                     for component in ('api', 'worker', 'web', 'deep')
                 }
                 with open('/tmp/ppap-current-cache.json', 'w') as output:
