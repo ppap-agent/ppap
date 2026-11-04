@@ -70,12 +70,6 @@ _FIELD_LABELS = {
         "公差带",
         "日期",
         "版本",
-        "USL",
-        "LSL",
-        "Cp",
-        "Cpk",
-        "Pp",
-        "Ppk",
     )
 }
 
@@ -715,6 +709,8 @@ def precheck_measurement(agent):
         "S-12": _mcr_zero_empty,
         "S-16": _mcr_model_phase,
         "S-10": _mcr_samples,
+        "S-14": lambda f: _mcr_batch(f, agent),
+        "S-15": lambda f: _mcr_batch(f, agent, history=True),
         "S-17": _mcr_state_carrier,
         "S-18": _mcr_preservation,
         "S-19": lambda f: f.regions(_MCR),
@@ -2432,14 +2428,20 @@ def _mcr_zero_empty(facts):
 
 
 def _inspection_quartet(facts):
-    for title in ("尺寸报告", "材料报告", "功能报告", "可靠性报告"):
+    reports = {
+        "尺寸报告": ("尺寸报告", "Dimension report", "Dimensional report"),
+        "材料报告": ("材料报告", "Material report"),
+        "功能报告": ("功能报告", "Function report", "Functional report"),
+        "可靠性报告": ("可靠性报告", "Reliability report"),
+    }
+    for title, aliases in reports.items():
         found = False
         for table in facts.tables():
-            if key(title) in key(table["id"]):
+            if any(key(alias) in key(table["id"]) for alias in aliases):
                 facts.columns(table, {"standard": _IR["standard"]})
                 found = True
             for address, item in table["cells"].items():
-                if item.get("state") == "known" and header(item.get("value"), (title,)):
+                if item.get("state") == "known" and header(item.get("value"), aliases):
                     row, column = coordinate_to_tuple(address)
                     facts.read(table, row, column)
                     found = True
@@ -2797,7 +2799,13 @@ def _paired_original_fact(agent, source_id, *, measurement):
         return state_fact(source_id, None, "已提供的配对原件无法读取，尚无业务结论。", status="error")
 
     def compare():
-        for aliases in [("零件号", "零件编号", "Part number", "Part No"), ("零件名称", "Part name"), ("版本号", "版本", "Revision")]:
+        for aliases in [
+            ("零件号", "零件编号", "Part number", "Part No"),
+            ("零件名称", "Part name"),
+            ("版本号", "版本", "Revision"),
+            ("项目号", "项目名称", "UAES项目编号"),
+            ("客户名称", "客户", "Customer"),
+        ]:
             if compact(facts.one(aliases, before=13)) != compact(other.one(aliases, before=13)):
                 facts.sources.extend(other.sources)
                 raise UnknownFact("双形态零件身份或版本不一致，尚未成立同源配对。")
@@ -2852,3 +2860,65 @@ def _msa_relation_scope(agent):
     if agent.group_context is None:
         return state_fact(identifier, None, "已读取范围声明，但冻结文件集合未提供，关联状态尚不能核实。", status="unknown")
     return state_fact(identifier, None, "范围声明已读取；需按具体量具与零件核对控制计划/PGQP1对端，未由名称推定齐套或缺件。", status="unknown")
+
+
+def _mcr_batch(facts, agent, *, history=False):
+    context = agent.group_context
+    if context is None:
+        raise UnknownFact("未提供完整冻结集合，不能核对本批多报告/同时在批的两批。")
+    if context.unavailable_files:
+        raise OSError("本批已提供资料无法读取，跨报告核对未完成。")
+    typed = {item.audit_id for values in context.by_doc_type.values() for item in values}
+    if any(item.audit_id not in typed for item in context.by_audit_id.values()):
+        raise UnknownFact("冻结集合有原件未确定类型，未按文件名推定不存在另一份测量报告。")
+    candidates = {item.audit_id: item for kind, values in context.by_doc_type.items() if kind in {agent.rule.type, "E02", "测量比较报告"} for item in values}
+    others = [item for identity, item in candidates.items() if identity != facts.audit.audit_id]
+    current_part = facts.one(("零件号", "Part number"), before=13)
+    if not others:
+        return "冻结类型集合没有同类另一份测量报告，未追索批次外历史。"
+    project = facts.one(("项目", "项目名称", "项目号"), before=13)
+    version = facts.one(("版本号", "版本", "Revision"), before=13)
+    supplier = facts.one(("供应商名称", "Supplier name"), before=13)
+    stage = facts.one(("项目阶段", "阶段"), before=13)
+    for item in others:
+        other = Facts(item)
+        part = other.one(("零件号", "Part number"), before=13)
+        other_project = other.one(("项目", "项目名称", "项目号"), before=13)
+        if compact(part) != compact(current_part) or compact(project) != compact(other_project):
+            continue
+        other_version = other.one(("版本号", "版本", "Revision"), before=13)
+        other_supplier = other.one(("供应商名称", "Supplier name"), before=13)
+        other_stage = other.one(("项目阶段", "阶段"), before=13)
+        facts.sources.extend(other.sources)
+        if compact(supplier) != compact(other_supplier) or compact(stage) != compact(other_stage):
+            raise DefectFact("B02", "同项目同零件多报告的供应商或阶段信息互斥。")
+        if not history:
+            if compact(version) == compact(other_version):
+                raise DefectFact("W04", "本批存在同零件同版本多份测量报告，需确认重复原因，未择一覆盖。")
+            continue
+        current_batch = facts.one(("批次号", "提交批次"), before=13)
+        other_batch = other.one(("批次号", "提交批次"), before=13)
+        facts.sources.extend(other.sources)
+        if compact(current_batch) == compact(other_batch):
+            continue
+        current_date = normalize_excel_date(facts.one(("报告日期", "测量日期"), before=13))
+        other_date = normalize_excel_date(other.one(("报告日期", "测量日期"), before=13))
+        facts.sources.extend(other.sources)
+        if current_date is None or other_date is None:
+            raise UnknownFact("两批日期未能可靠解析，不能判版本倒挂。")
+
+        def revision(value):
+            text = str(value).strip()
+            match = re.fullmatch(r"[vV]?(\d+)", text)
+            if match:
+                return int(match.group(1))
+            if re.fullmatch(r"[A-Z]", text):
+                return ord(text)
+            raise UnknownFact("两批版本号缺少可验证排序体系，未按普通字符串猜测倒挂。")
+
+        left, right = revision(version), revision(other_version)
+        if current_date > other_date and left < right or other_date > current_date and right < left:
+            raise DefectFact("B02", "同时在本批冻结集合的两批报告存在新日期配旧版本的倒挂。")
+        if left == right:
+            raise DefectFact("W04", "同时在批的两批报告为同版本，需说明新旧与重复原因。")
+    return "已核对当前冻结集合的同件报告，没有调用外部上一批结果。"

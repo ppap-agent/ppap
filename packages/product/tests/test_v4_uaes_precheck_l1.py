@@ -271,3 +271,61 @@ def test_msa_percent_sign_does_not_hide_out_of_range_values(tmp_path):
         assert facts["MSA-PRE-20"]["code"] == "W03"
     facts = execute(tmp_path, "U05", {"GRR报告": [["%GRR", "0.4%"], ["ndc", 8]]})
     assert facts["MSA-PRE-20"]["status"] == "satisfied"
+
+
+def test_measurement_batch_checks_use_only_frozen_typed_originals(tmp_path):
+    from audit.checkers.v4.uaes.precheck_l1 import Facts, _mcr_batch
+    from audit.contracts import GroupContextInput
+
+    def original(filename, version, date_value, stage="PP"):
+        book = Workbook()
+        for row in [["零件号", "P12345"], ["项目号", "CPJ-100"], ["版本号", version], ["供应商名称", "真实供应商"], ["项目阶段", stage], ["批次号", filename], ["报告日期", date_value]]:
+            book.active.append(row)
+        path = tmp_path / filename
+        book.save(path)
+        book.close()
+        return AuditInput(audit_id=filename, file_url=str(path), file_metadata={"original_filename": filename})
+
+    current = original("测量当前.xlsx", "V1", "2026-11-01")
+    other = original("测量前批.xlsx", "V2", "2026-10-01")
+    context = GroupContextInput(by_audit_id={current.audit_id: current, other.audit_id: other}, by_doc_type={"E02": [current, other]})
+    body = preset_rule_body("UAES", "U02")
+    agent = CLASS_BY_ENTRY["U02"](current, RuleInput(rule_id="rules", **{name: value for name, value in body.items() if name != "kind"}), context)
+    facts = Facts(current)
+    result = facts.observe("U02:S-15", lambda: _mcr_batch(facts, agent, history=True))
+    assert result["status"] == "defect"
+    assert result["code"] == "B02"
+    assert {json.loads(source["locator"])["file_version_id"] for source in result["evidence"]["sources"]} == {current.audit_id, other.audit_id}
+    context.unavailable_files = {"late-file": "E02"}
+    result = facts.observe("U02:S-15", lambda: _mcr_batch(facts, agent, history=True))
+    assert result["status"] == "error"
+
+
+def test_dual_form_filename_and_part_are_not_enough_to_establish_project_and_customer(tmp_path):
+    from audit.checkers.v4.uaes.precheck_l1 import _paired_original_fact
+    from audit.contracts import GroupContextInput
+    from docx import Document
+
+    rows = [["零件号", "P12345"], ["零件名称", "支架"], ["版本号", "A"]]
+    book = Workbook()
+    for row in rows:
+        book.active.append(row)
+    target_path = tmp_path / "pair.xlsx"
+    book.save(target_path)
+    book.close()
+    document = Document()
+    table = document.add_table(rows=3, cols=2)
+    for number, row in enumerate(rows):
+        for column, value in enumerate(row):
+            table.cell(number, column).text = value
+    reference_path = tmp_path / "pair.docx"
+    document.save(reference_path)
+    target = AuditInput(audit_id="target", file_url=str(target_path), file_metadata={"original_filename": "pair.xlsx"})
+    reference = AuditInput(audit_id="reference", file_url=str(reference_path), file_metadata={"original_filename": "pair.docx"})
+    body = preset_rule_body("UAES", "U02")
+    agent = CLASS_BY_ENTRY["U02"](
+        target, RuleInput(rule_id="rules", **{name: value for name, value in body.items() if name != "kind"}), GroupContextInput(by_audit_id={"target": target, "reference": reference})
+    )
+    result = _paired_original_fact(agent, "U02:S-08", measurement=True)
+    assert result["status"] == "unknown"
+    assert result["code"] is None
