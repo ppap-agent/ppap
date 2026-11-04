@@ -6,6 +6,7 @@ import {Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, Di
 import {Input} from '../components/ui/input'
 import {Label} from '../components/ui/label'
 import {FileName} from '../journey/file-name'
+import {showToast} from '../components/toast'
 import {sameSnapshot} from './result-projection'
 import {displayFields, validDisplayInfo, type DisplayInfo, type DisplayReceipt, type DisplayReference, type DisplayRequest, type DisplayValues} from './display-info-contract'
 
@@ -61,6 +62,7 @@ export function useDisplayEditor(adapter: AuditDisplayAdapter | undefined, tasks
       if (receipt.state === 'saved') {
         if (!validDisplayInfo(receipt.info) || receipt.info.revision !== request.expected_revision + 1 || !sameSnapshot(receipt.info.values, request.values)) throw new Error('display_saved_mismatch')
         onInfo(request.reference, receipt.info)
+        showToast('显示信息已更正')
         drafts.current.delete(keyOf(request.reference))
         setSelected(key => key === keyOf(request.reference) ? null : key)
       } else if (receipt.state === 'conflict') {

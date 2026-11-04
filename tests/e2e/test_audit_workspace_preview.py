@@ -66,7 +66,7 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="工作台", exact=True).click()
             page.get_by_role("button", name="继续当前审核", exact=True).click()
             page.get_by_role("combobox", name="审核结果筛选", exact=True).click()
-            page.get_by_role("option", name="不符合", exact=True).click()
+            page.get_by_role("option", name=re.compile(r"^不符合 \(")).click()
             page.get_by_role("button", name="专注复核（选做）", exact=True).click()
             focus = page.get_by_role("region", name="专注复核", exact=True)
             focus.get_by_role("button", name="下一待复核", exact=True).click()
@@ -131,6 +131,8 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
                     for name in ("PFMEA.xlsx", "控制计划.xlsx", "过程流程图.pdf"):
                         expect(queue.get_by_text(name, exact=True)).to_be_visible()
                     queue.get_by_role("button").first.click()
+                    page.get_by_role("combobox", name="审核结果筛选", exact=True).click()
+                    page.get_by_role("option", name=re.compile(r"^全部审核项 \(")).click()
                     actions = page.get_by_role("button", name=re.compile("^查看依据 "))
                     expect(actions).to_have_count(2)
                     for action in actions.all():
@@ -161,6 +163,8 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task")
             first = page.get_by_role("button", name="查看依据 1.1", exact=True)
             page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button").first.click()
+            page.get_by_role("combobox", name="审核结果筛选", exact=True).click()
+            page.get_by_role("option", name=re.compile(r"^全部审核项 \(")).click()
             first.click()
             basis = page.get_by_role("dialog").filter(has=page.get_by_role("tab", name="核对原件", exact=True))
             expect(basis.get_by_role("heading", name="1.1 · 频次一致性", exact=True)).to_be_visible()

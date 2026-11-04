@@ -22,6 +22,7 @@ import LegacyJourney from '../journey/intake'
 import {useWorkbenchData} from '../journey/workbench-data'
 import {TEMPLATE_GUIDE_URL} from './template-links'
 import {DeepPrepare} from './deep-prepare'
+import {Toaster} from '../components/toast'
 
 const renderOriginal: OriginalRenderer = (file, evidence, roundId) => <div className="flex h-[65dvh] min-h-96 min-w-0"><RemoteSourcePane file={{file_id: file.file_id, file_version_id: file.id, original_filename: file.original_filename, role: 'target', rule_version_id: null}} roundId={roundId} focus={evidence?.locator ? {location: sourceLocation({locator: evidence.locator}), requestId: 0} : undefined}/></div>
 
@@ -54,4 +55,4 @@ const readRound: ReadRound = (id, signal) => request(`/rounds/${encodeURICompone
 const shareId = new URL(location.href).searchParams.get('share')
 history.replaceState(history.state, '', canonicalAddress(new URL(location.href)))
 if (readAuditRoute(new URL(location.href)).surface === 'templates') location.replace(TEMPLATE_GUIDE_URL)
-else createRoot(document.getElementById('app')!).render(usesLegacyJourney(new URL(location.href)) ? <LegacyJourney/> : <ProductAccess recordValidators={{'requirement-library': isRequirementLibrary}} recordsReturnTo="/requirements"><AuditReviewProvider adapter={nativeReviewAdapter}>{shareId ? <SharedReports key={shareId} requestId={shareId}/> : <NativeAudit/>}</AuditReviewProvider></ProductAccess>)
+else createRoot(document.getElementById('app')!).render(usesLegacyJourney(new URL(location.href)) ? <LegacyJourney/> : <ProductAccess recordValidators={{'requirement-library': isRequirementLibrary}} recordsReturnTo="/requirements"><AuditReviewProvider adapter={nativeReviewAdapter}>{shareId ? <SharedReports key={shareId} requestId={shareId}/> : <NativeAudit/>}<Toaster/></AuditReviewProvider></ProductAccess>)

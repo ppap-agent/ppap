@@ -22,8 +22,10 @@ export function FileList({files, label = '文件清单'}: {files: {id: string; n
   </ItemGroup>
 }
 
-export function FileCollection({files, context = ''}: {files: FileReference[]; context?: string}) {
+/** `limit` keeps dense lists scannable; the remaining files stay one click away. */
+export function FileCollection({files, context = '', limit}: {files: FileReference[]; context?: string; limit?: number}) {
   const [reading, setReading] = useState<{file: FileReference; files: FileReference[]} | null>(null)
+  const [expanded, setExpanded] = useState(false)
   const trigger = useRef<HTMLButtonElement>(null)
   const roundId = reading && !reading.file.source?.material && !reading.file.source?.localFile ? reading.file.roundId : undefined
   const round = useRemote<Round>(roundId ? `/rounds/${encodeURIComponent(roundId)}` : null)
@@ -36,13 +38,15 @@ export function FileCollection({files, context = ''}: {files: FileReference[]; c
   const sources = reading?.files.map(resolve).filter((file): file is SourceFile => Boolean(file)) ?? []
   const readError = round.error || (round.value && !round.loading && !selected ? '未能找到这份文件的本轮固定版本，请打开审核记录核对。' : '')
   if (!files.length) return null
+  const hidden = limit !== undefined && !expanded ? Math.max(0, files.length - limit) : 0
   return <>
-    <FileList label={context ? `${context}的文件清单` : '文件清单'} files={files.map((file, index) => ({
+    <FileList label={context ? `${context}的文件清单` : '文件清单'} files={files.slice(0, files.length - hidden).map((file, index) => ({
       id: `${file.id}:${index}`, name: file.name,
       description: files.filter(item => item.name === file.name).length > 1 ? `版本 ${file.id}` : undefined,
       readLabel: `阅读 ${file.name}${files.filter(item => item.name === file.name).length > 1 ? ` · 版本 ${file.id}` : ''}`,
       onRead: file.source?.material || file.source?.localFile || file.roundId ? event => {trigger.current = event.currentTarget; setReading({file, files})} : undefined,
     }))}/>
+    {limit !== undefined && files.length > limit && <Button variant="link" size="xs" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{expanded ? '收起文件' : `另有 ${hidden} 份文件`}</Button>}
     {reading && !selected && <div className="space-y-2 p-2 text-sm">{readError ? <p role="alert">{readError}</p> : <ReadSkeleton label="正在读取原件入口…" kind="inline"/>}<div className="flex flex-wrap gap-2">{readError && <Button variant="outline" size="sm" onClick={round.refresh}>重新读取原件入口</Button>}<Button variant="ghost" size="sm" onClick={() => {setReading(null); trigger.current?.focus()}}>取消阅读</Button></div></div>}
     <SourceReaderDialog open={Boolean(selected)} onOpenChange={next => {if (!next) setReading(null)}} input={{receiptId: reading?.file.roundId || '文件清单', scope: context, files: sources, evidence: [], clarification: null}} file={selected} onCloseAutoFocus={event => {event.preventDefault(); trigger.current?.focus()}}/>
   </>

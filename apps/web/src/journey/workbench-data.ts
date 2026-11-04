@@ -29,12 +29,12 @@ export function useWorkbenchData(query: string, enabled: boolean, active: boolea
   const latest = useRef(snapshot)
   const inFlight = useRef<AbortController | null>(null)
   const publish = (next: Snapshot) => {latest.current = next; setSnapshot(next)}
-  const read = useCallback(async (more = false) => {
+  const read = useCallback(async (more = false, silent = false) => {
     if (!enabled || !active || inFlight.current) return
     const controller = new AbortController()
     inFlight.current = controller
     const before = latest.current.query === query ? latest.current : empty(query)
-    publish({...before, busy: more ? 'more' : 'refresh'})
+    if (!silent) publish({...before, busy: more ? 'more' : 'refresh'})
     const suffix = `?limit=50&q=${encodeURIComponent(query)}`
     const results = await Promise.allSettled([
       readPages<Draft>(`/drafts${suffix}`, before.drafts, more, controller.signal, body => ({rows: (body as DraftList).drafts, next: (body as DraftList).next_offset})),
@@ -54,7 +54,8 @@ export function useWorkbenchData(query: string, enabled: boolean, active: boolea
     if (latest.current.query !== query) publish(empty(query))
     if (!enabled || !active) return
     const visible = () => !document.hidden && !['requirements', 'usage'].includes(new URLSearchParams(location.search).get('view') || '')
-    const refresh = () => {if (visible()) void read()}
+    // Polling and focus reads are silent; the list updates in place without a busy flash.
+    const refresh = () => {if (visible()) void read(false, true)}
     refresh()
     const timer = window.setInterval(refresh, 15000)
     window.addEventListener('focus', refresh)

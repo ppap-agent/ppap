@@ -197,7 +197,7 @@ run_native() {
     export PPAP_DEEP_SANDBOX_PROFILE="$PPAP_REMOTE_DEEP_SANDBOX_PROFILE"
     export PPAP_USAGE_CHARGE_ENABLED=false LOG_FORMAT=text
     exec uv run --no-sync --env-file .env --package api python -m uvicorn api:app \
-      --host 127.0.0.1 --port 8080 --reload --reload-dir packages --reload-dir services --no-access-log
+      --host 127.0.0.1 --port 8080 --reload --reload-dir packages --no-access-log
   ) &
   tunnel_pids+=("$!")
   wait_for_port 8080

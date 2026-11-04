@@ -97,7 +97,7 @@ export function ProductAccess({children, recordValidators = emptyValidators, rec
   return <div className={"flex min-h-dvh flex-col bg-background text-foreground"}>
     <header className={"flex items-center gap-3 p-6"}><ClipboardCheck/><strong>PPAP</strong></header>
     <main className={"m-auto flex w-full max-w-md flex-col gap-5 px-6 pb-16"}>
-      <h1 className={"text-2xl font-semibold tracking-tight"}>登录审核工作台</h1>
+      <div className="space-y-2"><h1 className={"text-2xl font-semibold tracking-tight"}>登录审核工作台</h1><p className="text-sm text-muted-foreground">按客户规则逐项审核 PPAP 文件，结果保留原件证据与报告。登录后回到当前页面。</p></div>
       {!ready ? <ReadSkeleton label="正在确认登录状态…" kind="detail" rows={2}/> : error ? <>
         <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>
         <Button onClick={() => setRevision(value => value + 1)}>{canSignIn ? '重新读取登录状态' : '重试连接'}</Button>

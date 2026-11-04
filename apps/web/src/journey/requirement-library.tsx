@@ -2,7 +2,7 @@
 // and projects/13261964020862199279/screens/de9558b8e43347e2a006989d2b41b790.
 import {useEffect, useRef, useState, type Dispatch, type MouseEvent, type SetStateAction} from 'react'
 import {createPortal} from 'react-dom'
-import {ArrowLeft, ArrowRight, BookOpen, Check, ChevronDown, ChevronRight, GitBranch, Loader2, Plus, Search, Trash2, UploadCloud} from 'lucide-react'
+import {ArrowLeft, ArrowRight, BookOpen, Check, ChevronDown, ChevronRight, GitBranch, Info, Loader2, Plus, Search, Trash2, UploadCloud} from 'lucide-react'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Badge} from '../components/ui/badge'
 import {Button} from '../components/ui/button'
@@ -255,6 +255,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
         </div>
       </header>
       {draftSelected ? <fieldset disabled={locked} className="min-w-0 space-y-4">
+        <p className="flex items-center gap-2 rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground"><Info aria-hidden="true" className="size-3.5 shrink-0"/>草稿只保存在当前浏览器；换设备或清除浏览器数据前，请先保存版本。</p>
         <RuleExtraction basis={current.basis} readonly={locked} onChange={basis => edit(draft => ({...draft, basis}), reviewedBasisContent(current.basis) !== reviewedBasisContent(basis))}/>
         <div className="grid gap-4 md:grid-cols-2"><label className="grid gap-1.5">要求名称<Input value={current.basis.source.title} onChange={event => {const value = event.currentTarget.value; edit(draft => ({...draft, basis: {...draft.basis, source: {...draft.basis.source, title: value}}}))}}/></label><label className="grid gap-1.5">版本号<Input value={current.basis.source.version} onChange={event => {const value = event.currentTarget.value; edit(draft => ({...draft, basis: {...draft.basis, source: {...draft.basis.source, version: value}}}))}}/></label></div>
         <div className="grid gap-4 lg:grid-cols-3">{scopeFields.map(({key, flag, label}) => <div className="min-w-0 space-y-1.5" key={key}><label className="grid gap-1.5">适用{label}<Input disabled={locked || current.scope[flag] === true} value={current.scope[key]} onChange={event => {const value = event.currentTarget.value; edit(draft => ({...draft, scope: {...draft.scope, [key]: value}}))}}/></label><label className="flex min-h-9 items-center gap-2 text-muted-foreground max-md:min-h-11"><Checkbox disabled={locked} checked={current.scope[flag] === true} onCheckedChange={value => edit(draft => ({...draft, scope: {...draft.scope, [flag]: value === true}}))}/>不限定{label}</label></div>)}</div>

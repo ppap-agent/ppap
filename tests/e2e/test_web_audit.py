@@ -123,7 +123,7 @@ class WebAuditLoopTests(unittest.TestCase):
             page.goto(f"{WEB}/audit?round={original['id']}")
             expect(page.get_by_role("heading", name="历史审核", exact=True)).to_be_visible()
             records = page.get_by_role("region", name="历史机器记录", exact=True)
-            expect(records.get_by_text("原机器记录：满足", exact=True)).to_be_visible()
+            expect(records.get_by_text("原机器记录：符合", exact=True)).to_be_visible()
             records.get_by_role("button", name="核对记录原件", exact=True).click()
             original_reader = page.get_by_role("dialog", name="历史原件对照", exact=True)
             download = original_reader.get_by_role("link", name="下载原件", exact=True)
