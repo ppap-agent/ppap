@@ -6,7 +6,7 @@ from decimal import Decimal
 
 from audit.checkers.v3.excel_agent import rule
 
-from .native import UaesSourceAgent, UnknownFact, blank, number
+from .native import UaesSourceAgent, UnknownFact, blank, header, key, number
 
 
 class UaesProcessFlowAgent(UaesSourceAgent):
@@ -94,21 +94,37 @@ class UaesCapabilityAgent(UaesSourceAgent):
 
     @rule("能力汇总逐行结果目标及不足项措施")
     def rule_3(self):
-        rows = self.native().rows(
-            {
-                "cpk": ("CPK结果值", "CPK结果", "CPK"),
-                "ppk": ("PPK结果值", "PPK结果", "PPK"),
-                "cpk_target": ("CPK目标值", "CPK目标"),
-                "ppk_target": ("PPK目标值", "PPK目标"),
-                "reaction": ("反应计划", "备注", "反应计划或备注"),
-            },
-            title=("能力值汇总", "能力汇总"),
-            anchor=("cpk", "ppk"),
-        )
+        facts = self.native()
+        aliases = {
+            "cpk": ("CPK结果值", "CPK结果", "CPK"),
+            "ppk": ("PPK结果值", "PPK结果", "PPK"),
+            "cpk_target": ("CPK目标值", "CPK目标"),
+            "ppk_target": ("PPK目标值", "PPK目标"),
+            "reaction": ("反应计划", "备注", "反应计划或备注"),
+        }
+        table = facts.table(("能力值汇总", "能力汇总"))
+        start, _ = facts.columns(table, aliases)
+        # Optional subject columns extend membership without becoming new
+        # required source fields. Results must not decide whether a row exists.
+        for name, labels in {"characteristic": ("特性名称", "特性描述"), "sequence": ("序号", "编号", "特性编号")}.items():
+            matches = [column for column in range(1, table["cols"] + 1) if header(facts.readers[table["id"]].cell(start, column).get("value"), labels)]
+            if len(matches) > 1:
+                raise UnknownFact("能力汇总业务主体列有多个候选，需确认原件范围。")
+            if matches:
+                aliases[name] = labels
+        rows = facts.rows(aliases, title=("能力值汇总", "能力汇总"))
+        checked = 0
         for row in rows:
+            subjects = [row[name] for name in ("characteristic", "sequence") if name in row]
+            boundary = subjects if any(not blank(value) for value in subjects) else [row["cpk"], row["ppk"]]
+            if any(key(value).startswith(marker) for value in boundary for marker in ("编制/日期", "审核/日期", "编制人", "批准人")):
+                break
+            checked += 1
             if number(row["cpk"]) < number(row["cpk_target"]) or number(row["ppk"]) < number(row["ppk_target"]):
                 if blank(row["reaction"]):
                     return "NG", "能力汇总存在低于目标且没有反应计划或备注的行。"
+        if not checked:
+            raise UnknownFact("能力汇总没有可确认的业务行，不能按空范围通过。")
         return "PASS", "全部能力汇总行达到目标，或对应不足项已有反应计划/备注。"
 
     @rule("能力目录覆盖PGQP1特殊特性")
