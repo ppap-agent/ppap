@@ -441,8 +441,12 @@ def test_prepared_ordinary_task_resolves_an_explicit_candidate_in_the_same_task(
         expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_disabled()
         page.get_by_role("combobox", name="已接收.xlsx 的适用规则", exact=True).click()
         page.get_by_role("option", name="规则 B", exact=True).click()
-        expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
-        page.get_by_role("button", name="开始识别", exact=True).click()
+        expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
+        expect(page.get_by_role("combobox", name="已接收.xlsx 的适用规则", exact=True)).to_contain_text("规则 B")
+        expect(page.get_by_role("status").filter(has_text="文件或规则选择已有变更，请重新识别后再确认或结束任务。")).to_be_visible()
+        expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_disabled()
+        assert http.task["id"] == original_id and len(http.task_commands) == 1
+        page.get_by_role("button", name="按所选规则重新识别", exact=True).click()
         expect(page.get_by_role("heading", name="正在识别文件与匹配规则", exact=True)).to_be_visible()
         http.task.update(state="pending_confirm", estimated_points=500)
         http.task["files"][0]["match"] = {"state": "matched", "metadata": metadata, "document_type": "控制计划", "rule": rules[1], "gaps": []}
