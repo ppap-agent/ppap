@@ -120,7 +120,8 @@ class UaesCapabilityAgent(UaesSourceAgent):
             if any(key(value).startswith(marker) for value in boundary for marker in ("编制/日期", "审核/日期", "编制人", "批准人")):
                 break
             checked += 1
-            if number(row["cpk"]) < number(row["cpk_target"]) or number(row["ppk"]) < number(row["ppk_target"]):
+            cpk, cpk_target, ppk, ppk_target = (number(row[name]) for name in ("cpk", "cpk_target", "ppk", "ppk_target"))
+            if cpk < cpk_target or ppk < ppk_target:
                 if blank(row["reaction"]):
                     return "NG", "能力汇总存在低于目标且没有反应计划或备注的行。"
         if not checked:
