@@ -697,6 +697,8 @@ def test_bad_supplemental_indices_do_not_erase_seals_or_publish_authoritative_wo
 @pytest.fixture(autouse=True)
 def no_live_transports(monkeypatch):
     """Caught provider errors must not hide accidental live requests."""
+    import subprocess
+
     import httpx
     import requests
 
@@ -710,6 +712,11 @@ def no_live_transports(monkeypatch):
         attempted.append("async")
         raise AssertionError("Shadow tests must not perform network requests")
 
+    def reject_process(*args, **kwargs):
+        attempted.append("process")
+        raise AssertionError("Shadow tests must not start external processes")
+
+    monkeypatch.setattr(subprocess, "Popen", reject_process)
     monkeypatch.setattr(httpx.HTTPTransport, "handle_request", reject)
     monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", reject_async)
     monkeypatch.setattr(requests.sessions.Session, "request", reject)
