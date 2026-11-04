@@ -226,12 +226,17 @@ const confirmationRefusals: Record<string, string> = {
 /** This adapter owns transport only. Task, rules and execution remain server facts. */
 export function createNativeAuditAdapter(options: {deepOffered: boolean; customers: string[]; personalDriveUpload?: boolean}): AuditIntakeAdapter {
   const validations = new Map<string, string>()
-  function validation(job: ValidationJob, file: AuditTask['files'][number], requestId?: string) {
-    if (requestId && job.id !== requestId || !job.id || job.source_file_id !== file.file.file_id || job.source_file_version_id !== file.file.id) throw new Error('预检查回执不属于这份文件版本或原请求。')
-    validations.set(file.file.id, job.id)
+  type Scope = components['schemas']['FileValidationScope']
+  const sameScope = (left?: Scope | null, right?: Scope | null) => (!left && !right) || Boolean(left && right && left.customer_preference === right.customer_preference && left.preset_key === right.preset_key)
+  const validationKey = (version: string, scope?: Scope | null) => `${version}:${scope ? 'UAES:U13' : 'ordinary'}`
+  function validation(job: ValidationJob, file: AuditTask['files'][number], requestId?: string, scope?: Scope | null, restore = false) {
+    if (requestId && job.id !== requestId || !job.id || job.source_file_id !== file.file.file_id || job.source_file_version_id !== file.file.id || !restore && !sameScope(job.scope, scope)) throw new Error('预检查回执不属于这份文件版本、用途或原请求。')
+    if (job.scope && (job.scope.customer_preference !== 'UAES' || job.scope.preset_key !== 'U13')) throw new Error('预检查回执的用途无法核实。')
+    validations.set(validationKey(file.file.id, job.scope), job.id)
     const result = job.result
-    if (result && 'state' in result) return {validation_id: job.id, validation: result}
-    return {validation_id: job.id, validation: {state: job.status === 'failed' ? 'error' as const : 'checking' as const, reasons: [job.status === 'failed' ? '文件预检查失败，请核对原文件。' : '正在检查文件内容…']}}
+    const purpose = job.scope ? {validation_scope: job.scope} : {}
+    if (result && 'state' in result) return {validation_id: job.id, validation: result, ...purpose}
+    return {validation_id: job.id, validation: {state: job.status === 'failed' ? 'error' as const : 'checking' as const, reasons: [job.status === 'failed' ? '文件预检查失败，请核对原文件。' : '正在检查文件内容…']}, ...purpose}
   }
   return {
     deepOffered: options.deepOffered,
@@ -257,15 +262,34 @@ export function createNativeAuditAdapter(options: {deepOffered: boolean; custome
       readFile: (fileId, versionId) => request(`/files/${encoded(fileId)}/versions/${encoded(versionId)}`),
     },
     ...nativeUploads,
-    async readValidation(file) {
-      const known = file.validation_id || validations.get(file.file.id)
-      if (known) return validation(await request<ValidationJob>(`/file-validations/${encoded(known)}`), file, known)
+    async readValidation(file, requestedScope) {
+      const scope = requestedScope === undefined ? file.validation_scope : requestedScope
+      const key = validationKey(file.file.id, scope)
+      const restore = requestedScope === undefined && Boolean(file.validation_id) && !file.validation_scope
+      const known = (!file.validation_scope || sameScope(file.validation_scope, scope) ? file.validation_id : undefined) || validations.get(key)
+      if (known) return validation(await request<ValidationJob>(`/file-validations/${encoded(known)}`), file, known, scope, restore)
       const latest = await request<components['schemas']['LatestFileValidation']>(`/files/${encoded(file.file.file_id)}/versions/${encoded(file.file.id)}/validation`)
-      if (latest.validation) return validation(latest.validation, file)
+      if (latest.validation && sameScope(latest.validation.scope, scope)) return validation(latest.validation, file, undefined, scope)
       const id = crypto.randomUUID()
-      // Remember before submission: a missing reply grants readback, not another job.
-      validations.set(file.file.id, id)
-      return validation(await request<ValidationJob>('/file-validations', 'POST', {request_id: id, source_file_id: file.file.file_id, source_file_version_id: file.file.id}), file, id)
+      // Keep identity before submission, separately for each original and purpose.
+      // A missing reply grants readback of that request, never a replacement POST.
+      validations.set(key, id)
+      try {return validation(await request<ValidationJob>('/file-validations', 'POST', {request_id: id, source_file_id: file.file.file_id, source_file_version_id: file.file.id, ...(scope ? {scope} : {})}), file, id, scope)}
+      catch (failure) {
+        // Preserve readback identity in the prepared file even if this adapter
+        // is replaced after a customer-directory refresh or a page reload.
+        throw Object.assign(failure instanceof Error ? failure : new Error('预检查回执尚未核对。'), {validationRequestId: id})
+      }
+    },
+    precheck: {
+      async history(id) {return (await request<components['schemas']['PrecheckHistory']>(`${taskPath(id)}/prechecks`)).snapshots},
+      read: (id, snapshot) => request(`${taskPath(id)}/prechecks/${encoded(snapshot)}`),
+      retry: (task, requestId) => request(`${taskPath(task.id)}/prechecks`, 'POST', {request_id: requestId, expected_revision: task.input_revision ?? 0}),
+      async report(id, snapshot) {
+        const response = await fetch(`${apiUrl}${taskPath(id)}/prechecks/${encoded(snapshot)}/report`, {credentials: 'include'})
+        if (!response.ok || !response.headers.get('Content-Type')?.toLowerCase().startsWith('text/html')) throw new Error('预检记录尚不可读取。')
+        return response.blob()
+      },
     },
     prepareReaudit: roundId => request(`/rounds/${encoded(roundId)}/reaudit-inputs`),
     match: (files, mode, customer, previous, requestId, predecessorId, preparation) => request<AuditTask>('/audit-tasks', 'POST', {
