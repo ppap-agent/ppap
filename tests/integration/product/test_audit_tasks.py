@@ -2236,6 +2236,9 @@ def test_v4_nio_pair_keeps_frozen_dual_original_evidence_through_worker_and_api(
     assert confirmed.status_code == 201, confirmed.text
     round_id = confirmed.json()["round_id"]
     job = worker.claim_job("nio-audit")
+    if job.kind == "task_precheck":
+        process_claimed(worker, job, "nio-audit")
+        job = worker.claim_job("nio-audit")
     assert job.kind == "audit"
     process_claimed(worker, job, "nio-audit")
     frozen = client.get("/rounds/" + round_id).json()

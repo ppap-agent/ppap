@@ -243,6 +243,12 @@ class ExcelAgent(BaseAgent):
         if actual != expected:
             raise RuntimeError(f"{type(self).__name__} hardcoded rule contract mismatch: checker_categories={actual!r}, expected={expected!r}")
 
+        # V4 binds immutable source clause IDs to methods explicitly. The
+        # legacy ordinal JSON contract does not apply to those source IDs.
+        # Keep the internal method declaration check above for every profile.
+        if getattr(self.rule, "rule_profile", None) == "v4":
+            return
+
         raw_rules = getattr(self.rule, "rules", []) or []
         if not isinstance(raw_rules, list) or not raw_rules:
             return

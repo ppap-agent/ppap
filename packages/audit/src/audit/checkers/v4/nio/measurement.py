@@ -7,6 +7,7 @@ from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from types import MappingProxyType
+from typing import Any
 
 from audit.checkers.v3.dimension_measurement_excel_agent import (
     RULE_3_4_TARGET_DIRECTIONS,
@@ -85,7 +86,7 @@ class NioMeasurementAgent(DimensionMeasurementExcelAgent):
         return super()._finalize_rule_result(status=status, message=message, ctx=ctx)
 
     def _rows(self, ctx, *fields, optional=()):
-        result = []
+        result: list[Any] = []
         for sheet, section, columns in self._sections(ctx, "测点号", *fields, optional=optional):
             result.extend((sheet, row, columns) for row in section.rows_from(columns) if row.is_present("测点号"))
         if not result:

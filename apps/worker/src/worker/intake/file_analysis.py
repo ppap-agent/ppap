@@ -93,19 +93,45 @@ def analyze_file(
             notices.append("metadata_extraction_failed")
 
     candidates = [rule for rule in (rules if scoped else latest_rule_versions(rules)) if rule.get("kind") == "engine"]
+    aliases = {"uaes": "uaes", "联电": "uaes", "理想": "理想", "理想汽车": "理想", "蔚来": "蔚来", "nio": "蔚来"}
+    customer_text = html.unescape(re.sub(r"<[^>]+>", "\n", text))
+    explicit_customers = {
+        aliases[match.group(1).casefold()]
+        for match in re.finditer(r"(?:审核客户|客户(?:名称|名)?|customer(?:\s+name)?)\s*[:：]?\s*(UAES|联电|理想汽车|理想|蔚来|NIO)(?=\s|$|[，,;；/])", customer_text, re.IGNORECASE)
+    }
     selected_customer = (customer_preference or "").strip().casefold()
+    if not selected_customer and len(explicit_customers) == 1:
+        selected_customer = next(iter(explicit_customers))
     customer_presets = [rule for rule in candidates if rule.get("rule_profile") == "v4" and selected_customer in {value.casefold() for value in rule.get("customers") or []}]
     v4_mode = bool(scoped and customer_presets)
+    unresolved_v4_customer = bool(scoped and not selected_customer and any(rule.get("rule_profile") == "v4" for rule in candidates))
     candidates = [rule for rule in candidates if rule.get("rule_profile") != "v4"] + (customer_presets if v4_mode else [])
+    source_type = None
+    source_types = {}
+    if v4_mode:
+        from audit.presets import customer_presets as source_presets
+
+        # E document identities are source-owned. They do not extend the old
+        # enum or use an unrelated customer's nearest document type.
+        source_types = {
+            preset.source_type: re.sub(r"审核规则$", "", preset.title) for preset in source_presets() if preset.customer.casefold() == selected_customer and preset.source_type.startswith("E")
+        }
+        source_matches = {
+            preset.source_type
+            for preset in source_presets()
+            if preset.customer.casefold() == selected_customer and preset.source_type.startswith("E") and re.sub(r"审核规则$", "", preset.title) in filename
+        }
+        if len(source_matches) == 1:
+            source_type = next(iter(source_matches))
     inferred = PpapDocumentType.infer_from_signals(filename=filename, content=excerpt[:2000], min_margin=1 if scoped else 0)
-    if scoped and excerpt.strip() and "metadata_extraction_failed" not in notices:
+    if scoped and not source_type and excerpt.strip() and "metadata_extraction_failed" not in notices:
         evidence = PpapDocumentType.rank_from_signals(filename=filename, content=excerpt[:2000])
         if inferred == PpapDocumentType.UNKNOWN or not evidence[0].alias_hits:
             inferred = PpapDocumentType.UNKNOWN
             try:
                 classified = ai.structured_completion(
                     system_prompt=PromptManager.get_system_prompt("ppap_expert"),
-                    user_prompt=PromptManager.get_document_classification_prompt(excerpt, "\n".join(document_types())),
+                    user_prompt=PromptManager.get_document_classification_prompt(excerpt, "\n".join([*document_types(), *(f"{code} {title}" for code, title in source_types.items())])),
                     max_tokens=100,
                     temperature=0.0,
                     operation="document_classification",
@@ -114,18 +140,14 @@ def analyze_file(
                 )
                 if not isinstance(classified, str) or not classified.strip():
                     raise ValueError("invalid_document_classification")
+                classified_source = [code for code, title in source_types.items() if classified.strip() in {code, title, f"{code} {title}"}]
+                source_type = classified_source[0] if len(classified_source) == 1 else None
                 inferred = PpapDocumentType.from_string(classified)
-                if inferred == PpapDocumentType.UNKNOWN and classified.strip().casefold() not in {"未知", "unknown"}:
+                if not source_type and inferred == PpapDocumentType.UNKNOWN and classified.strip().casefold() not in {"未知", "unknown"}:
                     raise ValueError("invalid_document_classification")
             except Exception:
                 notices.append("document_classification_failed")
-    explicit_customers = set()
-    if v4_mode:
-        aliases = {"uaes": "uaes", "联电": "uaes", "理想": "理想", "理想汽车": "理想", "蔚来": "蔚来", "nio": "蔚来"}
-        customer_text = html.unescape(re.sub(r"<[^>]+>", "\n", excerpt))
-        for match in re.finditer(r"(?:审核客户|客户(?:名称|名)?|customer(?:\s+name)?)\s*[:：]?\s*(UAES|联电|理想汽车|理想|蔚来|NIO)(?=\s|$|[，,;；/])", customer_text, re.IGNORECASE):
-            explicit_customers.add(aliases[match.group(1).casefold()])
-    customer_conflict = bool(explicit_customers - {selected_customer})
+    customer_conflict = bool((v4_mode or unresolved_v4_customer) and explicit_customers - {selected_customer})
     matched_id = None
     ambiguous_ids: list[str] = []
     matching = "unmatched"
@@ -134,13 +156,20 @@ def analyze_file(
     elif customer_conflict:
         matching = "failed"
         notices.append("matching_customer_conflict")
+    elif unresolved_v4_customer:
+        matching = "unmatched"
+        notices.append("matching_customer_required")
     elif scoped and reference_only:
         matching = "reference"
     elif scoped and inferred == PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST and not v4_mode:
         matching = "reference"
     elif scoped:
-        customers = tuple(dict.fromkeys(value.strip().casefold() for value in (customer_preference, metadata["customer"]) if value and value.strip()))
-        typed_rules = [rule for rule in candidates if inferred != PpapDocumentType.UNKNOWN and PpapDocumentType.from_string(rule.get("type") or "") == inferred]
+        customers = tuple(dict.fromkeys(value.strip().casefold() for value in (selected_customer if v4_mode else customer_preference, metadata["customer"]) if value and value.strip()))
+        typed_rules = [
+            rule
+            for rule in candidates
+            if (rule.get("type") == source_type if source_type else inferred != PpapDocumentType.UNKNOWN and PpapDocumentType.from_string(rule.get("type") or "") == inferred)
+        ]
         preset_typed = [rule for rule in typed_rules if rule.get("rule_profile") == "v4"]
         if preset_typed:
             typed_rules = preset_typed
@@ -185,7 +214,7 @@ def analyze_file(
     selected = next((rule for rule in candidates if rule["id"] == matched_id), None)
     return {
         "metadata": metadata,
-        "document_type": selected.get("type") if selected else (None if inferred == PpapDocumentType.UNKNOWN else inferred.get_type_name()),
+        "document_type": selected.get("type") if selected else (source_type or (None if inferred == PpapDocumentType.UNKNOWN else inferred.get_type_name())),
         "matched_rule_id": matched_id,
         "matching_status": matching,
         "notices": notices,
