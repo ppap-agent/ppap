@@ -205,7 +205,7 @@ def _fact_list(agent, entry, operations, *, states=None):
         elif identity in operations:
             result.append(facts.observe(item["id"], lambda operation=operations[identity]: operation(facts)))
         else:
-            result.append(state_fact(item["id"], None, "本分则项目需要额外范围、关联或视觉事实；当前尚未核实。", status="unknown"))
+            result.append(state_fact(item["id"], None, "本分则判据尚未自动执行；其结论未核实，需要补充实现或核对所需的范围、关联及视觉事实。", status="not_checked"))
     return result
 
 
