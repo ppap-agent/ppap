@@ -17,6 +17,8 @@ def receipt():
             "customer_preference": "",
             "effective_customer": "UAES",
             "analysis_mode": "deep",
+            "execution_revision": "standard-v1:frozen-policy",
+            "execution_policy": {"app_revision": "frozen-build"},
             "files": [
                 {
                     "file": {"id": "version-old", "original_filename": "<script>evil</script>.png"},
@@ -58,7 +60,7 @@ def test_export_preserves_actual_status_for_images_unavailable_sources_and_failu
     assert saved == before
     assert record == render_precheck_record(saved)
     text = record.decode()
-    for expected in [label, "UAES", "客户预置规则", "U13", "rule-old", "version-old", "UaesPhotoAgent", "原始照片内容尚不能核实。"]:
+    for expected in [label, "UAES", "客户预置规则", "U13", "rule-old", "version-old", "UaesPhotoAgent", "原始照片内容尚不能核实。", "standard-v1:frozen-policy", "frozen-build"]:
         assert expected in text
     assert "<script>" not in text and "<img onerror" not in text
     assert "&lt;script&gt;" in text and "&lt;img onerror" in text

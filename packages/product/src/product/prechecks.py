@@ -138,6 +138,7 @@ def render_precheck_record(receipt: dict) -> bytes:
         f"<p>{escape(overall.get(receipt.get('status'), '本次预检执行状态尚未核实。'))}</p>",
         f"<p>审核客户：{escape(source.get('effective_customer') or source.get('customer_preference') or '自动识别')}<br>任务：{escape(source['task_id'])}"
         f"<br>输入修订：{escape(source['input_revision'])}<br>快照：{escape(receipt['id'])}<br>保存时间：{escape(receipt['created_at'])}</p>",
+        f"<p>执行版本：{escape(source.get('execution_revision'))}<br>应用版本：{escape((source.get('execution_policy') or {}).get('app_revision'))}</p>",
     ]
     by_version = {row["file_version_id"]: row for row in result.get("files") or []}
     for file in source["files"]:
