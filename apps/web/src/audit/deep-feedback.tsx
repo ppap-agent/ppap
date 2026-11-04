@@ -1,6 +1,7 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react'
 import {Check, ChevronDown, ChevronUp, RefreshCw, X} from 'lucide-react'
 import type {components} from '../generated/openapi'
+import {resultLabel, resultTone, type ResultStatus} from './status-labels'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Badge} from '../components/ui/badge'
 import {Button} from '../components/ui/button'
@@ -186,7 +187,7 @@ function FeedbackEvidence({source, at, file, open, visited, roundId, renderOrigi
 }
 
 function DeepResults({view, files}: {view: DeepFeedbackView; files: FileVersion[]}) {
-  const labels: Record<string, string> = {PASS: '满足', NG: '不符合', UNABLE: '无法判断', ERR: '技术错误', NA: '不适用'}
+  const labels: Record<string, string> = resultLabel
   return <div className="space-y-5">{view.results.filter(result => result.current).map(result => {
     const index = view.results.indexOf(result), previous = view.results[index - 1]
     const adopted = result.inputs.flatMap(input => (input.rule as {body?: {appendix?: Array<{id: string; content: string}>}} | undefined)?.body?.appendix || [])
@@ -199,7 +200,7 @@ function DeepResults({view, files}: {view: DeepFeedbackView; files: FileVersion[
         const locator = finding.locator as components['schemas']['FindingLocator'] | null
         const filename = files.find(file => file.id === locator?.file_version_id)?.original_filename || '原件未定位'
         const identity = `${filename} · ${locator?.rule_item_id || '条款未定位'}`
-        return <article key={String(finding.item_key || at)} aria-label={identity} className="space-y-2 border-t py-3"><p className="break-words text-xs text-muted-foreground">{identity}</p><div className="flex flex-wrap items-center gap-2"><Badge variant={finding.status === 'NG' ? 'destructive' : finding.status === 'PASS' ? 'success' : 'outline'}>{labels[String(finding.status)] || '结果待核对'}</Badge><h4 className="text-sm font-medium">{String(finding.item || finding.item_key || '审核要求')}</h4></div>
+        return <article key={String(finding.item_key || at)} aria-label={identity} className="space-y-2 border-t py-3"><p className="break-words text-xs text-muted-foreground">{identity}</p><div className="flex flex-wrap items-center gap-2"><Badge variant={Object.hasOwn(resultLabel, String(finding.status)) ? resultTone(finding.status as ResultStatus) : 'outline'}>{labels[String(finding.status)] || '结果待核对'}</Badge><h4 className="text-sm font-medium">{String(finding.item || finding.item_key || '审核要求')}</h4></div>
           {before && <p className="text-sm" aria-label="逐项结果变化">{before.status === finding.status ? `结论未变：${labels[String(finding.status)] || '结果待核对'}` : `此前：${labels[String(before.status)] || '结果待核对'} → 当前：${labels[String(finding.status)] || '结果待核对'}`}</p>}
           <p className="whitespace-pre-wrap text-sm leading-relaxed">{String(finding.classification || '')}</p>{Boolean(finding.suggestions) && <p className="whitespace-pre-wrap text-sm text-muted-foreground">{String(finding.suggestions)}</p>}</article>
       })}

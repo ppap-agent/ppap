@@ -136,7 +136,7 @@ def test_category_and_explicit_queue_survive_task_back_and_reload(partial_error,
         def check_selected():
             expect(page.get_by_role("tab", name=re.compile("^" + expected))).to_have_attribute("aria-selected", "true")
             row = row_for(expected)
-            expect(row).to_contain_text("不满足 1")
+            expect(row).to_contain_text("不符合 1")
             if partial_error:
                 expect(row).to_contain_text("存在执行异常")
                 expect(row).to_contain_text("读取失败的控制计划.xlsx")

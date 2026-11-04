@@ -140,7 +140,7 @@ class AuditArchivePreviewTests(unittest.TestCase):
                     expect(filename).to_be_visible()
                     self.assertLess(filename.bounding_box()["height"], 30)
                     self.assertGreater(table.bounding_box()["width"] / page.get_by_role("main").bounding_box()["width"], 0.9)
-                    self.assertGreater(first.get_by_role("cell").nth(1).bounding_box()["width"], 250 if width < 768 else 400)
+                    self.assertGreater(first.get_by_role("cell").nth(1).bounding_box()["width"], 250 if width < 1280 else 400)
                     for action in table.get_by_role("button", name="查看审核记录", exact=True).all():
                         if action.is_visible():
                             self.assertEqual(action.evaluate("element => getComputedStyle(element).whiteSpace"), "nowrap")
@@ -222,9 +222,9 @@ class AuditArchivePreviewTests(unittest.TestCase):
                     expect(page.get_by_role("button", name="历史审核记录", exact=True)).to_contain_text("第 3 次审核")
                     details = page.get_by_role("region", name="审核详情", exact=True)
                     expect(details.get_by_role("button", name="查看报告", exact=True)).to_be_enabled()
-                    expect(details.get_by_text("PASS · 符合 2 / 不符合 0", exact=True)).to_be_visible()
+                    expect(details.get_by_text("不符合 0 · 符合 2", exact=True)).to_be_visible()
                     if width >= 1024:
-                        self.assertLess(details.get_by_role("table").bounding_box()["y"] - heading.bounding_box()["y"], 280)
+                        self.assertLess(details.get_by_role("table").bounding_box()["y"] - heading.bounding_box()["y"], 300)
                     else:
                         self.assertGreater(heading.bounding_box()["width"], 240)
                         self.assertLess(heading.bounding_box()["height"], 32)

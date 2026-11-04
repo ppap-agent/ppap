@@ -9,10 +9,10 @@ import {RecordedReview, frozenOriginal} from './recorded-review'
 import {sameSnapshot} from './result-projection'
 import type {OriginalRenderer} from './review-content'
 import {ReviewEditorContext} from './review-editor'
+import {resultLabel, resultTone} from './status-labels'
 
 type Finding = components['schemas']['Finding']
 type Citation = components['schemas']['ReviewCitation']
-const labels = {PASS: '满足', NG: '不符合', ERR: '技术错误', UNABLE: '无法判断', NA: '不适用'}
 
 export function HistoricalFindings({findings, roundId, resultAttempt, versions, originals, renderOriginal, fileVersionId, title = '历史机器记录'}: {findings: Finding[]; roundId: string; resultAttempt: number | null; versions: string[]; originals: components['schemas']['AuditArchiveOriginal'][]; renderOriginal?: OriginalRenderer; fileVersionId?: string; title?: string}) {
   const reviewEditor = useContext(ReviewEditorContext)
@@ -25,7 +25,7 @@ export function HistoricalFindings({findings, roundId, resultAttempt, versions, 
   return <section aria-label={title} className="space-y-4 border-t pt-4"><h3 className="font-semibold">{title}</h3><p className="text-sm text-muted-foreground">以下原始记录未建立与具体条款的对应关系，不计为已核验条款。</p><ItemGroup>{findings.map(row => {
     const version = row.locator?.file_version_id || fileVersionId || ''
     return <Item role="listitem" key={row.item_key}><ItemContent className="min-w-0">
-      <ItemTitle wrap>{row.item || row.classification || '历史审核记录'}</ItemTitle><Badge variant="outline">原机器记录：{labels[row.status]}</Badge>
+      <ItemTitle wrap>{row.item || row.classification || '历史审核记录'}</ItemTitle><Badge variant={resultTone(row.status)}>原机器记录：{resultLabel[row.status]}</Badge>
       {row.classification && row.classification !== row.item && <p className="whitespace-pre-wrap text-sm">{row.classification}</p>}{row.suggestions && <p className="whitespace-pre-wrap text-sm">{row.suggestions}</p>}{row.locator?.locator && <p className="whitespace-pre-wrap text-xs text-muted-foreground">原记录位置：{row.locator.locator}</p>}
       <div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" disabled={!originalFor(version)} onClick={() => setSelected({key: row.item_key, version})}>核对记录原件</Button>{reviewEditor && <Button variant="outline" size="sm" onClick={() => reviewEditor.open({roundId, attempt: resultAttempt, itemKey: row.item_key, title: row.item || row.classification || '历史审核记录', files: originals.filter(original => versions.includes(original.file_version_id)).map(original => ({id: original.file_version_id, name: original.file?.original_filename || '本轮冻结原件'}))})}>记录人工复核</Button>}</div>
       {row.review && <RecordedReview review={row.review} originalFor={originalFor} onCitation={citation => setSelected({key: row.item_key, version: citation.file_version_id, citation})}/>}

@@ -12,6 +12,11 @@ export type CustomerDefaultAdapter = {
 }
 const presetCustomers = [{value: 'UAES', label: 'UAES（联电）'}, {value: '理想', label: '理想'}, {value: '蔚来', label: '蔚来'}]
 
+/** Sample photos are only checked by the UAES U13 preset; every other customer receives documents only. */
+const documentTypes = {accept: '.xlsx,.xls,.xlsm,.doc,.docx,.pdf', hint: 'Excel、Word、PDF · 单份最大 200 MB'}
+const photoTypes = {accept: `${documentTypes.accept},.png,.jpg,.jpeg,.webp`, hint: 'Excel、Word、PDF；样品照片可用 PNG、JPEG、WebP · 单份最大 200 MB'}
+export const acceptedUploads = (customer: string) => customer === 'UAES' ? photoTypes : documentTypes
+
 export function CustomerMode({value, ready, options, adapter, onChange, onInitialDefault, onRefresh}: {value: string; ready: boolean; options: {value: string; label: string}[]; adapter: CustomerDefaultAdapter; onChange: (value: string) => void; onInitialDefault: (value: string) => void; onRefresh?: () => void}) {
   const [current, setCurrent] = useState<CustomerDefault | null>(null)
   const [confirming, setConfirming] = useState(false), [saving, setSaving] = useState(false)

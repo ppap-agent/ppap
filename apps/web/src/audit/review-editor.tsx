@@ -11,6 +11,7 @@ import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '../
 import {Textarea} from '../components/ui/textarea'
 import {judgmentLabels} from '../journey/judgment-state'
 import {sameSnapshot} from './result-projection'
+import {showToast} from '../components/toast'
 
 export type AuditReviewAdapter = {read: (roundId: string) => Promise<ReviewRound>; save: (roundId: string, request: ReviewRequest) => Promise<ReviewRound>}
 type Target = {roundId: string; itemKey: string; title: string; files: {id: string; name: string}[]; attempt: number | null}
@@ -66,6 +67,7 @@ export function AuditReviewProvider({adapter, children}: {adapter: AuditReviewAd
         draft.phase = 'saved'; draft.message = '人工复核已保存。'; draft.request = undefined; draft.base = round; setRevision(value => value + 1)
         const key = keyOf(draft.target)
         if (continueAfterSave.current.delete(key)) {
+          showToast('已保存，继续下一项')
           setSelected(value => value === key ? null : value)
           presentations.current.get(key)?.onContinue?.()
         }
