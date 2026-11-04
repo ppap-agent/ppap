@@ -297,25 +297,9 @@ class SemanticRuntime:
                 raise DeepError("deep_integrity_mismatch")
             if not isinstance(clauses, list) or not clauses:
                 raise DeepError("deep_rules_empty")
-            raw_appendix = body.get("appendix")
-            from agent.checker_program import scoped_rule
-
-            rule = scoped_rule(
-                RuleInput(
-                    rule_id=item.rule_version_id or item.file_version_id,
-                    rule_profile=str(body.get("rule_profile") or "v3"),
-                    type=body.get("type"),
-                    rules=list(clauses),
-                    appendix=[entry for entry in raw_appendix if isinstance(entry, dict)] if isinstance(raw_appendix, list) else [],
-                ),
-                file_version_id=item.file_version_id,
-            )
-            audit_file = AuditInput(
-                audit_id=item.file_version_id,
-                file_url=item.filename,
-                file_metadata={"file_version_id": item.file_version_id, "sha256": item.sha256, "role": item.role},
-                project_id=spec.tenant_id or "default",
-            )
+            assert group_context is not None
+            rule = group_context.rules_by_id[item.file_version_id]
+            audit_file = group_context.by_audit_id[item.file_version_id]
             fixed: CheckerArtifact | None = None
             try:
                 fixed = self._load_fixed_artifact(spec, audit_file, rule, raw, role=item.role, group_context=group_context)
@@ -413,25 +397,9 @@ class SemanticRuntime:
                 if partial:
                     raise DeepError("deep_rules_empty")
                 return None
-            raw_appendix = body.get("appendix")
-            from agent.checker_program import scoped_rule
-
-            rule = scoped_rule(
-                RuleInput(
-                    rule_id=item.rule_version_id or item.file_version_id,
-                    rule_profile=str(body.get("rule_profile") or "v3"),
-                    type=body.get("type"),
-                    rules=list(clauses),
-                    appendix=[entry for entry in raw_appendix if isinstance(entry, dict)] if isinstance(raw_appendix, list) else [],
-                ),
-                file_version_id=item.file_version_id,
-            )
-            audit_file = AuditInput(
-                audit_id=item.file_version_id,
-                file_url=item.filename,
-                file_metadata={"file_version_id": item.file_version_id, "sha256": item.sha256, "role": item.role},
-                project_id=spec.tenant_id or "default",
-            )
+            assert group_context is not None
+            rule = group_context.rules_by_id[item.file_version_id]
+            audit_file = group_context.by_audit_id[item.file_version_id]
             digest = input_digest(audit_file, rule, file_sha256=item.sha256, role=item.role, group_context=group_context)
             try:
                 stored = self.objects.get(f"{self._attempt_prefix(spec)}/checkers/{digest}.json", max_bytes=MAX_BUNDLE_BYTES)

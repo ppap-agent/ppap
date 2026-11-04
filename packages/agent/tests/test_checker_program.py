@@ -169,6 +169,22 @@ def request() -> ExecuteRequest:
     return ExecuteRequest(protocol_revision="test", round_id="round-1", files=[], executor="ppap-deep", executor_revision=REVISION, job_id="job-1")
 
 
+def prepare_round_checker(host, spec, version, files):
+    from agent.checker_program import group_context_for_spec, verified_related_bytes
+
+    group = group_context_for_spec(spec)
+    return host.adapt_checker(
+        spec,
+        group.by_audit_id[version],
+        group.rules_by_id[version],
+        files[version],
+        role="target",
+        context=ExecutionContext(),
+        group_context=group,
+        related_bytes=verified_related_bytes(spec, files),
+    )
+
+
 def broken_draft() -> dict:
     return {"entrypoint": "checker:create_audit", "files": {"checker.py": "def unused():\n    return None\n"}}
 
@@ -398,7 +414,7 @@ def test_stored_checker_result_enters_the_product_record_without_trace_verificat
     spec = request().model_copy(update={"files": [frozen]})
     developer = ScriptedDeveloper([valid_draft()])
     host = SemanticRuntime(IsolatedRuntime(developer), MemoryObjects(), timeout=30)
-    host.adapt_checker(spec, audit_file(path), rules(), raw, role="target", context=ExecutionContext())
+    prepare_round_checker(host, spec, "version-1", {"version-1": raw})
 
     response = host.execute(spec, {"version-1": raw}, context=ExecutionContext())
     work = RoundWork(
@@ -557,7 +573,7 @@ def test_product_execute_rejects_a_stored_checker_with_a_different_digest(tmp_pa
     spec = request().model_copy(update={"files": [frozen]})
     runtime = IsolatedRuntime(ScriptedDeveloper([valid_draft()]))
     host = SemanticRuntime(runtime, MemoryObjects(), timeout=30)
-    artifact = host.adapt_checker(spec, audit_file(path), rules(), raw, role="target", context=ExecutionContext())
+    artifact = prepare_round_checker(host, spec, "version-1", {"version-1": raw})
     key = next(item for item in host.objects.items if item.endswith(f"/checkers/{artifact.input_digest}.json"))
     host.objects.items[key] = encoded(artifact.model_copy(update={"input_digest": "b" * 64}).model_dump(mode="json"))
     runtime.run = _reject_run
@@ -590,13 +606,13 @@ def test_a_pass_with_text_but_no_check_does_not_become_pass(tmp_path: Path) -> N
     spec = request().model_copy(update={"files": [frozen]})
 
     stated_host = SemanticRuntime(IsolatedRuntime(ScriptedDeveloper([stated])), MemoryObjects(), timeout=30)
-    stated_host.adapt_checker(spec, audit_file(path), rules(), raw, role="target", context=ExecutionContext())
+    prepare_round_checker(stated_host, spec, "version-1", {"version-1": raw})
     stated_response = stated_host.execute(spec, {"version-1": raw}, context=ExecutionContext())
     assert [item.status for item in stated_response.findings] == ["ERR"]
     assert "零断言不能判为通过" in stated_response.findings[0].suggestions
 
     checked_host = SemanticRuntime(IsolatedRuntime(ScriptedDeveloper([checked])), MemoryObjects(), timeout=30)
-    checked_host.adapt_checker(spec, audit_file(path), rules(), raw, role="target", context=ExecutionContext())
+    prepare_round_checker(checked_host, spec, "version-1", {"version-1": raw})
     checked_response = checked_host.execute(spec, {"version-1": raw}, context=ExecutionContext())
     assert [item.status for item in checked_response.findings] == ["PASS"]
 
@@ -617,7 +633,7 @@ def test_empty_pass_from_a_fixed_checker_does_not_become_pass(tmp_path: Path) ->
     frozen = FrozenFile(file_version_id="version-1", file_id="file-1", role="target", filename="target.xlsx", sha256=sha, rule_version_id="same-rule", rule_body=body)
     spec = request().model_copy(update={"files": [frozen]})
     host = SemanticRuntime(IsolatedRuntime(ScriptedDeveloper([empty_pass])), MemoryObjects(), timeout=30)
-    host.adapt_checker(spec, audit_file(path), rules(), raw, role="target", context=ExecutionContext())
+    prepare_round_checker(host, spec, "version-1", {"version-1": raw})
 
     response = host.execute(spec, {"version-1": raw}, context=ExecutionContext())
 
@@ -737,7 +753,7 @@ def test_explicit_empty_scope_pass_reaches_the_product_without_becoming_zero_ass
     frozen = FrozenFile(file_version_id="version-1", file_id="file-1", role="target", filename="target.xlsx", sha256=sha, rule_version_id="same-rule", rule_body=body)
     spec = request().model_copy(update={"files": [frozen]})
     host = SemanticRuntime(IsolatedRuntime(ScriptedDeveloper([allowed])), MemoryObjects(), timeout=30)
-    host.adapt_checker(spec, audit_file(path), rules(), raw, role="target", context=ExecutionContext())
+    prepare_round_checker(host, spec, "version-1", {"version-1": raw})
 
     response = host.execute(spec, {"version-1": raw}, context=ExecutionContext())
 
@@ -749,7 +765,7 @@ def test_explicit_empty_scope_pass_reaches_the_product_without_becoming_zero_ass
 
 
 def test_one_stored_checker_failure_does_not_drop_the_other_target(tmp_path: Path) -> None:
-    from agent.checker_program import encoded, input_digest
+    from agent.checker_program import encoded, group_context_for_spec, input_digest
     from agent.checker_spec import CheckerArtifact
     from agent.protocol import FrozenFile
 
@@ -783,14 +799,7 @@ def test_one_stored_checker_failure_does_not_drop_the_other_target(tmp_path: Pat
     )
     spec = request().model_copy(update={"files": [bad, good]})
     host = SemanticRuntime(IsolatedRuntime(ScriptedDeveloper([valid_draft()])), MemoryObjects(), timeout=30)
-    host.adapt_checker(
-        spec,
-        AuditInput(audit_id=good.file_version_id, file_url=good.filename, file_metadata={"file_version_id": good.file_version_id, "sha256": good.sha256, "role": good.role}),
-        rules(),
-        good_raw,
-        role="target",
-        context=ExecutionContext(),
-    )
+    prepare_round_checker(host, spec, good.file_version_id, {good.file_version_id: good_raw, bad.file_version_id: bad_raw})
     boom = """
 class Boom:
     def check(self):
@@ -804,7 +813,7 @@ def create_audit(audit_file, rule, group_context=None):
     return Audit()
 """
     bad_audit = AuditInput(audit_id=bad.file_version_id, file_url=bad.filename, file_metadata={"file_version_id": bad.file_version_id, "sha256": bad.sha256, "role": bad.role})
-    digest = input_digest(bad_audit, rules(), file_sha256=bad.sha256, role=bad.role)
+    digest = input_digest(bad_audit, rules(), file_sha256=bad.sha256, role=bad.role, group_context=group_context_for_spec(spec))
     artifact = CheckerArtifact(input_digest=digest, executor_revision=REVISION, entrypoint="checker:create_audit", files={"checker.py": boom.encode()})
     host.objects.put_exclusive(f"{host._attempt_prefix(spec)}/checkers/{digest}.json", encoded(artifact.model_dump(mode="json")), "application/json")
 
@@ -883,7 +892,7 @@ def test_reference_rules_enter_the_checker_without_replacing_the_target_rule(tmp
     host = SemanticRuntime(IsolatedRuntime(developer), MemoryObjects(), timeout=30)
     artifact = host.adapt_checker(
         request(),
-        audit_file(path),
+        group.by_audit_id[target.file_version_id],
         rules(),
         raw,
         role="target",
@@ -896,7 +905,7 @@ def test_reference_rules_enter_the_checker_without_replacing_the_target_rule(tmp
     results = host.execute_checker(
         request(),
         artifact,
-        audit_file(path),
+        group.by_audit_id[target.file_version_id],
         rules(),
         raw,
         role="target",
@@ -952,7 +961,16 @@ def test_product_execute_stages_reference_bytes_inside_the_guest(tmp_path: Path)
     )
     developer = ScriptedDeveloper([{"entrypoint": "checker:create_audit", "files": {"checker.py": program}}])
     host = SemanticRuntime(IsolatedRuntime(developer), MemoryObjects(), timeout=30)
-    host.adapt_checker(spec, audit_file(path), rules(), raw, role="target", context=ExecutionContext(), group_context=poisoned, related_bytes=verified_related_bytes(spec, {"related-1": related_raw}))
+    host.adapt_checker(
+        spec,
+        group.by_audit_id[target.file_version_id],
+        rules(),
+        raw,
+        role="target",
+        context=ExecutionContext(),
+        group_context=poisoned,
+        related_bytes=verified_related_bytes(spec, {"version-1": raw, "related-1": related_raw}),
+    )
     assert "related-" in developer.prompts[0]
     assert "target.xlsx" in developer.prompts[0]
     assert str(host_secret) not in developer.prompts[0]
@@ -1649,7 +1667,7 @@ def test_an_unchanged_template_is_not_fixed(tmp_path: Path) -> None:
 
 
 def test_resume_replays_a_saved_checker_and_marks_a_missing_target_unexecuted(tmp_path: Path) -> None:
-    from agent.checker_program import encoded, input_digest
+    from agent.checker_program import encoded, group_context_for_spec, input_digest
     from agent.checker_spec import CheckerArtifact
     from agent.protocol import FrozenFile
 
@@ -1686,7 +1704,7 @@ def test_resume_replays_a_saved_checker_and_marks_a_missing_target_unexecuted(tm
         file_url=good.filename,
         file_metadata={"file_version_id": good.file_version_id, "sha256": good.sha256, "role": good.role},
     )
-    digest = input_digest(audit, rules(), file_sha256=good.sha256, role=good.role)
+    digest = input_digest(audit, rules(), file_sha256=good.sha256, role=good.role, group_context=group_context_for_spec(spec))
     artifact = CheckerArtifact(input_digest=digest, executor_revision=REVISION, entrypoint="checker:create_audit", files={"checker.py": VALID_PROGRAM.encode()})
     host.objects.put_exclusive(f"{host._attempt_prefix(spec)}/checkers/{digest}.json", encoded(artifact.model_dump(mode="json")), "application/json")
 
@@ -2601,8 +2619,9 @@ def test_a_fixed_target_is_not_adapted_again_when_another_target_is_still_open(t
 
     assert caught.value.code == "deep_model_protocol"
     assert developer.calls == 9
-    assert "version-good" not in developer.prompts[-1]
-    assert "version-open" in developer.prompts[-1]
+    # The fixed target remains readable as context; only the open target is adapted.
+    assert '"audit_id":"version-open","file_url"' in developer.prompts[-1].split("本次文件：", 1)[1].split('"related"', 1)[0]
+    assert "version-good" in developer.prompts[-1]
 
 
 def test_task_resource_file_joins_the_registry_resource_in_one_context(tmp_path: Path) -> None:

@@ -19,7 +19,7 @@ from audit.engine.runtime import bind_runtime
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from agent.checker_spec import CheckerArtifact, CheckerJobSpec, CheckerProgramBundle, program_digest
-from agent.execution.checker_context import write_starting_point
+from agent.execution.checker_context import task_reference, write_starting_point
 from agent.execution.checker_runtime import CheckerRuntime
 from agent.execution.guest_model import ModelProtocolError
 
@@ -417,6 +417,8 @@ def _development_previews(
                 blocks.append("还有更多关联文件，预览没有列出。")
                 break
             item = group_context.by_audit_id[audit_id]
+            if item.audit_id == audit_file.audit_id:
+                continue
             version = _file_version(item)
             preview = _workbook_preview(converted_paths.get(version) or str(item.file_url or ""), max_sheets=1, max_rows=4)
             if not preview:
@@ -440,8 +442,8 @@ def _input_view(audit_file: AuditInput, group_context: GroupContextInput | None)
                     "file_url": item.file_url,
                     "role": str(metadata.get("role") or ""),
                     "original_filename": str(metadata.get("original_filename") or ""),
-                    "rules": [dict(clause) for clause in rule.rules] if rule is not None else [],
-                    "appendix": [dict(item) for item in rule.appendix] if rule is not None else [],
+                    "v4_source_type": metadata.get("v4_source_type"),
+                    "rule": rule.model_dump(mode="json") if rule is not None else None,
                 }
             )
     metadata = audit_file.file_metadata or {}
@@ -572,8 +574,8 @@ def _prompt(
         guide,
         starting_point,
         "",
-        "本次生效条款：",
-        _encoded({"rules": rule.model_dump(mode="json")["rules"]}).decode(),
+        "本次完整规则输入（rules 与 appendix 是本次生效规则，预置来源只用于选择参考实现）：",
+        _encoded(rule.model_dump(mode="json")).decode(),
         "",
         "本次文件：",
         _encoded(_input_view(audit_file, group_context)).decode(),
@@ -581,9 +583,8 @@ def _prompt(
     preview = _development_previews(audit_file, group_context, None if layout is None else layout.previews)
     if preview:
         parts.extend(["", preview])
-    confirmed = rule.appendix
-    if confirmed:
-        parts.extend(["", "本次已确认附录。它是规则的一部分，不是上次结论或系统建议：", _encoded(confirmed).decode()])
+    if rule.appendix:
+        parts.extend(["", "上述 appendix 是本次已确认附录，是规则的一部分，不是上次结论或系统建议。"])
     if prior:
         parts.extend(["", "可作起点的旧程序。必须按本次输入重新核对，不能直接沿用到其他文件：", _encoded(prior).decode()])
     if feedback and feedback_kind == "review":
@@ -594,12 +595,16 @@ def _prompt(
         parts.extend(["", "上次试跑失败：", feedback[:6000], "修复读取或实现错误后，按同一规则重新判断；保留修订依据。"])
     parts.extend(["", "NG、UNABLE 和 NA 可以是最终结果。不要为了让全部条款变成 PASS 而修改判断。"])
     if layout is not None:
-        parts.extend(["", PDF_GUIDE.read_text(encoding="utf-8"), "", layout.instructions])
+        parts.extend(["", "" if layout.native else PDF_GUIDE.read_text(encoding="utf-8"), "", layout.instructions])
     return "\n".join(parts)
 
 
 def _require_authored_pdf_spec(audit: object, audit_file: AuditInput) -> None:
     """A Deep program must name the target PDF layout. Presets are not applied implicitly."""
+    from audit.checkers.v4.uaes.native import UaesSourceAgent
+
+    if isinstance(audit, UaesSourceAgent):
+        return  # NativeFacts reads original PDF blocks; it does not convert a grid.
     if not _is_pdf(str(audit_file.file_url or "")):
         return
     defined = type(audit).__dict__.get("PDF_SPEC", None)
@@ -627,6 +632,7 @@ class PdfLayout:
     snippet: str
     previews: dict[str, str]
     instructions: str
+    native: bool = False
 
 
 def _file_version(audit_file: AuditInput) -> str:
@@ -765,6 +771,8 @@ def _prepare_pdf_layout(
     audit_file: AuditInput,
     group_context: GroupContextInput | None,
     work: Path,
+    *,
+    native: bool = False,
 ) -> PdfLayout | None:
     """Native observations and suggested specs; the checker loop can revise both."""
     documents = _pdf_documents(audit_file, group_context)
@@ -783,6 +791,8 @@ def _prepare_pdf_layout(
             lines.append(f"# {note}")
             continue
         notes.append(f"文件 {version} 的原生文字预览（最多 6000 字，非完整范围）：\n{text[:6000]}")
+        if native:
+            continue
         preset = _known_preset(text)
         if preset is None:
             lines.append(f"SPECS[{version!r}] = PdfSpec()  # 初始配置，按这份原件修订")
@@ -794,6 +804,13 @@ def _prepare_pdf_layout(
         else:
             lines.append(f"SPECS[{version!r}] = PdfSpec()")
             notes.append(f"{version} 的候选预设转换失败：{detail[:500]}")
+    if native:
+        return PdfLayout(
+            snippet="",
+            previews={},
+            instructions="沿用 UAES NativeFacts 读取原始 PDF 文字与位置；需要表格网格时显式定义 PdfSpec。视觉事实无可重放证据时为 UNABLE。\n" + "\n\n".join(notes),
+            native=True,
+        )
     notes.append("预设只由文件自身标记提供候选；不要按文档类型或文件名选择预设。非空表格不证明列、范围和原件映射正确。")
     snippet = "\n".join(lines) + "\n"
     return PdfLayout(
@@ -858,8 +875,11 @@ def develop_checker(
         )
         return artifact
 
+    from audit.checkers.v4.uaes.native import UaesSourceAgent
+
+    reference = task_reference(audit_file, rule)
     try:
-        layout = _prepare_pdf_layout(audit_file, group_context, work)
+        layout = _prepare_pdf_layout(audit_file, group_context, work, native=reference is not None and issubclass(reference, UaesSourceAgent))
     except _TargetUnread as exc:
         encoded = _validate_source({"checker.py": _unable_checker(str(exc))})
         run_program(encoded, work / "unable-program", audit_file, rule, group_context)
