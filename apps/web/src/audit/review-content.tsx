@@ -59,7 +59,7 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
   const editorHost = useRef<HTMLDivElement>(null), currentEditor = useRef(reviewEditor); currentEditor.current = reviewEditor
   const [open, setOpen] = useState(false), [pane, setPane] = useState('details')
   const [query, setQuery] = useState(''), [filter, setFilter] = useState(() => new URL(location.href).searchParams.get('checkFilter') || 'all'), [section, setSection] = useState('checks')
-  const trigger = useRef<HTMLElement | null>(null)
+  const trigger = useRef<HTMLElement | null>(null), comparisonTrigger = useRef<HTMLButtonElement>(null)
   const audit = file.audit, check = audit?.checks.find(row => row.rule_item.id === clause) ?? audit?.checks[0]
   const issue = frozenResultError(roundId, file, frozenFileVersionIds, frozenRule)
   const reportAccessIssue = reportAccess && reportAccess.state !== 'allowed' ? reportAccess.reason || '当前账号不能读取此报告。' : ''
@@ -69,6 +69,7 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
   const citation = chosen?.kind === 'review' ? chosen.reference : null
   const authorizedOriginal = (id: string) => frozenOriginal(originals, frozenFileVersionIds, id)
   const original = authorizedOriginal(chosen?.reference.file_version_id || originalId)
+  const pairedVersions = [...new Set(check?.evidence.map(item => item.file_version_id) || [])]
   const rule = audit?.rule || frozenRule
   const filtered = filterChecks(audit?.checks || [], query, filter)
   const at = audit?.checks.findIndex(row => row.rule_item.id === check?.rule_item.id) ?? -1
@@ -103,11 +104,28 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
     <h2 className="font-semibold">原件对照</h2><p className="text-sm text-muted-foreground">当前条款：{check?.rule_item.id || '—'} · {check?.rule_item.category || '尚未取得审核项'}</p>
     {original ? <><FileName name={original.file?.original_filename || '该次证据原件'}/>{source && <div className="space-y-2 text-sm"><p className="text-muted-foreground">{source.locator ? '证据位置：' + sourceLocation({locator: source.locator}) : source.location_gap || '未提供具体位置，可对照本轮原件。'}{source.rendition === 'derived' && ' · 派生内容引用，不等于原件定位已验证。'}</p>{source.locator && source.location_gap && <p className="text-muted-foreground">{source.location_gap}</p>}{(source.excerpt || check?.evidence_verified) && <p>{evidenceText(source, check?.evidence_verified === true)}</p>}</div>}{citation && <section aria-label="人工复核引用" className="space-y-2 text-sm"><h3 className="font-medium">人工记录位置</h3><p className="whitespace-pre-wrap">{citation.location}</p><p className="whitespace-pre-wrap text-muted-foreground">{citation.excerpt}</p></section>}{original.access.state !== 'allowed' || !original.file ? <Alert><AlertTitle>本次原件不可访问</AlertTitle><AlertDescription>{original.access.reason || '暂时无法读取此原件。'}</AlertDescription></Alert> : renderOriginal ? renderOriginal(original.file, source, roundId) : <Alert><AlertTitle>原件暂不可预览</AlertTitle><AlertDescription>请下载原件查看。</AlertDescription></Alert>}</> : <Alert variant="destructive"><AlertTitle>不能读取此证据原件</AlertTitle><AlertDescription>此证据不在本次审核的文件中。</AlertDescription></Alert>}
   </section>
+  function showComparison() {
+    if (!open) trigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    setPane('comparison'); setOpen(true)
+  }
+  const comparison = <section aria-label="关联原件对照" className="space-y-4">
+    <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm">同一条款：{check?.rule_item.id} · {check?.rule_item.category}</p><Button variant="outline" onClick={() => {setPane('details'); requestAnimationFrame(() => comparisonTrigger.current?.focus())}}>返回判定依据</Button></div>
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">{pairedVersions.map(version => {
+      const target = authorizedOriginal(version)
+      const evidence = check!.evidence.filter(item => item.file_version_id === version)
+      const name = target?.file?.original_filename || '本轮证据原件'
+      return <section key={version} aria-label={'关联原件 ' + name} data-file-version={version} className="min-w-0 space-y-3">
+        <h3 className="font-semibold"><FileName name={name}/></h3>
+        <div className="space-y-2 text-sm">{evidence.map((item, index) => <div key={index} className="space-y-1"><p className="text-muted-foreground">{item.locator ? '证据位置：' + sourceLocation({locator: item.locator}) : item.location_gap || '未提供具体位置，可对照本轮原件。'}{item.rendition === 'derived' && ' · 派生内容引用，不等于原件定位已验证。'}</p>{item.locator && item.location_gap && <p className="text-muted-foreground">{item.location_gap}</p>}<p className="whitespace-pre-wrap">{evidenceText(item, check!.evidence_verified)}</p></div>)}</div>
+        {!target ? <Alert variant="destructive"><AlertTitle>不能读取此证据原件</AlertTitle><AlertDescription>此证据不在本次审核的文件中。</AlertDescription></Alert> : target.access.state !== 'allowed' || !target.file ? <Alert><AlertTitle>本次原件不可访问</AlertTitle><AlertDescription>{target.access.reason || '暂时无法读取此原件。'}</AlertDescription></Alert> : renderOriginal ? renderOriginal(target.file, evidence[0], roundId) : <Alert><AlertTitle>原件暂不可预览</AlertTitle><AlertDescription>请下载原件查看。</AlertDescription></Alert>}
+      </section>
+    })}</div>
+  </section>
   const basis = check && <article aria-label="条款判定依据" className="space-y-6">
     <div className="flex flex-wrap items-center gap-2"><Badge shape="square" variant={checkLabel(check) === '不符合' ? 'destructive' : checkLabel(check) === '满足' ? 'success' : 'outline'}>{check.finding && check.coverage === 'executed' && check.execution === 'completed' ? check.finding.status + ' · ' : ''}{checkLabel(check)}</Badge>{review && <Badge shape="square" variant="outline">已有人工复核</Badge>}</div>
     <section className="space-y-2"><h3 className="font-medium">机器判定依据</h3><p className="whitespace-pre-wrap text-sm leading-relaxed">{clauseObservation(check)}</p>{check.scope && <p className="text-xs text-muted-foreground">检查范围：已查 {check.scope.checked}/{check.scope.total}，未知 {check.scope.unknown}。</p>}</section>
     <section className="space-y-2"><h3 className="font-medium">审核要求原文</h3><p className="whitespace-pre-wrap border-l-2 pl-4 text-sm leading-relaxed">{check.rule_item.rule_to_check}</p></section>
-    <section className="space-y-3"><h3 className="font-medium">本轮原件与来源证据</h3>{check.evidence.length ? check.evidence.map((evidence, index) => {
+    <section className="space-y-3"><h3 className="font-medium">本轮原件与来源证据</h3>{pairedVersions.length > 1 && <Button ref={comparisonTrigger} variant="outline" onClick={showComparison}><FileSearch/>同时核对关联原件</Button>}{check.evidence.length ? check.evidence.map((evidence, index) => {
       const target = authorizedOriginal(evidence.file_version_id)
       return <div key={evidence.file_version_id + '-' + index} data-file-version={evidence.file_version_id} className="space-y-3 border-t pt-3">
         <FileName name={target?.file?.original_filename || '本轮证据原件'}/>
@@ -161,9 +179,9 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
       <ResizablePanelGroup orientation="horizontal" className="min-h-[65dvh]"><ResizablePanel defaultSize="45%" minSize="25%"><div className="min-w-0 space-y-4 pr-4"><h2 className="text-lg font-semibold">{check?.rule_item.id} · {check?.rule_item.category}</h2>{basis}<div ref={editorHost}/></div></ResizablePanel><ResizableHandle withHandle/><ResizablePanel defaultSize="55%" minSize="25%"><div className="min-w-0 space-y-4 pl-4"><Select value={chosen?.reference.file_version_id || originalId} onValueChange={id => {setOriginalId(id); setSource(null)}}><SelectTrigger aria-label="选择对照原件"><SelectValue/></SelectTrigger><SelectContent>{originals.filter(row => frozenFileVersionIds.includes(row.file_version_id)).map(row => <SelectItem key={row.file_version_id} value={row.file_version_id}>{row.file?.original_filename || '冻结原件'}</SelectItem>)}</SelectContent></Select>{originalPanel}</div></ResizablePanel></ResizablePanelGroup>
     </section>}
     <HistoricalFindings findings={audit?.unmapped_findings || []} roundId={roundId} resultAttempt={audit?.result_attempt ?? null} versions={frozenFileVersionIds} originals={originals} renderOriginal={renderOriginal} fileVersionId={file.file.id}/>
-    <Sheet open={open} onOpenChange={setOpen}><SheetContent className={pane === 'original' ? 'overflow-y-auto data-[side=right]:w-full data-[side=right]:max-w-6xl' : 'overflow-y-auto data-[side=right]:w-full data-[side=right]:max-w-[38.75rem]'} onCloseAutoFocus={event => {event.preventDefault(); if (trigger.current?.isConnected) trigger.current.focus()}}>
+    <Sheet open={open} onOpenChange={setOpen}><SheetContent className={pane === 'original' || pane === 'comparison' ? 'overflow-y-auto data-[side=right]:w-full data-[side=right]:max-w-6xl' : 'overflow-y-auto data-[side=right]:w-full data-[side=right]:max-w-[38.75rem]'} onCloseAutoFocus={event => {event.preventDefault(); if (trigger.current?.isConnected) trigger.current.focus()}}>
       <div className="pr-8"><SheetHeader><SheetTitle>{check ? check.rule_item.id + ' · ' + check.rule_item.category : file.file.original_filename}</SheetTitle><SheetDescription className="sr-only">查看本轮审核依据与冻结原件</SheetDescription></SheetHeader></div>
-      <Tabs value={pane} onValueChange={setPane}><TabsList variant="line"><TabsTrigger value="details">审核详情</TabsTrigger><TabsTrigger value="original">核对原件</TabsTrigger></TabsList><TabsContent value="details"><div className="pt-4">{issue && <Alert variant="destructive"><AlertTitle>结果数据需要核对</AlertTitle><AlertDescription>{issue}</AlertDescription></Alert>}{basis}</div></TabsContent><TabsContent value="original"><div className="pt-4">{originalPanel}</div></TabsContent></Tabs>
+      <Tabs value={pane} onValueChange={setPane}><TabsList variant="line"><TabsTrigger value="details">审核详情</TabsTrigger><TabsTrigger value="original">核对原件</TabsTrigger>{pairedVersions.length > 1 && <TabsTrigger value="comparison">关联原件对照</TabsTrigger>}</TabsList><TabsContent value="details"><div className="pt-4">{issue && <Alert variant="destructive"><AlertTitle>结果数据需要核对</AlertTitle><AlertDescription>{issue}</AlertDescription></Alert>}{basis}</div></TabsContent><TabsContent value="original"><div className="pt-4">{originalPanel}</div></TabsContent>{pairedVersions.length > 1 && <TabsContent value="comparison"><div className="pt-4">{comparison}</div></TabsContent>}</Tabs>
     </SheetContent></Sheet>
   </section>
 }
