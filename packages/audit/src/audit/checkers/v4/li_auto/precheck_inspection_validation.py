@@ -673,10 +673,10 @@ def operations(agent, entry, facts):
                 "COR09": _unknown("完整原件的截断、遮挡、内嵌模糊和批注可读性尚未提供可验证视觉事实。"),
                 "COR10": lambda: _internal_contradiction(facts),
                 "COM03": lambda: _phase(facts),
-                "COM08": lambda: _explanations(facts),
+                "COM08": lambda: _explanations(agent, facts),
                 "COM10": lambda: _outside(facts),
                 "CON05": lambda: _family(facts),
-                "CON06": lambda: _dictionaries(facts),
+                "CON06": lambda: _dictionaries(agent, facts),
                 "CON07": lambda: _paired_dates(agent, facts),
                 "CON08": lambda: _family_mapping(facts),
                 "CON10": lambda: _timeline(facts),
@@ -748,14 +748,21 @@ def _internal_contradiction(facts):
         return "已核对明确数值阈值与文字结论关系；无明确阶段定义时未推定节点时序。"
 
 
-def _explanations(facts):
+def _explanations(agent, facts):
+    declarations = []
     separate = _optional(facts, ("豁免取消借用说明清单", "豁免说明清单", "借用说明清单"))
     if separate is not None and _text(separate):
-        return "已提供独立说明清单，未将合法豁免/取消/借用判为缺失。"
-    notes = facts.table_rows({"note": ("备注", "说明")})
-    if any(any(word in str(row["note"]) for word in ("豁免", "取消", "借用")) for row in notes):
-        raise DefectFact("W03", "豁免/取消/借用仅定位于备注栏，未提供独立说明清单。")
-    raise UnknownFact("备注已读取；批注、底色与表外说明尚未完整读取，未声称说明位置全部合规。")
+        declarations.append(_text(separate))
+    group = getattr(agent, "group_context", None)
+    if group is not None:
+        for other in _peers(agent, facts):
+            if facts.audit.part and other.audit.part and _identity(facts.audit.part) != _identity(other.audit.part):
+                continue
+            declaration = _optional(other, ("豁免取消借用说明清单", "豁免说明清单", "借用说明清单"))
+            if declaration is not None and _text(declaration):
+                _copy_sources(facts, other)
+                declarations.append(_text(declaration))
+    return _native_explanations(facts, declarations=declarations)
 
 
 def _family(facts):
@@ -768,11 +775,32 @@ def _family(facts):
     raise UnknownFact("表号对应已核对；列布局和值域的独立受控模板尚未取得，未以自述作为独立真值。")
 
 
-def _dictionaries(facts):
-    values = facts.values(("允许结论取值", "判定字典"), required=False)
-    if len({frozenset(key(item) for item in re.split(r"[,，;；/、\n]", str(value)) if _text(item)) for value in values}) > 1:
-        raise DefectFact("W03", "原件中明确声明了多套不同判定值域；按规则枚举执行，仅登记字典差异。")
-    return "原件中可定位的明确判定字典没有互相冲突；未将实际填值当作字典。"
+def _dictionaries(agent, facts):
+    dictionaries, unresolved = _native_dictionaries(facts)
+    _dictionary_conflict(dictionaries)
+    peers = _peers(agent, facts)
+    for other in peers:
+        if not _is_trial_original(other):
+            continue
+        values, missing = _native_dictionaries(other)
+        dictionaries.extend(values)
+        unresolved.extend(missing)
+        _copy_sources(facts, other)
+    _dictionary_conflict(dictionaries)
+    if unresolved:
+        raise UnknownFact("；".join(dict.fromkeys(unresolved)))
+    if not dictionaries:
+        raise StateFact("S01", "已读取本轮原件，未提供实际试验结果值域字典；不判规则字典是否齐全。")
+    if len(set(dictionaries)) > 1:
+        raise UnknownFact("原件字典仅存在包含关系，未确认互斥；不把按行限制的子集误判为多套互斥字典。")
+    return "已读取本轮原件实际试验结果的原生下拉/明示字典，未发现互斥字典；未替代规则权威枚举。"
+
+
+def _dictionary_conflict(dictionaries):
+    for index, left in enumerate(dictionaries):
+        for right in dictionaries[index + 1 :]:
+            if left - right and right - left:
+                raise DefectFact("W03", "本轮同一实际试验结果字段存在互不兼容的原件字典；规则枚举仍为权威，仅登记差异。")
 
 
 def _paired_dates(agent, facts):
@@ -1011,3 +1039,307 @@ def _trial_rows(facts, aliases):
     if not result:
         raise UnknownFact("未定位完整试验项目及本项的实际原件数据列。")
     return result
+
+
+_RESULT_HEADERS = {"实际试验结果", "试验结果"}
+_EXECUTION_HEADERS = {"试验项计划执行状态", "计划执行状态", "试验执行状态", "豁免取消借用说明", "豁免/取消/借用说明", "豁免说明", "取消说明", "借用说明"}
+_TRIAL_HEADERS = {
+    "序号",
+    "试验项目",
+    "试验要求",
+    "试验标准/方法",
+    "试验类型",
+    "完成节点",
+    "试验地点",
+    "试验样本描述",
+    "数量",
+    "状态",
+    "外观属性",
+    "计划开始",
+    "计划结束",
+    "试验实际开始日期",
+    "试验实际结束日期",
+    "实际试验结果",
+    "试验报告编号",
+    "备注",
+    *_EXECUTION_HEADERS,
+}
+
+
+def _native_book(facts):
+    from openpyxl import load_workbook
+
+    from audit.document_tools import ReadLimits, preflight
+
+    if Path(facts.audit.file_url).suffix.lower() not in {".xlsx", ".xlsm"}:
+        raise UnknownFact("当前原件不是可读取原生下拉、批注和底色的Excel载体，未推定这些对象不存在。")
+    if not hasattr(facts, "_li_native_book"):
+        path = Path(facts.audit.file_url)
+        preflight(path, ReadLimits())
+        facts._li_native_book = load_workbook(path, data_only=False, keep_links=False)
+    return facts._li_native_book
+
+
+def _is_trial_original(facts):
+    return any(key(cell.get("value")) == key("试验项目") for table in facts.data["tables"] for cell in table["cells"].values())
+
+
+def _native_regions(facts):
+    """Read the actual two-tier trial header without assuming column numbers."""
+    workbook = _native_book(facts)
+    result = []
+    for table in facts.data["tables"]:
+        if table["id"] not in workbook.sheetnames or any(word in table["id"] for word in ("填写说明", "填写指南")):
+            continue
+        for top in range(1, min(table["rows"], 80) + 1):
+            tests = [column for column in range(1, table["cols"] + 1) if key(effective(table, top, column).get("value")) == key("试验项目")]
+            if not tests:
+                continue
+            anchors = {effective(table, top, column)["anchor"] for column in tests}
+            if len(anchors) != 1:
+                raise UnknownFact("同一行有多个试验项目表头，无法唯一定位原生字典/说明范围。")
+            test_col = coordinate_to_tuple(next(iter(anchors)))[1]
+            columns: dict[str, set[int]] = {}
+            bottom = top
+            for row in range(top, min(top + 1, table["rows"]) + 1):
+                for column in range(1, table["cols"] + 1):
+                    cell = effective(table, row, column)
+                    token = key(cell.get("value"))
+                    if token not in {key(name) for name in _TRIAL_HEADERS}:
+                        continue
+                    anchor_row, anchor_col = coordinate_to_tuple(cell["anchor"])
+                    columns.setdefault(token, set()).add(anchor_col)
+                    facts.read(table, anchor_row, anchor_col)
+                    bottom = max([bottom, anchor_row] + [r2 for r1, c1, r2, c2 in table.get("merges", []) if r1 <= anchor_row <= r2 and c1 <= anchor_col <= c2])
+            if not any(key(name) in columns for name in _RESULT_HEADERS):
+                continue
+            if any(len(values) != 1 for values in columns.values()):
+                raise UnknownFact("业务字段有多个原生表头位置，需先确认范围。")
+            flattened = {name: next(iter(values)) for name, values in columns.items()}
+            rows = []
+            for row in range(bottom + 1, table["rows"] + 1):
+                project = effective(table, row, test_col)
+                if not _text(project.get("value")) and project.get("state") == "known":
+                    continue
+                text = _text(project.get("value"))
+                if key(text) in {key(name) for name in ("颜色说明", "底色说明", "颜色图例", "底色图例", "豁免取消借用说明清单", "豁免说明清单", "借用说明清单")}:
+                    break
+                if text.startswith(("职责说明", "实验室选择说明", "试验报告书写要求", "填表说明", "编制", "审核", "批准")):
+                    break
+                if re.fullmatch(r"[一二三四五六七八九十0-9]+[、.．].*类试验", text):
+                    continue
+                facts.read(table, row, test_col, vertical_only=True)
+                rows.append(row)
+            result.append((workbook[table["id"]], table, flattened, bottom, rows))
+            break
+    if not result:
+        raise UnknownFact("未定位完整DVP试验项目及实际试验结果原生表头，不能猜字典或说明归属。")
+    return result
+
+
+def _native_witness(facts, table, row, column, attribute, value):
+    """Attach native metadata to its actual original cell, including blank cells."""
+    import json
+
+    from audit.evidence import cell_locator
+
+    locator = {"file_version_id": facts.audit.audit_id, **cell_locator(facts.data["source"]["format"], table["id"], row, column).model_dump(mode="json")}
+    facts.sources.append({"kind": "structure", "locator": json.dumps(locator, ensure_ascii=False), "excerpt": (attribute + ": " + str(value))[:500]})
+
+
+def _validation_options(facts, workbook, worksheet, table, formula):
+    """Read literal/static lists only. Never evaluate formulas or follow links."""
+    from openpyxl.utils.cell import range_boundaries
+
+    text = _text(formula)
+    if len(text) > 32_767:
+        raise UnknownFact("原生下拉表达式超过有界读取长度，未求值或截断为通过。")
+    if text.startswith('"') and text.endswith('"'):
+        options = [value.replace('""', '"').strip() for value in text[1:-1].split(",")]
+        if not all(options) or len(options) > 10_000:
+            raise UnknownFact("原生下拉字典含空选项或超过一万项预算，不能可靠还原值域。")
+        return frozenset(_identity(value) for value in options)
+    reference = text.removeprefix("=").strip()
+    if any(mark in reference for mark in ("[", "]", "(", ")", ",", ";")):
+        raise UnknownFact("原生下拉使用动态公式或外部引用，未执行公式或读取外部资料。")
+    if "!" in reference:
+        sheet_name, address = reference.rsplit("!", 1)
+        sheet_name = sheet_name.strip("'").replace("''", "'")
+        destinations = [(sheet_name, address)]
+    elif re.fullmatch(r"\$?[A-Z]{1,3}\$?\d+(?::\$?[A-Z]{1,3}\$?\d+)?", reference, re.I):
+        destinations = [(worksheet.title, reference)]
+    else:
+        definition = worksheet.defined_names.get(reference) or workbook.defined_names.get(reference)
+        if definition is None or definition.type != "RANGE":
+            raise UnknownFact("原生下拉名称未解析为本原件的静态单元格范围。")
+        destinations = list(definition.destinations)
+    if len(destinations) != 1:
+        raise UnknownFact("原生下拉指向多个范围，未猜测选项拼接顺序。")
+    sheet_name, address = destinations[0]
+    if sheet_name not in workbook.sheetnames:
+        raise UnknownFact("原生下拉的字典工作表在本原件中不存在。")
+    try:
+        c1, r1, c2, r2 = range_boundaries(address)
+    except ValueError as exc:
+        raise UnknownFact("原生下拉的范围表达式不能可靠读取。") from exc
+    if any(value is None for value in (c1, r1, c2, r2)) or (c2 - c1 + 1) * (r2 - r1 + 1) > 10_000:
+        raise UnknownFact("原生下拉字典范围未界定或超过一万单元格读取预算。")
+    source_table = next((item for item in facts.data["tables"] if item["id"] == sheet_name), None)
+    if source_table is None or r2 > source_table["rows"] or c2 > source_table["cols"]:
+        raise UnknownFact("原生下拉字典范围超出已冻结读取的原件范围。")
+    options = []
+    for row in range(r1, r2 + 1):
+        for column in range(c1, c2 + 1):
+            value = facts.read(source_table, row, column)
+            if not _text(value):
+                continue
+            options.append(_identity(value))
+    if not options:
+        raise UnknownFact("原生下拉字典的静态范围没有可读取选项。")
+    return frozenset(options)
+
+
+def _native_dictionaries(facts):
+    workbook = _native_book(facts)
+    dictionaries = []
+    unresolved = []
+    for worksheet, table, columns, bottom, rows in _native_regions(facts):
+        result_cols = {columns[key(name)] for name in _RESULT_HEADERS if key(name) in columns}
+        validations = list(worksheet.data_validations.dataValidation)
+        if len(validations) > 4096:
+            raise UnknownFact("原生数据验证超过有界读取预算。")
+        for validation in validations:
+            if validation.type != "list":
+                continue
+            for region in validation.sqref.ranges:
+                overlap = result_cols & set(range(region.min_col, region.max_col + 1))
+                if not overlap or region.max_row <= bottom:
+                    continue
+                column = min(overlap)
+                row = max(region.min_row, bottom + 1)
+                if rows and not any(region.min_row <= item <= region.max_row for item in rows):
+                    continue
+                _native_witness(facts, table, min(row, table["rows"]), column, "原生数据验证", f"范围={region}; 选项={validation.formula1}")
+                try:
+                    dictionaries.append(_validation_options(facts, workbook, worksheet, table, validation.formula1))
+                except UnknownFact as exc:
+                    unresolved.append(str(exc))
+    # Explicit dictionary text is also actual source data; blank or missing
+    # dictionaries are not rule-side defects.
+    labels = {key(name) for name in ("允许结论取值", "判定字典")}
+    if any(key(cell.get("value")) in labels for table in facts.data["tables"] for cell in table["cells"].values()):
+        for value in facts.values(("允许结论取值", "判定字典"), required=False):
+            if _text(value):
+                dictionaries.append(frozenset(_identity(item) for item in re.split(r"[,，;；/、\n]", str(value)) if _text(item)))
+    return dictionaries, unresolved
+
+
+def _explanation_terms(value):
+    text = _text(value)
+    return {term for term in ("豁免", "取消", "借用") if term in text and not re.search(r"(?:不|未|无需|无须)" + term, text)}
+
+
+def _legend(facts):
+    mapping: dict[str, str] = {}
+    value = _optional(facts, ("颜色说明", "底色说明", "颜色图例", "底色图例"))
+    if value is None:
+        return mapping
+    colors = {"红色": "FF0000", "黄色": "FFFF00", "绿色": "00FF00", "蓝色": "0000FF"}
+    for color, term in re.findall(r"(红色|黄色|绿色|蓝色|[0-9A-Fa-f]{6})\s*(?:=|:|：|表示|代表)\s*(豁免|取消|借用)", _text(value)):
+        mapping[colors.get(color, color.upper())] = term
+    return mapping
+
+
+def _native_explanations(facts, *, declarations=()):
+    regions = _native_regions(facts)
+    if not any(rows for worksheet, table, columns, bottom, rows in regions):
+        raise UnknownFact("未取得真实试验项目行，不能按空范围判定说明位置合规。")
+    legend = _legend(facts)
+    unresolved_color = False
+    for worksheet, table, columns, bottom, rows in regions:
+        left, right = min(columns.values()), max(columns.values())
+        expected_columns = {columns[key(name)] for name in _EXECUTION_HEADERS if key(name) in columns}
+        note_columns = {columns[key(name)] for name in ("备注",) if key(name) in columns}
+        explicit_by_project = {}
+        project_keys = [_identity(facts.read(table, row, columns[key("试验项目")])) for row in rows]
+        if declarations and len(set(project_keys)) != len(project_keys):
+            raise UnknownFact("存在同名试验项目，独立说明清单缺少可唯一对应的试验编号，不能全局豁免。")
+        for row in rows:
+            explicit = set()
+            project = _text(facts.read(table, row, columns[key("试验项目")]))
+            for declaration in declarations:
+                for entry in re.split(r"[\n;；]", declaration):
+                    # Match an explicit list key; a substring such as 振动2
+                    # must not exempt 振动, nor a different trial in this file.
+                    parts = re.split(r"[:：]", entry, maxsplit=1)
+                    if len(parts) == 2 and _identity(parts[0]) == _identity(project):
+                        explicit |= _explanation_terms(parts[1])
+            for column in expected_columns:
+                explicit |= _explanation_terms(facts.read(table, row, column))
+            explicit_by_project[_identity(project)] = explicit
+            for column in range(1, table["cols"] + 1):
+                cell = worksheet.cell(row, column)
+                if _native_metadata_pair(table, row, column):
+                    continue
+                comment_terms = _explanation_terms(cell.comment.text) if cell.comment else set()
+                if comment_terms - explicit:
+                    _native_witness(facts, table, row, column, "原生批注", cell.comment.text)
+                    raise DefectFact("W03", "豁免/取消/借用只定位于原生批注，未提供可按业务栏读取的说明或独立清单。")
+                text_terms = _explanation_terms(facts.read(table, row, column))
+                if text_terms - explicit and (column in note_columns or column < left or column > right):
+                    _native_witness(facts, table, row, column, "备注/表外说明", cell.value)
+                    raise DefectFact("W03", "豁免/取消/借用只定位于备注或表外单元格，未提供独立说明清单。")
+            colors = set()
+            for column in range(left, right + 1):
+                cell = worksheet.cell(row, column)
+                if cell.fill.patternType != "solid":
+                    continue
+                color = cell.fill.fgColor
+                if color.type == "rgb":
+                    rgb = str(color.rgb)[-6:].upper()
+                    if rgb not in {"000000", "FFFFFF"} or rgb in legend:
+                        colors.add(rgb)
+                        _native_witness(facts, table, row, column, "原生实心底色", rgb)
+                else:
+                    unresolved_color = True
+            for color in colors:
+                if color in legend and legend[color] not in explicit:
+                    raise DefectFact("W03", "原件图例明确声明底色承载豁免/取消/借用，但业务栏未给出对应说明。")
+                if color not in legend:
+                    unresolved_color = True
+            for formatting in worksheet.conditional_formatting:
+                if any(region.min_row <= row <= region.max_row and region.min_col <= right and region.max_col >= left for region in formatting.sqref.ranges):
+                    raise UnknownFact("试验行存在条件格式，当前未计算其视觉结果，不能推定底色是否承载状态。")
+        projects = {_identity(facts.read(table, row, columns[key("试验项目")])) for row in rows}
+        for row in range(bottom + 1, table["rows"] + 1):
+            if row in rows:
+                continue
+            for column in range(1, table["cols"] + 1):
+                if _native_metadata_pair(table, row, column):
+                    continue
+                cell = worksheet.cell(row, column)
+                candidates = [("原生表外批注", cell.comment.text)] if cell.comment else []
+                raw = effective(table, row, column)
+                if raw.get("state") == "known" and _text(raw.get("value")):
+                    candidates.append(("原生表外说明块", _text(raw.get("value"))))
+                for attribute, text in candidates:
+                    terms = _explanation_terms(text)
+                    if not terms:
+                        continue
+                    _native_witness(facts, table, row, column, attribute, text)
+                    parts = re.split(r"[:：]", str(text), maxsplit=1)
+                    if len(parts) == 2 and _identity(parts[0]) in projects:
+                        if terms <= explicit_by_project.get(_identity(parts[0]), set()):
+                            continue
+                        raise DefectFact("W03", "明确对应试验项目的豁免/取消/借用说明只位于表外说明块或批注。")
+                    raise UnknownFact("表外原生文字或批注含豁免/取消/借用描述，但未明确归属试验项目，未推定为供应商问题。")
+    if unresolved_color:
+        raise UnknownFact("已读取原生底色；未提供可唯一解释该颜色的状态图例，未按红色等颜色猜测取消或豁免。")
+    return "已逐项读取原生批注、备注、表外单元格及静态底色，未定位仅藏于这些位置的豁免/取消/借用说明。"
+
+
+def _native_metadata_pair(table, row, column):
+    labels = {key(value) for value in ("颜色说明", "底色说明", "颜色图例", "底色图例", "豁免取消借用说明清单", "豁免说明清单", "借用说明清单")}
+    if key(effective(table, row, column).get("value")) in labels:
+        return True
+    return column > 1 and key(effective(table, row, column - 1).get("value")) in labels
