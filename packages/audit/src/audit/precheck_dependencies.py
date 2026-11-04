@@ -43,14 +43,14 @@ def _field(reader, aliases, *, required=True):
         if required:
             raise UnknownFact("关联身份字段尚未定位：" + aliases[0] + "。")
         return None
-    if len({identity(value) for value in values}) != 1 or identity(values[0]) in {"", "/", "na", "n/a", "tbd", "待填", "待定"}:
+    if len({identity(value) for value in values}) != 1 or identity(values[0]) in {"", "/", "na", "n/a", "tbd", "xxx", "无", "待填", "待定"}:
         raise UnknownFact("关联身份字段为空或有多个冲突值：" + aliases[0] + "。")
     return values[0]
 
 
 def _has_title(reader, aliases):
     def matches(value):
-        return any(key(alias) in key(value) for alias in aliases) and not any(word in key(value) for word in ("参考", "参照", "不是", "不适用", "填写说明", "填写指南"))
+        return any(key(alias) in key(value) for alias in aliases) and not any(word in key(value) for word in ("参考", "参照", "不是", "非", "不适用", "依据", "请参阅", "填写说明", "填写指南"))
 
     for table in reader.data.get("tables", []):
         if matches(table["id"]):
