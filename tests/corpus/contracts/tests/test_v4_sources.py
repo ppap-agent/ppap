@@ -148,3 +148,22 @@ def test_li_auto_equipment_template_metadata_cannot_replace_a_missing_device_sup
         target = RoundInput("target", "file", "version", "设备清单.xlsx", "ready", rule_version_id="li-l13", rule_body=body, rule_execution=freeze_target_rule_execution(body, "设备清单.xlsx"))
         result = run_round_from_bytes(RoundWork("round", "tenant", [target]), {"version": content.getvalue()})
         assert result["findings"][0]["status"] == expected, result["findings"][0]["suggestions"]
+
+
+def test_nio_measurement_template_does_not_turn_zeros_or_uncached_formulas_into_pass():
+    from audit.audits import RoundInput, RoundWork
+    from audit.engine.checkers.rule_declarations import freeze_target_rule_execution
+    from audit.presets import preset_rule_body
+    from product import run_round_from_bytes
+
+    source = ROOT / "assets/PPAP PRD v3.7/客户归类模板与规则_备份/模板/蔚来/1-2 尺寸测量报告.xlsm"
+    body = preset_rule_body("蔚来", "N01")
+    target = RoundInput("target", "file", "version", source.name, "ready", rule_version_id="nio-n01", rule_body=body, rule_execution=freeze_target_rule_execution(body, source.name))
+    result = run_round_from_bytes(RoundWork("round", "tenant", [target]), {"version": source.read_bytes()})
+    findings = result["findings"]
+    assert len(findings) == 11
+    assert not any(row["status"] == "ERR" for row in findings), [(row["status"], row["suggestions"]) for row in findings]
+    # The supplied offline template contains numeric zero in nominal cells and
+    # uncomputed centering/range formulas. It is not a golden passing report.
+    assert findings[3]["status"] == "NG"
+    assert findings[7]["status"] == findings[9]["status"] == "UNABLE"
