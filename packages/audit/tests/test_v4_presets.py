@@ -56,7 +56,9 @@ def test_preset_execution_requires_source_identity_and_explicit_equivalence():
     assert [row["coverage"] for row in frozen["items"]] == ["mapped", "mapped"]
     assert [row["checker_method"] for row in frozen["items"]] == ["rule_1", "rule_2"]
     uaes = freeze_target_rule_execution(preset_rule_body("UAES", "U07"), "PFMEA.xlsx")
-    assert all(row["coverage"] == "unsupported" for row in uaes["items"])
+    assert all(row["coverage"] == "mapped" for row in uaes["items"])
+    assert [row["checker_method"] for row in uaes["items"]] == ["rule_1", "rule_2", "rule_3", "rule_4"]
+    assert uaes["checker"]["class"] == "audit.checkers.v4.uaes.fmea.UaesPfmeaAgent"
     nio["rules"].reverse()
     assert [row["checker_method"] for row in freeze_target_rule_execution(nio, "特殊特性清单.xlsx")["items"]] == ["rule_2", "rule_1"]
     nio["rules"][0]["rule_to_check"] = "不同客户的条款"
@@ -65,12 +67,12 @@ def test_preset_execution_requires_source_identity_and_explicit_equivalence():
 
 
 def test_customer_resolver_never_borrows_another_customer_identity():
-    from audit.checkers.v3.process_special_characteristic_agent import ProcessSpecialCharacteristicAgent
+    from audit.checkers.v4.nio.special_characteristics import NioSpecialCharacteristicsAgent
     from audit.engine.routing import resolve_engine_agent_class
     from audit.kinds import PpapDocumentType
 
     kind = PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST
-    assert resolve_engine_agent_class(kind, "source.xlsx", "v4", preset_key="N04", preset_customer="蔚来") is ProcessSpecialCharacteristicAgent
+    assert resolve_engine_agent_class(kind, "source.xlsx", "v4", preset_key="N04", preset_customer="蔚来") is NioSpecialCharacteristicsAgent
     with pytest.raises(ValueError, match="unknown_customer_rule"):
         resolve_engine_agent_class(kind, "source.xlsx", "v4", preset_key="N04", preset_customer="UAES")
     with pytest.raises(ValueError, match="preset_document_type_mismatch"):
