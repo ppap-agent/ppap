@@ -8,7 +8,7 @@ from audit.checkers.v2.dimension_measurement_excel_agent import (
 )
 from audit.checkers.v3.excel_agent import rule
 from audit.engine.checkers.dimension_measurement_policy import check_duplicates, check_tolerance, is_strict_ok_text
-from audit.engine.rule_engine import Decision, GuardStop
+from audit.engine.rule_engine import Decision, GuardStop, Row
 from audit.kinds import PpapDocumentType
 
 from .facts import NativeFacts, compact
@@ -34,15 +34,32 @@ class LiAutoInspectionAgent(NativeFacts):
     def _inspection_rows(ctx, required):
         rows = []
         for section in _iter_doc01_main_sections(ctx):
-            columns = section.columns(*required, optional=("序号", "检查项目"))
-            for row in section.rows_from(columns):
+            optional = tuple(name for name in ("序号", "检查项目", "判定标准", "供方检查方法/检查工具", "检查数据", "判定结果") if name not in required)
+            columns = section.columns(*required, optional=optional)
+            business = [name for name in ("检查项目", "判定标准", "供方检查方法/检查工具", "检查数据", "判定结果") if name in columns]
+            section_count = 0
+            for index in range(max(column.data_start_row for column in columns.values()), section.resolved.ws.max_row + 1):
+                row = Row(ctx, section.resolved.ws, columns, index, section.resolved)
                 if row.is_header():
                     continue
-                if "序号" in columns and not _is_doc01_sequence_number(row.value("序号")):
+                project = compact(row.value("检查项目")) if "检查项目" in columns else ""
+                serial = compact(row.value("序号")) if "序号" in columns else ""
+                if project == "检查项目" and serial == "序号":
                     continue
-                if "检查项目" in columns and not row.is_present("检查项目"):
+                other = [name for name in business if name != "检查项目"]
+                has_other = any(row.is_present(name) for name in other)
+                if not has_other and (serial in {"尺寸", "非尺寸"} or project in {"尺寸", "非尺寸"}):
                     continue
-                rows.append((row, columns))
+                if not has_other and (
+                    serial.rstrip(":：") in {"车型", "零件名称", "零件号", "供应商", "责任人", "日期"} or project.rstrip(":：") in {"车型", "零件名称", "零件号", "供应商", "责任人", "日期"}
+                ):
+                    break
+                # Source clauses do not require a serial number or project
+                # label before examining an otherwise populated business row.
+                if has_other or project or _is_doc01_sequence_number(serial):
+                    rows.append((row, columns))
+                    section_count += 1
+            ctx.note_scan(yielded=section_count, finished=True)
         if not rows:
             raise GuardStop(Decision.UNABLE, "未取得可核实的检查数据行。")
         return rows
