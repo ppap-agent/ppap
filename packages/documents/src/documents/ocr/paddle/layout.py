@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, Literal
 
 from .client import PaddleOCRFormatError, require_pages
 
@@ -36,10 +36,11 @@ def blocks(pruned: dict[str, Any], name: str) -> list:
     return value
 
 
-def diagnostic(diagnostics: list[dict] | None, *, element: str, page: int, index: int | None, message: str) -> None:
+def diagnostic(diagnostics: list[dict] | None, *, element: str, page: int, index: int | None, message: str, outcome: Literal["error", "unknown"] = "error") -> None:
     if diagnostics is None:
         raise PaddleOCRFormatError(message)
-    diagnostics.append({"code": f"paddle.{element}.invalid", "message": message, "stage": "structure", "element": element, "page": page, "index": index})
+    suffix = "unknown" if outcome == "unknown" else "invalid"
+    diagnostics.append({"code": f"paddle.{element}.{suffix}", "outcome": outcome, "message": message, "stage": "structure", "element": element, "page": page, "index": index})
 
 
 def page_layouts(result: dict, page_count: int, *, diagnostics: list[dict] | None = None, source_pages: list[int] | None = None) -> list[dict]:

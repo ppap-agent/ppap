@@ -80,7 +80,7 @@ def seal_evidence(pruned: dict, regions: list[dict], page_no: int, *, diagnostic
             continue
         unresolved = bool(detected)
         if unresolved:
-            diagnostic(diagnostics, element="seal", page=page_no, index=item["index"], message="PaddleOCR seal text cannot be uniquely bound to a detected region")
+            diagnostic(diagnostics, element="seal", page=page_no, index=item["index"], message="PaddleOCR seal text cannot be uniquely bound to a detected region", outcome="unknown")
         result.append(
             {
                 "page": page_no,

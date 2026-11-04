@@ -57,10 +57,10 @@ def _locate(item: dict, frame: dict | None, diagnostics: list[dict], *, element:
     item["pdf_bbox"] = None
     bounds = item.get("bbox")
     if bounds is None or frame is None or "derotation_matrix" not in frame:
-        diagnostic(diagnostics, element=element, page=page, index=item.get("index", item.get("recognition_index")), message="PaddleOCR original location is unavailable")
+        diagnostic(diagnostics, element=element, page=page, index=item.get("index", item.get("recognition_index")), message="PaddleOCR original location is unavailable", outcome="unknown")
         return
     if bounds[2] > frame["width"] or bounds[3] > frame["height"]:
-        diagnostic(diagnostics, element=element, page=page, index=item.get("index", item.get("recognition_index")), message="PaddleOCR coordinate is outside its source page")
+        diagnostic(diagnostics, element=element, page=page, index=item.get("index", item.get("recognition_index")), message="PaddleOCR coordinate is outside its source page", outcome="unknown")
         return
     rectangle = fitz.Rect(
         bounds[0] * frame["pdf_display_width"] / frame["width"],

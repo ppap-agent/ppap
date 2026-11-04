@@ -214,3 +214,32 @@ def test_wrong_response_page_identity_is_not_guessed(source):
     response["layoutParsingResults"][0]["prunedResult"]["page_index"] = 4
     with pytest.raises(PaddleOCRFormatError, match="page identity"):
         build_evidence(response, page_count=1, pdf_path=source, source_pages=[3])
+
+
+@pytest.mark.parametrize("bounds", [None, [20, 40, 900, 500]])
+def test_unlocated_seal_is_unknown_while_other_source_facts_survive(source, bounds):
+    raw = page_result()
+    pruned = raw["layoutParsingResults"][0]["prunedResult"]
+    pruned["layout_det_res"]["boxes"][0]["coordinate"] = bounds
+    pruned["seal_res_list"][0]["bbox"] = bounds
+    evidence = build_evidence(raw, page_count=1, pdf_path=source, source_pages=[2])
+    seal = evidence["pages"][0]["seals"][0]
+    assert seal["pdf_bbox"] is None
+    assert evidence["pages"][0]["texts"][0]["pdf_bbox"] is not None
+    relevant = [d for d in evidence["diagnostics"] if d["element"] == "seal"]
+    assert relevant and all(d["outcome"] == "unknown" for d in relevant)
+
+
+def test_ambiguous_seal_text_binding_has_unknown_diagnostic(source):
+    raw = page_result()
+    pruned = raw["layoutParsingResults"][0]["prunedResult"]
+    pruned["layout_det_res"]["boxes"] = [
+        {"label": "seal", "coordinate": [20, 20, 100, 100]},
+        {"label": "seal", "coordinate": [80, 20, 160, 100]},
+    ]
+    pruned["seal_res_list"] = [{"rec_texts": ["ARCHIVE"], "bbox": [20, 20, 160, 100]}]
+    evidence = build_evidence(raw, page_count=1, pdf_path=source, source_pages=[2])
+    seals = evidence["pages"][0]["seals"]
+    assert all(s["recognized_text"] == [] for s in seals if s["source"] == "paddle_layout")
+    binding = [d for d in evidence["diagnostics"] if d["element"] == "seal"]
+    assert binding and all(d["outcome"] == "unknown" for d in binding)
