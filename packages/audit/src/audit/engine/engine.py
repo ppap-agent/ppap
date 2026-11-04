@@ -5,12 +5,15 @@ from __future__ import annotations
 import logging
 from typing import Any, List, Optional
 
+from documents.files import get_file_extension_from_url
+
 from audit.contracts import (
     AuditInput,
     AuditResultItem,
     GroupContextInput,
     RuleInput,
 )
+from audit.kinds import PpapDocumentType
 
 from .routing import (
     get_audit_file_compatibility_error,
@@ -110,19 +113,28 @@ def run_audit(
     runtime: Optional[AuditRuntime] = None,
 ) -> List[AuditResultItem]:
     """Execute an audit through the canonical type/file/profile route."""
-    compatibility_error = get_audit_file_compatibility_error(audit_input.file_url)
-    if compatibility_error is not None:
-        raise ValueError(compatibility_error)
-
+    preset = None
     if rule_input.rule_profile == "v4":
-        from audit.presets import preset_rule
+        from audit.presets import preset_document_type, preset_rule
 
         customer = rule_input.customers[0] if len(rule_input.customers) == 1 else ""
-        preset = preset_rule(customer, rule_input.preset_key)
+        try:
+            preset = preset_rule(customer, rule_input.preset_key)
+        except ValueError:
+            return _error_result(rule_input, "invalid_preset_source")
         if rule_input.preset_source_sha256 != preset.source_sha256:
             return _error_result(rule_input, "preset_source_version_mismatch")
+        if rule_input.type != preset_document_type(preset):
+            return _error_result(rule_input, "preset_document_type_mismatch")
+
+    compatibility_error = get_audit_file_compatibility_error(audit_input.file_url)
+    photo_carrier = get_file_extension_from_url(audit_input.file_url).lower() in {".png", ".jpg", ".jpeg", ".webp"}
+    if compatibility_error is not None and not (preset and (preset.customer, preset.entry_id) == ("UAES", "U13") and photo_carrier):
+        raise ValueError(compatibility_error)
 
     doc_type = get_document_type_from_rule(rule_input)
+    if doc_type is None and preset is not None:
+        doc_type = PpapDocumentType.UNKNOWN
     if doc_type is None:
         return _error_result(
             rule_input,

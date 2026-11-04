@@ -90,7 +90,13 @@ def _excel_has_content(content: bytes, suffix: str) -> bool:
     return has_content
 
 
-def validate_file(filename: str, content: bytes) -> dict:
+def validate_file(filename: str, content: bytes, *, scope: dict | None = None) -> dict:
+    if scope == {"customer_preference": "UAES", "preset_key": "U13"}:
+        from documents.photo_inputs import validate_photo_input
+
+        return validate_photo_input(filename, content)
+    if scope is not None:
+        return {"state": "error", "reasons": ["无法确认本次文件检查范围，请重新选择客户和文件用途"]}
     suffix = Path(filename).suffix.lower()
     if suffix not in {".xlsx", ".xls", ".xlsm", ".docx", ".doc", ".pdf"}:
         return {"state": "invalid", "reasons": ["非审核支持格式"]}
