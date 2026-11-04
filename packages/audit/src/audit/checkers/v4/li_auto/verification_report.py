@@ -1,9 +1,13 @@
 """L03 is an untamplated report with literal verdict/type tokens."""
 
+import json
 import unicodedata
+from pathlib import Path
 
 from audit.checkers.v3.dpvr_excel_agent import DpvrExcelAgent
 from audit.checkers.v3.excel_agent import rule
+from audit.checkers.v4.visual_facts import VisualFactsUnavailable, read_original_pdf_visual_facts
+from audit.contracts import AuditEvidence, EvidenceSource
 from audit.engine.rule_engine import Decision, GuardStop, Sheet
 
 from .facts import NativeFacts, compact, image_regions
@@ -17,6 +21,50 @@ def _key(value):
 
 class LiAutoVerificationReportAgent(NativeFacts, DpvrExcelAgent):
     EXPECTED_RULE_CATEGORIES = ("文件编号审核", "试验结论审核", "试验类型审核", "印章审核", "试验图片审核", "样品数量审核")
+
+    def _original_visual_facts(self):
+        if Path(self.audit_file.file_url).suffix.lower() != ".pdf":
+            raise GuardStop(Decision.UNABLE, "Office图像内容尚未核实，不能用颜色或图像对象认证实际印章或试验照片。")
+        if hasattr(self, "_original_visual_error"):
+            raise self._original_visual_error
+        if hasattr(self, "_original_visual_result"):
+            return self._original_visual_result
+        self._original_visual_sources = []
+
+        def witness(locator, excerpt, *, visual=False):
+            source = EvidenceSource(
+                kind="visual" if visual else "structure", locator=json.dumps({**locator, "file_version_id": self.audit_file.audit_id}, ensure_ascii=False, separators=(",", ":")), excerpt=excerpt
+            )
+            if source not in self._original_visual_sources:
+                self._original_visual_sources.append(source)
+
+        fields = {
+            "seal": "文件中存在实际印章；预印的盖章标签、图标、红色方块或公司标识不算。",
+            "before": "试验前或实验前区域有实际样品或试验现场照片；纯色、空白、文字占位、示意图不算。",
+            "during": "试验中或实验中区域有实际试验过程照片；纯色、空白、文字占位、示意图不算。",
+            "after": "试验后或实验后区域有实际样品或试验结果照片；纯色、空白、文字占位、示意图不算。",
+        }
+        try:
+            self._original_visual_result = read_original_pdf_visual_facts(self.audit_file, fields, witness, operation="li_auto_report_original_visual_facts")
+        except VisualFactsUnavailable as exc:
+            error = GuardStop(Decision.UNABLE, str(exc))
+            self._original_visual_error = error
+            raise error from exc
+        except Exception as exc:
+            self._original_visual_error = exc
+            raise
+        return self._original_visual_result
+
+    def _finalize_audit_result(self, result, *, rule_no, phase, ctx=None):
+        finalized = super()._finalize_audit_result(result, rule_no=rule_no, phase=phase, ctx=ctx)
+        sources = tuple(getattr(self, "_original_visual_sources", ())) if rule_no in {4, 5} else ()
+        if sources:
+            if finalized.evidence is not None:
+                evidence = finalized.evidence.model_copy(update={"required": "visual", "used": "both" if finalized.evidence.sources else "visual", "sources": (*finalized.evidence.sources, *sources)})
+            else:
+                evidence = AuditEvidence(required="visual", used="visual", source_format="pdf", prepared_format="pdf", conversion_strategies=("pdf_page_render",), sources=sources)
+            return finalized.model_copy(update={"evidence": evidence})
+        return finalized
 
     def _field(self, ctx, aliases):
         values = set()
@@ -68,10 +116,20 @@ class LiAutoVerificationReportAgent(NativeFacts, DpvrExcelAgent):
 
     @rule("印章审核")
     def rule_4(self, ctx):
-        return "UNABLE", "原件印章内容尚未核实；颜色或图像对象不等于真实印章。"
+        observed = self._original_visual_facts()["seal"]
+        if observed is None:
+            return "UNABLE", "原件印章内容尚未核实。"
+        return ("PASS", "已从完整原件核实实际印章。") if observed else ("NG", "完整原件中未见实际印章。")
 
     @rule("试验图片审核")
     def rule_5(self, ctx):
+        if Path(self.audit_file.file_url).suffix.lower() == ".pdf":
+            observed = self._original_visual_facts()
+            if any(observed[name] is False for name in ("before", "during", "after")):
+                return "NG", "完整原件缺少至少一个阶段的实际试验照片。"
+            if any(observed[name] is None for name in ("before", "during", "after")):
+                return "UNABLE", "试验前、中、后三阶段实际照片尚未全部核实。"
+            return "PASS", "已从完整原件核实试验前、中、后三阶段实际照片。"
         phases = [("试验前", "实验前"), ("试验中", "实验中"), ("试验后", "实验后")]
         confirmed = set()
         for ws in ctx.workbook.worksheets:

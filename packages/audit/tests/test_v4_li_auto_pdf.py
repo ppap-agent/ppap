@@ -15,7 +15,10 @@ class NativePdfRuntime:
 
 
 @pytest.mark.parametrize(("verdict", "expected"), [("通过", "PASS"), ("基本合格", "NG")])
-def test_real_untamplated_pdf_preserves_exact_verdict_and_page_evidence(tmp_path, verdict, expected):
+def test_real_untamplated_pdf_preserves_exact_verdict_and_page_evidence(tmp_path, monkeypatch, verdict, expected):
+    from audit.engine.checkers.client import AIClient
+
+    monkeypatch.setattr(AIClient, "image_analysis_completion", lambda *args, **kwargs: '{"seal":null,"before":null,"during":null,"after":null}')
     path = tmp_path / "真实验证报告.pdf"
     document = fitz.open()
     page = document.new_page(width=500, height=600)
