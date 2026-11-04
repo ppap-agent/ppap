@@ -183,3 +183,32 @@ def test_queue_tracks_history_entries_without_leaving_the_workbench(width):
         assert not any(path == "/audit-tasks/" + TASK for _method, path in calls)
         assert all(method == "GET" for method, _path in calls)
         browser.close()
+
+
+def test_opened_task_remains_visible_until_its_workbench_list_is_complete():
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page(viewport={"width": 1440, "height": 960})
+        calls, summary, _held = task_routes(page, False)
+        other = {**summary, "id": "00000000-0000-4000-8000-000000000003", "number": "PPAP-另一任务"}
+
+        def read_tasks(route):
+            calls.append((route.request.method, "/audit-tasks"))
+            last = "offset=50" in route.request.url
+            route.fulfill(json={"tasks": [summary if last else other], "next_offset": None if last else 50})
+
+        page.route("**/api/audit-tasks?*", read_tasks)
+        page.goto(WEB + "/tasks/" + TASK)
+        expect(page.get_by_role("region", name="全部文件概览", exact=True)).to_be_visible()
+        page.get_by_role("main").get_by_role("button", name="工作台", exact=True).click()
+        expect(page.get_by_role("heading", name="工作台", exact=True)).to_be_visible()
+        table = page.get_by_role("table", name="全部任务审核记录", exact=True)
+        expect(table.get_by_role("row").filter(has_text="PPAP-另一任务")).to_be_visible()
+        expect(table.get_by_role("row").filter(has_text="PPAP-状态核对")).to_be_visible()
+        expect(page.get_by_role("tab", name="全部任务", exact=False)).to_have_text("全部任务—")
+        page.get_by_role("button", name="加载更多记录", exact=True).click()
+        expect(page.get_by_role("tab", name="全部任务", exact=False)).to_have_text("全部任务2")
+        expect(table.get_by_role("row").filter(has_text="PPAP-状态核对")).to_be_visible()
+        assert calls.count(("GET", "/audit-tasks/" + TASK)) == 1
+        assert all(method == "GET" for method, _path in calls)
+        browser.close()
