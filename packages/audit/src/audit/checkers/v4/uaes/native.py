@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from audit.checkers.v2.base_agent import BaseAgent
+from audit.checkers.v4.pfmea_local import pair_identity
 from audit.contracts import AuditEvidence, AuditResultItem, EvidenceDiagnostic, EvidenceSource
 from audit.document_tools import ReadLimits, TableReader, snapshot
 from audit.engine.checkers.rule_declarations import discover_declared_rules
@@ -415,7 +416,7 @@ class UaesSourceAgent(BaseAgent):
         project_required = self.rule.preset_key == "U04"
         own_project = self.native().field(project_aliases, required=project_required)
         peer_project = other.field(project_aliases, required=project_required)
-        if (own_project or peer_project) and (not own_project or not peer_project or key(own_project) != key(peer_project)):
+        if (own_project or peer_project) and (not pair_identity(key(own_project)) or not pair_identity(key(peer_project)) or key(own_project) != key(peer_project)):
             raise UnknownFact("关联原件实际项目身份不一致或缺失，尚不能用于当前项目。")
         customer_aliases = ("客户名称", "客户", "customer")
         left_customer = self.audit_file.customer or self.native().field(customer_aliases)
@@ -425,8 +426,7 @@ class UaesSourceAgent(BaseAgent):
         part_aliases = ("零件号", "零件编号", "物料编号", "客户零件号", "part number")
         left, right = self.native().field(part_aliases), other.field(part_aliases)
         labels = {key(name) for name in (*part_aliases, "零件名称", "物料名称", "版本", "日期")}
-        placeholders = {key(value) for value in ("", "/", "NA", "N/A", "TBD", "无", "待填", "待定", "XXX", "--", "—")}
-        if key(left) in placeholders or key(right) in placeholders:
+        if not pair_identity(key(left)) or not pair_identity(key(right)):
             raise UnknownFact("关联原件零件号尚未确认，不能用占位值配对。")
         if key(left) in labels or key(right) in labels:
             raise UnknownFact("关联原件零件号值可能是相邻字段标签，需核对原件。")
@@ -436,7 +436,7 @@ class UaesSourceAgent(BaseAgent):
         # from upload order or borrow the current document's revision.
         revision_aliases = ("版本", "版次", "修订版次", "revision")
         own_revision, peer_revision = key(self.native().field(revision_aliases)), key(other.field(revision_aliases))
-        if own_revision in placeholders or peer_revision in placeholders or own_revision != peer_revision:
+        if not pair_identity(own_revision) or not pair_identity(peer_revision) or own_revision != peer_revision:
             raise UnknownFact("关联原件版本不一致，需确认适用版本。")
         if require_name:
             part_name_aliases = ("零件名称", "物料名称", "part name")

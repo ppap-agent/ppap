@@ -9,10 +9,10 @@ from audit.precheck_dependencies import dependency_facts
 from openpyxl import Workbook
 
 
-def original(tmp_path, version, *, title="报告", customer="UAES", part="P1", revision="A", msa="属性型", extra=None):
+def original(tmp_path, version, *, title="报告", customer="UAES", part="P1", revision="A", msa="属性型", extra=None, project="M1"):
     book = Workbook()
     book.active.title = title
-    for row in [["客户", customer], ["零件号", part], ["零件名称", "支架"], ["版本", revision], ["项目", "M1"], ["MSA类型", msa], ["实验室名称", "实验室A"], ["UAES批准的前提/备注", "条件认可"]]:
+    for row in [["客户", customer], ["零件号", part], ["零件名称", "支架"], ["版本", revision], ["项目", project], ["MSA类型", msa], ["实验室名称", "实验室A"], ["UAES批准的前提/备注", "条件认可"]]:
         book.active.append(row)
     if extra:
         book.create_sheet(extra).append(["项目", "附件"])
@@ -188,3 +188,20 @@ def test_material_drawing_pair_requires_the_source_project_identity(tmp_path):
         book.close()
     result = facts(target, "U04", GroupContextInput(by_audit_id={"reference": reference}))["drawing"]
     assert result["status"] == "unknown" and result["code"] is None
+
+
+@pytest.mark.parametrize("field,value", [("part", "待确认"), ("part", "none"), ("part", "-"), ("part", "工程更改版本"), ("part", "ＴＢＤ"), ("revision", "版本号"), ("revision", "待确认"), ("project", "待确认")])
+def test_equal_unknown_identity_does_not_establish_dependency_availability(tmp_path, field, value):
+    target = original(tmp_path, "target", **{field: value})
+    reference = original(tmp_path, "reference", title="过程流程图", **{field: value})
+    result = facts(target, "U08", GroupContextInput(by_audit_id={"reference": reference}))["pfd"]
+    assert result["status"] == "unknown"
+    assert result["code"] is None and result["warning_codes"] == []
+
+
+@pytest.mark.parametrize("part", ["P-123", "P/123", "P.123", "000123"])
+def test_dependency_availability_preserves_real_part_identity(tmp_path, part):
+    target = original(tmp_path, "target", part=part)
+    reference = original(tmp_path, "reference", title="过程流程图", part=part)
+    result = facts(target, "U08", GroupContextInput(by_audit_id={"reference": reference}))["pfd"]
+    assert result["status"] == "satisfied"

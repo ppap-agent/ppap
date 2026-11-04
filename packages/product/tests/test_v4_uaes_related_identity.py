@@ -150,3 +150,20 @@ def test_msa_broad_type_keeps_its_actual_kappa_subtype_available(tmp_path):
     body = preset_rule_body("UAES", "U05")
     rule = RuleInput(rule_id="frozen-rule", **{name: value for name, value in body.items() if name != "kind"})
     assert UaesMsaAgent(target, rule, group).related(("kappa",)).version == "reference"
+
+
+@pytest.mark.parametrize("field,value", [("part", "待确认"), ("part", "none"), ("part", "-"), ("part", "工程更改版本"), ("part", "ＴＢＤ"), ("revision", "版本号"), ("revision", "待确认"), ("project", "待确认")])
+def test_equal_unknown_source_identity_cannot_certify_a_formal_pair(tmp_path, field, value):
+    target = original(tmp_path, "target", target=True, **{field: value})
+    reference = original(tmp_path, "reference", **{field: value})
+    assert check(target, [reference]).status == "UNABLE"
+
+
+@pytest.mark.parametrize("part", ["P-123", "P/123", "P.123", "000123"])
+def test_valid_source_part_identity_retains_punctuation_and_leading_zeros(tmp_path, part):
+    assert check(original(tmp_path, "target", target=True, part=part), [original(tmp_path, "reference", part=part)]).status == "PASS"
+
+
+def test_formal_pair_keeps_optional_project_and_required_revision_contract(tmp_path):
+    assert check(original(tmp_path, "target", target=True, project=None), [original(tmp_path, "reference", project=None)]).status == "PASS"
+    assert check(original(tmp_path, "target", target=True, revision=None), [original(tmp_path, "reference", revision=None)]).status == "UNABLE"

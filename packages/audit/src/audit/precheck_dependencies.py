@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from audit.checkers.v4.pfmea_local import pair_identity
 from audit.document_tools import effective
 from audit.kinds import PpapDocumentType as T
 from audit.precheck_facts import SourceFacts, StateFact, UnknownFact, key
@@ -73,7 +74,7 @@ def _field(reader, aliases, *, required=True):
         if required:
             raise UnknownFact("关联身份字段尚未定位：" + aliases[0] + "。")
         return None
-    if len({identity(value) for value in values}) != 1 or identity(values[0]) in {"", "/", "na", "n/a", "tbd", "xxx", "无", "待填", "待定"} or key(values[0]) in _LABELS:
+    if len({identity(value) for value in values}) != 1 or not pair_identity(key(values[0])) or key(values[0]) in _LABELS:
         raise UnknownFact("关联身份字段为空或有多个冲突值：" + aliases[0] + "。")
     return values[0]
 
