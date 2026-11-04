@@ -715,3 +715,61 @@ def no_live_transports(monkeypatch):
     monkeypatch.setattr(requests.sessions.Session, "request", reject)
     yield
     assert attempted == [], "A caught exception hid a live transport attempt"
+
+
+@pytest.mark.parametrize("consumer", ["u08", "psw"])
+@pytest.mark.parametrize("stop", ["deadline", "cancel"])
+def test_identity_read_cannot_dispatch_after_the_scope_stops(tmp_path, monkeypatch, consumer, stop):
+    from audit.checkers.v4 import paddle_evidence as module
+    from audit.engine.runtime import bind_runtime
+
+    path, service, clock, cancelled = source(tmp_path), Service(), [0.0], [False]
+    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
+    if consumer == "psw":
+        rule = psw_rules()
+        with bind_runtime(PswRuntime()):
+            checker = psw_agent(path, rule)
+        selected = psw_targets(path, rule, (3,))
+    else:
+        checker, selected = agent(path), targets(path)
+    session = PaddleShadowSession(service, project_id="project-a", targets=selected, deadline_seconds=10, cancelled=lambda: cancelled[0])
+    read_identity, reads = session._identity, []
+
+    def delayed_identity(agent, target):
+        result = read_identity(agent, target)
+        reads.append(target)
+        if len(reads) == 2:
+            if stop == "deadline":
+                clock[0] = 11
+            else:
+                cancelled[0] = True
+        return result
+
+    monkeypatch.setattr(session, "_identity", delayed_identity)
+    with paddle_shadow_scope(session):
+        observation = session.observe_psw(checker, 3) if consumer == "psw" else session.observe(checker, "rule_3")
+    assert session.request_count == 0 and service.calls == []
+    assert observation.state == "error"
+    assert observation.reason == ("deadline_exceeded" if stop == "deadline" else "cancelled")
+    assert observation.evidence.sources == ()
+
+
+def test_dispatch_preserves_a_positive_budget_smaller_than_one_millisecond(tmp_path, monkeypatch):
+    from audit.checkers.v4 import paddle_evidence as module
+
+    class Capture(Service):
+        def __init__(self):
+            super().__init__()
+            self.timeouts = []
+
+        def analyze_page(self, path, page, *, timeout=None):
+            self.timeouts.append(timeout)
+            return super().analyze_page(path, page, timeout=timeout)
+
+    monkeypatch.setattr(module.time, "monotonic", lambda: 0.0)
+    path, service = source(tmp_path), Capture()
+    session = PaddleShadowSession(service, project_id="project-a", targets=targets(path), deadline_seconds=0.0005)
+    with paddle_shadow_scope(session):
+        observation = session.observe(agent(path), "rule_3")
+    assert service.timeouts == [0.0005]
+    assert session.request_count == 1 and observation.state == "known"
