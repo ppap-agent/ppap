@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
+import json
+import time
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from types import SimpleNamespace
+from threading import Event, Thread
 
 import fitz
+import httpx
 import pytest
-import requests
 from documents.ocr.paddle import PaddleOCRFormatError, PaddleStructureService, build_evidence, client
 
 
@@ -22,6 +27,20 @@ def source(tmp_path: Path) -> Path:
             page.insert_text((20, 40), text)
         pdf.save(path)
     return path
+
+
+@pytest.fixture
+def http_boundary(monkeypatch):
+    real_client = httpx.AsyncClient
+
+    def install(handler):
+        def transport(**kwargs):
+            assert kwargs["follow_redirects"] is False
+            return real_client(transport=httpx.MockTransport(handler), **kwargs)
+
+        monkeypatch.setattr(client.httpx, "AsyncClient", transport)
+
+    return install
 
 
 def page_result() -> dict:
@@ -40,73 +59,219 @@ def page_result() -> dict:
     }
 
 
-def test_selected_page_sends_exactly_one_original_page_without_touching_source(source, monkeypatch):
+@contextmanager
+def local_page_service(mode):
+    """A real HTTP boundary: no OCR provider, token or model is contacted."""
+    stopped, finished = Event(), Event()
+    calls = []
+    body = json.dumps({"result": page_result()}).encode()
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            calls.append(self.path)
+            try:
+                if mode == "headers":
+                    stopped.wait(0.5)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                if mode == "body":
+                    stopped.wait(0.5)
+                size = max(1, len(body) // 12) if mode == "drip" else len(body)
+                for offset in range(0, len(body), size):
+                    if stopped.is_set():
+                        break
+                    self.wfile.write(body[offset : offset + size])
+                    self.wfile.flush()
+                    if mode == "drip" and stopped.wait(0.035):
+                        break
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            finally:
+                finished.set()
+
+        def log_message(self, *_args):
+            pass
+
+    with ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            yield f"http://127.0.0.1:{server.server_port}/layout-parsing", calls
+        finally:
+            stopped.set()
+            server.shutdown()
+            thread.join(timeout=1)
+            assert finished.wait(1) and not thread.is_alive()
+
+
+def test_page_total_deadline_stops_a_response_that_never_hits_idle_timeout(source):
+    with local_page_service("drip") as (endpoint, calls):
+        began = time.monotonic()
+        with pytest.raises(PaddleOCRFormatError, match="TimeoutError"):
+            PaddleStructureService(endpoint, timeout=0.12).analyze_page(source, 2)
+        assert time.monotonic() - began < 0.3
+        assert calls == ["/layout-parsing"]
+
+
+@pytest.mark.parametrize("phase", ["headers", "body"])
+def test_page_total_deadline_stops_a_stalled_http_response(source, phase):
+    with local_page_service(phase) as (endpoint, calls):
+        began = time.monotonic()
+        with pytest.raises(PaddleOCRFormatError, match="TimeoutError"):
+            PaddleStructureService(endpoint, timeout=0.12).analyze_page(source, 2)
+        assert time.monotonic() - began < 0.3
+        assert calls == ["/layout-parsing"]
+
+
+@pytest.mark.parametrize("running_loop", [False, True])
+def test_page_within_total_deadline_works_for_sync_and_async_callers(source, running_loop):
+    with local_page_service("complete") as (endpoint, calls):
+        service = PaddleStructureService(endpoint, timeout=1)
+
+        async def within_loop():
+            loop = asyncio.get_running_loop()
+            result = service.analyze_page(source, 2)
+            assert asyncio.get_running_loop() is loop
+            return result
+
+        actual = asyncio.run(within_loop()) if running_loop else service.analyze_page(source, 2)
+        assert actual == page_result() and calls == ["/layout-parsing"]
+
+
+def test_expired_response_closes_its_stream_before_returning_to_async_caller(source, http_boundary):
+    closed, calls = [], []
+
+    class WaitingStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'{"result":'
+            await asyncio.sleep(5)
+
+        async def aclose(self):
+            closed.append(True)
+
+    def post(request):
+        calls.append(request)
+        return httpx.Response(200, stream=WaitingStream())
+
+    http_boundary(post)
+
+    async def within_loop():
+        with pytest.raises(PaddleOCRFormatError, match="TimeoutError"):
+            PaddleStructureService("https://ocr.example/layout-parsing", timeout=0.06).analyze_page(source, 1)
+        assert len(calls) == 1 and closed == [True]
+
+    asyncio.run(within_loop())
+
+
+@pytest.mark.parametrize("compatibility_entry", [False, True])
+def test_local_page_preparation_cannot_reset_an_expired_request_budget(source, monkeypatch, compatibility_entry):
+    path = source.parent / "single.pdf"
+    with fitz.open() as pdf:
+        pdf.new_page()
+        pdf.save(path)
+    validate = client.validate_pdf
+
+    def slow_validation(file_path):
+        result = validate(file_path)
+        time.sleep(0.025)
+        return result
+
+    monkeypatch.setattr(client, "validate_pdf", slow_validation)
+    monkeypatch.setattr(client.httpx, "AsyncClient", lambda *_a, **_kw: pytest.fail("expired preparation sent a page"))
+    service = PaddleStructureService("https://ocr.example/layout-parsing", timeout=0.005)
+    with pytest.raises(PaddleOCRFormatError, match="TimeoutError"):
+        if compatibility_entry:
+            service.analyze_full_pdf(path)
+        else:
+            service.analyze_page(path, 1)
+
+
+@pytest.mark.parametrize("status", [302, 429, 503])
+def test_page_http_failure_never_redirects_or_retries(source, http_boundary, status):
+    calls = []
+
+    def post(request):
+        calls.append(str(request.url))
+        return httpx.Response(status, headers={"Location": "https://other.example/layout-parsing"}, text="private provider response")
+
+    http_boundary(post)
+    with pytest.raises(PaddleOCRFormatError, match="HTTPStatusError") as failure:
+        PaddleStructureService("https://ocr.example/layout-parsing").analyze_page(source, 1)
+    assert calls == ["https://ocr.example/layout-parsing"]
+    assert "private provider" not in str(failure.value)
+
+
+def test_selected_page_sends_exactly_one_original_page_without_touching_source(source, http_boundary):
     before = source.read_bytes()
     calls = []
 
-    def post(endpoint, *, json, headers, timeout, allow_redirects):
-        assert allow_redirects is False
-        with fitz.open(stream=base64.b64decode(json["file"]), filetype="pdf") as selected:
+    def post(request):
+        payload = json.loads(request.content)
+        with fitz.open(stream=base64.b64decode(payload["file"]), filetype="pdf") as selected:
             assert len(selected) == 1
             assert "PAGE THREE" in selected[0].get_text()
             assert "PAGE ONE" not in selected[0].get_text()
-        calls.append((endpoint, timeout))
-        return SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"result": page_result()})
+        calls.append((str(request.url), request.extensions["timeout"]["read"]))
+        return httpx.Response(200, json={"result": page_result()})
 
-    monkeypatch.setattr(client.requests, "post", post)
+    http_boundary(post)
     actual = PaddleStructureService("https://ocr.example/layout-parsing", timeout=7).analyze_page(source, 3)
     assert actual == page_result()
-    assert calls == [("https://ocr.example/layout-parsing", 7)]
+    assert len(calls) == 1 and calls[0][0] == "https://ocr.example/layout-parsing"
+    assert 6 < calls[0][1] <= 7
     assert source.read_bytes() == before
 
 
 @pytest.mark.parametrize("page", [0, -1, 4, True, 1.5])
 def test_invalid_original_page_never_calls_service(source, monkeypatch, page):
-    monkeypatch.setattr(client.requests, "post", lambda *_a, **_kw: pytest.fail("invalid page sent"))
+    monkeypatch.setattr(client.httpx, "AsyncClient", lambda *_a, **_kw: pytest.fail("invalid page sent"))
     with pytest.raises(ValueError):
         PaddleStructureService("https://ocr.example/layout-parsing").analyze_page(source, page)
 
 
-def test_page_timeout_is_one_attempt_and_does_not_claim_remote_cancellation(source, monkeypatch):
+def test_page_timeout_is_one_attempt_and_does_not_claim_remote_cancellation(source, http_boundary):
     calls = []
 
-    def unavailable(*_a, **_kw):
+    def unavailable(request):
         calls.append(True)
-        raise requests.ReadTimeout("do not expose provider URL or body")
+        raise httpx.ReadTimeout("do not expose provider URL or body", request=request)
 
-    monkeypatch.setattr(client.requests, "post", unavailable)
+    http_boundary(unavailable)
     with pytest.raises(PaddleOCRFormatError, match="ReadTimeout"):
         PaddleStructureService("https://ocr.example/layout-parsing").analyze_page(source, 2)
     assert calls == [True]
 
 
-def test_page_request_uses_the_smaller_remaining_timeout(source, monkeypatch):
+def test_page_request_uses_the_smaller_remaining_timeout(source, http_boundary):
     timeouts = []
 
-    def post(*_a, **kwargs):
-        timeouts.append(kwargs["timeout"])
-        return SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"result": page_result()})
+    def post(request):
+        timeouts.append(request.extensions["timeout"]["read"])
+        return httpx.Response(200, json={"result": page_result()})
 
-    monkeypatch.setattr(client.requests, "post", post)
+    http_boundary(post)
     service = PaddleStructureService("https://ocr.example/layout-parsing", timeout=7)
     service.analyze_page(source, 1, timeout=0.5)
     service.analyze_page(source, 1, timeout=10)
-    assert timeouts == [0.5, 7]
+    assert 0 < timeouts[0] <= 0.5 and 6 < timeouts[1] <= 7
 
 
 @pytest.mark.parametrize("timeout", [0, -1, float("inf"), float("nan"), True])
 def test_invalid_remaining_timeout_never_sends_a_page(source, monkeypatch, timeout):
-    monkeypatch.setattr(client.requests, "post", lambda *_a, **_kw: pytest.fail("invalid timeout sent"))
+    monkeypatch.setattr(client.httpx, "AsyncClient", lambda *_a, **_kw: pytest.fail("invalid timeout sent"))
     with pytest.raises(ValueError, match="timeout"):
         PaddleStructureService("https://ocr.example/layout-parsing").analyze_page(source, 1, timeout=timeout)
 
 
-def test_source_change_during_request_rejects_late_evidence(source, monkeypatch):
-    def replace_source(*_a, **_kw):
+def test_source_change_during_request_rejects_late_evidence(source, http_boundary):
+    def replace_source(_request):
         source.write_bytes(b"changed while provider was running")
-        return SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"result": page_result()})
+        return httpx.Response(200, json={"result": page_result()})
 
-    monkeypatch.setattr(client.requests, "post", replace_source)
+    http_boundary(replace_source)
     with pytest.raises(PaddleOCRFormatError, match="source changed"):
         PaddleStructureService("https://ocr.example/layout-parsing").analyze_page(source, 2)
 
