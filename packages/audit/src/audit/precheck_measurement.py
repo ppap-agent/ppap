@@ -297,11 +297,14 @@ def execute(checker, entry="N01"):
     def c05(ctx):
         seen = set()
         for sheet, row, _ in rows(ctx):
-            identity = (sheet.ws.title, compact(row.value("测点号")))
+            point = compact(row.value("测点号"))
+            if not point:
+                continue
+            identity = (sheet.ws.title, point)
             if identity in seen:
                 return "NG", f"同页测点号重复：{row.value('测点号')}。"
             seen.add(identity)
-        return done(ctx)
+        return done(ctx) if seen else ("UNABLE", "没有可比较的非空测点号，不能认定空编号互相重复；缺值由M-05记录。")
 
     def c06(ctx):
         values = [compact(row.value("类型")) for _, row, _ in rows(ctx, "类型") if compact(row.value("类型"))]
@@ -321,8 +324,8 @@ def execute(checker, entry="N01"):
         return done(ctx)
 
     def m05(ctx):
-        fields = ("坐标X", "坐标Y", "坐标Z", "上公差", "下公差", "主要控制方向", "类型")
-        for _, row, _ in rows(ctx, *fields):
+        fields = ("测点号", "坐标X", "坐标Y", "坐标Z", "上公差", "下公差", "主要控制方向", "类型")
+        for _, row, _ in rows(ctx, *fields[1:]):
             if row.missing(*fields):
                 return "NG", f"测点行{row.row_index}存在可确定的必填空值。"
         return done(ctx)
@@ -489,13 +492,20 @@ def execute(checker, entry="N01"):
                     return "NG", "业务表头已定位且数据区没有实际测点行；不是读取未知。"
             raise
         real = 0
+        unassigned_samples = False
         for _sheet, row, columns in actual_rows:
-            identity = str(row.value("测点号") or "")
-            if re.search(r"\bi\.e\.|example|示例", identity, re.I):
+            identity = row.value("测点号")
+            if re.search(r"\bi\.e\.|example|示例", str(identity if identity is not None else ""), re.I):
                 continue
             values = row.values_between("测量偏差值", "IQG" if "IQG" in columns else "Centering")
-            if any(value is not None and str(value).strip() for value in values):
+            has_samples = any(value is not None and str(value).strip() for value in values)
+            if compact(identity) in _PLACEHOLDERS - {"0"}:
+                unassigned_samples |= has_samples
+                continue
+            if has_samples:
                 real += 1
+        if not real and unassigned_samples:
+            return "UNABLE", "已有原始样本但无有效测点归属，不能将其当作有效行或判为空白模板。"
         return done(ctx) if real else ("NG", "排除说明/示例后没有真实测量数据行。")
 
     def m09(ctx):
