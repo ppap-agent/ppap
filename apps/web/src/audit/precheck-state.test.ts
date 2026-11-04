@@ -41,3 +41,11 @@ test('old revisions and superseded attempts never describe current inputs', () =
   assert.equal(precheckIsCurrent({...current, current: false}, {id: 't1', input_revision: 2}), false)
   assert.equal(precheckIsCurrent(current, {id: 'other', input_revision: 2}), false)
 })
+
+
+test('explicit scope exclusions continue while missing implementation and unknown codes need confirmation', () => {
+  for (const code of ['S01', 'S02', '', 'S03', 'unrecognized']) {
+    const facts = precheckFacts(snapshot({files: [{file_version_id: 'v1', facts: [{status: 'not_checked', code}]}]}), 'v1')
+    assert.equal(preparationAction(file, facts), ['S01', 'S02'].includes(code) ? 'ready' : 'confirm')
+  }
+})

@@ -30,7 +30,7 @@ export function preparationAction(file: Task['files'][number], facts: PrecheckFa
   // A technical failure, missing coverage or visual uncertainty is never a
   // supplier defect or a new client-side gate. The server owns acceptance.
   if (facts.some(fact => fact.status === 'defect')) return 'process'
-  if (facts.some(fact => !['satisfied', 'handoff'].includes(fact.status))) return 'confirm'
+  if (facts.some(fact => !['satisfied', 'handoff'].includes(fact.status) && !(fact.status === 'not_checked' && ['S01', 'S02'].includes(fact.code)))) return 'confirm'
   return 'ready'
 }
 

@@ -617,6 +617,15 @@ def test_photo_purpose_is_explicit_and_lost_reply_reads_same_scope(width):
         assert len(http.photo_commands) == 1 and http.photo_reads == [http.photo_commands[0]["request_id"]]
         page.screenshot(path=f"/tmp/ppap-v4-photo-ui-{width}.png", full_page=True)
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        page.get_by_role("button", name="上一步", exact=True).click()
+        page.get_by_role("combobox", name="审核客户", exact=True).click()
+        page.get_by_role("option", name="理想", exact=True).click()
+        expect(page.get_by_label("选择审核文件", exact=True)).not_to_have_attribute("accept", re.compile(r"\.png"))
+        page.get_by_role("button", name="查看已选文件", exact=True).click()
+        expect(page.get_by_text("普通审核类型不支持图片。", exact=True)).to_be_visible()
+        expect(page.get_by_role("checkbox", name="选择 样品.png", exact=True)).to_have_count(0)
+        expect(page.get_by_role("button", name="作为生产件样品照片检查", exact=True)).to_have_count(0)
+        assert len(http.photo_commands) == 1
         browser.close()
 
 
