@@ -1,11 +1,8 @@
-"""U12: material identity and UAES characteristic columns, not NIO columns."""
+"""U12 native facts; physical merged rows and uncalculated formulas stay visible."""
 
-from __future__ import annotations
+from audit.checkers.v3.excel_agent import rule
 
-from audit.checkers.v3.excel_agent import ExcelAgent, rule
-from audit.engine.rule_engine import RuleContext, Table
-from audit.engine.rule_engine.contracts import ColumnModel, FieldBlockModel, FieldModel, RuleResourceModel, SectionModel, SheetModel, index_rule_resource
-from audit.kinds import PpapDocumentType
+from .native import MissingFact, UaesSourceAgent, UnknownFact, blank, header
 
 _ALIASES = {
     "编号": ("编号", "序号"),
@@ -13,51 +10,46 @@ _ALIASES = {
     "特性值": ("特性及公差", "特性值"),
     "特性类别": ("特性类型", "特性类别"),
 }
-_RESOURCE = index_rule_resource(
-    RuleResourceModel(
-        sheets=(SheetModel(canonical_name="主表", include_keywords=("特殊特性", "特性清单")),),
-        sections=(
-            SectionModel(
-                canonical_name="主数据区",
-                sheet_name="主表",
-                header_anchors=tuple(_ALIASES),
-                row_anchors=("编号",),
-                header_hit=2,
-                header_search_max_row=20,
-                header_search_max_col=64,
-                header_compact_match=True,
-                column_band=2,
-                row_stop_on_first_blank=False,
-                row_max_blank_streak=8,
-            ),
-        ),
-        columns=tuple(ColumnModel(canonical_name=key, section_name="主数据区", aliases=aliases) for key, aliases in _ALIASES.items()),
-        field_blocks=(FieldBlockModel(canonical_name="物料信息", sheet_name="主表", search_max_row=10, search_max_col=24),),
-        fields=tuple(FieldModel(canonical_name=name, block_name="物料信息", aliases=(name,), value_mode="right", scan_width=4) for name in ("物料名称", "物料编号")),
-    )
-)
 
 
-class UaesSpecialCharacteristicsAgent(ExcelAgent):
-    DOC_TYPE = PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST
+class UaesSpecialCharacteristicsAgent(UaesSourceAgent):
+    PRECHECK_METHODS = {"U12:1:597036a69da0f50a6e30": "rule_1", "U12:2:c399171334f03523c845": "rule_2"}
 
-    def __init__(self, audit_file, rule_input, group_context=None):
-        super().__init__(audit_file, rule_input, group_context=group_context, resource=_RESOURCE)
+    def identity(self, name):
+        facts = self.native()
+        try:
+            return facts.field((name,))
+        except UnknownFact:
+            # Only a readable, truly empty immediate value is a proven empty
+            # field. A missing/visual/ambiguous value remains unknown.
+            for table in facts.tables():
+                for row in range(1, min(10, table["rows"]) + 1):
+                    for column in range(1, min(24, table["cols"])):
+                        item = facts.readers[table["id"]].cell(row, column)
+                        if item.get("state") == "known" and header(item.get("value"), (name,)):
+                            merge = next((span for span in table.get("merges", []) if span[0] <= row <= span[2] and span[1] <= column <= span[3]), None)
+                            next_column = merge[3] + 1 if merge else column + 1
+                            if next_column <= table["cols"] and blank(facts.cell(table, row, next_column)):
+                                raise MissingFact(name + "对应内容为空。") from None
+            raise
 
     @rule("物料名称与编号必填")
-    def rule_1(self, ctx: RuleContext) -> tuple[str, str]:
-        Table(ctx).field_block("物料信息").expect("物料名称", "物料编号", context="UAES物料信息")
-        return "PASS", ""
+    def rule_1(self):
+        for name in ("物料名称", "物料编号"):
+            self.identity(name)
+        return "PASS", "已从原件核实物料名称与编号实际内容。"
 
-    @rule("特殊特性列与逐行必填")
-    def rule_2(self, ctx: RuleContext) -> tuple[str, str]:
+    @rule("特殊特性列与全部物理行必填")
+    def rule_2(self):
+        rows = self.native().rows(_ALIASES, title=("特殊特性", "特性清单"), anchor=("编号",))
         count = 0
-        for sheet in Table(ctx).find_sheets("主表"):
-            section = sheet.section("主数据区")
-            columns = section.columns(*_ALIASES)
-            for row in section.rows_from(columns):
-                if not row.is_present("编号"):
-                    continue
-                count += 1
-                row.expect("特性名称", "特性值", "特性类别", context="UAES特殊特性")
-        return ("PASS", "") if count else ("UNABLE", "没有已编号的特性行，尚不能核实逐行要求。")
+        for row in rows:
+            if blank(row["编号"]):
+                continue
+            count += 1
+            for name in ("特性名称", "特性值", "特性类别"):
+                if blank(row[name]):
+                    return "NG", f"已编号特性行{name}为空。"
+        if not count:
+            raise UnknownFact("没有已编号特性行，不能按空范围通过。")
+        return "PASS", "已读取全部已编号物理行的特性名称、值和类别。"
