@@ -1,0 +1,141 @@
+"""UAES engineering requirements, evaluated on complete source scopes."""
+
+from __future__ import annotations
+
+from decimal import Decimal
+
+from audit.checkers.v3.excel_agent import rule
+
+from .native import UaesSourceAgent, UnknownFact, blank, number
+
+
+class UaesProcessFlowAgent(UaesSourceAgent):
+    @rule("关键工序及特性标识与图例")
+    def rule_1(self):
+        return self.visual_result(
+            {
+                "key_operation": "全图至少有一个实际关键工序标记。",
+                "characteristic_marks": "产品/过程特性中的关键、重要或特殊特性有实际符号标注；不能只有未标注的文字描述。",
+                "legend": "原件图例或注释定义了上述每种关键标记的含义。",
+            },
+            "关键工序、特性标记和标记定义",
+        )
+
+    @rule("全图活动符号一致性与检验图例")
+    def rule_2(self):
+        return self.visual_result(
+            {
+                "standard_shapes": "全部工序活动用标准化流程图形表达，不能只是纯文字框或列表。",
+                "complete_legend": "图例覆盖了全图实际使用的全部符号。",
+                "consistent": "同一活动类型在全图使用相同符号。",
+                "inspection_shapes": "所有进货、过程、最终、巡检、自检活动使用检验符号，且可与图例核对。",
+            },
+            "全图标准符号、完整图例、一致性及检验符号",
+        )
+
+    @rule("过程流程图实际受控章")
+    def rule_3(self):
+        return self.controlled_stamp()
+
+
+class UaesCapabilityAgent(UaesSourceAgent):
+    REPORTS = ("工艺能力认证", "过程能力认证", "process capability")
+
+    def reports(self):
+        tables = self.native().tables(self.REPORTS)
+        if not tables:
+            raise UnknownFact("未能确定工艺能力认证报告的完整范围，不能按空报告通过。")
+        return tables
+
+    def report_value(self, table, aliases):
+        return self.native().field(aliases, title=(table["id"],))
+
+    @rule("所有能力认证报告的样本数与严格Cpk阈值")
+    def rule_1(self):
+        facts = self.native()
+        for table in self.reports():
+            count_text = self.report_value(table, ("读数次数", "读数个数", "样本数量", "sample size", "number of readings"))
+            count = number(count_text)
+            if count != count.to_integral_value() or count < 0:
+                raise UnknownFact("读数次数不是可确认的非负整数。")
+            if count < 125:
+                # A low declared count is not sufficient: the source also
+                # accepts >=125 actual measurements. Count only a complete,
+                # explicitly headed measurement region, not unrelated cells.
+                try:
+                    rows = facts.rows({"measurement": ("实测结果", "测量值", "measurement", "reading")}, title=(table["id"],))
+                    actual = sum(not blank(row["measurement"]) and number(row["measurement"]).is_finite() for row in rows)
+                except UnknownFact:
+                    raise
+                except Exception as exc:
+                    from .native import MissingFact
+
+                    if isinstance(exc, MissingFact):
+                        raise UnknownFact("读数次数不足125，实测区域数量尚不能完整核实。") from exc
+                    raise
+                if actual < 125:
+                    return "NG", "报告读数次数与完整实测区域数量均小于125。"
+            cpk = number(self.report_value(table, ("Cpk", "Process Capability (Cpk)", "Process Capability Cpk")))
+            if cpk <= Decimal("1.33"):
+                return "NG", "工艺能力认证报告Cpk必须严格大于1.33。"
+        return "PASS", "所有已确定的工艺能力认证报告满足样本数量和Cpk要求。"
+
+    @rule("所有能力认证报告的严格Ppk阈值")
+    def rule_2(self):
+        for table in self.reports():
+            if number(self.report_value(table, ("Ppk", "Performance index (Ppk)", "Performance index Ppk"))) <= Decimal("1.67"):
+                return "NG", "工艺能力认证报告Ppk必须严格大于1.67。"
+        return "PASS", "所有已确定的工艺能力认证报告Ppk严格大于1.67。"
+
+    @rule("能力汇总逐行结果目标及不足项措施")
+    def rule_3(self):
+        rows = self.native().rows(
+            {
+                "cpk": ("CPK结果值", "CPK结果", "CPK"),
+                "ppk": ("PPK结果值", "PPK结果", "PPK"),
+                "cpk_target": ("CPK目标值", "CPK目标"),
+                "ppk_target": ("PPK目标值", "PPK目标"),
+                "reaction": ("反应计划", "备注", "反应计划或备注"),
+            },
+            title=("能力值汇总", "能力汇总"),
+            anchor=("cpk", "ppk"),
+        )
+        for row in rows:
+            if number(row["cpk"]) < number(row["cpk_target"]) or number(row["ppk"]) < number(row["ppk_target"]):
+                if blank(row["reaction"]):
+                    return "NG", "能力汇总存在低于目标且没有反应计划或备注的行。"
+        return "PASS", "全部能力汇总行达到目标，或对应不足项已有反应计划/备注。"
+
+    @rule("能力目录覆盖PGQP1特殊特性")
+    def rule_4(self):
+        return self.pgqp_directory(process_only=False)
+
+    @rule("能力目录覆盖PGQP1全部过程特性")
+    def rule_5(self):
+        return self.pgqp_directory(process_only=True)
+
+    def pgqp_directory(self, *, process_only):
+        self.native().require_text("目录")
+        related = self.related(("采购件质量计划", "PGQP1"))
+        related.require_text("PGQP1")
+        aliases: dict[str, tuple[str, ...]] = {"name": ("特性名称", "特性描述", "产品/过程特性", "过程特性")}
+        if process_only:
+            aliases["type"] = ("特性类别", "特性类型", "类别")
+        else:
+            aliases["mark"] = ("特殊特性", "特殊特性标识", "特性分类")
+        rows = related.rows(aliases, title=("PGQP1",), anchor=("name",))
+        required = 0
+        for row in rows:
+            if process_only and "过程" not in str(row["type"]):
+                continue
+            if not process_only and blank(row["mark"]):
+                continue
+            required += 1
+            name = str(row["name"])
+            directory = self.native().table(("目录",))
+            if not any(name.strip() == str(fact.get("value", "")).strip() for fact in directory["cells"].values() if fact.get("state") == "known"):
+                raise UnknownFact("能力目录尚不能确认覆盖关联PGQP1特性：" + name)
+            self.native().require_text(name)
+        if not required:
+            raise UnknownFact("关联PGQP1没有可确认的适用特性，不能按空范围通过。")
+        return "PASS", "已按当前批次同零件的PGQP1核实全部适用特性目录。"
