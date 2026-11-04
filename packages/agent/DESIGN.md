@@ -101,7 +101,7 @@ def execute(
 
 | 层次 | 决定什么 | 现有基础与待补内容 |
 |---|---|---|
-| Ontology | 实体、属性含义及类型、身份、关系和值域 | `audit.models` 已有 `EntityConcept`、`RelationshipConcept`、`Ontology`；当前 checker 路径未消费它们。复用适用定义，按需要补值域、作用范围与来源/版本 |
+| Ontology | 实体、属性含义及类型、身份、关系和值域 | 待实现；从现有资源定义和用户确认的含义中提取，按实际消费者需要定义值域、作用范围与来源/版本 |
 | Projection | 文档表示哪些概念；一条记录的粒度、成员判定、分组、属性归属和关系 | 复用 checker 的对象构建经验、`SectionModel` 及分组能力；待补明确的概念引用与投影约定 |
 | Layout binding | sheet、区域、列、字段、合并格、PDF 页区及读取方式 | 直接使用 `RuleResource`、`SheetModel`、`SectionModel`、`ColumnModel`、`FieldModel`、`PdfSpec` 和原 resolver；缺少的绑定信息加在原类型中 |
 | Check | 对上述对象执行本次规则的义务 | 继续使用 `RuleCheck.check() -> AuditResultItem` 和原 Fluent API，不把业务判定移到文档解析器 |

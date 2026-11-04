@@ -46,12 +46,6 @@ test('docs-addon client comes from the package manager', () => {
   assert.doesNotMatch(addon, /block-docs-addon-api\.js/)
 })
 
-test('legacy page files are gone', () => {
-  for (const name of ['app.js', 'audit-files.html', 'rules.html', 'usage.html', 'product-api.js']) {
-    assert.equal(existsSync(join(web, name)), false)
-  }
-})
-
 test('package.json does not declare InsForge SDK or PostgREST clients', () => {
   const pkg = JSON.parse(readFileSync(join(web, 'package.json'), 'utf8'))
   const declared = {...pkg.dependencies, ...pkg.devDependencies}

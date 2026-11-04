@@ -11,6 +11,7 @@ from typing import Literal, Protocol
 from uuid import UUID
 
 from audit.contracts import AuditInput, AuditResultItem, GroupContextInput, RuleInput
+from audit.document_tools import ParserLimitError
 from audit.protocol import ControllerFault
 from audit.storage_errors import ObjectExists, ObjectMissing, ObjectTooLarge
 
@@ -20,7 +21,6 @@ from agent.execution.budget import DEEP_TOTAL_SECONDS
 from agent.execution.secure_files import read_json
 from agent.protocol import ExecuteRequest, ExecuteResponse
 from agent.run import ExecutionContext
-from agent.tools import ParserLimitError
 
 MAX_BUNDLE_BYTES = 16 * 1024 * 1024
 FAULTS = {
