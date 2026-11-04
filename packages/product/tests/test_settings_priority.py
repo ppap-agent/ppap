@@ -47,3 +47,16 @@ def test_environment_still_wins_over_dotenv_when_no_explicit_value_is_given(tmp_
 
     observed = settings.usage_charge_enabled
     assert observed is False
+
+
+def test_ocr_model_priority_has_no_legacy_gemma_fallback(monkeypatch):
+    monkeypatch.setenv("PPAP_PROFILE", "isolated-dev")
+    for name in ("OCR_MODEL_NAME", "MODEL_NAME", "LLM_MODEL"):
+        monkeypatch.delenv(name, raising=False)
+
+    inherited = Settings(llm_model="current-vision-model")
+    dedicated = Settings(llm_model="current-vision-model", OCR_MODEL_NAME="dedicated-ocr-model")
+
+    assert inherited.get_ocr_model_name() == "current-vision-model"
+    assert dedicated.get_ocr_model_name() == "dedicated-ocr-model"
+    assert not hasattr(Settings, "DEFAULT_OCR_MODEL_NAME")

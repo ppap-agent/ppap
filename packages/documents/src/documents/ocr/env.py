@@ -11,7 +11,6 @@ import os
 ISOLATED_DEV_LLM_BASE_URL = "https://api.trustedtunnel.app/v1"  # pragma: allowlist secret
 ISOLATED_DEV_LLM_MODEL = "gpt-5.6-luna"  # pragma: allowlist secret
 DEFAULT_OCR_OPENAI_BASE_URL = "https://gateway.ai.cloudflare.com/v1/b1a6ed92ee3fad00dcbb1e3e57327c02/openrouter/openrouter/v1"
-DEFAULT_OCR_MODEL_NAME = "google/gemma-3-27b-it:free"
 DEFAULT_MAX_FILE_SIZE = "100MB"
 DEFAULT_ALLOWED_EXTENSIONS = ".pdf,.doc,.docx,.pptx,.xlsx,.xls,.xlsm,.jpg,.jpeg,.png,.gif,.md"
 
@@ -90,4 +89,7 @@ def ocr_openai_base_url() -> str:
 
 
 def ocr_model_name() -> str:
-    return _env("OCR_MODEL_NAME") or _model_name() or DEFAULT_OCR_MODEL_NAME
+    model = _env("OCR_MODEL_NAME") or _model_name()
+    if not model:
+        raise ValueError("OCR model is not configured: set OCR_MODEL_NAME, MODEL_NAME, or LLM_MODEL")
+    return model
