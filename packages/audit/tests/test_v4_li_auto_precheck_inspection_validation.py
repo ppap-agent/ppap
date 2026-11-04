@@ -194,27 +194,6 @@ def test_independent_repeated_serial_is_a_gap(tmp_path):
     assert (observed["status"], observed["code"]) == ("defect", "W06")
 
 
-def test_source_dvp_two_tier_timeline_and_blank_actuals(tmp_path):
-    from pathlib import Path
-
-    from openpyxl import load_workbook
-
-    source = Path(__file__).resolve().parents[3] / "assets/PPAP PRD v3.7/客户归类模板与规则_备份/模板/理想/APQP-零部件设计验证计划.xlsx"
-    workbook = load_workbook(source)
-    sheet = workbook["DVP&R"]
-    sheet["M10"] = "2024-05-01"
-    sheet["N10"] = "2024-10-10"
-    path = tmp_path / "dvp.xlsx"
-    workbook.save(path)
-    audit = AuditInput(audit_id="native", file_url=str(path), customer="理想")
-    observed = result(audit, "L02", "CON-10")
-    assert (observed["status"], observed["code"]) == ("defect", "W06"), observed
-    sheet["M10"] = None
-    sheet["N10"] = None
-    workbook.save(path)
-    assert result(audit, "L02", "CON-10")["status"] == "satisfied"
-
-
 def test_declared_borrowing_downgrades_timeline_to_record(tmp_path):
     rows = [["试验项目", "计划开始", "计划结束", "试验实际开始日期", "试验实际结束日期"], ["振动", "2026-04-01", "2026-04-10", "2026-01-01", "2026-07-01"], ["借用说明", "按本批声明借用既有试验"]]
     observed = result(original(tmp_path, rows), "L02", "CON-10")

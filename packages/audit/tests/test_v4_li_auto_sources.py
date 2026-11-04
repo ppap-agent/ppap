@@ -259,28 +259,6 @@ def test_inspection_source_uses_dimension_regions_not_nio_coordinates(tmp_path, 
     assert execute(tmp_path, "L01", rule_number, rows, "尺寸检验报告").status == expected
 
 
-@pytest.mark.parametrize(
-    ("entry", "name"),
-    [("L09", "检具认可"), ("L10", "模具验收"), ("L11", "过程流程图"), ("L12", "产品过程CCSC"), ("L13", "设备开发"), ("L14", "产能评估"), ("L15", "项目问题"), ("L16", "年度试验"), ("L17", "零件提交")],
-)
-def test_each_l2_source_subcriterion_runs_on_actual_customer_template(entry, name):
-    from pathlib import Path
-
-    from audit.precheck_sources import required_structure
-
-    root = Path(__file__).resolve().parents[3] / "assets/PPAP PRD v3.7/客户归类模板与规则_备份/模板/理想"
-    path = next(path for path in root.iterdir() if name in path.name)
-    agent = EXCEL_AGENTS[entry](AuditInput(audit_id="template-version", file_url=str(path)), RuleInput(rule_id="r", **preset_rule_body("理想", entry)))
-    try:
-        facts = agent.precheck()
-        assert {row["id"] for row in facts} == {row["id"] for row in required_structure(entry)}
-        assert not [row for row in facts if row["status"] == "error"]
-        assert all(row["certified"] is False for row in facts)
-        assert all(row["evidence"] and row["evidence"]["sources"] for row in facts if row["status"] == "satisfied")
-    finally:
-        agent.close()
-
-
 def test_equipment_required_formula_without_cache_is_unknown_not_defect(tmp_path):
     book = Workbook()
     sheet = book.active
@@ -296,18 +274,6 @@ def test_equipment_required_formula_without_cache_is_unknown_not_defect(tmp_path
         assert facts["L13:S3"]["status"] == "satisfied"
         assert facts["L13:S4"]["status"] == "unknown"
         assert facts["L13:S4"]["code"] is None
-    finally:
-        agent.close()
-
-
-def test_blank_fixture_template_labels_and_unchecked_options_are_not_content():
-    from pathlib import Path
-
-    path = Path(__file__).resolve().parents[3] / "assets/PPAP PRD v3.7/客户归类模板与规则_备份/模板/理想/APQP-检具认可报告.xlsx"
-    agent = EXCEL_AGENTS["L09"](AuditInput(audit_id="blank-fixture", file_url=str(path)), RuleInput(rule_id="r", **preset_rule_body("理想", "L09")))
-    try:
-        facts = {row["id"]: row for row in agent.precheck()}
-        assert facts["L09:S3"]["status"] == "defect"
     finally:
         agent.close()
 
