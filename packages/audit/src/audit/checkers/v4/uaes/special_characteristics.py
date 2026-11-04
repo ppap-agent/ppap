@@ -2,7 +2,7 @@
 
 from audit.checkers.v3.excel_agent import rule
 
-from .native import MissingFact, UaesSourceAgent, UnknownFact, blank, header
+from .native import MissingFact, UaesSourceAgent, UnknownFact, blank, header, key
 
 _ALIASES = {
     "编号": ("编号", "序号"),
@@ -41,15 +41,20 @@ class UaesSpecialCharacteristicsAgent(UaesSourceAgent):
 
     @rule("特殊特性列与全部物理行必填")
     def rule_2(self):
-        rows = self.native().rows(_ALIASES, title=("特殊特性", "特性清单"), anchor=("编号",))
+        # Every populated characteristic row belongs to the scope. A readable
+        # empty number is a missing required field, not an absent business row.
+        rows = self.native().rows(_ALIASES, title=("特殊特性", "特性清单"))
         count = 0
         for row in rows:
-            if blank(row["编号"]):
-                continue
+            number = row["编号"]
+            if any(key(number).startswith(marker) for marker in ("编制/日期", "审核/日期", "编制人", "批准人")):
+                break
+            if blank(number):
+                return "NG", "特性业务行编号为空。"
             count += 1
             for name in ("特性名称", "特性值", "特性类别"):
                 if blank(row[name]):
                     return "NG", f"已编号特性行{name}为空。"
         if not count:
-            raise UnknownFact("没有已编号特性行，不能按空范围通过。")
-        return "PASS", "已读取全部已编号物理行的特性名称、值和类别。"
+            raise UnknownFact("没有可核实特性业务行，不能按空范围通过。")
+        return "PASS", "已读取全部物理业务行的编号、特性名称、值和类别。"
