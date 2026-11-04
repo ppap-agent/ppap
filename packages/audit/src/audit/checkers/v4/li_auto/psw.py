@@ -104,7 +104,9 @@ class LiAutoPswAgent(NativeFacts, PswExcelAgent):
                 (("工程更改版本", "版本", "版本号"), False),
                 (("项目名称", "车型项目", "项目编号", "项目代号", "项目标识", "UAES项目编号"), False),
             ]
-            for labels, required in fields:
+            # A standalone delivery-list original has no warrant to pair.
+            # Its attachment-completeness clause remains a unary check.
+            for labels, required in fields if main_sheets else ():
                 own = _label(ctx, ctx.workbook, labels, self.audit_file.audit_id, sheets=main_sheets)
                 other = _label(ctx, workbook, labels, version, sheets=sheets)
                 declared = any(
