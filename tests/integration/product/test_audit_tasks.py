@@ -2247,6 +2247,11 @@ def test_v4_nio_pair_keeps_frozen_dual_original_evidence_through_worker_and_api(
     sources = cross["locator"]["evidence"]["sources"]
     locators = [json.loads(source["locator"]) for source in sources]
     assert {locator["file_version_id"] for locator in locators} == {target["file_version_id"], reference["file_version_id"]}
+    projected = client.get(path).json()["files"][0]["audit"]["checks"]
+    projected_cross = next(check for check in projected if check["rule_item"]["id"].startswith("N02:7:"))
+    assert {source["file_version_id"] for source in projected_cross["evidence"]} == {target["file_version_id"], reference["file_version_id"]}
+    assert all(source["locator"] and source["locator"]["kind"] == "xlsx_cell" for source in projected_cross["evidence"])
+    assert projected_cross["evidence_verified"] is False
     assert any(source["excerpt"] == "KPC" for source in sources)
     assert any(source["excerpt"] == "CC" for source in sources)
     assert all(locator["kind"] == "xlsx_cell" for locator in locators)
