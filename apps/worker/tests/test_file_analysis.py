@@ -387,3 +387,28 @@ def test_builtin_v4_catalog_does_not_disable_an_existing_unrestricted_v2_auto_ru
     )
     assert result["matched_rule_id"] == "legacy", result
     assert result["matching_status"] == "matched"
+
+
+@pytest.mark.parametrize("filename", ["PGQP1.xlsx", "F-PU-127 采购件质量计划.xlsx"])
+def test_uaes_pgqp1_is_an_automatic_reference_never_a_formal_target(filename):
+    result = analyze_file(filename, workbook_bytes(("客户", "UAES"), ("文件类型", "PGQP1")), [rule("uaes-cp", ["UAES"], rule_profile="v4")], ai=MetadataAI({}), customer_preference="UAES", scoped=True)
+    assert (result["document_type"], result["matching_status"], result["matched_rule_id"]) == ("E12", "reference", None)
+
+
+def test_pgqp1_reference_routing_does_not_escape_the_uaes_customer_scope():
+    result = analyze_file("PGQP1.xlsx", workbook_bytes(("客户", "理想")), [rule("li-cp", ["理想"], rule_profile="v4")], ai=MetadataAI({}), customer_preference="理想", scoped=True)
+    assert result["matching_status"] != "reference"
+    assert result["matched_rule_id"] is None
+
+
+def test_pgqp1_mentioned_in_a_pfmea_filename_does_not_turn_the_pfmea_into_a_reference():
+    result = analyze_file(
+        "PFMEA-PGQP1比对.xlsx",
+        workbook_bytes(("客户", "UAES"), ("文件类型", "PFMEA")),
+        [rule("uaes-pfmea", ["UAES"], "PFMEA", rule_profile="v4")],
+        ai=MetadataAI({}),
+        customer_preference="UAES",
+        scoped=True,
+    )
+    assert result["matching_status"] == "matched"
+    assert result["matched_rule_id"] == "uaes-pfmea"

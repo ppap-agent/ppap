@@ -22,9 +22,12 @@ class NioSpecialCharacteristicsAgent(NioTableAgent):
                     if "特殊特性清单" in text:
                         ctx.note_cell(sheet.title, cell.row, cell.column)
                         prefix = text.split("特殊特性清单", 1)[0].strip()
-                        if prefix and re.search(r"[A-Za-z0-9]", prefix):
+                        if not prefix:
+                            return "NG", "特殊特性清单标题前缺少产品编号。"
+                        candidate = re.sub(r"^(?:产品编号|零件编号|Product\s*(?:No\.?|Number))\s*[:：]?\s*", "", prefix, flags=re.I).strip()
+                        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_. /-]*", candidate) and re.search(r"\d", candidate) and not re.match(r"(?:version|rev|ver)\W*\d", candidate, re.I):
                             return self._done(ctx)
-                        return "NG", "特殊特性清单标题前缺少产品编号。"
+                        return "UNABLE", "标题前有文本，但尚不能确认它是产品编号，需核对原件。"
         return "NG", "未找到特殊特性清单标题。"
 
     @rule("全部特性字段非空", clause_id="2")

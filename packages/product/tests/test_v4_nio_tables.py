@@ -199,3 +199,14 @@ def test_cp_duplicate_product_columns_are_ambiguous_instead_of_missing():
 def test_cp_uncached_stage_checkbox_is_unknown_instead_of_unselected():
     finding = run("N03", [['="☑ 生产 □ 样件 □ 试生产"']], "控制计划")[0]
     assert finding["status"] == "UNABLE", finding
+
+
+def test_a_checked_production_word_inside_process_data_is_not_the_plan_stage():
+    finding = run("N03", [["零件/工序号", "工序名称/操作描述"], [10, "☑ 生产"]], "控制计划")[0]
+    assert finding["status"] == "NG", finding
+
+
+@pytest.mark.parametrize("prefix", ["New", "Version2", "第2版"])
+def test_title_preamble_is_not_automatically_a_product_identifier(prefix):
+    finding = run("N04", [[prefix + " 特殊特性清单"]], "特殊特性清单")[0]
+    assert finding["status"] == "UNABLE", finding

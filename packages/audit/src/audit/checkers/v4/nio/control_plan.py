@@ -41,6 +41,8 @@ class NioControlPlanAgent(NioTableAgent):
                 cell.row for cells in sheet.iter_rows(max_row=min(sheet.max_row, 40)) for cell in cells if _identity(cell.value) in {_identity("零件/工序号"), _identity("工序名称/操作描述")}
             ]
             header_end = min(data_headers) - 1 if data_headers else min(sheet.max_row, 40)
+            if header_end < 1:
+                continue
             for cells in sheet.iter_rows(max_row=header_end):
                 for cell in cells:
                     if cell.data_type in {"e", "f"}:

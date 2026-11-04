@@ -123,6 +123,15 @@ def analyze_file(
         }
         if len(source_matches) == 1:
             source_type = next(iter(source_matches))
+        if selected_customer == "uaes":
+            # E12 is an allowed original reference, never a 42nd formal rule.
+            source_types["E12"] = "采购件质量计划"
+            if (
+                source_type is None
+                and PpapDocumentType.infer_from_signals(filename=filename) == PpapDocumentType.UNKNOWN
+                and re.search(r"PGQP1|F[-_ ]?PU[-_ ]?127|采购件质量计划", Path(filename).stem, re.IGNORECASE)
+            ):
+                source_type = "E12"
     inferred = PpapDocumentType.infer_from_signals(filename=filename, content=excerpt[:2000], min_margin=1 if scoped else 0)
     if scoped and not source_type and excerpt.strip() and "metadata_extraction_failed" not in notices:
         evidence = PpapDocumentType.rank_from_signals(filename=filename, content=excerpt[:2000])
@@ -160,7 +169,7 @@ def analyze_file(
     elif missing_v4_customer:
         matching = "unmatched"
         notices.append("matching_customer_required")
-    elif scoped and reference_only:
+    elif scoped and (reference_only or source_type == "E12"):
         matching = "reference"
     elif scoped and inferred == PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST and not v4_mode:
         matching = "reference"
