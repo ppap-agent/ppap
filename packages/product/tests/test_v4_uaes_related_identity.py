@@ -11,7 +11,7 @@ from audit.presets import preset_rule_body
 from openpyxl import Workbook
 
 
-def original(tmp_path, version, *, target=False, title="特殊特性清单", part="P1", customer="UAES", revision="A"):
+def original(tmp_path, version, *, target=False, title="特殊特性清单", part="P1", customer="UAES", revision="A", project="M1"):
     path = tmp_path / (version + ".xlsx")
     book = Workbook()
     book.active.title = "PFMEA" if target else title
@@ -20,6 +20,7 @@ def original(tmp_path, version, *, target=False, title="特殊特性清单", par
         ["零件号", part],
         ["零件名称", "支架"],
         ["版本", revision],
+        ["项目", project],
         ["功能/要求", "特殊特性"] if target else ["特性名称", "特性类别"],
         ["孔径", "CC"],
     ]:
@@ -53,7 +54,7 @@ def test_filename_alone_cannot_turn_an_untyped_unrelated_original_into_a_counter
     assert result.status == "UNABLE"
 
 
-@pytest.mark.parametrize("changes", [{"part": "P2"}, {"customer": "理想"}, {"revision": "B"}])
+@pytest.mark.parametrize("changes", [{"part": "P2"}, {"customer": "理想"}, {"revision": "B"}, {"project": "M2"}, {"project": None}])
 def test_typed_counterpart_still_requires_matching_original_identity(tmp_path, changes):
     result = check(original(tmp_path, "target", target=True), [original(tmp_path, "reference", **changes)])
     assert result.status == "UNABLE"
@@ -115,12 +116,26 @@ def test_valid_sample_photo_cannot_break_an_independent_typed_characteristic_pai
     assert result.status == "PASS", result.suggestions
 
 
-def test_unavailable_sample_photo_does_not_break_a_readable_formal_pair(tmp_path):
+@pytest.mark.parametrize("unavailable_type", ["E07", "控制计划", "过程流程图", "Control plan", "T11"])
+def test_unavailable_unrelated_type_does_not_break_a_readable_formal_pair(tmp_path, unavailable_type):
     target, reference = original(tmp_path, "target", target=True), original(tmp_path, "reference")
-    group = GroupContextInput(by_audit_id={"reference": reference}, by_doc_type={PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST.get_type_name(): [reference]}, unavailable_files={"photo": "E07"})
+    group = GroupContextInput(
+        by_audit_id={"reference": reference}, by_doc_type={PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST.get_type_name(): [reference]}, unavailable_files={"other": unavailable_type}
+    )
     body = preset_rule_body("UAES", "U07")
     rule = RuleInput(rule_id="frozen-rule", **{name: value for name, value in body.items() if name != "kind"})
     assert UaesPfmeaAgent(target, rule, group).check(2).status == "PASS"
+
+
+@pytest.mark.parametrize("unavailable_type", [None, "unknown", "过程特殊特性清单", "T12"])
+def test_unavailable_required_or_unclassified_type_keeps_its_execution_error(tmp_path, unavailable_type):
+    target, reference = original(tmp_path, "target", target=True), original(tmp_path, "reference")
+    group = GroupContextInput(
+        by_audit_id={"reference": reference}, by_doc_type={PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST.get_type_name(): [reference]}, unavailable_files={"other": unavailable_type}
+    )
+    body = preset_rule_body("UAES", "U07")
+    rule = RuleInput(rule_id="frozen-rule", **{name: value for name, value in body.items() if name != "kind"})
+    assert UaesPfmeaAgent(target, rule, group).check(2).status == "ERR"
 
 
 def test_msa_broad_type_keeps_its_actual_kappa_subtype_available(tmp_path):
