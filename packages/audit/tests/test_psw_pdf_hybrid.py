@@ -2,9 +2,6 @@
 
 import asyncio
 import gc
-import json
-from base64 import b64decode
-from io import BytesIO
 from xml.etree import ElementTree
 from zipfile import ZipFile
 
@@ -22,7 +19,6 @@ from audit.engine.checkers.psw_pdf_evidence import assess_psw_conversion_evidenc
 from audit.engine.runtime import bind_runtime
 from documents.contracts import ConversionArtifact
 from openpyxl import Workbook, load_workbook
-from PIL import Image
 
 
 @pytest.fixture(params=["v2", "v3"])
@@ -91,8 +87,22 @@ def use_external_conversion(monkeypatch, source, outcome):
     monkeypatch.setattr("audit.checkers.v3.pdf_agent.convert_pdf_to_excel_auto", convert)
 
 
-@pytest.mark.parametrize("error_code", ["manual_linegrid_failed", "download_failed", ""], ids=["conversion-rejected", "download-failed", "no-code"])
-def test_failed_table_conversion_does_not_become_a_business_ng(original_pdf, monkeypatch, profile, error_code):
+@pytest.mark.parametrize(
+    ("error_code", "expected"),
+    [
+        ("manual_linegrid_failed", "ERR"),
+        ("download_failed", "ERR"),
+        ("", "ERR"),
+        ("paddle_evidence_disabled", "UNABLE"),
+        ("paddle_evidence_unconfigured", "UNABLE"),
+        ("paddle_page_selection_required", "UNABLE"),
+        ("paddle_table_unconfirmed", "UNABLE"),
+        ("paddle_table_incomplete", "UNABLE"),
+        ("paddle_request_budget_exhausted", "UNABLE"),
+        ("paddle_scope_closed", "UNABLE"),
+    ],
+)
+def test_failed_table_conversion_does_not_become_a_business_ng(original_pdf, monkeypatch, profile, error_code, expected):
     original_bytes = original_pdf.read_bytes()
 
     def convert(file_ref, *, enable_cache=True, doc_type=None):
@@ -104,194 +114,10 @@ def test_failed_table_conversion_does_not_become_a_business_ng(original_pdf, mon
 
     results = run_audit_engine(AuditInput(audit_id="psw-conversion-failed", file_url=str(original_pdf)), psw_rules(profile, count=2))
 
-    assert [result.status for result in results] == ["ERR", "ERR"]
+    assert [result.status for result in results] == [expected, expected]
     assert all(result.evidence is not None and result.evidence.used == "none" for result in results)
-    assert all(result.evidence.diagnostics[0].code == "psw.pdf.conversion_failed" for result in results)
-    assert original_pdf.read_bytes() == original_bytes
-
-
-@pytest.mark.parametrize(
-    "response",
-    ["not-json", "[]", "null", json.dumps({"classification": "视觉检查", "item": "视觉检查", "priority": "P0", "status": "ERR", "suggestions": "模型无法完成识别"})],
-    ids=["invalid-json", "list", "null", "explicit-error"],
-)
-def test_invalid_model_response_does_not_become_a_business_ng(original_pdf, converted_table, monkeypatch, profile, response):
-    use_external_conversion(monkeypatch, original_pdf, ConversionArtifact(success=True, xlsx_path=str(converted_table)))
-    monkeypatch.setattr(AIClient, "image_analysis_completion", lambda self, **kwargs: response)
-
-    results = run_audit_engine(AuditInput(audit_id="psw-invalid-model-response", file_url=str(original_pdf)), psw_rules(profile, count=5))
-
-    assert len(results) == 5
-    assert results[1].status == "PASS"
-    assert [results[index].status for index in (2, 4)] == ["ERR", "ERR"]
-    assert all(results[index].evidence.diagnostics[0].code == "psw.visual.unverifiable" for index in (2, 4))
-    assert not converted_table.exists()
-
-
-def test_rule_five_requires_the_reported_signature_even_when_the_model_claims_pass(original_pdf, converted_table, monkeypatch, profile):
-    original = original_pdf.read_bytes()
-    use_external_conversion(monkeypatch, original_pdf, ConversionArtifact(success=True, xlsx_path=str(converted_table)))
-    calls = []
-
-    def analyze(self, **kwargs):
-        calls.append(kwargs)
-        return json.dumps(
-            {
-                "classification": "视觉检查",
-                "item": "经授权签字和盖章",
-                "priority": "P0",
-                "status": "PASS",
-                "suggestions": "印刷姓名存在，签字栏为空",
-                "psw_stamp_ends_with_company": True,
-                "authorized_signature_present": False,
-                "psw_stamp_present": True,
-            }
-        )
-
-    monkeypatch.setattr(AIClient, "image_analysis_completion", analyze)
-    results = run_audit_engine(AuditInput(audit_id="psw-signature-facts", file_url=str(original_pdf)), psw_rules(profile, count=5))
-
-    assert results[4].status == "NG"
-    assert "签字" in results[4].suggestions
-    assert [results[index].status for index in (1, 2, 3)] == ["PASS"] * 3
-    assert len(calls) == 2
-    signature_call = next(call for call in calls if "经授权的供方代表签字" in call["user_text"])
-    assert '"status"' not in signature_call["user_text"]
-    assert "印刷姓名" in signature_call["user_text"]
-    assert original_pdf.read_bytes() == original
-    assert not converted_table.exists()
-
-
-@pytest.mark.parametrize(
-    ("signature", "stamp", "expected"),
-    [
-        (True, True, "PASS"),
-        (False, True, "NG"),
-        (True, False, "NG"),
-        (False, False, "NG"),
-        (None, True, "UNABLE"),
-        (True, None, "UNABLE"),
-        (None, None, "UNABLE"),
-        (False, None, "NG"),
-        (None, False, "NG"),
-    ],
-)
-def test_rule_five_uses_both_signature_facts_without_turning_unknown_into_ng(original_pdf, converted_table, monkeypatch, profile, signature, stamp, expected):
-    use_external_conversion(monkeypatch, original_pdf, ConversionArtifact(success=True, xlsx_path=str(converted_table)))
-    response = {
-        "psw_stamp_ends_with_company": True,
-        "authorized_signature_present": signature,
-        "psw_stamp_present": stamp,
-        "classification": "不能覆盖冻结规则的分类",
-        "item": "不能覆盖冻结规则的名称",
-        "priority": "P0",
-        "status": "NG" if expected == "PASS" else "PASS",
-        "suggestions": "模型结论不能代替两项事实",
-    }
-    monkeypatch.setattr(AIClient, "image_analysis_completion", lambda self, **kwargs: json.dumps(response))
-
-    results = run_audit_engine(AuditInput(audit_id="psw-signature-fact-matrix", file_url=str(original_pdf)), psw_rules(profile, count=5))
-
-    assert results[4].status == expected
-    assert results[4].classification == "经授权签字和盖章检查"
-    assert results[4].item == "经授权签字和盖章检查"
-    assert [results[index].status for index in (1, 2, 3)] == ["PASS"] * 3
-    assert results[4].evidence.used == ("none" if expected == "UNABLE" else "visual")
-    if signature is False:
-        assert "签字" in results[4].suggestions
-    if stamp is False:
-        assert "盖章" in results[4].suggestions
-    assert not converted_table.exists()
-
-
-def test_missing_required_model_facts_are_not_a_document_nonconformity(original_pdf, converted_table, monkeypatch, profile):
-    use_external_conversion(monkeypatch, original_pdf, ConversionArtifact(success=True, xlsx_path=str(converted_table)))
-    response = {"classification": "视觉检查", "item": "视觉检查", "priority": "P0", "status": "PASS", "suggestions": "已完成检查"}
-    monkeypatch.setattr(AIClient, "image_analysis_completion", lambda self, **kwargs: json.dumps(response))
-
-    results = run_audit_engine(AuditInput(audit_id="psw-missing-model-facts", file_url=str(original_pdf)), psw_rules(profile))
-
-    assert len(results) == 10
-    assert results[1].status == "PASS"
-    assert [results[index].status for index in (2, 4, 7, 8, 9)] == ["UNABLE"] * 5
-
-
-def test_explicit_model_inability_is_not_a_system_failure(original_pdf, converted_table, monkeypatch, profile):
-    use_external_conversion(monkeypatch, original_pdf, ConversionArtifact(success=True, xlsx_path=str(converted_table)))
-    response = {"classification": "视觉检查", "item": "视觉检查", "priority": "P0", "status": "UNABLE", "suggestions": "无法辨认签字"}
-    monkeypatch.setattr(AIClient, "image_analysis_completion", lambda self, **kwargs: json.dumps(response))
-
-    results = run_audit_engine(AuditInput(audit_id="psw-model-unable", file_url=str(original_pdf)), psw_rules(profile, count=5))
-
-    assert results[1].status == "PASS"
-    assert [results[index].status for index in (2, 4)] == ["UNABLE", "UNABLE"]
-    assert all(results[index].evidence.diagnostics[0].severity == "warning" for index in (2, 4))
-
-
-@pytest.mark.parametrize(
-    ("note", "visual_status", "company_stamp", "visual_expected", "submission_expected", "submission_source"),
-    [(None, "Pass", True, "PASS", "PASS", "both"), (None, "NG", False, "NG", "NG", "both"), ("材料变更后的重新提交", "NG", False, "NG", "PASS", "structure")],
-    ids=["positive-original-facts", "negative-original-facts", "actual-submission-note"],
-)
-def test_complete_pdf_keeps_structured_decisions_and_original_visual_results(
-    original_pdf, converted_table, monkeypatch, profile, note, visual_status, company_stamp, visual_expected, submission_expected, submission_source
-):
-    original_bytes = original_pdf.read_bytes()
-    if note:
-        workbook = load_workbook(converted_table)
-        workbook.active["A33"] = "其他-请在下方说明"
-        workbook.active["B33"] = note
-        workbook.save(converted_table)
-        workbook.close()
-    use_external_conversion(monkeypatch, original_pdf, ConversionArtifact(success=True, xlsx_path=str(converted_table), strategy_used="manual_linegrid"))
-    calls = []
-
-    def analyze(self, **kwargs):
-        calls.append(kwargs)
-        return json.dumps(
-            {
-                "classification": "视觉检查",
-                "item": "视觉检查",
-                "priority": "P0",
-                "status": visual_status,
-                "suggestions": "视觉检查完成",
-                "psw_stamp_ends_with_company": company_stamp,
-                "authorized_signature_present": company_stamp,
-                "psw_stamp_present": company_stamp,
-                "authorization_table_present": False,
-                "authorization_company_stamp_present": False,
-                "disposition_visible": True,
-                "approved_checked": company_stamp,
-                "conditional_checked": False,
-                "rejected_checked": False,
-                "dimensional_checked": True,
-                "appearance_checked": True,
-                "material_functional_checked": True,
-                "statistical_checked": True,
-                "requirements_yes_checked": True,
-            }
-        )
-
-    monkeypatch.setattr(AIClient, "image_analysis_completion", analyze)
-
-    results = run_audit_engine(AuditInput(audit_id="psw-hybrid", file_url=str(original_pdf)), psw_rules(profile))
-
-    assert [results[index].status for index in (0, 1, 3, 5)] == ["NG", "PASS", "PASS", "NG"]
-    assert [results[index].status for index in (2, 4, 7, 8, 9)] == [visual_expected] * 5
-    assert results[6].status == submission_expected
-    assert [result.evidence.used for result in results] == ["structure", "structure", "visual", "structure", "visual", "structure", submission_source, "visual", "visual", "visual"]
-    assert all(result.evidence.source_format == "pdf" for result in results)
-    assert results[1].evidence.conversion_strategies == ("manual_linegrid",)
-    if note:
-        assert all("提交原因" not in call["user_text"] for call in calls)
-    assert calls
-    for call in calls:
-        assert call["image_base64_list"]
-        for encoded in call["image_base64_list"]:
-            with Image.open(BytesIO(b64decode(encoded.split(",", 1)[-1]))) as image:
-                red, green, blue = image.convert("RGB").getpixel((image.width // 2, image.height // 2))
-                assert red < 10 and green < 10 and blue > 245
-    assert not converted_table.exists()
+    code = "psw.pdf.conversion_failed" if expected == "ERR" else "psw.pdf." + error_code
+    assert all(result.evidence.diagnostics[0].code == code for result in results)
     assert original_pdf.read_bytes() == original_bytes
 
 
@@ -337,51 +163,6 @@ def test_converter_exception_before_an_artifact_is_an_execution_error(original_p
 
     assert [result.status for result in results] == ["ERR", "ERR"]
     assert all(result.evidence.diagnostics[0].code == "psw.pdf.conversion_failed" for result in results)
-
-
-def test_unreadable_original_pages_are_execution_errors_without_model_calls(original_pdf, monkeypatch, profile):
-    original_pdf.write_bytes(b"not a readable PDF")
-    original_bytes = original_pdf.read_bytes()
-    use_external_conversion(monkeypatch, original_pdf, ConversionArtifact(success=False))
-    model_calls = []
-
-    def reject_visual(self, **kwargs):
-        model_calls.append(kwargs)
-        raise AssertionError("Unreadable pages must not produce model inputs")
-
-    monkeypatch.setattr(AIClient, "image_analysis_completion", reject_visual)
-
-    results = run_audit_engine(AuditInput(audit_id="psw-render-failed", file_url=str(original_pdf)), psw_rules(profile, count=5))
-
-    assert len(results) == 5
-    assert [results[index].status for index in (2, 4)] == ["ERR", "ERR"]
-    assert all(results[index].evidence.diagnostics[0].code == "psw.visual.runtime_error" for index in (2, 4))
-    assert model_calls == []
-    assert original_pdf.read_bytes() == original_bytes
-
-
-@pytest.mark.parametrize("failure", [RuntimeError, TypeError], ids=["runtime-error", "type-error"])
-def test_model_service_exception_preserves_structured_results_and_releases_converted_files(original_pdf, converted_table, monkeypatch, profile, failure):
-    original_bytes = original_pdf.read_bytes()
-    use_external_conversion(monkeypatch, original_pdf, ConversionArtifact(success=True, xlsx_path=str(converted_table)))
-    attempted_prompts = []
-
-    def unavailable(self, **kwargs):
-        attempted_prompts.append(kwargs["user_text"])
-        raise failure("model service unavailable")
-
-    monkeypatch.setattr(AIClient, "image_analysis_completion", unavailable)
-
-    results = run_audit_engine(AuditInput(audit_id="psw-model-service-failed", file_url=str(original_pdf)), psw_rules(profile, count=5))
-
-    assert len(results) == 5
-    assert results[1].status == "PASS"
-    assert [results[index].status for index in (2, 4)] == ["ERR", "ERR"]
-    assert all(results[index].evidence.diagnostics[0].code == "psw.evaluation.runtime_error" for index in (2, 4))
-    assert len(attempted_prompts) == 2
-    assert len(set(attempted_prompts)) == 2
-    assert not converted_table.exists()
-    assert original_pdf.read_bytes() == original_bytes
 
 
 @pytest.mark.parametrize("converted", [True, False], ids=["with-table", "without-table"])
@@ -449,23 +230,227 @@ def test_actual_converted_controls_do_not_replace_original_pdf_checkbox_facts(or
     assert assessment.supports_checkbox_rule(8) is False
     assert "checkbox_controls_observed_without_completeness_proof" in assessment.diagnostics
     use_external_conversion(monkeypatch, original_pdf, ConversionArtifact(success=True, xlsx_path=str(converted_table)))
-    response = {
-        "classification": "视觉检查",
-        "item": "视觉检查",
-        "priority": "P0",
-        "status": "PASS",
-        "suggestions": "",
-        "psw_stamp_ends_with_company": True,
-        "disposition_visible": True,
-        "approved_checked": False,
-        "conditional_checked": False,
-        "rejected_checked": False,
-    }
-    monkeypatch.setattr(AIClient, "image_analysis_completion", lambda self, **kwargs: json.dumps(response))
 
     results = run_audit_engine(AuditInput(audit_id="psw-converted-controls", file_url=str(original_pdf)), psw_rules(profile, count=8))
 
     assert len(results) == 8
-    assert results[7].status == "NG"
-    assert "需且仅需勾选一个选项" in results[7].suggestions
-    assert results[7].evidence.used == "visual"
+    assert results[7].status == "UNABLE"
+    assert "无法判断" in results[7].suggestions
+    assert results[7].evidence.used == "none"
+
+
+@pytest.fixture(autouse=True)
+def no_psw_llm_or_render(monkeypatch):
+    attempts = []
+
+    def reject(*args, **kwargs):
+        attempts.append("LLM or image rendering")
+        raise AssertionError("PSW facts must use native/Paddle only")
+
+    monkeypatch.setattr(AIClient, "image_analysis_completion", reject)
+    monkeypatch.setattr(V2PswPDFAgent, "_get_pdf_images_sync", reject)
+    monkeypatch.setattr(V3PswPDFAgent, "_get_pdf_images_sync", reject)
+    yield
+    assert attempts == []
+
+
+def test_rule_eight_uses_native_paddle_facts_without_llm_fallback(original_pdf, converted_table, monkeypatch, profile):
+    use_external_conversion(monkeypatch, original_pdf, ConversionArtifact(success=True, xlsx_path=str(converted_table)))
+    calls = []
+
+    def read(audit, fields, witness, *, operation, cache):
+        calls.append((operation, tuple(fields), id(cache)))
+        assert audit.file_url == str(original_pdf)
+        return dict.fromkeys(fields)
+
+    monkeypatch.setattr("audit.checkers.v4.visual_facts.read_original_pdf_visual_facts", read)
+    original = original_pdf.read_bytes()
+    results = run_audit_engine(AuditInput(audit_id="psw-no-checkbox-proof", file_url=str(original_pdf)), psw_rules(profile, count=10))
+
+    assert results[7].status == "UNABLE"
+    assert results[7].evidence.diagnostics[0].code == "psw.paddle.fact_unconfirmed"
+    assert [operation for operation, _, _ in calls] == ["psw_rule_3", "psw_rule_5", "psw_rule_7", "psw_rule_8", "psw_rule_9", "psw_rule_10"]
+    assert len({cache_id for _, _, cache_id in calls}) == 1
+    assert original_pdf.read_bytes() == original
+    assert not converted_table.exists()
+
+
+@pytest.mark.parametrize(
+    ("signature", "stamp", "expected"), [(True, True, "PASS"), (False, True, "NG"), (True, False, "NG"), (None, True, "UNABLE"), (True, None, "UNABLE"), (False, None, "NG"), (None, None, "UNABLE")]
+)
+def test_signature_rule_uses_established_facts_and_preserves_unknown(original_pdf, converted_table, monkeypatch, profile, signature, stamp, expected):
+    use_external_conversion(monkeypatch, original_pdf, ConversionArtifact(success=True, xlsx_path=str(converted_table)))
+
+    def read(audit, fields, witness, **kwargs):
+        witness({"kind": "pdf_region", "page": 1, "engine": "paddle", "bbox": [0, 0, 20, 20]}, "已确认的原件区域", visual=True)
+        return {"psw_stamp_ends_with_company": None, "authorized_signature_present": signature, "psw_stamp_present": stamp}
+
+    monkeypatch.setattr("audit.checkers.v4.visual_facts.read_original_pdf_visual_facts", read)
+    results = run_audit_engine(AuditInput(audit_id="psw-signature-facts", file_url=str(original_pdf)), psw_rules(profile, count=5))
+    assert results[4].status == expected
+    assert results[1].status == "PASS"
+    assert results[4].evidence.used == "visual"
+    assert results[4].evidence.conversion_strategies == ("native_pdf", "paddle_single_page")
+    assert not converted_table.exists()
+
+
+@pytest.mark.parametrize("failure", [RuntimeError, TypeError, TimeoutError])
+def test_paddle_service_failure_preserves_structured_results_without_retry(original_pdf, converted_table, monkeypatch, profile, failure):
+    use_external_conversion(monkeypatch, original_pdf, ConversionArtifact(success=True, xlsx_path=str(converted_table)))
+    calls = []
+
+    def unavailable(audit, fields, witness, **kwargs):
+        calls.append(kwargs["operation"])
+        raise failure("private provider detail must not appear in diagnostics")
+
+    monkeypatch.setattr("audit.checkers.v4.visual_facts.read_original_pdf_visual_facts", unavailable)
+    results = run_audit_engine(AuditInput(audit_id="psw-paddle-failed", file_url=str(original_pdf)), psw_rules(profile, count=5))
+    assert results[1].status == "PASS"
+    assert [results[index].status for index in (2, 4)] == ["ERR", "ERR"]
+    assert all(results[index].evidence.diagnostics[0].code == "psw.paddle.runtime_error" for index in (2, 4))
+    assert len(calls) == 2
+    assert all("private provider detail" not in result.suggestions for result in results)
+    assert not converted_table.exists()
+
+
+def test_unavailable_facts_are_unable_without_fallback(original_pdf, monkeypatch, profile):
+    from audit.checkers.v4.visual_facts import VisualFactsUnavailable
+
+    use_external_conversion(monkeypatch, original_pdf, ConversionArtifact(success=False))
+
+    def unsupported(*args, **kwargs):
+        raise VisualFactsUnavailable("unsupported visual semantics")
+
+    monkeypatch.setattr("audit.checkers.v4.visual_facts.read_original_pdf_visual_facts", unsupported)
+    results = run_audit_engine(AuditInput(audit_id="psw-native-unavailable", file_url=str(original_pdf)), psw_rules(profile, count=5))
+    assert [results[index].status for index in (2, 4)] == ["UNABLE", "UNABLE"]
+
+
+def write_disposition_pdf(path, options, *, copies=1):
+    """Create real native characters with independent PDF source geometry."""
+    with fitz.open() as document:
+        for _ in range(copies):
+            page = document.new_page(width=600, height=800)
+            page.insert_text((25, 50), "零件提交保证书", fontname="china-s", fontsize=11)
+            for x, text in zip((25, 160, 290, 450), ("认可情况：", *options)):
+                page.insert_text((x, 80), text, fontname="china-s", fontsize=11)
+        document.save(path)
+    return path
+
+
+def disposition_page_response(*, complete=True, approved="□批准"):
+    texts = ["认可情况：", approved, "□条件批准", "□拒绝"] if complete else ["认可情况：", "批准", "条件批准", "拒绝"]
+    return {
+        "dataInfo": {"numPages": 1, "pages": [{"width": 600, "height": 800}]},
+        "layoutParsingResults": [
+            {
+                "prunedResult": {
+                    "layout_det_res": {"boxes": []},
+                    "parsing_res_list": [],
+                    "seal_res_list": [],
+                    "table_res_list": [],
+                    "overall_ocr_res": {"rec_texts": texts, "rec_boxes": [[25, 68, 95, 82], [160, 68, 210, 82], [290, 68, 365, 82], [450, 68, 500, 82]], "rec_scores": [0.99] * 4},
+                }
+            }
+        ],
+    }
+
+
+def psw_checker(monkeypatch, path, profile):
+    # Use the public PSW constructor and check entrypoint. The external
+    # converter is isolated so this verifies original-page fact selection.
+    use_external_conversion(monkeypatch, path, ConversionArtifact(success=False, diagnostics={"error_code": "paddle_table_unconfirmed"}))
+    agent_type = V2PswPDFAgent if profile == "v2" else V3PswPDFAgent
+    return agent_type(AuditInput(audit_id="frozen-native-psw", file_url=str(path)), psw_rules(profile))
+
+
+def paddle_response_boundary(monkeypatch, response):
+    attempts = []
+    monkeypatch.setenv("PADDLE_EVIDENCE_ENABLED", "true")
+    monkeypatch.setenv("PADDLE_OCR_URL", "https://paddle.invalid/layout-parsing")
+
+    def analyze(service, file_path, page_number, **kwargs):
+        attempts.append((str(file_path), page_number, service.timeout))
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    monkeypatch.setattr("documents.ocr.paddle.PaddleStructureService.analyze_page", analyze)
+    return attempts
+
+
+def test_public_rule_eight_native_empty_checkboxes_need_no_paddle(tmp_path, monkeypatch, profile):
+    path = write_disposition_pdf(tmp_path / "native-controls.pdf", ("□批准", "□条件批准", "□拒绝"))
+    with fitz.open(path) as document:
+        # The case depends on actual native PDF characters, not a reader stub.
+        assert all(text in document[0].get_text() for text in ("□批准", "□条件批准", "□拒绝"))
+    attempts = paddle_response_boundary(monkeypatch, AssertionError("Native controls must avoid Paddle"))
+    with bind_runtime(None):
+        checker = psw_checker(monkeypatch, path, profile)
+        try:
+            result = checker.check(7)
+        finally:
+            checker.close()
+    assert result.status == "NG"
+    assert "需且仅需勾选一个选项" in result.suggestions
+    assert result.evidence.used == "structure"
+    assert attempts == []
+    assert all(source.kind == "structure" for source in result.evidence.sources)
+
+
+@pytest.mark.parametrize(("complete", "expected"), [(True, "NG"), (False, "UNABLE")])
+def test_public_rule_eight_uses_one_paddle_page_for_incomplete_native_controls(tmp_path, monkeypatch, profile, complete, expected):
+    path = write_disposition_pdf(tmp_path / "native-labels.pdf", ("批准", "条件批准", "拒绝"))
+    attempts = paddle_response_boundary(monkeypatch, disposition_page_response(complete=complete))
+    with bind_runtime(None):
+        checker = psw_checker(monkeypatch, path, profile)
+        try:
+            result = checker.check(7)
+        finally:
+            checker.close()
+    assert result.status == expected
+    assert attempts == [(str(path), 1, 20)]
+    assert result.evidence.used == "both"
+
+
+def test_public_rule_eight_retains_known_native_state_over_conflicting_paddle(tmp_path, monkeypatch, profile):
+    path = write_disposition_pdf(tmp_path / "partial-native-controls.pdf", ("□批准", "条件批准", "拒绝"))
+    attempts = paddle_response_boundary(monkeypatch, disposition_page_response(approved="☑批准"))
+    with bind_runtime(None):
+        checker = psw_checker(monkeypatch, path, profile)
+        try:
+            result = checker.check(7)
+        finally:
+            checker.close()
+    # Native approved=False remains authoritative; Paddle supplies only the
+    # two previously unknown states, so the empty disposition is still NG.
+    assert result.status == "NG"
+    assert attempts == [(str(path), 1, 20)]
+
+
+@pytest.mark.parametrize("failed", [False, True], ids=["successful-page", "failed-page"])
+def test_public_rules_three_five_and_eight_reuse_one_success_or_failure(tmp_path, monkeypatch, profile, failed):
+    path = write_disposition_pdf(tmp_path / "shared-original.pdf", ("批准", "条件批准", "拒绝"))
+    attempts = paddle_response_boundary(monkeypatch, TimeoutError("private endpoint") if failed else disposition_page_response())
+    with bind_runtime(None):
+        checker = psw_checker(monkeypatch, path, profile)
+        try:
+            results = [checker.check(index) for index in (2, 4, 7)]
+        finally:
+            checker.close()
+    assert attempts == [(str(path), 1, 20)]
+    assert [result.status for result in results] == (["ERR"] * 3 if failed else ["UNABLE", "UNABLE", "NG"])
+    assert all("private endpoint" not in result.suggestions for result in results)
+
+
+def test_public_rule_eight_does_not_choose_between_two_original_disposition_pages(tmp_path, monkeypatch, profile):
+    path = write_disposition_pdf(tmp_path / "two-dispositions.pdf", ("批准", "条件批准", "拒绝"), copies=2)
+    attempts = paddle_response_boundary(monkeypatch, AssertionError("Ambiguous original page must not be sent"))
+    with bind_runtime(None):
+        checker = psw_checker(monkeypatch, path, profile)
+        try:
+            result = checker.check(7)
+        finally:
+            checker.close()
+    assert result.status == "UNABLE"
+    assert attempts == []

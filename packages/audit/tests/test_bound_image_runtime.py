@@ -1,7 +1,6 @@
 """The public shared image check uses the caller's runtime and original pages."""
 
 import base64
-import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
 from threading import Thread
@@ -79,50 +78,34 @@ def image_agent(url):
     )
 
 
-@pytest.mark.parametrize("outcome", ["PASS", "NG", RuntimeError("model unavailable"), TypeError("invalid model protocol")], ids=["pass", "ng", "runtime-error", "type-error"])
-def test_public_image_check_uses_all_original_pages_once_and_restores_the_runtime(image_source, monkeypatch, outcome):
-    url, _content, reads = image_source
+@pytest.mark.parametrize("bound", [False, True])
+@pytest.mark.parametrize("valid_source", [False, True])
+def test_public_image_check_keeps_unsupported_semantics_unknown_without_external_work(image_source, monkeypatch, bound, valid_source):
+    url, content, reads = image_source
     calls = []
-
-    def analyze(self, **kwargs):
-        calls.append(kwargs)
-        if isinstance(outcome, Exception):
-            raise outcome
-        return json.dumps({"classification": "视觉", "item": "印章", "priority": "P1", "status": outcome, "suggestions": "原件视觉结论"})
-
-    monkeypatch.setattr(AIClient, "image_analysis_completion", analyze)
-    runtime = OriginalImageRuntime()
+    monkeypatch.setattr(AIClient, "image_analysis_completion", lambda self, **kwargs: calls.append(kwargs))
+    if not valid_source:
+        content[0] = b"not a PDF"
+    runtime = OriginalImageRuntime() if bound else None
 
     with bind_runtime(runtime):
         result = image_agent(url).check(0)
 
-    assert result.status == ("ERR" if isinstance(outcome, Exception) else outcome)
+    assert result.status == "UNABLE"
+    assert result.checks_performed == 0
     assert get_runtime() is None
+    assert calls == [] and reads == []
+    assert runtime is None or runtime.rendered == []
+
+
+def test_original_page_rendering_utility_still_preserves_the_source_pixels(image_source):
+    url, _content, reads = image_source
+    runtime = OriginalImageRuntime()
+    pages = runtime.render_pdf_images(url)
     assert runtime.rendered == [(url, True)]
     assert reads == ["/original.pdf?version=frozen"]
-    assert len(calls) == 1
-    assert "检查原件印章" in calls[0]["user_text"]
-    pages = calls[0]["image_base64_list"]
     assert len(pages) == 2
     for encoded, expected in zip(pages, ((255, 0, 0), (0, 0, 255)), strict=True):
         with Image.open(BytesIO(base64.b64decode(encoded.split(",", 1)[-1]))) as image:
             actual = image.convert("RGB").getpixel((image.width // 2, image.height // 2))
             assert all(abs(observed - target) < 10 for observed, target in zip(actual, expected, strict=True))
-
-
-@pytest.mark.parametrize("failure", ["no-runtime", "corrupt-original"])
-def test_image_execution_failure_never_calls_the_model_or_invents_a_business_result(image_source, monkeypatch, failure):
-    url, content, reads = image_source
-    calls = []
-    monkeypatch.setattr(AIClient, "image_analysis_completion", lambda self, **kwargs: calls.append(kwargs))
-    if failure == "corrupt-original":
-        content[0] = b"not a PDF"
-    runtime = OriginalImageRuntime() if failure == "corrupt-original" else None
-
-    with bind_runtime(runtime):
-        result = image_agent(url).check(0)
-
-    assert result.status == "ERR"
-    assert get_runtime() is None
-    assert calls == []
-    assert reads == (["/original.pdf?version=frozen"] if failure == "corrupt-original" else [])

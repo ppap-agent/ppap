@@ -125,6 +125,7 @@ class Settings(BaseSettings):
     OCR_LOCAL_SQLITE_DB: str = ""
     PADDLE_OCR_URL: str = ""
     PADDLE_TOKEN: str = ""
+    PADDLE_EVIDENCE_ENABLED: bool = False
 
     @model_validator(mode="after")
     def production_must_not_inherit_isolated_dev(self) -> Self:
@@ -254,10 +255,14 @@ class Settings(BaseSettings):
                     "ocr_endpoint": self.OCR_REMOTE_URL.strip(),
                     "ocr_model_endpoint": self.get_ocr_openai_base_url(),
                     "ocr_model": self.get_ocr_model_name(),
-                    "vision_protocol": "responses_multimodal_v2",
+                    "vision_protocol": "paddle_single_page_v1",
+                    "paddle_evidence_enabled": self.PADDLE_EVIDENCE_ENABLED,
+                    "paddle_endpoint": self.PADDLE_OCR_URL.strip() if self.PADDLE_EVIDENCE_ENABLED else "",
+                    "paddle_http_timeout_seconds": 20,
+                    "paddle_max_requests": 2,
                     "max_file_size": self.MAX_FILE_SIZE,
                     "ng_topn": os.environ.get("PPAP_NG_TOPN", ""),
-                    "vision_page_workers": 2,
+                    "vision_page_workers": 1,
                     "doc_converter": os.environ.get("LEGACY_DOC_CONVERTER_EXECUTABLE", ""),
                     "doc_sandbox": os.environ.get("LEGACY_DOC_SANDBOX_EXECUTABLE", "ppap-local-converter-sandbox"),
                     "doc_broker": os.environ.get("LEGACY_DOC_CONVERTER_SOCKET", ""),

@@ -84,13 +84,10 @@ class PaddleShadowSession:
         project_id: str,
         targets: Sequence[ShadowTarget],
         max_requests: int = 2,
-        deadline_seconds: float = 60,
         cancelled: Callable[[], bool] | None = None,
     ) -> None:
         if not project_id or isinstance(max_requests, bool) or not isinstance(max_requests, int) or max_requests < 1:
             raise ValueError("A project and positive request budget are required")
-        if deadline_seconds < 0 or not float(deadline_seconds) < float("inf"):
-            raise ValueError("A finite nonnegative deadline is required")
         self.project_id = project_id
         self.targets = tuple(targets)
         if len({(t.file_version_id, t.clause_id) for t in targets}) != len(targets):
@@ -98,7 +95,6 @@ class PaddleShadowSession:
         self.service = service
         self._service_identity = (id(service), getattr(service, "endpoint", None), getattr(service, "timeout", None))
         self.max_requests = max_requests
-        self.deadline = time.monotonic() + deadline_seconds
         self.cancelled = cancelled or (lambda: False)
         self.request_count = 0
         self.observations: list[ShadowObservation] = []
@@ -114,8 +110,6 @@ class PaddleShadowSession:
             return "scope_closed"
         if self.cancelled():
             return "cancelled"
-        if time.monotonic() >= self.deadline:
-            return "deadline_exceeded"
         return None
 
     def _identity(self, agent, target: ShadowTarget) -> str | None:
@@ -236,8 +230,9 @@ class PaddleShadowSession:
                     else:
                         stopped = self._stopped() or self._identity(agent, target)
                         return self._record(target, "error", stopped) if stopped else self._record(target, "skipped", "native_sufficient")
-                # Native parsing can consume the remaining budget or race a
-                # cancellation/source change. Recheck before reserving work.
+                # Native parsing can race a cancellation/source change.
+                # Recheck before reserving work; elapsed task time is not an
+                # additional OCR deadline.
                 stopped = self._stopped() or self._identity(agent, target)
                 if stopped:
                     return self._record(target, "error", stopped)
@@ -248,14 +243,12 @@ class PaddleShadowSession:
                 else:
                     from documents.ocr.paddle import build_evidence
 
-                    # Opening/hashing the source and loading the parser can
-                    # consume the remaining budget. Check after both, before
-                    # reserving or dispatching any external work.
+                    # Recheck after local preparation, before reserving or
+                    # dispatching external work.
                     began = time.monotonic()
                     stopped = self._stopped()
-                    remaining = self.deadline - time.monotonic()
-                    if stopped or remaining <= 0:
-                        return self._record(target, "error", stopped or "deadline_exceeded")
+                    if stopped:
+                        return self._record(target, "error", stopped)
                     if self.request_count >= self.max_requests:
                         return self._record(target, "error", "request_budget_exhausted")
                     # Reservation and the eventual result (including failure)
@@ -263,7 +256,7 @@ class PaddleShadowSession:
                     self.request_count += 1
                     self._attempts[key] = _PageAttempt(None, "request_incomplete", 0)
                     try:
-                        raw = self.service.analyze_page(agent.audit_file.file_url, target.page_number, timeout=remaining)
+                        raw = self.service.analyze_page(agent.audit_file.file_url, target.page_number, timeout=20)
                         stopped = self._stopped() or self._identity(agent, target)
                         if stopped:
                             attempt = _PageAttempt(None, stopped, time.monotonic() - began)

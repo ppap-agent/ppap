@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,7 +10,7 @@ from typing import Any, Optional, Protocol, cast
 
 from openpyxl import load_workbook
 
-from audit.contracts import AuditInput, EvidenceDiagnostic
+from audit.contracts import AuditInput, EvidenceDiagnostic, EvidenceSource
 from audit.contracts import AuditResultItem as AuditResult
 from audit.engine.rule_engine.excel_ops import DefaultExcelOps
 
@@ -17,15 +18,14 @@ from .psw_evidence_trace import (
     DIAGNOSTIC_EVALUATION_RULE_UNAVAILABLE,
     DIAGNOSTIC_EVALUATION_RUNTIME_ERROR,
     DIAGNOSTIC_PDF_CONVERSION_FAILED,
-    DIAGNOSTIC_VISUAL_RUNTIME_ERROR,
-    DIAGNOSTIC_VISUAL_UNVERIFIABLE,
     EvidenceUse,
     with_psw_evidence,
 )
 from .psw_visual_evidence import (
     PSW_ALWAYS_VISUAL_RULES,
     PSW_CHECKBOX_DEPENDENT_RULES,
-    PswVisualRuleEvaluator,
+    PSW_RULE_FIELDS,
+    evaluate_psw_observation,
 )
 
 logger = logging.getLogger(__name__)
@@ -133,7 +133,6 @@ class _PswEvidenceHost(Protocol):
     audit_file: AuditInput
     conversion_artifact: Any
     excel_agent: Any
-    images: list[str]
     rule_checkers: list[Any]
 
     @property
@@ -146,16 +145,6 @@ class _PswEvidenceHost(Protocol):
     def create_error_result(self, error_msg: str, ith: int = -1) -> AuditResult: ...
 
     def get_rule_by_index(self, ith: int) -> Optional[dict[str, Any]]: ...
-
-    def _get_pdf_images_sync(self) -> list[str]: ...
-
-    def _analyze_images_with_prompt(
-        self,
-        system_prompt: str,
-        user_prompt: str,
-        images: list[str],
-        json_format: bool = False,
-    ) -> str: ...
 
 
 class PswPdfEvidenceMixin:
@@ -201,6 +190,7 @@ class PswPdfEvidenceMixin:
         attempted: EvidenceUse | None = None,
         diagnostic: EvidenceDiagnostic | None = None,
         audit: AuditInput | None = None,
+        sources: tuple[EvidenceSource, ...] | None = None,
     ) -> AuditResult:
         trace_audit = audit or self._host().audit_file
         if audit is None:
@@ -219,6 +209,7 @@ class PswPdfEvidenceMixin:
             used=used,
             attempted=attempted,
             diagnostics=(diagnostic,) if diagnostic is not None else (),
+            sources=sources,
         )
 
     def _failed_conversion_rule(self, ith: int) -> AuditResult:
@@ -253,6 +244,21 @@ class PswPdfEvidenceMixin:
             )
         diagnostics = getattr(artifact, "diagnostics", {}) if artifact is not None else {}
         error_code = str(diagnostics.get("error_code", "") or "")
+        if error_code in {
+            "paddle_evidence_disabled",
+            "paddle_evidence_unconfigured",
+            "paddle_page_selection_required",
+            "paddle_table_unconfirmed",
+            "paddle_table_incomplete",
+            "paddle_request_budget_exhausted",
+            "paddle_scope_closed",
+        }:
+            return self._trace_result(
+                AuditResult(classification="PDF结构化证据", item=f"PSW - 规则{ith + 1}", priority="P0", status="UNABLE", suggestions="原生或Paddle证据尚未形成可确认的表格，请核对原件。"),
+                rule_no=ith + 1,
+                used="none",
+                diagnostic=EvidenceDiagnostic(code="psw.pdf." + error_code, stage="conversion", severity="warning", message="当前原件表格内容未能确认；未作通过或不符合判断。"),
+            )
         message = "PDF 转换未产出可读取的表格，无法执行结构检查。"
         if error_code:
             message += f"转换错误：{error_code}。"
@@ -272,7 +278,7 @@ class PswPdfEvidenceMixin:
         rule_no = ith + 1
         if rule_no not in _VISUAL_RULES:
             return None
-        return self._run_prompt_rule(ith, rule_no)
+        return self._run_paddle_rule(ith, rule_no)
 
     def _run_structured_rule(self, ith: int) -> Optional[AuditResult]:
         host = self._host()
@@ -297,15 +303,15 @@ class PswPdfEvidenceMixin:
             if host.excel_agent is None:
                 result = self.fallback_rule_checkers(ith) or self._failed_conversion_rule(ith)
             elif rule_no in PSW_ALWAYS_VISUAL_RULES:
-                result = self._run_prompt_rule(ith, rule_no)
+                result = self._run_paddle_rule(ith, rule_no)
             elif rule_no == 7:
                 structured = self._run_structured_rule(ith)
                 if (structured is not None and str(structured.status).upper() == "PASS") or self._evidence().supports_checkbox_rule(rule_no):
                     result = structured
                 else:
-                    result = self._run_prompt_rule(ith, rule_no, used="both")
+                    result = self._run_paddle_rule(ith, rule_no, used="both")
             elif rule_no in {8, 9, 10} and not self._evidence().supports_checkbox_rule(rule_no):
-                result = self._run_prompt_rule(ith, rule_no)
+                result = self._run_paddle_rule(ith, rule_no)
             else:
                 result = self._run_structured_rule(ith)
         except Exception as exc:
@@ -361,60 +367,54 @@ class PswPdfEvidenceMixin:
         parent_resolve = getattr(super(), "_resolve_success_slots")
         return cast(int, parent_resolve(excel_rule_count))
 
-    def _run_prompt_rule(
+    def _run_paddle_rule(
         self,
         ith: int,
         rule_no: int,
         *,
         used: EvidenceUse = "visual",
     ) -> AuditResult:
+        from audit.checkers.v4.visual_facts import VisualFactsUnavailable, read_original_pdf_visual_facts
+
         host = self._host()
         if not host.get_rule_by_index(ith):
             return self._trace_result(
                 host.create_error_result("无法获取规则数据", ith),
                 rule_no=rule_no,
                 used="none",
-                diagnostic=EvidenceDiagnostic(
-                    code=DIAGNOSTIC_EVALUATION_RULE_UNAVAILABLE,
-                    stage="evaluation",
-                    severity="error",
-                    message=f"PSW PDF 规则 {rule_no} 缺少可执行配置。",
-                ),
+                diagnostic=EvidenceDiagnostic(code=DIAGNOSTIC_EVALUATION_RULE_UNAVAILABLE, stage="evaluation", severity="error", message=f"PSW PDF 规则 {rule_no} 缺少可执行配置。"),
             )
+        sources: list[EvidenceSource] = []
 
-        images = getattr(self, "images", None)
-        if not images:
-            images = host._get_pdf_images_sync()
-            host.images = images
-        if not images:
-            return self._trace_result(
-                host.create_error_result("无法将PDF渲染成图像用于分析。", ith),
-                rule_no=rule_no,
-                used="structure" if used == "both" else "none",
-                attempted=used,
-                diagnostic=EvidenceDiagnostic(
-                    code=DIAGNOSTIC_VISUAL_RUNTIME_ERROR,
-                    stage="visual",
-                    severity="error",
-                    message="PDF 页面渲染未产出图像。",
-                ),
-            )
-        result = PswVisualRuleEvaluator(host._analyze_images_with_prompt).evaluate(rule_no, images)
-        diagnostic = None
-        if result.status in {"ERR", "UNABLE"}:
-            diagnostic = EvidenceDiagnostic(
-                code=DIAGNOSTIC_VISUAL_UNVERIFIABLE,
-                stage="visual",
-                severity="error" if result.status == "ERR" else "warning",
-                message="视觉模型返回结果不可验证。",
-            )
-        return self._trace_result(
-            result,
-            rule_no=rule_no,
-            used=used if diagnostic is None else ("structure" if used == "both" else "none"),
-            attempted=used,
-            diagnostic=diagnostic,
-        )
+        def witness(locator: dict[str, object], excerpt: str, *, visual: bool = False) -> None:
+            sources.append(EvidenceSource(kind="visual" if visual else "structure", locator=json.dumps(locator, ensure_ascii=False, separators=(",", ":")), excerpt=excerpt[:500]))
+
+        if not hasattr(self, "_paddle_page_cache"):
+            self._paddle_page_cache: dict = {}
+        try:
+            facts = read_original_pdf_visual_facts(host.audit_file, PSW_RULE_FIELDS[rule_no], witness, operation=f"psw_rule_{rule_no}", cache=self._paddle_page_cache)
+            result = evaluate_psw_observation(rule_no, facts)
+            diagnostic = None
+            if result.status == "UNABLE":
+                diagnostic = EvidenceDiagnostic(code="psw.paddle.fact_unconfirmed", stage="visual", severity="warning", message="原生或Paddle证据未能确认所需事实；不调用LLM补判。")
+        except VisualFactsUnavailable:
+            result = evaluate_psw_observation(rule_no, {})
+            diagnostic = EvidenceDiagnostic(code="psw.paddle.fact_unconfirmed", stage="visual", severity="warning", message="当前原件不能提供可确认的Paddle事实，请核对原件。")
+        except Exception as exc:
+            result = host.create_error_result(f"Paddle证据读取失败（{type(exc).__name__}）。", ith)
+            diagnostic = EvidenceDiagnostic(code="psw.paddle.runtime_error", stage="visual", severity="error", message="Paddle证据读取发生技术错误，未形成业务判断。")
+        source_kinds = {source.kind for source in sources}
+        evidence_used: EvidenceUse = "both" if source_kinds == {"structure", "visual"} else "visual" if "visual" in source_kinds else "structure" if sources else "none"
+        if used == "both" and evidence_used == "visual":
+            # The preceding structured rule read a real submission note/field.
+            evidence_used = "both"
+            sources.insert(0, EvidenceSource(kind="structure", locator="pdf://converted-table-grid"))
+        traced = self._trace_result(result, rule_no=rule_no, used=evidence_used, diagnostic=diagnostic, sources=tuple(sources))
+        # This path never renders pages for an LLM. Report only observed sources.
+        if traced.evidence is not None:
+            strategies = ("native_pdf", "paddle_single_page") if "visual" in source_kinds else ("native_pdf",)
+            traced = traced.model_copy(update={"evidence": traced.evidence.model_copy(update={"conversion_strategies": strategies, "prepared_format": "pdf"})})
+        return traced
 
 
 __all__ = [

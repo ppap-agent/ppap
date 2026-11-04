@@ -94,48 +94,69 @@ def provider(request, monkeypatch):
         get_settings.cache_clear()
 
 
-def test_standard_round_keeps_real_provider_receipts_and_releases_the_tracking_scope(provider):
+def test_standard_psw_round_makes_no_model_calls_and_releases_the_tracking_scope(provider):
     work, blobs = psw_input()
     previous = get_current_request_id()
 
     result = run_round_from_bytes(work, blobs)
 
-    assert len(provider) == 2
-    assert [row["status"] for row in result["findings"]] == ["PASS", "NG"]
+    assert provider == []
+    assert [row["status"] for row in result["findings"]] == ["UNABLE", "UNABLE"]
     usage = result["usage"]
-    assert (usage["total_input_tokens"], usage["total_output_tokens"], usage["total_thinking_tokens"], usage["total_tokens"]) == (18, 10, 4, 28)
-    assert usage["llm_calls_count"] == 2
+    assert (usage["total_input_tokens"], usage["total_output_tokens"], usage["total_thinking_tokens"], usage["total_tokens"]) == (0, 0, 0, 0)
+    assert usage["llm_calls_count"] == 0
     assert usage["usage_complete"] is True
     assert usage["unreported_calls_count"] == 0
-    assert all(call["operation"] == "image_analysis" for call in usage["llm_calls"])
+    assert usage["llm_calls"] == []
     assert get_current_request_id() == previous
     assert get_token_tracker().get_request_summary(usage["request_id"]) is None
     assert "模型返回的不符合结论" not in json.dumps(usage, ensure_ascii=False)
     assert "test-only" not in json.dumps(usage)
 
     second = run_round_from_bytes(work, blobs)
-    assert len(provider) == 4
-    assert [row["status"] for row in second["findings"]] == ["PASS", "NG"]
+    assert provider == []
+    assert [row["status"] for row in second["findings"]] == ["UNABLE", "UNABLE"]
     assert second["usage"]["request_id"] != usage["request_id"]
-    assert second["usage"]["total_tokens"] == 28
-    assert second["usage"]["llm_calls_count"] == 2
+    assert second["usage"]["total_tokens"] == 0
+    assert second["usage"]["llm_calls_count"] == 0
     assert get_current_request_id() == previous
     assert get_token_tracker().get_request_summary(second["usage"]["request_id"]) is None
 
 
-@pytest.mark.parametrize("provider", [None], indirect=True)
-def test_missing_usage_receipts_do_not_change_actual_audit_results(provider):
-    work, blobs = psw_input()
-
-    result = run_round_from_bytes(work, blobs)
-
-    assert len(provider) == 2
-    assert [row["status"] for row in result["findings"]] == ["PASS", "NG"]
-    usage = result["usage"]
-    assert usage["llm_calls_count"] == usage["unreported_calls_count"] == 2
-    assert usage["usage_complete"] is False
-    assert usage["total_tokens"] is None
-    assert usage["llm_calls"] == []
+@pytest.mark.parametrize(
+    ("provider", "complete"),
+    [({"input_tokens": 9, "output_tokens": 5, "total_tokens": 14, "output_tokens_details": {"reasoning_tokens": 2}}, True), (None, False)],
+    indirect=["provider"],
+    ids=["visible-receipts", "missing-receipts"],
+)
+def test_text_model_usage_keeps_visible_receipts_and_unknown_usage_separate(provider, complete):
+    # Text calls remain supported. Exercise the SDK boundary without restoring
+    # removed PSW image calls just to generate a receipt.
+    tracker = get_token_tracker()
+    previous = get_current_request_id()
+    request_id = tracker.start_request_tracking()
+    try:
+        for _ in range(2):
+            AIClient().structured_completion(system_prompt="Return JSON", user_prompt="Test receipt", operation="text_receipt_test")
+        usage = tracker.end_request_tracking(request_id).to_dict()
+        assert len(provider) == usage["llm_calls_count"] == 2
+        assert usage["usage_complete"] is complete
+        if complete:
+            assert (usage["total_input_tokens"], usage["total_output_tokens"], usage["total_thinking_tokens"], usage["total_tokens"]) == (18, 10, 4, 28)
+            assert usage["unreported_calls_count"] == 0
+            assert len(usage["llm_calls"]) == 2
+            assert all(call["operation"] == "text_receipt_test" for call in usage["llm_calls"])
+        else:
+            assert usage["unreported_calls_count"] == 2
+            assert usage["total_tokens"] is None
+            assert usage["llm_calls"] == []
+        assert "模型返回的不符合结论" not in json.dumps(usage, ensure_ascii=False)
+        assert "test-only" not in json.dumps(usage)
+    finally:
+        tracker.cleanup_request(request_id)
+        tracker.set_current_request_id(previous)
+    assert get_current_request_id() == previous
+    assert tracker.get_request_summary(request_id) is None
 
 
 def test_failed_standard_input_restores_an_existing_tracking_scope():

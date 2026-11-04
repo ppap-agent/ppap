@@ -1,16 +1,11 @@
-"""Explicit PaddleOCR PP-StructureV3 HTTP and local PDF input. No production route imports."""
+"""Explicit single-page PaddleOCR PP-StructureV3 HTTP and local PDF input."""
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import hashlib
-import json
 import math
-import subprocess
-import sys
 from pathlib import Path
-from time import monotonic
 from urllib.parse import urlsplit
 
 import fitz
@@ -24,71 +19,14 @@ class PaddleOCRFormatError(ValueError):
     """PaddleOCR output cannot be used as reliable document evidence."""
 
 
-_HTTP_CHILD = "from documents.ocr.paddle.client import _http_child; _http_child()"
-
-
-async def _post_page(endpoint: str, payload: dict, headers: dict, deadline: float) -> object:
-    remaining = deadline - monotonic()
-    if remaining <= 0:
-        raise TimeoutError
-
-    async def check_deadline(_request: httpx.Request) -> None:
-        # JSON encoding and local client setup must not permit a late dispatch.
-        if monotonic() >= deadline:
-            raise TimeoutError
-
-    # A socket's idle timeout does not bound a slowly arriving response body.
-    # Cancellation closes our local HTTP resources, not the remote OCR job.
-    async with asyncio.timeout(remaining):
-        async with httpx.AsyncClient(timeout=remaining, follow_redirects=False, event_hooks={"request": [check_deadline]}) as client:
-            response = await client.post(endpoint, json=payload, headers=headers)
-            response.raise_for_status()
-            body = response.json()
-            if monotonic() >= deadline:
-                raise TimeoutError
-            return body
-
-
-def _post_page_sync(endpoint: str, payload: dict, headers: dict, deadline: float) -> object:
-    # A one-shot process also bounds DNS executor shutdown. A cancelled asyncio
-    # operation alone can still wait indefinitely for libc's resolver thread.
-    data = json.dumps([endpoint, payload, headers, deadline])
-    if monotonic() >= deadline:
-        raise TimeoutError
-    process = subprocess.Popen([sys.executable, "-c", _HTTP_CHILD], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-    try:
-        output, _ = process.communicate(data, timeout=max(0, deadline - monotonic()))
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.communicate()  # Reap the child, including any DNS thread.
-        raise TimeoutError from None
-    except BaseException:
-        process.kill()
-        process.communicate()
-        raise
-    if process.returncode != 0:
-        raise PaddleOCRFormatError("PaddleOCR request failed (TransportError)")
-    result = json.loads(output)
-    if not isinstance(result, dict):
-        raise PaddleOCRFormatError("PaddleOCR request failed (TransportError)")
-    if "error_type" in result:
-        kind = result["error_type"]
-        if not isinstance(kind, str) or not kind.isascii() or not kind.isidentifier() or len(kind) > 80:
-            kind = "TransportError"
-        raise PaddleOCRFormatError(f"PaddleOCR request failed ({kind})")
-    if "body" not in result:
-        raise PaddleOCRFormatError("PaddleOCR request failed (TransportError)")
-    return result["body"]
-
-
-def _http_child() -> None:
-    """Private single-exchange entry: credentials only cross private stdio."""
-    try:
-        endpoint, payload, headers, deadline = json.load(sys.stdin)
-        result = {"body": asyncio.run(_post_page(endpoint, payload, headers, deadline))}
-    except Exception as exc:
-        result = {"error_type": type(exc).__name__}
-    json.dump(result, sys.stdout)
+def _post_page_sync(endpoint: str, payload: dict, headers: dict, timeout: float) -> object:
+    # One HTTP exchange. This is an HTTP operation timeout, not an aggregate
+    # deadline for PDF preparation or a response that continues to make progress.
+    # Closing the local client does not claim to cancel the remote OCR job.
+    with httpx.Client(timeout=timeout, follow_redirects=False) as client:
+        response = client.post(endpoint, json=payload, headers=headers)
+        response.raise_for_status()
+        return response.json()
 
 
 def validate_pdf(file_path: str | Path) -> tuple[Path, int]:
@@ -141,7 +79,7 @@ def page_dimensions(result: dict, index: int) -> tuple[float, float]:
 class PaddleStructureService:
     """Historical /layout-parsing API contract, only called explicitly."""
 
-    def __init__(self, endpoint: str, *, token: str = "", timeout: float = 300) -> None:
+    def __init__(self, endpoint: str, *, token: str = "", timeout: float = 20) -> None:
         parsed = urlsplit(endpoint)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password or parsed.fragment:
             raise ValueError("PaddleOCR endpoint must be an HTTP(S) URL without credentials or fragment")
@@ -154,8 +92,8 @@ class PaddleStructureService:
     def analyze_page(self, file_path: str | Path, page_number: int, *, timeout: float | None = None) -> dict:
         """Send one selected original page, once. A timeout does not cancel it remotely."""
         if timeout is not None and (isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0):
-            raise ValueError("PaddleOCR remaining timeout must be finite and positive")
-        deadline = monotonic() + (min(self.timeout, timeout) if timeout is not None else self.timeout)
+            raise ValueError("PaddleOCR timeout must be finite and positive")
+        request_timeout = timeout if timeout is not None else self.timeout
         path, _ = validate_pdf(file_path)
         original = path.read_bytes()
         before_hash = hashlib.sha256(original).digest()
@@ -167,9 +105,7 @@ class PaddleStructureService:
                 payload = selected.tobytes(garbage=4, deflate=True)
         if len(payload) > parse_file_size(max_file_size()):
             raise ValueError("PaddleOCR selected page exceeds MAX_FILE_SIZE")
-        if monotonic() >= deadline:
-            raise PaddleOCRFormatError("PaddleOCR request failed (TimeoutError)")
-        result = self._request(payload, deadline=deadline)
+        result = self._request(payload, timeout=request_timeout)
         try:
             unchanged = hashlib.sha256(path.read_bytes()).digest() == before_hash
         except OSError:
@@ -178,19 +114,16 @@ class PaddleStructureService:
             raise PaddleOCRFormatError("PaddleOCR source changed during the request")
         require_pages(result, 1)
         page_dimensions(result, 0)
-        if monotonic() >= deadline:
-            raise PaddleOCRFormatError("PaddleOCR request failed (TimeoutError)")
         return result
 
     def analyze_full_pdf(self, file_path: str | Path) -> dict:
         """Compatibility entry for already-single-page PDFs; never send a whole multipage source."""
-        deadline = monotonic() + self.timeout
         path, page_count = validate_pdf(file_path)
         if page_count != 1:
             raise ValueError("Select one original page with analyze_page")
-        return self._request(path.read_bytes(), deadline=deadline)
+        return self._request(path.read_bytes(), timeout=self.timeout)
 
-    def _request(self, content: bytes, *, deadline: float) -> dict:
+    def _request(self, content: bytes, *, timeout: float) -> dict:
         headers = {"Content-Type": "application/json"}
         if self.token:
             headers["Authorization"] = f"token {self.token}"
@@ -205,7 +138,7 @@ class PaddleStructureService:
             "useTableRecognition": True,
         }
         try:
-            body = _post_page_sync(self.endpoint, payload, headers, deadline)
+            body = _post_page_sync(self.endpoint, payload, headers, timeout)
         except PaddleOCRFormatError:
             raise
         except (httpx.HTTPError, OSError, ValueError) as exc:
@@ -216,6 +149,4 @@ class PaddleStructureService:
         if not isinstance(result, dict):
             raise PaddleOCRFormatError("PaddleOCR response lacks required metadata")
         require_pages(result, 1)
-        if monotonic() >= deadline:
-            raise PaddleOCRFormatError("PaddleOCR request failed (TimeoutError)")
         return result

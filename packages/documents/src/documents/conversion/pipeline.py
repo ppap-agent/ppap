@@ -17,7 +17,7 @@ from documents.contracts import (
 )
 from documents.excel import load_excel_workbook
 from documents.files import download_file_to_dir_sync, parse_file_size
-from documents.ocr.env import max_file_size, ocr_adapter_mode
+from documents.ocr.env import max_file_size
 from documents.ocr.local import convert_local_pdf_to_excel
 from documents.pdf import (
     DEFAULT_SPEC,
@@ -49,8 +49,6 @@ from documents.pdf import (
     TitleSectionRule,
 )
 from documents.pdf import convert_pdf_to_excel as docops_convert_pdf_to_excel
-
-from .remote import RemoteOcrAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -165,16 +163,15 @@ def _attempt_ocr(
     enable_cache: bool,
 ) -> tuple[str | None, dict[str, object] | None]:
     try:
-        if ocr_adapter_mode() == "remote":
-            artifact = RemoteOcrAdapter().ocr_pdf_to_excel(source, enable_cache=enable_cache)
-        else:
-            artifact = convert_local_pdf_to_excel(source, enable_cache=enable_cache)
+        # The native backend owns the first attempt. OCR never delegates a
+        # complete document to the legacy remote/Responses fallback.
+        artifact = convert_local_pdf_to_excel(source, enable_cache=enable_cache)
         if artifact.excel_path:
             return artifact.excel_path, None
         raw_error = str((artifact.raw_meta or {}).get("error", "") or "")
         if raw_error:
             error_code = str((artifact.raw_meta or {}).get("error_code", "") or "")
-            if not error_code.startswith(("responses_", "raster_")):
+            if not error_code.startswith("paddle_"):
                 error_code = ERROR_OCR_EXCEPTION
             return None, {"error_code": error_code, "error": raw_error}
         return None, {

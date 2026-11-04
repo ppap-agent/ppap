@@ -1,7 +1,5 @@
 """PSW DOCX rules consume real Word structures and embedded image inputs."""
 
-import json
-from base64 import b64decode
 from copy import deepcopy
 from io import BytesIO
 from zipfile import ZIP_STORED, ZipFile
@@ -107,33 +105,11 @@ class WordVisualRuntime:
 
     def run_image_prompt(self, **kwargs):
         self.calls.append(kwargs)
-        return json.dumps(
-            {
-                "psw_stamp_ends_with_company": True,
-                "authorized_signature_present": True,
-                "psw_stamp_present": True,
-                "classification": "视觉检查",
-                "item": "PSW 视觉检查",
-                "priority": "P0",
-                "status": "PASS",
-                "suggestions": "已识别印章与签字",
-            }
-        )
+        raise AssertionError("Native/Paddle PSW must not call LLM vision")
 
     def __getattr__(self, name):
         self.unexpected_calls.append(name)
         raise AssertionError(f"Native DOCX must not use external conversion or rendering: {name}")
-
-
-def assert_original_images_reach_visual_rules(calls):
-    assert len(calls) == 2
-    for call in calls:
-        images = []
-        for data_url in call["image_base64_list"]:
-            with Image.open(BytesIO(b64decode(data_url.split(",", 1)[1]))) as image:
-                images.append((image.size, image.getextrema()))
-        assert images == [((48, 48), ((220, 220), (0, 0), (0, 0))), ((32, 40), ((0, 0), (0, 0), (180, 180)))]
-        assert "word/document.xml" in call["user_text"]
 
 
 @pytest.fixture(params=["v2", "v3"])
@@ -145,25 +121,26 @@ def audit(request):
             runtime=runtime,
         )
         assert runtime.unexpected_calls == []
+        assert runtime.calls == []
         return results
 
     return check
 
 
-def test_word_fields_controls_and_images_reach_the_existing_rules_without_rendering(tmp_path, audit):
+def test_native_word_fields_and_controls_remain_known_while_visuals_stay_unconfirmed(tmp_path, audit):
     path = tmp_path / "psw.docx"
     psw_document().save(path)
     runtime = WordVisualRuntime()
 
     results = audit(path, runtime)
 
-    assert [result.status for result in results] == ["PASS"] * 10
+    assert [result.status for result in results] == ["PASS", "PASS", "UNABLE", "PASS", "UNABLE", "PASS", "PASS", "PASS", "PASS", "PASS"]
     assert all(result.evidence is not None for result in results)
     assert results[0].evidence.used == "structure"
     assert results[0].evidence.source_format == "docx"
-    assert results[2].evidence.used == "visual"
-    assert results[2].evidence.sources[0].locator.startswith("docx://word/document.xml#")
-    assert_original_images_reach_visual_rules(runtime.calls)
+    assert results[2].evidence.used == "structure"
+    assert results[2].evidence.sources[0].locator == "docx://word/document.xml"
+    assert runtime.calls == []
 
 
 def test_missing_stamp_images_and_required_checkmarks_do_not_invent_passes(tmp_path, audit):
@@ -173,68 +150,32 @@ def test_missing_stamp_images_and_required_checkmarks_do_not_invent_passes(tmp_p
 
     results = audit(path, runtime)
 
-    assert [results[index].status for index in (2, 4, 6, 7)] == ["NG"] * 4
+    assert [results[index].status for index in (2, 4, 6, 7)] == ["UNABLE", "UNABLE", "NG", "NG"]
     assert runtime.calls == []
     assert results[2].evidence.diagnostics[0].code == "psw.visual.missing"
 
 
 @pytest.mark.parametrize("profile", ["v2", "v3"])
-def test_signature_rule_receives_native_word_text_and_the_original_images(tmp_path, monkeypatch, profile):
-    path = tmp_path / "psw.docx"
-    document = psw_document()
-    document.tables[1].cell(20, 0).text = "代表（印刷姓名）"
-    document.tables[1].cell(20, 1).text = "孙七"
-    document.save(path)
-    original = path.read_bytes()
-    calls = []
-
-    def analyze(self, **kwargs):
-        calls.append(kwargs)
-        return json.dumps(
-            {
-                "psw_stamp_ends_with_company": True,
-                "authorized_signature_present": True,
-                "psw_stamp_present": True,
-                "classification": "视觉检查",
-                "item": "PSW 视觉检查",
-                "priority": "P0",
-                "status": "PASS",
-                "suggestions": "已识别印章与签字",
-            }
-        )
-
-    monkeypatch.setattr(AIClient, "image_analysis_completion", analyze)
-    results = run_audit_engine(
-        AuditInput(audit_id="psw-word-signature-context", file_url=str(path)),
-        RuleInput(rule_id="confirmed-psw-rules", rule_profile=profile, type=PpapDocumentType.PSW.get_type_name(), rules=[{"id": str(index)} for index in range(1, 11)]),
-    )
-
-    signature_call = next(call for call in calls if "经授权的供方代表签字" in call["user_text"])
-    assert "赵六" in signature_call["user_text"]
-    assert "代表（印刷姓名）" in signature_call["user_text"]
-    assert "孙七" in signature_call["user_text"]
-    assert [result.status for result in results] == ["PASS"] * 10
-    assert results[4].evidence.used == "both"
-    assert {source.kind for source in results[4].evidence.sources} == {"structure", "visual"}
-    assert_original_images_reach_visual_rules(calls)
-    assert path.read_bytes() == original
-
-
-@pytest.mark.parametrize("profile", ["v2", "v3"])
-def test_invalid_model_response_keeps_word_field_decisions_and_reports_visual_errors(tmp_path, monkeypatch, profile):
+def test_docx_native_fields_remain_known_and_unsupported_visual_facts_stay_unable(tmp_path, monkeypatch, profile):
     path = tmp_path / "psw.docx"
     psw_document().save(path)
-    monkeypatch.setattr(AIClient, "image_analysis_completion", lambda self, **kwargs: "not-json")
+    original = path.read_bytes()
+    attempts = []
 
+    def reject(self, **kwargs):
+        attempts.append(kwargs)
+        raise AssertionError("DOCX must not call LLM vision")
+
+    monkeypatch.setattr(AIClient, "image_analysis_completion", reject)
     results = run_audit_engine(
-        AuditInput(audit_id="psw-word-model-error", file_url=str(path)),
+        AuditInput(audit_id="psw-word-native", file_url=str(path)),
         RuleInput(rule_id="confirmed-psw-rules", rule_profile=profile, type=PpapDocumentType.PSW.get_type_name(), rules=[{"id": str(index)} for index in range(1, 11)]),
     )
-
-    assert [result.status for result in results] == ["PASS", "PASS", "ERR", "PASS", "ERR", "PASS", "PASS", "PASS", "PASS", "PASS"]
-    for index in (2, 4):
-        assert results[index].evidence.used == "none"
-        assert results[index].evidence.diagnostics[0].code == "psw.visual.unverifiable"
+    assert [result.status for result in results] == ["PASS", "PASS", "UNABLE", "PASS", "UNABLE", "PASS", "PASS", "PASS", "PASS", "PASS"]
+    assert attempts == []
+    assert path.read_bytes() == original
+    assert results[4].evidence.used == "structure"
+    assert results[4].evidence.diagnostics[0].code == "psw.paddle.unsupported_source"
 
 
 @pytest.mark.parametrize("control", ["nested-checkbox", "generic-checkbox-character"])
@@ -247,16 +188,16 @@ def test_nested_submission_controls_remain_authoritative(tmp_path, audit, contro
     assert results[6].status == "PASS"
 
 
-def test_visual_rules_can_use_embedded_images_outside_the_main_table(tmp_path, audit):
+def test_embedded_images_outside_the_main_table_do_not_invent_seal_facts(tmp_path, audit):
     path = tmp_path / "psw.docx"
     psw_document(images_outside=True).save(path)
     runtime = WordVisualRuntime()
 
     results = audit(path, runtime)
 
-    assert results[2].status == "PASS"
-    assert results[4].status == "PASS"
-    assert_original_images_reach_visual_rules(runtime.calls)
+    assert results[2].status == "UNABLE"
+    assert results[4].status == "UNABLE"
+    assert runtime.calls == []
 
 
 def test_a_corrupt_embedded_image_package_is_an_execution_error(tmp_path, audit):
@@ -296,6 +237,6 @@ def test_ambiguous_primary_tables_do_not_send_arbitrary_images_to_visual_rules(t
 
     results = audit(path, runtime)
 
-    assert results[2].status == "NG"
-    assert results[4].status == "NG"
+    assert results[2].status == "UNABLE"
+    assert results[4].status == "UNABLE"
     assert runtime.calls == []

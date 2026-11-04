@@ -215,7 +215,7 @@ def test_remaining_unmapped_table_is_not_silently_discarded(tmp_path):
 
 
 @pytest.mark.parametrize("code", ["responses_invalid_json", "responses_timeout", "raster_cell_timeout"])
-def test_cell_failure_preserves_its_code_across_the_pipeline_without_retry(tmp_path, monkeypatch, code):
+def test_global_fallback_does_not_reenter_legacy_cell_ocr(tmp_path, monkeypatch, code):
     path, _source = _scan(tmp_path)
     calls = []
 
@@ -224,12 +224,12 @@ def test_cell_failure_preserves_its_code_across_the_pipeline_without_retry(tmp_p
         raise page.ResponsesEvidenceError(code, "Controlled evidence failure")
 
     monkeypatch.setenv("OCR_ADAPTER_MODE", "local")
+    monkeypatch.setenv("PADDLE_EVIDENCE_ENABLED", "false")
     with patch.object(page, "call_llm_async", side_effect=malformed), patch("documents.ocr.cell_ocr.call_llm_async", side_effect=malformed):
         result, error = pipeline._attempt_ocr(str(path), enable_cache=False)
     assert result is None
-    assert error["error_code"] == code
-    assert "page 1/1" in error["error"]
-    assert calls == ["ppap_raster_cell_evidence"]
+    assert error["error_code"] == "paddle_evidence_disabled"
+    assert calls == []
 
 
 def test_scanned_page_deadline_includes_remainder_and_cancels_its_request(tmp_path):
@@ -367,13 +367,15 @@ def test_table_mask_preserves_all_pixels_outside_the_verified_table(tmp_path):
     assert np.array_equal(masked, expected)
 
 
-def test_unverifiable_raster_cell_ocr_does_not_cache_partial_results(tmp_path, monkeypatch):
+def test_paddle_conversion_does_not_read_or_write_legacy_raster_cache(tmp_path, monkeypatch):
     path, _ = _scan(tmp_path)
     monkeypatch.setenv("OCR_LOCAL_OSS_DIR", str(tmp_path / "raster-cache"))
     monkeypatch.setenv("OCR_LOCAL_SQLITE_DB", str(tmp_path / "raster-cache" / "cache.db"))
-    fake, _calls = _fake_vision(merged=False, corrupt=True)
+    monkeypatch.setenv("PADDLE_EVIDENCE_ENABLED", "false")
+    fake, calls = _fake_vision(merged=False, corrupt=True)
     with patch.object(page, "call_llm_async", side_effect=fake), patch("documents.ocr.cell_ocr.call_llm_async", side_effect=fake):
         artifact = convert_local_pdf_to_excel(str(path))
     assert artifact.excel_path is None
-    assert artifact.raw_meta["error_code"] == "raster_cells_invalid_schema"
+    assert artifact.raw_meta["error_code"] == "paddle_evidence_disabled"
+    assert calls == []
     assert not list((tmp_path / "raster-cache" / "results").glob("*.xlsx"))

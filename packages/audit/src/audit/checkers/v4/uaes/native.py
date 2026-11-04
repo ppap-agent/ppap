@@ -358,7 +358,9 @@ class UaesSourceAgent(BaseAgent):
         from audit.checkers.v4.visual_facts import VisualFactsUnavailable, read_original_pdf_visual_facts
 
         try:
-            return read_original_pdf_visual_facts(self.audit_file, fields, self.witness, operation="uaes_original_visual_facts")
+            if not hasattr(self, "_paddle_page_cache"):
+                self._paddle_page_cache: dict[Any, Any] = {}
+            return read_original_pdf_visual_facts(self.audit_file, fields, self.witness, operation="uaes_original_visual_facts", cache=self._paddle_page_cache)
         except VisualFactsUnavailable as exc:
             raise UnknownFact(str(exc)) from exc
 

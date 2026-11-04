@@ -111,15 +111,14 @@ def test_failed_attempt_is_not_resent_by_another_rule(tmp_path, failure):
     assert "secret" not in repr(session.observations)
 
 
-def test_cancelled_or_expired_scope_never_sends(tmp_path):
+def test_cancelled_scope_never_sends(tmp_path):
     path = source(tmp_path)
-    for kwargs in ({"cancelled": lambda: True}, {"deadline_seconds": 0}):
-        service = Service()
-        session = PaddleShadowSession(service, project_id="project-a", targets=targets(path), **kwargs)
-        with paddle_shadow_scope(session):
-            agent(path).check(5)
-        assert service.calls == []
-        assert session.observations[0].state == "error"
+    service = Service()
+    session = PaddleShadowSession(service, project_id="project-a", targets=targets(path), cancelled=lambda: True)
+    with paddle_shadow_scope(session):
+        agent(path).check(5)
+    assert service.calls == []
+    assert session.observations[0].state == "error"
 
 
 def test_wrong_project_or_changed_original_cannot_supply_facts(tmp_path):
@@ -215,7 +214,7 @@ def test_bad_original_page_does_not_consume_an_external_request(tmp_path):
     assert session.observations[0].reason == "source_page_invalid"
 
 
-def test_deadline_after_dispatch_discards_the_returned_facts(tmp_path, monkeypatch):
+def test_elapsed_scope_time_does_not_discard_valid_returned_facts(tmp_path, monkeypatch):
     from audit.checkers.v4 import paddle_evidence
 
     clock = [0.0]
@@ -224,16 +223,17 @@ def test_deadline_after_dispatch_discards_the_returned_facts(tmp_path, monkeypat
 
     class SlowService(Service):
         def analyze_page(self, path, page, *, timeout=None):
-            assert 0 < timeout <= 10
+            assert timeout == 20
             value = super().analyze_page(path, page, timeout=timeout)
-            clock[0] = 11
+            clock[0] = 700
             return value
 
-    session = PaddleShadowSession(SlowService(), project_id="project-a", targets=targets(path), deadline_seconds=10)
+    session = PaddleShadowSession(SlowService(), project_id="project-a", targets=targets(path))
     with paddle_shadow_scope(session):
         agent(path).check(5)
-    assert session.observations[0].reason == "deadline_exceeded"
-    assert session.observations[0].evidence.sources == ()
+    assert session.observations[0].state == "known"
+    assert session.observations[0].evidence.sources
+    assert session.observations[0].elapsed_seconds == 700
 
 
 def test_bad_table_does_not_erase_a_good_seal(tmp_path):
@@ -497,7 +497,7 @@ def test_psw_rule_nine_formal_result_is_unchanged_and_shadow_does_not_add_model_
         with paddle_shadow_scope(session):
             actual = checker.check(8).model_dump()
     assert actual == baseline
-    assert len(runtime.prompt_calls) == 2
+    assert runtime.prompt_calls == []
     assert service.calls == [] and session.request_count == 0
     assert session.observations[0].state == "unknown"
 
@@ -567,7 +567,7 @@ def test_uaes_psw_existing_checker_consumes_selected_stamp_and_field_shadows(tmp
 
 
 @pytest.mark.parametrize("known", [False, True])
-@pytest.mark.parametrize("change", ["deadline", "cancel", "source"])
+@pytest.mark.parametrize("change", ["elapsed", "cancel", "source"])
 def test_native_read_must_revalidate_the_scope_before_skip_or_dispatch(tmp_path, monkeypatch, known, change):
     from audit.checkers.v4 import paddle_evidence as module
     from audit.checkers.v4.uaes.native import NativeFacts, UnknownFact
@@ -577,8 +577,8 @@ def test_native_read_must_revalidate_the_scope_before_skip_or_dispatch(tmp_path,
     monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
 
     def delayed_native(self, labels):
-        if change == "deadline":
-            clock[0] = 11
+        if change == "elapsed":
+            clock[0] = 700
         elif change == "cancel":
             cancelled[0] = True
         else:
@@ -588,13 +588,17 @@ def test_native_read_must_revalidate_the_scope_before_skip_or_dispatch(tmp_path,
         raise UnknownFact("native field unconfirmed")
 
     monkeypatch.setattr(NativeFacts, "field", delayed_native)
-    session = PaddleShadowSession(service, project_id="project-a", targets=targets(path), deadline_seconds=10, cancelled=lambda: cancelled[0])
+    session = PaddleShadowSession(service, project_id="project-a", targets=targets(path), cancelled=lambda: cancelled[0])
     with paddle_shadow_scope(session):
         observation = session.observe(agent(path), "rule_6")
-    assert service.calls == [] and session.request_count == 0
-    assert observation.state == "error"
-    assert observation.reason == {"deadline": "deadline_exceeded", "cancel": "cancelled", "source": "source_changed"}[change]
-    assert observation.evidence.sources == ()
+    if change == "elapsed":
+        assert observation.state == ("skipped" if known else "known")
+        assert session.request_count == len(service.calls) == (0 if known else 1)
+    else:
+        assert service.calls == [] and session.request_count == 0
+        assert observation.state == "error"
+        assert observation.reason == {"cancel": "cancelled", "source": "source_changed"}[change]
+        assert observation.evidence.sources == ()
 
 
 class RegionWordService(Service):
@@ -617,7 +621,7 @@ def test_psw_region_words_keep_separate_origins_without_changing_formal_results(
         session = PaddleShadowSession(service, project_id="project-a", targets=psw_targets(path, rule, (3,)))
         with paddle_shadow_scope(session):
             actual = checker.check(2).model_dump()
-    assert actual == baseline and len(runtime.prompt_calls) == 2
+    assert actual == baseline and runtime.prompt_calls == []
     assert session.request_count == len(service.calls) == 1
     observation = session.observations[0]
     assert observation.state == "known"
@@ -725,7 +729,7 @@ def no_live_transports(monkeypatch):
 
 
 @pytest.mark.parametrize("consumer", ["u08", "psw"])
-@pytest.mark.parametrize("stop", ["deadline", "cancel"])
+@pytest.mark.parametrize("stop", ["elapsed", "cancel"])
 def test_identity_read_cannot_dispatch_after_the_scope_stops(tmp_path, monkeypatch, consumer, stop):
     from audit.checkers.v4 import paddle_evidence as module
     from audit.engine.runtime import bind_runtime
@@ -739,15 +743,15 @@ def test_identity_read_cannot_dispatch_after_the_scope_stops(tmp_path, monkeypat
         selected = psw_targets(path, rule, (3,))
     else:
         checker, selected = agent(path), targets(path)
-    session = PaddleShadowSession(service, project_id="project-a", targets=selected, deadline_seconds=10, cancelled=lambda: cancelled[0])
+    session = PaddleShadowSession(service, project_id="project-a", targets=selected, cancelled=lambda: cancelled[0])
     read_identity, reads = session._identity, []
 
     def delayed_identity(agent, target):
         result = read_identity(agent, target)
         reads.append(target)
         if len(reads) == 2:
-            if stop == "deadline":
-                clock[0] = 11
+            if stop == "elapsed":
+                clock[0] = 700
             else:
                 cancelled[0] = True
         return result
@@ -755,13 +759,18 @@ def test_identity_read_cannot_dispatch_after_the_scope_stops(tmp_path, monkeypat
     monkeypatch.setattr(session, "_identity", delayed_identity)
     with paddle_shadow_scope(session):
         observation = session.observe_psw(checker, 3) if consumer == "psw" else session.observe(checker, "rule_3")
-    assert session.request_count == 0 and service.calls == []
-    assert observation.state == "error"
-    assert observation.reason == ("deadline_exceeded" if stop == "deadline" else "cancelled")
-    assert observation.evidence.sources == ()
+    if stop == "elapsed":
+        assert session.request_count == len(service.calls) == 1
+        assert observation.state == "known"
+        assert observation.evidence.sources
+    else:
+        assert session.request_count == 0 and service.calls == []
+        assert observation.state == "error"
+        assert observation.reason == "cancelled"
+        assert observation.evidence.sources == ()
 
 
-def test_dispatch_preserves_a_positive_budget_smaller_than_one_millisecond(tmp_path, monkeypatch):
+def test_dispatch_uses_one_twenty_second_http_timeout(tmp_path, monkeypatch):
     from audit.checkers.v4 import paddle_evidence as module
 
     class Capture(Service):
@@ -775,8 +784,8 @@ def test_dispatch_preserves_a_positive_budget_smaller_than_one_millisecond(tmp_p
 
     monkeypatch.setattr(module.time, "monotonic", lambda: 0.0)
     path, service = source(tmp_path), Capture()
-    session = PaddleShadowSession(service, project_id="project-a", targets=targets(path), deadline_seconds=0.0005)
+    session = PaddleShadowSession(service, project_id="project-a", targets=targets(path))
     with paddle_shadow_scope(session):
         observation = session.observe(agent(path), "rule_3")
-    assert service.timeouts == [0.0005]
+    assert service.timeouts == [20]
     assert session.request_count == 1 and observation.state == "known"

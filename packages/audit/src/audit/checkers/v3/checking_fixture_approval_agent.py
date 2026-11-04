@@ -42,10 +42,6 @@ class CheckingFixtureApprovalAgent(PdfExcelDelegatorAgent):
                     self._find_target_pages_by_text,
                     page_texts=self._get_pdf_page_texts(),
                 ),
-                partial(
-                    self._find_target_pages_by_text,
-                    page_texts=self._ocr_pdf_page_texts(),
-                ),
             ],
         )
 

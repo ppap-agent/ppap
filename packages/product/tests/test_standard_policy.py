@@ -22,6 +22,7 @@ from product.settings import Settings
         ("OCR_MODEL_NAME", "ocr-other"),
         ("OCR_OPENAI_BASE_URL", "https://ocr-model.invalid/v1"),
         ("MAX_FILE_SIZE", "10MB"),
+        ("PADDLE_EVIDENCE_ENABLED", True),
     ],
 )
 def test_standard_revision_tracks_effective_configuration(field, value):
@@ -70,13 +71,22 @@ def test_tool_environment_changes_identity_without_disclosing_paths(monkeypatch,
 
 
 @pytest.mark.parametrize("field,value", [("PADDLE_OCR_URL", "https://retired.invalid")])
-def test_retired_local_ocr_configuration_no_longer_changes_revision(field, value):
-    """Retired providers cannot silently become part of the active Standard tool identity."""
+def test_disabled_paddle_endpoint_does_not_change_revision(field, value):
+    """An inactive endpoint has no effect on the accepted execution."""
     settings = Settings(OPENAI_API_KEY="not-serialized", OCR_MODEL_NAME="vision-model")
     original = settings.standard_execution_policy()
     changed = settings.model_copy(update={field: value}).standard_execution_policy()
     assert changed == original
     assert value not in changed.model_dump_json()
+
+
+def test_enabled_paddle_endpoint_changes_revision_without_disclosing_credentials():
+    settings = Settings(PADDLE_EVIDENCE_ENABLED=True, PADDLE_OCR_URL="https://private-paddle.invalid", PADDLE_TOKEN="private-token")
+    original = settings.standard_execution_policy()
+    changed = settings.model_copy(update={"PADDLE_OCR_URL": "https://another.invalid"}).standard_execution_policy()
+    assert changed != original
+    assert settings.model_copy(update={"PADDLE_TOKEN": "rotated-token"}).standard_execution_policy() == original
+    assert all(private not in original.model_dump_json() for private in ("private-paddle", "private-token"))
 
 
 def test_retired_ocr_concurrency_env_no_longer_changes_revision(monkeypatch):
