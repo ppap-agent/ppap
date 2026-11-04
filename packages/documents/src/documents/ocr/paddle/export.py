@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import secrets
@@ -24,6 +25,8 @@ class PaddleOCRStats:
     text_blocks: int
     seals: int
     output_dir: Path
+    status: str
+    artifacts: tuple[str, ...]
 
 
 def _workbook(evidence: dict) -> Workbook:
@@ -47,10 +50,13 @@ def _workbook(evidence: dict) -> Workbook:
             if block["type"] != "table" and content:
                 text_rows.append((page["page"], block["type"], content))
         for seal in page["seals"]:
-            text_rows.append((page["page"], "seal", " ".join(seal["recognized_text"]) or "检测到印章（内容未识别）"))
+            text = " ".join(seal["recognized_text"])
+            if text or seal.get("detected") is True:
+                text_rows.append((page["page"], "seal", text or "检测到印章（内容未识别）"))
 
-    if not table_number and not text_rows:
-        raise PaddleOCRFormatError("PaddleOCR returned no recognized evidence")
+    if not table_number:
+        workbook.close()
+        raise PaddleOCRFormatError("PaddleOCR returned no valid table to export")
     if text_rows:
         sheet = workbook.create_sheet("OCR_Text")
         sheet.append(["Page", "Type", "Content"])
@@ -70,31 +76,68 @@ def evaluate_pdf(
     response: dict | None = None,
     endpoint: str | None = None,
     token: str = "",
+    page_number: int | None = None,
 ) -> PaddleOCRStats:
     """Publish a unique run directory, even when multiple jobs share one root."""
     source, page_count = validate_pdf(pdf_path)
+    source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+    if page_number is not None and (type(page_number) is not int or page_number < 1 or page_number > page_count):
+        raise ValueError("Selected PDF page is out of range")
     root = Path(out_root).expanduser().resolve()
-    if response is None:
-        if not endpoint:
-            raise ValueError("PaddleOCR endpoint is required unless replaying a response")
-        result = PaddleStructureService(endpoint, token=token).analyze_full_pdf(source)
-    else:
-        result = response.get("result") if isinstance(response, dict) and "result" in response else response
-
-    evidence = build_evidence(result, page_count=page_count, pdf_path=source)
-    workbook = _workbook(evidence)
+    result = None
+    selected_count = 1 if page_number is not None else page_count
+    try:
+        if response is None:
+            if page_number is None:
+                raise ValueError("Live PaddleOCR requires an explicit page_number")
+            if not endpoint:
+                raise ValueError("PaddleOCR endpoint is required unless replaying a response")
+            result = PaddleStructureService(endpoint, token=token).analyze_page(source, page_number)
+        else:
+            result = response.get("result") if isinstance(response, dict) and "result" in response else response
+        if not isinstance(result, dict):
+            raise PaddleOCRFormatError("PaddleOCR response is not an object")
+        evidence = build_evidence(result, page_count=selected_count, pdf_path=source, source_pages=[page_number] if page_number is not None else None)
+        if evidence["source_sha256"] != source_hash:
+            raise PaddleOCRFormatError("PaddleOCR source changed during evidence interpretation")
+    except PaddleOCRFormatError:
+        # Preserve the received data for explicit offline diagnosis, but never
+        # expose arbitrary remote exception text as trusted document evidence.
+        evidence = {
+            "status": "error",
+            "source_sha256": source_hash,
+            "pages": [],
+            "diagnostics": [
+                {
+                    "code": "paddle.response.invalid",
+                    "stage": "conversion",
+                    "element": "response",
+                    "page": page_number,
+                    "message": "PaddleOCR request or response could not provide reliable page evidence",
+                }
+            ],
+        }
+    workbook = _workbook(evidence) if any(page["tables"] for page in evidence["pages"]) else None
+    artifacts = ["evidence.json"]
+    if result is not None:
+        artifacts.append("response.json")
+    if workbook is not None:
+        artifacts.append("tables.xlsx")
+    evidence["artifacts"] = artifacts
     root.mkdir(parents=True, exist_ok=True)
     staged = Path(tempfile.mkdtemp(prefix=".paddle-", dir=root))
     destination: Path | None = None
     try:
-        try:
-            workbook.save(staged / "tables.xlsx")
-        finally:
-            workbook.close()
-        verified = load_workbook(staged / "tables.xlsx", read_only=True)
-        verified.close()
+        if workbook is not None:
+            try:
+                workbook.save(staged / "tables.xlsx")
+            finally:
+                workbook.close()
+            verified = load_workbook(staged / "tables.xlsx", read_only=True)
+            verified.close()
         (staged / "evidence.json").write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
-        (staged / "response.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        if result is not None:
+            (staged / "response.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
         for _ in range(10):
             candidate = root / f"paddle-{secrets.token_hex(16)}"
             try:
@@ -114,9 +157,11 @@ def evaluate_pdf(
         if staged.exists():
             shutil.rmtree(staged)
     return PaddleOCRStats(
-        pages=page_count,
+        pages=selected_count,
         tables=sum(len(page["tables"]) for page in evidence["pages"]),
         text_blocks=sum(block["type"] != "table" and bool(block["text"].strip()) for page in evidence["pages"] for block in page["texts"]),
         seals=sum(len(page["seals"]) for page in evidence["pages"]),
         output_dir=destination,
+        status=evidence["status"],
+        artifacts=tuple(artifacts),
     )
