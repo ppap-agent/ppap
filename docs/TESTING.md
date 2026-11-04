@@ -2,6 +2,10 @@
 
 测试保护当前行为，不维护第二套产品状态。
 
+Paddle 按需证据由 Issue #246 拥有：`packages/documents/tests/test_paddle.py` 与 `test_paddle_page_evidence.py` 检查单页传输、原件定位、局部失败及产物；`packages/audit/tests/test_paddle_shadow.py` 通过现有 Checker 检查原生优先、同页成功/失败复用、预算、来源与取消边界。新增测试只隔离外部 Paddle 请求，不访问真实 OCR 或模型。真实单页合同、印章/表格效果及服务负载须另行明确执行并如实报告，不能由 fixture 或有限状态模型代替。
+
+影子观察与正式结果分别验收：启用本地影子作用域前后，已有 Checker 的完整结果保持相同；默认不创建作用域、不发生 Paddle 调用。位置或配对不确定保留未知，解析/传输失败保留技术诊断；局部失败不能清空其他已知事实。
+
 迁移 baseline 的具体 Git revision 和当前观察结果只由 owning Issue 保存：
 - engine/corpus parity：[#3](https://github.com/ppap-agent/ppap/issues/3)
 - 飞书 capability parity：[#11](https://github.com/ppap-agent/ppap/issues/11)
