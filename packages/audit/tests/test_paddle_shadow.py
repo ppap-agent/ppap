@@ -344,3 +344,37 @@ def test_unlocatable_seal_is_unknown_not_a_technical_verdict(tmp_path):
         agent(path).check(2)
     assert session.observations[0].state == "unknown"
     assert session.observations[0].evidence.sources == ()
+
+
+@pytest.mark.parametrize(
+    ("markup", "state", "value", "reason"),
+    [
+        ('<table><tr><td colspan="2">零件号</td><td>P-42</td></tr></table>', "known", "P-42", "facts_observed"),
+        ('<table><tr><td>备注</td><td colspan="2">零件号</td><td colspan="2">P-42</td></tr></table>', "known", "P-42", "facts_observed"),
+        ("<table><tr><td>零件号</td><td></td><td>P-42</td></tr></table>", "unknown", None, "fact_unconfirmed"),
+        ('<table><tr><td colspan="2">零件号</td><td>P-42</td></tr><tr><td colspan="2">零件号</td><td>P-43</td></tr></table>', "unknown", None, "field_ambiguous"),
+    ],
+)
+def test_field_follows_the_label_merge_extent_without_skipping_unmerged_blanks(tmp_path, markup, state, value, reason):
+    path = source(tmp_path)
+
+    class MergedLabelService(Service):
+        def analyze_page(self, path, page, *, timeout=None):
+            raw = super().analyze_page(path, page, timeout=timeout)
+            raw["layoutParsingResults"][0]["prunedResult"]["table_res_list"][0]["pred_html"] = markup
+            return raw
+
+    service = MergedLabelService()
+    session = PaddleShadowSession(service, project_id="project-a", targets=targets(path))
+    with paddle_shadow_scope(session):
+        agent(path).check(5)
+    assert session.request_count == len(service.calls) == 1
+    observed = session.observations[0]
+    assert observed.state == state
+    assert observed.reason == reason
+    if state == "known":
+        assert observed.facts[0]["value"] == value
+        assert observed.evidence.sources
+    else:
+        assert observed.facts == ()
+        assert observed.evidence.sources == ()

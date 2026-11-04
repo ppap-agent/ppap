@@ -258,10 +258,16 @@ class PaddleShadowSession:
                     add({"detected": True, "text": seal.get("recognized_text", []), "text_status": seal.get("text_status", "unreadable")}, seal, index)
         else:
             for index, table in enumerate(page.get("tables", [])):
-                for row in table.get("rows", []):
+                for row_number, row in enumerate(table.get("rows", []), 1):
                     for column, text in enumerate(row[:-1]):
-                        if header(text, PART_NUMBER_LABELS) and str(row[column + 1]).strip():
-                            add({"field": "零件号", "source_label": str(text).strip(), "value": str(row[column + 1]).strip()}, table, index)
+                        if not header(text, PART_NUMBER_LABELS):
+                            continue
+                        merged = next((span for span in table.get("merges", []) if span[0] <= row_number <= span[2] and span[1] <= column + 1 <= span[3]), None)
+                        # Merges use one-based inclusive columns. The first
+                        # column after their end is the zero-based value index.
+                        value_column = merged[3] if merged else column + 1
+                        if value_column < len(row) and str(row[value_column]).strip():
+                            add({"field": "零件号", "source_label": str(text).strip(), "value": str(row[value_column]).strip()}, table, index)
             if len({f["value"] for f in facts}) > 1:
                 # Conflicting alternatives remain unresolved rather than
                 # lending one candidate to an authoritative field.
