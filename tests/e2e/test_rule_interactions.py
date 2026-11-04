@@ -8,7 +8,7 @@ import os
 import time
 import unittest
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 try:
     from playwright.sync_api import sync_playwright
@@ -1405,6 +1405,103 @@ class RuleInteractionTests(unittest.TestCase):
             page.get_by_role("button", name="加载更多记录", exact=True).click()
             expect(table.get_by_text("second.xlsx", exact=True)).to_be_visible()
             expect(page.get_by_role("tab", name="全部任务", exact=False)).to_have_text("全部任务2")
+            browser.close()
+
+    def test_workbench_does_not_reuse_a_previous_search_cursor_after_the_new_first_page_fails(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            self.route(page)
+            reads, ready, tail_failed = [], False, False
+            summary = {
+                "id": JOB,
+                "number": "A-head",
+                "state": "pending_confirm",
+                "analysis_mode": "standard",
+                "created_at": "2026-11-04T00:00:00Z",
+                "updated_at": "2026-11-04T00:00:00Z",
+                "round_id": None,
+                "input_revision": 0,
+                "files": [],
+            }
+
+            def read_tasks(route):
+                query = parse_qs(urlsplit(route.request.url).query, keep_blank_values=True)
+                search, offset = query.get("q", [""])[0], int(query["offset"][0])
+                reads.append((search, offset))
+                if search == "B" and (offset == 0 and not ready or offset == 50 and tail_failed):
+                    route.abort("failed")
+                else:
+                    task = summary if not search else {**summary, "id": VERSION if offset == 0 else SOURCE, "number": "B-head" if offset == 0 else "B-tail"}
+                    route.fulfill(json={"tasks": [task], "next_offset": 50 if offset == 0 else None})
+
+            page.route("**/api/audit-tasks?*", read_tasks)
+            page.goto(WEB)
+            more = page.get_by_role("button", name="加载更多记录", exact=True)
+            expect(more).to_be_enabled()
+            page.get_by_role("textbox", name="搜索审核任务", exact=True).fill("B")
+            expect(page.get_by_role("alert").filter(has_text="任务列表读取失败。当前文件与任务仍保留。")).to_be_visible()
+            expect(page.get_by_role("tab", name="全部任务", exact=False)).to_have_text("全部任务—")
+            expect(more).to_have_count(0)
+            self.assertEqual(reads, [("", 0), ("B", 0)])
+            ready = True
+            page.get_by_role("button", name="刷新任务列表", exact=True).click()
+            expect(page.get_by_role("alert")).to_have_count(0)
+            expect(more).to_be_enabled()
+            expect(page.get_by_role("tab", name="全部任务", exact=False)).to_have_text("全部任务—")
+            more.click()
+            expect(page.get_by_role("tab", name="全部任务", exact=False)).to_have_text("全部任务2")
+            self.assertEqual(reads, [("", 0), ("B", 0), ("B", 0), ("B", 50)])
+            page.get_by_role("button", name="刷新任务列表", exact=True).click()
+            expect(page.get_by_role("button", name="刷新任务列表", exact=True)).to_be_enabled()
+            expect(page.get_by_role("tab", name="全部任务", exact=False)).to_have_text("全部任务2")
+            expect(more).to_have_count(0)
+            self.assertEqual(reads, [("", 0), ("B", 0), ("B", 0), ("B", 50), ("B", 0), ("B", 50)])
+            tail_failed = True
+            page.get_by_role("button", name="刷新任务列表", exact=True).click()
+            expect(page.get_by_role("alert").filter(has_text="任务列表读取失败。当前文件与任务仍保留。")).to_be_visible()
+            expect(page.get_by_role("tab", name="全部任务", exact=False)).to_have_text("全部任务2")
+            expect(more).to_have_count(0)
+            self.assertEqual(reads[-2:], [("B", 0), ("B", 50)])
+            browser.close()
+
+    def test_workbench_uses_the_successful_current_list_even_when_older_tasks_are_cached(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            self.route(page)
+            empty = False
+            summary = {
+                "id": JOB,
+                "number": "B-visible",
+                "state": "pending_confirm",
+                "analysis_mode": "standard",
+                "created_at": "2026-11-04T00:00:00Z",
+                "updated_at": "2026-11-04T00:00:00Z",
+                "round_id": None,
+                "input_revision": 0,
+                "files": [],
+            }
+            page.route("**/api/audit-tasks?*", lambda route: route.fulfill(json={"tasks": [] if empty or "q=B" in route.request.url else [summary], "next_offset": None}))
+            page.goto(WEB)
+            all_tasks = page.get_by_role("tab", name="全部任务", exact=False)
+            expect(all_tasks).to_have_text("全部任务1")
+            empty = True
+            page.get_by_role("button", name="刷新任务列表", exact=True).click()
+            expect(all_tasks).to_have_text("全部任务0")
+            expect(page.get_by_role("alert")).to_have_count(0)
+            empty = False
+            page.get_by_role("button", name="刷新任务列表", exact=True).click()
+            expect(all_tasks).to_have_text("全部任务1")
+            with page.expect_response(lambda response: "/api/audit-tasks?" in response.url and "q=B" in response.url) as searched:
+                page.get_by_role("textbox", name="搜索审核任务", exact=True).fill("B")
+            searched.value.finished()
+            expect(all_tasks).to_have_text("全部任务0")
+            expect(page.get_by_role("alert")).to_have_count(0)
             browser.close()
 
     def test_native_validation_read_failure_keeps_other_file_without_creating_another_job(self):
