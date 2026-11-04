@@ -265,6 +265,15 @@ class FileAnalysisRequest(TypedDict):
     source_file_version_id: str
 
 
+class FileValidationScope(TypedDict):
+    customer_preference: Literal["UAES"]
+    preset_key: Literal["U13"]
+
+
+class FileValidationRequest(FileAnalysisRequest):
+    scope: NotRequired[FileValidationScope | None]
+
+
 class RuleParseJob(TypedDict):
     id: str
     status: str
@@ -459,6 +468,7 @@ class SemanticEvidence(TypedDict):
 
 
 class EvidenceSource(TypedDict):
+    excerpt: NotRequired[str]
     kind: str
     locator: str
 
@@ -729,6 +739,7 @@ class AuditFileValidation(TypedDict):
 
 
 class FileValidationJob(TypedDict):
+    scope: NotRequired[FileValidationScope]
     id: str
     source_file_id: str
     source_file_version_id: str
@@ -986,6 +997,7 @@ class AuditRecognitionFile(TypedDict):
 
 
 class AuditTaskFile(AuditRecognitionFile):
+    validation_scope: NotRequired[FileValidationScope]
     audit: NotRequired[AuditFileReview | None]
     display_info: NotRequired[AuditFileDisplayInfo | None]
     display_edit_access: NotRequired[AuditArchiveAccess]
@@ -1194,10 +1206,32 @@ class AuditNotificationPreferenceRequest(TypedDict):
     expected_revision: int
 
 
+class PrecheckRequest(TypedDict):
+    request_id: str
+    expected_revision: int
+
+
+class PrecheckReceipt(TypedDict):
+    id: str
+    task_id: str
+    input_revision: int
+    current: bool
+    status: Literal["queued", "leased", "unknown", "succeeded", "failed", "cancelled"]
+    input: dict[str, Any]
+    result: dict[str, Any] | None
+    created_at: str
+    updated_at: str
+
+
+class PrecheckHistory(TypedDict):
+    snapshots: list[PrecheckReceipt]
+
+
 class AuditTask(AuditTaskIdentity):
     """Persisted Task/Round view; optional delivery operations need their own API."""
 
     files: list[AuditTaskFile]
+    precheck: NotRequired[PrecheckReceipt | None]
     execution: NotRequired[Literal["queued", "running", "completed", "failed"]]
     has_execution_error: NotRequired[bool]
     acceptance: NotRequired[AuditAcceptance]

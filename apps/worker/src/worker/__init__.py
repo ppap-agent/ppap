@@ -86,7 +86,7 @@ def process_file_job(store, claimed, ident, ai=None) -> dict:
             if version is None or version.tenant_id != claimed.tenant_id or version.status != READY:
                 raise RuleParseError("file_not_ready")
             if claimed.kind == "file_validation":
-                result = validate_file(version.original_filename, store.version_bytes(version))
+                result = validate_file(version.original_filename, store.version_bytes(version), scope=payload.get("scope"))
             elif claimed.kind == "file_analysis":
                 scoped = payload.get("matching_scope") == "customer_document_type"
                 candidates = payload["candidate_rules"] if scoped else store.list_rules(claimed.tenant_id)
@@ -101,6 +101,7 @@ def process_file_job(store, claimed, ident, ai=None) -> dict:
                         customer_preference=payload.get("customer_preference"),
                         scoped=scoped,
                         reference_only=bool(payload.get("reference_only")),
+                        validation_scope=payload.get("validation_scope"),
                     )
                 )
                 result["source_file_version_id"] = version.id
@@ -131,6 +132,10 @@ def process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> d
     try:
         if claimed.kind in {"report_pdf", "report_zip"}:
             return process_report_job(store, claimed, ident)
+        if claimed.kind == "task_precheck":
+            from worker.prechecks import process_task_precheck
+
+            return process_task_precheck(store, claimed, ident)
         if claimed.kind in FILE_PREPARATION_KINDS:
             return process_file_job(store, claimed, ident, rule_ai)
         if claimed.kind != "audit" or not claimed.round_id:
