@@ -321,12 +321,21 @@ def test_cross_file_problem_opens_both_authorized_frozen_originals(running_produ
             page.get_by_role("button", name="同时核对关联原件", exact=True).click()
             comparison = page.get_by_role("region", name="关联原件对照", exact=True)
             expect(comparison).to_be_visible()
-            boxes = []
             for title, data, file in originals:
                 pane = comparison.get_by_role("region", name="关联原件 " + title + ".xlsx", exact=True)
                 expect(pane).to_have_attribute("data-file-version", file["file_version_id"])
                 expect(pane.get_by_role("link", name="下载原件", exact=True)).to_be_visible()
-                boxes.append(pane.bounding_box())
+            # The sheet changes width while opening. Compare both panes in one
+            # layout after that animation, instead of mixing different frames.
+            boxes = comparison.evaluate(
+                """async (element, versions) => {
+                    const sheet = element.closest('[data-slot="sheet-content"]');
+                    await Promise.all(sheet.getAnimations().map(animation => animation.finished.catch(() => {})));
+                    const panes = Array.from(element.querySelectorAll('[data-file-version]'));
+                    return versions.map(version => panes.find(pane => pane.dataset.fileVersion === version).getBoundingClientRect().toJSON());
+                }""",
+                [file["file_version_id"] for _, _, file in originals],
+            )
             assert all(boxes)
             if viewport["width"] >= 1024:
                 assert abs(boxes[0]["y"] - boxes[1]["y"]) <= 2
