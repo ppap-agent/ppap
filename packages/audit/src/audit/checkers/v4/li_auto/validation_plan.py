@@ -52,3 +52,8 @@ class LiAutoValidationPlanAgent(NativeFacts, DvpRExcelAgent):
     @rule("实际试验时间逻辑审核")
     def rule_5(self, ctx):
         return self._date_pair(ctx, "试验实际开始日期", "试验实际结束日期")
+
+    def precheck(self):
+        from .precheck_l1 import precheck_plan
+
+        return precheck_plan(self)

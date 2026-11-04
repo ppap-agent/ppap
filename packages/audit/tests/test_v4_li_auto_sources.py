@@ -192,3 +192,129 @@ def test_equipment_precheck_reads_identity_before_device_supplier(tmp_path):
         assert facts["L13:S3"]["status"] == "satisfied"
     finally:
         agent.close()
+
+
+def test_decodable_positioned_images_cannot_certify_trial_photo_content(tmp_path):
+    from io import BytesIO
+
+    from openpyxl.drawing.image import Image
+    from openpyxl.drawing.spreadsheet_drawing import AnchorMarker, TwoCellAnchor
+    from PIL import Image as PillowImage
+
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "试验报告"
+    for row, label in [(1, "试验前"), (10, "试验中"), (20, "试验后")]:
+        sheet.cell(row, 1, label)
+        pixels = BytesIO()
+        PillowImage.new("RGB", (10, 10), "white").save(pixels, format="PNG")
+        pixels.seek(0)
+        image = Image(pixels)
+        image.anchor = TwoCellAnchor(_from=AnchorMarker(col=0, row=row), to=AnchorMarker(col=2, row=row + 3))
+        sheet.add_image(image)
+    path = tmp_path / "试验图片.xlsx"
+    book.save(path)
+    book.close()
+    agent = EXCEL_AGENTS["L03"](AuditInput(audit_id="image-version", file_url=str(path)), RuleInput(rule_id="r", **preset_rule_body("理想", "L03")))
+    try:
+        assert agent._execute_rule_check(5).status == "UNABLE"
+    finally:
+        agent.close()
+
+
+def test_chart_object_cannot_replace_test_phase_photos(tmp_path):
+    from openpyxl.chart import BarChart, Reference
+
+    book = Workbook()
+    sheet = book.active
+    sheet.append(["试验前", "试验中", "试验后"])
+    sheet.append([1, 2, 3])
+    chart = BarChart()
+    chart.add_data(Reference(sheet, min_row=2, max_row=2, min_col=1, max_col=3))
+    sheet.add_chart(chart, "A2")
+    path = tmp_path / "图表.xlsx"
+    book.save(path)
+    book.close()
+    agent = EXCEL_AGENTS["L03"](AuditInput(audit_id="chart-version", file_url=str(path)), RuleInput(rule_id="r", **preset_rule_body("理想", "L03")))
+    try:
+        assert agent._execute_rule_check(5).status == "UNABLE"
+    finally:
+        agent.close()
+
+
+@pytest.mark.parametrize(
+    ("rule_number", "standard", "values", "method", "expected"),
+    [
+        (3, "10±0.5", (9.5, 10.5), "卡尺", "PASS"),
+        (3, "10±0.5", (9.49, 10), "卡尺", "NG"),
+        (3, "未给定", (10, 10.1), "卡尺", "UNABLE"),
+        (5, "10±0.5", (10, 10), "卡尺", "NG"),
+        (5, "10±0.5", (10, 10.1), "卡尺", "PASS"),
+        (7, "未给定", ("OK", "OK"), "通止规", "PASS"),
+        (7, "未给定", ("OK", "OK"), "卡尺", "NG"),
+    ],
+)
+def test_inspection_source_uses_dimension_regions_not_nio_coordinates(tmp_path, rule_number, standard, values, method, expected):
+    rows = [["序号", "检查项目", "判定标准", "供方检查方法/检查工具", "检查数据", None, "判定结果"], ["尺寸"], [1, "直径", standard, method, *values, "OK"]]
+    assert execute(tmp_path, "L01", rule_number, rows, "尺寸检验报告").status == expected
+
+
+@pytest.mark.parametrize(
+    ("entry", "name"),
+    [("L09", "检具认可"), ("L10", "模具验收"), ("L11", "过程流程图"), ("L12", "产品过程CCSC"), ("L13", "设备开发"), ("L14", "产能评估"), ("L15", "项目问题"), ("L16", "年度试验"), ("L17", "零件提交")],
+)
+def test_each_l2_source_subcriterion_runs_on_actual_customer_template(entry, name):
+    from pathlib import Path
+
+    from audit.precheck_sources import required_structure
+
+    root = Path(__file__).resolve().parents[3] / "assets/PPAP PRD v3.7/客户归类模板与规则_备份/模板/理想"
+    path = next(path for path in root.iterdir() if name in path.name)
+    agent = EXCEL_AGENTS[entry](AuditInput(audit_id="template-version", file_url=str(path)), RuleInput(rule_id="r", **preset_rule_body("理想", entry)))
+    try:
+        facts = agent.precheck()
+        assert {row["id"] for row in facts} == {row["id"] for row in required_structure(entry)}
+        assert not [row for row in facts if row["status"] == "error"]
+        assert all(row["certified"] is False for row in facts)
+        assert all(row["evidence"] and row["evidence"]["sources"] for row in facts if row["status"] == "satisfied")
+    finally:
+        agent.close()
+
+
+def test_equipment_required_formula_without_cache_is_unknown_not_defect(tmp_path):
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "设备开发验收清单"
+    sheet.append(["产线/工序", "设备开发", "设备", "供应商", "设备型号", "利旧设备数量", "新采购设备数量", "设备通用情况", "计划到位时间", "设备验收", "验收结果", "整改措施", "整改计划"])
+    sheet.append(["10 压装", "开发", "压装机", '= "供应商"', "M1", 0, 1, "专用", "2026-01-01", "验收", "通过", None, None])
+    path = tmp_path / "公式设备.xlsx"
+    book.save(path)
+    book.close()
+    agent = EXCEL_AGENTS["L13"](AuditInput(audit_id="formula-version", file_url=str(path)), RuleInput(rule_id="r", **preset_rule_body("理想", "L13")))
+    try:
+        facts = {row["id"]: row for row in agent.precheck()}
+        assert facts["L13:S3"]["status"] == "satisfied"
+        assert facts["L13:S4"]["status"] == "unknown"
+        assert facts["L13:S4"]["code"] is None
+    finally:
+        agent.close()
+
+
+def test_blank_fixture_template_labels_and_unchecked_options_are_not_content():
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[3] / "assets/PPAP PRD v3.7/客户归类模板与规则_备份/模板/理想/APQP-检具认可报告.xlsx"
+    agent = EXCEL_AGENTS["L09"](AuditInput(audit_id="blank-fixture", file_url=str(path)), RuleInput(rule_id="r", **preset_rule_body("理想", "L09")))
+    try:
+        facts = {row["id"]: row for row in agent.precheck()}
+        assert facts["L09:S3"]["status"] == "defect"
+    finally:
+        agent.close()
+
+
+@pytest.mark.parametrize(
+    ("state", "expected"), [("无（ ）/合格（√）/不合格（ ）", "PASS"), ("无（ ）/合格（ ）/不合格（√）", "NG"), ("无（ ）/完成（√）/未完成（ ）", "PASS"), ("无（ ）/完成（ ）/未完成（√）", "NG")]
+)
+def test_fixture_negative_condition_follows_the_selected_option(tmp_path, state, expected):
+    rows = [["所附文件", "状态"], ["三坐标报告", state], ["结论", None]]
+    assert execute(tmp_path, "L09", 3, rows, "检具认可报告").status == expected

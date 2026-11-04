@@ -8,7 +8,7 @@ from audit.checkers.v3.excel_agent import rule
 from audit.engine.rule_engine import RuleContext, Table, get_doc_resource_by_doc_type
 from audit.kinds import PpapDocumentType
 
-from .facts import NativeFacts, columns_present, identity_values, precheck_fact, sheet_present
+from .facts import NativeFacts, columns_present, data_rows, identity_values, precheck_fact, sheet_present
 
 _BASE = get_doc_resource_by_doc_type(PpapDocumentType.EQUIPMENT_LIST)
 assert _BASE is not None
@@ -44,7 +44,7 @@ class LiAutoEquipmentAgent(NativeFacts, EquipmentListAgent):
             precheck_fact(self, "L13:S4", self.rule_1),
             precheck_fact(self, "L13:S5", lambda ctx: columns_present(ctx, "主表", "主数据区", ("设备验收", "验收结果", "整改措施", "整改计划")), code="B05"),
             precheck_fact(self, "L13:S6", self._precheck_result),
-            precheck_fact(self, "L13:S7", self.rule_2),
+            precheck_fact(self, "L13:S7", self._precheck_remediation),
             precheck_fact(self, "L13:S8", lambda ctx: identity(ctx, ("车型",))),
             precheck_fact(self, "L13:S9", lambda ctx: identity(ctx, ("零件名称", "零件号"))),
             precheck_fact(self, "L13:S10", lambda ctx: identity(ctx, ("供应商",))),
@@ -59,3 +59,11 @@ class LiAutoEquipmentAgent(NativeFacts, EquipmentListAgent):
                 if row.is_present("产线/工序"):
                     row.expect("验收结果", context="设备验收结果必填")
         return "PASS", "已核实每行验收结果。"
+
+    def _precheck_remediation(self, ctx):
+        for row in data_rows(ctx, "主表", "主数据区", ("产线/工序", "验收结果", "整改措施", "整改计划"), trigger="产线/工序"):
+            if not row.is_present("验收结果"):
+                return "UNABLE", "验收结果未填写，不能确定整改要求是否触发。"
+            if row.exact("验收结果", "不通过", compact=True) or row.exact("验收结果", "条件通过", compact=True):
+                row.expect("整改措施", "整改计划", context="条件通过或不通过的整改必填项")
+        return "PASS", "适用设备验收行的整改要求已核实。"

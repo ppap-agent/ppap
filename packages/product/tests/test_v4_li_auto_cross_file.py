@@ -1,0 +1,160 @@
+"""Li Auto source binding and two-original facts through the actual Round."""
+
+import io
+import json
+
+import pytest
+from audit.audits import RoundInput, RoundWork
+from audit.engine.checkers.rule_declarations import freeze_target_rule_execution
+from audit.presets import preset_rule, preset_rule_body
+from openpyxl import Workbook
+from product import run_round_from_bytes
+
+
+def serialized(book):
+    content = io.BytesIO()
+    book.save(content)
+    book.close()
+    return content.getvalue()
+
+
+def pfmea(*, characteristic="G", process="10 成型", severity=6, detection=6, function=None):
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "PFMEA"
+    for label, value in [
+        ("公司名称", "供应商"),
+        ("车型项目", "X1"),
+        ("零件名称", "支架"),
+        ("零件号", "P123"),
+        ("版本", "A"),
+        ("客户名称", "理想"),
+        ("制造地址", "上海"),
+        ("PFMEA开始日期", "2026-01-01"),
+        ("PFMEA修订日期", "2026-02-01"),
+        ("跨职能团队", "质量/制造"),
+    ]:
+        sheet.append([label, value])
+    sheet.append(["过程步骤", "特殊特性", "过程项功能", "失效影响", "严重度", "现行探测控制", "探测度"])
+    sheet.append(
+        [
+            process,
+            characteristic,
+            function or "内部：压装\n客户工厂：装车\n最终用户：乘坐",
+            "内部：返工（4）\n客户工厂：返工（6）\n最终用户：异响（5）",
+            severity,
+            "双感官检查（6）\n目视检查（8）",
+            detection,
+        ]
+    )
+    history = book.create_sheet("变更履历")
+    history.append(["修订日期"])
+    history.append(["2026-01-01"])
+    history.append(["2026-02-01"])
+    return serialized(book)
+
+
+def pfd(*, part="P123", revision="A", customer="理想", process="成型", mark="【G】", generic=False):
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "过程流程图"
+    sheet.append(["零件号", part, "版本", revision])
+    sheet.append(["客户名称", customer])
+    sheet.append(["工序号", "工序名称", "产品特殊特性", "特性类别" if generic else "产品特性类别", "过程特殊特性", "特性类别" if generic else "过程特性类别"])
+    sheet.append([10, process, "孔径", mark, "温度", "【Z】"])
+    return serialized(book)
+
+
+def execute(entry, content, references, *, reverse=False):
+    body = preset_rule_body("理想", entry)
+    if reverse:
+        body["rules"].reverse()
+    target = RoundInput("target", "file", "version", "原件.xlsx", "ready", rule_version_id="li-rule", rule_body=body, rule_execution=freeze_target_rule_execution(body, "原件.xlsx"))
+    inputs = [target]
+    blobs = {"version": content}
+    for index, (name, ref) in enumerate(references):
+        version = f"ref-{index}"
+        inputs.append(RoundInput("reference", version, version, name, "ready"))
+        if ref is not None:
+            blobs[version] = ref
+    result = run_round_from_bytes(RoundWork("round", "tenant", inputs), blobs)
+    return {row["item_key"].split(":rule:", 1)[1]: row for row in result["findings"]}, result
+
+
+def test_all_seven_original_pfmea_clauses_and_two_originals():
+    findings, result = execute("L07", pfmea(), [("过程流程图.xlsx", pfd())])
+    clauses = preset_rule("理想", "L07").clauses
+    assert [findings[c.id]["status"] for c in clauses] == ["PASS"] * 7
+    assert all(row["coverage"] == "mapped" for row in result["coverage"]["rule_items"])
+    for index in (2, 4):
+        evidence = findings[clauses[index].id]["locator"]["evidence"]["sources"]
+        assert {json.loads(row["locator"])["file_version_id"] for row in evidence} == {"version", "ref-0"}
+
+
+@pytest.mark.parametrize(("changes", "index"), [({"function": "只有内部"}, 3), ({"severity": 5}, 5), ({"detection": 8}, 6), ({"characteristic": "CC"}, 4), ({"process": "10 检查"}, 2)])
+def test_source_id_binds_the_equivalent_check_even_when_not_same_ordinal(changes, index):
+    findings, _ = execute("L07", pfmea(**changes), [("过程流程图.xlsx", pfd())], reverse=True)
+    assert findings[preset_rule("理想", "L07").clauses[index].id]["status"] == "NG"
+
+
+@pytest.mark.parametrize(
+    "references",
+    [[], [("过程流程图.xlsx", pfd(part="OTHER"))], [("过程流程图.xlsx", pfd(revision="B"))], [("过程流程图.xlsx", pfd(customer="蔚来"))], [("过程流程图.xlsx", pfd()), ("过程流程图2.xlsx", pfd())]],
+)
+def test_pairing_uncertainty_is_not_a_confirmed_defect(references):
+    findings, _ = execute("L07", pfmea(), references)
+    clauses = preset_rule("理想", "L07").clauses
+    assert [findings[clauses[i].id]["status"] for i in (2, 4)] == ["UNABLE", "UNABLE"]
+
+
+def test_frozen_but_unreadable_peer_is_a_technical_failure():
+    findings, _ = execute("L07", pfmea(), [("过程流程图.xlsx", None)])
+    clauses = preset_rule("理想", "L07").clauses
+    assert [findings[clauses[i].id]["status"] for i in (2, 4)] == ["ERR", "ERR"]
+
+
+def warranty():
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "零件提交保证书"
+    sheet.append(["理想汽车零件号", "P123", "工程更改版本", "A"])
+    sheet.append(["客户名称", "理想"])
+    return serialized(book)
+
+
+def delivery(*, part="P123", customer="理想", revision="A", attachment="尺寸报告.pdf"):
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "生产件批准交付物文件清单"
+    sheet.append(["零件号", part, "版本", revision])
+    sheet.append(["客户名称", customer])
+    sheet.append(["项目", "附件"])
+    sheet.append(["尺寸报告", attachment])
+    sheet.append(["零件认证相关", None])
+    return serialized(book)
+
+
+def test_warranty_uses_frozen_independent_delivery_list_with_two_original_locations():
+    findings, _ = execute("L17", warranty(), [("交付清单.xlsx", delivery())])
+    row = findings[preset_rule("理想", "L17").clauses[0].id]
+    assert row["status"] == "PASS", row
+    sources = row["locator"]["evidence"]["sources"]
+    assert {json.loads(source["locator"])["file_version_id"] for source in sources if source["locator"].startswith("{")} == {"version", "ref-0"}
+
+
+@pytest.mark.parametrize(("changes", "expected"), [({"attachment": None}, "NG"), ({"part": "OTHER"}, "UNABLE"), ({"customer": "蔚来"}, "UNABLE"), ({"revision": "B"}, "UNABLE")])
+def test_warranty_pair_defects_are_separate_from_uncertain_pairing(changes, expected):
+    findings, _ = execute("L17", warranty(), [("交付清单.xlsx", delivery(**changes))])
+    assert findings[preset_rule("理想", "L17").clauses[0].id]["status"] == expected
+
+
+def test_warranty_unreadable_frozen_list_is_error():
+    findings, _ = execute("L17", warranty(), [("交付清单.xlsx", None)])
+    assert findings[preset_rule("理想", "L17").clauses[0].id]["status"] == "ERR"
+
+
+def test_pfmea_generic_category_headers_keep_original_text_in_evidence():
+    findings, _ = execute("L07", pfmea(), [("过程流程图.xlsx", pfd(generic=True))])
+    row = findings[preset_rule("理想", "L07").clauses[4].id]
+    assert row["status"] == "PASS", row
+    assert any(source["excerpt"] == "特性类别" for source in row["locator"]["evidence"]["sources"])

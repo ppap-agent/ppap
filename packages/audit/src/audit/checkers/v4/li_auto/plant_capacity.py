@@ -8,7 +8,7 @@ from audit.checkers.v3.plant_capacity_evaluation_agent import PlantCapacityEvalu
 from audit.engine.rule_engine import Table, get_doc_resource_by_doc_type
 from audit.kinds import PpapDocumentType
 
-from .facts import NativeFacts, data_rows, number
+from .facts import NativeFacts, columns_present, data_rows, number, precheck_fact, sheet_present
 
 _BASE = get_doc_resource_by_doc_type(PpapDocumentType.PLANT_CAPACITY_EVALUATION_REPORT)
 assert _BASE is not None
@@ -91,3 +91,23 @@ class LiAutoPlantCapacityAgent(NativeFacts, PlantCapacityEvaluationAgent):
             if abs(actual - expected) > number("1e-10"):
                 return "NG", "月度产能与源条款各项乘积不一致。"
         return "PASS", ""
+
+    def _precheck_risk_structure(self, ctx):
+        columns_present(ctx, "主表", "产能数据区", ("SOP+1达成风险", "SOP+2达成风险", "SOP+3达成风险"))
+        block = Table(ctx).field_block("头部字段区")
+        block.field("产能评估总体结论")
+        block.field("后续措施")
+        block.value("产能评估总体结论")
+        block.value("后续措施")
+
+    def precheck(self):
+        return [
+            precheck_fact(self, "L14:S1", lambda ctx: sheet_present(ctx, "主表"), code="B05"),
+            precheck_fact(self, "L14:S2", self.rule_1),
+            precheck_fact(self, "L14:S3", self.rule_2),
+            precheck_fact(self, "L14:S4", self._precheck_risk_structure, code="B05"),
+            precheck_fact(self, "L14:S5", self.rule_3, code="W06"),
+            precheck_fact(self, "L14:S6", self.rule_4, code="B06"),
+            precheck_fact(self, "L14:S7", self.rule_5, code="B06"),
+            precheck_fact(self, "L14:S8", self.rule_6, code="B06"),
+        ]

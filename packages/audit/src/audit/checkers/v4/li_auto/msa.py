@@ -43,3 +43,8 @@ class LiAutoMsaAgent(NativeFacts, MsaReportAgent):
                 if len(values) != 30:
                     return "NG", f"{sheet.title}评价人{evaluator}须有10个样本各3次的30个数据值。"
         return "PASS", ""
+
+    def precheck(self):
+        from .precheck_l1 import precheck_msa
+
+        return precheck_msa(self)

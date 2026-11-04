@@ -58,6 +58,8 @@ class LiAutoInspectionAgent(NativeFacts):
                 return "NG", "尺寸行缺少检查数据。"
             decision = check_tolerance(observation.standard_text, observation.raw_measurements, observation.result_text, observation.method_text)
             if decision.status == "NG":
+                if "无法解析" in decision.reason:
+                    return "UNABLE", decision.reason
                 return "NG", decision.reason
             if not decision.numeric_checked:
                 return "UNABLE", "本行尚未完成数值公差核对，不能按通用通过处理。"
@@ -115,3 +117,8 @@ class LiAutoInspectionAgent(NativeFacts):
                 if compact(observation.method_text) not in {"通止规", "菲林尺", "卡板"}:
                     return "NG", "尺寸检查数据出现OK时，方法须为通止规、菲林尺或卡板。"
         return ("PASS", "") if applied else ("NA", "没有尺寸OK定性数据。")
+
+    def precheck(self):
+        from .precheck_l1 import precheck_inspection
+
+        return precheck_inspection(self)

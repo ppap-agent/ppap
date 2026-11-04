@@ -53,6 +53,44 @@ class LiAutoPfmeaAgent(PfmeaLocalChecks, NativeFacts):
         finally:
             workbook.close()
 
+    def _pfd_characteristic_rows(self, ctx, workbook, version, sheets):
+        # A generic first/second category pair is bound to its product/process
+        # parent columns. We do not rewrite headers before collecting evidence.
+        for sheet in sheets:
+            generic = [(cell.row, cell.column) for row in sheet.iter_rows(max_row=min(sheet.max_row, 80)) for cell in row if compact(cell.value) == "特性类别"]
+            if not generic:
+                yield from _rows(ctx, workbook, PFD_FIELD_ALIASES, ("operation_name", "product_char_type", "process_char_type"), version, sheets=[sheet])
+                continue
+            if len(generic) != 2 or abs(generic[0][0] - generic[1][0]) > 2:
+                raise GuardStop(Decision.UNABLE, "过程流程图特性类别不能唯一对应产品和过程。")
+            top = min(row for row, _ in generic)
+            bottom = max(row for row, _ in generic)
+            labels = {}
+            for row in sheet.iter_rows(min_row=max(1, top - 2), max_row=min(sheet.max_row, bottom + 2)):
+                for cell in row:
+                    value = compact(cell.value)
+                    if value in {"工序名称", "产品特殊特性", "过程特殊特性"}:
+                        if value in labels and labels[value][1] != cell.column:
+                            raise GuardStop(Decision.UNABLE, "过程流程图有多个相同业务表头。")
+                        labels[value] = (cell.row, cell.column)
+            if set(labels) != {"工序名称", "产品特殊特性", "过程特殊特性"}:
+                raise GuardStop(Decision.UNABLE, "尚不能确定特性类别的产品或过程父列。")
+            categories = sorted(generic, key=lambda item: item[1])
+            if not (labels["产品特殊特性"][1] < categories[0][1] < labels["过程特殊特性"][1] < categories[1][1]):
+                raise GuardStop(Decision.UNABLE, "特性类别与产品、过程列的表头关系不明确。")
+            columns = {"operation_name": labels["工序名称"][1], "product_char_type": categories[0][1], "process_char_type": categories[1][1]}
+            for row, column in [*generic, *labels.values()]:
+                ctx.note_cell(sheet.title, row, column, file_version_id=version)
+            for index in range(max([bottom, *(row for row, _ in labels.values())]) + 1, sheet.max_row + 1):
+                cells = {name: sheet.cell(index, column) for name, column in columns.items()}
+                if not any(cell.value is not None for cell in cells.values()):
+                    continue
+                for cell in cells.values():
+                    if cell.data_type in {"e", "f"}:
+                        raise GuardStop(Decision.UNABLE, "关联工序或特性类别无法读取。")
+                    ctx.note_cell(sheet.title, cell.row, cell.column, file_version_id=version)
+                yield {name: str(cell.value or "").strip() for name, cell in cells.items()}
+
     @rule("过程流程图工序名称与PFMEA过程步骤一致", clause_id="6")
     def rule_6(self, ctx):
         steps = {_step_key(row["step"])[1] for row in self._target_rows(ctx, "step") if row["step"]}
@@ -68,7 +106,7 @@ class LiAutoPfmeaAgent(PfmeaLocalChecks, NativeFacts):
     def rule_7(self, ctx):
         target = self._target_rows(ctx, "step", "characteristic")
         with self._pfd(ctx) as (workbook, version, sheets):
-            for row in _rows(ctx, workbook, PFD_FIELD_ALIASES, ("operation_name", "product_char_type", "process_char_type"), version, sheets=sheets):
+            for row in self._pfd_characteristic_rows(ctx, workbook, version, sheets):
                 categories = {compact(row.get(k, "")) for k in ("product_char_type", "process_char_type")} & {"【G】", "【Z】"}
                 if not categories:
                     continue

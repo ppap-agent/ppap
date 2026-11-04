@@ -24,3 +24,8 @@ class LiAutoMaterialsAgent(NativeFacts, SubSupplierListExcelAgent):
             if row.is_present("外协-国产") or row.is_present("外协-进口"):
                 row.expect_equal("完成PPAP", "Y", case_insensitive=False, compact=True, context="理想外协零件完成PPAP")
         return "PASS", ""
+
+    def precheck(self):
+        from .precheck_l1 import precheck_materials
+
+        return precheck_materials(self)

@@ -11,7 +11,7 @@ from audit.engine.checkers.docx_workbook_agent import StructuredDocxWorkbookMixi
 from audit.engine.checkers.psw_docx_evidence import PswDocxEvidenceMixin
 from audit.engine.rule_engine import Table
 
-from .facts import NativeFacts
+from .facts import NativeFacts, precheck_fact
 
 
 class LiAutoPswAgent(NativeFacts, PswExcelAgent):
@@ -28,6 +28,16 @@ class LiAutoPswAgent(NativeFacts, PswExcelAgent):
         "条件批准补充评论检查",
     )
     PRECHECK_METHODS = {"L17:6:c9ac5fd9716f43cdb8ff": "rule_6"}
+
+    def _finalize_audit_result(self, result, *, rule_no, phase, ctx=None):
+        finalized = super()._finalize_audit_result(result, rule_no=rule_no, phase=phase, ctx=ctx)
+        # Legacy PSW tracing adds broad carrier evidence. Keep the actual V4
+        # cell reads as well, including the independently submitted checklist.
+        precise = self._evidence_from_reads(ctx) if ctx is not None else None
+        if precise and finalized.evidence:
+            combined = finalized.evidence.model_copy(update={"sources": (*finalized.evidence.sources, *precise.sources)})
+            return finalized.model_copy(update={"evidence": combined})
+        return finalized
 
     @staticmethod
     def _delivery_sheets(workbook):
@@ -101,6 +111,35 @@ class LiAutoPswAgent(NativeFacts, PswExcelAgent):
         month += 1
         earliest = today.replace(year=year, month=month, day=min(today.day, calendar.monthrange(year, month)[1]))
         return ("PASS", "条件批准日期在三个日历月内。") if earliest <= approved <= today else ("NG", "条件批准日期不在当前日期之前的三个日历月内。")
+
+    def _precheck_disposition(self, ctx):
+        sheet = Table(ctx).sheet("PSW主表")
+        disposition, _, _ = self._resolve_warrant_disposition(sheet, self._checked_controls(sheet))
+        if disposition in {"missing_field", "invalid_selection"}:
+            return "NG", "认可情况字段缺失，或选项未保持唯一。"
+        return "PASS", "认可情况字段及唯一勾选已核实。"
+
+    def precheck(self):
+        seal = precheck_fact(self, "L17:S3", self.rule_3, code="W03")
+        # A combined company/department seal check cannot attribute a negative
+        # result separately to either subcondition without visual evidence.
+        if seal["status"] == "defect":
+            seal.update(status="unknown", code=None, message="尚不能分别核实公司章或部门授权章，请核对原件。")
+        department = dict(seal, id="L17:S4", source_id="L17:S4")
+        return [
+            precheck_fact(self, "L17:S1", self.rule_1, code="W01"),
+            precheck_fact(self, "L17:S2", self.rule_2, code="W03"),
+            seal,
+            department,
+            precheck_fact(self, "L17:S5", self.rule_4, code="W03"),
+            precheck_fact(self, "L17:S6", self.rule_5, code="W03"),
+            precheck_fact(self, "L17:S7", self.rule_6),
+            precheck_fact(self, "L17:S8", self.rule_7),
+            precheck_fact(self, "L17:S9", self._precheck_disposition),
+            precheck_fact(self, "L17:S10", self.rule_8),
+            precheck_fact(self, "L17:S11", self.rule_9, code="W06"),
+            precheck_fact(self, "L17:S12", self.rule_10),
+        ]
 
 
 class LiAutoPswDocxAgent(PswDocxEvidenceMixin, StructuredDocxWorkbookMixin, LiAutoPswAgent):
