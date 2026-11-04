@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import json
 import math
-from concurrent.futures import ThreadPoolExecutor
+import subprocess
+import sys
 from pathlib import Path
 from time import monotonic
 from urllib.parse import urlsplit
@@ -20,6 +22,9 @@ from documents.ocr.env import max_file_size
 
 class PaddleOCRFormatError(ValueError):
     """PaddleOCR output cannot be used as reliable document evidence."""
+
+
+_HTTP_CHILD = "from documents.ocr.paddle.client import _http_child; _http_child()"
 
 
 async def _post_page(endpoint: str, payload: dict, headers: dict, deadline: float) -> object:
@@ -45,15 +50,45 @@ async def _post_page(endpoint: str, payload: dict, headers: dict, deadline: floa
 
 
 def _post_page_sync(endpoint: str, payload: dict, headers: dict, deadline: float) -> object:
-    operation = _post_page(endpoint, payload, headers, deadline)
+    # A one-shot process also bounds DNS executor shutdown. A cancelled asyncio
+    # operation alone can still wait indefinitely for libc's resolver thread.
+    data = json.dumps([endpoint, payload, headers, deadline])
+    if monotonic() >= deadline:
+        raise TimeoutError
+    process = subprocess.Popen([sys.executable, "-c", _HTTP_CHILD], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(operation)
-    # Keep the sync reader usable from async orchestration. The thread runs a
-    # cancellable, bounded operation and is joined before we return.
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, operation).result()
+        output, _ = process.communicate(data, timeout=max(0, deadline - monotonic()))
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.communicate()  # Reap the child, including any DNS thread.
+        raise TimeoutError from None
+    except BaseException:
+        process.kill()
+        process.communicate()
+        raise
+    if process.returncode != 0:
+        raise PaddleOCRFormatError("PaddleOCR request failed (TransportError)")
+    result = json.loads(output)
+    if not isinstance(result, dict):
+        raise PaddleOCRFormatError("PaddleOCR request failed (TransportError)")
+    if "error_type" in result:
+        kind = result["error_type"]
+        if not isinstance(kind, str) or not kind.isascii() or not kind.isidentifier() or len(kind) > 80:
+            kind = "TransportError"
+        raise PaddleOCRFormatError(f"PaddleOCR request failed ({kind})")
+    if "body" not in result:
+        raise PaddleOCRFormatError("PaddleOCR request failed (TransportError)")
+    return result["body"]
+
+
+def _http_child() -> None:
+    """Private single-exchange entry: credentials only cross private stdio."""
+    try:
+        endpoint, payload, headers, deadline = json.load(sys.stdin)
+        result = {"body": asyncio.run(_post_page(endpoint, payload, headers, deadline))}
+    except Exception as exc:
+        result = {"error_type": type(exc).__name__}
+    json.dump(result, sys.stdout)
 
 
 def validate_pdf(file_path: str | Path) -> tuple[Path, int]:
@@ -171,7 +206,9 @@ class PaddleStructureService:
         }
         try:
             body = _post_page_sync(self.endpoint, payload, headers, deadline)
-        except (httpx.HTTPError, TimeoutError, ValueError) as exc:
+        except PaddleOCRFormatError:
+            raise
+        except (httpx.HTTPError, OSError, ValueError) as exc:
             raise PaddleOCRFormatError(f"PaddleOCR request failed ({type(exc).__name__})") from None
         if not isinstance(body, dict):
             raise PaddleOCRFormatError("PaddleOCR response is not an object")
