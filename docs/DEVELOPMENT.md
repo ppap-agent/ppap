@@ -37,33 +37,93 @@
 
 本地开发也可作为现网的本地客户端：本地 Web 通过产品 API 使用同一份真实数据；需要验证未部署的服务代码时，本地候选 API 可连接现网 PostgreSQL、对象存储与飞书。浏览器不直连数据库，租户与对象授权仍由 API 执行。共享数据不代表新旧代码或 Schema 自动兼容，连接前须核对候选所需接口与数据库结构；这种联调不运行初始化、迁移、测试重置或额外 Worker。写入仍是真实业务操作，不能因入口在本地而视作模拟；会产生收费、通知或审核受理的动作须按本次联调范围控制。
 
-## PaddleOCR 独立验证（极简、无 LLM）
+## PaddleOCR 按需证据与本地影子验证
 
-入口是 `packages/documents/src/documents/ocr/paddle/`，不接入 `documents.conversion.pipeline`、Responses/Grok/Codex、审核规则、OCR SQLite 缓存或生产路由。无新依赖，无自动模型调用。
+Issue #246 的 Paddle 接入只补充可定位事实。默认全局 PDF converter、Responses OCR、正式审核结果、预检阻断、收费及通知均沿用原流程。正式生产判定没有启用；须在真实效果与负载核对后由产品负责人明确确认。
 
-默认仅处理**本地 PDF**，调用历史 PP-StructureV3 `/layout-parsing` API。多个并发任务可以复用 `--out-root` 指定的输出根目录；每次运行通过独占创建分配唯一的 `paddle-<随机标识>` 子目录，成功后一次性发布 `tables.xlsx`、`evidence.json` 和 `response.json`，失败不发布部分产物。CLI 打印生成的绝对路径。原始 PDF 永不修改。
+`packages/documents/src/documents/ocr/paddle/` 复用历史 PP-StructureV3 `/layout-parsing` 合同，不新增 LLM、Provider、数据库或服务队列。真实调用必须指定本地原件中的一页；先读取原生证据，仅在具体条款存在图像事实缺口时请求该页。原生 PDF 不因后缀、总页数或某次转换失败而自动送 OCR。
 
 ```sh
+# 凭据只存在操作进程环境；不要把真实值写入文档或日志。
 export PADDLE_OCR_URL="http://127.0.0.1:8080/layout-parsing"
-export PADDLE_TOKEN="..."  # 可选；也可使用 PADDLE_OCR_TOKEN
 uv run --no-sync python -m documents.ocr.paddle \
-  --pdf "/path/to/source.pdf" \
+  --pdf "/path/to/source.pdf" --page 3 \
   --out-root "/tmp/paddle-results"
 ```
 
-完全离线、不会发出模型或 PaddleOCR 网络请求的回放：
+CLI 打印独占创建的 `paddle-<随机标识>` 输出目录、原件页号及 `complete/partial/error`。保存 `response.json` 与 `evidence.json`；仅存在可导出的合法表格时生成 `tables.xlsx`。文字或印章事实不依赖工作簿是否生成；坏表、无法写入 Excel 的局部文本均留下诊断，其余事实保留。完全失败返回非零，部分识别不冒充整份文件完整。
+
+同一单页回执可以离线重放，不发出 OCR 或模型请求：
 
 ```sh
 uv run --no-sync python -m documents.ocr.paddle \
-  --pdf "/path/to/source.pdf" \
+  --pdf "/path/to/source.pdf" --page 3 \
   --response-json "/tmp/paddle-results/paddle-<run-id>/response.json" \
-  --out-root "/tmp/paddle-results"
-uv run --no-sync pytest packages/documents/tests/test_paddle.py
+  --out-root "/tmp/paddle-replay"
+uv run --no-sync pytest packages/documents/tests/test_paddle.py \
+  packages/documents/tests/test_paddle_page_evidence.py
 ```
 
-`evidence.json` 按页保留布局标签、原始坐标与文本来源、表格内容及合并单元格、印章位置与识别文字。**检测到但未识别文字的印章**保留为 `unreadable`，不等于不存在；Excel 中明确标注“检测到印章（内容未识别）”。表格先尝试带几何区域的原生 PDF 提取，再回退 PaddleOCR HTML 识别。每页表格独立输出，不凭重复表头猜测跨页合并。
+旧的整份真实响应仍可不带 `--page` 离线回放；真实请求不能使用整份多页输入。回放材料必须与原件和原始页对应，离线回放通过不是一次新的真实服务验证。
 
-为保持 KISS，移除了旧 Gemma 辅助图像拼接、PDF URL 下载、印章图像裁剪、跨页自动拼接、多出口配置与 HTML 生成。工具不推断复选框勾选、手写签名或印章真实性，必须用真实 PDF 和 PaddleOCR 响应单独验证识别效果。
+`evidence.json` 保留原件 SHA、原始 1-based 页号、Paddle 像素尺寸、PDF 尺寸与旋转、元素原始索引及原件坐标。坏表不抹除好章；章检测与章文字分别记录。无法唯一配对的文字不分给任意章，缺少可信位置的事实不作为权威原件证据。未知位置和识别不足保留未知；协议、解析及请求失败有单独技术诊断。不推断实际勾选、签名有效性、章真伪或跨页表格关系。
+
+### 审核侧影子消费
+
+唯一接入点为 `audit.checkers.v4.paddle_evidence` 的显式任务作用域。没有作用域时不请求 Paddle；作用域只记录补充观察，不修改正式 `AuditResultItem`。首批消费者来自现有 UAES U08：条款 `U08:3` 的印章事实和 `U08:7` 的零件号字段，使用既有条款绑定，不另建 Paddle 审核规则。
+
+下面只演示本地已授权原件的影子提取，不执行正式视觉审核、模型或数据库操作。生产调用方仍须先完成租户/对象授权，并提供本轮冻结的文件版本、规则和明确页号；本地示例标识不能冒充生产实体。
+
+```python
+import hashlib
+import os
+from pathlib import Path
+from audit.checkers.v4.paddle_evidence import (
+    PaddleShadowSession, ShadowTarget, paddle_shadow_scope,
+)
+from audit.checkers.v4.uaes.bindings import BINDINGS
+from audit.checkers.v4.uaes.control_plan import UaesControlPlanAgent
+from audit.contracts import AuditInput, RuleInput
+from audit.presets import preset_rule_body
+from documents.ocr.paddle import PaddleStructureService
+
+source = Path("/path/to/source.pdf")
+version, project, original_page = "local-shadow-version", "local-shadow-project", 1
+source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+targets = [
+    ShadowTarget(version, source_sha, clause, original_page)
+    for clause, method in BINDINGS["v4"].items()
+    if clause.startswith("U08:") and method in {"rule_3", "rule_6"}
+]
+# 凭据由当前操作进程安全读取；日志不要输出它们或原件文字。
+endpoint = os.environ["PADDLE_OCR_URL"]
+token = os.environ.get("PADDLE_OCR_TOKEN") or os.environ.get("PADDLE_TOKEN", "")
+service = PaddleStructureService(endpoint, token=token, timeout=30)
+checker = UaesControlPlanAgent(
+    AuditInput(audit_id=version, file_url=str(source), project_id=project),
+    RuleInput(rule_id="local-U08", **preset_rule_body("UAES", "U08")),
+)
+session = PaddleShadowSession(
+    service, project_id=project, targets=targets,
+    max_requests=1, deadline_seconds=40,
+)
+with paddle_shadow_scope(session):
+    session.observe(checker, "rule_3")
+    session.observe(checker, "rule_6")
+print(session.request_count, [(o.state, o.reason, o.reused) for o in session.observations])
+```
+
+这里的 30/40 秒只是示例操作预算，不是服务 SLA。应根据本次任务的剩余时间和服务实测明确设置。`request_count` 是预留的页级派发次数，可能因发送前验证而不产生 HTTP；核对真实调用量应观察传输边界。超时后远端可能仍在处理，既不宣称已取消，也不自动重发。
+
+同一作用域内，同源 SHA/页结果（含失败）复用；原生已充分确认零件号时该字段跳过 OCR。请求数、剩余时限、来源变化和取消均受控；关闭作用域后不接纳新的权威事实。作用域锁只串行化本任务，**不是多 Worker 的全局服务容量限制**。当前没有自动 Worker 或生产开关；正式启用前还需在既有调度边界确认服务容量。
+
+离线工程验收：
+
+```sh
+uv run --no-sync pytest packages/audit/tests/test_paddle_shadow.py
+```
+
+真实验证须显式执行，先串行单页，不为未知自动调用另一模型。固定输入版本、请求次数、实际耗时与人工已知事实；区分“代码存在、离线通过、真实请求已验、未知或未验”。单页响应成功不证明全场景识别率。29 页原生 PFMEA 若事实已充分，预期 Paddle 请求为零；扫描 CP 的部分坏表不能清空已检测印章；长扫描报告只请求选定的必要页。
 
 ## 当前命令
 
