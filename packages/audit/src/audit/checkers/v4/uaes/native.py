@@ -359,7 +359,6 @@ class UaesSourceAgent(BaseAgent):
             raise UnknownFact("当前批次没有关联资料，需补充同零件的独立原件。")
         if self.group_context.unavailable_files:
             raise OSError("当前批次有已提供但无法读取的关联资料。")
-        typed_ids = {item.audit_id for items in self.group_context.by_doc_type.values() for item in items}
         candidates = {
             item.audit_id: item
             for kind, items in self.group_context.by_doc_type.items()
@@ -370,9 +369,10 @@ class UaesSourceAgent(BaseAgent):
         for item in self.group_context.by_audit_id.values():
             if item.audit_id == self.audit_file.audit_id:
                 continue
-            if item.audit_id in typed_ids:
+            if item.audit_id in candidates:
                 continue
-            # An unclassified reference can still carry the required source.
+            # A broad type (for example MSA) does not identify its Kappa/GRR
+            # subtype. An unclassified reference can also carry the source.
             # Read its own title; an upload name or a body reference is not identity.
             title_reads: list[str] = []
             original = NativeFacts(item.file_url, item.audit_id, lambda _locator, value, *_: title_reads.append(str(value)))
