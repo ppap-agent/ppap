@@ -1239,9 +1239,18 @@ class RuleInteractionTests(unittest.TestCase):
             page = browser.new_page()
             self.route(page)
             drafts_failed = True
+            tasks_failed = False
             writes = []
             page.on("request", lambda request: writes.append(request.url) if request.method in ("POST", "PUT", "PATCH", "DELETE") else None)
             page.route("**/api/rules", lambda route: route.fulfill(json={"rules": []}))
+
+            def read_tasks(route):
+                if tasks_failed:
+                    route.abort("failed")
+                else:
+                    route.fulfill(json={"tasks": [], "next_offset": None})
+
+            page.route("**/api/audit-tasks?*", read_tasks)
             page.route(
                 "**/api/rounds?*",
                 lambda route: route.fulfill(
@@ -1312,7 +1321,90 @@ class RuleInteractionTests(unittest.TestCase):
             expect(table.get_by_text("恢复的准备.xlsx", exact=True)).to_be_visible()
             expect(table.get_by_text("已读取的审核.xlsx", exact=True)).to_be_visible()
             expect(page.get_by_role("tab", name="全部任务", exact=False)).to_have_text("全部任务2")
+            # Failed refreshes preserve a previously complete snapshot, including
+            # its known count. A partial first read above cannot do the same.
+            drafts_failed = True
+            page.get_by_role("button", name="刷新任务列表", exact=True).click()
+            expect(alert).to_be_visible()
+            expect(table.get_by_text("恢复的准备.xlsx", exact=True)).to_be_visible()
+            expect(table.get_by_text("已读取的审核.xlsx", exact=True)).to_be_visible()
+            expect(page.get_by_role("tab", name="全部任务", exact=False)).to_have_text("全部任务2")
+            # Prior success for another search does not prove that this search's
+            # task source was read, even when both legacy sources now succeed.
+            drafts_failed, tasks_failed = False, True
+            with page.expect_response(lambda response: "/api/rounds?" in response.url and "q=another-search" in response.url) as searched:
+                page.get_by_role("textbox", name="搜索审核任务", exact=True).fill("another-search")
+            searched.value.finished()
+            expect(page.get_by_role("alert").filter(has_text="任务列表读取失败。当前文件与任务仍保留。")).to_be_visible()
+            expect(alert).to_have_count(0)
+            expect(table.get_by_text("恢复的准备.xlsx", exact=True)).to_be_visible()
+            expect(table.get_by_text("已读取的审核.xlsx", exact=True)).to_be_visible()
+            expect(page.get_by_role("tab", name="全部任务", exact=False)).to_have_text("全部任务—")
+            tasks_failed = False
+            page.get_by_role("button", name="刷新任务列表", exact=True).click()
+            expect(page.get_by_role("alert")).to_have_count(0)
+            expect(page.get_by_role("tab", name="全部任务", exact=False)).to_have_text("全部任务2")
             self.assertEqual(writes, [])
+            browser.close()
+
+    def test_empty_workbench_count_requires_successful_reads_from_every_source(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            self.route(page)
+            pending = {}
+            page.route("**/api/audit-tasks?*", lambda route: pending.update(tasks=route))
+            page.route("**/api/drafts?*", lambda route: pending.update(drafts=route))
+            page.route("**/api/rounds?*", lambda route: pending.update(rounds=route))
+            page.goto(WEB)
+            all_tasks = page.get_by_role("tab", name="全部任务", exact=False)
+            expect(all_tasks).to_have_text("全部任务—")
+            expect(page.get_by_role("button", name="刷新任务列表", exact=True)).to_be_disabled()
+            self.assertEqual(set(pending), {"tasks", "drafts", "rounds"})
+            pending["tasks"].fulfill(json={"tasks": [], "next_offset": None})
+            pending["rounds"].fulfill(json={"rounds": [], "next_offset": None})
+            expect(all_tasks).to_have_text("全部任务—")
+            pending["drafts"].fulfill(json={"drafts": [], "next_offset": None})
+            expect(page.get_by_role("button", name="刷新任务列表", exact=True)).to_be_enabled()
+            expect(all_tasks).to_have_text("全部任务0")
+            browser.close()
+
+    def test_workbench_count_does_not_treat_a_partial_history_page_as_the_total(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            self.route(page)
+            summary = {
+                "id": JOB,
+                "execution": "completed",
+                "predecessor_id": None,
+                "analysis_mode": "standard",
+                "inputs": [{"file_version_id": VERSION, "original_filename": "history.xlsx", "role": "target", "rule": None}],
+                "result_counts": {"PASS": 1},
+                "reviewed_count": 0,
+                "created_at": "2026-10-18T00:00:00Z",
+                "case_title": "",
+                "case_scope": "",
+            }
+
+            def read_rounds(route):
+                if "offset=50" in route.request.url:
+                    route.fulfill(json={"rounds": [{**summary, "id": SOURCE, "inputs": [{**summary["inputs"][0], "original_filename": "second.xlsx"}]}], "next_offset": None})
+                else:
+                    route.fulfill(json={"rounds": [summary], "next_offset": 50})
+
+            page.route("**/api/rounds?*", read_rounds)
+            page.goto(WEB)
+            table = page.get_by_role("table", name="全部任务审核记录", exact=True)
+            expect(table.get_by_text("history.xlsx", exact=True)).to_be_visible()
+            expect(page.get_by_role("tab", name="全部任务", exact=False)).to_have_text("全部任务—")
+            page.get_by_role("button", name="加载更多记录", exact=True).click()
+            expect(table.get_by_text("second.xlsx", exact=True)).to_be_visible()
+            expect(page.get_by_role("tab", name="全部任务", exact=False)).to_have_text("全部任务2")
             browser.close()
 
     def test_native_validation_read_failure_keeps_other_file_without_creating_another_job(self):
