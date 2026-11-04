@@ -1212,6 +1212,7 @@ class PrecheckRequest(TypedDict):
 
 
 class PrecheckReceipt(TypedDict):
+    request_id: NotRequired[str]
     id: str
     task_id: str
     input_revision: int
