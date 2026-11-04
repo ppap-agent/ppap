@@ -76,9 +76,33 @@ def test_inspection_declared_three_samples_override_the_default_five(tmp_path):
     assert run(tmp_path, "L01", rows, "尺寸检验报告")["IR-17"]["status"] == "satisfied"
 
 
-@pytest.mark.parametrize(("value", "expected"), [(0, "satisfied"), (0.0, "satisfied"), ("0", "satisfied"), (None, "defect"), ("/", "defect"), ("NA", "defect"), ("N/A", "defect"), ("=1-1", "unknown")])
+@pytest.mark.parametrize(("value", "expected"), [(0, "satisfied"), (0.0, "satisfied"), ("0", "satisfied"), ("/", "defect"), ("NA", "defect"), ("N/A", "defect"), ("=1-1", "unknown")])
 def test_inspection_zero_measurement_is_not_an_empty_or_placeholder_value(tmp_path, value, expected):
     rows = [["序号", "检查项目", "判定标准", "供方检查方法/检查工具", "检查数据", None, "判定结果"], ["尺寸"], [1, "偏移量", "0±0.5", "卡尺", value, 0.1, "OK"]]
     fact = run(tmp_path, "L01", rows, "尺寸检验报告")["IR-08"]
     assert fact["status"] == expected
     assert not fact["certified"]
+
+
+def test_inspection_empty_measurement_range_is_still_a_defect(tmp_path):
+    rows = [["序号", "检查项目", "判定标准", "供方检查方法/检查工具", "检查数据", None, "判定结果"], ["尺寸"], [1, "偏移量", "0±0.5", "卡尺", None, None, "OK"]]
+    fact = run(tmp_path, "L01", rows, "尺寸检验报告")["IR-08"]
+    assert fact["status"] == "defect"
+    assert fact["code"] == "B05"
+    assert fact["critical"] and not fact["certified"]
+
+
+def test_inspection_sample_count_is_checked_separately_from_actual_value_presence(tmp_path):
+    rows = [["序号", "检查项目", "判定标准", "供方检查方法/检查工具", "检查数据", None, "判定结果"], ["尺寸"], [1, "偏移量", "0±0.5", "卡尺", None, 0.1, "OK"]]
+    facts = run(tmp_path, "L01", rows, "尺寸检验报告")
+    assert facts["IR-08"]["status"] == "defect"
+    assert facts["IR-08"]["code"] == "W02"
+    assert facts["IR-17"]["status"] == "defect"
+    assert facts["IR-17"]["code"] == "W06"
+
+
+def test_inspection_middle_sample_cannot_disappear_from_the_declared_band(tmp_path):
+    rows = [["应测样本量", 3], ["序号", "检查项目", "判定标准", "供方检查方法/检查工具", "检查数据", None, None, "判定结果"], ["尺寸"], [1, "偏移量", "0±0.5", "卡尺", 0, None, 0.1, "OK"]]
+    facts = run(tmp_path, "L01", rows, "尺寸检验报告")
+    assert facts["IR-08"]["code"] == "W02"
+    assert facts["IR-17"]["code"] == "W06"
