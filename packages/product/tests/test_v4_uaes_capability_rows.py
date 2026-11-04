@@ -40,6 +40,11 @@ def test_uncached_result_formula_is_unknown(tmp_path):
     assert result.status == "UNABLE", result.suggestions
 
 
+def test_reaction_for_low_cpk_does_not_prove_an_unread_ppk(tmp_path):
+    result = checked(tmp_path, [["孔径", 1, None, 1.33, 1.67, "调整工装并复测"]])
+    assert result.status == "UNABLE", result.suggestions
+
+
 @pytest.mark.parametrize(("reaction", "expected"), [(None, "NG"), ("调整工装并复测", "PASS")])
 def test_low_result_uses_its_actual_target_and_reaction(tmp_path, reaction, expected):
     result = checked(tmp_path, [["孔径", 2, 2, 3, 1.67, reaction]])
