@@ -192,7 +192,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const [readStatus, setReadStatus] = useState<Record<string, {busy: boolean; error: string; traceId?: string}>>({})
   const [endStatus, setEndStatus] = useState<Record<string, 'sending' | 'unknown' | 'rejected'>>({})
   const endingTasks = useRef(new Set<string>())
-  const [taskList, setTaskList] = useState<{next: number | null; busy: boolean; error: string}>({next: null, busy: false, error: ''})
+  const [taskList, setTaskList] = useState<{next: number | null; busy: boolean; error: string; readScope: string | null}>({next: null, busy: false, error: '', readScope: null})
   const listEpoch = useRef(0)
   const latestAdapter = useRef(adapter); latestAdapter.current = adapter
   const [ruleSource, setRuleSource] = useState<{rule: components['schemas']['BoundRule']; clause: components['schemas']['RuleItem'] | null; filename: string} | null>(null)
@@ -673,17 +673,20 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   }, [reviewEditor?.revision])
   const observedTaskEpoch = task ? taskReadEpoch.current.get(task.id) : undefined
   useTaskObservation(task?.id, autoObserve && surface === 'audit' && !legacyRoundId && !recovery && step === 'match' && !reportView && canObserveTask(task), () => task && activeTaskId.current === task.id && surfaceRef.current === 'audit' && stepRef.current === 'match' && taskReadEpoch.current.get(task.id) === observedTaskEpoch ? readMatching(task) : Promise.resolve(null))
+  // Even an empty successful read belongs to its search and state filter.
+  const taskListState = surface === 'workbench' || filter === 'all' ? null : filter as AuditTask['state']
+  const taskListScope = JSON.stringify([query, taskListState])
   async function loadTasks(offset = 0, signal?: AbortSignal, silent = false) {
     const epoch = ++listEpoch.current
     if (!silent) setTaskList(current => ({...current, busy: true, error: ''}))
     try {
-      const page = await latestAdapter.current.listTasks({q: query, state: surface === 'workbench' || filter === 'all' ? null : filter as AuditTask['state'], offset, signal})
+      const page = await latestAdapter.current.listTasks({q: query, state: taskListState, offset, signal})
       if (listEpoch.current !== epoch || signal?.aborted) return
       setSummaries(rows => [...rows.map(row => {
         const next = page.tasks.find(candidate => candidate.id === row.id)
         return next ? reconcileTaskSummary(row, next) : row
       }), ...page.tasks.filter(next => !rows.some(row => row.id === next.id))])
-      setTaskList({next: page.next_offset, busy: false, error: ''})
+      setTaskList({next: page.next_offset, busy: false, error: '', readScope: taskListScope})
     } catch {if (listEpoch.current === epoch && !signal?.aborted) setTaskList(current => ({...current, busy: false, error: '任务列表读取失败。当前文件与任务仍保留。'}))}
   }
   const loadTasksCurrent = useRef(loadTasks); loadTasksCurrent.current = loadTasks
@@ -778,7 +781,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
         </ol></nav> : <div className="flex min-w-0 items-center gap-1"><span className="text-muted-foreground">PPAP Audit / {pageContext}</span>{taskSwitcher}</div>}
       </div><div className="flex shrink-0 items-center gap-2"><div ref={setPageActions} role="group" aria-label="页面操作" className="flex min-w-0 flex-wrap items-center gap-2"/>{access?.principal && <AccountMenu compact onUsage={() => showSurface('usage')} showLocalRecords={Boolean(rules)}/>}</div></header>
       <main id="audit-main" tabIndex={-1} className={surface === 'audit' && workbench && !reportView ? 'w-full' : `mx-auto w-full space-y-6 p-6 max-sm:p-4 ${recovery || workbench || surface !== 'audit' ? '' : 'max-w-5xl'}`}>
-        {surface === 'workbench' && (renderWorkbench || (props => <AuditWorkbench {...props}/>))({headerActions: pageActions, tasks: shownTasks, query, onQuery: setQuery, onNew: newTask, onResume: auditReturn.current || activeTaskId.current || activeUploadDraftId.current ? () => showSurface('audit') : undefined, onOpen: href => {const route = readAuditRoute(new URL(href, location.href)); if (route.taskId) {taskAddress(route.taskId); void recover(route.taskId)} else location.assign(href)}, loading: taskList.busy && !summaries.length, busy: taskList.busy, errors: taskList.error ? [taskList.error] : [], more: taskList.next !== null, onMore: () => void loadTasks(taskList.next || 0), onRefresh: () => void loadTasks()})}
+        {surface === 'workbench' && (renderWorkbench || (props => <AuditWorkbench {...props}/>))({headerActions: pageActions, tasks: shownTasks, query, onQuery: setQuery, onNew: newTask, onResume: auditReturn.current || activeTaskId.current || activeUploadDraftId.current ? () => showSurface('audit') : undefined, onOpen: href => {const route = readAuditRoute(new URL(href, location.href)); if (route.taskId) {taskAddress(route.taskId); void recover(route.taskId)} else location.assign(href)}, loading: taskList.busy && !summaries.length, countsKnown: taskList.readScope === taskListScope, busy: taskList.busy, errors: taskList.error ? [taskList.error] : [], more: taskList.next !== null, onMore: () => void loadTasks(taskList.next || 0), onRefresh: () => void loadTasks()})}
         {archiveOpened && <div hidden={surface !== 'archive'}>{archiveAdapter ? <AuditArchive headerActions={surface === 'archive' ? pageActions : null} active={surface === 'archive'} adapter={archiveAdapter} onUpload={newTask} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter} renderOriginal={renderOriginal} onOpenTask={id => {taskAddress(id); void recover(id)}}/> : <Alert><AlertTitle>审核文件暂不可用</AlertTitle><AlertDescription>请稍后重试。</AlertDescription></Alert>}</div>}
         {rulesOpened && <div hidden={surface !== 'requirements'}>{rules?.(surface === 'requirements', surface === 'requirements' ? pageActions : null)}</div>}
         {usageOpened && <div hidden={surface !== 'usage'}><AuditUsage headerActions={surface === 'usage' ? pageActions : null} active={surface === 'usage'} adapter={usageAdapter} archiveAdapter={archiveAdapter} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter} renderOriginal={renderOriginal} onOpenTask={id => {taskAddress(id); void recover(id)}} onSupport={notice => openSupport({scenario: `用量记录 · ${notice}`})}/></div>}

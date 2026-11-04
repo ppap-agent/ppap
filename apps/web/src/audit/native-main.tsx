@@ -28,7 +28,7 @@ const renderOriginal: OriginalRenderer = (file, evidence, roundId) => <div class
 
 function NativeWorkbench(props: WorkbenchProps) {
   const legacy = useWorkbenchData(props.query, true, true)
-  return <AuditWorkbench {...props} legacyItems={workbenchItems([], legacy.drafts?.rows, legacy.rounds?.rows)} loading={props.loading || legacy.loading} errors={[...props.errors, ...legacy.errors]} busy={props.busy || Boolean(legacy.busy)} more={props.more || legacy.more} onMore={() => {if (props.more) props.onMore(); if (legacy.more) legacy.loadMore()}} onRefresh={() => {props.onRefresh(); legacy.refresh()}}/>
+  return <AuditWorkbench {...props} legacyItems={workbenchItems([], legacy.drafts?.rows, legacy.rounds?.rows)} countsKnown={props.countsKnown && legacy.drafts !== null && legacy.rounds !== null} loading={props.loading || legacy.loading} errors={[...props.errors, ...legacy.errors]} busy={props.busy || Boolean(legacy.busy)} more={props.more || legacy.more} onMore={() => {if (props.more) props.onMore(); if (legacy.more) legacy.loadMore()}} onRefresh={() => {props.onRefresh(); legacy.refresh()}}/>
 }
 
 function NativeAudit() {
