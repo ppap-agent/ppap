@@ -560,3 +560,209 @@ def test_v4_reference_choice_reaches_preparation_and_recognition():
         assert server.task_commands[0]["files"][0]["reference_only"] is True
         assert server.draft["upload_preparation"]["files"][0]["reference_only"] is True
         browser.close()
+
+
+class PhotoHTTP(PreparationHTTP):
+    def __init__(self):
+        super().__init__()
+        self.customer_default = {"customer_preference": "UAES", "revision": 0}
+        self.photo_commands = []
+        self.photo_reads = []
+        self.photo_job = None
+
+    def respond(self, route):
+        path = urlsplit(route.request.url).path.removeprefix("/api")
+        if path == "/file-validations" and route.request.method == "POST":
+            body = route.request.post_data_json
+            assert body["scope"] == {"customer_preference": "UAES", "preset_key": "U13"}
+            self.photo_commands.append(copy.deepcopy(body))
+            version = self.versions[body["source_file_version_id"]]
+            self.photo_job = {**self.validation(body["request_id"], version), "scope": body["scope"]}
+            route.abort("failed")
+        elif self.photo_job and path == "/file-validations/" + self.photo_job["id"]:
+            self.photo_reads.append(self.photo_job["id"])
+            route.fulfill(json=self.photo_job)
+        else:
+            super().respond(route)
+
+    @staticmethod
+    def validation(key, version):
+        value = PreparationHTTP.validation(key, version)
+        if version["original_filename"].endswith(".png"):
+            value["result"] = {"state": "invalid", "reasons": ["普通审核类型不支持图片。"]}
+        return value
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_photo_purpose_is_explicit_and_lost_reply_reads_same_scope(width):
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page(viewport={"width": width, "height": 954})
+        http = PhotoHTTP()
+        http.install(page)
+        page.goto(WEB + "/tasks/new")
+        expect(page.get_by_label("选择审核文件", exact=True)).to_have_attribute("accept", re.compile(r"\.png"))
+        page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "样品.png", "mimeType": "image/png", "buffer": b"controlled-original"})
+        purpose = page.get_by_role("button", name="作为生产件样品照片检查", exact=True)
+        expect(purpose).to_be_visible()
+        assert http.photo_commands == []
+        purpose.click()
+        expect(page.get_by_role("button", name="重新读取 样品.png 检查结果", exact=True)).to_be_visible()
+        assert len(http.photo_commands) == 1
+        # Replace the controlled receipt with its actual scoped decoding result.
+        http.photo_job["result"] = {"state": "valid", "reasons": []}
+        page.get_by_role("button", name="重新读取 样品.png 检查结果", exact=True).click()
+        expect(page.get_by_role("checkbox", name="选择 样品.png", exact=True)).to_be_checked()
+        expect(page.get_by_text("本轮用途：生产件样品照片；内容仍需人工确认", exact=True)).to_be_visible()
+        assert len(http.photo_commands) == 1 and http.photo_reads == [http.photo_commands[0]["request_id"]]
+        page.screenshot(path=f"/tmp/ppap-v4-photo-ui-{width}.png", full_page=True)
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        browser.close()
+
+
+class PrecheckHTTP(PreparationHTTP):
+    def __init__(self):
+        super().__init__()
+        version = {
+            "id": "version-one",
+            "file_id": "file-one",
+            "original_filename": "长文件名称-控制计划-原件.xlsx",
+            "status": "ready",
+            "sha256": "a" * 64,
+            "content_type": "application/octet-stream",
+            "byte_size": 10,
+        }
+        rule = {
+            "id": "v4-rule",
+            "title": "蔚来控制计划",
+            "body": {"kind": "engine", "rule_profile": "v4", "preset_key": "N03", "type": "控制计划", "customers": ["蔚来"], "models": [], "parts": [], "rules": []},
+        }
+        row = {
+            "file": version,
+            "selection": "selected",
+            "removal_reason": None,
+            "validation": {"state": "valid", "reasons": []},
+            "match": {"state": "matched", "document_type": "控制计划", "metadata": {"customer": "蔚来", "model": None, "part": None, "part_number": None}, "rule": rule, "gaps": []},
+        }
+        self.task = {
+            "id": "task-one",
+            "number": "PPAP-预检-001",
+            "state": "pending_confirm",
+            "analysis_mode": "standard",
+            "customer_preference": "蔚来",
+            "source_draft_id": "task-one",
+            "round_id": None,
+            "completion_reason": None,
+            "estimated_points": 500,
+            "created_at": "2026-10-22T00:00:00Z",
+            "updated_at": "2026-10-22T00:00:00Z",
+            "input_revision": 1,
+            "files": [row],
+        }
+        snapshot_input = {"files": [{"file": version}], "input_revision": 1}
+        self.old = {
+            "id": "old-snapshot",
+            "task_id": "task-one",
+            "input_revision": 0,
+            "current": False,
+            "status": "succeeded",
+            "input": {"files": [{"file": version}], "input_revision": 0},
+            "result": {"files": [{"file_version_id": version["id"], "facts": [{"id": "old", "status": "satisfied", "message": "旧输入的检查事实"}]}]},
+            "created_at": "2026-10-21T00:00:00Z",
+            "updated_at": "2026-10-21T00:00:00Z",
+        }
+        self.current = {
+            "id": "failed-snapshot",
+            "task_id": "task-one",
+            "input_revision": 1,
+            "current": True,
+            "status": "failed",
+            "input": snapshot_input,
+            "result": None,
+            "created_at": "2026-10-22T00:00:00Z",
+            "updated_at": "2026-10-22T00:00:00Z",
+        }
+        self.task["precheck"] = copy.deepcopy(self.current)
+        self.task["recognition_request_id"] = "recognition-one"
+        self.retry_commands = []
+        self.alias_reads = []
+        self.export_reads = []
+
+    def respond(self, route):
+        path = urlsplit(route.request.url).path.removeprefix("/api")
+        prefix = "/audit-tasks/task-one/prechecks"
+        if path == prefix and route.request.method == "POST":
+            body = route.request.post_data_json
+            assert body["expected_revision"] == 1
+            self.retry_commands.append(body)
+            self.current = {
+                **self.current,
+                "id": "retried-snapshot",
+                "status": "succeeded",
+                "request_id": body["request_id"],
+                "created_at": "2026-10-23T00:00:00Z",
+                "result": {
+                    "files": [
+                        {
+                            "file_version_id": "version-one",
+                            "checker": {"profile": "v4"},
+                            "facts": [
+                                {"id": "S1", "status": "satisfied", "message": "原件结构已核实"},
+                                {"id": "S2", "status": "not_checked", "message": "签章尚未核实"},
+                                {"id": "technical", "status": "error", "message": "图形读取失败"},
+                            ],
+                        }
+                    ]
+                },
+            }
+            route.abort("failed")
+        elif path == prefix:
+            route.fulfill(json={"snapshots": [self.current, self.old]})
+        elif self.retry_commands and path == prefix + "/" + self.retry_commands[0]["request_id"]:
+            self.alias_reads.append(self.retry_commands[0]["request_id"])
+            route.fulfill(json=self.current)
+        elif path == prefix + "/old-snapshot/report":
+            self.export_reads.append("old-snapshot")
+            route.fulfill(content_type="text/html; charset=utf-8", body="<!doctype html><p>旧输入的检查事实</p>")
+        elif path == prefix + "/retried-snapshot":
+            route.fulfill(json=self.current)
+        else:
+            super().respond(route)
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_precheck_readback_history_and_export_keep_one_formal_action(width):
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page(viewport={"width": width, "height": 954})
+        http = PrecheckHTTP()
+        http.install(page)
+        page.goto(WEB + "/tasks/task-one")
+        region = page.get_by_role("region", name="免费内容预检", exact=True)
+        expect(region.get_by_role("heading", name="需要确认 · 1", exact=True)).to_be_visible()
+        expect(page.get_by_role("button", name="开始审核", exact=True)).to_have_count(1)
+        region.get_by_role("button", name="重新检查当前资料", exact=True).click()
+        expect(region.get_by_text("预检回执尚未核对。请读取原检查，已有文件仍保留。", exact=True)).to_be_visible()
+        assert "precheckRequest=" in page.url
+        page.reload()
+        expect(region.get_by_text("有预检请求待核对，请读取原检查。不会再次提交检查请求。", exact=True)).to_be_visible()
+        region.get_by_role("button", name="读取原检查", exact=True).click()
+        expect(region.get_by_text("部分要求未核实", exact=True)).to_be_visible()
+        assert len(http.retry_commands) == 1 and http.alias_reads == [http.retry_commands[0]["request_id"]]
+        expect(region.get_by_role("heading", name="需要处理 · 0", exact=True)).to_be_visible()
+        expect(region.get_by_role("heading", name="需要确认 · 1", exact=True)).to_be_visible()
+        expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_enabled()
+        region.get_by_role("button", name="查看检查依据与未覆盖要求", exact=True).click()
+        expect(region.get_by_text("图形读取失败", exact=False)).to_be_visible()
+        expect(region.get_by_text("签章尚未核实", exact=False)).to_be_visible()
+        region.get_by_role("button", name="读取预检历史", exact=True).click()
+        region.get_by_role("button", name="修订 0", exact=False).click()
+        expect(region.get_by_text("历史快照，不代表当前资料", exact=False)).to_be_visible()
+        with page.expect_download() as download:
+            region.get_by_role("button", name="导出此预检记录", exact=True).click()
+        assert download.value.suggested_filename == "PPAP-预检-old-snapshot.html"
+        assert http.export_reads == ["old-snapshot"]
+        page.screenshot(path=f"/tmp/ppap-v4-precheck-ui-{width}.png", full_page=True)
+        assert page.get_by_role("button", name="开始审核", exact=True).count() == 1
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        browser.close()

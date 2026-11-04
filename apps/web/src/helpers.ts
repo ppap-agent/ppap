@@ -62,6 +62,7 @@ export function parseWorkspacePosition(raw: string | null): WorkspacePosition | 
 }
 
 const analysisNotices: Record<string, string | null> = {
+  photo_content_requires_manual_confirmation: '照片格式已核实。照片中的零件、标识和内容仍需人工确认。',
   empty_document_text: '未读取到文件文字，请核对原件后重新识别。',
   document_text_unavailable: '无法读取文件文字，请核对原件后重新识别。',
   metadata_uses_excerpt: null,

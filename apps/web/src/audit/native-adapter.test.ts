@@ -625,3 +625,77 @@ test('authorization, server and unknown refusals do not grant another confirmati
     assert.deepEqual(calls, ['POST /audit-tasks/task-a/confirm'])
   }
 })
+
+test('photo validation binds purpose to its own lost-reply identity and cannot reuse ordinary validation', async () => {
+  const scope = {customer_preference: 'UAES', preset_key: 'U13'} as const
+  const calls: {method: string; url: string}[] = []
+  let photoId = ''
+  globalThis.fetch = async (input, init) => {
+    const url = String(input), method = init?.method || 'GET'
+    calls.push({url, method})
+    if (url.endsWith('/validation')) return json({validation: {id: 'ordinary', source_file_id: 'file-a', source_file_version_id: 'version-a', status: 'completed', result: {state: 'invalid', reasons: ['Office required']}}})
+    if (method === 'POST') {
+      const body = JSON.parse(String(init?.body))
+      assert.deepEqual(body.scope, scope)
+      photoId = body.request_id
+      throw new TypeError('photo reply lost')
+    }
+    assert.equal(url, `/file-validations/${photoId}`)
+    return json({id: photoId, scope, source_file_id: 'file-a', source_file_version_id: 'version-a', status: 'succeeded', result: {state: 'valid', reasons: []}})
+  }
+  const adapter = createNativeAuditAdapter({deepOffered: false, customers: ['UAES']})
+  await assert.rejects(adapter.readValidation(file, scope), /lost/)
+  const result = await adapter.readValidation(file, scope)
+  assert.equal(result.validation_id, photoId)
+  assert.deepEqual(result.validation_scope, scope)
+  assert.equal(calls.filter(call => call.method === 'POST').length, 1)
+})
+
+test('a photo receipt cannot authorize ordinary validation or another original', async () => {
+  const scope = {customer_preference: 'UAES', preset_key: 'U13'} as const
+  globalThis.fetch = async () => json({id: 'original', scope, source_file_id: 'file-a', source_file_version_id: 'version-a', status: 'succeeded', result: {state: 'valid', reasons: []}})
+  const adapter = createNativeAuditAdapter({deepOffered: false, customers: []})
+  await assert.rejects(adapter.readValidation({...file, validation_id: 'original'}, null), /用途/)
+  await assert.rejects(adapter.readValidation({...file, file: {...file.file, id: 'other'}, validation_id: 'original', validation_scope: scope}, scope), /回执/)
+})
+
+test('saved original validation identity restores its server-owned photo scope', async () => {
+  const scope = {customer_preference: 'UAES', preset_key: 'U13'} as const
+  globalThis.fetch = async () => json({id: 'saved', scope, source_file_id: 'file-a', source_file_version_id: 'version-a', status: 'succeeded', result: {state: 'valid', reasons: []}})
+  const result = await createNativeAuditAdapter({deepOffered: false, customers: ['UAES']}).readValidation({...file, validation_id: 'saved'})
+  assert.deepEqual(result.validation_scope, scope)
+})
+
+test('precheck history and same-snapshot export use authenticated read-only task routes', async () => {
+  const calls: string[] = []
+  const receipt = {id: 'snapshot', task_id: task.id, request_id: 'original-request', input_revision: 2, current: true, status: 'succeeded', input: {}, result: {}, created_at: 'now', updated_at: 'now'}
+  globalThis.fetch = async (input, init) => {
+    const url = String(input)
+    calls.push(`${init?.method || 'GET'} ${url}`)
+    assert.equal(init?.credentials, 'include')
+    if (url.endsWith('/report')) return new Response('<!doctype html><p>frozen</p>', {headers: {'Content-Type': 'text/html; charset=utf-8'}})
+    if (url.endsWith('/prechecks')) return json({snapshots: [receipt]})
+    return json(receipt)
+  }
+  const adapter = createNativeAuditAdapter({deepOffered: false, customers: []}).precheck!
+  assert.deepEqual(await adapter.history(task.id), [receipt])
+  assert.deepEqual(await adapter.read(task.id, 'original-request'), receipt)
+  assert.match(await (await adapter.report(task.id, 'snapshot')).text(), /frozen/)
+  assert.deepEqual(calls, ['GET /audit-tasks/task-a/prechecks', 'GET /audit-tasks/task-a/prechecks/original-request', 'GET /audit-tasks/task-a/prechecks/snapshot/report'])
+})
+
+
+test('validation write loss keeps its original readback identity across adapter replacement', async () => {
+  let id = ''
+  globalThis.fetch = async (input, init) => {
+    if (String(input).endsWith('/validation')) return json({validation: null})
+    if (init?.method === 'POST') {id = JSON.parse(String(init.body)).request_id; throw new TypeError('lost')}
+    assert.equal(String(input), `/file-validations/${id}`)
+    return json({id, source_file_id: 'file-a', source_file_version_id: 'version-a', status: 'succeeded', result: {state: 'valid', reasons: []}})
+  }
+  let saved = ''
+  try {await createNativeAuditAdapter({deepOffered: false, customers: []}).readValidation(file)}
+  catch (error) {saved = (error as Error & {validationRequestId: string}).validationRequestId}
+  assert.equal(saved, id)
+  assert.equal((await createNativeAuditAdapter({deepOffered: false, customers: []}).readValidation({...file, validation_id: saved})).validation_id, id)
+})
