@@ -120,3 +120,17 @@ def test_kappa_needs_explicit_attribute_scope_and_lab_dvr_is_not_a_missing_oblig
         assert result["warning_codes"] == []
     result = facts(original(tmp_path, "target"), "U03", GroupContextInput())["dvr"]
     assert result["status"] == "handoff" and result["code"] == "S03" and result["warning_codes"] == []
+
+
+def test_matching_placeholders_do_not_establish_part_identity(tmp_path):
+    target = original(tmp_path, "target", part="无")
+    reference = original(tmp_path, "reference", part="无", title="过程流程图")
+    result = facts(target, "U08", GroupContextInput(by_audit_id={"reference": reference}))["pfd"]
+    assert result["status"] == "unknown"
+
+
+def test_title_referring_to_another_document_does_not_establish_source_identity(tmp_path):
+    target = original(tmp_path, "target")
+    reference = original(tmp_path, "reference", title="非过程流程图")
+    result = facts(target, "U08", GroupContextInput(by_audit_id={"reference": reference}))["pfd"]
+    assert result["status"] == "unknown" and result["code"] is None
