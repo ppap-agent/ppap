@@ -228,3 +228,27 @@ def test_delivery_only_original_checks_attachments_without_invented_warrant_requ
     sheet.append(["尺寸报告", attachment])
     findings, _ = execute("L17", serialized(book), [])
     assert findings[preset_rule("理想", "L17").clauses[0].id]["status"] == expected
+
+
+@pytest.mark.parametrize(
+    "label,value",
+    [("零件号", "OTHER"), ("版本", "B"), ("车型项目", "X2"), ("零件号", None), ("零件号", "=1+1")],
+)
+def test_embedded_identity_after_row_40_is_not_treated_as_undeclared(label, value):
+    book = load_workbook(io.BytesIO(embedded_warranty()))
+    sheet = book["生产件批准交付物文件清单"]
+    sheet.cell(41, 1, label)
+    if value is not None:
+        sheet.cell(41, 2, value)
+    findings, _ = execute("L17", serialized(book), [])
+    assert findings[preset_rule("理想", "L17").clauses[0].id]["status"] == "UNABLE"
+
+
+@pytest.mark.parametrize("declared", [False, True])
+def test_embedded_identity_scope_past_row_40_preserves_valid_inheritance(declared):
+    book = load_workbook(io.BytesIO(embedded_warranty()))
+    sheet = book["生产件批准交付物文件清单"]
+    sheet.cell(41, 1, "零件号" if declared else "补充交付物")
+    sheet.cell(41, 2, "P123" if declared else "附件.pdf")
+    findings, _ = execute("L17", serialized(book), [])
+    assert findings[preset_rule("理想", "L17").clauses[0].id]["status"] == "PASS"

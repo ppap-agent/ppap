@@ -6,10 +6,10 @@ from datetime import datetime
 from audit.checkers.v3.cross_file_extractors import _load_workbook_auto
 from audit.checkers.v3.excel_agent import rule
 from audit.checkers.v3.psw_excel_agent import PswExcelAgent
-from audit.checkers.v4.pfmea_local import _identity, _label, _rows, pair_identity
+from audit.checkers.v4.pfmea_local import _NON_DATA_SHEETS, _identity, _rows, pair_identity
 from audit.engine.checkers.docx_workbook_agent import StructuredDocxWorkbookMixin
 from audit.engine.checkers.psw_docx_evidence import PswDocxEvidenceMixin
-from audit.engine.rule_engine import Table
+from audit.engine.rule_engine import Decision, GuardStop, Table
 from audit.kinds import PpapDocumentType
 
 from .facts import NativeFacts, precheck_fact
@@ -43,6 +43,37 @@ class LiAutoPswAgent(NativeFacts, PswExcelAgent):
     @staticmethod
     def _delivery_sheets(workbook):
         return [sheet for sheet in workbook.worksheets if any(name in sheet.title for name in ("生产件批准交付物文件清单", "生产件批准提交清单", "PSW交付物清单"))]
+
+    @staticmethod
+    def _identity_field(ctx, labels, version, sheets):
+        keys = {_identity(label) for label in labels}
+        declared = False
+        values = set()
+        for sheet in sheets:
+            if any(token in sheet.title.casefold() for token in ("履历", *_NON_DATA_SHEETS)):
+                continue
+            if sheet.max_row * sheet.max_column > 250000:
+                raise GuardStop(Decision.UNABLE, "身份声明超出本次有界读取范围，尚不能确认没有另行声明。")
+            for row in sheet.iter_rows():
+                for cell in row:
+                    if _identity(cell.value).rstrip(":：") not in keys:
+                        continue
+                    declared = True
+                    ctx.note_cell(sheet.title, cell.row, cell.column, file_version_id=version)
+                    right = cell.column + 1
+                    for merged in sheet.merged_cells.ranges:
+                        if cell.coordinate in merged:
+                            right = merged.max_col + 1
+                            break
+                    value = sheet.cell(cell.row, right)
+                    ctx.note_cell(sheet.title, value.row, value.column, file_version_id=version)
+                    identity = _identity(value.value)
+                    if value.data_type in {"e", "f"}:
+                        raise GuardStop(Decision.UNABLE, "已声明的身份字段无法可靠读取，不能继承保证书身份。")
+                    values.add(identity)
+        if len(values) > 1:
+            raise GuardStop(Decision.UNABLE, "同一原件存在冲突的身份声明，不能配对。")
+        return declared, next(iter(values), "")
 
     @staticmethod
     def _could_contain_delivery_list(kind):
@@ -96,7 +127,7 @@ class LiAutoPswAgent(NativeFacts, PswExcelAgent):
             embedded = workbook is ctx.workbook
             main_sheets = [sheet for sheet in ctx.workbook.worksheets if sheet not in local] if embedded else ctx.workbook.worksheets
             for original, original_version, scope in [(ctx.workbook, self.audit_file.audit_id, main_sheets), (workbook, version, sheets)]:
-                customer = _label(ctx, original, ("客户", "客户名称", "Customer", "Customer Name"), original_version, sheets=scope)
+                _, customer = self._identity_field(ctx, ("客户", "客户名称", "Customer", "Customer Name"), original_version, scope)
                 if customer and _identity(customer) not in {"理想", "理想汽车", "liauto", "li"}:
                     return "UNABLE", "原件客户与本轮理想模式冲突，不能配对。"
             fields = [
@@ -107,14 +138,8 @@ class LiAutoPswAgent(NativeFacts, PswExcelAgent):
             # A standalone delivery-list original has no warrant to pair.
             # Its attachment-completeness clause remains a unary check.
             for labels, required in fields if main_sheets else ():
-                own = _label(ctx, ctx.workbook, labels, self.audit_file.audit_id, sheets=main_sheets)
-                other = _label(ctx, workbook, labels, version, sheets=sheets)
-                declared = any(
-                    _identity(cell.value).rstrip(":：") in {_identity(label) for label in labels}
-                    for sheet in sheets
-                    for row in sheet.iter_rows(max_row=min(sheet.max_row, 40), max_col=min(sheet.max_column, 80))
-                    for cell in row
-                )
+                _, own = self._identity_field(ctx, labels, self.audit_file.audit_id, main_sheets)
+                declared, other = self._identity_field(ctx, labels, version, sheets)
                 # An embedded checklist may inherit the warrant's identity only
                 # when it has no separate declaration of that identity field.
                 if embedded and not declared:
