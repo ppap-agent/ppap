@@ -748,7 +748,7 @@ class RuleInteractionTests(unittest.TestCase):
             self.assertEqual(state["saves"][0]["source_file_version_id"], state["source"]["id"])
             page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="工作台", exact=True).click()
             page.get_by_role("button", name="继续当前审核", exact=True).click()
-            page.get_by_role("combobox", name="客户（可选）", exact=True).click()
+            page.get_by_role("combobox", name="审核客户", exact=True).click()
             expect(page.get_by_role("option", name="测试客户", exact=True)).to_be_visible()
             page.keyboard.press("Escape")
             page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="审核规则", exact=True).click()
@@ -1892,6 +1892,8 @@ class RuleInteractionTests(unittest.TestCase):
                     },
                     headers=cors,
                 )
+            elif path == "/audit-customers/default" and request.method == "GET":
+                route.fulfill(json={"customer_preference": None, "revision": 0}, headers=cors)
             elif path == "/rule-types":
                 route.fulfill(json={"types": ["控制计划"]}, headers=cors)
             elif path in {"/audit-tasks", "/drafts", "/rounds"} and request.method == "GET":

@@ -30,6 +30,7 @@ def page():
         page = context.new_page()
         page.route("**/runtime-config.json", lambda route: route.fulfill(json={"api_url": WEB + "/api"}))
         page.route("**/api/**", lambda route: route.fulfill(status=404, json={"error": "unexpected_test_request"}))
+        page.route("**/api/audit-customers/default", lambda route: route.fulfill(json={"customer_preference": None, "revision": 0}))
         yield page
         context.close()
         browser.close()
@@ -93,7 +94,7 @@ def test_customer_catalog_refresh_keeps_the_restored_task_and_file_selection(pag
     page.goto(WEB + "/audit?task=original-task")
     page.get_by_role("button", name="返回核对客户", exact=True).click()
     assert reads == []
-    customer_picker = page.get_by_role("combobox", name="客户（可选）", exact=True)
+    customer_picker = page.get_by_role("combobox", name="审核客户", exact=True)
     with page.expect_response(lambda response: response.url.endswith("/api/audit-customers")):
         customer_picker.click()
     expect(page.get_by_role("option", name="新客户", exact=True)).to_have_count(0)
