@@ -578,9 +578,21 @@ def source_title_location(data: dict[str, Any], aliases) -> dict[str, Any] | Non
     def matches(value):
         return pattern.fullmatch(key(value)) is not None
 
+    own_title_labels = {"标题", "表名", "图名", "文件名称", "文档名称", "title", "documenttitle", "documentname", "tablename"}
+
+    def heading_context(text, current):
+        if not text.strip():
+            return current
+        if key(text) in own_title_labels:
+            return True
+        # A company banner can precede a document's own title. Other native
+        # text does not prove that a later block is a heading rather than data.
+        return current and re.search(r"(?:公司|company|ltd\.?|limited|inc\.?|gmbh)\s*$", text, re.IGNORECASE) is not None
+
     for table in data.get("tables", []):
         if matches(table["id"]):
             return {"table": table["id"]}
+        own_context = True
         for row in range(1, min(5, table["rows"]) + 1):
             cells: dict[str, tuple[int, dict]] = {}
             for column in range(1, table["cols"] + 1):
@@ -591,27 +603,28 @@ def source_title_location(data: dict[str, Any], aliases) -> dict[str, Any] | Non
                 # A title is standalone (merged cells count once), or explicitly
                 # labelled as this document's title. Row data is not a title.
                 previous = effective(table, row, column - 1) if column > 1 else {}
-                own_title = previous.get("state") == "known" and key(previous.get("value")) in {
-                    "标题",
-                    "表名",
-                    "图名",
-                    "文件名称",
-                    "文档名称",
-                    "title",
-                    "documenttitle",
-                    "documentname",
-                    "tablename",
-                }
-                if (len(cells) == 1 or own_title) and observed["state"] == "known" and matches(observed.get("value")):
+                own_title = previous.get("state") == "known" and key(previous.get("value")) in own_title_labels
+                if (len(cells) == 1 and own_context or own_title) and observed["state"] == "known" and matches(observed.get("value")):
                     return {"table": table["id"], "row": row, "column": column}
+            if len(cells) == 1:
+                _, observed = next(iter(cells.values()))
+                own_context = observed["state"] == "known" and heading_context(str(observed.get("value") or ""), own_context)
+            elif cells:
+                own_context = False
     # DOCX/PDF titles need their native location, not synthetic spreadsheet cells.
+    own_context = True
     for index, paragraph in enumerate(data.get("paragraphs", [])[:3], 1):
-        if matches(paragraph.get("text", "")):
+        text = paragraph.get("text", "")
+        if matches(text) and own_context:
             return {"kind": "docx_paragraph", "paragraph": index}
+        own_context = heading_context(text, own_context)
     for page in data.get("pages", [])[:1]:
+        own_context = True
         for index, block in enumerate(page.get("blocks", [])[:3], 1):
-            if matches(block.get("text", "")):
+            text = block.get("text", "")
+            if matches(text) and own_context:
                 return {"kind": "pdf_block", "page": page.get("page", 1), "block": index}
+            own_context = heading_context(text, own_context)
     return None
 
 

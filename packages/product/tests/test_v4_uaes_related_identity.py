@@ -134,6 +134,42 @@ def test_explicit_typed_counterpart_does_not_need_an_untyped_title_match(tmp_pat
     assert result.status == "PASS", result.suggestions
 
 
+@pytest.mark.parametrize(
+    "label,expected",
+    [
+        ("比对文件：", "UNABLE"),
+        ("比对文件", "UNABLE"),
+        ("Reference document:", "UNABLE"),
+        ("Reference document", "UNABLE"),
+        ("文件名称：", "PASS"),
+        ("Document title:", "PASS"),
+        ("供应商有限公司", "PASS"),
+    ],
+)
+def test_docx_native_title_keeps_split_field_context(tmp_path, label, expected):
+    from docx import Document
+
+    document = Document()
+    document.add_paragraph(label)
+    document.add_paragraph("特殊特性清单")
+    table = document.add_table(rows=0, cols=2)
+    for values in [("客户", "UAES"), ("零件号", "P1"), ("零件名称", "支架"), ("版本", "A"), ("项目", "M1"), ("特性名称", "特性类别"), ("孔径", "CC")]:
+        cells = table.add_row().cells
+        cells[0].text, cells[1].text = values
+    path = tmp_path / "reference.docx"
+    document.save(path)
+    reference = AuditInput(audit_id="reference", file_url=str(path))
+    target = original(tmp_path, "target", target=True)
+    result = check(target, [reference], typed=False)
+    assert result.status == expected, result.suggestions
+
+    from audit.precheck_dependencies import dependency_facts
+
+    group = GroupContextInput(by_audit_id={"reference": reference})
+    observed = next(row for row in dependency_facts(target, "U07", group) if row["id"].endswith(":characteristics"))
+    assert observed["status"] == ("satisfied" if expected == "PASS" else "unknown"), observed
+
+
 def test_provided_unreadable_counterpart_is_an_execution_error(tmp_path):
     reference = original(tmp_path, "reference")
     Path(reference.file_url).write_bytes(b"not a workbook")
