@@ -379,3 +379,11 @@ def test_a_different_customer_cannot_classify_a_uaes_only_e_type():
     )
     assert result["matching_status"] == "failed"
     assert result["matched_rule_id"] is None
+
+
+def test_builtin_v4_catalog_does_not_disable_an_existing_unrestricted_v2_auto_rule():
+    result = analyze_file(
+        "控制计划.xlsx", workbook_bytes(("文件类型", "控制计划")), [rule("legacy", [], customer_scope="all"), rule("nio", ["蔚来"], rule_profile="v4")], ai=MetadataAI({}), scoped=True
+    )
+    assert result["matched_rule_id"] == "legacy", result
+    assert result["matching_status"] == "matched"

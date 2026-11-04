@@ -147,7 +147,8 @@ def analyze_file(
                     raise ValueError("invalid_document_classification")
             except Exception:
                 notices.append("document_classification_failed")
-    customer_conflict = bool((v4_mode or unresolved_v4_customer) and explicit_customers - {selected_customer})
+    missing_v4_customer = unresolved_v4_customer and not (inferred != PpapDocumentType.UNKNOWN and any(PpapDocumentType.from_string(rule.get("type") or "") == inferred for rule in candidates))
+    customer_conflict = bool((v4_mode or missing_v4_customer) and explicit_customers - {selected_customer})
     matched_id = None
     ambiguous_ids: list[str] = []
     matching = "unmatched"
@@ -156,7 +157,7 @@ def analyze_file(
     elif customer_conflict:
         matching = "failed"
         notices.append("matching_customer_conflict")
-    elif unresolved_v4_customer:
+    elif missing_v4_customer:
         matching = "unmatched"
         notices.append("matching_customer_required")
     elif scoped and reference_only:

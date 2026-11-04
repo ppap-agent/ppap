@@ -60,6 +60,11 @@ class NioMeasurementAgent(DimensionMeasurementExcelAgent):
     def __init__(self, audit_file, rule_input, group_context=None):
         super().__init__(audit_file, rule_input, group_context=group_context, resource=_RESOURCE)
 
+    def precheck(self):
+        from audit.precheck_measurement import execute
+
+        return execute(self, "N01")
+
     def _load_workbook(self):
         workbook = super()._load_workbook()
         if getattr(self, "_formula_checked_workbook", None) is workbook:

@@ -346,6 +346,9 @@ class Row(_RecordMixin):
             if cell_key in seen_cells:
                 continue
             seen_cells.add(cell_key)
+            # Column-band reads have the same evidence and uncertainty
+            # obligations as named-column reads.
+            _remember_cell(self.ctx, self.ws, cell)
             raw_value = cell.value
             if present_only:
                 spec = _spec_for_col(col_index)

@@ -27,9 +27,11 @@ def run(entry, rows, title, reference=None):
     files = [target]
     contents = {"version": workbook(rows, title)}
     if reference:
-        _other_entry, other_rows, other_title = reference
-        files.append(RoundInput("reference", "reference", "other", other_title + ".xlsx", "ready"))
-        contents["other"] = workbook(other_rows, other_title)
+        references = reference if isinstance(reference, list) else [reference]
+        for index, (_other_entry, other_rows, other_title) in enumerate(references):
+            version = "other" if index == 0 else f"other-{index}"
+            files.append(RoundInput("reference", version, version, other_title + ".xlsx", "ready"))
+            contents[version] = workbook(other_rows, other_title)
     result = run_round_from_bytes(RoundWork("round", "tenant", files), contents)
     assert all(item["coverage"] == "mapped" for item in result["coverage"]["rule_items"]), result
     return result["findings"]
@@ -131,3 +133,59 @@ def test_nio_scl_precheck_separates_missing_columns_and_missing_identity(tmp_pat
     assert facts["N04:S3"]["code"] == "W02"
     assert all(item["certified"] is False for item in facts.values())
     agent.close()
+
+
+@pytest.mark.parametrize(("part", "kind", "expected"), [("P-1", "CC", "PASS"), ("P-1", "SC", "NG"), ("P-2", "CC", "UNABLE")])
+def test_cp_pfmea_special_characteristic_uses_the_complete_step(part, kind, expected):
+    own = [["零件号", "P-1"], ["版本", "A"], ["零件/工序号", "工序名称/操作描述", "特殊特性分类"], [10, "成型", "CC"]]
+    other = [["零件号", part], ["版本", "A"], ["过程步骤", "特殊特性"], ["10 成型", kind]]
+    findings = run("N03", own, "控制计划", ("N02", other, "PFMEA"))
+    assert findings[6]["status"] == expected, findings[6]
+
+
+@pytest.mark.parametrize(("description", "expected"), [("孔径", "PASS"), ("位置", "NG")])
+def test_cp_scl_characteristic_includes_category_value_and_kind(description, expected):
+    own = [["零件号", "P-1"], ["版本", "A"], ["产品", "过程", "特殊特性分类", "产品/工序规范/公差"], ["孔径", None, "CC", "10±1"]]
+    other = [["零件号", "P-1"], ["版本", "A"], ["特性分类", "特性描述", "特性值", "特殊特性种类"], ["产品", description, "10±1", "CC"]]
+    findings = run("N03", own, "控制计划", ("N04", other, "特殊特性清单"))
+    assert findings[7]["status"] == expected, findings[7]
+
+
+@pytest.mark.parametrize(("method", "expected"), [("整定和检具并按防错卡、测量卡执行", "PASS"), ("整定和检具", "NG")])
+def test_cp_pfmea_all_four_measures_must_be_present(method, expected):
+    own = [["零件号", "P-1"], ["版本", "A"], ["工序名称/操作描述", "评价测量技术"], ["成型", method]]
+    other = [["零件号", "P-1"], ["版本", "A"], ["过程步骤", "现行预防控制", "现行探测控制", "预防控制", "探测措施"], ["10 成型", "整定", "检具", "防错卡", "测量卡"]]
+    findings = run("N03", own, "控制计划", ("N02", other, "PFMEA"))
+    assert findings[8]["status"] == expected, findings[8]
+
+
+@pytest.mark.parametrize(("quantity", "expected"), [(1, "PASS"), (2, "NG")])
+def test_cp_scl_method_quantity_frequency_must_all_match(quantity, expected):
+    own = [["零件号", "P-1"], ["版本", "A"], ["产品", "过程", "特殊特性分类", "评价测量技术", "数量", "频率"], ["孔径", None, "CC", "量规", quantity, "每班"]]
+    other = [["零件号", "P-1"], ["版本", "A"], ["特性分类", "特性描述", "控制方法（制造过程）", "样本数", "频次"], ["产品", "孔径", "量规", 1, "每班"]]
+    findings = run("N03", own, "控制计划", ("N04", other, "特殊特性清单"))
+    assert findings[9]["status"] == expected, findings[9]
+
+
+def test_scl_literal_title_can_identify_an_unrenamed_worksheet():
+    findings = run("N04", [["P1 特殊特性清单"]], "Sheet1")
+    assert findings[0]["status"] == "PASS", findings[0]
+
+
+def test_pfd_structure_warning_code_distinguishes_a_missing_column_from_an_empty_value(tmp_path):
+    from audit.checkers.v4.nio.process_flow import NioProcessFlowAgent
+    from audit.contracts import AuditInput, RuleInput
+
+    def facts(rows):
+        path = tmp_path / "流程.xlsx"
+        path.write_bytes(workbook(rows, "过程流程图"))
+        agent = NioProcessFlowAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput(rule_id="rule", **preset_rule_body("蔚来", "N05")))
+        try:
+            return {item["id"]: item for item in agent.precheck()}
+        finally:
+            agent.close()
+
+    missing = facts([["产品特性类别"], ["CC"]])["N05:S3"]
+    empty = facts([["产品特性类别", "产品特殊特性"], ["CC", None]])["N05:S3"]
+    assert (missing["status"], missing["code"]) == ("defect", "B05")
+    assert (empty["status"], empty["code"]) == ("defect", "W02")

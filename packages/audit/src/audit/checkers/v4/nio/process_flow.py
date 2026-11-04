@@ -104,14 +104,42 @@ class NioProcessFlowAgent(NioTableAgent):
                 return "NG", f"特殊特性清单项目未在流程图覆盖：{feature}。"
         return self._done(ctx, applicable)
 
+    def _structure_fact(self, source_id, check):
+        fact = checker_fact(self, source_id, check)
+        if fact["status"] == "defect" and ("缺少必需列" in fact["message"] or fact["message"].startswith("缺少表头字段")):
+            fact["code"] = "B05"
+        return fact
+
+    def _header_precheck(self, ctx):
+        from audit.engine.rule_engine import Decision, GuardStop
+
+        required = (("零件号", "零件编号"), ("零件名称",), ("项目车型",), ("供应商名称",), ("代码",), ("编制日期",), ("修订日期",), ("版本",), ("团队",))
+        for labels in required:
+            matches = [
+                cell
+                for sheet in self._sheets(ctx)
+                for cells in sheet.iter_rows(max_row=min(sheet.max_row, 40), max_col=min(sheet.max_column, 80))
+                for cell in cells
+                if _identity(cell.value).rstrip(":：") in {_identity(label) for label in labels}
+            ]
+            if not matches:
+                # Known source sheet and bounded header region, with no
+                # unresolved cells, establish a missing literal field.
+                if any(cell.data_type in {"e", "f"} for sheet in self._sheets(ctx) for cells in sheet.iter_rows(max_row=min(sheet.max_row, 40)) for cell in cells):
+                    raise GuardStop(Decision.UNABLE, "表头存在不可读取内容，尚不能确认字段是否缺失。")
+                return "NG", f"缺少表头字段：{labels[0]}。"
+            if not self._field(ctx, *labels):
+                return "NG", f"表头字段{labels[0]}未填写。"
+        return self._done(ctx)
+
     def precheck(self):
         kinds = ("工序名称", "制造", "运输", "存储", "检验", "返工", "报废")
         return [
             checker_fact(self, "N05:S1", self._sheet_present, code="B05"),
-            checker_fact(self, "N05:S2", self.rule_1, code="B05"),
-            checker_fact(self, "N05:S3", self.rule_2, code="B05"),
-            checker_fact(self, "N05:S4", self._process_precheck, code="B05"),
-            checker_fact(self, "N05:S5", self.rule_4, code="B05"),
+            self._structure_fact("N05:S2", self._header_precheck),
+            self._structure_fact("N05:S3", self.rule_2),
+            self._structure_fact("N05:S4", self._process_precheck),
+            self._structure_fact("N05:S5", self.rule_4),
             checker_fact(self, "N05:S6", lambda ctx: self._columns(ctx, {key: [key] for key in kinds}), code="B05"),
             checker_fact(self, "N05:S7", self.rule_5, code="W06"),
             checker_fact(self, "N05:S8", self.rule_6, code="W01"),
