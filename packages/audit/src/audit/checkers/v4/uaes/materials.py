@@ -11,6 +11,21 @@ class UaesMaterialsAgent(UaesSourceAgent):
         facts = self.native()
         table = facts.table(("材料", "分供方"))
         start, columns = facts.columns(table, {"number": ("序号", "编号", "NO")})
+        for span in table.get("merges", []):
+            if span[0] <= start <= span[2] and span[3] > span[1]:
+                # Multi-tier choice groups are not one scalar required field.
+                # Their native values need a scoped selection decoder.
+                raise UnknownFact("材料清单含多层合并表头或选择组，尚不能把组内空格判为空字段。")
+        for address, item in table["cells"].items():
+            import re
+
+            if int(re.sub(r"^[A-Z]+", "", address)) >= start or item.get("state") != "known":
+                continue
+            text = str(item.get("value") or "")
+            if ":" in text or "：" in text:
+                label = re.split(r"[:：]", text, maxsplit=1)[0].strip()
+                if label:
+                    facts.field((label,))
         headers = {}
         reader = facts.readers[table["id"]]
         for column in range(1, table["cols"] + 1):

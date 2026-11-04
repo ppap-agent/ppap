@@ -28,6 +28,21 @@ def structural_facts(agent):
     def all_of(*operations):
         return lambda: [operation() for operation in operations]
 
+    def formal_structure(method):
+        def run():
+            status, message = method()
+            if status != "PASS":
+                raise UnknownFact(message)
+
+        return run
+
+    def selection(*aliases):
+        def run():
+            if agent.selection(aliases) is None:
+                raise UnknownFact("实际选择有多项，需确认。")
+
+        return run
+
     def column(*aliases, title=()):
         return lambda: facts().columns(facts().table(title), {"field": aliases})
 
@@ -56,6 +71,10 @@ def structural_facts(agent):
         checks.update({f"U18:S{i}": field(name) for i, name in enumerate(("基本信息", "分供方追溯", "生产过程追溯", "交付追溯", "追溯状态总结"), 2)})
     elif entry == "U17":
         checks = {
+            "U17:S2": selection("安全及政府条例"),
+            "U17:S6": selection("是否报告了受客户关注的材料信息"),
+            "U17:S9": formal_structure(agent.rule_4),
+            "U17:S10": formal_structure(agent.rule_5),
             "U17:S3": all_of(text("供方制造厂资料"), text("买方资料")),
             "U17:S4": field("公司名称"),
             "U17:S5": all_of(field("采购方及部门"), field("采购方代码"), field("应用")),
