@@ -8,7 +8,7 @@ from audit.checkers.v3.excel_agent import rule
 from audit.engine.rule_engine import get_doc_resource_by_doc_type
 from audit.kinds import PpapDocumentType
 
-from .facts import NativeFacts, data_rows
+from .facts import NativeFacts, compact, data_rows, precheck_fact
 
 _BASE = get_doc_resource_by_doc_type(PpapDocumentType.ANNUAL_TEST_REQUIREMENTS)
 assert _BASE is not None
@@ -30,3 +30,25 @@ class LiAutoAnnualTestsAgent(NativeFacts, AnnualTestRequirementsAgent):
             if not any(character.isascii() and character.isdigit() for character in str(row.value("要求-样本数量") or "")):
                 return "NG", "每个试验项目的样本数量须包含阿拉伯数字。"
         return "PASS", ""
+
+    def _precheck_frequency(self, ctx, biennial):
+        rows = data_rows(ctx, "主表", "试验频率区", ("频率-试验项目", "频率-测试频率"))
+        for row in rows:
+            item = compact(row.value("频率-试验项目"))
+            if not item:
+                return "UNABLE", "试验项目未填写，不能确定频率要求。"
+            if (item in {"ELV试验", "禁限用", "EMC试验"}) != biennial:
+                continue
+            row.expect_condition("频率-测试频率", lambda value: compact(value) in ({"每两年"} if biennial else {"每年", "每半年"}), context="年度试验频率取值")
+        return "PASS", "适用试验项目频率已核实。"
+
+    def precheck(self):
+        return [
+            precheck_fact(self, "L16:S1", self.rule_1, code="W03"),
+            precheck_fact(self, "L16:S2", lambda ctx: self._precheck_frequency(ctx, True), code="W03"),
+            precheck_fact(self, "L16:S3", lambda ctx: self._precheck_frequency(ctx, False), code="W03"),
+            precheck_fact(self, "L16:S4", self.rule_3, code="W03"),
+            precheck_fact(self, "L16:S5", self.rule_4, code="W03"),
+            precheck_fact(self, "L16:S6", self.rule_5),
+            precheck_fact(self, "L16:S7", self.rule_6),
+        ]

@@ -28,3 +28,8 @@ class LiAutoCapacityStudyAgent(NativeFacts, InitialProcessCapacityAgent):
             if number(block.value(f"{chart}-Cpk")) <= number("1.33"):
                 return "NG", f"{chart}短期过程能力Cpk未大于1.33。"
         return "PASS", "三类控制图的短期Cpk均大于1.33。"
+
+    def precheck(self):
+        from .precheck_l1 import precheck_capacity
+
+        return precheck_capacity(self)

@@ -7,7 +7,7 @@ from audit.checkers.v3.excel_agent import rule
 from audit.engine.rule_engine import Table
 from audit.kinds import PpapDocumentType
 
-from .facts import NativeFacts, compact
+from .facts import NativeFacts, columns_present, compact, precheck_fact
 
 
 class LiAutoProcessFlowAgent(NativeFacts):
@@ -35,7 +35,10 @@ class LiAutoProcessFlowAgent(NativeFacts):
             section = sheet.section("过程流程主数据区")
             cols = section.columns("工序名称", "产品特殊特性", "过程特殊特性")
             ws = section.resolved.ws
-            headers = sorted({cell.column for row in ws.iter_rows(min_row=section.resolved.header_row, max_row=section.resolved.header_row + 2) for cell in row if compact(cell.value) == "特性类别"})
+            band = [cell for row in ws.iter_rows(min_row=section.resolved.header_row, max_row=section.resolved.header_row + 2) for cell in row]
+            product = {cell.column for cell in band if compact(cell.value) == "产品特性类别"}
+            process = {cell.column for cell in band if compact(cell.value) == "过程特性类别"}
+            headers = [next(iter(product)), next(iter(process))] if len(product) == len(process) == 1 else sorted({cell.column for cell in band if compact(cell.value) == "特性类别"})
             if len(headers) != 2:
                 return "NG", "必须包含两个可唯一定位的特性类别列。"
             rows = list(section.rows_from(cols))
@@ -83,3 +86,29 @@ class LiAutoProcessFlowAgent(NativeFacts):
             if not all(i in covered for i in range(min(indices), max(indices) + 1)):
                 return "NG", "工序图例之间缺少可核实的连线。"
         return "PASS", "已读取工序之间的连线。"
+
+    def _precheck_category_columns(self, ctx):
+        for sheet in Table(ctx).find_sheets("过程流程图"):
+            section = sheet.section("过程流程主数据区")
+            columns = set()
+            for cells in sheet.ws.iter_rows(min_row=section.resolved.header_row, max_row=section.resolved.header_row + 2):
+                for cell in cells:
+                    if compact(cell.value) in {"特性类别", "产品特性类别", "过程特性类别"}:
+                        sheet.cell(cell.row, cell.column).value()
+                        columns.add(cell.column)
+            if len(columns) != 2:
+                return "NG", "应有两个特性类别列。"
+        return "PASS", "已核实两个特性类别列。"
+
+    def precheck(self):
+        activity = ("工序定义-工序名称", "工序定义-制造", "工序定义-运输", "工序定义-存储", "工序定义-检验", "工序定义-返工", "工序定义-报废")
+        return [
+            precheck_fact(self, "L11:S1", self.rule_1),
+            precheck_fact(self, "L11:S2", self._precheck_category_columns, code="B05"),
+            precheck_fact(self, "L11:S3", self.rule_2),
+            precheck_fact(self, "L11:S4", self.rule_3),
+            precheck_fact(self, "L11:S5", self.rule_4),
+            precheck_fact(self, "L11:S6", lambda ctx: columns_present(ctx, "过程流程图", "过程流程工序定义区", activity), code="B05"),
+            precheck_fact(self, "L11:S7", self.rule_5, code="W06"),
+            precheck_fact(self, "L11:S8", self.rule_6, code="W06"),
+        ]

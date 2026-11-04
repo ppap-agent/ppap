@@ -10,6 +10,9 @@ from pathlib import Path
 from audit.checkers.v3.excel_agent import ExcelAgent
 from audit.document_tools import snapshot
 from audit.engine.rule_engine import Decision, GuardStop, Table
+from audit.precheck_facts import checker_fact
+
+precheck_fact = checker_fact
 
 
 def compact(value):
@@ -67,37 +70,6 @@ def data_rows(ctx, sheet_name, section_name, required, *, trigger=None):
     return result
 
 
-def precheck_fact(agent, item_id, check, *, code="W02"):
-    """Run one explicit source-structure check with its own read evidence."""
-    ctx = None
-    status, message = "unknown", "本项尚未核实。"
-    try:
-        ctx = agent.rule_ctx(agent._load_workbook())
-        result = check(ctx)
-        decision, message = result if isinstance(result, tuple) else ("PASS", "已核实原件结构。")
-        if ctx.has_unresolved():
-            decision, message = "UNABLE", "存在不可读取的单元格，本项尚未核实。"
-        status = {"PASS": "satisfied", "NG": "defect", "ERR": "error", "UNABLE": "unknown", "NA": "not_checked"}.get(decision, "unknown")
-    except GuardStop as exc:
-        status = {"NG": "defect", "ERR": "error"}.get(exc.status, "unknown")
-        message = exc.message
-    except Exception as exc:
-        status, message = "error", f"原件结构读取失败：{type(exc).__name__}。"
-    evidence = agent._evidence_from_reads(ctx) if ctx is not None else None
-    if status == "satisfied" and (not evidence or not evidence.sources):
-        status, message = "unknown", "尚未取得原件定位，不能声明本项已核实。"
-    return {
-        "id": item_id,
-        "source_id": item_id,
-        "status": status,
-        "code": code if status == "defect" else None,
-        "message": message,
-        "certified": False,
-        "critical": False,
-        "evidence": evidence.model_dump(mode="json") if evidence else None,
-    }
-
-
 def sheet_present(ctx, sheet_name):
     sheet = Table(ctx).sheet(sheet_name)
     sheet.cell(1, 1).value()
@@ -131,3 +103,32 @@ def identity_values(ctx, sheet_name, labels, *, before_row):
             raise GuardStop(Decision.NG, f"表头{label}字段未填写。")
         if len({compact(value) for value in values}) > 1:
             raise GuardStop(Decision.UNABLE, f"表头{label}字段取值冲突。")
+
+
+def image_regions(agent, table):
+    """Return positioned native image objects whose embedded bytes decode."""
+    from io import BytesIO
+    from zipfile import ZipFile
+
+    from PIL import Image
+
+    source = agent._source_path
+    if not source or Path(source).suffix.lower() not in {".xlsx", ".xlsm"}:
+        return []
+    result = []
+    with ZipFile(source) as archive:
+        for visual in table.get("visual_evidence", []):
+            if visual.get("range") is None:
+                continue
+            for reference in visual.get("references", []):
+                part = reference.get("part", "")
+                if not part.startswith("xl/media/"):
+                    continue
+                try:
+                    with Image.open(BytesIO(archive.read(part))) as picture:
+                        picture.verify()
+                except (OSError, ValueError, KeyError, SyntaxError):
+                    continue
+                result.append((visual["range"], visual["source"]))
+                break
+    return result

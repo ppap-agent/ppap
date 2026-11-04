@@ -39,3 +39,6 @@ EXCEL_AGENTS = {
 }
 
 DOCX_AGENTS = {"L17": LiAutoPswDocxAgent}
+
+# Verified untamplated PDF text/grid carrier; unread visual facts stay UNABLE.
+PDF_AGENTS = {"L03": LiAutoVerificationReportAgent}

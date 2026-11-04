@@ -6,7 +6,7 @@ from audit.checkers.v3.dpvr_excel_agent import DpvrExcelAgent
 from audit.checkers.v3.excel_agent import rule
 from audit.engine.rule_engine import Decision, GuardStop, Sheet
 
-from .facts import NativeFacts, compact
+from .facts import NativeFacts, compact, image_regions
 
 _LABELS = ("文件编号", "报告编号", "编号", "实验判定", "试验判定", "判定", "试验结论", "实验结论", "结论", "试验类型", "样品数量", "样本数量")
 
@@ -68,10 +68,7 @@ class LiAutoVerificationReportAgent(NativeFacts, DpvrExcelAgent):
 
     @rule("印章审核")
     def rule_4(self, ctx):
-        for ws in ctx.workbook.worksheets:
-            if Sheet(ctx, ws).has_seal():
-                return "PASS", "已取得原件印章证据。"
-        return "UNABLE", "尚未取得可核实的印章证据，不能用标题或图片数量代替。"
+        return "UNABLE", "原件印章内容尚未核实；颜色或图像对象不等于真实印章。"
 
     @rule("试验图片审核")
     def rule_5(self, ctx):
@@ -81,20 +78,29 @@ class LiAutoVerificationReportAgent(NativeFacts, DpvrExcelAgent):
             source = self.native_tables.get(ws.title)
             if source is None:
                 continue
+            labels = []
             for cells in ws.iter_rows():
                 for cell in cells:
                     for index, aliases in enumerate(phases):
-                        if _key(cell.value) not in {_key(value) for value in aliases}:
-                            continue
-                        ctx.note_cell(ws.title, cell.row, cell.column)
-                        for visual in source.get("visual_evidence", []):
-                            region = visual.get("range")
-                            if region is not None and region[0] >= cell.row and region[0] <= cell.row + 6 and region[1] <= cell.column <= region[3]:
-                                confirmed.add(index)
+                        if _key(cell.value) in {_key(value) for value in aliases}:
+                            ctx.note_cell(ws.title, cell.row, cell.column)
+                            labels.append((index, cell.row, cell.column))
+            for region, _ in image_regions(self, source):
+                candidates = [(index, row, col) for index, row, col in labels if row <= region[0] <= row + 6 and region[1] <= col <= region[3]]
+                if candidates:
+                    nearest = max(row for _, row, _ in candidates)
+                    phases_for_object = {index for index, row, _ in candidates if row == nearest}
+                    if len(phases_for_object) == 1:
+                        confirmed.update(phases_for_object)
         if confirmed == {0, 1, 2}:
-            return "PASS", "三个阶段均有定位于其字段区域的图像对象。"
+            return "UNABLE", "三个阶段已定位到图像对象，但实际试验照片内容尚未核实。"
         return "UNABLE", "试验前、中、后三阶段图像尚未全部定位；文字或非空占位不能代替图片。"
 
     @rule("样品数量审核")
     def rule_6(self, ctx):
         return ("PASS", "") if self._field(ctx, ("样品数量", "样本数量")) else ("NG", "缺少或未填写样品/样本数量。")
+
+    def precheck(self):
+        from .precheck_l1 import precheck_report
+
+        return precheck_report(self)

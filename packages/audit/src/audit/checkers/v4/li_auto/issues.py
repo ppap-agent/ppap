@@ -6,7 +6,7 @@ from audit.checkers.v3.excel_agent import rule
 from audit.checkers.v3.xir_assembly_issue_agent import XirAssemblyIssueAgent
 from audit.engine.checkers.date_utils import normalize_excel_date
 
-from .facts import NativeFacts, data_rows
+from .facts import NativeFacts, data_rows, precheck_fact
 
 
 class LiAutoIssuesAgent(NativeFacts, XirAssemblyIssueAgent):
@@ -29,3 +29,18 @@ class LiAutoIssuesAgent(NativeFacts, XirAssemblyIssueAgent):
             if deadline <= now:
                 return "NG", f"问题行{row.row_index}的时间节点须晚于当前时间。"
         return "PASS", ""
+
+    def _precheck_remediation(self, ctx):
+        for row in data_rows(ctx, "主表", "问题跟踪区", ("问题描述列", "对应措施列", "时间节点列", "负责人列")):
+            if row.is_present("问题描述列"):
+                row.expect("对应措施列", "时间节点列", "负责人列", context="问题登记必填项")
+        return "PASS", "问题整改必填项已核实。"
+
+    def precheck(self):
+        return [
+            precheck_fact(self, "L15:S1", self.rule_1),
+            precheck_fact(self, "L15:S2", self.rule_2, code="W01"),
+            precheck_fact(self, "L15:S3", self._precheck_remediation),
+            precheck_fact(self, "L15:S4", self.rule_4, code="W03"),
+            {"id": "L15:S5", "source_id": "L15:S5", "status": "handoff", "code": "S03", "message": "时间节点有效性按源矩阵移交正式审核。", "certified": False},
+        ]

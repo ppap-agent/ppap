@@ -6,9 +6,11 @@ from dataclasses import replace
 from types import MappingProxyType
 
 from audit.checkers.v2.process_special_characteristic_agent import ProcessSpecialCharacteristicAgent as CcscChecks
-from audit.checkers.v3.excel_agent import ExcelAgent, rule
+from audit.checkers.v3.excel_agent import rule
 from audit.engine.rule_engine import Row, RuleContext, Table, get_doc_resource_by_doc_type
 from audit.kinds import PpapDocumentType
+
+from .facts import NativeFacts, columns_present, precheck_fact, sheet_present
 
 _BASE = get_doc_resource_by_doc_type(PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST)
 assert _BASE is not None
@@ -19,7 +21,7 @@ _SECTIONS["主数据区"] = _SECTIONS["主数据区"].model_copy(update={"header
 _RESOURCE = replace(_BASE, sections=MappingProxyType(_SECTIONS))
 
 
-class LiAutoSpecialCharacteristicsAgent(ExcelAgent):
+class LiAutoSpecialCharacteristicsAgent(NativeFacts):
     EXPECTED_RULE_CATEGORIES = ("关键字段完整性检查", "CCSC结构与逐行必填", "高风险行必须有预防措施")
     PRECHECK_METHODS = {"L12:1:c437062e97210ecb39ba": "rule_1", "L12:2:9344878425e7576fad48": "rule_2"}
     DOC_TYPE = PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST
@@ -56,3 +58,16 @@ class LiAutoSpecialCharacteristicsAgent(ExcelAgent):
                     row.expect("高风险管理项预防措施", context="理想高风险行")
         ctx.note_scan(yielded=scanned, finished=True)
         return ("PASS", "") if scanned else ("UNABLE", "未找到风险评估数据行，尚不能核实高风险措施。")
+
+    def precheck(self):
+        major = ("过程/流程步骤", "部件(来料检时涉及)", "客户要求/功能要求", "特性名称", "检验岗位", "产品/过程特性分类", "名义值/规格中心值", "规格下限", "规格上限", "T1-特性监控方法")
+        children = ("测量设备", "测量方式", "防错控制", "检查控制", "抽样频率", "SPC监控", "SPC线上管理计划时间", "说明（关键要求/操作参数等）")
+        return [
+            precheck_fact(self, "L12:S1", lambda ctx: sheet_present(ctx, "主表"), code="B05"),
+            precheck_fact(self, "L12:S2", self.rule_1),
+            precheck_fact(self, "L12:S3", lambda ctx: columns_present(ctx, "主表", "主数据区", major), code="B05"),
+            precheck_fact(self, "L12:S4", lambda ctx: columns_present(ctx, "主表", "主数据区", children), code="B05"),
+            precheck_fact(self, "L12:S5", self.rule_2),
+            precheck_fact(self, "L12:S6", lambda ctx: columns_present(ctx, "主表", "主数据区", ("现有管理方式风险评估", "高风险管理项预防措施")), code="B05"),
+            precheck_fact(self, "L12:S7", self.rule_3),
+        ]
