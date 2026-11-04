@@ -16,6 +16,7 @@ from audit.checkers.v3.dimension_measurement_excel_agent import (
 )
 from audit.checkers.v3.excel_agent import rule
 from audit.document_tools import snapshot
+from audit.engine.checkers.date_utils import normalize_excel_date
 from audit.engine.rule_engine import Decision, GuardStop, RuleContext, Table, get_doc_resource_by_doc_type
 from audit.kinds import PpapDocumentType
 
@@ -110,27 +111,46 @@ class NioMeasurementAgent(DimensionMeasurementExcelAgent):
         sheet = covers[0]
         if sheet.ws.max_row > 120 or sheet.ws.max_column > 80:
             return "UNABLE", "封面超出本次字段定位范围，需核对原件。"
-        for field, config in self.COVER_FIELD_CONFIG.items():
-            values = set()
-            for cells in sheet.ws.iter_rows():
-                for raw in cells:
-                    if not _is_exact_label_value(raw.value, config["aliases"]):
+        labels = []
+        for cells in sheet.ws.iter_rows():
+            for raw in cells:
+                for field, config in self.COVER_FIELD_CONFIG.items():
+                    if _is_exact_label_value(raw.value, config["aliases"]):
+                        span = ctx.ops.get_detailed_merge_info(sheet.ws, raw.row, raw.column)
+                        labels.append((field, raw.row, raw.column, span.max_col if span else raw.column, span.max_row if span else raw.row))
+        for field in self.COVER_FIELD_CONFIG:
+            values, uncertain = set(), False
+            for key, row, column, end_column, end_row in labels:
+                if key != field:
+                    continue
+                sheet.cell(row, column).value()
+                right = sheet.cell(row, end_column + 1).value()
+                if not _blank(right) and not self._is_cover_label_value(right):
+                    values.add(str(right).strip())
+                    continue
+                column_form = any(other_column == column and other_row != row for _name, other_row, other_column, _end, _bottom in labels)
+                right_region = ctx.ops.get_detailed_merge_info(sheet.ws, row, end_column + 1)
+                header_row = any(other_row == row and (other_column == end_column + 1 or other_end + 1 == column) for _name, other_row, other_column, other_end, _bottom in labels)
+                if column_form and header_row:
+                    uncertain = True
+                    continue
+                # A blank value box or a repeated key/value form is evidence
+                # for the right-hand field. Never search nearby notes instead.
+                if column_form or right_region:
+                    continue
+                below = sheet.cell(end_row + 1, column).value()
+                if field == "日期" and _is_exact_label_value(below, self.COVER_FIELD_CONFIG[field]["aliases"]):
+                    translated_value = sheet.cell(end_row + 2, column).value()
+                    if normalize_excel_date(translated_value) is not None:
+                        values.add(str(translated_value).strip())
                         continue
-                    label = sheet.cell(raw.row, raw.column)
-                    label.value()
-                    merged = ctx.ops.get_detailed_merge_info(sheet.ws, raw.row, raw.column)
-                    right = merged.max_col + 1 if merged else raw.column + 1
-                    below = merged.max_row + 1 if merged else raw.row + 1
-                    candidates = [sheet.cell(raw.row, right)]
-                    candidates.extend(sheet.cell(index, raw.column) for index in range(below, min(below + 3, sheet.ws.max_row + 1)))
-                    # Stop at a different label; its value cannot fill this field.
-                    for candidate in candidates:
-                        value = candidate.value()
-                        if self._is_cover_label_value(value):
-                            break
-                        if not _blank(value):
-                            values.add(str(value).strip())
-                            break
+                if header_row:
+                    if not _blank(below) and not self._is_cover_label_value(below):
+                        values.add(str(below).strip())
+                else:
+                    uncertain = True
+            if uncertain:
+                return "UNABLE", f"CoverSheet中{field}的取值区域尚不能确认。"
             if not values:
                 return "NG", f"CoverSheet缺少或未填写{field}。"
             if len(values) > 1:
@@ -180,6 +200,10 @@ class NioMeasurementAgent(DimensionMeasurementExcelAgent):
     def rule_6(self, ctx: RuleContext):
         rows = self._rows(ctx, optional=("测点图/截面",))
         points = {_text(row.value("测点号")) for _sheet, row, _columns in rows}
+        main_sheets = {sheet.title for sheet, _row, _columns in rows}
+        for name, native in self._native_source_tables.items():
+            if name not in main_sheets and (native.get("visual_evidence") or any(token in name.casefold() for token in ("测点图", "点位图", "截面", "drawing", "diagram", "section"))):
+                return "UNABLE", "另有未读取的独立视觉或图示页，尚不能核实全部标记。"
         for sheet, row, columns in rows:
             if "测点图/截面" not in columns:
                 continue
@@ -189,7 +213,7 @@ class NioMeasurementAgent(DimensionMeasurementExcelAgent):
                 return "UNABLE", "尚不能核实原件中的全部图示标记。"
             for visual in source.get("visual_evidence", []):
                 region = visual.get("range")
-                if region is None or region[0] <= row.row_index <= region[2] and region[3] >= column:
+                if region is None or region[2] >= columns["测点图/截面"].data_start_row and region[3] >= column:
                     return "UNABLE", "图示区域含未读取的视觉内容，文字标记不能代替完整图示核对。"
         markers: set[str] = set()
         for _sheet, row, columns in rows:
