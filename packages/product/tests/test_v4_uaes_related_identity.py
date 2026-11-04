@@ -93,3 +93,17 @@ def test_provided_unreadable_counterpart_is_an_execution_error(tmp_path):
     Path(reference.file_url).write_bytes(b"not a workbook")
     result = check(original(tmp_path, "target", target=True), [reference])
     assert result.status == "ERR"
+
+
+def test_msa_broad_type_keeps_its_actual_kappa_subtype_available(tmp_path):
+    from audit.checkers.v4.uaes.msa import UaesMsaAgent
+
+    target = original(tmp_path, "target", target=True)
+    reference = original(tmp_path, "reference", title="Kappa分析报告")
+    group = GroupContextInput(
+        by_audit_id={"target": target, "reference": reference},
+        by_doc_type={T.get_type_name(): [reference] for T in [PpapDocumentType.MSA_REPORT]},
+    )
+    body = preset_rule_body("UAES", "U05")
+    rule = RuleInput(rule_id="frozen-rule", **{name: value for name, value in body.items() if name != "kind"})
+    assert UaesMsaAgent(target, rule, group).related(("kappa",)).version == "reference"
