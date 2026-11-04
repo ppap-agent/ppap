@@ -16,7 +16,7 @@ PostgreSQL  object storage
 
 PC Web 入口在 `apps/web`，只调用 Product API。飞书 docs-addon 进入同一套 round / findings / review。
 
-兼容入口 `/mcp` 与 Product API 在同一进程运行，由独立 `fastmcp` 包提供工具装饰器、Schema、Resources、Prompts 和 Streamable HTTP。依赖版本由 `uv.lock` 固定；当前 FastMCP 的上游依赖要求 MCP Python SDK `<2`，不能只升级 SDK 主版本而保留未验证的组合。兼容入口的 Tasks 扩展关闭；Deep 的 `/mcp/deep` 适配提供原生 Tasks，仍引用现有 Round、engine job 与 MCP 操作回执。Deep 的未来原生 MCP 交互与共享应用边界见下文产品设计；当前调用方式与协议配置不是目标产品原则。
+统一入口 `/mcp` 与 Product API 在同一进程运行，由独立 `fastmcp` 包提供工具装饰器、Schema、Resources、Prompts 和 Streamable HTTP。依赖版本由 `uv.lock` 固定；当前 FastMCP 的上游依赖要求 MCP Python SDK `<2`，不能只升级 SDK 主版本而保留未验证的组合。Tasks 扩展关闭；Deep 使用同一工具注册、确认回执和 Product API，不另设协议入口。长任务读取既有轮次与业务回执。
 
 `mcp_gateway` 通过进程内 ASGI 调用同一 Product API 入口，保留路由中的对象授权、来源校验及分享编排。只有该适配器可在 ASGI scope 写入实际 `Delegation` 对象；网络请求头不构成身份。字节传输直接转发 ASGI 流，继续使用文件 owner 的 200 MiB 限制，不额外把整份文件缓存到 MCP JSON 或 HTTP 客户端响应中。
 
@@ -58,7 +58,7 @@ Controller 进程是 `python -m agent`。生产工厂要求显式设置 `PPAP_DE
 
 Deep 的核心目标设计见 [规则约束下的文档理解与反馈](../packages/agent/DESIGN.md)，未来产品架构、UI 与 MCP 见 [Deep 产品设计](../packages/agent/PRODUCT.md)：业务输入只有 `rules + documents`，已确认附录包含在 rules 中。当前计算是按本次规则和文件开发并执行固定 checker。目标是持续的审核工作区，Web 与原生 MCP 平等调用同一个 Audit Application；界面、确认方式、协议和部署均可重构，业务事实与审核语义保持单一拥有者。原生 snapshot 保持无损。尚不因此宣称任意布局和规则均能被模型正确解释。
 
-反馈应用复用现有审核轮次、队列和结果存储。`product.deep_rule_changes` 只拥有同一工作区内的规则变更操作回执；工作区身份复用根轮次。一个操作按已读修订保存附录，并可在同一事务受理新输入计算；技术 attempt 与新业务计算分开。Web 与 `/mcp/deep` 共用 `read_deep_feedback/apply_rule_change/read_rule_change`，迟到结果仍只属于其原轮次。问题指纹约束实际内容与来源；附录分别记录被解释原件和精确的目标文件／条款配对，同名条款不会隐式扩大范围。客户端会话不构成业务依据。确认记录可导出，默认无人工 gold 和训练资格。
+反馈应用复用现有审核轮次、队列和结果存储。`product.deep_rule_changes` 只拥有同一工作区内的规则变更操作回执；工作区身份复用根轮次。一个操作按已读修订保存附录，并可在同一事务受理新输入计算；技术 attempt 与新业务计算分开。Web 与 `/mcp` 共用 `read_deep_feedback/apply_rule_change/read_rule_change`，迟到结果仍只属于其原轮次。问题指纹约束实际内容与来源；附录分别记录被解释原件和精确的目标文件／条款配对，同名条款不会隐式扩大范围。客户端会话不构成业务依据。确认记录可导出，默认无人工 gold 和训练资格。
 
 当前执行入口只开发并执行固定 checker。宿主只能证明程序和范围的重放，不能独立证明规则理解、关联身份或表头映射正确。
 

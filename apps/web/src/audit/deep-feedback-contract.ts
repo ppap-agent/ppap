@@ -4,13 +4,11 @@ import type {components} from '../generated/openapi'
 export type DeepFeedbackView = components['schemas']['DeepFeedbackView']
 export type RuleChangeRequest = components['schemas']['RuleChangeRequest']
 export type RuleChangeReceipt = components['schemas']['RuleChangeReceipt']
-export type McpRuleChangeProposal = components['schemas']['McpRuleChangeProposal']
 
 export interface DeepFeedbackAdapter {
   read(roundId: string): Promise<DeepFeedbackView>
   apply(roundId: string, input: RuleChangeRequest, workspaceId: string): Promise<RuleChangeReceipt>
   readOperation(roundId: string, operationId: string, workspaceId: string): Promise<RuleChangeReceipt | null>
-  readProposal(roundId: string, proposalId: string): Promise<McpRuleChangeProposal>
 }
 
 const feedbackPath = (roundId: string) => `/audit-rounds/${encodeURIComponent(roundId)}`
@@ -32,7 +30,6 @@ export const nativeDeepFeedbackAdapter: DeepFeedbackAdapter = {
     const receipt = await feedbackRequest<RuleChangeReceipt | null>(`${feedbackPath(roundId)}/rule-changes/${encodeURIComponent(operationId)}`)
     return receipt === null ? null : checkedRuleChange(receipt, workspaceId, operationId)
   },
-  readProposal: (roundId, proposalId) => feedbackRequest(`${feedbackPath(roundId)}/mcp-rule-changes/${encodeURIComponent(proposalId)}`),
 }
 
 export function checkedRuleChange(receipt: RuleChangeReceipt, workspaceId: string, operationId: string) {

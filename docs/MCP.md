@@ -4,13 +4,11 @@
 
 ## Deep 接入与协议能力
 
-现有 `/mcp` 仍由 FastMCP 3.4.0 / MCP SDK 1.30.0 提供兼容入口，`prepare_task.analysis_mode` 支持 Deep。新的 `/mcp/deep` 是固定 MCP 2026-07-28 的窄适配，提供 `read_audit`、`apply_rule_change`、`start_analysis`，直接调用与 Web 相同的反馈应用，不把 2025 SDK 声明成新版实现。
+`/mcp` 是唯一客户端入口，由锁定的 FastMCP / MCP SDK 提供 Streamable HTTP、工具、Resources 和 Prompts。`prepare_task(analysis_mode="deep")` 与 `confirm_task` 启动首次审核；`read_audit` 读取问题、证据、说明与修订；`apply_rule_change` 保存明确修改；`start_analysis` 按已保存说明受理新轮次；`get_rule_change` 读回业务操作回执。所有入口复用 Web 的反馈应用与授权。
 
-新入口使用同一 OAuth 委托（resource 仍为 `/mcp`）、租户和对象授权。每次请求包含版本、clientInfo/clientCapabilities，以及匹配的 MCP-Protocol-Version、Mcp-Method、Mcp-Name 头。简单确认使用 form Elicitation/MRTR；支持 Tasks 的客户端通过 tasks/get/update 读回与提交。协议 Task 引用现有 MCP 传输回执，业务输入、保存与入队仍由产品唯一拥有。
+规则修改和重新分析复用现有 `confirmation_required` 网页确认：用户核对请求、来源、范围和执行意图后批准，再由客户端重放完全相同的调用。浏览器不直接执行操作。确认绑定输入快照，产品事务继续检查修订与问题指纹；依据变化必须重新核对。无需配置第二个 MCP 服务，也不要求客户端支持 Tasks 或 Elicitation。
 
-URL 模式进入同一个审核工作区，URL 中的 mcpRuleChange 只是提议引用。正常登录并核对后，网页沿用同一业务操作 ID 提交；打开 URL 或协议 accept 本身不保存。客户端读回实际产品回执。无 Elicitation 能力时返回工作区入口；没有 Tasks 时使用 MRTR/应用读回。关闭交互不会默认选择候选或取消已受理审核。
-
-解释确认绑定问题内容指纹、范围、规则修订和操作身份，过期提议必须重新核对。说明可仅保存、保存并分析，或移除后明确重算；机器结果和人工复核分别保留。业务合同见 [Deep 产品设计](../packages/agent/PRODUCT.md)。本地 wire 与真实 PostgreSQL/Worker/guest 测试只证明上述实现，不代表所有第三方宿主兼容或真实模型准确率。
+`apply_rule_change` 使用固定 UUID `body.operation_id`，其余工具参数由 Schema 提供。未知响应先用 `get_rule_change` 读取原业务回执及其中的 `analysis_round_id`，再用 `get_round` 读取执行状态；不得换 ID 盲目重发。说明可仅保存、保存并分析或移除后明确重算。机器结果、人工复核和旧轮次不覆盖。业务合同见 [Deep 产品设计](../packages/agent/PRODUCT.md)。真实第三方客户端联调不由本地协议测试替代。
 
 ## 服务与授权
 

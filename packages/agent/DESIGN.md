@@ -310,7 +310,7 @@ Agent 可以按原规则纠正实现。仍有合理歧义或需要改变业务�
 | Ontology projection / layout binding | 已有概念类型、资源模型和有效人工算法；尚未连成此语义合同 | 语义引用、身份/值域及其范围/版本、确认后的输入固定 |
 | 用户确认与新轮次 | 已有附录保存/移除、作用范围、回执及保存并分析合同 | 新语义候选与形式化接入后的 checker → 产品 → 新 checker 完整旅程验证 |
 
-前端与 MCP 消费经过 `checker_response` / `product_result` 映射的结果、覆盖和澄清问题；`CheckerArtifact` 的程序文件与试跑记录仍是内部执行产物，没有面向用户的程序查看接口。现有前端读取冻结轮次和同一反馈服务，普通 `/mcp` 可读取结果；Deep 的规则确认与显式重审目前另由 `/mcp/deep` 提供。单次 MCP 配置下发现并使用完整 Deep 能力尚未统一。以上结果合同测试不等于浏览器、真实模型和 MCP 客户端的完整联调。
+前端与 MCP 消费经过 `checker_response` / `product_result` 映射的结果、覆盖和澄清问题；`CheckerArtifact` 的程序文件与试跑记录仍是内部执行产物，没有面向用户的程序查看接口。现有前端读取冻结轮次和同一反馈服务，统一 `/mcp` 可启动 Deep、读取结果与问题、确认规则修改并显式重审，复用现有网页确认回执和反馈业务事务。以上结果合同测试不等于浏览器、真实模型和 MCP 客户端的完整联调。
 
 规则变化通过 `--source fixed.xlsx --rules rule-input.json --expected expected.json --prior artifact.json` 实测。`--rules` 接收完整 `RuleInput`，冻结本次规则，并取消原样本预期；`--expected` 是宿主独立评分输入，不提供给模型。适配与异地重放均读取冻结规则。预期必须先独立确定，不能从生成代码推导；新旧代码都能运行不是验收标准。命令见 [DEVELOPMENT](../../docs/DEVELOPMENT.md)。
 
