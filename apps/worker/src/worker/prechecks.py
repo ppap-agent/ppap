@@ -6,6 +6,7 @@ import hashlib
 import tempfile
 import threading
 from pathlib import Path
+from typing import Any, cast
 
 from audit.contracts import AuditInput, GroupContextInput, RuleInput
 from audit.engine.checkers.rule_declarations import _agent_for_target, discover_declared_rules, freeze_target_rule_execution
@@ -40,6 +41,38 @@ def execute_precheck(store, payload):
         "files": [],
         "notice": "只展示实际执行的准备检查；未覆盖和未知项不代表通过，正式工程结论留给正式审核。",
     }
+    frozen_customers = {
+        customer
+        for source in payload["files"]
+        if source["selection"] == "selected"
+        for customer in ((source.get("rule") or {}).get("body") or {}).get("customers", [])
+        if ((source.get("rule") or {}).get("body") or {}).get("rule_profile") == "v4"
+    }
+    if payload.get("customer_conflict") or len(frozen_customers) > 1:
+        # A recognition conflict is not a supplier defect. In particular, do
+        # not load a shared context that could pair originals across customers.
+        for source in payload["files"]:
+            file, rule = source["file"], source.get("rule") or {}
+            selected = source["selection"] == "selected"
+            fact = _fact(
+                "routing",
+                "unknown" if selected else "not_checked",
+                "任务识别到多个客户，关联范围尚不能确定；请按客户拆分任务后重试。未对本文件作缺陷判断。" if selected else "未选文件不参与预检。",
+                code="B03" if selected else "S01",
+            )
+            result["files"].append(
+                {
+                    "file_version_id": file["id"],
+                    "rule_version_id": rule.get("id"),
+                    "checker": (source.get("rule_execution") or {}).get("checker"),
+                    "facts": [fact],
+                    "coverage": {
+                        "expected": len(source.get("required_structure") or []) + len(source.get("precheck_criteria") or []),
+                        "by_status": {"not_checked": len(source.get("required_structure") or []) + len(source.get("precheck_criteria") or [])},
+                    },
+                }
+            )
+        return result
     with tempfile.TemporaryDirectory(prefix="ppap-precheck-") as directory:
         audits, failures = {}, {}
         group = GroupContextInput(task_group_id=payload["task_id"])
@@ -102,7 +135,7 @@ def execute_precheck(store, payload):
                     raise ValueError("checker_unavailable")
                 declarations = discover_declared_rules(cls)
                 numeric = [{"id": str(index), "category": text, "priority": "P0", "rule_to_check": text, "type_of_rule": "text"} for index, (_, text) in enumerate(declarations, 1)]
-                checker = cls(audits[file["id"]], RuleInput(rule_id=rule["id"], **{**{key: value for key, value in body.items() if key != "kind"}, "rules": numeric}), group)
+                checker = cast(Any, cls)(audits[file["id"]], RuleInput(rule_id=rule["id"], **{**{key: value for key, value in body.items() if key != "kind"}, "rules": numeric}), group)
                 methods = getattr(cls, "PRECHECK_METHODS", {})
                 for source_id, method in methods.items():
                     indices = [index for index, (name, _) in enumerate(declarations) if name == method]

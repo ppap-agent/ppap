@@ -15,6 +15,15 @@ class UnknownFact(ValueError):
     """The original cannot support this decision."""
 
 
+class StateFact(UnknownFact):
+    """A proven scope/peer state, distinct from an execution or reading failure."""
+
+    def __init__(self, code, message):
+        self.code = code
+        self.status = "handoff" if code == "S03" else "not_checked"
+        super().__init__(message)
+
+
 class DefectFact(ValueError):
     def __init__(self, code, message):
         self.code = code
@@ -95,10 +104,14 @@ class SourceFacts:
                 raise UnknownFact("本项尚未取得原件定位，不能视为通过。")
         except DefectFact as exc:
             status, code, message = "defect", exc.code, str(exc)
+        except StateFact as exc:
+            status, code, message = exc.status, exc.code, str(exc)
         except UnknownFact as exc:
             status, message = "unknown", str(exc)
         except Exception:
             status, message = "error", "原件读取或纯规则执行失败，尚无业务结论。"
+        if status == "defect" and not self.sources:
+            status, code, message = "unknown", None, "缺陷断言未取得原件定位，尚不能确认为文件问题。"
         return {
             "id": source_id,
             "source_id": source_id,
@@ -150,8 +163,9 @@ def checker_fact(agent, source_id, check, *, code="W02"):
     if ctx is not None and ctx.has_unresolved():
         status, message = "unknown", "存在不可读取单元格；本项尚未核实，不能判为文件缺陷。"
     evidence = agent._evidence_from_reads(ctx) if ctx is not None else None
-    if status == "satisfied" and (not evidence or not evidence.sources):
-        status, message = "unknown", "尚未取得原件定位，不能视为通过。"
+    if status in {"satisfied", "defect"} and (not evidence or not evidence.sources):
+        status, message = "unknown", "尚未取得原件定位，不能确认满足或文件缺陷。"
+    confirmed = status == "defect" and ctx is not None and not ctx.has_unresolved() and bool(evidence and evidence.sources)
     return {
         "id": source_id,
         "source_id": source_id,
@@ -159,6 +173,81 @@ def checker_fact(agent, source_id, check, *, code="W02"):
         "code": code if status == "defect" else None,
         "message": message,
         "certified": False,
-        "critical": False,
+        "certainty": "confirmed" if confirmed else "unknown",
+        "critical": confirmed and code in {"B01", "B02", "B03", "B04", "B05", "B06"},
         "evidence": evidence.model_dump(mode="json") if evidence else None,
     }
+
+
+def field_fact(agent, source_id, block_name, field_names, *, missing_code="B05", empty_code="W02"):
+    """Distinguish missing labels from empty values using existing typed fields.
+
+    The caller owns whether a missing structure is supplier B05 or controlled
+    template S05. Parser uncertainty never becomes either business defect.
+    """
+    from audit.engine.rule_engine import Decision, GuardStop, Table
+
+    selected_code = empty_code
+    if isinstance(field_names, str):
+        field_names = (field_names,)
+
+    def check(ctx):
+        nonlocal selected_code
+        block = Table(ctx).field_block(block_name)
+        if len(block.resolved.worksheets) != 1:
+            raise GuardStop(Decision.UNABLE, "字段区对应多个候选表，尚不能确认缺栏或空值。")
+        missing, empty = [], []
+        for name in field_names:
+            if name not in ctx.resource.fields or ctx.resource.fields[name].block_name != block_name:
+                raise GuardStop(Decision.ERR, "字段规范未定义或不属于此字段区，不能判文件缺栏。")
+            item = block.field(name)
+            if not item.exists():
+                missing.append(name)
+                continue
+            resolved = item.resolved
+            if resolved is None:
+                raise GuardStop(Decision.UNABLE, "字段位置尚未核实。")
+            ctx.note_cell(resolved.ws.title, resolved.label_row, resolved.label_col)
+            spec = ctx.resource.fields[name]
+            if spec.value_mode == "right":
+                span = ctx.ops.get_detailed_merge_info(resolved.ws, resolved.label_row, resolved.label_col)
+                first = span.max_col + 1 if span else resolved.label_col + 1
+                other_labels = {key(alias) for field in ctx.resource.fields.values() if field.block_name == block_name and field.canonical_name != name for alias in field.aliases}
+                for column in range(first, min(resolved.ws.max_column, first + spec.scan_width - 1) + 1):
+                    raw = resolved.ws.cell(resolved.label_row, column)
+                    if key(raw.value) in other_labels:
+                        break
+                    ctx.note_cell(resolved.ws.title, raw.row, raw.column)
+                    if resolved.value_col == column:
+                        break
+            elif resolved.value_row is None or resolved.value_col is None:
+                raise GuardStop(Decision.UNABLE, "字段值区域尚未定位，不能推断为空。")
+            if not item.has_business_value():
+                empty.append(name)
+        if missing:
+            block_spec = ctx.resource.field_blocks[block_name]
+            sheet = block.resolved.worksheets[0]
+            last_row = min(sheet.max_row, block_spec.search_max_row)
+            last_column = min(sheet.max_column, block_spec.search_max_col)
+            for cells in sheet.iter_rows(max_row=last_row, max_col=last_column):
+                for raw in cells:
+                    if raw.data_type == "e":
+                        ctx.note_cell(sheet.title, raw.row, raw.column)
+            ctx.note_cell(sheet.title, 1, 1)
+            ctx.note_cell(sheet.title, last_row, last_column)
+            selected_code = missing_code
+            return "NG", "规定字段区未找到必需字段标签：" + "、".join(missing)
+        if empty:
+            selected_code = empty_code
+            return "NG", "已定位的字段尚未填写业务值：" + "、".join(empty)
+        ctx.mark_scope_complete()
+        return "PASS", "已核实规定字段标签存在且业务值非空。"
+
+    observed = checker_fact(agent, source_id, check, code=missing_code)
+    if observed["status"] == "defect":
+        if selected_code == "S05":
+            observed.update(status="unknown", code="S05", certainty="unknown", critical=False, message="受控模板结构待核：" + observed["message"])
+        else:
+            observed["code"] = selected_code
+            observed["critical"] = observed.get("certainty") == "confirmed" and selected_code in {"B01", "B02", "B03", "B04", "B05", "B06"}
+    return observed

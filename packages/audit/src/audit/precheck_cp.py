@@ -6,6 +6,7 @@ import re
 import unicodedata
 from collections import defaultdict
 from decimal import Decimal
+from typing import Any
 
 from audit.document_tools import effective
 from audit.engine.checkers.date_utils import normalize_excel_date
@@ -85,12 +86,22 @@ class CpFacts(SourceFacts):
         candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
         if not candidates or candidates[0][0] == 0:
             raise UnknownFact("控制计划主表或有效工序数据尚不能定位；未把空模板当作通过。")
-        if len(candidates) > 1 and candidates[0][:2] == candidates[1][:2] and candidates[0][2]["id"] != candidates[1][2]["id"]:
-            raise UnknownFact("多份同等控制计划表尚不能确定主表范围。")
+        self.layouts: dict[str, tuple[Any, ...]] = {}
+        for candidate in candidates:
+            self.layouts.setdefault(candidate[2]["id"], candidate)
+        self.multiple_tables = len(self.layouts) > 1
         _, _, self.table, self.header, self.end, self.columns = candidates[0]
-        self.rows = [row for row in range(self.end + 1, self.table["rows"] + 1) if key(effective(self.table, row, self.columns["name"]).get("value"))]
+        self.rows = []
+        for row in range(self.end + 1, self.table["rows"] + 1):
+            observed = effective(self.table, row, self.columns["name"])
+            if observed["state"] != "known":
+                raise UnknownFact("工序行归属所需单元格不可读取，不能静默漏行后声明通过。")
+            if key(observed.get("value")):
+                self.rows.append(row)
 
     def values(self, *fields):
+        if self.multiple_tables:
+            raise UnknownFact("原件有多个控制计划数据表；单表检查尚需确认范围，文档间元信息仍单独核对。")
         if any(field not in self.columns for field in fields):
             raise UnknownFact("受控模板的相关列尚未全部定位，需核对模板；未认定为供应商缺列。")
         for field in fields:
@@ -128,6 +139,14 @@ def cp_precheck(audit, preset_key, group=None):
                 raise DefectFact("B05", "卷面样本容量为0，不能取得有效样本。")
             elif not text:
                 raise DefectFact("W02", "部分样本容量尚未填写。")
+            elif re.fullmatch(r"(?:≥|>=)?\s*\d+(?:\.\d+)?\s*(?:件|pcs)?", text, re.I):
+                match = re.search(r"\d+(?:\.\d+)?", text)
+                assert match is not None
+                number = Decimal(match[0])
+                if number <= 0:
+                    raise DefectFact("B05", "卷面样本容量不大于0。")
+            elif text not in {"全检", "全部"}:
+                raise UnknownFact("容量表达尚未确认是正数样本量或有效百分比，未按非空即通过。")
 
     operations["C-01"] = capacity
 
@@ -194,15 +213,27 @@ def cp_precheck(audit, preset_key, group=None):
     operations["C-10"] = characteristic_numbers
 
     def dates():
-        values = facts.header_values([("编制日期", "创建日期"), ("修订日期",), ("批准日期", "公司批准日期")])
+        from audit.precheck_pairs import optional_label
+
+        values = facts.header_values([("编制日期", "创建日期"), ("修订日期",)])
+        approval = optional_label(facts, facts.table, ("批准日期", "公司批准日期", "公司批准/日期", "公司批准（日期）", "Company Approval/Date"), facts.header)
+        if approval is None and any(
+            re.search(r"^(?!.*(?:不含|无批准|无需批准|没有批准)).*(?:批准.*日期|approval.*date)", str(effective(facts.table, row, column).get("value") or ""), re.I)
+            for row in range(1, facts.header)
+            for column in range(1, facts.table["cols"] + 1)
+        ):
+            raise UnknownFact("原件存在批准日期相关标签但尚未可靠定位，未按字段不存在关闭。")
+        if approval is not None:
+            values.append(approval)
         if any(not key(value) for value in values):
             raise DefectFact("W02", "已定位的签署日期字段未全部填写。")
         normalized = [normalize_excel_date(value) for value in values]
         if any(value is None for value in normalized):
             raise DefectFact("B05", "签署日期已填写但不能解析为有效日期。")
-        dates = [value for value in normalized if value is not None]
-        if not dates[0] <= dates[1] <= dates[2]:
-            raise DefectFact("B06", "卷面编制、修订、批准日期链逆序。")
+        known = [value for value in normalized if value is not None]
+        if any(after < before for before, after in zip(known, known[1:])):
+            raise DefectFact("W06", "卷面编制、修订、批准日期链逆序；本项按源分则只记警告。")
+        return "已核实存在的签署日期链。" if approval is not None else "批准日期栏不存在，按S02关闭该段；已核实编制日期≤修订日期。"
 
     operations["C-13"] = dates
 
@@ -289,10 +320,15 @@ def cp_precheck(audit, preset_key, group=None):
 
     operations["M-10"] = empty_shell
 
+    from audit.precheck_cp_extra import additional_operations
+
+    operations.update(additional_operations(facts, customer, group))
     result = []
     for identifier in criteria:
         if identifier in base:
             result.append(base[identifier])
+        elif facts.multiple_tables and identifier not in {"X-01", "X-02", "X-03", "C-07", "M-13", "X-04", "P-01"}:
+            result.append(state_fact(preset_key + ":" + identifier, None, "原件有多个控制计划数据表；本项单表范围需确认。", status="unknown"))
         elif identifier in operations:
             result.append(facts.observe(preset_key + ":" + identifier, operations[identifier]))
         else:
