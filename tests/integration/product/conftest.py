@@ -163,3 +163,28 @@ def change_payload(view, uploaded, *, intent="save_and_analyze"):
         "intent": intent,
         "confirmation_source": "synthetic",
     }
+
+
+@pytest.fixture(scope="session")
+def v4_objects(tmp_path_factory):
+    """Real existing Silo/S3 boundary for V4 routing and browser acceptance."""
+    import subprocess
+    from pathlib import Path
+
+    from product.storage import S3Objects, ensure_bucket
+
+    root = Path(__file__).resolve().parents[3]
+    override = tmp_path_factory.mktemp("v4-object-service") / "ports.yaml"
+    override.write_text('services:\n  silo:\n    ports:\n      - "127.0.0.1:0:9000"\n', encoding="utf-8")
+    project = "ppap-v4-objects-" + uuid.uuid4().hex[:12]
+    compose = ["docker", "compose", "-p", project, "-f", str(root / "deploy/isolated-dev/compose.yaml"), "-f", str(override)]
+    try:
+        started = subprocess.run([*compose, "up", "-d", "--wait", "--wait-timeout", "120", "--no-build", "silo"], capture_output=True, text=True, timeout=180)
+        assert started.returncode == 0, "V4 S3 service did not start: " + started.stderr[-2500:]
+        binding = subprocess.run([*compose, "port", "silo", "9000"], capture_output=True, text=True, check=True, timeout=15).stdout.strip()
+        assert binding.startswith("127.0.0.1:") and binding.rsplit(":", 1)[1].isdigit(), binding
+        settings = Settings(s3_endpoint="http://" + binding, s3_bucket="ppap-v4-tests")
+        ensure_bucket(settings)
+        yield S3Objects(settings)
+    finally:
+        subprocess.run([*compose, "down", "--volumes", "--remove-orphans"], capture_output=True, timeout=60)
