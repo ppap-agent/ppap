@@ -129,6 +129,32 @@ def test_matching_placeholders_do_not_establish_part_identity(tmp_path):
     assert result["status"] == "unknown"
 
 
+def test_adjacent_field_labels_are_not_matching_part_numbers(tmp_path):
+    target = original(tmp_path, "target", part="零件名称")
+    reference = original(tmp_path, "reference", part="零件名称", title="过程流程图")
+    result = facts(target, "U08", GroupContextInput(by_audit_id={"reference": reference}))["pfd"]
+    assert result["status"] == "unknown"
+
+
+def test_a_document_type_in_a_metadata_value_is_not_a_source_title(tmp_path):
+    target = original(tmp_path, "target", part="过程流程图")
+    reference = original(tmp_path, "reference", part="过程流程图", title="其他报告")
+    result = facts(target, "U08", GroupContextInput(by_audit_id={"reference": reference}))["pfd"]
+    assert result["status"] == "unknown"
+
+
+def test_valid_unrelated_sample_photo_does_not_break_text_counterpart_checks(tmp_path):
+    from PIL import Image
+
+    path = tmp_path / "sample.png"
+    Image.new("RGB", (16, 12), "white").save(path)
+    photo = AuditInput(audit_id="photo", file_url=str(path))
+    group = GroupContextInput(by_audit_id={"photo": photo}, by_doc_type={"E07": [photo]})
+    observed = facts(original(tmp_path, "target"), "U08", group)
+    assert all(row["status"] == "not_checked" for row in observed.values())
+    assert observed["drawing"]["code"] == "S04-C" and observed["pfd"]["code"] == "S04-S"
+
+
 def test_title_referring_to_another_document_does_not_establish_source_identity(tmp_path):
     target = original(tmp_path, "target")
     reference = original(tmp_path, "reference", title="非过程流程图")

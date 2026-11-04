@@ -128,6 +128,9 @@ def execute_precheck(store, payload):
             try:
                 if freeze_target_rule_execution(body, file["original_filename"]) != execution:
                     raise ValueError("checker_binding_changed")
+                from audit.precheck_dependencies import dependency_facts
+
+                facts.extend(dependency_facts(audits[file["id"]], body.get("preset_key"), group))
                 cls = _agent_for_target(
                     body.get("type") or "", file["original_filename"], body.get("rule_profile") or "v2", preset_key=body.get("preset_key"), preset_customer=(body.get("customers") or [None])[0]
                 )

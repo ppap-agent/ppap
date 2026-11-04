@@ -95,6 +95,20 @@ def test_provided_unreadable_counterpart_is_an_execution_error(tmp_path):
     assert result.status == "ERR"
 
 
+def test_valid_sample_photo_cannot_break_an_independent_typed_characteristic_pair(tmp_path):
+    from PIL import Image
+
+    target, reference = original(tmp_path, "target", target=True), original(tmp_path, "reference")
+    path = tmp_path / "sample.png"
+    Image.new("RGB", (16, 12), "white").save(path)
+    photo = AuditInput(audit_id="photo", file_url=str(path))
+    group = GroupContextInput(by_audit_id={"reference": reference, "photo": photo}, by_doc_type={PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST.get_type_name(): [reference], "E07": [photo]})
+    body = preset_rule_body("UAES", "U07")
+    rule = RuleInput(rule_id="frozen-rule", **{name: value for name, value in body.items() if name != "kind"})
+    result = UaesPfmeaAgent(target, rule, group).check(2)
+    assert result.status == "PASS", result.suggestions
+
+
 def test_msa_broad_type_keeps_its_actual_kappa_subtype_available(tmp_path):
     from audit.checkers.v4.uaes.msa import UaesMsaAgent
 

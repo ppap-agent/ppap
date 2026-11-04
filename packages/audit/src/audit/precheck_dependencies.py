@@ -31,6 +31,36 @@ _DEPENDENCIES = {
     "N05": (_SCL,),
 }
 _CUSTOMERS = {"U": ("UAES", {"uaes", "联电", "联合电子", "联合汽车电子", "联合汽车电子有限公司"}), "L": ("理想", {"理想", "理想汽车", "liauto", "li"}), "N": ("蔚来", {"蔚来", "蔚来汽车", "nio"})}
+_LABELS = {
+    key(label)
+    for label in (
+        "客户",
+        "客户名称",
+        "Customer",
+        "Customer Name",
+        "零件号",
+        "零件编号",
+        "物料编号",
+        "客户零件号",
+        "理想汽车零件号",
+        "Part number",
+        "Part No",
+        "零件名称",
+        "物料名称",
+        "Part name",
+        "版本",
+        "版本号",
+        "修订版次",
+        "Revision",
+        "项目",
+        "项目名称",
+        "项目号",
+        "UAES项目编号",
+        "车型项目",
+        "MSA类型",
+        "实验室名称",
+    )
+}
 
 
 def _field(reader, aliases, *, required=True):
@@ -43,7 +73,7 @@ def _field(reader, aliases, *, required=True):
         if required:
             raise UnknownFact("关联身份字段尚未定位：" + aliases[0] + "。")
         return None
-    if len({identity(value) for value in values}) != 1 or identity(values[0]) in {"", "/", "na", "n/a", "tbd", "xxx", "无", "待填", "待定"}:
+    if len({identity(value) for value in values}) != 1 or identity(values[0]) in {"", "/", "na", "n/a", "tbd", "xxx", "无", "待填", "待定"} or key(values[0]) in _LABELS:
         raise UnknownFact("关联身份字段为空或有多个冲突值：" + aliases[0] + "。")
     return values[0]
 
@@ -57,6 +87,8 @@ def _has_title(reader, aliases):
             return True
         for row in range(1, min(5, table["rows"]) + 1):
             for column in range(1, table["cols"] + 1):
+                if column > 1 and key(effective(table, row, column - 1).get("value")) in _LABELS:
+                    continue
                 observed = effective(table, row, column)
                 if observed["state"] == "known" and matches(observed.get("value")):
                     reader.read(table, row, column)
@@ -82,7 +114,7 @@ def dependency_facts(audit, entry, group):
         from audit.precheck_facts import state_fact
 
         return [state_fact(entry + ":dependency:" + name, None, "本轮主件无法读取，关联到位尚未核实。", status="error") for name, *_ in dependencies]
-    cache = {audit.audit_id: target}
+    cache: dict[str, SourceFacts | None] = {audit.audit_id: target}
     results = []
     for name, kinds, titles, customer_owned in dependencies:
 
@@ -98,11 +130,12 @@ def dependency_facts(audit, entry, group):
                         raise StateFact("S02", "本件明确为计量型MSA，Kappa对端不适用。")
                     raise UnknownFact("MSA类型尚不能可靠归一，Kappa适用性待确认。")
             candidates = {item.audit_id: item for kind in kinds for item in group.get_files_by_type(kind) if item.audit_id != audit.audit_id}
+            photos = {item.audit_id for kind, items in group.by_doc_type.items() if key(kind) in {"e07", "生产件样品照片"} for item in items}
             all_originals = {item.audit_id: item for item in group.by_audit_id.values()}
             all_originals.update({item.audit_id: item for items in group.by_doc_type.values() for item in items})
             all_originals[audit.audit_id] = audit
             for version, original in all_originals.items():
-                if version in candidates:
+                if version in candidates or version in photos:
                     continue
                 reader = cache.setdefault(version, None)
                 if reader is None:
@@ -122,6 +155,7 @@ def dependency_facts(audit, entry, group):
             if other is None:
                 other = cache[original.audit_id] = SourceFacts(original)
             try:
+                fields: list[tuple[str, ...]]
                 if name == "dvr":
                     fields = [("实验室名称", "检测机构", "机构名称", "测试机构")]
                 else:
