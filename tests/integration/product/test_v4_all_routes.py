@@ -48,9 +48,10 @@ def content(source):
 
 
 @pytest.mark.parametrize(("customer", "expected_count"), [("UAES", 19), ("理想", 17), ("蔚来", 5)])
-def test_each_source_accepts_and_freezes_its_actual_customer_checker(auth_store_factory, customer, expected_count):
+def test_each_source_accepts_and_freezes_its_actual_customer_checker(auth_store_factory, v4_objects, customer, expected_count):
     settings = Settings(usage_charge_enabled=False, feishu_app_id="v4-route-acceptance", git_sha="route-test")
     admin = auth_store_factory(settings)
+    admin.objects = v4_objects
     principal = admin.upsert_feishu_identity("routes-" + uuid.uuid4().hex, "owner")
     api = build_product_store(settings, objects=admin.objects, role="api")
     worker = build_product_store(settings, objects=admin.objects, role="worker")

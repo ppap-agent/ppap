@@ -1,0 +1,295 @@
+"""Actual browser/API/PG/Worker journeys; only metadata transport is controlled.
+
+No business HTTP response is mocked. These cases do not certify external model
+quality, Feishu delivery, production charging, or visual supplier judgments.
+"""
+
+import io
+import json
+import os
+import re
+import signal
+import socket
+import subprocess
+import threading
+import time
+from pathlib import Path
+
+import httpx
+import pytest
+import uvicorn
+from api import create_app
+from openpyxl import Workbook
+from product import build_product_store
+from product.identity import SESSION_COOKIE
+from product.settings import Settings
+from worker import process_claimed
+
+pytest.importorskip("playwright.sync_api")
+from playwright.sync_api import expect, sync_playwright  # noqa: E402
+
+
+class Metadata:
+    def __init__(self, customer):
+        self.customer = customer
+
+    def structured_completion(self, *, operation, **kwargs):
+        if operation == "document_metadata_extraction":
+            return json.dumps({"customer": self.customer, "part_number": "P12345"})
+        if operation == "document_classification":
+            return "过程特殊特性清单"
+        raise AssertionError("Unexpected external operation in a native XLSX journey")
+
+
+def original(customer):
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "特殊特性清单"
+    sheet.append(["客户", customer])
+    if customer == "UAES":
+        sheet.append(["物料名称", "支架"])
+        sheet.append(["物料编号", "P12345"])
+        sheet.append(["编号", "产品特性", "特性及公差", "特性类型"])
+        sheet.append([1, "孔径", None, "CC"])
+    elif customer == "理想":
+        sheet.append(["零件名称", "支架", "零件号", "P12345"])
+        sheet.append(["供应商名称", None, "供应商编码", "S01"])
+        columns = ["过程/流程步骤", "部件(来料检时涉及)", "客户要求/功能要求", "特性名称", "检验岗位", "产品/过程特性分类", "名义值/规格中心值", "规格下限", "规格上限"]
+        controls = ["测量设备", "测量方式", "防错控制", "检查控制", "抽样频率", "SPC监控", "SPC线上管理计划时间", "说明（关键要求/操作参数等）"]
+        sheet.append(columns + ["T1-特性监控方法"] + [None] * 7 + ["现有管理方式风险评估", "高风险管理项预防措施"])
+        sheet.append([None] * 9 + controls)
+        sheet.merge_cells("J4:Q4")
+        for column in (*range(1, 10), 18, 19):
+            sheet.merge_cells(start_row=4, end_row=5, start_column=column, end_column=column)
+        sheet.append(["10 压装", "衬套", "定位", "孔径", "检验", "产品", 10, 9.9, 10.1] + ["适用"] * 8 + ["高风险", "定位防错"])
+    else:
+        sheet.append(["P12345 特殊特性清单"])
+        names = ["零件编号", "零件名称", "特性分类", "特性描述", "特性值", "特性类别", "特殊特性种类", "控制方法（制造过程）", "防错方案描述", "频次", "样本数"]
+        sheet.append(names)
+        sheet.append(["P12345", "支架", "产品", "孔径", "10±0.1", "CC", "CC", "量规", "定位", "每班", None])
+    stream = io.BytesIO()
+    book.save(stream)
+    book.close()
+    return stream.getvalue()
+
+
+@pytest.fixture
+def running_product(auth_store_factory, v4_objects, tmp_path, request):
+    customer = request.param
+    settings = Settings(usage_charge_enabled=False, feishu_app_id="native-v4", git_sha="browser-source-test")
+    admin = auth_store_factory(settings)
+    admin.objects = v4_objects
+    principal = admin.upsert_feishu_identity("browser-v4", "member")
+    api = build_product_store(settings, objects=admin.objects, role="api")
+    worker = build_product_store(settings, objects=admin.objects, role="worker")
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    api_url = f"http://127.0.0.1:{listener.getsockname()[1]}"
+    server = uvicorn.Server(uvicorn.Config(create_app(settings, auth_store=api), log_level="warning"))
+    api_thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
+    api_thread.start()
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        web_port = probe.getsockname()[1]
+    web = f"http://127.0.0.1:{web_port}"
+    log = (tmp_path / "web.log").open("w+")
+    root = Path(__file__).resolve().parents[3]
+    vite = subprocess.Popen(
+        ["pnpm", "exec", "vite", "--host", "127.0.0.1", "--port", str(web_port), "--strictPort"],
+        cwd=root / "apps/web",
+        env={**os.environ, "PPAP_PREVIEW": "0", "PPAP_PUBLIC_API_URL": api_url},
+        stdout=log,
+        stderr=log,
+        start_new_session=True,
+    )
+    stop = threading.Event()
+    errors = []
+
+    def work():
+        while not stop.wait(0.05):
+            try:
+                job = worker.claim_job("native-browser")
+                if job:
+                    process_claimed(worker, job, "native-browser", rule_ai=Metadata(customer))
+            except Exception as error:
+                errors.append(type(error).__name__)
+                return
+
+    worker_thread = threading.Thread(target=work, daemon=True)
+    try:
+        deadline = time.monotonic() + 45
+        while True:
+            try:
+                if httpx.get(web + "/runtime-config.json", timeout=1).status_code == 200 and server.started:
+                    break
+            except httpx.HTTPError:
+                pass
+            assert vite.poll() is None, "Native Web did not start"
+            assert time.monotonic() < deadline, "Native product server startup timed out"
+            time.sleep(0.1)
+        worker_thread.start()
+        yield web, admin.create_session(principal), errors
+    finally:
+        stop.set()
+        if worker_thread.ident:
+            worker_thread.join(timeout=30)
+        server.should_exit = True
+        api_thread.join(timeout=10)
+        try:
+            os.killpg(vite.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            vite.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            os.killpg(vite.pid, signal.SIGKILL)
+            vite.wait(timeout=5)
+        listener.close()
+        log.close()
+
+
+@pytest.mark.parametrize("running_product", ["UAES", "理想", "蔚来"], indirect=True)
+def test_customer_intake_to_original_issue_and_frozen_precheck_export(running_product, request):
+    web, session, errors = running_product
+    customer = request.node.callspec.params["running_product"]
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        context = browser.new_context(viewport={"width": 1440, "height": 1000}, accept_downloads=True)
+        context.add_cookies([{"name": SESSION_COOKIE, "value": session, "url": web, "httpOnly": True}])
+        page = context.new_page()
+        page.set_default_timeout(20000)
+        try:
+            page.goto(web + "/tasks/new")
+            picker = page.get_by_role("combobox", name="审核客户", exact=True)
+            expect(picker).to_be_visible()
+            picker.click()
+            page.get_by_role("option", name="理想" if customer != "理想" else "蔚来", exact=True).click()
+            picker.click()
+            page.get_by_role("option", name="UAES（联电）" if customer == "UAES" else customer, exact=True).click()
+            default = page.request.get(web + "/api/audit-customers/default")
+            assert default.status == 200 and default.json()["customer_preference"] is None
+            source_bytes = original(customer)
+            with page.expect_file_chooser() as choose:
+                page.get_by_role("button", name="选择本地文件", exact=True).click()
+            choose.value.set_files({"name": "特殊特性清单.xlsx", "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": source_bytes})
+            expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
+            page.get_by_role("button", name="开始识别", exact=True).click()
+            expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_enabled(timeout=30000)
+            snapshot_region = page.get_by_role("region", name="免费内容预检", exact=True)
+            expect(snapshot_region).to_be_visible()
+            # Polling and reload read the same actual database record.
+            page.reload()
+            expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_enabled()
+            with page.expect_download() as downloaded:
+                page.get_by_role("button", name="导出此预检记录", exact=True).click()
+            export = Path(downloaded.value.path()).read_text()
+            assert "预检" in export and "特殊特性清单.xlsx" in export
+            snapshot_region.get_by_role("button", name="读取预检历史", exact=True).click()
+            expect(snapshot_region.get_by_role("list", name="预检历史", exact=True)).to_be_visible()
+            snapshot_region.get_by_role("button", name=re.compile("^修订 0")).click()
+            page.get_by_role("button", name="开始审核", exact=True).click()
+            result_file = page.get_by_role("button", name=re.compile(r"^特殊特性清单\.xlsx NG"))
+            expect(result_file).to_be_visible(timeout=30000)
+            expect(page.get_by_role("region", name="免费内容预检", exact=True)).to_have_count(1)
+            result_file.click()
+            page.get_by_role("combobox", name="审核结果筛选", exact=True).click()
+            page.get_by_role("option", name="不符合", exact=True).click()
+            page.get_by_role("button", name=re.compile("^查看依据 ")).first.click()
+            expect(page.get_by_role("heading", name="机器判定依据", exact=True)).to_be_visible()
+            page.get_by_role("button", name="核对 特殊特性清单.xlsx", exact=True).first.click()
+            preview = page.get_by_role("region", name="原件预览", exact=True)
+            expect(preview).to_be_visible()
+            download_link = preview.get_by_role("link", name="下载原件", exact=True)
+            expect(download_link).to_be_visible()
+            original_response = page.request.get(web + download_link.get_attribute("href") if download_link.get_attribute("href").startswith("/") else download_link.get_attribute("href"))
+            assert original_response.status == 200
+            assert original_response.body() == source_bytes
+            page.keyboard.press("Escape")
+            page.get_by_role("button", name="报告中心", exact=True).click()
+            report_download = page.get_by_role("button", name="下载当前报告", exact=True)
+            expect(report_download).to_be_enabled(timeout=30000)
+            with page.expect_download() as report_file:
+                report_download.click()
+            assert Path(report_file.value.path()).read_bytes().startswith(b"%PDF")
+            page.reload()
+            expect(page.get_by_role("region", name="逐文件审核报告", exact=True)).to_be_visible()
+            assert not errors, errors
+        except BaseException:
+            page.screenshot(path=str(Path("/tmp") / f"ppap-v4-real-browser-{customer}.png"), full_page=True)
+            raise
+        finally:
+            context.close()
+            browser.close()
+
+
+@pytest.mark.parametrize("running_product", ["蔚来"], indirect=True)
+def test_cross_file_problem_opens_both_authorized_frozen_originals(running_product):
+    web, session, errors = running_product
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        context = browser.new_context(viewport={"width": 1440, "height": 1000})
+        context.add_cookies([{"name": SESSION_COOKIE, "value": session, "url": web, "httpOnly": True}])
+        page = context.new_page()
+        page.set_default_timeout(20000)
+        originals = []
+        try:
+            for title, rows in [
+                (
+                    "PFMEA",
+                    [
+                        ["过程步骤", "特殊特性", "过程项功能", "失效影响", "严重度", "现行探测控制", "探测度"],
+                        ["10 成型", "KPC", "内部：压装 客户工厂：装车 最终用户：乘坐", "内部：返工（4） 客户工厂：返工（6） 最终用户：异响（5）", 6, "检查（6）", 6],
+                    ],
+                ),
+                ("过程流程图", [["工序号", "工序名称", "产品特殊特性", "产品特性类别", "过程特殊特性", "过程特性类别"], [10, "成型", "孔径", "CC", "温度", "SC"]]),
+            ]:
+                book = Workbook()
+                book.active.title = title
+                for row in [["零件号", "P12345", "版本", "A"], ["客户名称", "蔚来"], *rows]:
+                    book.active.append(row)
+                stream = io.BytesIO()
+                book.save(stream)
+                book.close()
+                data = stream.getvalue()
+                response = page.request.post(web + "/api/files", data={"original_filename": title + ".xlsx", "byte_size": len(data)})
+                assert response.status == 201
+                file = response.json()
+                path = f"{web}/api/files/{file['file_id']}/versions/{file['id']}"
+                assert page.request.put(path + "/blob", data=data).status == 200
+                assert page.request.post(path + "/finalize").status == 200
+                import uuid
+
+                validation_id = str(uuid.uuid4())
+                validation = page.request.post(web + "/api/file-validations", data={"request_id": validation_id, "source_file_id": file["file_id"], "source_file_version_id": file["id"]})
+                assert validation.status == 202
+                deadline = time.monotonic() + 20
+                while page.request.get(web + "/api/file-validations/" + validation_id).json()["status"] != "succeeded":
+                    assert time.monotonic() < deadline
+                    page.wait_for_timeout(50)
+                originals.append((title, data, {"file_version_id": file["id"], "validation_id": validation_id, "selection": "selected", "removal_reason": None, "reference_only": title != "PFMEA"}))
+            response = page.request.post(
+                web + "/api/audit-tasks", data={"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": "蔚来", "files": [file for _, _, file in originals]}
+            )
+            assert response.status == 202, response.text()
+            page.goto(web + "/tasks/" + response.json()["id"])
+            expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_enabled(timeout=30000)
+            page.get_by_role("button", name="开始审核", exact=True).click()
+            target = page.get_by_role("button", name=re.compile(r"^PFMEA\.xlsx NG"))
+            expect(target).to_be_visible(timeout=30000)
+            target.click()
+            for title, data, file in originals:
+                page.get_by_role("button", name=re.compile(r"^查看依据 N02:7:")).click()
+                page.get_by_role("button", name="核对 " + title + ".xlsx", exact=True).first.click()
+                pane = page.get_by_role("region", name="原件预览", exact=True)
+                expect(pane).to_have_attribute("data-file-version", file["file_version_id"])
+                link = pane.get_by_role("link", name="下载原件", exact=True)
+                expect(link).to_be_visible()
+                from urllib.parse import urljoin
+
+                response = page.request.get(urljoin(web, link.get_attribute("href")))
+                assert response.status == 200 and response.body() == data
+                page.keyboard.press("Escape")
+            assert not errors, errors
+        finally:
+            context.close()
+            browser.close()
