@@ -5,6 +5,7 @@ import json
 
 import pytest
 from audit.audits import RoundInput, RoundWork
+from audit.checkers.v4.pfmea_local import pair_identity
 from audit.engine.checkers.rule_declarations import freeze_target_rule_execution
 from audit.presets import preset_rule, preset_rule_body
 from openpyxl import Workbook
@@ -18,7 +19,7 @@ def serialized(book):
     return content.getvalue()
 
 
-def pfmea(*, characteristic="G", process="10 成型", severity=6, detection=6, function=None):
+def pfmea(*, characteristic="G", process="10 成型", severity=6, detection=6, function=None, part="P123", revision="A"):
     book = Workbook()
     sheet = book.active
     sheet.title = "PFMEA"
@@ -26,8 +27,8 @@ def pfmea(*, characteristic="G", process="10 成型", severity=6, detection=6, f
         ("公司名称", "供应商"),
         ("车型项目", "X1"),
         ("零件名称", "支架"),
-        ("零件号", "P123"),
-        ("版本", "A"),
+        ("零件号", part),
+        ("版本", revision),
         ("客户名称", "理想"),
         ("制造地址", "上海"),
         ("PFMEA开始日期", "2026-01-01"),
@@ -113,11 +114,11 @@ def test_frozen_but_unreadable_peer_is_a_technical_failure():
     assert [findings[clauses[i].id]["status"] for i in (2, 4)] == ["ERR", "ERR"]
 
 
-def warranty():
+def warranty(*, part="P123", revision="A"):
     book = Workbook()
     sheet = book.active
     sheet.title = "零件提交保证书"
-    sheet.append(["理想汽车零件号", "P123", "工程更改版本", "A"])
+    sheet.append(["理想汽车零件号", part, "工程更改版本", revision])
     sheet.append(["客户名称", "理想"])
     return serialized(book)
 
@@ -153,8 +154,35 @@ def test_warranty_unreadable_frozen_list_is_error():
     assert findings[preset_rule("理想", "L17").clauses[0].id]["status"] == "ERR"
 
 
+@pytest.mark.parametrize("kind", ["控制计划", "过程流程图"])
+def test_warranty_readable_delivery_list_does_not_depend_on_unrelated_failed_inputs(kind):
+    findings, _ = execute("L17", warranty(), [("交付清单.xlsx", delivery()), (kind + ".xlsx", None)])
+    assert findings[preset_rule("理想", "L17").clauses[0].id]["status"] == "PASS"
+
+
+@pytest.mark.parametrize("field,value", [("part", "无"), ("part", "/"), ("part", "TBD"), ("part", "零件名称"), ("revision", "无"), ("revision", "版本号")])
+def test_li_auto_pair_does_not_treat_matching_placeholders_as_identity(field, value):
+    values = {field: value}
+    findings, _ = execute("L17", warranty(**values), [("交付清单.xlsx", delivery(**values))])
+    assert findings[preset_rule("理想", "L17").clauses[0].id]["status"] == "UNABLE"
+    findings, _ = execute("L07", pfmea(**values), [("过程流程图.xlsx", pfd(**values))])
+    assert [findings[preset_rule("理想", "L07").clauses[index].id]["status"] for index in (2, 4)] == ["UNABLE", "UNABLE"]
+
+
 def test_pfmea_generic_category_headers_keep_original_text_in_evidence():
     findings, _ = execute("L07", pfmea(), [("过程流程图.xlsx", pfd(generic=True))])
     row = findings[preset_rule("理想", "L07").clauses[4].id]
     assert row["status"] == "PASS", row
     assert any(source["excerpt"] == "特性类别" for source in row["locator"]["evidence"]["sources"])
+
+
+@pytest.mark.parametrize("part", ["P-123", "P/123", "P.123", "000123"])
+def test_pair_identity_preserves_real_part_punctuation_and_leading_zeros(part):
+    assert pair_identity(part) == part.casefold()
+    findings, _ = execute("L17", warranty(part=part, revision=None), [("交付清单.xlsx", delivery(part=part, revision=None))])
+    assert findings[preset_rule("理想", "L17").clauses[0].id]["status"] == "PASS"
+
+
+@pytest.mark.parametrize("label", ["零件号：", "项目代号", "UAES项目编号", "工程更改版本", "Part No."])
+def test_pair_identity_rejects_copied_source_labels(label):
+    assert pair_identity(label) is None

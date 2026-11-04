@@ -32,6 +32,46 @@ def _identity(value) -> str:
     return "".join(normalize_text(value).split()).casefold()
 
 
+def pair_identity(value) -> str | None:
+    """A pairing key must be actual source data, not a placeholder or a label."""
+    normalized = _identity(value)
+    placeholders = {"", "/", "-", "--", "—", "–", "na", "n/a", "n.a.", "none", "null", "tbd", "xx", "xxx", "xxxx", "无", "待填", "待定", "待确认", "未填写"}
+    labels = {
+        _identity(label)
+        for label in (
+            "零件号",
+            "零件编号",
+            "零件名称",
+            "物料编号",
+            "物料名称",
+            "理想汽车零件号",
+            "客户零件号",
+            "Part number",
+            "Part No",
+            "Part No.",
+            "版本",
+            "版本号",
+            "工程更改版本",
+            "Revision",
+            "版次",
+            "修订版次",
+            "项目",
+            "项目名称",
+            "车型项目",
+            "项目代号",
+            "UAES项目编号",
+            "客户",
+            "客户名称",
+            "Customer",
+            "Customer Name",
+            "供应商名称",
+            "供应商代码",
+            "日期",
+        )
+    }
+    return None if normalized in placeholders or normalized.rstrip(":：") in labels else normalized
+
+
 def _label(ctx, workbook, labels, version, *, sheets=None):
     values = set()
     keys = {_identity(label) for label in labels}

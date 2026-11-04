@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unicodedata
 
+from audit.checkers.v4.pfmea_local import pair_identity
 from audit.document_tools import effective
 from audit.engine.checkers.date_utils import normalize_excel_date
 from audit.precheck_facts import DefectFact, SourceFacts, StateFact, UnknownFact, key
@@ -81,8 +82,7 @@ def optional_label(reader, original, aliases, before):
 def pair(left, left_table, left_header, right, right_table, right_header, customer, *, numeric_zeros=False, compare_version=True):
     left_part = left.label(left_table, ("零件号", "零件编号", "物料编号"), left_header)
     right_part = right.label(right_table, ("零件号", "零件编号", "物料编号"), right_header)
-    placeholders = {"", "/", "na", "n/a", "tbd", "xxx", "待填", "待定", "无"}
-    if identity(left_part) in placeholders or identity(right_part) in placeholders or identity(left_part, numeric_zeros=numeric_zeros) != identity(right_part, numeric_zeros=numeric_zeros):
+    if not pair_identity(left_part) or not pair_identity(right_part) or identity(left_part, numeric_zeros=numeric_zeros) != identity(right_part, numeric_zeros=numeric_zeros):
         raise UnknownFact("原件零件号不完整或不对应，不能将不同零件当作跨文件缺陷。")
     identity_fields: list[tuple[str, ...]] = [("项目", "项目名称", "车型项目", "项目代号", "UAES项目编号")]
     if compare_version:
@@ -91,7 +91,7 @@ def pair(left, left_table, left_header, right, right_table, right_header, custom
         first = optional_label(left, left_table, aliases, left_header)
         second = optional_label(right, right_table, aliases, right_header)
         if first is not None or second is not None:
-            if not identity(first) or identity(first) != identity(second):
+            if not pair_identity(first) or pair_identity(first) != pair_identity(second):
                 raise UnknownFact("原件项目或版本不对应/未填写，须先确认配对。")
     allowed = {"UAES": {"uaes", "联合电子", "联合汽车电子"}, "理想": {"理想", "理想汽车", "liauto"}, "蔚来": {"蔚来", "蔚来汽车", "nio"}}[customer]
     for reader, original, before in [(left, left_table, left_header), (right, right_table, right_header)]:

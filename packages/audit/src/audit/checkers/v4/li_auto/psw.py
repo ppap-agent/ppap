@@ -6,10 +6,11 @@ from datetime import datetime
 from audit.checkers.v3.cross_file_extractors import _load_workbook_auto
 from audit.checkers.v3.excel_agent import rule
 from audit.checkers.v3.psw_excel_agent import PswExcelAgent
-from audit.checkers.v4.pfmea_local import _identity, _label, _rows
+from audit.checkers.v4.pfmea_local import _identity, _label, _rows, pair_identity
 from audit.engine.checkers.docx_workbook_agent import StructuredDocxWorkbookMixin
 from audit.engine.checkers.psw_docx_evidence import PswDocxEvidenceMixin
 from audit.engine.rule_engine import Table
+from audit.kinds import PpapDocumentType
 
 from .facts import NativeFacts, precheck_fact
 
@@ -43,6 +44,24 @@ class LiAutoPswAgent(NativeFacts, PswExcelAgent):
     def _delivery_sheets(workbook):
         return [sheet for sheet in workbook.worksheets if any(name in sheet.title for name in ("生产件批准交付物文件清单", "生产件批准提交清单", "PSW交付物清单"))]
 
+    @staticmethod
+    def _could_contain_delivery_list(kind):
+        if not kind or _identity(kind) in {"unknown", "未知", "未知类型"}:
+            return True
+        if any(name in str(kind) for name in ("生产件批准交付物文件清单", "生产件批准提交清单", "PSW交付物清单")):
+            return True
+        typed = PpapDocumentType.from_string(str(kind))
+        if typed != PpapDocumentType.UNKNOWN:
+            return typed == PpapDocumentType.PSW
+        if str(kind) == "T17":
+            return True
+        from audit.presets import customer_presets
+
+        if any(preset.source_type == kind for preset in customer_presets()):
+            return False
+        # An unclassified source may contain an embedded delivery table.
+        return True
+
     @rule("生产件批准交付物文件清单附件检查")
     def rule_1(self, ctx):
         candidates = []
@@ -52,10 +71,18 @@ class LiAutoPswAgent(NativeFacts, PswExcelAgent):
             candidates.append((ctx.workbook, self.audit_file.audit_id, local))
         try:
             if not local and self.group_context:
-                if self.group_context.unavailable_files:
+                if any(self._could_contain_delivery_list(kind) for kind in self.group_context.unavailable_files.values()):
                     raise OSError("本轮关联原件读取失败，不能核实唯一交付物清单。")
-                for ref in self.group_context.by_audit_id.values():
+                references = dict(self.group_context.by_audit_id)
+                known_types = {}
+                for kind, entries in self.group_context.by_doc_type.items():
+                    for ref in entries:
+                        references[ref.audit_id] = ref
+                        known_types.setdefault(ref.audit_id, []).append(kind)
+                for ref in references.values():
                     if ref.audit_id == self.audit_file.audit_id:
+                        continue
+                    if ref.audit_id in known_types and not any(self._could_contain_delivery_list(kind) for kind in known_types[ref.audit_id]):
                         continue
                     workbook = _load_workbook_auto(ref.file_url)
                     opened.append(workbook)
@@ -73,11 +100,11 @@ class LiAutoPswAgent(NativeFacts, PswExcelAgent):
             if workbook is not ctx.workbook:
                 own_part = _label(ctx, ctx.workbook, ("理想汽车零件号", "零件号", "零件编号"), self.audit_file.audit_id)
                 other_part = _label(ctx, workbook, ("理想汽车零件号", "零件号", "零件编号"), version, sheets=sheets)
-                if not own_part or not other_part or _identity(own_part) != _identity(other_part):
+                if not pair_identity(own_part) or pair_identity(own_part) != pair_identity(other_part):
                     return "UNABLE", "保证书与交付物清单零件号缺失或不一致，不能配对。"
                 own_revision = _label(ctx, ctx.workbook, ("工程更改版本", "版本", "版本号"), self.audit_file.audit_id)
                 other_revision = _label(ctx, workbook, ("工程更改版本", "版本", "版本号"), version, sheets=sheets)
-                if (own_revision or other_revision) and (not own_revision or not other_revision or _identity(own_revision) != _identity(other_revision)):
+                if (own_revision or other_revision) and (not pair_identity(own_revision) or pair_identity(own_revision) != pair_identity(other_revision)):
                     return "UNABLE", "保证书与交付物清单版本缺失或不一致。"
             rows = _rows(ctx, workbook, {"item": ["项目", "交付物", "提交项目"], "attachment": ["附件"]}, ("item", "attachment"), version, sheets=sheets)
             checked = 0

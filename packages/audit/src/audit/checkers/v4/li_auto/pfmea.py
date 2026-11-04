@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from audit.checkers.v3.cross_file_extractors import _load_workbook_auto
 from audit.checkers.v3.excel_agent import rule
 from audit.checkers.v3.pfmea_shared import PFD_FIELD_ALIASES
-from audit.checkers.v4.pfmea_local import _NON_DATA_SHEETS, PfmeaLocalChecks, _identity, _label, _rows, _step_key
+from audit.checkers.v4.pfmea_local import _NON_DATA_SHEETS, PfmeaLocalChecks, _identity, _label, _rows, _step_key, pair_identity
 from audit.engine.rule_engine import Decision, GuardStop
 from audit.kinds import PpapDocumentType
 
@@ -39,11 +39,11 @@ class LiAutoPfmeaAgent(PfmeaLocalChecks, NativeFacts):
             ctx.bind_workbook(workbook, related.audit_id)
             part = self._target_label(ctx, ("零件号", "零件编号"))
             other = _label(ctx, workbook, ("零件号", "零件编号"), related.audit_id, sheets=sheets)
-            if not part or not other or _identity(part) != _identity(other):
+            if not pair_identity(part) or pair_identity(part) != pair_identity(other):
                 raise GuardStop(Decision.UNABLE, "两份原件的零件号缺失或不一致。")
             revision = self._target_label(ctx, ("版本", "版本号", "修订版次"))
             other_revision = _label(ctx, workbook, ("版本", "版本号", "修订版次"), related.audit_id, sheets=sheets)
-            if (revision or other_revision) and (not revision or not other_revision or _identity(revision) != _identity(other_revision)):
+            if (revision or other_revision) and (not pair_identity(revision) or pair_identity(revision) != pair_identity(other_revision)):
                 raise GuardStop(Decision.UNABLE, "两份原件版本缺失或不一致。")
             for source, version, scope in [(ctx.workbook, self.audit_file.audit_id, self._target_sheets(ctx)), (workbook, related.audit_id, sheets)]:
                 customer = _label(ctx, source, ("客户", "客户名称", "Customer", "Customer Name"), version, sheets=scope)

@@ -122,6 +122,13 @@ def test_provided_but_unreadable_pair_is_an_execution_error(reference):
     assert all(findings[index]["status"] == "PASS" for index in range(5))
 
 
+@pytest.mark.parametrize("field,value", [("part", "无"), ("part", "/"), ("part", "TBD"), ("part", "零件名称"), ("revision", "无"), ("revision", "版本号")])
+def test_matching_placeholders_do_not_establish_nio_pair_identity(field, value):
+    values = {field: value}
+    findings, _ = execute(pfmea(**values), [pfd(**values)])
+    assert [findings[index]["status"] for index in (5, 6)] == ["UNABLE", "UNABLE"]
+
+
 def test_auxiliary_pfd_table_cannot_supply_the_comparison_rows():
     from openpyxl import load_workbook
 
