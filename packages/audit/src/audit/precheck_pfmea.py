@@ -13,6 +13,9 @@ from audit.precheck_sources import l1_criteria
 
 ALIASES = {
     "step": ("过程步骤", "过程步骤编号", "工序号", "工序名称", "过程编号", "PROCESSSTEP"),
+    "characteristic": ("功能/要求", "功能/产品特性", "功能/过程特性"),
+    "product_characteristic": ("产品特性",),
+    "process_characteristic": ("过程特性",),
     "function": ("过程项功能", "过程项的功能", "过程项目的功能", "过程名称的功能", "FUNCTIONOFTHEPROCESSITEM", "PROCESSITEMFUNCTION"),
     "effect": ("失效影响", "失效后果", "失效影响FE", "失效影FE", "FAILUREEFFECT"),
     "severity": ("严重度", "严重度S", "严重性", "SEVERITY", "S"),
@@ -131,7 +134,15 @@ class PfmeaFacts(SourceFacts):
             raise UnknownFact("存在多份同等候选PFMEA主表，需确认本次数据范围。")
         _, _, self.table, self.header, self.end, self.columns = candidates[0]
         trigger = self.columns.get("mode") or self.columns.get("cause")
-        self.rows = [row for row in range(self.end + 1, self.table["rows"] + 1) if key(effective(self.table, row, trigger).get("value"))]
+        if trigger is None:
+            raise UnknownFact("失效模式/失效起因列均未定位，不能确定数据行范围。")
+        self.rows = []
+        for row in range(self.end + 1, self.table["rows"] + 1):
+            observed = effective(self.table, row, trigger)
+            if observed["state"] != "known":
+                raise UnknownFact("PFMEA行归属所需单元格不可读取，未跳过该行后按已检查通过。")
+            if key(observed.get("value")):
+                self.rows.append(row)
         if not self.rows:
             raise UnknownFact("PFMEA无可核实的数据行，不能按空范围通过。")
 
@@ -329,10 +340,20 @@ def pfmea_precheck(audit, preset_key, group=None):
             for table in facts.data["tables"]
             for r in range(1, table["rows"] + 1)
             for c in range(1, table["cols"] + 1)
-            if any(token in str(effective(table, r, c).get("value") or "") for token in ("经验教训", "历史问题", "客户抱怨", "过往失效"))
+            if any(
+                token in str(effective(table, r, c).get("value") or "")
+                for token in ("经验教训", "历史问题", "客户抱怨", "过往失效", "类似产品", "Lessons Learned", "lessons learned", "8D报告", "召回", "抱怨", "返修", "问题清单")
+            )
         ]
         if not matches:
-            raise UnknownFact("尚未定位到经验教训引用；不能推断是否使用了历史案例。")
+            if facts.data["source"]["format"] not in {".xlsx", ".xlsm", ".xls"} or any(
+                table.get("visual_evidence") or any(cell.get("state") != "known" for cell in table["cells"].values()) for table in facts.data["tables"]
+            ):
+                raise UnknownFact("尚未定位到经验教训引用，存在未核实图文/公式内容；不推断未使用历史案例。")
+            for table in facts.data["tables"]:
+                if table["rows"] and table["cols"]:
+                    facts.read(table, 1, 1)
+            raise DefectFact("W01", "已扫描原生表格全部可读文本，未发现源分则经验教训/历史案例引用关键词。")
         for table, row, column in matches:
             text = str(facts.read(table, row, column) or "")
             if len(text) > 8:
@@ -372,39 +393,12 @@ def pfmea_precheck(audit, preset_key, group=None):
         if len(candidates) != 1:
             raise UnknownFact("过程流程图数据表或列不能唯一定位，尚不能跨文件判断。")
         table, header, columns = candidates[0]
-        # Pair on independently read original part numbers. File names and the
-        # Task customer selection alone do not prove the two originals match.
-        left = facts.label(facts.table, ("零件号", "零件编号"), facts.header)
-        right = peer.label(table, ("零件号", "零件编号"), header)
+        from audit.precheck_pairs import pair
 
-        def identity(value):
-            return "".join(str(value or "").split()).casefold()
+        pair(facts, facts.table, facts.header, peer, table, header, customer)
+        from audit.precheck_pairs import rows as read_rows
 
-        if not identity(left) or identity(left) != identity(right):
-            raise UnknownFact("两份原件零件号不完整或不一致，尚不能归为同一零件。")
-
-        def optional_label(reader, original, names, before):
-            present = any(key(effective(original, r, c).get("value")) in {key(name) for name in names} for r in range(1, before) for c in range(1, original["cols"] + 1))
-            return reader.label(original, names, before) if present else None
-
-        for names in [("项目", "项目名称", "车型项目", "项目代号"), ("版本", "版本号", "修订版次")]:
-            left_value = optional_label(facts, facts.table, names, facts.header)
-            right_value = optional_label(peer, table, names, header)
-            if left_value is not None or right_value is not None:
-                if not identity(left_value) or identity(left_value) != identity(right_value):
-                    raise UnknownFact("两份原件项目或版本缺失/不一致，不能作跨文件冲突判断。")
-        customer_aliases = {"理想": {"理想", "理想汽车", "liauto"}, "蔚来": {"蔚来", "蔚来汽车", "nio"}}[customer]
-        for reader, original, before in [(facts, facts.table, facts.header), (peer, table, header)]:
-            declared = optional_label(reader, original, ("客户", "客户名称", "Customer", "Customer Name"), before)
-            if declared is not None and key(declared) not in customer_aliases:
-                raise UnknownFact("原件明确客户标识与当前客户冲突，须确认或拆分任务。")
-        rows = []
-        for index in range(header + 1, table["rows"] + 1):
-            if not key(effective(table, index, columns["name"]).get("value")):
-                continue
-            rows.append({field: peer.read(table, index, column, vertical_only=True) for field, column in columns.items()})
-        if not rows:
-            raise UnknownFact("对端过程流程图没有可核实数据行，不能按空集合通过。")
+        rows = read_rows(peer, (table, header, columns), trigger=("name",))
         for source in peer.sources:
             if source not in facts.sources and len(facts.sources) < 100:
                 facts.sources.append(source)
@@ -453,6 +447,9 @@ def pfmea_precheck(audit, preset_key, group=None):
 
     operations["R18"] = r18
 
+    from audit.precheck_pfmea_pairs import cross_operations
+
+    operations.update(cross_operations(facts, customer, group))
     result = []
     for identifier in source_ids:
         if identifier in base:

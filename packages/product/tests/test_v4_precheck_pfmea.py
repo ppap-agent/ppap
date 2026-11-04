@@ -192,3 +192,81 @@ def test_explicit_version_or_customer_conflict_prevents_cross_file_ng(tmp_path):
     book.close()
     result = with_peer(audit, peer)
     assert result["R17"]["status"] == "unknown" and result["R17"]["code"] is None
+
+
+def _paired_file(tmp_path, filename, *, date="2025-01-01", operation="OP10", part="P-1", name="零件A", with_history=True):
+    path = tmp_path / filename
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "过程流程图" if filename.startswith("pfd") else "控制计划"
+    for row in [["零件号", part], ["零件名称", name], ["项目", "M1"], ["工序号", "工序名称"], [operation, "加工"]]:
+        sheet.append(row)
+    if with_history:
+        history = book.create_sheet("变更履历")
+        history.append(["版本", "修订日期", "变更说明"])
+        history.append(["A", date, "正式发布"])
+    book.save(path)
+    book.close()
+    return AuditInput(audit_id=filename + "-version", file_url=str(path))
+
+
+def _trio(audit, pfd, cp):
+    from audit.contracts import GroupContextInput
+    from audit.kinds import PpapDocumentType
+
+    return {
+        row["id"].split(":", 1)[1]: row
+        for row in pfmea_precheck(audit, "N02", GroupContextInput(by_doc_type={PpapDocumentType.PROCESS_FLOW_CHART.get_type_name(): [pfd], PpapDocumentType.CONTROL_PLAN.get_type_name(): [cp]}))
+    }
+
+
+def test_three_original_identity_process_sets_and_history_dates_are_executed(tmp_path):
+    audit = original(tmp_path)
+    pfd = _paired_file(tmp_path, "pfd.xlsx")
+    cp = _paired_file(tmp_path, "cp.xlsx", date="2025-03-01")
+    observed = _trio(audit, pfd, cp)
+    assert observed["R21"]["status"] == observed["R22"]["status"] == "satisfied"
+    sources = {__import__("json").loads(source["locator"])["file_version_id"] for source in observed["R22"]["evidence"]["sources"]}
+    assert sources == {audit.audit_id, pfd.audit_id, cp.audit_id}
+    changed = _trio(audit, pfd, _paired_file(tmp_path, "cp.xlsx", date="2025-03-01", operation="OP20"))
+    assert changed["R21"]["status"] == "defect" and changed["R21"]["code"] == "B06"
+    changed = _trio(audit, pfd, _paired_file(tmp_path, "cp.xlsx", date="2025-02-01"))
+    assert changed["R22"]["status"] == "defect" and changed["R22"]["code"] == "B06"
+
+
+def test_missing_optional_history_is_s02_not_a_supplier_defect(tmp_path):
+    observed = _trio(original(tmp_path), _paired_file(tmp_path, "pfd.xlsx", with_history=False), _paired_file(tmp_path, "cp.xlsx", date="2025-03-01"))
+    assert observed["R22"]["status"] == "not_checked" and observed["R22"]["code"] == "S02"
+
+
+def test_uaes_scl_and_pgqp_coverage_read_actual_counterparts(tmp_path):
+    from audit.contracts import GroupContextInput
+    from audit.kinds import PpapDocumentType
+    from openpyxl import load_workbook
+
+    audit = original(tmp_path)
+    book = load_workbook(audit.file_url)
+    book.active.cell(9, 15, "功能/要求")
+    for row in range(10, 22):
+        book.active.cell(row, 15, "尺寸A")
+    book.save(audit.file_url)
+    book.close()
+    peers = []
+    for entry in ("SCL", "PGQP1"):
+        path = tmp_path / (entry + ".xlsx")
+        book = Workbook()
+        book.active.title = entry
+        for row in [["零件号", "P-1"], ["项目", "M1"], ["特性名称", "特性类别"], ["尺寸A", "CC"]]:
+            book.active.append(row)
+        book.save(path)
+        book.close()
+        peers.append(AuditInput(audit_id=entry + "-version", file_url=str(path)))
+    group = GroupContextInput(by_doc_type={PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST.get_type_name(): [peers[0]], "采购件质量计划": [peers[1]]})
+    observed = {row["id"].split(":", 1)[1]: row for row in pfmea_precheck(audit, "U07", group)}
+    assert observed["R19"]["status"] == observed["R20"]["status"] == "satisfied"
+    book = load_workbook(peers[0].file_url)
+    book.active.cell(4, 2, "SC")
+    book.save(peers[0].file_url)
+    book.close()
+    changed = {row["id"].split(":", 1)[1]: row for row in pfmea_precheck(audit, "U07", group)}
+    assert changed["R19"]["status"] == "defect" and changed["R19"]["code"] == "B06"
