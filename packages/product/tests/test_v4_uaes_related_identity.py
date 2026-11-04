@@ -152,7 +152,10 @@ def test_msa_broad_type_keeps_its_actual_kappa_subtype_available(tmp_path):
     assert UaesMsaAgent(target, rule, group).related(("kappa",)).version == "reference"
 
 
-@pytest.mark.parametrize("field,value", [("part", "待确认"), ("part", "none"), ("part", "-"), ("part", "工程更改版本"), ("part", "ＴＢＤ"), ("revision", "版本号"), ("revision", "待确认"), ("project", "待确认")])
+@pytest.mark.parametrize(
+    "field,value",
+    [("part", "待确认"), ("part", "none"), ("part", "-"), ("part", "工程更改版本"), ("part", "ＴＢＤ"), ("revision", "版本号"), ("revision", "待确认"), ("project", "待确认")],
+)
 def test_equal_unknown_source_identity_cannot_certify_a_formal_pair(tmp_path, field, value):
     target = original(tmp_path, "target", target=True, **{field: value})
     reference = original(tmp_path, "reference", **{field: value})
