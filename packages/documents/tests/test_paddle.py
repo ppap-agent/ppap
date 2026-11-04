@@ -444,3 +444,55 @@ def test_live_export_requires_page_instead_of_sending_full_document(tmp_path, mo
     with pytest.raises(ValueError, match="explicit page_number"):
         paddle.evaluate_pdf(source, tmp_path / "no-page", endpoint="https://paddle.example/layout-parsing")
     assert not (tmp_path / "no-page").exists()
+
+
+@pytest.mark.parametrize("content", ["x" * 32768, "known\x01text", "known\ud800text", "known\ufffftext"], ids=["too-long", "illegal-control", "unpaired-surrogate", "xml-noncharacter"])
+def test_unexportable_text_keeps_raw_evidence_and_valid_table(pdf, tmp_path, content):
+    result = response()
+    result["result"]["layoutParsingResults"][0]["prunedResult"]["parsing_res_list"][0]["block_content"] = content
+    stats = paddle.evaluate_pdf(pdf, tmp_path / "export-limits", response=result)
+    assert stats.status == "partial"
+    assert set(stats.artifacts) == {"response.json", "evidence.json", "tables.xlsx"}
+    raw = json.loads((stats.output_dir / "response.json").read_text())
+    assert raw["layoutParsingResults"][0]["prunedResult"]["parsing_res_list"][0]["block_content"] == content
+    evidence = json.loads((stats.output_dir / "evidence.json").read_text())
+    assert evidence["pages"][0]["texts"][0]["text"] == content
+    diagnostics = [d for d in evidence["diagnostics"] if d["code"] == "paddle.export.cell_unavailable"]
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["page"] == 1 and diagnostics[0]["element"] == "text" and diagnostics[0]["index"] == 0
+    assert diagnostics[0] in evidence["pages"][0]["diagnostics"]
+    assert content not in diagnostics[0]["message"]
+    workbook = load_workbook(stats.output_dir / "tables.xlsx")
+    try:
+        assert workbook["Table_1"]["B2"].value == "A&B"
+        assert content not in [c.value for row in workbook["OCR_Text"] for c in row]
+    finally:
+        workbook.close()
+
+
+def test_illegal_table_text_does_not_discard_another_valid_table(pdf, tmp_path):
+    result = response()
+    result["result"]["layoutParsingResults"][0]["prunedResult"]["table_res_list"].append({"pred_html": "<table><tr><td>bad\x01text</td></tr></table>"})
+    stats = paddle.evaluate_pdf(pdf, tmp_path / "bad-cell", response=result)
+    assert stats.status == "partial"
+    evidence = json.loads((stats.output_dir / "evidence.json").read_text())
+    assert evidence["pages"][0]["tables"][1]["rows"] == [["bad\x01text"]]
+    assert any(d["element"] == "table" and d["index"] == 1 for d in evidence["diagnostics"])
+    workbook = load_workbook(stats.output_dir / "tables.xlsx")
+    try:
+        assert workbook.sheetnames == ["Table_1", "OCR_Text"]
+        assert workbook["Table_1"]["B2"].value == "A&B"
+    finally:
+        workbook.close()
+
+
+def test_unexportable_only_table_still_publishes_raw_and_json(pdf, tmp_path):
+    result = response()
+    result["result"]["layoutParsingResults"][0]["prunedResult"]["table_res_list"] = [{"pred_html": "<table><tr><td>bad\x01text</td></tr></table>"}]
+    stats = paddle.evaluate_pdf(pdf, tmp_path / "json-only", response=result)
+    assert stats.status == "partial"
+    assert set(stats.artifacts) == {"response.json", "evidence.json"}
+    evidence = json.loads((stats.output_dir / "evidence.json").read_text())
+    assert evidence["pages"][0]["tables"][0]["rows"] == [["bad\x01text"]]
+    assert evidence["pages"][0]["seals"]
+    assert not (stats.output_dir / "tables.xlsx").exists()
