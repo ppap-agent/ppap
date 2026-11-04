@@ -318,3 +318,20 @@ def test_blank_fixture_template_labels_and_unchecked_options_are_not_content():
 def test_fixture_negative_condition_follows_the_selected_option(tmp_path, state, expected):
     rows = [["所附文件", "状态"], ["三坐标报告", state], ["结论", None]]
     assert execute(tmp_path, "L09", 3, rows, "检具认可报告").status == expected
+
+
+@pytest.mark.parametrize(
+    ("number", "second", "group"),
+    [
+        (3, [None, "孔径", "10±0.5", "卡尺", 50, 60, "OK"], "尺寸"),
+        (3, [2, None, "10±0.5", "卡尺", 50, 60, "OK"], "尺寸"),
+        (4, [None, "孔径", "10±0.5", "卡尺/千分尺", 10, 10.1, "OK"], "尺寸"),
+        (5, [None, "孔径", "10±0.5", "卡尺", 10, 10, "OK"], "尺寸"),
+        (6, [None, "外观", "无划伤", "目视", "PASS", "PASS", "OK"], "非尺寸"),
+        (7, [None, "孔径", "未给定", "卡尺", "OK", "OK", "OK"], "尺寸"),
+    ],
+)
+def test_inspection_populated_row_cannot_disappear_with_missing_serial_or_project(tmp_path, number, second, group):
+    first = [1, "直径", "10±0.5", "卡尺", 10, 10.1, "OK"] if group == "尺寸" else [1, "外观", "无划伤", "目视", "OK", "OK", "OK"]
+    rows = [["序号", "检查项目", "判定标准", "供方检查方法/检查工具", "检查数据", None, "判定结果"], [group], first, second]
+    assert execute(tmp_path, "L01", number, rows, "尺寸检验报告").status == "NG"
