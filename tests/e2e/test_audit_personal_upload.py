@@ -34,6 +34,7 @@ def test_choose_folder_cancel_and_resume_keep_original_upload_request(width, rec
                 }
             ),
         )
+        page.route("**/api/audit-customers/default", lambda r: r.fulfill(json={"customer_preference": None, "revision": 0}))
         page.route("**/api/audit-customers", lambda r: r.fulfill(json={"customers": []}))
         page.route("**/api/audit-tasks?*", lambda r: r.fulfill(json={"tasks": [], "next_offset": None}))
         page.route("**/api/integrations/feishu/root-folder", lambda r: r.fulfill(json={"token": "personal-root", "name": "我的文件夹", "type": "folder"}))
