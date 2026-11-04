@@ -10,6 +10,11 @@ from .native import UaesSourceAgent, UnknownFact, blank, key, number
 
 
 class UaesInspectionAgent(UaesSourceAgent):
+    def precheck(self):
+        from .precheck_l1 import precheck_inspection
+
+        return precheck_inspection(self)
+
     REPORTS = ("尺寸报告", "材料报告", "功能报告", "可靠性报告")
 
     def report(self, title):

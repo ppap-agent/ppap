@@ -39,6 +39,11 @@ class UaesProcessFlowAgent(UaesSourceAgent):
 
 
 class UaesCapabilityAgent(UaesSourceAgent):
+    def precheck(self):
+        from .precheck_l1 import precheck_capacity
+
+        return precheck_capacity(self)
+
     REPORTS = ("工艺能力认证", "过程能力认证", "process capability")
 
     def reports(self):

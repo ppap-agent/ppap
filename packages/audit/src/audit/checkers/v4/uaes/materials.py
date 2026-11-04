@@ -6,6 +6,11 @@ from .native import UaesSourceAgent, UnknownFact, blank, key
 
 
 class UaesMaterialsAgent(UaesSourceAgent):
+    def precheck(self):
+        from .precheck_l1 import precheck_materials
+
+        return precheck_materials(self)
+
     @rule("材料清单除备注外逐字段非空")
     def rule_1(self):
         facts = self.native()

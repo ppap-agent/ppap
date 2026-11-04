@@ -115,6 +115,11 @@ class UaesLabQualificationAgent(UaesSourceAgent):
 
 
 class UaesMeasurementComparisonAgent(UaesSourceAgent):
+    def precheck(self):
+        from .precheck_l1 import precheck_measurement
+
+        return precheck_measurement(self)
+
     @rule("测量比较报告四方原件签字")
     def rule_1(self):
         facts = self.native()
