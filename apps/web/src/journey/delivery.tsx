@@ -143,7 +143,7 @@ function DeliveryPanel(props: Props & {onClose: () => void}) {
     {chosenFiles.length < record.input.files.length && <p>本包将不包含 {record.input.files.length - chosenFiles.length} 份资料，清单会保留缺项。</p>}
     {['failed','interrupted'].includes(state.preparation) && <p role="alert">{state.preparation === 'interrupted' ? '上次生成中断，未产生新包。' : '资料包生成失败。'}决定及已有资料包未变，可重新生成。</p>}
     <div className={"flex flex-wrap items-center gap-2 my-4 mx-0"}><Button className={""} disabled={Boolean(job) || missing.length > 0 || Boolean(props.saveError)} onClick={prepare}><FileArchive/>{preparing ? '正在准备…' : state.packages.length ? '生成新资料包' : '准备资料包'}</Button><span>{chosenFiles.length} / {record.input.files.length} 份资料</span></div>
-    <p className={""}>{record.input.basis?.source.localFile ? `同时附上要求原件：${record.input.basis.source.filename}。` : '要求条款固定在报告与依据记录中。'}打包时核对本机原件；示例资料保留示例标识。</p>
+    <p className={""}>{record.input.basis?.source.localFile ? `同时附上规则原件：${record.input.basis.source.filename}。` : '要求条款固定在报告与依据记录中。'}打包时核对本机原件；示例资料保留示例标识。</p>
   </section>
   const sendSection = <section className={"min-w-0 mb-7"} aria-label="交付方式"><h3>交付方式</h3>
     {!state.packages.length ? <p>准备资料包后，选择下载或发送。</p> : <>

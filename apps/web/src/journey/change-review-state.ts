@@ -40,7 +40,7 @@ export function changeIssues(draft: ChangeDraft, base: DecisionInput, collection
   if (inputIdentity(draft.base) !== inputIdentity(base)) issues.push('已有更新的事项依据。请放弃本草稿，再从最新依据开始。')
   if (!basisConfirmed(draft.basis, changeScopeKey(draft.scope))) issues.push('确认新一轮的要求与适用范围。')
   const version = collections.flatMap(item => item.versions).find(item => item.id === (draft.basis?.library?.versionId ?? draft.basis?.source.id))
-  if (version && !scopeMatches(draft.scope, version.scope)) issues.push('所选要求版本不适用于本次范围。')
+  if (version && !scopeMatches(draft.scope, version.scope)) issues.push('所选规则版本不适用于本次范围。')
   if (draft.basis?.library && !version) issues.push('所选要求来源版本不可读取。')
   if (!draft.reason.trim()) issues.push('填写变化来源与重审原因。')
   if (!draft.scope.revision.trim()) issues.push('核对本次图纸修订。')

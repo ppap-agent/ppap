@@ -78,7 +78,7 @@ class TaskNavigationPreviewTests(unittest.TestCase):
             expect(task_trigger).to_be_focused()
             browser.close()
 
-    def test_task_switcher_shows_current_recent_and_every_filename_and_keeps_search(self):
+    def test_task_switcher_shows_current_filenames_and_recent_tasks_and_keeps_search(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page(viewport={"width": 1440, "height": 1000})

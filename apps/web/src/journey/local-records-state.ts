@@ -6,7 +6,7 @@ export type LocalRecord = {key: string; raw: string; valid: boolean; title: stri
 export type Backup = {format: 'ppap-local-records'; version: 1; at: string; source: 'saved' | 'current-input'; records: {key: string; raw: string}[]}
 const ownedKey = (key: string) => key === 'requirement-library' || /^(intake|review|decision|changes|reassessment):[^\s]+$/.test(key)
 export const recordKind = (key: string) => key.split(':')[0]
-const labels: Record<string, string> = {intake: '来件登记', review: '问题与补件', decision: '复核与决定', changes: '变化复查', reassessment: '补件复查', 'requirement-library': '审核要求库'}
+const labels: Record<string, string> = {intake: '来件登记', review: '问题与补件', decision: '复核与决定', changes: '变化复查', reassessment: '补件复查', 'requirement-library': '审核规则库'}
 const sameRecord = (left: string | null | undefined, right: string) => left === right || !!left && !!parseDraft(left) && !!parseDraft(right) && JSON.stringify(parseDraft(left)?.value) === JSON.stringify(parseDraft(right)?.value)
 export function describeRecord(key: string, raw: string, validators: RecordValidators): LocalRecord {
   const data = parseDraft(raw), kind = recordKind(key)

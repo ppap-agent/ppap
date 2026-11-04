@@ -11,7 +11,7 @@ export function parsedBasis(basis: RequirementBasis, candidate: RuleCandidate): 
       original: row.rule_to_check, source: basis.source.filename, location: `条款 ${row.id}（原件位置待核对）`, checked: false, applicability: 'pending', reason: ''}))}
 }
 export function basisRuleBody(basis: RequirementBasis): RuleBody {
-  if (!basis.server) throw new Error('审核要求尚未连接到规则版本。')
+  if (!basis.server) throw new Error('审核规则尚未连接到规则版本。')
   return {...basis.server.body,
     customers: basis.server.body.customers.map(value => value.trim()),
     models: basis.server.body.models.map(value => value.trim()),
@@ -41,7 +41,7 @@ export async function loadRuleCollections(): Promise<RequirementCollection[]> {
 export async function readRuleVersions(ids: string[], signal: AbortSignal): Promise<RequirementVersion[]> {
   const details = await Promise.all([...new Set(ids)].map(async id => {
     const rule = await request<RuleDetail>(`/rules/${encodeURIComponent(id)}`, 'GET', undefined, signal)
-    if (rule.id !== id) throw new Error('要求版本回执不一致，未显示其他版本。')
+    if (rule.id !== id) throw new Error('规则版本回执不一致，未显示其他版本。')
     return rule
   }))
   const files = new Map<string, Promise<FileVersion | null>>()
@@ -50,7 +50,7 @@ export async function readRuleVersions(ids: string[], signal: AbortSignal): Prom
     const path = `/files/${encodeURIComponent(rule.source_file_id)}/versions/${encodeURIComponent(rule.source_file_version_id)}`
     if (!files.has(path)) files.set(path, request<FileVersion>(path, 'GET', undefined, signal).catch(cause => {if (signal.aborted) throw cause; return null}))
     const file = await files.get(path)!
-    if (file && (file.id !== rule.source_file_version_id || file.file_id !== rule.source_file_id)) throw new Error('要求原件回执不一致，未使用其他文件。')
+    if (file && (file.id !== rule.source_file_version_id || file.file_id !== rule.source_file_id)) throw new Error('规则原件回执不一致，未使用其他文件。')
     const material: Material = {file_id: rule.source_file_id, file_version_id: rule.source_file_version_id, original_filename: file?.original_filename || rule.title, role: 'reference', rule_version_id: null}
     const base = localBasis(rule.title)
     let basis = parsedBasis({...base, server: {body: rule.body, material, ruleId: rule.id}}, {title: rule.title, body: rule.body, source_file_version_id: rule.source_file_version_id})

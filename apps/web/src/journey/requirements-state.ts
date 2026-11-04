@@ -25,7 +25,7 @@ const texts = [
 const internalText = '尺寸报告须对应图纸 Rev B。孔径 φ10.00±0.05 mm，3 件样本的每个实测值均须在 9.95–10.05 mm 内。'
 export function demoBasis(conflict = false): RequirementBasis {
   return {
-    source: {id: 'p204-customer-v2', title: '北辰汽车 · P-204 审核要求', filename: customerSource, version: 'v2', origin: 'demo', state: 'ready'},
+    source: {id: 'p204-customer-v2', title: '北辰汽车 · P-204 审核规则', filename: customerSource, version: 'v2', origin: 'demo', state: 'ready'},
     clauses: texts.map((text, i) => ({id: `R${i + 1}`, title: ['工序一致性', '工序号可读性', 'Rev B 尺寸'][i], text, original: text, source: customerSource, location: ['第 2 页 §1', '第 2 页 §2', '第 3 页 §3'][i], applicability: 'pending', reason: '', checked: false})),
     conflict: {active: conflict, choice: 'pending', reason: ''}, confirmed: null,
   }
@@ -57,10 +57,10 @@ export function clauseIssues(clause: RequirementClause, basis?: RequirementBasis
   return issues
 }
 export function basisIssues(basis: RequirementBasis | null | undefined): string[] {
-  if (!basis) return ['请选择已有要求版本，或上传要求文件。']
+  if (!basis) return ['请选择已有规则版本，或上传规则文件。']
   const issues: string[] = []
   if (!basis.source.title.trim() || !basis.source.version.trim()) issues.push('补全要求名称与版本。')
-  if (['unparsed', 'failed'].includes(basis.source.state)) issues.push('要求文件尚无可核对条款；请人工录入，或更换文件。')
+  if (['unparsed', 'failed'].includes(basis.source.state)) issues.push('规则文件尚无可核对条款；请人工录入，或更换文件。')
   if (!basis.clauses.length) issues.push('至少记录一条要求。')
   issues.push(...basis.clauses.flatMap(clause => clauseIssues(clause, basis)))
   if (!basis.clauses.some(clause => clause.applicability === 'apply')) issues.push('本次至少需要一条适用要求；不能用空范围开始审核。')

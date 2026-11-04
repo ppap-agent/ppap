@@ -87,7 +87,7 @@ export function TaskWorkbench({items, onOpen, onFiles, onDemo, requirements, usa
   function pick(files: File[]) {setUploadError(''); void upload.upload(files)}
   const nav = <nav aria-label="主要导航">
     <Button asChild className="justify-start text-left max-md:flex-1 max-md:justify-center" variant={view === 'workbench' ? 'secondary' : 'ghost'}><a href={viewHref('workbench')} aria-current={view === 'workbench' ? 'page' : undefined} onClick={event => navigate(event, 'workbench')}><LayoutDashboard/><span>工作台</span></a></Button>
-    <Button asChild className="justify-start text-left max-md:flex-1 max-md:justify-center" variant={view === 'requirements' ? 'secondary' : 'ghost'}><a href={viewHref('requirements')} aria-current={view === 'requirements' ? 'page' : undefined} onClick={event => navigate(event, 'requirements')}><BookOpen/><span>审核要求</span></a></Button>
+    <Button asChild className="justify-start text-left max-md:flex-1 max-md:justify-center" variant={view === 'requirements' ? 'secondary' : 'ghost'}><a href={viewHref('requirements')} aria-current={view === 'requirements' ? 'page' : undefined} onClick={event => navigate(event, 'requirements')}><BookOpen/><span>审核规则</span></a></Button>
   </nav>
   return <div className={"flex min-h-dvh bg-background text-foreground text-base"}>
     <a href="#task-main" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-background focus:p-3 focus:outline-2 focus:outline-ring">跳到主要内容</a>
