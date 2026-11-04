@@ -748,7 +748,7 @@ def test_precheck_readback_history_and_export_keep_one_formal_action(width):
         http.install(page)
         page.goto(WEB + "/tasks/task-one")
         region = page.get_by_role("region", name="免费内容预检", exact=True)
-        expect(region.get_by_role("heading", name="需要确认 · 1", exact=True)).to_be_visible()
+        expect(region.get_by_role("heading", name="可审核 · 1", exact=True)).to_be_visible()
         expect(page.get_by_role("button", name="开始审核", exact=True)).to_have_count(1)
         region.get_by_role("button", name="重新检查当前资料", exact=True).click()
         expect(region.get_by_text("预检回执尚未核对。请读取原检查，已有文件仍保留。", exact=True)).to_be_visible()
@@ -759,7 +759,7 @@ def test_precheck_readback_history_and_export_keep_one_formal_action(width):
         expect(region.get_by_text("部分要求未核实", exact=True)).to_be_visible()
         assert len(http.retry_commands) == 1 and http.alias_reads == [http.retry_commands[0]["request_id"]]
         expect(region.get_by_role("heading", name="需要处理 · 0", exact=True)).to_be_visible()
-        expect(region.get_by_role("heading", name="需要确认 · 1", exact=True)).to_be_visible()
+        expect(region.get_by_role("heading", name="可审核 · 1", exact=True)).to_be_visible()
         expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_enabled()
         region.get_by_role("button", name="查看检查依据与未覆盖要求", exact=True).click()
         expect(region.get_by_text("图形读取失败", exact=False)).to_be_visible()
