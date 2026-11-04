@@ -121,3 +121,26 @@ def test_process_order_and_empty_classification_are_independent(tmp_path):
     result = checked(original(tmp_path, reverse=True, symbol=""))
     assert result["C-18"]["code"] == "W03"
     assert result["M-05"]["code"] == "B05"
+
+
+def test_mixed_nominal_and_interval_must_be_consistent_even_between_valid_rows(tmp_path):
+    from openpyxl import load_workbook
+
+    audit = original(tmp_path)
+    book = load_workbook(audit.file_url)
+    book.active["G22"] = "10±1 [8,12]"
+    book.save(audit.file_url)
+    book.close()
+    fact = checked(audit)["C-03"]
+    assert (fact["status"], fact["code"]) == ("defect", "B06")
+
+
+def test_unparsed_specification_cannot_hide_between_parseable_intervals(tmp_path):
+    from openpyxl import load_workbook
+
+    audit = original(tmp_path)
+    book = load_workbook(audit.file_url)
+    book.active["G22"] = "按特殊外形曲线规定"
+    book.save(audit.file_url)
+    book.close()
+    assert checked(audit)["C-03"]["status"] == "unknown"

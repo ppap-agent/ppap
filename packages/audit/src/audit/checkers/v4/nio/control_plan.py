@@ -3,6 +3,7 @@
 from audit.checkers.v3.control_plan_agent import ControlPlanAgent as StageReader
 from audit.checkers.v3.excel_agent import rule
 from audit.checkers.v4.pfmea_local import _identity, _step_key
+from audit.engine.rule_engine import Decision, GuardStop
 from audit.kinds import PpapDocumentType as T
 
 from .tables import NioTableAgent
@@ -36,8 +37,15 @@ class NioControlPlanAgent(NioTableAgent):
     def _stages(self, ctx):
         stages = set()
         for sheet in self._sheets(ctx):
-            for cells in sheet.iter_rows(max_row=min(sheet.max_row, 40)):
+            data_headers = [
+                cell.row for cells in sheet.iter_rows(max_row=min(sheet.max_row, 40)) for cell in cells if _identity(cell.value) in {_identity("零件/工序号"), _identity("工序名称/操作描述")}
+            ]
+            header_end = min(data_headers) - 1 if data_headers else min(sheet.max_row, 40)
+            for cells in sheet.iter_rows(max_row=header_end):
                 for cell in cells:
+                    if cell.data_type in {"e", "f"}:
+                        ctx.note_cell(sheet.title, cell.row, cell.column)
+                        raise GuardStop(Decision.UNABLE, "类型勾选区域有未算公式或不可读取内容，尚不能确认选择。")
                     text = str(cell.value or "")
                     if any(mark in text for mark in ("■", "☑", "✓", "√", "✔", "☒", "▄")):
                         ctx.note_cell(sheet.title, cell.row, cell.column)

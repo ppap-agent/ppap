@@ -189,3 +189,13 @@ def test_pfd_structure_warning_code_distinguishes_a_missing_column_from_an_empty
     empty = facts([["产品特性类别", "产品特殊特性"], ["CC", None]])["N05:S3"]
     assert (missing["status"], missing["code"]) == ("defect", "B05")
     assert (empty["status"], empty["code"]) == ("defect", "W02")
+
+
+def test_cp_duplicate_product_columns_are_ambiguous_instead_of_missing():
+    finding = run("N03", [["特殊特性分类", "产品", "产品", "过程"], ["[CC]", "孔径", "孔径", None]], "控制计划")[1]
+    assert finding["status"] == "UNABLE", finding
+
+
+def test_cp_uncached_stage_checkbox_is_unknown_instead_of_unselected():
+    finding = run("N03", [['="☑ 生产 □ 样件 □ 试生产"']], "控制计划")[0]
+    assert finding["status"] == "UNABLE", finding

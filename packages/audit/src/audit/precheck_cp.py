@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections import defaultdict
 from decimal import Decimal
 
@@ -139,15 +140,31 @@ def cp_precheck(audit, preset_key, group=None):
 
     def tolerance():
         seen = 0
+        number = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
+        interval_pattern = rf"[\[(]\s*({number})\s*[,~～]\s*({number})\s*[\])]"
+        symmetric_pattern = rf"({number})\s*±\s*({number})"
         for row in facts.values("specification"):
-            text = str(row["specification"] or "").strip()
-            interval = re.fullmatch(r"[\[(]\s*([+-]?\d+(?:\.\d+)?)\s*[,，~～]\s*([+-]?\d+(?:\.\d+)?)\s*[\])]\s*(?:mm|cm|N|MPa)?", text)
+            text = unicodedata.normalize("NFKC", str(row["specification"] or "")).strip()
+            if len(re.findall(interval_pattern, text)) > 1 or len(re.findall(symmetric_pattern, text)) > 1:
+                raise UnknownFact("同格有多组公差表达，尚不能唯一配对上下限。")
+            interval = re.search(interval_pattern, text)
+            symmetric = re.search(symmetric_pattern, text)
+            remaining = re.sub(symmetric_pattern, "", re.sub(interval_pattern, "", text)).strip()
+            if remaining and not re.fullmatch(r"(?:mm|cm|N|MPa)", remaining):
+                raise UnknownFact("本行规格含未解析的表达，不能因其它行可解析而声明整项已核实。")
             if interval:
-                seen += 1
-                if Decimal(interval[1]) >= Decimal(interval[2]):
+                low, high = Decimal(interval[1]), Decimal(interval[2])
+                if low >= high:
                     raise DefectFact("B06", "原件公差闭区间上限不大于下限。")
-            elif re.search(r"±\s*-\s*\d", text):
-                raise DefectFact("B06", "对称公差幅度为负，卷面区间不自洽。")
+            if symmetric:
+                nominal, tolerance = Decimal(symmetric[1]), Decimal(symmetric[2])
+                if tolerance < 0:
+                    raise DefectFact("B06", "对称公差幅度为负，卷面区间不自洽。")
+                if interval and (nominal - tolerance != low or nominal + tolerance != high):
+                    raise DefectFact("B06", "名义值±公差与同格标注上下限不一致。")
+            if not (interval or symmetric):
+                raise UnknownFact("未取得本行可核实的明确公差；未判断实测值合格性。")
+            seen += 1
         if not seen:
             raise UnknownFact("未取得本项可核实的明确公差上下限；未判断实测值合格性。")
 
@@ -183,7 +200,8 @@ def cp_precheck(audit, preset_key, group=None):
         normalized = [normalize_excel_date(value) for value in values]
         if any(value is None for value in normalized):
             raise DefectFact("B05", "签署日期已填写但不能解析为有效日期。")
-        if not normalized[0] <= normalized[1] <= normalized[2]:
+        dates = [value for value in normalized if value is not None]
+        if not dates[0] <= dates[1] <= dates[2]:
             raise DefectFact("B06", "卷面编制、修订、批准日期链逆序。")
 
     operations["C-13"] = dates
