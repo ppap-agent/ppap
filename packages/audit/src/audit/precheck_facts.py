@@ -7,7 +7,8 @@ import re
 import unicodedata
 from pathlib import Path
 
-from audit.document_tools import effective, ref, snapshot
+from audit.document_tools import effective, snapshot
+from audit.evidence import cell_locator
 
 
 class UnknownFact(ValueError):
@@ -42,9 +43,7 @@ class SourceFacts:
                 if r1 <= row <= r2 and c1 <= column <= c2 and c1 != c2 and column != c1:
                     raise UnknownFact("数据横向合并跨越多个语义列，需确认真实列归属。")
         value = observed.get("value")
-        locator = {"file_version_id": self.audit.audit_id, "table": table["id"], "cell": ref(row, column)}
-        if str(table["id"]).startswith("page:"):
-            locator["page"] = int(str(table["id"]).split(":")[1].split("!")[0])
+        locator = {"file_version_id": self.audit.audit_id, **cell_locator(self.data["source"]["format"], table["id"], row, column).model_dump(mode="json")}
         source = {"kind": "structure", "locator": json.dumps(locator, ensure_ascii=False, separators=(",", ":")), "excerpt": str(value if value is not None else "空单元格")[:500]}
         if source not in self.sources and len(self.sources) < 100:
             self.sources.append(source)
@@ -110,7 +109,7 @@ class SourceFacts:
             "critical": bool(code and code.startswith("B")),
             "certified": False,
             "evidence": self.evidence(),
-            "next_step": "继续正式审核。" if status == "satisfied" else "核对定位原件；修正或确认资料后重新检查。",
+            "next_step": "继续正式审核。" if status == "satisfied" else "重试预检；若仍失败，联系产品维护。" if status == "error" else "核对定位原件；修正或确认资料后重新检查。",
         }
 
 
@@ -146,6 +145,8 @@ def checker_fact(agent, source_id, check, *, code="W02"):
         message = exc.message
     except Exception:
         status, message = "error", "原件读取或准备检查执行失败。"
+    if ctx is not None and ctx.has_unresolved():
+        status, message = "unknown", "存在不可读取单元格；本项尚未核实，不能判为文件缺陷。"
     evidence = agent._evidence_from_reads(ctx) if ctx is not None else None
     if status == "satisfied" and (not evidence or not evidence.sources):
         status, message = "unknown", "尚未取得原件定位，不能视为通过。"
