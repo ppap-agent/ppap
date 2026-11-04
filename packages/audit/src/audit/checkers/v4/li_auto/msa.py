@@ -25,13 +25,16 @@ class LiAutoMsaAgent(NativeFacts, MsaReportAgent):
             if len(header_columns) < 2:
                 return "UNABLE", "尚不能完整确认计划表业务列。"
             for index in range(serial.data_start_row, sheet.ws.max_row + 1):
-                value = compact(sheet.cell(index, serial.header_col).value())
-                if not value:
+                values = {column: compact(sheet.cell(index, column).value()) for column in header_columns}
+                value = values[serial.header_col]
+                if not any(values.values()):
                     continue
-                if any(marker in value for marker in ("备注", "编制", "审核", "批准")):
+                if value.rstrip(":：") in {"备注", "编制", "审核", "批准"}:
                     break
+                if all(not text or text in {compact(sheet.cell(header, column).value()) for header in range(section.resolved.header_row, serial.data_start_row)} for column, text in values.items()):
+                    continue
                 checked += 1
-                if any(not compact(sheet.cell(index, column).value()) for column in header_columns):
+                if any(not value for value in values.values()):
                     return "NG", f"计划表第{index}行有未填写的业务列。"
         return ("PASS", "") if checked else ("UNABLE", "计划表中没有序号数据行。")
 
