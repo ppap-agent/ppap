@@ -43,3 +43,22 @@ def test_process_is_the_source_condition_for_development_and_acceptance(change, 
     target = RoundInput("target", "file", "version", "设备清单.xlsx", "ready", rule_version_id="li-l13", rule_body=body, rule_execution=freeze_target_rule_execution(body, "设备清单.xlsx"))
     result = run_round_from_bytes(RoundWork("round", "tenant", [target]), {"version": content.getvalue()})
     assert [row["status"] for row in result["findings"]] == expected, [(row["status"], row["suggestions"]) for row in result["findings"]]
+
+
+@pytest.mark.parametrize(("column", "expected"), [("D3", ["NG", "PASS"]), ("K3", ["PASS", "NG"])])
+def test_merged_process_still_checks_each_device_row(column, expected):
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "设备开发验收清单"
+    sheet.append(["产线/工序", "设备开发", "设备", "供应商", "设备型号", "利旧设备数量", "新采购设备数量", "设备通用情况", "计划到位时间", "设备验收", "验收结果", "整改措施", "整改计划"])
+    for process, device in [("10 压装", "压装机A"), (None, "压装机B")]:
+        sheet.append([process, "开发", device, "供应商", "M1", 0, 1, "专用", "2026-01-01", "验收", "通过", None, None])
+    sheet.merge_cells("A2:A3")
+    sheet[column] = None
+    content = io.BytesIO()
+    book.save(content)
+    book.close()
+    body = preset_rule_body("理想", "L13")
+    target = RoundInput("target", "file", "version", "设备清单.xlsx", "ready", rule_version_id="li-l13", rule_body=body, rule_execution=freeze_target_rule_execution(body, "设备清单.xlsx"))
+    result = run_round_from_bytes(RoundWork("round", "tenant", [target]), {"version": content.getvalue()})
+    assert [row["status"] for row in result["findings"]] == expected, [(row["status"], row["suggestions"]) for row in result["findings"]]

@@ -122,6 +122,7 @@ class SectionModel(BaseModel):
     header_search_max_col: int = Field(default=80, ge=1)
     header_compact_match: bool = False
     column_band: int = Field(default=2, ge=0)
+    row_expand_merged_anchors: bool = False
     row_stop_on_first_blank: bool = True
     row_max_blank_streak: int = Field(default=8, ge=1)
     row_stop_markers: tuple[str, ...] = ()

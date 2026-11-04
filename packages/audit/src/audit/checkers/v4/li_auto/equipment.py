@@ -11,7 +11,7 @@ from audit.kinds import PpapDocumentType
 _BASE = get_doc_resource_by_doc_type(PpapDocumentType.EQUIPMENT_LIST)
 assert _BASE is not None
 _SECTIONS = dict(_BASE.sections)
-_SECTIONS["主数据区"] = _SECTIONS["主数据区"].model_copy(update={"row_anchors": ("产线/工序",)})
+_SECTIONS["主数据区"] = _SECTIONS["主数据区"].model_copy(update={"row_anchors": ("产线/工序",), "row_expand_merged_anchors": True})
 _RESOURCE = replace(_BASE, sections=MappingProxyType(_SECTIONS))
 
 
