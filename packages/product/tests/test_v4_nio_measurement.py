@@ -10,12 +10,34 @@ from openpyxl import Workbook
 from product import run_round_from_bytes
 
 
-def execute(*, nominal=None, point_type="CC", part1=0.1, part2=0.2, centering=0.075, range_value=0.05, marker="P01", cover_part="P12345", formula_cache=None, drawing=False):
+def execute(
+    *,
+    nominal=None,
+    point_type="CC",
+    part1=0.1,
+    part2=0.2,
+    centering=0.075,
+    range_value=0.05,
+    marker="P01",
+    cover_part="P12345",
+    formula_cache=None,
+    drawing=False,
+    drawing_outside_rows=False,
+    cover_layout="pairs",
+    separate_diagram=False,
+):
     book = Workbook()
     cover = book.active
     cover.title = "CoverSheet"
     for label, value in [("零件号", cover_part), ("零件名", "支架"), ("项目", "项目A"), ("项目阶段", "P"), ("日期", "2026-01-01")]:
         cover.append([label, value])
+    if cover_layout == "columns":
+        cover.delete_rows(1, cover.max_row)
+        cover.append(["零件号", "零件名", "项目", "项目阶段", "日期"])
+        cover.append([cover_part, "支架", "项目A", "P", "2026-01-01"])
+    elif cover_layout == "note-under-empty-part":
+        cover.insert_rows(2)
+        cover["A2"] = "备注：仅供内部使用"
     sheet = book.create_sheet("Surface")
     headers = ["测点号", "类型", "坐标X", "坐标Y", "坐标Z", "名义值", "上公差", "下公差", "主要控制方向", "测量偏差值", None, "Centering", "Range", "测点图/截面"]
     sheet.append(headers)
@@ -30,7 +52,16 @@ def execute(*, nominal=None, point_type="CC", part1=0.1, part2=0.2, centering=0.
 
         bitmap = io.BytesIO()
         Pixels.new("RGB", (8, 8), "white").save(bitmap, format="PNG")
-        sheet.add_image(Image(bitmap), "N3")
+        image = Image(bitmap)
+        if drawing_outside_rows:
+            from openpyxl.drawing.spreadsheet_drawing import AnchorMarker, TwoCellAnchor
+
+            image.anchor = TwoCellAnchor(_from=AnchorMarker(col=13, row=4), to=AnchorMarker(col=14, row=8))
+            sheet.add_image(image)
+        else:
+            sheet.add_image(image, "N3")
+    if separate_diagram:
+        book.create_sheet("独立测点图")["A1"] = "P99"
     content = io.BytesIO()
     book.save(content)
     book.close()
@@ -102,3 +133,19 @@ def test_text_markers_do_not_certify_unread_visual_markers():
     findings = execute(drawing=True)
     assert findings["6"]["status"] == "UNABLE"
     assert findings["7"]["status"] == "PASS"
+
+
+def test_cover_values_can_follow_a_real_column_header_row():
+    assert execute(cover_layout="columns")["1"]["status"] == "PASS"
+
+
+def test_an_unrelated_note_cannot_fill_a_missing_cover_part_number():
+    assert execute(cover_part=None, cover_layout="note-under-empty-part")["1"]["status"] != "PASS"
+
+
+def test_unread_drawing_below_the_point_rows_still_needs_confirmation():
+    assert execute(drawing=True, drawing_outside_rows=True)["6"]["status"] == "UNABLE"
+
+
+def test_separate_diagram_is_not_ignored_when_a_main_sheet_marker_matches():
+    assert execute(separate_diagram=True)["6"]["status"] == "UNABLE"
