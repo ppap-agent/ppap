@@ -284,6 +284,33 @@ def test_native_text_blocks_require_a_complete_title(surface, text, expected):
     assert _has_title(SimpleNamespace(data=data), ("特殊特性清单",)) is expected
 
 
+@pytest.mark.parametrize("surface", ["paragraphs", "pages", "tables"])
+@pytest.mark.parametrize("middle", [None, "", "供应商有限公司"])
+@pytest.mark.parametrize(
+    "label,title,expected",
+    [
+        ("比对文件：", "特殊特性清单", False),
+        ("比对文件", "特殊特性清单", False),
+        ("Reference document:", "Process special characteristic list", False),
+        ("Reference document", "Process special characteristic list", False),
+        ("文件名称：", "特殊特性清单", True),
+        ("Document title:", "Process special characteristic list", True),
+        ("供应商有限公司", "特殊特性清单", True),
+    ],
+)
+def test_native_split_label_and_title_preserves_own_title_context(surface, middle, label, title, expected):
+    from types import SimpleNamespace
+
+    from audit.precheck_dependencies import _has_title
+
+    blocks = [{"text": label}, *([{"text": middle}] if middle is not None else []), {"text": title}]
+    if surface == "tables":
+        data = {"tables": [{"id": "其他报告", "rows": len(blocks), "cols": 1, "cells": {f"A{index}": {"value": block["text"], "state": "known"} for index, block in enumerate(blocks, 1)}}]}
+    else:
+        data = {"paragraphs": blocks} if surface == "paragraphs" else {"pages": [{"page": 1, "blocks": blocks}]}
+    assert _has_title(SimpleNamespace(data=data, read=lambda *_: None), ("特殊特性清单",)) is expected
+
+
 def test_material_drawing_pair_requires_the_source_project_identity(tmp_path):
     from openpyxl import load_workbook
 
