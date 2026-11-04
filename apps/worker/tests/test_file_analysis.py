@@ -333,3 +333,49 @@ def test_explicit_validated_uaes_photo_scope_routes_without_inventing_text(refer
 def test_a_different_customer_cannot_reuse_a_photo_scope_to_bypass_recognition():
     result = analyze_file("样品.png", b"unused", [rule("nio", ["蔚来"])], customer_preference="蔚来", scoped=True, validation_scope={"customer_preference": "UAES", "preset_key": "U13"})
     assert result["matching_status"] == "failed" and result["matched_rule_id"] is None
+
+
+def test_v4_auto_customer_uses_original_facts_while_retaining_model_metadata():
+    result = analyze_file(
+        "控制计划.xlsx",
+        workbook_bytes(("客户", "蔚来"), ("文件类型", "控制计划")),
+        [rule("nio", ["蔚来"], rule_profile="v4"), rule("li", ["理想"], rule_profile="v4")],
+        ai=MetadataAI({"customer": "理想"}),
+        scoped=True,
+    )
+    assert result["matched_rule_id"] == "nio"
+    assert result["metadata"]["customer"] == "理想"
+
+
+def test_v4_auto_without_a_customer_fact_requires_confirmation_even_with_a_model_guess():
+    result = analyze_file("控制计划.xlsx", workbook_bytes(("文件类型", "控制计划")), [rule("nio", ["蔚来"], rule_profile="v4")], ai=MetadataAI({"customer": "蔚来"}), scoped=True)
+    assert result["matched_rule_id"] is None
+    assert result["notices"] == ["matching_customer_required"]
+
+
+@pytest.mark.parametrize("filename,classification", [("包装方案.xlsx", "未知"), ("附件001.xlsx", "E03")])
+def test_uaes_source_e_types_use_their_own_registered_identity(filename, classification):
+    result = analyze_file(
+        filename,
+        workbook_bytes(("客户", "UAES"), ("包装形式", "周转箱")),
+        [rule("pack", ["UAES"], "E03", rule_profile="v4")],
+        ai=MetadataAI({}, classification),
+        customer_preference="UAES",
+        scoped=True,
+    )
+    assert result["matching_status"] == "matched", result
+    assert result["matched_rule_id"] == "pack"
+    assert result["document_type"] == "E03"
+
+
+def test_a_different_customer_cannot_classify_a_uaes_only_e_type():
+    result = analyze_file(
+        "附件001.xlsx",
+        workbook_bytes(("客户", "理想")),
+        [rule("pack", ["UAES"], "E03", rule_profile="v4"), rule("li", ["理想"], rule_profile="v4")],
+        ai=MetadataAI({}, "E03"),
+        customer_preference="理想",
+        scoped=True,
+    )
+    assert result["matching_status"] == "failed"
+    assert result["matched_rule_id"] is None

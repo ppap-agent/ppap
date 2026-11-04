@@ -82,11 +82,13 @@ from audit.checkers.v3 import (
     V3_OVERLAY_EXCEL_AGENTS,
     V3_OVERLAY_PDF_AGENTS,
 )
-from audit.checkers.v4.li_auto.equipment import LiAutoEquipmentAgent
-from audit.checkers.v4.li_auto.special_characteristics import LiAutoSpecialCharacteristicsAgent
+from audit.checkers.v4 import li_auto as li_auto_checkers
+from audit.checkers.v4 import uaes as uaes_checkers
+from audit.checkers.v4.nio.control_plan import NioControlPlanAgent
 from audit.checkers.v4.nio.measurement import NioMeasurementAgent
 from audit.checkers.v4.nio.pfmea import NioPfmeaAgent
-from audit.checkers.v4.uaes.special_characteristics import UaesSpecialCharacteristicsAgent
+from audit.checkers.v4.nio.process_flow import NioProcessFlowAgent
+from audit.checkers.v4.nio.special_characteristics import NioSpecialCharacteristicsAgent
 from audit.kinds import PpapDocumentType
 from audit.rule_profile import RULE_PROFILE_V2, RULE_PROFILE_V3, RULE_PROFILE_V4, normalize_rule_profile
 
@@ -232,19 +234,25 @@ def resolve_engine_agent_class(
         expected_type = PpapDocumentType.from_string(preset_document_type(preset))
         if doc_type != expected_type:
             raise ValueError("preset_document_type_mismatch")
-        if (preset.customer, preset.entry_id) == ("UAES", "U12") and _resolve_audit_file_kind(file_url) in {_AuditFileKind.EXCEL, _AuditFileKind.PDF}:
-            return UaesSpecialCharacteristicsAgent
-        if (preset.customer, preset.entry_id) == ("理想", "L12") and _resolve_audit_file_kind(file_url) in {_AuditFileKind.EXCEL, _AuditFileKind.PDF}:
-            return LiAutoSpecialCharacteristicsAgent
-        if (preset.customer, preset.entry_id) == ("蔚来", "N02") and _resolve_audit_file_kind(file_url) in {_AuditFileKind.EXCEL, _AuditFileKind.PDF}:
-            return NioPfmeaAgent
-        if (preset.customer, preset.entry_id) == ("理想", "L13") and _resolve_audit_file_kind(file_url) in {_AuditFileKind.EXCEL, _AuditFileKind.PDF}:
-            return LiAutoEquipmentAgent
-        if (preset.customer, preset.entry_id) == ("蔚来", "N01") and _resolve_audit_file_kind(file_url) in {_AuditFileKind.EXCEL, _AuditFileKind.PDF}:
-            return NioMeasurementAgent
-        # V3 dimension checks implement NIO measurement coordinates. Li Auto's
-        # dimensional/non-dimensional inspection semantics are the V2 checks.
-        profile = RULE_PROFILE_V2 if (preset.customer, preset.entry_id) == ("理想", "L01") else RULE_PROFILE_V3
+        extension = get_file_extension_from_url(str(file_url)).lower()
+        if preset.customer == "UAES":
+            checker: type[Any] | None = uaes_checkers.CLASS_BY_ENTRY.get(preset.entry_id)
+            return checker if checker and extension in checker.SUPPORTED_EXTENSIONS else None
+        if preset.customer == "理想":
+            carrier_map = (
+                li_auto_checkers.EXCEL_AGENTS
+                if extension in EXCEL_EXTENSIONS
+                else li_auto_checkers.DOCX_AGENTS
+                if extension in DOCX_EXTENSIONS
+                else getattr(li_auto_checkers, "PDF_AGENTS", {})
+                if extension in PDF_EXTENSIONS
+                else {}
+            )
+            return carrier_map.get(preset.entry_id)
+        if preset.customer == "蔚来":
+            checker = {"N01": NioMeasurementAgent, "N02": NioPfmeaAgent, "N03": NioControlPlanAgent, "N04": NioSpecialCharacteristicsAgent, "N05": NioProcessFlowAgent}.get(preset.entry_id)
+            return checker if extension in EXCEL_EXTENSIONS | PDF_EXTENSIONS else None
+        profile = RULE_PROFILE_V3
     file_kind = _resolve_audit_file_kind(file_url)
     primary_map = _pick_agent_map(file_kind, V2_EXCEL_AGENTS, V2_PDF_AGENTS, V2_DOCX_AGENTS)
     if primary_map is None:

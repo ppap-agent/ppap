@@ -1,4 +1,4 @@
-"""N04's numbered-title and characteristic-row requirements match V3 methods."""
+"""Explicit NIO original clause to implementation bindings."""
 
 BINDINGS = {
     "v4": {
@@ -20,9 +20,26 @@ BINDINGS = {
         "N02:5:e8bbc2d8380a2b10bd71": "rule_5",
         "N02:6:581abefeec49d9035926": "rule_6",
         "N02:7:87fa95ba1978c0a2a4fa": "rule_7",
-    },
-    "v3": {
         "N04:1:479bb20f40bfa143dab8": "rule_1",
         "N04:2:7dafdb98bf6294be8a36": "rule_2",
-    },
+        "N03:1:58677c3fb2fa2c647879": "rule_1",
+        "N03:2:2f19af2fab0125c8ec7c": "rule_2",
+        "N03:3:8bf446f5fdd83ca4ac83": "rule_3",
+        "N03:4:17a5a837a0acc51db69f": "rule_4",
+        "N03:5:65ebeadc5fbc9bde3785": "rule_5",
+        "N03:6:4e11b9da2ec32cc63c41": "rule_6",
+        "N03:7:a477a89393e84e610eb5": "rule_7",
+        "N03:8:32c7a81f390721734863": "rule_8",
+        "N03:9:28e51d6dc7c87b074be4": "rule_9",
+        "N03:10:25cdb51f160baaffaa03": "rule_10",
+        "N05:1:3583b449cfbcc8d79808": "rule_1",
+        "N05:2:87cd7f2903975ba96163": "rule_2",
+        "N05:3:c57e35fa87c87002de6f": "rule_3",
+        "N05:4:f04b6677efa8508ddfa3": "rule_4",
+        "N05:5:68d9b9b6713516a16237": "rule_5",
+        "N05:6:26372158488bf13c0d5e": "rule_6",
+        "N05:7:a761b77b774a4e84ec00": "rule_7",
+        "N05:8:148cefc93f68e1451752": "rule_8",
+        "N05:9:dfa4e79c5afd036d303d": "rule_9",
+    }
 }
