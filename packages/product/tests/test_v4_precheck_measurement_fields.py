@@ -151,3 +151,19 @@ def test_nio_uncomputed_metadata_reference_stays_unknown(tmp_path):
     facts = execute(tmp_path, extra=reference)
     assert facts["M-03"]["status"] == "unknown"
     assert facts["S-11"]["status"] == "unknown"
+
+
+def test_nio_proven_empty_form_differs_from_unreadable_formula_row(tmp_path):
+    def empty(book):
+        book["Surface"].delete_rows(3)
+
+    facts = execute(tmp_path, extra=empty)
+    assert facts["M-06"]["status"] == "defect", facts["M-06"]
+    assert facts["M-06"]["code"] == "B04"
+    facts = execute(tmp_path, samples=["=1+1", 0.2, 0.1, 0.2, 0.15])
+    assert facts["M-06"]["status"] == "unknown"
+
+
+def test_nio_unassigned_real_samples_are_not_a_proven_empty_template(tmp_path):
+    facts = execute(tmp_path, extra=lambda book: setattr(book["Surface"]["A3"], "value", None))
+    assert facts["M-06"]["status"] == "unknown", facts["M-06"]
