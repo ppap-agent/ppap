@@ -26,6 +26,13 @@ def known_workbook(workbook, source):
 
 def selected_sheets(workbook, keyword):
     sheets = [sheet for sheet in workbook.worksheets if keyword.casefold() in sheet.title.casefold() and not any(token in sheet.title.casefold() for token in _NON_DATA_SHEETS)]
+    if not sheets:
+        sheets = [
+            sheet
+            for sheet in workbook.worksheets
+            if not any(token in sheet.title.casefold() for token in _NON_DATA_SHEETS)
+            and any(keyword.casefold() in str(cell.value or "").casefold() for cells in sheet.iter_rows(max_row=min(sheet.max_row, 5), max_col=min(sheet.max_column, 20)) for cell in cells)
+        ]
     if len(sheets) != 1:
         raise GuardStop(Decision.UNABLE, f"无法唯一确定{keyword}表，需确认原件。")
     return sheets
