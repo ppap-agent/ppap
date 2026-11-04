@@ -30,12 +30,17 @@ class UaesMsaAgent(UaesSourceAgent):
                 required.append(column)
         if len(required) < 2:
             raise UnknownFact("MSA计划未能确定完整表头范围。")
+        headings = [key(facts.cell(table, start, column)) for column in required]
         count = 0
         for row in range(start + 1, table["rows"] + 1):
-            if blank(facts.cell(table, row, columns["number"])):
+            serial = facts.cell(table, row, columns["number"])
+            if any(key(serial).startswith(marker) for marker in ("编制/日期", "审核/日期", "编制人", "批准人")):
+                break
+            values = [facts.cell(table, row, column) for column in required]
+            if all(blank(value) for value in values) or [key(value) for value in values] == headings:
                 continue
             count += 1
-            if any(blank(facts.cell(table, row, column)) for column in required):
+            if any(blank(value) for value in values):
                 return "NG", f"MSA计划第{row}行存在非备注空字段。"
         if not count:
             raise UnknownFact("MSA计划没有可确认的编号行，不能按空范围通过。")
