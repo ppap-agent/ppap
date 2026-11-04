@@ -66,10 +66,16 @@ def builtin_rule_input(item: RoundInput) -> RuleInput:
 
 
 def _audit_input(item: RoundInput, path: str) -> AuditInput:
+    metadata = {"original_filename": item.filename, "role": item.role}
+    body = item.rule_body or {}
+    if body.get("rule_profile") == "v4":
+        from audit.presets import validate_preset_body
+
+        metadata["v4_source_type"] = validate_preset_body(body).source_type
     return AuditInput(
         audit_id=item.file_version_id,
         file_url=path,
-        file_metadata={"original_filename": item.filename, "role": item.role},
+        file_metadata=metadata,
         project_id="default",
     )
 
@@ -77,6 +83,8 @@ def _audit_input(item: RoundInput, path: str) -> AuditInput:
 def _doc_type_key(audit: AuditInput, rule_type: str | None = None) -> str | None:
     """Cross-file type uses the shared standard inference steps."""
     metadata = audit.file_metadata or {}
+    if str(metadata.get("v4_source_type") or "").startswith("E"):
+        return str(metadata["v4_source_type"])
     filename = str(metadata.get("original_filename") or "")
     return cross_file_doc_type_name(filename=filename, content=audit.content or "", rule_type=rule_type)
 

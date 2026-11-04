@@ -59,6 +59,12 @@ def test_typed_counterpart_still_requires_matching_original_identity(tmp_path, c
     assert result.status == "UNABLE"
 
 
+@pytest.mark.parametrize("part", ["无", "/", "TBD", "XXX", "待定"])
+def test_matching_part_placeholders_never_establish_a_formal_pair(tmp_path, part):
+    result = check(original(tmp_path, "target", target=True, part=part), [original(tmp_path, "reference", part=part)])
+    assert result.status == "UNABLE"
+
+
 def test_multiple_typed_counterparts_remain_unknown(tmp_path):
     result = check(original(tmp_path, "target", target=True), [original(tmp_path, "one"), original(tmp_path, "two")])
     assert result.status == "UNABLE"
@@ -107,6 +113,14 @@ def test_valid_sample_photo_cannot_break_an_independent_typed_characteristic_pai
     rule = RuleInput(rule_id="frozen-rule", **{name: value for name, value in body.items() if name != "kind"})
     result = UaesPfmeaAgent(target, rule, group).check(2)
     assert result.status == "PASS", result.suggestions
+
+
+def test_unavailable_sample_photo_does_not_break_a_readable_formal_pair(tmp_path):
+    target, reference = original(tmp_path, "target", target=True), original(tmp_path, "reference")
+    group = GroupContextInput(by_audit_id={"reference": reference}, by_doc_type={PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST.get_type_name(): [reference]}, unavailable_files={"photo": "E07"})
+    body = preset_rule_body("UAES", "U07")
+    rule = RuleInput(rule_id="frozen-rule", **{name: value for name, value in body.items() if name != "kind"})
+    assert UaesPfmeaAgent(target, rule, group).check(2).status == "PASS"
 
 
 def test_msa_broad_type_keeps_its_actual_kappa_subtype_available(tmp_path):

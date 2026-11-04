@@ -12,7 +12,7 @@ from openpyxl import Workbook
 def original(tmp_path, version, *, title="报告", customer="UAES", part="P1", revision="A", msa="属性型", extra=None):
     book = Workbook()
     book.active.title = title
-    for row in [["客户", customer], ["零件号", part], ["零件名称", "支架"], ["版本", revision], ["项目", "M1"], ["MSA类型", msa], ["实验室名称", "实验室A"]]:
+    for row in [["客户", customer], ["零件号", part], ["零件名称", "支架"], ["版本", revision], ["项目", "M1"], ["MSA类型", msa], ["实验室名称", "实验室A"], ["UAES批准的前提/备注", "条件认可"]]:
         book.active.append(row)
     if extra:
         book.create_sheet(extra).append(["项目", "附件"])
@@ -74,6 +74,20 @@ def test_embedded_delivery_list_is_not_falsely_missing(tmp_path, extra):
 def test_embedded_deviation_summary_counts_as_accessible_original(tmp_path):
     target = original(tmp_path, "target", extra="偏差认可汇总清单")
     assert facts(target, "U19", GroupContextInput())["deviation"]["status"] == "satisfied"
+
+
+@pytest.mark.parametrize(("remarks", "status", "code"), [("完全认可", "not_checked", "S02"), ("尚未批准", "unknown", None), ("完全认可；条件认可", "unknown", None), (None, "unknown", None)])
+def test_deviation_list_is_only_required_for_confirmed_conditional_approval(tmp_path, remarks, status, code):
+    from openpyxl import load_workbook
+
+    target = original(tmp_path, "target")
+    book = load_workbook(target.file_url)
+    book.active.cell(8, 2).value = remarks
+    book.save(target.file_url)
+    book.close()
+    observed = facts(target, "U19", GroupContextInput())["deviation"]
+    assert (observed["status"], observed["code"]) == (status, code)
+    assert observed["warning_codes"] == []
 
 
 @pytest.mark.parametrize("changes", [{"part": "other"}, {"customer": "理想"}, {"revision": "B"}])

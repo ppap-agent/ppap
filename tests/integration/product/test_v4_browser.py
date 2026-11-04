@@ -261,11 +261,12 @@ def test_customer_intake_to_original_issue_and_frozen_precheck_export(running_pr
 
 
 @pytest.mark.parametrize("running_product", ["蔚来"], indirect=True)
-def test_cross_file_problem_opens_both_authorized_frozen_originals(running_product):
+@pytest.mark.parametrize("viewport", [{"width": 1440, "height": 1000}, {"width": 390, "height": 844}], ids=["desktop", "mobile"])
+def test_cross_file_problem_opens_both_authorized_frozen_originals(running_product, viewport):
     web, session, errors = running_product
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
-        context = browser.new_context(viewport={"width": 1440, "height": 1000})
+        context = browser.new_context(viewport=viewport)
         context.add_cookies([{"name": SESSION_COOKIE, "value": session, "url": web, "httpOnly": True}])
         page = context.new_page()
         page.set_default_timeout(20000)
@@ -315,6 +316,28 @@ def test_cross_file_problem_opens_both_authorized_frozen_originals(running_produ
             target = page.get_by_role("button", name=re.compile(r"^PFMEA\.xlsx NG"))
             expect(target).to_be_visible(timeout=30000)
             target.click()
+            basis = page.get_by_role("button", name=re.compile(r"^查看依据 N02:7:"))
+            basis.click()
+            page.get_by_role("button", name="同时核对关联原件", exact=True).click()
+            comparison = page.get_by_role("region", name="关联原件对照", exact=True)
+            expect(comparison).to_be_visible()
+            boxes = []
+            for title, data, file in originals:
+                pane = comparison.get_by_role("region", name="关联原件 " + title + ".xlsx", exact=True)
+                expect(pane).to_have_attribute("data-file-version", file["file_version_id"])
+                expect(pane.get_by_role("link", name="下载原件", exact=True)).to_be_visible()
+                boxes.append(pane.bounding_box())
+            assert all(boxes)
+            if viewport["width"] >= 1024:
+                assert abs(boxes[0]["y"] - boxes[1]["y"]) <= 2
+                assert boxes[0]["x"] + boxes[0]["width"] <= boxes[1]["x"] + 2
+            else:
+                assert boxes[1]["y"] >= boxes[0]["y"] + boxes[0]["height"]
+                assert abs(boxes[0]["x"] - boxes[1]["x"]) <= 2
+            page.get_by_role("button", name="返回判定依据", exact=True).click()
+            expect(page.get_by_role("button", name="同时核对关联原件", exact=True)).to_be_focused()
+            page.keyboard.press("Escape")
+            expect(basis).to_be_focused()
             for title, data, file in originals:
                 page.get_by_role("button", name=re.compile(r"^查看依据 N02:7:")).click()
                 page.get_by_role("button", name="核对 " + title + ".xlsx", exact=True).first.click()

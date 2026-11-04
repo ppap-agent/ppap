@@ -121,6 +121,16 @@ def dependency_facts(audit, entry, group):
         def check(name=name, kinds=kinds, titles=titles, customer_owned=customer_owned):
             if group is None:
                 raise UnknownFact("未提供本轮冻结集合，尚不能判定对端是否缺失。")
+            if name == "deviation":
+                remarks = _field(target, ("UAES批准的前提/备注", "UAES 批准的前提/备注"), required=False)
+                if remarks is None:
+                    raise UnknownFact("UAES认可结论尚未明确，不能先认定需要偏差汇总清单。")
+                full = "完全认可" in str(remarks)
+                conditional = any(term in str(remarks) for term in ("偏差认可", "条件认可", "超差", "不合格", "整改"))
+                if full and not conditional:
+                    raise StateFact("S02", "本件明确完全认可，偏差汇总对端不适用，不要求供应商补件。")
+                if full or not conditional:
+                    raise UnknownFact("UAES认可结论无法唯一归类，偏差对端适用性尚未核实。")
             if name == "kappa":
                 declared = _field(target, ("量具类型", "测量系统类型", "MSA类型", "评价方法"), required=False)
                 if declared is None:
