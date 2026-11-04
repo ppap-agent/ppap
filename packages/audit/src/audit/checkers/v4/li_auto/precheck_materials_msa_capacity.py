@@ -85,7 +85,7 @@ def _blank(value):
 def _located(facts, aliases, required):
     found = []
     for table in facts.data["tables"]:
-        if any(word in str(table["id"]) for word in ("填写说明", "填写指南", "评分准则")):
+        if any(word in str(table["id"]) for word in ("填写说明", "填表说明", "填写指南", "评分准则")):
             continue
         for header in range(1, min(80, table["rows"]) + 1):
             columns = {}
@@ -415,7 +415,17 @@ def _material_ops(agent, facts):
 
     def generation():
         columns()
-        raise UnknownFact("已核对理想自身列组合；原件未提供受控模板版本签名，不能仅凭选择理想推定V1.0/V1.5/V2.0/V3.0。")
+        for located in _material_slices(facts):
+            customer = _metadata(facts, located, ("客户", "客户名称"), required=False)
+            version = _metadata(facts, located, ("模板版本", "模板代际", "表格版本"), required=False)
+            if customer is None or version is None:
+                raise UnknownFact("已核对理想自身列组合；原件未共同声明客户与模板版本，不能仅凭任务选择推定V1.0/V1.5/V2.0/V3.0。")
+            if key(customer) not in {key("理想"), key("理想汽车"), "liauto"}:
+                raise UnknownFact("原件客户声明与理想任务冲突，需拆分或确认后再判代际。")
+            if key(version) == key("非标准"):
+                raise DefectFact("B03", "原件明确声明为非标准模板，不能归入源允许代际。")
+            if key(version) not in {key(value) for value in ("V1.0", "V1.5", "V2.0", "V3.0", "1.0", "1.5", "2.0", "3.0")}:
+                raise UnknownFact("原件模板版本声明不在受控代际列表，需受控版本对照，未猜测最近代际。")
 
     def external():
         text = _native_text(facts)
@@ -528,6 +538,8 @@ def _labels(facts, table, aliases, *, required=True):
 def _native_text(facts):
     result: list[Any] = []
     for table in facts.data["tables"]:
+        if any(word in str(table["id"]) for word in ("填写说明", "填表说明", "填写指南", "评分准则")):
+            continue
         if table.get("visual_evidence"):
             raise UnknownFact("原件含未解释的图像区，不能以原生文本未出现推断整份文件未声明。")
         for address, raw in table["cells"].items():
@@ -608,6 +620,8 @@ def _msa_ops(agent, facts):
         _self_list(agent, facts)
 
     def required_types():
+        from .precheck_l1 import L1Facts
+
         plans, reports = _msa_forms(facts)
         declarations = []
         for table in facts.data["tables"]:
@@ -617,13 +631,20 @@ def _msa_ops(agent, facts):
         if len(set(declarations)) != 1:
             raise UnknownFact("本次计划/报告提交范围未唯一声明，不能把单独计划自动判缺报告。")
         scope = declarations[0]
+        group = _group(agent, facts)
+        for audit in group.get_files_by_type(PpapDocumentType.MSA_REPORT):
+            if audit.audit_id == facts.audit.audit_id:
+                continue
+            reader = L1Facts(audit)
+            other_plans, other_reports = _msa_forms(reader)
+            plans.extend(other_plans)
+            reports.extend(other_reports)
+            for table in other_plans + other_reports:
+                reader.read(table, 1, 1)
+            merge_sources(facts, reader)
         if "计划" in scope and not plans or any(word in scope for word in ("报告", "R&R", "Kappa")) and not reports:
-            group = _group(agent, facts)
-            if len(group.get_files_by_type(PpapDocumentType.MSA_REPORT)) > 1:
-                raise UnknownFact("本文件缺声明类型，但冻结集合还有MSA原件，须先核对跨文件对端。")
-            # Cite the declaration already read by _labels.
-            raise DefectFact("B02", "原件明确声明的计划或报告类型整类未在本文件定位到；需按冻结范围核对补充。")
-        raise UnknownFact("已核对本文件声明类型；跨文件是否补齐仍需冻结任务同类原件逐一关联，不把单文件检查当整批闭合。")
+            raise DefectFact("B02", "原件明确声明的计划或报告类型整类未在完整冻结集合定位，请按声明补充。")
+        return "已按原件明确范围，核对完整冻结集合的计划/报告类型存在性；具体量具、项目、版本配对由关联项分别检查。"
 
     def relations():
         from .precheck_l1 import L1Facts
@@ -701,20 +722,40 @@ def _msa_ops(agent, facts):
                         raise DefectFact("W04", "同量具计划与报告的被测对象、名称或分析类型冲突。")
 
     def metadata_consistency():
-        _, reports = _msa_forms(facts)
-        grouped: dict[str, list[dict[str, Any]]] = {}
-        for table in reports:
-            identifier = identity(_labels(facts, table, ("量具编号",)))
-            if not identifier:
-                raise UnknownFact("报告量具编号为空，不能确认多联表单属于同一量具。")
-            grouped.setdefault(identifier, []).append(table)
+        from .precheck_l1 import L1Facts
+
+        readers = [facts]
+        group = getattr(agent, "group_context", None)
+        if group is not None:
+            _group(agent, facts)
+            readers.extend(L1Facts(audit) for audit in group.get_files_by_type(PpapDocumentType.MSA_REPORT) if audit.audit_id != facts.audit.audit_id)
+        grouped: dict[Any, list[Any]] = {}
+        for reader in readers:
+            _, reports = _msa_forms(reader)
+            for table in reports:
+                identifier = identity(_labels(reader, table, ("量具编号",)))
+                if not identifier:
+                    raise UnknownFact("报告量具编号为空，不能确认多联表单属于同一量具。")
+                project = _labels(reader, table, ("项目", "项目名称", "车型"), required=False)
+                version = _labels(reader, table, ("版本", "版本号"), required=False)
+                grouped.setdefault((identifier, identity(project), identity(version)), []).append((reader, table))
+            if reader is not facts:
+                merge_sources(facts, reader)
+        compared = False
         for tables in grouped.values():
+            if len(tables) < 2:
+                continue
+            compared = True
             for labels in (("量具名称",), _PART, ("规格公差", "公差"), ("评价人", "评价人姓名")):
-                values = [identity(_labels(facts, table, labels)) for table in tables]
+                values = []
+                for reader, table in tables:
+                    values.append(identity(_labels(reader, table, labels)))
+                    if reader is not facts:
+                        merge_sources(facts, reader)
                 if len(set(values)) > 1:
-                    raise DefectFact("W04", "同编号MSA多联报告的对象、规格或评价人元数据不一致。")
-        if not any(len(tables) > 1 for tables in grouped.values()):
-            raise StateFact("S02", "仅定位到单份同量具表单，无多联元数据比较对象。")
+                    raise DefectFact("W04", "同编号同项目同版本MSA多联报告的对象、规格或评价人元数据不一致。")
+        if not compared:
+            raise StateFact("S02", "冻结集合中无可配对的同量具同项目同版本多联报告，无多联元数据比较对象。")
 
     def conclusion():
         _, reports = _msa_forms(facts)
@@ -792,6 +833,33 @@ def _formula_source(facts, table, row, col, formula):
     facts.sources.append({"kind": "structure", "locator": json.dumps(locator, ensure_ascii=False, separators=(",", ":")), "excerpt": str(formula)[:500]})
 
 
+def _unit_value(value, unit):
+    unit = str(unit or "").strip().casefold()
+    scale = {"": Decimal(1), "mm": Decimal(1), "cm": Decimal(10), "μm": Decimal(".001"), "um": Decimal(".001")}
+    if unit not in scale:
+        raise UnknownFact("规格量纲未在当前受控长度换算范围内，不能猜测单位。")
+    return value * scale[unit], "mm" if unit else ""
+
+
+def _printed_spec(value):
+    text = str(value).strip().replace("＋", "+").replace("－", "-")
+    number = r"([+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+))"
+    symmetric = re.fullmatch(number + r"\s*±\s*" + number + r"\s*(mm|cm|μm|um)?", text, re.I)
+    if symmetric:
+        nominal, band = Decimal(symmetric[1]), Decimal(symmetric[2])
+        unit = (symmetric[3] or "").casefold()
+        lower, canonical = _unit_value(nominal - band, unit)
+        upper, _ = _unit_value(nominal + band, unit)
+        return lower, upper, canonical
+    interval = re.fullmatch(number + r"\s*[~～至]\s*" + number + r"\s*(mm|cm|μm|um)?", text, re.I)
+    if interval:
+        unit = (interval[3] or "").casefold()
+        lower, canonical = _unit_value(Decimal(interval[1]), unit)
+        upper, _ = _unit_value(Decimal(interval[2]), unit)
+        return lower, upper, canonical
+    raise UnknownFact("已印规格不能还原为唯一上下限及单位，不能以不同写法直接判公差冲突。")
+
+
 def _cap_ops(agent, facts):
     def shape():
         suffix = Path(facts.audit.file_url).suffix.lower()
@@ -806,13 +874,39 @@ def _cap_ops(agent, facts):
         raise UnknownFact("已核对可定位统计量读取状态；纯图数值与其他未定位关键区块仍需核对。")
 
     def declared():
+        from .precheck_l1 import L1Facts
+
         text = _native_text(facts)
         if any(re.fullmatch(r"\s*(?:草稿|待填|DEMO|示例|Draft)\s*", value, re.I) for value in text):
             raise DefectFact("B02", "能力报告保留明确草稿或演示标记，尚非有效定稿件。")
+        mains = [item for item in _located(facts, {"name": ("特性名称",), "cpk": ("P阶段Cpk结果",), "decision": ("P阶段结果判定",)}, ("name", "cpk", "decision")) if "ccsc" in key(item[0]["id"])]
+        if not mains:
+            raise UnknownFact("已读取文本，但未取得CCSC表名与P阶段列的共同族签名，不能以选择理想确认能力载体族。")
+        for item in mains:
+            rows = _rows(facts, item, allow_empty=True)
+            if not rows:
+                raise DefectFact("B02", "能力CCSC主表只有表头，没有有效填报行。")
+            for _, row in rows:
+                if str(_one(row, "name")).strip().casefold() in {"示例", "demo", "example", "待填", "xxx"}:
+                    raise DefectFact("B02", "能力条目名称保留示例或待填内容。")
+        group = _group(agent, facts)
+        other_targets = False
+        for audit in group.get_files_by_type(PpapDocumentType.INITIAL_PROCESS_CAPACITY_STUDY):
+            if audit.audit_id == facts.audit.audit_id or audit.file_metadata.get("role") == "reference":
+                continue
+            other_targets = True
+            reader = L1Facts(audit)
+            if reader.data["source"]["sha256"] == facts.data["source"]["sha256"]:
+                for table in reader.data["tables"][:1]:
+                    reader.read(table, 1, 1)
+                merge_sources(facts, reader)
+                raise DefectFact("W04", "冻结本体集合中存在原件字节相同的能力报告副本，请确认唯一审核对象。")
+        if other_targets:
+            raise UnknownFact("冻结本体集合有其他能力原件；不同字节是否高度雷同需稳定条目/版本配对，未按任意相似度阈值判重复。")
         try:
             _located(facts, {"filename": ("文件名", "文件名称", "File name")}, ("filename",))
         except UnknownFact:
-            raise StateFact("S01", "本原件无可定位自述文件清单，本子项无对账对象；未要求新增目录。") from None
+            return "已确认理想CCSC实际族签名和有效填报行，冻结本体集合无其他副本；无自述清单，对账子项S01。"
         _self_list(agent, facts)
 
     def required_fields():
@@ -989,28 +1083,113 @@ def _cap_ops(agent, facts):
         raise UnknownFact("已核对抽样先后、完整时间戳和可定位签署日期；生产起始日及抽样方案未独立提供，不能证明正常生产覆盖。")
 
     def consistency():
-        records: dict[Any, str] = {}
-        located = _located(
-            facts, {"name": ("特性名称",), "id": ("特性编号",), "lsl": ("LSL", "规格下限"), "usl": ("USL", "规格上限"), "cpk": ("Cpk", "P阶段Cpk结果"), "stage": ("阶段", "过程阶段")}, ("name",)
-        )
-        for item in located:
-            part = _metadata(facts, item, _PART)
-            if _blank(part):
-                raise UnknownFact("特性表的对象零件号未明确，不能跨区块配对。")
-            for _, row in _rows(facts, item):
-                name = identity(_one(row, "name"))
-                characteristic = identity(_one(row, "id")) if "id" in row else name
-                if not characteristic:
-                    raise UnknownFact("特性名称/编号为空，不能按行序跨表配对。")
-                marker = (identity(part), characteristic)
-                for field, values in row.items():
-                    if field not in {"lsl", "usl", "cpk", "stage"}:
-                        continue
-                    value = identity(_one(row, field))
-                    prior = records.setdefault((marker, field), value)
-                    if prior != value:
-                        raise DefectFact("W04" if field == "stage" else "B06", "同零件同特性的规格限、能力值或阶段在原件不同区块冲突。")
-        raise UnknownFact("已核对本文件同对象同特性可定位重复数值；特殊特性清单/控制计划对端和汇总-明细全集仍需冻结关联集合配对。")
+        from .precheck_l1 import L1Facts
+
+        sources = [(facts, "capability")]
+        group = getattr(agent, "group_context", None)
+        if group is not None:
+            _group(agent, facts)
+            seen = {facts.audit.audit_id}
+            for kind, family in (
+                (PpapDocumentType.INITIAL_PROCESS_CAPACITY_STUDY, "capability"),
+                (PpapDocumentType.CONTROL_PLAN, "control"),
+                (PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST, "special"),
+            ):
+                for audit in group.get_files_by_type(kind):
+                    if audit.audit_id not in seen:
+                        sources.append((L1Facts(audit), family))
+                        seen.add(audit.audit_id)
+        aliases = {
+            "name": ("特性名称", "产品特性", "过程特性", "产品/过程特性"),
+            "id": ("特性编号", "特性序号"),
+            "lsl": ("LSL", "规格下限"),
+            "usl": ("USL", "规格上限"),
+            "cpk": ("Cpk", "P阶段Cpk结果"),
+            "stage": ("阶段", "过程阶段"),
+            "spec": ("规格", "规格/公差", "规范/公差", "产品/过程规范/公差"),
+        }
+        records: dict[Any, Any] = {}
+        collections: dict[Any, set[str]] = {}
+        exact_sets: dict[Any, bool] = {}
+        scopes: dict[Any, Any] = {}
+        found_peer = False
+        for reader, family in sources:
+            for item in _located(reader, aliases, ("name",)):
+                part = _metadata(reader, item, _PART)
+                if _blank(part):
+                    raise UnknownFact("特性表零件号未明确，不能跨区块或跨原件配对。")
+                project = _metadata(reader, item, ("项目", "项目名称", "车型"), required=False)
+                version = _metadata(reader, item, ("版本", "版本号"), required=False)
+                customer = _metadata(reader, item, ("客户", "客户名称"), required=False)
+                declared_unit = _metadata(reader, item, ("单位", "测量单位"), required=False)
+                if customer is not None and key(customer) not in {key("理想"), key("理想汽车"), "liauto"}:
+                    raise UnknownFact("特性对端客户与理想任务冲突，未跨客户比较。")
+                scope = (identity(part), identity(project), identity(version))
+                # Missing project/version on only one source is an unproven pair,
+                # rather than permission to use any same-name old report.
+                previous = scopes.setdefault(identity(part), scope)
+                if previous != scope:
+                    raise UnknownFact("同零件不同区块/原件的项目或版本未对应，需确认当前有效配对。")
+                collection = (scope, reader.audit.audit_id, item[0]["id"], family)
+                collections[collection] = set()
+                exact_sets[collection] = "id" in item[2]
+                for _, row in _rows(reader, item):
+                    name = identity(_one(row, "name"))
+                    characteristic = identity(_one(row, "id")) if "id" in row else name
+                    if not characteristic:
+                        raise UnknownFact("特性名称/编号为空，不能按行序跨表配对。")
+                    if characteristic in collections[collection]:
+                        raise UnknownFact("同一区块特性标识重复，缺少唯一行主体，未任取一行。")
+                    collections[collection].add(characteristic)
+                    if reader is not facts:
+                        merge_sources(facts, reader)
+                        found_peer = True
+                    marker = (scope, characteristic)
+                    observed = {}
+                    for field in ("lsl", "usl", "cpk", "stage"):
+                        if field not in row:
+                            continue
+                        raw = _one(row, field)
+                        if _blank(raw):
+                            raise UnknownFact("跨表比较字段" + field + "为空，不能以两个空值认定一致。")
+                        observed[field] = _unit_value(facts.strict_number(raw), declared_unit) if field in {"lsl", "usl"} else facts.strict_number(raw) if field == "cpk" else identity(raw)
+                    if "spec" in row:
+                        lower, upper, unit = _printed_spec(_one(row, "spec"))
+                        for field, bound in (("lsl", lower), ("usl", upper)):
+                            value = (bound, unit)
+                            if field in observed and observed[field] != value:
+                                raise UnknownFact("同区块文字公差与上下限/单位尚未统一，需先核对原件。")
+                            observed[field] = value
+                    for field, value in observed.items():
+                        prior = records.setdefault((marker, field), value)
+                        if field in {"lsl", "usl"} and bool(prior[1]) != bool(value[1]):
+                            raise UnknownFact("跨表规格仅一方声明单位，尚不能证明相同量纲。")
+                        if prior != value:
+                            raise DefectFact("W04" if field == "stage" else "B06", "同冻结对象及已声明项目/版本的特性规格限、能力值或阶段在原件区块/对端中冲突。")
+        keys = list(collections)
+        compared = False
+        for index, left in enumerate(keys):
+            for right in keys[index + 1 :]:
+                if left[0] != right[0]:
+                    continue
+                if not exact_sets[left] or not exact_sets[right]:
+                    continue
+                left_family, right_family = left[3], right[3]
+                summary_detail = left_family == right_family == "capability" and any("汇总" in key(item[2]) or "清单" in key(item[2]) for item in (left, right))
+                managed_peer = {left_family, right_family} & {"control", "special"} and "capability" in {left_family, right_family}
+                if not summary_detail and not managed_peer:
+                    continue
+                compared = True
+                if collections[left] != collections[right]:
+                    raise DefectFact(
+                        "B06" if summary_detail else "W04",
+                        "同一冻结对象的汇总/明细特性集合不闭合。" if summary_detail else "冻结特性清单/控制计划与能力报告编号集合不闭合；本批次未识别到对应特性，请确认范围。",
+                    )
+        if not compared:
+            raise UnknownFact("已检查已定位特性重复值；各区块没有共同稳定特性编号或无同对象汇总/对端，不能以名称别名差异推定漏件。")
+        if not found_peer or not any(family in {"control", "special"} for _, family in sources):
+            raise UnknownFact("已核对已定位稳定编号集合；冻结集合未提供同对象CP/SCL原件，跨文件覆盖仍无对端。")
+        return "已核对同对象同项目同版本冻结特性编号集合及已印规格/能力值；未应用工程准入阈值。"
 
     return {
         "PRE-01": shape,

@@ -11,7 +11,7 @@ from audit.kinds import PpapDocumentType
 from openpyxl import Workbook
 
 
-def execute(tmp_path, entry, criterion, sheets, *, complete_group=False, metadata=None, other=None, **kwargs):
+def execute(tmp_path, entry, criterion, sheets, *, complete_group=False, metadata=None, other=None, other_kind=None, **kwargs):
     book = Workbook()
     book.remove(book.active)
     for title, rows in sheets.items():
@@ -37,7 +37,10 @@ def execute(tmp_path, entry, criterion, sheets, *, complete_group=False, metadat
             second.save(second_path)
             second.close()
             audits.append(AuditInput(audit_id="peer-version", file_url=str(second_path), file_metadata={"original_filename": "关联原件.xlsx", "role": "reference"}))
-        group = GroupContextInput(task_group_id="frozen-task", by_audit_id={item.audit_id: item for item in audits}, by_doc_type={kind.get_type_name(): audits})
+        by_type = {kind.get_type_name(): audits}
+        if other_kind is not None:
+            by_type = {kind.get_type_name(): [audit], other_kind.get_type_name(): audits[1:]}
+        group = GroupContextInput(task_group_id="frozen-task", by_audit_id={item.audit_id: item for item in audits}, by_doc_type=by_type)
     agent = SimpleNamespace(group_context=group)
     facts = L1Facts(audit)
     return facts.observe(entry + ":" + criterion, operations(agent, entry, facts)[criterion])
@@ -340,3 +343,59 @@ def test_material_declared_attachment_is_checked_only_with_frozen_group(tmp_path
 
 def test_material_no_attachment_declaration_does_not_invent_drawing_dependency(tmp_path):
     expect(execute(tmp_path, "L04", "PC-A8", {"材料清单": [_MATERIAL_HEADER, material()]}), "not_checked", "S02")
+
+
+def test_msa_multiform_metadata_is_compared_across_frozen_originals(tmp_path):
+    first = {"R&R数据表": [["量具编号", "G1"], ["量具名称", "卡尺"], ["零件号", "P1"], ["规格公差", "10±0.2"], ["评价人", "张工"]]}
+    other = {"R&R分析表": [["量具编号", "G1"], ["量具名称", "卡尺"], ["零件号", "P1"], ["规格公差", "10±0.2"], ["评价人", "李工"]]}
+    fact = execute(tmp_path, "L05", "MSA-PRE-07", first, complete_group=True, other=other)
+    expect(fact, "defect", "W04")
+    assert any("peer-version" in source["locator"] for source in fact["evidence"]["sources"])
+    other["R&R分析表"][-1][1] = "张工"
+    expect(execute(tmp_path, "L05", "MSA-PRE-07", first, complete_group=True, other=other), "satisfied")
+
+
+def test_capability_summary_detail_set_difference_uses_stable_ids(tmp_path):
+    first = [["零件号", "P1"], ["特性编号", "特性名称", "Cpk"], ["C1", "孔径", 1.1]]
+    second = [["零件号", "P1"], ["特性编号", "特性名称", "Cpk"], ["C2", "孔径", 1.1]]
+    expect(execute(tmp_path, "L06", "PRE-16", {"汇总清单": first, "明细页": second}), "defect", "B06")
+    first[1][0] = "其他列"
+    second[1][0] = "其他列"
+    expect(execute(tmp_path, "L06", "PRE-16", {"汇总清单": first, "明细页": second}), "unknown")
+
+
+@pytest.mark.parametrize(("spec", "status", "code"), [("10±0.2mm", "satisfied", None), ("1±0.02cm", "satisfied", None), ("10±0.3mm", "defect", "B06"), ("10±0.2", "unknown", None)])
+def test_cross_file_control_plan_specs_use_frozen_part_id_and_explicit_units(tmp_path, spec, status, code):
+    capability = {"能力汇总清单": [["零件号", "P1"], ["单位", "mm"], ["特性编号", "特性名称", "LSL", "USL", "Cpk"], ["C1", "孔径", 9.8, 10.2, 1.1]]}
+    cp = {"控制计划": [["零件号", "P1"], ["特性编号", "特性名称", "规格/公差"], ["C1", "孔径", spec]]}
+    fact = execute(tmp_path, "L06", "PRE-16", capability, complete_group=True, other=cp, other_kind=PpapDocumentType.CONTROL_PLAN)
+    expect(fact, status, code)
+    if status == "defect":
+        assert any("peer-version" in source["locator"] for source in fact["evidence"]["sources"])
+
+
+def test_control_plan_characteristic_set_difference_is_warning_not_missing_engineering_pass(tmp_path):
+    capability = {"能力汇总清单": [["零件号", "P1"], ["特性编号", "特性名称", "Cpk"], ["C1", "孔径", 1.1]]}
+    cp = {"控制计划": [["零件号", "P1"], ["特性编号", "特性名称"], ["C2", "孔径"]]}
+    expect(execute(tmp_path, "L06", "PRE-16", capability, complete_group=True, other=cp, other_kind=PpapDocumentType.CONTROL_PLAN), "defect", "W04")
+
+
+def test_material_generation_uses_original_customer_and_template_declaration(tmp_path):
+    sheets = {"材料清单": [["客户", "理想"], ["模板版本", "V3.0"], _MATERIAL_HEADER, material()]}
+    expect(execute(tmp_path, "L04", "PC-A5", sheets), "satisfied")
+    sheets["材料清单"][1][1] = "V9.0"
+    expect(execute(tmp_path, "L04", "PC-A5", sheets), "unknown")
+    sheets["材料清单"][1][1] = "非标准"
+    expect(execute(tmp_path, "L04", "PC-A5", sheets), "defect", "B03")
+
+
+def test_no_self_list_only_closes_reconciliation_subitem_not_entire_capability_checks(tmp_path):
+    sheets = {"CCSC特性管理清单": [["特性名称", "P阶段Cpk结果", "P阶段结果判定"], ["孔径", 1.1, "合格"]]}
+    expect(execute(tmp_path, "L06", "PRE-03", sheets), "unknown")
+    expect(execute(tmp_path, "L06", "PRE-03", sheets, complete_group=True), "satisfied")
+
+
+def test_declared_msa_report_type_can_be_supplied_by_frozen_peer(tmp_path):
+    plan = {"测量系统分析计划": [["提交范围", "计划和报告"], ["量具编号", "量具名称"], ["G1", "卡尺"]]}
+    report = {"R&R报告": [["量具编号", "G1"], ["结论", "可接受"]]}
+    expect(execute(tmp_path, "L05", "MSA-PRE-14", plan, complete_group=True, other=report), "satisfied")
