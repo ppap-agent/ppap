@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import shutil
 import tempfile
 from dataclasses import dataclass
@@ -22,6 +23,7 @@ class PaddleOCRStats:
     tables: int
     text_blocks: int
     seals: int
+    output_dir: Path
 
 
 def _workbook(evidence: dict) -> Workbook:
@@ -63,17 +65,15 @@ def _workbook(evidence: dict) -> Workbook:
 
 def evaluate_pdf(
     pdf_path: str | Path,
-    out_dir: str | Path,
+    out_root: str | Path,
     *,
     response: dict | None = None,
     endpoint: str | None = None,
     token: str = "",
 ) -> PaddleOCRStats:
-    """Create an entirely new output directory; never alter the input PDF or production cache."""
+    """Publish a unique run directory, even when multiple jobs share one root."""
     source, page_count = validate_pdf(pdf_path)
-    destination = Path(out_dir).expanduser().resolve()
-    if destination.exists() or destination.is_symlink():
-        raise FileExistsError(f"PaddleOCR output directory already exists: {destination}")
+    root = Path(out_root).expanduser().resolve()
     if response is None:
         if not endpoint:
             raise ValueError("PaddleOCR endpoint is required unless replaying a response")
@@ -83,8 +83,9 @@ def evaluate_pdf(
 
     evidence = build_evidence(result, page_count=page_count, pdf_path=source)
     workbook = _workbook(evidence)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    staged = Path(tempfile.mkdtemp(prefix=".paddle-", dir=destination.parent))
+    root.mkdir(parents=True, exist_ok=True)
+    staged = Path(tempfile.mkdtemp(prefix=".paddle-", dir=root))
+    destination: Path | None = None
     try:
         try:
             workbook.save(staged / "tables.xlsx")
@@ -94,7 +95,21 @@ def evaluate_pdf(
         verified.close()
         (staged / "evidence.json").write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
         (staged / "response.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.rename(staged, destination)
+        for _ in range(10):
+            candidate = root / f"paddle-{secrets.token_hex(16)}"
+            try:
+                candidate.mkdir(mode=0o700)  # Atomic reservation; never clobber another run.
+            except FileExistsError:
+                continue
+            try:
+                os.rename(staged, candidate)  # Publish all three files in one rename (POSIX).
+            except BaseException:
+                candidate.rmdir()
+                raise
+            destination = candidate
+            break
+        if destination is None:
+            raise FileExistsError("Unable to reserve a unique PaddleOCR output directory")
     finally:
         if staged.exists():
             shutil.rmtree(staged)
@@ -103,4 +118,5 @@ def evaluate_pdf(
         tables=sum(len(page["tables"]) for page in evidence["pages"]),
         text_blocks=sum(block["type"] != "table" and bool(block["text"].strip()) for page in evidence["pages"] for block in page["texts"]),
         seals=sum(len(page["seals"]) for page in evidence["pages"]),
+        output_dir=destination,
     )

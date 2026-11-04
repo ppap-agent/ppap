@@ -41,14 +41,14 @@
 
 入口是 `packages/documents/src/documents/ocr/paddle/`，不接入 `documents.conversion.pipeline`、Responses/Grok/Codex、审核规则、OCR SQLite 缓存或生产路由。无新依赖，无自动模型调用。
 
-默认仅处理**本地 PDF**，调用历史 PP-StructureV3 `/layout-parsing` API。输出目录必须是不存在的新路径；成功后一次性发布 `tables.xlsx`、`evidence.json` 和 `response.json`，失败不发布部分产物。原始 PDF 永不修改。
+默认仅处理**本地 PDF**，调用历史 PP-StructureV3 `/layout-parsing` API。多个并发任务可以复用 `--out-root` 指定的输出根目录；每次运行通过独占创建分配唯一的 `paddle-<随机标识>` 子目录，成功后一次性发布 `tables.xlsx`、`evidence.json` 和 `response.json`，失败不发布部分产物。CLI 打印生成的绝对路径。原始 PDF 永不修改。
 
 ```sh
 export PADDLE_OCR_URL="http://127.0.0.1:8080/layout-parsing"
 export PADDLE_TOKEN="..."  # 可选；也可使用 PADDLE_OCR_TOKEN
 uv run --no-sync python -m documents.ocr.paddle \
   --pdf "/path/to/source.pdf" \
-  --out-dir "/tmp/paddle-eval-1"
+  --out-root "/tmp/paddle-results"
 ```
 
 完全离线、不会发出模型或 PaddleOCR 网络请求的回放：
@@ -56,8 +56,8 @@ uv run --no-sync python -m documents.ocr.paddle \
 ```sh
 uv run --no-sync python -m documents.ocr.paddle \
   --pdf "/path/to/source.pdf" \
-  --response-json "/tmp/paddle-eval-1/response.json" \
-  --out-dir "/tmp/paddle-replay-1"
+  --response-json "/tmp/paddle-results/paddle-<run-id>/response.json" \
+  --out-root "/tmp/paddle-results"
 uv run --no-sync pytest packages/documents/tests/test_paddle.py
 ```
 

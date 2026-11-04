@@ -11,7 +11,7 @@ from .export import evaluate_pdf
 def main() -> None:
     parser = argparse.ArgumentParser(description="Standalone PaddleOCR layout and seal evaluation")
     parser.add_argument("--pdf", required=True, type=Path, help="Local source PDF")
-    parser.add_argument("--out-dir", required=True, type=Path, help="New directory for Excel and JSON evidence")
+    parser.add_argument("--out-root", required=True, type=Path, help="Parent directory for unique PaddleOCR run outputs")
     parser.add_argument("--response-json", type=Path, help="Replay a saved Paddle response without network")
     args = parser.parse_args()
 
@@ -21,12 +21,12 @@ def main() -> None:
         parser.error("PADDLE_OCR_URL is required unless --response-json is provided")
     stats = evaluate_pdf(
         args.pdf,
-        args.out_dir,
+        args.out_root,
         response=response,
         endpoint=endpoint,
         token=os.environ.get("PADDLE_OCR_TOKEN") or os.environ.get("PADDLE_TOKEN", ""),
     )
-    print(f"Paddle OCR: pages={stats.pages}, tables={stats.tables}, text_blocks={stats.text_blocks}, seals={stats.seals}")
+    print(f"Paddle OCR: output_dir={stats.output_dir} pages={stats.pages}, tables={stats.tables}, text_blocks={stats.text_blocks}, seals={stats.seals}")
 
 
 if __name__ == "__main__":
