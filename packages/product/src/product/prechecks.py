@@ -120,13 +120,14 @@ def render_precheck_record(receipt: dict) -> bytes:
     def escape(value):
         return html.escape(str(value if value is not None else ""))
 
+    statuses = {"satisfied": "本项已核实", "defect": "发现问题", "unknown": "未核实", "not_checked": "未执行", "error": "执行失败", "handoff": "转正式审核判断", "not_applicable": "本项不适用"}
     source, result = receipt["input"], receipt.get("result") or {}
     parts = [
         '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>PPAP 预检检查记录</title>',
         "<style>body{font:16px system-ui;max-width:64rem;margin:2rem auto;padding:0 1rem}"
         "table{border-collapse:collapse;width:100%}td,th{padding:.5rem;border:1px solid #bbb;text-align:left}small{color:#555}</style>",
         "<h1>PPAP 预检检查记录</h1><p>本记录只说明资料准备检查，不是正式审核合格结论。预检免费。</p>",
-        f"<p>审核客户：{escape(source.get('customer_preference') or '自动识别')}<br>任务：{escape(source['task_id'])}"
+        f"<p>审核客户：{escape(source.get('effective_customer') or source.get('customer_preference') or '自动识别')}<br>任务：{escape(source['task_id'])}"
         f"<br>输入修订：{escape(source['input_revision'])}<br>快照：{escape(receipt['id'])}<br>保存时间：{escape(receipt['created_at'])}</p>",
     ]
     by_version = {row["file_version_id"]: row for row in result.get("files") or []}
@@ -135,10 +136,13 @@ def render_precheck_record(receipt: dict) -> bytes:
         observed = by_version.get(version) or {}
         checker = observed.get("checker") or (file.get("rule_execution") or {}).get("checker") or {}
         rule = file.get("rule") or {}
+        body = rule.get("body") or {}
+        origin = "客户预置规则" if body.get("rule_profile") == "v4" and body.get("preset_key") else "用户自定义规则" if rule else "尚无适用规则"
         spec = file.get("precheck_spec") or source.get("precheck_source") or {}
         parts += [
             f"<h2>{escape(file['file']['original_filename'])}</h2>",
             f"<p>文件版本：{escape(version)}<br>角色：{escape(file['role'])}<br>规则：{escape(rule.get('title'))}（{escape(rule.get('id'))}）"
+            f"<br>规则来源：{escape(origin)} {escape(body.get('preset_key'))}<br>任务模式：{escape(source.get('analysis_mode'))}"
             f"<br>实际 Checker：{escape(checker.get('profile'))} {escape(checker.get('class'))}</p>",
             f"<p>预检判定源：{escape(spec.get('source'))}<br>源文件摘要：{escape(spec.get('source_sha256'))}</p>",
             "<table><thead><tr><th>检查事实</th><th>状态与原因</th><th>来源与下一步</th></tr></thead><tbody>",
@@ -147,10 +151,16 @@ def render_precheck_record(receipt: dict) -> bytes:
             evidence = "；".join(f"{item.get('locator', '')} {item.get('excerpt', '')}" for item in (fact.get("evidence") or {}).get("sources") or [])
             parts.append(
                 f"<tr><td>{escape(fact.get('source_id'))}<br>{escape(fact.get('message'))}</td><td>{escape(fact.get('status'))} {escape(fact.get('code'))}"
-                f"</td><td>{escape(evidence)}<br>{escape(fact.get('next_step'))}</td></tr>"
+                f"{escape(statuses.get(fact.get('status'), '状态未核实'))}</td><td>{escape(evidence)}<br>{escape(fact.get('next_step'))}</td></tr>"
             )
         if not observed.get("facts"):
             parts.append('<tr><td colspan="3">尚无已执行的内容预检结果，不能视为全部通过。</td></tr>')
         parts.append("</tbody></table>")
+        if body.get("appendix"):
+            parts.append(
+                "<details><summary>本次冻结的自定义规则附录与作用范围</summary><pre>"
+                f"{escape(json.dumps(body['appendix'], ensure_ascii=False, sort_keys=True, indent=2))}</pre>"
+                "<p>本预检记录不代替正式 Deep 自定义规则审核结论。</p></details>"
+            )
     parts.append("<p>未覆盖、未核实、技术失败和受控模板待核均不等于文件不合格。原件读取仍须单独授权；本记录不包含原件访问令牌。</p></html>")
     return "\n".join(parts).encode("utf-8")
