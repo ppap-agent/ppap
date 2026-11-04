@@ -97,6 +97,9 @@ def test_each_source_accepts_and_freezes_its_actual_customer_checker(auth_store_
         process_claimed(worker, precheck, "routes-precheck")
         frozen_precheck = client.get(path).json()["precheck"]
         assert frozen_precheck["status"] == "succeeded"
+        dependency_facts = [fact for row in frozen_precheck["result"]["files"] for fact in row["facts"] if ":dependency:" in fact.get("id", "")]
+        assert dependency_facts, "The source's applicable counterpart availability must run through the Worker"
+        assert not [fact for fact in dependency_facts if fact["status"] == "error"], dependency_facts
         confirmed = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0})
         assert confirmed.status_code == 201, confirmed.text
         job = worker.claim_job("routes-audit")

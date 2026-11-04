@@ -366,8 +366,9 @@ class UaesSourceAgent(BaseAgent):
             for item in items
             if item.audit_id != self.audit_file.audit_id
         }
+        photos = {item.audit_id for kind, items in self.group_context.by_doc_type.items() if key(kind) in {"e07", "生产件样品照片"} for item in items}
         for item in self.group_context.by_audit_id.values():
-            if item.audit_id == self.audit_file.audit_id:
+            if item.audit_id == self.audit_file.audit_id or item.audit_id in photos:
                 continue
             if item.audit_id in candidates:
                 continue
