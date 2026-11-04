@@ -37,6 +37,33 @@
 
 本地开发也可作为现网的本地客户端：本地 Web 通过产品 API 使用同一份真实数据；需要验证未部署的服务代码时，本地候选 API 可连接现网 PostgreSQL、对象存储与飞书。浏览器不直连数据库，租户与对象授权仍由 API 执行。共享数据不代表新旧代码或 Schema 自动兼容，连接前须核对候选所需接口与数据库结构；这种联调不运行初始化、迁移、测试重置或额外 Worker。写入仍是真实业务操作，不能因入口在本地而视作模拟；会产生收费、通知或审核受理的动作须按本次联调范围控制。
 
+## PaddleOCR API 独立验证（不接入产品）
+
+历史 PP-StructureV3 `/layout-parsing` OCR API 的显式验证入口位于 `documents.ocr.paddle_api`，由本地操作人员主动调用。它不进入 `documents.conversion.pipeline`，不修改 `OCR_ADAPTER_MODE`、Responses 默认回退路径、规则审核或共享 SQLite 缓存；不会因安装 `documents` 自动发出 API 请求。输入为本地 PDF，导出 OCR 表格（保留 HTML 合并单元格）和可选的转义后正文/印章 HTML。
+
+在线调用（自行配置本地或授权服务 URL 和密钥，不把密钥写入 Git 或命令行参数）：
+
+```sh
+export PADDLE_OCR_URL="http://127.0.0.1:8080/layout-parsing"
+export PADDLE_OCR_TOKEN="..."  # 无鉴权的本地 API 可省略
+uv run --no-sync python -m documents.ocr.paddle_api \
+  --pdf "/path/to/source.pdf" \
+  --xlsx "/tmp/paddle-evaluation.xlsx" \
+  --html "/tmp/paddle-evaluation.html"
+```
+
+无需网络的响应回放（`response.json` 为 PaddleOCR 的完整 API JSON 或其中的 `result` 对象）：
+
+```sh
+uv run --no-sync python -m documents.ocr.paddle_api \
+  --pdf "/path/to/source.pdf" \
+  --response-json "/path/to/response.json" \
+  --xlsx "/tmp/paddle-replay.xlsx"
+uv run --no-sync pytest packages/documents/tests/test_paddle_api.py
+```
+
+输出仅写入显式指定的本地路径，不进行生产缓存或数据库写入。API 响应必须包含每一 PDF 页（部分 Paddle 服务默认只处理前 10 页，需在服务端明确配置）；缺页、无效表格 HTML、检测到但未识别的表格均拒绝生成结果。表格以 `prunedResult.table_res_list[].pred_html` 为准；正文使用 `parsing_res_list`，印章使用 `seal_res_list`。此实验入口**不恢复 Gemma 二次视觉处理**，也不替代原有 `RemoteOcrAdapter`；真实 OCR 准确率、质量与网络稳定性须在用户本地验证后决定是否接入。
+
 ## 当前命令
 
 Local 与 CI 使用同一 ownership。CI 不再维护与目录结构脱节的测试分类。
