@@ -578,12 +578,22 @@ def precheck_inspection(agent):
             row.expect("判定标准", context="待检项目标准必填")
         return "PASS", "每个待检项均有标准文本。"
 
+    measurement_code = "W02"
+
     def measurements(ctx):
-        for row, _ in agent._inspection_rows(ctx, ("检查数据", "判定结果")):
-            row.expect("检查数据", "判定结果", context="实测值与检查结果必填")
-            values = row.values_between("检查数据", "判定结果")
-            if not values or any(str(value if value is not None else "").strip().upper() in {"", "/", "NA", "N/A"} for value in values):
-                return "NG", "实测值为空或仍是占位符。"
+        nonlocal measurement_code
+        defect = False
+        for row, columns in agent._inspection_rows(ctx, ("检查数据", "判定结果")):
+            raw_result = row.value("判定结果")
+            result = str(raw_result if raw_result is not None else "").strip()
+            values = [str(value if value is not None else "").strip().upper() for value in agent._measurements(row, columns)]
+            if values and not any(values) and result:
+                measurement_code = "B05"
+                defect = True
+            elif not result or not values or any(value in {"", "/", "NA", "N/A"} for value in values):
+                defect = True
+        if defect:
+            return "NG", "该行全部样本列为空但判定结果已填写。" if measurement_code == "B05" else "实测值或判定结果为空或仍是占位符。"
         return "PASS", "实测值与结果已填写。"
 
     def results(ctx):
@@ -624,9 +634,11 @@ def precheck_inspection(agent):
         "IR-07": (agent.rule_4, "W03"),
         "IR-08": (measurements, "W02"),
         "IR-10": (results, "W03"),
-        "IR-17": (samples, "W01"),
+        "IR-17": (samples, "W06"),
     }
     replacements = {"L01:" + criterion: precheck_fact(agent, "L01:" + criterion, operation, code=code) for criterion, (operation, code) in checks.items()}
+    if replacements["L01:IR-08"]["status"] == "defect":
+        replacements["L01:IR-08"].update(code=measurement_code, critical=measurement_code == "B05" and replacements["L01:IR-08"]["certainty"] == "confirmed")
     return [replacements.get(fact["id"], fact) for fact in facts]
 
 
