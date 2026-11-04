@@ -79,6 +79,9 @@ def test_automatic_precheck_is_free_immutable_and_read_only(system):
     request = {"request_id": str(uuid.uuid4()), "expected_revision": 0}
     assert client.post(path + "/prechecks", json=request).json()["id"] == current["id"]
     assert client.post(path + "/prechecks", json=request).json()["id"] == current["id"]
+    recovered = client.get(path + "/prechecks/" + request["request_id"])
+    assert recovered.status_code == 200 and recovered.json()["request_id"] == request["request_id"]
+    assert recovered.json()["id"] == current["id"]
     claimed = worker.claim_job("free-precheck")
     assert claimed.kind == "task_precheck"
     result = process_claimed(worker, claimed, "free-precheck")

@@ -1590,7 +1590,7 @@ class AuthStore:
                     raise KeyError("missing")
                 if prior[2].get("input_revision") != expected_revision:
                     raise ValueError("idempotency_conflict")
-                return self._read_task_precheck(conn, principal, task_id, prior[2]["snapshot_id"], draft["input_revision"])
+                return self._read_task_precheck(conn, principal, task_id, key, draft["input_revision"])
             if draft["input_revision"] != expected_revision:
                 raise ValueError("task_revision_conflict")
             receipt = self._queue_task_precheck(conn, principal, self._recognition_public(conn, principal, task_id), retry_key=key)
@@ -1603,15 +1603,21 @@ class AuthStore:
             ).fetchone()
             if not created:
                 raise ValueError("idempotency_conflict")
+            receipt["request_id"] = key
             return receipt
 
     def _read_task_precheck(self, conn, principal: Principal, task_id: str, snapshot_id: str, revision: int) -> dict:
         if not _as_uuid(snapshot_id):
             raise KeyError("missing")
+        operation = conn.execute(
+            "SELECT payload FROM engine.jobs WHERE id = %s AND tenant_id = %s AND kind = 'task_precheck_request' AND payload->>'task_id' = %s", (snapshot_id, principal.tenant_id, task_id)
+        ).fetchone()
+        request_id = snapshot_id if operation else None
+        resolved_id = operation[0]["snapshot_id"] if operation else snapshot_id
         row = conn.execute(
             """SELECT id, payload, status, result, lease_until < now(), created_at, updated_at FROM engine.jobs
                               WHERE id = %s AND tenant_id = %s AND kind = 'task_precheck' AND payload->>'task_id' = %s""",
-            (snapshot_id, principal.tenant_id, task_id),
+            (resolved_id, principal.tenant_id, task_id),
         ).fetchone()
         if not row:
             raise KeyError("missing")
@@ -1619,6 +1625,8 @@ class AuthStore:
         receipt = self._precheck_receipt(row, current_revision=revision)
         current = self._current_task_precheck(conn, task_id, principal.tenant_id, revision)
         receipt["current"] = bool(current and current["id"] == receipt["id"])
+        if request_id:
+            receipt["request_id"] = request_id
         return receipt
 
     def get_task_precheck(self, principal: Principal, task_id: str, snapshot_id: str) -> dict:
