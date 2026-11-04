@@ -262,3 +262,248 @@ def test_same_source_same_layout_compares_actual_values_not_only_identity(tmp_pa
         import json
 
         assert {json.loads(source["locator"])["file_version_id"] for source in observed["evidence"]["sources"]} == {"one", "two"}
+
+
+def trial(tmp_path, *, filename="trial.xlsx", audit_id="one", rows=None):
+    path = tmp_path / filename
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "DVP&R"
+    for row in rows or [["试验项目", "实际试验结果", "备注"], ["振动", "合格", None]]:
+        sheet.append(row)
+    workbook.save(path)
+    return AuditInput(audit_id=audit_id, file_url=str(path), customer="理想", file_metadata={"original_filename": filename})
+
+
+def edit_native(audit, edit):
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(audit.file_url)
+    edit(workbook)
+    workbook.save(audit.file_url)
+
+
+def dropdown(audit, formula, *, ranges=("B2",)):
+    from openpyxl.worksheet.datavalidation import DataValidation
+
+    def edit(workbook):
+        validation = DataValidation(type="list", formula1=formula)
+        workbook.active.add_data_validation(validation)
+        for address in ranges:
+            validation.add(address)
+
+    edit_native(audit, edit)
+
+
+def batch(*audits):
+    return GroupContextInput(task_group_id="task", by_audit_id={audit.audit_id: audit for audit in audits})
+
+
+def test_native_inline_dropdown_dictionary_positive(tmp_path):
+    audit = trial(tmp_path)
+    dropdown(audit, '"合格,视同,偏差认可"')
+    observed = result(audit, "L02", "CON-06", group=batch(audit))
+    assert observed["status"] == "satisfied", observed
+    assert any("原生数据验证" in source["excerpt"] for source in observed["evidence"]["sources"])
+
+
+def test_native_conflicting_dropdowns_in_batch_are_warning_not_authority(tmp_path):
+    one = trial(tmp_path)
+    two = trial(tmp_path, filename="two.xlsx", audit_id="two")
+    dropdown(one, '"合格,视同,偏差认可"')
+    dropdown(two, '"OK,NG"')
+    observed = result(one, "L02", "CON-06", group=batch(one, two))
+    assert (observed["status"], observed["code"]) == ("defect", "W03"), observed
+    assert observed["certified"] is False
+    assert "规则枚举仍为权威" in observed["message"]
+    import json
+
+    assert {json.loads(source["locator"])["file_version_id"] for source in observed["evidence"]["sources"]} == {"one", "two"}
+
+
+@pytest.mark.parametrize("named", [False, True])
+def test_native_dropdown_static_range_or_defined_name_reads_original_cells(tmp_path, named):
+    from openpyxl.workbook.defined_name import DefinedName
+
+    audit = trial(tmp_path)
+
+    def edit(workbook):
+        sheet = workbook.create_sheet("结果字典")
+        for word in ("合格", "视同", "偏差认可"):
+            sheet.append([word])
+        if named:
+            workbook.defined_names.add(DefinedName("ResultOptions", attr_text="'结果字典'!$A$1:$A$3"))
+
+    edit_native(audit, edit)
+    dropdown(audit, "=ResultOptions" if named else "='结果字典'!$A$1:$A$3")
+    observed = result(audit, "L02", "CON-06", group=batch(audit))
+    assert observed["status"] == "satisfied", observed
+    assert any("结果字典" in source["locator"] for source in observed["evidence"]["sources"])
+
+
+@pytest.mark.parametrize("formula", ["=OFFSET(A1,0,0,3,1)", "='[outside.xlsx]Sheet1'!$A$1:$A$3", "=MissingName"])
+def test_dynamic_external_or_missing_dropdown_is_unknown_without_evaluation(tmp_path, formula):
+    audit = trial(tmp_path)
+    dropdown(audit, formula)
+    assert result(audit, "L02", "CON-06", group=batch(audit))["status"] == "unknown"
+
+
+def test_native_formula_option_without_cached_value_is_unknown(tmp_path):
+    audit = trial(tmp_path)
+
+    def edit(workbook):
+        sheet = workbook.create_sheet("结果字典")
+        sheet.append(['="合格"'])
+
+    edit_native(audit, edit)
+    dropdown(audit, "='结果字典'!$A$1:$A$1")
+    assert result(audit, "L02", "CON-06", group=batch(audit))["status"] == "unknown"
+
+
+def test_no_dropdown_does_not_become_missing_rule_dictionary_defect(tmp_path):
+    audit = trial(tmp_path)
+    observed = result(audit, "L02", "CON-06", group=batch(audit))
+    assert (observed["status"], observed["code"]) == ("not_checked", "S01")
+
+
+def test_other_field_dropdown_is_not_conflicting_result_dictionary(tmp_path):
+    audit = trial(tmp_path)
+    dropdown(audit, '"合格,视同,偏差认可"')
+    dropdown(audit, '"DV,PV"', ranges=("A2",))
+    assert result(audit, "L02", "CON-06", group=batch(audit))["status"] == "satisfied"
+
+
+def test_native_subset_dictionary_not_assumed_mutually_exclusive(tmp_path):
+    one = trial(tmp_path)
+    two = trial(tmp_path, filename="two.xlsx", audit_id="two")
+    dropdown(one, '"合格,视同,偏差认可"')
+    dropdown(two, '"合格"')
+    assert result(one, "L02", "CON-06", group=batch(one, two))["status"] == "unknown"
+
+
+@pytest.mark.parametrize("location", ["comment", "outside", "remark"])
+def test_actual_native_unexpected_explanation_locations_warn(tmp_path, location):
+    from openpyxl.comments import Comment
+
+    audit = trial(tmp_path)
+
+    def edit(workbook):
+        sheet = workbook.active
+        if location == "comment":
+            sheet["B2"].comment = Comment("申请豁免：此项按项目说明不再执行", "supplier")
+        elif location == "outside":
+            sheet["E2"] = "借用 W01 的振动报告"
+        else:
+            sheet["C2"] = "本试验取消"
+
+    edit_native(audit, edit)
+    observed = result(audit, "L02", "COM-08")
+    assert (observed["status"], observed["code"]) == ("defect", "W03"), observed
+    assert any("批注" in source["excerpt"] or "表外" in source["excerpt"] for source in observed["evidence"]["sources"])
+
+
+def test_native_comments_without_explanation_terms_are_not_defects(tmp_path):
+    from openpyxl.comments import Comment
+
+    audit = trial(tmp_path)
+    edit_native(audit, lambda workbook: setattr(workbook.active["B2"], "comment", Comment("试验按已批准计划进行", "supplier")))
+    assert result(audit, "L02", "COM-08")["status"] == "satisfied"
+
+
+@pytest.mark.parametrize("has_legend,expected", [(True, "defect"), (False, "unknown")])
+def test_native_red_fill_needs_explicit_cancellation_legend(tmp_path, has_legend, expected):
+    from openpyxl.styles import PatternFill
+
+    audit = trial(tmp_path)
+
+    def edit(workbook):
+        sheet = workbook.active
+        for cell in sheet[2]:
+            cell.fill = PatternFill("solid", fgColor="FFFF0000")
+        if has_legend:
+            sheet["A4"] = "颜色说明"
+            sheet["B4"] = "红色表示取消"
+
+    edit_native(audit, edit)
+    observed = result(audit, "L02", "COM-08")
+    assert observed["status"] == expected, observed
+    if has_legend:
+        assert observed["code"] == "W03"
+        assert any("原生实心底色" in source["excerpt"] for source in observed["evidence"]["sources"])
+
+
+def test_clear_native_explanation_locations_can_pass(tmp_path):
+    audit = trial(tmp_path)
+    assert result(audit, "L02", "COM-08")["status"] == "satisfied"
+
+
+def test_provided_separate_list_suppresses_unexpected_comment_warning(tmp_path):
+    from openpyxl.comments import Comment
+
+    audit = trial(tmp_path)
+    edit_native(audit, lambda workbook: setattr(workbook.active["B2"], "comment", Comment("申请豁免", "supplier")))
+    explanation = original(tmp_path, [["豁免说明清单", "振动：经项目说明予以豁免"]], filename="explanation.xlsx", audit_id="explanation")
+    assert result(audit, "L02", "COM-08", group=batch(audit, explanation))["status"] == "satisfied"
+
+
+def test_structured_execution_status_prevents_only_in_comment_warning(tmp_path):
+    from openpyxl.comments import Comment
+
+    audit = trial(tmp_path, rows=[["试验项目", "实际试验结果", "备注", "计划执行状态"], ["振动", "合格", None, "取消"]])
+    edit_native(audit, lambda workbook: setattr(workbook.active["B2"], "comment", Comment("本试验取消", "supplier")))
+    assert result(audit, "L02", "COM-08")["status"] == "satisfied"
+
+
+def test_unrelated_separate_list_cannot_exempt_native_comment(tmp_path):
+    from openpyxl.comments import Comment
+
+    audit = trial(tmp_path)
+    edit_native(audit, lambda workbook: setattr(workbook.active["B2"], "comment", Comment("申请豁免", "supplier")))
+    explanation = original(tmp_path, [["豁免说明清单", "盐雾：经项目说明予以豁免"]], filename="explanation.xlsx", audit_id="explanation")
+    observed = result(audit, "L02", "COM-08", group=batch(audit, explanation))
+    assert (observed["status"], observed["code"]) == ("defect", "W03")
+
+
+def test_conditional_color_is_unknown_without_running_excel_formulas(tmp_path):
+    from openpyxl.formatting.rule import FormulaRule
+    from openpyxl.styles import PatternFill
+
+    audit = trial(tmp_path)
+    edit_native(audit, lambda workbook: workbook.active.conditional_formatting.add("A2:C2", FormulaRule(formula=['B2="合格"'], fill=PatternFill("solid", fgColor="FFFF0000"))))
+    assert result(audit, "L02", "COM-08")["status"] == "unknown"
+
+
+def test_empty_native_trial_range_is_not_explanation_pass(tmp_path):
+    audit = trial(tmp_path, rows=[["试验项目", "实际试验结果", "备注"]])
+    assert result(audit, "L02", "COM-08")["status"] == "unknown"
+
+
+def test_native_dropdown_default_options_exist_without_filled_trials(tmp_path):
+    audit = trial(tmp_path, rows=[["试验项目", "实际试验结果", "备注"]])
+    dropdown(audit, '"合格,视同,偏差认可"', ranges=("B2:B100",))
+    observed = result(audit, "L02", "CON-06", group=batch(audit))
+    assert observed["status"] == "satisfied", observed
+
+
+def test_native_below_table_block_with_exact_trial_key_warns(tmp_path):
+    audit = trial(tmp_path)
+    edit_native(audit, lambda workbook: setattr(workbook.active["E4"], "value", "振动：申请豁免"))
+    observed = result(audit, "L02", "COM-08")
+    assert (observed["status"], observed["code"]) == ("defect", "W03"), observed
+
+
+def test_native_orphan_comment_not_silently_skipped_or_guessed_as_defect(tmp_path):
+    from openpyxl.comments import Comment
+
+    audit = trial(tmp_path)
+    edit_native(audit, lambda workbook: setattr(workbook.active["E4"], "comment", Comment("申请豁免", "supplier")))
+    assert result(audit, "L02", "COM-08")["status"] == "unknown"
+
+
+def test_duplicate_trial_names_do_not_let_general_list_exempt_all(tmp_path):
+    from openpyxl.comments import Comment
+
+    audit = trial(tmp_path, rows=[["试验项目", "实际试验结果", "备注"], ["振动", "合格", None], ["振动", "合格", None]])
+    edit_native(audit, lambda workbook: setattr(workbook.active["B2"], "comment", Comment("申请豁免", "supplier")))
+    explanation = original(tmp_path, [["豁免说明清单", "振动：经项目说明予以豁免"]], filename="explanation.xlsx", audit_id="explanation")
+    assert result(audit, "L02", "COM-08", group=batch(audit, explanation))["status"] == "unknown"
