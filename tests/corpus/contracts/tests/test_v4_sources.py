@@ -75,7 +75,9 @@ def test_nio_t12_source_clauses_run_over_the_actual_template_and_controlled_chan
         target = RoundInput("target", "source", "frozen-source", "特殊特性清单.xlsx", "ready", rule_version_id="nio-t12-source", rule_body=body, rule_execution=execution)
         result = run_round_from_bytes(RoundWork("source-bound-round", "corpus", [target]), {"frozen-source": content.getvalue()})
         by_id = {finding["item_key"].split(":rule:", 1)[1]: finding["status"] for finding in result["findings"]}
-        assert [by_id[clause.id] for clause in next(rule for rule in customer_presets() if rule.entry_id == "N04").clauses] == expected
+        assert [by_id[clause.id] for clause in next(rule for rule in customer_presets() if rule.entry_id == "N04").clauses] == expected, [
+            (row["status"], row["suggestions"]) for row in result["findings"]
+        ]
         assert not result["coverage"]["unchecked"]
 
 

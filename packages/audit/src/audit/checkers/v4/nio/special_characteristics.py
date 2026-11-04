@@ -12,6 +12,11 @@ from .tables import NioTableAgent
 class NioSpecialCharacteristicsAgent(NioTableAgent):
     DOC_TYPE = PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST
     SHEET_KEYWORD = "特殊特性清单"
+    DATA_END_LABELS = ("备注", "编制/日期")
+
+    @staticmethod
+    def _field_aliases(names):
+        return {name: [name, "特殊特性类别"] if name == "特性类别" else [name] for name in names}
 
     @rule("标题前产品编号", clause_id="1")
     def rule_1(self, ctx):
@@ -33,7 +38,7 @@ class NioSpecialCharacteristicsAgent(NioTableAgent):
     @rule("全部特性字段非空", clause_id="2")
     def rule_2(self, ctx):
         names = ("零件编号", "零件名称", "特性分类", "特性描述", "特性值", "特性类别", "特殊特性种类", "控制方法（制造过程）", "防错方案描述", "频次", "样本数")
-        rows = self._data(ctx, {key: [key] for key in names})
+        rows = self._data(ctx, self._field_aliases(names))
         applicable = False
         for row in rows:
             if row["零件编号"] and row["零件名称"]:
@@ -47,7 +52,7 @@ class NioSpecialCharacteristicsAgent(NioTableAgent):
         names = ("零件编号", "零件名称", "特性分类", "特性描述", "特性值", "特性类别", "特殊特性种类", "控制方法（制造过程）", "防错方案描述", "频次", "样本数")
         return [
             checker_fact(self, "N04:S1", self.rule_1, code="W03"),
-            checker_fact(self, "N04:S2", lambda ctx: self._columns(ctx, {key: [key] for key in names}), code="B05"),
+            checker_fact(self, "N04:S2", lambda ctx: self._columns(ctx, self._field_aliases(names)), code="B05"),
             checker_fact(self, "N04:S3", self._identity_cells),
             checker_fact(self, "N04:S4", self.rule_2),
         ]

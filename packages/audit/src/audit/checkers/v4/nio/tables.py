@@ -67,7 +67,7 @@ def table_header(ctx, aliases, required, version, sheets):
                     second = sheet.cell(row + 1, column).value if row < sheet.max_row else None
                     if _header(first, names):
                         matches.append((column, 1))
-                    elif _header(str(first or "") + str(second or ""), names):
+                    elif _header(second, names) or _header(str(first or "") + str(second or ""), names):
                         matches.append((column, 2))
                 if len(matches) == 1:
                     columns[name] = matches[0][0]
@@ -94,10 +94,15 @@ def table_header(ctx, aliases, required, version, sheets):
     return sheet, header, span, columns
 
 
-def table_rows(ctx, workbook, aliases, required, version, sheets):
+def table_rows(ctx, workbook, aliases, required, version, sheets, *, end_labels=()):
     sheet, header, span, columns = table_header(ctx, aliases, required, version, sheets)
     result = []
     for row in range(header + span, sheet.max_row + 1):
+        first = next((cell for cell in sheet[row] if cell.value is not None and str(cell.value).strip()), None)
+        if first is not None and _header(first.value, end_labels):
+            merged = ctx.ops.get_detailed_merge_info(sheet, row, first.column)
+            if merged and merged.min_col <= min(columns.values()) and merged.max_col >= min(columns.values()):
+                break
         item = {"__row_number": str(row), "__sheet_name": sheet.title}
         for name, column in columns.items():
             merged = ctx.ops.get_detailed_merge_info(sheet, row, column)
@@ -120,6 +125,7 @@ def table_rows(ctx, workbook, aliases, required, version, sheets):
 class NioTableAgent(ExcelAgent):
     CLAUSE_BOUND_CHECKS = True
     SHEET_KEYWORD = ""
+    DATA_END_LABELS: tuple[str, ...] = ()
 
     def _load_workbook(self):
         workbook = super()._load_workbook()
@@ -132,7 +138,7 @@ class NioTableAgent(ExcelAgent):
         return selected_sheets(ctx.workbook, self.SHEET_KEYWORD)
 
     def _data(self, ctx, aliases, required=None):
-        return table_rows(ctx, ctx.workbook, aliases, tuple(aliases) if required is None else required, self.audit_file.audit_id, self._sheets(ctx))
+        return table_rows(ctx, ctx.workbook, aliases, tuple(aliases) if required is None else required, self.audit_file.audit_id, self._sheets(ctx), end_labels=self.DATA_END_LABELS)
 
     def _columns(self, ctx, aliases):
         table_header(ctx, aliases, tuple(aliases), self.audit_file.audit_id, self._sheets(ctx))
