@@ -4,7 +4,7 @@ from pathlib import Path
 
 from audit.checkers.v2.process_flow_chart_excel_agent import ProcessFlowChartExcelAgent as LegacyFlow
 from audit.checkers.v3.excel_agent import rule
-from audit.engine.rule_engine import Table
+from audit.engine.rule_engine import Row, Table
 from audit.kinds import PpapDocumentType
 
 from .facts import NativeFacts, columns_present, compact, precheck_fact
@@ -35,25 +35,30 @@ class LiAutoProcessFlowAgent(NativeFacts):
             section = sheet.section("过程流程主数据区")
             cols = section.columns("工序名称", "产品特殊特性", "过程特殊特性")
             ws = section.resolved.ws
-            band = [cell for row in ws.iter_rows(min_row=section.resolved.header_row, max_row=section.resolved.header_row + 2) for cell in row]
+            band = [cell for row in ws.iter_rows(min_row=section.resolved.header_row, max_row=max(column.data_start_row for column in cols.values()) - 1) for cell in row]
             product = {cell.column for cell in band if compact(cell.value) == "产品特性类别"}
             process = {cell.column for cell in band if compact(cell.value) == "过程特性类别"}
             headers = [next(iter(product)), next(iter(process))] if len(product) == len(process) == 1 else sorted({cell.column for cell in band if compact(cell.value) == "特性类别"})
             if len(headers) != 2:
                 return "NG", "必须包含两个可唯一定位的特性类别列。"
-            rows = list(section.rows_from(cols))
-            if not rows:
-                return "UNABLE", "没有可核实的工序行。"
-            for row in rows:
-                if not row.is_present("工序名称"):
+            count = 0
+            for index in range(max(column.data_start_row for column in cols.values()), ws.max_row + 1):
+                if not any(compact(ws.cell(index, column).value) for column in {*(col.header_col for col in cols.values()), *headers}):
                     continue
-                anchor = row.anchor("工序名称")
-                value = ws.cell(anchor.row_index, headers[ordinal])
+                count += 1
+                row = Row(ctx, ws, cols, index, section.resolved)
+                merge = ctx.ops.get_detailed_merge_info(ws, index, headers[ordinal])
+                if merge and merge.min_col != merge.max_col:
+                    return "UNABLE", "特性类别跨越不同业务列，尚不能确定归属。"
+                value = ws.cell(merge.min_row if merge else index, merge.min_col if merge else headers[ordinal])
                 ctx.note_cell(ws.title, value.row, value.column)
                 if value.data_type in {"e", "f"}:
                     return "UNABLE", "特性类别不可读取。"
                 if compact(value.value) in {"【G】", "【Z】"}:
                     row.expect("产品特殊特性" if ordinal == 0 else "过程特殊特性", context="G/Z对应特性必须填写")
+            ctx.note_scan(yielded=count, finished=True)
+            if not count:
+                return "UNABLE", "没有可核实的类别业务行。"
         return "PASS", "两个特性类别及对应内容已核实。"
 
     @rule("第一特性类别及产品特性")
@@ -91,7 +96,8 @@ class LiAutoProcessFlowAgent(NativeFacts):
         for sheet in Table(ctx).find_sheets("过程流程图"):
             section = sheet.section("过程流程主数据区")
             columns = set()
-            for cells in sheet.ws.iter_rows(min_row=section.resolved.header_row, max_row=section.resolved.header_row + 2):
+            business = section.columns("工序名称", "产品特殊特性", "过程特殊特性")
+            for cells in sheet.ws.iter_rows(min_row=section.resolved.header_row, max_row=max(column.data_start_row for column in business.values()) - 1):
                 for cell in cells:
                     if compact(cell.value) in {"特性类别", "产品特性类别", "过程特性类别"}:
                         sheet.cell(cell.row, cell.column).value()

@@ -335,3 +335,217 @@ def test_inspection_populated_row_cannot_disappear_with_missing_serial_or_projec
     first = [1, "直径", "10±0.5", "卡尺", 10, 10.1, "OK"] if group == "尺寸" else [1, "外观", "无划伤", "目视", "OK", "OK", "OK"]
     rows = [["序号", "检查项目", "判定标准", "供方检查方法/检查工具", "检查数据", None, "判定结果"], [group], first, second]
     assert execute(tmp_path, "L01", number, rows, "尺寸检验报告").status == "NG"
+
+
+@pytest.mark.parametrize("number", [3, 5])
+@pytest.mark.parametrize("value", ["NaN", "Infinity", "未识别数值"])
+def test_unknown_measurements_cannot_pass_tolerance_or_duplicates(tmp_path, number, value):
+    rows = [["序号", "检查项目", "判定标准", "供方检查方法/检查工具", "检查数据", None, "判定结果"], ["尺寸"], [1, "直径", "10±0.5", "卡尺", 10, value, "OK"]]
+    assert execute(tmp_path, "L01", number, rows, "尺寸检验报告").status == "UNABLE"
+
+
+def test_unlabelled_later_measurement_cell_is_not_an_empty_row(tmp_path):
+    rows = [["序号", "检查项目", "判定标准", "供方检查方法/检查工具", "检查数据", None, "判定结果"], ["尺寸"], [1, "直径", "10±0.5", "卡尺", 10, 10.1, "OK"], [None, None, None, None, None, 50, None]]
+    assert execute(tmp_path, "L01", 3, rows, "尺寸检验报告").status == "UNABLE"
+
+
+def test_merged_dimension_group_label_is_not_a_measurement_row(tmp_path):
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "尺寸检验报告"
+    sheet.append(["序号", "检查项目", "判定标准", "供方检查方法/检查工具", "检查数据", None, "判定结果"])
+    sheet.append(["尺寸"])
+    sheet.merge_cells("A2:G2")
+    sheet.append([1, "直径", "10±0.5", "卡尺", 10, 10.1, "OK"])
+    path = tmp_path / "合并分区.xlsx"
+    book.save(path)
+    book.close()
+    agent = EXCEL_AGENTS["L01"](AuditInput(audit_id="v", file_url=str(path)), RuleInput(rule_id="r", **preset_rule_body("理想", "L01")))
+    try:
+        assert agent._execute_rule_check(3).status == "PASS"
+    finally:
+        agent.close()
+
+
+def test_material_status_row_does_not_disappear_when_part_number_is_blank(tmp_path):
+    rows = [["零件号", "自制", "外协-国产", "外协-进口", "领用件"], ["P123", "X", None, None, None], [None, "X", "X", None, None]]
+    assert execute(tmp_path, "L04", 3, rows, "清单").status == "NG"
+
+
+@pytest.mark.parametrize(
+    ("number", "second"),
+    [(2, [None, "[X]", "孔径", None, "卡尺", "每批"]), (3, [None, "[G]", None, None, "卡尺", "每批"]), (4, [None, "[G]", "孔径", None, None, "每批"]), (5, [None, "NA", "孔径", None, "卡尺", None])],
+)
+def test_control_plan_classification_rows_do_not_require_a_process_label(tmp_path, number, second):
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "控制计划"
+    sheet.cell(1, 3, "特性")
+    sheet.merge_cells("C1:D1")
+    sheet.append(["工序名称", "特殊特性分类", "产品", "过程", "控制方法", "频率"])
+    sheet.append(["压装", "[G]", "孔径", None, "卡尺", "每批"])
+    sheet.append(second)
+    path = tmp_path / "无工序标签.xlsx"
+    book.save(path)
+    book.close()
+    agent = EXCEL_AGENTS["L08"](AuditInput(audit_id="v", file_url=str(path)), RuleInput(rule_id="r", **preset_rule_body("理想", "L08")))
+    try:
+        assert agent._execute_rule_check(number).status == "NG"
+    finally:
+        agent.close()
+
+
+@pytest.mark.parametrize("number", [2, 3])
+def test_flow_category_trigger_does_not_require_a_process_name(tmp_path, number):
+    rows = [["工序名称", "操作描述", "产品特殊特性", "特性类别", "过程特殊特性", "特性类别"], ["压装", "压入", "孔径", "【G】", "温度", "【Z】"], [None, "压入", None, "【G】", None, "【Z】"]]
+    assert execute(tmp_path, "L11", number, rows, "过程流程图").status == "NG"
+
+
+@pytest.mark.parametrize(
+    ("number", "headers", "first", "second", "expected"),
+    [
+        (4, ["线体/工序类别", "良率", "合格品数", "产出数量"], ["线体1", 0.9, 9, 10], ["线体2", None, 9, 10], "UNABLE"),
+        (5, ["线体/工序类别", "单线体/工序总产出JPH", "产出数量", "净利用时间（h）", "参与测试线体数量"], ["线体1", 5, 10, 2, 1], ["线体2", 5, 10, 2, None], "UNABLE"),
+        (
+            6,
+            ["线体/工序类别", "线体/工序预估月度产能", "单线体/工序总产出JPH", "现有线体数", "班次/天", "每班净利用时间（h）", "每月标准工作天数", "累积良率"],
+            ["线体1", 100, 1, 1, 1, 1, 100, 1],
+            ["线体2", None, 1, 1, 1, 1, 100, 1],
+            "UNABLE",
+        ),
+    ],
+)
+def test_capacity_calculation_does_not_drop_a_row_with_one_missing_operand(tmp_path, number, headers, first, second, expected):
+    assert execute(tmp_path, "L14", number, [headers, first, second], "产能评估表").status == expected
+
+
+def test_capacity_text_percentages_are_ratios_not_unknown_strings(tmp_path):
+    rows = [["线体/工序类别", "良率", "合格品数", "产出数量"], ["线体1", "90%", 9, 10]]
+    assert execute(tmp_path, "L14", 4, rows, "产能评估表").status == "PASS"
+
+
+def test_control_plan_unique_flat_characteristic_fields_are_semantically_sufficient(tmp_path):
+    rows = [["工序名称", "特殊特性分类", "产品", "过程"], ["压装", "[G]", "孔径", None]]
+    assert execute(tmp_path, "L08", 3, rows, "控制计划").status == "PASS"
+
+
+def test_flow_data_text_is_not_an_extra_category_header(tmp_path):
+    rows = [["工序名称", "操作描述", "产品特殊特性", "特性类别", "过程特殊特性", "特性类别"], ["压装", "压入", "特性类别", "【G】", "温度", "【Z】"]]
+    assert execute(tmp_path, "L11", 2, rows, "过程流程图").status == "PASS"
+
+
+def test_control_plan_competing_same_named_characteristic_fields_are_unknown(tmp_path):
+    rows = [["工序名称", "特殊特性分类", "产品", "产品", "过程"], ["压装", "[G]", "孔径", "另一个特性", None]]
+    assert execute(tmp_path, "L08", 3, rows, "控制计划").status == "UNABLE"
+
+
+def test_control_plan_complete_semantic_characteristic_paths_are_supported(tmp_path):
+    rows = [["工序名称", "特殊特性分类", "产品特性", "过程特性"], ["压装", "[G]", "孔径", None]]
+    assert execute(tmp_path, "L08", 3, rows, "控制计划").status == "PASS"
+
+
+@pytest.mark.parametrize(("number", "changed_column", "value"), [(2, 0, None), (3, 8, "软模件"), (4, 11, "2025-01-01"), (5, 13, "2025-01-01"), (6, 14, "PASS"), (7, 15, None)])
+def test_validation_business_rows_do_not_require_a_serial_number(tmp_path, number, changed_column, value):
+    headers = [
+        "序号",
+        "试验项目",
+        "试验要求",
+        "试验标准/方法",
+        "试验类型",
+        "完成节点",
+        "试验地点",
+        "数量",
+        "状态",
+        "外观属性",
+        "计划开始",
+        "计划结束",
+        "试验实际开始日期",
+        "试验实际结束日期",
+        "实际试验结果",
+        "试验报告编号",
+    ]
+    first = [1, "耐久", "无开裂", "GB/T 1234", "PV", "PPAP", "实验室", 3, "硬模件", "内饰", "2026-01-01", "2026-02-01", "2026-01-01", "2026-02-01", "合格", "R001"]
+    second = list(first)
+    second[0] = None
+    second[1] = "高低温"
+    second[changed_column] = value
+    assert execute(tmp_path, "L02", number, [headers, first, second], "DVP&R").status == "NG"
+
+
+@pytest.mark.parametrize("number", [2, 3, 4, 5, 6, 7])
+def test_validation_whole_row_merged_section_is_the_explicit_source_exception(tmp_path, number):
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "DVP&R"
+    sheet.append(
+        [
+            "序号",
+            "试验项目",
+            "试验要求",
+            "试验标准/方法",
+            "试验类型",
+            "完成节点",
+            "试验地点",
+            "数量",
+            "状态",
+            "外观属性",
+            "计划开始",
+            "计划结束",
+            "试验实际开始日期",
+            "试验实际结束日期",
+            "实际试验结果",
+            "试验报告编号",
+        ]
+    )
+    sheet.append([1, "耐久", "无开裂", "GB/T 1234", "PV", "PPAP", "实验室", 3, "硬模件", "内饰", "2026-01-01", "2026-02-01", "2026-01-01", "2026-02-01", "合格", "R001"])
+    sheet.cell(3, 1, "环境试验组")
+    sheet.merge_cells("A3:P3")
+    path = tmp_path / "分组试验.xlsx"
+    book.save(path)
+    book.close()
+    agent = EXCEL_AGENTS["L02"](AuditInput(audit_id="v", file_url=str(path)), RuleInput(rule_id="r", **preset_rule_body("理想", "L02")))
+    try:
+        assert agent._execute_rule_check(number).status == "PASS"
+    finally:
+        agent.close()
+
+
+@pytest.mark.parametrize(
+    ("number", "header", "values", "expected"),
+    [
+        (3, "模具设计尺寸", ["1×2×3", "4×5×6"], "PASS"),
+        (3, "模具设计尺寸", ["1×2×3", "4x5x6"], "NG"),
+        (3, "模具设计尺寸", ["1×2×3", "=1+1"], "UNABLE"),
+        (6, "实物确认", ["有", "无"], "PASS"),
+        (6, "实物确认", ["有", "未知"], "NG"),
+    ],
+)
+def test_tooling_single_source_column_does_not_require_a_process_identifier(tmp_path, number, header, values, expected):
+    rows = [[header], *[[value] for value in values]]
+    assert execute(tmp_path, "L10", number, rows, "Sheet1").status == expected
+
+
+@pytest.mark.parametrize(("number", "column", "value"), [(3, 4, "4x5x6"), (6, 5, "未知")])
+def test_tooling_missing_process_does_not_hide_populated_source_columns(tmp_path, number, column, value):
+    headers = ["工艺类型", "一级分总成零件名称", "模具制造供应商", "模具存放地点", "模具设计尺寸", "实物确认"]
+    first = ["注塑", "罩壳", "供应商", "上海", "1×2×3", "有"]
+    second = [None, "罩壳", "供应商", "上海", "1×2×3", "有"]
+    second[column] = value
+    assert execute(tmp_path, "L10", number, [headers, first, second], "模具验收报告").status == "NG"
+
+
+@pytest.mark.parametrize("number", [3, 5])
+def test_psw_uninterpreted_stamp_signal_cannot_certify_company_text_or_signature(tmp_path, number):
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "零件提交保证书"
+    sheet.append(["零件名称", "支架"])
+    path = tmp_path / "印章信号.xlsx"
+    book.save(path)
+    book.close()
+    agent = EXCEL_AGENTS["L17"](AuditInput(audit_id="v", file_url=str(path)), RuleInput(rule_id="r", **preset_rule_body("理想", "L17")))
+    agent._collect_stamp_signals = lambda *args: {"strong_seal": True, "strong_signature": True}
+    try:
+        assert agent._execute_rule_check(number).status == "UNABLE"
+    finally:
+        agent.close()
