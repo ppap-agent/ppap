@@ -19,7 +19,11 @@ def test_actual_pixels_are_valid_without_a_content_judgment(filename, format):
     assert validate_photo_input(filename, photo(format)) == {"state": "valid", "reasons": [], "image_count": 1}
 
 
-@pytest.mark.parametrize(("filename", "content"), [("part.png", b"damaged"), ("part.png", photo("JPEG")), ("part.pdf", b"damaged"), ("part.svg", b"<svg/>"), ("photos.zip", b"PK")], ids=["damaged-image", "wrong-carrier", "damaged-pdf", "svg", "zip"])
+@pytest.mark.parametrize(
+    ("filename", "content"),
+    [("part.png", b"damaged"), ("part.png", photo("JPEG")), ("part.pdf", b"damaged"), ("part.svg", b"<svg/>"), ("photos.zip", b"PK")],
+    ids=["damaged-image", "wrong-carrier", "damaged-pdf", "svg", "zip"],
+)
 def test_invalid_or_disguised_carriers_cannot_be_declared_readable(filename, content):
     assert validate_photo_input(filename, content)["state"] == "invalid"
 
