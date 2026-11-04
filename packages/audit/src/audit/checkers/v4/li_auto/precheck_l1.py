@@ -580,9 +580,9 @@ def precheck_inspection(agent):
 
     def measurements(ctx):
         for row, _ in agent._inspection_rows(ctx, ("检查数据", "判定结果")):
-            row.expect("判定结果", context="检查结果必填")
+            row.expect("检查数据", "判定结果", context="实测值与检查结果必填")
             values = row.values_between("检查数据", "判定结果")
-            if not values or any(str(value or "").strip().upper() in {"", "/", "NA", "N/A"} for value in values):
+            if not values or any(str(value if value is not None else "").strip().upper() in {"", "/", "NA", "N/A"} for value in values):
                 return "NG", "实测值为空或仍是占位符。"
         return "PASS", "实测值与结果已填写。"
 

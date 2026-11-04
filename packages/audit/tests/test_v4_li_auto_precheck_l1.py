@@ -74,3 +74,11 @@ def test_inspection_customer_switches_are_not_uaes_signature_or_bubble_requireme
 def test_inspection_declared_three_samples_override_the_default_five(tmp_path):
     rows = [["应测样本量", 3], ["序号", "检查项目", "判定标准", "供方检查方法/检查工具", "检查数据", None, None, "判定结果"], ["尺寸"], [1, "直径", "10±0.5", "卡尺", 10, 10.1, 10.2, "OK"]]
     assert run(tmp_path, "L01", rows, "尺寸检验报告")["IR-17"]["status"] == "satisfied"
+
+
+@pytest.mark.parametrize(("value", "expected"), [(0, "satisfied"), (0.0, "satisfied"), ("0", "satisfied"), (None, "defect"), ("/", "defect"), ("NA", "defect"), ("N/A", "defect"), ("=1-1", "unknown")])
+def test_inspection_zero_measurement_is_not_an_empty_or_placeholder_value(tmp_path, value, expected):
+    rows = [["序号", "检查项目", "判定标准", "供方检查方法/检查工具", "检查数据", None, "判定结果"], ["尺寸"], [1, "偏移量", "0±0.5", "卡尺", value, 0.1, "OK"]]
+    fact = run(tmp_path, "L01", rows, "尺寸检验报告")["IR-08"]
+    assert fact["status"] == expected
+    assert not fact["certified"]
