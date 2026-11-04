@@ -108,6 +108,7 @@ class NioProcessFlowAgent(NioTableAgent):
         fact = checker_fact(self, source_id, check)
         if fact["status"] == "defect" and ("缺少必需列" in fact["message"] or fact["message"].startswith("缺少表头字段")):
             fact["code"] = "B05"
+            fact["critical"] = fact.get("certainty") == "confirmed"
         return fact
 
     def _header_precheck(self, ctx):
