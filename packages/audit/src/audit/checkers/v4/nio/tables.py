@@ -58,6 +58,7 @@ def table_header(ctx, aliases, required, version, sheets):
             raise GuardStop(Decision.UNABLE, "原件数据超出本次有界读取范围。")
         for row in range(1, min(sheet.max_row, 40) + 1):
             columns = {}
+            ambiguous = {}
             span = 1
             for name, names in aliases.items():
                 matches = []
@@ -71,11 +72,18 @@ def table_header(ctx, aliases, required, version, sheets):
                 if len(matches) == 1:
                     columns[name] = matches[0][0]
                     span = max(span, matches[0][1])
-            if best is None or len(columns) > len(best[3]):
-                best = (sheet, row, span, columns)
-    if best is None or not best[3]:
+                elif len(matches) > 1:
+                    ambiguous[name] = [column for column, _ in matches]
+            if best is None or len(columns) + len(ambiguous) > len(best[3]) + len(best[4]):
+                best = (sheet, row, span, columns, ambiguous)
+    if best is None or not (best[3] or best[4]):
         raise GuardStop(Decision.UNABLE, "未能可靠定位数据表头。")
-    sheet, header, span, columns = best
+    sheet, header, span, columns, ambiguous = best
+    if set(required) & set(ambiguous):
+        for name in set(required) & set(ambiguous):
+            for column in ambiguous[name]:
+                ctx.note_cell(sheet.title, header, column, file_version_id=version)
+        raise GuardStop(Decision.UNABLE, "必需列存在多个同名候选，尚不能唯一确定数据归属。")
     for column in columns.values():
         ctx.note_cell(sheet.title, header, column, file_version_id=version)
     if not set(required).issubset(columns):

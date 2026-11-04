@@ -1487,8 +1487,16 @@ class AuthStore:
             """SELECT id, payload, status, result, lease_until < now(), created_at, updated_at
                FROM engine.jobs WHERE tenant_id = %s AND kind = 'task_precheck'
                  AND payload->>'task_id' = %s AND payload->>'input_revision' = %s
-                 AND payload->>'execution_revision' = %s ORDER BY created_at DESC, id DESC LIMIT 1""",
-            (tenant_id, task_id, str(revision), self.settings.standard_execution_policy().engine_revision()),
+                 AND payload->>'execution_revision' = %s
+                 AND NOT EXISTS (
+                     SELECT 1 FROM jsonb_array_elements(payload->'files') AS source
+                     LEFT JOIN product.draft_items current_input
+                       ON current_input.draft_id = %s
+                      AND current_input.file_version_id::text = source->'file'->>'id'
+                     WHERE current_input.file_version_id IS NULL
+                        OR current_input.selection IS DISTINCT FROM source->>'selection'
+                 ) ORDER BY created_at DESC, id DESC LIMIT 1""",
+            (tenant_id, task_id, str(revision), self.settings.standard_execution_policy().engine_revision(), task_id),
         ).fetchone()
         return self._precheck_receipt(row, current_revision=revision) if row else None
 

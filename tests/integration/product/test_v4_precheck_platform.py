@@ -336,3 +336,23 @@ def test_certified_gate_excludes_only_bad_target_and_replays_same_acceptance(sys
         assert conn.execute("SELECT count(*) FROM product.audit_rounds").fetchone()[0] == 1
     replayed = client.post(path + "/confirm", json=request)
     assert replayed.status_code == 201 and replayed.json()["round_id"] == accepted.json()["round_id"]
+
+
+def test_ending_with_no_selected_targets_does_not_call_the_old_snapshot_current(system):
+    client, worker, _, _ = system
+    path, file = task(system)
+    before = client.get(path).json()["precheck"]
+    assert before["current"] is True
+    command = {"expected_revision": 0, "unselected_file_version_ids": [file["file_version_id"]]}
+    ended = client.post(path + "/end", json=command)
+    assert ended.status_code == 200, ended.text
+    assert ended.json()["precheck"] is None
+    snapshot_path = path + "/prechecks/" + before["id"]
+    assert client.get(snapshot_path).json()["current"] is False
+    # A late completion is retained as history, never promoted back to current.
+    process_claimed(worker, worker.claim_job("late-ended-precheck"), "late-ended-precheck")
+    history = client.get(snapshot_path).json()
+    assert history["status"] == "succeeded" and history["current"] is False
+    assert client.get(path).json()["precheck"] is None
+    assert client.post(path + "/end", json=command).json() == ended.json()
+    assert client.get("/rounds").json()["rounds"] == []
