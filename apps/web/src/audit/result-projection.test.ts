@@ -432,3 +432,21 @@ test('empty rules, wrong progress and conflicting summary fail closed', () => {
   task.files[0].match!.rule = structuredClone(audit.rule)
   assert.match(error(task), /审核项与冻结规则不一致/)
 })
+
+test('the real API optional NA counter is checked without rejecting valid PASS or NG results', () => {
+  const task = projection(), audit = task.files[0].audit!
+  audit.counts.na_count = 0
+  assert.equal(error(task), '')
+  audit.counts.na_count = 1
+  assert.match(error(task), /计数/)
+  const check = structuredClone(audit.checks[0]); check.rule_item.id = '2'; check.finding!.item_key = '2'; check.finding!.status = 'NA'
+  audit.checks.push(check)
+  if (audit.rule.body.kind === 'engine' && task.files[0].match!.rule!.body.kind === 'engine') {
+    audit.rule.body.rules.push(structuredClone(check.rule_item))
+    task.files[0].match!.rule!.body.rules.push(structuredClone(check.rule_item))
+  }
+  audit.progress = {completed: 2, total: 2}
+  assert.equal(error(task), '')
+  audit.counts.na_count = 0
+  assert.match(error(task), /计数/)
+})

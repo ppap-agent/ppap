@@ -221,6 +221,8 @@ const confirmationRefusals: Record<string, string> = {
   task_input_locked: '当前任务不能接受本次确认，请核对当前任务。',
   invalid_task_confirmation: '本次确认信息无效，审核没有开始。请核对当前任务。',
   target_required: '没有可进入审核的文件，本次确认未受理。',
+  customer_scope_conflict: '本次文件属于不同客户，审核没有开始。请按客户分开任务后再确认。',
+  precheck_blocked: '预检发现已认证的阻断问题，审核没有开始。请处理问题后重新预检。',
 }
 
 /** This adapter owns transport only. Task, rules and execution remain server facts. */

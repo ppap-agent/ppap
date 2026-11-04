@@ -605,6 +605,23 @@ test('a refusal cannot overwrite an already accepted round found by readback', a
   assert.deepEqual(current.acceptance, {request_id: 'accept-original', state: 'accepted', reason: null})
 })
 
+test('customer conflicts and certified precheck blocks are explicit no-write refusals', async () => {
+  for (const [code, reason] of [
+    ['customer_scope_conflict', '本次文件属于不同客户，审核没有开始。请按客户分开任务后再确认。'],
+    ['precheck_blocked', '预检发现已认证的阻断问题，审核没有开始。请处理问题后重新预检。'],
+  ]) {
+    const calls: string[] = []
+    globalThis.fetch = async (url, init) => {
+      calls.push(`${init?.method} ${url}`)
+      return init?.method === 'POST' ? json({error: code}, 409) : json(task)
+    }
+    const current = await createNativeAuditAdapter({deepOffered: false, customers: []}).confirm(task, 'accept-a')
+    assert.deepEqual(current.acceptance, {request_id: 'accept-a', state: 'rejected', reason})
+    assert.equal(current.round_id, null)
+    assert.deepEqual(calls, ['POST /audit-tasks/task-a/confirm', 'GET /audit-tasks/task-a?request_id=accept-a'])
+  }
+})
+
 test('a superseded rule requires recognition again instead of silently accepting another rule', async () => {
   let posts = 0
   globalThis.fetch = async (_url, init) => {
