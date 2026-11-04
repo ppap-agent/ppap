@@ -134,3 +134,17 @@ def test_title_referring_to_another_document_does_not_establish_source_identity(
     reference = original(tmp_path, "reference", title="非过程流程图")
     result = facts(target, "U08", GroupContextInput(by_audit_id={"reference": reference}))["pfd"]
     assert result["status"] == "unknown" and result["code"] is None
+
+
+def test_material_drawing_pair_requires_the_source_project_identity(tmp_path):
+    from openpyxl import load_workbook
+
+    target = original(tmp_path, "target")
+    reference = original(tmp_path, "reference", title="客户图纸")
+    for item in (target, reference):
+        book = load_workbook(item.file_url)
+        book.active.delete_rows(5)
+        book.save(item.file_url)
+        book.close()
+    result = facts(target, "U04", GroupContextInput(by_audit_id={"reference": reference}))["drawing"]
+    assert result["status"] == "unknown" and result["code"] is None

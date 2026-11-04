@@ -134,7 +134,8 @@ def dependency_facts(audit, entry, group):
                 if name != "dvr":
                     if other is not target:
                         for aliases in [("版本", "版本号", "修订版次", "工程更改版本", "Revision"), ("项目", "项目名称", "项目号", "UAES项目编号", "车型项目")]:
-                            first, second = _field(target, aliases, required=False), _field(other, aliases, required=False)
+                            required = entry == "U04" and aliases[0] == "项目"
+                            first, second = _field(target, aliases, required=required), _field(other, aliases, required=required)
                             if (first is not None or second is not None) and (first is None or second is None or identity(first) != identity(second)):
                                 raise UnknownFact("关联原件项目或版本缺失/冲突，须确认配对。")
                     allowed = _CUSTOMERS[entry[0]][1]
