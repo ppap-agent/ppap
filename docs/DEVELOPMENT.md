@@ -51,7 +51,7 @@ uv run --no-sync python -m documents.ocr.paddle \
   --out-root "/tmp/paddle-results"
 ```
 
-CLI 打印独占创建的 `paddle-<随机标识>` 输出目录、原件页号及 `complete/partial/error`。保存 `response.json` 与 `evidence.json`；仅存在可导出的合法表格时生成 `tables.xlsx`。文字或印章事实不依赖工作簿是否生成；坏表、无法写入 Excel 的局部文本均留下诊断，其余事实保留。完全失败返回非零，部分识别不冒充整份文件完整。
+CLI 打印独占创建的 `paddle-<随机标识>` 输出目录、所选页数及 `complete/partial/error`；原件页号见 `evidence.json`。保存 `response.json` 与 `evidence.json`；仅存在可导出的合法表格时生成 `tables.xlsx`。文字或印章事实不依赖工作簿是否生成；坏表、无法写入 Excel 的局部文本均留下诊断，其余事实保留。完全失败返回非零，部分识别不冒充整份文件完整。
 
 同一单页回执可以离线重放，不发出 OCR 或模型请求：
 
