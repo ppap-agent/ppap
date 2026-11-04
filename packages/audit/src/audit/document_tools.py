@@ -542,6 +542,79 @@ def effective(table: dict[str, Any], row: int, column: int) -> dict[str, Any]:
     return _effective(table, row, column, table.get("merges", []))
 
 
+def source_title_location(data: dict[str, Any], aliases) -> dict[str, Any] | None:
+    """Find a complete native title; body references and row data are not titles."""
+    import unicodedata
+
+    from audit.kinds import PpapDocumentType as T
+
+    def key(value):
+        normalized = unicodedata.normalize("NFKC", str(value if value is not None else "")).casefold()
+        return re.sub(r"[\s:：()（）\[\]【】_.。-]", "", normalized)
+
+    # Recognize complete source titles, not prose which refers to a counterpart.
+    # Reuse the canonical bilingual names already owned by the document types.
+    titles = set(aliases)
+    for alias in aliases:
+        for kind in T:
+            if kind is not T.UNKNOWN and key(alias) in {key(name) for name in kind.iter_aliases()}:
+                titles.update(kind.value)
+    if "偏差认可汇总" in titles:
+        titles.add("偏差认可汇总清单")
+    if "kappa" in {key(title) for title in titles}:
+        titles.update(("Kappa分析记录", "Kappa分析报告", "Kappa报告"))
+    if "grr" in {key(title) for title in titles}:
+        titles.update(("GRR分析记录", "GRR分析报告", "GRR报告"))
+    if "特殊特性" in titles:
+        titles.update((*T.PROCESS_SPECIAL_CHARACTERISTIC_LIST.value, "特殊特性清单"))
+    if "PGQP1" in titles:
+        titles.add("Purchased Goods Quality Plan")
+    if "bubble" in {key(title) for title in titles}:
+        titles.add("Bubble drawing")
+    names = "|".join(re.escape(title) for title in sorted({key(title) for title in titles}, key=len, reverse=True))
+    # A form number and revision can surround a title. Arbitrary words cannot.
+    pattern = re.compile(r"(?:(?:apqp|ppap)|[a-z]{0,8}[0-9][0-9/]*[a-z]?)?(?:" + names + r"){1,3}(?:(?:v|rev|revision)[0-9]+[a-z]?)?")
+
+    def matches(value):
+        return pattern.fullmatch(key(value)) is not None
+
+    for table in data.get("tables", []):
+        if matches(table["id"]):
+            return {"table": table["id"]}
+        for row in range(1, min(5, table["rows"]) + 1):
+            cells: dict[str, tuple[int, dict]] = {}
+            for column in range(1, table["cols"] + 1):
+                cell = effective(table, row, column)
+                if cell["state"] != "known" or key(cell.get("value")):
+                    cells.setdefault(cell["anchor"], (column, cell))
+            for column, observed in cells.values():
+                # A title is standalone (merged cells count once), or explicitly
+                # labelled as this document's title. Row data is not a title.
+                previous = effective(table, row, column - 1) if column > 1 else {}
+                own_title = previous.get("state") == "known" and key(previous.get("value")) in {
+                    "标题",
+                    "表名",
+                    "图名",
+                    "文件名称",
+                    "文档名称",
+                    "title",
+                    "documenttitle",
+                    "documentname",
+                    "tablename",
+                }
+                if (len(cells) == 1 or own_title) and observed["state"] == "known" and matches(observed.get("value")):
+                    return {"table": table["id"], "row": row, "column": column}
+    # DOCX/PDF titles need their native location, not synthetic spreadsheet cells.
+    for index, paragraph in enumerate(data.get("paragraphs", [])[:3], 1):
+        if matches(paragraph.get("text", "")):
+            return {"kind": "docx_paragraph", "paragraph": index}
+    for page in data.get("pages", [])[:1]:
+        for index, block in enumerate(page.get("blocks", [])[:3], 1):
+            if matches(block.get("text", "")):
+                return {"kind": "pdf_block", "page": page.get("page", 1), "block": index}
+    return None
+
+
 class TableReader:
     """Index layout once per reader; retain the original first-match semantics.
 

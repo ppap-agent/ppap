@@ -83,16 +83,55 @@ def test_typed_and_untyped_counterparts_cannot_hide_a_second_candidate(tmp_path)
     assert UaesPfmeaAgent(target, rule, group).check(2).status == "UNABLE"
 
 
-def test_title_that_only_mentions_a_reference_does_not_establish_identity(tmp_path):
+@pytest.mark.parametrize("mention", ["参考特殊特性清单", "比对特殊特性清单", "核对特殊特性清单", "特殊特性清单需要另行提供"])
+def test_title_that_only_mentions_a_reference_does_not_establish_identity(tmp_path, mention):
     reference = original(tmp_path, "reference", title="其他报告")
     from openpyxl import load_workbook
 
     book = load_workbook(reference.file_url)
     book.active.insert_rows(1)
-    book.active.cell(1, 1, "参考特殊特性清单")
+    book.active.cell(1, 1, mention)
     book.save(reference.file_url)
     book.close()
     assert check(original(tmp_path, "target", target=True), [reference], typed=False).status == "UNABLE"
+
+
+def test_reference_field_value_is_not_an_untyped_source_title(tmp_path):
+    from openpyxl import load_workbook
+
+    reference = original(tmp_path, "reference", title="其他报告")
+    book = load_workbook(reference.file_url)
+    book.active.insert_rows(1)
+    book.active["A1"], book.active["B1"] = "比对文件", "特殊特性清单"
+    book.save(reference.file_url)
+    book.close()
+    assert check(original(tmp_path, "target", target=True), [reference], typed=False).status == "UNABLE"
+
+
+@pytest.mark.parametrize("title", ["特殊特性清单", "特殊特性清单 V2.1", "APQP-特殊特性清单", "Process special characteristic list", "特殊特性清单（Process special characteristic list）"])
+@pytest.mark.parametrize("label", [None, "文件名称"])
+def test_native_merged_title_and_own_title_field_can_identify_untyped_counterpart(tmp_path, title, label):
+    from openpyxl import load_workbook
+
+    reference = original(tmp_path, "reference", title="其他报告")
+    book = load_workbook(reference.file_url)
+    book.active.insert_rows(1)
+    if label:
+        book.active["A1"], book.active["B1"] = label, title
+        book.active.merge_cells("B1:D1")
+    else:
+        book.active["A1"] = title
+        book.active.merge_cells("A1:D1")
+    book.save(reference.file_url)
+    book.close()
+    result = check(original(tmp_path, "target", target=True), [reference], typed=False)
+    assert result.status == "PASS", result.suggestions
+    assert any(source.excerpt == title for source in result.evidence.sources)
+
+
+def test_explicit_typed_counterpart_does_not_need_an_untyped_title_match(tmp_path):
+    result = check(original(tmp_path, "target", target=True), [original(tmp_path, "reference", title="供应商自定义表名")])
+    assert result.status == "PASS", result.suggestions
 
 
 def test_provided_unreadable_counterpart_is_an_execution_error(tmp_path):

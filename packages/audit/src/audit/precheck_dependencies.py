@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from audit.checkers.v4.pfmea_local import pair_identity
-from audit.document_tools import effective
+from audit.document_tools import effective, source_title_location
 from audit.kinds import PpapDocumentType as T
 from audit.precheck_facts import SourceFacts, StateFact, UnknownFact, key
 from audit.precheck_pairs import identity, merge_sources, peer
@@ -80,64 +80,13 @@ def _field(reader, aliases, *, required=True):
 
 
 def _has_title(reader, aliases):
-    import re
-
-    # Recognize complete source titles, not prose which refers to a counterpart.
-    # Reuse the canonical bilingual names already owned by the document types.
-    titles = set(aliases)
-    for alias in aliases:
-        for kind in T:
-            if kind is not T.UNKNOWN and key(alias) in {key(name) for name in kind.iter_aliases()}:
-                titles.update(kind.value)
-    if "偏差认可汇总" in titles:
-        titles.add("偏差认可汇总清单")
-    if "Kappa" in titles:
-        titles.add("Kappa分析记录")
-    if "PGQP1" in titles:
-        titles.add("Purchased Goods Quality Plan")
-    if "Bubble" in titles:
-        titles.add("Bubble drawing")
-    names = "|".join(re.escape(title) for title in sorted({key(title) for title in titles}, key=len, reverse=True))
-    # A form number and revision can surround a title. Arbitrary words cannot.
-    pattern = re.compile(r"(?:(?:apqp|ppap)|[a-z]{0,8}[0-9][0-9/]*[a-z]?)?(?:" + names + r"){1,3}(?:(?:v|rev|revision)[0-9]+[a-z]?)?")
-
-    def matches(value):
-        return pattern.fullmatch(key(value)) is not None
-
-    for table in reader.data.get("tables", []):
-        if matches(table["id"]):
-            return True
-        for row in range(1, min(5, table["rows"]) + 1):
-            cells: dict[str, tuple[int, dict]] = {}
-            for column in range(1, table["cols"] + 1):
-                cell = effective(table, row, column)
-                if cell["state"] != "known" or key(cell.get("value")):
-                    cells.setdefault(cell["anchor"], (column, cell))
-            for column, observed in cells.values():
-                # A title is standalone (merged cells count once), or explicitly
-                # labelled as this document's title. Row data is not a title.
-                own_title = column > 1 and key(effective(table, row, column - 1).get("value")) in {
-                    "标题",
-                    "表名",
-                    "图名",
-                    "文件名称",
-                    "文档名称",
-                    "title",
-                    "documenttitle",
-                    "documentname",
-                    "tablename",
-                }
-                if (len(cells) == 1 or own_title) and observed["state"] == "known" and matches(observed.get("value")):
-                    reader.read(table, row, column)
-                    return True
-    # DOCX/PDF titles need their native location, not synthetic spreadsheet cells.
-    for paragraph in reader.data.get("paragraphs", [])[:3]:
-        if matches(paragraph.get("text", "")):
-            return True
-    for page in reader.data.get("pages", [])[:1]:
-        if any(matches(block.get("text", "")) for block in page.get("blocks", [])[:3]):
-            return True
-    return False
+    location = source_title_location(reader.data, aliases)
+    if location is None:
+        return False
+    if "row" in location:
+        table = next(table for table in reader.data["tables"] if table["id"] == location["table"])
+        reader.read(table, location["row"], location["column"])
+    return True
 
 
 def dependency_facts(audit, entry, group):
