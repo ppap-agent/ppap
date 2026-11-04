@@ -87,3 +87,10 @@ def test_whole_execution_failure_is_visible_without_exposing_raw_transport_error
     exported = render_precheck_record(saved)
     assert exported != completed and message in exported.decode()
     assert "private-service-token" not in exported.decode()
+
+
+def test_export_keeps_supplier_missing_warning_separate_from_unexecuted_pair_scope():
+    saved = receipt()
+    saved["result"]["files"][0]["facts"] = [{"source_id": "U08:dependency:PFD", "status": "not_checked", "code": "S04-S", "warning_codes": ["W01"], "message": "缺少供应商应交PFD；关联核对未执行。"}]
+    text = render_precheck_record(saved).decode()
+    assert "S04-S W01" in text and "未执行" in text

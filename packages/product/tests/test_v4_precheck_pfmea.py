@@ -161,11 +161,15 @@ def test_real_dual_original_process_and_characteristic_check(tmp_path):
 
 
 def test_pair_does_not_merge_distinct_part_punctuation_and_missing_is_not_defect(tmp_path):
+    from audit.contracts import GroupContextInput
+
     audit = original(tmp_path)
     result = with_peer(audit, peer_original(tmp_path, part="P1"))
     assert result["R17"]["status"] == result["R18"]["status"] == "unknown"
-    missing = by_id(audit)
-    assert missing["R17"]["code"] == "S04" and missing["R17"]["status"] == "not_checked"
+    missing = {fact["id"].split(":", 1)[1]: fact for fact in pfmea_precheck(audit, "N02", GroupContextInput())}
+    assert missing["R17"]["code"] == "S04-S" and missing["R17"]["status"] == "not_checked"
+    assert missing["R17"]["warning_codes"] == ["W01"]
+    assert by_id(audit)["R17"]["status"] == "unknown"
 
 
 def test_li_auto_g_equals_cc_only_after_actual_pair_binding(tmp_path):

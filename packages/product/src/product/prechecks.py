@@ -159,8 +159,9 @@ def render_precheck_record(receipt: dict) -> bytes:
         ]
         for fact in observed.get("facts") or []:
             evidence = "；".join(f"{item.get('locator', '')} {item.get('excerpt', '')}" for item in (fact.get("evidence") or {}).get("sources") or [])
+            codes = " ".join(str(code) for code in [fact.get("code"), *(fact.get("warning_codes") or [])] if code)
             parts.append(
-                f"<tr><td>{escape(fact.get('source_id'))}<br>{escape(fact.get('message'))}</td><td>{escape(fact.get('status'))} {escape(fact.get('code'))}"
+                f"<tr><td>{escape(fact.get('source_id'))}<br>{escape(fact.get('message'))}</td><td>{escape(fact.get('status'))} {escape(codes)}"
                 f"{escape(statuses.get(fact.get('status'), '状态未核实'))}</td><td>{escape(evidence)}<br>{escape(fact.get('next_step'))}</td></tr>"
             )
         if not observed.get("facts"):
