@@ -10,6 +10,7 @@ def receipt():
     return {
         "id": "snapshot-old",
         "created_at": "2026-11-03T12:00:00Z",
+        "status": "succeeded",
         "input": {
             "task_id": "task",
             "input_revision": 1,
@@ -74,3 +75,13 @@ def test_custom_appendix_and_generic_fallback_do_not_become_customer_certificati
     for expected in ["用户自定义规则", "custom-frozen", "GenericAgent", "仅孔径", "额外核对孔径", "尚无已执行的内容预检结果", "不代替正式 Deep 自定义规则审核结论"]:
         assert expected in text
     assert "客户预置规则" not in text
+
+
+@pytest.mark.parametrize(("status", "message"), [("failed", "本次预检执行失败"), ("cancelled", "本次预检已取消"), ("unknown", "本次预检执行状态尚未核实")])
+def test_whole_execution_failure_is_visible_without_exposing_raw_transport_errors(status, message):
+    saved = receipt()
+    completed = render_precheck_record(saved)
+    saved.update(status=status, result={"error": "private-service-token"})
+    exported = render_precheck_record(saved)
+    assert exported != completed and message in exported.decode()
+    assert "private-service-token" not in exported.decode()
