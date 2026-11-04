@@ -217,3 +217,14 @@ def test_embedded_delivery_inherits_identity_only_when_not_separately_declared(m
 def test_embedded_delivery_missing_attachment_is_still_defect():
     findings, _ = execute("L17", embedded_warranty(attachment=None), [])
     assert findings[preset_rule("理想", "L17").clauses[0].id]["status"] == "NG"
+
+
+@pytest.mark.parametrize("attachment,expected", [("尺寸报告.pdf", "PASS"), (None, "NG")])
+def test_delivery_only_original_checks_attachments_without_invented_warrant_requirement(attachment, expected):
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "生产件批准交付物文件清单"
+    sheet.append(["项目", "附件"])
+    sheet.append(["尺寸报告", attachment])
+    findings, _ = execute("L17", serialized(book), [])
+    assert findings[preset_rule("理想", "L17").clauses[0].id]["status"] == expected
