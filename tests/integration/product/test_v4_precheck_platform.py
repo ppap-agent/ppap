@@ -36,7 +36,7 @@ def system(auth_store_factory):
         yield client, worker, admin, principal
 
 
-def task(system):
+def task(system, copies=1):
     client, worker, _, _ = system
     stream = io.BytesIO()
     book = Workbook()
@@ -45,18 +45,22 @@ def task(system):
     book.save(stream)
     book.close()
     data = stream.getvalue()
-    version = client.post("/files", json={"original_filename": "特殊特性清单.xlsx", "byte_size": len(data)}).json()
-    path = f"/files/{version['file_id']}/versions/{version['id']}"
-    assert client.put(path + "/blob", content=data).status_code == 200
-    assert client.post(path + "/finalize").status_code == 200
-    validation = str(uuid.uuid4())
-    assert client.post("/file-validations", json={"request_id": validation, "source_file_id": version["file_id"], "source_file_version_id": version["id"]}).status_code == 202
-    process_claimed(worker, worker.claim_job("validation"), "validation")
-    file = {"file_version_id": version["id"], "validation_id": validation, "selection": "selected", "removal_reason": None}
-    body = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": "蔚来", "files": [file]}
+    files = []
+    for _ in range(copies):
+        version = client.post("/files", json={"original_filename": "特殊特性清单.xlsx", "byte_size": len(data)}).json()
+        path = f"/files/{version['file_id']}/versions/{version['id']}"
+        assert client.put(path + "/blob", content=data).status_code == 200
+        assert client.post(path + "/finalize").status_code == 200
+        validation = str(uuid.uuid4())
+        assert client.post("/file-validations", json={"request_id": validation, "source_file_id": version["file_id"], "source_file_version_id": version["id"]}).status_code == 202
+        process_claimed(worker, worker.claim_job("validation"), "validation")
+        file = {"file_version_id": version["id"], "validation_id": validation, "selection": "selected", "removal_reason": None}
+        files.append(file)
+    body = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": "蔚来", "files": files}
     response = client.post("/audit-tasks", json=body)
     assert response.status_code == 202, response.text
-    process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=Recognition())
+    for _ in range(copies):
+        process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=Recognition())
     path = "/audit-tasks/" + response.json()["id"]
     return path, file
 
@@ -265,3 +269,70 @@ def test_scoped_photo_validation_cannot_be_reused_for_another_customer(system):
     restored = client.get("/audit-tasks/" + accepted.json()["id"]).json()
     assert restored["files"][0]["validation_scope"] == request["scope"]
     assert restored["files"][0]["match"]["rule"]["body"]["preset_key"] == "U13"
+
+
+def test_snapshot_and_export_require_same_tenant_task_and_original_access(system):
+    client, worker, admin, principal = system
+    path, _ = task(system)
+    receipt = client.get(path).json()["precheck"]
+    process_claimed(worker, worker.claim_job("precheck"), "precheck")
+    snapshot_path = path + "/prechecks/" + receipt["id"]
+    other = admin.upsert_feishu_identity(principal.tenant_key, "same-tenant-other")
+    client.cookies.set(SESSION_COOKIE, admin.create_session(other))
+    assert client.get(snapshot_path).status_code == 403
+    assert client.get(snapshot_path + "/report").status_code == 403
+    assert client.get(path + "/prechecks").status_code == 403
+    foreign = admin.upsert_feishu_identity("foreign-" + uuid.uuid4().hex, "owner")
+    client.cookies.set(SESSION_COOKIE, admin.create_session(foreign))
+    assert client.get(snapshot_path).status_code == 403
+    client.cookies.set(SESSION_COOKIE, admin.create_session(principal))
+    with admin._conn() as conn:
+        conn.execute("DELETE FROM product.resource_grants WHERE resource_id=%s AND user_id=%s", (receipt["input"]["files"][0]["file"]["file_id"], principal.user_id))
+    assert client.get(snapshot_path).status_code == 403
+    assert client.get(snapshot_path + "/report").status_code == 403
+
+
+def test_certified_gate_excludes_only_bad_target_and_replays_same_acceptance(system):
+    from psycopg.types.json import Jsonb
+
+    client, worker, admin, _ = system
+    path, _ = task(system, copies=2)
+    process_claimed(worker, worker.claim_job("precheck"), "precheck")
+    receipt = client.get(path).json()["precheck"]
+    bad = receipt["input"]["files"][0]
+    good = receipt["input"]["files"][1]
+    result = {
+        "input_fingerprint": config_digest(receipt["input"]),
+        "execution_revision": receipt["input"]["execution_revision"],
+        "files": [
+            {
+                "file_version_id": bad["file"]["id"],
+                "rule_version_id": bad["rule"]["id"],
+                "checker": bad["rule_execution"]["checker"],
+                "facts": [
+                    {
+                        "source_id": "N04:S1",
+                        "status": "defect",
+                        "certainty": "confirmed",
+                        "critical": True,
+                        "certified": True,
+                        "code": "B05",
+                        "evidence": {"sources": [{"locator": json.dumps({"file_version_id": bad["file"]["id"], "cell": "A1"}), "excerpt": "independently confirmed missing identity"}]},
+                    }
+                ],
+            }
+        ],
+    }
+    admin.settings.precheck_gate_enforced = True
+    with admin._conn() as conn:
+        conn.execute("UPDATE engine.jobs SET result=%s WHERE id=%s", (Jsonb(result), receipt["id"]))
+    request = {"request_id": str(uuid.uuid4()), "expected_revision": 0}
+    accepted = client.post(path + "/confirm", json=request)
+    assert accepted.status_code == 201, accepted.text
+    assert accepted.json()["estimated_points"] == 500
+    with admin._conn() as conn:
+        targets = conn.execute("SELECT file_version_id FROM product.round_inputs WHERE round_id=%s AND role='target'", (accepted.json()["round_id"],)).fetchall()
+        assert targets == [(uuid.UUID(good["file"]["id"]),)]
+        assert conn.execute("SELECT count(*) FROM product.audit_rounds").fetchone()[0] == 1
+    replayed = client.post(path + "/confirm", json=request)
+    assert replayed.status_code == 201 and replayed.json()["round_id"] == accepted.json()["round_id"]

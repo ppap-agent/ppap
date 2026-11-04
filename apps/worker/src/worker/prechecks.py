@@ -9,7 +9,7 @@ from pathlib import Path
 
 from audit.contracts import AuditInput, GroupContextInput, RuleInput
 from audit.engine.checkers.rule_declarations import _agent_for_target, discover_declared_rules, freeze_target_rule_execution
-from audit.precheck_sources import structure_source
+from audit.precheck_sources import l1_spec, structure_source
 from product.standard_policy import config_digest
 
 
@@ -24,7 +24,7 @@ def _fact(source_id, status, message, *, code=None, evidence=None):
         "certified": False,
         "certainty": "unknown",
         "evidence": evidence,
-        "next_step": "继续正式审核。" if status == "satisfied" else "查看原件并确认；修正资料后重新检查。",
+        "next_step": "继续正式审核。" if status in {"satisfied", "handoff"} else "重试预检；若仍失败，联系产品维护。" if status == "error" else "查看原件并人工确认；未核实前不作通过结论。",
     }
 
 
@@ -72,17 +72,25 @@ def execute_precheck(store, payload):
             result["files"].append(row)
             facts = row["facts"]
             if source["selection"] != "selected":
-                facts.append(_fact("selection", "not_checked", "用户未选择此文件；未执行预检。", code="S02"))
+                facts.append(_fact("selection", "not_checked", "用户未选择此文件；未执行预检。", code="S01"))
                 continue
             if file["id"] in failures:
-                facts.append(_fact("original", "error", "冻结原件读取失败；尚无业务结论。", code="S05"))
+                facts.append(_fact("original", "error", "冻结原件读取失败；尚无业务结论。"))
                 continue
             if source["role"] == "reference":
                 facts.append(_fact("reference", "handoff", "此文件是关联参考资料；不创建收费审核目标。", code="S03"))
                 continue
             body = rule.get("body") or {}
             if not body or source.get("matching_state") != "matched":
-                facts.append(_fact("routing", "unknown", "尚未绑定可执行的客户规则。", code="S02"))
+                failed = source.get("matching_state") == "failed"
+                facts.append(
+                    _fact(
+                        "routing",
+                        "error" if failed else "unknown",
+                        "识别尚未取得可靠结果，请重试识别或人工确认。" if failed else "尚未绑定可执行的客户规则。",
+                        code=None if failed or source.get("matching_gaps") else "S02",
+                    )
+                )
                 continue
             try:
                 if freeze_target_rule_execution(body, file["original_filename"]) != execution:
@@ -99,7 +107,7 @@ def execute_precheck(store, payload):
                 for source_id, method in methods.items():
                     indices = [index for index, (name, _) in enumerate(declarations) if name == method]
                     if len(indices) != 1:
-                        facts.append(_fact(source_id, "error", "预检方法绑定无效。", code="S05"))
+                        facts.append(_fact(source_id, "error", "预检方法绑定无效。"))
                         continue
                     observed = checker.check(indices[0])
                     status = getattr(observed, "status", None)
@@ -107,6 +115,16 @@ def execute_precheck(store, payload):
                     # A formal NG is never promoted into a certified precheck defect.
                     mapped = "satisfied" if status == "PASS" and evidence and evidence.sources else "error" if status == "ERR" else "unknown"
                     facts.append(_fact(source_id, mapped, getattr(observed, "suggestions", "未取得检查结论。"), evidence=evidence.model_dump(mode="json") if evidence else None))
+                if source.get("precheck_spec") != l1_spec(body.get("preset_key") or ""):
+                    raise ValueError("precheck_l1_source_changed")
+                if body.get("preset_key") in {"U07", "L07", "N02"}:
+                    from audit.precheck_pfmea import pfmea_precheck
+
+                    facts.extend(pfmea_precheck(audits[file["id"]], body["preset_key"], group))
+                if body.get("preset_key") in {"U08", "L08", "N03"}:
+                    from audit.precheck_cp import cp_precheck
+
+                    facts.extend(cp_precheck(audits[file["id"]], body["preset_key"], group))
                 custom = getattr(checker, "precheck", None)
                 if custom:
                     for fact in custom():
@@ -114,25 +132,23 @@ def execute_precheck(store, payload):
                             raise ValueError("invalid_precheck_fact")
                         facts.append({**_fact(fact.get("source_id") or fact.get("id") or "unbound", fact["status"], fact.get("message") or ""), **fact, "certified": False})
                 if not facts:
-                    facts.append(_fact("coverage", "not_checked", "此客户条目的准备期检查尚未实现；不能视为通过。", code="S02"))
+                    facts.append(_fact("coverage", "not_checked", "此客户条目的准备期检查尚未实现；不能视为通过。"))
                 facts.append(_fact("engineering", "handoff", "正式工程结论由正式审核处理；预检未声明覆盖全部规则。", code="S03"))
             except Exception:
-                facts.append(_fact("execution", "error", "内容检查执行失败；未取得业务结论。", code="S05"))
+                facts.append(_fact("execution", "error", "内容检查执行失败；未取得业务结论。"))
     for source, row in zip(payload["files"], result["files"]):
-        expected = source.get("required_structure") or []
+        expected = [*(source.get("required_structure") or []), *(source.get("precheck_criteria") or [])]
         observed = {fact["id"] for fact in row["facts"]}
         for criterion in expected:
             if criterion["id"] not in observed:
-                fact = _fact(criterion["id"], "not_checked", criterion["criterion"], code="S02")
-                fact["source_clause"] = criterion["source_clause"]
+                fact = _fact(criterion["id"], "not_checked", criterion["criterion"])
+                fact["source_clause"] = criterion.get("source_clause") or criterion.get("source_cells")
                 fact["next_step"] = "此结构准则尚未核实，请人工检查原件；不能视为通过。"
                 row["facts"].append(fact)
         actual = {fact["id"]: fact for fact in row["facts"] if fact["id"] in {item["id"] for item in expected}}
         row["coverage"] = {
-            "required_structure": len(expected),
-            "evaluated_structure": sum(fact["status"] in {"satisfied", "defect"} for fact in actual.values()),
-            "unresolved_structure": sum(fact["status"] not in {"satisfied", "defect"} for fact in actual.values()),
-            "complete": False,
+            "expected": len(expected),
+            "by_status": {status: sum(fact["status"] == status for fact in actual.values()) for status in ("satisfied", "defect", "unknown", "not_checked", "error", "handoff")},
         }
     return result
 

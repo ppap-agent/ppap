@@ -1,4 +1,5 @@
 """The packaged executable source wording stays tied to the current accepted PRD."""
+
 import hashlib
 import re
 from pathlib import Path
@@ -24,3 +25,20 @@ def test_l2_criteria_are_exact_original_155_and_template_identity_additions():
         assert list(required_structure(key)) == rows
     assert [row["id"] for row in required_structure("L13")][-3:] == ["L13:S8", "L13:S9", "L13:S10"]
     assert required_structure("E12") == ()
+
+
+def test_l1_spec_wording_is_frozen_for_all_nineteen_customer_entries():
+    from audit.precheck_sources import l1_criteria, l1_spec
+
+    entries = ["U01", "U02", "U03", "U04", "U05", "U06", "U07", "U08", "L01", "L02", "L03", "L04", "L05", "L06", "L07", "L08", "N01", "N02", "N03"]
+    root = Path(__file__).resolve().parents[3] / "assets" / "PPAP PRD v3.7" / "预检规则"
+    for entry in entries:
+        spec = l1_spec(entry)
+        assert spec and hashlib.sha256((root / spec["source"]).read_bytes()).hexdigest() == spec["source_sha256"]
+        criteria = l1_criteria(entry)
+        assert criteria and len({row["id"] for row in criteria}) == len(criteria)
+        assert all(row["id"].startswith(entry + ":") and row["criterion"] for row in criteria)
+    ids = {row["criterion_id"] for row in l1_criteria("N02")}
+    assert "R08" in ids and not ids & {"R13", "R14"}
+    assert not any(row["criterion_id"].startswith("EXE") for row in l1_criteria("L02"))
+    assert l1_spec("L12") is None and l1_criteria("L12") == ()
