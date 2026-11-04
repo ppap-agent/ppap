@@ -300,3 +300,36 @@ def test_v4_customer_conflict_uses_explicit_file_facts_not_a_models_guess(label)
     assert "matching_customer_conflict" in conflict["notices"]
     guess = analyze_file("控制计划.xlsx", workbook_bytes(("文件类型", "控制计划")), presets, ai=MetadataAI({"customer": "理想"}), customer_preference="蔚来", scoped=True)
     assert guess["matched_rule_id"] == "nio-cp"
+
+
+@pytest.mark.parametrize("reference_only", [False, True])
+def test_explicit_validated_uaes_photo_scope_routes_without_inventing_text(reference_only):
+    from PIL import Image
+
+    content = BytesIO()
+    Image.new("RGB", (2, 2), "white").save(content, format="PNG")
+
+    class NoTextModel:
+        def structured_completion(self, **kwargs):
+            raise AssertionError("A validated photo must not require a text model")
+
+    result = analyze_file(
+        "样品.png",
+        content.getvalue(),
+        [rule("photo-preset", ["UAES"], "E07", rule_profile="v4")],
+        ai=NoTextModel(),
+        customer_preference="UAES",
+        scoped=True,
+        reference_only=reference_only,
+        validation_scope={"customer_preference": "UAES", "preset_key": "U13"},
+    )
+    assert result["document_type"] == "E07"
+    assert result["matching_status"] == ("reference" if reference_only else "matched")
+    assert result["matched_rule_id"] == (None if reference_only else "photo-preset")
+    assert result["metadata"]["customer"] is None
+    assert result["notices"] == ["photo_content_requires_manual_confirmation"]
+
+
+def test_a_different_customer_cannot_reuse_a_photo_scope_to_bypass_recognition():
+    result = analyze_file("样品.png", b"unused", [rule("nio", ["蔚来"])], customer_preference="蔚来", scoped=True, validation_scope={"customer_preference": "UAES", "preset_key": "U13"})
+    assert result["matching_status"] == "failed" and result["matched_rule_id"] is None

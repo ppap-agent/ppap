@@ -1,6 +1,7 @@
 """Customer-specific T12 facts are evaluated through the actual Round boundary."""
 
 import io
+import json
 
 import pytest
 from audit.audits import RoundInput, RoundWork
@@ -28,6 +29,10 @@ def test_uaes_material_identity_and_characteristic_values(missing, expected):
     result = run_round_from_bytes(RoundWork("round", "tenant", [target]), {"version": content.getvalue()})
     assert [finding["status"] for finding in result["findings"]] == expected, [(f["status"], f["suggestions"]) for f in result["findings"]]
     assert result["coverage"]["unchecked"] == []
+    for finding in result["findings"]:
+        sources = finding["locator"]["evidence"]["sources"]
+        assert sources
+        assert all(json.loads(source["locator"])["file_version_id"] == "version" for source in sources)
 
 
 @pytest.mark.parametrize(

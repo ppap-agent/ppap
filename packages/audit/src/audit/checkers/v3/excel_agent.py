@@ -900,7 +900,7 @@ class ExcelAgent(BaseAgent):
         return f"{message}；{extra}" if message else extra
 
     def _evidence_from_reads(self, ctx: RuleContext) -> AuditEvidence | None:
-        if not type(self).CLAUSE_BOUND_CHECKS:
+        if not type(self).CLAUSE_BOUND_CHECKS and self.rule.rule_profile != "v4":
             return None
         reads = ctx.cell_reads()
         if not reads:

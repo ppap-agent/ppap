@@ -11,12 +11,41 @@ from audit.kinds import PpapDocumentType
 from product.rules import document_types, latest_rule_versions
 
 
-def analyze_file(filename: str, content: bytes, rules: list[dict], *, ai=None, customer_preference: str | None = None, scoped: bool = False, reference_only: bool = False) -> dict:
+def analyze_file(
+    filename: str,
+    content: bytes,
+    rules: list[dict],
+    *,
+    ai=None,
+    customer_preference: str | None = None,
+    scoped: bool = False,
+    reference_only: bool = False,
+    validation_scope: dict | None = None,
+) -> dict:
     """Recognize a file; scoped tasks supply their already-frozen current candidates."""
     from audit.engine.checkers.client import AIClient
     from audit.engine.checkers.prompts import PromptManager
     from documents.extractors import get_extractor
     from product.rule_matching import RuleMatchingAIService
+
+    if validation_scope is not None:
+        result = {
+            "metadata": {"customer": None, "model": None, "part": None, "part_number": None},
+            "document_type": None,
+            "matched_rule_id": None,
+            "matching_status": "failed",
+            "notices": ["matching_document_type_required"],
+        }
+        if not scoped or customer_preference != "UAES" or validation_scope != {"customer_preference": "UAES", "preset_key": "U13"}:
+            return result
+        # Scope comes from a successful, file-version-bound validation receipt.
+        # The user explicitly chose U13; a picture has no required text layer.
+        candidates = [rule for rule in rules if rule.get("kind") == "engine" and rule.get("rule_profile") == "v4" and rule.get("type") == "E07" and rule.get("customers") == ["UAES"]]
+        if reference_only:
+            return {**result, "document_type": "E07", "matching_status": "reference", "notices": ["photo_content_requires_manual_confirmation"]}
+        if len(candidates) != 1:
+            return {**result, "document_type": "E07", "matching_status": "unmatched", "notices": ["matching_document_type_rules_missing"]}
+        return {**result, "document_type": "E07", "matched_rule_id": candidates[0]["id"], "matching_status": "matched", "notices": ["photo_content_requires_manual_confirmation"]}
 
     notices = []
     text = ""
