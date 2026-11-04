@@ -357,8 +357,22 @@ class UaesSourceAgent(BaseAgent):
         """Use only this frozen GroupContext; pair by source identity, never order."""
         if self.group_context is None:
             raise UnknownFact("当前批次没有关联资料，需补充同零件的独立原件。")
-        if any(key(kind) not in {"e07", "生产件样品照片"} for kind in self.group_context.unavailable_files.values()):
-            raise OSError("当前批次有已提供但无法读取的关联资料。")
+        from audit.kinds import PpapDocumentType
+        from audit.presets import customer_presets
+
+        for kind in self.group_context.unavailable_files.values():
+            if not kind or key(kind) in {"unknown", "未知", "未知类型"}:
+                raise OSError("当前批次有类别未确认且无法读取的原件，尚不能排除所需对端。")
+            names = [str(kind)]
+            resolved = PpapDocumentType.from_string(str(kind))
+            if resolved != PpapDocumentType.UNKNOWN:
+                names.append(resolved.get_type_name())
+            names.extend(preset.title for preset in customer_presets() if preset.customer == "UAES" and preset.source_type == kind)
+            relevant = any(key(term) in key(name) for term in terms for name in names)
+            # A broad MSA type can contain the requested Kappa/GRR/plan subtype.
+            broad_msa = any("测量系统分析" in name or "msa" in key(name) for name in names)
+            if relevant or broad_msa and any(key(term) in {"kappa", "grr", "msa计划", "测量系统分析计划"} for term in terms):
+                raise OSError("当前批次有已提供但无法读取的关联资料。")
         candidates = {
             item.audit_id: item
             for kind, items in self.group_context.by_doc_type.items()
@@ -397,6 +411,12 @@ class UaesSourceAgent(BaseAgent):
         if not self.audit_file.project_id or self.audit_file.project_id != item.project_id:
             raise UnknownFact("关联原件项目身份尚未确认一致。")
         other = NativeFacts(item.file_url, item.audit_id, self.witness)
+        project_aliases = ("项目", "项目名称", "项目号", "UAES项目编号", "车型项目")
+        project_required = self.rule.preset_key == "U04"
+        own_project = self.native().field(project_aliases, required=project_required)
+        peer_project = other.field(project_aliases, required=project_required)
+        if (own_project or peer_project) and (not own_project or not peer_project or key(own_project) != key(peer_project)):
+            raise UnknownFact("关联原件实际项目身份不一致或缺失，尚不能用于当前项目。")
         customer_aliases = ("客户名称", "客户", "customer")
         left_customer = self.audit_file.customer or self.native().field(customer_aliases)
         right_customer = item.customer or other.field(customer_aliases)

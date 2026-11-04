@@ -90,7 +90,8 @@ def test_materials_only_pairs_current_unique_matching_originals(tmp_path, varian
 
     def original(filename, *, part="P12345", customer="UAES", revision="A"):
         book = Workbook()
-        for row in [["零件号", part], ["零件名称", "支架"], ["客户名称", customer], ["版本", revision]]:
+        book.active.title = "图纸" if "图纸" in filename else "材料清单"
+        for row in [["零件号", part], ["零件名称", "支架"], ["客户名称", customer], ["版本", revision], ["项目", "M1"]]:
             book.active.append(row)
         path = tmp_path / filename
         book.save(path)
