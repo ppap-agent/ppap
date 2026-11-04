@@ -122,11 +122,20 @@ def render_precheck_record(receipt: dict) -> bytes:
 
     statuses = {"satisfied": "本项已核实", "defect": "发现问题", "unknown": "未核实", "not_checked": "未执行", "error": "执行失败", "handoff": "转正式审核判断", "not_applicable": "本项不适用"}
     source, result = receipt["input"], receipt.get("result") or {}
+    overall = {
+        "succeeded": "本次预检已完成，仍须核对各项未核实要求。",
+        "failed": "本次预检执行失败，尚未取得完整结论。请读取原检查或重试。",
+        "cancelled": "本次预检已取消，尚未取得完整结论。",
+        "queued": "本次预检等待执行。",
+        "leased": "本次预检正在执行。",
+        "unknown": "本次预检执行状态尚未核实，请读取原检查。",
+    }
     parts = [
         '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>PPAP 预检检查记录</title>',
         "<style>body{font:16px system-ui;max-width:64rem;margin:2rem auto;padding:0 1rem}"
         "table{border-collapse:collapse;width:100%}td,th{padding:.5rem;border:1px solid #bbb;text-align:left}small{color:#555}</style>",
         "<h1>PPAP 预检检查记录</h1><p>本记录只说明资料准备检查，不是正式审核合格结论。预检免费。</p>",
+        f"<p>{escape(overall.get(receipt.get('status'), '本次预检执行状态尚未核实。'))}</p>",
         f"<p>审核客户：{escape(source.get('effective_customer') or source.get('customer_preference') or '自动识别')}<br>任务：{escape(source['task_id'])}"
         f"<br>输入修订：{escape(source['input_revision'])}<br>快照：{escape(receipt['id'])}<br>保存时间：{escape(receipt['created_at'])}</p>",
     ]
