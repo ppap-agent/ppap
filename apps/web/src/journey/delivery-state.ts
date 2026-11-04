@@ -77,9 +77,9 @@ export async function packageBytes(pack: DeliveryPackage, report: string, record
     contents[`示例资料/${index + 1}-${safeName(file.name)}.示例.html`] = strToU8(sourceDocumentHTML(matches[0]))
   }
   const basis = record.input.basis?.source
-  if (basis?.localFile) await original({name: basis.filename, revision: basis.version, sourceVersion: 1, localFile: basis.localFile}, `审核要求/${safeName(basis.filename)}`)
+  if (basis?.localFile) await original({name: basis.filename, revision: basis.version, sourceVersion: 1, localFile: basis.localFile}, `审核规则/${safeName(basis.filename)}`)
   const list = (files: SourceFile[]) => files.map(file => `<li>${escape(file.name)} · Rev ${escape(file.revision)} · 文件 v${file.sourceVersion}</li>`).join('') || '<li>无</li>'
-  contents['请先阅读.html'] = strToU8(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>${escape(pack.id)}</title><h1>审核资料包 · 交互原型</h1><p>${escape(pack.id)} · ${escape(pack.at)}</p><p>报告和依据记录属于本次固定决定，不构成正式批准。“原件”目录保留上传字节；“示例资料”目录是合成 HTML，不是真实检验单据。</p><h2>包含资料</h2><ul>${list(pack.files)}</ul><h2>未包含资料</h2><ul>${list(pack.omitted)}</ul><h2>审核要求</h2><p>${basis?.localFile ? `已附原件：${escape(basis.filename)} · ${escape(basis.version)}` : '条款快照在依据记录与报告中；未附要求原件。'}</p><p>生成或下载资料包不代表对外送达。</p></html>`)
+  contents['请先阅读.html'] = strToU8(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>${escape(pack.id)}</title><h1>审核资料包 · 交互原型</h1><p>${escape(pack.id)} · ${escape(pack.at)}</p><p>报告和依据记录属于本次固定决定，不构成正式批准。“原件”目录保留上传字节；“示例资料”目录是合成 HTML，不是真实检验单据。</p><h2>包含资料</h2><ul>${list(pack.files)}</ul><h2>未包含资料</h2><ul>${list(pack.omitted)}</ul><h2>审核规则</h2><p>${basis?.localFile ? `已附原件：${escape(basis.filename)} · ${escape(basis.version)}` : '条款快照在依据记录与报告中；未附规则原件。'}</p><p>生成或下载资料包不代表对外送达。</p></html>`)
   signal?.throwIfAborted(); onProgress?.('正在打包')
   return new Promise<Uint8Array>((resolve, reject) => {
     const cancel = () => {terminate(); reject(signal?.reason ?? new DOMException('已取消', 'AbortError'))}

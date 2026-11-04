@@ -205,7 +205,7 @@ function OverviewMatrix({go}: {go: (stage: Stage) => void}) {
     <section className={"mt-9.5 [&_table]:w-full [&_table]:min-w-175 [&_table]:border-collapse [&_table]:text-left [&_th]:py-4.5 [&_th]:px-3.5 [&_th]:border-b [&_th]:border-r [&_th]:text-sm [&_th]:align-top [&_td]:py-4.5 [&_td]:px-3.5 [&_td]:border-b [&_td]:border-r [&_td]:text-sm [&_td]:align-top [&_th:last-child]:border-r-0 [&_td:last-child]:border-r-0 [&_tbody_tr:last-child_th]:border-b-0 [&_tbody_tr:last-child_td]:border-b-0 [&_thead_th]:bg-background [&_thead_th]:text-muted-foreground [&_thead_th]:text-xs [&_thead_th]:font-semibold [&_tbody_th]:min-w-39 [&_tbody_th]:font-semibold [&_td]:text-muted-foreground [&_td_strong]:text-foreground [&_td_strong]:font-semibold"}>
       <div className={"flex items-end justify-between gap-5 mb-4 [&_h2]:mt-0 [&_h2]:mr-0 [&_h2]:mb-1 [&_h2]:ml-0 [&_h2]:text-lg [&_h2]:font-bold [&_h2]:tracking-tight [&_p]:m-0 [&_p]:text-muted-foreground [&_p]:text-sm"}><div><h2>要求与资料</h2><p>按要求检查每份资料的覆盖情况。</p></div></div>
       <div className={"overflow-x-auto border rounded-lg bg-background"}><table>
-        <thead><tr><th>审核要求</th><th>过程流程图</th><th>控制计划</th><th>尺寸报告</th><th>本轮结论</th></tr></thead>
+        <thead><tr><th>审核规则</th><th>过程流程图</th><th>控制计划</th><th>尺寸报告</th><th>本轮结论</th></tr></thead>
         <tbody>
           <tr><th>工序描述一致</th><MatrixCell tone="bad">工序 17<br/><strong>热处理</strong></MatrixCell><MatrixCell tone="bad">工序 17<br/><strong>表面处理</strong></MatrixCell><MatrixCell>—</MatrixCell><MatrixCell><Status tone="bad">不一致</Status></MatrixCell></tr>
           <tr><th>工序号可核对</th><MatrixCell tone="wait">扫描处无法辨认</MatrixCell><MatrixCell>工序号可读</MatrixCell><MatrixCell>—</MatrixCell><MatrixCell><Status tone="wait">待核实</Status></MatrixCell></tr>

@@ -43,8 +43,8 @@ export function useLiveAudit({id, registration, items, state, plan, onChange, re
     try {
       await beforeStart?.()
       const current = latest.current, selected = current.items
-      if (!selected.some(item => item.role === 'target')) throw new Error('没有与本次要求类型对应的待审文件，请核对文件分类或审核要求。')
-      if (selected.some(item => item.role === 'target' && !item.rule_version_id)) throw new Error('请先确认并保存本次审核要求。')
+      if (!selected.some(item => item.role === 'target')) throw new Error('没有与本次要求类型对应的待审文件，请核对文件分类或审核规则。')
+      if (selected.some(item => item.role === 'target' && !item.rule_version_id)) throw new Error('请先确认并保存本次审核规则。')
       const pending = readAcceptance(key)
       const requestedPlan = draftPlan({items: selected, analysis_mode: current.state.mode})
       if (pending && pending.plan !== requestedPlan) throw new Error('原检查请求尚未完成核对，不能改变其文件或规则。')

@@ -15,6 +15,31 @@ PREVIEW = os.environ.get("PPAP_PREVIEW_URL", "").rstrip("/")
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires the explicit UI preview and Playwright")
 class AuditWorkspacePreviewTests(unittest.TestCase):
+    def test_wide_review_docks_evidence_beside_the_list_and_narrow_queue_collapses(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 960})
+            page.set_default_timeout(5000)
+            page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task")
+            queue = page.get_by_role("navigation", name="文件队列", exact=True)
+            queue.get_by_role("button").first.click()
+            details = page.get_by_role("region", name="审核详情", exact=True)
+            details.get_by_role("combobox", name="审核结果筛选", exact=True).click()
+            page.get_by_role("option", name=re.compile("^全部审核项")).click()
+            details.get_by_role("button", name=re.compile("^查看依据 1\\.1")).click()
+            expect(page.get_by_role("heading", name=re.compile(r"^1\.1 · "))).to_be_visible()
+            # The list stays usable and the docked evidence follows the selected row.
+            details.get_by_role("button", name=re.compile("^查看依据 1\\.2")).click()
+            expect(page.get_by_role("heading", name="1.2 · 记录完整性", exact=True)).to_be_visible()
+            page.keyboard.press("k")
+            expect(page.get_by_role("heading", name=re.compile(r"^1\.1 · "))).to_be_visible()
+            page.set_viewport_size({"width": 390, "height": 844})
+            page.keyboard.press("Escape")
+            expect(queue).to_be_hidden()
+            page.get_by_role("button", name=re.compile("^切换文件")).click()
+            expect(queue).to_be_visible()
+            browser.close()
+
     def test_browser_back_and_forward_restore_overview_and_exact_file_report(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
@@ -38,7 +63,7 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             page = browser.new_page(viewport={"width": 1440, "height": 960})
             page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task")
             overview = page.get_by_role("region", name="全部文件概览", exact=True)
-            expect(overview.get_by_role("row")).to_have_count(4)
+            expect(page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button")).to_have_count(3)
             expect(page.get_by_role("region", name="审核详情", exact=True)).to_have_count(0)
             page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button").first.click()
             page.get_by_role("button", name="专注复核（选做）", exact=True).click()
@@ -169,7 +194,7 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             basis = page.get_by_role("dialog").filter(has=page.get_by_role("tab", name="核对原件", exact=True))
             expect(basis.get_by_role("heading", name="1.1 · 频次一致性", exact=True)).to_be_visible()
             expect(basis.get_by_text("示例：控制计划与 PFMEA 的频次不同。", exact=False).first).to_be_visible()
-            expect(basis.get_by_role("heading", name="审核要求原文", exact=True)).to_be_visible()
+            expect(basis.get_by_role("heading", name="审核规则原文", exact=True)).to_be_visible()
             basis.get_by_role("button", name="关闭", exact=True).click()
             expect(first).to_be_focused()
             second = page.get_by_role("button", name="查看依据 1.2", exact=True)
