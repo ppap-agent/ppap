@@ -85,6 +85,14 @@ def test_cp_pfd_pair_checks_identity_and_has_both_originals(part, name, status):
         assert {json.loads(item["locator"])["file_version_id"] for item in evidence} == {"version", "other"}
 
 
+@pytest.mark.parametrize("part,revision", [("无", "A"), ("TBD", "A"), ("零件名称", "A"), ("P-1", "无"), ("P-1", "版本号")])
+def test_cp_pair_unknown_keys_are_not_established_by_equal_placeholder_text(part, revision):
+    own = [["零件号", part], ["版本", revision], ["零件/工序号", "工序名称/操作描述"], [10, "成型"]]
+    other = [["零件号", part], ["版本", revision], ["工序号", "工序名称"], [10, "成型"]]
+    findings = run("N03", own, "控制计划", ("N05", other, "过程流程图"))
+    assert findings[5]["status"] == "UNABLE"
+
+
 def test_pfd_blank_physical_row_does_not_count_as_the_next_inspection():
     findings = run("N05", [["工序名称"], ["返工"], [None], ["重检"]], "过程流程图")
     assert findings[7]["status"] == "NG"

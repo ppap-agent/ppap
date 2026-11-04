@@ -9,7 +9,7 @@ from pathlib import Path
 
 from audit.checkers.v3.cross_file_extractors import _load_workbook_auto
 from audit.checkers.v3.excel_agent import ExcelAgent
-from audit.checkers.v4.pfmea_local import _NON_DATA_SHEETS, _identity, _label
+from audit.checkers.v4.pfmea_local import _NON_DATA_SHEETS, _identity, _label, pair_identity
 from audit.document_tools import snapshot
 from audit.engine.rule_engine import Decision, GuardStop
 
@@ -170,7 +170,7 @@ class NioTableAgent(ExcelAgent):
             for labels, required in [(("零件号", "零件编号"), True), (("版本", "版本号", "修订版次"), False)]:
                 own = self._field(ctx, *labels)
                 other = _label(ctx, workbook, labels, related.audit_id, sheets=sheets)
-                if (required or own or other) and (not own or not other or _identity(own) != _identity(other)):
+                if (required or own or other) and (not pair_identity(own) or pair_identity(own) != pair_identity(other)):
                     raise GuardStop(Decision.UNABLE, f"关联原件{labels[0]}缺失或不一致，尚不能配对。")
             yield workbook, related.audit_id, sheets
         finally:
