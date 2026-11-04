@@ -357,7 +357,7 @@ class UaesSourceAgent(BaseAgent):
         """Use only this frozen GroupContext; pair by source identity, never order."""
         if self.group_context is None:
             raise UnknownFact("当前批次没有关联资料，需补充同零件的独立原件。")
-        if self.group_context.unavailable_files:
+        if any(key(kind) not in {"e07", "生产件样品照片"} for kind in self.group_context.unavailable_files.values()):
             raise OSError("当前批次有已提供但无法读取的关联资料。")
         candidates = {
             item.audit_id: item
@@ -405,6 +405,9 @@ class UaesSourceAgent(BaseAgent):
         part_aliases = ("零件号", "零件编号", "物料编号", "客户零件号", "part number")
         left, right = self.native().field(part_aliases), other.field(part_aliases)
         labels = {key(name) for name in (*part_aliases, "零件名称", "物料名称", "版本", "日期")}
+        placeholders = {key(value) for value in ("", "/", "NA", "N/A", "TBD", "无", "待填", "待定", "XXX", "--", "—")}
+        if key(left) in placeholders or key(right) in placeholders:
+            raise UnknownFact("关联原件零件号尚未确认，不能用占位值配对。")
         if key(left) in labels or key(right) in labels:
             raise UnknownFact("关联原件零件号值可能是相邻字段标签，需核对原件。")
         if key(left) != key(right):
@@ -412,7 +415,8 @@ class UaesSourceAgent(BaseAgent):
         # Frozen version identity must also be known. Do not infer a revision
         # from upload order or borrow the current document's revision.
         revision_aliases = ("版本", "版次", "修订版次", "revision")
-        if key(self.native().field(revision_aliases)) != key(other.field(revision_aliases)):
+        own_revision, peer_revision = key(self.native().field(revision_aliases)), key(other.field(revision_aliases))
+        if own_revision in placeholders or peer_revision in placeholders or own_revision != peer_revision:
             raise UnknownFact("关联原件版本不一致，需确认适用版本。")
         if require_name:
             names = ("零件名称", "物料名称", "part name")
