@@ -36,26 +36,52 @@ def blocks(pruned: dict[str, Any], name: str) -> list:
     return value
 
 
-def page_layouts(result: dict, page_count: int) -> list[dict]:
+def diagnostic(diagnostics: list[dict] | None, *, element: str, page: int, index: int | None, message: str) -> None:
+    if diagnostics is None:
+        raise PaddleOCRFormatError(message)
+    diagnostics.append({"code": f"paddle.{element}.invalid", "message": message, "stage": "structure", "element": element, "page": page, "index": index})
+
+
+def page_layouts(result: dict, page_count: int, *, diagnostics: list[dict] | None = None, source_pages: list[int] | None = None) -> list[dict]:
     layouts = []
     for page_no, source in enumerate(require_pages(result, page_count), 1):
+        original_page = source_pages[page_no - 1] if source_pages is not None else page_no
         pruned = source["prunedResult"]
         layout = pruned.get("layout_det_res", {})
         if not isinstance(layout, dict):
-            raise PaddleOCRFormatError("PaddleOCR layout data is invalid")
+            diagnostic(diagnostics, element="layout", page=original_page, index=None, message="PaddleOCR layout data is invalid")
+            layout = {}
         raw_regions = layout.get("boxes", [])
         if not isinstance(raw_regions, list):
-            raise PaddleOCRFormatError("PaddleOCR layout boxes are invalid")
+            diagnostic(diagnostics, element="layout", page=original_page, index=None, message="PaddleOCR layout boxes are invalid")
+            raw_regions = []
         regions = []
         for index, item in enumerate(raw_regions):
             if not isinstance(item, dict) or not isinstance(item.get("label"), str):
-                raise PaddleOCRFormatError("PaddleOCR layout region is invalid")
-            regions.append({"index": index, "label": item["label"], "bbox": box(item.get("coordinate"))})
+                diagnostic(diagnostics, element="layout", page=original_page, index=index, message="PaddleOCR layout region is invalid")
+                continue
+            try:
+                bounds = box(item.get("coordinate"))
+            except PaddleOCRFormatError as exc:
+                diagnostic(diagnostics, element="layout", page=original_page, index=index, message=str(exc))
+                bounds = None
+            regions.append({"index": index, "label": item["label"], "bbox": bounds})
         paragraphs = []
-        for index, item in enumerate(blocks(pruned, "parsing_res_list")):
+        try:
+            text_blocks = blocks(pruned, "parsing_res_list")
+        except PaddleOCRFormatError as exc:
+            diagnostic(diagnostics, element="text", page=original_page, index=None, message=str(exc))
+            text_blocks = []
+        for index, item in enumerate(text_blocks):
             if not isinstance(item, dict) or not isinstance(item.get("block_label", "text"), str) or not isinstance(item.get("block_content", ""), str):
-                raise PaddleOCRFormatError("PaddleOCR text block is invalid")
-            paragraphs.append({"index": index, "type": item.get("block_label", "text"), "text": item.get("block_content", ""), "bbox": box(item.get("block_bbox"))})
+                diagnostic(diagnostics, element="text", page=original_page, index=index, message="PaddleOCR text block is invalid")
+                continue
+            try:
+                bounds = box(item.get("block_bbox"))
+            except PaddleOCRFormatError as exc:
+                diagnostic(diagnostics, element="text", page=original_page, index=index, message=str(exc))
+                bounds = None
+            paragraphs.append({"index": index, "type": item.get("block_label", "text"), "text": item.get("block_content", ""), "bbox": bounds})
         # Preserve every source index, even when sorting for reading order.
         paragraphs.sort(key=lambda item: ((int(item["bbox"][1] / 20), item["bbox"][0]) if item["bbox"] else (math.inf, item["index"])))
         layouts.append({"page": page_no, "regions": regions, "texts": paragraphs})
