@@ -483,6 +483,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/audit-tasks/{task_id}/prechecks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Precheck History */
+        get: operations["precheck_history_audit_tasks__task_id__prechecks_get"];
+        put?: never;
+        /** Precheck Request */
+        post: operations["precheck_request_audit_tasks__task_id__prechecks_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-tasks/{task_id}/prechecks/{snapshot_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Precheck Read */
+        get: operations["precheck_read_audit_tasks__task_id__prechecks__snapshot_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-tasks/{task_id}/prechecks/{snapshot_id}/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Precheck Report */
+        get: operations["precheck_report_audit_tasks__task_id__prechecks__snapshot_id__report_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit-tasks/{task_id}/recognitions/{request_id}": {
         parameters: {
             query?: never;
@@ -2542,6 +2594,7 @@ export interface components {
             notification_revision?: number;
             /** Number */
             number: string;
+            precheck?: components["schemas"]["PrecheckReceipt"] | null;
             /** Predecessor Id */
             predecessor_id?: string;
             /** Predecessor Task Id */
@@ -2592,6 +2645,7 @@ export interface components {
             validation: components["schemas"]["AuditFileValidation"];
             /** Validation Id */
             validation_id?: string;
+            validation_scope?: components["schemas"]["FileValidationScope"];
         };
         /** AuditTaskSummary */
         AuditTaskSummary: {
@@ -3052,6 +3106,8 @@ export interface components {
         };
         /** EvidenceSource */
         EvidenceSource: {
+            /** Excerpt */
+            excerpt?: string;
             /** Kind */
             kind: string;
             /** Locator */
@@ -3142,12 +3198,26 @@ export interface components {
             id: string;
             /** Result */
             result: components["schemas"]["AuditFileValidation"] | components["schemas"]["JobError"] | null;
+            scope?: components["schemas"]["FileValidationScope"];
             /** Source File Id */
             source_file_id: string;
             /** Source File Version Id */
             source_file_version_id: string;
             /** Status */
             status: string;
+        };
+        /** FileValidationScope */
+        FileValidationScope: {
+            /**
+             * Customer Preference
+             * @constant
+             */
+            customer_preference: "UAES";
+            /**
+             * Preset Key
+             * @constant
+             */
+            preset_key: "U13";
         };
         /** FileVersion */
         FileVersion: {
@@ -3329,6 +3399,41 @@ export interface components {
             page: number;
             /** Region */
             region?: (number | null)[];
+        };
+        /** PrecheckHistory */
+        PrecheckHistory: {
+            /** Snapshots */
+            snapshots: components["schemas"]["PrecheckReceipt"][];
+        };
+        /** PrecheckReceipt */
+        PrecheckReceipt: {
+            /** Created At */
+            created_at: string;
+            /** Current */
+            current: boolean;
+            /** Id */
+            id: string;
+            /** Input */
+            input: {
+                [key: string]: unknown;
+            };
+            /** Input Revision */
+            input_revision: number;
+            /** Request Id */
+            request_id?: string;
+            /** Result */
+            result: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "leased" | "unknown" | "succeeded" | "failed" | "cancelled";
+            /** Task Id */
+            task_id: string;
+            /** Updated At */
+            updated_at: string;
         };
         /** PresenceRuleBody */
         PresenceRuleBody: {
@@ -5231,6 +5336,141 @@ export interface operations {
             };
         };
     };
+    precheck_history_audit_tasks__task_id__prechecks_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrecheckHistory"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    precheck_request_audit_tasks__task_id__prechecks_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Expected Revision */
+                    expected_revision: number;
+                    /** Request Id */
+                    request_id: string;
+                } & {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrecheckReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    precheck_read_audit_tasks__task_id__prechecks__snapshot_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                snapshot_id: string;
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrecheckReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    precheck_report_audit_tasks__task_id__prechecks__snapshot_id__report_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                snapshot_id: string;
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     audit_tasks_recognition_get_audit_tasks__task_id__recognitions__request_id__get: {
         parameters: {
             query?: never;
@@ -6101,6 +6341,18 @@ export interface operations {
                 "application/json": {
                     /** Request Id */
                     request_id: string;
+                    scope?: {
+                        /**
+                         * Customer Preference
+                         * @constant
+                         */
+                        customer_preference: "UAES";
+                        /**
+                         * Preset Key
+                         * @constant
+                         */
+                        preset_key: "U13";
+                    } | null;
                     /** Source File Id */
                     source_file_id: string;
                     /** Source File Version Id */

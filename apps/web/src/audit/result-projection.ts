@@ -137,6 +137,7 @@ export function frozenResultError(roundId: string | null, row: ReviewFile, froze
   if (audit.checks.some(item => item.evidence.some(source => !frozen.has(source.file_version_id)))) return '来源证据不在本轮冻结文件范围内。'
   const valid = audit.checks.filter(item => item.execution === 'completed' && item.coverage === 'executed' && item.finding)
   const counts = {pass_count: 0, ng_count: 0, unknown_count: 0, not_covered_count: 0, error_count: 0}
+  let notApplicable = 0
   for (const item of audit.checks) {
     if (['queued', 'running'].includes(item.execution)) continue
     if (item.execution === 'failed' || item.finding?.status === 'ERR') counts.error_count += 1
@@ -144,8 +145,10 @@ export function frozenResultError(roundId: string | null, row: ReviewFile, froze
     else if (!item.finding || item.finding.status === 'UNABLE') counts.unknown_count += 1
     else if (item.finding.status === 'PASS') counts.pass_count += 1
     else if (item.finding.status === 'NG') counts.ng_count += 1
+    else if (item.finding.status === 'NA') notApplicable += 1
   }
-  if (!sameSnapshot(counts, audit.counts)) return '审核计数与条目明细不一致。'
+  const {na_count, ...observedCounts} = audit.counts
+  if (!sameSnapshot(counts, observedCounts) || na_count !== undefined && na_count !== notApplicable) return '审核计数与条目明细不一致。'
   const complete = rules.length > 0 && audit.execution === 'completed' && valid.length === rules.length && valid.every(item => ['PASS', 'NG', 'NA'].includes(item.finding!.status))
   if (audit.progress.completed !== audit.checks.filter(item => ['completed', 'failed'].includes(item.execution)).length) return '审核进度与条目状态不一致。'
   if (audit.conclusion === 'PASS' && (!complete || valid.some(item => item.finding?.status === 'NG'))) return 'PASS 结论缺少完整的实际审核结果。'
