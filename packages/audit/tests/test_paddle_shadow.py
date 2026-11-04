@@ -420,11 +420,18 @@ class PswRuntime:
 
 
 def psw_agent(path, rule):
+    from unittest.mock import patch
+
     from audit.engine.routing import resolve_engine_agent_class
+    from audit.engine.runtime import get_runtime
     from audit.kinds import PpapDocumentType
 
     cls = resolve_engine_agent_class(PpapDocumentType.PSW, str(path), rule.rule_profile, preset_key=rule.preset_key, preset_customer="理想" if rule.preset_key else None)
-    return cls(AuditInput(audit_id="frozen-version", file_url=str(path), project_id="project-a"), rule)
+    runtime = get_runtime()
+    assert isinstance(runtime, PswRuntime)
+    # V2 converts at this external boundary directly; V3 uses bind_runtime.
+    with patch("audit.checkers.v2.pdf_agent.convert_pdf_to_excel_auto", side_effect=runtime.convert_pdf_to_excel):
+        return cls(AuditInput(audit_id="frozen-version", file_url=str(path), project_id="project-a"), rule)
 
 
 @pytest.mark.parametrize("profile", ["v2", "v3", "v4"])
@@ -588,3 +595,123 @@ def test_native_read_must_revalidate_the_scope_before_skip_or_dispatch(tmp_path,
     assert observation.state == "error"
     assert observation.reason == {"deadline": "deadline_exceeded", "cancel": "cancelled", "source": "source_changed"}[change]
     assert observation.evidence.sources == ()
+
+
+class RegionWordService(Service):
+    def analyze_page(self, path, page, *, timeout=None):
+        raw = super().analyze_page(path, page, timeout=timeout)
+        pruned = raw["layoutParsingResults"][0]["prunedResult"]
+        pruned["overall_ocr_res"] = {"rec_texts": ["部门", "公司名称（公司章）"], "rec_boxes": [[20, 20, 40, 30], [45, 45, 80, 70]]}
+        return raw
+
+
+@pytest.mark.parametrize("profile", ["v2", "v3", "v4"])
+def test_psw_region_words_keep_separate_origins_without_changing_formal_results(tmp_path, profile):
+    from audit.engine.runtime import bind_runtime
+
+    path, rule, runtime = source(tmp_path), psw_rules(profile), PswRuntime()
+    service = RegionWordService()
+    with bind_runtime(runtime):
+        checker = psw_agent(path, rule)
+        baseline = checker.check(2).model_dump()
+        session = PaddleShadowSession(service, project_id="project-a", targets=psw_targets(path, rule, (3,)))
+        with paddle_shadow_scope(session):
+            actual = checker.check(2).model_dump()
+    assert actual == baseline and len(runtime.prompt_calls) == 2
+    assert session.request_count == len(service.calls) == 1
+    observation = session.observations[0]
+    assert observation.state == "known"
+    fact = observation.facts[0]
+    assert fact["detected"] is True and fact["text"] == ["存档资料"]
+    fragments = fact["region_text_fragments"]
+    assert [(word["source"], word["index"], word["text"]) for word in fragments] == [("paddle_overall_ocr", 0, "部门")]
+    assert fragments[0]["page"] == 2 and fragments[0]["pdf_bbox"] == [20.0, 20.0, 40.0, 30.0]
+    assert fragments[0]["association"] == "geometric_containment_only"
+    words = [(item, json.loads(item.locator)) for item in observation.evidence.sources if json.loads(item.locator)["element"] == "ocr_word"]
+    assert len(words) == 1 and words[0][0].excerpt == "部门"
+    locator = words[0][1]
+    assert locator["source"] == "paddle_overall_ocr" and locator["element_index"] == 0 and locator["seal_index"] == 0
+    assert locator["bbox"] == fragments[0]["pdf_bbox"] and locator["page"] == 2
+    assert locator["file_version_id"] == "frozen-version" and locator["source_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert not any("专用章" in json.dumps(value, ensure_ascii=False) for value in observation.facts)
+
+
+def test_u08_region_words_reuse_the_page_without_becoming_dedicated_seal_text(tmp_path):
+    path, service = source(tmp_path), RegionWordService()
+    session = PaddleShadowSession(service, project_id="project-a", targets=targets(path))
+    with paddle_shadow_scope(session):
+        checker = agent(path)
+        checker.check(2)
+        checker.check(5)
+    assert session.request_count == 1 and len(service.calls) == 1
+    stamp, field = session.observations
+    assert stamp.facts[0]["text"] == ["存档资料"]
+    assert [item["text"] for item in stamp.facts[0]["region_text_fragments"]] == ["部门"]
+    assert field.facts[0]["value"] == "P-42" and field.reused
+    assert "region_text_fragments" not in field.facts[0]
+
+
+@pytest.mark.parametrize("invalid", ["missing", "negative", "boolean", "duplicate_word", "outside", "unlocated", "ambiguous_seal"])
+def test_bad_supplemental_indices_do_not_erase_seals_or_publish_authoritative_words(tmp_path, monkeypatch, invalid):
+    import copy
+
+    import documents.ocr.paddle as parser
+
+    real_build = parser.build_evidence
+
+    def malformed_association(*args, **kwargs):
+        value = real_build(*args, **kwargs)
+        page = value["pages"][0]
+        seal = page["seals"][0]
+        word = next(item for item in page["texts"] if item.get("source") == "paddle_overall_ocr" and item.get("index") == 0)
+        if invalid == "missing":
+            seal["supplemental_text_indices"] = [999]
+        elif invalid == "negative":
+            seal["supplemental_text_indices"] = [-1]
+        elif invalid == "boolean":
+            seal["supplemental_text_indices"] = [False]
+        elif invalid == "duplicate_word":
+            other = copy.deepcopy(word)
+            other["text"] = "不能任取的另一候选"
+            page["texts"].append(other)
+        elif invalid == "outside":
+            word["pdf_bbox"] = [70, 70, 90, 90]
+        elif invalid == "unlocated":
+            word["pdf_bbox"] = None
+        else:
+            page["seals"].append(copy.deepcopy(seal))
+        return value
+
+    monkeypatch.setattr(parser, "build_evidence", malformed_association)
+    path, service = source(tmp_path), RegionWordService()
+    session = PaddleShadowSession(service, project_id="project-a", targets=targets(path))
+    with paddle_shadow_scope(session):
+        agent(path).check(2)
+    observation = session.observations[0]
+    assert session.request_count == 1 and observation.state == "known"
+    assert all(item["detected"] and item["text"] == ["存档资料"] for item in observation.facts)
+    assert not any(item.get("region_text_fragments") for item in observation.facts)
+    assert not any(json.loads(item.locator)["element"] == "ocr_word" for item in observation.evidence.sources)
+
+
+@pytest.fixture(autouse=True)
+def no_live_transports(monkeypatch):
+    """Caught provider errors must not hide accidental live requests."""
+    import httpx
+    import requests
+
+    attempted = []
+
+    def reject(*args, **kwargs):
+        attempted.append("sync")
+        raise AssertionError("Shadow tests must not perform network requests")
+
+    async def reject_async(*args, **kwargs):
+        attempted.append("async")
+        raise AssertionError("Shadow tests must not perform network requests")
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", reject)
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", reject_async)
+    monkeypatch.setattr(requests.sessions.Session, "request", reject)
+    yield
+    assert attempted == [], "A caught exception hid a live transport attempt"
