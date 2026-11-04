@@ -5,13 +5,13 @@ from __future__ import annotations
 import base64
 import json
 import subprocess
-import sys
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
 
 import fitz
+import httpx
 import pytest
 from documents.ocr import paddle
 from documents.ocr.paddle import export
@@ -61,13 +61,7 @@ def response(pages: int = 1) -> dict:
 
 
 def test_client_uses_exact_historical_paddle_parameters(pdf, monkeypatch):
-    calls, commands = [], []
-    real_popen = subprocess.Popen
-
-    def child(argv, **kwargs):
-        commands.append(argv)
-        assert kwargs["stdin"] == subprocess.PIPE and kwargs["stdout"] == subprocess.PIPE and kwargs["stderr"] == subprocess.DEVNULL
-        return real_popen(argv, **kwargs)
+    calls = []
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
@@ -82,7 +76,7 @@ def test_client_uses_exact_historical_paddle_parameters(pdf, monkeypatch):
         def log_message(self, *_args):
             pass
 
-    monkeypatch.setattr(subprocess, "Popen", child)
+    monkeypatch.setattr(subprocess, "Popen", lambda *_a, **_kw: pytest.fail("Paddle HTTP must not start a process"))
     with ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
         origin = f"http://127.0.0.1:{server.server_port}"
         endpoint = origin + "/layout-parsing"
@@ -104,9 +98,8 @@ def test_client_uses_exact_historical_paddle_parameters(pdf, monkeypatch):
     assert payload["useTableRecognition"] is True
     assert payload["useChartRecognition"] is False
     assert headers["Authorization"] == "token secret"
-    assert service.timeout == 300
-    assert len(commands) == 1 and commands[0][:2] == [sys.executable, "-c"]
-    assert "secret" not in " ".join(commands[0]) and not thread.is_alive()
+    assert service.timeout == 20
+    assert not thread.is_alive()
 
 
 @pytest.mark.parametrize("endpoint", ["", "ftp://example.test", "https://user:password@example.test", "https://example.test/#fragment"])
@@ -459,7 +452,7 @@ def test_ambiguous_table_geometry_is_not_assigned_by_iteration_order():
 
 def test_cli_live_requires_selected_page_before_any_request(pdf, tmp_path, monkeypatch):
     monkeypatch.setenv("PADDLE_OCR_URL", "https://paddle.example/layout-parsing")
-    monkeypatch.setattr(subprocess, "Popen", lambda *_a, **_kw: pytest.fail("network must not be attempted"))
+    monkeypatch.setattr(httpx.Client, "post", lambda *_a, **_kw: pytest.fail("network must not be attempted"))
     monkeypatch.setattr("sys.argv", ["paddle", "--pdf", str(pdf), "--out-root", str(tmp_path / "no-page")])
     with pytest.raises(SystemExit) as caught:
         main()
@@ -469,7 +462,7 @@ def test_cli_live_requires_selected_page_before_any_request(pdf, tmp_path, monke
 
 def test_live_export_requires_page_instead_of_sending_full_document(tmp_path, monkeypatch):
     source = make_pdf(tmp_path, pages=2)
-    monkeypatch.setattr(subprocess, "Popen", lambda *_a, **_kw: pytest.fail("network must not be attempted"))
+    monkeypatch.setattr(httpx.Client, "post", lambda *_a, **_kw: pytest.fail("network must not be attempted"))
     with pytest.raises(ValueError, match="explicit page_number"):
         paddle.evaluate_pdf(source, tmp_path / "no-page", endpoint="https://paddle.example/layout-parsing")
     assert not (tmp_path / "no-page").exists()

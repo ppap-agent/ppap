@@ -1,20 +1,19 @@
 """PSW disposition rules must use reported facts, not the model verdict."""
 
-import json
 import unittest
 from datetime import date
 
 from audit.engine.checkers.psw_visual_evidence import (
-    PSW_RULE_PROMPTS,
-    PswVisualRuleEvaluator,
+    PSW_RULE_FIELDS,
     decide_disposition_visual_rule,
+    evaluate_psw_observation,
 )
 
 _TODAY = date(2026, 10, 2)
 
 
-def test_only_visual_psw_rules_have_visual_prompts() -> None:
-    assert set(PSW_RULE_PROMPTS) == {3, 5, 7, 8, 9, 10}
+def test_only_visual_psw_rules_have_fact_requirements() -> None:
+    assert set(PSW_RULE_FIELDS) == {3, 5, 7, 8, 9, 10}
 
 
 def _observation(**overrides: object) -> dict[str, object]:
@@ -120,133 +119,23 @@ class ConditionalVisualDecisionTests(unittest.TestCase):
         self.assertEqual(decide_disposition_visual_rule(8, _observation(disposition_visible=False), today=_TODAY)[0], "NG")
 
 
-class DispositionVisualEvaluatorTests(unittest.TestCase):
-    def test_rule_8_empty_disposition_overrides_model_pass(self) -> None:
-        # Required corpus PDF ef838f02, page 2: submission results are checked,
-        # but all three warrant disposition boxes are empty.
-        def analyze(**_kwargs: object) -> str:
-            return json.dumps(
-                {
-                    "classification": "认可情况检查",
-                    "item": "认可情况检查",
-                    "priority": "P0",
-                    "status": "PASS",
-                    "suggestions": "提交结果均已勾选",
-                    **_observation(),
-                    "dimensional_checked": True,
-                    "appearance_checked": True,
-                    "material_functional_checked": True,
-                    "statistical_checked": True,
-                    "requirements_yes_checked": True,
-                }
-            )
+class NativePaddleDecisionTests(unittest.TestCase):
+    def test_rule_eight_rejects_verdict_without_facts(self):
+        self.assertEqual(evaluate_psw_observation(8, {"status": "PASS"}).status, "UNABLE")
 
-        result = PswVisualRuleEvaluator(analyze).evaluate(8, ["image"], today=_TODAY)
-        self.assertEqual(result.status, "NG")
-        self.assertIn("需且仅需勾选一个选项", result.suggestions)
+    def test_rule_eight_empty_disposition_remains_ng(self):
+        self.assertEqual(evaluate_psw_observation(8, {"status": "PASS", **_observation()}).status, "NG")
 
-    def test_rule_8_model_verdict_without_observations_cannot_pass(self) -> None:
-        def analyze(**_kwargs: object) -> str:
-            return json.dumps({"classification": "认可情况检查", "item": "认可情况检查", "priority": "P0", "status": "PASS", "suggestions": ""})
-
-        result = PswVisualRuleEvaluator(analyze).evaluate(8, ["image"], today=_TODAY)
-        self.assertEqual(result.status, "UNABLE")
-        self.assertIn("无法判断", result.suggestions)
-
-    def test_rule_8_approved_requires_each_submission_checkbox(self) -> None:
+    def test_rule_eight_requires_each_submission_checkbox(self):
         fields = ("dimensional_checked", "appearance_checked", "material_functional_checked", "statistical_checked", "requirements_yes_checked")
         complete = {**_observation(approved_checked=True), **dict.fromkeys(fields, True)}
-        self.assertEqual(decide_disposition_visual_rule(8, complete, today=_TODAY)[0], "PASS")
+        self.assertEqual(evaluate_psw_observation(8, {"status": "NG", **complete}).status, "PASS")
         for field in fields:
             with self.subTest(field=field):
-                status, suggestions = decide_disposition_visual_rule(8, {**complete, field: False}, today=_TODAY)
-                self.assertEqual(status, "NG")
-                self.assertIn("提交结果勾选不完整", suggestions)
-                missing = dict(complete)
-                del missing[field]
-                self.assertEqual(decide_disposition_visual_rule(8, missing, today=_TODAY)[0], "UNABLE")
-                self.assertEqual(decide_disposition_visual_rule(8, {**complete, field: None}, today=_TODAY)[0], "UNABLE")
+                self.assertEqual(evaluate_psw_observation(8, {**complete, field: False}).status, "NG")
+                self.assertEqual(evaluate_psw_observation(8, {**complete, field: None}).status, "UNABLE")
 
-    def test_rule_8_conditional_and_rejected_defer_to_their_own_rules(self) -> None:
-        for field in ("conditional_checked", "rejected_checked"):
-            with self.subTest(field=field):
-                self.assertEqual(decide_disposition_visual_rule(8, _observation(**{field: True}), today=_TODAY)[0], "PASS")
-
-    def test_rule_8_missing_unreadable_or_multiple_dispositions_cannot_pass(self) -> None:
-        for payload, expected in (
-            (_observation(disposition_visible=False), "NG"),
-            (_observation(approved_checked=None), "UNABLE"),
-            (_observation(approved_checked=True, conditional_checked=True), "NG"),
-        ):
-            with self.subTest(payload=payload):
-                self.assertEqual(decide_disposition_visual_rule(8, payload, today=_TODAY)[0], expected)
-
-    def test_rule_8_uses_complete_observations_even_if_model_says_ng(self) -> None:
-        seen: dict[str, str] = {}
-
-        def analyze(**kwargs: object) -> str:
-            seen["prompt"] = str(kwargs["user_prompt"])
-            return json.dumps(
-                {
-                    "status": "NG",
-                    **_observation(approved_checked=True),
-                    "dimensional_checked": True,
-                    "appearance_checked": True,
-                    "material_functional_checked": True,
-                    "statistical_checked": True,
-                    "requirements_yes_checked": True,
-                }
-            )
-
-        result = PswVisualRuleEvaluator(analyze).evaluate(8, ["image"], today=_TODAY)
-        self.assertEqual(result.status, "PASS")
-        self.assertEqual(result.suggestions, "规则8检查通过")
-        self.assertIn("不要判断通过或不通过", seen["prompt"])
-        self.assertNotIn('"status"', seen["prompt"])
-
-    def test_model_pass_without_facts_does_not_pass(self) -> None:
-        def analyze(**_kwargs: object) -> str:
-            return json.dumps({"status": "PASS", "suggestions": "未勾选条件批准，所以通过"})
-
-        result = PswVisualRuleEvaluator(analyze).evaluate(9, ["image"], today=_TODAY)
-        self.assertEqual(result.status, "UNABLE")
-        self.assertIn("无法判断", result.suggestions)
-
-    def test_model_pass_with_empty_checks_is_overridden(self) -> None:
-        seen: dict[str, str] = {}
-
-        def analyze(**kwargs: object) -> str:
-            seen["prompt"] = str(kwargs["user_prompt"])
-            return json.dumps(
-                {
-                    "status": "PASS",
-                    "suggestions": "未勾选条件批准，所以通过",
-                    **_observation(),
-                }
-            )
-
-        result = PswVisualRuleEvaluator(analyze).evaluate(9, ["image"], today=_TODAY)
-        self.assertEqual(result.status, "NG")
-        self.assertIn("需且仅需勾选一个选项", result.suggestions)
-        self.assertIn("不要判断通过或不通过", seen["prompt"])
-        self.assertNotIn('"status"', seen["prompt"])
-
-    def test_other_visual_rules_still_accept_the_model_status(self) -> None:
-        def analyze(**_kwargs: object) -> str:
-            return json.dumps(
-                {
-                    "classification": "提交原因检查",
-                    "item": "提交原因检查",
-                    "priority": "P0",
-                    "status": "Pass",
-                    "suggestions": "",
-                }
-            )
-
-        result = PswVisualRuleEvaluator(analyze).evaluate(7, ["image"], today=_TODAY)
-        self.assertEqual(result.status, "PASS")
-        self.assertEqual(result.suggestions, "规则7检查通过")
-
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_rule_seven_ignores_a_model_verdict(self):
+        self.assertEqual(evaluate_psw_observation(7, {"status": "PASS"}).status, "UNABLE")
+        self.assertEqual(evaluate_psw_observation(7, {"submission_other_present": True}).status, "PASS")
+        self.assertEqual(evaluate_psw_observation(7, {"submission_other_present": False, "submission_any_checked": False}).status, "NG")

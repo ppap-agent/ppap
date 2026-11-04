@@ -28,6 +28,8 @@ class AuditRuntime(Protocol):
 
     def render_pdf_images(self, file_url: str, *, render_all_pages: bool = True) -> list[str]: ...
 
+    def read_paddle_page(self, file_url: str, page_number: int) -> dict[str, Any]: ...
+
     def run_image_prompt(
         self,
         *,

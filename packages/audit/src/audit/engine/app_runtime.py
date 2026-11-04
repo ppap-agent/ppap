@@ -27,7 +27,6 @@ from audit.contracts import (
     GroupContextInput,
     RuleInput,
 )
-from audit.engine.checkers.client import AIClient
 from audit.engine.checkers.psw_evidence_trace import (
     DIAGNOSTIC_DOC_CONVERSION_FAILED,
     DIAGNOSTIC_STRUCTURE_INSUFFICIENT,
@@ -93,6 +92,11 @@ class _AppAuditRuntime(AuditRuntime):
         file_content, file_type = _load_file_bytes(file_url)
         return extract_images_from_bytes(file_content, file_type, render_all_pages=render_all_pages)
 
+    def read_paddle_page(self, file_url: str, page_number: int) -> dict[str, Any]:
+        from documents.ocr.paddle.reader import read_pdf_page_evidence
+
+        return read_pdf_page_evidence(file_url, page_number)
+
     def run_image_prompt(
         self,
         *,
@@ -103,14 +107,10 @@ class _AppAuditRuntime(AuditRuntime):
         temperature: float = 0.1,
         json_format: bool = True,
     ) -> str:
-        return AIClient().image_analysis_completion(
-            system_prompt=system_prompt,
-            user_text=user_text,
-            image_base64_list=image_base64_list,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            json_format=json_format,
-        )
+        """Unstructured image prompts have no supported Paddle fact contract."""
+        from audit.engine.rule_engine import Decision, GuardStop
+
+        raise GuardStop(Decision.UNABLE, "此图形规则没有可验证的Paddle事实，需人工确认；不再自动调用LLM视觉。")
 
 
 def _build_group_context_input(group_context: Any) -> Optional[GroupContextInput]:

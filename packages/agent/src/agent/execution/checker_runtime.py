@@ -39,3 +39,6 @@ class CheckerRuntime:
 
     def run_image_prompt(self, **kwargs: Any) -> str:
         raise GuardStop(Decision.UNABLE, "固定 checker 没有可重放的视觉观察，需补充证据")
+
+    def read_paddle_page(self, file_url: str, page_number: int) -> dict[str, Any]:
+        raise GuardStop(Decision.UNABLE, "固定 checker 没有可重放的视觉观察（Paddle），需补充证据")

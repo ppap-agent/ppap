@@ -61,6 +61,16 @@ def allowed_extensions() -> str:
     return _env("ALLOWED_EXTENSIONS") or DEFAULT_ALLOWED_EXTENSIONS
 
 
+def paddle_evidence_enabled() -> bool:
+    """Production Paddle consumption requires an explicit opt-in."""
+    value = _env("PADDLE_EVIDENCE_ENABLED").lower()
+    if value in {"", "0", "false", "off", "no"}:
+        return False
+    if value in {"1", "true", "on", "yes"}:
+        return True
+    raise ValueError("PADDLE_EVIDENCE_ENABLED must be a boolean")
+
+
 def ocr_remote_url() -> str:
     return _env("OCR_REMOTE_URL")
 

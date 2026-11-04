@@ -163,56 +163,15 @@ class BaseAgent(ABC):
         )
 
     def _process_image_rule(self, specific_rule: Any, system_prompt: str, prompt_manager: Any) -> AuditResult:
-        """
-        在同步环境中处理图像规则（通过新的事件循环）
-
-        Args:
-            specific_rule: 具体规则
-            system_prompt: 系统提示
-            prompt_manager: 提示管理器
-
-        Returns:
-            审核结果
-        """
-        try:
-            file_url = str(self.audit_file.file_url)  # 确保转换为字符串
-            logger.debug(f"提取文件中的图像: {file_url}")
-
-            from audit.engine.runtime import get_runtime
-
-            runtime = get_runtime()
-            if runtime is None:
-                return self._failed_audit_result("图像规则缺少运行时支持")
-
-            image_base64_list = runtime.render_pdf_images(file_url, render_all_pages=True)
-
-            if not image_base64_list:
-                logger.warning(f"未能从文件中提取到图像: {file_url}")
-                return self._failed_audit_result("未能提取到规则关联的图像内容")
-
-            logger.debug(f"成功提取了 {len(image_base64_list)} 张图像")
-
-            # 构建图像分析提示
-            user_prompt = prompt_manager.get_image_audit_prompt(self.audit_file, self.rule, specific_rule)
-
-            response = runtime.run_image_prompt(
-                system_prompt=system_prompt,
-                user_text=user_prompt,
-                image_base64_list=image_base64_list,
-                max_tokens=3000,
-                temperature=0.1,
-                json_format=True,
-            )
-
-            # 解析响应
-            assert response != "", "调用图像分析AI服务响应为空"
-            result = self._parse_ai_response(response)
-            logger.debug(f"图像规则处理成功: {self.audit_file.audit_id}")
-            return result
-
-        except Exception:
-            logger.exception("图像规则异步处理失败")
-            return self._failed_audit_result("图像相关规则分析失败")
+        """Keep unsupported image semantics explicit, with no model fallback."""
+        return AuditResult(
+            classification="图形检查",
+            item=getattr(specific_rule, "name", "原件图形证据") or "原件图形证据",
+            priority="P0",
+            status="UNABLE",
+            suggestions="此图形规则缺少可验证的Paddle事实，需人工确认；不自动调用LLM视觉。",
+            checks_performed=0,
+        )
 
     def _parse_ai_response(
         self,

@@ -261,53 +261,8 @@ class PDFAgent(BaseAgent):
             return []
 
     def _ocr_pdf_page_texts(self) -> List[str]:
-        """
-        提取PDF的每页文本内容，带缓存
-
-        Returns:
-            每页文本内容的列表
-        """
-        if self._pdf_page_ocr_texts_cache is not None:
-            logger.debug("从缓存中获取PDF页面文本。")
-            return self._pdf_page_ocr_texts_cache
-
-        try:
-            file_content = self._get_pdf_file_content()
-            if not file_content:
-                logger.warning("无法获取PDF文件内容")
-                return []
-            images = self._get_pdf_images_sync()
-            logger.debug(f"PDFAgent: 开始 OCR PDF 页面文本内容... 共 {len(images)} 页")
-
-            def _ocr_page_with_ai_client(image_base64: str) -> Optional[str]:
-                from audit.engine.runtime import get_runtime
-
-                runtime = get_runtime()
-                if runtime is not None:
-                    return runtime.run_image_prompt(
-                        system_prompt="",
-                        user_text=("extract text from the image, organized into exact text based on the table structure"),
-                        image_base64_list=[image_base64],
-                        temperature=1.0,
-                    )
-                return self.client.image_analysis_completion(
-                    system_prompt="",
-                    user_text=("extract text from the image, organized into exact text based on the table structure"),
-                    image_base64_list=[image_base64],
-                    temperature=1.0,
-                    operation="ocr_pdf_page_text",
-                )
-
-            self._pdf_page_ocr_texts_cache = self.pdf_extractor.ocr_pages_text(
-                images,
-                ocr_page_callable=_ocr_page_with_ai_client,
-            )
-            logger.debug(f"PDFAgent: 成功 OCR PDF 的 {len(self._pdf_page_ocr_texts_cache)} 页文本内容")
-            return self._pdf_page_ocr_texts_cache
-
-        except Exception as e:
-            logger.error(f"PDFAgent: OCR PDF页面文本失败: {e}")
-            return []
+        """Page discovery uses native text; never OCR a whole PDF for routing."""
+        return self._get_pdf_page_texts()
 
     def _find_target_pages(
         self,
@@ -573,40 +528,8 @@ class PDFAgent(BaseAgent):
         images: List[str],
         json_format: bool = False,
     ) -> str:
-        """
-        使用给定的提示和图像列表调用多模态AI进行分析（同步版本）。
-
-        Args:
-            system_prompt: 提供给AI的系统角色和指令。
-            user_prompt: 用户的具体问题或任务描述。
-            images: Base64编码的图像列表。
-            json_format: 是否要求AI返回严格的JSON格式。
-
-        Returns:
-            AI模型的原始文本响应。
-        """
-        if not images:
-            logger.error("分析图像失败：图像列表为空。")
-            return "{}"
-
-        from audit.engine.runtime import get_runtime
-
-        runtime = get_runtime()
-        if runtime is not None:
-            response = runtime.run_image_prompt(
-                system_prompt=system_prompt,
-                user_text=user_prompt,
-                image_base64_list=images,
-                json_format=json_format,
-            )
-        else:
-            response = self.client.image_analysis_completion(
-                system_prompt=system_prompt,
-                user_text=user_prompt,
-                image_base64_list=images,
-                json_format=json_format,
-            )
-        return response
+        """Arbitrary visual prompts cannot be converted into proven OCR facts."""
+        return '{"classification":"图形检查","item":"原件图形证据","priority":"P0","status":"UNABLE","suggestions":"此图形规则缺少可验证的Paddle事实，需人工确认；不自动调用LLM视觉。"}'
 
     def _chain_text_analysis(
         self,

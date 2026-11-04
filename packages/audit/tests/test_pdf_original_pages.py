@@ -54,21 +54,17 @@ def check_original_image(monkeypatch, agent_profile, source, observation=None):
     return result, seen_images
 
 
-def test_local_image_is_read_from_original_bytes_without_a_runtime(tmp_path, monkeypatch, agent_profile):
+def test_unsupported_local_image_rule_has_no_model_fallback(tmp_path, monkeypatch, agent_profile):
     path = tmp_path / "original.png"
     Image.new("RGB", (8, 8), "white").save(path)
 
     result, images = check_original_image(monkeypatch, agent_profile, str(path))
 
-    assert result.status == "PASS"
-    assert len(images) == 1
-    assert images[0].startswith("data:image/jpeg;base64,")
-    with Image.open(io.BytesIO(base64.b64decode(images[0].split(",", 1)[1]))) as image:
-        assert image.size == (8, 8)
-        assert image.getpixel((4, 4)) == (255, 255, 255)
+    assert result.status == "UNABLE"
+    assert images == []
 
 
-def test_signed_image_url_reads_the_original_downloaded_image(tmp_path, monkeypatch, agent_profile):
+def test_unsupported_signed_image_rule_does_not_download_for_a_model(tmp_path, monkeypatch, agent_profile):
     path = tmp_path / "original.png"
     Image.new("RGB", (12, 12), (0, 128, 255)).save(path)
     source = "https://files.example.test/original.png?signature=fixture"
@@ -83,12 +79,8 @@ def test_signed_image_url_reads_the_original_downloaded_image(tmp_path, monkeypa
 
     result, images = check_original_image(monkeypatch, agent_profile, source)
 
-    assert result.status == "PASS"
-    assert len(images) == 1
-    assert images[0].startswith("data:image/jpeg;base64,")
-    with Image.open(io.BytesIO(base64.b64decode(images[0].split(",", 1)[1]))) as image:
-        assert image.size == (12, 12)
-        assert all(abs(actual - expected) <= 2 for actual, expected in zip(image.getpixel((6, 6)), (0, 128, 255)))
+    assert result.status == "UNABLE"
+    assert images == []
 
 
 @pytest.fixture
@@ -103,8 +95,8 @@ def original_pdf(tmp_path):
     return path
 
 
-@pytest.mark.parametrize(("stamp_present", "expected_status"), [(True, "PASS"), (False, "NG")])
-def test_failed_conversion_keeps_the_original_page_fallback_verdict(original_pdf, monkeypatch, agent_profile, stamp_present, expected_status):
+@pytest.mark.parametrize("stamp_present", [True, False])
+def test_failed_conversion_does_not_recover_a_verdict_from_unrequested_model_facts(original_pdf, monkeypatch, agent_profile, stamp_present):
     result, images = check_original_image(
         monkeypatch,
         agent_profile,
@@ -112,10 +104,8 @@ def test_failed_conversion_keeps_the_original_page_fallback_verdict(original_pdf
         {"psw_stamp_ends_with_company": stamp_present, "authorization_table_present": False},
     )
 
-    assert result.status == expected_status
-    assert len(images) == 3
-    with Image.open(io.BytesIO(base64.b64decode(images[1].split(",", 1)[1]))) as image:
-        assert all(abs(actual - expected) <= 3 for actual, expected in zip(image.getpixel((100, 100)), (51, 179, 77)))
+    assert result.status == "UNABLE"
+    assert images == []
 
 
 @pytest.mark.parametrize(("keyword", "expected_colors"), [("Authorization", [(51, 179, 77)]), ("Not in this document", [(255, 255, 255), (51, 179, 77), (51, 77, 204)])])

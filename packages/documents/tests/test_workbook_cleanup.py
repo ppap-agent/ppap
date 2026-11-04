@@ -75,26 +75,20 @@ def test_original_excel_is_not_a_temporary_conversion_file(tmp_path, cleanup):
 
 
 @pytest.mark.parametrize("mode", ["local", "remote"])
-def test_pdf_vision_fallback_uses_only_selected_backend(monkeypatch, mode):
+def test_pdf_ocr_fallback_has_no_legacy_remote_bypass(monkeypatch, mode):
     from documents.contracts import OcrArtifact
     from documents.conversion import pipeline
 
     called = []
 
-    monkeypatch.setattr(pipeline, "ocr_adapter_mode", lambda: mode)
+    monkeypatch.setenv("OCR_ADAPTER_MODE", mode)
 
     def local(source, *, enable_cache):
         called.append(("local", source, enable_cache))
-        return OcrArtifact(provider="local_ocr_doc_cache", excel_path="/tmp/controlled.xlsx")
-
-    class Remote:
-        def ocr_pdf_to_excel(self, source, *, enable_cache):
-            called.append(("remote", source, enable_cache))
-            return OcrArtifact(provider="remote_ocr", excel_path="/tmp/controlled.xlsx")
+        return OcrArtifact(provider="paddleocr_ppstructure_v3", excel_path="/tmp/controlled.xlsx")
 
     monkeypatch.setattr(pipeline, "convert_local_pdf_to_excel", local)
-    monkeypatch.setattr(pipeline, "RemoteOcrAdapter", Remote)
 
     path, error = pipeline._attempt_ocr("source.pdf", enable_cache=False)
     assert path == "/tmp/controlled.xlsx" and error is None
-    assert called == [(mode, "source.pdf", False)]
+    assert called == [("local", "source.pdf", False)]

@@ -1,60 +1,10 @@
-import json
-
 import pytest
-from audit.checkers.v2.psw_pdf_agent import PswPDFAgent as V2PswPDFAgent
-from audit.checkers.v3.psw_pdf_agent import PswPDFAgent as V3PswPDFAgent
-from audit.contracts import (
-    AuditInput,
-    RuleInput,
-)
-from audit.engine.runtime import bind_runtime
-from documents.contracts import ConversionArtifact
+from audit.engine.checkers.psw_visual_evidence import evaluate_psw_observation
 
 
-class VisualRuntime:
-    def __init__(self, response: dict[str, object] | str | Exception):
-        self.response = response
-
-    def convert_pdf_to_excel(self, file_ref, *, enable_cache=True):
-        return ConversionArtifact(success=False)
-
-    def load_workbook_auto(self, file_ref):
-        raise AssertionError("No converted workbook is available")
-
-    def render_pdf_images(self, file_url, *, render_all_pages=True):
-        return ["rendered-original-page"]
-
-    def run_image_prompt(self, **kwargs):
-        if isinstance(self.response, Exception):
-            raise self.response
-        if isinstance(self.response, str):
-            return self.response
-        return json.dumps(self.response, ensure_ascii=False)
-
-
-@pytest.fixture(params=[("v2", V2PswPDFAgent), ("v3", V3PswPDFAgent)], ids=["v2", "v3"])
-def check_stamp(request, monkeypatch):
-    profile, agent_type = request.param
-    # V2 calls the external converter directly; V3 uses the runtime boundary.
-    monkeypatch.setattr(
-        "audit.checkers.v2.pdf_agent.convert_pdf_to_excel_auto",
-        lambda *args, **kwargs: ConversionArtifact(success=False),
-    )
-    rules = RuleInput(
-        rule_id="confirmed-psw-rules",
-        rule_profile=profile,
-        type="零件提交保证书",
-        rules=[{"id": str(index), "category": "local_excel_check", "rule_to_check": f"规则 {index}"} for index in range(1, 11)],
-    )
-
-    def check(response):
-        with bind_runtime(VisualRuntime(response)):
-            agent = agent_type(AuditInput(audit_id="psw", file_url="original.pdf"), rules)
-            result = agent.check(2)
-        assert result is not None
-        return result
-
-    return check
+@pytest.fixture
+def check_stamp():
+    return lambda observation: evaluate_psw_observation(3, observation)
 
 
 def test_empty_company_seal_position_is_not_a_stamped_authorization(check_stamp):
@@ -98,18 +48,10 @@ def test_either_accepted_stamp_branch_is_sufficient(check_stamp, observation):
         ({"psw_stamp_ends_with_company": False, "authorization_table_present": True}, "UNABLE"),
         ({"psw_stamp_ends_with_company": "unreadable", "authorization_table_present": False}, "UNABLE"),
         ({"status": "PASS"}, "UNABLE"),
-        ("not json", "ERR"),
-        ("[]", "ERR"),
     ],
-    ids=["no-authorization", "no-authorization-seal", "unreadable-authorization-seal", "unreadable-stamp", "verdict-without-facts", "invalid-json", "non-object"],
+    ids=["no-authorization", "no-authorization-seal", "unreadable-authorization-seal", "unreadable-stamp", "verdict-without-facts"],
 )
 def test_stamp_facts_distinguish_business_ng_from_unavailable_recognition(check_stamp, observation, expected):
     result = check_stamp(observation)
 
     assert result.status == expected
-
-
-def test_model_service_failure_remains_an_execution_error(check_stamp):
-    result = check_stamp(RuntimeError("model service unavailable"))
-
-    assert result.status == "ERR"

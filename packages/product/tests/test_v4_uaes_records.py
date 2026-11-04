@@ -62,23 +62,54 @@ def test_photo_success_does_not_claim_correct_part_content(tmp_path):
     assert "需人工确认样品照片是否符合要求" in result.suggestions
 
 
-@pytest.mark.parametrize(("response", "expected"), [("true", "PASS"), ("false", "NG"), ("null", "UNABLE"), ('"true"', "UNABLE")])
-def test_controlled_stamp_uses_visual_facts_not_preprinted_labels(tmp_path, monkeypatch, response, expected):
+@pytest.mark.parametrize(
+    ("text", "detected", "expected"),
+    [("受控", True, "PASS"), ("受控文件", True, "PASS"), ("存档资料", True, "UNABLE"), ("不受控", True, "UNABLE"), ("非受控", True, "UNABLE"), ("受控", False, "UNABLE")],
+)
+def test_controlled_stamp_uses_located_paddle_seal_facts_not_preprinted_labels(tmp_path, monkeypatch, text, detected, expected):
+    from types import SimpleNamespace
+
     import fitz
     from audit.checkers.v4.uaes.records import UaesControlledDocumentAgent
     from audit.engine.checkers.client import AIClient
+    from audit.engine.runtime import bind_runtime
+    from documents.ocr.paddle import build_evidence
 
     path = tmp_path / "controlled.pdf"
     with fitz.open() as document:
-        document.new_page().insert_text((20, 20), "controlled stamp label")
+        document.new_page(width=400, height=200).insert_text((20, 20), "controlled stamp label")
         document.save(path)
-    monkeypatch.setattr(AIClient, "image_analysis_completion", lambda *args, **kwargs: '{"controlled_stamp":' + response + "}")
+    original = path.read_bytes()
+    reads, calls = [], []
+
+    def read(file_path, page_number):
+        reads.append((file_path, page_number))
+        raw = {
+            "dataInfo": {"pages": [{"width": 400, "height": 200}]},
+            "layoutParsingResults": [
+                {
+                    "prunedResult": {
+                        "layout_det_res": {"boxes": [{"label": "seal", "coordinate": [10, 10, 60, 60]}] if detected else []},
+                        "seal_res_list": [{"rec_texts": [text], "bbox": [10, 10, 60, 60]}] if detected else [],
+                        "parsing_res_list": [],
+                        "table_res_list": [],
+                    }
+                }
+            ],
+        }
+        return build_evidence(raw, page_count=1, pdf_path=file_path, source_pages=[page_number])
+
+    monkeypatch.setattr(AIClient, "image_analysis_completion", lambda *args, **kwargs: calls.append(kwargs))
     body = preset_rule_body("UAES", "U10")
     agent = UaesControlledDocumentAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput(rule_id="rules", **{key: value for key, value in body.items() if key != "kind"}))
-    result = agent.check(0)
-    assert result.status == expected
-    assert result.evidence.used == "visual"
+    with bind_runtime(SimpleNamespace(read_paddle_page=read)):
+        result = agent.check(0)
+        second = agent.check(0)
+    assert result.status == second.status == expected
+    assert reads == [(str(path), 1)] and calls == []
+    assert result.evidence.used == ("visual" if detected else "none")
     assert all(source.kind == "visual" for source in result.evidence.sources)
+    assert path.read_bytes() == original
 
 
 @pytest.mark.parametrize(

@@ -39,7 +39,7 @@
 
 ## PaddleOCR 按需证据与本地影子验证
 
-Issue #246 的 Paddle 接入只补充可定位事实。默认全局 PDF converter、Responses OCR、正式审核结果、预检阻断、收费及通知均沿用原流程。正式生产判定没有启用；须在真实效果与负载核对后由产品负责人明确确认。
+Issue #246 的候选实现使用原生读取与按需 Paddle，审核、PDF 文字发现和转换入口不再自动调用 LLM 视觉。`PADDLE_EVIDENCE_ENABLED=false` 为默认值；关闭时保留原生读取，未核实图像事实为 UNABLE，不回退 LLM。正式生产启用须由产品负责人确认，本 PR 不部署或开启该开关。
 
 `packages/documents/src/documents/ocr/paddle/` 复用历史 PP-StructureV3 `/layout-parsing` 合同，不新增 LLM、Provider、数据库或服务队列。真实调用必须指定本地原件中的一页；先读取原生证据，仅在具体条款存在图像事实缺口时请求该页。原生 PDF 不因后缀、总页数或某次转换失败而自动送 OCR。
 
@@ -66,11 +66,13 @@ uv run --no-sync pytest packages/documents/tests/test_paddle.py \
 
 旧的整份真实响应仍可不带 `--page` 离线回放；真实请求不能使用整份多页输入。回放材料必须与原件和原始页对应，离线回放通过不是一次新的真实服务验证。
 
-`evidence.json` 保留原件 SHA、原始 1-based 页号、Paddle 像素尺寸、PDF 尺寸与旋转、元素原始索引及原件坐标。坏表不抹除好章；章检测与章文字分别记录。无法唯一配对的文字不分给任意章，缺少可信位置的事实不作为权威原件证据。未知位置和识别不足保留未知；协议、解析及请求失败有单独技术诊断。不推断实际勾选、签名有效性、章真伪或跨页表格关系。
+`evidence.json` 保留原件 SHA、原始 1-based 页号、Paddle 像素尺寸、PDF 尺寸与旋转、元素原始索引及原件坐标。坏表不抹除好章；章检测与章文字分别记录。无法唯一配对的文字不分给任意章，缺少可信位置的事实不作为权威原件证据。未知位置和识别不足保留未知；协议、解析及请求失败有单独技术诊断。实际勾选只接受唯一“认可情况”行中带可信坐标的明确复选框符号，不从选项文字或附近孤立符号猜测。签名有效性、章真伪或跨页表格关系不由本接口证明。
 
 ### 审核侧影子消费
 
-唯一接入点为 `audit.checkers.v4.paddle_evidence` 的显式任务作用域。没有作用域时不请求 Paddle；作用域只记录补充观察，不修改正式 `AuditResultItem`。消费者包括现有 UAES U08 的印章事实和零件号字段、UAES U17 的印章及基础信息中的零件号子集，以及 V2/V3 PSW 和 V4 L17 PDF 回退的印章及零件号子集。使用既有条款绑定，不另建 Paddle 审核规则；字段子集不代表整条规则已经核实。
+`documents.ocr.paddle.reader` 是页证据入口，`audit.checkers.v4.visual_facts` 将支持的事实交给已有规则。引擎每次审核建立任务作用域，同一源 SHA/页/识别配置的成功或失败均复用，最多两次请求。原生文字和表格优先；多页必须能从原生标签唯一选择所需页，不能因转换失败扫描全篇。全局转换保持原生优先，只对单页 PDF 尝试 Paddle 表格；多个规则与转换共享一次页回执，不复用旧 LLM 缓存。
+
+`audit.checkers.v4.paddle_evidence` 保留显式影子作用域，只记录补充观察，不修改正式结果。影子观察与候选规则消费分别验收；检测到章、读到文字与条款通过是不同事实。
 
 下面只演示本地已授权原件的影子提取，不执行正式视觉审核、模型或数据库操作。生产调用方仍须先完成租户/对象授权，并提供本轮冻结的文件版本、规则和明确页号；本地示例标识不能冒充生产实体。
 
@@ -98,14 +100,14 @@ targets = [
 # 凭据由当前操作进程安全读取；日志不要输出它们或原件文字。
 endpoint = os.environ["PADDLE_OCR_URL"]
 token = os.environ.get("PADDLE_OCR_TOKEN") or os.environ.get("PADDLE_TOKEN", "")
-service = PaddleStructureService(endpoint, token=token, timeout=30)
+service = PaddleStructureService(endpoint, token=token, timeout=20)
 checker = UaesControlPlanAgent(
     AuditInput(audit_id=version, file_url=str(source), project_id=project),
     RuleInput(rule_id="local-U08", **preset_rule_body("UAES", "U08")),
 )
 session = PaddleShadowSession(
     service, project_id=project, targets=targets,
-    max_requests=1, deadline_seconds=40,
+    max_requests=1,
 )
 with paddle_shadow_scope(session):
     session.observe(checker, "rule_3")
@@ -113,9 +115,9 @@ with paddle_shadow_scope(session):
 print(session.request_count, [(o.state, o.reason, o.reused) for o in session.observations])
 ```
 
-这里的 30/40 秒只是示例操作预算，不是服务 SLA。应根据本次任务的剩余时间和服务实测明确设置。Paddle 客户端从准备原件前开始计时；同步文件工作结束后会扣除已用时间，过期则不派发。每次显式 HTTP 交换在一次性本地进程中执行，启动、DNS、连接和完整响应体共用剩余预算；到期后回收并确认该进程结束，慢流或系统解析线程不会留在后台继续占用调用方。同步文件工作本身不作抢占中断。原生读取和最后一次来源校验结束后均再次检查截止及取消。同步 reader 从异步调用方使用时仍等待本次有界操作返回。`request_count` 是预留的页级派发次数，可能因发送前验证而不产生 HTTP；核对真实调用量应观察传输边界。超时后远端可能仍在处理，既不宣称已取消，也不自动重发。
+Paddle 使用单次 HTTP timeout 20 秒，分别限制 connect/read/write/pool 操作，不设置审核、原件准备或完整响应的总墙钟预算。持续收到数据时总耗时可以超过 20 秒。不创建传输子进程。超时或连接失败只记录本次技术失败，不自动重试、不宣称服务端已取消。作用域仍检查取消、原件身份与请求数；`request_count` 表示派发尝试，不等于服务端已处理次数。
 
-同一作用域内，同源 SHA/页结果（含失败）复用；原生已充分确认零件号时该字段跳过 OCR。请求数、剩余时限、来源变化和取消均受控；关闭作用域后不接纳新的权威事实。作用域锁只串行化本任务，**不是多 Worker 的全局服务容量限制**。当前没有自动 Worker 或生产开关；正式启用前还需在既有调度边界确认服务容量。
+同一影子作用域内，同源 SHA/页结果（含失败）复用；原生已确认字段跳过 OCR。来源变化、取消与关闭作用域仍受检查，不再按总时限丢弃慢读结果。作用域锁只串行化本任务，不是多 Worker 的全局容量限制；正式启用前仍需核对服务容量。
 
 PSW 可改用下列输入和调用，其余原件、服务及授权变量沿用上例。`psw_shadow_clause_id()` 将实际 profile、冻结规则版本、源条款 ID/内容和执行槽位绑定在一起；不要手工猜测条款编号。这个本地载体只供影子事实读取，避免构造正式 PDF Checker 时触发已有转换流程。
 
@@ -137,7 +139,7 @@ targets = [
 ]
 session = PaddleShadowSession(
     service, project_id=project, targets=targets,
-    max_requests=1, deadline_seconds=90,
+    max_requests=1,
 )
 with paddle_shadow_scope(session):
     session.observe_psw(inputs, 3)  # 印章检测及已返回的文字
@@ -146,7 +148,7 @@ with paddle_shadow_scope(session):
 print(session.request_count, [(o.state, o.reason, o.reused) for o in session.observations])
 ```
 
-V2/V3 使用各自已经冻结的 PSW `RuleInput`。现有 PSW `check()` 和 UAES U17 的 hook 只在显式作用域内追加影子观察；调用正式 Checker 时，其原有模型调用仍会执行。上面的 `observe_psw()` 示例只读取补充事实，不执行正式判断、模型或数据库操作。章检测、已返回的可读文字和满足业务条款分别表达；`known` 不代表 PASS，也不保证完整章文已读到。缺少检测仍为未知，不能证明无章；预印文字、签名和实际勾选不能凭附近文字补成已核实。
+V2/V3 使用各自冻结的 PSW `RuleInput`。PDF 规则 3/5/7/8/9/10 使用已有固定判定，仅消费原生或 Paddle 确认的事实，不再调用视觉模型。复选框仅支持唯一“认可情况”行中的明确符号及坐标；OCR 词还须来自逐词回执并满足最低置信度。符号缺失、独立空框、冲突或低置信度保持未知，不能借用提交结果区域。DOCX 当前不能通过 PDF 页接口确认图像；原生字段保留，缺失图像事实返回 UNABLE。未建立签字、完整章文或照片事实时不宣称通过。
 
 整体 OCR 的逐词文字保留在已有页证据中，与印章专用识别文字分别记录。只有完整位于一个可信章区域内、且关联唯一的词，才可作为该区域的局部补充；相交、靠近或文字像“公司章”均不足以归章。补充词保留来源、原始索引与坐标，不与专用识别结果拼成“完整章文”，也不证明该词必然来自章的油墨。真实服务没有返回的文字保持未知。
 

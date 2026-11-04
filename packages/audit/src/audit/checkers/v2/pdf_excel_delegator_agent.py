@@ -169,6 +169,19 @@ class PdfExcelDelegatorAgent(PDFAgent):
         self.agent_rules = self._resolve_fallback_agent_rules(slots)
 
     def _failed_conversion_rule(self, ith: int) -> AuditResult:
+        artifact = getattr(self, "conversion_artifact", None)
+        diagnostics = getattr(artifact, "diagnostics", {}) or {}
+        if diagnostics.get("error_code") in {
+            "paddle_evidence_disabled",
+            "paddle_evidence_unconfigured",
+            "paddle_page_selection_required",
+            "paddle_table_unconfirmed",
+            "paddle_table_incomplete",
+            "paddle_request_budget_exhausted",
+            "paddle_scope_closed",
+        }:
+            result = self.create_error_result("当前原件未取得可确认的表格证据，需核对原件。", ith)
+            return result.model_copy(update={"status": "UNABLE", "checks_performed": 0})
         message = "PDF to Excel conversion failed, cannot run deterministic rule checker."
         return self.create_error_result(
             message,
@@ -186,10 +199,6 @@ class PdfExcelDelegatorAgent(PDFAgent):
                 partial(
                     self._find_target_pages_by_text,
                     page_texts=self._get_pdf_page_texts(),
-                ),
-                partial(
-                    self._find_target_pages_by_text,
-                    page_texts=self._ocr_pdf_page_texts(),
                 ),
             ],
         )

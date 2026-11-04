@@ -2,13 +2,13 @@
 
 测试保护当前行为，不维护第二套产品状态。
 
-Paddle 按需证据由 Issue #246 拥有：`packages/documents/tests/test_paddle.py` 与 `test_paddle_page_evidence.py` 检查单页传输、原件定位、局部失败及产物；慢流、响应头/响应体停滞还通过本地 HTTP 验证总墙钟预算、连接关闭和零重试；DNS 延迟回归确认一次性传输进程已进入解析阶段、到期被回收且没有僵尸进程。`packages/audit/tests/test_paddle_shadow.py` 通过现有 U08/U17、V2/V3 PSW 与 V4 L17 PDF 回退 Checker 检查正式完整结果不变、原生优先、同页成功/失败复用、实际规则来源绑定、预算与取消边界，包括原生读取耗尽预算后不派发。新增测试只隔离外部 Paddle 请求，不访问真实 OCR 或模型。真实单页合同、印章/表格效果及服务负载须另行明确执行并如实报告，不能由 fixture 或有限状态模型代替。
+Paddle 按需证据由 Issue #246 拥有：`packages/documents/tests/test_paddle.py` 与 `test_paddle_page_evidence.py` 验证单页、原件定位、局部失败与产物，并用本地 HTTP 检查 20 秒操作超时配置、停滞读取、连接清理及零重试；持续有进展的读取不受总墙钟预算限制。`test_local_ocr_artifacts.py` 验证原生优先、未选多页零请求、任务内成功/失败复用、请求数上限、退出与隔离。`packages/audit/tests/test_paddle_shadow.py` 验证影子观察不改正式结果、授权身份、同页复用、取消及慢读取不会因总预算丢弃。离线测试不调用真实 OCR 或模型；真实效果及多 Worker 服务容量须另行核验。
 
-影子观察与正式结果分别验收：启用本地影子作用域前后，已有 Checker 的完整结果保持相同；默认不创建作用域、不发生 Paddle 调用。位置或配对不确定保留未知，解析/传输失败保留技术诊断；局部失败不能清空其他已知事实。
+影子观察与候选规则分别验收。默认 `PADDLE_EVIDENCE_ENABLED=false`，不请求 Paddle；候选审核、页发现与转换不自动回退 LLM 视觉。关闭或未支持的能力保留原生结果与 UNABLE，传输/协议故障为 ERR。位置或配对不确定保持未知，局部失败不能清空其他已知事实。
 
 影子测试同时隔离正式 Checker 构造阶段的外部转换边界。V2 与 V3 需分别核对实际入口，不能假设二者都只经过绑定的 Runtime。该测试模块对 requests、同步/异步 HTTPX 及未预期子进程外发加护栏，并在用例结束时检查尝试记录，避免生产代码捕获网络异常后让用例假通过。
 
-现有 PSW corpus 的视觉对比仍验证原有 LLM 路径，不证明 Paddle 已具备相同能力。Paddle 真实验收须先标明原件 SHA、原始页、人工可确认区域及文字，再明确执行单页请求；分别核对检测、返回文字和缺失内容。含章的原件、空白章框和预印说明应区分；单章成功不补证多章、完整不可读章、签名真实性或实际勾选。原生字段已充分时不为制造 OCR 正向结果强制请求。
+旧 PSW corpus 的 PASS/NG 期望不会因替换后证据不足而改写。`test_psw_checkbox_evidence.py` 检查唯一“认可情况”行中的明确符号、原件坐标、OCR 置信度、冲突与跨区域隔离；`test_psw_pdf_hybrid.py` 检查公开入口的原生优先、Paddle 单页、无 LLM 回退及未知状态。Paddle 真实验收须标明原件 SHA、原页、人工可确认内容与实际请求数。录制回执离线通过不等于新服务请求成功，也不代表已覆盖所有复选框版式、签名或完整章文。
 
 迁移 baseline 的具体 Git revision 和当前观察结果只由 owning Issue 保存：
 - engine/corpus parity：[#3](https://github.com/ppap-agent/ppap/issues/3)
@@ -16,9 +16,9 @@ Paddle 按需证据由 Issue #246 拥有：`packages/documents/tests/test_paddle
 
 迁移完成后，本仓测试成为 current authority，不继续复制 legacy baseline 到长期文档。
 
-人工 CSV 是测试期望的唯一数据源，但标注本身可以复核。争议样本先确认测试实际映射的文件及其摘要，再按原始规则和完整相关页面中的可定位事实裁决；更正期望需保留依据，不能以模型结论、一次重跑通过或放宽 baseline exception 代替复核。PSW 规则 3、5、8～10 的视觉路径只从模型读取签字／印章／勾选事实，由程序执行固定条件；空白盖章栏不等于实际盖章，缺少必需事实不能通过。这些判定输入与可选 locator／摘录分开，不以可选证据完整性改变已有 PASS/NG。
+人工 CSV 是 corpus 测试期望的唯一数据源，但标注可以复核。争议样本须先确认文件摘要、原始规则与可定位事实；不能以一次重跑、模型结论或修改 oracle 让 CI 变绿。PSW 规则 3/5/7/8/9/10 由固定程序判断，只使用已确认原生/Paddle 事实；缺少必需事实不能通过。旧 LLM 识别的 PASS/NG 不证明 Paddle 已具有同等效果。
 
-PSW 第5条只要求授权供方代表签字和盖章同时存在，不增加必须手写、鉴真或公司章类型条件；印刷姓名等其他字段不能代替签字字段。两项事实均为 true 才 PASS；任一明确 false 为 NG；没有明确 false 但仍有未知事实为 UNABLE，调用／JSON 协议失败仍为 ERR。DOCX 的原生文字及 OOXML 位置随原内嵌图片进入同一视觉请求，成功判定保留 structure／visual 两种来源；不要求渲染或额外模型调用。`test_psw_docx.py` 和 `test_psw_pdf_hybrid.py` 经公开审核入口验证原件输入、三值组合和不采信模型最终 verdict；只控制外部模型／转换边界，不证明真实识别稳定性或已解决历史 PSW 波动。
+PSW 第5条要求授权供方代表签字和盖章同时存在，不增加必须手写、鉴真或公司章类型条件；其他字段中的印刷姓名不能代替签字字段。两项均 true 才 PASS；任一明确 false 为 NG；仍有未知为 UNABLE；传输或协议失败为 ERR。当前 PDF Paddle 只提供已定位印章等有限事实，不能凭旁边文字确认签字；DOCX 保留原生文字与位置，但不自动发起图像模型调用。固定判定测试不证明真实识别稳定性。
 
 PSW 混合审核分别验证三类结果：有效业务事实不满足规则为 NG；可解析但关键事实缺失或无法辨认为 UNABLE；转换、调用、JSON／输出协议失败为 ERR。明确不存在的字段或未勾选不是“无法辨认”，无关分支未知也不抹掉已充分决定的 PASS/NG。PDF 与 DOCX 共用此视觉结果合同；受控模型／转换响应的测试不证明真实识别质量。
 

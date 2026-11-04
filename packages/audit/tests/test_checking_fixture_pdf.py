@@ -47,10 +47,7 @@ def checker(request, monkeypatch):
                 result = agent.check(index)
             finally:
                 agent.close()
-        if model_response is None:
-            assert not model_calls
-        else:
-            assert len(model_calls) == 1
+        assert model_calls == []
         assert result is not None
         return result
 
@@ -90,26 +87,23 @@ def test_readable_pdf_missing_logic_sections_is_a_business_failure(tmp_path, che
 
 
 @pytest.mark.parametrize(
-    ("response", "expected"),
+    "response",
     [
-        (json.dumps({"status": "PASS", "suggestions": "附件与结论一致"}), "PASS"),
-        (json.dumps({"status": "NG", "suggestions": "否定状态缺少结论"}), "NG"),
-        (RuntimeError("model unavailable"), "ERR"),
-        ("{}", "ERR"),
+        json.dumps({"status": "PASS", "suggestions": "附件与结论一致"}),
+        json.dumps({"status": "NG", "suggestions": "否定状态缺少结论"}),
+        RuntimeError("model unavailable"),
+        "{}",
     ],
     ids=["pass", "ng", "service-error", "invalid-output"],
 )
-def test_complete_logic_sections_preserve_the_model_result_or_execution_error(tmp_path, checker, response, expected):
+def test_complete_logic_sections_need_proven_graphic_facts_without_a_model_fallback(tmp_path, checker, response):
     path = tmp_path / "fixture.pdf"
     write_pdf(path, "检具认可报告\n所附文件\n不合格\n结论")
 
     result = checker(path, 2, response)
 
-    assert result.status == expected
-    if expected == "ERR":
-        assert "逻辑关联性检查过程中发生错误" in result.suggestions
-    else:
-        assert result.suggestions == json.loads(response)["suggestions"]
+    assert result.status == "UNABLE"
+    assert "Paddle" in result.suggestions
 
 
 @pytest.mark.parametrize("content", [None, b"", b"not a PDF"], ids=["missing", "empty", "corrupt"])

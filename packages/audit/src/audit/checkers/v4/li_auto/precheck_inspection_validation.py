@@ -979,6 +979,7 @@ def _inspection_seal(agent, facts):
             {"seal": "完整原件中存在实际印章；预印盖章标签、图标、红色方块或公司标识不算。"},
             witness,
             operation="li_auto_inspection_precheck_seal",
+            cache=agent.__dict__.setdefault("_paddle_page_cache", {}),
         )
     except VisualFactsUnavailable as exc:
         raise UnknownFact(str(exc)) from exc

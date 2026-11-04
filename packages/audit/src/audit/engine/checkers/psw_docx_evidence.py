@@ -10,7 +10,6 @@ from openpyxl import Workbook
 from audit.contracts import AuditInput, EvidenceDiagnostic, EvidenceSource
 from audit.contracts import AuditResultItem as AuditResult
 from audit.engine.rule_engine import GuardStop, RuleContext
-from audit.engine.runtime import get_runtime
 
 from .docx_workbook_agent import (
     PSW_DOCX_PRIMARY_TABLE,
@@ -22,11 +21,10 @@ from .psw_evidence_trace import (
     DIAGNOSTIC_STRUCTURE_INSUFFICIENT,
     DIAGNOSTIC_VISUAL_MISSING,
     DIAGNOSTIC_VISUAL_RUNTIME_ERROR,
-    DIAGNOSTIC_VISUAL_UNVERIFIABLE,
     EvidenceUse,
     with_psw_evidence,
 )
-from .psw_visual_evidence import PSW_ALWAYS_VISUAL_RULES, PswVisualRuleEvaluator
+from .psw_visual_evidence import PSW_ALWAYS_VISUAL_RULES, evaluate_psw_observation
 
 
 class _PswDocxHost(Protocol):
@@ -71,27 +69,6 @@ class PswDocxEvidenceMixin:
             sources=sources,
         )
 
-    def _analyze_docx_images(
-        self,
-        *,
-        system_prompt: str,
-        user_prompt: str,
-        images: list[str],
-        json_format: bool,
-    ) -> str:
-        runtime = get_runtime()
-        if runtime is None:
-            raise RuntimeError("DOCX 视觉规则缺少运行时支持")
-        return cast(
-            str,
-            runtime.run_image_prompt(
-                system_prompt=system_prompt,
-                user_text=user_prompt,
-                image_base64_list=images,
-                json_format=json_format,
-            ),
-        )
-
     def _word_text_evidence(self) -> list[WordParagraphBlock]:
         sources: list[WordParagraphBlock] = []
 
@@ -120,16 +97,16 @@ class PswDocxEvidenceMixin:
                 classification="DOCX视觉证据",
                 item=f"PSW - 规则{rule_no}",
                 priority="P0",
-                status="NG",
-                suggestions=f"未找到可验证的内嵌图片，不能确认印章或签字{source_note}",
+                status="UNABLE",
+                suggestions=f"未找到可验证的印章或签字事实，请核对原件{source_note}",
             ),
             rule_no=rule_no,
             used="none",
             diagnostic=EvidenceDiagnostic(
                 code=DIAGNOSTIC_VISUAL_MISSING,
                 stage="visual",
-                severity="error",
-                message="DOCX 未找到可验证的内嵌视觉证据。",
+                severity="warning",
+                message="DOCX 未找到可验证的内嵌视觉证据；缺少证据不证明缺少印章或签字。",
             ),
         )
 
@@ -149,35 +126,19 @@ class PswDocxEvidenceMixin:
             if not evidence:
                 result = self._missing_visual_result(rule_no)
             else:
-                text_evidence = self._word_text_evidence() if rule_no == 5 else []
-                result = PswVisualRuleEvaluator(self._analyze_docx_images).evaluate(
-                    rule_no,
-                    [item.data_url for item in evidence],
-                    source_locations=[f"{item.evidence.source.part}:{item.evidence.source.path}" for item in evidence],
-                    source_text=[f"{block.source.part}:{block.source.path}: {block.text}" for block in text_evidence],
-                )
-                diagnostic = None
-                if result.status in {"ERR", "UNABLE"}:
-                    diagnostic = EvidenceDiagnostic(
-                        code=DIAGNOSTIC_VISUAL_UNVERIFIABLE,
-                        stage="visual",
-                        severity="error" if result.status == "ERR" else "warning",
-                        message="视觉模型返回结果不可验证。",
-                    )
-                sources = tuple(
-                    EvidenceSource(
-                        kind="visual",
-                        locator=f"docx://{item.evidence.source.part}#{item.evidence.source.path}",
-                    )
-                    for item in evidence
-                )
-                sources += tuple(EvidenceSource(kind="structure", locator=f"docx://{part}") for part in dict.fromkeys(block.source.part for block in text_evidence))
+                text_evidence = self._word_text_evidence()
+                # The current Paddle contract accepts selected PDF pages. A
+                # DOCX image is not a PDF page and OCR text cannot establish a
+                # signature or full seal wording. Do not render, infer, or call
+                # an LLM to manufacture these facts.
+                result = evaluate_psw_observation(rule_no, {})
+                sources = tuple(EvidenceSource(kind="structure", locator=f"docx://{part}") for part in dict.fromkeys(block.source.part for block in text_evidence))
                 result = self._trace_result(
                     result,
                     rule_no=rule_no,
-                    used=("both" if text_evidence else "visual") if diagnostic is None else "none",
-                    diagnostic=diagnostic,
-                    sources=sources if diagnostic is None else (),
+                    used="structure" if sources else "none",
+                    diagnostic=EvidenceDiagnostic(code="psw.paddle.unsupported_source", stage="visual", severity="warning", message="当前Paddle单页证据不支持DOCX印章或签字判断，请核对原件。"),
+                    sources=sources,
                 )
         except GuardStop as stop:
             is_runtime_error = stop.status == "ERR"
@@ -186,7 +147,7 @@ class PswDocxEvidenceMixin:
                     classification="DOCX结构化证据",
                     item=f"PSW - 规则{rule_no}",
                     priority="P0",
-                    status=stop.status,
+                    status="ERR" if is_runtime_error else "UNABLE",
                     suggestions=stop.message,
                 ),
                 rule_no=rule_no,
@@ -194,7 +155,7 @@ class PswDocxEvidenceMixin:
                 diagnostic=EvidenceDiagnostic(
                     code=(DIAGNOSTIC_EVALUATION_RUNTIME_ERROR if is_runtime_error else DIAGNOSTIC_STRUCTURE_INSUFFICIENT),
                     stage="evaluation" if is_runtime_error else "structure",
-                    severity="error",
+                    severity="error" if is_runtime_error else "warning",
                     message=("DOCX 规则执行发生运行时错误。" if is_runtime_error else "DOCX 结构不足，无法定位 PSW 视觉证据。"),
                 ),
             )
