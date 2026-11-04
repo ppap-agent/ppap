@@ -7,7 +7,6 @@ from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
 
 from audit.checkers.v3.dimension_measurement_excel_agent import (
     RULE_3_4_TARGET_DIRECTIONS,
@@ -18,7 +17,7 @@ from audit.checkers.v3.dimension_measurement_excel_agent import (
 from audit.checkers.v3.excel_agent import rule
 from audit.document_tools import snapshot
 from audit.engine.checkers.date_utils import normalize_excel_date
-from audit.engine.rule_engine import Decision, GuardStop, RuleContext, Table, get_doc_resource_by_doc_type
+from audit.engine.rule_engine import Decision, GuardStop, Row, RuleContext, Table, get_doc_resource_by_doc_type
 from audit.kinds import PpapDocumentType
 
 _BASE = get_doc_resource_by_doc_type(PpapDocumentType.DIMENSION_MEASUREMENT_REPORT)
@@ -90,10 +89,48 @@ class NioMeasurementAgent(DimensionMeasurementExcelAgent):
             return self._apply_scope("UNABLE", "存在未算出的公式或不可读取单元格，尚不能判定本条。", ctx)
         return super()._finalize_rule_result(status=status, message=message, ctx=ctx)
 
-    def _rows(self, ctx, *fields, optional=()):
-        result: list[Any] = []
-        for sheet, section, columns in self._sections(ctx, "测点号", *fields, optional=optional):
-            result.extend((sheet, row, columns) for row in section.rows_from(columns) if row.is_present("测点号"))
+    def _rows(self, ctx, *fields, optional=(), value_fields=None):
+        result = []
+        scope_fields = ("类型", "坐标X", "坐标Y", "坐标Z", "名义值", "上公差", "下公差", "主要控制方向", "测量偏差值", "IQG", "Centering", "Range", "测点图/截面")
+        scope_optional = tuple(name for name in dict.fromkeys((*optional, *scope_fields)) if name not in {"测点号", *fields})
+        for sheet, section, columns in self._sections(ctx, "测点号", *fields, optional=scope_optional):
+            if sheet.ws.max_row * sheet.ws.max_column > 250000:
+                raise GuardStop(Decision.UNABLE, "测点原件超出本次有界读取范围，尚不能确认完整行范围。")
+            indices = {column.header_col for column in columns.values()}
+            if "测量偏差值" in columns and "Centering" in columns:
+                stop = columns["IQG"].header_col if "IQG" in columns else columns["Centering"].header_col
+                indices.update(range(columns["测量偏差值"].header_col, stop))
+            # A column can locate the sample boundary without its value being
+            # an input to this clause (for example Centering in clause 4).
+            values = {"测点号", *(fields if value_fields is None else value_fields)}
+            value_indices = {columns[name].header_col for name in values if name in columns}
+            if "测量偏差值" in values and "Centering" in columns:
+                stop = columns["IQG"].header_col if "IQG" in columns else columns["Centering"].header_col
+                value_indices.update(range(columns["测量偏差值"].header_col, stop))
+            count = 0
+            for index in range(max(column.data_start_row for column in columns.values()), sheet.ws.max_row + 1):
+                physical = [sheet.ws.cell(index, column) for column in sorted(indices)]
+                present = [cell for cell in physical if not _blank(cell.value)]
+                if len(present) == 1 and re.match(r"^(?:备注|说明|编制|审核|批准)[:：]", str(present[0].value).strip()):
+                    break
+                known = [cell for cell in present if cell.data_type not in {"e", "f"}]
+                if not known:
+                    if any(cell.column in value_indices for cell in present):
+                        raise GuardStop(Decision.UNABLE, "未算出公式或错误单元格使测点行归属不明，不能跳行后判通过。")
+                    continue
+                row = Row(ctx, sheet.ws, columns, index, section.resolved)
+                declared = []
+                for name, column in columns.items():
+                    span = ctx.ops.get_detailed_merge_info(sheet.ws, index, column.header_col)
+                    cell = sheet.ws.cell(span.min_row if span else index, span.min_col if span else column.header_col)
+                    if cell.data_type not in {"e", "f"}:
+                        declared.append((name, cell.value))
+                header_hits = sum(not _blank(value) and _text(value) in {_text(name), *(_text(alias) for alias in ctx.resource.columns[name].aliases)} for name, value in declared)
+                if header_hits >= min(2, len(columns)):
+                    continue
+                result.append((sheet, row, columns))
+                count += 1
+            ctx.note_scan(yielded=count, finished=True)
         if not result:
             raise GuardStop(Decision.UNABLE, "没有有效测点行，不能按空范围通过。")
         return result
@@ -167,8 +204,8 @@ class NioMeasurementAgent(DimensionMeasurementExcelAgent):
     def rule_2(self, ctx: RuleContext):
         fields = ("坐标X", "坐标Y", "坐标Z", "上公差", "下公差", "主要控制方向")
         for _sheet, row, _columns in self._rows(ctx, *fields):
-            if row.missing(*fields):
-                return "NG", f"测点行{row.row_index}缺少坐标、公差或主要控制方向。"
+            if row.missing("测点号", *fields):
+                return "NG", f"测点行{row.row_index}缺少测点号、坐标、公差或主要控制方向。"
         return self._done(ctx)
 
     @rule("特定控制方向的公差NA值一致性审核", clause_id="3")
@@ -185,7 +222,7 @@ class NioMeasurementAgent(DimensionMeasurementExcelAgent):
     @rule("名义值为空时的偏差值存在性审核", clause_id="4")
     def rule_4(self, ctx: RuleContext):
         applied = False
-        for _sheet, row, columns in self._rows(ctx, "主要控制方向", "名义值", "测量偏差值", "Centering", optional=("IQG",)):
+        for _sheet, row, columns in self._rows(ctx, "主要控制方向", "名义值", "测量偏差值", "Centering", optional=("IQG",), value_fields=("主要控制方向", "名义值", "测量偏差值")):
             if _text(row.value("主要控制方向")) not in RULE_3_4_TARGET_DIRECTIONS | RULE_8_11_TARGET_DIRECTIONS:
                 continue
             applied = True
