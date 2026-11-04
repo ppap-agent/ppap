@@ -109,3 +109,9 @@ def test_u12_uncalculated_formula_and_merged_number_never_hide_physical_row():
     book.close()
     result = run_round_from_bytes(RoundWork("round", "tenant", [target]), {"version": content.getvalue()})
     assert result["findings"][1]["status"] == "UNABLE"
+
+
+@pytest.mark.parametrize("resources", [None, "另一压装机"])
+def test_cp_unknown_process_anchor_is_never_skipped_as_a_repeated_header(resources):
+    findings = execute("U08", {"控制计划": [["工序名称", "生产资源"], ["压装", "压装机"], ["=A2", resources]]})
+    assert findings[0]["status"] == "UNABLE", findings[0]

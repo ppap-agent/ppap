@@ -206,8 +206,17 @@ class NativeFacts:
             raw = {name: self.readers[table["id"]].cell(row, column) for name, column in columns.items()}
             if all(blank(item.get("value")) and item.get("state") == "known" for item in raw.values()):
                 continue
-            if all(item.get("state") == "known" and header(item.get("value"), aliases[name]) for name, item in raw.items() if not blank(item.get("value"))):
+            if (
+                all(item.get("state") == "known" for item in raw.values())
+                and any(not blank(item.get("value")) for item in raw.values())
+                and all(header(item.get("value"), aliases[name]) for name, item in raw.items() if not blank(item.get("value")))
+            ):
                 continue
+            for name in anchor:
+                if raw[name].get("state") != "known":
+                    # An unreadable scope anchor cannot establish that the row
+                    # is outside the business range, even when resources exist.
+                    self.cell(table, row, columns[name])
             if anchor and all(raw[name].get("state") == "known" and blank(raw[name].get("value")) for name in anchor):
                 continue
             if any(key(raw[name].get("value")).startswith(marker) for name in anchor for marker in ("编制/日期", "审核/日期", "编制人", "批准人")):
