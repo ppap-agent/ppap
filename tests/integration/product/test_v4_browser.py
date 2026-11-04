@@ -168,6 +168,23 @@ def test_customer_intake_to_original_issue_and_frozen_precheck_export(running_pr
             page.get_by_role("option", name="UAES（联电）" if customer == "UAES" else customer, exact=True).click()
             default = page.request.get(web + "/api/audit-customers/default")
             assert default.status == 200 and default.json()["customer_preference"] is None
+            if customer == "UAES":
+                page.get_by_role("button", name="设为企业默认", exact=True).click()
+                dialog = page.get_by_role("dialog", name="更改企业默认客户？")
+                dialog.get_by_role("button", name="取消", exact=True).click()
+                assert page.request.get(web + "/api/audit-customers/default").json() == default.json()
+                page.get_by_role("button", name="设为企业默认", exact=True).click()
+                page.get_by_role("button", name="确认更改", exact=True).click()
+                expect(page.get_by_role("status")).to_contain_text("已保存企业默认")
+                saved_default = page.request.get(web + "/api/audit-customers/default").json()
+                assert saved_default == {"customer_preference": "UAES", "revision": 1}
+                page.goto(web + "/tasks/new")
+                expect(picker).to_contain_text("UAES（联电）")
+                picker.click()
+                page.get_by_role("option", name="理想", exact=True).click()
+                assert page.request.get(web + "/api/audit-customers/default").json() == saved_default
+                picker.click()
+                page.get_by_role("option", name="UAES（联电）", exact=True).click()
             source_bytes = original(customer)
             with page.expect_file_chooser() as choose:
                 page.get_by_role("button", name="选择本地文件", exact=True).click()
@@ -213,6 +230,27 @@ def test_customer_intake_to_original_issue_and_frozen_precheck_export(running_pr
             assert Path(report_file.value.path()).read_bytes().startswith(b"%PDF")
             page.reload()
             expect(page.get_by_role("region", name="逐文件审核报告", exact=True)).to_be_visible()
+            if customer == "UAES":
+                old_url = page.url
+                tasks = page.request.get(web + "/api/audit-tasks").json()
+                old_tasks = tasks.get("tasks", [])
+                assert old_tasks
+                frozen_task = next(row for row in old_tasks if row.get("round_id"))
+                frozen = page.request.get(web + "/api/audit-tasks/" + frozen_task["id"]).json()
+                fresh = context.new_page()
+                fresh.goto(web + "/tasks/new")
+                expect(fresh.get_by_role("combobox", name="审核客户", exact=True)).to_contain_text("UAES（联电）")
+                fresh.get_by_role("combobox", name="审核客户", exact=True).click()
+                fresh.get_by_role("option", name="理想", exact=True).click()
+                fresh.get_by_role("button", name="设为企业默认", exact=True).click()
+                fresh.get_by_role("button", name="确认更改", exact=True).click()
+                expect(fresh.get_by_role("status")).to_contain_text("已保存企业默认")
+                assert fresh.request.get(web + "/api/audit-customers/default").json() == {"customer_preference": "理想", "revision": 2}
+                fresh.close()
+                restored = page.request.get(web + "/api/audit-tasks/" + frozen_task["id"]).json()
+                assert restored["customer_preference"] == frozen["customer_preference"] == "UAES"
+                assert restored["round_id"] == frozen["round_id"] and restored["precheck"]["input"] == frozen["precheck"]["input"]
+                assert page.url == old_url
             assert not errors, errors
         except BaseException:
             page.screenshot(path=str(Path("/tmp") / f"ppap-v4-real-browser-{customer}.png"), full_page=True)
