@@ -1,4 +1,5 @@
 """Suite-level coverage and immutable execution contracts, without Python MRO routing."""
+
 from __future__ import annotations
 
 import hashlib
@@ -112,14 +113,34 @@ class FrozenInput:
     model: str | None = None
     part: str | None = None
     project_id: str = "default"
+    rule_revision_id: str = ""
+    rules: Mapping[str, Any] | None = None
+    appendix: tuple[Mapping[str, Any], ...] = ()
 
     def __post_init__(self) -> None:
         if not self.file_version_id or not _DIGEST.fullmatch(self.sha256) or self.role not in {"target", "reference"} or not self.filename:
             raise ValueError("invalid_frozen_input")
+        if bool(self.rule_revision_id) != (self.rules is not None) or (self.appendix and self.rules is None):
+            raise ValueError("incomplete_frozen_source_rule")
+        object.__setattr__(self, "rules", _freeze(self.rules))
+        object.__setattr__(self, "appendix", _freeze(self.appendix))
 
     def to_dict(self) -> dict:
-        return {"file_version_id": self.file_version_id, "sha256": self.sha256, "role": self.role, "filename": self.filename, "document_type": self.document_type, "file_id": self.file_id,
-                "customer": self.customer, "model": self.model, "part": self.part, "project_id": self.project_id}
+        return {
+            "file_version_id": self.file_version_id,
+            "sha256": self.sha256,
+            "role": self.role,
+            "filename": self.filename,
+            "document_type": self.document_type,
+            "file_id": self.file_id,
+            "customer": self.customer,
+            "model": self.model,
+            "part": self.part,
+            "project_id": self.project_id,
+            "rule_revision_id": self.rule_revision_id,
+            "rules": _thaw(self.rules),
+            "appendix": _thaw(self.appendix),
+        }
 
 
 @dataclass(frozen=True)
@@ -151,9 +172,16 @@ class FrozenTarget:
 
     def to_dict(self) -> dict:
         return {
-            "file_version_id": self.file_version_id, "suite_revision_id": self.suite_revision_id, "suite_key": self.suite_key, "suite_digest": self.suite_digest,
-            "rules": _thaw(self.rules), "appendix": _thaw(self.appendix), "binding": self.binding.to_dict(), "verification": self.verification,
-            "related_suite_digests": dict(self.related_suite_digests), "samples_not_rerun": self.samples_not_rerun,
+            "file_version_id": self.file_version_id,
+            "suite_revision_id": self.suite_revision_id,
+            "suite_key": self.suite_key,
+            "suite_digest": self.suite_digest,
+            "rules": _thaw(self.rules),
+            "appendix": _thaw(self.appendix),
+            "binding": self.binding.to_dict(),
+            "verification": self.verification,
+            "related_suite_digests": dict(self.related_suite_digests),
+            "samples_not_rerun": self.samples_not_rerun,
         }
 
 
@@ -186,9 +214,17 @@ class ExecutionSnapshot:
         object.__setattr__(self, "model_identity", MappingProxyType(dict(self.model_identity)))
 
     def to_dict(self) -> dict:
-        return {"schema_version": self.schema_version, "tenant_id": self.tenant_id, "initiating_user_id": self.initiating_user_id, "round_id": self.round_id,
-                "inputs": [item.to_dict() for item in self.inputs], "targets": [target.to_dict() for target in self.targets], "runtime_revision": self.runtime_revision,
-                "library_revision": self.library_revision, "model_identity": dict(self.model_identity)}
+        return {
+            "schema_version": self.schema_version,
+            "tenant_id": self.tenant_id,
+            "initiating_user_id": self.initiating_user_id,
+            "round_id": self.round_id,
+            "inputs": [item.to_dict() for item in self.inputs],
+            "targets": [target.to_dict() for target in self.targets],
+            "runtime_revision": self.runtime_revision,
+            "library_revision": self.library_revision,
+            "model_identity": dict(self.model_identity),
+        }
 
     @property
     def input_digest(self) -> str:
@@ -260,6 +296,16 @@ def validate_results(results: Sequence[AuditResultItem | dict], *, target: Froze
         if found is not None:
             findings.append(found)
         elif mapped:
-            findings.append({"file_version_id": target.file_version_id, "clause_id": clause, "status": "ERR", "classification": "",
-                             "item": "", "priority": "", "suggestions": "Checker returned no result.", "evidence_file_version_ids": [target.file_version_id]})
+            findings.append(
+                {
+                    "file_version_id": target.file_version_id,
+                    "clause_id": clause,
+                    "status": "ERR",
+                    "classification": "",
+                    "item": "",
+                    "priority": "",
+                    "suggestions": "Checker returned no result.",
+                    "evidence_file_version_ids": [target.file_version_id],
+                }
+            )
     return {"findings": findings, "coverage": coverage}
