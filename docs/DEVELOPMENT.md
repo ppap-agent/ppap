@@ -336,3 +336,5 @@ uv run --no-sync python scripts/deep_lab.py --recipe checker --effort high \
 这是本地质量实验，默认使用本地 Pi 进程和现有短期授权网关；不证明产品 guest 隔离或生产端到端行为。固定执行只使用原生读取与明确的 `PdfSpec`，不自动转入 OCR。
 
 GitHub Actions 的外部模型测试使用 `CI_LLM_API_KEY`、`CI_LLM_BASE_URL` 和 `CI_LLM_MODEL` 三项仓库 Secret，与生产 Standard 配置分开。当前 CI 使用已授权的 Codex Responses 服务，避免调用已耗尽额度的 Grok；真实模型用量仍属于测试运行，不以缓存伪造模型成功。
+
+旧 XLS 的图形事实按需调用 `documents.excel.visual.render_xls_header(content, sheet_name=..., header_rows=12)`，返回请求工作表前若干行的 PNG。原生表格仍由现有 loader 读取。该函数在无外部网络、无继承凭据、禁止文档宏的隔离配置中执行两次本地 LibreOffice Calc 转换，只改临时副本的工作表可见性与打印范围，保留原件绘图与覆盖顺序；不会用单元格文本重画勾选。多工作表必须绑定指定名称，输出必须唯一一页。外部工作簿／DDE 引用、缺少 Calc／沙箱、无法确认页范围均报告不可用。复用旧 DOC 的每次 45 秒、25 MiB 输入／50 MiB 输出与资源限制，不增加预算配置。Linux 运行时需 `libreoffice-calc`、`fonts-noto-cjk` 与现有 `ppap-local-converter-sandbox`；生产镜像及 V3 corpus host 已接线。渲染成功不等于视觉事实已确认，仍由原件证据读取报告确认或未知。

@@ -201,7 +201,7 @@ def _pdf_images(audit, pages: Sequence[int], digest: str, fields=None):
     from audit.engine.checkers.ocr_visual_facts import OcrImage
 
     images = []
-    context = []
+    context = {}
     with fitz.open(audit.file_url) as document:
         if document.needs_pass or len(pages) > 10 or any(type(page) is not int or not 1 <= page <= len(document) for page in pages):
             raise VisualFactsUnavailable("原页范围或访问权限尚不能确认。")
@@ -210,7 +210,7 @@ def _pdf_images(audit, pages: Sequence[int], digest: str, fields=None):
             # Render in the original, unrotated PDF coordinate frame. Only this
             # private in-memory document is changed; source bytes stay frozen.
             page.set_rotation(0)
-            context.append(f"原页{number}: {page.get_text()}")
+            context[f"pdf:{number}"] = page.get_text()
             regions = [(page.rect, True)]
             requested = set(fields or ())
             psw_fields = {"psw_stamp_present", "psw_stamp_ending_text", "authorized_signature_present"}
@@ -275,7 +275,7 @@ def _pdf_images(audit, pages: Sequence[int], digest: str, fields=None):
                         pixmap.height,
                     )
                 )
-    return images, "\n".join(context)
+    return images, context
 
 
 def _source_identity(audit, cache):
@@ -310,7 +310,14 @@ def _ocr_pdf_facts(audit, fields, witness, *, pages, cache, field_scopes=None, n
         try:
             images, context = _pdf_images(audit, pages, digest, fields)
             facts = observe_ocr_images(
-                images, fields, lambda *args, **kwargs: observations.append((args, kwargs)), context=context, field_scopes=field_scopes, any_fields=_EXISTENCE_FIELDS, native_by_scope=native_by_scope
+                images,
+                fields,
+                lambda *args, **kwargs: observations.append((args, kwargs)),
+                context_by_scope=context,
+                field_scopes=field_scopes,
+                any_fields=_EXISTENCE_FIELDS,
+                native_by_scope=native_by_scope,
+                request_cache=cache,
             )
             _source_identity(audit, cache)
             cache[key] = (facts, observations)

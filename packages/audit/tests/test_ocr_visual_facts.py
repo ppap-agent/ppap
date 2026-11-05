@@ -34,6 +34,15 @@ def install(monkeypatch, raw):
     return calls
 
 
+def install_scoped(monkeypatch, values):
+    async def read(data, prompt, *, response_schema, **kwargs):
+        fields = response_schema["schema"]["properties"]
+        (scope,) = next(iter(fields.values()))["items"]["properties"]["scope"]["enum"]
+        return {field: response(values[scope], scope=scope) for field in fields}
+
+    monkeypatch.setattr("documents.ocr.client.call_llm_async", read)
+
+
 def test_source_located_ocr_fact_uses_dedicated_responses(monkeypatch):
     calls = install(monkeypatch, {"checked": response(False)})
     witness = Mock()
@@ -85,7 +94,7 @@ def test_false_without_complete_context_is_unknown(monkeypatch):
 
 def test_two_business_pages_conflict_instead_of_selecting_one(monkeypatch):
     frames = images() + [OcrImage(b"other", {"scope": "pdf:3", "page": 3, "bbox": [0, 0, 100, 200], "context": True}, 100, 200)]
-    install(monkeypatch, {"checked": response(False) + response(True, scope="pdf:3", index=1)})
+    install_scoped(monkeypatch, {"pdf:2": False, "pdf:3": True})
     assert observe_ocr_images(frames, {"checked": "实际勾选"}, Mock()) == {"checked": None}
 
 
@@ -96,7 +105,7 @@ def test_native_known_value_wins_over_ocr(monkeypatch):
 
 def test_global_existence_any_true_needs_no_false_override(monkeypatch):
     frames = images() + [OcrImage(b"other", {"scope": "pdf:3", "page": 3, "context": True}, 100, 200)]
-    install(monkeypatch, {"seal": response(False) + response(True, scope="pdf:3", index=1)})
+    install_scoped(monkeypatch, {"pdf:2": False, "pdf:3": True})
     assert observe_ocr_images(frames, {"seal": "文件中存在实际印章"}, Mock(), any_fields=frozenset({"seal"})) == {"seal": True}
 
 
@@ -196,7 +205,7 @@ def test_psw_stamp_presence_conflicts_across_business_pages_stay_unknown(monkeyp
     from audit.checkers.v4.visual_facts import _EXISTENCE_FIELDS
 
     frames = images() + [OcrImage(b"other", {"scope": "pdf:3", "page": 3, "context": True}, 100, 200)]
-    install(monkeypatch, {"psw_stamp_present": response(False) + response(True, scope="pdf:3", index=1)})
+    install_scoped(monkeypatch, {"pdf:2": False, "pdf:3": True})
     assert observe_ocr_images(frames, {"psw_stamp_present": "保证书实际盖章"}, Mock(), any_fields=_EXISTENCE_FIELDS) == {"psw_stamp_present": None}
 
 
@@ -257,3 +266,93 @@ def test_seal_ending_has_bounded_original_characters(monkeypatch, value):
     install(monkeypatch, {"psw_stamp_ending_text": response(value)})
     with pytest.raises(ValueError, match="two to six"):
         observe_ocr_images(images(), {"psw_stamp_ending_text": "末端原字"}, Mock())
+
+
+def test_known_fact_schema_requires_sources_including_absence():
+    """The provider must not be offered complete negatives the reader rejects."""
+    from audit.engine.checkers.ocr_visual_facts import _schema
+
+    fields = {"psw_stamp_present": "实际印章", "psw_stamp_ending_text": "末端原字"}
+    schema = _schema(fields, dict.fromkeys(fields, ["pdf:3", "pdf:5"]))
+    for name in fields:
+        item = schema["schema"]["properties"][name]["items"]
+        known, unknown = item["anyOf"]
+        assert known["properties"]["sources"]["minItems"] == 1
+        assert unknown["properties"]["sources"].get("minItems", 0) == 0
+
+
+def test_negative_with_empty_sources_from_recorded_provider_response_remains_error(monkeypatch):
+    # Recorded failure shape: two complete original pages, no cited region.
+    frames = images() + [OcrImage(b"second-page", {"scope": "pdf:5", "page": 5, "bbox": [0, 0, 100, 200], "context": True}, 100, 200)]
+    raw = {"psw_stamp_present": response(False) + response(False, scope="pdf:5", index=1)}
+    for observation in raw["psw_stamp_present"]:
+        observation["sources"] = []
+    install(monkeypatch, raw)
+    with pytest.raises(ValueError, match="no original source"):
+        observe_ocr_images(frames, {"psw_stamp_present": "实际印章"}, Mock())
+
+
+def test_multiple_business_pages_have_independent_requests_and_shared_aggregation(monkeypatch):
+    frames = images() + [OcrImage(b"second", {"scope": "pdf:3", "context": True}, 100, 200)]
+    calls = []
+
+    async def read(data, prompt, *, response_schema, **kwargs):
+        fields = response_schema["schema"]["properties"]
+        scopes = fields["checked"]["items"]["properties"]["scope"]["enum"]
+        assert len(data) == 1 and len(scopes) == 1
+        scope = scopes[0]
+        calls.append(scope)
+        assert ("PAGE_TWO" in prompt) == (scope == "pdf:2")
+        assert ("PAGE_THREE" in prompt) == (scope == "pdf:3")
+        item = fields["checked"]["items"]["properties"]
+        assert item["sources"]["items"]["properties"]["image_index"]["enum"] == [0]
+        assert item["covered_image_indices"]["items"]["enum"] == [0]
+        return {field: response(scope == "pdf:3", scope=scope) for field in fields}
+
+    monkeypatch.setattr("documents.ocr.client.call_llm_async", read)
+    result = observe_ocr_images(frames, {"checked": "实际勾选", "seal": "实际印章"}, Mock(), any_fields=frozenset({"seal"}), context_by_scope={"pdf:2": "PAGE_TWO", "pdf:3": "PAGE_THREE"})
+    assert result == {"checked": None, "seal": True}
+    assert calls == ["pdf:2", "pdf:3"]
+
+
+def test_successful_page_and_failed_page_are_not_requested_again(monkeypatch):
+    frames = images() + [OcrImage(b"second", {"scope": "pdf:3", "context": True}, 100, 200)]
+    calls = []
+
+    async def read(data, prompt, *, response_schema, **kwargs):
+        (scope,) = response_schema["schema"]["properties"]["checked"]["items"]["properties"]["scope"]["enum"]
+        calls.append(scope)
+        if scope == "pdf:3":
+            raise ValueError("OCR visual coverage is invalid")
+        return {"checked": response(False, scope=scope)}
+
+    monkeypatch.setattr("documents.ocr.client.call_llm_async", read)
+    cache = {}
+    for _ in range(2):
+        with pytest.raises(ValueError, match="coverage is invalid"):
+            observe_ocr_images(frames, {"checked": "实际勾选"}, Mock(), request_cache=cache)
+    assert calls == ["pdf:2", "pdf:3"]
+
+
+def test_recorded_foreign_page_coverage_is_not_dropped_or_accepted(monkeypatch):
+    raw = {"checked": response(False)}
+    raw["checked"][0]["covered_image_indices"] = [0, 5]
+    install(monkeypatch, raw)
+    with pytest.raises(ValueError, match="coverage is invalid"):
+        observe_ocr_images(images(), {"checked": "实际勾选"}, Mock())
+
+
+def test_valid_unreadable_page_retains_unknown_after_another_page_is_known(monkeypatch):
+    frames = images() + [OcrImage(b"second", {"scope": "pdf:5", "context": True}, 100, 200)]
+    calls = []
+
+    async def read(data, prompt, *, response_schema, **kwargs):
+        (scope,) = response_schema["schema"]["properties"]["checked"]["items"]["properties"]["scope"]["enum"]
+        calls.append(scope)
+        if scope == "pdf:5":
+            return {"checked": [{"scope": scope, "value": None, "sources": [], "covered_image_indices": [], "coverage": "unreadable", "excerpt": ""}]}
+        return {"checked": response(False, scope=scope)}
+
+    monkeypatch.setattr("documents.ocr.client.call_llm_async", read)
+    assert observe_ocr_images(frames, {"checked": "实际勾选"}, Mock()) == {"checked": None}
+    assert calls == ["pdf:2", "pdf:5"]

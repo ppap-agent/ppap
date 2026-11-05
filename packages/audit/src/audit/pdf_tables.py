@@ -18,7 +18,7 @@ from documents.pdf.source_graphics import (
 from documents.pdf.source_graphics import (
     _vector_inside as _vector_inside,
 )
-from documents.pdf.source_graphics import native_text_underlines
+from documents.pdf.source_graphics import native_text_underlines, native_text_visibility, native_visual_overlaps
 
 from .document_tools import ReadLimits, col_number, ref, within
 
@@ -66,21 +66,38 @@ def _table(grid: Any, page: Any, limits: ReadLimits, geometry_tolerance: float) 
         and all(any(abs(item[1][edge] - bound) <= geometry_tolerance for bound in axes) for edges, axes in (((0, 2), grid.cols), ((1, 3), grid.rows)) for edge in edges)
     }
 
+    native_rectangles, native_values = [], []
+    for cell in grid.cells:
+        try:
+            bounds = [grid.cols[cell.col_start], grid.rows[cell.row_start], grid.cols[cell.col_end + 1], grid.rows[cell.row_end + 1]]
+        except (IndexError, TypeError):
+            continue
+        if isinstance(cell.content, str):
+            native_rectangles.append(bounds)
+            native_values.append(cell.content)
+    graphics = native_visual_overlaps(page, native_rectangles, tolerance=geometry_tolerance, grid_axes=(grid.cols, grid.rows))
+    visible = native_text_visibility(page, native_rectangles, native_values, tolerance=geometry_tolerance, visuals=graphics)
+    text_visibility = {(tuple(bounds), value): readable for bounds, value, readable in zip(native_rectangles, native_values, visible, strict=True)}
+
     def observed(row: int, column: int, last_row: int, last_column: int, value: str | None, *, reconstructed: bool) -> dict[str, Any]:
         bbox = [grid.cols[column], grid.rows[row], grid.cols[last_column + 1], grid.rows[last_row + 1]]
         overlap = any(_intersects(bbox, image) for image in images)
         annotation_overlap = any(_intersects(bbox, bounds) for bounds in annotations)
         widget_overlap = any(_intersects(bbox, bounds) for bounds in widgets)
         vector_paths = [index for index, drawing in enumerate(drawings, 1) if index - 1 not in underlines and _vector_inside(drawing, bbox, geometry_tolerance, aligned_fills)]
+        text_readable = text_visibility.get((tuple(bbox), value)) if isinstance(value, str) else None
+        graphical = bool(overlap or vector_paths or annotation_overlap or widget_overlap)
         if not valid_pdf_bbox(bbox, page.rect.width, page.rect.height):
             state = "unknown_geometry"
         elif not reconstructed:
             state = "unknown_uncovered_grid"
-        elif overlap or vector_paths or annotation_overlap or widget_overlap:
+        elif (graphical and text_readable is not True) or text_readable is False:
             state = "unknown_visual_evidence"
         else:
             state = "known"
         cell: dict[str, Any] = {"value": value, "state": state, "source": {"page": number, "bbox": bbox}}
+        if text_readable is False or (graphical and text_readable is True):
+            cell["native_text_unobscured"] = text_readable
         if overlap:
             cell["image_overlap"] = True
         if annotation_overlap:
@@ -194,7 +211,7 @@ def snapshot_pdf(raw: bytes, limits: ReadLimits) -> dict[str, Any]:
             "limitations": [
                 "Native page grids preserve PDF points, not workbook coordinates. Grid extraction does not verify business row roles or field meaning.",
                 "Uncovered cells, unread visual content and invalid geometry remain unknown; "
-                "native text is retained but cannot confirm cell contents under image, vector, annotation or widget overlays.",
+                "native scalar text remains usable only when source characters are visible. Separate graphics remain uninterpreted.",
                 "Vector path indices use original page.get_drawings() order (1-based). Cell-boundary strokes and whole-cell rectangle backgrounds are excluded; other geometry is uninterpreted.",
                 "The native parser line tolerance is used only to match full-edge rules and whole-cell rectangles to reconstructed boundaries, not to interpret internal marks.",
                 "A native blank describes the selected grid cell interior. It does not establish absence of graphics in a parent region or the business meaning of an enclosing rectangle.",
@@ -290,6 +307,8 @@ def validate_pdf_tables(snapshot: dict[str, Any]) -> None:
             for flag in ("image_overlap", "visual_overlap", "annotation_overlap", "widget_overlap"):
                 if flag in cell and type(cell[flag]) is not bool:
                     raise ValueError("Invalid PDF visual overlap observation")
+            if "native_text_unobscured" in cell and (type(cell["native_text_unobscured"]) is not bool or not (value or "").strip()):
+                raise ValueError("Invalid PDF native text visibility observation")
             path_indices = cell.get("vector_path_indices", [])
             if not isinstance(path_indices, list) or any(type(index) is not int or not 1 <= index <= path_count for index in path_indices) or len(path_indices) != len(set(path_indices)):
                 raise ValueError("Invalid PDF vector path observation")
@@ -302,9 +321,9 @@ def validate_pdf_tables(snapshot: dict[str, Any]) -> None:
             if state == "unknown_uncovered_grid" and (value is not None or address in merges):
                 raise ValueError("Uncovered PDF slots cannot claim reconstructed content")
             visual_overlap = any(cell.get(flag) for flag in ("image_overlap", "visual_overlap", "annotation_overlap", "widget_overlap"))
-            if state == "unknown_visual_evidence" and not visual_overlap:
+            if state == "unknown_visual_evidence" and not (visual_overlap or cell.get("native_text_unobscured") is False):
                 raise ValueError("Invalid PDF visual unknown")
-            if state == "known" and visual_overlap:
+            if state == "known" and (cell.get("native_text_unobscured") is False or (visual_overlap and cell.get("native_text_unobscured") is not True)):
                 raise ValueError("An uninterpreted visual cannot establish cell contents")
             for bounds, positions in ((x_bounds, ((c1 - 1, bbox[0]), (c2, bbox[2]))), (y_bounds, ((r1 - 1, bbox[1]), (r2, bbox[3])))):
                 for index, value in positions:

@@ -250,3 +250,55 @@ def test_native_text_underline_does_not_hide_other_graphic_marks(mark, expected)
         if mark == "extra_stroke":
             page.draw_line((120, 105), (125, 111), width=0.5)
         assert native_visual_overlaps(page, [[90, 104, 210, 114]]) == [expected]
+
+
+@pytest.mark.parametrize("mark", ["vector", "image", "annotation", "widget"])
+def test_native_label_is_not_erased_by_a_separate_graphic_in_its_cell(mark):
+    import io
+
+    import fitz
+    from documents.pdf.source_graphics import annotate_native_cells
+    from documents.table.models import CellRegion, TableGrid
+    from PIL import Image
+
+    with fitz.open() as document:
+        page = document.new_page(width=220, height=100)
+        page.insert_text((20, 35), "Header")
+        if mark == "vector":
+            page.draw_line((140, 20), (160, 40))
+        elif mark == "image":
+            data = io.BytesIO()
+            Image.new("RGB", (10, 10), "black").save(data, format="PNG")
+            page.insert_image(fitz.Rect(140, 20, 160, 40), stream=data.getvalue())
+        elif mark == "annotation":
+            page.add_rect_annot(fitz.Rect(140, 20, 160, 40))
+        else:
+            widget = fitz.Widget()
+            widget.field_name = "separate-choice"
+            widget.field_type = fitz.PDF_WIDGET_TYPE_CHECKBOX
+            widget.rect = fitz.Rect(140, 20, 160, 40)
+            page.add_widget(widget)
+        source = document.tobytes()
+    grid = TableGrid([10.0, 60.0], [10.0, 200.0], [CellRegion(0, 0, 0, 0, "Header")])
+    annotate_native_cells(source, 0, grid, tolerance=1.0)
+    assert grid.cells[0].is_unknown is False
+    assert grid.cells[0].content == "Header"
+
+
+@pytest.mark.parametrize("after", [False, True])
+def test_native_text_visibility_respects_full_cell_fill_paint_order(after):
+    import fitz
+    from documents.pdf.source_graphics import annotate_native_cells
+    from documents.table.models import CellRegion, TableGrid
+
+    with fitz.open() as document:
+        page = document.new_page(width=220, height=100)
+        if not after:
+            page.draw_rect(fitz.Rect(10, 10, 200, 60), color=None, fill=(1, 1, 1))
+        page.insert_text((20, 35), "Header")
+        if after:
+            page.draw_rect(fitz.Rect(10, 10, 200, 60), color=None, fill=(1, 1, 1))
+        source = document.tobytes()
+    grid = TableGrid([10.0, 60.0], [10.0, 200.0], [CellRegion(0, 0, 0, 0, "Header")])
+    annotate_native_cells(source, 0, grid, tolerance=1.0)
+    assert grid.cells[0].is_unknown is after

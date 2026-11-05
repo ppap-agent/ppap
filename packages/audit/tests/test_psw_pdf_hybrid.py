@@ -463,9 +463,9 @@ def test_public_rule_eight_checks_both_original_disposition_pages(tmp_path, monk
         finally:
             checker.close()
     assert result.status == "NG"
-    assert len(attempts) == 1
-    scopes = attempts[0]["schema"]["properties"]["approved_checked"]["items"]["properties"]["scope"]["enum"]
-    assert scopes == ["pdf:1", "pdf:2"]
+    assert len(attempts) == 2
+    scopes = [attempt["schema"]["properties"]["approved_checked"]["items"]["properties"]["scope"]["enum"] for attempt in attempts]
+    assert scopes == [["pdf:1"], ["pdf:2"]]
 
 
 def test_public_partial_native_values_survive_ocr_on_another_business_page(tmp_path, monkeypatch, profile):
@@ -483,7 +483,7 @@ def test_public_partial_native_values_survive_ocr_on_another_business_page(tmp_p
         finally:
             checker.close()
     assert result.status == "UNABLE"
-    assert len(attempts) == 1
+    assert len(attempts) == 2
 
 
 @pytest.mark.parametrize("department", [False, True], ids=["company-no-authorization-read", "department-reads-authorization"])
@@ -559,3 +559,30 @@ def test_public_psw_raster_uses_the_same_dedicated_ocr_fact_path(tmp_path, monke
     assert result.evidence.source_format == extension
     assert result.evidence.prepared_format == "png"
     assert len(attempts) == 1
+
+
+def test_public_multi_page_partial_success_and_protocol_failure_are_reused(tmp_path, monkeypatch, profile):
+    from documents.ocr import client
+
+    path = write_disposition_pdf(tmp_path / "page-local-failure.pdf", ("批准", "条件批准", "拒绝"), copies=2)
+    ocr_response_boundary(monkeypatch, disposition_page_response())
+    controlled = client.call_llm_async
+    scopes = []
+
+    async def per_page(images, prompt, *, response_schema, **kwargs):
+        field = next(iter(response_schema["schema"]["properties"].values()))
+        (scope,) = field["items"]["properties"]["scope"]["enum"]
+        scopes.append(scope)
+        if scope == "pdf:2":
+            raise ValueError("OCR visual coverage is invalid")
+        return await controlled(images, prompt, response_schema=response_schema, **kwargs)
+
+    monkeypatch.setattr(client, "call_llm_async", per_page)
+    with bind_runtime(None):
+        checker = psw_checker(monkeypatch, path, profile)
+        try:
+            results = [checker.check(index) for index in (2, 4, 7)]
+        finally:
+            checker.close()
+    assert [result.status for result in results] == ["ERR", "ERR", "ERR"]
+    assert scopes == ["pdf:1", "pdf:2"]

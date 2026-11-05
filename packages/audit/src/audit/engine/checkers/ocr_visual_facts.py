@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import json
 import math
 import re
@@ -40,13 +41,15 @@ def request_ocr_visual_facts(*, images: list[bytes], prompt: str, response_schem
         return worker.submit(copy_context().run, asyncio.run, operation).result()
 
 
-def _schema(fields: dict[str, str], field_scopes: dict[str, list[str]]) -> dict:
-    source = {
+def _schema(fields: dict[str, str], field_scopes: dict[str, list[str]], image_count: int | None = None) -> dict:
+    source: dict[str, Any] = {
         "type": "object",
         "additionalProperties": False,
         "required": ["image_index", "bbox"],
         "properties": {"image_index": {"type": "integer"}, "bbox": {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4}},
     }
+    if image_count is not None:
+        source["properties"]["image_index"]["enum"] = list(range(image_count))
     properties = {}
     for field in fields:
         observation: dict[str, Any] = {
@@ -63,6 +66,8 @@ def _schema(fields: dict[str, str], field_scopes: dict[str, list[str]]) -> dict:
             },
         }
 
+        if image_count is not None:
+            observation["properties"]["covered_image_indices"]["items"]["enum"] = list(range(image_count))
         if field == "approval_date":
             observation["properties"]["value"]["pattern"] = r"^(?:|[0-9]{4}-[0-9]{2}-[0-9]{2})$"
         if field == "psw_stamp_ending_text":
@@ -70,6 +75,7 @@ def _schema(fields: dict[str, str], field_scopes: dict[str, list[str]]) -> dict:
         known = copy.deepcopy(observation)
         known["properties"]["value"]["type"] = "string" if field in {"approval_date", "psw_stamp_ending_text"} else "boolean"
         known["properties"]["coverage"] = {"type": "string", "enum": ["complete"]}
+        known["properties"]["sources"]["minItems"] = 1
         unknown = copy.deepcopy(observation)
         unknown["properties"]["value"] = {"type": "null"}
         unknown["properties"]["coverage"] = {"type": "string", "enum": ["partial", "unreadable"]}
@@ -79,6 +85,85 @@ def _schema(fields: dict[str, str], field_scopes: dict[str, list[str]]) -> dict:
 
 
 def observe_ocr_images(
+    images: list[OcrImage],
+    fields: dict[str, str],
+    witness: Callable[..., None],
+    *,
+    context: str = "",
+    field_scopes: dict[str, list[str]] | None = None,
+    any_fields: frozenset[str] = frozenset(),
+    native_by_scope: dict[str, dict[str, object]] | None = None,
+    context_by_scope: dict[str, str] | None = None,
+    request_cache: dict | None = None,
+) -> dict[str, object]:
+    """Read each original scope once, then combine facts without a vote.
+
+    Image indices are local to that request. A later scope's failure cannot
+    trigger another request for an already observed or failed scope.
+    """
+    if not images or not fields:
+        return dict.fromkeys(fields)
+    scopes: dict[str, list[OcrImage]] = {}
+    for image in images:
+        scopes.setdefault(str(image.locator.get("scope", "document")), []).append(image)
+    selected = field_scopes or {field: list(scopes) for field in fields}
+    if set(selected) != set(fields) or any(not names or not set(names).issubset(scopes) for names in selected.values()):
+        raise ValueError("A visual fact needs an explicit applicable scope")
+    observations: dict[str, dict[str, object]] = {field: {} for field in fields}
+    for scope, frames in scopes.items():
+        subset = {field: description for field, description in fields.items() if scope in selected[field]}
+        if not subset:
+            continue
+        local_context = (context_by_scope or {}).get(scope, context if len(scopes) == 1 else "")
+        local_native = {field: {scope: values[scope]} for field, values in (native_by_scope or {}).items() if field in subset and scope in values}
+        key = None
+        if request_cache is not None:
+            from documents.ocr.env import ocr_policy_identity
+
+            identity = {
+                "images": [(frame.locator, hashlib.sha256(frame.data).hexdigest()) for frame in frames],
+                "fields": subset,
+                "native": local_native,
+                "context_sha256": hashlib.sha256(local_context.encode()).hexdigest(),
+            }
+            key = ("ocr_scope", ocr_policy_identity(), hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest())
+        cached = request_cache.get(key) if request_cache is not None and key is not None else None
+        if cached is None:
+            sources = []
+            try:
+                facts = _observe_ocr_scope(
+                    frames,
+                    subset,
+                    lambda *args, **kwargs: sources.append((args, kwargs)),
+                    context=local_context,
+                    field_scopes={field: [scope] for field in subset},
+                    native_by_scope=local_native,
+                )
+                cached = (facts, sources)
+            except Exception as error:
+                if request_cache is not None and key is not None:
+                    request_cache[key] = error
+                raise
+            if request_cache is not None and key is not None:
+                request_cache[key] = cached
+        if isinstance(cached, Exception):
+            raise cached
+        facts, sources = cached
+        for args, kwargs in sources:
+            witness(*args, **kwargs)
+        for field, value in facts.items():
+            observations[field][scope] = value
+    result: dict[str, object] = dict.fromkeys(fields)
+    for field, values_by_scope in observations.items():
+        values = [values_by_scope[scope] for scope in selected[field]]
+        if field in any_fields and any(value is True for value in values):
+            result[field] = True
+        elif all(value is not None for value in values) and len(set(values)) == 1:
+            result[field] = values[0]
+    return result
+
+
+def _observe_ocr_scope(
     images: list[OcrImage],
     fields: dict[str, str],
     witness: Callable[..., None],
@@ -126,6 +211,7 @@ def observe_ocr_images(
         "无法看清时value必须null且coverage为partial/unreadable，不能一边报告明确事实一边标记unreadable。"
         "同scope不同图片是同一原件的上下文与局部，不是不同文件。"
         "否定事实必须完整查看该scope所有context=true的上下文图，不能以未识别到代替不存在。"
+        "所有已知事实（包括false和空字符串）必须至少有一条sources，不能留空。否定事实引用实际已查看的目标区域，不能凭未识别到就判断不存在。"
         "sources的bbox使用对应图像0到1归一化坐标[x0,y0,x1,y1]，image_index从0开始。"
         "covered_image_indices列出该观察已完整查看的图像；sources不能引用未查看或其他scope的图。"
         "日期approval_date为YYYY-MM-DD，明确空白用空字符串，未知用null。"
@@ -144,7 +230,7 @@ def observe_ocr_images(
     from audit.engine.rule_engine import GuardStop
 
     try:
-        raw = request(images=[image.data for image in images], prompt=prompt, response_schema=_schema(fields, selected_scopes))
+        raw = request(images=[image.data for image in images], prompt=prompt, response_schema=_schema(fields, selected_scopes, len(images)))
     except GuardStop as stop:
         if stop.status == "UNABLE":
             return result

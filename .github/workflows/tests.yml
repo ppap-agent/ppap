@@ -338,6 +338,15 @@ jobs:
           else
             uv sync --locked
           fi
+      - name: Install bounded XLS header renderer
+        if: ${{ matrix.name == 'V3' }}
+        working-directory: ${{ github.workspace }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libreoffice-calc fonts-noto-cjk
+          cc -O2 -Wall -Wextra -Werror packages/documents/native/legacy_doc_sandbox.c \
+            -o "$RUNNER_TEMP/ppap-local-converter-sandbox"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
       - name: Run in-repo corpus pytest
         working-directory: ${{ github.workspace }}
         if: ${{ matrix.mode == 'pytest' }}
