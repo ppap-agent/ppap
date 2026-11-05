@@ -23,7 +23,6 @@ from audit.audits import (
     ClaimedJob,
     RoundInput,
     RoundWork,
-    job_payload,
     normalize_analysis_mode,
     normalize_idempotency_key,
     normalize_review,
@@ -4287,6 +4286,7 @@ class AuthStore:
         if existing and str(existing[4]) != source_draft_id and conn.execute("SELECT 1 FROM product.audit_drafts WHERE id = %s AND task_fingerprint IS NOT NULL", (existing[4],)).fetchone():
             raise ValueError("idempotency_conflict")
         draft_status = None
+        recognized_metadata: dict[str, dict] = {}
         analysis_mode = ANALYSIS_STANDARD
         if source_draft_id:
             draft = conn.execute(
@@ -4316,6 +4316,7 @@ class AuthStore:
                     raise ValueError("draft_already_accepted")
                 task = self._recognition_public(conn, principal, source_draft_id)
                 selected = [row for row in task["files"] if row["selection"] == "selected"]
+                recognized_metadata = {row["file"]["id"]: dict((row.get("match") or {}).get("metadata") or {}) for row in selected}
                 if not existing and (
                     task["state"] != "pending_confirm"
                     or any((row["match"] or {}).get("state") not in {"matched", "reference", "unmatched"} or row["validation"]["state"] != "valid" for row in selected)
@@ -4400,6 +4401,8 @@ class AuthStore:
         if items is None:
             items = []
         prepared = self._bound_audit_items(conn, principal, items)
+        for item in prepared:
+            item["frozen_metadata"] = recognized_metadata.get(item["file_version_id"], {})
         if feedback_inputs is not None:
             if analysis_mode != ANALYSIS_DEEP or source_draft_id is not None:
                 raise ValueError("deep_feedback_requires_deep")
@@ -4407,8 +4410,6 @@ class AuthStore:
             for item in prepared:
                 if item["role"] == "target":
                     item["rule_body"] = normalize_rule_body(overrides[item["file_version_id"]]["rule_body"])
-        if analysis_mode == ANALYSIS_STANDARD and any((item.get("rule_body") or {}).get("appendix") for item in prepared):
-            raise ValueError("rule_appendix_requires_deep")
         require_targets(prepared)
         fingerprint = request_fingerprint(prepared)
         if existing:
@@ -4422,10 +4423,13 @@ class AuthStore:
         if source_draft_id and draft_status == DRAFT_ACCEPTED:
             raise ValueError("draft_already_accepted")
         round_id = str(uuid.uuid4())
-        execution_payload: dict[str, Any] = job_payload(round_id, analysis_mode, self.settings.deep_execution_revision() if analysis_mode == ANALYSIS_DEEP else "")
-        if analysis_mode == ANALYSIS_STANDARD:
-            policy = self.settings.standard_execution_policy()
-            execution_payload.update(executor_revision=policy.engine_revision(), execution_policy=policy.model_dump(mode="json"))
+        from product.store.suites import SuiteStore, freeze_round_execution
+
+        snapshot = freeze_round_execution(self, conn, principal, round_id=round_id, prepared=prepared, analysis_mode=analysis_mode)
+        execution_payload: dict[str, Any] = {
+            "round_id": round_id, "executor": "ppap-checker-core", "executor_revision": snapshot.runtime_revision,
+            "checker_snapshot_digest": snapshot.input_digest,
+        }
         self._check_usage_policy(conn, principal, usage_policy)
         job_id = str(uuid.uuid4())
         conn.execute(
@@ -4467,6 +4471,7 @@ class AuthStore:
                     Jsonb(row["rule_execution"]) if row.get("rule_execution") is not None else None,
                 ),
             )
+        SuiteStore(self.settings, self.objects, self.role).save_snapshot(conn, snapshot=snapshot)
         if source_draft_id:
             conn.execute(
                 "UPDATE product.audit_rounds SET case_context = (SELECT case_context - %s FROM product.audit_drafts WHERE id = %s) WHERE id = %s", (PREPARATION_KEY, source_draft_id, round_id)

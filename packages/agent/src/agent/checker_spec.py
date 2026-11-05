@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
+from types import MappingProxyType
 from typing import Literal
 from uuid import NAMESPACE_URL, UUID, uuid5
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
 
 def program_digest(files: dict[str, bytes]) -> str:
@@ -93,3 +95,36 @@ class CheckerProgramBundle(BaseModel):
         ):
             raise ValueError("checker execution identity mismatch")
         return self
+
+
+class SourceArtifact(BaseModel):
+    """Reusable source identity, deliberately independent of any audit input.
+
+    Binding requires a validator receipt for this exact code and new input. A
+    previous input's successful execution is not evidence for another document.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    entrypoint: Literal["checker:create_audit"] = "checker:create_audit"
+    files: Mapping[str, bytes]
+    program_digest: str = Field(default="", pattern=r"^$|^[a-f0-9]{64}$")
+
+    @model_validator(mode="after")
+    def fixed_source(self) -> SourceArtifact:
+        checked = CheckerArtifact(input_digest="0" * 64, executor_revision="source", entrypoint=self.entrypoint, files=dict(self.files), program_digest=self.program_digest)
+        object.__setattr__(self, "files", MappingProxyType(dict(checked.files)))
+        object.__setattr__(self, "program_digest", checked.program_digest)
+        return self
+
+    @field_serializer("files")
+    def serialize_files(self, value: Mapping[str, bytes]) -> dict[str, bytes]:
+        return dict(value)
+
+    def bind(self, *, input_digest: str, executor_revision: str, validated_program_digest: str, validated_input_digest: str) -> CheckerArtifact:
+        if validated_program_digest != self.program_digest or validated_input_digest != input_digest or program_digest(dict(self.files)) != self.program_digest:
+            raise ValueError("checker requires validation for this code and input")
+        return CheckerArtifact(input_digest=input_digest, executor_revision=executor_revision, entrypoint=self.entrypoint, files=dict(self.files), program_digest=self.program_digest)
+
+    @classmethod
+    def from_artifact(cls, artifact: CheckerArtifact) -> SourceArtifact:
+        return cls(files=dict(artifact.files), entrypoint=artifact.entrypoint, program_digest=artifact.program_digest)
