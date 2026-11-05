@@ -39,3 +39,60 @@ def check_clause(context: Any, resources: dict[str, Any]) -> AuditResultItem:
         raise ValueError("standard_suite_missing_result")
     result = AuditResultItem.model_validate(item.model_dump())
     return result.model_copy(update={"clause_id": context.clause_id})
+
+
+def check_factory(context: Any, factory: Any) -> AuditResultItem:
+    """Adapt already-authored clause-bound artifacts to the same Core call.
+
+    Only existing authored artifacts need this compatibility helper. Core
+    entrypoints remain plain callables and do not require a historical base.
+    """
+    import inspect
+
+    key = ("authored-checker", context.audit_file.audit_id, context.target.binding.checker_digest)
+    audit = context.cache.get(key)
+    if audit is None:
+        # Inspect once rather than retrying a factory after an internal TypeError,
+        # which could repeat a model call with an unknown external outcome.
+        signature = inspect.signature(factory)
+        args: tuple[Any, ...] = (context.audit_file, context.rule, context.group_context)
+        try:
+            signature.bind(*args)
+        except TypeError:
+            args = args[:2]
+            signature.bind(*args)
+        audit = factory(*args)
+        context.cache[key] = audit
+        context.on_close(audit)
+    checks = tuple(getattr(audit, "checks", ()) or ())
+    if not checks:
+        raise ValueError("authored_checker_missing_checks")
+    ids = [str(getattr(getattr(check, "rule_item", None), "id", "")) for check in checks]
+    if all(ids):
+        matches = [check for check, clause_id in zip(checks, ids) if clause_id == context.clause_id]
+        if len(matches) != 1 or getattr(matches[0], "binding_error", None):
+            raise ValueError("authored_checker_clause_binding_invalid")
+        result = matches[0].check()
+        if result is None:
+            raise ValueError("authored_checker_missing_result")
+        item = AuditResultItem.model_validate(result.model_dump())
+        if item.clause_id != context.clause_id:
+            raise ValueError("authored_checker_result_clause_mismatch")
+        return item
+    # Some valid authored factories only attach IDs to returned results. Execute
+    # that factory's checks once, then attribute by IDs, never by list position.
+    result_key = (*key, "results")
+    if result_key not in context.cache:
+        results = {}
+        for check in checks:
+            result = check.check()
+            if result is None:
+                raise ValueError("authored_checker_missing_result")
+            item = AuditResultItem.model_validate(result.model_dump())
+            if item.clause_id not in context.target.binding.entrypoints or item.clause_id in results:
+                raise ValueError("authored_checker_result_clause_mismatch")
+            results[item.clause_id] = item
+        if set(results) != set(context.target.binding.entrypoints):
+            raise ValueError("authored_checker_result_clause_mismatch")
+        context.cache[result_key] = results
+    return context.cache[result_key][context.clause_id]
