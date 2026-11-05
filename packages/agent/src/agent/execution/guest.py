@@ -96,6 +96,11 @@ def run_entrypoint(inputs: Path, work: Path, credentials: Path) -> None:
     from agent.execution.guest_model import PiRunner
 
     manifest = read_json(inputs, ("manifest.json",), 1024 * 1024)
+    if manifest.get("operation") == "execute-audit":
+        from agent.core_program import run_audit_manifest
+
+        run_audit_manifest(inputs, work, credentials)
+        return
     if manifest.get("operation") == "snapshot":
         parse_source(inputs, work, SnapshotSpec.model_validate(manifest["spec"]))
         return
