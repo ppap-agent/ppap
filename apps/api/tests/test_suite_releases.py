@@ -101,3 +101,27 @@ def test_template_distribution_and_tenant_input_cannot_be_forged(auth_store_fact
     assert rejected.status_code == 400
     assert rejected.json()["error"] == "template_distribution_not_authorized"
     assert alice.post(path, json={"base_revision_id": official.id, "files": {"checker.py": "new"}, "tenant_id": "other"}).status_code == 400
+
+
+def test_candidate_save_is_idempotent_and_readable_after_lost_response(auth_store_factory):
+    store, official, _, _, (alice, bob, carol) = prepare_fixture(auth_store_factory)
+    path = f"/suite-revisions/{official.id}/candidates"
+    operation = str(uuid.uuid4())
+    body = {"operation_id": operation, "files": {"checker.py": "def check(context):\n    return [1]\n"}}
+    receipt_path = f"{path}/{operation}"
+    assert alice.get(receipt_path).status_code == 404
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        replies = [future.result() for future in [pool.submit(alice.post, path, json=body) for _ in range(2)]]
+    assert [reply.status_code for reply in replies] == [201, 201]
+    candidate = replies[0].json()
+    assert replies[1].json() == candidate
+    assert alice.get(receipt_path).json() == candidate
+    assert bob.get(receipt_path).json() == candidate
+    assert carol.get(receipt_path).status_code == 404
+    assert alice.post(path, json={**body, "files": {"checker.py": "changed"}}).status_code == 409
+    assert bob.post(path, json=body).status_code == 409
+    with store._conn() as conn:
+        assert conn.execute("SELECT count(*) FROM product.suite_candidate_operations").fetchone()[0] == 1
+        assert conn.execute("SELECT count(*) FROM product.suite_revisions WHERE tenant_id IS NOT NULL").fetchone()[0] == 1
+        assert conn.execute("SELECT count(*) FROM product.audit_rounds").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM engine.jobs").fetchone()[0] == 0
