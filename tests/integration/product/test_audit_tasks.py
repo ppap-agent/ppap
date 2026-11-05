@@ -2242,13 +2242,13 @@ def test_v4_nio_pair_keeps_frozen_dual_original_evidence_through_worker_and_api(
     assert job.kind == "audit"
     process_claimed(worker, job, "nio-audit")
     frozen = client.get("/rounds/" + round_id).json()
-    cross = [finding for finding in frozen["findings"] if ":rule:N02:7:" in finding["item_key"]][0]
+    cross = [finding for finding in frozen["findings"] if finding["item_key"].endswith(":rule:N02:7")][0]
     assert cross["status"] == "NG"
     sources = cross["locator"]["evidence"]["sources"]
     locators = [json.loads(source["locator"]) for source in sources]
     assert {locator["file_version_id"] for locator in locators} == {target["file_version_id"], reference["file_version_id"]}
     projected = client.get(path).json()["files"][0]["audit"]["checks"]
-    projected_cross = next(check for check in projected if check["rule_item"]["id"].startswith("N02:7:"))
+    projected_cross = next(check for check in projected if check["rule_item"]["id"] == "N02:7")
     assert {source["file_version_id"] for source in projected_cross["evidence"]} == {target["file_version_id"], reference["file_version_id"]}
     assert all(source["locator"] and source["locator"]["kind"] == "xlsx_cell" for source in projected_cross["evidence"])
     assert projected_cross["evidence_verified"] is False

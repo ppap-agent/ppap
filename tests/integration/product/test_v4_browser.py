@@ -315,7 +315,7 @@ def test_cross_file_problem_opens_both_authorized_frozen_originals(running_produ
             target = page.get_by_role("button", name=re.compile(r"^PFMEA\.xlsx 不符合"))
             expect(target).to_be_visible(timeout=30000)
             target.click()
-            basis = page.get_by_role("button", name=re.compile(r"^查看依据 N02:7:"))
+            basis = page.get_by_role("button", name=re.compile(r"^查看依据 N02:7\b"))
             basis.click()
             page.get_by_role("button", name="同时核对关联原件", exact=True).click()
             comparison = page.get_by_role("region", name="关联原件对照", exact=True)
@@ -347,7 +347,7 @@ def test_cross_file_problem_opens_both_authorized_frozen_originals(running_produ
             page.keyboard.press("Escape")
             expect(basis).to_be_focused()
             for title, data, file in originals:
-                page.get_by_role("button", name=re.compile(r"^查看依据 N02:7:")).click()
+                page.get_by_role("button", name=re.compile(r"^查看依据 N02:7\b")).click()
                 page.get_by_role("button", name="核对 " + title + ".xlsx", exact=True).first.click()
                 pane = page.get_by_role("region", name="原件预览", exact=True)
                 expect(pane).to_have_attribute("data-file-version", file["file_version_id"])
