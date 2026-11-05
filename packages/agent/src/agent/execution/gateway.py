@@ -166,6 +166,11 @@ class Grants:
             # Unknown usage closes the lease. Bytes and requested output are
             # not actual token counts and must not be reported as such.
 
+    def finish_not_sent(self, lease: Lease) -> None:
+        """A local credential rejection is not an unknown provider charge."""
+        with self.lock:
+            lease.in_flight = False
+
     @staticmethod
     def _usage(leases: list[Lease]) -> dict[str, Any]:
         result: dict[str, Any] = {
@@ -436,6 +441,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.flush()
         except ModelUnavailable:
             error_type = "PersonalModelUnavailable"
+            if lease is not None:
+                # The resolver is checked before upstream.request. Do not turn
+                # a known no-send into unknown usage or a completed inference.
+                self.server.grants.finish_not_sent(lease)
+                recorded = True
             self.send_error(503, "Personal model unavailable")
         except DuplicateInference:
             self.send_error(409, "Inference already submitted; automatic replay disabled")

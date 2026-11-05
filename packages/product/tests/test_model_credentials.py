@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 from cryptography.fernet import Fernet
-from documents.model_access import ModelUnavailable, current_model_access, model_access_scoped
+from documents.model_access import ModelUnavailable, current_model_access, model_access_scope, model_access_scoped, model_request_scope
 from product.model_access import personal_model_scope
 from product.settings import Settings
 from product.store.model_credentials import ModelCredentialError, decrypt_credential, encrypt_credential, public_config
@@ -72,3 +72,17 @@ def test_each_model_call_resolves_the_current_initiator_and_revocation():
     assert not model_access_scoped()
     with personal_model_scope(store, tenant_id=tenant, initiating_user_id=bob):
         assert current_model_access().api_key == second.api_key
+
+
+def test_pending_requests_are_private_to_scope_and_block_concurrent_duplicate():
+    request = {"input": "controlled text", "model": "deepseek-flash"}
+    with model_access_scope(None):
+        with model_request_scope("https://api.deepseek.com", request):
+            with pytest.raises(ModelUnavailable, match="personal_model_request_uncertain"):
+                with model_request_scope("https://api.deepseek.com", request):
+                    pytest.fail("duplicate request must not reach the provider")
+            with model_access_scope(None), model_request_scope("https://api.deepseek.com", request):
+                pass
+        with pytest.raises(ModelUnavailable, match="personal_model_request_uncertain"):
+            with model_request_scope("https://api.deepseek.com", request):
+                pytest.fail("unknown request must stay blocked in the outer scope")

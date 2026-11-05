@@ -103,6 +103,10 @@ def test_revoke_is_checked_before_any_provider_send():
             finally:
                 client.close()
             upstream.return_value.request.assert_not_called()
+            usage = gateway.grants.usage(execution_id)
+            assert usage["uncertain"] is False
+            assert usage["completed_requests"] == 0
+            assert usage["input_tokens"] == usage["output_tokens"] == 0
 
 
 def test_rebinding_runtime_revokes_all_previous_user_grants():

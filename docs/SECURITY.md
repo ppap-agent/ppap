@@ -54,6 +54,8 @@ LLM、飞书、Partner AI 和其它可访问远程环境可以直接用于相关
 
 ## 个人模型凭据
 
-个人 DeepSeek Key 使用 `PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY`（Fernet）加密存入 `personal_model_credentials`。部署密钥只注入 API、Worker 和可信 Controller，不进入 guest、Artifact、日志或接口回执。密文包含租户和用户绑定，复制到另一用户记录不能借用。成员/账户删除会级联清理个人凭据；企业 Checker 不引用凭据表。
+个人 DeepSeek Key 使用 `PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY`（Fernet）加密存入 `personal_model_credentials`。部署密钥只注入 API、Worker 和可信 Controller，不进入 guest、Artifact、日志或接口回执。密文包含租户和用户绑定，复制到另一用户记录不能借用。删除成员记录或物理删除用户行会级联清理个人凭据；企业 Checker 不引用凭据表。历史业务外键可能阻止物理删除用户，当前没有账户匿名化产品入口；以后保留用户行的匿名化必须在同一事务显式清理凭据和授权，不能把外键级联当作已完成匿名化的证明。
 
 调用身份取本次受理的 `initiating_user_id`，不取 Artifact 作者。文字、视觉与模型 OCR 使用同一 scope，每次模型调用重新读取当前凭据；缺少、撤销、成员资格失效或解密失败均不回退部署 `LLM_*`、`OCR_*` 或其他人的 Key。可信 Controller 的既有 Responses gateway 只向 guest 发短期执行 grant。
+
+个人模型 SDK 不自动重试。同一执行 scope 仅记录请求摘要，阻止后续条款重发仍在进行或用量未知的相同请求；完整 Token 回执才解除这项阻止。该内存保护不跨进程崩溃或新执行，不能替代持久任务的未知状态处理，也不证明服务商退款或停止计费。凭据缺失在发送前被拒绝时，网关记录已知未发送，不伪造已完成请求或未知费用。
