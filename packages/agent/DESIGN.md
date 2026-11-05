@@ -38,7 +38,7 @@ Audit 共享工作簿、转换结果和只读解析缓存；每次 `check()` 独
 
 ### V4 的复用入口
 
-Deep 保留完整 `RuleInput`：`rule_profile`、`preset_key`、`preset_source_sha256`、`customers/models/parts`、类型、正文和生效附录。从冻结轮次构建输入、guest manifest、开发提示、固定执行和恢复重放使用同一合同。输入摘要包含完整规则与整组文件身份；客户和预置来源也参与旧程序起点的选择，避免跨客户借用起点。
+Deep 保留完整 `RuleInput`：`rule_profile`、`preset_key`、`customers/models/parts`、类型、正文和生效附录。从冻结轮次构建输入、guest manifest、开发提示、固定执行和恢复重放使用同一合同。输入摘要包含完整规则与整组文件身份；客户和预置来源也参与旧程序起点的选择，避免跨客户借用起点。
 
 V4 通过现有 Resolver 选择客户及载体的 checker，再提供原源码、资源和源码条款绑定作为开发上下文。预置来源校验只确认客户、预置键、类型和源码摘要；当前条款可以修订。原预置条款的严格认证仍由 `validate_preset_body` 执行，Deep 的任务产物不继承该认证。条款 ID 相同不代表正文或附录未变，模型仍须逐条核对算法。
 

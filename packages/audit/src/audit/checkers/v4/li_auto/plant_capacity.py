@@ -40,7 +40,7 @@ _RESOURCE = replace(_BASE, sections=MappingProxyType(_SECTIONS))
 
 class LiAutoPlantCapacityAgent(NativeFacts, PlantCapacityEvaluationAgent):
     EXPECTED_RULE_CATEGORIES = ("基础字段完整性与内容校验", "线体工序数据完整性校验", "风险评估与措施一致性校验", "良率计算逻辑校验", "单线体总产出JPH计算逻辑校验", "预估月度产能计算逻辑校验")
-    PRECHECK_METHODS = {"L14:1:db15d5a26a01862591ba": "rule_1", "L14:2:233073ace59527469bbf": "rule_2"}
+    PRECHECK_METHODS = {"L14:1": "rule_1", "L14:2": "rule_2"}
 
     def __init__(self, audit_file, rule_input, group_context=None):
         super().__init__(audit_file, rule_input, group_context=group_context, resource=_RESOURCE)

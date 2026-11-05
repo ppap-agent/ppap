@@ -69,7 +69,7 @@ def test_starting_point_uses_customer_resolver_and_source_bindings(tmp_path, cus
     assert module in guide
     bindings = json.loads((tmp_path / "reference-bindings.json").read_text())
     original = preset_rule(customer, entry)
-    assert bindings[original.clauses[0].id][0] == original.clauses[0].text
+    assert bindings[original.clauses[0].id].startswith("rule_")
     template = (tmp_path / "template-checker.py").read_text()
     assert template.count("clause_id=") == len(rule.rules)
     assert "bind_native_checks" in template if customer == "UAES" else "resource=RESOURCE" in template
@@ -85,7 +85,6 @@ def test_complete_rules_and_all_roles_enter_the_group_without_losing_source_iden
     assert group.by_audit_id["first"].file_metadata["v4_source_type"] == "T12"
     rule = group.rules_by_id["first"]
     assert (rule.customers, rule.models, rule.parts, rule.preset_key) == (["UAES"], ["M1"], ["P1"], "U12")
-    assert rule.preset_source_sha256 == first.rule_body["preset_source_sha256"]
     assert [item["text"] for item in rule.appendix] == ["当前约定"]
     # Applicability is not an observation of the uploaded document's customer.
     assert group.by_audit_id["first"].customer is None
@@ -94,7 +93,7 @@ def test_complete_rules_and_all_roles_enter_the_group_without_losing_source_iden
         group_context_for_spec(request(first, first))
 
 
-@pytest.mark.parametrize("change", [{"customers": ["other"]}, {"models": ["M2"]}, {"parts": ["P2"]}, {"preset_key": "U07"}, {"preset_source_sha256": "f" * 64}])
+@pytest.mark.parametrize("change", [{"customers": ["other"]}, {"models": ["M2"]}, {"parts": ["P2"]}, {"preset_key": "U07"}])
 def test_complete_rule_identity_invalidates_fixed_and_same_rule_starts(change):
     target = AuditInput(audit_id="target", file_url="target.xlsx")
     rule = rule_for_file(frozen("target"))
@@ -106,17 +105,18 @@ def test_complete_rule_identity_invalidates_fixed_and_same_rule_starts(change):
         assert checker_type_start_prefix("tenant", "rev", rule) != checker_type_start_prefix("tenant", "rev", revised)
 
 
-@pytest.mark.parametrize("change", [{"customers": []}, {"customers": ["UAES", "蔚来"]}, {"preset_source_sha256": "f" * 64}, {"preset_key": "unknown"}])
+@pytest.mark.parametrize("change", [{"customers": []}, {"customers": ["UAES", "蔚来"]}, {"preset_key": "unknown"}])
 def test_untrusted_v4_source_is_rejected_before_development(change):
     with pytest.raises(DeepError, match="deep_input_invalid"):
         rule_for_file(frozen("target", **change))
 
 
-def test_changed_effective_clause_is_not_mistaken_for_certified_preset():
+def test_preset_clauses_are_identified_by_their_ids():
     item = frozen("target")
     item.rule_body["rules"][0]["rule_to_check"] = "只检查物料编号"
-    rule = rule_for_file(item)
-    assert rule.rules[0]["rule_to_check"] == "只检查物料编号"
+    assert rule_for_file(item).rules[0]["rule_to_check"] == "只检查物料编号"
+    validate_preset_body(item.rule_body)
+    item.rule_body["rules"][0]["id"] = "other"
     with pytest.raises(ValueError, match="invalid_preset_clauses"):
         validate_preset_body(item.rule_body)
 

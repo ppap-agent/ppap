@@ -56,7 +56,6 @@ def builtin_rule_input(item: RoundInput) -> RuleInput:
         rule_id=item.rule_version_id,
         rule_profile=body.get("rule_profile") or "v2",
         preset_key=body.get("preset_key"),
-        preset_source_sha256=body.get("preset_source_sha256"),
         type=body.get("type") or "",
         rules=builtin_rules,
         customers=list(body.get("customers") or []),

@@ -1,19 +1,21 @@
 """Malformed human tables must fail before any product execution."""
 
 import csv
-import hashlib
 from collections import defaultdict
 from pathlib import Path
 
 import pytest
 from corpus_contracts.oracle import EXPECTED_COLUMNS, FILE_COLUMNS, build_round, load_oracle, original
-from corpus_contracts.product_round import BLOCKING, KNOWN_GAP, MATCH, OK, SETUP_FAILURE, STATUS_MISMATCH, UNABLE, RuleVerdict, compare_file, severity
+from corpus_contracts.product_round import BLOCKING, KNOWN_GAP, MATCH, OK, SETUP_FAILURE, STATUS_MISMATCH, RuleVerdict, compare_file, severity
 
 
 def write_oracle(tmp_path, *, files=None, expected=None):
     (tmp_path / "input.xlsx").write_bytes(b"original")
     tables = {
-        "cases.csv": (FILE_COLUMNS, files if files is not None else [["v3", "group", "target", "input.xlsx", "upload.xlsx", "target", "builtin:v3:控制计划"]]),
+        "cases.csv": (
+            FILE_COLUMNS,
+            files if files is not None else [["v3", "group", "target", "input.xlsx", "upload.xlsx", "target", "builtin:v3:控制计划", "v3.control_plan_agent.ControlPlanAgent"]],
+        ),
         "oracle.csv": (EXPECTED_COLUMNS, expected if expected is not None else [["v3", "group", "target", "1", "PASS", "Rule", "Human evidence", "", "", ""]]),
     }
     for name, (headers, rows) in tables.items():
@@ -25,8 +27,8 @@ def write_oracle(tmp_path, *, files=None, expected=None):
 
 
 def test_whole_combination_keeps_reference_without_asserting_it(tmp_path):
-    target = ["v3", "group", "target", "input.xlsx", "upload.xlsx", "target", "builtin:v3:控制计划"]
-    drawing = ["v3", "group", "drawing", "input.xlsx", "drawing.xlsx", "reference", ""]
+    target = ["v3", "group", "target", "input.xlsx", "upload.xlsx", "target", "builtin:v3:控制计划", "v3.control_plan_agent.ControlPlanAgent"]
+    drawing = ["v3", "group", "drawing", "input.xlsx", "drawing.xlsx", "reference", "", ""]
     paths = write_oracle(tmp_path, files=[target, drawing])
     (case,) = load_oracle(**paths)
     assert [file.file_id for file in case.files] == ["target", "drawing"]
@@ -37,7 +39,8 @@ def test_whole_combination_keeps_reference_without_asserting_it(tmp_path):
     "change,match",
     [
         ("missing-original", "Missing original"),
-        ("missing-rule", "Missing frozen rule"),
+        ("invalid-route", "Invalid route"),
+        ("missing-group", "Invalid route"),
         ("duplicate-file", "Duplicate file"),
         ("duplicate-rule", "Duplicate expectation"),
         ("orphan-rule", "no target"),
@@ -45,17 +48,19 @@ def test_whole_combination_keeps_reference_without_asserting_it(tmp_path):
         ("unknown-status", "Invalid expectation"),
         ("zero-assertions", "zero assertions"),
         ("formula", "formulas"),
-        ("gap-without-issue", "Invalid known gap"),
+        ("gap-without-reason", "Invalid known gap"),
         ("gap-equals-truth", "Invalid known gap"),
     ],
 )
 def test_invalid_table_cannot_pass(tmp_path, change, match):
-    files = [["v3", "group", "target", "input.xlsx", "upload.xlsx", "target", "builtin:v3:控制计划"]]
+    files = [["v3", "group", "target", "input.xlsx", "upload.xlsx", "target", "builtin:v3:控制计划", "v3.control_plan_agent.ControlPlanAgent"]]
     expected = [["v3", "group", "target", "1", "PASS", "Rule", "Evidence", "", "", ""]]
     if change == "missing-original":
         files[0][3] = "missing.xlsx"
-    if change == "missing-rule":
+    if change == "invalid-route":
         files[0][6] = "missing.json"
+    if change == "missing-group":
+        files[0][7] = ""
     if change == "duplicate-file":
         files.append(files[0][:])
     if change == "duplicate-rule":
@@ -67,13 +72,13 @@ def test_invalid_table_cannot_pass(tmp_path, change, match):
     if change == "unknown-status":
         expected[0][4] = "MAYBE"
     if change == "zero-assertions":
-        files.append(["v3", "group", "other", "input.xlsx", "other.xlsx", "target", "builtin:v3:控制计划"])
+        files.append(["v3", "group", "other", "input.xlsx", "other.xlsx", "target", "builtin:v3:控制计划", "v3.control_plan_agent.ControlPlanAgent"])
     if change == "formula":
         expected[0][4] = '=IF(1,"PASS","NG")'
-    if change == "gap-without-issue":
+    if change == "gap-without-reason":
         expected[0][9] = "UNABLE"
     if change == "gap-equals-truth":
-        expected[0][9] = "PASS #1"
+        expected[0][9] = "PASS 说明"
     with pytest.raises(ValueError, match=match):
         load_oracle(**write_oracle(tmp_path, files=files, expected=expected))
 
@@ -85,10 +90,11 @@ def test_all_real_tables_bind_every_assertion_to_a_declared_rule():
         assert all(totals[file.file_id] >= len(file.expected) > 0 for file in case.files if file.role == "target")
 
 
-def test_originals_are_content_addressed():
-    for case in load_oracle():
-        for file in case.files:
-            assert file.path.stem == hashlib.sha256(file.path.read_bytes()).hexdigest()
+def test_a_case_cannot_silently_run_on_another_checker_group(tmp_path):
+    files = [["v3", "group", "target", "input.xlsx", "upload.xlsx", "target", "builtin:v3:控制计划", "v3.pfmea_agent.PfmeaAgent"]]
+    (case,) = load_oracle(**write_oracle(tmp_path, files=files))
+    with pytest.raises(ValueError, match="routed to v3.control_plan_agent.ControlPlanAgent"):
+        build_round(case)
 
 
 def test_same_document_in_pdf_and_excel_has_one_truth():
@@ -117,8 +123,9 @@ def test_original_lookup_rejects_an_unknown_name():
         (MATCH, "NG", "NG", "UNABLE", BLOCKING),
         (STATUS_MISMATCH, "NG", "PASS", "", BLOCKING),
         (STATUS_MISMATCH, "PASS", "NG", "", BLOCKING),
-        (STATUS_MISMATCH, "NG", "UNABLE", "", UNABLE),
-        (STATUS_MISMATCH, "PASS", "UNABLE", "", UNABLE),
+        (STATUS_MISMATCH, "NG", "UNABLE", "", BLOCKING),
+        (STATUS_MISMATCH, "PASS", "UNABLE", "", BLOCKING),
+        (STATUS_MISMATCH, "NG", "UNABLE", "UNABLE", KNOWN_GAP),
         (STATUS_MISMATCH, "UNABLE", "PASS", "", BLOCKING),
         (STATUS_MISMATCH, "UNABLE", "NG", "", BLOCKING),
         (STATUS_MISMATCH, "NA", "UNABLE", "", BLOCKING),

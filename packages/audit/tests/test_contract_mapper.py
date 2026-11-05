@@ -37,7 +37,6 @@ def test_runtime_rule_adapter_preserves_the_version_scope_and_normalized_profile
         "rule_id": "rule-version-four",
         "rule_profile": "v3",
         "preset_key": None,
-        "preset_source_sha256": None,
         "type": "控制计划",
         "rules": [{"id": "1", "rule_to_check": "检查工序"}],
         "appendix": appendix or [],

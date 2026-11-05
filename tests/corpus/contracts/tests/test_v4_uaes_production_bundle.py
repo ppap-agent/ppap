@@ -1,21 +1,16 @@
 """Actual frozen UAES inputs; unknown visual facts are not passing goldens."""
 
 import hashlib
-import json
-from pathlib import Path
 
 import pytest
 from audit.audits import RoundInput, RoundWork
 from audit.checkers.v4.uaes.native import NativeFacts, UaesSourceAgent
+from audit.engine.checkers.rule_declarations import freeze_target_rule_execution
+from audit.presets import preset_rule_body
 from corpus_contracts.oracle import original
 from product import run_round_from_bytes
 
-RULES = Path(__file__).resolve().parents[4] / "assets/corpus/rules/v4-uaes-2026-11-04"
-
-
-def frozen(name):
-    rule_name = "控制计划.xlsx" if name.endswith(".pdf") else name
-    return json.loads((RULES / (rule_name + ".json")).read_text())
+ENTRIES = {"PFMEA.xls": "U07", "控制计划.xlsx": "U08", "控制计划-模板3 WY.pdf": "U08", "过程流程图.xls": "U16"}
 
 
 @pytest.mark.parametrize(
@@ -30,24 +25,15 @@ def test_actual_uaes_bundle_keeps_each_file_and_its_frozen_clauses(names, monkey
     # This is native/preparation coverage. No ambient credentials or model
     # output can turn these original files into an all-PASS oracle.
     monkeypatch.setattr(UaesSourceAgent, "visual_pdf", lambda self, fields: dict.fromkeys(fields))
-    source_hashes = {
-        "PFMEA.xls": "eb65cbeff2052f2329572b53a24ed045bc0aa4f0d74283cb5822a773ad45bd78",
-        "控制计划.xlsx": "777dc22645a73dc11ce5ed5aa1b2883b32709469a4c3d9aea1df4f3ffadbf54f",
-        "过程流程图.xls": "8534b20607334cd6274a6f280eebab4f701c1b7bb6f8087216f0addd90488b33",
-        "控制计划-模板3 WY.pdf": "fc87fac089541368e46cd1c6b78a61b63c6bd9e4bacaebadcd3184e0831f2b42",
-    }
-    for name in names:
-        assert hashlib.sha256(original(name).read_bytes()).hexdigest() == source_hashes[name]
     inputs, blobs = [], {}
     expected = {}
     for name in names:
-        rule = frozen(name)
-        body = rule["rule_body"]
+        body = preset_rule_body("UAES", ENTRIES[name])
         assert body["rule_profile"] == "v4" and body["customers"] == ["UAES"]
         version = "original:" + name
         expected[version] = {clause["id"] for clause in body["rules"]}
         blobs[version] = original(name).read_bytes()
-        inputs.append(RoundInput("target", version, version, name, "ready", rule_version_id=rule["rule_version_id"], rule_body=body, rule_execution=rule["rule_execution"]))
+        inputs.append(RoundInput("target", version, version, name, "ready", rule_version_id=ENTRIES[name], rule_body=body, rule_execution=freeze_target_rule_execution(body, name)))
     result = run_round_from_bytes(RoundWork("uaes-production-bundle", "tenant", inputs), blobs)
     findings = result["findings"]
     assert len(findings) == sum(map(len, expected.values()))

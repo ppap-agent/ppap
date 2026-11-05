@@ -18,7 +18,7 @@ class LiAutoValidationPlanAgent(NativeFacts, DvpRExcelAgent):
         "试验结果有效性审核",
         "试验报告编号完整性审核",
     )
-    PRECHECK_METHODS = {"L02:1:12bdf5c15f23163a60b3": "rule_1", "L02:2:87c488de4762850210ef": "rule_2"}
+    PRECHECK_METHODS = {"L02:1": "rule_1", "L02:2": "rule_2"}
 
     def _trial_rows(self, ctx, required):
         result = []

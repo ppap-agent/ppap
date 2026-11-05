@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -31,13 +32,21 @@ def pytest_make_parametrize_id(config: Any, val: Any, argname: Any) -> Any:
     return None
 
 
+def _replay_scope(item: pytest.Item) -> str:
+    case = getattr(item, "callspec", None) and item.callspec.params.get("audit_case")
+    if case is not None:
+        return case.id
+    test_file, _, name = item.nodeid.partition("::")
+    return f"{Path(test_file).parent.name}/{Path(test_file).stem}/{name.replace('/', '_')}"
+
+
 @pytest.fixture(autouse=True)
-def model_replay(monkeypatch: pytest.MonkeyPatch):
+def model_replay(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch):
     """Every corpus test sees recorded model answers unless the run measures the live model."""
     if mode() == LIVE:
         yield None
         return
-    recorder = Recorder()
+    recorder = Recorder(_replay_scope(request.node))
     install(monkeypatch, recorder)
     _active.append(recorder)
     yield recorder

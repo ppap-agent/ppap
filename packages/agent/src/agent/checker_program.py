@@ -277,7 +277,6 @@ def checker_type_start_prefix(tenant_id: str, executor_revision: str, rule: Rule
         "type": rule.type,
         "customers": rule.customers,
         "preset_key": rule.preset_key,
-        "preset_source_sha256": rule.preset_source_sha256,
     }
     digest = hashlib.sha256(encoded(identity)).hexdigest()
     return f"deep/{tenant}/{executor_revision}/checker-type-starts/{digest}"

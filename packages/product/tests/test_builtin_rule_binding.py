@@ -29,7 +29,6 @@ def test_frozen_rule_identity_profile_and_scope_reach_the_checker_without_changi
         "rule_id": "confirmed-rules-v4",
         "rule_profile": expected,
         "preset_key": None,
-        "preset_source_sha256": None,
         "appendix": [],
         "type": "PFMEA",
         "customers": ["客户甲", "客户乙"],

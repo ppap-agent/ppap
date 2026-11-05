@@ -1,10 +1,10 @@
-"""Source clauses bind by verified meaning, never their list position."""
+"""Source clauses bind by their ID, never their list position."""
 
 import pytest
 from audit.rule_coverage import freeze_rule_execution
 
-SOURCE = {"id": "U12:2:columns-v1", "category": "必填列", "rule_to_check": "编号、特性名称和特性类别列必须存在。", "priority": "P0"}
-BINDINGS = {SOURCE["id"]: (SOURCE["rule_to_check"], "required_columns")}
+SOURCE = {"id": "U12:2", "category": "必填列", "rule_to_check": "编号、特性名称和特性类别列必须存在。", "priority": "P0"}
+BINDINGS = {SOURCE["id"]: "required_columns"}
 
 
 def test_explicit_binding_survives_clause_and_checker_reordering():
@@ -20,11 +20,11 @@ def test_explicit_binding_survives_clause_and_checker_reordering():
     assert reordered["items"][1]["coverage"] == "unsupported"
 
 
-def test_same_id_or_position_cannot_reuse_a_different_rule_meaning():
+def test_clause_text_is_display_only_and_an_unbound_id_is_not_checked():
     changed = {**SOURCE, "rule_to_check": "所有特性值必须满足公差。"}
     frozen = freeze_rule_execution({"kind": "engine", "rules": [changed]}, [("required_columns", "结构")], source_bindings=BINDINGS)
-    assert frozen["items"][0]["coverage"] == "unsupported"
-    assert "checker_method" not in frozen["items"][0]
+    assert frozen["items"][0]["checker_method"] == "required_columns"
+    assert frozen["items"][0]["rule_to_check"] == changed["rule_to_check"]
     no_binding = freeze_rule_execution({"kind": "engine", "rules": [SOURCE]}, [("required_columns", "结构")], source_bindings={})
     assert no_binding["items"][0]["coverage"] == "unsupported"
 

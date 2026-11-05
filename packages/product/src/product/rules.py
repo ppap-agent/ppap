@@ -204,19 +204,17 @@ def install_customer_presets(conn, tenant_id: str) -> None:
            ORDER BY created_at DESC, id DESC""",
         (tenant_id,),
     ).fetchall()
-    by_id = {str(row[0]): row[1] for row in existing}
-    predecessors: dict[str, str] = {}
+    latest: dict[str, tuple[str, dict]] = {}
     for identifier, body in existing:
-        predecessors.setdefault(body.get("preset_key"), str(identifier))
+        latest.setdefault(body.get("preset_key"), (str(identifier), body))
     for preset in customer_presets():
-        rule_id = str(uuid.uuid5(uuid.UUID(str(tenant_id)), f"v4:{preset.entry_id}:{preset.source_sha256}"))
         body = preset_rule_body(preset.customer, preset.entry_id)
-        if rule_id in by_id:
-            if by_id[rule_id] != body:
-                raise ValueError("preset_registration_conflict")
+        predecessor = latest.get(preset.entry_id)
+        if predecessor is not None and predecessor[1] == body:
             continue
+        rule_id = str(uuid.uuid4())
         conn.execute(
             """INSERT INTO product.rule_versions (id, tenant_id, title, body, predecessor_id, case_context)
                VALUES (%s, %s, %s, %s, %s, %s)""",
-            (rule_id, tenant_id, preset.title, Jsonb(body), predecessors.get(preset.entry_id), Jsonb({"origin": "product_preset", "source_path": preset.source_path})),
+            (rule_id, tenant_id, preset.title, Jsonb(body), predecessor[0] if predecessor else None, Jsonb({"origin": "product_preset", "source_path": preset.source_path})),
         )

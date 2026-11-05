@@ -1,17 +1,19 @@
 """Recorded answers replace model calls, and only a passing case keeps a new answer."""
 
 import asyncio
+import base64
 import json
+import struct
 
 import pytest
-from corpus_contracts.replay import LIVE, REPLAY, Recorder, install, mode, request_key
+from corpus_contracts.replay import LIVE, REPLAY, Recorder, install, mode, shown_to_model
 from documents.ocr import client as ocr_client
 
 
-def test_key_ignores_nothing_shown_to_the_model_and_is_order_stable():
-    assert request_key("ocr", {"a": 1, "b": 2}) == request_key("ocr", {"b": 2, "a": 1})
-    assert request_key("ocr", {"a": 1}) != request_key("ocr", {"a": 2})
-    assert request_key("ocr", {"a": 1}) != request_key("text", {"a": 1})
+def test_recorded_request_is_readable_and_keeps_only_the_image_size():
+    png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + struct.pack(">II", 30, 20) + b"\x08\x02" + b"\x00" * 3000
+    shown = shown_to_model({"text": "看印章", "image": "data:image/png;base64," + base64.b64encode(png).decode(), "file": "QUJD" * 2000})
+    assert shown == {"text": "看印章", "image": "<png 30x20>", "file": "<binary>"}
 
 
 def test_mode_defaults_to_replay_and_rejects_unknown(monkeypatch):
@@ -42,7 +44,7 @@ def _answering_model(monkeypatch, answer):
 def test_new_answer_is_recorded_only_when_the_case_passes_then_replayed(tmp_path, monkeypatch):
     calls = _answering_model(monkeypatch, ("completed", '{"seal": false}'))
     with pytest.MonkeyPatch.context() as patched:
-        recorder = Recorder(tmp_path, tmp_path)
+        recorder = Recorder("case", tmp_path, tmp_path)
         install(patched, recorder)
         asyncio.run(ocr_client._request_response(_ocr_kwargs()))
         asyncio.run(ocr_client._request_response(_ocr_kwargs()))
@@ -51,12 +53,13 @@ def test_new_answer_is_recorded_only_when_the_case_passes_then_replayed(tmp_path
         asyncio.run(ocr_client._request_response({**_ocr_kwargs(), "model": "other"}))
         recorder.finish(keep=True)
     assert len(calls) == 2
-    (path,) = tmp_path.iterdir()
-    assert json.loads(path.read_text())["answer"] == '{"seal": false}'
+    (entry,) = json.loads((tmp_path / "case.json").read_text())
+    assert entry["answer"] == '{"seal": false}'
+    assert entry["request"]["input"] == [{"text": "shown"}]
 
     with pytest.MonkeyPatch.context() as patched:
         calls.clear()
-        recorder = Recorder(tmp_path, tmp_path)
+        recorder = Recorder("case", tmp_path, tmp_path)
         install(patched, recorder)
         response = asyncio.run(ocr_client._request_response(_ocr_kwargs()))
         recorder.finish(keep=True)
@@ -64,10 +67,20 @@ def test_new_answer_is_recorded_only_when_the_case_passes_then_replayed(tmp_path
     assert (response.status, response.output_text) == ("completed", '{"seal": false}')
 
 
+def test_a_changed_prompt_or_crop_asks_again(tmp_path, monkeypatch):
+    calls = _answering_model(monkeypatch, ("completed", "{}"))
+    with pytest.MonkeyPatch.context() as patched:
+        recorder = Recorder("case", tmp_path, tmp_path)
+        install(patched, recorder)
+        asyncio.run(ocr_client._request_response(_ocr_kwargs()))
+        asyncio.run(ocr_client._request_response({**_ocr_kwargs(), "input": [{"text": "changed"}]}))
+    assert len(calls) == 2
+
+
 def test_incomplete_answer_is_never_recorded(tmp_path, monkeypatch):
     _answering_model(monkeypatch, ("incomplete", ""))
     with pytest.MonkeyPatch.context() as patched:
-        recorder = Recorder(tmp_path, tmp_path)
+        recorder = Recorder("case", tmp_path, tmp_path)
         install(patched, recorder)
         asyncio.run(ocr_client._request_response(_ocr_kwargs()))
         recorder.finish(keep=True)
@@ -79,9 +92,9 @@ def test_new_answers_can_go_to_a_separate_output(tmp_path, monkeypatch):
     recordings, output = tmp_path / "recordings", tmp_path / "out"
     recordings.mkdir()
     with pytest.MonkeyPatch.context() as patched:
-        recorder = Recorder(recordings, output)
+        recorder = Recorder("case", recordings, output)
         install(patched, recorder)
         asyncio.run(ocr_client._request_response(_ocr_kwargs()))
         recorder.finish(keep=True)
     assert list(recordings.iterdir()) == []
-    assert len(list(output.iterdir())) == 1
+    assert (output / "case.json").is_file()

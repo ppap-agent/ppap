@@ -13,7 +13,7 @@ _ALIASES = {
 
 
 class UaesSpecialCharacteristicsAgent(UaesSourceAgent):
-    PRECHECK_METHODS = {"U12:1:597036a69da0f50a6e30": "rule_1", "U12:2:c399171334f03523c845": "rule_2"}
+    PRECHECK_METHODS = {"U12:1": "rule_1", "U12:2": "rule_2"}
 
     def identity(self, name):
         facts = self.native()

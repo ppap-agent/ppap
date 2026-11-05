@@ -364,7 +364,7 @@ jobs:
             python3 -m scripts.ci_heartbeat --timeout 1800 -- \
               uv run --no-sync pytest ${{ matrix.args }} --durations=25 -vv -o faulthandler_timeout=120 --junitxml=ci-report/junit.xml
           fi
-      - name: Report oracle coverage and UNABLE rate
+      - name: Report oracle coverage and outcomes
         working-directory: ${{ github.workspace }}
         if: ${{ always() && matrix.mode == 'pytest' }}
         run: uv run --no-sync python -m scripts.corpus_report --results ci-report/rules --output ci-report/corpus-report.md
@@ -395,10 +395,11 @@ jobs:
             -f tests/corpus/Dockerfile.psw \
             -t "ppap-psw-test:${PPAP_BUILD_SHA}" \
             .
-          mkdir -p ci-report
+          mkdir -p ci-report assets/corpus/replay
           python3 -m scripts.ci_heartbeat --timeout 1800 -- docker run --rm \
             -v "$PWD/ci-report:/ci-report" \
-            -e PPAP_CORPUS_MODEL=live \
+            -v "$PWD/assets/corpus/replay:/app/assets/corpus/replay:ro" \
+            -e PPAP_CORPUS_REPLAY_OUT=/ci-report/replay \
             -e OPENAI_API_KEY \
             -e OPENAI_BASE_URL \
             -e MODEL_NAME \

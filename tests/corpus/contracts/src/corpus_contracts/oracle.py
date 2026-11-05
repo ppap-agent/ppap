@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import csv
-import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from audit.audits import RoundInput, RoundWork
+from audit.engine.checkers.rule_declarations import freeze_target_rule_execution
+from audit.engine.routing import resolve_engine_agent_class
+from audit.kinds import PpapDocumentType
+from audit.presets import preset_document_type, preset_rule, preset_rule_body
 
 from corpus_contracts.product_round import engine_rule_body
 
@@ -16,11 +19,12 @@ REPO_ROOT = Path(__file__).resolve().parents[5]
 CASES_PATH = REPO_ROOT / "assets/corpus/cases.csv"
 ORACLE_PATH = REPO_ROOT / "assets/corpus/oracle.csv"
 DATASETS = ("v2", "v3", "v4-uaes")
-FILE_COLUMNS = ("数据集", "组合ID", "文件ID", "原件", "提交文件名", "角色", "规则引用")
+FILE_COLUMNS = ("数据集", "组合ID", "文件ID", "原件", "提交文件名", "角色", "路由", "Checker组")
 EXPECTED_COLUMNS = ("数据集", "组合ID", "文件ID", "条款ID", "人工真值", "条款说明", "人工判定依据", "判定人", "判定日期", "已知差距")
 TRUTHS = frozenset({"PASS", "NG", "UNABLE", "NA"})
-# What the product still does differently from the truth, and the Issue that owns it.
-_KNOWN_GAP = re.compile(r"^(PASS|NG|UNABLE|NA|ERR) #[0-9]+$")
+# What the product still does differently from the truth, and why.
+_KNOWN_GAP = re.compile(r"^(PASS|NG|UNABLE|NA|ERR) \S.*$")
+_ROUTE = re.compile(r"^(builtin:v[23]:|preset:[^:]+:)[^:]+$")
 
 
 @dataclass(frozen=True)
@@ -41,18 +45,22 @@ class OracleFile:
     path: Path
     filename: str
     role: str
-    rule_ref: str
+    route: str
+    checker_group: str
     expected: dict[str, Expectation]
 
-    def rules(self, root: Path = REPO_ROOT) -> tuple[dict, dict | None, str]:
-        if self.rule_ref.startswith("builtin:"):
-            _, profile, doc_type = self.rule_ref.split(":", 2)
-            if profile not in {"v2", "v3"}:
-                raise ValueError(f"Unsupported builtin profile: {profile}")
-            body, execution = engine_rule_body(doc_type, self.filename, profile)
-            return body, execution, self.rule_ref
-        frozen = json.loads((root / self.rule_ref).read_text())
-        return frozen["rule_body"], frozen["rule_execution"], frozen["rule_version_id"]
+    def rule_body(self) -> dict:
+        kind, first, second = self.route.split(":", 2)
+        return preset_rule_body(first, second) if kind == "preset" else engine_rule_body(second, self.filename, first)[0]
+
+    def resolved_checker_group(self) -> str:
+        kind, first, second = self.route.split(":", 2)
+        if kind == "preset":
+            preset = preset_rule(first, second)
+            agent = resolve_engine_agent_class(PpapDocumentType.from_string(preset_document_type(preset)), self.filename, "v4", preset_key=second, preset_customer=first)
+        else:
+            agent = resolve_engine_agent_class(PpapDocumentType.from_string(second), self.filename, first)
+        return f"{agent.__module__.removeprefix('audit.checkers.')}.{agent.__name__}" if agent else ""
 
 
 @dataclass(frozen=True)
@@ -95,7 +103,7 @@ def load_oracle(dataset: str | None = None, *, cases: Path = CASES_PATH, oracle:
     names: set[tuple[str, str, str]] = set()
     for row in files:
         key = (row["数据集"], row["组合ID"], row["文件ID"])
-        if not all(row[column] for column in FILE_COLUMNS if column != "规则引用"):
+        if not all(row[column] for column in FILE_COLUMNS if column not in {"路由", "Checker组"}):
             raise ValueError(f"Incomplete file row: {key}")
         if key in indexed or (key[0], key[1], row["提交文件名"]) in names:
             raise ValueError(f"Duplicate file: {key}")
@@ -103,11 +111,8 @@ def load_oracle(dataset: str | None = None, *, cases: Path = CASES_PATH, oracle:
             raise ValueError(f"Invalid file role: {key}")
         if not (root / row["原件"]).is_file():
             raise ValueError(f"Missing original: {row['原件']}")
-        ref = row["规则引用"]
-        if row["角色"] == "target" and not ref:
-            raise ValueError(f"Missing rule reference: {key}")
-        if ref and not ref.startswith("builtin:") and not (root / ref).is_file():
-            raise ValueError(f"Missing frozen rule: {ref}")
+        if row["角色"] == "target" and (not row["Checker组"] or _ROUTE.fullmatch(row["路由"]) is None):
+            raise ValueError(f"Invalid route: {key}")
         indexed[key] = row
         expectations[key] = {}
         names.add((key[0], key[1], row["提交文件名"]))
@@ -127,7 +132,7 @@ def load_oracle(dataset: str | None = None, *, cases: Path = CASES_PATH, oracle:
     for key, row in indexed.items():
         if row["角色"] == "target" and not expectations[key]:
             raise ValueError(f"Target has zero assertions: {key}")
-        groups.setdefault(key[:2], []).append(OracleFile(key[2], root / row["原件"], row["提交文件名"], row["角色"], row["规则引用"], expectations[key]))
+        groups.setdefault(key[:2], []).append(OracleFile(key[2], root / row["原件"], row["提交文件名"], row["角色"], row["路由"], row["Checker组"], expectations[key]))
     if any(not any(file.role == "target" for file in group) for group in groups.values()):
         raise ValueError("Oracle case has no targets")
     return [OracleCase(key[0], key[1], tuple(items)) for key, items in groups.items() if dataset is None or key[0] == dataset]
@@ -141,14 +146,19 @@ def original(filename: str, *, cases: Path = CASES_PATH, root: Path = REPO_ROOT)
     return root / paths.pop()
 
 
-def build_round(case: OracleCase, *, root: Path = REPO_ROOT) -> tuple[RoundWork, dict[str, bytes], dict[str, int]]:
+def build_round(case: OracleCase) -> tuple[RoundWork, dict[str, bytes], dict[str, int]]:
     inputs, blobs, totals = [], {}, {}
     for file in case.files:
-        body, execution, version = file.rules(root) if file.rule_ref else ({}, None, "")
-        ids = [str(rule["id"]) for rule in body.get("rules", [])]
-        if len(ids) != len(set(ids)) or set(file.expected) - set(ids):
-            raise ValueError(f"{case.id}/{file.file_id}: duplicate or missing declared rule IDs")
-        totals[file.file_id] = len(ids)
-        inputs.append(RoundInput(file.role, file.file_id, file.file_id, file.filename, "ready", rule_version_id=version or None, rule_body=body or None, rule_execution=execution))
+        body, execution = None, None
+        if file.role == "target":
+            if file.resolved_checker_group() != file.checker_group:
+                raise ValueError(f"{case.id}/{file.file_id}: routed to {file.resolved_checker_group()}, not {file.checker_group}")
+            body = file.rule_body()
+            execution = freeze_target_rule_execution(body, file.filename)
+            ids = [str(rule["id"]) for rule in body["rules"]]
+            if len(ids) != len(set(ids)) or set(file.expected) - set(ids):
+                raise ValueError(f"{case.id}/{file.file_id}: duplicate or missing declared rule IDs")
+            totals[file.file_id] = len(ids)
+        inputs.append(RoundInput(file.role, file.file_id, file.file_id, file.filename, "ready", rule_version_id=file.route or None, rule_body=body, rule_execution=execution))
         blobs[file.file_id] = file.path.read_bytes()
     return RoundWork(case.id, "corpus", inputs), blobs, totals

@@ -9,7 +9,7 @@ from .facts import NativeFacts, compact
 
 class LiAutoMsaAgent(NativeFacts, MsaReportAgent):
     EXPECTED_RULE_CATEGORIES = ("任务项字段识别与状态审核", "测量系统分析计划表完整性审核", "量具重复性和再现性样本数量审核", "量具重复性和再现性结论判定审核")
-    PRECHECK_METHODS = {"L05:2:6fabfa226deb7b2b0ff2": "rule_2"}
+    PRECHECK_METHODS = {"L05:2": "rule_2"}
 
     @rule("测量系统分析计划表完整性审核")
     def rule_2(self, ctx):

@@ -11,7 +11,7 @@
 
 检查写入 `checker.py`，并提供 `create_audit(audit_file, rule, group_context=None)`。它返回带 `checks` 的审核对象；持有需要释放的资源时实现 `close()`。需要本次文件自己的资源时，再写 `resources.py`。
 
-完整 `RuleInput` 保留客户、车型、零件、预置来源、条款和已确认附录。V4 的 `reference-bindings.json` 是原条款 ID → `[原文, 方法名]`；先比较本次正文和附录再复用方法，相同 ID 不能证明语义仍相同。`group_context` 包含本组全部文件，其他 `target` 也可作为关联资料；仅为当前目标执行本次条款，并按文件版本记录来源。规则中的客户适用范围不是文件中已经读到的客户身份。
+完整 `RuleInput` 保留客户、车型、零件、预置来源、条款和已确认附录。V4 的 `reference-bindings.json` 是原条款 ID → 方法名；先比较本次正文和附录再复用方法，相同 ID 不能证明语义仍相同。`group_context` 包含本组全部文件，其他 `target` 也可作为关联资料；仅为当前目标执行本次条款，并按文件版本记录来源。规则中的客户适用范围不是文件中已经读到的客户身份。
 
 ## 判断
 

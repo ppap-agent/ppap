@@ -16,13 +16,13 @@ def map_rule_items(
     items: Sequence[dict[str, Any]],
     declarations: Sequence[tuple[str, str]],
     *,
-    source_bindings: Mapping[str, tuple[str, str]] | None = None,
+    source_bindings: Mapping[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Keep user text and order; do not adjudicate the rule's business meaning."""
     mapped: list[dict[str, Any]] = []
     reason = REASON_UNSUPPORTED if not declarations else REASON_MANUAL_ONLY
     methods = {name: (index, description) for index, (name, description) in enumerate(declarations)}
-    if source_bindings is not None and (len(methods) != len(declarations) or any(method not in methods for _text, method in source_bindings.values())):
+    if source_bindings is not None and (len(methods) != len(declarations) or any(method not in methods for method in source_bindings.values())):
         raise ValueError("invalid_source_binding")
     seen = set()
     for position, raw in enumerate(items):
@@ -38,12 +38,11 @@ def map_rule_items(
             if item["id"] in seen:
                 raise ValueError("duplicate_rule_id")
             seen.add(item["id"])
-            binding = source_bindings.get(item["id"])
-            if binding is None or binding[0] != item["rule_to_check"]:
+            method = source_bindings.get(item["id"])
+            if method is None:
                 item.update(coverage=COVERAGE_UNSUPPORTED, reason=reason)
                 mapped.append(item)
                 continue
-            method = binding[1]
             position, description = methods[method]
         elif position < len(declarations):
             method, description = declarations[position]
@@ -65,7 +64,7 @@ def freeze_rule_execution(
     rule_body: dict[str, Any] | None,
     declarations: Iterable[tuple[str, str]] | None = None,
     *,
-    source_bindings: Mapping[str, tuple[str, str]] | None = None,
+    source_bindings: Mapping[str, str] | None = None,
 ) -> dict[str, Any] | None:
     if not rule_body or rule_body.get("kind") == "presence":
         return None

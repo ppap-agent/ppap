@@ -127,9 +127,9 @@ def load_poc_cases(bundle: str | None = None, seq_set: set[str] | None = None) -
         if bundle and group.case_id != bundle:
             continue
         for file in group.files:
-            _, profile, type_name = file.rule_ref.split(":", 2)
+            _, profile, type_name = file.route.split(":", 2)
             if profile != "v3":
-                raise ValueError(f"Not a V3 rule: {file.rule_ref}")
+                raise ValueError(f"Not a V3 rule: {file.route}")
             seq = by_type[type_name]
             if seq_set and seq not in seq_set:
                 continue

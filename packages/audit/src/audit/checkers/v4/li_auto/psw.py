@@ -28,7 +28,7 @@ class LiAutoPswAgent(NativeFacts, PswExcelAgent):
         "条件批准日期时效检查",
         "条件批准补充评论检查",
     )
-    PRECHECK_METHODS = {"L17:6:c9ac5fd9716f43cdb8ff": "rule_6"}
+    PRECHECK_METHODS = {"L17:6": "rule_6"}
 
     def _finalize_audit_result(self, result, *, rule_no, phase, ctx=None):
         finalized = super()._finalize_audit_result(result, rule_no=rule_no, phase=phase, ctx=ctx)

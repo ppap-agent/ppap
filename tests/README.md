@@ -80,12 +80,15 @@ docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 
 ## Corpus
 
-`assets/corpus/` 只保存四类内容：
+`assets/corpus/` 只保存三类内容：
 
-- `files/<sha256>.<ext>`：原件，按内容寻址，不可变。
-- `cases.csv`：一次提交包含的文件。列为数据集、组合ID、文件ID、原件、提交文件名、角色、规则引用。角色为 target 或 reference；规则引用为 `builtin:v2:<类型>`、`builtin:v3:<类型>` 或 `assets/corpus/rules/` 下的冻结规则。
-- `oracle.csv`：人工结论。列为数据集、组合ID、文件ID、条款ID、人工真值、条款说明、人工判定依据、判定人、判定日期、已知差距。人工真值须来自原件和规则，不能复制程序输出。
-- `replay/<请求哈希>.json`：录制的模型回答。
+- `documents/<数据集>/…`：原件，用提交时的文件名。
+- `cases.csv`：一次提交包含的文件。列为数据集、组合ID、文件ID、原件、提交文件名、角色、路由、Checker组。路由是 `builtin:v2:<类型>`、`builtin:v3:<类型>` 或 `preset:<客户>:<条目>`；Checker组是期望实际运行的类，路由结果不一致时用例在执行前失败。一组 checker 共享一个文件类型的布局读取，是开发和升级的单位。
+- `oracle.csv`：人工结论。列为数据集、组合ID、文件ID、条款ID、人工真值、条款说明、人工判定依据、判定人、判定日期、已知差距。
+
+规则原文和人工结果是开发 checker 的依据；产品里的规则文本只用于展示，测试和运行时都不比对正文。
+
+`replay/<组合>.json` 是录制的模型回答，记录模型看到的文字、图片尺寸和回答，可以直接阅读。
 
 两份 CSV 是带 BOM 的 UTF-8，可用 Excel 打开，改动在 PR 中逐行可审。缺原件、重复行、公式、未知取值都在执行前报错。
 
@@ -93,31 +96,24 @@ docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 
 ### 结果判定
 
-| 人工真值 | 产品结果 | 处理 |
-|---|---|---|
-| PASS / NG | 相同 | 通过 |
-| PASS / NG | 相反 | 阻断 |
-| PASS / NG | UNABLE | 不算错，计入 UNABLE 率，单个数据集超过 5% 时阻断 |
-| UNABLE | PASS / NG | 阻断 |
-| 任意 | ERR、缺失 | 阻断 |
+产品结果必须等于人工真值，没有比例容错：`UNABLE`、相反结论、ERR 和缺失都阻断。
 
-产品暂时做不到的结论不改人工真值，写进“已知差距”，格式为 `<产品结果> #<Issue>`，例如 `UNABLE #123`。产品修好后这一列会让用例失败，提醒删除。
+产品暂时做不到的结论不改人工真值，写进“已知差距”，格式为 `<产品结果> <原因>`，例如 `UNABLE .xls 原件尚不能走视觉读取`。产品修好后这一列会让用例失败，提醒删除。
 
 ### 模型回答
 
-默认回放：请求按模型看到的内容（文字、图片、输出格式）哈希。命中就不调模型；未命中才真实调用，用例通过后记录回答。用例失败或得到 UNABLE 时不记录，下次重新询问。回放验证取证和判定逻辑，不验证模型能力。
+默认回放：模型看到的文字和图片尺寸与录制一致就不调模型；否则真实调用，用例通过后记录回答。用例失败时不记录，下次重新询问。回放验证取证和判定逻辑，不验证模型能力；图片尺寸不变、内容变化时不会重新询问，这部分由每晚评测兜底。
 
 CI 把新回答放进任务产物的 `replay/`。下载后提交，之后的运行就不再调用这些请求：
 
 ```sh
 gh run download <run-id> --pattern 'corpus-*' --dir /tmp/corpus-replay
-mkdir -p assets/corpus/replay
-cp /tmp/corpus-replay/*/replay/*.json assets/corpus/replay/
+for dir in /tmp/corpus-replay/*/replay; do cp -R "$dir"/. assets/corpus/replay/; done
 ```
 
-录制的回答错了就删除对应文件，失败信息会列出用例用到的哈希。LibreOffice 渲染的图片因平台而异，本地和 CI 的 Excel 视觉请求哈希可能不同，所以提交 CI 产生的录制，不提交本地录制。
+录制的回答错了就编辑或删除失败信息列出的文件。
 
-[`corpus-eval`](../.github/workflows/corpus-eval.yml) 每晚用 `PPAP_CORPUS_MODEL=live` 真实跑多轮：错误 PASS 必须为 0，错误结果不超过 2%，UNABLE 不超过 5%，并列出同一文件答案不一致的条款。提示词、裁图或模型变更后可手动触发。
+[`corpus-eval`](../.github/workflows/corpus-eval.yml) 每晚用 `PPAP_CORPUS_MODEL=live` 真实跑多轮，判定标准相同，并单独统计 UNABLE、错误 PASS 和同一文件答案不一致的条款。提示词、裁图或模型变更后可手动触发。
 
 `python -m scripts.corpus_report` 从 oracle 计算覆盖矩阵和缺 PASS 或 NG 样本的条款；加 `--results` 再汇总运行结果。
 

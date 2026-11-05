@@ -13,7 +13,7 @@ from .native import MissingFact, UaesSourceAgent, UnknownFact
 
 
 class UaesPackagingAgent(UaesSourceAgent):
-    PRECHECK_METHODS = {"U09:1:d4a3aece8ee5d551fa27": "rule_1"}
+    PRECHECK_METHODS = {"U09:1": "rule_1"}
 
     @rule("包装方案标题与六个内容块")
     def rule_1(self):
@@ -31,7 +31,7 @@ class UaesControlledDocumentAgent(UaesSourceAgent):
 
 
 class UaesEngineeringHistoryAgent(UaesSourceAgent):
-    PRECHECK_METHODS = {"U11:1:cf088001602b522ab78a": "rule_1"}
+    PRECHECK_METHODS = {"U11:1": "rule_1"}
 
     @rule("工程更改一览表及五类字段")
     def rule_1(self):
@@ -55,7 +55,7 @@ class UaesEngineeringHistoryAgent(UaesSourceAgent):
 
 
 class UaesTraceabilityAgent(UaesSourceAgent):
-    PRECHECK_METHODS = {"U18:1:67b6f6fe04be4c627598": "rule_1"}
+    PRECHECK_METHODS = {"U18:1": "rule_1"}
 
     @rule("供应商零件追溯五个区域须有实际内容")
     def rule_1(self):
@@ -132,7 +132,7 @@ class UaesMeasurementComparisonAgent(UaesSourceAgent):
 
 
 class UaesPhotoAgent(UaesSourceAgent):
-    PRECHECK_METHODS = {"U13:1:bc1f288c8f9d34fe2d17": "rule_1"}
+    PRECHECK_METHODS = {"U13:1": "rule_1"}
 
     SUPPORTED_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".pdf"})
 

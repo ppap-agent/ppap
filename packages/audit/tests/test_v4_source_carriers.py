@@ -29,7 +29,7 @@ def test_source_e_type_reaches_the_existing_resolver_without_changing_the_old_en
     assert PpapDocumentType.from_string(rule.type) is PpapDocumentType.UNKNOWN
 
 
-@pytest.mark.parametrize("change", [{"preset_source_sha256": "wrong"}, {"type": "unregistered"}, {"customers": ["理想"]}])
+@pytest.mark.parametrize("change", [{"type": "unregistered"}, {"customers": ["理想"]}])
 def test_wrong_source_identity_cannot_authorize_an_image_carrier(monkeypatch, change):
     def forbidden(*args, **kwargs):
         raise AssertionError("Invalid source must not reach a Checker")

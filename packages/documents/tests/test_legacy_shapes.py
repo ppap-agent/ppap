@@ -4,8 +4,7 @@ from pathlib import Path
 
 from documents.excel.legacy_shapes import option_boxes
 
-# 控制计划 -CETUS.xls, content-addressed in the corpus.
-CETUS_XLS = Path(__file__).resolve().parents[3] / "assets" / "corpus" / "files" / "09ea288088c0028eb96f422b04b62d867dca37c6778ff9518766e4df46809620.xls"
+CETUS_XLS = Path(__file__).resolve().parents[3] / "assets" / "corpus" / "documents" / "v3" / "Cetus Spoiler-有特殊特性清单" / "控制计划 -CETUS.xls"
 
 
 def test_overpainted_box_shows_its_top_shape_and_only_the_last_option_is_filled():

@@ -7,11 +7,9 @@ claims that an extracted clause is implemented. Run --check in Corpus tests.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
-import re
-import unicodedata
 import xml.etree.ElementTree as ET
+from collections import Counter
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -75,12 +73,14 @@ def cell_text(cell: ET.Element) -> str:
     return "\n".join("".join(node.text or "" for node in paragraph.findall(".//w:t", NS)) for paragraph in cell.findall("w:p", NS)).strip()
 
 
-def clause_id(entry: str, number: str, category: str, text: str) -> str:
-    # Text identity survives reordered rows and duplicate source numbers. Any
-    # semantic source change requires a new explicit binding, not a positional PASS.
-    meaning = unicodedata.normalize("NFKC", category + "\n" + text)
-    digest = hashlib.sha256(re.sub(r"\s+", " ", meaning).strip().encode()).hexdigest()[:20]
-    return f"{entry}:{number}:{digest}"
+def assign_clause_ids(entry: str, clauses: list[dict]) -> None:
+    # The source number names a clause; a number used by several rows gets its row order.
+    uses = Counter(clause["source_number"] for clause in clauses)
+    seen: Counter[str] = Counter()
+    for clause in clauses:
+        number = clause["source_number"]
+        seen[number] += 1
+        clause["id"] = f"{entry}:{number}" if uses[number] == 1 else f"{entry}:{number}-{seen[number]}"
 
 
 def compile_presets() -> str:
@@ -92,7 +92,6 @@ def compile_presets() -> str:
             entry = f"{prefix}{index:02d}"
             path = SOURCES / customer / filename
             expected_files.add(path)
-            content = path.read_bytes()
             with ZipFile(path) as archive:
                 document = ET.fromstring(archive.read("word/document.xml"))
             clauses = []
@@ -111,9 +110,10 @@ def compile_presets() -> str:
                     text = cells[description_column]
                     if not text:
                         raise ValueError(f"Empty rule text: {path.name}:{row_index}")
-                    clauses.append({"id": clause_id(entry, number, category, text), "source_number": number, "category": category, "text": text, "locator": f"table:{table_index}/row:{row_index}"})
-            if not clauses or len({clause["id"] for clause in clauses}) != len(clauses):
-                raise ValueError(f"Empty or duplicate clauses: {path.name}")
+                    clauses.append({"id": "", "source_number": number, "category": category, "text": text, "locator": f"table:{table_index}/row:{row_index}"})
+            if not clauses:
+                raise ValueError(f"Empty clauses: {path.name}")
+            assign_clause_ids(entry, clauses)
             result.append(
                 {
                     "customer": customer,
@@ -122,7 +122,6 @@ def compile_presets() -> str:
                     "level": "L1" if index <= (3 if customer == "蔚来" else 8) else "L2",
                     "title": path.stem,
                     "source_path": str(path.relative_to(ROOT)),
-                    "source_sha256": hashlib.sha256(content).hexdigest(),
                     "clauses": clauses,
                 }
             )

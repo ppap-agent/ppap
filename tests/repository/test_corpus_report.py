@@ -2,7 +2,7 @@
 
 from collections import Counter
 
-from corpus_contracts.product_round import BLOCKING, OK, UNABLE
+from corpus_contracts.product_round import BLOCKING, KNOWN_GAP, OK
 
 from scripts.corpus_report import coverage, coverage_gaps, main, summarize, unstable_rules, violations
 
@@ -16,20 +16,17 @@ def test_clause_without_a_failing_sample_is_a_gap():
     assert coverage_gaps(matrix) == [("v2", "控制计划", "1", "NG")]
 
 
-def test_unable_rate_over_the_limit_fails_any_run():
-    rows = [_row("NG", "NG", OK)] * 9 + [_row("NG", "UNABLE", UNABLE)]
-    assert violations(summarize(rows), live=False)
-    assert not violations(summarize([_row("NG", "NG", OK)] * 20 + [_row("NG", "UNABLE", UNABLE)]), live=False)
+def test_any_difference_from_the_truth_fails_the_run():
+    assert violations(summarize([_row("NG", "NG", OK)] * 999 + [_row("NG", "UNABLE", BLOCKING)]))
+    assert not violations(summarize([_row("NG", "NG", OK), _row("NG", "UNABLE", KNOWN_GAP)]))
 
 
-def test_false_pass_fails_live_at_any_rate():
-    rows = [_row("NG", "NG", OK)] * 999 + [_row("NG", "PASS", BLOCKING)]
-    assert summarize(rows)["v2"]["false_pass"] == 1
-    assert violations(summarize(rows), live=True)
+def test_false_pass_is_counted_apart():
+    assert summarize([_row("NG", "PASS", BLOCKING), _row("PASS", "NG", BLOCKING)])["v2"]["false_pass"] == 1
 
 
 def test_live_rounds_with_different_answers_are_listed():
-    assert unstable_rules([_row("NG", "NG", OK), _row("NG", "UNABLE", UNABLE), _row("PASS", "PASS", OK, rule="2")]) == [("v2", "c", "f.pdf", "1", {"NG": 1, "UNABLE": 1})]
+    assert unstable_rules([_row("NG", "NG", OK), _row("NG", "UNABLE", BLOCKING), _row("PASS", "PASS", OK, rule="2")]) == [("v2", "c", "f.pdf", "1", {"NG": 1, "UNABLE": 1})]
 
 
 def test_empty_results_directory_cannot_pass(tmp_path):

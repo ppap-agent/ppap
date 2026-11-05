@@ -22,7 +22,7 @@ _RESOURCE = replace(_BASE, columns=MappingProxyType(_COLUMNS))
 
 class LiAutoAnnualTestsAgent(NativeFacts, AnnualTestRequirementsAgent):
     EXPECTED_RULE_CATEGORIES = ("质量等级字段识别", "试验项目与测试频率一致性", "供应商名称格式审核", "样本数量列及内容识别", "试验要求栏完整性审核", "车型字段存在性及内容审核")
-    PRECHECK_METHODS = {"L16:5:c605c183cd0072b18d1f": "rule_5", "L16:6:6de176019f93a8723bd3": "rule_6"}
+    PRECHECK_METHODS = {"L16:5": "rule_5", "L16:6": "rule_6"}
 
     def __init__(self, audit_file, rule_input, group_context=None):
         super().__init__(audit_file, rule_input, group_context=group_context, resource=_RESOURCE)

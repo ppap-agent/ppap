@@ -15,7 +15,6 @@ class RuleInput(BaseModel):
     rule_id: str
     rule_profile: str = "v2"
     preset_key: Optional[str] = None
-    preset_source_sha256: Optional[str] = None
     type: Optional[str] = None
     rules: List[Dict[str, Any]] = Field(default_factory=list)
     appendix: List[Dict[str, Any]] = Field(default_factory=list)

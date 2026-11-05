@@ -15,7 +15,7 @@ _COLUMNS = ("一级分总成零件名称", "分总成组件或分序模具名称
 
 class LiAutoToolingAgent(NativeFacts, ToolingApprovalAgent):
     EXPECTED_RULE_CATEGORIES = ("零件供应商名称与提交日期字段检查", "关键列完整性与内容非空检查", "模具设计尺寸格式检查", "实物照片列检查", "编制与审核字段检查", "实物确认列内容检查")
-    PRECHECK_METHODS = {"L10:1:4e8e945601812ae4b33b": "rule_1", "L10:2:fd6961d07be220cb241c": "rule_2", "L10:5:d947b1eed353bd878313": "rule_5"}
+    PRECHECK_METHODS = {"L10:1": "rule_1", "L10:2": "rule_2", "L10:5": "rule_5"}
 
     @rule("关键列完整性与内容非空检查")
     def rule_2(self, ctx):

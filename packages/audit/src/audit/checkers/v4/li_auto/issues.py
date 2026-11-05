@@ -11,7 +11,7 @@ from .facts import NativeFacts, data_rows, precheck_fact
 
 class LiAutoIssuesAgent(NativeFacts, XirAssemblyIssueAgent):
     EXPECTED_RULE_CATEGORIES = ("基础字段完整性审核", "问题关闭状态与描述关联审核", "整改措施要素完整性及时间有效性审核", "风险分类标识审核")
-    PRECHECK_METHODS = {"L15:1:9663b311448fb23b5a82": "rule_1"}
+    PRECHECK_METHODS = {"L15:1": "rule_1"}
 
     @rule("整改措施要素完整性及时间有效性审核")
     def rule_3(self, ctx):

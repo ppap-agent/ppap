@@ -9,7 +9,7 @@ from .facts import NativeFacts, data_rows
 
 class LiAutoMaterialsAgent(NativeFacts, SubSupplierListExcelAgent):
     EXPECTED_RULE_CATEGORIES = ("单件重量列及精度审核", "材料信息列完整性及非空审核", "部件状态列存在性及互斥性审核", "PPAP完成状态逻辑一致性审核")
-    PRECHECK_METHODS = {"L04:2:0ec0cf78b5785b5f2f28": "rule_2"}
+    PRECHECK_METHODS = {"L04:2": "rule_2"}
 
     @rule("部件状态列存在性及互斥性审核")
     def rule_3(self, ctx):

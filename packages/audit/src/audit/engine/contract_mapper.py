@@ -30,7 +30,6 @@ def to_rule_input(value: Any) -> RuleInput:
         rule_id=str(getattr(value, "rule_id", "")),
         rule_profile=normalize_rule_profile(getattr(value, "rule_profile", "v2")),
         preset_key=getattr(value, "preset_key", None),
-        preset_source_sha256=getattr(value, "preset_source_sha256", None),
         type=str(getattr(value, "type", "") or ""),
         rules=list(getattr(value, "rules", []) or []),
         appendix=list(getattr(value, "appendix", []) or []),

@@ -12,7 +12,7 @@ from .facts import NativeFacts, columns_present, compact, precheck_fact
 
 class LiAutoProcessFlowAgent(NativeFacts):
     EXPECTED_RULE_CATEGORIES = ("表头八项完整且非空", "第一特性类别及产品特性", "第二特性类别及过程特性", "工序名称与操作描述检查", "工序定义完整性检查", "工序图例之间存在真实连线")
-    PRECHECK_METHODS = {"L11:1:8b5696288e17e73fafb3": "rule_1", "L11:4:2b4112e6303b5d99b69a": "rule_4"}
+    PRECHECK_METHODS = {"L11:1": "rule_1", "L11:4": "rule_4"}
     DOC_TYPE = PpapDocumentType.PROCESS_FLOW_CHART
     rule_4 = LegacyFlow.rule_4
     rule_5 = LegacyFlow.rule_5

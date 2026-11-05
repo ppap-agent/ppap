@@ -3,22 +3,31 @@
 from audit.checkers.v3.excel_agent import rule
 from audit.engine.checkers.date_utils import normalize_excel_date
 
-from .native import UaesSourceAgent, UnknownFact, blank, key
+from .native import UaesSourceAgent, UnknownFact, any_row, blank, key
 
-_OP = ("工序名称", "操作描述", "工序名称/操作描述")
+_OP = ("工序名称", "操作描述", "工序名称/操作描述", "过程名称/操作描述")
 _CHAR = ("产品/过程规格/公差", "产品特性", "过程特性", "特性名称", "产品", "过程")
 
 
 class UaesControlPlanAgent(UaesSourceAgent):
-    def rows(self, extra=None):
-        return self.native().rows({"operation": _OP, **(extra or {})}, title=("控制计划", "control plan"), anchor=("operation",))
+    def rows(self, extra=None, *, defer_unknown=False):
+        return self.native().rows({"operation": _OP, **(extra or {})}, title=("控制计划", "control plan"), anchor=("operation",), defer_unknown=defer_unknown)
 
     @rule("全部工序生产资源")
     def rule_1(self):
-        rows = self.rows({"resources": ("机器装置夹具工装", "机器/装置/夹具/工装", "生产资源", "机器设备工装")})
-        for row in rows:
+        rows = self.rows({"resources": ("机器装置夹具工装", "机器/装置/夹具/工装", "生产资源", "机器设备工装", "生产设备")}, defer_unknown=True)
+        unresourced = []
+
+        def lacks_resources(row):
+            # Reading the operation first keeps a row of unknown scope undecided.
+            operation = row["operation"]
             if blank(row["resources"]):
-                return "NG", "控制计划存在未说明生产资源的工序：" + str(row["operation"])
+                unresourced.append(operation)
+                return True
+            return False
+
+        if any_row(rows, lacks_resources):
+            return "NG", "控制计划存在未说明生产资源的工序：" + str(unresourced[0])
         return "PASS", "全部工序的对应生产资源已读取。"
 
     @rule("生产追溯及先进先出实际措施")
@@ -37,8 +46,8 @@ class UaesControlPlanAgent(UaesSourceAgent):
 
     @rule("特性类型列实际特性标记")
     def rule_4(self):
-        rows = self.rows({"mark": ("特性类型", "特殊特性")})
-        if not any(not blank(row["mark"]) for row in rows):
+        rows = self.rows({"mark": ("特性类型", "特殊特性", "特殊/特性/分类")}, defer_unknown=True)
+        if not any_row(rows, lambda row: not blank(row["mark"])):
             return "NG", "控制计划特性类型/特殊特性列没有实际标记。"
         return "PASS", "已读取实际特性标记。"
 
@@ -57,11 +66,12 @@ class UaesControlPlanAgent(UaesSourceAgent):
 
     @rule("CP身份字段图纸身份及最后更改日期")
     def rule_6(self):
+        # The clause fails without a drawing, however the identity fields read.
+        drawing = self.related(("图纸", "drawing"), require_name=True)
         facts = self.native()
         for aliases in [("供应商名称",), ("供应商代码",), ("编制人",), ("版本号", "版本"), ("零件名称",), ("零件号",)]:
             facts.field(aliases)
         facts.field(("受控日期", "创建日期", "修订日期"))
-        drawing = self.related(("图纸", "drawing"), require_name=True)
         drawing_date = normalize_excel_date(drawing.field(("日期", "图纸日期")))
         changes = facts.rows({"date": ("变更日期", "更改日期", "修订日期")}, title=("变更履历", "修订履历"), anchor=("date",))
         dates = [normalize_excel_date(row["date"]) for row in changes]
@@ -100,11 +110,10 @@ class UaesControlPlanAgent(UaesSourceAgent):
 
     @rule("PFD PFMEA PGQP1全部工序覆盖")
     def rule_7(self):
+        flow, pfmea, plan = self.related_all(("过程流程图",), ("PFMEA",), ("采购件质量计划", "PGQP1"))
+        plan.require_text("PGQP1")
         target = self.rows()
-        for terms, aliases in [(("过程流程图",), ("工序", "工序名称")), (("PFMEA",), ("工序/功能/要求", "过程项", "过程步骤")), (("采购件质量计划", "PGQP1"), ("工艺", "工序"))]:
-            related = self.related(terms)
-            if "PGQP1" in terms:
-                related.require_text("PGQP1")
+        for related, aliases in [(flow, ("工序", "工序名称")), (pfmea, ("工序/功能/要求", "过程项", "过程步骤")), (plan, ("工艺", "工序"))]:
             source = related.rows({"name": aliases}, anchor=("name",))
             for row in source:
                 if not any(key(item["operation"]) == key(row["name"]) for item in target):
@@ -113,8 +122,7 @@ class UaesControlPlanAgent(UaesSourceAgent):
 
     @rule("PFD PFMEA PGQP1全部特殊特性覆盖")
     def rule_8(self):
-        for terms in [("过程流程图",), ("PFMEA",), ("采购件质量计划", "PGQP1")]:
-            related = self.related(terms)
+        for related in self.related_all(("过程流程图",), ("PFMEA",), ("采购件质量计划", "PGQP1")):
             result = self.cover(related, source_aliases=("功能/要求", "产品特性", "过程特性", "特性名称"), marked=True)
             if result[0] != "PASS":
                 return result

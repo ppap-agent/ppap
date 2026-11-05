@@ -27,7 +27,6 @@ def test_new_enterprise_receives_all_preset_rules_without_upload(auth_store_fact
         assert actual.status_code == 200
         body = actual.json()["body"]
         assert body["preset_key"][0] in "ULN"
-        assert len(body["preset_source_sha256"]) == 64
         assert body["rules"]
         assert actual.json()["created_by"] is None
         assert actual.json()["source_file_version_id"] is None

@@ -3058,8 +3058,6 @@ export interface components {
             parts: string[];
             /** Preset Key */
             preset_key?: string;
-            /** Preset Source Sha256 */
-            preset_source_sha256?: string;
             /** Rule Profile */
             rule_profile: string;
             /** Rules */

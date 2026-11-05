@@ -21,6 +21,7 @@ from audit.document_tools import ReadLimits, TableReader, ref, snapshot, source_
 from audit.engine.checkers.rule_declarations import discover_declared_rules
 from audit.engine.rule_engine.context import GuardStop
 from audit.evidence import EvidenceBudget, cell_locator
+from audit.kinds import PpapDocumentType
 
 
 class UnknownFact(Exception):
@@ -233,7 +234,7 @@ class NativeFacts:
             self.cell(table, start, column)
         return start, columns
 
-    def rows(self, aliases, *, title=(), anchor=()):
+    def rows(self, aliases, *, title=(), anchor=(), defer_unknown=False):
         table = self.table(title)
         start, columns = self.columns(table, aliases)
         records = []
@@ -248,7 +249,7 @@ class NativeFacts:
             ):
                 continue
             for name in anchor:
-                if raw[name].get("state") != "known":
+                if raw[name].get("state") != "known" and not defer_unknown:
                     # An unreadable scope anchor cannot establish that the row
                     # is outside the business range, even when resources exist.
                     self.cell(table, row, columns[name])
@@ -294,6 +295,20 @@ class NativeFacts:
         return ""
 
 
+def any_row(rows, predicate) -> bool:
+    """A row that proves the fact decides it; unknown rows only matter when none does."""
+    unknown = None
+    for row in rows:
+        try:
+            if predicate(row):
+                return True
+        except UnknownFact as exc:
+            unknown = unknown or exc
+    if unknown is not None:
+        raise unknown
+    return False
+
+
 class NativeRow(Mapping[str, Any]):
     def __init__(self, native, table, row, columns):
         self.native, self.table, self.row, self.columns = native, table, row, columns
@@ -306,6 +321,25 @@ class NativeRow(Mapping[str, Any]):
 
     def __len__(self):
         return len(self.columns)
+
+
+def _kind_names(kind) -> list[str]:
+    from audit.presets import customer_presets
+
+    names = [str(kind)]
+    resolved = PpapDocumentType.from_string(str(kind))
+    if resolved != PpapDocumentType.UNKNOWN:
+        names.append(resolved.get_type_name())
+    names.extend(preset.title for preset in customer_presets() if preset.customer == "UAES" and preset.source_type == kind)
+    return names
+
+
+def _kind_matches(kind, terms) -> bool:
+    """A term names a type by its text or by the document type it resolves to, such as PFMEA."""
+    if any(key(term) in key(name) for term in terms for name in _kind_names(kind)):
+        return True
+    resolved = PpapDocumentType.from_string(str(kind))
+    return resolved != PpapDocumentType.UNKNOWN and any(PpapDocumentType.from_string(term) == resolved for term in terms)
 
 
 class UaesSourceAgent(BaseAgent):
@@ -402,30 +436,20 @@ class UaesSourceAgent(BaseAgent):
         """Use only this frozen GroupContext; pair by source identity, never order."""
         if self.group_context is None:
             raise UnknownFact("当前批次没有关联资料，需补充同零件的独立原件。")
-        from audit.kinds import PpapDocumentType
-        from audit.presets import customer_presets
-
         for kind in self.group_context.unavailable_files.values():
             if not kind or key(kind) in {"unknown", "未知", "未知类型"}:
                 raise OSError("当前批次有类别未确认且无法读取的原件，尚不能排除所需对端。")
-            names = [str(kind)]
-            resolved = PpapDocumentType.from_string(str(kind))
-            if resolved != PpapDocumentType.UNKNOWN:
-                names.append(resolved.get_type_name())
-            names.extend(preset.title for preset in customer_presets() if preset.customer == "UAES" and preset.source_type == kind)
-            relevant = any(key(term) in key(name) for term in terms for name in names)
+            names = _kind_names(kind)
+            relevant = _kind_matches(kind, terms)
             # A broad MSA type can contain the requested Kappa/GRR/plan subtype.
             broad_msa = any("测量系统分析" in name or "msa" in key(name) for name in names)
             if relevant or broad_msa and any(key(term) in {"kappa", "grr", "msa计划", "测量系统分析计划"} for term in terms):
                 raise OSError("当前批次有已提供但无法读取的关联资料。")
-        candidates = {
-            item.audit_id: item
-            for kind, items in self.group_context.by_doc_type.items()
-            if any(key(term) in key(kind) for term in terms)
-            for item in items
-            if item.audit_id != self.audit_file.audit_id
-        }
+        candidates = {item.audit_id: item for kind, items in self.group_context.by_doc_type.items() if _kind_matches(kind, terms) for item in items if item.audit_id != self.audit_file.audit_id}
         photos = {item.audit_id for kind, items in self.group_context.by_doc_type.items() if key(kind) in {"e07", "生产件样品照片"} for item in items}
+        # A broad type does not identify its Kappa/GRR subtype, so it stays open.
+        classified = {item.audit_id for kind, items in self.group_context.by_doc_type.items() if not ("测量系统分析" in kind or "msa" in key(kind)) for item in items}
+        undetermined = False
         for item in self.group_context.by_audit_id.values():
             if item.audit_id == self.audit_file.audit_id or item.audit_id in photos:
                 continue
@@ -438,8 +462,13 @@ class UaesSourceAgent(BaseAgent):
             try:
                 original.require_source_title(terms)
             except UnknownFact:
+                # A classified file of another type is not the source; an
+                # unclassified one without a located title cannot be excluded.
+                undetermined = undetermined or item.audit_id not in classified
                 continue
             candidates[item.audit_id] = item
+        if not candidates and not undetermined:
+            raise MissingFact("当前批次缺少所需关联原件（" + terms[0] + "），请补充后复审。")
         if len(candidates) != 1:
             raise UnknownFact("当前批次缺少唯一关联原件，需补充或确认候选，不能任取一份。")
         item = next(iter(candidates.values()))
@@ -477,6 +506,18 @@ class UaesSourceAgent(BaseAgent):
             if key(self.native().field(part_name_aliases)) != key(other.field(part_name_aliases)):
                 raise MissingFact("同项目同零件编号原件的零件名称不一致。")
         return other
+
+    def related_all(self, *term_sets):
+        """A missing source fails the clause, whatever is still unknown about the other sources."""
+        sources, unknown = [], None
+        for terms in term_sets:
+            try:
+                sources.append(self.related(terms))
+            except UnknownFact as exc:
+                unknown = unknown or exc
+        if unknown is not None:
+            raise unknown
+        return sources
 
     def controlled_stamp(self):
         observed = self.visual_pdf({"controlled_stamp": "文件中存在真实盖上的受控章；只有“受控章/受控/盖章处”文字标签、空白盖章栏时不算。"})

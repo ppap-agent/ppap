@@ -1,5 +1,0 @@
-{
- "answer": "{\"psw_stamp_ending_text\": \"有限公司\", \"psw_stamp_present\": true}",
- "kind": "ocr",
- "model": "deepseek/deepseek-v4.1-flash-1017"
-}

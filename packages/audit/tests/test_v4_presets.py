@@ -61,7 +61,7 @@ def test_preset_execution_requires_source_identity_and_explicit_equivalence():
     assert uaes["checker"]["class"] == "audit.checkers.v4.uaes.fmea.UaesPfmeaAgent"
     nio["rules"].reverse()
     assert [row["checker_method"] for row in freeze_target_rule_execution(nio, "特殊特性清单.xlsx")["items"]] == ["rule_2", "rule_1"]
-    nio["rules"][0]["rule_to_check"] = "不同客户的条款"
+    nio["rules"][0]["id"] = "不存在的条款"
     with pytest.raises(ValueError, match="invalid_preset_clauses"):
         freeze_target_rule_execution(nio, "特殊特性清单.xlsx")
 

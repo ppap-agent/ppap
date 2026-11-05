@@ -122,8 +122,6 @@ def run_audit(
             preset = preset_rule(customer, rule_input.preset_key)
         except ValueError:
             return _error_result(rule_input, "invalid_preset_source")
-        if rule_input.preset_source_sha256 != preset.source_sha256:
-            return _error_result(rule_input, "preset_source_version_mismatch")
         if rule_input.type != preset_document_type(preset):
             return _error_result(rule_input, "preset_document_type_mismatch")
 

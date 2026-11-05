@@ -56,9 +56,9 @@ jobs:
             python3 -m scripts.ci_heartbeat --timeout 3000 -- \
               uv run --no-sync pytest tests/corpus/test_cases.py -q -n 4 --dist=load --max-worker-restart=0 || true
           done
-      - name: Report live accuracy
+      - name: Report differences from the human truth
         working-directory: ${{ github.workspace }}
-        run: uv run --no-sync python -m scripts.corpus_report --live --results ci-report/rules --output ci-report/corpus-report.md
+        run: uv run --no-sync python -m scripts.corpus_report --results ci-report/rules --output ci-report/corpus-report.md
       - name: Upload evaluation report
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

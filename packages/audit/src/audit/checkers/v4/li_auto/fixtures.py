@@ -11,7 +11,7 @@ from .facts import NativeFacts, compact, precheck_fact, sheet_present
 
 class LiAutoFixtureAgent(NativeFacts, CheckingFixtureApprovalExcelAgent):
     EXPECTED_RULE_CATEGORIES = ("检具清单与认可报告完整性审核", "检具清单标题规范性审核", "所附文件与结论一致性审核")
-    PRECHECK_METHODS = {"L09:1:15af01843efa244952e4": "rule_1"}
+    PRECHECK_METHODS = {"L09:1": "rule_1"}
 
     def _report_content(self, ctx):
         table = Table(ctx)

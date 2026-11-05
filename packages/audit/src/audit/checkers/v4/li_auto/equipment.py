@@ -19,7 +19,7 @@ _RESOURCE = replace(_BASE, sections=MappingProxyType(_SECTIONS))
 
 class LiAutoEquipmentAgent(NativeFacts, EquipmentListAgent):
     EXPECTED_RULE_CATEGORIES = ("设备开发列完整性与数据填充审核", "设备验收列完整性与整改逻辑审核")
-    PRECHECK_METHODS = {"L13:1:d9d7fb687737a02a84aa": "rule_1"}
+    PRECHECK_METHODS = {"L13:1": "rule_1"}
 
     def __init__(self, audit_file, rule_input, group_context=None):
         super().__init__(audit_file, rule_input, group_context=group_context, resource=_RESOURCE)

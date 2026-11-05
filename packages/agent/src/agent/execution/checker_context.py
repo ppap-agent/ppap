@@ -117,7 +117,7 @@ def write_starting_point(work: Path, audit_file: AuditInput, rule: RuleInput) ->
             "先读 reference-checker.py 中相关方法和 reference-resources.json（若存在）。辅助函数仍可从原模块导入。",
             "template-checker.py 已按本次条款装配入口。布局不同先适配资源。",
             "UAES 原生方法无 ctx 参数，沿用 native()/related()/witness() 与 check(ith) 的证据收尾；其他 ExcelAgent 路径继续使用原资源和 Fluent API。",
-            "V4 的 reference-bindings.json（若存在）是原始条款 ID → [原文, 方法名] 的参考映射。逐条核对本次规则和附录后复用或修订；相同 ID 不证明修改后的条款语义不变。",
+            "V4 的 reference-bindings.json（若存在）是原始条款 ID → 方法名的参考映射。逐条核对本次规则和附录后复用或修订；相同 ID 不证明修改后的条款语义不变。",
             "条款含义不同则调整实现。文档类型和方法编号不证明规则相同，参考源码不决定本次判定。",
             methods or "没有对应的人工规则方法；使用原 ExcelAgent 和 Fluent API 实现本次条款。",
         ]

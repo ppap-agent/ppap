@@ -29,7 +29,6 @@ class CustomerPreset:
     level: str
     title: str
     source_path: str
-    source_sha256: str
     clauses: tuple[PresetClause, ...]
 
 
@@ -79,7 +78,6 @@ def preset_rule_body(customer: str, entry_id: str) -> dict:
         "rule_profile": "v4",
         "type": preset_document_type(preset),
         "preset_key": preset.entry_id,
-        "preset_source_sha256": preset.source_sha256,
         "customers": [preset.customer],
         "models": [],
         "parts": [],
@@ -88,31 +86,31 @@ def preset_rule_body(customer: str, entry_id: str) -> dict:
 
 
 def validate_preset_source(body: dict) -> CustomerPreset:
-    """Validate source identity, without certifying a task's effective clauses."""
+    """Validate which preset this is, without certifying a task's effective clauses."""
     customers = body.get("customers")
     if not isinstance(customers, list) or len(customers) != 1:
         raise ValueError("invalid_preset_source")
     preset = preset_rule(customers[0], body.get("preset_key"))
-    if body.get("preset_source_sha256") != preset.source_sha256 or body.get("type") != preset_document_type(preset):
+    if body.get("type") != preset_document_type(preset):
         raise ValueError("invalid_preset_source")
     return preset
 
 
 def validate_preset_body(body: dict) -> CustomerPreset:
     preset = validate_preset_source(body)
-    expected = {clause.id: clause.text for clause in preset.clauses}
     actual = body.get("rules")
-    if not isinstance(actual, list) or len(actual) != len(expected) or any(not isinstance(row, dict) for row in actual):
+    if not isinstance(actual, list) or any(not isinstance(row, dict) for row in actual):
         raise ValueError("invalid_preset_clauses")
-    if {row.get("id"): row.get("rule_to_check") for row in actual} != expected:
+    # The clause text is shown to people; the checker group executes the IDs it declares.
+    if sorted(str(row.get("id")) for row in actual) != sorted(clause.id for clause in preset.clauses):
         raise ValueError("invalid_preset_clauses")
     return preset
 
 
-def preset_source_bindings(preset: CustomerPreset, *, checker_profile: str) -> dict[str, tuple[str, str]]:
+def preset_source_bindings(preset: CustomerPreset, *, checker_profile: str) -> dict[str, str]:
     from audit.checkers.v4.li_auto.bindings import BINDINGS as li_auto
     from audit.checkers.v4.nio.bindings import BINDINGS as nio
     from audit.checkers.v4.uaes.bindings import BINDINGS as uaes
 
     bindings = {"UAES": uaes, "理想": li_auto, "蔚来": nio}[preset.customer].get(checker_profile, {})
-    return {clause.id: (clause.text, bindings[clause.id]) for clause in preset.clauses if clause.id in bindings}
+    return {clause.id: bindings[clause.id] for clause in preset.clauses if clause.id in bindings}

@@ -22,7 +22,6 @@ SETUP_FAILURE = "setup_failure"
 
 OK = "ok"
 BLOCKING = "blocking"
-UNABLE = "unable"
 KNOWN_GAP = "known_gap"
 
 
@@ -153,15 +152,10 @@ def compare_file(
 
 
 def severity(verdict: RuleVerdict, gap_status: str = "") -> str:
-    """How much one difference from the human truth matters; unknown can never become a conclusion."""
+    """Any difference from the human truth blocks, unless a known gap records exactly that result."""
     if verdict.kind == MATCH:
         return BLOCKING if gap_status else OK
-    actual = verdict.actual or "ERR"
-    if gap_status and actual == gap_status:
-        return KNOWN_GAP
-    if verdict.kind == STATUS_MISMATCH and actual == "UNABLE" and verdict.expected in {"PASS", "NG"}:
-        return UNABLE
-    return BLOCKING
+    return KNOWN_GAP if gap_status and (verdict.actual or "ERR") == gap_status else BLOCKING
 
 
 def failing_verdicts(verdicts: list[RuleVerdict]) -> list[RuleVerdict]:

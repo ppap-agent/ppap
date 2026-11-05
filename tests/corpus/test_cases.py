@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 from corpus_contracts.oracle import OracleCase, build_round, load_oracle
-from corpus_contracts.product_round import BLOCKING, UNABLE, compare_file, format_verdicts, severity
+from corpus_contracts.product_round import BLOCKING, compare_file, format_verdicts, severity
 from product import run_round_from_bytes
 
 
@@ -54,9 +54,5 @@ def test_audit_case(audit_case: OracleCase, model_replay):
             if level == BLOCKING:
                 failures.append(verdict)
     _write_report(rows)
-    if any(row.get("severity") == UNABLE for row in rows) and model_replay is not None:
-        # Keep asking: a one-off "cannot tell" must not become the frozen answer.
-        model_replay.discard()
     if failures:
-        used = sorted(model_replay.used) if model_replay is not None else []
-        pytest.fail(format_verdicts(failures) + (f"\nreplay: {' '.join(used)}" if used else ""))
+        pytest.fail(format_verdicts(failures) + (f"\nreplay: {model_replay.path}" if model_replay is not None else ""))

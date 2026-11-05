@@ -79,7 +79,6 @@ def freeze_target_rule_execution(rule_body: dict | None, filename: str):
                 "profile": checker_profile,
                 "class": f"{agent_cls.__module__}.{agent_cls.__name__}" if agent_cls else None,
                 "preset_key": preset.entry_id,
-                "source_sha256": preset.source_sha256,
             }
         return frozen
     return freeze_rule_execution(rule_body, declarations)

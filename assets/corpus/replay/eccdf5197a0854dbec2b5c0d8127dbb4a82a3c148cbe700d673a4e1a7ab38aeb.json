@@ -1,5 +1,0 @@
-{
- "answer": "{\"authorized_signature_present\": true}",
- "kind": "ocr",
- "model": "deepseek/deepseek-v4.1-flash-1017"
-}
