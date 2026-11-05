@@ -28,6 +28,7 @@ from audit.protocol import CompileSpec, ControllerFault, GuestFault, SnapshotSpe
 from pydantic import Field
 
 from agent.checker_spec import CheckerJobSpec
+from agent.core_program import AuditJobSpec
 from agent.execution.budget import MAX_INPUT_FILES, MAX_INPUT_TOTAL
 from agent.execution.gateway import grant_request
 from agent.execution.guest_model import ModelBudgetError, ModelGrant
@@ -420,7 +421,7 @@ class ContainerRuntime:
 
     def run(
         self,
-        spec: SubmissionSpec | CompileSpec | SnapshotSpec | CheckerJobSpec,
+        spec: SubmissionSpec | CompileSpec | SnapshotSpec | CheckerJobSpec | AuditJobSpec,
         inputs: Path,
         work: Path,
         deadline: float,
@@ -453,7 +454,7 @@ class ContainerRuntime:
                 raise ControllerFault("ISOLATION_UNAVAILABLE")
             if cancelled.is_set() or time.monotonic() >= deadline:
                 raise ControllerFault("CANCELLED" if cancelled.is_set() else "MODEL_TIMEOUT")
-            model_operation = isinstance(spec, (SubmissionSpec, CompileSpec)) or (isinstance(spec, CheckerJobSpec) and spec.operation == "adapt-checker")
+            model_operation = isinstance(spec, (SubmissionSpec, CompileSpec, AuditJobSpec)) or (isinstance(spec, CheckerJobSpec) and spec.operation == "adapt-checker")
             saved = self.journal / (runtime_id.hex + ".json")
             if model_operation and saved.exists():
                 write_json(work / "result" / "bundle.json", read_json(self.journal, (saved.name,), MAX_OUTPUT))
