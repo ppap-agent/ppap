@@ -149,8 +149,8 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   }, [])
   const [supportSnapshot, setSupportSnapshot] = useState<SupportSnapshot | null>(null)
   const supportReturnTargets = useRef<(HTMLElement | null)[]>([])
-  function openSupport(snapshot: SupportSnapshot) {
-    const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  function openSupport(snapshot: SupportSnapshot, returnTo?: HTMLElement | null) {
+    const trigger = returnTo ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null)
     supportReturnTargets.current = [trigger, trigger?.closest<HTMLElement>('[role="dialog"]') || null]
     setSupportSnapshot(structuredClone(snapshot))
   }
@@ -185,6 +185,8 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const [query, setQuery] = useState(''), [filter, setFilter] = useState('all')
   const [sheet, setSheet] = useState(false)
   const [navigationSheet, setNavigationSheet] = useState(false)
+  // The sheet closes as support opens, so its own button is gone by the time focus returns.
+  const navigationTrigger = useRef<HTMLButtonElement>(null)
   const [reportView, setReportView] = useState(() => new URL(location.href).searchParams.has('report'))
   const [error, setError] = useState(''), [dragging, setDragging] = useState(false)
   const [checking, setChecking] = useState<string[]>([])
@@ -768,7 +770,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
       const itemClass = tiles ? 'relative' : compact ? 'justify-center' : 'justify-start'
       return <Tooltip key={view} {...navigationTooltipProps(view, compact)}><TooltipTrigger asChild>{view === 'templates' ? <Button asChild size={tiles ? 'tile' : 'default'} className={itemClass} variant={tiles ? 'secondary' : 'ghost'}><a href={TEMPLATE_GUIDE_URL} target="_blank" rel="noopener noreferrer" aria-label="模板库（在飞书新窗口打开）"><Icon aria-hidden="true"/><span className={compact ? 'sr-only' : ''}>{label}</span>{!compact && <ExternalLink className={tiles ? 'absolute top-4 right-4 size-3 text-muted-foreground' : 'ml-auto size-3 text-muted-foreground'} aria-hidden="true"/>}</a></Button> : <Button size={tiles ? 'tile' : 'default'} className={itemClass} aria-label={label} aria-current={active ? 'page' : undefined} variant={tiles ? active ? 'default' : 'secondary' : active ? 'secondary' : 'ghost'} onClick={() => showSurface(view)}><Icon aria-hidden="true"/><span className={compact ? 'sr-only' : ''}>{label}</span></Button>}</TooltipTrigger><TooltipContent side="right">{label}</TooltipContent></Tooltip>
     })}
-    {tiles && <Button variant="secondary" size="tile" onClick={() => {setNavigationSheet(false); openSupport({scenario: supportScenario})}}><HelpCircle aria-hidden="true"/>联系我们</Button>}
+    {tiles && <Button variant="secondary" size="tile" onClick={() => {setNavigationSheet(false); openSupport({scenario: supportScenario}, navigationTrigger.current)}}><HelpCircle aria-hidden="true"/>联系我们</Button>}
   </nav>
   // Files stopped for the same reason need the same action, so the advice appears once above them.
   const sameReasonBatches = (rows: typeof matchingFiles) => {
@@ -811,7 +813,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     </aside>
     <div className="min-w-0 flex-1">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-2 max-sm:px-4"><div className="flex min-w-0 items-center gap-3">
-        <Sheet open={navigationSheet} onOpenChange={setNavigationSheet}><SheetTrigger asChild><Button variant="outline" size="icon" className="lg:hidden" aria-label="打开产品导航"><Menu aria-hidden="true"/></Button></SheetTrigger><SheetContent side="left" className="w-[min(100%,26rem)] max-w-none"><SheetHeader><SheetTitle>产品导航</SheetTitle><SheetDescription className="sr-only">选择产品页面</SheetDescription></SheetHeader><div className="min-h-0 flex-1 overflow-y-auto">{navigation(false, true)}</div></SheetContent></Sheet>
+        <Sheet open={navigationSheet} onOpenChange={setNavigationSheet}><SheetTrigger asChild><Button ref={navigationTrigger} variant="outline" size="icon" className="lg:hidden" aria-label="打开产品导航"><Menu aria-hidden="true"/></Button></SheetTrigger><SheetContent side="left" className="w-[min(100%,26rem)] max-w-none"><SheetHeader><SheetTitle>产品导航</SheetTitle><SheetDescription className="sr-only">选择产品页面</SheetDescription></SheetHeader><div className="min-h-0 flex-1 overflow-y-auto">{navigation(false, true)}</div></SheetContent></Sheet>
         {surface === 'audit' && !legacyRoundId && reportView ? <nav aria-label="当前位置" className="min-w-0"><ol className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <li><a href={surfaceAddress('workbench')} className="text-muted-foreground hover:text-foreground hover:underline" onClick={event => {if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {event.preventDefault(); showSurface('workbench')}}}>工作台</a></li>
           <li aria-hidden="true" className="text-muted-foreground">/</li>

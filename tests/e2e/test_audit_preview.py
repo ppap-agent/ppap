@@ -1650,6 +1650,7 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("button", name="手机", exact=True).click()
             expect(dialog.get_by_role("textbox", name="客户", exact=True)).to_have_value("主题切换后保留")
             dialog.get_by_role("button", name="关闭，稍后核对", exact=True).click()
+            expect(dialog).to_have_count(0)
             close_workspace_panel(product)
             product.get_by_role("button", name="报告中心", exact=True).click()
             product.get_by_role("link", name="返回审核结果", exact=True).click()

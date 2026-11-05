@@ -1394,6 +1394,9 @@ class RuleInteractionTests(unittest.TestCase):
             all_tasks = page.get_by_role("tab", name="全部任务", exact=False)
             expect(all_tasks).to_have_text("全部任务—")
             expect(page.get_by_role("button", name="刷新任务列表", exact=True)).to_be_disabled()
+            deadline = time.monotonic() + 5
+            while len(pending) < 3 and time.monotonic() < deadline:
+                page.wait_for_timeout(50)
             self.assertEqual(set(pending), {"tasks", "drafts", "rounds"})
             pending["tasks"].fulfill(json={"tasks": [], "next_offset": None})
             pending["rounds"].fulfill(json={"rounds": [], "next_offset": None})
