@@ -19,6 +19,7 @@ from audit.audits import ANALYSIS_DEEP, ANALYSIS_MODES, ANALYSIS_STANDARD, EXECU
 from product.standard_policy import StandardExecutionPolicy
 
 from corpus_contracts.acceptance_report import write_acceptance_report
+from corpus_contracts.oracle import ORACLE_PATH
 from corpus_contracts.poc_oracle import POC_SEQ_TO_DOC_TYPE, REPO_ROOT, build_bundle_map, load_poc_cases
 from corpus_contracts.product_round import MATCH, compare_file
 
@@ -67,7 +68,7 @@ def _poll(client, path, field, terminal, timeout, interval):
         time.sleep(interval)
 
 
-def _upload(client, path, run, save):
+def _upload(client, path, run, save, *, filename=None):
     content = path.read_bytes()
     digest = hashlib.sha256(content).hexdigest()
     receipt = {"stage": "file_upload", "request_id": str(uuid4()), "sha256": digest}
@@ -78,7 +79,7 @@ def _upload(client, path, run, save):
         "POST",
         "/files",
         expected=201,
-        json={"original_filename": path.name, "content_type": "application/octet-stream", "byte_size": len(content), "sha256": digest, "request_id": receipt["request_id"]},
+        json={"original_filename": filename or path.name, "content_type": "application/octet-stream", "byte_size": len(content), "sha256": digest, "request_id": receipt["request_id"]},
     )
     receipt.update(file_id=version["file_id"], file_version_id=version["id"])
     save()
@@ -268,8 +269,8 @@ def run_live(
     stage = "preflight"
     save()
     try:
-        oracle_path = REPO_ROOT / "assets" / "poc测试" / "poc-测试数据统计表.xlsx"
-        cases = load_poc_cases(dataset_root=REPO_ROOT / "assets" / "poc测试" / "POC测试样本", expected_xlsx=oracle_path)
+        oracle_path = ORACLE_PATH
+        cases = load_poc_cases()
         bundles = build_bundle_map(cases)
         if len(cases) != 26 or len(bundles) != 8 or sum(len(case.expected) for case in cases) != 209 or {case.file_seq for case in cases} != set(RULE_DOCS):
             raise LiveError("canonical_universe_incomplete")
@@ -319,7 +320,7 @@ def run_live(
                 if any(case.file_seq in unavailable for case in selected):
                     raise LiveError("group_rule_setup_incomplete")
                 for case in selected:
-                    version = _upload(client, case.file_path, run, save)
+                    version = _upload(client, case.file_path, run, save, filename=case.file_name)
                     versions[case.file_name] = version["id"]
                     items.append({"file_version_id": version["id"], "role": "target", "rule_version_id": published[case.file_seq]["id"]})
                 stage = "draft_save"

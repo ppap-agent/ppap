@@ -1,16 +1,15 @@
-"""Corpus pytest options. Defaults point at in-repo assets from ppap-agent@53a5bd2b."""
+"""Corpus selection and bounded failure diagnostics."""
 
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 from typing import Any
 
 import pytest
+from corpus_contracts.oracle import DATASETS
+from corpus_contracts.replay import LIVE, Recorder, install, mode
 
-_REPO = Path(__file__).resolve().parents[2]
-_DEFAULT_V2_ROOT = _REPO / "assets" / "v2.0plus"
-_DEFAULT_V2_CSV = _REPO / "assets" / "全量测试 - 4.8文件测试反馈（云端） - 4.8（云端）.csv"
+_active: list[Recorder] = []
 
 
 def pytest_addoption(parser: Any) -> None:
@@ -21,44 +20,37 @@ def pytest_addoption(parser: Any) -> None:
         choices=["excel", "pdf"],
         help="Filter V2 cases by file type",
     )
-    parser.addoption("--verbose-check", action="store_true", default=False)
-    parser.addoption("--mismatch-only", action="store_true", default=False)
-    parser.addoption("--bundle", action="store", default=None)
-    parser.addoption("--seq", action="store", default=None)
-    parser.addoption("--report", action="store", default=None)
-    parser.addoption(
-        "--v2-dataset-root",
-        action="store",
-        default=str(_DEFAULT_V2_ROOT),
-        help="V2 dataset root (defaults to in-repo assets/v2.0plus)",
-    )
-    parser.addoption(
-        "--v2-expected-csv",
-        action="store",
-        default=str(_DEFAULT_V2_CSV),
-        help="V2 human expected CSV (defaults to in-repo 4.8 feedback table)",
-    )
-    parser.addoption(
-        "--cross-format",
-        action="store_true",
-        default=False,
-        help="Run V2 PDF↔Excel pair execution (Corpus Pairs variant)",
-    )
-
-
-def pytest_collection_modifyitems(items: Any) -> None:
-    for item in items:
-        item._nodeid = item.nodeid
+    parser.addoption("--dataset", action="store", default=None, choices=DATASETS, help="One oracle dataset; defaults to all")
 
 
 def pytest_make_parametrize_id(config: Any, val: Any, argname: Any) -> Any:
     if isinstance(val, str):
         return val
-    if hasattr(val, "pair_id"):
-        return val.pair_id
     if hasattr(val, "file_name"):
         return val.file_name
     return None
+
+
+@pytest.fixture(autouse=True)
+def model_replay(monkeypatch: pytest.MonkeyPatch):
+    """Every corpus test sees recorded model answers unless the run measures the live model."""
+    if mode() == LIVE:
+        yield None
+        return
+    recorder = Recorder()
+    install(monkeypatch, recorder)
+    _active.append(recorder)
+    yield recorder
+    _active.remove(recorder)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> Any:
+    outcome = yield
+    report = outcome.get_result()
+    if report.when == "call":
+        for recorder in _active:
+            recorder.finish(keep=report.passed)
 
 
 @pytest.hookimpl(trylast=True)

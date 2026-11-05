@@ -1,13 +1,13 @@
 [project]
 name = "corpus-contracts"
 version = "0.1.0"
-description = "Corpus regression domain: ExecutionOutcome, baselines, and oracle reconciliation. Not a product API."
+description = "Corpus regression domain: human oracle, model replay, and reporting. Not a product API."
 requires-python = "==3.12.*"
 dependencies = [
     "product",
     "documents",
     "audit",
-    "pandas>=2.1.4",
+    "openpyxl>=3.1.2",
     "httpx>=0.28.1",
 ]
 

@@ -1,10 +1,10 @@
 # Tests
 
-Canonical 测试策略见 [docs/TESTING.md](../docs/TESTING.md)。本目录只记录当前 ownership 和可执行入口。
+本文件记录测试归属和运行入口；CI 执行范围由 [Tests workflow](../.github/workflows/tests.yml) 定义。
 
 ## Ownership
 
-Single-owner tests live with their production owner under `packages/*/tests` or `services/*/tests`. Root `tests/` is system-level authority only:
+单一模块的测试放在对应的 `packages/*/tests`、`apps/api/tests`、`apps/worker/tests` 或 `apps/mcp-client/tests`。根目录 `tests/` 只放系统测试：
 
 - `repository`: repository/build/config/tooling contracts
 - `schema`: real PostgreSQL contracts
@@ -23,9 +23,9 @@ Repository contract:
 ```sh
 uv sync --locked
 git show --format= --check HEAD -- . ':!assets' ':!tests/corpus/fixtures'
-uv run --no-sync python -m compileall -q packages services tests
-uv run --no-sync ruff check packages services tests scripts
-uv run --no-sync ruff format --check packages services tests scripts
+uv run --no-sync python -m compileall -q packages apps/api apps/worker apps/mcp-client tests
+uv run --no-sync ruff check packages apps/api apps/worker apps/mcp-client tests scripts
+uv run --no-sync ruff format --check packages apps/api apps/worker apps/mcp-client tests scripts
 uv run --no-sync mypy --no-incremental
 node deploy/insforge/verify-config.mjs
 docker compose -f deploy/isolated-dev/compose.yaml config --quiet >/dev/null
@@ -46,7 +46,7 @@ python3 scripts/validate_distribution.py --prove-missing-dependency
 Python module groups:
 
 ```sh
-# One pytest process per physical owner. CI discovers every packages/*/tests and services/*/tests.
+# One pytest process per physical owner. CI discovers every packages/*/tests and apps/api/tests, apps/worker/tests, and apps/mcp-client/tests.
 uv run --no-sync pytest packages/product/tests
 uv run --no-sync pytest packages/product/tests/test_settings_priority.py packages/audit/tests/test_token_tracker.py
 uv run --no-sync pytest tests/corpus/contracts/tests
@@ -80,11 +80,51 @@ docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 
 ## Corpus
 
+`assets/corpus/` 只保存四类内容：
+
+- `files/<sha256>.<ext>`：原件，按内容寻址，不可变。
+- `cases.csv`：一次提交包含的文件。列为数据集、组合ID、文件ID、原件、提交文件名、角色、规则引用。角色为 target 或 reference；规则引用为 `builtin:v2:<类型>`、`builtin:v3:<类型>` 或 `assets/corpus/rules/` 下的冻结规则。
+- `oracle.csv`：人工结论。列为数据集、组合ID、文件ID、条款ID、人工真值、条款说明、人工判定依据、判定人、判定日期、已知差距。人工真值须来自原件和规则，不能复制程序输出。
+- `replay/<请求哈希>.json`：录制的模型回答。
+
+两份 CSV 是带 BOM 的 UTF-8，可用 Excel 打开，改动在 PR 中逐行可审。缺原件、重复行、公式、未知取值都在执行前报错。
+
+[`test_cases.py`](corpus/test_cases.py) 是唯一的表驱动 runner，每次执行完整组合。`--dataset` 选数据集，`--ftype` 按组合划分（含 PDF 的组合只属于 pdf），`-k` 选组合。[`regressions/`](corpus/regressions) 放针对具体原件或路径的回归，[`psw/`](corpus/psw) 在专用镜像中运行。
+
+### 结果判定
+
+| 人工真值 | 产品结果 | 处理 |
+|---|---|---|
+| PASS / NG | 相同 | 通过 |
+| PASS / NG | 相反 | 阻断 |
+| PASS / NG | UNABLE | 不算错，计入 UNABLE 率，单个数据集超过 5% 时阻断 |
+| UNABLE | PASS / NG | 阻断 |
+| 任意 | ERR、缺失 | 阻断 |
+
+产品暂时做不到的结论不改人工真值，写进“已知差距”，格式为 `<产品结果> #<Issue>`，例如 `UNABLE #123`。产品修好后这一列会让用例失败，提醒删除。
+
+### 模型回答
+
+默认回放：请求按模型看到的内容（文字、图片、输出格式）哈希。命中就不调模型；未命中才真实调用，用例通过后记录回答。用例失败或得到 UNABLE 时不记录，下次重新询问。回放验证取证和判定逻辑，不验证模型能力。
+
+CI 把新回答放进任务产物的 `replay/`。下载后提交，之后的运行就不再调用这些请求：
+
 ```sh
-uv run --no-sync pytest tests/corpus/v2_assets --ftype excel -q
-uv run --no-sync pytest tests/corpus/v2_assets --ftype pdf -q
-uv run --no-sync pytest tests/corpus/pairs --cross-format -q
-uv run --no-sync pytest tests/corpus/v3_poc -q
+gh run download <run-id> --pattern 'corpus-*' --dir /tmp/corpus-replay
+mkdir -p assets/corpus/replay
+cp /tmp/corpus-replay/*/replay/*.json assets/corpus/replay/
+```
+
+录制的回答错了就删除对应文件，失败信息会列出用例用到的哈希。LibreOffice 渲染的图片因平台而异，本地和 CI 的 Excel 视觉请求哈希可能不同，所以提交 CI 产生的录制，不提交本地录制。
+
+[`corpus-eval`](../.github/workflows/corpus-eval.yml) 每晚用 `PPAP_CORPUS_MODEL=live` 真实跑多轮：错误 PASS 必须为 0，错误结果不超过 2%，UNABLE 不超过 5%，并列出同一文件答案不一致的条款。提示词、裁图或模型变更后可手动触发。
+
+`python -m scripts.corpus_report` 从 oracle 计算覆盖矩阵和缺 PASS 或 NG 样本的条款；加 `--results` 再汇总运行结果。
+
+```sh
+uv run --no-sync pytest tests/corpus/test_cases.py tests/corpus/regressions --ftype excel -q
+uv run --no-sync pytest tests/corpus/test_cases.py tests/corpus/regressions --ftype pdf -q
+uv run --no-sync python -m scripts.corpus_report
 
 export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
 docker buildx bake worker
@@ -100,7 +140,7 @@ docker run --rm \
   pytest tests/corpus/psw -q
 ```
 
-Pairs compares PDF vs Excel outcomes for the same oracle stem at pair+rule granularity. Known format divergences are a structured baseline, not a second expected-status oracle. Excel / PDF variants do not pass `--cross-format`. PSW remains a purpose-built container entry in the same CI Corpus matrix. Its image starts from the production worker install and runs `uv sync --frozen --no-editable` so the default dev dependency group comes from the same lock.
+同一文档 PDF 和 Excel 的人工真值必须一致，这由 oracle 契约测试保证；两者各自与真值比较，不再单独配对运行。
 
 ## Schema
 

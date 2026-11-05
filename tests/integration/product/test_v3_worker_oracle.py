@@ -59,7 +59,7 @@ def _upload(client: TestClient, name: str, body: bytes) -> dict:
 
 
 @pytest.mark.usefixtures("ocr_transport_diagnostics")
-def test_v3_api_worker_matches_poc_oracle(auth_store_factory, tmp_path: Path) -> None:
+def test_v3_api_worker_preserves_representative_bundle_oracle(auth_store_factory, tmp_path: Path) -> None:
     env = _worker_env()
     env.start()
     get_settings.cache_clear()
@@ -72,7 +72,8 @@ def test_v3_api_worker_matches_poc_oracle(auth_store_factory, tmp_path: Path) ->
         assert client.post("/isolated-dev/sessions", json={"subject": "alice"}).status_code == 200
         rows: list[dict] = []
         failures = []
-        for bundle_id, cases in sorted(build_bundle_map(load_poc_cases()).items()):
+        selected_cases = load_poc_cases(bundle="Cetus Spoiler-特殊特性清单见原文件夹")
+        for bundle_id, cases in sorted(build_bundle_map(selected_cases).items()):
             items = []
             versions: dict[str, str] = {}
             for case in cases:
@@ -145,8 +146,8 @@ def test_v3_api_worker_matches_poc_oracle(auth_store_factory, tmp_path: Path) ->
         assert len(loaded) == len(rows)
         assert rows, "POC oracle produced no rule rows"
         summary = json.loads(report.read_text(encoding="utf-8"))["summary"]
-        assert summary["selected_cases"] == 26
-        assert summary["total_rules"] == 209
+        assert summary["selected_cases"] == len(selected_cases)
+        assert summary["total_rules"] == sum(len(case.expected) for case in selected_cases)
         assert report.with_suffix(".md").is_file()
         if failures:
             pytest.fail(format_verdicts(failures))

@@ -264,20 +264,17 @@ class ArchitectureTests(unittest.TestCase):
 
     def test_corpus_contract_tests_follow_their_owner(self):
         owner = ROOT / "tests/corpus/contracts/tests"
-        self.assertTrue((owner / "test_execution_outcome.py").is_file())
-        self.assertTrue((owner / "test_baseline_exceptions.py").is_file())
-        self.assertTrue((owner / "test_cross_format_contract.py").is_file())
+        self.assertTrue((owner / "test_replay.py").is_file())
         self.assertTrue((owner / "test_oracle_reconciliation.py").is_file())
         self.assertTrue((owner / "test_psw_cross_format_regression.py").is_file())
-        self.assertFalse((ROOT / "tests/corpus/v2_assets/test_baseline_exceptions.py").exists())
         corpus_conftest = (ROOT / "tests/corpus/conftest.py").read_text()
         self.assertNotIn("BASELINE_XFAIL_IDS", corpus_conftest)
         self.assertNotIn("pytest.mark.xfail", corpus_conftest)
         moved_core_tests = "\n".join(path.read_text() for path in (ROOT / "packages/product/tests").glob("test_settings_priority.py"))
         self.assertNotIn("audit.engine", moved_core_tests)
 
-    def test_corpus_pairs_and_psw_have_physical_suite_ownership(self):
-        for suite in ("pairs", "psw"):
+    def test_corpus_regressions_and_psw_have_physical_suite_ownership(self):
+        for suite in ("regressions", "psw"):
             directory = ROOT / "tests/corpus" / suite
             self.assertTrue(directory.is_dir())
             self.assertTrue(any(directory.glob("test_*.py")))

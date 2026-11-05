@@ -2,11 +2,95 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 import re
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 from .document_tools import ReadLimits, col_number, ref, within
+
+
+def prepare_pdf_workbook(path: str, original: dict[str, Any], limits: ReadLimits) -> dict[str, Any]:
+    """Consume the existing converter's workbook without losing original cell facts."""
+    from documents.pdf import convert_pdf_to_excel
+    from documents.pdf._stitch import _build_boundary_index_map, _remap_cell_columns
+
+    from .document_tools import snapshot
+    from .kinds import PpapDocumentType
+
+    def normalize(value):
+        text = re.sub(r"(?m)^\s*\d+\s*/\s*\d+\s*$", "", str(value or ""))
+        return re.sub(r"\s+", "", text).casefold()
+
+    titles = []
+    for table in original["tables"]:
+        values = {normalize(item.get("value")) for address, item in table["cells"].items() if re.fullmatch(r"[A-Z]+1", address) and item.get("state") == "known" and item.get("value")}
+        values.discard("")
+        if len(values) != 1:
+            return original
+        titles.append(next(iter(values)))
+    known_titles = {normalize(alias) for kind in PpapDocumentType if kind != PpapDocumentType.UNKNOWN for alias in kind.iter_aliases()}
+    if not titles or len(set(titles)) != 1 or titles[0] not in known_titles:
+        return original  # Different forms are not continuation pages.
+    raw = Path(path).read_bytes()
+    if hashlib.sha256(raw).hexdigest() != original["source"]["sha256"]:
+        raise ValueError("PDF source changed during preparation")
+    with TemporaryDirectory(prefix="ppap-uaes-pdf-") as directory:
+        target = Path(directory) / "prepared.xlsx"
+        converted = convert_pdf_to_excel(raw, str(target))
+        prepared = snapshot(target, limits=limits)
+    groups = [group for group in converted.extraction.groups if group.success and group.table_grid is not None]
+    if len(groups) != len(prepared["tables"]):
+        raise ValueError("PDF workbook groups do not match their extracted sources")
+    originals = {table["page"]: table for table in original["tables"]}
+    for group, table in zip(groups, prepared["tables"]):
+        grid = group.table_grid
+        assert grid is not None
+        if table["rows"] != len(grid.rows) - 1 or table["cols"] != len(grid.cols) - 1:
+            raise ValueError("PDF workbook dimensions do not match extraction")
+        for row in range(1, table["rows"] + 1):
+            for column in range(1, table["cols"] + 1):
+                item = table["cells"].setdefault(ref(row, column), {"value": None, "state": "known"})
+                item["conversion_state"] = item["state"]
+                item["state"] = "unknown_conversion_source"
+        offset = 0
+        pages = [page for page in group.page_results if page.success and page.page_index in group.pages]
+        for index, page in enumerate(pages):
+            source = originals[page.page_index + 1]
+            source_grid = page.table_grid
+            if source["rows"] != len(source_grid.rows) - 1 or source["cols"] != len(source_grid.cols) - 1:
+                raise ValueError("PDF original grid changed during preparation")
+            skip = int(converted.extraction.spec.stitch.drop_repeated_header and index > 0)
+            boundaries = _build_boundary_index_map(source_grid.cols, grid.cols)
+            for cell in source_grid.cells:
+                if cell.row_end < skip:
+                    continue
+                first, _last = _remap_cell_columns(cell, boundaries)
+                if first >= table["cols"]:
+                    continue
+                start_row = max(cell.row_start, skip) - skip + offset + 1
+                start_col = first + 1
+                item = table["cells"][ref(start_row, start_col)]
+                fact = source["cells"][ref(cell.row_start + 1, cell.col_start + 1)]
+                same_value = str(item["value"] if item["value"] is not None else "") == str(fact["value"] if fact["value"] is not None else "")
+                if not same_value:
+                    continue
+                state = fact["state"] if item["conversion_state"] == "known" else item["conversion_state"]
+                item.update({**fact, "value": item["value"], "state": state})
+                item["source"] = {**fact["source"], "row": cell.row_start + 1, "column": cell.col_start + 1}
+            offset += source["rows"] - skip
+        if offset != table["rows"]:
+            raise ValueError("PDF workbook rows do not match their source pages")
+        for first_row, first_column, last_row, last_column in table["merges"]:
+            for row in range(first_row, last_row + 1):
+                for column in range(first_column, last_column + 1):
+                    if (row, column) != (first_row, first_column):
+                        table["cells"].pop(ref(row, column), None)
+        for item in table["cells"].values():
+            item.pop("conversion_state", None)
+    return {**original, "tables": prepared["tables"], "prepared_format": "xlsx", "prepared_sha256": prepared["source"]["sha256"]}
 
 
 def _finite(value: Any) -> bool:

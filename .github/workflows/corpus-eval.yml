@@ -1,0 +1,69 @@
+name: Corpus live model evaluation
+
+on:
+  schedule:
+    - cron: "0 18 * * *"
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: Complete corpus passes against the live model
+        default: "3"
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    name: Live model evaluation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      OPENAI_REASONING_EFFORT: low
+      PPAP_CORPUS_MODEL: live
+      ROUNDS: ${{ inputs.rounds || '3' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          working-directory: ${{ github.workspace }}
+          version: "0.9.26"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install Python deps
+        working-directory: ${{ github.workspace }}
+        run: uv sync --locked --group e2e
+      - name: Install shared Excel converter
+        uses: ./.github/actions/excel-converter
+      - name: Run every oracle case against the live model
+        working-directory: ${{ github.workspace }}
+        env:
+          OPENAI_API_KEY: ${{ secrets.CI_LLM_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.CI_LLM_BASE_URL }}
+          MODEL_NAME: ${{ secrets.CI_LLM_MODEL }}
+          PADDLE_OCR_URL: ${{ secrets.PADDLE_OCR_URL }}
+          PADDLE_TOKEN: ${{ secrets.PADDLE_TOKEN }}
+          OCR_OPENAI_API_KEY: ${{ secrets.OCR_OPENAI_API_KEY }}
+          OCR_OPENAI_BASE_URL: ${{ secrets.OCR_OPENAI_BASE_URL }}
+          OCR_MODEL_NAME: ${{ secrets.OCR_MODEL_NAME }}
+          PPAP_CORPUS_REPORT_DIR: ci-report/rules
+        run: |
+          set -uo pipefail
+          # Individual wrong answers are the measurement; the report decides the outcome.
+          for round in $(seq 1 "$ROUNDS"); do
+            python3 -m scripts.ci_heartbeat --timeout 3000 -- \
+              uv run --no-sync pytest tests/corpus/test_cases.py -q -n 4 --dist=load --max-worker-restart=0 || true
+          done
+      - name: Report live accuracy
+        working-directory: ${{ github.workspace }}
+        run: uv run --no-sync python -m scripts.corpus_report --live --results ci-report/rules --output ci-report/corpus-report.md
+      - name: Upload evaluation report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: corpus-eval-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ github.workspace }}/ci-report/
+          if-no-files-found: ignore
+          retention-days: 30

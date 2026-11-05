@@ -305,16 +305,10 @@ jobs:
         include:
           - name: Excel
             mode: pytest
-            args: tests/corpus/v2_assets --ftype excel -q
+            args: tests/corpus/test_cases.py tests/corpus/regressions --ftype excel -q
           - name: PDF
             mode: pytest
-            args: tests/corpus/v2_assets --ftype pdf -q
-          - name: Pairs
-            mode: pytest
-            args: tests/corpus/pairs --cross-format -q
-          - name: V3
-            mode: pytest
-            args: tests/corpus/v3_poc -q
+            args: tests/corpus/test_cases.py tests/corpus/regressions --ftype pdf -q
           - name: PSW
             mode: psw
     steps:
@@ -356,18 +350,24 @@ jobs:
           OCR_OPENAI_API_KEY: ${{ secrets.OCR_OPENAI_API_KEY }}
           OCR_OPENAI_BASE_URL: ${{ secrets.OCR_OPENAI_BASE_URL }}
           OCR_MODEL_NAME: ${{ secrets.OCR_MODEL_NAME }}
+          PPAP_CORPUS_REPORT_DIR: ci-report/rules
+          PPAP_CORPUS_REPLAY_OUT: ci-report/replay
         run: |
           set -euo pipefail
           if [[ "${{ matrix.name }}" == "PDF" && "$PPAP_CORPUS_PDF_WORKERS" == "2" ]]; then
             # One real xdist pool for all PDF corpus items, including the slow
-            # test_v2_assets cases. Per-worker writable extraction caches are isolated.
+            # table-driven combinations. Per-worker writable extraction caches are isolated.
             python3 -m scripts.ci_heartbeat --timeout 2400 -- \
-              uv run --no-sync pytest tests/corpus/v2_assets --ftype pdf -q -n 2 \
+              uv run --no-sync pytest tests/corpus/test_cases.py tests/corpus/regressions --ftype pdf -q -n 2 \
                 --dist=load --max-worker-restart=0 --durations=25 -vv -o faulthandler_timeout=120 --junitxml=ci-report/junit.xml
           else
             python3 -m scripts.ci_heartbeat --timeout 1800 -- \
               uv run --no-sync pytest ${{ matrix.args }} --durations=25 -vv -o faulthandler_timeout=120 --junitxml=ci-report/junit.xml
           fi
+      - name: Report oracle coverage and UNABLE rate
+        working-directory: ${{ github.workspace }}
+        if: ${{ always() && matrix.mode == 'pytest' }}
+        run: uv run --no-sync python -m scripts.corpus_report --results ci-report/rules --output ci-report/corpus-report.md
       - name: Assert Docker
         working-directory: ${{ github.workspace }}
         if: ${{ matrix.mode == 'psw' }}
@@ -398,6 +398,7 @@ jobs:
           mkdir -p ci-report
           python3 -m scripts.ci_heartbeat --timeout 1800 -- docker run --rm \
             -v "$PWD/ci-report:/ci-report" \
+            -e PPAP_CORPUS_MODEL=live \
             -e OPENAI_API_KEY \
             -e OPENAI_BASE_URL \
             -e MODEL_NAME \

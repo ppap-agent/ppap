@@ -50,7 +50,7 @@
 - 文本模型只接收相关条款和有原件位置的片段，引用须回查；部分范围不能声称全篇通过。不能用语义分析补造视觉内容或替代缺失 AP 标准表。
 - 实际 OCR SDK 回执并入现有审核用量；有回执才记录 token、供应商费用及耗时，缺回执为未知。供应商费用不是客户业务收费。原件文字、模型隐藏推理和密钥不得写入诊断日志。
 
-单页 Paddle 服务核验仍可使用现有 `python -m documents.ocr.paddle --help`；离线回放和真实调用分别报告。人工样本答案只作差异参考，不是绝对真值；不能为匹配标签把未知硬改为 PASS/NG。确定的误判、权限和数据完整性仍是必须修复的问题。当前实现测试与真实效果验收入口见 [TESTING](TESTING.md)。
+单页 Paddle 服务核验仍可使用现有 `python -m documents.ocr.paddle --help`；离线回放和真实调用分别报告。人工样本答案只作差异参考，不是绝对真值；不能为匹配标签把未知硬改为 PASS/NG。确定的误判、权限和数据完整性仍是必须修复的问题。当前实现测试与真实效果验收入口见 [测试入口](../tests/README.md)。
 
 ## 当前命令
 
@@ -125,7 +125,7 @@ uv run --no-sync pytest tests/schema
 docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 ```
 
-Browser E2E 是 Python Playwright（`uv run --no-sync pytest tests/e2e`），对着 isolated-dev。生产 runtime/backup 是 `uv run --no-sync pytest tests/integration/runtime`。Corpus 的 Excel/PDF/V3/PSW 命令见 [TESTING](TESTING.md)。Pairs/PSW 分别由 `tests/corpus/pairs` 与 `tests/corpus/psw` 的物理目录发现；纯 Corpus contract tests 跟随 `corpus-contracts` owner。
+Browser E2E 是 Python Playwright（`uv run --no-sync pytest tests/e2e`），对着 isolated-dev。生产 runtime/backup 是 `uv run --no-sync pytest tests/integration/runtime`。Corpus 的 v2/v3/v4、Pairs 和 PSW 命令见 [测试入口](../tests/README.md)。回归和 PSW 分别由 `tests/corpus/regressions` 与 `tests/corpus/psw` 的物理目录发现；纯 Corpus contract tests 跟随 `corpus-contracts` owner。
 
 默认 merge contract 是 required groups：Web、Repository contract、Python modules、Distribution closure、Schema、Corpus、Product integration。`CI Gate` 只汇总这些 required groups，不把“是否 deterministic”当成入 Gate 的条件。Corpus 即使 cache miss 调用真实 OCR / model 仍是 required。当前不做 change-aware path skipping。`tests/live` 表示不进入默认 merge contract、需要显式执行的真实环境验证，不是所有带外部依赖的测试；InsForge native lifecycle 同样不进入默认 Gate。
 
@@ -140,7 +140,7 @@ cd assets/poc测试/poc规则/markdown
 pandoc '../10规则-控制计划.docx' --wrap=none -t gfm -o '10规则-控制计划.docx.md' --extract-media='media/10规则-控制计划'
 ```
 
-在输出目录运行 Pandoc，使图片链接保持 `media/10规则-控制计划/media/image*.png`，对应文件位于该目录的 `media/10规则-控制计划/` 下。生成后检查 diff、所有图片引用和对应文件；只移除已确认不再被引用的旧生成图片，不手改规则正文。若内容变化会影响预期行为，按 [TESTING](TESTING.md) 在当前 `tests/corpus/v3_poc` 入口验证，不恢复旧仓的测试路径，也不据导出成功声明审核通过。
+在输出目录运行 Pandoc，使图片链接保持 `media/10规则-控制计划/media/image*.png`，对应文件位于该目录的 `media/10规则-控制计划/` 下。生成后检查 diff、所有图片引用和对应文件；只移除已确认不再被引用的旧生成图片，不手改规则正文。若内容变化会影响预期行为，按 [Corpus 测试入口](../tests/README.md#corpus) 验证 v3 oracle 和规则资产边界，不恢复旧仓的测试路径，也不据导出成功声明审核通过。
 
 ## 工程工具链
 

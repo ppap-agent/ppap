@@ -30,7 +30,7 @@
 6. 证据可定位、计数可重放和输出类型正确，是必要条件，不是业务结论正确的充分条件。
 7. 保留现有任务和产品不变量；选择最短正确实现，不为预想需求建设通用框架。
 
-相关约束继续由 [Northstar](NORTHSTAR.md)、[数据模型](DATA_MODEL.md)、[架构](ARCHITECTURE.md)、[安全边界](SECURITY.md) 和 [测试策略](TESTING.md) 拥有。本文定义本轮待实现的增量，不将其中描述的当前行为改写成“已经完成”。
+相关约束继续由 [Northstar](NORTHSTAR.md)、[数据模型](DATA_MODEL.md)、[架构](ARCHITECTURE.md)、[安全边界](SECURITY.md) 和 [测试入口](../tests/README.md) 拥有。本文定义本轮待实现的增量，不将其中描述的当前行为改写成“已经完成”。
 
 ## 3. 能力差异与证据
 
@@ -192,7 +192,7 @@ Standard 的承诺是执行已声明、已验证适用范围的内置检查集�
 - [客户规则原件](../../ppap-agent/assets/poc测试/poc规则/)：`10规则-控制计划.docx`、`8规则-过程流程图.docx`、`9规则-潜在过程失效模式及后果分析（PFMEA）.docx`。注意 Markdown 副本、原件和已发布修订未必一致。
 - 用户提供的联电附件二：`控制计划.xlsx`、`过程流程图.xls`、`PFMEA.xls`、`CPO-45薄膜电容器控制计划.xlsx`，以及产能 Word 文件。
 - [POC 真实样本](../../ppap-agent/assets/poc测试/POC测试样本/)中的 `尺寸检验报告-example.xlsm` 和文本型 PDF 控制计划。
-- Standard 使用现有 [V2 corpus](../tests/corpus/v2_assets/) 与 [V3 POC corpus](../tests/corpus/v3_poc/) 及对应人工 expected；不能修改 expected 来迎合实现。
+- Standard 使用现有 [corpus](../tests/corpus/test_cases.py) 的 v2 与 v3 数据集 及对应人工 expected；不能修改 expected 来迎合实现。
 
 验收中的变更只作用于样例副本和明确测试记录，不修改客户原件、其他测试者任务或既有历史结果。共享队列不是任意修改共享业务数据的授权。
 

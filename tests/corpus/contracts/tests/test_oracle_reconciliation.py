@@ -1,212 +1,138 @@
-from __future__ import annotations
+"""Malformed human tables must fail before any product execution."""
 
 import csv
-import json
+import hashlib
+from collections import defaultdict
 from pathlib import Path
 
 import pytest
-from corpus_contracts.v2_assets_shared import (
-    build_cases_from_long_feedback,
+from corpus_contracts.oracle import EXPECTED_COLUMNS, FILE_COLUMNS, build_round, load_oracle, original
+from corpus_contracts.product_round import BLOCKING, KNOWN_GAP, MATCH, OK, SETUP_FAILURE, STATUS_MISMATCH, UNABLE, RuleVerdict, compare_file, severity
+
+
+def write_oracle(tmp_path, *, files=None, expected=None):
+    (tmp_path / "input.xlsx").write_bytes(b"original")
+    tables = {
+        "cases.csv": (FILE_COLUMNS, files if files is not None else [["v3", "group", "target", "input.xlsx", "upload.xlsx", "target", "builtin:v3:控制计划"]]),
+        "oracle.csv": (EXPECTED_COLUMNS, expected if expected is not None else [["v3", "group", "target", "1", "PASS", "Rule", "Human evidence", "", "", ""]]),
+    }
+    for name, (headers, rows) in tables.items():
+        with (tmp_path / name).open("w", encoding="utf-8-sig", newline="") as output:
+            writer = csv.writer(output)
+            writer.writerow(headers)
+            writer.writerows(rows)
+    return {"cases": tmp_path / "cases.csv", "oracle": tmp_path / "oracle.csv", "root": tmp_path}
+
+
+def test_whole_combination_keeps_reference_without_asserting_it(tmp_path):
+    target = ["v3", "group", "target", "input.xlsx", "upload.xlsx", "target", "builtin:v3:控制计划"]
+    drawing = ["v3", "group", "drawing", "input.xlsx", "drawing.xlsx", "reference", ""]
+    paths = write_oracle(tmp_path, files=[target, drawing])
+    (case,) = load_oracle(**paths)
+    assert [file.file_id for file in case.files] == ["target", "drawing"]
+    assert case.files[1].expected == {}
+
+
+@pytest.mark.parametrize(
+    "change,match",
+    [
+        ("missing-original", "Missing original"),
+        ("missing-rule", "Missing frozen rule"),
+        ("duplicate-file", "Duplicate file"),
+        ("duplicate-rule", "Duplicate expectation"),
+        ("orphan-rule", "no target"),
+        ("blank-status", "Invalid expectation"),
+        ("unknown-status", "Invalid expectation"),
+        ("zero-assertions", "zero assertions"),
+        ("formula", "formulas"),
+        ("gap-without-issue", "Invalid known gap"),
+        ("gap-equals-truth", "Invalid known gap"),
+    ],
 )
-
-_LONG_FEEDBACK_HEADERS = [
-    "文件类型",
-    "修复状态",
-    "回归测试结果",
-    "问题大类",
-    "问题描述",
-    "解决方案",
-    "规则编号",
-    "规则",
-    "人工结果",
-    "人工依据",
-    "AI结果",
-    "AI依据",
-    "文件",
-    "文件格式",
-    "测试链接",
-    "修复测试链接",
-]
-
-
-def _write_long_feedback(path: Path, files: list[tuple[str, str, str]]) -> None:
-    with path.open("w", encoding="utf-8-sig", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=_LONG_FEEDBACK_HEADERS)
-        writer.writeheader()
-        for file_name, file_format, file_type in files:
-            writer.writerow(
-                {
-                    "文件类型": file_type,
-                    "规则编号": "1",
-                    "规则": "title",
-                    "人工结果": "PASS",
-                    "人工依据": "manual",
-                    "文件": file_name,
-                    "文件格式": file_format,
-                }
-            )
+def test_invalid_table_cannot_pass(tmp_path, change, match):
+    files = [["v3", "group", "target", "input.xlsx", "upload.xlsx", "target", "builtin:v3:控制计划"]]
+    expected = [["v3", "group", "target", "1", "PASS", "Rule", "Evidence", "", "", ""]]
+    if change == "missing-original":
+        files[0][3] = "missing.xlsx"
+    if change == "missing-rule":
+        files[0][6] = "missing.json"
+    if change == "duplicate-file":
+        files.append(files[0][:])
+    if change == "duplicate-rule":
+        expected.append(expected[0][:])
+    if change == "orphan-rule":
+        expected[0][2] = "other"
+    if change == "blank-status":
+        expected[0][4] = ""
+    if change == "unknown-status":
+        expected[0][4] = "MAYBE"
+    if change == "zero-assertions":
+        files.append(["v3", "group", "other", "input.xlsx", "other.xlsx", "target", "builtin:v3:控制计划"])
+    if change == "formula":
+        expected[0][4] = '=IF(1,"PASS","NG")'
+    if change == "gap-without-issue":
+        expected[0][9] = "UNABLE"
+    if change == "gap-equals-truth":
+        expected[0][9] = "PASS #1"
+    with pytest.raises(ValueError, match=match):
+        load_oracle(**write_oracle(tmp_path, files=files, expected=expected))
 
 
-def _write_manifest(path: Path, rows: list[dict[str, str]]) -> None:
-    path.write_text(json.dumps({"rows": rows}), encoding="utf-8")
+def test_all_real_tables_bind_every_assertion_to_a_declared_rule():
+    for case in load_oracle():
+        work, blobs, totals = build_round(case)
+        assert len(work.inputs) == len(case.files) == len(blobs)
+        assert all(totals[file.file_id] >= len(file.expected) > 0 for file in case.files if file.role == "target")
 
 
-def test_required_v2_entry_does_not_skip_missing_oracle_assets() -> None:
-    import corpus_contracts.v2_assets_shared as v2_assets_shared
-
-    source = Path(v2_assets_shared.__file__).read_text()
-    assert "def reconcile_v2_oracle_assets" in source
-    assert "V2 oracle assets missing" in source
-    assert "long-feedback files not found" not in source
-    assert "Skipped" not in source
+def test_originals_are_content_addressed():
+    for case in load_oracle():
+        for file in case.files:
+            assert file.path.stem == hashlib.sha256(file.path.read_bytes()).hexdigest()
 
 
-def test_partial_missing_v2_oracle_asset_fails(tmp_path: Path) -> None:
-    present = tmp_path / "1-present.xlsx"
-    present.write_bytes(b"present")
-    csv_path = tmp_path / "oracle.csv"
-    _write_long_feedback(
-        csv_path,
-        [
-            ("1-present.xlsx", "Excel", "1"),
-            ("1-missing.xlsx", "Excel", "1"),
-        ],
-    )
-
-    with pytest.raises(AssertionError, match=r"V2 oracle assets missing") as exc_info:
-        build_cases_from_long_feedback(
-            dataset_root=tmp_path,
-            expected_csv=csv_path,
-            ftype_filter="excel",
-        )
-    message = str(exc_info.value)
-    assert "file=1-missing.xlsx" in message
-    assert "file_type=excel" in message
-    assert "1-present.xlsx" not in message.split("V2 oracle assets missing", 1)[1]
+def test_same_document_in_pdf_and_excel_has_one_truth():
+    truths = defaultdict(dict)
+    for case in load_oracle():
+        for file in case.files:
+            if file.expected:
+                truths[(case.dataset, Path(file.filename).stem)][Path(file.filename).suffix.lower()] = {rule: item.status for rule, item in file.expected.items()}
+    pairs = [formats for formats in truths.values() if ".pdf" in formats and len(formats) > 1]
+    assert pairs
+    for formats in pairs:
+        first = formats[".pdf"]
+        assert all(other == first for other in formats.values())
 
 
-def test_all_missing_v2_oracle_assets_fail_closed(tmp_path: Path) -> None:
-    csv_path = tmp_path / "oracle.csv"
-    _write_long_feedback(
-        csv_path,
-        [
-            ("1-missing-a.xlsx", "Excel", "1"),
-            ("1-missing-b.xlsx", "Excel", "1"),
-        ],
-    )
-    with pytest.raises(AssertionError, match=r"V2 oracle assets missing") as exc_info:
-        build_cases_from_long_feedback(
-            dataset_root=tmp_path,
-            expected_csv=csv_path,
-            ftype_filter="excel",
-        )
-    message = str(exc_info.value)
-    assert "file=1-missing-a.xlsx" in message
-    assert "file=1-missing-b.xlsx" in message
-    assert "file_type=excel" in message
+def test_original_lookup_rejects_an_unknown_name():
+    assert original("5-模具验收报告-上海亚大.xls").is_file()
+    with pytest.raises(ValueError, match="Expected one original"):
+        original("no-such-file.xlsx")
 
 
-def test_ambiguous_v2_oracle_asset_fails(tmp_path: Path) -> None:
-    first = tmp_path / "first.xlsx"
-    second = tmp_path / "second.xlsx"
-    first.write_bytes(b"first")
-    second.write_bytes(b"second")
-    csv_path = tmp_path / "oracle.csv"
-    _write_long_feedback(csv_path, [("1-sample.xlsx", "Excel", "1")])
-    manifest = tmp_path / "manifest.json"
-    _write_manifest(
-        manifest,
-        [
-            {
-                "file_name": "1-sample.xlsx",
-                "file_format": "Excel",
-                "local_path": str(first),
-            },
-            {
-                "file_name": "1-sample.xlsx",
-                "file_format": "Excel",
-                "local_path": str(second),
-            },
-        ],
-    )
-
-    with pytest.raises(AssertionError, match=r"V2 oracle assets ambiguous") as exc_info:
-        build_cases_from_long_feedback(
-            dataset_root=tmp_path,
-            expected_csv=csv_path,
-            ftype_filter="excel",
-            manifest_path=manifest,
-        )
-    message = str(exc_info.value)
-    assert "file=1-sample.xlsx" in message
-    assert "file_type=excel" in message
+@pytest.mark.parametrize(
+    "kind,truth,actual,gap,expected",
+    [
+        (MATCH, "NG", "NG", "", OK),
+        (MATCH, "NG", "NG", "UNABLE", BLOCKING),
+        (STATUS_MISMATCH, "NG", "PASS", "", BLOCKING),
+        (STATUS_MISMATCH, "PASS", "NG", "", BLOCKING),
+        (STATUS_MISMATCH, "NG", "UNABLE", "", UNABLE),
+        (STATUS_MISMATCH, "PASS", "UNABLE", "", UNABLE),
+        (STATUS_MISMATCH, "UNABLE", "PASS", "", BLOCKING),
+        (STATUS_MISMATCH, "UNABLE", "NG", "", BLOCKING),
+        (STATUS_MISMATCH, "NA", "UNABLE", "", BLOCKING),
+        (STATUS_MISMATCH, "NG", "PASS", "PASS", KNOWN_GAP),
+        (STATUS_MISMATCH, "NG", "PASS", "UNABLE", BLOCKING),
+        ("execution_failure", "NG", "ERR", "", BLOCKING),
+        ("missing_rule", "NG", None, "", BLOCKING),
+    ],
+)
+def test_difference_from_truth_has_a_severity(kind, truth, actual, gap, expected):
+    assert severity(RuleVerdict("file", "1", kind, truth, actual), gap) == expected
 
 
-def test_manifest_fallback_still_resolves_existing_dataset_name(tmp_path: Path) -> None:
-    asset = tmp_path / "1-sample.xlsx"
-    asset.write_bytes(b"ok")
-    csv_path = tmp_path / "oracle.csv"
-    _write_long_feedback(csv_path, [("1-sample.xlsx", "Excel", "1")])
-    manifest = tmp_path / "manifest.json"
-    _write_manifest(
-        manifest,
-        [
-            {
-                "file_name": "1-sample.xlsx",
-                "file_format": "Excel",
-                "local_path": str(tmp_path / "missing-machine-path.xlsx"),
-            }
-        ],
-    )
-
-    cases = build_cases_from_long_feedback(
-        dataset_root=tmp_path,
-        expected_csv=csv_path,
-        ftype_filter="excel",
-        manifest_path=manifest,
-    )
-    assert [case.file_name for case in cases] == ["1-sample.xlsx"]
-    assert cases[0].file_path == asset.resolve()
-
-
-@pytest.mark.parametrize("local_present", [True, False])
-def test_manifest_cannot_read_another_workspaces_asset(tmp_path: Path, local_present: bool) -> None:
-    dataset = tmp_path / "selected-dataset"
-    dataset.mkdir()
-    local = dataset / "1-sample.xlsx"
-    foreign = tmp_path / "other-workspace.xlsx"
-    foreign.write_bytes(b"foreign corpus data")
-    if local_present:
-        local.write_bytes(b"selected corpus data")
-    oracle = tmp_path / "oracle.csv"
-    _write_long_feedback(oracle, [("1-sample.xlsx", "Excel", "1")])
-    manifest = dataset / "manifest.json"
-    _write_manifest(manifest, [{"file_name": "1-sample.xlsx", "file_format": "Excel", "local_path": str(foreign)}])
-
-    if local_present:
-        cases = build_cases_from_long_feedback(dataset_root=dataset, expected_csv=oracle, ftype_filter="excel", manifest_path=manifest)
-        assert cases[0].file_path == local.resolve()
-    else:
-        with pytest.raises(AssertionError, match="V2 oracle assets missing"):
-            build_cases_from_long_feedback(dataset_root=dataset, expected_csv=oracle, ftype_filter="excel", manifest_path=manifest)
-
-
-def test_complete_v2_oracle_assets_build_cases(tmp_path: Path) -> None:
-    first = tmp_path / "1-first.xlsx"
-    second = tmp_path / "1-second.xlsx"
-    first.write_bytes(b"one")
-    second.write_bytes(b"two")
-    csv_path = tmp_path / "oracle.csv"
-    _write_long_feedback(
-        csv_path,
-        [
-            ("1-first.xlsx", "Excel", "1"),
-            ("1-second.xlsx", "Excel", "1"),
-        ],
-    )
-    cases = build_cases_from_long_feedback(
-        dataset_root=tmp_path,
-        expected_csv=csv_path,
-        ftype_filter="excel",
-    )
-    assert [case.file_name for case in cases] == ["1-first.xlsx", "1-second.xlsx"]
+def test_duplicate_result_id_is_not_silently_overwritten():
+    result = {"coverage": {"rule_items": [{"file_version_id": "v1", "id": "U08:1"}, {"file_version_id": "v1", "id": "U08:1"}]}}
+    (verdict,) = compare_file(file_name="file", version_id="v1", expected={"U08:1": "PASS"}, result=result, setup_error=None)
+    assert verdict.kind == SETUP_FAILURE

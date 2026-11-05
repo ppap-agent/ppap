@@ -37,4 +37,4 @@ KISS 不等于把迁移人为切成最小碎片。如果一个内聚 package、�
 
 不要新增 roadmap、CURRENT、Story/proof/evidence registry、manifest 或第二套状态台账。历史信息由 Git history 和已关闭 Issue 保存。
 
-开发命令见 [DEVELOPMENT](docs/DEVELOPMENT.md)，测试策略见 [TESTING](docs/TESTING.md)。
+开发命令见 [DEVELOPMENT](docs/DEVELOPMENT.md)，选择和运行测试时见 [tests/README](tests/README.md)。

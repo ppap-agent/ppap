@@ -17,7 +17,7 @@ from typing import Any, cast
 from audit.checkers.v2.base_agent import BaseAgent
 from audit.checkers.v4.pfmea_local import pair_identity
 from audit.contracts import AuditEvidence, AuditResultItem, EvidenceDiagnostic, EvidenceSource
-from audit.document_tools import ReadLimits, TableReader, snapshot, source_title_location
+from audit.document_tools import ReadLimits, TableReader, ref, snapshot, source_title_location
 from audit.engine.checkers.rule_declarations import discover_declared_rules
 from audit.engine.rule_engine.context import GuardStop
 from audit.evidence import EvidenceBudget, cell_locator
@@ -71,6 +71,10 @@ class NativeFacts:
         self.data = snapshot(path, limits=ReadLimits())
         self.version, self.witness = version, witness
         self.format = self.data["source"]["format"]
+        if self.format == ".pdf" and len(self.data["tables"]) > 1 and not self.data.get("coverage", {}).get("unresolved_pages"):
+            from audit.pdf_tables import prepare_pdf_workbook
+
+            self.data = prepare_pdf_workbook(path, self.data, ReadLimits())
         self._unread_visual = self.format == ".xls"
         if self.format == ".docx":
             import zipfile
@@ -79,9 +83,25 @@ class NativeFacts:
                 self._unread_visual = any(name.startswith(("word/header", "word/footer", "word/media/")) for name in archive.namelist())
         self.readers = {table["id"]: TableReader(table, EvidenceBudget()) for table in self.data.get("tables", [])}
 
+    def cell_location(self, table, row, column, fact):
+        if self.data.get("prepared_format") == "xlsx":
+            source = fact.get("source", {})
+            if not all(source.get(field) for field in ("page", "row", "column", "bbox")):
+                raise UnknownFact("转换单元格尚无可核对的原 PDF 位置。")
+            locator = cell_locator(".pdf", f"page-{source['page']}", source["row"], source["column"]).model_dump(mode="json")
+            return {
+                **locator,
+                "bbox": source["bbox"],
+                "source_sha256": self.data["source"]["sha256"],
+                "prepared_sheet": table["id"],
+                "prepared_cell": ref(row, column),
+                "prepared_sha256": self.data["prepared_sha256"],
+            }
+        return cell_locator(self.format, table["id"], row, column).model_dump(mode="json")
+
     def cell(self, table, row, column):
         fact = self.readers[table["id"]].cell(row, column)
-        locator = cell_locator(self.format, table["id"], row, column).model_dump(mode="json")
+        locator = self.cell_location(table, row, column, fact)
         self.witness(locator, fact.get("value"), self.version)
         if fact.get("state") != "known":
             raise UnknownFact("原件单元格含未算出的公式、图像或读取不确定性。")
@@ -101,7 +121,7 @@ class NativeFacts:
                 column = 0
                 for character in match.group(1):
                     column = column * 26 + ord(character) - ord("A") + 1
-                locator = cell_locator(self.format, table["id"], int(match.group(2)), column).model_dump(mode="json")
+                locator = self.cell_location(table, int(match.group(2)), column, fact)
                 yield str(fact["value"]), locator
         for paragraph in self.data.get("paragraphs", []):
             if paragraph.get("text", "").strip():
@@ -344,7 +364,7 @@ class UaesSourceAgent(BaseAgent):
                 required="structure_or_visual",
                 used=("both" if len({item.kind for item in self._evidence_sources}) > 1 else self._evidence_sources[0].kind) if self._evidence_sources else "none",
                 source_format=cast(Any, suffix),
-                prepared_format=cast(Any, "docx" if suffix == "doc" else suffix),
+                prepared_format=cast(Any, (self._native.data.get("prepared_format") if self._native is not None else None) or ("docx" if suffix == "doc" else suffix)),
                 sources=tuple(self._evidence_sources),
                 diagnostics=(EvidenceDiagnostic(code="uaes_source_fact", stage="evaluation", severity="info", message="客户原始条款的实际执行结果；未知事实未转为通过。"),),
             )

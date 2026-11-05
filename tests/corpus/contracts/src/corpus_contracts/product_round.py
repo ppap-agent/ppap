@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Generic, TypeVar
 
 from audit.audits import ERR, RoundInput, RoundWork
 from audit.engine.checkers.rule_declarations import (
@@ -19,11 +20,19 @@ MISSING_RULE = "missing_rule"
 EXECUTION_FAILURE = "execution_failure"
 SETUP_FAILURE = "setup_failure"
 
+OK = "ok"
+BLOCKING = "blocking"
+UNABLE = "unable"
+KNOWN_GAP = "known_gap"
+
+
+RuleIndex = TypeVar("RuleIndex", int, str)
+
 
 @dataclass(frozen=True)
-class RuleVerdict:
+class RuleVerdict(Generic[RuleIndex]):
     file_name: str
-    rule_index: int
+    rule_index: RuleIndex
     kind: str
     expected: str
     actual: str | None = None
@@ -106,24 +115,24 @@ def compare_file(
     *,
     file_name: str,
     version_id: str,
-    expected: dict[int, str],
+    expected: dict[RuleIndex, str],
     result: dict | None,
     setup_error: str | None,
     expected_coverage: str = "mapped",
-) -> list[RuleVerdict]:
+) -> list[RuleVerdict[RuleIndex]]:
     if setup_error or result is None:
         return [RuleVerdict(file_name, index, SETUP_FAILURE, status, detail=setup_error or "round did not run") for index, status in sorted(expected.items())]
     items = [row for row in (result.get("coverage") or {}).get("rule_items") or [] if row.get("file_version_id") == version_id]
-    by_index: dict[int, dict] = {}
+    by_index: dict[str, dict] = {}
     for row in items:
-        try:
-            by_index[int(row.get("id"))] = row
-        except (TypeError, ValueError):
-            continue
+        key = str(row.get("id"))
+        if key in by_index:
+            return [RuleVerdict(file_name, index, SETUP_FAILURE, status, detail=f"duplicate result ID: {key}") for index, status in expected.items()]
+        by_index[key] = row
     note = str(result.get("note") or "")
-    verdicts: list[RuleVerdict] = []
+    verdicts: list[RuleVerdict[RuleIndex]] = []
     for index, status in sorted(expected.items()):
-        row = by_index.get(index)
+        row = by_index.get(str(index))
         if row is None:
             verdicts.append(RuleVerdict(file_name, index, MISSING_RULE, status, detail=note))
             continue
@@ -141,6 +150,18 @@ def compare_file(
         else:
             verdicts.append(RuleVerdict(file_name, index, MATCH, status, actual))
     return verdicts
+
+
+def severity(verdict: RuleVerdict, gap_status: str = "") -> str:
+    """How much one difference from the human truth matters; unknown can never become a conclusion."""
+    if verdict.kind == MATCH:
+        return BLOCKING if gap_status else OK
+    actual = verdict.actual or "ERR"
+    if gap_status and actual == gap_status:
+        return KNOWN_GAP
+    if verdict.kind == STATUS_MISMATCH and actual == "UNABLE" and verdict.expected in {"PASS", "NG"}:
+        return UNABLE
+    return BLOCKING
 
 
 def failing_verdicts(verdicts: list[RuleVerdict]) -> list[RuleVerdict]:

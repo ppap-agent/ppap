@@ -1,0 +1,80 @@
+{
+  "rule_version_id": "7ae18dea-9439-59ee-9ac1-38ce75b30b17",
+  "rule_title": "过程流程图（PFD）审核规则",
+  "rule_body": {
+    "kind": "engine",
+    "type": "过程流程图",
+    "parts": [],
+    "rules": [
+      {
+        "id": "U16:1:4cc850bc6dca62eaa46b",
+        "category": "关键工序及关键特性是否被标识",
+        "priority": "P0",
+        "type_of_rule": "text",
+        "rule_to_check": "文件中须有关键工序标记；无任何标识则不通过；\n产品特性/过程特性列中，关键/重要/特殊特性须有符号标注；所有特性描述无标识则不通过；\n须有图例或注释定义关键标识含义（如「K 表示关键过程」）；有符号无解释则不通过；\n以上三项全部满足则通过，任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；"
+      },
+      {
+        "id": "U16:2:ffa5b55bf2840c14ff11",
+        "category": "过程流程图是否按物流规范采用标示图",
+        "priority": "P0",
+        "type_of_rule": "text",
+        "rule_to_check": "工序活动须以标准化图形符号表达；纯文字框/文字列表则不通过；\n图内须有图例且覆盖全部使用符号；无图例或不完整则不通过；\n同一活动类型须全图使用同一符号；同义混用则不通过；\n检验类活动（进货/过程/最终/巡检/自检）须以检验符号表达，图中无法识别则不通过；\n以上四项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，但判定依据需提醒用户进行人工复核。"
+      },
+      {
+        "id": "U16:3:ed222fa10074d7c47729",
+        "category": "过程流程图是否受控",
+        "priority": "P0",
+        "type_of_rule": "text",
+        "rule_to_check": "当过程流程图中包含受控章则通过，否则不通过；如果无法辨识则不通过，但判定依据需提醒用户进行人工复核"
+      }
+    ],
+    "models": [],
+    "customers": [
+      "UAES"
+    ],
+    "preset_key": "U16",
+    "rule_profile": "v4",
+    "preset_source_sha256": "57a35f8b7a0d4c69d16c5e3ced83a62f6f9b86ac85483889d8c7a258bc546aa3"
+  },
+  "rule_execution": {
+    "mode": "rule_items",
+    "items": [
+      {
+        "id": "U16:1:4cc850bc6dca62eaa46b",
+        "category": "关键工序及关键特性是否被标识",
+        "coverage": "mapped",
+        "priority": "P0",
+        "checker_index": 0,
+        "rule_to_check": "文件中须有关键工序标记；无任何标识则不通过；\n产品特性/过程特性列中，关键/重要/特殊特性须有符号标注；所有特性描述无标识则不通过；\n须有图例或注释定义关键标识含义（如「K 表示关键过程」）；有符号无解释则不通过；\n以上三项全部满足则通过，任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+        "checker_method": "rule_1",
+        "checker_description": "关键工序及特性标识与图例"
+      },
+      {
+        "id": "U16:2:ffa5b55bf2840c14ff11",
+        "category": "过程流程图是否按物流规范采用标示图",
+        "coverage": "mapped",
+        "priority": "P0",
+        "checker_index": 1,
+        "rule_to_check": "工序活动须以标准化图形符号表达；纯文字框/文字列表则不通过；\n图内须有图例且覆盖全部使用符号；无图例或不完整则不通过；\n同一活动类型须全图使用同一符号；同义混用则不通过；\n检验类活动（进货/过程/最终/巡检/自检）须以检验符号表达，图中无法识别则不通过；\n以上四项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，但判定依据需提醒用户进行人工复核。",
+        "checker_method": "rule_2",
+        "checker_description": "全图活动符号一致性与检验图例"
+      },
+      {
+        "id": "U16:3:ed222fa10074d7c47729",
+        "category": "过程流程图是否受控",
+        "coverage": "mapped",
+        "priority": "P0",
+        "checker_index": 2,
+        "rule_to_check": "当过程流程图中包含受控章则通过，否则不通过；如果无法辨识则不通过，但判定依据需提醒用户进行人工复核",
+        "checker_method": "rule_3",
+        "checker_description": "过程流程图实际受控章"
+      }
+    ],
+    "checker": {
+      "class": "audit.checkers.v4.uaes.engineering.UaesProcessFlowAgent",
+      "profile": "v4",
+      "preset_key": "U16",
+      "source_sha256": "57a35f8b7a0d4c69d16c5e3ced83a62f6f9b86ac85483889d8c7a258bc546aa3"
+    }
+  }
+}

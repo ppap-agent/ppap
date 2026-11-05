@@ -12,7 +12,7 @@
 | 代码与运行边界 | [Architecture](docs/ARCHITECTURE.md) |
 | 数据不变量 | [Data model](docs/DATA_MODEL.md) |
 | 开发、配置、运行 | [Development](docs/DEVELOPMENT.md)、[.env.dev](.env.dev)、[.env.production](.env.production)、[.env.example](.env.example) |
-| 测试 | [Testing](docs/TESTING.md) |
+| 测试 | [测试入口](tests/README.md) |
 | 安全边界 | [Security](docs/SECURITY.md) |
 | 迁移来源 | [Inventory](docs/INVENTORY.md)、[Migration](docs/MIGRATION.md) |
 

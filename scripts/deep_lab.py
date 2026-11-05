@@ -84,14 +84,14 @@ def prepare(recipe: str, bundle: str, file_name: str, effort: str, *, variant: s
         raise SystemExit(f"{file_name} matched {len(selected)} files in {bundle}")
     case = selected[0]
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    work = OUTPUT / recipe / effort / bundle / f"{case.file_seq}-{case.file_path.stem}" / stamp
+    work = OUTPUT / recipe / effort / bundle / f"{case.file_seq}-{Path(case.file_name).stem}" / stamp
     files = work / "files"
     files.mkdir(parents=True)
     copied: dict[str, str] = {}
     for item in cases:
-        destination = files / item.file_path.name
+        destination = files / item.file_name
         if destination.exists():
-            destination = files / f"{item.file_seq}-{item.file_path.name}"
+            destination = files / f"{item.file_seq}-{item.file_name}"
         shutil.copy2(item.file_path, destination)
         copied[item.file_name] = str(destination.relative_to(work))
     if source is not None:
