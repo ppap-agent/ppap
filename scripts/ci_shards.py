@@ -77,6 +77,36 @@ def partition(targets: list[Target], shard_count: int) -> list[list[Target]]:
     return shards
 
 
+def discover_integration() -> list[Path]:
+    files = sorted(path.relative_to(ROOT) for path in (ROOT / "tests/integration/product").rglob("test_*.py"))
+    if not files:
+        raise RuntimeError("no product contract tests discovered")
+    return files
+
+
+def partition_integration(files: list[Path], shard_count: int) -> list[list[Path]]:
+    """Balance by source size, the stable proxy available without run history."""
+    if shard_count < 1:
+        raise ValueError("shard_count must be positive")
+    shards: list[list[Path]] = [[] for _ in range(shard_count)]
+    loads = [0] * shard_count
+    for path in sorted(files, key=lambda item: ((ROOT / item).stat().st_size, str(item)), reverse=True):
+        index = loads.index(min(loads))
+        shards[index].append(path)
+        loads[index] += (ROOT / path).stat().st_size
+    return shards
+
+
+def run_integration(shard: int, shard_count: int) -> None:
+    """One PostgreSQL per shard: these files share a database and cannot join an xdist pool."""
+    files = partition_integration(discover_integration(), shard_count)[shard]
+    project = f"ppap-ci-i-{shard}-{os.environ.get('GITHUB_RUN_ID', 'local')}-{os.environ.get('GITHUB_RUN_ATTEMPT', '1')}"
+    report = ROOT / "ci-report"
+    report.mkdir(exist_ok=True)
+    command = ["uv", "run", "--no-sync", "pytest", *map(str, files), "-vv", "--durations=25", "-o", "faulthandler_timeout=120", f"--junitxml=ci-report/product-{shard}.xml"]
+    with_postgres(command, project)
+
+
 def run(command: list[str], *, env: dict[str, str] | None = None) -> None:
     print("+", shlex.join(command), flush=True)
     run_with_heartbeat(command, cwd=ROOT, env=env, timeout=1800)
@@ -93,7 +123,7 @@ def with_postgres(command: list[str], project: str) -> None:
         if not port.isdigit():
             raise RuntimeError(f"invalid PostgreSQL port binding: {binding!r}")
         run([*compose, "run", "--rm", "init-db"], env=env)
-        run(command, env={**env, "PGPORT": port})
+        run(command, env={**env, "PGPORT": port, "COMPOSE_PROJECT_NAME": project})
     except (OSError, RuntimeError, subprocess.CalledProcessError):
         for diagnostic in ([*compose, "ps", "-a"], [*compose, "logs", "--no-color", "--timestamps", "postgres", "init-db"]):
             try:
@@ -130,7 +160,7 @@ def run_target(target: Target, suite: str, project: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("suite", choices=["plan", "modules", "distributions"])
+    parser.add_argument("suite", choices=["plan", "modules", "distributions", "integration"])
     parser.add_argument("--shard", type=int)
     parser.add_argument("--shards", type=int, default=DEFAULT_SHARDS)
     args = parser.parse_args()
@@ -140,6 +170,10 @@ def main() -> None:
     suites = ("modules", "distributions") if args.suite == "plan" else (args.suite,)
     if args.suite != "plan" and (args.shard is None or not 0 <= args.shard < args.shards):
         parser.error("provide --shard in [0, --shards)")
+
+    if args.suite == "integration":
+        run_integration(args.shard, args.shards)
+        return
 
     for suite in suites:
         targets = discover_modules() if suite == "modules" else discover_distributions()

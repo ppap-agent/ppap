@@ -85,9 +85,9 @@ def test_all_browser_e2e_items_join_one_xdist_pool_without_exclusion():
     assert 'uv run --no-sync pytest "$suite"' in script
     # Runtime tests remain serial and the same CI Gate still requires integration.
     assert "bash scripts/run-compose-tests.sh tests/integration/runtime" in integration
-    assert "pytest tests/integration/product -vv --durations=25" in integration
-    assert "python3 -m scripts.ci_heartbeat --timeout 2400" in integration
-    assert "      - integration" in workflow
+    assert 'python3 -m scripts.ci_shards integration --shard "${{ matrix.shard }}"' in workflow
+    assert "      - integration_contracts\n" in workflow
+    assert "      - integration\n" in workflow
 
 
 def test_browser_cleanup_is_owned_by_always_step_and_failures_are_reported():
@@ -100,4 +100,4 @@ def test_browser_cleanup_is_owned_by_always_step_and_failures_are_reported():
     assert "if: always()" in cleanup
     assert 'exit "$failed"' in cleanup
     assert "down -v --remove-orphans || failed=1" in cleanup
-    assert cleanup.count("down -v --remove-orphans || failed=1") == 3
+    assert cleanup.count("down -v --remove-orphans || failed=1") == 2

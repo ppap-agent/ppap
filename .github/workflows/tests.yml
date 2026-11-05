@@ -26,6 +26,7 @@ permissions:
 jobs:
   web:
     name: Web
+    needs: repository
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
@@ -180,6 +181,7 @@ jobs:
   # keep their own pytest process; distribution runs retain isolated wheel venvs.
   distribution_closure:
     name: Distribution closure / shard ${{ matrix.shard }}
+    needs: repository
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
@@ -206,6 +208,7 @@ jobs:
 
   python_modules:
     name: Python modules / shard ${{ matrix.shard }}
+    needs: repository
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
@@ -243,6 +246,7 @@ jobs:
 
   schema:
     name: Schema
+    needs: repository
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -295,6 +299,7 @@ jobs:
 
   corpus:
     name: Corpus / ${{ matrix.name }}
+    needs: repository
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
@@ -427,16 +432,17 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  integration:
-    name: Product integration
+  integration_contracts:
+    name: Product contracts / shard ${{ matrix.shard }}
+    needs: repository
     runs-on: ubuntu-24.04
-    timeout-minutes: 80
+    timeout-minutes: 45
     env:
-      PPAP_BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       OPENAI_REASONING_EFFORT: low
-      PPAP_COMPOSE_TEST: ppap-ci-product-tests-${{ github.run_id }}-${{ github.run_attempt }}
-      PPAP_COMPOSE_PROD: ppap-ci-prod-${{ github.run_id }}-${{ github.run_attempt }}
-      PPAP_COMPOSE_E2E: ppap-ci-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -483,8 +489,6 @@ jobs:
       - name: Cross-owner product contracts
         working-directory: ${{ github.workspace }}
         env:
-          COMPOSE_PROJECT_NAME: ${{ env.PPAP_COMPOSE_TEST }}
-          PPAP_TEST_POSTGRES_PORT: "0"
           OPENAI_API_KEY: ${{ secrets.CI_LLM_API_KEY }}
           OPENAI_BASE_URL: ${{ secrets.CI_LLM_BASE_URL }}
           MODEL_NAME: ${{ secrets.CI_LLM_MODEL }}
@@ -493,21 +497,85 @@ jobs:
           OCR_OPENAI_API_KEY: ${{ secrets.OCR_OPENAI_API_KEY }}
           OCR_OPENAI_BASE_URL: ${{ secrets.OCR_OPENAI_BASE_URL }}
           OCR_MODEL_NAME: ${{ secrets.OCR_MODEL_NAME }}
+        run: python3 -m scripts.ci_shards integration --shard "${{ matrix.shard }}"
+      - name: Upload contract failure evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: integration-contracts-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ github.workspace }}/ci-report/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  integration:
+    name: Product integration
+    needs: repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+    env:
+      PPAP_BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      OPENAI_REASONING_EFFORT: low
+      PPAP_COMPOSE_PROD: ppap-ci-prod-${{ github.run_id }}-${{ github.run_attempt }}
+      PPAP_COMPOSE_E2E: ppap-ci-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Assert Docker
+        working-directory: ${{ github.workspace }}
+        run: bash scripts/ci_assert_docker.sh
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          working-directory: ${{ github.workspace }}
+          version: "0.9.26"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Use runner-local Corepack cache
+        working-directory: ${{ github.workspace }}
+        run: echo "COREPACK_HOME=$RUNNER_TEMP/corepack/${GITHUB_RUN_ID}/${GITHUB_JOB}" >> "$GITHUB_ENV"
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Install frontend dependencies for feedback E2E
+        working-directory: ${{ github.workspace }}/apps/web
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
         run: |
-          set -euo pipefail
-          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml up -d postgres --wait --wait-timeout 120
-          binding=$(docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml port postgres 5432)
-          export PGPORT="${binding##*:}"
-          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml run --rm init-db
-          # Keep the long DB suite visible to the runner and cap its lifetime.
-          python3 -m scripts.ci_heartbeat --timeout 2400 -- \
-            uv run --no-sync pytest tests/integration/product -vv --durations=25 -o faulthandler_timeout=120 --junitxml=ci-report/product.xml
-          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
-      - name: Bake canonical api, worker, and web images
+          corepack enable
+          pnpm install --frozen-lockfile
+      - name: Install Python deps and browser
         working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
-          docker buildx bake
+          uv sync --locked --group e2e
+          uv run --no-sync python -m playwright install chromium
+      - name: Install shared Excel converter for product contracts
+        working-directory: ${{ github.workspace }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libreoffice-calc fonts-noto-cjk
+          cc -O2 -Wall -Wextra -Werror packages/documents/native/legacy_doc_sandbox.c \
+            -o "$RUNNER_TEMP/ppap-local-converter-sandbox"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Set up cached image builder
+        id: image_builder
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          use: false
+      - name: Expose the Actions cache to the image builder
+        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
+      - name: Bake canonical api, worker, and web images
+        working-directory: ${{ github.workspace }}
+        env:
+          IMAGE_BUILDER: ${{ steps.image_builder.outputs.name }}
+        run: |
+          set -euo pipefail
+          docker buildx bake --builder "$IMAGE_BUILDER" --load \
+            --set '*.cache-from=type=gha,scope=ppap-images' \
+            --set '*.cache-to=type=gha,mode=max,scope=ppap-images'
           docker image inspect \
             "ppap-api:${PPAP_BUILD_SHA}" \
             "ppap-worker:${PPAP_BUILD_SHA}" \
@@ -557,7 +625,6 @@ jobs:
             docker compose -p "$project" -f "$file" "$@" logs --no-color --timestamps \
               postgres silo init-db init-bucket api worker web || true
           }
-          dump "$PPAP_COMPOSE_TEST" deploy/isolated-dev/compose.yaml
           dump "$PPAP_COMPOSE_PROD" deploy/compose.yaml --env-file deploy/compose.env.example
           dump "$PPAP_COMPOSE_E2E" deploy/isolated-dev/compose.yaml
       - name: Clean Compose stacks
@@ -567,8 +634,6 @@ jobs:
           # Attempt every stack even after one cleanup error. Never mask failure.
           set +e
           failed=0
-          docker compose -p "$PPAP_COMPOSE_TEST" -f deploy/isolated-dev/compose.yaml \
-            down -v --remove-orphans || failed=1
           docker compose -p "$PPAP_COMPOSE_PROD" -f deploy/compose.yaml --env-file deploy/compose.env.example \
             down -v --remove-orphans || failed=1
           docker compose -p "$PPAP_COMPOSE_E2E" -f deploy/isolated-dev/compose.yaml \
@@ -594,6 +659,7 @@ jobs:
       - distribution_closure
       - schema
       - corpus
+      - integration_contracts
       - integration
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -606,6 +672,7 @@ jobs:
           DISTRIBUTION_CLOSURE_RESULT: ${{ needs.distribution_closure.result }}
           SCHEMA_RESULT: ${{ needs.schema.result }}
           CORPUS_RESULT: ${{ needs.corpus.result }}
+          INTEGRATION_CONTRACTS_RESULT: ${{ needs.integration_contracts.result }}
           INTEGRATION_RESULT: ${{ needs.integration.result }}
         run: |
           set -euo pipefail
@@ -617,6 +684,7 @@ jobs:
             "$DISTRIBUTION_CLOSURE_RESULT" \
             "$SCHEMA_RESULT" \
             "$CORPUS_RESULT" \
+            "$INTEGRATION_CONTRACTS_RESULT" \
             "$INTEGRATION_RESULT"
           do
             if [ "$result" != "success" ]; then
