@@ -52,7 +52,7 @@ jobs:
         run: |
           set -uo pipefail
           # Individual wrong answers are the measurement; the report decides the outcome.
-          for round in $(seq 1 "$ROUNDS"); do
+          for _ in $(seq 1 "$ROUNDS"); do
             python3 -m scripts.ci_heartbeat --timeout 3000 -- \
               uv run --no-sync pytest tests/corpus/test_cases.py -q -n 4 --dist=load --max-worker-restart=0 || true
           done
