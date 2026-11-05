@@ -1,4 +1,5 @@
 """Immutable, tenant-scoped Suite content. Publication pointers live elsewhere."""
+
 from __future__ import annotations
 
 import hashlib
@@ -34,7 +35,7 @@ class SuiteRevision:
     suite_key: str
     related_suite_keys: tuple[str, ...]
     base_revision_id: str | None
-    overrides: Mapping[str, str]
+    overrides: Mapping[str, str | None]
     resolved_digest: str
     created_by: str | None
     revision_number: int = 1
@@ -47,7 +48,9 @@ class SuiteRevision:
         related = tuple(sorted(self.related_suite_keys))
         if self.suite_key in related or len(set(related)) != len(related) or any(not key or key.strip() != key for key in related):
             raise ValueError("invalid_related_suite_keys")
-        if not set(self.overrides) <= SUITE_PATHS or any(not DIGEST.fullmatch(value) for value in self.overrides.values()):
+        if not set(self.overrides) <= SUITE_PATHS or any(
+            (path != "resources.py" or self.base_revision_id is None) if value is None else not DIGEST.fullmatch(value) for path, value in self.overrides.items()
+        ):
             raise ValueError("invalid_suite_objects")
         if not DIGEST.fullmatch(self.resolved_digest):
             raise ValueError("invalid_suite_digest")
@@ -121,6 +124,12 @@ def resolve_suite(
     objects: dict[str, str] = {}
     for revision in reversed(chain):
         for path, digest in revision.overrides.items():
+            if digest is None:
+                if path not in files:
+                    raise ValueError("suite_deleted_object_missing")
+                del files[path]
+                del objects[path]
+                continue
             body = load_object(revision.tenant_id, digest)
             if not isinstance(body, bytes) or len(body) > MAX_OBJECT_BYTES or content_digest(body) != digest:
                 raise ValueError("suite_object_digest_mismatch")

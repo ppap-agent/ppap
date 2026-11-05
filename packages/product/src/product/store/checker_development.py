@@ -7,7 +7,9 @@ import json
 from typing import Any
 from uuid import UUID, uuid4
 
+from audit.contracts import RuleInput
 from audit.models import public_locator
+from audit.standard_suites import library_revision
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
@@ -23,6 +25,10 @@ def _id(value: str) -> str:
 
 def _digest(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+
+
+def _rule_semantics(body: dict) -> dict:
+    return RuleInput.model_validate({**body, "rule_id": "", "rule_profile": body.get("rule_profile") or "v3"}).model_dump(mode="json", exclude={"rule_id"})
 
 
 def _member(conn, principal) -> None:
@@ -54,16 +60,16 @@ def _feedback(row: dict) -> dict:
 def _receipt(row: dict) -> dict:
     state = row["state"]
     # A dead lease after dispatch is never permission to consume the provider again.
-    if state == "running" and row.get("lease_expired"):
-        state = "unknown"
+    if state in {"queued", "running"} and row.get("lease_expired"):
+        state = "unknown" if row.get("model_started_at") else "failed"
     return {
         "operation_id": str(row["operation_id"]),
         "suite_revision_id": str(row["suite_revision_id"]),
         "state": state,
         "candidate_revision_id": str(row["candidate_revision_id"]) if row["candidate_revision_id"] else None,
         "report": row["report"],
-        "usage": row["usage"],
-        "failure": "execution_outcome_unknown" if state == "unknown" and not row["failure"] else row["failure"],
+        "usage": {**row["usage"], "uncertain": True} if state == "unknown" else row["usage"],
+        "failure": row["failure"] or ("execution_outcome_unknown" if state == "unknown" else "worker_lost_before_dispatch" if state == "failed" and row.get("lease_expired") else None),
         "cancel_requested": row["cancel_requested"],
         "created_at": row["created_at"].isoformat(),
     }
@@ -120,6 +126,9 @@ class CheckerDevelopmentStore:
             raise ValueError("checker_feedback_invalid")
         fingerprint = _digest({"round_id": round_id, "user_id": principal.user_id, **payload})
         with self.store._conn() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+            from product.store.suite_releases import _lock
+
+            _lock(conn, principal.tenant_id)
             self._authorize_round(conn, principal, round_id, write=True)
             conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("checker-feedback-operation:" + principal.tenant_id + ":" + operation_id,))
             cur.execute("SELECT * FROM product.checker_feedback WHERE tenant_id=%s AND operation_id=%s", (principal.tenant_id, operation_id))
@@ -127,6 +136,8 @@ class CheckerDevelopmentStore:
             if prior:
                 if prior["request_fingerprint"] != fingerprint:
                     raise ValueError("checker_operation_conflict")
+                if prior["deleted_at"] is not None:
+                    raise ValueError("checker_feedback_deleted")
                 return _feedback(prior)
             head = conn.execute("SELECT result_attempt FROM product.audit_rounds WHERE id=%s AND tenant_id=%s FOR SHARE", (round_id, principal.tenant_id)).fetchone()
             if not head or head[0] != payload["result_attempt"]:
@@ -173,11 +184,16 @@ class CheckerDevelopmentStore:
                     fingerprint,
                 ),
             )
-            return _feedback(cur.fetchone())
+            saved = cur.fetchone()
+            self._invalidate_proofs(conn, principal.tenant_id, suite.revision.suite_key)
+            return _feedback(saved)
 
     def edit_feedback(self, principal, round_id, feedback_id, *, expected_revision, payload=None):
         round_id, feedback_id = _id(round_id), _id(feedback_id)
         with self.store._conn() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+            from product.store.suite_releases import _lock
+
+            _lock(conn, principal.tenant_id)
             self._authorize_round(conn, principal, round_id, write=True)
             cur.execute(
                 "SELECT * FROM product.checker_feedback WHERE id=%s AND round_id=%s AND tenant_id=%s AND created_by=%s AND deleted_at IS NULL FOR UPDATE",
@@ -188,6 +204,7 @@ class CheckerDevelopmentStore:
                 raise KeyError("checker_feedback_missing")
             if type(expected_revision) is not int or row["revision"] != expected_revision:
                 raise ValueError("checker_feedback_revision_conflict")
+            self._invalidate_proofs(conn, principal.tenant_id, row["suite_key"])
             if payload is None:
                 cur.execute("UPDATE product.checker_feedback SET deleted_at=now(),revision=revision+1,updated_at=now() WHERE id=%s", (feedback_id,))
                 return {"id": feedback_id, "deleted": True, "revision": expected_revision + 1}
@@ -212,7 +229,77 @@ class CheckerDevelopmentStore:
                    AND o.frozen->'source_round_ids' ? %s ORDER BY o.created_at DESC LIMIT 50""",
                 (principal.tenant_id, principal.user_id, round_id),
             )
-            return {"round_id": round_id, "feedback": feedback, "optimizations": [_receipt(row) for row in cur.fetchall()]}
+            optimizations = []
+            for row in cur.fetchall():
+                try:
+                    self._authorize_frozen(conn, principal, row["frozen"])
+                except KeyError:
+                    continue
+                optimizations.append(_receipt(row))
+            return {"round_id": round_id, "feedback": feedback, "optimizations": optimizations}
+
+    @staticmethod
+    def _invalidate_proofs(conn, tenant_id, suite_key):
+        # Feedback edits are not a replacement Oracle for an old proof. The old
+        # report stays readable; adoption must explicitly revalidate current labels.
+        conn.execute(
+            """UPDATE product.suite_validations v SET status='stale',revision=revision+1,
+                      proof=jsonb_set(v.proof,'{reasons}',coalesce(v.proof->'reasons','[]'::jsonb) || '["oracle_changed"]'::jsonb)
+               FROM product.suite_revisions r WHERE v.revision_id=r.id AND v.tenant_id=%s
+                 AND r.suite_key=%s AND v.status<>'stale' AND v.proof->'report'->>'oracle_revision' IS NOT NULL""",
+            (tenant_id, suite_key),
+        )
+
+    def _freeze_files(self, conn, principal, sample, suite):
+        """Persist exact source identities and effective rules, never query latest on dispatch."""
+        rows = conn.execute(
+            """SELECT i.role,v.id,v.file_id,v.original_filename,v.sha256,v.content_type,
+                      i.rule_version_id,i.rule_title,i.rule_body,i.rule_execution,v.status
+               FROM product.round_inputs i JOIN product.file_versions v ON v.id=i.file_version_id
+               WHERE i.round_id=%s AND v.tenant_id=%s ORDER BY v.id""",
+            (sample["round_id"], principal.tenant_id),
+        ).fetchall()
+        result = []
+        for row in rows:
+            target = str(row[1]) == str(sample["file_version_id"])
+            if not target and row[0] != "reference":
+                continue
+            resource = self.store._resource(conn, str(row[2]))
+            grants = self.store._grants(conn, str(row[2]), principal.user_id)
+            if resource is None or not can_read(principal, resource, grants):
+                raise KeyError("checker_access_denied")
+            if row[10] != "ready" or not row[4]:
+                raise ValueError("checker_input_unavailable")
+            body = json.loads(suite.files["rules.json"]) if target else row[8]
+            if target:
+                body = {**body, "appendix": json.loads(suite.files.get("appendix.json", b"[]"))}
+            result.append(
+                {
+                    "file_version_id": str(row[1]),
+                    "file_id": str(row[2]),
+                    "role": "target" if target else "reference",
+                    "filename": row[3],
+                    "sha256": row[4],
+                    "content_type": row[5] or "",
+                    "rule_version_id": str(row[6]) if row[6] else None,
+                    "rule_title": row[7],
+                    "rule_body": body,
+                    "rule_execution": None if target else row[9],
+                }
+            )
+        if not any(row["role"] == "target" for row in result):
+            raise ValueError("checker_input_unavailable")
+        return result
+
+    def _authorize_frozen(self, conn, principal, frozen):
+        _member(conn, principal)
+        for round_id in frozen["source_round_ids"]:
+            self._authorize_round(conn, principal, round_id)
+        for sample in frozen["samples"]:
+            for item in sample["files"]:
+                resource = self.store._resource(conn, item["file_id"])
+                if resource is None or not can_read(principal, resource, self.store._grants(conn, item["file_id"], principal.user_id)):
+                    raise KeyError("checker_access_denied")
 
     def start(self, principal, suite_revision_id, payload):
         from product.store.suite_releases import current_selection
@@ -221,8 +308,6 @@ class CheckerDevelopmentStore:
         feedback_ids = sorted({_id(value) for value in payload["feedback_ids"]})
         if not feedback_ids or len(feedback_ids) > 64 or payload["action"] not in {"save_only", "run_tests"}:
             raise ValueError("checker_optimization_invalid")
-        if payload["action"] == "run_tests" and payload.get("consume_model") is not True:
-            raise ValueError("checker_model_confirmation_required")
         fingerprint = _digest({"suite_revision_id": suite_revision_id, "user_id": principal.user_id, **payload, "feedback_ids": feedback_ids})
         with self.store._conn() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
             _member(conn, principal)
@@ -235,6 +320,7 @@ class CheckerDevelopmentStore:
             if prior:
                 if prior["request_fingerprint"] != fingerprint:
                     raise ValueError("checker_operation_conflict")
+                self._authorize_frozen(conn, principal, prior["frozen"])
                 return _receipt(prior)
             suite = self.suites.resolve_suite(suite_revision_id, principal.tenant_id, conn=conn)
             related = {key: current_selection(conn, principal.tenant_id, key)["revision_id"] for key in suite.revision.related_suite_keys}
@@ -244,26 +330,51 @@ class CheckerDevelopmentStore:
                 raise ValueError("checker_feedback_scope_mismatch")
             if len(samples) > 64:
                 raise ValueError("checker_sample_limit")
+            frozen_samples = []
             for row in samples:
                 self._authorize_round(conn, principal, str(row["round_id"]))
-                # Recheck every source object, not only the result's tenant.
-                sources = conn.execute("SELECT v.file_id FROM product.round_inputs i JOIN product.file_versions v ON v.id=i.file_version_id WHERE i.round_id=%s", (row["round_id"],)).fetchall()
-                for (file_id,) in sources:
-                    grants = self.store._grants(conn, str(file_id), principal.user_id)
-                    resource = self.store._resource(conn, str(file_id))
-                    if resource is None or not can_read(principal, resource, grants):
-                        raise KeyError("checker_access_denied")
-            if payload["action"] == "run_tests":
+                original_rule = conn.execute(
+                    "SELECT rule_body FROM product.round_inputs WHERE round_id=%s AND file_version_id=%s AND rule_version_id=%s AND role='target'",
+                    (row["round_id"], row["file_version_id"], row["rule_version_id"]),
+                ).fetchone()
+                if original_rule is None:
+                    raise ValueError("checker_feedback_scope_mismatch")
+                frozen_samples.append({**_feedback(row), "confirmed_by": str(row["created_by"]), "expected_rule_body": original_rule[0], "files": self._freeze_files(conn, principal, row, suite)})
+            training = [row for row in frozen_samples if row["ordinal"] % 4]
+            if not training:
+                raise ValueError("checker_training_sample_required")
+            target = next((row for row in training if row["id"] in feedback_ids), training[0])
+            visible = {item["sha256"] for row in training for item in row["files"]}
+            if any(visible.intersection(item["sha256"] for item in row["files"]) for row in frozen_samples if row["ordinal"] % 4 == 0):
+                raise ValueError("checker_holdout_input_exposed")
+            if payload["action"] == "run_tests" and payload.get("consume_model") is True:
                 # Key readiness only; no model call and no secret enters frozen JSON.
                 self.store.personal_model_access(principal.tenant_id, principal.user_id)
             frozen = {
-                "samples": [{**_feedback(row), "confirmed_by": str(row["created_by"])} for row in samples],
+                "samples": frozen_samples,
+                "target_sample_id": target["id"],
                 "selected_feedback_ids": feedback_ids,
                 "source_round_ids": sorted({str(row["round_id"]) for row in samples}),
                 "suite_digest": suite.revision.resolved_digest,
                 "related_revision_ids": related,
-                "executor_revision": self.store.settings.deep_execution_revision(),
+                "related_suite_digests": {key: self.suites.resolve_suite(value, principal.tenant_id, conn=conn).revision.resolved_digest for key, value in related.items()},
+                "executor_revision": self.store.settings.deep_execution_revision() if payload["action"] == "run_tests" else "",
+                "library_revision": library_revision(),
+                "model_identity": self.store.settings.deep_execution_policy().runtime_identity() if payload["action"] == "run_tests" else {},
+                "consume_model": payload.get("consume_model") is True,
             }
+            frozen["oracle_revision"] = _digest(frozen_samples)
+            candidate = None
+            if payload["action"] == "save_only":
+                candidate = self.suites.create_revision(
+                    tenant_id=principal.tenant_id,
+                    suite_key=suite.revision.suite_key,
+                    files={},
+                    created_by=principal.user_id,
+                    base_revision_id=suite.revision.id,
+                    related_suite_keys=suite.revision.related_suite_keys,
+                    conn=conn,
+                )
             job_id = uuid4() if payload["action"] == "run_tests" else None
             if job_id:
                 conn.execute(
@@ -271,9 +382,21 @@ class CheckerDevelopmentStore:
                     (job_id, principal.tenant_id, Jsonb({"operation_id": operation_id, "initiating_user_id": principal.user_id, "executor_revision": frozen["executor_revision"]})),
                 )
             cur.execute(
-                """INSERT INTO product.checker_optimizations(operation_id,tenant_id,initiating_user_id,suite_revision_id,action,request_fingerprint,frozen,job_id,state)
-                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
-                (operation_id, principal.tenant_id, principal.user_id, suite_revision_id, payload["action"], fingerprint, Jsonb(frozen), job_id, "queued" if job_id else "saved"),
+                """INSERT INTO product.checker_optimizations(operation_id,tenant_id,initiating_user_id,suite_revision_id,action,request_fingerprint,frozen,job_id,state,candidate_revision_id,report)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
+                (
+                    operation_id,
+                    principal.tenant_id,
+                    principal.user_id,
+                    suite_revision_id,
+                    payload["action"],
+                    fingerprint,
+                    Jsonb(frozen),
+                    job_id,
+                    "queued" if job_id else "saved",
+                    candidate.id if candidate else None,
+                    Jsonb({"verified": False, "reasons": ["tests_not_run"]}) if candidate else None,
+                ),
             )
             return _receipt(cur.fetchone())
 
@@ -288,26 +411,248 @@ class CheckerDevelopmentStore:
             row = cur.fetchone()
             if row is None:
                 raise KeyError("checker_optimization_missing")
-            for round_id in row["frozen"]["source_round_ids"]:
-                self._authorize_round(conn, principal, round_id)
+            self._authorize_frozen(conn, principal, row["frozen"])
             return _receipt(row)
 
     def stop(self, principal, operation_id):
         with self.store._conn() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
             _member(conn, principal)
             cur.execute(
-                "SELECT * FROM product.checker_optimizations WHERE operation_id=%s AND tenant_id=%s AND initiating_user_id=%s FOR UPDATE", (_id(operation_id), principal.tenant_id, principal.user_id)
+                """SELECT o.*, (j.lease_until < clock_timestamp()) AS lease_expired FROM product.checker_optimizations o
+                   LEFT JOIN engine.jobs j ON j.id=o.job_id
+                   WHERE o.operation_id=%s AND o.tenant_id=%s AND o.initiating_user_id=%s FOR UPDATE OF o""",
+                (_id(operation_id), principal.tenant_id, principal.user_id),
             )
             row = cur.fetchone()
             if row is None:
                 raise KeyError("checker_optimization_missing")
+            self._authorize_frozen(conn, principal, row["frozen"])
             if row["state"] in {"queued", "running"}:
                 cur.execute(
-                    "UPDATE product.checker_optimizations SET cancel_requested=true, state=CASE WHEN state='queued' THEN 'stopped' ELSE state END WHERE operation_id=%s RETURNING *", (operation_id,)
+                    """UPDATE product.checker_optimizations SET cancel_requested=true,
+                       state=CASE WHEN state='queued' THEN 'stopped' ELSE state END,
+                       completed_at=CASE WHEN state='queued' THEN now() ELSE completed_at END
+                       WHERE operation_id=%s RETURNING *""",
+                    (operation_id,),
                 )
-                row = cur.fetchone()
+                row = {**cur.fetchone(), "lease_expired": row["lease_expired"]}
+                if row["state"] == "stopped":
+                    conn.execute("UPDATE engine.jobs SET status='failed',lease_until=NULL,updated_at=now() WHERE id=%s AND status IN ('queued','leased')", (row["job_id"],))
+                    conn.execute("UPDATE engine.attempts SET finished_at=now(),outcome='failed' WHERE job_id=%s AND finished_at IS NULL", (row["job_id"],))
             return _receipt(row)
+
+    def save_round_artifacts(self, spec, original_snapshot, artifacts):
+        """Controller-only actual Deep output, fenced and separate from accepted inputs."""
+        from audit.checker_core import checker_digest
+
+        result = {}
+        with self.store._conn() as conn, conn.transaction():
+            job = conn.execute(
+                """SELECT j.id FROM engine.jobs j JOIN product.audit_rounds r ON r.id=j.audit_round_id
+                   WHERE j.id=%s AND j.tenant_id=%s AND j.attempt=%s AND j.kind='audit'
+                     AND j.status='leased' AND j.lease_until>clock_timestamp() AND r.id=%s AND r.tenant_id=j.tenant_id
+                     AND r.created_by=%s AND r.analysis_mode='deep' FOR UPDATE OF j""",
+                (spec.job_id, spec.tenant_id, spec.attempt, spec.round_id, spec.initiating_user_id),
+            ).fetchone()
+            if job is None:
+                raise ValueError("checker_lease_lost")
+            frozen = self.suites.read_snapshot(spec.round_id, spec.tenant_id, conn=conn)
+            if frozen is None or frozen.to_dict() != original_snapshot.to_dict():
+                raise ValueError("checker_snapshot_mismatch")
+            from product.store.suite_releases import _lock
+
+            _lock(conn, spec.tenant_id)
+            targets = {item.file_version_id: item for item in frozen.targets}
+            if not artifacts or not set(artifacts) <= targets.keys():
+                raise ValueError("checker_artifact_scope_mismatch")
+            for version_id, artifact in artifacts.items():
+                # The controller validated execution and source trace. Recheck the
+                # immutable byte identity before giving it a durable Suite identity.
+                if artifact.executor_revision != spec.executor_revision or artifact.program_digest != checker_digest(artifact.files):
+                    raise ValueError("checker_artifact_identity_mismatch")
+                prior = conn.execute(
+                    """SELECT suite_revision_id,program_digest,input_digest FROM product.checker_round_artifacts
+                       WHERE round_id=%s AND file_version_id=%s AND result_attempt=%s AND tenant_id=%s""",
+                    (spec.round_id, version_id, spec.attempt, spec.tenant_id),
+                ).fetchone()
+                if prior:
+                    if (prior[1], prior[2]) != (artifact.program_digest, artifact.input_digest):
+                        raise ValueError("checker_artifact_identity_mismatch")
+                    candidate = self.suites.resolve_suite(str(prior[0]), spec.tenant_id, conn=conn).revision
+                else:
+                    base = self.suites.resolve_suite(targets[version_id].suite_revision_id, spec.tenant_id, conn=conn)
+                    candidate = self.suites.create_revision(
+                        tenant_id=spec.tenant_id,
+                        suite_key=base.revision.suite_key,
+                        files=_candidate_files(base, artifact),
+                        deleted_paths=_deleted_program_paths(base, artifact),
+                        created_by=spec.initiating_user_id,
+                        base_revision_id=base.revision.id,
+                        related_suite_keys=base.revision.related_suite_keys,
+                        conn=conn,
+                    )
+                    conn.execute(
+                        """INSERT INTO product.checker_round_artifacts
+                           (round_id,file_version_id,result_attempt,tenant_id,suite_revision_id,program_digest,input_digest)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+                        (spec.round_id, version_id, spec.attempt, spec.tenant_id, candidate.id, artifact.program_digest, artifact.input_digest),
+                    )
+                result[version_id] = {"suite_revision_id": candidate.id, "suite_digest": candidate.resolved_digest, "program_digest": artifact.program_digest, "input_digest": artifact.input_digest}
+            # Slow object storage cannot commit a success after this attempt expires.
+            if not conn.execute("SELECT 1 FROM engine.jobs WHERE id=%s AND lease_until>clock_timestamp()", (spec.job_id,)).fetchone():
+                raise ValueError("checker_lease_lost")
+        return result
+
+    def operation_for_dispatch(self, request):
+        """Read-only preflight. The final dispatch CAS runs after inputs are materialized."""
+        with self.store._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("SELECT * FROM product.checker_optimizations WHERE operation_id=%s AND tenant_id=%s AND job_id=%s", (_id(request.operation_id), _id(request.tenant_id), _id(request.job_id)))
+            row = cur.fetchone()
+            if row is None or not self._owns(conn, request):
+                raise KeyError("checker_operation_unauthorized")
+            self._authorize_frozen(conn, principal_for_operation(row), row["frozen"])
+            return row
+
+    @staticmethod
+    def _owns(conn, request, *, lock=False):
+        return (
+            conn.execute(
+                """SELECT 1 FROM engine.jobs WHERE id=%s AND tenant_id=%s AND kind='checker_optimization'
+               AND attempt=%s AND lease_owner=%s AND status='leased' AND lease_until>clock_timestamp()"""
+                + (" FOR UPDATE" if lock else ""),
+                (request.job_id, request.tenant_id, request.attempt, request.lease_owner),
+            ).fetchone()
+            is not None
+        )
+
+    def dispatch(self, request):
+        with self.store._conn() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                "SELECT * FROM product.checker_optimizations WHERE operation_id=%s AND tenant_id=%s AND job_id=%s FOR UPDATE", (_id(request.operation_id), _id(request.tenant_id), _id(request.job_id))
+            )
+            row = cur.fetchone()
+            if row is None or not self._owns(conn, request):
+                raise KeyError("checker_operation_unauthorized")
+            if row["state"] != "queued" or row["model_started_at"] or row["cancel_requested"]:
+                return None
+            self._authorize_frozen(conn, principal_for_operation(row), row["frozen"])
+            if not self._owns(conn, request, lock=True):
+                raise KeyError("checker_operation_unauthorized")
+            cur.execute("UPDATE product.checker_optimizations SET state='running',model_started_at=now() WHERE operation_id=%s", (request.operation_id,))
+            return row
+
+    def active(self, request):
+        with self.store._conn() as conn:
+            return (
+                self._owns(conn, request)
+                and conn.execute(
+                    "SELECT 1 FROM product.checker_optimizations WHERE operation_id=%s AND job_id=%s AND state='running' AND cancel_requested=false",
+                    (request.operation_id, request.job_id),
+                ).fetchone()
+                is not None
+            )
+
+    def finish(self, request, outcome):
+        """Atomic candidate/proof/receipt/job completion under the original live fence."""
+        from product.store.suite_releases import SuiteReleaseStore, _lock
+
+        with self.store._conn() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("SELECT * FROM product.checker_optimizations WHERE operation_id=%s AND tenant_id=%s AND job_id=%s FOR UPDATE", (request.operation_id, request.tenant_id, request.job_id))
+            row = cur.fetchone()
+            if row is None or row["state"] not in {"queued", "running"} or not self._owns(conn, request, lock=True):
+                return False
+            principal = principal_for_operation(row)
+            candidate, report = None, outcome.receipt()
+            if row["cancel_requested"]:
+                state, failure = "stopped", "checker_cancelled"
+            elif outcome.usage_uncertain:
+                state, failure = "unknown", outcome.error_code or "execution_outcome_unknown"
+            elif outcome.error_code:
+                state, failure = "failed", outcome.error_code
+            elif outcome.artifact is None or outcome.validation is None:
+                state, failure = "failed", "checker_artifact_unavailable"
+            else:
+                state, failure = "completed", None
+            # Preserve an actual fixed artifact even if a later trial failed. It is
+            # never adopted, and a failed/unknown run cannot receive verified proof.
+            if outcome.artifact is not None and not row["cancel_requested"]:
+                _lock(conn, principal.tenant_id)
+                base = self.suites.resolve_suite(str(row["suite_revision_id"]), principal.tenant_id, conn=conn)
+                candidate = self.suites.create_revision(
+                    tenant_id=principal.tenant_id,
+                    suite_key=base.revision.suite_key,
+                    files=_candidate_files(base, outcome.artifact),
+                    deleted_paths=_deleted_program_paths(base, outcome.artifact),
+                    created_by=principal.user_id,
+                    base_revision_id=base.revision.id,
+                    related_suite_keys=base.revision.related_suite_keys,
+                    conn=conn,
+                )
+                if outcome.validation is not None:
+                    _lock(conn, principal.tenant_id)
+                    proof = outcome.validation.model_copy(update={"suite_revision_id": candidate.id, "suite_digest": candidate.resolved_digest})
+                    if any(
+                        _rule_semantics(sample["expected_rule_body"]) != _rule_semantics(next(item["rule_body"] for item in sample["files"] if item["role"] == "target"))
+                        for sample in row["frozen"]["samples"]
+                    ):
+                        proof = proof.model_copy(update={"reasons": tuple(dict.fromkeys((*proof.reasons, "oracle_rules_changed")))})
+                    current_samples = conn.execute(
+                        "SELECT id,revision FROM product.checker_feedback WHERE tenant_id=%s AND suite_key=%s AND deleted_at IS NULL ORDER BY ordinal",
+                        (principal.tenant_id, base.revision.suite_key),
+                    ).fetchall()
+                    frozen_samples = [(item["id"], item["revision"]) for item in row["frozen"]["samples"]]
+                    if [(str(item[0]), item[1]) for item in current_samples] != frozen_samples:
+                        proof = proof.model_copy(update={"reasons": (*proof.reasons, "oracle_changed")})
+                    if state != "completed":
+                        proof = proof.model_copy(update={"reasons": (*proof.reasons, "development_incomplete")})
+                    # Keep a proof of the frozen dependencies. If adoption changed
+                    # during execution this proof is stored but exposed as stale.
+                    _lock(conn, principal.tenant_id)
+                    releases = SuiteReleaseStore(self.store.settings, self.store.objects, role=self.store.role)
+                    try:
+                        with conn.transaction():
+                            releases._record_validation(conn, principal.tenant_id, principal.user_id, candidate.id, proof, 0)
+                    except ValueError as exc:
+                        if str(exc) != "suite_validation_inputs_changed":
+                            raise
+                        proof = proof.model_copy(update={"reasons": (*proof.reasons, "related_suite_changed")})
+                    report["validation"] = proof.receipt()
+            if not self._owns(conn, request):
+                raise ValueError("checker_lease_lost")
+            cur.execute(
+                """UPDATE product.checker_optimizations SET state=%s,candidate_revision_id=%s,report=%s,usage=%s,failure=%s,completed_at=now()
+                   WHERE operation_id=%s""",
+                (
+                    state,
+                    candidate.id if candidate else None,
+                    Jsonb(report),
+                    Jsonb({**outcome.usage, "source": outcome.usage_source, "uncertain": outcome.usage_uncertain}),
+                    failure,
+                    request.operation_id,
+                ),
+            )
+            conn.execute(
+                "UPDATE engine.jobs SET status=%s,result=%s,lease_until=NULL,updated_at=now() WHERE id=%s",
+                ("succeeded" if state == "completed" else "failed", Jsonb({"operation_id": request.operation_id, "state": state}), request.job_id),
+            )
+            conn.execute(
+                "UPDATE engine.attempts SET finished_at=now(),outcome=%s,diagnostic=%s WHERE job_id=%s AND attempt=%s",
+                ("succeeded" if state == "completed" else "failed", Jsonb({"state": state, "failure": failure}), request.job_id, request.attempt),
+            )
+            return True
 
 
 def principal_for_operation(row: dict) -> Principal:
     return Principal(str(row["initiating_user_id"]), str(row["tenant_id"]), "", "", "", "", "member")
+
+
+def _candidate_files(base, artifact):
+    rules = json.loads(base.files["rules.json"])
+    rules["checker_binding"] = {item["id"]: "checker:create_audit" for item in rules["rules"]}
+    return {**dict(artifact.files), "rules.json": json.dumps(rules, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()}
+
+
+def _deleted_program_paths(base, artifact):
+    # Artifact.files is the complete executed program, not a sparse edit. An
+    # omitted optional module must not reappear through the Suite's base overlay.
+    return ("resources.py",) if "resources.py" in base.files and "resources.py" not in artifact.files else ()

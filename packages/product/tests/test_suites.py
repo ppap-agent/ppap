@@ -150,3 +150,24 @@ def test_feedback_normalization_preserves_suite_provenance_and_only_normalizes_a
     assert rules["rules"][0]["rule_to_check"] == "Exact source wording"
     with pytest.raises(ValueError, match="invalid_rule_appendix"):
         normalize_feedback_body({**rules, "appendix": [{"id": "invalid"}]})
+
+
+def test_optional_program_tombstone_preserves_base_and_cannot_delete_required_assets():
+    assets = baseline()
+    assets.add("with-resource", owner="a", base="official", files={"resources.py": b"VALUE = 1"})
+    previous = assets.resolve("with-resource")
+    digests = {key: value for key, value in previous.object_digests.items() if key != "resources.py"}
+    deleted = SuiteRevision("deleted", "a", "cp", (), "with-resource", {"resources.py": None}, resolved_digest("cp", (), digests), "author")
+    assets.rows["deleted"] = deleted
+    candidate = assets.resolve("deleted")
+    assert "resources.py" not in candidate.files
+    assert candidate.files["templates.json"] == previous.files["templates.json"]
+    assert assets.resolve("with-resource") == previous
+    for path in ("rules.json", "checker.py", "templates.json"):
+        with pytest.raises(ValueError, match="invalid_suite_objects"):
+            replace(deleted, overrides={path: None})
+    with pytest.raises(ValueError, match="invalid_suite_objects"):
+        replace(deleted, base_revision_id=None)
+    assets.rows["absent"] = replace(deleted, id="absent", base_revision_id="official")
+    with pytest.raises(ValueError, match="suite_deleted_object_missing"):
+        assets.resolve("absent")
