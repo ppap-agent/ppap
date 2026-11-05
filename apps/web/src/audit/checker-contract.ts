@@ -1,10 +1,11 @@
 import {request} from '../api.ts'
+import type {components, operations} from '../generated/openapi'
 
-export type ValidationSummary = {total_samples: number; passed_samples: number; new_errors: number; reasons: string[]; status: 'verified' | 'unverified' | 'stale'; samples_not_rerun?: boolean}
-export type AdoptionReceipt = {operation_id: string; suite_key: string; revision_id: string; revision: number; force_unverified: boolean; published_by: string | null; published_by_name?: string | null; published_at: string}
-export type CheckerActive = {title: string; version: number | null; origin: 'official' | 'enterprise'; selection_mode: 'automatic_official' | 'pinned' | 'candidate_only'; suite_key: string; revision: number; current_revision_id: string | null; verification_status: string; force_unverified: boolean; validation: ValidationSummary; history: AdoptionReceipt[]}
-export type CheckerRevision = {id: string; suite_key: string; title: string; version: number; diff: {path: string; before: string | null; after: string | null}[]; validation: ValidationSummary; files: Record<string, string>; changed_paths: string[]; round_count: number; rounds: {id: string; task_id: string | null; created_at: string}[]}
-export type AdoptChecker = {revision_id: string; expected_revision: number; operation_id: string; force_unverified: boolean}
+export type ValidationSummary = components['schemas']['SuiteValidation']
+export type AdoptionReceipt = components['schemas']['SuitePublication']
+export type CheckerActive = components['schemas']['SuiteActive']
+export type CheckerRevision = components['schemas']['SuiteRevisionDetail']
+export type AdoptChecker = NonNullable<operations['suites_publish_suites__suite_key__active_put']['requestBody']>['content']['application/json']
 export interface CheckerReleaseAdapter {
   revision(id: string): Promise<CheckerRevision>
   active(key: string): Promise<CheckerActive>
