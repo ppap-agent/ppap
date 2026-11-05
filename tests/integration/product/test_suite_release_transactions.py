@@ -11,8 +11,9 @@ from audit.checker_core import checker_digest
 from audit.standard_suites import library_revision
 from product.checker_validation import CaseEvaluation, ClauseEvaluation, SuiteValidationReport
 from product.settings import Settings
-from product.store.suite_releases import SuiteReleaseStore, current_selection
+from product.store.suite_releases import SuiteReleaseStore, _lock, current_selection
 from product.store.suites import SuiteStore
+from psycopg.errors import LockNotAvailable
 
 FILES = {"rules.json": b'{"rules":[{"id":"R1","rule_to_check":"Required"}]}', "checker.py": b"def check(context):\n    return []\n"}
 
@@ -275,3 +276,53 @@ def test_release_migration_replay_preserves_adoption_proof_and_lineage(auth_stor
         assert conn.execute("SELECT count(*) FROM product.schema_migrations WHERE version='0041_suite_releases.sql'").fetchone()[0] == 1
     with store._conn() as conn, conn.transaction(), pytest.raises(Exception, match="immutable_suite_publication"):
         conn.execute("UPDATE product.suite_publications SET revision_id = %s WHERE operation_id = %s", (official.id, operation))
+
+
+@pytest.mark.parametrize("action", ["official_revision", "official_validation", "tenant_publication", "tenant_validation"])
+def test_admission_freeze_excludes_input_changes_until_commit(auth_store_factory, monkeypatch, action):
+    store, suites, releases, alice, _ = seed(auth_store_factory)
+    official = suites.create_revision(tenant_id=None, suite_key="control-plan", files=FILES, created_by=None)
+    platform = SuiteReleaseStore(store.settings, store.objects, role="migrator")
+    report = proof_for(suites, alice, official)
+    for target in (suites, releases, platform):
+        connect = target._conn
+
+        def bounded_connection(connect=connect):
+            conn = connect()
+            conn.execute("SET lock_timeout = '100ms'")
+            return conn
+
+        monkeypatch.setattr(target, "_conn", bounded_connection)
+    actions = {
+        "official_revision": lambda: suites.create_revision(tenant_id=None, suite_key="control-plan", files=FILES, created_by=None),
+        "official_validation": lambda: platform.record_official_validation(official.id, report, expected_revision=0),
+        "tenant_publication": lambda: releases.publish(alice, "control-plan", official.id, 0, str(uuid.uuid4()), True),
+        "tenant_validation": lambda: releases.record_validation(alice, official.id, report, expected_revision=0),
+    }
+    with store._conn() as conn, conn.transaction():
+        frozen = current_selection(conn, alice.tenant_id, "control-plan")
+        with pytest.raises(LockNotAvailable):
+            actions[action]()
+        assert current_selection(conn, alice.tenant_id, "control-plan") == frozen
+    # Once the acceptance transaction commits the operation is allowed normally.
+    actions[action]()
+
+
+def test_worker_can_record_tenant_proof_but_never_official(auth_store_factory):
+    store, suites, _, alice, _ = seed(auth_store_factory)
+    official = suites.create_revision(tenant_id=None, suite_key="control-plan", files=FILES, created_by=None)
+    report = proof_for(suites, alice, official)
+    worker = SuiteReleaseStore(store.settings, store.objects, role="worker")
+    # The optimizer verifies its frozen job/attempt/user fence before entering
+    # this host-only completion transaction, rather than using a user HTTP route.
+    with worker._conn() as conn, conn.transaction():
+        _lock(conn, alice.tenant_id)
+        recorded = worker._record_validation(conn, alice.tenant_id, alice.user_id, official.id, report, 0)
+    assert recorded["verified"] is True
+    assert recorded["proof_scope"] == "tenant"
+    with pytest.raises(PermissionError, match="official_validation_write_forbidden"):
+        worker.record_official_validation(official.id, report, expected_revision=0)
+    platform = SuiteReleaseStore(store.settings, store.objects, role="migrator")
+    platform.record_official_validation(official.id, report, expected_revision=0)
+    with worker._conn() as conn, conn.transaction(), pytest.raises(Exception, match="official_validation_write_forbidden"):
+        conn.execute("UPDATE product.suite_validations SET status = 'unverified' WHERE tenant_id IS NULL")
