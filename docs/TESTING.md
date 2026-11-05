@@ -10,7 +10,7 @@
 - Audit：`test_ocr_visual_facts.py`、`test_psw_pdf_hybrid.py`、`test_document_visual_checks.py`、`test_generic_visual_acceptance.py` 检查公开入口的原生优先、同事实复用、原页/区域定位、多业务页冲突、图形未知和 ERR。`test_text_evidence.py` 检查原文引文、位置和完整范围，未读区域不能被文本模型补全。
 - 真实验收固定原件 SHA、适用条款、实际模型、请求次数及供应商回执，保留并比较原 corpus oracle，但人工标签也须按原件和条款复核，不要求全部人工标签相等才推送验证。PSW 包括空/真签字、淡色勾选和多表；完整扫描表格转录不属于本次放行门槛；原生 PFMEA 不因页多或个别字段未知全篇 OCR。分别报告错误 PASS、错误 NG、未知、技术错误、耗时和费用；小样本不报告总体准确率或 P95。
 
-扫描延期仅限两个内容摘要已冻结的真实样本：V3 `19-BLANC尾-生产控制计划.pdf`（4 页纯图）和 V2 scanned `PV试验报告2024-07-03 13.35.pdf`（含无原生文字的扫描表页）。`deferred_full_scan_reason` 同时核对文件名与完整 SHA；内容变化不沿用跳过。对应单文件／Product Round 检查说明 Issue #246 原因；V3 Product Round 仅移除该扫描目标，保留同组其他 3 个原生 Excel。资产完整性、原始 oracle 与规则绑定检查继续执行；V2 native PDF、29 页原生 PFMEA、PSW 及页级未知／ERR／来源测试均保留。该范围不证明完整扫描表格能力，后续需求须重新确认。
+当前 Corpus 只覆盖原生 Excel 和有原生文字的 PDF。扫描版 PDF、对应人工预期和整表 OCR 缓存不再保留；PSW 签字、印章、照片及原生 PDF 的图形证据继续由各自规则检查。
 
 - 录制回执离线回放只证明当前消费路径，不等于新服务实采。真实请求结果未知时先读既有回执，不重复请求挑选符合 oracle 的答案。网络护栏须检查实际外发尝试，不能让捕获异常后的测试通过掩盖未授权调用。
 
@@ -102,7 +102,7 @@ Single-owner Python tests 与 production owner co-locate：`packages/*/tests`、
 - **Python modules**：CI 发现每一个含 `test_*.py` 的 `packages/*/tests`、`apps/api/tests`、`apps/worker/tests` 和 `apps/mcp-client/tests`，各自一个 pytest 进程。API 与 Worker 不共享进程。需要 PostgreSQL 的只有 `apps/api/tests` 和 `apps/worker/tests`。纯 Corpus contract tests 位于 `tests/corpus/contracts/tests`，由同一物理 owner discovery 自动纳入。
 - **Distribution closure**：对每个 production workspace member 单独构建 wheel 和其声明的 workspace transitive wheels；在 `/tmp` clean venv 中显式安装这些 wheels，并用 `uv.lock` 约束 registry dependency 版本。从非仓库 cwd import 后再运行该 owner tests。这个 job 不执行 root `uv sync`、不使用 editable install、`PYTHONPATH` 或 `sys.path` bootstrap。删除 `product → audit` 的真实 dependency declaration 有单独 mutation proof，必须使 isolated import fail closed。
 - **Schema**：`tests/schema`，继续使用 real PostgreSQL。Empty、previous、重复 apply、`schema_migrations` 顺序和故意失败 migration 都通过 production `migrations/apply.sh` runner 验证；numbered filenames 是唯一 ordering authority。
-- **Corpus**：Excel / PDF / scanned / Pairs / V3 / PSW format matrix；Pairs 以 `tests/corpus/pairs`、PSW 以 `tests/corpus/psw` 作为物理 suite authority，新 `test_*.py` 无需修改 workflow；PSW 继续使用 purpose-built worker-derived container。Corpus 是 CI Gate 的 required child；本次仅跳过上文明确的两个完整扫描表格样本，其余范围保留。按需视觉 cache miss 时可以调用已授权的真实 OCR / model，这不把整个 Corpus 变成 live 或 optional。默认 V3 dataset / expected XLSX 缺失或解析后无有效 case 时 fail closed，不 skip。进入 required V3 的 case 必须至少有一条人工 PASS/NG expectation；零断言 case fail closed。V2 每个 required variant 在执行前对账 oracle 选中的全部 case 与真实 asset；任一缺失或歧义映射失败，不跳过部分样本。V2 baseline exception 与 PDF↔Excel Pairs 共用同一个 `ExecutionOutcome`（status / execution_class / 可选 diagnostic_code）；比较整个 structured outcome，不把任意 ERR 当成同一行为。已知 mismatch 消失则要求清理 record。V2 PDF↔Excel pairs 按 oracle 文件 stem 自动配对，在 pair+rule 粒度比较；已知格式分歧写入 structured baseline，不是第二套 human oracle。新的、改变的或已愈合的 divergence 失败；aggregate 一致性百分比不是 merge gate。配对歧义或发现不到任何 pair 时 fail closed。Excel / PDF / scanned 不重复执行 pair suite。V2 对照行只从 JSON 报告读取：缺少 JSON，或某一行缺字段，就 fail closed；不恢复旧 baseline 脚本。
+- **Corpus**：Excel / PDF / Pairs / V3 / PSW format matrix；Pairs 以 `tests/corpus/pairs`、PSW 以 `tests/corpus/psw` 作为物理 suite authority，新 `test_*.py` 无需修改 workflow；PSW 继续使用 purpose-built worker-derived container。Corpus 是 CI Gate 的 required child；扫描版 PDF 不在该集合中。按需视觉 cache miss 时可以调用已授权的真实 OCR / model，这不把整个 Corpus 变成 live 或 optional。默认 V3 dataset / expected XLSX 缺失或解析后无有效 case 时 fail closed，不 skip。进入 required V3 的 case 必须至少有一条人工 PASS/NG expectation；零断言 case fail closed。V2 每个 required variant 在执行前对账 oracle 选中的全部 case 与真实 asset；任一缺失或歧义映射失败，不跳过部分样本。V2 baseline exception 与 PDF↔Excel Pairs 共用同一个 `ExecutionOutcome`（status / execution_class / 可选 diagnostic_code）；比较整个 structured outcome，不把任意 ERR 当成同一行为。已知 mismatch 消失则要求清理 record。V2 PDF↔Excel pairs 按 oracle 文件 stem 自动配对，在 pair+rule 粒度比较；已知格式分歧写入 structured baseline，不是第二套 human oracle。新的、改变的或已愈合的 divergence 失败；aggregate 一致性百分比不是 merge gate。配对歧义或发现不到任何 pair 时 fail closed。Excel / PDF 不重复执行 pair suite。V2 对照行只从 JSON 报告读取：缺少 JSON，或某一行缺字段，就 fail closed；不恢复旧 baseline 脚本。
 - **Product integration**：`tests/integration/product` + canonical single bake + `tests/integration/runtime` + Python Playwright `tests/e2e`。V3 POC oracle 还走 API 显式规则版本和 Worker，并写出同源 JSON／Markdown 报告；不调用旧 analysis API，也不使用 `matchedRuleId`。
 - **Container build authority**：`docker-bake.hcl` 唯一拥有 API / Worker / Web build graph。Compose 只消费 images；Repository contract 从 Bake/Compose native rendered output 核对 image identity 与无 `build` graph，Integration 对同一 `PPAP_BUILD_SHA` 只 Bake 一次并复用。
 - **CI Gate**：不运行测试，只汇总以上 required groups（包括 Distribution closure）；任一 required group failed / cancelled / skipped 时 Gate 失败。
@@ -119,7 +119,6 @@ V2 单文件回归也保留实际业务结果的公开 `suggestions`，最多 10
 
 Standard 的 `run_round_from_bytes` 用独立、执行后即清理的跟踪范围收集 SDK 可见用量，返回到已有 Worker `usage`／attempt 诊断边界，不新增客户用量 API。已报告的输入／输出 token 不因模型输出无效而丢失；任一 SDK 调用缺少有效输入／输出回执时，`usage_complete=false`、总量为 `null`，已知调用明细保留。`usage_complete` 只表示可见 SDK 调用的输入／输出回执完整性；可选 reasoning 拆分缺失／无效时显示 `null`，不丢弃已知输入／输出，也不重复加入总量。正常返回或异常退出均恢复调用前的范围，下一次执行不继承旧统计。Core Tracker、真实 Word／审核器和外部 HTTP／SDK 边界测试保护此行为；它不改变 PASS／NG、既有重试或每份 500 点业务账，也不证明 SDK 内部全部 HTTP 尝试、实际扣费订单或当前候选的 PG 持久化已验收。
 
-`tests/integration/product/test_standard_usage_persistence.py` 在隔离 Product 数据库中补充公开上传、JSON 规则解析／发布、显式冻结受理、实际 Standard Worker／Word 审核器与 PostgreSQL attempt 诊断读回。对象存储和 SDK 外部 HTTP 响应受控，分别检查完整、混合及缺失回执；已知明细与未知总量保持，实际 PASS／NG、冻结版本、原件和重复只读不执行保持。数据库场景须由隔离 CI 实际执行，收集不算通过；不新增开发者回执 API，不证明真实视觉质量、SDK 隐藏重试、结算订单或旧自动技术重排。
 
 ### 显式 V3 POC Live
 
@@ -133,7 +132,7 @@ uv run --no-sync python -m corpus_contracts.live_poc \
   --isolated-login --output /tmp/ppap-v3-live-new-run
 ```
 
-`--analysis-mode standard|deep` 显式选择执行模式，缺省仍为 Standard；现有远端 Live workflow 未因此改为 Deep。若另获授权使用具备当前候选 Deep sidecar 的独立栈，可在同一命令加入 `--analysis-mode deep`，并使用新的输出目录。runner 将所选模式写入报告，核对受理与完成读回的冻结模式、executor 和 revision；Deep 要求实际策略摘要，不能静默回退 Standard。这里仍只比较同一 canonical 27 样例／220 条人工预期，不代表 #166 的独立保留集、完整质量、成本、隔离或恢复验收已完成，也不构成执行 Live 的授权。
+`--analysis-mode standard|deep` 显式选择执行模式，缺省仍为 Standard；现有远端 Live workflow 未因此改为 Deep。若另获授权使用具备当前候选 Deep sidecar 的独立栈，可在同一命令加入 `--analysis-mode deep`，并使用新的输出目录。runner 将所选模式写入报告，核对受理与完成读回的冻结模式、executor 和 revision；Deep 要求实际策略摘要，不能静默回退 Standard。这里仍只比较同一 canonical 26 样例／209 条人工预期，不代表 #166 的独立保留集、完整质量、成本、隔离或恢复验收已完成，也不构成执行 Live 的授权。
 
 Standard 使用受理返回的 `StandardExecutionPolicy` 验证配置结构、构建 SHA 和 `standard-v1:` 策略摘要，并在终态读回时比较完整冻结策略。不能用旧固定标签或任意格式正确的摘要替代这些检查；HTTP 夹具同样使用当前策略模型。JSON 字段顺序变化不改变策略身份，缺失、篡改或终态漂移仍拒绝。
 
@@ -143,17 +142,16 @@ Standard 使用受理返回的 `StandardExecutionPolicy` 验证配置结构、�
 uv run --no-sync python -c 'from corpus_contracts.poc_oracle import build_bundle_map, load_poc_cases; print("\n".join(sorted(build_bundle_map(load_poc_cases()))))'
 ```
 
-已有 isolated-dev 授权可通过 `PPAP_LIVE_COOKIE` 注入，不在参数、日志或报告中保存。命令只接受独立栈，先核对完整 27 样例／8 组／220 预期及选择，再检查候选、收费策略。完整运行发布 5 份原始 DOCX；子集只上传和发布所选组需要的规则 DOCX，仍核对原文、出处与发布版本，再逐组明确绑定并受理，不从检查器生成规则。每组仅 accept 一次，响应丢失只 GET 同一 Draft 的 Round，失败或超时不重新受理。输出目录必须不存在，避免误用同一命令重跑；小批次选择也不构成额外 Live 或付费调用授权。
+已有 isolated-dev 授权可通过 `PPAP_LIVE_COOKIE` 注入，不在参数、日志或报告中保存。命令只接受独立栈，先核对完整 26 样例／8 组／209 预期及选择，再检查候选、收费策略。完整运行发布 5 份原始 DOCX；子集只上传和发布所选组需要的规则 DOCX，仍核对原文、出处与发布版本，再逐组明确绑定并受理，不从检查器生成规则。每组仅 accept 一次，响应丢失只 GET 同一 Draft 的 Round，失败或超时不重新受理。输出目录必须不存在，避免误用同一命令重跑；小批次选择也不构成额外 Live 或付费调用授权。
 
-以下 Live 命令保留历史完整 canonical suite，其中含已延期的扫描控制计划；其完整 220 项证明不作为本次 #246 推送前提。若另行选择运行该完整 Live overlay 的 in-process OCR 路径，执行前须提供真实 `PADDLE_OCR_URL` 及该服务需要的授权；LLM 配置或离线 OCR cache 不能证明此能力可用。workflow 在任何业务写入前检查地址已配置，但配置存在不代表外部服务验收通过。
 
 复用参考环境时，须分别核对服务级配置与仓库根配置；两者不是同一来源。迁入代码不会继承参考服务的 OCR 配置，独立栈须显式注入当前 Settings 所需的 Paddle／模型变量，不增加运行时跨仓配置回退。
 
-每次写操作前保存安全回执，JSON／Markdown 保留逐条结果和失败阶段；只读到终态、冻结输入一致且所选规则全部逐一匹配才通过所声明范围，只有完整 220 项对齐才返回 `PROVEN`。子集的未完成规则仍保留在所选分母中，未选组不冒充已验证。缺项、重复项、ERR、状态不符或未完成均为 `NOT_PROVEN`，归因默认 `inconclusive`。不要仅凭退出码推断缺陷归属或自动重跑。可选证据位置不参与 PASS/NG 门槛。这里证明 Product API／Worker 能力，包含显式 SCL 审核；不改变 Native 客户流程中 SCL 仅为比对资料的政策，也不证明浏览器、飞书登录、PDF/ZIP、收费或生产放行。运行授权、预算和真实结果只记在 owning Issue，不新增运行台账或提交报告文件。
+每次写操作前保存安全回执，JSON／Markdown 保留逐条结果和失败阶段；只读到终态、冻结输入一致且所选规则全部逐一匹配才通过所声明范围，只有完整 209 项对齐才返回 `PROVEN`。子集的未完成规则仍保留在所选分母中，未选组不冒充已验证。缺项、重复项、ERR、状态不符或未完成均为 `NOT_PROVEN`，归因默认 `inconclusive`。不要仅凭退出码推断缺陷归属或自动重跑。可选证据位置不参与 PASS/NG 门槛。这里证明 Product API／Worker 能力，包含显式 SCL 审核；不改变 Native 客户流程中 SCL 仅为比对资料的政策，也不证明浏览器、飞书登录、PDF/ZIP、收费或生产放行。运行授权、预算和真实结果只记在 owning Issue，不新增运行台账或提交报告文件。
 
 规则结果通过同一 Round 中冻结的 FileVersion → RuleVersion、coverage 的文件／规则索引及唯一 finding 关联。coverage 的 inline `rule_version_id` 是可选字段，不能把缺省当作缺项；若返回该字段，必须与冻结绑定一致。错误绑定和重复 finding 均拒绝，但不要求一个可选表示成为唯一证明。失败后的只读诊断报告须保留原始报告，并明确未重新受理或调用模型／转换服务，不能冒充新候选的一次成功验收。
 
-完成读回还逐项核对冻结条款与 coverage／finding 集合，不接受额外条款或孤立 finding。Standard 使用 `mapped`、Deep 使用 `executed` 的实际公开 coverage；Deep 局部 `execution_error`／ERR 记为执行失败而非缺项，仍保留在 220 条分母中。可选证据缺失不参与该比较门槛。
+完成读回还逐项核对冻结条款与 coverage／finding 集合，不接受额外条款或孤立 finding。Standard 使用 `mapped`、Deep 使用 `executed` 的实际公开 coverage；Deep 局部 `execution_error`／ERR 记为执行失败而非缺项，仍保留在 209 条分母中。可选证据缺失不参与该比较门槛。
 
 Live 工作流失败时先保留本项目容器状态及 allowlist 字段的结构化服务日志，不输出原始模型／HTTP 日志。结束时仅停止本次 project；其 PostgreSQL／S3 命名卷保留新验收记录，不使用 `down -v`。完成必要读回并确认不再需要这些测试记录后，才对该明确 project 清理卷；不得清理共享开发栈或其他 project。
 
@@ -223,7 +221,6 @@ Corpus：
 ```sh
 uv run --no-sync pytest tests/corpus/v2_assets --ftype excel -q
 uv run --no-sync pytest tests/corpus/v2_assets --ftype pdf -q
-uv run --no-sync pytest tests/corpus/v2_assets --ftype scanned -q
 uv run --no-sync pytest tests/corpus/pairs --cross-format -q
 uv run --no-sync pytest tests/corpus/v3_poc -q
 
@@ -276,7 +273,7 @@ uv run --no-sync pytest tests/e2e
 docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 ```
 
-PSW 的 `.doc` 用例需要 LibreOffice 和 Linux 上可执行的 `ppap-local-converter-sandbox`。CI 与推荐本地路径是先 `docker buildx bake worker`，再构建 `tests/corpus/Dockerfile.psw` 派生测试镜像并在其中跑 pytest（worker 已含 LibreOffice 与 sandbox；测试镜像对同一 `uv.lock` 执行 `uv sync --frozen --no-editable`，装上默认 dev dependency group；测试文件经 build context COPY，不 bind-mount 仓库）。`.doc` 转换是默认行为，没有开关变量；转换器或沙箱缺失时该项记 ERR，不跳过格式。需要 Paddle 的 PDF 转换优先使用 `tests/corpus/fixtures/ocr_cache`；未命中时再读 `PADDLE_OCR_URL`。这仍是 required corpus regression，不是 live。人工 expected 以 corpus 内 CSV/XLSX 为准，不要改它来迎合实现。
+PSW 的 `.doc` 用例需要 LibreOffice 和 Linux 上可执行的 `ppap-local-converter-sandbox`。CI 与推荐本地路径是先 `docker buildx bake worker`，再构建 `tests/corpus/Dockerfile.psw` 派生测试镜像并在其中跑 pytest（worker 已含 LibreOffice 与 sandbox；测试镜像对同一 `uv.lock` 执行 `uv sync --frozen --no-editable`，装上默认 dev dependency group；测试文件经 build context COPY，不 bind-mount 仓库）。`.doc` 转换是默认行为，没有开关变量；转换器或沙箱缺失时该项记 ERR，不跳过格式。这仍是 required corpus regression，不是 live。人工 expected 以 corpus 内 CSV/XLSX 为准，不要改它来迎合实现。
 
 #7 的代表性浏览器 E2E 从当前 Web 上传待审与参考文件，经公开 Product API 显式绑定 fixture 规则并受理，由真实数据库、对象存储和 Worker 完成执行。浏览器核对两轮冻结原件的下载字节、人工复核持久化，以及返回后的条款、文件、筛选恢复和保存后继续。规则绑定、受理和显式新轮准备由 API 完成，不作为 V3.1 自动匹配与确认界面已完成的证据；presence fixture 也不证明真实 PPAP 审核质量。
 
@@ -363,7 +360,7 @@ API owner tests validate that every major Web-consumed endpoint has an explicit 
 
 Web `V3.1 preview browser contracts` 使用原来单一的本地 Vite Preview 服务和全部已有用例。`e2e` 组锁定 `pytest-xdist==3.8.0`；默认 `PPAP_PREVIEW_WORKERS=2` 启用 `-n 2 --dist=load`，仅 Web Preview 运行两个 pytest worker。设为 `0` 立即恢复原有串行行为（需要新 CI 运行）；不支持其他值，以免静默变更验证范围。并发下各浏览器由测试单独创建，共享同一个只读 UI 预览服务器；任何测试互相污染或资源竞争导致的失败不得用串行自动重跑掩盖。
 
-PDF Corpus 的 `test_v2_product_round_respects_oracle_baseline` 保留原 `build_cases_from_long_feedback`、逐文件执行和 baseline mismatch / drift / stale 判定。`PPAP_CORPUS_PDF_WORKERS=2` 时，PDF Corpus 的全部 173 个测试（含 88 个原 V2、85 个 Product Round）进入**同一个** `pytest-xdist -n 2 --dist=load` 池，不再让慢 V2 阶段和 Product Round 彼此等待。旧 OCR SQLite/整表产物缓存已移除；`=0` 则完整串行。仅跳过前述两个固定 SHA 的完整扫描表格样本，其余 Excel、Pairs、V3、PSW 验证范围保留。长测试通过 `scripts/ci_heartbeat.py` 每 30 秒向 Runner 输出进度，`-vv` 与 `faulthandler_timeout=120` 记录卡住的用例与 Python 线程栈；超时明确失败，不通过自动重跑掩盖。
+PDF Corpus 的 `test_v2_product_round_respects_oracle_baseline` 保留原 `build_cases_from_long_feedback`、逐文件执行和 baseline mismatch / drift / stale 判定。`PPAP_CORPUS_PDF_WORKERS=2` 时，PDF Corpus 的全部 173 个测试（含 88 个原 V2、85 个 Product Round）进入**同一个** `pytest-xdist -n 2 --dist=load` 池，不再让慢 V2 阶段和 Product Round 彼此等待。旧 OCR SQLite/整表产物缓存已移除；`=0` 则完整串行。Excel、Pairs、V3、PSW 验证继续使用各自原件。长测试通过 `scripts/ci_heartbeat.py` 每 30 秒向 Runner 输出进度，`-vv` 与 `faulthandler_timeout=120` 记录卡住的用例与 Python 线程栈；超时明确失败，不通过自动重跑掩盖。
 
 Product Browser E2E 在本次 **all-suite concurrency stress experiment** 中不再区分受控与真实服务用例。`PPAP_E2E_WORKERS=4` 在同一个 isolated-dev Docker Compose 环境中，对整个 `tests/e2e` 调用一次 `pytest-xdist -n 4 --dist=load --max-worker-restart=0 -vv --durations=25`，没有 `--ignore`、静默重跑或跳过任何原有可运行测试。真实 API/PostgreSQL/Worker 测试同样进入调度池：跨 worker 的共同 `alice` 身份、数据库/对象存储、服务端全局状态可能造成 race 或污染，这正是本实验要揭示的，不应解释成已实现生产级测试隔离。`PPAP_E2E_WORKERS=0` 恢复原完整 E2E 单进程测试。`-vv` 标出 `[gwN]` 和逐项执行结果，`--durations=25` 捕获慢项。原先独立运行的 9 项历史报告测试也包含在这一个调用中。CI Gate、Product 集成数据库测试和 Production runtime 测试没有放宽。若失败，先按失败用例和共享资源类型归类，然后改造 per-worker 用户身份、唯一记录或独立 DB/Compose project；不要自动忽略失败。
 

@@ -271,7 +271,7 @@ def run_live(
         oracle_path = REPO_ROOT / "assets" / "poc测试" / "poc-测试数据统计表.xlsx"
         cases = load_poc_cases(dataset_root=REPO_ROOT / "assets" / "poc测试" / "POC测试样本", expected_xlsx=oracle_path)
         bundles = build_bundle_map(cases)
-        if len(cases) != 27 or len(bundles) != 8 or sum(len(case.expected) for case in cases) != 220 or {case.file_seq for case in cases} != set(RULE_DOCS):
+        if len(cases) != 26 or len(bundles) != 8 or sum(len(case.expected) for case in cases) != 209 or {case.file_seq for case in cases} != set(RULE_DOCS):
             raise LiveError("canonical_universe_incomplete")
         if bundle_ids is not None:
             if not isinstance(bundle_ids, list) or not bundle_ids or any(not isinstance(bundle, str) for bundle in bundle_ids) or len(set(bundle_ids)) != len(bundle_ids):
@@ -285,7 +285,7 @@ def run_live(
         run.update(
             scope="full" if len(bundles) == 8 else "subset",
             selected_bundles=sorted(bundles),
-            denominators={"full": {"bundles": 8, "files": 27, "rules": 220}, "selected": {"bundles": len(bundles), "files": len(selected_cases), "rules": selected_rules}},
+            denominators={"full": {"bundles": 8, "files": 26, "rules": 209}, "selected": {"bundles": len(bundles), "files": len(selected_cases), "rules": selected_rules}},
         )
         assets = [oracle_path, *[case.file_path for case in selected_cases], *[REPO_ROOT / "assets" / "poc测试" / "poc规则" / RULE_DOCS[seq] for seq in RULE_DOCS if seq in required_seqs]]
         run["asset_digests"] = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in assets}

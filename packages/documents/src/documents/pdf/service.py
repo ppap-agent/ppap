@@ -13,7 +13,6 @@ from ._stitch import stitch_pages_with_outcome
 from ._writer import write_workbook
 from .errors import PdfConversionError
 from .result import ConversionResult, ExtractionResult, GroupExtraction, PageExtraction, PdfSource
-from .source_graphics import annotate_native_cells
 from .spec import DEFAULT_SPEC, FailureMode, PdfSpec, SheetNameMode, validate_pdf_spec
 
 logger = logging.getLogger(__name__)
@@ -120,13 +119,11 @@ def convert_pdf_to_excel(
 
     try:
         output_spec = (spec or DEFAULT_SPEC).output
-        unknown_cells: list[dict] = []
         output_saved = write_workbook(
             extraction.groups,
             output_path,
             output_spec,
             source=source,
-            unknown_cells=unknown_cells,
         )
         if not output_saved:
             raise PdfConversionError(
@@ -139,7 +136,6 @@ def convert_pdf_to_excel(
             **extraction.diagnostics,
             "output_path": output_path,
             "output_saved": True,
-            "native_unknown_cells": unknown_cells,
         }
         return ConversionResult(
             output_path=output_path,
@@ -184,8 +180,6 @@ def _run_group(
                 table_region=table_region,
                 color_filter=spec.extraction.color_filter,
             )
-            if extraction.success and extraction.table_grid.cells:
-                annotate_native_cells(file_content, page, extraction.table_grid, tolerance=spec.extraction.line_tolerance)
 
             page_results.append(
                 PageExtraction(

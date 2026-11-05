@@ -159,7 +159,6 @@ def test_real_rule_change_oracle_matches_original_sample():
     finally:
         book.close()
     assert {case.file_name for case in cases} == {
-        "19-BLANC尾-生产控制计划.pdf",
         "P0363244_扰流板总成_特殊特性清单.xlsx",
         "过程流程图-BLANC.xlsx",
         "BLANC扰流板总成PFMEA_V3.xlsx",

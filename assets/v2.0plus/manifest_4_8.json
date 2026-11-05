@@ -5,11 +5,11 @@
   "output_root": "/Users/bef0rewind/Projects/work/ppap-agent/assets/v2.0plus",
   "resolver_project_root": "/Users/bef0rewind/Projects/work/ppap-agent/agent_loops/codex-sdk-auto-fix",
   "summary": {
-    "total_rows": 268,
-    "rows_with_link": 268,
+    "total_rows": 266,
+    "rows_with_link": 266,
     "rows_without_link": 0,
-    "unique_links": 103,
-    "resolved_link_entries": 87,
+    "unique_links": 102,
+    "resolved_link_entries": 86,
     "unresolved_links": 0,
     "downloaded_files": 0,
     "fallback_unique_files": 17,
@@ -665,15 +665,6 @@
       "local_path": "/Users/bef0rewind/Projects/work/ppap-agent/assets/v2.0plus/files/fmea/智能与电器-W02APQP交付物2-8材料、产品及分供方清单_V3.0.80327.pdf"
     },
     {
-      "link": "http://le.test.icoastline.com/#/ppapAudit/ppapAuditAgent?folderId=464891529099776&firstStep=false&groupId=464916610927104&taskId=464916610943489",
-      "group_id": "464916610927104",
-      "task_id": "464916610943489",
-      "file_key": "fmea/PV试验报告2024-07-0313.35.98754.pdf",
-      "file_name": "PV试验报告2024-07-03 13.35.pdf",
-      "url": "http://f-hd-le.test.icoastline.com/fmea/PV%E8%AF%95%E9%AA%8C%E6%8A%A5%E5%91%8A2024-07-0313.35.98754.pdf",
-      "local_path": "/Users/bef0rewind/Projects/work/ppap-agent/assets/v2.0plus/files/fmea/PV试验报告2024-07-0313.35.98754.pdf"
-    },
-    {
       "link": "http://le.test.icoastline.com/#/ppapAudit/ppapAuditAgent?folderId=464891529099776&firstStep=false&groupId=464916610927104&taskId=464916610943491",
       "group_id": "464916610927104",
       "task_id": "464916610943491",
@@ -1280,34 +1271,6 @@
       "task_id": "464914276112900",
       "file_key": "fmea/2-零部件设计验证计划和报告_继峰-线框被遮挡.16601.pdf",
       "local_path": "/Users/bef0rewind/Projects/work/ppap-agent/assets/v2.0plus/files/fmea/2-零部件设计验证计划和报告_继峰-线框被遮挡.16601.pdf"
-    },
-    {
-      "row_number": 30,
-      "file_name": "PV试验报告2024-07-03 13.35.pdf",
-      "file_type": "2-2",
-      "file_format": "扫描版PDF",
-      "rule_index": 3,
-      "test_link": "http://le.test.icoastline.com/#/ppapAudit/ppapAuditAgent?folderId=464891529099776&firstStep=false&groupId=464916610927104&taskId=464916610943489",
-      "fix_test_link": "",
-      "source": "link",
-      "group_id": "464916610927104",
-      "task_id": "464916610943489",
-      "file_key": "fmea/PV试验报告2024-07-0313.35.98754.pdf",
-      "local_path": "/Users/bef0rewind/Projects/work/ppap-agent/assets/v2.0plus/files/fmea/PV试验报告2024-07-0313.35.98754.pdf"
-    },
-    {
-      "row_number": 31,
-      "file_name": "PV试验报告2024-07-03 13.35.pdf",
-      "file_type": "2-2",
-      "file_format": "扫描版PDF",
-      "rule_index": 4,
-      "test_link": "http://le.test.icoastline.com/#/ppapAudit/ppapAuditAgent?folderId=464891529099776&firstStep=false&groupId=464916610927104&taskId=464916610943489",
-      "fix_test_link": "",
-      "source": "link",
-      "group_id": "464916610927104",
-      "task_id": "464916610943489",
-      "file_key": "fmea/PV试验报告2024-07-0313.35.98754.pdf",
-      "local_path": "/Users/bef0rewind/Projects/work/ppap-agent/assets/v2.0plus/files/fmea/PV试验报告2024-07-0313.35.98754.pdf"
     },
     {
       "row_number": 32,

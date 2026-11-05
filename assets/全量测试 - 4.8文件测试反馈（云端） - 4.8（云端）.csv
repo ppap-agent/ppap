@@ -143,14 +143,6 @@
 2-2,,,,,,5,当文件中包含“试验前”、“实验中”、“试验后”的图片则通过，否则不通过,NG,文件中缺少“试验前”、“实验中”、“试验后”的图片，不符合审核要求，请补充。,NG,未找到有效工作表,NJ24010097_EVB理想X04_PACK3_绝缘耐压等电位正本-DVP试验报告.pdf,电子版PDF,http://le.test.icoastline.com/#/ppapAudit/ppapAuditAgent?folderId=&firstStep=false&groupId=486498373331456&taskId=486498373335552,
 2-2,,,,,,6,"识别报告中是否包含“样品数量”或“样本数量”字段，如果包含则继续识别；当“样品数量”或“样本数量”对应内容不为空则通过，否则不通过。
 ",PASS,,NG,未找到有效工作表,NJ24010097_EVB理想X04_PACK3_绝缘耐压等电位正本-DVP试验报告.pdf,电子版PDF,http://le.test.icoastline.com/#/ppapAudit/ppapAuditAgent?folderId=&firstStep=false&groupId=486498373331456&taskId=486498373335552,
-2-2,,,,,,1,不限模板，是供应商自己做的报告还是三方机构做的报告，识别文件中是否有“文件编号”或“报告编号”或“编号”字段，且内容不为空则通过，否则不通过,PASS,,NG,未找到工作表[DVP&R工作表],PV试验报告2024-07-03 13.35.pdf,扫描版PDF,http://le.test.icoastline.com/#/ppapAudit/ppapAuditAgent?folderId=&firstStep=false&groupId=486498373331456&taskId=486498373335553,
-2-2,,,,,,2,"当实验的判定或结论为“符合”或“通过”或“合格”或“P”或“pass”时则通过，否则不通过。若为F，则不通过。注意文字需要严格一致，不经过语言翻译之后的结果，不接受意思相近的其他文字描述；
-",PASS,,NG,未找到工作表[DVP&R工作表],PV试验报告2024-07-03 13.35.pdf,扫描版PDF,http://le.test.icoastline.com/#/ppapAudit/ppapAuditAgent?folderId=&firstStep=false&groupId=486498373331456&taskId=486498373335553,
-2-2,,,,,,3,识别是否有“试验类型”字段，且该字段对应的值为“DV”或“PV”则通过，否则不通过。注意：“DV”或“PV”无需考虑英文的大小写。,PASS,,NG,未找到工作表[DVP&R工作表],PV试验报告2024-07-03 13.35.pdf,扫描版PDF,http://le.test.icoastline.com/#/ppapAudit/ppapAuditAgent?folderId=&firstStep=false&groupId=486498373331456&taskId=486498373335553,
-2-2,,,,,,4,当文件中包含印章则通过，否则不通过。,PASS,,NG,未找到工作表[DVP&R工作表],PV试验报告2024-07-03 13.35.pdf,扫描版PDF,http://le.test.icoastline.com/#/ppapAudit/ppapAuditAgent?folderId=&firstStep=false&groupId=486498373331456&taskId=486498373335553,
-2-2,,,,,,5,当文件中包含“试验前”、“实验中”、“试验后”的图片则通过，否则不通过,PASS,,NG,未找到工作表[DVP&R工作表],PV试验报告2024-07-03 13.35.pdf,扫描版PDF,http://le.test.icoastline.com/#/ppapAudit/ppapAuditAgent?folderId=&firstStep=false&groupId=486498373331456&taskId=486498373335553,
-2-2,,,,,,6,"识别报告中是否包含“样品数量”或“样本数量”字段，如果包含则继续识别；当“样品数量”或“样本数量”对应内容不为空则通过，否则不通过。
-",PASS,,NG,未找到工作表[DVP&R工作表],PV试验报告2024-07-03 13.35.pdf,扫描版PDF,http://le.test.icoastline.com/#/ppapAudit/ppapAuditAgent?folderId=&firstStep=false&groupId=486498373331456&taskId=486498373335553,
 2-2,,,,,,1,不限模板，是供应商自己做的报告还是三方机构做的报告，识别文件中是否有“文件编号”或“报告编号”或“编号”字段，且内容不为空则通过，否则不通过,PASS,,NG,未定位到数据区[DPVR主数据区]表头,SHF03-25021669-QC-15 阻燃性 试验报告 4.pdf,电子版PDF,http://le.test.icoastline.com/#/ppapAudit/ppapAuditAgent?folderId=&firstStep=false&groupId=486498373331456&taskId=486498373335554,
 2-2,,,,,,2,"当实验的判定或结论为“符合”或“通过”或“合格”或“P”或“pass”时则通过，否则不通过。若为F，则不通过。注意文字需要严格一致，不经过语言翻译之后的结果，不接受意思相近的其他文字描述；
 ",PASS,,NG,未定位到数据区[DPVR主数据区]表头,SHF03-25021669-QC-15 阻燃性 试验报告 4.pdf,电子版PDF,http://le.test.icoastline.com/#/ppapAudit/ppapAuditAgent?folderId=&firstStep=false&groupId=486498373331456&taskId=486498373335554,

@@ -289,7 +289,7 @@ def resolve_agent_cls(
 
     if file_type == "excel":
         agent_map = EXCEL_AGENT_MAP
-    elif file_type in {"pdf", "scanned"}:
+    elif file_type == "pdf":
         agent_map = PDF_AGENT_MAP
     else:
         return None
@@ -357,13 +357,13 @@ def build_cases(
 
         if ftype_filter == "excel" and not is_excel:
             continue
-        if ftype_filter in {"pdf", "scanned"} and not is_pdf:
+        if ftype_filter == "pdf" and not is_pdf:
             continue
 
         if is_excel:
             file_type = "excel"
         elif is_pdf:
-            file_type = "pdf" if ftype_filter != "scanned" else "scanned"
+            file_type = "pdf"
         else:
             continue
         agent_cls = resolve_agent_cls(doc_key, file_type=file_type)
@@ -408,8 +408,6 @@ def _match_feedback_file_type(*, file_format: str, ftype_filter: str | None) -> 
         return "excel" in normalized
     if ftype_filter == "pdf":
         return "pdf" in normalized and "扫描" not in normalized
-    if ftype_filter == "scanned":
-        return "扫描" in normalized and "pdf" in normalized
     return False
 
 
@@ -518,7 +516,7 @@ def _select_long_feedback_oracle_cases(
             if doc_key is None:
                 continue
 
-            if ftype_filter in {"excel", "pdf", "scanned"}:
+            if ftype_filter in {"excel", "pdf"}:
                 agent_file_type = ftype_filter
             else:
                 suffix = Path(file_name).suffix.lower()

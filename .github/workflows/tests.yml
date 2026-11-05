@@ -303,9 +303,6 @@ jobs:
           - name: PDF
             mode: pytest
             args: tests/corpus/v2_assets --ftype pdf -q
-          - name: scanned
-            mode: pytest
-            args: tests/corpus/v2_assets --ftype scanned -q
           - name: Pairs
             mode: pytest
             args: tests/corpus/pairs --cross-format -q
@@ -467,6 +464,14 @@ jobs:
           set -euo pipefail
           uv sync --locked --group e2e
           uv run --no-sync python -m playwright install chromium
+      - name: Install XLS header renderer for product contracts
+        working-directory: ${{ github.workspace }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libreoffice-calc fonts-noto-cjk
+          cc -O2 -Wall -Wextra -Werror packages/documents/native/legacy_doc_sandbox.c \
+            -o "$RUNNER_TEMP/ppap-local-converter-sandbox"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
       - name: Cross-owner product contracts
         working-directory: ${{ github.workspace }}
         env:

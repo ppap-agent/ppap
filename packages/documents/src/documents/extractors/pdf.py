@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, NamedTuple, Optional, Set, Union
+from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Set, Union
 
 from .base import BaseExtractor, ExtractionError
 
@@ -916,35 +916,6 @@ class PDFExtractor(BaseExtractor):
             raise ExtractionError("PDF提取器依赖库未安装", file_type="PDF", original_error=e)
         except Exception as e:
             raise ExtractionError(f"PDF文本提取失败: {str(e)}", file_type="PDF", original_error=e)
-
-    def ocr_pages_text(
-        self,
-        images: List[str],
-        ocr_page_callable: Optional[Callable[[str], Optional[str]]] = None,
-    ) -> List[str]:
-        """提取PDF文档的所有页面文本内容
-
-        Args:
-            images: PDF页面渲染后的Base64图片列表
-            ocr_page_callable: 单页OCR回调，入参为图片Base64，返回识别文本
-
-        Returns:
-            str: 提取的文本内容
-        """
-        if ocr_page_callable is None:
-            logger.warning("未提供 OCR callable，跳过 PDF 页面 OCR。")
-            return []
-
-        text_content: List[str] = []
-        for index, image in enumerate(images):
-            try:
-                ocr_text = ocr_page_callable(image)
-                if ocr_text:
-                    text_content.append(ocr_text)
-            except Exception as e:
-                logger.warning(f"OCR处理第 {index + 1} 页失败: {str(e)}")
-
-        return text_content
 
     def extract_metadata(self, file_content: bytes, file_path: Optional[Union[str, Path]] = None) -> Dict[str, Any]:
         """提取PDF文档的元数据

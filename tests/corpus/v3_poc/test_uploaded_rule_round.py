@@ -58,8 +58,8 @@ def test_original_docx_keeps_confirmed_order_without_interpreting_text_or_filena
 def test_original_docx_bindings_match_the_existing_worker_oracle_for_all_cases():
     bodies = {seq: uploaded_rules(seq) for seq in SOURCES}
     cases = load_poc_cases()
-    assert len(cases) == 27
-    assert sum(len(case.expected) for case in cases) == 220
+    assert len(cases) == 26
+    assert sum(len(case.expected) for case in cases) == 209
     for case in cases:
         actual = freeze_target_rule_execution(bodies[case.file_seq], case.file_name)
         _body, existing = engine_rule_body(POC_SEQ_TO_DOC_TYPE[case.file_seq].get_type_name(), case.file_name, "v3")
@@ -84,7 +84,7 @@ def test_original_docx_three_file_round_matches_all_27_oracle_results():
         blobs[version] = case.file_path.read_bytes()
     result = run_round_from_bytes(RoundWork("uploaded-customer-rules", "corpus", inputs), blobs)
     items = result["coverage"]["rule_items"]
-    assert len(items) == 27
+    assert len(items) == 26
     pending = [item for item in items if item["coverage"] != "mapped"]
     assert pending == []
     failures = []
@@ -93,4 +93,4 @@ def test_original_docx_three_file_round_matches_all_27_oracle_results():
         failures.extend(failing_verdicts(compare_file(file_name=case.file_name, version_id="file-" + case.file_seq, expected=expected, result=result, setup_error=None)))
     if failures:
         pytest.fail(format_verdicts(failures))
-    assert len(result["findings"]) == 27
+    assert len(result["findings"]) == 26

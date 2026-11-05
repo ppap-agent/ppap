@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Literal
 
 from ..table.models import CellRegion, TableGrid
@@ -116,8 +116,7 @@ def _stack_rows(
             new_row_end = max(cell.row_end, skip_local_rows) - skip_local_rows + row_offset
 
             remapped_page_cells.append(
-                replace(
-                    cell,
+                CellRegion(
                     row_start=new_row_start,
                     row_end=new_row_end,
                     col_start=col_start,
@@ -312,8 +311,7 @@ def _split_multirow_cells_by_marker_rows(
         for seg_start, seg_end in segments:
             content = "".join(row_contents.get(row, "") for row in range(seg_start, seg_end + 1)).strip()
             next_cells.append(
-                replace(
-                    cell,
+                CellRegion(
                     row_start=seg_start,
                     row_end=seg_end,
                     col_start=cell.col_start,
@@ -382,8 +380,7 @@ def _split_multirow_value_cells_by_neighbor_labels(
         row_contents = _split_cell_content_by_rows(page_result=page_result, cell=cell, rows=split_rows)
         for row in split_rows:
             next_cells.append(
-                replace(
-                    cell,
+                CellRegion(
                     row_start=row,
                     row_end=row,
                     col_start=cell.col_start,

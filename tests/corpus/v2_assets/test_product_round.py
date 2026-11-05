@@ -13,7 +13,6 @@ from corpus_contracts.execution_outcome import (
     MISSING_RULE,
     ExecutionOutcome,
 )
-from corpus_contracts.poc_oracle import deferred_full_scan_reason
 from corpus_contracts.product_round import (
     MATCH,
     SETUP_FAILURE,
@@ -62,9 +61,6 @@ def test_v2_product_round_respects_oracle_baseline(product_case: FileCase, reque
     """Check one file with the same oracle as the former serial file loop."""
     file_type = request.config.getoption("--ftype") or "excel"
     case = product_case
-    reason = deferred_full_scan_reason(case.file_path)
-    if reason:
-        pytest.skip(reason)
     doc_type = bound_type_name(case.agent_cls, case.file_name, RULE_PROFILE_V2)
     if doc_type is None:
         pytest.fail(format_verdicts([RuleVerdict(case.file_name, 0, SETUP_FAILURE, "", detail="no bound document type")]))

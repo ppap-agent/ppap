@@ -19,8 +19,6 @@ jobs:
       LLM_API_KEY: ${{ secrets.CI_LLM_API_KEY }}
       LLM_BASE_URL: ${{ secrets.CI_LLM_BASE_URL }}
       LLM_MODEL: ${{ secrets.CI_LLM_MODEL }}
-      PADDLE_OCR_URL: ${{ secrets.PADDLE_OCR_URL }}
-      PADDLE_TOKEN: ${{ secrets.PADDLE_TOKEN }}
       OCR_OPENAI_API_KEY: ${{ secrets.OCR_OPENAI_API_KEY }}
       OCR_OPENAI_BASE_URL: ${{ secrets.OCR_OPENAI_BASE_URL }}
       OCR_MODEL_NAME: ${{ secrets.OCR_MODEL_NAME }}
@@ -39,7 +37,6 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
-          : "${PADDLE_OCR_URL:?canonical PDF sample needs a real Paddle endpoint, not only cached OCR}"
           uv sync --locked
           uv run --no-sync pytest tests/corpus/contracts/tests
           docker buildx bake api worker --load

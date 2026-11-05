@@ -122,9 +122,5 @@ BASELINE_RULE_BEHAVIORS: frozenset[BaselineRuleBehavior] = frozenset(
         B("SHF03-25021669-QC-15 阻燃性 试验报告 4.pdf", "pdf", 4, "PASS", "NG"),
         B("W02管路PV试验报告2025052803_QFZ.pdf", "pdf", 4, "PASS", "NG"),
         B("零部件DPV试验报告20231226.pdf", "pdf", 4, "PASS", "NG"),
-        B("PV试验报告2024-07-03 13.35.pdf", "scanned", 2, "PASS", "NG"),
-        B("PV试验报告2024-07-03 13.35.pdf", "scanned", 3, "PASS", "NG"),
-        B("PV试验报告2024-07-03 13.35.pdf", "scanned", 4, "PASS", "NG"),
-        B("PV试验报告2024-07-03 13.35.pdf", "scanned", 5, "PASS", "NG"),
     }
 )

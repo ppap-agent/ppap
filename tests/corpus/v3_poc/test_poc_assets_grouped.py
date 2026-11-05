@@ -18,7 +18,6 @@ from corpus_contracts.poc_oracle import (
     SimpleAuditFile,
     build_bundle_map,
     build_group_context_for_bundle,
-    deferred_full_scan_reason,
     load_poc_cases,
     parse_seq_filter,
 )
@@ -230,9 +229,6 @@ def mismatch_only(request: Any) -> Any:
 
 @pytest.mark.usefixtures("ocr_transport_diagnostics")
 def test_poc_assets_grouped(case: PocCase, verbose_check: bool, mismatch_only: bool) -> None:
-    reason = deferred_full_scan_reason(case.file_path)
-    if reason:
-        pytest.skip(reason)
     bundle_cases = _ALL_BUNDLE_CASES.get(case.bundle_id)
     if not bundle_cases:
         pytest.fail(f"Missing bundle context for {case.bundle_id}")

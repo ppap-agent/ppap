@@ -58,7 +58,6 @@ class PDFAgent(BaseAgent):
         self.temp_files: List[str] = []
         self._pdf_images_cache: Optional[List[str]] = None
         self._pdf_page_texts_cache: Optional[List[str]] = None
-        self._pdf_page_ocr_texts_cache: Optional[List[str]] = None
         self._pdf_file_content_cache: Optional[bytes] = None
         self.conversion_artifact: Optional[ConversionArtifact] = None
 
@@ -266,10 +265,6 @@ class PDFAgent(BaseAgent):
         except Exception as e:
             logger.error(f"提取PDF页面文本失败: {e}")
             return []
-
-    def _ocr_pdf_page_texts(self) -> List[str]:
-        """Page discovery uses native text; never OCR a whole PDF for routing."""
-        return self._get_pdf_page_texts()
 
     def _find_target_pages(
         self,

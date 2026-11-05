@@ -83,7 +83,6 @@ docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 ```sh
 uv run --no-sync pytest tests/corpus/v2_assets --ftype excel -q
 uv run --no-sync pytest tests/corpus/v2_assets --ftype pdf -q
-uv run --no-sync pytest tests/corpus/v2_assets --ftype scanned -q
 uv run --no-sync pytest tests/corpus/pairs --cross-format -q
 uv run --no-sync pytest tests/corpus/v3_poc -q
 
@@ -101,7 +100,7 @@ docker run --rm \
   pytest tests/corpus/psw -q
 ```
 
-Pairs compares PDF vs Excel outcomes for the same oracle stem at pair+rule granularity. Known format divergences are a structured baseline, not a second expected-status oracle. Excel / PDF / scanned variants do not pass `--cross-format`. PSW remains a purpose-built container entry in the same CI Corpus matrix. Its image starts from the production worker install and runs `uv sync --frozen --no-editable` so the default dev dependency group comes from the same lock.
+Pairs compares PDF vs Excel outcomes for the same oracle stem at pair+rule granularity. Known format divergences are a structured baseline, not a second expected-status oracle. Excel / PDF variants do not pass `--cross-format`. PSW remains a purpose-built container entry in the same CI Corpus matrix. Its image starts from the production worker install and runs `uv sync --frozen --no-editable` so the default dev dependency group comes from the same lock.
 
 ## Schema
 

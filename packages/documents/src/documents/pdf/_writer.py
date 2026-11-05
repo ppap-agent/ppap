@@ -27,7 +27,6 @@ def write_workbook(
     output: OutputSpec,
     *,
     source: str | Path | bytes | None = None,
-    unknown_cells: list[dict[str, Any]] | None = None,
 ) -> bool:
     if output.mode != OutputMode.SHEET_PER_GROUP:
         raise ValueError(f"Unsupported output mode: {output.mode}")
@@ -38,22 +37,6 @@ def write_workbook(
 
     sheets = [(_sheet_name(group, output, index), group.table_grid) for index, group in enumerate(successful_groups, start=1) if group.table_grid is not None]
     workbook = build_workbook_from_table_grids(sheets)
-    if unknown_cells is not None:
-        for worksheet, group in zip(workbook.worksheets, successful_groups, strict=True):
-            for cell in group.table_grid.cells if group.table_grid is not None else ():
-                if cell.is_unknown:
-                    unknown_cells.append(
-                        {
-                            "sheet": worksheet.title,
-                            "row": cell.row_start + 1,
-                            "column": cell.col_start + 1,
-                            "end_row": cell.row_end + 1,
-                            "end_column": cell.col_end + 1,
-                            "source_page": cell.source_page,
-                            "source_bbox": cell.source_bbox,
-                            "native_value": cell.source_value,
-                        }
-                    )
 
     if output.preserve_pdf_embedded_images and source is not None:
         _attach_pdf_embedded_images(

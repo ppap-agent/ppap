@@ -288,8 +288,8 @@ def test_full_public_flow_keeps_all_cases_and_never_reaccepts(tmp_path, failure,
     assert len([path for method, path in api.writes if path.endswith("/accept")]) == 8
     assert len([path for method, path in api.writes if path == "/rules/parse"]) == 5
     report = json.loads((output / "report.json").read_text())
-    assert report["summary"]["selected_cases"] == 27
-    assert report["summary"]["total_rules"] == 220
+    assert report["summary"]["selected_cases"] == 26
+    assert report["summary"]["total_rules"] == 209
     assert result["analysis_mode"] == report["run"]["analysis_mode"] == analysis_mode
     assert {draft["analysis_mode"] for draft in api.drafts.values()} == {analysis_mode}
     accepted = [operation for operation in result["operations"] if operation["stage"] == "accept"]
@@ -360,8 +360,8 @@ def test_changed_frozen_inputs_reject_only_the_affected_group_without_reacceptin
     assert len(accept_paths) == len(set(accept_paths)) == 8
     assert sum(path == "/rules/parse" for method, path in api.writes) == 5
     report = json.loads((output / "report.json").read_text())
-    assert report["summary"]["selected_cases"] == 27
-    assert report["summary"]["total_rules"] == 220
+    assert report["summary"]["selected_cases"] == 26
+    assert report["summary"]["total_rules"] == 209
     affected = [row for row in report["rule_results"] if row["round_id"] == api.changed_round_id]
     assert {row["bundle"] for row in affected} == {error["bundle"]}
     assert {row["failure_stage"] for row in affected} == {stage}
@@ -376,7 +376,7 @@ def test_default_mode_stays_standard_and_invalid_modes_never_make_requests(tmp_p
     assert result["outcome"] == "PROVEN"
     assert result["analysis_mode"] == "standard"
     assert result["scope"] == "full"
-    assert result["denominators"] == {"full": {"bundles": 8, "files": 27, "rules": 220}, "selected": {"bundles": 8, "files": 27, "rules": 220}}
+    assert result["denominators"] == {"full": {"bundles": 8, "files": 26, "rules": 209}, "selected": {"bundles": 8, "files": 26, "rules": 209}}
     assert {draft["analysis_mode"] for draft in api.drafts.values()} == {"standard"}
 
     def unexpected_request(_request):
@@ -402,7 +402,7 @@ def test_selected_whole_bundles_publish_only_required_rules_and_never_claim_full
     assert result["scope"] == "subset"
     assert result["selected_bundles"] == sorted(bundle_ids)
     assert result["denominators"] == {
-        "full": {"bundles": 8, "files": 27, "rules": 220},
+        "full": {"bundles": 8, "files": 26, "rules": 209},
         "selected": {"bundles": len(bundle_ids), "files": len(selected), "rules": sum(len(case.expected) for case in selected)},
     }
     assert {draft["analysis_mode"] for draft in api.drafts.values()} == {analysis_mode}
@@ -422,7 +422,7 @@ def test_selected_whole_bundles_publish_only_required_rules_and_never_claim_full
     assert report["summary"]["selected_cases"] == len(selected)
     assert report["summary"]["total_rules"] == len(report["rule_results"]) == result["denominators"]["selected"]["rules"]
     markdown = (output / "report.md").read_text()
-    assert "SUBSET_PROVEN" in markdown and "subset" in markdown and "denominators" in markdown and "220" in markdown
+    assert "SUBSET_PROVEN" in markdown and "subset" in markdown and "denominators" in markdown and "209" in markdown
 
 
 @pytest.mark.parametrize("bundle_ids", [[], ["unknown"], ["Aries Spoiler", "Aries Spoiler"], ["Aries Spoiler", "unknown"], ["Aries Spoiler "]])
@@ -450,7 +450,7 @@ def test_explicitly_selecting_all_bundles_is_the_same_full_scope(tmp_path):
     assert result["outcome"] == "PROVEN"
     assert result["scope"] == "full"
     assert result["selected_bundles"] == sorted(bundles)
-    assert result["denominators"]["full"] == result["denominators"]["selected"] == {"bundles": 8, "files": 27, "rules": 220}
+    assert result["denominators"]["full"] == result["denominators"]["selected"] == {"bundles": 8, "files": 26, "rules": 209}
     assert len(api.drafts) == 8 and len(api.rules) == 5
 
 
@@ -506,8 +506,8 @@ def test_mode_policy_and_exact_rule_output_are_frozen_without_reaccepting(tmp_pa
     accepts = [path for _method, path in api.writes if path.endswith("/accept")]
     assert len(accepts) == len(set(accepts)) == 8
     report = json.loads((output / "report.json").read_text())
-    assert report["summary"]["selected_cases"] == 27
-    assert report["summary"]["total_rules"] == 220
+    assert report["summary"]["selected_cases"] == 26
+    assert report["summary"]["total_rules"] == 209
     assert all(row["kind"] == "match" for row in report["rule_results"] if row["round_id"] != api.changed_round_id)
 
 
@@ -537,8 +537,8 @@ def test_standard_policy_rejects_tampering_and_terminal_drift_without_reacceptin
     accepts = [path for _method, path in api.writes if path.endswith("/accept")]
     assert len(accepts) == len(set(accepts)) == 8
     report = json.loads((output / "report.json").read_text())
-    assert report["summary"]["selected_cases"] == 27
-    assert report["summary"]["total_rules"] == 220
+    assert report["summary"]["selected_cases"] == 26
+    assert report["summary"]["total_rules"] == 209
     affected = [row for row in report["rule_results"] if row["round_id"] == api.changed_round_id]
     assert affected
     assert {row["kind"] for row in affected} == {"setup_failure" if stage == "accept" else "execution_failure"}
@@ -562,7 +562,7 @@ def test_mode_coverage_keeps_execution_errors_distinct_from_missing_rules(tmp_pa
     assert result["errors"] == []
     assert len([path for _method, path in api.writes if path.endswith("/accept")]) == 8
     report = json.loads((output / "report.json").read_text())
-    assert report["summary"]["total_rules"] == 220
+    assert report["summary"]["total_rules"] == 209
     affected = [row for row in report["rule_results"] if row["kind"] != "match"]
     assert {row["round_id"] for row in affected} == {api.changed_round_id}
     if failure == "execution_error":

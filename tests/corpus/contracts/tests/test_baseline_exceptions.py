@@ -94,7 +94,7 @@ def test_split_does_not_apply_another_file_or_type() -> None:
     known = frozenset(
         {
             B("a.pdf", "pdf", 2, "PASS", "NG"),
-            B("a.pdf", "scanned", 1, "PASS", "NG"),
+            B("a.pdf", "excel", 1, "PASS", "NG"),
             B("b.pdf", "pdf", 3, "PASS", "NG"),
         }
     )

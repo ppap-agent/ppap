@@ -18,7 +18,7 @@ def pytest_addoption(parser: Any) -> None:
         "--ftype",
         action="store",
         default=None,
-        choices=["excel", "pdf", "scanned"],
+        choices=["excel", "pdf"],
         help="Filter V2 cases by file type",
     )
     parser.addoption("--verbose-check", action="store_true", default=False)
