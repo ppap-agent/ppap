@@ -170,6 +170,13 @@ class Grants:
         """A local credential rejection is not an unknown provider charge."""
         with self.lock:
             lease.in_flight = False
+            lease.transport_failure = {
+                "phase": "provider_request",
+                "error_type": "PersonalModelUnavailable",
+                "provider_status": 0,
+                "response_bytes": 0,
+                "last_event": "none",
+            }
 
     @staticmethod
     def _usage(leases: list[Lease]) -> dict[str, Any]:

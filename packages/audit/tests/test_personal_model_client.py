@@ -118,3 +118,17 @@ def test_confirmed_receipt_allows_deliberate_repeat_without_cross_user_state(mon
         for _ in range(2):
             assert AIClient().response_text([{"role": "user", "content": "check"}]) == "checked"
     assert len(calls) == 2
+
+
+def test_provider_error_body_cannot_escape_as_a_personal_audit_diagnostic(monkeypatch, caplog):
+    key = str(uuid4())
+
+    def send(_client, request, **kwargs):
+        return httpx.Response(401, request=request, json={"error": {"message": key, "type": "authentication_error"}})
+
+    monkeypatch.setattr(httpx.Client, "send", send)
+    with model_access_scope(ModelAccess(api_key=SecretStr(key))), pytest.raises(ModelUnavailable, match="personal_model_request_failed") as failure:
+        AIClient().response_text([{"role": "user", "content": "check"}])
+    assert key not in str(failure.value)
+    assert failure.value.__suppress_context__
+    assert key not in caplog.text

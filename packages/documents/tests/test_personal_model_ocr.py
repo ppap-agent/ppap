@@ -81,3 +81,19 @@ async def test_uncertain_visual_request_cannot_be_replayed_by_later_clause(monke
         with pytest.raises(ModelUnavailable, match="personal_model_request_uncertain"):
             await call_llm_async(b"controlled-image", "Read a fact.", response_schema=schema)
     assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_provider_error_body_cannot_escape_as_a_visual_diagnostic(monkeypatch, caplog):
+    key = str(uuid4())
+
+    async def send(_client, request, **kwargs):
+        return httpx.Response(401, request=request, json={"error": {"message": key, "type": "authentication_error"}})
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", send)
+    schema = {"name": "fact", "schema": {"type": "object"}, "strict": True}
+    with model_access_scope(ModelAccess(api_key=SecretStr(key))), pytest.raises(ModelUnavailable, match="personal_model_request_failed") as failure:
+        await call_llm_async(b"controlled-image", "Read a fact.", response_schema=schema)
+    assert key not in str(failure.value)
+    assert failure.value.__suppress_context__
+    assert key not in caplog.text

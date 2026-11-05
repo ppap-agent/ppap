@@ -9,6 +9,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
+from agent.execution.diagnostics import failure_facts
 from agent.execution.gateway import Gateway, Grants
 from documents.model_access import ModelUnavailable
 from openai import OpenAI
@@ -107,6 +108,8 @@ def test_revoke_is_checked_before_any_provider_send():
             assert usage["uncertain"] is False
             assert usage["completed_requests"] == 0
             assert usage["input_tokens"] == usage["output_tokens"] == 0
+            assert usage["transport_failure"]["error_type"] == "PersonalModelUnavailable"
+            assert failure_facts({"usage": usage, "transport_failure": usage["transport_failure"]})["transport_failure"]["error_type"] == "PersonalModelUnavailable"
 
 
 def test_rebinding_runtime_revokes_all_previous_user_grants():
