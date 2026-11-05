@@ -82,3 +82,39 @@ def test_uncertain_http_request_never_retries_even_with_requested_retry_limit(mo
     with model_access_scope(ModelAccess(api_key=SecretStr(str(uuid4())))), pytest.raises(Exception):
         AIClient().response_text([{"role": "user", "content": "check"}], retry_limit=5)
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("timeout", [True, False])
+def test_later_clause_does_not_replay_same_uncertain_request(monkeypatch, timeout):
+    calls = []
+
+    def send(_client, request, **kwargs):
+        calls.append(request)
+        if timeout:
+            raise httpx.ReadTimeout("controlled timeout", request=request)
+        return response(request, None)
+
+    monkeypatch.setattr(httpx.Client, "send", send)
+    with model_access_scope(ModelAccess(api_key=SecretStr(str(uuid4())))):
+        if timeout:
+            with pytest.raises(Exception):
+                AIClient().response_text([{"role": "user", "content": "check"}])
+        else:
+            assert AIClient().response_text([{"role": "user", "content": "check"}]) == "checked"
+        with pytest.raises(ModelUnavailable, match="personal_model_request_uncertain"):
+            AIClient().response_text([{"role": "user", "content": "check"}], request_timeout=5)
+    assert len(calls) == 1
+
+
+def test_confirmed_receipt_allows_deliberate_repeat_without_cross_user_state(monkeypatch):
+    calls = []
+
+    def send(_client, request, **kwargs):
+        calls.append(request)
+        return response(request, {"input_tokens": 2, "output_tokens": 1, "total_tokens": 3})
+
+    monkeypatch.setattr(httpx.Client, "send", send)
+    with model_access_scope(ModelAccess(api_key=SecretStr(str(uuid4())))):
+        for _ in range(2):
+            assert AIClient().response_text([{"role": "user", "content": "check"}]) == "checked"
+    assert len(calls) == 2

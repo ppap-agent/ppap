@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Self
 from urllib.parse import urlsplit
 
-from documents.model_access import current_model_access, model_access_scoped
+from documents.model_access import current_model_access, model_access_scoped, model_request_scope
 from openai import OpenAI as BaseOpenAI
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -327,11 +327,13 @@ class AIClient:
                 # 应用速率限制（每次请求都需要遵守）
                 self._wait_for_rate_limit()
                 try:
-                    if _uses_codex_transport(self.settings):
-                        with request_client.responses.stream(**request_kwargs) as stream:
-                            response = stream.get_final_response()
-                    else:
-                        response = request_client.responses.create(**request_kwargs)
+                    with model_request_scope(self.settings.OPENAI_BASE_URL, request_kwargs) as settle:
+                        if _uses_codex_transport(self.settings):
+                            with request_client.responses.stream(**request_kwargs) as stream:
+                                response = stream.get_final_response()
+                        else:
+                            response = request_client.responses.create(**request_kwargs)
+                        settle(response)
                 except Exception:
                     record_unreported_usage()
                     raise

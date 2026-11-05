@@ -11,6 +11,7 @@ from documents.model_access import ModelUnavailable
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from product.settings import Settings
+from product.store import AuthStore
 from product.store.model_credentials import decrypt_credential, encrypt_credential, public_config
 from pydantic import SecretStr
 
@@ -100,3 +101,57 @@ def test_personal_store_database_owner_isolation_and_membership_cleanup(auth_sto
         conn.execute("DELETE FROM product.memberships WHERE user_id=%s AND tenant_id=%s", (bob.user_id, bob.tenant_id))
     with pytest.raises(ModelUnavailable):
         store.personal_model_access(bob.tenant_id, bob.user_id)
+
+
+def test_database_roles_encrypted_owner_binding_and_member_rejoin(auth_store_factory):
+    config = Settings(feishu_app_id="controlled-app", model_credential_encryption_key=SecretStr(Fernet.generate_key().decode()))
+    setup = auth_store_factory(config)
+    alice = setup.upsert_feishu_identity("controlled-tenant", "alice")
+    bob = setup.upsert_feishu_identity("controlled-tenant", "bob")
+    api = AuthStore(config, objects=setup.objects, role="api")
+    worker = AuthStore(config, objects=setup.objects, role="worker")
+    alice_key, bob_key = SecretStr(str(uuid4())), SecretStr(str(uuid4()))
+    api.put_personal_model_config(alice, alice_key)
+    api.put_personal_model_config(bob, bob_key)
+    assert worker.personal_model_access(alice.tenant_id, alice.user_id).api_key == alice_key
+    assert worker.personal_model_access(bob.tenant_id, bob.user_id).api_key == bob_key
+    # Compromised row placement cannot lend a different owner's decrypted key.
+    with setup._conn() as conn:
+        cipher = conn.execute("SELECT key_ciphertext FROM product.personal_model_credentials WHERE user_id=%s", (alice.user_id,)).fetchone()[0]
+        conn.execute("UPDATE product.personal_model_credentials SET key_ciphertext=%s WHERE user_id=%s", (cipher, bob.user_id))
+    with pytest.raises(ModelUnavailable):
+        worker.personal_model_access(bob.tenant_id, bob.user_id)
+    assert worker.personal_model_access(alice.tenant_id, alice.user_id).api_key == alice_key
+    # The worker can resolve keys, but cannot save/revoke another user's config.
+    import psycopg
+
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        worker.put_personal_model_config(alice, SecretStr(str(uuid4())))
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        worker.delete_personal_model_config(alice)
+    with setup._conn() as conn:
+        conn.execute("DELETE FROM product.memberships WHERE user_id=%s AND tenant_id=%s", (alice.user_id, alice.tenant_id))
+        assert conn.execute("SELECT 1 FROM product.personal_model_credentials WHERE user_id=%s", (alice.user_id,)).fetchone() is None
+    with pytest.raises(ModelUnavailable):
+        api.put_personal_model_config(alice, SecretStr(str(uuid4())))
+    with setup._conn() as conn:
+        conn.execute("INSERT INTO product.memberships (user_id,tenant_id,role) VALUES (%s,%s,'member')", (alice.user_id, alice.tenant_id))
+    assert api.personal_model_config(alice)["configured"] is False
+    with pytest.raises(ModelUnavailable):
+        worker.personal_model_access(alice.tenant_id, alice.user_id)
+
+
+def test_database_account_deletion_cleans_keys_after_identity_cleanup(auth_store_factory):
+    config = Settings(feishu_app_id="controlled-app", model_credential_encryption_key=SecretStr(Fernet.generate_key().decode()))
+    store = auth_store_factory(config)
+    alice = store.upsert_feishu_identity("controlled-tenant", "alice")
+    store.put_personal_model_config(alice, SecretStr(str(uuid4())))
+    # Existing product history can retain a user row. This verifies physical
+    # removal only after the existing identity/membership references are gone.
+    with store._conn() as conn, conn.transaction():
+        conn.execute("DELETE FROM product.identities WHERE user_id=%s", (alice.user_id,))
+        conn.execute("DELETE FROM product.memberships WHERE user_id=%s", (alice.user_id,))
+        conn.execute("DELETE FROM product.users WHERE id=%s", (alice.user_id,))
+        assert conn.execute("SELECT 1 FROM product.personal_model_credentials WHERE user_id=%s", (alice.user_id,)).fetchone() is None
+    with pytest.raises(ModelUnavailable):
+        store.personal_model_access(alice.tenant_id, alice.user_id)
