@@ -139,6 +139,37 @@ class ControlPlanAgent(ExcelAgent):
         "措施一致性审核（特殊特性清单与CP）",
     )
 
+    def _read_stage_boxes(self, content: bytes, sheet: Any, stage_cells) -> Tuple[str, str] | None:
+        """An XLS option row pairs boxes with labels by order, which survives any font or renderer."""
+        from documents.excel.legacy_shapes import option_boxes
+        from documents.excel.loader import ExcelLoader
+
+        if not content.startswith(ExcelLoader.OLE_MAGIC):
+            return None
+        for row, column, _ in stage_cells:
+            cell = sheet.cell(row, column)
+            labels = str(cell.value or "").split()
+            boxes = option_boxes(content, sheet.title, row) if len(labels) > 1 else None
+            if not boxes or len(boxes) != len(labels) or any(box.filled is None for box in boxes):
+                continue
+            chosen = [label for label, box in zip(labels, boxes) if box.filled]
+            production = any(self._classify_stage_text(label.casefold()) == "production" for label in chosen)
+            self._stage_graphics_evidence = AuditEvidence(
+                required="structure",
+                used="structure",
+                source_format="xls",
+                prepared_format="xls",
+                sources=(
+                    EvidenceSource(
+                        kind="structure",
+                        locator=json.dumps({"kind": "xls_drawing", "sheet": sheet.title, "cell": cell.coordinate, "options": labels, "filled": chosen}, ensure_ascii=False, sort_keys=True),
+                        excerpt=str(cell.value)[:500],
+                    ),
+                ),
+            )
+            return ("PASS", "原件生产阶段勾选已确认。") if production else ("NG", "原件生产/SOP阶段未勾选。")
+        return None
+
     def _read_stage_graphics(self, sheet: Any, stage_cells) -> Tuple[str, str] | None:
         """Read the stage's labelled field through the shared Excel fact reader."""
         from documents.excel.visual import has_region_graphics, renderable_xlsx
@@ -149,6 +180,9 @@ class ControlPlanAgent(ExcelAgent):
 
         self._stage_graphics_evidence = None
         content, _ = _load_file_bytes(str(self.audit_file.file_url))
+        structural = self._read_stage_boxes(content, sheet, stage_cells)
+        if structural is not None:
+            return structural
         try:
             normalized = renderable_xlsx(content)
         except ValueError as error:
@@ -206,7 +240,8 @@ class ControlPlanAgent(ExcelAgent):
             sources=tuple(sources),
             diagnostics=() if selected is not None else (EvidenceDiagnostic(code="control_plan.stage_unconfirmed", stage="visual", severity="warning", message="原件阶段勾选尚不能确认。"),),
         )
-        if selected is None:
+        # A converted XLS can shift text away from its fixed boxes, so a render alone cannot prove "unchecked".
+        if selected is None or (selected is False and source_format == "xls"):
             return "UNABLE", "原件阶段区域中的生产/SOP勾选无法确认。"
         return ("PASS", "原件生产阶段勾选已确认。") if selected is True else ("NG", "原件生产/SOP阶段未勾选。")
 

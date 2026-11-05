@@ -53,6 +53,8 @@ class EngineRunnerTests(unittest.TestCase):
         workbook = Workbook()
         workbook.active.append(["工序号", "工序名称"])
         workbook.active.append(["10", "成型"])
+        workbook.active["Z1"] = "零件号"
+        workbook.active["AA1"] = "P001"
         output = BytesIO()
         workbook.save(output)
         workbook.close()

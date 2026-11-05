@@ -54,6 +54,8 @@ def test_excel_region_preserves_identity_and_reuses_success_unknown_and_errors(t
 
     monkeypatch.setattr(visual, "render_xlsx_field", render)
     monkeypatch.setattr(visual, "has_region_graphics", lambda *a, **kw: True)
+    if suffix == "xls" and value is False:
+        expected = "UNABLE"
     agent, path = stage_agent(tmp_path, suffix)
     original = path.read_bytes()
     try:
