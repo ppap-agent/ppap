@@ -597,7 +597,8 @@ def _psw_stages(result, selected_fields, rule_no, request_stage):
         needed = {"dimensional_checked", "appearance_checked", "material_functional_checked", "statistical_checked", "requirements_yes_checked"}
     elif rule_no in {9, 10} and result.get("conditional_checked") is True and result.get("approved_checked") is False and result.get("rejected_checked") is False:
         needed = {"approval_date", "comments_present"}
-    branch = {field: selected_fields[field] for field in needed.intersection(selected_fields) if result.get(field) is None}
+    # Follow the declared order: the request must not depend on set iteration.
+    branch = {field: description for field, description in selected_fields.items() if field in needed and result.get(field) is None}
     if branch:
         result.update(request_stage(branch))
     return result

@@ -26,6 +26,11 @@ class OcrImage:
     height: int
 
 
+def _shown_locator(locator: dict[str, Any]) -> dict[str, Any]:
+    """Where an image comes from; file identities and digests stay out of the prompt."""
+    return {name: value for name, value in locator.items() if name not in {"source_sha256", "prepared_sha256", "file_version_id"}}
+
+
 def request_ocr_visual_facts(*, images: list[bytes], prompt: str, response_schema: dict) -> dict:
     """One actual Responses request, with its own event loop and client lifetime.
 
@@ -197,7 +202,7 @@ def _observe_ocr_scope(
     selected_scopes = field_scopes or {field: list(scopes) for field in fields}
     if set(selected_scopes) != set(fields) or any(not names or not set(names).issubset(scopes) for names in selected_scopes.values()):
         raise ValueError("A visual fact needs an explicit applicable scope")
-    frames = "\n".join(f"图 {index}: {image.locator}" for index, image in enumerate(images))
+    frames = "\n".join(f"图 {index}: {_shown_locator(image.locator)}" for index, image in enumerate(images))
     sample_field = next(iter(fields))
     example: dict[str, Any] = {sample_field: [{"scope": selected_scopes[sample_field][0], "value": None, "sources": [], "covered_image_indices": [], "coverage": "unreadable", "excerpt": ""}]}
     prompt = (
