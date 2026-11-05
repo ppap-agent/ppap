@@ -44,6 +44,13 @@ def rule_digest(rules: Mapping[str, Any], appendix: Sequence[Mapping[str, Any]] 
     return _digest({"rules": _thaw(rules), "appendix": _thaw(tuple(appendix))})
 
 
+def runtime_revision(policy_revision: str, library_revision: str) -> str:
+    """One shared identity for runtime policy, deployment and installed library."""
+    if not policy_revision or not library_revision:
+        raise ValueError("runtime_identity_required")
+    return "checker-core-v1:" + _digest({"policy_revision": policy_revision, "library_revision": library_revision})
+
+
 def checker_digest(files: Mapping[str, bytes]) -> str:
     hasher = hashlib.sha256()
     for name in sorted(files):
