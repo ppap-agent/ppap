@@ -1,1 +1,1 @@
-"""Multimodal PDF extraction and immutable result cache."""
+"""On-demand OCR evidence from source pages and images."""

@@ -99,7 +99,6 @@ def ocr_transport_diagnostics(monkeypatch, caplog):
     """Observe real requests without reading bodies, URLs, headers or trace info."""
     logger = logging.getLogger("tests.ocr_transport")
     caplog.set_level(logging.INFO, logger=logger.name)
-    caplog.set_level(logging.INFO, logger="documents.ocr.cell_ocr")
     original = httpx.AsyncClient.send
     original_close = httpx.AsyncClient.aclose
     original_read = httpx.Response.aread

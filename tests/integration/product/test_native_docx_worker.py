@@ -11,7 +11,6 @@ import hashlib
 import json
 import os
 import uuid
-from base64 import b64decode
 from io import BytesIO
 from unittest.mock import patch
 
@@ -29,9 +28,10 @@ from worker import process_claimed
 
 @pytest.fixture
 def native_docx_system(auth_store_factory):
-    keep = {key: value for key, value in os.environ.items() if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))}
+    keep = {key: value for key, value in os.environ.items() if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "OCR_", "MODEL_NAME", "FEISHU_"))}
     with patch.dict(os.environ, keep, clear=True):
-        settings = Settings(usage_charge_enabled=False)
+        os.environ.update(OCR_MODEL_NAME="controlled-ocr", OCR_OPENAI_API_KEY="controlled", OCR_OPENAI_BASE_URL="https://ocr.invalid/v1")
+        settings = Settings(usage_charge_enabled=False, OCR_MODEL_NAME="controlled-ocr", OCR_OPENAI_API_KEY="controlled", OCR_OPENAI_BASE_URL="https://ocr.invalid/v1")
         store = auth_store_factory(settings)
         store.seed_isolated_dev()
         worker = build_product_store(settings, objects=store.objects, role="worker")
@@ -225,28 +225,33 @@ def psw_docx_bytes(*, include_images):
 
 def visual_provider_response(request):
     images = []
-    for data_url in request["image_base64_list"]:
-        with Image.open(BytesIO(b64decode(data_url.split(",", 1)[1]))) as image:
+    for payload in request["images"]:
+        with Image.open(BytesIO(payload)) as image:
             images.append((image.size, image.getextrema()))
     assert images == [((48, 48), ((220, 220), (0, 0), (0, 0))), ((32, 40), ((0, 0), (0, 0), (180, 180)))]
-    assert "word/document.xml" in request["user_text"]
-    if "psw_stamp_ends_with_company" in request["user_text"]:
-        # Rule 3's current provider contract reports visible facts, not PASS.
-        return json.dumps({"psw_stamp_ends_with_company": True, "authorization_table_present": False, "authorization_company_stamp_present": False})
-    assert "经授权的供方代表签字" in request["user_text"]
-    # The real evaluator receives provider observations, not a substituted AuditResult.
-    return json.dumps(
-        {
-            "authorized_signature_present": True,
-            "psw_stamp_present": True,
-            "classification": "签字与盖章",
-            "item": "签字与盖章完整性",
-            "priority": "P0",
-            "status": "PASS",
-            "suggestions": "可见供方代表签字及盖章。",
-        },
-        ensure_ascii=False,
-    )
+    assert "word/document.xml" in request["prompt"]
+    facts = {
+        "psw_stamp_ending_text": "公司",
+        "psw_stamp_ends_with_company": True,
+        "authorization_table_present": False,
+        "authorization_company_stamp_present": False,
+        "authorized_signature_present": True,
+        "psw_stamp_present": True,
+    }
+    result = {}
+    for field, schema in request["response_schema"]["schema"]["properties"].items():
+        result[field] = [
+            {
+                "scope": scope,
+                "value": facts.get(field),
+                "sources": [{"image_index": 0, "bbox": [0, 0, 1, 1]}],
+                "covered_image_indices": list(range(len(images))),
+                "coverage": "complete",
+                "excerpt": "受控提供方观察",
+            }
+            for scope in schema["items"]["properties"]["scope"]["enum"]
+        ]
+    return result
 
 
 @pytest.mark.parametrize("include_images", [True, False], ids=["complete-visual-evidence", "missing-required-images"])
@@ -276,17 +281,17 @@ def test_psw_docx_upload_parse_publish_and_worker_result_keep_v3_frozen(native_d
     }
     calls = []
 
-    def visual(_client, **request):
+    def visual(**request):
         calls.append(request)
         return visual_provider_response(request)
 
-    monkeypatch.setattr("audit.engine.checkers.client.AIClient.image_analysis_completion", visual)
+    monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", visual)
     target, rule, frozen = parse_publish_and_accept(client, worker, "零件提交保证书.docx", content, body)
     job = worker.claim_job("psw-word-audit")
     assert job is not None and job.kind == "audit" and job.round_id == frozen["id"]
     process_claimed(worker, job, "psw-word-audit")
     expected = ["PASS"] * 10 if include_images else ["PASS", "PASS", "NG", "PASS", "NG", "PASS", "PASS", "PASS", "PASS", "PASS"]
     calls_after_audit = len(calls)
-    assert calls_after_audit == (2 if include_images else 0)
+    assert calls_after_audit == (1 if include_images else 0)
     assert_completed_word(client, worker, target, rule, frozen, content, expected)
     assert len(calls) == calls_after_audit

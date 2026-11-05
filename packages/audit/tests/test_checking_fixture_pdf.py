@@ -33,7 +33,6 @@ def checker(request, monkeypatch):
                 raise model_response
             return model_response
 
-        monkeypatch.setattr(AIClient, "image_analysis_completion", analyze)
         monkeypatch.setattr(AIClient, "structured_completion", analyze)
         rules = RuleInput(
             rule_id="confirmed-fixture-rules",
@@ -103,7 +102,7 @@ def test_complete_logic_sections_need_proven_graphic_facts_without_a_model_fallb
     result = checker(path, 2, response)
 
     assert result.status == "UNABLE"
-    assert "Paddle" in result.suggestions
+    assert "无法完整确认" in result.suggestions
 
 
 @pytest.mark.parametrize("content", [None, b"", b"not a PDF"], ids=["missing", "empty", "corrupt"])
@@ -116,4 +115,4 @@ def test_unreadable_source_is_an_execution_error(tmp_path, checker, content, ind
     result = checker(path, index)
 
     assert result.status == "ERR"
-    assert "审核过程中出现错误" in result.suggestions
+    assert "技术错误" in result.suggestions

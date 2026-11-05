@@ -1,4 +1,4 @@
-"""Deterministic PSW policy over native/Paddle facts; no model verdicts."""
+"""Deterministic PSW policy over source-located facts; no model verdicts."""
 
 from __future__ import annotations
 
@@ -38,9 +38,10 @@ PSW_RULE_LABELS = {
 PSW_RULE_FIELDS: dict[int, dict[str, str]] = {
     3: {
         "psw_stamp_present": "保证书实际盖章",
-        "psw_stamp_ends_with_company": "保证书实际印章完整文字的最后两字为公司",
+        "psw_stamp_ending_text": "查看实际印章全部区域，按外圈公司名、内部及底部用途文字的阅读顺序，只返回真正末端2至6个原字；不能只取外圈公司名。末端或顺序不明为null；无章为空字符串。",
+        "psw_stamp_ends_with_company": "保证书实际印章完整文字的最后两字为公司，不能只取外圈公司名",
         "authorization_table_present": "存在部门章授权声明表格",
-        "authorization_company_stamp_present": "部门章授权声明表格中实际盖有公司章",
+        "authorization_company_stamp_present": "部门章授权声明中实际盖有公司章；部门章/专用章不是公司章，空白公司章位置或标签不算，无法确认返回null。",
     },
     5: {
         "authorized_signature_present": "经授权的供方代表签字字段有实际签字内容",
@@ -58,7 +59,13 @@ PSW_RULE_FIELDS: dict[int, dict[str, str]] = {
         "statistical_checked": "提交结果统计过程数据实际被选中",
         "requirements_yes_checked": "这些结果均满足所有图纸和规范要求的是实际被选中",
     },
-    9: {"disposition_visible": "存在认可情况字段", "approved_checked": "认可情况批准实际被选中", "conditional_checked": "认可情况条件批准实际被选中", "rejected_checked": "认可情况拒绝实际被选中"},
+    9: {
+        "approval_date": "条件批准的日期（YYYY-MM-DD），明确空白为空字符串",
+        "disposition_visible": "存在认可情况字段",
+        "approved_checked": "认可情况批准实际被选中",
+        "conditional_checked": "认可情况条件批准实际被选中",
+        "rejected_checked": "认可情况拒绝实际被选中",
+    },
     10: {
         "disposition_visible": "存在认可情况字段",
         "approved_checked": "认可情况批准实际被选中",
@@ -160,12 +167,30 @@ def decide_disposition_visual_rule(
     return "NG", _COMMENTS_NG
 
 
+def normalize_psw_stamp_facts(observation: Mapping[str, object]) -> dict[str, object]:
+    """Keep inconsistent stamp observations unknown; use canonical source text."""
+    facts = dict(observation)
+    ending_text = facts.get("psw_stamp_ending_text")
+    if not isinstance(ending_text, str):
+        if "psw_stamp_ending_text" in facts:
+            facts["psw_stamp_ends_with_company"] = None
+        return facts
+    text = re.sub(r"[\s，。；、,.;:：()（）]", "", ending_text)
+    present = _as_bool(facts.get("psw_stamp_present"))
+    if (present is True and not text) or (present is False and text):
+        facts.update(psw_stamp_present=None, psw_stamp_ending_text=None, psw_stamp_ends_with_company=None)
+    else:
+        facts["psw_stamp_ends_with_company"] = text.endswith("公司")
+    return facts
+
+
 def evaluate_psw_observation(rule_no: int, observation: Mapping[str, object], *, today: date | None = None) -> AuditResult:
     """Apply frozen PSW requirements only to established facts.
 
     Nearby table text alone does not prove checkbox selection, handwriting,
-    complete seal wording, or a negative seal detection.
+    the terminal seal wording, or a negative seal detection.
     """
+    observation = normalize_psw_stamp_facts(observation)
     status, suggestions = "UNABLE", _UNDECIDABLE
     if rule_no in _DISPOSITION_VISUAL_RULES:
         status, suggestions = decide_disposition_visual_rule(rule_no, observation, today=today or date.today())

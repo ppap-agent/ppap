@@ -21,7 +21,7 @@ from PIL import Image
 from audit.checkers.v2.base_agent import BaseAgent
 from audit.contracts import AuditInput, GroupContextInput, RuleInput
 from audit.contracts import AuditResultItem as AuditResult
-from audit.engine.checkers.client import AIClient
+from audit.kinds import PpapDocumentType
 
 logger = logging.getLogger(__name__)
 RuleChecker = Callable[[int], Optional[AuditResult]]
@@ -34,8 +34,7 @@ class PDFAgent(BaseAgent):
     提供了处理PDF文件的通用功能，包括：
     - 将PDF页面同步渲染为Base64编码的图像序列，并进行缓存。
     - 对单张图像进行裁剪。
-    - 封装了针对图像的AI分析流程。
-    - 提供了AI提示链式调用的能力。
+    - 保留原件页面与转换产物，供具体条款按需读取。
     """
 
     def __init__(
@@ -54,7 +53,6 @@ class PDFAgent(BaseAgent):
         super().__init__(audit_file, rule, group_context=group_context)
         self.rule_checkers: List[Optional[RuleChecker]] = []
         self.agent_rules = []
-        self.client = AIClient()
         self.pdf_extractor = PDFExtractor()
         self.temp_files: List[str] = []
         self._pdf_images_cache: Optional[List[str]] = None
@@ -198,16 +196,22 @@ class PDFAgent(BaseAgent):
         file_url = str(self.audit_file.file_url)
         from audit.engine.runtime import get_runtime
 
+        declared = getattr(type(self), "DOC_TYPE", None)
+        doc_type = declared if isinstance(declared, PpapDocumentType) else PpapDocumentType.from_string(str(self.rule.type or ""))
+        if doc_type == PpapDocumentType.UNKNOWN:
+            doc_type = None
         runtime = get_runtime()
         if runtime is not None:
             artifact = runtime.convert_pdf_to_excel(
                 FileRef(location=file_url),
                 enable_cache=True,
+                doc_type=doc_type,
             )
         else:
             artifact = convert_pdf_to_excel_auto(
                 FileRef(location=file_url),
                 enable_cache=True,
+                doc_type=doc_type,
             )
         self.conversion_artifact = artifact
         if not artifact.success or not artifact.xlsx_path:
@@ -520,37 +524,3 @@ class PDFAgent(BaseAgent):
         except Exception as e:
             logger.error(f"裁剪图像失败: {e}", exc_info=True)
             return image_base64  # 失败时返回原图
-
-    def _analyze_images_with_prompt(
-        self,
-        system_prompt: str,
-        user_prompt: str,
-        images: List[str],
-        json_format: bool = False,
-    ) -> str:
-        """Arbitrary visual prompts cannot be converted into proven OCR facts."""
-        return '{"classification":"图形检查","item":"原件图形证据","priority":"P0","status":"UNABLE","suggestions":"此图形规则缺少可验证的Paddle事实，需人工确认；不自动调用LLM视觉。"}'
-
-    def _chain_text_analysis(
-        self,
-        initial_response: str,
-        next_system_prompt: str,
-        next_user_prompt_template: str = "{initial_response}",
-    ) -> str:
-        """
-        将一个AI调用的输出作为另一个文本分析AI调用的输入（提示链）（同步版本）。
-        这对于多步骤的推理任务非常有用。
-
-        Args:
-            initial_response: 第一个AI调用的结果。
-            next_system_prompt: 第二个AI调用的系统提示。
-            next_user_prompt_template: 第二个AI调用的用户提示模板，
-                                     可以用 {initial_response} 占位符。
-
-        Returns:
-            第二个AI调用的结果。
-        """
-        user_prompt = next_user_prompt_template.format(initial_response=initial_response)
-
-        response = self.client.structured_completion(system_prompt=next_system_prompt, user_prompt=user_prompt, json_format=True)
-        return response

@@ -34,7 +34,7 @@ class OriginalImageRuntime:
         return extract_images_from_bytes(content, ".pdf", render_all_pages=render_all_pages)
 
     def run_image_prompt(self, **kwargs):
-        return AIClient().image_analysis_completion(**kwargs)
+        return AIClient().structured_completion(**kwargs)
 
 
 @pytest.fixture
@@ -83,7 +83,7 @@ def image_agent(url):
 def test_public_image_check_keeps_unsupported_semantics_unknown_without_external_work(image_source, monkeypatch, bound, valid_source):
     url, content, reads = image_source
     calls = []
-    monkeypatch.setattr(AIClient, "image_analysis_completion", lambda self, **kwargs: calls.append(kwargs))
+    monkeypatch.setattr(AIClient, "structured_completion", lambda self, **kwargs: calls.append(kwargs))
     if not valid_source:
         content[0] = b"not a PDF"
     runtime = OriginalImageRuntime() if bound else None

@@ -40,9 +40,6 @@ data:
   PPAP_DEEP_SANDBOX_PROFILE: "off"
   LOG_FORMAT: json
   LOG_LEVEL: INFO
-  OCR_ADAPTER_MODE: auto
-  OCR_ENGINE: easyocr
-  OCR_LANGUAGES: ch_sim,en
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

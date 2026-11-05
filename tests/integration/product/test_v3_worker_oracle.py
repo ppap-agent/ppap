@@ -11,7 +11,7 @@ import pytest
 from api import create_app
 from audit.rule_profile import RULE_PROFILE_V3
 from corpus_contracts.acceptance_report import load_acceptance_report, write_acceptance_report
-from corpus_contracts.poc_oracle import POC_SEQ_TO_DOC_TYPE, build_bundle_map, load_poc_cases
+from corpus_contracts.poc_oracle import POC_SEQ_TO_DOC_TYPE, PocCase, build_bundle_map, deferred_full_scan_reason, load_poc_cases
 from corpus_contracts.product_round import (
     MATCH,
     compare_file,
@@ -23,14 +23,10 @@ from fastapi.testclient import TestClient
 from product.settings import Settings, get_settings
 from worker import process_claimed
 
-_REPO = Path(__file__).resolve().parents[3]
-_OCR_CACHE = _REPO / "tests" / "corpus" / "fixtures" / "ocr_cache"
-
 
 def _worker_env():
     keep = {key: value for key, value in os.environ.items() if key in {"PGPORT", "CI"} or key.startswith(("LLM_", "OPENAI_", "MODEL_NAME", "OCR_", "PADDLE_"))}
     keep["PPAP_PROFILE"] = "isolated-dev"
-    keep.setdefault("OCR_LOCAL_OSS_DIR", str(_OCR_CACHE))
     return patch.dict(os.environ, keep, clear=True)
 
 
@@ -40,6 +36,36 @@ def test_worker_environment_preserves_database_isolation(monkeypatch):
     with _worker_env():
         assert os.environ.get("PGPORT") == "32123"
         assert os.environ.get("CI") == "true"
+
+
+def _native_poc_cases() -> list[PocCase]:
+    cases = []
+    for case in load_poc_cases():
+        reason = deferred_full_scan_reason(case.file_path)
+        if reason:
+            print(f"Deferred {case.file_name}: {reason}")
+        else:
+            cases.append(case)
+    return cases
+
+
+def test_native_worker_scope_retains_native_peers_without_full_scan(capsys):
+    cases = _native_poc_cases()
+    assert len(cases) == 26
+    assert sum(len(case.expected) for case in cases) == 209
+    assert "19-BLANC尾-生产控制计划.pdf" not in {case.file_name for case in cases}
+    peers = build_bundle_map(cases)["Blanc Spoiler-有特殊特性清单"]
+    assert {case.file_seq for case in peers} == {"8", "9", "11"}
+    assert "Issue #246" in capsys.readouterr().out
+
+
+def test_worker_environment_does_not_inject_full_scan_requirements(monkeypatch):
+    for key in ("OCR_LOCAL_OSS_DIR", "OCR_OPENAI_API_KEY", "PADDLE_OCR_URL"):
+        monkeypatch.delenv(key, raising=False)
+    with _worker_env():
+        assert "OCR_LOCAL_OSS_DIR" not in os.environ
+        assert "OCR_OPENAI_API_KEY" not in os.environ
+        assert "PADDLE_OCR_URL" not in os.environ
 
 
 def _upload(client: TestClient, name: str, body: bytes) -> dict:
@@ -63,15 +89,13 @@ def test_v3_api_worker_matches_poc_oracle(auth_store_factory, tmp_path: Path) ->
     client = None
     try:
         settings = Settings(usage_charge_enabled=False)
-        if not settings.get_ocr_openai_api_key():
-            pytest.fail("setup_failure: V3 worker oracle requires an explicit OCR provider credential")
         store = auth_store_factory(settings)
         store.seed_isolated_dev()
         client = TestClient(create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, store))
         assert client.post("/isolated-dev/sessions", json={"subject": "alice"}).status_code == 200
         rows: list[dict] = []
         failures = []
-        for bundle_id, cases in sorted(build_bundle_map(load_poc_cases()).items()):
+        for bundle_id, cases in sorted(build_bundle_map(_native_poc_cases()).items()):
             items = []
             versions: dict[str, str] = {}
             for case in cases:
@@ -144,8 +168,8 @@ def test_v3_api_worker_matches_poc_oracle(auth_store_factory, tmp_path: Path) ->
         assert len(loaded) == len(rows)
         assert rows, "POC oracle produced no rule rows"
         summary = json.loads(report.read_text(encoding="utf-8"))["summary"]
-        assert summary["selected_cases"] == 27
-        assert summary["total_rules"] == 220
+        assert summary["selected_cases"] == 26
+        assert summary["total_rules"] == 209
         assert report.with_suffix(".md").is_file()
         if failures:
             pytest.fail(format_verdicts(failures))

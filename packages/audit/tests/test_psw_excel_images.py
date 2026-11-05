@@ -98,3 +98,73 @@ def test_corrupt_native_psw_workbook_is_an_execution_error_without_invented_evid
         assert path.read_bytes() == original
     finally:
         agent.close()
+
+
+def native_psw_fields(path, *, unknown=None):
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "零件提交保证书"
+    sheet["A1"] = "零件提交保证书"
+    sheet["A2"] = "供应商名称/供应商代码"
+    sheet["C2"] = "顾客名称"
+    sheet["A3"] = "示例有限公司/S001"
+    sheet["C3"] = "理想汽车"
+    fields = (
+        ("重量(kg)", "1.2345"),
+        ("零件名称", "样件"),
+        ("理想汽车零件号", "P001"),
+        ("供方料号", "S001"),
+        ("图纸号", "D001"),
+        ("模具穴号", "1"),
+        ("工程更改版本", "A"),
+        ("版本日期", "2026-11-01"),
+        ("街道地址", "示例路1号"),
+        ("城市", "上海"),
+        ("省", "上海"),
+        ("国家", "中国"),
+        ("顾客名称", "理想汽车"),
+        ("设计开发", "甲"),
+        ("采购工程", "乙"),
+        ("PTC", "丙"),
+    )
+    for row, (label, value) in enumerate(fields, 4):
+        sheet.cell(row, 1, label)
+        sheet.cell(row, 2, value)
+    delivery = workbook.create_sheet("生产件批准交付物文件清单")
+    delivery.append(["项目", "附件"])
+    delivery.append(["尺寸报告", "报告.xlsx"])
+    if unknown:
+        sheet_name, address = unknown
+        workbook[sheet_name][address] = "#N/A"
+        assert workbook[sheet_name][address].data_type == "e"
+    workbook.save(path)
+    workbook.close()
+
+
+@pytest.mark.parametrize(("profile", "agent_type"), [("v2", V2PswAgent), ("v3", V3PswAgent)], ids=["v2", "v3"])
+@pytest.mark.parametrize(
+    ("unknown", "expected"),
+    [
+        (None, ["PASS", "PASS", "PASS", "PASS"]),
+        (("零件提交保证书", "Z60"), ["PASS", "PASS", "PASS", "PASS"]),
+        (("零件提交保证书", "B4"), ["PASS", "UNABLE", "PASS", "UNABLE"]),
+        (("零件提交保证书", "A3"), ["PASS", "PASS", "UNABLE", "UNABLE"]),
+        (("生产件批准交付物文件清单", "B2"), ["UNABLE", "PASS", "PASS", "PASS"]),
+    ],
+    ids=["all-native-known", "unrelated-unknown-footer", "unknown-weight", "unknown-supplier", "unknown-attachment"],
+)
+def test_native_psw_unknown_cells_do_not_become_filled_values_or_erase_known_rules(tmp_path, profile, agent_type, unknown, expected):
+    path = tmp_path / "native-partial.xlsx"
+    native_psw_fields(path, unknown=unknown)
+    original = path.read_bytes()
+    agent = agent_type(
+        AuditInput(audit_id="native-partial", file_url=str(path)), RuleInput(rule_id="psw-known-native", rule_profile=profile, type="零件提交保证书", rules=[{"id": str(i)} for i in range(1, 11)])
+    )
+    try:
+        with bind_runtime(None):
+            results = [agent.check(index) for index in (0, 1, 3, 5)]
+        assert [result.status for result in results] == expected
+        assert all("#N/A" not in result.suggestions for result in results)
+        assert path.read_bytes() == original
+    finally:
+        agent.close()

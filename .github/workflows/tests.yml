@@ -355,21 +355,13 @@ jobs:
           if [[ "${{ matrix.name }}" == "PDF" && "$PPAP_CORPUS_PDF_WORKERS" == "2" ]]; then
             # One real xdist pool for all PDF corpus items, including the slow
             # test_v2_assets cases. Per-worker writable extraction caches are isolated.
-            PPAP_CORPUS_XDIST_ISOLATE_OCR=1 python3 -m scripts.ci_heartbeat --timeout 2400 -- \
+            python3 -m scripts.ci_heartbeat --timeout 2400 -- \
               uv run --no-sync pytest tests/corpus/v2_assets --ftype pdf -q -n 2 \
                 --dist=load --max-worker-restart=0 --durations=25 -vv -o faulthandler_timeout=120 --junitxml=ci-report/junit.xml
           else
             python3 -m scripts.ci_heartbeat --timeout 1800 -- \
               uv run --no-sync pytest ${{ matrix.args }} --durations=25 -vv -o faulthandler_timeout=120 --junitxml=ci-report/junit.xml
           fi
-      - name: Preserve current-protocol OCR evidence
-        if: ${{ always() && matrix.name == 'V3' }}
-        working-directory: ${{ github.workspace }}
-        run: |
-          uv run --no-sync python -m scripts.export_vision_fixture \
-            tests/corpus/fixtures/ocr_cache \
-            "assets/poc测试/POC测试样本/Blanc Spoiler-有特殊特性清单/19-BLANC尾-生产控制计划.pdf" \
-            ci-report/vision-fixture-candidate
       - name: Assert Docker
         working-directory: ${{ github.workspace }}
         if: ${{ matrix.mode == 'psw' }}
@@ -487,14 +479,6 @@ jobs:
           python3 -m scripts.ci_heartbeat --timeout 2400 -- \
             uv run --no-sync pytest tests/integration/product -vv --durations=25 -o faulthandler_timeout=120 --junitxml=ci-report/product.xml
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
-      - name: Preserve current-protocol OCR evidence
-        if: always()
-        working-directory: ${{ github.workspace }}
-        run: |
-          uv run --no-sync python -m scripts.export_vision_fixture \
-            tests/corpus/fixtures/ocr_cache \
-            "assets/poc测试/POC测试样本/Blanc Spoiler-有特殊特性清单/19-BLANC尾-生产控制计划.pdf" \
-            ci-report/vision-fixture-candidate
       - name: Bake canonical api, worker, and web images
         working-directory: ${{ github.workspace }}
         run: |

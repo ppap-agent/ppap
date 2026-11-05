@@ -5,6 +5,7 @@ from typing import Any, List
 
 import pytest
 from corpus_contracts.baseline_exceptions import classify_v2_baseline_outcomes
+from corpus_contracts.poc_oracle import deferred_full_scan_reason
 from corpus_contracts.v2_assets_shared import APP_ROOT, FileCase, build_cases
 from corpus_contracts.v2_observe import collect_v2_rule_outcomes, format_v2_rule_outcome
 from dotenv import load_dotenv
@@ -60,6 +61,9 @@ def collect_v2_rule_mismatches(case: FileCase, verbose_check: bool = False, mism
 
 
 def test_v2_assets_cases(case: FileCase, verbose_check: bool, mismatch_only: bool) -> None:
+    reason = deferred_full_scan_reason(case.file_path)
+    if reason:
+        pytest.skip(reason)
     outcomes = collect_v2_rule_outcomes(case, verbose_check=verbose_check, mismatch_only=mismatch_only)
     new_mismatches, drifted, stale = classify_v2_baseline_outcomes(case.file_name, case.file_type, outcomes)
     parts: List[str] = []

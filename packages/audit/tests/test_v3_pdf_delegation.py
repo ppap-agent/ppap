@@ -23,7 +23,7 @@ class ConversionRuntime:
         self.converted_sources: list[str] = []
         self.loaded_paths: list[str] = []
 
-    def convert_pdf_to_excel(self, file_ref: FileRef, *, enable_cache: bool = True) -> ConversionArtifact:
+    def convert_pdf_to_excel(self, file_ref: FileRef, *, enable_cache: bool = True, doc_type=None) -> ConversionArtifact:
         assert enable_cache is True
         self.converted_sources.append(file_ref.location)
         return self.artifact

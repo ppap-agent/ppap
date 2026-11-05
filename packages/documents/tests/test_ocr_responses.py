@@ -42,7 +42,7 @@ class OCRResponsesTests(TestCase):
             ],
         )
         self.assertFalse(calls[0]["store"])
-        self.assertEqual(calls[0]["max_output_tokens"], 16384)
+        self.assertEqual(calls[0]["max_output_tokens"], 4096)
         sdk.close.assert_awaited_once()
 
     def test_incomplete_response_is_not_accepted(self):
@@ -63,33 +63,39 @@ class OCRResponsesTests(TestCase):
         self.assertEqual(len(calls), 1)
         sdk.close.assert_awaited_once()
 
-    def test_wall_deadline_cancels_slow_responses_body_without_retry(self):
+    def test_request_timeout_is_twenty_seconds_and_never_retries(self):
+        import httpx
+        from openai import APITimeoutError
+
         calls = []
-        cancelled = []
 
-        async def slow_create(**kwargs):
+        async def timeout(**kwargs):
             calls.append(kwargs)
-            try:
-                # Data or keep-alives can arrive frequently enough that a
-                # per-read socket timeout would never bound the full response.
-                await asyncio.sleep(10)
-            except asyncio.CancelledError:
-                cancelled.append(True)
-                raise
+            raise APITimeoutError(request=httpx.Request("POST", "https://ocr.example.test/v1/responses"))
 
-        sdk = SimpleNamespace(responses=SimpleNamespace(create=slow_create), close=AsyncMock())
+        sdk = SimpleNamespace(responses=SimpleNamespace(create=timeout), close=AsyncMock())
         with (
             patch.object(llm_service, "_get_llm_client", return_value=sdk),
             patch.object(llm_service, "_get_llm_model_name", return_value="test"),
-            patch.object(llm_service, "RESPONSE_WALL_TIMEOUT_SECONDS", 0.02),
         ):
             with self.assertRaises(llm_service.ResponsesEvidenceError) as error:
                 asyncio.run(llm_service.call_llm_async(b"image", "inspect", response_schema=SCHEMA))
-
         self.assertEqual(error.exception.code, "responses_timeout")
         self.assertEqual(len(calls), 1)
-        self.assertEqual(cancelled, [True])
+        self.assertEqual(calls[0]["timeout"], 20)
         sdk.close.assert_awaited_once()
+
+    def test_user_extra_body_and_token_limit_are_preserved(self):
+        sdk = SimpleNamespace(responses=SimpleNamespace(create=AsyncMock(return_value=SimpleNamespace(status="completed", output_text='{"has_checkboxes":true}'))), close=AsyncMock())
+        with (
+            patch.object(llm_service, "_get_llm_client", return_value=sdk),
+            patch.object(llm_service, "_get_llm_model_name", return_value="test"),
+            patch.object(llm_service, "ocr_extra_body", return_value={"reasoning": True}),
+        ):
+            asyncio.run(llm_service.call_llm_async(b"image", "inspect", response_schema=SCHEMA, max_output_tokens=4096))
+        kwargs = sdk.responses.create.call_args.kwargs
+        self.assertEqual(kwargs["extra_body"], {"reasoning": True})
+        self.assertEqual(kwargs["max_output_tokens"], 4096)
 
     def test_invalid_json_returns_typed_error_without_retried_or_logged_evidence(self):
         private = "secret-document-evidence"
@@ -136,3 +142,45 @@ class OCRResponsesTests(TestCase):
         self.assertEqual(len(calls), 1)
         self.assertNotIn(private, str(error.exception))
         self.assertNotIn(private, "\n".join(logs.output))
+
+
+class OCRUsageTests(TestCase):
+    def test_receipt_is_counted_before_invalid_json_is_rejected(self):
+        receipts = []
+        sdk = SimpleNamespace(
+            responses=SimpleNamespace(
+                create=AsyncMock(
+                    return_value=SimpleNamespace(
+                        status="completed",
+                        output_text="private-invalid-json",
+                        model="actual-ocr-model",
+                        usage=SimpleNamespace(input_tokens=12, output_tokens=7, output_tokens_details=SimpleNamespace(reasoning_tokens=3), cost=0.004),
+                    )
+                )
+            ),
+            close=AsyncMock(),
+        )
+        with (
+            patch.object(llm_service, "_get_llm_client", return_value=sdk),
+            patch.object(llm_service, "_get_llm_model_name", return_value="requested-model"),
+            llm_service.ocr_usage_scope(receipts.append),
+        ):
+            with self.assertRaises(llm_service.ResponsesEvidenceError):
+                asyncio.run(llm_service.call_llm_async(b"image", "inspect", response_schema=SCHEMA))
+        self.assertEqual(len(receipts), 1)
+        receipt = receipts[0]
+        self.assertEqual((receipt["model"], receipt["input_tokens"], receipt["output_tokens"], receipt["reasoning_tokens"], receipt["cost_usd"]), ("actual-ocr-model", 12, 7, 3, 0.004))
+        self.assertGreaterEqual(receipt["elapsed_seconds"], 0)
+        self.assertNotIn("private-invalid-json", str(receipts))
+
+    def test_transport_failure_has_one_unknown_receipt_without_invented_zero_cost(self):
+        receipts = []
+        sdk = SimpleNamespace(responses=SimpleNamespace(create=AsyncMock(side_effect=ConnectionError("controlled"))), close=AsyncMock())
+        with patch.object(llm_service, "_get_llm_client", return_value=sdk), patch.object(llm_service, "_get_llm_model_name", return_value="test"), llm_service.ocr_usage_scope(receipts.append):
+            with self.assertRaises(ConnectionError):
+                asyncio.run(llm_service.call_llm_async(b"image", "inspect", response_schema=SCHEMA))
+        self.assertEqual(len(receipts), 1)
+        self.assertEqual(receipts[0]["model"], "test")
+        self.assertNotIn("input_tokens", receipts[0])
+        self.assertNotIn("output_tokens", receipts[0])
+        self.assertNotIn("cost_usd", receipts[0])

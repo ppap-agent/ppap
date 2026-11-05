@@ -262,11 +262,13 @@ class ExcelAgent(BaseAgent):
             return normalized_status, normalized_message
 
         if not ctx.has_collected_ng():
+            if normalized_status == "PASS" and ctx.has_unreadable_cells():
+                return "UNABLE", "单元格证据尚不能确认，不能据此作业务判断。" + ctx.unresolved_summary()
             return normalized_status, normalized_message
 
         if normalized_status == "PASS":
             return "NG", ctx.build_ng_summary()
-        if normalized_status == "NG":
+        if normalized_status in {"NG", "UNABLE"}:
             return "NG", ctx.build_ng_summary(existing=normalized_message)
         return normalized_status, normalized_message
 
@@ -329,16 +331,16 @@ class ExcelAgent(BaseAgent):
             )
 
         except GuardStop as stop:
-            suggestions = stop.message
-            if stop.status == "NG" and ctx is not None and ctx.has_collected_ng():
-                suggestions = ctx.build_ng_summary(existing=stop.message)
+            status, suggestions = stop.status, stop.message
+            if ctx is not None:
+                status, suggestions = self._finalize_rule_result(status=status, message=suggestions, ctx=ctx)
             item = self.agent_rules[rule_no - 1] if rule_no <= len(self.agent_rules) else f"[{self.document_type_name}]规则检查-{rule_no}"
             return self._finalize_audit_result(
                 AuditResult(
                     classification=self.document_type_name,
                     item=item,
                     priority=self._get_rule_priority(rule_no),
-                    status=stop.status,
+                    status=status,
                     suggestions=suggestions,
                 ),
                 rule_no=rule_no,

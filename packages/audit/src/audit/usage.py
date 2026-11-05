@@ -1,11 +1,13 @@
 """Token使用跟踪器 - 用于收集和聚合LLM调用的token使用情况"""
 
 import logging
+import math
 import threading
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +22,8 @@ class TokenUsage:
     total_tokens: int = 0
     model_name: str = ""
     operation: str = ""  # 操作描述，如 "document_analysis", "rule_matching"
+    provider_cost_usd: Optional[float] = None
+    elapsed_seconds: Optional[float] = None
     timestamp: datetime = field(default_factory=datetime.now)
 
 
@@ -57,6 +61,8 @@ class RequestTokenSummary:
                     "thinking_tokens": call.thinking_tokens,
                     "total_tokens": call.total_tokens,
                     "timestamp": call.timestamp.isoformat(),
+                    **({"provider_cost_usd": call.provider_cost_usd} if call.provider_cost_usd is not None else {}),
+                    **({"elapsed_seconds": call.elapsed_seconds} if call.elapsed_seconds is not None else {}),
                 }
                 for call in self.llm_calls
             ],
@@ -136,6 +142,8 @@ class TokenTracker:
         model_name: str = "",
         operation: str = "",
         request_id: Optional[str] = None,
+        provider_cost_usd: Optional[float] = None,
+        elapsed_seconds: Optional[float] = None,
     ) -> None:
         """记录token使用情况"""
         if request_id is None:
@@ -154,6 +162,8 @@ class TokenTracker:
             total_tokens=total_tokens,
             model_name=model_name,
             operation=operation,
+            provider_cost_usd=provider_cost_usd,
+            elapsed_seconds=elapsed_seconds,
         )
 
         with self._lock:
@@ -163,9 +173,9 @@ class TokenTracker:
             else:
                 logger.warning(f"未找到请求ID的跟踪记录: {request_id}")
 
-    def record_unreported_usage(self) -> None:
+    def record_unreported_usage(self, request_id: Optional[str] = None) -> None:
         """A visible SDK call without a valid receipt has unknown token usage."""
-        request_id = self.get_current_request_id()
+        request_id = request_id or self.get_current_request_id()
         if request_id is None:
             return
         with self._lock:
@@ -237,3 +247,42 @@ def get_current_request_id() -> Optional[str]:
 def set_current_request_id(request_id: Optional[str]) -> None:
     """设置当前线程的请求ID"""
     _token_tracker.set_current_request_id(request_id)
+
+
+@contextmanager
+def track_ocr_usage() -> Iterator[None]:
+    """Join document OCR receipts to the existing audit request across threads."""
+    from documents.ocr.client import ocr_usage_scope
+
+    request_id = _token_tracker.get_current_request_id()
+
+    def observe(receipt: dict[str, Any]) -> None:
+        if request_id is None:
+            return
+        input_tokens, output_tokens = receipt.get("input_tokens"), receipt.get("output_tokens")
+        if type(input_tokens) is not int or input_tokens < 0 or type(output_tokens) is not int or output_tokens < 0:
+            _token_tracker.record_unreported_usage(request_id)
+            return
+        reasoning = receipt.get("reasoning_tokens")
+        if type(reasoning) is not int or not 0 <= reasoning <= output_tokens:
+            reasoning = None
+
+        def number(key: str) -> float | None:
+            value = receipt.get(key)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+                return None
+            return float(value)
+
+        _token_tracker.record_token_usage(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            thinking_tokens=reasoning,
+            model_name=str(receipt.get("model") or ""),
+            operation="ocr_evidence",
+            request_id=request_id,
+            provider_cost_usd=number("cost_usd"),
+            elapsed_seconds=number("elapsed_seconds"),
+        )
+
+    with ocr_usage_scope(observe):
+        yield

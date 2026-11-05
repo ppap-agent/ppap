@@ -65,44 +65,42 @@ def test_app_runtime_pdf_conversion_uses_actual_values_and_releases_temporary_fi
 
 @pytest.mark.parametrize("profile", ["v2", "v3"])
 @pytest.mark.parametrize("stamp_detected", [True, False])
-def test_app_runtime_uses_single_page_paddle_evidence_without_model_verdicts(tmp_path, monkeypatch, profile, stamp_detected):
-    from documents.ocr.paddle import PaddleStructureService
-
+def test_app_runtime_reads_psw_facts_directly_through_ocr_configuration(tmp_path, monkeypatch, profile, stamp_detected):
     source = tmp_path / "original.pdf"
     with fitz.open() as document:
-        page = document.new_page(width=240, height=320)
-        page.draw_rect(page.rect, fill=(0, 0, 1), color=(0, 0, 1))
+        document.new_page(width=240, height=320).draw_rect(fitz.Rect(10, 10, 60, 60))
         document.save(source)
     original_bytes = source.read_bytes()
-    calls, model_calls = [], []
+    calls = []
+    monkeypatch.setenv("OCR_OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://ocr.invalid/v1")
+    monkeypatch.setenv("OCR_MODEL_NAME", "configured-ocr")
 
-    def convert(file_ref, *, enable_cache=True, doc_type=None):
-        assert file_ref.location == str(source)
+    def convert(*args, **kwargs):
         return ConversionArtifact(success=False)
 
-    def read_page(self, file_path, page_number, **kwargs):
-        calls.append((str(file_path), page_number))
-        assert self.timeout == 20
-        return {
-            "dataInfo": {"pages": [{"width": 240, "height": 320}]},
-            "layoutParsingResults": [
+    def read(**request):
+        calls.append(request)
+        output = {}
+        for field, spec in request["response_schema"]["schema"]["properties"].items():
+            output[field] = [
                 {
-                    "prunedResult": {
-                        "layout_det_res": {"boxes": [{"label": "seal", "coordinate": [10, 10, 60, 60]}] if stamp_detected else []},
-                        "seal_res_list": [{"rec_texts": ["测试部门章"], "bbox": [10, 10, 60, 60]}] if stamp_detected else [],
-                        "parsing_res_list": [],
-                        "table_res_list": [],
-                    }
+                    "scope": scope,
+                    "value": True if field == "psw_stamp_present" and stamp_detected else None,
+                    "sources": [{"image_index": 0, "bbox": [0.1, 0.1, 0.3, 0.3]}],
+                    "covered_image_indices": [0],
+                    "coverage": "complete",
+                    "excerpt": "章区域",
                 }
-            ],
-        }
+                for scope in spec["items"]["properties"]["scope"]["enum"]
+            ]
+        return output
 
-    monkeypatch.setenv("PADDLE_EVIDENCE_ENABLED", "true")
-    monkeypatch.setenv("PADDLE_OCR_URL", "https://paddle.invalid/layout-parsing")
     monkeypatch.setattr("audit.engine.app_runtime.convert_pdf_to_excel_auto", convert)
     monkeypatch.setattr("audit.checkers.v2.pdf_agent.convert_pdf_to_excel_auto", convert)
-    monkeypatch.setattr(PaddleStructureService, "analyze_page", read_page)
-    monkeypatch.setattr(AIClient, "image_analysis_completion", lambda self, **kwargs: model_calls.append(kwargs))
+    monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", read)
+    monkeypatch.setattr(AIClient, "structured_completion", lambda *a, **k: pytest.fail("PSW images must not enter text LLM"))
+    monkeypatch.setattr("documents.ocr.paddle.reader.read_pdf_page_evidence", lambda *a, **k: pytest.fail("PSW must not wait for Paddle first"))
     rules = RuleInput(
         rule_id="confirmed-psw-rules",
         rule_profile=profile,
@@ -110,13 +108,13 @@ def test_app_runtime_uses_single_page_paddle_evidence_without_model_verdicts(tmp
         rules=[{"id": str(index), "category": "local_excel_check", "rule_to_check": f"规则 {index}"} for index in range(1, 11)],
     )
     results = run_audit_engine(AuditInput(audit_id="original-psw", file_url=str(source)), rules)
-
     assert len(results) == 10
-    # Seal presence alone proves neither complete company wording nor signature.
     assert results[2].status == results[4].status == results[7].status == "UNABLE"
     assert results[4].evidence.used == ("visual" if stamp_detected else "none")
-    assert calls == [(str(source), 1)]
-    assert model_calls == []
+    assert len(calls) == 2
+    fact_sets = [set(call["response_schema"]["schema"]["properties"]) for call in calls]
+    assert fact_sets[0] == {"psw_stamp_present", "psw_stamp_ending_text", "authorized_signature_present", "disposition_visible", "approved_checked", "conditional_checked", "rejected_checked"}
+    assert fact_sets[1] == {"submission_any_checked", "submission_other_present"}
     assert source.read_bytes() == original_bytes
 
 
@@ -137,7 +135,6 @@ def test_fixed_runtime_missing_paddle_replay_stays_unknown_and_does_not_fall_thr
         calls.append((path, page_number))
         raise GuardStop(Decision.UNABLE, "No replayable Paddle observation")
 
-    monkeypatch.setenv("PADDLE_EVIDENCE_ENABLED", "true")
     monkeypatch.setattr("documents.ocr.paddle.reader.read_pdf_page_evidence", lambda *_a, **_kw: pytest.fail("Fixed runtime must not fall through to live Paddle"))
     audit = AuditInput(audit_id="frozen-version", file_url=str(source))
     with bind_runtime(SimpleNamespace(read_paddle_page=fixed_reader)):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import unicodedata
 from dataclasses import dataclass
@@ -30,6 +31,18 @@ REPO_ROOT = Path(__file__).resolve().parents[5]
 ASSETS_ROOT = Path(os.getenv("PPAP_ASSETS_ROOT", REPO_ROOT / "assets"))
 DEFAULT_POC_DATASET_ROOT = Path(os.getenv("PPAP_POC_DATASET_ROOT", ASSETS_ROOT / "poc测试" / "POC测试样本"))
 DEFAULT_POC_EXPECTED_XLSX = Path(os.getenv("PPAP_POC_EXPECTED_XLSX", ASSETS_ROOT / "poc测试" / "poc-测试数据统计表.xlsx"))
+
+
+def deferred_full_scan_reason(path: Path) -> str | None:
+    """Defer only the two frozen full-table scans excluded by Issue #246."""
+    frozen = {
+        "19-BLANC尾-生产控制计划.pdf": "cc55d72482fdee506cfa2facd36af1840753d4c23b3486b6db8d516e559c02e9",
+        "PV试验报告2024-07-03 13.35.pdf": "f6a45fc7f0c71d632c72bcc869c4f3ec21dce3985badd632b2f5a74f65e8fd65",
+    }
+    expected = frozen.get(path.name)
+    if expected is None or hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+        return None
+    return "Issue #246: full scanned-table transcription is deferred; preserve the original oracle and validate requested page/region facts separately"
 
 
 @dataclass(frozen=True)

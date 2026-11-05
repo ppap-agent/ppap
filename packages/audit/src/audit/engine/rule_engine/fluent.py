@@ -75,27 +75,28 @@ def _anchored_cell(ctx: RuleContext, ws: Any, row_index: int, col_index: int) ->
     return ws.cell(row=row_index, column=col_index)
 
 
-def _remember_cell(ctx: RuleContext, ws: Any, cell: Any) -> Any:
+def _remember_cell(ctx: RuleContext, ws: Any, cell: Any, *, allow_unresolved: bool = False) -> Any:
     unreadable = getattr(cell, "data_type", None) == "e"
     if unreadable:
-        ctx.note_unresolved("单元格内容无法读取，不能当成已知值")
+        ctx.note_unreadable_cell()
     version = ctx.version_for_worksheet(ws)
     workbook = getattr(ws, "parent", None)
-    if workbook is not ctx.workbook and not version:
-        return cell
-    value = getattr(cell, "value", None)
-    ctx.note_cell(
-        str(getattr(ws, "title", "") or ""),
-        int(getattr(cell, "row", 0) or 0),
-        int(getattr(cell, "column", 0) or 0),
-        file_version_id=version,
-        excerpt=None if unreadable else _format_evidence_value(value),
-    )
+    if workbook is ctx.workbook or version:
+        value = getattr(cell, "value", None)
+        ctx.note_cell(
+            str(getattr(ws, "title", "") or ""),
+            int(getattr(cell, "row", 0) or 0),
+            int(getattr(cell, "column", 0) or 0),
+            file_version_id=version,
+            excerpt=None if unreadable else _format_evidence_value(value),
+        )
+    if unreadable and not allow_unresolved:
+        raise GuardStop(Decision.UNABLE, "单元格内容无法读取，不能当成已知值")
     return cell
 
 
 def _observe_cell(ctx: RuleContext, ws: Any, cell: Any) -> Observation:
-    remembered = _remember_cell(ctx, ws, cell)
+    remembered = _remember_cell(ctx, ws, cell, allow_unresolved=True)
     if getattr(remembered, "data_type", None) == "e":
         return Observation("unresolved", getattr(remembered, "value", None))
     return classify_cell(getattr(remembered, "value", None))
@@ -598,7 +599,7 @@ class Section:
             )
 
         def _anchor_filled(row_index: int, anchor: ResolvedColumn) -> bool:
-            cell = _anchored_cell(self.ctx, self.resolved.ws, row_index, anchor.header_col)
+            cell = _remember_cell(self.ctx, self.resolved.ws, _anchored_cell(self.ctx, self.resolved.ws, row_index, anchor.header_col))
             spec = self.ctx.resource.columns[anchor.column_name]
             return _value_is_non_empty(cell.value, spec, self.ctx.resource.tokens)
 

@@ -97,20 +97,10 @@ class _AppAuditRuntime(AuditRuntime):
 
         return read_pdf_page_evidence(file_url, page_number)
 
-    def run_image_prompt(
-        self,
-        *,
-        system_prompt: str,
-        user_text: str,
-        image_base64_list: list[str],
-        max_tokens: int = 12000,
-        temperature: float = 0.1,
-        json_format: bool = True,
-    ) -> str:
-        """Unstructured image prompts have no supported Paddle fact contract."""
-        from audit.engine.rule_engine import Decision, GuardStop
+    def read_ocr_visual_facts(self, *, images: list[bytes], prompt: str, response_schema: dict[str, Any]) -> dict[str, Any]:
+        from audit.engine.checkers.ocr_visual_facts import request_ocr_visual_facts
 
-        raise GuardStop(Decision.UNABLE, "此图形规则没有可验证的Paddle事实，需人工确认；不再自动调用LLM视觉。")
+        return request_ocr_visual_facts(images=images, prompt=prompt, response_schema=response_schema)
 
 
 def _build_group_context_input(group_context: Any) -> Optional[GroupContextInput]:

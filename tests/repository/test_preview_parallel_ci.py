@@ -44,7 +44,6 @@ def test_pdf_all_oracles_share_one_bounded_xdist_pool():
     assert 'PPAP_CORPUS_PDF_WORKERS: "2"' in corpus
     assert "PPAP_CORPUS_PDF_WORKERS must be 0 or 2" in corpus
     assert "uv sync --locked --group e2e" in corpus
-    assert "PPAP_CORPUS_XDIST_ISOLATE_OCR=1" in corpus
     assert "pytest tests/corpus/v2_assets --ftype pdf -q -n 2" in corpus
     assert "--dist=load --max-worker-restart=0 --durations=25 -vv" in corpus
     assert "-k 'not test_v2_product_round_respects_oracle_baseline'" not in corpus
@@ -67,16 +66,6 @@ def test_product_round_cases_are_separate_items_without_changing_oracle():
         "format_verdicts(",
     ):
         assert rule in source
-
-
-def test_corpus_xdist_uses_separate_writable_ocr_caches():
-    source = (ROOT / "tests/corpus/conftest.py").read_text()
-    assert "PPAP_CORPUS_XDIST_ISOLATE_OCR" in source
-    assert 'hasattr(config, "workerinput")' in source
-    assert "shutil.copytree(seed, worker_cache)" in source
-    assert 'os.environ["OCR_LOCAL_OSS_DIR"] = str(worker_cache)' in source
-    assert 'os.environ["OCR_LOCAL_SQLITE_DB"] = str(worker_cache / "ocr_cache.db")' in source
-    assert "shutil.rmtree(_WORKER_CACHE_DIR, ignore_errors=True)" in source
 
 
 def test_all_browser_e2e_items_join_one_xdist_pool_without_exclusion():

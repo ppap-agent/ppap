@@ -30,12 +30,12 @@ def control_plan() -> Workbook:
     return workbook
 
 
-def check_rule(tmp_path: Path, workbook: Workbook, rule_number: int) -> AuditResultItem:
+def check_rule(tmp_path: Path, workbook: Workbook, rule_number: int, *, source_pdf_url: str | None = None) -> AuditResultItem:
     path = tmp_path / "control-plan.xlsx"
     workbook.save(path)
     workbook.close()
     agent = ControlPlanAgent(
-        AuditInput(audit_id="control-plan", file_url=str(path)),
+        AuditInput(audit_id="control-plan", file_url=str(path), file_metadata={"source_pdf_url": source_pdf_url} if source_pdf_url else {}),
         RuleInput(
             rule_id="confirmed-rules",
             rule_profile="v3",
@@ -160,3 +160,39 @@ def test_v3_special_characteristic_can_use_genuinely_merged_product_evidence(tmp
     worksheet.merge_cells("E15:E16")
     result_merged = check_rule(tmp_path, workbook, 4)
     assert result_merged.status == "PASS"
+
+
+@pytest.mark.parametrize("rule_number", [4, 5])
+def test_special_characteristic_checks_cover_later_table_sheets(tmp_path, rule_number):
+    workbook = control_plan()
+    later = workbook.copy_worksheet(workbook.active)
+    later.title = "控制计划第2页"
+    if rule_number == 4:
+        later["E15"] = later["F15"] = None
+    else:
+        later["L15"] = None
+    result = check_rule(tmp_path, workbook, rule_number)
+    assert result.status == "NG"
+
+
+def test_pdf_stage_words_without_actual_mark_cannot_pass(tmp_path):
+    workbook = control_plan()
+    workbook.active["A1"] = "样件 试生产 批量生产"
+    result = check_rule(tmp_path, workbook, 1, source_pdf_url="original.pdf")
+    assert result.status == "UNABLE"
+
+
+@pytest.mark.parametrize("rule_number,cell", [(4, "G15"), (4, "E15"), (5, "G15"), (5, "L15")])
+def test_selected_unknown_cell_cannot_pass_special_characteristic_rules(tmp_path, rule_number, cell):
+    workbook = control_plan()
+    workbook.active[cell] = "#N/A"
+    result = check_rule(tmp_path, workbook, rule_number)
+    assert result.status == "UNABLE"
+
+
+def test_known_process_evidence_is_sufficient_when_product_cell_is_unknown(tmp_path):
+    workbook = control_plan()
+    workbook.active["E15"] = "#N/A"
+    workbook.active["F15"] = "known process"
+    result = check_rule(tmp_path, workbook, 4)
+    assert result.status == "PASS"

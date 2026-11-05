@@ -18,6 +18,7 @@ from .psw_evidence_trace import (
     DIAGNOSTIC_EVALUATION_RULE_UNAVAILABLE,
     DIAGNOSTIC_EVALUATION_RUNTIME_ERROR,
     DIAGNOSTIC_PDF_CONVERSION_FAILED,
+    DIAGNOSTIC_VISUAL_RUNTIME_ERROR,
     EvidenceUse,
     with_psw_evidence,
 )
@@ -195,7 +196,8 @@ class PswPdfEvidenceMixin:
         trace_audit = audit or self._host().audit_file
         if audit is None:
             metadata = dict(trace_audit.file_metadata or {})
-            metadata.setdefault("source_pdf_url", trace_audit.file_url)
+            if Path(trace_audit.file_url).suffix.casefold() == ".pdf":
+                metadata.setdefault("source_pdf_url", trace_audit.file_url)
             artifact = getattr(self, "conversion_artifact", None)
             metadata.setdefault(
                 "pdf_conversion_strategy",
@@ -245,13 +247,16 @@ class PswPdfEvidenceMixin:
         diagnostics = getattr(artifact, "diagnostics", {}) if artifact is not None else {}
         error_code = str(diagnostics.get("error_code", "") or "")
         if error_code in {
-            "paddle_evidence_disabled",
             "paddle_evidence_unconfigured",
             "paddle_page_selection_required",
             "paddle_table_unconfirmed",
             "paddle_table_incomplete",
             "paddle_request_budget_exhausted",
             "paddle_scope_closed",
+            "ocr_page_selection_required",
+            "ocr_evidence_unconfigured",
+            "ocr_table_unconfirmed",
+            "ocr_cell_unconfirmed",
         }:
             return self._trace_result(
                 AuditResult(classification="PDF结构化证据", item=f"PSW - 规则{ith + 1}", priority="P0", status="UNABLE", suggestions="原生或Paddle证据尚未形成可确认的表格，请核对原件。"),
@@ -278,7 +283,7 @@ class PswPdfEvidenceMixin:
         rule_no = ith + 1
         if rule_no not in _VISUAL_RULES:
             return None
-        return self._run_paddle_rule(ith, rule_no)
+        return self._run_fact_rule(ith, rule_no)
 
     def _run_structured_rule(self, ith: int) -> Optional[AuditResult]:
         host = self._host()
@@ -303,15 +308,15 @@ class PswPdfEvidenceMixin:
             if host.excel_agent is None:
                 result = self.fallback_rule_checkers(ith) or self._failed_conversion_rule(ith)
             elif rule_no in PSW_ALWAYS_VISUAL_RULES:
-                result = self._run_paddle_rule(ith, rule_no)
+                result = self._run_fact_rule(ith, rule_no)
             elif rule_no == 7:
                 structured = self._run_structured_rule(ith)
                 if (structured is not None and str(structured.status).upper() == "PASS") or self._evidence().supports_checkbox_rule(rule_no):
                     result = structured
                 else:
-                    result = self._run_paddle_rule(ith, rule_no, used="both")
+                    result = self._run_fact_rule(ith, rule_no, used="both")
             elif rule_no in {8, 9, 10} and not self._evidence().supports_checkbox_rule(rule_no):
-                result = self._run_paddle_rule(ith, rule_no)
+                result = self._run_fact_rule(ith, rule_no)
             else:
                 result = self._run_structured_rule(ith)
         except Exception as exc:
@@ -367,7 +372,7 @@ class PswPdfEvidenceMixin:
         parent_resolve = getattr(super(), "_resolve_success_slots")
         return cast(int, parent_resolve(excel_rule_count))
 
-    def _run_paddle_rule(
+    def _run_fact_rule(
         self,
         ith: int,
         rule_no: int,
@@ -387,22 +392,28 @@ class PswPdfEvidenceMixin:
         sources: list[EvidenceSource] = []
 
         def witness(locator: dict[str, object], excerpt: str, *, visual: bool = False) -> None:
+            if locator.get("fact") and locator["fact"] not in PSW_RULE_FIELDS[rule_no]:
+                return
             sources.append(EvidenceSource(kind="visual" if visual else "structure", locator=json.dumps(locator, ensure_ascii=False, separators=(",", ":")), excerpt=excerpt[:500]))
 
         if not hasattr(self, "_paddle_page_cache"):
             self._paddle_page_cache: dict = {}
         try:
-            facts = read_original_pdf_visual_facts(host.audit_file, PSW_RULE_FIELDS[rule_no], witness, operation=f"psw_rule_{rule_no}", cache=self._paddle_page_cache)
+            slots = len(getattr(getattr(self, "rule", None), "rules", []) or [])
+            batch_fields = {field: description for number, requirements in PSW_RULE_FIELDS.items() if number <= slots for field, description in requirements.items()}
+            facts = read_original_pdf_visual_facts(
+                host.audit_file, PSW_RULE_FIELDS[rule_no], witness, operation=f"psw_rule_{rule_no}", cache=self._paddle_page_cache, batch_fields=batch_fields or PSW_RULE_FIELDS[rule_no]
+            )
             result = evaluate_psw_observation(rule_no, facts)
             diagnostic = None
             if result.status == "UNABLE":
-                diagnostic = EvidenceDiagnostic(code="psw.paddle.fact_unconfirmed", stage="visual", severity="warning", message="原生或Paddle证据未能确认所需事实；不调用LLM补判。")
+                diagnostic = EvidenceDiagnostic(code="psw.paddle.fact_unconfirmed", stage="visual", severity="warning", message="原生、Paddle或OCR模型证据未能确认所需事实，请核对原件。")
         except VisualFactsUnavailable:
             result = evaluate_psw_observation(rule_no, {})
-            diagnostic = EvidenceDiagnostic(code="psw.paddle.fact_unconfirmed", stage="visual", severity="warning", message="当前原件不能提供可确认的Paddle事实，请核对原件。")
+            diagnostic = EvidenceDiagnostic(code="psw.paddle.fact_unconfirmed", stage="visual", severity="warning", message="当前原件不能提供可确认的视觉事实，请核对原件。")
         except Exception as exc:
-            result = host.create_error_result(f"Paddle证据读取失败（{type(exc).__name__}）。", ith)
-            diagnostic = EvidenceDiagnostic(code="psw.paddle.runtime_error", stage="visual", severity="error", message="Paddle证据读取发生技术错误，未形成业务判断。")
+            result = host.create_error_result(f"视觉证据读取失败（{type(exc).__name__}）。", ith)
+            diagnostic = EvidenceDiagnostic(code=DIAGNOSTIC_VISUAL_RUNTIME_ERROR, stage="visual", severity="error", message="视觉证据读取发生技术错误，未形成业务判断。")
         source_kinds = {source.kind for source in sources}
         evidence_used: EvidenceUse = "both" if source_kinds == {"structure", "visual"} else "visual" if "visual" in source_kinds else "structure" if sources else "none"
         if used == "both" and evidence_used == "visual":
@@ -410,10 +421,13 @@ class PswPdfEvidenceMixin:
             evidence_used = "both"
             sources.insert(0, EvidenceSource(kind="structure", locator="pdf://converted-table-grid"))
         traced = self._trace_result(result, rule_no=rule_no, used=evidence_used, diagnostic=diagnostic, sources=tuple(sources))
-        # This path never renders pages for an LLM. Report only observed sources.
+        # Report the actual native/Paddle/OCR backend used by these sources.
         if traced.evidence is not None:
-            strategies = ("native_pdf", "paddle_single_page") if "visual" in source_kinds else ("native_pdf",)
-            traced = traced.model_copy(update={"evidence": traced.evidence.model_copy(update={"conversion_strategies": strategies, "prepared_format": "pdf"})})
+            engines = {json.loads(source.locator).get("engine") for source in sources if source.kind == "visual" and source.locator.startswith("{")}
+            backend = "ocr_llm" if "ocr_llm" in engines else "paddle_single_page"
+            carrier = "native_pdf" if Path(host.audit_file.file_url).suffix.casefold() == ".pdf" else "original_image"
+            strategies = (carrier, backend) if "visual" in source_kinds else (carrier,)
+            traced = traced.model_copy(update={"evidence": traced.evidence.model_copy(update={"conversion_strategies": strategies, "prepared_format": "pdf" if carrier == "native_pdf" else "png"})})
         return traced
 
 
