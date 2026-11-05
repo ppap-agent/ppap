@@ -46,7 +46,7 @@ ppap-web 仍是未选择版本时的默认界面，不能把 edition proxy 的 `
 
 ## Apply current stack
 
-Secret `ppap-current` is not in git. Create it once from the production env file (passwords, Feishu secret, S3 keys). Host fields in the ConfigMap already point at in-cluster Services. Text-model credentials use Secret `ppap-current-text-model-v1`, key `LLM_API_KEY`; API and Worker read it through explicit references. `LLM_BASE_URL` and `LLM_MODEL` belong to ConfigMap `ppap-current`. Updating only the Deep model does not switch rule extraction or other text calls. Existing images support the Codex Responses endpoint; model configuration changes require a process restart, not an image rebuild.
+Secret `ppap-current` is not in git. Create it when absent, then update its managed keys from the confirmed production configuration on each release; creating it once is insufficient. It also contains passwords, Feishu secret and S3 keys, so never replace the entire Secret to update one capability. Host fields in the ConfigMap already point at in-cluster Services. Text-model credentials use Secret `ppap-current-text-model-v1`, key `LLM_API_KEY`; API and Worker read it through explicit references. `LLM_BASE_URL` and `LLM_MODEL` belong to ConfigMap `ppap-current`. Updating only the Deep model does not switch rule extraction or other text calls. Existing images support the Codex Responses endpoint; model configuration changes require a process restart, not an image rebuild.
 
 API reads only its API database password; Worker and Deep read only the Worker password. Runtime containers must use explicit `secretKeyRef` entries, not `envFrom` for the whole Secret. Bootstrap and migrator credentials belong to database initialization, not application processes. Adding a new secret setting requires an explicit reference in its owning container.
 
@@ -69,13 +69,42 @@ is needed. Only preview caches are ephemeral; originals remain in PPAP storage.
 
 本节是现有栈的部署入口。部署直接使用 `kubectl`；不运行 Python 部署编排、不自动预加载镜像、不创建临时测试环境。默认先执行本次需要的更新，遇到实际错误再诊断。构建与部署分开，配置变更不触发构建。
 
-以下命令在仓库根目录执行，需要 `kubectl` 和 Mike Farah `yq` v4。设置集群连接：
+以下命令在仓库根目录执行，需要 `kubectl`、Python 3 和 Mike Farah `yq` v4。设置集群连接：
 
 ```sh
 export KUBECONFIG="$HOME/Projects/work/hax/runtime/tke-cls-6e71r2cz/headscale-ipv6.kubeconfig"
 ```
 
 ### 更新镜像或应用清单
+
+每次发布同时同步最新的 ConfigMap、Secret 和容器配置引用，然后执行滚动更新。更新配置属于发布步骤，不能只更新镜像而遗漏新版本必需的凭据或端点。流程保持直接：**整理本次配置 → 按授权同步配置 → 应用清单／滚动更新**；失败后再诊断，不增加预演环境或完整预检。
+
+配置来源使用用户本次指定或此前已确认的生产配置。现网由用户更新的模型、端点和 Secret 引用是有效变更，仓库旧默认值不能覆盖它们；先将这些最新值反映到本次部署清单。不要把开发 `.env` 全量当作生产配置，也不要用示例文件中的空值清除生产值。缺失项与明确删除是不同操作，删除或重命名必须有明确授权。
+
+交互环境中，尚未获确认的配置变更可以在更新前展示并确认：公开参数列出旧值和新值；密钥只列 Secret 名、key 和是否变更，不展示值或散列。已获明确授权的配置不重复确认。非交互部署只自动同步已确认配置源中明确管理的 key，不猜测新凭据、不擅自切换模型。
+
+当前配置归属：
+
+| 配置项 | 存放位置 | 容器引用 |
+|---|---|---|
+| `LLM_MODEL`、`LLM_BASE_URL` | ConfigMap `ppap-current` | API、Worker；Deep 沿用其需要的公共配置 |
+| `LLM_API_KEY` | Secret `ppap-current-text-model-v1` | API、Worker |
+| `PPAP_DEEP_LLM_API_KEY` | Secret `ppap-current-deep-model-v1` | Deep Controller |
+| `OCR_MODEL_NAME`、`OCR_OPENAI_BASE_URL`、`OCR_OPENAI_EXTRA_BODY_JSON`、`PADDLE_OCR_URL` | Secret `ppap-current` | API、Worker、Deep 的配置身份 |
+| `OCR_OPENAI_API_KEY`、`PADDLE_TOKEN` | Secret `ppap-current` | API、Worker；不向 Deep guest 注入 |
+
+已有 Secret 使用按 key 合并更新，保留其余数据。例如，`PPAP_SECRET_ENV_FILE` 指向权限为 `0600`、不入 Git 的生产文件，且**只包含本次已确认要更新到 `ppap-current` 的 key**。下面的管道自动更新这些 key，不将密钥放入命令参数或输出：
+
+```sh
+set -euo pipefail
+set +x
+kubectl -n ppap-test create secret generic ppap-current \
+  --from-env-file="$PPAP_SECRET_ENV_FILE" --dry-run=client -o json \
+  | python3 -c 'import json, sys; json.dump({"data": json.load(sys.stdin)["data"]}, sys.stdout)' \
+  | kubectl -n ppap-test patch secret ppap-current --type=merge --patch-file=/dev/stdin
+```
+
+Secret 不存在时，先用同一个已确认文件创建；其他 Secret 按表中归属分别更新，不把整份 `ppap-current-text-model-v1` 覆盖到 `ppap-current`。新配置 key 还必须出现在所属容器的明确 `secretKeyRef`／`configMapKeyRef` 中；只写入 Secret 而没有容器引用，同样属于未完成配置。
 
 将本次镜像 digest、`PPAP_BUILD_SHA` 和非敏感配置写入 `current.yaml`，然后直接应用现有应用的 ConfigMap 与 Deployment：
 
@@ -87,11 +116,11 @@ kubectl kustomize deploy/tke \
 
 镜像变化会自动触发对应 Deployment 的滚动更新。命令成功表示更新已提交，不表示所有 Pod 已就绪。提交更新的目标时间为 20 秒内；下载镜像、调度和应用启动可能更久。
 
-此命令只更新应用，不运行初始化 Job、数据库迁移，也不修改旧版入口、Office、Secret 或存储卷。变更 Worker 协议或数据库结构时，按该变更的兼容要求安排更新顺序。
+此 apply 命令只更新应用的 ConfigMap 与 Deployment；Secret 已按前述步骤单独同步。不运行初始化 Job、数据库迁移，也不修改旧版入口、Office 或存储卷。变更 Worker 协议或数据库结构时，按该变更的兼容要求安排更新顺序。
 
 ### 仅修改配置或重启
 
-修改 `current.yaml` 后执行上面的 apply 命令。ConfigMap 和 Secret 的环境变量需要重建 Pod 才能生效；没有镜像变化时，直接重启受影响的进程：
+修改 `current.yaml` 后执行上面的 apply 命令。ConfigMap 和 Secret 的环境变量需要重建 Pod 才能生效；仅配置内容变化、尚未触发滚动时，直接重启受影响的进程：
 
 ```sh
 kubectl -n ppap-test rollout restart deployment/ppap-current-worker deployment/ppap-current-api
@@ -104,6 +133,8 @@ kubectl -n ppap-test rollout restart deployment/ppap-current-web
 ```
 
 不重建镜像，不等待完整验收。修改 Secret 时使用明确的 key 或新版本 Secret，通过 `secretKeyRef` 引用；密钥不写入 Markdown、Git 或命令输出。更新凭据引用后同样会触发滚动更新。
+
+清单变更已经触发滚动时，不再重复 `rollout restart`；配置内容未变化时不为同步配置额外重启。配置注入完成表示服务具备调用条件，真实服务可达性和识别效果是另一项验收，不在默认发布中调用模型或 Paddle。
 
 ### 出错后诊断
 
