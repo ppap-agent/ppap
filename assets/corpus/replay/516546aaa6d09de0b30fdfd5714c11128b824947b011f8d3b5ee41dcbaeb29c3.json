@@ -1,0 +1,5 @@
+{
+ "answer": "{\"approved_checked\": false, \"conditional_checked\": false, \"rejected_checked\": false}",
+ "kind": "ocr",
+ "model": "deepseek/deepseek-v4.1-flash-1017"
+}

@@ -1,0 +1,5 @@
+{
+ "answer": "{\"psw_stamp_present\": false, \"psw_stamp_ending_text\": \"\"}",
+ "kind": "ocr",
+ "model": "deepseek/deepseek-v4.1-flash-1017"
+}
