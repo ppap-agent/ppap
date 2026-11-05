@@ -91,7 +91,12 @@ def standard_suites() -> tuple[StandardSuite, ...]:
         # Binding identities are independent of the declaration's position/name.
         entrypoints = {clause: "checker:check" for clause in methods}
         resources = {"carriers": carriers, "methods": methods}
-        source = (f"from audit.standard_library import check_clause\nRESOURCES = {resources!r}\ndef check(context):\n    return check_clause(context, RESOURCES)\n").encode()
+        source = (
+            "from audit.standard_library import check_clause, prepare_target\n"
+            f"RESOURCES = {resources!r}\n"
+            "def check(context):\n    return check_clause(context, RESOURCES)\n"
+            "def precheck(context):\n    return prepare_target(context, RESOURCES)\n"
+        ).encode()
         rules = preset_rule_body(preset.customer, preset.entry_id)
         # The data retains source provenance. Runtime selection uses only the
         # frozen suite and artifact, never rule_profile or a class-name heuristic.

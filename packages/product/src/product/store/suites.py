@@ -213,22 +213,18 @@ def freeze_authorized_inputs(conn, principal, prepared: list[dict]) -> tuple[Fro
     return tuple(inputs)
 
 
-def freeze_round_execution(store, conn, principal, *, round_id: str, prepared: list[dict], analysis_mode: str, require_rule_match: bool = False) -> ExecutionSnapshot:
-    """Resolve the adopted Suite under the publication lock during Round acceptance.
+def freeze_selected_targets(store, conn, tenant_id: str, prepared: list[dict], *, require_rule_match: bool = False, preparation: bool = False) -> tuple[FrozenTarget, ...]:
+    """Resolve the same adopted immutable Suite for preparation and acceptance.
 
-    No missing seed, invalid source or stale proof silently falls back to a legacy
-    engine. A user's explicit adoption of unverified code remains runnable and is
-    permanently recorded as unverified in this Round.
+    Preparation may inspect unverified source without publishing it or approving
+    formal use. Its verification status is preserved and it never grants billing.
     """
     from audit.standard_suites import library_revision
 
     from product.store.suite_releases import current_selection
 
-    if analysis_mode not in {"standard", "deep"}:
-        raise ValueError("invalid_analysis_mode")
     suites = SuiteStore(store.settings, store.objects, store.role)
     library = library_revision()
-    policy = store.settings.deep_execution_policy()
     targets = []
     for item in prepared:
         if item["role"] != "target":
@@ -239,8 +235,8 @@ def freeze_round_execution(store, conn, principal, *, round_id: str, prepared: l
             key = f"{body['customers'][0]}:{body['preset_key']}"
         if not key:
             raise ValueError("checker_suite_required")
-        selection = current_selection(conn, principal.tenant_id, key)
-        suite = suites.resolve_suite(selection["revision_id"], principal.tenant_id, conn=conn)
+        selection = current_selection(conn, tenant_id, key)
+        suite = suites.resolve_suite(selection["revision_id"], tenant_id, conn=conn)
         rules = json.loads(suite.files["rules.json"])
         appendix = tuple(json.loads(suite.files.get("appendix.json", b"[]")))
         if require_rule_match and rule_digest({"rules": body.get("rules")}, body.get("appendix", [])) != rule_digest({"rules": rules.get("rules")}, appendix):
@@ -254,7 +250,7 @@ def freeze_round_execution(store, conn, principal, *, round_id: str, prepared: l
         if not isinstance(entrypoints, dict):
             raise ValueError("checker_binding_required")
         code = checker_digest({path: value for path, value in suite.files.items() if path in {"checker.py", "resources.py"}})
-        related = {key: suites.resolve_suite(identifier, principal.tenant_id, conn=conn).revision.resolved_digest for key, identifier in selection["related_revision_ids"].items()}
+        related = {key: suites.resolve_suite(identifier, tenant_id, conn=conn).revision.resolved_digest for key, identifier in selection["related_revision_ids"].items()}
         verified = selection["verification_status"] == "verified"
         binding = RuleBinding(suite.revision.suite_key, code, entrypoints, rule_digest(rules, appendix) if verified else None)
         receipt = selection["validation"]
@@ -266,7 +262,7 @@ def freeze_round_execution(store, conn, principal, *, round_id: str, prepared: l
             validation=validation,
             related_suite_digests=related,
             library_revision=library,
-            allow_unverified=selection["force_unverified"],
+            allow_unverified=preparation or selection["force_unverified"],
         )
         targets.append(target)
         # Existing Round/report readers retain actual accepted text and the new
@@ -279,6 +275,23 @@ def freeze_round_execution(store, conn, principal, *, round_id: str, prepared: l
             "verification": target.verification,
             "samples_not_rerun": target.samples_not_rerun,
         }
+    return tuple(targets)
+
+
+def freeze_round_execution(store, conn, principal, *, round_id: str, prepared: list[dict], analysis_mode: str, require_rule_match: bool = False) -> ExecutionSnapshot:
+    """Resolve the adopted Suite under the publication lock during Round acceptance.
+
+    No missing seed, invalid source or stale proof silently falls back to a legacy
+    engine. A user's explicit adoption of unverified code remains runnable and is
+    permanently recorded as unverified in this Round.
+    """
+    from audit.standard_suites import library_revision
+
+    if analysis_mode not in {"standard", "deep"}:
+        raise ValueError("invalid_analysis_mode")
+    library = library_revision()
+    policy = store.settings.deep_execution_policy()
+    targets = freeze_selected_targets(store, conn, principal.tenant_id, prepared, require_rule_match=require_rule_match)
     return ExecutionSnapshot(
         tenant_id=principal.tenant_id,
         initiating_user_id=principal.user_id,

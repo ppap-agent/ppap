@@ -25,12 +25,36 @@ class Recognition:
 
 
 @pytest.fixture
-def system(auth_store_factory):
-    settings = Settings(usage_charge_enabled=False, feishu_app_id="v4-precheck", git_sha="precheck-test-build")
+def system(auth_store_factory, monkeypatch):
+    settings = Settings(usage_charge_enabled=False, feishu_app_id="v4-precheck", git_sha="a" * 40)
     admin = auth_store_factory(settings)
     principal = admin.upsert_feishu_identity("precheck-" + uuid.uuid4().hex, "owner")
     api = build_product_store(settings, objects=admin.objects, role="api")
     worker = build_product_store(settings, objects=admin.objects, role="worker")
+    from agent.client import DeepClient
+    from agent.execution.precheck_runtime import run_precheck
+    from agent.protocol import PrecheckEnvelope
+    from agent.run import ExecutionContext
+    from audit.standard_suites import standard_suites
+    from product.store.suite_releases import SuiteReleaseStore
+    from product.store.suites import SuiteStore
+    from worker.precheck_controller import precheck_handler
+
+    # This fixture explicitly adopts an unverified source. It is not fabricated
+    # official validation or evidence that a customer checker is correct.
+    baseline = next(suite for suite in standard_suites() if suite.suite_key == "蔚来:N04")
+    suites = SuiteStore(settings, admin.objects, role="migrator")
+    revision = suites.create_revision(tenant_id=None, suite_key=baseline.suite_key, files=dict(baseline.files), created_by=None)
+    SuiteReleaseStore(settings, admin.objects, role="api").publish(principal, baseline.suite_key, revision.id, 0, str(uuid.uuid4()), force_unverified=True)
+
+    class ControlledRuntime:
+        def execute_precheck(self, payload, snapshot, sources, programs, context):
+            return run_precheck(payload, snapshot, sources, programs)
+
+    # Exercise the production controller's persisted-identity authorization and
+    # byte loading with real DB roles. OS isolation has separate runtime tests.
+    handle = precheck_handler(worker, ControlledRuntime())
+    monkeypatch.setattr(DeepClient, "precheck", lambda self, request, *, cancelled=None: handle(PrecheckEnvelope.model_validate(request), ExecutionContext(cancelled=cancelled)))
     with TestClient(create_app(settings, auth_store=api)) as client:
         client.cookies.set(SESSION_COOKIE, admin.create_session(principal))
         yield client, worker, admin, principal
@@ -214,7 +238,7 @@ def test_gate_runs_inside_confirmation_and_unknown_does_not_block(system, enforc
             {
                 "file_version_id": version,
                 "rule_version_id": source["rule"]["id"],
-                "checker": source["rule_execution"]["checker"],
+                "suite_execution": source["rule_execution"],
                 "facts": [
                     {
                         "source_id": "N04:S1",
@@ -308,7 +332,7 @@ def test_certified_gate_excludes_only_bad_target_and_replays_same_acceptance(sys
             {
                 "file_version_id": bad["file"]["id"],
                 "rule_version_id": bad["rule"]["id"],
-                "checker": bad["rule_execution"]["checker"],
+                "suite_execution": bad["rule_execution"],
                 "facts": [
                     {
                         "source_id": "N04:S1",
@@ -380,3 +404,85 @@ def test_export_stays_frozen_when_customer_mode_and_later_precheck_change(system
     with admin._conn() as conn:
         assert conn.execute("SELECT count(*) FROM product.audit_rounds").fetchone()[0] == 0
         assert conn.execute("SELECT count(*) FROM product.usage_events").fetchone()[0] == 0
+
+
+def test_precheck_and_acceptance_use_current_suite_and_keep_old_receipts(system):
+    from product.store.suite_releases import SuiteReleaseStore
+    from product.store.suites import SuiteStore
+
+    client, worker, admin, principal = system
+    path, _ = task(system)
+    old = client.get(path).json()["precheck"]
+    old_revision = old["input"]["files"][0]["suite_target"]["suite_revision_id"]
+    releases = SuiteReleaseStore(admin.settings, admin.objects, role="api")
+    candidate = releases.save_candidate(
+        principal,
+        old_revision,
+        {
+            "checker.py": """def check(context):
+    raise AssertionError("not the free path")
+def precheck(context):
+    return [{"id": "enterprise", "status": "unknown", "message": "changed enterprise preparation"}]
+"""
+        },
+    )
+    releases.publish(principal, "蔚来:N04", candidate["id"], 1, str(uuid.uuid4()), force_unverified=True)
+    assert client.get(path).json()["precheck"] is None
+    assert client.get(path + "/prechecks/" + old["id"]).json()["current"] is False
+    # A worker that was queued before adoption still sees the original source.
+    process_claimed(worker, worker.claim_job("old-source"), "old-source")
+    historical = client.get(path + "/prechecks/" + old["id"]).json()
+    assert historical["status"] == "succeeded"
+    assert "changed enterprise" not in json.dumps(historical["result"])
+    assert historical["input"] == old["input"]
+    current = client.post(path + "/prechecks", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).json()
+    assert current["input"]["files"][0]["suite_target"]["suite_revision_id"] == candidate["id"]
+    process_claimed(worker, worker.claim_job("new-source"), "new-source")
+    assert "changed enterprise preparation" in json.dumps(client.get(path).json()["precheck"]["result"])
+    accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0})
+    assert accepted.status_code == 201, accepted.text
+    snapshot = SuiteStore(admin.settings, admin.objects).read_snapshot(accepted.json()["round_id"], principal.tenant_id)
+    assert snapshot.targets[0].suite_revision_id == candidate["id"]
+    assert snapshot.targets[0].binding.to_dict() == current["input"]["files"][0]["suite_target"]["binding"]
+
+
+def test_precheck_controller_rejects_wrong_lease_before_reading_objects(system):
+    from types import SimpleNamespace
+
+    from agent.client import DeepError
+    from agent.protocol import PrecheckEnvelope
+    from agent.run import ExecutionContext
+    from worker.precheck_controller import precheck_handler
+
+    _, worker, _, _ = system
+    task(system)
+    claimed = worker.claim_job("owner")
+    handle = precheck_handler(worker, SimpleNamespace())
+    request = {"op": "precheck", "job_id": claimed.id, "tenant_id": claimed.tenant_id, "attempt": claimed.attempt, "lease_owner": "owner"}
+    for key, value in [("attempt", claimed.attempt + 1), ("lease_owner", "foreign-worker"), ("tenant_id", str(uuid.uuid4())), ("job_id", str(uuid.uuid4()))]:
+        with pytest.raises(DeepError, match="deep_input_unauthorized"):
+            handle(PrecheckEnvelope.model_validate({**request, key: value}), ExecutionContext())
+
+
+def test_precheck_controller_discards_reply_after_lease_loss(system):
+    from agent.client import DeepError
+    from agent.execution.precheck_runtime import run_precheck
+    from agent.protocol import PrecheckEnvelope
+    from agent.run import ExecutionContext
+    from worker.precheck_controller import precheck_handler
+
+    client, worker, admin, _ = system
+    path, _ = task(system)
+    claimed = worker.claim_job("owner")
+
+    class InterruptedRuntime:
+        def execute_precheck(self, payload, snapshot, sources, programs, context):
+            with admin._conn() as conn:
+                conn.execute("UPDATE engine.jobs SET lease_until=now()-interval '1 second' WHERE id=%s", (claimed.id,))
+            return run_precheck(payload, snapshot, sources, programs)
+
+    handle = precheck_handler(worker, InterruptedRuntime())
+    request = PrecheckEnvelope(op="precheck", job_id=claimed.id, tenant_id=claimed.tenant_id, attempt=claimed.attempt, lease_owner="owner")
+    with pytest.raises(DeepError, match="deep_(input_unauthorized|cancelled)"):
+        handle(request, ExecutionContext())
+    assert client.get(path).json()["precheck"]["status"] == "unknown"

@@ -6,7 +6,6 @@ import html
 import json
 import uuid
 
-from audit.engine.checkers.rule_declarations import freeze_target_rule_execution
 from audit.precheck_sources import l1_criteria, l1_spec, required_structure, structure_source
 
 from product.standard_policy import config_digest
@@ -14,7 +13,7 @@ from product.standard_policy import config_digest
 PRECHECK_KIND = "task_precheck"
 
 
-def frozen_precheck_input(task: dict, tenant_id: str, policy: dict) -> dict:
+def frozen_precheck_input(task: dict, tenant_id: str, policy: dict, *, targets: dict | None = None, initiating_user_id: str = "") -> dict:
     files = []
     for row in task["files"]:
         if row["selection"] == "removed":
@@ -22,14 +21,15 @@ def frozen_precheck_input(task: dict, tenant_id: str, policy: dict) -> dict:
         match = row.get("match") or {}
         rule = match.get("rule")
         body = rule.get("body") if rule else None
+        target = (targets or {}).get(row["file"]["id"])
         execution = None
-        if body:
-            try:
-                execution = freeze_target_rule_execution(body, row["file"]["original_filename"])
-            except Exception:
-                # A rules/implementation failure is a visible preparation gap,
-                # not proof of a supplier defect and not a reason to block.
-                execution = {"mode": "unavailable", "items": [], "reason": "checker_binding_unavailable"}
+        if target is not None:
+            frozen = target.to_dict()
+            body = {**frozen["rules"], "appendix": frozen["appendix"], "suite_key": target.suite_key}
+            rule = {**(rule or {}), "body": body}
+            execution = {"mode": "checker_core", "suite_revision_id": target.suite_revision_id, "suite_digest": target.suite_digest, "binding": target.binding.to_dict()}
+        elif body:
+            execution = {"mode": "unavailable", "reason": "checker_suite_unavailable"}
         files.append(
             {
                 "file": dict(row["file"]),
@@ -41,17 +41,24 @@ def frozen_precheck_input(task: dict, tenant_id: str, policy: dict) -> dict:
                 "metadata": match.get("metadata") or {},
                 "rule": rule,
                 "rule_execution": execution,
+                "suite_target": target.to_dict() if target is not None else None,
                 "required_structure": list(required_structure((body or {}).get("preset_key") or "")),
                 "precheck_criteria": list(l1_criteria((body or {}).get("preset_key") or "")),
                 "precheck_spec": l1_spec((body or {}).get("preset_key") or ""),
             }
         )
-    customers = {customer for row in files for customer in ((row.get("rule") or {}).get("body") or {}).get("customers", []) if ((row.get("rule") or {}).get("body") or {}).get("rule_profile") == "v4"}
+    customers = {
+        customer
+        for row in files
+        for customer in ((row.get("rule") or {}).get("body") or {}).get("customers", [])
+        if row.get("suite_target") or ((row.get("rule") or {}).get("body") or {}).get("rule_profile") == "v4"
+    }
     return {
         "effective_customer": next(iter(customers)) if len(customers) == 1 else None,
         "customer_conflict": len(customers) > 1,
         "precheck_source": structure_source(),
-        "schema_version": 1,
+        "schema_version": 2,
+        "initiating_user_id": initiating_user_id,
         "task_id": task["id"],
         "tenant_id": tenant_id,
         "input_revision": task["input_revision"],
@@ -79,11 +86,14 @@ def blocked_targets(payload: dict, result: dict | None) -> set[str]:
     for file in result.get("files") or []:
         version = file.get("file_version_id")
         source = targets.get(version)
-        if not source or file.get("rule_version_id") != (source.get("rule") or {}).get("id") or file.get("checker") != (source.get("rule_execution") or {}).get("checker"):
+        if not source or file.get("rule_version_id") != (source.get("rule") or {}).get("id"):
             continue
-        checker = (source.get("rule_execution") or {}).get("checker") or {}
-        if not checker.get("class"):
-            continue
+        execution = source.get("rule_execution") or {}
+        if execution.get("mode") == "checker_core":
+            if file.get("suite_execution") != execution or not execution.get("suite_revision_id") or not execution.get("binding", {}).get("checker_digest"):
+                continue
+        elif file.get("checker") != execution.get("checker") or not (execution.get("checker") or {}).get("class"):
+            continue  # Historical receipts retain their original identity contract.
         criteria = {item["id"] for item in source.get("required_structure") or []}
         criteria.update(item["id"] for item in source.get("precheck_criteria") or [])
         for fact in file.get("facts") or []:
@@ -146,16 +156,23 @@ def render_precheck_record(receipt: dict) -> bytes:
     for file in source["files"]:
         version = file["file"]["id"]
         observed = by_version.get(version) or {}
+        execution = file.get("rule_execution") or {}
+        suite = file.get("suite_target") or {}
         checker = observed.get("checker") or (file.get("rule_execution") or {}).get("checker") or {}
         rule = file.get("rule") or {}
         body = rule.get("body") or {}
-        origin = "客户预置规则" if body.get("rule_profile") == "v4" and body.get("preset_key") else "用户自定义规则" if rule else "尚无适用规则"
+        origin = "冻结 Suite" if suite else "客户预置规则" if body.get("rule_profile") == "v4" and body.get("preset_key") else "用户自定义规则" if rule else "尚无适用规则"
         spec = file.get("precheck_spec") or source.get("precheck_source") or {}
+        implementation = (
+            f"Suite：{escape(suite.get('suite_key'))} · 修订：{escape(execution.get('suite_revision_id'))} · 内容摘要：{escape(execution.get('suite_digest'))}"
+            if execution.get("mode") == "checker_core"
+            else f"Checker：{escape(checker.get('profile'))} {escape(checker.get('class'))}"
+        )
         parts += [
             f"<h2>{escape(file['file']['original_filename'])}</h2>",
             f"<p>文件版本：{escape(version)}<br>角色：{escape(file['role'])}<br>规则：{escape(rule.get('title'))}（{escape(rule.get('id'))}）"
             f"<br>规则来源：{escape(origin)} {escape(body.get('preset_key'))}<br>任务模式：{escape(source.get('analysis_mode'))}"
-            f"<br>实际 Checker：{escape(checker.get('profile'))} {escape(checker.get('class'))}</p>",
+            f"<br>实际 {implementation}</p>",
             f"<p>预检判定源：{escape(spec.get('source'))}<br>源文件摘要：{escape(spec.get('source_sha256'))}</p>",
             "<table><thead><tr><th>检查事实</th><th>状态与原因</th><th>来源与下一步</th></tr></thead><tbody>",
         ]
