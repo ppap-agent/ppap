@@ -1,4 +1,4 @@
-"""Enterprise Suite candidates and releases. Tests never accept formal Rounds."""
+"""Enterprise Suite candidates and releases(). Tests never accept formal Rounds."""
 
 from __future__ import annotations
 
@@ -112,7 +112,9 @@ class SuitePublishRequest(TypedDict):
 
 
 def register_suite_routes(app: FastAPI, store, principal_of):
-    releases = SuiteReleaseStore(store.settings, store.objects, role=store.role)
+    def releases():
+        return SuiteReleaseStore(store.settings, store.objects, role=store.role)
+
     headers = {"Cache-Control": "private, no-store"}
 
     def respond(request: Request, action, *, status_code: int = 200):
@@ -137,30 +139,30 @@ def register_suite_routes(app: FastAPI, store, principal_of):
 
     @app.get("/suites", response_model=SuiteCatalog)
     def suites_list(request: Request):
-        return respond(request, releases.list_suites)
+        return respond(request, releases().list_suites)
 
     @app.get("/suites/{suite_key}/active", response_model=SuiteActive)
     def suites_active(suite_key: str, request: Request):
-        return respond(request, lambda principal: releases.active(principal, suite_key))
+        return respond(request, lambda principal: releases().active(principal, suite_key))
 
     @app.put("/suites/{suite_key}/active", response_model=SuitePublication, openapi_extra=wc.openapi_body(SuitePublishRequest))
     def suites_publish(suite_key: str, request: Request, body: Any = Body(...)):
-        return respond(request, lambda principal: releases.publish(principal, suite_key, **body_fields(body, {"revision_id", "expected_revision", "operation_id", "force_unverified"})))
+        return respond(request, lambda principal: releases().publish(principal, suite_key, **body_fields(body, {"revision_id", "expected_revision", "operation_id", "force_unverified"})))
 
     @app.get("/suite-revisions/{revision_id}", response_model=SuiteRevisionDetail)
     def suite_revision(revision_id: str, request: Request):
-        return respond(request, lambda principal: releases.detail(principal, revision_id))
+        return respond(request, lambda principal: releases().detail(principal, revision_id))
 
     @app.post("/suites/{suite_key}/variants", response_model=SuiteRevisionDetail, status_code=201, openapi_extra=wc.openapi_body(SuiteVariantRequest))
     def suite_variant(suite_key: str, request: Request, body: Any = Body(...)):
         return respond(
-            request, lambda principal: releases.save_candidate(principal, suite_key=suite_key, **body_fields(body, {"base_revision_id", "files"}, frozenset({"operation_id"}))), status_code=201
+            request, lambda principal: releases().save_candidate(principal, suite_key=suite_key, **body_fields(body, {"base_revision_id", "files"}, frozenset({"operation_id"}))), status_code=201
         )
 
     @app.post("/suite-revisions/{revision_id}/candidates", response_model=SuiteRevisionDetail, status_code=201, openapi_extra=wc.openapi_body(SuiteCandidateRequest))
     def suite_candidate(revision_id: str, request: Request, body: Any = Body(...)):
-        return respond(request, lambda principal: releases.save_candidate(principal, revision_id, **body_fields(body, {"files"}, frozenset({"operation_id"}))), status_code=201)
+        return respond(request, lambda principal: releases().save_candidate(principal, revision_id, **body_fields(body, {"files"}, frozenset({"operation_id"}))), status_code=201)
 
     @app.get("/suite-revisions/{revision_id}/candidates/{operation_id}", response_model=SuiteRevisionDetail)
     def suite_candidate_receipt(revision_id: str, operation_id: str, request: Request):
-        return respond(request, lambda principal: releases.read_candidate(principal, revision_id, operation_id))
+        return respond(request, lambda principal: releases().read_candidate(principal, revision_id, operation_id))

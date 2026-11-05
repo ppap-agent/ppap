@@ -141,6 +141,24 @@ def command(f, **changes):
     return {"operation_id": str(uuid4()), "feedback_ids": [f.feedback[0][2]["id"]], "action": "run_tests", "consume_model": True, **changes}
 
 
+def test_suite_samples_span_rounds_but_recheck_current_original_permissions(auth_store_factory):
+    f = fixture(auth_store_factory)
+    path = f"/suite-revisions/{f.suite.id}/checker-feedback"
+    listed = f.clients[0].get(path)
+    assert listed.status_code == 200
+    assert {row["round_id"] for row in listed.json()["feedback"]} == {row[0] for row in f.feedback}
+    assert f.clients[1].get(path).json() == {"feedback": []}
+    assert f.clients[2].get(path).json() == {"feedback": []}
+    round_id, payload, _ = f.feedback[0]
+    with f.store._conn() as conn:
+        conn.execute(
+            "DELETE FROM product.resource_grants WHERE user_id=%s AND resource_id=(SELECT file_id FROM product.file_versions WHERE id=%s)",
+            (f.alice.user_id, payload["file_version_id"]),
+        )
+    assert len(f.clients[0].get(path).json()["feedback"]) == 3
+    assert f.clients[0].get(f"/audit-rounds/{round_id}/checker-feedback").json()["feedback"] == []
+
+
 def start(f, body=None):
     body = body or command(f)
     response = f.clients[0].post(f"/suite-revisions/{f.suite.id}/optimizations", json=body)

@@ -65,6 +65,7 @@ def _receipt(row: dict) -> dict:
     return {
         "operation_id": str(row["operation_id"]),
         "suite_revision_id": str(row["suite_revision_id"]),
+        "suite_key": row["frozen"]["suite_key"],
         "state": state,
         "candidate_revision_id": str(row["candidate_revision_id"]) if row["candidate_revision_id"] else None,
         "report": row["report"],
@@ -222,7 +223,7 @@ class CheckerDevelopmentStore:
         with self.store._conn() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
             self._authorize_round(conn, principal, round_id)
             cur.execute("SELECT * FROM product.checker_feedback WHERE round_id=%s AND tenant_id=%s AND deleted_at IS NULL ORDER BY ordinal", (round_id, principal.tenant_id))
-            feedback = [_feedback(row) for row in cur.fetchall()]
+            feedback = self._readable_feedback(conn, principal, cur.fetchall())
             cur.execute(
                 """SELECT o.*, (j.lease_until < now()) AS lease_expired FROM product.checker_optimizations o
                    LEFT JOIN engine.jobs j ON j.id=o.job_id WHERE o.tenant_id=%s AND o.initiating_user_id=%s
@@ -237,6 +238,31 @@ class CheckerDevelopmentStore:
                     continue
                 optimizations.append(_receipt(row))
             return {"round_id": round_id, "feedback": feedback, "optimizations": optimizations}
+
+    def list_suite_feedback(self, principal, revision_id):
+        """Same-check samples across rounds, filtered by current object grants."""
+        with self.store._conn() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+            _member(conn, principal)
+            revision = self.suites.get_revision(_id(revision_id), principal.tenant_id, conn=conn)
+            if revision is None:
+                raise KeyError("checker_access_denied")
+            cur.execute(
+                "SELECT * FROM product.checker_feedback WHERE tenant_id=%s AND suite_key=%s AND deleted_at IS NULL ORDER BY ordinal",
+                (principal.tenant_id, revision.suite_key),
+            )
+            return {"feedback": self._readable_feedback(conn, principal, cur.fetchall())}
+
+    def _readable_feedback(self, conn, principal, rows):
+        result = []
+        for row in rows:
+            try:
+                self._authorize_round(conn, principal, str(row["round_id"]))
+                self.store._prepared_items(conn, principal, [{"file_version_id": str(row["file_version_id"]), "role": "reference"}])
+                self._evidence(conn, principal, str(row["round_id"]), row["evidence"])
+            except (KeyError, ValueError):
+                continue
+            result.append(_feedback(row))
+        return result
 
     @staticmethod
     def _invalidate_proofs(conn, tenant_id, suite_key):
@@ -351,6 +377,7 @@ class CheckerDevelopmentStore:
                 # Key readiness only; no model call and no secret enters frozen JSON.
                 self.store.personal_model_access(principal.tenant_id, principal.user_id)
             frozen = {
+                "suite_key": suite.revision.suite_key,
                 "samples": frozen_samples,
                 "target_sample_id": target["id"],
                 "selected_feedback_ids": feedback_ids,

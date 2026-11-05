@@ -83,8 +83,8 @@ from api.office_routes import register_office_routes
 from api.report_routes import register_report_routes
 from api.rule_routes import register_rule_routes
 from api.sharing_routes import register_sharing_routes
-from api.support_routes import register_support_routes
 from api.suite_routes import register_suite_routes
+from api.support_routes import register_support_routes
 from api.usage_reporting import report_usage, run_pending_usage
 
 Probe = Callable[[Settings], dict[str, str]]

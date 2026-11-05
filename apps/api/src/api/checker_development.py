@@ -82,6 +82,7 @@ class DevelopmentReport(BaseModel):
 class OptimizationReceipt(BaseModel):
     operation_id: str
     suite_revision_id: str
+    suite_key: str
     state: Literal["saved", "queued", "running", "completed", "failed", "unknown", "stopped"]
     candidate_revision_id: str | None
     report: DevelopmentReport | None
@@ -103,8 +104,13 @@ class FeedbackDeletion(BaseModel):
     revision: int
 
 
+class SuiteFeedbackView(BaseModel):
+    feedback: list[FeedbackResponse]
+
+
 def register_checker_development_routes(app, store, principal_of):
-    development = CheckerDevelopmentStore(store)
+    def development():
+        return CheckerDevelopmentStore(store)
 
     def call(request, operation):
         principal = principal_of(request)
@@ -121,30 +127,34 @@ def register_checker_development_routes(app, store, principal_of):
 
     @app.get("/audit-rounds/{round_id}/checker-feedback", response_model=FeedbackView, response_model_exclude_unset=True)
     def read_feedback(round_id: str, request: Request):
-        return call(request, lambda principal: development.list_feedback(principal, round_id))
+        return call(request, lambda principal: development().list_feedback(principal, round_id))
+
+    @app.get("/suite-revisions/{revision_id}/checker-feedback", response_model=SuiteFeedbackView)
+    def read_suite_feedback(revision_id: str, request: Request):
+        return call(request, lambda principal: development().list_suite_feedback(principal, revision_id))
 
     @app.post("/audit-rounds/{round_id}/checker-feedback", response_model=FeedbackResponse)
     def create_feedback(round_id: str, body: FeedbackCreate, request: Request):
-        return call(request, lambda principal: development.save_feedback(principal, round_id, body.model_dump()))
+        return call(request, lambda principal: development().save_feedback(principal, round_id, body.model_dump()))
 
     @app.put("/audit-rounds/{round_id}/checker-feedback/{feedback_id}", response_model=FeedbackResponse)
     def edit_feedback(round_id: str, feedback_id: str, body: FeedbackUpdate, request: Request):
         return call(
-            request, lambda principal: development.edit_feedback(principal, round_id, feedback_id, expected_revision=body.expected_revision, payload=body.model_dump(exclude={"expected_revision"}))
+            request, lambda principal: development().edit_feedback(principal, round_id, feedback_id, expected_revision=body.expected_revision, payload=body.model_dump(exclude={"expected_revision"}))
         )
 
     @app.delete("/audit-rounds/{round_id}/checker-feedback/{feedback_id}", response_model=FeedbackDeletion)
     def delete_feedback(round_id: str, feedback_id: str, request: Request, expected_revision: int = Query(ge=1)):
-        return call(request, lambda principal: development.edit_feedback(principal, round_id, feedback_id, expected_revision=expected_revision))
+        return call(request, lambda principal: development().edit_feedback(principal, round_id, feedback_id, expected_revision=expected_revision))
 
     @app.post("/suite-revisions/{revision_id}/optimizations", response_model=OptimizationReceipt, response_model_exclude_unset=True)
     def start_optimization(revision_id: str, body: OptimizationCreate, request: Request):
-        return call(request, lambda principal: development.start(principal, revision_id, body.model_dump()))
+        return call(request, lambda principal: development().start(principal, revision_id, body.model_dump()))
 
     @app.get("/checker-optimizations/{operation_id}", response_model=OptimizationReceipt, response_model_exclude_unset=True)
     def read_optimization(operation_id: str, request: Request):
-        return call(request, lambda principal: development.read(principal, operation_id))
+        return call(request, lambda principal: development().read(principal, operation_id))
 
     @app.post("/checker-optimizations/{operation_id}/stop", response_model=OptimizationReceipt, response_model_exclude_unset=True)
     def stop_optimization(operation_id: str, request: Request):
-        return call(request, lambda principal: development.stop(principal, operation_id))
+        return call(request, lambda principal: development().stop(principal, operation_id))
