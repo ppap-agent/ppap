@@ -241,3 +241,83 @@ def test_unknown_usage_never_becomes_zero():
 def test_original_filename_survives_safe_local_materialization():
     program = PROGRAM.replace(b"context.cache['count'] =", b"assert context.audit_file.file_metadata['original_filename'] == context.audit_file.audit_id + '.txt'\n    context.cache['count'] =")
     assert all(row["status"] == "PASS" for row in run_audit(*request(program))["findings"])
+
+
+def test_reference_type_is_visible_without_a_reference_rule():
+    from dataclasses import replace
+
+    program = PROGRAM.replace(
+        b"context.cache['count'] =",
+        b"assert [item.audit_id for item in context.group_context.by_doc_type['control-plan']] == ['reference']\n"
+        b"    assert 'reference' not in context.group_context.rules_by_id\n"
+        b"    context.cache['count'] =",
+    )
+    snapshot, sources, programs = request(program, targets=1)
+    snapshot = replace(snapshot, inputs=tuple(replace(item, document_type="control-plan") if item.role == "reference" else item for item in snapshot.inputs))
+    assert all(item["status"] == "PASS" for item in run_audit_process(snapshot, sources, programs)["findings"])
+
+
+def test_reference_rule_and_appendix_are_frozen_and_survive_guest_serialization():
+    from dataclasses import replace
+
+    program = PROGRAM.replace(
+        b"context.cache['count'] =",
+        b"related = context.group_context.rules_by_id['reference']\n"
+        b"    assert related.rule_id == 'related-revision'\n"
+        b"    assert related.rules[0]['rule_to_check'] == 'confirmed reference rule'\n"
+        b"    assert related.appendix == [{'instruction': 'confirmed attachment'}]\n"
+        b"    assert context.group_context.rules_by_id[context.audit_file.audit_id].rule_id == 'revision'\n"
+        b"    context.cache['count'] =",
+    )
+    snapshot, sources, programs = request(program, targets=1)
+    body = {"type": "control-plan", "rules": [{"id": "r", "rule_to_check": "confirmed reference rule"}]}
+    appendix = ({"instruction": "confirmed attachment"},)
+    reference = replace(snapshot.inputs[-1], rule_revision_id="related-revision", rules=body, appendix=appendix)
+    frozen = replace(snapshot, inputs=(*snapshot.inputs[:-1], reference))
+    digest = frozen.input_digest
+    body["rules"][0]["rule_to_check"] = "changed later"
+    appendix[0]["instruction"] = "changed later"
+    assert frozen.input_digest == digest
+    assert digest != snapshot.input_digest
+    assert ExecutionSnapshot.from_dict(frozen.to_dict()).input_digest == digest
+    changed = replace(frozen, inputs=(*frozen.inputs[:-1], replace(reference, rule_revision_id="later-revision")))
+    assert changed.input_digest != digest
+    assert all(item["status"] == "PASS" for item in run_audit_process(frozen, sources, programs)["findings"])
+
+
+def test_shared_program_module_is_loaded_once_per_audit():
+    program = PROGRAM.replace(b"def check(context):", b"calls = 0\n\ndef check(context):\n    global calls\n    calls += 1").replace(b"str(context.cache['count'])", b"str(calls)")
+    result = run_audit_process(*request(program))
+    assert [item["suggestions"] for item in result["findings"]] == [f"{result['process_id']}:{index}" for index in range(1, 5)]
+
+
+def test_program_without_resources_cannot_import_another_suite_resource(monkeypatch):
+    import sys
+    from types import ModuleType
+
+    foreign = ModuleType("resources")
+    monkeypatch.setitem(sys.modules, "resources", foreign)
+    program = PROGRAM.replace(b"context.cache['count'] =", b"import sys\n    assert 'resources' not in sys.modules\n    context.cache['count'] =")
+    assert all(item["status"] == "PASS" for item in run_audit(*request(program))["findings"])
+    assert sys.modules["resources"] is foreign
+
+
+def test_authored_unknown_checks_are_diagnostics_not_authoritative_findings():
+    program = b"""from types import SimpleNamespace
+from audit.contracts import AuditResultItem
+
+def create_audit(audit_file, rule, group_context):
+    def check():
+        return AuditResultItem(classification='x', item='a', priority='P0', status='NG', suggestions='native finding', clause_id='a')
+    def forbidden():
+        raise AssertionError('Unbound code must not run')
+    return SimpleNamespace(checks=[SimpleNamespace(rule_item=SimpleNamespace(id='a'), check=check), SimpleNamespace(rule_item=SimpleNamespace(id='foreign'), check=forbidden)])
+"""
+    from dataclasses import replace
+
+    snapshot, sources, programs = request(program, targets=1)
+    snapshot = replace(snapshot, targets=tuple(replace(target, binding=replace(target.binding, entrypoints={"a": "checker:create_audit", "b": "checker:create_audit"})) for target in snapshot.targets))
+    result = run_audit(snapshot, sources, programs)
+    assert [(row["clause_id"], row["status"]) for row in result["findings"]] == [("a", "NG"), ("b", "ERR")]
+    assert result["diagnostics"] == [{"file_version_id": "target-0", "clause_id": "foreign", "code": "authored_checker_extra_clause"}]
+    assert "Unbound code must not run" not in json.dumps(result)

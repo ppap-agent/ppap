@@ -105,7 +105,7 @@ def test_fixed_program_keeps_distinct_clauses_hierarchy_and_related_file(tmp_pat
 
     assert [(item.clause_id, item.status) for item in results] == [("A", "PASS"), ("B", "NG")]
     assert "子工序" in results[0].suggestions
-    assert "related-file" in results[1].suggestions
+    assert "related-version" in results[1].suggestions
 
 
 def _sheet(title: str, header: list[str], row: list[str]) -> Workbook:

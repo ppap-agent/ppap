@@ -28,6 +28,7 @@ from audit.checker_core import ExecutionSnapshot, FrozenTarget, checker_digest, 
 from audit.contracts import AuditInput, AuditResultItem, GroupContextInput, RuleInput
 from audit.engine.rule_engine.context import GuardStop
 from audit.engine.runtime import bind_runtime
+from audit.standard_library import AuthoredCheckerError
 
 from agent.execution.checker_runtime import CheckerRuntime
 
@@ -82,7 +83,7 @@ def _load_program(files: Mapping[str, bytes], directory: Path) -> tuple[dict[str
     for name, data in files.items():
         (directory / name).write_bytes(data)
     modules: dict[str, ModuleType] = {}
-    saved: dict[str, ModuleType | None] = {}
+    saved: dict[str, ModuleType | None] = {stem: sys.modules.pop(stem, None) for stem in ("resources", "checker")}
     try:
         for stem in ("resources", "checker"):
             name = stem + ".py"
@@ -90,7 +91,6 @@ def _load_program(files: Mapping[str, bytes], directory: Path) -> tuple[dict[str
                 continue
             # Preserve only a temporary local import alias; caller restores it
             # before any other Suite is loaded.
-            saved[stem] = sys.modules.get(stem)
             spec = importlib.util.spec_from_file_location(f"ppap_suite_{uuid4().hex}", directory / name)
             assert spec is not None
             module = importlib.util.module_from_spec(spec)
@@ -111,6 +111,14 @@ def _restore_modules(saved: Mapping[str, ModuleType | None]) -> None:
             sys.modules.pop(name, None)
         else:
             sys.modules[name] = module
+
+
+def _activate_modules(modules: Mapping[str, ModuleType]) -> dict[str, ModuleType | None]:
+    saved = {stem: sys.modules.pop(stem, None) for stem in ("resources", "checker")}
+    for stem, module in modules.items():
+        saved[module.__name__] = sys.modules.get(module.__name__)
+        sys.modules[stem] = sys.modules[module.__name__] = module
+    return saved
 
 
 def _error(clause_id: str, status: str, code: str) -> AuditResultItem:
@@ -153,16 +161,24 @@ def run_audit(
         raise AuditRunError("checker_program_digest_mismatch")
     runtime = runtime or CheckerRuntime(allow_model_tools=True)
     cache: dict[Any, Any] = {}
+    loaded_programs: dict[str, dict[str, ModuleType]] = {}
     closeables: list[Any] = []
-    findings, coverage = [], []
+    findings, coverage, diagnostics = [], [], []
     with tempfile.TemporaryDirectory(prefix="ppap-audit-guest-") as work:
         root = Path(work)
         paths: dict[str, Path] = {}
         audits: dict[str, AuditInput] = {}
         rules = {
-            target.file_version_id: RuleInput.model_validate({**target.to_dict()["rules"], "rule_id": target.suite_revision_id, "appendix": target.to_dict()["appendix"]})
-            for target in snapshot.targets
+            source.file_version_id: RuleInput.model_validate({**source.to_dict()["rules"], "rule_id": source.rule_revision_id, "appendix": source.to_dict()["appendix"]})
+            for source in snapshot.inputs
+            if source.rules is not None
         }
+        rules.update(
+            {
+                target.file_version_id: RuleInput.model_validate({**target.to_dict()["rules"], "rule_id": target.suite_revision_id, "appendix": target.to_dict()["appendix"]})
+                for target in snapshot.targets
+            }
+        )
         for index, source in enumerate(snapshot.inputs):
             # Display names never become writable paths or lookup authority.
             path = root / f"source-{index}{Path(source.filename).suffix.lower()}"
@@ -182,7 +198,7 @@ def run_audit(
         for source in snapshot.inputs:
             if source.document_type:
                 by_type.setdefault(source.document_type, []).append(audits[source.file_version_id])
-        group = GroupContextInput(task_group_id=snapshot.round_id, by_audit_id=audits, by_doc_type=by_type, rules_by_id={rule.rule_id: rule for rule in rules.values()})
+        group = GroupContextInput(task_group_id=snapshot.round_id, by_audit_id=audits, by_doc_type=by_type, rules_by_id=rules)
         try:
             from audit.usage import get_token_tracker, track_ocr_usage
             from documents.model_access import ModelUnavailable, model_access_scope, model_access_scoped
@@ -194,7 +210,13 @@ def run_audit(
             model_scope = contextlib.nullcontext() if model_access_scoped() else model_access_scope(None)
             with model_scope, bind_runtime(runtime), paddle_page_scope(), track_ocr_usage():
                 for index, target in enumerate(snapshot.targets):
-                    modules, saved = _load_program(programs[target.binding.checker_digest], root / f"program-{index}")
+                    digest = target.binding.checker_digest
+                    if digest in loaded_programs:
+                        modules = loaded_programs[digest]
+                        saved = _activate_modules(modules)
+                    else:
+                        modules, saved = _load_program(programs[digest], root / f"program-{index}")
+                        loaded_programs[digest] = modules
                     try:
                         entrypoints = {}
                         for entrypoint in set(target.binding.entrypoints.values()):
@@ -237,12 +259,15 @@ def run_audit(
                                 item = _error(clause, "UNABLE", "personal_model_unavailable_or_uncertain")
                             except GuardStop as exc:
                                 item = _error(clause, str(exc.status), exc.message)
+                            except AuthoredCheckerError as exc:
+                                item = _error(clause, "ERR", str(exc))
                             except Exception as exc:
                                 # Exception messages may contain originals or credentials.
                                 item = _error(clause, "ERR", f"checker_failure:{type(exc).__name__}")
                             # Wrong clause IDs/references remain whole-run contract errors,
                             # not silently repaired attribution or partially accepted PASS.
                             results.append(_evidence_references(item, target.file_version_id))
+                        diagnostics.extend(cache.pop(("authored-diagnostics", target.file_version_id), ()))
                         validated = validate_results(results, target=target, inputs=snapshot.inputs)
                         findings.extend(validated["findings"])
                         coverage.extend(validated["coverage"])
@@ -250,7 +275,7 @@ def run_audit(
                         _restore_modules(saved)
             snapshot.validate_sources({identity: path.read_bytes() for identity, path in paths.items()})
             usage = tracker.end_request_tracking(request_id).to_dict()
-            return {"input_digest": snapshot.input_digest, "findings": findings, "coverage": coverage, "process_id": os.getpid(), "usage": usage}
+            return {"input_digest": snapshot.input_digest, "findings": findings, "coverage": coverage, "diagnostics": diagnostics, "process_id": os.getpid(), "usage": usage}
         finally:
             if "request_id" in locals():
                 tracker.cleanup_request(request_id)
