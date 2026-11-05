@@ -496,6 +496,7 @@ def test_psw_requests_only_facts_needed_by_the_active_branches(tmp_path, monkeyp
     with fitz.open(path) as document:
         page = document.new_page(width=600, height=800)
         page.insert_text((25, 50), "部门章授权声明", fontname="china-s", fontsize=11)
+        page.insert_image(fitz.Rect(400, 600, 500, 700), pixmap=fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 20, 20)))
         document.saveIncr()
     payload = {
         **disposition_page_response(),
@@ -520,6 +521,50 @@ def test_psw_requests_only_facts_needed_by_the_active_branches(tmp_path, monkeyp
     if department:
         assert requested[1] == {"authorization_company_stamp_present"}
     assert not any({"approval_date", "comments_present", "dimensional_checked", "submission_any_checked"}.intersection(fields) for fields in requested)
+
+
+def test_blank_authorization_stamp_position_is_ng_without_a_visual_reading(tmp_path, monkeypatch, profile):
+    path = write_disposition_pdf(tmp_path / "blank-authorization.pdf", ("批准", "条件批准", "拒绝"))
+    with fitz.open(path) as document:
+        page = document.new_page(width=600, height=800)
+        page.insert_text((25, 50), "部门章授权声明", fontname="china-s", fontsize=11)
+        page.insert_text((25, 300), "公司名称（公司章）：", fontname="china-s", fontsize=11)
+        page.draw_rect(fitz.Rect(20, 280, 580, 700), color=(0, 0, 0))
+        document.saveIncr()
+    payload = {**disposition_page_response(), "psw_stamp_present": True, "psw_stamp_ending_text": "专用章", "authorization_company_stamp_present": None}
+    attempts = ocr_response_boundary(monkeypatch, payload)
+    with bind_runtime(None):
+        checker = psw_checker(monkeypatch, path, profile)
+        try:
+            result = checker.check(2)
+        finally:
+            checker.close()
+    assert result.status == "NG"
+    assert [set(schema["schema"]["properties"]) for schema in attempts] == [{"psw_stamp_present", "psw_stamp_ending_text"}]
+
+
+@pytest.mark.parametrize(
+    ("mark", "expected"),
+    [
+        (lambda page: None, False),
+        (lambda page: page.draw_rect(fitz.Rect(20, 20, 200, 200), color=(0, 0, 0), fill=(1, 1, 1)), False),
+        (lambda page: page.insert_text((50, 50), "Name", color=(0, 0, 0)), False),
+        (lambda page: page.insert_image(fitz.Rect(50, 50, 150, 150), pixmap=fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 20, 20))), True),
+        (lambda page: page.draw_circle((100, 100), 40, color=(0, 0, 0)), True),
+        (lambda page: page.draw_rect(fitz.Rect(50, 50, 150, 150), color=(1, 0, 0)), True),
+        (lambda page: page.insert_text((50, 50), "Seal", color=(1, 0, 0)), True),
+        (lambda page: page.add_stamp_annot(fitz.Rect(50, 50, 150, 150)), True),
+    ],
+    ids=["blank", "black-rectangle", "black-text", "image", "curve", "red-rectangle", "red-text", "annotation"],
+)
+def test_only_form_structure_counts_as_an_empty_stamp_region(mark, expected):
+    from audit.checkers.v4.visual_facts import _region_may_hold_stamp
+
+    with fitz.open() as document:
+        page = document.new_page(width=300, height=300)
+        mark(page)
+        assert _region_may_hold_stamp(page, page.rect) is expected
+        assert _region_may_hold_stamp(page, fitz.Rect(250, 250, 300, 300)) is False
 
 
 def test_conditional_date_and_comments_are_one_separate_request_only_when_applicable(tmp_path, monkeypatch, profile):

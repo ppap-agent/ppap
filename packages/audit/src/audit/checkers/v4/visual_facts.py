@@ -272,6 +272,23 @@ def _submission_option_regions(page, section):
     return [fitz.Rect(box.x0 - 3, box.y0 - 3, box.x1 + 70, box.y1 + 3) & section for box in sorted(boxes, key=lambda box: (box.x0, box.y0))]
 
 
+def _is_neutral(rgb):
+    return rgb is None or max(rgb) - min(rgb) < 0.02
+
+
+def _region_may_hold_stamp(page, region):
+    """A stamp is an image, annotation, curve or coloured mark; black or white rectangles and text are form structure."""
+    marks = [fitz.Rect(item["bbox"]) for item in page.get_image_info()]
+    marks.extend(item.rect for item in (*(page.annots() or ()), *(page.widgets() or ())))
+    if any(mark.intersects(region) for mark in marks):
+        return True
+    for drawing in page.get_drawings():
+        if fitz.Rect(drawing["rect"]).intersects(region) and (any(item[0] != "re" for item in drawing["items"]) or not _is_neutral(drawing.get("fill")) or not _is_neutral(drawing.get("color"))):
+            return True
+    spans = (span for block in page.get_text("dict", clip=region)["blocks"] for line in block.get("lines", ()) for span in line["spans"])
+    return any(not _is_neutral(fitz.sRGB_to_pdf(span["color"])) for span in spans)
+
+
 def _pdf_images(audit, pages: Sequence[int], digest: str, fields=None):
     from audit.engine.checkers.ocr_visual_facts import OcrImage
 
@@ -516,6 +533,31 @@ def read_psw_pdf_visual_facts(audit, fields: dict[str, str], witness, *, cache: 
                     )
             selected_fields.pop("authorization_table_present", None)
             scopes.pop("authorization_table_present", None)
+        if authorization and "authorization_company_stamp_present" in all_fields:
+            regions = {}
+            for number in authorization:
+                document[number - 1].set_rotation(0)
+                regions[number] = pdf_field_region(document[number - 1], {"authorization_company_stamp_present"})
+            # A stamp position holding no mark at all needs no visual reading.
+            if not any(_region_may_hold_stamp(document[number - 1], region) for number, region in regions.items()):
+                result["authorization_company_stamp_present"] = False
+                for number, region in regions.items():
+                    witness(
+                        {
+                            "kind": "pdf_region",
+                            "page": number,
+                            "bbox": list(region),
+                            "coordinate_system": "pdf_points_unrotated",
+                            "source_sha256": digest,
+                            "file_version_id": audit.audit_id,
+                            "element": "authorization_stamp_region",
+                            "fact": "authorization_company_stamp_present",
+                        },
+                        "完整区域未包含图形印章对象",
+                        visual=False,
+                    )
+                selected_fields.pop("authorization_company_stamp_present", None)
+                scopes.pop("authorization_company_stamp_present", None)
     from audit.engine.checkers.psw_visual_evidence import evaluate_psw_observation
 
     if all(result[field] is not None for field in fields) or (rule_no is not None and evaluate_psw_observation(rule_no, result).status in {"PASS", "NG"}):
