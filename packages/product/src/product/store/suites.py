@@ -184,7 +184,7 @@ def freeze_authorized_inputs(conn, principal, prepared: list[dict]) -> tuple[Fro
                 row[0],
                 item["role"],
                 row[1],
-                (item.get("rule_body") or {}).get("type"),
+                item.get("document_type") or (item.get("rule_body") or {}).get("type"),
                 item["file_id"],
                 metadata.get("customer") or (customers[0] if len(customers) == 1 else None),
                 metadata.get("model"),

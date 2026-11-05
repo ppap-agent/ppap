@@ -4323,6 +4323,7 @@ class AuthStore:
             raise ValueError("idempotency_conflict")
         draft_status = None
         recognized_metadata: dict[str, dict] = {}
+        recognized_types: dict[str, str | None] = {}
         analysis_mode = ANALYSIS_STANDARD
         if source_draft_id:
             draft = conn.execute(
@@ -4353,6 +4354,7 @@ class AuthStore:
                 task = self._recognition_public(conn, principal, source_draft_id)
                 selected = [row for row in task["files"] if row["selection"] == "selected"]
                 recognized_metadata = {row["file"]["id"]: dict((row.get("match") or {}).get("metadata") or {}) for row in selected}
+                recognized_types = {row["file"]["id"]: (row.get("match") or {}).get("document_type") for row in selected}
                 if not existing and (
                     task["state"] != "pending_confirm"
                     or any((row["match"] or {}).get("state") not in {"matched", "reference", "unmatched"} or row["validation"]["state"] != "valid" for row in selected)
@@ -4439,6 +4441,7 @@ class AuthStore:
         prepared = self._bound_audit_items(conn, principal, items)
         for item in prepared:
             item["frozen_metadata"] = recognized_metadata.get(item["file_version_id"], {})
+            item["document_type"] = recognized_types.get(item["file_version_id"]) or (item.get("rule_body") or {}).get("type")
         if feedback_inputs is not None:
             if analysis_mode != ANALYSIS_DEEP or source_draft_id is not None:
                 raise ValueError("deep_feedback_requires_deep")

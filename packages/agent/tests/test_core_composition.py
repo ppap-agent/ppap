@@ -271,3 +271,29 @@ def test_container_offline_audit_never_issues_a_model_grant(tmp_path, monkeypatc
     assert exported == [False]
     assert not run.exists()
     assert not runtime.attempts.exists()
+
+
+def test_development_freezes_reference_type_and_rules_without_requiring_a_rule():
+    from dataclasses import replace
+
+    from agent.checker_spec import CheckerArtifact
+    from agent.core_program import development_snapshot
+
+    snapshot, sources, _, spec, _ = setup()
+    reference = replace(snapshot.inputs[-1], document_type="过程流程图")
+    snapshot = replace(snapshot, inputs=(*snapshot.inputs[:-1], reference))
+    prepared = snapshot_development_inputs(snapshot, sources)["file-a"]
+    assert prepared.group_context.by_doc_type["过程流程图"][0].audit_id == "reference"
+    assert "reference" not in prepared.group_context.rules_by_id
+    artifact = CheckerArtifact(input_digest=prepared.digest, executor_revision="runtime", entrypoint="checker:create_audit", files={"checker.py": FACTORY})
+    frozen, _ = development_snapshot(prepared, artifact, spec)
+    assert next(row for row in frozen.inputs if row.file_version_id == "reference").document_type == "过程流程图"
+    rules = {"type": "过程流程图", "rules": [{"id": "P1", "rule_to_check": "工序顺序"}]}
+    reference = replace(reference, rule_revision_id="reference-rules", rules=rules, appendix=({"text": "已确认附录"},))
+    with_rules = replace(snapshot, inputs=(*snapshot.inputs[:-1], reference))
+    assert with_rules.input_digest != snapshot.input_digest
+    prepared = snapshot_development_inputs(with_rules, sources)["file-a"]
+    restored = prepared.group_context.rules_by_id["reference"]
+    assert restored.rule_id == "reference-rules"
+    assert restored.rules[0]["id"] == "P1"
+    assert restored.appendix == [{"text": "已确认附录"}]

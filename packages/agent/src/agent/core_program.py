@@ -350,8 +350,18 @@ def development_snapshot(inputs, artifact, spec):
 
     target_id = str(inputs.audit_file.file_metadata.get("file_version_id") or inputs.audit_file.audit_id)
     source_rows = {target_id: inputs.audit_file}
+    source_types = {target_id: inputs.rule.type}
+    source_rules = {target_id: inputs.rule}
     if inputs.group_context is not None:
         source_rows.update({str(row.file_metadata.get("file_version_id") or row.audit_id): row for row in inputs.group_context.by_audit_id.values()})
+        for kind, rows in inputs.group_context.by_doc_type.items():
+            for row in rows:
+                identity = str(row.file_metadata.get("file_version_id") or row.audit_id)
+                if identity in source_types and source_types[identity] != kind:
+                    raise DeepError("deep_input_invalid")
+                source_types[identity] = kind
+        source_rules.update(inputs.group_context.rules_by_id)
+        source_rules[target_id] = inputs.rule
     sources = dict(inputs.related_bytes)
     sources[target_id] = inputs.file_bytes
     if set(source_rows) != set(sources):
@@ -362,10 +372,14 @@ def development_snapshot(inputs, artifact, spec):
             hashlib.sha256(sources[identity]).hexdigest(),
             "target" if identity == target_id else "reference",
             str(row.file_metadata.get("original_filename") or Path(row.file_url).name),
+            document_type=source_types.get(identity),
             customer=row.customer,
             model=row.model,
             part=row.part,
             project_id=row.project_id,
+            rule_revision_id=source_rules[identity].rule_id if identity in source_rules else "",
+            rules=source_rules[identity].model_dump(mode="json") if identity in source_rules else None,
+            appendix=tuple(source_rules[identity].model_dump(mode="json").get("appendix") or ()) if identity in source_rules else (),
         )
         for identity, row in source_rows.items()
     )
@@ -403,8 +417,13 @@ def snapshot_development_inputs(snapshot, sources, *, directory=None):
         directory.mkdir()
     audits, by_type = {}, {}
     rules = {
-        target.file_version_id: RuleInput.model_validate({**target.to_dict()["rules"], "rule_id": target.suite_revision_id, "appendix": target.to_dict()["appendix"]}) for target in snapshot.targets
+        source.file_version_id: RuleInput.model_validate({**source.to_dict()["rules"], "rule_id": source.rule_revision_id, "appendix": source.to_dict()["appendix"]})
+        for source in snapshot.inputs
+        if source.rules is not None
     }
+    rules.update(
+        {target.file_version_id: RuleInput.model_validate({**target.to_dict()["rules"], "rule_id": target.suite_revision_id, "appendix": target.to_dict()["appendix"]}) for target in snapshot.targets}
+    )
     for index, source in enumerate(snapshot.inputs):
         filename = source.filename
         if directory is not None:
