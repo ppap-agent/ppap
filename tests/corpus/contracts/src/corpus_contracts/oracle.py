@@ -3,28 +3,33 @@
 from __future__ import annotations
 
 import csv
+import hashlib
+import json
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
+from typing import Literal, cast
 
-from audit.audits import RoundInput, RoundWork
-from audit.engine.checkers.rule_declarations import freeze_target_rule_execution
-from audit.engine.routing import resolve_engine_agent_class
-from audit.kinds import PpapDocumentType
-from audit.presets import preset_document_type, preset_rule, preset_rule_body
-
-from corpus_contracts.product_round import engine_rule_body
+from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest
+from audit.standard_suites import StandardSuite, library_revision, standard_suites
+from audit.suite_migration import generic_standard_suites
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
 CASES_PATH = REPO_ROOT / "assets/corpus/cases.csv"
 ORACLE_PATH = REPO_ROOT / "assets/corpus/oracle.csv"
 DATASETS = ("v2", "v3", "v4-uaes")
-FILE_COLUMNS = ("数据集", "组合ID", "文件ID", "原件", "提交文件名", "角色", "路由", "Checker组")
+FILE_COLUMNS = ("数据集", "组合ID", "文件ID", "原件", "提交文件名", "角色", "Suite版本", "Checker组", "Binding")
 EXPECTED_COLUMNS = ("数据集", "组合ID", "文件ID", "条款ID", "人工真值", "条款说明", "人工判定依据", "判定人", "判定日期", "已知差距")
 TRUTHS = frozenset({"PASS", "NG", "UNABLE", "NA"})
 # What the product still does differently from the truth, and why.
 _KNOWN_GAP = re.compile(r"^(PASS|NG|UNABLE|NA|ERR) \S.*$")
-_ROUTE = re.compile(r"^(builtin:v[23]:|preset:[^:]+:)[^:]+$")
+_REVISION = re.compile(r"^sha256:[a-f0-9]{64}$")
+
+
+@lru_cache(maxsize=1)
+def suite_sources() -> dict[str, StandardSuite]:
+    return {f"sha256:{suite.revision_digest}": suite for suite in (*standard_suites(), *generic_standard_suites(include_history=True))}
 
 
 @dataclass(frozen=True)
@@ -45,22 +50,23 @@ class OracleFile:
     path: Path
     filename: str
     role: str
-    route: str
+    suite_revision: str
     checker_group: str
+    binding_ids: tuple[str, ...]
     expected: dict[str, Expectation]
 
-    def rule_body(self) -> dict:
-        kind, first, second = self.route.split(":", 2)
-        return preset_rule_body(first, second) if kind == "preset" else engine_rule_body(second, self.filename, first)[0]
+    def suite(self) -> StandardSuite:
+        suite = suite_sources().get(self.suite_revision)
+        if suite is None:
+            raise ValueError("Unknown corpus Suite revision: " + self.suite_revision)
+        if suite.suite_key != self.checker_group:
+            raise ValueError(f"Suite revision belongs to {suite.suite_key}, not {self.checker_group}")
+        if len(set(self.binding_ids)) != len(self.binding_ids) or set(self.binding_ids) != set(suite.entrypoints):
+            raise ValueError("Corpus Binding identities differ from frozen Suite")
+        return suite
 
-    def resolved_checker_group(self) -> str:
-        kind, first, second = self.route.split(":", 2)
-        if kind == "preset":
-            preset = preset_rule(first, second)
-            agent = resolve_engine_agent_class(PpapDocumentType.from_string(preset_document_type(preset)), self.filename, "v4", preset_key=second, preset_customer=first)
-        else:
-            agent = resolve_engine_agent_class(PpapDocumentType.from_string(second), self.filename, first)
-        return f"{agent.__module__.removeprefix('audit.checkers.')}.{agent.__name__}" if agent else ""
+    def rule_body(self) -> dict:
+        return json.loads(self.suite().files["rules.json"])
 
 
 @dataclass(frozen=True)
@@ -103,7 +109,7 @@ def load_oracle(dataset: str | None = None, *, cases: Path = CASES_PATH, oracle:
     names: set[tuple[str, str, str]] = set()
     for row in files:
         key = (row["数据集"], row["组合ID"], row["文件ID"])
-        if not all(row[column] for column in FILE_COLUMNS if column not in {"路由", "Checker组"}):
+        if not all(row[column] for column in FILE_COLUMNS if column not in {"Suite版本", "Checker组", "Binding"}):
             raise ValueError(f"Incomplete file row: {key}")
         if key in indexed or (key[0], key[1], row["提交文件名"]) in names:
             raise ValueError(f"Duplicate file: {key}")
@@ -111,8 +117,8 @@ def load_oracle(dataset: str | None = None, *, cases: Path = CASES_PATH, oracle:
             raise ValueError(f"Invalid file role: {key}")
         if not (root / row["原件"]).is_file():
             raise ValueError(f"Missing original: {row['原件']}")
-        if row["角色"] == "target" and (not row["Checker组"] or _ROUTE.fullmatch(row["路由"]) is None):
-            raise ValueError(f"Invalid route: {key}")
+        if row["角色"] == "target" and (not row["Checker组"] or not row["Binding"] or _REVISION.fullmatch(row["Suite版本"]) is None):
+            raise ValueError(f"Invalid Suite revision: {key}")
         indexed[key] = row
         expectations[key] = {}
         names.add((key[0], key[1], row["提交文件名"]))
@@ -132,7 +138,9 @@ def load_oracle(dataset: str | None = None, *, cases: Path = CASES_PATH, oracle:
     for key, row in indexed.items():
         if row["角色"] == "target" and not expectations[key]:
             raise ValueError(f"Target has zero assertions: {key}")
-        groups.setdefault(key[:2], []).append(OracleFile(key[2], root / row["原件"], row["提交文件名"], row["角色"], row["路由"], row["Checker组"], expectations[key]))
+        groups.setdefault(key[:2], []).append(
+            OracleFile(key[2], root / row["原件"], row["提交文件名"], row["角色"], row["Suite版本"], row["Checker组"], tuple(row["Binding"].split(";")) if row["Binding"] else (), expectations[key])
+        )
     if any(not any(file.role == "target" for file in group) for group in groups.values()):
         raise ValueError("Oracle case has no targets")
     return [OracleCase(key[0], key[1], tuple(items)) for key, items in groups.items() if dataset is None or key[0] == dataset]
@@ -146,19 +154,27 @@ def original(filename: str, *, cases: Path = CASES_PATH, root: Path = REPO_ROOT)
     return root / paths.pop()
 
 
-def build_round(case: OracleCase) -> tuple[RoundWork, dict[str, bytes], dict[str, int]]:
-    inputs, blobs, totals = [], {}, {}
+def build_round(case: OracleCase) -> tuple[ExecutionSnapshot, dict[str, bytes], dict[str, int]]:
+    inputs, targets, blobs, totals = [], [], {}, {}
     for file in case.files:
-        body, execution = None, None
+        data = file.path.read_bytes()
+        document_type = ""
         if file.role == "target":
-            if file.resolved_checker_group() != file.checker_group:
-                raise ValueError(f"{case.id}/{file.file_id}: routed to {file.resolved_checker_group()}, not {file.checker_group}")
+            suite = file.suite()
             body = file.rule_body()
-            execution = freeze_target_rule_execution(body, file.filename)
             ids = [str(rule["id"]) for rule in body["rules"]]
             if len(ids) != len(set(ids)) or set(file.expected) - set(ids):
                 raise ValueError(f"{case.id}/{file.file_id}: duplicate or missing declared rule IDs")
             totals[file.file_id] = len(ids)
-        inputs.append(RoundInput(file.role, file.file_id, file.file_id, file.filename, "ready", rule_version_id=file.route or None, rule_body=body, rule_execution=execution))
-        blobs[file.file_id] = file.path.read_bytes()
-    return RoundWork(case.id, "corpus", inputs), blobs, totals
+            document_type = suite.document_type
+            targets.append(
+                FrozenTarget(file.file_id, file.suite_revision, suite.suite_key, suite.revision_digest, body, RuleBinding(suite.suite_key, checker_digest(suite.program_files), suite.entrypoints))
+            )
+        inputs.append(FrozenInput(file.file_id, hashlib.sha256(data).hexdigest(), cast(Literal["target", "reference"], file.role), file.filename, document_type=document_type))
+        blobs[file.file_id] = data
+    snapshot = ExecutionSnapshot("corpus", "corpus-controlled-runner", tuple(inputs), tuple(targets), "corpus-source", library_revision(), {}, round_id=case.id)
+    return snapshot, blobs, totals
+
+
+def programs_for(snapshot: ExecutionSnapshot) -> dict[str, dict[str, bytes]]:
+    return {target.binding.checker_digest: suite_sources()[target.suite_revision_id].program_files for target in snapshot.targets}

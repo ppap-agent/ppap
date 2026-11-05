@@ -185,7 +185,7 @@ def run_audit(
         group = GroupContextInput(task_group_id=snapshot.round_id, by_audit_id=audits, by_doc_type=by_type, rules_by_id={rule.rule_id: rule for rule in rules.values()})
         try:
             from audit.usage import get_token_tracker, track_ocr_usage
-            from documents.model_access import model_access_scope, model_access_scoped
+            from documents.model_access import ModelUnavailable, model_access_scope, model_access_scoped
             from documents.ocr.paddle.reader import paddle_page_scope
 
             tracker = get_token_tracker()
@@ -233,6 +233,8 @@ def run_audit(
                                     item = _error(clause, "ERR", "checker_missing_result")
                             except ClauseTimeout:
                                 item = _error(clause, "ERR", "checker_clause_timeout_external_usage_unknown")
+                            except ModelUnavailable:
+                                item = _error(clause, "UNABLE", "personal_model_unavailable_or_uncertain")
                             except GuardStop as exc:
                                 item = _error(clause, str(exc.status), exc.message)
                             except Exception as exc:
