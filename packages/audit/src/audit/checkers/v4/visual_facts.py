@@ -421,9 +421,8 @@ def _ocr_pdf_facts(audit, fields, witness, *, pages, cache, field_scopes=None, n
                 fields,
                 lambda *args, **kwargs: observations.append((args, kwargs)),
                 context_by_scope=context,
-                any_fields=_ANY_PAGE_FIELDS,
                 field_scopes=field_scopes,
-                any_fields=_EXISTENCE_FIELDS,
+                any_fields=_EXISTENCE_FIELDS | _ANY_PAGE_FIELDS,
                 native_by_scope=native_by_scope,
                 request_cache=cache,
             )

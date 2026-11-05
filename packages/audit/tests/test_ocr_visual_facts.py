@@ -381,6 +381,8 @@ def test_located_field_uses_application_coordinates_and_preserves_unknown(monkey
 
 
 def test_submission_reason_on_one_warrant_page_is_not_contradicted_by_a_blank_copy(monkeypatch):
+    from types import SimpleNamespace
+
     from audit.checkers.v4 import visual_facts
     from audit.engine.checkers import ocr_visual_facts
 
