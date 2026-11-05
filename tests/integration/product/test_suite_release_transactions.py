@@ -3,6 +3,8 @@
 import hashlib
 import json
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import pytest
 from audit.checker_core import checker_digest
@@ -12,7 +14,7 @@ from product.settings import Settings
 from product.store.suite_releases import SuiteReleaseStore, current_selection
 from product.store.suites import SuiteStore
 
-FILES = {"rules.json": b'{"rules":[{"id":"R1","rule_to_check":"Required"}]}', "checker.py": b'def check(context):\n    return []\n'}
+FILES = {"rules.json": b'{"rules":[{"id":"R1","rule_to_check":"Required"}]}', "checker.py": b"def check(context):\n    return []\n"}
 
 
 def seed(auth_store_factory):
@@ -34,9 +36,14 @@ def proof_for(suites, principal, revision, *, related=None, version=None, expect
         oracle_revision="human-reviewed-oracle-1",
         related_suite_digests=related or {},
         cases=tuple(
-            CaseEvaluation(case_id=f"case-{i}", ordinal=i, input_digest=hashlib.sha256(str(i).encode()).hexdigest(),
-                           split="holdout" if i % 4 == 0 else "training", coverage=True,
-                           clauses=(ClauseEvaluation(clause_id=clause, expected=expected, actual=actual, evidence_locatable=True, checks_performed=1),))
+            CaseEvaluation(
+                case_id=f"case-{i}",
+                ordinal=i,
+                input_digest=hashlib.sha256(str(i).encode()).hexdigest(),
+                split="holdout" if i % 4 == 0 else "training",
+                coverage=True,
+                clauses=(ClauseEvaluation(clause_id=clause, expected=expected, actual=actual, evidence_locatable=True, checks_performed=1),),
+            )
             for i in range(1, 5)
         ),
     )
@@ -139,3 +146,132 @@ def test_official_proof_is_trusted_global_and_dependency_bound(auth_store_factor
     # SQL permission boundary also forbids writing a global proof with API credentials.
     with releases._conn() as conn, conn.transaction(), pytest.raises(Exception, match="official_validation_write_forbidden"):
         conn.execute("UPDATE product.suite_validations SET status = 'unverified' WHERE tenant_id IS NULL AND revision_id = %s", (second.id,))
+
+
+def test_official_fallback_revision_is_not_tenant_validation_write_head(auth_store_factory):
+    store, suites, releases, alice, bob = seed(auth_store_factory)
+    revision = suites.create_revision(tenant_id=None, suite_key="control-plan", files=FILES, created_by=None)
+    platform = SuiteReleaseStore(store.settings, store.objects, role="migrator")
+    report = proof_for(suites, alice, revision)
+    for expected in (0, 1):
+        official = platform.record_official_validation(revision.id, report, expected_revision=expected)
+        assert official["write_revision"] == expected + 1
+    fallback = releases.detail(alice, revision.id)["validation"]
+    assert fallback["proof_scope"] == "official"
+    assert fallback["revision"] == 2
+    assert fallback["write_revision"] == 0
+    with pytest.raises(ValueError, match="suite_validation_conflict"):
+        releases.record_validation(alice, revision.id, report, expected_revision=fallback["revision"])
+    failed_report = proof_for(suites, alice, revision, expected="NG", actual="PASS")
+    own = releases.record_validation(alice, revision.id, failed_report, expected_revision=fallback["write_revision"])
+    assert own["proof_scope"] == "tenant"
+    assert own["revision"] == own["write_revision"] == 1
+    # A failing tenant proof cannot silently fall back to a successful global proof.
+    assert releases.detail(bob, revision.id)["validation"]["verified"] is False
+    outsider = store.upsert_feishu_identity("other-tenant", "reader")
+    assert releases.detail(outsider, revision.id)["validation"]["verified"] is True
+
+
+def test_concurrent_first_tenant_validation_uses_cas(auth_store_factory):
+    _, suites, releases, alice, bob = seed(auth_store_factory)
+    revision = suites.create_revision(tenant_id=None, suite_key="control-plan", files=FILES, created_by=None)
+    report = proof_for(suites, alice, revision)
+
+    def record(person):
+        try:
+            return releases.record_validation(person, revision.id, report, expected_revision=0)["write_revision"]
+        except ValueError as error:
+            return str(error)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(record, (alice, bob)))
+    assert results.count(1) == results.count("suite_validation_conflict") == 1
+
+
+@pytest.mark.parametrize("field,value", [("suite_revision_id", str(uuid.uuid4())), ("suite_digest", "0" * 64), ("program_digest", "0" * 64)])
+def test_validation_rejects_any_mismatched_content_identity(auth_store_factory, field, value):
+    _, suites, releases, alice, _ = seed(auth_store_factory)
+    revision = suites.create_revision(tenant_id=None, suite_key="control-plan", files=FILES, created_by=None)
+    report = proof_for(suites, alice, revision).model_copy(update={field: value})
+    with pytest.raises(ValueError, match="suite_validation_identity_mismatch"):
+        releases.record_validation(alice, revision.id, report, expected_revision=0)
+    assert releases.detail(alice, revision.id)["validation"]["write_revision"] == 0
+
+
+@pytest.mark.parametrize(
+    "path,body",
+    [
+        ("rules.json", '{"rules":[{"id":"R1","rule_to_check":"Changed semantics"}]}'),
+        ("checker.py", "def check(context): return [1]\n"),
+        ("resources.py", "LAYOUT = {'number': 'B7'}\n"),
+        ("templates.json", '[{"kind":"structure","columns":["Number"]}]'),
+    ],
+)
+def test_every_suite_content_change_requires_new_bound_proof(auth_store_factory, path, body):
+    _, suites, releases, alice, _ = seed(auth_store_factory)
+    official = suites.create_revision(tenant_id=None, suite_key="control-plan", files=FILES, created_by=None)
+    report = proof_for(suites, alice, official)
+    releases.record_validation(alice, official.id, report, expected_revision=0)
+    candidate = releases.save_candidate(alice, official.id, {path: body})
+    assert candidate["validation"]["verified"] is False
+    # Retargeting only the immutable ID cannot claim that changed bytes were tested.
+    with pytest.raises(ValueError, match="suite_validation_identity_mismatch"):
+        releases.record_validation(alice, candidate["id"], report.model_copy(update={"suite_revision_id": candidate["id"]}), expected_revision=0)
+    with pytest.raises(ValueError, match="suite_confirmation_required"):
+        releases.publish(alice, "control-plan", candidate["id"], 0, str(uuid.uuid4()))
+    receipt = releases.publish(alice, "control-plan", candidate["id"], 0, str(uuid.uuid4()), True)
+    assert receipt["verification_status"] == "unverified"
+
+
+def test_latest_official_order_is_revision_not_transaction_timestamp_or_uuid(auth_store_factory):
+    store, suites, releases, alice, _ = seed(auth_store_factory)
+    with store._conn() as conn, conn.transaction():
+        revisions = [suites.create_revision(tenant_id=None, suite_key="control-plan", files=FILES, created_by=None, conn=conn) for _ in range(8)]
+        assert conn.execute("SELECT count(DISTINCT created_at) FROM product.suite_revisions").fetchone()[0] == 1
+    assert releases.active(alice, "control-plan")["current_revision_id"] == revisions[-1].id
+
+
+def test_api_cannot_move_official_validation_into_tenant_scope(auth_store_factory):
+    store, suites, releases, alice, _ = seed(auth_store_factory)
+    revision = suites.create_revision(tenant_id=None, suite_key="control-plan", files=FILES, created_by=None)
+    platform = SuiteReleaseStore(store.settings, store.objects, role="migrator")
+    platform.record_official_validation(revision.id, proof_for(suites, alice, revision), expected_revision=0)
+    with releases._conn() as conn, conn.transaction(), pytest.raises(Exception, match="immutable_suite_validation_scope"):
+        conn.execute("UPDATE product.suite_validations SET tenant_id = %s WHERE tenant_id IS NULL AND revision_id = %s", (alice.tenant_id, revision.id))
+    assert releases.detail(alice, revision.id)["validation"]["proof_scope"] == "official"
+
+
+def test_official_validation_cannot_use_tenant_dependency_content(auth_store_factory):
+    store, suites, releases, alice, _ = seed(auth_store_factory)
+    first = suites.create_revision(tenant_id=None, suite_key="first", files=FILES, created_by=None)
+    second = suites.create_revision(tenant_id=None, suite_key="second", files=FILES, created_by=None, related_suite_keys=("first",))
+    candidate = releases.save_candidate(alice, first.id, {"resources.py": "LOCATION = 'C1'\n"})
+    releases.publish(alice, "first", candidate["id"], 0, str(uuid.uuid4()), True)
+    tenant_report = proof_for(suites, alice, second, related={"first": candidate["resolved_digest"]})
+    assert releases.record_validation(alice, second.id, tenant_report, expected_revision=0)["verified"] is True
+    platform = SuiteReleaseStore(store.settings, store.objects, role="migrator")
+    with pytest.raises(ValueError, match="suite_validation_inputs_changed"):
+        platform.record_official_validation(second.id, tenant_report, expected_revision=0)
+    with pytest.raises(KeyError):
+        platform.record_official_validation(candidate["id"], tenant_report, expected_revision=0)
+
+
+def test_release_migration_replay_preserves_adoption_proof_and_lineage(auth_store_factory):
+    store, suites, releases, alice, bob = seed(auth_store_factory)
+    official = suites.create_revision(tenant_id=None, suite_key="control-plan", files=FILES, created_by=None)
+    candidate = suites.create_revision(tenant_id=alice.tenant_id, suite_key="control-plan", files={"resources.py": b"LOCATION = 'B2'\n"}, created_by=alice.user_id, base_revision_id=official.id)
+    releases.record_validation(alice, candidate.id, proof_for(suites, alice, candidate), expected_revision=0)
+    operation = str(uuid.uuid4())
+    before = releases.publish(bob, "control-plan", candidate.id, 0, operation)
+    detail = releases.detail(bob, candidate.id)
+    migration = Path(__file__).resolve().parents[3] / "migrations/0041_suite_releases.sql"
+    for _ in range(2):
+        with store._conn() as conn:
+            conn.execute(migration.read_text())
+    assert releases.detail(bob, candidate.id) == detail
+    assert releases.active(bob, "control-plan")["history"] == [before]
+    assert releases.publish(bob, "control-plan", candidate.id, 0, operation) == before
+    with store._conn() as conn:
+        assert conn.execute("SELECT count(*) FROM product.schema_migrations WHERE version='0041_suite_releases.sql'").fetchone()[0] == 1
+    with store._conn() as conn, conn.transaction(), pytest.raises(Exception, match="immutable_suite_publication"):
+        conn.execute("UPDATE product.suite_publications SET revision_id = %s WHERE operation_id = %s", (official.id, operation))

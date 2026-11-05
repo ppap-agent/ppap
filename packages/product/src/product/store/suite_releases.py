@@ -38,14 +38,23 @@ def _member(conn, principal) -> None:
         raise KeyError("suite_access_denied")
 
 
+def _read_lock(conn, tenant_id: str) -> None:
+    # All callers acquire official before tenant locks. A platform release is also
+    # an input change for tenants still following the automatic official default.
+    conn.execute("SELECT pg_advisory_xact_lock_shared(hashtextextended(%s, 0))", ("suite-publication:official",))
+    conn.execute("SELECT pg_advisory_xact_lock_shared(hashtextextended(%s, 0))", ("suite-publication:" + tenant_id,))
+
+
 def _lock(conn, tenant_id: str) -> None:
     # Validation and publication share one small tenant lock. Related Suites cannot
     # change between proof comparison and adoption, and opposite dependency orders
     # cannot deadlock. No model work runs under this lock.
+    if tenant_id != "official":
+        conn.execute("SELECT pg_advisory_xact_lock_shared(hashtextextended(%s, 0))", ("suite-publication:official",))
     conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("suite-publication:" + tenant_id,))
 
 
-def _revision(conn, revision_id: str, tenant_id: str) -> dict:
+def _revision(conn, revision_id: str, tenant_id: str | None) -> dict:
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute("SELECT * FROM product.suite_revisions WHERE id = %s AND (tenant_id = %s OR tenant_id IS NULL)", (_id(revision_id), tenant_id))
         row = cur.fetchone()
@@ -54,21 +63,21 @@ def _revision(conn, revision_id: str, tenant_id: str) -> dict:
     return row
 
 
-def _selected(conn, tenant_id: str, suite_key: str) -> dict:
+def _selected(conn, tenant_id: str | None, suite_key: str) -> dict:
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute("SELECT * FROM product.tenant_suite_heads WHERE tenant_id = %s AND suite_key = %s", (tenant_id, suite_key))
         head = cur.fetchone()
         if head:
             row = _revision(conn, str(head["current_revision_id"]), tenant_id)
         else:
-            cur.execute("SELECT * FROM product.suite_revisions WHERE suite_key = %s AND tenant_id IS NULL ORDER BY created_at DESC, id DESC LIMIT 1", (suite_key,))
+            cur.execute("SELECT * FROM product.suite_revisions WHERE suite_key = %s AND tenant_id IS NULL ORDER BY revision_number DESC LIMIT 1", (suite_key,))
             row = cur.fetchone()
     if row is None:
         raise KeyError("suite_access_denied")
     return {"row": row, "head": head}
 
 
-def _related_digests(conn, tenant_id: str, revision: dict) -> dict[str, str]:
+def _related_digests(conn, tenant_id: str | None, revision: dict) -> dict[str, str]:
     result = {}
     for key in revision["related_suite_keys"]:
         try:
@@ -79,10 +88,13 @@ def _related_digests(conn, tenant_id: str, revision: dict) -> dict[str, str]:
     return result
 
 
-def _validation(conn, tenant_id: str, revision: dict) -> dict:
+def _validation(conn, tenant_id: str | None, revision: dict) -> dict:
     with conn.cursor(row_factory=dict_row) as cur:
-        cur.execute("""SELECT * FROM product.suite_validations WHERE (tenant_id = %s OR tenant_id IS NULL) AND revision_id = %s
-                       ORDER BY tenant_id NULLS LAST LIMIT 1""", (tenant_id, revision["id"]))
+        cur.execute(
+            """SELECT * FROM product.suite_validations WHERE (tenant_id = %s OR tenant_id IS NULL) AND revision_id = %s
+                       ORDER BY tenant_id NULLS LAST LIMIT 1""",
+            (tenant_id, revision["id"]),
+        )
         row = cur.fetchone()
     if row is None:
         return empty_validation()
@@ -94,9 +106,13 @@ def _validation(conn, tenant_id: str, revision: dict) -> dict:
     if row["suite_digest"] != revision["resolved_digest"] or row["related_suite_digests"] != _related_digests(conn, tenant_id, revision):
         status = "stale"
         reasons.append("suite_inputs_changed")
+    owns_write_scope = (row["tenant_id"] is None and tenant_id is None) or str(row["tenant_id"]) == tenant_id
     return {
         "status": status,
         "revision": row["revision"],
+        # A global fallback is readable but is not this tenant's CAS write head.
+        "write_revision": row["revision"] if owns_write_scope else 0,
+        "proof_scope": "official" if row["tenant_id"] is None else "tenant",
         "total_samples": proof["total_samples"],
         "passed_samples": proof["passed_samples"],
         "new_errors": proof["new_errors"],
@@ -114,7 +130,7 @@ def current_selection(conn, tenant_id: str, suite_key: str) -> dict:
     Shared lock is compatible with other admissions and excludes tenant publishing
     until the frozen Round is committed. The caller must own a transaction.
     """
-    conn.execute("SELECT pg_advisory_xact_lock_shared(hashtextextended(%s, 0))", ("suite-publication:" + tenant_id,))
+    _read_lock(conn, tenant_id)
     selected = _selected(conn, tenant_id, _key(suite_key))
     row, head = selected["row"], selected["head"]
     validation = _validation(conn, tenant_id, row)
@@ -140,7 +156,8 @@ def _display_name(conn, user_id, tenant_id: str) -> str:
     row = conn.execute(
         """SELECT i.display_name FROM product.identities i JOIN product.tenants t ON t.id = %s
            WHERE i.user_id = %s AND i.tenant_key = t.external_key AND i.provider = t.provider
-           AND i.display_name <> '' ORDER BY i.created_at, i.id LIMIT 1""", (tenant_id, user_id),
+           AND i.display_name <> '' ORDER BY i.created_at, i.id LIMIT 1""",
+        (tenant_id, user_id),
     ).fetchone()
     return row[0] if row else "企业成员"
 
@@ -181,9 +198,21 @@ class SuiteReleaseStore:
             try:
                 suites.append(self.active(principal, key))
             except KeyError:
-                suites.append({"title": "文件检查", "version": 0, "origin": "enterprise", "selection_mode": "candidate_only",
-                               "suite_key": key, "revision": 0, "current_revision_id": None, "verification_status": "unverified",
-                               "force_unverified": False, "validation": empty_validation(), "history": []})
+                suites.append(
+                    {
+                        "title": "文件检查",
+                        "version": 0,
+                        "origin": "enterprise",
+                        "selection_mode": "candidate_only",
+                        "suite_key": key,
+                        "revision": 0,
+                        "current_revision_id": None,
+                        "verification_status": "unverified",
+                        "force_unverified": False,
+                        "validation": empty_validation(),
+                        "history": [],
+                    }
+                )
         return {"suites": suites}
 
     def active(self, principal, suite_key: str) -> dict:
@@ -195,11 +224,17 @@ class SuiteReleaseStore:
             resolved = self.suites.resolve_suite(selection["revision_id"], principal.tenant_id, conn=conn)
             rules = json.loads(resolved.files["rules.json"])
         return {
-            "title": rules.get("title") or rules.get("type") or "文件检查", "version": selection["version"],
-            "origin": selection["origin"], "selection_mode": selection["selection_mode"],
-            "suite_key": suite_key, "revision": selection["head_revision"], "current_revision_id": selection["revision_id"],
-            "verification_status": selection["verification_status"], "force_unverified": selection["force_unverified"],
-            "validation": selection["validation"], "history": history,
+            "title": rules.get("title") or rules.get("type") or "文件检查",
+            "version": selection["version"],
+            "origin": selection["origin"],
+            "selection_mode": selection["selection_mode"],
+            "suite_key": suite_key,
+            "revision": selection["head_revision"],
+            "current_revision_id": selection["revision_id"],
+            "verification_status": selection["verification_status"],
+            "force_unverified": selection["force_unverified"],
+            "validation": selection["validation"],
+            "history": history,
         }
 
     def publish(self, principal, suite_key: str, revision_id: str, expected_revision: int, operation_id: str, force_unverified: bool = False) -> dict:
@@ -267,14 +302,20 @@ class SuiteReleaseStore:
             if suite_key is not None and base["suite_key"] != _key(suite_key):
                 raise ValueError("suite_key_mismatch")
             revision = self.suites.create_revision(
-                tenant_id=principal.tenant_id, suite_key=base["suite_key"], files={path: value.encode() for path, value in files.items()},
-                created_by=principal.user_id, base_revision_id=str(base["id"]), related_suite_keys=tuple(base["related_suite_keys"]), conn=conn,
+                tenant_id=principal.tenant_id,
+                suite_key=base["suite_key"],
+                files={path: value.encode() for path, value in files.items()},
+                created_by=principal.user_id,
+                base_revision_id=str(base["id"]),
+                related_suite_keys=tuple(base["related_suite_keys"]),
+                conn=conn,
             )
         return self.detail(principal, revision.id)
 
     def detail(self, principal, revision_id: str) -> dict:
         with self._conn() as conn, conn.transaction():
             _member(conn, principal)
+            _read_lock(conn, principal.tenant_id)
             row = _revision(conn, revision_id, principal.tenant_id)
             resolved = self.suites.resolve_suite(revision_id, principal.tenant_id, conn=conn)
             validation = _validation(conn, principal.tenant_id, row)
@@ -285,15 +326,23 @@ class SuiteReleaseStore:
             title = rules.get("title") or rules.get("type") or "文件检查"
             creator_name = _display_name(conn, row["created_by"], principal.tenant_id) if row["tenant_id"] else "PPAP"
         return {
-            "title": title, "version": row["revision_number"], "created_by_name": creator_name,
-            "id": str(row["id"]), "tenant_id": str(row["tenant_id"]) if row["tenant_id"] else None,
-            "suite_key": row["suite_key"], "base_revision_id": str(row["base_revision_id"]) if row["base_revision_id"] else None,
-            "created_by": str(row["created_by"]) if row["created_by"] else None, "created_at": row["created_at"].isoformat(),
-            "resolved_digest": row["resolved_digest"], "related_suite_keys": list(row["related_suite_keys"]),
-            "files": {path: body.decode("utf-8") for path, body in resolved.files.items()}, "changed_paths": sorted(changed),
-            "diff": [{"path": path, "before": original.files.get(path, b"").decode("utf-8") if original else "",
-                      "after": resolved.files[path].decode("utf-8")} for path in sorted(changed)],
-            "validation": validation, "round_count": len(rounds), "rounds": rounds,
+            "title": title,
+            "version": row["revision_number"],
+            "created_by_name": creator_name,
+            "id": str(row["id"]),
+            "tenant_id": str(row["tenant_id"]) if row["tenant_id"] else None,
+            "suite_key": row["suite_key"],
+            "base_revision_id": str(row["base_revision_id"]) if row["base_revision_id"] else None,
+            "created_by": str(row["created_by"]) if row["created_by"] else None,
+            "created_at": row["created_at"].isoformat(),
+            "resolved_digest": row["resolved_digest"],
+            "related_suite_keys": list(row["related_suite_keys"]),
+            "files": {path: body.decode("utf-8") for path, body in resolved.files.items()},
+            "changed_paths": sorted(changed),
+            "diff": [{"path": path, "before": original.files.get(path, b"").decode("utf-8") if original else "", "after": resolved.files[path].decode("utf-8")} for path in sorted(changed)],
+            "validation": validation,
+            "round_count": len(rounds),
+            "rounds": rounds,
         }
 
     @staticmethod
@@ -334,12 +383,14 @@ class SuiteReleaseStore:
         lookup_tenant = tenant_id or "00000000-0000-0000-0000-000000000000"
         with conn.cursor(row_factory=dict_row) as cur:
             revision = _revision(conn, revision_id, lookup_tenant)
+            if tenant_id is None and revision["tenant_id"] is not None:
+                raise ValueError("official_validation_requires_official_suite")
             resolved = self.suites.resolve_suite(revision_id, lookup_tenant, conn=conn)
             if not proof.library_revision or proof.suite_revision_id != str(revision["id"]) or proof.suite_digest != revision["resolved_digest"]:
                 raise ValueError("suite_validation_identity_mismatch")
             if proof.program_digest != checker_digest({path: body for path, body in resolved.files.items() if path in {"checker.py", "resources.py"}}):
                 raise ValueError("suite_validation_identity_mismatch")
-            related_digests = _related_digests(conn, lookup_tenant, revision)
+            related_digests = _related_digests(conn, tenant_id, revision)
             if dict(proof.related_suite_digests) != related_digests or "missing" in related_digests.values():
                 raise ValueError("suite_validation_inputs_changed")
             cur.execute("SELECT revision FROM product.suite_validations WHERE tenant_id IS NOT DISTINCT FROM %s::uuid AND revision_id = %s", (tenant_id, revision_id))
@@ -347,15 +398,17 @@ class SuiteReleaseStore:
             if (previous["revision"] if previous else 0) != expected_revision:
                 raise ValueError("suite_validation_conflict")
             expected_clauses = {item["id"] for item in json.loads(resolved.files["rules.json"])["rules"]}
-            coverage_complete = bool(expected_clauses) and all(
-                len(case.clauses) == len(expected_clauses) and {item.clause_id for item in case.clauses} == expected_clauses for case in proof.cases
-            )
+            coverage_complete = bool(expected_clauses) and all(len(case.clauses) == len(expected_clauses) and {item.clause_id for item in case.clauses} == expected_clauses for case in proof.cases)
             reasons = list(proof.reasons)
             if not coverage_complete:
                 reasons.append("suite_clause_coverage_incomplete")
             stored = {
-                "proof_digest": proof.proof_digest, "total_samples": proof.total_samples, "passed_samples": proof.passed_samples,
-                "new_errors": proof.new_errors, "library_revision": proof.library_revision, "reasons": reasons,
+                "proof_digest": proof.proof_digest,
+                "total_samples": proof.total_samples,
+                "passed_samples": proof.passed_samples,
+                "new_errors": proof.new_errors,
+                "library_revision": proof.library_revision,
+                "reasons": reasons,
                 "report": proof.model_dump(mode="json"),
             }
             cur.execute(
@@ -365,7 +418,15 @@ class SuiteReleaseStore:
                      status = EXCLUDED.status, revision = EXCLUDED.revision, suite_digest = EXCLUDED.suite_digest,
                      related_suite_digests = EXCLUDED.related_suite_digests, proof = EXCLUDED.proof,
                      recorded_by = EXCLUDED.recorded_by, recorded_at = now()""",
-                (tenant_id, revision_id, "verified" if proof.verified and coverage_complete else "unverified", expected_revision + 1,
-                 revision["resolved_digest"], Jsonb(related_digests), Jsonb(stored), user_id),
+                (
+                    tenant_id,
+                    revision_id,
+                    "verified" if proof.verified and coverage_complete else "unverified",
+                    expected_revision + 1,
+                    revision["resolved_digest"],
+                    Jsonb(related_digests),
+                    Jsonb(stored),
+                    user_id,
+                ),
             )
-            return _validation(conn, lookup_tenant, revision)
+            return _validation(conn, tenant_id, revision)
