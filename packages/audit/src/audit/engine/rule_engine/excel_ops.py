@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import io
 import logging
 import os
 import posixpath
@@ -180,7 +181,8 @@ class DefaultExcelOps:
         source_path: str | None = None,
     ) -> list[tuple[int, int, bool]]:
         xlsx_path = str(source_path or "")
-        if not xlsx_path.lower().endswith((".xlsx", ".xlsm")) or not os.path.exists(xlsx_path):
+        normalized = getattr(ws.parent, "_ppap_xlsx_content", None)
+        if normalized is None and (not xlsx_path.lower().endswith((".xlsx", ".xlsm")) or not os.path.exists(xlsx_path)):
             return []
         cache_key = f"{xlsx_path}::{ws.title}"
         cached = self._checkbox_controls_cache.get(cache_key)
@@ -191,7 +193,7 @@ class DefaultExcelOps:
         ns_rel = {"rel": "http://schemas.openxmlformats.org/package/2006/relationships"}
 
         try:
-            with zipfile.ZipFile(xlsx_path, "r") as zf:
+            with zipfile.ZipFile(io.BytesIO(normalized) if normalized is not None else xlsx_path, "r") as zf:
                 sheet_xml_path = self._resolve_sheet_xml_path(zf, ws.title)
                 if not sheet_xml_path:
                     self._checkbox_controls_cache[cache_key] = []

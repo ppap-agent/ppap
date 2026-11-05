@@ -104,6 +104,8 @@ def _iter_doc01_main_sections(ctx: RuleContext) -> Iterator[Any]:
 class DimensionMeasurementExcelAgent(ExcelAgent):
     """尺寸检验报告 Excel 文件专用审核代理。"""
 
+    _original_dimension_cells: dict[tuple[str, str], list[tuple[tuple[Any, ...], int, str]]]
+
     DOC_TYPE = PpapDocumentType.DIMENSION_MEASUREMENT_REPORT
 
     def _original_pdf_measurements(self, row: Row, observation: Doc01RowObservation) -> tuple[tuple[Any, ...], str]:

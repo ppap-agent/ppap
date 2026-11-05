@@ -25,7 +25,11 @@ from worker import process_claimed
 
 
 def _worker_env():
-    keep = {key: value for key, value in os.environ.items() if key in {"PGPORT", "CI"} or key.startswith(("LLM_", "OPENAI_", "MODEL_NAME", "OCR_", "PADDLE_"))}
+    keep = {
+        key: value
+        for key, value in os.environ.items()
+        if key in {"PGPORT", "CI", "PATH", "LEGACY_DOC_CONVERTER_EXECUTABLE", "LEGACY_DOC_SANDBOX_EXECUTABLE"} or key.startswith(("LLM_", "OPENAI_", "MODEL_NAME", "OCR_", "PADDLE_"))
+    }
     keep["PPAP_PROFILE"] = "isolated-dev"
     return patch.dict(os.environ, keep, clear=True)
 
@@ -33,9 +37,11 @@ def _worker_env():
 def test_worker_environment_preserves_database_isolation(monkeypatch):
     monkeypatch.setenv("PGPORT", "32123")
     monkeypatch.setenv("CI", "true")
+    monkeypatch.setenv("PATH", "/tmp/office-converter:/usr/bin")
     with _worker_env():
         assert os.environ.get("PGPORT") == "32123"
         assert os.environ.get("CI") == "true"
+        assert os.environ.get("PATH") == "/tmp/office-converter:/usr/bin"
 
 
 def _upload(client: TestClient, name: str, body: bytes) -> dict:

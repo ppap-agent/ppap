@@ -62,6 +62,8 @@ def configure_ocr(monkeypatch):
 
 
 def observation(request, values):
+    if request["response_schema"]["name"] == "located_field_facts":
+        return {field: values.get(field) for field in request["response_schema"]["schema"]["properties"]}
     return {
         field: [
             {

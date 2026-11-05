@@ -56,14 +56,14 @@ class PlantCapacityEvaluationAgent(ExcelAgent):
         if metadata.get("source_pdf_url"):
             # A PDF stores the displayed value, including its decimal precision.
             text = reported.rstrip("%")
-            tolerance = Decimal("0.5").scaleb(Decimal(text).as_tuple().exponent)
+            tolerance = Decimal("0.5").scaleb(int(Decimal(text).as_tuple().exponent))
             if reported.endswith("%"):
                 tolerance /= 100
         return abs(self._number(reported, percent=True) - calculated) <= tolerance
 
     def _display_interval(self, value: str) -> tuple[Decimal, Decimal]:
         number = self._number(value, percent=True)
-        half_unit = Decimal("0.5").scaleb(Decimal(value.rstrip("%")).as_tuple().exponent)
+        half_unit = Decimal("0.5").scaleb(int(Decimal(value.rstrip("%")).as_tuple().exponent))
         if value.endswith("%"):
             half_unit /= 100
         return max(Decimal(0), number - half_unit), number + half_unit
@@ -276,15 +276,17 @@ class PlantCapacityEvaluationAgent(ExcelAgent):
 
                 if all(
                     self._is_value_numeric(v, percent=index == 6)
-                    for index, v in enumerate([
-                        monthly_capacity_value,
-                        jph_value,
-                        existing_line_qty_value,
-                        shifts_per_day_value,
-                        net_util_time_per_shift_value,
-                        standard_work_days_per_month_value,
-                        cumulative_yield_value,
-                    ])
+                    for index, v in enumerate(
+                        [
+                            monthly_capacity_value,
+                            jph_value,
+                            existing_line_qty_value,
+                            shifts_per_day_value,
+                            net_util_time_per_shift_value,
+                            standard_work_days_per_month_value,
+                            cumulative_yield_value,
+                        ]
+                    )
                 ):
                     monthly_capacity_num = self._number(monthly_capacity_value)
                     jph_num = self._number(jph_value)

@@ -38,13 +38,19 @@ PSW_RULE_LABELS = {
 PSW_RULE_FIELDS: dict[int, dict[str, str]] = {
     3: {
         "psw_stamp_present": "保证书实际盖章",
-        "psw_stamp_ending_text": "查看实际印章全部区域，按外圈公司名、内部及底部用途文字的阅读顺序，只返回真正末端2至6个原字；不能只取外圈公司名。末端或顺序不明为null；无章为空字符串。",
+        "psw_stamp_ending_text": (
+            "查看实际印章全部区域，按外圈公司名、内部及底部用途文字的阅读顺序，只返回末端2至6个中文汉字；"
+            "注册编号中的数字、英文字母和标点不算中文字。若还有质量部、专用章等用途文字，必须取用途文字末端，不能只取外圈公司名。"
+            "末端或顺序不明为null；无章为空字符串。"
+        ),
         "psw_stamp_ends_with_company": "保证书实际印章完整文字的最后两字为公司，不能只取外圈公司名",
-        "authorization_table_present": "存在部门章授权声明表格",
-        "authorization_company_stamp_present": "部门章授权声明中实际盖有公司章；部门章/专用章不是公司章，空白公司章位置或标签不算，无法确认返回null。",
+        "authorization_table_present": (
+            "存在实际的部门章授权声明表格或授权正文（说明授权主体、部门和用章授权）；交付物清单、目录、附件列表中仅提到该文件名不算授权表。页面只有清单或保证书而没有实际授权表时为false。"
+        ),
+        "authorization_company_stamp_present": "实际部门章授权声明中盖有公司章；页面没有实际授权声明时为false。部门章/专用章不是公司章，空白公司章位置或标签不算，无法确认返回null。",
     },
     5: {
-        "authorized_signature_present": "经授权的供方代表签字字段有实际签字内容",
+        "authorized_signature_present": "仅检查经授权的供方代表签字行是否有实际签字内容；代表印刷体姓名/Print Name、职务及客户签字均不能代替该签字行。清晰可见的空白签字行必须为false。",
         "psw_stamp_present": "保证书实际盖章",
     },
     7: {"submission_any_checked": "提交原因至少一个选项实际被选中", "submission_other_present": "提交原因其他说明有内容"},
@@ -172,7 +178,9 @@ def normalize_psw_stamp_facts(observation: Mapping[str, object]) -> dict[str, ob
     facts = dict(observation)
     ending_text = facts.get("psw_stamp_ending_text")
     if not isinstance(ending_text, str):
-        if "psw_stamp_ending_text" in facts:
+        if facts.get("psw_stamp_present") is False:
+            facts["psw_stamp_ends_with_company"] = False
+        elif "psw_stamp_ending_text" in facts:
             facts["psw_stamp_ends_with_company"] = None
         return facts
     text = re.sub(r"[\s，。；、,.;:：()（）]", "", ending_text)

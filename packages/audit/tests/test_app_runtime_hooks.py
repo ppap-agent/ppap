@@ -83,6 +83,9 @@ def test_app_runtime_reads_psw_facts_directly_through_ocr_configuration(tmp_path
         calls.append(request)
         output = {}
         for field, spec in request["response_schema"]["schema"]["properties"].items():
+            if "items" not in spec:
+                output[field] = True if field == "psw_stamp_present" and stamp_detected else None
+                continue
             output[field] = [
                 {
                     "scope": scope,
@@ -111,10 +114,13 @@ def test_app_runtime_reads_psw_facts_directly_through_ocr_configuration(tmp_path
     assert len(results) == 10
     assert results[2].status == results[4].status == results[7].status == "UNABLE"
     assert results[4].evidence.used == ("visual" if stamp_detected else "none")
-    assert len(calls) == 2
+    assert len(calls) == 4
     fact_sets = [set(call["response_schema"]["schema"]["properties"]) for call in calls]
-    assert fact_sets[0] == {"psw_stamp_present", "psw_stamp_ending_text", "authorized_signature_present", "disposition_visible", "approved_checked", "conditional_checked", "rejected_checked"}
-    assert fact_sets[1] == {"submission_any_checked", "submission_other_present"}
+    assert fact_sets[0] == {"psw_stamp_present", "psw_stamp_ending_text"}
+    assert {"authorized_signature_present"} in fact_sets
+    assert {"disposition_visible", "approved_checked", "conditional_checked", "rejected_checked"} in fact_sets
+    assert len({tuple(sorted(fields)) for fields in fact_sets}) == len(fact_sets)
+    assert {"submission_any_checked", "submission_other_present"} in fact_sets
     assert source.read_bytes() == original_bytes
 
 

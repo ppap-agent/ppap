@@ -7,7 +7,7 @@ import re
 from collections import Counter
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Literal, Optional, Tuple
 
 from audit.checkers.v3.control_plan_shared import (
     CP_FIELD_ALIASES as _CP_FIELD_ALIASES,
@@ -126,8 +126,8 @@ class ControlPlanAgent(ExcelAgent):
     """Control Plan 专用审核代理。"""
 
     DOC_TYPE = PpapDocumentType.CONTROL_PLAN
-    _xls_stage_cache: dict[object, Any]
-    _xls_stage_evidence: AuditEvidence | None = None
+    _stage_graphics_cache: dict[object, Any]
+    _stage_graphics_evidence: AuditEvidence | None = None
     EXPECTED_RULE_CATEGORIES = (
         "文件类型勾选审核",
         "过程流程图与控制计划列项及一致性审核",
@@ -142,32 +142,50 @@ class ControlPlanAgent(ExcelAgent):
         "措施一致性审核（特殊特性清单与CP）",
     )
 
-    def _read_original_xls_stage(self, sheet_name: str) -> Tuple[str, str]:
-        """Read only the original header graphics that the XLS cell loader drops."""
-        from documents.excel.visual import render_xls_header
+    def _read_stage_graphics(self, sheet: Any, stage_cells) -> Tuple[str, str] | None:
+        """Read the text-located field from the canonical XLSX, regardless of source format."""
+        from documents.excel.visual import has_region_graphics, render_xlsx_field
         from documents.ocr.env import ocr_model_name, ocr_openai_api_key, ocr_openai_base_url, ocr_policy_identity
+        from openpyxl.utils.cell import get_column_letter
         from PIL import Image
 
         from audit.engine.app_runtime import _load_file_bytes
         from audit.engine.checkers.ocr_visual_facts import OcrImage, observe_ocr_images
 
-        self._xls_stage_evidence = None
+        self._stage_graphics_evidence = None
+        content, _ = _load_file_bytes(str(self.audit_file.file_url))
+        normalized = getattr(sheet.parent, "_ppap_xlsx_content", content)
+        if not normalized.startswith(b"PK"):
+            return None
+        source_suffix = Path(str(self.audit_file.file_url)).suffix.lower()
+        source_format: Literal["xls", "xlsx", "xlsm"] = "xls" if source_suffix == ".xls" else "xlsm" if source_suffix == ".xlsm" else "xlsx"
+        ranges = []
+        for row, column, _ in stage_cells:
+            merged = self._get_detailed_merge_info(sheet, row, column)
+            ranges.append((merged.min_col, merged.min_row, merged.max_col, merged.max_row) if merged else (column, row, column, row))
+        left = max(1, min(item[0] for item in ranges) - 1)
+        top = min(item[1] for item in ranges)
+        right = max(item[2] for item in ranges)
+        bottom = max(item[3] for item in ranges)
+        cell_range = f"{get_column_letter(left)}{top}:{get_column_letter(right)}{bottom}"
+        sheet_name = sheet.title
+        if not has_region_graphics(normalized, sheet_name=sheet_name, cell_range=cell_range):
+            return None
         try:
             configured = bool(ocr_model_name() and ocr_openai_api_key() and ocr_openai_base_url())
         except ValueError:
             configured = False
         if not configured:
-            return "UNABLE", "原XLS阶段图形需要已配置的OCR，不能用阶段文字确认勾选。"
-        content, _ = _load_file_bytes(str(self.audit_file.file_url))
+            return "UNABLE", "阶段区域中的图形状态需要已配置的OCR，不能用选项文字确认勾选。"
         digest = hashlib.sha256(content).hexdigest()
         metadata = self.audit_file.file_metadata or {}
         expected = metadata.get("source_sha256") or metadata.get("sha256")
-        cache: dict[object, Any] | None = getattr(self, "_xls_stage_cache", None)
+        cache: dict[object, Any] | None = getattr(self, "_stage_graphics_cache", None)
         if cache is None:
-            cache = self._xls_stage_cache = {"source_sha256": digest}
+            cache = self._stage_graphics_cache = {"source_sha256": digest}
         if expected and expected != digest or cache["source_sha256"] != digest:
-            raise ValueError("Frozen XLS identity changed")
-        key = (sheet_name, _HEADER_SCAN_ROWS, ocr_policy_identity())
+            raise ValueError("Frozen Excel identity changed")
+        key = (sheet_name, cell_range, hashlib.sha256(normalized).hexdigest(), ocr_policy_identity())
         if key not in cache:
             sources: list[EvidenceSource] = []
 
@@ -175,19 +193,19 @@ class ControlPlanAgent(ExcelAgent):
                 sources.append(EvidenceSource(kind="visual", locator=json.dumps(locator, ensure_ascii=False, sort_keys=True), excerpt=excerpt))
 
             try:
-                image_bytes = render_xls_header(content, sheet_name=sheet_name, header_rows=_HEADER_SCAN_ROWS)
+                image_bytes = render_xlsx_field(normalized, sheet_name=sheet_name, cell_range=cell_range, keywords=("样件", "样品", "试生产", "生产", "SOP", "Prototype", "Production", "Pre-launch"))
                 with Image.open(BytesIO(image_bytes)) as image:
                     width, height = image.size
                 image_ref = OcrImage(
                     image_bytes,
                     {
-                        "kind": "xls_header",
+                        "kind": "xlsx_field",
+                        "located_region": True,
                         "source_sha256": digest,
                         "file_version_id": str(metadata.get("file_version_id") or self.audit_file.audit_id),
                         "sheet": sheet_name,
-                        "row_start": 1,
-                        "row_end": _HEADER_SCAN_ROWS,
-                        "scope": f"xls:{sheet_name}:header",
+                        "cell_range": cell_range,
+                        "scope": f"xlsx:{sheet_name}:{cell_range}",
                         "context": True,
                         "bbox": [0, 0, width, height],
                     },
@@ -209,21 +227,21 @@ class ControlPlanAgent(ExcelAgent):
                 cache[key] = exc
         observation = cache[key]
         if isinstance(observation, Exception):
-            self._xls_stage_evidence = AuditEvidence(
+            self._stage_graphics_evidence = AuditEvidence(
                 required="visual",
                 used="none",
-                source_format="xls",
+                source_format=source_format,
                 prepared_format="png",
                 diagnostics=(EvidenceDiagnostic(code="control_plan.stage_read_error", stage="visual", severity="error", message="原件阶段图形读取失败。"),),
             )
-            raise ValueError(f"旧XLS原件图形读取失败（{type(observation).__name__}）。") from None
+            raise ValueError(f"阶段字段区域读取失败（{getattr(observation, 'code', type(observation).__name__)}）。") from None
         selected, observed_sources = observation
-        self._xls_stage_evidence = AuditEvidence(
+        self._stage_graphics_evidence = AuditEvidence(
             required="visual",
             used="visual" if observed_sources else "none",
-            source_format="xls",
+            source_format=source_format,
             prepared_format="png",
-            conversion_strategies=("local_calc_header_render", "ocr_llm"),
+            conversion_strategies=("xlsx_text_located_region", "ocr_llm"),
             sources=observed_sources,
             diagnostics=() if selected is not None else (EvidenceDiagnostic(code="control_plan.stage_unconfirmed", stage="visual", severity="warning", message="原件阶段勾选尚不能确认。"),),
         )
@@ -232,8 +250,8 @@ class ControlPlanAgent(ExcelAgent):
         return ("PASS", "原件生产阶段勾选已确认。") if selected is True else ("NG", "原件生产/SOP阶段未勾选。")
 
     def _finalize_audit_result(self, result: AuditResultItem, *, rule_no: int, phase: Any, ctx: RuleContext | None = None) -> AuditResultItem:
-        if rule_no == 1 and getattr(self, "_xls_stage_evidence", None) is not None:
-            result = result.model_copy(update={"evidence": self._xls_stage_evidence})
+        if rule_no == 1 and getattr(self, "_stage_graphics_evidence", None) is not None:
+            result = result.model_copy(update={"evidence": self._stage_graphics_evidence})
         return super()._finalize_audit_result(result, rule_no=rule_no, phase=phase, ctx=ctx)
 
     @staticmethod
@@ -1908,35 +1926,6 @@ class ControlPlanAgent(ExcelAgent):
                 selected.append(selected_stage)
         return selected
 
-    def _is_legacy_xls_stage_header_cell(self, sheet: Any, row: int, col: int, text: str) -> bool:
-        """Detect legacy .xls templates whose production checkbox is stored as a shape.
-
-        The xlrd -> openpyxl conversion path preserves cell text and merges but drops
-        form controls / drawings. In the old CETUS-style template the stage header is a
-        single merged cell like "样件 试生产 批量生产", while the checked state lives in a
-        lost shape. Restrict this fallback to the narrow legacy pattern so normal
-        xlsx-based templates still require explicit marks.
-        """
-
-        file_url = str(getattr(self.audit_file, "file_url", "") or "").lower()
-        if not file_url.endswith(".xls") or file_url.endswith(".xlsx"):
-            return False
-
-        stages = {stage for _, _, stage in self._extract_stage_occurrences(text)}
-        if stages != {"prototype", "pre_launch", "production"}:
-            return False
-
-        merged_ranges = getattr(getattr(sheet, "merged_cells", None), "ranges", [])
-        for merged_range in merged_ranges:
-            if (
-                merged_range.min_row <= row <= merged_range.max_row
-                and merged_range.min_col <= col <= merged_range.max_col
-                and merged_range.min_row == merged_range.max_row
-                and (merged_range.max_col - merged_range.min_col + 1) >= 4
-            ):
-                return True
-        return False
-
     @rule("文件类型勾选审核")
     def rule_1(self, ctx: RuleContext) -> Tuple[str, str]:
         """规则 1: 文件适用阶段检查
@@ -2009,9 +1998,10 @@ class ControlPlanAgent(ExcelAgent):
                     return "NG", "勾选了非生产/SOP阶段"
 
                 # 5) 有 stage 关键词但无 mark → 未勾选任何阶段
-                for sr, sc, scl in stage_cells:
-                    if self._is_legacy_xls_stage_header_cell(sheet, sr, sc, scl):
-                        return self._read_original_xls_stage(sheet.title)
+                if stage_cells:
+                    graphic_result = self._read_stage_graphics(sheet, stage_cells)
+                    if graphic_result is not None:
+                        return graphic_result
                 metadata = getattr(self.audit_file, "file_metadata", None)
                 source_url = str(metadata.get("source_pdf_url", "") or "") if isinstance(metadata, dict) else ""
                 file_url = str(getattr(self.audit_file, "file_url", "") or "")

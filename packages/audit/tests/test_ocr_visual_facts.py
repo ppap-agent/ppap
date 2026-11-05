@@ -356,3 +356,18 @@ def test_valid_unreadable_page_retains_unknown_after_another_page_is_known(monke
     monkeypatch.setattr("documents.ocr.client.call_llm_async", read)
     assert observe_ocr_images(frames, {"checked": "实际勾选"}, Mock()) == {"checked": None}
     assert calls == ["pdf:2", "pdf:5"]
+
+
+@pytest.mark.parametrize("value", [True, False, None])
+def test_located_field_uses_application_coordinates_and_preserves_unknown(monkeypatch, value):
+    frames = images()
+    frames[0].locator["located_region"] = True
+    calls = install(monkeypatch, {"checked": value})
+    witness = Mock()
+    assert observe_ocr_images(frames, {"checked": "此区域实际勾选"}, witness) == {"checked": value}
+    assert calls[0][2]["response_schema"]["schema"]["properties"]["checked"] == {"type": ["boolean", "null"]}
+    if value is None:
+        witness.assert_not_called()
+    else:
+        assert witness.call_args.args[0]["bbox"] == [10, 20, 110, 220]
+        assert witness.call_args.args[0]["observed_value"] is value

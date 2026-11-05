@@ -58,10 +58,21 @@ def test_pdf_display_precision_does_not_hide_inconsistent_capacity_inputs(tmp_pa
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "table_产能测试及评估"
-    sheet.append([
-        "线体/工序类别", "参与测试线体数量", "单线体/工序总产出JPH", "现有线体数", "班次/天", "每班净利用时间（h）",
-        "每月标准工作天数", "累积良率", "线体/工序预估月度产能", "产出数量", "净利用时间（h）",
-    ])
+    sheet.append(
+        [
+            "线体/工序类别",
+            "参与测试线体数量",
+            "单线体/工序总产出JPH",
+            "现有线体数",
+            "班次/天",
+            "每班净利用时间（h）",
+            "每月标准工作天数",
+            "累积良率",
+            "线体/工序预估月度产能",
+            "产出数量",
+            "净利用时间（h）",
+        ]
+    )
     sheet.append(["SMT", "1", jph, "1", "1", "9.5", "26", "90.6%", monthly, "450", "3.8"])
     result = check_workbook(tmp_path, workbook, V2CapacityAgent, "v2", 6, {"source_pdf_url": "original.pdf"})
     assert result.status == expected

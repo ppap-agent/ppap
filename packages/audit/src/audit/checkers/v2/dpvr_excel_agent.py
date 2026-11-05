@@ -110,6 +110,9 @@ _TEST_TYPE_NORMALIZATION = {
 class DpvrExcelAgent(ExcelAgent):
     """零部件设计验证计划和报告(DVP&R)审核代理"""
 
+    _dpvr_native_fields: dict[tuple[str, ...], list[str]]
+    _dpvr_seal_cache: dict[Any, Any]
+
     DOC_TYPE = PpapDocumentType.DPVR
 
     def _normalize_text(self, value: Any) -> tuple[str, str]:
@@ -302,7 +305,7 @@ class DpvrExcelAgent(ExcelAgent):
                     for anchor in page.search_for(label):
                         # Bilingual labels and their value can use different PDF
                         # text blocks. Vertical overlap binds the original row.
-                        groups = {}
+                        groups: dict[tuple[int, int], list[Any]] = {}
                         for word in words:
                             if word[0] < anchor.x1 + 2 or min(word[3], anchor.y1) <= max(word[1], anchor.y0):
                                 continue
@@ -463,11 +466,13 @@ class DpvrExcelAgent(ExcelAgent):
             sources = []
             facts = read_original_pdf_visual_facts(
                 original,
-                {"seal": (
-                    "原件中是否存在实际印章。本条仅判断是否存在，不要求完整圆形、完整章名、日期或鉴真。"
-                    "被页面裁切后仍可见的印章弧线及沿弧排列的文字，足以确认印章存在。"
-                    "单独的红色线条、公司标识或印章字段文字不能代替实际印章。"
-                )},
+                {
+                    "seal": (
+                        "原件中是否存在实际印章。本条仅判断是否存在，不要求完整圆形、完整章名、日期或鉴真。"
+                        "被页面裁切后仍可见的印章弧线及沿弧排列的文字，足以确认印章存在。"
+                        "单独的红色线条、公司标识或印章字段文字不能代替实际印章。"
+                    )
+                },
                 lambda locator, excerpt, **kwargs: sources.append(locator),
                 operation="dpvr_seal",
                 cache=cache,

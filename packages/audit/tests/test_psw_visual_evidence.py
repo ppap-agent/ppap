@@ -156,3 +156,7 @@ def test_conflicting_stamp_presence_and_complete_text_cannot_decide_a_business_r
 
 def test_unknown_complete_stamp_text_cannot_be_replaced_by_the_outer_company_name():
     assert evaluate_psw_observation(3, {"psw_stamp_present": True, "psw_stamp_ending_text": None, "psw_stamp_ends_with_company": True, "authorization_table_present": False}).status == "UNABLE"
+
+
+def test_confirmed_missing_stamp_does_not_need_a_transcription_of_nonexistent_text():
+    assert evaluate_psw_observation(3, {"psw_stamp_present": False, "psw_stamp_ending_text": None, "authorization_table_present": False}).status == "NG"

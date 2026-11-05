@@ -210,9 +210,29 @@ def _pdf_images(audit, pages: Sequence[int], digest: str, fields=None):
             # Render in the original, unrotated PDF coordinate frame. Only this
             # private in-memory document is changed; source bytes stay frozen.
             page.set_rotation(0)
-            context[f"pdf:{number}"] = page.get_text()
-            regions = [(page.rect, True)]
             requested = set(fields or ())
+            primary = page.rect
+            if requested and requested.issubset({"authorized_signature_present"}):
+                anchors = page.search_for("经授权的供方代表签字")
+                if anchors:
+                    anchor = anchors[0]
+                    dates = [box for box in page.search_for("日期") if box.x0 > anchor.x1 and abs(box.y0 - anchor.y0) < anchor.height * 2]
+                    right = min((box.x0 for box in dates), default=page.rect.x1)
+                    primary = fitz.Rect(max(0, anchor.x0 - 4), max(0, anchor.y0 - anchor.height), right, min(page.rect.y1, anchor.y1 + anchor.height * 0.6))
+            elif requested and requested.issubset(_DISPOSITION_FIELDS):
+                anchors = page.search_for("认可情况")
+                if anchors:
+                    anchor = anchors[0]
+                    primary = fitz.Rect(max(0, anchor.x0 - 8), max(0, anchor.y0 - anchor.height * 2), page.rect.x1, min(page.rect.y1, anchor.y1 + anchor.height * 2))
+            elif requested and requested.issubset({"psw_stamp_present", "psw_stamp_ending_text"}):
+                anchors = page.search_for("公司名称")
+                if anchors:
+                    anchor = anchors[-1]
+                    following = [box.y0 for label in ("认可情况", "仅供理想使用") for box in page.search_for(label) if box.y0 > anchor.y1]
+                    bottom = min(following, default=page.rect.y1) - 2
+                    primary = fitz.Rect(max(0, anchor.x0 - 8), max(0, anchor.y0 - 8), page.rect.x1, bottom)
+            context[f"pdf:{number}"] = page.get_text() if primary == page.rect else page.get_textbox(primary)
+            regions = [(primary, True)]
             psw_fields = {"psw_stamp_present", "psw_stamp_ending_text", "authorized_signature_present"}
             labels = {}
             if requested.intersection(psw_fields):
@@ -241,7 +261,9 @@ def _pdf_images(audit, pages: Sequence[int], digest: str, fields=None):
                     continue
                 # Local source-composite views only improve requested regions.
                 # Shape chooses a magnification crop, never a seal verdict.
-                if labels and not any(bounds.intersects(region) for region in located_regions):
+                if primary != page.rect and not bounds.intersects(primary):
+                    continue
+                if labels and primary == page.rect and not any(bounds.intersects(region) for region in located_regions):
                     continue
                 if requested.intersection(psw_fields) and not 0.8 <= bounds.width / bounds.height <= 1.25:
                     continue
@@ -259,14 +281,28 @@ def _pdf_images(audit, pages: Sequence[int], digest: str, fields=None):
                 regions.append((crop, False))
             # Every planned page keeps its full context; local views share a
             # finite total pixel allocation rather than multiplying it.
-            page_regions = regions[:7]
+            page_regions = [(primary, True)] if primary != page.rect else regions[:7]
+            if primary != page.rect and requested.issubset(_DISPOSITION_FIELDS):
+                # Keep each option and its preceding checkbox together. A long
+                # row makes the small marks unreadable after image scaling.
+                conditional = page.search_for("条件批准")
+                option_regions = []
+                for label in ("批准", "条件批准", "拒绝"):
+                    matches = [box for box in page.search_for(label) if box.intersects(primary)]
+                    if label == "批准":
+                        matches = [box for box in matches if not any(box.intersects(other) for other in conditional)]
+                    for box in matches:
+                        option_regions.append((fitz.Rect(max(primary.x0, box.x0 - box.height * 4), primary.y0, min(primary.x1, box.x1 + box.height), primary.y1), True))
+                if len(option_regions) == 3:
+                    page_regions = option_regions
             pixel_budget = min(12_000_000, 32_000_000 / len(pages) / len(page_regions))
             for bounds, complete in page_regions:
                 area = bounds.width * bounds.height
                 if not math.isfinite(area) or area <= 0:
                     raise VisualFactsUnavailable("原页区域尺寸无效。")
                 local_scale = 8 if requested and requested.issubset(_SEAL_FIELDS) else 4
-                scale = min(1.5 if complete else local_scale, math.sqrt(pixel_budget / area), 4096 / max(bounds.width, bounds.height))
+                base_scale = 1.5 if complete and primary == page.rect else local_scale
+                scale = min(base_scale, math.sqrt(pixel_budget / area), 4096 / max(bounds.width, bounds.height))
                 pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=bounds, alpha=False)
                 images.append(
                     OcrImage(
@@ -280,6 +316,7 @@ def _pdf_images(audit, pages: Sequence[int], digest: str, fields=None):
                             "file_version_id": audit.audit_id,
                             "scope": f"pdf:{number}",
                             "context": complete,
+                            "located_region": True,
                         },
                         pixmap.width,
                         pixmap.height,
@@ -434,15 +471,19 @@ def read_psw_pdf_visual_facts(audit, fields: dict[str, str], witness, *, cache: 
 
 
 def _psw_stages(result, selected_fields, rule_no, request_stage):
-    from audit.engine.checkers.psw_visual_evidence import evaluate_psw_observation
+    from audit.engine.checkers.psw_visual_evidence import PSW_RULE_FIELDS, evaluate_psw_observation, normalize_psw_stamp_facts
 
-    core = {"psw_stamp_present", "psw_stamp_ending_text", "authorized_signature_present", *_DISPOSITION_FIELDS}
-    core_fields = {field: description for field, description in selected_fields.items() if field in core}
-    if core_fields:
-        result.update(request_stage(core_fields))
-    from audit.engine.checkers.psw_visual_evidence import normalize_psw_stamp_facts
-
-    result = normalize_psw_stamp_facts(result)
+    required = PSW_RULE_FIELDS.get(rule_no, selected_fields)
+    groups = ({"psw_stamp_present", "psw_stamp_ending_text"}, {"authorized_signature_present"}, _DISPOSITION_FIELDS)
+    for group in groups:
+        if not set(required).intersection(group):
+            continue
+        core_fields = {field: description for field, description in selected_fields.items() if field in group}
+        if core_fields:
+            result.update(request_stage(core_fields))
+        result = normalize_psw_stamp_facts(result)
+        if rule_no is not None and evaluate_psw_observation(rule_no, result).status in {"PASS", "NG"}:
+            return result
     if rule_no is not None and evaluate_psw_observation(rule_no, result).status in {"PASS", "NG"}:
         return result
     needed = set()

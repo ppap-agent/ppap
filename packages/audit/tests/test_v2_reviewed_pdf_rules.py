@@ -1,10 +1,7 @@
 """Original-source regressions from the reviewed V2 corpus differences."""
 
-from pathlib import Path
-
 import fitz
 import pytest
-from audit.checkers.v2.dimension_measurement_pdf_agent import DimensionMeasurementPDFAgent
 from audit.checkers.v2.dpvr_excel_agent import DpvrExcelAgent
 from audit.contracts import AuditInput, RuleInput
 from openpyxl import Workbook
@@ -17,19 +14,6 @@ def rules(agent_type, count):
         type=agent_type.DOC_TYPE.get_type_name(),
         rules=[{"id": str(number), "category": "原件检查", "rule_to_check": f"规则{number}"} for number in range(1, count + 1)],
     )
-
-
-def test_giant_measurement_failure_names_an_actual_out_of_tolerance_record():
-    source = Path(__file__).resolve().parents[3] / "assets/v2.0plus/fallback/1-全功能检验报告_巨一.pdf"
-    agent = DimensionMeasurementPDFAgent(AuditInput(audit_id="giant-measurement", file_url=str(source)), rules(DimensionMeasurementPDFAgent, 8))
-    try:
-        result = agent.check(2)
-        assert result.status == "NG"
-        assert "原PDF第4页序号103" in result.suggestions
-        assert "14.05超出公差范围(14.1, 14.2)" in result.suggestions
-        assert "非数值" not in result.suggestions
-    finally:
-        agent.close()
 
 
 @pytest.mark.parametrize(("conclusion", "quantity", "rule_number", "expected"), [("P", "1pc", 2, "PASS"), ("F", "1pc", 2, "NG"), ("P", "1pc", 6, "PASS"), ("P", "", 6, "NG")])

@@ -28,6 +28,8 @@ def original(tmp_path, monkeypatch):
 
 
 def receipt(request, values):
+    if request["response_schema"]["name"] == "located_field_facts":
+        return {field: values.get(field) for field in request["response_schema"]["schema"]["properties"]}
     result = {}
     for field, spec in request["response_schema"]["schema"]["properties"].items():
         result[field] = [

@@ -335,8 +335,8 @@ jobs:
           else
             uv sync --locked
           fi
-      - name: Install bounded XLS header renderer
-        if: ${{ matrix.name == 'V3' }}
+      - name: Install shared Excel converter
+        if: ${{ matrix.mode == 'pytest' }}
         working-directory: ${{ github.workspace }}
         run: |
           sudo apt-get update
@@ -464,7 +464,7 @@ jobs:
           set -euo pipefail
           uv sync --locked --group e2e
           uv run --no-sync python -m playwright install chromium
-      - name: Install XLS header renderer for product contracts
+      - name: Install shared Excel converter for product contracts
         working-directory: ${{ github.workspace }}
         run: |
           sudo apt-get update

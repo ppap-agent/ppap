@@ -368,6 +368,9 @@ def ocr_response_boundary(monkeypatch, response):
         mapping = response
         result = {}
         for field, schema in response_schema["schema"]["properties"].items():
+            if "items" not in schema:
+                result[field] = mapping.get(field)
+                continue
             values = []
             for scope in schema["items"]["properties"]["scope"]["enum"]:
                 # Image indices are explicit captions in the transport prompt.
@@ -439,7 +442,7 @@ def test_public_rule_eight_retains_known_native_state_over_conflicting_ocr(tmp_p
 
 
 @pytest.mark.parametrize("failed", [False, True], ids=["successful-page", "failed-page"])
-def test_public_rules_three_five_and_eight_reuse_one_ocr_success_or_failure(tmp_path, monkeypatch, profile, failed):
+def test_public_rules_reuse_each_located_fact_group_success_or_failure(tmp_path, monkeypatch, profile, failed):
     path = write_disposition_pdf(tmp_path / "shared-original.pdf", ("批准", "条件批准", "拒绝"))
     attempts = ocr_response_boundary(monkeypatch, TimeoutError("private endpoint") if failed else disposition_page_response())
     with bind_runtime(None):
@@ -448,7 +451,9 @@ def test_public_rules_three_five_and_eight_reuse_one_ocr_success_or_failure(tmp_
             results = [checker.check(index) for index in (2, 4, 7)]
         finally:
             checker.close()
-    assert len(attempts) == 1
+    groups = [tuple(sorted(attempt["schema"]["properties"])) for attempt in attempts]
+    assert len(groups) == len(set(groups))
+    assert len(groups) == (2 if failed else 3)
     assert [result.status for result in results] == (["ERR"] * 3 if failed else ["UNABLE", "UNABLE", "NG"])
     assert all("private endpoint" not in result.suggestions for result in results)
 
@@ -464,8 +469,7 @@ def test_public_rule_eight_checks_both_original_disposition_pages(tmp_path, monk
             checker.close()
     assert result.status == "NG"
     assert len(attempts) == 2
-    scopes = [attempt["schema"]["properties"]["approved_checked"]["items"]["properties"]["scope"]["enum"] for attempt in attempts]
-    assert scopes == [["pdf:1"], ["pdf:2"]]
+    assert all(attempt["name"] == "located_field_facts" for attempt in attempts)
 
 
 def test_public_partial_native_values_survive_ocr_on_another_business_page(tmp_path, monkeypatch, profile):
@@ -509,8 +513,10 @@ def test_psw_requests_only_facts_needed_by_the_active_branches(tmp_path, monkeyp
             checker.close()
     assert [result.status for result in results] == ["NG" if department else "PASS", "PASS", "NG", "NG", "NG"]
     requested = [set(schema["schema"]["properties"]) for schema in attempts]
-    assert len(attempts) == (2 if department else 1)
-    assert requested[0] == {"psw_stamp_present", "psw_stamp_ending_text", "authorized_signature_present", "approved_checked", "conditional_checked", "rejected_checked"}
+    assert len(attempts) == (4 if department else 3)
+    assert requested[0] == {"psw_stamp_present", "psw_stamp_ending_text"}
+    assert {"authorized_signature_present"} in requested
+    assert {"approved_checked", "conditional_checked", "rejected_checked"} in requested
     if department:
         assert requested[1] == {"authorization_company_stamp_present"}
     assert not any({"approval_date", "comments_present", "dimensional_checked", "submission_any_checked"}.intersection(fields) for fields in requested)
@@ -571,7 +577,12 @@ def test_public_multi_page_partial_success_and_protocol_failure_are_reused(tmp_p
 
     async def per_page(images, prompt, *, response_schema, **kwargs):
         field = next(iter(response_schema["schema"]["properties"].values()))
-        (scope,) = field["items"]["properties"]["scope"]["enum"]
+        if "items" in field:
+            (scope,) = field["items"]["properties"]["scope"]["enum"]
+        else:
+            import ast
+
+            scope = ast.literal_eval(next(line.split(": ", 1)[1] for line in prompt.splitlines() if line.startswith("图 0:")))["scope"]
         scopes.append(scope)
         if scope == "pdf:2":
             raise ValueError("OCR visual coverage is invalid")
@@ -585,4 +596,4 @@ def test_public_multi_page_partial_success_and_protocol_failure_are_reused(tmp_p
         finally:
             checker.close()
     assert [result.status for result in results] == ["ERR", "ERR", "ERR"]
-    assert scopes == ["pdf:1", "pdf:2"]
+    assert scopes == ["pdf:1", "pdf:2", "pdf:1", "pdf:2"]

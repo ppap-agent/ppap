@@ -121,10 +121,7 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
                         if "工序名称" in located:
                             name_bounds = located["工序名称"]
                             column = layout["操作描述"]
-                            record["操作描述"] = " ".join(
-                                word[4] for word in words
-                                if column.x0 < (word[0] + word[2]) / 2 < column.x1 and name_bounds.y0 < (word[1] + word[3]) / 2 < name_bounds.y1
-                            )
+                            record["操作描述"] = " ".join(word[4] for word in words if column.x0 < (word[0] + word[2]) / 2 < column.x1 and name_bounds.y0 < (word[1] + word[3]) / 2 < name_bounds.y1)
                         if record["工序名称"]:
                             records.append(record)
         self._native_flow_rows = records

@@ -253,24 +253,14 @@ class Facts(SourceFacts):
         table, row, column = self.value_positions[index]
         suffix = Path(self.audit.file_url).suffix.lower()
         display = ""
-        if suffix in {".xlsx", ".xlsm"}:
-            from openpyxl import load_workbook
+        if suffix in {".xls", ".xlsx", ".xlsm"}:
+            from documents.excel.loader import ExcelLoader, ExcelLoadOptions
 
-            book = load_workbook(self.audit.file_url, read_only=True, data_only=False)
+            book = ExcelLoader.load_workbook(self.audit.file_url, options=ExcelLoadOptions(read_only=True, data_only=False))
             try:
                 display = book[table["id"]].cell(row, column).number_format
             finally:
                 book.close()
-        elif suffix == ".xls":
-            import xlrd
-
-            book = xlrd.open_workbook(self.audit.file_url, formatting_info=True)
-            try:
-                sheet = book.sheet_by_name(table["id"])
-                xf = book.xf_list[sheet.cell_xf_index(row - 1, column - 1)]
-                display = book.format_map[xf.format_key].format_str
-            finally:
-                book.release_resources()
         else:
             raise UnknownFact("百分比显示单位未能从原件可靠读取。")
         cleaned = re.sub(r'"[^"]*"', "", display)
