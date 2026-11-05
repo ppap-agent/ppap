@@ -84,6 +84,7 @@ from api.report_routes import register_report_routes
 from api.rule_routes import register_rule_routes
 from api.sharing_routes import register_sharing_routes
 from api.support_routes import register_support_routes
+from api.suite_routes import register_suite_routes
 from api.usage_reporting import report_usage, run_pending_usage
 
 Probe = Callable[[Settings], dict[str, str]]
@@ -949,6 +950,7 @@ def create_app(
 
     register_deep_feedback_routes(app, store, principal_of, quota_for)
     register_rule_routes(app, store, principal_of, require_file_read)
+    register_suite_routes(app, store, principal_of)
     register_support_routes(app, principal_of, settings)
     register_sharing_routes(app, store, session_of, http, settings)
     wc.add_ui_contract(app)

@@ -1,0 +1,154 @@
+"""Enterprise Suite candidates and releases. Tests never accept formal Rounds."""
+
+from __future__ import annotations
+
+from typing import Any, Literal, NotRequired, TypedDict
+
+from fastapi import Body, FastAPI, Request
+from fastapi.responses import JSONResponse
+from product.files import ObjectMissing
+from product.store.suite_releases import SuiteReleaseStore
+
+from api import web_contract as wc
+
+
+class SuiteValidation(TypedDict):
+    status: Literal["verified", "unverified", "stale"]
+    revision: int
+    total_samples: int
+    passed_samples: int
+    new_errors: int
+    verified: bool
+    samples_not_rerun: bool
+    reasons: list[str]
+    library_revision: NotRequired[str]
+    proof_digest: NotRequired[str]
+
+
+class SuitePublication(TypedDict):
+    operation_id: str
+    suite_key: str
+    revision_id: str
+    previous_revision_id: str | None
+    expected_revision: int
+    revision: int
+    verification_status: str
+    force_unverified: bool
+    published_by: str | None
+    published_at: str
+    published_by_name: str
+
+
+class SuiteActive(TypedDict):
+    title: str
+    version: int
+    origin: Literal["official", "enterprise"]
+    selection_mode: Literal["automatic_official", "pinned", "candidate_only"]
+    suite_key: str
+    revision: int
+    current_revision_id: str | None
+    verification_status: str
+    force_unverified: bool
+    validation: SuiteValidation
+    history: list[SuitePublication]
+
+
+class SuiteCatalog(TypedDict):
+    suites: list[SuiteActive]
+
+
+class SuiteRound(TypedDict):
+    id: str
+    task_id: str | None
+    created_at: str
+
+
+class SuiteDiff(TypedDict):
+    path: str
+    before: str
+    after: str
+
+
+class SuiteRevisionDetail(TypedDict):
+    title: str
+    version: int
+    created_by_name: str
+    diff: list[SuiteDiff]
+    id: str
+    tenant_id: str | None
+    suite_key: str
+    base_revision_id: str | None
+    created_by: str | None
+    created_at: str
+    resolved_digest: str
+    related_suite_keys: list[str]
+    files: dict[str, str]
+    changed_paths: list[str]
+    validation: SuiteValidation
+    round_count: int
+    rounds: list[SuiteRound]
+
+
+class SuiteVariantRequest(TypedDict):
+    base_revision_id: str
+    files: dict[str, str]
+
+
+class SuiteCandidateRequest(TypedDict):
+    files: dict[str, str]
+
+
+class SuitePublishRequest(TypedDict):
+    revision_id: str
+    expected_revision: int
+    operation_id: str
+    force_unverified: bool
+
+
+def register_suite_routes(app: FastAPI, store, principal_of):
+    releases = SuiteReleaseStore(store.settings, store.objects, role=store.role)
+    headers = {"Cache-Control": "private, no-store"}
+
+    def respond(request: Request, action, *, status_code: int = 200):
+        principal = principal_of(request)
+        if not principal:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401, headers=headers)
+        try:
+            return JSONResponse(action(principal), status_code=status_code, headers=headers)
+        except KeyError:
+            return JSONResponse({"error": "access_denied"}, status_code=403, headers=headers)
+        except ObjectMissing:
+            return JSONResponse({"error": "suite_artifact_missing"}, status_code=409, headers=headers)
+        except ValueError as exc:
+            code = str(exc)
+            status = 409 if code in {"suite_head_conflict", "suite_operation_conflict", "suite_confirmation_required"} else 400
+            return JSONResponse({"error": code}, status_code=status, headers=headers)
+
+    def body_fields(body, fields: set[str]):
+        if not isinstance(body, dict) or set(body) != fields:
+            raise ValueError("invalid_suite_request")
+        return body
+
+    @app.get("/suites", response_model=SuiteCatalog)
+    def suites_list(request: Request):
+        return respond(request, releases.list_suites)
+
+    @app.get("/suites/{suite_key}/active", response_model=SuiteActive)
+    def suites_active(suite_key: str, request: Request):
+        return respond(request, lambda principal: releases.active(principal, suite_key))
+
+    @app.put("/suites/{suite_key}/active", response_model=SuitePublication, openapi_extra=wc.openapi_body(SuitePublishRequest))
+    def suites_publish(suite_key: str, request: Request, body: Any = Body(...)):
+        return respond(request, lambda principal: releases.publish(principal, suite_key, **body_fields(body, {"revision_id", "expected_revision", "operation_id", "force_unverified"})))
+
+    @app.get("/suite-revisions/{revision_id}", response_model=SuiteRevisionDetail)
+    def suite_revision(revision_id: str, request: Request):
+        return respond(request, lambda principal: releases.detail(principal, revision_id))
+
+    @app.post("/suites/{suite_key}/variants", response_model=SuiteRevisionDetail, status_code=201, openapi_extra=wc.openapi_body(SuiteVariantRequest))
+    def suite_variant(suite_key: str, request: Request, body: Any = Body(...)):
+        return respond(request, lambda principal: releases.save_candidate(principal, suite_key=suite_key, **body_fields(body, {"base_revision_id", "files"})), status_code=201)
+
+    @app.post("/suite-revisions/{revision_id}/candidates", response_model=SuiteRevisionDetail, status_code=201, openapi_extra=wc.openapi_body(SuiteCandidateRequest))
+    def suite_candidate(revision_id: str, request: Request, body: Any = Body(...)):
+        return respond(request, lambda principal: releases.save_candidate(principal, revision_id, **body_fields(body, {"files"})), status_code=201)
