@@ -153,6 +153,10 @@ _XLSX_DRAWING = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDra
 # DrawingML ST_Coordinate, integer EMUs (ISO/IEC 29500-1 §20.1.10.16).
 _XLSX_COORDINATE_MIN = -27273042329600
 _XLSX_COORDINATE_MAX = 27273042316900
+_XLSX_EMU_PER_POINT = 12700
+# The narrowest digit of a common default font is 5 pixels at 9525 EMU each.
+_XLSX_EMU_PER_CHARACTER = 5 * 9525
+_XlsxExtents = tuple[dict[int, int], int, list[tuple[int, int, int]], int]
 
 
 def _archive_target(part: str, target: str) -> str:
@@ -168,8 +172,9 @@ def _archive_target(part: str, target: str) -> str:
 def _xlsx_visual_evidence(path: Path, limits: ReadLimits) -> dict[str, list[dict[str, Any]]]:
     """Keep uninterpreted OOXML objects; no shape-to-business-value mapping.
 
-    A zero-offset two-cell anchor gives a cell intersection. Other native
-    placements stay explicitly unresolved on their own worksheet.
+    A two-cell anchor gives a cell intersection when its offsets fit the
+    measured cells. Other native placements stay explicitly unresolved on
+    their own worksheet.
     Offsets use integer EMUs; unit-qualified lengths are unsupported.
     No archive member is extracted and no external relationship is followed.
     """
@@ -220,6 +225,7 @@ def _xlsx_visual_evidence(path: Path, limits: ReadLimits) -> dict[str, list[dict
             *,
             rels: dict[str, dict[str, str]],
             location: ET.Element | None = None,
+            extents: _XlsxExtents | None = None,
         ) -> None:
             nonlocal count
             count += 1
@@ -231,7 +237,12 @@ def _xlsx_visual_evidence(path: Path, limits: ReadLimits) -> dict[str, list[dict
                 item["from"] = first
             if last is not None:
                 item["to"] = last
-            item["range"] = _xlsx_anchor_range(first, last) if kind == "twoCellAnchor" and first is not None and last is not None else None
+            item["range"] = None
+            if kind == "twoCellAnchor" and first is not None and last is not None:
+                measured = _xlsx_measure(first, last, extents)
+                item["range"] = _xlsx_anchor_range(first, last, measured)
+                if item["range"] is not None and _xlsx_has_offset(first, last):
+                    item["measured_emu"] = measured
             if item["range"] is None:
                 item["unresolved_reason"] = "unsupported_anchor_geometry"
             references = []
@@ -271,6 +282,7 @@ def _xlsx_visual_evidence(path: Path, limits: ReadLimits) -> dict[str, list[dict
             sheet_part = related(workbook, workbook_rels, sheet.get(f"{{{_XLSX_REL}}}id"))
             sheet_xml, sheet_rels = xml(sheet_part), relationships(sheet_part)
             items = result.setdefault(str(sheet.attrib["name"]), [])
+            extents = _xlsx_sheet_extents(sheet_xml)
             # Follow the original ZIP relationships even when openpyxl drops
             # unsupported shapes. Images/charts remain source references only.
             for drawing in sheet_xml.iter(f"{{{_XLSX_SS}}}drawing"):
@@ -280,7 +292,7 @@ def _xlsx_visual_evidence(path: Path, limits: ReadLimits) -> dict[str, list[dict
                     raise ValueError("Invalid spreadsheet drawing root")
                 within(sum(1 for _ in drawing_xml.iter()), limits.blocks, "visual XML nodes")
                 for index, node in enumerate(drawing_xml, 1):
-                    add(items, part, index, node.tag.rsplit("}", 1)[-1], node, rels=drawing_rels)
+                    add(items, part, index, node.tag.rsplit("}", 1)[-1], node, rels=drawing_rels, extents=extents)
             for index, control in enumerate(sheet_xml.iter(), 1):
                 kind = control.tag.rsplit("}", 1)[-1]
                 if kind not in {"legacyDrawing", "control", "oleObject", "picture"}:
@@ -325,17 +337,86 @@ def _xlsx_marker(anchor: ET.Element, name: str) -> dict[str, int] | None:
     return {"row": row + 1, "column": column + 1, "row_offset_emu": row_offset, "column_offset_emu": column_offset}
 
 
-def _xlsx_anchor_range(first: dict[str, int], last: dict[str, int]) -> list[int] | None:
-    # Native offsets can cross cell boundaries. Without layout measurements,
-    # their nominal row/column is only a navigation hint, not a coverage proof.
-    if any(marker[offset] != 0 for marker in (first, last) for offset in ("row_offset_emu", "column_offset_emu")):
+def _xlsx_sheet_extents(sheet: ET.Element) -> _XlsxExtents:
+    """Stored row heights and column widths in EMU: explicit rows, default row, explicit columns, default column.
+
+    A width counts characters of the workbook's default font. Its digit width is
+    not stored, so the narrowest common one gives a lower bound: an offset that
+    fits this extent fits the real cell, and an unmeasured size stays zero.
+    """
+    node = f"{{{_XLSX_SS}}}"
+    defaults = next(sheet.iter(node + "sheetFormatPr"), None)
+    attributes = defaults.attrib if defaults is not None else {}
+    default_row = 0 if attributes.get("zeroHeight") in {"1", "true"} else _xlsx_emu(attributes.get("defaultRowHeight"), _XLSX_EMU_PER_POINT)
+    default_column = _xlsx_emu(attributes.get("defaultColWidth") or attributes.get("baseColWidth", "8"), _XLSX_EMU_PER_CHARACTER)
+    rows = {}
+    for row in sheet.iter(node + "row"):
+        if row.get("r", "").isdigit() and (row.get("ht") or row.get("hidden")):
+            hidden = row.get("hidden") in {"1", "true"}
+            rows[int(row.attrib["r"])] = 0 if hidden else _xlsx_emu(row.get("ht"), _XLSX_EMU_PER_POINT) or default_row
+    columns = []
+    for column in sheet.iter(node + "col"):
+        first, last = column.get("min", ""), column.get("max", "")
+        if first.isdigit() and last.isdigit():
+            hidden = column.get("hidden") in {"1", "true"}
+            columns.append((int(first), int(last), 0 if hidden else _xlsx_emu(column.get("width"), _XLSX_EMU_PER_CHARACTER)))
+    return rows, default_row, columns, default_column
+
+
+def _xlsx_emu(value: str | None, unit: int) -> int:
+    try:
+        return max(0, int(float(value or 0) * unit))
+    except (ValueError, OverflowError):
+        return 0
+
+
+def _xlsx_measure(first: dict[str, int], last: dict[str, int], extents: _XlsxExtents | None) -> dict[str, int] | None:
+    if extents is None:
+        return None
+    rows, default_row, columns, default_column = extents
+
+    def column_width(number: int) -> int:
+        return next((width for start, end, width in columns if start <= number <= end), default_column)
+
+    return {
+        "from_row": rows.get(first["row"], default_row),
+        "from_column": column_width(first["column"]),
+        "to_row": rows.get(last["row"], default_row),
+        "to_column": column_width(last["column"]),
+    }
+
+
+def _xlsx_has_offset(first: dict[str, int], last: dict[str, int]) -> bool:
+    return any(marker[offset] != 0 for marker in (first, last) for offset in ("row_offset_emu", "column_offset_emu"))
+
+
+def _xlsx_offsets_fit(first: dict[str, int], last: dict[str, int], measured: dict[str, int]) -> bool:
+    pairs = (
+        (first["row_offset_emu"], measured["from_row"]),
+        (first["column_offset_emu"], measured["from_column"]),
+        (last["row_offset_emu"], measured["to_row"]),
+        (last["column_offset_emu"], measured["to_column"]),
+    )
+    return all(0 <= offset <= extent for offset, extent in pairs)
+
+
+def _xlsx_anchor_range(first: dict[str, int], last: dict[str, int], measured: dict[str, int] | None = None) -> list[int] | None:
+    # An offset can cross its cell, so its nominal cell is only a navigation
+    # hint until the offset is shown to fit inside the measured cell.
+    has_offset = _xlsx_has_offset(first, last)
+    if has_offset and (measured is None or not _xlsx_offsets_fit(first, last, measured)):
         return None
     if any(last[name] < first[name] for name in ("row", "column")):
+        if has_offset:
+            return None
         raise ValueError("Reversed visual anchor")
-    if any(last[name] == first[name] for name in ("row", "column")):
-        return None  # Native line shapes can have a zero-width or zero-height box.
-    # A zero-offset endpoint is the next cell boundary, not part of that cell.
-    return [first["row"], first["column"], last["row"] - 1, last["column"] - 1]
+    ends = []
+    for name, offset in (("row", "row_offset_emu"), ("column", "column_offset_emu")):
+        if last[name] == first[name] and last[offset] <= first[offset]:
+            return None  # Native line shapes can have a zero-width or zero-height box.
+        # A zero-offset endpoint is the next cell boundary, not part of that cell.
+        ends.append(last[name] if last[offset] else last[name] - 1)
+    return [first["row"], first["column"], *ends]
 
 
 def snapshot(path: str | Path, *, limits: ReadLimits | None = None) -> dict[str, Any]:
@@ -428,8 +509,8 @@ def snapshot(path: str | Path, *, limits: ReadLimits | None = None) -> dict[str,
                             table["cols"] = max(table["cols"], visual["from"]["column"])
                 result["tables"].append(table)
         result["limitations"] = [
-            "Uninterpreted visual sources remain unknown on overlapping empty cells. Only zero-offset two-cell anchors have cell coverage; "
-            "nonzero offsets and unsupported placements affect empty cells on their worksheet. Linked external images are not fetched; local caches remain source references. "
+            "Uninterpreted visual sources remain unknown on overlapping empty cells. Only two-cell anchors whose offsets fit the measured cells have cell coverage; "
+            "other offsets and unsupported placements affect empty cells on their worksheet. Linked external images are not fetched; local caches remain source references. "
             "Only integer EMU offsets are supported. Formula caches are not recalculated."
         ]
     elif suffix == ".xls":

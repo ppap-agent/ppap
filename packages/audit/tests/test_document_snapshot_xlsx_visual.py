@@ -252,8 +252,8 @@ def test_zero_height_line_is_an_unresolved_visual_source(tmp_path):
 
 @pytest.mark.parametrize("endpoint", ["from", "to"])
 @pytest.mark.parametrize("axis", ["row", "column"])
-@pytest.mark.parametrize("offset", [-27273042329600, -1, 1, 10**12, 27273042316900])
-def test_nonzero_anchor_offsets_are_native_hints_not_cell_coverage(tmp_path, endpoint, axis, offset):
+@pytest.mark.parametrize("offset", [-27273042329600, -1, 10**12, 27273042316900])
+def test_offsets_outside_the_measured_cell_are_native_hints_not_cell_coverage(tmp_path, endpoint, axis, offset):
     offsets = (offset, 0) if axis == "row" else (0, offset)
     placement = anchor(**{"first_offsets" if endpoint == "from" else "offsets": offsets})
     path = workbook(tmp_path, [placement], cells={"B2": "native", "C2": 0, "D2": False, "B3": "=1+1"})
@@ -295,6 +295,83 @@ def test_unsupported_visual_kind_cannot_claim_precise_cell_coverage(tmp_path, ki
     observed = snapshot(path)
     assert observed["tables"][0]["visual_evidence"][0]["range"] is None
     validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
+
+
+def sized_workbook(tmp_path, anchors, *, column_width=None, row_height=None, hidden_row=False, cells=None):
+    path = workbook(tmp_path, anchors, cells=cells)
+    with ZipFile(path) as archive:
+        parts = {item.filename: archive.read(item) for item in archive.infolist()}
+    sheet = ET.fromstring(parts["xl/worksheets/sheet1.xml"])
+    data = sheet.find(f"{{{SS}}}sheetData")
+    if column_width is not None:
+        columns = ET.Element(f"{{{SS}}}cols")
+        ET.SubElement(columns, f"{{{SS}}}col", {"min": "2", "max": "2", "width": str(column_width), "customWidth": "1"})
+        sheet.insert(list(sheet).index(data), columns)
+    if row_height is not None or hidden_row:
+        attributes = {"r": "2", **({"ht": str(row_height), "customHeight": "1"} if row_height is not None else {}), **({"hidden": "1"} if hidden_row else {})}
+        row = next((node for node in data if node.get("r") == "2"), None)
+        if row is None:
+            row = ET.Element(f"{{{SS}}}row")
+            data.insert(1, row)
+        row.attrib.update(attributes)
+    parts["xl/worksheets/sheet1.xml"] = ET.tostring(sheet)
+    rewrite(path, parts)
+    return path
+
+
+def test_image_inside_one_measured_cell_leaves_other_blank_cells_known(tmp_path):
+    placement = anchor((2, 2), (2, 2), first_offsets=(1000, 1000), offsets=(100000, 200000))
+    observed = snapshot(sized_workbook(tmp_path, [placement], column_width=20, row_height=20))
+    table = observed["tables"][0]
+    visual = table["visual_evidence"][0]
+    assert visual["range"] == [2, 2, 2, 2]
+    assert visual["measured_emu"] == {"from_row": 254000, "from_column": 952500, "to_row": 254000, "to_column": 952500}
+    assert "unresolved_reason" not in visual
+    assert effective(table, 2, 2)["state"] == "unknown_visual_evidence"
+    assert effective(table, 3, 2)["state"] == "known"
+    assert effective(table, 2, 3)["state"] == "known"
+    validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
+
+
+def test_end_offset_includes_its_cell_and_a_boundary_end_does_not(tmp_path):
+    offset_end = snapshot(sized_workbook(tmp_path, [anchor((2, 2), (3, 3), first_offsets=(1, 1), offsets=(1, 1))]))
+    assert offset_end["tables"][0]["visual_evidence"][0]["range"] == [2, 2, 3, 3]
+    boundary_end = snapshot(sized_workbook(tmp_path, [anchor((2, 2), (3, 3), first_offsets=(1, 1))]))
+    assert boundary_end["tables"][0]["visual_evidence"][0]["range"] == [2, 2, 2, 2]
+
+
+@pytest.mark.parametrize(
+    "placement,size",
+    [
+        (anchor((2, 2), (2, 2), first_offsets=(1, 1), offsets=(300000, 1000)), {"row_height": 20}),
+        (anchor((2, 2), (2, 2), first_offsets=(1, 1), offsets=(1000, 1000000)), {"column_width": 20}),
+        (anchor((2, 2), (2, 2), first_offsets=(1, 1), offsets=(1000, 1000)), {"hidden_row": True}),
+        (anchor((2, 2), (2, 2), first_offsets=(500, 1), offsets=(100, 1000)), {"row_height": 20}),
+    ],
+    ids=["taller-than-row", "wider-than-column", "hidden-row", "reversed-in-cell"],
+)
+def test_offsets_that_do_not_fit_stay_unresolved_on_the_whole_sheet(tmp_path, placement, size):
+    observed = snapshot(sized_workbook(tmp_path, [placement], **size))
+    table = observed["tables"][0]
+    assert table["visual_evidence"][0]["range"] is None
+    assert "measured_emu" not in table["visual_evidence"][0]
+    assert effective(table, 7, 5)["state"] == "unknown_visual_evidence"
+    validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
+
+
+@pytest.mark.parametrize("measured", [{"from_row": 1}, {"from_row": -1, "from_column": 1, "to_row": 1, "to_column": 1}, "wide"])
+def test_validation_rejects_a_malformed_measurement(tmp_path, measured):
+    observed = snapshot(sized_workbook(tmp_path, [anchor((2, 2), (2, 2), first_offsets=(1, 1), offsets=(100, 100))], row_height=20))
+    observed["tables"][0]["visual_evidence"][0]["measured_emu"] = measured
+    with pytest.raises(ValueError, match="visual measurement"):
+        validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
+
+
+def test_validation_rejects_offsets_beyond_the_recorded_measurement(tmp_path):
+    observed = snapshot(sized_workbook(tmp_path, [anchor((2, 2), (2, 2), first_offsets=(1, 1), offsets=(100, 100))], row_height=20))
+    observed["tables"][0]["visual_evidence"][0]["to"]["row_offset_emu"] = 10**7
+    with pytest.raises(ValueError, match="visual range"):
+        validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
 
 
 @pytest.mark.parametrize("offset", [-27273042329601, 27273042316901])

@@ -8,6 +8,15 @@ from typing import Any
 from .evidence import EvidenceBudget
 
 
+def _measured(visual: dict[str, Any]) -> dict[str, int] | None:
+    measured = visual.get("measured_emu")
+    if measured is None:
+        return None
+    if not isinstance(measured, dict) or set(measured) != {"from_row", "from_column", "to_row", "to_column"} or any(type(value) is not int or value < 0 for value in measured.values()):
+        raise ValueError("Invalid spreadsheet visual measurement")
+    return measured
+
+
 def _validate_xlsx_visuals(table: dict[str, Any], budget: EvidenceBudget) -> None:
     from .document_tools import _XLSX_COORDINATE_MAX, _XLSX_COORDINATE_MIN, _archive_target, _regions_overlap, _xlsx_anchor_range, col_number
 
@@ -32,7 +41,7 @@ def _validate_xlsx_visuals(table: dict[str, Any], budget: EvidenceBudget) -> Non
     for visual in visuals:
         if (
             not isinstance(visual, dict)
-            or set(visual) - {"source", "kind", "content_observed", "range", "from", "to", "unresolved_reason", "references"}
+            or set(visual) - {"source", "kind", "content_observed", "range", "from", "to", "measured_emu", "unresolved_reason", "references"}
             or not {"source", "kind", "content_observed", "range"} <= set(visual)
             or visual["content_observed"] is not False
             or not isinstance(visual["kind"], str)
@@ -58,7 +67,7 @@ def _validate_xlsx_visuals(table: dict[str, Any], budget: EvidenceBudget) -> Non
             or visual["kind"] != "twoCellAnchor"
             or "from" not in visual
             or "to" not in visual
-            or region != _xlsx_anchor_range(visual["from"], visual["to"])
+            or region != _xlsx_anchor_range(visual["from"], visual["to"], _measured(visual))
             or "unresolved_reason" in visual
         ):
             raise ValueError("Invalid spreadsheet visual range")
