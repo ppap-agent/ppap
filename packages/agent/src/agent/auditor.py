@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import tempfile
 import time
 from pathlib import Path
@@ -23,6 +24,7 @@ from agent.protocol import ExecuteRequest, ExecuteResponse
 from agent.run import ExecutionContext
 
 MAX_BUNDLE_BYTES = 16 * 1024 * 1024
+logger = logging.getLogger(__name__)
 FAULTS = {
     "INPUT_INTEGRITY_ERROR": "deep_integrity_mismatch",
     "PARSER_LIMIT": "deep_parser_limit",
@@ -95,6 +97,32 @@ class SemanticRuntime:
 
     def _checker_usage_key(self, spec: ExecuteRequest) -> str:
         return self._attempt_prefix(spec) + "/checker-usage.json"
+
+    def _persist_checker_failure(self, spec: ExecuteRequest, job: CheckerJobSpec, version_id: str, work: Path, code: str) -> None:
+        from agent.execution.diagnostics import failure_facts
+
+        try:
+            try:
+                diagnostic = read_json(work, ("diagnostic.json",), 65536)
+            except (OSError, ValueError):
+                diagnostic = None
+            record = {
+                "round_id": spec.round_id,
+                "job_id": spec.job_id,
+                "attempt": spec.attempt,
+                "execution_id": str(job.execution_id),
+                "operation": job.operation,
+                "input_digest": job.input_digest,
+                "executor_revision": spec.executor_revision,
+                "file_version_id": version_id,
+                "code": code,
+                "details_available": isinstance(diagnostic, dict),
+                "details": failure_facts(diagnostic),
+            }
+            self._put(f"{self._attempt_prefix(spec)}/checker-diagnostics/{job.execution_id}.json", record)
+        except Exception as exc:
+            # Diagnostic storage must not replace the original execution failure.
+            logger.warning("deep_diagnostic_persist_failed round_id=%s job_id=%s attempt=%s error_type=%s", spec.round_id, spec.job_id, spec.attempt, type(exc).__name__)
 
     def _resume_fixed_checker(self, spec: ExecuteRequest, files: dict[str, bytes], context: ExecutionContext) -> ExecuteResponse | None:
         """Finish a checker attempt from its fixed program. RulePlan attempts return None."""
@@ -556,23 +584,28 @@ class SemanticRuntime:
                 raise DeepError("deep_integrity_mismatch") from exc
             context.raise_if_cancelled()
             try:
-                self.runtime.run(job, inputs, work, deadline, context.cancelled, on_progress=None)
-            except DeepError:
+                try:
+                    self.runtime.run(job, inputs, work, deadline, context.cancelled, on_progress=None)
+                except DeepError:
+                    raise
+                except ControllerFault as exc:
+                    raise DeepError(FAULTS.get(exc.code, "deep_execution_failed")) from exc
+                except TimeoutError as exc:
+                    raise DeepError("deep_timeout") from exc
+                except ModelProtocolError as exc:
+                    raise DeepError("deep_model_protocol") from exc
+                except CheckerProgramError as exc:
+                    raise DeepError("deep_output_invalid") from exc
+                try:
+                    bundle = CheckerProgramBundle.model_validate(read_json(work, ("result", "bundle.json"), MAX_BUNDLE_BYTES))
+                except (OSError, ValueError) as exc:
+                    raise DeepError("deep_output_invalid") from exc
+                if bundle.input_digest != digest or bundle.executor_revision != revision or bundle.operation != operation:
+                    raise DeepError("deep_output_identity_mismatch")
+            except Exception as exc:
+                code = exc.code if isinstance(exc, DeepError) else "deep_execution_failed"
+                self._persist_checker_failure(spec, job, version_id, work, code)
                 raise
-            except ControllerFault as exc:
-                raise DeepError(FAULTS.get(exc.code, "deep_execution_failed")) from exc
-            except TimeoutError as exc:
-                raise DeepError("deep_timeout") from exc
-            except ModelProtocolError as exc:
-                raise DeepError("deep_model_protocol") from exc
-            except CheckerProgramError as exc:
-                raise DeepError("deep_output_invalid") from exc
-            try:
-                bundle = CheckerProgramBundle.model_validate(read_json(work, ("result", "bundle.json"), MAX_BUNDLE_BYTES))
-            except (OSError, ValueError) as exc:
-                raise DeepError("deep_output_invalid") from exc
-        if bundle.input_digest != digest or bundle.executor_revision != revision or bundle.operation != operation:
-            raise DeepError("deep_output_identity_mismatch")
         if operation == "adapt-checker":
             if bundle.artifact is None:
                 raise DeepError("deep_output_invalid")

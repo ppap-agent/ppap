@@ -1,4 +1,5 @@
 import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -119,6 +120,15 @@ class MemoryObjects:
         self.items[key] = body
 
 
+def assert_only_failure_diagnostics(objects, code):
+    assert objects.items
+    for key, raw in objects.items.items():
+        assert "/checker-diagnostics/" in key
+        saved = json.loads(raw)
+        assert saved["code"] == code
+        assert "artifact" not in saved and "results" not in saved
+
+
 class ScriptedDeveloper:
     def __init__(self, drafts: list[dict]) -> None:
         self.drafts = list(drafts)
@@ -217,6 +227,118 @@ def test_checker_runtime_fault_keeps_its_product_failure_code(tmp_path: Path, co
     with pytest.raises(DeepError) as caught:
         host.adapt_checker(request(), audit_file(path), rules(), raw, role="target", context=ExecutionContext())
     assert caught.value.code == expected
+
+
+@pytest.mark.parametrize("failure", ["controller", "model", "timeout", "deep", "invalid_bundle"])
+def test_checker_failure_diagnostic_survives_temporary_work_cleanup(tmp_path, failure):
+    from audit.protocol import ControllerFault
+
+    class FailingRuntime(IsolatedRuntime):
+        def run(self, job, inputs, work, *args, **kwargs):
+            self.work, self.job = work, job
+            (work / "diagnostic.json").write_text(
+                json.dumps(
+                    {
+                        "code": "MODEL_PROTOCOL_ERROR",
+                        "stages": [
+                            {
+                                "stage": "trial-0",
+                                "stderr": "RangeError: WebAssembly.instantiate(): Out of memory: Cannot allocate Wasm memory for new instance\n"
+                                "Bearer private-grant; supplier contents; provider credential",
+                                "terminal": {"stop_reason": "error", "is_error": True, "num_turns": 1, "usage": {"input_tokens": 0, "output_tokens": 0, "secret": "private-usage"}},
+                                "validation": {"private": "supplier contents"},
+                            }
+                        ],
+                        "usage": {"completed_requests": 0, "input_tokens": 0, "output_tokens": 0, "uncertain": False, "in_flight": False, "budget_exhausted": False},
+                        "transport_failure": {
+                            "phase": "provider_read",
+                            "error_type": "IncompleteRead",
+                            "provider_status": 200,
+                            "response_bytes": 12,
+                            "client_request_id": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+                            "last_event": "private-event",
+                            "headers": "private-header",
+                        },
+                        "guest": {"exit_code": 1, "stderr_tail": "private-guest"},
+                    }
+                )
+            )
+            if failure == "invalid_bundle":
+                (work / "result").mkdir()
+                (work / "result/bundle.json").write_text("{}")
+                return
+            raise {
+                "controller": ControllerFault("MODEL_PROTOCOL_ERROR"),
+                "model": ModelProtocolError("private-model"),
+                "timeout": TimeoutError("private-timeout"),
+                "deep": DeepError("deep_model_protocol"),
+            }[failure]
+
+    path = tmp_path / "target.xlsx"
+    raw = workbook_bytes(path)
+    objects = MemoryObjects()
+    runtime = FailingRuntime(ScriptedDeveloper([]))
+    spec = request().model_copy(update={"tenant_id": "tenant-1", "attempt": 2})
+    with pytest.raises(DeepError) as caught:
+        SemanticRuntime(runtime, objects).adapt_checker(spec, audit_file(path), rules(), raw, role="target", context=ExecutionContext())
+    expected = "deep_timeout" if failure == "timeout" else "deep_output_invalid" if failure == "invalid_bundle" else "deep_model_protocol"
+    assert caught.value.code == expected
+    assert not runtime.work.exists()
+    key = f"{SemanticRuntime(runtime, objects)._attempt_prefix(spec)}/checker-diagnostics/{runtime.job.execution_id}.json"
+    saved = json.loads(objects.get(key))
+    assert saved["job_id"] == spec.job_id and saved["attempt"] == 2 and saved["round_id"] == spec.round_id
+    assert saved["code"] == expected and saved["operation"] == "adapt-checker"
+    assert saved["file_version_id"] == "version-1"
+    assert saved["details"]["stages"][0]["runtime_error"] == "node_wasm_memory_allocation_failed"
+    assert saved["details"]["stages"][0]["terminal"]["usage"] == {"input_tokens": 0, "output_tokens": 0}
+    assert saved["details"]["transport_failure"]["error_type"] == "IncompleteRead"
+    assert saved["details"]["guest"] == {"exit_code": 1}
+    assert "private" not in json.dumps(saved) and "supplier contents" not in json.dumps(saved)
+
+
+def test_checker_diagnostic_storage_failure_preserves_original_error(tmp_path, caplog):
+    from audit.protocol import ControllerFault
+
+    class FailingRuntime(IsolatedRuntime):
+        def run(self, *args, **kwargs):
+            raise ControllerFault("MODEL_PROTOCOL_ERROR")
+
+    class BrokenObjects(MemoryObjects):
+        def put_exclusive(self, *args, **kwargs):
+            raise OSError("private-storage-credential")
+
+    path = tmp_path / "target.xlsx"
+    with pytest.raises(DeepError) as caught:
+        SemanticRuntime(FailingRuntime(ScriptedDeveloper([])), BrokenObjects()).adapt_checker(request(), audit_file(path), rules(), workbook_bytes(path), role="target", context=ExecutionContext())
+    assert caught.value.code == "deep_model_protocol"
+    assert "deep_diagnostic_persist_failed" in caplog.text
+    assert "private-storage-credential" not in caplog.text
+
+
+@pytest.mark.parametrize("local_diagnostic", [None, '{"broken":', '"' + "x" * 65536 + '"', "[]"])
+def test_missing_invalid_or_large_diagnostic_still_saves_failure_identity(tmp_path, local_diagnostic):
+    from audit.protocol import ControllerFault
+
+    class FailingRuntime(IsolatedRuntime):
+        def run(self, job, inputs, work, *args, **kwargs):
+            if local_diagnostic is not None:
+                (work / "diagnostic.json").write_text(local_diagnostic)
+            raise ControllerFault("MODEL_PROTOCOL_ERROR")
+
+    path = tmp_path / "target.xlsx"
+    raw = workbook_bytes(path)
+    objects = MemoryObjects()
+    runtime = FailingRuntime(ScriptedDeveloper([]))
+    host = SemanticRuntime(runtime, objects)
+    for attempt in (1, 1, 2):
+        with pytest.raises(DeepError, match="deep_model_protocol"):
+            host.adapt_checker(request().model_copy(update={"attempt": attempt}), audit_file(path), rules(), raw, role="target", context=ExecutionContext())
+    assert len(objects.items) == 2
+    assert {json.loads(body)["attempt"] for body in objects.items.values()} == {1, 2}
+    for body in objects.items.values():
+        saved = json.loads(body)
+        assert saved["details_available"] is False and saved["details"] == {}
+        assert saved["code"] == "deep_model_protocol"
 
 
 def test_input_digest_includes_file_version_and_role_not_only_the_rule_id(tmp_path: Path) -> None:
@@ -386,7 +508,7 @@ def test_failed_checker_development_does_not_publish_an_empty_success(tmp_path: 
 
     assert developer.calls == 6
     assert caught.value.code == "deep_output_invalid"
-    assert host.objects.items == {}
+    assert_only_failure_diagnostics(host.objects, caught.value.code)
 
 
 def test_stored_checker_result_enters_the_product_record_without_trace_verification(tmp_path: Path) -> None:
@@ -1663,7 +1785,7 @@ def test_an_unchanged_template_is_not_fixed(tmp_path: Path) -> None:
     assert developer.calls == 2
     assert "PDF 的观察与表格建模" not in developer.prompts[0]
     assert "模板尚未实现本次条款" in developer.prompts[1]
-    assert host.objects.items == {}
+    assert_only_failure_diagnostics(host.objects, caught.value.code)
 
 
 def test_resume_replays_a_saved_checker_and_marks_a_missing_target_unexecuted(tmp_path: Path) -> None:
@@ -1939,7 +2061,7 @@ def test_a_failed_revision_does_not_fix_the_unconfirmed_program(tmp_path: Path) 
 
     assert caught.value.code == "deep_output_invalid"
     assert developer.calls == 6
-    assert host.objects.items == {}
+    assert_only_failure_diagnostics(host.objects, caught.value.code)
     assert "这些结果只说明程序跑完，不说明业务判断正确。" in developer.prompts[1]
     assert "程序缺少 create_audit" in developer.prompts[2]
 
@@ -1969,7 +2091,7 @@ def test_a_confirmation_turn_without_a_program_does_not_fix_the_candidate(tmp_pa
 
     assert caught.value.code == "deep_output_invalid"
     assert developer.calls == 2
-    assert host.objects.items == {}
+    assert_only_failure_diagnostics(host.objects, caught.value.code)
 
 
 def test_the_sixth_trial_cannot_fix_the_first_full_success(tmp_path: Path) -> None:
@@ -1983,7 +2105,7 @@ def test_the_sixth_trial_cannot_fix_the_first_full_success(tmp_path: Path) -> No
 
     assert caught.value.code == "deep_output_invalid"
     assert developer.calls == 6
-    assert host.objects.items == {}
+    assert_only_failure_diagnostics(host.objects, caught.value.code)
 
 
 def test_the_last_successful_trial_is_not_fixed_without_confirmation(tmp_path: Path) -> None:
@@ -2138,7 +2260,7 @@ def create_audit(audit_file, rule, group_context=None):
     assert caught.value.code == "deep_output_invalid"
     assert "这是局部试跑" not in developer.prompts[1]
     assert "B should wait" in developer.prompts[1]
-    assert host.objects.items == {}
+    assert_only_failure_diagnostics(host.objects, caught.value.code)
 
 
 def test_removing_resources_runs_every_clause_even_when_the_receipt_names_one(tmp_path: Path) -> None:
@@ -2196,7 +2318,7 @@ def create_audit(audit_file, rule, group_context=None):
     assert developer.calls == 3
     assert "这是局部试跑" not in developer.prompts[2]
     assert "B should wait" in developer.prompts[2]
-    assert host.objects.items == {}
+    assert_only_failure_diagnostics(host.objects, caught.value.code)
 
 
 def test_a_shared_function_change_runs_every_clause_even_when_the_receipt_names_one(tmp_path: Path) -> None:
@@ -2257,7 +2379,7 @@ def create_audit(audit_file, rule, group_context=None):
     assert developer.calls == 3
     assert "这是局部试跑" not in developer.prompts[2]
     assert "B should wait" in developer.prompts[2]
-    assert host.objects.items == {}
+    assert_only_failure_diagnostics(host.objects, caught.value.code)
 
 
 def test_a_clause_method_change_can_still_name_one_clause(tmp_path: Path) -> None:
@@ -2331,7 +2453,7 @@ def create_audit(audit_file, rule, group_context=None):
     assert "本次已有结果的条款" in developer.prompts[2]
     assert "本次已有结果的条款：A" in developer.prompts[2]
     assert "B should wait" not in developer.prompts[2]
-    assert host.objects.items == {}
+    assert_only_failure_diagnostics(host.objects, caught.value.code)
 
 
 def test_a_shared_check_method_change_runs_every_clause_even_when_the_receipt_names_one(tmp_path: Path) -> None:
@@ -2388,7 +2510,7 @@ def create_audit(audit_file, rule, group_context=None):
 
     assert caught.value.code == "deep_model_protocol"
     assert developer.calls == 3
-    assert host.objects.items == {}
+    assert_only_failure_diagnostics(host.objects, caught.value.code)
     assert "这些结果只说明程序跑完，不说明业务判断正确。" in developer.prompts[1]
     assert "这是局部试跑" not in developer.prompts[2]
     assert "B should wait" in developer.prompts[2]
@@ -2562,7 +2684,7 @@ def create_audit(audit_file, rule, group_context=None):
 
     assert caught.value.code == "deep_output_invalid"
     assert developer.calls == 6
-    assert host.objects.items == {}
+    assert_only_failure_diagnostics(host.objects, caught.value.code)
     assert "条款 C2 检查结果无效" in developer.prompts[1]
     assert "AttributeError" in developer.prompts[1]
     assert "C1|UNABLE" in developer.prompts[1]
@@ -3244,7 +3366,7 @@ def test_fixed_execution_keeps_a_completed_clause_when_another_is_missing_or_dup
 
     assert caught.value.code == "deep_output_invalid"
     assert developer.calls == 6
-    assert host.objects.items == {}
+    assert_only_failure_diagnostics(host.objects, caught.value.code)
     assert "条款结果与生效规则不一致" in developer.prompts[1]
     assert "A|NG" in developer.prompts[1]
 

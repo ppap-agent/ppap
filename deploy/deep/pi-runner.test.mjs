@@ -34,7 +34,7 @@ const textItem = { type: "message", id: "msg_1", role: "assistant", status: "com
 const writeItem = { type: "function_call", id: "fc_1", call_id: "call_1", name: "write",
   arguments: JSON.stringify({ path: "checker.py", content: "def create_audit(audit_file, rule, group_context=None): return None\n" }) };
 
-async function runFixture(t, handler, maxTurns = 3) {
+async function runFixture(t, handler, maxTurns = 3, addressSpaceLimit = false) {
   const work = await mkdtemp(join(tmpdir(), "ppap-pi-test-"));
   t.after(() => rm(work, { recursive: true, force: true }));
   let calls = 0;
@@ -55,7 +55,9 @@ async function runFixture(t, handler, maxTurns = 3) {
     base_url: `http://127.0.0.1:${server.address().port}/v1`, model: "test-model",
     reasoning_effort: "low", max_turns: maxTurns, max_tokens: 10000,
   }));
-  const child = spawn(process.execPath, [runner, join(work, "request.json")], {
+  const command = addressSpaceLimit ? "prlimit" : runner;
+  const args = [...(addressSpaceLimit ? ["--as=1610612736", "--core=0", "--", runner] : []), join(work, "request.json")];
+  const child = spawn(command, args, {
     cwd: work, env: { PATH: process.env.PATH, HOME: join(work, "home"), PI_OFFLINE: "1", PI_TELEMETRY: "0" },
   });
   let stdout = "", stderr = "";
@@ -69,6 +71,17 @@ async function runFixture(t, handler, maxTurns = 3) {
   const events = stdout.trim().split("\n").map((line) => JSON.parse(line));
   return { work, calls, bodies, code, events, result: events.at(-1) };
 }
+
+test("production launcher completes HTTP and file work under the 1536 MiB guest address limit", {
+  skip: process.platform !== "linux",
+}, async (t) => {
+  const run = await runFixture(t, (response, calls) => respond(response, calls === 1 ? writeItem : textItem, calls), 3, true);
+  assert.equal(run.code, 0);
+  assert.equal(run.calls, 2);
+  assert.equal(run.result.is_error, false);
+  assert.deepEqual(run.result.usage, { input_tokens: 26, output_tokens: 10 });
+  assert.match(await readFile(join(run.work, "checker.py"), "utf8"), /def create_audit/);
+});
 
 test("Pi SDK writes the actual file, settles, and counts cached input once", async (t) => {
   const run = await runFixture(t, (response, calls) => respond(response, calls === 1 ? writeItem : textItem, calls));

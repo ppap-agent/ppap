@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env -S node --disable-wasm-trap-handler
 // Fixed SDK entrypoint. The Python adapter supplies only an execution-scoped grant.
 import { readFileSync } from "node:fs";
 import {
