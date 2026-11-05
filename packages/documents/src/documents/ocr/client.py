@@ -13,6 +13,7 @@ from typing import Any
 
 from openai import APITimeoutError, AsyncOpenAI
 
+from documents.model_access import current_model_access, model_access_scoped
 from documents.ocr.env import ocr_extra_body, ocr_model_name, ocr_openai_api_key, ocr_openai_base_url
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,9 @@ def ocr_usage_scope(callback: Callable[[dict[str, Any]], None]) -> Iterator[None
 
 
 def _get_llm_client() -> AsyncOpenAI:
+    if model_access_scoped():
+        access = current_model_access()
+        return AsyncOpenAI(api_key=access.api_key.get_secret_value(), base_url=access.base_url, max_retries=0, timeout=REQUEST_TIMEOUT_SECONDS)
     if not ocr_openai_api_key() or not ocr_openai_base_url():
         raise ValueError("OCR endpoint and credential are not configured; set OCR_OPENAI_BASE_URL and OCR_OPENAI_API_KEY")
     return AsyncOpenAI(

@@ -17,7 +17,7 @@ def environment(**updates):
 def test_release_reads_the_container_start_configuration_without_credentials():
     actual = environment()
     identity = verify_process_config({k: v for k, v in actual.items() if k != "PPAP_SERVICE"}, process_env=actual)
-    assert identity["model"] == "model" and identity["reasoning_effort"] == "high"
+    assert identity["model"] == "deepseek-flash" and identity["reasoning_effort"] == "high"
     assert identity["agent"] == "pi" and "API_KEY" not in str(identity)
 
 

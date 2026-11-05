@@ -10,18 +10,8 @@ from product.settings import Settings
     "field,value",
     [
         ("git_sha", "b" * 40),
-        ("MODEL_NAME", "another-model"),
-        ("OPENAI_BASE_URL", "https://another.invalid/v1"),
-        ("OPENAI_REASONING_EFFORT", "high"),
-        ("OPENAI_REASONING_EFFORT", "low"),
-        ("OPENAI_TEMPERATURE", 0.7),
-        ("OPENAI_TOP_P", 0.3),
-        ("OPENAI_EXTRA_BODY_JSON", '{"provider":{"order":["other"]}}'),
-        ("OCR_MODEL_NAME", "ocr-other"),
-        ("OCR_OPENAI_BASE_URL", "https://ocr-model.invalid/v1"),
         ("MAX_FILE_SIZE", "10MB"),
         ("PADDLE_OCR_URL", "https://paddle.invalid"),
-        ("OCR_OPENAI_EXTRA_BODY_JSON", '{"reasoning":{"enabled":true}}'),
     ],
 )
 def test_standard_revision_tracks_effective_configuration(field, value):
@@ -31,7 +21,7 @@ def test_standard_revision_tracks_effective_configuration(field, value):
     assert original.engine_revision().startswith("standard-v1:")
     assert changed.engine_revision() != original.engine_revision()
     assert original.app_revision == "a" * 40
-    assert original.model == "model-a"
+    assert original.model == "deepseek-flash"
 
 
 def test_policy_contains_no_secrets_or_raw_provider_options():
@@ -93,4 +83,15 @@ def test_ocr_no_reasoning_default_and_explicit_override_share_the_actual_policy(
         settings.OCR_OPENAI_EXTRA_BODY_JSON = value
         assert settings.standard_execution_policy() == default
     settings.OCR_OPENAI_EXTRA_BODY_JSON = '{"reasoning":{"effort":"high"}}'
-    assert settings.standard_execution_policy() != default
+    assert settings.standard_execution_policy() == default
+
+
+@pytest.mark.parametrize(
+    "field", ["llm_api_key", "llm_model", "llm_base_url", "OPENAI_API_KEY", "OPENAI_BASE_URL", "MODEL_NAME", "OCR_MODEL_NAME", "OCR_OPENAI_BASE_URL", "OCR_OPENAI_API_KEY", "OPENAI_EXTRA_BODY_JSON"]
+)
+def test_personal_policy_never_inherits_deployment_model_configuration(field):
+    settings = Settings()
+    original = settings.standard_execution_policy()
+    setattr(settings, field, "ignored-deployment-value")
+    assert settings.standard_execution_policy() == original
+    assert original.model == "deepseek-flash"

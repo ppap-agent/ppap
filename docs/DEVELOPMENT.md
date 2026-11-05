@@ -340,3 +340,11 @@ GitHub Actions 的外部模型测试使用 `CI_LLM_API_KEY`、`CI_LLM_BASE_URL` 
 Excel 的图形事实通过 `audit.engine.checkers.excel_field_evidence` 读取。XLS 先经既有 LibreOffice 隔离转换为 XLSX，保留原始绘图部分；单元格、控件和可靠原生文字优先使用。按字段文字、合并范围和相邻字段确定区域，必要时由 `documents.excel.visual` 渲染；Excel 与 PDF 共用 `pdf_field_region` 的栏目边界。签字字段不读取印刷姓名、日期或客户签字，保证书盖章与授权表盖章分别取证。缺少标签且需要证明没有盖章时，覆盖完整适用工作表，包含原生单元格范围外的绘图；不能凭局部未找到就确认不存在。模型只返回事实，坐标、文件版本和来源摘要由程序保存；未知仍为 UNABLE，调用或解析错误为 ERR。同一字段复用成功或失败结果，不自动重试。
 
 尺寸审核把检查数据、判定标准、单位和结果绑定到同一原始记录。明确的不同量纲不能直接比较；支持的同量纲单位先换算，单位无法可靠确定时返回 UNABLE。跨文件读取绑定本轮冻结文件版本，完整匹配零件标识及工序号，保留两份原件的单元格位置。不同文档的修订计数不要求相同；两份原件都明确声明同零件的工程更改水平时，冲突不能通过。身份不足不能支持 PASS，也不借用相近编号的记录。历史文件、规则与结果不变。
+
+## Checker Core 个人 DeepSeek 配置
+
+`GET/PUT/DELETE /me/model-config` 管理当前登录用户自己的 Key；PUT 仅接受 `api_key`，回执仅含 provider、model、configured、updated_at。部署先通过 Secret 配置同一 `PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY`，不提供默认值，也不自动生成持久密钥。替换部署加密密钥前必须保留/迁移既有密文，否则原 Key 会明确不可用。
+
+产品执行固定使用 DeepSeek `deepseek-flash` 的 Responses 接口和本次发起人的凭据，模型别名不承诺永久权重版本。官方 [Responses 文档](https://api-docs.deepseek.com/api/create-response/) 支持 function tools、user/developer `input_image`、reasoning none/low/high/max；文字与视觉事实使用 none，开发循环按明确参数执行。受控真实 SDK/网关测试验证请求形状与完整/未知用量，不替代真实付费兼容性验证；本次未进行真实付费模型调用。
+
+缺 Key 不阻止原生或 Paddle 确定性检查，只在需要付费模型时报告不可用。SDK 和调用层不自动重试未知完成的请求。Token 只采用实际 provider 回执，缺失显示 unknown；用户应在 DeepSeek 账户侧设置消费上限，PPAP 不承诺费用硬封顶，本变更不启用业务收费。

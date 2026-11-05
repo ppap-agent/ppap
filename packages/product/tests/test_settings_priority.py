@@ -61,7 +61,7 @@ def test_ocr_configuration_is_independent_from_text_model(monkeypatch):
         inherited.get_ocr_model_name()
     assert inherited.get_ocr_openai_api_key() == ""
     assert inherited.get_ocr_openai_base_url() == ""
-    assert inherited.standard_execution_policy().model == "text-model"
+    assert inherited.standard_execution_policy().model == "deepseek-flash"
     assert dedicated.get_ocr_model_name() == "dedicated-ocr-model"
     assert dedicated.get_ocr_openai_api_key() == "ocr-key"
     assert dedicated.get_ocr_openai_base_url() == "https://ocr.invalid/v1"

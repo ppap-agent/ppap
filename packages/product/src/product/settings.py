@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 from functools import lru_cache
 from typing import Literal, Optional, Self
 from urllib.parse import urlsplit
 
 from audit.policy import DeepExecutionPolicy
-from documents.ocr.env import effective_ocr_extra_body
-from pydantic import Field, model_validator
+from documents.model_access import DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from product.standard_policy import StandardExecutionPolicy, config_digest
@@ -32,6 +31,8 @@ class Settings(BaseSettings):
     profile: Literal["isolated-dev", "remote-dev", "production"] = Field(default="isolated-dev", alias="PPAP_PROFILE")
     precheck_gate_enforced: bool = Field(default=False, alias="PPAP_PRECHECK_GATE_ENFORCED")
     git_sha: str = Field(default="", alias="PPAP_BUILD_SHA")
+
+    model_credential_encryption_key: SecretStr = Field(default=SecretStr(""), alias="PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY", repr=False, exclude=True)
 
     llm_api_key: str = Field(default="", alias="LLM_API_KEY")
     llm_base_url: str = Field(default="", alias="LLM_BASE_URL")
@@ -206,7 +207,9 @@ class Settings(BaseSettings):
         return base_url, model, key
 
     def deep_execution_policy(self) -> DeepExecutionPolicy:
-        base_url, model = self.deep_model_policy()
+        # Product runs use the initiator's personal DeepSeek configuration.
+        # Legacy deployment settings remain for explicit standalone tooling only.
+        base_url, model = DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
         return DeepExecutionPolicy.model_validate(
             {
                 "app_revision": self.git_sha,
@@ -222,38 +225,23 @@ class Settings(BaseSettings):
         return self.deep_execution_policy().engine_revision()
 
     def standard_execution_policy(self) -> StandardExecutionPolicy:
-        # Match AIClient's effective override handling. Never persist credentials,
-        # raw endpoints, local cache paths, or arbitrary provider extra-body data.
-        try:
-            extra = json.loads(self.OPENAI_EXTRA_BODY_JSON)
-        except (ValueError, TypeError):
-            extra = None
-        if not isinstance(extra, dict):
-            extra = None
-        try:
-            ocr_extra = effective_ocr_extra_body(self.OCR_OPENAI_EXTRA_BODY_JSON)
-        except (ValueError, TypeError):
-            ocr_extra = None
-        if not isinstance(ocr_extra, dict):
-            ocr_extra = None
         return StandardExecutionPolicy(
             app_revision=self.git_sha or None,
-            model=self.MODEL_NAME,
+            model=DEEPSEEK_MODEL,
             model_config_revision=config_digest(
                 {
-                    "endpoint": self.OPENAI_BASE_URL,
-                    "model": self.MODEL_NAME,
-                    "reasoning_effort": self.OPENAI_REASONING_EFFORT,
-                    "temperature": self.OPENAI_TEMPERATURE,
-                    "top_p": self.OPENAI_TOP_P,
-                    "extra_body": extra,
+                    "endpoint": DEEPSEEK_BASE_URL,
+                    "model": DEEPSEEK_MODEL,
+                    "credential_source": "initiating_user",
+                    "reasoning_effort": "none",
+                    "max_retries": 0,
                 }
             ),
             tool_config_revision=config_digest(
                 {
-                    "ocr_model_endpoint": self.get_ocr_openai_base_url(),
-                    "ocr_model": self.OCR_MODEL_NAME.strip(),
-                    "ocr_extra_body": ocr_extra,
+                    "ocr_model_endpoint": DEEPSEEK_BASE_URL,
+                    "ocr_model": DEEPSEEK_MODEL,
+                    "ocr_extra_body": {"reasoning": {"effort": "none"}},
                     "vision_protocol": "native_paddle_responses_v3",
                     "paddle_endpoint": self.PADDLE_OCR_URL.strip(),
                     "paddle_http_timeout_seconds": 20,

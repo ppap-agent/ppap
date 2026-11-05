@@ -36,7 +36,8 @@ def main() -> int:
     objects = S3Objects(settings)
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
-    with runtime_from_env(settings, objects) as runtime:
+    store = open_store(settings)
+    with runtime_from_env(settings, objects, model_access_for_request=lambda spec: store.personal_model_access(spec.tenant_id, spec.initiating_user_id)) as runtime:
         server = UnixControllerServer(
             socket_path,
             Controller(

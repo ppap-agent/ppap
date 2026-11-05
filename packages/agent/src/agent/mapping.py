@@ -41,6 +41,7 @@ def spec_from_work(work: RoundWork, executor: str, executor_revision: str, proto
         executor="ppap-deep",
         executor_revision=executor_revision,
         tenant_id=work.tenant_id,
+        initiating_user_id=work.initiating_user_id,
     )
 
 
