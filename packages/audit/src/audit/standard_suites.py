@@ -72,8 +72,8 @@ def _carriers(customer: str, entry: str) -> dict[str, str]:
             if entry in classes:
                 carriers[extension] = _class_name(classes[entry])
         return carriers
-    classes = {"N01": NioMeasurementAgent, "N02": NioPfmeaAgent, "N03": NioControlPlanAgent, "N04": NioSpecialCharacteristicsAgent, "N05": NioProcessFlowAgent}
-    return {extension: _class_name(classes[entry]) for extension in (".xlsx", ".xls", ".xlsm", ".pdf")}
+    nio_classes = {"N01": NioMeasurementAgent, "N02": NioPfmeaAgent, "N03": NioControlPlanAgent, "N04": NioSpecialCharacteristicsAgent, "N05": NioProcessFlowAgent}
+    return {extension: _class_name(nio_classes[entry]) for extension in (".xlsx", ".xls", ".xlsm", ".pdf")}
 
 
 def standard_suites() -> tuple[StandardSuite, ...]:

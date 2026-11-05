@@ -90,3 +90,31 @@ def test_editable_u12_l11_n03_starters_execute_source_clauses(tmp_path):
                 close = getattr(checker, "close", None)
                 if close:
                     close()
+
+
+def test_authored_factory_results_bind_by_ids_without_historical_class():
+    from audit.contracts import AuditResultItem
+    from audit.standard_library import check_factory
+
+    calls = []
+
+    def result(clause):
+        calls.append(clause)
+        return AuditResultItem(classification="x", item=clause, priority="P0", status="NG", suggestions="", clause_id=clause)
+
+    def factory(audit, rule):
+        return SimpleNamespace(checks=[SimpleNamespace(check=lambda: result("b")), SimpleNamespace(check=lambda: result("a"))])
+
+    context = SimpleNamespace(
+        audit_file=SimpleNamespace(audit_id="target"),
+        target=SimpleNamespace(binding=SimpleNamespace(checker_digest="fixed", entrypoints={"a": "checker:create_audit", "b": "checker:create_audit"})),
+        rule=None,
+        group_context=None,
+        cache={},
+        on_close=lambda item: None,
+        clause_id="a",
+    )
+    assert check_factory(context, factory).clause_id == "a"
+    context.clause_id = "b"
+    assert check_factory(context, factory).clause_id == "b"
+    assert calls == ["b", "a"]

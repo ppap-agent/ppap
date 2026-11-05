@@ -118,6 +118,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - name: Protect independent human corpus truth
+        run: python3 scripts/check_oracle_changes.py --event "$GITHUB_EVENT_PATH"
       - name: Use runner-local Corepack cache
         working-directory: ${{ github.workspace }}
         run: echo "COREPACK_HOME=$RUNNER_TEMP/corepack/${GITHUB_RUN_ID}/${GITHUB_JOB}" >> "$GITHUB_ENV"
