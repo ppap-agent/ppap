@@ -178,7 +178,7 @@ python3 deploy/tke/build-current.py <full-source-sha> --run-id <run-id>
 
 构建保持四组件统一源码 SHA，一次 Bake 共享步骤并按依赖调度；不增加按文件选择组件的发布分支。固定系统工具放在应用源码之前，Deep 的 npm 安装及签名检查只依赖锁文件，runner 测试在源码层执行。依赖校验和打包后的 import 检查继续保留。
 
-云效使用临时 `docker-container` BuildKit，将所有中间阶段缓存导出到现有 TCR 的各组件 `:buildkit-cache`（`mode=max`）。首次构建仍可导入原 `:build-cache`；两个缓存引用都不能作为部署镜像。后续构建复用依赖层，不依赖临时 Runner 的本地磁盘或 uv cache mount 持久化。首次填充缓存仍需完整构建，后续实际收益由构建步骤耗时确认。
+云效公共 Runner 使用原生 Docker 驱动和 inline 缓存，导出到现有各组件的 `:build-cache` 镜像；缓存 tag 不能作为部署 pin。该节点实际拒绝 `docker-container` BuildKit 启动（`flow not support`），因此不启用依赖该驱动的 registry `mode=max` 中间阶段缓存，也不为缓存新增构建服务。固定依赖分层继续减少源码变更时的重装。临时 Runner 的本地 uv cache mount 不保证跨运行持久化；实际缓存收益由构建步骤耗时确认。
 
 默认入口先验证该 SHA 的四个镜像；全部存在且身份正确则直接复用，不读取历史成功运行。仅有镜像明确缺失时查询活动流水线：同源码跟进原 run，不同源码活动时停止；历史运行通过 `--run-id` 显式恢复。查询使用云效 [ListPipelineRuns 的 RUNNING 过滤](https://help.aliyun.com/en/yunxiao/developer-reference/listpipelineruns)，不再逐条读取成功历史。
 

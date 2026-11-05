@@ -59,7 +59,7 @@ stages:
                 export PPAP_IMAGE_PREFIX=icoastline.tencentcloudcr.com/ppap-feishu/current-
                 test "$(git rev-parse HEAD)" = "$PPAP_BUILD_SHA"
                 git diff --exit-code
-                # Export intermediate stages as well as final layers; cache refs are not deployment pins.
+                # Flow public runners reject docker-container startup; use their native inline cache.
                 # JSON tag overrides also work on the runner's older Buildx (no tags+=).
                 python3 - <<'PY'
                 import json, os
@@ -73,7 +73,7 @@ stages:
                 }
                 targets = {
                     component: {
-                        'tags': [os.environ['PPAP_IMAGE_PREFIX'] + component + ':' + os.environ['PPAP_BUILD_SHA']],
+                        'tags': [os.environ['PPAP_IMAGE_PREFIX'] + component + ':' + tag for tag in (os.environ['PPAP_BUILD_SHA'], 'build-cache')],
                         'contexts': {base: 'docker-image://docker.m.daocloud.io/library/' + base for base in bases[component]},
                     }
                     for component in ('api', 'worker', 'web', 'deep')
@@ -81,15 +81,9 @@ stages:
                 with open('/tmp/ppap-current-cache.json', 'w') as output:
                     json.dump({'target': targets}, output)
                 PY
-                # The container driver supports registry mode=max on older Docker Engines too.
-                docker buildx create --driver docker-container \
-                  --driver-opt image=docker.m.daocloud.io/moby/buildkit:buildx-stable-1 --use
-                set -- --set '*.platform=linux/amd64'
+                set -- --set '*.platform=linux/amd64' --set '*.cache-to=type=inline'
                 for component in api worker web deep; do
-                  set -- "$@" \
-                    --set "$component.cache-from=type=registry,ref=${PPAP_IMAGE_PREFIX}${component}:build-cache" \
-                    --set "$component.cache-from=type=registry,ref=${PPAP_IMAGE_PREFIX}${component}:buildkit-cache" \
-                    --set "$component.cache-to=type=registry,ref=${PPAP_IMAGE_PREFIX}${component}:buildkit-cache,mode=max"
+                  set -- "$@" --set "$component.cache-from=type=registry,ref=${PPAP_IMAGE_PREFIX}${component}:build-cache"
                 done
                 docker buildx bake -f docker-bake.hcl -f /tmp/ppap-current-cache.json release "$@" \
                   --provenance=false --metadata-file /tmp/ppap-current-images.json --push
