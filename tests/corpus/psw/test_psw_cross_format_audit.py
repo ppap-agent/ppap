@@ -66,9 +66,12 @@ class _DeterministicRuntime(_AppAuditRuntime):
 
 
 def _controlled_visual_facts(response_schema, image_count, prompt=""):
-    values = {"authorized_signature_present": True, "psw_stamp_present": True}
+    values = {"authorized_signature_present": True, "psw_stamp_present": True, "submission_any_checked": True}
     result = {}
     for field, schema in response_schema["schema"]["properties"].items():
+        if "items" not in schema:  # A located region returns the bare value.
+            result[field] = values.get(field)
+            continue
         observations = []
         for scope in schema["items"]["properties"]["scope"]["enum"]:
             indices = [int(line.split(":", 1)[0].split()[1]) for line in prompt.splitlines() if line.startswith("图 ") and f"'scope': '{scope}'" in line] or list(range(image_count))
