@@ -61,19 +61,45 @@ def check_clause(context: Any, resources: dict[str, Any]) -> AuditResultItem:
     return result.model_copy(update={"clause_id": context.clause_id})
 
 
-def check_factory(context: Any, factory: Any) -> AuditResultItem:
-    """Adapt already-authored clause-bound artifacts to the same Core call.
+class AuthoredCheckerError(ValueError):
+    """A bounded library diagnostic, without provider or original payloads."""
 
-    Only existing authored artifacts need this compatibility helper. Core
-    entrypoints remain plain callables and do not require a historical base.
+
+def _authored_error(clause: str, code: str) -> AuditResultItem:
+    return AuditResultItem(classification="规则审核", item=clause, priority="P0", status="ERR", suggestions=code, clause_id=clause)
+
+
+def _require_pdf_spec(audit: Any, context: Any) -> None:
+    from documents.pdf import PdfSpec, validate_pdf_spec
+
+    from audit.checkers.v3.excel_agent import ExcelAgent
+    from audit.checkers.v4.uaes.native import UaesSourceAgent
+
+    # Native readers and plain callable checkers need no grid specification.
+    if not isinstance(audit, ExcelAgent) or isinstance(audit, UaesSourceAgent) or Path(context.audit_file.file_url).suffix.lower() != ".pdf":
+        return
+    spec = type(audit).__dict__.get("PDF_SPEC")
+    if not isinstance(spec, PdfSpec):
+        raise AuthoredCheckerError("authored_pdf_spec_required")
+    try:
+        validate_pdf_spec(spec)
+    except ValueError:
+        raise AuthoredCheckerError("authored_pdf_spec_invalid") from None
+
+
+def check_factory(context: Any, factory: Any) -> AuditResultItem:
+    """Adapt authored artifacts without retry, positional binding or extra execution.
+
+    Diagnostics about unbound authored methods are separate from Core findings.
+    Only the frozen explicit clauses can produce authoritative findings.
     """
     import inspect
 
+    from pydantic import ValidationError
+
     key = ("authored-checker", context.audit_file.audit_id, context.target.binding.checker_digest)
-    audit = context.cache.get(key)
-    if audit is None:
-        # Inspect once rather than retrying a factory after an internal TypeError,
-        # which could repeat a model call with an unknown external outcome.
+
+    def create():
         signature = inspect.signature(factory)
         args: tuple[Any, ...] = (context.audit_file, context.rule, context.group_context)
         try:
@@ -81,39 +107,76 @@ def check_factory(context: Any, factory: Any) -> AuditResultItem:
         except TypeError:
             args = args[:2]
             signature.bind(*args)
-        audit = _once(context, key, lambda: factory(*args))
+        audit = factory(*args)
         context.on_close(audit)
+        _require_pdf_spec(audit, context)
+        return audit
+
+    audit = _once(context, key, create)
     checks = tuple(getattr(audit, "checks", ()) or ())
     if not checks:
-        raise ValueError("authored_checker_missing_checks")
-    ids = [str(getattr(getattr(check, "rule_item", None), "id", "")) for check in checks]
-    if all(ids):
-        matches = [check for check, clause_id in zip(checks, ids) if clause_id == context.clause_id]
-        if len(matches) != 1 or getattr(matches[0], "binding_error", None):
-            raise ValueError("authored_checker_clause_binding_invalid")
-        result = matches[0].check()
-        if result is None:
-            raise ValueError("authored_checker_missing_result")
-        item = AuditResultItem.model_validate(result.model_dump())
-        if item.clause_id != context.clause_id:
-            raise ValueError("authored_checker_result_clause_mismatch")
-        return item
-    # Some valid authored factories only attach IDs to returned results. Execute
-    # that factory's checks once, then attribute by IDs, never by list position.
-    result_key = (*key, "results")
+        raise AuthoredCheckerError("authored_checker_missing_checks")
+    diagnostic_key = ("authored-diagnostics", context.audit_file.audit_id)
+    diagnostics = context.cache.setdefault(diagnostic_key, [])
 
+    def diagnostic(clause: str | None, code: str) -> None:
+        value = {"file_version_id": context.audit_file.audit_id, "clause_id": clause, "code": code}
+        if value not in diagnostics:
+            diagnostics.append(value)
+
+    def checked(check):
+        result = check.check()
+        if result is None:
+            return None
+        try:
+            return AuditResultItem.model_validate(result if isinstance(result, dict) else result.model_dump())
+        except (ValidationError, AttributeError):
+            raise AuthoredCheckerError("authored_checker_invalid_result") from None
+
+    ids = [str(getattr(getattr(check, "rule_item", None), "id", "") or "") for check in checks]
+    if any(hasattr(check, "rule_item") for check in checks):
+        allowed = {row["id"] for row in context.rule.rules}
+        for clause in ids:
+            if not clause:
+                diagnostic(None, "authored_checker_missing_clause_id")
+            elif clause not in allowed:
+                diagnostic(clause, "authored_checker_extra_clause")
+        matches = [check for check, clause in zip(checks, ids) if clause == context.clause_id]
+        if not matches:
+            raise AuthoredCheckerError("authored_checker_missing_binding")
+        if len(matches) != 1:
+            raise AuthoredCheckerError("authored_checker_duplicate_binding")
+        problem = getattr(matches[0], "binding_error", None)
+        if problem:
+            if str(problem).endswith("绑定了多个检查入口"):
+                raise AuthoredCheckerError("authored_checker_duplicate_binding")
+            if str(problem).endswith("没有对应的检查入口"):
+                raise AuthoredCheckerError("authored_checker_missing_binding")
+            raise AuthoredCheckerError("authored_checker_invalid_binding")
+        item = checked(matches[0])
+        if item is None:
+            return _authored_error(context.clause_id, "checker_missing_result")
+        if item.clause_id != context.clause_id:
+            raise AuthoredCheckerError("authored_checker_result_clause_mismatch")
+        return item
+
+    # Earlier authored factories attach identity to the result only. Evaluate
+    # once, retain uniquely attributed results, and reject all extra outputs.
     def collect():
-        results = {}
+        results: dict[str, AuditResultItem] = {}
         for check in checks:
-            result = check.check()
-            if result is None:
-                raise ValueError("authored_checker_missing_result")
-            item = AuditResultItem.model_validate(result.model_dump())
-            if item.clause_id not in context.target.binding.entrypoints or item.clause_id in results:
-                raise ValueError("authored_checker_result_clause_mismatch")
-            results[item.clause_id] = item
-        if set(results) != set(context.target.binding.entrypoints):
-            raise ValueError("authored_checker_result_clause_mismatch")
+            item = checked(check)
+            if item is None or not item.clause_id:
+                diagnostic(None, "authored_checker_missing_clause_id")
+                continue
+            clause = item.clause_id
+            if clause not in context.target.binding.entrypoints:
+                diagnostic(clause, "authored_checker_extra_clause")
+            elif clause in results:
+                results[clause] = _authored_error(clause, "authored_checker_duplicate_result")
+            else:
+                results[clause] = item
         return results
 
-    return _once(context, result_key, collect)[context.clause_id]
+    results = _once(context, (*key, "results"), collect)
+    return results.get(context.clause_id) or _authored_error(context.clause_id, "authored_checker_missing_result")

@@ -139,7 +139,7 @@ def test_uaes_checks_follow_effective_clause_count_order_and_native_evidence(tmp
     one = run_program({"checker.py": source}, tmp_path / "partial", target, rule, None, only_clauses=[clauses[0]["id"]])
     assert [(result.clause_id, result.status) for result in one] == [(clauses[0]["id"], "PASS")]
     missing = rule.model_copy(update={"rules": [*rule.rules, {**clauses[0], "id": "missing"}]})
-    with pytest.raises(CheckerTrialError, match="一一对应"):
+    with pytest.raises(CheckerTrialError, match="条款结果与生效规则不一致"):
         run_program({"checker.py": source}, tmp_path / "invalid", target, missing, None)
 
 
@@ -322,5 +322,5 @@ def test_native_electronic_pdf_development_and_fixed_visual_guard(tmp_path, monk
     artifact = adapt(target, rule, runner=Developer(), work=tmp_path / "adapt", deadline=10**12, **args)
     results = execute(artifact, target, rule, work=tmp_path / "execute", **args)
     assert [result.status for result in results] == ["PASS", "UNABLE"]
-    assert "可重放的视觉观察" in results[1].suggestions
+    assert "尚未核实" in results[1].suggestions
     assert all(json.loads(source.locator)["file_version_id"] == "target" for result in results for source in result.evidence.sources)

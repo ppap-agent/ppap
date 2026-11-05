@@ -1101,7 +1101,8 @@ def test_product_execute_stages_reference_bytes_inside_the_guest(tmp_path: Path)
 
     suggestion = response.findings[0].suggestions
     assert "RELATED-OK" in suggestion
-    assert "related-" in suggestion
+    assert "ppap-audit-guest-" in suggestion
+    assert "source-" in suggestion
     assert str(host_secret) not in suggestion
     assert reference.filename in "".join(response.coverage.unchecked)
 
@@ -1967,7 +1968,8 @@ def create_audit(audit_file, rule, group_context=None):
 
     assert developer.calls == 3
     assert "条款 B1 试跑失败" in developer.prompts[1]
-    assert "缺原件位置 page:4" in developer.prompts[1]
+    assert "缺原件位置 page:4" not in developer.prompts[1]
+    assert "checker_failure:RuntimeError" in developer.prompts[1]
     assert "B2|UNABLE" in developer.prompts[1]
     assert "修复读取或实现错误后，按同一规则重新判断" in developer.prompts[1]
     assert "这些结果只说明程序跑完，不说明业务判断正确。" in developer.prompts[2]
@@ -2259,7 +2261,7 @@ def create_audit(audit_file, rule, group_context=None):
 
     assert caught.value.code == "deep_output_invalid"
     assert "这是局部试跑" not in developer.prompts[1]
-    assert "B should wait" in developer.prompts[1]
+    assert "B|ERR||checker_failure:RuntimeError" in developer.prompts[1]
     assert_only_failure_diagnostics(host.objects, caught.value.code)
 
 
@@ -2317,7 +2319,7 @@ def create_audit(audit_file, rule, group_context=None):
     assert caught.value.code == "deep_model_protocol"
     assert developer.calls == 3
     assert "这是局部试跑" not in developer.prompts[2]
-    assert "B should wait" in developer.prompts[2]
+    assert "B|ERR||checker_failure:RuntimeError" in developer.prompts[2]
     assert_only_failure_diagnostics(host.objects, caught.value.code)
 
 
@@ -2378,7 +2380,7 @@ def create_audit(audit_file, rule, group_context=None):
     assert caught.value.code == "deep_model_protocol"
     assert developer.calls == 3
     assert "这是局部试跑" not in developer.prompts[2]
-    assert "B should wait" in developer.prompts[2]
+    assert "B|ERR||checker_failure:RuntimeError" in developer.prompts[2]
     assert_only_failure_diagnostics(host.objects, caught.value.code)
 
 
@@ -2513,7 +2515,7 @@ def create_audit(audit_file, rule, group_context=None):
     assert_only_failure_diagnostics(host.objects, caught.value.code)
     assert "这些结果只说明程序跑完，不说明业务判断正确。" in developer.prompts[1]
     assert "这是局部试跑" not in developer.prompts[2]
-    assert "B should wait" in developer.prompts[2]
+    assert "B|ERR||checker_failure:RuntimeError" in developer.prompts[2]
     assert "A|NG" in developer.prompts[2]
 
 
@@ -2629,8 +2631,8 @@ def create_audit(audit_file, rule, group_context=None):
     results = host.execute_checker(request(), artifact, audit, rule, raw, role="target", context=ExecutionContext())
 
     assert [(item.clause_id, item.status) for item in results] == [("C1", "ERR"), ("C2", "UNABLE"), ("C3", "ERR")]
-    assert "AttributeError" in results[0].suggestions
-    assert "ValidationError" in results[2].suggestions
+    assert "检查结果无效" in results[0].suggestions
+    assert "检查结果无效" in results[2].suggestions
     assert "PASS" not in {item.status for item in results}
 
 
@@ -2686,7 +2688,7 @@ def create_audit(audit_file, rule, group_context=None):
     assert developer.calls == 6
     assert_only_failure_diagnostics(host.objects, caught.value.code)
     assert "条款 C2 检查结果无效" in developer.prompts[1]
-    assert "AttributeError" in developer.prompts[1]
+    assert "authored_checker_invalid_result" in developer.prompts[1]
     assert "C1|UNABLE" in developer.prompts[1]
 
 
@@ -3407,9 +3409,9 @@ def test_fixed_execution_keeps_a_completed_clause_when_another_is_missing_or_dup
         ),
     )
     by_key = {item.item_key: item for item in response.findings}
-    gap_text = "条款 B 有多个结果" if gap == "duplicate" else "条款 B 没有结果"
+    gap_text = "条款 B 绑定错误: 绑定了多个检查入口" if gap == "duplicate" else "条款 B 绑定错误: 没有对应的检查入口"
 
-    assert [(item.clause_id, item.status) for item in results] == [("A", "NG"), ("B", "ERR"), (None, "ERR"), ("Z", "UNABLE")]
+    assert [(item.clause_id, item.status) for item in results] == [("A", "NG"), ("B", "ERR"), ("Z", "ERR"), (None, "ERR")]
     assert results[0].suggestions == "已比较"
     assert results[1].suggestions == gap_text
     assert "第一次" not in " ".join(item.suggestions for item in results)
@@ -3424,83 +3426,20 @@ def test_fixed_execution_keeps_a_completed_clause_when_another_is_missing_or_dup
     assert response.coverage.verification is None
 
 
-def test_duplicate_rule_ids_run_the_unique_clause_and_keep_distinct_keys(tmp_path: Path) -> None:
-    from agent.mapping import checker_response, product_result
-    from audit.audits import RoundInput, RoundWork
+def test_duplicate_rule_ids_fail_before_authored_code_or_model_runs(tmp_path: Path) -> None:
+    from agent.execution.checker_guest import CheckerTrialError, run_program
 
     path = tmp_path / "target.xlsx"
     raw = workbook_bytes(path)
-    clauses = [
-        {"id": "R4", "category": "工序名称", "rule_to_check": "第一次工序名称"},
-        {"id": "R4", "category": "工序名称", "rule_to_check": "第二次工序名称"},
-        {"id": "R5", "category": "操作描述", "rule_to_check": "操作描述需要单独检查"},
-    ]
-    rule = RuleInput(
-        rule_id="same-rule",
-        rule_profile="v3",
-        type=PpapDocumentType.PROCESS_FLOW_CHART.get_type_name(),
-        rules=clauses,
-    )
-    program = """
-from audit.checkers.v3.excel_agent import ExcelAgent, rule
-from audit.engine.rule_engine.context import RuleContext
-from audit.kinds import PpapDocumentType
-
-
-class TaskAudit(ExcelAgent):
-    DOC_TYPE = PpapDocumentType.PROCESS_FLOW_CHART
-    CLAUSE_BOUND_CHECKS = True
-
-    @rule("工序名称", clause_id="R4")
-    def rule_1(self, ctx: RuleContext) -> tuple[str, str]:
-        return "NG", "工序名称不一致"
-
-    @rule("操作描述", clause_id="R5")
-    def rule_2(self, ctx: RuleContext) -> tuple[str, str]:
-        return "UNABLE", "操作描述未核对"
-
-
-def create_audit(audit_file, rule, group_context=None):
-    return TaskAudit(audit_file, rule, group_context)
-"""
-    developer = ScriptedDeveloper([{"entrypoint": "checker:create_audit", "files": {"checker.py": program}}])
+    rule = rules().model_copy(update={"rules": [rules().rules[0], rules().rules[0]]})
+    developer = ScriptedDeveloper([valid_draft()])
     host = SemanticRuntime(IsolatedRuntime(developer), MemoryObjects(), timeout=30)
-    artifact = host.adapt_checker(request(), audit_file(path), rule, raw, role="target", context=ExecutionContext())
-    assert developer.calls == 2
-    results = host.execute_checker(request(), artifact, audit_file(path), rule, raw, role="target", context=ExecutionContext())
-    frozen = _frozen_target(raw, clauses)
-    response = checker_response(request().model_copy(update={"files": [frozen]}), [(frozen, results)])
-    stored = product_result(
-        response,
-        RoundWork(
-            round_id="round-1",
-            tenant_id="",
-            inputs=[
-                RoundInput(
-                    role="target",
-                    file_id="file-1",
-                    file_version_id="version-1",
-                    filename="target.xlsx",
-                    status="ready",
-                    sha256=hashlib.sha256(raw).hexdigest(),
-                    rule_version_id="same-rule",
-                    rule_body=frozen.rule_body,
-                )
-            ],
-        ),
-    )
-    by_key = {item.item_key: item for item in response.findings}
-
-    assert [(item.clause_id, item.status) for item in results] == [("R4", "ERR"), ("R4", "ERR"), ("R5", "UNABLE")]
-    assert results[0].suggestions == "条款 R4 在生效规则中重复"
-    assert results[1].suggestions == "条款 R4 在生效规则中重复"
-    assert results[2].suggestions == "操作描述未核对"
-    assert [item.item_key for item in response.findings] == ["version-1:rule:R4", "version-1:rule:R4:2", "version-1:rule:R5"]
-    assert by_key["version-1:rule:R4"].item == "第一次工序名称"
-    assert by_key["version-1:rule:R4:2"].item == "第二次工序名称"
-    assert by_key["version-1:rule:R5"].status == "UNABLE"
-    assert [item["item_key"] for item in stored["findings"]] == ["version-1:rule:R4", "version-1:rule:R4:2", "version-1:rule:R5"]
-    assert response.coverage.verification is None
+    with pytest.raises(DeepError) as caught:
+        host.adapt_checker(request(), audit_file(path), rule, raw, role="target", context=ExecutionContext())
+    assert caught.value.code == "deep_output_invalid"
+    assert developer.calls == 0
+    with pytest.raises(CheckerTrialError):
+        run_program({"checker.py": b"raise AssertionError('must not execute')"}, tmp_path / "fixed", audit_file(path), rule, None)
 
 
 def test_an_open_question_reaches_product_clarification_without_trace_verification(tmp_path: Path) -> None:

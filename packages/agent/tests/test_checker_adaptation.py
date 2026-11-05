@@ -85,7 +85,8 @@ def test_prior_diagnosis_failed_candidate_repair_and_fixed_execution(tmp_path: P
                 draft_resource = "raise ValueError('resource is incomplete')"
             else:
                 if self.calls == 2:
-                    assert "resource is incomplete" in prompt
+                    assert "试跑合同或输入失败: ValueError" in prompt
+                    assert "resource is incomplete" not in prompt
                     assert (work / "current-resources.py").read_text() == "raise ValueError('resource is incomplete')"
                 draft_resource = resource("供应商资料")
             return schema.model_validate({"entrypoint": "checker:create_audit", "files": {"checker.py": source, "resources.py": draft_resource}})

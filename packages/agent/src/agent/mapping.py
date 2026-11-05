@@ -241,7 +241,7 @@ def checker_response(
                     "category": str(clause.get("category") or "客户规则"),
                     "rule_to_check": clause.get("rule_to_check") or "",
                     "item_key": item_key,
-                    "coverage": "executed" if matched_result is not None else "execution_error",
+                    "coverage": "executed" if matched_result is not None and status != "ERR" else "execution_error",
                     "status": status,
                     "verification_scope": "checker_execution",
                     **({"checks_performed": performed} if type(performed) is int and performed >= 0 else {}),
@@ -346,7 +346,7 @@ def checker_response(
                 )
             )
         clarifications.extend(_merge_clarifications(parsed_results, target.file_version_id, clarifications, set(file_facts)))
-        if raw_results:
+        if any(item.status != "ERR" and item.clause_id in expected_counts for item in parsed_results):
             checked.append(target.filename)
         else:
             unchecked.append(f"{target.filename}（审核执行失败，未执行）")

@@ -3,24 +3,19 @@
 from __future__ import annotations
 
 import ast
-import importlib.util
-import sys
 import time
 from collections import Counter
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from types import ModuleType
 from typing import Any, Protocol, TypeVar
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from audit.contracts import AuditInput, AuditResultItem, GroupContextInput, RuleInput
-from audit.engine.runtime import bind_runtime
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from agent.checker_spec import CheckerArtifact, CheckerJobSpec, CheckerProgramBundle, program_digest
 from agent.execution.checker_context import task_reference, write_starting_point
-from agent.execution.checker_runtime import CheckerRuntime
 from agent.execution.guest_model import ModelProtocolError
 
 T = TypeVar("T", bound=BaseModel)
@@ -74,6 +69,8 @@ def _clause_ids(rule: RuleInput) -> list[str]:
         ids.append(clause_id)
     if not ids:
         raise CheckerProgramError("生效规则没有检查项")
+    if len(ids) != len(set(ids)):
+        raise CheckerProgramError("生效规则包含重复条款 ID")
     return ids
 
 
@@ -95,66 +92,6 @@ def _validate_source(files: dict[str, str]) -> dict[str, bytes]:
     return encoded
 
 
-def _load_module(name: str, path: Path) -> ModuleType:
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None:
-        raise CheckerTrialError(f"无法加载 {path.name}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    # Execute the submitted bytes, even when a directory is reused within the
-    # filesystem timestamp resolution. Cached .pyc files are not program inputs.
-    exec(compile(path.read_bytes(), str(path), "exec"), module.__dict__)
-    return module
-
-
-def _load_factory(directory: Path) -> tuple[Callable, str, ModuleType | None]:
-    module_name = f"ppap_task_checker_{uuid4().hex}"
-    previous_resource = sys.modules.pop("resources", None)
-    try:
-        if (directory / "resources.py").is_file():
-            _load_module("resources", directory / "resources.py")
-        module = _load_module(module_name, directory / "checker.py")
-        factory = getattr(module, "create_audit", None)
-        if not callable(factory):
-            raise CheckerTrialError("程序缺少 create_audit")
-    except CheckerTrialError:
-        _release_module(module_name, previous_resource)
-        raise
-    except Exception as exc:
-        _release_module(module_name, previous_resource)
-        raise CheckerTrialError(f"程序无法加载: {type(exc).__name__}: {exc}") from None
-    return factory, module_name, previous_resource
-
-
-def _release_module(module_name: str, previous_resource: ModuleType | None) -> None:
-    sys.modules.pop(module_name, None)
-    sys.modules.pop("resources", None)
-    if previous_resource is not None:
-        sys.modules["resources"] = previous_resource
-
-
-def _fault_detail(exc: Exception) -> str:
-    return f"{type(exc).__name__}: {exc}".replace("\n", " ")[:500]
-
-
-def _fault_result(checker: object, exc: Exception) -> AuditResultItem:
-    rule_item = getattr(checker, "rule_item", None)
-    clause_id = str(getattr(rule_item, "id", "") or "").strip()
-    if not clause_id:
-        raise CheckerTrialError(f"试跑失败: {_fault_detail(exc)}")
-    category = str(getattr(rule_item, "category", "") or "")
-    text = str(getattr(rule_item, "rule_to_check", "") or "")
-    priority = str(getattr(rule_item, "priority", "") or "") or "P0"
-    return AuditResultItem(
-        classification="规则审核",
-        item=category or text or f"条款 {clause_id}",
-        priority=priority,
-        status="ERR",
-        suggestions=f"条款 {clause_id} 技术失败: {_fault_detail(exc)}",
-        clause_id=clause_id,
-    )
-
-
 def run_program(
     files: dict[str, bytes],
     directory: Path,
@@ -165,72 +102,126 @@ def run_program(
     isolate_faults: bool = False,
     only_clauses: list[str] | None = None,
 ) -> list[AuditResultItem]:
+    """Adapt authored trials to the same guest Core; never start another process.
+
+    Supplied files already belong to the authorized guest. A partial trial
+    binds only explicitly requested IDs and makes no claim about other clauses.
+    """
+    import hashlib
+
+    from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest, clause_ids, rule_digest
+    from audit.standard_suites import library_revision
+
+    from agent.execution.audit_runtime import AuditRunError, run_audit
+
     directory.mkdir(parents=True, exist_ok=True)
-    if "resources.py" not in files:
-        (directory / "resources.py").unlink(missing_ok=True)
-    for name, content in files.items():
-        target = directory / name
-        if target.name != name:
-            raise CheckerTrialError("程序路径无效")
-        target.write_bytes(content)
-    with bind_runtime(CheckerRuntime()):
-        factory, module_name, previous_resource = _load_factory(directory)
-        audit = None
-        try:
-            try:
-                audit = factory(audit_file, rule, group_context)
-            except TypeError:
-                audit = factory(audit_file, rule)
-            _require_authored_pdf_spec(audit, audit_file)
-            checks = getattr(audit, "checks", None)
-            if not checks:
-                raise CheckerTrialError("程序没有检查项。类必须设置 CLAUSE_BOUND_CHECKS = True，并用 @rule 的 clause_id 绑定每个生效条款。")
-            results: list[AuditResultItem] = []
-            selected = set(only_clauses) if only_clauses is not None else None
-            ran = False
-            for checker in checks:
-                clause_id = str(getattr(getattr(checker, "rule_item", None), "id", "") or "").strip()
-                if selected is not None and clause_id not in selected:
-                    continue
-                ran = True
-                binding_error = str(getattr(checker, "binding_error", "") or "").strip()
-                if binding_error and not isolate_faults:
-                    clause_id = str(getattr(getattr(checker, "rule_item", None), "id", "") or "").strip() or "?"
-                    raise CheckerTrialError(f"条款 {clause_id} 绑定错误: {binding_error}; {_result_brief(results)}")
-                try:
-                    result = checker.check()
-                    if result is None:
-                        result = _missing_clause_result(checker)
-                    results.append(AuditResultItem.model_validate(result.model_dump()))
-                except CheckerTrialError:
-                    raise
-                except (AttributeError, ValidationError) as exc:
-                    if isolate_faults:
-                        results.append(_fault_result(checker, exc))
-                        continue
-                    clause_id = str(getattr(getattr(checker, "rule_item", None), "id", "") or "").strip() or "?"
-                    raise CheckerTrialError(f"条款 {clause_id} 检查结果无效: {_fault_detail(exc)}; {_result_brief(results)}") from None
-                except Exception as exc:
-                    if isolate_faults:
-                        results.append(_fault_result(checker, exc))
-                        continue
-                    clause_id = str(getattr(getattr(checker, "rule_item", None), "id", "") or "").strip() or "?"
-                    raise CheckerTrialError(f"条款 {clause_id} 试跑失败: {_fault_detail(exc)}; {_result_brief(results)}") from None
-            if selected is not None and not ran:
-                raise CheckerTrialError(f"局部试跑没有命中检查入口: {', '.join(only_clauses or [])}")
-            return results
-        except CheckerTrialError:
-            raise
-        except Exception as exc:
-            raise CheckerTrialError(f"试跑失败: {type(exc).__name__}: {exc}") from None
-        finally:
-            close = getattr(audit, "close", None)
-            if callable(close):
-                try:
-                    close()
-                except Exception:
-                    pass
-            _release_module(module_name, previous_resource)
+    try:
+        body = rule.model_dump(mode="json")
+        ids = clause_ids(body)
+        selected = tuple(only_clauses) if only_clauses is not None else ids
+        if not selected or len(set(selected)) != len(selected) or not set(selected) <= set(ids):
+            raise CheckerTrialError("局部试跑没有命中检查入口或包含重复条款")
+
+        def identity(item: AuditInput) -> str:
+            return str((item.file_metadata or {}).get("file_version_id") or item.audit_id)
+
+        by_id = {identity(item): item for item in (group_context.by_audit_id.values() if group_context else ())}
+        by_id[identity(audit_file)] = audit_file
+        by_type: dict[str, str | None] = {
+            identity(item): str(kind.get_type_name() if hasattr(kind, "get_type_name") else kind) for kind, items in (group_context.by_doc_type.items() if group_context else ()) for item in items
+        }
+        by_type[identity(audit_file)] = rule.type
+        sources, inputs = {}, []
+        for version, item in by_id.items():
+            path = Path(item.file_url)
+            data = path.read_bytes()
+            expected = (item.file_metadata or {}).get("sha256")
+            if expected and hashlib.sha256(data).hexdigest() != expected:
+                raise CheckerTrialError("原件摘要与冻结版本不一致")
+            related_rule = group_context.rules_by_id.get(version) if group_context else None
+            sources[version] = data
+            inputs.append(
+                FrozenInput(
+                    version,
+                    hashlib.sha256(data).hexdigest(),
+                    "target" if version == identity(audit_file) else "reference",
+                    str((item.file_metadata or {}).get("original_filename") or path.name),
+                    document_type=by_type.get(version),
+                    file_id=item.audit_id,
+                    customer=item.customer,
+                    model=item.model,
+                    part=item.part,
+                    project_id=item.project_id,
+                    rule_revision_id=related_rule.rule_id if related_rule else "",
+                    rules=related_rule.model_dump(mode="json") if related_rule else None,
+                    appendix=tuple(related_rule.appendix) if related_rule else (),
+                )
+            )
+        digest = checker_digest(files)
+        target = FrozenTarget(
+            identity(audit_file),
+            rule.rule_id or "authored-trial",
+            "authored-trial",
+            rule_digest(body, rule.appendix),
+            body,
+            RuleBinding("authored-trial", digest, dict.fromkeys(selected, "checker:create_audit")),
+            tuple(rule.appendix),
+        )
+        snapshot = ExecutionSnapshot(
+            "authorized-guest", "guest-initiator", tuple(inputs), (target,), "authored-trial", library_revision(), {}, round_id=(group_context.task_group_id or "") if group_context else ""
+        )
+        result = run_audit(snapshot, sources, {digest: files})
+        results = [AuditResultItem.model_validate(item) for item in result["findings"]]
+        failures = [item for item in results if item.status == "ERR" and (item.suggestions.startswith(("checker_failure:", "authored_")))]
+        diagnostics = result.get("diagnostics") or []
+        for diagnostic in diagnostics:
+            results.append(
+                AuditResultItem(
+                    classification="规则审核",
+                    item=diagnostic["clause_id"] or "未命名条款",
+                    priority="P0",
+                    status="ERR",
+                    suggestions=_trial_diagnostic(diagnostic["clause_id"], diagnostic["code"]),
+                    clause_id=diagnostic["clause_id"],
+                )
+            )
+        if not isolate_faults and (failures or diagnostics):
+            messages = [_trial_diagnostic(item.clause_id, item.suggestions) for item in failures]
+            messages.extend(_trial_diagnostic(item["clause_id"], item["code"]) for item in diagnostics)
+            raise CheckerTrialError("条款结果与生效规则不一致；" + "; ".join(messages) + "; " + _result_brief(results))
+        results = [item.model_copy(update={"suggestions": _trial_diagnostic(item.clause_id, item.suggestions)}) if item.status == "ERR" else item for item in results]
+        return results
+    except CheckerTrialError:
+        raise
+    except AuditRunError as exc:
+        if str(exc) == "checker_entrypoint_missing":
+            raise CheckerTrialError("程序缺少 create_audit") from None
+        raise CheckerTrialError(f"试跑合同失败: {str(exc)}") from None
+    except Exception as exc:
+        # Provider/original payloads in exception messages are not model prompts.
+        raise CheckerTrialError(f"试跑合同或输入失败: {type(exc).__name__}") from None
+
+
+def _trial_diagnostic(clause: str | None, code: str) -> str:
+    prefix = f"条款 {clause or '?'}"
+    messages = {
+        "authored_pdf_spec_required": "目标 PDF 缺少类属性 PDF_SPEC。不要依赖自动预设。",
+        "authored_pdf_spec_invalid": "PDF_SPEC 不合法",
+        "authored_checker_missing_checks": "程序没有检查项。使用显式条款 ID 绑定检查入口。",
+        "authored_checker_missing_clause_id": "检查入口缺少条款 ID",
+        "authored_checker_extra_clause": f"{prefix} 绑定错误: 不在本次生效规则中",
+        "authored_checker_missing_binding": f"{prefix} 绑定错误: 没有对应的检查入口",
+        "authored_checker_duplicate_binding": f"{prefix} 绑定错误: 绑定了多个检查入口",
+        "authored_checker_invalid_binding": f"{prefix} 绑定错误",
+        "authored_checker_invalid_result": f"{prefix} 检查结果无效",
+        "authored_checker_result_clause_mismatch": f"{prefix} 返回的条款 ID 与绑定不一致",
+        "authored_checker_duplicate_result": f"{prefix} 有多个结果",
+        "authored_checker_missing_result": f"{prefix} 没有结果",
+        "checker_missing_result": f"{prefix} 没有返回结果",
+    }
+    if code.startswith("checker_failure:"):
+        return f"{prefix} 试跑失败（技术失败）: {code}"
+    return messages.get(code, code)
 
 
 def _result_brief(results: list[AuditResultItem]) -> str:
@@ -338,24 +329,6 @@ def _write_bundle(work: Path, bundle: CheckerProgramBundle) -> None:
     payload = bundle.model_dump_json().encode()
     with target.open("xb") as stream:
         stream.write(payload)
-
-
-def _missing_clause_result(checker: object) -> AuditResultItem:
-    rule_item = getattr(checker, "rule_item", None)
-    clause_id = str(getattr(rule_item, "id", "") or "").strip()
-    if not clause_id:
-        raise CheckerTrialError("检查没有返回结果")
-    category = str(getattr(rule_item, "category", "") or "")
-    text = str(getattr(rule_item, "rule_to_check", "") or "")
-    priority = str(getattr(rule_item, "priority", "") or "") or "P0"
-    return AuditResultItem(
-        classification="规则审核",
-        item=category or text or f"条款 {clause_id}",
-        priority=priority,
-        status="ERR",
-        suggestions=f"条款 {clause_id} 没有返回结果",
-        clause_id=clause_id,
-    )
 
 
 def _preview_cell(value: object) -> str:
@@ -600,27 +573,6 @@ def _prompt(
     if layout is not None:
         parts.extend(["", "" if layout.native else PDF_GUIDE.read_text(encoding="utf-8"), "", layout.instructions])
     return "\n".join(parts)
-
-
-def _require_authored_pdf_spec(audit: object, audit_file: AuditInput) -> None:
-    """A Deep program must name the target PDF layout. Presets are not applied implicitly."""
-    from audit.checkers.v4.uaes.native import UaesSourceAgent
-
-    if isinstance(audit, UaesSourceAgent):
-        return  # NativeFacts reads original PDF blocks; it does not convert a grid.
-    if not _is_pdf(str(audit_file.file_url or "")):
-        return
-    defined = type(audit).__dict__.get("PDF_SPEC", None)
-    if defined is None:
-        raise CheckerTrialError("目标 PDF 缺少类属性 PDF_SPEC。不要依赖自动预设。")
-    from documents.pdf import PdfSpec, validate_pdf_spec
-
-    if not isinstance(defined, PdfSpec):
-        raise CheckerTrialError("PDF_SPEC 必须是 PdfSpec")
-    try:
-        validate_pdf_spec(defined)
-    except ValueError as exc:
-        raise CheckerTrialError(f"PDF_SPEC 不合法: {exc}") from None
 
 
 def _is_pdf(file_url: str) -> bool:
