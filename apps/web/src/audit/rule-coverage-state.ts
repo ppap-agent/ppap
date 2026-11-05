@@ -23,7 +23,7 @@ export function ruleCoverage(rules: Rule[], standardTypes: string[]): CustomerCo
     const own = [...new Set(applied.map(rule => rule.type!).filter(type => !standardTypes.includes(type)))]
     const types = [...comparable.sort((a, b) => standardTypes.indexOf(a) - standardTypes.indexOf(b)), ...own.sort()].map(type => {
       const matching = applied.filter(rule => rule.type === type)
-      return {type, label: standardTypes.includes(type) ? type : matching[0].title.replace(/审核规则$/, ''), rules: matching.map(rule => rule.title)}
+      return {type, label: standardTypes.includes(type) ? type : matching[0].title.replace(/审核规则$/, ''), rules: [...new Set(matching.map(rule => rule.title))]}
     })
     return {customer, covered: types.filter(row => row.rules.length).length, total: types.length, types}
   }).sort((a, b) => a.customer.localeCompare(b.customer, 'zh-CN'))

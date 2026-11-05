@@ -8,7 +8,7 @@ type Task = components['schemas']['AuditTask']
 function projection(): Task {
   const rule: components['schemas']['BoundRule'] = {id: 'rule-v1', title: '冻结规则', body: {kind: 'engine', type: '控制计划', rule_profile: 'v3', customers: [], models: [], parts: [], rules: [{id: '1', category: '频次', priority: null, rule_to_check: '频次须一致。', type_of_rule: 'table'}]}}
   const checks: components['schemas']['AuditClauseEvaluation'][] = [{rule_item: structuredClone(rule.body.kind === 'engine' ? rule.body.rules[0] : null!), execution: 'completed', coverage: 'executed', evidence_verified: true, scope: {checked: 1, total: 1, unknown: 0}, scope_notice: null, finding: {item_key: '1', item: '频次', status: 'PASS', classification: '已核对', suggestions: '', priority: null, locator: null, review: null}, evidence: [{file_version_id: 'file-v1', locator: {kind: 'xlsx_cell', sheet: '审核', cell: 'C12'}, excerpt: '每班', location_gap: null, rendition: 'original', derived_file_version_id: null}]}]
-  return {id: 'task-1', number: '001', state: 'completed', completion_reason: 'processed', analysis_mode: 'standard', source_draft_id: null, round_id: 'round-1', customer_preference: null, created_at: '', updated_at: '', estimated_points: null, files: [{file: {id: 'file-v1', file_id: 'file-1', original_filename: '控制计划.xlsx', content_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', byte_size: 1024, status: 'ready', sha256: null}, selection: 'selected', removal_reason: null, validation: {state: 'valid', reasons: []}, match: {state: 'matched', metadata: {customer: null, model: null, part: null}, document_type: '控制计划', rule: structuredClone(rule), gaps: []}, audit: {file_version_id: 'file-v1', round_id: 'round-1', result_attempt: 1, rule, execution: 'completed', progress: {completed: 1, total: 1}, failure: null, conclusion: 'PASS', checks, counts: {pass_count: 1, ng_count: 0, unknown_count: 0, not_covered_count: 0, error_count: 0}, summary: {conclusion: 'PASS', text: '满足要求', corrective_actions: [], extended_suggestions: []}, report: {state: 'ready', report_id: 'report-1', reason: null}}}]}
+  return {id: 'task-1', number: '001', state: 'completed', completion_reason: 'processed', analysis_mode: 'standard', source_draft_id: null, round_id: 'round-1', customer_preference: null, created_at: '', updated_at: '', estimated_points: null, files: [{file: {id: 'file-v1', file_id: 'file-1', original_filename: '控制计划.xlsx', content_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', byte_size: 1024, status: 'ready', sha256: null}, selection: 'selected', removal_reason: null, validation: {state: 'valid', reasons: []}, match: {state: 'matched', metadata: {customer: null, model: null, part: null}, document_type: '控制计划', rule: structuredClone(rule), gaps: []}, audit: {file_version_id: 'file-v1', round_id: 'round-1', result_attempt: 1, rule, execution: 'completed', progress: {completed: 1, total: 1}, failure: null, conclusion: 'PASS', checks, counts: {pass_count: 1, ng_count: 0, unknown_count: 0, not_covered_count: 0, error_count: 0}, report: {state: 'ready', report_id: 'report-1', reason: null}}}]}
 }
 const error = (task: Task) => resultConsistencyError(task, task.files[0])
 
@@ -36,7 +36,7 @@ test('workbench totals count valid audit targets, not reference or excluded file
   const task = projection(), ng = structuredClone(task.files[0])
   ng.file.id = 'file-v2'; ng.audit!.file_version_id = ng.file.id
   ng.audit!.checks[0].finding!.status = 'NG'; ng.audit!.counts = {...ng.audit!.counts, pass_count: 0, ng_count: 1}
-  ng.audit!.conclusion = 'NG'; ng.audit!.summary = null
+  ng.audit!.conclusion = 'NG'
   task.files.push(ng)
   const reference = structuredClone(task.files[0]); reference.file.id = 'reference-v1'; reference.match!.state = 'reference'; reference.match!.rule = null; delete reference.audit
   const excluded = structuredClone(reference); excluded.file.id = 'excluded-v1'; excluded.selection = 'unselected'
@@ -63,7 +63,7 @@ test('missing optional evidence does not downgrade executed PASS or NG or block 
     check.finding!.status = status
     check.evidence_verified = false; check.scope = null; check.evidence = []
     check.scope_notice = '未提供具体定位与摘录。'
-    audit.conclusion = status; audit.summary!.conclusion = status
+    audit.conclusion = status
     audit.counts = {pass_count: status === 'PASS' ? 1 : 0, ng_count: status === 'NG' ? 1 : 0, unknown_count: 0, not_covered_count: 0, error_count: 0}
     assert.equal(error(task), '')
     assert.ok(reportReference(task, task.files[0]))
@@ -123,7 +123,7 @@ test('a historical presence result needs no invented clause and cannot earn a fo
   const file = projection().files[0], audit = file.audit!
   audit.rule = {id: 'presence-rule', title: '文件存在', body: {kind: 'presence'}}
   audit.checks = []; audit.progress = {completed: 0, total: 0}; audit.counts.pass_count = 0
-  audit.conclusion = 'UNKNOWN'; audit.summary = null; audit.report = {state: 'not_eligible', report_id: null, reason: null}
+  audit.conclusion = 'UNKNOWN'; audit.report = {state: 'not_eligible', report_id: null, reason: null}
   const historical = {file: file.file, audit}
   assert.equal(frozenResultError('round-1', historical, ['file-v1'], audit.rule), '')
   audit.conclusion = 'PASS'
@@ -155,7 +155,7 @@ test('a read cannot erase ended work or reopen a terminal file in the same froze
 test('completed execution cannot hide running checks, while whole-file failure can retain unexecuted checks', () => {
   const task = projection(), audit = task.files[0].audit!
   audit.checks[0] = {...audit.checks[0], execution: 'running', coverage: 'mapped', finding: null, evidence_verified: false, scope: null, evidence: []}
-  audit.progress.completed = 0; audit.conclusion = null; audit.summary = null
+  audit.progress.completed = 0; audit.conclusion = null
   audit.counts.pass_count = 0; audit.report = {state: 'not_eligible', report_id: null, reason: null}
   assert.match(error(task), /文件声称审核结束，但仍有未结束的审核项/)
   audit.execution = 'running'
@@ -179,7 +179,7 @@ test('task progress checks selected file endings without invalidating another fi
       const audit = pending.audit!
       audit.file_version_id = pending.file.id; audit.execution = execution
       audit.checks[0] = {...audit.checks[0], execution: 'running', coverage: 'mapped', finding: null, evidence_verified: false, scope: null, evidence: []}
-      audit.progress.completed = 0; audit.conclusion = null; audit.summary = null
+      audit.progress.completed = 0; audit.conclusion = null
       audit.counts.pass_count = 0; audit.report = {state: 'not_eligible', report_id: null, reason: null}
     }
     task.files[1] = pending
@@ -227,7 +227,7 @@ test('optional scope gaps do not replace actual PASS or NG or block a formal rep
   const task = projection(), audit = task.files[0].audit!
   audit.checks[0].scope = {checked: 0, total: 1, unknown: 1}
   assert.equal(error(task), '')
-  audit.conclusion = 'NG'; audit.summary = null
+  audit.conclusion = 'NG'
   audit.checks[0].finding!.status = 'NG'
   audit.counts = {...audit.counts, pass_count: 0, ng_count: 1}
   assert.equal(error(task), '')
@@ -239,7 +239,7 @@ test('NG and PASS both count when the second check has an optional scope gap', (
   audit.checks[0].finding!.status = 'NG'; audit.checks.push(second)
   if (audit.rule.body.kind === 'engine') audit.rule.body.rules.push(structuredClone(second.rule_item))
   row.match!.rule = structuredClone(audit.rule)
-  audit.progress = {completed: 2, total: 2}; audit.counts = {...audit.counts, ng_count: 1}; audit.conclusion = 'NG'; audit.summary = null; audit.report = {state: 'not_eligible', report_id: null, reason: null}
+  audit.progress = {completed: 2, total: 2}; audit.counts = {...audit.counts, ng_count: 1}; audit.conclusion = 'NG'; audit.report = {state: 'not_eligible', report_id: null, reason: null}
   assert.equal(error(task), '')
   assert.equal(audit.checks[0].finding!.status, 'NG')
 })
@@ -415,17 +415,15 @@ test('unknown and failed checks cannot earn PASS or a formal report', () => {
   audit.checks[0].finding!.status = 'UNABLE'; audit.checks[0].evidence_verified = false
   audit.counts = {pass_count: 0, ng_count: 0, unknown_count: 1, not_covered_count: 0, error_count: 0}
   assert.match(error(task), /PASS 结论缺少完整/)
-  audit.conclusion = 'UNKNOWN'; audit.summary = null
+  audit.conclusion = 'UNKNOWN'
   assert.match(error(task), /不能生成正式/)
   audit.execution = 'review_failed'; audit.checks[0].execution = 'failed'
   audit.counts = {...audit.counts, unknown_count: 0, error_count: 1}
   assert.match(error(task), /不能生成正式/)
 })
-test('empty rules, wrong progress and conflicting summary fail closed', () => {
+test('empty rules and wrong progress fail closed', () => {
   const task = projection(), audit = task.files[0].audit!
-  audit.summary!.conclusion = 'NG'
-  assert.match(error(task), /总结与审核明细不一致/)
-  audit.summary = null; audit.progress.completed = 0
+  audit.progress.completed = 0
   assert.match(error(task), /进度与条目状态不一致/)
   audit.checks = []; audit.progress = {completed: 0, total: 0}
   if (audit.rule.body.kind === 'engine') audit.rule.body.rules = []

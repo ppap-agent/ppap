@@ -24,8 +24,7 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             queue = page.get_by_role("navigation", name="文件队列", exact=True)
             queue.get_by_role("button").first.click()
             details = page.get_by_role("region", name="审核详情", exact=True)
-            details.get_by_role("combobox", name="审核结果筛选", exact=True).click()
-            page.get_by_role("option", name=re.compile("^全部审核项")).click()
+            details.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name=re.compile("^全部")).click()
             details.get_by_role("button", name=re.compile("^查看依据 1\\.1")).click()
             expect(page.get_by_role("heading", name=re.compile(r"^1\.1 · "))).to_be_visible()
             # The list stays usable and the docked evidence follows the selected row.
@@ -90,8 +89,7 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button").first.click()
             page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="工作台", exact=True).click()
             page.get_by_role("button", name="继续当前审核", exact=True).click()
-            page.get_by_role("combobox", name="审核结果筛选", exact=True).click()
-            page.get_by_role("option", name=re.compile(r"^不符合 \(")).click()
+            page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name=re.compile("^不符合")).click()
             page.get_by_role("button", name="专注复核（选做）", exact=True).click()
             focus = page.get_by_role("region", name="专注复核", exact=True)
             focus.get_by_role("button", name="下一待复核", exact=True).click()
@@ -103,7 +101,7 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             expect(page).to_have_url(address)
             expect(focus.get_by_role("heading", name="1.2 · 记录完整性", exact=True)).to_be_visible()
             page.get_by_role("button", name="返回审核项", exact=True).click()
-            expect(page.get_by_role("combobox", name="审核结果筛选", exact=True)).to_contain_text("不符合")
+            expect(page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name=re.compile("^不符合"))).to_have_attribute("aria-pressed", "true")
             browser.close()
 
     def test_escape_closes_only_the_display_editor_and_returns_focus_to_file_info(self):
@@ -143,6 +141,30 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             expect(trigger).to_be_focused()
             browser.close()
 
+    def test_result_counts_appear_once_as_filters_on_the_list(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 900})
+            page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task")
+            expect(page.get_by_role("heading", name="审核结果", exact=True)).to_be_visible()
+            queue = page.get_by_role("navigation", name="文件队列", exact=True)
+            queue.get_by_role("button", name=re.compile("PFMEA.xlsx")).click()
+            details = page.get_by_role("region", name="审核详情", exact=True)
+            chips = details.get_by_role("group", name="审核结果筛选", exact=True)
+            ng = chips.get_by_role("button", name="不符合 1", exact=True)
+            expect(ng).to_have_attribute("aria-pressed", "true")
+            expect(details.get_by_role("region", name="审核总结", exact=True)).to_have_count(0)
+            expect(details.get_by_text("不符合 1 · 符合 1", exact=True)).to_have_count(0)
+            expect(queue).not_to_contain_text("示例 PFMEA 规则")
+            expect(page.get_by_role("banner").or_(page.locator("header")).first).not_to_contain_text("共 6 项")
+            expect(details.get_by_role("row")).to_have_count(2)
+            chips.get_by_role("button", name=re.compile("^符合")).click()
+            expect(details.get_by_role("row")).to_have_count(2)
+            expect(details.get_by_role("row").nth(1)).to_contain_text("符合")
+            chips.get_by_role("button", name=re.compile("^全部")).click()
+            expect(details.get_by_role("row")).to_have_count(3)
+            browser.close()
+
     def test_responsive_results_keep_full_files_and_single_line_actions(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
@@ -156,8 +178,7 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
                     for name in ("PFMEA.xlsx", "控制计划.xlsx", "过程流程图.pdf"):
                         expect(queue.get_by_text(name, exact=True)).to_be_visible()
                     queue.get_by_role("button").first.click()
-                    page.get_by_role("combobox", name="审核结果筛选", exact=True).click()
-                    page.get_by_role("option", name=re.compile(r"^全部审核项 \(")).click()
+                    page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name=re.compile("^全部")).click()
                     actions = page.get_by_role("button", name=re.compile("^查看依据 "))
                     expect(actions).to_have_count(2)
                     for action in actions.all():
@@ -168,7 +189,7 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
                         details = page.get_by_role("region", name="审核详情", exact=True)
                         heading = page.get_by_role("heading", name="审核结果", exact=True).bounding_box()
                         table = details.get_by_role("table").bounding_box()
-                        self.assertLess(table["y"] - heading["y"], 380)
+                        self.assertLess(table["y"] - heading["y"], 260)
                         title = details.get_by_role("heading", name=re.compile(r"^审核项 \(")).bounding_box()
                         search = details.get_by_role("textbox", name="搜索审核项", exact=True).bounding_box()
                         self.assertLessEqual(abs(title["y"] + title["height"] / 2 - search["y"] - search["height"] / 2), 4)
@@ -188,8 +209,7 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task")
             first = page.get_by_role("button", name="查看依据 1.1", exact=True)
             page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button").first.click()
-            page.get_by_role("combobox", name="审核结果筛选", exact=True).click()
-            page.get_by_role("option", name=re.compile(r"^全部审核项 \(")).click()
+            page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name=re.compile("^全部")).click()
             first.click()
             basis = page.get_by_role("dialog").filter(has=page.get_by_role("tab", name="核对原件", exact=True))
             expect(basis.get_by_role("heading", name="1.1 · 频次一致性", exact=True)).to_be_visible()
@@ -216,7 +236,6 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             basis = page.get_by_role("dialog").filter(has=page.get_by_role("tab", name="核对原件", exact=True))
             basis.get_by_role("button", name="核对 控制计划.xlsx", exact=True).click()
             original = basis.get_by_role("region", name="原件预览", exact=True)
-            expect(original.get_by_text("当前条款：1.1 · 频次一致性", exact=True)).to_be_visible()
             expect(original.get_by_text("控制计划.xlsx", exact=True).first).to_be_visible()
             basis.get_by_role("tab", name="审核详情", exact=True).click()
             expect(basis.get_by_role("heading", name="1.1 · 频次一致性", exact=True)).to_be_visible()

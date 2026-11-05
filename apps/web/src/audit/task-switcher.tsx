@@ -33,7 +33,7 @@ export function TaskSwitcher({open, onOpenChange, currentId, tasks, labels, quer
   const recent = [...others.filter(row => row.state === 'pending_confirm'), ...others.filter(row => row.state !== 'pending_confirm')]
   const row = (task: TaskSummary) => <Button key={task.id} size="row" variant={task.id === currentId ? 'secondary' : 'ghost'} aria-current={task.id === currentId ? 'page' : undefined} className="min-w-0 items-start" onClick={() => onOpen(task.id)}>
     <span className="grid min-w-0 w-full gap-2">
-      <span className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1"><span className="font-medium">{task.number}</span><span className="flex items-center gap-2 text-xs text-muted-foreground"><Badge shape="square" variant={hasExecutionError(task) ? 'destructive' : stateTone[task.state]}>{labels[task.state]}</Badge>{task.files.filter(file => file.selection === 'selected').length} 份文件</span></span>
+      <span className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1"><span className="font-medium">{task.number}</span><span className="flex items-center gap-2 text-xs text-muted-foreground"><Badge shape="square" variant={hasExecutionError(task) ? 'destructive' : stateTone[task.state]}>{hasExecutionError(task) ? '审核异常' : labels[task.state]}</Badge>{task.files.filter(file => file.selection === 'selected').length} 份文件</span></span>
       <span className="grid gap-1.5 text-xs font-normal text-muted-foreground">{(task.id === currentId || query ? task.files : task.files.slice(0, 2)).map(file => <FileName truncate key={file.file.id} name={file.file.original_filename}/>)}{task.id !== currentId && !query && task.files.length > 2 && <span>另有 {task.files.length - 2} 份文件</span>}</span>
     </span>
   </Button>

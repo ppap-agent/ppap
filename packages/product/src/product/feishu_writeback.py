@@ -332,7 +332,7 @@ def report_blocks(round_body: dict, return_url: str = "") -> list[dict]:
     blocks.extend(
         [
             _heading2("本轮摘要"),
-            _text(f"待审资料 {len(targets)} 份；自动检查 {len(findings)} 项：通过 {counts[PASS]}，不符合 {counts[NG]}，无法判断 {counts[UNABLE]}，不适用 {counts[NA]}，检查异常 {counts[ERR]}。"),
+            _text(f"待审资料 {len(targets)} 份；自动检查 {len(findings)} 项：符合 {counts[PASS]}，不符合 {counts[NG]}，无法判断 {counts[UNABLE]}，不适用 {counts[NA]}，技术错误 {counts[ERR]}。"),
             _text(f"未记录人工复核 {pending} 项。已记录不等于问题已解决，本报告不代表正式批准。"),
             _text("未自动检查的规则条目会单独列出，不计入机器通过。"),
         ]

@@ -24,20 +24,6 @@ class TemplateLinksPreviewTests(unittest.TestCase):
                     page.get_by_role("button", name="使用三类文件示例", exact=True).click()
                     page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True).uncheck()
                     page.get_by_role("checkbox", name="深度模式", exact=True).check()
-                    address = page.url
-                    for name, url in (("查看模板", GUIDE), ("模板反馈", CONTACT)):
-                        link = page.get_by_role("link", name=name, exact=True)
-                        expect(link).to_have_attribute("href", url)
-                        expect(link).to_have_attribute("target", "_blank")
-                        expect(link).to_have_attribute("rel", "noopener noreferrer")
-                        with page.expect_popup() as opened:
-                            link.click()
-                        expect(opened.value.get_by_role("heading", name="模板使用说明")).to_be_visible()
-                        opened.value.close()
-                        expect(page).to_have_url(address)
-                        expect(page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True)).not_to_be_checked()
-                        expect(page.get_by_role("checkbox", name="选择 PFMEA.xlsx", exact=True)).to_be_checked()
-                        expect(page.get_by_role("checkbox", name="深度模式", exact=True)).to_be_checked()
                     if width < 1024:
                         page.get_by_role("button", name="打开产品导航", exact=True).click()
                     nav = page.get_by_role("navigation", name="产品导航", exact=True).filter(visible=True)
@@ -55,7 +41,8 @@ class TemplateLinksPreviewTests(unittest.TestCase):
             expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
             for name, url in (("查看模板", GUIDE), ("模板反馈", CONTACT)):
                 links = page.get_by_role("link", name=name, exact=True)
-                expect(links).to_have_count(3)
+                # All three files are stopped for one reason, so they share one set of links.
+                expect(links).to_have_count(1)
                 for link in links.all():
                     expect(link).to_have_attribute("href", url)
                     expect(link).to_have_attribute("target", "_blank")

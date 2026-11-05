@@ -78,13 +78,16 @@ class AuditIntakeClosureTests(unittest.TestCase):
                 ("restore-progress", "preview-recovery-task", ["complete", "complete", "current"]),
                 ("reports-failed", "preview-report-task", ["complete", "complete", "current"]),
                 ("reports-generating", "preview-report-task", ["complete", "complete", "current"]),
-                ("reports-all-ready", "preview-report-task", ["complete", "complete", "complete"]),
             ):
                 page.goto(PREVIEW + f"/preview/audit.html?scene={scene}&task={task}")
                 expect(page.get_by_role("heading", name="审核结果", exact=True)).to_be_visible()
                 nodes = page.get_by_role("list", name="审核步骤", exact=True).get_by_role("listitem")
                 for index, state in enumerate(states):
                     expect(nodes.nth(index)).to_have_attribute("data-state", state)
+            # Once every report is ready the steps have nothing left to say, so the results get the room.
+            page.goto(PREVIEW + "/preview/audit.html?scene=reports-all-ready&task=preview-report-task")
+            expect(page.get_by_role("heading", name="审核结果", exact=True)).to_be_visible()
+            expect(page.get_by_role("list", name="审核步骤", exact=True)).to_have_count(0)
             browser.close()
 
     def test_matching_observes_progress_without_a_manual_read_action(self):
@@ -96,7 +99,6 @@ class AuditIntakeClosureTests(unittest.TestCase):
             page.get_by_role("button", name="开始识别", exact=True).click()
             expect(page.get_by_text("识别中 2/3", exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="读取识别结果", exact=True)).to_have_count(0)
-            expect(page.get_by_text("识别每份文件适配规则，未匹配文件无法进入审核", exact=True)).to_be_visible()
             page.get_by_role("button", name="返回示例读取 1", exact=True).click()
             expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_enabled()

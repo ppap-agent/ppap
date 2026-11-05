@@ -228,9 +228,9 @@ class AuditArchivePreviewTests(unittest.TestCase):
                     expect(page.get_by_role("button", name="历史审核记录", exact=True)).to_contain_text("第 3 次审核")
                     details = page.get_by_role("region", name="审核详情", exact=True)
                     expect(details.get_by_role("button", name="查看报告", exact=True)).to_be_enabled()
-                    expect(details.get_by_text("不符合 0 · 符合 2", exact=True)).to_be_visible()
+                    expect(details.get_by_role("button", name="符合 2", exact=True)).to_be_visible()
                     if width >= 1024:
-                        self.assertLess(details.get_by_role("table").bounding_box()["y"] - heading.bounding_box()["y"], 420)
+                        self.assertLess(details.get_by_role("table").bounding_box()["y"] - heading.bounding_box()["y"], 300)
                     else:
                         self.assertGreater(heading.bounding_box()["width"], 240)
                         self.assertLess(heading.bounding_box()["height"], 32)

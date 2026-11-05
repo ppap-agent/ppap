@@ -6,10 +6,10 @@ import {Badge} from '../components/ui/badge'
 import {Button} from '../components/ui/button'
 import {ReadSkeleton} from '../components/read-skeleton'
 import {Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger} from '../components/ui/sheet'
+import {reportShortLabel as labels} from './status-labels'
 import {readReportPdf, type AuditReportAdapter, type AuditReportReference} from './report-contract'
 
 const PdfSource = lazy(() => import('../journey/pdf-source').then(module => ({default: module.PdfSource})))
-const labels = {not_eligible: '无正式报告', pending: '待生成', generating: '生成中', ready: '就绪', failed: '生成失败'}
 
 export function ReportTime({value}: {value: string}) {
   const instant = new Date(value)
@@ -30,7 +30,7 @@ export function ReportPreview({name, rule, ruleVersion, reference, report, ready
   const currentPdf = pdf?.key === pdfKey ? pdf : null
   function download() {if (currentPdf?.url && report?.artifact) {const link = document.createElement('a'); link.href = currentPdf.url; link.download = report.artifact.filename; link.click()}}
   return <section className="flex h-full min-w-0 flex-col gap-3" aria-label="当前报告" data-file-version={reference?.file_version_id} data-result-attempt={reference?.result_attempt}>
-    <header className="flex flex-wrap items-center gap-2">{navigation}<h2 className="min-w-0 flex-1 basis-48 [overflow-wrap:anywhere] text-base font-semibold">{name}-审核报告</h2><div className="flex flex-wrap items-center gap-1">
+    <header className="flex flex-wrap items-center gap-2">{navigation}<h2 className="min-w-0 flex-1 basis-48 [overflow-wrap:anywhere] text-base font-semibold">{name}</h2><div className="flex flex-wrap items-center gap-1">
       <Sheet><SheetTrigger asChild><Button variant="ghost" size="sm"><Info/>报告信息</Button></SheetTrigger><SheetContent><SheetHeader><SheetTitle>报告信息</SheetTitle><SheetDescription>查看本报告的来源与审核记录。</SheetDescription></SheetHeader>
         <div className="min-h-0 space-y-6 overflow-y-auto px-4 pb-6 text-sm">
           <div className="space-y-1 border-b pb-5"><p className="text-xs text-muted-foreground">原始文件</p><h3 className="[overflow-wrap:anywhere] text-base font-semibold">{name}</h3></div>

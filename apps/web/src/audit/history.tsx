@@ -14,9 +14,8 @@ import {HistoryReport} from './history-report'
 import type {AuditReportAdapter} from './report-contract'
 import type {AuditSharingAdapter} from './sharing-contract'
 import {sameSnapshot} from './result-projection'
-import {conclusionLabel, resultTone} from './status-labels'
+import {conclusionLabel, executionLabel as labels, resultTone} from './status-labels'
 
-const labels = {queued: '排队中', running: '审核中', completed: '审核完成', review_failed: '审核异常'}
 export function ArchiveHistory({document, documentId, initialAddress, onNavigate, adapter, renderOriginal, onBack, onOpenTask, reportAdapter, sharingAdapter, backLabel = '返回文件档案'}: {document: ArchiveDocument | null; documentId: string; initialAddress: ReturnType<typeof readArchiveAddress>; onNavigate: (reference: ResultReference, report: boolean, replace?: boolean) => void; adapter: AuditArchiveAdapter; renderOriginal?: OriginalRenderer; onBack: () => void; onOpenTask: (id: string) => void; reportAdapter?: AuditReportAdapter; sharingAdapter?: AuditSharingAdapter; backLabel?: string}) {
   const [history, setHistory] = useState<components['schemas']['AuditHistoryPage'] | null>(null)
   const [selected, setSelected] = useState<HistoryEntry | null>(null), [detail, setDetail] = useState<HistoryDetail | null>(null)

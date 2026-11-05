@@ -1718,7 +1718,6 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual((audit["conclusion"], audit["counts"]["pass_count"]), ("PASS", 1))
         self.assertFalse(audit["checks"][0]["evidence_verified"])
         self.assertEqual(audit["checks"][0]["evidence"][0]["excerpt"], "P-1")
-        self.assertEqual(audit["summary"]["text"], "已审核 1 项要求：满足 1 项，不符合 0 项，不适用 0 项。")
         historical = self.display_client.get(f"/rounds/{task['round_id']}?read_view=true").json()
         self.assertEqual(historical["result_job_id"], job.id)
         self.assertEqual(historical["coverage"]["verification"], result["coverage"]["verification"])
@@ -1759,8 +1758,8 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
             text = "".join(page.get_text() for page in pdf)
             self.assertIn("必须填写零件号", text)
             self.assertIn("P-1", text)
-            self.assertIn("审核总结", text)
-            self.assertIn("已审核1项要求：满足1项，不符合0项，不适用0项。", "".join(text.split()))
+            self.assertIn("共1项：符合1项，不符合0项，不适用0项。", "".join(text.split()))
+            self.assertIn("部分判定的证据未经验证", text)
         for field, value in (("round_id", str(uuid.uuid4())), ("file_version_id", str(uuid.uuid4())), ("result_attempt", 2), ("artifact_id", "other-artifact")):
             self.assertEqual(self.display_client.get(pdf_path, params={**query, field: value}).status_code, 403)
         self.display_principal = self.store.principal_for_fixture("bob")

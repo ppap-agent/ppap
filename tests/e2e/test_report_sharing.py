@@ -120,7 +120,7 @@ def test_shared_report_switch_download_and_denied_revisit_never_open_private_inp
         expect(page.get_by_role("link", name="返回审核工作台", exact=True)).to_have_attribute("href", "/workbench")
         navigation = page.get_by_role("navigation", name="分享的报告")
         expect(navigation.get_by_role("button")).to_have_count(2)
-        expect(page.get_by_role("heading", name="控制计划.xlsx-审核报告", exact=True)).to_be_visible()
+        expect(page.get_by_role("heading", name="控制计划.xlsx", exact=True)).to_be_visible()
         if stall:
             expect(page.get_by_text("正在读取 PDF…", exact=True)).to_be_visible()
             page.clock.fast_forward(45_000)
@@ -135,7 +135,7 @@ def test_shared_report_switch_download_and_denied_revisit_never_open_private_inp
         expect(page.get_by_role("region", name="当前报告").locator("pre")).to_contain_text("冻结审核报告")
         assert decoder_reads and all(status == 200 for _path, status in decoder_reads)
         navigation.get_by_role("button").filter(has_text="尺寸检验报告.xlsx").click()
-        expect(page.get_by_role("heading", name="尺寸检验报告.xlsx-审核报告", exact=True)).to_be_visible()
+        expect(page.get_by_role("heading", name="尺寸检验报告.xlsx", exact=True)).to_be_visible()
         expect(page.get_by_role("img", name="尺寸检验报告.xlsx-审核报告.pdf · 第 1 页", exact=True)).to_be_visible()
         if stall:
             assert len(held_pdf) == 1

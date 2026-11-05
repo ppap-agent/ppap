@@ -153,7 +153,6 @@ export function frozenResultError(roundId: string | null, row: ReviewFile, froze
   if (audit.progress.completed !== audit.checks.filter(item => ['completed', 'failed'].includes(item.execution)).length) return '审核进度与条目状态不一致。'
   if (audit.conclusion === 'PASS' && (!complete || valid.some(item => item.finding?.status === 'NG'))) return 'PASS 结论缺少完整的实际审核结果。'
   if (audit.conclusion === 'NG' && !valid.some(item => item.finding?.status === 'NG')) return 'NG 结论没有对应的不符合项。'
-  if (audit.summary && audit.summary.conclusion !== audit.conclusion) return '总结与审核明细不一致，暂不展示总结和正式报告。'
   if (audit.report.state !== 'not_eligible' && (!complete || !['PASS', 'NG'].includes(audit.conclusion || ''))) return '尚未取得全部审核结果，不能生成正式 PASS/NG 报告。'
   return ''
 }

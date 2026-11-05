@@ -32,7 +32,8 @@ import {requirementDirectory, type ReadRequirementVersions, type RequirementDire
 const routeSelection = () => ({id: new URLSearchParams(location.search).get('requirement') ?? '', version: new URLSearchParams(location.search).get('reqVersion') ?? ''})
 const routeQuery = () => (new URLSearchParams(location.search).get('reqQuery') ?? '').slice(0, 200)
 const routeContent = () => new URLSearchParams(location.search).get('reqTab') === 'changes' ? 'changes' : 'clauses'
-const listScope = (scope: RequirementScope) => scopeFields.every(({flag}) => scope[flag]) ? '不限定客户、零件与修订' : scopeLabel(scope)
+// Only real restrictions earn space in the list; "not limited" is the default and goes unsaid.
+const listScope = (scope: RequirementScope) => [scope.allCustomers ? '全部客户' : scope.customer || '客户待核对', !scope.allParts && (scope.part || '零件待核对'), !scope.allRevisions && (scope.revision ? `图纸 Rev ${scope.revision}` : '图纸修订待核对')].filter(Boolean).join(' · ')
 function reviewedBasisContent(basis: RequirementBasis) {
   return canonical({
     ...basis,

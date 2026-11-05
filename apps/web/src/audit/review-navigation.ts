@@ -12,7 +12,9 @@ export function filterChecks(checks: Check[], query: string, filter: string) {
   return checks.filter(row => (row.rule_item.id + ' ' + row.rule_item.category + ' ' + row.rule_item.rule_to_check + ' ' + clauseObservation(row)).toLowerCase().includes(query.toLowerCase()) && (
     filter === 'all' || filter === 'unreviewed' && reviewable(row) && !reviewed(row)
     || filter === 'attention' && needsAttention(row)
-    || row.execution === 'completed' && row.coverage === 'executed' && row.finding?.status === ({ng: 'NG', unable: 'UNABLE', pass: 'PASS'} as Record<string, string>)[filter]
+    || filter === 'error' && (row.execution === 'failed' || row.finding?.status === 'ERR')
+    || filter === 'uncovered' && row.execution === 'completed' && row.coverage !== 'executed' && row.finding?.status !== 'ERR'
+    || row.execution === 'completed' && row.coverage === 'executed' && row.finding?.status === ({ng: 'NG', unable: 'UNABLE', pass: 'PASS', na: 'NA'} as Record<string, string>)[filter]
   ))
 }
 export function nextUnreviewed(checks: Check[], current: string) {

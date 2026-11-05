@@ -326,7 +326,6 @@ if (scene.startsWith('restore-') && scene !== 'restore-missing' || scene.startsW
     audit.checks[0].finding!.review = {judgment: scene === 'restore-review-unknown' ? 'toString' : 'manual-satisfied', rationale: '人工查阅原件后认为频次符合要求。', next_step: '与客户确认频次定义。', version: 2, citations: [{file_version_id: scene === 'restore-review-outside' ? 'outside-this-round' : source.id, location: '审核示例 C12', excerpt: '每班一次'}]}
     audit.checks[1] = {...audit.checks[1], coverage: 'unsupported', finding: null, evidence: [], review: {judgment: 'unknown', rationale: '人工记录：缺少清晰的签字页。', next_step: '', version: 1, citations: []}}
     audit.counts = {...audit.counts, unknown_count: 0, not_covered_count: 1}
-    if (audit.summary) audit.summary.text = '1 项不符合，1 项未覆盖。'
   }
   if (scene.startsWith('restore-review-edit')) for (const file of snapshot.files) for (const check of file.audit?.checks || []) check.review_item_key = check.finding ? `${file.file.id}:rule:${check.rule_item.id}` : `coverage:${file.file.id}:${check.rule_item.id}`
   if (scene.startsWith('restore-usage-')) snapshot.usage_notice = usageNotices.paid_insufficient

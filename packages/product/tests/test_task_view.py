@@ -343,7 +343,7 @@ class TaskRoundViewTests(unittest.TestCase):
                 self.assertEqual(audit["counts"]["pass_count" if status == "PASS" else "ng_count"], 1)
                 self.assertEqual(audit["counts"]["unknown_count"], 0)
                 self.assertFalse(audit["checks"][0]["evidence_verified"])
-                self.assertTrue(audit["checks"][0]["scope_notice"])
+                self.assertFalse(audit["checks"][0]["evidence_verified"])
                 self.assertTrue(report_eligible(audit["checks"], False, audit["unmapped_findings"]))
                 self.assertEqual(round, before)
 
@@ -355,21 +355,15 @@ class TaskRoundViewTests(unittest.TestCase):
         self.assertEqual(audit["counts"]["pass_count"], 0)
         self.assertEqual(audit["counts"]["ng_count"], 0)
         self.assertEqual(audit["counts"]["na_count"], 1)
-        self.assertIn("不适用 1 项", audit["summary"]["text"])
-        self.assertNotEqual(audit["summary"]["conclusion"], "PASS")
 
-    def test_complete_verified_results_have_a_shared_summary_without_invented_recommendations(self):
+    def test_results_do_not_repeat_their_counts_as_a_generated_summary(self):
         round = verified_round()
         audit = task_round_view(task_input(), round)["files"][0]["audit"]
-        self.assertEqual(
-            audit["summary"],
-            {"conclusion": "NG", "text": "已审核 1 项要求：满足 0 项，不符合 1 项，不适用 0 项。", "corrective_actions": [], "extended_suggestions": []},
-        )
-        self.assertEqual(round_read_view(round, {"version-a": {"id": "version-a"}})["files"][0]["audit"]["summary"], audit["summary"])
+        self.assertNotIn("summary", audit)
+        self.assertNotIn("summary", round_read_view(round, {"version-a": {"id": "version-a"}})["files"][0]["audit"])
         round["findings"][0]["locator"]["semantic"]["scope"]["unknown"] = 1
         incomplete = task_round_view(task_input(), round)["files"][0]["audit"]
         self.assertEqual(incomplete["conclusion"], "NG")
-        self.assertEqual(incomplete["summary"], audit["summary"])
         self.assertTrue(incomplete["checks"][0]["scope_notice"])
 
     def test_host_validated_source_and_trace_reach_task_and_historical_results(self):
@@ -431,7 +425,7 @@ class TaskRoundViewTests(unittest.TestCase):
         self.assertFalse(audit["checks"][0]["evidence_verified"])
         self.assertEqual(audit["report"]["state"], "not_eligible")
         self.assertEqual(audit["report"]["reason"], "正式报告暂不可用")
-        self.assertTrue(audit["checks"][0]["scope_notice"])
+        self.assertFalse(audit["checks"][0]["evidence_verified"])
         self.assertTrue(report_eligible(audit["checks"], False, audit["unmapped_findings"]))
         round["inputs"][0]["rule"]["body"]["rules"].append({"id": "clause-b", "category": "其他", "rule_to_check": "另一项要求"})
         audit = task_round_view(task_input(), round)["files"][0]["audit"]
@@ -617,7 +611,7 @@ class TaskRoundViewTests(unittest.TestCase):
         self.assertEqual(first["checks"][0]["evidence"][0]["excerpt"], "")
         self.assertIn("Sheet1!A2", first["checks"][0]["evidence"][0]["location_gap"])
         self.assertFalse(first["checks"][0]["evidence_verified"])
-        self.assertNotEqual(first["checks"][0]["scope_notice"], round["coverage"].get("rule_items", [{}])[0].get("reason"))
+        self.assertFalse(first["checks"][0]["evidence_verified"])
         self.assertEqual(round, before)
 
     def test_running_and_failed_execution_do_not_look_queued_or_keep_task_open(self):

@@ -40,7 +40,7 @@ def test_a_pdf_contains_readable_chinese_rule_result_and_empty_cell_evidence():
         assert "尺寸检验报告.xlsx" in text
         assert "客户尺寸要求" in text
         assert "必须填写零件号" in text
-        assert "NG" in text
+        assert "不符合" in text
         assert "该位置内容为空" in text
         assert "检验!A2" in text
         assert "深度" not in text
@@ -56,7 +56,7 @@ def test_optional_evidence_and_scope_can_be_absent_without_losing_the_report_or_
     check["evidence"] = [{"file_version_id": "version-one", "locator": None, "excerpt": "", "location_gap": "原件定位信息不完整。"}]
     with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
         text = "".join(page.get_text() for page in document)
-        assert "NG" in text and "必须填写零件号" in text
+        assert "不符合" in text and "必须填写零件号" in text
         assert "原件定位信息不完整" in text
         assert "该位置内容为空" not in text
 
@@ -69,7 +69,7 @@ def test_pdf_table_cell_report_keeps_the_original_pdf_page_and_coordinates():
         text = "".join(page.get_text() for page in document)
         assert "尺寸检验报告.pdf" in text
         assert "第 3 页 · 表格行 12 · 列 4" in text
-        assert "NG" in text
+        assert "不符合" in text
         assert "该位置内容为空" in text
         assert "Sheet" not in text
         assert "!A2" not in text

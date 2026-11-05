@@ -81,7 +81,7 @@ class PageHeaderPreviewTests(unittest.TestCase):
             title = page.get_by_role("heading", name="审核报告", exact=True)
             self.assertLessEqual(title.bounding_box()["height"], 2)
             current = page.get_by_role("region", name="当前报告", exact=True)
-            filename = current.get_by_role("heading", name="控制计划.xlsx-审核报告", exact=True)
+            filename = current.get_by_role("heading", name="控制计划.xlsx", exact=True)
             toolbar = current.get_by_role("toolbar", name="PDF 阅读工具", exact=True)
             expect(toolbar).to_be_visible()
             bottom = bar.bounding_box()["y"] + bar.bounding_box()["height"]

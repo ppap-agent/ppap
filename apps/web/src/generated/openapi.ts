@@ -2037,23 +2037,8 @@ export interface components {
             /** Round Id */
             round_id: string;
             rule: components["schemas"]["BoundRule"];
-            summary: components["schemas"]["AuditFileSummary"] | null;
             /** Unmapped Findings */
             unmapped_findings?: components["schemas"]["Finding"][];
-        };
-        /** AuditFileSummary */
-        AuditFileSummary: {
-            /**
-             * Conclusion
-             * @enum {string}
-             */
-            conclusion: "PASS" | "NG" | "UNKNOWN";
-            /** Corrective Actions */
-            corrective_actions: string[];
-            /** Extended Suggestions */
-            extended_suggestions: string[];
-            /** Text */
-            text: string;
         };
         /** AuditFileValidation */
         AuditFileValidation: {

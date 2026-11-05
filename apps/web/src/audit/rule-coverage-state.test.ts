@@ -27,3 +27,8 @@ test('applies confirmed all-customer rules to everyone and ignores unconfirmed s
   assert.deepEqual(ruleCoverage([all], standard).map(row => [row.customer, row.covered]), [['全部客户', 1]])
   assert.deepEqual(ruleCoverage([rule('x', [], 'PSW')], standard), [])
 })
+
+test('lists a rule title once when a built-in and an uploaded rule share it', () => {
+  const rows = ruleCoverage([rule('built-in', ['UAES'], 'PSW', {title: 'PSW 规则'}), rule('uploaded', ['UAES'], 'PSW', {title: 'PSW 规则'})], standard)
+  assert.deepEqual(rows[0].types[0].rules, ['PSW 规则'])
+})

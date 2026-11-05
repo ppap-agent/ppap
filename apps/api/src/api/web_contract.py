@@ -820,13 +820,6 @@ class AuditResultCounts(TypedDict):
     error_count: int
 
 
-class AuditFileSummary(TypedDict):
-    conclusion: Literal["PASS", "NG", "UNKNOWN"]
-    text: str
-    corrective_actions: list[str]
-    extended_suggestions: list[str]
-
-
 class AuditReportReference(TypedDict):
     task_id: str
     round_id: str
@@ -881,7 +874,6 @@ class AuditFileReview(TypedDict):
     counts: AuditResultCounts
     checks: list[AuditClauseEvaluation]
     unmapped_findings: NotRequired[list[Finding]]
-    summary: AuditFileSummary | None
     report: AuditFileReport
 
 

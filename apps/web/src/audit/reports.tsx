@@ -17,11 +17,10 @@ import {ReportPackage, LinkedReportPackage, reportPackageAddress} from './report
 import {ReportPreview} from './report-preview'
 import {ReportShareDialog} from './report-share'
 import {useShareActions} from './share-actions'
-import {conclusionLabel} from './status-labels'
+import {conclusionLabel, reportShortLabel as labels} from './status-labels'
 import type {AuditSharingAdapter} from './sharing-contract'
 
 type Task = components['schemas']['AuditTask']
-const labels = {not_eligible: '无正式报告', pending: '待生成', generating: '生成中', ready: '就绪', failed: '生成失败'}
 
 export function AuditReports({task, initialFile, onChoose, onRead, busy, readError, onReadSupport, adapter, onChange, sharingAdapter, headerActions}: {task: Task; initialFile: string; onChoose: (fileId: string) => void; onRead: () => void; busy: boolean; readError: string; onReadSupport: () => void; adapter?: AuditReportAdapter; onChange: (task: Task) => void; sharingAdapter?: AuditSharingAdapter; headerActions?: HTMLElement | null}) {
   const rows = task.files.filter(file => file.selection === 'selected' && file.match?.state !== 'reference')
@@ -88,7 +87,7 @@ export function AuditReports({task, initialFile, onChoose, onRead, busy, readErr
     const choose = () => {onChoose(row.file.id); setOpen(false)}
     return <TableRow key={row.file.id} data-state={file?.file.id === row.file.id ? 'selected' : undefined} className="cursor-pointer" onClick={choose}>
       <TableCell className="align-top" onClick={event => event.stopPropagation()}><div className="mt-2"><Checkbox aria-label={`选择报告 ${row.file.original_filename}${suffix}`} disabled={!ready} checked={checked.includes(row.file.id)} onCheckedChange={value => setChecked(ids => value === true ? [...ids, row.file.id] : ids.filter(id => id !== row.file.id))}/></div></TableCell>
-      <TableCell className="whitespace-normal"><Button variant="ghost" aria-label={`${row.file.original_filename}-审核报告 ${status}${suffix}`} aria-pressed={file?.file.id === row.file.id} className="h-auto w-full justify-start whitespace-normal text-left" onClick={event => {event.stopPropagation(); choose()}}><span className="grid min-w-0 gap-1"><FileName name={`${row.file.original_filename}-审核报告`} format="pdf"/><span className={`pl-6 text-xs ${ready && row.audit?.conclusion === 'NG' ? 'text-destructive' : 'text-muted-foreground'}`}>{ready ? `结论：${row.audit?.conclusion ? conclusionLabel[row.audit.conclusion] ?? '结果未知' : '结果未知'}` : status}{suffix}</span></span></Button>{outcome?.state === 'failed' && <p className="mt-1 text-xs text-destructive">上次打包：{outcome.reason}</p>}</TableCell>
+      <TableCell className="whitespace-normal"><Button variant="ghost" aria-label={`${row.file.original_filename} ${status}${suffix}`} aria-pressed={file?.file.id === row.file.id} className="h-auto w-full justify-start whitespace-normal text-left" onClick={event => {event.stopPropagation(); choose()}}><span className="grid min-w-0 gap-1"><FileName name={row.file.original_filename} format="pdf"/><span className={`pl-6 text-xs ${ready && row.audit?.conclusion === 'NG' ? 'text-destructive' : 'text-muted-foreground'}`}>{ready ? `结论：${row.audit?.conclusion ? conclusionLabel[row.audit.conclusion] ?? '结果未知' : '结果未知'}` : status}{suffix}</span></span></Button>{outcome?.state === 'failed' && <p className="mt-1 text-xs text-destructive">上次打包：{outcome.reason}</p>}</TableCell>
     </TableRow>
   })}</TableBody></Table>
   const packages = packageRequest ? <LinkedReportPackage key={packageRequest} task={task} requestId={packageRequest} adapter={adapter} nameFor={reference => describe(reference).name} busy={downloading} onDownload={job => void downloadZip(job)} onExit={leaveLinkedPackage} downloadError={zipDownloadError}/> : packageScopeIssue ? <Alert variant="destructive"><AlertTitle>ZIP 不属于当前任务</AlertTitle><AlertDescription>{packageScopeIssue} 未读取或下载该包，已有 PDF 不受影响。<Button variant="outline" disabled={busy} onClick={onRead}>重新读取报告状态</Button></AlertDescription></Alert> : <ReportPackage job={job} nameFor={reference => describe(reference).name} busy={actions.packageBusy || downloading} onRead={() => void actions.readPackage()} onDownload={() => void downloadZip()} onRetry={() => {if (job?.state === 'failed' && job.retry_allowed) void actions.createPackage(job.reports)}} downloadError={zipDownloadError}/>

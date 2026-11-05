@@ -199,7 +199,6 @@ def _check(round: dict, version_id: str, rule_id: str, rule: dict, file_failed: 
         "verification_scope": verification_scope if isinstance(verification_scope, str) else None,
         "scope": scope,
         "scope_notice": _join_notices(notice, evidence_notice, scope_gap, checker_notice)
-        or ("请核对原件中的证据和检查范围。" if finding and not verified else None)
         or ((coverage or {}).get("reason") if not finding else None),
         "evidence": evidence,
         **({"review_item_key": original["item_key"] if original else f"coverage:{version_id}:{rule['id']}"} if original or coverage and coverage.get("coverage") != "executed" else {}),
@@ -272,15 +271,6 @@ def file_round_audit(round: dict, frozen: dict) -> dict:
     counts = _counts(checks)
     complete = report_eligible(checks, file_has_error, unmapped)
     conclusion = ("NG" if counts["ng_count"] else "PASS" if complete and counts["pass_count"] else "UNKNOWN") if finished else None
-    summary: dict | None = None
-    if complete:
-        not_applicable = sum(check["finding"]["status"] == "NA" for check in checks)
-        summary = {
-            "conclusion": conclusion,
-            "text": f"已审核 {len(checks)} 项要求：满足 {counts['pass_count']} 项，不符合 {counts['ng_count']} 项，不适用 {not_applicable} 项。",
-            "corrective_actions": [],
-            "extended_suggestions": [],
-        }
     return {
         "round_id": round["id"],
         "file_version_id": version_id,
@@ -295,7 +285,6 @@ def file_round_audit(round: dict, frozen: dict) -> dict:
         "counts": counts,
         "checks": checks,
         "unmapped_findings": unmapped,
-        "summary": summary,
         "report": {"state": "not_eligible", "report_id": None, "reason": "正式报告暂不可用" if complete else "尚未取得全部审核项的结果" if finished else "审核尚未完成"},
     }
 
