@@ -108,12 +108,21 @@ def test_converted_file_and_auxiliary_artifact_are_cleaned_up(tmp_path):
 @pytest.mark.parametrize(("operation", "expected_status"), [("OP15", "PASS"), ("OP99", "NG")])
 def test_pdf_cross_file_check_uses_the_submitted_group(tmp_path, operation, expected_status):
     converted = converted_control_plan(tmp_path)
+    from openpyxl import load_workbook
+
+    plan = load_workbook(converted)
+    plan.active["Z1"] = "零件号"
+    plan.active["AA1"] = "P001"
+    plan.save(converted)
+    plan.close()
     flow_path = tmp_path / "flow.xlsx"
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "过程流程图"
     sheet.append(["工序号", "工序名称"])
     sheet.append([operation, "装配"])
+    sheet["Z1"] = "零件号"
+    sheet["AA1"] = "P001"
     workbook.save(flow_path)
     workbook.close()
     flow = AuditInput(audit_id="flow", file_url=str(flow_path))

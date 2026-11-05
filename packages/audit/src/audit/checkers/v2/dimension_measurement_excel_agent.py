@@ -8,6 +8,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from audit.contracts import AuditEvidence, AuditResultItem, EvidenceSource
 from audit.engine.checkers.dimension_measurement_policy import check_duplicates, check_qualitative_method, check_tolerance, is_strict_ok_text, normalize_quality_standard_text, split_tokens
 from audit.engine.rule_engine import Row, RuleContext, Table
 from audit.kinds import PpapDocumentType
@@ -27,6 +28,7 @@ class Doc01RowObservation:
     method_text: str
     result_text: str
     raw_measurements: tuple[Any, ...]
+    unit: str = ""
 
 
 def _resolve_row_index(row: Any, columns: Mapping[str, Any]) -> int:
@@ -65,6 +67,7 @@ def _observe_doc01_row(
         method_text="" if method_value is None else str(method_value),
         result_text="" if result_value is None else str(result_value),
         raw_measurements=raw_measurements,
+        unit=str(row.value("单位") or "") if "单位" in columns else "",
     )
 
 
@@ -104,9 +107,18 @@ def _iter_doc01_main_sections(ctx: RuleContext) -> Iterator[Any]:
 class DimensionMeasurementExcelAgent(ExcelAgent):
     """尺寸检验报告 Excel 文件专用审核代理。"""
 
-    _original_dimension_cells: dict[tuple[str, str], list[tuple[tuple[Any, ...], int, str]]]
+    _original_dimension_cells: dict[tuple[str, str], list[tuple[tuple[Any, ...], int, str, tuple[float, float, float, float]]]]
 
     DOC_TYPE = PpapDocumentType.DIMENSION_MEASUREMENT_REPORT
+    _numeric_evidence: AuditEvidence | None = None
+    _original_measurement_source: EvidenceSource | None = None
+    _numeric_failure_source: EvidenceSource | None = None
+
+    def _finalize_audit_result(self, result: AuditResultItem, *, rule_no: int, phase: Any) -> AuditResultItem:
+        result = super()._finalize_audit_result(result, rule_no=rule_no, phase=phase)
+        if rule_no == 3 and self._numeric_evidence is not None:
+            return result.model_copy(update={"evidence": self._numeric_evidence})
+        return result
 
     def _original_pdf_measurements(self, row: Row, observation: Doc01RowObservation) -> tuple[tuple[Any, ...], str]:
         """Recover cell boundaries using the same serial and standard in the source.
@@ -116,6 +128,7 @@ class DimensionMeasurementExcelAgent(ExcelAgent):
         """
         from pathlib import Path
 
+        self._original_measurement_source = None
         source = (self.audit_file.file_metadata or {}).get("source_pdf_url")
         if not source or not Path(source).is_file() or "序号" not in row.columns:
             return observation.raw_measurements, ""
@@ -130,18 +143,37 @@ class DimensionMeasurementExcelAgent(ExcelAgent):
             cache = self._original_dimension_cells = {}
             with fitz.open(source) as document:
                 for page in document:
+                    page.set_rotation(0)
                     for table in page.find_tables().tables:
-                        for cells in table.extract():
+                        for index, cells in enumerate(table.extract()):
                             if len(cells) not in (10, 11) or not str(cells[0] or "").isdigit():
                                 continue
                             if not cells[2] or not cells[-1]:
                                 continue
                             measurements = tuple("" if value is None else "".join(str(value).split()) for value in cells[-6:-1])
-                            cache.setdefault(key(cells[0], cells[2]), []).append((measurements, page.number + 1, str(cells[-1]).strip()))
+                            bounds = table.rows[index].bbox
+                            cache.setdefault(key(cells[0], cells[2]), []).append((measurements, page.number + 1, str(cells[-1]).strip(), (bounds[0], bounds[1], bounds[2], bounds[3])))
         serial = row.value("序号", compact=True)
         matches = cache.get(key(serial, observation.standard_text), [])
         if len(matches) == 1 and matches[0][2].lower() == observation.result_text.strip().lower():
-            measurements, page, _ = matches[0]
+            import json
+
+            measurements, page, _, bounds = matches[0]
+            self._original_measurement_source = EvidenceSource(
+                kind="structure",
+                locator=json.dumps(
+                    {
+                        "kind": "pdf_table_row",
+                        "page": page,
+                        "serial": serial,
+                        "bbox": bounds,
+                        "coordinate_system": "pdf_points_unrotated",
+                        "file_version_id": str((self.audit_file.file_metadata or {}).get("file_version_id") or self.audit_file.audit_id),
+                    },
+                    ensure_ascii=False,
+                ),
+                excerpt=str(measurements)[:500],
+            )
             return measurements, f"原PDF第{page}页序号{serial}"
         return observation.raw_measurements, ""
 
@@ -165,14 +197,26 @@ class DimensionMeasurementExcelAgent(ExcelAgent):
 
     @rule("尺寸区数值公差带检查")
     def rule_3(self, ctx: RuleContext) -> tuple[str, str]:
+        from audit.engine.checkers.excel_field_evidence import native_cell_evidence
+
+        self._numeric_failure_source = None
+        try:
+            return self._check_tolerance_rows(ctx)
+        finally:
+            self._numeric_evidence = native_cell_evidence(ctx, str(self.audit_file.file_url))
+            if self._numeric_evidence is not None and self._numeric_failure_source is not None:
+                self._numeric_evidence = self._numeric_evidence.model_copy(update={"sources": (self._numeric_failure_source, *self._numeric_evidence.sources)})
+
+    def _check_tolerance_rows(self, ctx: RuleContext) -> tuple[str, str]:
         checked_rows = 0
+        unresolved = ""
 
         for section in _iter_doc01_main_sections(ctx):
             columns = section.columns(
                 "检查数据",
                 "判定标准",
                 "判定结果",
-                optional=("序号", "检查项目", "供方检查方法/检查工具"),
+                optional=("序号", "检查项目", "供方检查方法/检查工具", "单位"),
             )
 
             for row in _iter_doc01_inspection_rows(section, columns):
@@ -181,12 +225,19 @@ class DimensionMeasurementExcelAgent(ExcelAgent):
                     continue
 
                 measurements, original_location = self._original_pdf_measurements(row, obs)
-                decision = check_tolerance(obs.standard_text, measurements, obs.result_text, obs.method_text)
+                decision = check_tolerance(obs.standard_text, measurements, obs.result_text, obs.method_text, unit=obs.unit)
                 if decision.status == "NG":
+                    self._numeric_failure_source = self._original_measurement_source
                     location = original_location or f"工作表{row.sheet_title}第{obs.row_index}行"
                     return "NG", f"{location}{decision.reason}"
+                if decision.status == "UNABLE" and not unresolved:
+                    self._numeric_failure_source = self._original_measurement_source
+                    location = original_location or f"工作表{row.sheet_title}第{obs.row_index}行"
+                    unresolved = f"{location}{decision.reason}"
                 checked_rows += int(decision.numeric_checked)
 
+        if unresolved:
+            return "UNABLE", unresolved
         if checked_rows == 0:
             return "PASS", "规则3按通过处理"
         return "PASS", "所有检查数据均在公差范围内"

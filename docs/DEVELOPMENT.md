@@ -337,4 +337,6 @@ uv run --no-sync python scripts/deep_lab.py --recipe checker --effort high \
 
 GitHub Actions 的外部模型测试使用 `CI_LLM_API_KEY`、`CI_LLM_BASE_URL` 和 `CI_LLM_MODEL` 三项仓库 Secret，与生产 Standard 配置分开。当前 CI 使用已授权的 Codex Responses 服务，避免调用已耗尽额度的 Grok；真实模型用量仍属于测试运行，不以缓存伪造模型成功。
 
-旧 XLS 的图形事实按需调用 `documents.excel.visual.render_xls_header(content, sheet_name=..., header_rows=12)`，返回请求工作表前若干行的 PNG。原生表格仍由现有 loader 读取。该函数在无外部网络、无继承凭据、禁止文档宏的隔离配置中执行两次本地 LibreOffice Calc 转换，只改临时副本的工作表可见性与打印范围，保留原件绘图与覆盖顺序；不会用单元格文本重画勾选。多工作表必须绑定指定名称，输出必须唯一一页。外部工作簿／DDE 引用、缺少 Calc／沙箱、无法确认页范围均报告不可用。复用旧 DOC 的每次 45 秒、25 MiB 输入／50 MiB 输出与资源限制，不增加预算配置。Linux 运行时需 `libreoffice-calc`、`fonts-noto-cjk` 与现有 `ppap-local-converter-sandbox`；生产镜像及 V3 corpus host 已接线。渲染成功不等于视觉事实已确认，仍由原件证据读取报告确认或未知。
+Excel 的图形事实通过 `audit.engine.checkers.excel_field_evidence` 读取。XLS 先经既有 LibreOffice 隔离转换为 XLSX，保留原始绘图部分；单元格、控件和可靠原生文字优先使用。按字段文字、合并范围和相邻字段确定区域，必要时由 `documents.excel.visual` 渲染；Excel 与 PDF 共用 `pdf_field_region` 的栏目边界。签字字段不读取印刷姓名、日期或客户签字，保证书盖章与授权表盖章分别取证。缺少标签且需要证明没有盖章时，覆盖完整适用工作表，包含原生单元格范围外的绘图；不能凭局部未找到就确认不存在。模型只返回事实，坐标、文件版本和来源摘要由程序保存；未知仍为 UNABLE，调用或解析错误为 ERR。同一字段复用成功或失败结果，不自动重试。
+
+尺寸审核把检查数据、判定标准、单位和结果绑定到同一原始记录。明确的不同量纲不能直接比较；支持的同量纲单位先换算，单位无法可靠确定时返回 UNABLE。跨文件读取绑定本轮冻结文件版本，完整匹配零件标识及工序号，保留两份原件的单元格位置。不同文档的修订计数不要求相同；两份原件都明确声明同零件的工程更改水平时，冲突不能通过。身份不足不能支持 PASS，也不借用相近编号的记录。历史文件、规则与结果不变。

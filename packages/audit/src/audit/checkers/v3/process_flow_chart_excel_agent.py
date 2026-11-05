@@ -17,6 +17,7 @@ from typing import Any, cast
 
 from audit.checkers.v3.cross_file_extractors import (
     _load_workbook_auto,
+    check_reference_identity,
     extract_rows_from_workbook,
     normalize_key,
     normalize_text,
@@ -242,6 +243,7 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
                 metadata = getattr(related, "file_metadata", {}) or {}
                 version = str(metadata.get("file_version_id") or getattr(related, "audit_id", "") or "")
                 ctx.bind_workbook(workbook, version)
+                check_reference_identity(ctx, ctx.workbook, workbook)
                 extracted_rows = extract_rows_from_workbook(
                     workbook=workbook,
                     field_aliases=_RULE9_SCL_FIELD_ALIASES,

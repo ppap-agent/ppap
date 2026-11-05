@@ -5,6 +5,7 @@ Excel文件专用审核代理基类
 所有处理Excel文件的PPAP审核代理都应该继承此类。
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -18,13 +19,11 @@ from documents.contracts import ConversionArtifact, FileRef
 from documents.excel import load_excel_workbook
 from documents.pdf import PdfSpec
 from openpyxl import Workbook
-from openpyxl.utils import get_column_letter
 
 from audit.checkers.v2.base_agent import BaseAgent
 from audit.contracts import (
     AuditEvidence,
     AuditInput,
-    EvidenceDiagnostic,
     EvidenceSource,
     GroupContextInput,
     RuleInput,
@@ -180,6 +179,7 @@ class ExcelAgent(BaseAgent):
         # Cached workbook – loaded once, reused across all rule checks.
         self._workbook_cache: Optional[Workbook] = None
         self._related_pdf_cache: dict[str, tuple[ConversionArtifact, Workbook | None]] = {}
+        self._related_workbook_cache: dict[str, tuple[str, str, Workbook | Exception]] = {}
         self._related_conversion_artifacts: dict[str, ConversionArtifact] = {}
         self._conversion_artifact: ConversionArtifact | None = None
         self._doc_type = self._resolve_resource_doc_type()
@@ -310,6 +310,10 @@ class ExcelAgent(BaseAgent):
 
     def close(self) -> None:
         self._close_cached_workbook()
+        for _, _, workbook in getattr(self, "_related_workbook_cache", {}).values():
+            if isinstance(workbook, Workbook):
+                workbook.close()
+        self._related_workbook_cache.clear()
         for _, workbook in self._related_pdf_cache.values():
             if workbook is not None:
                 workbook.close()
@@ -606,6 +610,34 @@ class ExcelAgent(BaseAgent):
         metadata = getattr(self.audit_file, "file_metadata", {}) or {}
         return str(metadata.get("file_version_id") or metadata.get("sha256") or self.audit_file.audit_id)
 
+    def load_related_workbook(self, item: Any) -> Workbook:
+        """Bind reference reads to their frozen file version, retaining ownership."""
+        from .cross_file_extractors import _load_workbook_auto, check_reference_identity
+
+        metadata = getattr(item, "file_metadata", None) or {}
+        location = str(item.file_url)
+        version = str(metadata.get("file_version_id") or item.audit_id)
+        source = Path(location)
+        digest = hashlib.sha256(source.read_bytes()).hexdigest() if source.is_file() else ""
+        expected = metadata.get("source_sha256") or metadata.get("sha256")
+        cached = self._related_workbook_cache.get(version)
+        if (expected and digest and expected != digest) or (cached and cached[:2] != (location, digest)):
+            raise OSError("本轮冻结关联资料已变化，不能完成本项核对。")
+        if cached is None:
+            try:
+                loaded: Workbook | Exception = _load_workbook_auto(location)
+            except Exception as error:
+                loaded = error
+            cached = (location, digest, loaded)
+            self._related_workbook_cache[version] = cached
+        workbook = cached[2]
+        if isinstance(workbook, Exception):
+            raise workbook
+        if self._shared_rule_context is not None:
+            self._shared_rule_context.bind_workbook(workbook, version)
+            check_reference_identity(self._shared_rule_context, self._shared_rule_context.workbook, workbook)
+        return workbook
+
     def _load_pdf_workbook(self, file_url: str) -> Workbook:
         from documents.conversion import convert_pdf_to_excel_auto
 
@@ -860,6 +892,10 @@ class ExcelAgent(BaseAgent):
 
     def _apply_scope(self, status: str, message: str, ctx: RuleContext) -> tuple[str, str]:
         if not type(self).CLAUSE_BOUND_CHECKS:
+            from .cross_file_extractors import REFERENCE_IDENTITY_UNRESOLVED
+
+            if status == "PASS" and ctx.has_unresolved(REFERENCE_IDENTITY_UNRESOLVED):
+                return "UNABLE", REFERENCE_IDENTITY_UNRESOLVED
             if status == "PASS" and ctx.has_unreadable_cells():
                 return "UNABLE", self._scope_text("单元格证据尚不能确认，不能据此作业务判断。", ctx)
             return status, message
@@ -908,44 +944,12 @@ class ExcelAgent(BaseAgent):
         return f"{message}；{extra}" if message else extra
 
     def _evidence_from_reads(self, ctx: RuleContext) -> AuditEvidence | None:
-        if not type(self).CLAUSE_BOUND_CHECKS and self.rule.rule_profile != "v4":
+        from audit.engine.checkers.excel_field_evidence import native_cell_evidence
+
+        versions = {item[0] for item in ctx.cell_reads()}
+        if not type(self).CLAUSE_BOUND_CHECKS and self.rule.rule_profile != "v4" and len(versions) < 2:
             return None
-        reads = ctx.cell_reads()
-        if not reads:
-            return None
-        sources = []
-        for version, sheet, row, column in reads:
-            payload = {"kind": "xlsx_cell", "sheet": sheet, "cell": f"{get_column_letter(column)}{row}"}
-            if version:
-                payload["file_version_id"] = version
-            sources.append(
-                EvidenceSource(
-                    kind="structure",
-                    locator=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-                    excerpt=ctx.cell_excerpt(version, sheet, row, column),
-                )
-            )
-        diagnostics: tuple[EvidenceDiagnostic, ...] = ()
-        if ctx.cell_reads_truncated():
-            diagnostics = (
-                EvidenceDiagnostic(
-                    code="read_locations_truncated",
-                    stage="structure",
-                    severity="warning",
-                    message="本次读取位置超过展示上限。未列出的读取已经执行，展示上限不是完整定位。",
-                ),
-            )
-        suffix = Path(str(self._source_path or getattr(self.audit_file, "file_url", "") or "")).suffix.lower().lstrip(".")
-        source_format = suffix if suffix in {"xlsx", "xls", "xlsm", "pdf", "docx", "doc"} else "xlsx"
-        prepared_format = "xlsx" if source_format in {"pdf", "doc"} else source_format if source_format in {"xlsx", "xls", "xlsm", "docx"} else "xlsx"
-        return AuditEvidence(
-            required="structure",
-            used="structure",
-            source_format=cast(Literal["xlsx", "xls", "xlsm", "pdf", "docx", "doc"], source_format),
-            prepared_format=cast(Literal["xlsx", "xls", "xlsm", "pdf", "docx"], prepared_format),
-            sources=tuple(sources),
-            diagnostics=diagnostics,
-        )
+        return native_cell_evidence(ctx, str(self._source_path or self.audit_file.file_url))
 
     def _finalize_audit_result(
         self,

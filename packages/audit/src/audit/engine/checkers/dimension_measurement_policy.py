@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any, Literal
 
 STRICT_OK_TOKENS = {"ok", "合格"}
@@ -16,7 +17,7 @@ INVALID_MEASUREMENT_TOKENS = {"/", "-", "—", "－", "na", "n/a", "none", "null
 FORBIDDEN_RESULT_EQUIVALENTS = {"pass", "正确"}
 GEOMETRIC_STANDARD_PREFIXES = ("位置度", "同轴度", "圆柱度", "平面度", "垂直度", "平行度")
 PURE_NOMINAL_STANDARD_RE = re.compile(r"(?:\d+\s*[xX×]\s*)?[Φφ]?-?\d+(?:\.\d+)?")
-MEASUREMENT_NUMBER_WITH_UNIT_RE = re.compile(r"^\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*(?:[a-zA-ZμΩ℃°%·.]+)?\s*$")
+MEASUREMENT_NUMBER_WITH_UNIT_RE = re.compile(r"^\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s*(?:[a-zA-ZμΩ℃°%·.]+)?\s*$")
 RULE_7_ALLOWED_METHOD_KEYWORDS = ("通止规", "菲林尺", "卡板")
 
 
@@ -193,18 +194,57 @@ def classify_quality_standard(value: Any) -> tuple[str, tuple[float, float] | No
 
 @dataclass(frozen=True)
 class MeasurementCheck:
-    status: Literal["PASS", "NG", "NA"]
+    status: Literal["PASS", "NG", "NA", "UNABLE"]
     reason: str = ""
     # Rule 3's existing aggregate message distinguishes numeric comparisons.
     numeric_checked: bool = False
 
 
-def check_tolerance(standard: Any, measurements: tuple[Any, ...], result: Any, method: Any) -> MeasurementCheck:
+_UNITS = {
+    "s": ("time", "1"),
+    "sec": ("time", "1"),
+    "秒": ("time", "1"),
+    "min": ("time", "60"),
+    "分钟": ("time", "60"),
+    "h": ("time", "3600"),
+    "小时": ("time", "3600"),
+    "mm": ("length", "0.001"),
+    "毫米": ("length", "0.001"),
+    "cm": ("length", "0.01"),
+    "厘米": ("length", "0.01"),
+    "m": ("length", "1"),
+    "米": ("length", "1"),
+    "μm": ("length", "0.000001"),
+    "um": ("length", "0.000001"),
+    "微米": ("length", "0.000001"),
+    "g": ("mass", "0.001"),
+    "克": ("mass", "0.001"),
+    "kg": ("mass", "1"),
+    "千克": ("mass", "1"),
+    "°": ("angle", "1"),
+    "度": ("angle", "1"),
+    "%": ("ratio", "0.01"),
+    "n": ("force", "1"),
+    "kn": ("force", "1000"),
+    "pa": ("pressure", "1"),
+    "kpa": ("pressure", "1000"),
+    "mpa": ("pressure", "1000000"),
+}
+_UNIT_SUFFIX = re.compile(r"(?<=[0-9)])\s*([a-zA-ZμµΩ℃°%\u4e00-\u9fff]+)\s*$")
+
+
+def _quantity_unit(value: str, *, threshold: bool = False) -> tuple[str, str]:
+    match = _UNIT_SUFFIX.search(value)
+    if match is None or (threshold and match.group(1).lower() in {"min", "max"}):
+        return value, ""
+    return value[: match.start()].strip(), match.group(1).lower().replace("µ", "μ")
+
+
+def check_tolerance(standard: Any, measurements: tuple[Any, ...], result: Any, method: Any, *, unit: str = "") -> MeasurementCheck:
     """Apply existing rule 3 to one known dimension record."""
     # Converted cells can contain several measurements separated by line breaks.
     # Keep those boundaries while accepting spaces between a number and its unit.
     measurements = tuple("" if value is None else ";".join("".join(line.split()) for line in str(value).splitlines()) for value in measurements)
-    standard_text = "" if standard is None else str(standard)
     result_text = "" if result is None else str(result)
     method_text = "" if method is None else str(method)
     measurement_kind, parsed_groups = inspect_measurements(measurements)
@@ -216,6 +256,32 @@ def check_tolerance(standard: Any, measurements: tuple[Any, ...], result: Any, m
         if not is_strict_ok_text(result_text):
             return MeasurementCheck("NG", f"判定结果不规范: {result_text}")
         return MeasurementCheck("PASS")
+    standard_text = "" if standard is None else str(standard)
+    standard_text, standard_unit = _quantity_unit(standard_text, threshold=True)
+    declared_unit = unit.strip().lower().replace("µ", "μ")
+    target_unit = standard_unit or declared_unit
+    quantities = [[_quantity_unit(token) for token in split_tokens(value)] for value in measurements]
+    explicit_units = {item_unit for group in quantities for _, item_unit in group if item_unit}
+    explicit_units.update(item_unit for item_unit in (standard_unit, declared_unit) if item_unit)
+    if any(item_unit not in _UNITS for item_unit in explicit_units):
+        return MeasurementCheck("UNABLE", "数值单位无法可靠解析，未执行公差比较")
+    if len({_UNITS[item_unit][0] for item_unit in explicit_units}) > 1:
+        return MeasurementCheck("NG", "检查数据与判定标准的单位维度不一致")
+    if not target_unit and len(explicit_units) > 1:
+        return MeasurementCheck("UNABLE", "判定标准缺少单位，无法确认不同单位数值的比较基准")
+    target_unit = target_unit or next(iter(explicit_units), "")
+    if explicit_units:
+        normalized = []
+        for group in quantities:
+            values = []
+            for number, item_unit in group:
+                effective_unit = item_unit or declared_unit or target_unit
+                if effective_unit != target_unit and re.fullmatch(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?", number):
+                    number = format(Decimal(number) * Decimal(_UNITS[effective_unit][1]) / Decimal(_UNITS[target_unit][1]), "f")
+                values.append(number)
+            normalized.append(";".join(values))
+        measurements = tuple(normalized)
+    measurement_kind, parsed_groups = inspect_measurements(measurements)
     if measurement_kind == "mixed_or_invalid":
         invalid_value = next((value for value in measurements if parse_measurement_numbers(value) is None), measurements[0])
         return MeasurementCheck("NG", f"检查数据非数值或占位符: {invalid_value}")
@@ -231,9 +297,9 @@ def check_tolerance(standard: Any, measurements: tuple[Any, ...], result: Any, m
     if not row_numbers:
         return MeasurementCheck("NA")
     lower, upper = quality_range
-    for number in row_numbers:
-        if not (lower <= number <= upper):
-            return MeasurementCheck("NG", f"检查数据{number}超出公差范围{(lower, upper)}", numeric_checked=True)
+    for measured_number in row_numbers:
+        if not (lower <= measured_number <= upper):
+            return MeasurementCheck("NG", f"检查数据{measured_number}超出公差范围{(lower, upper)}", numeric_checked=True)
     return MeasurementCheck("PASS", numeric_checked=True)
 
 

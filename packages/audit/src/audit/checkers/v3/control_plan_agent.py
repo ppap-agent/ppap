@@ -1,11 +1,9 @@
 """控制计划审核代理（含跨文件一致性规则）。"""
 
-import hashlib
 import json
 import logging
 import re
 from collections import Counter
-from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Literal, Optional, Tuple
 
@@ -35,20 +33,20 @@ from audit.checkers.v3.control_plan_shared import (
 )
 from audit.checkers.v3.control_plan_shared import (
     display_values,
-    extract_operation_keys,
     value_matches,
 )
 from audit.checkers.v3.cross_file_extractors import (
-    _load_workbook_auto,
     build_struct_key,
-    extract_rows_from_file,
     extract_rows_from_workbook,
     filter_pfd_process_rows,
     format_row_location,
     is_pfd_header_row,
     normalize_key,
     normalize_text,
+    operation_number_key,
+    part_numbers_compatible,
     prepend_row_location,
+    read_part_number_keys,
 )
 from audit.checkers.v3.excel_agent import ExcelAgent, rule
 from audit.contracts import AuditEvidence, AuditResultItem, EvidenceDiagnostic, EvidenceSource
@@ -87,7 +85,6 @@ _CP_STAGE_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("pre_launch", ("试生产", "pre-launch")),
     ("production", ("批量生产", "mass production", "量产", "生产", "production", "sop")),
 )
-_CROSS_RULE_PART_NUMBER_ALIASES = ["零件编号", "零件号", "part number", "partnumber"]
 _CP_HEADER_OPERATION_NO_KEYS = {normalize_key(value) for value in ["工序号", "工序编号", "零件/工序号", "零件/过程编号", "零件/过程号码", "Part / Process Number"]}
 _CP_HEADER_OPERATION_NAME_KEYS = {normalize_key(value) for value in ["工序名称", "工序内容", "过程名称", "工序名称/操作描述", "过程名称/操作描述", "Process Name / Operation Description"]}
 _PFMEA_RULE9_FIELD_ALIASES: Dict[str, List[str]] = {
@@ -143,14 +140,12 @@ class ControlPlanAgent(ExcelAgent):
     )
 
     def _read_stage_graphics(self, sheet: Any, stage_cells) -> Tuple[str, str] | None:
-        """Read the text-located field from the canonical XLSX, regardless of source format."""
-        from documents.excel.visual import has_region_graphics, render_xlsx_field
-        from documents.ocr.env import ocr_model_name, ocr_openai_api_key, ocr_openai_base_url, ocr_policy_identity
+        """Read the stage's labelled field through the shared Excel fact reader."""
+        from documents.excel.visual import has_region_graphics
         from openpyxl.utils.cell import get_column_letter
-        from PIL import Image
 
         from audit.engine.app_runtime import _load_file_bytes
-        from audit.engine.checkers.ocr_visual_facts import OcrImage, observe_ocr_images
+        from audit.engine.checkers.excel_field_evidence import observe_excel_region
 
         self._stage_graphics_evidence = None
         content, _ = _load_file_bytes(str(self.audit_file.file_url))
@@ -164,69 +159,32 @@ class ControlPlanAgent(ExcelAgent):
             merged = self._get_detailed_merge_info(sheet, row, column)
             ranges.append((merged.min_col, merged.min_row, merged.max_col, merged.max_row) if merged else (column, row, column, row))
         left = max(1, min(item[0] for item in ranges) - 1)
-        top = min(item[1] for item in ranges)
-        right = max(item[2] for item in ranges)
-        bottom = max(item[3] for item in ranges)
-        cell_range = f"{get_column_letter(left)}{top}:{get_column_letter(right)}{bottom}"
-        sheet_name = sheet.title
-        if not has_region_graphics(normalized, sheet_name=sheet_name, cell_range=cell_range):
+        cell_range = f"{get_column_letter(left)}{min(item[1] for item in ranges)}:{get_column_letter(max(item[2] for item in ranges))}{max(item[3] for item in ranges)}"
+        if not has_region_graphics(normalized, sheet_name=sheet.title, cell_range=cell_range):
             return None
-        try:
-            configured = bool(ocr_model_name() and ocr_openai_api_key() and ocr_openai_base_url())
-        except ValueError:
-            configured = False
-        if not configured:
-            return "UNABLE", "阶段区域中的图形状态需要已配置的OCR，不能用选项文字确认勾选。"
-        digest = hashlib.sha256(content).hexdigest()
-        metadata = self.audit_file.file_metadata or {}
-        expected = metadata.get("source_sha256") or metadata.get("sha256")
-        cache: dict[object, Any] | None = getattr(self, "_stage_graphics_cache", None)
+        cache = getattr(self, "_stage_graphics_cache", None)
         if cache is None:
-            cache = self._stage_graphics_cache = {"source_sha256": digest}
-        if expected and expected != digest or cache["source_sha256"] != digest:
-            raise ValueError("Frozen Excel identity changed")
-        key = (sheet_name, cell_range, hashlib.sha256(normalized).hexdigest(), ocr_policy_identity())
-        if key not in cache:
-            sources: list[EvidenceSource] = []
+            cache = self._stage_graphics_cache = {}
+        sources: list[EvidenceSource] = []
 
-            def witness(locator, excerpt, *, visual=False):
-                sources.append(EvidenceSource(kind="visual", locator=json.dumps(locator, ensure_ascii=False, sort_keys=True), excerpt=excerpt))
+        def witness(locator, excerpt, *, visual=False):
+            sources.append(EvidenceSource(kind="visual" if visual else "structure", locator=json.dumps(locator, ensure_ascii=False, sort_keys=True), excerpt=str(excerpt)[:500]))
 
-            try:
-                image_bytes = render_xlsx_field(normalized, sheet_name=sheet_name, cell_range=cell_range, keywords=("样件", "样品", "试生产", "生产", "SOP", "Prototype", "Production", "Pre-launch"))
-                with Image.open(BytesIO(image_bytes)) as image:
-                    width, height = image.size
-                image_ref = OcrImage(
-                    image_bytes,
-                    {
-                        "kind": "xlsx_field",
-                        "located_region": True,
-                        "source_sha256": digest,
-                        "file_version_id": str(metadata.get("file_version_id") or self.audit_file.audit_id),
-                        "sheet": sheet_name,
-                        "cell_range": cell_range,
-                        "scope": f"xlsx:{sheet_name}:{cell_range}",
-                        "context": True,
-                        "bbox": [0, 0, width, height],
-                    },
-                    width,
-                    height,
-                )
-                facts = observe_ocr_images(
-                    [image_ref],
-                    {
-                        "production_stage_selected": (
-                            "表头中的生产、批量生产、量产或SOP选项是否实际勾选。必须看实际原件绘图：对应框内有勾、叉或实心填充为true，清楚完整的空框为false；"
-                            "看不清图形或不能将框唯一关联到生产选项为null。不能凭生产阶段文字、选项位置或业务常识推断。"
-                        )
-                    },
-                    witness,
-                )
-                cache[key] = (facts["production_stage_selected"], tuple(sources))
-            except Exception as exc:
-                cache[key] = exc
-        observation = cache[key]
-        if isinstance(observation, Exception):
+        try:
+            facts = observe_excel_region(
+                self.audit_file,
+                sheet,
+                cell_range,
+                {
+                    "production_stage_selected": (
+                        "生产、批量生产或SOP选项对应的复选框实际被勾选或填充；样件/试生产勾选不算，选项文字存在不代表已勾选。完整区域看清且生产框为空返回false，看不清返回null。"
+                    )
+                },
+                ("样件", "样品", "试生产", "生产", "SOP", "Prototype", "Production", "Pre-launch"),
+                cache=cache,
+                witness=witness,
+            )
+        except Exception as error:
             self._stage_graphics_evidence = AuditEvidence(
                 required="visual",
                 used="none",
@@ -234,19 +192,19 @@ class ControlPlanAgent(ExcelAgent):
                 prepared_format="png",
                 diagnostics=(EvidenceDiagnostic(code="control_plan.stage_read_error", stage="visual", severity="error", message="原件阶段图形读取失败。"),),
             )
-            raise ValueError(f"阶段字段区域读取失败（{getattr(observation, 'code', type(observation).__name__)}）。") from None
-        selected, observed_sources = observation
+            raise ValueError(f"阶段字段区域读取失败（{getattr(error, 'code', type(error).__name__)}）。") from None
+        selected = facts["production_stage_selected"]
         self._stage_graphics_evidence = AuditEvidence(
             required="visual",
-            used="visual" if observed_sources else "none",
+            used="visual" if sources else "none",
             source_format=source_format,
             prepared_format="png",
             conversion_strategies=("xlsx_text_located_region", "ocr_llm"),
-            sources=observed_sources,
+            sources=tuple(sources),
             diagnostics=() if selected is not None else (EvidenceDiagnostic(code="control_plan.stage_unconfirmed", stage="visual", severity="warning", message="原件阶段勾选尚不能确认。"),),
         )
         if selected is None:
-            return "UNABLE", "原件阶段勾选尚不能确认，请核对原件。"
+            return "UNABLE", "原件阶段区域中的生产/SOP勾选无法确认。"
         return ("PASS", "原件生产阶段勾选已确认。") if selected is True else ("NG", "原件生产/SOP阶段未勾选。")
 
     def _finalize_audit_result(self, result: AuditResultItem, *, rule_no: int, phase: Any, ctx: RuleContext | None = None) -> AuditResultItem:
@@ -323,21 +281,21 @@ class ControlPlanAgent(ExcelAgent):
             workbook=wb,
             field_aliases=_CP_FIELD_ALIASES,
             required_fields=("operation_no", "operation_name"),
+            note_cell=self._shared_rule_context.note_cell if self._shared_rule_context else None,
         )
 
-    def _extract_related_rows(
-        self,
-        doc_type: PpapDocumentType,
-        aliases: Dict[str, List[str]],
-        required_fields: Tuple[str, ...],
-    ) -> Any:
+    def _extract_related_rows(self, doc_type: PpapDocumentType, aliases: Dict[str, List[str]], required_fields: Tuple[str, ...]) -> Any:
         related_file, error = self._require_single_related_file(doc_type)
         if related_file is None:
             return None, error
-        rows = extract_rows_from_file(
-            file_url=str(getattr(related_file, "file_url", "")),
-            field_aliases=aliases,
-            required_fields=required_fields,
+        workbook = self.load_related_workbook(related_file)
+        ctx = self._shared_rule_context
+        version = str((getattr(related_file, "file_metadata", None) or {}).get("file_version_id") or related_file.audit_id)
+        rows = extract_rows_from_workbook(
+            workbook,
+            aliases,
+            required_fields,
+            note_cell=(lambda sheet, row, column: ctx.note_cell(sheet, row, column, file_version_id=version)) if ctx else None,
         )
         if not rows:
             return None, f"{doc_type.get_type_name()}无法识别必要列结构"
@@ -352,11 +310,9 @@ class ControlPlanAgent(ExcelAgent):
         for related_file in files:
             file_url = str(getattr(related_file, "file_url", "") or "")
             file_name = Path(file_url).name if file_url else "特殊特性清单"
-            extracted_rows = extract_rows_from_file(
-                file_url=file_url,
-                field_aliases=_SCL_FIELD_ALIASES_V2,
-                required_fields=("char_description",),
-            )
+            workbook = self.load_related_workbook(related_file)
+            ws = self._find_special_characteristic_list_worksheet(workbook)
+            extracted_rows = self._extract_rows_from_single_sheet(ws, _SCL_FIELD_ALIASES_V2, ("char_description",)) if ws is not None else []
             if not extracted_rows:
                 return None, f"特殊特性清单“{file_name}”无法识别必要列结构"
             for row in extracted_rows:
@@ -376,83 +332,15 @@ class ControlPlanAgent(ExcelAgent):
                 return workbook[sheet_name]
         return None
 
-    def _extract_rows_from_single_sheet(
-        self,
-        ws: Any,
-        field_aliases: Dict[str, List[str]],
-        required_fields: Tuple[str, ...] = (),
-    ) -> List[Dict[str, str]]:
-        header_scan_rows = min(40, ws.max_row)
-        header_scan_cols = min(80, ws.max_column)
-        empty_row_break = 40
-
-        alias_keys = {field: [normalize_key(alias) for alias in aliases] for field, aliases in field_aliases.items()}
-
-        best_row = 0
-        best_columns: Dict[str, int] = {}
-        best_alias_priority: Dict[str, int] = {}
-
-        for row in range(1, header_scan_rows + 1):
-            columns: Dict[str, int] = {}
-            alias_priority: Dict[str, int] = {}
-            for col in range(1, header_scan_cols + 1):
-                header_1 = normalize_key(ws.cell(row=row, column=col).value)
-                header_2 = normalize_key(ws.cell(row=row + 1, column=col).value) if row < ws.max_row else ""
-                combined = f"{header_1}{header_2}"
-                if not combined:
-                    continue
-                for field, aliases in alias_keys.items():
-                    matched_priority = next(
-                        (idx for idx, alias in enumerate(aliases) if alias and alias in combined),
-                        None,
-                    )
-                    if matched_priority is None:
-                        continue
-                    current_priority = alias_priority.get(field)
-                    if current_priority is None or matched_priority < current_priority:
-                        columns[field] = col
-                        alias_priority[field] = matched_priority
-
-            if len(columns) > len(best_columns):
-                best_row = row
-                best_columns = columns
-                best_alias_priority = alias_priority
-            elif len(columns) == len(best_columns) and columns:
-                if any(alias_priority.get(field, len(alias_keys[field])) < best_alias_priority.get(field, len(alias_keys[field])) for field in columns.keys() & best_columns.keys()):
-                    best_row = row
-                    best_columns = columns
-                    best_alias_priority = alias_priority
-
-        if not best_columns:
-            return []
-
-        required_set = set(required_fields)
-        if required_set and not required_set.issubset(best_columns):
-            return []
-
-        rows: List[Dict[str, str]] = []
-        empty_row_count = 0
-        for row in range(best_row + 1, ws.max_row + 1):
-            item: Dict[str, str] = {
-                "__sheet_name": str(ws.title),
-                "__row_number": str(row),
-            }
-            has_value = False
-            for field, col in best_columns.items():
-                value = normalize_text(ws.cell(row=row, column=col).value)
-                item[field] = value
-                has_value = has_value or bool(value)
-
-            if not has_value:
-                empty_row_count += 1
-                if empty_row_count >= empty_row_break:
-                    break
-                continue
-
-            empty_row_count = 0
-            rows.append(item)
-
-        return rows
+    def _extract_rows_from_single_sheet(self, ws: Any, field_aliases: Dict[str, List[str]], required_fields: Tuple[str, ...] = ()) -> List[Dict[str, str]]:
+        ctx = self._shared_rule_context
+        return extract_rows_from_workbook(
+            ws.parent,
+            field_aliases,
+            required_fields,
+            note_cell=(lambda sheet, row, column: ctx.note_cell(sheet, row, column, file_version_id=ctx.version_for_worksheet(ws))) if ctx else None,
+            sheets=(ws,),
+        )
 
     def _extract_cross_rule_8_scl_rows_and_part_numbers(self) -> tuple[List[Dict[str, str]], List[str], bool]:
         scl_files = self.get_related_files(PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST)
@@ -468,7 +356,7 @@ class ControlPlanAgent(ExcelAgent):
             file_name = Path(file_url).name if file_url else "特殊特性清单"
             if not file_url:
                 continue
-            workbook = _load_workbook_auto(file_url)
+            workbook = self.load_related_workbook(related_file)
 
             ws = self._find_special_characteristic_list_worksheet(workbook)
             if ws is None:
@@ -542,98 +430,9 @@ class ControlPlanAgent(ExcelAgent):
                 return workbook[sheet_name]
         return None
 
-    @staticmethod
-    def _extract_cross_rule_part_number_keys(raw_value: str) -> list[str]:
-        keys: list[str] = []
-        seen: set[str] = set()
-
-        def _append(candidate: str) -> None:
-            key = normalize_key(candidate)
-            if not key or key in seen:
-                return
-            seen.add(key)
-            keys.append(key)
-
-        _append(raw_value)
-        for token in re.split(r"[\s,;，；/、|]+", raw_value):
-            _append(token)
-        return keys
-
-    @staticmethod
-    def _extract_inline_part_number_value(raw_value: str) -> str:
-        text = normalize_text(raw_value)
-        if not text:
-            return ""
-        match = re.search(
-            r"(?:零件号(?:/最新更改水平)?|零件编号|part\s*number)\s*[:：]?\s*(.+)$",
-            text,
-            flags=re.IGNORECASE,
-        )
-        if not match:
-            return ""
-        return normalize_text(match.group(1))
-
-    @staticmethod
-    def _is_valid_part_number_candidate(raw_value: str) -> bool:
-        text = normalize_text(raw_value)
-        if not text:
-            return False
-        normalized = normalize_key(text)
-        if not normalized:
-            return False
-        if any(keyword in normalized for keyword in ("零件名称", "mulfunctionteam", "核心小组", "公司批准", "组织工厂", "特殊特性清单")):
-            return False
-        if not re.search(r"[a-zA-Z0-9].*\d|\d.*[a-zA-Z0-9]", text):
-            return False
-        return True
-
     def _extract_cross_rule_part_number_from_sheet(self, ws: Any) -> list[str]:
-        alias_keys = [normalize_key(alias) for alias in _CROSS_RULE_PART_NUMBER_ALIASES]
-        candidates: list[str] = []
-
-        def _append_candidate(raw_value: Any) -> None:
-            text = normalize_text(raw_value)
-            if self._is_valid_part_number_candidate(text):
-                candidates.append(text)
-
-        max_row = min(getattr(ws, "max_row", 0), 15)
-        max_col = min(getattr(ws, "max_column", 0), 15)
-        for row in range(1, max_row + 1):
-            for col in range(1, max_col + 1):
-                cell_value = normalize_text(ws.cell(row=row, column=col).value)
-                normalized = normalize_key(cell_value)
-                if not normalized or not any(alias in normalized for alias in alias_keys):
-                    continue
-
-                inline_value = self._extract_inline_part_number_value(cell_value)
-                _append_candidate(inline_value)
-
-                _append_candidate(self._read_right_header_value(ws, row, col))
-
-                for offset in range(1, 5):
-                    _append_candidate(ws.cell(row=row + offset, column=col).value)
-                for offset in range(1, 3):
-                    _append_candidate(ws.cell(row=row, column=col + offset).value)
-                    _append_candidate(ws.cell(row=row + offset, column=col + offset).value)
-
-        dedup_keys: list[str] = []
-        seen: set[str] = set()
-        for candidate in candidates:
-            for key in self._extract_cross_rule_part_number_keys(candidate):
-                if key and key not in seen:
-                    seen.add(key)
-                    dedup_keys.append(key)
-        return dedup_keys
-
-    @staticmethod
-    def _is_cross_rule_part_number_compatible(left_keys: list[str], right_keys: list[str]) -> bool:
-        if not left_keys or not right_keys:
-            return False
-        for left_key in left_keys:
-            for right_key in right_keys:
-                if left_key == right_key or left_key in right_key or right_key in left_key:
-                    return True
-        return False
+        ctx = self._shared_rule_context
+        return read_part_number_keys(ws, (lambda sheet, row, column: ctx.note_cell(sheet, row, column, file_version_id=ctx.version_for_worksheet(ws))) if ctx else None)
 
     def _get_cross_rule_9_pfmea_sheet_and_rows(self) -> tuple[Any, list[dict[str, str]] | None, str]:
         related_file, _error = self._require_single_related_file(PpapDocumentType.PFMEA)
@@ -644,16 +443,18 @@ class ControlPlanAgent(ExcelAgent):
         if not file_url:
             return None, None, "缺少PFMEA，请补充"
 
-        pfmea_workbook = _load_workbook_auto(file_url)
+        pfmea_workbook = self.load_related_workbook(related_file)
 
         pfmea_ws = self._find_pfmea_worksheet(pfmea_workbook)
         if pfmea_ws is None:
             return None, None, "缺少PFMEA，请补充"
 
+        ctx = self._shared_rule_context
         pfmea_rows = extract_rows_from_workbook(
             workbook=pfmea_workbook,
             field_aliases=_PFMEA_RULE9_FIELD_ALIASES,
             required_fields=("process_step",),
+            note_cell=(lambda sheet, row, column: ctx.note_cell(sheet, row, column, file_version_id=ctx.version_for_worksheet(pfmea_ws))) if ctx else None,
         )
         if not pfmea_rows:
             return pfmea_ws, None, "PFMEA无法识别必要列结构"
@@ -668,16 +469,18 @@ class ControlPlanAgent(ExcelAgent):
         if not file_url:
             return None, None, "缺少过程流程图，请补充"
 
-        pfd_workbook = _load_workbook_auto(file_url)
+        pfd_workbook = self.load_related_workbook(related_file)
 
         pfd_ws = self._find_process_flow_chart_worksheet(pfd_workbook)
         if pfd_ws is None:
             return None, None, "缺少过程流程图，请补充"
 
+        ctx = self._shared_rule_context
         pfd_rows = extract_rows_from_workbook(
             workbook=pfd_workbook,
             field_aliases=_PFD_FIELD_ALIASES,
             required_fields=("operation_no", "operation_name"),
+            note_cell=(lambda sheet, row, column: ctx.note_cell(sheet, row, column, file_version_id=ctx.version_for_worksheet(pfd_ws))) if ctx else None,
         )
         return pfd_ws, pfd_rows, ""
 
@@ -838,12 +641,12 @@ class ControlPlanAgent(ExcelAgent):
         if not pfd_rows:
             return "NG", "PFD 未提取到有效工序数据"
 
-        cp_operations = extract_operation_keys(cp_rows, include_name=True)
+        cp_operations = {(operation_number_key(row.get("operation_no", "")), normalize_key(row.get("operation_name", ""))) for row in cp_rows if row.get("operation_no") or row.get("operation_name")}
         if not cp_operations:
             return "NG", "控制计划未提取到有效工序数据"
         cp_rows_by_operation_no: Dict[str, List[Dict[str, str]]] = {}
         for row in cp_rows:
-            opno_key = normalize_key(row.get("operation_no", ""))
+            opno_key = operation_number_key(row.get("operation_no", ""))
             if not opno_key:
                 continue
             cp_rows_by_operation_no.setdefault(opno_key, []).append(row)
@@ -852,12 +655,12 @@ class ControlPlanAgent(ExcelAgent):
         for row in pfd_rows:
             operation_no = normalize_text(row.get("operation_no", ""))
             operation_name = normalize_text(row.get("operation_name", ""))
-            key = build_struct_key(operation_no, operation_name)
-            if not key:
+            key = (operation_number_key(operation_no), normalize_key(operation_name))
+            if not any(key):
                 continue
             if key in cp_operations:
                 continue
-            operation_no_key = normalize_key(operation_no)
+            operation_no_key = operation_number_key(operation_no)
             same_operation_no_rows = cp_rows_by_operation_no.get(operation_no_key, [])
             if same_operation_no_rows and any(self._operation_name_matches(operation_name, cp_row.get("operation_name", "")) for cp_row in same_operation_no_rows):
                 continue
@@ -1056,7 +859,7 @@ class ControlPlanAgent(ExcelAgent):
         cp_part_keys = self._extract_cross_rule_part_number_from_sheet(cp_ws)
         if not pfd_part_keys or not cp_part_keys:
             return "NG", "请补充文件的零件编号信息"
-        if not self._is_cross_rule_part_number_compatible(pfd_part_keys, cp_part_keys):
+        if not part_numbers_compatible(pfd_part_keys, cp_part_keys):
             return "NG", "请上传同零件号的待审文件进行审核"
 
         cp_rows = self._extract_cp_rows(wb)
@@ -1073,13 +876,14 @@ class ControlPlanAgent(ExcelAgent):
 
         missing_issues: List[str] = []
         for pfd_key, pfd_info in pfd_operations.items():
-            if any(pfd_key == cp_key or pfd_key in cp_key or cp_key in pfd_key for cp_key in cp_operations):
-                continue
-
-            pfd_operation_no_key = normalize_key(pfd_info.get("operation_no", ""))
-            if pfd_operation_no_key and any(
-                normalize_key(cp_info.get("operation_no", "")).startswith(pfd_operation_no_key) for cp_info in cp_operations.values() if normalize_key(cp_info.get("operation_no", ""))
+            pfd_operation_no_key = operation_number_key(pfd_info.get("operation_no", ""))
+            if any(
+                (not pfd_operation_no_key or not cp_info.get("operation_no") or pfd_operation_no_key == operation_number_key(cp_info["operation_no"]))
+                and (pfd_key == cp_key or pfd_key in cp_key or cp_key in pfd_key)
+                for cp_key, cp_info in cp_operations.items()
             ):
+                continue
+            if pfd_operation_no_key and any(operation_number_key(cp_info.get("operation_no", "")) == pfd_operation_no_key for cp_info in cp_operations.values()):
                 continue
 
             row_ref = {
@@ -1126,7 +930,7 @@ class ControlPlanAgent(ExcelAgent):
         cp_part_keys = self._extract_cross_rule_part_number_from_sheet(cp_ws)
         if not cp_part_keys or not scl_part_keys:
             return "NG", "请补充文件的零件编号信息"
-        if not self._is_cross_rule_part_number_compatible(cp_part_keys, scl_part_keys):
+        if not part_numbers_compatible(cp_part_keys, scl_part_keys):
             return "NG", "请上传同零件号的待审文件进行审核"
 
         scl_entries = self._build_cross_rule_8_scl_entries(special_rows)
@@ -1177,7 +981,7 @@ class ControlPlanAgent(ExcelAgent):
         cp_part_keys = self._extract_cross_rule_part_number_from_sheet(cp_ws)
         if not pfmea_part_keys or not cp_part_keys:
             return "NG", "请补充文件的零件编号信息"
-        if not self._is_cross_rule_part_number_compatible(pfmea_part_keys, cp_part_keys):
+        if not part_numbers_compatible(pfmea_part_keys, cp_part_keys):
             return "NG", "请上传同零件号的待审文件进行审核"
 
         cp_rows = self._extract_cp_rows(wb)
@@ -1282,7 +1086,7 @@ class ControlPlanAgent(ExcelAgent):
         cp_part_keys = self._extract_cross_rule_part_number_from_sheet(cp_ws)
         if not cp_part_keys or not scl_part_keys:
             return "NG", "请补充文件的零件编号信息"
-        if not self._is_cross_rule_part_number_compatible(cp_part_keys, scl_part_keys):
+        if not part_numbers_compatible(cp_part_keys, scl_part_keys):
             return "NG", "请上传同零件号的待审文件进行审核"
 
         # SCL 按 (特性分类, 特性描述) 建索引

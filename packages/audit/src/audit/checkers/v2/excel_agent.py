@@ -226,12 +226,11 @@ class ExcelAgent(BaseAgent):
             else:
                 doc_type_name = str(getattr(self.rule, "type", "") or "").strip() or "UNKNOWN"
             raise RuntimeError(f"文档类型{doc_type_name}缺少代码资源定义")
-        return RuleContext(
-            ops=None,
-            workbook=workbook,
-            resource=resource,
-            source_path=self._source_path,
-        )
+        metadata = getattr(self.audit_file, "file_metadata", None) or {}
+        version = str(metadata.get("file_version_id") or self.audit_file.audit_id)
+        ctx = RuleContext(ops=None, workbook=workbook, resource=resource, source_path=self._source_path, file_version_id=version)
+        ctx.bind_workbook(workbook, version)
+        return ctx
 
     def _resolve_ng_collection_topn(self) -> int:
         class_topn = getattr(type(self), "NG_COLLECTION_TOPN", None)

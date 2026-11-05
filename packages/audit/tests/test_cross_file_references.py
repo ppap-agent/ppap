@@ -24,6 +24,8 @@ def save_flow(path, operation=10):
     workbook.active.title = "过程流程图"
     workbook.active.append(["工序号", "工序名称"])
     workbook.active.append([operation, "切割"])
+    workbook.active["Z1"] = "零件号"
+    workbook.active["AA1"] = "P001"
     workbook.save(path)
     workbook.close()
 
@@ -31,6 +33,7 @@ def save_flow(path, operation=10):
 def save_pdf(path, operation=10):
     with fitz.open() as document:
         page = document.new_page()
+        page.insert_text((72, 54), "Part Number: P001")
         page.insert_text((72, 72), f"Operation {operation}: Cutting")
         document.save(path)
 
@@ -134,6 +137,8 @@ def test_app_runtime_compares_actual_pdf_reference_rows_and_cleans_all_conversio
     workbook.active.title = "控制计划"
     workbook.active.append(["零件/工序号", "工序名称", "产品", "过程", "特殊特性分类", "控制方法", "频率"])
     workbook.active.append([10, "切割", "外观", None, "SC", "作业指导书", "连续/自检"])
+    workbook.active["Z1"] = "零件号"
+    workbook.active["AA1"] = "P001"
     workbook.save(plan_path)
     workbook.close()
     source = tmp_path / "flow.pdf"
@@ -214,6 +219,8 @@ def test_public_runtime_preserves_unavailable_context_without_reclassifying_busi
     workbook.active.title = "控制计划"
     workbook.active.append(["零件/工序号", "工序名称", "产品", "过程", "特殊特性分类", "控制方法", "频率"])
     workbook.active.append([10, "切割", "外观", None, "SC", "作业指导书", "连续/自检"])
+    workbook.active["Z1"] = "零件号"
+    workbook.active["AA1"] = "P001"
     workbook.save(plan_path)
     workbook.close()
     original = plan_path.read_bytes()

@@ -250,6 +250,9 @@ def test_pfmea_special_characteristic_is_checked_against_the_actual_flow_file(tm
     flow.active.title = "过程流程图"
     flow.active.append(["工序名称", "产品特性类别", "过程特性类别"])
     flow.active.append(["10 注塑", None, flow_special])
+    for source in (workbook, flow):
+        source.active["Z1"] = "零件号"
+        source.active["AA1"] = "P001"
     related = saved_file(tmp_path, "flow.xlsx", flow)
     if reference_format == "pdf":
         converted = related.file_url
@@ -320,6 +323,9 @@ def test_flow_cross_file_agreement_can_pass_after_the_rows_are_compared(tmp_path
     sheet.title = "特殊特性清单"
     sheet.append(["特性分类", "特性描述", "特性值", "特殊特性种类"])
     sheet.append(["产品", "External Projection", "预防性防错", "法律法规"])
+    for source in (workbook, characteristics):
+        source.active["Z1"] = "零件号"
+        source.active["AA1"] = "P001"
     related = saved_file(tmp_path, "characteristics.xlsx", characteristics).model_copy(update={"file_metadata": {"file_version_id": "related-version"}})
     group = GroupContextInput(by_doc_type={"过程特殊特性清单": [related]}, by_audit_id={related.audit_id: related})
 
@@ -362,6 +368,9 @@ def test_related_characteristic_workbook_is_closed_after_the_check(tmp_path, mon
     sheet.title = "特殊特性清单"
     sheet.append(["特性分类", "特性描述", "特性值", "特殊特性种类"])
     sheet.append(["产品", "External Projection", "预防性防错", "法律法规"])
+    for source in (workbook, characteristics):
+        source.active["Z1"] = "零件号"
+        source.active["AA1"] = "P001"
     related = saved_file(tmp_path, "characteristics.xlsx", characteristics)
     group = GroupContextInput(by_doc_type={"过程特殊特性清单": [related]}, by_audit_id={related.audit_id: related})
 

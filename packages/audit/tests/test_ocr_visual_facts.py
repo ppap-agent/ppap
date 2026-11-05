@@ -143,6 +143,9 @@ def test_pdf_context_and_crops_bound_actual_render_allocations(monkeypatch):
         def get_text(self):
             return ""
 
+        def get_textbox(self, bounds):
+            return ""
+
         def search_for(self, text):
             return []
 
@@ -226,6 +229,9 @@ def test_psw_image_plan_only_magnifies_requested_regions(monkeypatch):
         def get_text(self):
             return ""
 
+        def get_textbox(self, bounds):
+            return ""
+
         def search_for(self, text):
             return [fitz.Rect(labels[text])] if text in labels else []
 
@@ -257,8 +263,9 @@ def test_psw_image_plan_only_magnifies_requested_regions(monkeypatch):
     assert core[0].locator["context"] is True
     assert not any(image.locator["bbox"][1] < 500 for image in core[1:])
     submission, _ = _pdf_images(audit, [1], "a" * 64, {"dimensional_checked": "尺寸提交结果"})
-    assert len(submission) == 2
-    assert 400 < submission[1].locator["bbox"][1] < 450
+    assert len(submission) == 1
+    assert 400 < submission[0].locator["bbox"][1] < 450
+    assert submission[0].locator["bbox"][3] < 610
 
 
 @pytest.mark.parametrize("value", ["司", "示例有限公司部门专用章"])

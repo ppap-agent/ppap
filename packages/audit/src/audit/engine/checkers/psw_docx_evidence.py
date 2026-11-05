@@ -210,8 +210,10 @@ class PswDocxEvidenceMixin:
                         facts = observe_ocr_images(images, fields, lambda *args, **kwargs: observed_sources.append((args, kwargs)), context=native_text)
                         # A source-located native value in the signature field
                         # is sufficient; another printed name is not.
-                        native_signature = getattr(self, "_has_authorized_representative_info", None)
-                        if callable(native_signature) and native_signature(context, Table(context), Table(context).sheet("PSW主表")):
+                        from .excel_field_evidence import read_native_signature
+
+                        native_signature, _ = read_native_signature(context, Table(context).sheet("PSW主表").ws)
+                        if native_signature is True:
                             facts["authorized_signature_present"] = True
                             observed_sources.append(
                                 (

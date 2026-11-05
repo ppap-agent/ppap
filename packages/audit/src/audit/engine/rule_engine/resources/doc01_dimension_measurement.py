@@ -133,6 +133,12 @@ _DOC01_RESOURCE_MODEL = RuleResourceModel(
     ),
     columns=(
         ColumnModel(
+            canonical_name="单位",
+            section_name="主数据区",
+            aliases=("单位", "unit", "单位unit"),
+            missing_tokens=("", "none", "null"),
+        ),
+        ColumnModel(
             canonical_name="序号",
             section_name="主数据区",
             aliases=("序号",),

@@ -26,7 +26,7 @@ from audit.engine.checkers.date_utils import normalize_excel_date
 from audit.engine.checkers.psw_evidence_trace import (
     finalize_excel_psw_result,
 )
-from audit.engine.rule_engine import Decision, RuleContext, Sheet, Table
+from audit.engine.rule_engine import RuleContext, Sheet, Table
 from audit.kinds import PpapDocumentType
 
 from .excel_agent import ExcelAgent, RuleEvidencePhase, rule
@@ -61,20 +61,6 @@ _RULE6_LABEL_NOISE_RAW = (
     "pur",
     "tpm",
 )
-_SIGNATURE_NOISE_RAW = (
-    "经授权的供方代表签字",
-    "经授权签字",
-    "authorized signature",
-    "organization authorized signature",
-    "代表印刷体姓名",
-    "print name",
-    "日期",
-    "date",
-    "电话",
-    "phone",
-    "传真",
-    "fax",
-)
 
 
 class PswExcelAgent(ExcelAgent):
@@ -89,7 +75,7 @@ class PswExcelAgent(ExcelAgent):
         rule_no: int,
         phase: RuleEvidencePhase,
     ) -> AuditResult:
-        return finalize_excel_psw_result(
+        result = finalize_excel_psw_result(
             super()._finalize_audit_result(
                 result,
                 rule_no=rule_no,
@@ -99,6 +85,8 @@ class PswExcelAgent(ExcelAgent):
             rule_no=rule_no,
             phase=phase,
         )
+        field_evidence = getattr(self, "_psw_field_evidence", {}).get(rule_no)
+        return result.model_copy(update={"evidence": field_evidence}) if field_evidence is not None else result
 
     def _extract_supplier_name_code(self, sheet: Sheet) -> str:
         section = sheet.section("PSW供应商信息区")
@@ -121,56 +109,9 @@ class PswExcelAgent(ExcelAgent):
         checked_col: int,
         disposition_row: int,
     ) -> str:
-        ws = sheet.ws
-        row_min = max(1, disposition_row - 1)
-        row_max = min(ws.max_row, disposition_row + 2)
+        from audit.engine.checkers.excel_field_evidence import classify_psw_disposition
 
-        def _find_near_col(
-            include_groups: tuple[tuple[str, ...], ...],
-            *,
-            exclude_tokens: tuple[str, ...] = (),
-        ) -> int | None:
-            found = sheet.find_label(
-                include_groups,
-                row_max=row_max,
-                col_max=min(30, ws.max_column),
-                exclude_tokens=exclude_tokens,
-            )
-            if found is None:
-                return None
-            if found.row_index < row_min:
-                return None
-            return found.col_index
-
-        approved_col = _find_near_col(
-            (("批准",), ("approved",)),
-            exclude_tokens=("条件",),
-        )
-        conditional_col = _find_near_col(
-            (("条件批准",), ("conditional", "approved"), ("conditional",)),
-        )
-        rejected_col = _find_near_col(
-            (("拒绝",), ("rejected",)),
-        )
-        option_cols = {
-            "approved": approved_col,
-            "conditional": conditional_col,
-            "rejected": rejected_col,
-        }
-
-        valid_options = {k: v for k, v in option_cols.items() if isinstance(v, int)}
-        if valid_options:
-            scored = sorted(
-                valid_options.items(),
-                key=lambda item: abs(checked_col - int(item[1])) + abs(checked_row - disposition_row),
-            )
-            return scored[0][0]
-
-        if checked_col <= 7:
-            return "approved"
-        if checked_col <= 12:
-            return "conditional"
-        return "rejected"
+        return classify_psw_disposition(sheet, checked_row, checked_col, disposition_row)
 
     def _checked_controls(self, sheet: Sheet) -> list[tuple[int, int]]:
         return [(row, col) for row, col, checked in sheet.checkbox_controls() if checked]
@@ -202,17 +143,6 @@ class PswExcelAgent(ExcelAgent):
             disposition_row=disposition_row,
         )
         return option, disposition_checks, disposition_row
-
-    def _has_checked_control_near(
-        self,
-        checked_controls: list[tuple[int, int]],
-        *,
-        row: int,
-        col: int,
-        row_tol: int = 2,
-        col_tol: int = 2,
-    ) -> bool:
-        return any(abs(checked_row - row) <= row_tol and abs(checked_col - col) <= col_tol for checked_row, checked_col in checked_controls)
 
     @staticmethod
     def _compact_token(value: object) -> str:
@@ -343,114 +273,14 @@ class PswExcelAgent(ExcelAgent):
                 return value
         return ""
 
-    def _collect_stamp_signals(self, table: Table, main_sheet: Sheet) -> dict[str, bool]:
-        main_has_seal, main_has_signature_or_stamp = main_sheet.stamp_signals()
-        declaration_has_seal = False
-        declaration_has_signature_or_stamp = False
-        declaration_sheets = table.find_sheets(
-            "部门章授权声明",
-            on_missing=Decision.IGNORE,
-        )
-        declaration_sheet = declaration_sheets[0] if declaration_sheets else None
-        if declaration_sheet is not None:
-            declaration_has_seal, declaration_has_signature_or_stamp = declaration_sheet.stamp_signals()
-
-        strong_seal = main_has_seal or declaration_has_seal
-        strong_signature = main_has_signature_or_stamp or declaration_has_signature_or_stamp
-
-        return {
-            "strong_seal": strong_seal,
-            "strong_signature": strong_signature,
-        }
-
-    def _has_authorized_representative_info(self, ctx: RuleContext, table: Table, sheet: Sheet) -> bool:
-        field_block = table.field_block("PSW主表字段区")
-        signature_missing_tokens = {str(token).strip().lower() for token in ctx.resource.fields["经授权签字字段"].missing_tokens if str(token).strip()}
-        signature_noise_tokens = self._build_label_tokens(_SIGNATURE_NOISE_RAW)
-
-        signature_field = field_block.field("经授权签字字段")
-        if signature_field.exists() and self._is_effective_business_value(
-            signature_field.value(),
-            missing_tokens=signature_missing_tokens,
-            label_noise_tokens=signature_noise_tokens,
-            reject_date_like=True,
-        ):
-            return True
-
-        sign_label_cell = sheet.find_label(
-            (("经授权", "签字"), ("authorized", "signature")),
-            row_max=120,
-            col_max=30,
-        )
-        if sign_label_cell is None:
-            return False
-
-        signature_value_cell = sign_label_cell.find_right(
-            max_offset=10,
-            use_merged_anchor=True,
-        )
-        if signature_value_cell is not None and self._is_effective_business_value(
-            signature_value_cell.value(),
-            missing_tokens=signature_missing_tokens,
-            label_noise_tokens=signature_noise_tokens,
-            reject_date_like=True,
-        ):
-            return True
-
-        for nearby in sign_label_cell.scan_nearby(row_span=1, col_span=10):
-            if self._is_effective_business_value(
-                nearby.value(),
-                missing_tokens=signature_missing_tokens,
-                label_noise_tokens=signature_noise_tokens,
-                reject_date_like=True,
-            ):
-                return True
-        return False
-
     def _is_submission_result_all_checked(
         self,
         sheet: Sheet,
         checked_controls: list[tuple[int, int]],
-    ) -> bool:
-        ws = sheet.ws
-        required_fields: tuple[tuple[tuple[str, ...], ...], ...] = (
-            (("尺寸测量",), ("dimensional", "measurement")),
-            (("外观标准",), ("appearance", "criteria")),
-            (("材料", "功能", "试验"), ("material", "functional", "tests")),
-            (("统计过程数据",), ("statistical", "process", "package")),
-        )
-        for anchors in required_fields:
-            label_cell = sheet.find_label(tuple(anchors), row_max=90, col_max=25)
-            if label_cell is None:
-                return False
-            if not self._has_checked_control_near(
-                checked_controls,
-                row=label_cell.row_index,
-                col=label_cell.col_index,
-            ):
-                return False
+    ) -> bool | None:
+        from audit.engine.checkers.excel_field_evidence import psw_submission_results
 
-        overall_label_cell = sheet.find_label(
-            (("这些结果均满足",), ("theseresultmeetall",), ("meetalldesignrecordrequirements",)),
-            row_max=90,
-            col_max=25,
-        )
-        if overall_label_cell is None:
-            return False
-
-        yes_label_cell = sheet.find_label(
-            (("是",), ("yes",)),
-            row_max=min(ws.max_row, overall_label_cell.row_index + 2),
-            col_max=min(ws.max_column, overall_label_cell.col_index + 12),
-        )
-        if yes_label_cell is None:
-            yes_row = overall_label_cell.row_index
-            yes_col = min(ws.max_column, overall_label_cell.col_index + 6)
-        else:
-            yes_row = yes_label_cell.row_index
-            yes_col = yes_label_cell.col_index
-
-        return self._has_checked_control_near(checked_controls, row=yes_row, col=yes_col)
+        return psw_submission_results(sheet)
 
     @rule("附件列内容检查")
     def rule_1(self, ctx: RuleContext) -> Tuple[str, str]:
@@ -512,15 +342,10 @@ class PswExcelAgent(ExcelAgent):
         Returns:
             bool: 规则是否通过
         """
-        table = Table(ctx)
-        main_sheet = table.sheet("PSW主表")
-        signals = self._collect_stamp_signals(table, main_sheet)
-        if signals["strong_seal"]:
-            return "PASS", ""
-        return (
-            "NG",
-            "未检测到有效印章；弱PDF线索不可单独判定通过。",
-        )
+        from audit.engine.checkers.excel_field_evidence import check_psw_excel_fields
+
+        result = check_psw_excel_fields(self, ctx, 3)
+        return result.status, result.suggestions
 
     @rule("供应商名称/供应商代码格式检查")
     def rule_4(self, ctx: RuleContext) -> Tuple[str, str]:
@@ -553,27 +378,10 @@ class PswExcelAgent(ExcelAgent):
         Returns:
             bool: 规则是否通过
         """
-        table = Table(ctx)
-        main_sheet = table.sheet("PSW主表")
-        signals = self._collect_stamp_signals(table, main_sheet)
-        has_authorized_signature = self._has_authorized_representative_info(ctx, table, main_sheet)
+        from audit.engine.checkers.excel_field_evidence import check_psw_excel_fields
 
-        has_seal = signals["strong_seal"]
-        has_signature = signals["strong_signature"] or has_authorized_signature
-
-        if has_seal and has_signature:
-            return "PASS", ""
-
-        missing_parts: list[str] = []
-        if not has_signature:
-            missing_parts.append("经授权签字")
-        if not has_seal:
-            missing_parts.append("盖章")
-        detail = "、".join(missing_parts) if missing_parts else "签字或盖章"
-        return (
-            "NG",
-            f"签字和盖章需同时满足，缺少有效{detail}证据；仅接受Excel可验证证据。",
-        )
+        result = check_psw_excel_fields(self, ctx, 5)
+        return result.status, result.suggestions
 
     @rule("必填字段检查")
     def rule_6(self, ctx: RuleContext) -> Tuple[str, str]:
@@ -676,39 +484,9 @@ class PswExcelAgent(ExcelAgent):
 
     @rule("提交原因检查")
     def rule_7(self, ctx: RuleContext) -> Tuple[str, str]:
-        """
-        规则7：“提交原因”区域的选项至少有一个选项被选中，或者“其他-请在下方说明”下的内容不为空则通过，否则不通过
-        """
-        table = Table(ctx)
-        main_sheet = table.sheet("PSW主表")
-        checked_controls = self._checked_controls(main_sheet)
-        submission_reason_checks = [(row, col) for row, col in checked_controls if 32 <= row <= 44]
-        if submission_reason_checks:
-            return "PASS", ""
+        from audit.engine.checkers.excel_field_evidence import check_psw_submission_reason
 
-        if table.field_block("PSW主表字段区").is_present("其他说明字段"):
-            return "PASS", ""
-
-        other_label_cell = main_sheet.find_label(
-            (("其他", "请在下方说明"), ("other", "specify", "below")),
-            row_max=90,
-            col_max=25,
-        )
-        if other_label_cell is not None:
-            other_note_cell = other_label_cell.find_right(
-                max_offset=8,
-                use_merged_anchor=True,
-            )
-            if other_note_cell is not None and other_note_cell.has_data():
-                return "PASS", ""
-
-            nearby_cells = other_label_cell.scan_nearby(row_span=2, col_span=10)
-            if any(cell.has_data() for cell in nearby_cells):
-                return "PASS", ""
-
-        # 无法可靠识别复选框时，不允许默认通过
-        logger.error("excel文件暂不支持复选框识别")
-        return "NG", "复选框识别失败：未检测到可验证勾选或备注"
+        return check_psw_submission_reason(self, ctx)
 
     @rule("认可情况检查")
     def rule_8(self, ctx: RuleContext) -> Tuple[str, str]:
@@ -727,8 +505,11 @@ class PswExcelAgent(ExcelAgent):
             return "NG", "“认可情况”需且仅需勾选一个选项。"
 
         if disposition == "approved":
-            if self._is_submission_result_all_checked(main_sheet, checked_controls):
+            all_checked = self._is_submission_result_all_checked(main_sheet, checked_controls)
+            if all_checked is True:
                 return "PASS", ""
+            if all_checked is None:
+                return "UNABLE", "无法将提交结果的全部选项与各自的勾选状态绑定。"
             return "NG", "“批准”状态下提交结果勾选不完整。"
 
         if disposition in {"conditional", "rejected"}:
@@ -737,7 +518,7 @@ class PswExcelAgent(ExcelAgent):
         logger.error("规则8无法识别认可情况选项: %s / %s", disposition, disposition_checks)
         if disposition_row is None:
             return "NG", "认可情况定位异常，无法判断勾选状态。"
-        return "NG", "无法识别“认可情况”选项。"
+        return "UNABLE", "无法确定控件对应的“认可情况”选项。"
 
     @rule("条件批准日期检查")
     def rule_9(self, ctx: RuleContext) -> Tuple[str, str]:
@@ -754,6 +535,8 @@ class PswExcelAgent(ExcelAgent):
             return "NG", "未找到“认可情况”字段。"
         if disposition == "invalid_selection":
             return "NG", "“认可情况”需且仅需勾选一个选项。"
+        if disposition == "unknown":
+            return "UNABLE", "无法确定控件对应的“认可情况”选项。"
         if disposition != "conditional":
             return "PASS", ""
         if disposition_row is None:
@@ -785,6 +568,8 @@ class PswExcelAgent(ExcelAgent):
             return "NG", "未找到“认可情况”字段。"
         if disposition == "invalid_selection":
             return "NG", "“认可情况”需且仅需勾选一个选项。"
+        if disposition == "unknown":
+            return "UNABLE", "无法确定控件对应的“认可情况”选项。"
         if disposition != "conditional":
             return "PASS", ""
 

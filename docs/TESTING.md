@@ -7,7 +7,7 @@
 按需取证由 [Issue #246](https://github.com/ppap-agent/ppap/issues/246) 拥有，当前流程见 [DEVELOPMENT](DEVELOPMENT.md#按规则读取审核证据)。测试使用独立受控客户端；没有新旧路径开关。包内离线通过不证明真实模型效果或多 Worker 服务容量。
 
 - Documents：原生充分时零外发；可靠表格直接复用，图形覆盖的局部单元格保留原文和位置但保持未知；不为未知格自动整篇 OCR。按需页级事实使用独立 OCR 配置，单次 HTTP 20 秒、无总墙钟预算、无自动重试。
-- Audit：`test_ocr_visual_facts.py`、`test_psw_pdf_hybrid.py`、`test_document_visual_checks.py`、`test_generic_visual_acceptance.py` 检查公开入口的原生优先、同事实复用、原页/区域定位、多业务页冲突、图形未知和 ERR。`test_text_evidence.py` 检查原文引文、位置和完整范围，未读区域不能被文本模型补全。
+- Audit：`test_field_boundaries.py` 检查相邻栏目、签字与印刷姓名、数值单位、零件和工序标识以及冻结来源；真实文件回归由 corpus 拥有。`test_ocr_visual_facts.py`、`test_psw_pdf_hybrid.py`、`test_document_visual_checks.py`、`test_generic_visual_acceptance.py` 检查公开入口的原生优先、同事实复用、原页/区域定位、多业务页冲突、图形未知和 ERR。`test_text_evidence.py` 检查原文引文、位置和完整范围，未读区域不能被文本模型补全。
 - 真实验收固定原件 SHA、适用条款、实际模型、请求次数及供应商回执，保留并比较原 corpus oracle，但人工标签也须按原件和条款复核，不要求全部人工标签相等才推送验证。PSW 包括空/真签字、淡色勾选和多表；完整扫描表格转录不属于本次放行门槛；原生 PFMEA 不因页多或个别字段未知全篇 OCR。分别报告错误 PASS、错误 NG、未知、技术错误、耗时和费用；小样本不报告总体准确率或 P95。
 
 当前 Corpus 只覆盖原生 Excel 和有原生文字的 PDF。扫描版 PDF、对应人工预期和整表 OCR 缓存不再保留；PSW 签字、印章、照片及原生 PDF 的图形证据继续由各自规则检查。

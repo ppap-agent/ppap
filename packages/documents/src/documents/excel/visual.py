@@ -22,7 +22,7 @@ class ExcelRegionRenderError(ValueError):
         super().__init__(message)
 
 
-def _region_print_copy(content: bytes, *, sheet_name: str, cell_range: str, max_bytes: int) -> bytes:
+def _region_print_copy(content: bytes, *, sheet_name: str, cell_range: str | None, max_bytes: int) -> bytes:
     """Change print metadata only; preserve the converted source drawing parts."""
     with zipfile.ZipFile(io.BytesIO(content)) as archive:
         if sum(info.file_size for info in archive.infolist()) > max_bytes:
@@ -48,8 +48,9 @@ def _region_print_copy(content: bytes, *, sheet_name: str, cell_range: str, max_
             if name.get("name") in {"_xlnm.Print_Area", "_xlnm.Print_Titles"}:
                 names.remove(name)
         quoted = sheet_name.replace("'", "''")
-        area = ET.SubElement(names, f"{{{_MAIN}}}definedName", name="_xlnm.Print_Area", localSheetId=str(index))
-        area.text = f"'{quoted}'!{absolute_coordinate(cell_range)}"
+        if cell_range is not None:
+            area = ET.SubElement(names, f"{{{_MAIN}}}definedName", name="_xlnm.Print_Area", localSheetId=str(index))
+            area.text = f"'{quoted}'!{absolute_coordinate(cell_range)}"
         relationships = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
         relationship_id = target.get(f"{{{_REL}}}id")
         relations = [item for item in relationships if item.get("Id") == relationship_id and item.get("TargetMode") != "External"]
@@ -93,8 +94,8 @@ def _sheet_part(archive, sheet_name):
     raise ExcelRegionRenderError("sheet_binding_failed", "未找到请求的工作表")
 
 
-def has_region_graphics(content: bytes, *, sheet_name: str, cell_range: str) -> bool:
-    left, top, right, bottom = range_boundaries(cell_range)
+def has_region_graphics(content: bytes, *, sheet_name: str, cell_range: str | None) -> bool:
+    left, top, right, bottom = range_boundaries(cell_range) if cell_range is not None else (1, 1, 16384, 1048576)
     with zipfile.ZipFile(io.BytesIO(content)) as archive:
         part = _sheet_part(archive, sheet_name)
         worksheet = ET.fromstring(archive.read(part))
@@ -112,6 +113,21 @@ def has_region_graphics(content: bytes, *, sheet_name: str, cell_range: str) -> 
             target = target.lstrip("/") if target.startswith("/") else posixpath.normpath(posixpath.join(posixpath.dirname(part), target))
             drawing = ET.fromstring(archive.read(target))
             for anchor in drawing:
+                kind = anchor.tag.rsplit("}", 1)[-1]
+                if kind == "absoluteAnchor":
+                    return True  # No cell footprint: it cannot prove a field blank.
+                if kind == "shape":
+                    client = next((node for node in anchor.iter() if node.tag.rsplit("}", 1)[-1] == "ClientData"), None)
+                    if client is not None and client.get("ObjectType") == "Note":
+                        continue
+                    placement = next((node.text for node in anchor.iter() if node.tag.rsplit("}", 1)[-1] == "Anchor"), None)
+                    if placement is None:
+                        return True
+                    positions = [int(value.strip()) for value in placement.split(",")]
+                    if len(positions) != 8:
+                        return True
+                    if positions[2] + 1 <= bottom and positions[6] + 1 >= top and positions[0] + 1 <= right and positions[4] + 1 >= left:
+                        return True
                 starts: dict[str, int] = {}
                 ends: dict[str, int] = {}
                 for node in anchor:
@@ -119,15 +135,22 @@ def has_region_graphics(content: bytes, *, sheet_name: str, cell_range: str) -> 
                     if name in {"from", "to"}:
                         values = {child.tag.rsplit("}", 1)[-1]: int(child.text or 0) + 1 for child in node if child.tag.rsplit("}", 1)[-1] in {"row", "col"}}
                         (starts if name == "from" else ends).update(values)
-                if starts and starts.get("row", 1) <= bottom and ends.get("row", starts.get("row", 1)) >= top and starts.get("col", 1) <= right and ends.get("col", starts.get("col", 1)) >= left:
+                # A one-cell anchor has an extent, not a `to` marker. Until its
+                # exact footprint is known it can extend below/right of its
+                # anchor; it cannot establish that an overlapping field is blank.
+                if starts and starts.get("row", 1) <= bottom and ends.get("row", bottom) >= top and starts.get("col", 1) <= right and ends.get("col", right) >= left:
                     return True
     return False
 
 
-def render_xlsx_field(content: bytes, *, sheet_name: str, cell_range: str, keywords: tuple[str, ...]) -> bytes:
+def render_xlsx_pdf(content: bytes, *, sheet_name: str, cell_range: str | None) -> bytes:
     limits = LegacyDocConversionLimits()
     region = _region_print_copy(content, sheet_name=sheet_name, cell_range=cell_range, max_bytes=limits.max_output_bytes)
-    pdf = convert_excel(region, source_suffix="xlsx", target_suffix="pdf", output_filter="pdf:calc_pdf_Export")
+    return convert_excel(region, source_suffix="xlsx", target_suffix="pdf", output_filter="pdf:calc_pdf_Export")
+
+
+def render_xlsx_field(content: bytes, *, sheet_name: str, cell_range: str, keywords: tuple[str, ...]) -> bytes:
+    pdf = render_xlsx_pdf(content, sheet_name=sheet_name, cell_range=cell_range)
     with fitz.open(stream=pdf, filetype="pdf") as document:
         if len(document) != 1:
             raise ExcelRegionRenderError("region_coverage_unconfirmed", "字段区域未生成唯一页面")

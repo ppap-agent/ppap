@@ -329,8 +329,8 @@ class RuleContext:
         self._unresolved_seen.add(text)
         self._unresolved.append(text)
 
-    def has_unresolved(self) -> bool:
-        return bool(self._unresolved)
+    def has_unresolved(self, message: str | None = None) -> bool:
+        return message in self._unresolved if message is not None else bool(self._unresolved)
 
     def unresolved_summary(self) -> str:
         if not self._unresolved:

@@ -12,12 +12,12 @@ from audit.engine.rule_engine import RuleContext
 from audit.kinds import PpapDocumentType
 
 from .cross_file_extractors import (
-    _load_workbook_auto,
     extract_rows_from_workbook,
     format_row_location,
     is_pfd_header_row,
     normalize_key,
     normalize_text,
+    operation_number_key,
     prepend_row_location,
 )
 from .excel_agent import ExcelAgent, rule
@@ -38,8 +38,6 @@ _EMPTY = {"", "nan", "none"}
 _PROCESS_CODE_PATTERN = re.compile(r"^\s*([A-Za-z]?\d+(?:[.\-]\d+)*)")
 _CHINESE_TEXT_PATTERN = re.compile(r"[\u4e00-\u9fff]+")
 _ENGLISH_TEXT_PATTERN = re.compile(r"[A-Za-z]+")
-_PROCESS_CODE_SEP_PATTERN = re.compile(r"[.\-\s]+")
-_RULE6_PART_NUMBER_ALIASES = ["零件编号", "零件号", "part number", "partnumber"]
 _RULE7_PFD_SPECIAL_MARKS = frozenset({"cc", "sc"})
 _RULE7_PFMEA_SPECIAL_MARKS = frozenset({"cc", "sc", "kpc", "kcc"})
 
@@ -333,7 +331,7 @@ class PfmeaAgent(ExcelAgent):
     def _normalize_process_code_for_match(self, process_code: str) -> str:
         if not process_code:
             return ""
-        return _PROCESS_CODE_SEP_PATTERN.sub("", process_code.lower())
+        return operation_number_key(process_code)
 
     def _find_process_flow_chart_worksheet(self, workbook: Any) -> Any:
         if not hasattr(workbook, "sheetnames"):
@@ -350,44 +348,6 @@ class PfmeaAgent(ExcelAgent):
                 return workbook[sheet_name]
         return None
 
-    @staticmethod
-    def _extract_rule_6_part_number_keys(raw_value: str) -> list[str]:
-        keys: list[str] = []
-        seen: set[str] = set()
-
-        def _append_key(candidate: str) -> None:
-            key = normalize_key(candidate)
-            if not key or key in seen:
-                return
-            seen.add(key)
-            keys.append(key)
-
-        _append_key(raw_value)
-        for token in re.split(r"[\s,;，；/、|]+", raw_value):
-            _append_key(token)
-        return keys
-
-    def _extract_rule_6_part_number_from_sheet(self, ws: Worksheet) -> list[str]:
-        part_row, part_col = self._find_cell_by_keywords(ws, _RULE6_PART_NUMBER_ALIASES)
-        if part_row <= 0 or part_col <= 0:
-            return []
-        value = self._read_label_value(ws, part_row, part_col)
-        if not value:
-            value = normalize_text(ws.cell(row=part_row, column=part_col + 1).value)
-        return self._extract_rule_6_part_number_keys(value)
-
-    @staticmethod
-    def _is_rule_6_part_number_compatible(left_keys: list[str], right_keys: list[str]) -> bool:
-        if not left_keys or not right_keys:
-            return False
-        for left_key in left_keys:
-            for right_key in right_keys:
-                if left_key == right_key:
-                    return True
-                if left_key in right_key or right_key in left_key:
-                    return True
-        return False
-
     def _get_rule_6_pfd_sheet_and_rows(self) -> tuple[Any, list[dict[str, str]] | None, str]:
         related_file, _error = self._require_single_related_file(PpapDocumentType.PROCESS_FLOW_CHART)
         if related_file is None:
@@ -397,7 +357,7 @@ class PfmeaAgent(ExcelAgent):
         if not file_url:
             return None, None, "缺少过程流程图，请补充"
 
-        pfd_workbook = _load_workbook_auto(file_url)
+        pfd_workbook = self.load_related_workbook(related_file)
 
         pfd_ws = self._find_process_flow_chart_worksheet(pfd_workbook)
         if pfd_ws is None:
@@ -888,11 +848,16 @@ class PfmeaAgent(ExcelAgent):
 
         missing_issues: list[str] = []
         for op_key, op_info in pfd_ops.items():
-            if any(op_key == step_key or op_key in step_key or step_key in op_key for step_key in pfmea_steps):
+            normalized_process_code = op_info["normalized_process_code"]
+            if any(
+                (not normalized_process_code or not step_info["normalized_process_code"] or normalized_process_code == step_info["normalized_process_code"])
+                and (op_key == step_key or op_key in step_key or step_key in op_key)
+                for step_key, step_info in pfmea_steps.items()
+            ):
                 continue
 
             normalized_process_code = op_info["normalized_process_code"]
-            if normalized_process_code and any(step_info["normalized_process_code"].startswith(normalized_process_code) for step_info in pfmea_steps.values() if step_info["normalized_process_code"]):
+            if normalized_process_code and any(step_info["normalized_process_code"] == normalized_process_code for step_info in pfmea_steps.values() if step_info["normalized_process_code"]):
                 continue
 
             missing_issues.append(prepend_row_location(op_info["row"], f"PFD工序'{op_info['raw']}'在PFMEA过程步骤中未找到对应行"))

@@ -284,3 +284,117 @@ def extract_rows_from_workbook(
                 note_cell(str(best_sheet.title), row, column)
         rows.append(item)
     return rows
+
+
+_PART_LABEL = re.compile(r"^\s*(?:(?:零件号(?:/最新更改水平)?|零件编号|part\s*(?:number|no\.?))\s*[:：]?\s*)+", re.I)
+_IDENTITY_STOP = re.compile(r"零件名称|工序|序号|特性|组织|日期|供应商|公司|核心|多功能|结构分析|功能分析|失效分析|风险分析|part\s*name|operation|process|revision|date|company|team", re.I)
+
+
+def part_number_keys(value: object, *, includes_change_level: bool = False) -> list[str]:
+    """Keep whole identifiers, including suffixes; whitespace is formatting."""
+    text = unicodedata.normalize("NFKC", str(value or ""))
+    if includes_change_level:
+        # A compound part/change-level field does not declare its revision as
+        # another part. Keep the original cell as the source of both values.
+        text = text.split("/", 1)[0]
+    tokens = re.split(r"[,;，；/、|\r\n]+|\s+(?=[A-Za-z]+\s*\d)", text)
+    if "/" in text and any(not re.search(r"\d", token) for token in tokens if token.strip()):
+        tokens = [text]
+    return list(dict.fromkeys(re.sub(r"\s+", "", token).casefold() for token in tokens if token.strip()))
+
+
+def part_numbers_compatible(left: list[str], right: list[str]) -> bool:
+    return bool(set(left).intersection(right))
+
+
+def read_part_number_keys(
+    ws: Worksheet,
+    note_cell: Optional[Callable[[str, int, int], None]] = None,
+    note_change_level: Optional[Callable[[str, str], None]] = None,
+) -> list[str]:
+    """Read the value belonging to a part-number label, without diagonal scans."""
+    values = []
+    for row in ws.iter_rows(max_row=min(ws.max_row, 15), max_col=min(ws.max_column, 40)):
+        for cell in row:
+            if cell.value is None:
+                continue
+            text = unicodedata.normalize("NFKC", str(cell.value))
+            label = _PART_LABEL.match(text)
+            if label is None:
+                continue
+            inline = text[label.end() :].strip()
+            candidates = []
+            if inline:
+                candidates.append((cell.row, cell.column, inline))
+            else:
+                merged = next((area for area in ws.merged_cells.ranges if cell.coordinate in area), None)
+                right = merged.max_col + 1 if merged else cell.column + 1
+                below = merged.max_row + 1 if merged else cell.row + 1
+                directions = (
+                    ((cell.row, col) for col in range(right, min(ws.max_column, right + 9) + 1)),
+                    ((number, cell.column) for number in range(below, min(ws.max_row, below + 2) + 1)),
+                )
+                for positions in directions:
+                    for number, column in positions:
+                        source = ws.cell(number, column)
+                        if source.value is None:
+                            continue
+                        value = str(source.value).strip()
+                        if source.data_type != "e" and not _IDENTITY_STOP.search(value) and re.search(r"\d", value):
+                            candidates.append((number, column, value))
+                        break
+                    if candidates:
+                        break
+            for number, column, value in candidates:
+                if _IDENTITY_STOP.search(value) or not re.search(r"\d", value):
+                    continue
+                includes_change_level = "最新更改水平" in text
+                values.extend(part_number_keys(value, includes_change_level=includes_change_level))
+                if includes_change_level and note_change_level is not None and "/" in value:
+                    part, level = value.split("/", 1)
+                    if part.strip() and level.strip():
+                        note_change_level(re.sub(r"\s+", "", part).casefold(), re.sub(r"\s+", "", level).casefold())
+                if note_cell is not None:
+                    note_cell(ws.title, number, column)
+    return list(dict.fromkeys(values))
+
+
+REFERENCE_IDENTITY_UNRESOLVED = "缺少可定位的关联零件号，无法确认两份文件的对应关系。"
+
+
+def check_reference_identity(ctx, target: Workbook, reference: Workbook) -> None:
+    """Require whole part identifiers and retain both frozen file versions.
+
+    Document revision counters are independent and are not compared as part
+    revisions. Missing identity blocks an otherwise positive comparison.
+    """
+    from audit.engine.rule_engine import Decision, GuardStop
+
+    levels: dict[int, dict[str, set[str]]] = {}
+
+    def keys(workbook):
+        values = []
+        declared = levels.setdefault(id(workbook), {})
+
+        def change_level(part, level):
+            declared.setdefault(part, set()).add(level)
+
+        for sheet in workbook.worksheets:
+            if sheet.sheet_state != "visible":
+                continue
+            values.extend(read_part_number_keys(sheet, lambda name, row, column: ctx.note_cell(name, row, column, file_version_id=ctx.version_for_worksheet(sheet)), change_level))
+        return values
+
+    target_keys, reference_keys = keys(target), keys(reference)
+    if target_keys and reference_keys and not part_numbers_compatible(target_keys, reference_keys):
+        raise GuardStop(Decision.NG, "关联资料与当前文件不是同零件号，不能借用其他零件的审核证据。")
+    for part in levels[id(target)].keys() & levels[id(reference)].keys():
+        if levels[id(target)][part] != levels[id(reference)][part]:
+            raise GuardStop(Decision.NG, "同零件号的工程更改水平不一致，不能作为同版本对象进行核对。")
+    if not target_keys or not reference_keys:
+        ctx.note_unresolved(REFERENCE_IDENTITY_UNRESOLVED)
+
+
+def operation_number_key(value: object) -> str:
+    text = re.sub(r"\s+", "", normalize_text(value)).casefold()
+    return re.sub(r"^(?:op|工序|序号)[:：]?", "", text)
