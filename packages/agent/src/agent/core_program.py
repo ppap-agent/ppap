@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import tempfile
 import time
+from contextvars import ContextVar
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Literal
@@ -27,6 +28,7 @@ from agent.run import ExecutionContext
 
 MAX_MANIFEST = 4 * 1024 * 1024
 MAX_BUNDLE = 16 * 1024 * 1024
+_ALLOW_MODEL_CALLS: ContextVar[bool] = ContextVar("core_allow_model_calls", default=True)
 
 
 class AuditJobSpec(BaseModel):
@@ -36,19 +38,27 @@ class AuditJobSpec(BaseModel):
     input_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
     executor_revision: str = Field(min_length=1)
     analysis_mode: Literal["standard", "deep"] = "standard"
+    allow_model_calls: bool = True
 
     @classmethod
-    def from_snapshot(cls, snapshot: ExecutionSnapshot, analysis_mode: Literal["standard", "deep"] = "standard") -> AuditJobSpec:
+    def from_snapshot(cls, snapshot: ExecutionSnapshot, analysis_mode: Literal["standard", "deep"] = "standard", allow_model_calls: bool = True) -> AuditJobSpec:
         return cls(
-            execution_id=uuid5(NAMESPACE_URL, "ppap-audit:" + analysis_mode + ":" + snapshot.input_digest),
+            execution_id=uuid5(NAMESPACE_URL, "ppap-audit:" + analysis_mode + ":" + str(allow_model_calls) + ":" + snapshot.input_digest),
             input_digest=snapshot.input_digest,
             executor_revision=snapshot.runtime_revision,
             analysis_mode=analysis_mode,
+            allow_model_calls=allow_model_calls,
         )
 
 
 def write_audit_manifest(
-    inputs: Path, snapshot: ExecutionSnapshot, sources: dict[str, bytes], programs: dict[str, dict[str, bytes]], *, analysis_mode: Literal["standard", "deep"] = "standard"
+    inputs: Path,
+    snapshot: ExecutionSnapshot,
+    sources: dict[str, bytes],
+    programs: dict[str, dict[str, bytes]],
+    *,
+    analysis_mode: Literal["standard", "deep"] = "standard",
+    allow_model_calls: bool = True,
 ) -> AuditJobSpec:
     snapshot.validate_sources(sources)
     expected = {target.binding.checker_digest for target in snapshot.targets}
@@ -80,7 +90,7 @@ def write_audit_manifest(
             staged = f"program-{index}-{name}"
             stage(staged, body)
             program_paths[digest][name] = staged
-    job = AuditJobSpec.from_snapshot(snapshot, analysis_mode)
+    job = AuditJobSpec.from_snapshot(snapshot, analysis_mode, allow_model_calls)
     raw = json.dumps(
         {"operation": "execute-audit", "spec": job.model_dump(mode="json"), "snapshot": snapshot.to_dict(), "source_paths": source_paths, "program_paths": program_paths}, ensure_ascii=False
     ).encode()
@@ -109,7 +119,7 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
         raise ValueError("audit_manifest_invalid")
     snapshot = ExecutionSnapshot.from_dict(manifest["snapshot"])
     job = AuditJobSpec.model_validate(manifest["spec"])
-    if job != AuditJobSpec.from_snapshot(snapshot, job.analysis_mode):
+    if job != AuditJobSpec.from_snapshot(snapshot, job.analysis_mode, job.allow_model_calls):
         raise ValueError("audit_manifest_identity_mismatch")
     total = 0
 
@@ -121,16 +131,21 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
 
     sources = {key: read(name) for key, name in manifest["source_paths"].items()}
     programs = {key: {name: read(path) for name, path in paths.items()} for key, paths in manifest["program_paths"].items()}
-    grant = ModelGrant.model_validate(read_json(credentials, ("model.json",), 16384))
-    # A temporary local capability is the only model credential the guest sees.
-    from urllib.parse import urlsplit
+    access = None
+    grant = None
+    if job.allow_model_calls:
+        grant = ModelGrant.model_validate(read_json(credentials, ("model.json",), 16384))
+        # A temporary local capability is the only model credential the guest sees.
+        from urllib.parse import urlsplit
 
-    endpoint = urlsplit(grant.base_url)
-    if endpoint.scheme != "http" or endpoint.hostname not in {"127.0.0.1", "localhost", "::1"} or endpoint.username or endpoint.password or grant.model != snapshot.model_identity.get("model"):
-        raise ValueError("audit_model_grant_mismatch")
-    access = ModelAccess(provider="deepseek", base_url=grant.base_url, model=grant.model, api_key=SecretStr(grant.token))
-    if snapshot.model_identity.get("provider") not in {None, access.provider}:
-        raise ValueError("audit_model_grant_mismatch")
+        endpoint = urlsplit(grant.base_url)
+        if endpoint.scheme != "http" or endpoint.hostname not in {"127.0.0.1", "localhost", "::1"} or endpoint.username or endpoint.password or grant.model != snapshot.model_identity.get("model"):
+            raise ValueError("audit_model_grant_mismatch")
+        access = ModelAccess(provider="deepseek", base_url=grant.base_url, model=grant.model, api_key=SecretStr(grant.token))
+        if snapshot.model_identity.get("provider") not in {None, access.provider}:
+            raise ValueError("audit_model_grant_mismatch")
+    elif job.analysis_mode == "deep":
+        raise ValueError("audit_generation_requires_model")
     artifacts: dict[str, CheckerArtifact] = {}
     effective = snapshot
     snapshot.validate_sources(sources)
@@ -139,6 +154,7 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
             from agent.execution.checker_guest import develop_checker
             from agent.execution.guest_model import PiRunner
 
+            assert grant is not None
             runner = PiRunner(grant.model_dump(mode="json"))
             deadline = time.monotonic() + runner.wall_seconds
             development = snapshot_development_inputs(snapshot, sources, directory=work / "development-sources")
@@ -195,7 +211,14 @@ class CoreRuntime(SemanticRuntime):
         return self.runtime.ready(operation)
 
     def execute_snapshot(
-        self, snapshot: ExecutionSnapshot, sources: dict[str, bytes], programs: dict[str, dict[str, bytes]], context: ExecutionContext, *, analysis_mode: Literal["standard", "deep"] = "standard"
+        self,
+        snapshot: ExecutionSnapshot,
+        sources: dict[str, bytes],
+        programs: dict[str, dict[str, bytes]],
+        context: ExecutionContext,
+        *,
+        analysis_mode: Literal["standard", "deep"] = "standard",
+        allow_model_calls: bool = True,
     ) -> dict:
         from agent.execution.audit_runtime import _validate_output
 
@@ -204,7 +227,7 @@ class CoreRuntime(SemanticRuntime):
             root = Path(root_name)
             work, inputs = root / "work", root / "inputs"
             work.mkdir()
-            job = write_audit_manifest(inputs, snapshot, sources, programs, analysis_mode=analysis_mode)
+            job = write_audit_manifest(inputs, snapshot, sources, programs, analysis_mode=analysis_mode, allow_model_calls=allow_model_calls)
             try:
                 self.runtime.run(job, inputs, work, time.monotonic() + self.timeout, context.cancelled)
                 result = read_json(work, ("result", "bundle.json"), MAX_BUNDLE)
@@ -268,6 +291,16 @@ class CoreRuntime(SemanticRuntime):
         context.progress({"phase": "validating"})
         return core_response(spec, effective, result)
 
+    def develop_and_run(self, request, *, spec, context):
+        # Fixed Oracle evaluation must never give the model hidden documents.
+        # Adaptation remains the explicitly authorized model operation; every
+        # candidate/baseline trial is credential-free once an Oracle is present.
+        token = _ALLOW_MODEL_CALLS.set(getattr(request, "allow_model_calls", True) and not request.oracle)
+        try:
+            return super().develop_and_run(request, spec=spec, context=context)
+        finally:
+            _ALLOW_MODEL_CALLS.reset(token)
+
     def _checker_job(self, spec, audit_file, rule, file_bytes, *, role, context, group_context, operation, prior=None, artifact=None, related_bytes=None, development_feedback=None):
         # Generation uses the existing granted guest. Every fixed execution,
         # including independent holdout, uses exactly the whole-audit Core.
@@ -295,7 +328,7 @@ class CoreRuntime(SemanticRuntime):
         if artifact.input_digest != inputs.digest or artifact.executor_revision != spec.executor_revision:
             raise DeepError("deep_output_identity_mismatch")
         snapshot, sources = development_snapshot(inputs, artifact, spec)
-        result = self.execute_snapshot(snapshot, sources, {artifact.program_digest: dict(artifact.files)}, context)
+        result = self.execute_snapshot(snapshot, sources, {artifact.program_digest: dict(artifact.files)}, context, allow_model_calls=_ALLOW_MODEL_CALLS.get())
         job = CheckerJobSpec(execution_id=UUID(int=0), operation="execute-checker", input_digest=inputs.digest, executor_revision=spec.executor_revision)
         return CheckerProgramBundle(
             operation="execute-checker",

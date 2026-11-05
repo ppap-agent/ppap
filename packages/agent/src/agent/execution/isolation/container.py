@@ -454,7 +454,11 @@ class ContainerRuntime:
                 raise ControllerFault("ISOLATION_UNAVAILABLE")
             if cancelled.is_set() or time.monotonic() >= deadline:
                 raise ControllerFault("CANCELLED" if cancelled.is_set() else "MODEL_TIMEOUT")
-            model_operation = isinstance(spec, (SubmissionSpec, CompileSpec, AuditJobSpec)) or (isinstance(spec, CheckerJobSpec) and spec.operation == "adapt-checker")
+            model_operation = (
+                isinstance(spec, (SubmissionSpec, CompileSpec))
+                or (isinstance(spec, AuditJobSpec) and spec.allow_model_calls)
+                or (isinstance(spec, CheckerJobSpec) and spec.operation == "adapt-checker")
+            )
             saved = self.journal / (runtime_id.hex + ".json")
             if model_operation and saved.exists():
                 write_json(work / "result" / "bundle.json", read_json(self.journal, (saved.name,), MAX_OUTPUT))
