@@ -949,6 +949,9 @@ def create_app(
     from api.deep_feedback import register_deep_feedback_routes
 
     register_deep_feedback_routes(app, store, principal_of, quota_for)
+    from api.checker_development import register_checker_development_routes
+
+    register_checker_development_routes(app, store, principal_of)
     register_rule_routes(app, store, principal_of, require_file_read)
     register_suite_routes(app, store, principal_of)
     register_support_routes(app, principal_of, settings)
