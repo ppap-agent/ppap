@@ -94,10 +94,12 @@ class SuiteRevisionDetail(TypedDict):
 class SuiteVariantRequest(TypedDict):
     base_revision_id: str
     files: dict[str, str]
+    operation_id: NotRequired[str]
 
 
 class SuiteCandidateRequest(TypedDict):
     files: dict[str, str]
+    operation_id: NotRequired[str]
 
 
 class SuitePublishRequest(TypedDict):
@@ -123,11 +125,11 @@ def register_suite_routes(app: FastAPI, store, principal_of):
             return JSONResponse({"error": "suite_artifact_missing"}, status_code=409, headers=headers)
         except ValueError as exc:
             code = str(exc)
-            status = 409 if code in {"suite_head_conflict", "suite_operation_conflict", "suite_confirmation_required"} else 400
+            status = 404 if code == "suite_candidate_not_found" else 409 if code in {"suite_head_conflict", "suite_operation_conflict", "suite_confirmation_required"} else 400
             return JSONResponse({"error": code}, status_code=status, headers=headers)
 
-    def body_fields(body, fields: set[str]):
-        if not isinstance(body, dict) or set(body) != fields:
+    def body_fields(body, fields: set[str], optional: frozenset[str] = frozenset()):
+        if not isinstance(body, dict) or not fields <= set(body) or set(body) - fields - optional:
             raise ValueError("invalid_suite_request")
         return body
 
@@ -149,8 +151,14 @@ def register_suite_routes(app: FastAPI, store, principal_of):
 
     @app.post("/suites/{suite_key}/variants", response_model=SuiteRevisionDetail, status_code=201, openapi_extra=wc.openapi_body(SuiteVariantRequest))
     def suite_variant(suite_key: str, request: Request, body: Any = Body(...)):
-        return respond(request, lambda principal: releases.save_candidate(principal, suite_key=suite_key, **body_fields(body, {"base_revision_id", "files"})), status_code=201)
+        return respond(
+            request, lambda principal: releases.save_candidate(principal, suite_key=suite_key, **body_fields(body, {"base_revision_id", "files"}, frozenset({"operation_id"}))), status_code=201
+        )
 
     @app.post("/suite-revisions/{revision_id}/candidates", response_model=SuiteRevisionDetail, status_code=201, openapi_extra=wc.openapi_body(SuiteCandidateRequest))
     def suite_candidate(revision_id: str, request: Request, body: Any = Body(...)):
-        return respond(request, lambda principal: releases.save_candidate(principal, revision_id, **body_fields(body, {"files"})), status_code=201)
+        return respond(request, lambda principal: releases.save_candidate(principal, revision_id, **body_fields(body, {"files"}, frozenset({"operation_id"}))), status_code=201)
+
+    @app.get("/suite-revisions/{revision_id}/candidates/{operation_id}", response_model=SuiteRevisionDetail)
+    def suite_candidate_receipt(revision_id: str, operation_id: str, request: Request):
+        return respond(request, lambda principal: releases.read_candidate(principal, revision_id, operation_id))

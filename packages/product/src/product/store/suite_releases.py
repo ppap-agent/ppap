@@ -12,6 +12,7 @@ from psycopg.types.json import Jsonb
 
 from product.db import connect
 from product.suite_releases import empty_validation, publication_fingerprint
+from product.suites import canonical_json, content_digest
 
 if TYPE_CHECKING:
     from product.checker_validation import SuiteValidationReport
@@ -286,7 +287,9 @@ class SuiteReleaseStore:
             result = _receipt(cur.fetchone(), published_by_name=_display_name(conn, principal.user_id, principal.tenant_id))
         return result
 
-    def save_candidate(self, principal, base_revision_id: str, files: dict[str, str], *, suite_key: str | None = None) -> dict:
+    def save_candidate(self, principal, base_revision_id: str, files: dict[str, str], *, suite_key: str | None = None, operation_id: str | None = None) -> dict:
+        base_revision_id = _id(base_revision_id)
+        operation_id = _id(operation_id) if operation_id is not None else str(uuid.uuid4())
         if not isinstance(files, dict) or not files or any(not isinstance(value, str) for value in files.values()):
             raise ValueError("invalid_suite_candidate")
         if "templates.json" in files:
@@ -301,16 +304,46 @@ class SuiteReleaseStore:
             base = _revision(conn, base_revision_id, principal.tenant_id)
             if suite_key is not None and base["suite_key"] != _key(suite_key):
                 raise ValueError("suite_key_mismatch")
-            revision = self.suites.create_revision(
-                tenant_id=principal.tenant_id,
-                suite_key=base["suite_key"],
-                files={path: value.encode() for path, value in files.items()},
-                created_by=principal.user_id,
-                base_revision_id=str(base["id"]),
-                related_suite_keys=tuple(base["related_suite_keys"]),
-                conn=conn,
-            )
-        return self.detail(principal, revision.id)
+            fingerprint = content_digest(canonical_json({"base_revision_id": base_revision_id, "files": files, "created_by": principal.user_id}))
+            conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("suite-candidate:" + principal.tenant_id + ":" + operation_id,))
+            prior = conn.execute(
+                "SELECT revision_id,request_fingerprint FROM product.suite_candidate_operations WHERE tenant_id=%s AND operation_id=%s", (principal.tenant_id, operation_id)
+            ).fetchone()
+            if prior:
+                if prior[1] != fingerprint:
+                    raise ValueError("suite_operation_conflict")
+                revision_id = str(prior[0])
+            else:
+                revision = self.suites.create_revision(
+                    tenant_id=principal.tenant_id,
+                    suite_key=base["suite_key"],
+                    files={path: value.encode() for path, value in files.items()},
+                    created_by=principal.user_id,
+                    base_revision_id=base_revision_id,
+                    related_suite_keys=tuple(base["related_suite_keys"]),
+                    conn=conn,
+                )
+                revision_id = revision.id
+                conn.execute(
+                    """INSERT INTO product.suite_candidate_operations (tenant_id,operation_id,base_revision_id,revision_id,request_fingerprint,created_by)
+                       VALUES (%s,%s,%s,%s,%s,%s)""",
+                    (principal.tenant_id, operation_id, base_revision_id, revision_id, fingerprint, principal.user_id),
+                )
+        return self.detail(principal, revision_id)
+
+    def read_candidate(self, principal, base_revision_id: str, operation_id: str) -> dict:
+        """Read an uncertain save by its original operation, without repeating it."""
+        base_revision_id, operation_id = _id(base_revision_id), _id(operation_id)
+        with self._conn() as conn:
+            _member(conn, principal)
+            _revision(conn, base_revision_id, principal.tenant_id)
+            row = conn.execute(
+                "SELECT revision_id FROM product.suite_candidate_operations WHERE tenant_id=%s AND operation_id=%s AND base_revision_id=%s",
+                (principal.tenant_id, operation_id, base_revision_id),
+            ).fetchone()
+        if row is None:
+            raise ValueError("suite_candidate_not_found")
+        return self.detail(principal, str(row[0]))
 
     def detail(self, principal, revision_id: str) -> dict:
         with self._conn() as conn, conn.transaction():
