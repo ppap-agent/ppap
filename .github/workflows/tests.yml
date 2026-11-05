@@ -229,6 +229,14 @@ jobs:
       - name: Canonical install
         working-directory: ${{ github.workspace }}
         run: uv sync --locked
+      - name: Install shared Excel converter for owner tests
+        working-directory: ${{ github.workspace }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libreoffice-calc fonts-noto-cjk
+          cc -O2 -Wall -Wextra -Werror packages/documents/native/legacy_doc_sandbox.c \
+            -o "$RUNNER_TEMP/ppap-local-converter-sandbox"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
       - name: Run complete Python owner tests
         working-directory: ${{ github.workspace }}
         run: python3 -m scripts.ci_shards modules --shard "${{ matrix.shard }}"

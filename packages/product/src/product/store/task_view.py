@@ -198,8 +198,7 @@ def _check(round: dict, version_id: str, rule_id: str, rule: dict, file_failed: 
         "evidence_verified": verified,
         "verification_scope": verification_scope if isinstance(verification_scope, str) else None,
         "scope": scope,
-        "scope_notice": _join_notices(notice, evidence_notice, scope_gap, checker_notice)
-        or ((coverage or {}).get("reason") if not finding else None),
+        "scope_notice": _join_notices(notice, evidence_notice, scope_gap, checker_notice) or ((coverage or {}).get("reason") if not finding else None),
         "evidence": evidence,
         **({"review_item_key": original["item_key"] if original else f"coverage:{version_id}:{rule['id']}"} if original or coverage and coverage.get("coverage") != "executed" else {}),
         "review": deepcopy((original or coverage or {}).get("review")),
