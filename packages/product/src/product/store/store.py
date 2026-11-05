@@ -2778,7 +2778,7 @@ class AuthStore:
         with self._conn() as conn:
             rows = conn.execute(
                 """SELECT id, title, created_at, predecessor_id, body->'customers', body->'parts', case_context,
-                    CASE WHEN jsonb_typeof(body->'rules') = 'array' THEN jsonb_array_length(body->'rules') ELSE 0 END, body->>'type'
+                    CASE WHEN jsonb_typeof(body->'rules') = 'array' THEN jsonb_array_length(body->'rules') ELSE 0 END
                 FROM product.rule_versions WHERE tenant_id = %s AND body->>'kind' = 'engine' AND source_file_version_id IS NOT NULL
                 ORDER BY created_at DESC, id DESC""",
                 (tenant_id,),
@@ -2810,7 +2810,6 @@ class AuthStore:
                     "created_at": row[2].isoformat(),
                     "predecessor_id": str(row[3]) if row[3] else None,
                     "clause_count": row[7],
-                    "document_type": row[8] or "",
                 }
             )
         return versions

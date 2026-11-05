@@ -3861,8 +3861,6 @@ export interface components {
             clause_count: number;
             /** Created At */
             created_at: string;
-            /** Document Type */
-            document_type: string;
             /** Id */
             id: string;
             /** Predecessor Id */

@@ -5,6 +5,7 @@ and Task navigation use the unified workbench; these are separate contracts.
 """
 
 import os
+import re
 import time
 import unittest
 from pathlib import Path
@@ -822,6 +823,37 @@ class RuleInteractionTests(unittest.TestCase):
             route.fulfill(json={"versions": versions})
 
         page.route("**/api/rule-library", library)
+
+    def test_rule_coverage_counts_built_in_rules_and_keeps_customer_only_types_apart(self):
+        from audit.presets import customer_presets, preset_rule_body
+        from playwright.sync_api import expect
+        from product.rules import document_types
+
+        rules = []
+        for preset in customer_presets():
+            body = preset_rule_body(preset.customer, preset.entry_id)
+            identity = {"id": preset.entry_id, "title": preset.title, "kind": "engine", "created_at": "2026-10-01T00:00:00Z", "predecessor_id": None}
+            rules.append({**identity, "customer_scope": "restricted", "type": body["type"], "rule_profile": "v4", "customers": body["customers"], "models": [], "parts": []})
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            state = self.requirement_routes(page)
+            self.native_rule_routes(page, state)
+            page.route("**/api/rules", lambda route: route.fulfill(json={"rules": rules}))
+            page.route("**/api/rule-types", lambda route: route.fulfill(json={"types": document_types()}))
+            page.goto(WEB + "/audit?view=requirements")
+            coverage = page.get_by_role("region", name="规则覆盖度", exact=True)
+            for customer, count in (("UAES", "19/28"), ("理想", "17/17"), ("蔚来", "5/17")):
+                expect(coverage.get_by_role("button").filter(has_text=customer).filter(has_text=f"已覆盖 {count} 类")).to_be_visible()
+            coverage.get_by_role("button", name=re.compile("^UAES")).click()
+            types = coverage.get_by_role("list", name="UAES 的文件类型", exact=True)
+            photo = types.get_by_role("listitem").filter(has_text="生产件样品照片")
+            expect(photo).to_contain_text("生效中")
+            expect(types.get_by_role("listitem").filter(has_text="检具验收报告")).to_contain_text("未覆盖")
+            expect(types).not_to_contain_text("E07")
+            coverage.get_by_role("button", name=re.compile("^蔚来")).click()
+            expect(coverage.get_by_role("list", name="蔚来 的文件类型", exact=True)).not_to_contain_text("生产件样品照片")
+            browser.close()
 
     def test_native_rule_catalog_refresh_failure_keeps_the_saved_version(self):
         from playwright.sync_api import expect
