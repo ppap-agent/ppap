@@ -130,3 +130,15 @@ class ErrorEnvelope(BaseModel):
 
     op: Literal["error"]
     code: str = Field(min_length=1)
+
+
+class DevelopmentEnvelope(BaseModel):
+    """Only durable identities cross the worker/controller optimization boundary."""
+
+    model_config = ConfigDict(extra="forbid")
+    op: Literal["develop"]
+    operation_id: str = Field(min_length=36, max_length=36)
+    job_id: str = Field(min_length=36, max_length=36)
+    tenant_id: str = Field(min_length=36, max_length=36)
+    attempt: int = Field(ge=1, strict=True)
+    lease_owner: str = Field(min_length=1, max_length=200)

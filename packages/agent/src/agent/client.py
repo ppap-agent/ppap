@@ -108,6 +108,18 @@ class DeepClient:
         self.timeout = timeout
 
     def execute(self, spec: ExecuteRequest, *, cancelled: threading.Event | None = None, on_progress: Callable[[dict], None] | None = None) -> ExecuteResponse:
+        raw = self._request(RequestEnvelope(op="execute", spec=spec).model_dump(), cancelled=cancelled, on_progress=on_progress)
+        return ResultEnvelope.model_validate(raw).result
+
+    def develop(self, request, *, cancelled: threading.Event | None = None, on_progress: Callable[[dict], None] | None = None) -> dict:
+        from agent.protocol import DevelopmentEnvelope
+
+        raw = self._request(DevelopmentEnvelope.model_validate(request).model_dump(), cancelled=cancelled, on_progress=on_progress)
+        if set(raw) != {"op", "receipt"} or raw["op"] != "development_result" or not isinstance(raw["receipt"], dict):
+            raise DeepError("deep_protocol_invalid")
+        return raw["receipt"]
+
+    def _request(self, payload: dict, *, cancelled=None, on_progress=None) -> dict:
         deadline = time.monotonic() + self.timeout
         _check_active(deadline, cancelled)
         if not self.socket_path:
@@ -119,7 +131,7 @@ class DeepClient:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
                 sock.settimeout(max(0, deadline - time.monotonic()))
                 sock.connect(self.socket_path)
-                write_frame(sock, RequestEnvelope(op="execute", spec=spec).model_dump(), deadline=deadline, cancelled=cancelled)
+                write_frame(sock, payload, deadline=deadline, cancelled=cancelled)
                 while True:
                     raw = read_frame(sock, deadline=deadline, cancelled=cancelled)
                     if raw.get("op") != "progress":
@@ -138,6 +150,5 @@ class DeepClient:
             code = ErrorEnvelope.model_validate(raw).code
             _check_active(deadline, cancelled)
             raise DeepError(code)
-        result = ResultEnvelope.model_validate(raw).result
         _check_active(deadline, cancelled)
-        return result
+        return raw
