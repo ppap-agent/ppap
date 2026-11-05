@@ -194,7 +194,7 @@ def test_no_personal_model_access_never_uses_environment_key(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "host-key")
     with model_access_scope(None):
         result = run_audit(*request(program))
-    assert all(row["status"] == "ERR" and row["suggestions"] == "checker_failure:ModelUnavailable" for row in result["findings"])
+    assert all(row["status"] == "UNABLE" and row["suggestions"] == "personal_model_unavailable_or_uncertain" for row in result["findings"])
 
 
 def test_clause_deadline_cannot_be_swallowed_by_legacy_fallback():

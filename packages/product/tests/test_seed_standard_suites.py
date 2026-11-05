@@ -44,10 +44,10 @@ class Store:
         return SimpleNamespace(id=kwargs["suite_key"])
 
 
-def test_seed_installs_41_immutable_sources_without_validation_or_publication():
+def test_seed_installs_customer_and_historical_sources_without_validation_or_publication():
     store = Store()
     result = seed_standard_suites(store)
-    assert len(store.created) == len(result) == 41
+    assert len(store.created) == len(result) == 75
     assert all(row["validation"] == "not-created" for row in result)
     existing = Store(existing=store.created)
     assert seed_standard_suites(existing) == result
@@ -60,3 +60,12 @@ def test_api_role_cannot_install_official_sources():
     store.role = "api"
     with pytest.raises(PermissionError, match="official_suite_write_forbidden"):
         seed_standard_suites(store)
+
+
+def test_revision_digest_matches_content_contract():
+    from audit.standard_suites import standard_suites
+    from audit.suite_migration import generic_standard_suites
+    from product.suites import content_digest, resolved_digest
+
+    for suite in (*standard_suites(), *generic_standard_suites(include_history=True)):
+        assert suite.revision_digest == resolved_digest(suite.suite_key, suite.related_suite_keys, {key: content_digest(value) for key, value in suite.files.items()})

@@ -263,10 +263,8 @@ def test_customer_intake_to_original_issue_and_frozen_precheck_export(running_pr
                 assert page.url == old_url
             assert not errors, errors
         except BaseException:
-            page.screenshot(path=str(Path("/tmp") / f"ppap-v4-real-browser-{customer}.png"), full_page=True)
-            raise
-        except Exception:
             print_page(page)
+            page.screenshot(path=str(Path("/tmp") / f"ppap-v4-real-browser-{customer}.png"), full_page=True)
             raise
         finally:
             context.close()

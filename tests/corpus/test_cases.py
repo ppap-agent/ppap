@@ -5,9 +5,9 @@ import os
 from pathlib import Path
 
 import pytest
-from corpus_contracts.oracle import OracleCase, build_round, load_oracle
+from agent.execution.audit_runtime import run_audit
+from corpus_contracts.oracle import OracleCase, build_round, load_oracle, programs_for
 from corpus_contracts.product_round import BLOCKING, compare_file, format_verdicts, severity
-from product import run_round_from_bytes
 
 
 def _is_pdf_case(case: OracleCase) -> bool:
@@ -40,7 +40,7 @@ def _write_report(rows: list[dict]) -> None:
 @pytest.mark.usefixtures("ocr_transport_diagnostics")
 def test_audit_case(audit_case: OracleCase, model_replay):
     work, blobs, totals = build_round(audit_case)
-    result = run_round_from_bytes(work, blobs)
+    result = run_audit(work, blobs, programs_for(work))
     rows, failures = [], []
     for file in audit_case.files:
         if file.role != "target":

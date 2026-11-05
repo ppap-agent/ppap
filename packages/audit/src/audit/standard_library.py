@@ -42,12 +42,19 @@ def check_clause(context: Any, resources: dict[str, Any]) -> AuditResultItem:
         context.on_close(checker)
     # Index is an internal adapter for a named, explicit library method. It
     # never assigns business clauses by order or infers coverage from a class.
-    names = [name for name, _ in discover_declared_rules(type(checker))]
+    declaration_type = getattr(type(checker), "TARGET_EXCEL_AGENT_CLASS", None) or type(checker)
+    names = [name for name, _ in discover_declared_rules(declaration_type)]
     if method not in names:
         raise ValueError("standard_suite_method_missing")
     index = names.index(method)
-    direct = getattr(checker, "_execute_rule_check", None)
-    item = direct(index + 1) if callable(direct) else checker.check(index)
+    if getattr(type(checker), "TARGET_EXCEL_AGENT_CLASS", None) is not None:
+        # The configured PDF carrier owns its conversion/native evidence policy.
+        # Never call its broad .check() exception fallback into generic AI.
+        delegate = checker.excel_agent
+        item = delegate._execute_rule_check(index + 1) if delegate is not None else checker._run_fallback_rule(index)
+    else:
+        direct = getattr(checker, "_execute_rule_check", None)
+        item = direct(index + 1) if callable(direct) else checker.check(index)
     if item is None:
         raise ValueError("standard_suite_missing_result")
     result = AuditResultItem.model_validate(item.model_dump())

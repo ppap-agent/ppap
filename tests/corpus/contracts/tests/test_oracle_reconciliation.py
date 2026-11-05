@@ -9,12 +9,19 @@ from corpus_contracts.oracle import EXPECTED_COLUMNS, FILE_COLUMNS, build_round,
 from corpus_contracts.product_round import BLOCKING, KNOWN_GAP, MATCH, OK, SETUP_FAILURE, STATUS_MISMATCH, RuleVerdict, compare_file, severity
 
 
+def suite_columns(document_type, *, group=None):
+    from audit.suite_migration import migrated_builtin_suite
+
+    suite = migrated_builtin_suite("v3", document_type)
+    return ["sha256:" + suite.revision_digest, group or suite.suite_key, ";".join(suite.entrypoints)]
+
+
 def write_oracle(tmp_path, *, files=None, expected=None):
     (tmp_path / "input.xlsx").write_bytes(b"original")
     tables = {
         "cases.csv": (
             FILE_COLUMNS,
-            files if files is not None else [["v3", "group", "target", "input.xlsx", "upload.xlsx", "target", "builtin:v3:控制计划", "v3.control_plan_agent.ControlPlanAgent"]],
+            files if files is not None else [["v3", "group", "target", "input.xlsx", "upload.xlsx", "target", *suite_columns("控制计划")]],
         ),
         "oracle.csv": (EXPECTED_COLUMNS, expected if expected is not None else [["v3", "group", "target", "1", "PASS", "Rule", "Human evidence", "", "", ""]]),
     }
@@ -27,8 +34,8 @@ def write_oracle(tmp_path, *, files=None, expected=None):
 
 
 def test_whole_combination_keeps_reference_without_asserting_it(tmp_path):
-    target = ["v3", "group", "target", "input.xlsx", "upload.xlsx", "target", "builtin:v3:控制计划", "v3.control_plan_agent.ControlPlanAgent"]
-    drawing = ["v3", "group", "drawing", "input.xlsx", "drawing.xlsx", "reference", "", ""]
+    target = ["v3", "group", "target", "input.xlsx", "upload.xlsx", "target", *suite_columns("控制计划")]
+    drawing = ["v3", "group", "drawing", "input.xlsx", "drawing.xlsx", "reference", "", "", ""]
     paths = write_oracle(tmp_path, files=[target, drawing])
     (case,) = load_oracle(**paths)
     assert [file.file_id for file in case.files] == ["target", "drawing"]
@@ -39,8 +46,8 @@ def test_whole_combination_keeps_reference_without_asserting_it(tmp_path):
     "change,match",
     [
         ("missing-original", "Missing original"),
-        ("invalid-route", "Invalid route"),
-        ("missing-group", "Invalid route"),
+        ("invalid-route", "Invalid Suite revision"),
+        ("missing-group", "Invalid Suite revision"),
         ("duplicate-file", "Duplicate file"),
         ("duplicate-rule", "Duplicate expectation"),
         ("orphan-rule", "no target"),
@@ -53,7 +60,7 @@ def test_whole_combination_keeps_reference_without_asserting_it(tmp_path):
     ],
 )
 def test_invalid_table_cannot_pass(tmp_path, change, match):
-    files = [["v3", "group", "target", "input.xlsx", "upload.xlsx", "target", "builtin:v3:控制计划", "v3.control_plan_agent.ControlPlanAgent"]]
+    files = [["v3", "group", "target", "input.xlsx", "upload.xlsx", "target", *suite_columns("控制计划")]]
     expected = [["v3", "group", "target", "1", "PASS", "Rule", "Evidence", "", "", ""]]
     if change == "missing-original":
         files[0][3] = "missing.xlsx"
@@ -72,7 +79,7 @@ def test_invalid_table_cannot_pass(tmp_path, change, match):
     if change == "unknown-status":
         expected[0][4] = "MAYBE"
     if change == "zero-assertions":
-        files.append(["v3", "group", "other", "input.xlsx", "other.xlsx", "target", "builtin:v3:控制计划", "v3.control_plan_agent.ControlPlanAgent"])
+        files.append(["v3", "group", "other", "input.xlsx", "other.xlsx", "target", *suite_columns("控制计划")])
     if change == "formula":
         expected[0][4] = '=IF(1,"PASS","NG")'
     if change == "gap-without-reason":
@@ -91,9 +98,9 @@ def test_all_real_tables_bind_every_assertion_to_a_declared_rule():
 
 
 def test_a_case_cannot_silently_run_on_another_checker_group(tmp_path):
-    files = [["v3", "group", "target", "input.xlsx", "upload.xlsx", "target", "builtin:v3:控制计划", "v3.pfmea_agent.PfmeaAgent"]]
+    files = [["v3", "group", "target", "input.xlsx", "upload.xlsx", "target", *suite_columns("控制计划", group="PPAP:潜在过程失效模式及后果分析")]]
     (case,) = load_oracle(**write_oracle(tmp_path, files=files))
-    with pytest.raises(ValueError, match="routed to v3.control_plan_agent.ControlPlanAgent"):
+    with pytest.raises(ValueError, match="Suite revision belongs to PPAP:控制计划"):
         build_round(case)
 
 

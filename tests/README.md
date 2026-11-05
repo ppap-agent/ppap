@@ -83,7 +83,7 @@ docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 `assets/corpus/` 只保存三类内容：
 
 - `documents/<数据集>/…`：原件，用提交时的文件名。
-- `cases.csv`：一次提交包含的文件。列为数据集、组合ID、文件ID、原件、提交文件名、角色、路由、Checker组。路由是 `builtin:v2:<类型>`、`builtin:v3:<类型>` 或 `preset:<客户>:<条目>`；Checker组是期望实际运行的类，路由结果不一致时用例在执行前失败。一组 checker 共享一个文件类型的布局读取，是开发和升级的单位。
+- `cases.csv`：一次提交包含的文件。列为数据集、组合ID、文件ID、原件、提交文件名、角色、Suite版本、Checker组、Binding。Suite版本是源内容的 `sha256:<digest>`，Checker组是 Suite key，Binding 是显式条款 ID 集合。原 PDF、Excel、DOCX 使用同一文档类型的 Suite；历史样例固定各自不可变 revision，不从旧 profile 或类名选择检查器。身份或 Binding 不一致在执行前失败。表驱动 runner 调用正式 guest 的 `run_audit` 函数，进程/授权/Worker 路径由 Runtime 集成测试覆盖。
 - `oracle.csv`：人工结论。列为数据集、组合ID、文件ID、条款ID、人工真值、条款说明、人工判定依据、判定人、判定日期、已知差距。
 
 规则原文和人工结果是开发 checker 的依据；产品里的规则文本只用于展示，测试和运行时都不比对正文。

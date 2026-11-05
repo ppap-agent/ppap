@@ -11,6 +11,7 @@ import json
 from typing import Any
 
 from audit.standard_suites import standard_suites
+from audit.suite_migration import generic_standard_suites
 
 
 def seed_standard_suites(store: Any) -> list[dict[str, str]]:
@@ -22,7 +23,7 @@ def seed_standard_suites(store: Any) -> list[dict[str, str]]:
     with store._conn() as conn, conn.transaction():
         # All platform seeding writers use the same transaction-level lock.
         conn.execute("SELECT pg_advisory_xact_lock(hashtextextended('ppap-standard-suite-seed', 0))")
-        for suite in standard_suites():
+        for suite in (*standard_suites(), *generic_standard_suites(include_history=True)):
             digest = resolved_digest(suite.suite_key, suite.related_suite_keys, {name: content_digest(body) for name, body in suite.files.items()})
             current = conn.execute(
                 "SELECT id FROM product.suite_revisions WHERE tenant_id IS NULL AND suite_key=%s AND resolved_digest=%s ORDER BY created_at DESC, id DESC LIMIT 1",
@@ -43,7 +44,11 @@ def main() -> None:
     parser.add_argument("--apply", action="store_true", help="Write official revisions using configured migrator and object storage credentials.")
     args = parser.parse_args()
     if not args.apply:
-        print(json.dumps({"suites": [suite.suite_key for suite in standard_suites()], "writes": False, "validation": "not-created"}, ensure_ascii=False))
+        print(
+            json.dumps(
+                {"suites": [suite.suite_key for suite in (*standard_suites(), *generic_standard_suites(include_history=True))], "writes": False, "validation": "not-created"}, ensure_ascii=False
+            )
+        )
         return
     from product.settings import Settings
     from product.store.suites import SuiteStore

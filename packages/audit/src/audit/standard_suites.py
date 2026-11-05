@@ -34,6 +34,11 @@ class StandardSuite:
     source_path: str
 
     @property
+    def revision_digest(self) -> str:
+        objects = {name: hashlib.sha256(body).hexdigest() for name, body in self.files.items()}
+        return hashlib.sha256(_json({"suite_key": self.suite_key, "related_suite_keys": sorted(self.related_suite_keys), "objects": objects})).hexdigest()
+
+    @property
     def program_files(self) -> dict[str, bytes]:
         return {name: value for name, value in self.files.items() if name in {"checker.py", "resources.py"}}
 
