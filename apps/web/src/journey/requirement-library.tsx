@@ -1,6 +1,6 @@
 // Stitch: projects/13261964020862199279/screens/9988350685214b589db5c26ca0920ee5
 // and projects/13261964020862199279/screens/de9558b8e43347e2a006989d2b41b790.
-import {useEffect, useRef, useState, type Dispatch, type MouseEvent, type SetStateAction} from 'react'
+import {useEffect, useRef, useState, type Dispatch, type MouseEvent, type ReactNode, type SetStateAction} from 'react'
 import {createPortal} from 'react-dom'
 import {ArrowLeft, ArrowRight, BookOpen, Check, ChevronDown, ChevronRight, GitBranch, Info, Loader2, Plus, Search, Trash2, UploadCloud} from 'lucide-react'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
@@ -62,7 +62,8 @@ function ClauseDifference({before, after, label}: {before?: RequirementClause; a
   </article>
 }
 
-export function RequirementLibraryPanel({collections, onChange, uses, onOpen, saveError, loading, readError, onReload, title = '审核规则', uploadLabel = '上传规则', onPublished, active = true, automaticMatching = false, directory, readVersions, readRevision = 0, headerActions}: {
+export function RequirementLibraryPanel({collections, onChange, uses, onOpen, saveError, loading, readError, onReload, title = '审核规则', uploadLabel = '上传规则', onPublished, active = true, automaticMatching = false, directory, readVersions, readRevision = 0, headerActions, catalogIntro}: {
+  catalogIntro?: ReactNode
   collections: RequirementCollection[]; onChange: Dispatch<SetStateAction<RequirementCollection[]>>
   uses: RequirementUse[]; onOpen: (id: string) => void; saveError: string
   loading: boolean; readError: string; onReload: () => void
@@ -232,6 +233,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
     {(upload.error || saveError) && <Alert variant="destructive"><AlertTitle>未能保存</AlertTitle><AlertDescription>{upload.error || saveError}</AlertDescription></Alert>}
     {feedback && <p role={feedback.failed ? 'alert' : 'status'} className={feedback.failed ? 'text-destructive' : 'text-muted-foreground'}>{feedback.text}</p>}
     {!selection.id ? <>
+      {catalogIntro}
       {(!loading || shown.length > 0) && <div role="search" aria-label="筛选审核规则" className="flex max-w-xl items-center gap-2"><Search className="size-4 shrink-0 text-muted-foreground" aria-hidden="true"/><Input aria-label="搜索审核规则" type="search" placeholder="搜索要求、客户或零件" maxLength={200} value={query} onChange={event => search(event.target.value)}/>{query && <Button variant="ghost" onClick={() => search('')}>清除</Button>}</div>}
       {shown.length ? <>
         <div className="max-lg:hidden"><Table className="table-fixed"><TableHeader><TableRow><TableHead className="w-[40%]">要求名称</TableHead><TableHead>适用范围</TableHead><TableHead className="w-36">最近版本</TableHead><TableHead className="w-16">条款</TableHead><TableHead className="w-10"><span className="sr-only">打开</span></TableHead></TableRow></TableHeader><TableBody>{shown.map(item => {

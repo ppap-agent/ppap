@@ -219,6 +219,7 @@ class RuleLibraryEntry(TypedDict):
     created_at: str
     predecessor_id: str | None
     clause_count: int
+    document_type: str
 
 
 class RuleLibrary(TypedDict):

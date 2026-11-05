@@ -277,7 +277,7 @@ def test_a_legacy_round_without_a_task_keeps_its_result_without_inventing_a_repo
         calls, _content = round_report_routes(page, access=None)
         page.goto(WEB + f"/audit?round={ROUND}&file={VERSION}")
         expect(page.get_by_role("heading", name="原控制计划.xlsx", exact=True)).to_be_visible()
-        checks = page.get_by_role("tabpanel", name="审核项 (1)", exact=True)
+        checks = page.get_by_role("region", name="审核项", exact=True)
         expect(checks.get_by_text("原签字要求", exact=True)).to_be_visible()
         expect(checks.get_by_text("不符合", exact=True)).to_be_visible()
         expect(page.get_by_role("button", name="查看报告", exact=True)).to_be_disabled()

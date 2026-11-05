@@ -22,6 +22,7 @@ export function ArchiveHistory({document, documentId, initialAddress, onNavigate
   const [selected, setSelected] = useState<HistoryEntry | null>(null), [detail, setDetail] = useState<HistoryDetail | null>(null)
   const [loading, setLoading] = useState(true), [error, setError] = useState(''), [reload, setReload] = useState(0), [listReload, setListReload] = useState(0)
   const [open, setOpen] = useState(false), [reportView, setReportView] = useState(initialAddress.report)
+  const [previous, setPrevious] = useState<{sequence: number; detail: HistoryDetail} | null>(null)
   const epoch = useRef(0)
   const preliminary = useRef<{reference: ResultReference; read: Promise<HistoryDetail>} | null>(null)
   useEffect(() => {
@@ -63,6 +64,16 @@ export function ArchiveHistory({document, documentId, initialAddress, onNavigate
     }}).finally(() => {if (epoch.current === run) setLoading(false)})
     return () => {epoch.current += 1}
   }, [adapter, documentId, selected, reload])
+  // Compare with the nearest earlier completed audit; a failed read only omits the comparison.
+  const earlier = selected && history?.entries.filter(row => row.sequence < selected.sequence && row.execution === 'completed').sort((a, b) => b.sequence - a.sequence)[0]
+  const detailShown = Boolean(detail)
+  useEffect(() => {
+    setPrevious(null)
+    if (!earlier || !detailShown) return
+    let current = true
+    void adapter.readHistory(documentId, structuredClone(earlier.reference)).then(result => {if (current) setPrevious({sequence: earlier.sequence, detail: result})}).catch(() => {})
+    return () => {current = false}
+  }, [adapter, documentId, detailShown, earlier?.reference.task_id, earlier?.reference.round_id, earlier?.reference.file_version_id, earlier?.reference.result_attempt])
   function choose(entry: HistoryEntry) {setOpen(false); if (selected && sameSnapshot(selected.reference, entry.reference)) return; epoch.current += 1; setReportView(false); setDetail(null); setSelected(entry); onNavigate(entry.reference, false)}
   const list = <nav aria-label="历次审核" className="grid divide-y">{history?.entries.map(entry => <Button key={resultKey(entry.reference)} variant="ghost" size="row" aria-label={`选择第 ${entry.sequence} 次审核`} aria-pressed={Boolean(selected && sameSnapshot(selected.reference, entry.reference))} className="items-start" onClick={() => choose(entry)}><span className="grid min-w-0 flex-1 gap-2"><span className="flex flex-wrap items-center gap-2 font-medium">第 {entry.sequence} 次审核{sameSnapshot(entry.reference, history.default_reference) && <Badge variant="outline">最新完成</Badge>}</span><span className="flex flex-wrap items-center gap-2 text-xs"><Badge shape="square" variant={entry.execution === 'review_failed' ? 'destructive' : resultTone(entry.conclusion)}>{labels[entry.execution]}{entry.conclusion ? ` · ${conclusionLabel[entry.conclusion] ?? '结果未知'}` : ''}</Badge><time dateTime={entry.audited_at} className="text-muted-foreground">{new Date(entry.audited_at).toLocaleString('zh-CN', {hour12: false})}</time></span><span className="text-xs text-muted-foreground">{entry.initiator} · 原件修订：{entry.source_revision || '未提供修订标识'}</span></span>{selected && sameSnapshot(selected.reference, entry.reference) && <Check className="mt-0.5 shrink-0"/>}</Button>)}</nav>
   return <section aria-label="文档历史审核">{reportView && detail && <HistoryReport detail={detail} adapter={reportAdapter} sharingAdapter={sharingAdapter} onChange={next => setDetail(latest => latest && sameSnapshot(latest.entry.reference, next.entry.reference) ? next : latest)} onBack={() => {setReportView(false); onNavigate(detail.entry.reference, false)}} onRead={() => {setDetail(null); setReload(value => value + 1)}}/>}
@@ -76,7 +87,7 @@ export function ArchiveHistory({document, documentId, initialAddress, onNavigate
       </header>
       {loading && <ReadSkeleton label="正在读取这次审核…" kind={detail ? 'inline' : 'detail'} className="px-6 py-5 max-sm:px-4"/>}
       {error && <div className="px-6 py-5 max-sm:px-4"><Alert variant="destructive"><AlertTitle>这次记录读取未完成</AlertTitle><AlertDescription>{error}<Button variant="outline" onClick={() => history ? setReload(value => value + 1) : setListReload(value => value + 1)}>重新读取这次审核</Button></AlertDescription></Alert></div>}
-      {detail && <AuditReviewContent key={resultKey(detail.entry.reference)} file={detail.file} showFileTitle={false} roundId={detail.entry.reference.round_id} frozenFileVersionIds={detail.frozen_file_version_ids} originals={detail.originals} renderOriginal={renderOriginal} onReport={() => {setReportView(true); onNavigate(detail.entry.reference, true)}}/>}
+      {detail && <AuditReviewContent key={resultKey(detail.entry.reference)} previous={previous?.detail.file.audit ? {label: `第 ${previous.sequence} 次审核`, checks: previous.detail.file.audit.checks} : null} file={detail.file} showFileTitle={false} roundId={detail.entry.reference.round_id} frozenFileVersionIds={detail.frozen_file_version_ids} originals={detail.originals} renderOriginal={renderOriginal} onReport={() => {setReportView(true); onNavigate(detail.entry.reference, true)}}/>}
       {history && !selected && !loading && <p className="px-6 py-5 max-sm:px-4">尚无完成审核。可以选择已有记录查看进度或异常。</p>}
     </div>
   </section>

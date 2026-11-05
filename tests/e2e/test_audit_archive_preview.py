@@ -99,6 +99,10 @@ class AuditArchivePreviewTests(unittest.TestCase):
                         expect(events.get_by_text("历史审核详情", exact=True)).to_have_count(1)
                         events.get_by_role("button", name=re.compile("返回示例读取 ")).click()
                     expect(page.get_by_role("region", name="审核详情", exact=True)).to_be_visible()
+                    # Only the displayed result starts the read of the earlier audit it is compared with.
+                    expect(events.get_by_text("历史审核详情", exact=True)).to_have_count(1)
+                    events.get_by_role("button", name=re.compile("返回示例读取 ")).click()
+                    expect(page.get_by_role("region", name="与上次审核对比", exact=True)).to_contain_text("与第 2 次审核相比")
                     expect(events.get_by_role("button")).to_have_count(0)
             browser.close()
 
@@ -115,6 +119,8 @@ class AuditArchivePreviewTests(unittest.TestCase):
             expect(events.get_by_text("历史审核详情", exact=True)).to_have_count(1)
             events.get_by_role("button", name=re.compile("返回示例读取 ")).click()
             expect(page.get_by_role("region", name="审核详情", exact=True)).to_be_visible()
+            expect(events.get_by_text("历史审核详情", exact=True)).to_have_count(1)
+            events.get_by_role("button", name=re.compile("返回示例读取 ")).click()
             expect(events.get_by_role("button")).to_have_count(0)
             page.get_by_role("button", name="返回文件档案", exact=True).click()
             expect(events.get_by_text("文件档案清单", exact=True)).to_have_count(1)
@@ -224,7 +230,7 @@ class AuditArchivePreviewTests(unittest.TestCase):
                     expect(details.get_by_role("button", name="查看报告", exact=True)).to_be_enabled()
                     expect(details.get_by_text("不符合 0 · 符合 2", exact=True)).to_be_visible()
                     if width >= 1024:
-                        self.assertLess(details.get_by_role("table").bounding_box()["y"] - heading.bounding_box()["y"], 300)
+                        self.assertLess(details.get_by_role("table").bounding_box()["y"] - heading.bounding_box()["y"], 380)
                     else:
                         self.assertGreater(heading.bounding_box()["width"], 240)
                         self.assertLess(heading.bounding_box()["height"], 32)

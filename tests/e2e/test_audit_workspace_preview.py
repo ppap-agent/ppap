@@ -168,10 +168,10 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
                         details = page.get_by_role("region", name="审核详情", exact=True)
                         heading = page.get_by_role("heading", name="审核结果", exact=True).bounding_box()
                         table = details.get_by_role("table").bounding_box()
-                        self.assertLess(table["y"] - heading["y"], 295)
-                        tabs = details.get_by_role("tablist").bounding_box()
+                        self.assertLess(table["y"] - heading["y"], 380)
+                        title = details.get_by_role("heading", name=re.compile(r"^审核项 \(")).bounding_box()
                         search = details.get_by_role("textbox", name="搜索审核项", exact=True).bounding_box()
-                        self.assertLessEqual(abs(tabs["y"] + tabs["height"] / 2 - search["y"] - search["height"] / 2), 4)
+                        self.assertLessEqual(abs(title["y"] + title["height"] / 2 - search["y"] - search["height"] / 2), 4)
                         for file in queue.get_by_role("button").all():
                             self.assertEqual(file.evaluate("element => getComputedStyle(element).borderRadius"), "0px")
                         expect(page.get_by_role("banner").get_by_role("button", name="报告中心", exact=True)).to_be_visible()

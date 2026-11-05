@@ -7,6 +7,7 @@ import type {components} from '../generated/openapi'
 import {groupRequirementDirectory, type RequirementDirectoryCollection} from '../journey/requirement-directory'
 import {message} from '../journey/remote'
 import {useSavedDraft} from '../journey/saved-draft'
+import {RuleCoverage} from './rule-coverage'
 
 export function AuditRules({onPublished, active, headerActions}: {onPublished: () => void; active: boolean; headerActions?: HTMLElement | null}) {
   const library = useSavedDraft('requirement-library', () => ({collections: []}), isRequirementLibrary)
@@ -14,6 +15,7 @@ export function AuditRules({onPublished, active, headerActions}: {onPublished: (
   const [read, setRead] = useState({loading: true, error: ''})
   const [revision, setRevision] = useState(0)
   const [directory, setDirectory] = useState<RequirementDirectoryCollection[]>([])
+  const [entries, setEntries] = useState<components['schemas']['RuleLibraryEntry'][]>([])
   useEffect(() => {
     if (!active) return
     const controller = new AbortController()
@@ -21,9 +23,10 @@ export function AuditRules({onPublished, active, headerActions}: {onPublished: (
     void request<components['schemas']['RuleLibrary']>('/rule-library', 'GET', undefined, controller.signal).then(result => {
       if (controller.signal.aborted) return
       setDirectory(groupRequirementDirectory(result.versions))
+      setEntries(result.versions)
       setRead({loading: false, error: ''})
     }).catch(cause => {if (!controller.signal.aborted) setRead({loading: false, error: message(cause)})})
     return () => controller.abort()
   }, [revision, active])
-  return <RequirementLibraryPanel headerActions={headerActions} title="审核规则" uploadLabel="上传规则" automaticMatching active={active} collections={collections} onChange={setCollections} directory={directory} readVersions={readRuleVersions} readRevision={revision} uses={[]} onOpen={() => {}} saveError={library.saveError} loading={read.loading} readError={read.error} onReload={() => setRevision(value => value + 1)} onPublished={() => {setRevision(value => value + 1); onPublished()}}/>
+  return <RequirementLibraryPanel catalogIntro={<RuleCoverage entries={entries} active={active}/>} headerActions={headerActions} title="审核规则" uploadLabel="上传规则" automaticMatching active={active} collections={collections} onChange={setCollections} directory={directory} readVersions={readRuleVersions} readRevision={revision} uses={[]} onOpen={() => {}} saveError={library.saveError} loading={read.loading} readError={read.error} onReload={() => setRevision(value => value + 1)} onPublished={() => {setRevision(value => value + 1); onPublished()}}/>
 }
