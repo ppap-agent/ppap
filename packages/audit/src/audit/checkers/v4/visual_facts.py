@@ -197,6 +197,9 @@ def _read_paddle_visual_facts(
 _EXISTENCE_FIELDS = frozenset({"seal", "controlled_stamp", "authorization_table_present", "authorization_company_stamp_present", "before", "during", "after"})
 
 
+_MAX_SUBMISSION_OPTIONS = 12
+
+
 def _pdf_section(page, starts, stops):
     anchors = [box for label in starts for box in page.search_for(label)]
     if not anchors:
@@ -253,6 +256,18 @@ def pdf_field_region(page, fields):
             bottom = min(following, default=page.rect.y1) - 2
             primary = fitz.Rect(max(0, anchor.x0 - 8), max(0, anchor.y0 - 8), page.rect.x1, bottom)
     return primary
+
+
+def _submission_option_regions(page, section):
+    """Each reason's box with its label: forms exported from Excel keep these boxes as tiny images, unreadable in the whole section."""
+    boxes: list[fitz.Rect] = []
+    for item in page.get_image_info():
+        mark = fitz.Rect(item["bbox"])
+        if not (4 <= mark.width <= 16 and 4 <= mark.height <= 16 and mark.intersects(section)):
+            continue
+        if not any(abs(mark.x0 - box.x0) < 3 and abs(mark.y0 - box.y0) < 3 for box in boxes):
+            boxes.append(mark)
+    return [fitz.Rect(box.x0 - 3, box.y0 - 3, box.x1 + 70, box.y1 + 3) & section for box in sorted(boxes, key=lambda box: (box.x0, box.y0))]
 
 
 def _pdf_images(audit, pages: Sequence[int], digest: str, fields=None):
@@ -334,12 +349,16 @@ def _pdf_images(audit, pages: Sequence[int], digest: str, fields=None):
                         option_regions.append((fitz.Rect(max(primary.x0, box.x0 - box.height * 4), primary.y0, min(primary.x1, box.x1 + box.height), primary.y1), True))
                 if len(option_regions) == 3:
                     page_regions = option_regions
+            option_views = []
+            if primary != page.rect and requested.issubset({"submission_any_checked", "submission_other_present"}):
+                option_views = _submission_option_regions(page, primary)[:_MAX_SUBMISSION_OPTIONS]
+                page_regions = [*page_regions, *((region, False) for region in option_views)]
             pixel_budget = min(12_000_000, 32_000_000 / len(pages) / len(page_regions))
             for bounds, complete in page_regions:
                 area = bounds.width * bounds.height
                 if not math.isfinite(area) or area <= 0:
                     raise VisualFactsUnavailable("原页区域尺寸无效。")
-                local_scale = 8 if requested and requested.issubset(_SEAL_FIELDS) else 4
+                local_scale = 8 if requested and requested.issubset(_SEAL_FIELDS) else 12 if bounds in option_views else 4
                 base_scale = 1.5 if complete and primary == page.rect else local_scale
                 scale = min(base_scale, math.sqrt(pixel_budget / area), 4096 / max(bounds.width, bounds.height))
                 pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=bounds, alpha=False)

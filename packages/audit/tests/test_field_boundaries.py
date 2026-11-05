@@ -1,6 +1,7 @@
 """Field identity and scope prevent evidence from a neighbouring field passing a rule."""
 
 from io import BytesIO
+from pathlib import Path
 from types import SimpleNamespace
 
 import fitz
@@ -296,3 +297,13 @@ def test_submission_result_options_cannot_share_a_neighbouring_checked_control(t
         assert result.status == ("PASS" if appearance_checked else "NG")
     finally:
         agent.close()
+
+
+def test_submission_reason_sends_each_small_box_enlarged_beside_its_label():
+    source = next((Path(__file__).resolve().parents[3] / "assets").rglob("16-零件提交保证书-上海亚大.40603.pdf"))
+    images, _ = _pdf_images(SimpleNamespace(file_url=str(source), audit_id="v"), [2], "a" * 64, {"submission_any_checked", "submission_other_present"})
+    section, *options = images
+    assert section.locator["context"] is True
+    assert len(options) == 10
+    assert all(view.locator["located_region"] is True and view.locator["context"] is False for view in options)
+    assert all(view.width >= 800 for view in options)
