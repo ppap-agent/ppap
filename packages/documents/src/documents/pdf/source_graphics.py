@@ -13,13 +13,106 @@ def annotate_native_cells(source: bytes, page_index: int, grid: Any, *, toleranc
     with fitz.open(stream=source, filetype="pdf") as document:
         page = document[page_index]
         visual = native_visual_overlaps(page, rectangles, tolerance=tolerance, grid_axes=(grid.cols, grid.rows))
+        readable = native_text_visibility(page, rectangles, [cell.content for cell in grid.cells], tolerance=tolerance, visuals=visual)
         transformed = bool(page.rotation or page.cropbox_position.x or page.cropbox_position.y)
-        for cell, bounds, unknown in zip(grid.cells, rectangles, visual, strict=True):
-            if unknown or transformed:
+        for cell, bounds, unknown, text_readable in zip(grid.cells, rectangles, visual, readable, strict=True):
+            if (unknown and text_readable is not True) or text_readable is False or transformed:
                 cell.is_unknown = True
                 cell.source_page = page_index + 1
                 cell.source_bbox = None if transformed else tuple(bounds)
                 cell.source_value = cell.content
+
+
+def native_text_visibility(page: Any, cells: list[list[float]], values: list[str], *, tolerance: float = 1.0, visuals: list[bool] | None = None) -> list[bool | None]:
+    """Confirm native scalar text without interpreting neighbouring graphics.
+
+    A cell can contain a separate mark while its native text remains readable.
+    A later fill / image over that text cannot be ignored as a background.
+    Empty cells make no scalar claim and retain the full-cell visual guard.
+    """
+    import fitz
+
+    if not any(value.strip() for value in values):
+        return [None] * len(values)
+    try:
+        traces = page.get_texttrace()
+        textpage = page.get_textpage()
+        drawings = page.get_drawings()
+        images = [(index, bounds) for index, (kind, bounds) in enumerate(page.get_bboxlog()) if kind == "fill-image"]
+        overlays = [list(item.rect) for item in (page.annots() or ())] + [list(item.rect) for item in (page.widgets() or ())]
+        underlines = native_text_underlines(page, drawings, tolerance=tolerance)
+    except (AttributeError, TypeError, ValueError):
+        return [None] * len(values)
+
+    def compact(value: str) -> str:
+        return "".join(value.split())
+
+    result: list[bool | None] = []
+    first_text = min((trace["seqno"] for trace in traces), default=float("inf"))
+    covering_fills = [tuple(drawing["rect"]) for drawing in drawings if drawing.get("fill") is not None and drawing.get("fill_opacity", 1) > 0 and drawing.get("seqno", 0) > first_text]
+    drawing_bounds = [(index, drawing, _expanded(drawing["rect"], float(drawing.get("width") or 0) / 2)) for index, drawing in enumerate(drawings) if index not in underlines]
+    for position, (cell, value) in enumerate(zip(cells, values, strict=True)):
+        # The existing grid guard already proves ordinary border/background
+        # cells safe. Only recheck graphic cells and later whole-cell masks.
+        if (
+            visuals is not None
+            and not visuals[position]
+            and not any(bounds[0] <= cell[0] + tolerance and bounds[1] <= cell[1] + tolerance and bounds[2] >= cell[2] - tolerance and bounds[3] >= cell[3] - tolerance for bounds in covering_fills)
+        ):
+            result.append(None)
+            continue
+        required = compact(value)
+        if not required or required not in compact(textpage.extractTextbox(fitz.Rect(cell))):
+            result.append(None)
+            continue
+        characters = [
+            (chr(character[0]), character[3], trace["seqno"])
+            for trace in traces
+            if trace.get("type") != 3 and trace.get("opacity", 1) > 0 and _intersects(cell, trace["bbox"])
+            for character in trace["chars"]
+            if not chr(character[0]).isspace() and cell[0] <= (character[3][0] + character[3][2]) / 2 <= cell[2] and cell[1] <= (character[3][1] + character[3][3]) / 2 <= cell[3]
+        ]
+        start = "".join(character for character, _bounds, _sequence in characters).find(required)
+        if start < 0:
+            characters.sort(key=lambda item: (round((item[1][1] + item[1][3]) / 2, 1), item[1][0]))
+            start = "".join(character for character, _bounds, _sequence in characters).find(required)
+        if start < 0:
+            result.append(None)
+            continue
+        characters = characters[start : start + len(required)]
+        spans: dict[tuple[int, float], list[float]] = {}
+        for _character, bounds, sequence in characters:
+            key = (sequence, round((bounds[1] + bounds[3]) / 2, 1))
+            if key not in spans:
+                spans[key] = list(bounds)
+            else:
+                previous = spans[key]
+                spans[key] = [min(previous[0], bounds[0]), min(previous[1], bounds[1]), max(previous[2], bounds[2]), max(previous[3], bounds[3])]
+        local_drawings = [(index, drawing, bounds) for index, drawing, bounds in drawing_bounds if _intersects(cell, bounds)]
+        obscured = False
+        for (sequence, _line), bounds in spans.items():
+            if any(_intersects(bounds, overlay) for overlay in overlays) or any(index > sequence and _intersects(bounds, image) for index, image in images):
+                obscured = True
+                break
+            for _index, drawing, drawing_box in local_drawings:
+                if not _intersects(bounds, drawing_box):
+                    continue
+                if drawing.get("fill") is not None and drawing.get("fill_opacity", 1) > 0 and drawing.get("seqno", sequence + 1) > sequence:
+                    obscured = True
+                    break
+                if drawing.get("color") is not None and drawing.get("stroke_opacity", 1) > 0:
+                    stroke = {**drawing, "fill": None}
+                    if _vector_inside(stroke, _expanded(bounds, float(drawing.get("width") or 0) / 2), 0, set()):
+                        obscured = True
+                        break
+            if obscured:
+                break
+        result.append(not obscured)
+    return result
+
+
+def _expanded(bounds: Any, amount: float) -> list[float]:
+    return [bounds[0] - amount, bounds[1] - amount, bounds[2] + amount, bounds[3] + amount]
 
 
 def native_visual_overlaps(page: Any, cells: list[list[float]], *, tolerance: float = 1.0, grid_axes: tuple[list[float], list[float]] | None = None) -> list[bool]:

@@ -197,7 +197,7 @@ class PDFAgent(BaseAgent):
         from audit.engine.runtime import get_runtime
 
         declared = getattr(type(self), "DOC_TYPE", None)
-        doc_type = declared if isinstance(declared, PpapDocumentType) else PpapDocumentType.from_string(str(self.rule.type or ""))
+        doc_type: PpapDocumentType | None = declared if isinstance(declared, PpapDocumentType) else PpapDocumentType.from_string(str(self.rule.type or ""))
         if doc_type == PpapDocumentType.UNKNOWN:
             doc_type = None
         runtime = get_runtime()

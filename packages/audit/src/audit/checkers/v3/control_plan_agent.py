@@ -1,8 +1,11 @@
 """控制计划审核代理（含跨文件一致性规则）。"""
 
+import hashlib
+import json
 import logging
 import re
 from collections import Counter
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
@@ -48,6 +51,7 @@ from audit.checkers.v3.cross_file_extractors import (
     prepend_row_location,
 )
 from audit.checkers.v3.excel_agent import ExcelAgent, rule
+from audit.contracts import AuditEvidence, AuditResultItem, EvidenceDiagnostic, EvidenceSource
 from audit.engine.checkers.control_plan_section_headers import (
     detail_section_header_merge,
     detail_table_bounds,
@@ -122,6 +126,8 @@ class ControlPlanAgent(ExcelAgent):
     """Control Plan 专用审核代理。"""
 
     DOC_TYPE = PpapDocumentType.CONTROL_PLAN
+    _xls_stage_cache: dict[object, Any]
+    _xls_stage_evidence: AuditEvidence | None = None
     EXPECTED_RULE_CATEGORIES = (
         "文件类型勾选审核",
         "过程流程图与控制计划列项及一致性审核",
@@ -135,6 +141,100 @@ class ControlPlanAgent(ExcelAgent):
         "措施一致性审核（PFMEA与CP）",
         "措施一致性审核（特殊特性清单与CP）",
     )
+
+    def _read_original_xls_stage(self, sheet_name: str) -> Tuple[str, str]:
+        """Read only the original header graphics that the XLS cell loader drops."""
+        from documents.excel.visual import render_xls_header
+        from documents.ocr.env import ocr_model_name, ocr_openai_api_key, ocr_openai_base_url, ocr_policy_identity
+        from PIL import Image
+
+        from audit.engine.app_runtime import _load_file_bytes
+        from audit.engine.checkers.ocr_visual_facts import OcrImage, observe_ocr_images
+
+        self._xls_stage_evidence = None
+        try:
+            configured = bool(ocr_model_name() and ocr_openai_api_key() and ocr_openai_base_url())
+        except ValueError:
+            configured = False
+        if not configured:
+            return "UNABLE", "原XLS阶段图形需要已配置的OCR，不能用阶段文字确认勾选。"
+        content, _ = _load_file_bytes(str(self.audit_file.file_url))
+        digest = hashlib.sha256(content).hexdigest()
+        metadata = self.audit_file.file_metadata or {}
+        expected = metadata.get("source_sha256") or metadata.get("sha256")
+        cache: dict[object, Any] | None = getattr(self, "_xls_stage_cache", None)
+        if cache is None:
+            cache = self._xls_stage_cache = {"source_sha256": digest}
+        if expected and expected != digest or cache["source_sha256"] != digest:
+            raise ValueError("Frozen XLS identity changed")
+        key = (sheet_name, _HEADER_SCAN_ROWS, ocr_policy_identity())
+        if key not in cache:
+            sources: list[EvidenceSource] = []
+
+            def witness(locator, excerpt, *, visual=False):
+                sources.append(EvidenceSource(kind="visual", locator=json.dumps(locator, ensure_ascii=False, sort_keys=True), excerpt=excerpt))
+
+            try:
+                image_bytes = render_xls_header(content, sheet_name=sheet_name, header_rows=_HEADER_SCAN_ROWS)
+                with Image.open(BytesIO(image_bytes)) as image:
+                    width, height = image.size
+                image_ref = OcrImage(
+                    image_bytes,
+                    {
+                        "kind": "xls_header",
+                        "source_sha256": digest,
+                        "file_version_id": str(metadata.get("file_version_id") or self.audit_file.audit_id),
+                        "sheet": sheet_name,
+                        "row_start": 1,
+                        "row_end": _HEADER_SCAN_ROWS,
+                        "scope": f"xls:{sheet_name}:header",
+                        "context": True,
+                        "bbox": [0, 0, width, height],
+                    },
+                    width,
+                    height,
+                )
+                facts = observe_ocr_images(
+                    [image_ref],
+                    {
+                        "production_stage_selected": (
+                            "表头中的生产、批量生产、量产或SOP选项是否实际勾选。必须看实际原件绘图：对应框内有勾、叉或实心填充为true，清楚完整的空框为false；"
+                            "看不清图形或不能将框唯一关联到生产选项为null。不能凭生产阶段文字、选项位置或业务常识推断。"
+                        )
+                    },
+                    witness,
+                )
+                cache[key] = (facts["production_stage_selected"], tuple(sources))
+            except Exception as exc:
+                cache[key] = exc
+        observation = cache[key]
+        if isinstance(observation, Exception):
+            self._xls_stage_evidence = AuditEvidence(
+                required="visual",
+                used="none",
+                source_format="xls",
+                prepared_format="png",
+                diagnostics=(EvidenceDiagnostic(code="control_plan.stage_read_error", stage="visual", severity="error", message="原件阶段图形读取失败。"),),
+            )
+            raise ValueError(f"旧XLS原件图形读取失败（{type(observation).__name__}）。") from None
+        selected, observed_sources = observation
+        self._xls_stage_evidence = AuditEvidence(
+            required="visual",
+            used="visual" if observed_sources else "none",
+            source_format="xls",
+            prepared_format="png",
+            conversion_strategies=("local_calc_header_render", "ocr_llm"),
+            sources=observed_sources,
+            diagnostics=() if selected is not None else (EvidenceDiagnostic(code="control_plan.stage_unconfirmed", stage="visual", severity="warning", message="原件阶段勾选尚不能确认。"),),
+        )
+        if selected is None:
+            return "UNABLE", "原件阶段勾选尚不能确认，请核对原件。"
+        return ("PASS", "原件生产阶段勾选已确认。") if selected is True else ("NG", "原件生产/SOP阶段未勾选。")
+
+    def _finalize_audit_result(self, result: AuditResultItem, *, rule_no: int, phase: Any, ctx: RuleContext | None = None) -> AuditResultItem:
+        if rule_no == 1 and getattr(self, "_xls_stage_evidence", None) is not None:
+            result = result.model_copy(update={"evidence": self._xls_stage_evidence})
+        return super()._finalize_audit_result(result, rule_no=rule_no, phase=phase, ctx=ctx)
 
     @staticmethod
     def _workbook_from_ctx(ctx: RuleContext) -> Any:
@@ -1911,7 +2011,7 @@ class ControlPlanAgent(ExcelAgent):
                 # 5) 有 stage 关键词但无 mark → 未勾选任何阶段
                 for sr, sc, scl in stage_cells:
                     if self._is_legacy_xls_stage_header_cell(sheet, sr, sc, scl):
-                        return "UNABLE", "原XLS的勾选图形未保留，不能用阶段文字确认实际选择，请核对原件。"
+                        return self._read_original_xls_stage(sheet.title)
                 metadata = getattr(self.audit_file, "file_metadata", None)
                 source_url = str(metadata.get("source_pdf_url", "") or "") if isinstance(metadata, dict) else ""
                 file_url = str(getattr(self.audit_file, "file_url", "") or "")

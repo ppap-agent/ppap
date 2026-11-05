@@ -17,7 +17,7 @@
 import logging
 from typing import Tuple
 
-from audit.engine.rule_engine import Decision, RuleContext, Table
+from audit.engine.rule_engine import Cell, Decision, RuleContext, Table
 from audit.kinds import PpapDocumentType
 
 from .excel_agent import ExcelAgent, rule
@@ -180,8 +180,13 @@ class MsaReportAgent(ExcelAgent):
         block = Table(ctx).field_block("R&R结论字段区")
         block.expect("R&R可接受结论", context="R&R结论字段区")
 
-        check_cell_value = block.value("R&R可接受结论勾选标记", compact=True)
+        conclusion = block.field("R&R可接受结论").resolved
+        if conclusion is None or conclusion.label_col <= 1:
+            return "NG", "R&R分析结论未提供相邻勾选位置"
+        # The choice is adjacent to its label. A wider leftward search can
+        # consume an unrelated R&R calculation instead of the actual marker.
+        check_cell_value = Cell(ctx, conclusion.ws, conclusion.label_row, conclusion.label_col - 1).value(compact=True)
         logger.info(f"找到R&R结论勾选状态: {check_cell_value}")
-        if block.checked_count("R&R可接受结论勾选标记") > 0 or check_cell_value in {"√", "☑", "✔", "✓"}:
+        if any(marker in str(check_cell_value or "") for marker in {"√", "☑", "✔", "✓"}):
             return "PASS", ""
         return "NG", "R&R分析结论不符合要求"

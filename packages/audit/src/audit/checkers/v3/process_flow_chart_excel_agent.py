@@ -21,7 +21,7 @@ from audit.checkers.v3.cross_file_extractors import (
     normalize_key,
     normalize_text,
 )
-from audit.engine.rule_engine import RuleContext, Table
+from audit.engine.rule_engine import RuleContext, Sheet, Table
 from audit.kinds import PpapDocumentType
 
 from .excel_agent import ExcelAgent, rule
@@ -274,6 +274,27 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
         """
         table = Table(ctx)
         block = table.field_block("过程流程图头部字段区")
+        # Native vertical headers can use bilingual labels outside the exact
+        # resource aliases. Equal merged spans establish the value's location;
+        # a known blank there proves this required field is empty even when
+        # another header field remains unreadable.
+        for ws in block.resolved.worksheets:
+            sheet = Sheet(ctx, ws)
+            label = sheet.find_label((("修订日期",), ("revision", "date")), row_max=80, col_max=80)
+            if label is None:
+                continue
+            heading = ctx.ops.get_detailed_merge_info(ws, label.row_index, label.col_index)
+            if heading is None or heading.min_row != heading.max_row:
+                continue
+            value_row = heading.max_row + 1
+            value = ctx.ops.get_detailed_merge_info(ws, value_row, heading.min_col)
+            if value is None or value.min_row != value_row or (value.min_col, value.max_col) != (heading.min_col, heading.max_col):
+                continue
+            if not sheet.cell(value_row, heading.min_col).has_data():
+                message = f"工作表 {ws.title} 修订日期字段的原生值区域为空"
+                ctx.record_ng(message)
+                return "NG", message
+            break
 
         required_non_empty_field_names = (
             "零件号字段",

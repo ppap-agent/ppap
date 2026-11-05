@@ -173,7 +173,8 @@ def test_expanded_outer_grid_backgrounds_should_preserve_known_blank(tmp_path):
 
 def test_native_text_remains_observed_when_uninterpreted_vector_overlaps(tmp_path):
     cell = checked(vector_pdf(tmp_path, "circle", native_text=True))["tables"][0]["cells"]["A2"]
-    assert (cell["value"], cell["state"], cell["visual_overlap"]) == ("Native", "unknown_visual_evidence", True)
+    assert (cell["value"], cell["state"], cell["visual_overlap"]) == ("Native", "known", True)
+    assert cell["native_text_unobscured"] is True
     assert cell["vector_path_indices"] == [7]
 
 
@@ -394,3 +395,19 @@ def test_annotation_and_widget_observations_do_not_invent_vector_paths(kind):
     assert table["vector_path_count"] == 0
     assert not cell.get("vector_path_indices")
     assert not cell.get("visual_overlap")
+
+
+def test_later_full_cell_mask_cannot_be_promoted_to_a_known_native_value(tmp_path):
+    source = vector_pdf(tmp_path, native_text=True)
+    masked = tmp_path / "masked.pdf"
+    with fitz.open(source) as document:
+        document[0].draw_rect(fitz.Rect(20, 60, 140, 100), color=None, fill=(1, 1, 1))
+        document.save(masked)
+    data = checked(masked)
+    cell = data["tables"][0]["cells"]["A2"]
+    assert cell["value"] == "Native"
+    assert cell["state"] == "unknown_visual_evidence"
+    assert cell["native_text_unobscured"] is False
+    cell["state"] = "known"
+    with pytest.raises(ValueError, match="uninterpreted visual"):
+        validate_snapshot(data, data["source"]["sha256"], ".pdf")
