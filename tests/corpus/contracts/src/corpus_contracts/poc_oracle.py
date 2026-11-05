@@ -82,9 +82,9 @@ def _normalize_status(value: str) -> str:
     if not raw:
         return ""
     normalized = raw.upper()
-    if normalized in {"PASS", "NG"}:
+    if normalized in {"PASS", "NG", "UNABLE"}:
         return normalized
-    raise ValueError(f"Invalid manual status: '{value}' (only PASS/NG/empty are allowed)")
+    raise ValueError(f"Invalid manual status: '{value}' (only PASS/NG/UNABLE/empty are allowed)")
 
 
 def parse_seq_filter(raw: str | None) -> set[str] | None:
