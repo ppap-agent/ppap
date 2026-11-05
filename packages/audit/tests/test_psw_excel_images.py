@@ -7,7 +7,7 @@ from audit.checkers.v2.psw_excel_agent import PswExcelAgent as V2PswAgent
 from audit.checkers.v3.psw_excel_agent import PswExcelAgent as V3PswAgent
 from audit.contracts import AuditInput, RuleInput
 from audit.engine.runtime import bind_runtime
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.drawing.image import Image as WorkbookImage
 from PIL import Image, ImageDraw
 
@@ -74,6 +74,28 @@ def test_embedded_images_and_authorized_signature_preserve_existing_excel_decisi
             assert "缺少有效经授权签字" in signature.suggestions
         else:
             assert "盖章" in signature.suggestions
+    finally:
+        agent.close()
+
+
+@pytest.mark.parametrize(("profile", "agent_type"), [("v2", V2PswAgent), ("v3", V3PswAgent)], ids=["v2", "v3"])
+@pytest.mark.parametrize("missing,expected", [(True, "NG"), (False, "UNABLE")])
+def test_required_field_defect_is_preserved_when_later_field_is_unknown(tmp_path, profile, agent_type, missing, expected):
+    path = tmp_path / "required-fields.xlsx"
+    native_psw_fields(path, unknown=("零件提交保证书", "B19"))
+    if missing:
+        workbook = load_workbook(path)
+        workbook["零件提交保证书"]["B8"] = None
+        workbook.save(path)
+        workbook.close()
+    agent = agent_type(AuditInput(audit_id="native-partial", file_url=str(path)), RuleInput(rule_id="required", rule_profile=profile, type="零件提交保证书", rules=[]))
+    try:
+        with bind_runtime(None):
+            result = agent.check(5)
+        assert result.status == expected
+        if missing:
+            assert "图纸号" in result.suggestions
+        assert "#N/A" not in result.suggestions
     finally:
         agent.close()
 

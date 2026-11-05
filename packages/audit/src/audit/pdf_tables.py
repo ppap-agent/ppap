@@ -18,6 +18,7 @@ from documents.pdf.source_graphics import (
 from documents.pdf.source_graphics import (
     _vector_inside as _vector_inside,
 )
+from documents.pdf.source_graphics import native_text_underlines
 
 from .document_tools import ReadLimits, col_number, ref, within
 
@@ -54,6 +55,7 @@ def _table(grid: Any, page: Any, limits: ReadLimits, geometry_tolerance: float) 
     annotations = [list(annotation.rect) for annotation in (page.annots() or ())]
     widgets = [list(widget.rect) for widget in (page.widgets() or ())]
     drawings = page.get_drawings()
+    underlines = native_text_underlines(page, drawings, tolerance=geometry_tolerance)
     aligned_fills = {
         tuple(item[1])
         for drawing in drawings
@@ -69,7 +71,7 @@ def _table(grid: Any, page: Any, limits: ReadLimits, geometry_tolerance: float) 
         overlap = any(_intersects(bbox, image) for image in images)
         annotation_overlap = any(_intersects(bbox, bounds) for bounds in annotations)
         widget_overlap = any(_intersects(bbox, bounds) for bounds in widgets)
-        vector_paths = [index for index, drawing in enumerate(drawings, 1) if _vector_inside(drawing, bbox, geometry_tolerance, aligned_fills)]
+        vector_paths = [index for index, drawing in enumerate(drawings, 1) if index - 1 not in underlines and _vector_inside(drawing, bbox, geometry_tolerance, aligned_fills)]
         if not valid_pdf_bbox(bbox, page.rect.width, page.rect.height):
             state = "unknown_geometry"
         elif not reconstructed:

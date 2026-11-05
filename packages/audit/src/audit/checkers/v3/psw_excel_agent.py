@@ -672,6 +672,7 @@ class PswExcelAgent(ExcelAgent):
                     if nearby_hit:
                         continue
             failed_fields.append(field_name)
+            ctx.record_ng(f"必填字段缺失或为空：{field_name}")
 
         supplier_value = self._extract_supplier_name_code(main_sheet)
         if not supplier_value:
