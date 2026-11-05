@@ -11,6 +11,9 @@ from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit
+
+import httpx
 
 from .client import PaddleOCRFormatError, PaddleStructureService, validate_pdf
 from .evidence import build_evidence
@@ -65,18 +68,39 @@ def read_pdf_page_evidence(file_path: str | Path, page_number: int) -> dict:
     The authorized caller owns page selection, task scope and business
     interpretation. An empty response does not establish absent content.
     """
-    endpoint = os.environ.get("PADDLE_OCR_URL", "").strip()
+    bridge = os.environ.get("PPAP_PADDLE_BRIDGE_URL", "").strip()
+    endpoint = bridge or os.environ.get("PADDLE_OCR_URL", "").strip()
     if not endpoint:
         raise PaddleEvidenceUnavailable("Paddle服务尚未配置，需核对原件。", code="paddle_evidence_unconfigured")
     source, page_count = validate_pdf(file_path)
     if type(page_number) is not int or not 1 <= page_number <= page_count:
         raise ValueError("An existing original PDF page must be explicitly selected")
     source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
-    credential = os.environ.get("PADDLE_TOKEN", "")
+    credential = os.environ.get("PPAP_PADDLE_BRIDGE_TOKEN", "") if bridge else os.environ.get("PADDLE_TOKEN", "")
 
     def read() -> dict:
-        service = PaddleStructureService(endpoint, token=credential, timeout=20)
-        response = service.analyze_page(source, page_number)
+        if bridge:
+            parsed = urlsplit(bridge)
+            if parsed.scheme != "http" or parsed.hostname != "127.0.0.1" or parsed.path != "/paddle-page" or parsed.username or parsed.password or parsed.query or parsed.fragment or not credential:
+                raise PaddleOCRFormatError("PaddleOCR local capability is invalid")
+            try:
+                with httpx.Client(timeout=25, trust_env=False, follow_redirects=False) as client:
+                    with client.stream("POST", bridge, json={"source_sha256": source_hash, "page_number": page_number}, headers={"Authorization": "Bearer " + credential}) as result:
+                        result.raise_for_status()
+                        parts, length = [], 0
+                        for part in result.iter_bytes():
+                            length += len(part)
+                            if length > 16 * 1024 * 1024:
+                                raise PaddleOCRFormatError("PaddleOCR local response is too large")
+                            parts.append(part)
+                        import json
+
+                        response = json.loads(b"".join(parts))
+            except (httpx.HTTPError, OSError, ValueError):
+                raise PaddleOCRFormatError("PaddleOCR local capability failed") from None
+        else:
+            service = PaddleStructureService(endpoint, token=credential, timeout=20)
+            response = service.analyze_page(source, page_number)
         evidence = build_evidence(response, page_count=1, pdf_path=source, source_pages=[page_number])
         if evidence["source_sha256"] != source_hash:
             raise PaddleOCRFormatError("PaddleOCR source changed during the request")
