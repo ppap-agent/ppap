@@ -1,0 +1,188 @@
+"""Real fixed execution with a controlled author; no paid model quality claim."""
+
+import hashlib
+from dataclasses import replace
+from uuid import UUID
+
+import pytest
+from agent.checker_development import DevelopmentRequest, FrozenDevelopmentInput, OracleSample, develop_and_run
+from agent.checker_program import CheckerManifest, run_adapt_manifest, run_execute_manifest, write_manifest
+from agent.checker_spec import CheckerArtifact, CheckerJobSpec, CheckerProgramBundle
+from agent.client import DeepError
+from audit.contracts import AuditInput, RuleInput
+from openpyxl import Workbook
+
+PROGRAM = """from openpyxl import load_workbook
+from audit.contracts import AuditEvidence, AuditResultItem, EvidenceSource
+
+class Check:
+    def __init__(self, audit_file, clause):
+        self.audit_file = audit_file
+        self.clause = clause
+    def check(self):
+        book = load_workbook(self.audit_file.file_url, read_only=True)
+        value = book.active['A1'].value
+        book.close()
+        return AuditResultItem(
+            classification='rule', item='Threshold', priority='P1', clause_id=self.clause['id'],
+            status='PASS' if value >= 10 else 'NG', suggestions='Compared original cell', checks_performed=1,
+            evidence=AuditEvidence(required='structure', used='structure', source_format='xlsx', prepared_format='xlsx',
+                sources=(EvidenceSource(kind='structure', locator='{"kind":"xlsx_cell","sheet":"Sheet","cell":"A1"}'),)))
+class TaskAudit:
+    def __init__(self, audit_file, rule):
+        self.checks = [Check(audit_file, clause) for clause in rule.rules]
+def create_audit(audit_file, rule, group_context=None):
+    return TaskAudit(audit_file, rule)
+"""
+
+
+def source(tmp_path, name, value):
+    path = tmp_path / f"{name}.xlsx"
+    book = Workbook()
+    book.active["A1"] = value
+    book.save(path)
+    book.close()
+    raw = path.read_bytes()
+    target = AuditInput(audit_id=name, file_url=str(path), file_metadata={"file_version_id": name, "sha256": hashlib.sha256(raw).hexdigest()})
+    rule = RuleInput(rule_id="rules", rule_profile="v3", type="自定义", rules=[{"id": "R1", "category": "阈值", "rule_to_check": "A1至少10"}])
+    return FrozenDevelopmentInput(target, rule, raw)
+
+
+class Runtime:
+    def __init__(self, root, *, program=PROGRAM, error=None):
+        self.root, self.program, self.error = root, program, error
+        self.calls = []
+        self.prompts = []
+        self.input_tokens = 12
+        self.output_tokens = 24
+
+    def run(self, work, prompt, schema, deadline, *, reasoning_effort):
+        self.prompts.append(prompt)
+        assert "hidden-sentinel" not in prompt
+        return schema(entrypoint="checker:create_audit", files={"checker.py": self.program})
+
+    def __call__(self, inputs, *, operation, artifact=None, prior=None, feedback=None):
+        self.calls.append((operation, inputs.audit_file.audit_id, feedback))
+        if operation == "adapt-checker" and self.error:
+            raise DeepError(self.error)
+        job = CheckerJobSpec(execution_id=UUID(int=0), operation=operation, input_digest=inputs.digest, executor_revision="revision")
+        job = job.model_copy(update={"execution_id": job.expected_execution_id()})
+        manifest = CheckerManifest(
+            operation=operation,
+            spec=job,
+            document="target.xlsx",
+            audit_id=inputs.audit_file.audit_id,
+            rule=inputs.rule.model_dump(mode="json"),
+            file_sha256=hashlib.sha256(inputs.file_bytes).hexdigest(),
+            file_version_id=inputs.audit_file.audit_id,
+            role="target",
+            artifact=artifact,
+            prior_files={name: value.decode() for name, value in prior.files.items()} if prior else None,
+            development_feedback=feedback,
+        )
+        folder = self.root / str(len(self.calls))
+        write_manifest(folder / "inputs", manifest, inputs.file_bytes)
+        if operation == "adapt-checker":
+            assert "hidden-sentinel" not in manifest.model_dump_json()
+            run_adapt_manifest(folder / "inputs", folder / "work", self, 10**12)
+        else:
+            assert feedback is None
+            run_execute_manifest(folder / "inputs", folder / "work")
+        return CheckerProgramBundle.model_validate_json((folder / "work" / "result" / "bundle.json").read_bytes())
+
+
+def request(tmp_path, *, oracle=True):
+    target = source(tmp_path, "target", 5)
+    prior = CheckerArtifact(input_digest="f" * 64, executor_revision="old", entrypoint="checker:create_audit", files={"checker.py": PROGRAM.replace("value >= 10", "value >= 0").encode()})
+    samples = tuple(
+        OracleSample(f"case-{i}" if i != 4 else "hidden-sentinel", i, source(tmp_path, f"sample-{i}", value), {"R1": expected}, "reviewer")
+        for i, (value, expected) in enumerate([(4, "NG"), (15, "PASS"), (16, "PASS"), (6, "NG")], 1)
+    )
+    return DevelopmentRequest(
+        target=target,
+        executor_revision="revision",
+        initiating_user_id="reviewer",
+        prior=prior,
+        oracle=samples if oracle else (),
+        oracle_revision="oracle-1" if oracle else None,
+        suite_revision_id="suite-1",
+        suite_digest="a" * 64,
+    )
+
+
+def test_deep_and_optimizer_share_real_fixed_program_loop(tmp_path):
+    req = request(tmp_path)
+    runtime = Runtime(tmp_path / "runtime")
+    outcome = develop_and_run(req, runtime)
+    assert outcome.error_code is None
+    assert outcome.results[0].status == "NG"
+    assert outcome.validation.verified
+    assert outcome.validation.total_samples == outcome.validation.passed_samples == 4
+    assert outcome.validation.cases[0].clauses[0].baseline_actual == "PASS"
+    assert outcome.validation.cases[0].clauses[0].actual == "NG"
+    assert outcome.validation.cases[-1].split == "holdout"
+    assert outcome.usage == {"input_tokens": 12, "output_tokens": 24, "model_requests": 2}
+    assert len(runtime.prompts) == 2
+    adapt_index = next(i for i, call in enumerate(runtime.calls) if call[0] == "adapt-checker")
+    assert all(call[1] != "sample-4" for call in runtime.calls[:adapt_index])
+    assert all(call[0] == "execute-checker" for call in runtime.calls[adapt_index + 1 :])
+    assert "用户确认的训练样本" in runtime.prompts[0]
+    assert "case-1" in runtime.prompts[0]
+    # Exactly the same source and request path works without labels, unverified.
+    deep = develop_and_run(replace(req, oracle=(), oracle_revision=None), Runtime(tmp_path / "deep"))
+    assert deep.results[0].status == "NG"
+    assert not deep.validation.verified
+    assert deep.validation.reasons == ("no_independent_oracle",)
+
+
+@pytest.mark.parametrize("status", ["UNABLE", "ERR", "PASS"])
+def test_wrong_or_unable_results_cannot_game_negative_samples(tmp_path, status):
+    runtime = Runtime(tmp_path / "runtime", program=PROGRAM.replace("'PASS' if value >= 10 else 'NG'", repr(status)))
+    outcome = develop_and_run(request(tmp_path), runtime)
+    assert not outcome.validation.verified
+    assert outcome.validation.cases[0].clauses[0].kind == ("missed_detection" if status == "PASS" else status)
+
+
+def test_missing_checks_and_fake_locator_never_verify(tmp_path):
+    runtime = Runtime(tmp_path / "runtime", program=PROGRAM.replace("checks_performed=1", "checks_performed=0"))
+    outcome = develop_and_run(request(tmp_path), runtime)
+    assert not outcome.validation.verified
+    assert outcome.validation.cases[1].clauses[0].actual == "ERR"
+    runtime = Runtime(tmp_path / "fake-locator", program=PROGRAM.replace('"sheet":"Sheet"', '"sheet":"Sheet","file_version_id":"foreign"'))
+    outcome = develop_and_run(request(tmp_path), runtime)
+    assert not outcome.validation.verified
+    assert not any(clause.evidence_locatable for case in outcome.validation.cases for clause in case.clauses)
+
+
+@pytest.mark.parametrize("code", ["deep_model_protocol", "deep_timeout", "deep_budget_exhausted"])
+def test_failed_provider_consumption_is_readable_and_not_retried(tmp_path, code):
+    runtime = Runtime(tmp_path / "runtime", error=code)
+    outcome = develop_and_run(request(tmp_path, oracle=False), runtime)
+    assert outcome.error_code == code
+    assert outcome.usage_uncertain
+    assert outcome.artifact is None
+    assert outcome.results == []
+    assert len(runtime.calls) == 1
+
+
+def test_holdout_rejects_overlap_with_target_or_training_before_model_work(tmp_path):
+    req = request(tmp_path)
+    overlap = replace(req.oracle[-1], inputs=req.target)
+    runtime = Runtime(tmp_path / "runtime")
+    with pytest.raises(ValueError, match="exposed"):
+        develop_and_run(replace(req, oracle=(*req.oracle[:-1], overlap)), runtime)
+    assert runtime.calls == []
+
+
+def test_too_few_samples_and_frozen_replay_remain_unverified(tmp_path):
+    req = request(tmp_path)
+    runtime = Runtime(tmp_path / "runtime")
+    outcome = develop_and_run(replace(req, oracle=req.oracle[:3]), runtime)
+    assert not outcome.validation.verified
+    assert outcome.validation.reasons == ("too_few_samples",)
+    replay_runtime = Runtime(tmp_path / "replay")
+    replay = develop_and_run(replace(req, oracle=(), oracle_revision=None, fixed=outcome.artifact), replay_runtime)
+    assert len(replay_runtime.calls) == 1
+    assert replay_runtime.calls[0][0] == "execute-checker"
+    assert replay.results == outcome.results
+    assert replay.usage == {"input_tokens": 0, "output_tokens": 0, "model_requests": 0}
