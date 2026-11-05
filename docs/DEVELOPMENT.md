@@ -354,3 +354,13 @@ Excel 的图形事实通过 `audit.engine.checkers.excel_field_evidence` 读取�
 产品执行固定使用 DeepSeek `deepseek-flash` 的 Responses 接口和本次发起人的凭据，模型别名不承诺永久权重版本。官方 [Responses 文档](https://api-docs.deepseek.com/api/create-response/) 支持 function tools、user/developer `input_image`、reasoning none/low/high/max；文字与视觉事实使用 none，开发循环按明确参数执行。受控真实 SDK/网关测试验证请求形状与完整/未知用量，不替代真实付费兼容性验证；本次未进行真实付费模型调用。
 
 缺 Key 不阻止原生或 Paddle 确定性检查，只在需要付费模型时报告不可用。SDK 和调用层不自动重试未知完成的请求。Token 只采用实际 provider 回执，缺失显示 unknown；用户应在 DeepSeek 账户侧设置消费上限，PPAP 不承诺费用硬封顶，本变更不启用业务收费。
+
+## Checker Core 免费预检
+
+预检排队与正式受理共用 `freeze_selected_targets`，在 Suite 发布锁下冻结当前采用的修订、Checker 摘要、Binding、规则/附录及关联 Suite 摘要。预检不创建 Round，不改变收费或通知。发布新修订后旧预检仍可按原快照读取，但不再标为当前，也不能作为新修订的阻断依据。
+
+Suite 的 `checker.py` 可以提供 `precheck(context)`，返回准备事实列表；标准 Suite 的该入口复用原有客户准备检查。没有入口明确显示未检查，不回退历史路由，也不执行正式 `check` 代替预检。参考文件保留已识别的文档类型和固定版本，不创建收费目标。预检不调用模型；模型 scope 明确不可用，原生读取不能完成的项目保持未知、未检查或错误。
+
+Worker 只发送预检 Job、租户、attempt 和 lease owner。Controller 从持久 Job 核验身份并加载冻结原件和 Suite 字节，再由已有 `ContainerRuntime` 降权 guest 执行；企业 Python 不能在 Worker 或 Controller import。`execute-precheck` 不签发模型 grant，不进入付费调用/用量日志。执行前后及执行期间都核对租约，晚到结果不能覆盖新 attempt。
+
+Guest 提交的准备事实均不能自证 `certified`。既有硬阻断仍要求精确输入/执行/Suite 身份、已确认的关键缺陷、允许的阻断代码及原件定位；正式 NG 不升级为预检阻断。`tests/integration/product/test_v4_precheck_platform.py` 检查真实 PostgreSQL/API 身份、历史、免费和阻断合同，`packages/agent/tests/test_suite_prechecks.py` 检查冻结程序、无模型能力与 guest 消息合同；受控测试不替代生产 guest 的操作系统隔离验收。

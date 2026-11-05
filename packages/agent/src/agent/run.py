@@ -24,6 +24,7 @@ from agent.protocol import (
     ErrorEnvelope,
     ExecuteRequest,
     ExecuteResponse,
+    PrecheckEnvelope,
     ProgressEnvelope,
     RequestEnvelope,
     ResultEnvelope,
@@ -77,9 +78,11 @@ class Controller:
         readiness: Callable[[], bool] | None = None,
         configuration: dict[str, str] | None = None,
         development_handler: Callable[[DevelopmentEnvelope, ExecutionContext], dict] | None = None,
+        precheck_handler: Callable[[PrecheckEnvelope, ExecutionContext], dict] | None = None,
     ):
         self.runtime = runtime
         self.development_handler = development_handler
+        self.precheck_handler = precheck_handler
         self.file_source = file_source
         self.executor_revision = str(executor_revision or "").strip() or DEEP_PROTOCOL_REVISION
         self.protocol_revision = str(protocol_revision or "").strip() or DEEP_PROTOCOL_REVISION
@@ -174,6 +177,11 @@ class Controller:
                 ready = False
             return {"op": "ready", "ready": ready}
         try:
+            if payload.get("op") == "precheck":
+                if self.precheck_handler is None:
+                    raise DeepUnavailable()
+                request = PrecheckEnvelope.model_validate(payload)
+                return {"op": "precheck_result", "result": self.precheck_handler(request, context or ExecutionContext())}
             if payload.get("op") == "develop":
                 if self.development_handler is None:
                     raise DeepUnavailable()

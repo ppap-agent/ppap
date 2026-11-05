@@ -1532,10 +1532,13 @@ class AuthStore:
                  ) ORDER BY created_at DESC, id DESC LIMIT 1""",
             (tenant_id, task_id, str(revision), self.settings.standard_execution_policy().engine_revision(), task_id),
         ).fetchone()
-        return self._precheck_receipt(row, current_revision=revision) if row else None
+        from product.store.prechecks import precheck_suites_current
+
+        return self._precheck_receipt(row, current_revision=revision) if row and precheck_suites_current(self, conn, row[1]) else None
 
     def _queue_task_precheck(self, conn, principal: Principal, task: dict, *, retry_key: str | None = None) -> dict | None:
-        from product.prechecks import frozen_precheck_input, precheck_identity
+        from product.prechecks import precheck_identity
+        from product.store.prechecks import freeze_task_precheck
 
         v4_customers = {
             customer
@@ -1547,7 +1550,7 @@ class AuthStore:
             return None
         if task["state"] == "matching":
             raise ValueError("task_not_ready")
-        payload = frozen_precheck_input(task, principal.tenant_id, self.settings.standard_execution_policy().model_dump(mode="json"))
+        payload = freeze_task_precheck(self, conn, principal, task)
         identifier = precheck_identity(payload)
         previous = conn.execute(
             "SELECT id, status FROM engine.jobs WHERE tenant_id = %s AND kind = 'task_precheck' AND payload = %s ORDER BY created_at DESC, id DESC LIMIT 1", (principal.tenant_id, Jsonb(payload))
@@ -1586,10 +1589,13 @@ class AuthStore:
             )
             rows = cur.fetchall()
         files = []
+        initiators = set()
         for row in rows:
             match = None
             if row["selection"] == "selected":
                 payload, result = row["payload"] or {}, row["result"] or {}
+                if payload.get("initiating_user_id"):
+                    initiators.add(payload["initiating_user_id"])
                 if row["job_status"] in {"queued", "leased"}:
                     return
                 bound = self._analysis_snapshot_bound(payload, result, task_id, draft[1], str(row["file_version_id"]))
@@ -1614,7 +1620,9 @@ class AuthStore:
             )
             files.append({"file": version.public(), "selection": row["selection"], "match": match, "reference_only": row["role"] == "reference"})
         task = {"id": task_id, "input_revision": draft[1], "customer_preference": draft[2], "analysis_mode": draft[3], "state": "pending_confirm", "files": files}
-        principal = Principal("", str(draft[0]), "", "", "", "", "")
+        if len(initiators) != 1:
+            return
+        principal = Principal(next(iter(initiators)), str(draft[0]), "", "", "", "", "")
         self._queue_task_precheck(conn, principal, task)
 
     def request_task_precheck(self, principal: Principal, task_id: str, request_id, expected_revision) -> dict:
@@ -4375,12 +4383,13 @@ class AuthStore:
                         if scope and row["match"]["state"] != "reference" and (owned["customer_preference"] != "UAES" or rule_body.get("rule_profile") != "v4" or rule_body.get("preset_key") != "U13"):
                             raise ValueError("validation_scope_mismatch")
                     if self.settings.precheck_gate_enforced:
-                        from product.prechecks import blocked_targets, frozen_precheck_input
+                        from product.prechecks import blocked_targets
+                        from product.store.prechecks import freeze_task_precheck
 
                         receipt = task.get("precheck")
                         blocked = set()
                         if receipt and receipt["status"] == "succeeded":
-                            frozen = frozen_precheck_input(task, principal.tenant_id, self.settings.standard_execution_policy().model_dump(mode="json"))
+                            frozen = freeze_task_precheck(self, conn, principal, task)
                             if frozen == receipt["input"]:
                                 blocked = blocked_targets(frozen, receipt["result"])
                         if blocked:

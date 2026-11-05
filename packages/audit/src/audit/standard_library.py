@@ -180,3 +180,45 @@ def check_factory(context: Any, factory: Any) -> AuditResultItem:
 
     results = _once(context, (*key, "results"), collect)
     return results.get(context.clause_id) or _authored_error(context.clause_id, "authored_checker_missing_result")
+
+
+def prepare_target(context: Any, resources: dict[str, Any]) -> list[dict]:
+    """Free preparation hook owned by the frozen Suite, executed only in guest.
+
+    This reuses the original preparation algorithms, never promotes formal NG,
+    and never derives the selected implementation from profile/filename routing.
+    """
+    from audit.precheck_contract import fact
+    from audit.precheck_dependencies import dependency_facts
+
+    entry = context.rule.preset_key
+    facts = list(dependency_facts(context.audit_file, entry, context.group_context))
+    implementation = resources["carriers"].get(Path(context.audit_file.file_url).suffix.lower())
+    if implementation is None:
+        return [*facts, fact("coverage", "not_checked", "此套件尚不支持原件载体的准备检查。")]
+    module, name = implementation.split(":", 1)
+    cls = getattr(importlib.import_module(module), name)
+    checker = cls(context.audit_file, context.rule, group_context=context.group_context)
+    context.on_close(checker)
+    declarations = discover_declared_rules(cls)
+    for source_id, method in getattr(cls, "PRECHECK_METHODS", {}).items():
+        indices = [index for index, (name, _) in enumerate(declarations) if name == method]
+        if len(indices) != 1:
+            facts.append(fact(source_id, "error", "预检方法绑定无效。"))
+            continue
+        observed = checker.check(indices[0])
+        status, evidence = getattr(observed, "status", None), getattr(observed, "evidence", None)
+        mapped = "satisfied" if status == "PASS" and evidence and evidence.sources else "error" if status == "ERR" else "unknown"
+        facts.append(fact(source_id, mapped, getattr(observed, "suggestions", "未取得检查结论。"), evidence=evidence.model_dump(mode="json") if evidence else None))
+    if entry in {"U07", "L07", "N02"}:
+        from audit.precheck_pfmea import pfmea_precheck
+
+        facts.extend(pfmea_precheck(context.audit_file, entry, context.group_context))
+    if entry in {"U08", "L08", "N03"}:
+        from audit.precheck_cp import cp_precheck
+
+        facts.extend(cp_precheck(context.audit_file, entry, context.group_context))
+    custom = getattr(checker, "precheck", None)
+    if custom:
+        facts.extend(custom())
+    return facts

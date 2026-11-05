@@ -55,6 +55,11 @@ def runtime_from_env(settings, objects, *, model_access_for_request=None, snapsh
             def execute(self, spec, files, *, context):
                 return self._invoke(spec, lambda: semantic.execute(spec, files, context=context))
 
+            def execute_precheck(self, payload, snapshot, sources, programs, context):
+                from agent.precheck_program import execute_precheck
+
+                return self._invoke(None, lambda: execute_precheck(runtime, payload, snapshot, sources, programs, context))
+
             def develop_and_run(self, request, *, spec, context):
                 return self._invoke(spec, lambda: semantic.develop_and_run(request, spec=spec, context=context))
 
