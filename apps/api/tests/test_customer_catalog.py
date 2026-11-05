@@ -109,7 +109,8 @@ def test_catalog_uses_current_tenant_published_rules_not_rule_files_or_history(a
         assert len(versions) == 6
         assert any(version["id"] == old for version in versions)
         assert any(version["predecessor_id"] == old for version in versions)
-        assert all(set(version) == {"id", "title", "version", "scope", "reason", "created_at", "predecessor_id", "clause_count", "document_type"} and version["clause_count"] == 1 for version in versions)
+        version_fields = {"id", "title", "version", "scope", "reason", "created_at", "predecessor_id", "clause_count", "document_type"}
+        assert all(set(version) == version_fields and version["clause_count"] == 1 for version in versions)
         assert not {version["id"] for version in versions} & {version["id"] for version in second.get("/rule-library").json()["versions"]}
         assert first.get("/audit-tasks").json()["tasks"] == []
         assert first.get("/rounds").json()["rounds"] == []

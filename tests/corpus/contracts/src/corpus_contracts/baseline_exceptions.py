@@ -96,10 +96,6 @@ def B(
 # Product EvidenceDiagnostic codes may be stored on ExecutionOutcome when stable.
 BASELINE_RULE_BEHAVIORS: frozenset[BaselineRuleBehavior] = frozenset(
     {
-        # Issue #240: accepted gpt-6.1-sol stamp-recognition differences.
-        # The original CSV PASS stays authoritative; actual NG is not a PASS.
-        B("16-零件提交保证书-继峰.pdf", "pdf", 3, "PASS", "NG", alternatives=("UNABLE",)),
-        B("16-零件提交保证书-继峰 - 无边框.pdf", "pdf", 3, "PASS", "NG", alternatives=("UNABLE",)),
         B("1-全功能检验报告_巨一.pdf", "pdf", 3, "PASS", "NG"),
         B("10-控制计划-常州新泉.pdf", "pdf", 5, "NG", "PASS"),
         B("11-过程特殊特性清单-上海大亚.pdf", "pdf", 3, "PASS", "NG"),

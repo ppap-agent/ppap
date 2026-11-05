@@ -22,6 +22,8 @@ jobs:
       OCR_OPENAI_API_KEY: ${{ secrets.OCR_OPENAI_API_KEY }}
       OCR_OPENAI_BASE_URL: ${{ secrets.OCR_OPENAI_BASE_URL }}
       OCR_MODEL_NAME: ${{ secrets.OCR_MODEL_NAME }}
+      PADDLE_OCR_URL: ${{ secrets.PADDLE_OCR_URL }}
+      PADDLE_TOKEN: ${{ secrets.PADDLE_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -84,7 +84,7 @@ def test_original_docx_three_file_round_matches_all_27_oracle_results():
         blobs[version] = case.file_path.read_bytes()
     result = run_round_from_bytes(RoundWork("uploaded-customer-rules", "corpus", inputs), blobs)
     items = result["coverage"]["rule_items"]
-    assert len(items) == 26
+    assert len(items) == 27
     pending = [item for item in items if item["coverage"] != "mapped"]
     assert pending == []
     failures = []
@@ -93,4 +93,4 @@ def test_original_docx_three_file_round_matches_all_27_oracle_results():
         failures.extend(failing_verdicts(compare_file(file_name=case.file_name, version_id="file-" + case.file_seq, expected=expected, result=result, setup_error=None)))
     if failures:
         pytest.fail(format_verdicts(failures))
-    assert len(result["findings"]) == 26
+    assert len(result["findings"]) == 27
