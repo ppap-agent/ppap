@@ -286,7 +286,8 @@ def find_field_label(
     max_col: int,
     match_mode: MatchMode = "exact",
 ) -> tuple[int, int] | None:
-    normalized_aliases = _normalize_compact_aliases(aliases)
+    normalized_aliases = [alias.rstrip(":：") for alias in _normalize_compact_aliases(aliases)]
+    normalized_aliases = [alias for alias in normalized_aliases if alias]
     if not normalized_aliases:
         return None
 
@@ -295,7 +296,7 @@ def find_field_label(
     contains_fallback: tuple[int, int] | None = None
     for row in range(1, row_end + 1):
         for col in range(1, col_end + 1):
-            text = _read_compact_cell_text(ops, ws, row, col)
+            text = _read_compact_cell_text(ops, ws, row, col).rstrip(":：")
             if not text:
                 continue
             if text in normalized_aliases:

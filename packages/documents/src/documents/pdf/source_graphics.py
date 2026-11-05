@@ -28,6 +28,7 @@ def native_visual_overlaps(page: Any, cells: list[list[float]], *, tolerance: fl
     images.extend(list(annotation.rect) for annotation in (page.annots() or ()))
     images.extend(list(widget.rect) for widget in (page.widgets() or ()))
     drawings = page.get_drawings()
+    underlines = native_text_underlines(page, drawings, tolerance=tolerance)
     xs = grid_axes[0] if grid_axes is not None else [value for cell in cells for value in (cell[0], cell[2])]
     ys = grid_axes[1] if grid_axes is not None else [value for cell in cells for value in (cell[1], cell[3])]
     # A merged cell can span several source background tiles. Retain the raw
@@ -47,11 +48,34 @@ def native_visual_overlaps(page: Any, cells: list[list[float]], *, tolerance: fl
         any(_intersects(cell, image) for image in images)
         or any(
             _vector_inside(drawing, cell, tolerance, aligned_fills)
-            for drawing in drawings
+            for index, drawing in enumerate(drawings)
+            if index not in underlines
             if max(cell[0], drawing["rect"][0]) <= min(cell[2], drawing["rect"][2]) and max(cell[1], drawing["rect"][1]) <= min(cell[3], drawing["rect"][3])
         )
         for cell in cells
     ]
+
+
+def native_text_underlines(page: Any, drawings: list[dict[str, Any]], *, tolerance: float) -> set[int]:
+    """Recognize only a single thin stroke aligned below a whole native span."""
+    if not drawings:
+        return set()
+    spans = [span for block in page.get_text("dict")["blocks"] for line in block.get("lines", []) for span in line["spans"] if span["text"].strip()]
+    result = set()
+    for index, drawing in enumerate(drawings):
+        if drawing.get("fill") is not None or drawing.get("closePath") or len(drawing["items"]) != 1 or not 0 < (drawing.get("width") or 0) <= tolerance:
+            continue
+        item = drawing["items"][0]
+        if item[0] != "l" or abs(item[1].y - item[2].y) > 0.01:
+            continue
+        left, right = sorted((item[1].x, item[2].x))
+        y = item[1].y
+        if any(
+            abs(left - span["bbox"][0]) <= tolerance and abs(right - span["bbox"][2]) <= tolerance and span["origin"][1] < y <= min(span["bbox"][3], span["origin"][1] + span["size"] * 0.15)
+            for span in spans
+        ):
+            result.add(index)
+    return result
 
 
 def _intersects(a: Any, b: Any) -> bool:
@@ -90,8 +114,16 @@ def _rectangle_inside(rect: Any, cell: list[float], tolerance: float, *, filled:
     # reconstructed neighbour edge. Do not mistake that sliver for cell content.
     if filled and grid_aligned and min(min(rect[axis + 2], cell[axis + 2]) - max(rect[axis], cell[axis]) for axis in (0, 1)) <= tolerance:
         return False
+    # Neighbour tiles and borders can extend beyond the reconstructed grid.
+    # Ignore only a boundary sliver whose rectangle lies outside the cell and
+    # either spans the other axis or also grazes its outside corner. Interior
+    # marks remain unknown; this does not depend on fill colour or field text.
+    if filled:
+        outside = [(rect[axis] < cell[axis] and rect[axis + 2] <= cell[axis] + tolerance) or (rect[axis + 2] > cell[axis + 2] and rect[axis] >= cell[axis + 2] - tolerance) for axis in (0, 1)]
+        if any(outside) and all(outside[axis] or (rect[axis] <= cell[axis] + tolerance and rect[axis + 2] >= cell[axis + 2] - tolerance) for axis in (0, 1)):
+            return False
     # Exported table rules can be filled thin rectangles rather than strokes.
-    # Require a full edge; crossing only one corner does not establish a rule.
+    # Require a full edge for a rectangle not proved to be outside the cell.
     for axis in (0, 1):
         along = 1 - axis
         if (

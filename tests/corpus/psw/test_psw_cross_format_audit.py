@@ -205,7 +205,11 @@ def test_real_xlsx_pdf_pair_runs_extraction_and_audit_before_comparison() -> Non
     assert reference.key_fields
     assert all(reference.key_fields.values())
     assert diff.key_field_mismatches == ()
-    assert diff.kind == DifferenceKind.CORRECT_FORMAT_DIFFERENCE
+    assert diff.kind == DifferenceKind.CORRECT_FORMAT_DIFFERENCE, (
+        diff,
+        [(index, result.status, result.suggestions) for index, result in enumerate(xlsx_results, 1)],
+        [(index, result.status, result.suggestions) for index, result in enumerate(pdf_results, 1)],
+    )
     assert all(result.evidence is not None for result in xlsx_results + pdf_results)
 
 

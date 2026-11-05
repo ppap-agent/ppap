@@ -194,3 +194,59 @@ def test_native_cell_graphic_is_not_hidden_by_background_sliver_exception(bounds
     annotate_native_cells(source, 0, grid, tolerance=1.15)
     assert grid.cells[0].is_unknown is True
     assert grid.cells[0].source_value == "known text"
+
+
+@pytest.mark.parametrize("vertical", [False, True])
+def test_native_cell_keeps_label_when_adjacent_thin_borders_only_graze_corners(vertical):
+    import fitz
+    from documents.pdf.source_graphics import native_visual_overlaps
+
+    cell = [100, 100, 160, 110]
+    borders = [[20, 109.2, 100.05, 110.05], [159.2, 109.2, 220, 110.05]]
+    if vertical:
+        cell = [cell[1], cell[0], cell[3], cell[2]]
+        borders = [[bounds[1], bounds[0], bounds[3], bounds[2]] for bounds in borders]
+    with fitz.open() as document:
+        page = document.new_page()
+        for bounds in borders:
+            page.draw_rect(fitz.Rect(*bounds), color=None, fill=(0, 0, 0))
+        assert native_visual_overlaps(page, [cell], tolerance=1.0) == [False]
+
+
+@pytest.mark.parametrize("bounds", [(159.2, 106, 220, 110.05), (140, 109.2, 150, 110.05), (159.2, 103, 170, 107)])
+def test_native_cell_corner_exception_keeps_interior_marks_unknown(bounds):
+    import fitz
+    from documents.pdf.source_graphics import native_visual_overlaps
+
+    with fitz.open() as document:
+        page = document.new_page()
+        page.draw_rect(fitz.Rect(*bounds), color=None, fill=(0, 0, 0))
+        assert native_visual_overlaps(page, [[100, 100, 160, 110]], tolerance=1.0) == [True]
+
+
+@pytest.mark.parametrize("bounds", [(42.18, 105.36, 52.86, 115.2), (42.18, 93, 52.86, 105.5)])
+def test_native_label_keeps_text_when_neighbour_background_extends_beyond_grid(bounds):
+    import fitz
+    from documents.pdf.source_graphics import native_visual_overlaps
+
+    with fitz.open() as document:
+        page = document.new_page()
+        page.draw_rect(fitz.Rect(*bounds), color=None, fill=(1, 1, 1))
+        assert native_visual_overlaps(page, [[52.65, 105.4, 81.5, 114.05]], tolerance=1.0) == [False]
+
+
+@pytest.mark.parametrize("mark,expected", [("underline", False), ("crossout", True), ("short_mark", True), ("extra_stroke", True)])
+def test_native_text_underline_does_not_hide_other_graphic_marks(mark, expected):
+    import fitz
+    from documents.pdf.source_graphics import native_visual_overlaps
+
+    with fitz.open() as document:
+        page = document.new_page()
+        text = "6B201CH_LAA-11040014"
+        page.insert_text((100, 112), text, fontsize=7)
+        end = 100 + fitz.get_text_length(text, fontsize=7)
+        y = 109 if mark == "crossout" else 112.7
+        page.draw_line((100, y), (end - 10 if mark == "short_mark" else end, y), width=0.5)
+        if mark == "extra_stroke":
+            page.draw_line((120, 105), (125, 111), width=0.5)
+        assert native_visual_overlaps(page, [[90, 104, 210, 114]]) == [expected]

@@ -118,3 +118,31 @@ def test_field_absence_requires_readable_bounded_label_search(tmp_path, base, ca
     finally:
         agent.close()
     assert result.status == expected
+
+
+@pytest.mark.parametrize("base", [V2Excel, V3Excel], ids=["v2", "v3"])
+@pytest.mark.parametrize("label,expected", [("零件名称：", "PASS"), ("零件名称:", "PASS"), ("零 件 名 称 ：", "PASS"), ("零件名称说明：", "UNABLE")])
+def test_exact_field_label_accepts_terminal_colon_without_matching_other_fields(tmp_path, base, label, expected):
+    class Probe(base):
+        DOC_TYPE = PpapDocumentType.PSW
+
+        @rule("字段存在检查")
+        def rule_1(self, ctx):
+            Table(ctx).field_block("PSW主表字段区").expect("零件名称字段")
+            return "PASS", "存在且已填写"
+
+    path = tmp_path / "label-colon.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "零件提交保证书"
+    sheet["A1"] = label
+    sheet["B1"] = "原生零件"
+    sheet["D2"] = "#N/A"
+    workbook.save(path)
+    workbook.close()
+    agent = Probe(AuditInput(audit_id="frozen", file_url=str(path)), RuleInput(rule_id="confirmed", type="零件提交保证书", rules=[]))
+    try:
+        result = agent.check(0)
+    finally:
+        agent.close()
+    assert result.status == expected
