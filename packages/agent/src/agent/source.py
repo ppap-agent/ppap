@@ -30,16 +30,16 @@ def authorize_execution(settings: Any, *, connect: Callable, open_store: Callabl
                    JOIN product.audit_rounds r ON r.id = j.audit_round_id AND r.id = %s AND r.tenant_id = j.tenant_id
                    WHERE j.id = %s AND j.tenant_id = %s AND j.attempt = %s
                      AND j.kind = 'audit' AND j.status = 'leased' AND j.lease_until > now()
-                     AND j.payload->>'round_id' = r.id::text AND r.analysis_mode = 'deep'""",
+                     AND j.payload->>'round_id' = r.id::text""",
                 (*identities, spec.attempt),
             ).fetchone()
-        if not row or row[0].get("executor") != spec.executor or row[0].get("executor_revision") != spec.executor_revision:
+        if not row or row[0].get("executor") != spec.executor or row[0].get("executor_revision") != spec.executor_revision or row[0].get("checker_snapshot_digest", "") != spec.checker_snapshot_digest:
             raise DeepError("deep_input_unauthorized")
         work = store.round_work(spec.round_id)
         if work is None or work.tenant_id != spec.tenant_id:
             raise DeepError("deep_input_unauthorized")
-        expected = spec_from_work(work, spec.executor, spec.executor_revision, spec.protocol_revision)
-        if expected.files != spec.files or expected.initiating_user_id != spec.initiating_user_id:
+        expected = spec_from_work(work, spec.executor, spec.executor_revision, spec.protocol_revision, checker_snapshot_digest=spec.checker_snapshot_digest)
+        if expected.files != spec.files or expected.initiating_user_id != spec.initiating_user_id or expected.analysis_mode != spec.analysis_mode:
             raise DeepError("deep_input_unauthorized")
 
     return authorize

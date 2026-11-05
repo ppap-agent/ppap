@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import tempfile
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Literal
 from uuid import NAMESPACE_URL, UUID, uuid5
@@ -17,6 +18,8 @@ from audit.checker_core import ExecutionSnapshot, checker_digest
 from audit.protocol import ControllerFault
 from pydantic import BaseModel, ConfigDict, Field
 
+from agent.auditor import FAULTS, SemanticRuntime
+from agent.checker_spec import CheckerArtifact
 from agent.client import DeepError
 from agent.execution.budget import MAX_INPUT_FILES, MAX_INPUT_TOTAL
 from agent.execution.secure_files import read_json, read_regular
@@ -32,13 +35,21 @@ class AuditJobSpec(BaseModel):
     execution_id: UUID
     input_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
     executor_revision: str = Field(min_length=1)
+    analysis_mode: Literal["standard", "deep"] = "standard"
 
     @classmethod
-    def from_snapshot(cls, snapshot: ExecutionSnapshot) -> AuditJobSpec:
-        return cls(execution_id=uuid5(NAMESPACE_URL, "ppap-audit:" + snapshot.input_digest), input_digest=snapshot.input_digest, executor_revision=snapshot.runtime_revision)
+    def from_snapshot(cls, snapshot: ExecutionSnapshot, analysis_mode: Literal["standard", "deep"] = "standard") -> AuditJobSpec:
+        return cls(
+            execution_id=uuid5(NAMESPACE_URL, "ppap-audit:" + analysis_mode + ":" + snapshot.input_digest),
+            input_digest=snapshot.input_digest,
+            executor_revision=snapshot.runtime_revision,
+            analysis_mode=analysis_mode,
+        )
 
 
-def write_audit_manifest(inputs: Path, snapshot: ExecutionSnapshot, sources: dict[str, bytes], programs: dict[str, dict[str, bytes]]) -> AuditJobSpec:
+def write_audit_manifest(
+    inputs: Path, snapshot: ExecutionSnapshot, sources: dict[str, bytes], programs: dict[str, dict[str, bytes]], *, analysis_mode: Literal["standard", "deep"] = "standard"
+) -> AuditJobSpec:
     snapshot.validate_sources(sources)
     expected = {target.binding.checker_digest for target in snapshot.targets}
     if set(programs) != expected or any(checker_digest(files) != digest for digest, files in programs.items()):
@@ -46,7 +57,8 @@ def write_audit_manifest(inputs: Path, snapshot: ExecutionSnapshot, sources: dic
     if 1 + len(sources) + sum(len(files) for files in programs.values()) > MAX_INPUT_FILES:
         raise ValueError("audit_input_limit")
     inputs.mkdir()
-    source_paths, program_paths = {}, {}
+    source_paths: dict[str, str] = {}
+    program_paths: dict[str, dict[str, str]] = {}
     total = 0
 
     def stage(name: str, body: bytes) -> None:
@@ -68,8 +80,10 @@ def write_audit_manifest(inputs: Path, snapshot: ExecutionSnapshot, sources: dic
             staged = f"program-{index}-{name}"
             stage(staged, body)
             program_paths[digest][name] = staged
-    job = AuditJobSpec.from_snapshot(snapshot)
-    raw = json.dumps({"operation": "execute-audit", "spec": job.model_dump(mode="json"), "snapshot": snapshot.to_dict(), "source_paths": source_paths, "program_paths": program_paths}, ensure_ascii=False).encode()
+    job = AuditJobSpec.from_snapshot(snapshot, analysis_mode)
+    raw = json.dumps(
+        {"operation": "execute-audit", "spec": job.model_dump(mode="json"), "snapshot": snapshot.to_dict(), "source_paths": source_paths, "program_paths": program_paths}, ensure_ascii=False
+    ).encode()
     if len(raw) > MAX_MANIFEST:
         raise ValueError("audit_manifest_limit")
     stage("manifest.json", raw)
@@ -95,7 +109,7 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
         raise ValueError("audit_manifest_invalid")
     snapshot = ExecutionSnapshot.from_dict(manifest["snapshot"])
     job = AuditJobSpec.model_validate(manifest["spec"])
-    if job != AuditJobSpec.from_snapshot(snapshot):
+    if job != AuditJobSpec.from_snapshot(snapshot, job.analysis_mode):
         raise ValueError("audit_manifest_identity_mismatch")
     total = 0
 
@@ -117,9 +131,44 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
     access = ModelAccess(provider="deepseek", base_url=grant.base_url, model=grant.model, api_key=SecretStr(grant.token))
     if snapshot.model_identity.get("provider") not in {None, access.provider}:
         raise ValueError("audit_model_grant_mismatch")
+    artifacts: dict[str, CheckerArtifact] = {}
+    effective = snapshot
+    snapshot.validate_sources(sources)
     with model_access_scope(access):
-        result = run_audit(snapshot, sources, programs)
-    payload = {**result, "operation": "execute-audit", "execution_id": str(job.execution_id), "executor_revision": snapshot.runtime_revision}
+        if job.analysis_mode == "deep":
+            from agent.execution.checker_guest import develop_checker
+            from agent.execution.guest_model import PiRunner
+
+            runner = PiRunner(grant.model_dump(mode="json"))
+            deadline = time.monotonic() + runner.wall_seconds
+            development = snapshot_development_inputs(snapshot, sources, directory=work / "development-sources")
+            for index, target in enumerate(snapshot.targets):
+                item = development[target.file_version_id]
+                target_work = work / f"development-{index}"
+                target_work.mkdir()
+                artifact = develop_checker(
+                    audit_file=item.audit_file,
+                    rule=item.rule,
+                    group_context=item.group_context,
+                    digest=item.digest,
+                    executor_revision=snapshot.runtime_revision,
+                    runner=runner,
+                    work=target_work,
+                    deadline=deadline,
+                    prior_files={name: body.decode("utf-8") for name, body in programs[target.binding.checker_digest].items()},
+                )
+                artifacts[target.file_version_id] = artifact
+            effective = generated_snapshot(snapshot, sources, artifacts)
+            programs = {artifact.program_digest: dict(artifact.files) for artifact in artifacts.values()}
+        result = run_audit(effective, sources, programs)
+    payload = {
+        **result,
+        "operation": "execute-audit",
+        "execution_id": str(job.execution_id),
+        "executor_revision": snapshot.runtime_revision,
+        "accepted_input_digest": snapshot.input_digest,
+        "generated_artifacts": {identity: value.model_dump(mode="json") for identity, value in artifacts.items()},
+    }
     encoded = json.dumps(payload, ensure_ascii=False).encode()
     if len(encoded) > MAX_BUNDLE:
         raise ValueError("audit_output_limit")
@@ -127,17 +176,27 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
     (work / "result" / "bundle.json").write_bytes(encoded)
 
 
-class CoreRuntime:
+class CoreRuntime(SemanticRuntime):
     """Trusted host adapter: resolve immutable content, then run one audit guest."""
 
-    def __init__(self, runtime: Any, snapshot_for_request, suite_for_revision, *, timeout: float = 2400) -> None:
+    def __init__(self, runtime: Any, snapshot_for_request, suite_for_revision, *, objects=None, save_round_artifacts=None, timeout: float = 2400) -> None:
         self.runtime, self.snapshot_for_request, self.suite_for_revision = runtime, snapshot_for_request, suite_for_revision
         self.timeout = timeout
+        self.objects = objects
+        self.save_round_artifacts = save_round_artifacts
+
+    def execution_revision(self) -> str:
+        from audit.checker_core import runtime_revision
+        from audit.standard_suites import library_revision
+
+        return runtime_revision(self.runtime.engine_revision(), library_revision())
 
     def ready(self, operation: str = "audit") -> bool:
         return self.runtime.ready(operation)
 
-    def execute_snapshot(self, snapshot: ExecutionSnapshot, sources: dict[str, bytes], programs: dict[str, dict[str, bytes]], context: ExecutionContext) -> dict:
+    def execute_snapshot(
+        self, snapshot: ExecutionSnapshot, sources: dict[str, bytes], programs: dict[str, dict[str, bytes]], context: ExecutionContext, *, analysis_mode: Literal["standard", "deep"] = "standard"
+    ) -> dict:
         from agent.execution.audit_runtime import _validate_output
 
         context.raise_if_cancelled()
@@ -145,24 +204,38 @@ class CoreRuntime:
             root = Path(root_name)
             work, inputs = root / "work", root / "inputs"
             work.mkdir()
-            job = write_audit_manifest(inputs, snapshot, sources, programs)
+            job = write_audit_manifest(inputs, snapshot, sources, programs, analysis_mode=analysis_mode)
             try:
                 self.runtime.run(job, inputs, work, time.monotonic() + self.timeout, context.cancelled)
                 result = read_json(work, ("result", "bundle.json"), MAX_BUNDLE)
             except ControllerFault as exc:
                 # A failed paid operation is not automatically repeated: the
                 # existing runtime journal and attempt marker own reconciliation.
-                raise DeepError("deep_model_protocol" if exc.code == "MODEL_PROTOCOL_ERROR" else "deep_execution_failed") from exc
+                raise DeepError(FAULTS.get(exc.code, "deep_execution_failed")) from exc
             if result.get("execution_id") != str(job.execution_id) or result.get("executor_revision") != snapshot.runtime_revision or result.get("operation") != "execute-audit":
                 raise DeepError("deep_output_identity_mismatch")
             context.raise_if_cancelled()
-            return _validate_output(snapshot, result)
+            if result.get("accepted_input_digest") != snapshot.input_digest:
+                raise DeepError("deep_output_identity_mismatch")
+            raw_artifacts = result.get("generated_artifacts")
+            if not isinstance(raw_artifacts, dict) or analysis_mode != "deep" and raw_artifacts:
+                raise DeepError("deep_output_invalid")
+            artifacts = {identity: CheckerArtifact.model_validate(raw) for identity, raw in raw_artifacts.items()}
+            effective = generated_snapshot(snapshot, sources, artifacts) if analysis_mode == "deep" else snapshot
+            return _validate_output(effective, result)
 
     def execute(self, spec, files: dict[str, bytes], *, context: ExecutionContext):
         from agent.core_result import core_response
 
         snapshot = self.snapshot_for_request(spec)
-        if snapshot is None or snapshot.input_digest != spec.checker_snapshot_digest or snapshot.tenant_id != spec.tenant_id or snapshot.round_id != spec.round_id or snapshot.runtime_revision != spec.executor_revision or snapshot.initiating_user_id != spec.initiating_user_id:
+        if (
+            snapshot is None
+            or snapshot.input_digest != spec.checker_snapshot_digest
+            or snapshot.tenant_id != spec.tenant_id
+            or snapshot.round_id != spec.round_id
+            or snapshot.runtime_revision != spec.executor_revision
+            or snapshot.initiating_user_id != spec.initiating_user_id
+        ):
             raise DeepError("deep_input_unauthorized")
         programs: dict[str, dict[str, bytes]] = {}
         for target in snapshot.targets:
@@ -174,6 +247,175 @@ class CoreRuntime:
                 raise DeepError("deep_integrity_mismatch")
             programs[target.binding.checker_digest] = code
         context.progress({"phase": "checking"})
-        result = self.execute_snapshot(snapshot, files, programs, context)
+        result = self.execute_snapshot(snapshot, files, programs, context, analysis_mode=spec.analysis_mode)
+        artifacts = {identity: CheckerArtifact.model_validate(raw) for identity, raw in result["generated_artifacts"].items()}
+        if artifacts:
+            if self.save_round_artifacts is None:
+                raise DeepError("deep_artifact_persistence_unavailable")
+            effective = generated_snapshot(snapshot, files, artifacts)
+            adopted = self.save_round_artifacts(spec, snapshot, artifacts)
+            if set(adopted) != set(artifacts):
+                raise DeepError("deep_output_identity_mismatch")
+            effective = replace(
+                effective,
+                targets=tuple(
+                    replace(target, suite_revision_id=adopted[target.file_version_id]["suite_revision_id"], suite_digest=adopted[target.file_version_id]["suite_digest"])
+                    for target in effective.targets
+                ),
+            )
+        else:
+            effective = snapshot
         context.progress({"phase": "validating"})
-        return core_response(spec, snapshot, result)
+        return core_response(spec, effective, result)
+
+    def _checker_job(self, spec, audit_file, rule, file_bytes, *, role, context, group_context, operation, prior=None, artifact=None, related_bytes=None, development_feedback=None):
+        # Generation uses the existing granted guest. Every fixed execution,
+        # including independent holdout, uses exactly the whole-audit Core.
+        if operation == "adapt-checker":
+            return super()._checker_job(
+                spec,
+                audit_file,
+                rule,
+                file_bytes,
+                role=role,
+                context=context,
+                group_context=group_context,
+                operation=operation,
+                prior=prior,
+                artifact=artifact,
+                related_bytes=related_bytes,
+                development_feedback=development_feedback,
+            )
+        from agent.checker_development import FrozenDevelopmentInput
+        from agent.checker_spec import CheckerJobSpec, CheckerProgramBundle
+
+        if artifact is None:
+            raise DeepError("deep_output_invalid")
+        inputs = FrozenDevelopmentInput(audit_file, rule, file_bytes, role, group_context, related_bytes or {})
+        if artifact.input_digest != inputs.digest or artifact.executor_revision != spec.executor_revision:
+            raise DeepError("deep_output_identity_mismatch")
+        snapshot, sources = development_snapshot(inputs, artifact, spec)
+        result = self.execute_snapshot(snapshot, sources, {artifact.program_digest: dict(artifact.files)}, context)
+        job = CheckerJobSpec(execution_id=UUID(int=0), operation="execute-checker", input_digest=inputs.digest, executor_revision=spec.executor_revision)
+        return CheckerProgramBundle(
+            operation="execute-checker",
+            execution_id=job.expected_execution_id(),
+            input_digest=inputs.digest,
+            executor_revision=spec.executor_revision,
+            results=result["findings"],
+            **{key: result[key] for key in ("input_tokens", "output_tokens", "model_requests") if type(result.get(key)) is int},
+        )
+
+
+def development_snapshot(inputs, artifact, spec):
+    """Convert authorized trial inputs to the same immutable clause contract."""
+    import hashlib
+
+    from audit.checker_core import FrozenInput, FrozenTarget, RuleBinding, clause_ids
+    from audit.standard_suites import library_revision
+    from documents.model_access import DEEPSEEK_MODEL
+
+    target_id = str(inputs.audit_file.file_metadata.get("file_version_id") or inputs.audit_file.audit_id)
+    source_rows = {target_id: inputs.audit_file}
+    if inputs.group_context is not None:
+        source_rows.update({str(row.file_metadata.get("file_version_id") or row.audit_id): row for row in inputs.group_context.by_audit_id.values()})
+    sources = dict(inputs.related_bytes)
+    sources[target_id] = inputs.file_bytes
+    if set(source_rows) != set(sources):
+        raise DeepError("deep_input_invalid")
+    frozen = tuple(
+        FrozenInput(
+            identity,
+            hashlib.sha256(sources[identity]).hexdigest(),
+            "target" if identity == target_id else "reference",
+            str(row.file_metadata.get("original_filename") or Path(row.file_url).name),
+            customer=row.customer,
+            model=row.model,
+            part=row.part,
+            project_id=row.project_id,
+        )
+        for identity, row in source_rows.items()
+    )
+    rules = inputs.rule.model_dump(mode="json")
+    key = str(rules.get("suite_key") or inputs.rule.rule_id or "development")
+    target = FrozenTarget(
+        target_id,
+        str(inputs.rule.rule_id or "development"),
+        key,
+        artifact.program_digest,
+        rules,
+        RuleBinding(key, artifact.program_digest, {clause: "checker:create_audit" for clause in clause_ids(rules)}),
+        appendix=tuple(rules.get("appendix") or ()),
+    )
+    return ExecutionSnapshot(
+        tenant_id=spec.tenant_id,
+        initiating_user_id=spec.initiating_user_id,
+        inputs=frozen,
+        targets=(target,),
+        runtime_revision=spec.executor_revision,
+        library_revision=library_revision(),
+        model_identity={"provider": "deepseek", "model": DEEPSEEK_MODEL},
+        round_id=spec.round_id,
+    ), sources
+
+
+def snapshot_development_inputs(snapshot, sources, *, directory=None):
+    """Use one canonical input identity on both trusted host and guest."""
+    from audit.contracts import AuditInput, GroupContextInput, RuleInput
+
+    from agent.checker_development import FrozenDevelopmentInput
+
+    snapshot.validate_sources(sources)
+    if directory is not None:
+        directory.mkdir()
+    audits, by_type = {}, {}
+    rules = {
+        target.file_version_id: RuleInput.model_validate({**target.to_dict()["rules"], "rule_id": target.suite_revision_id, "appendix": target.to_dict()["appendix"]}) for target in snapshot.targets
+    }
+    for index, source in enumerate(snapshot.inputs):
+        filename = source.filename
+        if directory is not None:
+            path = directory / f"source-{index}{Path(filename).suffix.lower()}"
+            path.write_bytes(sources[source.file_version_id])
+            path.chmod(0o400)
+            filename = str(path)
+        audit = AuditInput(
+            audit_id=source.file_version_id,
+            file_url=filename,
+            project_id=source.project_id,
+            customer=source.customer,
+            model=source.model,
+            part=source.part,
+            file_metadata={"file_version_id": source.file_version_id, "sha256": source.sha256, "role": source.role, "original_filename": source.filename},
+        )
+        audits[source.file_version_id] = audit
+        if source.document_type:
+            by_type.setdefault(source.document_type, []).append(audit)
+    group = GroupContextInput(task_group_id=snapshot.round_id, by_audit_id=audits, by_doc_type=by_type, rules_by_id=rules)
+    return {
+        target.file_version_id: FrozenDevelopmentInput(audits[target.file_version_id], rules[target.file_version_id], sources[target.file_version_id], "target", group, dict(sources))
+        for target in snapshot.targets
+    }
+
+
+def generated_snapshot(snapshot, sources, artifacts):
+    """Host independently checks generated code identity; never imports it."""
+    from audit.checker_core import RuleBinding, clause_ids
+
+    expected = snapshot_development_inputs(snapshot, sources)
+    if set(artifacts) != set(expected):
+        raise DeepError("deep_output_identity_mismatch")
+    targets = []
+    for target in snapshot.targets:
+        artifact = artifacts[target.file_version_id]
+        if artifact.input_digest != expected[target.file_version_id].digest or artifact.executor_revision != snapshot.runtime_revision:
+            raise DeepError("deep_output_identity_mismatch")
+        targets.append(
+            replace(
+                target,
+                binding=RuleBinding(target.suite_key, artifact.program_digest, {clause: "checker:create_audit" for clause in clause_ids(target.rules)}),
+                verification="unverified",
+                samples_not_rerun=False,
+            )
+        )
+    return replace(snapshot, targets=tuple(targets))

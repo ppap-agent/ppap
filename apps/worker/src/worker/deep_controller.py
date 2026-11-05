@@ -10,10 +10,13 @@ from agent.client import DEEP_REQUEST_TIMEOUT
 from agent.execution.harness import runtime_from_env
 from agent.run import Controller, UnixControllerServer
 from agent.source import authorize_execution, object_file_source
+from audit.checker_core import runtime_revision
+from audit.standard_suites import library_revision
 from product.db import connect
 from product.settings import load_settings
 from product.storage import S3Objects
 from product.store.store import AuthStore
+from product.store.suites import SuiteStore
 
 STOP = threading.Event()
 
@@ -32,12 +35,19 @@ def main() -> int:
     if not socket_path:
         print("PPAP_DEEP_CONTROLLER_SOCKET is required", file=sys.stderr)
         return 2
-    revision = settings.deep_execution_revision()
+    revision = runtime_revision(settings.deep_execution_revision(), library_revision())
     objects = S3Objects(settings)
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
     store = open_store(settings)
-    with runtime_from_env(settings, objects, model_access_for_request=lambda spec: store.personal_model_access(spec.tenant_id, spec.initiating_user_id)) as runtime:
+    suites = SuiteStore(settings, objects, role="worker")
+    with runtime_from_env(
+        settings,
+        objects,
+        model_access_for_request=lambda spec: store.personal_model_access(spec.tenant_id, spec.initiating_user_id),
+        snapshot_for_request=lambda spec: suites.read_snapshot(spec.round_id, spec.tenant_id),
+        suite_for_revision=suites.resolve_suite,
+    ) as runtime:
         server = UnixControllerServer(
             socket_path,
             Controller(
