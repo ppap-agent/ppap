@@ -253,9 +253,11 @@ def preview_failure_diagnostics(request, monkeypatch):
                                 })""",
                                 timeout=1000,
                             )
+                            result["url"] = page.url
+                            result["aria"] = page.locator("body").aria_snapshot(timeout=1000)[:4000]
                         except Exception as error:
                             result["snapshot_error_type"] = type(error).__name__
-                    print("Preview failure diagnostics: " + json.dumps(result), file=sys.stderr)
+                    print("Preview failure diagnostics: " + json.dumps(result, ensure_ascii=False), file=sys.stderr)
                 raise
 
     monkeypatch.setattr(Browser, "new_page", observe(Browser.new_page))

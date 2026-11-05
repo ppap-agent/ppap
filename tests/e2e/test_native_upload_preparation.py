@@ -10,6 +10,8 @@ import pytest
 pytest.importorskip("playwright.sync_api")
 from playwright.sync_api import expect, sync_playwright  # noqa: E402
 
+from .conftest import pick_audit_files  # noqa: E402
+
 WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
 
 
@@ -221,7 +223,7 @@ def test_unknown_upload_and_other_success_survive_a_fresh_page(width, lose_prepa
         http = PreparationHTTP(lose_prepare_reply)
         http.install(page)
         page.goto(WEB + "/tasks/new")
-        page.get_by_label("选择审核文件", exact=True).set_input_files([{"name": name, "mimeType": "application/octet-stream", "buffer": b"original"} for name in ("已接收.xlsx", "待核对.xlsx")])
+        pick_audit_files(page, [{"name": name, "mimeType": "application/octet-stream", "buffer": b"original"} for name in ("已接收.xlsx", "待核对.xlsx")])
         expect(page.get_by_role("checkbox", name="选择 已接收.xlsx", exact=True)).to_be_checked()
         expect(page.get_by_role("button", name="读取传输 待核对.xlsx", exact=True)).to_be_enabled()
         saved_url = page.url
@@ -255,7 +257,7 @@ def test_begin_recognition_promotes_and_reopens_the_same_draft_without_resubmiss
         http.allow_receipts = True
         http.install(page)
         page.goto(WEB + "/tasks/new")
-        page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "已接收.xlsx", "mimeType": "application/octet-stream", "buffer": b"original"})
+        pick_audit_files(page, {"name": "已接收.xlsx", "mimeType": "application/octet-stream", "buffer": b"original"})
         expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_enabled()
         saved_url = page.url
         draft_id = http.draft["id"]
@@ -280,7 +282,7 @@ def test_failed_preparation_read_after_back_does_not_leave_the_previous_task_act
         http.allow_receipts = True
         http.install(page)
         page.goto(WEB + "/tasks/new")
-        page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "已接收.xlsx", "mimeType": "application/octet-stream", "buffer": b"original"})
+        pick_audit_files(page, {"name": "已接收.xlsx", "mimeType": "application/octet-stream", "buffer": b"original"})
         expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_enabled()
         saved_url = page.url
         # Keep the prepared address in browser history, then open the promoted Task.
@@ -314,7 +316,7 @@ def test_same_bytes_can_be_reselected_without_changing_the_original_upload_ident
         http.allow_resume = True
         http.install(page)
         page.goto(WEB + "/tasks/new")
-        page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "待核对.xlsx", "mimeType": "application/octet-stream", "buffer": b"original"})
+        pick_audit_files(page, {"name": "待核对.xlsx", "mimeType": "application/octet-stream", "buffer": b"original"})
         expect(page.get_by_role("button", name="读取传输 待核对.xlsx", exact=True)).to_be_enabled()
         saved_url = page.url
         original_request = http.creates[0]["request_id"]
@@ -378,9 +380,7 @@ def test_one_unreadable_local_file_does_not_block_the_other_files_before_transfe
           };
         })();""")
         page.goto(WEB + "/tasks/new")
-        page.get_by_label("选择审核文件", exact=True).set_input_files(
-            [{"name": name, "mimeType": "application/octet-stream", "buffer": b"original"} for name in ("已接收.xlsx", "不可读取.xlsx", "另一份.xlsx")]
-        )
+        pick_audit_files(page, [{"name": name, "mimeType": "application/octet-stream", "buffer": b"original"} for name in ("已接收.xlsx", "不可读取.xlsx", "另一份.xlsx")])
         expect(page.get_by_role("checkbox", name="选择 已接收.xlsx", exact=True)).to_be_checked()
         expect(page.get_by_role("checkbox", name="选择 另一份.xlsx", exact=True)).to_be_checked()
         expect(page.get_by_text("本地原件无法读取，未开始上传。请排除此文件后重新选择。", exact=True)).to_be_visible()
@@ -429,7 +429,7 @@ def test_prepared_ordinary_task_resolves_an_explicit_candidate_in_the_same_task(
         page.route("**/api/audit-tasks", rematch)
         page.route("**/api/audit-tasks/*/confirm", confirm)
         page.goto(WEB + "/tasks/new")
-        page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "已接收.xlsx", "mimeType": "application/octet-stream", "buffer": b"original"})
+        pick_audit_files(page, {"name": "已接收.xlsx", "mimeType": "application/octet-stream", "buffer": b"original"})
         expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_enabled()
         page.get_by_role("button", name="开始识别", exact=True).click()
         expect(page.get_by_role("heading", name="正在识别文件与匹配规则", exact=True)).to_be_visible()
@@ -517,7 +517,7 @@ def test_pending_default_cannot_silently_create_an_auto_customer_upload():
         pending.pop().fulfill(json=server.customer_default)
         expect(page.get_by_role("combobox", name="审核客户", exact=True)).to_contain_text("UAES（联电）")
         expect(page.get_by_role("button", name="选择本地文件", exact=True)).to_be_enabled()
-        page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "资料.xlsx", "mimeType": "application/octet-stream", "buffer": b"original"})
+        pick_audit_files(page, {"name": "资料.xlsx", "mimeType": "application/octet-stream", "buffer": b"original"})
         expect(page.get_by_role("checkbox", name="选择 资料.xlsx", exact=True)).to_be_checked()
         assert server.preparation_creates[0]["upload_preparation"]["customer_preference"] == "UAES"
         browser.close()
@@ -554,7 +554,7 @@ def test_v4_reference_choice_reaches_preparation_and_recognition():
         server.install(page)
         page.goto(WEB + "/tasks/new")
         expect(page.get_by_role("combobox", name="审核客户", exact=True)).to_contain_text("蔚来")
-        page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "特殊特性清单.xlsx", "mimeType": "application/octet-stream", "buffer": b"original"})
+        pick_audit_files(page, {"name": "特殊特性清单.xlsx", "mimeType": "application/octet-stream", "buffer": b"original"})
         role = page.get_by_role("combobox", name="特殊特性清单.xlsx 本轮用途", exact=True)
         role.click()
         page.get_by_role("option", name="比对资料 · 不单独审核或收费", exact=True).click()
@@ -606,7 +606,7 @@ def test_photo_purpose_is_explicit_and_lost_reply_reads_same_scope(width):
         http.install(page)
         page.goto(WEB + "/tasks/new")
         expect(page.get_by_label("选择审核文件", exact=True)).to_have_attribute("accept", re.compile(r"\.png"))
-        page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "样品.png", "mimeType": "image/png", "buffer": b"controlled-original"})
+        pick_audit_files(page, {"name": "样品.png", "mimeType": "image/png", "buffer": b"controlled-original"})
         purpose = page.get_by_role("button", name="作为生产件样品照片检查", exact=True)
         expect(purpose).to_be_visible()
         assert http.photo_commands == []

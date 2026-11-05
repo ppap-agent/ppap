@@ -3,6 +3,8 @@
 import os
 import unittest
 
+from .conftest import pick_audit_files  # noqa: E402
+
 try:
     from playwright.sync_api import expect, sync_playwright
 except ImportError:
@@ -54,7 +56,7 @@ class AuditIntakeClosureTests(unittest.TestCase):
             page = browser.new_page()
             for fail_reply in (False, True):
                 page.goto(PREVIEW + "/preview/audit.html?scene=upload-loading")
-                page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "等待回执.pdf", "mimeType": "application/pdf", "buffer": b"fixture"})
+                pick_audit_files(page, {"name": "等待回执.pdf", "mimeType": "application/pdf", "buffer": b"fixture"})
                 if fail_reply:
                     page.get_by_role("button", name="令示例读取 1 失败", exact=True).click()
                     expect(page.get_by_role("button", name="读取传输 等待回执.pdf", exact=True)).to_be_enabled()

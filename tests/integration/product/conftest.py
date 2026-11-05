@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import os
+import sys
+import threading
+import traceback
 import uuid
 
 import psycopg
@@ -205,3 +208,16 @@ def v4_objects(tmp_path_factory):
         yield S3Objects(settings)
     finally:
         subprocess.run([*compose, "down", "--volumes", "--remove-orphans"], capture_output=True, timeout=60)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """A browser test's failure says what the worker and dev server were doing at that moment."""
+    outcome = yield
+    report = outcome.get_result()
+    if report.when != "call" or not report.failed or not hasattr(item, "web_log"):
+        return
+    names = {thread.ident: thread.name for thread in threading.enumerate()}
+    stacks = (f"--- {names.get(ident, ident)}\n{''.join(traceback.format_stack(frame))}" for ident, frame in sys._current_frames().items() if ident != threading.get_ident())
+    report.sections.append(("Thread stacks at failure", "\n".join(stacks)))
+    report.sections.append(("Web server log", item.web_log.read_text(errors="replace")[-4000:]))

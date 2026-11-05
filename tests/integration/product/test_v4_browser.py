@@ -93,6 +93,7 @@ def running_product(auth_store_factory, v4_objects, tmp_path, request):
         web_port = probe.getsockname()[1]
     web = f"http://127.0.0.1:{web_port}"
     log = (tmp_path / "web.log").open("w+")
+    request.node.web_log = tmp_path / "web.log"
     root = Path(__file__).resolve().parents[3]
     vite = subprocess.Popen(
         ["pnpm", "exec", "vite", "--host", "127.0.0.1", "--port", str(web_port), "--strictPort"],
@@ -110,7 +111,9 @@ def running_product(auth_store_factory, v4_objects, tmp_path, request):
             try:
                 job = worker.claim_job("native-browser")
                 if job:
+                    started = time.monotonic()
                     process_claimed(worker, job, "native-browser", rule_ai=Metadata(customer))
+                    print(f"worker job {job.kind} took {time.monotonic() - started:.2f}s", flush=True)
             except Exception as error:
                 errors.append(type(error).__name__)
                 return
@@ -146,6 +149,14 @@ def running_product(auth_store_factory, v4_objects, tmp_path, request):
             vite.wait(timeout=5)
         listener.close()
         log.close()
+
+
+def print_page(page):
+    """expect() reports what it waited for; a failed test also needs what the page showed."""
+    try:
+        print(f"Page at failure: {page.url}\n{page.locator('body').aria_snapshot(timeout=1000)[:4000]}", flush=True)
+    except Exception as error:
+        print(f"Page at failure unavailable: {type(error).__name__}", flush=True)
 
 
 @pytest.mark.parametrize("running_product", ["UAES", "理想", "蔚来"], indirect=True)
@@ -254,6 +265,9 @@ def test_customer_intake_to_original_issue_and_frozen_precheck_export(running_pr
         except BaseException:
             page.screenshot(path=str(Path("/tmp") / f"ppap-v4-real-browser-{customer}.png"), full_page=True)
             raise
+        except Exception:
+            print_page(page)
+            raise
         finally:
             context.close()
             browser.close()
@@ -359,6 +373,9 @@ def test_cross_file_problem_opens_both_authorized_frozen_originals(running_produ
                 assert response.status == 200 and response.body() == data
                 page.keyboard.press("Escape")
             assert not errors, errors
+        except Exception:
+            print_page(page)
+            raise
         finally:
             context.close()
             browser.close()

@@ -4,6 +4,8 @@ import os
 import re
 import unittest
 
+from .conftest import pick_audit_files  # noqa: E402
+
 PREVIEW = os.environ.get("PPAP_PREVIEW_URL", "").rstrip("/")
 
 if PREVIEW:
@@ -18,7 +20,7 @@ class SupportPreviewTests(unittest.TestCase):
             page = browser.new_page(viewport={"width": 1280, "height": 900})
             page.goto(PREVIEW + "/__preview?page=audit&scene=support-loading&width=390")
             preview = page.frame_locator("iframe")
-            preview.get_by_label("选择审核文件", exact=True).set_input_files({"name": "本次未提交.xlsx", "mimeType": "application/octet-stream", "buffer": b"sample"})
+            pick_audit_files(preview, {"name": "本次未提交.xlsx", "mimeType": "application/octet-stream", "buffer": b"sample"})
             preview.get_by_role("button", name="打开产品导航", exact=True).click()
             preview.get_by_role("button", name="用量记录", exact=True).click()
             preview.get_by_role("button", name="打开产品导航", exact=True).click()
@@ -103,7 +105,7 @@ class SupportPreviewTests(unittest.TestCase):
             page.goto(PREVIEW + "/preview/audit.html")
             page.get_by_role("combobox", name="客户（可选）").click()
             page.get_by_role("option", name="示例客户", exact=True).click()
-            page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "保留本次文件.xlsx", "mimeType": "application/octet-stream", "buffer": b"sample"})
+            pick_audit_files(page, {"name": "保留本次文件.xlsx", "mimeType": "application/octet-stream", "buffer": b"sample"})
             page.get_by_role("button", name="用量记录", exact=True).click()
             page.get_by_role("button", name="联系我们", exact=True).click()
             expect(page.get_by_role("dialog", name="联系我们", exact=True)).to_be_visible()
@@ -135,7 +137,7 @@ class SupportPreviewTests(unittest.TestCase):
             browser = playwright.chromium.launch()
             page = browser.new_page(viewport={"width": 390, "height": 844})
             page.goto(PREVIEW + "/preview/audit.html")
-            page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "保留草稿.xlsx", "mimeType": "application/octet-stream", "buffer": b"sample"})
+            pick_audit_files(page, {"name": "保留草稿.xlsx", "mimeType": "application/octet-stream", "buffer": b"sample"})
             page.get_by_role("button", name="打开产品导航", exact=True).click()
             page.get_by_role("button", name="联系我们", exact=True).click()
             dialog = page.get_by_role("dialog", name="联系我们", exact=True)

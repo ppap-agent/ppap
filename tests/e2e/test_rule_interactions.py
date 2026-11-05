@@ -11,6 +11,8 @@ import unittest
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
+from .conftest import pick_audit_files  # noqa: E402
+
 try:
     from playwright.sync_api import sync_playwright
 except ImportError:  # pragma: no cover - optional until the e2e job installs Playwright
@@ -696,9 +698,7 @@ class RuleInteractionTests(unittest.TestCase):
             page.route("**/api/file-validations", create_validation)
             page.route("**/api/file-validations/*", read_validation)
             page.goto(WEB + "/audit")
-            page.get_by_label("选择审核文件", exact=True).set_input_files(
-                {"name": "未知回执.xlsx", "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": b"fixture"}
-            )
+            pick_audit_files(page, {"name": "未知回执.xlsx", "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": b"fixture"})
             retry = page.get_by_role("button", name="重新读取 未知回执.xlsx 检查结果", exact=True)
             expect(retry).to_be_enabled()
             open_rule_library(page)
@@ -935,9 +935,7 @@ class RuleInteractionTests(unittest.TestCase):
 
             page.route("**/api/files/*/versions/*/validation", validation)
             page.goto(WEB + "/audit")
-            page.get_by_label("选择审核文件", exact=True).set_input_files(
-                {"name": "保留选择.xlsx", "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": b"fixture"}
-            )
+            pick_audit_files(page, {"name": "保留选择.xlsx", "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": b"fixture"})
             selected = page.get_by_role("checkbox", name="选择 保留选择.xlsx", exact=True)
             expect(selected).to_be_checked()
             selected.uncheck()
@@ -1598,9 +1596,7 @@ class RuleInteractionTests(unittest.TestCase):
             page.route("**/api/file-validations/*", read_validation)
             page.route("**/api/file-validations", create_validation)
             page.goto(WEB + "/audit")
-            page.get_by_label("选择审核文件", exact=True).set_input_files(
-                [{"name": name, "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": b"fixture"} for name in ("flow.xlsx", "control.xlsx")]
-            )
+            pick_audit_files(page, [{"name": name, "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": b"fixture"} for name in ("flow.xlsx", "control.xlsx")])
             retry = page.get_by_role("button", name="重新读取 flow.xlsx 检查结果", exact=True)
             expect(retry).to_be_enabled()
             expect(page.get_by_role("checkbox", name="选择 control.xlsx", exact=True)).to_be_checked()

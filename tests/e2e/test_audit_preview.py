@@ -12,6 +12,8 @@ import unittest
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlencode, urlparse
 
+from .conftest import pick_audit_files  # noqa: E402
+
 try:
     from playwright.sync_api import expect, sync_playwright
 except ImportError:
@@ -1964,10 +1966,10 @@ class AuditPreviewTests(unittest.TestCase):
             page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html?scene=upload-loading")
-            page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "草稿A.pdf", "mimeType": "application/pdf", "buffer": b"draft-a"})
+            pick_audit_files(page, {"name": "草稿A.pdf", "mimeType": "application/pdf", "buffer": b"draft-a"})
             expect(page.get_by_role("button", name="返回示例读取 1", exact=True)).to_be_visible()
             new_task(page)
-            page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "草稿B.pdf", "mimeType": "application/pdf", "buffer": b"draft-b"})
+            pick_audit_files(page, {"name": "草稿B.pdf", "mimeType": "application/pdf", "buffer": b"draft-b"})
             expect(page.get_by_role("button", name="返回示例读取 2", exact=True)).to_be_visible()
             page.go_back()
             expect(page.get_by_role("button", name="读取传输 草稿A.pdf", exact=True)).to_be_enabled()
@@ -1998,9 +2000,7 @@ class AuditPreviewTests(unittest.TestCase):
             page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html?scene=upload-partial")
-            page.get_by_label("选择审核文件", exact=True).set_input_files(
-                {"name": "明确失败.xlsx", "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": b"original-draft-file"}
-            )
+            pick_audit_files(page, {"name": "明确失败.xlsx", "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": b"original-draft-file"})
             expect(page.get_by_role("button", name="重试传输 明确失败.xlsx", exact=True)).to_be_enabled()
             new_task(page)
             page.go_back()
@@ -2150,14 +2150,14 @@ class AuditPreviewTests(unittest.TestCase):
             new_task(page)
             page.get_by_role("button", name="使用三类文件示例", exact=True).click()
             page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True).uncheck()
-            page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "草稿A.pdf", "mimeType": "application/pdf", "buffer": b"draft-a"})
+            pick_audit_files(page, {"name": "草稿A.pdf", "mimeType": "application/pdf", "buffer": b"draft-a"})
             expect(page.get_by_role("heading", name="等待预检查 · 1 份", exact=True)).to_be_visible()
             page.get_by_role("button", name="上一步", exact=True).click()
             new_task(page)
             page.get_by_role("button", name="使用三类文件示例", exact=True).click()
             page.get_by_role("checkbox", name="深度模式", exact=True).check()
             page.get_by_role("button", name="移除 过程流程图.pdf", exact=True).click()
-            page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "草稿B.pdf", "mimeType": "application/pdf", "buffer": b"draft-b"})
+            pick_audit_files(page, {"name": "草稿B.pdf", "mimeType": "application/pdf", "buffer": b"draft-b"})
             expect(page.get_by_role("heading", name="等待预检查 · 1 份", exact=True)).to_be_visible()
             page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="用量记录", exact=True).click()
             # The task count below requires the usage fixture's archive initialization.
@@ -2427,7 +2427,7 @@ class AuditPreviewTests(unittest.TestCase):
             page.clock.fast_forward(3000)
             expect(page.get_by_text("任务观察 · preview-recovery-task · 读取 1", exact=True)).to_be_visible()
             new_task(page)
-            page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "新草稿.pdf", "mimeType": "application/pdf", "buffer": b"preview"})
+            pick_audit_files(page, {"name": "新草稿.pdf", "mimeType": "application/pdf", "buffer": b"preview"})
             expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
             close_workspace_panel(page)
             page.get_by_role("button", name="返回示例读取 1", exact=True).click()
@@ -4216,7 +4216,7 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("button", name="开始识别", exact=True).click()
             page.get_by_role("button", name="上一步", exact=True).click()
             page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True).uncheck()
-            page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "附加.pdf", "mimeType": "application/pdf", "buffer": b"preview"})
+            pick_audit_files(page, {"name": "附加.pdf", "mimeType": "application/pdf", "buffer": b"preview"})
             expect(page.get_by_text("传输回执 · 附加.pdf", exact=True)).to_be_visible()
             task_url = page.url
             page.go_back()
@@ -4293,7 +4293,7 @@ class AuditPreviewTests(unittest.TestCase):
             page.goto(PREVIEW + "/preview/audit.html?scene=restore-loading&task=preview-recovery-task")
             expect(page.get_by_role("heading", name="审核任务", exact=True)).to_be_visible()
             new_task(page)
-            page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "新选择.pdf", "mimeType": "application/pdf", "buffer": b"preview"})
+            pick_audit_files(page, {"name": "新选择.pdf", "mimeType": "application/pdf", "buffer": b"preview"})
             close_workspace_panel(page)
             page.get_by_role("button", name="返回示例读取 1", exact=True).click()
             expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
@@ -4351,9 +4351,9 @@ class AuditPreviewTests(unittest.TestCase):
             page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html?scene=upload-loading")
-            page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "旧草稿.pdf", "mimeType": "application/pdf", "buffer": b"preview"})
+            pick_audit_files(page, {"name": "旧草稿.pdf", "mimeType": "application/pdf", "buffer": b"preview"})
             new_task(page)
-            page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "新草稿.pdf", "mimeType": "application/pdf", "buffer": b"preview"})
+            pick_audit_files(page, {"name": "新草稿.pdf", "mimeType": "application/pdf", "buffer": b"preview"})
             close_workspace_panel(page)
             page.get_by_role("button", name="返回示例读取 1", exact=True).click()
             expect(page.get_by_text("旧草稿.pdf", exact=True)).to_have_count(0)
@@ -4369,7 +4369,7 @@ class AuditPreviewTests(unittest.TestCase):
             page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html?scene=upload-loading")
-            page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "已排除.pdf", "mimeType": "application/pdf", "buffer": b"preview"})
+            pick_audit_files(page, {"name": "已排除.pdf", "mimeType": "application/pdf", "buffer": b"preview"})
             page.get_by_role("button", name="排除传输 已排除.pdf", exact=True).click()
             close_workspace_panel(page)
             page.get_by_role("button", name="返回示例读取 1", exact=True).click()
@@ -4400,12 +4400,13 @@ class AuditPreviewTests(unittest.TestCase):
             page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html?scene=upload-partial")
-            page.get_by_label("选择审核文件", exact=True).set_input_files(
+            pick_audit_files(
+                page,
                 [
                     {"name": "已接收.pdf", "mimeType": "application/pdf", "buffer": b"preview"},
                     {"name": "明确失败.xlsx", "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": b"preview"},
                     {"name": "结果未知.docx", "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "buffer": b"preview"},
-                ]
+                ],
             )
             expect(page.get_by_role("heading", name="等待预检查 · 1 份", exact=True)).to_be_visible()
             expect(page.get_by_role("heading", name="待处理传输 · 2 份", exact=True)).to_be_visible()
@@ -4468,9 +4469,7 @@ class AuditPreviewTests(unittest.TestCase):
                     page = browser.new_page(viewport={"width": 1440, "height": 1000})
                     page.set_default_timeout(5000)
                     page.goto(PREVIEW + "/preview/audit.html?scene=upload-resume")
-                    page.get_by_label("选择审核文件", exact=True).set_input_files(
-                        {"name": "待续传.xlsx", "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": b"preview"}
-                    )
+                    pick_audit_files(page, {"name": "待续传.xlsx", "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": b"preview"})
                     expect(page.get_by_role("button", name="重试传输 待续传.xlsx", exact=True)).to_be_disabled()
                     expect(page.get_by_role("button", name="继续传输 待续传.xlsx", exact=True)).to_have_count(0)
                     page.get_by_role("button", name="读取传输 待续传.xlsx", exact=True).click()
@@ -4618,7 +4617,7 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("button", name="开始审核", exact=True).click()
             expect(page.get_by_role("button", name="正在确认…", exact=True)).to_be_disabled()
             new_task(page)
-            page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "新草稿.pdf", "mimeType": "application/pdf", "buffer": b"preview"})
+            pick_audit_files(page, {"name": "新草稿.pdf", "mimeType": "application/pdf", "buffer": b"preview"})
             close_workspace_panel(page)
             page.get_by_role("button", name="返回示例读取 1", exact=True).click()
             expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
@@ -5095,7 +5094,7 @@ class AuditPreviewTests(unittest.TestCase):
             page = browser.new_page(viewport={"width": 390, "height": 844})
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html")
-            page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "not-a-real-document.pdf", "mimeType": "application/pdf", "buffer": b"broken"})
+            pick_audit_files(page, {"name": "not-a-real-document.pdf", "mimeType": "application/pdf", "buffer": b"broken"})
             expect(page.get_by_text("文件待检查。", exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_disabled()
             self.assertEqual(page.locator("h1").count(), 1)

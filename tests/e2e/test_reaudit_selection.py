@@ -9,6 +9,8 @@ import pytest
 pytest.importorskip("playwright.sync_api")
 from playwright.sync_api import expect, sync_playwright  # noqa: E402
 
+from .conftest import pick_audit_files  # noqa: E402
+
 WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
 ROUND = "00000000-0000-4000-8000-000000000001"
 
@@ -195,7 +197,7 @@ def reaudit_page(request):
         commands = reaudit_routes(page, accept=getattr(request, "param", False))
         page.goto(WEB + f"/tasks/new?fromRound={ROUND}")
         expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
-        page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "补件C.xlsx", "mimeType": "application/octet-stream", "buffer": b"fixture"})
+        pick_audit_files(page, {"name": "补件C.xlsx", "mimeType": "application/octet-stream", "buffer": b"fixture"})
         expect(page.get_by_role("checkbox", name="选择 补件C.xlsx", exact=True)).to_be_checked()
         yield page, commands
         browser.close()
