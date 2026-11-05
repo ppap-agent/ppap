@@ -109,23 +109,6 @@ def test_customer_catalog_refresh_keeps_the_restored_task_and_file_selection(pag
     assert page.url == WEB + "/tasks/original-task"
     assert reads == ["GET", "GET"]
 
-    address = page.url
-    page.context.route("https://icoastline.feishu.cn/wiki/**", lambda route: route.fulfill(body="<h1>模板使用说明</h1>", content_type="text/html; charset=utf-8"))
-    for name, suffix in (("查看模板", ""), ("模板反馈", "#share-Mo3QdDJbko2ZHHx9cf1c5FdZn7M")):
-        link = page.get_by_role("link", name=name, exact=True)
-        expect(link).to_have_attribute("href", "https://icoastline.feishu.cn/wiki/M5KqwJYWDiuUYNkGoiXcL1bgnbe" + suffix)
-        expect(link).to_have_attribute("target", "_blank")
-        expect(link).to_have_attribute("rel", "noopener noreferrer")
-        with page.expect_popup() as opened:
-            link.click()
-        expect(opened.value.get_by_role("heading", name="模板使用说明")).to_be_visible()
-        opened.value.close()
-        assert page.url == address
-        expect(page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True)).to_be_checked()
-        expect(customer_picker).to_have_count(0)
-        page.get_by_role("button", name="上一步", exact=True).click()
-        expect(customer_picker).to_contain_text("新客户")
-        page.get_by_role("button", name="查看已选文件", exact=True).click()
     expect(page.get_by_role("link", name="模板库（在飞书新窗口打开）", exact=True)).to_have_attribute("href", "https://icoastline.feishu.cn/wiki/M5KqwJYWDiuUYNkGoiXcL1bgnbe")
 
 

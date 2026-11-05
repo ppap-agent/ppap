@@ -27,9 +27,9 @@ def test_preview_parallel_dependency_is_locked_in_e2e_group():
 
 def test_preview_workers_are_bounded_with_serial_rollback():
     workflow = (ROOT / ".github/workflows/tests.yml").read_text()
-    assert 'PPAP_PREVIEW_WORKERS: "2"' in workflow
-    assert "['0', '2'].includes(workers)" in workflow
-    assert "workers === '2' ? ['-n', '2', '--dist=load'] : []" in workflow
+    assert 'PPAP_PREVIEW_WORKERS: "4"' in workflow
+    assert "['0', '4'].includes(workers)" in workflow
+    assert "workers === '4' ? ['-n', '4', '--dist=load'] : []" in workflow
     assert "'--durations=25', ...tests" in workflow
     assert "PPAP_PREVIEW_URL: preview" in workflow
     assert "if (!tests.length) throw new Error('No preview browser contracts found')" in workflow
@@ -85,7 +85,7 @@ def test_all_browser_e2e_items_join_one_xdist_pool_without_exclusion():
     assert 'uv run --no-sync pytest "$suite"' in script
     # Runtime tests remain serial and the same CI Gate still requires integration.
     assert "bash scripts/run-compose-tests.sh tests/integration/runtime" in integration
-    assert 'python3 -m scripts.ci_shards integration --shard "${{ matrix.shard }}"' in workflow
+    assert "python3 -m scripts.ci_shards integration" in workflow
     assert "      - integration_contracts\n" in workflow
     assert "      - integration\n" in workflow
 

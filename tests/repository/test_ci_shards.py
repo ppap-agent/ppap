@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from scripts.ci_shards import Target, discover_distributions, discover_integration, discover_modules, partition, partition_integration, with_postgres
+from scripts.ci_shards import Target, discover_distributions, discover_modules, partition, with_postgres
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -38,14 +38,6 @@ def test_distribution_discovery_keeps_separate_clean_wheel_contract():
     assert "corpus-contracts" not in targets
     assert "product" in targets
     assert targets["api"].postgres and targets["worker"].postgres
-
-
-def test_product_contract_shards_cover_every_file_once_and_stay_stable():
-    files = discover_integration()
-    shards = partition_integration(files, 3)
-    assert all(shards)
-    assert sorted(path for group in shards for path in group) == files
-    assert shards == partition_integration(files, 3)
 
 
 def test_reject_invalid_partition_sizes_and_duplicate_targets():

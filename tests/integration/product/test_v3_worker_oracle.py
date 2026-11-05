@@ -28,7 +28,8 @@ def _worker_env():
     keep = {
         key: value
         for key, value in os.environ.items()
-        if key in {"PGPORT", "CI", "PATH", "LEGACY_DOC_CONVERTER_EXECUTABLE", "LEGACY_DOC_SANDBOX_EXECUTABLE"} or key.startswith(("LLM_", "OPENAI_", "MODEL_NAME", "OCR_", "PADDLE_"))
+        if key in {"PGPORT", "PPAP_PG_DATABASE", "CI", "PATH", "LEGACY_DOC_CONVERTER_EXECUTABLE", "LEGACY_DOC_SANDBOX_EXECUTABLE"}
+        or key.startswith(("LLM_", "OPENAI_", "MODEL_NAME", "OCR_", "PADDLE_"))
     }
     keep["PPAP_PROFILE"] = "isolated-dev"
     return patch.dict(os.environ, keep, clear=True)

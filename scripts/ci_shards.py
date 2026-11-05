@@ -15,6 +15,7 @@ import os
 import shlex
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,6 +25,7 @@ from scripts.validate_distribution import production_members
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE_FILE = "deploy/isolated-dev/compose.yaml"
 DEFAULT_SHARDS = 3
+MODULE_CONCURRENCY = 3
 
 
 @dataclass(frozen=True)
@@ -77,36 +79,6 @@ def partition(targets: list[Target], shard_count: int) -> list[list[Target]]:
     return shards
 
 
-def discover_integration() -> list[Path]:
-    files = sorted(path.relative_to(ROOT) for path in (ROOT / "tests/integration/product").rglob("test_*.py"))
-    if not files:
-        raise RuntimeError("no product contract tests discovered")
-    return files
-
-
-def partition_integration(files: list[Path], shard_count: int) -> list[list[Path]]:
-    """Balance by source size, the stable proxy available without run history."""
-    if shard_count < 1:
-        raise ValueError("shard_count must be positive")
-    shards: list[list[Path]] = [[] for _ in range(shard_count)]
-    loads = [0] * shard_count
-    for path in sorted(files, key=lambda item: ((ROOT / item).stat().st_size, str(item)), reverse=True):
-        index = loads.index(min(loads))
-        shards[index].append(path)
-        loads[index] += (ROOT / path).stat().st_size
-    return shards
-
-
-def run_integration(shard: int, shard_count: int) -> None:
-    """One PostgreSQL per shard: these files share a database and cannot join an xdist pool."""
-    files = partition_integration(discover_integration(), shard_count)[shard]
-    project = f"ppap-ci-i-{shard}-{os.environ.get('GITHUB_RUN_ID', 'local')}-{os.environ.get('GITHUB_RUN_ATTEMPT', '1')}"
-    report = ROOT / "ci-report"
-    report.mkdir(exist_ok=True)
-    command = ["uv", "run", "--no-sync", "pytest", *map(str, files), "-vv", "--durations=25", "-o", "faulthandler_timeout=120", f"--junitxml=ci-report/product-{shard}.xml"]
-    with_postgres(command, project)
-
-
 def run(command: list[str], *, env: dict[str, str] | None = None) -> None:
     print("+", shlex.join(command), flush=True)
     run_with_heartbeat(command, cwd=ROOT, env=env, timeout=1800)
@@ -142,11 +114,36 @@ def with_postgres(command: list[str], project: str) -> None:
             print(f"::warning::PostgreSQL cleanup could not run for {project}: {error}", flush=True)
 
 
+def run_integration() -> None:
+    """Product contracts reset whole schemas; conftest gives each xdist worker its own database."""
+    project = f"ppap-ci-i-{os.environ.get('GITHUB_RUN_ID', 'local')}-{os.environ.get('GITHUB_RUN_ATTEMPT', '1')}"
+    (ROOT / "ci-report").mkdir(exist_ok=True)
+    command = [
+        "uv",
+        "run",
+        "--no-sync",
+        "pytest",
+        "tests/integration/product",
+        "-n",
+        "4",
+        "--dist=loadfile",
+        "-vv",
+        "--durations=25",
+        "-o",
+        "faulthandler_timeout=120",
+        "--junitxml=ci-report/product.xml",
+    ]
+    with_postgres(command, project)
+
+
 def run_target(target: Target, suite: str, project: str) -> None:
     if suite == "modules":
         if target.tests is None:
             raise RuntimeError(f"missing tests path for {target.name}")
         command = ["uv", "run", "--no-sync", "pytest", target.tests]
+        if target.name == "api":
+            # The API conftest gives each xdist worker its own database.
+            command += ["-n", "4", "--dist=loadfile"]
     else:
         command = [sys.executable, "scripts/validate_distribution.py", "--member", target.name]
     if target.postgres:
@@ -167,13 +164,13 @@ def main() -> None:
     if args.shards < 1:
         parser.error("--shards must be positive")
 
+    if args.suite == "integration":
+        run_integration()
+        return
+
     suites = ("modules", "distributions") if args.suite == "plan" else (args.suite,)
     if args.suite != "plan" and (args.shard is None or not 0 <= args.shard < args.shards):
         parser.error("provide --shard in [0, --shards)")
-
-    if args.suite == "integration":
-        run_integration(args.shard, args.shards)
-        return
 
     for suite in suites:
         targets = discover_modules() if suite == "modules" else discover_distributions()
@@ -184,15 +181,19 @@ def main() -> None:
         if args.suite == "plan":
             continue
 
-        failures = []
-        for index, target in enumerate(groups[args.shard]):
+        def run_isolated(index: int, target: Target) -> str | None:
             project = f"ppap-ci-{suite[0]}-{args.shard}-{index}-{os.environ.get('GITHUB_RUN_ID', 'local')}-{os.environ.get('GITHUB_RUN_ATTEMPT', '1')}"
             print(f"\n=== {suite}: {target.name} ===", flush=True)
             try:
                 run_target(target, suite, project)
             except (OSError, RuntimeError, subprocess.CalledProcessError) as error:
                 print(f"::error title={suite}/{target.name}::{error}", flush=True)
-                failures.append(target.name)
+                return target.name
+            return None
+
+        # Owners are independent pytest processes with separate databases; clean-wheel builds stay serial.
+        with ThreadPoolExecutor(max_workers=MODULE_CONCURRENCY if suite == "modules" else 1) as pool:
+            failures = [name for name in pool.map(lambda item: run_isolated(*item), enumerate(groups[args.shard])) if name]
         if failures:
             parser.exit(1, f"{suite} shard {args.shard} FAILED: {', '.join(failures)}\n")
         print(f"{suite} shard {args.shard}: all {len(groups[args.shard])} targets passed", flush=True)
