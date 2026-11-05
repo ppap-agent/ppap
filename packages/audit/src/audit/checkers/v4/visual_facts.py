@@ -224,6 +224,13 @@ def _pdf_images(audit, pages: Sequence[int], digest: str, fields=None):
                 if anchors:
                     anchor = anchors[0]
                     primary = fitz.Rect(max(0, anchor.x0 - 8), max(0, anchor.y0 - anchor.height * 2), page.rect.x1, min(page.rect.y1, anchor.y1 + anchor.height * 2))
+            elif requested == {"authorization_company_stamp_present"}:
+                anchors = page.search_for("公司名称")
+                if anchors:
+                    anchor = anchors[-1]
+                    statements = [box.y0 for box in page.search_for("特此声明") if box.y0 < anchor.y0]
+                    top = max(statements, default=anchor.y0 - anchor.height * 12)
+                    primary = fitz.Rect(max(0, anchor.x0 - 12), max(0, top), page.rect.x1, page.rect.y1)
             elif requested and requested.issubset({"psw_stamp_present", "psw_stamp_ending_text"}):
                 anchors = page.search_for("公司名称")
                 if anchors:
