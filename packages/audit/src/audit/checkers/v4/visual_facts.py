@@ -198,6 +198,8 @@ _EXISTENCE_FIELDS = frozenset({"seal", "controlled_stamp", "authorization_table_
 
 
 _MAX_SUBMISSION_OPTIONS = 12
+# "At least one reason" holds when any warrant page shows it; a blank template copy cannot contradict it.
+_ANY_PAGE_FIELDS = frozenset({"submission_any_checked", "submission_other_present"})
 
 
 def _pdf_section(page, starts, stops):
@@ -419,6 +421,7 @@ def _ocr_pdf_facts(audit, fields, witness, *, pages, cache, field_scopes=None, n
                 fields,
                 lambda *args, **kwargs: observations.append((args, kwargs)),
                 context_by_scope=context,
+                any_fields=_ANY_PAGE_FIELDS,
                 field_scopes=field_scopes,
                 any_fields=_EXISTENCE_FIELDS,
                 native_by_scope=native_by_scope,

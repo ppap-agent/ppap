@@ -378,3 +378,22 @@ def test_located_field_uses_application_coordinates_and_preserves_unknown(monkey
     else:
         assert witness.call_args.args[0]["bbox"] == [10, 20, 110, 220]
         assert witness.call_args.args[0]["observed_value"] is value
+
+
+def test_submission_reason_on_one_warrant_page_is_not_contradicted_by_a_blank_copy(monkeypatch):
+    from audit.checkers.v4 import visual_facts
+    from audit.engine.checkers import ocr_visual_facts
+
+    captured = {}
+
+    def observe(images, fields, witness, **kwargs):
+        captured.update(kwargs)
+        return dict.fromkeys(fields)
+
+    monkeypatch.setattr(ocr_visual_facts, "observe_ocr_images", observe)
+    monkeypatch.setattr(visual_facts, "_source_identity", lambda audit, cache: "a" * 64)
+    monkeypatch.setattr(visual_facts, "_pdf_images", lambda *args: ([object()], {}))
+    fields = {"submission_any_checked": "any"}
+    visual_facts._ocr_pdf_facts(SimpleNamespace(audit_id="v"), fields, lambda *a, **k: None, pages=[3, 5], cache={}, field_scopes={"submission_any_checked": ["pdf:3", "pdf:5"]})
+    assert "submission_any_checked" in captured["any_fields"]
+    assert "psw_stamp_present" not in captured["any_fields"]
