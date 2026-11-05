@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 from agent.client import DeepError
-from agent.core_program import CoreRuntime, generated_snapshot, run_audit_manifest, snapshot_development_inputs, write_audit_manifest
+from agent.core_program import AuditJobSpec, CoreRuntime, generated_snapshot, run_audit_manifest, snapshot_development_inputs, write_audit_manifest
 from agent.protocol import ExecuteRequest, FrozenFile
 from agent.run import Controller, ExecutionContext
 from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest
@@ -169,3 +169,105 @@ def test_manifest_rejects_paths_and_hash_changes(tmp_path):
         run_audit_manifest(inputs, tmp_path / "work", tmp_path / "grant")
     with pytest.raises(ValueError, match="snapshot_source_digest_mismatch"):
         write_audit_manifest(tmp_path / "other", snapshot, {**sources, "file-a": b"tampered"}, programs)
+
+
+def test_offline_manifest_needs_no_grant_and_cannot_inherit_personal_key(tmp_path):
+    from dataclasses import replace
+
+    from documents.model_access import ModelAccess, model_access_scope
+    from pydantic import SecretStr
+
+    code = b"""from audit.contracts import AuditResultItem
+from documents.model_access import current_model_access, ModelUnavailable
+
+def check(context):
+    try:
+        current_model_access()
+    except ModelUnavailable:
+        return AuditResultItem(classification="rule", item=context.clause_id, priority="P0", status="UNABLE",
+                               suggestions="No model access", clause_id=context.clause_id)
+    raise AssertionError("Hidden evaluation inherited a personal model key")
+"""
+    snapshot, sources, *_ = setup()
+    digest = checker_digest({"checker.py": code})
+    snapshot = replace(snapshot, targets=tuple(replace(target, binding=replace(target.binding, checker_digest=digest)) for target in snapshot.targets))
+    write_audit_manifest(tmp_path / "inputs", snapshot, sources, {digest: {"checker.py": code}}, allow_model_calls=False)
+    with model_access_scope(ModelAccess(api_key=SecretStr("outer-key-never-for-the-hidden-trial"))):
+        run_audit_manifest(tmp_path / "inputs", tmp_path / "work", tmp_path / "nonexistent-grants")
+    result = json.loads((tmp_path / "work" / "result" / "bundle.json").read_text())
+    assert len(result["findings"]) == 4
+    assert {row["suggestions"] for row in result["findings"]} == {"No model access"}
+    assert "outer-key" not in json.dumps(result)
+
+
+def test_offline_and_model_jobs_have_separate_replay_identities(tmp_path):
+    snapshot, sources, programs, *_ = setup()
+    assert AuditJobSpec.from_snapshot(snapshot).execution_id != AuditJobSpec.from_snapshot(snapshot, allow_model_calls=False).execution_id
+    write_audit_manifest(tmp_path / "inputs", snapshot, sources, programs, analysis_mode="deep", allow_model_calls=False)
+    with pytest.raises(ValueError, match="audit_generation_requires_model"):
+        run_audit_manifest(tmp_path / "inputs", tmp_path / "work", tmp_path / "nonexistent-grants")
+
+
+@pytest.mark.parametrize("oracle,allow_model_calls,expected", [((), True, True), ((), False, False), ((object(),), True, False)])
+def test_fixed_development_trials_do_not_give_models_oracle_inputs(tmp_path, monkeypatch, oracle, allow_model_calls, expected):
+    from agent.auditor import SemanticRuntime
+    from agent.checker_spec import CheckerArtifact
+
+    snapshot, sources, _, spec, suite = setup()
+    inputs = snapshot_development_inputs(snapshot, sources)["file-a"]
+    artifact = CheckerArtifact(input_digest=inputs.digest, executor_revision="runtime", entrypoint="checker:create_audit", files={"checker.py": FACTORY})
+    runtime = CoreRuntime(ControlledGuest(tmp_path), lambda _spec: snapshot, lambda *_: suite)
+    observed = []
+
+    def execute_snapshot(*args, **kwargs):
+        observed.append(kwargs["allow_model_calls"])
+        return {"findings": []}
+
+    def fixed_job():
+        return runtime._checker_job(
+            spec,
+            inputs.audit_file,
+            inputs.rule,
+            inputs.file_bytes,
+            role=inputs.role,
+            context=ExecutionContext(),
+            group_context=inputs.group_context,
+            related_bytes=inputs.related_bytes,
+            operation="execute-checker",
+            artifact=artifact,
+        )
+
+    monkeypatch.setattr(runtime, "execute_snapshot", execute_snapshot)
+    monkeypatch.setattr(SemanticRuntime, "develop_and_run", lambda self, request, **kwargs: fixed_job())
+    runtime.develop_and_run(SimpleNamespace(oracle=oracle, allow_model_calls=allow_model_calls), spec=spec, context=ExecutionContext())
+    fixed_job()
+    assert observed == [expected, True]  # The request's scope never leaks into another execution.
+
+
+def test_container_offline_audit_never_issues_a_model_grant(tmp_path, monkeypatch):
+    import threading
+    import time
+
+    from agent.execution.isolation.container import ContainerRuntime
+
+    snapshot, *_ = setup()
+    runtime = object.__new__(ContainerRuntime)
+    runtime.slot = threading.Semaphore(1)
+    runtime.degraded = False
+    runtime.journal, runtime.attempts = tmp_path / "journal", tmp_path / "attempts"
+    run = tmp_path / "run"
+    run.mkdir()
+    exported = []
+    monkeypatch.setattr(runtime, "_new_run_dir", lambda *args: run)
+    monkeypatch.setattr(runtime, "_execute", lambda *args: None)
+    monkeypatch.setattr(runtime, "_export", lambda run, work, model_operation, *args, **kwargs: exported.append(model_operation))
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Offline audit must not issue or settle a model grant")
+
+    monkeypatch.setattr(runtime, "_write_grant", forbidden)
+    monkeypatch.setattr(runtime, "_seal_usage", forbidden)
+    runtime.run(AuditJobSpec.from_snapshot(snapshot, allow_model_calls=False), tmp_path / "inputs", tmp_path / "work", time.monotonic() + 10, threading.Event())
+    assert exported == [False]
+    assert not run.exists()
+    assert not runtime.attempts.exists()
