@@ -122,6 +122,15 @@ def process_file_job(store, claimed, ident, ai=None) -> dict:
 
 
 def process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> dict:
+    from product.model_access import personal_model_scope
+
+    # Absent identity is an unavailable scope, never permission to use LLM_*.
+    user_id = store.model_user_for_job(claimed) if hasattr(store, "model_user_for_job") else ""
+    with personal_model_scope(store, tenant_id=claimed.tenant_id or "", initiating_user_id=user_id):
+        return _process_claimed(store, claimed, ident, rule_ai=rule_ai)
+
+
+def _process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> dict:
     tokens = bind(
         job_id=claimed.id,
         attempt=claimed.attempt,

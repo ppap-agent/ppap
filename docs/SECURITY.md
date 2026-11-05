@@ -51,3 +51,9 @@ self-hosted InsForge Custom Compute 需要把宿主机 `docker.sock` 挂进 InsF
 报告分享使用现有持久发送逻辑，在现有 `engine.jobs` 保存原请求与逐目标尝试；只有明确失败的目标可显式重试，成功目标不重发。物理数据库连接上的会话锁覆盖准备与发送，连接失效后旧处理器不能重新取得发送权。已越过持久发送边界的超时或中断保持未知；飞书一小时消息去重不等于长期 exactly-once，未接入按原发送 UUID 安全核对的能力。准备阶段的私有文件上传可能残留，不声称已经远程清理或撤回。
 
 LLM、飞书、Partner AI 和其它可访问远程环境可以直接用于相关开发/验证；它们的临时不可用不阻塞无关 Core 路径。
+
+## 个人模型凭据
+
+个人 DeepSeek Key 使用 `PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY`（Fernet）加密存入 `personal_model_credentials`。部署密钥只注入 API、Worker 和可信 Controller，不进入 guest、Artifact、日志或接口回执。密文包含租户和用户绑定，复制到另一用户记录不能借用。成员/账户删除会级联清理个人凭据；企业 Checker 不引用凭据表。
+
+调用身份取本次受理的 `initiating_user_id`，不取 Artifact 作者。文字、视觉与模型 OCR 使用同一 scope，每次模型调用重新读取当前凭据；缺少、撤销、成员资格失效或解密失败均不回退部署 `LLM_*`、`OCR_*` 或其他人的 Key。可信 Controller 的既有 Responses gateway 只向 guest 发短期执行 grant。

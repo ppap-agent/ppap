@@ -158,7 +158,7 @@ def create_app(
         CORSMiddleware,
         allow_origins=settings.web_origins(),
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT"],
+        allow_methods=["GET", "POST", "PUT", "DELETE"],
         allow_headers=["Accept", "Content-Type"],
         expose_headers=["Content-Disposition", "X-Content-SHA256", "X-Request-ID"],
     )
@@ -460,6 +460,10 @@ def create_app(
     @app.get("/enter-legacy", response_model=None)
     def enter_legacy(request: Request) -> RedirectResponse | JSONResponse:
         return _enter_edition(request, "legacy")
+
+    from api.model_credentials import register_model_credential_routes
+
+    register_model_credential_routes(app, store, principal_of)
 
     @app.get("/me", response_model=wc.PrincipalPublic)
     def me(request: Request) -> JSONResponse:

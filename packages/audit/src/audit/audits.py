@@ -114,6 +114,7 @@ class RoundWork:
     inputs: list[RoundInput]
     result_attempt: int | None = None
     analysis_mode: str = ANALYSIS_STANDARD
+    initiating_user_id: str = ""
 
 
 @dataclass

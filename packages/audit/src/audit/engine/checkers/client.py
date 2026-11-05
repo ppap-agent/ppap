@@ -6,9 +6,11 @@ import logging
 import threading
 import time
 from collections import deque
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Self
 from urllib.parse import urlsplit
 
+from documents.model_access import current_model_access, model_access_scoped
 from openai import OpenAI as BaseOpenAI
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -93,6 +95,8 @@ class AIClient:
     _initialized: bool = False
 
     def __new__(cls) -> "AIClient":
+        if model_access_scoped():
+            return object.__new__(cls)
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
@@ -101,10 +105,18 @@ class AIClient:
         return cls._instance
 
     def __init__(self) -> None:
+        self._personal_scope = model_access_scoped()
+        if self._personal_scope:
+            return
         if self._initialized:
             return
 
-        self.settings = get_settings()
+        self._initialize(get_settings())
+
+    def _initialize(self, settings: Any, *, personal: bool = False) -> None:
+        self._personal_scope = False
+        self._bound_personal_call = personal
+        self.settings = settings
         self.development_mode = bool(self.settings.DEVELOPMENT)
         self.langfuse_enabled = False
         self.langfuse_client = None
@@ -130,7 +142,8 @@ class AIClient:
                 logger.error("Langfuse initialization failed: error_type=%s", type(exc).__name__)
 
         # Register shutdown handler
-        atexit.register(self.shutdown)
+        if not personal:
+            atexit.register(self.shutdown)
 
         # Mark as initialized
         self._initialized = True
@@ -144,10 +157,12 @@ class AIClient:
         self._request_times: deque[float] = deque()
         self._rate_limit_lock = threading.Lock()
 
+        client_options: dict[str, Any] = {"max_retries": 0} if personal else {}
         if self.settings.OPENAI_BASE_URL:
             self.client = openai_cls(
                 api_key=self.settings.OPENAI_API_KEY,
                 base_url=self.settings.OPENAI_BASE_URL,
+                **client_options,
             )
         else:
             self.client = openai_cls(api_key=self.settings.OPENAI_API_KEY)
@@ -264,6 +279,35 @@ class AIClient:
         Returns:
             AI响应内容
         """
+        if (getattr(self, "_personal_scope", False) or model_access_scoped()) and not getattr(self, "_bound_personal_call", False):
+            # Resolve at each request: no singleton key, no platform defaults,
+            # no Langfuse export, and no automatic replay after uncertain IO.
+            access = current_model_access()
+            current = object.__new__(AIClient)
+            current._initialize(
+                SimpleNamespace(
+                    DEVELOPMENT=False,
+                    OPENAI_API_KEY=access.api_key.get_secret_value(),
+                    OPENAI_BASE_URL=access.base_url,
+                    MODEL_NAME=access.model,
+                    OPENAI_EXTRA_BODY_JSON="",
+                    OPENAI_REASONING_EFFORT="none",
+                ),
+                personal=True,
+            )
+            try:
+                return current.response_text(
+                    messages,
+                    max_tokens,
+                    temperature,
+                    text_format,
+                    operation,
+                    request_timeout=request_timeout,
+                    retry_limit=0,
+                )
+            finally:
+                current.client.close()
+                current.settings.OPENAI_API_KEY = ""
         try:
             request_kwargs = self._build_request_kwargs(
                 messages=messages,

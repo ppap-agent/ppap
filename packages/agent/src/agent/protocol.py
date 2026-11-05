@@ -32,6 +32,7 @@ class ExecuteRequest(BaseModel):
     executor: Literal["ppap-deep"]
     executor_revision: str
     tenant_id: str = ""
+    initiating_user_id: str = ""
     job_id: str = ""
     attempt: int = Field(default=1, ge=1)
     resume_attempt: int | None = Field(default=None, ge=1, strict=True)

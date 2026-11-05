@@ -491,6 +491,12 @@ spec:
                   name: ppap-current
                   key: FEISHU_VERIFICATION_TOKEN
                   optional: true
+            - name: PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY
+                  optional: true
             - name: PPAP_SERVICE
               value: api
             - name: PPAP_ONLYOFFICE_SECRET
@@ -592,6 +598,12 @@ spec:
                 configMapKeyRef:
                   name: ppap-current
                   key: LLM_BASE_URL
+            - name: PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY
+                  optional: true
             - name: PPAP_SERVICE
               value: deep
           volumeMounts:
@@ -676,6 +688,12 @@ spec:
                 secretKeyRef:
                   name: ppap-current
                   key: FEISHU_APP_SECRET
+            - name: PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY
+                  optional: true
             - name: PPAP_SERVICE
               value: worker
           command: ["sh", "-c"]

@@ -10,12 +10,15 @@ import socket
 import socketserver
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
+
+from documents.model_access import ModelUnavailable
 
 from agent.execution.budget import DEEP_TOTAL_SECONDS
 from agent.execution.guest_model import ModelBudgetError
@@ -43,6 +46,7 @@ class Lease:
     uncertain: bool = False
     budget_exhausted: bool = False
     request_hashes: set[str] = field(default_factory=set)
+    provider_key: Callable[[], str] | None = field(default=None, repr=False)
     transport_failure: dict[str, int | str | bool | None] | None = None
     upstream: http.client.HTTPConnection | None = field(default=None, repr=False)
     upstream_socket: socket.socket | None = field(default=None, repr=False)
@@ -59,10 +63,12 @@ class Grants:
         output_tokens: int = 100_000,
         per_request_output_tokens: int = 32_768,
         capacity: int = 128,
+        provider_key_factory: Callable[[], Callable[[], str]] | None = None,
     ) -> None:
         if not model or any(type(value) is not int or value < 1 for value in (ttl, requests, input_tokens, output_tokens, per_request_output_tokens, capacity)):
             raise ValueError("Invalid gateway limits")
         self.model = model
+        self.provider_key_factory = provider_key_factory
         self.ttl = ttl
         self.requests = requests
         self.input_budget = input_tokens
@@ -101,6 +107,7 @@ class Grants:
                 self.requests - prior["model_requests"],
                 self.input_budget - prior["input_tokens"],
                 self.output_budget - prior["output_tokens"],
+                provider_key=self.provider_key_factory() if self.provider_key_factory is not None else None,
             )
             return token
 
@@ -202,6 +209,13 @@ class Grants:
             upstream.close()
         return usage
 
+    def revoke_all(self) -> None:
+        """Close every prior execution before rebinding a shared host runtime."""
+        with self.lock:
+            executions = {lease.execution_id for lease in self.leases.values()}
+        for execution_id in executions:
+            self.revoke(execution_id)
+
     def bind_upstream(self, lease: Lease, upstream: http.client.HTTPConnection) -> None:
         with self.lock:
             if lease.expires <= time.monotonic() or not any(value is lease for value in self.leases.values()):
@@ -224,7 +238,7 @@ class Grants:
 class Gateway(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address: tuple[str, int], grants: Grants, upstream: str, provider_key: str) -> None:
+    def __init__(self, address: tuple[str, int], grants: Grants, upstream: str, provider_key: str | Callable[[], str]) -> None:
         url = urlsplit(upstream)
         if url.scheme != "https" or not url.hostname or url.username or url.password or url.query or url.fragment:
             raise ValueError("Invalid provider endpoint")
@@ -320,11 +334,15 @@ class Handler(BaseHTTPRequestHandler):
             # This local identifier correlates one authorized send attempt;
             # it is not evidence that the provider received or billed it.
             client_request_id = str(uuid4())
+            selected_key = lease.provider_key or self.server.provider_key
+            provider_key = selected_key() if callable(selected_key) else selected_key
+            if not provider_key or not self.server.grants.active(lease):
+                raise ModelUnavailable()
             upstream.request(
                 "POST",
                 url.path.rstrip("/") + "/responses",
                 json.dumps(body),
-                {"Authorization": "Bearer " + self.server.provider_key, "Content-Type": "application/json", "X-Client-Request-Id": client_request_id},
+                {"Authorization": "Bearer " + provider_key, "Content-Type": "application/json", "X-Client-Request-Id": client_request_id},
             )
             self.server.grants.bind_upstream(lease, upstream)
             phase = "provider_headers"
@@ -416,6 +434,9 @@ class Handler(BaseHTTPRequestHandler):
             if client_connected:
                 self.wfile.write(b"0\r\n\r\n")
                 self.wfile.flush()
+        except ModelUnavailable:
+            error_type = "PersonalModelUnavailable"
+            self.send_error(503, "Personal model unavailable")
         except DuplicateInference:
             self.send_error(409, "Inference already submitted; automatic replay disabled")
         except (ValueError, TypeError, AttributeError, OSError, http.client.HTTPException) as error:
@@ -475,7 +496,8 @@ class LocalGateway:
         *,
         upstream: str,
         model: str,
-        provider_key: str,
+        provider_key: str | Callable[[], str],
+        provider_key_factory: Callable[[], Callable[[], str]] | None = None,
         input_tokens: int = 4_000_000,
         output_tokens: int = 100_000,
         requests: int = 128,
@@ -488,6 +510,7 @@ class LocalGateway:
             requests=requests,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            provider_key_factory=provider_key_factory,
         )
         self.http = Gateway(("127.0.0.1", 0), grants, upstream, provider_key)
         try:
@@ -523,7 +546,8 @@ def local_gateway(
     *,
     upstream: str,
     model: str,
-    provider_key: str,
+    provider_key: str | Callable[[], str],
+    provider_key_factory: Callable[[], Callable[[], str]] | None = None,
     input_tokens: int = 4_000_000,
     output_tokens: int = 100_000,
     requests: int = 128,
@@ -534,6 +558,7 @@ def local_gateway(
         upstream=upstream,
         model=model,
         provider_key=provider_key,
+        provider_key_factory=provider_key_factory,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         requests=requests,

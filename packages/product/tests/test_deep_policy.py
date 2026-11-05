@@ -22,7 +22,7 @@ def test_deep_revision_changes_with_effective_policy_not_provider_credentials(mo
     original = settings.deep_execution_revision()
     assert len(original) == 64
     assert original != "release-a"
-    for field, value in (("git_sha", "b" * 40), ("llm_base_url", "https://other.example/v1"), ("llm_model", "model-b"), ("deep_executor_revision", "release-b"), ("deep_sandbox_profile", "ppap")):
+    for field, value in (("git_sha", "b" * 40), ("deep_executor_revision", "release-b"), ("deep_sandbox_profile", "ppap")):
         changed = settings.model_copy(update={field: value})
         assert changed.deep_execution_revision() != original
     settings.llm_api_key = "rotated-provider-credential"
@@ -57,11 +57,11 @@ def test_deep_model_override_is_complete_and_independent_of_standard():
     )
     revision = settings.deep_execution_revision()
     assert settings.deep_model_config() == ("https://deep.example/backend-api/codex", "deep", "deep-key")
-    assert settings.deep_execution_policy().model == "deep"
+    assert settings.deep_execution_policy().model == "deepseek-flash"
     assert settings.llm_api_key == "standard-key" and settings.llm_model == "standard"
     assert settings.model_copy(update={"deep_llm_api_key": "rotated"}).deep_execution_revision() == revision
     assert settings.model_copy(update={"llm_model": "other-standard"}).deep_execution_revision() == revision
-    assert settings.model_copy(update={"deep_llm_model": "other-deep"}).deep_execution_revision() != revision
+    assert settings.model_copy(update={"deep_llm_model": "other-deep"}).deep_execution_revision() == revision
     without_key = settings.model_copy(update={"deep_llm_api_key": ""})
     assert without_key.deep_execution_revision() == revision
     with pytest.raises(ValueError, match="credential is unavailable"):

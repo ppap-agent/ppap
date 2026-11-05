@@ -147,6 +147,39 @@ class AuthStore:
     def _conn(self) -> psycopg.Connection:
         return connect(self.settings, self.role)
 
+    def model_user_for_job(self, claimed) -> str:
+        """Read the accepted initiator, never trust a caller-supplied user/key."""
+        with self._conn() as conn:
+            row = conn.execute(
+                """SELECT COALESCE(r.created_by::text, j.payload->>'initiating_user_id', '')
+                   FROM engine.jobs j LEFT JOIN product.audit_rounds r
+                     ON r.id=j.audit_round_id AND r.tenant_id=j.tenant_id
+                   WHERE j.id=%s AND j.tenant_id=%s AND j.attempt=%s
+                     AND j.status='leased' AND j.lease_until > now()""",
+                (claimed.id, claimed.tenant_id, claimed.attempt),
+            ).fetchone()
+        return str(row[0]) if row else ""
+
+    def personal_model_config(self, principal: Principal) -> dict:
+        from product.store.model_credentials import PersonalModelStore
+
+        return PersonalModelStore(self).config(principal)
+
+    def put_personal_model_config(self, principal: Principal, api_key) -> dict:
+        from product.store.model_credentials import PersonalModelStore
+
+        return PersonalModelStore(self).put(principal, api_key)
+
+    def delete_personal_model_config(self, principal: Principal) -> dict:
+        from product.store.model_credentials import PersonalModelStore
+
+        return PersonalModelStore(self).delete(principal)
+
+    def personal_model_access(self, tenant_id: str, initiating_user_id: str):
+        from product.store.model_credentials import PersonalModelStore
+
+        return PersonalModelStore(self).access(tenant_id, initiating_user_id)
+
     def save_state(self, raw_state: str, return_to: str, ttl_seconds: int = 600) -> None:
         with self._conn() as conn:
             conn.execute(
@@ -1030,6 +1063,7 @@ class AuthStore:
 
     def _accept_file_job(self, principal, request_id, source_file_id, source_file_version_id, kind, document_type="", *, validation_scope=None) -> dict:
         job_id, payload = rule_parse_request(request_id, source_file_id, source_file_version_id, document_type)
+        payload["initiating_user_id"] = principal.user_id
         if validation_scope is not None:
             if kind != "file_validation" or validation_scope != {"customer_preference": "UAES", "preset_key": "U13"}:
                 raise ValueError("invalid_validation_scope")
@@ -1403,6 +1437,7 @@ class AuthStore:
             if analysis_id:
                 payload = {
                     "task_id": task_id,
+                    "initiating_user_id": principal.user_id,
                     "task_revision": revision,
                     "source_file_id": source["file_id"],
                     "source_file_version_id": row["file_version_id"],
@@ -3451,7 +3486,7 @@ class AuthStore:
         with self._conn() as conn:
             head = conn.execute(
                 """
-                SELECT id, tenant_id, result_attempt, analysis_mode
+                SELECT id, tenant_id, result_attempt, analysis_mode, created_by
                 FROM product.audit_rounds WHERE id = %s
                 """,
                 (parsed,),
@@ -3494,6 +3529,7 @@ class AuthStore:
             ],
             head[2],
             normalize_analysis_mode(head[3]),
+            str(head[4]) if head[4] else "",
         )
 
     def claim_job(self, worker_ident: str) -> ClaimedJob | None:
