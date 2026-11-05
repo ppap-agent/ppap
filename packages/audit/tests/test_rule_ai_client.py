@@ -4,21 +4,7 @@ import unittest
 from contextlib import contextmanager
 from types import SimpleNamespace
 
-from audit.contracts import AuditInput, RuleInput, RuleItem
-from audit.engine.checkers.prompts import PromptManager
 from audit.usage import get_current_request_id, get_token_tracker, set_current_request_id
-
-
-def test_rule_prompt_remains_usable_without_extracted_file_content():
-    prompt = PromptManager.get_audit_prompt(
-        AuditInput(audit_id="version-one", file_url="/tmp/original.xlsx", content=None),
-        RuleInput(rule_id="confirmed-rules", type="控制计划"),
-        RuleItem(id="1", category="任务项", priority="P1", rule_to_check="检查工序", type_of_rule="text"),
-        agentic_prompt="",
-    )
-
-    assert "规则编号：1" in prompt
-    assert "文件内容" in prompt
 
 
 class SDK:
@@ -66,6 +52,30 @@ class RuleAIClientTests(unittest.TestCase):
         client.extra_body = None
         client._wait_for_rate_limit = lambda: None
         return client
+
+    def test_text_client_rejects_visual_and_nontext_payloads_before_sdk_call(self):
+        contents = [
+            [{"type": "input_image", "image_url": "private-image"}],
+            [{"type": "input_text", "text": "source"}, {"type": "input_image", "image_url": "private-image"}],
+            {"type": "input_image", "image_url": "private-image"},
+            [{"type": "input_text", "text": {"image_url": "private-image"}}],
+            ["source"],
+            42,
+        ]
+        for content in contents:
+            with self.subTest(content=content):
+                sdk = SDK(SimpleNamespace(status="completed", output_text="ok"))
+                with self.assertLogs("audit.engine.checkers.client", level="ERROR"):
+                    with self.assertRaisesRegex(ValueError, "text only"):
+                        self.client(sdk).response_text([{"role": "user", "content": content}], retry_limit=0)
+                self.assertEqual(sdk.calls, [])
+                self.assertEqual(sdk.options, [])
+
+    def test_text_client_accepts_located_transcription_as_text(self):
+        sdk = SDK(SimpleNamespace(status="completed", output_text="ok"))
+        source = [{"role": "user", "content": [{"type": "input_text", "text": "Page 1, region [1, 2, 3, 4]: approved"}]}]
+        self.assertEqual(self.client(sdk).response_text(source, retry_limit=0), "ok")
+        self.assertEqual(sdk.calls[0]["input"], source)
 
     def test_rule_call_bounds_sdk_and_empty_response_retries_without_changing_defaults(self):
         sdk = SDK(SimpleNamespace(status="completed", output_text=""))
@@ -234,38 +244,6 @@ class RuleAIClientTests(unittest.TestCase):
                 self.assertNotIn(marker, "\n".join(logs.output))
                 self.assertEqual(len(sdk.calls), 1)
 
-    def test_json_image_and_usage_use_responses_shape(self):
-        sdk = SDK(
-            SimpleNamespace(
-                status="completed",
-                output_text='{"ok": true}',
-                usage=SimpleNamespace(input_tokens=9, output_tokens=5, output_tokens_details=SimpleNamespace(reasoning_tokens=2)),
-            )
-        )
-        client = self.client(sdk)
-        with tracked_request() as request_id:
-            self.assertEqual(client.image_analysis_completion("system", "inspect", ["data:image/png;base64,AAAA"], json_format=True), '{"ok": true}')
-            summary = get_token_tracker().end_request_tracking(request_id).to_dict()
-        self.assertEqual(summary["llm_calls_count"], 1)
-        self.assertEqual(summary["unreported_calls_count"], 0)
-        self.assertTrue(summary["usage_complete"])
-        self.assertEqual(summary["total_tokens"], 14)
-        self.assertEqual(
-            {key: value for key, value in summary["llm_calls"][0].items() if key != "timestamp"},
-            {"input_tokens": 9, "output_tokens": 5, "thinking_tokens": 2, "total_tokens": 14, "model_name": "test", "operation": "image_analysis"},
-        )
-        request = sdk.calls[0]
-        self.assertEqual(request["text"], {"format": {"type": "json_object"}})
-        self.assertEqual(request["timeout"], 120)
-        self.assertEqual(sdk.options, [{"max_retries": 0}])
-        self.assertEqual(
-            request["input"][1]["content"],
-            [
-                {"type": "input_image", "image_url": "data:image/png;base64,AAAA", "detail": "high"},
-                {"type": "input_text", "text": "inspect"},
-            ],
-        )
-
     def test_reasoning_tokens_are_part_of_output_total(self):
         from audit.usage import TokenTracker
 
@@ -277,206 +255,3 @@ class RuleAIClientTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-def test_visual_provider_timeout_is_one_failed_attempt_without_hidden_retries():
-    sdk = SDK(error=TimeoutError("private-visual-provider"))
-    client = RuleAIClientTests().client(sdk)
-    client.settings.OPENAI_REASONING_EFFORT = "low"
-    with tracked_request() as request_id:
-        with unittest.TestCase().assertLogs("audit.engine.checkers.client", level="ERROR") as logs:
-            with unittest.TestCase().assertRaises(TimeoutError):
-                client.image_analysis_completion("system", "private-document", ["data:image/png;base64,AAAA"])
-        usage = get_token_tracker().end_request_tracking(request_id).to_dict()
-    assert len(sdk.calls) == 1
-    assert sdk.calls[0]["timeout"] == 120
-    assert sdk.calls[0]["max_output_tokens"] == 12000
-    assert sdk.calls[0]["reasoning"] == {"effort": "low"}
-    assert sdk.options == [{"max_retries": 0}]
-    assert usage["unreported_calls_count"] == 1
-    assert "private-visual-provider" not in "\n".join(logs.output)
-    assert "private-document" not in "\n".join(logs.output)
-
-
-def test_visual_async_request_cancels_response_body_with_one_provider_call():
-    import asyncio
-    from unittest.mock import patch
-
-    from audit.engine.checkers import client as client_module
-
-    calls = []
-    cancelled = []
-    closed = []
-
-    async def slow_create(**kwargs):
-        calls.append(kwargs)
-        try:
-            await asyncio.sleep(30)
-        except asyncio.CancelledError:
-            cancelled.append(True)
-            raise
-
-    class FakeAsyncClient:
-        responses = SimpleNamespace(create=slow_create)
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc_value, traceback):
-            closed.append(True)
-
-    with patch.object(client_module, "AsyncOpenAI", return_value=FakeAsyncClient()):
-        with unittest.TestCase().assertRaises(TimeoutError):
-            asyncio.run(
-                client_module._bounded_visual_request(
-                    SimpleNamespace(OPENAI_API_KEY="unit-test-token", OPENAI_BASE_URL="https://example.invalid/v1"),
-                    {"model": "unit-test"},
-                    0.02,
-                )
-            )
-    assert calls == [{"model": "unit-test"}]
-    assert cancelled == [True]
-    assert closed == [True]
-
-
-def test_visual_provider_uses_bounded_async_path_with_real_sdk_type_simulated():
-    import asyncio
-    from unittest.mock import patch
-
-    from audit.engine.checkers import client as client_module
-
-    sdk = SDK(SimpleNamespace(status="completed", output_text="verified"))
-    client = RuleAIClientTests().client(sdk)
-
-    async def provider(settings, kwargs, timeout):
-        assert timeout == 120
-        assert kwargs["timeout"] == 120
-        return SimpleNamespace(status="completed", output_text="verified")
-
-    with (
-        patch.object(client_module, "BaseOpenAI", SDK),
-        patch.object(client_module, "_run_bounded_visual_sync", side_effect=lambda settings, kwargs, timeout: asyncio.run(provider(settings, kwargs, timeout))),
-    ):
-        assert client.image_analysis_completion("system", "inspect", ["data:image/png;base64,AAAA"]) == "verified"
-    assert sdk.direct_calls == 0
-    assert sdk.options == []
-
-
-def test_bounded_visual_request_from_running_event_loop_uses_isolated_loop():
-    import asyncio
-    from unittest.mock import patch
-
-    from audit.engine.checkers import client as client_module
-
-    closed = []
-
-    class FakeAsyncClient:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            closed.append(True)
-
-        class responses:
-            @staticmethod
-            async def create(**kwargs):
-                return SimpleNamespace(status="completed", output_text="verified")
-
-    async def inside_event_loop():
-        return client_module._run_bounded_visual_sync(
-            SimpleNamespace(OPENAI_API_KEY="unit-test-token", OPENAI_BASE_URL="https://example.invalid/v1"),
-            {"model": "unit-test"},
-            1,
-        )
-
-    with patch.object(client_module, "AsyncOpenAI", return_value=FakeAsyncClient()):
-        response = asyncio.run(inside_event_loop())
-    assert response.output_text == "verified"
-    assert closed == [True]
-
-
-def test_codex_visual_transport_streams_and_preserves_final_receipt():
-    import asyncio
-    from unittest.mock import patch
-
-    from audit.engine.checkers import client as module
-
-    calls = []
-    receipt = SimpleNamespace(status="completed", output_text="verified", usage=SimpleNamespace(input_tokens=9, output_tokens=5))
-
-    class Stream:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            pass
-
-        async def get_final_response(self):
-            return receipt
-
-    class Responses:
-        def stream(self, **kwargs):
-            calls.append(kwargs)
-            return Stream()
-
-    class Client:
-        responses = Responses()
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            pass
-
-    settings = SimpleNamespace(OPENAI_API_KEY="unit-test-token", OPENAI_BASE_URL="https://example.invalid/backend-api/codex")
-    client = RuleAIClientTests().client(SDK())
-    client.settings.OPENAI_BASE_URL = settings.OPENAI_BASE_URL
-    kwargs = client._build_request_kwargs([{"role": "user", "content": "inspect"}], 1000, 0.1)
-    assert "temperature" not in kwargs
-    assert kwargs["max_output_tokens"] == 1000
-    with patch.object(module, "AsyncOpenAI", return_value=Client()):
-        result = asyncio.run(module._bounded_visual_request(settings, kwargs, 1))
-    assert result is receipt
-    assert calls == [kwargs]
-
-
-def test_codex_visual_stream_is_closed_when_total_budget_expires():
-    import asyncio
-    from unittest.mock import patch
-
-    from audit.engine.checkers import client as module
-
-    closed = []
-    calls = []
-
-    class Stream:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            closed.append(True)
-
-        async def get_final_response(self):
-            await asyncio.sleep(30)
-
-    class Client:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            closed.append(True)
-
-        def stream(self, **kwargs):
-            calls.append(kwargs)
-            return Stream()
-
-        @property
-        def responses(self):
-            return self
-
-    settings = SimpleNamespace(OPENAI_API_KEY="unit-test-token", OPENAI_BASE_URL="https://example.invalid/backend-api/codex/")
-    with patch.object(module, "AsyncOpenAI", return_value=Client()):
-        with unittest.TestCase().assertRaises(TimeoutError):
-            asyncio.run(module._bounded_visual_request(settings, {"model": "test"}, 0.02))
-    assert len(calls) == 1
-    assert closed == [True, True]

@@ -106,12 +106,12 @@ def test_prior_diagnosis_failed_candidate_repair_and_fixed_execution(tmp_path: P
 
 def test_electronic_pdf_spec_can_be_repaired_in_the_checker_loop(tmp_path: Path, monkeypatch):
     import fitz
-    from documents.conversion import pipeline
 
     def no_ocr(*args, **kwargs):
         pytest.fail("fixed checker must not start OCR")
 
-    monkeypatch.setattr(pipeline, "_attempt_ocr", no_ocr)
+    monkeypatch.setattr("documents.ocr.client._get_llm_client", no_ocr)
+    monkeypatch.setattr("documents.ocr.paddle.client.PaddleStructureService.analyze_page", no_ocr)
     path = tmp_path / "source.pdf"
     document = fitz.open()
     page = document.new_page()

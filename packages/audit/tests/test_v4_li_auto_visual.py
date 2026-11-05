@@ -1,4 +1,4 @@
-"""Native/Paddle fact contracts; offline records do not certify OCR accuracy."""
+"""One native/Paddle/OCR fact route; offline records do not certify accuracy."""
 
 import hashlib
 import json
@@ -39,30 +39,62 @@ def evidence(path, *, seals=(), page=1):
 
 
 @pytest.fixture(autouse=True)
-def forbid_llm(monkeypatch):
+def forbid_text_model(monkeypatch):
     attempts = []
 
     def reject(*args, **kwargs):
         attempts.append(True)
-        raise AssertionError("Paddle facts must not fall back to LLM vision")
+        raise AssertionError("Fixed visual facts must not use the text model")
 
-    monkeypatch.setattr(AIClient, "image_analysis_completion", reject)
+    monkeypatch.setattr(AIClient, "structured_completion", reject)
+    # Ambient credentials cannot turn an offline test into an OCR request.
+    monkeypatch.setenv("OCR_MODEL_NAME", "")
+    monkeypatch.setenv("OCR_OPENAI_API_KEY", "")
+    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "")
     yield
     assert attempts == []
 
 
+def configure_ocr(monkeypatch):
+    monkeypatch.setenv("OCR_MODEL_NAME", "configured-ocr")
+    monkeypatch.setenv("OCR_OPENAI_API_KEY", "controlled-noncredential")
+    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://ocr.invalid/v1")
+
+
+def observation(request, values):
+    return {
+        field: [
+            {
+                "scope": scope,
+                "value": values.get(field),
+                "sources": [{"image_index": 0, "bbox": [0.1, 0.1, 0.8, 0.8]}],
+                "covered_image_indices": list(range(len(request["images"]))),
+                "coverage": "complete" if values.get(field) is not None else "unreadable",
+                "excerpt": "原件中的受控图形观察",
+            }
+            for scope in spec["items"]["properties"]["scope"]["enum"]
+        ]
+        for field, spec in request["response_schema"]["schema"]["properties"].items()
+    }
+
+
 @pytest.mark.parametrize("detected", [False, True])
-def test_l03_reuses_one_page_and_never_infers_photos_or_seal_absence(tmp_path, monkeypatch, detected):
+def test_l03_mixed_photo_and_seal_needs_use_one_ocr_request_and_keep_unknown(tmp_path, monkeypatch, detected):
     path = tmp_path / "原件.pdf"
     original_pdf(path)
-    calls = []
+    configure_ocr(monkeypatch)
+    calls, paddle_calls = [], []
 
-    def paddle(source, page):
-        calls.append((source, page))
-        return evidence(path, seals=[{"detected": True, "pdf_bbox": [10, 20, 60, 80]}] if detected else [])
+    def read(**request):
+        calls.append(request)
+        return observation(request, {"seal": True if detected else None})
 
-    monkeypatch.setattr("documents.ocr.paddle.reader.read_pdf_page_evidence", paddle)
-    runtime = SimpleNamespace(convert_pdf_to_excel=lambda ref, **kwargs: convert_pdf_to_excel_auto(ref, allow_ocr=False, **kwargs))
+    def no_paddle(*args):
+        paddle_calls.append(args)
+        raise AssertionError("Photo and seal facts use one direct OCR observation")
+
+    monkeypatch.setattr("documents.ocr.paddle.reader.read_pdf_page_evidence", no_paddle)
+    runtime = SimpleNamespace(convert_pdf_to_excel=lambda ref, **kwargs: convert_pdf_to_excel_auto(ref, **kwargs), read_ocr_visual_facts=read)
     with bind_runtime(runtime):
         agent = PDF_AGENTS["L03"](AuditInput(audit_id="original-version", file_url=str(path)), RuleInput(rule_id="r", **preset_rule_body("理想", "L03")))
         try:
@@ -72,9 +104,10 @@ def test_l03_reuses_one_page_and_never_infers_photos_or_seal_absence(tmp_path, m
                 visual = [source for source in results[0].evidence.sources if source.kind == "visual"]
                 assert {json.loads(source.locator)["file_version_id"] for source in visual} == {"original-version"}
                 assert {json.loads(source.locator)["page"] for source in visual} == {1}
+                assert {json.loads(source.locator)["engine"] for source in visual} == {"ocr_llm"}
         finally:
             agent.close()
-    assert len(calls) == 1
+    assert len(calls) == 1 and paddle_calls == []
 
 
 @pytest.mark.parametrize("corrupt", ["page", "source", "transport"])
@@ -103,7 +136,7 @@ def test_page_identity_and_technical_failures_are_cached_without_retry(tmp_path,
     assert calls == [1]
 
 
-def test_unselected_long_source_and_unsupported_photos_do_not_trigger_ocr(tmp_path, monkeypatch):
+def test_unplanned_long_source_keeps_seal_and_photo_facts_unknown_without_ocr(tmp_path, monkeypatch):
     path = tmp_path / "长原件.pdf"
     original_pdf(path, count=29)
     monkeypatch.setattr("documents.ocr.paddle.reader.read_pdf_page_evidence", lambda *a: pytest.fail("No selected page or supported fact"))
@@ -141,8 +174,8 @@ def test_a_frozen_version_cannot_accept_changed_bytes_without_metadata_sha(tmp_p
 
 
 @pytest.mark.parametrize("overlay", ["vector", "image", "annotation"])
-@pytest.mark.parametrize("paddle_checked", [False, True], ids=["unavailable-paddle", "explicit-paddle-mark"])
-def test_native_checkbox_glyph_with_overlapping_graphics_does_not_prove_an_empty_box(tmp_path, monkeypatch, overlay, paddle_checked):
+@pytest.mark.parametrize("ocr_checked", [False, True], ids=["unreadable-ocr", "explicit-ocr-mark"])
+def test_native_checkbox_glyph_with_overlapping_graphics_requires_ocr_and_keeps_unknown(tmp_path, monkeypatch, overlay, ocr_checked):
     from io import BytesIO
 
     from PIL import Image, ImageDraw
@@ -174,28 +207,25 @@ def test_native_checkbox_glyph_with_overlapping_graphics_does_not_prove_an_empty
         # The text layer still says empty, while the original has an actual X.
         assert "□批准" in page.get_text()
         document.save(path)
-    calls = []
+    configure_ocr(monkeypatch)
+    calls, paddle_calls = [], []
 
-    def paddle(source, page):
-        calls.append((str(source), page))
-        if not paddle_checked:
-            from documents.ocr.paddle.reader import PaddleEvidenceUnavailable
+    def read(**request):
+        calls.append(request)
+        return observation(request, {"approved_checked": True if ocr_checked else None})
 
-            raise PaddleEvidenceUnavailable("No replayable evidence")
-        value = evidence(path)
-        value["pages"][0]["texts"] = [
-            {"index": index, "text": text, "pdf_bbox": box, "source": "paddle_overall_ocr", "type": "ocr_word", "score": 0.99}
-            for index, (text, box) in enumerate(zip(("认可情况：", "☑批准", "□条件批准", "□拒绝"), boxes, strict=True))
-        ]
-        return value
+    def no_paddle(*args):
+        paddle_calls.append(args)
+        raise AssertionError("Actual checkbox state needs original-image OCR")
 
-    monkeypatch.setattr("documents.ocr.paddle.reader.read_pdf_page_evidence", paddle)
+    monkeypatch.setattr("documents.ocr.paddle.reader.read_pdf_page_evidence", no_paddle)
     fields = {name: name for name in ("disposition_visible", "approved_checked", "conditional_checked", "rejected_checked")}
     audit = AuditInput(audit_id="frozen-marked-version", file_url=str(path))
     cache = {}
-    for _ in range(2):
-        facts = read_original_pdf_visual_facts(audit, fields, lambda *a, **k: None, cache=cache)
-        assert facts["approved_checked"] is (True if paddle_checked else None)
-        assert facts["conditional_checked"] is False
-        assert facts["rejected_checked"] is False
-    assert calls == [(str(path), 1)]
+    with bind_runtime(SimpleNamespace(read_ocr_visual_facts=read)):
+        for _ in range(2):
+            facts = read_original_pdf_visual_facts(audit, fields, lambda *a, **k: None, cache=cache)
+            assert facts["approved_checked"] is (True if ocr_checked else None)
+            assert facts["conditional_checked"] is False
+            assert facts["rejected_checked"] is False
+    assert len(calls) == 1 and paddle_calls == []

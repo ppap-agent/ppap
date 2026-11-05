@@ -1911,13 +1911,13 @@ class ControlPlanAgent(ExcelAgent):
                 # 5) 有 stage 关键词但无 mark → 未勾选任何阶段
                 for sr, sc, scl in stage_cells:
                     if self._is_legacy_xls_stage_header_cell(sheet, sr, sc, scl):
-                        return "Pass", "适用阶段勾选正确"
+                        return "UNABLE", "原XLS的勾选图形未保留，不能用阶段文字确认实际选择，请核对原件。"
                 metadata = getattr(self.audit_file, "file_metadata", None)
                 source_url = str(metadata.get("source_pdf_url", "") or "") if isinstance(metadata, dict) else ""
                 file_url = str(getattr(self.audit_file, "file_url", "") or "")
                 source_candidates = (file_url.lower(), source_url.lower())
                 if any(candidate.endswith(".pdf") for candidate in source_candidates) and any(self._classify_stage_text(scl) == "production" for _sr, _sc, scl in stage_cells):
-                    return "Pass", "适用阶段勾选正确"
+                    return "UNABLE", "尚未从PDF原件确认实际阶段勾选；生产阶段文字不能代替选择。"
                 if stage_cells:
                     return "NG", "未勾选任何控制计划类型"
 
@@ -1989,6 +1989,7 @@ class ControlPlanAgent(ExcelAgent):
         遍历所有工作表直到找到匹配列。
         """
         wb = self._workbook_from_ctx(ctx)
+        found = False
         for ws in wb.worksheets:
             feature_type_row, feature_type_col = self._find_special_char_column(ws)
             if feature_type_row is None or feature_type_col is None:
@@ -2034,6 +2035,7 @@ class ControlPlanAgent(ExcelAgent):
             logger.debug(f"工作表{ws.title}产品 {product_row}, col {product_col}")
             logger.debug(f"工作表{ws.title}过程 {process_row}, col {process_col}")
 
+            found = True
             # 确定数据起始行
             is_merged = self._get_detailed_merge_info(ws, feature_type_row, feature_type_col)
             data_start = (is_merged.max_row + 1) if is_merged else (feature_type_row + 1)
@@ -2073,10 +2075,11 @@ class ControlPlanAgent(ExcelAgent):
                     continue
 
                 is_merged_cell = self._get_detailed_merge_info(ws, r, feature_type_col)
-                if is_merged_cell:
-                    val_special = ws.cell(is_merged_cell.min_row, feature_type_col).value
-                else:
-                    val_special = ws.cell(r, feature_type_col).value
+                special_cell = ws.cell(is_merged_cell.min_row if is_merged_cell else r, feature_type_col)
+                if special_cell.data_type == "e":
+                    ctx.note_cell(ws.title, special_cell.row, special_cell.column)
+                    return "UNABLE", f"行号{r} 特殊特性分类无法确认"
+                val_special = special_cell.value
 
                 if val_special is not None and str(val_special).strip():
                     is_merged_product = self._get_detailed_merge_info(ws, r, product_col)
@@ -2090,14 +2093,21 @@ class ControlPlanAgent(ExcelAgent):
                         process_col,
                     ).value
 
-                    if (val_product is None or str(val_product).strip() == "") and (val_process is None or str(val_process).strip() == ""):
+                    product_cell = ws.cell(is_merged_product.min_row if is_merged_product else r, product_col)
+                    process_cell = ws.cell(is_merged_process.min_row if is_merged_process else r, process_col)
+                    if any(cell.data_type != "e" and cell.value is not None and str(cell.value).strip() for cell in (product_cell, process_cell)):
+                        pass
+                    elif any(cell.data_type == "e" for cell in (product_cell, process_cell)):
+                        for cell in (product_cell, process_cell):
+                            if cell.data_type == "e":
+                                ctx.note_cell(ws.title, cell.row, cell.column)
+                        return "UNABLE", f"行号{r} 产品、过程证据无法确认"
+                    elif (val_product is None or str(val_product).strip() == "") and (val_process is None or str(val_process).strip() == ""):
                         return "NG", f"行号{r} 特殊特性分类对应行的产品、过程列均为空"
 
                 r = (is_merged_cell.max_row + 1) if is_merged_cell else (r + 1)
 
-            return "Pass", "特殊特性分类、特性列符合要求"
-
-        return "NG", "未找到'特殊特性分类'或'特性'列"
+        return ("Pass", "特殊特性分类、特性列符合要求") if found else ("NG", "未找到'特殊特性分类'或'特性'列")
 
     @rule("特殊特性分类与控制方法关联审核")
     def rule_5(self, ctx: RuleContext) -> Tuple[str, str]:
@@ -2107,6 +2117,7 @@ class ControlPlanAgent(ExcelAgent):
         支持灵活的中/英文表头匹配，遍历所有工作表。
         """
         wb = self._workbook_from_ctx(ctx)
+        found = False
         for ws in wb.worksheets:
             feature_type_row, feature_type_col = self._find_special_char_column(ws)
             if feature_type_row is None or feature_type_col is None:
@@ -2125,6 +2136,7 @@ class ControlPlanAgent(ExcelAgent):
             logger.debug(f"工作表{ws.title}特殊特性分类 {feature_type_row}, col {feature_type_col}")
             logger.debug(f"工作表{ws.title}控制方法 {ctrl_row}, col {ctrl_col}")
 
+            found = True
             is_merged = self._get_detailed_merge_info(ws, feature_type_row, feature_type_col)
             data_start = (is_merged.max_row + 1) if is_merged else (feature_type_row + 1)
 
@@ -2171,10 +2183,11 @@ class ControlPlanAgent(ExcelAgent):
 
                 # 读取特殊特性分类列的值
                 is_merged_cell = self._get_detailed_merge_info(ws, r, feature_type_col)
-                if is_merged_cell:
-                    val_special = ws.cell(is_merged_cell.min_row, feature_type_col).value
-                else:
-                    val_special = ws.cell(r, feature_type_col).value
+                special_cell = ws.cell(is_merged_cell.min_row if is_merged_cell else r, feature_type_col)
+                if special_cell.data_type == "e":
+                    ctx.note_cell(ws.title, special_cell.row, special_cell.column)
+                    return "UNABLE", f"行号{r} 特殊特性分类无法确认"
+                val_special = special_cell.value
 
                 if val_special is not None and str(val_special).strip():
                     v = str(val_special).strip()
@@ -2184,14 +2197,16 @@ class ControlPlanAgent(ExcelAgent):
                             is_merged_ctrl.min_row if is_merged_ctrl else r,
                             ctrl_col,
                         ).value
+                        control_cell = ws.cell(is_merged_ctrl.min_row if is_merged_ctrl else r, ctrl_col)
+                        if control_cell.data_type == "e":
+                            ctx.note_cell(ws.title, control_cell.row, control_cell.column)
+                            return "UNABLE", f"行号{r} 控制方法无法确认"
                         if val_ctrl is None or str(val_ctrl).strip() == "":
                             return "NG", f"行号{r} 特殊特性分类对应行的控制方法列为空"
 
                 r = (is_merged_cell.max_row + 1) if is_merged_cell else (r + 1)
 
-            return "Pass", "特殊特性分类、控制方法列符合要求"
-
-        return "NG", "未找到'特殊特性分类'或'控制方法'列"
+        return ("Pass", "特殊特性分类、控制方法列符合要求") if found else ("NG", "未找到'特殊特性分类'或'控制方法'列")
 
     @rule("频率或频次列完整性审核")
     def rule_6(self, ctx: RuleContext) -> Tuple[str, str]:

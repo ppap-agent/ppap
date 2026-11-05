@@ -4,7 +4,7 @@ import json
 import logging
 from typing import Any, Dict, List
 
-from audit.contracts import AuditInput, RuleInput, RuleItem
+from audit.contracts import RuleItem
 
 logger = logging.getLogger(__name__)
 
@@ -22,78 +22,6 @@ class PromptManager:
         ),
         "rule_matcher": "You are an expert in matching audit documents to compliance rules. Your task is to identify the single best rule ID for a given audit file.",
     }
-
-    # specific_rule = {
-    #     "id": "1",
-    #     "category": "任务项",
-    #     "priority": null,
-    #     "rule_to_check": "任务项一和任务项二都必须选OK",
-    #     "type_of_rule": "text",
-    # }
-    #
-    @staticmethod
-    def get_audit_prompt(
-        audit_file: AuditInput,
-        rule: RuleInput,
-        specific_rule: RuleItem,
-        agentic_prompt: str = "",
-    ) -> str:
-        """构建审核提示"""
-        try:
-            file_content = (getattr(audit_file, "content", "") or "")[:20000]
-            agentic_section = ""
-            if agentic_prompt:
-                agentic_section = (
-                    "专业代理审核结果:\n\n" + agentic_prompt + "\n- 如果不满足检查条件，则输出 ERR；\n" + "- 如果满足检查条件，但是检查结果不满足约束，返回 NG\n" + "请严格遵循上面的结果。\n"
-                )
-            return (
-                f"""
-请根据以下规则对审核文件进行合规性检查：
-
-规则信息：
-- 规则编号：{specific_rule.id}
-- 需要检查的具体规则：{specific_rule.rule_to_check}
-- 适用客户: {rule.customers}
-- 适用车型: {rule.models}
-- 适用零件: {rule.parts}
-
-审核文件信息：
-- 客户: {audit_file.customer}
-- 车型: {audit_file.model}
-- 零件: {audit_file.part}
-- 文件元数据: {audit_file.file_metadata}
-
-{("文件内容:\n\n" + file_content) if agentic_prompt == "" else ""}
-
-{agentic_section}
-
-
-请严格按照以下格式返回审核结果，不要添加其他内容：
-
-classification: [内容分类，如：基本信息、质量检查、合规性检查等]
-item: [具体审核项，如：文件完整性检查、数据有效性等]
-priority: [优先级，只能是P0、P1、P2]
-status: [状态，只能是PASS、NG、ERR]
-suggestions: [修改建议，如果状态是PASS可以为空]
-"""
-                + """
-return exact json format exactly as below example:
-{
-    "classification": "基本信息",
-    "item": "文件完整性检查",
-    "priority": "P0",
-    "status": "PASS",
-    "suggestions": "修改建议"
-}
-
-
-请进行详细的合规性检查并严格按照上述格式返回结果。
-如果你没有能力或者信息不足以完成检查，请务必返回 ERR。
-"""
-            )
-        except Exception:
-            logger.exception("构建审核提示失败")
-            raise
 
     @staticmethod
     def get_document_metadata_prompt(file_content: str, file_name: str) -> str:

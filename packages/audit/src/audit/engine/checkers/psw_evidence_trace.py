@@ -15,8 +15,8 @@ from audit.contracts import (
 )
 
 EvidenceUse = Literal["none", "structure", "visual", "both"]
-SourceFormat = Literal["xlsx", "xls", "xlsm", "pdf", "docx", "doc"]
-PreparedFormat = Literal["xlsx", "xls", "xlsm", "pdf", "docx"]
+SourceFormat = Literal["xlsx", "xls", "xlsm", "pdf", "docx", "doc", "png", "jpg", "jpeg", "webp"]
+PreparedFormat = Literal["xlsx", "xls", "xlsm", "pdf", "docx", "png"]
 
 DIAGNOSTIC_DOC_CONVERSION_FAILED = "psw.doc.conversion_failed"
 DIAGNOSTIC_PDF_CONVERSION_FAILED = "psw.pdf.conversion_failed"
@@ -80,6 +80,10 @@ def _source_preparation(
             strategies = ("local_pdf_page_render",)
         prepared: PreparedFormat = "xlsx" if attempted in {"none", "structure", "both"} else "pdf"
         return "pdf", prepared, strategies, _pdf_sources(used)
+    if current_format in {"png", "jpg", "jpeg", "webp"}:
+        carrier = cast(Literal["png", "jpg", "jpeg", "webp"], current_format)
+        sources = (EvidenceSource(kind="visual", locator="image://original"),) if used in {"visual", "both"} else ()
+        return carrier, "png", ("original_image_decode",), sources
     if current_format == "docx":
         return "docx", "docx", ("docx_ooxml",), _word_sources(used)
     if current_format == "doc":

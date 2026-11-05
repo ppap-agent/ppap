@@ -77,11 +77,9 @@ class BaseAgent(ABC):
             logger.debug(f"开始审核文件: {self.audit_file.audit_id} 使用规则: {specific_rule}")
 
             # 使用AI服务进行审核
-            from audit.engine.checkers.client import AIClient
             from audit.engine.checkers.prompts import PromptManager
 
             # 使用AI服务进行审核
-            client = AIClient()
             prompt_manager = PromptManager()
             system_prompt = prompt_manager.get_system_prompt("audit_expert")
 
@@ -90,27 +88,13 @@ class BaseAgent(ABC):
                 return self._process_image_rule(specific_rule, system_prompt, prompt_manager)
             else:
                 # 处理文本和表格类型的规则
-                user_prompt = prompt_manager.get_audit_prompt(self.audit_file, self.rule, specific_rule, "")
+                from audit.engine.checkers.text_evidence import evaluate_text_rule
 
-                # 调用标准AI服务
-                response = client.structured_completion(
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    max_tokens=3000,
-                    temperature=0.1,
-                    json_format=True,
-                )
-
-            # 解析响应
-            assert response != "", "调用文本分析 AI 服务响应为空"
-            result = self._parse_ai_response(
-                response,
-                default={"item": getattr(specific_rule, "category", "默认任务项")},
-            )
-            logger.debug(f"规则处理成功: {self.audit_file.audit_id}")
-
-            self.log_audit_result(result, ith)
-            return result
+                if not hasattr(self, "_text_evidence_cache"):
+                    self._text_evidence_cache: dict[Any, Any] = {}
+                result = evaluate_text_rule(self.audit_file, specific_rule, self._text_evidence_cache)
+                self.log_audit_result(result, ith)
+                return result
 
         except Exception:
             logger.exception("AI审核失败")
@@ -163,44 +147,9 @@ class BaseAgent(ABC):
         )
 
     def _process_image_rule(self, specific_rule: Any, system_prompt: str, prompt_manager: Any) -> AuditResult:
-        """Keep unsupported image semantics explicit, with no model fallback."""
-        return AuditResult(
-            classification="图形检查",
-            item=getattr(specific_rule, "name", "原件图形证据") or "原件图形证据",
-            priority="P0",
-            status="UNABLE",
-            suggestions="此图形规则缺少可验证的Paddle事实，需人工确认；不自动调用LLM视觉。",
-            checks_performed=0,
-        )
+        from audit.engine.checkers.document_visual_checks import generic_image_check
 
-    def _parse_ai_response(
-        self,
-        response_text: str,
-        default: Optional[Dict[str, Any]] = None,
-    ) -> AuditResult:
-        """解析AI响应"""
-        try:
-            import json
-
-            cleaned = response_text.strip()
-            if cleaned.startswith("```"):
-                lines = cleaned.splitlines()
-                if lines and lines[0].startswith("```"):
-                    lines = lines[1:]
-                if lines and lines[-1].strip() == "```":
-                    lines = lines[:-1]
-                cleaned = "\n".join(lines).strip()
-
-            parsed = json.loads(cleaned)
-            if not isinstance(parsed, dict):
-                raise TypeError("AI响应不是JSON对象")
-
-            payload: Dict[str, Any] = dict(default or {})
-            payload.update(parsed)
-            return AuditResult(**payload)
-        except Exception:
-            logger.exception("failed to load response to AuditResult: %s", response_text)
-            return self._failed_audit_result("大模型引擎返回了错误信息")
+        return generic_image_check(self, specific_rule)
 
     def _failed_audit_result(self, error_msg: str) -> AuditResult:
         return AuditResult(

@@ -17,16 +17,6 @@ class FileRef(BaseModel):
         return self.location.startswith(("http://", "https://"))
 
 
-class OcrArtifact(BaseModel):
-    """OCR extraction artifact."""
-
-    text: str = ""
-    excel_path: Optional[str] = None
-    html_path: Optional[str] = None
-    provider: str = "unknown"
-    raw_meta: Dict[str, Any] = Field(default_factory=dict)
-
-
 class ConversionArtifact(BaseModel):
     """PDF to Excel conversion artifact."""
 

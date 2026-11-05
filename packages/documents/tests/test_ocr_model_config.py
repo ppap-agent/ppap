@@ -1,58 +1,60 @@
-"""OCR model configuration fails closed instead of selecting a retired Gemma default."""
+"""OCR uses dedicated settings and never inherits a text-model credential."""
 
 import asyncio
+from unittest.mock import patch
 
 import pytest
 from documents.ocr import client, env
 
 
-@pytest.mark.parametrize(
-    ("ocr", "legacy", "llm", "expected"),
-    [
-        ("dedicated-ocr-model", "generic-model", "standard-model", "dedicated-ocr-model"),
-        ("", "generic-model", "standard-model", "generic-model"),
-        ("", "", "standard-model", "standard-model"),
-    ],
-)
-def test_ocr_model_explicit_precedence(monkeypatch, ocr, legacy, llm, expected):
-    monkeypatch.setenv("PPAP_PROFILE", "remote-dev")
-    for name, value in (("OCR_MODEL_NAME", ocr), ("MODEL_NAME", legacy), ("LLM_MODEL", llm)):
-        monkeypatch.setenv(name, value)
-
-    assert env.ocr_model_name() == expected
-
-
-def test_isolated_dev_uses_current_standard_model_when_not_overridden(monkeypatch):
-    monkeypatch.setenv("PPAP_PROFILE", "isolated-dev")
-    for name in ("OCR_MODEL_NAME", "MODEL_NAME", "LLM_MODEL"):
-        monkeypatch.delenv(name, raising=False)
-
-    assert env.ocr_model_name() == env.ISOLATED_DEV_LLM_MODEL
-    assert not hasattr(env, "DEFAULT_OCR_MODEL_NAME")
-
-
-def test_missing_model_rejects_before_any_responses_request(monkeypatch):
-    monkeypatch.setenv("PPAP_PROFILE", "production")
-    for name in ("OCR_MODEL_NAME", "MODEL_NAME", "LLM_MODEL"):
-        monkeypatch.delenv(name, raising=False)
-    requests = []
-
-    def forbidden_client():
-        requests.append(1)
-        raise AssertionError("Must not create a provider client when OCR model is missing")
-
-    monkeypatch.setattr(client, "_get_llm_client", forbidden_client)
-
+def test_ocr_configuration_does_not_inherit_text_settings(monkeypatch):
+    for key in ("MODEL_NAME", "LLM_MODEL", "LLM_TEXT_MODEL", "OPENAI_API_KEY", "LLM_API_KEY", "OPENAI_BASE_URL", "LLM_BASE_URL"):
+        monkeypatch.setenv(key, "text-only")
+    for key in ("OCR_MODEL_NAME", "OCR_OPENAI_API_KEY", "OCR_OPENAI_BASE_URL"):
+        monkeypatch.delenv(key, raising=False)
+    assert env.ocr_openai_api_key() == env.ocr_openai_base_url() == ""
     with pytest.raises(ValueError, match="OCR model is not configured"):
         env.ocr_model_name()
+    with patch.object(client, "_get_llm_client") as provider:
+        with pytest.raises(ValueError, match="OCR model is not configured"):
+            asyncio.run(client.call_llm_async(b"PNG", "inspect", response_schema={}))
+        provider.assert_not_called()
 
-    with pytest.raises(ValueError, match="OCR model is not configured"):
-        asyncio.run(
-            client.call_llm_async(
-                b"PNG",
-                "OCR",
-                response_schema={"name": "ocr_test", "strict": True, "schema": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}},
-            )
-        )
 
-    assert requests == []
+def test_ocr_dedicated_model_and_extra_body_are_canonical(monkeypatch):
+    monkeypatch.setenv("OCR_MODEL_NAME", "dedicated-ocr-model")
+    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://ocr.example.test/v1")
+    monkeypatch.setenv("OCR_OPENAI_EXTRA_BODY_JSON", '{"reasoning":true,"a":1}')
+    first = env.ocr_policy_identity()
+    assert env.ocr_model_name() == "dedicated-ocr-model"
+    assert env.ocr_extra_body() == {"reasoning": True, "a": 1}
+    monkeypatch.setenv("OCR_OPENAI_EXTRA_BODY_JSON", '{"a":1,"reasoning":true}')
+    assert env.ocr_policy_identity() == first
+    monkeypatch.setenv("OCR_OPENAI_EXTRA_BODY_JSON", '{"a":1,"reasoning":false}')
+    assert env.ocr_policy_identity() != first
+
+
+def test_ocr_transcription_defaults_to_no_reasoning_without_overriding_user(monkeypatch):
+    monkeypatch.delenv("OCR_OPENAI_EXTRA_BODY_JSON", raising=False)
+    assert env.ocr_extra_body() == {"reasoning": {"effort": "none"}}
+    default_identity = env.ocr_policy_identity()
+    monkeypatch.setenv("OCR_OPENAI_EXTRA_BODY_JSON", '{"reasoning":{"effort":"high"},"other":true}')
+    assert env.ocr_extra_body() == {"reasoning": {"effort": "high"}, "other": True}
+    assert env.ocr_policy_identity() != default_identity
+
+
+@pytest.mark.parametrize("raw", ["[]", "null", "not-json"])
+def test_invalid_ocr_extra_body_fails_without_network(monkeypatch, raw):
+    monkeypatch.setenv("OCR_OPENAI_EXTRA_BODY_JSON", raw)
+    with pytest.raises(ValueError, match="one JSON object"):
+        env.ocr_extra_body()
+
+
+def test_missing_ocr_credential_cannot_use_text_credential(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "text-only")
+    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://ocr.example.test/v1")
+    monkeypatch.delenv("OCR_OPENAI_API_KEY", raising=False)
+    with patch.object(client, "AsyncOpenAI") as sdk:
+        with pytest.raises(ValueError, match="OCR endpoint and credential"):
+            client._get_llm_client()
+        sdk.assert_not_called()

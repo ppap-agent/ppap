@@ -14,6 +14,10 @@ class CellRegion:
     col_start: int
     col_end: int
     content: str = ""
+    is_unknown: bool = False
+    source_page: int | None = None
+    source_bbox: tuple[float, float, float, float] | None = None
+    source_value: str | None = None
 
     def __str__(self) -> str:
         return f"Cell({self.row_start}-{self.row_end}, {self.col_start}-{self.col_end}): {self.content}"

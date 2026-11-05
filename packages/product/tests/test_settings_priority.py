@@ -49,14 +49,19 @@ def test_environment_still_wins_over_dotenv_when_no_explicit_value_is_given(tmp_
     assert observed is False
 
 
-def test_ocr_model_priority_has_no_legacy_gemma_fallback(monkeypatch):
+def test_ocr_configuration_is_independent_from_text_model(monkeypatch):
     monkeypatch.setenv("PPAP_PROFILE", "isolated-dev")
-    for name in ("OCR_MODEL_NAME", "MODEL_NAME", "LLM_MODEL"):
+    for name in ("OCR_MODEL_NAME", "OCR_OPENAI_API_KEY", "OCR_OPENAI_BASE_URL", "MODEL_NAME", "LLM_MODEL"):
         monkeypatch.delenv(name, raising=False)
 
-    inherited = Settings(llm_model="current-vision-model")
-    dedicated = Settings(llm_model="current-vision-model", OCR_MODEL_NAME="dedicated-ocr-model")
+    inherited = Settings(llm_model="text-model", llm_api_key="text-key", llm_base_url="https://text.invalid/v1")
+    dedicated = Settings(llm_model="text-model", OCR_MODEL_NAME="dedicated-ocr-model", OCR_OPENAI_API_KEY="ocr-key", OCR_OPENAI_BASE_URL="https://ocr.invalid/v1")
 
-    assert inherited.get_ocr_model_name() == "current-vision-model"
+    with pytest.raises(ValueError, match="OCR_MODEL_NAME"):
+        inherited.get_ocr_model_name()
+    assert inherited.get_ocr_openai_api_key() == ""
+    assert inherited.get_ocr_openai_base_url() == ""
+    assert inherited.standard_execution_policy().model == "text-model"
     assert dedicated.get_ocr_model_name() == "dedicated-ocr-model"
-    assert not hasattr(Settings, "DEFAULT_OCR_MODEL_NAME")
+    assert dedicated.get_ocr_openai_api_key() == "ocr-key"
+    assert dedicated.get_ocr_openai_base_url() == "https://ocr.invalid/v1"

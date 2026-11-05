@@ -18,7 +18,6 @@ from documents.contracts import (
 from documents.excel import load_excel_workbook
 from documents.files import download_file_to_dir_sync, parse_file_size
 from documents.ocr.env import max_file_size
-from documents.ocr.local import convert_local_pdf_to_excel
 from documents.pdf import (
     DEFAULT_SPEC,
     PPAP_1_DIMENSION_MEASUREMENT_REPORT_SPEC,
@@ -53,17 +52,8 @@ from documents.pdf import convert_pdf_to_excel as docops_convert_pdf_to_excel
 logger = logging.getLogger(__name__)
 
 BACKEND_MANUAL_LINEGRID = "manual_linegrid"
-BACKEND_OCR = "ocr"
-
-# KISS: global fixed backend sequence (manual -> ocr)
-PDF_CONVERSION_BACKEND_SEQUENCE: tuple[str, ...] = (
-    BACKEND_MANUAL_LINEGRID,
-    BACKEND_OCR,
-)
 
 ERROR_INVALID_INPUT = "invalid_input"
-ERROR_OCR_EMPTY = "ocr_empty_result"
-ERROR_OCR_EXCEPTION = "ocr_exception"
 ERROR_DOWNLOAD_FAILED = "download_failed"
 ERROR_MANUAL_LINEGRID_FAILED = "manual_linegrid_failed"
 ERROR_MANUAL_LINEGRID_EXCEPTION = "manual_linegrid_exception"
@@ -155,34 +145,6 @@ def _failure(
         diagnostics=diagnostics,
         temp_files=temp_files,
     )
-
-
-def _attempt_ocr(
-    source: str,
-    *,
-    enable_cache: bool,
-) -> tuple[str | None, dict[str, object] | None]:
-    try:
-        # The native backend owns the first attempt. OCR never delegates a
-        # complete document to the legacy remote/Responses fallback.
-        artifact = convert_local_pdf_to_excel(source, enable_cache=enable_cache)
-        if artifact.excel_path:
-            return artifact.excel_path, None
-        raw_error = str((artifact.raw_meta or {}).get("error", "") or "")
-        if raw_error:
-            error_code = str((artifact.raw_meta or {}).get("error_code", "") or "")
-            if not error_code.startswith("paddle_"):
-                error_code = ERROR_OCR_EXCEPTION
-            return None, {"error_code": error_code, "error": raw_error}
-        return None, {
-            "error_code": ERROR_OCR_EMPTY,
-            "error": "empty_result",
-        }
-    except Exception as exc:
-        return None, {
-            "error_code": ERROR_OCR_EXCEPTION,
-            "error": str(exc),
-        }
 
 
 def _attempt_manual_linegrid(
@@ -341,12 +303,10 @@ def convert_pdf_to_excel_auto(
     enable_cache: bool = True,
     doc_type: object | None = None,
     spec: PdfSpec | None = None,
-    allow_ocr: bool = True,
 ) -> ConversionArtifact:
-    """Convert PDF to local xlsx path using fixed backend order."""
+    """Prepare native tables only; graph facts use the explicit page reader."""
     conversion_started_at = time.perf_counter()
     ref = _to_file_ref(file_ref)
-    backends = PDF_CONVERSION_BACKEND_SEQUENCE if allow_ocr else (BACKEND_MANUAL_LINEGRID,)
     resolved_doc_type = _normalize_doc_type(doc_type)
     if spec is not None:
         profile_name, manual_linegrid_spec, profile_doc_seq = "task", spec, None
@@ -357,7 +317,7 @@ def convert_pdf_to_excel_auto(
         profile_name, manual_linegrid_spec, profile_doc_seq = _resolve_manual_linegrid_profile(ref.location)
     diagnostics: dict[str, object] = {
         "location": ref.location,
-        "conversion_backend_order": list(backends),
+        "conversion_backend_order": [BACKEND_MANUAL_LINEGRID],
         "conversion_attempts": [],
         "fallback_ocr_triggered": False,
         "manual_linegrid_spec_label": profile_name,
@@ -415,92 +375,28 @@ def convert_pdf_to_excel_auto(
         temp_files.append(downloaded_pdf)
         diagnostics["download_elapsed_ms"] = _elapsed_ms(download_started_at)
 
-    attempts: list[dict[str, object]] = []
-    first_error_code = ""
-    last_error: dict[str, object] = {}
-
-    for idx, backend in enumerate(backends):
-        attempt_started_at = time.perf_counter()
-
-        if backend == BACKEND_OCR:
-            diagnostics["fallback_ocr_triggered"] = idx > 0
-            ocr_xlsx, ocr_diag = _attempt_ocr(pdf_path, enable_cache=enable_cache)
-            elapsed_ms = _elapsed_ms(attempt_started_at)
-            diagnostics["ocr_elapsed_ms"] = elapsed_ms
-            if ocr_xlsx:
-                attempts.append(_build_attempt(backend, success=True, elapsed_ms=elapsed_ms))
-                diagnostics["conversion_attempts"] = attempts
-                diagnostics["conversion_backend"] = backend
-                diagnostics["final_strategy_used"] = backend
-                diagnostics["total_elapsed_ms"] = _elapsed_ms(conversion_started_at)
-                return ConversionArtifact(
-                    success=True,
-                    xlsx_path=ocr_xlsx,
-                    strategy_used=backend,
-                    diagnostics=diagnostics,
-                    temp_files=temp_files + [ocr_xlsx],
-                )
-
-            error = ocr_diag or {
-                "error_code": ERROR_OCR_EMPTY,
-                "error": "empty_result",
-            }
-            error_code = str(error.get("error_code", "") or "")
-            attempts.append(_build_attempt(backend, success=False, error_code=error_code, elapsed_ms=elapsed_ms))
-            diagnostics["ocr"] = error
-            last_error = error
-        else:
-            fd, temp_xlsx = tempfile.mkstemp(suffix=".xlsx")
-            os.close(fd)
-            temp_files.append(temp_xlsx)
-
-            manual_error, manual_diagnostics = _attempt_manual_linegrid(
-                pdf_path,
-                temp_xlsx,
-                spec=manual_linegrid_spec,
-            )
-            if manual_diagnostics:
-                diagnostics["pdf_v2_diagnostics"] = manual_diagnostics
-            elapsed_ms = _elapsed_ms(attempt_started_at)
-            diagnostics["manual_linegrid_elapsed_ms"] = elapsed_ms
-
-            if manual_error is None:
-                attempts.append(_build_attempt(backend, success=True, elapsed_ms=elapsed_ms))
-                diagnostics["conversion_attempts"] = attempts
-                diagnostics["conversion_backend"] = backend
-                diagnostics["final_strategy_used"] = backend
-                diagnostics["total_elapsed_ms"] = _elapsed_ms(conversion_started_at)
-                return ConversionArtifact(
-                    success=True,
-                    xlsx_path=temp_xlsx,
-                    strategy_used=backend,
-                    diagnostics=diagnostics,
-                    temp_files=temp_files,
-                )
-
-            error_code = str(manual_error.get("error_code", "") or "")
-            attempts.append(_build_attempt(backend, success=False, error_code=error_code, elapsed_ms=elapsed_ms))
-            _cleanup([temp_xlsx])
-            temp_files = [path for path in temp_files if path != temp_xlsx]
-            last_error = manual_error
-
-        if not first_error_code:
-            first_error_code = str(last_error.get("error_code", "") or "")
-
-    final_backend = backends[-1]
-    diagnostics["conversion_attempts"] = attempts
-    diagnostics["conversion_backend"] = final_backend
-    diagnostics["final_strategy_used"] = final_backend
-    diagnostics["primary_error_code"] = first_error_code
+    fd, temp_xlsx = tempfile.mkstemp(suffix=".xlsx")
+    os.close(fd)
+    temp_files.append(temp_xlsx)
+    began = time.perf_counter()
+    error, native = _attempt_manual_linegrid(pdf_path, temp_xlsx, spec=manual_linegrid_spec)
+    if native:
+        diagnostics["pdf_v2_diagnostics"] = native
+    elapsed = _elapsed_ms(began)
+    diagnostics["manual_linegrid_elapsed_ms"] = elapsed
+    diagnostics["conversion_backend"] = BACKEND_MANUAL_LINEGRID
+    diagnostics["final_strategy_used"] = BACKEND_MANUAL_LINEGRID
     diagnostics["total_elapsed_ms"] = _elapsed_ms(conversion_started_at)
-    return _failure(
-        strategy_used=final_backend,
-        diagnostics={
-            **diagnostics,
-            **last_error,
-        },
-        temp_files=temp_files,
-    )
+    if error is None:
+        diagnostics["conversion_attempts"] = [_build_attempt(BACKEND_MANUAL_LINEGRID, success=True, elapsed_ms=elapsed)]
+        return ConversionArtifact(success=True, xlsx_path=temp_xlsx, strategy_used=BACKEND_MANUAL_LINEGRID, diagnostics=diagnostics, temp_files=temp_files)
+    code = str(error.get("error_code", ERROR_MANUAL_LINEGRID_FAILED))
+    if error.get("pdf_v2_error_code") in {"no_groups", "no_successful_groups", "strict_mode_failed"}:
+        code = "native_table_unconfirmed"
+    diagnostics.update(error)
+    diagnostics["error_code"] = code
+    diagnostics["conversion_attempts"] = [_build_attempt(BACKEND_MANUAL_LINEGRID, success=False, error_code=code, elapsed_ms=elapsed)]
+    return _failure(strategy_used=BACKEND_MANUAL_LINEGRID, diagnostics=diagnostics, temp_files=temp_files)
 
 
 def load_workbook_auto(

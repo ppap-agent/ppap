@@ -157,7 +157,9 @@ def run_audit(
     try:
         from documents.ocr.paddle.reader import paddle_page_scope
 
-        with bind_runtime(runtime), paddle_page_scope():
+        from audit.usage import track_ocr_usage
+
+        with bind_runtime(runtime), paddle_page_scope(), track_ocr_usage():
             return _execute_agent(
                 agent_cls,
                 audit_input,

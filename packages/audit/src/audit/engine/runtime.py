@@ -30,16 +30,7 @@ class AuditRuntime(Protocol):
 
     def read_paddle_page(self, file_url: str, page_number: int) -> dict[str, Any]: ...
 
-    def run_image_prompt(
-        self,
-        *,
-        system_prompt: str,
-        user_text: str,
-        image_base64_list: list[str],
-        max_tokens: int = 12000,
-        temperature: float = 0.1,
-        json_format: bool = True,
-    ) -> str: ...
+    def read_ocr_visual_facts(self, *, images: list[bytes], prompt: str, response_schema: dict[str, Any]) -> dict[str, Any]: ...
 
 
 _RUNTIME_VAR: ContextVar[AuditRuntime | None] = ContextVar("ppap_audit_runtime", default=None)

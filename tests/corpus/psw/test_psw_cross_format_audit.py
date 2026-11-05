@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import gc
-import json
 import re
 import shutil
 import tempfile
@@ -20,7 +19,6 @@ from audit.contracts import (
 )
 from audit.engine import run_audit
 from audit.engine.app_runtime import _AppAuditRuntime, run_audit_engine
-from audit.engine.checkers.client import AIClient
 from audit.engine.rule_engine import Table
 from audit.kinds import PpapDocumentType
 from corpus_contracts.psw_cross_format_regression import (
@@ -63,18 +61,29 @@ class _DeterministicRuntime(_AppAuditRuntime):
         self.pdf_artifact = artifact
         return artifact
 
-    def run_image_prompt(self, **_kwargs: Any) -> str:
-        return json.dumps(
-            {
-                "classification": "视觉证据",
-                "item": "PSW 视觉规则",
-                "priority": "P0",
-                "authorized_signature_present": True,
-                "psw_stamp_present": True,
-                "status": "PASS",
-                "suggestions": "确定性回归视觉结果",
-            }
-        )
+    def read_ocr_visual_facts(self, *, images, prompt, response_schema):
+        return _controlled_visual_facts(response_schema, len(images), prompt)
+
+
+def _controlled_visual_facts(response_schema, image_count, prompt=""):
+    values = {"authorized_signature_present": True, "psw_stamp_present": True}
+    result = {}
+    for field, schema in response_schema["schema"]["properties"].items():
+        observations = []
+        for scope in schema["items"]["properties"]["scope"]["enum"]:
+            indices = [int(line.split(":", 1)[0].split()[1]) for line in prompt.splitlines() if line.startswith("图 ") and f"'scope': '{scope}'" in line] or list(range(image_count))
+            observations.append(
+                {
+                    "scope": scope,
+                    "value": values.get(field),
+                    "sources": [{"image_index": indices[0], "bbox": [0, 0, 1, 1]}],
+                    "covered_image_indices": indices,
+                    "coverage": "complete",
+                    "excerpt": "受控视觉事实",
+                }
+            )
+        result[field] = observations
+    return result
 
 
 def _psw_rules() -> RuleInput:
@@ -228,10 +237,11 @@ def test_real_doc_and_its_converted_docx_have_equivalent_results_and_release_tem
     executable = shutil.which("soffice") or shutil.which("libreoffice")
     assert executable is not None, "required PSW runtime must provide LibreOffice"
     monkeypatch.setenv("LEGACY_DOC_CONVERTER_EXECUTABLE", executable)
+    monkeypatch.setenv("OCR_MODEL_NAME", "controlled-ocr")
+    monkeypatch.setenv("OCR_OPENAI_API_KEY", "controlled")
+    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://ocr.invalid/v1")
     monkeypatch.setattr(
-        AIClient,
-        "image_analysis_completion",
-        _DeterministicRuntime.run_image_prompt,
+        "audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", lambda **request: _controlled_visual_facts(request["response_schema"], len(request["images"]), request["prompt"])
     )
     runtime_temp = tmp_path / "conversion-temporary"
     runtime_temp.mkdir()
@@ -329,8 +339,8 @@ def test_psw_pdf_visual_rules_match_the_xlsx_product_round() -> None:
     from product.settings import get_settings
 
     settings = get_settings()
-    if not (settings.OPENAI_API_KEY.strip() and settings.MODEL_NAME.strip()):
-        pytest.fail("setup_failure: model credential is missing; PDF visual audit did not start")
+    if not (settings.OCR_OPENAI_API_KEY.strip() and settings.OCR_OPENAI_BASE_URL.strip() and settings.OCR_MODEL_NAME.strip()):
+        pytest.fail("setup_failure: dedicated OCR configuration is missing; PDF visual audit did not start")
     pdf_path = _PAIR_ROOT.with_suffix(".pdf")
     xlsx_path = _PAIR_ROOT.with_suffix(".xlsx")
     doc_type = PpapDocumentType.PSW.get_type_name()

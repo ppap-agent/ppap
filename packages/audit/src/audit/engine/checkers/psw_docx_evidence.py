@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
+from io import BytesIO
+from pathlib import Path
 from typing import Optional, Protocol, Sequence, cast
+from xml.etree import ElementTree
+from zipfile import ZipFile
 
 from documents.word import WordBlock, WordDocument, WordParagraphBlock, WordTableBlock
 from openpyxl import Workbook
+from PIL import Image
 
 from audit.contracts import AuditInput, EvidenceDiagnostic, EvidenceSource
 from audit.contracts import AuditResultItem as AuditResult
-from audit.engine.rule_engine import GuardStop, RuleContext
+from audit.engine.rule_engine import Decision, GuardStop, RuleContext, Table
 
 from .docx_workbook_agent import (
     PSW_DOCX_PRIMARY_TABLE,
@@ -24,7 +32,30 @@ from .psw_evidence_trace import (
     EvidenceUse,
     with_psw_evidence,
 )
-from .psw_visual_evidence import PSW_ALWAYS_VISUAL_RULES, evaluate_psw_observation
+from .psw_visual_evidence import PSW_ALWAYS_VISUAL_RULES, PSW_RULE_FIELDS, evaluate_psw_observation
+
+
+def _no_opaque_docx_graphics(path: str) -> bool:
+    """Only admit absence when no unparsed graphic carrier remains."""
+    try:
+        with ZipFile(path) as archive:
+            parts = archive.infolist()
+            if any(item.filename.startswith(("word/media/", "word/embeddings/", "word/fonts/", "word/footnotes", "word/endnotes", "word/comments")) for item in parts):
+                return False
+            xml_parts = [item for item in parts if item.filename.startswith("word/") and item.filename.endswith((".xml", ".rels"))]
+            if sum(item.file_size for item in xml_parts) > 10_000_000:
+                return False
+            opaque = {"drawing", "pict", "object", "shape", "graphic", "chart", "sym", "AlternateContent", "oMath", "oMathPara"}
+            for item in xml_parts:
+                root = ElementTree.fromstring(archive.read(item.filename))
+                if any(
+                    node.tag.rsplit("}", 1)[-1] in opaque or (node.tag.endswith("Relationship") and str(node.get("Type", "")).rsplit("/", 1)[-1] in {"image", "oleObject", "package", "chart", "font"})
+                    for node in root.iter()
+                ):
+                    return False
+        return True
+    except Exception:
+        return False
 
 
 class _PswDocxHost(Protocol):
@@ -45,6 +76,7 @@ class _PswDocxHost(Protocol):
 class PswDocxEvidenceMixin:
     """Route PSW DOCX rules without rendering or office conversion."""
 
+    _docx_visual_facts: tuple[dict[str, object], list] | Exception
     DOCX_PRIMARY_TABLE_CONTRACT: DocxPrimaryTableContract | None = PSW_DOCX_PRIMARY_TABLE
     DOCX_NAMED_TABLE_ANCHORS: tuple[tuple[str, tuple[str, ...], int], ...] = (("PSW交付物清单", ("生产件批准交付物文件清单", "项目", "附件"), 2),)
 
@@ -92,6 +124,13 @@ class PswDocxEvidenceMixin:
         if document is not None:
             sources = [f"{item.source.part}:{item.source.path}" for item in document.visual_evidence if item.kind in {"embedded_image", "drawing"}]
         source_note = f"；已发现但无法验证的来源: {', '.join(sources)}" if sources else ""
+        if document is not None and not any(item.kind in {"embedded_image", "drawing"} for item in document.visual_evidence) and _no_opaque_docx_graphics(self._host().audit_file.file_url):
+            result = evaluate_psw_observation(
+                rule_no, {"psw_stamp_ends_with_company": False, "authorization_table_present": False, "authorization_company_stamp_present": False, "psw_stamp_present": False}
+            )
+            return self._trace_result(
+                result, rule_no=rule_no, used="structure", sources=(EvidenceSource(kind="structure", locator="docx://word/package", excerpt="完整原件未包含图形、绘图或内嵌图片。"),)
+            )
         return self._trace_result(
             AuditResult(
                 classification="DOCX视觉证据",
@@ -126,18 +165,86 @@ class PswDocxEvidenceMixin:
             if not evidence:
                 result = self._missing_visual_result(rule_no)
             else:
-                text_evidence = self._word_text_evidence()
-                # The current Paddle contract accepts selected PDF pages. A
-                # DOCX image is not a PDF page and OCR text cannot establish a
-                # signature or full seal wording. Do not render, infer, or call
-                # an LLM to manufacture these facts.
-                result = evaluate_psw_observation(rule_no, {})
-                sources = tuple(EvidenceSource(kind="structure", locator=f"docx://{part}") for part in dict.fromkeys(block.source.part for block in text_evidence))
+                from .ocr_visual_facts import OcrImage, observe_ocr_images
+
+                audit = host.audit_file
+                digest = hashlib.sha256(Path(audit.file_url).read_bytes()).hexdigest()
+                previous = getattr(self, "_docx_visual_identity", digest)
+                if previous != digest:
+                    raise ValueError("Frozen Word source changed")
+                self._docx_visual_identity = digest
+                if not hasattr(self, "_docx_visual_facts"):
+                    observed_sources = []
+                    try:
+                        images = []
+                        for item in evidence:
+                            payload = base64.b64decode(item.data_url.split(",", 1)[-1], validate=True)
+                            with Image.open(BytesIO(payload)) as original:
+                                width, height = original.size
+                                if width * height > 12_000_000:
+                                    raise GuardStop(Decision.UNABLE, "原件图像超出本次有界读取范围，尚不能确认视觉事实。")
+                                original.load()
+                                output = BytesIO()
+                                original.convert("RGB").save(output, format="PNG")
+                            images.append(
+                                OcrImage(
+                                    output.getvalue(),
+                                    {
+                                        "kind": "docx_image",
+                                        "part": item.evidence.source.part,
+                                        "path": item.evidence.source.path,
+                                        "file_version_id": audit.audit_id,
+                                        "source_sha256": digest,
+                                        "coordinate_system": "image_pixels",
+                                        "bbox": [0, 0, width, height],
+                                        "scope": "docx:psw",
+                                        "context": True,
+                                    },
+                                    width,
+                                    height,
+                                )
+                            )
+                        fields = {field: description for number in (3, 5) for field, description in PSW_RULE_FIELDS[number].items() if field != "psw_stamp_ends_with_company"}
+                        text_evidence = self._word_text_evidence()
+                        native_text = "\n".join(f"{block.source.part}:{block.source.path}: {block.text}" for block in text_evidence)
+                        facts = observe_ocr_images(images, fields, lambda *args, **kwargs: observed_sources.append((args, kwargs)), context=native_text)
+                        # A source-located native value in the signature field
+                        # is sufficient; another printed name is not.
+                        native_signature = getattr(self, "_has_authorized_representative_info", None)
+                        if callable(native_signature) and native_signature(context, Table(context), Table(context).sheet("PSW主表")):
+                            facts["authorized_signature_present"] = True
+                            observed_sources.append(
+                                (
+                                    (
+                                        {"kind": "docx_structure", "part": "word/document.xml", "file_version_id": audit.audit_id, "source_sha256": digest, "fact": "authorized_signature_present"},
+                                        "经授权的供方代表签字字段存在原生内容。",
+                                    ),
+                                    {"visual": False},
+                                )
+                            )
+                        if hashlib.sha256(Path(audit.file_url).read_bytes()).hexdigest() != digest:
+                            raise ValueError("Frozen Word source changed")
+                        self._docx_visual_facts = (facts, observed_sources)
+                    except Exception as exc:
+                        self._docx_visual_facts = exc
+                cached = self._docx_visual_facts
+                if isinstance(cached, Exception):
+                    raise cached
+                facts, observed_sources = cached
+                sources = tuple(
+                    EvidenceSource(kind="visual" if kwargs.get("visual") else "structure", locator=json.dumps(args[0], ensure_ascii=False, separators=(",", ":")), excerpt=args[1])
+                    for args, kwargs in observed_sources
+                    if args[0].get("fact") in PSW_RULE_FIELDS[rule_no]
+                )
+                result = evaluate_psw_observation(rule_no, facts)
+                kinds = {source.kind for source in sources}
                 result = self._trace_result(
                     result,
                     rule_no=rule_no,
-                    used="structure" if sources else "none",
-                    diagnostic=EvidenceDiagnostic(code="psw.paddle.unsupported_source", stage="visual", severity="warning", message="当前Paddle单页证据不支持DOCX印章或签字判断，请核对原件。"),
+                    used="both" if kinds == {"visual", "structure"} else "visual" if "visual" in kinds else "structure" if kinds else "none",
+                    diagnostic=EvidenceDiagnostic(code="psw.visual.unconfirmed", stage="visual", severity="warning", message="原件视觉事实尚不能确认，请核对原件。")
+                    if result.status == "UNABLE"
+                    else None,
                     sources=sources,
                 )
         except GuardStop as stop:
@@ -161,7 +268,7 @@ class PswDocxEvidenceMixin:
             )
         except Exception as exc:
             result = self._trace_result(
-                host.create_error_result(str(exc), ith),
+                host.create_error_result(f"DOCX证据处理失败（{type(exc).__name__}）。", ith),
                 rule_no=rule_no,
                 used="none",
                 diagnostic=EvidenceDiagnostic(

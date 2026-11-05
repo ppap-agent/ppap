@@ -838,7 +838,7 @@ class ExcelAgent(BaseAgent):
             if text and text not in summary and summary not in text:
                 summary = ctx.build_ng_summary(existing=text)
             return self._apply_scope("NG", summary or text, ctx)
-        if normalized_status in {"UNABLE", "NA"} and type(self).CLAUSE_BOUND_CHECKS:
+        if normalized_status == "UNABLE" or (normalized_status == "NA" and type(self).CLAUSE_BOUND_CHECKS):
             text = normalized_message.strip()
             return self._apply_scope("NG", ctx.build_ng_summary(existing=text or None), ctx)
         return self._apply_scope(normalized_status, normalized_message, ctx)
@@ -860,6 +860,8 @@ class ExcelAgent(BaseAgent):
 
     def _apply_scope(self, status: str, message: str, ctx: RuleContext) -> tuple[str, str]:
         if not type(self).CLAUSE_BOUND_CHECKS:
+            if status == "PASS" and ctx.has_unreadable_cells():
+                return "UNABLE", self._scope_text("单元格证据尚不能确认，不能据此作业务判断。", ctx)
             return status, message
         if status == "NA" and ctx.questions():
             return "UNABLE", self._scope_text("含义未确认，不能判为不适用。", ctx)

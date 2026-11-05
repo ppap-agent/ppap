@@ -12,8 +12,6 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from documents.ocr.env import paddle_evidence_enabled
-
 from .client import PaddleOCRFormatError, PaddleStructureService, validate_pdf
 from .evidence import build_evidence
 
@@ -28,7 +26,7 @@ class PaddleEvidenceUnavailable(ValueError):
 
 @dataclass
 class _PageScope:
-    max_requests: int
+    max_requests: int | None
     attempts: dict[tuple, dict | Exception] = field(default_factory=dict)
     request_count: int = 0
     closed: bool = False
@@ -39,13 +37,13 @@ _PAGE_SCOPE: ContextVar[_PageScope | None] = ContextVar("paddle_page_scope", def
 
 
 @contextmanager
-def paddle_page_scope(*, max_requests: int = 2) -> Iterator[None]:
+def paddle_page_scope(*, max_requests: int | None = None) -> Iterator[None]:
     """Reuse successful and failed page attempts within one authorized audit.
 
     This limit belongs to this task only, not global service capacity. Nested
     helper calls share their owner's scope; nothing persists across audits.
     """
-    if type(max_requests) is not int or max_requests < 1:
+    if max_requests is not None and (type(max_requests) is not int or max_requests < 1):
         raise ValueError("A positive Paddle request count is required")
     if _PAGE_SCOPE.get() is not None:
         yield
@@ -67,8 +65,6 @@ def read_pdf_page_evidence(file_path: str | Path, page_number: int) -> dict:
     The authorized caller owns page selection, task scope and business
     interpretation. An empty response does not establish absent content.
     """
-    if not paddle_evidence_enabled():
-        raise PaddleEvidenceUnavailable("Paddle证据尚未启用，需核对原件。", code="paddle_evidence_disabled")
     endpoint = os.environ.get("PADDLE_OCR_URL", "").strip()
     if not endpoint:
         raise PaddleEvidenceUnavailable("Paddle服务尚未配置，需核对原件。", code="paddle_evidence_unconfigured")
@@ -98,7 +94,7 @@ def read_pdf_page_evidence(file_path: str | Path, page_number: int) -> dict:
         if hashlib.sha256(source.read_bytes()).hexdigest() != source_hash:
             raise PaddleOCRFormatError("PaddleOCR source changed before evidence reuse")
         if key not in scope.attempts:
-            if scope.request_count >= scope.max_requests:
+            if scope.max_requests is not None and scope.request_count >= scope.max_requests:
                 raise PaddleEvidenceUnavailable("本次审核的Paddle请求数已达上限；其余页面尚未核实。", code="paddle_request_budget_exhausted")
             scope.request_count += 1
             scope.attempts[key] = PaddleOCRFormatError("PaddleOCR previous request did not complete")

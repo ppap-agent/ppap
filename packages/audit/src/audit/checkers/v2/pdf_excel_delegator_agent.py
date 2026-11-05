@@ -172,8 +172,13 @@ class PdfExcelDelegatorAgent(PDFAgent):
         artifact = getattr(self, "conversion_artifact", None)
         diagnostics = getattr(artifact, "diagnostics", {}) or {}
         if diagnostics.get("error_code") in {
-            "paddle_evidence_disabled",
+            "native_table_unconfirmed",
+            "native_visual_evidence_required",
             "paddle_evidence_unconfigured",
+            "ocr_evidence_unconfigured",
+            "ocr_page_selection_required",
+            "ocr_table_unconfirmed",
+            "ocr_cell_unconfirmed",
             "paddle_page_selection_required",
             "paddle_table_unconfirmed",
             "paddle_table_incomplete",

@@ -305,7 +305,7 @@ def test_native_electronic_pdf_development_and_fixed_visual_guard(tmp_path, monk
     page.insert_text((40, 60), "物料名称: 支架\n物料编号: P12345", fontname="china-s")
     doc.save(path)
     doc.close()
-    monkeypatch.setattr(AIClient, "image_analysis_completion", lambda *args, **kwargs: pytest.fail("fixed checker must not call a model"))
+    monkeypatch.setattr(AIClient, "structured_completion", lambda *args, **kwargs: pytest.fail("fixed checker must not call a model"))
     rule = rule_for_file(frozen("target"))
     rule = rule.model_copy(update={"rules": [rule.rules[0], {**rule.rules[0], "id": "stamp", "category": "受控章", "rule_to_check": "须有实际受控章"}]})
     target = AuditInput(audit_id="target", file_url=str(path))

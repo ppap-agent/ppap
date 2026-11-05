@@ -37,128 +37,20 @@
 
 本地开发也可作为现网的本地客户端：本地 Web 通过产品 API 使用同一份真实数据；需要验证未部署的服务代码时，本地候选 API 可连接现网 PostgreSQL、对象存储与飞书。浏览器不直连数据库，租户与对象授权仍由 API 执行。共享数据不代表新旧代码或 Schema 自动兼容，连接前须核对候选所需接口与数据库结构；这种联调不运行初始化、迁移、测试重置或额外 Worker。写入仍是真实业务操作，不能因入口在本地而视作模拟；会产生收费、通知或审核受理的动作须按本次联调范围控制。
 
-## PaddleOCR 按需证据与本地影子验证
+## 按规则读取审核证据
 
-Issue #246 的候选实现使用原生读取与按需 Paddle，审核、PDF 文字发现和转换入口不再自动调用 LLM 视觉。`PADDLE_EVIDENCE_ENABLED=false` 为默认值；关闭时保留原生读取，未核实图像事实为 UNABLE，不回退 LLM。正式生产启用须由产品负责人确认，本 PR 不部署或开启该开关。
+当前合同由 [Issue #246](https://github.com/ppap-agent/ppap/issues/246) 拥有。所有适用审核使用同一流程：规则确定所需事实 → 原生提取 → 按具体缺口选择 Paddle 或 LLM OCR → 固定程序/有来源的文本语义检查。没有新旧流程开关，不把发布批准变成运行时分支。生产启用仍须产品负责人明确确认；开发完成不等于已部署。
 
-`packages/documents/src/documents/ocr/paddle/` 复用历史 PP-StructureV3 `/layout-parsing` 合同，不新增 LLM、Provider、数据库或服务队列。真实调用必须指定本地原件中的一页；先读取原生证据，仅在具体条款存在图像事实缺口时请求该页。原生 PDF 不因后缀、总页数或某次转换失败而自动送 OCR。
+- 原生 Excel、PDF 文字和可靠表格优先。Paddle 提供扫描文字、表格、坐标和章区域；坏表不清空其他有效元素，空响应不证明没有内容。
+- 签字、实际勾选、照片及复杂图形事实使用原图和专用 OCR 模型，不先等待 Paddle 失败。PSW、V4、检具、尺寸和通用图像规则复用同一事实入口；专属规则用代码判定，通用规则将可定位观察交给文本语义检查。
+- `LLM_*` / `OPENAI_*` 是文本配置。`OCR_OPENAI_API_KEY`、`OCR_OPENAI_BASE_URL`、`OCR_MODEL_NAME` 是独立 OCR 配置，缺少时不能借用文本配置。OCR 事实提取默认使用 `reasoning.effort=none`（关闭推理）；推理强度与输出上限是能力约束，不保证服务必定成功。可选 `OCR_OPENAI_EXTRA_BODY_JSON` 只给 OCR；显式 `reasoning` 原样优先，实际参数进入配置摘要。Paddle 使用 `PADDLE_OCR_URL`、`PADDLE_TOKEN`。Secret 仅通过现有进程环境注入，不写日志。
+- OCR 复用 `documents.ocr.client` 的 OpenAI Responses 调用，`store=False`、严格 schema、单次 HTTP connect/read/write/pool timeout 20 秒、零自动重试；没有整页或整份文件的总墙钟预算。持续接收数据可能超过 20 秒。视觉事实每次最多 4096 tokens，包含推理与可见 JSON；截断或空白结果为技术失败，不解析残缺证据。
+- 同轮同源页及同组事实复用成功/失败回执。缓存绑定原件、原页、模型/端点与提取配置；原件或配置改变不能覆盖冻结依据。局部未知保留来源，不抹除其余可靠原生内容。
+- 扫描 PDF 优先级低，当前不自动做整份表格转录或多页补格。没有可靠原生表格时明确返回无法检查；仍可由具体条款请求指定页/区域的视觉事实。不要为补齐工作簿触发整份 OCR。
+- 文本模型只接收相关条款和有原件位置的片段，引用须回查；部分范围不能声称全篇通过。不能用语义分析补造视觉内容或替代缺失 AP 标准表。
+- 实际 OCR SDK 回执并入现有审核用量；有回执才记录 token、供应商费用及耗时，缺回执为未知。供应商费用不是客户业务收费。原件文字、模型隐藏推理和密钥不得写入诊断日志。
 
-```sh
-# 凭据只存在操作进程环境；不要把真实值写入文档或日志。
-export PADDLE_OCR_URL="http://127.0.0.1:8080/layout-parsing"
-uv run --no-sync python -m documents.ocr.paddle \
-  --pdf "/path/to/source.pdf" --page 3 \
-  --out-root "/tmp/paddle-results"
-```
-
-CLI 打印独占创建的 `paddle-<随机标识>` 输出目录、所选页数及 `complete/partial/error`；原件页号见 `evidence.json`。保存 `response.json` 与 `evidence.json`；仅存在可导出的合法表格时生成 `tables.xlsx`。文字或印章事实不依赖工作簿是否生成；坏表、无法写入 Excel 的局部文本均留下诊断，其余事实保留。完全失败返回非零，部分识别不冒充整份文件完整。
-
-同一单页回执可以离线重放，不发出 OCR 或模型请求：
-
-```sh
-uv run --no-sync python -m documents.ocr.paddle \
-  --pdf "/path/to/source.pdf" --page 3 \
-  --response-json "/tmp/paddle-results/paddle-<run-id>/response.json" \
-  --out-root "/tmp/paddle-replay"
-uv run --no-sync pytest packages/documents/tests/test_paddle.py \
-  packages/documents/tests/test_paddle_page_evidence.py
-```
-
-旧的整份真实响应仍可不带 `--page` 离线回放；真实请求不能使用整份多页输入。回放材料必须与原件和原始页对应，离线回放通过不是一次新的真实服务验证。
-
-`evidence.json` 保留原件 SHA、原始 1-based 页号、Paddle 像素尺寸、PDF 尺寸与旋转、元素原始索引及原件坐标。坏表不抹除好章；章检测与章文字分别记录。无法唯一配对的文字不分给任意章，缺少可信位置的事实不作为权威原件证据。未知位置和识别不足保留未知；协议、解析及请求失败有单独技术诊断。实际勾选只接受唯一“认可情况”行中带可信坐标的明确复选框符号，不从选项文字或附近孤立符号猜测。签名有效性、章真伪或跨页表格关系不由本接口证明。
-
-### 审核侧影子消费
-
-`documents.ocr.paddle.reader` 是页证据入口，`audit.checkers.v4.visual_facts` 将支持的事实交给已有规则。引擎每次审核建立任务作用域，同一源 SHA/页/识别配置的成功或失败均复用，最多两次请求。原生文字和表格优先；多页必须能从原生标签唯一选择所需页，不能因转换失败扫描全篇。全局转换保持原生优先，只对单页 PDF 尝试 Paddle 表格；多个规则与转换共享一次页回执，不复用旧 LLM 缓存。
-
-`audit.checkers.v4.paddle_evidence` 保留显式影子作用域，只记录补充观察，不修改正式结果。影子观察与候选规则消费分别验收；检测到章、读到文字与条款通过是不同事实。
-
-下面只演示本地已授权原件的影子提取，不执行正式视觉审核、模型或数据库操作。生产调用方仍须先完成租户/对象授权，并提供本轮冻结的文件版本、规则和明确页号；本地示例标识不能冒充生产实体。
-
-```python
-import hashlib
-import os
-from pathlib import Path
-from audit.checkers.v4.paddle_evidence import (
-    PaddleShadowSession, ShadowTarget, paddle_shadow_scope,
-)
-from audit.checkers.v4.uaes.bindings import BINDINGS
-from audit.checkers.v4.uaes.control_plan import UaesControlPlanAgent
-from audit.contracts import AuditInput, RuleInput
-from audit.presets import preset_rule_body
-from documents.ocr.paddle import PaddleStructureService
-
-source = Path("/path/to/source.pdf")
-version, project, original_page = "local-shadow-version", "local-shadow-project", 1
-source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
-targets = [
-    ShadowTarget(version, source_sha, clause, original_page)
-    for clause, method in BINDINGS["v4"].items()
-    if clause.startswith("U08:") and method in {"rule_3", "rule_6"}
-]
-# 凭据由当前操作进程安全读取；日志不要输出它们或原件文字。
-endpoint = os.environ["PADDLE_OCR_URL"]
-token = os.environ.get("PADDLE_OCR_TOKEN") or os.environ.get("PADDLE_TOKEN", "")
-service = PaddleStructureService(endpoint, token=token, timeout=20)
-checker = UaesControlPlanAgent(
-    AuditInput(audit_id=version, file_url=str(source), project_id=project),
-    RuleInput(rule_id="local-U08", **preset_rule_body("UAES", "U08")),
-)
-session = PaddleShadowSession(
-    service, project_id=project, targets=targets,
-    max_requests=1,
-)
-with paddle_shadow_scope(session):
-    session.observe(checker, "rule_3")
-    session.observe(checker, "rule_6")
-print(session.request_count, [(o.state, o.reason, o.reused) for o in session.observations])
-```
-
-Paddle 使用单次 HTTP timeout 20 秒，分别限制 connect/read/write/pool 操作，不设置审核、原件准备或完整响应的总墙钟预算。持续收到数据时总耗时可以超过 20 秒。不创建传输子进程。超时或连接失败只记录本次技术失败，不自动重试、不宣称服务端已取消。作用域仍检查取消、原件身份与请求数；`request_count` 表示派发尝试，不等于服务端已处理次数。
-
-同一影子作用域内，同源 SHA/页结果（含失败）复用；原生已确认字段跳过 OCR。来源变化、取消与关闭作用域仍受检查，不再按总时限丢弃慢读结果。作用域锁只串行化本任务，不是多 Worker 的全局容量限制；正式启用前仍需核对服务容量。
-
-PSW 可改用下列输入和调用，其余原件、服务及授权变量沿用上例。`psw_shadow_clause_id()` 将实际 profile、冻结规则版本、源条款 ID/内容和执行槽位绑定在一起；不要手工猜测条款编号。这个本地载体只供影子事实读取，避免构造正式 PDF Checker 时触发已有转换流程。
-
-```python
-from types import SimpleNamespace
-from audit.checkers.v4.paddle_evidence import psw_shadow_clause_id
-
-rule = RuleInput(rule_id="local-frozen-L17", **preset_rule_body("理想", "L17"))
-inputs = SimpleNamespace(
-    audit_file=AuditInput(
-        audit_id=version, file_url=str(source), project_id=project,
-        file_metadata={"file_version_id": version},
-    ),
-    rule=rule,
-)
-targets = [
-    ShadowTarget(version, source_sha, psw_shadow_clause_id(rule, slot), original_page)
-    for slot in (3, 6, 9)
-]
-session = PaddleShadowSession(
-    service, project_id=project, targets=targets,
-    max_requests=1,
-)
-with paddle_shadow_scope(session):
-    session.observe_psw(inputs, 3)  # 印章检测及已返回的文字
-    session.observe_psw(inputs, 6)  # 仅零件号字段；原生充分时跳过
-    session.observe_psw(inputs, 9)  # 实际勾选尚未支持，记录未知且不发请求
-print(session.request_count, [(o.state, o.reason, o.reused) for o in session.observations])
-```
-
-V2/V3 使用各自冻结的 PSW `RuleInput`。PDF 规则 3/5/7/8/9/10 使用已有固定判定，仅消费原生或 Paddle 确认的事实，不再调用视觉模型。复选框仅支持唯一“认可情况”行中的明确符号及坐标；OCR 词还须来自逐词回执并满足最低置信度。符号缺失、独立空框、冲突或低置信度保持未知，不能借用提交结果区域。DOCX 当前不能通过 PDF 页接口确认图像；原生字段保留，缺失图像事实返回 UNABLE。未建立签字、完整章文或照片事实时不宣称通过。
-
-整体 OCR 的逐词文字保留在已有页证据中，与印章专用识别文字分别记录。只有完整位于一个可信章区域内、且关联唯一的词，才可作为该区域的局部补充；相交、靠近或文字像“公司章”均不足以归章。补充词保留来源、原始索引与坐标，不与专用识别结果拼成“完整章文”，也不证明该词必然来自章的油墨。真实服务没有返回的文字保持未知。
-
-离线工程验收：
-
-```sh
-uv run --no-sync pytest packages/audit/tests/test_paddle_shadow.py
-```
-
-真实验证须显式执行，先串行单页，不为未知自动调用另一模型。固定输入版本、请求次数、实际耗时与人工已知事实；区分“代码存在、离线通过、真实请求已验、未知或未验”。单页响应成功不证明全场景识别率。29 页原生 PFMEA 若事实已充分，预期 Paddle 请求为零；扫描 CP 的部分坏表不能清空已检测印章；长扫描报告只请求选定的必要页。
+单页 Paddle 服务核验仍可使用现有 `python -m documents.ocr.paddle --help`；离线回放和真实调用分别报告。人工样本答案只作差异参考，不是绝对真值；不能为匹配标签把未知硬改为 PASS/NG。确定的误判、权限和数据完整性仍是必须修复的问题。当前实现测试与真实效果验收入口见 [TESTING](TESTING.md)。
 
 ## 当前命令
 

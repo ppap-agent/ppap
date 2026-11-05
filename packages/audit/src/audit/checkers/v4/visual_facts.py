@@ -1,9 +1,11 @@
-"""Native-page selection and supported Paddle facts, without model fallback."""
+"""Rule-driven native/Paddle facts and dedicated OCR Responses observations."""
 
 from __future__ import annotations
 
 import hashlib
+import math
 import re
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -65,7 +67,7 @@ def _native_disposition_texts(page):
     return entries
 
 
-def read_original_pdf_visual_facts(
+def _read_paddle_visual_facts(
     audit,
     fields: dict[str, str],
     witness,
@@ -189,4 +191,394 @@ def read_original_pdf_visual_facts(
     if needs_seal and all(value is None for value in result.values()) and any(item.get("element") == "seal" and item.get("outcome", "error") != "unknown" for item in value.get("diagnostics", [])):
         raise ValueError("Paddle seal extraction failed")
     # Empty output proves neither absence, checkbox state nor authenticity.
+    return result
+
+
+_EXISTENCE_FIELDS = frozenset({"seal", "controlled_stamp", "authorization_table_present", "authorization_company_stamp_present", "before", "during", "after"})
+
+
+def _pdf_images(audit, pages: Sequence[int], digest: str, fields=None):
+    from audit.engine.checkers.ocr_visual_facts import OcrImage
+
+    images = []
+    context = []
+    with fitz.open(audit.file_url) as document:
+        if document.needs_pass or len(pages) > 10 or any(type(page) is not int or not 1 <= page <= len(document) for page in pages):
+            raise VisualFactsUnavailable("原页范围或访问权限尚不能确认。")
+        for number in pages:
+            page = document[number - 1]
+            # Render in the original, unrotated PDF coordinate frame. Only this
+            # private in-memory document is changed; source bytes stay frozen.
+            page.set_rotation(0)
+            context.append(f"原页{number}: {page.get_text()}")
+            regions = [(page.rect, True)]
+            requested = set(fields or ())
+            psw_fields = {"psw_stamp_present", "psw_stamp_ending_text", "authorized_signature_present"}
+            labels = {}
+            if requested.intersection(psw_fields):
+                labels["经授权的供方代表签字"] = 70
+            if requested.intersection(_DISPOSITION_FIELDS):
+                labels["认可情况"] = 20
+            if requested.intersection({"approval_date", "comments_present"}):
+                labels["认可情况"] = 70
+            if requested.intersection({"dimensional_checked", "appearance_checked", "material_functional_checked", "statistical_checked", "requirements_yes_checked"}):
+                labels["提交结果"] = 70
+            if requested.intersection({"submission_any_checked", "submission_other_present"}):
+                labels["提交原因"] = 70
+            if any(field.startswith("authorization_") for field in requested):
+                labels["部门章授权声明"] = 200
+            located_regions = []
+            for label, height in labels.items():
+                for found in page.search_for(label):
+                    margin_above = 25 if label == "经授权的供方代表签字" else 8
+                    clip = fitz.Rect(max(0, found.x0 - 12), max(0, found.y0 - margin_above), page.rect.x1, min(page.rect.y1, found.y1 + height))
+                    if not clip.is_empty:
+                        regions.append((clip, False))
+                        located_regions.append(clip)
+            for image in page.get_image_info():
+                bounds = fitz.Rect(image["bbox"]) & page.rect
+                if not 400 <= bounds.width * bounds.height <= page.rect.width * page.rect.height / 5:
+                    continue
+                # Local source-composite views only improve requested regions.
+                # Shape chooses a magnification crop, never a seal verdict.
+                if labels and not any(bounds.intersects(region) for region in located_regions):
+                    continue
+                if requested.intersection(psw_fields) and not 0.8 <= bounds.width / bounds.height <= 1.25:
+                    continue
+                if requested and not labels:
+                    continue
+                regions.append((bounds + (-2, -2, 2, 2) & page.rect, False))
+            # Every planned page keeps its full context; local views share a
+            # finite total pixel allocation rather than multiplying it.
+            page_regions = regions[:7]
+            pixel_budget = min(12_000_000, 32_000_000 / len(pages) / len(page_regions))
+            for bounds, complete in page_regions:
+                area = bounds.width * bounds.height
+                if not math.isfinite(area) or area <= 0:
+                    raise VisualFactsUnavailable("原页区域尺寸无效。")
+                scale = min(1.5 if complete else 4, math.sqrt(pixel_budget / area), 4096 / max(bounds.width, bounds.height))
+                pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=bounds, alpha=False)
+                images.append(
+                    OcrImage(
+                        pixmap.tobytes("png"),
+                        {
+                            "kind": "pdf_region",
+                            "page": number,
+                            "bbox": list(bounds),
+                            "coordinate_system": "pdf_points_unrotated",
+                            "source_sha256": digest,
+                            "file_version_id": audit.audit_id,
+                            "scope": f"pdf:{number}",
+                            "context": complete,
+                        },
+                        pixmap.width,
+                        pixmap.height,
+                    )
+                )
+    return images, "\n".join(context)
+
+
+def _source_identity(audit, cache):
+    path = Path(audit.file_url)
+    if path.suffix.casefold() not in {".pdf", ".png", ".jpg", ".jpeg", ".webp"}:
+        raise VisualFactsUnavailable("当前载体尚无已定位的原页图像证据。")
+    with path.open("rb") as source:
+        digest = hashlib.file_digest(source, "sha256").hexdigest()
+    expected = (audit.file_metadata or {}).get("source_sha256") or (audit.file_metadata or {}).get("sha256")
+    key = ("frozen_source", audit.audit_id)
+    if (expected and expected != digest) or (key in cache and cache[key] != digest):
+        raise ValueError("Frozen PDF identity changed")
+    cache[key] = digest
+    return digest
+
+
+def _ocr_pdf_facts(audit, fields, witness, *, pages, cache, field_scopes=None, native_by_scope=None):
+    from documents.ocr.env import ocr_policy_identity
+
+    from audit.engine.checkers.ocr_visual_facts import observe_ocr_images
+    from audit.engine.rule_engine import GuardStop
+
+    digest = _source_identity(audit, cache)
+    policy = ocr_policy_identity()
+    identity_key = ("ocr_policy", audit.audit_id)
+    if identity_key in cache and cache[identity_key] != policy:
+        raise ValueError("OCR configuration changed during the audit")
+    cache[identity_key] = policy
+    key = ("ocr_visual", digest, tuple(pages), tuple(sorted(fields.items())), tuple((field, tuple(scopes)) for field, scopes in sorted((field_scopes or {}).items())))
+    if key not in cache:
+        observations = []
+        try:
+            images, context = _pdf_images(audit, pages, digest, fields)
+            facts = observe_ocr_images(
+                images, fields, lambda *args, **kwargs: observations.append((args, kwargs)), context=context, field_scopes=field_scopes, any_fields=_EXISTENCE_FIELDS, native_by_scope=native_by_scope
+            )
+            _source_identity(audit, cache)
+            cache[key] = (facts, observations)
+        except GuardStop as exc:
+            cache[key] = VisualFactsUnavailable(exc.message) if exc.status == "UNABLE" else exc
+        except Exception as exc:
+            cache[key] = exc
+    value = cache[key]
+    if isinstance(value, Exception):
+        raise value
+    facts, observations = value
+    for args, kwargs in observations:
+        witness(*args, **kwargs)
+    return dict(facts)
+
+
+def read_psw_pdf_visual_facts(audit, fields: dict[str, str], witness, *, cache: dict[Any, Any], batch_fields: dict[str, str] | None = None, rule_no: int | None = None) -> dict[str, object]:
+    """Plan every applicable PSW/authorization page, then request them once.
+
+    Multiple warrant pages remain separate scopes. No page is selected by
+    order, missing identity or a presumed instruction role.
+    """
+    from audit.engine.checkers.psw_checkbox_evidence import read_disposition_facts
+    from audit.pdf_tables import valid_pdf_bbox
+
+    all_fields = batch_fields or fields
+    result: dict[str, object] = dict.fromkeys(all_fields)
+    digest = _source_identity(audit, cache)
+    native_by_scope: dict[str, dict[str, object]] = {}
+    with fitz.open(audit.file_url) as document:
+        if document.needs_pass:
+            raise VisualFactsUnavailable("原件访问权限尚不能确认。")
+        warrant = [page.number + 1 for page in document if page.search_for("经授权的供方代表签字") or page.search_for("认可情况")]
+        authorization = [page.number + 1 for page in document if page.search_for("部门章授权声明")]
+        if not warrant and len(document) == 1:
+            warrant = [1]
+        if not warrant:
+            return {field: None for field in fields}
+        # With a located authorization title, inspect those pages. If the
+        # rule needs to establish its absence, every page in a small source is
+        # an explicit scope; a missing native title cannot prove absence.
+        authorization_scopes = authorization
+        if not authorization and any(field.startswith("authorization_") for field in all_fields) and len(document) <= 10:
+            authorization_scopes = list(range(1, len(document) + 1))
+        pages = sorted(set(warrant + authorization_scopes))
+        if len(pages) > 10:
+            raise VisualFactsUnavailable("本次所需原页超出有界视觉读取范围。")
+        scopes = {}
+        selected_fields = {}
+        for field, description in all_fields.items():
+            relevant = authorization_scopes if field.startswith("authorization_") else warrant
+            if relevant:
+                scopes[field] = [f"pdf:{number}" for number in relevant]
+                selected_fields[field] = description
+        for number in warrant:
+            page = document[number - 1]
+            native = read_disposition_facts(
+                [item for item in _native_disposition_texts(page) if valid_pdf_bbox(item["pdf_bbox"], page.rect.width, page.rect.height)],
+                lambda locator, excerpt, **kwargs: witness({**locator, "file_version_id": audit.audit_id}, excerpt, **kwargs),
+                page=number,
+                source_sha256=digest,
+                visual=False,
+            )
+            for field in _DISPOSITION_FIELDS.intersection(all_fields):
+                native_by_scope.setdefault(field, {})[f"pdf:{number}"] = native[field]
+        for field, observations in native_by_scope.items():
+            values = list(observations.values())
+            if all(value is not None for value in values) and len(set(values)) == 1:
+                result[field] = values[0]
+                selected_fields.pop(field, None)
+                scopes.pop(field, None)
+        if authorization and "authorization_table_present" in all_fields:
+            result["authorization_table_present"] = True
+            for number in authorization:
+                for bounds in document[number - 1].search_for("部门章授权声明"):
+                    witness(
+                        {
+                            "kind": "pdf_region",
+                            "page": number,
+                            "bbox": list(bounds),
+                            "coordinate_system": "pdf_points_unrotated",
+                            "source_sha256": digest,
+                            "file_version_id": audit.audit_id,
+                            "element": "authorization_title",
+                            "fact": "authorization_table_present",
+                        },
+                        "部门章授权声明",
+                        visual=False,
+                    )
+            selected_fields.pop("authorization_table_present", None)
+            scopes.pop("authorization_table_present", None)
+    from audit.engine.checkers.psw_visual_evidence import evaluate_psw_observation
+
+    if all(result[field] is not None for field in fields) or (rule_no is not None and evaluate_psw_observation(rule_no, result).status in {"PASS", "NG"}):
+        return {field: result[field] for field in fields}
+
+    def request_stage(stage):
+        stage_scopes = {field: scopes[field] for field in stage}
+        stage_pages = sorted({int(scope.split(":")[1]) for names in stage_scopes.values() for scope in names})
+        return _ocr_pdf_facts(audit, stage, witness, pages=stage_pages, cache=cache, field_scopes=stage_scopes, native_by_scope=native_by_scope)
+
+    result = _psw_stages(result, selected_fields, rule_no, request_stage)
+    return {field: result[field] for field in fields}
+
+
+def _psw_stages(result, selected_fields, rule_no, request_stage):
+    from audit.engine.checkers.psw_visual_evidence import evaluate_psw_observation
+
+    core = {"psw_stamp_present", "psw_stamp_ending_text", "authorized_signature_present", *_DISPOSITION_FIELDS}
+    core_fields = {field: description for field, description in selected_fields.items() if field in core}
+    if core_fields:
+        result.update(request_stage(core_fields))
+    from audit.engine.checkers.psw_visual_evidence import normalize_psw_stamp_facts
+
+    result = normalize_psw_stamp_facts(result)
+    if rule_no is not None and evaluate_psw_observation(rule_no, result).status in {"PASS", "NG"}:
+        return result
+    needed = set()
+    if rule_no == 3 and (result.get("psw_stamp_ends_with_company") is False or (result.get("authorization_table_present") is True and result.get("psw_stamp_present") is True)):
+        needed = {"authorization_table_present", "authorization_company_stamp_present"}
+    elif rule_no == 7:
+        needed = {"submission_any_checked", "submission_other_present"}
+    elif rule_no == 8 and result.get("approved_checked") is True and result.get("conditional_checked") is False and result.get("rejected_checked") is False:
+        needed = {"dimensional_checked", "appearance_checked", "material_functional_checked", "statistical_checked", "requirements_yes_checked"}
+    elif rule_no in {9, 10} and result.get("conditional_checked") is True and result.get("approved_checked") is False and result.get("rejected_checked") is False:
+        needed = {"approval_date", "comments_present"}
+    branch = {field: selected_fields[field] for field in needed.intersection(selected_fields) if result.get(field) is None}
+    if branch:
+        result.update(request_stage(branch))
+    return result
+
+
+def _raster_visual_facts(audit, fields, witness, cache):
+    from io import BytesIO
+
+    from PIL import Image
+
+    from audit.engine.checkers.ocr_visual_facts import OcrImage, observe_ocr_images
+
+    digest = _source_identity(audit, cache)
+    key = ("ocr_raster", digest, tuple(sorted(fields.items())))
+    if key not in cache:
+        observations = []
+        try:
+            with Image.open(audit.file_url) as image:
+                if getattr(image, "n_frames", 1) != 1:
+                    raise VisualFactsUnavailable("多帧图像尚无明确逐帧范围。")
+                width, height = image.size
+                if width * height > 12_000_000:
+                    raise VisualFactsUnavailable("原始图像像素超出本次有界读取范围。")
+                image.load()
+                resized = image.convert("RGB")
+                resized.thumbnail((4096, 4096))
+                if resized.width * resized.height > 12_000_000:
+                    factor = math.sqrt(12_000_000 / (resized.width * resized.height))
+                    resized = resized.resize((max(1, int(resized.width * factor)), max(1, int(resized.height * factor))))
+                output = BytesIO()
+                resized.save(output, format="PNG")
+            frames = [
+                OcrImage(
+                    output.getvalue(),
+                    {
+                        "kind": "image_region",
+                        "scope": "image:1",
+                        "context": True,
+                        "bbox": [0, 0, width, height],
+                        "coordinate_system": "image_pixels",
+                        "file_version_id": audit.audit_id,
+                        "source_sha256": digest,
+                    },
+                    resized.width,
+                    resized.height,
+                )
+            ]
+            facts = observe_ocr_images(frames, fields, lambda *args, **kwargs: observations.append((args, kwargs)), any_fields=_EXISTENCE_FIELDS)
+            _source_identity(audit, cache)
+            cache[key] = (facts, observations)
+        except Exception as exc:
+            cache[key] = exc
+    value = cache[key]
+    if isinstance(value, Exception):
+        raise value
+    facts, observations = value
+    for args, kwargs in observations:
+        witness(*args, **kwargs)
+    return dict(facts)
+
+
+def read_original_pdf_visual_facts(
+    audit,
+    fields: dict[str, str],
+    witness,
+    *,
+    operation="v4_original_visual_facts",
+    cache: dict[Any, Any] | None = None,
+    source_pages: Sequence[int] | None = None,
+    batch_fields: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Native facts first; supported Paddle facts or dedicated OCR observations.
+
+    Callers may supply explicitly planned original page numbers. Otherwise the
+    small source is covered as separate page scopes, with no guessed page role.
+    """
+    from documents.ocr.env import ocr_model_name, ocr_openai_api_key, ocr_openai_base_url
+
+    cache = {} if cache is None else cache
+    if Path(audit.file_url).suffix.casefold() in {".png", ".jpg", ".jpeg", ".webp"}:
+        if source_pages is not None and list(source_pages) != [1]:
+            raise VisualFactsUnavailable("单张图像没有该原页范围。")
+        all_fields = batch_fields or fields
+        if operation.startswith("psw_rule_"):
+            initial = dict.fromkeys(all_fields)
+            observed = _psw_stages(initial, all_fields, int(operation.rsplit("_", 1)[-1]), lambda stage: _raster_visual_facts(audit, stage, witness, cache))
+        else:
+            observed = _raster_visual_facts(audit, all_fields, witness, cache)
+        return {field: observed.get(field) for field in fields}
+    if operation.startswith("psw_rule_"):
+        return read_psw_pdf_visual_facts(audit, fields, witness, cache=cache, batch_fields=batch_fields, rule_no=int(operation.rsplit("_", 1)[-1]))
+    digest = _source_identity(audit, cache)
+    with fitz.open(audit.file_url) as document:
+        if source_pages is not None:
+            pages = sorted(set(source_pages))
+        elif len(document) <= 10:
+            pages = list(range(1, len(document) + 1))
+        else:
+            return dict.fromkeys(fields)
+        if not pages or len(pages) > 10 or any(type(number) is not int or not 1 <= number <= len(document) for number in pages):
+            raise VisualFactsUnavailable("原页计划无效或超出有界读取范围。")
+        result: dict[str, bool | None] = dict.fromkeys(fields)
+        if _DISPOSITION_FIELDS.intersection(fields):
+            from audit.engine.checkers.psw_checkbox_evidence import read_disposition_facts
+            from audit.pdf_tables import valid_pdf_bbox
+
+            by_page = []
+            for number in pages:
+                page = document[number - 1]
+                native = read_disposition_facts(
+                    [item for item in _native_disposition_texts(page) if valid_pdf_bbox(item["pdf_bbox"], page.rect.width, page.rect.height)],
+                    lambda locator, excerpt, **kwargs: witness({**locator, "file_version_id": audit.audit_id}, excerpt, **kwargs),
+                    page=number,
+                    source_sha256=digest,
+                    visual=False,
+                )
+                by_page.append(native)
+            for field in _DISPOSITION_FIELDS.intersection(fields):
+                values = [value[field] for value in by_page]
+                if all(value is not None for value in values) and len(set(values)) == 1:
+                    result[field] = values[0]
+    unresolved = {field: description for field, description in fields.items() if result[field] is None}
+    if not unresolved:
+        return result
+    # Signatures, checkboxes, photos and graphic semantics go directly to the
+    # dedicated OCR model. A seal-only request may benefit from Paddle first.
+    if set(unresolved).issubset(_SEAL_FIELDS):
+        try:
+            paddle = _read_paddle_visual_facts(audit, unresolved, witness, operation=operation, cache=cache)
+            result.update({field: value for field, value in paddle.items() if value is not None})
+        except Exception:
+            # This is a configured alternative evidence capability, not a
+            # replay of an uncertain Paddle request. Its failure stays cached.
+            try:
+                configured = bool(ocr_model_name() and ocr_openai_api_key() and ocr_openai_base_url())
+            except ValueError:
+                configured = False
+            if not configured:
+                raise
+    unresolved = {field: description for field, description in fields.items() if result[field] is None}
+    if unresolved:
+        observed = _ocr_pdf_facts(audit, unresolved, witness, pages=pages, cache=cache)
+        result.update({field: value if type(value) is bool else None for field, value in observed.items()})
     return result

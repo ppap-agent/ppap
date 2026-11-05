@@ -77,7 +77,7 @@ def test_pdf_native_grid_and_original_text_blocks_keep_their_own_identity(tmp_pa
 def test_native_text_survives_image_overlap_but_image_only_content_stays_unknown(tmp_path):
     data = checked(original_pdf(tmp_path, images=True))
     cells = data["tables"][0]["cells"]
-    assert (cells["B2"]["value"], cells["B2"]["state"], cells["B2"]["image_overlap"]) == ("10.25", "known", True)
+    assert (cells["B2"]["value"], cells["B2"]["state"], cells["B2"]["image_overlap"]) == ("10.25", "unknown_visual_evidence", True)
     assert (cells["B3"]["state"], cells["B3"]["image_overlap"]) == ("unknown_visual_evidence", True)
 
 
@@ -173,7 +173,7 @@ def test_expanded_outer_grid_backgrounds_should_preserve_known_blank(tmp_path):
 
 def test_native_text_remains_observed_when_uninterpreted_vector_overlaps(tmp_path):
     cell = checked(vector_pdf(tmp_path, "circle", native_text=True))["tables"][0]["cells"]["A2"]
-    assert (cell["value"], cell["state"], cell["visual_overlap"]) == ("Native", "known", True)
+    assert (cell["value"], cell["state"], cell["visual_overlap"]) == ("Native", "unknown_visual_evidence", True)
     assert cell["vector_path_indices"] == [7]
 
 
@@ -309,3 +309,88 @@ def test_backend_unavailable_grid_is_distinct_from_other_parser_and_integrity_fa
 def test_text_block_only_observation_keeps_existing_contract():
     data = {"source": {"sha256": "a" * 64, "format": ".pdf"}, "tables": [], "pages": [{"page": 1, "blocks": [{"text": "Observed paragraph"}]}]}
     validate_snapshot(deepcopy(data), "a" * 64, ".pdf")
+
+
+@pytest.mark.parametrize("kind", ["annotation", "widget"])
+def test_native_text_under_annotation_or_widget_is_retained_but_unknown(tmp_path, kind):
+    original = vector_pdf(tmp_path, native_text=True)
+    path = tmp_path / "overlaid.pdf"
+    with fitz.open(original) as document:
+        page = document[0]
+        if kind == "annotation":
+            annotation = page.add_highlight_annot(fitz.Rect(30, 65, 100, 90))
+            annotation.update()
+        else:
+            widget = fitz.Widget()
+            widget.field_name = "overlay"
+            widget.field_type = fitz.PDF_WIDGET_TYPE_TEXT
+            widget.field_value = "Different"
+            widget.rect = fitz.Rect(30, 65, 100, 90)
+            page.add_widget(widget)
+        document.save(path)
+    data = checked(path)
+    cells = data["tables"][0]["cells"]
+    cell = cells["A2"]
+    assert "Native" in cell["value"]
+    assert cell["state"] == "unknown_visual_evidence"
+    assert cell[f"{kind}_overlap"] is True
+    # Some annotation appearances also exist in the original get_drawings()
+    # list. Such paths retain real source indices rather than invented ones.
+    with fitz.open(path) as document:
+        assert data["tables"][0]["vector_path_count"] == len(document[0].get_drawings())
+    assert not cell.get("image_overlap")
+    assert cells["B2"]["state"] == "known"
+    cell["state"] = "known"
+    with pytest.raises(ValueError, match="uninterpreted visual"):
+        validate_snapshot(data, data["source"]["sha256"], ".pdf")
+
+
+@pytest.mark.parametrize("kind", ["annotation", "widget"])
+def test_graphic_outside_native_cell_does_not_change_its_state(tmp_path, monkeypatch, kind):
+    cells = [CellRegion(row, row, col, col, "Native" if (row, col) == (1, 0) else "") for row in range(2) for col in range(2)]
+    native_result(monkeypatch, TableGrid(rows=[20, 60, 100], cols=[20, 140, 260], cells=cells))
+    original = vector_pdf(tmp_path, native_text=True)
+    path = tmp_path / "outside.pdf"
+    with fitz.open(original) as document:
+        page = document[0]
+        if kind == "annotation":
+            page.add_rect_annot(fitz.Rect(5, 102, 30, 115)).update()
+        else:
+            widget = fitz.Widget()
+            widget.field_name = "outside"
+            widget.field_type = fitz.PDF_WIDGET_TYPE_TEXT
+            widget.field_value = "Other"
+            widget.rect = fitz.Rect(5, 102, 30, 115)
+            page.add_widget(widget)
+        document.save(path)
+    cell = checked(path)["tables"][0]["cells"]["A2"]
+    assert (cell["value"], cell["state"]) == ("Native", "known")
+    assert not cell.get(f"{kind}_overlap")
+
+
+@pytest.mark.parametrize("flag", ["annotation_overlap", "widget_overlap"])
+def test_pdf_visual_overlap_flags_must_be_boolean(tmp_path, flag):
+    data = checked(original_pdf(tmp_path))
+    data["tables"][0]["cells"]["B2"][flag] = "true"
+    with pytest.raises(ValueError, match="overlap observation"):
+        validate_snapshot(data, data["source"]["sha256"], ".pdf")
+
+
+@pytest.mark.parametrize("kind", ["annotation", "widget"])
+def test_annotation_and_widget_observations_do_not_invent_vector_paths(kind):
+    from audit.pdf_tables import _table
+
+    page = SimpleNamespace(
+        number=0,
+        rect=fitz.Rect(0, 0, 100, 100),
+        get_image_info=lambda: [],
+        get_drawings=lambda: [],
+        annots=lambda: [SimpleNamespace(rect=fitz.Rect(20, 20, 30, 30))] if kind == "annotation" else [],
+        widgets=lambda: [SimpleNamespace(rect=fitz.Rect(20, 20, 30, 30))] if kind == "widget" else [],
+    )
+    table = _table(TableGrid(rows=[10, 50], cols=[10, 50], cells=[CellRegion(0, 0, 0, 0, "Native")]), page, ReadLimits(), 1.0)
+    cell = table["cells"]["A1"]
+    assert (cell["value"], cell["state"], cell[f"{kind}_overlap"]) == ("Native", "unknown_visual_evidence", True)
+    assert table["vector_path_count"] == 0
+    assert not cell.get("vector_path_indices")
+    assert not cell.get("visual_overlap")

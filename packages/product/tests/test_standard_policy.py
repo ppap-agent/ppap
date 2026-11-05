@@ -17,12 +17,11 @@ from product.settings import Settings
         ("OPENAI_TEMPERATURE", 0.7),
         ("OPENAI_TOP_P", 0.3),
         ("OPENAI_EXTRA_BODY_JSON", '{"provider":{"order":["other"]}}'),
-        ("OCR_ADAPTER_MODE", "remote"),
-        ("OCR_REMOTE_URL", "https://ocr.invalid"),
         ("OCR_MODEL_NAME", "ocr-other"),
         ("OCR_OPENAI_BASE_URL", "https://ocr-model.invalid/v1"),
         ("MAX_FILE_SIZE", "10MB"),
-        ("PADDLE_EVIDENCE_ENABLED", True),
+        ("PADDLE_OCR_URL", "https://paddle.invalid"),
+        ("OCR_OPENAI_EXTRA_BODY_JSON", '{"reasoning":{"enabled":true}}'),
     ],
 )
 def test_standard_revision_tracks_effective_configuration(field, value):
@@ -70,18 +69,8 @@ def test_tool_environment_changes_identity_without_disclosing_paths(monkeypatch,
     assert "private-alternate" not in changed.model_dump_json()
 
 
-@pytest.mark.parametrize("field,value", [("PADDLE_OCR_URL", "https://retired.invalid")])
-def test_disabled_paddle_endpoint_does_not_change_revision(field, value):
-    """An inactive endpoint has no effect on the accepted execution."""
-    settings = Settings(OPENAI_API_KEY="not-serialized", OCR_MODEL_NAME="vision-model")
-    original = settings.standard_execution_policy()
-    changed = settings.model_copy(update={field: value}).standard_execution_policy()
-    assert changed == original
-    assert value not in changed.model_dump_json()
-
-
-def test_enabled_paddle_endpoint_changes_revision_without_disclosing_credentials():
-    settings = Settings(PADDLE_EVIDENCE_ENABLED=True, PADDLE_OCR_URL="https://private-paddle.invalid", PADDLE_TOKEN="private-token")
+def test_paddle_endpoint_changes_revision_without_disclosing_credentials():
+    settings = Settings(PADDLE_OCR_URL="https://private-paddle.invalid", PADDLE_TOKEN="private-token")
     original = settings.standard_execution_policy()
     changed = settings.model_copy(update={"PADDLE_OCR_URL": "https://another.invalid"}).standard_execution_policy()
     assert changed != original
@@ -95,3 +84,13 @@ def test_retired_ocr_concurrency_env_no_longer_changes_revision(monkeypatch):
     original = settings.standard_execution_policy()
     monkeypatch.setenv("CONCURRENT_SIZE", "private-old-worker-count")
     assert settings.standard_execution_policy() == original
+
+
+def test_ocr_no_reasoning_default_and_explicit_override_share_the_actual_policy():
+    settings = Settings(OCR_OPENAI_EXTRA_BODY_JSON="")
+    default = settings.standard_execution_policy()
+    for value in ("{}", '{"reasoning":{"effort":"none"}}'):
+        settings.OCR_OPENAI_EXTRA_BODY_JSON = value
+        assert settings.standard_execution_policy() == default
+    settings.OCR_OPENAI_EXTRA_BODY_JSON = '{"reasoning":{"effort":"high"}}'
+    assert settings.standard_execution_policy() != default

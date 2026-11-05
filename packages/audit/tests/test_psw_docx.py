@@ -2,7 +2,8 @@
 
 from copy import deepcopy
 from io import BytesIO
-from zipfile import ZIP_STORED, ZipFile
+from xml.etree import ElementTree as ET
+from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
 
 import pytest
 from audit.contracts import AuditInput, RuleInput
@@ -138,8 +139,8 @@ def test_native_word_fields_and_controls_remain_known_while_visuals_stay_unconfi
     assert all(result.evidence is not None for result in results)
     assert results[0].evidence.used == "structure"
     assert results[0].evidence.source_format == "docx"
-    assert results[2].evidence.used == "structure"
-    assert results[2].evidence.sources[0].locator == "docx://word/document.xml"
+    assert results[2].evidence.used == "none"
+    assert results[2].evidence.sources == ()
     assert runtime.calls == []
 
 
@@ -150,9 +151,9 @@ def test_missing_stamp_images_and_required_checkmarks_do_not_invent_passes(tmp_p
 
     results = audit(path, runtime)
 
-    assert [results[index].status for index in (2, 4, 6, 7)] == ["UNABLE", "UNABLE", "NG", "NG"]
+    assert [results[index].status for index in (2, 4, 6, 7)] == ["NG", "NG", "NG", "NG"]
     assert runtime.calls == []
-    assert results[2].evidence.diagnostics[0].code == "psw.visual.missing"
+    assert results[2].evidence.used == "structure"
 
 
 @pytest.mark.parametrize("profile", ["v2", "v3"])
@@ -166,7 +167,7 @@ def test_docx_native_fields_remain_known_and_unsupported_visual_facts_stay_unabl
         attempts.append(kwargs)
         raise AssertionError("DOCX must not call LLM vision")
 
-    monkeypatch.setattr(AIClient, "image_analysis_completion", reject)
+    monkeypatch.setattr(AIClient, "structured_completion", reject)
     results = run_audit_engine(
         AuditInput(audit_id="psw-word-native", file_url=str(path)),
         RuleInput(rule_id="confirmed-psw-rules", rule_profile=profile, type=PpapDocumentType.PSW.get_type_name(), rules=[{"id": str(index)} for index in range(1, 11)]),
@@ -175,7 +176,7 @@ def test_docx_native_fields_remain_known_and_unsupported_visual_facts_stay_unabl
     assert attempts == []
     assert path.read_bytes() == original
     assert results[4].evidence.used == "structure"
-    assert results[4].evidence.diagnostics[0].code == "psw.paddle.unsupported_source"
+    assert results[4].evidence.diagnostics[0].code == "psw.visual.unconfirmed"
 
 
 @pytest.mark.parametrize("control", ["nested-checkbox", "generic-checkbox-character"])
@@ -240,3 +241,63 @@ def test_ambiguous_primary_tables_do_not_send_arbitrary_images_to_visual_rules(t
     assert results[2].status == "UNABLE"
     assert results[4].status == "UNABLE"
     assert runtime.calls == []
+
+
+def add_graphic_footnote(document):
+    relationship_ns = "http://schemas.openxmlformats.org/package/2006/relationships"
+    word_ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    document.tables[1].cell(19, 1).paragraphs[0]._p.append(oxml.parse_xml(f'<w:r xmlns:w="{word_ns}"><w:footnoteReference w:id="1"/></w:r>'))
+    packed = BytesIO()
+    document.save(packed)
+    with ZipFile(BytesIO(packed.getvalue())) as archive:
+        parts = {name: archive.read(name) for name in archive.namelist()}
+    relations = ET.fromstring(parts["word/_rels/document.xml.rels"])
+    ET.SubElement(
+        relations, f"{{{relationship_ns}}}Relationship", {"Id": "rIdFootnote", "Type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes", "Target": "footnotes.xml"}
+    )
+    parts["word/_rels/document.xml.rels"] = ET.tostring(relations)
+    types = ET.fromstring(parts["[Content_Types].xml"])
+    ET.SubElement(
+        types,
+        "{http://schemas.openxmlformats.org/package/2006/content-types}Override",
+        {"PartName": "/word/footnotes.xml", "ContentType": "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"},
+    )
+    parts["[Content_Types].xml"] = ET.tostring(types)
+    parts["word/footnotes.xml"] = (
+        f'<w:footnotes xmlns:w="{word_ns}" xmlns:v="urn:schemas-microsoft-com:vml" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        '<w:footnote w:id="1"><w:p><w:r><w:pict><v:shape style="width:40pt;height:40pt">'
+        '<v:imagedata r:id="rIdSeal"/></v:shape></w:pict></w:r></w:p></w:footnote></w:footnotes>'
+    ).encode()
+    parts["word/_rels/footnotes.xml.rels"] = (
+        f'<Relationships xmlns="{relationship_ns}"><Relationship Id="rIdSeal" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" '
+        'Target="media/seal.png"/></Relationships>'
+    ).encode()
+    image = BytesIO()
+    Image.new("RGB", (40, 40), "red").save(image, format="PNG")
+    parts["word/media/seal.png"] = image.getvalue()
+    result = BytesIO()
+    with ZipFile(result, "w", ZIP_DEFLATED) as archive:
+        for name, data in parts.items():
+            archive.writestr(name, data)
+    return result.getvalue()
+
+
+@pytest.mark.parametrize("profile", ["v2", "v3"])
+def test_unparsed_graphic_footnote_does_not_prove_an_absent_stamp(tmp_path, monkeypatch, profile):
+    from documents.word import extract_docx_structure
+
+    path = tmp_path / "footnote-seal.docx"
+    content = add_graphic_footnote(psw_document(images=False, checkboxes=False))
+    path.write_bytes(content)
+    parsed = extract_docx_structure(content)
+    assert parsed.valid and not parsed.visual_evidence
+    for name in ("OCR_MODEL_NAME", "OCR_OPENAI_API_KEY", "OCR_OPENAI_BASE_URL"):
+        monkeypatch.setenv(name, "")
+    results = run_audit_engine(
+        AuditInput(audit_id="word-with-opaque-footnote", file_url=str(path)),
+        RuleInput(rule_id="psw-footnote", rule_profile=profile, type=PpapDocumentType.PSW.get_type_name(), rules=[{"id": str(i)} for i in range(1, 11)]),
+    )
+    assert results[2].status == "UNABLE"
+    assert results[4].status == "UNABLE"

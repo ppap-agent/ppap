@@ -3,6 +3,7 @@
 import unittest
 from datetime import date
 
+import pytest
 from audit.engine.checkers.psw_visual_evidence import (
     PSW_RULE_FIELDS,
     decide_disposition_visual_rule,
@@ -139,3 +140,19 @@ class NativePaddleDecisionTests(unittest.TestCase):
         self.assertEqual(evaluate_psw_observation(7, {"status": "PASS"}).status, "UNABLE")
         self.assertEqual(evaluate_psw_observation(7, {"submission_other_present": True}).status, "PASS")
         self.assertEqual(evaluate_psw_observation(7, {"submission_other_present": False, "submission_any_checked": False}).status, "NG")
+
+
+def test_department_seal_complete_text_cannot_pass_from_its_outer_company_name():
+    result = evaluate_psw_observation(3, {"psw_stamp_present": True, "psw_stamp_ending_text": "专用章", "psw_stamp_ends_with_company": True, "authorization_table_present": False})
+    assert result.status == "NG"
+
+
+@pytest.mark.parametrize(("present", "text"), [(False, "公司"), (True, "")])
+def test_conflicting_stamp_presence_and_complete_text_cannot_decide_a_business_result(present, text):
+    observation = {"psw_stamp_present": present, "psw_stamp_ending_text": text, "authorized_signature_present": True, "authorization_table_present": False}
+    assert evaluate_psw_observation(3, observation).status == "UNABLE"
+    assert evaluate_psw_observation(5, observation).status == "UNABLE"
+
+
+def test_unknown_complete_stamp_text_cannot_be_replaced_by_the_outer_company_name():
+    assert evaluate_psw_observation(3, {"psw_stamp_present": True, "psw_stamp_ending_text": None, "psw_stamp_ends_with_company": True, "authorization_table_present": False}).status == "UNABLE"

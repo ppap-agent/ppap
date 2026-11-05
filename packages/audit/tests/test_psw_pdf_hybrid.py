@@ -93,7 +93,7 @@ def use_external_conversion(monkeypatch, source, outcome):
         ("manual_linegrid_failed", "ERR"),
         ("download_failed", "ERR"),
         ("", "ERR"),
-        ("paddle_evidence_disabled", "UNABLE"),
+        ("ocr_evidence_unconfigured", "UNABLE"),
         ("paddle_evidence_unconfigured", "UNABLE"),
         ("paddle_page_selection_required", "UNABLE"),
         ("paddle_table_unconfirmed", "UNABLE"),
@@ -145,7 +145,7 @@ def test_table_diagnostics_do_not_replace_the_actual_weight_decision(original_pd
         model_calls.append(kwargs)
         raise AssertionError("Structured PSW rules must not request image analysis")
 
-    monkeypatch.setattr(AIClient, "image_analysis_completion", reject_visual)
+    monkeypatch.setattr(AIClient, "structured_completion", reject_visual)
 
     results = run_audit_engine(AuditInput(audit_id="psw-structured", file_url=str(original_pdf)), psw_rules(profile, count=2))
 
@@ -247,7 +247,7 @@ def no_psw_llm_or_render(monkeypatch):
         attempts.append("LLM or image rendering")
         raise AssertionError("PSW facts must use native/Paddle only")
 
-    monkeypatch.setattr(AIClient, "image_analysis_completion", reject)
+    monkeypatch.setattr(AIClient, "structured_completion", reject)
     monkeypatch.setattr(V2PswPDFAgent, "_get_pdf_images_sync", reject)
     monkeypatch.setattr(V3PswPDFAgent, "_get_pdf_images_sync", reject)
     yield
@@ -258,7 +258,7 @@ def test_rule_eight_uses_native_paddle_facts_without_llm_fallback(original_pdf, 
     use_external_conversion(monkeypatch, original_pdf, ConversionArtifact(success=True, xlsx_path=str(converted_table)))
     calls = []
 
-    def read(audit, fields, witness, *, operation, cache):
+    def read(audit, fields, witness, *, operation, cache, batch_fields=None):
         calls.append((operation, tuple(fields), id(cache)))
         assert audit.file_url == str(original_pdf)
         return dict.fromkeys(fields)
@@ -307,7 +307,7 @@ def test_paddle_service_failure_preserves_structured_results_without_retry(origi
     results = run_audit_engine(AuditInput(audit_id="psw-paddle-failed", file_url=str(original_pdf)), psw_rules(profile, count=5))
     assert results[1].status == "PASS"
     assert [results[index].status for index in (2, 4)] == ["ERR", "ERR"]
-    assert all(results[index].evidence.diagnostics[0].code == "psw.paddle.runtime_error" for index in (2, 4))
+    assert all(results[index].evidence.diagnostics[0].code == "psw.visual.runtime_error" for index in (2, 4))
     assert len(calls) == 2
     assert all("private provider detail" not in result.suggestions for result in results)
     assert not converted_table.exists()
@@ -339,20 +339,11 @@ def write_disposition_pdf(path, options, *, copies=1):
 
 
 def disposition_page_response(*, complete=True, approved="□批准"):
-    texts = ["认可情况：", approved, "□条件批准", "□拒绝"] if complete else ["认可情况：", "批准", "条件批准", "拒绝"]
     return {
-        "dataInfo": {"numPages": 1, "pages": [{"width": 600, "height": 800}]},
-        "layoutParsingResults": [
-            {
-                "prunedResult": {
-                    "layout_det_res": {"boxes": []},
-                    "parsing_res_list": [],
-                    "seal_res_list": [],
-                    "table_res_list": [],
-                    "overall_ocr_res": {"rec_texts": texts, "rec_boxes": [[25, 68, 95, 82], [160, 68, 210, 82], [290, 68, 365, 82], [450, 68, 500, 82]], "rec_scores": [0.99] * 4},
-                }
-            }
-        ],
+        "disposition_visible": True,
+        "approved_checked": approved == "☑批准" if complete else None,
+        "conditional_checked": False if complete else None,
+        "rejected_checked": False if complete else None,
     }
 
 
@@ -364,18 +355,37 @@ def psw_checker(monkeypatch, path, profile):
     return agent_type(AuditInput(audit_id="frozen-native-psw", file_url=str(path)), psw_rules(profile))
 
 
-def paddle_response_boundary(monkeypatch, response):
+def ocr_response_boundary(monkeypatch, response):
+    """Controlled OCR Responses boundary; Paddle is not sent before checkboxes."""
     attempts = []
-    monkeypatch.setenv("PADDLE_EVIDENCE_ENABLED", "true")
-    monkeypatch.setenv("PADDLE_OCR_URL", "https://paddle.invalid/layout-parsing")
+    for name, value in (("OCR_MODEL_NAME", "controlled-ocr"), ("OCR_OPENAI_API_KEY", "controlled"), ("OCR_OPENAI_BASE_URL", "https://ocr.invalid/v1")):
+        monkeypatch.setenv(name, value)
 
-    def analyze(service, file_path, page_number, **kwargs):
-        attempts.append((str(file_path), page_number, service.timeout))
+    async def analyze(images, prompt, *, response_schema, **kwargs):
+        attempts.append(response_schema)
         if isinstance(response, Exception):
             raise response
-        return response
+        mapping = response
+        result = {}
+        for field, schema in response_schema["schema"]["properties"].items():
+            values = []
+            for scope in schema["items"]["properties"]["scope"]["enum"]:
+                # Image indices are explicit captions in the transport prompt.
+                indices = [int(line.split(":", 1)[0].split()[1]) for line in prompt.splitlines() if line.startswith("图 ") and f"'scope': '{scope}'" in line]
+                values.append(
+                    {
+                        "scope": scope,
+                        "value": mapping.get(field),
+                        "sources": [{"image_index": indices[0], "bbox": [0, 0, 1, 1]}],
+                        "covered_image_indices": indices,
+                        "coverage": "complete",
+                        "excerpt": "受控原件事实",
+                    }
+                )
+            result[field] = values
+        return result
 
-    monkeypatch.setattr("documents.ocr.paddle.PaddleStructureService.analyze_page", analyze)
+    monkeypatch.setattr("documents.ocr.client.call_llm_async", analyze)
     return attempts
 
 
@@ -384,7 +394,7 @@ def test_public_rule_eight_native_empty_checkboxes_need_no_paddle(tmp_path, monk
     with fitz.open(path) as document:
         # The case depends on actual native PDF characters, not a reader stub.
         assert all(text in document[0].get_text() for text in ("□批准", "□条件批准", "□拒绝"))
-    attempts = paddle_response_boundary(monkeypatch, AssertionError("Native controls must avoid Paddle"))
+    attempts = ocr_response_boundary(monkeypatch, AssertionError("Native controls must avoid Paddle"))
     with bind_runtime(None):
         checker = psw_checker(monkeypatch, path, profile)
         try:
@@ -399,9 +409,9 @@ def test_public_rule_eight_native_empty_checkboxes_need_no_paddle(tmp_path, monk
 
 
 @pytest.mark.parametrize(("complete", "expected"), [(True, "NG"), (False, "UNABLE")])
-def test_public_rule_eight_uses_one_paddle_page_for_incomplete_native_controls(tmp_path, monkeypatch, profile, complete, expected):
+def test_public_rule_eight_uses_ocr_directly_for_incomplete_native_controls(tmp_path, monkeypatch, profile, complete, expected):
     path = write_disposition_pdf(tmp_path / "native-labels.pdf", ("批准", "条件批准", "拒绝"))
-    attempts = paddle_response_boundary(monkeypatch, disposition_page_response(complete=complete))
+    attempts = ocr_response_boundary(monkeypatch, disposition_page_response(complete=complete))
     with bind_runtime(None):
         checker = psw_checker(monkeypatch, path, profile)
         try:
@@ -409,13 +419,13 @@ def test_public_rule_eight_uses_one_paddle_page_for_incomplete_native_controls(t
         finally:
             checker.close()
     assert result.status == expected
-    assert attempts == [(str(path), 1, 20)]
-    assert result.evidence.used == "both"
+    assert len(attempts) == 1
+    assert result.evidence.used == ("both" if complete else "structure")
 
 
-def test_public_rule_eight_retains_known_native_state_over_conflicting_paddle(tmp_path, monkeypatch, profile):
+def test_public_rule_eight_retains_known_native_state_over_conflicting_ocr(tmp_path, monkeypatch, profile):
     path = write_disposition_pdf(tmp_path / "partial-native-controls.pdf", ("□批准", "条件批准", "拒绝"))
-    attempts = paddle_response_boundary(monkeypatch, disposition_page_response(approved="☑批准"))
+    attempts = ocr_response_boundary(monkeypatch, disposition_page_response(approved="☑批准"))
     with bind_runtime(None):
         checker = psw_checker(monkeypatch, path, profile)
         try:
@@ -425,27 +435,47 @@ def test_public_rule_eight_retains_known_native_state_over_conflicting_paddle(tm
     # Native approved=False remains authoritative; Paddle supplies only the
     # two previously unknown states, so the empty disposition is still NG.
     assert result.status == "NG"
-    assert attempts == [(str(path), 1, 20)]
+    assert len(attempts) == 1
 
 
 @pytest.mark.parametrize("failed", [False, True], ids=["successful-page", "failed-page"])
-def test_public_rules_three_five_and_eight_reuse_one_success_or_failure(tmp_path, monkeypatch, profile, failed):
+def test_public_rules_three_five_and_eight_reuse_one_ocr_success_or_failure(tmp_path, monkeypatch, profile, failed):
     path = write_disposition_pdf(tmp_path / "shared-original.pdf", ("批准", "条件批准", "拒绝"))
-    attempts = paddle_response_boundary(monkeypatch, TimeoutError("private endpoint") if failed else disposition_page_response())
+    attempts = ocr_response_boundary(monkeypatch, TimeoutError("private endpoint") if failed else disposition_page_response())
     with bind_runtime(None):
         checker = psw_checker(monkeypatch, path, profile)
         try:
             results = [checker.check(index) for index in (2, 4, 7)]
         finally:
             checker.close()
-    assert attempts == [(str(path), 1, 20)]
+    assert len(attempts) == 1
     assert [result.status for result in results] == (["ERR"] * 3 if failed else ["UNABLE", "UNABLE", "NG"])
     assert all("private endpoint" not in result.suggestions for result in results)
 
 
-def test_public_rule_eight_does_not_choose_between_two_original_disposition_pages(tmp_path, monkeypatch, profile):
+def test_public_rule_eight_checks_both_original_disposition_pages(tmp_path, monkeypatch, profile):
     path = write_disposition_pdf(tmp_path / "two-dispositions.pdf", ("批准", "条件批准", "拒绝"), copies=2)
-    attempts = paddle_response_boundary(monkeypatch, AssertionError("Ambiguous original page must not be sent"))
+    attempts = ocr_response_boundary(monkeypatch, disposition_page_response())
+    with bind_runtime(None):
+        checker = psw_checker(monkeypatch, path, profile)
+        try:
+            result = checker.check(7)
+        finally:
+            checker.close()
+    assert result.status == "NG"
+    assert len(attempts) == 1
+    scopes = attempts[0]["schema"]["properties"]["approved_checked"]["items"]["properties"]["scope"]["enum"]
+    assert scopes == ["pdf:1", "pdf:2"]
+
+
+def test_public_partial_native_values_survive_ocr_on_another_business_page(tmp_path, monkeypatch, profile):
+    path = write_disposition_pdf(tmp_path / "native-plus-unknown.pdf", ("□批准", "条件批准", "拒绝"))
+    with fitz.open(path) as document:
+        page = document.new_page(width=600, height=800)
+        for x, text in zip((25, 160, 290, 450), ("认可情况：", "批准", "条件批准", "拒绝")):
+            page.insert_text((x, 80), text, fontname="china-s", fontsize=11)
+        document.saveIncr()
+    attempts = ocr_response_boundary(monkeypatch, disposition_page_response(approved="☑批准"))
     with bind_runtime(None):
         checker = psw_checker(monkeypatch, path, profile)
         try:
@@ -453,4 +483,79 @@ def test_public_rule_eight_does_not_choose_between_two_original_disposition_page
         finally:
             checker.close()
     assert result.status == "UNABLE"
-    assert attempts == []
+    assert len(attempts) == 1
+
+
+@pytest.mark.parametrize("department", [False, True], ids=["company-no-authorization-read", "department-reads-authorization"])
+def test_psw_requests_only_facts_needed_by_the_active_branches(tmp_path, monkeypatch, profile, department):
+    path = write_disposition_pdf(tmp_path / "staged-psw.pdf", ("批准", "条件批准", "拒绝"))
+    with fitz.open(path) as document:
+        page = document.new_page(width=600, height=800)
+        page.insert_text((25, 50), "部门章授权声明", fontname="china-s", fontsize=11)
+        document.saveIncr()
+    payload = {
+        **disposition_page_response(),
+        "psw_stamp_present": True,
+        "authorized_signature_present": True,
+        "psw_stamp_ending_text": "专用章" if department else "公司",
+        "authorization_company_stamp_present": False,
+    }
+    attempts = ocr_response_boundary(monkeypatch, payload)
+    with bind_runtime(None):
+        checker = psw_checker(monkeypatch, path, profile)
+        try:
+            results = [checker.check(index) for index in (2, 4, 7, 8, 9)]
+        finally:
+            checker.close()
+    assert [result.status for result in results] == ["NG" if department else "PASS", "PASS", "NG", "NG", "NG"]
+    requested = [set(schema["schema"]["properties"]) for schema in attempts]
+    assert len(attempts) == (2 if department else 1)
+    assert requested[0] == {"psw_stamp_present", "psw_stamp_ending_text", "authorized_signature_present", "approved_checked", "conditional_checked", "rejected_checked"}
+    if department:
+        assert requested[1] == {"authorization_company_stamp_present"}
+    assert not any({"approval_date", "comments_present", "dimensional_checked", "submission_any_checked"}.intersection(fields) for fields in requested)
+
+
+def test_conditional_date_and_comments_are_one_separate_request_only_when_applicable(tmp_path, monkeypatch, profile):
+    from datetime import date
+
+    path = write_disposition_pdf(tmp_path / "conditional-psw.pdf", ("批准", "条件批准", "拒绝"))
+    payload = {
+        **disposition_page_response(),
+        "conditional_checked": True,
+        "psw_stamp_present": True,
+        "psw_stamp_ending_text": "公司",
+        "authorized_signature_present": True,
+        "approval_date": date.today().isoformat(),
+        "comments_present": True,
+    }
+    attempts = ocr_response_boundary(monkeypatch, payload)
+    with bind_runtime(None):
+        checker = psw_checker(monkeypatch, path, profile)
+        try:
+            results = [checker.check(index) for index in (7, 8, 9)]
+        finally:
+            checker.close()
+    assert [result.status for result in results] == ["PASS", "PASS", "PASS"]
+    assert len(attempts) == 2
+    assert set(attempts[1]["schema"]["properties"]) == {"approval_date", "comments_present"}
+
+
+@pytest.mark.parametrize("extension", ["png", "jpeg"])
+def test_public_psw_raster_uses_the_same_dedicated_ocr_fact_path(tmp_path, monkeypatch, profile, extension):
+    from PIL import Image
+
+    path = tmp_path / ("original." + extension)
+    with Image.new("RGB", (400, 500), "white") as image:
+        image.save(path)
+    attempts = ocr_response_boundary(monkeypatch, disposition_page_response())
+    with bind_runtime(None):
+        checker = psw_checker(monkeypatch, path, profile)
+        try:
+            result = checker.check(7)
+        finally:
+            checker.close()
+    assert result.status == "NG"
+    assert result.evidence.source_format == extension
+    assert result.evidence.prepared_format == "png"
+    assert len(attempts) == 1

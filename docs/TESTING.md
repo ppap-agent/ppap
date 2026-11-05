@@ -2,13 +2,15 @@
 
 测试保护当前行为，不维护第二套产品状态。
 
-Paddle 按需证据由 Issue #246 拥有：`packages/documents/tests/test_paddle.py` 与 `test_paddle_page_evidence.py` 验证单页、原件定位、局部失败与产物，并用本地 HTTP 检查 20 秒操作超时配置、停滞读取、连接清理及零重试；持续有进展的读取不受总墙钟预算限制。`test_local_ocr_artifacts.py` 验证原生优先、未选多页零请求、任务内成功/失败复用、请求数上限、退出与隔离。`packages/audit/tests/test_paddle_shadow.py` 验证影子观察不改正式结果、授权身份、同页复用、取消及慢读取不会因总预算丢弃。离线测试不调用真实 OCR 或模型；真实效果及多 Worker 服务容量须另行核验。
+按需取证由 [Issue #246](https://github.com/ppap-agent/ppap/issues/246) 拥有，当前流程见 [DEVELOPMENT](DEVELOPMENT.md#按规则读取审核证据)。测试使用独立受控客户端；没有新旧路径开关。包内离线通过不证明真实模型效果或多 Worker 服务容量。
 
-影子观察与候选规则分别验收。默认 `PADDLE_EVIDENCE_ENABLED=false`，不请求 Paddle；候选审核、页发现与转换不自动回退 LLM 视觉。关闭或未支持的能力保留原生结果与 UNABLE，传输/协议故障为 ERR。位置或配对不确定保持未知，局部失败不能清空其他已知事实。
+- Documents：原生充分时零外发；可靠表格直接复用，图形覆盖的局部单元格保留原文和位置但保持未知；不为未知格自动整篇 OCR。按需页级事实使用独立 OCR 配置，单次 HTTP 20 秒、无总墙钟预算、无自动重试。
+- Audit：`test_ocr_visual_facts.py`、`test_psw_pdf_hybrid.py`、`test_document_visual_checks.py`、`test_generic_visual_acceptance.py` 检查公开入口的原生优先、同事实复用、原页/区域定位、多业务页冲突、图形未知和 ERR。`test_text_evidence.py` 检查原文引文、位置和完整范围，未读区域不能被文本模型补全。
+- 真实验收固定原件 SHA、适用条款、实际模型、请求次数及供应商回执，保留并比较原 corpus oracle，但人工标签也须按原件和条款复核，不要求全部人工标签相等才推送验证。PSW 包括空/真签字、淡色勾选和多表；完整扫描表格转录不属于本次放行门槛；原生 PFMEA 不因页多或个别字段未知全篇 OCR。分别报告错误 PASS、错误 NG、未知、技术错误、耗时和费用；小样本不报告总体准确率或 P95。
 
-影子测试同时隔离正式 Checker 构造阶段的外部转换边界。V2 与 V3 需分别核对实际入口，不能假设二者都只经过绑定的 Runtime。该测试模块对 requests、同步/异步 HTTPX 及未预期子进程外发加护栏，并在用例结束时检查尝试记录，避免生产代码捕获网络异常后让用例假通过。
+扫描延期仅限两个内容摘要已冻结的真实样本：V3 `19-BLANC尾-生产控制计划.pdf`（4 页纯图）和 V2 scanned `PV试验报告2024-07-03 13.35.pdf`（含无原生文字的扫描表页）。`deferred_full_scan_reason` 同时核对文件名与完整 SHA；内容变化不沿用跳过。对应单文件／Product Round 检查说明 Issue #246 原因；V3 Product Round 仅移除该扫描目标，保留同组其他 3 个原生 Excel。资产完整性、原始 oracle 与规则绑定检查继续执行；V2 native PDF、29 页原生 PFMEA、PSW 及页级未知／ERR／来源测试均保留。该范围不证明完整扫描表格能力，后续需求须重新确认。
 
-旧 PSW corpus 的 PASS/NG 期望不会因替换后证据不足而改写。`test_psw_checkbox_evidence.py` 检查唯一“认可情况”行中的明确符号、原件坐标、OCR 置信度、冲突与跨区域隔离；`test_psw_pdf_hybrid.py` 检查公开入口的原生优先、Paddle 单页、无 LLM 回退及未知状态。Paddle 真实验收须标明原件 SHA、原页、人工可确认内容与实际请求数。录制回执离线通过不等于新服务请求成功，也不代表已覆盖所有复选框版式、签名或完整章文。
+- 录制回执离线回放只证明当前消费路径，不等于新服务实采。真实请求结果未知时先读既有回执，不重复请求挑选符合 oracle 的答案。网络护栏须检查实际外发尝试，不能让捕获异常后的测试通过掩盖未授权调用。
 
 迁移 baseline 的具体 Git revision 和当前观察结果只由 owning Issue 保存：
 - engine/corpus parity：[#3](https://github.com/ppap-agent/ppap/issues/3)
@@ -16,9 +18,9 @@ Paddle 按需证据由 Issue #246 拥有：`packages/documents/tests/test_paddle
 
 迁移完成后，本仓测试成为 current authority，不继续复制 legacy baseline 到长期文档。
 
-人工 CSV 是 corpus 测试期望的唯一数据源，但标注可以复核。争议样本须先确认文件摘要、原始规则与可定位事实；不能以一次重跑、模型结论或修改 oracle 让 CI 变绿。PSW 规则 3/5/7/8/9/10 由固定程序判断，只使用已确认原生/Paddle 事实；缺少必需事实不能通过。旧 LLM 识别的 PASS/NG 不证明 Paddle 已具有同等效果。
+人工 CSV 是 corpus 测试期望的唯一数据源，但标注可以复核。争议样本须先确认文件摘要、原始规则与可定位事实；不能以一次重跑、模型结论或修改 oracle 让 CI 变绿。PSW 规则 3/5/7/8/9/10 由固定程序判断，只使用有位置的原生/Paddle/LLM OCR 事实；缺少必需事实不能通过。有效 JSON、合法 HTML 或固定程序自身通过均不证明识别内容正确。
 
-PSW 第5条要求授权供方代表签字和盖章同时存在，不增加必须手写、鉴真或公司章类型条件；其他字段中的印刷姓名不能代替签字字段。两项均 true 才 PASS；任一明确 false 为 NG；仍有未知为 UNABLE；传输或协议失败为 ERR。当前 PDF Paddle 只提供已定位印章等有限事实，不能凭旁边文字确认签字；DOCX 保留原生文字与位置，但不自动发起图像模型调用。固定判定测试不证明真实识别稳定性。
+PSW 第5条要求授权供方代表签字和盖章同时存在，不增加必须手写、鉴真或公司章类型条件；其他字段中的印刷姓名不能代替签字字段。两项均 true 才 PASS；任一明确 false 为 NG；仍有未知为 UNABLE；传输或协议失败为 ERR。PDF 和 DOCX 从原件读取实际签字/盖章，不能凭旁边文字确认签字，也不能用未覆盖的 Word 部件推导全包无章。固定判定测试不证明真实识别稳定性。 当前 DOCX 视觉读取覆盖正文、页眉和页脚中的嵌入图片；未读取部件中的图片、复杂图形及混合部件完整性仍是能力限制，不能宣称已核对整个 Word 包。
 
 PSW 混合审核分别验证三类结果：有效业务事实不满足规则为 NG；可解析但关键事实缺失或无法辨认为 UNABLE；转换、调用、JSON／输出协议失败为 ERR。明确不存在的字段或未勾选不是“无法辨认”，无关分支未知也不抹掉已充分决定的 PASS/NG。PDF 与 DOCX 共用此视觉结果合同；受控模型／转换响应的测试不证明真实识别质量。
 
@@ -98,7 +100,7 @@ Single-owner Python tests 与 production owner co-locate：`packages/*/tests`、
 - **Python modules**：CI 发现每一个含 `test_*.py` 的 `packages/*/tests`、`apps/api/tests`、`apps/worker/tests` 和 `apps/mcp-client/tests`，各自一个 pytest 进程。API 与 Worker 不共享进程。需要 PostgreSQL 的只有 `apps/api/tests` 和 `apps/worker/tests`。纯 Corpus contract tests 位于 `tests/corpus/contracts/tests`，由同一物理 owner discovery 自动纳入。
 - **Distribution closure**：对每个 production workspace member 单独构建 wheel 和其声明的 workspace transitive wheels；在 `/tmp` clean venv 中显式安装这些 wheels，并用 `uv.lock` 约束 registry dependency 版本。从非仓库 cwd import 后再运行该 owner tests。这个 job 不执行 root `uv sync`、不使用 editable install、`PYTHONPATH` 或 `sys.path` bootstrap。删除 `product → audit` 的真实 dependency declaration 有单独 mutation proof，必须使 isolated import fail closed。
 - **Schema**：`tests/schema`，继续使用 real PostgreSQL。Empty、previous、重复 apply、`schema_migrations` 顺序和故意失败 migration 都通过 production `migrations/apply.sh` runner 验证；numbered filenames 是唯一 ordering authority。
-- **Corpus**：Excel / PDF / scanned / Pairs / V3 / PSW format matrix；Pairs 以 `tests/corpus/pairs`、PSW 以 `tests/corpus/psw` 作为物理 suite authority，新 `test_*.py` 无需修改 workflow；PSW 继续使用 purpose-built worker-derived container。Corpus 是 CI Gate 的 required child：cache miss 时可以调用真实 OCR / model，这不把它变成 live 或 optional。默认 V3 dataset / expected XLSX 缺失或解析后无有效 case 时 fail closed，不 skip。进入 required V3 的 case 必须至少有一条人工 PASS/NG expectation；零断言 case fail closed。V2 每个 required variant 在执行前对账 oracle 选中的全部 case 与真实 asset；任一缺失或歧义映射失败，不跳过部分样本。V2 baseline exception 与 PDF↔Excel Pairs 共用同一个 `ExecutionOutcome`（status / execution_class / 可选 diagnostic_code）；比较整个 structured outcome，不把任意 ERR 当成同一行为。已知 mismatch 消失则要求清理 record。V2 PDF↔Excel pairs 按 oracle 文件 stem 自动配对，在 pair+rule 粒度比较；已知格式分歧写入 structured baseline，不是第二套 human oracle。新的、改变的或已愈合的 divergence 失败；aggregate 一致性百分比不是 merge gate。配对歧义或发现不到任何 pair 时 fail closed。Excel / PDF / scanned 不重复执行 pair suite。V2 对照行只从 JSON 报告读取：缺少 JSON，或某一行缺字段，就 fail closed；不恢复旧 baseline 脚本。
+- **Corpus**：Excel / PDF / scanned / Pairs / V3 / PSW format matrix；Pairs 以 `tests/corpus/pairs`、PSW 以 `tests/corpus/psw` 作为物理 suite authority，新 `test_*.py` 无需修改 workflow；PSW 继续使用 purpose-built worker-derived container。Corpus 是 CI Gate 的 required child；本次仅跳过上文明确的两个完整扫描表格样本，其余范围保留。按需视觉 cache miss 时可以调用已授权的真实 OCR / model，这不把整个 Corpus 变成 live 或 optional。默认 V3 dataset / expected XLSX 缺失或解析后无有效 case 时 fail closed，不 skip。进入 required V3 的 case 必须至少有一条人工 PASS/NG expectation；零断言 case fail closed。V2 每个 required variant 在执行前对账 oracle 选中的全部 case 与真实 asset；任一缺失或歧义映射失败，不跳过部分样本。V2 baseline exception 与 PDF↔Excel Pairs 共用同一个 `ExecutionOutcome`（status / execution_class / 可选 diagnostic_code）；比较整个 structured outcome，不把任意 ERR 当成同一行为。已知 mismatch 消失则要求清理 record。V2 PDF↔Excel pairs 按 oracle 文件 stem 自动配对，在 pair+rule 粒度比较；已知格式分歧写入 structured baseline，不是第二套 human oracle。新的、改变的或已愈合的 divergence 失败；aggregate 一致性百分比不是 merge gate。配对歧义或发现不到任何 pair 时 fail closed。Excel / PDF / scanned 不重复执行 pair suite。V2 对照行只从 JSON 报告读取：缺少 JSON，或某一行缺字段，就 fail closed；不恢复旧 baseline 脚本。
 - **Product integration**：`tests/integration/product` + canonical single bake + `tests/integration/runtime` + Python Playwright `tests/e2e`。V3 POC oracle 还走 API 显式规则版本和 Worker，并写出同源 JSON／Markdown 报告；不调用旧 analysis API，也不使用 `matchedRuleId`。
 - **Container build authority**：`docker-bake.hcl` 唯一拥有 API / Worker / Web build graph。Compose 只消费 images；Repository contract 从 Bake/Compose native rendered output 核对 image identity 与无 `build` graph，Integration 对同一 `PPAP_BUILD_SHA` 只 Bake 一次并复用。
 - **CI Gate**：不运行测试，只汇总以上 required groups（包括 Distribution closure）；任一 required group failed / cancelled / skipped 时 Gate 失败。
@@ -111,7 +113,7 @@ V2 Standard round 的失败日志保留公开 finding 的判定说明：只采�
 
 V2 单文件回归也保留实际业务结果的公开 `suggestions`，最多 1024 字符并按单行 JSON 字符串转义，供 required corpus 的失败说明使用。说明不参与 outcome 或 baseline equality；ERR 仍只使用已有稳定 diagnostic code，不新增异常原文。未返回业务说明时不编造原因，也不据一次重跑通过认定模型判定波动已修复。
 
-当前 Grok 配置在 Corpus、Product、API 和 Worker 中显式使用 `OPENAI_REASONING_EFFORT=low`，避免让供应商的默认推理量占满视觉事实提取的 120 秒期限。该设置进入已有 Standard 执行配置摘要；API 与 Worker 必须一致，旧受理和历史不回填。其他模型须按其能力配置此字段，不支持时留空。单次视觉调用仍最多 12000 输出 token、无隐藏重试，超时仍为 ERR；降低推理量的正确性由相同人工预期的完整回归核对，不修改预期或 baseline。
+文字语义与视觉事实使用各自的模型配置。`OPENAI_REASONING_EFFORT` 只约束文本客户端；OCR 使用 `OCR_OPENAI_EXTRA_BODY_JSON`，默认关闭推理，显式配置优先。视觉事实输出最多 4096 token（含推理），单次 HTTP 操作超时 20 秒，零自动重试；没有总墙钟期限。配置进入 Standard 执行配置摘要，API 与 Worker 必须一致，历史不回填。参数限制不证明准确率；人工标签只作差异参考，发现冲突须回看原件，不为匹配标签改写事实。
 
 Standard 的 `run_round_from_bytes` 用独立、执行后即清理的跟踪范围收集 SDK 可见用量，返回到已有 Worker `usage`／attempt 诊断边界，不新增客户用量 API。已报告的输入／输出 token 不因模型输出无效而丢失；任一 SDK 调用缺少有效输入／输出回执时，`usage_complete=false`、总量为 `null`，已知调用明细保留。`usage_complete` 只表示可见 SDK 调用的输入／输出回执完整性；可选 reasoning 拆分缺失／无效时显示 `null`，不丢弃已知输入／输出，也不重复加入总量。正常返回或异常退出均恢复调用前的范围，下一次执行不继承旧统计。Core Tracker、真实 Word／审核器和外部 HTTP／SDK 边界测试保护此行为；它不改变 PASS／NG、既有重试或每份 500 点业务账，也不证明 SDK 内部全部 HTTP 尝试、实际扣费订单或当前候选的 PG 持久化已验收。
 
@@ -141,7 +143,7 @@ uv run --no-sync python -c 'from corpus_contracts.poc_oracle import build_bundle
 
 已有 isolated-dev 授权可通过 `PPAP_LIVE_COOKIE` 注入，不在参数、日志或报告中保存。命令只接受独立栈，先核对完整 27 样例／8 组／220 预期及选择，再检查候选、收费策略。完整运行发布 5 份原始 DOCX；子集只上传和发布所选组需要的规则 DOCX，仍核对原文、出处与发布版本，再逐组明确绑定并受理，不从检查器生成规则。每组仅 accept 一次，响应丢失只 GET 同一 Draft 的 Round，失败或超时不重新受理。输出目录必须不存在，避免误用同一命令重跑；小批次选择也不构成额外 Live 或付费调用授权。
 
-完整 canonical suite 含需要 OCR 回退的控制计划 PDF。使用本 Live overlay 的 in-process OCR 路径时，执行前须提供真实 `PADDLE_OCR_URL` 及该服务需要的授权；LLM 配置或离线 OCR cache 不能证明此能力可用。workflow 在任何业务写入前检查地址已配置，但配置存在不代表外部服务验收通过。
+以下 Live 命令保留历史完整 canonical suite，其中含已延期的扫描控制计划；其完整 220 项证明不作为本次 #246 推送前提。若另行选择运行该完整 Live overlay 的 in-process OCR 路径，执行前须提供真实 `PADDLE_OCR_URL` 及该服务需要的授权；LLM 配置或离线 OCR cache 不能证明此能力可用。workflow 在任何业务写入前检查地址已配置，但配置存在不代表外部服务验收通过。
 
 复用参考环境时，须分别核对服务级配置与仓库根配置；两者不是同一来源。迁入代码不会继承参考服务的 OCR 配置，独立栈须显式注入当前 Settings 所需的 Paddle／模型变量，不增加运行时跨仓配置回退。
 
@@ -359,7 +361,7 @@ API owner tests validate that every major Web-consumed endpoint has an explicit 
 
 Web `V3.1 preview browser contracts` 使用原来单一的本地 Vite Preview 服务和全部已有用例。`e2e` 组锁定 `pytest-xdist==3.8.0`；默认 `PPAP_PREVIEW_WORKERS=2` 启用 `-n 2 --dist=load`，仅 Web Preview 运行两个 pytest worker。设为 `0` 立即恢复原有串行行为（需要新 CI 运行）；不支持其他值，以免静默变更验证范围。并发下各浏览器由测试单独创建，共享同一个只读 UI 预览服务器；任何测试互相污染或资源竞争导致的失败不得用串行自动重跑掩盖。
 
-PDF Corpus 的 `test_v2_product_round_respects_oracle_baseline` 保留原 `build_cases_from_long_feedback`、逐文件执行和 baseline mismatch / drift / stale 判定。`PPAP_CORPUS_PDF_WORKERS=2` 时，PDF Corpus 的全部 173 个测试（含 88 个原 V2、85 个 Product Round）进入**同一个** `pytest-xdist -n 2 --dist=load` 池，不再让慢 V2 阶段和 Product Round 彼此等待。两个 worker 分别复制 OCR SQLite/产物缓存，绝不共享可写目录；`=0` 则完整串行。其他 Excel、scanned、Pairs、V3、PSW 保持原验证范围。长测试通过 `scripts/ci_heartbeat.py` 每 30 秒向 Runner 输出进度，`-vv` 与 `faulthandler_timeout=120` 记录卡住的用例与 Python 线程栈；超时明确失败，不通过自动重跑掩盖。
+PDF Corpus 的 `test_v2_product_round_respects_oracle_baseline` 保留原 `build_cases_from_long_feedback`、逐文件执行和 baseline mismatch / drift / stale 判定。`PPAP_CORPUS_PDF_WORKERS=2` 时，PDF Corpus 的全部 173 个测试（含 88 个原 V2、85 个 Product Round）进入**同一个** `pytest-xdist -n 2 --dist=load` 池，不再让慢 V2 阶段和 Product Round 彼此等待。旧 OCR SQLite/整表产物缓存已移除；`=0` 则完整串行。仅跳过前述两个固定 SHA 的完整扫描表格样本，其余 Excel、Pairs、V3、PSW 验证范围保留。长测试通过 `scripts/ci_heartbeat.py` 每 30 秒向 Runner 输出进度，`-vv` 与 `faulthandler_timeout=120` 记录卡住的用例与 Python 线程栈；超时明确失败，不通过自动重跑掩盖。
 
 Product Browser E2E 在本次 **all-suite concurrency stress experiment** 中不再区分受控与真实服务用例。`PPAP_E2E_WORKERS=4` 在同一个 isolated-dev Docker Compose 环境中，对整个 `tests/e2e` 调用一次 `pytest-xdist -n 4 --dist=load --max-worker-restart=0 -vv --durations=25`，没有 `--ignore`、静默重跑或跳过任何原有可运行测试。真实 API/PostgreSQL/Worker 测试同样进入调度池：跨 worker 的共同 `alice` 身份、数据库/对象存储、服务端全局状态可能造成 race 或污染，这正是本实验要揭示的，不应解释成已实现生产级测试隔离。`PPAP_E2E_WORKERS=0` 恢复原完整 E2E 单进程测试。`-vv` 标出 `[gwN]` 和逐项执行结果，`--durations=25` 捕获慢项。原先独立运行的 9 项历史报告测试也包含在这一个调用中。CI Gate、Product 集成数据库测试和 Production runtime 测试没有放宽。若失败，先按失败用例和共享资源类型归类，然后改造 per-worker 用户身份、唯一记录或独立 DB/Compose project；不要自动忽略失败。
 
@@ -397,28 +399,9 @@ CI Run 40063063124 中 `cursor`、`cursor-ppap` 两个 runner 名称都上报相
 
 Run 40059336983 中 Product API/PG 289 项、生产 runtime 4 项、正常 E2E 108 项及独立历史报告 9 项均通过；随后 `Isolated-dev browser E2E` step 在重复的 `docker compose down` 过程中收到 `The operation was canceled`，该 step 被标记为取消，整个 Job 为 failure。现将 E2E 的 Compose 清理明确交给既有的 `if: always()` 末尾步骤：测试步骤只负责测试、失败必须传播；末尾三个 Compose 清理操作全部尝试，清理失败也必须让 CI Gate 失败。取消信号的外部来源仍不能从旧日志证明，不把测试已通过等同于完整 CI 绿色。已在串行 Browser E2E 中增加 `-vv` 供 GitHub timestamps 精确定位单例运行和非 call 时间的长时间空档；`test_round_reports.py` 在失败的运行中 9 项用例以 4.70s 通过，不是本次 E2E 慢段。完整 CI 在精确新 HEAD 上重新验证后才能合并。
 
-### CR-01：以 Responses 多模态统一 PDF fallback，移除重复 OCR 管线
-
-针对 `catalog/engineering/context-reduce/SKILL.md` 的审查，明确发现历史 Paddle 布局分析 → 本地表格裁图 → Gemma 二次视觉 Tagging → HTML 的重复解析层，让一份 PDF 必须维护多个来源的中间结构。当前唯一的 PDF fallback 位于 `packages/documents/src/documents/ocr/{local,cache,page,client}.py`，由统一 PDF pipeline 直接调用：每页渲染 PNG，用配置的 OCR/产品 Responses 模型端点提交 `input_image`，以严格 JSON Schema 读回表格行、可验证的合并单元格范围、普通正文和印章文字。合并范围必须落在表格边界内，不得覆盖独立非空证据；保留真实合并范围后写入 XLSX，正文及印章写为 HTML（所有模型文字 HTML 转义）。没有可靠扫描网格的页面每页一次 Responses 请求；有可靠网格的扫描页按下文的固定单元格路径读取。每份 PDF 最多 2 个在途请求；旧 Paddle 布局客户端、裁图/二次 Gemma processor 与 tag prompt 不再是当前执行路径。
-
-为避免把旧 Paddle 识别结果误认为新模型证据，缓存以模型名及 `responses_multimodal_v2` 版本重新生成 file identity，只缓存完整、有效、可读取的输出。模型拒绝、API 超时、JSON 不符合 schema、无图像证据均明确失败，绝不凭空判为 PASS。显式 `OCR_ADAPTER_MODE=remote` 的远程兼容 API 已归入 `packages/documents/src/documents/conversion/remote.py`；默认 `auto/local` 的 PDF 路径只保留一套本地视觉转换，不改变原来的手工 linegrid 优先次序。
-
-外部模型会接收 PDF 页面内容，属于既有客户文档出站处理边界；只发送到配置的可信 Responses 服务，使用 `store=False`，不在日志中写页面文本、图像或密钥。CI 本地单元测试 mock 模型接口，真实远程模型可用性和输出质量需由完整 Corpus/PSW baseline 再验证。若模型能力不支持严格 schema，必须报错并确认端点能力，而不是退回旧 OCR 静默通过。
-
 ### CI 长任务并发与可观测性
 
 `scripts/ci_heartbeat.py` 对长时间无输出的 Python owner、Distribution、Corpus 和 PSW 子进程提供有限时执行和约 30 秒的 heartbeat，向 Linux 子进程组发送 TERM，必要时升级 KILL，并保留原退出码。`pytest` 采用 `-vv --durations=25` 和 `faulthandler_timeout=120` 定位慢用例；不能将 Runner 平台误报失败当作测试通过证据。CI Gate、Worker/DB 权限与所有原测试项目数继续保持严格检查。运行时服务器任务仍是被测对象的自身串行行为，不应与 pytest-xdist 的四进程并发混为一谈。
-
-### 2026-10-24：CI 回归修复与验收边界
-
-Run #40119017530 的确定性失败包括 `test_ci_heartbeat.py` 的 Ruff 导入排序和 `ppap_core` 指纹测试仍要求已停用的 Paddle 端点与 `CONCURRENT_SIZE` 改变执行身份。本次让测试只跟踪实际生效的配置，并增设负向测试确保旧配置不能污染 Standard 修订标识；核心执行契约未改变。
-
-PDF/V3 的 19-BLANC 控制计划规则 4 曾返回 `NG`：第 13 行存在特殊特性分类，但产品/过程列为空。本次增强多模态结构化输入，只允许模型声明在 PDF 上真实可见的跨行或跨列合并单元格；验证不重叠、不越界且不覆盖独立非空证据，随后将合并范围写回生成的 XLSX，使审核规则能够像处理原始 Excel 一样读取合并单元格上的锚点内容。**不修改 PASS/NG oracle，不把空字段推断为已填。** 原样本是否恢复 PASS 必须由新 CI 验证。
-
-PDF 的长耗时堆栈指向 `audit.engine/checkers/client.py` 的视觉模型 Responses HTTP，而非 xdist 或新 `vision_service.py` 进程池。视觉审核现在每次请求最长等待 120 秒并禁用 SDK/应用层重试；超时保持显式错误，不重放已经接收但回复未知的请求，也不凭空写入 PASS。文本模型调用继续保持既有行为。Web Preview 保留双 worker，但 Node 控制器每 30 秒输出心跳；Product DB 集成测试加上 `-vv`、Python faulthandler 与 30 秒心跳，避免 Runner 长时间没有输出时无法判断是否仍在运行。日志不写入原始用户文件或模型输出。
-
-后续验收必须检查同一 HEAD 下 Repository、Core wheel、V3 Corpus、V2 PDF 和 E2E 的完整结果以及 CI Gate，区分确定性逻辑回归与 self-hosted Runner 错误状态；不能借由恢复旧 Paddle 路径或调整 oracle 让检查变绿。
-
 
 ### Runner `_work/_temp` 隔离与时间异常的宿主机验收
 
@@ -439,35 +422,6 @@ checkout/post-job 使用的临时目录。管理员必须在宿主机执行以�
 Corpus PDF/V3/PSW 和 Product integration 通过原测试、逐例即时错误及 JUnit 工件保留失败证据。
 被平台取消的 Job 不保证 pytest 有机会写出最终 JUnit，因此仍需 Runner `_diag` 和心跳时间线。
 
-
-### 2026-10-25：Responses PDF 合并范围的源证据与快速取消
-
-`packages/documents/src/documents/ocr/page.py` 对每两页构建一组共享 event loop 的异步 Responses 调用；任一页的模型结果无效，即取消另一在途请求并等待其网络客户端关闭。PDF 页面渲染仍在所属线程进行，最多两个在途请求，不修改产品 E2E 或 PDF Corpus 的 pytest worker 设置。客户端取消不等于供应商没有处理或计费；不自动重试超时或无效输出。
-
-对模型产生的“合并区域覆盖非空单元格”冲突，保留原有 fail-closed validator。只有 PDF 原生矢量边框解析能够定位唯一表格、行列尺寸一致、至少三个独立原文证据跨越两行两列严格匹配，并且修复后的每一个 merge 仍符合非空单元格保护时，才采用确定性绘制边界纠正模型的 `merges`。保留模型已有全部单元格文字，不补写缺失内容。对扫描图片、无可提取物理表格边界、表格匹配不唯一、边界解析失败或独立文本证据不吻合的情况保持 `responses_invalid_schema`，不得静默删除冲突 merge、猜测业务字段或更改 PASS/NG oracle。
-
-受控回归包含物理独立单元格纠正错误 merge、真实物理合并拒绝覆盖文字、无边框 fail closed、四页最多两个模型请求、第一页错误触发第二页 SDK 请求取消及客户端关闭。真实 `19-BLANC` PDF 必须在保持原始 oracle 的 CI 中验收，不能把受控向量图测试代替真实样本质量声明。
-
-
-### 扫描件的 source-grounded 图像网格与定点文字识别
-
-`packages/documents/src/documents/ocr/raster.py` 在 PyMuPDF 未提取到原生矢量表格时分析已渲染的页面 PNG。使用 OpenCV 自适应阈值与水平／垂直形态学定位封闭物理单元格；每个区域必须有四边支持，并且能构成完整、无重叠的逻辑网格。表头与正文可以有不同列宽；粗线或双线只在有实际线条像素支持时合并为同一边界，不推测缺失数据格。直接提取失败时，仅对具有明确凸四边形外框、轻微倾斜的页面做透视校正，保留整页内容，并将同一校正图像用于网格和裁图识别；原件不变。页面仍限制为 1200 万像素，逻辑网格最多 4096 格；密集真实表格不再被原 400 格上限拒绝。边界不完整、分区重叠或存在未覆盖区域时仍拒绝，不按模型的 `merges` 猜测。
-
-有可靠物理网格时直接使用 `vision/cell_ocr.py`，不先让模型生成整页表格 JSON 再等待 merge 冲突。每个物理单元格都裁成图像，在图像**之外**加唯一 ID。每批最多 64 格，按实际裁图宽度紧凑排成一张 PNG，不把小单元格统一放大、填充为 1024 像素宽长条；逐批生成，避免先为整页创建所有裁图。三个真实代表批次在原 32 格范围内由 466–573 万像素降至 59–108 万；使用 64 格后两页的请求数由 18/23 次降至 9/12 次。输出使用本批固定 ID 字符串到文字的闭合映射：JSON Schema 将每个 ID 列为必填属性并禁止其他属性，运行时仍核对完整集合与文字类型。JSON 解码拒绝重复键，不能让后一个值覆盖已返回的证据；不再用允许任意数量元素的 `(id,text)` 对象数组。模型不能重定义位置、边界或合并范围，响应乱序按 ID 归位。扫描渲染保留主要原始图像的分辨率，最多 3 倍页面缩放、1200 万像素；不能先缩小文字再通过放大裁图声称恢复字符。所有物理单元格均保留精确 ID 校验。缩减输入或固定输出结构本身不证明供应商延迟与文字质量，仍需真实 Corpus/Product 门禁。
-
-正文与印章使用独立的小 schema：同时提供原页和仅遮白已验证表格的页面，读取遮白页上的普通正文及原页上包括表格内部的印章。遮白页若仍有表格则明确失败，不能把未覆盖表格当作普通正文丢弃。整个扫描页（全部单元格及正文/印章）共用原 180 秒预算；失败取消在途请求，不自动重试，也不修补损坏 JSON。原整页模型与裁图模型的文字交叉比较已删除：它把另一次模型生成误作原件见证，并使可靠物理网格仍依赖整页 JSON。当前原件身份由完整物理格分区、源像素裁图与精确 ID 集合绑定；文字正确性仍须真实 oracle 验收，不能声称几何证明文字质量。任何缺失、结构冲突或不完整响应均返回专用错误，不发布 XLSX/缓存；文字及完整原始响应不得进入诊断日志。
-
-这是一条面向有清晰栅格线条扫描页的兜底修复路径；**无表格线、旋转过大、边界不完整或不可靠的扫描件仍需明确失败**，不可将视觉模型对行列或 merge 的猜测伪装成来源事实。额外的裁图请求受每页总预算与一次请求一次调用约束，每份 PDF 最多两个在途请求。扫描页按页处理，在同一页内由两个固定 worker 领取独立批次，避免多批串行耗尽整页预算；无物理网格的页面仍最多两页并行。批次出错后停止领取，取消并等待其余请求的本地清理，完成前不返回或发布部分表格；远端推理是否停止不在该保证内。受控回归覆盖批次完成乱序、跨页身份、并发上限、供应商错误、整页到期及调用方取消，不证明真实供应商吞吐或文字质量。缓存协议变更必须配套可验证的二进制 fixture 迁移；无协议标记的旧记录不能改标签当作新 Responses 证据，也不能只清理旧缓存来制造新的收费请求。
-
-`scripts/export_vision_fixture.py` 从现有 CI 已完成的转换中复制候选到原 `ci-report` 工件，不调用模型。导出核对原件字节、协议、模型和缓存身份，只读取源 SQLite，拒绝缓存目录外的文件，并去掉 URL 映射和无关元数据。可读取工作簿只证明转换输出完整，不证明其文字或 PASS/NG 正确；只有原 oracle 核验通过后才可提交迁移 fixture。默认 Corpus 的 cache miss 仍可执行真实模型，候选缓存不代替最终 SHA 的显式 Live 验收。
-
-控制计划的阶段勾选支持同一单元格中的前置或后置复选框。完整选项列表必须同时使用已选和未选标记确定配对顺序，不能把 `□样件 □试生产 ■批量生产` 的前置已选框归到左侧“试生产”。回归同时验证三个阶段和全不选，不以模板名称或 PDF 类型修正结果。
-
-独立回归必须覆盖：纯图像 PDF 不含原生文字或绘图、扫描件的真实横向合并与分离边界、裁图 ID 的缺失/重复/伪造拒绝和响应乱序、整页生成依赖消除、未覆盖表格拒绝、正文/印章保留、整个页面预算及无栅格线冲突的 fail-closed 行为。最终验收仍是未经修改的 Corpus V3 `19-BLANC` 原始 11 条 oracle，以及 Product API/Worker 和四 worker E2E。
-
-真实四页扫描件的几何回归位于 `tests/corpus/v3_poc/test_scanned_geometry.py`，验证原图分辨率、完整无重叠物理格分区及原件字节不变；owner 测试只用合成扫描件，覆盖倾斜的 480 格表格和破损外框拒绝，不读取根目录 corpus。该无网络验证只证明几何、绑定和请求成本，不替代真实文字识别和 oracle 验收。单次 Responses 请求超时记 `responses_timeout`，整页 180 秒预算耗尽才记 `raster_cell_timeout`；取消继续传播，不自动重试。两类前缀均经过 local adapter 和统一 pipeline 保留，不再被改成笼统的 `ocr_exception`；失败只记录格数、PNG 字节数、耗时及异常类型，不记录原件/响应文字，也不发布缓存。
-
-`tests/conftest.py` 对现有 V3 oracle 门禁提供只读 HTTPX 阶段诊断：保留原请求、响应和 trace callback，记录请求序号、最后的网络阶段及事件、耗时和异常类型。响应体中止时另记状态码、已下载字节、数字格式的声明长度和 JSON/事件流/其他分类，区分读取与关闭；不记录 URL、原始 header、trace info 或正文，也不触发额外请求。预览测试仅在失败时收集最近 3 页的 DOM 计数及每页最多 12 条脚本/资源事件；只保留同源代码资源路径，去掉查询参数，不记录页面文字、异常消息或控制台正文。诊断不能把供应商不响应或未复现的浏览器启动失败判成已修复。
 
 `packages/agent/tests/test_pi_runner.py` 验证 Pi 的终态、文件回执、预算和环境隔离。`deploy/deep/pi-runner.test.mjs` 运行真实 Pi 1.5.0 SDK，使用本地受控 Responses 服务检查文件写入、缓存 token 计数、请求前轮次上限、HTTP 失败不重试和截断不能成功；Deep 镜像构建必须通过这些测试。这些离线测试不证明真实模型审核质量。
 

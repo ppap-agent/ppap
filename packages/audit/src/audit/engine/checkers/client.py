@@ -1,17 +1,14 @@
 """AI客户端 - 统一管理OpenAI连接和基础配置"""
 
-import asyncio
 import atexit
 import json
 import logging
 import threading
 import time
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Self
 from urllib.parse import urlsplit
 
-from openai import AsyncOpenAI
 from openai import OpenAI as BaseOpenAI
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -71,33 +68,6 @@ class _InvalidAIResponseError(RuntimeError):
 
 def _uses_codex_transport(settings: Any) -> bool:
     return urlsplit(getattr(settings, "OPENAI_BASE_URL", "")).path.rstrip("/").endswith("/backend-api/codex")
-
-
-async def _bounded_visual_request(settings: Any, kwargs: dict[str, Any], timeout: float) -> Any:
-    """Use cancellation to bound an entire provider response, not one socket read."""
-    async with asyncio.timeout(timeout):
-        async with AsyncOpenAI(
-            api_key=settings.OPENAI_API_KEY,
-            base_url=settings.OPENAI_BASE_URL or None,
-            max_retries=0,
-        ) as client:
-            if _uses_codex_transport(settings):
-                async with client.responses.stream(**kwargs) as stream:
-                    return await stream.get_final_response()
-            return await client.responses.create(**kwargs)
-
-
-def _run_bounded_visual_sync(settings: Any, kwargs: dict[str, Any], timeout: float) -> Any:
-    """The synchronous audit API can also be invoked from an already-running event loop."""
-    operation = _bounded_visual_request(settings, kwargs, timeout)
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(operation)
-    # asyncio.run() cannot nest in the caller's event loop. Keep the same
-    # request cancellation budget while isolating its own event loop.
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, operation).result()
 
 
 def _parse_extra_body(raw: str) -> Dict[str, Any] | None:
@@ -282,10 +252,10 @@ class AIClient:
         retry_limit: int | None = None,
     ) -> str:
         """
-        统一的 Responses 接口，支持文本和图像
+        文本专用 Responses 接口
 
         Args:
-            messages: 消息列表，支持文本和图像内容
+            messages: 文本消息列表
             max_tokens: 最大token数
             temperature: 温度参数
             text_format: 输出格式
@@ -303,9 +273,8 @@ class AIClient:
             )
             if request_timeout is not None:
                 request_kwargs["timeout"] = request_timeout
-            # The bounded async path does not use a copy of the synchronous client.
             request_client = self.client
-            if retry_limit is not None and not (request_timeout is not None and isinstance(self.client, BaseOpenAI)):
+            if retry_limit is not None:
                 request_client = self.client.with_options(max_retries=max(0, retry_limit))
             max_retries = max(0, int(getattr(self.settings, "OPENAI_EMPTY_CHOICES_RETRIES", 2) if retry_limit is None else retry_limit))
             base_retry_delay = float(getattr(self.settings, "OPENAI_EMPTY_CHOICES_RETRY_DELAY_SECONDS", 1.0))
@@ -314,11 +283,7 @@ class AIClient:
                 # 应用速率限制（每次请求都需要遵守）
                 self._wait_for_rate_limit()
                 try:
-                    if request_timeout is not None and isinstance(self.client, BaseOpenAI):
-                        # Only real SDK clients take the cancellable transport path.
-                        # Lightweight injected test clients preserve their public stub API.
-                        response = _run_bounded_visual_sync(self.settings, request_kwargs, request_timeout)
-                    elif _uses_codex_transport(self.settings):
+                    if _uses_codex_transport(self.settings):
                         with request_client.responses.stream(**request_kwargs) as stream:
                             response = stream.get_final_response()
                     else:
@@ -385,6 +350,12 @@ class AIClient:
         temperature: float,
         text_format: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
+        for message in messages:
+            content = message.get("content", "")
+            if not isinstance(content, str) and (
+                not isinstance(content, list) or any(not isinstance(item, dict) or item.get("type") != "input_text" or not isinstance(item.get("text"), str) for item in content)
+            ):
+                raise ValueError("The text client accepts text only; visual evidence uses OCR configuration")
         request_temperature = getattr(self.settings, "OPENAI_TEMPERATURE", None)
         kwargs: Dict[str, Any] = {
             "model": self.settings.MODEL_NAME,
@@ -451,150 +422,4 @@ class AIClient:
             operation=operation,
             request_timeout=request_timeout,
             retry_limit=retry_limit,
-        )
-
-    def _llm_is_available(self) -> bool:
-        return bool(str(getattr(self.settings, "OPENAI_API_KEY", "")).strip() and str(getattr(self.settings, "MODEL_NAME", "")).strip())
-
-    @staticmethod
-    def _coerce_json_bool(value: Any) -> bool:
-        if isinstance(value, bool):
-            return value
-        return str(value).strip().lower() == "true"
-
-    def llm_equal_batch(
-        self,
-        items: List[Dict[str, str]],
-        equality_standard: str,
-        operation: str = "llm_equal_batch",
-        batch_size: int = 25,
-    ) -> Dict[str, bool]:
-        """Use the LLM to decide whether pairs of strings should be treated as equal."""
-        standard = str(equality_standard or "").strip()
-        results: Dict[str, bool] = {}
-        if not items or not standard:
-            return results
-
-        normalized_items: List[Dict[str, str]] = []
-        for idx, item in enumerate(items):
-            item_id = str(item.get("id") or idx)
-            left = str(item.get("left") or "").strip()
-            right = str(item.get("right") or "").strip()
-            if not left or not right:
-                results[item_id] = False
-                continue
-            if left == right:
-                results[item_id] = True
-                continue
-            normalized_items.append({"id": item_id, "left": left, "right": right})
-
-        if not normalized_items or not self._llm_is_available():
-            for item in normalized_items:
-                results.setdefault(item["id"], False)
-            return results
-
-        system_prompt = (
-            "你是一个严格的文本相等判断器。"
-            "你只能根据给定的“判断相等的标准”来判断每一对文本是否应视为相等。"
-            "逐项独立判断，不要在不同项目之间迁移结论，不要扩展标准，不要做额外推断。"
-            "尤其禁止把同义词、近义词、缩写扩写、范围扩大或缩小、一个更宽泛或更具体的表述判成相等。"
-            "只输出 JSON，格式为 "
-            '{"results": [{"id": "...", "equal": true}, {"id": "...", "equal": false}]}。'
-        )
-
-        safe_batch_size = max(1, int(batch_size))
-        for start in range(0, len(normalized_items), safe_batch_size):
-            chunk = normalized_items[start : start + safe_batch_size]
-            user_prompt = json.dumps(
-                {
-                    "equality_standard": standard,
-                    "items": chunk,
-                },
-                ensure_ascii=False,
-            )
-
-            try:
-                response = self.structured_completion(
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    max_tokens=max(200, min(1200, 80 * len(chunk))),
-                    temperature=0.0,
-                    json_format=True,
-                    operation=operation,
-                )
-                payload = json.loads(response)
-                chunk_results = payload.get("results", []) if isinstance(payload, dict) else []
-                chunk_result_map = {str(item.get("id")): self._coerce_json_bool(item.get("equal")) for item in chunk_results if isinstance(item, dict) and item.get("id") is not None}
-                for item in chunk:
-                    results[item["id"]] = chunk_result_map.get(item["id"], False)
-            except Exception as exc:
-                logger.error("llm_equal_batch failed: error_type=%s", type(exc).__name__)
-                for item in chunk:
-                    results[item["id"]] = False
-
-        return results
-
-    def llm_equal(
-        self,
-        str1: str,
-        str2: str,
-        equality_standard: str,
-        operation: str = "llm_equal",
-    ) -> bool:
-        """Use the LLM to decide whether two strings should be treated as equal."""
-        results = self.llm_equal_batch(
-            items=[{"id": "0", "left": str1, "right": str2}],
-            equality_standard=equality_standard,
-            operation=operation,
-            batch_size=1,
-        )
-        return results.get("0", False)
-
-    def image_analysis_completion(
-        self,
-        system_prompt: str,
-        user_text: str,
-        image_base64_list: List[str],
-        max_tokens: int = 12000,
-        temperature: float = 0.1,
-        json_format: bool = False,
-        operation: str = "image_analysis",
-    ) -> str:
-        """
-        图像分析完成接口
-
-        Args:
-            system_prompt: 系统提示
-            user_text: 用户文本描述
-            image_base64_list: base64编码的图像列表
-            max_tokens: 最大token数
-            temperature: 温度参数
-            json_format: 是否要求JSON格式
-            operation: 操作描述，用于token跟踪
-
-        Returns:
-            AI响应内容
-        """
-        from documents.images.image import OpenAIImageMessageBuilder
-
-        messages = OpenAIImageMessageBuilder.create_image_analysis_messages(
-            system_prompt=system_prompt,
-            user_text=user_text,
-            image_base64_list=image_base64_list,
-        )
-
-        text_format = {"type": "json_object"} if json_format else None
-
-        # Visual evidence is slow and potentially billed. A single bounded
-        # Responses attempt prevents hidden SDK retries and multi-minute
-        # stalls under concurrent PDF oracle execution. Never convert a timeout
-        # into PASS or silently reuse an older observation.
-        return self.response_text(
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            text_format=text_format,
-            operation=operation,
-            request_timeout=120,
-            retry_limit=0,
         )

@@ -133,6 +133,7 @@ class RuleContext:
         self._scans_partial = 0
         self._scan_counts: list[tuple[int, bool]] = []
         self._witness = False
+        self._unreadable_cell_read = False
         self._unresolved: list[str] = []
         self._unresolved_seen: set[str] = set()
         self._cells: list[tuple[str, str, int, int]] = []
@@ -198,6 +199,14 @@ class RuleContext:
             return self._file_version_id
         return ""
 
+    def note_unreadable_cell(self) -> None:
+        """Record a selected unreadable value, separate from an incomplete search."""
+        self._unreadable_cell_read = True
+        self.note_unresolved("单元格内容无法读取，不能当成已知值")
+
+    def has_unreadable_cells(self) -> bool:
+        return self._unreadable_cell_read
+
     def note_cell(self, sheet: str, row: int, column: int, *, file_version_id: str = "", excerpt: str | None = None) -> None:
         """Remember one cell that exists on a bound workbook. The caller cannot supply the excerpt."""
         del excerpt
@@ -217,7 +226,7 @@ class RuleContext:
         merged = self._ops.get_detailed_merge_info(worksheet, row, column)
         source = worksheet.cell(row=merged.min_row, column=merged.min_col) if merged else worksheet.cell(row=row, column=column)
         if getattr(source, "data_type", None) == "e":
-            self.note_unresolved("单元格内容无法读取，不能当成已知值")
+            self.note_unreadable_cell()
             stored = ""
         else:
             value = getattr(source, "value", None)
@@ -426,6 +435,7 @@ class RuleContext:
         self._scans_partial = 0
         self._scan_counts.clear()
         self._witness = False
+        self._unreadable_cell_read = False
         self._unresolved.clear()
         self._unresolved_seen.clear()
         self._cells.clear()
@@ -738,6 +748,17 @@ class RuleContext:
             data_start_row=data_start,
         )
 
+    def _require_readable_field_search(self, block: ResolvedFieldBlock, canonical_name: str) -> None:
+        """A bounded label-search miss cannot establish absence through errors."""
+        spec = self._resource.field_blocks[block.block_name]
+        for ws in block.worksheets:
+            for row in ws.iter_rows(max_row=min(ws.max_row, spec.search_max_row), max_col=min(ws.max_column, spec.search_max_col)):
+                for cell in row:
+                    if getattr(cell, "data_type", None) == "e":
+                        self.note_unreadable_cell()
+                        self.note_cell(ws.title, cell.row, cell.column, file_version_id=self.version_for_worksheet(ws))
+                        raise GuardStop(Decision.UNABLE, f"字段[{canonical_name}]的搜索区域含不可读单元格，不能确认字段不存在")
+
     def _resolve_field(
         self,
         block: ResolvedFieldBlock,
@@ -760,6 +781,7 @@ class RuleContext:
         if cache_key in self._field_cache:
             cached = self._field_cache[cache_key]
             if cached is None:
+                self._require_readable_field_search(block, canonical_name)
                 self._raise_or_ignore(on_missing, f"缺少字段[{canonical_name}]")
                 return None
             return cached
@@ -893,6 +915,7 @@ class RuleContext:
             self._field_cache[cache_key] = resolved
             return resolved
 
+        self._require_readable_field_search(block, canonical_name)
         self._field_cache[cache_key] = None
         self._raise_or_ignore(on_missing, f"缺少字段[{canonical_name}]")
         return None

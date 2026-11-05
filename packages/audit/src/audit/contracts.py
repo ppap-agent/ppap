@@ -96,8 +96,8 @@ class AuditEvidence(BaseModel):
     schema_version: Literal["1"] = "1"
     required: Literal["structure", "visual", "structure_or_visual"]
     used: Literal["none", "structure", "visual", "both"]
-    source_format: Literal["xlsx", "xls", "xlsm", "pdf", "docx", "doc", "png", "jpg", "jpeg", "webp"]
-    prepared_format: Literal["xlsx", "xls", "xlsm", "pdf", "docx", "png", "jpg", "jpeg", "webp"]
+    source_format: Literal["xlsx", "xls", "xlsm", "pdf", "docx", "doc", "png", "jpg", "jpeg", "webp", "txt", "md"]
+    prepared_format: Literal["xlsx", "xls", "xlsm", "pdf", "docx", "png", "jpg", "jpeg", "webp", "txt", "md"]
     conversion_strategies: tuple[str, ...] = ()
     sources: tuple[EvidenceSource, ...] = ()
     diagnostics: tuple[EvidenceDiagnostic, ...] = ()

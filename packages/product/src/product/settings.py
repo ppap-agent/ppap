@@ -6,10 +6,11 @@ import hashlib
 import json
 import os
 from functools import lru_cache
-from typing import ClassVar, Literal, Optional, Self
+from typing import Literal, Optional, Self
 from urllib.parse import urlsplit
 
 from audit.policy import DeepExecutionPolicy
+from documents.ocr.env import effective_ocr_extra_body
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -92,7 +93,6 @@ class Settings(BaseSettings):
     support_qr_file: str = Field(default="", alias="PPAP_SUPPORT_QR_FILE")
 
     # Checker/OCR names kept from the migrated engine. Product code still reads llm_*.
-    DEFAULT_OCR_OPENAI_BASE_URL: ClassVar[str] = "https://gateway.ai.cloudflare.com/v1/b1a6ed92ee3fad00dcbb1e3e57327c02/openrouter/openrouter/v1"
     APP_NAME: str = "PPAP"
     APP_VERSION: str = "0.1.0"
     APP_GIT_SHA: str = "unknown"
@@ -114,18 +114,12 @@ class Settings(BaseSettings):
     LANGFUSE_HOST: str = ""
     MAX_FILE_SIZE: str = "100MB"
     ALLOWED_EXTENSIONS: str = ".pdf,.doc,.docx,.pptx,.xlsx,.xls,.xlsm,.jpg,.jpeg,.png,.gif,.md"
-    OCR_ADAPTER_MODE: str = "auto"
-    OCR_ENGINE: str = "easyocr"
-    OCR_LANGUAGES: str = "ch_sim,en"
-    OCR_REMOTE_URL: str = ""
     OCR_OPENAI_API_KEY: str = ""
     OCR_OPENAI_BASE_URL: str = ""
     OCR_MODEL_NAME: str = ""
-    OCR_LOCAL_OSS_DIR: str = ""
-    OCR_LOCAL_SQLITE_DB: str = ""
+    OCR_OPENAI_EXTRA_BODY_JSON: str = ""
     PADDLE_OCR_URL: str = ""
     PADDLE_TOKEN: str = ""
-    PADDLE_EVIDENCE_ENABLED: bool = False
 
     @model_validator(mode="after")
     def production_must_not_inherit_isolated_dev(self) -> Self:
@@ -236,6 +230,12 @@ class Settings(BaseSettings):
             extra = None
         if not isinstance(extra, dict):
             extra = None
+        try:
+            ocr_extra = effective_ocr_extra_body(self.OCR_OPENAI_EXTRA_BODY_JSON)
+        except (ValueError, TypeError):
+            ocr_extra = None
+        if not isinstance(ocr_extra, dict):
+            ocr_extra = None
         return StandardExecutionPolicy(
             app_revision=self.git_sha or None,
             model=self.MODEL_NAME,
@@ -251,18 +251,19 @@ class Settings(BaseSettings):
             ),
             tool_config_revision=config_digest(
                 {
-                    "ocr_adapter": self.get_ocr_adapter_mode(),
-                    "ocr_endpoint": self.OCR_REMOTE_URL.strip(),
                     "ocr_model_endpoint": self.get_ocr_openai_base_url(),
-                    "ocr_model": self.get_ocr_model_name(),
-                    "vision_protocol": "paddle_single_page_v1",
-                    "paddle_evidence_enabled": self.PADDLE_EVIDENCE_ENABLED,
-                    "paddle_endpoint": self.PADDLE_OCR_URL.strip() if self.PADDLE_EVIDENCE_ENABLED else "",
+                    "ocr_model": self.OCR_MODEL_NAME.strip(),
+                    "ocr_extra_body": ocr_extra,
+                    "vision_protocol": "native_paddle_responses_v3",
+                    "paddle_endpoint": self.PADDLE_OCR_URL.strip(),
                     "paddle_http_timeout_seconds": 20,
-                    "paddle_max_requests": 2,
+                    "ocr_http_timeout_seconds": 20,
+                    "ocr_max_retries": 0,
+                    "ocr_output_limit": 4096,
+                    "ocr_page_scope": "required_source_pages",
                     "max_file_size": self.MAX_FILE_SIZE,
                     "ng_topn": os.environ.get("PPAP_NG_TOPN", ""),
-                    "vision_page_workers": 1,
+                    "vision_page_workers": 2,
                     "doc_converter": os.environ.get("LEGACY_DOC_CONVERTER_EXECUTABLE", ""),
                     "doc_sandbox": os.environ.get("LEGACY_DOC_SANDBOX_EXECUTABLE", "ppap-local-converter-sandbox"),
                     "doc_broker": os.environ.get("LEGACY_DOC_CONVERTER_SOCKET", ""),
@@ -270,25 +271,16 @@ class Settings(BaseSettings):
             ),
         )
 
-    def get_ocr_languages(self) -> list[str]:
-        return [lang.strip() for lang in self.OCR_LANGUAGES.split(",")]
-
-    def get_ocr_adapter_mode(self) -> str:
-        mode = self.OCR_ADAPTER_MODE.strip().lower()
-        if mode in {"auto", "local", "remote"}:
-            return mode
-        raise ValueError(f"Invalid OCR_ADAPTER_MODE: {self.OCR_ADAPTER_MODE}")
-
     def get_ocr_openai_api_key(self) -> str:
-        return (self.OCR_OPENAI_API_KEY or self.OPENAI_API_KEY).strip()
+        return self.OCR_OPENAI_API_KEY.strip()
 
     def get_ocr_openai_base_url(self) -> str:
-        return (self.OCR_OPENAI_BASE_URL or self.OPENAI_BASE_URL or self.DEFAULT_OCR_OPENAI_BASE_URL).strip()
+        return self.OCR_OPENAI_BASE_URL.strip()
 
     def get_ocr_model_name(self) -> str:
-        model = (self.OCR_MODEL_NAME or self.MODEL_NAME).strip()
+        model = self.OCR_MODEL_NAME.strip()
         if not model:
-            raise ValueError("OCR model is not configured: set OCR_MODEL_NAME or LLM_MODEL")
+            raise ValueError("OCR model is not configured: set OCR_MODEL_NAME")
         return model
 
     def get_ocr_paddle_url(self) -> str:

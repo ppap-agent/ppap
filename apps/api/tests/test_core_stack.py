@@ -51,7 +51,6 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(values["PPAP_S3_BUCKET"], "ppap-objects")
         self.assertEqual(values["FEISHU_FREE_TRIAL_QUOTA_POINTS"], "10000")
         self.assertEqual(values["LOG_LEVEL"], "INFO")
-        self.assertEqual(values["OCR_ADAPTER_MODE"], "auto")
         self.assertTrue(values["LLM_API_KEY"] == "", "Development template LLM_API_KEY must be empty")
         self.assertTrue(values["FEISHU_APP_ID"] == "", "Development template FEISHU_APP_ID must be empty")
 
@@ -76,7 +75,6 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(values["LLM_MODEL"], "")
         self.assertEqual(values["FEISHU_FREE_TRIAL_QUOTA_POINTS"], "10000")
         self.assertEqual(values["LOG_LEVEL"], "INFO")
-        self.assertEqual(values["OCR_ADAPTER_MODE"], "auto")
         self.assertTrue(values["FEISHU_APP_ID"] == "", "Production template FEISHU_APP_ID must be empty")
         self.assertIn("2caeb428f08e175d", values["PPAP_CURRENT_TENANT_ALLOWLIST"])
         self.assertEqual(values["PPAP_USAGE_CHARGE_ENABLED"], "false")
