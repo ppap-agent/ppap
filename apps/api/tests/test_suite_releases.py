@@ -11,7 +11,7 @@ from product.identity import SESSION_COOKIE
 from product.settings import Settings
 from product.store.suites import SuiteStore
 
-FILES = {"rules.json": b'{"title":"Control plan checks","rules":[{"id":"R1","rule_to_check":"Required"}]}', "checker.py": b'def check(context):\n    return []\n'}
+FILES = {"rules.json": b'{"title":"Control plan checks","rules":[{"id":"R1","rule_to_check":"Required"}]}', "checker.py": b"def check(context):\n    return []\n"}
 
 
 def prepare_fixture(auth_store_factory):
@@ -44,8 +44,8 @@ def test_member_can_publish_peers_candidate_with_explicit_risk_and_read_same_rec
     assert revision["validation"]["verified"] is False
     assert revision["changed_paths"] == ["checker.py"]
     assert revision["diff"][0]["before"] == FILES["checker.py"].decode()
-    assert bob.get(f'/suite-revisions/{revision["id"]}').status_code == 200
-    assert carol.get(f'/suite-revisions/{revision["id"]}').status_code == 403
+    assert bob.get(f"/suite-revisions/{revision['id']}").status_code == 200
+    assert carol.get(f"/suite-revisions/{revision['id']}").status_code == 403
     assert carol.put(path, json=command(revision["id"])).status_code == 403
     assert bob.put(path, json=command(revision["id"], force=False)).json()["error"] == "suite_confirmation_required"
     request = command(revision["id"])
@@ -75,7 +75,10 @@ def test_publish_compare_and_swap_and_fixed_rollback(auth_store_factory):
         results = [request.result() for request in requests]
     assert sorted(response.status_code for response in results) == [200, 409]
     second_official = SuiteStore(store.settings, store.objects, role="migrator").create_revision(
-        tenant_id=None, suite_key="control-plan", files={**FILES, "checker.py": b"def check(context):\n    return [2]\n"}, created_by=None,
+        tenant_id=None,
+        suite_key="control-plan",
+        files={**FILES, "checker.py": b"def check(context):\n    return [2]\n"},
+        created_by=None,
     )
     # A deliberate pin/rollback to a prior official version is not silently upgraded.
     assert alice.get(path).json()["current_revision_id"] == official.id

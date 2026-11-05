@@ -90,7 +90,10 @@ CREATE TRIGGER suite_publication_immutable BEFORE UPDATE ON product.suite_public
 
 GRANT SELECT, INSERT, UPDATE ON product.tenant_suite_heads, product.suite_validations TO ppap_api;
 GRANT SELECT, INSERT ON product.suite_publications TO ppap_api;
-GRANT SELECT ON product.tenant_suite_heads, product.suite_validations, product.suite_publications TO ppap_worker;
+GRANT SELECT ON product.tenant_suite_heads, product.suite_publications TO ppap_worker;
+-- Host-fenced optimizer completion records tenant proofs; the scope trigger still
+-- forbids worker writes to official proofs. There is no client proof endpoint.
+GRANT SELECT, INSERT, UPDATE ON product.suite_validations TO ppap_worker;
 
 INSERT INTO product.schema_migrations (version) VALUES ('0041_suite_releases.sql') ON CONFLICT DO NOTHING;
 COMMIT;
