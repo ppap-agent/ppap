@@ -29,4 +29,4 @@ test-results/
 .grok/*.lock
 output/
 
-/deploy/tke/.release.lock
+/deploy/tke/.build.lock

@@ -11,7 +11,7 @@ Do not change the load balancer ID, TLS secret, or `ppap.api.xixifusi.online`.
 
 TKE qcloud Ingress only accepts NodePort / LoadBalancer Service. `edition-proxy` stays NodePort.
 
-Validation and deployment consume the same rendered object stream from `deploy/tke/render-current.sh`. That script runs the pinned Kustomize 5.6.0 image against this directory. CI pipes the render to kubeconform; deployment first sends the same render through Kubernetes server-side dry-run and then applies that exact stream.
+`kustomization.yaml` owns the Kubernetes manifests. CI renders them with pinned Kustomize 5.6.0 through `render-current.sh` and validates them with kubeconform. Operators deploy with the native commands below.
 
 ## Alpha 入口边界
 
@@ -46,7 +46,7 @@ ppap-web 仍是未选择版本时的默认界面，不能把 edition proxy 的 `
 
 ## Apply current stack
 
-Secret `ppap-current` is not in git. Create it once from the production env file (passwords, Feishu secret, S3 keys). Host fields in the ConfigMap already point at in-cluster Services. Text-model credentials use Secret `ppap-current-text-model-v1`, key `LLM_API_KEY`; API and Worker read it through explicit references. `LLM_BASE_URL` and `LLM_MODEL` belong to ConfigMap `ppap-current`. Updating only the Deep model does not switch rule extraction or other text calls. Existing images support the Codex Responses endpoint; model configuration changes require a verified rollout, not an image rebuild.
+Secret `ppap-current` is not in git. Create it once from the production env file (passwords, Feishu secret, S3 keys). Host fields in the ConfigMap already point at in-cluster Services. Text-model credentials use Secret `ppap-current-text-model-v1`, key `LLM_API_KEY`; API and Worker read it through explicit references. `LLM_BASE_URL` and `LLM_MODEL` belong to ConfigMap `ppap-current`. Updating only the Deep model does not switch rule extraction or other text calls. Existing images support the Codex Responses endpoint; model configuration changes require a process restart, not an image rebuild.
 
 API reads only its API database password; Worker and Deep read only the Worker password. Runtime containers must use explicit `secretKeyRef` entries, not `envFrom` for the whole Secret. Bootstrap and migrator credentials belong to database initialization, not application processes. Adding a new secret setting requires an explicit reference in its owning container.
 
@@ -67,94 +67,83 @@ is needed. Only preview caches are ephemeral; originals remain in PPAP storage.
 
 ## Authoritative release procedure
 
-This page and `release-current.py` own the existing-stack release procedure. Platform access facts remain in hax `runtime/tke-cls-6e71r2cz/YUNXIAO-FACTS.md`; do not copy this procedure there. Source/build authority is `docker-bake.hcl`; Kubernetes authority is `kustomization.yaml` through `render-current.sh`. The procedure does not initialize a new cluster or authorize a customer-entry/callback switch.
+本节是现有栈的部署入口。部署直接使用 `kubectl`；不运行 Python 部署编排、不自动预加载镜像、不创建临时测试环境。默认先执行本次需要的更新，遇到实际错误再诊断。构建与部署分开，配置变更不触发构建。
 
-| Route | Build | Image repository | Priority |
-|---|---|---|---|
-| Yunxiao | Versioned `yunxiao.yaml`, Flow 5339663, Hong Kong runner | private TCR `ppap-feishu/current-{api,worker,web,deep}` | Default |
-| unregistry | Same Bake `release` graph on the registry build host | `unregistry.xixifusi.online/ppap-{api,worker,web,deep}` | Explicit backup |
-
-There is no automatic route switch after failure. Both routes build the four `linux/amd64` targets in one Bake graph; Deep consumes that graph's Worker target. GHCR application publishing and node-to-node archive transfer are removed. GHCR tool dependencies such as uv and kubeconform remain.
-
-### Build and review
-
-Use a clean checkout containing the selected full commit and Python 3.12+, Git, `gh`, Docker/Buildx and `kubectl`. Set `KUBECONFIG` for this cluster. `gh` must read the PPAP repository and its Actions runs. Build requires an available full source commit and can run in parallel with CI. Deployment requires a successful latest `Tests` push/manual run for that exact SHA; a PR merge-ref test alone is insufficient. Do not substitute the current branch HEAD or a configuration commit for the selected application source.
-
-For the default route, supply `ALIYUN_DEV_OPS_TOKEN` only in the operator process. The hax environment file owns that credential. The script never prints it or stores it in Git. TCR verification reuses the existing `web-base` pull Secret binding. Flow uses its existing Codeup and TCR service connections, not the operator PAT in build logs.
+以下命令在仓库根目录执行，需要 `kubectl` 和 Mike Farah `yq` v4。设置集群连接：
 
 ```sh
-python3 deploy/tke/release-current.py build <full-source-sha>
+export KUBECONFIG="$HOME/Projects/work/hax/runtime/tke-cls-6e71r2cz/headscale-ipv6.kubeconfig"
 ```
 
-Routine use is **build the selected SHA, then deploy the reviewed pins**. Build does not query or wait for CI. Deploy reuses the existing successful exact-SHA CI; neither operation launches another test workflow.
+### 更新镜像或应用清单
 
-The build operation pushes only a new `codex/ppap-current-release-<full-sha>` ref in the private Codeup `ppap-web` repository; it never forces a ref or changes `master`. Existing history makes later pushes incremental. The script updates only the dedicated build-only Flow from `yunxiao.yaml`, with manual triggers and a source identity check. Do not run two operators against this pipeline concurrently. Matching successful/running builds are reused across Flow history pages; a failed build never permits deployment. New Yunxiao builds import/export [inline cache](https://docs.docker.com/build/cache/backends/inline/) through each component’s separate `build-cache` tag. That tag uses the same image blobs and is never a deployment pin. A first-build cache miss is allowed. The application Dockerfile installs OS packages before copying source, so source edits do not invalidate that layer. Registry manifest/config checks run in parallel and do not download application layers. Resume a known run without reconfiguration or dispatch:
+将本次镜像 digest、`PPAP_BUILD_SHA` 和非敏感配置写入 `current.yaml`，然后直接应用现有应用的 ConfigMap 与 Deployment：
 
 ```sh
-python3 deploy/tke/release-current.py build <full-source-sha> --run-id <run-id>
+kubectl kustomize deploy/tke \
+  | yq 'select((.kind == "ConfigMap" and .metadata.name == "ppap-current") or (.kind == "Deployment" and (.metadata.name == "ppap-current-api" or .metadata.name == "ppap-current-worker" or .metadata.name == "ppap-current-web")))' \
+  | kubectl -n ppap-test apply -f -
 ```
 
-The script verifies the successful run's actual source, four emitted digests, private TCR access, manifest/config hashes, platform, revision label and baked SHA. Only then does it update the four immutable image pins and `PPAP_BUILD_SHA` in `current.yaml`. Review and commit that diff in the authorized PR. A later configuration commit does not change the application source identity. Build never applies Kubernetes objects.
+镜像变化会自动触发对应 Deployment 的滚动更新。命令成功表示更新已提交，不表示所有 Pod 已就绪。提交更新的目标时间为 20 秒内；下载镜像、调度和应用启动可能更久。
 
-Yunxiao pulls Docker Hub base images through `docker.m.daocloud.io` using Bake named contexts. The context keys retain the exact Dockerfile image versions and any existing digest; GHCR tool images and the Deep-to-Worker build dependency are unchanged. This changes base-image transport only: builds still run in Yunxiao and publish to private TCR. A mirror failure stops the build rather than switching the release provider. When a Docker Hub `FROM` reference changes, update its matching context in `yunxiao.yaml`.
+此命令只更新应用，不运行初始化 Job、数据库迁移，也不修改旧版入口、Office、Secret 或存储卷。变更 Worker 协议或数据库结构时，按该变更的兼容要求安排更新顺序。
 
-For backup, run the same entrypoint **on the unregistry build host** with the selected commit and existing local Docker registry access:
+### 仅修改配置或重启
+
+修改 `current.yaml` 后执行上面的 apply 命令。ConfigMap 和 Secret 的环境变量需要重建 Pod 才能生效；没有镜像变化时，直接重启受影响的进程：
 
 ```sh
-python3 deploy/tke/release-current.py build <full-source-sha> --provider unregistry
+kubectl -n ppap-test rollout restart deployment/ppap-current-worker deployment/ppap-current-api
 ```
 
-It first reuses the four images if their existing SHA tags verify. Only confirmed missing images cause a build; an authentication, transport or identity error stops. A build archives tracked source only, uses the canonical four-target graph and pushes through `localhost:5001`. It verifies the public registry and writes immutable public digest pins. Do not add a developer-machine image relay. Existing full-SHA unregistry tags remain accepted for rollback, with the same source/image identity checks and automatic full-check selection. A registry switch requires full checks. Keep previous images and configuration until rollback responsibility ends.
-
-### Deploy and read back
-
-Deploy only with explicit release authorization and reviewed `current.yaml` pins:
+只有 Web 配置变化时才重启 Web：
 
 ```sh
-./deploy/tke/apply-current.sh
-# Same operation: python3 deploy/tke/release-current.py deploy
+kubectl -n ppap-test rollout restart deployment/ppap-current-web
 ```
 
-The default routine path is short:
+不重建镜像，不等待完整验收。修改 Secret 时使用明确的 key 或新版本 Secret，通过 `secretKeyRef` 引用；密钥不写入 Markdown、Git 或命令输出。更新凭据引用后同样会触发滚动更新。
 
-1. Reuse exact-SHA Tests, verify four registry identities in parallel, and check schema/in-flight jobs. No test workflow or build is started.
-2. Render once and server-dry-run once. Only the application ConfigMap and API/Web/Worker Deployments may change. Apply its application ConfigMap and Worker Deployment first and wait for the Worker rollout before applying the complete fixed render, so API cannot enqueue new confirmation work to an old Worker. Each scheduled Kubelet pulls directly with `IfNotPresent` and reuses existing layers. If nothing changes, skip apply and rollout waiting.
-3. Wait for application rollouts in parallel, then verify actual image IDs, Ready/restarts, public API/Web SHA, readiness, fresh Worker heartbeat, Deep socket, schema and the unchanged default legacy page. Routine checks do not claim a full historical-data comparison.
+### 出错后诊断
 
-Full checks run automatically when the live-to-target diff is unknown, runtime/registry or non-model configuration changes, a live Deployment is not ready, or a same-source image is replaced. A proven source/test/doc-only diff with unchanged deployment runtime uses the routine path. A pin-record commit in `current.yaml` does not force full checks by itself: actual rendered configuration is compared with the live runtime. Dockerfiles, lockfiles, dependency manifests and unfamiliar paths require full checks. To force them for an environment investigation:
+更新命令报错、应用不可用或用户报告异常时，按受影响组件读取状态和日志：
 
 ```sh
-./deploy/tke/apply-current.sh --full-check
+kubectl -n ppap-test get pods
+kubectl -n ppap-test rollout status deployment/ppap-current-worker --timeout=60s
+kubectl -n ppap-test logs deployment/ppap-current-worker -c worker --since=10m --tail=100
+kubectl -n ppap-test logs deployment/ppap-current-api -c api --since=10m --tail=100
 ```
 
-Full checks add direct pulls/CRI identities and isolated `Never` startup on both nodes in parallel, followed by fresh read-only history/queue and non-target resource baselines. Both nodes need a free Pod slot. Preloading proceeds directly without a fixed free-space threshold or a separate DiskPressure gate; actual image-pull and startup failures are reported through Kubernetes. Temporary Pod-local PostgreSQL/Silo and an empty queue prevent production data, model, notification or charge probes. Cleanup must succeed before apply. After slow checks the script dry-runs again and compares full baselines after rollout; concurrent legitimate writes require reconciliation.
+日志仅用于本地诊断，对外引用前去除密钥和原文。命令响应丢失时，先读取对应资源确认结果，再决定是否补做。不要自动重试审核受理、收费、通知等业务写操作。
 
-Every path requires the migration payload/schema to match the numbered files. Schema upgrades remain a separately reviewed #15 operation with backups and stopped writes; completed init Jobs are not deleted or treated as proof that new migrations ran. Active business jobs block rollout. Notification jobs are never reset or resent.
+需要回退时，将已知兼容的镜像和配置恢复到 `current.yaml`，再执行同一 apply 命令；仅配置回退后也要重启受影响进程。不要删除 PVC 或重建初始化 Job 来强行恢复。
 
-Database preflight and history readback use the existing PostgreSQL Pod, with `SET LOCAL ROLE ppap_api` inside a read-only, repeatable-read transaction. They do not require an API Pod to be running. A migration that requires stopping old API credential consumers can therefore keep them stopped until the reviewed Worker-first release starts the new API. This does not perform migrations or relax schema, image, CI or post-release API checks.
+### 构建镜像
 
-No nodeSelector, node service/network reconfiguration, workload eviction or image pruning is part of release. The procedure keeps existing Secrets, PVCs, TLS/LB, default legacy route, Office and old UAC/Feishu callbacks. A healthy socket proves startup only, not a real Deep audit or stronger isolation.
+构建工具只负责构建和写入四个镜像 pin，不操作部署。源文件与测试由正常 CI 负责，不在每次部署前同步重跑。
 
-Each invocation prints a private temporary operation directory. It contains only recovery identity, hashes, the fixed render and readback results, not credentials or full environment/Secret dumps. If dispatch/apply response is lost, **do not rerun the mutation blindly**. Inspect Flow runs and resume the exact run, or read back the saved deployment attempt:
+默认使用云效 Flow 5339663，在香港 Runner 构建并发布到私有 TCR。只在操作进程中注入 `ALIYUN_DEV_OPS_TOKEN`，凭据来源见 hax 环境配置。
 
 ```sh
-python3 deploy/tke/release-current.py verify --attempt <printed-operation-directory>
+python3 deploy/tke/build-current.py <full-source-sha>
+# 已有构建继续读取同一次运行，不重复发起：
+python3 deploy/tke/build-current.py <full-source-sha> --run-id <run-id>
 ```
 
-A failed preload cleans up its own temporary resources and prevents apply. Cleanup failure prints the exact resource name and blocks rollout. A partial apply is not rolled back automatically: inspect live state, reconcile writes and schema compatibility, then explicitly authorize any correction/rollback. Use the previous reviewed config through this same deploy path, never delete/recreate PVCs or completed init Jobs to force progress. Remove operation directories only after reconciliation is complete.
+构建复用 `docker-bake.hcl` 的四目标图和缓存，核对实际源版本与镜像 digest 后写入 `current.yaml`。提交这些 pin 后，使用上面的原生部署命令。
 
-When `PPAP_PIP_INDEX_URL` is set, builds retain the frozen lockfile, package hashes and dependency checks. Optional Debian mirrors must serve both Debian and its `-security` sibling. These are transport settings, not permission to change locked dependencies.
+显式选择备用 unregistry 时，在已有 registry 登录的构建主机运行：
 
-## Deep runtime boundary
+```sh
+python3 deploy/tke/build-current.py <full-source-sha> --provider unregistry
+```
 
-The Worker Pod has a dedicated `ppap-deep` sidecar (`PPAP_SERVICE=deep` → `python -m agent`) and the existing `ppap-worker` container. They share only `emptyDir` `/run/ppap-deep` for the Controller socket. The root Controller reads authorized DB/S3 input and owns a loopback Responses gateway. Each semantic guest drops to UID/GID 10001 with a fresh environment; the provider key is not passed to it. `PPAP_DEEP_EXECUTOR_REVISION=ppap-deep-v2`, `PPAP_DEEP_RUNTIME=container-only`, and `PPAP_DEEP_SANDBOX_PROFILE=off` are explicit. On this kernel, `off` means container-level isolation only: it does not give strong guest filesystem or egress isolation. There is no Docker socket or gVisor dependency. Worker waits up to 60 seconds for the UDS; if unavailable, it logs a warning and still starts so Standard jobs continue. Deep jobs fail explicitly when the Controller is unavailable; they never fall back to Standard.
+工具先复用已存在且身份匹配的镜像，仅在确认镜像缺失时构建。未知写入结果先读回，不重复发起。云效拉取 Docker Hub 基础镜像时使用 `yunxiao.yaml` 中的镜像代理；这是构建传输设置，不是部署前检查。
 
-Deep readiness requires the Controller socket. Core `/ready` checks only PostgreSQL and object storage; neither check proves a real Deep audit. After rollout, also inspect container restart counts.
+## Deep 配置
 
-## Deep configuration releases
+`PPAP_DEEP_LLM_BASE_URL`、`PPAP_DEEP_LLM_MODEL`、`PPAP_DEEP_REASONING_EFFORT` 属于 Deep。普通规则提取使用 `LLM_BASE_URL`、`LLM_MODEL`，二者分别配置。Deep 凭据只注入 Controller；普通文本凭据通过独立 Secret 注入 API 和 Worker。
 
-The canonical renderer adds `ppap.io/configuration-digest` to application Pod templates. Non-secret application configuration rolls API and Worker; Web only tracks its public API address. Updating a fixed-name ConfigMap alone is insufficient for process environment changes.
-
-Deep uses `PPAP_DEEP_LLM_BASE_URL`, `PPAP_DEEP_LLM_MODEL`, and `PPAP_DEEP_REASONING_EFFORT` (default `medium`). API and Worker compute this non-secret execution policy without provider credentials. Only the Deep Controller receives `PPAP_DEEP_LLM_API_KEY`, from the separately versioned Secret `ppap-current-deep-model-v1`. Rotate credentials by creating a new Secret version and updating that reference; never put a key or its hash in the ConfigMap or a Pod annotation. Credential rotation does not change execution semantics.
-
-An unchanged source and identical images with only these supported model settings changed can use the routine release checks. Unknown changes, dependency or image changes, readiness failures and other runtime changes retain full checks. All releases still require exact-source CI, immutable image verification, schema and queue preflight, server dry-run, Worker-first rollout, and actual configuration readback. The release verifies original process environment in each application container, the Controller's loaded policy over its existing UDS, and the installed Pi version. Stale Pods or differing policies cannot report success. Model/effort changes alter the frozen execution revision; old tasks are not rewritten.
+Worker 与 Deep Controller 共享 `/run/ppap-deep` 的 UDS。配置变更后直接重启其 Deployment；UDS 可用只表示进程连通，不证明真实 Deep 审核成功。当前 `container-only` / sandbox `off` 的能力边界仍见 `deploy/deep/README.md`。

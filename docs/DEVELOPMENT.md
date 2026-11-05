@@ -60,7 +60,7 @@ Repository contract：
 
 数据库 migration ordering authority 只有 numbered filenames。Compose / InsForge / TKE / Schema CI 共用 `migrations/apply.sh`；仓库不存在 `apply.sql` 或第二份顺序清单。
 
-TKE 的 Kubernetes authority 是 `deploy/tke/kustomization.yaml`。CI 与真实 apply 都通过 `deploy/tke/render-current.sh` 得到同一 rendered object stream；CI 对它执行 kubeconform；日常部署及完整检查的触发条件只认[权威发布流程](../deploy/tke/README.md#authoritative-release-procedure)，`apply-current.sh` 调用同一 `release-current.py` 部署入口。edition proxy 的 nginx 内容只存在于 `deploy/tke/edition-proxy.conf`，ConfigMap 由 Kustomize `configMapGenerator` 生成。
+TKE 的 Kubernetes authority 是 `deploy/tke/kustomization.yaml`。部署入口是[原生部署命令](../deploy/tke/README.md#authoritative-release-procedure)，直接使用 `kubectl` 更新并重启；默认先执行更新，遇到错误再诊断，不运行 Python 部署编排或自动预加载。构建由 `build-current.py` 独立负责。CI 通过 `render-current.sh` 使用固定版本 Kustomize 生成清单并执行 kubeconform。edition proxy 的 nginx 内容只存在于 `deploy/tke/edition-proxy.conf`，ConfigMap 由 Kustomize `configMapGenerator` 生成。
 
 ```sh
 uv sync --locked
