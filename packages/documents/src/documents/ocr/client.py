@@ -13,7 +13,7 @@ from typing import Any
 
 from openai import APITimeoutError, AsyncOpenAI
 
-from documents.model_access import current_model_access, model_access_scoped, model_request_scope
+from documents.model_access import ModelUnavailable, current_model_access, model_access_scoped, model_request_scope
 from documents.ocr.env import ocr_extra_body, ocr_model_name, ocr_openai_api_key, ocr_openai_base_url
 
 logger = logging.getLogger(__name__)
@@ -78,7 +78,13 @@ async def _request_response(kwargs: dict[str, Any]) -> Any:
             settle(response)
         return response
     except (TimeoutError, APITimeoutError) as exc:
-        raise ResponsesEvidenceError("responses_timeout", "Responses request timed out") from exc
+        raise ResponsesEvidenceError("responses_timeout", "Responses request timed out") from (None if model_access_scoped() else exc)
+    except ModelUnavailable:
+        raise
+    except Exception:
+        if model_access_scoped():
+            raise ModelUnavailable("personal_model_request_failed") from None
+        raise
     finally:
         try:
             await client.close()

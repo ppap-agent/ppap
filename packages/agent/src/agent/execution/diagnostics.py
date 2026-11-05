@@ -56,6 +56,7 @@ def failure_facts(raw: object) -> dict:
             "error_type": (
                 "IncompleteResponse",
                 "ProviderStatus",
+                "PersonalModelUnavailable",
                 "IncompleteRead",
                 "RemoteDisconnected",
                 "TimeoutError",

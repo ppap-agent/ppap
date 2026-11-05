@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Self
 from urllib.parse import urlsplit
 
-from documents.model_access import current_model_access, model_access_scoped, model_request_scope
+from documents.model_access import ModelUnavailable, current_model_access, model_access_scoped, model_request_scope
 from openai import OpenAI as BaseOpenAI
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -327,15 +327,22 @@ class AIClient:
                 # 应用速率限制（每次请求都需要遵守）
                 self._wait_for_rate_limit()
                 try:
-                    with model_request_scope(self.settings.OPENAI_BASE_URL, request_kwargs) as settle:
+                    with model_request_scope(getattr(self.settings, "OPENAI_BASE_URL", ""), request_kwargs) as settle:
                         if _uses_codex_transport(self.settings):
                             with request_client.responses.stream(**request_kwargs) as stream:
                                 response = stream.get_final_response()
                         else:
                             response = request_client.responses.create(**request_kwargs)
                         settle(response)
+                except ModelUnavailable:
+                    # Local refusals did not send another paid request.
+                    raise
                 except Exception:
                     record_unreported_usage()
+                    if getattr(self, "_bound_personal_call", False):
+                        # A provider error body can echo a submitted credential.
+                        # Callers must not persist it as an audit diagnostic.
+                        raise ModelUnavailable("personal_model_request_failed") from None
                     raise
 
                 # A visible provider receipt is usage even when its audit output
