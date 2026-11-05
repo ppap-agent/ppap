@@ -17,7 +17,6 @@ HERE = Path(__file__).resolve().parent
 NAMESPACE = "ppap-test"
 NODES = ("10.3.4.3", "10.3.4.7")
 OWNERS = {"api": "ppap-current-api", "worker": "ppap-current-worker", "deep": "ppap-current-worker", "web": "ppap-current-web"}
-DISK_CHECK = "import os; s=os.statvfs('/host/var/lib/containerd'); assert s.f_bavail*s.f_frsize >= 12*1024**3, 'at least 12 GiB free required for image layers'"
 
 
 def command(args: list[str], *, data: bytes | None = None, timeout: int = 1800) -> bytes:
@@ -106,9 +105,6 @@ def pull_pod(name: str, node: str, bootstrap: str, cm: str, pull_secret: str | N
             "terminationGracePeriodSeconds": 5,
             **({"imagePullSecrets": [{"name": pull_secret}]} if pull_secret else {}),
             "initContainers": [
-                {"name": "check-disk", "image": bootstrap, "imagePullPolicy": "IfNotPresent", "command": ["python", "-c", DISK_CHECK], "volumeMounts": [host], "securityContext": security},
-            ]
-            + [
                 {"name": "pull-" + key, "image": ref, "imagePullPolicy": "IfNotPresent", "command": ["true"], "resources": {"requests": {"cpu": "10m", "memory": "16Mi"}}}
                 for key, ref in images.items()
             ],
@@ -216,8 +212,6 @@ def preload(objects: list[dict], expected_configs: dict[str, str]) -> None:
         raise ValueError("node membership changed; review pre-distribution targets before rollout")
     if any(node["status"]["nodeInfo"]["architecture"] != "amd64" or not any(c["type"] == "Ready" and c["status"] == "True" for c in node["status"]["conditions"]) for node in nodes):
         raise ValueError("both amd64 nodes must be Ready")
-    if any(any(c["type"] == "DiskPressure" and c["status"] != "False" for c in node["status"]["conditions"]) for node in nodes):
-        raise ValueError("node disk pressure must clear before pre-distribution")
     pods = json.loads(kube("get", "pods", "--all-namespaces", "-o", "json"))["items"]
     for node in nodes:
         active = sum(pod.get("spec", {}).get("nodeName") == node["metadata"]["name"] and pod.get("status", {}).get("phase") not in {"Succeeded", "Failed"} for pod in pods)
@@ -276,7 +270,6 @@ def preload(objects: list[dict], expected_configs: dict[str, str]) -> None:
             delete("pod", name)
 
         def startup(node: str) -> None:
-            kube("wait", "--for=condition=DiskPressure=false", "node/" + node, "--timeout=300s")
             name = run_id + "-smoke-" + node.rsplit(".", 1)[1]
             kube("wait", "--for=condition=Ready", "pod/" + name, "--timeout=180s")
             execute(

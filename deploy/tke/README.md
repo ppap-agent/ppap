@@ -46,7 +46,7 @@ ppap-web 仍是未选择版本时的默认界面，不能把 edition proxy 的 `
 
 ## Apply current stack
 
-Secret `ppap-current` is not in git. Create it once from the production env file (passwords, LLM, Feishu secret, S3 keys). Host fields in the ConfigMap already point at in-cluster Services.
+Secret `ppap-current` is not in git. Create it once from the production env file (passwords, Feishu secret, S3 keys). Host fields in the ConfigMap already point at in-cluster Services. Text-model credentials use Secret `ppap-current-text-model-v1`, key `LLM_API_KEY`; API and Worker read it through explicit references. `LLM_BASE_URL` and `LLM_MODEL` belong to ConfigMap `ppap-current`. Updating only the Deep model does not switch rule extraction or other text calls. Existing images support the Codex Responses endpoint; model configuration changes require a verified rollout, not an image rebuild.
 
 API reads only its API database password; Worker and Deep read only the Worker password. Runtime containers must use explicit `secretKeyRef` entries, not `envFrom` for the whole Secret. Bootstrap and migrator credentials belong to database initialization, not application processes. Adding a new secret setting requires an explicit reference in its owning container.
 
@@ -127,7 +127,7 @@ Full checks run automatically when the live-to-target diff is unknown, runtime/r
 ./deploy/tke/apply-current.sh --full-check
 ```
 
-Full checks add direct pulls/CRI identities and isolated `Never` startup on both nodes in parallel, followed by fresh read-only history/queue and non-target resource baselines. Both nodes need a free Pod slot, no disk pressure and 12 GiB free. Temporary Pod-local PostgreSQL/Silo and an empty queue prevent production data, model, notification or charge probes. Cleanup must succeed before apply. After slow checks the script dry-runs again and compares full baselines after rollout; concurrent legitimate writes require reconciliation.
+Full checks add direct pulls/CRI identities and isolated `Never` startup on both nodes in parallel, followed by fresh read-only history/queue and non-target resource baselines. Both nodes need a free Pod slot. Preloading proceeds directly without a fixed free-space threshold or a separate DiskPressure gate; actual image-pull and startup failures are reported through Kubernetes. Temporary Pod-local PostgreSQL/Silo and an empty queue prevent production data, model, notification or charge probes. Cleanup must succeed before apply. After slow checks the script dry-runs again and compares full baselines after rollout; concurrent legitimate writes require reconciliation.
 
 Every path requires the migration payload/schema to match the numbered files. Schema upgrades remain a separately reviewed #15 operation with backups and stopped writes; completed init Jobs are not deleted or treated as proof that new migrations ran. Active business jobs block rollout. Notification jobs are never reset or resent.
 

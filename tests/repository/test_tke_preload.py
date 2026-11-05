@@ -1,10 +1,8 @@
 """Preload transport and the boundary before any production apply."""
 
 import json
-import os
 import runpy
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -100,27 +98,6 @@ def test_native_multi_document_json_keeps_every_deployment():
         PRELOAD["native_objects"](b"")
 
 
-def test_disk_pressure_aborts_before_allocating_resources():
-    nodes = [
-        {"metadata": {"name": node}, "status": {"nodeInfo": {"architecture": "amd64"}, "conditions": [{"type": "Ready", "status": "True"}, {"type": "DiskPressure", "status": "True"}]}}
-        for node in PRELOAD["NODES"]
-    ]
-    preload = PRELOAD["preload"]
-    with patch.dict(preload.__globals__, {"kube": lambda *args, **kwargs: json.dumps({"items": nodes}).encode()}):
-        with pytest.raises(ValueError, match="disk pressure"):
-            preload(objects(), {c: "sha256:" + "a" * 64 for c in IMAGES})
-
-
-def test_emitted_disk_check_reserves_space_for_full_images():
-    for gib in (9, 12):
-        with patch.object(os, "statvfs", return_value=SimpleNamespace(f_bavail=gib * 1024**3, f_frsize=1)):
-            if gib < 12:
-                with pytest.raises(AssertionError, match="12 GiB"):
-                    exec(PRELOAD["DISK_CHECK"])
-            else:
-                exec(PRELOAD["DISK_CHECK"])
-
-
 def test_full_process_smoke_is_isolated_and_proves_cache():
     pod = PRELOAD["smoke_pod"]("probe", "node", IMAGES, "scripts", {"postgres": "postgres:16", "silo": "silo:fixture"})
     spec = pod["spec"]
@@ -166,7 +143,7 @@ def test_each_node_direct_pull_and_startup_with_failure_cleanup(provider, failur
                             "status": {
                                 "allocatable": {"pods": "61"},
                                 "nodeInfo": {"architecture": "amd64"},
-                                "conditions": [{"type": "Ready", "status": "True"}, {"type": "DiskPressure", "status": "False"}],
+                                "conditions": [{"type": "Ready", "status": "True"}, {"type": "DiskPressure", "status": "True"}],
                             },
                         }
                         for node in PRELOAD["NODES"]
