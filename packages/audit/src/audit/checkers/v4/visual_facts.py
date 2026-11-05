@@ -245,9 +245,18 @@ def _pdf_images(audit, pages: Sequence[int], digest: str, fields=None):
                     continue
                 if requested.intersection(psw_fields) and not 0.8 <= bounds.width / bounds.height <= 1.25:
                     continue
-                if requested and not labels:
+                if requested and not labels and not requested.issubset(_SEAL_FIELDS):
                     continue
-                regions.append((bounds + (-2, -2, 2, 2) & page.rect, False))
+                crop = bounds + (-2, -2, 2, 2) & page.rect
+                if requested and requested.issubset(_SEAL_FIELDS):
+                    # A clipped edge stamp may be only a narrow strip. Preserve
+                    # adjacent page context in a square view instead of sending
+                    # an extreme aspect ratio to the image reader.
+                    side = max(crop.width, crop.height)
+                    x = max(0, min((crop.x0 + crop.x1 - side) / 2, page.rect.width - side))
+                    y = max(0, min((crop.y0 + crop.y1 - side) / 2, page.rect.height - side))
+                    crop = fitz.Rect(x, y, min(page.rect.width, x + side), min(page.rect.height, y + side))
+                regions.append((crop, False))
             # Every planned page keeps its full context; local views share a
             # finite total pixel allocation rather than multiplying it.
             page_regions = regions[:7]
@@ -256,7 +265,8 @@ def _pdf_images(audit, pages: Sequence[int], digest: str, fields=None):
                 area = bounds.width * bounds.height
                 if not math.isfinite(area) or area <= 0:
                     raise VisualFactsUnavailable("原页区域尺寸无效。")
-                scale = min(1.5 if complete else 4, math.sqrt(pixel_budget / area), 4096 / max(bounds.width, bounds.height))
+                local_scale = 8 if requested and requested.issubset(_SEAL_FIELDS) else 4
+                scale = min(1.5 if complete else local_scale, math.sqrt(pixel_budget / area), 4096 / max(bounds.width, bounds.height))
                 pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=bounds, alpha=False)
                 images.append(
                     OcrImage(

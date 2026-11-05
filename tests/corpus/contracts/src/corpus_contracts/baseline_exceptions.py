@@ -94,28 +94,4 @@ def B(
 # Observed from the current required V2 corpus. Human CSV remains expected
 # authority. ERR records freeze execution_failure without raised:* types.
 # Product EvidenceDiagnostic codes may be stored on ExecutionOutcome when stable.
-BASELINE_RULE_BEHAVIORS: frozenset[BaselineRuleBehavior] = frozenset(
-    {
-        B("1-全功能检验报告_巨一.pdf", "pdf", 3, "PASS", "NG"),
-        B("10-控制计划-常州新泉.pdf", "pdf", 5, "NG", "PASS"),
-        B("11-过程特殊特性清单-上海大亚.pdf", "pdf", 3, "PASS", "NG"),
-        B("11-过程特殊特性清单-巨一.pdf", "pdf", 3, "PASS", "NG"),
-        B("11-过程特殊特性清单-继峰 - 无边框.pdf", "pdf", 3, "PASS", "NG"),
-        B("11-过程特殊特性清单-继峰.pdf", "pdf", 3, "PASS", "NG"),
-        B("13-生产系统产能评估报告-继峰 - 错误.pdf", "pdf", 4, "NG", "PASS"),
-        B("13-生产系统产能评估报告-继峰 - 错误.pdf", "pdf", 5, "NG", "PASS"),
-        B("13-生产系统产能评估报告-继峰 - 错误.pdf", "pdf", 6, "NG", "PASS"),
-        B("8-过程流程图-亚大.pdf", "pdf", 3, "PASS", "NG"),
-        B("8-过程流程图-巨一.pdf", "pdf", 3, "PASS", "NG"),
-        B("8-过程流程图-继峰 - 无线框.pdf", "pdf", 3, "PASS", "NG"),
-        B("8-过程流程图-继峰 - 无线框.pdf", "pdf", 4, "PASS", "NG"),
-        B("8-过程流程图-继峰.pdf", "pdf", 3, "PASS", "NG"),
-        B("8-过程流程图-继峰.pdf", "pdf", 4, "PASS", "NG"),
-        B("NJ24010097_EVB理想X04_PACK3_绝缘耐压等电位正本-DVP试验报告.pdf", "pdf", 2, "PASS", "NG"),
-        B("NJ24010097_EVB理想X04_PACK3_绝缘耐压等电位正本-DVP试验报告.pdf", "pdf", 4, "PASS", "NG"),
-        B("NJ24010097_EVB理想X04_PACK3_绝缘耐压等电位正本-DVP试验报告.pdf", "pdf", 6, "PASS", "NG"),
-        B("SHF03-25021669-QC-15 阻燃性 试验报告 4.pdf", "pdf", 2, "PASS", "NG"),
-        B("SHF03-25021669-QC-15 阻燃性 试验报告 4.pdf", "pdf", 4, "PASS", "NG"),
-        B("W02管路PV试验报告2025052803_QFZ.pdf", "pdf", 4, "PASS", "NG"),
-    }
-)
+BASELINE_RULE_BEHAVIORS: frozenset[BaselineRuleBehavior] = frozenset()

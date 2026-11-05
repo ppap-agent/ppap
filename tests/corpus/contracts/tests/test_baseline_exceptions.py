@@ -114,7 +114,6 @@ def test_behavior_matches_does_not_use_suggestion_text() -> None:
 
 
 def test_recorded_behaviors_are_unique_locations() -> None:
-    assert BASELINE_RULE_BEHAVIORS
     seen: set[tuple[str, str, int]] = set()
     for item in BASELINE_RULE_BEHAVIORS:
         assert item.location not in seen

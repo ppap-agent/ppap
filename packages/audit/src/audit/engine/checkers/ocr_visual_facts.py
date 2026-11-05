@@ -46,7 +46,7 @@ def _schema(fields: dict[str, str], field_scopes: dict[str, list[str]], image_co
         "type": "object",
         "additionalProperties": False,
         "required": ["image_index", "bbox"],
-        "properties": {"image_index": {"type": "integer"}, "bbox": {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4}},
+        "properties": {"image_index": {"type": "integer"}, "bbox": {"type": "array", "items": {"type": "number", "minimum": 0, "maximum": 1}, "minItems": 4, "maxItems": 4}},
     }
     if image_count is not None:
         source["properties"]["image_index"]["enum"] = list(range(image_count))

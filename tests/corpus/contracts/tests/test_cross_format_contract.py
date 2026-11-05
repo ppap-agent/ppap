@@ -144,7 +144,6 @@ def test_comparison_does_not_use_suggestion_text() -> None:
 
 
 def test_known_divergences_are_unique_pair_rule_records() -> None:
-    assert KNOWN_PAIR_DIVERGENCES
     seen: set[tuple[str, int]] = set()
     for item in KNOWN_PAIR_DIVERGENCES:
         assert item.location not in seen

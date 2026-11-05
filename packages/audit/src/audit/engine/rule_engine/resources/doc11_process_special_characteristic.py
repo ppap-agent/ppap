@@ -165,7 +165,7 @@ _DOC11_RESOURCE_MODEL = RuleResourceModel(
         ColumnModel(
             canonical_name="现有管理方式风险评估",
             section_name="主数据区",
-            aliases=("现有管理方式风险评估",),
+            aliases=("现有管理方式风险评估", "现有管理方式风险"),
             missing_tokens=("", "none", "nan"),
         ),
         ColumnModel(

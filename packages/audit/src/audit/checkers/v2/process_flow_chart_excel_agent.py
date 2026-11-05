@@ -16,6 +16,7 @@ import posixpath
 import re
 import xml.etree.ElementTree as ET
 import zipfile
+from pathlib import Path
 from typing import Any
 
 from openpyxl.utils import get_column_letter
@@ -48,6 +49,106 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
     """过程流程图Excel文件专用审核代理"""
 
     DOC_TYPE = PpapDocumentType.PROCESS_FLOW_CHART
+
+    def _original_flow_rows(self):
+        """Locate original cells when conversion joins distinct process records."""
+        source = (self.audit_file.file_metadata or {}).get("source_pdf_url")
+        if not source or not Path(source).is_file():
+            return None
+        cached = getattr(self, "_native_flow_rows", None)
+        if cached is not None:
+            return cached
+        import fitz
+
+        fields = ("工序名称", "操作描述", "过程特殊特性")
+        layout = {}
+        records = []
+        with fitz.open(source) as document:
+            for page in document:
+                text = re.sub(r"\s+", "", page.get_text())
+                words = page.get_text("words")
+                cell_text = {}
+                if "代码填写供应商代码" in text:
+                    continue  # Unfilled instruction/example sheet, not process data.
+                for table in page.find_tables().tables:
+                    if table.col_count < 10:
+                        continue
+                    header_bottom = table.bbox[1]
+                    headers = {}
+                    categories = []
+                    rows = table.extract()
+                    for index, values in enumerate(rows[:10]):
+                        for column, value in enumerate(values):
+                            name = re.sub(r"\s+", "", str(value or ""))
+                            cell = table.rows[index].cells[column]
+                            if cell and name in fields:
+                                headers[name] = fitz.Rect(cell)
+                            if cell and name == "特性类别":
+                                categories.append(fitz.Rect(cell))
+                    if len(headers) == len(fields) and len(categories) >= 2:
+                        layout = {**headers, "过程特性类别": max(categories, key=lambda cell: cell.x0)}
+                        header_bottom = max(cell.y1 for cell in layout.values())
+                    if not layout:
+                        continue
+                    cells = [fitz.Rect(cell) for cell in table.cells if cell]
+                    for native_row in table.rows:
+                        if native_row.bbox[1] < header_bottom - 0.1:
+                            continue
+                        # A row bbox includes vertically merged name cells. Its
+                        # midpoint can lie exactly on another column's divider.
+                        y = native_row.bbox[1] + min(0.1, (native_row.bbox[3] - native_row.bbox[1]) / 2)
+                        record = {"page": page.number + 1}
+                        located = {}
+                        for name, column in layout.items():
+                            x = (column.x0 + column.x1) / 2
+                            matches = [cell for cell in cells if cell.x0 < x < cell.x1 and cell.y0 < y < cell.y1]
+                            if not matches:
+                                record[name] = ""
+                                continue
+                            bounds = min(matches, key=lambda cell: cell.get_area())
+                            bounds = bounds & fitz.Rect(column.x0, bounds.y0, column.x1, bounds.y1)
+                            located[name] = bounds
+                            identity = tuple(bounds)
+                            if identity not in cell_text:
+                                groups = {}
+                                for word in words:
+                                    if bounds.x0 < (word[0] + word[2]) / 2 < bounds.x1 and bounds.y0 < (word[1] + word[3]) / 2 < bounds.y1:
+                                        groups.setdefault((word[5], word[6]), []).append(word)
+                                cell_text[identity] = "\n".join(" ".join(word[4] for word in sorted(group, key=lambda word: word[0])) for group in groups.values())
+                            record[name] = cell_text[identity]
+                        # The named operation can span several drawing/substep
+                        # rows. Read its complete original description group.
+                        if "工序名称" in located:
+                            name_bounds = located["工序名称"]
+                            column = layout["操作描述"]
+                            record["操作描述"] = " ".join(
+                                word[4] for word in words
+                                if column.x0 < (word[0] + word[2]) / 2 < column.x1 and name_bounds.y0 < (word[1] + word[3]) / 2 < name_bounds.y1
+                            )
+                        if record["工序名称"]:
+                            records.append(record)
+        self._native_flow_rows = records
+        return records
+
+    def _original_flow_check(self, rule_number: int) -> tuple[str, str] | None:
+        records = ProcessFlowChartExcelAgent._original_flow_rows(self)
+        if records is None:
+            return None
+        if not records:
+            return "UNABLE", "无法确认原PDF流程图的行列对应关系。"
+        for record in records:
+            if rule_number == 3:
+                category = re.sub(r"\s+", "", record["过程特性类别"]).lower()
+                if category not in {"【g】", "【z】", "[g]", "[z]", "g", "z"}:
+                    continue
+                missing = not record["过程特殊特性"]
+                field = "过程特殊特性"
+            else:
+                missing = not record["操作描述"]
+                field = "操作描述"
+            if missing:
+                return "NG", f"原PDF第{record['page']}页工序“{record['工序名称']}”的{field}为空。"
+        return "PASS", ""
 
     @rule("表头关键字段完整性检查")
     def rule_1(self, ctx: RuleContext) -> tuple[str, str]:
@@ -166,15 +267,14 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
                     "NG",
                     f"工序“{_process_label(row)}”的第二特性类别命中G/Z/X，但“过程特殊特性”为空。",
                 )
-            if "工序号" not in columns:
-                continue
-            serial_lines = _split_non_empty_lines(row.value("工序号"))
-            special_lines = _split_non_empty_lines(row.value("过程特殊特性"))
-            if len(serial_lines) >= 2 and len(special_lines) < len(serial_lines):
-                return (
-                    "NG",
-                    (f"工序“{_process_label(row)}”所在记录存在多工序合并（工序号{len(serial_lines)}条）且命中第二特性类别，但“过程特殊特性”信息不足，无法逐工序验证。"),
-                )
+            if "工序号" in columns:
+                serial_lines = _split_non_empty_lines(row.value("工序号"))
+                special_lines = _split_non_empty_lines(row.value("过程特殊特性"))
+                if len(serial_lines) >= 2 and len(special_lines) < len(serial_lines):
+                    original = ProcessFlowChartExcelAgent._original_flow_check(self, 3)
+                    if original is not None:
+                        return original
+                    return "NG", f"工序“{_process_label(row)}”的多工序记录无法逐项确认过程特殊特性。"
         return "PASS", ""
 
     @rule("工序名称与操作描述检查")
@@ -203,19 +303,15 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
                     "NG",
                     f"工序“{_process_label(row)}”存在“工序名称”但“操作描述”为空。",
                 )
-            if "工序号" not in columns:
-                continue
-            serial_lines = _split_non_empty_lines(row.value("工序号"))
-            if len(serial_lines) < 2:
-                continue
-            process_lines = _split_non_empty_lines(row.value("工序名称"))
-            operation_lines = _split_non_empty_lines(row.value("操作描述"))
-            expected_lines = max(len(serial_lines), len(process_lines))
-            if len(operation_lines) < expected_lines:
-                return (
-                    "NG",
-                    (f"工序“{_process_label(row)}”疑似多工序合并（工序号{len(serial_lines)}条），但“操作描述”仅识别到{len(operation_lines)}条，存在缺失。"),
-                )
+            if "工序号" in columns:
+                serial_lines = _split_non_empty_lines(row.value("工序号"))
+                process_lines = _split_non_empty_lines(row.value("工序名称"))
+                operation_lines = _split_non_empty_lines(row.value("操作描述"))
+                if len(serial_lines) >= 2 and len(operation_lines) < max(len(serial_lines), len(process_lines)):
+                    original = ProcessFlowChartExcelAgent._original_flow_check(self, 4)
+                    if original is not None:
+                        return original
+                    return "NG", f"工序“{_process_label(row)}”的多工序记录无法逐项确认操作描述。"
         return "PASS", ""
 
     @rule("工序定义完整性检查")

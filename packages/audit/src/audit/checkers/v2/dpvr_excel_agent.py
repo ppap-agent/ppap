@@ -41,13 +41,14 @@ _REPORT_NUMBER_FIELD_LABELS = ("试验报告编号", "检测报告编号", "报�
 _TEST_TYPE_FIELD_LABELS = ("试验类型", "试验阶段", "测试阶段", "项目阶段", "Test type")
 _RESULT_FIELD_LABELS = (
     "结果判定",
+    "判定结果",
     "判定结论",
     "检测结论",
     "结论",
     "Result judgment",
     "Conclusion",
 )
-_SAMPLE_QUANTITY_FIELD_LABELS = ("样品数量", "样本数量", "试验样本描述", "Sample quantity")
+_SAMPLE_QUANTITY_FIELD_LABELS = ("样品数量", "样本数量", "测试样品数量", "试验样本描述", "Sample quantity")
 _SAMPLE_QUANTITY_LABEL_TOKENS = {
     "样品数量",
     "样本数量",
@@ -246,6 +247,8 @@ class DpvrExcelAgent(ExcelAgent):
                 col_min=1,
                 col_max=min(sheet.ws.max_column, 80),
             ):
+                if len(str(cell.value() or "").splitlines()) > 4 or len(str(cell.value() or "")) > 160:
+                    continue
                 if not self._matches_any_label(cell.value(), labels):
                     continue
 
@@ -265,7 +268,52 @@ class DpvrExcelAgent(ExcelAgent):
                     if not self._is_layered_value(below, labels=labels):
                         break
                     values.append(below)
-        return self._dedupe_values(tuple(values))
+        return self._dedupe_values(tuple(values)) or self._source_pdf_field_values(labels)
+
+    def _source_pdf_field_values(self, labels: tuple[str, ...]) -> list[str]:
+        """Bind native report fields to their table cell or explicit inline value.
+
+        A converted paragraph is not a field's adjacent value. Read the original
+        layout for reports whose pages were preserved as paragraph cells.
+        """
+        path = self._source_pdf_path()
+        if path is None:
+            return []
+        cache = getattr(self, "_dpvr_native_fields", None)
+        if cache is None:
+            cache = self._dpvr_native_fields = {}
+        if labels in cache:
+            return cache[labels]
+        import fitz
+
+        values: list[str] = []
+        inline = re.compile(r"^\s*(?:" + "|".join(re.escape(label) for label in labels) + r")\s*[:：]\s*(\S.*?)\s*$", re.IGNORECASE)
+        with fitz.open(path) as document:
+            for page in document:
+                text = page.get_text(sort=True)
+                if not self._matches_any_label(text, labels):
+                    continue
+                for line in text.splitlines():
+                    match = inline.fullmatch(line)
+                    if match:
+                        values.append(match[1])
+                words = page.get_text("words")
+                for label in labels:
+                    for anchor in page.search_for(label):
+                        # Bilingual labels and their value can use different PDF
+                        # text blocks. Vertical overlap binds the original row.
+                        groups = {}
+                        for word in words:
+                            if word[0] < anchor.x1 + 2 or min(word[3], anchor.y1) <= max(word[1], anchor.y0):
+                                continue
+                            groups.setdefault((word[5], word[6]), []).append(word)
+                        candidates = sorted(groups.values(), key=lambda group: min(word[0] for word in group))
+                        if candidates:
+                            value = " ".join(word[4] for word in sorted(candidates[0], key=lambda word: word[0]))
+                            if self._is_layered_value(value, labels=labels):
+                                values.append(value)
+        cache[labels] = self._dedupe_values(tuple(values))
+        return cache[labels]
 
     def _layered_report_numbers(self, table: Table) -> list[str]:
         del table
@@ -397,6 +445,42 @@ class DpvrExcelAgent(ExcelAgent):
 
     @rule("印章检查")
     def rule_4(self, ctx: RuleContext) -> tuple[str, str]:
+        path = self._source_pdf_path()
+        if path is not None:
+            import fitz
+
+            from audit.checkers.v4.visual_facts import read_original_pdf_visual_facts
+
+            with fitz.open(path) as document:
+                count = len(document)
+            # Presence needs one located witness. Unexamined pages can never
+            # establish absence, so a negative partial observation stays unknown.
+            pages = sorted({1, count}) if count else []
+            original = self.audit_file.model_copy(update={"file_url": str(path)})
+            cache = getattr(self, "_dpvr_seal_cache", None)
+            if cache is None:
+                cache = self._dpvr_seal_cache = {}
+            sources = []
+            facts = read_original_pdf_visual_facts(
+                original,
+                {"seal": (
+                    "原件中是否存在实际印章。本条仅判断是否存在，不要求完整圆形、完整章名、日期或鉴真。"
+                    "被页面裁切后仍可见的印章弧线及沿弧排列的文字，足以确认印章存在。"
+                    "单独的红色线条、公司标识或印章字段文字不能代替实际印章。"
+                )},
+                lambda locator, excerpt, **kwargs: sources.append(locator),
+                operation="dpvr_seal",
+                cache=cache,
+                source_pages=pages,
+            )
+            ctx.record_execution()
+            if facts["seal"] is True:
+                located = sorted({item["page"] for item in sources if type(item.get("page")) is int and (item.get("observed_value") is True or item.get("element") == "seal")})
+                location = "第" + "、".join(map(str, located)) + "页" if located else "中"
+                return "PASS", f"原PDF{location}检测到实际印章。"
+            if facts["seal"] is False and len(pages) == count:
+                return "NG", "完整原PDF中未检测到印章。"
+            return "UNABLE", "原PDF印章尚不能确认，请核对原件。"
         table = Table(ctx)
         for fluent_sheet in table.find_sheets(_SHEET_NAME):
             if fluent_sheet.has_seal():

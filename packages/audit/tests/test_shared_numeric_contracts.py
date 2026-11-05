@@ -9,12 +9,12 @@ from audit.contracts import AuditInput, RuleInput
 from openpyxl import Workbook
 
 
-def check_workbook(tmp_path, workbook, agent_type, profile, rule_number):
+def check_workbook(tmp_path, workbook, agent_type, profile, rule_number, metadata=None):
     path = tmp_path / "numeric-contract.xlsx"
     workbook.save(path)
     workbook.close()
     agent = agent_type(
-        AuditInput(audit_id="numeric-contract", file_url=str(path)),
+        AuditInput(audit_id="numeric-contract", file_url=str(path), file_metadata=metadata or {}),
         RuleInput(
             rule_id="confirmed-numeric-rules",
             rule_profile=profile,
@@ -51,6 +51,20 @@ def test_monthly_capacity_accepts_floor_or_ceiling_and_reports_the_source_row(tm
     else:
         assert "第9行" in result.suggestions
         assert "预估月度产能与计算结果不一致" in result.suggestions
+
+
+@pytest.mark.parametrize(("jph", "monthly", "expected"), [("118.4", "26507", "PASS"), ("118.0", "26507", "NG"), ("118.4", "27000", "NG")])
+def test_pdf_display_precision_does_not_hide_inconsistent_capacity_inputs(tmp_path, jph, monthly, expected):
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "table_产能测试及评估"
+    sheet.append([
+        "线体/工序类别", "参与测试线体数量", "单线体/工序总产出JPH", "现有线体数", "班次/天", "每班净利用时间（h）",
+        "每月标准工作天数", "累积良率", "线体/工序预估月度产能", "产出数量", "净利用时间（h）",
+    ])
+    sheet.append(["SMT", "1", jph, "1", "1", "9.5", "26", "90.6%", monthly, "450", "3.8"])
+    result = check_workbook(tmp_path, workbook, V2CapacityAgent, "v2", 6, {"source_pdf_url": "original.pdf"})
+    assert result.status == expected
 
 
 @pytest.mark.parametrize(("profile", "agent_type"), [("v2", V2SupplierAgent), ("v3", V3SupplierAgent)], ids=["v2", "v3"])

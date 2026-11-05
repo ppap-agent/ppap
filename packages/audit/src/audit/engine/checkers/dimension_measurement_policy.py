@@ -75,8 +75,8 @@ def parse_quality_standard_range(value: Any) -> tuple[float, float] | None:
     if match:
         base = float(match.group(1))
         upper_tol = float(match.group(2))
-        lower_tol = abs(float(match.group(3)))
-        return (base - lower_tol, base + upper_tol)
+        lower_tol = float(match.group(3))
+        return (base + min(lower_tol, upper_tol), base + max(lower_tol, upper_tol))
 
     match = re.fullmatch(r"(-?\d+\.?\d*)\s*\+\s*(\d+\.?\d*)", s)
     if match:
@@ -183,7 +183,7 @@ def classify_quality_standard(value: Any) -> tuple[str, tuple[float, float] | No
     if matched_prefix is not None:
         suffix = normalized.removeprefix(matched_prefix)
         if suffix and re.fullmatch(r"-?\d+(?:\.\d+)?", suffix):
-            return "recognized_non_range", None
+            return "numeric_range", (0.0, float(suffix))
 
     if PURE_NOMINAL_STANDARD_RE.fullmatch(normalized):
         return "recognized_non_range", None
@@ -201,8 +201,9 @@ class MeasurementCheck:
 
 def check_tolerance(standard: Any, measurements: tuple[Any, ...], result: Any, method: Any) -> MeasurementCheck:
     """Apply existing rule 3 to one known dimension record."""
-    # Rule 3 has always checked compact cell text; other rules use raw values.
-    measurements = tuple("" if value is None else "".join(str(value).split()) for value in measurements)
+    # Converted cells can contain several measurements separated by line breaks.
+    # Keep those boundaries while accepting spaces between a number and its unit.
+    measurements = tuple("" if value is None else ";".join("".join(line.split()) for line in str(value).splitlines()) for value in measurements)
     standard_text = "" if standard is None else str(standard)
     result_text = "" if result is None else str(result)
     method_text = "" if method is None else str(method)

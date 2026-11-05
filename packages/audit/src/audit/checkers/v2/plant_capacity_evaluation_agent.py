@@ -33,17 +33,40 @@ class PlantCapacityEvaluationAgent(ExcelAgent):
 
     DOC_TYPE = PpapDocumentType.PLANT_CAPACITY_EVALUATION_REPORT
 
-    def _is_value_numeric(self, value: object) -> bool:
-        if isinstance(value, str) and value.strip() == "":
-            return False
+    def _is_value_numeric(self, value: object, *, percent: bool = False) -> bool:
         try:
-            float(str(value))
+            self._number(value, percent=percent)
             return True
-        except (TypeError, ValueError):
+        except (ArithmeticError, ValueError, TypeError):
             return False
 
-    def _is_ocr_table_sheet(self, sheet_name: str) -> bool:
-        return str(sheet_name or "").lower().startswith("table_")
+    @staticmethod
+    def _number(value: object, *, percent: bool = False) -> Decimal:
+        text = str(value).strip()
+        if text.endswith("%") and not percent:
+            raise ValueError("Percentage is only valid for a yield field")
+        number = Decimal(text.rstrip("%"))
+        if not number.is_finite():
+            raise ValueError("Non-finite capacity value")
+        return number / 100 if text.endswith("%") else number
+
+    def _matches_calculation(self, reported: str, calculated: Decimal) -> bool:
+        tolerance = Decimal("0.0001")
+        metadata = self.audit_file.file_metadata or {}
+        if metadata.get("source_pdf_url"):
+            # A PDF stores the displayed value, including its decimal precision.
+            text = reported.rstrip("%")
+            tolerance = Decimal("0.5").scaleb(Decimal(text).as_tuple().exponent)
+            if reported.endswith("%"):
+                tolerance /= 100
+        return abs(self._number(reported, percent=True) - calculated) <= tolerance
+
+    def _display_interval(self, value: str) -> tuple[Decimal, Decimal]:
+        number = self._number(value, percent=True)
+        half_unit = Decimal("0.5").scaleb(Decimal(value.rstrip("%")).as_tuple().exponent)
+        if value.endswith("%"):
+            half_unit /= 100
+        return max(Decimal(0), number - half_unit), number + half_unit
 
     @rule("关键字段完整性检查")
     def rule_1(self, ctx: RuleContext) -> Tuple[str, str]:
@@ -143,32 +166,28 @@ class PlantCapacityEvaluationAgent(ExcelAgent):
         try:
             section = Table(ctx).sheet("主表").section("产能数据区")
             columns = section.columns("良率", "合格品数", "产出数量")
-            is_ocr_table = self._is_ocr_table_sheet(section.sheet_title)
 
             for row in section.rows_from(columns):
                 yield_value = row.value("良率", compact=True).lower()
                 qualified_qty_value = row.value("合格品数", compact=True).lower()
                 output_qty_value = row.value("产出数量", compact=True).lower()
 
-                if self._is_value_numeric(yield_value) and self._is_value_numeric(qualified_qty_value) and self._is_value_numeric(output_qty_value):
-                    yield_num = float(yield_value)
-                    qualified_qty_num = float(qualified_qty_value)
-                    output_qty_num = float(output_qty_value)
+                if self._is_value_numeric(yield_value, percent=True) and self._is_value_numeric(qualified_qty_value) and self._is_value_numeric(output_qty_value):
+                    qualified_qty_num = self._number(qualified_qty_value)
+                    output_qty_num = self._number(output_qty_value)
                     if output_qty_num == 0:
                         return (
                             "NG",
                             f"第{row.row_index}行产出数量为0，无法计算良率。",
                         )
                     calculated_yield = qualified_qty_num / output_qty_num
-                    if abs(calculated_yield - yield_num) > 0.0001:
+                    if not self._matches_calculation(yield_value, calculated_yield):
                         return (
                             "NG",
                             f"第{row.row_index}行良率与“合格品数÷产出数量”不一致。",
                         )
                 else:
                     if yield_value in {"", "none", "nan"} and qualified_qty_value in {"", "none", "nan"} and output_qty_value in {"", "none", "nan"}:
-                        continue
-                    if is_ocr_table:
                         continue
                     return (
                         "NG",
@@ -187,9 +206,6 @@ class PlantCapacityEvaluationAgent(ExcelAgent):
         """
         try:
             section = Table(ctx).sheet("主表").section("产能数据区")
-            is_ocr_table = self._is_ocr_table_sheet(section.sheet_title)
-            if is_ocr_table:
-                return "PASS", ""
             columns = section.columns(
                 "单线体/工序总产出JPH",
                 "产出数量",
@@ -204,25 +220,22 @@ class PlantCapacityEvaluationAgent(ExcelAgent):
                 test_line_qty_value = row.value("参与测试线体数量", compact=True).lower()
 
                 if self._is_value_numeric(jph_value) and self._is_value_numeric(output_qty_value) and self._is_value_numeric(net_util_time_value) and self._is_value_numeric(test_line_qty_value):
-                    jph_num = float(jph_value)
-                    output_qty_num = float(output_qty_value)
-                    net_util_time_num = float(net_util_time_value)
-                    test_line_qty_num = float(test_line_qty_value)
+                    output_qty_num = self._number(output_qty_value)
+                    net_util_time_num = self._number(net_util_time_value)
+                    test_line_qty_num = self._number(test_line_qty_value)
                     if net_util_time_num == 0 or test_line_qty_num == 0:
                         return (
                             "NG",
                             f"第{row.row_index}行净利用时间或参与测试线体数量为0，无法计算JPH。",
                         )
                     calculated_jph = output_qty_num / net_util_time_num / test_line_qty_num
-                    if abs(calculated_jph - jph_num) > 0.0001:
+                    if not self._matches_calculation(jph_value, calculated_jph):
                         return (
                             "NG",
                             f"第{row.row_index}行JPH与计算结果不一致。",
                         )
                 else:
                     if jph_value in {"", "none", "nan"} and output_qty_value in {"", "none", "nan"} and net_util_time_value in {"", "none", "nan"} and test_line_qty_value in {"", "none", "nan"}:
-                        continue
-                    if is_ocr_table:
                         continue
                     return (
                         "NG",
@@ -249,9 +262,9 @@ class PlantCapacityEvaluationAgent(ExcelAgent):
                 "每班净利用时间（h）",
                 "每月标准工作天数",
                 "累积良率",
+                optional=("产出数量", "净利用时间（h）", "参与测试线体数量"),
             )
 
-            is_ocr_table = self._is_ocr_table_sheet(section.sheet_title)
             for row in section.rows_from(columns):
                 monthly_capacity_value = row.value("线体/工序预估月度产能", compact=True).lower()
                 jph_value = row.value("单线体/工序总产出JPH", compact=True).lower()
@@ -262,8 +275,8 @@ class PlantCapacityEvaluationAgent(ExcelAgent):
                 cumulative_yield_value = row.value("累积良率", compact=True).lower()
 
                 if all(
-                    self._is_value_numeric(v)
-                    for v in [
+                    self._is_value_numeric(v, percent=index == 6)
+                    for index, v in enumerate([
                         monthly_capacity_value,
                         jph_value,
                         existing_line_qty_value,
@@ -271,19 +284,30 @@ class PlantCapacityEvaluationAgent(ExcelAgent):
                         net_util_time_per_shift_value,
                         standard_work_days_per_month_value,
                         cumulative_yield_value,
-                    ]
+                    ])
                 ):
-                    monthly_capacity_num = Decimal(monthly_capacity_value)
-                    jph_num = Decimal(jph_value)
-                    existing_line_qty_num = Decimal(existing_line_qty_value)
-                    shifts_per_day_num = Decimal(shifts_per_day_value)
-                    net_util_time_per_shift_num = Decimal(net_util_time_per_shift_value)
-                    standard_work_days_per_month_num = Decimal(standard_work_days_per_month_value)
-                    cumulative_yield_num = Decimal(cumulative_yield_value)
+                    monthly_capacity_num = self._number(monthly_capacity_value)
+                    jph_num = self._number(jph_value)
+                    existing_line_qty_num = self._number(existing_line_qty_value)
+                    shifts_per_day_num = self._number(shifts_per_day_value)
+                    net_util_time_per_shift_num = self._number(net_util_time_per_shift_value)
+                    standard_work_days_per_month_num = self._number(standard_work_days_per_month_value)
+                    cumulative_yield_num = self._number(cumulative_yield_value, percent=True)
 
                     calculated_monthly_capacity = jph_num * existing_line_qty_num * shifts_per_day_num * net_util_time_per_shift_num * standard_work_days_per_month_num * cumulative_yield_num
                     lower_bound = calculated_monthly_capacity.to_integral_value(rounding=ROUND_FLOOR)
                     upper_bound = calculated_monthly_capacity.to_integral_value(rounding=ROUND_CEILING)
+                    if (self.audit_file.file_metadata or {}).get("source_pdf_url"):
+                        inputs = ("产出数量", "净利用时间（h）", "参与测试线体数量")
+                        if all(name in columns and self._is_value_numeric(row.value(name, compact=True)) for name in inputs):
+                            output, hours, lines = (self._number(row.value(name, compact=True)) for name in inputs)
+                            if hours <= 0 or lines <= 0 or not self._matches_calculation(jph_value, output / hours / lines):
+                                return "NG", f"第{row.row_index}行月度产能使用的JPH与产出数量、净利用时间及线体数量不一致。"
+                        jph_low, jph_high = self._display_interval(jph_value)
+                        yield_low, yield_high = self._display_interval(cumulative_yield_value)
+                        factor = existing_line_qty_num * shifts_per_day_num * net_util_time_per_shift_num * standard_work_days_per_month_num
+                        lower_bound = (jph_low * yield_low * factor).to_integral_value(rounding=ROUND_FLOOR)
+                        upper_bound = (jph_high * yield_high * factor).to_integral_value(rounding=ROUND_CEILING)
                     if not lower_bound <= monthly_capacity_num <= upper_bound:
                         return (
                             "NG",
@@ -302,8 +326,6 @@ class PlantCapacityEvaluationAgent(ExcelAgent):
                             cumulative_yield_value,
                         ]
                     ):
-                        continue
-                    if is_ocr_table:
                         continue
                     return (
                         "NG",

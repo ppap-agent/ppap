@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from audit.engine.checkers.dimension_measurement_policy import check_duplicates, check_qualitative_method, check_tolerance, is_strict_ok_text, split_tokens
+from audit.engine.checkers.dimension_measurement_policy import check_duplicates, check_qualitative_method, check_tolerance, is_strict_ok_text, normalize_quality_standard_text, split_tokens
 from audit.engine.rule_engine import Row, RuleContext, Table
 from audit.kinds import PpapDocumentType
 
@@ -106,6 +106,43 @@ class DimensionMeasurementExcelAgent(ExcelAgent):
 
     DOC_TYPE = PpapDocumentType.DIMENSION_MEASUREMENT_REPORT
 
+    def _original_pdf_measurements(self, row: Row, observation: Doc01RowObservation) -> tuple[tuple[Any, ...], str]:
+        """Recover cell boundaries using the same serial and standard in the source.
+
+        Conversion can put several original measurement cells into one cell.
+        A line break then cannot distinguish a wrapped decimal from a new value.
+        """
+        from pathlib import Path
+
+        source = (self.audit_file.file_metadata or {}).get("source_pdf_url")
+        if not source or not Path(source).is_file() or "序号" not in row.columns:
+            return observation.raw_measurements, ""
+
+        def key(serial, standard):
+            return str(serial).strip(), re.sub(r"\s+", "", normalize_quality_standard_text(standard))
+
+        cache = getattr(self, "_original_dimension_cells", None)
+        if cache is None:
+            import fitz
+
+            cache = self._original_dimension_cells = {}
+            with fitz.open(source) as document:
+                for page in document:
+                    for table in page.find_tables().tables:
+                        for cells in table.extract():
+                            if len(cells) not in (10, 11) or not str(cells[0] or "").isdigit():
+                                continue
+                            if not cells[2] or not cells[-1]:
+                                continue
+                            measurements = tuple("" if value is None else "".join(str(value).split()) for value in cells[-6:-1])
+                            cache.setdefault(key(cells[0], cells[2]), []).append((measurements, page.number + 1, str(cells[-1]).strip()))
+        serial = row.value("序号", compact=True)
+        matches = cache.get(key(serial, observation.standard_text), [])
+        if len(matches) == 1 and matches[0][2].lower() == observation.result_text.strip().lower():
+            measurements, page, _ = matches[0]
+            return measurements, f"原PDF第{page}页序号{serial}"
+        return observation.raw_measurements, ""
+
     @rule("标题识别检查")
     def rule_1(self, ctx: RuleContext) -> tuple[str, str]:
         block = Table(ctx).field_block("标题区")
@@ -141,9 +178,11 @@ class DimensionMeasurementExcelAgent(ExcelAgent):
                 if obs.section_group != "尺寸":
                     continue
 
-                decision = check_tolerance(obs.standard_text, obs.raw_measurements, obs.result_text, obs.method_text)
+                measurements, original_location = self._original_pdf_measurements(row, obs)
+                decision = check_tolerance(obs.standard_text, measurements, obs.result_text, obs.method_text)
                 if decision.status == "NG":
-                    return "NG", f"工作表{row.sheet_title}第{obs.row_index}行{decision.reason}"
+                    location = original_location or f"工作表{row.sheet_title}第{obs.row_index}行"
+                    return "NG", f"{location}{decision.reason}"
                 checked_rows += int(decision.numeric_checked)
 
         if checked_rows == 0:
