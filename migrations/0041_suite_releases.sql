@@ -55,6 +55,9 @@ BEGIN
         RAISE EXCEPTION 'suite_tenant_mismatch' USING ERRCODE = '23514';
     END IF;
     IF TG_TABLE_NAME = 'suite_validations' THEN
+        IF TG_OP = 'UPDATE' AND (NEW.tenant_id IS DISTINCT FROM OLD.tenant_id OR NEW.revision_id <> OLD.revision_id) THEN
+            RAISE EXCEPTION 'immutable_suite_validation_scope' USING ERRCODE = '23514';
+        END IF;
         IF NEW.tenant_id IS NULL AND current_user <> 'ppap_migrator' THEN
             RAISE EXCEPTION 'official_validation_write_forbidden';
         END IF;

@@ -15,6 +15,8 @@ from api import web_contract as wc
 class SuiteValidation(TypedDict):
     status: Literal["verified", "unverified", "stale"]
     revision: int
+    write_revision: int
+    proof_scope: Literal["official", "tenant", "none"]
     total_samples: int
     passed_samples: int
     new_errors: int

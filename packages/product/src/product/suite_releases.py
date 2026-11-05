@@ -15,4 +15,15 @@ def publication_fingerprint(*, suite_key: str, revision_id: str, expected_revisi
 
 
 def empty_validation() -> dict[str, Any]:
-    return {"status": "unverified", "revision": 0, "total_samples": 0, "passed_samples": 0, "new_errors": 0, "verified": False, "samples_not_rerun": False, "reasons": ["no_validation_proof"]}
+    return {
+        "status": "unverified",
+        "revision": 0,
+        "write_revision": 0,
+        "proof_scope": "none",
+        "total_samples": 0,
+        "passed_samples": 0,
+        "new_errors": 0,
+        "verified": False,
+        "samples_not_rerun": False,
+        "reasons": ["no_validation_proof"],
+    }
