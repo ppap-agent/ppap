@@ -57,7 +57,8 @@ def test_xls_cells_come_from_the_original_without_libreoffice(monkeypatch):
         raise AssertionError("cell reads must not convert the workbook")
 
     monkeypatch.setattr("documents.excel.legacy.convert_excel", refuse)
-    source = next((Path(__file__).resolve().parents[3] / "assets").rglob("控制计划 -CETUS.xls"))
+    # 控制计划 -CETUS.xls, content-addressed in the corpus.
+    source = Path(__file__).resolve().parents[3] / "assets" / "corpus" / "files" / "09ea288088c0028eb96f422b04b62d867dca37c6778ff9518766e4df46809620.xls"
     workbook = ExcelLoader.load_workbook(str(source), options=ExcelLoadOptions(data_only=False))
     try:
         assert workbook.sheetnames == ["扰流板"]
