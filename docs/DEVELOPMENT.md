@@ -341,6 +341,12 @@ Excel 的图形事实通过 `audit.engine.checkers.excel_field_evidence` 读取�
 
 尺寸审核把检查数据、判定标准、单位和结果绑定到同一原始记录。明确的不同量纲不能直接比较；支持的同量纲单位先换算，单位无法可靠确定时返回 UNABLE。跨文件读取绑定本轮冻结文件版本，完整匹配零件标识及工序号，保留两份原件的单元格位置。不同文档的修订计数不要求相同；两份原件都明确声明同零件的工程更改水平时，冲突不能通过。身份不足不能支持 PASS，也不借用相近编号的记录。历史文件、规则与结果不变。
 
+## Checker Core 官方发布
+
+官方 Suite 的安装、回归与发布是三个动作。`product.seed_standard_suites --apply` 只保存不可变候选；平台以 migrator 角色调用 `SuiteReleaseStore.record_official_validation` 保存独立回归证明，再调用 `publish_official(revision_id, expected_revision=..., expected_validation_revision=...)` 发布。发布前用 `official_active(suite_key)` 读取官方指针修订；首次为 0，验证修订取刚确认的证明。发布在同一事务内重查证明、当前关联 Suite、共享库版本及对象字节，并以 CAS 更新唯一官方指针。过期发布请求须先读回，不自动用新修订重发。验证或保存新候选不会替换当前官方版本；回滚也须显式发布准确旧版本。
+
+首次启用先按关联依赖顺序验证并发布官方 Suite，再受理跟随官方版本的审核。迁移 `0048_official_suite_heads.sql` 不把既有 latest 或验证记录猜成发布批准，未激活的官方源仍可按 revision 查看；既有企业固定指针和历史 Round 不变。没有固定企业版本的租户仅跟随已发布官方指针，企业明确固定某个官方或企业 revision 后不会被后续官方发布覆盖。
+
 ## Checker Core 个人 DeepSeek 配置
 
 `GET/PUT/DELETE /me/model-config` 管理当前登录用户自己的 Key；PUT 仅接受 `api_key`，回执仅含 provider、model、configured、updated_at。部署先通过 Secret 配置同一 `PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY`，不提供默认值，也不自动生成持久密钥。替换部署加密密钥前必须保留/迁移既有密文，否则原 Key 会明确不可用。

@@ -49,6 +49,8 @@ class SuiteActive(TypedDict):
     suite_key: str
     revision: int
     current_revision_id: str | None
+    latest_official_revision_id: str | None
+    latest_official_version: int | None
     verification_status: str
     force_unverified: bool
     validation: SuiteValidation

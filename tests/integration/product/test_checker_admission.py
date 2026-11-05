@@ -73,7 +73,9 @@ class Admission:
             ),
         )
         platform = SuiteReleaseStore(self.store.settings, self.store.objects, role="migrator")
-        return platform.record_official_validation(revision.id, proof, expected_revision=0)
+        result = platform.record_official_validation(revision.id, proof, expected_revision=0)
+        platform.publish_official(revision.id, expected_revision=0, expected_validation_revision=result["write_revision"])
+        return result
 
     def draft(self, mode="standard"):
         draft = self.store.create_draft(self.alice, items=self.items)
@@ -147,7 +149,7 @@ def test_missing_official_proof_is_atomic_and_only_explicit_force_can_run(admiss
     a = admission
     draft = a.draft()
     before = a.counts()
-    with pytest.raises(ValueError, match="suite_validation_required"):
+    with pytest.raises(KeyError, match="suite_access_denied"):
         a.store.accept_draft(a.alice, draft, "missing-proof")
     assert a.counts() == before
     assert a.store.get_draft(draft)["status"] == "open"

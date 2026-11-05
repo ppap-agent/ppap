@@ -71,7 +71,12 @@ def _selected(conn, tenant_id: str | None, suite_key: str) -> dict:
         if head:
             row = _revision(conn, str(head["current_revision_id"]), tenant_id)
         else:
-            cur.execute("SELECT * FROM product.suite_revisions WHERE suite_key = %s AND tenant_id IS NULL ORDER BY revision_number DESC LIMIT 1", (suite_key,))
+            cur.execute(
+                """SELECT r.* FROM product.official_suite_heads h
+                   JOIN product.suite_revisions r ON r.id = h.current_revision_id
+                   WHERE h.suite_key = %s AND r.tenant_id IS NULL""",
+                (suite_key,),
+            )
             row = cur.fetchone()
     if row is None:
         raise KeyError("suite_access_denied")
@@ -208,6 +213,8 @@ class SuiteReleaseStore:
                         "suite_key": key,
                         "revision": 0,
                         "current_revision_id": None,
+                        "latest_official_revision_id": None,
+                        "latest_official_version": None,
                         "verification_status": "unverified",
                         "force_unverified": False,
                         "validation": empty_validation(),
@@ -224,6 +231,12 @@ class SuiteReleaseStore:
             history = [_receipt(row, published_by_name=_display_name(conn, row["published_by"], principal.tenant_id)) for row in cur.fetchall()]
             resolved = self.suites.resolve_suite(selection["revision_id"], principal.tenant_id, conn=conn)
             rules = json.loads(resolved.files["rules.json"])
+            cur.execute(
+                """SELECT h.current_revision_id, r.revision_number FROM product.official_suite_heads h
+                   JOIN product.suite_revisions r ON r.id = h.current_revision_id WHERE h.suite_key = %s""",
+                (suite_key,),
+            )
+            official = cur.fetchone()
         return {
             "title": rules.get("title") or rules.get("type") or "文件检查",
             "version": selection["version"],
@@ -232,6 +245,8 @@ class SuiteReleaseStore:
             "suite_key": suite_key,
             "revision": selection["head_revision"],
             "current_revision_id": selection["revision_id"],
+            "latest_official_revision_id": str(official["current_revision_id"]) if official else None,
+            "latest_official_version": official["revision_number"] if official else None,
             "verification_status": selection["verification_status"],
             "force_unverified": selection["force_unverified"],
             "validation": selection["validation"],
@@ -411,6 +426,63 @@ class SuiteReleaseStore:
         with self._conn() as conn, conn.transaction():
             _lock(conn, "official")
             return self._record_validation(conn, None, None, revision_id, proof, expected_revision)
+
+    def official_active(self, suite_key: str) -> dict:
+        """Platform release readback; an absent head is not the latest candidate."""
+        with self._conn() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+            conn.execute("SELECT pg_advisory_xact_lock_shared(hashtextextended('suite-publication:official', 0))")
+            cur.execute("SELECT * FROM product.official_suite_heads WHERE suite_key = %s", (_key(suite_key),))
+            head = cur.fetchone()
+        return self._official_receipt(suite_key, head)
+
+    @staticmethod
+    def _official_receipt(suite_key: str, head: dict | None) -> dict:
+        return {
+            "suite_key": suite_key,
+            "current_revision_id": str(head["current_revision_id"]) if head else None,
+            "revision": head["revision"] if head else 0,
+            "validation_revision": head["validation_revision"] if head else None,
+            "published_at": head["published_at"].isoformat() if head else None,
+        }
+
+    def publish_official(self, revision_id: str, *, expected_revision: int, expected_validation_revision: int) -> dict:
+        """Activate exactly the reviewed proof under the admission/publication lock.
+
+        Saving sources and recording tests never call this method. A late test
+        cannot promote its old candidate, and a stale publisher cannot overwrite
+        a newer release. Deliberate rollback is the same explicit CAS operation.
+        """
+        if self.role != "migrator":
+            raise PermissionError("official_suite_write_forbidden")
+        if type(expected_revision) is not int or expected_revision < 0 or type(expected_validation_revision) is not int or expected_validation_revision < 1:
+            raise ValueError("invalid_official_suite_publication")
+        with self._conn() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+            _lock(conn, "official")
+            revision = _revision(conn, revision_id, None)
+            cur.execute("SELECT * FROM product.official_suite_heads WHERE suite_key = %s FOR UPDATE", (revision["suite_key"],))
+            head = cur.fetchone()
+            if (head["revision"] if head else 0) != expected_revision:
+                raise ValueError("suite_head_conflict")
+            validation = _validation(conn, None, revision)
+            if validation["write_revision"] != expected_validation_revision:
+                raise ValueError("suite_validation_conflict")
+            if not validation["verified"] or validation["samples_not_rerun"]:
+                raise ValueError("official_suite_validation_required")
+            # Proof identity is insufficient if an object disappeared or drifted.
+            self.suites.resolve_suite(str(revision["id"]), "00000000-0000-0000-0000-000000000000", conn=conn)
+            if head:
+                cur.execute(
+                    """UPDATE product.official_suite_heads SET current_revision_id = %s, revision = revision + 1,
+                         validation_revision = %s, published_at = now() WHERE suite_key = %s AND revision = %s RETURNING *""",
+                    (revision["id"], expected_validation_revision, revision["suite_key"], expected_revision),
+                )
+            else:
+                cur.execute(
+                    """INSERT INTO product.official_suite_heads (suite_key, current_revision_id, revision, validation_revision)
+                       VALUES (%s, %s, 1, %s) RETURNING *""",
+                    (revision["suite_key"], revision["id"], expected_validation_revision),
+                )
+            return self._official_receipt(revision["suite_key"], cur.fetchone())
 
     def _record_validation(self, conn, tenant_id: str | None, user_id: str | None, revision_id: str, proof: SuiteValidationReport, expected_revision: int) -> dict:
         if type(expected_revision) is not int or expected_revision < 0:
