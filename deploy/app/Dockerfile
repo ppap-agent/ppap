@@ -33,7 +33,7 @@ RUN set -eux; \
     i=1; \
     while [ "$i" -le 5 ]; do \
       if apt-get -o Acquire::Retries=5 update \
-        && apt-get -o Acquire::Retries=5 install -y --no-install-recommends ca-certificates libgomp1 libglib2.0-0 libreoffice-writer libreoffice-calc fonts-noto-cjk; then \
+        && apt-get -o Acquire::Retries=5 install -y --no-install-recommends bash util-linux ca-certificates libgomp1 libglib2.0-0 libreoffice-writer libreoffice-calc fonts-noto-cjk; then \
         break; \
       fi; \
       if [ "$i" -eq 5 ]; then \

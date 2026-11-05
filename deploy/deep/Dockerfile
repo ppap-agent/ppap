@@ -1,19 +1,18 @@
 ARG PPAP_APP_IMAGE=ppap-worker
 FROM node:22.22.0-bookworm-slim@sha256:dd9d21971ec4395903fa6143c2b9267d048ae01ca6d3ea96f16cb30df6187d94 AS pi
 WORKDIR /opt/ppap-pi
-COPY deploy/deep/package.json deploy/deep/package-lock.json deploy/deep/pi-runner.mjs deploy/deep/pi-runner.test.mjs ./
+COPY deploy/deep/package.json deploy/deep/package-lock.json ./
 RUN npm ci --ignore-scripts --registry=https://registry.npmjs.org \
- && npm audit signatures \
- && node pi-runner.mjs --version \
+ && npm audit signatures
+COPY deploy/deep/pi-runner.mjs deploy/deep/pi-runner.test.mjs ./
+RUN node pi-runner.mjs --version \
  && node --test pi-runner.test.mjs \
  && rm pi-runner.test.mjs
 
 FROM ${PPAP_APP_IMAGE}
 USER root
-RUN apt-get update \
- && apt-get install -y --no-install-recommends bash util-linux \
- && rm -rf /var/lib/apt/lists/* \
- && useradd --uid 10001 --create-home --shell /bin/bash audit
+# System tools are installed in the shared application dependency layer.
+RUN useradd --uid 10001 --create-home --shell /bin/bash audit
 COPY --from=pi /usr/local/bin/node /usr/local/bin/node
 COPY --from=pi /opt/ppap-pi /opt/ppap-pi
 RUN chmod +x /opt/ppap-pi/pi-runner.mjs \

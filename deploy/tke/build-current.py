@@ -120,26 +120,25 @@ def run_source(observation: dict, sha: str) -> bool:
 def yunxiao(sha: str, attempt: Path, resume_run: int | None) -> dict[str, str]:
     expected_config_id = None
     if resume_run is None:
-        # Search existing runs before building, including older pages. Never rebuild
-        # a source just because its successful run fell off the first page.
+        # Completed builds are reused by verified registry identity in build().
+        # Query only active runs, not every successful run in the pipeline history.
         seen = set()
         active = False
         for page in range(1, 101):
-            rows = cloud("GET", FLOW + "/runs", query={"page": page})
+            rows = cloud("GET", FLOW + "/runs", query={"page": page, "perPage": 30, "status": "RUNNING"})
             if not rows:
                 break
             ids = {row.get("pipelineRunId", row.get("id")) for row in rows}
             require(not ids & seen, "Flow pagination repeated; use --run-id instead of rebuilding blindly")
             seen.update(ids)
-            active |= any(row["status"] not in {"SUCCESS", "FAIL", "FAILED", "CANCELED", "CANCELLED"} for row in rows)
-            candidates = [row.get("pipelineRunId", row.get("id")) for row in rows if row["status"] not in {"FAIL", "FAILED", "CANCELED", "CANCELLED"}]
             with ThreadPoolExecutor(max_workers=4) as pool:
-                observations = list(pool.map(lambda rid: cloud("GET", FLOW + f"/runs/{rid}"), candidates))
-            for rid, previous in zip(candidates, observations, strict=True):
+                observations = list(pool.map(lambda rid: cloud("GET", FLOW + f"/runs/{rid}"), ids))
+            for rid, previous in zip(ids, observations, strict=True):
                 if run_source(previous, sha) and previous["status"] not in {"FAIL", "FAILED", "CANCELED", "CANCELLED"}:
                     return yunxiao(sha, attempt, int(rid))
+                active |= previous["status"] not in {"SUCCESS", "FAIL", "FAILED", "CANCELED", "CANCELLED"}
         else:
-            raise ReleaseError("Flow history search limit reached; select --run-id instead of duplicating a build")
+            raise ReleaseError("Flow active-run search limit reached; select --run-id")
         require(not active, "release pipeline has an active run; do not reconfigure it")
         branch = source_branch(sha, attempt)
         config = (HERE / "yunxiao.yaml").read_text().replace("__SOURCE_SHA__", sha)
@@ -250,16 +249,11 @@ def registry_images(sha: str, images: dict[str, str]) -> tuple[dict[str, str], d
         headers = {"Accept": "application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json"}
         code, response_headers, raw = registry_get(url, headers)
         if auth:
-            require(code == 401, "TCR repository must reject anonymous access")
+            require(code == 401, "TCR registry did not provide an authentication challenge")
             challenge = dict(re.findall(r'(realm|service)="([^"]+)"', response_headers.get("WWW-Authenticate", "")))
             realm = challenge.get("realm", "")
             require(urllib.parse.urlsplit(realm).scheme == "https" and urllib.parse.urlsplit(realm).hostname == host, "untrusted registry authentication realm")
             tokenurl = realm + "?" + urllib.parse.urlencode({"service": challenge["service"], "scope": "repository:" + path + ":pull"})
-            token_code, _, body = registry_get(tokenurl, {})
-            require(token_code == 200, "anonymous registry token unavailable")
-            anonymous = json.loads(body)
-            anonymous_headers = {**headers, "Authorization": "Bearer " + (anonymous.get("token") or anonymous["access_token"])}
-            require(registry_get(url, anonymous_headers)[0] in {401, 403}, "TCR image is publicly accessible")
             tokenurl += "&" + urllib.parse.urlencode({"account": base64.b64decode(auth).decode().split(":", 1)[0]})
             token_code, _, body = registry_get(tokenurl, {"Authorization": "Basic " + auth, "Cache-Control": "no-cache"})
             require(token_code == 200, "TCR authentication failed")
@@ -310,14 +304,20 @@ def build(sha: str, provider: str, attempt: Path, run_id: int | None) -> None:
     require(not run(["git", "status", "--porcelain", "--", "deploy/tke/current.yaml"]).strip(), "current.yaml has local edits; review/commit them before updating pins")
     prefix = PREFIXES[provider]
     pins = None
-    if provider == "yunxiao":
-        images = yunxiao(sha, attempt, run_id)
-    else:
-        require(run_id is None, "--run-id applies only to Yunxiao")
-        images = {c: prefix + c + ":" + sha for c in COMPONENTS}
+    images = {c: prefix + c + ":" + sha for c in COMPONENTS}
+    if run_id is None:
         try:
             pins, _ = registry_images(sha, images)
         except RegistryImageMissing:
+            pass  # Only a confirmed missing image permits a new build.
+        else:
+            print("Reusing four verified images; build skipped.", flush=True)
+    if provider == "yunxiao":
+        if pins is None:
+            images = yunxiao(sha, attempt, run_id)
+    else:
+        require(run_id is None, "--run-id applies only to Yunxiao")
+        if pins is None:
             # Run this fallback on the unregistry build host with its existing Docker login.
             # Only tracked files from the selected commit enter the build context.
             archive = attempt / "source.tar"
@@ -337,8 +337,6 @@ def build(sha: str, provider: str, attempt: Path, run_id: int | None) -> None:
                 timeout=7200,
             )
             require(result.returncode == 0, "unregistry build failed; do not deploy")
-        else:
-            print("Reusing four verified unregistry images; build skipped.", flush=True)
     if pins is None:
         pins, _ = registry_images(sha, images)
     config = HERE / "current.yaml"

@@ -98,7 +98,7 @@ def test_existing_matching_build_is_reused_without_reconfiguring(tmp_path):
     def cloud(method, path, *args, **kwargs):
         posts.append(method)
         if path.endswith("/runs"):
-            return [{"pipelineRunId": 2, "status": "SUCCESS"}]
+            return [{"pipelineRunId": 2, "status": "RUNNING"}]
         if path.endswith("/runs/2"):
             return source_run()
         if path.endswith("/steps"):
@@ -190,27 +190,76 @@ def test_invalid_source_blocks_build_before_cloud_actions(tmp_path, candidate, a
             operation(candidate, "yunxiao", tmp_path, None)
 
 
-def test_existing_success_outside_first_flow_page_is_not_rebuilt(tmp_path):
+@pytest.mark.parametrize("provider", ["yunxiao", "unregistry"])
+def test_existing_source_images_skip_all_flow_history_and_build_calls(tmp_path, provider):
+    operation = BUILD["build"]
+    (tmp_path / "current.yaml").write_text((ROOT / "deploy/tke/current.yaml").read_text())
+    checks = []
+
+    def registry(sha, refs):
+        checks.append((sha, refs))
+        return IMAGES, CONFIGS
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("verified images must skip cloud/build calls")
+
+    with patch.dict(
+        operation.__globals__,
+        {
+            "HERE": tmp_path,
+            "source_commit": lambda sha: None,
+            "run": lambda *args: b"",
+            "registry_images": registry,
+            "yunxiao": forbidden,
+            "cloud": forbidden,
+        },
+    ):
+        operation(SHA, provider, tmp_path, None)
+    assert len(checks) == 1
+    assert checks[0][1] == {c: BUILD["PREFIXES"][provider] + c + ":" + SHA for c in COMPONENTS}
+
+
+def test_flow_search_only_inspects_active_runs_and_blocks_other_source(tmp_path):
     operation = BUILD["yunxiao"]
-    pages = []
+    queries = []
 
     def cloud(method, path, body=None, query=None):
-        assert method == "GET"
+        assert method == "GET", "another active source must prevent pipeline writes"
         if path.endswith("/runs"):
-            pages.append(query["page"])
-            return [{"pipelineRunId": 3 if query["page"] == 1 else 2, "status": "SUCCESS"}]
-        if path.endswith("/runs/3"):
-            return source_run("0" * 40)
-        if path.endswith("/runs/2"):
-            return source_run()
-        if path.endswith("/steps"):
-            return [{"buildId": 10}]
-        return {"logs": "\n".join(["PPAP_RELEASE_SOURCE " + SHA, *(f"PPAP_RELEASE_IMAGE {c} {IMAGES[c]}" for c in COMPONENTS)]), "more": False}
+            queries.append(query)
+            return [{"pipelineRunId": 3, "status": "RUNNING"}] if query["page"] == 1 else []
+        assert path.endswith("/runs/3")
+        return source_run("0" * 40, "RUNNING")
 
     with patch.dict(operation.__globals__, {"cloud": cloud}):
-        assert operation(SHA, tmp_path, None) == IMAGES
-    assert pages == [1, 2]
-    assert not (tmp_path / "dispatch-intent.json").exists()
+        with pytest.raises(ValueError, match="active run"):
+            operation(SHA, tmp_path, None)
+    assert all(q["status"] == "RUNNING" and q["perPage"] == 30 for q in queries)
+
+
+def test_unknown_registry_result_cannot_dispatch_a_new_build(tmp_path):
+    operation = BUILD["build"]
+    (tmp_path / "current.yaml").write_text("unchanged")
+
+    def registry(*args):
+        raise RuntimeError("registry transport failed")
+
+    def forbidden(*args):
+        pytest.fail("unknown is not a missing image")
+
+    with patch.dict(
+        operation.__globals__,
+        {
+            "HERE": tmp_path,
+            "source_commit": lambda sha: None,
+            "run": lambda *args: b"",
+            "registry_images": registry,
+            "yunxiao": forbidden,
+        },
+    ):
+        with pytest.raises(RuntimeError, match="transport"):
+            operation(SHA, "yunxiao", tmp_path, None)
+    assert (tmp_path / "current.yaml").read_text() == "unchanged"
 
 
 def test_backup_reuses_verified_images_without_build_or_duplicate_metadata_reads(tmp_path):
@@ -245,3 +294,91 @@ def test_queued_build_waits_for_source_metadata_without_dispatching(tmp_path):
     with patch.dict(operation.__globals__, {"cloud": cloud}), patch.object(BUILD["time"], "sleep", side_effect=waits.append):
         assert operation(SHA, tmp_path, 2) == IMAGES
     assert waits == [15]
+
+
+def test_tcr_verification_uses_authenticated_token_without_anonymous_permission_probe():
+    import base64
+
+    operation = BUILD["registry_images"]
+    image = {
+        "architecture": "amd64",
+        "os": "linux",
+        "config": {
+            "Env": ["PPAP_BUILD_SHA=" + SHA],
+            "Labels": {"org.opencontainers.image.revision": SHA, "org.opencontainers.image.source": "https://github.com/ppap-agent/ppap"},
+        },
+    }
+    config = json.dumps(image).encode()
+    config_digest = BUILD["digest"](config)
+    manifest = json.dumps({"config": {"digest": config_digest, "size": len(config)}}).encode()
+    manifest_digest = BUILD["digest"](manifest)
+    credential = base64.b64encode(b"probe-user:probe-password").decode()
+    secret = {
+        "data": {
+            ".dockerconfigjson": base64.b64encode(
+                json.dumps(
+                    {
+                        "auths": {
+                            "icoastline.tencentcloudcr.com": {"auth": credential},
+                        }
+                    }
+                ).encode()
+            ).decode()
+        }
+    }
+    tokens = []
+
+    def get(url, headers):
+        if "/token?" in url:
+            assert headers.get("Authorization") == "Basic " + credential
+            tokens.append(url)
+            return 200, {}, b'{"token":"probe-bearer"}'
+        if not headers.get("Authorization"):
+            return 401, {"WWW-Authenticate": 'Bearer realm="https://icoastline.tencentcloudcr.com/token",service="tcr"'}, b""
+        assert headers["Authorization"] == "Bearer probe-bearer"
+        if "/blobs/" in url:
+            return 200, {}, config
+        return 200, {"Docker-Content-Digest": manifest_digest}, manifest
+
+    with patch.dict(
+        operation.__globals__,
+        {
+            "tcr_pull_secret": lambda: "pull-secret",
+            "kube": lambda *args: json.dumps(secret).encode(),
+            "registry_get": get,
+        },
+    ):
+        pins, _ = operation(SHA, {c: BUILD["PREFIXES"]["yunxiao"] + c + ":" + SHA for c in COMPONENTS})
+    assert len(tokens) == len(COMPONENTS)
+    assert all(ref.endswith("@" + manifest_digest) for ref in pins.values())
+
+
+def test_confirmed_missing_images_build_once_then_verify_before_pinning(tmp_path):
+    operation = BUILD["build"]
+    (tmp_path / "current.yaml").write_text((ROOT / "deploy/tke/current.yaml").read_text())
+    events = []
+
+    def registry(sha, refs):
+        events.append("registry")
+        if len(events) == 1:
+            raise BUILD["RegistryImageMissing"]("confirmed missing")
+        assert refs == IMAGES
+        return IMAGES, CONFIGS
+
+    def flow(sha, attempt, run_id):
+        events.append("build")
+        return IMAGES
+
+    with patch.dict(
+        operation.__globals__,
+        {
+            "HERE": tmp_path,
+            "source_commit": lambda sha: None,
+            "run": lambda *args: b"",
+            "registry_images": registry,
+            "yunxiao": flow,
+        },
+    ):
+        operation(SHA, "yunxiao", tmp_path, None)
+    assert events == ["registry", "build", "registry"]
+    assert all(ref in (tmp_path / "current.yaml").read_text() for ref in IMAGES.values())

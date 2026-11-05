@@ -116,6 +116,17 @@ kubectl kustomize deploy/tke \
 
 镜像变化会自动触发对应 Deployment 的滚动更新。命令成功表示更新已提交，不表示所有 Pod 已就绪。提交更新的目标时间为 20 秒内；下载镜像、调度和应用启动可能更久。
 
+需要报告“部署完成”时，对受影响的 Deployment 各读取一次滚动结果；未受影响组件不检查。不把 `apply` 成功当成 Pod 已就绪，也不循环追加环境变量、日志或业务验收检查：
+
+```sh
+kubectl -n ppap-test rollout status deployment/ppap-current-worker --timeout=180s
+kubectl -n ppap-test rollout status deployment/ppap-current-api --timeout=180s
+kubectl -n ppap-test rollout status deployment/ppap-current-web --timeout=180s
+```
+
+API／Web readiness 和 Deep 本地通信探针由 Kubernetes 持续执行，不在发布命令中重复实现。Worker 当前没有独立 readinessProbe；Pod Ready 不等于已验证队列消费。仅在本次修改涉及消费链路或出现异常时检查 Worker 心跳。普通发布不调用真实模型、Paddle 或通知接口。
+
+
 此 apply 命令只更新应用的 ConfigMap 与 Deployment；Secret 已按前述步骤单独同步。不运行初始化 Job、数据库迁移，也不修改旧版入口、Office 或存储卷。变更 Worker 协议或数据库结构时，按该变更的兼容要求安排更新顺序。
 
 ### 仅修改配置或重启
@@ -164,6 +175,15 @@ python3 deploy/tke/build-current.py <full-source-sha> --run-id <run-id>
 ```
 
 构建复用 `docker-bake.hcl` 的四目标图和缓存，核对实际源版本与镜像 digest 后写入 `current.yaml`。提交这些 pin 后，使用上面的原生部署命令。
+
+构建保持四组件统一源码 SHA，一次 Bake 共享步骤并按依赖调度；不增加按文件选择组件的发布分支。固定系统工具放在应用源码之前，Deep 的 npm 安装及签名检查只依赖锁文件，runner 测试在源码层执行。依赖校验和打包后的 import 检查继续保留。
+
+云效使用临时 `docker-container` BuildKit，将所有中间阶段缓存导出到现有 TCR 的各组件 `:buildkit-cache`（`mode=max`）。首次构建仍可导入原 `:build-cache`；两个缓存引用都不能作为部署镜像。后续构建复用依赖层，不依赖临时 Runner 的本地磁盘或 uv cache mount 持久化。首次填充缓存仍需完整构建，后续实际收益由构建步骤耗时确认。
+
+默认入口先验证该 SHA 的四个镜像；全部存在且身份正确则直接复用，不读取历史成功运行。仅有镜像明确缺失时查询活动流水线：同源码跟进原 run，不同源码活动时停止；历史运行通过 `--run-id` 显式恢复。查询使用云效 [ListPipelineRuns 的 RUNNING 过滤](https://help.aliyun.com/en/yunxiao/developer-reference/listpipelineruns)，不再逐条读取成功历史。
+
+每次保留 digest／config 字节、平台及源码身份验证；仓库匿名访问检查移至 TCR 创建或访问权限变更时，由权限维护者确认仓库及镜像不能匿名拉取。日常构建只执行正常认证拉取，不重复申请匿名 token、探测公开权限。网络、认证或身份验证失败不当作“镜像不存在”，不能据此重新触发构建。
+
 
 显式选择备用 unregistry 时，在已有 registry 登录的构建主机运行：
 
