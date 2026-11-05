@@ -27,8 +27,15 @@ class Assets:
 
 def baseline():
     assets = Assets()
-    assets.add("official", files={"rules.json": b'{"rules":[{"id":"r1","rule_to_check":"Required"}]}', "checker.py": b"def check(ctx): pass",
-                                 "templates.json": b'[{"kind":"structure","columns":["Part"]}]', "tests.json": b'[]'})
+    assets.add(
+        "official",
+        files={
+            "rules.json": b'{"rules":[{"id":"r1","rule_to_check":"Required"}]}',
+            "checker.py": b"def check(ctx): pass",
+            "templates.json": b'[{"kind":"structure","columns":["Part"]}]',
+            "tests.json": b"[]",
+        },
+    )
     return assets
 
 
@@ -73,7 +80,7 @@ def test_resolution_fails_closed(fault):
         assets.rows["official"] = replace(assets.rows["official"], resolved_digest="0" * 64)
     else:
         for number in range(15):
-            assets.add(f"depth{number}", owner="a", base=f"depth{number-1}" if number else "child")
+            assets.add(f"depth{number}", owner="a", base=f"depth{number - 1}" if number else "child")
         assets.rows["child"] = replace(assets.rows["child"], base_revision_id="depth14")
     with pytest.raises((ValueError, KeyError)):
         assets.resolve("child")
@@ -124,3 +131,22 @@ def test_freeze_validation_stales_text_and_direct_dependencies_not_library():
     args["suite"] = assets.resolve("changed")
     with pytest.raises(ValueError, match="validation_required"):
         freeze_execution(**args)
+
+
+def test_feedback_normalization_preserves_suite_provenance_and_only_normalizes_appendix():
+    from product.store.deep_feedback import normalize_feedback_body
+
+    rules = {
+        "kind": "engine",
+        "rule_profile": "v4",
+        "suite_key": "UAES:U08",
+        "checker_binding": {"R1": "checker:check"},
+        "rules": [{"id": "R1", "rule_to_check": "Exact source wording"}],
+        "appendix": [],
+    }
+    normalized = normalize_feedback_body(rules)
+    assert normalized == rules
+    normalized["rules"][0]["rule_to_check"] = "mutated"
+    assert rules["rules"][0]["rule_to_check"] == "Exact source wording"
+    with pytest.raises(ValueError, match="invalid_rule_appendix"):
+        normalize_feedback_body({**rules, "appendix": [{"id": "invalid"}]})

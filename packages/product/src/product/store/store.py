@@ -3599,7 +3599,7 @@ class AuthStore:
             row = conn.execute(
                 """UPDATE engine.jobs SET lease_until = now() + interval '30 seconds', updated_at = now()
                 WHERE id = %s AND attempt = %s AND lease_owner = %s AND status = 'leased'
-                  AND (kind <> 'audit' OR COALESCE(payload->>'analysis_mode', 'standard') <> 'deep' OR lease_until > now())
+                  AND (kind <> 'audit' OR lease_until > clock_timestamp())
                   AND (kind <> 'task_precheck' OR lease_until > now()) RETURNING id""",
                 (claimed.id, claimed.attempt, worker_ident),
             ).fetchone()
@@ -3614,7 +3614,7 @@ class AuthStore:
                    SET diagnostic = a.diagnostic || %s
                    FROM engine.jobs j
                    WHERE j.id = %s AND j.attempt = %s AND j.lease_owner = %s
-                     AND j.status = 'leased' AND j.lease_until > now()
+                     AND j.status = 'leased' AND j.lease_until > clock_timestamp()
                      AND a.job_id = j.id AND a.attempt = j.attempt RETURNING a.id""",
                 (Jsonb({"progress": safe}), claimed.id, claimed.attempt, worker_ident),
             ).fetchone()
@@ -3638,7 +3638,7 @@ class AuthStore:
                     SET status = %s, lease_until = NULL, updated_at = now(),
                         result = CASE WHEN kind = ANY(%s) THEN %s ELSE result END
                     WHERE id = %s AND attempt = %s AND lease_owner = %s AND status = 'leased'
-                      AND (kind <> 'audit' OR COALESCE(payload->>'analysis_mode', 'standard') <> 'deep' OR lease_until > now())
+                      AND (kind <> 'audit' OR lease_until > clock_timestamp())
                       AND (kind <> 'task_precheck' OR lease_until > now())
                     RETURNING id
                     """,
@@ -4442,10 +4442,12 @@ class AuthStore:
         if feedback_inputs is not None:
             if analysis_mode != ANALYSIS_DEEP or source_draft_id is not None:
                 raise ValueError("deep_feedback_requires_deep")
+            from product.store.deep_feedback import normalize_feedback_body
+
             overrides = {item["file_version_id"]: item for item in feedback_inputs}
             for item in prepared:
                 if item["role"] == "target":
-                    item["rule_body"] = normalize_rule_body(overrides[item["file_version_id"]]["rule_body"])
+                    item["rule_body"] = normalize_feedback_body(overrides[item["file_version_id"]]["rule_body"])
         require_targets(prepared)
         fingerprint = request_fingerprint(prepared)
         if existing:
@@ -4461,9 +4463,11 @@ class AuthStore:
         round_id = str(uuid.uuid4())
         from product.store.suites import SuiteStore, freeze_round_execution
 
-        snapshot = freeze_round_execution(self, conn, principal, round_id=round_id, prepared=prepared, analysis_mode=analysis_mode)
+        snapshot = freeze_round_execution(self, conn, principal, round_id=round_id, prepared=prepared, analysis_mode=analysis_mode, require_rule_match=feedback_inputs is not None)
         execution_payload: dict[str, Any] = {
-            "round_id": round_id, "executor": "ppap-checker-core", "executor_revision": snapshot.runtime_revision,
+            "round_id": round_id,
+            "executor": "ppap-checker-core",
+            "executor_revision": snapshot.runtime_revision,
             "checker_snapshot_digest": snapshot.input_digest,
         }
         self._check_usage_policy(conn, principal, usage_policy)

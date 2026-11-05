@@ -14,6 +14,17 @@ from product.identity import can_read, can_review
 from product.rules import normalize_rule_appendix, normalize_rule_body
 
 
+def normalize_feedback_body(body: dict) -> dict:
+    """Only feedback appendices change; retain a frozen Suite's exact provenance."""
+    if "checker_binding" in body:
+        # Suite rules have already passed admission. The legacy normalizer rejects
+        # preset rules and drops the Suite key, so it cannot normalize this input.
+        result = deepcopy(body)
+        result["appendix"] = normalize_rule_appendix(body.get("appendix", []), {str(rule["id"]) for rule in body["rules"]})
+        return result
+    return normalize_rule_body(body)
+
+
 def _uuid(value):
     try:
         return str(uuid.UUID(str(value)))
@@ -251,7 +262,7 @@ def apply_change(store, principal, round_id, payload, *, usage_policy=None):
                             ]
                             if targets:
                                 body["appendix"].append({**part, "scope": {**part["scope"], "rule_ids": list(dict.fromkeys(target["rule_id"] for target in targets)), "rule_targets": targets}})
-                        item["rule_body"] = normalize_rule_body(body)
+                        item["rule_body"] = normalize_feedback_body(body)
                 accepted = store._accept_locked(
                     conn, principal, "deep-feedback:" + request["operation_id"], source_draft_id=None, predecessor_id=current_id, items=inputs, usage_policy=usage_policy, feedback_inputs=inputs
                 )
