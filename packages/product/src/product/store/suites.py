@@ -5,7 +5,7 @@ import json
 import uuid
 from contextlib import nullcontext
 
-from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, ValidationRecord, checker_digest, rule_digest
+from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, ValidationRecord, checker_digest, rule_digest, runtime_revision
 from psycopg.types.json import Jsonb
 
 from product.db import connect
@@ -202,5 +202,5 @@ def freeze_round_execution(store, conn, principal, *, round_id: str, prepared: l
                                   "verification": target.verification, "samples_not_rerun": target.samples_not_rerun}
     return ExecutionSnapshot(tenant_id=principal.tenant_id, initiating_user_id=principal.user_id,
                              inputs=freeze_authorized_inputs(conn, principal, prepared), targets=tuple(targets),
-                             runtime_revision="checker-core-v1:" + library, library_revision=library,
+                             runtime_revision=runtime_revision(policy.engine_revision(), library), library_revision=library,
                              model_identity={"model": policy.model, "revision": policy.model_revision}, round_id=round_id)
