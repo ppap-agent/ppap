@@ -175,7 +175,7 @@ function gapsFor(file: Document, part: string): Gap[] {
   }
   if (file.kind !== file.expectedKind) result.push({fileId: file.id, nature: 'identity', title: '资料类型待确认', detail: '人工分类与文件内容线索不同；不能仅凭分类判断其覆盖范围。'})
   if (file.declaredRevision !== file.contentRevision) result.push({fileId: file.id, nature: 'identity', title: '声明修订待确认', detail: '手填的修订与模拟原件内容不一致；改标签不会改变原件。'})
-  if (file.readability === 'partial') result.push({fileId: file.id, nature: 'quality', title: '局部不可读', detail: '扫描件第 3 页有一处工序号无法可靠辨认；其他内容仍可继续处理。'})
+  if (file.readability === 'partial') result.push({fileId: file.id, nature: 'quality', title: '局部不可读', detail: '原件第 3 页有一处工序号无法可靠辨认；其他内容仍可继续处理。'})
   if (file.contentRevision !== 'B') result.push({fileId: file.id, nature: 'coverage', title: '未覆盖 Rev B', detail: '这份原件基于 Rev A，不能证明本轮 Rev B 的尺寸要求；这不是测量超差结论。'})
   return result
 }

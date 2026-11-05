@@ -66,12 +66,12 @@ const variants: {id: OverviewVariant; label: string}[] = [
 ]
 const requestDefaults: Record<RequestKey, string> = {
   conflict: '流程图工序 17 写“热处理”，控制计划写“表面处理”。请核对并修正不一致的文件，说明修改原因。本条要求核对文件一致性。',
-  scan: '请补交清晰的过程流程图原件，确认当前扫描件中无法辨认的工序号。',
+  scan: '请补交清晰的过程流程图原件，确认当前原件中无法辨认的工序号。',
   report: '请补交对应图纸 Rev B 的尺寸报告。现有报告为 Rev A，不能证明本轮要求。',
 }
 const requestRows: {id: RequestKey; name: string; tag: string; source: string; observation: string}[] = [
   {id: 'conflict', name: '工序 17 描述冲突', tag: '确认不一致', source: '过程流程图_B.pdf · 控制计划_B.xlsx', observation: '同一工序分别写“热处理”和“表面处理”。'},
-  {id: 'scan', name: '扫描件工序号不清', tag: '待核实', source: '过程流程图_B.pdf · 第 3 页', observation: '有一处工序号无法可靠辨认；尚无合格或不合格结论。'},
+  {id: 'scan', name: '原件工序号不清', tag: '待核实', source: '过程流程图_B.pdf · 第 3 页', observation: '有一处工序号无法可靠辨认；尚无合格或不合格结论。'},
   {id: 'report', name: '缺少 Rev B 尺寸报告', tag: '需补交', source: '尺寸报告_A.xlsx · Rev A', observation: '报告修订 A 不覆盖本轮图纸修订 B；不是尺寸超差结论。'},
 ]
 type ReviewDraft = {
@@ -180,14 +180,14 @@ function OverviewAction({go}: {go: (stage: Stage) => void}) {
       <div className={"flex items-end justify-between gap-5 mb-4 [&_h2]:mt-0 [&_h2]:mr-0 [&_h2]:mb-1 [&_h2]:ml-0 [&_h2]:text-lg [&_h2]:font-bold [&_h2]:tracking-tight [&_p]:m-0 [&_p]:text-muted-foreground [&_p]:text-sm"}><div><h2>需要处理</h2><p>先核对确定的差异，再向供应商提出准确要求。</p></div><span className={"text-muted-foreground text-sm"}>3 项</span></div>
       <div className={"border-t"}>
         <div className={"grid grid-cols-[126px_minmax(0,_1fr)_auto] items-center gap-4.5 min-h-23 py-4.5 px-1.5 border-b [&_strong]:text-base [&_strong]:font-semibold [&_p]:mt-1.5 [&_p]:mr-0 [&_p]:mb-0 [&_p]:ml-0 [&_p]:text-muted-foreground [&_p]:text-sm max-sm:grid-cols-[1fr_auto] max-sm:gap-y-2.5 max-sm:gap-x-1.5 max-sm:py-4.5 max-sm:px-0.5 max-sm:[&_strong]:text-sm max-sm:[&_p]:text-xs max-sm:[&_p]:leading-normal"}><Status tone="bad">确认不一致</Status><div><strong>工序 17 的工艺描述不同</strong><p>流程图：热处理　／　控制计划：表面处理</p></div><Button variant="ghost" onClick={() => go('evidence')}>查看证据 <ChevronRight size={16} /></Button></div>
-        <div className={"grid grid-cols-[126px_minmax(0,_1fr)_auto] items-center gap-4.5 min-h-23 py-4.5 px-1.5 border-b [&_strong]:text-base [&_strong]:font-semibold [&_p]:mt-1.5 [&_p]:mr-0 [&_p]:mb-0 [&_p]:ml-0 [&_p]:text-muted-foreground [&_p]:text-sm max-sm:grid-cols-[1fr_auto] max-sm:gap-y-2.5 max-sm:gap-x-1.5 max-sm:py-4.5 max-sm:px-0.5 max-sm:[&_strong]:text-sm max-sm:[&_p]:text-xs max-sm:[&_p]:leading-normal"}><Status tone="wait">待核实</Status><div><strong>扫描件有一处工序号无法辨认</strong><p>尚不能判断该工序是否符合要求。</p></div><Button variant="ghost" onClick={() => go('evidence')}>确认原件 <ChevronRight size={16} /></Button></div>
+        <div className={"grid grid-cols-[126px_minmax(0,_1fr)_auto] items-center gap-4.5 min-h-23 py-4.5 px-1.5 border-b [&_strong]:text-base [&_strong]:font-semibold [&_p]:mt-1.5 [&_p]:mr-0 [&_p]:mb-0 [&_p]:ml-0 [&_p]:text-muted-foreground [&_p]:text-sm max-sm:grid-cols-[1fr_auto] max-sm:gap-y-2.5 max-sm:gap-x-1.5 max-sm:py-4.5 max-sm:px-0.5 max-sm:[&_strong]:text-sm max-sm:[&_p]:text-xs max-sm:[&_p]:leading-normal"}><Status tone="wait">待核实</Status><div><strong>原件有一处工序号无法辨认</strong><p>尚不能判断该工序是否符合要求。</p></div><Button variant="ghost" onClick={() => go('evidence')}>确认原件 <ChevronRight size={16} /></Button></div>
         <div className={"grid grid-cols-[126px_minmax(0,_1fr)_auto] items-center gap-4.5 min-h-23 py-4.5 px-1.5 border-b [&_strong]:text-base [&_strong]:font-semibold [&_p]:mt-1.5 [&_p]:mr-0 [&_p]:mb-0 [&_p]:ml-0 [&_p]:text-muted-foreground [&_p]:text-sm max-sm:grid-cols-[1fr_auto] max-sm:gap-y-2.5 max-sm:gap-x-1.5 max-sm:py-4.5 max-sm:px-0.5 max-sm:[&_strong]:text-sm max-sm:[&_p]:text-xs max-sm:[&_p]:leading-normal"}><Status tone="missing">需补交</Status><div><strong>尺寸报告版本不对应</strong><p>现有 Rev A 报告，不能覆盖本案图纸 Rev B。</p></div><Button variant="ghost" onClick={() => go('request')}>准备补件 <ChevronRight size={16} /></Button></div>
       </div>
     </section>
     <section className={"mt-9.5 mt-10"}>
       <div className={"flex items-end justify-between gap-5 mb-4 [&_h2]:mt-0 [&_h2]:mr-0 [&_h2]:mb-1 [&_h2]:ml-0 [&_h2]:text-lg [&_h2]:font-bold [&_h2]:tracking-tight [&_p]:m-0 [&_p]:text-muted-foreground [&_p]:text-sm"}><div><h2>本轮资料</h2><p>三份文件，均可追溯原始版本。</p></div></div>
       <div className={"grid grid-cols-[repeat(3,_1fr)] gap-2.5 [&_>_div]:grid [&_>_div]:grid-cols-[20px_1fr] [&_>_div]:gap-y-2 [&_>_div]:gap-x-2 [&_>_div]:min-h-25 [&_>_div]:p-4.5 [&_>_div]:border [&_>_div]:rounded-lg [&_>_div]:bg-background [&_svg]:text-muted-foreground [&_span]:min-w-0 [&_span]:break-all [&_span]:text-sm [&_span]:font-semibold [&_small]:col-start-2 [&_small]:text-muted-foreground [&_small]:text-xs max-sm:grid-cols-1 max-sm:gap-0 max-sm:[&_>_div]:min-h-18 max-sm:[&_>_div]:py-4 max-sm:[&_>_div]:px-0 max-sm:[&_>_div]:border-0 max-sm:[&_>_div]:border-b max-sm:[&_>_div]:rounded-lg max-sm:[&_>_div]:bg-muted"}>
-        <div><FileText size={18} /><span>过程流程图_B.pdf</span><small>扫描件 · 有待核实内容</small></div>
+        <div><FileText size={18} /><span>过程流程图_B.pdf</span><small>原件 · 有待核实内容</small></div>
         <div><FileText size={18} /><span>控制计划_B.xlsx</span><small>Rev B · 工序 17 存在差异</small></div>
         <div><FileClock size={18} /><span>尺寸报告_A.xlsx</span><small>Rev A · 不覆盖本轮</small></div>
       </div>

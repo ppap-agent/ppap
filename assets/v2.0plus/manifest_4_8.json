@@ -5,11 +5,11 @@
   "output_root": "/Users/bef0rewind/Projects/work/ppap-agent/assets/v2.0plus",
   "resolver_project_root": "/Users/bef0rewind/Projects/work/ppap-agent/agent_loops/codex-sdk-auto-fix",
   "summary": {
-    "total_rows": 266,
-    "rows_with_link": 266,
+    "total_rows": 265,
+    "rows_with_link": 265,
     "rows_without_link": 0,
-    "unique_links": 102,
-    "resolved_link_entries": 86,
+    "unique_links": 101,
+    "resolved_link_entries": 85,
     "unresolved_links": 0,
     "downloaded_files": 0,
     "fallback_unique_files": 17,
@@ -674,15 +674,6 @@
       "local_path": "/Users/bef0rewind/Projects/work/ppap-agent/assets/v2.0plus/files/fmea/W02管路PV试验报告2025052803_QFZ.45109.pdf"
     },
     {
-      "link": "http://le.test.icoastline.com/#/ppapAudit/ppapAuditAgent?folderId=464891529099776&firstStep=false&groupId=464916610927104&taskId=464916610943492",
-      "group_id": "464916610927104",
-      "task_id": "464916610943492",
-      "file_key": "fmea/零部件DPV试验报告20231226.87016.pdf",
-      "file_name": "零部件DPV试验报告20231226.pdf",
-      "url": "http://f-hd-le.test.icoastline.com/fmea/%E9%9B%B6%E9%83%A8%E4%BB%B6DPV%E8%AF%95%E9%AA%8C%E6%8A%A5%E5%91%8A20231226.87016.pdf",
-      "local_path": "/Users/bef0rewind/Projects/work/ppap-agent/assets/v2.0plus/files/fmea/零部件DPV试验报告20231226.87016.pdf"
-    },
-    {
       "link": "http://le.test.icoastline.com/#/ppapAudit/ppapAuditAgent?folderId=464891529099776&firstStep=false&groupId=464923456543232&taskId=464923456563712",
       "group_id": "464923456543232",
       "task_id": "464923456563712",
@@ -1285,20 +1276,6 @@
       "task_id": "464916610943491",
       "file_key": "fmea/W02管路PV试验报告2025052803_QFZ.45109.pdf",
       "local_path": "/Users/bef0rewind/Projects/work/ppap-agent/assets/v2.0plus/files/fmea/W02管路PV试验报告2025052803_QFZ.45109.pdf"
-    },
-    {
-      "row_number": 33,
-      "file_name": "零部件DPV试验报告20231226.pdf",
-      "file_type": "2-2",
-      "file_format": "电子版PDF",
-      "rule_index": 4,
-      "test_link": "http://le.test.icoastline.com/#/ppapAudit/ppapAuditAgent?folderId=464891529099776&firstStep=false&groupId=464916610927104&taskId=464916610943492",
-      "fix_test_link": "",
-      "source": "link",
-      "group_id": "464916610927104",
-      "task_id": "464916610943492",
-      "file_key": "fmea/零部件DPV试验报告20231226.87016.pdf",
-      "local_path": "/Users/bef0rewind/Projects/work/ppap-agent/assets/v2.0plus/files/fmea/零部件DPV试验报告20231226.87016.pdf"
     },
     {
       "row_number": 34,

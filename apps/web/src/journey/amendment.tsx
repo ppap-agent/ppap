@@ -52,7 +52,7 @@ export function isIntactDemoFile(file: ReceivedFile | undefined): boolean {
 }
 const rows: {id: RequestKey; title: string; original: string; issue: string; replacement: string; replacementFact: string}[] = [
   {id: 'conflict', title: '工序 17 描述冲突', original: '控制计划_B.xlsx · 过程流程图_B.pdf', issue: '同一工序在两份原件中分别写为“表面处理”和“热处理”。', replacement: conflictFiles.control.name, replacementFact: conflictFiles.control.fact},
-  {id: 'scan', title: '扫描件工序号不清', original: '过程流程图_B.pdf · 第 3 页', issue: '另有一处工序号无法可靠辨认，尚无业务结论。', replacement: '过程流程图_B_清晰版.pdf', replacementFact: '模拟新原件的对应位置可读，仍需核对工序内容。'},
+  {id: 'scan', title: '原件工序号不清', original: '过程流程图_B.pdf · 第 3 页', issue: '另有一处工序号无法可靠辨认，尚无业务结论。', replacement: '过程流程图_B_清晰版.pdf', replacementFact: '模拟新原件的对应位置可读，仍需核对工序内容。'},
   {id: 'report', title: '尺寸报告未覆盖 Rev B', original: '尺寸报告_A.xlsx · Rev A', issue: '现有报告不对应本轮图纸修订，不能据此判断尺寸合格。', replacement: '尺寸报告_B.xlsx', replacementFact: '模拟新原件标为 Rev B，实测内容仍需审核。'},
 ]
 const modeLabels: {id: ReplyMode; label: string}[] = [
