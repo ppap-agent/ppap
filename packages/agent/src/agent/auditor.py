@@ -313,10 +313,6 @@ class SemanticRuntime:
         published = False
         usage = dict.fromkeys(("input_tokens", "output_tokens", "tool_calls", "completed_tool_calls", "compactions", "model_requests"), 0)
 
-        def add_usage(bundle) -> None:
-            for name in usage:
-                usage[name] += int(getattr(bundle, name, 0) or 0)
-
         for item in targets:
             raw = files.get(item.file_version_id)
             body = item.rule_body or {}
@@ -351,37 +347,25 @@ class SemanticRuntime:
                         fixed = candidate
                         self._put(f"{self._attempt_prefix(spec)}/checkers/{current}.json", fixed.model_dump(mode="json"))
                         prior_program = None
-                if fixed is None:
-                    adapted = self._checker_job(
-                        spec,
-                        audit_file,
-                        rule,
-                        raw,
-                        role=item.role,
-                        context=context,
-                        group_context=group_context,
-                        related_bytes=related_bytes,
+                from agent.checker_development import DevelopmentRequest, FrozenDevelopmentInput
+
+                development = self.develop_and_run(
+                    DevelopmentRequest(
+                        target=FrozenDevelopmentInput(audit_file, rule, raw, item.role, group_context, related_bytes),
+                        executor_revision=spec.executor_revision,
+                        initiating_user_id=getattr(spec, "initiating_user_id", ""),
                         prior=prior_program,
-                        operation="adapt-checker",
-                    )
-                    if adapted.artifact is None:
-                        raise DeepError("deep_output_invalid")
-                    fixed = adapted.artifact
-                    add_usage(adapted)
-                executed_bundle = self._checker_job(
-                    spec,
-                    audit_file,
-                    rule,
-                    raw,
-                    role=item.role,
+                        fixed=fixed,
+                    ),
+                    spec=spec,
                     context=context,
-                    group_context=group_context,
-                    related_bytes=related_bytes,
-                    operation="execute-checker",
-                    artifact=fixed,
                 )
-                add_usage(executed_bundle)
-                results = [AuditResultItem.model_validate(item) for item in executed_bundle.results]
+                fixed = development.artifact
+                for name in usage:
+                    usage[name] += int(development.usage.get(name, 0))
+                if development.error_code:
+                    raise DeepError(development.error_code)
+                results = development.results
                 published = True
             except DeepError as exc:
                 self._remember_checker_failure(spec, exc.code)
@@ -468,6 +452,33 @@ class SemanticRuntime:
             executed.append((item, results))
         return checker_response(spec, executed)
 
+    def develop_and_run(self, request, *, spec: ExecuteRequest, context: ExecutionContext):
+        """Shared Deep/Optimizer host loop; publication is deliberately absent."""
+        from agent.checker_development import develop_and_run
+
+        def job(inputs, *, operation, artifact=None, prior=None, feedback=None):
+            context.raise_if_cancelled()
+            return self._checker_job(
+                spec,
+                inputs.audit_file,
+                inputs.rule,
+                inputs.file_bytes,
+                role=inputs.role,
+                context=context,
+                group_context=inputs.group_context,
+                related_bytes=inputs.related_bytes,
+                operation=operation,
+                artifact=artifact,
+                prior=prior,
+                development_feedback=feedback,
+            )
+
+        outcome = develop_and_run(request, job)
+        source = getattr(self.runtime, "usage_source", "unknown")
+        outcome.usage_source = source if source in {"controlled", "provider"} else "unknown"
+        self._put(f"{self._attempt_prefix(spec)}/development/{request.target.digest}.json", outcome.receipt())
+        return outcome
+
     def adapt_checker(
         self,
         spec: ExecuteRequest,
@@ -538,6 +549,7 @@ class SemanticRuntime:
         prior: CheckerArtifact | None = None,
         artifact: CheckerArtifact | None = None,
         related_bytes: dict[str, bytes] | None = None,
+        development_feedback: str | None = None,
     ) -> CheckerProgramBundle:
         from agent.checker_program import CheckerManifest, input_digest, scoped_rule, write_manifest
         from agent.execution.checker_guest import CheckerProgramError
@@ -569,6 +581,7 @@ class SemanticRuntime:
             file_version_id=version_id,
             role=role,
             group_context=group_context.model_dump(mode="json") if group_context is not None else None,
+            development_feedback=development_feedback,
             prior_files={name: content.decode("utf-8") for name, content in prior.files.items()} if prior is not None else None,
             artifact=artifact,
         )

@@ -568,6 +568,7 @@ def _prompt(
     feedback_kind: str | None = None,
     layout: PdfLayout | None = None,
     starting_point: str = "",
+    development_feedback: str | None = None,
 ) -> str:
     guide = GUIDE.read_text(encoding="utf-8")
     parts = [
@@ -583,6 +584,8 @@ def _prompt(
     preview = _development_previews(audit_file, group_context, None if layout is None else layout.previews)
     if preview:
         parts.extend(["", preview])
+    if development_feedback:
+        parts.extend(["", "用户反馈与已确认训练样本：", development_feedback])
     if rule.appendix:
         parts.extend(["", "上述 appendix 是本次已确认附录，是规则的一部分，不是上次结论或系统建议。"])
     if prior:
@@ -836,6 +839,7 @@ def develop_checker(
     deadline: float,
     prior_files: dict[str, str] | None = None,
     observations: list[str] | None = None,
+    development_feedback: str | None = None,
     reasoning_effort: str = "medium",
 ) -> CheckerArtifact:
     if reasoning_effort not in {"xhigh", "high", "medium", "low"}:
@@ -910,7 +914,17 @@ def develop_checker(
         try:
             draft = runner.run(
                 stage,
-                _prompt(rule, feedback, prior_files if trial == 0 else None, audit_file, group_context, feedback_kind=feedback_kind, layout=layout, starting_point=starting_point),
+                _prompt(
+                    rule,
+                    feedback,
+                    prior_files if trial == 0 else None,
+                    audit_file,
+                    group_context,
+                    feedback_kind=feedback_kind,
+                    layout=layout,
+                    starting_point=starting_point,
+                    development_feedback=development_feedback,
+                ),
                 CheckerDraft,
                 deadline,
                 reasoning_effort=reasoning_effort,

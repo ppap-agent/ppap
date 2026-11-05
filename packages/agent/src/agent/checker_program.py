@@ -70,6 +70,7 @@ class CheckerManifest(BaseModel):
     group_context: dict[str, Any] | None = None
     related_documents: dict[str, str] = Field(default_factory=dict)
     prior_files: dict[str, str] | None = None
+    development_feedback: str | None = Field(default=None, max_length=32768)
     artifact: CheckerArtifact | None = None
     reasoning_effort: Literal["xhigh", "high", "medium", "low"] = "medium"
 
@@ -562,6 +563,7 @@ def run_adapt_manifest(inputs: Path, work: Path, runner: ProgramRunner, deadline
         work=work,
         deadline=deadline,
         prior_files=manifest.prior_files,
+        development_feedback=manifest.development_feedback,
         reasoning_effort=manifest.reasoning_effort,
     )
 
