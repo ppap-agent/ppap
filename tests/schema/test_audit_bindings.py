@@ -27,18 +27,11 @@ class AuditDatabaseCase(unittest.TestCase):
         self.schema.require_postgres()
         self.database = "ppap_bindings_" + uuid.uuid4().hex[:12]
         # Cloning the migrated database is far cheaper than replaying every migration per test.
-        cloned = (
-            not self.previous_schema
-            and self.schema.psql(
-                self.schema.bootstrap_user(), self.schema.bootstrap_password(), "postgres", "-c", f"CREATE DATABASE {self.database} OWNER {self.schema.migrator_user()} TEMPLATE ppap"
-            ).returncode
-            == 0
-        )
-        if not cloned:
-            self.schema.require(
-                self.schema.psql(self.schema.bootstrap_user(), self.schema.bootstrap_password(), "postgres", "-c", f"CREATE DATABASE {self.database} OWNER {self.schema.migrator_user()}"),
-                "create isolated audit DB",
-            )  # noqa: E501
+        template = "" if self.previous_schema else " TEMPLATE ppap"
+        self.schema.require(
+            self.schema.psql(self.schema.bootstrap_user(), self.schema.bootstrap_password(), "postgres", "-c", f"CREATE DATABASE {self.database} OWNER {self.schema.migrator_user()}{template}"),
+            "create isolated audit DB",
+        )  # noqa: E501
         self.addCleanup(
             lambda: self.schema.require(
                 self.schema.psql(self.schema.bootstrap_user(), self.schema.bootstrap_password(), "postgres", "-c", f"DROP DATABASE {self.database} WITH (FORCE)"), "drop isolated audit DB"
@@ -49,8 +42,6 @@ class AuditDatabaseCase(unittest.TestCase):
                 if migration.name >= "0010":
                     break
                 self.schema.require(self.schema.psql(self.schema.migrator_user(), self.schema.migrator_password(), self.database, "-f", str(migration)), "apply prior audit schema")
-        elif not cloned:
-            self.schema.require(self.schema.apply(self.database), "apply audit schema")
         self.settings = Settings(
             usage_charge_enabled=False,
             git_sha="a" * 40,

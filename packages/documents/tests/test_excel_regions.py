@@ -2,6 +2,7 @@
 
 import io
 import zipfile
+from pathlib import Path
 from xml.etree import ElementTree as ET
 
 import fitz
@@ -51,25 +52,34 @@ def test_print_copy_cannot_choose_first_sheet_when_requested_sheet_is_missing():
     assert error.value.code == "sheet_binding_failed"
 
 
-def test_binary_excel_has_one_libreoffice_to_xlsx_path_and_keeps_original_parts(monkeypatch):
-    converted = converted_book()
+def test_xls_cells_come_from_the_original_without_libreoffice(monkeypatch):
+    def refuse(*args, **kwargs):
+        raise AssertionError("cell reads must not convert the workbook")
+
+    monkeypatch.setattr("documents.excel.legacy.convert_excel", refuse)
+    source = next((Path(__file__).resolve().parents[3] / "assets").rglob("控制计划 -CETUS.xls"))
+    workbook = ExcelLoader.load_workbook(str(source), options=ExcelLoadOptions(data_only=False))
+    try:
+        assert workbook.sheetnames == ["扰流板"]
+        assert workbook["扰流板"]["A9"].value == "CETUS扰流板"
+    finally:
+        workbook.close()
+
+
+def test_only_rendering_converts_an_xls_source(monkeypatch):
     calls = []
 
     def convert(content, **kwargs):
-        calls.append((content, kwargs))
-        return converted
+        calls.append(content)
+        return b"PK-converted"
 
-    monkeypatch.setattr("documents.excel.legacy.convert_excel", convert)
+    monkeypatch.setattr(visual, "convert_excel", convert)
+    visual.renderable_xlsx.cache_clear()
     original = ExcelLoader.OLE_MAGIC + b"controlled binary source"
-    source = io.BytesIO(original)
-    workbook = ExcelLoader.load_workbook(source, options=ExcelLoadOptions(data_only=False))
-    try:
-        assert workbook.sheetnames == ["cover", "requested ' header", "other"]
-        assert workbook._ppap_xlsx_content == converted
-        assert source.tell() == 0
-        assert calls == [(original, {"source_suffix": "xls", "target_suffix": "xlsx", "output_filter": "xlsx:Calc MS Excel 2007 XML"})]
-    finally:
-        workbook.close()
+    assert visual.renderable_xlsx(original) == b"PK-converted"
+    assert visual.renderable_xlsx(b"PK-xlsx") == b"PK-xlsx"
+    assert calls == [original]
+    visual.renderable_xlsx.cache_clear()
 
 
 def test_render_crops_text_and_its_marker_instead_of_a_fixed_header(monkeypatch):

@@ -6,10 +6,13 @@ import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+from functools import lru_cache
+
 import fitz
 from openpyxl.utils.cell import absolute_coordinate, range_boundaries
 
 from documents.excel.legacy import convert_excel
+from documents.excel.loader import ExcelLoader
 from documents.word.legacy import LegacyDocConversionLimits
 
 _MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
@@ -141,6 +144,14 @@ def has_region_graphics(content: bytes, *, sheet_name: str, cell_range: str | No
                 if starts and starts.get("row", 1) <= bottom and ends.get("row", bottom) >= top and starts.get("col", 1) <= right and ends.get("col", right) >= left:
                     return True
     return False
+
+
+@lru_cache(maxsize=8)
+def renderable_xlsx(content: bytes) -> bytes:
+    """LibreOffice is only for pictures of a workbook; cell values are read from the original."""
+    if content.startswith(ExcelLoader.OLE_MAGIC):
+        return convert_excel(content, source_suffix="xls", target_suffix="xlsx", output_filter="xlsx:Calc MS Excel 2007 XML")
+    return content
 
 
 def render_xlsx_pdf(content: bytes, *, sheet_name: str, cell_range: str | None) -> bytes:

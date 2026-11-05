@@ -141,7 +141,7 @@ class ControlPlanAgent(ExcelAgent):
 
     def _read_stage_graphics(self, sheet: Any, stage_cells) -> Tuple[str, str] | None:
         """Read the stage's labelled field through the shared Excel fact reader."""
-        from documents.excel.visual import has_region_graphics
+        from documents.excel.visual import has_region_graphics, renderable_xlsx
         from openpyxl.utils.cell import get_column_letter
 
         from audit.engine.app_runtime import _load_file_bytes
@@ -149,7 +149,10 @@ class ControlPlanAgent(ExcelAgent):
 
         self._stage_graphics_evidence = None
         content, _ = _load_file_bytes(str(self.audit_file.file_url))
-        normalized = getattr(sheet.parent, "_ppap_xlsx_content", content)
+        try:
+            normalized = renderable_xlsx(content)
+        except ValueError as error:
+            raise ValueError(f"阶段字段区域读取失败（{getattr(error, 'code', type(error).__name__)}）。") from None
         if not normalized.startswith(b"PK"):
             return None
         source_suffix = Path(str(self.audit_file.file_url)).suffix.lower()

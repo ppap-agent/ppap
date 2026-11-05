@@ -18,7 +18,6 @@ from contextlib import ExitStack, closing
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from pathlib import Path, PurePosixPath
-from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
 from xml.etree import ElementTree as ET
 
@@ -434,16 +433,28 @@ def snapshot(path: str | Path, *, limits: ReadLimits | None = None) -> dict[str,
             "Only integer EMU offsets are supported. Formula caches are not recalculated."
         ]
     elif suffix == ".xls":
-        from documents.excel.legacy import convert_excel
+        import xlrd
 
-        converted = convert_excel(path.read_bytes(), source_suffix="xls", target_suffix="xlsx", output_filter="xlsx:Calc MS Excel 2007 XML")
-        with TemporaryDirectory(prefix="ppap-excel-snapshot-") as directory:
-            normalized = Path(directory) / "source.xlsx"
-            normalized.write_bytes(converted)
-            original_source = result["source"]
-            result = snapshot(normalized, limits=limits)
-            result["source"] = original_source
-            result["limitations"].append("XLS normalized by LibreOffice to XLSX; formulas may be recalculated during conversion.")
+        book = xlrd.open_workbook(str(path), formatting_info=True)
+        within(book.nsheets, limits.tables, "tables")
+        for xls_sheet in book.sheets():
+            visited_cells += xls_sheet.nrows * xls_sheet.ncols
+            within(visited_cells, limits.cells, "cell visits")
+            within(len(xls_sheet.merged_cells), limits.merges, "merges")
+            table = {"id": xls_sheet.name, "rows": xls_sheet.nrows, "cols": xls_sheet.ncols, "cells": {}, "merges": [[r1 + 1, c1 + 1, r2, c2] for r1, r2, c1, c2 in xls_sheet.merged_cells]}
+            for xls_row in range(xls_sheet.nrows):
+                for column in range(xls_sheet.ncols):
+                    xls_cell = xls_sheet.cell(xls_row, column)
+                    if xls_cell.ctype in (xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK):
+                        continue
+                    value = xls_cell.value
+                    if xls_cell.ctype == xlrd.XL_CELL_DATE:
+                        value = xlrd.xldate_as_datetime(value, book.datemode).isoformat()
+                    elif xls_cell.ctype == xlrd.XL_CELL_BOOLEAN:
+                        value = bool(value)
+                    table["cells"][ref(xls_row + 1, column + 1)] = {"value": value, "state": "unknown_excel_error" if xls_cell.ctype == xlrd.XL_CELL_ERROR else "known", "source_type": xls_cell.ctype}
+            result["tables"].append(table)
+        result["limitations"] = ["XLS exposes cached values; formula freshness and embedded objects are not verified."]
     elif suffix == ".docx":
         from docx import Document
         from docx.oxml.ns import qn

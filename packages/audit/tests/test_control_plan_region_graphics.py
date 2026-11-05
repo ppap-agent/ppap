@@ -17,7 +17,6 @@ def stage_agent(tmp_path, suffix="xls"):
     from io import BytesIO
 
     path = tmp_path / ("original." + suffix)
-    path.write_bytes(b"frozen-original")
     workbook = Workbook()
     workbook.active.title = "控制计划"
     workbook.active.merge_cells("A1:F1")
@@ -25,7 +24,7 @@ def stage_agent(tmp_path, suffix="xls"):
     agent = ControlPlanAgent(AuditInput(audit_id="frozen", file_url=str(path)), RuleInput(rule_id="confirmed", rule_profile="v3", type="控制计划", rules=[]))
     serialized = BytesIO()
     workbook.save(serialized)
-    workbook._ppap_xlsx_content = serialized.getvalue()
+    path.write_bytes(serialized.getvalue())
     agent._workbook_cache = workbook
     return agent, path
 
@@ -62,7 +61,7 @@ def test_excel_region_preserves_identity_and_reuses_success_unknown_and_errors(t
             results = [agent.check(0), agent.check(0)]
         assert [result.status for result in results] == [expected, expected]
         assert len(calls) == len(renders) == 1
-        assert renders[0][:2] == (agent._workbook_cache._ppap_xlsx_content, "控制计划")
+        assert renders[0][:2] == (path.read_bytes(), "控制计划")
         assert renders[0][2] == "A1:F1"
         assert all("private provider body" not in result.suggestions for result in results)
         if type(value) is bool:
@@ -72,7 +71,7 @@ def test_excel_region_preserves_identity_and_reuses_success_unknown_and_errors(t
             assert locator["source_sha256"] == hashlib.sha256(original).hexdigest()
             assert locator["sheet"] == "控制计划" and locator["cell_range"] == "A1:F1"
             assert locator["observed_value"] is value
-        path.write_bytes(b"different-source")
+        path.write_bytes(b"PK-different-source")
         with bind_runtime(SimpleNamespace(read_ocr_visual_facts=request)):
             assert agent.check(0).status == "ERR"
         assert len(calls) == 1

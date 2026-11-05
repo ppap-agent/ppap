@@ -232,8 +232,6 @@ jobs:
       - name: Canonical install
         working-directory: ${{ github.workspace }}
         run: uv sync --locked --group e2e
-      - name: Install shared Excel converter for owner tests
-        uses: ./.github/actions/excel-converter
       - name: Run complete Python owner tests
         working-directory: ${{ github.workspace }}
         run: python3 -m scripts.ci_shards modules --shard "${{ matrix.shard }}"
