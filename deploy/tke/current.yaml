@@ -425,6 +425,36 @@ spec:
             - configMapRef:
                 name: ppap-current
           env:
+            - name: OCR_OPENAI_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: OCR_OPENAI_BASE_URL
+            - name: OCR_MODEL_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: OCR_MODEL_NAME
+            - name: OCR_OPENAI_EXTRA_BODY_JSON
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: OCR_OPENAI_EXTRA_BODY_JSON
+            - name: PADDLE_OCR_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PADDLE_OCR_URL
+            - name: OCR_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: OCR_OPENAI_API_KEY
+            - name: PADDLE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PADDLE_TOKEN
             - name: PPAP_PG_API_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -517,6 +547,26 @@ spec:
             - configMapRef:
                 name: ppap-current
           env:
+            - name: OCR_OPENAI_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: OCR_OPENAI_BASE_URL
+            - name: OCR_MODEL_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: OCR_MODEL_NAME
+            - name: OCR_OPENAI_EXTRA_BODY_JSON
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: OCR_OPENAI_EXTRA_BODY_JSON
+            - name: PADDLE_OCR_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PADDLE_OCR_URL
             - name: PPAP_PG_WORKER_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -566,6 +616,36 @@ spec:
             - configMapRef:
                 name: ppap-current
           env:
+            - name: OCR_OPENAI_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: OCR_OPENAI_BASE_URL
+            - name: OCR_MODEL_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: OCR_MODEL_NAME
+            - name: OCR_OPENAI_EXTRA_BODY_JSON
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: OCR_OPENAI_EXTRA_BODY_JSON
+            - name: PADDLE_OCR_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PADDLE_OCR_URL
+            - name: OCR_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: OCR_OPENAI_API_KEY
+            - name: PADDLE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PADDLE_TOKEN
             - name: PPAP_PG_WORKER_PASSWORD
               valueFrom:
                 secretKeyRef:
