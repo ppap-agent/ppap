@@ -67,6 +67,7 @@ GRANT SELECT, INSERT, UPDATE ON product.checker_optimizations TO ppap_api, ppap_
 -- Trusted completion creates an unadopted candidate, never a publication.
 GRANT INSERT ON product.suite_objects, product.suite_revisions TO ppap_worker;
 GRANT SELECT ON product.memberships, product.resources, product.resource_grants TO ppap_worker;
+GRANT SELECT (id) ON product.tenants TO ppap_worker;
 GRANT SELECT (task_fingerprint) ON product.audit_drafts TO ppap_worker;
 GRANT SELECT ON product.deep_rule_changes TO ppap_worker;
 INSERT INTO product.schema_migrations(version) VALUES ('0045_checker_development.sql') ON CONFLICT DO NOTHING;

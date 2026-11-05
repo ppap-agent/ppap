@@ -354,6 +354,8 @@ class SuiteReleaseStore:
             validation = _validation(conn, principal.tenant_id, row)
             original = self.suites.resolve_suite(str(row["base_revision_id"]), principal.tenant_id, conn=conn) if row["base_revision_id"] else None
             changed = [path for path, digest in resolved.object_digests.items() if original is None or original.object_digests.get(path) != digest]
+            if original is not None:
+                changed.extend(set(original.files) - set(resolved.files))
             rounds = self._rounds(conn, principal, revision_id)
             rules = json.loads(resolved.files["rules.json"])
             title = rules.get("title") or rules.get("type") or "文件检查"
@@ -372,7 +374,7 @@ class SuiteReleaseStore:
             "related_suite_keys": list(row["related_suite_keys"]),
             "files": {path: body.decode("utf-8") for path, body in resolved.files.items()},
             "changed_paths": sorted(changed),
-            "diff": [{"path": path, "before": original.files.get(path, b"").decode("utf-8") if original else "", "after": resolved.files[path].decode("utf-8")} for path in sorted(changed)],
+            "diff": [{"path": path, "before": original.files.get(path, b"").decode("utf-8") if original else "", "after": resolved.files.get(path, b"").decode("utf-8")} for path in sorted(changed)],
             "validation": validation,
             "round_count": len(rounds),
             "rounds": rounds,

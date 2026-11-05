@@ -3546,7 +3546,7 @@ class AuthStore:
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1
                     """,
-                    (["feishu_notification", "task_confirmation"], list(FILE_PREPARATION_KINDS)),
+                    (["feishu_notification", "task_confirmation"], [*FILE_PREPARATION_KINDS, "checker_optimization"]),
                 ).fetchone()
                 if not row:
                     return None
@@ -3600,7 +3600,7 @@ class AuthStore:
                 """UPDATE engine.jobs SET lease_until = now() + interval '30 seconds', updated_at = now()
                 WHERE id = %s AND attempt = %s AND lease_owner = %s AND status = 'leased'
                   AND (kind <> 'audit' OR lease_until > clock_timestamp())
-                  AND (kind <> 'task_precheck' OR lease_until > now()) RETURNING id""",
+                  AND (kind NOT IN ('task_precheck','checker_optimization') OR lease_until > now()) RETURNING id""",
                 (claimed.id, claimed.attempt, worker_ident),
             ).fetchone()
             return row is not None
@@ -3639,7 +3639,7 @@ class AuthStore:
                         result = CASE WHEN kind = ANY(%s) THEN %s ELSE result END
                     WHERE id = %s AND attempt = %s AND lease_owner = %s AND status = 'leased'
                       AND (kind <> 'audit' OR lease_until > clock_timestamp())
-                      AND (kind <> 'task_precheck' OR lease_until > now())
+                      AND (kind NOT IN ('task_precheck','checker_optimization') OR lease_until > now())
                     RETURNING id
                     """,
                     (

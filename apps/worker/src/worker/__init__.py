@@ -122,6 +122,10 @@ def _process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> 
     )
     emit("job_claimed", kind=claimed.kind)
     try:
+        if claimed.kind == "checker_optimization":
+            from worker.checker_optimizer import process_checker_optimization
+
+            return process_checker_optimization(store, claimed, ident)
         if claimed.kind in {"report_pdf", "report_zip"}:
             return process_report_job(store, claimed, ident)
         if claimed.kind == "task_precheck":

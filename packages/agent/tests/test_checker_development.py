@@ -186,3 +186,75 @@ def test_too_few_samples_and_frozen_replay_remain_unverified(tmp_path):
     assert replay_runtime.calls[0][0] == "execute-checker"
     assert replay.results == outcome.results
     assert replay.usage == {"input_tokens": 0, "output_tokens": 0, "model_requests": 0}
+
+
+def test_model_free_request_cannot_silently_start_adaptation(tmp_path):
+    runtime = Runtime(tmp_path / "runtime")
+    with pytest.raises(ValueError, match="fixed artifact"):
+        develop_and_run(replace(request(tmp_path), allow_model_calls=False), runtime)
+    assert runtime.calls == []
+
+
+def test_combined_user_feedback_and_training_remain_bounded(tmp_path):
+    runtime = Runtime(tmp_path / "runtime")
+    outcome = develop_and_run(replace(request(tmp_path), feedback="confirmed note " * 530), runtime)
+    assert outcome.validation.verified
+    feedback = next(call[2] for call in runtime.calls if call[0] == "adapt-checker")
+    assert len(feedback) <= 8000
+    assert "case-1" in feedback and "hidden-sentinel" not in feedback
+
+
+def test_partial_oracle_labels_do_not_verify_an_entire_suite(tmp_path):
+    req = request(tmp_path)
+    rule = req.target.rule.model_copy(update={"rules": [*req.target.rule.rules, {"id": "R2", "category": "threshold", "rule_to_check": "second"}]})
+    req = replace(req, target=replace(req.target, rule=rule), oracle=tuple(replace(sample, inputs=replace(sample.inputs, rule=rule)) for sample in req.oracle))
+    outcome = develop_and_run(req, Runtime(tmp_path / "runtime"))
+    assert not outcome.validation.verified
+    assert "oracle_clause_coverage_incomplete" in outcome.validation.reasons
+    assert all(case.coverage for case in outcome.validation.cases)
+
+
+@pytest.mark.parametrize("change", ["threshold", "appendix", "order"])
+def test_same_clause_ids_cannot_hide_old_rule_semantics_in_trials(tmp_path, change):
+    req = request(tmp_path)
+    if change == "threshold":
+        modified = req.target.rule.model_copy(update={"rules": [{**req.target.rule.rules[0], "rule_to_check": "A1至少0"}]})
+    elif change == "appendix":
+        modified = req.target.rule.model_copy(update={"appendix": [{"rule_id": "R1", "interpretation": "Use a different threshold"}]})
+    else:
+        modified = req.target.rule.model_copy(update={"rules": [*req.target.rule.rules, {"id": "R2", "category": "threshold", "rule_to_check": "second"}]})
+        req = replace(req, oracle=tuple(replace(sample, inputs=replace(sample.inputs, rule=modified.model_copy(update={"rules": list(reversed(modified.rules))}))) for sample in req.oracle))
+    runtime = Runtime(tmp_path / "runtime")
+    with pytest.raises(ValueError, match="effective rules and appendix"):
+        develop_and_run(replace(req, target=replace(req.target, rule=modified)), runtime)
+    assert runtime.calls == []
+
+
+def test_old_expected_labels_cannot_verify_after_effective_rule_change(tmp_path):
+    from agent.checker_development import effective_rule_digest
+
+    req = request(tmp_path)
+    old = req.target.rule.model_copy(update={"rules": [{**req.target.rule.rules[0], "rule_to_check": "A1至少0"}]})
+    req = replace(req, oracle=tuple(replace(sample, expected_rule_digest=effective_rule_digest(old)) for sample in req.oracle))
+    runtime = Runtime(tmp_path / "runtime")
+    outcome = develop_and_run(req, runtime)
+    assert all(case.passed for case in outcome.validation.cases)
+    assert not outcome.validation.verified
+    assert "oracle_rules_changed" in outcome.validation.reasons
+    prompt = next(call[2] for call in runtime.calls if call[0] == "adapt-checker")
+    assert prompt is None  # Obsolete labels are not generator training truth.
+
+
+def test_removed_clause_is_a_stale_regression_not_a_success_or_admission_block(tmp_path):
+    from agent.checker_development import effective_rule_digest
+
+    req = request(tmp_path)
+    previous = effective_rule_digest(req.target.rule)
+    new_rule = req.target.rule.model_copy(update={"rules": [{"id": "R2", "category": "threshold", "rule_to_check": "new criterion"}]})
+    req = replace(req, target=replace(req.target, rule=new_rule), oracle=tuple(replace(sample, inputs=replace(sample.inputs, rule=new_rule), expected_rule_digest=previous) for sample in req.oracle))
+    outcome = develop_and_run(req, Runtime(tmp_path / "runtime"))
+    assert outcome.error_code is None
+    assert not outcome.validation.verified
+    assert "oracle_rules_changed" in outcome.validation.reasons
+    assert all(case.clauses[0].actual is None for case in outcome.validation.cases)
+    assert any(row.clause_id == "R2" for row in outcome.results)

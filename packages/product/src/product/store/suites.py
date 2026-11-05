@@ -49,7 +49,16 @@ class SuiteStore:
             return resolve_suite(revision_id, tenant_id, load_revision=lambda identifier: self.get_revision(identifier, tenant_id, conn=db), load_object=load_object)
 
     def create_revision(
-        self, *, tenant_id: str | None, suite_key: str, files: dict[str, bytes], created_by: str | None, base_revision_id: str | None = None, related_suite_keys: tuple[str, ...] = (), conn=None
+        self,
+        *,
+        tenant_id: str | None,
+        suite_key: str,
+        files: dict[str, bytes],
+        created_by: str | None,
+        base_revision_id: str | None = None,
+        related_suite_keys: tuple[str, ...] = (),
+        deleted_paths: tuple[str, ...] = (),
+        conn=None,
     ) -> SuiteRevision:
         """Caller authenticates the tenant. Only the platform migrator may seed official assets.
 
@@ -60,6 +69,8 @@ class SuiteStore:
             raise PermissionError("official_suite_write_forbidden")
         if tenant_id is not None and not created_by:
             raise ValueError("suite_creator_required")
+        if set(deleted_paths) - {"resources.py"} or set(deleted_paths).intersection(files) or deleted_paths and base_revision_id is None:
+            raise ValueError("invalid_suite_deleted_paths")
         with nullcontext(conn) if conn is not None else self._conn() as db, db.transaction():
             if tenant_id is None:
                 db.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("suite-publication:official",))
@@ -72,14 +83,22 @@ class SuiteStore:
             if base is not None and (base.revision.suite_key != suite_key or tenant_id is None and base.revision.tenant_id is not None):
                 raise ValueError("invalid_suite_base")
             all_files, all_digests = (dict(base.files), dict(base.object_digests)) if base else ({}, {})
-            overrides = {path: content_digest(body) for path, body in files.items() if path not in all_digests or content_digest(body) != all_digests[path]}
+            overrides: dict[str, str | None] = {path: content_digest(body) for path, body in files.items() if path not in all_digests or content_digest(body) != all_digests[path]}
             all_files.update(files)
-            all_digests.update(overrides)
+            all_digests.update({path: digest for path, digest in overrides.items() if digest is not None})
+            for path in deleted_paths:
+                if path not in all_files:
+                    raise ValueError("suite_deleted_object_missing")
+                overrides[path] = None
+                del all_files[path]
+                del all_digests[path]
             validate_content(all_files, official=tenant_id is None)
             revision = SuiteRevision(
                 str(uuid.uuid4()), tenant_id, suite_key, tuple(related_suite_keys), base_revision_id, overrides, resolved_digest(suite_key, tuple(related_suite_keys), all_digests), created_by, number
             )
             for path, digest in overrides.items():
+                if digest is None:
+                    continue
                 owner = tenant_id or "official"
                 key = f"suites/{owner}/objects/{digest}"
                 try:

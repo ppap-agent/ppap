@@ -47,10 +47,20 @@ class OracleSample:
     inputs: FrozenDevelopmentInput
     expected: dict[str, Literal["PASS", "NG", "NA"]]
     confirmed_by: str
+    expected_rule_digest: str | None = None
 
     @property
     def holdout(self) -> bool:
         return self.ordinal % 4 == 0
+
+    @property
+    def expectations_current(self) -> bool:
+        return self.expected_rule_digest is None or self.expected_rule_digest == effective_rule_digest(self.inputs.rule)
+
+
+def effective_rule_digest(rule: RuleInput) -> str:
+    """A new rule row ID is not a semantic change; text and appendices are."""
+    return hashlib.sha256(encoded(rule.model_dump(mode="json", exclude={"rule_id"}))).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -68,6 +78,7 @@ class DevelopmentRequest:
     feedback: str | None = None
     oracle_revision: str | None = None
     oracle: tuple[OracleSample, ...] = ()
+    allow_model_calls: bool = True
 
 
 class DevelopmentJob(Protocol):
@@ -115,6 +126,12 @@ def _validate(request: DevelopmentRequest) -> None:
         raise ValueError("too many oracle samples for one bounded development request")
     if request.feedback and len(request.feedback) > 8000:
         raise ValueError("development feedback is too large")
+    if not request.allow_model_calls and request.fixed is None:
+        raise ValueError("model-free development requires a fixed artifact")
+    if request.target.group_context is not None:
+        contextual = request.target.group_context.rules_by_id.get(request.target.audit_file.audit_id)
+        if contextual is None or effective_rule_digest(contextual) != effective_rule_digest(request.target.rule):
+            raise ValueError("development group context has different effective rules")
     ids: set[str] = set()
     ordinals: set[int] = set()
     visible = request.target.document_digests
@@ -127,10 +144,17 @@ def _validate(request: DevelopmentRequest) -> None:
             raise ValueError("oracle samples require unique identity, ordinal and user confirmation")
         ids.add(sample.case_id)
         ordinals.add(sample.ordinal)
+        if effective_rule_digest(sample.inputs.rule) != effective_rule_digest(request.target.rule):
+            raise ValueError("oracle trials must use the candidate's effective rules and appendix")
+        if sample.inputs.group_context is not None:
+            contextual = sample.inputs.group_context.rules_by_id.get(sample.inputs.audit_file.audit_id)
+            if contextual is None or effective_rule_digest(contextual) != effective_rule_digest(sample.inputs.rule):
+                raise ValueError("oracle group context has different effective rules")
         expected_ids = [str(row.get("id") or "") for row in sample.inputs.rule.rules]
         if (
             not sample.expected
-            or not set(sample.expected).issubset(expected_ids)
+            or sample.expectations_current
+            and not set(sample.expected).issubset(expected_ids)
             or len(expected_ids) != len(set(expected_ids))
             or any(value not in {"PASS", "NG", "NA"} for value in sample.expected.values())
         ):
@@ -152,6 +176,8 @@ def _trial(job: DevelopmentJob, source: CheckerArtifact, inputs: FrozenDevelopme
         return [AuditResultItem.model_validate(row) for row in bundle.results], None
     except DeepError as exc:
         return [], exc.code
+    except (ValueError, TypeError):
+        return [], "deep_output_invalid"
 
 
 def _evaluate(sample: OracleSample, results: list[AuditResultItem], baseline: list[AuditResultItem], error: str | None) -> CaseEvaluation:
@@ -210,10 +236,21 @@ def develop_and_run(request: DevelopmentRequest, job: DevelopmentJob) -> Develop
                 continue
             rows, error = _trial(job, request.prior, sample.inputs, request.executor_revision)
             baseline[sample.case_id] = rows
-            training.append({"case_id": sample.case_id, "expected": sample.expected, "actual": {str(row.clause_id): row.status for row in rows}, "error_code": error})
+            if sample.expectations_current:
+                training.append({"case_id": sample.case_id, "expected": sample.expected, "actual": {str(row.clause_id): row.status for row in rows}, "error_code": error})
     feedback = request.feedback or ""
     if training:
-        feedback += "\n用户确认的训练样本（不是模型自评；不得改写预期）：\n" + encoded(training).decode()
+        # The generation boundary is bounded even when many long clause IDs or
+        # user notes are present. Omitted training rows still run in evaluation.
+        heading = "\n用户确认的训练样本（不是模型自评；不得改写预期）：\n"
+        available = 8000 - len(heading)
+        selected: list[dict] = []
+        for training_row in training:
+            if len(encoded([*selected, training_row]).decode()) > available:
+                break
+            selected.append(training_row)
+        training_text = encoded(selected).decode()
+        feedback = feedback[: available - len(training_text)] + heading + training_text
     try:
         if outcome.artifact is None:
             adapted = job(request.target, operation="adapt-checker", prior=request.prior, feedback=feedback or None)
@@ -224,6 +261,8 @@ def develop_and_run(request: DevelopmentRequest, job: DevelopmentJob) -> Develop
             if outcome.artifact is None:
                 raise DeepError("deep_output_invalid")
         executed = job(request.target, operation="execute-checker", artifact=outcome.artifact)
+        for name in usage:
+            usage[name] += int(getattr(executed, name, 0) or 0)
         outcome.results = [AuditResultItem.model_validate(row) for row in executed.results]
     except DeepError as exc:
         outcome.error_code = exc.code
@@ -241,8 +280,9 @@ def develop_and_run(request: DevelopmentRequest, job: DevelopmentJob) -> Develop
     elif len(request.oracle) < 4 or not any(row.holdout for row in request.oracle):
         reasons.append("too_few_samples")
     if request.oracle:
-        labeled = {clause for sample in request.oracle for clause in sample.expected}
-        if not {str(row.get("id") or "") for row in request.target.rule.rules}.issubset(labeled):
+        if any(not sample.expectations_current for sample in request.oracle):
+            reasons.append("oracle_rules_changed")
+        if any(set(sample.expected) != {str(row.get("id") or "") for row in sample.inputs.rule.rules} for sample in request.oracle):
             reasons.append("oracle_clause_coverage_incomplete")
     outcome.validation = SuiteValidationReport(
         suite_revision_id=request.suite_revision_id,
