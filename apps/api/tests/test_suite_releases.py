@@ -82,10 +82,11 @@ def test_publish_compare_and_swap_and_fixed_rollback(auth_store_factory):
     )
     # A deliberate pin/rollback to a prior official version is not silently upgraded.
     assert alice.get(path).json()["current_revision_id"] == official.id
-    # An untouched tenant still follows newly published official content.
+    # Saving an unverified official candidate is not publication for other tenants.
     carol = TestClient(create_app(store.settings, auth_store=store))
     carol.cookies.set(SESSION_COOKIE, store.create_session(store.upsert_feishu_identity("untouched", "reader")))
-    assert carol.get(path).json()["current_revision_id"] == second_official.id
+    assert carol.get(path).status_code == 403
+    assert carol.get(f"/suite-revisions/{second_official.id}").status_code == 200
     published = bob.put(path, json=command(second_official.id, 1)).json()
     rollback = alice.put(path, json=command(official.id, 2)).json()
     assert published["revision"] == 2
