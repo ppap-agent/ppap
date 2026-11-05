@@ -88,7 +88,7 @@ class Controller:
         context = context or ExecutionContext()
         if spec.protocol_revision != self.protocol_revision:
             raise DeepError("deep_protocol_mismatch")
-        if spec.executor != "ppap-deep":
+        if spec.executor not in {"ppap-deep", "ppap-checker-core"}:
             raise DeepError("deep_executor_mismatch")
         if spec.executor_revision != self.executor_revision:
             raise DeepError("executor_revision_mismatch")
@@ -143,7 +143,20 @@ class Controller:
         expected = {
             f"{item.file_version_id}:rule:{clause.get('id') or index}" for item in spec.files if item.role == "target" for index, clause in enumerate((item.rule_body or {}).get("rules") or [], 1)
         }
-        if expected and seen != expected:
+        if spec.executor == "ppap-checker-core":
+            # Unsupported clauses remain explicit coverage, not fabricated ERR
+            # findings. Require an exact, unique disposition for every clause.
+            coverage = result.coverage.rule_items
+            covered = {f"{row.get('file_version_id')}:rule:{row.get('rule_item_id')}" for row in coverage}
+            if len(covered) != len(coverage) or covered != expected:
+                raise DeepError("deep_output_invalid")
+            unsupported = {f"{row.get('file_version_id')}:rule:{row.get('rule_item_id')}" for row in coverage if row.get("coverage") == "unsupported"}
+            if seen != expected - unsupported:
+                raise DeepError("deep_output_invalid")
+            identity = result.coverage.checker_execution or {}
+            if identity.get("input_digest") != spec.checker_snapshot_digest or identity.get("runtime_revision") != spec.executor_revision:
+                raise DeepError("deep_output_identity_mismatch")
+        elif expected and seen != expected:
             raise DeepError("deep_output_invalid")
         return result
 

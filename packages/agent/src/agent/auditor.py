@@ -54,6 +54,9 @@ class SemanticRuntime:
     def __init__(self, runtime, objects: Objects, *, timeout: float = DEEP_TOTAL_SECONDS):
         self.runtime, self.objects, self.timeout = runtime, objects, timeout
 
+    def execution_revision(self) -> str:
+        return self.runtime.engine_revision()
+
     def ready(self) -> bool:
         return self.runtime.ready()
 
@@ -475,7 +478,7 @@ class SemanticRuntime:
 
         outcome = develop_and_run(request, job)
         source = getattr(self.runtime, "usage_source", "unknown")
-        outcome.usage_source = source if source in {"controlled", "provider"} else "unknown"
+        outcome.usage_source = "controlled" if source == "controlled" else "provider" if source == "provider" else "unknown"
         self._put(f"{self._attempt_prefix(spec)}/development/{request.target.digest}.json", outcome.receipt())
         return outcome
 
@@ -555,7 +558,7 @@ class SemanticRuntime:
         from agent.execution.checker_guest import CheckerProgramError
         from agent.execution.guest_model import ModelProtocolError
 
-        revision = self.runtime.engine_revision()
+        revision = self.execution_revision()
         if spec.executor_revision != revision:
             raise DeepError("executor_revision_mismatch")
         file_sha256 = hashlib.sha256(file_bytes).hexdigest()

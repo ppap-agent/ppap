@@ -9,13 +9,13 @@ from pathlib import Path
 
 from documents.model_access import ModelUnavailable
 
-from agent.auditor import SemanticRuntime
 from agent.client import DeepError
+from agent.core_program import CoreRuntime
 from agent.execution.isolation import ContainerRuntime, RuntimeConfig, local_gateway
 
 
 @contextmanager
-def runtime_from_env(settings, objects, *, model_access_for_request=None):
+def runtime_from_env(settings, objects, *, model_access_for_request=None, snapshot_for_request=None, suite_for_revision=None, save_round_artifacts=None):
     if os.environ.get("PPAP_DEEP_RUNTIME", "") != "container-only":
         raise ValueError("PPAP_DEEP_RUNTIME must explicitly select container-only")
     profile = os.environ.get("PPAP_DEEP_SANDBOX_PROFILE", "")
@@ -46,7 +46,7 @@ def runtime_from_env(settings, objects, *, model_access_for_request=None):
     with local_gateway(state / "gateway.sock", upstream=DEEPSEEK_BASE_URL, model=DEEPSEEK_MODEL, provider_key=resolve_key, provider_key_factory=bind_key) as gateway:
         runtime = ContainerRuntime(RuntimeConfig(state=state, gateway_socket=gateway.socket_path, gateway_host="127.0.0.1", **policy.model_dump()))
         runtime.recover()
-        semantic = SemanticRuntime(runtime, objects)
+        semantic = CoreRuntime(runtime, snapshot_for_request, suite_for_revision, objects=objects, save_round_artifacts=save_round_artifacts)
 
         class PersonalRuntime:
             def ready(self):
@@ -63,9 +63,8 @@ def runtime_from_env(settings, objects, *, model_access_for_request=None):
                     gateway.http.grants.revoke_all()
                     active[0] = spec
                     try:
-                        # Fail with an actionable reason, without trying another
-                        # member or platform key. Each subsequent call rechecks.
-                        resolve_key()
+                        # Resolve a credential only if a model request is made.
+                        # Pure native checks remain usable without a personal key.
                         return operation()
                     except ModelUnavailable:
                         raise DeepError("personal_model_unavailable") from None

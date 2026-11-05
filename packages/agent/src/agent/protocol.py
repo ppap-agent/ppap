@@ -29,10 +29,12 @@ class ExecuteRequest(BaseModel):
     protocol_revision: str
     round_id: str
     files: list[FrozenFile]
-    executor: Literal["ppap-deep"]
+    executor: Literal["ppap-deep", "ppap-checker-core"]
     executor_revision: str
     tenant_id: str = ""
     initiating_user_id: str = ""
+    analysis_mode: Literal["standard", "deep"] = "standard"
+    checker_snapshot_digest: str = Field(default="", pattern=r"^$|^[a-f0-9]{64}$")
     job_id: str = ""
     attempt: int = Field(default=1, ge=1)
     resume_attempt: int | None = Field(default=None, ge=1, strict=True)
@@ -77,6 +79,7 @@ class DeepCoverage(BaseModel):
     locator_gap: bool
     rule_items: list[dict[str, Any]] = Field(default_factory=list)
     verification: DeepVerification | None = None
+    checker_execution: dict[str, Any] | None = None
     clarifications: list[dict[str, Any]] = Field(default_factory=list, max_length=256)
 
 

@@ -12,8 +12,8 @@ from agent.client import DeepError
 from agent.protocol import DeepCoverage, DeepFinding, ExecuteRequest, ExecuteResponse, FrozenFile
 
 
-def spec_from_work(work: RoundWork, executor: str, executor_revision: str, protocol_revision: str) -> ExecuteRequest:
-    if executor != "ppap-deep":
+def spec_from_work(work: RoundWork, executor: str, executor_revision: str, protocol_revision: str, *, checker_snapshot_digest: str = "") -> ExecuteRequest:
+    if executor not in {"ppap-deep", "ppap-checker-core"}:
         raise DeepError("deep_executor_mismatch")
     files = []
     for item in work.inputs:
@@ -38,10 +38,12 @@ def spec_from_work(work: RoundWork, executor: str, executor_revision: str, proto
         protocol_revision=protocol_revision,
         round_id=work.round_id,
         files=files,
-        executor="ppap-deep",
+        executor=cast(Literal["ppap-deep", "ppap-checker-core"], executor),
         executor_revision=executor_revision,
         tenant_id=work.tenant_id,
         initiating_user_id=work.initiating_user_id,
+        analysis_mode=cast(Literal["standard", "deep"], work.analysis_mode),
+        checker_snapshot_digest=checker_snapshot_digest,
     )
 
 

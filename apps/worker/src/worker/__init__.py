@@ -9,19 +9,12 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from audit.audits import (
-    ANALYSIS_DEEP,
-    EXECUTOR_STANDARD,
-    STANDARD_EXECUTOR_REVISION,
-    evaluate_round,
-)
-from product import build_product_store, run_standard_round
+from product import build_product_store
 from product.db import connect
 from product.logs import bind, emit, reset
 from product.logs import configure as configure_logs
 from product.rules import FILE_PREPARATION_KINDS
 from product.settings import get_settings
-from product.standard_policy import StandardExecutionPolicy
 from product.store import AuthStore
 
 from worker.intake import analyze_file, parse_rule_file, validate_file
@@ -44,17 +37,7 @@ def run_claimed_job(kind: str, payload: dict) -> dict:
         return {"error": "unsupported_job_kind", "note": "unsupported_job_kind"}
     if payload.get("round_id"):
         return {"note": "round_audit", "round_id": payload.get("round_id")}
-    from audit.engine.app_runtime import run_audit_engine
-
-    results = run_audit_engine(payload.get("audit") or payload, payload.get("rule") or {})
-    return {
-        "note": "in-repo engine",
-        "results": [result.model_dump() for result in results],
-    }
-
-
-def engine_runner(work, store: AuthStore):
-    return run_standard_round(store, work)
+    return {"error": "checker_snapshot_required", "note": "checker_snapshot_required"}
 
 
 def process_file_job(store, claimed, ident, ai=None) -> dict:
@@ -161,49 +144,9 @@ def _process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> 
             return result
         if work.tenant_id:
             tokens.extend(bind(tenant_id=work.tenant_id))
-        if work.analysis_mode == ANALYSIS_DEEP:
-            result, outcome = run_deep_round(store, claimed, work, ident)
-            accepted = store.complete_job(claimed, ident, result, outcome)
-            emit(
-                "job_completed" if accepted else "job_result_discarded",
-                outcome=outcome,
-                note=result.get("note") or "deep_audit",
-            )
-            return result
-
-        # Legacy jobs retain their original label; no invented configuration is
-        # backfilled. New jobs must match before reading original bytes or AI IO.
-        payload = claimed.payload or {}
-        if payload.get("execution_policy") is not None or payload.get("executor_revision") != STANDARD_EXECUTOR_REVISION:
-            try:
-                policy = StandardExecutionPolicy.model_validate(payload.get("execution_policy"))
-                matched = payload.get("executor") == EXECUTOR_STANDARD and payload.get("executor_revision") == policy.engine_revision() and policy == store.settings.standard_execution_policy()
-            except ValueError:
-                matched = False
-            if not matched:
-                result = {"findings": [], "coverage": {}, "failure": {"code": "executor_revision_mismatch", "retryable": False}, "note": "executor_revision_mismatch"}
-                accepted = store.complete_job(claimed, ident, result, "failed")
-                emit("job_completed" if accepted else "job_result_discarded", outcome="failed", note="executor_revision_mismatch")
-                return result
-
-        def runner(current):
-            return engine_runner(current, store)
-
-        error_type = None
-        try:
-            result = evaluate_round(work, engine_runner=runner)
-        except Exception:
-            from audit.audits import execution_error_result
-
-            result = execution_error_result("engine_error")
-            result["note"] = "round_audit_error"
-            error_type = "engine_error"
-        else:
-            result["note"] = result.get("note") or "round_audit"
-        # A failed result transaction is not an engine failure. Let the caller
-        # retain the unfinished attempt instead of writing a fabricated ERR.
-        store.complete_job(claimed, ident, result, "succeeded")
-        emit("job_completed", outcome="succeeded", note=result.get("note"), error_type=error_type)
+        result, outcome = run_core_round(store, claimed, work, ident)
+        accepted = store.complete_job(claimed, ident, result, outcome)
+        emit("job_completed" if accepted else "job_result_discarded", outcome=outcome, note=result.get("note") or "checker_core_audit")
         return result
     finally:
         reset(tokens)
@@ -264,31 +207,35 @@ def audit_lease(store, claimed, ident):
         renewal.join(timeout=1)
 
 
-def run_deep_round(store: AuthStore, claimed, work, ident: str = "") -> tuple[dict, str]:
-    """Deep execution boundary. Never falls back to the in-repo Standard engine."""
+def run_core_round(store: AuthStore, claimed, work, ident: str = "") -> tuple[dict, str]:
+    """All admitted audits share the frozen Core and existing leased UDS boundary."""
     from agent.client import DEEP_REQUEST_TIMEOUT, DeepClient, DeepError
     from agent.failures import failure_result
     from agent.mapping import product_result, spec_from_work
     from agent.protocol import DeepProgress
-    from audit.audits import DEEP_PROTOCOL_REVISION, EXECUTOR_DEEP, frozen_executor
+    from audit.audits import DEEP_PROTOCOL_REVISION
+    from audit.checker_core import runtime_revision
+    from audit.standard_suites import library_revision
 
     settings = getattr(store, "settings", None)
     payload = claimed.payload if isinstance(claimed.payload, dict) else {}
     executor = payload.get("executor")
     revision = payload.get("executor_revision")
     try:
-        _expected_executor, expected_revision = frozen_executor(ANALYSIS_DEEP, settings.deep_execution_revision() if settings else "")
-    except ValueError:
+        if settings is None:
+            raise ValueError("settings_required")
+        expected_revision = runtime_revision(settings.deep_execution_revision(), library_revision())
+    except (ValueError, AttributeError):
         return failure_result("executor_revision_mismatch"), "failed"
-    if work.analysis_mode != ANALYSIS_DEEP or executor != EXECUTOR_DEEP:
-        return failure_result("deep_executor_mismatch"), "failed"
+    if executor != "ppap-checker-core" or not payload.get("checker_snapshot_digest"):
+        return failure_result("checker_snapshot_required"), "failed"
     if revision != expected_revision:
         return failure_result("executor_revision_mismatch"), "failed"
     socket_path = str(getattr(settings, "deep_controller_socket", "") if settings else "").strip()
     if not socket_path:
         return failure_result("deep_runtime_unavailable"), "failed"
     try:
-        spec = spec_from_work(work, executor, revision, DEEP_PROTOCOL_REVISION)
+        spec = spec_from_work(work, executor, revision, DEEP_PROTOCOL_REVISION, checker_snapshot_digest=payload["checker_snapshot_digest"])
         spec = spec.model_copy(update={"job_id": claimed.id, "attempt": claimed.attempt})
         with audit_lease(store, claimed, ident) as cancelled:
 
@@ -306,7 +253,7 @@ def run_deep_round(store: AuthStore, claimed, work, ident: str = "") -> tuple[di
             if cancelled.is_set():
                 raise DeepError("deep_lease_lost")
         result = product_result(response, work)
-        result["note"] = result.get("note") or "deep_audit"
+        result["note"] = result.get("note") or "checker_core_audit"
         return result, "succeeded"
     except DeepError as exc:
         return failure_result(exc.code), "failed"
