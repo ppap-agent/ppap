@@ -118,3 +118,55 @@ def test_authored_factory_results_bind_by_ids_without_historical_class():
     context.clause_id = "b"
     assert check_factory(context, factory).clause_id == "b"
     assert calls == ["b", "a"]
+
+
+def test_authored_factory_failure_is_not_repeated_for_later_clauses():
+    import pytest
+    from audit.standard_library import check_factory
+
+    calls = []
+
+    def factory(*args):
+        calls.append("external")
+        raise RuntimeError("unknown provider outcome")
+
+    context = SimpleNamespace(
+        audit_file=SimpleNamespace(audit_id="target"),
+        target=SimpleNamespace(binding=SimpleNamespace(checker_digest="fixed")),
+        rule=None,
+        group_context=None,
+        cache={},
+        on_close=lambda item: None,
+        clause_id="a",
+    )
+    for clause in ("a", "b"):
+        context.clause_id = clause
+        with pytest.raises(RuntimeError, match="unknown provider"):
+            check_factory(context, factory)
+    assert calls == ["external"]
+
+
+def test_authored_collective_failure_is_not_repeated_for_later_clauses():
+    import pytest
+    from audit.standard_library import check_factory
+
+    calls = []
+
+    def fail():
+        calls.append("external")
+        raise RuntimeError("unknown provider outcome")
+
+    context = SimpleNamespace(
+        audit_file=SimpleNamespace(audit_id="target"),
+        target=SimpleNamespace(binding=SimpleNamespace(checker_digest="fixed", entrypoints={"a": "checker:create_audit", "b": "checker:create_audit"})),
+        rule=None,
+        group_context=None,
+        cache={},
+        on_close=lambda item: None,
+        clause_id="a",
+    )
+    for clause in ("a", "b"):
+        context.clause_id = clause
+        with pytest.raises(RuntimeError, match="unknown provider"):
+            check_factory(context, lambda *args: SimpleNamespace(checks=[SimpleNamespace(check=fail)]))
+    assert calls == ["external"]
