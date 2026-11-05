@@ -3,10 +3,9 @@
 import io
 import posixpath
 import zipfile
+from functools import lru_cache
 from pathlib import Path
 from xml.etree import ElementTree as ET
-
-from functools import lru_cache
 
 import fitz
 from openpyxl.utils.cell import absolute_coordinate, range_boundaries
