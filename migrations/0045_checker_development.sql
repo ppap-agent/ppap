@@ -1,7 +1,7 @@
 BEGIN;
 
 -- Actual Deep output is not the Suite that happened to be its starting point.
-CREATE TABLE product.checker_round_artifacts (
+CREATE TABLE IF NOT EXISTS product.checker_round_artifacts (
     round_id uuid NOT NULL REFERENCES product.audit_rounds(id),
     file_version_id uuid NOT NULL REFERENCES product.file_versions(id),
     result_attempt integer NOT NULL CHECK (result_attempt > 0),
@@ -12,7 +12,7 @@ CREATE TABLE product.checker_round_artifacts (
     PRIMARY KEY (round_id, file_version_id, result_attempt)
 );
 
-CREATE TABLE product.checker_feedback (
+CREATE TABLE IF NOT EXISTS product.checker_feedback (
     id uuid PRIMARY KEY,
     operation_id uuid NOT NULL,
     tenant_id uuid NOT NULL REFERENCES product.tenants(id),
@@ -37,9 +37,9 @@ CREATE TABLE product.checker_feedback (
     UNIQUE (tenant_id, operation_id),
     UNIQUE (tenant_id, suite_key, ordinal)
 );
-CREATE INDEX checker_feedback_suite ON product.checker_feedback(tenant_id, suite_key, ordinal) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS checker_feedback_suite ON product.checker_feedback(tenant_id, suite_key, ordinal) WHERE deleted_at IS NULL;
 
-CREATE TABLE product.checker_optimizations (
+CREATE TABLE IF NOT EXISTS product.checker_optimizations (
     operation_id uuid PRIMARY KEY,
     tenant_id uuid NOT NULL REFERENCES product.tenants(id),
     initiating_user_id uuid NOT NULL REFERENCES product.users(id),
@@ -58,7 +58,7 @@ CREATE TABLE product.checker_optimizations (
     created_at timestamptz NOT NULL DEFAULT now(),
     completed_at timestamptz
 );
-CREATE INDEX checker_optimizations_owner ON product.checker_optimizations(tenant_id, initiating_user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS checker_optimizations_owner ON product.checker_optimizations(tenant_id, initiating_user_id, created_at DESC);
 
 GRANT SELECT, INSERT ON product.checker_round_artifacts TO ppap_api, ppap_worker;
 GRANT SELECT, INSERT, UPDATE ON product.checker_feedback TO ppap_api;

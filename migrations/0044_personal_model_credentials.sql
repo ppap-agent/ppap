@@ -1,6 +1,6 @@
 -- Ciphertext only. Membership/account removal revokes personal model access;
 -- shared Checker artifacts never reference or cascade from this table.
-CREATE TABLE product.personal_model_credentials (
+CREATE TABLE IF NOT EXISTS product.personal_model_credentials (
     tenant_id uuid NOT NULL,
     user_id uuid NOT NULL,
     provider text NOT NULL DEFAULT 'deepseek' CHECK (provider = 'deepseek'),
