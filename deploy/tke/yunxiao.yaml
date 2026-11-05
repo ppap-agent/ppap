@@ -1,3 +1,7 @@
+concurrencyConfig:
+  maxRunningPipelineInstances: 3
+  pipelineMaxRunningBehavior: rejectNew
+  maxRunningJobInstances: 3
 defaultWorkspace: current_repo
 sources:
   current_repo:
