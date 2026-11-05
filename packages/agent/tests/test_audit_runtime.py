@@ -195,3 +195,49 @@ def test_no_personal_model_access_never_uses_environment_key(monkeypatch):
     with model_access_scope(None):
         result = run_audit(*request(program))
     assert all(row["status"] == "ERR" and row["suggestions"] == "checker_failure:ModelUnavailable" for row in result["findings"])
+
+
+def test_clause_deadline_cannot_be_swallowed_by_legacy_fallback():
+    program = PROGRAM.replace(
+        b"context.cache['count'] =",
+        b"if context.clause_id == 'a':\n        try:\n            import time; time.sleep(1)\n        except Exception:\n            pass\n    context.cache['count'] =",
+    )
+    result = run_audit(*request(program, targets=1), clause_timeout=0.01)
+    assert [row["status"] for row in result["findings"]] == ["ERR", "PASS"]
+    assert result["findings"][0]["suggestions"] == "checker_clause_timeout_external_usage_unknown"
+
+
+@pytest.mark.parametrize("seconds", [float("nan"), float("inf"), 0, -1])
+def test_invalid_deadline_fails_before_guest(seconds):
+    with pytest.raises(ValueError, match="invalid_clause_timeout"):
+        run_audit(*request(), clause_timeout=seconds)
+
+
+def test_usage_receipts_are_returned_and_parent_scope_restored():
+    from audit.usage import get_token_tracker
+
+    tracker = get_token_tracker()
+    parent = tracker.start_request_tracking()
+    program = PROGRAM.replace(b"context.cache['count'] =", b"from audit.usage import record_token_usage\n    record_token_usage(3, 2, model_name='controlled')\n    context.cache['count'] =")
+    try:
+        result = run_audit(*request(program, targets=1))
+        assert result["usage"]["total_tokens"] == 10
+        assert result["usage"]["llm_calls_count"] == 2
+        assert result["usage"]["usage_complete"]
+        assert tracker.get_current_request_id() == parent
+        assert tracker.get_request_summary(result["usage"]["request_id"]) is None
+    finally:
+        tracker.cleanup_request(parent)
+        tracker.set_current_request_id(None)
+
+
+def test_unknown_usage_never_becomes_zero():
+    program = PROGRAM.replace(b"context.cache['count'] =", b"from audit.usage import record_unreported_usage\n    record_unreported_usage()\n    context.cache['count'] =")
+    usage = run_audit(*request(program, targets=1))["usage"]
+    assert usage["total_tokens"] is None
+    assert not usage["usage_complete"]
+
+
+def test_original_filename_survives_safe_local_materialization():
+    program = PROGRAM.replace(b"context.cache['count'] =", b"assert context.audit_file.file_metadata['original_filename'] == context.audit_file.audit_id + '.txt'\n    context.cache['count'] =")
+    assert all(row["status"] == "PASS" for row in run_audit(*request(program))["findings"])

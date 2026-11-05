@@ -10,6 +10,7 @@ import base64
 import contextlib
 import importlib.util
 import json
+import math
 import os
 import signal
 import subprocess
@@ -37,8 +38,8 @@ class AuditRunError(RuntimeError):
     """A failed or interrupted run has no publishable partial success."""
 
 
-class ClauseTimeout(TimeoutError):
-    pass
+class ClauseTimeout(BaseException):
+    """Escape legacy catch-all Exception fallbacks without retrying a check."""
 
 
 @dataclass
@@ -58,7 +59,7 @@ class CheckerContext:
 
 @contextlib.contextmanager
 def _clause_deadline(seconds: float):
-    if seconds <= 0:
+    if not math.isfinite(seconds) or seconds <= 0:
         raise ValueError("invalid_clause_timeout")
     old = signal.getsignal(signal.SIGALRM)
 
@@ -144,6 +145,8 @@ def run_audit(
     clause_timeout: float = 120,
 ) -> dict[str, Any]:
     """Execute in the caller's guest; never spawn per target or per clause."""
+    if not math.isfinite(clause_timeout) or clause_timeout <= 0:
+        raise ValueError("invalid_clause_timeout")
     snapshot.validate_sources(sources)
     expected = {target.binding.checker_digest for target in snapshot.targets}
     if set(programs) != expected or any(checker_digest(files) != digest for digest, files in programs.items()):
@@ -173,7 +176,7 @@ def run_audit(
                 customer=source.customer,
                 model=source.model,
                 part=source.part,
-                file_metadata={"file_version_id": source.file_version_id, "sha256": source.sha256, "role": source.role},
+                file_metadata={"file_version_id": source.file_version_id, "sha256": source.sha256, "role": source.role, "original_filename": source.filename},
             )
         by_type: dict[str, list[AuditInput]] = {}
         for source in snapshot.inputs:
@@ -181,10 +184,13 @@ def run_audit(
                 by_type.setdefault(source.document_type, []).append(audits[source.file_version_id])
         group = GroupContextInput(task_group_id=snapshot.round_id, by_audit_id=audits, by_doc_type=by_type, rules_by_id={rule.rule_id: rule for rule in rules.values()})
         try:
-            from audit.usage import track_ocr_usage
+            from audit.usage import get_token_tracker, track_ocr_usage
             from documents.model_access import model_access_scope, model_access_scoped
             from documents.ocr.paddle.reader import paddle_page_scope
 
+            tracker = get_token_tracker()
+            previous_request = tracker.get_current_request_id()
+            request_id = tracker.start_request_tracking()
             model_scope = contextlib.nullcontext() if model_access_scoped() else model_access_scope(None)
             with model_scope, bind_runtime(runtime), paddle_page_scope(), track_ocr_usage():
                 for index, target in enumerate(snapshot.targets):
@@ -225,6 +231,8 @@ def run_audit(
                                         item = entrypoints[selected_entrypoint](context)
                                 if item is None:
                                     item = _error(clause, "ERR", "checker_missing_result")
+                            except ClauseTimeout:
+                                item = _error(clause, "ERR", "checker_clause_timeout_external_usage_unknown")
                             except GuardStop as exc:
                                 item = _error(clause, str(exc.status), exc.message)
                             except Exception as exc:
@@ -239,8 +247,12 @@ def run_audit(
                     finally:
                         _restore_modules(saved)
             snapshot.validate_sources({identity: path.read_bytes() for identity, path in paths.items()})
-            return {"input_digest": snapshot.input_digest, "findings": findings, "coverage": coverage, "process_id": os.getpid()}
+            usage = tracker.end_request_tracking(request_id).to_dict()
+            return {"input_digest": snapshot.input_digest, "findings": findings, "coverage": coverage, "process_id": os.getpid(), "usage": usage}
         finally:
+            if "request_id" in locals():
+                tracker.cleanup_request(request_id)
+                tracker.set_current_request_id(previous_request)
             for item in reversed(closeables):
                 close = getattr(item, "close", None)
                 if callable(close):
@@ -275,8 +287,12 @@ def run_audit_process(
     cancelled: Callable[[], bool] = lambda: False,
     model_grant: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Host lifecycle boundary. Never retry an interrupted/non-idempotent guest."""
-    if timeout <= 0 or clause_timeout <= 0:
+    """Local test harness only; production must use the existing ContainerRuntime.
+
+    This helper is not a deployment or security boundary. Never retry an
+    interrupted/non-idempotent guest.
+    """
+    if not math.isfinite(timeout) or not math.isfinite(clause_timeout) or timeout <= 0 or clause_timeout <= 0:
         raise ValueError("invalid_audit_timeout")
     snapshot.validate_sources(sources)
     if cancelled():

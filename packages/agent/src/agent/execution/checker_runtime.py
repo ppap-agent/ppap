@@ -24,7 +24,7 @@ class CheckerRuntime:
     def __init__(self, *, allow_model_tools: bool = False) -> None:
         self.allow_model_tools = allow_model_tools
         self._cache: dict[Any, Any] = {}
-        self._failed: dict[Any, Exception] = {}
+        self._failed: dict[Any, BaseException] = {}
         self._closeables: list[Any] = []
 
     def _once(self, key: Any, operation: Callable[[], Any]) -> Any:
@@ -33,7 +33,7 @@ class CheckerRuntime:
         if key not in self._cache:
             try:
                 self._cache[key] = operation()
-            except Exception as exc:
+            except BaseException as exc:
                 self._failed[key] = exc
                 raise
         return self._cache[key]
@@ -50,7 +50,9 @@ class CheckerRuntime:
     def convert_pdf_to_excel(self, file_ref: FileRef, *, enable_cache: bool = True, spec: Any = None, doc_type: object | None = None) -> ConversionArtifact:
         if spec is None and not self.allow_model_tools:
             raise GuardStop(Decision.UNABLE, "PDF 必须提供本次文件的 PdfSpec")
-        return convert_pdf_to_excel_auto(file_ref, enable_cache=enable_cache, spec=spec, doc_type=doc_type)
+        spec_key = spec.model_dump_json() if hasattr(spec, "model_dump_json") else repr(spec)
+        key = ("pdf_conversion", str(Path(file_ref.location).resolve()), enable_cache, spec_key, str(doc_type))
+        return self._once(key, lambda: convert_pdf_to_excel_auto(file_ref, enable_cache=enable_cache, spec=spec, doc_type=doc_type))
 
     def render_pdf_images(self, file_url: str, *, render_all_pages: bool = True) -> list[str]:
         from documents.images.image import extract_images_from_bytes

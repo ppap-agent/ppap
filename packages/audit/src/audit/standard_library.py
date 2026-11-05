@@ -8,10 +8,24 @@ from __future__ import annotations
 
 import importlib
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from audit.contracts import AuditResultItem
 from audit.engine.checkers.rule_declarations import discover_declared_rules
+
+
+def _once(context: Any, key: tuple, operation: Callable[[], Any]) -> Any:
+    """Remember both completed and interrupted calls; never retry unknown usage."""
+    failure = (*key, "failure")
+    if failure in context.cache:
+        raise context.cache[failure]
+    if key not in context.cache:
+        try:
+            context.cache[key] = operation()
+        except BaseException as exc:
+            context.cache[failure] = exc
+            raise
+    return context.cache[key]
 
 
 def check_clause(context: Any, resources: dict[str, Any]) -> AuditResultItem:
@@ -24,8 +38,7 @@ def check_clause(context: Any, resources: dict[str, Any]) -> AuditResultItem:
     if checker is None:
         module, name = implementation.split(":", 1)
         cls = getattr(importlib.import_module(module), name)
-        checker = cls(context.audit_file, context.rule, group_context=context.group_context)
-        context.cache[key] = checker
+        checker = _once(context, key, lambda: cls(context.audit_file, context.rule, group_context=context.group_context))
         context.on_close(checker)
     # Index is an internal adapter for a named, explicit library method. It
     # never assigns business clauses by order or infers coverage from a class.
@@ -61,8 +74,7 @@ def check_factory(context: Any, factory: Any) -> AuditResultItem:
         except TypeError:
             args = args[:2]
             signature.bind(*args)
-        audit = factory(*args)
-        context.cache[key] = audit
+        audit = _once(context, key, lambda: factory(*args))
         context.on_close(audit)
     checks = tuple(getattr(audit, "checks", ()) or ())
     if not checks:
@@ -82,7 +94,8 @@ def check_factory(context: Any, factory: Any) -> AuditResultItem:
     # Some valid authored factories only attach IDs to returned results. Execute
     # that factory's checks once, then attribute by IDs, never by list position.
     result_key = (*key, "results")
-    if result_key not in context.cache:
+
+    def collect():
         results = {}
         for check in checks:
             result = check.check()
@@ -94,5 +107,6 @@ def check_factory(context: Any, factory: Any) -> AuditResultItem:
             results[item.clause_id] = item
         if set(results) != set(context.target.binding.entrypoints):
             raise ValueError("authored_checker_result_clause_mismatch")
-        context.cache[result_key] = results
-    return context.cache[result_key][context.clause_id]
+        return results
+
+    return _once(context, result_key, collect)[context.clause_id]
