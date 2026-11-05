@@ -160,6 +160,20 @@ def _attempt_manual_linegrid(
             spec=spec,
         )
         observed = dict(getattr(result, "diagnostics", None) or {})
+        # Keep the existing audit-facing page identity outside the original
+        # converter. This metadata never changes extracted cells or XLSX data.
+        extraction = getattr(result, "extraction", None)
+        if extraction is not None:
+            observed["original_pages"] = [
+                {
+                    "page": page.page_index + 1,
+                    "success": page.success,
+                    "region": None if page.table_region is None else [None if value is None else round(float(value), 2) for value in page.table_region],
+                    "error": page.error_message,
+                }
+                for group in extraction.groups
+                for page in group.page_results
+            ]
         result_output_path = getattr(result, "output_path", None)
         result_success = getattr(result, "success", None)
         if result_output_path == output_path and os.path.exists(output_path):

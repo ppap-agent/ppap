@@ -81,8 +81,6 @@ def fill_worksheet_from_table_grid(worksheet: Worksheet, table_grid: TableGrid) 
 
         start_cell = worksheet.cell(row=excel_row_start, column=excel_col_start)
         start_cell.value = cell_region.content
-        if start_cell.data_type == "f":
-            start_cell.data_type = "s"
         start_cell.border = thin_border
         start_cell.alignment = Alignment(wrap_text=True, vertical="top")
 
