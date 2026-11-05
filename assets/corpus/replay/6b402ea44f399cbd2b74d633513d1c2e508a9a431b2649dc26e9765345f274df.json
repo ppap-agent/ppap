@@ -1,0 +1,5 @@
+{
+ "answer": "{\"psw_stamp_ending_text\":\"部门专用章\",\"psw_stamp_present\":true}",
+ "kind": "ocr",
+ "model": "deepseek/deepseek-v4.1-flash-1017"
+}

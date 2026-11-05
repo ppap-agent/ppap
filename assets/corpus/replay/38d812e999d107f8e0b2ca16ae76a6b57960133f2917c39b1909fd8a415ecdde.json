@@ -1,0 +1,5 @@
+{
+ "answer": "{\"submission_other_present\": false, \"submission_any_checked\": true}",
+ "kind": "ocr",
+ "model": "deepseek/deepseek-v4.1-flash-1017"
+}

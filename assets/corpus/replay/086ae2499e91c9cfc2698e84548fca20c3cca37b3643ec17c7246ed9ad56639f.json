@@ -1,0 +1,5 @@
+{
+ "answer": "{\"authorization_company_stamp_present\": null, \"authorization_table_present\": false}",
+ "kind": "ocr",
+ "model": "deepseek/deepseek-v4.1-flash-1017"
+}
