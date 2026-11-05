@@ -11,7 +11,7 @@ from product.store.checker_development import CheckerDevelopmentStore
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class Evidence(BaseModel):
+class CheckerFeedbackEvidence(BaseModel):
     model_config = ConfigDict(extra="forbid")
     file_version_id: str
     locator: dict[str, Any]
@@ -22,7 +22,7 @@ class FeedbackEdit(BaseModel):
     model_config = ConfigDict(extra="forbid")
     expected_status: Literal["PASS", "NG", "NA"]
     rationale: str = Field(min_length=1, max_length=8000)
-    evidence: list[Evidence] = Field(min_length=1, max_length=20)
+    evidence: list[CheckerFeedbackEvidence] = Field(min_length=1, max_length=20)
 
 
 class FeedbackCreate(FeedbackEdit):

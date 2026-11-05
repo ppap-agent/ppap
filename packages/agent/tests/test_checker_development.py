@@ -9,6 +9,7 @@ from agent.checker_development import DevelopmentRequest, FrozenDevelopmentInput
 from agent.checker_program import CheckerManifest, run_adapt_manifest, run_execute_manifest, write_manifest
 from agent.checker_spec import CheckerArtifact, CheckerJobSpec, CheckerProgramBundle
 from agent.client import DeepError
+from agent.execution.checker_guest import CheckerProgramError
 from audit.contracts import AuditInput, RuleInput
 from openpyxl import Workbook
 
@@ -82,12 +83,16 @@ class Runtime:
         )
         folder = self.root / str(len(self.calls))
         write_manifest(folder / "inputs", manifest, inputs.file_bytes)
-        if operation == "adapt-checker":
-            assert "hidden-sentinel" not in manifest.model_dump_json()
-            run_adapt_manifest(folder / "inputs", folder / "work", self, 10**12)
-        else:
-            assert feedback is None
-            run_execute_manifest(folder / "inputs", folder / "work")
+        try:
+            if operation == "adapt-checker":
+                assert "hidden-sentinel" not in manifest.model_dump_json()
+                run_adapt_manifest(folder / "inputs", folder / "work", self, 10**12)
+            else:
+                assert feedback is None
+                run_execute_manifest(folder / "inputs", folder / "work")
+        except CheckerProgramError:
+            # Match the production guest fault -> trusted host error boundary.
+            raise DeepError("deep_output_invalid") from None
         return CheckerProgramBundle.model_validate_json((folder / "work" / "result" / "bundle.json").read_bytes())
 
 
@@ -150,8 +155,10 @@ def test_missing_checks_and_fake_locator_never_verify(tmp_path):
     assert outcome.validation.cases[1].clauses[0].actual == "ERR"
     runtime = Runtime(tmp_path / "fake-locator", program=PROGRAM.replace('"sheet":"Sheet"', '"sheet":"Sheet","file_version_id":"foreign"'))
     outcome = develop_and_run(request(tmp_path), runtime)
-    assert not outcome.validation.verified
-    assert not any(clause.evidence_locatable for case in outcome.validation.cases for clause in case.clauses)
+    assert outcome.error_code == "deep_output_invalid"
+    assert outcome.artifact is None
+    assert outcome.results == []
+    assert outcome.validation is None
 
 
 @pytest.mark.parametrize("code", ["deep_model_protocol", "deep_timeout", "deep_budget_exhausted"])
