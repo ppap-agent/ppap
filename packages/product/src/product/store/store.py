@@ -36,7 +36,7 @@ from psycopg.types.json import Jsonb
 
 from product.db import connect
 from product.feishu import CardAction, UserTokens
-from product.feishu_notifications import task_notification_card
+from product.feishu_notifications import optimization_notification_card, task_notification_card
 from product.feishu_personal_upload import PersonalDriveClient, UploadRejected, UploadUnknown
 from product.feishu_usage import FeishuUsageError, PartnerAiItem, audit_usage_points, remaining_trial_points, split_trial_and_partner
 from product.files import (
@@ -1757,14 +1757,30 @@ class AuthStore:
             )
             return self._notification_preference(conn, self._recognition_owner(conn, principal, task_id))
 
-    def _queue_task_notification(self, conn, task_id: str, stage: str, round_id: str | None = None, *, package_id: str | None = None) -> None:
-        payload = {"task_id": task_id, "stage": stage, **({"package_id": package_id} if package_id else {})}
+    def _queue_task_notification(self, conn, task_id: str | None, stage: str, round_id: str | None = None, *, package_id: str | None = None, operation_id: str | None = None) -> None:
+        if stage == "optimization_completed":
+            # The original operation, not a browser session or task creator,
+            # owns this intent. Bare historical Rounds need no artificial Task.
+            owner = conn.execute(
+                """SELECT o.tenant_id, r.source_draft_id FROM product.checker_optimizations o
+                   JOIN product.audit_rounds r ON r.id=%s AND r.tenant_id=o.tenant_id
+                   WHERE o.operation_id=%s AND o.completed_at IS NOT NULL
+                   AND o.state IN ('completed','failed','unknown','stopped')""",
+                (round_id, operation_id),
+            ).fetchone()
+            if not owner:
+                return
+            task_id = str(owner[1]) if owner[1] else None
+        else:
+            owner = conn.execute("SELECT tenant_id FROM product.audit_drafts WHERE id=%s AND task_fingerprint IS NOT NULL", (task_id,)).fetchone()
+            if not owner:
+                return
+        payload = {"stage": stage, **({"task_id": task_id} if task_id else {}), **({"package_id": package_id} if package_id else {}), **({"operation_id": operation_id} if operation_id else {})}
         conn.execute(
             """INSERT INTO engine.jobs (id, tenant_id, audit_round_id, kind, payload, status, result)
-            SELECT gen_random_uuid(), d.tenant_id, %s, 'feishu_notification', %s, 'queued', %s
-            FROM product.audit_drafts d WHERE d.id = %s AND d.task_fingerprint IS NOT NULL
-            ON CONFLICT (tenant_id, (payload->>'task_id'), (payload->>'stage'), (COALESCE(payload->>'package_id', ''))) WHERE kind = 'feishu_notification' DO NOTHING""",
-            (round_id, Jsonb(payload), Jsonb({"state": "queued", "reason": None}), task_id),
+            VALUES (gen_random_uuid(), %s, %s, 'feishu_notification', %s, 'queued', %s)
+            ON CONFLICT DO NOTHING""",
+            (owner[0], round_id, Jsonb(payload), Jsonb({"state": "queued", "reason": None})),
         )
 
     def _queue_finished_notification(self, conn, task_id: str, round_id: str) -> None:
@@ -1807,14 +1823,24 @@ class AuthStore:
             )[0]
             conn.execute("INSERT INTO engine.attempts (id, job_id, attempt, worker_id) VALUES (gen_random_uuid(), %s, %s, %s)", (row[0], attempt, worker_ident))
             claimed = ClaimedJob(str(row[0]), "feishu_notification", row[3], attempt, str(row[2]) if row[2] else None, str(row[1]))
-            identities = conn.execute(
-                """SELECT i.user_id, i.provider, i.app_id, i.tenant_key, i.subject, m.role, i.display_name
-                FROM product.audit_drafts d JOIN product.tenants t ON t.id = d.tenant_id
-                JOIN product.memberships m ON m.tenant_id = t.id AND m.user_id = d.created_by
-                JOIN product.identities i ON i.user_id = d.created_by AND i.provider = t.provider AND i.tenant_key = t.external_key
-                WHERE d.id = %s AND d.tenant_id = %s AND i.app_id = %s""",
-                (row[3].get("task_id"), row[1], self.settings.feishu_app_id),
-            ).fetchall()
+            if row[3].get("stage") == "optimization_completed":
+                identities = conn.execute(
+                    """SELECT i.user_id, i.provider, i.app_id, i.tenant_key, i.subject, m.role, i.display_name
+                    FROM product.checker_optimizations o JOIN product.tenants t ON t.id=o.tenant_id
+                    JOIN product.memberships m ON m.tenant_id=t.id AND m.user_id=o.initiating_user_id
+                    JOIN product.identities i ON i.user_id=o.initiating_user_id AND i.provider=t.provider AND i.tenant_key=t.external_key
+                    WHERE o.operation_id=%s AND o.tenant_id=%s AND i.app_id=%s AND m.role='member'""",
+                    (_as_uuid(str(row[3].get("operation_id") or "")), row[1], self.settings.feishu_app_id),
+                ).fetchall()
+            else:
+                identities = conn.execute(
+                    """SELECT i.user_id, i.provider, i.app_id, i.tenant_key, i.subject, m.role, i.display_name
+                    FROM product.audit_drafts d JOIN product.tenants t ON t.id = d.tenant_id
+                    JOIN product.memberships m ON m.tenant_id = t.id AND m.user_id = d.created_by
+                    JOIN product.identities i ON i.user_id = d.created_by AND i.provider = t.provider AND i.tenant_key = t.external_key
+                    WHERE d.id = %s AND d.tenant_id = %s AND i.app_id = %s""",
+                    (row[3].get("task_id"), row[1], self.settings.feishu_app_id),
+                ).fetchall()
             if len(identities) != 1:
                 self._finish_task_notification(conn, claimed, worker_ident, {"state": "suppressed", "reason": "recipient_unavailable", "message_id": None}, before_dispatch=True)
                 return None
@@ -1863,12 +1889,14 @@ class AuthStore:
     def start_task_notification(self, claimed: ClaimedJob, worker_ident: str, principal: Principal) -> dict | None:
         task_id, stage = _as_uuid(str(claimed.payload.get("task_id") or "")), claimed.payload.get("stage")
         package_id = _as_uuid(str(claimed.payload.get("package_id") or "")) if stage == "zip_ready" else None
-        if not task_id or stage not in {"confirmation", "started", "completed", "zip_ready"} or stage == "zip_ready" and not package_id:
+        operation_id = _as_uuid(str(claimed.payload.get("operation_id") or "")) if stage == "optimization_completed" else None
+        if stage not in {"confirmation", "started", "completed", "zip_ready", "optimization_completed"}:
+            raise ValueError("invalid_notification_scope")
+        if stage == "optimization_completed" and not operation_id or stage != "optimization_completed" and not task_id or stage == "zip_ready" and not package_id:
             raise ValueError("invalid_notification_scope")
         with self._conn() as conn, conn.transaction():
             reason, report_package = None, None
             try:
-                draft = self._recognition_owner(conn, principal, task_id, lock=True)
                 identity = conn.execute(
                     """SELECT 1 FROM product.identities i JOIN product.memberships m ON m.user_id = i.user_id
                     WHERE i.user_id = %s AND i.provider = 'feishu' AND i.app_id = %s AND i.tenant_key = %s
@@ -1877,35 +1905,44 @@ class AuthStore:
                 ).fetchone()
                 if not identity or not self.settings.tenant_allowed(principal.tenant_key):
                     raise KeyError("recipient_unavailable")
-                task = self._recognition_public(conn, principal, task_id)
-                if stage == "confirmation" and task["state"] == "matching":
-                    self._defer_task_notification(conn, claimed, worker_ident)
-                    return None
-                if stage == "confirmation" and task["state"] != "pending_confirm" or stage == "started" and task["round_id"] != claimed.round_id:
-                    reason = "task_advanced"
-                if stage == "completed" and not draft["notification_enabled"]:
-                    reason = "completion_disabled"
-                if stage == "completed" and task["state"] != "completed":
-                    raise ValueError("notification_task_not_completed")
-                if stage == "zip_ready":
-                    request = conn.execute(
-                        """SELECT id, payload FROM engine.jobs WHERE tenant_id = %s AND kind = 'report_zip_request'
-                        AND payload->>'task_id' = %s AND payload->>'package_id' = %s AND payload->>'created_by' = %s
-                        ORDER BY created_at, id LIMIT 1""",
-                        (principal.tenant_id, task_id, package_id, principal.user_id),
-                    ).fetchone()
-                    if not request:
-                        raise KeyError("missing")
-                    report_package = self._report_package_public(conn, principal, task, str(request[0]), request[1])
-                    artifact = report_package.get("artifact") or {}
-                    if report_package["state"] != "ready" or not artifact.get("artifact_id") or artifact.get("content_type") != "application/zip" or not artifact.get("byte_size", 0) > 0:
-                        reason = "zip_not_ready"
+                if stage == "optimization_completed":
+                    from product.store.checker_development import CheckerDevelopmentStore
+
+                    operation, sample = CheckerDevelopmentStore(self).notification_context(conn, principal, operation_id)
+                    card = optimization_notification_card(operation, sample, self.settings.canonical_web_url())
+                else:
+                    assert task_id is not None
+                    draft = self._recognition_owner(conn, principal, task_id, lock=True)
+                    task = self._recognition_public(conn, principal, task_id)
+                    if stage == "confirmation" and task["state"] == "matching":
+                        self._defer_task_notification(conn, claimed, worker_ident)
+                        return None
+                    if stage == "confirmation" and task["state"] != "pending_confirm" or stage == "started" and task["round_id"] != claimed.round_id:
+                        reason = "task_advanced"
+                    if stage == "completed" and not draft["notification_enabled"]:
+                        reason = "completion_disabled"
+                    if stage == "completed" and task["state"] != "completed":
+                        raise ValueError("notification_task_not_completed")
+                    if stage == "zip_ready":
+                        request = conn.execute(
+                            """SELECT id, payload FROM engine.jobs WHERE tenant_id = %s AND kind = 'report_zip_request'
+                            AND payload->>'task_id' = %s AND payload->>'package_id' = %s AND payload->>'created_by' = %s
+                            ORDER BY created_at, id LIMIT 1""",
+                            (principal.tenant_id, task_id, package_id, principal.user_id),
+                        ).fetchone()
+                        if not request:
+                            raise KeyError("missing")
+                        report_package = self._report_package_public(conn, principal, task, str(request[0]), request[1])
+                        artifact = report_package.get("artifact") or {}
+                        if report_package["state"] != "ready" or not artifact.get("artifact_id") or artifact.get("content_type") != "application/zip" or not artifact.get("byte_size", 0) > 0:
+                            reason = "zip_not_ready"
             except KeyError:
                 reason = "notification_access_revoked"
             if reason:
                 self._finish_task_notification(conn, claimed, worker_ident, {"state": "suppressed", "reason": reason, "message_id": None}, before_dispatch=True)
                 return None
-            card = task_notification_card(task, stage, self.settings.canonical_web_url(), report_package, confirmation_id=claimed.id if self.settings.feishu_verification_token.strip() else None)
+            if stage != "optimization_completed":
+                card = task_notification_card(task, stage, self.settings.canonical_web_url(), report_package, confirmation_id=claimed.id if self.settings.feishu_verification_token.strip() else None)
             dispatch = {"receive_id": principal.subject, "card": card}
             saved = {"dispatch": dispatch}
             if any(
@@ -1919,9 +1956,9 @@ class AuthStore:
                 payload = payload || %s, updated_at = now(), lease_until = now() + interval '90 seconds'
                 WHERE id = %s AND kind = 'feishu_notification' AND attempt = %s AND lease_owner = %s
                 AND status = 'leased' AND result->>'state' = 'preparing' AND lease_until > now()
-                AND tenant_id = %s AND payload->>'task_id' = %s AND payload->>'stage' = %s
-                AND COALESCE(payload->>'package_id', '') = %s RETURNING id""",
-                (Jsonb(saved), claimed.id, claimed.attempt, worker_ident, principal.tenant_id, task_id, stage, package_id or ""),
+                AND tenant_id = %s AND COALESCE(payload->>'task_id', '') = %s AND payload->>'stage' = %s
+                AND COALESCE(payload->>'package_id', '') = %s AND COALESCE(payload->>'operation_id', '') = %s RETURNING id""",
+                (Jsonb(saved), claimed.id, claimed.attempt, worker_ident, principal.tenant_id, task_id or "", stage, package_id or "", operation_id or ""),
             ).fetchone()
             return dispatch if row else None
 

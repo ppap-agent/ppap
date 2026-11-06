@@ -451,6 +451,22 @@ class CheckerDevelopmentStore:
             self._authorize_frozen(conn, principal, row["frozen"])
             return _receipt(row)
 
+    def notification_context(self, conn, principal, operation_id):
+        """Read the original terminal operation under the recipient's current access."""
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """SELECT * FROM product.checker_optimizations WHERE operation_id=%s AND tenant_id=%s
+                   AND initiating_user_id=%s AND completed_at IS NOT NULL
+                   AND state IN ('completed','failed','unknown','stopped')""",
+                (_id(operation_id), principal.tenant_id, principal.user_id),
+            )
+            row = cur.fetchone()
+        if row is None:
+            raise KeyError("checker_optimization_missing")
+        self._authorize_frozen(conn, principal, row["frozen"])
+        target = next(sample for sample in row["frozen"]["samples"] if sample["id"] == row["frozen"]["target_sample_id"])
+        return _receipt(row), target
+
     def stop(self, principal, operation_id):
         with self.store._conn() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
             _member(conn, principal)
@@ -678,6 +694,8 @@ class CheckerDevelopmentStore:
                 "UPDATE engine.attempts SET finished_at=now(),outcome=%s,diagnostic=%s WHERE job_id=%s AND attempt=%s",
                 ("succeeded" if state == "completed" else "failed", Jsonb({"state": state, "failure": failure}), request.job_id, request.attempt),
             )
+            target = next(sample for sample in row["frozen"]["samples"] if sample["id"] == row["frozen"]["target_sample_id"])
+            self.store._queue_task_notification(conn, None, "optimization_completed", target["round_id"], operation_id=request.operation_id)
             return True
 
 

@@ -560,6 +560,11 @@ def test_deleted_operator_preserves_feedback_completed_receipt_and_published_che
         conn.execute("DELETE FROM product.resource_grants WHERE user_id=%s", (f.bob.user_id,))
         conn.execute("DELETE FROM product.memberships WHERE user_id=%s", (f.bob.user_id,))
         conn.execute("DELETE FROM product.users WHERE id=%s", (f.bob.user_id,))
+    assert f.api.claim_task_notification("deleted-notifier") is None
+    with f.store._conn() as conn:
+        assert (
+            conn.execute("SELECT result->>'reason' FROM engine.jobs WHERE kind='feishu_notification' AND payload->>'operation_id'=%s", (body["operation_id"],)).fetchone()[0] == "recipient_unavailable"
+        )
     with pytest.raises(ModelUnavailable):
         f.worker.personal_model_access(f.bob.tenant_id, f.bob.user_id)
     retained = releases.detail(f.alice, receipt["candidate_revision_id"])
@@ -613,3 +618,216 @@ def test_membership_retirement_serializes_with_atomic_admission(auth_store_facto
         conn.execute("DELETE FROM product.memberships WHERE user_id=%s AND tenant_id=%s", (f.alice.user_id, f.alice.tenant_id))
         assert conn.execute("SELECT state FROM product.checker_optimizations WHERE operation_id=%s", (receipt["operation_id"],)).fetchone() == ("stopped",)
     assert f.worker.claim_job("retirement-race") is None
+
+
+def _completed_notification(f):
+    receipt, _ = start(f)
+    request = claim(f)
+    result = development_handler(f.worker, ControlledRuntime())(request, ExecutionContext())
+    assert result["state"] == "completed"
+    with f.store._conn() as conn:
+        rows = conn.execute("SELECT id,payload FROM engine.jobs WHERE kind='feishu_notification' AND payload->>'operation_id'=%s", (receipt["operation_id"],)).fetchall()
+    assert len(rows) == 1
+    assert rows[0][1]["stage"] == "optimization_completed"
+    return receipt["operation_id"], str(rows[0][0])
+
+
+def test_optimization_notification_is_atomic_with_terminal_receipt_and_deduplicated(auth_store_factory, monkeypatch):
+    f = fixture(auth_store_factory)
+    receipt, body = start(f)
+    request = claim(f)
+    development = CheckerDevelopmentStore(f.worker)
+    loaded, spec = materialize_request(development, development.operation_for_dispatch(request))
+    assert development.dispatch(request)
+    outcome = ControlledRuntime().develop_and_run(loaded, spec=spec, context=ExecutionContext())
+    enqueue = f.worker._queue_task_notification
+
+    def disconnected_after_queue(*args, **kwargs):
+        enqueue(*args, **kwargs)
+        raise RuntimeError("transaction interrupted")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(f.worker, "_queue_task_notification", disconnected_after_queue)
+        with pytest.raises(RuntimeError, match="transaction interrupted"):
+            development.finish(request, outcome)
+    with f.store._conn() as conn:
+        assert conn.execute("SELECT state FROM product.checker_optimizations WHERE operation_id=%s", (receipt["operation_id"],)).fetchone()[0] == "running"
+        assert conn.execute("SELECT count(*) FROM engine.jobs WHERE kind='feishu_notification'").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM product.suite_revisions WHERE tenant_id=%s", (f.alice.tenant_id,)).fetchone()[0] == 0
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        completed = list(pool.map(lambda _: development.finish(request, outcome), range(2)))
+    assert sorted(completed) == [False, True]
+    assert development.finish(request, outcome) is False
+    assert start(f, body)[0]["state"] == "completed"
+    with f.store._conn() as conn:
+        # Replaying intent creation cannot schedule a second notification either.
+        f.store._queue_task_notification(conn, None, "optimization_completed", f.feedback[0][0], operation_id=receipt["operation_id"])
+        assert conn.execute("SELECT count(*) FROM engine.jobs WHERE kind='feishu_notification'").fetchone()[0] == 1
+    assert f.worker.claim_job("audit-worker") is None  # API, not audit Worker, owns sending.
+
+
+def test_notifications_survive_closed_browser_and_target_initiator_not_task_owner(auth_store_factory, monkeypatch):
+    from urllib.parse import parse_qs, urlsplit
+
+    import httpx
+    from api.notifications import dispatch_task_notification
+
+    f = fixture(auth_store_factory)
+    draft = f.store.create_draft(f.bob)
+    with f.store._conn() as conn:
+        conn.execute("UPDATE product.audit_rounds SET source_draft_id=%s WHERE id=%s", (draft["id"], f.feedback[0][0]))
+    first, _ = _completed_notification(f)
+    second, _ = _completed_notification(f)
+    assert first != second
+    for client in f.clients:
+        f.store.revoke_session(client.cookies.get(SESSION_COOKIE))
+        client.close()
+    f.api.settings.feishu_notifications_enabled = True
+    f.api.settings.feishu_app_secret = "test-only-no-network"
+    monkeypatch.setattr("api.notifications.tenant_access_token", lambda *args: "test-token")
+    requests = []
+
+    def send(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json={"code": 0, "data": {"message_id": "om_" + str(len(requests))}})
+
+    # No browser polling is involved; both intents reach the existing API sender.
+    with httpx.Client(transport=httpx.MockTransport(send)) as http:
+        assert dispatch_task_notification(f.api, http, f.api.settings, "notifier", task_id=draft["id"])
+        assert dispatch_task_notification(f.api, http, f.api.settings, "notifier", task_id=draft["id"])
+        assert not dispatch_task_notification(f.api, http, f.api.settings, "notifier", task_id=draft["id"])
+    assert len(requests) == 2
+    recovered = set()
+    for request in requests:
+        assert request["receive_id"] == f.alice.subject and request["receive_id"] != f.bob.subject
+        card = json.loads(request["content"])
+        assert "未自动发布" in card["body"]["elements"][0]["content"]
+        link = card["body"]["elements"][1]["behaviors"][0]["default_url"]
+        assert urlsplit(link).path == "/enter-current"
+        target = parse_qs(urlsplit(link).query)["return_to"][0]
+        params = parse_qs(urlsplit(target).query)
+        assert params["round"] == [f.feedback[0][0]] and params["file"] == [f.feedback[0][1]["file_version_id"]]
+        assert params["clause"] == ["R1"] and params["basis"] == ["1"]
+        assert params["checkerFeedbackClause"] == ["R1"]
+        assert params["checkerFeedbackScope"] == [f"{f.feedback[0][0]}:{f.feedback[0][1]['file_version_id']}:R1"]
+        recovered.add(params["checkerOptimization"][0])
+    assert recovered == {first, second}
+    serialized = json.dumps(requests)
+    assert "test-only-no-provider-called" not in serialized and "hidden-sentinel" not in serialized
+
+
+@pytest.mark.parametrize("revocation", ["membership", "identity", "source_round", "regression_original", "tenant", "different_user", "different_tenant"])
+def test_optimization_notification_rechecks_recipient_and_all_frozen_access(auth_store_factory, revocation):
+    f = fixture(auth_store_factory)
+    if revocation == "source_round":
+        draft = f.store.create_draft(f.alice)
+        with f.store._conn() as conn:
+            conn.execute("UPDATE product.audit_drafts SET task_fingerprint='test',task_day='2026-11-06',task_sequence=1 WHERE id=%s", (draft["id"],))
+            conn.execute("UPDATE product.audit_rounds SET source_draft_id=%s WHERE id=%s", (draft["id"], f.feedback[-1][0]))
+    _, intent = _completed_notification(f)
+    job, recipient = f.api.claim_task_notification("notifier")
+    with f.store._conn() as conn:
+        if revocation == "membership":
+            conn.execute("DELETE FROM product.memberships WHERE tenant_id=%s AND user_id=%s", (f.alice.tenant_id, f.alice.user_id))
+        elif revocation == "identity":
+            conn.execute("DELETE FROM product.identities WHERE user_id=%s", (f.alice.user_id,))
+        elif revocation == "source_round":
+            conn.execute("DELETE FROM product.resource_grants WHERE resource_id=%s AND user_id=%s", (f.feedback[-1][0], f.alice.user_id))
+        elif revocation == "regression_original":
+            conn.execute("DELETE FROM product.resource_grants WHERE resource_id=(SELECT file_id FROM product.file_versions WHERE id=%s)", (f.feedback[-1][1]["file_version_id"],))
+        elif revocation == "tenant":
+            f.api.settings.current_tenant_allowlist = "another-tenant"
+        elif revocation == "different_user":
+            recipient = f.bob
+        else:
+            recipient = f.other
+    assert f.api.start_task_notification(job, "notifier", recipient) is None
+    with f.store._conn() as conn:
+        status, result = conn.execute("SELECT status,result FROM engine.jobs WHERE id=%s", (intent,)).fetchone()
+    assert status == "cancelled" and result["state"] == "suppressed"
+    assert f.api.claim_task_notification("again") is None
+
+
+def test_removed_recipient_is_suppressed_before_claim(auth_store_factory):
+    f = fixture(auth_store_factory)
+    _, intent = _completed_notification(f)
+    with f.store._conn() as conn:
+        conn.execute("DELETE FROM product.memberships WHERE tenant_id=%s AND user_id=%s", (f.alice.tenant_id, f.alice.user_id))
+    assert f.api.claim_task_notification("notifier") is None
+    with f.store._conn() as conn:
+        assert conn.execute("SELECT result->>'reason' FROM engine.jobs WHERE id=%s", (intent,)).fetchone()[0] == "recipient_unavailable"
+
+
+def test_optimization_notification_reclaims_only_before_dispatch_and_fences_late_receipts(auth_store_factory):
+    f = fixture(auth_store_factory)
+    _, intent = _completed_notification(f)
+    old, recipient = f.api.claim_task_notification("old")
+    with f.store._conn() as conn:
+        conn.execute("UPDATE engine.jobs SET lease_until=now()-interval '1 second' WHERE id=%s", (intent,))
+    current, recipient = f.api.claim_task_notification("current")
+    assert current.attempt == old.attempt + 1
+    assert f.api.start_task_notification(old, "old", recipient) is None
+    assert f.api.start_task_notification(current, "current", recipient)
+    assert f.api.finish_task_notification(old, "old", {"state": "sent", "message_id": "om_stale"}) is False
+    with f.store._conn() as conn:
+        conn.execute("UPDATE engine.jobs SET lease_until=now()-interval '1 second' WHERE id=%s", (intent,))
+    assert f.api.claim_task_notification("must-not-retry") is None
+    with f.store._conn() as conn:
+        assert conn.execute("SELECT result->>'state' FROM engine.jobs WHERE id=%s", (intent,)).fetchone()[0] == "unknown"
+    assert f.api.finish_task_notification(current, "current", {"state": "sent", "message_id": "om_late"})
+    assert f.api.finish_task_notification(current, "current", {"state": "sent", "message_id": "om_duplicate"}) is False
+    assert f.api.claim_task_notification("still-no-retry") is None
+
+
+def test_optimization_notification_connection_failure_defers_but_unknown_send_never_retries(auth_store_factory, monkeypatch):
+    import httpx
+    from api.notifications import dispatch_task_notification
+    from product.feishu_usage import FeishuUsageError
+
+    f = fixture(auth_store_factory)
+    _, intent = _completed_notification(f)
+    f.api.settings.feishu_notifications_enabled = True
+    f.api.settings.feishu_app_secret = "test-only-no-network"
+    attempts = []
+
+    def no_connection(*args):
+        raise FeishuUsageError("offline")
+
+    def uncertain_send(request):
+        attempts.append(request)
+        raise httpx.ReadTimeout("receipt lost", request=request)
+
+    with httpx.Client(transport=httpx.MockTransport(uncertain_send)) as http:
+        monkeypatch.setattr("api.notifications.tenant_access_token", no_connection)
+        assert dispatch_task_notification(f.api, http, f.api.settings, "notifier")
+        assert attempts == []
+        with f.store._conn() as conn:
+            assert conn.execute("SELECT result->>'state' FROM engine.jobs WHERE id=%s", (intent,)).fetchone()[0] == "queued"
+            conn.execute("UPDATE engine.jobs SET lease_until=now()-interval '1 second' WHERE id=%s", (intent,))
+        monkeypatch.setattr("api.notifications.tenant_access_token", lambda *args: "test-token")
+        assert dispatch_task_notification(f.api, http, f.api.settings, "notifier")
+        assert not dispatch_task_notification(f.api, http, f.api.settings, "notifier")
+    assert len(attempts) == 1
+    with f.store._conn() as conn:
+        assert conn.execute("SELECT result->>'state' FROM engine.jobs WHERE id=%s", (intent,)).fetchone()[0] == "unknown"
+
+
+@pytest.mark.parametrize("state", ["failed", "unknown", "stopped"])
+def test_non_success_optimization_terminal_notices_keep_the_original_outcome(auth_store_factory, state):
+    f = fixture(auth_store_factory, count=1)
+    receipt, _ = start(f)
+    request = claim(f)
+    development = CheckerDevelopmentStore(f.worker)
+    assert development.dispatch(request)
+    if state == "stopped":
+        assert development.stop(f.alice, receipt["operation_id"])["cancel_requested"]
+    outcome = DevelopmentOutcome(None, [], [], {}, error_code="checker_execution_failed", usage_uncertain=state == "unknown")
+    assert development.finish(request, outcome)
+    assert development.read(f.alice, receipt["operation_id"])["state"] == state
+    notification, recipient = f.api.claim_task_notification("notifier")
+    delivery = f.api.start_task_notification(notification, "notifier", recipient)
+    assert delivery
+    content = delivery["card"]["body"]["elements"][0]["content"]
+    assert "验证通过" not in content
+    assert {"unknown": "未知", "failed": "尚未得到完整验证结果", "stopped": "已停止"}[state] in content
+    assert f.worker.claim_job("no-model-retry") is None
