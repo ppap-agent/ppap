@@ -31,8 +31,9 @@ def _rule_semantics(body: dict) -> dict:
     return RuleInput.model_validate({**body, "rule_id": "", "rule_profile": body.get("rule_profile") or "v3"}).model_dump(mode="json", exclude={"rule_id"})
 
 
-def _member(conn, principal) -> None:
-    if not conn.execute("SELECT 1 FROM product.memberships WHERE tenant_id=%s AND user_id=%s AND role='member'", (principal.tenant_id, principal.user_id)).fetchone():
+def _member(conn, principal, *, lock=False) -> None:
+    query = "SELECT 1 FROM product.memberships WHERE tenant_id=%s AND user_id=%s AND role='member'"
+    if not conn.execute(query + (" FOR KEY SHARE" if lock else ""), (principal.tenant_id, principal.user_id)).fetchone():
         raise KeyError("checker_access_denied")
 
 
@@ -336,7 +337,9 @@ class CheckerDevelopmentStore:
             raise ValueError("checker_optimization_invalid")
         fingerprint = _digest({"suite_revision_id": suite_revision_id, "user_id": principal.user_id, **payload, "feedback_ids": feedback_ids})
         with self.store._conn() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
-            _member(conn, principal)
+            # An accepted operation cannot appear after membership retirement has
+            # already cancelled that member's jobs. Deletion waits for admission.
+            _member(conn, principal, lock=True)
             conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("checker-optimization:" + operation_id,))
             cur.execute(
                 "SELECT o.*, (j.lease_until < now()) AS lease_expired FROM product.checker_optimizations o LEFT JOIN engine.jobs j ON j.id=o.job_id WHERE o.operation_id=%s AND o.tenant_id=%s",
@@ -365,7 +368,14 @@ class CheckerDevelopmentStore:
                 ).fetchone()
                 if original_rule is None:
                     raise ValueError("checker_feedback_scope_mismatch")
-                frozen_samples.append({**_feedback(row), "confirmed_by": str(row["created_by"]), "expected_rule_body": original_rule[0], "files": self._freeze_files(conn, principal, row, suite)})
+                frozen_samples.append(
+                    {
+                        **_feedback(row),
+                        "confirmed_by": str(row["created_by"]) if row["created_by"] else "deleted-member",
+                        "expected_rule_body": original_rule[0],
+                        "files": self._freeze_files(conn, principal, row, suite),
+                    }
+                )
             training = [row for row in frozen_samples if row["ordinal"] % 4]
             if not training:
                 raise ValueError("checker_training_sample_required")
@@ -573,7 +583,9 @@ class CheckerDevelopmentStore:
             return (
                 self._owns(conn, request)
                 and conn.execute(
-                    "SELECT 1 FROM product.checker_optimizations WHERE operation_id=%s AND job_id=%s AND state='running' AND cancel_requested=false",
+                    """SELECT 1 FROM product.checker_optimizations o
+                       JOIN product.memberships m ON m.tenant_id=o.tenant_id AND m.user_id=o.initiating_user_id
+                       WHERE o.operation_id=%s AND o.job_id=%s AND o.state='running' AND o.cancel_requested=false""",
                     (request.operation_id, request.job_id),
                 ).fetchone()
                 is not None
@@ -670,6 +682,8 @@ class CheckerDevelopmentStore:
 
 
 def principal_for_operation(row: dict) -> Principal:
+    if row["initiating_user_id"] is None:
+        raise KeyError("checker_operator_removed")
     return Principal(str(row["initiating_user_id"]), str(row["tenant_id"]), "", "", "", "", "member")
 
 

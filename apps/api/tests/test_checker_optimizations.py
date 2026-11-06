@@ -449,3 +449,165 @@ def test_changed_rules_run_current_candidate_but_old_labels_cannot_verify(auth_s
     assert all(not sample.expectations_current for sample in runtime.request.oracle)
     assert result["report"]["validation"]["verified"] is False
     assert "oracle_rules_changed" in result["report"]["validation"]["reasons"]
+
+
+@pytest.mark.parametrize("dispatched", [False, True])
+@pytest.mark.parametrize("consume_model", [False, True])
+def test_membership_removal_atomically_revokes_optimizer_fence_and_key(auth_store_factory, dispatched, consume_model):
+    from documents.model_access import ModelUnavailable
+
+    f = fixture(auth_store_factory, count=1)
+    receipt, _ = start(f, command(f, consume_model=consume_model))
+    identity = claim(f)
+    development = CheckerDevelopmentStore(f.worker)
+    if dispatched:
+        assert development.dispatch(identity)
+        assert development.active(identity)
+    with f.store._conn() as conn, conn.transaction():
+        conn.execute("DELETE FROM product.memberships WHERE user_id=%s AND tenant_id=%s", (f.alice.user_id, f.alice.tenant_id))
+    with pytest.raises(ModelUnavailable):
+        f.worker.personal_model_access(f.alice.tenant_id, f.alice.user_id)
+    assert development.active(identity) is False
+    assert development.finish(identity, DevelopmentOutcome(None, [], [], {}, error_code="late-result")) is False
+    runtime = ControlledRuntime()
+    with pytest.raises(KeyError):
+        development_handler(f.worker, runtime)(identity, ExecutionContext())
+    assert runtime.calls == 0
+    assert f.worker.claim_job("replacement") is None
+    assert f.clients[0].get(f"/checker-optimizations/{receipt['operation_id']}").status_code == 401
+    with f.store._conn() as conn:
+        state, cancelled, candidate, usage, failure = conn.execute(
+            "SELECT state,cancel_requested,candidate_revision_id,usage,failure FROM product.checker_optimizations WHERE operation_id=%s", (receipt["operation_id"],)
+        ).fetchone()
+        assert state == ("unknown" if dispatched and consume_model else "stopped")
+        assert cancelled and candidate is None and failure == "checker_operator_removed"
+        assert bool(usage.get("uncertain")) is (dispatched and consume_model)
+        assert conn.execute("SELECT status,lease_until FROM engine.jobs WHERE id=%s", (identity.job_id,)).fetchone() == ("cancelled", None)
+        assert conn.execute("SELECT outcome,finished_at IS NOT NULL FROM engine.attempts WHERE job_id=%s", (identity.job_id,)).fetchone() == ("cancelled", True)
+        assert conn.execute("SELECT count(*) FROM product.personal_model_credentials WHERE user_id=%s", (f.alice.user_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM product.checker_feedback").fetchone()[0] == 1
+        assert conn.execute("SELECT count(*) FROM product.audit_rounds").fetchone()[0] == 1
+    # Rejoining never reactivates the previous job or restores the removed key.
+    with f.store._conn() as conn:
+        conn.execute("INSERT INTO product.memberships(user_id,tenant_id,role) VALUES (%s,%s,'member')", (f.alice.user_id, f.alice.tenant_id))
+    assert f.worker.claim_job("rejoined") is None
+    with pytest.raises(ModelUnavailable):
+        f.worker.personal_model_access(f.alice.tenant_id, f.alice.user_id)
+
+
+def test_running_membership_revocation_cancels_controller_and_blocks_next_model_access(auth_store_factory):
+    from documents.model_access import ModelUnavailable
+
+    f = fixture(auth_store_factory, count=1)
+    receipt, _ = start(f)
+    entered = threading.Event()
+    continue_call = threading.Event()
+    context = ExecutionContext()
+
+    class WaitingRuntime:
+        def develop_and_run(self, request, *, spec, context):
+            # This boundary reads the same live credential accessor as production,
+            # but sends no model request. Never cache this access for later calls.
+            f.worker.personal_model_access(spec.tenant_id, spec.initiating_user_id)
+            entered.set()
+            assert continue_call.wait(timeout=5)
+            with pytest.raises(ModelUnavailable):
+                f.worker.personal_model_access(spec.tenant_id, spec.initiating_user_id)
+            assert context.cancelled.wait(timeout=5)
+            context.raise_if_cancelled()
+
+    identity = claim(f)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(development_handler(f.worker, WaitingRuntime()), identity, context)
+        assert entered.wait(timeout=5)
+        with f.store._conn() as conn:
+            conn.execute("DELETE FROM product.memberships WHERE user_id=%s AND tenant_id=%s", (f.alice.user_id, f.alice.tenant_id))
+        continue_call.set()
+        with pytest.raises(KeyError):
+            future.result(timeout=5)
+    with f.store._conn() as conn:
+        assert conn.execute("SELECT state,candidate_revision_id FROM product.checker_optimizations WHERE operation_id=%s", (receipt["operation_id"],)).fetchone() == ("unknown", None)
+        assert conn.execute("SELECT count(*) FROM product.suite_revisions WHERE tenant_id=%s", (f.alice.tenant_id,)).fetchone()[0] == 0
+
+
+def test_deleted_operator_preserves_feedback_completed_receipt_and_published_checker(auth_store_factory):
+    from documents.model_access import ModelUnavailable
+
+    f = fixture(auth_store_factory, count=1)
+    round_id, original, _ = f.feedback[0]
+    with f.store._conn() as conn:
+        conn.execute(
+            "INSERT INTO product.resource_grants(resource_id,user_id,capability) SELECT resource_id,%s,capability FROM product.resource_grants WHERE user_id=%s",
+            (f.bob.user_id, f.alice.user_id),
+        )
+    # Bob operates on Alice's historical round: the older audit owner FKs remain
+    # unchanged. This proves the new Checker tables do not add deletion blockers.
+    response = f.clients[1].post(f"/audit-rounds/{round_id}/checker-feedback", json={**original, "operation_id": str(uuid4())})
+    assert response.status_code == 200, response.text
+    sample = response.json()
+    body = command(f, feedback_ids=[sample["id"]], consume_model=False)
+    response = f.clients[1].post(f"/suite-revisions/{f.suite.id}/optimizations", json=body)
+    assert response.status_code == 200, response.text
+    receipt = development_handler(f.worker, ControlledRuntime())(claim(f), ExecutionContext())
+    assert receipt["state"] == "completed"
+    releases = SuiteReleaseStore(f.store.settings, f.store.objects, role="api")
+    releases.publish(f.bob, "threshold", receipt["candidate_revision_id"], 0, str(uuid4()), True)
+    f.store.put_personal_model_config(f.bob, SecretStr("test-only-no-provider-called"))
+    with f.store._conn() as conn, conn.transaction():
+        conn.execute("DELETE FROM product.sessions WHERE user_id=%s", (f.bob.user_id,))
+        conn.execute("DELETE FROM product.provider_authorizations WHERE user_id=%s", (f.bob.user_id,))
+        conn.execute("DELETE FROM product.identities WHERE user_id=%s", (f.bob.user_id,))
+        conn.execute("DELETE FROM product.resource_grants WHERE user_id=%s", (f.bob.user_id,))
+        conn.execute("DELETE FROM product.memberships WHERE user_id=%s", (f.bob.user_id,))
+        conn.execute("DELETE FROM product.users WHERE id=%s", (f.bob.user_id,))
+    with pytest.raises(ModelUnavailable):
+        f.worker.personal_model_access(f.bob.tenant_id, f.bob.user_id)
+    retained = releases.detail(f.alice, receipt["candidate_revision_id"])
+    assert retained["created_by"] is None and retained["created_by_name"] == "已删除成员"
+    assert retained["files"]["checker.py"] == PROGRAM.decode() + "# fixed candidate\n"
+    assert releases.active(f.alice, "threshold")["history"][0]["published_by"] is None
+    with f.store._conn() as conn:
+        assert conn.execute("SELECT created_by,expected_status FROM product.checker_feedback WHERE id=%s", (sample["id"],)).fetchone() == (None, "NG")
+        assert conn.execute(
+            "SELECT initiating_user_id,state,report FROM product.checker_optimizations WHERE operation_id=%s", (body["operation_id"],)
+        ).fetchone() == (None, "completed", receipt["report"])
+        assert conn.execute("SELECT count(*) FROM product.audit_rounds").fetchone()[0] == 1
+        assert conn.execute("SELECT count(*) FROM product.findings").fetchone()[0] == 1
+    # Retained human confirmation remains usable by a currently authorized member,
+    # without inventing a live operator or attempting to borrow the former key.
+    response = f.clients[0].post(f"/suite-revisions/{f.suite.id}/optimizations", json=command(f, feedback_ids=[sample["id"]], consume_model=False))
+    assert response.status_code == 200, response.text
+    identity = claim(f)
+    row = CheckerDevelopmentStore(f.worker).operation_for_dispatch(identity)
+    loaded, _ = materialize_request(CheckerDevelopmentStore(f.worker), row)
+    assert next(item for item in loaded.oracle if item.case_id == sample["id"]).confirmed_by == "deleted-member"
+    assert loaded.initiating_user_id == f.alice.user_id
+
+
+def test_membership_retirement_serializes_with_atomic_admission(auth_store_factory, monkeypatch):
+    from psycopg.errors import LockNotAvailable
+
+    f = fixture(auth_store_factory, count=1)
+    entered, release = threading.Event(), threading.Event()
+    access = f.api.personal_model_access
+
+    def paused_access(*args):
+        entered.set()
+        assert release.wait(timeout=5)
+        return access(*args)
+
+    monkeypatch.setattr(f.api, "personal_model_access", paused_access)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(CheckerDevelopmentStore(f.api).start, f.alice, f.suite.id, command(f))
+        try:
+            assert entered.wait(timeout=5)
+            with f.store._conn() as conn, conn.transaction(), pytest.raises(LockNotAvailable):
+                conn.execute("SET LOCAL lock_timeout='100ms'")
+                conn.execute("DELETE FROM product.memberships WHERE user_id=%s AND tenant_id=%s", (f.alice.user_id, f.alice.tenant_id))
+        finally:
+            release.set()
+        receipt = future.result(timeout=5)
+    with f.store._conn() as conn:
+        conn.execute("DELETE FROM product.memberships WHERE user_id=%s AND tenant_id=%s", (f.alice.user_id, f.alice.tenant_id))
+        assert conn.execute("SELECT state FROM product.checker_optimizations WHERE operation_id=%s", (receipt["operation_id"],)).fetchone() == ("stopped",)
+    assert f.worker.claim_job("retirement-race") is None
