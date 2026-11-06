@@ -152,8 +152,9 @@ def receipt_snapshot(receipt):
     nested = receipt.get("report") or {}
     usage = receipt.get("usage") or {}
     return {
-        **{name: receipt.get(name) for name in ("state", "suite_revision_id", "candidate_revision_id", "failure")},
+        **{name: receipt.get(name) for name in ("state", "suite_revision_id", "candidate_revision_id")},
         "returned_operation_id": receipt.get("operation_id"),
+        "product_failure": receipt.get("failure"),
         "usage": {name: usage[name] for name in ("source", "uncertain", "model_requests", "input_tokens", "output_tokens") if name in usage},
         "validation": nested.get("validation") or {},
     }
@@ -163,6 +164,30 @@ def retain_receipt(report, receipt):
     snapshot = receipt_snapshot(receipt)
     snapshot["usage"] = {**report.get("usage", {}), **snapshot["usage"]}
     report.update(snapshot)
+
+
+def final_readback(report, receipt):
+    """A read must not erase gate diagnostics or keep a changed proof accepted."""
+    mismatch = receipt.get("operation_id") != report.get("operation_id")
+    if report.get("accepted"):
+        previous = report.get("validation") or {}
+        current = (receipt.get("report") or {}).get("validation") or {}
+        mismatch = mismatch or receipt.get("state") != "completed" or receipt.get("candidate_revision_id") != report.get("candidate_revision_id") or current != previous
+        try:
+            validate_outcome(receipt, report["samples"])
+        except (AcceptanceFailure, KeyError, TypeError):
+            mismatch = True
+    if mismatch:
+        report["accepted"] = False
+        report.setdefault("gate_failure", "final_receipt_identity_or_proof_changed")
+    retain_receipt(report, receipt)
+
+
+def validate_rendered_round(rendered, expected):
+    require(
+        rendered == {"round_id": expected["id"], "attempt": str(expected["result_attempt"]), "status": {"PASS": "符合", "NG": "不符合"}[expected["findings"][0]["status"]]},
+        "browser_round_identity_or_result_mismatch",
+    )
 
 
 def validate_bindings(receipt, *, operation_id, base_revision_id, detail, frozen, input_digests):
@@ -200,9 +225,41 @@ class BrowserJourney:
         self.page = self.context.new_page()
         self.page.set_default_timeout(20000)
 
-    def feedback(self, result, uploaded, expected):
+    def read_round(self, result):
+        from playwright.sync_api import expect
+
         page = self.page
         page.goto("http://127.0.0.1:14173/audit?round=" + result["id"])
+        view = page.get_by_role("region", name="历史审核", exact=True)
+        expect(view).to_have_attribute("data-round-id", result["id"])
+        expect(view).to_have_attribute("data-result-attempt", str(result["result_attempt"]))
+        row = view.get_by_role("row").filter(has=page.get_by_role("button", name="这条判错了 R1", exact=True))
+        expect(row).to_have_count(1)
+        status = row.get_by_role("cell").nth(2)
+        expect(status).to_have_text({"PASS": "符合", "NG": "不符合"}[result["findings"][0]["status"]])
+        validate_rendered_round({"round_id": view.get_attribute("data-round-id"), "attempt": view.get_attribute("data-result-attempt"), "status": status.inner_text()}, result)
+
+    def read_optimization(self, receipt, samples):
+        from playwright.sync_api import expect
+
+        self.page.goto(self.address)
+        view = self.page.get_by_role("region", name="修复与回归结果", exact=True)
+        expect(view).to_have_attribute("data-operation-id", receipt["operation_id"])
+        expect(view).to_have_attribute("data-candidate-revision", receipt["candidate_revision_id"])
+        repaired = sum(row["expected"] != row["baseline"] for row in samples.values())
+        expect(view.get_by_text(f"修好 {repaired} 条 · 新增错误 0 条 · 无法判断 0 条 · 技术失败 0 条", exact=True)).to_be_visible()
+        view.get_by_text("逐项验证结果与正确答案", exact=True).click()
+        expect(view.locator("article[data-case-id]")).to_have_count(len(samples))
+        labels = {"PASS": "符合", "NG": "不符合"}
+        for identity, sample in samples.items():
+            case = view.locator(f'article[data-case-id="{identity}"]')
+            split = "独立验证样本" if sample["ordinal"] % 4 == 0 else "修复样本"
+            expect(case.get_by_text(split + " · 符合已确认答案", exact=True)).to_be_visible()
+            expect(case.get_by_text(f"条款 R1 · 正确答案 {labels[sample['expected']]} · 此前 {labels[sample['baseline']]} → 当前 {labels[sample['expected']]}", exact=True)).to_be_visible()
+
+    def feedback(self, result, uploaded, expected):
+        page = self.page
+        self.read_round(result)
         page.get_by_role("button", name="这条判错了 R1", exact=True).click()
         page.get_by_label("正确结论", exact=True).select_option(expected)
         page.get_by_text("添加我在原件中找到的依据", exact=True).click()
@@ -236,6 +293,9 @@ class BrowserJourney:
         def capture(route):
             # Persist the real UI-generated identity before forwarding its sole
             # mutation. The request and real response are otherwise unchanged.
+            if route.request.method != "POST":
+                route.continue_()
+                return
             body = route.request.post_data_json
             require(not report.get("operation_id") and body.get("expected_model_revision") == configured["revision"], "optimization_identity_not_frozen")
             report.update(stage="admitting", operation_id=body["operation_id"])
@@ -412,7 +472,7 @@ def run(report_path):
         require(receipt["report"]["validation"]["program_digest"] == checker_digest(program), "validated_candidate_identity_mismatch")
         require(client.request("GET", f"/suites/{suite_key}/active")["current_revision_id"] == base.id, "candidate_published_without_request")
         browser.new_session(store.create_session(principal))
-        browser.page.goto(browser.address)
+        browser.read_optimization(receipt, samples)
         require(client.request("GET", path) == receipt, "reconnected_receipt_changed")
         browser.publish()
         require(client.request("GET", f"/suites/{suite_key}/active")["current_revision_id"] == receipt["candidate_revision_id"], "publication_not_applied")
@@ -421,10 +481,7 @@ def run(report_path):
         require(newer.get("execution") == "completed" and newer["predecessor_id"] == rounds[0]["round_id"] and newer["findings"][0]["status"] == "NG", "explicit_reaudit_failed")
         newer_snapshot = suites.read_snapshot(newer["id"], principal.tenant_id)
         require(newer_snapshot.targets[0].suite_revision_id == receipt["candidate_revision_id"], "reaudit_used_wrong_suite")
-        browser.page.goto("http://127.0.0.1:14173/audit?round=" + newer["id"])
-        from playwright.sync_api import expect
-
-        expect(browser.page.get_by_role("button", name="这条判错了 R1", exact=True)).to_be_visible()
+        browser.read_round(newer)
         rounds.append({"round_id": newer["id"], "history_sha256": history_fingerprint(newer, newer_snapshot.to_dict())})
         report["reaudit_round_id"] = newer["id"]
         browser.rollback()
@@ -508,7 +565,7 @@ def run(report_path):
         # own it. The entire disposable stack is stopped by workflow cleanup.
         if report.get("operation_id"):
             try:
-                retain_receipt(report, client.request("GET", "/checker-optimizations/" + report["operation_id"]))
+                final_readback(report, client.request("GET", "/checker-optimizations/" + report["operation_id"]))
                 report["final_readback"] = "read_only_completed"
             except Exception:
                 report["final_readback"] = "unavailable_known_usage_preserved"
@@ -530,7 +587,7 @@ def final_snapshot(path):
     client = Client(json.loads(recovery.read_text())["session"])
     client.http.timeout = httpx.Timeout(5)
     try:
-        retain_receipt(report, client.request("GET", "/checker-optimizations/" + report["operation_id"]))
+        final_readback(report, client.request("GET", "/checker-optimizations/" + report["operation_id"]))
         report["final_readback"] = "read_only_completed"
     except Exception:
         report["final_readback"] = "unavailable_known_usage_preserved"
@@ -552,7 +609,7 @@ def main():
         return 0
     except Exception as exc:
         report = json.loads(path.read_text()) if path.exists() else {"accepted": False}
-        report.update(accepted=False, failure=str(exc) if isinstance(exc, AcceptanceFailure) else type(exc).__name__, automatic_retry=False, cost="unknown")
+        report.update(accepted=False, gate_failure=str(exc) if isinstance(exc, AcceptanceFailure) else type(exc).__name__, automatic_retry=False, cost="unknown")
         write_report(path, report)
         print("Checker live acceptance did not pass; inspect report.json. Do not rerun uncertain provider work.")
         return 1

@@ -255,8 +255,9 @@ holdout document canaries, exact held-out source identities and hidden case IDs
 at the author boundary, and rejects canaries or hidden IDs in provider requests.
 The label-only leak regression carries no workbook marker. Holdout execution
 must be credential-free. The guard also exercises the actual guest UID against
-the private evidence directory. Only the guard is mounted into the Controller;
-the client/oracle is neither in the Deep image nor mounted there. The existing
+the private evidence directory. Only the guard code is mounted into the Controller; the client source is not.
+The private Oracle identities and evidence directory are available to the trusted
+Controller, but are root/runner-private and denied to the guest UID. The existing
 `container-only` runtime is not a general hostile-code isolation proof.
 
 After real independent validation, Chromium explicitly publishes the candidate
@@ -297,5 +298,5 @@ prepared assertions count as acceptance.
 Offline false-accept and safety regressions:
 
 ```sh
-uv run --no-sync pytest tests/repository/test_checker_live_acceptance.py -q
+uv run --no-sync python -m pytest tests/repository/test_checker_live_acceptance.py -q
 ```

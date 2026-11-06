@@ -239,6 +239,7 @@ def test_workflow_is_manual_only_bounded_and_not_in_default_gate():
     assert "CI_LLM_API_KEY" not in json.dumps(workflow["jobs"]["live"]["env"])
     steps_with_key = [step for step in workflow["jobs"]["live"]["steps"] if "CI_LLM_API_KEY" in step.get("env", {})]
     assert len(steps_with_key) == 1
+    assert "uv run --no-sync python -m pytest tests/repository/test_checker_live_acceptance.py" in json.dumps(workflow)
 
 
 def test_stack_keeps_oracle_outside_guest_and_disables_fixture_login():
@@ -294,7 +295,7 @@ def test_hidden_oracle_labels_are_rejected_without_a_workbook_canary(tmp_path, b
 def test_unknown_null_report_retains_authoritative_state_and_known_usage():
     report = {"operation_id": "requested-id", "usage": {"input_tokens": 17, "model_requests": 1}}
     acceptance.retain_receipt(report, {"operation_id": "requested-id", "state": "unknown", "report": None, "usage": {"uncertain": True}, "failure": "execution_outcome_unknown"})
-    assert report["state"] == "unknown" and report["failure"] == "execution_outcome_unknown"
+    assert report["state"] == "unknown" and report["product_failure"] == "execution_outcome_unknown"
     assert report["operation_id"] == report["returned_operation_id"] == "requested-id"
     assert report["usage"] == {"input_tokens": 17, "model_requests": 1, "uncertain": True}
     assert report["validation"] == {}
@@ -381,3 +382,67 @@ def test_host_fixture_settings_use_explicit_random_credentials_and_distinct_loop
     config = yaml.safe_load((ROOT / "deploy/isolated-dev/checker-live.yaml").read_text())
     assert config["services"]["api"]["ports"] == ["127.0.0.1:18080:8080"]
     assert config["services"]["web"]["ports"] == ["127.0.0.1:14173:4173"]
+
+
+def test_final_snapshot_preserves_gate_failure_when_product_has_no_failure(tmp_path, monkeypatch):
+    path = tmp_path / "report.json"
+    path.write_text(json.dumps({"accepted": False, "operation_id": "original", "gate_failure": "independent_answer_mismatch", "usage": {"model_requests": 2}}))
+    (tmp_path / "private-client.json").write_text(json.dumps({"session": "synthetic"}))
+    calls = []
+
+    class ReadOnlyClient:
+        def __init__(self, session):
+            self.http = SimpleNamespace(timeout=None, close=lambda: None)
+
+        def request(self, method, target):
+            calls.append((method, target))
+            return {"operation_id": "original", "state": "completed", "failure": None, "report": None, "usage": {}}
+
+    monkeypatch.setattr(acceptance, "Client", ReadOnlyClient)
+    acceptance.final_snapshot(path)
+    saved = json.loads(path.read_text())
+    assert saved["gate_failure"] == "independent_answer_mismatch" and saved["product_failure"] is None and saved["accepted"] is False
+    assert saved["usage"]["model_requests"] == 2
+    assert calls == [("GET", "/checker-optimizations/original")]
+
+
+@pytest.mark.parametrize("mutation", ["operation", "state", "proof"])
+def test_final_readback_revokes_acceptance_if_identity_or_sealed_proof_changes(mutation):
+    receipt, samples = valid_receipt()
+    receipt["operation_id"] = "original"
+    report = {"accepted": True, "operation_id": "original", "candidate_revision_id": receipt["candidate_revision_id"], "validation": copy.deepcopy(receipt["report"]["validation"]), "samples": samples}
+    if mutation == "operation":
+        receipt["operation_id"] = "different"
+    elif mutation == "state":
+        receipt.update(state="unknown", report=None)
+    else:
+        receipt["report"]["validation"]["cases"][0]["clauses"][0]["actual"] = "PASS"
+    acceptance.final_readback(report, receipt)
+    assert report["accepted"] is False and report["gate_failure"] == "final_receipt_identity_or_proof_changed"
+    assert report["operation_id"] == "original"
+
+
+@pytest.mark.parametrize(
+    "rendered",
+    [
+        {"round_id": "old", "attempt": "1", "status": "符合"},
+        {"round_id": "new", "attempt": "1", "status": "符合"},
+        {"round_id": "old", "attempt": "1", "status": "不符合"},
+        {"round_id": "new", "attempt": "2", "status": "不符合"},
+    ],
+)
+def test_old_pass_page_cannot_prove_a_new_ng_reaudit(rendered):
+    expected = {"id": "new", "result_attempt": 1, "findings": [{"status": "NG"}]}
+    acceptance.validate_rendered_round({"round_id": "new", "attempt": "1", "status": "不符合"}, expected)
+    with pytest.raises(acceptance.AcceptanceFailure, match="browser_round_identity_or_result_mismatch"):
+        acceptance.validate_rendered_round(rendered, expected)
+
+
+def test_dom_identity_hooks_use_rendered_product_state_not_requested_url():
+    reader = (ROOT / "apps/web/src/audit/round-reader.tsx").read_text()
+    result = (ROOT / "apps/web/src/audit/checker-feedback.tsx").read_text()
+    assert "data-round-id={round?.id === roundId ? round.id : undefined}" in reader
+    assert "data-result-attempt={round?.id === roundId ? round.result_attempt : undefined}" in reader
+    assert "data-operation-id={operation.operation_id}" in result
+    assert "data-candidate-revision={operation.candidate_revision_id}" in result
+    assert "data-case-id={row.case_id}" in result
