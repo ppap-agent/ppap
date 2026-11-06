@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from audit.kinds import PpapDocumentType
 from fastapi import Body, FastAPI, Request
 from fastapi.responses import JSONResponse
 from product.files import ObjectMissing
-from product.rules import document_types, latest_rule_versions
+from product.rules import document_types, latest_rule_versions, normalize_document_type
 from worker.intake.rule_sources import rule_sources, validate_registration_sources
 
 from api import web_contract as wc
@@ -15,8 +14,11 @@ from api import web_contract as wc
 def customer_catalog(store, tenant_id: str) -> wc.AuditCustomerCatalog:
     customers: dict[str, wc.AuditCustomer] = {}
     for rule in latest_rule_versions(store.list_rules(tenant_id)):
-        document_type = PpapDocumentType.from_string(rule.get("type") or "").get_type_name()
-        if rule.get("kind") != "engine" or document_type == PpapDocumentType.UNKNOWN.get_type_name() or not isinstance(rule.get("customers"), list):
+        if rule.get("kind") != "engine" or not isinstance(rule.get("customers"), list):
+            continue
+        try:
+            normalize_document_type(rule.get("type"))
+        except ValueError:
             continue
         for value in rule.get("customers") or []:
             if not isinstance(value, str) or not value.strip():
@@ -163,7 +165,7 @@ def register_rule_routes(app: FastAPI, store, principal_of, require_file_read):
         except KeyError:
             return JSONResponse({"error": "access_denied"}, status_code=403)
         except ValueError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=409 if str(exc) == "file_not_ready" else 400)
+            return JSONResponse({"error": str(exc)}, status_code=409 if str(exc) in {"file_not_ready", "suite_head_conflict", "idempotency_conflict"} else 400)
         except ObjectMissing:
             return JSONResponse({"error": "rule_source_unavailable"}, status_code=409)
         return JSONResponse(published, status_code=201)

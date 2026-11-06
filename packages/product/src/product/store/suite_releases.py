@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from contextlib import nullcontext
 from typing import TYPE_CHECKING
 
 from audit.checker_core import checker_digest
@@ -12,7 +13,7 @@ from psycopg.types.json import Jsonb
 
 from product.db import connect
 from product.suite_releases import empty_validation, publication_fingerprint
-from product.suites import canonical_json, content_digest
+from product.suites import canonical_json, content_digest, is_unimplemented_suite
 
 if TYPE_CHECKING:
     from product.checker_validation import SuiteValidationReport
@@ -253,10 +254,10 @@ class SuiteReleaseStore:
             "history": history,
         }
 
-    def publish(self, principal, suite_key: str, revision_id: str, expected_revision: int, operation_id: str, force_unverified: bool = False) -> dict:
+    def publish(self, principal, suite_key: str, revision_id: str, expected_revision: int, operation_id: str, force_unverified: bool = False, *, conn=None) -> dict:
         suite_key, revision_id, operation_id = _key(suite_key), _id(revision_id), _id(operation_id)
         fingerprint = publication_fingerprint(suite_key=suite_key, revision_id=revision_id, expected_revision=expected_revision, force_unverified=force_unverified, user_id=principal.user_id)
-        with self._conn() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+        with nullcontext(conn) if conn is not None else self._conn() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
             _member(conn, principal)
             _lock(conn, principal.tenant_id)
             revision = _revision(conn, revision_id, principal.tenant_id)
@@ -273,11 +274,11 @@ class SuiteReleaseStore:
             if (head["revision"] if head else 0) != expected_revision:
                 raise ValueError("suite_head_conflict")
             validation = _validation(conn, principal.tenant_id, revision)
-            if not validation["verified"] and not force_unverified:
-                raise ValueError("suite_confirmation_required")
             # Resolve bytes at the adoption boundary: missing/corrupt artifacts are
             # never accepted merely because the caller acknowledges validation risk.
-            self.suites.resolve_suite(revision_id, principal.tenant_id, conn=conn)
+            resolved = self.suites.resolve_suite(revision_id, principal.tenant_id, conn=conn)
+            if not validation["verified"] and not force_unverified and not is_unimplemented_suite(resolved):
+                raise ValueError("suite_confirmation_required")
             previous = str(head["current_revision_id"]) if head else None
             if previous is None:
                 try:

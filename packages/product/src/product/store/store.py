@@ -2900,6 +2900,9 @@ class AuthStore:
         }
 
     def publish_rule(self, principal: Principal, title, body, source_file_version_id, predecessor_id=None, request_id=None, case_context=None) -> dict:
+        from product.store.custom_suites import publish_custom_rule_suite
+        from product.store.suite_releases import _lock, _member
+
         title, body = rule_title(title), normalize_rule_body(body)
         rule_id = _as_uuid(request_id) if request_id else str(uuid.uuid4())
         if not rule_id:
@@ -2909,35 +2912,38 @@ class AuthStore:
             raise ValueError("invalid_case_context")
         if "customer_scope" in context and (context["customer_scope"] != "all" or body["customers"]):
             raise ValueError("invalid_rule_scope")
-        with self._conn() as conn:
-            with conn.transaction():
-                self._prepared_items(conn, principal, [{"file_version_id": source_file_version_id, "role": "reference"}])
-                predecessor = _as_uuid(predecessor_id) if predecessor_id else None
-                if predecessor_id and (not predecessor or not self._rule_for_tenant(conn, predecessor, principal.tenant_id)):
-                    raise KeyError("missing")
-                if predecessor:
-                    previous = self._rule_for_tenant(conn, predecessor, principal.tenant_id)
-                    if previous and (previous[2] or {}).get("rule_profile") == "v4":
-                        raise ValueError("product_preset_required")
-                conn.execute(
-                    """
-                    INSERT INTO product.rule_versions
-                        (id, tenant_id, title, body, source_file_version_id, predecessor_id, created_by, case_context)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING
-                    """,
-                    (rule_id, principal.tenant_id, title, Jsonb(body), source_file_version_id, predecessor, principal.user_id, Jsonb(context)),
-                )
-                existing = conn.execute("SELECT tenant_id, title, body, source_file_version_id, predecessor_id, case_context FROM product.rule_versions WHERE id = %s", (rule_id,)).fetchone()
-                if not existing or str(existing[0]) != principal.tenant_id:
+        with self._conn() as conn, conn.transaction():
+            _member(conn, principal)
+            _lock(conn, principal.tenant_id)
+            conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("rule-publication:" + rule_id,))
+            self._prepared_items(conn, principal, [{"file_version_id": source_file_version_id, "role": "reference"}])
+            predecessor = _as_uuid(predecessor_id) if predecessor_id else None
+            previous = self._rule_for_tenant(conn, predecessor, principal.tenant_id) if predecessor else None
+            if predecessor_id and previous is None:
+                raise KeyError("missing")
+            if previous and (previous[2] or {}).get("rule_profile") == "v4":
+                raise ValueError("product_preset_required")
+            existing = conn.execute("SELECT tenant_id, title, body, source_file_version_id, predecessor_id, case_context FROM product.rule_versions WHERE id = %s", (rule_id,)).fetchone()
+            if existing:
+                if str(existing[0]) != principal.tenant_id:
                     raise KeyError("missing")
                 if (
                     existing[1] != title
-                    or existing[2] != body
+                    or normalize_rule_body(existing[2]) != body
                     or str(existing[3]) != str(source_file_version_id)
-                    or (str(existing[4]) if existing[4] else None) != (str(predecessor) if predecessor else None)
+                    or (str(existing[4]) if existing[4] else None) != predecessor
                     or existing[5] != context
                 ):
                     raise ValueError("idempotency_conflict")
+                # Return the original publication, never re-adopt an old head.
+            else:
+                body = publish_custom_rule_suite(self, conn, principal, rule_id=rule_id, title=title, body=body, previous=previous[2] if previous else None)
+                conn.execute(
+                    """INSERT INTO product.rule_versions
+                        (id, tenant_id, title, body, source_file_version_id, predecessor_id, created_by, case_context)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                    (rule_id, principal.tenant_id, title, Jsonb(body), source_file_version_id, predecessor, principal.user_id, Jsonb(context)),
+                )
         return cast(dict, self.get_rule(principal.tenant_id, rule_id))
 
     def _reject_task_predecessor(self, conn, predecessor_id: str | None) -> None:

@@ -13,7 +13,7 @@ from psycopg.types.json import Jsonb
 from product.db import connect
 from product.files import ObjectExists
 from product.storage import S3Objects
-from product.suites import MAX_OBJECT_BYTES, ResolvedSuite, SuiteRevision, content_digest, resolve_suite, resolved_digest, validate_content
+from product.suites import MAX_OBJECT_BYTES, ResolvedSuite, SuiteRevision, content_digest, is_unimplemented_suite, resolve_suite, resolved_digest, validate_content
 
 
 class SuiteStore:
@@ -166,7 +166,7 @@ def freeze_execution(
         else {"state": "unverified", "samples_not_rerun": False}
     )
     verified = status["state"] == "verified" and binding.validated_rule_digest == rules_digest
-    if not verified and not allow_unverified:
+    if not verified and not allow_unverified and not is_unimplemented_suite(suite):
         raise ValueError("suite_validation_required")
     return FrozenTarget(
         file_version_id,
