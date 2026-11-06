@@ -68,12 +68,15 @@ export function createTaskAcceptance(adapter: AuditAcceptanceAdapter, onAccepted
       remember(task.id, {requestId, phase: 'accepted', message: ''})
       return true
     }
-    if (!task.acceptance || operations.has(task.id)) return true
+    if (!task.acceptance) return true
+    const current = operations.get(task.id)
+    if (current && current.requestId !== task.acceptance.request_id) return true
     if (task.acceptance.state === 'rejected' && task.state === 'pending_confirm' && !task.round_id) {
-      remember(task.id, {requestId: task.acceptance.request_id, phase: 'rejected', message: task.acceptance.reason || '本次请求明确未受理，可以重新确认。'})
+      const input = inputs.get(task.acceptance.request_id)
+      remember(task.id, {requestId: task.acceptance.request_id, phase: 'rejected', ...(input?.confirmation_basis_digest && task.confirmation_basis_digest !== input.confirmation_basis_digest ? {staleBasisDigest: input.confirmation_basis_digest} : {}), message: task.acceptance.reason || '本次请求明确未受理，可以重新确认。'})
       return true
     }
-    if (task.acceptance.state !== 'pending') return true
+    if (current || task.acceptance.state !== 'pending') return true
     const requestId = task.acceptance.request_id
     inputs.set(requestId, structuredClone(task))
     remember(task.id, {requestId, phase: 'unknown', message: task.acceptance.reason || '恢复到尚未取得回执的确认请求。请读取原请求结果，不要重复开始审核。'})
