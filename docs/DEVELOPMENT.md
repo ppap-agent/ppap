@@ -113,11 +113,8 @@ docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 Root system contracts：
 
 ```sh
-export COMPOSE_PROJECT_NAME=ppap-product-integration
-docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
-docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
-uv run --no-sync pytest tests/integration/product
-docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
+# Own PostgreSQL + Silo for the entire parallel suite; focused runs: tests/README.md
+python3 -m scripts.ci_shards integration
 
 export COMPOSE_PROJECT_NAME=ppap-schema
 docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait

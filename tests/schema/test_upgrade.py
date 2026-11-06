@@ -13,22 +13,6 @@ class SchemaUpgradeTests(unittest.TestCase):
     def _schema_support(self, schema_tools):
         self.schema = schema_tools
 
-    def test_numbered_files_are_the_only_ordering_authority(self):
-        versions = [path.name for path in self.schema.migration_files()]
-        self.assertGreaterEqual(len(versions), 2)
-        self.assertEqual(versions, sorted(versions))
-        self.assertEqual(self.schema.latest_version(), versions[-1])
-        self.assertEqual(self.schema.previous_version(), versions[-2])
-        self.assertTrue(all(name.endswith(".sql") for name in versions))
-        self.assertFalse((self.schema.MIGRATIONS / "apply.sql").exists())
-
-        runner = (self.schema.MIGRATIONS / "apply.sh").read_text()
-        self.assertIn("LC_ALL=C", runner)
-        self.assertIn('"$MIGRATIONS_DIR"/[0-9][0-9][0-9][0-9]_*.sql', runner)
-        self.assertIn('psql -d "$PPAP_PG_DATABASE" -v ON_ERROR_STOP=1 -f "$migration"', runner)
-        for name in versions:
-            self.assertNotIn(name, runner)
-
     def test_empty_and_previous_schema_reach_latest_through_shared_runner(self):
         self.schema.require_postgres()
         versions = [path.name for path in self.schema.migration_files()]

@@ -47,19 +47,41 @@ def test_reject_invalid_partition_sizes_and_duplicate_targets():
         partition([Target("api", False), Target("api", True)], 3)
 
 
-def test_postgres_fixture_cleans_up_after_failed_test():
-    failure = subprocess.CalledProcessError(1, ["uv", "run", "pytest"])
+@pytest.mark.parametrize("silo", [False, True])
+def test_service_fixture_lifetime(silo):
+    # Retain the existing failed-PostgreSQL cleanup case; exercise the complete
+    # successful product lifecycle, including Silo, through the same owner.
+    failure = None if silo else subprocess.CalledProcessError(1, ["uv", "run", "pytest"])
+    events = []
+
+    def execute(command, *, env):
+        events.append((command, env))
+        if command == ["uv", "run", "pytest"] and failure:
+            raise failure
+
+    def direct(command, **kwargs):
+        events.append((command, kwargs["env"]))
+        return subprocess.CompletedProcess(command, 0)
+
     with (
-        patch("scripts.ci_shards.run", side_effect=[None, None, failure]) as execute,
-        patch("scripts.ci_shards.subprocess.check_output", return_value="0.0.0.0:45678"),
-        patch("scripts.ci_shards.subprocess.run") as direct,
+        patch("scripts.ci_shards.run", side_effect=execute),
+        patch("scripts.ci_shards.subprocess.check_output", side_effect=["127.0.0.1:45678", "127.0.0.1:45679"]),
+        patch("scripts.ci_shards.subprocess.run", side_effect=direct),
     ):
-        direct.return_value.returncode = 0
-        with pytest.raises(subprocess.CalledProcessError):
-            with_postgres(["uv", "run", "pytest"], "ppap-ci-test")
-    assert execute.call_count == 3
-    assert execute.call_args.kwargs["env"]["PGPORT"] == "45678"
-    assert any(call.args[0][-3:] == ["down", "-v", "--remove-orphans"] for call in direct.call_args_list)
+        if failure:
+            with pytest.raises(subprocess.CalledProcessError):
+                with_postgres(["uv", "run", "pytest"], "ppap-ci-test")
+        else:
+            with_postgres(["uv", "run", "pytest"], "ppap-ci-test", silo=True)
+    assert events[1][0][-3:] == ["run", "--rm", "init-db"]
+    command, env = events[2]
+    assert command == ["uv", "run", "pytest"]
+    assert env["PGPORT"] == "45678"
+    assert events[-1][0][-3:] == ["down", "-v", "--remove-orphans"]
+    if silo:
+        assert events[0][0][-7:] == ["up", "-d", "postgres", "silo", "--wait", "--wait-timeout", "120"]
+        assert env["PPAP_TEST_S3_ENDPOINT"] == "http://127.0.0.1:45679"
+        assert len(events) == 4  # No network lifecycle operations between launch and child exit.
 
 
 def test_ci_cli_module_invocation_discovers_all_targets():

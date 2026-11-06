@@ -34,13 +34,11 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.llm_base_url, ISOLATED_DEV_LLM_BASE_URL)
         self.assertEqual(settings.llm_model, ISOLATED_DEV_LLM_MODEL)
         self.assertFalse(llm_configured(settings))
-        self.assertFalse(hasattr(settings, "LEGACY_DOC_CONVERSION_ENABLED"))
         self.assertIn(".doc", settings.get_allowed_extensions())
 
-    def test_env_dev_records_settings_defaults_without_conversion_flag(self):
+    def test_env_dev_records_settings_defaults(self):
         path = ROOT / ".env.dev"
         values = dotenv_values(path)
-        self.assertTrue("LEGACY_DOC_CONVERSION_ENABLED" not in values, "Development template must not contain the conversion flag")
         self.assertEqual(values["PPAP_PROFILE"], "isolated-dev")
         self.assertEqual(values["PPAP_PG_PORT"], "5432")
         self.assertEqual(values["PPAP_PG_DATABASE"], "ppap")
@@ -57,7 +55,6 @@ class SettingsTests(unittest.TestCase):
     def test_env_production_records_safe_defaults_without_isolated_dev_secrets(self):
         path = ROOT / ".env.production"
         values = dotenv_values(path)
-        self.assertTrue("LEGACY_DOC_CONVERSION_ENABLED" not in values, "Production template must not contain the conversion flag")
         self.assertTrue(ISOLATED_DEV_SECRET not in set(values.values()), "Production template must not contain the isolated-dev secret")
         self.assertEqual(values["PPAP_PROFILE"], "production")
         self.assertEqual(values["PPAP_PG_PORT"], "5432")

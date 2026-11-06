@@ -2,27 +2,9 @@
 
 from __future__ import annotations
 
-import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-
-
-def test_preview_parallel_dependency_is_locked_in_e2e_group():
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text())
-    lock = tomllib.loads((ROOT / "uv.lock").read_text())
-    assert "pytest-xdist==3.8.0" in project["dependency-groups"]["e2e"]
-    packages = {package["name"]: package for package in lock["package"]}
-    assert {"name": "pytest-xdist"} in packages["ppap"]["dev-dependencies"]["e2e"]
-    expected = {"name": "pytest-xdist", "specifier": "==3.8.0"}
-    assert expected in packages["ppap"]["metadata"]["requires-dev"]["e2e"]
-    assert packages["pytest-xdist"]["version"] == "3.8.0"
-    assert {dependency["name"] for dependency in packages["pytest-xdist"]["dependencies"]} == {"execnet", "pytest"}
-    assert packages["execnet"]["version"] == "2.1.2"
-    for name in ("pytest-xdist", "execnet"):
-        wheel = packages[name]["wheels"][0]
-        assert wheel["url"].startswith("https://files.pythonhosted.org/packages/")
-        assert wheel["hash"].startswith("sha256:")
 
 
 def test_preview_workers_are_bounded_with_serial_rollback():

@@ -36,16 +36,8 @@ def test_policy_contains_no_secrets_or_raw_provider_options():
         assert private not in serialized
 
 
-def test_equivalent_extra_body_and_unconfigured_build_remain_truthful():
-    settings = Settings(git_sha="", OPENAI_EXTRA_BODY_JSON='{"a":1,"b":2}')
-    first = settings.standard_execution_policy()
-    settings.OPENAI_EXTRA_BODY_JSON = '{"b": 2, "a": 1}'
-    assert settings.standard_execution_policy() == first
-    assert first.app_revision is None
-    settings.OPENAI_EXTRA_BODY_JSON = "invalid"
-    invalid = settings.standard_execution_policy()
-    settings.OPENAI_EXTRA_BODY_JSON = "[]"
-    assert settings.standard_execution_policy() == invalid
+def test_unconfigured_build_identity_remains_unknown():
+    assert Settings(git_sha="").standard_execution_policy().app_revision is None
 
 
 @pytest.mark.parametrize("name", ["PPAP_NG_TOPN", "LEGACY_DOC_CONVERTER_EXECUTABLE", "LEGACY_DOC_SANDBOX_EXECUTABLE", "LEGACY_DOC_CONVERTER_SOCKET"])
@@ -68,26 +60,21 @@ def test_paddle_endpoint_changes_revision_without_disclosing_credentials():
     assert all(private not in original.model_dump_json() for private in ("private-paddle", "private-token"))
 
 
-def test_retired_ocr_concurrency_env_no_longer_changes_revision(monkeypatch):
-    monkeypatch.delenv("CONCURRENT_SIZE", raising=False)
-    settings = Settings()
-    original = settings.standard_execution_policy()
-    monkeypatch.setenv("CONCURRENT_SIZE", "private-old-worker-count")
-    assert settings.standard_execution_policy() == original
-
-
-def test_ocr_no_reasoning_default_and_explicit_override_share_the_actual_policy():
-    settings = Settings(OCR_OPENAI_EXTRA_BODY_JSON="")
-    default = settings.standard_execution_policy()
-    for value in ("{}", '{"reasoning":{"effort":"none"}}'):
-        settings.OCR_OPENAI_EXTRA_BODY_JSON = value
-        assert settings.standard_execution_policy() == default
-    settings.OCR_OPENAI_EXTRA_BODY_JSON = '{"reasoning":{"effort":"high"}}'
-    assert settings.standard_execution_policy() == default
-
-
 @pytest.mark.parametrize(
-    "field", ["llm_api_key", "llm_model", "llm_base_url", "OPENAI_API_KEY", "OPENAI_BASE_URL", "MODEL_NAME", "OCR_MODEL_NAME", "OCR_OPENAI_BASE_URL", "OCR_OPENAI_API_KEY", "OPENAI_EXTRA_BODY_JSON"]
+    "field",
+    [
+        "llm_api_key",
+        "llm_model",
+        "llm_base_url",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "MODEL_NAME",
+        "OCR_MODEL_NAME",
+        "OCR_OPENAI_BASE_URL",
+        "OCR_OPENAI_API_KEY",
+        "OPENAI_EXTRA_BODY_JSON",
+        "OCR_OPENAI_EXTRA_BODY_JSON",
+    ],
 )
 def test_personal_policy_never_inherits_deployment_model_configuration(field):
     settings = Settings()

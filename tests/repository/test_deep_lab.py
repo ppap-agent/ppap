@@ -28,7 +28,7 @@ def test_missing_extra_and_empty_checks_are_not_success(tmp_path):
         assert deep_lab.score(tmp_path, expected)["match"] is False
 
 
-def test_a_new_source_is_explicitly_unscored(tmp_path):
+def test_result_without_independent_oracle_is_unscored(tmp_path):
     (tmp_path / "result.json").write_text(json.dumps({"checks": [{"id": "1", "status": "PASS"}]}))
     report = deep_lab.score(tmp_path, None)
     assert report["match"] is None
@@ -110,13 +110,6 @@ def test_rule_change_scoring_requires_exact_clause_coverage(tmp_path, checks, ma
     (tmp_path / "result.json").write_text(json.dumps({"checks": checks}))
     report = deep_lab.score(tmp_path, {"R1": "PASS", "R2": "NG"})
     assert report["match"] is matched
-
-
-def test_changed_rules_have_no_implicit_corpus_oracle(tmp_path):
-    (tmp_path / "result.json").write_text(json.dumps({"checks": [{"id": "R1", "status": "PASS"}]}))
-    report = deep_lab.score(tmp_path, None)
-    assert report["match"] is None
-    assert report["scored"] is False
 
 
 def test_rule_override_is_used_after_relocation(tmp_path, monkeypatch):

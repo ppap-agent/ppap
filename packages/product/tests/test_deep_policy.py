@@ -6,12 +6,11 @@ from audit.audits import ANALYSIS_STANDARD, DEEP_PROTOCOL_REVISION, job_payload
 from product.settings import Settings
 
 
-def test_pinned_pi_upgrade_changes_the_frozen_execution_revision(monkeypatch):
-    assert deep_policy.PI_VERSION == "1.5.0"
+def test_pi_version_changes_the_frozen_execution_revision(monkeypatch):
     policy = deep_policy.DeepExecutionPolicy(model="test-model", model_revision="0" * 64, app_revision="a" * 40, sandbox_profile="off")
     current = policy.engine_revision()
-    with monkeypatch.context() as legacy:
-        legacy.setattr(deep_policy, "PI_VERSION", "1.4.0")
+    with monkeypatch.context() as changed:
+        changed.setattr(deep_policy, "PI_VERSION", deep_policy.PI_VERSION + "-alternate")
         assert policy.engine_revision() != current
     assert policy.engine_revision() == current
 

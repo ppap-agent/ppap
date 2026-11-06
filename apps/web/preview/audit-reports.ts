@@ -45,9 +45,7 @@ export function fixtureReports(tasks: Map<string, components['schemas']['AuditTa
     invalidPackageReads.add(job.receipt.request_id)
     const outcomes = next.outcomes!
     if (scene === 'reports-zip-outcome-missing') next.outcomes = outcomes.slice(0, 1)
-    if (scene === 'reports-zip-outcome-duplicate') next.outcomes = [outcomes[0], outcomes[0]]
     if (scene === 'reports-zip-outcome-reference') outcomes[0].reference.report_id = 'preview-other-report'
-    if (scene === 'reports-zip-outcome-blank') outcomes[0] = {...outcomes[0], state: 'failed', reason: '  '}
     if (scene === 'reports-zip-outcome-ready') {outcomes[0] = {...outcomes[0], state: 'failed', reason: '报告未准备完成，无法下载 ZIP。'}; savePackage(next)}
     return next
   }

@@ -1,0 +1,5 @@
+# Test-only host access. The suite owns this bridge until every worker exits.
+services:
+  silo:
+    ports:
+      - "127.0.0.1:0:9000"
