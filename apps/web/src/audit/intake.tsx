@@ -47,6 +47,7 @@ import {auditAddressChanged, readAuditRoute, surfaceAddress, taskAddress as task
 import {AuditRoundReader, type ReadRound} from './round-reader'
 import {TaskRecovery, type TaskRecoveryState} from './task-recovery'
 import {TaskSwitcher} from './task-switcher'
+import {taskListStatus} from './task-list-status'
 import {Skeleton} from '../components/ui/skeleton'
 import {createUploadPreparation, describeUploads, preparationFiles, restoreUploads, type PreparationAdapter, type UploadPreparation} from './upload-preparation'
 
@@ -197,7 +198,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const [readStatus, setReadStatus] = useState<Record<string, {busy: boolean; error: string; traceId?: string}>>({})
   const [endStatus, setEndStatus] = useState<Record<string, 'sending' | 'unknown' | 'rejected'>>({})
   const endingTasks = useRef(new Set<string>())
-  const [taskList, setTaskList] = useState<{next: number | null; busy: boolean; error: string; readScope: string | null; ids: string[]; pages: number}>({next: null, busy: false, error: '', readScope: null, ids: [], pages: 0})
+  const [taskList, setTaskList] = useState<{next: number | null; busy: boolean; error: string; errorScope: string | null; readScope: string | null; ids: string[]; pages: number}>({next: null, busy: false, error: '', errorScope: null, readScope: null, ids: [], pages: 0})
   const listEpoch = useRef(0)
   const latestAdapter = useRef(adapter); latestAdapter.current = adapter
   const [ruleSource, setRuleSource] = useState<{rule: components['schemas']['BoundRule']; clause: components['schemas']['RuleItem'] | null; filename: string} | null>(null)
@@ -687,11 +688,14 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   // Even an empty successful read belongs to its search and state filter.
   const taskListState = surface === 'workbench' || filter === 'all' ? null : filter as AuditTask['state']
   const taskListScope = JSON.stringify([query, taskListState])
+  const currentListScope = useRef(taskListScope); currentListScope.current = taskListScope
+  const listStatus = taskListStatus(taskList, taskListScope)
   const taskListNext = taskList.readScope === taskListScope ? taskList.next : null
   async function loadTasks(offset = 0, signal?: AbortSignal, silent = false) {
     if (offset !== 0 && (taskList.readScope !== taskListScope || offset !== taskList.next)) return
     const epoch = ++listEpoch.current
-    if (!silent) setTaskList(current => ({...current, busy: true, error: ''}))
+    const isCurrent = () => listEpoch.current === epoch && currentListScope.current === taskListScope && !signal?.aborted
+    if (!silent) setTaskList(current => ({...current, busy: true, error: '', errorScope: null}))
     try {
       // Refresh only this search's opened pages, then publish them together.
       const count = offset === 0 && taskList.readScope === taskListScope ? Math.max(taskList.pages, 1) : 1
@@ -700,7 +704,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
       for (let index = 0; index < count && next !== null; index++) {
         const at: number = next
         const page = await latestAdapter.current.listTasks({q: query, state: taskListState, offset: at, signal})
-        if (listEpoch.current !== epoch || signal?.aborted) return
+        if (!isCurrent()) return
         if (page.next_offset !== null && page.next_offset <= at) throw new Error('task_list_cursor_invalid')
         incoming.push(...page.tasks); pages++; next = page.next_offset
       }
@@ -709,8 +713,8 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
         const next = read.find(candidate => candidate.id === row.id)
         return next ? reconcileTaskSummary(row, next) : row
       }), ...read.filter(next => !rows.some(row => row.id === next.id))])
-      setTaskList({next, pages, busy: false, error: '', readScope: taskListScope, ids: offset === 0 ? read.map(row => row.id) : [...new Set([...taskList.ids, ...read.map(row => row.id)])]})
-    } catch {if (listEpoch.current === epoch && !signal?.aborted) setTaskList(current => ({...current, busy: false, error: '任务列表读取失败。当前文件与任务仍保留。'}))}
+      setTaskList({next, pages, busy: false, error: '', errorScope: null, readScope: taskListScope, ids: offset === 0 ? read.map(row => row.id) : [...new Set([...taskList.ids, ...read.map(row => row.id)])]})
+    } catch {if (isCurrent()) setTaskList(current => ({...current, busy: false, error: '任务列表读取失败。当前文件与任务仍保留。', errorScope: taskListScope}))}
   }
   const loadTasksCurrent = useRef(loadTasks); loadTasksCurrent.current = loadTasks
   useEffect(() => {
@@ -796,7 +800,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
             {row.match?.gaps.filter(gap => !isMatchingReason(gap)).map(gap => analysisNotice(gap)).filter((notice): notice is string => Boolean(notice)).map(notice => <p key={notice} className="text-sm text-muted-foreground">{notice}</p>)}
             {row.match?.candidates && row.match.candidates.length > 1 && <div className="space-y-2"><Label>选择适用规则后重新识别</Label><Select value={row.preferred_rule_version_id || ''} onValueChange={value => setFiles(rows => rows.map(file => file.file.id === row.file.id ? {...file, preferred_rule_version_id: value} : file))}><SelectTrigger aria-label={`${row.file.original_filename} 的适用规则`}><SelectValue placeholder="请选择规则，不会自动选择"/></SelectTrigger><SelectContent>{row.match.candidates.map(rule => <SelectItem key={rule.id} value={rule.id}>{rule.title}</SelectItem>)}</SelectContent></Select>{row.preferred_rule_version_id && <Button variant="outline" size="sm" disabled={recognitionLocked || Boolean(blocked)} onClick={() => void startMatching()}>按所选规则重新识别</Button>}</div>}
           </section>
-  const taskSwitcher = surface === 'audit' && <TaskSwitcher open={sheet} onOpenChange={setSheet} currentId={legacyRoundId ? undefined : task?.id} tasks={shownTasks} labels={taskLabels} query={query} onQuery={setQuery} filter={filter} onFilter={setFilter} busy={taskList.busy} error={taskList.error} hasMore={taskListNext !== null} hasTasks={summaries.length > 0} onMore={() => void loadTasks(taskList.error ? 0 : taskListNext!)} onNew={newTask} onOpen={id => {setSheet(false); taskAddress(id); void recover(id)}}/>
+  const taskSwitcher = surface === 'audit' && <TaskSwitcher open={sheet} onOpenChange={setSheet} currentId={legacyRoundId ? undefined : task?.id} tasks={shownTasks} labels={taskLabels} query={query} onQuery={setQuery} filter={filter} onFilter={setFilter} busy={listStatus.busy} ready={listStatus.ready} error={listStatus.error} hasMore={taskListNext !== null} hasTasks={summaries.length > 0} onMore={() => void loadTasks(listStatus.error ? 0 : taskListNext!)} onNew={newTask} onOpen={id => {setSheet(false); taskAddress(id); void recover(id)}}/>
   const table = (rows: AuditTaskFile[], selectable: boolean) => <Table className="table-fixed">
     <TableHeader><TableRow>{selectable && <TableHead className="w-12"><Checkbox aria-label="全选可审核文件" checked={selected.length === valid.length && valid.length > 0 ? true : selected.length ? 'indeterminate' : false} onCheckedChange={value => toggleAll(value === true)}/></TableHead>}<TableHead>文件</TableHead><TableHead className="w-24 max-md:hidden">大小</TableHead><TableHead className="w-28 max-md:hidden">预检查</TableHead><TableHead className={selectable ? 'w-16' : 'w-36'}><span className="sr-only">操作</span></TableHead></TableRow></TableHeader>
     <TableBody>{rows.map(row => <TableRow key={row.file.id}>{selectable && <TableCell><Checkbox aria-label={`选择 ${row.file.original_filename}`} checked={row.selection === 'selected'} onCheckedChange={value => toggle(row.file.id, value === true)}/></TableCell>}<TableCell className="whitespace-normal"><FileName name={row.file.original_filename}/>{customer === 'UAES' && /\.(?:png|jpe?g|webp|pdf)$/i.test(row.file.original_filename) && <div className="mt-2">{row.validation_scope || photoScopes.current.has(row.file.id) ? <p className="text-xs text-muted-foreground">本轮用途：生产件样品照片；内容仍需人工确认</p> : <Button variant="outline" size="sm" disabled={checking.includes(row.file.id)} onClick={() => void usePhotoPurpose(row)}>作为生产件样品照片检查</Button>}</div>}{selectable && v4Mode && <Select value={row.reference_only ? 'reference' : 'target'} onValueChange={value => setFiles(rows => rows.map(file => file.file.id === row.file.id ? {...file, reference_only: value === 'reference' ? true : undefined, preferred_rule_version_id: undefined} : file))}><SelectTrigger className="mt-2 w-full max-w-56" aria-label={`${row.file.original_filename} 本轮用途`}><SelectValue/></SelectTrigger><SelectContent><SelectItem value="target">待审文件 · 正式审核收费</SelectItem><SelectItem value="reference">比对资料 · 不单独审核或收费</SelectItem></SelectContent></Select>}{!selectable && <p className="mt-2 text-sm text-muted-foreground">{row.validation.reasons.join('；') || '暂未完成检查'}</p>}<span className="mt-1 block text-xs text-muted-foreground md:hidden">{sizeLabel(row.file.byte_size)} · {row.validation.state === 'valid' ? '可审核' : '待处理'}</span></TableCell><TableCell className="max-md:hidden"><span className="text-muted-foreground">{sizeLabel(row.file.byte_size)}</span></TableCell><TableCell className="max-md:hidden"><Badge variant="outline">{{valid: '可审核', pending: '待预检查', checking: '检查中', invalid: '文件异常', error: '读取失败'}[row.validation.state]}</Badge></TableCell><TableCell><div className="flex flex-wrap items-center justify-end gap-1">{!selectable && row.validation.state !== 'invalid' && <Button variant="outline" size="sm" disabled={checking.includes(row.file.id)} aria-label={`${row.validation.state === 'error' ? '重新读取' : '读取'} ${row.file.original_filename} 检查结果`} onClick={() => void readValidation(row)}>{checking.includes(row.file.id) ? '读取中…' : row.validation.state === 'error' ? '重新读取' : '读取结果'}</Button>}<Button variant="ghost" size="icon" aria-label={`移除 ${row.file.original_filename}`} onClick={() => remove(row.file.id)}><X/></Button></div></TableCell></TableRow>)}</TableBody>
@@ -826,7 +830,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
         </ol></nav> : <div className="flex min-w-0 items-center gap-1"><span className="text-muted-foreground">PPAP Audit / {pageContext}</span>{taskSwitcher}</div>}
       </div><div className="flex shrink-0 items-center gap-2"><div ref={setPageActions} role="group" aria-label="页面操作" className="flex min-w-0 flex-wrap items-center gap-2"/>{access?.principal && <AccountMenu compact onUsage={() => showSurface('usage')} showLocalRecords={Boolean(rules)}/>}</div></header>
       <main id="audit-main" tabIndex={-1} className={surface === 'audit' && workbench && !reportView ? 'w-full' : `mx-auto w-full space-y-6 p-6 max-sm:p-4 ${recovery || workbench || surface !== 'audit' ? '' : step === 'match' ? 'max-w-7xl' : 'max-w-5xl'}`}>
-        {surface === 'workbench' && (renderWorkbench || (props => <AuditWorkbench {...props}/>))({headerActions: pageActions, tasks: workbenchTasks, query, onQuery: setQuery, onNew: newTask, onResume: auditReturn.current || activeTaskId.current || activeUploadDraftId.current ? () => showSurface('audit') : undefined, onOpen: href => {const route = readAuditRoute(new URL(href, location.href)); if (route.taskId) {taskAddress(route.taskId); void recover(route.taskId)} else location.assign(href)}, loading: taskList.busy && !workbenchTasks.length, countsKnown: taskList.readScope === taskListScope, busy: taskList.busy, errors: taskList.error ? [taskList.error] : [], more: taskListNext !== null, onMore: () => void loadTasks(taskListNext || 0), onRefresh: () => void loadTasks()})}
+        {surface === 'workbench' && (renderWorkbench || (props => <AuditWorkbench {...props}/>))({headerActions: pageActions, tasks: workbenchTasks, query, onQuery: setQuery, onNew: newTask, onResume: auditReturn.current || activeTaskId.current || activeUploadDraftId.current ? () => showSurface('audit') : undefined, onOpen: href => {const route = readAuditRoute(new URL(href, location.href)); if (route.taskId) {taskAddress(route.taskId); void recover(route.taskId)} else location.assign(href)}, loading: listStatus.busy, countsKnown: listStatus.ready, busy: listStatus.busy, errors: listStatus.error ? [listStatus.error] : [], more: taskListNext !== null, onMore: () => void loadTasks(taskListNext || 0), onRefresh: () => void loadTasks()})}
         {archiveOpened && <div hidden={surface !== 'archive'}>{archiveAdapter ? <AuditArchive headerActions={surface === 'archive' ? pageActions : null} active={surface === 'archive'} adapter={archiveAdapter} onUpload={newTask} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter} renderOriginal={renderOriginal} onOpenTask={id => {taskAddress(id); void recover(id)}}/> : <Alert><AlertTitle>审核文件暂不可用</AlertTitle><AlertDescription>请稍后重试。</AlertDescription></Alert>}</div>}
         {rulesOpened && <div hidden={surface !== 'requirements'}>{rules?.(surface === 'requirements', surface === 'requirements' ? pageActions : null)}</div>}
         {usageOpened && <div hidden={surface !== 'usage'}><AuditUsage headerActions={surface === 'usage' ? pageActions : null} active={surface === 'usage'} adapter={usageAdapter} archiveAdapter={archiveAdapter} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter} renderOriginal={renderOriginal} onOpenTask={id => {taskAddress(id); void recover(id)}} onSupport={notice => openSupport({scenario: `用量记录 · ${notice}`})}/></div>}

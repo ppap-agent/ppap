@@ -94,8 +94,9 @@ class TaskNavigationPreviewTests(unittest.TestCase):
             for filename in ("PFMEA.xlsx", "控制计划.xlsx", "过程流程图.pdf"):
                 expect(current.get_by_text(filename, exact=True)).to_be_visible()
             switcher.get_by_role("textbox", name="搜索任务文件", exact=True).fill("第二个任务")
-            expect(listing.get_by_role("button")).to_have_count(1)
-            listing.get_by_role("button").click()
+            other = listing.get_by_role("button", name=re.compile(r"^PPAP-第二个任务(?:\s|$)"))
+            expect(other).to_have_count(1)
+            other.click()
             expect(switcher).not_to_be_visible()
             expect(page).to_have_url(PREVIEW + "/preview/audit.html?scene=restore-notification-tasks&task=preview-second-task")
             page.get_by_role("button", name="打开审核任务", exact=True).click()
