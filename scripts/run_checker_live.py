@@ -91,7 +91,7 @@ class Client:
     def __init__(self, session):
         from product.identity import SESSION_COOKIE
 
-        self.http = httpx.Client(base_url="http://127.0.0.1:8080", timeout=30, follow_redirects=False, headers={"Cookie": SESSION_COOKIE + "=" + session}, trust_env=False)
+        self.http = httpx.Client(base_url="http://127.0.0.1:18080", timeout=30, follow_redirects=False, headers={"Cookie": SESSION_COOKIE + "=" + session}, trust_env=False)
 
     def request(self, method, path, *, payload=None, content=None, status=200):
         # Never retry a write, including an uncertain optimization admission.
@@ -196,13 +196,13 @@ class BrowserJourney:
         if self.context:
             self.context.close()
         self.context = self.browser.new_context(viewport={"width": 1440, "height": 1000})
-        self.context.add_cookies([{"name": SESSION_COOKIE, "value": session, "url": "http://127.0.0.1:4173", "httpOnly": True}])
+        self.context.add_cookies([{"name": SESSION_COOKIE, "value": session, "url": "http://127.0.0.1:14173", "httpOnly": True}])
         self.page = self.context.new_page()
         self.page.set_default_timeout(20000)
 
     def feedback(self, result, uploaded, expected):
         page = self.page
-        page.goto("http://127.0.0.1:4173/audit?round=" + result["id"])
+        page.goto("http://127.0.0.1:14173/audit?round=" + result["id"])
         page.get_by_role("button", name="这条判错了 R1", exact=True).click()
         page.get_by_label("正确结论", exact=True).select_option(expected)
         page.get_by_text("添加我在原件中找到的依据", exact=True).click()
@@ -219,7 +219,7 @@ class BrowserJourney:
         from playwright.sync_api import expect
 
         page = self.page
-        self.address = "http://127.0.0.1:4173/audit?round=" + original["round_id"] + "&file=" + original["file_version_id"] + "&clause=R1&basis=1&checkerFeedbackClause=R1"
+        self.address = "http://127.0.0.1:14173/audit?round=" + original["round_id"] + "&file=" + original["file_version_id"] + "&clause=R1&basis=1&checkerFeedbackClause=R1"
         page.goto(self.address)
         page.get_by_role("button", name="让 AI 修复并验证", exact=True).click()
         page.get_by_label("Base URL", exact=True).fill(base_url)
@@ -288,6 +288,35 @@ class BrowserJourney:
         self.playwright.stop()
 
 
+def local_settings(environment):
+    from product.settings import Settings
+
+    return Settings(
+        profile="remote-dev",
+        git_sha=environment["PPAP_BUILD_SHA"],
+        personal_model_max_requests=int(environment["PPAP_PERSONAL_MODEL_MAX_REQUESTS"]),
+        personal_model_max_input_tokens=int(environment["PPAP_PERSONAL_MODEL_MAX_INPUT_TOKENS"]),
+        personal_model_max_output_tokens=int(environment["PPAP_PERSONAL_MODEL_MAX_OUTPUT_TOKENS"]),
+        pg_host="127.0.0.1",
+        pg_port=15432,
+        pg_database="ppap",
+        pg_migrator_password=environment["LIVE_PG_MIGRATOR_PASSWORD"],
+        s3_endpoint="http://127.0.0.1:19000",
+        s3_bucket="checker-live",
+        s3_access_key=environment["LIVE_S3_ACCESS_KEY"],
+        s3_secret_key=environment["LIVE_S3_SECRET_KEY"],
+        web_url="http://127.0.0.1:14173",
+        llm_base_url=environment["PPAP_APPROVED_BASE_URL"],
+        llm_model=environment["PPAP_APPROVED_MODEL"],
+        usage_charge_enabled=False,
+        feishu_notifications_enabled=False,
+        deep_executor_revision="checker-live",
+        feishu_app_id="checker-live",
+        personal_model_allowed_base_urls=environment["PPAP_APPROVED_BASE_URL"],
+        model_credential_encryption_key=environment["LIVE_ENCRYPTION_KEY"],
+    )
+
+
 def run(report_path):
     base_url, model = approved_configuration(os.environ)
     report = {"accepted": False, "stage": "initializing", "candidate_sha": os.environ["PPAP_BUILD_SHA"], "provider_endpoint": base_url, "model": model, "cost": "unknown", "automatic_retry": False}
@@ -297,31 +326,11 @@ def run(report_path):
     # All files, real baseline rounds, personal settings, feedback, optimization
     # admission and result readback use the authenticated production HTTP routes.
     from product import build_product_store
-    from product.settings import Settings
     from product.storage import S3Objects
     from product.store.suites import SuiteStore
     from psycopg.types.json import Jsonb
 
-    settings = Settings(
-        profile="remote-dev",
-        pg_host="127.0.0.1",
-        pg_port=5432,
-        pg_database="ppap",
-        pg_migrator_password=os.environ["LIVE_PG_MIGRATOR_PASSWORD"],
-        s3_endpoint="http://127.0.0.1:9000",
-        s3_bucket="checker-live",
-        s3_access_key=os.environ["LIVE_S3_ACCESS_KEY"],
-        s3_secret_key=os.environ["LIVE_S3_SECRET_KEY"],
-        web_url="http://127.0.0.1:4173",
-        llm_base_url=base_url,
-        llm_model=model,
-        usage_charge_enabled=False,
-        feishu_notifications_enabled=False,
-        deep_executor_revision="checker-live",
-        feishu_app_id="checker-live",
-        personal_model_allowed_base_urls=base_url,
-        model_credential_encryption_key=os.environ["LIVE_ENCRYPTION_KEY"],
-    )
+    settings = local_settings(os.environ)
     require(not settings.usage_charge_enabled and not settings.feishu_notifications_enabled, "business_side_effects_must_be_disabled")
     store = build_product_store(settings, objects=S3Objects(settings), role="migrator")
     principal = store.upsert_feishu_identity("checker-live-" + uuid4().hex, "acceptance", "Synthetic Checker acceptance")
@@ -412,7 +421,7 @@ def run(report_path):
         require(newer.get("execution") == "completed" and newer["predecessor_id"] == rounds[0]["round_id"] and newer["findings"][0]["status"] == "NG", "explicit_reaudit_failed")
         newer_snapshot = suites.read_snapshot(newer["id"], principal.tenant_id)
         require(newer_snapshot.targets[0].suite_revision_id == receipt["candidate_revision_id"], "reaudit_used_wrong_suite")
-        browser.page.goto("http://127.0.0.1:4173/audit?round=" + newer["id"])
+        browser.page.goto("http://127.0.0.1:14173/audit?round=" + newer["id"])
         from playwright.sync_api import expect
 
         expect(browser.page.get_by_role("button", name="这条判错了 R1", exact=True)).to_be_visible()
