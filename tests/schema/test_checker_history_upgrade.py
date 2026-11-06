@@ -45,15 +45,19 @@ def test_pre_core_rounds_and_human_reviews_survive_full_upgrade_and_replay(schem
         tables = ("audit_rounds", "round_inputs", "findings", "reviews", "resource_grants", "file_versions")
 
         def read():
-            return {table: json.loads(sql(f"SELECT jsonb_agg(to_jsonb(t) - 'checker_history') FROM product.{table} t")) for table in tables}
+            return {table: json.loads(sql(f"SELECT jsonb_agg(to_jsonb(t) - 'checker_history' - 'review_document_pairs' - 'review_hint_action') FROM product.{table} t")) for table in tables}
 
         original = read()
         schema_tools.require(schema_tools.apply(database), "upgrade actual pre-Core history")
         assert read() == original
+        assert sql("SELECT review_document_pairs FROM product.audit_rounds") == "[]"
+        assert sql("SELECT review_hint_action IS NULL FROM product.findings") == "t"
         assert sql("SELECT count(*) FROM product.round_inputs WHERE checker_history IS NOT NULL") == "0"
         assert sql("SELECT count(*) FROM product.checker_execution_snapshots") == "0"
         assert sql("SELECT count(*) FROM product.suite_revisions") == "0"
         schema_tools.require(schema_tools.apply(database), "replay upgraded history schema")
         assert read() == original
+        assert sql("SELECT review_document_pairs FROM product.audit_rounds") == "[]"
+        assert sql("SELECT review_hint_action IS NULL FROM product.findings") == "t"
     finally:
         schema_tools.psql(schema_tools.bootstrap_user(), schema_tools.bootstrap_password(), "postgres", "-c", f"DROP DATABASE IF EXISTS {database} WITH (FORCE)")

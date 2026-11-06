@@ -413,8 +413,18 @@ def check(context):
         self.assertNotEqual(next_round["id"], accepted["id"])
         self.assertEqual(next_round["predecessor_id"], accepted["id"])
         self.assertEqual(self.store.get_round(accepted["id"])["inputs"], accepted["inputs"])
+        # Uploading a new rule is not adoption, even for an explicit re-audit.
+        self.assertEqual(next(item for item in next_round["inputs"] if item["file_version_id"] == second.id)["rule"]["body"], expected_body)
+        from product.store.suite_releases import SuiteReleaseStore
+
+        releases = SuiteReleaseStore(self.store.settings, self.store.objects, role="api")
+        active = releases.active(self.alice, rule["body"]["suite_key"])
+        releases.publish(self.alice, rule["body"]["suite_key"], newer["body"]["suite_revision_id"], active["revision"], str(uuid.uuid4()))
+        adopted_round = self.store.resubmit_round(self.alice, next_round["id"], "explicit-adopted-resubmit", next_items)
         expected_new = {**changed, "title": "新版客户规则", "suite_key": rule["body"]["suite_key"], "checker_binding": {}, "appendix": []}
-        self.assertEqual(next(item for item in next_round["inputs"] if item["file_version_id"] == second.id)["rule"]["body"], expected_new)
+        self.assertEqual(next(item for item in adopted_round["inputs"] if item["file_version_id"] == second.id)["rule"]["body"], expected_new)
+        self.assertEqual(self.store.get_round(accepted["id"])["inputs"], accepted["inputs"])
+        self.assertEqual(self.store.get_round(next_round["id"])["inputs"], next_round["inputs"])
 
     def test_same_key_concurrent_acceptance_and_conflicts_check_bindings_roles_and_round_access(self):
         from product.fixtures import RULE_A
