@@ -48,6 +48,7 @@ class OracleSample:
     expected: dict[str, Literal["PASS", "NG", "NA"]]
     confirmed_by: str
     expected_rule_digest: str | None = None
+    repair_selected: bool = True
 
     @property
     def holdout(self) -> bool:
@@ -238,7 +239,7 @@ def develop_and_run(request: DevelopmentRequest, job: DevelopmentJob) -> Develop
                 continue
             rows, error = _trial(job, request.prior, sample.inputs, request.executor_revision)
             baseline[sample.case_id] = rows
-            if sample.expectations_current:
+            if sample.expectations_current and sample.repair_selected:
                 training.append({"case_id": sample.case_id, "expected": sample.expected, "actual": {str(row.clause_id): row.status for row in rows}, "error_code": error})
     feedback = request.feedback or ""
     if training:

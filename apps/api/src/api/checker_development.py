@@ -23,6 +23,7 @@ class FeedbackEdit(BaseModel):
     expected_status: Literal["PASS", "NG", "NA"]
     rationale: str = Field(min_length=1, max_length=8000)
     evidence: list[CheckerFeedbackEvidence] = Field(min_length=1, max_length=20)
+    reason_category: Literal["unspecified", "missing_value", "incorrect_reading", "rule_application"] = "unspecified"
 
 
 class FeedbackCreate(FeedbackEdit):
@@ -112,8 +113,33 @@ class FeedbackDeletion(BaseModel):
     revision: int
 
 
+class FeedbackGroup(BaseModel):
+    id: str
+    rule_clause_id: str
+    original_status: str
+    reason_category: str
+    source_field: str
+    feedback_ids: list[str]
+
+
 class SuiteFeedbackView(BaseModel):
     feedback: list[FeedbackResponse]
+    groups: list[FeedbackGroup] = Field(default_factory=list)
+    next_cursor: int | None = None
+
+
+class AffectedRound(BaseModel):
+    round_id: str
+    file_version_id: str
+    rule_clause_id: str
+    status: str
+    created_at: str
+
+
+class AffectedRoundsView(BaseModel):
+    items: list[AffectedRound]
+    scanned_rounds: int
+    next_cursor: str | None
 
 
 def register_checker_development_routes(app, store, principal_of):
@@ -138,12 +164,23 @@ def register_checker_development_routes(app, store, principal_of):
         return call(request, lambda principal: development().list_feedback(principal, round_id))
 
     @app.get("/suite-revisions/{revision_id}/checker-feedback", response_model=SuiteFeedbackView)
-    def read_suite_feedback(revision_id: str, request: Request):
-        return call(request, lambda principal: development().list_suite_feedback(principal, revision_id))
+    def read_suite_feedback(revision_id: str, request: Request, after: int = Query(default=0, ge=0), limit: int = Query(default=64, ge=1, le=64)):
+        return call(request, lambda principal: development().list_suite_feedback(principal, revision_id, after=after, limit=limit))
+
+    @app.get("/suite-revisions/{revision_id}/affected-rounds", response_model=AffectedRoundsView)
+    def read_affected_rounds(
+        revision_id: str,
+        request: Request,
+        clause_id: str = Query(min_length=1, max_length=200),
+        after: str | None = None,
+        limit: int = Query(default=25, ge=1, le=50),
+        exclude_round_id: str | None = None,
+    ):
+        return call(request, lambda principal: development().affected_rounds(principal, revision_id, clause_id, after=after, limit=limit, exclude_round_id=exclude_round_id))
 
     @app.post("/audit-rounds/{round_id}/checker-feedback", response_model=FeedbackResponse)
     def create_feedback(round_id: str, body: FeedbackCreate, request: Request):
-        return call(request, lambda principal: development().save_feedback(principal, round_id, body.model_dump()))
+        return call(request, lambda principal: development().save_feedback(principal, round_id, body.model_dump(exclude_unset=True)))
 
     @app.put("/audit-rounds/{round_id}/checker-feedback/{feedback_id}", response_model=FeedbackResponse)
     def edit_feedback(round_id: str, feedback_id: str, body: FeedbackUpdate, request: Request):

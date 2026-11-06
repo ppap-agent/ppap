@@ -148,8 +148,8 @@ def test_suite_samples_span_rounds_but_recheck_current_original_permissions(auth
     listed = f.clients[0].get(path)
     assert listed.status_code == 200
     assert {row["round_id"] for row in listed.json()["feedback"]} == {row[0] for row in f.feedback}
-    assert f.clients[1].get(path).json() == {"feedback": []}
-    assert f.clients[2].get(path).json() == {"feedback": []}
+    assert f.clients[1].get(path).json() == {"feedback": [], "groups": [], "next_cursor": None}
+    assert f.clients[2].get(path).json() == {"feedback": [], "groups": [], "next_cursor": None}
     round_id, payload, _ = f.feedback[0]
     with f.store._conn() as conn:
         conn.execute(

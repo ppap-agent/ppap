@@ -239,6 +239,19 @@ The separate InsForge native lifecycle remains path-filtered / manual / schedule
 
 The default merge contract is the required groups: Web, Repository contract, Python modules, Distribution closure, Schema, Corpus, and Product integration. Being external-backed does not make a test optional or live; Corpus stays a required CI Gate child even when a cache miss calls real OCR / model capability. pytest does not inject the repository root via `pythonpath`; production imports come from uv workspace packaging. `tests/live` is opt-in real-environment validation, not the set of all external tests. The final `CI Gate` runs no tests; it succeeds only when every required group succeeds. Repository-side merge-contract semantics are therefore stable even when internal matrix groups evolve; whether the hosting plan can enforce `CI Gate` through branch protection/rulesets is a separate platform capability.
 
+### Feedback grouping controlled comparison (#258)
+
+`packages/product/tests/test_feedback_groups.py` covers deterministic category/column grouping.
+`test_grouped_feedback_selection_and_read_only_history` in the workspace browser suite exercises
+real results, explicit group selection, removing one item, preserving the full regression set,
+and read-only authorized history. Grouping and history never dispatch a model or a re-audit.
+
+`test_controlled_grouped_and_individual_repair_keep_the_full_oracle` compares the same four
+confirmed samples through the real fixed execution loop with a controlled author: one grouped
+request records 2 model requests and 36 synthetic tokens; three separate requests record 6
+and 108. All four samples pass in each run. These are adapter receipts, not provider billing or
+real-model quality evidence. Grouped repair therefore remains an explicit opt-in, not the default.
+
 ### Real-model Checker optimization test and regression guard
 
 `Checker optimization live test` is the expensive real-model **T** in the

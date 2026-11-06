@@ -403,9 +403,10 @@ def answer(page, f, round_, expected):
     page.get_by_label("工作表名称", exact=True).fill("Sheet")
     page.get_by_label("单元格（例如 B12）", exact=True).fill("A1")
     page.get_by_role("button", name="加入这处依据", exact=True).click()
+    page.get_by_label("判断理由类别（用于建议分组）", exact=True).select_option("rule_application")
     page.get_by_label("为什么应当这样判断", exact=True).fill("我已核对原件 A1 与大于等于 10 的要求。")
     page.get_by_role("button", name="加入待修复", exact=True).click()
-    expect(page.get_by_role("button", name="让 AI 修复并验证", exact=True)).to_be_enabled()
+    expect(page.get_by_text("已加入待修复。尚未调用模型，也没有改写本轮结果。", exact=True)).to_be_visible()
 
 
 @pytest.mark.parametrize("viewport", [{"width": 1440, "height": 1000}, {"width": 390, "height": 844}], ids=["desktop", "mobile"])
@@ -439,6 +440,7 @@ def test_feedback_optimize_verify_publish_reaudit_and_rollback(workspace_product
             original, uploaded = rounds[0]
             page.goto(f.web + f"/audit?round={original['id']}&file={uploaded['id']}&clause=R1&basis=1&checkerFeedbackClause=R1")
             expect(page.get_by_role("button", name="让 AI 修复并验证", exact=True)).to_be_enabled()
+            page.get_by_role("button", name="选择全部已确认样本", exact=True).click()
             # Save-only neither executes nor manufactures a validation proof.
             page.get_by_role("button", name="仅保存待发布修改", exact=True).click()
             expect(page.get_by_role("heading", name="已保存，尚未验证", exact=True)).to_be_visible()
@@ -585,12 +587,30 @@ def test_workspace_http_receipts_use_real_trials_and_frozen_reaudit(workspace_pr
                     "original_status": actual,
                     "expected_status": expected,
                     "rationale": "用户已核对 A1 与阈值要求。",
+                    "reason_category": "rule_application",
                     "evidence": [{"file_version_id": uploaded["id"], "locator": {"kind": "xlsx_cell", "sheet": "Sheet", "cell": "A1"}, "excerpt": str(value)}],
                 }
                 url = f.web + f"/api/audit-rounds/{round_['id']}/checker-feedback"
                 saved = response_json(request.post(url, data=payload))
                 assert response_json(request.post(url, data=payload)) == saved
                 feedback.append(saved)
+            sample_path = f.web + f"/api/suite-revisions/{f.base.id}/checker-feedback"
+            grouped = response_json(request.get(sample_path))
+            assert grouped["groups"][0]["feedback_ids"] == [feedback[1]["id"], feedback[3]["id"]]
+            first_page = response_json(request.get(sample_path + "?limit=2"))
+            second_page = response_json(request.get(sample_path + f"?limit=2&after={first_page['next_cursor']}"))
+            assert [row["id"] for row in first_page["feedback"] + second_page["feedback"]] == [row["id"] for row in feedback]
+            history_path = f.web + f"/api/suite-revisions/{f.base.id}/affected-rounds?clause_id=R1&limit=1&exclude_round_id={rounds[0][0]['id']}"
+            affected, cursor, scanned = [], None, 0
+            while True:
+                history = response_json(request.get(history_path + (f"&after={cursor}" if cursor else "")))
+                affected.extend(history["items"])
+                scanned += history["scanned_rounds"]
+                cursor = history["next_cursor"]
+                if cursor is None:
+                    break
+            assert scanned == 4 and {row["round_id"] for row in affected} == {item[0]["id"] for item in rounds[1:]}
+            assert f.guest.adaptations == 0
             path = f.web + f"/api/suite-revisions/{f.base.id}/optimizations"
             saved = response_json(request.post(path, data={"operation_id": str(uuid4()), "feedback_ids": [row["id"] for row in feedback], "action": "save_only", "consume_model": False}))
             assert saved["state"] == "saved" and saved["report"] == {"verified": False, "reasons": ["tests_not_run"]}
@@ -691,3 +711,48 @@ def test_workspace_http_receipts_use_real_trials_and_frozen_reaudit(workspace_pr
         finally:
             f.pause.clear()
             request.dispose()
+
+
+def test_grouped_feedback_selection_and_read_only_history(workspace_product):
+    """Two real results can be grouped, split, and opened without paid dispatch."""
+    from playwright.sync_api import expect, sync_playwright
+
+    f = workspace_product
+    with sync_playwright() as playwright:
+        executable = os.environ.get("PPAP_BROWSER_EXECUTABLE")
+        browser = playwright.chromium.launch(**({"executable_path": executable} if executable else {}))
+        context = browser.new_context(viewport={"width": 1440, "height": 1000})
+        context.add_cookies([{"name": SESSION_COOKIE, "value": f.session, "url": f.web, "httpOnly": True}])
+        page = context.new_page()
+        page.set_default_timeout(20000)
+        try:
+            rounds = []
+            for index in (1, 2):
+                round_, uploaded = create_round(page, f, 5, index)
+                rounds.append((round_, uploaded))
+                answer(page, f, round_, "NG")
+            first, uploaded = rounds[0]
+            page.goto(f.web + f"/audit?round={first['id']}&file={uploaded['id']}&clause=R1&basis=1&checkerFeedbackClause=R1")
+            expect(page.get_by_text("这 2 条可能是同一个原因：条款 R1 · Sheet · A", exact=True)).to_be_visible()
+            page.get_by_role("button", name="选择这组一起修复", exact=True).click()
+            page.get_by_label("本次修复条款 R1 的样本 2", exact=True).uncheck()
+            with page.expect_response(lambda r: r.request.method == "POST" and r.url.endswith("/optimizations")) as started:
+                page.get_by_role("button", name="仅保存待发布修改", exact=True).click()
+            saved = response_json(started.value)
+            selected = started.value.request.post_data_json["feedback_ids"]
+            assert len(selected) == 1 and saved["state"] == "saved"
+            samples = response_json(page.request.get(f.web + f"/api/suite-revisions/{f.base.id}/checker-feedback"))
+            assert selected == [next(row["id"] for row in samples["feedback"] if row["ordinal"] == 1)]
+            with f.admin._conn() as conn:
+                frozen = conn.execute("SELECT frozen FROM product.checker_optimizations WHERE operation_id=%s", (saved["operation_id"],)).fetchone()[0]
+                assert frozen["selected_feedback_ids"] == selected and len(frozen["samples"]) == 2
+            page.get_by_role("button", name="查看同一条款的历史结果", exact=True).click()
+            expect(page.get_by_text("本页找到 1 轮可能受影响；已检查 2 轮历史，不代表全部历史。", exact=True)).to_be_visible()
+            history = page.get_by_role("region", name="可能受影响的历史结果")
+            expect(history.get_by_role("link", name="查看结果并选择重审", exact=False)).to_have_attribute("href", f"/audit?round={rounds[1][0]['id']}&file={rounds[1][1]['id']}&clause=R1&basis=1")
+            assert f.guest.adaptations == 0
+            with f.admin._conn() as conn:
+                assert conn.execute("SELECT count(*) FROM product.audit_rounds WHERE tenant_id=%s", (f.alice.tenant_id,)).fetchone()[0] == 2
+        finally:
+            context.close()
+            browser.close()

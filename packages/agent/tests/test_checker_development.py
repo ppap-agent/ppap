@@ -298,3 +298,24 @@ def test_removed_clause_is_a_stale_regression_not_a_success_or_admission_block(t
     assert "oracle_rules_changed" in outcome.validation.reasons
     assert all(case.clauses[0].actual is None for case in outcome.validation.cases)
     assert any(row.clause_id == "R2" for row in outcome.results)
+
+
+def test_controlled_grouped_and_individual_repair_keep_the_full_oracle(tmp_path):
+    """Controlled cost comparison, not evidence of provider quality or billing."""
+    req = request(tmp_path)
+    grouped_runtime = Runtime(tmp_path / "grouped")
+    grouped = develop_and_run(req, grouped_runtime)
+    individual = []
+    for selected in req.oracle[:3]:
+        runtime = Runtime(tmp_path / selected.case_id)
+        outcome = develop_and_run(replace(req, oracle=tuple(replace(sample, repair_selected=sample.case_id == selected.case_id) for sample in req.oracle)), runtime)
+        individual.append(outcome)
+        prompt = next(call[2] for call in runtime.calls if call[0] == "adapt-checker")
+        assert selected.case_id in prompt
+        assert all(sample.case_id not in prompt for sample in req.oracle if sample.case_id != selected.case_id)
+    assert grouped.validation.passed_samples == grouped.validation.total_samples == 4
+    assert all(outcome.validation.passed_samples == outcome.validation.total_samples == 4 for outcome in individual)
+    assert grouped.usage["model_requests"] == 2
+    assert sum(outcome.usage["model_requests"] for outcome in individual) == 6
+    assert grouped.usage["input_tokens"] + grouped.usage["output_tokens"] == 36
+    assert sum(outcome.usage["input_tokens"] + outcome.usage["output_tokens"] for outcome in individual) == 108

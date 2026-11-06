@@ -75,3 +75,13 @@ test('another entry restores the latest operation for this check even after cand
   assert.equal(latestOptimization(view, 'control-plan'), newer)
   assert.equal(latestOptimization(view, 'missing'), null)
 })
+
+test('explicit grouped selection can be split while independent answers stay intact', async () => {
+  const {selectedFeedback} = await import('./checker-feedback-contract.ts')
+  const first = {...input, id: 'sample-a', suite_revision_id: 'suite-a', revision: 1, round_id: 'round-a', suite_key: 'control-plan', ordinal: 1}
+  const second = {...first, id: 'sample-b', ordinal: 2, expected_status: 'PASS' as const}
+  const batch = [first, second]
+  assert.deepEqual(selectedFeedback(batch, null, ['sample-a']).map(row => row.id), ['sample-a'])
+  assert.deepEqual(selectedFeedback(batch, ['sample-a', 'sample-b'], []).map(row => row.expected_status), ['NG', 'PASS'])
+  assert.deepEqual(selectedFeedback(batch, ['sample-b'], []).map(row => row.id), ['sample-b'])
+})

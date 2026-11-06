@@ -83,7 +83,17 @@ def materialize_request(development, row):
             verified_related_bytes(spec, sample_blobs),
         )
         original_rule = rule_for_file(target.model_copy(update={"rule_body": sample["expected_rule_body"]}))
-        samples.append(OracleSample(sample["id"], sample["ordinal"], inputs, {sample["rule_clause_id"]: sample["expected_status"]}, sample["confirmed_by"], effective_rule_digest(original_rule)))
+        samples.append(
+            OracleSample(
+                sample["id"],
+                sample["ordinal"],
+                inputs,
+                {sample["rule_clause_id"]: sample["expected_status"]},
+                sample["confirmed_by"],
+                effective_rule_digest(original_rule),
+                repair_selected=sample["id"] in frozen["selected_feedback_ids"],
+            )
+        )
         specs[sample["id"]] = spec
     target_sample = next(item for item in samples if item.case_id == frozen["target_sample_id"])
     current_training = {sample.case_id for sample in samples if not sample.holdout and sample.expectations_current}
