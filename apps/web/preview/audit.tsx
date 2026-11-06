@@ -375,6 +375,13 @@ if (scene.startsWith('restore-') && scene !== 'restore-missing' || scene.startsW
   if (scene === 'restore-unknown' || scene === 'restore-card-pending') accepted.set(seed.id, frozen)
 }
 
+if (scene.startsWith('task-list-controlled')) {
+  for (const number of ['甲任务', '乙任务']) {
+    const task = fixtureMatch(adapter.samples(), 'standard', null, null, `preview-list-${number}`)
+    taskStore.set(task.id, {...task, number: `PPAP-${number}`})
+  }
+}
+
 function Preview() {
   const [reads, setReads] = useState<{id: number; label: string; finish: () => void; fail: () => void}[]>([])
   const readNumber = useRef(0)
@@ -406,6 +413,11 @@ function Preview() {
   const controlled: AuditIntakeAdapter = {...adapter,
     listTasks: async args => {
       const result = await adapter.listTasks(args)
+      // Keep snapshots held even after abort, so a late result/error tests the real owner guard.
+      if (scene.startsWith('task-list-controlled')) {
+        const page = scene.endsWith('-paged') ? {tasks: result.tasks.slice(0, 1), next_offset: result.tasks.length > 1 ? args.offset + 1 : null} : result
+        return defer(`任务列表 · ${args.q || '全部'} · ${args.state || 'all'} · ${args.offset}`, page)
+      }
       if (scene === 'archive-history-loads') return defer('审核任务清单', result)
       return scene === 'recognition-tasks-list-stale' && args.q ? defer('任务列表旧投影', result) : result
     },
@@ -518,7 +530,7 @@ function Preview() {
       return fixtureReviewRound(task)
     },
   }), [])
-  const content = <>{window.parent === window && <p role="note" className="border-b px-4 py-2 text-xs text-muted-foreground">模拟预览 · 不连接现网</p>}{(automaticObservation || delayedDisplay || scene.startsWith('recognition-') || scene.startsWith('restore-review-edit') || ['checking-loading', 'matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'upload-resume', 'restore-loading', 'restore-race', 'reports-pdf-race', 'reports-generate-race', 'reports-share-race', 'reports-share-directory-loading', 'archive-history-race', 'archive-history-loads', 'usage-race', 'original-loading', 'support-loading'].includes(scene)) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>预览事件</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}
+  const content = <>{window.parent === window && <p role="note" className="border-b px-4 py-2 text-xs text-muted-foreground">模拟预览 · 不连接现网</p>}{(automaticObservation || delayedDisplay || scene.startsWith('recognition-') || scene.startsWith('task-list-controlled') || scene.startsWith('restore-review-edit') || ['checking-loading', 'matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'upload-resume', 'restore-loading', 'restore-race', 'reports-pdf-race', 'reports-generate-race', 'reports-share-race', 'reports-share-directory-loading', 'archive-history-race', 'archive-history-loads', 'usage-race', 'original-loading', 'support-loading'].includes(scene)) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>预览事件</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}
     <AuditIntake adapter={controlled} autoObserve={automaticObservation} reportAdapter={controlledReports} sharingAdapter={controlledSharing} archiveAdapter={controlledArchive} usageAdapter={controlledUsage} supportAdapter={controlledSupport} displayAdapter={scene.startsWith('restore-display-') ? controlledDisplay : undefined} renderOriginal={(file, evidence) => scene.startsWith('original-') && file.original_filename.endsWith('.xlsx') ? <FixtureRemoteOriginal key={file.id} file={file} office={originalOffice}/> : <FixtureOriginal file={file} evidence={evidence}/>}/></>
   return scene.startsWith('restore-review-edit') ? <AuditReviewProvider adapter={reviewAdapter}>{content}</AuditReviewProvider> : content
 }
