@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Self
 from urllib.parse import urlsplit
 
+import httpx
 from documents.model_access import ModelUnavailable, current_model_access, model_access_scoped, model_request_scope
 from openai import OpenAI as BaseOpenAI
 from pydantic import Field, model_validator
@@ -157,7 +158,7 @@ class AIClient:
         self._request_times: deque[float] = deque()
         self._rate_limit_lock = threading.Lock()
 
-        client_options: dict[str, Any] = {"max_retries": 0} if personal else {}
+        client_options: dict[str, Any] = {"max_retries": 0, "http_client": httpx.Client(follow_redirects=False, trust_env=False)} if personal else {}
         if self.settings.OPENAI_BASE_URL:
             self.client = openai_cls(
                 api_key=self.settings.OPENAI_API_KEY,

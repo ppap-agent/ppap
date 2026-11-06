@@ -81,7 +81,7 @@ class CoreRoundTests(unittest.TestCase):
         self.completed = []
         self.guest = _ControlledGuest(Path(self.temp.name))
         self.revision = runtime_revision("test-policy", library_revision())
-        self.settings = SimpleNamespace(deep_controller_socket="/not-opened-controlled-transport", deep_execution_revision=lambda: "test-policy")
+        self.settings = SimpleNamespace(deep_controller_socket="/not-opened-controlled-transport", deep_execution_revision=lambda identity=None: "test-policy")
 
     def add_input(self, filename, *, role="target", document_type="控制计划", rules=None, code=CHECKER, missing=False, entrypoints=None):
         identity = f"version-{len(self.inputs) + 1}"
@@ -112,7 +112,13 @@ class CoreRoundTests(unittest.TestCase):
             round_id=work.round_id,
             tenant_id=work.tenant_id,
             attempt=1,
-            payload={"executor": "ppap-checker-core", "executor_revision": self.revision, "checker_snapshot_digest": self.snapshot.input_digest, **(payload or {})},
+            payload={
+                "executor": "ppap-checker-core",
+                "executor_revision": self.revision,
+                "checker_snapshot_digest": self.snapshot.input_digest,
+                "model_identity": dict(self.snapshot.model_identity),
+                **(payload or {}),
+            },
         )
 
         def complete(job, worker, result, outcome):

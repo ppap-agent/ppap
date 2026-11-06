@@ -4,6 +4,7 @@ import {readLocalUpload, request, uploadLocalVersion, type FileVersion, type Pub
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Button} from '../components/ui/button'
 import {PersonalModelSettings} from './model-config'
+import type {PersonalModelConfig} from './model-config-contract'
 import {Checkbox} from '../components/ui/checkbox'
 import {Label} from '../components/ui/label'
 import {NativeSelect, NativeSelectOption} from '../components/ui/native-select'
@@ -18,7 +19,7 @@ type Upload = {id: string; name: string; state: 'uploading' | 'ready' | 'unknown
 export function DeepPrepare() {
   const [rules, setRules] = useState<RulesList['rules']>([]), [details, setDetails] = useState<Record<string, RuleDetail>>({})
   const [uploads, setUploads] = useState<Upload[]>([]), [error, setError] = useState(''), [busy, setBusy] = useState(false)
-  const [modelReady, setModelReady] = useState(false), [modelConsent, setModelConsent] = useState(false)
+  const [modelConfig, setModelConfig] = useState<PersonalModelConfig | null>(null), [modelConsent, setModelConsent] = useState(false)
   const [quota, setQuota] = useState<QuotaEstimate | null>(null), [quotaError, setQuotaError] = useState('')
   const [chargeEnabled, setChargeEnabled] = useState<boolean | null>(null)
   const [draftId] = useState(() => new URL(location.href).searchParams.get('deepDraft') || crypto.randomUUID())
@@ -27,6 +28,8 @@ export function DeepPrepare() {
   const targets = uploads.filter(upload => upload.role === 'target')
   const locked = busy || Boolean(acceptId)
   const targetCount = targets.length
+  const modelReady = modelConfig?.configured === true && Boolean(modelConfig.revision)
+  useEffect(() => {setModelConsent(false)}, [modelConfig])
   useEffect(() => {
     const controller = new AbortController()
     void request<RulesList>('/rules', 'GET', undefined, controller.signal).then(result => setRules(result.rules.filter(rule => rule.kind === 'engine'))).catch(cause => {if (!controller.signal.aborted) setError(String(cause.message || '规则目录暂不可读。'))})
@@ -90,13 +93,15 @@ export function DeepPrepare() {
     try {
       await request('/drafts', 'POST', {request_id: draftId})
       await request(`/drafts/${encodeURIComponent(draftId)}`, 'PUT', {items, analysis_mode: 'deep'})
-      const round = await request<Round>(`/drafts/${encodeURIComponent(draftId)}/accept`, 'POST', {idempotency_key: key})
+      const round = await request<Round>(`/drafts/${encodeURIComponent(draftId)}/accept`, 'POST', {idempotency_key: key, expected_model_revision: modelConfig?.revision ?? null})
       const actual = round.inputs.map(item => ({file_version_id: item.file_version_id, role: item.role, rule_version_id: item.rule?.id || null}))
       if (JSON.stringify(actual.sort((a, b) => a.file_version_id.localeCompare(b.file_version_id))) !== JSON.stringify([...items].sort((a, b) => a.file_version_id.localeCompare(b.file_version_id)))) throw new Error('受理内容与本次明确选择不同，请核对原请求。')
       openRound(round)
     } catch (cause) {
-      const failure = cause as {status?: number}
-      if (failure.status !== undefined && [400, 401, 403, 404, 422].includes(failure.status)) {
+      const failure = cause as {status?: number; code?: string}
+      const modelChanged = failure.code === 'personal_model_configuration_changed'
+      if (modelChanged) {setModelConsent(false); setModelConfig(null)}
+      if (modelChanged || failure.status !== undefined && [400, 401, 403, 404, 422].includes(failure.status)) {
         setAcceptId(null)
         const current = new URL(location.href); current.searchParams.delete('deepAccept'); writeAuditAddress(current)
         setError(`${cause instanceof Error ? cause.message : '本次分析未受理。'} 请核对资料、规则及权限。`)
@@ -116,7 +121,7 @@ export function DeepPrepare() {
         </article>)}
       </section>
       <p className="text-sm text-muted-foreground">需要导入或核对新的规则时，可进入<a href="/requirements" className="underline underline-offset-4">审核规则</a>。这里使用明确选择的已发布规则，不按文件名猜测。</p>
-      <section aria-label="本次分析范围" className="space-y-4 border-t pt-5"><p className="text-sm">开始后将分析 {targetCount} 份待审文件{targets.length > 0 && `：${targets.map(upload => upload.name).join('、')}`}；另外 {uploads.length - targetCount} 份作为比对资料。</p>{quotaError && <p role="alert" className="text-sm">{quotaError}</p>}{quota && <p className="text-sm text-muted-foreground">{quota.message || quota.detailed_message || (quota.usage_charge_enabled === false ? '当前环境未启用业务扣费。' : quota.estimated_points !== undefined ? `本次预估 ${quota.estimated_points} 点，以实际受理规则为准。` : '用量条件已核对。')}</p>}<PersonalModelSettings onReady={setModelReady}/><p className="text-sm">将使用你自己的 DeepSeek Key，消费账户 Token。比普通审核更贵且更慢，不承诺精确费用封顶。关闭页面不停止已发生的消费。</p><div className="flex items-start gap-2"><Checkbox id="deep-model-consent" checked={modelConsent} disabled={locked} onCheckedChange={value => setModelConsent(value === true)}/><Label htmlFor="deep-model-consent">同意使用我的 DeepSeek 账户分析本次明确选择的资料</Label></div><Button disabled={!ready || locked || !modelReady || !modelConsent} onClick={() => void start()}>让 AI 深度分析</Button></section>
+      <section aria-label="本次分析范围" className="space-y-4 border-t pt-5"><p className="text-sm">开始后将分析 {targetCount} 份待审文件{targets.length > 0 && `：${targets.map(upload => upload.name).join('、')}`}；另外 {uploads.length - targetCount} 份作为比对资料。</p>{quotaError && <p role="alert" className="text-sm">{quotaError}</p>}{quota && <p className="text-sm text-muted-foreground">{quota.message || quota.detailed_message || (quota.usage_charge_enabled === false ? '当前环境未启用业务扣费。' : quota.estimated_points !== undefined ? `本次预估 ${quota.estimated_points} 点，以实际受理规则为准。` : '用量条件已核对。')}</p>}<PersonalModelSettings onConfig={setModelConfig}/><p className="text-sm">将把本次明确选择的待审文件、比对资料及规则发送到已保存的模型服务，使用你的 Key，可能产生 Token 费用。比普通审核更贵且更慢，不承诺精确费用封顶。关闭页面不停止已发生的消费。</p><div className="flex items-start gap-2"><Checkbox id="deep-model-consent" checked={modelConsent} disabled={locked || !modelReady} onCheckedChange={value => setModelConsent(value === true)}/><Label htmlFor="deep-model-consent">同意将本次明确选择的资料发送至 {modelConfig?.base_url || '待配置地址'}，使用 {modelConfig?.model || '待配置模型'} 分析</Label></div><Button disabled={!ready || locked || !modelReady || !modelConsent} onClick={() => void start()}>让 AI 深度分析</Button></section>
     </>}
   </main>
 }

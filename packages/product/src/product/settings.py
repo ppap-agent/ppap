@@ -34,6 +34,11 @@ class Settings(BaseSettings):
 
     model_credential_encryption_key: SecretStr = Field(default=SecretStr(""), alias="PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY", repr=False, exclude=True)
 
+    personal_model_allowed_base_urls: str = Field(default="", alias="PPAP_PERSONAL_MODEL_ALLOWED_BASE_URLS")
+    personal_model_max_requests: int = Field(default=128, ge=1, le=128, alias="PPAP_PERSONAL_MODEL_MAX_REQUESTS")
+    personal_model_max_input_tokens: int = Field(default=4_000_000, ge=1, le=4_000_000, alias="PPAP_PERSONAL_MODEL_MAX_INPUT_TOKENS")
+    personal_model_max_output_tokens: int = Field(default=100_000, ge=1, le=100_000, alias="PPAP_PERSONAL_MODEL_MAX_OUTPUT_TOKENS")
+
     llm_api_key: str = Field(default="", alias="LLM_API_KEY")
     llm_base_url: str = Field(default="", alias="LLM_BASE_URL")
     llm_model: str = Field(default="", alias="LLM_MODEL")
@@ -206,32 +211,44 @@ class Settings(BaseSettings):
             raise ValueError("Deep model credential is unavailable")
         return base_url, model, key
 
-    def deep_execution_policy(self) -> DeepExecutionPolicy:
-        # Product runs use the initiator's personal DeepSeek configuration.
-        # Legacy deployment settings remain for explicit standalone tooling only.
-        base_url, model = DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
+    def deep_execution_policy(self, model_identity: dict[str, str] | None = None) -> DeepExecutionPolicy:
+        # Product acceptance supplies the initiator's frozen non-secret identity.
+        # No platform credential or endpoint is a fallback for a personal run.
+        identity = (
+            model_identity
+            if model_identity is not None
+            else {"provider": "deepseek", "model": DEEPSEEK_MODEL, "revision": "unconfigured", "deployment": hashlib.sha256(DEEPSEEK_BASE_URL.encode()).hexdigest()}
+        )
+        model = identity["model"]
         return DeepExecutionPolicy.model_validate(
             {
                 "app_revision": self.git_sha,
                 "model": model,
                 "reasoning_effort": self.deep_reasoning_effort,
-                "model_revision": hashlib.sha256((base_url + "\n" + model).encode()).hexdigest(),
+                "model_revision": config_digest(
+                    {
+                        "identity": identity,
+                        "max_requests": self.personal_model_max_requests,
+                        "max_input_tokens": self.personal_model_max_input_tokens,
+                        "max_output_tokens": self.personal_model_max_output_tokens,
+                    }
+                ),
                 "sandbox_profile": self.deep_sandbox_profile,
                 **({"executor_label": self.deep_executor_revision.strip()} if self.deep_executor_revision.strip() else {}),
             }
         )
 
-    def deep_execution_revision(self) -> str:
-        return self.deep_execution_policy().engine_revision()
+    def deep_execution_revision(self, model_identity: dict[str, str] | None = None) -> str:
+        return self.deep_execution_policy(model_identity).engine_revision()
 
-    def standard_execution_policy(self) -> StandardExecutionPolicy:
+    def standard_execution_policy(self, model_identity: dict[str, str] | None = None) -> StandardExecutionPolicy:
+        identity = model_identity or {"provider": "deepseek", "model": DEEPSEEK_MODEL, "revision": "unconfigured", "deployment": hashlib.sha256(DEEPSEEK_BASE_URL.encode()).hexdigest()}
         return StandardExecutionPolicy(
             app_revision=self.git_sha or None,
-            model=DEEPSEEK_MODEL,
+            model=identity["model"],
             model_config_revision=config_digest(
                 {
-                    "endpoint": DEEPSEEK_BASE_URL,
-                    "model": DEEPSEEK_MODEL,
+                    "identity": identity,
                     "credential_source": "initiating_user",
                     "reasoning_effort": "none",
                     "max_retries": 0,
@@ -239,8 +256,7 @@ class Settings(BaseSettings):
             ),
             tool_config_revision=config_digest(
                 {
-                    "ocr_model_endpoint": DEEPSEEK_BASE_URL,
-                    "ocr_model": DEEPSEEK_MODEL,
+                    "ocr_model_identity": identity,
                     "ocr_extra_body": {"reasoning": {"effort": "none"}},
                     "vision_protocol": "native_paddle_responses_v3",
                     "paddle_endpoint": self.PADDLE_OCR_URL.strip(),

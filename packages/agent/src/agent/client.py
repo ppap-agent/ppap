@@ -23,6 +23,17 @@ class DeepError(Exception):
         self.code = str(code or "deep_execution_failed")
 
 
+class PersonalModelNotStarted(DeepError):
+    """Trusted runtime rejected model access before any execution was started.
+
+    This local-only exception is evidence of zero provider requests. A generic
+    personal_model_unavailable error, including one received over RPC, is not.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("personal_model_unavailable")
+
+
 class DeepUnavailable(DeepError):
     def __init__(self, code: str = "deep_runtime_unavailable"):
         super().__init__(code)

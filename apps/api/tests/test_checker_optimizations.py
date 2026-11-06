@@ -895,29 +895,38 @@ def actual_core_runtime(f, monkeypatch, *, generated=None):
             assert generated is not None
             return schema(entrypoint="checker:create_audit", files={"checker.py": generated.decode()})
 
+    recorded = SimpleNamespace(fixed_manifests=[], generation_manifests=[])
+
     class Guest:
         usage_source = "controlled"
 
-        def __init__(self):
-            self.fixed_manifests = []
-            self.generation_manifests = []
+        def __init__(self, model_identity):
+            self.model_identity = dict(model_identity)
 
         def engine_revision(self):
-            return f.store.settings.deep_execution_revision()
+            return f.store.settings.deep_execution_revision(self.model_identity)
 
         def run(self, job, inputs, work, deadline, cancelled, **kwargs):
             manifest = json.loads((inputs / "manifest.json").read_text())
             if isinstance(job, AuditJobSpec):
                 assert job.allow_model_calls is False
-                self.fixed_manifests.append(manifest)
+                assert manifest["snapshot"]["model_identity"] == self.model_identity
+                recorded.fixed_manifests.append(manifest)
                 run_audit_manifest(inputs, work, work / "no-model-grant")
             else:
                 assert job.operation == "adapt-checker" and generated is not None
-                self.generation_manifests.append(manifest)
+                recorded.generation_manifests.append(manifest)
                 run_adapt_manifest(inputs, work, Author(), deadline)
 
-    guest = Guest()
-    return CoreRuntime(guest, lambda _: None, lambda *_: None, objects=f.store.objects), guest
+    class Runtime:
+        def develop_and_run(self, request, *, spec, context):
+            # Mirror the production per-request runtime. Use the accepted
+            # identity from the materialized operation, not today's settings.
+            core = CoreRuntime(Guest(spec.model_identity), lambda _: None, lambda *_: None, objects=f.store.objects)
+            assert core.execution_revision() == request.executor_revision == spec.executor_revision
+            return core.develop_and_run(request, spec=spec, context=context)
+
+    return Runtime(), recorded
 
 
 def direct_suite_fixture(auth_store_factory, monkeypatch):
@@ -1006,3 +1015,136 @@ def test_fixed_rule_text_change_cannot_reuse_old_labels_as_verified(auth_store_f
     assert saved["validation"]["verified"] is False
     assert json.loads(saved["files"]["rules.json"])["checker_binding"] == rules["checker_binding"]
     assert guest.generation_manifests == []
+
+
+@pytest.mark.parametrize("expectation", ["changed", "null"])
+@pytest.mark.parametrize("consume_model", [False, True])
+def test_model_revision_consent_rejects_before_optimization_admission(auth_store_factory, monkeypatch, expectation, consume_model):
+    f = fixture(auth_store_factory, count=1)
+    observed = f.api.personal_model_config(f.alice)["revision"]
+    if expectation == "changed":
+        f.store.put_personal_model_config(f.alice, SecretStr("replacement-test-only-no-provider-called"))
+        assert f.api.personal_model_config(f.alice)["revision"] != observed
+    body = command(f, consume_model=consume_model, expected_model_revision=observed if expectation == "changed" else None)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("A rejected consent must not resolve credentials or call a provider")
+
+    monkeypatch.setattr(f.api, "personal_model_access", forbidden)
+    with f.store._conn() as conn:
+        suites_before = conn.execute("SELECT count(*) FROM product.suite_revisions").fetchone()[0]
+    response = f.clients[0].post(f"/suite-revisions/{f.suite.id}/optimizations", json=body)
+    assert response.status_code == 409 and response.json()["error"] == "personal_model_configuration_changed", response.text
+    with f.store._conn() as conn:
+        assert conn.execute("SELECT count(*) FROM product.checker_optimizations WHERE operation_id=%s", (body["operation_id"],)).fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM engine.jobs WHERE payload->>'operation_id'=%s", (body["operation_id"],)).fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM product.suite_revisions").fetchone()[0] == suites_before
+        assert conn.execute("SELECT count(*) FROM product.usage_events").fetchone()[0] == 0
+    assert f.worker.claim_job("rejected-consent") is None
+
+
+def test_matching_model_consent_freezes_identity_and_replay_preserves_original_receipt(auth_store_factory):
+    f = fixture(auth_store_factory, count=1)
+    accepted_identity = f.api.personal_model_identity(f.alice.tenant_id, f.alice.user_id)
+    receipt, body = start(f, command(f, expected_model_revision=accepted_identity["revision"]))
+    assert receipt["state"] == "queued"
+    f.store.put_personal_model_config(f.alice, SecretStr("replacement-test-only-no-provider-called"))
+    current_identity = f.api.personal_model_identity(f.alice.tenant_id, f.alice.user_id)
+    assert current_identity != accepted_identity
+    # A lost response is a read-back of the accepted operation, not consent to
+    # use today's provider or another opportunity to enqueue paid work.
+    assert start(f, body)[0] == receipt
+    with f.store._conn() as conn:
+        frozen = conn.execute("SELECT frozen FROM product.checker_optimizations WHERE operation_id=%s", (receipt["operation_id"],)).fetchone()[0]
+        assert frozen["model_identity"] == accepted_identity
+        assert conn.execute("SELECT count(*) FROM engine.jobs WHERE payload->>'operation_id'=%s", (body["operation_id"],)).fetchone()[0] == 1
+    runtime = ControlledRuntime()
+    result = development_handler(f.worker, runtime)(claim(f), ExecutionContext())
+    assert result["state"] == "failed" and result["failure"] == "personal_model_unavailable"
+    assert result["usage"]["uncertain"] is False and runtime.calls == 0
+    with f.store._conn() as conn:
+        assert conn.execute("SELECT model_started_at FROM product.checker_optimizations WHERE operation_id=%s", (receipt["operation_id"],)).fetchone()[0] is None
+
+
+def test_model_change_after_dispatch_before_runtime_is_known_zero_send(auth_store_factory, monkeypatch):
+    from contextlib import contextmanager
+
+    from agent.execution import harness
+
+    f = fixture(auth_store_factory, count=1)
+    receipt, body = start(f)
+    identity = claim(f)
+    dispatch = CheckerDevelopmentStore.dispatch
+    dispatches, runtimes = [], []
+
+    def change_after_dispatch(development, request):
+        accepted = dispatch(development, request)
+        assert accepted is not None
+        f.store.put_personal_model_config(f.alice, SecretStr("changed-after-dispatch-no-provider-called"))
+        dispatches.append(request.operation_id)
+        return accepted
+
+    @contextmanager
+    def gateway(path, **kwargs):
+        yield SimpleNamespace(socket_path=path, http=SimpleNamespace(grants=SimpleNamespace(revoke_all=lambda: None)))
+
+    class Bootstrap:
+        degraded = False
+
+        def __init__(self, config, **kwargs):
+            runtimes.append(config)
+
+        def recover(self):
+            pass
+
+        def ready(self):
+            return True
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Runtime pre-start rejection must not construct a guest, resolve a key or send a model request")
+
+    monkeypatch.setenv("PPAP_DEEP_RUNTIME", "container-only")
+    monkeypatch.setenv("PPAP_DEEP_SANDBOX_PROFILE", "off")
+    monkeypatch.setattr(CheckerDevelopmentStore, "dispatch", change_after_dispatch)
+    monkeypatch.setattr(harness, "local_gateway", gateway)
+    monkeypatch.setattr(harness, "ContainerRuntime", Bootstrap)
+    monkeypatch.setattr(harness, "CoreRuntime", forbidden)
+    with harness.runtime_from_env(
+        f.worker.settings,
+        f.worker.objects,
+        model_access_for_request=forbidden,
+        model_identity_for_request=lambda spec: f.worker.personal_model_identity(spec.tenant_id, spec.initiating_user_id),
+    ) as runtime:
+        result = development_handler(f.worker, runtime)(identity, ExecutionContext())
+    assert dispatches == [receipt["operation_id"]] and len(runtimes) == 1
+    assert result["state"] == "failed" and result["failure"] == "personal_model_unavailable"
+    assert result["usage"] == {"model_requests": 0, "input_tokens": 0, "output_tokens": 0, "source": "controlled", "uncertain": False}
+    assert result["candidate_revision_id"] is None
+    assert start(f, body)[0] == result
+    assert f.worker.claim_job("no-automatic-retry") is None
+    with f.store._conn() as conn:
+        assert conn.execute("SELECT model_started_at IS NOT NULL, state FROM product.checker_optimizations WHERE operation_id=%s", (receipt["operation_id"],)).fetchone() == (True, "failed")
+        assert conn.execute("SELECT status FROM engine.jobs WHERE id=%s", (identity.job_id,)).fetchone()[0] == "failed"
+        assert conn.execute("SELECT count(*) FROM product.usage_events").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("error_type", ["model_unavailable", "deep_error"])
+def test_generic_runtime_model_error_without_prestart_proof_remains_uncertain(auth_store_factory, error_type):
+    from agent.client import DeepError
+    from documents.model_access import ModelUnavailable
+
+    f = fixture(auth_store_factory, count=1)
+    receipt, body = start(f)
+
+    class Runtime:
+        def develop_and_run(self, request, *, spec, context):
+            # Ordinary runtime errors do not prove that earlier turns were free.
+            if error_type == "model_unavailable":
+                raise ModelUnavailable()
+            raise DeepError("personal_model_unavailable")
+
+    result = development_handler(f.worker, Runtime())(claim(f), ExecutionContext())
+    assert result["state"] == "unknown" and result["failure"] == "personal_model_unavailable"
+    assert result["usage"]["uncertain"] is True
+    assert start(f, body)[0] == result
+    assert f.worker.claim_job("no-unknown-replay") is None

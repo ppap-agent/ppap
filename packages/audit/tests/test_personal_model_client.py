@@ -132,3 +132,39 @@ def test_provider_error_body_cannot_escape_as_a_personal_audit_diagnostic(monkey
     assert key not in str(failure.value)
     assert failure.value.__suppress_context__
     assert key not in caplog.text
+
+
+def test_text_transport_keeps_custom_provider_identity_and_never_follows_redirects(monkeypatch):
+    calls = []
+    monkeypatch.setenv("HTTPS_PROXY", "http://untrusted-proxy.invalid:8888")
+
+    def handle(request):
+        calls.append(request)
+        return httpx.Response(307, request=request, headers={"location": "https://other.invalid/steal"})
+
+    initialize = httpx.Client.__init__
+
+    def controlled(client, **kwargs):
+        initialize(client, **kwargs, transport=httpx.MockTransport(handle))
+
+    monkeypatch.setattr(httpx.Client, "__init__", controlled)
+    access = ModelAccess(api_key=SecretStr(str(uuid4())), provider="responses-compatible", base_url="https://models.company.test/inference", model="gpt-6.1-sol")
+    with model_access_scope(access), pytest.raises(ModelUnavailable):
+        AIClient().response_text([{"role": "user", "content": "check"}])
+    assert len(calls) == 1
+    assert str(calls[0].url) == "https://models.company.test/inference/responses"
+    assert calls[0].headers["authorization"] == "Bearer " + access.api_key.get_secret_value()
+    assert json.loads(calls[0].content)["model"] == "gpt-6.1-sol"
+
+
+def test_text_personal_client_disables_environment_proxy_and_redirects(monkeypatch):
+    clients = []
+
+    def send(client, request, **kwargs):
+        clients.append(client)
+        return response(request, {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2})
+
+    monkeypatch.setattr(httpx.Client, "send", send)
+    with model_access_scope(ModelAccess(api_key=SecretStr(str(uuid4())))):
+        assert AIClient().response_text([{"role": "user", "content": "check"}]) == "checked"
+    assert clients and not clients[0].follow_redirects and not clients[0].trust_env

@@ -34,6 +34,7 @@ class ExecuteRequest(BaseModel):
     tenant_id: str = ""
     initiating_user_id: str = ""
     analysis_mode: Literal["standard", "deep"] = "standard"
+    model_identity: dict[str, str] = Field(default_factory=dict)
     checker_snapshot_digest: str = Field(default="", pattern=r"^$|^[a-f0-9]{64}$")
     job_id: str = ""
     attempt: int = Field(default=1, ge=1)

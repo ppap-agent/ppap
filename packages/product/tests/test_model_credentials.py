@@ -38,7 +38,7 @@ def test_ciphertext_is_authenticated_and_bound_to_tenant_and_user():
     ]:
         with pytest.raises(ModelUnavailable, match="personal_model_unavailable"):
             decrypt_credential(cfg, owner_tenant, owner_user, ciphertext)
-    assert set(public_config()) == {"provider", "model", "configured", "updated_at"}
+    assert set(public_config()) == {"provider", "model", "base_url", "revision", "configured", "updated_at"}
     assert public_config()["configured"] is False
 
 
@@ -86,3 +86,38 @@ def test_pending_requests_are_private_to_scope_and_block_concurrent_duplicate():
         with pytest.raises(ModelUnavailable, match="personal_model_request_uncertain"):
             with model_request_scope("https://api.deepseek.com", request):
                 pytest.fail("unknown request must stay blocked in the outer scope")
+
+
+def test_encrypted_configuration_binds_endpoint_model_and_revision_without_exposing_key():
+    config = settings()
+    config.personal_model_allowed_base_urls = "https://models.company.test/v1,https://other.company.test/v1"
+    tenant, alice, revision = (str(uuid4()) for _ in range(3))
+    key = SecretStr(str(uuid4()))
+    encrypted = encrypt_credential(config, tenant, alice, key, base_url="https://models.company.test/v1/", model="gpt-6.1-sol", revision=revision)
+    access = decrypt_credential(config, tenant, alice, encrypted)
+    assert access.base_url == "https://models.company.test/v1" and access.model == "gpt-6.1-sol"
+    assert access.provider == "responses-compatible" and access.revision == revision
+    assert access.api_key == key
+    assert access.base_url not in str(access.identity()) and key.get_secret_value() not in str(access.identity())
+    assert decrypt_credential(config, tenant, alice, encrypted, expected_identity=access.identity()) == access
+    for field, value in [("provider", "deepseek"), ("model", "other"), ("revision", str(uuid4())), ("deployment", "0" * 64)]:
+        with pytest.raises(ModelUnavailable):
+            decrypt_credential(config, tenant, alice, encrypted, expected_identity={**access.identity(), field: value})
+    config.personal_model_allowed_base_urls = ""
+    with pytest.raises(ModelUnavailable):
+        decrypt_credential(config, tenant, alice, encrypted)
+
+
+def test_legacy_envelope_can_only_use_its_original_destination():
+    import hashlib
+    import json
+
+    config = settings()
+    tenant, alice, revision = (str(uuid4()) for _ in range(3))
+    body = {"tenant_id": tenant, "user_id": alice, "provider": "deepseek", "api_key": str(uuid4())}
+    ciphertext = Fernet(config.model_credential_encryption_key.get_secret_value().encode()).encrypt(json.dumps(body).encode()).decode()
+    identity = {"provider": "deepseek", "model": "deepseek-flash", "revision": revision, "deployment": hashlib.sha256(b"https://api.deepseek.com").hexdigest()}
+    assert decrypt_credential(config, tenant, alice, ciphertext, expected_identity=identity).revision == revision
+    for field, value in [("provider", "responses-compatible"), ("model", "gpt-6.1-sol"), ("deployment", "0" * 64)]:
+        with pytest.raises(ModelUnavailable):
+            decrypt_credential(config, tenant, alice, ciphertext, expected_identity={**identity, field: value})

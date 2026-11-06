@@ -1,7 +1,7 @@
 """Safe, actionable product messages; never publish model or subprocess exceptions."""
 
 MESSAGES = {
-    "personal_model_unavailable": ("本次发起人的 DeepSeek Key 不可用，请前往个人模型设置配置或更换。", False),
+    "personal_model_unavailable": ("本次发起人的个人模型不可用或配置已变化，请检查个人模型设置后重新发起。", False),
     "deep_runtime_unavailable": ("深度审核服务暂不可用，请稍后重新提交。", True),
     "deep_lease_lost": ("本次执行已停止，未发布未经确认的结果。", False),
     "deep_cancelled": ("本次执行已停止。", False),

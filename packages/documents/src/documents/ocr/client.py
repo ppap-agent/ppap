@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any
 
+import httpx
 from openai import APITimeoutError, AsyncOpenAI
 
 from documents.model_access import ModelUnavailable, current_model_access, model_access_scoped, model_request_scope
@@ -56,7 +57,13 @@ def ocr_usage_scope(callback: Callable[[dict[str, Any]], None]) -> Iterator[None
 def _get_llm_client() -> AsyncOpenAI:
     if model_access_scoped():
         access = current_model_access()
-        return AsyncOpenAI(api_key=access.api_key.get_secret_value(), base_url=access.base_url, max_retries=0, timeout=REQUEST_TIMEOUT_SECONDS)
+        return AsyncOpenAI(
+            api_key=access.api_key.get_secret_value(),
+            base_url=access.base_url,
+            max_retries=0,
+            timeout=REQUEST_TIMEOUT_SECONDS,
+            http_client=httpx.AsyncClient(follow_redirects=False, trust_env=False, timeout=REQUEST_TIMEOUT_SECONDS),
+        )
     if not ocr_openai_api_key() or not ocr_openai_base_url():
         raise ValueError("OCR endpoint and credential are not configured; set OCR_OPENAI_BASE_URL and OCR_OPENAI_API_KEY")
     return AsyncOpenAI(
@@ -92,7 +99,7 @@ async def _request_response(kwargs: dict[str, Any]) -> Any:
             callback = _USAGE.get()
             if callback is not None:
                 usage = getattr(response, "usage", None)
-                receipt: dict[str, Any] = {"model": getattr(response, "model", None) or kwargs.get("model"), "elapsed_seconds": time.monotonic() - started}
+                receipt: dict[str, Any] = {"model": kwargs.get("model"), "elapsed_seconds": time.monotonic() - started}
                 for name in ("input_tokens", "output_tokens"):
                     value = getattr(usage, name, None)
                     if type(value) is int and value >= 0:
@@ -146,7 +153,8 @@ async def call_llm_async(
         response = await _request_response(kwargs)
         status = getattr(response, "status", None)
         if status != "completed":
-            raise ResponsesEvidenceError("responses_incomplete", f"Responses status is {str(status)[:40]}")
+            safe_status = status if isinstance(status, str) and status in {"queued", "in_progress", "incomplete", "failed", "cancelled"} else "unknown"
+            raise ResponsesEvidenceError("responses_incomplete", f"Responses status is {safe_status}")
         content_text = getattr(response, "output_text", None)
         if not isinstance(content_text, str) or not content_text.strip():
             raise ResponsesEvidenceError("responses_empty_text", "Responses completed without nonempty text")
@@ -158,6 +166,8 @@ async def call_llm_async(
             details = getattr(response, "incomplete_details", None)
             usage = getattr(response, "usage", None)
             output_tokens = getattr(usage, "output_tokens", None)
+            reason = getattr(details, "reason", None)
+            safe_reason = reason if isinstance(reason, str) and reason in {"max_output_tokens", "content_filter"} else "unknown"
             logger.warning(
                 "Responses invalid JSON: reason=%s line=%d col=%d pos=%d output_chars=%d output_tokens=%s incomplete=%s",
                 exc.msg,
@@ -166,7 +176,7 @@ async def call_llm_async(
                 exc.pos,
                 len(clean_content),
                 output_tokens if type(output_tokens) is int else "unknown",
-                getattr(details, "reason", None),
+                safe_reason,
             )
             raise ResponsesEvidenceError(
                 "responses_invalid_json",

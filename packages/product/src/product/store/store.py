@@ -87,6 +87,8 @@ from product.store.task_view import file_round_audit, has_execution_error, repor
 from product.store.upload_preparation import PREPARATION_KEY, normalize_preparation, preparation_inputs, validate_preparation_update
 from product.writeback_targets import normalize_external_ref, public_target
 
+_MODEL_REVISION_UNSPECIFIED = object()
+
 
 def _preset_customers(body: dict) -> set[str]:
     """Use adopted Suite identity; legacy recognition retains preset provenance."""
@@ -173,15 +175,20 @@ class AuthStore:
 
         return PersonalModelStore(self).config(principal)
 
-    def put_personal_model_config(self, principal: Principal, api_key) -> dict:
+    def put_personal_model_config(self, principal: Principal, api_key, **configuration) -> dict:
         from product.store.model_credentials import PersonalModelStore
 
-        return PersonalModelStore(self).put(principal, api_key)
+        return PersonalModelStore(self).put(principal, api_key, **configuration)
 
     def delete_personal_model_config(self, principal: Principal) -> dict:
         from product.store.model_credentials import PersonalModelStore
 
         return PersonalModelStore(self).delete(principal)
+
+    def personal_model_identity(self, tenant_id: str, initiating_user_id: str, *, conn=None) -> dict[str, str]:
+        from product.store.model_credentials import PersonalModelStore
+
+        return PersonalModelStore(self).identity(tenant_id, initiating_user_id, conn=conn)
 
     def personal_model_access(self, tenant_id: str, initiating_user_id: str):
         from product.store.model_credentials import PersonalModelStore
@@ -1097,6 +1104,7 @@ class AuthStore:
                 prepared = self._prepared_items(conn, principal, [{"file_version_id": payload["source_file_version_id"], "role": "reference"}])
                 if prepared[0]["file_id"] != payload["source_file_id"]:
                     raise KeyError("missing")
+                payload["model_identity"] = self.personal_model_identity(principal.tenant_id, principal.user_id, conn=conn)
                 conn.execute(
                     """INSERT INTO engine.jobs (id, tenant_id, kind, payload, status)
                     VALUES (%s, %s, %s, %s, 'queued') ON CONFLICT (id) DO NOTHING""",
@@ -1111,7 +1119,9 @@ class AuthStore:
                 )
                 if str(row[0]) != principal.tenant_id or row[1] != kind:
                     raise KeyError("missing")
-                if row[2] != payload:
+                # An idempotent retry keeps the original accepted provider,
+                # even if personal settings changed while the job was queued.
+                if {key: value for key, value in row[2].items() if key != "model_identity"} != {key: value for key, value in payload.items() if key != "model_identity"}:
                     raise ValueError("idempotency_conflict" if kind == "file_validation" else "rule_parse_conflict")
                 return rule_parse_view(job_id, row[2], row[3], row[4], bool(row[5]))
 
@@ -1463,6 +1473,7 @@ class AuthStore:
                     "task_id": task_id,
                     "initiating_user_id": principal.user_id,
                     "task_revision": revision,
+                    "model_identity": self.personal_model_identity(principal.tenant_id, principal.user_id, conn=conn),
                     "source_file_id": source["file_id"],
                     "source_file_version_id": row["file_version_id"],
                     "document_type": "",
@@ -2841,7 +2852,6 @@ class AuthStore:
         # Accepted tasks returned above must never resolve a newer Suite head.
         from audit.checker_core import FrozenTarget, runtime_revision
         from audit.standard_suites import library_revision
-        from documents.model_access import DEEPSEEK_MODEL, DEEPSEEK_PROVIDER
 
         from product.standard_policy import config_digest
         from product.store.suites import freeze_selected_targets
@@ -2890,6 +2900,7 @@ class AuthStore:
             # transaction. Bind source identity, clauses, code, related Suites
             # and verification risk, not merely visible rule text or input_revision.
             library = library_revision()
+            model_identity = self.personal_model_identity(principal.tenant_id, principal.user_id, conn=conn)
             task["confirmation_basis_digest"] = config_digest(
                 {
                     "task_id": task_id,
@@ -2900,8 +2911,8 @@ class AuthStore:
                     "customer_preference": task["customer_preference"],
                     "estimated_points": task["estimated_points"],
                     "library_revision": library,
-                    "runtime_revision": runtime_revision(self.settings.deep_execution_policy().engine_revision(), library),
-                    "model_identity": {"provider": DEEPSEEK_PROVIDER, "model": DEEPSEEK_MODEL},
+                    "runtime_revision": runtime_revision(self.settings.deep_execution_policy(model_identity).engine_revision(), library),
+                    "model_identity": model_identity,
                     "confirmation_scope": task["confirmation_scope"],
                     "precheck_gate_enforced": self.settings.precheck_gate_enforced,
                     "precheck": {key: task["precheck"][key] for key in ("input", "result")} if self.settings.precheck_gate_enforced and task.get("precheck") else None,
@@ -3457,7 +3468,9 @@ class AuthStore:
                     conn.execute("UPDATE product.audit_drafts SET case_context = %s, updated_at = now() WHERE id = %s", (Jsonb(case_context), parsed))
                 return cast(dict, self._draft_public(conn, parsed))
 
-    def accept_draft(self, principal: Principal, draft_id: str, idempotency_key: str, predecessor_id: str | None = None, *, usage_policy=None) -> dict:
+    def accept_draft(
+        self, principal: Principal, draft_id: str, idempotency_key: str, predecessor_id: str | None = None, *, usage_policy=None, expected_model_revision: Any = _MODEL_REVISION_UNSPECIFIED
+    ) -> dict:
         draft = self.get_draft(draft_id)
         if draft and draft.get("predecessor_id"):
             if predecessor_id and predecessor_id != draft["predecessor_id"]:
@@ -3473,7 +3486,9 @@ class AuthStore:
                 raise KeyError("missing")
         with self._conn() as conn:
             with conn.transaction():
-                return self._accept_locked(conn, principal, key, source_draft_id=parsed, predecessor_id=predecessor_id, items=None, usage_policy=usage_policy)
+                return self._accept_locked(
+                    conn, principal, key, source_draft_id=parsed, predecessor_id=predecessor_id, items=None, usage_policy=usage_policy, expected_model_revision=expected_model_revision
+                )
 
     def resubmit_round(
         self,
@@ -4580,6 +4595,7 @@ class AuthStore:
         feedback_inputs: list[dict] | None = None,
         expected_confirmation_basis_digest: str | None = None,
         require_confirmation_basis: bool = False,
+        expected_model_revision: Any = _MODEL_REVISION_UNSPECIFIED,
     ) -> dict:
         # Serialize one tenant/key before reading existing acceptance, including
         # competing requests from different drafts. Hash collisions only serialize.
@@ -4734,11 +4750,14 @@ class AuthStore:
         from product.store.suites import SuiteStore, freeze_round_execution
 
         snapshot = freeze_round_execution(self, conn, principal, round_id=round_id, prepared=prepared, analysis_mode=analysis_mode, require_rule_match=feedback_inputs is not None)
+        if expected_model_revision is not _MODEL_REVISION_UNSPECIFIED and expected_model_revision != snapshot.model_identity.get("revision"):
+            raise ValueError("personal_model_configuration_changed")
         execution_payload: dict[str, Any] = {
             "round_id": round_id,
             "executor": "ppap-checker-core",
             "executor_revision": snapshot.runtime_revision,
             "checker_snapshot_digest": snapshot.input_digest,
+            "model_identity": dict(snapshot.model_identity),
         }
         self._check_usage_policy(conn, principal, usage_policy)
         job_id = str(uuid.uuid4())

@@ -44,6 +44,7 @@ class OptimizationCreate(BaseModel):
     feedback_ids: list[str] = Field(min_length=1, max_length=64)
     action: Literal["save_only", "run_tests"]
     consume_model: bool = False
+    expected_model_revision: str | None = Field(default=None, min_length=1, max_length=64)
 
 
 class FeedbackResponse(FeedbackEdit):
@@ -156,7 +157,7 @@ def register_checker_development_routes(app, store, principal_of):
 
     @app.post("/suite-revisions/{revision_id}/optimizations", response_model=OptimizationReceipt, response_model_exclude_unset=True)
     def start_optimization(revision_id: str, body: OptimizationCreate, request: Request):
-        return call(request, lambda principal: development().start(principal, revision_id, body.model_dump()))
+        return call(request, lambda principal: development().start(principal, revision_id, body.model_dump(exclude_unset=True)))
 
     @app.get("/checker-optimizations/{operation_id}", response_model=OptimizationReceipt, response_model_exclude_unset=True)
     def read_optimization(operation_id: str, request: Request):

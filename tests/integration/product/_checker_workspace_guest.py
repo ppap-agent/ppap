@@ -5,7 +5,6 @@ Core checks and evidence validation still execute the production guest code.
 The subprocess is not a security/container isolation claim.
 """
 
-import json
 import sys
 from pathlib import Path
 
@@ -39,7 +38,10 @@ class DeterministicAuthor:
     input_tokens = output_tokens = 0
 
     def __init__(self, grant):
+        from agent.execution.guest_model import ModelGrant
+
         assert grant["token"] == "synthetic-unused-workspace-grant-1234567890"
+        self.grant = ModelGrant.model_validate(grant)
 
     def run(self, work, prompt, schema, deadline, **kwargs):
         # Held-out original and label must not enter the author directory/prompt.
@@ -61,18 +63,6 @@ if __name__ == "__main__":
 
     guest_model.PiRunner = DeterministicAuthor
     inputs, work, grants = map(Path, sys.argv[1:])
-    # A localhost dead endpoint fails closed if any unexpected code tries to
-    # reach a provider. No user key or ambient network credentials are passed.
-    grants.mkdir()
-    (grants / "model.json").write_text(
-        json.dumps(
-            {
-                "base_url": "http://127.0.0.1:1/v1",
-                "token": "synthetic-unused-workspace-grant-1234567890",
-                "model": "deepseek-flash",
-                "wall_seconds": 60,
-                "max_turns": 1,
-            }
-        )
-    )
+    # The host stages only an unused synthetic token and the accepted public
+    # identity. Its dead localhost endpoint cannot reach an external provider.
     run_entrypoint(inputs, work, grants)

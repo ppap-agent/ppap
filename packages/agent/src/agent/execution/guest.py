@@ -118,9 +118,17 @@ def run_entrypoint(inputs: Path, work: Path, credentials: Path) -> None:
     grant = read_json(credentials, ("model.json",), 16384)
     runner = PiRunner(grant)
     if manifest.get("operation") == "adapt-checker":
+        from documents.model_access import ModelAccess, model_access_scope
+        from pydantic import SecretStr
+
         from agent.checker_program import run_adapt_manifest
 
-        run_adapt_manifest(inputs, work, runner, time.monotonic() + runner.wall_seconds)
+        # Authored trials run in-process with Pi. Give text/vision tools the
+        # same temporary grant; never allow environment credential fallback.
+        selected = runner.grant
+        access = ModelAccess(api_key=SecretStr(selected.token), provider=selected.provider, model=selected.model, base_url=selected.base_url, revision=selected.revision)
+        with model_access_scope(access):
+            run_adapt_manifest(inputs, work, runner, time.monotonic() + runner.wall_seconds)
         return
     if manifest.get("operation") in {"compile", "execute", None} or "operation" not in manifest:
         raise ValueError("RulePlan execution is removed")

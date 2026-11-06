@@ -1,0 +1,58 @@
+"""HTTP admission preserves omission versus an explicitly expected model revision."""
+
+from types import SimpleNamespace
+from uuid import uuid4
+
+import pytest
+from api.audit_routes import register_audit_routes
+from api.checker_development import register_checker_development_routes
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from product.store.checker_development import CheckerDevelopmentStore
+
+
+@pytest.mark.parametrize("expectation", [{}, {"expected_model_revision": None}, {"expected_model_revision": str(uuid4())}])
+def test_optimization_forwards_exact_consent_to_atomic_admission(monkeypatch, expectation):
+    received = []
+
+    def start(self, principal, revision_id, payload):
+        received.append(payload)
+        raise ValueError("personal_model_configuration_changed")
+
+    monkeypatch.setattr(CheckerDevelopmentStore, "start", start)
+    app = FastAPI()
+    register_checker_development_routes(app, SimpleNamespace(settings=SimpleNamespace(), objects=object(), role="api"), lambda request: SimpleNamespace(user_id="actor"))
+    response = TestClient(app).post(
+        "/suite-revisions/suite-a/optimizations", json={"operation_id": str(uuid4()), "feedback_ids": [str(uuid4())], "action": "run_tests", "consume_model": True, **expectation}
+    )
+    assert response.status_code == 409
+    assert response.json() == {"error": "personal_model_configuration_changed"}
+    assert {key: value for key, value in received[0].items() if key == "expected_model_revision"} == expectation
+
+
+@pytest.mark.parametrize("expectation", [{}, {"expected_model_revision": None}, {"expected_model_revision": str(uuid4())}])
+def test_deep_accept_forwards_exact_consent_to_atomic_admission(expectation):
+    received = []
+    principal = SimpleNamespace(user_id="actor", tenant_id="tenant-a")
+
+    def accept(*args, **kwargs):
+        received.append(kwargs)
+        raise ValueError("personal_model_configuration_changed")
+
+    store = SimpleNamespace(resource=lambda identity: SimpleNamespace(tenant_id="tenant-a", kind="draft"), grants=lambda *args: {"read"}, accept_draft=accept)
+    app = FastAPI()
+    register_audit_routes(app, store, lambda request: principal, lambda *args: {})
+    response = TestClient(app).post("/drafts/draft-a/accept", json={"idempotency_key": str(uuid4()), **expectation})
+    assert response.status_code == 409
+    assert response.json() == {"error": "personal_model_configuration_changed"}
+    assert {key: value for key, value in received[0].items() if key == "expected_model_revision"} == expectation
+
+
+def test_deep_rejects_invalid_revision_before_admission():
+    store = SimpleNamespace(resource=lambda identity: SimpleNamespace(tenant_id="tenant-a", kind="draft"), grants=lambda *args: {"read"})
+    app = FastAPI()
+    register_audit_routes(app, store, lambda request: SimpleNamespace(user_id="actor", tenant_id="tenant-a"), lambda *args: {})
+    for invalid in ([], {}, 3, "x" * 65):
+        response = TestClient(app).post("/drafts/draft-a/accept", json={"idempotency_key": str(uuid4()), "expected_model_revision": invalid})
+        assert response.status_code == 409
+        assert response.json() == {"error": "personal_model_configuration_changed"}

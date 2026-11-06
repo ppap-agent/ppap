@@ -107,13 +107,20 @@ class DeterministicMetadata:
 class NativeGuest:
     usage_source = "controlled"
 
-    def __init__(self, settings):
+    def __init__(self, settings, model_identity=None, *, jobs=None):
         self.settings = settings
-        self.adaptations = 0
-        self.jobs = []
+        self.model_identity = dict(model_identity) if model_identity is not None else None
+        self.jobs = jobs if jobs is not None else []
+
+    @property
+    def adaptations(self):
+        return self.jobs.count("adapt-checker")
+
+    def for_identity(self, identity):
+        return NativeGuest(self.settings, identity, jobs=self.jobs)
 
     def engine_revision(self):
-        return self.settings.deep_execution_revision()
+        return self.settings.deep_execution_revision(self.model_identity)
 
     def ready(self, operation="audit"):
         return True
@@ -121,7 +128,24 @@ class NativeGuest:
     def run(self, job, inputs, work, deadline, cancelled, **kwargs):
         assert not cancelled.is_set()
         self.jobs.append(job.operation)
-        self.adaptations += job.operation == "adapt-checker"
+        grants = work / "grants"
+        grants.mkdir()
+        if job.operation in {"execute-audit", "adapt-checker"}:
+            assert self.model_identity is not None
+            manifest = json.loads((inputs / "manifest.json").read_text())
+            if job.operation == "execute-audit":
+                assert manifest["snapshot"]["model_identity"] == self.model_identity
+            (grants / "model.json").write_text(
+                json.dumps(
+                    {
+                        **self.model_identity,
+                        "base_url": "http://127.0.0.1:1/v1",
+                        "token": "synthetic-unused-workspace-grant-1234567890",
+                        "wall_seconds": 60,
+                        "max_turns": 1,
+                    }
+                )
+            )
         # Do not inherit any credentials or PYTHONSTARTUP. Run production guest
         # on its own main thread so real clause deadlines stay active.
         env = {key: value for key, value in os.environ.items() if key in {"PATH", "LANG", "LC_ALL"}}
@@ -174,11 +198,26 @@ def workspace_product(auth_store_factory, tmp_path, request, monkeypatch):
     worker = build_product_store(settings, objects=objects, role="worker")
     worker_suites = SuiteStore(settings, objects, role="worker")
     guest = NativeGuest(settings)
-    runtime = CoreRuntime(guest, lambda spec: worker_suites.read_snapshot(spec.round_id, spec.tenant_id), worker_suites.resolve_suite, objects=objects)
+
+    class Runtime:
+        def core(self, spec):
+            scoped = CoreRuntime(guest.for_identity(spec.model_identity), lambda spec: worker_suites.read_snapshot(spec.round_id, spec.tenant_id), worker_suites.resolve_suite, objects=objects)
+            assert scoped.execution_revision() == spec.executor_revision
+            return scoped
+
+        def execute(self, spec, files, *, context):
+            return self.core(spec).execute(spec, files, context=context)
+
+        def develop_and_run(self, request, *, spec, context):
+            assert request.executor_revision == spec.executor_revision
+            return self.core(spec).develop_and_run(request, spec=spec, context=context)
+
+    runtime = Runtime()
     controller = Controller(
         runtime,
         object_file_source(settings, connect=connect, objects=objects),
         executor_revision=runtime_revision(settings.deep_execution_revision(), library_revision()),
+        executor_revision_for_request=lambda spec: runtime_revision(settings.deep_execution_revision(spec.model_identity), library_revision()),
         authorize=authorize_execution(settings, connect=connect, open_store=lambda _: worker),
         readiness=lambda: True,
         configuration=settings.deep_execution_policy().runtime_identity(),
@@ -406,10 +445,10 @@ def test_feedback_optimize_verify_publish_reaudit_and_rollback(workspace_product
             page.get_by_role("button", name="让 AI 修复并验证", exact=True).click()
             expect(page.get_by_text("尚未配置。普通审核已有的检查不需要生成代码。", exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="确认开始修复", exact=True)).to_be_disabled()
-            page.get_by_label("DeepSeek API Key", exact=True).fill("synthetic-workspace-key-never-sent-to-provider")
-            page.get_by_role("button", name="保存我的 Key", exact=True).click()
+            page.get_by_label("API Key", exact=True).fill("synthetic-workspace-key-never-sent-to-provider")
+            page.get_by_role("button", name="保存模型配置", exact=True).click()
             expect(page.get_by_text("已配置，仅供你发起的模型操作使用。", exact=True)).to_be_visible()
-            consent = page.get_by_label("同意本次调用我的 DeepSeek 账户修复并验证这 4 条反馈", exact=True)
+            consent = page.get_by_label("同意将本次资料发送至 https://api.deepseek.com，使用 deepseek-flash 修复并验证这 4 条反馈", exact=True)
             consent.check()
             f.pause.set()
             assert f.paused.wait(5), "Worker did not pause before admission"

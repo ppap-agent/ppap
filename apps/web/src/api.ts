@@ -107,6 +107,7 @@ const messages: Record<string,string> = {
   rule_source_unavailable: '暂时无法读取可定位的原文。请核对原文件是否可读取。',
   invalid_analysis_mode: '请选择标准或深度审核。',
   deep_not_available: '当前环境不提供深度审核。',
+  personal_model_configuration_changed: '模型配置已更改，本次操作未受理。请读取当前配置并重新确认目标地址和模型。',
   feedback_revision_conflict: '规则说明已被更新，请读取最新依据后再核对。',
   feedback_scope_conflict: '本次说明超出了可修改范围，请核对文件与要求。',
   feedback_question_expired: '该问题已随分析依据改变，请读取当前问题。',

@@ -491,6 +491,30 @@ spec:
                   name: ppap-current
                   key: FEISHU_VERIFICATION_TOKEN
                   optional: true
+            - name: PPAP_PERSONAL_MODEL_MAX_REQUESTS
+              valueFrom:
+                configMapKeyRef:
+                  name: ppap-current
+                  key: PPAP_PERSONAL_MODEL_MAX_REQUESTS
+                  optional: true
+            - name: PPAP_PERSONAL_MODEL_MAX_INPUT_TOKENS
+              valueFrom:
+                configMapKeyRef:
+                  name: ppap-current
+                  key: PPAP_PERSONAL_MODEL_MAX_INPUT_TOKENS
+                  optional: true
+            - name: PPAP_PERSONAL_MODEL_MAX_OUTPUT_TOKENS
+              valueFrom:
+                configMapKeyRef:
+                  name: ppap-current
+                  key: PPAP_PERSONAL_MODEL_MAX_OUTPUT_TOKENS
+                  optional: true
+            - name: PPAP_PERSONAL_MODEL_ALLOWED_BASE_URLS
+              valueFrom:
+                configMapKeyRef:
+                  name: ppap-current
+                  key: PPAP_PERSONAL_MODEL_ALLOWED_BASE_URLS
+                  optional: true
             - name: PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY
               valueFrom:
                 secretKeyRef:
@@ -598,6 +622,30 @@ spec:
                 configMapKeyRef:
                   name: ppap-current
                   key: LLM_BASE_URL
+            - name: PPAP_PERSONAL_MODEL_MAX_REQUESTS
+              valueFrom:
+                configMapKeyRef:
+                  name: ppap-current
+                  key: PPAP_PERSONAL_MODEL_MAX_REQUESTS
+                  optional: true
+            - name: PPAP_PERSONAL_MODEL_MAX_INPUT_TOKENS
+              valueFrom:
+                configMapKeyRef:
+                  name: ppap-current
+                  key: PPAP_PERSONAL_MODEL_MAX_INPUT_TOKENS
+                  optional: true
+            - name: PPAP_PERSONAL_MODEL_MAX_OUTPUT_TOKENS
+              valueFrom:
+                configMapKeyRef:
+                  name: ppap-current
+                  key: PPAP_PERSONAL_MODEL_MAX_OUTPUT_TOKENS
+                  optional: true
+            - name: PPAP_PERSONAL_MODEL_ALLOWED_BASE_URLS
+              valueFrom:
+                configMapKeyRef:
+                  name: ppap-current
+                  key: PPAP_PERSONAL_MODEL_ALLOWED_BASE_URLS
+                  optional: true
             - name: PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY
               valueFrom:
                 secretKeyRef:
@@ -688,6 +736,30 @@ spec:
                 secretKeyRef:
                   name: ppap-current
                   key: FEISHU_APP_SECRET
+            - name: PPAP_PERSONAL_MODEL_MAX_REQUESTS
+              valueFrom:
+                configMapKeyRef:
+                  name: ppap-current
+                  key: PPAP_PERSONAL_MODEL_MAX_REQUESTS
+                  optional: true
+            - name: PPAP_PERSONAL_MODEL_MAX_INPUT_TOKENS
+              valueFrom:
+                configMapKeyRef:
+                  name: ppap-current
+                  key: PPAP_PERSONAL_MODEL_MAX_INPUT_TOKENS
+                  optional: true
+            - name: PPAP_PERSONAL_MODEL_MAX_OUTPUT_TOKENS
+              valueFrom:
+                configMapKeyRef:
+                  name: ppap-current
+                  key: PPAP_PERSONAL_MODEL_MAX_OUTPUT_TOKENS
+                  optional: true
+            - name: PPAP_PERSONAL_MODEL_ALLOWED_BASE_URLS
+              valueFrom:
+                configMapKeyRef:
+                  name: ppap-current
+                  key: PPAP_PERSONAL_MODEL_ALLOWED_BASE_URLS
+                  optional: true
             - name: PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY
               valueFrom:
                 secretKeyRef:

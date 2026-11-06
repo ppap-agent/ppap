@@ -75,6 +75,7 @@ class Controller:
         file_source: FileSource,
         *,
         executor_revision: str = DEEP_PROTOCOL_REVISION,
+        executor_revision_for_request: Callable[[ExecuteRequest], str] | None = None,
         protocol_revision: str = DEEP_PROTOCOL_REVISION,
         authorize: Callable[[ExecuteRequest], None] | None = None,
         readiness: Callable[[], bool] | None = None,
@@ -87,6 +88,7 @@ class Controller:
         self.precheck_handler = precheck_handler
         self.file_source = file_source
         self.executor_revision = str(executor_revision or "").strip() or DEEP_PROTOCOL_REVISION
+        self.executor_revision_for_request = executor_revision_for_request
         self.protocol_revision = str(protocol_revision or "").strip() or DEEP_PROTOCOL_REVISION
         self.authorize = authorize
         self.readiness = readiness
@@ -98,7 +100,11 @@ class Controller:
             raise DeepError("deep_protocol_mismatch")
         if spec.executor not in {"ppap-deep", "ppap-checker-core"}:
             raise DeepError("deep_executor_mismatch")
-        if spec.executor_revision != self.executor_revision:
+        try:
+            expected_revision = self.executor_revision_for_request(spec) if self.executor_revision_for_request is not None else self.executor_revision
+        except (ValueError, KeyError, TypeError):
+            raise DeepError("executor_revision_mismatch") from None
+        if spec.executor_revision != expected_revision:
             raise DeepError("executor_revision_mismatch")
         if self.authorize:
             self.authorize(spec)

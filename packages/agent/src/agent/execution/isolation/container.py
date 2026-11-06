@@ -18,6 +18,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -123,7 +124,7 @@ class ContainerRuntime:
     usage_source = "provider"
     adapts_checkers = True
 
-    def __init__(self, config: RuntimeConfig) -> None:
+    def __init__(self, config: RuntimeConfig, *, model_grant_binding=None) -> None:
         if not _running_in_container():
             raise ValueError("ContainerRuntime requires root inside a Linux container")
         for path in (config.state, config.gateway_socket, config.python_executable, config.pythonpath, config.agent_executable, config.setpriv_executable, config.prlimit_executable):
@@ -141,6 +142,7 @@ class ContainerRuntime:
         if version.returncode != 0 or version.stdout.decode(errors="replace").strip() != PI_VERSION:
             raise ValueError(f"Verified Pi {PI_VERSION} is required")
         self.config = config
+        self.model_grant_binding = model_grant_binding
         self.config.state.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.config.state.chmod(0o711)
         self.journal = self.config.state / "journal"
@@ -204,7 +206,8 @@ class ContainerRuntime:
     def _write_grant(self, execution_id: UUID, run: Path, prior_usage: dict[str, Any] | None = None) -> None:
         kwargs = {"prior_usage": prior_usage} if prior_usage is not None else {}
         try:
-            grant = ModelGrant.model_validate(grant_request(str(self.config.gateway_socket), "issue", execution_id, **kwargs))
+            with self.model_grant_binding(execution_id) if self.model_grant_binding is not None else nullcontext():
+                grant = ModelGrant.model_validate(grant_request(str(self.config.gateway_socket), "issue", execution_id, **kwargs))
         except ModelBudgetError:
             raise ControllerFault("RESOURCE_LIMIT") from None
         url = urlsplit(grant.base_url)

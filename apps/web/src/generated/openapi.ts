@@ -3781,6 +3781,8 @@ export interface components {
              * @default false
              */
             consume_model: boolean;
+            /** Expected Model Revision */
+            expected_model_revision?: string | null;
             /** Feedback Ids */
             feedback_ids: string[];
             /** Operation Id */
@@ -3850,6 +3852,21 @@ export interface components {
             page: number;
             /** Region */
             region?: (number | null)[];
+        };
+        /** PersonalModelConfigResponse */
+        PersonalModelConfigResponse: {
+            /** Base Url */
+            base_url: string;
+            /** Configured */
+            configured: boolean;
+            /** Model */
+            model: string;
+            /** Provider */
+            provider: string;
+            /** Revision */
+            revision: string | null;
+            /** Updated At */
+            updated_at: string | null;
         };
         /** PrecheckHistory */
         PrecheckHistory: {
@@ -6876,6 +6893,8 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** Expected Model Revision */
+                    expected_model_revision?: string | null;
                     /** Idempotency Key */
                     idempotency_key: string;
                     /** Predecessor Id */
@@ -8240,7 +8259,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["PersonalModelConfigResponse"];
                 };
             };
         };
@@ -8260,7 +8279,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["PersonalModelConfigResponse"];
                 };
             };
         };
@@ -8280,7 +8299,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["PersonalModelConfigResponse"];
                 };
             };
         };

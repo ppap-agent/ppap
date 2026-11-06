@@ -54,6 +54,7 @@ def setup(unbound=False, *, mode="standard"):
         job_id="job",
         analysis_mode=mode,
         checker_snapshot_digest=snapshot.input_digest,
+        model_identity=dict(snapshot.model_identity),
         files=[FrozenFile(file_version_id=row.file_version_id, role=row.role, filename=row.filename, sha256=row.sha256, rule_body=rules if row.role == "target" else None) for row in inputs],
     )
     suite = SimpleNamespace(revision=SimpleNamespace(resolved_digest="a" * 64), files=programs)

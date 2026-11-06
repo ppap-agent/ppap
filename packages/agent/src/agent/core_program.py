@@ -155,8 +155,8 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
         endpoint = urlsplit(grant.base_url)
         if endpoint.scheme != "http" or endpoint.hostname not in {"127.0.0.1", "localhost", "::1"} or endpoint.username or endpoint.password or grant.model != snapshot.model_identity.get("model"):
             raise ValueError("audit_model_grant_mismatch")
-        access = ModelAccess(provider="deepseek", base_url=grant.base_url, model=grant.model, api_key=SecretStr(grant.token))
-        if snapshot.model_identity.get("provider") not in {None, access.provider}:
+        access = ModelAccess(provider=grant.provider, base_url=grant.base_url, model=grant.model, api_key=SecretStr(grant.token), revision=grant.revision)
+        if any(getattr(grant, key) != snapshot.model_identity.get(key, "") for key in ("provider", "model", "revision", "deployment")):
             raise ValueError("audit_model_grant_mismatch")
     elif job.analysis_mode == "deep":
         raise ValueError("audit_generation_requires_model")
@@ -272,6 +272,7 @@ class CoreRuntime(SemanticRuntime):
             or snapshot.round_id != spec.round_id
             or snapshot.runtime_revision != spec.executor_revision
             or snapshot.initiating_user_id != spec.initiating_user_id
+            or snapshot.model_identity != spec.model_identity
         ):
             raise DeepError("deep_input_unauthorized")
         programs: dict[str, dict[str, bytes]] = {}
@@ -360,7 +361,6 @@ def development_snapshot(inputs, artifact, spec):
 
     from audit.checker_core import FrozenInput, FrozenTarget, RuleBinding, clause_ids
     from audit.standard_suites import library_revision
-    from documents.model_access import DEEPSEEK_MODEL
 
     target_id = str(inputs.audit_file.file_metadata.get("file_version_id") or inputs.audit_file.audit_id)
     source_rows = {target_id: inputs.audit_file}
@@ -416,7 +416,7 @@ def development_snapshot(inputs, artifact, spec):
         targets=(target,),
         runtime_revision=spec.executor_revision,
         library_revision=library_revision(),
-        model_identity={"provider": "deepseek", "model": DEEPSEEK_MODEL},
+        model_identity=dict(spec.model_identity),
         round_id=spec.round_id,
     ), sources
 

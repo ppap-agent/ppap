@@ -33,7 +33,13 @@ def authorize_execution(settings: Any, *, connect: Callable, open_store: Callabl
                      AND j.payload->>'round_id' = r.id::text""",
                 (*identities, spec.attempt),
             ).fetchone()
-        if not row or row[0].get("executor") != spec.executor or row[0].get("executor_revision") != spec.executor_revision or row[0].get("checker_snapshot_digest", "") != spec.checker_snapshot_digest:
+        if (
+            not row
+            or row[0].get("executor") != spec.executor
+            or row[0].get("executor_revision") != spec.executor_revision
+            or row[0].get("checker_snapshot_digest", "") != spec.checker_snapshot_digest
+            or row[0].get("model_identity", {}) != spec.model_identity
+        ):
             raise DeepError("deep_input_unauthorized")
         work = store.round_work(spec.round_id)
         if work is None or work.tenant_id != spec.tenant_id:
