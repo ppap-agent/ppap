@@ -115,7 +115,7 @@ for dir in /tmp/corpus-replay/*/replay; do cp -R "$dir"/. assets/corpus/replay/;
 
 录制的回答错了就编辑或删除失败信息列出的文件。
 
-[`corpus-eval`](../.github/workflows/corpus-eval.yml) 每晚用 `PPAP_CORPUS_MODEL=live` 真实跑多轮，判定标准相同，并单独统计 UNABLE、错误 PASS 和同一文件答案不一致的条款。提示词、裁图或模型变更后可手动触发。
+[`corpus-eval`](../.github/workflows/corpus-eval.yml) 每晚用 `PPAP_CORPUS_MODEL=live` 真实跑多轮，判定标准相同，并单独统计 UNABLE、错误 PASS 和同一文件答案不一致的条款。每轮结果独立保存，必须完整覆盖当前 oracle 的条款身份和人工真值；缺失、重复、错绑或执行失败都不能通过，后续轮次不会覆盖先前失败。提示词、裁图或模型变更后可手动触发。
 
 `python -m scripts.corpus_report` 从 oracle 计算覆盖矩阵和缺 PASS 或 NG 样本的条款；加 `--results` 再汇总运行结果。
 
