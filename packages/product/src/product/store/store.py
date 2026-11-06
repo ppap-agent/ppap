@@ -2044,6 +2044,9 @@ class AuthStore:
         # A failed or unconfirmed commit propagates; it is not a pending receipt.
         with psycopg.connect(self.settings.dsn("api"), autocommit=True, connect_timeout=1, options="-c statement_timeout=500 -c lock_timeout=200") as conn, conn.transaction():
             conn.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            # A committed intent is read without waiting on its worker/quota.
+            # Only first registration takes the shared operation boundary;
+            # source authorization and exact parameters still gate every replay.
             query = """WITH source AS (
                     SELECT j.tenant_id, d.id AS task_id, d.created_by, j.payload->'confirmation' AS confirmation,
                         r.id AS round_id
@@ -2063,7 +2066,7 @@ class AuthStore:
                             WHERE g.resource_id = f.file_id AND g.user_id = d.created_by AND g.capability IN ('read', 'review')))
                 ), locked AS MATERIALIZED (
                     SELECT source.*, pg_advisory_xact_lock(hashtextextended(tenant_id::text || ':' || (confirmation->>'request_id'), 0))
-                    FROM source
+                    FROM source WHERE NOT EXISTS (SELECT 1 FROM engine.jobs existing WHERE existing.id = (confirmation->>'request_id')::uuid)
                 ), queued AS (
                     INSERT INTO engine.jobs (id, tenant_id, kind, payload, status, result)
                     SELECT (confirmation->>'request_id')::uuid, tenant_id, 'task_confirmation',
@@ -2076,9 +2079,9 @@ class AuthStore:
                     RETURNING id, tenant_id, kind, payload, result
                 ), receipt AS (
                     SELECT * FROM queued UNION ALL
-                    SELECT j.id, j.tenant_id, j.kind, j.payload, j.result FROM engine.jobs j JOIN locked s
+                    SELECT j.id, j.tenant_id, j.kind, j.payload, j.result FROM engine.jobs j JOIN source s
                         ON j.id = (s.confirmation->>'request_id')::uuid WHERE NOT EXISTS (SELECT 1 FROM queued)
-                ) SELECT q.id, q.tenant_id, q.kind, q.payload, q.result FROM receipt q JOIN locked s ON s.tenant_id = q.tenant_id
+                ) SELECT q.id, q.tenant_id, q.kind, q.payload, q.result FROM receipt q JOIN source s ON s.tenant_id = q.tenant_id
                     AND s.task_id::text = q.payload->>'task_id' AND s.created_by::text = q.payload->>'created_by'
                     AND q.payload->'expected_revision' IS NOT DISTINCT FROM s.confirmation->'expected_revision'
                     AND q.payload->'expected_confirmation_basis_digest' IS NOT DISTINCT FROM s.confirmation->'expected_confirmation_basis_digest'"""
