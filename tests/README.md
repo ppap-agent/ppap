@@ -86,7 +86,7 @@ docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 - `cases.csv`：一次提交包含的文件。列为数据集、组合ID、文件ID、原件、提交文件名、角色、Suite版本、Checker组、Binding。Suite版本是源内容的 `sha256:<digest>`，Checker组是 Suite key，Binding 是显式条款 ID 集合。原 PDF、Excel、DOCX 使用同一文档类型的 Suite；历史样例固定各自不可变 revision，不从旧 profile 或类名选择检查器。身份或 Binding 不一致在执行前失败。表驱动 runner 调用正式 guest 的 `run_audit` 函数，进程/授权/Worker 路径由 Runtime 集成测试覆盖。
 - `oracle.csv`：人工结论。列为数据集、组合ID、文件ID、条款ID、人工真值、条款说明、人工判定依据、判定人、判定日期、已知差距。
 
-规则原文和人工结果是开发 checker 的依据；产品里的规则文本只用于展示，测试和运行时都不比对正文。
+规则原文和人工结果是开发 Checker 的依据。规则、附录、Binding 和程序共同进入不可变执行身份；规则正文发生变化会使旧验证失效，不能仅因条款 ID 相同沿用旧人工标签。运行时按显式 Binding 调用实现，不按规则文字猜测方法。
 
 `replay/<组合>.json` 是录制的模型回答，记录模型看到的文字、图片尺寸和回答，可以直接阅读。
 
