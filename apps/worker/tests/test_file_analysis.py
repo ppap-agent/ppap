@@ -412,3 +412,29 @@ def test_pgqp1_mentioned_in_a_pfmea_filename_does_not_turn_the_pfmea_into_a_refe
     )
     assert result["matching_status"] == "matched"
     assert result["matched_rule_id"] == "uaes-pfmea"
+
+
+@pytest.mark.parametrize("filename", ["供应商自定义追溯记录.xlsx", "renamed.xlsx"])
+def test_published_custom_document_type_can_match_without_a_platform_preset(filename):
+    kind = "供应商自定义追溯记录"
+    result = analyze_file(
+        filename,
+        workbook_bytes(("批号", "B1")),
+        [rule("custom", ["甲客户"], kind), rule("official", ["UAES"], "E01", rule_profile="v4")],
+        ai=MetadataAI({"customer": "甲客户"}, classification=kind),
+        scoped=True,
+    )
+    assert (result["matching_status"], result["matched_rule_id"], result["document_type"]) == ("matched", "custom", kind)
+    assert result["notices"] == []
+
+
+def test_custom_document_type_does_not_bypass_customer_scope():
+    result = analyze_file(
+        "供应商自定义追溯记录.xlsx",
+        workbook_bytes(("批号", "B1")),
+        [rule("custom", ["甲客户"], "供应商自定义追溯记录")],
+        ai=MetadataAI({"customer": "乙客户"}),
+        scoped=True,
+    )
+    assert result["matched_rule_id"] is None
+    assert result["matching_status"] == "unmatched"

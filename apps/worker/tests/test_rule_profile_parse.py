@@ -11,7 +11,8 @@ from product.rules import RuleParseError
 from worker.intake import parse_rule_file
 
 
-def test_structured_word_requirements_keep_exact_original_text_and_use_v3():
+@pytest.mark.parametrize("document_type", ["过程流程图", "供应商自定义追溯记录"])
+def test_structured_word_requirements_keep_exact_original_text_and_use_v3(document_type):
     from docx import Document
     from worker.intake.rule_sources import rule_sources
 
@@ -32,8 +33,9 @@ def test_structured_word_requirements_keep_exact_original_text_and_use_v3():
         def structured_completion(self, **kwargs):
             raise AssertionError("A complete rule table must not be rewritten by a model")
 
-    body = parse_rule_file("renamed-requirements.docx", out.getvalue(), document_type="过程流程图", ai=NoModel())
+    body = parse_rule_file("renamed-requirements.docx", out.getvalue(), document_type=document_type, ai=NoModel())
     assert body["rule_profile"] == RULE_PROFILE_V3
+    assert body["type"] == document_type
     assert [(row["id"], row["rule_to_check"]) for row in body["rules"]] == requirements
     originals = {unit["excerpt"] for unit in rule_sources("renamed-requirements.docx", out.getvalue())}
     assert all(row["rule_to_check"] in originals for row in body["rules"])
@@ -120,3 +122,15 @@ def test_json_parse_rejects_a_different_requested_document_type() -> None:
     with pytest.raises(RuleParseError, match="^rule_document_type_mismatch$"):
         parse_rule_file("rules.json", content, document_type="全功能检验报告")
     assert parse_rule_file("rules.json", content, document_type="控制计划")["type"] == "控制计划"
+
+
+def test_unstructured_custom_rule_type_is_preserved_in_extraction_without_reclassification():
+    class Extract:
+        def structured_completion(self, **kwargs):
+            assert kwargs["operation"] == "rule_extraction"
+            assert "供应商自定义追溯记录" in kwargs["user_prompt"]
+            return json.dumps({"rules": [_item()]})
+
+    result = parse_rule_file("requirements.md", "必须填写零件号".encode(), document_type="供应商自定义追溯记录", ai=Extract())
+    assert result["type"] == "供应商自定义追溯记录"
+    assert result["rules"] == [_item()]

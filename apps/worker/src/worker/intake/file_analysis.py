@@ -132,6 +132,17 @@ def analyze_file(
                 and re.search(r"PGQP1|F[-_ ]?PU[-_ ]?127|采购件质量计划", Path(filename).stem, re.IGNORECASE)
             ):
                 source_type = "E12"
+    # An enterprise-published document type is an explicit available identity,
+    # not an invitation to route it through the nearest historical checker type.
+    custom_types = {
+        rule["type"]: rule["type"]
+        for rule in candidates
+        if rule.get("rule_profile") != "v4" and isinstance(rule.get("type"), str) and rule["type"].strip() and PpapDocumentType.from_string(rule["type"]) == PpapDocumentType.UNKNOWN
+    }
+    source_types.update(custom_types)
+    custom_matches = [kind for kind in custom_types if kind in Path(filename).stem]
+    if source_type is None and len(custom_matches) == 1:
+        source_type = custom_matches[0]
     inferred = PpapDocumentType.infer_from_signals(filename=filename, content=excerpt[:2000], min_margin=1 if scoped else 0)
     if scoped and not source_type and excerpt.strip() and "metadata_extraction_failed" not in notices:
         evidence = PpapDocumentType.rank_from_signals(filename=filename, content=excerpt[:2000])
@@ -156,7 +167,9 @@ def analyze_file(
                     raise ValueError("invalid_document_classification")
             except Exception:
                 notices.append("document_classification_failed")
-    missing_v4_customer = unresolved_v4_customer and not (inferred != PpapDocumentType.UNKNOWN and any(PpapDocumentType.from_string(rule.get("type") or "") == inferred for rule in candidates))
+    missing_v4_customer = unresolved_v4_customer and not (
+        source_type in custom_types or inferred != PpapDocumentType.UNKNOWN and any(PpapDocumentType.from_string(rule.get("type") or "") == inferred for rule in candidates)
+    )
     customer_conflict = bool((v4_mode or missing_v4_customer) and explicit_customers - {selected_customer})
     matched_id = None
     ambiguous_ids: list[str] = []
