@@ -160,6 +160,10 @@ def test_old_round_dry_run_apply_retry_readback_preserve_results_and_human_oracl
         releases.detail(bob, suite_id)
     with pytest.raises(KeyError, match="suite_access_denied"):
         releases.publish(alice, suite.revision.suite_key, suite_id, 0, str(uuid.uuid4()), force_unverified=True)
+    with pytest.raises(KeyError, match="suite_access_denied"):
+        releases.upgrade_official(alice, suite.revision.suite_key, suite_id, str(uuid.uuid4()), 0, str(uuid.uuid4()))
+    with store._conn() as conn:
+        assert conn.execute("SELECT count(*) FROM product.suite_upgrade_operations").fetchone()[0] == 0
     assert suite.files["checker.py"] == b"def create_audit(*args): raise RuntimeError('must never execute')\n"
     assert run(history, apply=True, digest=plan["plan_digest"])["rounds"][0]["state"] == "verified"
     assert read_history(api, alice, rid) == readback and business_state(store) == before
