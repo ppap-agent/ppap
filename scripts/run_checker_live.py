@@ -599,12 +599,16 @@ def final_snapshot(path):
 
 def main():
     path = Path(os.environ["PPAP_CHECKER_LIVE_OUTPUT"]) / "report.json"
-    if sys.argv[1:] == ["--snapshot"]:
-        final_snapshot(path)
-        return 0
-    require(not sys.argv[1:], "invalid_arguments")
     try:
-        run(path)
+        require(sys.argv[1:] in ([], ["--snapshot"]), "invalid_arguments")
+        if sys.argv[1:] == ["--snapshot"]:
+            final_snapshot(path)
+        else:
+            run(path)
+        # The final read can revoke an earlier proof. Both the live process and
+        # the workflow's later read-only snapshot must propagate that verdict.
+        report = json.loads(path.read_text()) if path.is_file() else {}
+        require(report.get("accepted") is True, report.get("gate_failure") or "final_acceptance_not_proven")
         print("Checker live acceptance passed; see the bounded report.")
         return 0
     except Exception as exc:
