@@ -119,6 +119,7 @@ def valid_receipt():
         )
     return {
         "state": "completed",
+        "suite_revision_id": "base",
         "candidate_revision_id": "candidate",
         "usage": {"source": "provider", "uncertain": False, "input_tokens": 500, "output_tokens": 100, "model_requests": 2},
         "report": {"validation": {"verified": True, "total_samples": 8, "passed_samples": 8, "cases": cases}},
@@ -411,7 +412,7 @@ def test_final_snapshot_preserves_gate_failure_when_product_has_no_failure(tmp_p
 def test_both_entrypoints_propagate_final_readback_verdict(tmp_path, monkeypatch, capsys, snapshot, changed):
     receipt, samples = valid_receipt()
     receipt["operation_id"] = "original"
-    report = {"accepted": True, "operation_id": "original", "candidate_revision_id": receipt["candidate_revision_id"], "validation": copy.deepcopy(receipt["report"]["validation"]), "samples": samples}
+    report = {**copy.deepcopy(acceptance.receipt_snapshot(receipt)), "accepted": True, "operation_id": "original", "samples": samples}
     path = tmp_path / "report.json"
     path.write_text(json.dumps(report))
     (tmp_path / "private-client.json").write_text(json.dumps({"session": "synthetic"}))
@@ -444,15 +445,19 @@ def test_both_entrypoints_propagate_final_readback_verdict(tmp_path, monkeypatch
     assert calls == ([("GET", "/checker-optimizations/original")] if snapshot else [])
 
 
-@pytest.mark.parametrize("mutation", ["operation", "state", "proof"])
+@pytest.mark.parametrize("mutation", ["operation", "state", "proof", "base", "usage"])
 def test_final_readback_revokes_acceptance_if_identity_or_sealed_proof_changes(mutation):
     receipt, samples = valid_receipt()
     receipt["operation_id"] = "original"
-    report = {"accepted": True, "operation_id": "original", "candidate_revision_id": receipt["candidate_revision_id"], "validation": copy.deepcopy(receipt["report"]["validation"]), "samples": samples}
+    report = {**copy.deepcopy(acceptance.receipt_snapshot(receipt)), "accepted": True, "operation_id": "original", "samples": samples}
     if mutation == "operation":
         receipt["operation_id"] = "different"
     elif mutation == "state":
         receipt.update(state="unknown", report=None)
+    elif mutation == "base":
+        receipt["suite_revision_id"] = "another-base"
+    elif mutation == "usage":
+        receipt["usage"]["model_requests"] += 1
     else:
         receipt["report"]["validation"]["cases"][0]["clauses"][0]["actual"] = "PASS"
     acceptance.final_readback(report, receipt)
