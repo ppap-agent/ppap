@@ -112,7 +112,7 @@ class RuleApiTests(unittest.TestCase):
         env = {key: value for key, value in os.environ.items() if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))}
         self.env = patch.dict(os.environ, env, clear=True)
         self.env.start()
-        self.settings = Settings(usage_charge_enabled=False)
+        self.settings = Settings(usage_charge_enabled=False, git_sha="a" * 40)
         self.store = self.auth_store(self.settings)
         self.store.seed_isolated_dev()
         self.ai = FakeRuleAI()
@@ -229,7 +229,7 @@ class RuleApiTests(unittest.TestCase):
         self.assertEqual(successor.status_code, 201)
         self.assertNotEqual(successor.json()["id"], original["id"])
         self.assertEqual(successor.json()["predecessor_id"], original["id"])
-        self.assertEqual(self.client.get("/rules/" + original["id"]).json()["body"], rule_body())
+        self.assertEqual(self.client.get("/rules/" + original["id"]).json()["body"], original["body"])
         self.assertEqual(self.client.get("/rounds/" + round_id).json()["inputs"][0]["rule"]["id"], original["id"])
 
     def test_source_authorization_and_enterprise_rule_visibility_are_separate(self):

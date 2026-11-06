@@ -9,13 +9,12 @@ from unittest.mock import patch
 
 import pytest
 from api import create_app
-from audit.rule_profile import RULE_PROFILE_V3
+from audit.suite_migration import migrated_builtin_suite
 from corpus_contracts.acceptance_report import load_acceptance_report, write_acceptance_report
 from corpus_contracts.poc_oracle import POC_SEQ_TO_DOC_TYPE, build_bundle_map, load_poc_cases
 from corpus_contracts.product_round import (
     MATCH,
     compare_file,
-    engine_rule_body,
     failing_verdicts,
     format_verdicts,
 )
@@ -59,15 +58,16 @@ def _upload(client: TestClient, name: str, body: bytes) -> dict:
 
 
 @pytest.mark.usefixtures("ocr_transport_diagnostics")
-def test_v3_api_worker_preserves_representative_bundle_oracle(auth_store_factory, tmp_path: Path) -> None:
+def test_v3_api_worker_preserves_representative_bundle_oracle(auth_store_factory, core_system, tmp_path: Path) -> None:
     env = _worker_env()
     env.start()
     get_settings.cache_clear()
     client = None
     try:
-        settings = Settings(usage_charge_enabled=False)
+        settings = Settings(usage_charge_enabled=False, git_sha="a" * 40)
         store = auth_store_factory(settings)
         store.seed_isolated_dev()
+        core_system.install(store)
         client = TestClient(create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, store))
         assert client.post("/isolated-dev/sessions", json={"subject": "alice"}).status_code == 200
         rows: list[dict] = []
@@ -80,12 +80,14 @@ def test_v3_api_worker_preserves_representative_bundle_oracle(auth_store_factory
                 doc_type = POC_SEQ_TO_DOC_TYPE[case.file_seq].get_type_name()
                 version = _upload(client, case.file_name, case.file_path.read_bytes())
                 versions[case.file_name] = version["id"]
-                body, _execution = engine_rule_body(doc_type, case.file_name, RULE_PROFILE_V3)
+                checker = migrated_builtin_suite("v3", doc_type)
+                body = json.loads(checker.files["rules.json"])
                 published = client.post(
                     "/rules",
                     json={"title": f"{doc_type} {case.file_name}"[:200], "body": body, "source_file_version_id": version["id"]},
                 )
                 assert published.status_code == 201, published.text
+                core_system.adopt(store, published.json()["id"], checker.files["checker.py"].decode(), dict(checker.entrypoints))
                 items.append(
                     {
                         "file_version_id": version["id"],
@@ -120,6 +122,7 @@ def test_v3_api_worker_preserves_representative_bundle_oracle(auth_store_factory
                     expected=expected,
                     result=payload,
                     setup_error=None,
+                    expected_coverage="executed",
                 )
                 failures.extend(failing_verdicts(verdicts))
                 rows.extend(
