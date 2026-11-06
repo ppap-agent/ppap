@@ -16,7 +16,7 @@ from audit.checker_validation import CaseEvaluation, ClauseEvaluation, SuiteVali
 from audit.contracts import AuditInput, AuditResultItem, GroupContextInput, RuleInput
 
 from agent.checker_program import encoded, input_digest
-from agent.checker_spec import CheckerArtifact, CheckerProgramBundle
+from agent.checker_spec import CheckerArtifact, CheckerProgramBundle, SuiteCheckerProgram
 from agent.client import DeepError
 
 
@@ -73,8 +73,8 @@ class DevelopmentRequest:
     related_revision_ids: tuple[str, ...] = ()
     library_revision: str = ""
     related_suite_digests: dict[str, str] = field(default_factory=dict)
-    prior: CheckerArtifact | None = None
-    fixed: CheckerArtifact | None = None
+    prior: CheckerArtifact | SuiteCheckerProgram | None = None
+    fixed: CheckerArtifact | SuiteCheckerProgram | None = None
     feedback: str | None = None
     oracle_revision: str | None = None
     oracle: tuple[OracleSample, ...] = ()
@@ -87,15 +87,15 @@ class DevelopmentJob(Protocol):
         inputs: FrozenDevelopmentInput,
         *,
         operation: Literal["adapt-checker", "execute-checker"],
-        artifact: CheckerArtifact | None = None,
-        prior: CheckerArtifact | None = None,
+        artifact: CheckerArtifact | SuiteCheckerProgram | None = None,
+        prior: CheckerArtifact | SuiteCheckerProgram | None = None,
         feedback: str | None = None,
     ) -> CheckerProgramBundle: ...
 
 
 @dataclass
 class DevelopmentOutcome:
-    artifact: CheckerArtifact | None
+    artifact: CheckerArtifact | SuiteCheckerProgram | None
     results: list[AuditResultItem]
     trials: list[str]
     usage: dict[str, int]
@@ -163,13 +163,15 @@ def _validate(request: DevelopmentRequest) -> None:
             raise ValueError("holdout document is exposed in development inputs")
 
 
-def _trial_artifact(source: CheckerArtifact, inputs: FrozenDevelopmentInput, revision: str) -> CheckerArtifact:
+def _trial_artifact(source: CheckerArtifact | SuiteCheckerProgram, inputs: FrozenDevelopmentInput, revision: str) -> CheckerArtifact | SuiteCheckerProgram:
     # This is a fresh trial of the same source, never an assertion that it was
     # validated for this input. Every oracle sample is actually executed.
+    if isinstance(source, SuiteCheckerProgram):
+        return SuiteCheckerProgram(input_digest=inputs.digest, executor_revision=revision, binding=source.binding, files=dict(source.files), program_digest=source.program_digest)
     return CheckerArtifact(input_digest=inputs.digest, executor_revision=revision, entrypoint=source.entrypoint, files=dict(source.files), program_digest=source.program_digest)
 
 
-def _trial(job: DevelopmentJob, source: CheckerArtifact, inputs: FrozenDevelopmentInput, revision: str) -> tuple[list[AuditResultItem], str | None]:
+def _trial(job: DevelopmentJob, source: CheckerArtifact | SuiteCheckerProgram, inputs: FrozenDevelopmentInput, revision: str) -> tuple[list[AuditResultItem], str | None]:
     try:
         bound = _trial_artifact(source, inputs, revision)
         bundle = job(inputs, operation="execute-checker", artifact=bound)

@@ -57,6 +57,7 @@ RULES = {"type": "自定义", "rules": [{"id": "R1", "category": "阈值", "rule
 
 
 def fixture(auth_store_factory, *, count=4, resources=False):
+    clause_id = RULES["rules"][0]["id"]
     objects = Objects()
     settings = Settings(feishu_app_id="checker-optimizer", git_sha="a" * 40, usage_charge_enabled=False, model_credential_encryption_key=SecretStr(Fernet.generate_key().decode()))
     store = auth_store_factory(settings, objects=objects)
@@ -113,7 +114,7 @@ def fixture(auth_store_factory, *, count=4, resources=False):
             conn.execute(
                 """INSERT INTO product.findings(id,round_id,item_key,classification,item,status,locator)
                             VALUES (%s,%s,'R1','rule','threshold','PASS',%s)""",
-                (uuid4(), round_id, Jsonb({"file_version_id": version_id, "rule_item_id": "R1"})),
+                (uuid4(), round_id, Jsonb({"file_version_id": version_id, "rule_item_id": clause_id})),
             )
             conn.execute(
                 """INSERT INTO product.checker_round_artifacts(round_id,file_version_id,result_attempt,tenant_id,suite_revision_id,program_digest,input_digest)
@@ -124,7 +125,7 @@ def fixture(auth_store_factory, *, count=4, resources=False):
             "operation_id": str(uuid4()),
             "file_version_id": version_id,
             "rule_version_id": rule_id,
-            "rule_clause_id": "R1",
+            "rule_clause_id": clause_id,
             "result_attempt": 1,
             "original_status": "PASS",
             "expected_status": "NG" if i % 4 in (0, 3) else "PASS",
@@ -831,3 +832,177 @@ def test_non_success_optimization_terminal_notices_keep_the_original_outcome(aut
     assert "验证通过" not in content
     assert {"unknown": "未知", "failed": "尚未得到完整验证结果", "stopped": "已停止"}[state] in content
     assert f.worker.claim_job("no-model-retry") is None
+
+
+DIRECT_RULES = {
+    "type": "自定义",
+    "rules": [{"id": "R1", "category": "阈值", "rule_to_check": "A1 must be >=10"}, {"id": "R2", "category": "原件", "rule_to_check": "A1 must be numeric"}],
+    "checker_binding": {"R1": "checker:threshold", "R2": "resources:numeric"},
+}
+DIRECT_PROGRAM = b"""from openpyxl import load_workbook
+from audit.contracts import AuditEvidence, AuditResultItem, EvidenceSource
+
+def threshold(context):
+    book = load_workbook(context.audit_file.file_url, read_only=True)
+    value = book.active['A1'].value
+    book.close()
+    return AuditResultItem(classification='rule', item='Threshold', priority='P1', clause_id=context.clause_id,
+        status='PASS' if value >= 10 else 'NG', suggestions='Compared original cell', checks_performed=1,
+        evidence=AuditEvidence(required='structure', used='structure', source_format='xlsx', prepared_format='xlsx',
+            sources=(EvidenceSource(kind='structure', locator='{"kind":"xlsx_cell","sheet":"Sheet","cell":"A1"}'),)))
+"""
+DIRECT_RESOURCE = b"""from openpyxl import load_workbook
+from audit.contracts import AuditResultItem
+
+def numeric(context):
+    book = load_workbook(context.audit_file.file_url, read_only=True)
+    value = book.active['A1'].value
+    book.close()
+    return AuditResultItem(classification='rule', item='Native number', priority='P1', clause_id=context.clause_id,
+        status='PASS' if isinstance(value, (int, float)) else 'NG', suggestions='Read the original number', checks_performed=1)
+"""
+GENERATED_FACTORY = b"""from types import SimpleNamespace
+from openpyxl import load_workbook
+from audit.contracts import AuditResultItem
+
+def create_audit(audit_file, rule, group_context=None):
+    def check(clause):
+        book = load_workbook(audit_file.file_url, read_only=True)
+        value = book.active['A1'].value
+        book.close()
+        status = ('PASS' if value >= 10 else 'NG') if clause == 'R1' else 'PASS'
+        return AuditResultItem(classification='rule', item=clause, priority='P1', clause_id=clause,
+            status=status, suggestions='Generated native comparison', checks_performed=1)
+    return SimpleNamespace(checks=[SimpleNamespace(rule_item=SimpleNamespace(id=row['id']), check=lambda clause=row['id']: check(clause)) for row in rule.rules])
+"""
+
+
+def actual_core_runtime(f, monkeypatch, *, generated=None):
+    """Run actual Core manifests; only the author, when requested, is controlled."""
+    from agent.checker_program import run_adapt_manifest
+    from agent.core_program import AuditJobSpec, CoreRuntime, run_audit_manifest
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Fixed evaluation must not call a model or Paddle")
+
+    monkeypatch.setattr("documents.ocr.paddle.reader.read_pdf_page_evidence", forbidden)
+    monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", forbidden)
+
+    class Author:
+        input_tokens = output_tokens = 0
+
+        def run(self, work, prompt, schema, deadline, **kwargs):
+            assert generated is not None
+            return schema(entrypoint="checker:create_audit", files={"checker.py": generated.decode()})
+
+    class Guest:
+        usage_source = "controlled"
+
+        def __init__(self):
+            self.fixed_manifests = []
+            self.generation_manifests = []
+
+        def engine_revision(self):
+            return f.store.settings.deep_execution_revision()
+
+        def run(self, job, inputs, work, deadline, cancelled, **kwargs):
+            manifest = json.loads((inputs / "manifest.json").read_text())
+            if isinstance(job, AuditJobSpec):
+                assert job.allow_model_calls is False
+                self.fixed_manifests.append(manifest)
+                run_audit_manifest(inputs, work, work / "no-model-grant")
+            else:
+                assert job.operation == "adapt-checker" and generated is not None
+                self.generation_manifests.append(manifest)
+                run_adapt_manifest(inputs, work, Author(), deadline)
+
+    guest = Guest()
+    return CoreRuntime(guest, lambda _: None, lambda *_: None, objects=f.store.objects), guest
+
+
+def direct_suite_fixture(auth_store_factory, monkeypatch):
+    monkeypatch.setitem(globals(), "RULES", DIRECT_RULES)
+    monkeypatch.setitem(globals(), "PROGRAM", DIRECT_PROGRAM)
+    f = fixture(auth_store_factory, count=1)
+    releases = SuiteReleaseStore(f.store.settings, f.store.objects)
+    candidate = releases.save_candidate(f.alice, f.suite.id, {"resources.py": DIRECT_RESOURCE.decode()})
+    return f, candidate
+
+
+def test_fixed_suite_preserves_multiple_explicit_entrypoints_through_saved_candidate(auth_store_factory, monkeypatch):
+    f, candidate = direct_suite_fixture(auth_store_factory, monkeypatch)
+    runtime, guest = actual_core_runtime(f, monkeypatch)
+    revision = candidate["id"]
+    for _ in range(2):
+        response = f.clients[0].post(f"/suite-revisions/{revision}/optimizations", json=command(f, consume_model=False))
+        assert response.status_code == 200, response.text
+        receipt = development_handler(f.worker, runtime)(claim(f), ExecutionContext())
+        assert receipt["state"] == "completed", receipt
+        assert [(row["clause_id"], row["status"]) for row in receipt["report"]["results"]] == [("R1", "NG"), ("R2", "PASS")]
+        assert receipt["report"]["validation"]["verified"] is False
+        revision = receipt["candidate_revision_id"]
+        saved = SuiteReleaseStore(f.store.settings, f.store.objects).detail(f.alice, revision)
+        assert json.loads(saved["files"]["rules.json"])["checker_binding"] == DIRECT_RULES["checker_binding"]
+        assert saved["files"]["resources.py"] == DIRECT_RESOURCE.decode()
+    assert guest.generation_manifests == []
+    assert all(row["snapshot"]["targets"][0]["binding"]["entrypoints"] == DIRECT_RULES["checker_binding"] for row in guest.fixed_manifests)
+
+
+def test_native_standard_suite_can_be_validated_without_generating_a_factory(auth_store_factory, monkeypatch):
+    from audit.standard_suites import standard_suites
+
+    standard = standard_suites()[0]
+    monkeypatch.setitem(globals(), "RULES", json.loads(standard.files["rules.json"]))
+    monkeypatch.setitem(globals(), "PROGRAM", standard.files["checker.py"])
+    f = fixture(auth_store_factory, count=1)
+    start(f, command(f, consume_model=False))
+    runtime, guest = actual_core_runtime(f, monkeypatch)
+    receipt = development_handler(f.worker, runtime)(claim(f), ExecutionContext())
+    assert receipt["state"] == "completed", receipt
+    assert {row["clause_id"] for row in receipt["report"]["results"]} == set(standard.entrypoints)
+    saved = SuiteReleaseStore(f.store.settings, f.store.objects).detail(f.alice, receipt["candidate_revision_id"])
+    assert json.loads(saved["files"]["rules.json"])["checker_binding"] == dict(standard.entrypoints)
+    assert guest.generation_manifests == []
+
+
+def test_native_baseline_then_generated_factory_keeps_its_own_binding_and_tombstone(auth_store_factory, monkeypatch):
+    f, candidate = direct_suite_fixture(auth_store_factory, monkeypatch)
+    response = f.clients[0].post(f"/suite-revisions/{candidate['id']}/optimizations", json=command(f, consume_model=True))
+    assert response.status_code == 200, response.text
+    runtime, guest = actual_core_runtime(f, monkeypatch, generated=GENERATED_FACTORY)
+    receipt = development_handler(f.worker, runtime)(claim(f), ExecutionContext())
+    assert receipt["state"] == "completed", receipt
+    assert guest.fixed_manifests[0]["snapshot"]["targets"][0]["binding"]["entrypoints"] == DIRECT_RULES["checker_binding"]
+    assert len(guest.generation_manifests) == 1
+    assert guest.generation_manifests[0]["prior_files"] == {"checker.py": DIRECT_PROGRAM.decode(), "resources.py": DIRECT_RESOURCE.decode()}
+    saved = SuiteReleaseStore(f.store.settings, f.store.objects).detail(f.alice, receipt["candidate_revision_id"])
+    generated_binding = {clause: "checker:create_audit" for clause in ("R1", "R2")}
+    assert json.loads(saved["files"]["rules.json"])["checker_binding"] == generated_binding
+    assert "resources.py" not in saved["files"]
+    response = f.clients[0].post(f"/suite-revisions/{saved['id']}/optimizations", json=command(f, consume_model=False))
+    assert response.status_code == 200, response.text
+    second = development_handler(f.worker, runtime)(claim(f), ExecutionContext())
+    assert second["state"] == "completed", second
+    assert guest.fixed_manifests[-1]["snapshot"]["targets"][0]["binding"]["entrypoints"] == generated_binding
+    assert len(guest.generation_manifests) == 1
+
+
+def test_fixed_rule_text_change_cannot_reuse_old_labels_as_verified(auth_store_factory, monkeypatch):
+    rules = {**DIRECT_RULES, "rules": DIRECT_RULES["rules"][:1], "checker_binding": {"R1": "checker:threshold"}}
+    monkeypatch.setitem(globals(), "RULES", rules)
+    monkeypatch.setitem(globals(), "PROGRAM", DIRECT_PROGRAM)
+    f = fixture(auth_store_factory)
+    changed = {**rules, "rules": [{**rules["rules"][0], "rule_to_check": "A1 must be >=100"}]}
+    candidate = SuiteReleaseStore(f.store.settings, f.store.objects).save_candidate(f.alice, f.suite.id, {"rules.json": json.dumps(changed)})
+    response = f.clients[0].post(f"/suite-revisions/{candidate['id']}/optimizations", json=command(f, consume_model=False))
+    assert response.status_code == 200, response.text
+    runtime, guest = actual_core_runtime(f, monkeypatch)
+    receipt = development_handler(f.worker, runtime)(claim(f), ExecutionContext())
+    assert receipt["state"] == "completed", receipt
+    proof = receipt["report"]["validation"]
+    assert proof["passed_samples"] == proof["total_samples"] == 4
+    assert proof["verified"] is False and "oracle_rules_changed" in proof["reasons"]
+    saved = SuiteReleaseStore(f.store.settings, f.store.objects).detail(f.alice, receipt["candidate_revision_id"])
+    assert saved["validation"]["verified"] is False
+    assert json.loads(saved["files"]["rules.json"])["checker_binding"] == rules["checker_binding"]
+    assert guest.generation_manifests == []

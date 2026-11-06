@@ -16,7 +16,7 @@ from audit.document_tools import ParserLimitError
 from audit.protocol import ControllerFault
 from audit.storage_errors import ObjectExists, ObjectMissing, ObjectTooLarge
 
-from agent.checker_spec import CheckerArtifact, CheckerJobSpec, CheckerProgramBundle
+from agent.checker_spec import CheckerArtifact, CheckerJobSpec, CheckerProgramBundle, SuiteCheckerProgram
 from agent.client import DeepError
 from agent.execution.budget import DEEP_TOTAL_SECONDS
 from agent.execution.secure_files import read_json
@@ -549,7 +549,7 @@ class SemanticRuntime:
         context: ExecutionContext,
         group_context: GroupContextInput | None,
         operation: Literal["adapt-checker", "execute-checker"],
-        prior: CheckerArtifact | None = None,
+        prior: CheckerArtifact | SuiteCheckerProgram | None = None,
         artifact: CheckerArtifact | None = None,
         related_bytes: dict[str, bytes] | None = None,
         development_feedback: str | None = None,

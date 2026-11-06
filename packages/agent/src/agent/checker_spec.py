@@ -9,6 +9,7 @@ from types import MappingProxyType
 from typing import Literal
 from uuid import NAMESPACE_URL, UUID, uuid5
 
+from audit.checker_core import RuleBinding
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
 
@@ -23,19 +24,18 @@ def program_digest(files: dict[str, bytes]) -> str:
     return hasher.hexdigest()
 
 
-class CheckerArtifact(BaseModel):
-    """Code and resources fixed for one rules, appendix, file version, and role."""
+class _CheckerProgram(BaseModel):
+    """Shared immutable-byte checks, not a generated entrypoint contract."""
 
     model_config = ConfigDict(extra="forbid")
 
     input_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
     executor_revision: str = Field(min_length=1)
-    entrypoint: Literal["checker:create_audit"]
     files: dict[str, bytes]
     program_digest: str = Field(default="", pattern=r"^$|^[a-f0-9]{64}$")
 
     @model_validator(mode="after")
-    def supported_files(self) -> CheckerArtifact:
+    def supported_files(self) -> _CheckerProgram:
         if "checker.py" not in self.files:
             raise ValueError("checker.py is required")
         unknown = set(self.files) - {"checker.py", "resources.py"}
@@ -48,6 +48,32 @@ class CheckerArtifact(BaseModel):
             raise ValueError("checker program digest mismatch")
         self.program_digest = digest
         return self
+
+
+class CheckerArtifact(_CheckerProgram):
+    """Generated factory fixed for one rules, appendix, file version, and role."""
+
+    entrypoint: Literal["checker:create_audit"]
+
+
+class SuiteCheckerProgram(_CheckerProgram):
+    """Host-resolved existing Suite; never accepted as a generated artifact.
+
+    A fixed trial uses these exact per-clause entrypoints and complete bytes.
+    It does not convert a native callable into an authored factory.
+    """
+
+    binding: RuleBinding
+
+    @model_validator(mode="after")
+    def matching_binding(self) -> SuiteCheckerProgram:
+        if self.binding.checker_digest != self.program_digest:
+            raise ValueError("checker binding program digest mismatch")
+        return self
+
+    @field_serializer("binding")
+    def serialize_binding(self, value: RuleBinding) -> dict:
+        return value.to_dict()
 
 
 class CheckerJobSpec(BaseModel):
