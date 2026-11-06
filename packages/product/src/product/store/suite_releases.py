@@ -58,7 +58,7 @@ def _lock(conn, tenant_id: str) -> None:
 
 def _revision(conn, revision_id: str, tenant_id: str | None) -> dict:
     with conn.cursor(row_factory=dict_row) as cur:
-        cur.execute("SELECT * FROM product.suite_revisions WHERE id = %s AND (tenant_id = %s OR tenant_id IS NULL)", (_id(revision_id), tenant_id))
+        cur.execute("SELECT * FROM product.suite_revisions WHERE id = %s AND NOT history_only AND (tenant_id = %s OR tenant_id IS NULL)", (_id(revision_id), tenant_id))
         row = cur.fetchone()
     if row is None:
         raise KeyError("suite_access_denied")
@@ -198,7 +198,9 @@ class SuiteReleaseStore:
     def list_suites(self, principal) -> dict:
         with self._conn() as conn, conn.transaction():
             _member(conn, principal)
-            rows = conn.execute("SELECT DISTINCT suite_key FROM product.suite_revisions WHERE tenant_id IS NULL OR tenant_id = %s ORDER BY suite_key", (principal.tenant_id,)).fetchall()
+            rows = conn.execute(
+                "SELECT DISTINCT suite_key FROM product.suite_revisions WHERE NOT history_only AND (tenant_id IS NULL OR tenant_id = %s) ORDER BY suite_key", (principal.tenant_id,)
+            ).fetchall()
         # Candidate-only keys are visible but never silently become active.
         suites = []
         for (key,) in rows:

@@ -23,18 +23,18 @@ class SuiteStore:
     def _conn(self):
         return connect(self.settings, self.role)
 
-    def get_revision(self, revision_id: str, tenant_id: str, *, conn=None) -> SuiteRevision | None:
+    def get_revision(self, revision_id: str, tenant_id: str, *, conn=None, include_history: bool = False) -> SuiteRevision | None:
         with nullcontext(conn) if conn is not None else self._conn() as db:
             row = db.execute(
                 """SELECT id, tenant_id, suite_key, related_suite_keys, base_revision_id, overrides, resolved_digest, created_by, revision_number
-                   FROM product.suite_revisions WHERE id = %s AND (tenant_id IS NULL OR tenant_id = %s)""",
-                (revision_id, tenant_id),
+                   FROM product.suite_revisions WHERE id = %s AND (tenant_id IS NULL OR tenant_id = %s) AND (NOT history_only OR %s)""",
+                (revision_id, tenant_id, include_history),
             ).fetchone()
         if row is None:
             return None
         return SuiteRevision(str(row[0]), str(row[1]) if row[1] else None, row[2], tuple(row[3]), str(row[4]) if row[4] else None, row[5], row[6], str(row[7]) if row[7] else None, row[8])
 
-    def resolve_suite(self, revision_id: str, tenant_id: str, *, conn=None) -> ResolvedSuite:
+    def resolve_suite(self, revision_id: str, tenant_id: str, *, conn=None, include_history: bool = False) -> ResolvedSuite:
         with nullcontext(conn) if conn is not None else self._conn() as db:
 
             def load_object(owner: str | None, digest: str) -> bytes:
@@ -46,7 +46,7 @@ class SuiteStore:
                     raise ValueError("suite_object_too_large")
                 return body
 
-            return resolve_suite(revision_id, tenant_id, load_revision=lambda identifier: self.get_revision(identifier, tenant_id, conn=db), load_object=load_object)
+            return resolve_suite(revision_id, tenant_id, load_revision=lambda identifier: self.get_revision(identifier, tenant_id, conn=db, include_history=include_history), load_object=load_object)
 
     def create_revision(
         self,
@@ -58,6 +58,7 @@ class SuiteStore:
         base_revision_id: str | None = None,
         related_suite_keys: tuple[str, ...] = (),
         deleted_paths: tuple[str, ...] = (),
+        history_only: bool = False,
         conn=None,
     ) -> SuiteRevision:
         """Caller authenticates the tenant. Only the platform migrator may seed official assets.
@@ -65,6 +66,8 @@ class SuiteStore:
         `files` contains changed paths only; inherited bytes are never stored again.
         The optional connection keeps candidate creation inside its owner's transaction.
         """
+        if history_only and (self.role != "migrator" or tenant_id is None):
+            raise PermissionError("history_suite_migrator_required")
         if tenant_id is None and self.role != "migrator":
             raise PermissionError("official_suite_write_forbidden")
         if tenant_id is not None and not created_by:
@@ -108,12 +111,23 @@ class SuiteStore:
                         raise ValueError("suite_object_digest_mismatch") from None
                 db.execute("INSERT INTO product.suite_objects (owner_scope, digest, object_key) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING", (owner, digest, key))
             db.execute(
-                """INSERT INTO product.suite_revisions (id,tenant_id,suite_key,related_suite_keys,base_revision_id,overrides,resolved_digest,created_by,revision_number)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                (revision.id, tenant_id, suite_key, list(revision.related_suite_keys), base_revision_id, Jsonb(dict(overrides)), revision.resolved_digest, created_by, revision.revision_number),
+                """INSERT INTO product.suite_revisions (id,tenant_id,suite_key,related_suite_keys,base_revision_id,overrides,resolved_digest,created_by,revision_number,history_only)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (
+                    revision.id,
+                    tenant_id,
+                    suite_key,
+                    list(revision.related_suite_keys),
+                    base_revision_id,
+                    Jsonb(dict(overrides)),
+                    revision.resolved_digest,
+                    created_by,
+                    revision.revision_number,
+                    history_only,
+                ),
             )
             # The same bounded resolver used by execution rejects chains that grew too deep.
-            self.resolve_suite(revision.id, lookup_tenant, conn=db)
+            self.resolve_suite(revision.id, lookup_tenant, conn=db, include_history=history_only)
             return revision
 
     def save_snapshot(self, conn, *, snapshot: ExecutionSnapshot) -> None:
