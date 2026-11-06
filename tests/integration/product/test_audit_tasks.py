@@ -25,10 +25,11 @@ from worker import process_claimed
 
 
 @pytest.fixture
-def task_system(auth_store_factory):
-    settings = Settings(usage_charge_enabled=False)
+def task_system(auth_store_factory, core_system):
+    settings = Settings(usage_charge_enabled=False, git_sha="a" * 40)
     store = auth_store_factory(settings)
     store.seed_isolated_dev()
+    core_system.install(store)
     worker = build_product_store(settings, objects=store.objects, role="worker")
     api = build_product_store(settings, objects=store.objects, role="api")
     client = TestClient(create_app(settings, auth_store=api))
@@ -307,6 +308,33 @@ def matched_task(task_system):
     return client, worker, f"/audit-tasks/{task['id']}", body, rule
 
 
+PART_NUMBER_CHECKER = """import json
+from io import BytesIO
+from openpyxl import load_workbook
+from audit.contracts import AuditEvidence, AuditResultItem, EvidenceSource
+
+def check(context):
+    book = load_workbook(BytesIO(context.sources[context.audit_file.audit_id]), read_only=True)
+    try:
+        sheet = book.active
+        # The controlled template requires a distinct header and value cell.
+        present = sheet["C1"].value == "零件号" and bool(sheet["C2"].value)
+        return AuditResultItem(classification="身份", item="必须填写零件号", priority="P0",
+            status="PASS" if present else "NG", suggestions="已核对C1零件号表头与C2必填字段。", checks_performed=1, clause_id=context.clause_id,
+            evidence=AuditEvidence(required="structure", used="structure", source_format="xlsx", prepared_format="xlsx",
+                sources=(EvidenceSource(kind="structure", locator=json.dumps({"kind":"xlsx_cell", "sheet":sheet.title, "cell":"C1"}), excerpt=str(sheet["C1"].value or "")),)))
+    finally:
+        book.close()
+"""
+
+
+@pytest.fixture
+def executable_task(matched_task, core_system):
+    client, worker, path, body, rule = matched_task
+    core_system.adopt(worker, rule["id"], PART_NUMBER_CHECKER)
+    return client, worker, path, body, rule
+
+
 def test_archive_summary_matches_frozen_detail_and_preserves_default_and_revocation(matched_task, auth_store_factory):
     client, worker, path, body, rule = matched_task
     migrator = auth_store_factory(worker.settings, objects=worker.objects, reset=False)
@@ -415,8 +443,8 @@ def test_archive_summary_keeps_task_readiness_and_bound_metadata(matched_task, a
 
 
 @pytest.mark.parametrize("report_state", ["pending", "generating", "ready", "failed"])
-def test_round_read_view_projects_the_same_authorized_task_report_without_creating_work(matched_task, report_state):
-    client, worker, path, _body, _rule = matched_task
+def test_round_read_view_projects_the_same_authorized_task_report_without_creating_work(executable_task, report_state):
+    client, worker, path, _body, _rule = executable_task
     accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).json()
     audit_job = worker.claim_job("round-report-audit")
     process_claimed(worker, audit_job, "round-report-audit")
@@ -451,8 +479,8 @@ def test_round_read_view_projects_the_same_authorized_task_report_without_creati
         assert worker.claim_job("round-report-no-read-side-effect") is None
 
 
-def test_round_report_projection_keeps_private_task_and_current_grant_authority(matched_task, auth_store_factory):
-    client, worker, path, _body, _rule = matched_task
+def test_round_report_projection_keeps_private_task_and_current_grant_authority(executable_task, auth_store_factory):
+    client, worker, path, _body, _rule = executable_task
     accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).json()
     process_claimed(worker, worker.claim_job("private-report-audit"), "private-report-audit")
     process_claimed(worker, worker.claim_job("private-report-pdf"), "private-report-pdf")
@@ -592,8 +620,8 @@ def billing_client(worker, item):
 
 
 @pytest.mark.parametrize("fault", ["round_grant", "unselected_file_grant", "unselected_not_ready", "unselected_cloud_source", "target_unselected", "result_attempt"])
-def test_pdf_download_keeps_complete_task_authority_without_building_the_task_projection(matched_task, auth_store_factory, monkeypatch, fault):
-    client, worker, path, body, _rule = matched_task
+def test_pdf_download_keeps_complete_task_authority_without_building_the_task_projection(executable_task, auth_store_factory, monkeypatch, fault):
+    client, worker, path, body, _rule = executable_task
     unselected = {**checked_file(client, worker, "未选择的补充.xlsx"), "selection": "unselected"}
     revised = {**body, "request_id": str(uuid.uuid4()), "task_id": body["request_id"], "expected_revision": 0, "files": body["files"] + [unselected]}
     assert client.post("/audit-tasks", json=revised).status_code == 202
@@ -670,8 +698,8 @@ def test_pdf_download_keeps_complete_task_authority_without_building_the_task_pr
 
 
 @pytest.mark.parametrize("corruption", ["magic", "length", "digest"])
-def test_pdf_download_still_verifies_the_frozen_object_bytes(matched_task, auth_store_factory, corruption):
-    client, worker, path, _body, _rule = matched_task
+def test_pdf_download_still_verifies_the_frozen_object_bytes(executable_task, auth_store_factory, corruption):
+    client, worker, path, _body, _rule = executable_task
     assert client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).status_code == 201
     process_claimed(worker, worker.claim_job("integrity-audit"), "integrity-audit")
     process_claimed(worker, worker.claim_job("integrity-pdf"), "integrity-pdf")
@@ -700,8 +728,8 @@ def test_pdf_download_still_verifies_the_frozen_object_bytes(matched_task, auth_
 
 
 @pytest.mark.parametrize("source_fault", ["not_ready", "changed_artifact"])
-def test_zip_bulk_sources_keep_each_frozen_reference_and_reject_one_invalid_member(matched_task, auth_store_factory, source_fault):
-    client, worker, path, body, _rule = matched_task
+def test_zip_bulk_sources_keep_each_frozen_reference_and_reject_one_invalid_member(executable_task, auth_store_factory, source_fault):
+    client, worker, path, body, _rule = executable_task
     second = checked_file(client, worker, "另一份控制计划.xlsx")
     revised = {**body, "request_id": str(uuid.uuid4()), "task_id": body["request_id"], "expected_revision": 0, "files": body["files"] + [second]}
     assert client.post("/audit-tasks", json=revised).status_code == 202
@@ -1172,11 +1200,12 @@ def test_recognition_is_persistent_and_zero_match_ends_without_an_audit(task_sys
     assert worker.claim_job("unexpected-audit") is None
 
 
-def test_customer_recovery_rematches_and_finishes_the_original_task_without_changing_files(task_system):
+def test_customer_recovery_rematches_and_finishes_the_original_task_without_changing_files(task_system, core_system):
     client, worker = task_system
     worker.settings.usage_charge_enabled = False
     file = checked_file(client, worker)
     rule = publish_rule(client, file)
+    core_system.adopt(worker, rule["id"], PART_NUMBER_CHECKER)
 
     class CustomerUnknownAI(MetadataAI):
         def structured_completion(self, **request):
@@ -1519,7 +1548,13 @@ def test_native_preparation_ambiguity_is_resolved_by_explicit_rematching_before_
     source = frozen["inputs"][0]
     assert source["file_version_id"] == file["file_version_id"] and source["role"] == "target"
     assert source["rule_version_id"] == chosen["id"] != first["id"]
-    assert source["rule"]["id"] == chosen["id"] and source["rule"]["body"] == chosen["body"]
+    assert source["rule"]["id"] == chosen["id"]
+    assert source["rule"]["body"]["rules"] == chosen["body"]["rules"]
+    with worker._conn() as conn:
+        execution = conn.execute("SELECT rule_execution FROM product.round_inputs WHERE round_id=%s AND role='target'", (frozen["id"],)).fetchone()[0]
+    assert execution["suite_revision_id"] == chosen["body"]["suite_revision_id"]
+    assert execution["binding"]["entrypoints"] == {}
+    assert source["rule"]["body"]["checker_binding"] == {}
     assert client.post(path + "/confirm", json=confirmation).json()["round_id"] == frozen["id"]
     restored = client.get(draft_path).json()
     assert restored["id"] == draft_id and restored["task_id"] == draft_id
@@ -1758,7 +1793,8 @@ def test_explicit_customer_scope_and_reference_survive_acceptance_and_recovery(t
     assert response.status_code == 201, response.text
     confirmed = response.json()
     assert confirmed["customer_scope"] == "all"
-    assert confirmed["body"] == legacy["body"]
+    assert {k: v for k, v in confirmed["body"].items() if k != "suite_revision_id"} == {k: v for k, v in legacy["body"].items() if k != "suite_revision_id"}
+    assert confirmed["body"]["suite_revision_id"] != legacy["body"]["suite_revision_id"]
     assert client.get(f"/rules/{legacy['id']}").json() == legacy
     listed = {row["id"]: row for row in client.get("/rules").json()["rules"]}
     assert (listed[legacy["id"]]["customer_scope"], listed[confirmed["id"]]["customer_scope"]) == ("unconfirmed", "all")
@@ -1805,7 +1841,8 @@ def test_scope_only_publication_preserves_legacy_body_source_and_version(task_sy
     assert confirmed.status_code == 201, confirmed.text
     assert confirmed.json()["customer_scope"] == "all"
     assert confirmed.json()["case_context"] == {"customer_scope": "all"}
-    assert confirmed.json()["body"] == legacy["body"]
+    assert {k: v for k, v in confirmed.json()["body"].items() if k != "suite_revision_id"} == {k: v for k, v in legacy["body"].items() if k != "suite_revision_id"}
+    assert confirmed.json()["body"]["suite_revision_id"] != legacy["body"]["suite_revision_id"]
     assert confirmed.json()["source_file_version_id"] == legacy["source_file_version_id"]
     assert client.get("/rules/" + legacy["id"]).json() == legacy
     unverified = client.post("/rules", json={**command, "case_context": {"customer_scope": "all", "registration": "{}"}})
@@ -1833,7 +1870,8 @@ def test_scope_only_version_inherits_legacy_citations_without_claiming_new_verif
     }
     response = client.post("/rules", json=command)
     assert response.status_code == 201, response.text
-    assert response.json()["body"] == legacy["body"]
+    assert {k: v for k, v in response.json()["body"].items() if k != "suite_revision_id"} == {k: v for k, v in legacy["body"].items() if k != "suite_revision_id"}
+    assert response.json()["body"]["suite_revision_id"] != legacy["body"]["suite_revision_id"]
     assert response.json()["customer_scope"] == "all"
     assert response.json()["case_context"]["registration"] == legacy_context["registration"]
     assert client.get("/rules/" + legacy["id"]).json() == legacy
@@ -1892,7 +1930,7 @@ def test_three_document_types_match_their_own_rules_without_accepting_an_audit(t
 
 
 @pytest.mark.parametrize("source_missing", [False, True], ids=["readable-ng", "source-read-error"])
-def test_confirmation_freezes_three_matched_targets_once_and_restores_the_same_round(task_system, source_missing):
+def test_confirmation_freezes_three_matched_targets_once_and_restores_the_same_round(task_system, source_missing, core_system):
     client, worker = task_system
     worker.settings.usage_charge_enabled = False
     files, rules = [], []
@@ -1900,6 +1938,8 @@ def test_confirmation_freezes_three_matched_targets_once_and_restores_the_same_r
         file = checked_file(client, worker, document_type + ".xlsx", document_type)
         files.append(file)
         rules.append(publish_rule(client, file, title="客户" + document_type, document_type=document_type))
+    for rule in rules:
+        core_system.adopt(worker, rule["id"], PART_NUMBER_CHECKER)
     task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": files}).json()
     for _ in files:
         process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=MetadataAI())
@@ -1916,7 +1956,7 @@ def test_confirmation_freezes_three_matched_targets_once_and_restores_the_same_r
     assert {row["file_version_id"]: row["rule_version_id"] for row in round["inputs"]} == {file["file_version_id"]: rule["id"] for file, rule in zip(files, rules)}
     assert all(row["role"] == "target" for row in round["inputs"])
     assert all(row["audit"]["round_id"] == accepted["round_id"] for row in accepted["files"])
-    publish_rule(client, files[0], predecessor=rules[0]["id"], title="受理后发布的 PFMEA 规则", document_type="PFMEA")
+    core_system.adopt(worker, rules[0]["id"], PART_NUMBER_CHECKER + "\n# New immutable program after admission\n")
     assert client.post(path + "/confirm", json=command).json() == accepted
     client.cookies.clear()
     assert client.post("/isolated-dev/sessions", json={"subject": "alice"}).status_code == 200
@@ -1946,7 +1986,8 @@ def test_confirmation_freezes_three_matched_targets_once_and_restores_the_same_r
     assert finished["completion_reason"] == "processed"
     assert finished["progress"] == {"completed": 3, "total": 3}
     assert [row["audit"]["execution"] for row in finished["files"]] == (["completed", "review_failed", "completed"] if source_missing else ["completed", "completed", "completed"])
-    assert [row["audit"]["checks"][0]["coverage"] for row in finished["files"]] == (["executed", "unsupported", "executed"] if source_missing else ["executed", "executed", "executed"])
+    assert [row["audit"]["checks"][0]["coverage"] for row in finished["files"]] == ["executed", "executed", "executed"]
+    assert [row["audit"]["checks"][0]["finding"]["status"] for row in finished["files"]] == (["NG", "ERR", "NG"] if source_missing else ["NG", "NG", "NG"])
     assert [row["audit"]["conclusion"] for row in finished["files"]] == (["NG", "UNKNOWN", "NG"] if source_missing else ["NG", "NG", "NG"])
     assert [row["audit"]["report"]["state"] for row in finished["files"]] == (["ready", "not_eligible", "ready"] if source_missing else ["ready", "ready", "ready"])
     summaries = client.get("/audit-tasks", params={"state": "completed"}).json()["tasks"]
@@ -2132,10 +2173,12 @@ def test_zero_target_end_rejects_foreign_or_stale_selection_intent(task_system):
     assert client.get(path).json()["state"] == "pending_confirm"
 
 
-def test_v4_preset_t12_can_be_a_target_without_changing_legacy_reference_behavior(auth_store_factory):
-    settings = Settings(usage_charge_enabled=False, feishu_app_id="v4-preset-task")
+def test_v4_preset_t12_can_be_a_target_without_changing_legacy_reference_behavior(auth_store_factory, core_system):
+    settings = Settings(usage_charge_enabled=False, feishu_app_id="v4-preset-task", git_sha="a" * 40)
     store = auth_store_factory(settings)
     principal = store.upsert_feishu_identity("v4-" + uuid.uuid4().hex, "owner")
+    core_system.adopt_standard(store, principal, "蔚来:N04")
+    core_system.install(store)
     client = TestClient(create_app(settings, auth_store=store))
     client.cookies.set(SESSION_COOKIE, store.create_session(principal))
     worker = build_product_store(settings, objects=store.objects, role="worker")
@@ -2155,7 +2198,7 @@ def test_v4_preset_t12_can_be_a_target_without_changing_legacy_reference_behavio
 
 
 def test_v4_t12_explicit_reference_remains_free_and_restores_its_role(auth_store_factory):
-    settings = Settings(usage_charge_enabled=False, feishu_app_id="v4-preset-task")
+    settings = Settings(usage_charge_enabled=False, feishu_app_id="v4-preset-task", git_sha="a" * 40)
     store = auth_store_factory(settings)
     principal = store.upsert_feishu_identity("v4-" + uuid.uuid4().hex, "owner")
     client = TestClient(create_app(settings, auth_store=store))
@@ -2178,10 +2221,12 @@ def test_v4_t12_explicit_reference_remains_free_and_restores_its_role(auth_store
     client.close()
 
 
-def test_v4_nio_pair_keeps_frozen_dual_original_evidence_through_worker_and_api(auth_store_factory):
-    settings = Settings(usage_charge_enabled=False, feishu_app_id="v4-nio-pair")
+def test_v4_nio_pair_keeps_frozen_dual_original_evidence_through_worker_and_api(auth_store_factory, core_system):
+    settings = Settings(usage_charge_enabled=False, feishu_app_id="v4-nio-pair", git_sha="a" * 40)
     store = auth_store_factory(settings)
     principal = store.upsert_feishu_identity("v4-pair-" + uuid.uuid4().hex, "owner")
+    core_system.adopt_standard(store, principal, "蔚来:N02")
+    core_system.install(store)
     client = TestClient(create_app(settings, auth_store=store))
     client.cookies.set(SESSION_COOKIE, store.create_session(principal))
     worker = build_product_store(settings, objects=store.objects, role="worker")
@@ -2244,8 +2289,8 @@ def test_v4_nio_pair_keeps_frozen_dual_original_evidence_through_worker_and_api(
     frozen = client.get("/rounds/" + round_id).json()
     cross = [finding for finding in frozen["findings"] if finding["item_key"].endswith(":rule:N02:7")][0]
     assert cross["status"] == "NG"
-    sources = cross["locator"]["evidence"]["sources"]
-    locators = [json.loads(source["locator"]) for source in sources]
+    sources = cross["locator"]["semantic"]["sources"]
+    locators = [{**source["locator"], "file_version_id": source["file_version_id"]} for source in sources]
     assert {locator["file_version_id"] for locator in locators} == {target["file_version_id"], reference["file_version_id"]}
     projected = client.get(path).json()["files"][0]["audit"]["checks"]
     projected_cross = next(check for check in projected if check["rule_item"]["id"] == "N02:7")
