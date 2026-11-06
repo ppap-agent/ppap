@@ -56,9 +56,12 @@ jobs:
       PPAP_PERSONAL_MODEL_MAX_REQUESTS: ${{ inputs.max_model_requests }}
       PPAP_PERSONAL_MODEL_MAX_INPUT_TOKENS: ${{ inputs.max_input_tokens }}
       PPAP_PERSONAL_MODEL_MAX_OUTPUT_TOKENS: ${{ inputs.max_output_tokens }}
-      PPAP_CHECKER_LIVE_ENV: ${{ runner.temp }}/checker-live.env
-      PPAP_CHECKER_LIVE_OUTPUT: ${{ runner.temp }}/checker-live-output
     steps:
+      - name: Prepare isolated runner paths
+        run: |
+          set -euo pipefail
+          printf 'PPAP_CHECKER_LIVE_ENV=%s/checker-live.env\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'PPAP_CHECKER_LIVE_OUTPUT=%s/checker-live-output\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false

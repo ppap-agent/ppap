@@ -4,6 +4,7 @@ import copy
 import hashlib
 import io
 import json
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -250,8 +251,9 @@ def test_http_write_with_unknown_outcome_is_never_retried():
     client.http.close()
 
 
-def test_workflow_is_manual_only_bounded_and_not_in_default_gate():
-    workflow = yaml.load((ROOT / ".github/workflows/checker-optimization-live.yml").read_text(), Loader=yaml.BaseLoader)
+@pytest.mark.parametrize("filename", ["checker-optimization-live.yml", "v3-poc-live.yml"])
+def test_workflow_is_manual_only_bounded_and_not_in_default_gate(filename):
+    workflow = yaml.load((ROOT / ".github/workflows" / filename).read_text(), Loader=yaml.BaseLoader)
     assert set(workflow["on"]) == {"workflow_dispatch"}
     assert workflow["on"]["workflow_dispatch"]["inputs"]["approve_paid"]["default"] == "false"
     assert workflow["jobs"]["live"]["if"] == "${{ inputs.approve_paid && github.run_attempt == 1 }}"
@@ -261,6 +263,31 @@ def test_workflow_is_manual_only_bounded_and_not_in_default_gate():
     steps_with_key = [step for step in workflow["jobs"]["live"]["steps"] if "CI_LLM_API_KEY" in step.get("env", {})]
     assert len(steps_with_key) == 1
     assert "uv run --no-sync python -m pytest tests/repository/test_checker_live_acceptance.py" in json.dumps(workflow)
+
+
+@pytest.mark.parametrize("filename", ["checker-optimization-live.yml", "v3-poc-live.yml"])
+def test_runner_paths_are_exported_at_runtime_before_any_consuming_step(tmp_path, filename):
+    workflow = yaml.load((ROOT / ".github/workflows" / filename).read_text(), Loader=yaml.BaseLoader)
+    job = workflow["jobs"]["live"]
+    # GitHub does not provide the runner context to job-level env expressions.
+    # actionlint is the platform syntax authority; exercise the actual shell
+    # setup as well, including paths containing spaces.
+    assert "runner." not in json.dumps(job["env"])
+    runner_temp = tmp_path / "runner temp"
+    runner_temp.mkdir()
+    github_env = tmp_path / "github env"
+    subprocess.run(
+        ["/bin/bash", "-c", job["steps"][0]["run"]],
+        env={"RUNNER_TEMP": str(runner_temp), "GITHUB_ENV": str(github_env)},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    exported = dict(line.split("=", 1) for line in github_env.read_text().splitlines())
+    assert exported == {
+        "PPAP_CHECKER_LIVE_ENV": str(runner_temp / "checker-live.env"),
+        "PPAP_CHECKER_LIVE_OUTPUT": str(runner_temp / "checker-live-output"),
+    }
 
 
 def test_stack_keeps_oracle_outside_guest_and_disables_fixture_login():
