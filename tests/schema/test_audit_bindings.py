@@ -674,6 +674,9 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         web = TestClient(create_app(settings=self.settings, auth_store=api_store))
         self.addCleanup(web.close)
         web.cookies.set(SESSION_COOKIE, api_store.create_session(self.alice))
+        preview = web.get(f"/audit-tasks/{task['id']}")
+        self.assertEqual(preview.status_code, 200)
+        basis = preview.json()["confirmation_basis_digest"]
         barrier = threading.Barrier(2)
 
         def card_confirm():
@@ -682,7 +685,10 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
 
         def web_confirm():
             barrier.wait(timeout=10)
-            return web.post(f"/audit-tasks/{task['id']}/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0})
+            return web.post(
+                f"/audit-tasks/{task['id']}/confirm",
+                json={"request_id": str(uuid.uuid4()), "expected_revision": 0, "expected_confirmation_basis_digest": basis},
+            )
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             card, browser = pool.submit(card_confirm), pool.submit(web_confirm)
