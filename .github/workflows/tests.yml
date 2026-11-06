@@ -302,7 +302,15 @@ jobs:
 
   corpus:
     name: Corpus / ${{ matrix.name }}
-    needs: repository
+    # Only spend on external LLM/OCR after every no-provider group succeeds.
+    # Keep the paid-capable groups parallel; CI Gate still requires both.
+    needs:
+      - repository
+      - web
+      - python_modules
+      - distribution_closure
+      - schema
+      - integration
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
@@ -433,7 +441,15 @@ jobs:
 
   integration_contracts:
     name: Product contracts
-    needs: repository
+    # Only spend on external LLM/OCR after every no-provider group succeeds.
+    # Keep the paid-capable groups parallel; CI Gate still requires both.
+    needs:
+      - repository
+      - web
+      - python_modules
+      - distribution_closure
+      - schema
+      - integration
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
