@@ -80,6 +80,38 @@ def test_wrong_clause_and_wrong_source_fail_whole_contract():
         run_audit(*request(program))
 
 
+@pytest.mark.parametrize("shared_entrypoint", [False, True])
+@pytest.mark.parametrize("result_type", ["model", "dict"])
+def test_direct_entrypoint_cannot_return_another_bound_clause(shared_entrypoint, result_type):
+    from dataclasses import replace
+
+    program = b"""from audit.contracts import AuditResultItem
+
+def check(context):
+    context.cache.setdefault('calls', []).append(context.clause_id)
+    item = AuditResultItem(classification='rule', item=context.clause_id, priority='P0',
+        clause_id={'a': 'b', 'b': 'a', 'c': 'c'}[context.clause_id],
+        status='NG' if context.clause_id == 'a' else 'PASS',
+        suggestions=','.join(context.cache['calls']), checks_performed=1)
+    return item
+
+def check_a(context): return check(context)
+def check_b(context): return check(context)
+def check_c(context): return check(context)
+"""
+    if result_type == "dict":
+        program = program.replace(b"return item", b"return item.model_dump()")
+    snapshot, sources, programs = request(program, clauses=("a", "b", "c"), targets=1)
+    if not shared_entrypoint:
+        target = snapshot.targets[0]
+        target = replace(target, binding=replace(target.binding, entrypoints={clause: "checker:check_" + clause for clause in ("a", "b", "c")}))
+        snapshot = replace(snapshot, targets=(target,))
+    result = run_audit(snapshot, sources, programs)
+    assert [(row["clause_id"], row["status"]) for row in result["findings"]] == [("a", "ERR"), ("b", "ERR"), ("c", "PASS")]
+    assert [row["suggestions"] for row in result["findings"]] == ["checker_result_clause_mismatch", "checker_result_clause_mismatch", "a,b,c"]
+    assert all(row["coverage"] == "mapped" for row in result["coverage"])
+
+
 def test_modified_original_rejected_after_execution():
     program = PROGRAM.replace(b"context.cache['count'] =", b"path = context.paths[context.audit_file.audit_id]\n    path.chmod(0o600); path.write_bytes(b'tampered')\n    context.cache['count'] =")
     with pytest.raises(ValueError, match="snapshot_source_digest_mismatch"):

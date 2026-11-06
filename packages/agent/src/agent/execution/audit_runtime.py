@@ -287,9 +287,14 @@ def run_audit(
                             except Exception as exc:
                                 # Exception messages may contain originals or credentials.
                                 item = _error(clause, "ERR", f"checker_failure:{type(exc).__name__}")
-                            # Wrong clause IDs/references remain whole-run contract errors,
-                            # not silently repaired attribution or partially accepted PASS.
-                            results.append(_evidence_references(item, target.file_version_id))
+                            data = _evidence_references(item, target.file_version_id)
+                            returned_clause = data.get("clause_id")
+                            if isinstance(returned_clause, str) and returned_clause != clause and returned_clause in target.binding.entrypoints:
+                                # A known clause is still not authority for this call.
+                                # Drop the misattributed result, not the other clauses.
+                                data = _evidence_references(_error(clause, "ERR", "checker_result_clause_mismatch"), target.file_version_id)
+                            # Unknown clauses/references still reject the whole contract.
+                            results.append(data)
                         diagnostics.extend(cache.pop(("authored-diagnostics", target.file_version_id), ()))
                         validated = validate_results(results, target=target, inputs=snapshot.inputs)
                         findings.extend(validated["findings"])
