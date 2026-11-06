@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, Protocol, cast
 
+import fitz
 from openpyxl import load_workbook
 
 from audit.contracts import AuditInput, EvidenceDiagnostic, EvidenceSource
@@ -146,6 +148,47 @@ class _PswEvidenceHost(Protocol):
     def create_error_result(self, error_msg: str, ith: int = -1) -> AuditResult: ...
 
     def get_rule_by_index(self, ith: int) -> Optional[dict[str, Any]]: ...
+
+
+def _original_pdf_sources(audit: AuditInput, sources: list[EvidenceSource]) -> tuple[EvidenceSource, ...]:
+    """Expose actual original page geometry, never a prepared grid location."""
+    if Path(audit.file_url).suffix.casefold() != ".pdf" or not sources:
+        return tuple(sources)
+    from audit.pdf_tables import valid_pdf_bbox
+
+    original = Path(audit.file_url).read_bytes()
+    digest = hashlib.sha256(original).hexdigest()
+    expected = (audit.file_metadata or {}).get("source_sha256") or (audit.file_metadata or {}).get("sha256")
+    if expected and expected != digest:
+        raise ValueError("Frozen PDF identity changed")
+    located = []
+    with fitz.open(stream=original, filetype="pdf") as document:
+        for source in sources:
+            try:
+                raw = json.loads(source.locator)
+            except (ValueError, TypeError):
+                located.append(source)
+                continue
+            page = raw.get("page") if isinstance(raw, dict) else None
+            if (
+                isinstance(raw, dict)
+                and raw.get("kind") == "pdf_region"
+                and raw.get("file_version_id") == audit.audit_id
+                and raw.get("source_sha256") == digest
+                and raw.get("coordinate_system") == "pdf_points_unrotated"
+                and type(page) is int
+                and 1 <= page <= len(document)
+            ):
+                original_page = document[page - 1]
+                original_page.set_rotation(0)
+                region = raw.get("bbox")
+                if isinstance(region, list) and valid_pdf_bbox(region, original_page.rect.width, original_page.rect.height):
+                    locator = {"kind": "pdf_page", "file_version_id": audit.audit_id, "page": page, "region": list(region)}
+                    source = source.model_copy(update={"locator": json.dumps(locator, ensure_ascii=False, separators=(",", ":"))})
+            # Unrecognized/foreign locations stay explicit and fail the public
+            # projection; do not drop them or substitute the target identity.
+            located.append(source)
+    return tuple(located)
 
 
 class PswPdfEvidenceMixin:
@@ -318,7 +361,7 @@ class PswPdfEvidenceMixin:
                 if (structured is not None and str(structured.status).upper() == "PASS") or self._evidence().supports_checkbox_rule(rule_no):
                     result = structured
                 else:
-                    result = self._run_fact_rule(ith, rule_no, used="both")
+                    result = self._run_fact_rule(ith, rule_no)
             elif rule_no in {8, 9, 10} and not self._evidence().supports_checkbox_rule(rule_no):
                 result = self._run_fact_rule(ith, rule_no)
             else:
@@ -380,8 +423,6 @@ class PswPdfEvidenceMixin:
         self,
         ith: int,
         rule_no: int,
-        *,
-        used: EvidenceUse = "visual",
     ) -> AuditResult:
         from audit.checkers.v4.visual_facts import VisualFactsUnavailable, read_original_pdf_visual_facts
 
@@ -420,11 +461,9 @@ class PswPdfEvidenceMixin:
             diagnostic = EvidenceDiagnostic(code=DIAGNOSTIC_VISUAL_RUNTIME_ERROR, stage="visual", severity="error", message="视觉证据读取发生技术错误，未形成业务判断。")
         source_kinds = {source.kind for source in sources}
         evidence_used: EvidenceUse = "both" if source_kinds == {"structure", "visual"} else "visual" if "visual" in source_kinds else "structure" if sources else "none"
-        if used == "both" and evidence_used == "visual":
-            # The preceding structured rule read a real submission note/field.
-            evidence_used = "both"
-            sources.insert(0, EvidenceSource(kind="structure", locator="pdf://converted-table-grid"))
-        traced = self._trace_result(result, rule_no=rule_no, used=evidence_used, diagnostic=diagnostic, sources=tuple(sources))
+        # The original-page predicate owns its evidence. A preceding table
+        # attempt does not establish a located structural fact for this result.
+        traced = self._trace_result(result, rule_no=rule_no, used=evidence_used, diagnostic=diagnostic, sources=_original_pdf_sources(host.audit_file, sources))
         # Report the actual native/Paddle/OCR backend used by these sources.
         if traced.evidence is not None:
             engines = {json.loads(source.locator).get("engine") for source in sources if source.kind == "visual" and source.locator.startswith("{")}
