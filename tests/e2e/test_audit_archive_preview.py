@@ -7,6 +7,7 @@ import os
 import re
 import unittest
 import zipfile
+from itertools import combinations
 from urllib.parse import parse_qs, urlparse
 
 try:
@@ -20,6 +21,87 @@ PREVIEW = os.environ.get("PPAP_PREVIEW_URL", "").rstrip("/")
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires the explicit UI preview and Playwright")
 class AuditArchivePreviewTests(unittest.TestCase):
+    def assert_history_reader_layout(self, page, filename):
+        """Identity and actions fit; results use the reader width and begin in view."""
+        heading = page.get_by_role("heading", name=filename, exact=True)
+        identity = heading.locator("xpath=ancestor::header")
+        details = page.get_by_role("region", name="审核详情", exact=True)
+        selector = page.get_by_role("button", name="历史审核记录", exact=True)
+        report = details.get_by_role("button", name="查看报告", exact=True)
+        search = details.get_by_role("textbox", name="搜索审核项", exact=True)
+        filters = details.get_by_role("group", name="审核结果筛选", exact=True)
+        source_notice = identity.get_by_text("无权查看来源任务。", exact=True)
+        provenance = (
+            identity.locator("time").locator(".."),
+            identity.get_by_text("发起人：示例李工", exact=True),
+            identity.get_by_text("原件修订：Rev C", exact=True),
+            identity.get_by_role("button", name="打开来源任务", exact=True),
+        )
+        # Wait for the actual recipe-free state and comparison, not a transient loading layout.
+        expect(page.get_by_role("region", name="原件事实确认", exact=True)).to_have_count(0)
+        expect(details.get_by_role("region", name="与上次审核对比", exact=True)).to_be_visible()
+        page.evaluate("document.fonts.ready")
+        targets = (heading, selector, *provenance, source_notice, report, search, filters)
+        for target in targets:
+            expect(target).to_be_visible()
+            expect(target).to_be_in_viewport(ratio=1)
+            self.assertTrue(target.evaluate("el => el.scrollWidth <= el.clientWidth && el.scrollHeight <= el.clientHeight"), f"Clipped content: {target}")
+        # A wrapped filename is allowed; it must not collide with the history selector or actions.
+        boxes = [target.bounding_box() for target in targets]
+        for first, second in combinations(boxes, 2):
+            self.assertTrue(
+                first["x"] + first["width"] <= second["x"]
+                or second["x"] + second["width"] <= first["x"]
+                or first["y"] + first["height"] <= second["y"]
+                or second["y"] + second["height"] <= first["y"],
+                f"Identity or controls overlap: {first}, {second}",
+            )
+        identity_box, reader_box = identity.bounding_box(), details.bounding_box()
+        self.assertGreaterEqual(reader_box["y"], identity_box["y"] + identity_box["height"])
+        self.assertEqual(reader_box["x"], identity_box["x"], "Results must start at the available reader's left edge")
+        self.assertEqual(reader_box["width"], identity_box["width"], "History must not reserve a side column beside results")
+        # The table's scrollport fills the result region's content box. On narrow screens the
+        # columns may scroll inside it, but must not widen the page or disappear through clipping.
+        items = details.get_by_role("region", name="审核项", exact=True)
+        geometry = items.evaluate("""el => {
+            const box = el.getBoundingClientRect(), style = getComputedStyle(el);
+            const table = el.querySelector('table'), scrollport = table.parentElement, frame = scrollport.parentElement;
+            const frameBox = frame.getBoundingClientRect(), frameStyle = getComputedStyle(frame), portBox = scrollport.getBoundingClientRect();
+            return {left: frameBox.left, right: frameBox.right,
+                contentLeft: box.left + parseFloat(style.paddingLeft),
+                contentRight: box.right - parseFloat(style.paddingRight),
+                portLeft: portBox.left, portRight: portBox.right,
+                frameContentLeft: frameBox.left + parseFloat(frameStyle.borderLeftWidth) + parseFloat(frameStyle.paddingLeft),
+                frameContentRight: frameBox.right - parseFloat(frameStyle.borderRightWidth) - parseFloat(frameStyle.paddingRight),
+                tableWidth: table.getBoundingClientRect().width, portWidth: portBox.width,
+                scrollable: scrollport.scrollWidth <= scrollport.clientWidth || ['auto', 'scroll'].includes(getComputedStyle(scrollport).overflowX)};
+        }""")
+        self.assertEqual(geometry["left"], geometry["contentLeft"])
+        self.assertEqual(geometry["right"], geometry["contentRight"])
+        self.assertEqual(geometry["portLeft"], geometry["frameContentLeft"])
+        self.assertEqual(geometry["portRight"], geometry["frameContentRight"])
+        self.assertGreaterEqual(geometry["tableWidth"], geometry["portWidth"])
+        self.assertTrue(geometry["scrollable"], "Wide result columns need a usable local scrollport")
+        self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), page.viewport_size["width"])
+        if page.viewport_size["width"] >= 1024:
+            # Desktop's initial view must show a complete named result vertically, not
+            # merely a table border. Wide columns remain reachable through the local scrollport.
+            row = details.get_by_role("row").filter(has=page.get_by_role("button", name="查看依据 2.1", exact=True))
+            expect(row).to_be_in_viewport()
+            visible = row.evaluate("""el => {
+                const row = el.getBoundingClientRect();
+                let top = 0, bottom = innerHeight;
+                for (let ancestor = el.parentElement; ancestor; ancestor = ancestor.parentElement) {
+                    if (getComputedStyle(ancestor).overflowY === 'visible') continue;
+                    const box = ancestor.getBoundingClientRect();
+                    top = Math.max(top, box.top + ancestor.clientTop);
+                    bottom = Math.min(bottom, box.top + ancestor.clientTop + ancestor.clientHeight);
+                }
+                return {rowTop: row.top, rowBottom: row.bottom, top, bottom};
+            }""")
+            self.assertGreaterEqual(visible["rowTop"], visible["top"])
+            self.assertLessEqual(visible["rowBottom"], visible["bottom"], "The first result must be readable without vertical scrolling or ancestor clipping")
+
     def test_natural_file_route_restores_list_and_exact_history_on_back_and_forward(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
@@ -217,7 +299,9 @@ class AuditArchivePreviewTests(unittest.TestCase):
     def test_history_uses_one_filename_and_a_full_width_result_reader(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            for width in (1440, 1079, 390):
+            # Representative desktop/mobile and the original 1079px regression, plus both
+            # sides of sm identity reflow, lg product navigation and xl provenance reflow.
+            for width in (1440, 1079, 390, 639, 640, 1023, 1024, 1279, 1280):
                 with self.subTest(width=width):
                     page = browser.new_page(viewport={"width": width, "height": 960})
                     page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready&view=archive&archiveDoc=preview-archive-A001")
@@ -229,12 +313,38 @@ class AuditArchivePreviewTests(unittest.TestCase):
                     details = page.get_by_role("region", name="审核详情", exact=True)
                     expect(details.get_by_role("button", name="查看报告", exact=True)).to_be_enabled()
                     expect(details.get_by_role("button", name="符合 2", exact=True)).to_be_visible()
-                    if width >= 1024:
-                        self.assertLess(details.get_by_role("table").bounding_box()["y"] - heading.bounding_box()["y"], 300)
-                    else:
-                        self.assertGreater(heading.bounding_box()["width"], 240)
-                        self.assertLess(heading.bounding_box()["height"], 32)
-                    self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), width)
+                    self.assert_history_reader_layout(page, "控制计划.xlsx")
+                    action = details.get_by_role("button", name="查看依据 2.1", exact=True)
+                    action.click()
+                    expect(page.get_by_role("dialog", name="2.1 · 频次一致性", exact=True)).to_be_visible()
+                    page.keyboard.press("Escape")
+                    expect(action).to_be_focused()
+                    page.close()
+            browser.close()
+
+    def test_long_history_filename_wraps_without_displacing_reader_controls(self):
+        filename = "控制计划-尾门扰流板总成-客户联合评审批准版本-图纸修订RevC-量产阶段检查记录.xlsx"
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            for width in (1440, 1079, 390):
+                with self.subTest(width=width):
+                    page = browser.new_page(viewport={"width": width, "height": 960})
+                    page.goto(PREVIEW + "/preview/audit.html?scene=archive-long-filename&view=archive&archiveDoc=preview-archive-A001")
+                    heading = page.get_by_role("heading", name=filename, exact=True)
+                    expect(heading).to_be_visible()
+                    self.assert_history_reader_layout(page, filename)
+                    page.get_by_role("region", name="审核详情", exact=True).get_by_role("button", name="查看报告", exact=True).click()
+                    expect(page.get_by_role("region", name="当前报告", exact=True).get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
+                    page.get_by_role("button", name="返回本次审核", exact=True).click()
+                    selector = page.get_by_role("button", name="历史审核记录", exact=True)
+                    selector.focus()
+                    page.keyboard.press("Enter")
+                    history = page.get_by_role("dialog", name="历史审核记录", exact=True)
+                    history.get_by_role("button", name="选择第 2 次审核", exact=True).click()
+                    expect(selector).to_contain_text("第 2 次审核")
+                    expect(selector).to_be_focused()
+                    expect(heading).to_be_visible()
+                    expect(page.get_by_text("原件修订：Rev B", exact=True)).to_be_visible()
                     page.close()
             browser.close()
 

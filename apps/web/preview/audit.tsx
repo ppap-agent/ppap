@@ -17,7 +17,7 @@ import {fixtureSupport} from './audit-support'
 import {displayReadFixture, fixtureDisplay} from './audit-display'
 import {fileDisplayValues} from '../src/audit/display-info-contract'
 import {usageNotices} from '../src/audit/usage-contract'
-import {reportReference} from '../src/audit/result-projection'
+import {auditReportFilename, reportReference} from '../src/audit/result-projection'
 import {AuditRoundReader} from '../src/audit/round-reader'
 import {fixtureRound, fixtureReviewRound} from './audit-rounds'
 import {AuditReviewProvider, type AuditReviewAdapter} from '../src/audit/review-editor'
@@ -329,7 +329,14 @@ const archiveAdapter = fixtureArchive(taskStore, scene, (id, sequence, failed, p
   if (matched.confirmation_scope) seed.confirmation_scope = {target_file_version_ids: matched.confirmation_scope.target_file_version_ids.map(version).sort(), reference_file_version_ids: matched.confirmation_scope.reference_file_version_ids.map(version).sort(), excluded_files: matched.confirmation_scope.excluded_files.map(row => ({...row, file_version_id: version(row.file_version_id)})).sort((a, b) => a.file_version_id.localeCompare(b.file_version_id))}
   const accepted = fixtureAcceptance(seed, `${id}-accept`)
   if (scene === 'archive-display') accepted.files = accepted.files.map(file => ({...file, display_info: {revision: 1, values: {...fileDisplayValues(file), customer: `第 ${sequence} 次显示客户`}}}))
-  return pending ? accepted : fixtureResults(accepted, failed ? 'reports-none' : 'reports-ready')
+  const result = pending ? accepted : fixtureResults(accepted, failed ? 'reports-none' : 'reports-ready')
+  if (scene === 'archive-long-filename') {
+    // Vary the synthetic display name, retaining the known control-plan PDF bytes and audit facts.
+    const file = result.files[1], name = '控制计划-尾门扰流板总成-客户联合评审批准版本-图纸修订RevC-量产阶段检查记录.xlsx'
+    file.file = {...file.file, original_filename: name}
+    if (file.audit?.report.artifact) file.audit.report.artifact = {...file.audit.report.artifact, filename: auditReportFilename(name)}
+  }
+  return result
 }, sharingAdapter.forReport)
 const usageAdapter = fixtureUsage(archiveAdapter, scene)
 
