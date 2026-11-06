@@ -451,6 +451,21 @@ class ContainerRuntime:
                 job_key = hashlib.sha256(manifest.runtime_job_id.encode()).hexdigest()
                 if source_attempt is not None:
                     runtime_id = uuid5(spec.execution_id, f"{job_key}:{runtime_attempt}")
+        elif isinstance(spec, CheckerJobSpec) and spec.operation == "adapt-checker":
+            from agent.checker_program import CheckerManifest
+
+            try:
+                checker_manifest = CheckerManifest.model_validate(read_json(inputs, ("manifest.json",), 1024 * 1024))
+            except (OSError, ValueError):
+                raise ControllerFault("INPUT_INTEGRITY_ERROR") from None
+            if checker_manifest.spec != spec or checker_manifest.operation != spec.operation or not checker_manifest.runtime_job_id or spec.execution_id != spec.expected_execution_id():
+                raise ControllerFault("INPUT_INTEGRITY_ERROR")
+            # The program/input identity is reusable, but paid development is
+            # not: a new explicit operation can have different prior/feedback.
+            # Never include the technical attempt, which would bypass an
+            # uncertain operation's existing fence and repeat provider work.
+            job_key = hashlib.sha256(checker_manifest.runtime_job_id.encode()).hexdigest()
+            runtime_id = uuid5(spec.execution_id, job_key)
         while True:
             remaining = deadline - time.monotonic()
             if cancelled.is_set() or remaining <= 0:
