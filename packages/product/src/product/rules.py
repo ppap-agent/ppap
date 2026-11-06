@@ -45,7 +45,7 @@ def normalize_document_type(value: Any) -> str:
         raise ValueError("unknown_rule_type")
     value = value.strip()
     kind = PpapDocumentType.from_string(value)
-    if value == PpapDocumentType.UNKNOWN.get_type_name():
+    if value.casefold() in {"unknown", PpapDocumentType.UNKNOWN.get_type_name().casefold()}:
         raise ValueError("unknown_rule_type")
     return kind.get_type_name() if kind != PpapDocumentType.UNKNOWN else value
 

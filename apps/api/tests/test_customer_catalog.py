@@ -89,7 +89,7 @@ def test_catalog_uses_current_tenant_published_rules_not_rule_files_or_history(a
         publish(second, ["其他企业客户"], "控制计划")
         old = publish(first, ["旧客户"], "控制计划")
         assert custom_choices(first.get("/audit-customers").json()) == [{"customer_id": "旧客户", "name": "旧客户"}]
-        publish(first, ["Customer A"], "过程流程图", old)
+        publish(first, ["Customer A"], "控制计划", old)
         publish(first, [" customer a ", "Customer A"], "Control plan")
         publish(first, ["Customer A"], "过程流程图")
         publish(first, [], "全功能检验报告")
