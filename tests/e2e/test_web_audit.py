@@ -88,7 +88,6 @@ def adopt_presence_rule(page, api):
             "body": {
                 "kind": "engine",
                 "type": "控制计划",
-                "rule_profile": "v3",
                 "customers": [],
                 "models": [],
                 "parts": [],
