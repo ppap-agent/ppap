@@ -2765,6 +2765,7 @@ export interface components {
             completion_reason: ("no_matching_rules" | "processed") | null;
             /** Confirmation Basis Digest */
             confirmation_basis_digest: string | null;
+            confirmation_scope: components["schemas"]["AuditTaskConfirmationScope"] | null;
             /** Created At */
             created_at: string;
             /** Customer Preference */
@@ -2815,6 +2816,22 @@ export interface components {
             updated_at: string;
             /** Usage Notice */
             usage_notice?: string | null;
+        };
+        /** AuditTaskConfirmationExclusion */
+        AuditTaskConfirmationExclusion: {
+            /** File Version Id */
+            file_version_id: string;
+            /** Reason */
+            reason: string;
+        };
+        /** AuditTaskConfirmationScope */
+        AuditTaskConfirmationScope: {
+            /** Excluded Files */
+            excluded_files: components["schemas"]["AuditTaskConfirmationExclusion"][];
+            /** Reference File Version Ids */
+            reference_file_version_ids: string[];
+            /** Target File Version Ids */
+            target_file_version_ids: string[];
         };
         /** AuditTaskFile */
         AuditTaskFile: {

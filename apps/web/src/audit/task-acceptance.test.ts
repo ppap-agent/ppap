@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {components} from '../generated/openapi.ts'
-import {createTaskAcceptance} from './task-acceptance.ts'
+import {confirmationScope, createTaskAcceptance} from './task-acceptance.ts'
 
 type Task = components['schemas']['AuditTask']
 function pending(digest = 'a'.repeat(64)): Task {
-  return {id: 'task-a', number: 'PPAP-1', state: 'pending_confirm', analysis_mode: 'standard', created_at: '2026-11-06', updated_at: '2026-11-06', source_draft_id: 'task-a', round_id: null, customer_preference: null, completion_reason: null, estimated_points: 500, input_revision: 2, confirmation_basis_digest: digest,
+  return {id: 'task-a', number: 'PPAP-1', state: 'pending_confirm', analysis_mode: 'standard', created_at: '2026-11-06', updated_at: '2026-11-06', source_draft_id: 'task-a', round_id: null, customer_preference: null, completion_reason: null, estimated_points: 500, input_revision: 2, confirmation_basis_digest: digest, confirmation_scope: {target_file_version_ids: ['file-a'], reference_file_version_ids: [], excluded_files: []},
     files: [{file: {id: 'file-a', file_id: 'source-a', original_filename: 'a.xlsx', content_type: 'application/octet-stream', byte_size: 3, status: 'ready', sha256: null}, selection: 'selected', removal_reason: null, validation: {state: 'valid', reasons: []}, match: {state: 'matched', metadata: {customer: null, model: null, part: null}, document_type: 'PFMEA', gaps: [], rule: {id: 'rule-a', title: 'PFMEA', body: {kind: 'presence'}}}}]}
 }
-const accepted = (input: Task, requestId: string): Task => ({...structuredClone(input), confirmation_basis_digest: null, state: 'reviewing', round_id: 'round-a', acceptance: {request_id: requestId, state: 'accepted', reason: null}})
+const accepted = (input: Task, requestId: string): Task => ({...structuredClone(input), files: structuredClone(input.files).map(file => {const excluded = input.confirmation_scope?.excluded_files.find(row => row.file_version_id === file.file.id); return excluded ? {...file, selection: 'removed', removal_reason: excluded.reason, audit: null} : file}), confirmation_basis_digest: null, state: 'reviewing', round_id: 'round-a', acceptance: {request_id: requestId, state: 'accepted', reason: null}})
 const rejected = (input: Task, requestId: string): Task => ({...structuredClone(input), acceptance: {request_id: requestId, state: 'rejected', reason: '审核依据已变化，请刷新后重新确认。'}})
 
 test('changed confirmation basis requires a refreshed snapshot and another explicit command', async () => {
@@ -106,4 +106,97 @@ test('navigation recovery adopts only the original operation rejection and prese
   assert.equal(controller.needsBasisRefresh(fresh), false)
   await controller.confirm(old)
   assert.equal(commands.length, 1)
+})
+
+function partial(): Task {
+  const task = pending()
+  const file = task.files[0]
+  task.files.push(
+    {...structuredClone(file), file: {...file.file, id: 'file-b', original_filename: '阻断.xlsx'}},
+    {...structuredClone(file), file: {...file.file, id: 'file-c'}, match: {...file.match!, state: 'reference', rule: null}},
+    {...structuredClone(file), file: {...file.file, id: 'file-d'}, selection: 'unselected'},
+    {...structuredClone(file), file: {...file.file, id: 'file-e'}, selection: 'removed', removal_reason: '识别前移除'},
+    {...structuredClone(file), file: {...file.file, id: 'file-f'}, match: {...file.match!, state: 'unmatched', rule: null}},
+  )
+  task.confirmation_scope = {target_file_version_ids: ['file-a'], reference_file_version_ids: ['file-c'], excluded_files: [{file_version_id: 'file-b', reason: '已认证的预检阻断：原件无内容'}, {file_version_id: 'file-e', reason: '识别前移除'}, {file_version_id: 'file-f', reason: '未匹配到规则，不进入本轮审核'}]}
+  return task
+}
+
+test('partial certified gate uses the complete server scope without rewriting the pending selections', async () => {
+  const input = partial(), results: Task[] = []
+  assert.deepEqual(confirmationScope(input), input.confirmation_scope)
+  const controller = createTaskAcceptance({confirm: async (task, requestId) => accepted(task, requestId), readTask: async () => {throw new Error('not read')}}, task => results.push(task))
+  await controller.confirm(input)
+  assert.equal(controller.get(input.id)!.phase, 'accepted')
+  assert.deepEqual(results[0].files.filter(file => file.selection === 'selected').map(file => file.file.id), ['file-a', 'file-c'])
+  assert.equal(results[0].files[1].removal_reason, input.confirmation_scope!.excluded_files[0].reason)
+  assert.equal(results[0].files[1].audit, null)
+  assert.equal(input.files[1].selection, 'selected')
+  assert.equal(input.files[5].selection, 'selected')
+})
+
+for (const [label, mutate] of [
+  ['scope changed', (task: Task) => {task.confirmation_scope!.target_file_version_ids.push('file-b')}],
+  ['scope missing', (task: Task) => {task.confirmation_scope = null}],
+  ['scope reason changed', (task: Task) => {task.confirmation_scope!.excluded_files[0].reason = '另一原因'}],
+  ['actual reason changed', (task: Task) => {task.files[1].removal_reason = '另一原因'}],
+  ['blocked target admitted', (task: Task) => {task.files[1].selection = 'selected'}],
+  ['blocked target executed', (task: Task) => {task.files[1].audit = {} as NonNullable<Task['files'][number]['audit']>}],
+  ['reference executed', (task: Task) => {task.files[2].audit = {} as NonNullable<Task['files'][number]['audit']>}],
+  ['unselected file changed', (task: Task) => {task.files[3].selection = 'removed'}],
+  ['original removal changed', (task: Task) => {task.files[4].removal_reason = '另一原因'}],
+  ['file omitted', (task: Task) => {task.files.pop()}],
+  ['file duplicated', (task: Task) => {task.files[5] = structuredClone(task.files[4])}],
+] as const) test(`partial gate receipt rejects ${label}`, async () => {
+  const input = partial()
+  const controller = createTaskAcceptance({confirm: async (task, requestId) => {const next = accepted(task, requestId); mutate(next); return next}, readTask: async () => {throw new Error('not read')}}, () => assert.fail('changed scope cannot be accepted'))
+  await controller.confirm(input)
+  assert.equal(controller.get(input.id)!.phase, 'unknown')
+})
+
+for (const [label, mutate] of [
+  ['duplicate', (task: Task) => {task.confirmation_scope!.target_file_version_ids.push('file-a')}],
+  ['overlapping', (task: Task) => {task.confirmation_scope!.reference_file_version_ids.push('file-a')}],
+  ['outside', (task: Task) => {task.confirmation_scope!.target_file_version_ids[0] = 'outside'}],
+  ['incomplete', (task: Task) => {task.confirmation_scope!.excluded_files.pop()}],
+  ['wrong role', (task: Task) => {task.confirmation_scope!.target_file_version_ids[0] = 'file-c'; task.confirmation_scope!.reference_file_version_ids[0] = 'file-a'}],
+  ['changed original removal', (task: Task) => {task.confirmation_scope!.excluded_files[1].reason = '另一原因'}],
+  ['empty reason', (task: Task) => {task.confirmation_scope!.excluded_files[0].reason = ' '}],
+  ['unselected admitted', (task: Task) => {task.confirmation_scope!.target_file_version_ids.push('file-d')}],
+] as const) test(`invalid ${label} pending scope cannot start an audit`, async () => {
+  const input = partial(); mutate(input)
+  assert.equal(confirmationScope(input), null)
+  const controller = createTaskAcceptance({confirm: async () => {throw new Error('must not post')}, readTask: async () => {throw new Error('not read')}}, () => {})
+  await controller.confirm(input)
+  assert.equal(controller.get(input.id), undefined)
+})
+
+test('a newly completed gate rejects the old digest before refresh and accepts only the new effective scope', async () => {
+  const current = partial(), old = structuredClone(current), results: Task[] = [], commands: string[] = []
+  old.confirmation_scope!.target_file_version_ids.push('file-b')
+  old.confirmation_scope!.excluded_files.shift()
+  current.confirmation_basis_digest = 'b'.repeat(64)
+  const controller = createTaskAcceptance({
+    confirm: async (task, requestId) => {commands.push(requestId); return task.confirmation_basis_digest === old.confirmation_basis_digest ? rejected(current, requestId) : accepted(task, requestId)},
+    readTask: async () => {throw new Error('not read')},
+  }, task => results.push(task))
+  await controller.confirm(old)
+  assert.equal(controller.get(old.id)!.phase, 'rejected')
+  await controller.confirm(old)
+  assert.equal(commands.length, 1)
+  controller.restore(current)
+  assert.equal(commands.length, 1)
+  await controller.confirm(current)
+  assert.notEqual(commands[0], commands[1])
+  assert.equal(results[0].files[1].selection, 'removed')
+  assert.deepEqual(results[0].confirmation_scope, current.confirmation_scope)
+})
+
+test('an all-blocked server scope cannot start an audit even if a stale digest remains', async () => {
+  const input = pending()
+  input.confirmation_scope = {target_file_version_ids: [], reference_file_version_ids: [], excluded_files: [{file_version_id: 'file-a', reason: '已认证阻断'}]}
+  assert.deepEqual(confirmationScope(input), input.confirmation_scope)
+  const controller = createTaskAcceptance({confirm: async () => {throw new Error('must not post')}, readTask: async () => {throw new Error('not read')}}, () => {})
+  await controller.confirm(input)
+  assert.equal(controller.get(input.id), undefined)
 })

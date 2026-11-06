@@ -7,7 +7,7 @@ type Task = components['schemas']['AuditTask']
 const files: Task['files'] = [{file: {id: 'version-a', file_id: 'file-a', original_filename: 'a.xlsx', content_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', byte_size: 10, status: 'ready', sha256: null}, selection: 'selected', removal_reason: null, validation: {state: 'valid', reasons: []}, match: null}]
 const input = () => ({files: structuredClone(files), mode: 'standard' as const, customer: null, previous: null})
 function task(requestId: string): Task {
-  return {confirmation_basis_digest: null, id: requestId, number: 'PPAP-20261016-001', state: 'matching', analysis_mode: 'standard', customer_preference: null, source_draft_id: null, round_id: null, completion_reason: null, estimated_points: null, created_at: '2026-10-16T00:00:00Z', updated_at: '2026-10-16T00:00:00Z', files: structuredClone(files), input_revision: 0, recognition_request_id: requestId}
+  return {confirmation_basis_digest: null, confirmation_scope: null, id: requestId, number: 'PPAP-20261016-001', state: 'matching', analysis_mode: 'standard', customer_preference: null, source_draft_id: null, round_id: null, completion_reason: null, estimated_points: null, created_at: '2026-10-16T00:00:00Z', updated_at: '2026-10-16T00:00:00Z', files: structuredClone(files), input_revision: 0, recognition_request_id: requestId}
 }
 
 test('a prepared draft retains its own task identity when the recognition reply is lost', async () => {

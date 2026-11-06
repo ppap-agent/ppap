@@ -20,7 +20,7 @@ import {Tooltip, TooltipContent, TooltipProvider, TooltipTrigger} from '../compo
 import {FileName} from '../journey/file-name'
 import {AccountMenu, useAccess} from '../journey/access'
 import {FeishuPicker, FeishuFolderPicker, type DrivePickerSource} from './feishu-picker'
-import {useTaskAcceptance, type AuditAcceptanceAdapter} from './task-acceptance'
+import {confirmationScope, useTaskAcceptance, type AuditAcceptanceAdapter} from './task-acceptance'
 import {useTaskRecognition, type AuditRecognitionAdapter} from './task-recognition'
 import {AuditExcludedFiles, AuditWorkspace} from './workspace'
 import type {OriginalRenderer} from './review-content'
@@ -339,12 +339,13 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   }
   const confirmation = task ? acceptance.observations[task.id] : undefined
   const confirmationLocked = Boolean(confirmation && confirmation.phase !== 'rejected' || task?.acceptance?.state === 'pending' && confirmation?.phase !== 'rejected')
+  const scope = task ? confirmationScope(task) : null
   const basisNeedsRefresh = Boolean(task && acceptance.needsBasisRefresh(task))
-  const canConfirm = !basisNeedsRefresh && Boolean(task?.confirmation_basis_digest) && task?.state === 'pending_confirm' && matched.length > 0 && matchingFiles.every(row => row.match?.state === 'unmatched' || row.match?.state === 'reference' || row.match?.state === 'matched' && row.match.rule) && !confirmationLocked && !recognitionLocked && !recognitionDirty && recognitionState?.phase !== 'conflict'
+  const canConfirm = Boolean(scope?.target_file_version_ids.length) && !basisNeedsRefresh && Boolean(task?.confirmation_basis_digest) && task?.state === 'pending_confirm' && matched.length > 0 && matchingFiles.every(row => row.match?.state === 'unmatched' || row.match?.state === 'reference' || row.match?.state === 'matched' && row.match.rule) && !confirmationLocked && !recognitionLocked && !recognitionDirty && recognitionState?.phase !== 'conflict'
   function confirm(current: AuditTask) {
     taskReadEpoch.current.set(current.id, (taskReadEpoch.current.get(current.id) || 0) + 1)
     taskReads.current.delete(current.id)
-    void acceptance.confirm({...current, files: structuredClone(files)})
+    void acceptance.confirm(current)
   }
   function changeReport(next: AuditTask) {
     taskReadEpoch.current.set(next.id, (taskReadEpoch.current.get(next.id) || 0) + 1); taskReads.current.delete(next.id)
@@ -872,10 +873,11 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
             <MatchingFeedback gaps={batch[0].match!.gaps} onCheck={() => setStep(batch[0].match!.gaps.some(gap => gap === 'matching_customer_required' || gap === 'matching_customer_conflict') ? 'upload' : 'check')} onRules={rules ? () => showSurface('requirements') : undefined}/>
             <ul aria-label="同一原因的文件" className="divide-y rounded-md border">{batch.map(row => <li key={row.file.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-3 py-2"><h3 className="min-w-0 flex-1 basis-64 font-medium"><FileName name={row.file.original_filename}/></h3><dl className="flex flex-wrap gap-x-4 gap-y-1 text-xs">{matchFields(row).filter(([label]) => !sharedFields.some(field => field[0] === label)).map(([label, value]) => <div className="flex min-w-0 gap-1.5" key={label}><dt className="text-muted-foreground">{label}</dt><dd className="break-words">{value || '—'}</dd></div>)}</dl><Badge variant="warning">未匹配</Badge><Button variant="ghost" size="sm" onClick={() => remove(row.file.id)}>移除</Button></li>)}</ul>
           </section> : matchRow(batch[0]))}</div></section>)}
+          {task.state === 'pending_confirm' && scope && !recognitionDirty && <section aria-label="本次审核范围" className="space-y-2 rounded-md border p-4 text-sm"><h2 className="font-medium">本次审核范围</h2><p>进入审核 {scope.target_file_version_ids.length} 份 · 比对资料 {scope.reference_file_version_ids.length} 份（不单独审核或收费）</p>{scope.excluded_files.length > 0 && <><p>以下文件不进入本次审核，也不计费：</p><ul className="space-y-2">{scope.excluded_files.map(row => <li key={row.file_version_id} className="break-words">{task.files.find(file => file.file.id === row.file_version_id)!.file.original_filename}：{row.reason}</li>)}</ul></>}{!scope.target_file_version_ids.length && <p>没有可受理的待审文件。请先处理排除原因，再核对审核依据。</p>}</section>}
           <footer className="sticky bottom-0 z-10 -mx-6 space-y-4 border-t bg-background/95 px-6 py-4 backdrop-blur-sm max-sm:-mx-4 max-sm:px-4">{noMatches && <p className="text-muted-foreground">没有可进入审核的匹配文件。可以结束任务，不扣费、不生成报告。</p>}
             {(noMatches ? endInputsDirty : recognitionDirty) && <p role="status" className="text-muted-foreground">文件或规则选择已有变更，请重新识别后再确认或结束任务。</p>}
             {confirmation?.message && <Alert data-request-id={confirmation.requestId} variant={confirmation.phase === 'rejected' ? 'default' : 'destructive'}><AlertTitle>{confirmation.phase === 'rejected' ? '本次未受理' : '受理结果待核对'}</AlertTitle><AlertDescription><p>{confirmation.staleBasisDigest && task.confirmation_basis_digest && !basisNeedsRefresh ? '已读取当前审核依据，请核对后重新确认。' : confirmation.message}</p><Button variant="outline" size="sm" onClick={() => openSupport({scenario: '确认审核', traceId: confirmation.traceId, facts: [{label: '任务标识', value: task.id}, {label: '确认请求', value: confirmation.requestId}, {label: '受理状态', value: confirmation.phase === 'rejected' ? '明确未受理' : '尚未确认'}, {label: '服务说明', value: confirmation.message}]})}>联系支持</Button></AlertDescription></Alert>}
-            {task.state === 'pending_confirm' && matched.length > 0 && !confirmationLocked && (basisNeedsRefresh || !task.confirmation_basis_digest) && <Alert><AlertTitle>请刷新审核依据</AlertTitle><AlertDescription><p>刷新只读取当前规则，不会开始审核。核对后需要再次确认。</p><Button variant="outline" onClick={() => void recover(task.id)}>刷新审核依据</Button></AlertDescription></Alert>}
+            {task.state === 'pending_confirm' && matched.length > 0 && !confirmationLocked && (basisNeedsRefresh || !task.confirmation_basis_digest || !scope) && <Alert><AlertTitle>请刷新审核依据</AlertTitle><AlertDescription><p>刷新只读取当前规则，不会开始审核。核对后需要再次确认。</p><Button variant="outline" onClick={() => void recover(task.id)}>刷新审核依据</Button></AlertDescription></Alert>}
             {endStatus[task.id] === 'rejected' && <Alert><AlertTitle>结束请求已拒绝</AlertTitle><AlertDescription>输入版本可能已更新。当前文件与选择已保留，请读取当前任务后再操作。<Button variant="outline" onClick={() => void recover(task.id)}>读取当前任务</Button></AlertDescription></Alert>}
             <div className="flex flex-wrap items-center justify-between gap-3"><Button variant="outline" disabled={confirmationLocked || endStatus[task.id] === 'sending' || endStatus[task.id] === 'unknown'} onClick={() => setStep('check')}><ArrowLeft/>上一步</Button>{noMatches ? <Button disabled={Boolean(endStatus[task.id])} onClick={() => void endTask(task)}>{endStatus[task.id] === 'sending' ? '正在结束任务…' : '结束任务'}</Button> : <div className="flex flex-wrap gap-2">{confirmation && ['unknown', 'reading'].includes(confirmation.phase) && <Button variant="outline" disabled={confirmation.phase === 'reading'} onClick={() => void acceptance.reconcile(task)}>{confirmation.phase === 'reading' ? '正在读取受理结果…' : '读取受理结果'}</Button>}<span className="self-center text-sm tabular-nums text-muted-foreground">预计 {task.estimated_points ?? '—'} 点{task.estimated_points == null && '（待确认）'}</span><Button disabled={!canConfirm} onClick={() => confirm(task)}>{confirmation?.phase === 'sending' ? '正在确认…' : '开始审核'}<ArrowRight/></Button></div>}</div>
           </footer>
