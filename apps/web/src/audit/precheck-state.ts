@@ -44,15 +44,24 @@ export function precheckIsCurrent(snapshot: PrecheckReceipt, task: Pick<Task, 'i
   return snapshot.task_id === task.id && snapshot.input_revision === (task.input_revision ?? 0) && snapshot.current
 }
 
+/** Visibility follows server-owned preparation or Suite identity, never a legacy profile. */
+export function hasTaskPrecheck(task: Pick<Task, 'files' | 'precheck'>) {
+  return Boolean(task.precheck) || task.files.some(file => file.selection === 'selected' && file.match?.state === 'matched' && file.match.rule?.body.kind === 'engine' && Boolean(string(record(file.match.rule.body).suite_key).trim()))
+}
+
 export function checkerLabel(file: Task['files'][number], snapshot?: PrecheckReceipt | null) {
-  const body = file.match?.rule?.body
+  if (file.match?.state === 'reference') return '比对资料 · 不单独审核或收费'
+  const rule = file.match?.rule, body = rule?.body
   if (body?.kind === 'presence') return '文件存在性检查'
-  if (!body || body.kind !== 'engine') return file.match?.state === 'reference' ? '比对资料 · 不单独审核或收费' : '尚未确定适用规则'
-  const rows = record(snapshot?.result).files
-  const profile = Array.isArray(rows) ? record(record(rows.find(row => record(row).file_version_id === file.file.id)).checker).profile : null
-  if (profile === 'v2' || profile === 'v3') return `使用通用 ${profile.toUpperCase()} 检查，客户专属条款可能未覆盖`
-  if (body.rule_profile === 'v4') return `${body.customers?.join('、') || '客户'} V4 检查`
-  return `使用通用 ${body.rule_profile === 'v3' ? 'V3' : 'V2'} 检查，客户专属条款可能未覆盖`
+  if (!body || body.kind !== 'engine') return '尚未确定适用规则'
+  const rows = record(snapshot?.input).files
+  const frozen = Array.isArray(rows) ? record(rows.find(row => record(record(row).file).id === file.file.id)) : {}
+  const target = record(frozen.suite_target), execution = record(frozen.rule_execution)
+  const title = string(record(target.rules).title) || string(record(body).title) || rule?.title || `${body.type}检查`
+  if (execution.mode === 'checker_core' && string(target.suite_revision_id) && string(target.suite_key)) return `${title} · 本次采用的检查${target.verification === 'verified' ? '' : ' · 需要重新验证'}`
+  if (execution.mode === 'unavailable') return `${title} · 尚无可运行的检查，未检查`
+  if (string(record(body).suite_key).trim()) return `${title} · 按本企业采用版本预检`
+  return `${title} · 检查来源尚未确认，不代表已检查`
 }
 
 export function precheckFiles(snapshot: PrecheckReceipt): {version: string; name: string}[] {

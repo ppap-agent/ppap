@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {components} from '../generated/openapi.ts'
-import {checkerLabel, precheckFacts, precheckFiles, precheckIsCurrent, preparationAction, type PrecheckReceipt} from './precheck-state.ts'
+import {checkerLabel, hasTaskPrecheck, precheckFacts, precheckFiles, precheckIsCurrent, preparationAction, type PrecheckReceipt} from './precheck-state.ts'
 
 type File = components['schemas']['AuditTaskFile']
 const file: File = {file: {id: 'v1', file_id: 'f1', original_filename: '原件.xlsx', content_type: 'application/octet-stream', byte_size: 1, sha256: null, status: 'ready'}, selection: 'selected', removal_reason: null, validation: {state: 'valid', reasons: []}, match: {state: 'matched', rule: {id: 'rule', title: '适用规则', body: {kind: 'engine', rule_profile: 'v4', type: '控制计划', customers: ['蔚来'], models: [], parts: [], rules: []}}, document_type: '控制计划', gaps: [], metadata: {customer: null, model: null, part: null, part_number: null}}}
@@ -63,4 +63,24 @@ test('an unimplemented or unfamiliar check is retained as a detail without inven
     assert.equal(preparationAction(file, facts), 'ready')
     assert.equal(facts[0].status, 'not_checked')
   }
+})
+
+test('precheck visibility comes from server Suite identity or a persisted receipt, not profile labels', () => {
+  assert.equal(hasTaskPrecheck({files: [file]}), false)
+  for (const profile of ['v2', 'v3', 'v4', undefined]) {
+    const matched = {...file, match: {...file.match!, rule: {...file.match!.rule!, body: {...file.match!.rule!.body, rule_profile: profile, suite_key: 'control-plan'}}}} as File
+    assert.equal(hasTaskPrecheck({files: [matched]}), true)
+    assert.equal(hasTaskPrecheck({files: [{...matched, selection: 'removed'}]}), false)
+    assert.equal(hasTaskPrecheck({files: [{...matched, match: {...matched.match!, state: 'reference'}}]}), false)
+    assert.doesNotMatch(checkerLabel(matched), /V[234]/)
+    assert.match(checkerLabel(matched), /本企业采用版本/)
+  }
+  assert.equal(hasTaskPrecheck({files: [], precheck: snapshot({})}), true)
+})
+test('checker labels use exact frozen Suite facts and do not invent a generic fallback', () => {
+  assert.match(checkerLabel(file, snapshot({files: [{file_version_id: 'v1', checker: {profile: 'v2'}}]})), /来源尚未确认/)
+  const receipt = {...snapshot({}), input: {files: [{file: file.file, rule_execution: {mode: 'checker_core'}, suite_target: {suite_revision_id: 'revision-a', suite_key: 'control-plan', rules: {title: '控制计划检查'}, verification: 'unverified'}}]}}
+  assert.equal(checkerLabel(file, receipt), '控制计划检查 · 本次采用的检查 · 需要重新验证')
+  assert.doesNotMatch(checkerLabel({...file, file: {...file.file, id: 'other'}}, receipt), /本次采用的检查/)
+  assert.match(checkerLabel(file, {...receipt, input: {files: [{file: file.file, rule_execution: {mode: 'unavailable'}}]}}), /尚无可运行的检查，未检查/)
 })
