@@ -30,16 +30,6 @@ class LiAutoPswAgent(NativeFacts, PswExcelAgent):
     )
     PRECHECK_METHODS = {"L17:6": "rule_6"}
 
-    def _finalize_audit_result(self, result, *, rule_no, phase, ctx=None):
-        finalized = super()._finalize_audit_result(result, rule_no=rule_no, phase=phase, ctx=ctx)
-        # Legacy PSW tracing adds broad carrier evidence. Keep the actual V4
-        # cell reads as well, including the independently submitted checklist.
-        precise = self._evidence_from_reads(ctx) if ctx is not None else None
-        if precise and finalized.evidence:
-            combined = finalized.evidence.model_copy(update={"sources": (*finalized.evidence.sources, *precise.sources)})
-            return finalized.model_copy(update={"evidence": combined})
-        return finalized
-
     @staticmethod
     def _delivery_sheets(workbook):
         return [sheet for sheet in workbook.worksheets if any(name in sheet.title for name in ("生产件批准交付物文件清单", "生产件批准提交清单", "PSW交付物清单"))]
@@ -145,6 +135,7 @@ class LiAutoPswAgent(NativeFacts, PswExcelAgent):
                 if embedded and not declared:
                     other = own
                 if required or own or other or (embedded and declared):
+                    ctx.record_execution()
                     if not pair_identity(own) or pair_identity(own) != pair_identity(other):
                         return "UNABLE", "保证书与交付物清单零件号、项目或版本缺失或不一致，不能配对。"
             rows = _rows(ctx, workbook, {"item": ["项目", "交付物", "提交项目"], "attachment": ["附件"]}, ("item", "attachment"), version, sheets=sheets)
@@ -153,6 +144,7 @@ class LiAutoPswAgent(NativeFacts, PswExcelAgent):
                 if not row["item"] or _identity(row["item"]) == _identity("零件认证相关"):
                     continue
                 checked += 1
+                ctx.record_execution()
                 if not row["attachment"]:
                     return "NG", "交付物清单业务行的附件未填写。"
             return ("PASS", "已核实交付物附件。") if checked else ("UNABLE", "清单没有可核实的业务行。")
@@ -172,8 +164,11 @@ class LiAutoPswAgent(NativeFacts, PswExcelAgent):
     def rule_9(self, ctx):
         main_sheet = Table(ctx).sheet("PSW主表")
         disposition, _, row = self._resolve_warrant_disposition(main_sheet, self._checked_controls(main_sheet))
+        ctx.record_execution()
         if disposition in {"missing_field", "invalid_selection"}:
             return "NG", "认可情况缺失或勾选不唯一。"
+        if disposition == "unknown":
+            return "UNABLE", "无法确定控件对应的认可情况选项。"
         if disposition != "conditional":
             return "PASS", "本条条件未触发。"
         if row is None:
@@ -186,6 +181,7 @@ class LiAutoPswAgent(NativeFacts, PswExcelAgent):
         year, month = divmod(offset, 12)
         month += 1
         earliest = today.replace(year=year, month=month, day=min(today.day, calendar.monthrange(year, month)[1]))
+        ctx.record_execution()
         return ("PASS", "条件批准日期在三个日历月内。") if earliest <= approved <= today else ("NG", "条件批准日期不在当前日期之前的三个日历月内。")
 
     def _precheck_disposition(self, ctx):
@@ -193,6 +189,8 @@ class LiAutoPswAgent(NativeFacts, PswExcelAgent):
         disposition, _, _ = self._resolve_warrant_disposition(sheet, self._checked_controls(sheet))
         if disposition in {"missing_field", "invalid_selection"}:
             return "NG", "认可情况字段缺失，或选项未保持唯一。"
+        if disposition == "unknown":
+            return "UNABLE", "无法确定控件对应的认可情况选项。"
         return "PASS", "认可情况字段及唯一勾选已核实。"
 
     def precheck(self):

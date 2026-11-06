@@ -347,13 +347,16 @@ def check_psw_submission_reason(agent: Any, ctx: RuleContext) -> tuple[str, str]
                 sources.append(EvidenceSource(kind="visual" if visual else "structure", locator=json.dumps(locator, ensure_ascii=False, sort_keys=True), excerpt=str(excerpt)[:500]))
 
             facts.update(observe_excel_region(agent.audit_file, sheet.ws, region, PSW_RULE_FIELDS[7], labels, cache=agent._psw_field_cache, witness=witness, whole_field=True))
-    evidence = native_cell_evidence(ctx, str(agent.audit_file.file_url))
+    evidence_reader = getattr(agent, "_evidence_from_reads", None)
+    evidence = evidence_reader(ctx) if callable(evidence_reader) else native_cell_evidence(ctx, str(agent.audit_file.file_url))
     if evidence is not None and sources:
         evidence = evidence.model_copy(update={"required": "visual", "used": "both", "prepared_format": "png", "sources": (*evidence.sources, *sources)})
     if not hasattr(agent, "_psw_field_evidence"):
         agent._psw_field_evidence = {}
     agent._psw_field_evidence[7] = evidence
     result = evaluate_psw_observation(7, facts)
+    if result.checks_performed:
+        ctx.record_execution()  # The composite submission-reason predicate was decided.
     return result.status, result.suggestions
 
 

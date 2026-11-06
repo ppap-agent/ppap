@@ -47,10 +47,11 @@ def check_clause(context: Any, resources: dict[str, Any]) -> AuditResultItem:
     if method not in names:
         raise ValueError("standard_suite_method_missing")
     index = names.index(method)
-    if getattr(type(checker), "TARGET_EXCEL_AGENT_CLASS", None) is not None:
-        # The configured PDF carrier owns its conversion/native evidence policy.
+    source_check = getattr(checker, "check_source_rule", None)
+    if callable(source_check):
+        # The configured carrier owns its conversion/native evidence policy.
         # Never call its broad .check() exception fallback into generic AI.
-        item = checker.check_source_rule(index)
+        item = source_check(index)
     else:
         direct = getattr(checker, "_execute_rule_check", None)
         item = direct(index + 1) if callable(direct) else checker.check(index)

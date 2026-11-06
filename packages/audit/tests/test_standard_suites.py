@@ -226,3 +226,55 @@ def test_pdf_suite_keeps_conversion_page_evidence():
     result = check_clause(context, {"carriers": {".pdf": implementation}, "methods": {"1": method}})
     assert result.status == "UNABLE"
     assert result.suggestions == "original page was incomplete"
+
+
+@pytest.mark.parametrize("version", ["v2", "v3"])
+def test_word_suite_uses_original_visual_hook_instead_of_excel(version):
+    from audit.contracts import AuditResultItem
+
+    module = f"audit.checkers.{version}.psw_docx_agent"
+    cls = importlib.import_module(module).PswDocxAgent
+    checker = object.__new__(cls)
+    checker.temp_files = []
+    checker.audit_file = AuditInput(audit_id="frozen", file_url="/frozen/original.docx")
+    checker._execute_rule_check = lambda *_: pytest.fail("Word visual clauses must not read an XLSX carrier")
+    calls = []
+    checker.check_source_rule = lambda ith: calls.append(ith) or AuditResultItem(classification="stamp", item="stamp", priority="P0", status="UNABLE", suggestions="unconfirmed")
+    implementation = f"{module}:PswDocxAgent"
+    context = SimpleNamespace(audit_file=checker.audit_file, clause_id="3", cache={("standard-checker", "frozen", implementation): checker})
+    result = check_clause(context, {"carriers": {".docx": implementation}, "methods": {"3": discover_declared_rules(cls)[2][0]}})
+    assert calls == [2]
+    assert result.status == "UNABLE" and result.clause_id == "3"
+
+
+@pytest.mark.parametrize("version", ["v2", "v3"])
+@pytest.mark.parametrize("performed", [False, True])
+def test_native_adapter_publishes_only_actual_predicate_count(tmp_path, version, performed):
+    from audit.kinds import PpapDocumentType
+    from openpyxl import Workbook
+
+    module = importlib.import_module(f"audit.checkers.{version}.excel_agent")
+
+    class NativeChecker(module.ExcelAgent):
+        DOC_TYPE = PpapDocumentType.PSW
+
+        @module.rule("actual equality")
+        def rule_1(self, ctx):
+            if performed:
+                value = ctx.workbook.active["A1"].value
+                ctx.note_cell(ctx.workbook.active.title, 1, 1)
+                ctx.record_execution()
+                return ("PASS", "equal") if value == "known" else ("NG", "different")
+            return "PASS", "no predicate ran"
+
+    workbook = Workbook()
+    workbook.active["A1"] = "known"
+    path = tmp_path / "original.xlsx"
+    workbook.save(path)
+    workbook.close()
+    checker = NativeChecker(AuditInput(audit_id="frozen", file_url=str(path)), RuleInput(rule_id="r", type="零件提交保证书", rules=[{"id": "1"}]))
+    try:
+        result = checker._execute_rule_check(1)
+        assert result.checks_performed == int(performed)
+    finally:
+        checker.close()

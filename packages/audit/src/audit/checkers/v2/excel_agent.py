@@ -271,6 +271,11 @@ class ExcelAgent(BaseAgent):
             return "NG", ctx.build_ng_summary(existing=normalized_message)
         return normalized_status, normalized_message
 
+    def _evidence_from_reads(self, ctx: RuleContext):
+        from audit.engine.checkers.excel_field_evidence import native_cell_evidence
+
+        return native_cell_evidence(ctx, str(self._source_path or self.audit_file.file_url))
+
     def _finalize_audit_result(
         self,
         result: AuditResult,
@@ -324,6 +329,8 @@ class ExcelAgent(BaseAgent):
                     priority=self._get_rule_priority(rule_no),
                     status=result.upper(),
                     suggestions=message,
+                    checks_performed=ctx.execution_count,
+                    evidence=self._evidence_from_reads(ctx),
                 ),
                 rule_no=rule_no,
                 phase="decision",
@@ -341,6 +348,8 @@ class ExcelAgent(BaseAgent):
                     priority=self._get_rule_priority(rule_no),
                     status=status,
                     suggestions=suggestions,
+                    checks_performed=ctx.execution_count if ctx is not None else None,
+                    evidence=self._evidence_from_reads(ctx) if ctx is not None else None,
                 ),
                 rule_no=rule_no,
                 phase="guard",

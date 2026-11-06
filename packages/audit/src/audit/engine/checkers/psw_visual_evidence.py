@@ -229,7 +229,9 @@ def evaluate_psw_observation(rule_no: int, observation: Mapping[str, object], *,
         raise ValueError(f"unsupported PSW rule {rule_no}")
     if not suggestions:
         suggestions = f"规则{rule_no}检查通过" if status == "PASS" else f"规则{rule_no}检查不通过"
-    return AuditResult(classification=PSW_RULE_LABELS[rule_no], item=PSW_RULE_LABELS[rule_no], priority="P0", status=status, suggestions=suggestions)
+    # This function evaluated one named, deterministic rule over established
+    # source facts. Unknown observations do not claim a completed assertion.
+    return AuditResult(classification=PSW_RULE_LABELS[rule_no], item=PSW_RULE_LABELS[rule_no], priority="P0", status=status, suggestions=suggestions, checks_performed=int(status in {"PASS", "NG"}))
 
 
 __all__ = [

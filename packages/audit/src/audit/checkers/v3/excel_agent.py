@@ -1026,7 +1026,7 @@ class ExcelAgent(BaseAgent):
                         priority=self._get_rule_priority(rule_no),
                         status=result.upper(),
                         suggestions=message,
-                        checks_performed=ctx.execution_count if type(self).CLAUSE_BOUND_CHECKS else None,
+                        checks_performed=ctx.execution_count,
                         empty_scope_basis=empty_basis,
                         scope=self._recorded_scan_scope(ctx),
                     ),
@@ -1059,7 +1059,7 @@ class ExcelAgent(BaseAgent):
                 status, suggestions, performed = stop.status, stop.message, None
             else:
                 status, suggestions = self._finalize_rule_result(status=stop.status, message=stop.message, ctx=ctx)
-                performed = ctx.execution_count if type(self).CLAUSE_BOUND_CHECKS else None
+                performed = ctx.execution_count
             item = self.agent_rules[rule_no - 1] if rule_no <= len(self.agent_rules) else f"[{self.document_type_name}]规则检查-{rule_no}"
             return self._finalize_audit_result(
                 self._with_questions(

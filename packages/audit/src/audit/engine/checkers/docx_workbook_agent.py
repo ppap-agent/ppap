@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -11,6 +13,7 @@ from documents.files import download_file_sync
 from documents.word import (
     WordDocument,
     WordImageEvidence,
+    WordParagraphBlock,
     WordTableBlock,
     extract_docx_structure,
     resolve_docx_image_evidence,
@@ -19,6 +22,7 @@ from documents.word import (
 from openpyxl import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
+from audit.contracts import AuditEvidence
 from audit.engine.rule_engine import GuardStop, RuleContext
 from audit.engine.rule_engine.contracts import Decision, RuleResource
 from audit.engine.rule_engine.excel_ops import DefaultExcelOps
@@ -140,6 +144,35 @@ class WordEvidenceExcelOps(DefaultExcelOps):
         cell = max(matching, key=lambda item: len(item.source.path))
         return cell.row + 1, cell.col + 1
 
+    def source_locator(self, part: str, path: str) -> dict | None:
+        """Map an observed OOXML path to its real, public original location."""
+        if part != "word/document.xml":
+            return None
+        for block in self._document.blocks:
+            if block.source.part != part:
+                continue
+            if isinstance(block, WordTableBlock):
+                index = re.fullmatch(r"body/tbl\[(\d+)\]", block.source.path)
+                if index is None:
+                    continue
+                for cell in block.cells:
+                    if cell.origin and (path == cell.source.path or path.startswith(cell.source.path + "/")):
+                        return {"kind": "docx_cell", "table": int(index[1]), "row": cell.row + 1, "column": cell.col + 1}
+            elif isinstance(block, WordParagraphBlock):
+                index = re.fullmatch(r"body/p\[(\d+)\]", block.source.path)
+                if index is not None and (path == block.source.path or path.startswith(block.source.path + "/")):
+                    return {"kind": "docx_paragraph", "paragraph": int(index[1])}
+        return None
+
+    def cell_locator(self, ws: Worksheet, row: int, column: int) -> dict | None:
+        table = self._table_by_sheet.get(id(ws))
+        if table is None:
+            return None
+        for cell in table.cells:
+            if cell.origin and cell.row <= row - 1 < cell.row + cell.rowspan and cell.col <= column - 1 < cell.col + cell.colspan:
+                return self.source_locator(cell.source.part, cell.source.path)
+        return None
+
     def get_checkbox_controls(
         self,
         ws: Worksheet,
@@ -228,12 +261,44 @@ class StructuredDocxWorkbookMixin:
                 workbook,
                 self._word_images_cache,
             )
-        return RuleContext(
+        audit = getattr(self, "audit_file")
+        version = str((audit.file_metadata or {}).get("file_version_id") or audit.audit_id)
+        context = RuleContext(
             ops=self._word_ops_cache,
             workbook=workbook,
             resource=resource,
             source_path=None,
+            file_version_id=version,
         )
+        context.bind_workbook(workbook, version)
+        return context
+
+    def _evidence_from_reads(self, ctx: RuleContext) -> AuditEvidence | None:
+        from .excel_field_evidence import native_cell_evidence
+
+        audit = getattr(self, "audit_file")
+        evidence = native_cell_evidence(ctx, audit.file_url)
+        ops = self._word_ops_cache
+        if evidence is None or ops is None:
+            return None
+        own_version = str((audit.file_metadata or {}).get("file_version_id") or audit.audit_id)
+        sources = []
+        for (version, sheet, row, column), source in zip(ctx.cell_reads(), evidence.sources, strict=True):
+            # Referenced workbooks keep their own native cell coordinates. A
+            # same-named worksheet is not a table in this Word original.
+            if version != own_version:
+                sources.append(source)
+                continue
+            locator = ops.cell_locator(ctx.workbook[sheet], row, column) if sheet in ctx.workbook.sheetnames else None
+            if locator is None:
+                # Keep an unresolved locator explicit so Core cannot publish a
+                # PASS using an invented Word cell or an Excel coordinate.
+                source = source.model_copy(update={"locator": "docx://unmapped-read"})
+            else:
+                locator["file_version_id"] = version
+                source = source.model_copy(update={"locator": json.dumps(locator, ensure_ascii=False)})
+            sources.append(source)
+        return evidence.model_copy(update={"sources": tuple(sources)})
 
     def _load_workbook(self) -> Workbook:
         if self._workbook_cache is not None:

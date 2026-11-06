@@ -187,6 +187,7 @@ def finalize_excel_psw_result(
         audit=audit,
         rule_no=rule_no,
         used=used,
+        sources=result.evidence.sources if result.evidence is not None else None,
     )
 
 
