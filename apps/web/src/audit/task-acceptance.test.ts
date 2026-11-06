@@ -88,3 +88,22 @@ test('null confirmation basis cannot start a new audit but accepted history rema
   assert.equal(controller.restore(accepted(input, 'original-request')), true)
   assert.equal(controller.get(input.id)!.phase, 'accepted')
 })
+
+test('navigation recovery adopts only the original operation rejection and preserves its stale basis', async () => {
+  const old = pending(), fresh = pending('b'.repeat(64)), commands: string[] = []
+  const controller = createTaskAcceptance({
+    confirm: async (_task, requestId) => {commands.push(requestId); throw new TypeError('response lost')},
+    readTask: async () => {throw new Error('navigation already read this receipt')},
+  }, () => assert.fail('rejection cannot become acceptance'))
+  await controller.confirm(old)
+  controller.restore(rejected(fresh, 'another-request'))
+  assert.equal(controller.get(old.id)!.phase, 'unknown')
+  await controller.confirm(fresh)
+  assert.equal(commands.length, 1)
+  controller.restore(rejected(fresh, commands[0]))
+  assert.equal(controller.get(old.id)!.phase, 'rejected')
+  assert.equal(controller.needsBasisRefresh(old), true)
+  assert.equal(controller.needsBasisRefresh(fresh), false)
+  await controller.confirm(old)
+  assert.equal(commands.length, 1)
+})
