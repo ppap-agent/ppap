@@ -43,8 +43,9 @@ def _clean_env(**extra: str):
 
 class AuditFlowTests(unittest.TestCase):
     @pytest.fixture(autouse=True)
-    def _owner_store(self, auth_store_factory):
+    def _owner_store(self, auth_store_factory, core_system):
         self.auth_store = auth_store_factory
+        self.core = core_system
 
     def setUp(self):
         self._env = _clean_env(FEISHU_APP_ID="cli_test", FEISHU_APP_SECRET="secret", PPAP_BUILD_SHA="a" * 40)
@@ -52,6 +53,9 @@ class AuditFlowTests(unittest.TestCase):
         self.settings = Settings(usage_charge_enabled=False)
         self.store = self.auth_store(self.settings)
         self.store.seed_isolated_dev()
+        self.core.adopt_presence(self.store)
+        self.core.install(self.store)
+        self.originals = {}
         self.client = TestClient(create_app(self.settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.store))
 
     def tearDown(self):
@@ -71,6 +75,8 @@ class AuditFlowTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
 
     def _upload(self, name: str, body: bytes, file_id: str | None = None) -> dict:
+        if name.endswith(".xlsx"):
+            body = self.core.workbook(body.decode())
         meta = {"original_filename": name, "content_type": "application/octet-stream", "byte_size": len(body)}
         created = self.client.post(f"/files/{file_id}/versions", json=meta) if file_id else self.client.post("/files", json=meta)
         self.assertEqual(created.status_code, 201)
@@ -78,6 +84,7 @@ class AuditFlowTests(unittest.TestCase):
         self.assertEqual(self.client.put(f"/files/{file_id}/versions/{vid}/blob", content=body).status_code, 200)
         ready = self.client.post(f"/files/{file_id}/versions/{vid}/finalize")
         self.assertEqual(ready.status_code, 200)
+        self.originals[vid] = body
         return ready.json()
 
     def _finish_worker(self) -> None:
@@ -232,12 +239,12 @@ class AuditFlowTests(unittest.TestCase):
         body = self.client.get(f"/rounds/{round_id}").json()
         self.assertEqual(body["execution"], "completed")
         statuses = {row["status"] for row in body["findings"]}
-        self.assertEqual(statuses, {"PASS"})
+        self.assertEqual(statuses, {"PASS"}, body["findings"])
         self.assertFalse(body["coverage"]["locator_gap"])
         self.assertTrue(any(row["locator"] and row["locator"]["kind"] == "file_version" for row in body["findings"]))
         original = body["findings"][0]
         download = self.client.get(f"/rounds/{round_id}/files/{original['locator']['file_id']}/versions/{original['locator']['file_version_id']}/download")
-        self.assertIn(download.content, {b"target-bytes", b"reference-bytes"})
+        self.assertIn(download.content, {self.originals[target["id"]], self.originals[reference["id"]]})
 
     def test_standard_result_writeback_failure_does_not_fabricate_engine_results_or_new_audits(self):
         self._login("alice")
@@ -328,7 +335,7 @@ class AuditFlowTests(unittest.TestCase):
         finding = visible.json()["findings"][0]
         original = self.client.get(f"/rounds/{round_id}/files/{finding['locator']['file_id']}/versions/{finding['locator']['file_version_id']}/download")
         self.assertEqual(original.status_code, 200)
-        self.assertEqual(original.content, b"secret-bytes")
+        self.assertEqual(original.content, self.originals[target["id"]])
         reviewed = self.client.put(
             f"/rounds/{round_id}/reviews",
             json={"item_key": finding["item_key"], "judgment": "同意", "rationale": "x", "next_step": "y", "version": 0},
@@ -442,8 +449,8 @@ class AuditFlowTests(unittest.TestCase):
         self.assertIsNone(new["findings"][0]["review"])
         old_bytes = self.client.get(f"/rounds/{old_id}/files/{first['file_id']}/versions/{first['id']}/download")
         new_bytes = self.client.get(f"/rounds/{new_id}/files/{second['file_id']}/versions/{second['id']}/download")
-        self.assertEqual(old_bytes.content, b"version-one")
-        self.assertEqual(new_bytes.content, b"version-two")
+        self.assertEqual(old_bytes.content, self.originals[first["id"]])
+        self.assertEqual(new_bytes.content, self.originals[second["id"]])
 
     def test_staging_cannot_be_accepted(self):
         self._login("alice")
@@ -567,7 +574,7 @@ class AuditFlowTests(unittest.TestCase):
         self._finish_worker()
         body = self.client.get(f"/rounds/{round_id}").json()
         keys = {row["item_key"] for row in body["findings"]}
-        self.assertEqual(keys, {f"target:{first['id']}", f"target:{second['id']}"})
+        self.assertEqual(keys, {f"{first['id']}:rule:presence", f"{second['id']}:rule:presence"})
         self.assertEqual(sorted(body["coverage"]["checked"]), ["a.xlsx", "b.xlsx"])
         self.assertTrue(any("context.pdf" in row for row in body["coverage"]["unchecked"]))
         self.assertFalse(body["coverage"]["locator_gap"])
@@ -604,14 +611,25 @@ class AuditFlowTests(unittest.TestCase):
         bob_list = self.client.get("/rounds").json()["rounds"]
         self.assertEqual([row["id"] for row in bob_list], [round_id])
 
-    def test_selected_rule_items_are_frozen_in_confirmed_order(self):
-        from audit.contracts import AuditEvidence, AuditResultItem, EvidenceSource
-        from audit.engine import app_runtime
-        from audit.engine.checkers.rule_declarations import declarations_for_target
+    def test_uploaded_rule_without_binding_cannot_claim_presence_pass(self):
+        self._login("alice")
+        source = self._upload("new-rule.json", b"{}")
+        uploaded = self.client.post("/rules", json={"title": "新规则", "body": rule_body(), "source_file_version_id": source["id"]})
+        self.assertEqual(uploaded.status_code, 201)
+        draft = self.client.post("/drafts", json={"items": [{"file_version_id": source["id"], "role": "target", "rule_version_id": uploaded.json()["id"]}]}).json()
+        accepted = self.client.post(f"/drafts/{draft['id']}/accept", json={"idempotency_key": "unimplemented-upload"})
+        self.assertEqual(accepted.status_code, 201)
+        self._finish_worker()
+        result = self.client.get("/rounds/" + accepted.json()["id"]).json()
+        self.assertEqual(result["execution"], "completed")
+        self.assertEqual(result["findings"], [])
+        self.assertEqual([row["coverage"] for row in result["coverage"]["rule_items"]], ["unsupported"])
+        self.assertEqual(self.core.calls, 1)
 
+    def test_selected_rule_items_are_frozen_in_confirmed_order(self):
         self._login("alice")
         source = self._upload("rules.json", b"{}")
-        mapped_text = declarations_for_target("控制计划", "plan.xlsx", "v3")[0][1]
+        mapped_text = "明确绑定的首条检查"
         body = rule_body()
         body["rules"] = [
             {"id": "keep", "category": mapped_text, "priority": "P1", "rule_to_check": mapped_text, "type_of_rule": "text"},
@@ -619,6 +637,24 @@ class AuditFlowTests(unittest.TestCase):
         ]
         published = self.client.post("/rules", json={"title": "控制计划清单", "body": body, "source_file_version_id": source["id"]})
         self.assertEqual(published.status_code, 201)
+        self.core.adopt(
+            self.store,
+            published.json()["id"],
+            """from audit.contracts import AuditEvidence, AuditResultItem, EvidenceSource
+
+def check(context):
+    clause = next(row for row in context.rule.rules if row["id"] == context.clause_id)
+    from openpyxl import load_workbook
+    from io import BytesIO
+    book = load_workbook(BytesIO(context.sources[context.audit_file.audit_id]))
+    assert book.active["A1"].value == "target-bytes"
+    book.close()
+    return AuditResultItem(status="PASS", classification="规则", item=clause["rule_to_check"], priority="P0",
+        suggestions="已核对受控原件", clause_id=context.clause_id, checks_performed=1,
+        evidence=AuditEvidence(required="structure", used="structure", source_format="xlsx", prepared_format="xlsx",
+            sources=(EvidenceSource(kind="structure", locator='{"kind":"xlsx_cell","sheet":"Sheet","cell":"A1"}'),)))
+""",
+        )
         target = self._upload("plan.xlsx", b"target-bytes")
         draft = self.client.post("/drafts").json()["id"]
         self.client.put(f"/drafts/{draft}", json={"items": [{"file_version_id": target["id"], "role": "target", "rule_version_id": published.json()["id"]}]})
@@ -628,33 +664,13 @@ class AuditFlowTests(unittest.TestCase):
             "SELECT rule_execution FROM product.round_inputs WHERE round_id = %s AND role = 'target'",
             (accepted.json()["id"],),
         )
-        self.assertEqual(frozen["mode"], "rule_items")
-        self.assertEqual([row["id"] for row in frozen["items"]], ["keep", "extra"])
-        self.assertEqual(frozen["items"][0]["coverage"], "mapped")
-        self.assertEqual(frozen["items"][1]["coverage"], "mapped")
-        self.assertEqual([row["checker_index"] for row in frozen["items"]], [0, 1])
+        self.assertEqual(frozen["mode"], "checker_core")
+        accepted_rules = accepted.json()["inputs"][0]["rule"]["body"]["rules"]
+        self.assertEqual([row["id"] for row in accepted_rules], ["keep", "extra"])
+        self.assertEqual(frozen["verification"], "unverified")
+        self.assertEqual(frozen["binding"]["entrypoints"], {"keep": "checker:check", "extra": "checker:check"})
 
-        def fake_run(audit, rule, group_context=None):
-            return [
-                AuditResultItem(
-                    status="PASS",
-                    classification="规则",
-                    item=row["rule_to_check"],
-                    priority="P0",
-                    suggestions="",
-                    evidence=AuditEvidence(
-                        required="structure",
-                        used="structure",
-                        source_format="xlsx",
-                        prepared_format="xlsx",
-                        sources=(EvidenceSource(kind="structure", locator="B2"),),
-                    ),
-                )
-                for row in rule.rules
-            ]
-
-        with patch.object(app_runtime, "run_audit_engine", fake_run):
-            self._finish_worker()
+        self._finish_worker()
         loaded = self.client.get("/rounds/" + accepted.json()["id"]).json()
         self.assertEqual(loaded["findings"][0]["item_key"], target["id"] + ":rule:keep")
         self.assertEqual(loaded["findings"][0]["item"], mapped_text)
@@ -663,35 +679,14 @@ class AuditFlowTests(unittest.TestCase):
         changed = rule_body()
         changed["rules"][0]["rule_to_check"] = "新版要求"
         successor = self.client.post("/rules", json={"title": "新版", "body": changed, "source_file_version_id": source["id"], "predecessor_id": published.json()["id"]})
-        self.assertEqual(successor.status_code, 201)
+        self.assertEqual(successor.status_code, 409)
+        self.assertEqual(successor.json()["error"], "suite_head_conflict")
         replay = self.client.get("/rounds/" + accepted.json()["id"]).json()
         self.assertEqual(replay["findings"][0]["item"], mapped_text)
         self.assertEqual(replay["inputs"][0]["rule"]["id"], published.json()["id"])
 
 
 class PresenceEvaluationTests(unittest.TestCase):
-    def test_presence_does_not_import_engine(self):
-        # Engine tests can run first in discovery. Verify lazy imports in a fresh interpreter.
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                """
-import sys
-from audit.audits import RoundInput, RoundWork, evaluate_round
-work = RoundWork('r1', 't1', [RoundInput('target', 'f1', 'v1', 'a.xlsx', 'ready',
-    rule_version_id='rule-1', rule_title='资料就绪', rule_body={'kind': 'presence'})])
-assert evaluate_round(work)['findings'][0]['status'] == 'PASS'
-assert 'audit.engine' not in sys.modules
-""",
-            ],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-
     def test_round_payload_does_not_import_engine(self):
         result = subprocess.run(
             [
