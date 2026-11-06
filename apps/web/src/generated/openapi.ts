@@ -1853,6 +1853,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/suites/{suite_key}/official-update/seen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Suite Official Update Seen */
+        post: operations["suite_official_update_seen_suites__suite_key__official_update_seen_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/suites/{suite_key}/upgrades": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Suite Official Upgrade */
+        post: operations["suite_official_upgrade_suites__suite_key__upgrades_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/suites/{suite_key}/upgrades/{operation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Suite Official Upgrade Receipt */
+        get: operations["suite_official_upgrade_receipt_suites__suite_key__upgrades__operation_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/suites/{suite_key}/variants": {
         parameters: {
             query?: never;
@@ -3138,6 +3189,15 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** CheckerSource */
+        CheckerSource: {
+            /** File Version Id */
+            file_version_id: string;
+            /** Suite Key */
+            suite_key: string;
+            /** Suite Revision Id */
+            suite_revision_id: string;
+        };
         /** ConfirmedAppendix */
         ConfirmedAppendix: {
             /** Candidate Id */
@@ -3533,6 +3593,8 @@ export interface components {
             optimizations: components["schemas"]["OptimizationReceipt"][];
             /** Round Id */
             round_id: string;
+            /** Sources */
+            sources?: components["schemas"]["CheckerSource"][];
         };
         /** FileValidationJob */
         FileValidationJob: {
@@ -4445,6 +4507,12 @@ export interface components {
             latest_official_revision_id: string | null;
             /** Latest Official Version */
             latest_official_version: number | null;
+            /** Official Base Revision Id */
+            official_base_revision_id: string | null;
+            /** Official Update Available */
+            official_update_available: boolean;
+            /** Official Update Notice */
+            official_update_notice: boolean;
             /**
              * Origin
              * @enum {string}
@@ -4531,6 +4599,8 @@ export interface components {
             };
             /** Id */
             id: string;
+            /** Official Base Revision Id */
+            official_base_revision_id?: string | null;
             /** Related Suite Keys */
             related_suite_keys: string[];
             /** Resolved Digest */
@@ -4545,6 +4615,7 @@ export interface components {
             tenant_id: string | null;
             /** Title */
             title: string;
+            upgrade?: components["schemas"]["SuiteUpgradeReceipt"];
             validation: components["schemas"]["SuiteValidation"];
             /** Version */
             version: number;
@@ -4557,6 +4628,17 @@ export interface components {
             id: string;
             /** Task Id */
             task_id: string | null;
+        };
+        /** SuiteUpgradeReceipt */
+        SuiteUpgradeReceipt: {
+            /** Expected Revision */
+            expected_revision: number;
+            /** Operation Id */
+            operation_id: string;
+            /** Source Revision Id */
+            source_revision_id: string;
+            /** Target Revision Id */
+            target_revision_id: string;
         };
         /** SuiteValidation */
         SuiteValidation: {
@@ -9083,6 +9165,120 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SuitePublication"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    suite_official_update_seen_suites__suite_key__official_update_seen_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                suite_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Official Revision Id */
+                    official_revision_id: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuiteActive"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    suite_official_upgrade_suites__suite_key__upgrades_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                suite_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Expected Revision */
+                    expected_revision: number;
+                    /** Operation Id */
+                    operation_id: string;
+                    /** Source Revision Id */
+                    source_revision_id: string;
+                    /** Target Revision Id */
+                    target_revision_id: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuiteRevisionDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    suite_official_upgrade_receipt_suites__suite_key__upgrades__operation_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                operation_id: string;
+                suite_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuiteRevisionDetail"];
                 };
             };
             /** @description Validation Error */

@@ -11,6 +11,13 @@ export function editableRules(files: Record<string, string>): RuleText[] {
     return {id: row.id, text: row.rule_to_check}
   })
 }
+/** Detect raw edits even when their current JSON or rule text is invalid. */
+export function checkerEditorDirty(files: Record<string, string>, rules: RuleText[], templates: string, code: Record<string, string>): boolean {
+  let original: RuleText[] = []
+  try {original = editableRules(files)} catch { /* Unsupported original rules render an empty editor. */ }
+  const codePaths = Object.keys(files).filter(path => ['checker.py', 'resources.py'].includes(path))
+  return rules.length !== original.length || rules.some((row, index) => row.id !== original[index]?.id || row.text !== original[index]?.text) || templates !== (files['templates.json'] || '[]') || Object.keys(code).length !== codePaths.length || codePaths.some(path => code[path] !== files[path])
+}
 export function candidateChanges(files: Record<string, string>, rules: RuleText[], templates: string, code: Record<string, string>): Record<string, string> {
   const body = JSON.parse(files['rules.json']), original = editableRules(files)
   if (rules.length !== original.length || rules.some((row, index) => row.id !== original[index].id || !row.text.trim())) throw new Error('条款身份必须保持不变，规则正文不能为空。')

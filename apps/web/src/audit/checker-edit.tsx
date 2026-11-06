@@ -1,22 +1,25 @@
-import {useId, useRef, useState} from 'react'
+import {useEffect, useId, useRef, useState} from 'react'
 import {Button} from '../components/ui/button'
 import {Label} from '../components/ui/label'
 import {Textarea} from '../components/ui/textarea'
 import {definiteCheckerRejection, type CheckerRevision} from './checker-contract'
-import {candidateChanges, editableRules, nativeCheckerEditAdapter} from './checker-edit-contract'
+import {candidateChanges, checkerEditorDirty, editableRules, nativeCheckerEditAdapter} from './checker-edit-contract'
 import {writeAuditAddress} from './routes'
 
-export function CheckerEditor({revision, onSaved, disabled = false}: {revision: CheckerRevision; onSaved: (value: CheckerRevision) => void; disabled?: boolean}) {
+export function CheckerEditor({revision, onSaved, disabled = false, onBlockedChange}: {revision: CheckerRevision; onSaved: (value: CheckerRevision) => void; disabled?: boolean; onBlockedChange?: (blocked: boolean) => void}) {
   const id = useId(), locked = useRef(false)
   const [rules, setRules] = useState(() => {try {return editableRules(revision.files)} catch {return []}})
   const [templates, setTemplates] = useState(revision.files['templates.json'] || '[]'), [code, setCode] = useState(Object.fromEntries(Object.entries(revision.files).filter(([key]) => ['checker.py', 'resources.py'].includes(key))))
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [pending, setPending] = useState(() => {const p = new URL(location.href).searchParams; return p.get('checkerEditBase') === revision.id ? p.get('checkerEditOperation') : null})
+  const dirty = checkerEditorDirty(revision.files, rules, templates, code)
+  useEffect(() => {onBlockedChange?.(dirty || busy || Boolean(pending))}, [dirty, busy, pending, onBlockedChange])
+  useEffect(() => () => onBlockedChange?.(false), [onBlockedChange])
   function remember(operation: string | null) {const url = new URL(location.href); for (const key of ['checkerEditBase', 'checkerEditOperation']) url.searchParams.delete(key); if (operation) {url.searchParams.set('checkerEditBase', revision.id); url.searchParams.set('checkerEditOperation', operation)}; writeAuditAddress(url)}
   async function save() {
     if (locked.current || pending || disabled) return
     let files: Record<string, string>
     try {files = candidateChanges(revision.files, rules, templates, code)} catch (cause) {setError(cause instanceof Error ? cause.message : '修改内容需要核对。'); return}
-    locked.current = true; setBusy(true); setError('')
+    locked.current = true; setBusy(true); onBlockedChange?.(true); setError('')
     const operation = crypto.randomUUID(); setPending(operation); remember(operation)
     try {
       const value = await nativeCheckerEditAdapter.save(revision.id, {operation_id: operation, files})

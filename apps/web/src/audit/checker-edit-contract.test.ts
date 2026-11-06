@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {candidateChanges, editableRules, nativeCheckerEditAdapter} from './checker-edit-contract.ts'
+import {candidateChanges, checkerEditorDirty, editableRules, nativeCheckerEditAdapter} from './checker-edit-contract.ts'
 Object.defineProperty(globalThis, 'navigator', {value: {onLine: true}, configurable: true})
 const files = {'rules.json': JSON.stringify({title: '控制计划', rules: [{id: '1', category: '完整性', rule_to_check: '需要签名'}], binding: {value: 'preserved'}}), 'templates.json': '[]', 'checker.py': 'def check(ctx): pass'}
 test('rule and template edits preserve frozen identifiers and untouched properties', () => {
@@ -25,4 +25,14 @@ test('unknown candidate save is recovered with GET of its original operation, ne
     await nativeCheckerEditAdapter.read('base/a', 'op-a')
     assert.deepEqual(calls, ['POST /suite-revisions/base%2Fa/candidates', 'GET /suite-revisions/base%2Fa/candidates/op-a'])
   } finally {globalThis.fetch = original}
+})
+
+test('unsaved valid and invalid edits block upgrading without blocking the editor save path', () => {
+  const rules = editableRules(files), code = {'checker.py': files['checker.py']}
+  assert.equal(checkerEditorDirty(files, rules, '[]', code), false)
+  assert.equal(checkerEditorDirty(files, [{id: '1', text: ''}], '[]', code), true)
+  assert.equal(checkerEditorDirty(files, rules, '{invalid JSON', code), true)
+  assert.equal(checkerEditorDirty(files, rules, '[]', {'checker.py': ''}), true)
+  assert.equal(checkerEditorDirty(files, rules, '[]', {}), true)
+  assert.equal(checkerEditorDirty(files, rules, '[]', code), false)
 })

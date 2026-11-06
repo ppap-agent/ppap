@@ -371,3 +371,11 @@ Guest 提交的准备事实均不能自证 `certified`。既有硬阻断仍要�
 `POST /rules` 将已授权规则原件发布为企业自己的不可变 Suite，不需要官方基线或预设文档类型。首次发布只保存规则和没有可执行入口的固定占位文件，所有条款覆盖均为 `unsupported`，没有回归证明，不自动调用付费模型，也不复用历史 profile 路由。默认指针、发布记录和 RuleVersion 在同一事务内提交；这是仅发布规则，不是强制执行未经验证的代码。
 
 同一前置规则链共享 Suite key。后继规则产生新的 revision 并清除可执行绑定，历史 Round 保持原快照。请求重发只读回原回执，不重新采用旧版本。如果另一成员已发布新的规则或采用优化后的 Checker，旧规则编辑请求返回 `suite_head_conflict`；读取最新 Suite 后在版本工作区保存候选。生成 Checker、样本验证和采用继续使用同一 Suite 开发/发布路径，可执行未验证版本仍需明确确认。
+
+## 企业 Suite 的官方升级
+
+企业工作区以服务端 `official_update_notice` 显示官方更新提示，显示后通过 `POST /suites/{suite_key}/official-update/seen` 保存当前成员对准确官方 revision 的已读记录。刷新或换浏览器不重复提示同一版本，其他成员和新的官方 revision 独立提示。已读不隐藏升级入口，也不表示同意采用。
+
+`POST /suites/{suite_key}/upgrades` 将所选企业 revision 相对原官方基线的净文件差量带到当前已发布官方 revision。请求固定 source、target、企业发布指针修订与 operation ID；服务端在官方／企业发布锁下校验，原子保存新候选和升级回执。未修改或已还原的文件继承新官方内容，企业修改过的文件完整保留，即使官方同时改过该文件；资源删除及关联 Suite 增删也保留。没有 Python 文本合并或规则语义猜测，不覆盖原 revision，不把最新官方当成企业发布批准。
+
+“升级并验证”先创建候选，再显式调用既有优化入口的 `run_tests`／`consume_model=false`，实际执行、样本隔离、规则变更及验证保存沿用同一 Checker 开发循环。不足样本或原规则已变更不能 verified；如需模型适配，仍由用户另行明确授权。当前采用版本和历史审核不变，验证后的候选仍需单独发布。升级响应未知时通过 `GET /suites/{suite_key}/upgrades/{operation_id}` 读回原候选；刷新、读回均不重复升级或自动运行样本。
