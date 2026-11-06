@@ -1898,6 +1898,12 @@ class AuthStore:
         if stage == "optimization_completed" and not operation_id or stage != "optimization_completed" and not task_id or stage == "zip_ready" and not package_id:
             raise ValueError("invalid_notification_scope")
         with self._conn() as conn, conn.transaction():
+            if stage == "confirmation":
+                # Reserve the card's deterministic operation before locking its
+                # draft, the same order as HTTP admission. Its saved payload is
+                # already the displayed intent, even before callback enqueue.
+                confirmation_key = str(uuid.uuid5(uuid.UUID(claimed.id), "confirm"))
+                conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (principal.tenant_id + ":" + confirmation_key,))
             reason, report_package = None, None
             try:
                 identity = conn.execute(
@@ -2055,6 +2061,9 @@ class AuthStore:
                     AND NOT EXISTS (SELECT 1 FROM product.draft_items di JOIN product.file_versions f ON f.id = di.file_version_id
                         WHERE di.draft_id = d.id AND NOT EXISTS (SELECT 1 FROM product.resource_grants g
                             WHERE g.resource_id = f.file_id AND g.user_id = d.created_by AND g.capability IN ('read', 'review')))
+                ), locked AS MATERIALIZED (
+                    SELECT source.*, pg_advisory_xact_lock(hashtextextended(tenant_id::text || ':' || (confirmation->>'request_id'), 0))
+                    FROM source
                 ), queued AS (
                     INSERT INTO engine.jobs (id, tenant_id, kind, payload, status, result)
                     SELECT (confirmation->>'request_id')::uuid, tenant_id, 'task_confirmation',
@@ -2063,14 +2072,16 @@ class AuthStore:
                             'expected_confirmation_basis_digest', confirmation->'expected_confirmation_basis_digest',
                             'notification_id', %s::text, 'message_id', %s::text, 'tenant_key', %s::text, 'subject', %s::text),
                         'queued', jsonb_build_object('state', 'pending', 'reason', '已收到卡片确认，正在核对用量，尚未受理。')
-                    FROM source WHERE true ON CONFLICT (id) DO NOTHING
+                    FROM locked WHERE true ON CONFLICT (id) DO NOTHING
                     RETURNING id, tenant_id, kind, payload, result
                 ), receipt AS (
                     SELECT * FROM queued UNION ALL
-                    SELECT j.id, j.tenant_id, j.kind, j.payload, j.result FROM engine.jobs j JOIN source s
+                    SELECT j.id, j.tenant_id, j.kind, j.payload, j.result FROM engine.jobs j JOIN locked s
                         ON j.id = (s.confirmation->>'request_id')::uuid WHERE NOT EXISTS (SELECT 1 FROM queued)
-                ) SELECT q.id, q.tenant_id, q.kind, q.payload, q.result FROM receipt q JOIN source s ON s.tenant_id = q.tenant_id
-                    AND s.task_id::text = q.payload->>'task_id' AND s.created_by::text = q.payload->>'created_by'"""
+                ) SELECT q.id, q.tenant_id, q.kind, q.payload, q.result FROM receipt q JOIN locked s ON s.tenant_id = q.tenant_id
+                    AND s.task_id::text = q.payload->>'task_id' AND s.created_by::text = q.payload->>'created_by'
+                    AND q.payload->'expected_revision' IS NOT DISTINCT FROM s.confirmation->'expected_revision'
+                    AND q.payload->'expected_confirmation_basis_digest' IS NOT DISTINCT FROM s.confirmation->'expected_confirmation_basis_digest'"""
             params = (notification_id, action.message_id, self.settings.feishu_app_id, action.tenant_key, action.subject, notification_id, action.message_id, action.tenant_key, action.subject)
             row = conn.execute(query, params).fetchone()
             if row is None:
@@ -2079,7 +2090,7 @@ class AuthStore:
                 # One fresh, bounded statement reads that exact authorized ID;
                 # a database wait/commit failure still propagates as unknown.
                 row = conn.execute(query, params).fetchone()
-            if not row or row[2] != "task_confirmation" or row[3].get("notification_id") != notification_id:
+            if not row or row[2] != "task_confirmation" or row[3].get("notification_id") not in {None, notification_id}:
                 raise KeyError("missing")
             receipt = {"request_id": str(row[0]), "state": row[4]["state"], "reason": row[4].get("reason")}
         return receipt
@@ -2379,11 +2390,28 @@ class AuthStore:
             prior = conn.execute("SELECT tenant_id, kind, payload, result FROM engine.jobs WHERE id=%s FOR UPDATE", (key,)).fetchone()
             conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (principal.tenant_id + ":" + key,))
             self._recognition_owner(conn, principal, parsed_task)
+            if prior is None:
+                prior = conn.execute("SELECT tenant_id, kind, payload, result FROM engine.jobs WHERE id=%s", (key,)).fetchone()
+            accepted = conn.execute(
+                "SELECT 1 FROM product.audit_rounds WHERE tenant_id=%s AND idempotency_key=%s AND source_draft_id=%s AND created_by=%s",
+                (principal.tenant_id, key, parsed_task, principal.user_id),
+            ).fetchone()
+            if not accepted:
+                card = conn.execute(
+                    """SELECT payload->'confirmation' FROM engine.jobs WHERE tenant_id=%s AND kind='feishu_notification'
+                       AND payload->>'task_id'=%s AND payload->'confirmation'->>'request_id'=%s""",
+                    (principal.tenant_id, parsed_task, key),
+                ).fetchone()
+                if card and (card[0].get("expected_revision") != expected_revision or card[0].get("expected_confirmation_basis_digest") != expected_confirmation_basis_digest):
+                    raise ValueError("idempotency_conflict")
             if prior:
                 if str(prior[0]) != principal.tenant_id or prior[1] != "task_confirmation" or prior[2].get("task_id") != parsed_task or prior[2].get("created_by") != principal.user_id:
                     raise ValueError("idempotency_conflict")
-                if (prior[3] or {}).get("state") == "rejected":
-                    raise ValueError((prior[3] or {}).get("error") or "task_confirmation_changed")
+                if not accepted:
+                    if prior[2].get("expected_revision") != expected_revision or prior[2].get("expected_confirmation_basis_digest") != expected_confirmation_basis_digest:
+                        raise ValueError("idempotency_conflict")
+                    if (prior[3] or {}).get("state") == "rejected":
+                        raise ValueError((prior[3] or {}).get("error") or "task_confirmation_changed")
             try:
                 with conn.transaction():
                     self._accept_locked(
@@ -2420,6 +2448,28 @@ class AuthStore:
                 if not saved:
                     raise ValueError("idempotency_conflict") from None
             else:
+                if require_confirmation_basis and prior is None and not accepted:
+                    # The original public intent and its successful result commit
+                    # with admission. A competing card enqueue uses the same
+                    # operation lock and cannot register different parameters.
+                    conn.execute(
+                        """INSERT INTO engine.jobs (id, tenant_id, kind, payload, status, result)
+                           VALUES (%s, %s, 'task_confirmation', %s, 'succeeded', %s)""",
+                        (
+                            key,
+                            principal.tenant_id,
+                            Jsonb(
+                                {
+                                    "task_id": parsed_task,
+                                    "created_by": principal.user_id,
+                                    "request_id": key,
+                                    "expected_revision": expected_revision,
+                                    "expected_confirmation_basis_digest": expected_confirmation_basis_digest,
+                                }
+                            ),
+                            Jsonb({"state": "accepted", "reason": None}),
+                        ),
+                    )
                 return self._recognition_public(conn, principal, parsed_task)
         # Raise only after committing the definite rejection. Lost responses can
         # recover this exact request without accepting a newly published Suite.
@@ -2709,6 +2759,7 @@ class AuthStore:
             "files": files,
             "completion_reason": draft["task_completion_reason"],
             "confirmation_basis_digest": None,
+            "confirmation_scope": None,
             "estimated_points": None if matching or any(row["match"]["state"] == "failed" for row in selected) else sum(row["match"]["state"] == "matched" for row in selected) * 500,
         }
         task["precheck"] = self._current_task_precheck(conn, task_id, principal.tenant_id, draft["input_revision"])
@@ -2785,10 +2836,14 @@ class AuthStore:
         # Recognition's rule version is provenance. Show the same adopted Suite
         # body that acceptance will freeze, without publishing or authorizing it.
         # Accepted tasks returned above must never resolve a newer Suite head.
+        from audit.checker_core import FrozenTarget, runtime_revision
+        from audit.standard_suites import library_revision
+        from documents.model_access import DEEPSEEK_MODEL, DEEPSEEK_PROVIDER
+
         from product.standard_policy import config_digest
         from product.store.suites import freeze_selected_targets
 
-        targets = []
+        targets: list[FrozenTarget] = []
         for file in task["files"]:
             match = file.get("match") or {}
             if match.get("state") != "matched" or not match.get("rule"):
@@ -2801,10 +2856,37 @@ class AuthStore:
                 task["estimated_points"] = None
             else:
                 match["rule"] = {**match["rule"], "body": prepared[0]["rule_body"]}
-        if targets and task["state"] == "pending_confirm" and all(row["validation"]["state"] == "valid" and row["match"]["state"] in {"matched", "reference", "unmatched"} for row in selected):
+        ready = task["state"] == "pending_confirm" and all(row["validation"]["state"] == "valid" and row["match"]["state"] in {"matched", "reference", "unmatched"} for row in selected)
+        if ready:
+            blocked: set[str] = set()
+            receipt = task.get("precheck")
+            if self.settings.precheck_gate_enforced and receipt and receipt["status"] == "succeeded":
+                from product.prechecks import blocked_targets
+                from product.store.prechecks import freeze_task_precheck
+
+                frozen = freeze_task_precheck(self, conn, principal, task)
+                if frozen == receipt["input"]:
+                    blocked = blocked_targets(frozen, receipt["result"])
+            # Keep the original selection/precheck identity. This separate view
+            # is the server's exact prospective Round, including explicit reasons
+            # for sources that will be removed atomically during admission.
+            exclusions = [{"file_version_id": row["file"]["id"], "reason": row["removal_reason"]} for row in files if row["selection"] == "removed"]
+            exclusions.extend(
+                {"file_version_id": row["file"]["id"], "reason": "预检已确认的阻断缺陷，需修正后重新提交" if row["file"]["id"] in blocked else "未匹配到生效规则，未纳入审核"}
+                for row in selected
+                if row["file"]["id"] in blocked or row["match"]["state"] == "unmatched"
+            )
+            task["confirmation_scope"] = {
+                "target_file_version_ids": sorted(row["file"]["id"] for row in selected if row["match"]["state"] == "matched" and row["file"]["id"] not in blocked),
+                "reference_file_version_ids": sorted(row["file"]["id"] for row in selected if row["match"]["state"] == "reference"),
+                "excluded_files": sorted(exclusions, key=lambda row: row["file_version_id"]),
+            }
+            task["estimated_points"] = len(task["confirmation_scope"]["target_file_version_ids"]) * 500
+        if targets and ready:
             # current_selection holds the publication locks through admission's
             # transaction. Bind source identity, clauses, code, related Suites
             # and verification risk, not merely visible rule text or input_revision.
+            library = library_revision()
             task["confirmation_basis_digest"] = config_digest(
                 {
                     "task_id": task_id,
@@ -2814,6 +2896,12 @@ class AuthStore:
                     "analysis_mode": task["analysis_mode"],
                     "customer_preference": task["customer_preference"],
                     "estimated_points": task["estimated_points"],
+                    "library_revision": library,
+                    "runtime_revision": runtime_revision(self.settings.deep_execution_policy().engine_revision(), library),
+                    "model_identity": {"provider": DEEPSEEK_PROVIDER, "model": DEEPSEEK_MODEL},
+                    "confirmation_scope": task["confirmation_scope"],
+                    "precheck_gate_enforced": self.settings.precheck_gate_enforced,
+                    "precheck": {key: task["precheck"][key] for key in ("input", "result")} if self.settings.precheck_gate_enforced and task.get("precheck") else None,
                     "files": [{key: row.get(key) for key in ("file", "selection", "removal_reason", "validation", "validation_scope", "match", "reference_only")} for row in files],
                     "targets": [target.to_dict() for target in targets],
                 }
@@ -4557,15 +4645,8 @@ class AuthStore:
                     if require_confirmation_basis and task["confirmation_basis_digest"] != expected_confirmation_basis_digest:
                         raise ValueError("task_confirmation_changed")
                     if self.settings.precheck_gate_enforced:
-                        from product.prechecks import blocked_targets
-                        from product.store.prechecks import freeze_task_precheck
-
-                        receipt = task.get("precheck")
-                        blocked = set()
-                        if receipt and receipt["status"] == "succeeded":
-                            frozen = freeze_task_precheck(self, conn, principal, task)
-                            if frozen == receipt["input"]:
-                                blocked = blocked_targets(frozen, receipt["result"])
+                        scope = task["confirmation_scope"]
+                        blocked = {row["file"]["id"] for row in selected if row["match"]["state"] == "matched" and row["file"]["id"] not in scope["target_file_version_ids"]}
                         if blocked:
                             selected = [row for row in selected if row["file"]["id"] not in blocked]
                             if not any(row["match"]["state"] == "matched" for row in selected):

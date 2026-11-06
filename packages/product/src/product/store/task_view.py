@@ -333,5 +333,13 @@ def task_round_view(task: dict, round: dict, reports: dict[str, dict] | None = N
         "state": "completed" if task_finished else "reviewing",
         "completion_reason": "processed" if task_finished else None,
         "files": files,
+        "confirmation_scope": {
+            "target_file_version_ids": sorted(item["file_version_id"] for item in round["inputs"] if item["role"] == "target"),
+            "reference_file_version_ids": sorted(references),
+            "excluded_files": sorted(
+                ({"file_version_id": row["file"]["id"], "reason": row["removal_reason"]} for row in files if row["selection"] == "removed"),
+                key=lambda row: row["file_version_id"],
+            ),
+        },
         "progress": {"completed": ended, "total": len(selected)},
     }
