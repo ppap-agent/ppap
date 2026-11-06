@@ -36,6 +36,7 @@ def core_response(spec: ExecuteRequest, snapshot: ExecutionSnapshot, result: dic
         "execution_input_digest": result["input_digest"],
         "runtime_revision": snapshot.runtime_revision,
         "library_revision": snapshot.library_revision,
+        "unavailable_file_version_ids": result.get("unavailable_sources", []),
         "targets": [
             {
                 "file_version_id": target.file_version_id,

@@ -152,14 +152,26 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
         self.assertEqual(client.get("/support").status_code, 401)
 
     def test_worker_persists_one_unreadable_file_error_without_losing_other_frozen_file_results(self):
+        import json
         from io import BytesIO
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from unittest.mock import patch
 
+        from agent.core_program import CoreRuntime, run_audit_manifest
+        from agent.run import Controller, ExecutionContext
+        from agent.source import authorize_execution, object_file_source
         from api.audit_routes import register_audit_routes
         from api.web_contract import Round
+        from audit.storage_errors import ObjectTooLarge
+        from documents.model_access import DEEPSEEK_MODEL
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
         from openpyxl import Workbook
         from product import build_product_store
+        from product.db import connect
+        from product.store.suite_releases import SuiteReleaseStore
+        from product.store.suites import SuiteStore
         from pydantic import TypeAdapter
         from worker import process_claimed
 
@@ -173,13 +185,76 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
             self.store.put_blob(file, content.getvalue())
             files.append(self.store.finalize_version(file))
         rule = self.store.publish_rule(self.alice, "客户自定义要求", self.rule_body(), files[-1].id)
+        releases = SuiteReleaseStore(self.settings, self.store.objects)
+        base = releases.suites.resolve_suite(rule["body"]["suite_revision_id"], self.alice.tenant_id)
+        rules = json.loads(base.files["rules.json"])
+        rules["checker_binding"] = {"1": "checker:check"}
+        code = """import json
+from audit.contracts import AuditEvidence, AuditResultItem, EvidenceSource
+from openpyxl import load_workbook
+
+def check(context):
+    assert context.audit_file.file_metadata['original_filename'] != 'missing.xlsx'
+    workbook = load_workbook(context.audit_file.file_url)
+    try:
+        value = workbook.active['A1'].value
+        sheet = workbook.active.title
+    finally:
+        workbook.close()
+    location = json.dumps({'kind': 'xlsx_cell', 'sheet': sheet, 'cell': 'A1', 'file_version_id': context.audit_file.audit_id})
+    evidence = AuditEvidence(required='structure', used='structure', source_format='xlsx', prepared_format='xlsx',
+                             sources=(EvidenceSource(kind='structure', locator=location, excerpt=str(value)),))
+    return AuditResultItem(classification='基本信息', item='标题检查', priority='P0', status='PASS' if value == '控制计划' else 'NG',
+                           suggestions='已读取本轮冻结原件A1', clause_id=context.clause_id, checks_performed=1, evidence=evidence)
+"""
+        candidate = releases.save_candidate(self.alice, base.revision.id, {"rules.json": json.dumps(rules, ensure_ascii=False), "checker.py": code})
+        releases.publish(self.alice, base.revision.suite_key, candidate["id"], 1, str(uuid.uuid4()), force_unverified=True)
         draft = self.draft([{"file_version_id": file.id, "role": "target", "rule_version_id": rule["id"]} for file in files])
         accepted = self.store.accept_draft(self.alice, draft, "file-isolation")
         self.store.objects.delete(files[0].object_key)
         worker = build_product_store(self.settings, objects=self.store.objects, role="worker")
         claimed = worker.claim_job("file-isolation-test")
         self.assertIsNotNone(claimed)
-        process_claimed(worker, claimed, "file-isolation-test")
+        suites = SuiteStore(self.settings, self.store.objects, role="worker")
+        frozen = suites.read_snapshot(accepted["id"], self.alice.tenant_id)
+        self.assertTrue(all(target.verification == "unverified" for target in frozen.targets))
+        calls = []
+
+        class BoundedObjects:
+            def get(_, key, *, max_bytes):
+                data = self.store.objects.get(key)
+                if len(data) > max_bytes:
+                    raise ObjectTooLarge()
+                return data
+
+        class ControlledGuest:
+            # Real host/guest manifest and Core execution; this test substitutes
+            # transport only and does not claim UID/container isolation.
+            def run(_, job, inputs, work, deadline, cancelled):
+                calls.append(job)
+                with TemporaryDirectory() as root:
+                    credentials = Path(root)
+                    (credentials / "model.json").write_text(
+                        json.dumps({"base_url": "http://127.0.0.1:1/v1", "token": "controlled-local-capability-1234567890", "model": DEEPSEEK_MODEL, "wall_seconds": 100, "max_turns": 20})
+                    )
+                    run_audit_manifest(inputs, work, credentials)
+
+        controller = Controller(
+            CoreRuntime(ControlledGuest(), lambda spec: suites.read_snapshot(spec.round_id, spec.tenant_id), suites.resolve_suite),
+            object_file_source(self.settings, connect=connect, objects=BoundedObjects()),
+            executor_revision=frozen.runtime_revision,
+            authorize=authorize_execution(self.settings, connect=connect, open_store=lambda _: worker),
+        )
+        self.settings.deep_controller_socket = "/controlled-test-transport"
+
+        def execute(_, spec, *, cancelled, on_progress):
+            return controller.handle(spec, ExecutionContext(cancelled=cancelled, on_progress=on_progress))
+
+        with patch("agent.client.DeepClient.execute", execute):
+            process_claimed(worker, claimed, "file-isolation-test")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0].unavailable_sources, (files[0].id,))
+        self.assertEqual(suites.read_snapshot(accepted["id"], self.alice.tenant_id).to_dict(), frozen.to_dict())
 
         app = FastAPI()
         register_audit_routes(app, self.store, lambda request: self.alice, Mock())

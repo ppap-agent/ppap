@@ -237,10 +237,14 @@ class ExecutionSnapshot:
         data["targets"] = tuple(FrozenTarget(**{**row, "binding": RuleBinding(**row["binding"])}) for row in data["targets"])
         return cls(**data)
 
-    def validate_sources(self, sources: Mapping[str, bytes]) -> None:
-        if set(sources) != {item.file_version_id for item in self.inputs}:
+    def validate_sources(self, sources: Mapping[str, bytes], *, unavailable: frozenset[str] = frozenset()) -> None:
+        # Availability belongs to this execution attempt, never to the frozen
+        # source identity. Only an explicit, disjoint disposition can omit bytes.
+        if set(sources) & unavailable or set(sources) | unavailable != {item.file_version_id for item in self.inputs}:
             raise ValueError("snapshot_sources_mismatch")
         for item in self.inputs:
+            if item.file_version_id in unavailable:
+                continue
             if hashlib.sha256(sources[item.file_version_id]).hexdigest() != item.sha256:
                 raise ValueError("snapshot_source_digest_mismatch")
 

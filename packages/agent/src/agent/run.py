@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Protocol
 
 from audit.audits import DEEP_PROTOCOL_REVISION
+from audit.storage_errors import ObjectMissing
 from pydantic import ValidationError
 
 from agent.client import DeepError, DeepUnavailable, read_frame, write_frame
@@ -37,6 +38,7 @@ FileSource = Callable[[str, int], bytes]
 class ExecutionContext:
     cancelled: threading.Event = field(default_factory=threading.Event)
     on_progress: Callable[[dict], None] = lambda _state: None
+    unavailable_sources: frozenset[str] = frozenset()
 
     def raise_if_cancelled(self) -> None:
         if self.cancelled.is_set():
@@ -104,6 +106,8 @@ class Controller:
             raise DeepError("deep_budget_exhausted")
         context.progress({"phase": "reading"})
         blobs: dict[str, bytes] = {}
+        unavailable: set[str] = set()
+        context.unavailable_sources = frozenset()
         remaining = MAX_INPUT_TOTAL
         try:
             for item in spec.files:
@@ -112,8 +116,16 @@ class Controller:
                     raise DeepError("deep_integrity_mismatch")
                 try:
                     data = self.file_source(item.file_version_id, remaining)
-                except DeepError:
+                except DeepError as exc:
+                    if exc.code == "deep_input_missing" and spec.executor == "ppap-checker-core" and spec.analysis_mode == "standard":
+                        unavailable.add(item.file_version_id)
+                        continue
                     raise
+                except (ObjectMissing, FileNotFoundError) as exc:
+                    if spec.executor == "ppap-checker-core" and spec.analysis_mode == "standard":
+                        unavailable.add(item.file_version_id)
+                        continue
+                    raise DeepError("deep_input_missing") from exc
                 except Exception as exc:
                     raise DeepError("deep_input_missing") from exc
                 context.raise_if_cancelled()
@@ -125,11 +137,13 @@ class Controller:
                     raise DeepError("deep_integrity_mismatch")
                 blobs[item.file_version_id] = data
             context.raise_if_cancelled()
+            context.unavailable_sources = frozenset(unavailable)
             result = self.runtime.execute(spec, blobs, context=context)
             context.raise_if_cancelled()
             return self._validate(spec, ExecuteResponse.model_validate(result.model_dump()))
         finally:
             blobs.clear()
+            context.unavailable_sources = frozenset()
 
     def _validate(self, spec: ExecuteRequest, result: ExecuteResponse) -> ExecuteResponse:
         if result.round_id != spec.round_id:

@@ -39,15 +39,22 @@ class AuditJobSpec(BaseModel):
     executor_revision: str = Field(min_length=1)
     analysis_mode: Literal["standard", "deep"] = "standard"
     allow_model_calls: bool = True
+    unavailable_sources: tuple[str, ...] = ()
 
     @classmethod
-    def from_snapshot(cls, snapshot: ExecutionSnapshot, analysis_mode: Literal["standard", "deep"] = "standard", allow_model_calls: bool = True) -> AuditJobSpec:
+    def from_snapshot(
+        cls, snapshot: ExecutionSnapshot, analysis_mode: Literal["standard", "deep"] = "standard", allow_model_calls: bool = True, unavailable_sources: frozenset[str] = frozenset()
+    ) -> AuditJobSpec:
+        unavailable = tuple(sorted(unavailable_sources))
+        # A restored object cannot replay the outcome of an unavailable attempt.
+        availability = ":" + json.dumps(unavailable, separators=(",", ":")) if unavailable else ""
         return cls(
-            execution_id=uuid5(NAMESPACE_URL, "ppap-audit:" + analysis_mode + ":" + str(allow_model_calls) + ":" + snapshot.input_digest),
+            execution_id=uuid5(NAMESPACE_URL, "ppap-audit:" + analysis_mode + ":" + str(allow_model_calls) + ":" + snapshot.input_digest + availability),
             input_digest=snapshot.input_digest,
             executor_revision=snapshot.runtime_revision,
             analysis_mode=analysis_mode,
             allow_model_calls=allow_model_calls,
+            unavailable_sources=unavailable,
         )
 
 
@@ -59,8 +66,11 @@ def write_audit_manifest(
     *,
     analysis_mode: Literal["standard", "deep"] = "standard",
     allow_model_calls: bool = True,
+    unavailable_sources: frozenset[str] = frozenset(),
 ) -> AuditJobSpec:
-    snapshot.validate_sources(sources)
+    snapshot.validate_sources(sources, unavailable=unavailable_sources)
+    if analysis_mode == "deep" and unavailable_sources:
+        raise DeepError("deep_input_missing")
     expected = {target.binding.checker_digest for target in snapshot.targets}
     if set(programs) != expected or any(checker_digest(files) != digest for digest, files in programs.items()):
         raise ValueError("checker_program_digest_mismatch")
@@ -90,7 +100,7 @@ def write_audit_manifest(
             staged = f"program-{index}-{name}"
             stage(staged, body)
             program_paths[digest][name] = staged
-    job = AuditJobSpec.from_snapshot(snapshot, analysis_mode, allow_model_calls)
+    job = AuditJobSpec.from_snapshot(snapshot, analysis_mode, allow_model_calls, unavailable_sources)
     raw = json.dumps(
         {"operation": "execute-audit", "spec": job.model_dump(mode="json"), "snapshot": snapshot.to_dict(), "source_paths": source_paths, "program_paths": program_paths}, ensure_ascii=False
     ).encode()
@@ -119,8 +129,11 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
         raise ValueError("audit_manifest_invalid")
     snapshot = ExecutionSnapshot.from_dict(manifest["snapshot"])
     job = AuditJobSpec.model_validate(manifest["spec"])
-    if job != AuditJobSpec.from_snapshot(snapshot, job.analysis_mode, job.allow_model_calls):
+    unavailable = frozenset(job.unavailable_sources)
+    if job != AuditJobSpec.from_snapshot(snapshot, job.analysis_mode, job.allow_model_calls, unavailable):
         raise ValueError("audit_manifest_identity_mismatch")
+    if job.analysis_mode == "deep" and unavailable:
+        raise ValueError("audit_generation_requires_complete_sources")
     total = 0
 
     def read(name: str) -> bytes:
@@ -148,7 +161,7 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
         raise ValueError("audit_generation_requires_model")
     artifacts: dict[str, CheckerArtifact] = {}
     effective = snapshot
-    snapshot.validate_sources(sources)
+    snapshot.validate_sources(sources, unavailable=unavailable)
     with model_access_scope(access):
         if job.analysis_mode == "deep":
             from agent.execution.checker_guest import develop_checker
@@ -176,7 +189,7 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
                 artifacts[target.file_version_id] = artifact
             effective = generated_snapshot(snapshot, sources, artifacts)
             programs = {artifact.program_digest: dict(artifact.files) for artifact in artifacts.values()}
-        result = run_audit(effective, sources, programs)
+        result = run_audit(effective, sources, programs, unavailable_sources=unavailable)
     payload = {
         **result,
         "operation": "execute-audit",
@@ -227,7 +240,7 @@ class CoreRuntime(SemanticRuntime):
             root = Path(root_name)
             work, inputs = root / "work", root / "inputs"
             work.mkdir()
-            job = write_audit_manifest(inputs, snapshot, sources, programs, analysis_mode=analysis_mode, allow_model_calls=allow_model_calls)
+            job = write_audit_manifest(inputs, snapshot, sources, programs, analysis_mode=analysis_mode, allow_model_calls=allow_model_calls, unavailable_sources=context.unavailable_sources)
             try:
                 self.runtime.run(job, inputs, work, time.monotonic() + self.timeout, context.cancelled)
                 result = read_json(work, ("result", "bundle.json"), MAX_BUNDLE)
@@ -245,7 +258,7 @@ class CoreRuntime(SemanticRuntime):
                 raise DeepError("deep_output_invalid")
             artifacts = {identity: CheckerArtifact.model_validate(raw) for identity, raw in raw_artifacts.items()}
             effective = generated_snapshot(snapshot, sources, artifacts) if analysis_mode == "deep" else snapshot
-            return _validate_output(effective, result)
+            return _validate_output(effective, result, unavailable_sources=context.unavailable_sources)
 
     def execute(self, spec, files: dict[str, bytes], *, context: ExecutionContext):
         from agent.core_result import core_response

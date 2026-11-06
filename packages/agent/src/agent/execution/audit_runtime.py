@@ -25,7 +25,7 @@ from typing import Any
 from uuid import uuid4
 
 from audit.checker_core import ExecutionSnapshot, FrozenTarget, checker_digest, clause_ids, validate_results
-from audit.contracts import AuditInput, AuditResultItem, GroupContextInput, RuleInput
+from audit.contracts import AuditInput, AuditResultItem, GroupContextInput, RuleInput, UnavailableSourceError
 from audit.engine.rule_engine.context import GuardStop
 from audit.engine.runtime import bind_runtime
 from audit.standard_library import AuthoredCheckerError
@@ -151,11 +151,12 @@ def run_audit(
     *,
     runtime: CheckerRuntime | None = None,
     clause_timeout: float = 120,
+    unavailable_sources: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """Execute in the caller's guest; never spawn per target or per clause."""
     if not math.isfinite(clause_timeout) or clause_timeout <= 0:
         raise ValueError("invalid_clause_timeout")
-    snapshot.validate_sources(sources)
+    snapshot.validate_sources(sources, unavailable=unavailable_sources)
     expected = {target.binding.checker_digest for target in snapshot.targets}
     if set(programs) != expected or any(checker_digest(files) != digest for digest, files in programs.items()):
         raise AuditRunError("checker_program_digest_mismatch")
@@ -180,6 +181,8 @@ def run_audit(
             }
         )
         for index, source in enumerate(snapshot.inputs):
+            if source.file_version_id in unavailable_sources:
+                continue
             # Display names never become writable paths or lookup authority.
             path = root / f"source-{index}{Path(source.filename).suffix.lower()}"
             path.write_bytes(sources[source.file_version_id])
@@ -196,9 +199,15 @@ def run_audit(
             )
         by_type: dict[str, list[AuditInput]] = {}
         for source in snapshot.inputs:
-            if source.document_type:
+            if source.document_type and source.file_version_id in audits:
                 by_type.setdefault(source.document_type, []).append(audits[source.file_version_id])
-        group = GroupContextInput(task_group_id=snapshot.round_id, by_audit_id=audits, by_doc_type=by_type, rules_by_id=rules)
+        group = GroupContextInput(
+            task_group_id=snapshot.round_id,
+            by_audit_id=audits,
+            by_doc_type=by_type,
+            rules_by_id=rules,
+            unavailable_files={source.file_version_id: source.document_type for source in snapshot.inputs if source.file_version_id in unavailable_sources},
+        )
         try:
             from audit.usage import get_token_tracker, track_ocr_usage
             from documents.model_access import ModelUnavailable, model_access_scope, model_access_scoped
@@ -210,6 +219,12 @@ def run_audit(
             model_scope = contextlib.nullcontext() if model_access_scoped() else model_access_scope(None)
             with model_scope, bind_runtime(runtime), paddle_page_scope(), track_ocr_usage():
                 for index, target in enumerate(snapshot.targets):
+                    if target.file_version_id in unavailable_sources:
+                        results = [_evidence_references(_error(clause, "ERR", "checker_input_unavailable"), target.file_version_id) for clause in target.binding.entrypoints]
+                        validated = validate_results(results, target=target, inputs=snapshot.inputs)
+                        findings.extend(validated["findings"])
+                        coverage.extend(validated["coverage"])
+                        continue
                     if not target.binding.entrypoints:
                         # An unverified starter may contain arbitrary code but
                         # authorizes no execution, including import side effects.
@@ -263,6 +278,8 @@ def run_audit(
                                 item = _error(clause, "ERR", "checker_clause_timeout_external_usage_unknown")
                             except ModelUnavailable:
                                 item = _error(clause, "UNABLE", "personal_model_unavailable_or_uncertain")
+                            except UnavailableSourceError:
+                                item = _error(clause, "UNABLE", "checker_reference_unavailable")
                             except GuardStop as exc:
                                 item = _error(clause, str(exc.status), exc.message)
                             except AuthoredCheckerError as exc:
@@ -279,9 +296,17 @@ def run_audit(
                         coverage.extend(validated["coverage"])
                     finally:
                         _restore_modules(saved)
-            snapshot.validate_sources({identity: path.read_bytes() for identity, path in paths.items()})
+            snapshot.validate_sources({identity: path.read_bytes() for identity, path in paths.items()}, unavailable=unavailable_sources)
             usage = tracker.end_request_tracking(request_id).to_dict()
-            return {"input_digest": snapshot.input_digest, "findings": findings, "coverage": coverage, "diagnostics": diagnostics, "process_id": os.getpid(), "usage": usage}
+            return {
+                "input_digest": snapshot.input_digest,
+                "findings": findings,
+                "coverage": coverage,
+                "diagnostics": diagnostics,
+                "process_id": os.getpid(),
+                "usage": usage,
+                "unavailable_sources": sorted(unavailable_sources),
+            }
         finally:
             if "request_id" in locals():
                 tracker.cleanup_request(request_id)
@@ -294,15 +319,21 @@ def run_audit(
             runtime.close()
 
 
-def _validate_output(snapshot: ExecutionSnapshot, result: dict[str, Any]) -> dict[str, Any]:
+def _validate_output(snapshot: ExecutionSnapshot, result: dict[str, Any], *, unavailable_sources: frozenset[str] = frozenset()) -> dict[str, Any]:
     if result.get("input_digest") != snapshot.input_digest:
         raise AuditRunError("audit_output_identity_mismatch")
+    if result.get("unavailable_sources", []) != sorted(unavailable_sources):
+        raise AuditRunError("audit_output_availability_mismatch")
     known = {target.file_version_id for target in snapshot.targets}
     if any(item.get("file_version_id") not in known for item in result.get("findings", ())):
         raise AuditRunError("audit_output_target_mismatch")
     findings, coverage = [], []
     for target in snapshot.targets:
         checked = validate_results([item for item in result["findings"] if item["file_version_id"] == target.file_version_id], target=target, inputs=snapshot.inputs)
+        if target.file_version_id in unavailable_sources and any(row["status"] != "ERR" or row["suggestions"] != "checker_input_unavailable" or row.get("evidence") for row in checked["findings"]):
+            raise AuditRunError("audit_output_unavailable_source")
+        if target.file_version_id not in unavailable_sources and any(set(row["evidence_file_version_ids"]) & unavailable_sources for row in checked["findings"]):
+            raise AuditRunError("audit_output_unavailable_source")
         findings.extend(checked["findings"])
         coverage.extend(checked["coverage"])
     if result.get("coverage") != coverage:
@@ -319,6 +350,7 @@ def run_audit_process(
     clause_timeout: float = 120,
     cancelled: Callable[[], bool] = lambda: False,
     model_grant: dict[str, str] | None = None,
+    unavailable_sources: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """Local test harness only; production must use the existing ContainerRuntime.
 
@@ -327,7 +359,7 @@ def run_audit_process(
     """
     if not math.isfinite(timeout) or not math.isfinite(clause_timeout) or timeout <= 0 or clause_timeout <= 0:
         raise ValueError("invalid_audit_timeout")
-    snapshot.validate_sources(sources)
+    snapshot.validate_sources(sources, unavailable=unavailable_sources)
     if cancelled():
         raise AuditRunError("audit_cancelled")
     if model_grant is not None and any(model_grant.get(key) != snapshot.model_identity.get(key) for key in ("provider", "model")):
@@ -339,6 +371,7 @@ def run_audit_process(
             "sources": {key: base64.b64encode(value).decode() for key, value in sources.items()},
             "programs": {key: {name: base64.b64encode(data).decode() for name, data in files.items()} for key, files in programs.items()},
             "clause_timeout": clause_timeout,
+            "unavailable_sources": sorted(unavailable_sources),
         }
         request = root / "input.json"
         request.write_text(json.dumps(payload), encoding="utf-8")
@@ -371,7 +404,7 @@ def run_audit_process(
                 raise AuditRunError("audit_result_too_large")
             if cancelled():
                 raise AuditRunError("audit_cancelled")
-            return _validate_output(snapshot, json.loads(output.read_bytes()))
+            return _validate_output(snapshot, json.loads(output.read_bytes()), unavailable_sources=unavailable_sources)
         finally:
             if process.poll() is None:
                 os.killpg(process.pid, signal.SIGKILL)
@@ -404,6 +437,7 @@ def _main() -> None:
             {key: base64.b64decode(value, validate=True) for key, value in payload["sources"].items()},
             {key: {name: base64.b64decode(data, validate=True) for name, data in files.items()} for key, files in payload["programs"].items()},
             clause_timeout=payload["clause_timeout"],
+            unavailable_sources=frozenset(payload.get("unavailable_sources", ())),
         )
     output.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
 
