@@ -5,12 +5,12 @@
 当前仓库先通过唯一的 Bake build graph 构建应用镜像，再用 Docker Compose 启动 isolated-dev：
 
 ```sh
-export PPAP_BUILD_SHA="${PPAP_BUILD_SHA:-local}"
-docker buildx bake
-docker compose -f deploy/isolated-dev/compose.yaml up --no-build -d --wait
+export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
+docker buildx bake release
+docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/deep-live.yaml up --no-build -d --wait
 ```
 
-这会启动 PostgreSQL、[PGSTY Silo](https://github.com/pgsty/silo)、`psql` 角色/schema、对象桶，以及同一 Git revision 的 API / Worker / nginx Web。用于开发演示，不代表 production deployment 已完成。
+这会启动 PostgreSQL、[PGSTY Silo](https://github.com/pgsty/silo)、`psql` 角色/schema、对象桶，以及同一 Git revision 的 API / Worker / Checker Core Controller / nginx Web。用于开发演示，不代表 production deployment 已完成。
 
 ## 目标生产组成
 
@@ -19,9 +19,10 @@ docker compose -f deploy/isolated-dev/compose.yaml up --no-build -d --wait
 3. Worker process
 4. PostgreSQL
 5. S3-compatible object storage
-6. 仅在当前 DOC 支持需要时存在的受限 converter sandbox
+6. Checker Core Controller 和低权限执行 guest（Standard 与 Deep 共用）
+7. 仅在当前 DOC 支持需要时存在的受限 converter sandbox
 
-API 和 Worker 是两个核心应用进程；基础设施与可选安全 sandbox 不改变产品边界。
+API 和 Worker 承担产品服务与队列调度；Controller 负责受限执行。基础设施与可选安全 sandbox 不改变产品边界。
 
 Production 必须外部注入 Secret，不能继承 isolated-dev credential 或 loopback endpoint。部署 artifact 必须能关联到明确 Git revision/build identity。
 
@@ -52,6 +53,8 @@ docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example up -
 uv run --no-sync pytest tests/integration/runtime
 docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down -v --remove-orphans
 ```
+
+上述基础生产 Compose 和 runtime/backup 测试只覆盖应用生命周期与备份，不启动 Checker Core Controller，也不证明审核能够执行。实际 Standard 和 Deep 审核都要求另行部署受限 Controller，并为 API/Worker 配置可达的 `PPAP_DEEP_CONTROLLER_SOCKET` 与一致的执行配置。构建该镜像用 `docker buildx bake release`；部署和生产切流仍需明确批准，此处不会自动启用。
 
 真实部署把填好密钥的文件交给 `--env-file`（生产字段目录是仓库根 [`.env.production`](../.env.production)；`deploy/compose.env.example` 只是 verify fixture）。接到 self-hosted InsForge 时用 `-f deploy/insforge/compose.yaml`：不启动 PostgreSQL，加入已有 `insforge-network`，API/Worker 作为该网络上的常驻容器；对象数据在 named volume `ppap-silo-data` 上。该 overlay 停服务时用 `docker compose down`，不要带 `-v`，不会删掉对象卷。验证用的默认 `deploy/compose.yaml` 仍可用 `down -v` 做 CI 清理。Custom Compute 规格见 [insforge/README.md](insforge/README.md)。
 
