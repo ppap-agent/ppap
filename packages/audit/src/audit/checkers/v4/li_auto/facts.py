@@ -34,6 +34,8 @@ def number(value):
 class NativeFacts(ExcelAgent):
     """Preserve unknown native cells while reusing the existing Excel agents."""
 
+    SOURCE_CLAUSE_IDS = True
+
     def _load_workbook(self):
         workbook = super()._load_workbook()
         if getattr(self, "_native_facts_workbook", None) is workbook:

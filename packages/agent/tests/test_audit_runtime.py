@@ -95,6 +95,18 @@ def test_program_hash_checked_and_entrypoint_is_callable_only():
         run_audit(*request(b"check = None\n"))
 
 
+@pytest.mark.parametrize("runner", [run_audit, run_audit_process])
+def test_empty_binding_never_imports_placeholder_code(runner):
+    from dataclasses import replace
+
+    snapshot, sources, programs = request(b"raise AssertionError('Placeholder code must not execute')\n", targets=1)
+    snapshot = replace(snapshot, targets=tuple(replace(target, binding=replace(target.binding, entrypoints={})) for target in snapshot.targets))
+    result = runner(snapshot, sources, programs)
+    assert result["findings"] == []
+    assert [(row["clause_id"], row["coverage"]) for row in result["coverage"]] == [("a", "unsupported"), ("b", "unsupported")]
+    assert snapshot.targets[0].verification == "unverified"
+
+
 def test_crash_timeout_cancel_never_return_partial_success():
     with pytest.raises(AuditRunError, match="guest_failed"):
         run_audit_process(*request(b"import os\ndef check(context): os._exit(7)\n"))
@@ -321,3 +333,47 @@ def create_audit(audit_file, rule, group_context):
     assert [(row["clause_id"], row["status"]) for row in result["findings"]] == [("a", "NG"), ("b", "ERR")]
     assert result["diagnostics"] == [{"file_version_id": "target-0", "clause_id": "foreign", "code": "authored_checker_extra_clause"}]
     assert "Unbound code must not run" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("customer,count", [("UAES", 19), ("理想", 17), ("蔚来", 5)])
+def test_all_standard_suites_execute_explicit_clauses_without_claiming_correctness(customer, count):
+    """Synthetic source smoke, separate from independently labelled corpus results."""
+    import io
+
+    from audit.standard_suites import standard_suites
+    from openpyxl import Workbook
+    from PIL import Image
+
+    suites = [suite for suite in standard_suites() if suite.customer == customer]
+    assert len(suites) == count
+    inputs, targets, sources, programs = [], [], {}, {}
+    for suite in suites:
+        stream = io.BytesIO()
+        if suite.source_entry == "U13":
+            Image.new("RGB", (2, 2), "white").save(stream, format="PNG")
+            suffix = ".png"
+        else:
+            book = Workbook()
+            book.active.title = {"N01": "CoverSheet", "N02": "PFMEA", "N03": "控制计划", "N04": "特殊特性清单", "N05": "过程流程图"}.get(suite.source_entry, "报告")
+            rules = json.loads(suite.files["rules.json"])
+            for row in [[suite.source_entry, rules["title"]], ["客户", customer], ["零件号", "P-1"], ["版本", "A"]]:
+                book.active.append(row)
+            book.save(stream)
+            book.close()
+            suffix = ".xlsx"
+        data = stream.getvalue()
+        version = suite.source_entry
+        sources[version] = data
+        digest = checker_digest(suite.program_files)
+        programs[digest] = suite.program_files
+        inputs.append(FrozenInput(version, hashlib.sha256(data).hexdigest(), "target", version + suffix, document_type=suite.document_type, customer=customer))
+        targets.append(
+            FrozenTarget(version, suite.revision_digest, suite.suite_key, suite.revision_digest, json.loads(suite.files["rules.json"]), RuleBinding(suite.suite_key, digest, suite.entrypoints))
+        )
+    snapshot = ExecutionSnapshot("tenant", "initiator", tuple(inputs), tuple(targets), "runtime", "library", {})
+    result = run_audit_process(snapshot, sources, programs)
+    expected = {(target.file_version_id, clause) for target in targets for clause in target.binding.entrypoints}
+    assert {(row["file_version_id"], row["clause_id"]) for row in result["findings"]} == expected
+    assert not [row for row in result["findings"] if row["status"] == "ERR"]
+    assert all(row["coverage"] == "mapped" for row in result["coverage"])
+    assert all(target.verification == "unverified" for target in targets)

@@ -130,6 +130,9 @@ class ExcelAgent(BaseAgent):
     NG_COLLECTION_TOPN: int | None = None
     EXPECTED_RULE_CATEGORIES: Tuple[str, ...] = ()
     CLAUSE_BOUND_CHECKS = False
+    # Source-native carriers use immutable external IDs, bound explicitly by
+    # their Suite. They must not opt into legacy ordinal IDs via rule metadata.
+    SOURCE_CLAUSE_IDS = False
     # Builtin checkers keep declaration order when the rule ids are not their clause ids.
     POSITIONAL_CLAUSE_CHECKS = False
 
@@ -243,10 +246,10 @@ class ExcelAgent(BaseAgent):
         if actual != expected:
             raise RuntimeError(f"{type(self).__name__} hardcoded rule contract mismatch: checker_categories={actual!r}, expected={expected!r}")
 
-        # V4 binds immutable source clause IDs to methods explicitly. The
+        # Source-native carriers bind immutable clause IDs explicitly. The
         # legacy ordinal JSON contract does not apply to those source IDs.
-        # Keep the internal method declaration check above for every profile.
-        if getattr(self.rule, "rule_profile", None) == "v4":
+        # Keep the internal method declaration check above for every carrier.
+        if type(self).SOURCE_CLAUSE_IDS:
             return
 
         raw_rules = getattr(self.rule, "rules", []) or []
@@ -947,7 +950,7 @@ class ExcelAgent(BaseAgent):
         from audit.engine.checkers.excel_field_evidence import native_cell_evidence
 
         versions = {item[0] for item in ctx.cell_reads()}
-        if not type(self).CLAUSE_BOUND_CHECKS and self.rule.rule_profile != "v4" and len(versions) < 2:
+        if not type(self).CLAUSE_BOUND_CHECKS and not type(self).SOURCE_CLAUSE_IDS and len(versions) < 2:
             return None
         return native_cell_evidence(ctx, str(self._source_path or self.audit_file.file_url))
 
