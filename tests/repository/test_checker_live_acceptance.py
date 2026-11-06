@@ -406,6 +406,44 @@ def test_final_snapshot_preserves_gate_failure_when_product_has_no_failure(tmp_p
     assert calls == [("GET", "/checker-optimizations/original")]
 
 
+@pytest.mark.parametrize("snapshot", [False, True])
+@pytest.mark.parametrize("changed", [False, True])
+def test_both_entrypoints_propagate_final_readback_verdict(tmp_path, monkeypatch, capsys, snapshot, changed):
+    receipt, samples = valid_receipt()
+    receipt["operation_id"] = "original"
+    report = {"accepted": True, "operation_id": "original", "candidate_revision_id": receipt["candidate_revision_id"], "validation": copy.deepcopy(receipt["report"]["validation"]), "samples": samples}
+    path = tmp_path / "report.json"
+    path.write_text(json.dumps(report))
+    (tmp_path / "private-client.json").write_text(json.dumps({"session": "synthetic"}))
+    if changed:
+        receipt["operation_id"] = "different"
+    calls = []
+
+    class ReadOnlyClient:
+        def __init__(self, session):
+            self.http = SimpleNamespace(timeout=None, close=lambda: None)
+
+        def request(self, method, target):
+            calls.append((method, target))
+            return receipt
+
+    def run_with_final_readback(output):
+        acceptance.final_readback(report, receipt)
+        acceptance.write_report(output, report)
+
+    monkeypatch.setenv("PPAP_CHECKER_LIVE_OUTPUT", str(tmp_path))
+    monkeypatch.setattr(acceptance.sys, "argv", ["run_checker_live"] + (["--snapshot"] if snapshot else []))
+    monkeypatch.setattr(acceptance, "Client", ReadOnlyClient)
+    monkeypatch.setattr(acceptance, "run", run_with_final_readback)
+    assert acceptance.main() == (1 if changed else 0)
+    saved = json.loads(path.read_text())
+    assert saved["accepted"] is not changed
+    if changed:
+        assert saved["gate_failure"] == "final_receipt_identity_or_proof_changed"
+        assert "acceptance passed" not in capsys.readouterr().out
+    assert calls == ([("GET", "/checker-optimizations/original")] if snapshot else [])
+
+
 @pytest.mark.parametrize("mutation", ["operation", "state", "proof"])
 def test_final_readback_revokes_acceptance_if_identity_or_sealed_proof_changes(mutation):
     receipt, samples = valid_receipt()
