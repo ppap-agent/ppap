@@ -1,0 +1,128 @@
+name: Checker optimization live acceptance
+
+# Paid and manual only. Never a Tests / CI Gate child; no schedule, push or PR hook.
+on:
+  workflow_dispatch:
+    inputs:
+      approve_paid:
+        description: 'Approve one synthetic optimization at the endpoint/model and limits below (not a currency cap)'
+        type: boolean
+        required: true
+        default: false
+      expected_sha:
+        description: 'Exact reviewed 40-character commit SHA of this workflow ref'
+        type: string
+        required: true
+      expected_base_url:
+        description: 'Approved HTTPS recipient base URL, must exactly match CI_LLM_BASE_URL'
+        type: string
+        required: true
+      expected_model:
+        description: 'Approved model, must exactly match CI_LLM_MODEL'
+        type: string
+        required: true
+      max_model_requests:
+        description: 'Maximum model requests for the single optimization (1-32)'
+        type: number
+        default: 32
+      max_input_tokens:
+        description: 'Input-token guard (1-200000); final request usage can overshoot'
+        type: number
+        default: 200000
+      max_output_tokens:
+        description: 'Output-token guard (1-32000), not a billing guarantee'
+        type: number
+        default: 32000
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checker-optimization-live
+  cancel-in-progress: false
+
+jobs:
+  live:
+    if: ${{ inputs.approve_paid && github.run_attempt == 1 }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      PPAP_BUILD_SHA: ${{ github.sha }}
+      PPAP_APPROVED_SHA: ${{ inputs.expected_sha }}
+      COMPOSE_PROJECT_NAME: ppap-checker-live-${{ github.run_id }}
+      PPAP_CHECKER_LIVE_APPROVED: 'true'
+      PPAP_APPROVED_BASE_URL: ${{ inputs.expected_base_url }}
+      PPAP_APPROVED_MODEL: ${{ inputs.expected_model }}
+      PPAP_PERSONAL_MODEL_MAX_REQUESTS: ${{ inputs.max_model_requests }}
+      PPAP_PERSONAL_MODEL_MAX_INPUT_TOKENS: ${{ inputs.max_input_tokens }}
+      PPAP_PERSONAL_MODEL_MAX_OUTPUT_TOKENS: ${{ inputs.max_output_tokens }}
+      PPAP_CHECKER_LIVE_ENV: ${{ runner.temp }}/checker-live.env
+      PPAP_CHECKER_LIVE_OUTPUT: ${{ runner.temp }}/checker-live-output
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check exact authorization and prepare isolated secrets
+        env:
+          CI_LLM_BASE_URL: ${{ secrets.CI_LLM_BASE_URL }}
+          CI_LLM_MODEL: ${{ secrets.CI_LLM_MODEL }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$PPAP_APPROVED_SHA"
+          python3 scripts/prepare_checker_live.py
+          mkdir -m 700 "$PPAP_CHECKER_LIVE_OUTPUT"
+          bash scripts/ci_assert_docker.sh
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: '0.9.26'
+          enable-cache: true
+      - name: Verify the acceptance gate offline and build exact images
+        run: |
+          set -euo pipefail
+          uv sync --locked --group e2e
+          uv run --no-sync python -m playwright install --with-deps chromium
+          uv run --no-sync pytest tests/repository/test_checker_live_acceptance.py -q
+          docker buildx bake api worker deep web --load
+          for service in api worker deep web; do
+            revision=$(docker image inspect "ppap-$service:$PPAP_BUILD_SHA" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
+            test "$revision" = "$PPAP_BUILD_SHA"
+          done
+      - name: Start only the independent candidate stack
+        run: |
+          set -euo pipefail
+          docker compose --env-file "$PPAP_CHECKER_LIVE_ENV" -f deploy/isolated-dev/checker-live.yaml up -d --no-build --wait --wait-timeout 180 api worker web
+      - name: One real optimization through personal settings and the production stack
+        env:
+          CI_LLM_API_KEY: ${{ secrets.CI_LLM_API_KEY }}
+          CI_LLM_BASE_URL: ${{ secrets.CI_LLM_BASE_URL }}
+          CI_LLM_MODEL: ${{ secrets.CI_LLM_MODEL }}
+        run: |
+          set -euo pipefail
+          # No pytest rerun, transport write retry or second optimization operation.
+          set -a
+          source "$PPAP_CHECKER_LIVE_ENV"
+          set +a
+          timeout 55m uv run --no-sync python -m scripts.run_checker_live
+      - name: Read the original operation once, without any new model operation
+        if: always()
+        run: |
+          if test -f "$PPAP_CHECKER_LIVE_OUTPUT/private-client.json"; then
+            uv run --no-sync python -m scripts.run_checker_live --snapshot
+          fi
+      - name: Stop this stack before reading final evidence
+        if: always()
+        run: |
+          if test -f "$PPAP_CHECKER_LIVE_ENV"; then
+            docker compose --env-file "$PPAP_CHECKER_LIVE_ENV" -f deploy/isolated-dev/checker-live.yaml down --remove-orphans
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: checker-live-${{ github.sha }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/checker-live-output/report.json
+            ${{ runner.temp }}/checker-live-output/controller.json
+          if-no-files-found: warn
+      - name: Remove ephemeral host credential file
+        if: always()
+        run: rm -f "$PPAP_CHECKER_LIVE_ENV" "$PPAP_CHECKER_LIVE_OUTPUT/private-client.json" "$PPAP_CHECKER_LIVE_OUTPUT/private-oracle.json"

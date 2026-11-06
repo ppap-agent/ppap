@@ -216,3 +216,86 @@ The separate InsForge native lifecycle remains path-filtered / manual / schedule
 ## CI Gate
 
 The default merge contract is the required groups: Web, Repository contract, Python modules, Distribution closure, Schema, Corpus, and Product integration. Being external-backed does not make a test optional or live; Corpus stays a required CI Gate child even when a cache miss calls real OCR / model capability. pytest does not inject the repository root via `pythonpath`; production imports come from uv workspace packaging. `tests/live` is opt-in real-environment validation, not the set of all external tests. The final `CI Gate` runs no tests; it succeeds only when every required group succeeds. Repository-side merge-contract semantics are therefore stable even when internal matrix groups evolve; whether the hosting plan can enforce `CI Gate` through branch protection/rulesets is a separate platform capability.
+
+### Real-model Checker optimization acceptance
+
+`Checker optimization live acceptance` is a separate `workflow_dispatch` only.
+It does not change `Tests` or `CI Gate`, and is not triggered by pushes, pull
+requests or a schedule. Preparing this entrypoint and passing offline regressions
+is **not a live pass**. Dispatch requires approval of the exact reviewed commit,
+provider recipient/model, synthetic sample transmission and paid limits. The
+provider is not tied to a brand or to who issued the test key.
+
+The inputs must match `CI_LLM_BASE_URL` / `CI_LLM_MODEL` and the selected workflow
+ref's SHA. `CI_LLM_API_KEY` is injected only into the private acceptance process
+on the disposable runner. Real Chromium saves `api_key` / `base_url` / `model`
+through the formal settings UI. The test reads back the redacted configuration
+and verifies that the UI binds optimization to its revision. No provider key is
+supplied in a Worker RPC or guest environment. Browser traces, video, request
+bodies and screenshots of the settings form are not recorded.
+
+The standalone `deploy/isolated-dev/checker-live.yaml` starts fresh PostgreSQL,
+Silo, API, Worker, Web and the production Controller/Pi guest image. Its
+`remote-dev` profile disables the fixture-login endpoint. Per-run random database
+and S3 credentials replace guessable defaults. Ports are bound only to the
+runner's loopback; there is no external network attachment, ambient `.env` file
+or Docker socket. Only the synthetic identity/session, rule and faulty immutable
+Checker are seeded. Eight source files and real baseline rounds use the product
+API. Chromium enters eight independent answers, configures the personal account,
+starts one real optimization, refreshes, and reopens its result in a fresh session.
+
+The six training and two held-out expectations are literal and independent. The
+held-out set covers PASS and NG. No corrected Checker or result is injected; the
+provider must repair a real missed detection and preserve both sets. The gate
+binds each case to the frozen original, Oracle, operation, base Suite, candidate
+and actual program digest, and checks evidence and nonempty coverage separately.
+
+A small observational guard wraps the unchanged runtime and gateway. It rejects
+holdout document canaries, exact held-out source identities and hidden case IDs
+at the author boundary, and rejects canaries or hidden IDs in provider requests.
+The label-only leak regression carries no workbook marker. Holdout execution
+must be credential-free. The guard also exercises the actual guest UID against
+the private evidence directory. Only the guard is mounted into the Controller;
+the client/oracle is neither in the Deep image nor mounted there. The existing
+`container-only` runtime is not a general hostile-code isolation proof.
+
+After real independent validation, Chromium explicitly publishes the candidate
+in the disposable tenant. The client explicitly requests a linked re-audit by
+the formal API and Chromium opens the new result. Chromium then rolls back the
+active Suite. A later sample edit must make the old proof stale, block ordinary
+API publication and require the browser's unverified confirmation. The gate
+hashes complete historical findings and frozen snapshots to prove that none of
+these actions changed the old results. This covers the synthetic self-service
+repair journey, not every #255 customer scenario, OAuth login, mobile layout or
+the browser's separate file-recognition/re-audit preparation flow.
+
+One optimization may have up to 32 model requests, a 200,000 input-token guard
+and 32,000 output-token guard, each reducible at dispatch. These are not currency
+ceilings: the final input usage is only known after the response and may exceed
+its remaining input allowance. Confirm endpoint pricing and acceptable spend
+before running. This run deliberately avoids model-backed metadata preparation;
+its initial and repeat audits use fixed native Checkers. Any unexpected gateway
+consumption before optimization is rejected; all observed provider requests must
+match the optimization's authoritative usage. Other product model capabilities
+are not covered by these per-execution gateway limits.
+
+No paid probe or automatic write retry is performed, and workflow reruns are
+refused. The UI-generated operation ID is saved before its request is forwarded.
+Each polled receipt preserves known usage, including legal unknown receipts with
+`report: null`. Before stopping containers, an always-run step makes one final
+read-only request to that same operation. This disposable stack is **not
+recoverable after cleanup**. Unknown later charges require provider-billing
+reconciliation, never automatic redispatch.
+
+Only bounded `report.json` and `controller.json` are uploaded, with known token
+and request counts. Keys, session tokens, original bytes, prompts, raw model
+responses and raw service logs are not artifacts. Monetary cost stays unknown
+without a provider billing receipt. No production data, notifications or formal
+audit points are affected. The live run must actually pass before any of these
+prepared assertions count as acceptance.
+
+Offline false-accept and safety regressions:
+
+```sh
+uv run --no-sync pytest tests/repository/test_checker_live_acceptance.py -q
+```
