@@ -1,4 +1,4 @@
-import {useCallback, useEffect, useMemo, useRef, useState} from 'react'
+import {useCallback, useContext, useEffect, useMemo, useRef, useState} from 'react'
 import {RefreshCw} from 'lucide-react'
 import {apiUrl} from '../api'
 import type {components} from '../generated/openapi'
@@ -9,7 +9,8 @@ import {Input} from '../components/ui/input'
 import {FileName} from '../journey/file-name'
 import {sourceLocation} from '../journey/product'
 import {RemoteSourcePane} from '../journey/remote-source'
-import {checkedFactAnswer, definiteFactAnswerRejection, factValueLabel, groupFactQuestions, nativeFactAnswersAdapter, type FactAnswerReceipt, type FactAnswersAdapter, type FactAnswersView, type FactQuestion} from './fact-answers-contract'
+import {checkedFactAnswer, definiteFactAnswerRejection, factValueLabel, groupFactQuestions, type FactAnswerReceipt, type FactAnswersAdapter, type FactAnswersView, type FactQuestion} from './fact-answers-contract'
+import {FactAnswersContext} from './fact-answers-context'
 import {resultLabel, resultTone} from './status-labels'
 import {writeAuditAddress} from './routes'
 
@@ -30,7 +31,9 @@ function keepOperation(roundId: string, operationId: string | null) {
 }
 
 /** Answers apply only to this frozen original and round. Machine findings stay untouched. */
-export function FactQuestions({roundId, files, findings = [], fileVersionId, adapter = nativeFactAnswersAdapter}: {roundId: string; files: FileVersion[]; findings?: MachineFinding[]; fileVersionId?: string; adapter?: FactAnswersAdapter}) {
+export function FactQuestions({roundId, files, findings = [], fileVersionId, adapter: providedAdapter}: {roundId: string; files: FileVersion[]; findings?: MachineFinding[]; fileVersionId?: string; adapter?: FactAnswersAdapter}) {
+  const inheritedAdapter = useContext(FactAnswersContext)
+  const adapter = providedAdapter ?? inheritedAdapter
   const [view, setView] = useState<FactAnswersView | null>(null)
   const [error, setError] = useState(''), [notice, setNotice] = useState('')
   const [loading, setLoading] = useState(true), [saving, setSaving] = useState(false)

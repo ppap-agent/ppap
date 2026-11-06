@@ -21,6 +21,8 @@ import {reportReference} from '../src/audit/result-projection'
 import {AuditRoundReader} from '../src/audit/round-reader'
 import {fixtureRound, fixtureReviewRound} from './audit-rounds'
 import {AuditReviewProvider, type AuditReviewAdapter} from '../src/audit/review-editor'
+import {FactAnswersContext} from '../src/audit/fact-answers-context'
+import {fixtureFactAnswers} from './audit-fact-answers'
 import {reviewOf} from '../src/review-contract'
 
 // Explicit UI fixtures only. No production entry imports this adapter.
@@ -30,6 +32,7 @@ const automaticObservation = scene.startsWith('restore-observe') || ['observe-ma
 const readHistoricalRound = async (id: string) => fixtureRound(fixtureResults(fixtureAcceptance(fixtureMatch(adapter.samples(), 'standard', null, null, 'history-input'), 'history-accept'), 'reports-none'), id)
 const delayedDisplay = scene === 'restore-display-loading' || scene === 'restore-display-denied'
 const supportAdapter = fixtureSupport(scene)
+const factAnswersAdapter = fixtureFactAnswers(scene)
 document.documentElement.classList.toggle('dark', query.get('theme') === 'dark')
 const documents = [
   ...reportSamples.documents,
@@ -583,4 +586,4 @@ function HistoricalPreview() {
   const content = <>{scene === 'round-history-race' && <aside aria-label="预览事件控制" className="flex flex-wrap gap-2 p-3"><Button onClick={() => setRoundId(value => value === 'history-round' ? 'another-round' : 'history-round')}>切换历史审核</Button>{reads.map(row => <Button key={row.id} onClick={() => {row.finish(); setReads(rows => rows.filter(item => item.id !== row.id))}}>返回历史读取 {row.id}</Button>)}</aside>}{scene === 'round-history-review-race' && <aside aria-label="预览事件控制">{reviewReplies.map(reply => <Button key={reply.id} onClick={() => {reply.finish(); setReviewReplies(rows => rows.filter(row => row.id !== reply.id))}}>返回复核保存 {reply.id}</Button>)}</aside>}<AuditRoundReader roundId={roundId} readRound={read} returnHref="/preview/audit.html" renderOriginal={(file, evidence) => <FixtureOriginal file={file} evidence={evidence}/>}/></>
   return scene.startsWith('round-history-review') ? <AuditReviewProvider adapter={reviewAdapter}>{content}</AuditReviewProvider> : content
 }
-createRoot(document.getElementById('app')!).render(scene.startsWith('round-history') ? <HistoricalPreview/> : <Preview/>)
+createRoot(document.getElementById('app')!).render(<FactAnswersContext.Provider value={factAnswersAdapter}>{scene.startsWith('round-history') ? <HistoricalPreview/> : <Preview/>}</FactAnswersContext.Provider>)
