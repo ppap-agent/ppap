@@ -154,9 +154,9 @@ class EngineRuleBody(TypedDict):
     kind: Literal["engine"]
     type: str
     rule_profile: NotRequired[str]
-    customers: list[str]
-    models: list[str]
-    parts: list[str]
+    customers: NotRequired[list[str]]
+    models: NotRequired[list[str]]
+    parts: NotRequired[list[str]]
     rules: list[RuleItem]
 
 
@@ -436,6 +436,7 @@ SemanticLocator = XlsxCellLocator | XlsxRangeLocator | PdfBlockLocator | PdfPage
 
 
 class SemanticSource(TypedDict):
+    kind: NotRequired[Literal["structure", "visual"]]
     file_version_id: str
     filename: str
     role: MaterialRole
@@ -462,6 +463,8 @@ class SemanticEvidence(TypedDict):
     rule_text: str
     sources: list[SemanticSource]
     scope: NotRequired[SemanticScope]
+    checks_performed: NotRequired[int]
+    empty_scope_basis: NotRequired[str]
     diagnostic: NotRequired[str]
     rule_source_file_version_id: NotRequired[str]
     verification_scope: NotRequired[str]
@@ -481,6 +484,9 @@ class Evidence(TypedDict):
 
 
 class FindingLocator(TypedDict, total=False):
+    suite_revision_id: str
+    checker_digest: str
+    verification_status: Literal["unverified", "verified"]
     kind: str
     file_id: str
     file_version_id: str
