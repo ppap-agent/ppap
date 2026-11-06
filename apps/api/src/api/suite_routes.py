@@ -51,6 +51,9 @@ class SuiteActive(TypedDict):
     current_revision_id: str | None
     latest_official_revision_id: str | None
     latest_official_version: int | None
+    official_base_revision_id: str | None
+    official_update_available: bool
+    official_update_notice: bool
     verification_status: str
     force_unverified: bool
     validation: SuiteValidation
@@ -73,7 +76,24 @@ class SuiteDiff(TypedDict):
     after: str
 
 
+class SuiteUpgradeReceipt(TypedDict):
+    operation_id: str
+    source_revision_id: str
+    target_revision_id: str
+    expected_revision: int
+
+
+class SuiteUpgradeRequest(SuiteUpgradeReceipt):
+    pass
+
+
+class SuiteOfficialUpdateSeen(TypedDict):
+    official_revision_id: str
+
+
 class SuiteRevisionDetail(TypedDict):
+    official_base_revision_id: NotRequired[str | None]
+    upgrade: NotRequired[SuiteUpgradeReceipt]
     title: str
     version: int
     created_by_name: str
@@ -129,7 +149,13 @@ def register_suite_routes(app: FastAPI, store, principal_of):
             return JSONResponse({"error": "suite_artifact_missing"}, status_code=409, headers=headers)
         except ValueError as exc:
             code = str(exc)
-            status = 404 if code == "suite_candidate_not_found" else 409 if code in {"suite_head_conflict", "suite_operation_conflict", "suite_confirmation_required"} else 400
+            status = (
+                404
+                if code == "suite_candidate_not_found"
+                else 409
+                if code in {"suite_head_conflict", "suite_official_head_conflict", "suite_operation_conflict", "suite_confirmation_required"}
+                else 400
+            )
             return JSONResponse({"error": code}, status_code=status, headers=headers)
 
     def body_fields(body, fields: set[str], optional: frozenset[str] = frozenset()):
@@ -148,6 +174,26 @@ def register_suite_routes(app: FastAPI, store, principal_of):
     @app.put("/suites/{suite_key}/active", response_model=SuitePublication, openapi_extra=wc.openapi_body(SuitePublishRequest))
     def suites_publish(suite_key: str, request: Request, body: Any = Body(...)):
         return respond(request, lambda principal: releases().publish(principal, suite_key, **body_fields(body, {"revision_id", "expected_revision", "operation_id", "force_unverified"})))
+
+    @app.post("/suites/{suite_key}/official-update/seen", response_model=SuiteActive, openapi_extra=wc.openapi_body(SuiteOfficialUpdateSeen))
+    def suite_official_update_seen(suite_key: str, request: Request, body: Any = Body(...)):
+        return respond(request, lambda principal: releases().acknowledge_official_update(principal, suite_key, **body_fields(body, {"official_revision_id"})))
+
+    @app.post("/suites/{suite_key}/upgrades", response_model=SuiteRevisionDetail, status_code=201, openapi_extra=wc.openapi_body(SuiteUpgradeRequest))
+    def suite_official_upgrade(suite_key: str, request: Request, body: Any = Body(...)):
+        return respond(
+            request,
+            lambda principal: releases().upgrade_official(
+                principal,
+                suite_key,
+                **body_fields(body, {"source_revision_id", "target_revision_id", "expected_revision", "operation_id"}),
+            ),
+            status_code=201,
+        )
+
+    @app.get("/suites/{suite_key}/upgrades/{operation_id}", response_model=SuiteRevisionDetail)
+    def suite_official_upgrade_receipt(suite_key: str, operation_id: str, request: Request):
+        return respond(request, lambda principal: releases().read_upgrade(principal, suite_key, operation_id))
 
     @app.get("/suite-revisions/{revision_id}", response_model=SuiteRevisionDetail)
     def suite_revision(revision_id: str, request: Request):

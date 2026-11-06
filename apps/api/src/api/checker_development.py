@@ -92,10 +92,17 @@ class OptimizationReceipt(BaseModel):
     created_at: str
 
 
+class CheckerSource(BaseModel):
+    file_version_id: str
+    suite_revision_id: str
+    suite_key: str
+
+
 class FeedbackView(BaseModel):
     round_id: str
     feedback: list[FeedbackResponse]
     optimizations: list[OptimizationReceipt]
+    sources: list[CheckerSource] = Field(default_factory=list)
 
 
 class FeedbackDeletion(BaseModel):

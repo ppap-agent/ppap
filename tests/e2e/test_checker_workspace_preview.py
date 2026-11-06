@@ -24,12 +24,21 @@ class CheckerHttpFixture:
         self.head = 0
         self.lose_feedback = False
         self.lose_publish = False
+        self.lose_upgrade = False
+        self.reject_upgrade = False
+        self.reject_upgrade_verification = False
+        self.latest_official = None
+        self.seen_official = set()
+        self.upgrades = {}
         self.revisions = {"revision-base": self.revision("revision-base", 1)}
 
     @staticmethod
     def revision(identity, version):
         return {
             "id": identity,
+            "tenant_id": "tenant-a",
+            "base_revision_id": "official-old",
+            "official_base_revision_id": "official-old",
             "suite_key": "control-plan",
             "title": "控制计划检查",
             "version": version,
@@ -39,6 +48,21 @@ class CheckerHttpFixture:
             "validation": {"status": "unverified", "total_samples": 1, "passed_samples": 1, "new_errors": 0, "reasons": ["insufficient_samples"]},
             "round_count": 1,
             "rounds": [],
+        }
+
+    def active(self):
+        return {
+            "suite_key": "control-plan",
+            "current_revision_id": self.current,
+            "revision": self.head,
+            "history": self.history,
+            "selection_mode": "pinned",
+            "validation": self.revisions[self.current]["validation"],
+            "latest_official_revision_id": self.latest_official,
+            "latest_official_version": 4 if self.latest_official else None,
+            "official_base_revision_id": "official-old",
+            "official_update_available": bool(self.latest_official),
+            "official_update_notice": bool(self.latest_official and self.latest_official not in self.seen_official),
         }
 
     def route(self, route):
@@ -52,7 +76,12 @@ class CheckerHttpFixture:
             response = {"provider": "deepseek", "model": "deepseek-flash", "configured": True, "updated_at": None}
         elif path == "/audit-rounds/round-a/checker-feedback":
             if method == "GET":
-                response = {"round_id": "round-a", "feedback": self.feedback, "optimizations": list(reversed(list(self.operations.values())))}
+                response = {
+                    "round_id": "round-a",
+                    "feedback": self.feedback,
+                    "sources": [{"file_version_id": "file-a", "suite_revision_id": "revision-base", "suite_key": "control-plan"}],
+                    "optimizations": list(reversed(list(self.operations.values()))),
+                }
             else:
                 row = {**body, "id": "sample-a", "suite_revision_id": "revision-base", "suite_key": "control-plan", "round_id": "round-a", "revision": 1, "ordinal": 1}
                 self.feedback.append(row)
@@ -73,9 +102,15 @@ class CheckerHttpFixture:
             response = {"feedback": self.feedback}
         elif path.startswith("/suite-revisions/") and path.endswith("/optimizations"):
             revision = path.split("/")[2]
-            candidate = "revision-candidate"
+            if revision == "revision-upgraded" and self.reject_upgrade_verification:
+                route.fulfill(status=409, json={"error": "checker_feedback_rules_changed"})
+                return
+            candidate = "revision-upgrade-tested" if revision == "revision-upgraded" else "revision-candidate"
             state = "running" if body["consume_model"] else "saved"
             self.revisions[candidate] = self.revision(candidate, 2)
+            if revision == "revision-upgraded":
+                self.revisions[candidate]["base_revision_id"] = self.latest_official
+                self.revisions[candidate]["official_base_revision_id"] = self.latest_official
             response = {
                 "operation_id": body["operation_id"],
                 "suite_revision_id": revision,
@@ -93,6 +128,30 @@ class CheckerHttpFixture:
             response = self.operations[path.split("/")[2]]
             if path.endswith("/stop"):
                 response.update(state="stopped", cancel_requested=True)
+        elif path == "/suites/control-plan/official-update/seen":
+            assert body["official_revision_id"] == self.latest_official
+            self.seen_official.add(body["official_revision_id"])
+            response = self.active()
+        elif path.startswith("/suites/control-plan/upgrades"):
+            if method == "POST":
+                if self.reject_upgrade:
+                    route.fulfill(status=409, json={"error": "official_update_changed"})
+                    return
+                assert body["expected_revision"] == self.head
+                assert body["target_revision_id"] == self.latest_official
+                source = self.revisions[body["source_revision_id"]]
+                candidate = self.revision("revision-upgraded", 4)
+                candidate.update(base_revision_id=self.latest_official, official_base_revision_id=self.latest_official, upgrade=body)
+                candidate["files"].update(source["files"])
+                self.revisions[candidate["id"]] = candidate
+                self.upgrades[body["operation_id"]] = candidate
+                if self.lose_upgrade:
+                    self.lose_upgrade = False
+                    route.abort("failed")
+                    return
+                response = candidate
+            else:
+                response = self.upgrades.get(path.split("/")[-1])
         elif path == "/suites/control-plan/active":
             if method == "PUT":
                 assert body["expected_revision"] == self.head
@@ -105,14 +164,7 @@ class CheckerHttpFixture:
                     route.abort("failed")
                     return
             else:
-                response = {
-                    "suite_key": "control-plan",
-                    "current_revision_id": self.current,
-                    "revision": self.head,
-                    "history": self.history,
-                    "selection_mode": "pinned",
-                    "validation": self.revisions[self.current]["validation"],
-                }
+                response = self.active()
         elif path.startswith("/suite-revisions/"):
             revision = path.split("/")[2]
             if path.endswith("/candidates"):
@@ -220,4 +272,159 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
             page.get_by_role("button", name="用新版本重审这份文件", exact=True).click()
             expect(page.get_by_text("已进入现有显式重审入口", exact=True)).to_be_visible()
             self.assertEqual(len([row for row in fixture.calls if row[:2] == ("PUT", "/suites/control-plan/active")]), 1)
+            browser.close()
+
+    def open_upgrade(self, page, fixture):
+        fixture.latest_official = "official-new"
+        self.answer(page)
+        expect(page.get_by_role("button", name="升级并验证", exact=True)).to_be_enabled()
+
+    def test_official_notice_once_and_upgrade_tests_selected_edits_without_publish_or_model(self):
+        with sync_playwright() as playwright:
+            browser = self.browser(playwright)
+            fixture = CheckerHttpFixture()
+            fixture.latest_official = "official-new"
+            page = self.open(browser, fixture, 390)
+            expect(page.get_by_text("官方检查有新版本", exact=True)).to_be_visible()
+            self.answer(page)
+            expect(page.get_by_role("button", name="升级并验证", exact=True)).to_be_enabled()
+            page.reload()
+            expect(page.get_by_role("button", name="升级并验证", exact=True)).to_be_enabled()
+            expect(page.get_by_text("官方检查有新版本", exact=True)).not_to_be_visible()
+            self.assertEqual(len([row for row in fixture.calls if row[1].endswith("/official-update/seen")]), 1)
+            page.get_by_text("单独修改规则或模板", exact=True).click()
+            page.get_by_label("条款 U08-1 的规则原文", exact=True).fill("保留企业有效签名要求")
+            expect(page.get_by_role("button", name="升级并验证", exact=True)).to_be_disabled()
+            expect(page.get_by_text("先保存当前修改再升级；保存结果未确认时，请先读取原保存操作。", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="仅保存这些修改", exact=True)).to_be_enabled()
+            page.get_by_role("button", name="仅保存这些修改", exact=True).click()
+            expect(page.get_by_text("控制计划检查 · 本企业版本 v3 · 待发布的修改", exact=True)).to_be_visible()
+            page.get_by_role("button", name="升级并验证", exact=True).click()
+            expect(page.get_by_text("控制计划检查 · 本企业版本 v2 · 待发布的修改", exact=True)).to_be_visible()
+            writes = [row for row in fixture.calls if row[0] == "POST"]
+            upgrade = next(row for row in writes if row[1] == "/suites/control-plan/upgrades")
+            self.assertEqual(upgrade[2]["source_revision_id"], "revision-edited")
+            self.assertEqual(upgrade[2]["target_revision_id"], "official-new")
+            self.assertEqual(upgrade[2]["expected_revision"], 0)
+            verification = next(row for row in writes if row[1] == "/suite-revisions/revision-upgraded/optimizations")
+            self.assertEqual(verification[2]["action"], "run_tests")
+            self.assertFalse(verification[2]["consume_model"])
+            self.assertEqual(verification[2]["feedback_ids"], ["sample-a"])
+            self.assertIn("保留企业有效签名要求", fixture.revisions["revision-upgraded"]["files"]["rules.json"])
+            self.assertEqual(fixture.history, [])
+            self.assertEqual(fixture.current, "revision-base")
+            self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 390)
+            browser.close()
+
+    def test_unknown_upgrade_refresh_is_read_only_and_verification_requires_another_click(self):
+        with sync_playwright() as playwright:
+            browser = self.browser(playwright)
+            fixture = CheckerHttpFixture()
+            fixture.lose_upgrade = True
+            page = self.open(browser, fixture)
+            self.open_upgrade(page, fixture)
+            page.get_by_role("button", name="升级并验证", exact=True).click()
+            expect(page.get_by_text("升级结果尚未确定。请读取原升级操作，不要再次升级。", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="发布此修改", exact=True)).not_to_be_visible()
+            expect(page.get_by_role("button", name="重新运行验证样本", exact=True)).to_be_disabled()
+            expect(page.get_by_role("button", name="仅保存待发布修改", exact=True)).to_be_disabled()
+            expect(page.get_by_role("button", name="只运行现有检查验证", exact=True)).to_be_disabled()
+            self.assertIn("checkerUpgrade=", page.url)
+            page.reload()
+            page.get_by_role("button", name="读取原升级操作", exact=True).click()
+            expect(page.get_by_text("已找回升级候选，尚未自动运行样本。请重新运行验证样本后核对结果。", exact=True)).to_be_visible()
+            self.assertNotIn("checkerUpgrade=", page.url)
+            self.assertEqual(len([row for row in fixture.calls if row[:2] == ("POST", "/suites/control-plan/upgrades")]), 1)
+            self.assertFalse(any(row[:2] == ("POST", "/suite-revisions/revision-upgraded/optimizations") for row in fixture.calls))
+            expect(page.get_by_role("button", name="重新运行验证样本", exact=True)).to_be_enabled()
+            page.get_by_role("button", name="重新运行验证样本", exact=True).click()
+            expect(page.get_by_text("控制计划检查 · 本企业版本 v2 · 待发布的修改", exact=True)).to_be_visible()
+            self.assertEqual(len([row for row in fixture.calls if row[:2] == ("POST", "/suite-revisions/revision-upgraded/optimizations")]), 1)
+            browser.close()
+
+    def test_changed_official_target_rejects_upgrade_and_new_notice_is_per_revision(self):
+        with sync_playwright() as playwright:
+            browser = self.browser(playwright)
+            fixture = CheckerHttpFixture()
+            fixture.reject_upgrade = True
+            page = self.open(browser, fixture)
+            self.open_upgrade(page, fixture)
+            page.get_by_role("button", name="升级并验证", exact=True).click()
+            expect(page.get_by_role("button", name="读取最新版本后核对升级", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="升级并验证", exact=True)).not_to_be_visible()
+            self.assertNotIn("checkerUpgrade=", page.url)
+            self.assertEqual(fixture.upgrades, {})
+            fixture.latest_official = "official-next"
+            fixture.reject_upgrade = False
+            page.get_by_role("button", name="读取最新版本后核对升级", exact=True).click()
+            expect(page.get_by_text("官方检查有新版本", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="升级并验证", exact=True)).to_be_enabled()
+            page.reload()
+            expect(page.get_by_role("button", name="升级并验证", exact=True)).to_be_enabled()
+            expect(page.get_by_text("官方检查有新版本", exact=True)).not_to_be_visible()
+            seen = [row[2]["official_revision_id"] for row in fixture.calls if row[1].endswith("/official-update/seen")]
+            self.assertEqual(seen, ["official-new", "official-next"])
+            browser.close()
+
+    def test_upgrade_candidate_stays_selected_when_verification_rejects(self):
+        with sync_playwright() as playwright:
+            browser = self.browser(playwright)
+            fixture = CheckerHttpFixture()
+            fixture.reject_upgrade_verification = True
+            page = self.open(browser, fixture)
+            self.open_upgrade(page, fixture)
+            page.get_by_role("button", name="升级并验证", exact=True).click()
+            expect(page.get_by_text("原反馈中的条款已变更，请先核对正确答案。", exact=True)).to_be_visible()
+            expect(page.get_by_text("控制计划检查 · 本企业版本 v4 · 待发布的修改", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="重新运行验证样本", exact=True)).to_be_enabled()
+            page.reload()
+            expect(page.get_by_text("控制计划检查 · 本企业版本 v4 · 待发布的修改", exact=True)).to_be_visible()
+            self.assertEqual(len([row for row in fixture.calls if row[:2] == ("POST", "/suites/control-plan/upgrades")]), 1)
+            self.assertEqual(len([row for row in fixture.calls if row[:2] == ("POST", "/suite-revisions/revision-upgraded/optimizations")]), 1)
+            self.assertEqual(fixture.history, [])
+            browser.close()
+
+    def test_official_update_is_visible_without_feedback_or_optimization_candidate(self):
+        with sync_playwright() as playwright:
+            browser = self.browser(playwright)
+            fixture = CheckerHttpFixture()
+            fixture.latest_official = "official-new"
+            page = self.open(browser, fixture)
+            expect(page.get_by_text("官方检查有新版本", exact=True)).to_be_visible()
+            expect(page.get_by_text("控制计划检查 · 本企业版本 v1 · 当前使用", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="升级并验证", exact=True)).to_be_disabled()
+            expect(page.get_by_text("尚无验证样本。可以查看版本和官方更新；添加正确答案后才能升级并验证。", exact=True)).to_be_visible()
+            self.assertEqual(fixture.feedback, [])
+            self.assertEqual(fixture.operations, {})
+            self.assertEqual(fixture.upgrades, {})
+            self.assertFalse(any(row[0] == "POST" and row[1].endswith(("/candidates", "/optimizations", "/upgrades")) for row in fixture.calls))
+            self.answer(page)
+            expect(page.get_by_role("button", name="升级并验证", exact=True)).to_be_enabled()
+            page.get_by_role("button", name="升级并验证", exact=True).click()
+            expect(page.get_by_text("控制计划检查 · 本企业版本 v2 · 待发布的修改", exact=True)).to_be_visible()
+            upgrades = [row for row in fixture.calls if row[:2] == ("POST", "/suites/control-plan/upgrades")]
+            self.assertEqual(upgrades[0][2]["source_revision_id"], "revision-base")
+            self.assertFalse(any(row[0] == "POST" and row[1].endswith("/candidates") for row in fixture.calls))
+            self.assertEqual(fixture.history, [])
+            browser.close()
+
+    def test_historical_entry_upgrades_current_enterprise_version_not_old_report_source(self):
+        with sync_playwright() as playwright:
+            browser = self.browser(playwright)
+            fixture = CheckerHttpFixture()
+            fixture.latest_official = "official-new"
+            fixture.current = "revision-current"
+            fixture.revisions[fixture.current] = fixture.revision(fixture.current, 3)
+            fixture.revisions[fixture.current]["files"]["checker.py"] = "# current enterprise change"
+            fixture.head = 2
+            page = self.open(browser, fixture)
+            expect(page.get_by_text("控制计划检查 · 本企业版本 v3 · 当前使用", exact=True)).to_be_visible()
+            self.answer(page)
+            page.get_by_role("button", name="升级并验证", exact=True).click()
+            expect(page.get_by_text("控制计划检查 · 本企业版本 v2 · 待发布的修改", exact=True)).to_be_visible()
+            upgrade = next(row[2] for row in fixture.calls if row[:2] == ("POST", "/suites/control-plan/upgrades"))
+            self.assertEqual(upgrade["source_revision_id"], "revision-current")
+            self.assertEqual(upgrade["expected_revision"], 2)
+            self.assertEqual(fixture.revisions["revision-upgraded"]["files"]["checker.py"], "# current enterprise change")
+            self.assertEqual(fixture.current, "revision-current")
             browser.close()

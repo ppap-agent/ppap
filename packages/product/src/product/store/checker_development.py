@@ -239,7 +239,26 @@ class CheckerDevelopmentStore:
                 except KeyError:
                     continue
                 optimizations.append(_receipt(row))
-            return {"round_id": round_id, "feedback": feedback, "optimizations": optimizations}
+            sources = []
+            rows = conn.execute(
+                """SELECT i.file_version_id,v.file_id,r.result_attempt FROM product.round_inputs i
+                   JOIN product.file_versions v ON v.id=i.file_version_id AND v.tenant_id=%s
+                   JOIN product.audit_rounds r ON r.id=i.round_id AND r.tenant_id=v.tenant_id
+                   WHERE i.round_id=%s AND i.role='target' AND r.result_attempt IS NOT NULL ORDER BY i.file_version_id""",
+                (principal.tenant_id, round_id),
+            ).fetchall()
+            for version_id, file_id, attempt in rows:
+                resource = self.store._resource(conn, str(file_id))
+                if resource is None or not can_read(principal, resource, self.store._grants(conn, str(file_id), principal.user_id)):
+                    continue
+                try:
+                    suite = self._frozen_source(conn, principal, round_id, str(version_id), attempt)
+                except ValueError as exc:
+                    if str(exc) == "checker_artifact_unavailable":
+                        continue
+                    raise
+                sources.append({"file_version_id": str(version_id), "suite_revision_id": suite.revision.id, "suite_key": suite.revision.suite_key})
+            return {"round_id": round_id, "feedback": feedback, "optimizations": optimizations, "sources": sources}
 
     def list_suite_feedback(self, principal, revision_id):
         """Same-check samples across rounds, filtered by current object grants."""

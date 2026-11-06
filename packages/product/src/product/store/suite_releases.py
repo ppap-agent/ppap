@@ -13,7 +13,7 @@ from psycopg.types.json import Jsonb
 
 from product.db import connect
 from product.suite_releases import empty_validation, publication_fingerprint
-from product.suites import canonical_json, content_digest, is_unimplemented_suite
+from product.suites import MAX_SUITE_DEPTH, canonical_json, content_digest, is_unimplemented_suite
 
 if TYPE_CHECKING:
     from product.checker_validation import SuiteValidationReport
@@ -157,6 +157,26 @@ def current_selection(conn, tenant_id: str, suite_key: str) -> dict:
     }
 
 
+def _official_base(conn, revision: dict, tenant_id: str) -> dict | None:
+    """Locate the nearest official ancestor; never confuse tenant revision IDs with updates."""
+    seen = set()
+    current = revision
+    for _ in range(MAX_SUITE_DEPTH):
+        if current["id"] in seen or current["suite_key"] != revision["suite_key"]:
+            raise ValueError("invalid_suite_base")
+        seen.add(current["id"])
+        if current["tenant_id"] is None:
+            return current
+        if current["base_revision_id"] is None:
+            return None
+        current = _revision(conn, str(current["base_revision_id"]), tenant_id)
+    raise ValueError("suite_cycle_or_depth")
+
+
+def _upgrade_provenance(row) -> dict:
+    return {"operation_id": str(row[0]), "source_revision_id": str(row[1]), "target_revision_id": str(row[2]), "expected_revision": row[3]}
+
+
 def _display_name(conn, user_id, tenant_id: str) -> str:
     if user_id is None:
         return "已删除成员"
@@ -218,6 +238,9 @@ class SuiteReleaseStore:
                         "current_revision_id": None,
                         "latest_official_revision_id": None,
                         "latest_official_version": None,
+                        "official_base_revision_id": None,
+                        "official_update_available": False,
+                        "official_update_notice": False,
                         "verification_status": "unverified",
                         "force_unverified": False,
                         "validation": empty_validation(),
@@ -240,6 +263,16 @@ class SuiteReleaseStore:
                 (suite_key,),
             )
             official = cur.fetchone()
+            base = _official_base(conn, _revision(conn, selection["revision_id"], principal.tenant_id), principal.tenant_id)
+            update = bool(official and base and base["id"] != official["current_revision_id"] and selection["selection_mode"] == "pinned")
+            seen = (
+                not update
+                or conn.execute(
+                    "SELECT 1 FROM product.suite_official_update_views WHERE tenant_id=%s AND user_id=%s AND official_revision_id=%s",
+                    (principal.tenant_id, principal.user_id, official["current_revision_id"]),
+                ).fetchone()
+                is not None
+            )
         return {
             "title": rules.get("title") or rules.get("type") or "文件检查",
             "version": selection["version"],
@@ -250,11 +283,112 @@ class SuiteReleaseStore:
             "current_revision_id": selection["revision_id"],
             "latest_official_revision_id": str(official["current_revision_id"]) if official else None,
             "latest_official_version": official["revision_number"] if official else None,
+            "official_base_revision_id": str(base["id"]) if base else None,
+            "official_update_available": update,
+            "official_update_notice": not seen,
             "verification_status": selection["verification_status"],
             "force_unverified": selection["force_unverified"],
             "validation": selection["validation"],
             "history": history,
         }
+
+    def acknowledge_official_update(self, principal, suite_key: str, official_revision_id: str) -> dict:
+        suite_key, official_revision_id = _key(suite_key), _id(official_revision_id)
+        with self._conn() as conn, conn.transaction():
+            _member(conn, principal)
+            _read_lock(conn, principal.tenant_id)
+            official = conn.execute("SELECT current_revision_id FROM product.official_suite_heads WHERE suite_key=%s", (suite_key,)).fetchone()
+            if official is None or str(official[0]) != official_revision_id:
+                raise ValueError("suite_official_head_conflict")
+            conn.execute(
+                """INSERT INTO product.suite_official_update_views(tenant_id,user_id,suite_key,official_revision_id)
+                   VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
+                (principal.tenant_id, principal.user_id, suite_key, official_revision_id),
+            )
+        return self.active(principal, suite_key)
+
+    def upgrade_official(self, principal, suite_key: str, source_revision_id: str, target_revision_id: str, expected_revision: int, operation_id: str) -> dict:
+        """Save a candidate only. Existing optimization and explicit publication own the next steps."""
+        from product.suite_upgrades import carry_enterprise_changes
+
+        suite_key, source_revision_id, target_revision_id, operation_id = _key(suite_key), _id(source_revision_id), _id(target_revision_id), _id(operation_id)
+        if type(expected_revision) is not int or expected_revision < 0:
+            raise ValueError("invalid_suite_upgrade")
+        fingerprint = content_digest(
+            canonical_json(
+                {
+                    "suite_key": suite_key,
+                    "source_revision_id": source_revision_id,
+                    "target_revision_id": target_revision_id,
+                    "expected_revision": expected_revision,
+                    "created_by": principal.user_id,
+                }
+            )
+        )
+        with self._conn() as conn, conn.transaction():
+            _member(conn, principal)
+            _lock(conn, principal.tenant_id)
+            prior = conn.execute(
+                "SELECT revision_id,request_fingerprint FROM product.suite_upgrade_operations WHERE tenant_id=%s AND operation_id=%s",
+                (principal.tenant_id, operation_id),
+            ).fetchone()
+            if prior:
+                if prior[1] != fingerprint:
+                    raise ValueError("suite_operation_conflict")
+                candidate_id = str(prior[0])
+            else:
+                source = _revision(conn, source_revision_id, principal.tenant_id)
+                if source["suite_key"] != suite_key:
+                    raise ValueError("suite_key_mismatch")
+                selected = _selected(conn, principal.tenant_id, suite_key)
+                if (selected["head"]["revision"] if selected["head"] else 0) != expected_revision:
+                    raise ValueError("suite_head_conflict")
+                official = conn.execute("SELECT current_revision_id FROM product.official_suite_heads WHERE suite_key=%s", (suite_key,)).fetchone()
+                if official is None or str(official[0]) != target_revision_id:
+                    raise ValueError("suite_official_head_conflict")
+                base = _official_base(conn, source, principal.tenant_id)
+                if base is None or str(base["id"]) == target_revision_id:
+                    raise ValueError("suite_upgrade_not_available")
+                changes = carry_enterprise_changes(
+                    self.suites.resolve_suite(source_revision_id, principal.tenant_id, conn=conn),
+                    self.suites.resolve_suite(str(base["id"]), principal.tenant_id, conn=conn),
+                    self.suites.resolve_suite(target_revision_id, principal.tenant_id, conn=conn),
+                )
+                candidate = self.suites.create_revision(
+                    tenant_id=principal.tenant_id,
+                    suite_key=suite_key,
+                    files=changes.files,
+                    deleted_paths=changes.deleted_paths,
+                    created_by=principal.user_id,
+                    base_revision_id=target_revision_id,
+                    related_suite_keys=changes.related_suite_keys,
+                    conn=conn,
+                )
+                candidate_id = candidate.id
+                conn.execute(
+                    """INSERT INTO product.suite_upgrade_operations
+                       (tenant_id,operation_id,suite_key,source_revision_id,target_revision_id,revision_id,expected_revision,request_fingerprint,created_by)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (principal.tenant_id, operation_id, suite_key, source_revision_id, target_revision_id, candidate_id, expected_revision, fingerprint, principal.user_id),
+                )
+                conn.execute(
+                    """INSERT INTO product.suite_official_update_views(tenant_id,user_id,suite_key,official_revision_id)
+                       VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
+                    (principal.tenant_id, principal.user_id, suite_key, target_revision_id),
+                )
+        return self.detail(principal, candidate_id)
+
+    def read_upgrade(self, principal, suite_key: str, operation_id: str) -> dict:
+        suite_key, operation_id = _key(suite_key), _id(operation_id)
+        with self._conn() as conn:
+            _member(conn, principal)
+            row = conn.execute(
+                "SELECT revision_id FROM product.suite_upgrade_operations WHERE tenant_id=%s AND suite_key=%s AND operation_id=%s",
+                (principal.tenant_id, suite_key, operation_id),
+            ).fetchone()
+        if row is None:
+            raise ValueError("suite_candidate_not_found")
+        return self.detail(principal, str(row[0]))
 
     def publish(self, principal, suite_key: str, revision_id: str, expected_revision: int, operation_id: str, force_unverified: bool = False, *, conn=None) -> dict:
         suite_key, revision_id, operation_id = _key(suite_key), _id(revision_id), _id(operation_id)
@@ -371,6 +505,7 @@ class SuiteReleaseStore:
             resolved = self.suites.resolve_suite(revision_id, principal.tenant_id, conn=conn)
             validation = _validation(conn, principal.tenant_id, row)
             original = self.suites.resolve_suite(str(row["base_revision_id"]), principal.tenant_id, conn=conn) if row["base_revision_id"] else None
+            official_base = _official_base(conn, row, principal.tenant_id)
             changed = [path for path, digest in resolved.object_digests.items() if original is None or original.object_digests.get(path) != digest]
             if original is not None:
                 changed.extend(set(original.files) - set(resolved.files))
@@ -378,7 +513,12 @@ class SuiteReleaseStore:
             rules = json.loads(resolved.files["rules.json"])
             title = rules.get("title") or rules.get("type") or "文件检查"
             creator_name = _display_name(conn, row["created_by"], principal.tenant_id) if row["tenant_id"] else "PPAP"
+            upgrade = conn.execute(
+                "SELECT operation_id,source_revision_id,target_revision_id,expected_revision FROM product.suite_upgrade_operations WHERE tenant_id=%s AND revision_id=%s",
+                (principal.tenant_id, revision_id),
+            ).fetchone()
         return {
+            **({"upgrade": _upgrade_provenance(upgrade)} if upgrade else {}),
             "title": title,
             "version": row["revision_number"],
             "created_by_name": creator_name,
@@ -386,6 +526,7 @@ class SuiteReleaseStore:
             "tenant_id": str(row["tenant_id"]) if row["tenant_id"] else None,
             "suite_key": row["suite_key"],
             "base_revision_id": str(row["base_revision_id"]) if row["base_revision_id"] else None,
+            "official_base_revision_id": str(official_base["id"]) if official_base else None,
             "created_by": str(row["created_by"]) if row["created_by"] else None,
             "created_at": row["created_at"].isoformat(),
             "resolved_digest": row["resolved_digest"],
