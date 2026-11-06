@@ -367,7 +367,7 @@ def run_audit_process(
     snapshot.validate_sources(sources, unavailable=unavailable_sources)
     if cancelled():
         raise AuditRunError("audit_cancelled")
-    if model_grant is not None and any(model_grant.get(key) != snapshot.model_identity.get(key) for key in ("provider", "model")):
+    if model_grant is not None and any(model_grant.get(key, "") != snapshot.model_identity.get(key, "") for key in ("provider", "model", "revision", "deployment")):
         raise AuditRunError("audit_model_identity_mismatch")
     with tempfile.TemporaryDirectory(prefix="ppap-audit-run-") as work:
         root = Path(work)
@@ -432,9 +432,9 @@ def _main() -> None:
         endpoint = urlsplit(grant["base_url"])
         if endpoint.hostname not in {"127.0.0.1", "localhost", "::1"} or endpoint.scheme != "http":
             raise AuditRunError("invalid_execution_grant_endpoint")
-        access = ModelAccess(provider=grant["provider"], base_url=grant["base_url"], model=grant["model"], api_key=SecretStr(grant["token"]))
+        access = ModelAccess(provider=grant["provider"], base_url=grant["base_url"], model=grant["model"], api_key=SecretStr(grant["token"]), revision=grant.get("revision", ""))
     snapshot = ExecutionSnapshot.from_dict(payload["snapshot"])
-    if access is not None and (access.provider != snapshot.model_identity.get("provider") or access.model != snapshot.model_identity.get("model")):
+    if grant is not None and any(grant.get(key, "") != snapshot.model_identity.get(key, "") for key in ("provider", "model", "revision", "deployment")):
         raise AuditRunError("audit_model_identity_mismatch")
     with model_access_scope(access):
         result = run_audit(

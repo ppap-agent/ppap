@@ -169,7 +169,7 @@ class OCRUsageTests(TestCase):
                 asyncio.run(llm_service.call_llm_async(b"image", "inspect", response_schema=SCHEMA))
         self.assertEqual(len(receipts), 1)
         receipt = receipts[0]
-        self.assertEqual((receipt["model"], receipt["input_tokens"], receipt["output_tokens"], receipt["reasoning_tokens"], receipt["cost_usd"]), ("actual-ocr-model", 12, 7, 3, 0.004))
+        self.assertEqual((receipt["model"], receipt["input_tokens"], receipt["output_tokens"], receipt["reasoning_tokens"], receipt["cost_usd"]), ("requested-model", 12, 7, 3, 0.004))
         self.assertGreaterEqual(receipt["elapsed_seconds"], 0)
         self.assertNotIn("private-invalid-json", str(receipts))
 

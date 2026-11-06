@@ -109,7 +109,8 @@ def process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> d
 
     # Absent identity is an unavailable scope, never permission to use LLM_*.
     user_id = store.model_user_for_job(claimed) if hasattr(store, "model_user_for_job") else ""
-    with personal_model_scope(store, tenant_id=claimed.tenant_id or "", initiating_user_id=user_id):
+    payload = claimed.payload if isinstance(claimed.payload, dict) else {}
+    with personal_model_scope(store, tenant_id=claimed.tenant_id or "", initiating_user_id=user_id, expected_identity=payload.get("model_identity", {})):
         return _process_claimed(store, claimed, ident, rule_ai=rule_ai)
 
 
@@ -228,8 +229,8 @@ def run_core_round(store: AuthStore, claimed, work, ident: str = "") -> tuple[di
     try:
         if settings is None:
             raise ValueError("settings_required")
-        expected_revision = runtime_revision(settings.deep_execution_revision(), library_revision())
-    except (ValueError, AttributeError):
+        expected_revision = runtime_revision(settings.deep_execution_revision(payload.get("model_identity")), library_revision())
+    except (ValueError, AttributeError, KeyError, TypeError):
         return failure_result("executor_revision_mismatch"), "failed"
     if executor != "ppap-checker-core" or not payload.get("checker_snapshot_digest"):
         return failure_result("checker_snapshot_required"), "failed"
@@ -240,7 +241,7 @@ def run_core_round(store: AuthStore, claimed, work, ident: str = "") -> tuple[di
         return failure_result("deep_runtime_unavailable"), "failed"
     try:
         spec = spec_from_work(work, executor, revision, DEEP_PROTOCOL_REVISION, checker_snapshot_digest=payload["checker_snapshot_digest"])
-        spec = spec.model_copy(update={"job_id": claimed.id, "attempt": claimed.attempt})
+        spec = spec.model_copy(update={"job_id": claimed.id, "attempt": claimed.attempt, "model_identity": payload.get("model_identity", {})})
         with audit_lease(store, claimed, ident) as cancelled:
 
             def progress(state):

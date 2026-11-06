@@ -38,6 +38,16 @@ class ModelAccess:
     provider: str = DEEPSEEK_PROVIDER
     model: str = DEEPSEEK_MODEL
     base_url: str = DEEPSEEK_BASE_URL
+    revision: str = ""
+
+    def identity(self) -> dict[str, str]:
+        """Opaque execution identity, never a credential or private endpoint URL."""
+        return {
+            "provider": self.provider,
+            "model": self.model,
+            "revision": self.revision,
+            "deployment": hashlib.sha256(self.base_url.encode()).hexdigest(),
+        }
 
 
 ModelResolver = Callable[[], ModelAccess]

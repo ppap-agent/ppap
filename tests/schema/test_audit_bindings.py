@@ -235,7 +235,16 @@ def check(context):
                 with TemporaryDirectory() as root:
                     credentials = Path(root)
                     (credentials / "model.json").write_text(
-                        json.dumps({"base_url": "http://127.0.0.1:1/v1", "token": "controlled-local-capability-1234567890", "model": DEEPSEEK_MODEL, "wall_seconds": 100, "max_turns": 20})
+                        json.dumps(
+                            {
+                                **dict(frozen.model_identity),
+                                "base_url": "http://127.0.0.1:1/v1",
+                                "token": "controlled-local-capability-1234567890",
+                                "model": DEEPSEEK_MODEL,
+                                "wall_seconds": 100,
+                                "max_turns": 20,
+                            }
+                        )
                     )
                     run_audit_manifest(inputs, work, credentials)
 

@@ -7,7 +7,6 @@ import uuid
 from contextlib import nullcontext
 
 from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, ValidationRecord, checker_digest, rule_digest, runtime_revision
-from documents.model_access import DEEPSEEK_MODEL, DEEPSEEK_PROVIDER
 from psycopg.types.json import Jsonb
 
 from product.db import connect
@@ -304,7 +303,8 @@ def freeze_round_execution(store, conn, principal, *, round_id: str, prepared: l
     if analysis_mode not in {"standard", "deep"}:
         raise ValueError("invalid_analysis_mode")
     library = library_revision()
-    policy = store.settings.deep_execution_policy()
+    identity = store.personal_model_identity(principal.tenant_id, principal.user_id, conn=conn)
+    policy = store.settings.deep_execution_policy(identity)
     targets = freeze_selected_targets(store, conn, principal.tenant_id, prepared, require_rule_match=require_rule_match)
     return ExecutionSnapshot(
         tenant_id=principal.tenant_id,
@@ -313,6 +313,6 @@ def freeze_round_execution(store, conn, principal, *, round_id: str, prepared: l
         targets=tuple(targets),
         runtime_revision=runtime_revision(policy.engine_revision(), library),
         library_revision=library,
-        model_identity={"provider": DEEPSEEK_PROVIDER, "model": DEEPSEEK_MODEL},
+        model_identity=identity,
         round_id=round_id,
     )

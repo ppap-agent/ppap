@@ -13,7 +13,7 @@ import threading
 from agent.checker_development import DevelopmentOutcome, DevelopmentRequest, FrozenDevelopmentInput, OracleSample, effective_rule_digest
 from agent.checker_program import group_context_for_spec, rule_for_file, verified_related_bytes
 from agent.checker_spec import SuiteCheckerProgram
-from agent.client import DEEP_REQUEST_TIMEOUT, DeepClient, DeepError
+from agent.client import DEEP_REQUEST_TIMEOUT, DeepClient, DeepError, PersonalModelNotStarted
 from agent.execution.budget import MAX_INPUT_FILES, MAX_INPUT_TOTAL
 from agent.protocol import DevelopmentEnvelope, ExecuteRequest, FrozenFile
 from audit.audits import DEEP_PROTOCOL_REVISION
@@ -27,7 +27,7 @@ from product.store.checker_development import CheckerDevelopmentStore, _receipt,
 def materialize_request(development, row):
     """Holdout bytes live only in this host process until fixed evaluation starts."""
     store, frozen = development.store, row["frozen"]
-    if frozen["executor_revision"] != runtime_revision(store.settings.deep_execution_revision(), library_revision()):
+    if frozen["executor_revision"] != runtime_revision(store.settings.deep_execution_revision(frozen["model_identity"]), library_revision()):
         raise DeepError("executor_revision_mismatch")
     suite = development.suites.resolve_suite(str(row["suite_revision_id"]), str(row["tenant_id"]))
     if suite.revision.resolved_digest != frozen["suite_digest"]:
@@ -50,6 +50,7 @@ def materialize_request(development, row):
             files=files,
             executor="ppap-deep",
             executor_revision=frozen["executor_revision"],
+            model_identity=frozen["model_identity"],
             tenant_id=str(row["tenant_id"]),
             job_id=str(row["job_id"]),
             initiating_user_id=str(row["initiating_user_id"]),
@@ -130,8 +131,11 @@ def development_handler(store, runtime):
         monitor = None
         try:
             context.raise_if_cancelled()
+            if store.personal_model_identity(str(row["tenant_id"]), str(row["initiating_user_id"])) != row["frozen"]["model_identity"]:
+                raise ModelUnavailable()
             if row["frozen"]["consume_model"]:
-                store.personal_model_access(str(row["tenant_id"]), str(row["initiating_user_id"]))
+                if store.personal_model_access(str(row["tenant_id"]), str(row["initiating_user_id"])).identity() != row["frozen"]["model_identity"]:
+                    raise ModelUnavailable()
             request, spec = materialize_request(development, row)
             spec = spec.model_copy(update={"attempt": identity.attempt})
             context.raise_if_cancelled()
@@ -152,6 +156,10 @@ def development_handler(store, runtime):
             monitor = threading.Thread(target=watch_fence, daemon=True)
             monitor.start()
             outcome = runtime.develop_and_run(request, spec=spec, context=context)
+        except PersonalModelNotStarted as exc:
+            # Only the trusted pre-start runtime rejection proves no send.
+            # A generic unavailable error during execution can follow paid work.
+            outcome = DevelopmentOutcome(None, [], [], {"model_requests": 0, "input_tokens": 0, "output_tokens": 0}, error_code=exc.code, usage_source="controlled")
         except (DeepError, ModelUnavailable, KeyError, ValueError) as exc:
             code = exc.code if isinstance(exc, DeepError) else "personal_model_unavailable" if isinstance(exc, ModelUnavailable) else "checker_input_invalid"
             outcome = DevelopmentOutcome(None, [], [], {}, error_code=code, usage_uncertain=dispatched and row["frozen"]["consume_model"])

@@ -1,21 +1,30 @@
 """Self-service personal model settings. Never echo submitted secret inputs."""
 
-from documents.model_access import ModelUnavailable
+from documents.model_access import DEEPSEEK_BASE_URL, DEEPSEEK_MODEL, ModelUnavailable
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from product.store.model_credentials import ModelCredentialError
-from pydantic import SecretStr
+from pydantic import BaseModel, SecretStr
+
+
+class PersonalModelConfigResponse(BaseModel):
+    provider: str
+    model: str
+    base_url: str
+    configured: bool
+    updated_at: str | None
+    revision: str | None
 
 
 def register_model_credential_routes(app, store, principal_of):
-    @app.get("/me/model-config")
+    @app.get("/me/model-config", response_model=PersonalModelConfigResponse)
     def model_config(request: Request):
         principal = principal_of(request)
         if not principal:
             return JSONResponse({"error": "unauthenticated"}, status_code=401)
         return JSONResponse(store.personal_model_config(principal), headers={"Cache-Control": "no-store"})
 
-    @app.put("/me/model-config")
+    @app.put("/me/model-config", response_model=PersonalModelConfigResponse)
     async def put_model_config(request: Request):
         principal = principal_of(request)
         if not principal:
@@ -31,12 +40,20 @@ def register_model_credential_routes(app, store, principal_of):
             import json
 
             body = json.loads(raw)
-            if not isinstance(body, dict) or set(body) != {"api_key"} or not isinstance(body["api_key"], str):
+            if not isinstance(body, dict) or not {"api_key"} <= set(body) <= {"api_key", "base_url", "model"} or not isinstance(body["api_key"], str):
                 raise ValueError()
         except (ValueError, UnicodeError):
             return JSONResponse({"error": "invalid_model_credential"}, status_code=400)
+        if ("base_url" in body) != ("model" in body):
+            code = "invalid_model_endpoint" if "base_url" not in body else "invalid_model_model"
+            return JSONResponse({"error": code}, status_code=400)
+        base_url, model = body.get("base_url", DEEPSEEK_BASE_URL), body.get("model", DEEPSEEK_MODEL)
+        if not isinstance(base_url, str) or not 1 <= len(base_url) <= 2048:
+            return JSONResponse({"error": "invalid_model_endpoint"}, status_code=400)
+        if not isinstance(model, str) or not 1 <= len(model) <= 128:
+            return JSONResponse({"error": "invalid_model_model"}, status_code=400)
         try:
-            result = store.put_personal_model_config(principal, SecretStr(body["api_key"]))
+            result = store.put_personal_model_config(principal, SecretStr(body["api_key"]), base_url=base_url, model=model)
         except ModelUnavailable:
             return JSONResponse({"error": "access_denied"}, status_code=403)
         except ModelCredentialError as exc:
@@ -44,7 +61,7 @@ def register_model_credential_routes(app, store, principal_of):
             return JSONResponse({"error": exc.code}, status_code=status)
         return JSONResponse(result, headers={"Cache-Control": "no-store"})
 
-    @app.delete("/me/model-config")
+    @app.delete("/me/model-config", response_model=PersonalModelConfigResponse)
     def delete_model_config(request: Request):
         principal = principal_of(request)
         if not principal:

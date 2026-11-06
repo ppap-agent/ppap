@@ -378,6 +378,7 @@ class DraftSaveRequest(TypedDict, total=False):
 
 class DraftAcceptRequest(TypedDict):
     idempotency_key: str
+    expected_model_revision: NotRequired[str | None]
     predecessor_id: NotRequired[str | None]
 
 

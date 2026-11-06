@@ -49,6 +49,7 @@ def main() -> int:
     with runtime_from_env(
         settings,
         objects,
+        model_identity_for_request=lambda spec: store.personal_model_identity(spec.tenant_id, spec.initiating_user_id),
         model_access_for_request=lambda spec: store.personal_model_access(spec.tenant_id, spec.initiating_user_id),
         snapshot_for_request=lambda spec: suites.read_snapshot(spec.round_id, spec.tenant_id),
         suite_for_revision=suites.resolve_suite,
@@ -60,6 +61,7 @@ def main() -> int:
                 runtime,
                 object_file_source(settings, connect=connect, objects=objects),
                 executor_revision=revision,
+                executor_revision_for_request=lambda spec: runtime_revision(settings.deep_execution_revision(spec.model_identity), library_revision()),
                 authorize=authorize_execution(settings, connect=connect, open_store=open_store),
                 readiness=runtime.ready,
                 precheck_handler=precheck_handler(store, runtime),

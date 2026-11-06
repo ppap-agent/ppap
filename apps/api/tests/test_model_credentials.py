@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 from api.model_credentials import register_model_credential_routes
 from cryptography.fernet import Fernet
-from documents.model_access import ModelUnavailable
+from documents.model_access import DEEPSEEK_BASE_URL, DEEPSEEK_MODEL, ModelUnavailable
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from product.settings import Settings
@@ -17,17 +17,21 @@ from pydantic import SecretStr
 
 
 def controlled_api():
-    config = Settings(model_credential_encryption_key=SecretStr(Fernet.generate_key().decode()))
+    config = Settings(model_credential_encryption_key=SecretStr(Fernet.generate_key().decode()), personal_model_allowed_base_urls="https://models.company.test/v1")
     tenant = str(uuid4())
     alice, bob = (SimpleNamespace(tenant_id=tenant, user_id=str(uuid4())) for _ in range(2))
     principal = [alice]
     rows = {}
 
     def get(p):
-        return public_config(rows[p.user_id][1] if p.user_id in rows else None)
+        if p.user_id not in rows:
+            return public_config()
+        ciphertext, updated_at = rows[p.user_id]
+        access = decrypt_credential(config, p.tenant_id, p.user_id, ciphertext)
+        return public_config(updated_at, provider=access.provider, model=access.model, base_url=access.base_url, revision=access.revision)
 
-    def put(p, key):
-        rows[p.user_id] = (encrypt_credential(config, p.tenant_id, p.user_id, key), datetime.now(timezone.utc))
+    def put(p, key, *, base_url=DEEPSEEK_BASE_URL, model=DEEPSEEK_MODEL):
+        rows[p.user_id] = (encrypt_credential(config, p.tenant_id, p.user_id, key, base_url=base_url, model=model, revision=str(uuid4())), datetime.now(timezone.utc))
         return get(p)
 
     def delete(p):
@@ -155,3 +159,80 @@ def test_database_account_deletion_cleans_keys_after_identity_cleanup(auth_store
         assert conn.execute("SELECT 1 FROM product.personal_model_credentials WHERE user_id=%s", (alice.user_id,)).fetchone() is None
     with pytest.raises(ModelUnavailable):
         store.personal_model_access(alice.tenant_id, alice.user_id)
+
+
+def test_custom_config_is_complete_secret_safe_and_does_not_call_provider(monkeypatch):
+    import httpx
+
+    def no_provider(*args, **kwargs):
+        raise AssertionError("Saving configuration must not call a model provider")
+
+    # TestClient is in-process; block both actual HTTP network transports.
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", no_provider)
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", no_provider)
+    client, _, alice, _, rows, config = controlled_api()
+    old_key, new_key = str(uuid4()), str(uuid4())
+    assert client.get("/me/model-config").json()["revision"] is None
+    initial = client.put("/me/model-config", json={"api_key": old_key})
+    assert initial.status_code == 200
+    assert initial.json()["revision"]
+    destination = {"base_url": "https://models.company.test/v1", "model": "internal-reasoner"}
+    # Never borrow the old key when changing a destination or model.
+    rejected = client.put("/me/model-config", json=destination)
+    assert rejected.status_code == 400
+    assert client.get("/me/model-config").json()["base_url"] == DEEPSEEK_BASE_URL
+    saved = client.put("/me/model-config", json={"api_key": new_key, **destination})
+    assert saved.status_code == 200
+    assert saved.json() == {"provider": "responses-compatible", **destination, "configured": True, "updated_at": saved.json()["updated_at"], "revision": saved.json()["revision"]}
+    assert client.get("/me/model-config").json() == saved.json()
+    assert saved.json()["revision"] != initial.json()["revision"]
+    assert old_key not in saved.text and new_key not in saved.text
+    access = decrypt_credential(config, alice.tenant_id, alice.user_id, rows[alice.user_id][0])
+    assert access.api_key.get_secret_value() == new_key
+    assert access.base_url == destination["base_url"] and access.model == destination["model"]
+    assert set(saved.json()) == {"provider", "model", "base_url", "configured", "updated_at", "revision"}
+
+
+@pytest.mark.parametrize(
+    "patch,code",
+    [
+        ({"base_url": None}, "invalid_model_endpoint"),
+        ({"base_url": ["secret-in-url"]}, "invalid_model_endpoint"),
+        ({"base_url": "x" * 2049}, "invalid_model_endpoint"),
+        ({"base_url": "http://models.company.test/v1"}, "invalid_model_endpoint"),
+        ({"base_url": "https://secret-in-url@models.company.test/v1"}, "invalid_model_endpoint"),
+        ({"base_url": "https://models.company.test/v1?api_key=secret-in-url"}, "invalid_model_endpoint"),
+        ({"base_url": "https://unapproved.example/v1"}, "model_endpoint_not_allowed"),
+        ({"model": None}, "invalid_model_model"),
+        ({"model": ["secret-in-model"]}, "invalid_model_model"),
+        ({"model": ""}, "invalid_model_model"),
+        ({"model": "x" * 201}, "invalid_model_model"),
+    ],
+)
+def test_model_input_rejections_are_fixed_codes_without_echo(patch, code):
+    client, _, _, _, rows, _ = controlled_api()
+    key = str(uuid4())
+    result = client.put("/me/model-config", json={"api_key": key, "base_url": "https://models.company.test/v1", "model": "internal-reasoner", **patch})
+    assert result.status_code == 400
+    assert result.json() == {"error": code}
+    assert key not in result.text and "secret-in-" not in result.text
+    assert not rows
+
+
+def test_malformed_partial_or_oversized_config_never_echoes_secret():
+    client, _, _, _, rows, _ = controlled_api()
+    key = str(uuid4())
+    for body in [
+        {"api_key": key, "base_url": "https://models.company.test/v1"},
+        {"api_key": key, "model": "internal-reasoner"},
+        {"api_key": key, "base_url": "https://models.company.test/v1", "model": "internal-reasoner", "revision": key},
+    ]:
+        response = client.put("/me/model-config", json=body)
+        assert response.status_code == 400
+        assert key not in response.text
+    for raw in [b'{"api_key":"' + key.encode(), b'{"api_key":"' + key.encode() + b'"' + b" " * 8192 + b"}", b"\xff" + key.encode()]:
+        response = client.put("/me/model-config", content=raw, headers={"Content-Type": "application/json"})
+        assert response.status_code == 400
+        assert response.json() == {"error": "invalid_model_credential"}
+        assert key not in response.text
+    assert not rows

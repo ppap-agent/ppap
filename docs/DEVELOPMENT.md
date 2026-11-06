@@ -348,13 +348,17 @@ Excel 的图形事实通过 `audit.engine.checkers.excel_field_evidence` 读取�
 
 首次启用先按关联依赖顺序验证并发布官方 Suite，再受理跟随官方版本的审核。迁移 `0048_official_suite_heads.sql` 不把既有 latest 或验证记录猜成发布批准，未激活的官方源仍可按 revision 查看；既有企业固定指针和历史 Round 不变。没有固定企业版本的租户仅跟随已发布官方指针，企业明确固定某个官方或企业 revision 后不会被后续官方发布覆盖。
 
-## Checker Core 个人 DeepSeek 配置
+## Checker Core 个人模型配置
 
-`GET/PUT/DELETE /me/model-config` 管理当前登录用户自己的 Key；PUT 仅接受 `api_key`，回执仅含 provider、model、configured、updated_at。部署先通过 Secret 配置同一 `PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY`，不提供默认值，也不自动生成持久密钥。替换部署加密密钥前必须保留/迁移既有密文，否则原 Key 会明确不可用。
+`GET/PUT/DELETE /me/model-config` 管理当前登录用户的个人 Responses 兼容模型。PUT 保存完整的 `api_key`、`base_url`、`model`；修改地址或模型也必须重新输入 Key，不会把旧 Key 发往新地址。旧版仅含 `api_key` 的请求仍表示原默认地址和模型。GET 只返回 provider、model、base_url、configured、updated_at、非秘密配置 revision，不回显 Key。保存本身不调用模型。页面确认的是读回的准确目的地址、模型和配置修订；受理前其它标签页更换配置会拒绝旧同意。
 
-产品执行固定使用 DeepSeek `deepseek-flash` 的 Responses 接口和本次发起人的凭据，模型别名不承诺永久权重版本。官方 [Responses 文档](https://api-docs.deepseek.com/api/create-response/) 支持 function tools、user/developer `input_image`、reasoning none/low/high/max；文字与视觉事实使用 none，开发循环按明确参数执行。受控真实 SDK/网关测试验证请求形状与完整/未知用量，不替代真实付费兼容性验证；本次未进行真实付费模型调用。
+部署先通过 Secret 给 API、Worker 和 Controller 配置相同的 `PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY`，不提供默认值，也不自动生成持久密钥。自定义提供方另须在相同进程配置 `PPAP_PERSONAL_MODEL_ALLOWED_BASE_URLS`，值为逗号分隔的**完整 HTTPS base URL**，例如 `https://models.company.example/v1`。这是管理员对准确目的地的信任，不是通配域名或任意内网代理。管理员须控制其 DNS、TLS 和网络路由；内部 HTTPS 服务可以列入，但本机、链路本地、元数据及其它特殊 IP 不接受。不跟随重定向，也不使用环境代理。用户不能通过查询串、URL 内密码、子路径或子域名扩大授权。移出允许列表后，后续调用不可用。此变更只提供配置能力，不改变当前生产允许列表。
 
-缺 Key 不阻止原生或 Paddle 确定性检查，只在需要付费模型时报告不可用。SDK 和调用层不自动重试未知完成的请求。Token 只采用实际 provider 回执，缺失显示 unknown；用户应在 DeepSeek 账户侧设置消费上限，PPAP 不承诺费用硬封顶，本变更不启用业务收费。
+个人模型须支持 Bearer 认证的 `POST <base_url>/responses`，以及使用路径需要的 function tools、`input_image`、严格 JSON schema、reasoning 参数和 usage 回执；不是仅实现 `/chat/completions` 就满足合同。模型和地址是用户选择的配置，不承诺远端具体权重版本或所有 OpenAI 兼容服务均可用。真实优化验收针对所选 provider 能否修复 Checker，不要求其品牌是 DeepSeek。
+
+Key、租户、用户、地址、模型及配置修订一起加密绑定，数据库非秘密元数据必须与解密值一致。每次保存生成新的配置修订。审核与优化受理冻结该修订、模型和端点摘要；执行中更换或撤销配置后，旧工作不能漂移到新 provider 或新 Key。文字、视觉和 Checker 开发循环共享此身份；guest 只获得本地网关的短期执行授权，不获得真实 Key 或外部地址。替换部署加密密钥前必须迁移既有密文，否则原配置明确不可用。
+
+缺 Key 不阻止原生或 Paddle 确定性检查，只在需要模型时报告不可用。调用不回退到部署共享模型或其他成员。SDK 和调用层不自动重试未知完成的请求。Token 只采用实际 provider 回执，缺失显示 unknown；用户应在提供方设置消费上限，Controller 的 `PPAP_PERSONAL_MODEL_MAX_REQUESTS`、`PPAP_PERSONAL_MODEL_MAX_INPUT_TOKENS`、`PPAP_PERSONAL_MODEL_MAX_OUTPUT_TOKENS` 可分别降低默认每执行 128 次、4000000 输入 Token、100000 输出 Token 的边界；API、Worker、Controller 必须一致，预算进入执行身份。输入限制依赖实际回执，一次在途请求仍可能跨过阈值，因此这些限制不是费用硬封顶，也不改变业务收费。受控 SDK/网关测试不替代实际模型质量与付费闭环验收。
 
 ## Checker Core 免费预检
 

@@ -8,6 +8,7 @@ import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {sourceLocation} from '../helpers'
 import {writeAuditAddress} from './routes'
 import {PersonalModelSettings} from './model-config'
+import type {PersonalModelConfig} from './model-config-contract'
 import {CheckerRelease} from './checker-release'
 import {CheckerEvidenceInput} from './checker-evidence'
 import {definiteCheckerRejection} from './checker-contract'
@@ -43,7 +44,7 @@ export function CheckerFeedbackWorkspace({roundId, fileVersionId, ruleVersionId,
   const [operationIntentId, setOperationIntentId] = useState(() => savedId('checkerOptimization'))
   const [operationId, setOperationId] = useState(() => savedId('checkerOptimization')), [operation, setOperation] = useState<CheckerOptimization | null>(null)
   const [developmentRevision, setDevelopmentRevision] = useState<string | null>(null), [workspaceBusy, setWorkspaceBusy] = useState(false)
-  const [modelReady, setModelReady] = useState(false), [consent, setConsent] = useState(false), [showModel, setShowModel] = useState(false), [stopConfirm, setStopConfirm] = useState(false)
+  const [modelConfig, setModelConfig] = useState<PersonalModelConfig | null>(null), [consent, setConsent] = useState(false), [showModel, setShowModel] = useState(false), [stopConfirm, setStopConfirm] = useState(false)
   const read = useCallback(async () => checkedFeedbackView(await adapter.read(roundId), roundId), [adapter, roundId])
   const currentFeedback = view?.feedback.filter(row => row.file_version_id === fileVersionId && row.rule_clause_id === clauseId) || []
   const frozenSource = view?.sources?.find(row => row.file_version_id === fileVersionId)
@@ -60,6 +61,8 @@ export function CheckerFeedbackWorkspace({roundId, fileVersionId, ruleVersionId,
   }, [adapter, suiteRevisionId, suiteKey, samplesTick])
   const batchIdentity = batch.map(row => `${row.id}:${row.revision}`).join(',')
   useEffect(() => {setConsent(false)}, [batchIdentity, developmentRevision])
+  const modelReady = modelConfig?.configured === true && Boolean(modelConfig.revision)
+  useEffect(() => {setConsent(false)}, [modelConfig])
   const running = Boolean(operationId && (!operation || ['queued', 'running', 'unknown'].includes(operation.state)))
   const readOnly = busy || workspaceBusy || Boolean(pendingFeedback || pendingMutation)
   const validSource = feedbackSourceStatus(originalStatus, resultAttempt)
@@ -156,9 +159,10 @@ export function CheckerFeedbackWorkspace({roundId, fileVersionId, ruleVersionId,
     submittedOperations.current.add(id)
     setOperation(null); setOperationId(id); setOperationIntentId(id); remember('checkerOptimization', id)
     try {
-      setOperation(await adapter.optimize(revision, {operation_id: id, feedback_ids: batch.map(row => row.id), action, consume_model: consumeModel})); setConsent(false)
+      setOperation(await adapter.optimize(revision, {operation_id: id, feedback_ids: batch.map(row => row.id), action, consume_model: consumeModel, ...(consumeModel ? {expected_model_revision: modelConfig?.revision ?? null} : {})})); setConsent(false)
       try {setView(await read()); setSamplesTick(value => value + 1)} catch {setError('操作回执已确认，但最新列表暂不可读。请读取最新记录。')}
     } catch (cause) {
+      if ((cause as {code?: string})?.code === 'personal_model_configuration_changed') {setConsent(false); setModelConfig(null)}
       if (definiteCheckerRejection(cause)) {setOperationId(null); setOperationIntentId(null); remember('checkerOptimization', null); setError(failureMessage(cause))}
       else setError('操作受理结果尚未确定。请读取原操作，不要再次开始；若已允许模型调用，可能已经消费 Token。')
     } finally {end()}
@@ -194,7 +198,7 @@ export function CheckerFeedbackWorkspace({roundId, fileVersionId, ruleVersionId,
       <details open={samplesExpanded} onToggle={event => setSamplesExpanded(event.currentTarget.open)} className="text-sm"><summary className="cursor-pointer">查看、改错或删除样本</summary>{batch.map(row => <article key={row.id} className="space-y-2 border-t py-3"><p>条款 {row.rule_clause_id} · 正确答案：{resultLabel[row.expected_status]} · {row.ordinal % 4 === 0 ? '独立验证样本' : '修复样本'}</p><p>{row.rationale}</p>{row.evidence.map((item, index) => sampleEvidence(row, item, index))}<div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" disabled={readOnly || running} onClick={() => {setEditing(row); setExpected(row.expected_status); setRationale(row.rationale); setSelectedEvidence(feedbackEvidence(row.evidence))}}>改错</Button><Button variant="ghost" size="sm" disabled={readOnly || running} onClick={() => setDeleting(row)}>删除样本</Button></div></article>)}</details>
       {deleting && <div role="group" aria-label="确认删除样本" className="space-y-2 border p-3"><p className="text-sm">删除条款 {deleting.rule_clause_id} 的这条样本后，相关验证需要重新执行；已有报告不变。</p><Button variant="destructive" disabled={readOnly} onClick={() => void remove()}>确认删除样本</Button><Button variant="ghost" disabled={readOnly} onClick={() => setDeleting(null)}>取消</Button></div>}
       <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={readOnly || running} onClick={() => void optimize('save_only', false)}>仅保存待发布修改</Button><Button variant="outline" disabled={readOnly || running} onClick={() => void optimize('run_tests', false)}>只运行现有检查验证</Button><Button disabled={readOnly || running} onClick={() => setShowModel(value => !value)}>让 AI 修复并验证</Button></div><p className="text-xs text-muted-foreground">仅保存不运行测试。只验证不会生成代码或调用模型，需要模型的条目会如实显示无法判断。以上操作均不自动发布。</p>
-      {showModel && <div className="space-y-3"><PersonalModelSettings onReady={setModelReady}/><p className="text-sm">将使用你自己的 DeepSeek Key，消耗账户 Token。比普通审核更贵且更慢，无法承诺精确费用封顶。关闭或离开页面不停止已经发生的消费；返回时读取同一操作。</p><div className="flex items-start gap-2"><Checkbox id={`${formId}-consent`} checked={consent} onCheckedChange={value => setConsent(value === true)}/><Label htmlFor={`${formId}-consent`}>同意本次调用我的 DeepSeek 账户修复并验证这 {batch.length} 条反馈</Label></div><Button disabled={readOnly || running || !modelReady || !consent} onClick={() => void optimize('run_tests', true)}>确认开始修复</Button></div>}
+      {showModel && <div className="space-y-3"><PersonalModelSettings onConfig={setModelConfig}/><p className="text-sm">将把本次明确选择的反馈、样本资料及规则发送到已保存的模型服务，使用你的 Key，可能产生 Token 费用。比普通审核更贵且更慢，无法承诺精确费用封顶。关闭或离开页面不停止已经发生的消费；返回时读取同一操作。</p><div className="flex items-start gap-2"><Checkbox id={`${formId}-consent`} checked={consent} disabled={!modelReady} onCheckedChange={value => setConsent(value === true)}/><Label htmlFor={`${formId}-consent`}>同意将本次资料发送至 {modelConfig?.base_url || '待配置地址'}，使用 {modelConfig?.model || '待配置模型'} 修复并验证这 {batch.length} 条反馈</Label></div><Button disabled={readOnly || running || !modelReady || !consent} onClick={() => void optimize('run_tests', true)}>确认开始修复</Button></div>}
     </section>}
     {operation && <section aria-label="修复与回归结果" className="space-y-3 border-t pt-3"><h4 className="font-medium">{operation.state === 'saved' ? '已保存，尚未验证' : operation.state === 'completed' ? '修复结果' : operation.state === 'failed' ? '本次修复未完成' : operation.state === 'stopped' ? '已停止' : operation.state === 'unknown' ? '模型消费与执行结果待核对' : '正在修复与验证'}</h4>{['queued', 'running'].includes(operation.state) && <><p role="status" className="text-sm">可以离开页面。操作在后台继续，返回后读取同一记录；不会自动发布。</p><Button variant="outline" disabled={busy || operation.cancel_requested} onClick={() => setStopConfirm(true)}>{operation.cancel_requested ? '已请求停止，等待读回' : '停止后续执行'}</Button></>}{stopConfirm && <div role="group" aria-label="确认停止修复" className="space-y-2"><p className="text-sm">停止后续执行不会撤销已经发生的消费。</p><Button variant="destructive" disabled={busy} onClick={() => void stop()}>确认停止</Button><Button variant="ghost" disabled={busy} onClick={() => setStopConfirm(false)}>继续执行</Button></div>}{operation.failure && <p role="alert" className="text-sm">{checkerReason(operation.failure)}</p>}{operation.report?.reasons?.map(reason => <p key={reason} className="text-sm">{checkerReason(reason)}</p>)}
       {summary && report && <><p role="status" className="text-sm">修好 {summary.fixed} 条 · 新增错误 {summary.regressions} 条 · 无法判断 {summary.unknown} 条 · 技术失败 {summary.errors} 条</p><p className="text-sm">错误放行 {summary.falsePass} 条 · 错误判为不符合 {summary.falseNg} 条</p>{(report.total_samples < 4 || !report.cases.some(row => row.split === 'holdout')) && <p className="text-sm text-warning">{report.total_samples === 1 ? '只验证了这一条，没有回归样本。' : '验证样本不足或缺少独立验证样本，不能认定整体通过。'}</p>}{report.reasons.map((reason, index) => <p key={index} className="text-sm text-warning">{checkerReason(reason)}</p>)}<details className="text-sm"><summary className="cursor-pointer">逐项验证结果与正确答案</summary><div className="mt-3 space-y-3">{report.cases.map(row => <article key={row.case_id} className="space-y-2 border-t pt-2"><p>{row.split === 'holdout' ? '独立验证样本' : '修复样本'} · {row.passed ? '符合已确认答案' : '需要核对'}</p>{row.error_code && <p>技术失败：{checkerReason(row.error_code)}</p>}{row.clauses.map(item => <p key={item.clause_id}>条款 {item.clause_id} · 正确答案 {statusText(item.expected)} · 此前 {statusText(item.baseline_actual)} → 当前 {statusText(item.actual)}{item.regression ? ' · 新增错误' : ''}{!item.evidence_locatable ? ' · 原件定位未验证' : ''}</p>)}{(() => {const sample = samples?.find(item => item.id === row.case_id); return sample?.evidence.map((item, index) => sampleEvidence(sample, item, index))})()}</article>)}</div></details></>}

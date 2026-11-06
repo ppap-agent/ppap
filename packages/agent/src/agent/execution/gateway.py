@@ -11,6 +11,7 @@ import socketserver
 import threading
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -18,7 +19,7 @@ from typing import Any, cast
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
-from documents.model_access import ModelUnavailable
+from documents.model_access import ModelAccess, ModelUnavailable
 
 from agent.execution.budget import DEEP_TOTAL_SECONDS
 from agent.execution.guest_model import ModelBudgetError
@@ -47,6 +48,8 @@ class Lease:
     budget_exhausted: bool = False
     request_hashes: set[str] = field(default_factory=set)
     provider_key: Callable[[], str] | None = field(default=None, repr=False)
+    model_identity: dict[str, str] = field(default_factory=dict)
+    access_resolver: Callable[[], ModelAccess] | None = field(default=None, repr=False)
     transport_failure: dict[str, int | str | bool | None] | None = None
     upstream: http.client.HTTPConnection | None = field(default=None, repr=False)
     upstream_socket: socket.socket | None = field(default=None, repr=False)
@@ -64,10 +67,13 @@ class Grants:
         per_request_output_tokens: int = 32_768,
         capacity: int = 128,
         provider_key_factory: Callable[[], Callable[[], str]] | None = None,
+        require_binding: bool = False,
     ) -> None:
         if not model or any(type(value) is not int or value < 1 for value in (ttl, requests, input_tokens, output_tokens, per_request_output_tokens, capacity)):
             raise ValueError("Invalid gateway limits")
         self.model = model
+        self.require_binding = require_binding
+        self.bindings: dict[UUID, tuple[dict[str, str], Callable[[], ModelAccess]]] = {}
         self.provider_key_factory = provider_key_factory
         self.ttl = ttl
         self.requests = requests
@@ -77,6 +83,29 @@ class Grants:
         self.capacity = capacity
         self.leases: dict[str, Lease] = {}
         self.lock = threading.Lock()
+
+    @contextmanager
+    def bind(self, execution_id: UUID, identity: dict[str, str], resolver: Callable[[], ModelAccess]):
+        """Only trusted host code registers an accepted execution, never guest RPC."""
+        frozen = dict(identity)
+        if set(frozen) != {"provider", "model", "revision", "deployment"} or not frozen["model"]:
+            raise ModelUnavailable()
+        with self.lock:
+            if execution_id in self.bindings:
+                raise ValueError("Execution grant already bound")
+            self.bindings[execution_id] = frozen, resolver
+        try:
+            yield
+        finally:
+            with self.lock:
+                self.bindings.pop(execution_id, None)
+
+    def identity(self, token: str) -> dict[str, str]:
+        with self.lock:
+            lease = self.leases.get(hashlib.sha256(token.encode()).hexdigest())
+            if lease is None:
+                raise ValueError("Invalid execution grant")
+            return dict(lease.model_identity)
 
     def issue(self, execution_id: UUID, prior_usage: dict[str, Any] | None = None) -> str:
         # Rule compilation and audit have separate leases but share one budget.
@@ -96,6 +125,9 @@ class Grants:
         if any(prior[key] > limit for key, limit in limits.items()):
             raise ModelBudgetError("Grant budget exhausted")
         with self.lock:
+            binding = self.bindings.get(execution_id)
+            if self.require_binding and binding is None:
+                raise ValueError("Execution grant is not bound")
             now = time.monotonic()
             self.leases = {key: lease for key, lease in self.leases.items() if lease.expires > now and lease.execution_id != execution_id}
             if len(self.leases) >= self.capacity:
@@ -108,13 +140,19 @@ class Grants:
                 self.input_budget - prior["input_tokens"],
                 self.output_budget - prior["output_tokens"],
                 provider_key=self.provider_key_factory() if self.provider_key_factory is not None else None,
+                model_identity=dict(binding[0]) if binding else {"model": self.model},
+                access_resolver=binding[1] if binding else None,
             )
             return token
 
-    def authorize(self, token: str, body: dict[str, Any], request_bytes: int) -> Lease:
+    def authorize(self, token: str, body: dict[str, Any], request_bytes: int, *, select_model: bool = False) -> Lease:
         with self.lock:
             lease = self.leases.get(hashlib.sha256(token.encode()).hexdigest())
-            if lease is None or lease.expires <= time.monotonic() or lease.in_flight or lease.uncertain or lease.budget_exhausted or body.get("model") != self.model:
+            if lease is None or lease.expires <= time.monotonic() or lease.in_flight or lease.uncertain or lease.budget_exhausted:
+                raise ValueError("Invalid execution grant")
+            if select_model:
+                body["model"] = lease.model_identity["model"]
+            if body.get("model") != lease.model_identity["model"]:
                 raise ValueError("Invalid execution grant")
             if lease.requests_left <= 0 or lease.input_tokens >= lease.input_budget or lease.output_tokens >= lease.output_budget:
                 lease.budget_exhausted = True
@@ -326,7 +364,6 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("Invalid model request")
             # The grant selects the paid model, including CLI compaction calls.
             # Internal CLI model aliases must not select a different provider/model.
-            body["model"] = self.server.grants.model
             authorization = self.headers.get("Authorization", "")
             if not authorization.startswith("Bearer "):
                 raise ValueError("Missing grant")
@@ -337,8 +374,21 @@ class Handler(BaseHTTPRequestHandler):
             if not acquired:
                 self.send_error(408, "Model request queue timeout")
                 return
-            lease = self.server.grants.authorize(authorization[7:], body, len(raw))
-            url = self.server.upstream
+            lease = self.server.grants.authorize(authorization[7:], body, len(raw), select_model=True)
+            if lease.access_resolver is not None:
+                access = lease.access_resolver()
+                if access.identity() != lease.model_identity:
+                    raise ModelUnavailable()
+                url = urlsplit(access.base_url)
+                if url.scheme != "https" or not url.hostname or url.username or url.password or url.query or url.fragment:
+                    raise ModelUnavailable()
+                provider_key = access.api_key.get_secret_value()
+            else:
+                url = self.server.upstream
+                selected_key = lease.provider_key or self.server.provider_key
+                provider_key = selected_key() if callable(selected_key) else selected_key
+            if not provider_key or not self.server.grants.active(lease):
+                raise ModelUnavailable()
             phase = "provider_request"
             # The 3.12 typeshed types this port as str. Runtime still needs an int.
             upstream = http.client.HTTPSConnection(str(url.hostname), port=cast(Any, url.port or 443), timeout=min(300, max(1, lease.expires - time.monotonic())))
@@ -346,10 +396,6 @@ class Handler(BaseHTTPRequestHandler):
             # This local identifier correlates one authorized send attempt;
             # it is not evidence that the provider received or billed it.
             client_request_id = str(uuid4())
-            selected_key = lease.provider_key or self.server.provider_key
-            provider_key = selected_key() if callable(selected_key) else selected_key
-            if not provider_key or not self.server.grants.active(lease):
-                raise ModelUnavailable()
             upstream.request(
                 "POST",
                 url.path.rstrip("/") + "/responses",
@@ -515,6 +561,7 @@ class LocalGateway:
         model: str,
         provider_key: str | Callable[[], str],
         provider_key_factory: Callable[[], Callable[[], str]] | None = None,
+        require_binding: bool = False,
         input_tokens: int = 4_000_000,
         output_tokens: int = 100_000,
         requests: int = 128,
@@ -528,6 +575,7 @@ class LocalGateway:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             provider_key_factory=provider_key_factory,
+            require_binding=require_binding,
         )
         self.http = Gateway(("127.0.0.1", 0), grants, upstream, provider_key)
         try:
@@ -565,6 +613,7 @@ def local_gateway(
     model: str,
     provider_key: str | Callable[[], str],
     provider_key_factory: Callable[[], Callable[[], str]] | None = None,
+    require_binding: bool = False,
     input_tokens: int = 4_000_000,
     output_tokens: int = 100_000,
     requests: int = 128,
@@ -576,6 +625,7 @@ def local_gateway(
         model=model,
         provider_key=provider_key,
         provider_key_factory=provider_key_factory,
+        require_binding=require_binding,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         requests=requests,
@@ -604,7 +654,7 @@ class GrantHandler(socketserver.StreamRequestHandler):
                 result: dict[str, Any] = {
                     "base_url": self.server.base_url,
                     "token": token,
-                    "model": grants.model,
+                    **grants.identity(token),
                     "max_turns": min(64, remaining_requests),
                     "max_total_turns": remaining_requests,
                     "max_total_tokens": max(1, grants.input_budget + grants.output_budget - prior["input_tokens"] - prior["output_tokens"]),
@@ -623,7 +673,7 @@ class GrantHandler(socketserver.StreamRequestHandler):
                 raise ValueError("Unsupported grant method")
         except ModelBudgetError:
             result = {"error": "Grant rejected", "code": "RESOURCE_LIMIT"}
-        except (ValueError, TypeError, KeyError, OSError):
+        except (ValueError, TypeError, KeyError, OSError, ModelUnavailable):
             result = {"error": "Grant rejected"}
         self.wfile.write(json.dumps(result).encode() + b"\n")
 

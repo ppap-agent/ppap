@@ -403,9 +403,13 @@ class CheckerDevelopmentStore:
             visible = {item["sha256"] for row in training for item in row["files"]}
             if any(visible.intersection(item["sha256"] for item in row["files"]) for row in frozen_samples if row["ordinal"] % 4 == 0):
                 raise ValueError("checker_holdout_input_exposed")
+            model_identity = self.store.personal_model_identity(principal.tenant_id, principal.user_id, conn=conn) if payload["action"] == "run_tests" else {}
+            if "expected_model_revision" in payload and payload["action"] == "run_tests" and payload["expected_model_revision"] != model_identity["revision"]:
+                raise ValueError("personal_model_configuration_changed")
             if payload["action"] == "run_tests" and payload.get("consume_model") is True:
                 # Key readiness only; no model call and no secret enters frozen JSON.
-                self.store.personal_model_access(principal.tenant_id, principal.user_id)
+                if self.store.personal_model_access(principal.tenant_id, principal.user_id).identity() != model_identity:
+                    raise ValueError("personal_model_configuration_changed")
             frozen = {
                 "suite_key": suite.revision.suite_key,
                 "samples": frozen_samples,
@@ -415,9 +419,9 @@ class CheckerDevelopmentStore:
                 "suite_digest": suite.revision.resolved_digest,
                 "related_revision_ids": related,
                 "related_suite_digests": {key: self.suites.resolve_suite(value, principal.tenant_id, conn=conn).revision.resolved_digest for key, value in related.items()},
-                "executor_revision": runtime_revision(self.store.settings.deep_execution_revision(), library_revision()) if payload["action"] == "run_tests" else "",
+                "executor_revision": runtime_revision(self.store.settings.deep_execution_revision(model_identity), library_revision()) if payload["action"] == "run_tests" else "",
                 "library_revision": library_revision(),
-                "model_identity": self.store.settings.deep_execution_policy().runtime_identity() if payload["action"] == "run_tests" else {},
+                "model_identity": model_identity,
                 "consume_model": payload.get("consume_model") is True,
             }
             frozen["oracle_revision"] = _digest(frozen_samples)
