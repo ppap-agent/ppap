@@ -4,6 +4,7 @@ import json
 import os
 import re
 import unittest
+from types import SimpleNamespace
 from urllib.parse import urlsplit
 
 try:
@@ -127,7 +128,10 @@ class CheckerHttpFixture:
             }
             self.operations[body["operation_id"]] = response
         elif path.startswith("/checker-optimizations/"):
-            response = self.operations[path.split("/")[2]]
+            response = self.operations.get(path.split("/")[2])
+            if response is None:
+                route.fulfill(status=404, json={"error": "checker_access_denied"})
+                return
             if path.endswith("/stop"):
                 response.update(state="stopped", cancel_requested=True)
         elif path == "/suites/control-plan/official-update/seen":
@@ -188,6 +192,16 @@ class CheckerHttpFixture:
             route.fulfill(status=404, json={"error": "fixture_route_not_found"})
         else:
             route.fulfill(json=response)
+
+
+def test_missing_preview_optimization_returns_the_product_not_found_receipt():
+    fixture = CheckerHttpFixture()
+    for method, suffix in (("GET", ""), ("POST", "/stop")):
+        replies = []
+        request = SimpleNamespace(url=f"http://preview.test/checker-optimizations/missing{suffix}", method=method, post_data=None, post_data_json=None)
+        fixture.route(SimpleNamespace(request=request, fulfill=lambda **reply: replies.append(reply)))
+        assert replies == [{"status": 404, "json": {"error": "checker_access_denied"}}]
+        assert fixture.operations == {}
 
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires the explicit UI preview and Playwright")

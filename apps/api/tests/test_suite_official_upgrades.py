@@ -7,18 +7,42 @@ from concurrent.futures import ThreadPoolExecutor
 
 import psycopg
 import pytest
+from api import create_app
 from audit.checker_core import checker_digest
 from audit.checker_validation import CaseEvaluation, ClauseEvaluation, SuiteValidationReport
 from audit.standard_suites import library_revision
+from fastapi.testclient import TestClient
+from product import build_product_store
+from product.identity import SESSION_COOKIE
+from product.settings import Settings
 from product.store.suite_releases import SuiteReleaseStore
 from product.store.suites import SuiteStore
-
-from .test_suite_releases import FILES, command, prepare_fixture
 
 KEY = "control-plan"
 ACTIVE = f"/suites/{KEY}/active"
 UPGRADES = f"/suites/{KEY}/upgrades"
 SEEN = f"/suites/{KEY}/official-update/seen"
+FILES = {"rules.json": b'{"title":"Control plan checks","rules":[{"id":"R1","rule_to_check":"Required"}]}', "checker.py": b"def check(context):\n    return []\n"}
+
+
+def prepare_fixture(auth_store_factory):
+    """Own this setup so clean-wheel collection never imports a sibling test module."""
+    store = auth_store_factory(Settings(feishu_app_id="suite-releases", usage_charge_enabled=False))
+    principal = store.upsert_feishu_identity("suite-a", "operator-a", "Alice")
+    peer = store.upsert_feishu_identity("suite-a", "operator-b", "Bob")
+    other = store.upsert_feishu_identity("suite-b", "operator-c", "Carol")
+    official = SuiteStore(store.settings, store.objects, role="migrator").create_revision(tenant_id=None, suite_key=KEY, files=FILES, created_by=None)
+    api_store = build_product_store(store.settings, objects=store.objects, role="api")
+    clients = []
+    for person in (principal, peer, other):
+        client = TestClient(create_app(store.settings, auth_store=api_store))
+        client.cookies.set(SESSION_COOKIE, store.create_session(person))
+        clients.append(client)
+    return store, official, principal, peer, clients
+
+
+def command(revision_id, expected_revision=0, force=True):
+    return {"revision_id": revision_id, "expected_revision": expected_revision, "operation_id": str(uuid.uuid4()), "force_unverified": force}
 
 
 def publish_official(store, revision):
