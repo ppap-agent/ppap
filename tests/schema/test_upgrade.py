@@ -65,11 +65,35 @@ class SchemaUpgradeTests(unittest.TestCase):
                 ),
                 "save customer default before migration replay",
             )
+            # Two optimizations on one task are distinct intents. Full replay
+            # must not rebuild an older index that collapses their identities.
+            self.schema.require(
+                self.schema.psql(
+                    self.schema.migrator_user(),
+                    self.schema.migrator_password(),
+                    empty,
+                    "-c",
+                    "INSERT INTO engine.jobs(id,tenant_id,kind,payload,status) "
+                    f"SELECT gen_random_uuid(),'{tenant_id}','feishu_notification',"
+                    "jsonb_build_object('task_id','00000000-0000-0000-0000-000000000001',"
+                    "'stage','optimization_completed','operation_id',gen_random_uuid()::text),'queued' FROM generate_series(1,2)",
+                ),
+                "save distinct optimization intents before migration replay",
+            )
             second_apply = self.schema.apply(empty)
             self.schema.require(second_apply, "re-apply empty")
             repeated = [line.removeprefix("applying ") for line in (second_apply.stdout or b"").decode().splitlines() if line.startswith("applying ")]
             self.assertEqual(repeated, versions)
             self.assertEqual(self.schema.applied(empty), versions)
+            intents = self.schema.psql(
+                self.schema.migrator_user(),
+                self.schema.migrator_password(),
+                empty,
+                "-Atc",
+                "SELECT count(*) FROM engine.jobs WHERE kind='feishu_notification' AND payload->>'stage'='optimization_completed'",
+            )
+            self.schema.require(intents, "read preserved optimization intents")
+            self.assertEqual(intents.stdout.strip(), b"2")
             default = self.schema.psql(
                 self.schema.migrator_user(),
                 self.schema.migrator_password(),
