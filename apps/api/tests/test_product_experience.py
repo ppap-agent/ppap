@@ -110,7 +110,7 @@ class ProductExperienceTests(unittest.TestCase):
             result.fetchone.return_value = None
             result.fetchall.return_value = []
             if "FROM product.audit_rounds" in sql:
-                result.fetchone.return_value = ("round", "completed", {}, None, None, 1, None, "deep", {}, False, None)
+                result.fetchone.return_value = ("round", "completed", {}, None, None, 1, None, "deep", {}, False, None, [])
             elif "FROM product.round_inputs" in sql:
                 result.fetchall.return_value = inputs
             elif "FROM product.findings" in sql:
