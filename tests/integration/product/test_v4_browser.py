@@ -160,16 +160,41 @@ def running_product(auth_store_factory, v4_objects, core_system, tmp_path, reque
         assert not errors, errors
 
 
-def print_page(page):
-    """expect() reports what it waited for; a failed test also needs what the page showed."""
+def print_page(page, *, asset_diagnostics=(), screenshot=None):
+    """Collect independent failure evidence without replacing the test exception."""
+    for snapshot in asset_diagnostics:
+        try:
+            print("Browser asset diagnostics:", json.dumps(snapshot()), flush=True)
+        except Exception:
+            print("Browser asset diagnostics unavailable", flush=True)
     try:
-        print(f"Page at failure: {page.url}\n{page.locator('body').aria_snapshot(timeout=1000)[:4000]}", flush=True)
-    except Exception as error:
-        print(f"Page at failure unavailable: {type(error).__name__}", flush=True)
+        print(f"Page at failure: {page.url}", flush=True)
+    except Exception:
+        print("Page URL at failure unavailable", flush=True)
+    try:
+        document = page.locator("body").evaluate(
+            """() => ({
+                readyState: document.readyState, appChildren: document.getElementById('app')?.childElementCount ?? null,
+                bodyTextLength: document.body.innerText.length, bodyAriaHidden: document.body.getAttribute('aria-hidden')
+            })""",
+            timeout=1000,
+        )
+        print("Document at failure:", json.dumps(document), flush=True)
+    except Exception:
+        print("Document at failure unavailable", flush=True)
+    try:
+        print(page.locator("body").aria_snapshot(timeout=1000)[:4000], flush=True)
+    except Exception:
+        print("Page ARIA at failure unavailable", flush=True)
+    if screenshot is not None:
+        try:
+            page.screenshot(path=screenshot, full_page=True)
+        except Exception:
+            print("Page screenshot at failure unavailable", flush=True)
 
 
 @pytest.mark.parametrize("running_product", ["UAES", "理想", "蔚来"], indirect=True)
-def test_customer_intake_to_original_issue_and_frozen_precheck_export(running_product, core_system, request):
+def test_customer_intake_to_original_issue_and_frozen_precheck_export(running_product, core_system, request, observe_browser_assets):
     web, session, errors = running_product
     customer = request.node.callspec.params["running_product"]
     with sync_playwright() as playwright:
@@ -177,6 +202,7 @@ def test_customer_intake_to_original_issue_and_frozen_precheck_export(running_pr
         context = browser.new_context(viewport={"width": 1440, "height": 1000}, accept_downloads=True)
         context.add_cookies([{"name": SESSION_COOKIE, "value": session, "url": web, "httpOnly": True}])
         page = context.new_page()
+        asset_diagnostics = [observe_browser_assets(page, web)]
         page.set_default_timeout(20000)
         try:
             page.goto(web + "/tasks/new")
@@ -258,6 +284,7 @@ def test_customer_intake_to_original_issue_and_frozen_precheck_export(running_pr
                 frozen_task = next(row for row in old_tasks if row.get("round_id"))
                 frozen = page.request.get(web + "/api/audit-tasks/" + frozen_task["id"]).json()
                 fresh = context.new_page()
+                asset_diagnostics.append(observe_browser_assets(fresh, web))
                 fresh.goto(web + "/tasks/new")
                 expect(fresh.get_by_role("combobox", name="审核客户", exact=True)).to_contain_text("UAES（联电）")
                 fresh.get_by_role("combobox", name="审核客户", exact=True).click()
@@ -274,8 +301,7 @@ def test_customer_intake_to_original_issue_and_frozen_precheck_export(running_pr
             assert core_system.calls >= 2, "Precheck and audit must both execute through Core"
             assert not errors, errors
         except BaseException:
-            print_page(page)
-            page.screenshot(path=str(Path("/tmp") / f"ppap-v4-real-browser-{customer}.png"), full_page=True)
+            print_page(page, asset_diagnostics=asset_diagnostics, screenshot=str(Path("/tmp") / f"ppap-v4-real-browser-{customer}.png"))
             raise
         finally:
             context.close()
