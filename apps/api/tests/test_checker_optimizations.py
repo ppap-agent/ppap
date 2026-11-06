@@ -1148,3 +1148,36 @@ def test_generic_runtime_model_error_without_prestart_proof_remains_uncertain(au
     assert result["usage"]["uncertain"] is True
     assert start(f, body)[0] == result
     assert f.worker.claim_job("no-unknown-replay") is None
+
+
+def test_feedback_granted_reference_sources_are_authorized_on_each_readback(auth_store_factory):
+    """Saving, replaying, editing and listing retain the same explicit source scope."""
+    from unittest.mock import patch
+
+    f = fixture(auth_store_factory, count=2)
+    round_id, original, _ = f.feedback[0]
+    reference = f.feedback[1][1]["file_version_id"]
+    with f.store._conn() as conn:
+        conn.execute("INSERT INTO product.round_inputs(round_id,file_version_id,role) VALUES (%s,%s,'reference')", (round_id, reference))
+    evidence = [*original["evidence"], {"file_version_id": reference, "locator": {"kind": "xlsx_cell", "sheet": "Sheet", "cell": "B1"}, "excerpt": "Confirmed reference"}]
+    payload = {**original, "operation_id": str(uuid4()), "evidence": evidence}
+    path = f"/audit-rounds/{round_id}/checker-feedback"
+    expected_sources = {original["file_version_id"], reference}
+
+    def checked_sources(authorize):
+        assert any({row["file_version_id"] for row in call.args[2]} == expected_sources for call in authorize.call_args_list)
+        authorize.reset_mock()
+
+    with patch.object(f.api, "_prepared_items", wraps=f.api._prepared_items) as authorize:
+        saved = f.clients[0].post(path, json=payload)
+        assert saved.status_code == 200 and saved.json()["evidence"] == evidence
+        checked_sources(authorize)
+        assert f.clients[0].post(path, json=payload).json() == saved.json()
+        checked_sources(authorize)
+        edited = f.clients[0].put(path + "/" + saved.json()["id"], json={"expected_revision": 1, "expected_status": "NG", "rationale": "Reconfirmed target and reference", "evidence": evidence})
+        assert edited.status_code == 200 and edited.json()["evidence"] == evidence
+        checked_sources(authorize)
+        listed = f.clients[0].get(f"/suite-revisions/{f.suite.id}/checker-feedback?limit=1&after=2")
+        assert listed.status_code == 200 and [row["id"] for row in listed.json()["feedback"]] == [saved.json()["id"]]
+        assert listed.json()["next_cursor"] is None
+        checked_sources(authorize)

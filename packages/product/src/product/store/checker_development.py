@@ -138,6 +138,8 @@ class CheckerDevelopmentStore:
                 raise ValueError("checker_feedback_evidence_invalid")
             if public_locator(row["locator"]) is None or not isinstance(row["excerpt"], str) or len(row["excerpt"]) > 500:
                 raise ValueError("checker_feedback_evidence_invalid")
+        # Being a frozen round input is not a current grant to read its excerpt.
+        self.store._prepared_items(conn, principal, [{"file_version_id": version, "role": "reference"} for version in sorted({row["file_version_id"] for row in rows})])
         return rows
 
     def save_feedback(self, principal, round_id, payload):
@@ -155,6 +157,7 @@ class CheckerDevelopmentStore:
 
             _lock(conn, principal.tenant_id)
             self._authorize_round(conn, principal, round_id, write=True)
+            self.store._prepared_items(conn, principal, [{"file_version_id": version_id, "role": "reference"}])
             conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("checker-feedback-operation:" + principal.tenant_id + ":" + operation_id,))
             cur.execute("SELECT * FROM product.checker_feedback WHERE tenant_id=%s AND operation_id=%s", (principal.tenant_id, operation_id))
             prior = cur.fetchone()
@@ -163,6 +166,7 @@ class CheckerDevelopmentStore:
                     raise ValueError("checker_operation_conflict")
                 if prior["deleted_at"] is not None:
                     raise ValueError("checker_feedback_deleted")
+                self._evidence(conn, principal, round_id, prior["evidence"])
                 return _feedback({**prior, "case_ordinal": _case_ordinal(conn, prior)})
             head = conn.execute("SELECT result_attempt FROM product.audit_rounds WHERE id=%s AND tenant_id=%s FOR SHARE", (round_id, principal.tenant_id)).fetchone()
             if not head or head[0] != payload["result_attempt"]:
@@ -231,6 +235,7 @@ class CheckerDevelopmentStore:
                 raise KeyError("checker_feedback_missing")
             if type(expected_revision) is not int or row["revision"] != expected_revision:
                 raise ValueError("checker_feedback_revision_conflict")
+            self.store._prepared_items(conn, principal, [{"file_version_id": str(row["file_version_id"]), "role": "reference"}])
             self._invalidate_proofs(conn, principal.tenant_id, row["suite_key"])
             if payload is None:
                 cur.execute("UPDATE product.checker_feedback SET deleted_at=now(),revision=revision+1,updated_at=now() WHERE id=%s", (feedback_id,))
@@ -300,12 +305,20 @@ class CheckerDevelopmentStore:
                 """SELECT f.* FROM product.checker_feedback f
                    JOIN product.audit_rounds r ON r.id=f.round_id AND r.tenant_id=f.tenant_id
                    JOIN product.file_versions v ON v.id=f.file_version_id AND v.tenant_id=f.tenant_id AND v.status='ready'
+                   JOIN product.resources vr ON vr.id=v.file_id AND vr.kind='file' AND vr.tenant_id=f.tenant_id
                    WHERE f.tenant_id=%s AND f.suite_key=%s AND f.deleted_at IS NULL AND f.ordinal>%s
                      AND EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id=v.file_id AND g.user_id=%s AND g.capability IN ('read','review'))
+                     AND NOT EXISTS (
+                         SELECT 1 FROM jsonb_array_elements(f.evidence) e WHERE NOT EXISTS (
+                             SELECT 1 FROM product.file_versions ev
+                             JOIN product.resources er ON er.id=ev.file_id AND er.kind='file' AND er.tenant_id=f.tenant_id
+                             JOIN product.round_inputs ei ON ei.file_version_id=ev.id AND ei.round_id=f.round_id
+                             JOIN product.resource_grants eg ON eg.resource_id=ev.file_id AND eg.user_id=%s AND eg.capability IN ('read','review')
+                             WHERE ev.id::text=e->>'file_version_id' AND ev.tenant_id=f.tenant_id AND ev.status='ready'))
                      AND """
                 + _ROUND_READ_ACCESS
                 + " ORDER BY f.ordinal LIMIT %s",
-                (principal.tenant_id, revision.suite_key, after, principal.user_id, principal.user_id, limit + 1),
+                (principal.tenant_id, revision.suite_key, after, principal.user_id, principal.user_id, principal.user_id, limit + 1),
             )
             rows = cur.fetchall()
             feedback = self._readable_feedback(conn, principal, rows[:limit])
