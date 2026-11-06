@@ -577,6 +577,7 @@ class SemanticRuntime:
             operation=operation,
             reasoning_effort=getattr(getattr(self.runtime, "config", None), "reasoning_effort", "medium"),
             spec=job,
+            runtime_job_id=spec.job_id or None,
             document=staged_document_name(original_name),
             audit_id=audit_file.audit_id,
             rule=rule.model_dump(mode="json"),

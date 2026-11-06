@@ -61,6 +61,8 @@ class CheckerManifest(BaseModel):
 
     operation: str = Field(pattern=r"^(adapt-checker|execute-checker)$")
     spec: CheckerJobSpec
+    # Trusted durable operation, not a new identity for a technical retry.
+    runtime_job_id: str | None = Field(default=None, min_length=1, max_length=256)
     document: str = "document"
     audit_id: str = Field(min_length=1)
     rule: dict[str, Any]
