@@ -570,3 +570,21 @@ def test_sent_card_intent_is_immutable_even_before_callback_is_enqueued(system, 
     rejected = admin.process_task_confirmation(admin.claim_task_confirmation("card"), "card")
     assert rejected["state"] == "rejected" and "审核依据已更新" in rejected["reason"]
     assert_no_admission(system)
+
+
+def test_legacy_accepted_operation_without_receipt_job_replays_without_new_writes(system, core_system):
+    client, _, admin, principal = system
+    path, _ = prepare(system, core_system, "UAES", "U12")
+    before = client.get(path).json()
+    key = str(uuid.uuid4())
+    accepted = admin.confirm_audit_task(principal, before["id"], key, before["input_revision"])
+    publish_edit(system, "UAES:U12")
+    with admin._conn() as conn:
+        assert conn.execute("SELECT count(*) FROM engine.jobs WHERE id=%s", (key,)).fetchone()[0] == 0
+        counts = conn.execute("SELECT (SELECT count(*) FROM product.audit_rounds), (SELECT count(*) FROM engine.jobs), (SELECT count(*) FROM product.usage_events)").fetchone()
+    replay = client.post(path + "/confirm", json={"request_id": key, "expected_revision": before["input_revision"]})
+    assert replay.status_code == 201, replay.text
+    for field in ("round_id", "files", "confirmation_scope", "acceptance"):
+        assert replay.json()[field] == accepted[field]
+    with admin._conn() as conn:
+        assert conn.execute("SELECT (SELECT count(*) FROM product.audit_rounds), (SELECT count(*) FROM engine.jobs), (SELECT count(*) FROM product.usage_events)").fetchone() == counts

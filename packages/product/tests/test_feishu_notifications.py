@@ -20,10 +20,10 @@ def test_confirmation_card_shows_the_frozen_choices_before_offering_an_explicit_
         "files": [
             {
                 "selection": "selected",
-                "file": {"original_filename": "控制计划.xlsx"},
+                "file": {"id": "version-0", "original_filename": "控制计划.xlsx"},
                 "match": {"state": "matched", "rule": {"title": "海岸线控制计划要求"}, "gaps": ["metadata_uses_excerpt", "缺少过程流程图"]},
             },
-            {"selection": "selected", "file": {"original_filename": "未匹配.pdf"}, "match": {"state": "unmatched", "rule": None, "gaps": []}},
+            {"selection": "selected", "file": {"id": "version-1", "original_filename": "未匹配.pdf"}, "match": {"state": "unmatched", "rule": None, "gaps": []}},
         ],
     }
     card = task_notification_card(task, "confirmation", "https://ppap.example.test", confirmation_id="intent-a")
@@ -72,8 +72,8 @@ def test_confirmation_without_a_rule_or_selection_does_not_offer_a_blind_accepta
         "number": "001",
         "estimated_points": 500,
         "files": [
-            {"selection": "selected", "file": {"original_filename": "待核对.xlsx"}, "match": {"state": "matched", "rule": None}},
-            {"selection": "unselected", "file": {"original_filename": "未选择.xlsx"}, "match": None},
+            {"selection": "selected", "file": {"id": "version-2", "original_filename": "待核对.xlsx"}, "match": {"state": "matched", "rule": None}},
+            {"selection": "unselected", "file": {"id": "version-3", "original_filename": "未选择.xlsx"}, "match": None},
         ],
     }
     card = task_notification_card(task, "confirmation", "https://ppap.example.test", confirmation_id="intent-a")
@@ -85,7 +85,13 @@ def test_incomplete_audit_is_an_exception_not_a_ready_report_or_a_raw_unknown_la
     task = {
         "id": "task-a",
         "number": "001",
-        "files": [{"selection": "selected", "file": {"original_filename": "控制计划.xlsx"}, "audit": {"execution": "completed", "conclusion": "UNKNOWN", "report": {"state": "not_eligible"}}}],
+        "files": [
+            {
+                "selection": "selected",
+                "file": {"id": "version-0", "original_filename": "控制计划.xlsx"},
+                "audit": {"execution": "completed", "conclusion": "UNKNOWN", "report": {"state": "not_eligible"}},
+            }
+        ],
     }
     card = task_notification_card(task, "completed", "https://ppap.example.test")
     assert card["header"]["title"]["content"] == "审核已结束，未生成正式报告"
@@ -142,11 +148,11 @@ def test_recall_card_separates_comparison_material_from_audited_files(stage) -> 
         "files": [
             {
                 "selection": "selected",
-                "file": {"original_filename": "控制计划.xlsx"},
+                "file": {"id": "version-0", "original_filename": "控制计划.xlsx"},
                 "match": {"state": "matched", "rule": {"title": "控制计划规则"}},
                 "audit": {"execution": "completed", "conclusion": "PASS", "report": {"state": "ready"}},
             },
-            {"selection": "selected", "file": {"original_filename": "特殊特性清单.xlsx"}, "match": {"state": "reference"}, "audit": None},
+            {"selection": "selected", "file": {"id": "version-4", "original_filename": "特殊特性清单.xlsx"}, "match": {"state": "reference"}, "audit": None},
         ],
     }
     card = task_notification_card(task, stage, "https://ppap.example.test", confirmation_id="intent-a")
@@ -243,7 +249,7 @@ def test_completed_card_uses_actual_counts_without_changing_ng_or_inventing_pass
         "files": [
             {
                 "selection": "selected",
-                "file": {"original_filename": "控制计划.xlsx"},
+                "file": {"id": "version-0", "original_filename": "控制计划.xlsx"},
                 "audit": {
                     "execution": "completed",
                     "conclusion": "NG",
@@ -293,3 +299,31 @@ def test_optimization_recall_does_not_claim_publication_or_unknown_success(state
         assert "未知" in _text(card) and "不会自动重试" in _text(card)
     target = parse_qs(urlsplit(card["body"]["elements"][1]["behaviors"][0]["default_url"]).query)["return_to"][0]
     assert parse_qs(urlsplit(target).query)["clause"] == ["R1 & <b>"]
+
+
+@pytest.mark.parametrize("all_blocked", [False, True])
+def test_confirmation_card_displays_only_server_admission_scope_and_exclusion_reasons(all_blocked):
+    task = {
+        "id": "task-a",
+        "number": "001",
+        "estimated_points": 0 if all_blocked else 500,
+        "confirmation_scope": {
+            "target_file_version_ids": [] if all_blocked else ["good"],
+            "reference_file_version_ids": ["ref"],
+            "excluded_files": [{"file_version_id": "bad", "reason": "已认证的阻断问题，请修正原件"}],
+        },
+        "files": [
+            {"file": {"id": "bad", "original_filename": "阻断目标.xlsx"}, "selection": "selected", "match": {"state": "matched", "rule": {"title": "目标规则"}}},
+            {"file": {"id": "ref", "original_filename": "比对资料.xlsx"}, "selection": "selected", "match": {"state": "reference"}},
+        ],
+    }
+    if not all_blocked:
+        task["files"].append({"file": {"id": "good", "original_filename": "可审目标.xlsx"}, "selection": "selected", "match": {"state": "matched", "rule": {"title": "目标规则"}}})
+    card = task_notification_card(task, "confirmation", "https://ppap.example.test", confirmation_id="intent-a")
+    text = _text(card)
+    assert "阻断目标.xlsx**<br>不纳入审核；已认证的阻断问题，请修正原件" in text
+    assert "**比对资料**<br>比对资料.xlsx" in text
+    assert f"已匹配 **{0 if all_blocked else 1} 份**" in text
+    assert f"预计点数：{0 if all_blocked else 500}" in text
+    callbacks = [element for element in card["body"]["elements"] if any(behavior["type"] == "callback" for behavior in element.get("behaviors", []))]
+    assert len(callbacks) == (0 if all_blocked else 1)
