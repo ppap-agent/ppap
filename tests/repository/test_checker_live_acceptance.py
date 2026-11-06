@@ -22,18 +22,16 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def configuration():
     return {
-        "PPAP_CHECKER_LIVE_APPROVED": "true",
+        "GITHUB_EVENT_NAME": "workflow_dispatch",
         "GITHUB_RUN_ATTEMPT": "1",
         "PPAP_BUILD_SHA": "a" * 40,
         "PPAP_APPROVED_SHA": "a" * 40,
         "CI_LLM_BASE_URL": "https://provider.example/v1",
-        "PPAP_APPROVED_BASE_URL": "https://provider.example/v1",
         "CI_LLM_MODEL": "arbitrary-model",
-        "PPAP_APPROVED_MODEL": "arbitrary-model",
         "CI_LLM_API_KEY": "synthetic-never-transmitted-key",
         "GITHUB_ACTIONS": "true",
         "GITHUB_RUN_ID": "123",
-        "COMPOSE_PROJECT_NAME": "ppap-checker-live-123",
+        "COMPOSE_PROJECT_NAME": "ppap-checker-live-123-1",
         "PPAP_PERSONAL_MODEL_MAX_REQUESTS": "32",
         "PPAP_PERSONAL_MODEL_MAX_INPUT_TOKENS": "200000",
         "PPAP_PERSONAL_MODEL_MAX_OUTPUT_TOKENS": "32000",
@@ -43,33 +41,32 @@ def configuration():
 @pytest.mark.parametrize(
     "key,value",
     [
-        ("PPAP_CHECKER_LIVE_APPROVED", "false"),
-        ("GITHUB_RUN_ATTEMPT", "2"),
-        ("PPAP_APPROVED_BASE_URL", "https://other.example/v1"),
-        ("PPAP_APPROVED_MODEL", "another-model"),
+        ("GITHUB_EVENT_NAME", "push"),
+        ("GITHUB_RUN_ATTEMPT", "0"),
+        ("PPAP_APPROVED_SHA", "b" * 40),
         ("CI_LLM_API_KEY", ""),
         ("GITHUB_ACTIONS", "false"),
         ("GITHUB_RUN_ID", "not-a-run"),
         ("COMPOSE_PROJECT_NAME", "production"),
     ],
 )
-def test_live_entry_requires_exact_explicit_approval_and_isolated_services(key, value):
+def test_live_entry_requires_manual_invocation_exact_source_and_isolated_services(key, value):
     env = configuration()
     env[key] = value
-    with pytest.raises(acceptance.AcceptanceFailure):
-        acceptance.approved_configuration(env)
+    with pytest.raises((acceptance.AcceptanceFailure, ValueError)):
+        acceptance.live_configuration(env)
 
 
 def test_provider_is_not_tied_to_a_brand():
-    assert acceptance.approved_configuration(configuration()) == ("https://provider.example/v1", "arbitrary-model")
+    assert acceptance.live_configuration(configuration()) == ("https://provider.example/v1", "arbitrary-model")
 
 
 @pytest.mark.parametrize("base", ["http://provider.example/v1", "https://user:secret@provider.example/v1", "https://provider.example/v1?key=secret", "https://provider.example/v1#secret"])
 def test_provider_address_cannot_carry_a_secret_or_use_plaintext(base):
     env = configuration()
-    env["CI_LLM_BASE_URL"] = env["PPAP_APPROVED_BASE_URL"] = base
-    with pytest.raises(acceptance.AcceptanceFailure):
-        acceptance.approved_configuration(env)
+    env["CI_LLM_BASE_URL"] = base
+    with pytest.raises((acceptance.AcceptanceFailure, ValueError)):
+        acceptance.live_configuration(env)
 
 
 def test_ephemeral_setup_uses_private_unique_credentials_and_never_overwrites(tmp_path):
@@ -86,15 +83,15 @@ def test_ephemeral_setup_uses_private_unique_credentials_and_never_overwrites(tm
 @pytest.mark.parametrize(
     "key,value",
     [
-        ("GITHUB_RUN_ATTEMPT", "2"),
+        ("GITHUB_RUN_ATTEMPT", "0"),
         ("PPAP_APPROVED_SHA", "b" * 40),
-        ("PPAP_APPROVED_MODEL", "other"),
+        ("CI_LLM_MODEL", ""),
         ("PPAP_PERSONAL_MODEL_MAX_REQUESTS", "33"),
         ("PPAP_PERSONAL_MODEL_MAX_INPUT_TOKENS", "200001"),
         ("PPAP_PERSONAL_MODEL_MAX_OUTPUT_TOKENS", "0"),
     ],
 )
-def test_setup_rejects_changed_approval_or_excessive_budget(tmp_path, key, value):
+def test_setup_rejects_changed_source_or_excessive_budget(tmp_path, key, value):
     env = configuration()
     env[key] = value
     with pytest.raises(ValueError):
@@ -228,7 +225,7 @@ def test_probe_rejects_provider_canary_without_logging_body(tmp_path):
     probe = controller.Probe(tmp_path / "evidence/controller.json")
     probe.facts["adaptations"] = 1
     probe.author_active = True
-    probe.observe_provider({"input": "safe synthetic training"})
+    probe.observe_provider({"input": "safe synthetic training", "model": "arbitrary-model"})
     with pytest.raises(ValueError):
         probe.observe_provider({"input": "checker-live-holdout-secret"})
     assert "secret" not in probe.path.read_text()
@@ -251,43 +248,54 @@ def test_http_write_with_unknown_outcome_is_never_retried():
     client.http.close()
 
 
-@pytest.mark.parametrize("filename", ["checker-optimization-live.yml", "v3-poc-live.yml"])
-def test_workflow_is_manual_only_bounded_and_not_in_default_gate(filename):
-    workflow = yaml.load((ROOT / ".github/workflows" / filename).read_text(), Loader=yaml.BaseLoader)
+def checker_workflow():
+    return yaml.load((ROOT / ".github/workflows/checker-optimization-live.yml").read_text(), Loader=yaml.BaseLoader)
+
+
+def test_workflow_is_manual_only_bounded_and_not_in_default_gate():
+    workflow = checker_workflow()
     assert set(workflow["on"]) == {"workflow_dispatch"}
-    assert workflow["on"]["workflow_dispatch"]["inputs"]["approve_paid"]["default"] == "false"
-    assert workflow["jobs"]["live"]["if"] == "${{ inputs.approve_paid && github.run_attempt == 1 }}"
+    assert set(workflow["on"]["workflow_dispatch"]["inputs"]) == {"expected_sha", "max_model_requests", "max_input_tokens", "max_output_tokens"}
+    job = workflow["jobs"]["live"]
+    assert "if" not in job
     assert workflow["concurrency"]["cancel-in-progress"] == "false"
     assert "checker-optimization-live" not in (ROOT / ".github/workflows/tests.yml").read_text()
-    assert "CI_LLM_API_KEY" not in json.dumps(workflow["jobs"]["live"]["env"])
-    steps_with_key = [step for step in workflow["jobs"]["live"]["steps"] if "CI_LLM_API_KEY" in step.get("env", {})]
+    assert "CI_LLM_API_KEY" not in json.dumps(job["env"])
+    steps_with_key = [step for step in job["steps"] if "CI_LLM_API_KEY" in step.get("env", {})]
     assert len(steps_with_key) == 1
     assert "uv run --no-sync python -m pytest tests/repository/test_checker_live_acceptance.py" in json.dumps(workflow)
+    assert job["env"]["COMPOSE_PROJECT_NAME"].endswith("${{ github.run_id }}-${{ github.run_attempt }}")
+    upload = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact@"))
+    assert upload["with"]["name"].endswith("${{ github.run_id }}-${{ github.run_attempt }}")
 
 
-@pytest.mark.parametrize("filename", ["checker-optimization-live.yml", "v3-poc-live.yml"])
-def test_runner_paths_are_exported_at_runtime_before_any_consuming_step(tmp_path, filename):
-    workflow = yaml.load((ROOT / ".github/workflows" / filename).read_text(), Loader=yaml.BaseLoader)
-    job = workflow["jobs"]["live"]
-    # GitHub does not provide the runner context to job-level env expressions.
-    # actionlint is the platform syntax authority; exercise the actual shell
-    # setup as well, including paths containing spaces.
+@pytest.mark.parametrize("event,attempt,matched_sha", [("workflow_dispatch", "1", True), ("workflow_dispatch", "2", True), ("push", "1", True), ("workflow_dispatch", "1", False)])
+def test_first_step_rejects_invalid_invocations_without_skipping(tmp_path, event, attempt, matched_sha):
+    job = checker_workflow()["jobs"]["live"]
+    # Exercise the actual first shell step, before any model-key consuming step.
     assert "runner." not in json.dumps(job["env"])
     runner_temp = tmp_path / "runner temp"
     runner_temp.mkdir()
     github_env = tmp_path / "github env"
-    subprocess.run(
-        ["/bin/bash", "-c", job["steps"][0]["run"]],
-        env={"RUNNER_TEMP": str(runner_temp), "GITHUB_ENV": str(github_env)},
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    exported = dict(line.split("=", 1) for line in github_env.read_text().splitlines())
-    assert exported == {
-        "PPAP_CHECKER_LIVE_ENV": str(runner_temp / "checker-live.env"),
-        "PPAP_CHECKER_LIVE_OUTPUT": str(runner_temp / "checker-live-output"),
-    }
+    env = configuration()
+    env.update(RUNNER_TEMP=str(runner_temp), GITHUB_ENV=str(github_env), GITHUB_EVENT_NAME=event, GITHUB_RUN_ATTEMPT=attempt)
+    if not matched_sha:
+        env["PPAP_APPROVED_SHA"] = "b" * 40
+    result = subprocess.run(["/bin/bash", "-c", job["steps"][0]["run"]], env=env, capture_output=True, text=True)
+    valid = event == "workflow_dispatch" and matched_sha
+    assert (result.returncode == 0) is valid
+    if valid:
+        exported = dict(line.split("=", 1) for line in github_env.read_text().splitlines())
+        assert exported == {"PPAP_CHECKER_LIVE_ENV": str(runner_temp / "checker-live.env"), "PPAP_CHECKER_LIVE_OUTPUT": str(runner_temp / "checker-live-output")}
+    else:
+        assert not github_env.exists()
+
+
+def test_v3_entrypoint_retains_its_own_test():
+    workflow = yaml.load((ROOT / ".github/workflows/v3-poc-live.yml").read_text(), Loader=yaml.BaseLoader)
+    assert set(workflow["on"]) == {"workflow_dispatch"}
+    assert "corpus_contracts.live_poc" in json.dumps(workflow)
+    assert "run_checker_live" not in json.dumps(workflow)
 
 
 def test_stack_keeps_oracle_outside_guest_and_disables_fixture_login():
@@ -461,7 +469,8 @@ def test_both_entrypoints_propagate_final_readback_verdict(tmp_path, monkeypatch
     receipt["operation_id"] = "original"
     report = {**copy.deepcopy(acceptance.receipt_snapshot(receipt)), "accepted": True, "operation_id": "original", "samples": samples}
     path = tmp_path / "report.json"
-    path.write_text(json.dumps(report))
+    if snapshot:
+        path.write_text(json.dumps(report))
     (tmp_path / "private-client.json").write_text(json.dumps({"session": "synthetic"}))
     if changed:
         receipt["operation_id"] = "different"
@@ -536,3 +545,109 @@ def test_dom_identity_hooks_use_rendered_product_state_not_requested_url():
     assert "data-operation-id={operation.operation_id}" in result
     assert "data-candidate-revision={operation.candidate_revision_id}" in result
     assert "data-case-id={row.case_id}" in result
+
+
+@pytest.mark.parametrize("run_id,attempt", [("123", "2"), ("124", "1")])
+def test_manual_rerun_and_new_dispatch_prepare_fresh_isolated_tests(tmp_path, run_id, attempt):
+    first = tmp_path / "first.env"
+    setup.prepare(configuration(), first)
+    env = configuration()
+    env.update(GITHUB_RUN_ID=run_id, GITHUB_RUN_ATTEMPT=attempt, COMPOSE_PROJECT_NAME=f"ppap-checker-live-{run_id}-{attempt}")
+    second = tmp_path / "second.env"
+    setup.prepare(env, second)
+    assert acceptance.live_configuration(env) == (env["CI_LLM_BASE_URL"], env["CI_LLM_MODEL"])
+    assert first.read_text() != second.read_text()
+
+
+def test_existing_attempt_cannot_be_reinvoked_or_overwrite_its_operation(tmp_path, monkeypatch):
+    path = tmp_path / "report.json"
+    original = {"accepted": False, "stage": "waiting", "operation_id": "uncertain-original", "usage": {"uncertain": True}}
+    path.write_text(json.dumps(original))
+    for key, value in configuration().items():
+        monkeypatch.setenv(key, value)
+    with pytest.raises(acceptance.TestAlreadyStarted):
+        acceptance.run(path)
+    assert json.loads(path.read_text()) == original
+
+
+def test_actions_model_configuration_is_the_only_source_for_all_stack_consumers():
+    env = checker_workflow()["jobs"]["live"]["env"]
+    assert env["CI_LLM_MODEL"] == "${{ secrets.CI_LLM_MODEL }}"
+    assert env["CI_LLM_BASE_URL"] == "${{ secrets.CI_LLM_BASE_URL }}"
+    config = yaml.safe_load((ROOT / "deploy/isolated-dev/checker-live.yaml").read_text())
+    for service in ("api", "worker", "deep"):
+        values = config["services"][service]["environment"]
+        assert values["LLM_MODEL"] == "${CI_LLM_MODEL:?}"
+        assert values["LLM_BASE_URL"] == values["PPAP_PERSONAL_MODEL_ALLOWED_BASE_URLS"] == "${CI_LLM_BASE_URL:?}"
+
+
+def test_requested_model_records_the_gateway_selection_without_copying_private_content(tmp_path):
+    from uuid import uuid4
+
+    from agent.execution.gateway import Grants
+
+    probe = controller.Probe(tmp_path / "evidence/controller.json")
+    probe.author_active = True
+    probe.facts["adaptations"] = 1
+    model = "provider/arbitrary-model-alias"
+    grants = Grants(model)
+    body = {"model": "cli-internal-alias", "input": "private-synthetic-content"}
+    grants.authorize(grants.issue(uuid4()), body, 100, select_model=True)
+    probe.observe_provider(body)
+    saved = json.loads(probe.path.read_text())
+    assert saved["requested_models"] == [model]
+    assert "private-synthetic-content" not in probe.path.read_text()
+    assert "cli-internal-alias" not in probe.path.read_text()
+
+
+def test_partial_progress_retains_only_verified_steps_and_known_usage(tmp_path):
+    path = tmp_path / "report.json"
+    report = {"accepted": False, "journey": {}, "usage": {"input_tokens": 17}}
+    acceptance.checkpoint(path, report, "publishing", browser_optimize=True, reconnect_readback=True)
+    acceptance.checkpoint(path, report, "reauditing", browser_publish=True)
+    saved = json.loads(path.read_text())
+    assert saved["stage"] == "reauditing" and saved["accepted"] is False
+    assert saved["journey"] == {"browser_optimize": True, "reconnect_readback": True, "browser_publish": True}
+    assert saved["usage"] == {"input_tokens": 17}
+
+
+@pytest.mark.parametrize("accepted,job_status", [(True, "success"), (False, "failure"), (True, "failure")])
+def test_summary_requires_real_completion_and_does_not_infer_failure_cause(tmp_path, accepted, job_status):
+    report_path = tmp_path / "checker-live-output/report.json"
+    acceptance.write_report(report_path, {"accepted": accepted, "stage": "complete" if accepted else "reauditing", "journey": {"browser_publish": True}, "usage": {"input_tokens": 17}})
+    summary = tmp_path / "summary.md"
+    env = configuration()
+    env.update(RUNNER_TEMP=str(tmp_path), GITHUB_STEP_SUMMARY=str(summary), CHECKER_JOB_STATUS=job_status, GITHUB_SHA="a" * 40)
+    setup.summarize(env)
+    rendered = summary.read_text()
+    facts = json.loads(rendered.split("```json\n")[1].split("\n```")[0])
+    assert facts["outcome"] == ("PROVEN" if accepted and job_status == "success" else "NOT_PROVEN")
+    assert facts["verified_steps"] == ["browser_publish"]
+    assert facts["usage"] == {"input_tokens": 17}
+    assert facts["provider_returned_model"].startswith("unknown")
+    if facts["outcome"] == "NOT_PROVEN":
+        assert facts["failure_attribution"] == "inconclusive"
+    assert env["CI_LLM_API_KEY"] not in rendered
+
+
+def test_summary_does_not_turn_an_unexecuted_test_into_success(tmp_path):
+    summary = tmp_path / "summary.md"
+    env = configuration()
+    env.update(RUNNER_TEMP=str(tmp_path), GITHUB_STEP_SUMMARY=str(summary), CHECKER_JOB_STATUS="success", GITHUB_SHA="a" * 40)
+    setup.summarize(env)
+    facts = json.loads(summary.read_text().split("```json\n")[1].split("\n```")[0])
+    assert facts["outcome"] == "NOT_PROVEN"
+    assert facts["stage"] == "setup_or_build"
+    assert facts["usage"] == "unknown"
+
+
+@pytest.mark.parametrize("accepted", [False, True])
+def test_cli_reentry_rejects_without_rewriting_original_verdict_or_usage(tmp_path, monkeypatch, accepted):
+    path = tmp_path / "report.json"
+    original = json.dumps({"accepted": accepted, "operation_id": "original", "usage": {"input_tokens": 17}, "gate_failure": "original-failure"})
+    path.write_text(original)
+    monkeypatch.setenv("PPAP_CHECKER_LIVE_OUTPUT", str(tmp_path))
+    monkeypatch.setattr(acceptance.sys, "argv", ["run_checker_live"])
+    monkeypatch.setattr(acceptance, "run", lambda _: pytest.fail("A second operation must not start"))
+    assert acceptance.main() == 1
+    assert path.read_text() == original

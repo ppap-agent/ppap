@@ -1,24 +1,12 @@
-name: Checker optimization live acceptance
+name: Checker optimization live test
 
-# Paid and manual only. Never a Tests / CI Gate child; no schedule, push or PR hook.
+# Paid TDD test and regression guard. Each manual dispatch or rerun is a new test.
+# Never a Tests / CI Gate child; no schedule, push, PR hook or automatic retry.
 on:
   workflow_dispatch:
     inputs:
-      approve_paid:
-        description: 'Approve one synthetic optimization at the endpoint/model and limits below (not a currency cap)'
-        type: boolean
-        required: true
-        default: false
       expected_sha:
         description: 'Exact reviewed 40-character commit SHA of this workflow ref'
-        type: string
-        required: true
-      expected_base_url:
-        description: 'Approved HTTPS recipient base URL, must exactly match CI_LLM_BASE_URL'
-        type: string
-        required: true
-      expected_model:
-        description: 'Approved model, must exactly match CI_LLM_MODEL'
         type: string
         required: true
       max_model_requests:
@@ -43,32 +31,30 @@ concurrency:
 
 jobs:
   live:
-    if: ${{ inputs.approve_paid && github.run_attempt == 1 }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
       PPAP_BUILD_SHA: ${{ github.sha }}
       PPAP_APPROVED_SHA: ${{ inputs.expected_sha }}
-      COMPOSE_PROJECT_NAME: ppap-checker-live-${{ github.run_id }}
-      PPAP_CHECKER_LIVE_APPROVED: 'true'
-      PPAP_APPROVED_BASE_URL: ${{ inputs.expected_base_url }}
-      PPAP_APPROVED_MODEL: ${{ inputs.expected_model }}
+      COMPOSE_PROJECT_NAME: ppap-checker-live-${{ github.run_id }}-${{ github.run_attempt }}
+      CI_LLM_BASE_URL: ${{ secrets.CI_LLM_BASE_URL }}
+      CI_LLM_MODEL: ${{ secrets.CI_LLM_MODEL }}
       PPAP_PERSONAL_MODEL_MAX_REQUESTS: ${{ inputs.max_model_requests }}
       PPAP_PERSONAL_MODEL_MAX_INPUT_TOKENS: ${{ inputs.max_input_tokens }}
       PPAP_PERSONAL_MODEL_MAX_OUTPUT_TOKENS: ${{ inputs.max_output_tokens }}
     steps:
-      - name: Prepare isolated runner paths
+      - name: Check manual test invocation and prepare isolated runner paths
         run: |
           set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$PPAP_BUILD_SHA" = "$PPAP_APPROVED_SHA"
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ && "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
           printf 'PPAP_CHECKER_LIVE_ENV=%s/checker-live.env\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
           printf 'PPAP_CHECKER_LIVE_OUTPUT=%s/checker-live-output\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Check exact authorization and prepare isolated secrets
-        env:
-          CI_LLM_BASE_URL: ${{ secrets.CI_LLM_BASE_URL }}
-          CI_LLM_MODEL: ${{ secrets.CI_LLM_MODEL }}
+      - name: Check source identity, configuration and budget; prepare isolated secrets
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$PPAP_APPROVED_SHA"
@@ -97,8 +83,6 @@ jobs:
       - name: One real optimization through personal settings and the production stack
         env:
           CI_LLM_API_KEY: ${{ secrets.CI_LLM_API_KEY }}
-          CI_LLM_BASE_URL: ${{ secrets.CI_LLM_BASE_URL }}
-          CI_LLM_MODEL: ${{ secrets.CI_LLM_MODEL }}
         run: |
           set -euo pipefail
           # No pytest rerun, transport write retry or second optimization operation.
@@ -118,10 +102,15 @@ jobs:
           if test -f "$PPAP_CHECKER_LIVE_ENV"; then
             docker compose --env-file "$PPAP_CHECKER_LIVE_ENV" -f deploy/isolated-dev/checker-live.yaml down --remove-orphans
           fi
+      - name: Summarize this test attempt
+        if: always()
+        env:
+          CHECKER_JOB_STATUS: ${{ job.status }}
+        run: python3 scripts/prepare_checker_live.py --summary
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: checker-live-${{ github.sha }}-${{ github.run_id }}
+          name: checker-live-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/checker-live-output/report.json
             ${{ runner.temp }}/checker-live-output/controller.json
