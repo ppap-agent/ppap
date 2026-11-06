@@ -353,16 +353,27 @@ def test_certified_gate_excludes_only_bad_target_and_replays_same_acceptance(sys
     admin.settings.precheck_gate_enforced = True
     with admin._conn() as conn:
         conn.execute("UPDATE engine.jobs SET result=%s WHERE id=%s", (Jsonb(result), receipt["id"]))
-    request = {"request_id": str(uuid.uuid4()), "expected_revision": 0, "expected_confirmation_basis_digest": client.get(path).json()["confirmation_basis_digest"]}
+    preview = client.get(path).json()
+    assert preview["estimated_points"] == 500
+    assert all(row["selection"] == "selected" for row in preview["files"])
+    scope = {
+        "target_file_version_ids": [good["file"]["id"]],
+        "reference_file_version_ids": [],
+        "excluded_files": [{"file_version_id": bad["file"]["id"], "reason": "预检已确认的阻断缺陷，需修正后重新提交"}],
+    }
+    assert preview["confirmation_scope"] == scope
+    request = {"request_id": str(uuid.uuid4()), "expected_revision": 0, "expected_confirmation_basis_digest": preview["confirmation_basis_digest"]}
     accepted = client.post(path + "/confirm", json=request)
     assert accepted.status_code == 201, accepted.text
     assert accepted.json()["estimated_points"] == 500
+    assert accepted.json()["confirmation_scope"] == scope
     with admin._conn() as conn:
         targets = conn.execute("SELECT file_version_id FROM product.round_inputs WHERE round_id=%s AND role='target'", (accepted.json()["round_id"],)).fetchall()
         assert targets == [(uuid.UUID(good["file"]["id"]),)]
         assert conn.execute("SELECT count(*) FROM product.audit_rounds").fetchone()[0] == 1
     replayed = client.post(path + "/confirm", json=request)
     assert replayed.status_code == 201 and replayed.json()["round_id"] == accepted.json()["round_id"]
+    assert replayed.json()["confirmation_scope"] == scope
 
 
 def test_ending_with_no_selected_targets_does_not_call_the_old_snapshot_current(system):
