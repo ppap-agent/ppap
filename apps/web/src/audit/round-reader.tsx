@@ -13,6 +13,7 @@ import {sameSnapshot} from './result-projection'
 import {ReviewEditorContext} from './review-editor'
 import {writeAuditAddress} from './routes'
 import {DeepFeedback} from './deep-feedback'
+import {FactQuestions} from './fact-questions'
 
 type Round = components['schemas']['Round']
 export type ReadRound = (id: string, signal: AbortSignal) => Promise<Round>
@@ -59,6 +60,7 @@ export function AuditRoundReader({roundId, readRound, renderOriginal, onReaudit,
       <div className="flex flex-wrap gap-2"><Button variant="outline" asChild><a href={returnHref}>返回工作台</a></Button>{onReaudit && round && ['completed', 'failed'].includes(round.execution) && <Button onClick={onReaudit}>补件／重新审核</Button>}<Button variant="outline" onClick={() => setRevision(value => value + 1)}>重新读取</Button></div>
     </header>}
     {error ? <Alert variant="destructive"><AlertTitle>历史审核暂不可用</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : !view ? <ReadSkeleton label="正在读取本轮审核…" kind={'detail'}/> : <>
+      {round?.execution === 'completed' && <FactQuestions key={`facts:${roundId}`} roundId={roundId} files={view.files.map(row => row.file)} findings={round.findings}/>}
       {round?.analysis_mode === 'deep' && <DeepFeedback key={roundId} roundId={roundId} files={view.files.map(row => row.file)} rules={view.files.flatMap(row => row.rule?.body.kind === 'engine' ? row.rule.body.rules.map(rule => ({documentId: row.file.id, filename: row.file.original_filename, rule})) : [])} renderOriginal={renderOriginal} onBasisChanged={setBasisChanged}/>}
       {basisChanged && <h2 className="text-lg font-semibold">此前输入的审核结果</h2>}
       <nav aria-label="本轮文件" className="flex flex-wrap gap-2">{view.files.map(row => <Button key={row.file.id} variant={file?.file.id === row.file.id ? 'secondary' : 'ghost'} className="h-auto max-w-full whitespace-normal text-left" aria-pressed={file?.file.id === row.file.id} onClick={() => selectFile(row.file.id)}><FileName name={row.file.original_filename}/>{row.role === 'reference' && <span className="text-xs text-muted-foreground">比对资料</span>}</Button>)}</nav>

@@ -200,6 +200,10 @@ def checker_response(
                 "sources": sources,
                 "verification_scope": "checker_execution",
             }
+            if matched_result and matched_result.status == "UNABLE":
+                semantic["fact_questions"] = [question.model_dump(mode="json") for question in matched_result.fact_questions if question.file_version_id == target.file_version_id]
+                if matched_result.fact_evaluation is not None and matched_result.fact_evaluation.file_version_id == target.file_version_id:
+                    semantic["fact_evaluation"] = matched_result.fact_evaluation.model_dump(mode="json")
             if evidence_incomplete:
                 semantic["evidence_incomplete"] = True
             performed = getattr(matched_result, "checks_performed", None) if matched_result is not None else None

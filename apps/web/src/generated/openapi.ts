@@ -330,6 +330,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/audit-rounds/{round_id}/fact-answers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Fact Answers */
+        get: operations["read_fact_answers_audit_rounds__round_id__fact_answers_get"];
+        put?: never;
+        /** Apply Fact Answer */
+        post: operations["apply_fact_answer_audit_rounds__round_id__fact_answers_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-rounds/{round_id}/fact-answers/{operation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Fact Answer Operation */
+        get: operations["read_fact_answer_operation_audit_rounds__round_id__fact_answers__operation_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-rounds/{round_id}/fact-answers/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export Fact Answers */
+        get: operations["export_fact_answers_audit_rounds__round_id__fact_answers_export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-rounds/{round_id}/fact-answers/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Fact Confirmation Report */
+        get: operations["fact_confirmation_report_audit_rounds__round_id__fact_answers_report_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit-rounds/{round_id}/rule-changes": {
         parameters: {
             query?: never;
@@ -3475,6 +3544,193 @@ export interface components {
             /** Locator */
             locator: string;
         };
+        /** FactAnswer */
+        FactAnswer: {
+            /**
+             * Answer Type
+             * @enum {string}
+             */
+            answer_type: "boolean" | "text";
+            /** Answered At */
+            answered_at: string;
+            /** Answered By */
+            answered_by: string;
+            /** Field */
+            field: string;
+            /** File Version Id */
+            file_version_id: string;
+            /** Locator */
+            locator: {
+                [key: string]: unknown;
+            };
+            /** Operation Id */
+            operation_id: string;
+            /** Prompt */
+            prompt: string;
+            /** Round Id */
+            round_id: string;
+            /** Value */
+            value: boolean | string | null;
+        };
+        /** FactAnswerReceipt */
+        FactAnswerReceipt: {
+            answer: components["schemas"]["FactAnswer"];
+            /**
+             * Model Calls
+             * @constant
+             */
+            model_calls: 0;
+            /** Operation Id */
+            operation_id: string;
+            /** Results */
+            results: components["schemas"]["FactConfirmedResult"][];
+            /** Revision */
+            revision: number;
+            /** Round Id */
+            round_id: string;
+        };
+        /** FactAnswerRequest */
+        FactAnswerRequest: {
+            /** Expected Question Fingerprint */
+            expected_question_fingerprint: string;
+            /** Expected Revision */
+            expected_revision: number;
+            /** Field */
+            field: string;
+            /** File Version Id */
+            file_version_id: string;
+            /** Operation Id */
+            operation_id: string;
+            /** Value */
+            value: boolean | string | null;
+        };
+        /** FactAnswersExport */
+        FactAnswersExport: {
+            /** Answers */
+            answers: components["schemas"]["FactAnswer"][];
+            /** Machine Findings */
+            machine_findings: components["schemas"]["FactMachineFinding"][];
+            /**
+             * Model Calls
+             * @constant
+             */
+            model_calls: 0;
+            /** Questions */
+            questions: components["schemas"]["FactQuestionView"][];
+            /** Results */
+            results: components["schemas"]["FactConfirmedResult"][];
+            /** Revision */
+            revision: number;
+            /** Round Id */
+            round_id: string;
+            /**
+             * Schema
+             * @constant
+             */
+            schema: "original-fact-confirmations-v1";
+            /**
+             * Training Eligible
+             * @constant
+             */
+            training_eligible: false;
+        };
+        /** FactAnswerSource */
+        FactAnswerSource: {
+            /** Answered At */
+            answered_at: string;
+            /** Answered By */
+            answered_by: string;
+            /** Field */
+            field: string;
+            /** File Version Id */
+            file_version_id: string;
+            /** Locator */
+            locator: {
+                [key: string]: unknown;
+            };
+            /** Value */
+            value: boolean | string | null;
+        };
+        /** FactAnswersView */
+        FactAnswersView: {
+            /** Answers */
+            answers: components["schemas"]["FactAnswer"][];
+            /**
+             * Model Calls
+             * @constant
+             */
+            model_calls: 0;
+            /** Questions */
+            questions: components["schemas"]["FactQuestionView"][];
+            /** Results */
+            results: components["schemas"]["FactConfirmedResult"][];
+            /** Revision */
+            revision: number;
+            /** Round Id */
+            round_id: string;
+        };
+        /** FactConfirmedResult */
+        FactConfirmedResult: {
+            /** Answer Ids */
+            answer_ids: string[];
+            /** Confirmed At */
+            confirmed_at: string;
+            /** Confirmed By */
+            confirmed_by: string[];
+            /** Item Key */
+            item_key: string;
+            /** Sources */
+            sources: components["schemas"]["FactAnswerSource"][];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "PASS" | "NG" | "NA" | "UNABLE" | "ERR";
+            /** Suggestions */
+            suggestions: string;
+        };
+        /** FactMachineFinding */
+        FactMachineFinding: {
+            /** Item Key */
+            item_key: string;
+            /** Locator */
+            locator: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "PASS" | "NG" | "NA" | "UNABLE" | "ERR";
+            /** Suggestions */
+            suggestions: string;
+        };
+        /** FactQuestionView */
+        FactQuestionView: {
+            /**
+             * Answer Type
+             * @enum {string}
+             */
+            answer_type: "boolean" | "text";
+            /** Answered */
+            answered: boolean;
+            /** Clause Ids */
+            clause_ids: string[];
+            /** Field */
+            field: string;
+            /** File Version Id */
+            file_version_id: string;
+            /** Fingerprint */
+            fingerprint: string;
+            /** Item Keys */
+            item_keys: string[];
+            /** Locator */
+            locator: {
+                [key: string]: unknown;
+            };
+            /** Prompt */
+            prompt: string;
+        };
         /** FeedbackCandidate */
         FeedbackCandidate: {
             /** Explanation */
@@ -5732,6 +5988,167 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_fact_answers_audit_rounds__round_id__fact_answers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                round_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FactAnswersView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apply_fact_answer_audit_rounds__round_id__fact_answers_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                round_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FactAnswerRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FactAnswerReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_fact_answer_operation_audit_rounds__round_id__fact_answers__operation_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                operation_id: string;
+                round_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FactAnswerReceipt"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_fact_answers_audit_rounds__round_id__fact_answers_export_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                round_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FactAnswersExport"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    fact_confirmation_report_audit_rounds__round_id__fact_answers_report_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                round_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                    "application/pdf": string;
                 };
             };
             /** @description Validation Error */

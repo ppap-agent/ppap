@@ -94,3 +94,49 @@ def render_audit_pdf(source: dict) -> bytes:
             page.insert_text((275, 814), f"{index + 1} / {len(document)}", fontsize=9, color=(0.4, 0.4, 0.4))
         document.subset_fonts()
         return document.tobytes(garbage=4, deflate=True)
+
+
+def render_fact_confirmation_pdf(source: dict) -> bytes:
+    """Separate human-confirmation report; the original machine PDF is immutable."""
+    results = {result["item_key"]: result for result in source["results"]}
+    parts = [
+        '<html lang="zh"><body><h1>PPAP 原件事实人工确认报告</h1>',
+        f"<p>审核轮次：{_text(source['round_id'])}；回答修订：{source['revision']}</p>",
+        "<p>机器结果与人工确认分别记录。回答仅用于本轮所选文件版本，不修改规则，不调用模型，不自动作为训练样本。</p>",
+    ]
+    for finding in source["machine_findings"]:
+        locator = finding.get("locator") or {}
+        parts.extend(
+            [
+                f"<h2>{_text(locator.get('filename') or locator.get('file_version_id'))} · {_text(locator.get('rule_item_id') or finding['item_key'])}</h2>",
+                f"<p>原机器判定：{_text(finding['status'])} · {_text(finding['suggestions'])}</p>",
+            ]
+        )
+        if finding["item_key"] not in results:
+            continue
+        result = results[finding["item_key"]]
+        parts.append(f"<p><b>人工确认：{_text(result['status'])}</b> · {_text(result['suggestions'])}</p>")
+        for answer in result["sources"]:
+            value = "看不清" if answer["value"] is None else "是" if answer["value"] is True else "否" if answer["value"] is False else answer["value"]
+            position = answer["locator"]
+            location = f"第 {position['page']} 页" if position.get("kind") == "pdf_page" else _location(position)
+            parts.append(f"<p>依据：文件版本 {_text(answer['file_version_id'])} · {_text(location)} · {_text(answer['field'])} · 回答：{_text(value)}</p>")
+            parts.append(f"<p>回答人：{_text(answer['answered_by'])}；时间：{_text(answer['answered_at'])}</p>")
+    parts.append("</body></html>")
+    html = "".join(parts)
+    if len(html) > 4_000_000:
+        raise ValueError("report_content_too_large")
+    story = pymupdf.Story(html=html, user_css="body {font-family:sans-serif; font-size:10pt; line-height:1.6} h1 {font-size:18pt} h2 {font-size:12pt} p {white-space:pre-wrap}")
+    output = BytesIO()
+    with pymupdf.DocumentWriter(output) as writer:
+
+        def page_rect(number, filled):
+            if number >= 500:
+                raise ValueError("report_page_limit")
+            return pymupdf.Rect(0, 0, 595, 842), pymupdf.Rect(42, 42, 553, 786), None
+
+        story.write(writer, page_rect)
+    with pymupdf.open(stream=output.getvalue(), filetype="pdf") as document:
+        document.set_metadata({"title": "PPAP 原件事实人工确认报告", "subject": f"round={source['round_id']};fact_revision={source['revision']}"})
+        document.subset_fonts()
+        return document.tobytes(garbage=4, deflate=True)

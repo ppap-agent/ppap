@@ -3531,6 +3531,26 @@ class AuthStore:
                     usage_policy=usage_policy,
                 )
 
+    def read_fact_answers(self, principal: Principal, round_id: str) -> dict:
+        from .fact_answers import read_answers
+
+        return read_answers(self, principal, round_id)
+
+    def apply_fact_answer(self, principal: Principal, round_id: str, payload: dict) -> dict:
+        from .fact_answers import apply_answer
+
+        return apply_answer(self, principal, round_id, payload)
+
+    def read_fact_answer_operation(self, principal: Principal, round_id: str, operation_id: str) -> dict | None:
+        from .fact_answers import read_operation
+
+        return read_operation(self, principal, round_id, operation_id)
+
+    def export_fact_answers(self, principal: Principal, round_id: str) -> dict:
+        from .fact_answers import export_answers
+
+        return export_answers(self, principal, round_id)
+
     def read_deep_feedback(self, principal: Principal, round_id: str) -> dict:
         from .deep_feedback import read_feedback
 
