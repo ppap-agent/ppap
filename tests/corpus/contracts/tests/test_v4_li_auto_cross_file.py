@@ -72,9 +72,9 @@ def execute(entry, content, references, *, reverse=False):
     inputs = [target]
     blobs = {"version": content}
     reference_types = {}
-    for index, (name, ref) in enumerate(references):
+    for index, (document_type, name, ref) in enumerate(references):
         version = f"ref-{index}"
-        reference_types[version] = "过程流程图" if entry == "L07" else "零件提交保证书" if name == "交付清单.xlsx" else "控制计划" if name == "控制计划.xlsx" else "过程流程图"
+        reference_types[version] = document_type
         inputs.append(RoundInput("reference", version, version, name, "ready"))
         if ref is not None:
             blobs[version] = ref
@@ -83,7 +83,7 @@ def execute(entry, content, references, *, reverse=False):
 
 
 def test_all_seven_original_pfmea_clauses_and_two_originals():
-    findings, result = execute("L07", pfmea(), [("过程流程图.xlsx", pfd())])
+    findings, result = execute("L07", pfmea(), [("过程流程图", "过程流程图.xlsx", pfd())])
     clauses = preset_rule("理想", "L07").clauses
     assert [findings[c.id]["status"] for c in clauses] == ["PASS"] * 7
     assert all(row["coverage"] == "executed" for row in result["coverage"]["rule_items"])
@@ -94,13 +94,19 @@ def test_all_seven_original_pfmea_clauses_and_two_originals():
 
 @pytest.mark.parametrize(("changes", "index"), [({"function": "只有内部"}, 3), ({"severity": 5}, 5), ({"detection": 8}, 6), ({"characteristic": "CC"}, 4), ({"process": "10 检查"}, 2)])
 def test_source_id_binds_the_equivalent_check_even_when_not_same_ordinal(changes, index):
-    findings, _ = execute("L07", pfmea(**changes), [("过程流程图.xlsx", pfd())], reverse=True)
+    findings, _ = execute("L07", pfmea(**changes), [("过程流程图", "过程流程图.xlsx", pfd())], reverse=True)
     assert findings[preset_rule("理想", "L07").clauses[index].id]["status"] == "NG"
 
 
 @pytest.mark.parametrize(
     "references",
-    [[], [("过程流程图.xlsx", pfd(part="OTHER"))], [("过程流程图.xlsx", pfd(revision="B"))], [("过程流程图.xlsx", pfd(customer="蔚来"))], [("过程流程图.xlsx", pfd()), ("过程流程图2.xlsx", pfd())]],
+    [
+        [],
+        [("过程流程图", "过程流程图.xlsx", pfd(part="OTHER"))],
+        [("过程流程图", "过程流程图.xlsx", pfd(revision="B"))],
+        [("过程流程图", "过程流程图.xlsx", pfd(customer="蔚来"))],
+        [("过程流程图", "过程流程图.xlsx", pfd()), ("过程流程图", "过程流程图2.xlsx", pfd())],
+    ],
 )
 def test_pairing_uncertainty_is_not_a_confirmed_defect(references):
     findings, _ = execute("L07", pfmea(), references)
@@ -109,7 +115,7 @@ def test_pairing_uncertainty_is_not_a_confirmed_defect(references):
 
 
 def test_frozen_but_unreadable_peer_is_a_technical_failure():
-    findings, _ = execute("L07", pfmea(), [("过程流程图.xlsx", None)])
+    findings, _ = execute("L07", pfmea(), [("过程流程图", "过程流程图.xlsx", None)])
     clauses = preset_rule("理想", "L07").clauses
     assert [findings[clauses[i].id]["status"] for i in (2, 4)] == ["ERR", "ERR"]
 
@@ -136,7 +142,7 @@ def delivery(*, part="P123", customer="理想", revision="A", attachment="尺寸
 
 
 def test_warranty_uses_frozen_independent_delivery_list_with_two_original_locations():
-    findings, _ = execute("L17", warranty(), [("交付清单.xlsx", delivery())])
+    findings, _ = execute("L17", warranty(), [("零件提交保证书", "交付清单.xlsx", delivery())])
     row = findings[preset_rule("理想", "L17").clauses[0].id]
     assert row["status"] == "PASS", row
     sources = row["locator"]["semantic"]["sources"]
@@ -145,32 +151,32 @@ def test_warranty_uses_frozen_independent_delivery_list_with_two_original_locati
 
 @pytest.mark.parametrize(("changes", "expected"), [({"attachment": None}, "NG"), ({"part": "OTHER"}, "UNABLE"), ({"customer": "蔚来"}, "UNABLE"), ({"revision": "B"}, "UNABLE")])
 def test_warranty_pair_defects_are_separate_from_uncertain_pairing(changes, expected):
-    findings, _ = execute("L17", warranty(), [("交付清单.xlsx", delivery(**changes))])
+    findings, _ = execute("L17", warranty(), [("零件提交保证书", "交付清单.xlsx", delivery(**changes))])
     assert findings[preset_rule("理想", "L17").clauses[0].id]["status"] == expected
 
 
 def test_warranty_unreadable_frozen_list_is_error():
-    findings, _ = execute("L17", warranty(), [("交付清单.xlsx", None)])
+    findings, _ = execute("L17", warranty(), [("零件提交保证书", "交付清单.xlsx", None)])
     assert findings[preset_rule("理想", "L17").clauses[0].id]["status"] == "ERR"
 
 
 @pytest.mark.parametrize("kind", ["控制计划", "过程流程图"])
 def test_warranty_readable_delivery_list_does_not_depend_on_unrelated_failed_inputs(kind):
-    findings, _ = execute("L17", warranty(), [("交付清单.xlsx", delivery()), (kind + ".xlsx", None)])
+    findings, _ = execute("L17", warranty(), [("零件提交保证书", "交付清单.xlsx", delivery()), (kind, kind + ".xlsx", None)])
     assert findings[preset_rule("理想", "L17").clauses[0].id]["status"] == "PASS"
 
 
 @pytest.mark.parametrize("field,value", [("part", "无"), ("part", "/"), ("part", "TBD"), ("part", "零件名称"), ("revision", "无"), ("revision", "版本号")])
 def test_li_auto_pair_does_not_treat_matching_placeholders_as_identity(field, value):
     values = {field: value}
-    findings, _ = execute("L17", warranty(**values), [("交付清单.xlsx", delivery(**values))])
+    findings, _ = execute("L17", warranty(**values), [("零件提交保证书", "交付清单.xlsx", delivery(**values))])
     assert findings[preset_rule("理想", "L17").clauses[0].id]["status"] == "UNABLE"
-    findings, _ = execute("L07", pfmea(**values), [("过程流程图.xlsx", pfd(**values))])
+    findings, _ = execute("L07", pfmea(**values), [("过程流程图", "过程流程图.xlsx", pfd(**values))])
     assert [findings[preset_rule("理想", "L07").clauses[index].id]["status"] for index in (2, 4)] == ["UNABLE", "UNABLE"]
 
 
 def test_pfmea_generic_category_headers_keep_original_text_in_evidence():
-    findings, _ = execute("L07", pfmea(), [("过程流程图.xlsx", pfd(generic=True))])
+    findings, _ = execute("L07", pfmea(), [("过程流程图", "过程流程图.xlsx", pfd(generic=True))])
     row = findings[preset_rule("理想", "L07").clauses[4].id]
     assert row["status"] == "PASS", row
     assert any(source["excerpt"] == "特性类别" for source in row["locator"]["semantic"]["sources"])
@@ -179,7 +185,7 @@ def test_pfmea_generic_category_headers_keep_original_text_in_evidence():
 @pytest.mark.parametrize("part", ["P-123", "P/123", "P.123", "000123"])
 def test_pair_identity_preserves_real_part_punctuation_and_leading_zeros(part):
     assert pair_identity(part) == part.casefold()
-    findings, _ = execute("L17", warranty(part=part, revision=None), [("交付清单.xlsx", delivery(part=part, revision=None))])
+    findings, _ = execute("L17", warranty(part=part, revision=None), [("零件提交保证书", "交付清单.xlsx", delivery(part=part, revision=None))])
     assert findings[preset_rule("理想", "L17").clauses[0].id]["status"] == "PASS"
 
 
