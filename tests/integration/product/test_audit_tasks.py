@@ -1293,7 +1293,7 @@ def test_task_round_cannot_prepare_a_legacy_retry(matched_task):
     assert client.get("/usage").json() == usage
 
 
-def test_linked_reaudit_keeps_original_rule_version_and_does_not_copy_results(matched_task):
+def test_linked_reaudit_keeps_provenance_but_freezes_current_suite_without_copying_results(matched_task):
     client, worker, path, body, old = matched_task
     accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).json()
     job = worker.claim_job("original")
@@ -1323,7 +1323,24 @@ def test_linked_reaudit_keeps_original_rule_version_and_does_not_copy_results(ma
     assert client.post(next_path + "/confirm", json=confirmation).json() == new_round.json()
     frozen = client.get(f"/rounds/{new_round.json()['round_id']}").json()
     assert frozen["predecessor_id"] == original["id"]
-    assert frozen["inputs"] == original["inputs"]
+    # Reusing a source rule is provenance, not a per-audit executable version
+    # selector. The current enterprise Suite owns every newly accepted Round.
+    assert [{key: item[key] for key in ("file_id", "file_version_id", "role", "rule_version_id")} for item in frozen["inputs"]] == [
+        {key: item[key] for key in ("file_id", "file_version_id", "role", "rule_version_id")} for item in original["inputs"]
+    ]
+    assert frozen["inputs"][0]["rule"]["id"] == old["id"]
+    assert frozen["inputs"][0]["rule"]["body"]["title"] == newer["title"]
+    assert frozen["inputs"][0]["rule"]["body"]["rules"] == newer["body"]["rules"]
+    with worker._conn() as conn:
+        executions = {
+            str(rid): execution
+            for rid, execution in conn.execute(
+                "SELECT round_id,rule_execution FROM product.round_inputs WHERE round_id=ANY(%s::uuid[]) AND role='target'",
+                ([original["id"], frozen["id"]],),
+            ).fetchall()
+        }
+    assert executions[original["id"]]["suite_revision_id"] == old["body"]["suite_revision_id"]
+    assert executions[frozen["id"]]["suite_revision_id"] == newer["body"]["suite_revision_id"]
     assert frozen["findings"] == []
     assert client.get(f"/rounds/{original['id']}").json() == original
 
