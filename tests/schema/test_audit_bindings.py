@@ -52,6 +52,16 @@ class AuditDatabaseCase(unittest.TestCase):
             pg_migrator_password=self.schema.migrator_password(),
         )  # noqa: E501
         self.store = build_product_store(self.settings, objects=self.memory_objects_type())
+        if not self.previous_schema:
+            # Other owners may have seeded the template DB with object references.
+            # This test has a fresh object store, so clone schema, not their data.
+            from product.db import connect
+            from psycopg import sql
+
+            with connect(self.settings, "migrator") as conn:
+                tables = conn.execute("SELECT schemaname,tablename FROM pg_tables WHERE schemaname IN ('product','engine')").fetchall()
+                names = [sql.Identifier(schema, table) for schema, table in tables if table not in {"schema_migrations", "trial_cutover_baselines"}]
+                conn.execute(sql.SQL("TRUNCATE TABLE {} CASCADE").format(sql.SQL(", ").join(names)))
         self.store.seed_isolated_dev()
         self.alice = self.store.principal_for_fixture("alice")
 
