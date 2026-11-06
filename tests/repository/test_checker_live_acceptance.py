@@ -103,7 +103,10 @@ def test_setup_rejects_changed_approval_or_excessive_budget(tmp_path, key, value
 
 def valid_receipt():
     samples, cases = {}, []
-    for ordinal, (value, expected) in enumerate(acceptance.SAMPLES, 1):
+    # Synthetic receipt-only test values are unrelated to any live run's hidden
+    # inputs, which are chosen privately after the public commit is built.
+    values = (*acceptance.TRAINING_SAMPLES[:3], (7, "NG"), *acceptance.TRAINING_SAMPLES[3:], (30, "PASS"))
+    for ordinal, (value, expected) in enumerate(values, 1):
         ident = str(ordinal)
         baseline = "PASS" if value >= 0 else "NG"
         samples[ident] = {"ordinal": ordinal, "expected": expected, "baseline": baseline}
@@ -166,13 +169,30 @@ def test_claimed_verified_receipt_cannot_hide_broken_independent_proof(path, val
         acceptance.validate_outcome(receipt, samples)
 
 
-def test_expectations_are_literal_and_not_a_model_or_checker_output():
-    assert acceptance.SAMPLES == ((3, "NG"), (10, "PASS"), (20, "PASS"), (7, "NG"), (-5, "NG"), (9, "NG"), (12, "PASS"), (30, "PASS"))
-    assert not any(str(acceptance.SAMPLES) in text for text in (acceptance.BASELINE, (ROOT / "scripts/checker_live_controller.py").read_text()))
-    for ordinal, (value, _expected) in enumerate(acceptance.SAMPLES, 1):
+def test_live_hidden_values_and_label_order_are_private_fresh_and_independent(monkeypatch):
+    entropy = iter([1, 2, 0, 3, 4, 1])
+    monkeypatch.setattr(acceptance.secrets, "randbelow", lambda bound: next(entropy))
+    first, second = acceptance.make_samples(), acceptance.make_samples()
+    training = set(acceptance.TRAINING_SAMPLES)
+    assert training == {(3, "NG"), (10, "PASS"), (20, "PASS"), (-5, "NG"), (9, "NG"), (12, "PASS")}
+    assert [first[index][1] for index in (3, 7)] == ["NG", "PASS"]
+    assert [second[index][1] for index in (3, 7)] == ["PASS", "NG"]
+    assert {first[index][0] for index in (3, 7)}.isdisjoint(second[index][0] for index in (3, 7))
+    for run in (first, second):
+        for index, (value, expected) in enumerate(run):
+            if index in (3, 7):
+                assert value not in {item[0] for item in training}
+            else:
+                assert (value, expected) in training
+            assert expected == ("NG" if value < 10 else "PASS")
+
+
+def test_private_samples_round_trip_into_marked_workbooks():
+    for ordinal, (value, expected) in enumerate(acceptance.make_samples(), 1):
         raw = acceptance.workbook(value, ordinal)
         book = load_workbook(io.BytesIO(raw), data_only=True)
-        assert book.active["A1"].value == value
+        assert book.active["A1"].value == pytest.approx(value)
+        assert ("NG" if book.active["A1"].value < 10 else "PASS") == expected
         assert controller.contains_holdout(raw) == (ordinal % 4 == 0)
         book.close()
 

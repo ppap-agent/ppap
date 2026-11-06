@@ -1,7 +1,7 @@
 """Explicit paid Checker optimization acceptance, never collected by default pytest.
 
-Only synthetic inputs are used. Expected answers are authored here, never by the
-provider. This file is mounted into the private client only, not the Deep image.
+Only synthetic inputs are used. A private independent Oracle freezes answers
+before optimization. Fresh hidden inputs and their order are never public code.
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ import hashlib
 import io
 import json
 import os
+import secrets
 import sys
 import time
 from pathlib import Path
@@ -20,7 +21,7 @@ from uuid import uuid4
 import httpx
 from openpyxl import Workbook
 
-SAMPLES = ((3, "NG"), (10, "PASS"), (20, "PASS"), (7, "NG"), (-5, "NG"), (9, "NG"), (12, "PASS"), (30, "PASS"))
+TRAINING_SAMPLES = ((3, "NG"), (10, "PASS"), (20, "PASS"), (-5, "NG"), (9, "NG"), (12, "PASS"))
 HOLDOUT_MARKER = "checker-live-holdout-"
 BASELINE = """import json
 from types import SimpleNamespace
@@ -78,6 +79,20 @@ def workbook(value, ordinal):
     book.save(stream)
     book.close()
     return stream.getvalue()
+
+
+def make_samples():
+    # This repository is public. Neither hidden values nor their filename/label
+    # mapping may be recoverable from its source or a previous run's artifacts.
+    # The odd numerator makes the negative case non-integral and disjoint from
+    # training; the positive case is also outside every training value.
+    hidden_values = [(2 * secrets.randbelow(1 << 39) + 1) * 10 / (1 << 40), 21 + secrets.randbelow(1 << 40)]
+    if secrets.randbelow(2):
+        hidden_values.reverse()
+    # This independent, trusted Oracle implements the user-approved threshold;
+    # it never executes candidate code or asks the provider for an expectation.
+    hidden = [(value, "PASS" if value >= 10 else "NG") for value in hidden_values]
+    return (*TRAINING_SAMPLES[:3], hidden[0], *TRAINING_SAMPLES[3:], hidden[1])
 
 
 def write_report(path, report):
@@ -424,7 +439,7 @@ def run(report_path):
         client.request("PUT", f"/suites/{suite_key}/active", payload={"revision_id": base.id, "expected_revision": 0, "operation_id": str(uuid4()), "force_unverified": True})
         samples = {}
         rounds = []
-        for ordinal, (value, expected) in enumerate(SAMPLES, 1):
+        for ordinal, (value, expected) in enumerate(make_samples(), 1):
             raw = workbook(value, ordinal)
             uploaded = client.upload(f"sample-{ordinal}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", raw)
             require(uploaded["sha256"] == hashlib.sha256(raw).hexdigest(), "uploaded_source_identity_mismatch")
