@@ -1,4 +1,4 @@
-"""Docs-addon host login through the common Feishu round. Mocked HTTP only."""
+"""Docs-addon host login through real PostgreSQL/Core, with controlled HTTP and guest OS boundaries."""
 
 from __future__ import annotations
 
@@ -24,7 +24,8 @@ def _clean_env(**extra: str):
 
 
 class _AddonMock:
-    def __init__(self):
+    def __init__(self, workbook: bytes):
+        self.workbook = workbook
         self.calls: list[tuple[str, str]] = []
         self.host_codes: list[str] = []
 
@@ -118,7 +119,7 @@ class _AddonMock:
         if method == "GET" and url.endswith("/drive/v1/files/xlsx-token/download"):
             return httpx.Response(
                 200,
-                content=b"target-bytes",
+                content=self.workbook,
                 headers={
                     "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     "Content-Disposition": 'attachment; filename="report.xlsx"',
@@ -171,7 +172,8 @@ class HostCodeTests(unittest.TestCase):
 
 class FeishuDocsAddonTests(unittest.TestCase):
     @pytest.fixture(autouse=True)
-    def _owner_store(self, auth_store_factory, seed_usage_event_factory):
+    def _owner_store(self, auth_store_factory, seed_usage_event_factory, core_system):
+        self.core_system = core_system
         self.auth_store = auth_store_factory
         self.seed_usage_event = seed_usage_event_factory
 
@@ -186,7 +188,9 @@ class FeishuDocsAddonTests(unittest.TestCase):
         self.settings = Settings()
         self.store = self.auth_store(self.settings)
         self.store.seed_isolated_dev()
-        self.feishu = _AddonMock()
+        self.core_system.install(self.store)
+        self.core_system.adopt_presence(self.store)
+        self.feishu = _AddonMock(self.core_system.workbook())
         self.http = httpx.Client(transport=httpx.MockTransport(self.feishu.handler))
         self.client = TestClient(
             create_app(
@@ -264,14 +268,16 @@ class FeishuDocsAddonTests(unittest.TestCase):
         round_id = submitted.json()["id"]
         claimed = self.store.claim_job("test-worker")
         self.assertIsNotNone(claimed)
+        guest_calls = self.core_system.calls
         process_claimed(self.store, claimed, "test-worker")
+        self.assertEqual(self.core_system.calls, guest_calls + 1)
         done = self.client.get(f"/rounds/{round_id}").json()
         self.assertEqual(done["execution"], "completed")
         self.assertEqual(done["findings"][0]["status"], "PASS")
         self.assertTrue(done["writeback"]["available"])
         self.assertNotIn("current-doc", json.dumps(done))
         writeback = self.client.post(f"/integrations/feishu/rounds/{round_id}/writeback")
-        self.assertEqual(writeback.status_code, 200)
+        self.assertEqual(writeback.status_code, 200, writeback.text)
         self.assertTrue(writeback.json()["inserted"])
         self.assertIn(f"/?round={round_id}", writeback.json()["return_url"])
         self.assertTrue(any("/drive/v1/files/xlsx-token/download" in url for _method, url in self.feishu.calls))

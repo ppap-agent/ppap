@@ -1,4 +1,4 @@
-"""Write common round findings back into the source Feishu doc. Mocked HTTP only."""
+"""Feishu writeback through real PostgreSQL/Core, with controlled HTTP and guest OS boundaries."""
 
 from __future__ import annotations
 
@@ -10,8 +10,11 @@ from unittest.mock import patch
 
 import httpx
 import pytest
+from agent.core_result import core_response
+from agent.protocol import ExecuteRequest, FrozenFile
 from api import create_app
-from audit.audits import RoundInput, findings_from_engine_results
+from audit.audits import RoundInput
+from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding
 from audit.contracts import AuditEvidence, AuditResultItem, EvidenceDiagnostic, EvidenceSource
 from fastapi.testclient import TestClient
 from product.feishu import UserTokens
@@ -29,6 +32,32 @@ def _clean_env(**extra: str):
     return patch.dict(os.environ, keep, clear=True)
 
 
+def _core_projection(results, *, target):
+    """Exercise the production Core projection, with explicit frozen rule identity."""
+    rules = {"rules": [{"id": "signature", "category": "签字", "rule_to_check": "签字检查"}]}
+    frozen = FrozenInput(target.file_version_id, "a" * 64, "target", target.filename, file_id=target.file_id)
+    binding = RuleBinding("test:writeback", "b" * 64, {"signature": "checker:check"})
+    selected = FrozenTarget(target.file_version_id, "suite-1", binding.suite_key, "c" * 64, rules, binding)
+    snapshot = ExecutionSnapshot("tenant", "user", (frozen,), (selected,), "runtime", "library", {}, round_id="round-1")
+    spec = ExecuteRequest(
+        protocol_revision="test-projection",
+        round_id=snapshot.round_id,
+        executor="ppap-checker-core",
+        executor_revision=snapshot.runtime_revision,
+        checker_snapshot_digest=snapshot.input_digest,
+        files=[FrozenFile(file_version_id=target.file_version_id, file_id=target.file_id, role="target", filename=target.filename, sha256=frozen.sha256, rule_version_id=RULE_A, rule_body=rules)],
+    )
+    result = {
+        "input_digest": snapshot.input_digest,
+        "findings": [{**row.model_dump(), "file_version_id": target.file_version_id} for row in results],
+        "coverage": [{"file_version_id": target.file_version_id, "clause_id": "signature", "coverage": "executed"}],
+    }
+    return {
+        **core_response(spec, snapshot, result).model_dump(),
+        "inputs": [{"role": "target", "file_version_id": target.file_version_id, "rule_version_id": RULE_A, "original_filename": target.filename, "rule": {"body": rules}}],
+    }
+
+
 class HistorySemanticsTests(unittest.TestCase):
     def test_public_writeback_hides_object_ref(self):
         self.assertEqual(public_target(None), {"available": False})
@@ -42,7 +71,7 @@ class HistorySemanticsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid_writeback_target"):
             normalize_external_ref({"provider": "feishu", "object_kind": "docx"})
 
-    def test_engine_ng_keeps_its_file_and_all_evidence_in_the_report(self):
+    def test_core_ng_keeps_its_file_and_all_evidence_in_the_report(self):
         target = RoundInput("target", "file-1", "version-1", "report.xlsx", "ready")
         evidence = AuditEvidence(
             required="structure_or_visual",
@@ -50,8 +79,8 @@ class HistorySemanticsTests(unittest.TestCase):
             source_format="xlsx",
             prepared_format="xlsx",
             sources=(
-                EvidenceSource(kind="structure", locator="Sheet1!A1"),
-                EvidenceSource(kind="visual", locator="Sheet1 image 2"),
+                EvidenceSource(kind="structure", locator=json.dumps({"kind": "xlsx_cell", "sheet": "Sheet1", "cell": "A1"})),
+                EvidenceSource(kind="visual", locator=json.dumps({"kind": "xlsx_range", "sheet": "Sheet1", "start": "B2", "end": "C3"})),
             ),
             diagnostics=(EvidenceDiagnostic(code="partial_structure", stage="structure", severity="warning", message="部分结构缺失"),),
         )
@@ -62,25 +91,37 @@ class HistorySemanticsTests(unittest.TestCase):
             status="NG",
             suggestions="缺少签字",
             evidence=evidence,
+            clause_id="signature",
+            checks_performed=1,
         )
-        mapped = findings_from_engine_results([result], target=target)
+        mapped = _core_projection([result], target=target)
         body = {
             "execution": "completed",
-            "inputs": [{"role": "target", "rule_version_id": RULE_A, "file_version_id": target.file_version_id, "original_filename": target.filename}],
+            "inputs": mapped["inputs"],
             "findings": mapped["findings"],
         }
         text = history_text(body)
         self.assertNotIn("审核结果：PASS", text)
         self.assertIn("签字检查 : 缺少签字", text)
         self.assertEqual(comment_text(body), "总结：\n签字检查：缺少签字")
-        self.assertEqual(mapped["findings"][0]["locator"]["kind"], "structure")
-        self.assertEqual(mapped["findings"][0]["locator"]["locator"], "Sheet1!A1")
-        self.assertEqual(mapped["findings"][0]["locator"]["evidence"], evidence.model_dump(mode="json"))
+        locator = mapped["findings"][0]["locator"]
+        self.assertEqual(locator["kind"], "file_version")
+        self.assertEqual(locator["suite_revision_id"], "suite-1")
+        self.assertEqual(locator["checker_digest"], "b" * 64)
+        self.assertEqual(locator["verification_status"], "unverified")
+        self.assertEqual(
+            locator["semantic"]["sources"],
+            [
+                {"file_version_id": target.file_version_id, "filename": target.filename, "role": "target", "kind": source.kind, "locator": json.loads(source.locator), "excerpt": ""}
+                for source in evidence.sources
+            ],
+        )
+        self.assertEqual(locator["semantic"]["diagnostics"], [item.model_dump() for item in evidence.diagnostics])
 
     def test_same_name_versions_have_separate_machine_results(self):
         first = RoundInput("target", "file-1", "version-1", "report.xlsx", "ready")
         second = RoundInput("target", "file-2", "version-2", "report.xlsx", "ready")
-        findings = []
+        findings, inputs = [], []
         for target, status in [(first, "PASS"), (second, "NG")]:
             result = AuditResultItem(
                 classification="签字",
@@ -88,12 +129,23 @@ class HistorySemanticsTests(unittest.TestCase):
                 priority="P0",
                 status=status,
                 suggestions="缺少签字" if status == "NG" else "",
+                clause_id="signature",
+                checks_performed=1,
+                evidence=AuditEvidence(
+                    required="structure",
+                    used="structure",
+                    source_format="xlsx",
+                    prepared_format="xlsx",
+                    sources=(EvidenceSource(kind="structure", locator=json.dumps({"kind": "xlsx_cell", "sheet": "Sheet1", "cell": "A1"})),),
+                ),
             )
-            findings.extend(findings_from_engine_results([result], target=target)["findings"])
+            projected = _core_projection([result], target=target)
+            findings.extend(projected["findings"])
+            inputs.extend(projected["inputs"])
         findings[1]["review"] = {"judgment": "PASS", "rationale": "人工接受", "next_step": "", "version": 1}
         body = {
             "execution": "completed",
-            "inputs": [{"role": "target", "rule_version_id": RULE_A, "file_version_id": target.file_version_id, "original_filename": target.filename} for target in (first, second)],
+            "inputs": inputs,
             "findings": findings,
         }
         text = history_text(body)
@@ -124,12 +176,12 @@ class HistorySemanticsTests(unittest.TestCase):
                 with self.assertRaisesRegex(FeishuWritebackError, "round_incomplete"):
                     history_text(body)
 
-    def test_missing_evidence_and_empty_or_unknown_engine_results_remain_explicit(self):
+    def test_missing_evidence_and_empty_or_unknown_core_results_remain_explicit(self):
         target = RoundInput("target", "file-1", "version-1", "report.xlsx", "ready")
         for status in ("NG", "UNKNOWN", None):
             with self.subTest(status=status):
-                results = [] if status is None else [AuditResultItem(classification="签字", item="签字检查", priority="P0", status=status, suggestions="")]
-                mapped = findings_from_engine_results(results, target=target)
+                results = [] if status is None else [AuditResultItem(classification="签字", item="签字检查", priority="P0", status=status, suggestions="", clause_id="signature")]
+                mapped = _core_projection(results, target=target)
                 finding = mapped["findings"][0]
                 self.assertEqual(finding["status"], "NG" if status == "NG" else "ERR")
                 self.assertEqual(finding["locator"]["file_version_id"], "version-1")
@@ -137,7 +189,7 @@ class HistorySemanticsTests(unittest.TestCase):
                 self.assertTrue(mapped["coverage"]["locator_gap"])
                 body = {
                     "execution": "completed",
-                    "inputs": [{"role": "target", "rule_version_id": RULE_A, "file_version_id": "version-1", "original_filename": "report.xlsx"}],
+                    "inputs": mapped["inputs"],
                     "findings": mapped["findings"],
                 }
                 if status == "NG":
@@ -319,7 +371,8 @@ class _WritebackMock:
 
 class FeishuWritebackTests(unittest.TestCase):
     @pytest.fixture(autouse=True)
-    def _owner_store(self, auth_store_factory):
+    def _owner_store(self, auth_store_factory, core_system):
+        self.core_system = core_system
         self.auth_store = auth_store_factory
 
     def setUp(self):
@@ -328,6 +381,8 @@ class FeishuWritebackTests(unittest.TestCase):
         self.settings = Settings(usage_charge_enabled=False)
         self.store = self.auth_store(self.settings)
         self.store.seed_isolated_dev()
+        self.core_system.install(self.store)
+        self.core_system.adopt_presence(self.store)
         self.feishu = _WritebackMock()
         self.http = httpx.Client(transport=httpx.MockTransport(self.feishu.handler))
         self.client = TestClient(
@@ -403,7 +458,7 @@ class FeishuWritebackTests(unittest.TestCase):
         self.assertNotIn("object_ref", dumped)
 
     def _complete_round(self, filename: str = "report.xlsx", *, writeback: bool = True) -> str:
-        version = self._upload(filename, b"target-bytes")
+        version = self._upload(filename, self.core_system.workbook())
         draft = self.client.post("/drafts").json()["id"]
         saved = self.client.put(
             f"/drafts/{draft}",
@@ -416,7 +471,9 @@ class FeishuWritebackTests(unittest.TestCase):
         self.assertEqual(accepted.status_code, 201)
         claimed = self.store.claim_job("test-worker")
         self.assertIsNotNone(claimed)
+        guest_calls = self.core_system.calls
         process_claimed(self.store, claimed, "test-worker")
+        self.assertEqual(self.core_system.calls, guest_calls + 1)
         return accepted.json()["id"]
 
     def test_fixture_session_cannot_writeback_without_user_token(self):
@@ -431,7 +488,7 @@ class FeishuWritebackTests(unittest.TestCase):
         self._login_feishu_user()
         round_id = self._complete_round()
         response = self.client.post(f"/integrations/feishu/rounds/{round_id}/writeback", json={"file_token": "docx-token"})
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 200, response.text)
         body = response.json()
         self.assertTrue(body["inserted"])
         self.assertFalse(body["commented"])
@@ -474,7 +531,7 @@ class FeishuWritebackTests(unittest.TestCase):
 
     def test_incomplete_and_cross_tenant_and_insert_failure(self):
         self._login_feishu_user()
-        version = self._upload("queued.xlsx", b"bytes")
+        version = self._upload("queued.xlsx", self.core_system.workbook())
         draft = self.client.post("/drafts").json()["id"]
         self.client.put(
             f"/drafts/{draft}",
@@ -488,7 +545,9 @@ class FeishuWritebackTests(unittest.TestCase):
         self.assertEqual(incomplete.json()["error"], "round_incomplete")
         claimed = self.store.claim_job("test-worker")
         self.assertIsNotNone(claimed)
+        guest_calls = self.core_system.calls
         process_claimed(self.store, claimed, "test-worker")
+        self.assertEqual(self.core_system.calls, guest_calls + 1)
 
         round_id = self._complete_round()
         self.feishu.fail_insert = True
@@ -529,7 +588,7 @@ class FeishuWritebackTests(unittest.TestCase):
         self.assertEqual(again.status_code, 201)
         draft = again.json()
         self.assertTrue(draft["writeback"]["available"])
-        version = self._upload("again.xlsx", b"again-bytes")
+        version = self._upload("again.xlsx", self.core_system.workbook("again"))
         saved = self.client.put(
             f"/drafts/{draft['id']}",
             json={"items": [{"file_version_id": version["id"], "role": "target", "rule_version_id": RULE_A}]},
@@ -539,7 +598,9 @@ class FeishuWritebackTests(unittest.TestCase):
         self.assertEqual(accepted.status_code, 201)
         claimed = self.store.claim_job("test-worker")
         self.assertIsNotNone(claimed)
+        guest_calls = self.core_system.calls
         process_claimed(self.store, claimed, "test-worker")
+        self.assertEqual(self.core_system.calls, guest_calls + 1)
         next_id = accepted.json()["id"]
         response = self.client.post(f"/integrations/feishu/rounds/{next_id}/writeback")
         self.assertEqual(response.status_code, 200)

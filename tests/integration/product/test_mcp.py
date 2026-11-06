@@ -184,7 +184,8 @@ def approve(client, operation):
     assert client.post(operation["confirmation_url"], data={"csrf": csrf, "decision": "approve"}).status_code == 200
 
 
-def reviewed_round(client, store, token):
+def reviewed_round(client, store, token, core_system):
+    core_system.adopt_presence(store)
     file, _ = upload(client, token)
     draft = client.post("/drafts", json={"items": [{"file_version_id": file["id"], "role": "target", "rule_version_id": RULE_A}]}).json()
     bound = client.put(f"/drafts/{draft['id']}", json={"writeback_target": {"provider": "feishu", "object_kind": "docx", "object_ref": "approved-document"}})
@@ -487,7 +488,7 @@ def test_prepare_task_reads_original_identity_after_reply_loss_and_restart(mcp_a
         assert rpc(restored, token, "tools/call", {"name": "get_task", "arguments": {"task_id": task_id}}).status_code == 401
 
 
-def completed_mcp_task(client, store, token, *, publish_new_rule=True, prepare_draft=None, fail_pdf=False):
+def completed_mcp_task(client, store, token, core_system, *, publish_new_rule=True, prepare_draft=None, fail_pdf=False):
     worker = build_product_store(store.settings, objects=store.objects, role="worker")
     file, _ = upload(client, token)
     validation_id = str(uuid4())
@@ -536,7 +537,9 @@ def completed_mcp_task(client, store, token, *, publish_new_rule=True, prepare_d
         }
         publish["body"] = {**parsed["result"], "case_context": {"registration": json.dumps({"basis": {"source": {"filename": source["original_filename"]}, "clauses": [clause]}})}}
         approve(client, call(client, token, "publish_rule", **publish))
-        assert call(client, token, "publish_rule", **publish)["status"] == "ok"
+        published = call(client, token, "publish_rule", **publish)
+        assert published["status"] == "ok", published
+        core_system.adopt_presence(store, published["data"]["id"])
     request_id = str(uuid4())
     inputs = {
         "request_id": request_id,
@@ -565,7 +568,9 @@ def completed_mcp_task(client, store, token, *, publish_new_rule=True, prepare_d
     approve(client, call(client, token, "confirm_task", **confirm))
     accepted = call(client, token, "confirm_task", **confirm)
     assert accepted["status"] == "ok", accepted
+    guest_calls = core_system.calls
     process_claimed(worker, worker.claim_job("share-audit"), "share-audit")
+    assert core_system.calls == guest_calls + 1
     job = worker.claim_job("share-pdf")
     assert job.kind == "report_pdf"
     if fail_pdf:
@@ -581,14 +586,14 @@ def completed_mcp_task(client, store, token, *, publish_new_rule=True, prepare_d
     return worker, task, reference, report["artifact"]
 
 
-def test_mcp_pdf_and_zip_recovery_preserve_original_results_after_lost_replies(mcp_app, monkeypatch):
+def test_mcp_pdf_and_zip_recovery_preserve_original_results_after_lost_replies(mcp_app, core_system, monkeypatch):
     app, store = mcp_app
     with TestClient(app, base_url="http://127.0.0.1:8080") as client:
         cid, tokens, _ = connection(client, store, scopes=" ".join(SCOPES))
         token = tokens["access_token"]
-        worker, first, reference, artifact = completed_mcp_task(client, store, token, fail_pdf=True)
+        worker, first, reference, artifact = completed_mcp_task(client, store, token, core_system, fail_pdf=True)
         assert artifact is None
-        _, second, second_reference, _ = completed_mcp_task(client, store, token, publish_new_rule=False)
+        _, second, second_reference, _ = completed_mcp_task(client, store, token, core_system, publish_new_rule=False)
         rounds = {row["round_id"]: call(client, token, "get_round", round_id=row["round_id"])["data"]["value"] for row in (first, second)}
         regeneration = {"request_id": str(uuid4()), "reference": reference}
         approve(client, call(client, token, "regenerate_report", **regeneration))
@@ -675,7 +680,7 @@ def test_mcp_pdf_and_zip_recovery_preserve_original_results_after_lost_replies(m
         assert restored.get(url, headers={"Authorization": "Bearer " + token}).status_code == 401
 
 
-def test_mcp_preparation_carries_writeback_target_through_restart_acceptance_and_lost_send_reply(mcp_app, monkeypatch):
+def test_mcp_preparation_carries_writeback_target_through_restart_acceptance_and_lost_send_reply(mcp_app, core_system, monkeypatch):
     """Use only MCP business tools from preparation to writeback; HTTP effects are controlled."""
     _, store = mcp_app
     target = {"provider": "feishu", "object_kind": "docx", "object_ref": "mcp-prepared-document"}
@@ -723,7 +728,7 @@ def test_mcp_preparation_carries_writeback_target_through_restart_acceptance_and
                 assert stale["status"] == "error" and stale["error"] == "draft_revision_conflict"
                 return {**inputs, "source_draft_id": draft_id, "expected_draft_revision": 1}
 
-            _, task, _, _ = completed_mcp_task(client, store, token, prepare_draft=prepare_draft)
+            _, task, _, _ = completed_mcp_task(client, store, token, core_system, prepare_draft=prepare_draft)
             round_id = task["round_id"]
             assert store.round_writeback(round_id) == target
             original_round = call(client, token, "get_round", round_id=round_id)["data"]["value"]
@@ -759,13 +764,13 @@ def test_mcp_preparation_carries_writeback_target_through_restart_acceptance_and
             assert effects == sent
 
 
-@pytest.mark.parametrize("rule_choice", ["original", "newer"])
-def test_mcp_review_replacement_and_linked_reaudit_preserve_frozen_history(mcp_app, monkeypatch, rule_choice):
+@pytest.mark.parametrize("suite_choice", ["original", "newer"])
+def test_mcp_review_replacement_and_linked_reaudit_preserve_frozen_suite_history(mcp_app, core_system, monkeypatch, suite_choice):
     app, store = mcp_app
     with TestClient(app, base_url="http://127.0.0.1:8080") as client:
         cid, tokens, _ = connection(client, store, scopes=" ".join(SCOPES))
         token = tokens["access_token"]
-        worker, first_task, first_ref, _ = completed_mcp_task(client, store, token)
+        worker, first_task, first_ref, _ = completed_mcp_task(client, store, token, core_system)
         round_id = first_task["round_id"]
         before = call(client, token, "get_round", round_id=round_id)["data"]["value"]
         old_file = first_task["files"][0]["file"]
@@ -792,23 +797,29 @@ def test_mcp_review_replacement_and_linked_reaudit_preserve_frozen_history(mcp_a
         assert reviewed["data"]["findings"][0]["status"] == before["findings"][0]["status"]
         frozen_old = call(client, token, "get_round", round_id=round_id)["data"]["value"]
         assert frozen_old["findings"][0]["review"]["citations"] == review["body"]["citations"]
-        publish = {
-            "request_id": str(uuid4()),
-            "body": {
-                "title": "补件审核规则第二版",
-                "source_file_version_id": old_rule["source_file_version_id"],
-                "predecessor_id": old_rule_id,
-                "body": {**old_rule["body"], "rules": [{**old_rule["body"]["rules"][0], "rule_to_check": "必须填写修订后的零件号"}]},
-            },
-        }
-        approve(client, call(client, token, "publish_rule", **publish))
-        newer = call(client, token, "publish_rule", **publish)
-        assert newer["status"] == "ok", newer
-        chosen_rule = old_rule_id if rule_choice == "original" else newer["data"]["id"]
+        # Rule-version provenance stays immutable. Editing an adopted Checker
+        # goes through a Suite candidate, not a stale rule publication that
+        # would overwrite the current Suite head.
+        from product.store.suite_releases import SuiteReleaseStore
+
+        principal = store.principal_for_fixture("alice")
+        releases = SuiteReleaseStore(store.settings, store.objects, role="api")
+        old_suite_id = before["coverage"]["checker_execution"]["targets"][0]["suite_revision_id"]
+        suite_key = before["inputs"][0]["rule"]["body"]["suite_key"]
+        selected = releases.active(principal, suite_key)
+        rules = json.loads(releases.suites.resolve_suite(old_suite_id, principal.tenant_id).files["rules.json"])
+        changed_text = "必须填写修订后的零件号"
+        rules["rules"][0]["rule_to_check"] = changed_text
+        candidate = releases.save_candidate(principal, old_suite_id, {"rules.json": json.dumps(rules, ensure_ascii=False)})
+        chosen_suite_id = old_suite_id
+        if suite_choice == "newer":
+            releases.publish(principal, suite_key, candidate["id"], selected["revision"], str(uuid4()), force_unverified=True)
+            chosen_suite_id = candidate["id"]
+        chosen_rule = old_rule_id
         prepared = call(client, token, "get_reaudit_inputs", round_id=round_id)["data"]["value"]
         old_input = prepared["files"][0]
         assert old_input["preferred_rule_version_id"] == old_rule_id
-        assert {row["id"] for row in old_input["rule_options"]} == {old_rule_id, newer["data"]["id"]}
+        assert {row["id"] for row in old_input["rule_options"]} == {old_rule_id}
 
         content = io.BytesIO()
         book = Workbook()
@@ -876,12 +887,17 @@ def test_mcp_review_replacement_and_linked_reaudit_preserve_frozen_history(mcp_a
         assert call(restored, token, "confirm_task", **confirm)["status"] in {"running", "unknown"}
         job = worker.claim_job("replacement-audit")
         assert job.round_id == next_round_id and worker.claim_job("no-duplicate-audit") is None
+        guest_calls = core_system.calls
         process_claimed(worker, job, "replacement-audit")
+        assert core_system.calls == guest_calls + 1
         process_claimed(worker, worker.claim_job("replacement-pdf"), "replacement-pdf")
         finished = call(restored, token, "get_task", task_id=next_task_id)["data"]["value"]
         assert finished["state"] == "completed"
         current = call(restored, token, "get_round", round_id=next_round_id)["data"]["value"]
         assert current["predecessor_id"] == round_id
+        assert current["coverage"]["checker_execution"]["targets"][0]["suite_revision_id"] == chosen_suite_id
+        expected_text = changed_text if suite_choice == "newer" else before["inputs"][0]["rule"]["body"]["rules"][0]["rule_to_check"]
+        assert current["inputs"][0]["rule"]["body"]["rules"][0]["rule_to_check"] == expected_text
         assert [(row["file_version_id"], row["rule_version_id"]) for row in current["inputs"]] == [(replacement["id"], chosen_rule)]
         assert all(finding["review"] is None for finding in current["findings"])
         assert call(restored, token, "get_round", round_id=round_id)["data"]["value"] == frozen_old
@@ -900,8 +916,8 @@ def test_mcp_review_replacement_and_linked_reaudit_preserve_frozen_history(mcp_a
 
 
 @pytest.mark.parametrize(("kind", "edit_at"), [("link", "none"), ("pdf", "none"), ("zip", "none"), ("link", "before_capture"), ("link", "after_capture")])
-def test_mcp_report_delivery_freezes_approved_sources_and_retries_only_failed(mcp_app, monkeypatch, kind, edit_at):
-    """Real PG, workers, PDF/ZIP bytes and MCP; only Feishu HTTP is controlled."""
+def test_mcp_report_delivery_freezes_approved_sources_and_retries_only_failed(mcp_app, core_system, monkeypatch, kind, edit_at):
+    """Real PG/Core, workers, PDF/ZIP and MCP; Feishu HTTP and guest OS are controlled."""
     _, store = mcp_app
     principal = store.principal_for_fixture("alice")
     store.settings.feishu_app_secret = "controlled-secret"
@@ -954,7 +970,7 @@ def test_mcp_report_delivery_freezes_approved_sources_and_retries_only_failed(mc
         with TestClient(app, base_url="http://127.0.0.1:8080") as client:
             _, tokens, _ = connection(client, store, scopes=" ".join(SCOPES), browser_session=session)
             token = tokens["access_token"]
-            worker, task, reference, artifact = completed_mcp_task(client, store, token)
+            worker, task, reference, artifact = completed_mcp_task(client, store, token, core_system)
             pdf_transfer = call(client, token, "download_report", reference=reference, artifact_id=artifact["artifact_id"])
             assert pdf_transfer["status"] == "ok", pdf_transfer
             pdf = client.get(pdf_transfer["data"]["url"], headers={"Authorization": "Bearer " + token})
@@ -962,7 +978,7 @@ def test_mcp_report_delivery_freezes_approved_sources_and_retries_only_failed(mc
             content = {"kind": kind, "artifact": artifact if kind == "pdf" else None, "package_id": None}
             reports = [reference]
             if kind == "zip":
-                _, _, second_reference, _ = completed_mcp_task(client, store, token, publish_new_rule=False)
+                _, _, second_reference, _ = completed_mcp_task(client, store, token, core_system, publish_new_rule=False)
                 reports.append(second_reference)
                 package_request = str(uuid4())
                 created = call(client, token, "create_report_package", request_id=package_request, reports=reports)
@@ -1047,7 +1063,7 @@ def test_mcp_report_delivery_freezes_approved_sources_and_retries_only_failed(mc
 
 @pytest.mark.parametrize("tool", ["create_feishu_report", "writeback_feishu_report"])
 @pytest.mark.parametrize("edit_at", ["before_capture", "after_capture"])
-def test_external_report_uses_approved_content_at_effect_boundary(mcp_app, monkeypatch, tool, edit_at):
+def test_external_report_uses_approved_content_at_effect_boundary(mcp_app, core_system, monkeypatch, tool, edit_at):
     """The gateway check alone cannot close a concurrent Web-edit race."""
     _, store = mcp_app
     effects, captured_rounds = [], []
@@ -1064,7 +1080,7 @@ def test_external_report_uses_approved_content_at_effect_boundary(mcp_app, monke
         with TestClient(app, base_url="http://127.0.0.1:8080") as client:
             _, tokens, _ = connection(client, store, scopes=" ".join(SCOPES), browser_session=session)
             token = tokens["access_token"]
-            round_id, new_review = reviewed_round(client, store, token)
+            round_id, new_review = reviewed_round(client, store, token, core_system)
             arguments = {"round_id": round_id, "request_id": str(uuid4())}
             approve(client, call(client, token, tool, **arguments))
             edits = []
@@ -1178,7 +1194,7 @@ def test_pkce_failure_does_not_consume_code_and_unregistered_redirect_is_rejecte
         assert "location" not in rejected.headers
 
 
-def test_mcp_precheck_rule_publication_prepare_and_human_confirm_once(mcp_app):
+def test_mcp_precheck_rule_publication_prepare_and_human_confirm_once(mcp_app, core_system):
     app, store = mcp_app
     worker = build_product_store(store.settings, objects=store.objects, role="worker")
     with TestClient(app, base_url="http://127.0.0.1:8080") as client:
@@ -1241,12 +1257,23 @@ def test_mcp_precheck_rule_publication_prepare_and_human_confirm_once(mcp_app):
         assert accepted["status"] == "ok", accepted
         assert accepted["data"]["round_id"]
         assert call(client, token, "confirm_task", **confirm)["data"] == accepted["data"]
-        assert worker.claim_job("mcp-audit").kind == "audit"
+        job = worker.claim_job("mcp-audit")
+        assert job.kind == "audit"
         assert worker.claim_job("no-second-audit") is None
+        before_calls = core_system.calls
+        process_claimed(worker, job, "mcp-audit")
+        assert core_system.calls == before_calls + 1
+        round_body = call(client, token, "get_round", round_id=accepted["data"]["round_id"])["data"]["value"]
+        assert round_body["execution"] == "completed"
+        assert round_body["executor"] == "ppap-checker-core"
+        assert round_body["findings"] == []
+        assert [item["coverage"] for item in round_body["coverage"]["rule_items"]] == ["unsupported"]
+        assert round_body["coverage"]["checker_execution"]["targets"][0]["suite_revision_id"]
 
 
-def test_review_receipt_commits_with_effect_even_when_transport_loses_reply(mcp_app, monkeypatch):
+def test_review_receipt_commits_with_effect_even_when_transport_loses_reply(mcp_app, core_system, monkeypatch):
     app, store = mcp_app
+    core_system.adopt_presence(store)
     with TestClient(app, base_url="http://127.0.0.1:8080") as client:
         cid, tokens, _ = connection(client, store, scopes=" ".join(SCOPES))
         token = tokens["access_token"]
@@ -1640,6 +1667,24 @@ def test_deep_uses_one_mcp_confirmation_save_reanalysis_and_readback(mcp_app, mo
         assert saved["status"] == "ok", saved
         assert saved["data"]["analysis_round_id"] is None
         assert call(client, token, "apply_rule_change", round_id=rid, body=body)["data"] == saved["data"]
+        # Saving feedback does not silently replace the adopted Suite. Explicitly
+        # adopt the confirmed appendix before authorizing a new frozen analysis.
+        from product.store.suite_releases import SuiteReleaseStore
+
+        principal = store.principal_for_fixture("alice")
+        releases = SuiteReleaseStore(store.settings, store.objects, role="api")
+        suite_key = view["results"][0]["inputs"][0]["rule"]["body"]["suite_key"]
+        selected = releases.active(principal, suite_key)
+        # The typed MCP receipt includes null optional fields. An authored
+        # appendix omits those fields, matching the confirmed persisted input.
+        appendix = [{key: value for key, value in part.items() if value is not None} for part in saved["data"]["appendix"]]
+        candidate = releases.save_candidate(principal, selected["current_revision_id"], {"appendix.json": json.dumps(appendix, ensure_ascii=False)})
+        releases.publish(principal, suite_key, candidate["id"], selected["revision"], str(uuid4()), force_unverified=True)
+        persisted_feedback = store.read_deep_feedback(principal, rid)
+        assert persisted_feedback["appendix"] == appendix
+        resolved = releases.suites.resolve_suite(candidate["id"], principal.tenant_id)
+        assert json.loads(resolved.files["appendix.json"]) == persisted_feedback["appendix"]
+        assert json.loads(resolved.files["rules.json"])["rules"] == view["results"][0]["inputs"][0]["rule"]["body"]["rules"]
         analysis = {"round_id": rid, "operation_id": str(uuid4()), "expected_revision": saved["data"]["revision"]}
         approve(client, call(client, token, "start_analysis", **analysis))
         gateway = app.state.mcp_gateway

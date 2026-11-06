@@ -1,4 +1,4 @@
-"""Feishu Drive/Docs import into common file versions. Mocked HTTP only."""
+"""Feishu imports through real PostgreSQL/Core, with controlled HTTP and guest OS boundaries."""
 
 from __future__ import annotations
 
@@ -112,7 +112,7 @@ class DriveDownloadTests(unittest.TestCase):
 
 
 class _DriveMock:
-    def __init__(self):
+    def __init__(self, target: bytes, reference: bytes):
         self.calls: list[tuple[str, str]] = []
         self.drive_attempts = 0
         self.fail_drive_times = 0
@@ -121,8 +121,8 @@ class _DriveMock:
             "sheet-token": {"doc_type": "sheet", "title": "cloud-sheet"},
             "folder-token": {"doc_type": "folder", "title": "a-folder"},
         }
-        self.drive_bytes = {"xlsx-token": b"target-bytes"}
-        self.export_bytes = {"sheet-token": b"exported-xlsx"}
+        self.drive_bytes = {"xlsx-token": target}
+        self.export_bytes = {"sheet-token": reference}
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         url = str(request.url)
@@ -204,7 +204,8 @@ class _DriveMock:
 
 class FeishuImportTests(unittest.TestCase):
     @pytest.fixture(autouse=True)
-    def _owner_store(self, auth_store_factory):
+    def _owner_store(self, auth_store_factory, core_system):
+        self.core_system = core_system
         self.auth_store = auth_store_factory
 
     def setUp(self):
@@ -213,7 +214,9 @@ class FeishuImportTests(unittest.TestCase):
         self.settings = Settings(usage_charge_enabled=False)
         self.store = self.auth_store(self.settings)
         self.store.seed_isolated_dev()
-        self.feishu = _DriveMock()
+        self.core_system.install(self.store)
+        self.core_system.adopt_presence(self.store)
+        self.feishu = _DriveMock(self.core_system.workbook("target"), self.core_system.workbook("reference"))
         self.http = httpx.Client(transport=httpx.MockTransport(self.feishu.handler))
         self.client = TestClient(
             create_app(
@@ -271,7 +274,7 @@ class FeishuImportTests(unittest.TestCase):
         version = imported.json()
         self.assertEqual(version["status"], "ready")
         self.assertEqual(version["original_filename"], "report.xlsx")
-        self.assertEqual(version["byte_size"], len(b"target-bytes"))
+        self.assertEqual(version["byte_size"], len(self.feishu.drive_bytes["xlsx-token"]))
         self.assertEqual(self.store.file_source(version["id"])["object_ref"], "xlsx-token")
         self.assertTrue(version["origin"]["available"])
         self.assertEqual(version["origin"]["object_kind"], "file")
@@ -293,14 +296,16 @@ class FeishuImportTests(unittest.TestCase):
         self.assertEqual(accepted.status_code, 201)
         claimed = self.store.claim_job("test-worker")
         self.assertIsNotNone(claimed)
+        guest_calls = self.core_system.calls
         process_claimed(self.store, claimed, "test-worker")
+        self.assertEqual(self.core_system.calls, guest_calls + 1)
         round_id = accepted.json()["id"]
         body = self.client.get(f"/rounds/{round_id}").json()
         self.assertEqual(body["execution"], "completed")
         original = body["findings"][0]
         download = self.client.get(f"/rounds/{round_id}/files/{original['locator']['file_id']}/versions/{original['locator']['file_version_id']}/download")
         self.assertEqual(download.status_code, 200)
-        self.assertEqual(download.content, b"target-bytes")
+        self.assertEqual(download.content, self.feishu.drive_bytes["xlsx-token"])
         self._login_fixture("carol")
         denied = self.client.get(f"/files/{version['file_id']}/versions/{version['id']}/download")
         self.assertEqual(denied.status_code, 403)
@@ -311,11 +316,11 @@ class FeishuImportTests(unittest.TestCase):
         self.assertEqual(imported.status_code, 201)
         version = imported.json()
         self.assertEqual(version["original_filename"], "cloud-sheet.xlsx")
-        self.assertEqual(version["byte_size"], len(b"exported-xlsx"))
+        self.assertEqual(version["byte_size"], len(self.feishu.export_bytes["sheet-token"]))
         self.assertTrue(any(method == "POST" and url.endswith("/drive/v1/export_tasks") for method, url in self.feishu.calls))
         self.assertFalse(any("/files/sheet-token/download" in url for _method, url in self.feishu.calls))
         downloaded = self.client.get(f"/files/{version['file_id']}/versions/{version['id']}/download")
-        self.assertEqual(downloaded.content, b"exported-xlsx")
+        self.assertEqual(downloaded.content, self.feishu.export_bytes["sheet-token"])
 
     def test_import_drive_material_retries_transient_download(self):
         self.feishu.fail_drive_times = 2
@@ -327,7 +332,7 @@ class FeishuImportTests(unittest.TestCase):
             sleeper=lambda _ms: None,
             sleep_ms=0,
         )
-        self.assertEqual(material.data, b"target-bytes")
+        self.assertEqual(material.data, self.feishu.drive_bytes["xlsx-token"])
         self.assertEqual(self.feishu.drive_attempts, 3)
 
     def test_imported_targets_and_references_use_common_draft_and_replay(self):
@@ -364,13 +369,15 @@ class FeishuImportTests(unittest.TestCase):
         self.assertEqual(sum(method == "POST" and url.endswith("/drive/v1/export_tasks") for method, url in self.feishu.calls), export_posts)
         claimed = self.store.claim_job("test-worker")
         self.assertIsNotNone(claimed)
+        guest_calls = self.core_system.calls
         process_claimed(self.store, claimed, "test-worker")
+        self.assertEqual(self.core_system.calls, guest_calls + 1)
         round_id = body["id"]
         done = self.client.get(f"/rounds/{round_id}").json()
         self.assertEqual(done["execution"], "completed")
         target = next(row for row in done["inputs"] if row["role"] == "target")
         original = self.client.get(f"/rounds/{round_id}/files/{target['file_id']}/versions/{target['file_version_id']}/download")
-        self.assertEqual(original.content, b"target-bytes")
+        self.assertEqual(original.content, self.feishu.drive_bytes["xlsx-token"])
         self._login_fixture("carol")
         denied = self.client.get(f"/rounds/{round_id}")
         self.assertEqual(denied.status_code, 403)
