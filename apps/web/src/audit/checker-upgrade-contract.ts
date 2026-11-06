@@ -3,7 +3,7 @@ import type {operations} from '../generated/openapi'
 import type {CheckerActive, CheckerRevision} from './checker-contract.ts'
 
 export type UpgradeChecker = NonNullable<operations['suite_official_upgrade_suites__suite_key__upgrades_post']['requestBody']>['content']['application/json']
-export type PendingUpgrade = {suite: string; input: UpgradeChecker}
+export type PendingUpgrade = {scope: string; suite: string; input: UpgradeChecker}
 export interface CheckerUpgradeAdapter {
   seen(suite: string, target: string): Promise<CheckerActive>
   upgrade(suite: string, input: UpgradeChecker): Promise<CheckerRevision>
@@ -26,12 +26,13 @@ export function upgradeAvailable(active: Pick<CheckerActive, 'suite_key' | 'offi
   return Boolean(active.suite_key === revision.suite_key && (revision.tenant_id != null || active.official_update_available) && active.latest_official_revision_id && revision.official_base_revision_id && revision.official_base_revision_id !== active.latest_official_revision_id && revision.id !== active.latest_official_revision_id)
 }
 
-const fields = ['checkerUpgrade', 'checkerUpgradeSuite', 'checkerUpgradeSource', 'checkerUpgradeTarget', 'checkerUpgradeExpected']
+const fields = ['checkerUpgradeScope', 'checkerUpgrade', 'checkerUpgradeSuite', 'checkerUpgradeSource', 'checkerUpgradeTarget', 'checkerUpgradeExpected']
 /** Save identity before the write; refresh may only read this operation, never resubmit it. */
 export function upgradeAddress(url: URL, value: PendingUpgrade | null): URL {
   const next = new URL(url)
   for (const field of fields) next.searchParams.delete(field)
   if (value) {
+    next.searchParams.set('checkerUpgradeScope', value.scope)
     next.searchParams.set('checkerUpgrade', value.input.operation_id)
     next.searchParams.set('checkerUpgradeSuite', value.suite)
     next.searchParams.set('checkerUpgradeSource', value.input.source_revision_id)
@@ -40,8 +41,8 @@ export function upgradeAddress(url: URL, value: PendingUpgrade | null): URL {
   }
   return next
 }
-export function savedUpgrade(url: URL, suite: string): PendingUpgrade | null {
+export function savedUpgrade(url: URL, suite: string, scope: string): PendingUpgrade | null {
   const params = url.searchParams, expected = params.get('checkerUpgradeExpected')
-  if (params.get('checkerUpgradeSuite') !== suite || !params.get('checkerUpgrade') || !params.get('checkerUpgradeSource') || !params.get('checkerUpgradeTarget') || expected === null || !/^\d+$/.test(expected) || !Number.isSafeInteger(Number(expected))) return null
-  return {suite, input: {operation_id: params.get('checkerUpgrade')!, source_revision_id: params.get('checkerUpgradeSource')!, target_revision_id: params.get('checkerUpgradeTarget')!, expected_revision: Number(expected)}}
+  if (params.get('checkerUpgradeScope') !== scope || params.get('checkerUpgradeSuite') !== suite || !params.get('checkerUpgrade') || !params.get('checkerUpgradeSource') || !params.get('checkerUpgradeTarget') || expected === null || !/^\d+$/.test(expected) || !Number.isSafeInteger(Number(expected))) return null
+  return {scope, suite, input: {operation_id: params.get('checkerUpgrade')!, source_revision_id: params.get('checkerUpgradeSource')!, target_revision_id: params.get('checkerUpgradeTarget')!, expected_revision: Number(expected)}}
 }

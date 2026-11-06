@@ -15,20 +15,21 @@ test('upgrade receipt binds exact candidate, suite, source, target, original ope
 
 test('refresh preserves a complete upgrade identity and never borrows another suite or malformed CAS', () => {
   const original = new URL('https://ppap.example/audit?round=r&checkerOptimization=original#result')
-  const pending = {suite: 'suite/a', input}
+  const pending = {scope: 'round:file:clause:suite/a', suite: 'suite/a', input}
   const saved = upgradeAddress(original, pending)
-  assert.deepEqual(savedUpgrade(saved, 'suite/a'), pending)
-  assert.equal(savedUpgrade(saved, 'other'), null)
+  assert.deepEqual(savedUpgrade(saved, 'suite/a', pending.scope), pending)
+  assert.equal(savedUpgrade(saved, 'other', pending.scope), null)
+  assert.equal(savedUpgrade(saved, 'suite/a', 'other-scope'), null)
   assert.equal(saved.searchParams.get('checkerOptimization'), 'original')
   assert.equal(saved.hash, '#result')
   assert.equal(upgradeAddress(saved, null).href, original.href)
   for (const value of ['', '-1', 'NaN', '1.5', '1e3', '9007199254740992']) {
     const broken = new URL(saved); broken.searchParams.set('checkerUpgradeExpected', value)
-    assert.equal(savedUpgrade(broken, 'suite/a'), null)
+    assert.equal(savedUpgrade(broken, 'suite/a', pending.scope), null)
   }
   for (const field of ['checkerUpgrade', 'checkerUpgradeSource', 'checkerUpgradeTarget']) {
     const broken = new URL(saved); broken.searchParams.delete(field)
-    assert.equal(savedUpgrade(broken, 'suite/a'), null)
+    assert.equal(savedUpgrade(broken, 'suite/a', pending.scope), null)
   }
 })
 

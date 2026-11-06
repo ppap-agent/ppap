@@ -11,15 +11,15 @@ const errorText = (cause: unknown) => {
 }
 
 /** Official upgrades create a candidate; only an explicit click may enter the existing test loop. */
-export function CheckerUpgrade({active, revision, disabled, canVerify, editingBlocked = false, onLockChange, onCandidate, onRefresh, adapter = nativeCheckerUpgradeAdapter}: {
-  active: CheckerActive; revision: CheckerRevision; disabled: boolean; canVerify: boolean; editingBlocked?: boolean
+export function CheckerUpgrade({scope, active, revision, disabled, canVerify, editingBlocked = false, onLockChange, onCandidate, onRefresh, adapter = nativeCheckerUpgradeAdapter}: {
+  scope: string; active: CheckerActive; revision: CheckerRevision; disabled: boolean; canVerify: boolean; editingBlocked?: boolean
   onLockChange: (locked: boolean) => void
   onCandidate: (value: CheckerRevision, runTests: boolean) => void
   onRefresh: () => void
   adapter?: CheckerUpgradeAdapter
 }) {
   const live = useRef(true), locked = useRef(false), attemptedNotices = useRef(new Set<string>())
-  const [pending, setPending] = useState(() => savedUpgrade(new URL(location.href), active.suite_key))
+  const [pending, setPending] = useState(() => savedUpgrade(new URL(location.href), active.suite_key, scope))
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [stale, setStale] = useState(false)
   const [notice, setNotice] = useState(active.official_update_notice ? active.latest_official_revision_id : null)
   const [noticeError, setNoticeError] = useState('')
@@ -43,7 +43,7 @@ export function CheckerUpgrade({active, revision, disabled, canVerify, editingBl
   function remember(value: PendingUpgrade | null) {setPending(value); writeAuditAddress(upgradeAddress(new URL(location.href), value))}
   async function start() {
     if (locked.current || disabled || pending || stale || !target || !canVerify || !applicable) return
-    const command: PendingUpgrade = {suite: active.suite_key, input: {source_revision_id: revision.id, target_revision_id: target, expected_revision: active.revision, operation_id: crypto.randomUUID()}}
+    const command: PendingUpgrade = {scope, suite: active.suite_key, input: {source_revision_id: revision.id, target_revision_id: target, expected_revision: active.revision, operation_id: crypto.randomUUID()}}
     locked.current = true; setBusy(true); onLockChange(true); remember(command); setError('')
     try {
       const candidate = checkedUpgrade(await adapter.upgrade(command.suite, command.input), command.suite, command.input)

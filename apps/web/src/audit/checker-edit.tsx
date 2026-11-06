@@ -6,15 +6,22 @@ import {definiteCheckerRejection, type CheckerRevision} from './checker-contract
 import {candidateChanges, checkerEditorDirty, editableRules, nativeCheckerEditAdapter} from './checker-edit-contract'
 import {writeAuditAddress} from './routes'
 
-export function CheckerEditor({revision, onSaved, disabled = false, onBlockedChange}: {revision: CheckerRevision; onSaved: (value: CheckerRevision) => void; disabled?: boolean; onBlockedChange?: (blocked: boolean) => void}) {
-  const id = useId(), locked = useRef(false)
+export function CheckerEditor({scope, revision, onSaved, disabled = false, onBlockedChange}: {scope: string; revision: CheckerRevision; onSaved: (value: CheckerRevision) => void; disabled?: boolean; onBlockedChange?: (blocked: boolean) => void}) {
+  const id = useId(), locked = useRef(false), live = useRef(true)
   const [rules, setRules] = useState(() => {try {return editableRules(revision.files)} catch {return []}})
   const [templates, setTemplates] = useState(revision.files['templates.json'] || '[]'), [code, setCode] = useState(Object.fromEntries(Object.entries(revision.files).filter(([key]) => ['checker.py', 'resources.py'].includes(key))))
-  const [error, setError] = useState(''), [busy, setBusy] = useState(false), [pending, setPending] = useState(() => {const p = new URL(location.href).searchParams; return p.get('checkerEditBase') === revision.id ? p.get('checkerEditOperation') : null})
+  const [error, setError] = useState(''), [busy, setBusy] = useState(false), [pending, setPending] = useState(() => {const p = new URL(location.href).searchParams; return p.get('checkerEditScope') === scope && p.get('checkerEditBase') === revision.id ? p.get('checkerEditOperation') : null})
+  useEffect(() => {live.current = true; return () => {live.current = false}}, [])
   const dirty = checkerEditorDirty(revision.files, rules, templates, code)
   useEffect(() => {onBlockedChange?.(dirty || busy || Boolean(pending))}, [dirty, busy, pending, onBlockedChange])
   useEffect(() => () => onBlockedChange?.(false), [onBlockedChange])
-  function remember(operation: string | null) {const url = new URL(location.href); for (const key of ['checkerEditBase', 'checkerEditOperation']) url.searchParams.delete(key); if (operation) {url.searchParams.set('checkerEditBase', revision.id); url.searchParams.set('checkerEditOperation', operation)}; writeAuditAddress(url)}
+  function remember(operation: string | null, expectedOperation?: string) {
+    const url = new URL(location.href)
+    if (!operation && (url.searchParams.get('checkerEditScope') !== scope || url.searchParams.get('checkerEditBase') !== revision.id || url.searchParams.get('checkerEditOperation') !== expectedOperation)) return
+    for (const key of ['checkerEditScope', 'checkerEditBase', 'checkerEditOperation']) url.searchParams.delete(key)
+    if (operation) {url.searchParams.set('checkerEditScope', scope); url.searchParams.set('checkerEditBase', revision.id); url.searchParams.set('checkerEditOperation', operation)}
+    writeAuditAddress(url)
+  }
   async function save() {
     if (locked.current || pending || disabled) return
     let files: Record<string, string>
@@ -23,17 +30,19 @@ export function CheckerEditor({revision, onSaved, disabled = false, onBlockedCha
     const operation = crypto.randomUUID(); setPending(operation); remember(operation)
     try {
       const value = await nativeCheckerEditAdapter.save(revision.id, {operation_id: operation, files})
+      if (!live.current) return
       if (value.suite_key !== revision.suite_key || value.id === revision.id) throw new Error('保存回执不一致。')
-      setPending(null); remember(null); onSaved(value)
+      setPending(null); remember(null, operation); onSaved(value)
     } catch (cause) {
-      if (definiteCheckerRejection(cause)) {setPending(null); remember(null); setError(cause instanceof Error ? cause.message : '修改被拒绝。')}
+      if (!live.current) return
+      if (definiteCheckerRejection(cause)) {setPending(null); remember(null, operation); setError(cause instanceof Error ? cause.message : '修改被拒绝。')}
       else setError('保存结果待核对，请读取原保存操作，不要再次提交。')
     } finally {locked.current = false; setBusy(false)}
   }
   async function recover() {
     if (!pending || locked.current) return
     locked.current = true; setBusy(true)
-    try {const value = await nativeCheckerEditAdapter.read(revision.id, pending); if (value.suite_key !== revision.suite_key || value.id === revision.id) throw new Error('保存回执不一致。'); setPending(null); remember(null); onSaved(value)}
+    try {const value = await nativeCheckerEditAdapter.read(revision.id, pending); if (!live.current) return; if (value.suite_key !== revision.suite_key || value.id === revision.id) throw new Error('保存回执不一致。'); setPending(null); remember(null, pending); onSaved(value)}
     catch {setError('尚未读取到原保存结果，请稍后读取；不会自动重复创建修改。')} finally {locked.current = false; setBusy(false)}
   }
   const readOnly = busy || disabled || Boolean(pending)
