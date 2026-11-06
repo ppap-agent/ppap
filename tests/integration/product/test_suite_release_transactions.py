@@ -198,11 +198,14 @@ def test_concurrent_first_tenant_validation_uses_cas(auth_store_factory):
     assert results.count(1) == results.count("suite_validation_conflict") == 1
 
 
-@pytest.mark.parametrize("field,value", [("suite_revision_id", str(uuid.uuid4())), ("suite_digest", "0" * 64), ("program_digest", "0" * 64)])
+# Parameter values become xdist node IDs, so invalid identities must be stable.
+@pytest.mark.parametrize("field,value", [("suite_revision_id", "00000000-0000-0000-0000-000000000000"), ("suite_digest", "0" * 64), ("program_digest", "0" * 64)])
 def test_validation_rejects_any_mismatched_content_identity(auth_store_factory, field, value):
     _, suites, releases, alice, _ = seed(auth_store_factory)
     revision = suites.create_revision(tenant_id=None, suite_key="control-plan", files=FILES, created_by=None)
-    report = proof_for(suites, alice, revision).model_copy(update={field: value})
+    report = proof_for(suites, alice, revision)
+    assert getattr(report, field) != value
+    report = report.model_copy(update={field: value})
     with pytest.raises(ValueError, match="suite_validation_identity_mismatch"):
         releases.record_validation(alice, revision.id, report, expected_revision=0)
     assert releases.detail(alice, revision.id)["validation"]["write_revision"] == 0
