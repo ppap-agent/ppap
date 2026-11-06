@@ -2,12 +2,10 @@
 
 from urllib.parse import urlsplit
 
-from tests.conftest import _preview_asset_path, _PreviewAssetTimings
 
-
-def test_pending_assets_and_slow_completions_keep_elapsed_time():
+def test_pending_assets_and_slow_completions_keep_elapsed_time(preview_asset_timing_factory):
     now = [1.0]
-    timing = _PreviewAssetTimings(clock=lambda: now[0])
+    timing = preview_asset_timing_factory(clock=lambda: now[0])
     timing.start("entry", "/preview/audit.tsx")
     timing.start("style", "/src/index.css")
     now[0] = 1.1
@@ -25,9 +23,9 @@ def test_pending_assets_and_slow_completions_keep_elapsed_time():
     assert timing.snapshot()["slow_completed"] == [{"asset": "/preview/audit.tsx", "elapsed_ms": 5000}]
 
 
-def test_diagnostic_storage_and_output_remain_bounded_without_losing_counts():
+def test_diagnostic_storage_and_output_remain_bounded_without_losing_counts(preview_asset_timing_factory):
     now = [0.0]
-    timing = _PreviewAssetTimings(clock=lambda: now[0])
+    timing = preview_asset_timing_factory(clock=lambda: now[0])
     for index in range(200):
         timing.start(index, f"/src/module-{index}.tsx")
     assert len(timing.pending) == 128
@@ -40,9 +38,9 @@ def test_diagnostic_storage_and_output_remain_bounded_without_losing_counts():
     assert len(timing.snapshot()["slow_completed"]) == 12
 
 
-def test_asset_paths_exclude_queries_cross_origin_and_business_requests():
+def test_asset_paths_exclude_queries_cross_origin_and_business_requests(preview_asset_path):
     origin = urlsplit("http://127.0.0.1:4185")
-    assert _preview_asset_path("http://127.0.0.1:4185/src/main.tsx?input=private#fragment", origin) == "/src/main.tsx"
-    assert _preview_asset_path("https://other.example/src/main.tsx?secret=hidden", origin) is None
-    assert _preview_asset_path("http://127.0.0.1:4185/api/rules?token=hidden", origin) is None
-    assert _preview_asset_path("http://127.0.0.1:4185/files/private", origin) is None
+    assert preview_asset_path("http://127.0.0.1:4185/src/main.tsx?input=private#fragment", origin) == "/src/main.tsx"
+    assert preview_asset_path("https://other.example/src/main.tsx?secret=hidden", origin) is None
+    assert preview_asset_path("http://127.0.0.1:4185/api/rules?token=hidden", origin) is None
+    assert preview_asset_path("http://127.0.0.1:4185/files/private", origin) is None

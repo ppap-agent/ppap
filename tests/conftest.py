@@ -214,6 +214,16 @@ class _PreviewAssetTimings:
         }
 
 
+@pytest.fixture
+def preview_asset_timing_factory():
+    return _PreviewAssetTimings
+
+
+@pytest.fixture
+def preview_asset_path():
+    return _preview_asset_path
+
+
 @pytest.fixture(autouse=True)
 def preview_failure_diagnostics(request, monkeypatch):
     preview = os.environ.get("PPAP_PREVIEW_URL", "")
