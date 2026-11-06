@@ -1,7 +1,7 @@
-import {request, type FileVersion, type Material, type Round, type RuleCandidate, type RuleDetail, type RulesList, type RuleBody} from '../api'
-import {clauseSourceReady, isRequirementBasis, localBasis, type RequirementBasis} from './requirements-state'
-import type {RequirementCollection, RequirementVersion} from './requirement-library-state'
-import {sourceContent} from './requirement-library-state'
+import {request, type FileVersion, type Material, type Round, type RuleCandidate, type RuleDetail, type RulesList, type RuleBody} from '../api.ts'
+import {clauseSourceReady, isRequirementBasis, localBasis, type RequirementBasis} from './requirements-state.ts'
+import type {RequirementCollection, RequirementVersion} from './requirement-library-state.ts'
+import {sourceContent} from './requirement-library-state.ts'
 import type {DecisionEvidence, DecisionInput} from './decision'
 
 export function parsedBasis(basis: RequirementBasis, candidate: RuleCandidate): RequirementBasis {
@@ -10,9 +10,17 @@ export function parsedBasis(basis: RequirementBasis, candidate: RuleCandidate): 
     clauses: candidate.body.rules.map(row => ({id: row.id, title: row.rule_to_check.split('\n')[0].slice(0, 60), text: row.rule_to_check,
       original: row.rule_to_check, source: basis.source.filename, location: `条款 ${row.id}（原件位置待核对）`, checked: false, applicability: 'pending', reason: ''}))}
 }
+// These two fields are assigned by publication, not editable rule content. Keep
+// every other field in the comparison so a changed clause or appendix still fails.
+function publicationBody(body: RuleBody): RuleBody {
+  const content = {...body}
+  delete content.suite_key
+  delete content.suite_revision_id
+  return content
+}
 export function basisRuleBody(basis: RequirementBasis): RuleBody {
   if (!basis.server) throw new Error('审核规则尚未连接到规则版本。')
-  return {...basis.server.body,
+  return {...publicationBody(basis.server.body),
     customers: (basis.server.body.customers ?? []).map(value => value.trim()),
     models: (basis.server.body.models ?? []).map(value => value.trim()),
     parts: (basis.server.body.parts ?? []).map(value => value.trim()),
@@ -69,7 +77,7 @@ export async function readRuleVersions(ids: string[], signal: AbortSignal): Prom
     scope = {...scope, allCustomers: rule.customer_scope === 'all'}
     basis.source.id = rule.id; basis.source.filename = material.original_filename
     if (!rule.case_context?.registration) basis.source.version = rule.created_at.slice(0, 16).replace('T', ' ')
-    basis.server!.publishedContent = canonical({body: rule.body, title: basis.source.title, version: basis.source.version})
+    basis.server!.publishedContent = canonical({body: publicationBody(rule.body), title: basis.source.title, version: basis.source.version})
     if (basis.clauses.every(clause => clause.checked && clauseSourceReady(clause, basis))) basis.server!.verifiedContent = sourceContent(basis)
     return [{id: rule.id, basis, scope, reason, at: rule.created_at, baseId: rule.predecessor_id || null}]
   }))).flat()
@@ -86,8 +94,15 @@ export async function publishBasis(basis: RequirementBasis, declaration?: {scope
   const hex = Array.from(bytes.slice(0, 16), value => value.toString(16).padStart(2, '0')).join('')
   const requestId = `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`
   function verified(rule: RuleDetail, exactId = false) {
-    if (!rule?.id || exactId && rule.id !== requestId || rule.title !== title || canonical(rule.body) !== content || rule.source_file_id !== server.material.file_id || rule.source_file_version_id !== server.material.file_version_id || (rule.predecessor_id ?? null) !== (server.ruleId ?? null) || canonical(rule.case_context) !== canonical(case_context)) throw new Error('保存回执与本次要求不一致。未采用该版本，请核对原请求。')
-    return rule
+    if (!rule?.id || exactId && rule.id !== requestId || rule.title !== title || rule.body?.kind !== 'engine' || canonical(publicationBody(rule.body)) !== content || rule.source_file_id !== server.material.file_id || rule.source_file_version_id !== server.material.file_version_id || (rule.predecessor_id ?? null) !== (server.ruleId ?? null) || canonical(rule.case_context) !== canonical(case_context)) throw new Error('保存回执与本次要求不一致。未采用该版本，请核对原请求。')
+    const {suite_key: key, suite_revision_id: revision} = rule.body
+    // Older immutable receipts may lack Suite metadata. A present binding must
+    // be complete and remain in the server-derived publication lineage.
+    if (key !== undefined || revision !== undefined || server.body.suite_key !== undefined) {
+      const expectedKey = server.ruleId ? server.body.suite_key : `custom:${rule.id}`
+      if (typeof key !== 'string' || !key || key !== expectedKey || typeof revision !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(revision)) throw new Error('保存回执的检查版本关联不一致。未采用该版本，请核对原请求。')
+    }
+    return {...rule, body: rule.body}
   }
   async function find() {
     const direct = await request<RuleDetail>(`/rules/${requestId}`).catch(cause => {if ((cause as {status?: number}).status === 403 || (cause as {status?: number}).status === 404) return null; throw cause})
@@ -95,7 +110,7 @@ export async function publishBasis(basis: RequirementBasis, declaration?: {scope
     const list = await request<RulesList>('/rules')
     for (const row of list.rules.filter(row => row.title === basis.source.title)) {
       const rule = await request<RuleDetail>(`/rules/${row.id}`)
-      if (rule.source_file_version_id === server.material.file_version_id && canonical(rule.body) === content && canonical(rule.case_context) === canonical(case_context)) return verified(rule)
+      if (rule.source_file_version_id === server.material.file_version_id && rule.body.kind === 'engine' && canonical(publicationBody(rule.body)) === content && canonical(rule.case_context) === canonical(case_context)) return verified(rule)
     }
     return null
   }
@@ -108,7 +123,7 @@ export async function publishBasis(basis: RequirementBasis, declaration?: {scope
       rule = found
     }
   }
-  const published = {...basis, source: {...basis.source, id: rule.id}, server: {...server, ruleId: rule.id, body, publishedContent: signature}}
+  const published = {...basis, source: {...basis.source, id: rule.id}, server: {...server, ruleId: rule.id, body: rule.body, publishedContent: signature}}
   return {...published, server: {...published.server, verifiedContent: sourceContent(published)}}
 }
 export function sourceLocation(locator: Record<string, unknown>) {
