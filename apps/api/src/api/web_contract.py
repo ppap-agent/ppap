@@ -1153,6 +1153,7 @@ class AuditTaskEndRequest(TypedDict):
 class AuditTaskConfirmRequest(TypedDict):
     request_id: str
     expected_revision: int
+    expected_confirmation_basis_digest: str
 
 
 class AuditTaskRemoval(TypedDict):
@@ -1232,6 +1233,7 @@ class PrecheckHistory(TypedDict):
 class AuditTask(AuditTaskIdentity):
     """Persisted Task/Round view; optional delivery operations need their own API."""
 
+    confirmation_basis_digest: str | None
     files: list[AuditTaskFile]
     precheck: NotRequired[PrecheckReceipt | None]
     execution: NotRequired[Literal["queued", "running", "completed", "failed"]]

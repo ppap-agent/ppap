@@ -1953,7 +1953,11 @@ class AuthStore:
                 for element in card["body"]["elements"]
                 for behavior in element.get("behaviors", [])
             ):
-                saved["confirmation"] = {"request_id": str(uuid.uuid5(uuid.UUID(claimed.id), "confirm")), "expected_revision": task["input_revision"]}
+                saved["confirmation"] = {
+                    "request_id": str(uuid.uuid5(uuid.UUID(claimed.id), "confirm")),
+                    "expected_revision": task["input_revision"],
+                    "expected_confirmation_basis_digest": task["confirmation_basis_digest"],
+                }
             row = conn.execute(
                 """UPDATE engine.jobs SET result = '{"state":"dispatching","reason":null}'::jsonb,
                 payload = payload || %s, updated_at = now(), lease_until = now() + interval '90 seconds'
@@ -1992,11 +1996,21 @@ class AuthStore:
             or principal.user_id != expected_confirmation.get("created_by")
             or confirmation.get("request_id") != expected_confirmation.get("request_id")
             or confirmation.get("expected_revision") != expected_confirmation.get("expected_revision")
+            or confirmation.get("expected_confirmation_basis_digest") != expected_confirmation.get("expected_confirmation_basis_digest")
         ):
             raise ValueError("task_revision_conflict")
         try:
             self._accept_locked(
-                conn, principal, confirmation["request_id"], source_draft_id=task_id, predecessor_id=None, items=None, task_revision=confirmation["expected_revision"], usage_policy=usage_policy
+                conn,
+                principal,
+                confirmation["request_id"],
+                source_draft_id=task_id,
+                predecessor_id=None,
+                items=None,
+                task_revision=confirmation["expected_revision"],
+                usage_policy=usage_policy,
+                expected_confirmation_basis_digest=confirmation.get("expected_confirmation_basis_digest"),
+                require_confirmation_basis=True,
             )
         except ValueError as error:
             if str(error) != "draft_already_accepted":
@@ -2046,6 +2060,7 @@ class AuthStore:
                     SELECT (confirmation->>'request_id')::uuid, tenant_id, 'task_confirmation',
                         jsonb_build_object('task_id', task_id::text, 'created_by', created_by::text,
                             'request_id', confirmation->>'request_id', 'expected_revision', confirmation->'expected_revision',
+                            'expected_confirmation_basis_digest', confirmation->'expected_confirmation_basis_digest',
                             'notification_id', %s::text, 'message_id', %s::text, 'tenant_key', %s::text, 'subject', %s::text),
                         'queued', jsonb_build_object('state', 'pending', 'reason', '已收到卡片确认，正在核对用量，尚未受理。')
                     FROM source WHERE true ON CONFLICT (id) DO NOTHING
@@ -2115,6 +2130,7 @@ class AuthStore:
                 reason = {
                     "rule_candidate_expired": "规则已更新，请打开页面重新识别并核对。",
                     "task_revision_conflict": "文件或审核模式已变化，请打开页面核对。",
+                    "task_confirmation_changed": "审核依据已更新，本次未受理。请打开页面刷新并核对后重新确认。",
                     "usage_quota_unavailable": "当前无法确认用量，请打开页面核对后重新确认。",
                     "usage_ai_disabled": "飞书AI包开关已关闭，请联系管理员。",
                     "usage_balance_empty": "当前没有可用额度，请联系管理员。",
@@ -2341,13 +2357,73 @@ class AuthStore:
                 "report_access": entry["report_access"],
             }
 
-    def confirm_audit_task(self, principal: Principal, task_id: str, request_id, expected_revision, *, usage_policy=None) -> dict:
+    def confirm_audit_task(
+        self,
+        principal: Principal,
+        task_id: str,
+        request_id: str,
+        expected_revision: int,
+        *,
+        usage_policy=None,
+        expected_confirmation_basis_digest: str | None = None,
+        require_confirmation_basis: bool = False,
+    ) -> dict:
         parsed_task, key = _as_uuid(task_id), _as_uuid(request_id)
         if not parsed_task or not key or type(expected_revision) is not int or expected_revision < 0:
             raise ValueError("invalid_task_confirmation")
+        rejection = None
         with self._conn() as conn, conn.transaction():
-            self._accept_locked(conn, principal, key, source_draft_id=parsed_task, predecessor_id=None, items=None, task_revision=expected_revision, usage_policy=usage_policy)
-            return self._recognition_public(conn, principal, parsed_task)
+            # Lock an existing confirmation before its admission lock, matching
+            # the card worker's order. A lost HTTP rejection is read from the
+            # same receipt store; no new operation ledger is needed.
+            prior = conn.execute("SELECT tenant_id, kind, payload, result FROM engine.jobs WHERE id=%s FOR UPDATE", (key,)).fetchone()
+            conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (principal.tenant_id + ":" + key,))
+            self._recognition_owner(conn, principal, parsed_task)
+            if prior:
+                if str(prior[0]) != principal.tenant_id or prior[1] != "task_confirmation" or prior[2].get("task_id") != parsed_task or prior[2].get("created_by") != principal.user_id:
+                    raise ValueError("idempotency_conflict")
+                if (prior[3] or {}).get("state") == "rejected":
+                    raise ValueError((prior[3] or {}).get("error") or "task_confirmation_changed")
+            try:
+                with conn.transaction():
+                    self._accept_locked(
+                        conn,
+                        principal,
+                        key,
+                        source_draft_id=parsed_task,
+                        predecessor_id=None,
+                        items=None,
+                        task_revision=expected_revision,
+                        usage_policy=usage_policy,
+                        expected_confirmation_basis_digest=expected_confirmation_basis_digest,
+                        require_confirmation_basis=require_confirmation_basis,
+                    )
+            except ValueError as error:
+                if str(error) != "task_confirmation_changed":
+                    raise
+                rejection = str(error)
+                payload = {
+                    "task_id": parsed_task,
+                    "created_by": principal.user_id,
+                    "request_id": key,
+                    "expected_revision": expected_revision,
+                    "expected_confirmation_basis_digest": expected_confirmation_basis_digest,
+                }
+                result = {"state": "rejected", "reason": "审核依据已更新，本次未受理。请刷新并核对后重新确认。", "error": rejection}
+                if prior:
+                    raise ValueError("idempotency_conflict") from None
+                saved = conn.execute(
+                    """INSERT INTO engine.jobs (id, tenant_id, kind, payload, status, result)
+                       VALUES (%s, %s, 'task_confirmation', %s, 'failed', %s) ON CONFLICT (id) DO NOTHING RETURNING id""",
+                    (key, principal.tenant_id, Jsonb(payload), Jsonb(result)),
+                ).fetchone()
+                if not saved:
+                    raise ValueError("idempotency_conflict") from None
+            else:
+                return self._recognition_public(conn, principal, parsed_task)
+        # Raise only after committing the definite rejection. Lost responses can
+        # recover this exact request without accepting a newly published Suite.
+        raise ValueError(rejection)
 
     @staticmethod
     def _display_receipt(row: dict) -> dict:
@@ -2632,6 +2708,7 @@ class AuthStore:
             "notification_revision": draft["notification_revision"],
             "files": files,
             "completion_reason": draft["task_completion_reason"],
+            "confirmation_basis_digest": None,
             "estimated_points": None if matching or any(row["match"]["state"] == "failed" for row in selected) else sum(row["match"]["state"] == "matched" for row in selected) * 500,
         }
         task["precheck"] = self._current_task_precheck(conn, task_id, principal.tenant_id, draft["input_revision"])
@@ -2708,20 +2785,39 @@ class AuthStore:
         # Recognition's rule version is provenance. Show the same adopted Suite
         # body that acceptance will freeze, without publishing or authorizing it.
         # Accepted tasks returned above must never resolve a newer Suite head.
+        from product.standard_policy import config_digest
         from product.store.suites import freeze_selected_targets
 
+        targets = []
         for file in task["files"]:
             match = file.get("match") or {}
             if match.get("state") != "matched" or not match.get("rule"):
                 continue
             prepared = [{"role": "target", "file_version_id": file["file"]["id"], "rule_body": match["rule"]["body"]}]
             try:
-                freeze_selected_targets(self, conn, principal.tenant_id, prepared, preparation=True)
+                targets.extend(freeze_selected_targets(self, conn, principal.tenant_id, prepared, preparation=True))
             except (KeyError, ValueError):
                 match.update(state="failed", rule=None, gaps=[*match.get("gaps", []), "checker_suite_unavailable"])
                 task["estimated_points"] = None
             else:
                 match["rule"] = {**match["rule"], "body": prepared[0]["rule_body"]}
+        if targets and task["state"] == "pending_confirm" and all(row["validation"]["state"] == "valid" and row["match"]["state"] in {"matched", "reference", "unmatched"} for row in selected):
+            # current_selection holds the publication locks through admission's
+            # transaction. Bind source identity, clauses, code, related Suites
+            # and verification risk, not merely visible rule text or input_revision.
+            task["confirmation_basis_digest"] = config_digest(
+                {
+                    "task_id": task_id,
+                    "tenant_id": principal.tenant_id,
+                    "created_by": principal.user_id,
+                    "input_revision": task["input_revision"],
+                    "analysis_mode": task["analysis_mode"],
+                    "customer_preference": task["customer_preference"],
+                    "estimated_points": task["estimated_points"],
+                    "files": [{key: row.get(key) for key in ("file", "selection", "removal_reason", "validation", "validation_scope", "match", "reference_only")} for row in files],
+                    "targets": [target.to_dict() for target in targets],
+                }
+            )
         return task
 
     def list_audit_tasks(self, principal: Principal, limit: int = 20, offset: int = 0, q: str = "", state: str = "") -> list[dict]:
@@ -4391,6 +4487,8 @@ class AuthStore:
         task_revision: int | None = None,
         usage_policy=None,
         feedback_inputs: list[dict] | None = None,
+        expected_confirmation_basis_digest: str | None = None,
+        require_confirmation_basis: bool = False,
     ) -> dict:
         # Serialize one tenant/key before reading existing acceptance, including
         # competing requests from different drafts. Hash collisions only serialize.
@@ -4436,6 +4534,8 @@ class AuthStore:
                     raise ValueError("task_input_locked")
                 if draft_status == DRAFT_ACCEPTED and not existing:
                     raise ValueError("draft_already_accepted")
+                if not existing and require_confirmation_basis and (not isinstance(expected_confirmation_basis_digest, str) or not re.fullmatch(r"[a-f0-9]{64}", expected_confirmation_basis_digest)):
+                    raise ValueError("invalid_task_confirmation")
                 task = self._recognition_public(conn, principal, source_draft_id)
                 selected = [row for row in task["files"] if row["selection"] == "selected"]
                 recognized_metadata = {row["file"]["id"]: dict((row.get("match") or {}).get("metadata") or {}) for row in selected}
@@ -4454,6 +4554,8 @@ class AuthStore:
                         rule_body = ((row.get("match") or {}).get("rule") or {}).get("body") or {}
                         if scope and row["match"]["state"] != "reference" and (owned["customer_preference"] != "UAES" or rule_body.get("suite_key") != "UAES:U13"):
                             raise ValueError("validation_scope_mismatch")
+                    if require_confirmation_basis and task["confirmation_basis_digest"] != expected_confirmation_basis_digest:
+                        raise ValueError("task_confirmation_changed")
                     if self.settings.precheck_gate_enforced:
                         from product.prechecks import blocked_targets
                         from product.store.prechecks import freeze_task_precheck

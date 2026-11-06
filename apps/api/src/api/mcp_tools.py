@@ -283,14 +283,14 @@ def register_tools(mcp, gateway, authority):
         return await read("audits:read", f"/audit-tasks/{task_id}/recognitions/{request_id}", page)
 
     @mcp.tool(annotations=EXTERNAL)
-    async def confirm_task(task_id: UUID, request_id: UUID, expected_revision: int) -> Reply[dict]:
+    async def confirm_task(task_id: UUID, request_id: UUID, expected_revision: int, expected_confirmation_basis_digest: str) -> Reply[dict]:
         """Confirm the displayed files, frozen rule versions, mode and estimate. Requires a browser approval bound to this revision."""
         return await write(
             "audits:execute",
             "confirm_task",
             request_id,
             f"/audit-tasks/{task_id}/confirm",
-            {"request_id": str(request_id), "expected_revision": expected_revision},
+            {"request_id": str(request_id), "expected_revision": expected_revision, "expected_confirmation_basis_digest": expected_confirmation_basis_digest},
             probes=[f"/audit-tasks/{task_id}"],
             confirm=True,
         )
