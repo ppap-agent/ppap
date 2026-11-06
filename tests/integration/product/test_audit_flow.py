@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from product import build_product_store
 from product.fixtures import RULE_A, USER_BOB
 from product.settings import Settings
+from product.store.suite_releases import SuiteReleaseStore
 from psycopg import errors, sql
 from worker import process_claimed
 
@@ -676,12 +677,31 @@ def check(context):
         self.assertEqual(loaded["findings"][0]["item"], mapped_text)
         self.assertFalse(loaded["coverage"]["unchecked"])
         self.assertEqual(loaded["findings"][1]["item"], "arbitrary customer requirement")
+        releases = SuiteReleaseStore(self.store.settings, self.store.objects, role="api")
+        principal = self.store.principal_for_fixture("alice")
+        suite_key = published.json()["body"]["suite_key"]
+        active = releases.active(principal, suite_key)
         changed = rule_body()
         changed["rules"][0]["rule_to_check"] = "新版要求"
         successor = self.client.post("/rules", json={"title": "新版", "body": changed, "source_file_version_id": source["id"], "predecessor_id": published.json()["id"]})
-        self.assertEqual(successor.status_code, 409)
-        self.assertEqual(successor.json()["error"], "suite_head_conflict")
+        self.assertEqual(successor.status_code, 201)
+        # Upload is a candidate based on the adopted Checker, not adoption.
+        after_upload = releases.active(principal, suite_key)
+        self.assertEqual(after_upload["current_revision_id"], active["current_revision_id"])
+        self.assertEqual(after_upload["revision"], active["revision"])
+        self.assertEqual(after_upload["history"], active["history"])
+        self.assertEqual(after_upload["verification_status"], "stale")
+        self.assertEqual(after_upload["rule_update"]["target_revision_id"], successor.json()["body"]["suite_revision_id"])
+        self.assertEqual(self.client.get("/rounds/" + accepted.json()["id"]).json(), loaded)
+        candidate_id = successor.json()["body"]["suite_revision_id"]
+        releases.publish(principal, suite_key, candidate_id, active["revision"], str(uuid.uuid4()), force_unverified=True)
+        self.assertEqual(releases.active(principal, suite_key)["current_revision_id"], candidate_id)
         replay = self.client.get("/rounds/" + accepted.json()["id"]).json()
+        self.assertEqual(replay, loaded)
+        self.assertEqual(
+            self._scalar("SELECT rule_execution FROM product.round_inputs WHERE round_id = %s AND role = 'target'", (accepted.json()["id"],)),
+            frozen,
+        )
         self.assertEqual(replay["findings"][0]["item"], mapped_text)
         self.assertEqual(replay["inputs"][0]["rule"]["id"], published.json()["id"])
 
