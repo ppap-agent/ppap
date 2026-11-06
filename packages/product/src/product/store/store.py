@@ -492,23 +492,35 @@ class AuthStore:
                         USER_CAROL,
                     ),
                 )
-                conn.execute(
-                    """
-                    INSERT INTO product.rule_versions (id, tenant_id, title, body)
-                    VALUES (%s, %s, %s, %s), (%s, %s, %s, %s)
-                    ON CONFLICT (id) DO NOTHING
-                    """,
-                    (
-                        RULE_A,
-                        TENANT_A,
-                        "资料就绪",
-                        Jsonb(PRESENCE_RULE_BODY),
-                        RULE_B,
-                        TENANT_B,
-                        "资料就绪",
-                        Jsonb(PRESENCE_RULE_BODY),
-                    ),
-                )
+                core_schema = conn.execute("SELECT to_regclass('product.suite_revisions')").fetchone()[0] is not None
+                for rule_id, tenant_id, name in ((RULE_A, TENANT_A, "alice"), (RULE_B, TENANT_B, "carol")):
+                    if conn.execute("SELECT 1 FROM product.rule_versions WHERE id=%s", (rule_id,)).fetchone():
+                        continue
+                    body = dict(PRESENCE_RULE_BODY)
+                    if core_schema:
+                        from product.store.custom_suites import publish_custom_rule_suite
+                        from product.store.suite_releases import _lock, _member
+
+                        principal = self.principal_for_fixture(name)
+                        _member(conn, principal)
+                        _lock(conn, tenant_id)
+                        body = publish_custom_rule_suite(
+                            self,
+                            conn,
+                            principal,
+                            rule_id=rule_id,
+                            title="资料就绪",
+                            body={
+                                "kind": "engine",
+                                "type": "资料就绪",
+                                "rules": [{"id": "presence", "category": "资料", "priority": "P0", "rule_to_check": "原件资料已经就绪", "type_of_rule": "text"}],
+                            },
+                            previous=None,
+                        )
+                    conn.execute(
+                        "INSERT INTO product.rule_versions (id,tenant_id,title,body) VALUES (%s,%s,%s,%s)",
+                        (rule_id, tenant_id, "资料就绪", Jsonb(body)),
+                    )
 
     def principal_for_fixture(self, name: str) -> Principal:
         spec = SUBJECTS[name]
