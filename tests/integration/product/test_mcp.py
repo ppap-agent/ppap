@@ -564,7 +564,8 @@ def completed_mcp_task(client, store, token, core_system, *, publish_new_rule=Tr
 
     process_claimed(worker, worker.claim_job("share-match"), "share-match", rule_ai=MetadataAI())
     task_id = prepared["data"]["id"]
-    confirm = {"task_id": task_id, "request_id": str(uuid4()), "expected_revision": 0}
+    pending = call(client, token, "get_task", task_id=task_id)["data"]["value"]
+    confirm = {"task_id": task_id, "request_id": str(uuid4()), "expected_revision": 0, "expected_confirmation_basis_digest": pending["confirmation_basis_digest"]}
     approve(client, call(client, token, "confirm_task", **confirm))
     accepted = call(client, token, "confirm_task", **confirm)
     assert accepted["status"] == "ok", accepted
@@ -865,7 +866,7 @@ def test_mcp_review_replacement_and_linked_reaudit_preserve_frozen_suite_history
         matched = call(client, token, "get_task", task_id=next_task_id)["data"]["value"]
         assert matched["predecessor_id"] == round_id
         assert matched["files"][1]["match"]["rule"]["id"] == chosen_rule
-        confirm = {"task_id": next_task_id, "request_id": str(uuid4()), "expected_revision": matched["input_revision"]}
+        confirm = {"task_id": next_task_id, "request_id": str(uuid4()), "expected_revision": matched["input_revision"], "expected_confirmation_basis_digest": matched["confirmation_basis_digest"]}
         approve(client, call(client, token, "confirm_task", **confirm))
         original_request = app.state.mcp_gateway.request
 
@@ -1249,7 +1250,7 @@ def test_mcp_precheck_rule_publication_prepare_and_human_confirm_once(mcp_app, c
         process_claimed(worker, worker.claim_job("mcp-match"), "mcp-match", rule_ai=MetadataAI())
         task = call(client, token, "get_task", task_id=task["id"])["data"]["value"]
         assert task["state"] == "pending_confirm" and task["round_id"] is None
-        confirm = {"task_id": task["id"], "request_id": str(uuid4()), "expected_revision": task["input_revision"]}
+        confirm = {"task_id": task["id"], "request_id": str(uuid4()), "expected_revision": task["input_revision"], "expected_confirmation_basis_digest": task["confirmation_basis_digest"]}
         proposal = call(client, token, "confirm_task", **confirm)
         assert call(client, token, "get_operation", request_id=confirm["request_id"])["confirmation_url"] == proposal["confirmation_url"]
         approve(client, proposal)
@@ -1335,6 +1336,9 @@ def test_registry_pagination_annotations_and_browser_revoke(mcp_app):
                 break
             params = {"cursor": result["nextCursor"]}
         assert {"prepare_task", "confirm_task", "submit_review", "share_reports", "retry_share_target", "download_report", "get_usage"} <= tools.keys()
+        confirmation = tools["confirm_task"]["inputSchema"]
+        assert set(confirmation["required"]) == {"task_id", "request_id", "expected_revision", "expected_confirmation_basis_digest"}
+        assert confirmation["properties"]["expected_confirmation_basis_digest"]["type"] == "string"
         assert tools["list_feishu_files"]["annotations"]["readOnlyHint"] is True
         assert tools["share_reports"]["annotations"]["readOnlyHint"] is False
         assert tools["share_reports"]["annotations"]["openWorldHint"] is True

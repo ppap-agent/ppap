@@ -56,6 +56,18 @@ def checked_file(client, worker, name="控制计划.xlsx", document_type="控制
     return {"file_version_id": version["id"], "validation_id": validation_id, "selection": "selected", "removal_reason": None}
 
 
+def confirmation_command(client, path, expected_revision):
+    """Read the displayed basis once; reuse this command for retries."""
+    response = client.get(path)
+    assert response.status_code == 200, response.text
+    task = response.json()
+    assert task["state"] == "pending_confirm"
+    assert task["input_revision"] == expected_revision
+    digest = task["confirmation_basis_digest"]
+    assert isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest)
+    return {"request_id": str(uuid.uuid4()), "expected_revision": expected_revision, "expected_confirmation_basis_digest": digest}
+
+
 def upload_preparation(files=()):
     return {"version": 1, "analysis_mode": "standard", "customer_preference": None, "predecessor_id": None, "uploads": [], "files": list(files)}
 
@@ -347,7 +359,7 @@ def test_archive_summary_matches_frozen_detail_and_preserves_default_and_revocat
             assert created.status_code == 202, created.text
             path = f"/audit-tasks/{created.json()['id']}"
             process_claimed(worker, worker.claim_job("archive-recognition"), "archive-recognition", rule_ai=MetadataAI())
-        accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0})
+        accepted = client.post(path + "/confirm", json=confirmation_command(client, path, 0))
         assert accepted.status_code == 201, accepted.text
         if index < 2:
             job = worker.claim_job("archive-audit")
@@ -406,7 +418,7 @@ def test_archive_summary_keeps_task_readiness_and_bound_metadata(matched_task, a
     migrator = auth_store_factory(worker.settings, objects=worker.objects, reset=False)
     version = body["files"][0]["file_version_id"]
     migrator.save_file_source(version, "file", "archive-bound-source")
-    accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0})
+    accepted = client.post(path + "/confirm", json=confirmation_command(client, path, 0))
     assert accepted.status_code == 201, accepted.text
     file = accepted.json()["files"][0]["file"]
     with migrator._conn() as conn:
@@ -445,7 +457,7 @@ def test_archive_summary_keeps_task_readiness_and_bound_metadata(matched_task, a
 @pytest.mark.parametrize("report_state", ["pending", "generating", "ready", "failed"])
 def test_round_read_view_projects_the_same_authorized_task_report_without_creating_work(executable_task, report_state):
     client, worker, path, _body, _rule = executable_task
-    accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).json()
+    accepted = client.post(path + "/confirm", json=confirmation_command(client, path, 0)).json()
     audit_job = worker.claim_job("round-report-audit")
     process_claimed(worker, audit_job, "round-report-audit")
     if report_state != "pending":
@@ -481,7 +493,7 @@ def test_round_read_view_projects_the_same_authorized_task_report_without_creati
 
 def test_round_report_projection_keeps_private_task_and_current_grant_authority(executable_task, auth_store_factory):
     client, worker, path, _body, _rule = executable_task
-    accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).json()
+    accepted = client.post(path + "/confirm", json=confirmation_command(client, path, 0)).json()
     process_claimed(worker, worker.claim_job("private-report-audit"), "private-report-audit")
     process_claimed(worker, worker.claim_job("private-report-pdf"), "private-report-pdf")
     task = client.get(path).json()
@@ -557,7 +569,7 @@ def test_legacy_round_read_view_does_not_invent_a_private_task_or_report(task_sy
 
 def test_concurrent_task_confirmation_and_cross_task_key_reuse(matched_task):
     client, worker, path, body, _rule = matched_task
-    commands = [{"request_id": str(uuid.uuid4()), "expected_revision": 0} for _ in range(2)]
+    commands = [confirmation_command(client, path, 0) for _ in range(2)]
     with ThreadPoolExecutor(max_workers=2) as pool:
         replies = list(pool.map(lambda command: client.post(path + "/confirm", json=command), commands))
     assert sorted(reply.status_code for reply in replies) == [201, 409]
@@ -580,15 +592,15 @@ def test_concurrent_task_confirmation_and_cross_task_key_reuse(matched_task):
 def test_confirmation_requires_current_revision_and_server_quota(matched_task):
     client, worker, path, body, _rule = matched_task
     assert client.get(path, params={"request_id": str(uuid.uuid4())}).json()["acceptance"]["state"] == "pending"
+    command = confirmation_command(client, path, 0)
     revised = {**body, "request_id": str(uuid.uuid4()), "task_id": body["request_id"], "expected_revision": 0}
     assert client.post("/audit-tasks", json=revised).status_code == 202
-    command = {"request_id": str(uuid.uuid4()), "expected_revision": 0}
     stale = client.post(path + "/confirm", json=command)
     assert stale.status_code == 409
     assert stale.json() == {"error": "task_revision_conflict"}
     process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=MetadataAI())
     worker.settings.usage_charge_enabled = True
-    denied = client.post(path + "/confirm", json={**command, "expected_revision": 1})
+    denied = client.post(path + "/confirm", json=confirmation_command(client, path, 1))
     assert denied.status_code == 409
     assert denied.json() == {"error": "usage_quota_unavailable"}
     assert client.get(path).json()["state"] == "pending_confirm"
@@ -626,7 +638,7 @@ def test_pdf_download_keeps_complete_task_authority_without_building_the_task_pr
     revised = {**body, "request_id": str(uuid.uuid4()), "task_id": body["request_id"], "expected_revision": 0, "files": body["files"] + [unselected]}
     assert client.post("/audit-tasks", json=revised).status_code == 202
     process_claimed(worker, worker.claim_job("download-recognition"), "download-recognition", rule_ai=MetadataAI())
-    accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 1})
+    accepted = client.post(path + "/confirm", json=confirmation_command(client, path, 1))
     assert accepted.status_code == 201, accepted.text
     process_claimed(worker, worker.claim_job("download-audit"), "download-audit")
     process_claimed(worker, worker.claim_job("download-pdf"), "download-pdf")
@@ -700,7 +712,7 @@ def test_pdf_download_keeps_complete_task_authority_without_building_the_task_pr
 @pytest.mark.parametrize("corruption", ["magic", "length", "digest"])
 def test_pdf_download_still_verifies_the_frozen_object_bytes(executable_task, auth_store_factory, corruption):
     client, worker, path, _body, _rule = executable_task
-    assert client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).status_code == 201
+    assert client.post(path + "/confirm", json=confirmation_command(client, path, 0)).status_code == 201
     process_claimed(worker, worker.claim_job("integrity-audit"), "integrity-audit")
     process_claimed(worker, worker.claim_job("integrity-pdf"), "integrity-pdf")
     task = client.get(path).json()
@@ -735,7 +747,7 @@ def test_zip_bulk_sources_keep_each_frozen_reference_and_reject_one_invalid_memb
     assert client.post("/audit-tasks", json=revised).status_code == 202
     for _ in range(2):
         process_claimed(worker, worker.claim_job("bulk-recognition"), "bulk-recognition", rule_ai=MetadataAI())
-    assert client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 1}).status_code == 201
+    assert client.post(path + "/confirm", json=confirmation_command(client, path, 1)).status_code == 201
     process_claimed(worker, worker.claim_job("bulk-audit"), "bulk-audit")
     for _ in range(2):
         process_claimed(worker, worker.claim_job("bulk-pdf"), "bulk-pdf")
@@ -811,7 +823,7 @@ def test_zip_bulk_sources_keep_each_frozen_reference_and_reject_one_invalid_memb
 )
 def test_task_list_and_detail_keep_execution_faults_separate_from_round_completion(matched_task, status, coverage, failed, locator_only):
     client, worker, path, _body, rule = matched_task
-    response = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0})
+    response = client.post(path + "/confirm", json=confirmation_command(client, path, 0))
     assert response.status_code == 201, response.text
     task = response.json()
     version = task["files"][0]["file"]["id"]
@@ -860,7 +872,7 @@ def test_charged_confirmation_records_a_split_file_once_and_replay_needs_no_quot
     item = {"enabled": True, "user_quota": 0, "ai_package_purchased": False}
     client, http, calls = billing_client(worker, item)
     try:
-        command = {"request_id": str(uuid.uuid4()), "expected_revision": 0}
+        command = confirmation_command(client, path, 0)
         accepted = client.post(path + "/confirm", json=command)
         assert accepted.status_code == 201, accepted.text
         usage = client.get("/usage").json()["events"]
@@ -886,7 +898,7 @@ def test_charging_policy_is_not_client_authority_and_rejection_preserves_task(ma
     worker.settings.feishu_free_trial_quota_points = 0
     client, http, _calls = billing_client(worker, item)
     try:
-        blocked = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0})
+        blocked = client.post(path + "/confirm", json=confirmation_command(client, path, 0))
         assert blocked.status_code == 409
         assert blocked.json()["error"] in {"usage_ai_disabled", "usage_balance_empty"}
         assert client.get(path).json()["state"] == "pending_confirm"
@@ -911,8 +923,9 @@ def test_two_confirmations_cannot_both_spend_the_last_free_allocation(matched_ta
     charged, http, _calls = billing_client(worker, {"enabled": True, "user_quota": 0, "ai_package_purchased": False})
     try:
         paths = [first_path, f"/audit-tasks/{second['id']}"]
+        commands = [(path, confirmation_command(charged, path, 0)) for path in paths]
         with ThreadPoolExecutor(max_workers=2) as pool:
-            replies = list(pool.map(lambda path: charged.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}), paths))
+            replies = list(pool.map(lambda item: charged.post(item[0] + "/confirm", json=item[1]), commands))
         assert sorted(row.status_code for row in replies) == [201, 409]
         assert next(row for row in replies if row.status_code == 409).json() == {"error": "usage_balance_empty"}
         usage = charged.get("/usage").json()["events"]
@@ -936,7 +949,7 @@ def test_charged_task_allocates_only_matched_selected_files_and_p8_counts_files(
     worker.settings.feishu_free_trial_quota_points = 750
     charged, http, _calls = billing_client(worker, {"enabled": True, "user_quota": 1, "ai_package_purchased": True})
     try:
-        accepted = charged.post(f"/audit-tasks/{task['id']}/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0})
+        accepted = charged.post(f"/audit-tasks/{task['id']}/confirm", json=confirmation_command(charged, f"/audit-tasks/{task['id']}", 0))
         assert accepted.status_code == 201, accepted.text
         ledger = charged.get("/usage").json()["events"]
         assert len(ledger) == 3
@@ -960,7 +973,7 @@ def test_charged_report_and_zip_recovery_check_quota_without_new_audit_fees(matc
     assert client.post("/audit-tasks", json=revised).status_code == 202
     for _ in range(2):
         process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=MetadataAI())
-    accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 1}).json()
+    accepted = client.post(path + "/confirm", json=confirmation_command(client, path, 1)).json()
     audit_job = worker.claim_job("audit")
     findings = [
         {
@@ -1041,8 +1054,9 @@ def test_charged_report_and_zip_recovery_check_quota_without_new_audit_fees(matc
 
 def test_superseded_candidate_requires_explicit_rematching_before_confirmation(matched_task):
     client, worker, path, body, old = matched_task
+    command = confirmation_command(client, path, 0)
     new = publish_rule(client, body["files"][0], predecessor=old["id"], title="修订要求")
-    response = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0})
+    response = client.post(path + "/confirm", json=command)
     assert response.status_code == 409
     assert response.json() == {"error": "rule_candidate_expired"}
     current = client.get(path).json()
@@ -1056,7 +1070,7 @@ def test_superseded_candidate_requires_explicit_rematching_before_confirmation(m
     assert client.post("/audit-tasks", json=revised).status_code == 202
     process_claimed(worker, worker.claim_job("rematching"), "rematching", rule_ai=MetadataAI())
     assert client.get(path).json()["files"][0]["match"]["rule"]["id"] == new["id"]
-    accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 1})
+    accepted = client.post(path + "/confirm", json=confirmation_command(client, path, 1))
     assert accepted.status_code == 201
     assert accepted.json()["files"][0]["match"]["rule"]["id"] == new["id"]
 
@@ -1064,7 +1078,7 @@ def test_superseded_candidate_requires_explicit_rematching_before_confirmation(m
 def test_confirmation_and_rematching_serialize_on_the_same_task_revision(matched_task):
     client, _worker, path, body, _rule = matched_task
     revision = {**body, "request_id": str(uuid.uuid4()), "task_id": body["request_id"], "expected_revision": 0}
-    command = {"request_id": str(uuid.uuid4()), "expected_revision": 0}
+    command = confirmation_command(client, path, 0)
     with ThreadPoolExecutor(max_workers=2) as pool:
         confirmation = pool.submit(client.post, path + "/confirm", json=command)
         recognition = pool.submit(client.post, "/audit-tasks", json=revision)
@@ -1119,7 +1133,7 @@ def test_confirmation_excludes_unmatched_and_unselected_files_from_the_frozen_ro
     task = client.post("/audit-tasks", json=body).json()
     for _ in range(2):
         process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=MetadataAI())
-    response = client.post(f"/audit-tasks/{task['id']}/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0})
+    response = client.post(f"/audit-tasks/{task['id']}/confirm", json=confirmation_command(client, f"/audit-tasks/{task['id']}", 0))
     assert response.status_code == 201, response.text
     accepted = response.json()
     assert [row["selection"] for row in accepted["files"]] == ["selected", "removed", "unselected"]
@@ -1138,7 +1152,7 @@ def test_queue_insert_failure_rolls_back_the_task_round_and_frozen_inputs(matche
             BEGIN IF NEW.kind = 'audit' THEN RAISE EXCEPTION 'test_queue_unavailable'; END IF; RETURN NEW; END $$"""
         )
         conn.execute("CREATE TRIGGER reject_test_audit_insert BEFORE INSERT ON engine.jobs FOR EACH ROW EXECUTE FUNCTION engine.reject_test_audit_insert()")
-    command = {"request_id": str(uuid.uuid4()), "expected_revision": 0}
+    command = confirmation_command(client, path, 0)
     try:
         with pytest.raises(psycopg.errors.RaiseException, match="test_queue_unavailable"):
             client.post(path + "/confirm", json=command)
@@ -1229,7 +1243,7 @@ def test_customer_recovery_rematches_and_finishes_the_original_task_without_chan
     assert matched["files"][0]["match"]["rule"]["id"] == rule["id"]
     assert matched["files"][0]["match"]["metadata"]["customer"] is None
 
-    command = {"request_id": str(uuid.uuid4()), "expected_revision": 1}
+    command = confirmation_command(client, path, 1)
     accepted = client.post(path + "/confirm", json=command)
     assert accepted.status_code == 201
     round_id = accepted.json()["round_id"]
@@ -1270,7 +1284,7 @@ def test_legacy_draft_operations_cannot_replace_or_accept_a_recognition_task(tas
 
 def test_task_round_cannot_prepare_a_legacy_retry(matched_task):
     client, worker, path, _body, _rule = matched_task
-    accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).json()
+    accepted = client.post(path + "/confirm", json=confirmation_command(client, path, 0)).json()
     job = worker.claim_job("terminal-audit")
     assert job.round_id == accepted["round_id"]
     assert worker.complete_job(job, "terminal-audit", {"failure": {"code": "test_failure", "message": "受控执行失败", "retryable": False}}, outcome="failed")
@@ -1295,7 +1309,7 @@ def test_task_round_cannot_prepare_a_legacy_retry(matched_task):
 
 def test_linked_reaudit_keeps_provenance_but_freezes_current_suite_without_copying_results(matched_task):
     client, worker, path, body, old = matched_task
-    accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).json()
+    accepted = client.post(path + "/confirm", json=confirmation_command(client, path, 0)).json()
     job = worker.claim_job("original")
     assert worker.complete_job(job, "original", {"failure": {"code": "test_failure", "message": "受控执行失败", "retryable": False}}, outcome="failed")
     original = client.get(f"/rounds/{accepted['round_id']}").json()
@@ -1317,7 +1331,7 @@ def test_linked_reaudit_keeps_provenance_but_freezes_current_suite_without_copyi
     assert current["predecessor_id"] == original["id"]
     assert current["files"][0]["match"]["rule"]["id"] == old["id"]
     assert {row["id"] for row in current["files"][0]["rule_options"]} == {old["id"], newer["id"]}
-    confirmation = {"request_id": str(uuid.uuid4()), "expected_revision": 0}
+    confirmation = confirmation_command(client, next_path, 0)
     new_round = client.post(next_path + "/confirm", json=confirmation)
     assert new_round.status_code == 201, new_round.text
     assert client.post(next_path + "/confirm", json=confirmation).json() == new_round.json()
@@ -1348,7 +1362,7 @@ def test_linked_reaudit_keeps_provenance_but_freezes_current_suite_without_copyi
 @pytest.mark.parametrize("rule_choice", ["original", "current", "auto"])
 def test_reaudit_replacement_respects_the_explicit_rule_choice(matched_task, rule_choice):
     client, worker, path, body, old = matched_task
-    accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).json()
+    accepted = client.post(path + "/confirm", json=confirmation_command(client, path, 0)).json()
     assert client.get(f"/rounds/{accepted['round_id']}/reaudit-inputs").status_code == 409
     job = worker.claim_job("old")
     worker.complete_job(job, "old", {"failure": {"code": "test", "message": "受控失败", "retryable": False}}, outcome="failed")
@@ -1379,7 +1393,7 @@ def test_reaudit_replacement_respects_the_explicit_rule_choice(matched_task, rul
     assert actual["match"]["rule"]["id"] == expected_rule
     assert actual.get("preferred_rule_version_id") == (expected_rule if rule_choice != "auto" else None)
     assert {row["id"] for row in actual["rule_options"]} == {old["id"], newer["id"]}
-    result = client.post(next_path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0})
+    result = client.post(next_path + "/confirm", json=confirmation_command(client, next_path, 0))
     assert result.status_code == 201, result.text
     frozen = client.get(f"/rounds/{result.json()['round_id']}").json()
     assert [(row["file_version_id"], row["rule_version_id"]) for row in frozen["inputs"]] == [(replacement["file_version_id"], expected_rule)]
@@ -1390,7 +1404,7 @@ def test_reaudit_replacement_respects_the_explicit_rule_choice(matched_task, rul
 @pytest.mark.parametrize("selection", ["unselected", "removed"])
 def test_excluded_reaudit_replacement_retains_its_binding_across_readback_and_rematching(matched_task, selection):
     client, worker, path, body, old = matched_task
-    accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).json()
+    accepted = client.post(path + "/confirm", json=confirmation_command(client, path, 0)).json()
     worker.complete_job(worker.claim_job("old"), "old", {"failure": {"code": "test", "message": "受控失败", "retryable": False}}, outcome="failed")
     original_round = client.get(f"/rounds/{accepted['round_id']}").json()
     usage = client.get("/usage").json()
@@ -1433,7 +1447,7 @@ def test_excluded_reaudit_replacement_retains_its_binding_across_readback_and_re
 
 def test_excluded_replacement_survives_removal_of_its_receipt_anchor_at_acceptance(matched_task):
     client, worker, path, body, old = matched_task
-    accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).json()
+    accepted = client.post(path + "/confirm", json=confirmation_command(client, path, 0)).json()
     worker.complete_job(worker.claim_job("old"), "old", {"failure": {"code": "test", "message": "受控失败", "retryable": False}}, outcome="failed")
     original_round = client.get(f"/rounds/{accepted['round_id']}").json()
     anchor = checked_file(client, worker, "未匹配文件.xlsx")
@@ -1449,7 +1463,7 @@ def test_excluded_replacement_survives_removal_of_its_receipt_anchor_at_acceptan
     assert worker.complete_job(job, "unmatched-anchor", {"source_file_version_id": anchor["file_version_id"], "matching_status": "unmatched"})
     process_claimed(worker, worker.claim_job("original"), "original", rule_ai=NoRecognitionAI())
     assert worker.claim_job("no-excluded-analysis") is None
-    next_round = client.post(next_path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0})
+    next_round = client.post(next_path + "/confirm", json=confirmation_command(client, next_path, 0))
     assert next_round.status_code == 201, next_round.text
     current = client.get(next_path).json()
     assert current["files"][0]["selection"] == "removed"
@@ -1462,7 +1476,7 @@ def test_excluded_replacement_survives_removal_of_its_receipt_anchor_at_acceptan
 @pytest.mark.parametrize("subject", ["bob", "carol"])
 def test_reaudit_source_authorization_and_scope_cannot_be_bypassed(matched_task, subject):
     client, worker, path, body, old = matched_task
-    accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).json()
+    accepted = client.post(path + "/confirm", json=confirmation_command(client, path, 0)).json()
     worker.complete_job(worker.claim_job("old"), "old", {"failure": {"code": "test", "message": "受控失败", "retryable": False}}, outcome="failed")
     original = client.get(path).json()
     publish_rule(client, body["files"][0], predecessor=old["id"])
@@ -1536,7 +1550,10 @@ def test_native_preparation_ambiguity_is_resolved_by_explicit_rematching_before_
     assert match["state"] == "failed" and match["rule"] is None
     assert match["gaps"] == ["ambiguous_available_rules"]
     assert {row["id"] for row in match["candidates"]} == {first["id"], chosen["id"]}
-    assert client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).status_code == 409
+    assert ambiguous["confirmation_basis_digest"] is None
+    invalid = {"request_id": str(uuid.uuid4()), "expected_revision": 0, "expected_confirmation_basis_digest": ambiguous["confirmation_basis_digest"]}
+    refused = client.post(path + "/confirm", json=invalid)
+    assert refused.status_code == 400 and refused.json() == {"error": "invalid_task_confirmation"}
     assert client.get("/rounds").json()["rounds"] == []
 
     rematch = {
@@ -1554,7 +1571,7 @@ def test_native_preparation_ambiguity_is_resolved_by_explicit_rematching_before_
     matched = client.get(path).json()
     assert matched["files"][0]["match"]["state"] == "matched"
     assert matched["files"][0]["match"]["rule"]["id"] == chosen["id"]
-    confirmation = {"request_id": str(uuid.uuid4()), "expected_revision": 1}
+    confirmation = confirmation_command(client, path, 1)
     accepted = client.post(path + "/confirm", json=confirmation)
     assert accepted.status_code == 201, accepted.text
     result = accepted.json()
@@ -1823,7 +1840,7 @@ def test_explicit_customer_scope_and_reference_survive_acceptance_and_recovery(t
     assert [row["match"]["state"] for row in matched["files"]] == ["matched", "reference"]
     assert matched["files"][0]["match"]["rule"]["id"] == confirmed["id"]
     assert matched["estimated_points"] == 500
-    command = {"request_id": str(uuid.uuid4()), "expected_revision": 0}
+    command = confirmation_command(client, path, 0)
     response = client.post(path + "/confirm", json=command)
     assert response.status_code == 201, response.text
     accepted = response.json()
@@ -1961,7 +1978,7 @@ def test_confirmation_freezes_three_matched_targets_once_and_restores_the_same_r
     for _ in files:
         process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=MetadataAI())
     path = f"/audit-tasks/{task['id']}"
-    command = {"request_id": str(uuid.uuid4()), "expected_revision": 0}
+    command = confirmation_command(client, path, 0)
     response = client.post(path + "/confirm", json=command)
     assert response.status_code == 201, response.text
     accepted = response.json()
@@ -2020,7 +2037,7 @@ def test_private_task_cannot_be_read_through_its_round_or_original_by_a_tenant_p
     task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [file]}).json()
     process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=MetadataAI())
     path = f"/audit-tasks/{task['id']}"
-    command = {"request_id": str(uuid.uuid4()), "expected_revision": 0}
+    command = confirmation_command(client, path, 0)
     accepted = client.post(path + "/confirm", json=command).json()
     version = accepted["files"][0]["file"]
     round_path = f"/rounds/{accepted['round_id']}"
@@ -2081,7 +2098,10 @@ def test_reference_only_task_can_end_without_a_round_report_or_charge(task_syste
     recognized = client.get(path).json()
     assert recognized["files"][0]["match"]["state"] == "reference"
     assert recognized["estimated_points"] == 0
-    assert client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).status_code == 409
+    assert recognized["confirmation_basis_digest"] is None
+    invalid = {"request_id": str(uuid.uuid4()), "expected_revision": 0, "expected_confirmation_basis_digest": recognized["confirmation_basis_digest"]}
+    refused = client.post(path + "/confirm", json=invalid)
+    assert refused.status_code == 400 and refused.json() == {"error": "invalid_task_confirmation"}
     ended = client.post(path + "/end", json={"expected_revision": 0})
     assert ended.status_code == 200, ended.text
     assert ended.json()["state"] == "completed"
@@ -2161,6 +2181,7 @@ def test_user_can_end_after_unselecting_all_matched_targets(task_system):
     process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=MetadataAI())
     path = f"/audit-tasks/{task['id']}"
     assert client.get(path).json()["files"][0]["match"]["state"] == "matched"
+    confirmation = confirmation_command(client, path, 0)
     assert client.post(path + "/end", json={"expected_revision": 0}).status_code == 409
     command = {"expected_revision": 0, "unselected_file_version_ids": [file["file_version_id"]]}
     ended = client.post(path + "/end", json=command)
@@ -2170,7 +2191,7 @@ def test_user_can_end_after_unselecting_all_matched_targets(task_system):
     assert ended.json()["round_id"] is None
     assert ended.json()["estimated_points"] == 0
     assert client.post(path + "/end", json=command).json() == ended.json()
-    assert client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).status_code == 409
+    assert client.post(path + "/confirm", json=confirmation).status_code == 409
     assert client.get("/rounds").json()["rounds"] == []
     assert client.get("/usage").json()["events"] == []
 
@@ -2207,7 +2228,7 @@ def test_v4_preset_t12_can_be_a_target_without_changing_legacy_reference_behavio
     assert recognized["files"][0]["match"]["state"] == "matched"
     assert recognized["files"][0]["match"]["rule"]["body"]["preset_key"] == "N04"
     assert recognized["estimated_points"] == 500
-    accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0})
+    accepted = client.post(path + "/confirm", json=confirmation_command(client, path, 0))
     assert accepted.status_code == 201, accepted.text
     assert accepted.json()["round_id"]
     assert accepted.json()["files"][0]["match"]["state"] == "matched"
@@ -2231,7 +2252,10 @@ def test_v4_t12_explicit_reference_remains_free_and_restores_its_role(auth_store
     assert task["files"][0]["match"]["state"] == "reference"
     assert task["files"][0]["reference_only"] is True
     assert task["estimated_points"] == 0
-    assert client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).status_code == 409
+    assert task["confirmation_basis_digest"] is None
+    invalid = {"request_id": str(uuid.uuid4()), "expected_revision": 0, "expected_confirmation_basis_digest": task["confirmation_basis_digest"]}
+    refused = client.post(path + "/confirm", json=invalid)
+    assert refused.status_code == 400 and refused.json() == {"error": "invalid_task_confirmation"}
     assert client.post(path + "/end", json={"expected_revision": 0}).status_code == 200
     assert client.get("/rounds").json()["rounds"] == []
     assert client.get("/usage").json()["events"] == []
@@ -2294,7 +2318,7 @@ def test_v4_nio_pair_keeps_frozen_dual_original_evidence_through_worker_and_api(
     assert recognized["files"][0]["match"]["rule"]["body"]["preset_key"] == "N02"
     assert recognized["files"][1]["match"]["state"] == "reference"
     assert recognized["estimated_points"] == 500
-    confirmed = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0})
+    confirmed = client.post(path + "/confirm", json=confirmation_command(client, path, 0))
     assert confirmed.status_code == 201, confirmed.text
     round_id = confirmed.json()["round_id"]
     job = worker.claim_job("nio-audit")

@@ -257,7 +257,9 @@ def test_gate_runs_inside_confirmation_and_unknown_does_not_block(system, enforc
     admin.settings.precheck_gate_enforced = enforced
     with admin._conn() as conn:
         conn.execute("UPDATE engine.jobs SET result=%s WHERE id=%s", (Jsonb(result), receipt["id"]))
-    response = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0})
+    response = client.post(
+        path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0, "expected_confirmation_basis_digest": client.get(path).json()["confirmation_basis_digest"]}
+    )
     assert response.status_code == (409 if enforced else 201), response.text
     if enforced:
         assert response.json()["error"] == "precheck_blocked"
@@ -351,7 +353,7 @@ def test_certified_gate_excludes_only_bad_target_and_replays_same_acceptance(sys
     admin.settings.precheck_gate_enforced = True
     with admin._conn() as conn:
         conn.execute("UPDATE engine.jobs SET result=%s WHERE id=%s", (Jsonb(result), receipt["id"]))
-    request = {"request_id": str(uuid.uuid4()), "expected_revision": 0}
+    request = {"request_id": str(uuid.uuid4()), "expected_revision": 0, "expected_confirmation_basis_digest": client.get(path).json()["confirmation_basis_digest"]}
     accepted = client.post(path + "/confirm", json=request)
     assert accepted.status_code == 201, accepted.text
     assert accepted.json()["estimated_points"] == 500
@@ -440,7 +442,9 @@ def precheck(context):
     assert current["input"]["files"][0]["suite_target"]["suite_revision_id"] == candidate["id"]
     process_claimed(worker, worker.claim_job("new-source"), "new-source")
     assert "changed enterprise preparation" in json.dumps(client.get(path).json()["precheck"]["result"])
-    accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0})
+    accepted = client.post(
+        path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0, "expected_confirmation_basis_digest": client.get(path).json()["confirmation_basis_digest"]}
+    )
     assert accepted.status_code == 201, accepted.text
     snapshot = SuiteStore(admin.settings, admin.objects).read_snapshot(accepted.json()["round_id"], principal.tenant_id)
     assert snapshot.targets[0].suite_revision_id == candidate["id"]

@@ -220,7 +220,10 @@ class OpenAPIContractTests(unittest.TestCase):
         self.assertIn("acceptance", task["properties"])
         confirmation = spec["paths"]["/audit-tasks/{task_id}/confirm"]["post"]
         self.assertEqual(_response_schema(confirmation)["$ref"], "#/components/schemas/AuditTask")
-        self.assertEqual(set(_request_schema(confirmation)["required"]), {"request_id", "expected_revision"})
+        self.assertIn("confirmation_basis_digest", task["required"])
+        self.assertEqual(task["properties"]["confirmation_basis_digest"]["anyOf"], [{"type": "string"}, {"type": "null"}])
+        self.assertEqual(set(_request_schema(confirmation)["required"]), {"request_id", "expected_revision", "expected_confirmation_basis_digest"})
+        self.assertEqual(_request_schema(confirmation)["properties"]["expected_confirmation_basis_digest"]["type"], "string")
         request = _request_schema(app.openapi()["paths"]["/audit-tasks"]["post"])
         self.assertEqual(set(request["required"]), {"request_id", "analysis_mode", "customer_preference", "files"})
         self.assertEqual(set(request["properties"]["files"]["items"]["required"]), {"file_version_id", "validation_id", "selection", "removal_reason"})
