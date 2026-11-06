@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 from copy import deepcopy
+from dataclasses import replace
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -19,6 +20,7 @@ from audit.precheck_sources import l1_criteria, l1_spec, required_structure, str
 from audit.standard_suites import standard_suites
 from documents.model_access import ModelAccess, model_access_scope
 from openpyxl import Workbook
+from PIL import Image
 from pydantic import SecretStr
 
 CODE = b"""def check(context):
@@ -163,6 +165,125 @@ def test_guest_cannot_self_certify_or_name_another_result():
     changed["files"][0]["facts"][0]["certified"] = True
     with pytest.raises(ValueError, match="uncertified"):
         validate_result(payload, changed)
+
+
+def test_element_fact_ids_and_shared_source_keep_distinct_states_and_root_coverage():
+    code = b"""def precheck(context):
+    from audit.precheck_contract import fact
+    return [
+        fact("R", "unknown", "Whole criterion remains unknown"),
+        {**fact("R:E01", "satisfied", "One element observed"), "source_id": "R"},
+        {**fact("R:E02", "defect", "Another element has a defect"), "source_id": "R"},
+        {**fact("T:E01", "satisfied", "No root result was produced"), "source_id": "T"},
+    ]
+"""
+    payload, snapshot, sources, programs = request(code)
+    payload["files"][0]["precheck_criteria"] = [{"id": name, "criterion": name} for name in ("R", "T")]
+    result = execute_precheck(ControlledGuest(), payload, snapshot, sources, programs, ExecutionContext())
+    row = result["files"][0]
+    facts = {item["id"]: item for item in row["facts"]}
+    assert {name: (facts[name]["source_id"], facts[name]["status"]) for name in ("R", "R:E01", "R:E02", "T:E01", "T")} == {
+        "R": ("R", "unknown"),
+        "R:E01": ("R", "satisfied"),
+        "R:E02": ("R", "defect"),
+        "T:E01": ("T", "satisfied"),
+        "T": ("T", "not_checked"),
+    }
+    assert row["coverage"]["expected"] == 2
+    assert {status: count for status, count in row["coverage"]["by_status"].items() if count} == {"unknown": 1, "not_checked": 1}
+
+
+def test_duplicate_fact_ids_still_rejected_even_with_different_sources():
+    code = b"""def precheck(context):
+    from audit.precheck_contract import fact
+    return [fact("same", "unknown", "first"), {**fact("same", "satisfied", "second"), "source_id": "another"}]
+"""
+    with pytest.raises(ValueError, match="duplicate_precheck_fact"):
+        run_precheck(*request(code))
+    payload, snapshot, sources, programs = request()
+    result = run_precheck(payload, snapshot, sources, programs)
+    result["files"][0]["facts"].append({**result["files"][0]["facts"][0], "source_id": "another"})
+    with pytest.raises(ValueError, match="duplicate_precheck_fact"):
+        validate_result(payload, result)
+
+
+@pytest.mark.parametrize(("key", "value"), [("id", ""), ("id", 1), ("source_id", ""), ("source_id", None), ("source_id", 1)])
+def test_result_requires_nonempty_fact_and_source_ids(key, value):
+    payload, snapshot, sources, programs = request()
+    result = run_precheck(payload, snapshot, sources, programs)
+    result["files"][0]["facts"][0][key] = value
+    with pytest.raises(ValueError, match="invalid_precheck_fact"):
+        validate_result(payload, result)
+
+
+def test_criterion_id_with_a_different_source_cannot_claim_root_coverage():
+    payload, snapshot, sources, programs = request()
+    payload["files"][0]["precheck_criteria"] = [{"id": "X", "criterion": "Required structure"}]
+    result = run_precheck(payload, snapshot, sources, programs)
+    result["files"][0]["facts"][0]["source_id"] = "different-criterion"
+    with pytest.raises(ValueError, match="coverage_mismatch"):
+        validate_result(payload, result)
+
+
+def test_all_19_uaes_sources_precheck_together_without_collapsing_measurement_elements(monkeypatch):
+    """Controlled originals exercise every UAES hook, not engineering certification."""
+    import httpx
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Free preparation must not make external model requests")
+
+    monkeypatch.setattr(httpx.Client, "send", forbidden)
+    monkeypatch.setattr(httpx.AsyncClient, "send", forbidden)
+    payload, snapshot, _, _ = request()
+    payload["files"] = []
+    inputs, targets, sources, programs = [], [], {}, {}
+    suites = [suite for suite in standard_suites() if suite.customer == "UAES"]
+    assert len(suites) == 19
+    for suite in suites:
+        entry = suite.source_entry
+        buffer = io.BytesIO()
+        if entry == "U13":
+            Image.new("RGB", (2, 2), "white").save(buffer, format="PNG")
+            suffix = ".png"
+        else:
+            book = Workbook()
+            book.active.title = "报告"
+            for row in [[entry, suite.document_type], ["客户", "UAES"], ["零件号", "P-1"], ["版本", "A"]]:
+                book.active.append(row)
+            book.save(buffer)
+            book.close()
+            suffix = ".xlsx"
+        sources[entry] = buffer.getvalue()
+        inputs.append(FrozenInput(entry, hashlib.sha256(sources[entry]).hexdigest(), "target", entry + suffix, suite.document_type, "file-" + entry, "UAES"))
+        one_payload, one_snapshot, _, one_programs = request(suite=suite)
+        target = replace(one_snapshot.targets[0], file_version_id=entry, suite_revision_id="frozen-" + entry, suite_digest=suite.revision_digest)
+        source = one_payload["files"][0]
+        source["file"]["id"] = entry
+        source["suite_target"] = target.to_dict()
+        source["rule_execution"].update(suite_revision_id=target.suite_revision_id, suite_digest=target.suite_digest)
+        payload["files"].append(source)
+        targets.append(target)
+        programs.update(one_programs)
+    snapshot = replace(snapshot, inputs=tuple(inputs), targets=tuple(targets))
+    with model_access_scope(ModelAccess(SecretStr("host-secret-must-not-be-visible"))):
+        result = execute_precheck(ControlledGuest(), payload, snapshot, sources, programs, ExecutionContext())
+    assert len(result["files"]) == 19
+    for source, row in zip(payload["files"], result["files"]):
+        facts = {item["id"]: item for item in row["facts"]}
+        assert len(facts) == len(row["facts"])
+        assert "execution" not in facts, row
+        assert all(item["certified"] is False for item in facts.values())
+        criteria = [*source["required_structure"], *source["precheck_criteria"]]
+        assert row["coverage"]["expected"] == len(criteria)
+        assert sum(row["coverage"]["by_status"].values()) == len(criteria)
+    measurement = next(row for row in result["files"] if row["file_version_id"] == "U02")
+    elements = {item["id"]: item for item in measurement["facts"] if item["source_id"] == "U02:M-02"}
+    assert set(elements) == {"U02:M-02", *(f"U02:M-02:E{index:02d}" for index in range(1, 24))}
+    assert elements["U02:M-02"]["status"] == "unknown"
+    assert elements["U02:M-02:E03"]["status"] == "satisfied"
+    assert elements["U02:M-02:E11"]["status"] == "not_checked"
+    assert any(item["excerpt"] == "P-1" for item in elements["U02:M-02:E03"]["evidence"]["sources"])
+    assert "host-secret" not in json.dumps(result)
 
 
 def test_identity_rpc_rejects_worker_code_and_paths_before_dispatch():

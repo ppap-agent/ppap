@@ -96,10 +96,13 @@ def run_precheck(payload, snapshot, sources, programs):
                                     for item in observed:
                                         if not isinstance(item, dict) or item.get("status") not in STATUSES:
                                             raise ValueError("invalid_precheck_fact")
-                                        identity = item.get("source_id") or item.get("id")
-                                        if not isinstance(identity, str) or not identity:
+                                        # A criterion may have several distinct element facts.
+                                        # Keep their unique IDs separate from their shared source.
+                                        identity = item.get("id", item.get("source_id"))
+                                        source_id = item.get("source_id", identity)
+                                        if not isinstance(identity, str) or not identity or not isinstance(source_id, str) or not source_id:
                                             raise ValueError("invalid_precheck_fact")
-                                        facts.append({**fact(identity, item["status"], item.get("message") or ""), **item, "id": identity, "source_id": identity, "certified": False})
+                                        facts.append({**fact(identity, item["status"], item.get("message") or ""), **item, "id": identity, "source_id": source_id, "certified": False})
                                 facts.append(fact("engineering", "handoff", "正式工程结论由正式审核处理；预检未声明覆盖全部规则。", code="S03"))
                             finally:
                                 _restore_modules(saved)
