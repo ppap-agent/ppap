@@ -1,4 +1,7 @@
-"""In-repo audit runtime: DTO mapping plus engine call. Worker uses this, not ppap-agent."""
+"""Historical algorithm/conversion baseline helpers used by direct regression tests.
+
+Accepted product audits execute through the frozen Checker Core guest boundary.
+"""
 
 from __future__ import annotations
 
