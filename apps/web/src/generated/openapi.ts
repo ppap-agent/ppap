@@ -3299,16 +3299,16 @@ export interface components {
                 [key: string]: string;
             };
             /** Customers */
-            customers: string[];
+            customers?: string[];
             /**
              * Kind
              * @constant
              */
             kind: "engine";
             /** Models */
-            models: string[];
+            models?: string[];
             /** Parts */
-            parts: string[];
+            parts?: string[];
             /** Preset Key */
             preset_key?: string;
             /** Rule Profile */
@@ -3582,6 +3582,8 @@ export interface components {
         };
         /** FindingLocator */
         FindingLocator: {
+            /** Checker Digest */
+            checker_digest?: string;
             evidence?: components["schemas"]["Evidence"] | null;
             /** File Id */
             file_id?: string;
@@ -3596,6 +3598,13 @@ export interface components {
             /** Rule Item Id */
             rule_item_id?: string;
             semantic?: components["schemas"]["SemanticEvidence"];
+            /** Suite Revision Id */
+            suite_revision_id?: string;
+            /**
+             * Verification Status
+             * @enum {string}
+             */
+            verification_status?: "unverified" | "verified";
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -4334,12 +4343,16 @@ export interface components {
         SemanticEvidence: {
             /** Binding */
             binding?: string;
+            /** Checks Performed */
+            checks_performed?: number;
             /** Clause Id */
             clause_id: string;
             /** Diagnostic */
             diagnostic?: string;
             /** Diagnostics */
             diagnostics?: components["schemas"]["SemanticDiagnostic"][];
+            /** Empty Scope Basis */
+            empty_scope_basis?: string;
             /** Evidence Incomplete */
             evidence_incomplete?: boolean;
             /** Rule Source File Version Id */
@@ -4371,6 +4384,11 @@ export interface components {
             file_version_id: string;
             /** Filename */
             filename: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind?: "structure" | "visual";
             /** Locator */
             locator: components["schemas"]["XlsxCellLocator"] | components["schemas"]["XlsxRangeLocator"] | components["schemas"]["PdfBlockLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["PdfCellLocator"] | components["schemas"]["DocxParagraphLocator"] | components["schemas"]["DocxCellLocator"];
             /**

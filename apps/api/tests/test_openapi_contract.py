@@ -75,6 +75,43 @@ def _request_schema(operation: dict) -> dict | None:
 
 
 class OpenAPIContractTests(unittest.TestCase):
+    def test_suite_rule_contract_does_not_require_historical_routing_metadata(self):
+        import json
+
+        from audit.suite_migration import migrated_builtin_suite
+
+        body = json.loads(migrated_builtin_suite("v3", "控制计划").files["rules.json"])
+        observed = TypeAdapter(wc.EngineRuleBody).validate_python(body)
+        self.assertEqual(observed["rules"], body["rules"])
+        self.assertEqual(observed["checker_binding"], body["checker_binding"])
+        self.assertNotIn("rule_profile", observed)
+        self.assertNotIn("customers", observed)
+
+    def test_core_finding_contract_preserves_execution_identity_and_evidence(self):
+        value = {
+            "suite_revision_id": "suite-revision",
+            "checker_digest": "sha256:checker",
+            "verification_status": "unverified",
+            "semantic": {
+                "rule_version_id": "rules",
+                "clause_id": "C1",
+                "rule_text": "Inspect the original cell",
+                "checks_performed": 1,
+                "empty_scope_basis": "",
+                "sources": [
+                    {
+                        "file_version_id": "file",
+                        "filename": "sample.xlsx",
+                        "role": "target",
+                        "kind": "structure",
+                        "locator": {"kind": "xlsx_cell", "sheet": "Sheet1", "cell": "A1"},
+                        "excerpt": "confirmed",
+                    }
+                ],
+            },
+        }
+        self.assertEqual(TypeAdapter(wc.FindingLocator).validate_python(value), value)
+
     def test_pdf_cell_contract_preserves_one_based_original_pdf_coordinates(self):
         locator = {"kind": "pdf_cell", "page": 3, "row": 12, "column": 4}
         adapter = TypeAdapter(wc.SemanticLocator)

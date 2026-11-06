@@ -13,9 +13,9 @@ export function parsedBasis(basis: RequirementBasis, candidate: RuleCandidate): 
 export function basisRuleBody(basis: RequirementBasis): RuleBody {
   if (!basis.server) throw new Error('审核规则尚未连接到规则版本。')
   return {...basis.server.body,
-    customers: basis.server.body.customers.map(value => value.trim()),
-    models: basis.server.body.models.map(value => value.trim()),
-    parts: basis.server.body.parts.map(value => value.trim()),
+    customers: (basis.server.body.customers ?? []).map(value => value.trim()),
+    models: (basis.server.body.models ?? []).map(value => value.trim()),
+    parts: (basis.server.body.parts ?? []).map(value => value.trim()),
     rules: basis.clauses.filter(row => row.applicability === 'apply').map(row => {
     const original = basis.server!.body.rules.find(item => item.id === row.id)
     return {id: row.id.trim(), category: row.title.trim(), priority: original?.priority ?? null, rule_to_check: row.text.trim(), type_of_rule: original?.type_of_rule.trim() || 'text'}
@@ -54,7 +54,7 @@ export async function readRuleVersions(ids: string[], signal: AbortSignal): Prom
     const material: Material = {file_id: rule.source_file_id, file_version_id: rule.source_file_version_id, original_filename: file?.original_filename || rule.title, role: 'reference', rule_version_id: null}
     const base = localBasis(rule.title)
     let basis = parsedBasis({...base, server: {body: rule.body, material, ruleId: rule.id}}, {title: rule.title, body: rule.body, source_file_version_id: rule.source_file_version_id})
-    let scope: RequirementCollection['versions'][number]['scope'] = {customer: rule.body.customers[0] || '', part: rule.body.parts[0] || '', revision: '', allCustomers: rule.customer_scope === 'all', allParts: !rule.body.parts.length, allRevisions: true}
+    let scope: RequirementCollection['versions'][number]['scope'] = {customer: rule.body.customers?.[0] || '', part: rule.body.parts?.[0] || '', revision: '', allCustomers: rule.customer_scope === 'all', allParts: !rule.body.parts?.length, allRevisions: true}
     let reason = ''
     if (rule.case_context?.registration) {
       try {
