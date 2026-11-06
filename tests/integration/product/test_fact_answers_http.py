@@ -49,9 +49,12 @@ def test_http_fact_answer_export_and_report_keep_the_original(auth_store_factory
         assert report.status_code == 200
         assert report.headers["content-type"] == "application/pdf"
         with fitz.open(stream=report.content, filetype="pdf") as document:
-            text = "".join(page.get_text() for page in document)
+            # Expand font ligatures so identifiers are compared as source text.
+            text = "".join(page.get_text(flags=fitz.TEXTFLAGS_TEXT & ~fitz.TEXT_PRESERVE_LIGATURES) for page in document)
         assert "UNABLE" in text and "PASS" in text
         assert alice.user_id in text
+        assert version["id"] in text
+        assert round_id in text
     reopened = build_product_store(store.settings, objects=store.objects, role="api")
     assert reopened.get_round(round_id) == original
     assert reopened.read_fact_answer_operation(alice, round_id, request["operation_id"]) == receipt
