@@ -11,6 +11,7 @@ from product.rules import (
     RULE_FILE_EXTENSIONS,
     RuleParseError,
     document_types,
+    normalize_document_type,
     normalize_rule_body,
 )
 
@@ -50,6 +51,12 @@ def _word_rule_table(content: bytes) -> list[dict] | None:
 
 
 def parse_rule_file(filename: str, content: bytes, *, document_type: str = "", ai=None) -> dict:
+    if not isinstance(document_type, str):
+        raise RuleParseError("unknown_rule_type")
+    try:
+        document_type = normalize_document_type(document_type) if document_type else ""
+    except ValueError:
+        raise RuleParseError("unknown_rule_type") from None
     extension = Path(filename).suffix.lower()
     if extension not in RULE_FILE_EXTENSIONS:
         raise RuleParseError("unsupported_rule_file")
@@ -78,23 +85,20 @@ def parse_rule_file(filename: str, content: bytes, *, document_type: str = "", a
         raise RuleParseError("empty_rule_document")
     if len(text) > MAX_RULE_TEXT:
         raise RuleParseError("rule_document_too_long")
-    if not isinstance(document_type, str):
-        raise RuleParseError("unknown_rule_type")
     doc_type = PpapDocumentType.from_string(document_type or filename)
-    if document_type and doc_type == PpapDocumentType.UNKNOWN:
-        raise RuleParseError("unknown_rule_type")
-    if doc_type == PpapDocumentType.UNKNOWN and len(text) > 4000:
+    type_name = document_type or (doc_type.get_type_name() if doc_type != PpapDocumentType.UNKNOWN else "")
+    if not type_name and len(text) > 4000:
         raise RuleParseError("rule_type_required")
-    if extension == ".docx" and doc_type != PpapDocumentType.UNKNOWN:
+    if extension == ".docx" and type_name:
         rules = _word_rule_table(content)
         if rules is not None:
-            return normalize_rule_body({"kind": "engine", "type": doc_type.get_type_name(), "rule_profile": "v3", "rules": rules})
+            return normalize_rule_body({"kind": "engine", "type": type_name, "rule_profile": "v3", "rules": rules})
     try:
         if ai is None:
             from audit.engine.checkers.client import AIClient
 
             ai = AIClient()
-        if doc_type == PpapDocumentType.UNKNOWN:
+        if not type_name:
             classified = ai.structured_completion(
                 system_prompt=PromptManager.get_system_prompt("ppap_expert"),
                 user_prompt=PromptManager.get_document_classification_prompt(text, "\n".join(document_types())),
@@ -105,9 +109,10 @@ def parse_rule_file(filename: str, content: bytes, *, document_type: str = "", a
                 retry_limit=0,
             )
             doc_type = PpapDocumentType.from_string(classified)
-        if doc_type == PpapDocumentType.UNKNOWN:
+            type_name = doc_type.get_type_name() if doc_type != PpapDocumentType.UNKNOWN else ""
+        if not type_name:
             raise RuleParseError("unknown_rule_type")
-        prompt = PromptManager.get_rule_extraction_prompt(text, doc_type.get_type_name())
+        prompt = PromptManager.get_rule_extraction_prompt(text, type_name)
         prompt += "\n同时返回 customers、models、parts 三个字符串数组，仅包含原文明确的适用客户、型号、零件；没有则为空数组。"
         response = ai.structured_completion(
             system_prompt=PromptManager.get_system_prompt("rule_extractor"),
@@ -122,7 +127,7 @@ def parse_rule_file(filename: str, content: bytes, *, document_type: str = "", a
         parsed = json.loads(response.strip().removeprefix("```json").removesuffix("```").strip())
         if not isinstance(parsed, dict):
             raise ValueError("invalid_rule_body")
-        return normalize_rule_body({**parsed, "type": doc_type.get_type_name(), "rule_profile": "v3"})
+        return normalize_rule_body({**parsed, "type": type_name, "rule_profile": "v3"})
     except RuleParseError:
         raise
     except Exception:
