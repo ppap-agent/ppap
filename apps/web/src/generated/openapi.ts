@@ -3357,6 +3357,22 @@ export interface components {
             /** Suite Revision Id */
             suite_revision_id: string;
         };
+        /** ClauseChange */
+        ClauseChange: {
+            /** After */
+            after: string | null;
+            /** Before */
+            before: string | null;
+            /** Checker */
+            checker: string | null;
+            /** Clause Id */
+            clause_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "added" | "removed" | "changed" | "unchanged";
+        };
         /** ConfirmedAppendix */
         ConfirmedAppendix: {
             /** Candidate Id */
@@ -3426,6 +3442,8 @@ export interface components {
         };
         /** DevelopmentReport */
         DevelopmentReport: {
+            /** Code Changed */
+            code_changed?: boolean | null;
             /** Error Code */
             error_code?: string | null;
             /** Reasons */
@@ -3860,6 +3878,8 @@ export interface components {
         };
         /** FeedbackResponse */
         FeedbackResponse: {
+            /** Case Ordinal */
+            case_ordinal?: number | null;
             /** Evidence */
             evidence: components["schemas"]["CheckerFeedbackEvidence"][];
             /**
@@ -4163,11 +4183,17 @@ export interface components {
              * @enum {string}
              */
             action: "save_only" | "run_tests";
+            /** Confirmed Rule Revision Id */
+            confirmed_rule_revision_id?: string | null;
             /**
              * Consume Model
              * @default false
              */
             consume_model: boolean;
+            /** Expected Feedback Revisions */
+            expected_feedback_revisions?: {
+                [key: string]: number;
+            } | null;
             /** Expected Model Revision */
             expected_model_revision?: string | null;
             /** Feedback Ids */
@@ -4790,6 +4816,19 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** RuleImpact */
+        RuleImpact: {
+            /** Appendix Changed */
+            appendix_changed: boolean;
+            /** Changed */
+            changed: boolean;
+            /** Clauses */
+            clauses: components["schemas"]["ClauseChange"][];
+            /** Source Revision Id */
+            source_revision_id: string;
+            /** Target Revision Id */
+            target_revision_id: string;
+        };
         /** RuleItem */
         RuleItem: {
             /** Category */
@@ -4988,6 +5027,7 @@ export interface components {
             latest_official_version: number | null;
             /** Official Base Revision Id */
             official_base_revision_id: string | null;
+            official_rule_impact?: components["schemas"]["RuleImpact"] | null;
             /** Official Update Available */
             official_update_available: boolean;
             /** Official Update Notice */
@@ -4999,6 +5039,7 @@ export interface components {
             origin: "official" | "enterprise";
             /** Revision */
             revision: number;
+            rule_update?: components["schemas"]["RuleImpact"] | null;
             /**
              * Selection Mode
              * @enum {string}
@@ -5092,6 +5133,7 @@ export interface components {
             round_count: number;
             /** Rounds */
             rounds: components["schemas"]["SuiteRound"][];
+            rule_impact?: components["schemas"]["RuleImpact"] | null;
             /** Suite Key */
             suite_key: string;
             /** Tenant Id */

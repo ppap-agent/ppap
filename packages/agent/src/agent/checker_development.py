@@ -49,6 +49,8 @@ class OracleSample:
     confirmed_by: str
     expected_rule_digest: str | None = None
     repair_selected: bool = True
+    repair_clause_ids: frozenset[str] | None = None
+    feedback_ids: tuple[str, ...] = ()
 
     @property
     def holdout(self) -> bool:
@@ -77,6 +79,7 @@ class DevelopmentRequest:
     prior: CheckerArtifact | SuiteCheckerProgram | None = None
     fixed: CheckerArtifact | SuiteCheckerProgram | None = None
     feedback: str | None = None
+    rule_changes: tuple[dict, ...] = ()
     oracle_revision: str | None = None
     oracle: tuple[OracleSample, ...] = ()
     allow_model_calls: bool = True
@@ -104,10 +107,12 @@ class DevelopmentOutcome:
     error_code: str | None = None
     usage_uncertain: bool = False
     usage_source: Literal["unknown", "provider", "controlled"] = "unknown"
+    code_changed: bool | None = None
 
     def receipt(self) -> dict:
         return {
             "artifact": self.artifact.model_dump(mode="json") if self.artifact else None,
+            "code_changed": self.code_changed,
             "results": [row.model_dump(mode="json") for row in self.results],
             "trials": self.trials,
             "usage": self.usage,
@@ -213,6 +218,7 @@ def _evaluate(sample: OracleSample, results: list[AuditResultItem], baseline: li
         )
     return CaseEvaluation(
         case_id=sample.case_id,
+        feedback_ids=sample.feedback_ids,
         ordinal=sample.ordinal,
         input_digest=sample.inputs.digest,
         split="holdout" if sample.holdout else "training",
@@ -239,9 +245,27 @@ def develop_and_run(request: DevelopmentRequest, job: DevelopmentJob) -> Develop
                 continue
             rows, error = _trial(job, request.prior, sample.inputs, request.executor_revision)
             baseline[sample.case_id] = rows
-            if sample.expectations_current and sample.repair_selected:
-                training.append({"case_id": sample.case_id, "expected": sample.expected, "actual": {str(row.clause_id): row.status for row in rows}, "error_code": error})
+            selected_expected = {clause: status for clause, status in sample.expected.items() if sample.repair_clause_ids is None or clause in sample.repair_clause_ids}
+            if sample.expectations_current and sample.repair_selected and selected_expected:
+                training.append(
+                    {
+                        "case_id": sample.case_id,
+                        "expected": selected_expected,
+                        "actual": {str(row.clause_id): row.status for row in rows if row.clause_id in selected_expected},
+                        "error_code": error,
+                    }
+                )
     feedback = request.feedback or ""
+    if request.rule_changes:
+        changes: list[dict] = []
+        for change in request.rule_changes:
+            if change["kind"] == "unchanged":
+                continue
+            if len(encoded([*changes, change]).decode()) > 5000:
+                break
+            changes.append(change)
+        diff_text = "规则原文差异（按 ID 比较；完整新版规则见正式输入，未变化条款同样必须回归）：\n" + encoded(changes).decode()
+        feedback = diff_text + "\n" + feedback[: max(0, 8000 - len(diff_text) - 1)]
     if training:
         # The generation boundary is bounded even when many long clause IDs or
         # user notes are present. Omitted training rows still run in evaluation.
@@ -271,6 +295,7 @@ def develop_and_run(request: DevelopmentRequest, job: DevelopmentJob) -> Develop
         outcome.error_code = exc.code
         outcome.usage_uncertain = exc.code in {"deep_model_protocol", "deep_timeout", "deep_execution_failed", "deep_runtime_unavailable", "deep_budget_exhausted"}
         return outcome
+    outcome.code_changed = request.prior is None or outcome.artifact.files != request.prior.files
     evaluations: list[CaseEvaluation] = []
     for sample in request.oracle:
         if request.prior is not None and sample.case_id not in baseline:

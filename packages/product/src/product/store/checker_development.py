@@ -65,7 +65,17 @@ def _feedback(row: dict) -> dict:
         "evidence",
         "revision",
     )
-    return {name: str(row[name]) if isinstance(row[name], UUID) else row[name] for name in fields}
+    return {**{name: str(row[name]) if isinstance(row[name], UUID) else row[name] for name in fields}, "case_ordinal": row.get("case_ordinal", row["ordinal"])}
+
+
+def _case_ordinal(conn, row):
+    return conn.execute(
+        """SELECT case_ordinal FROM (
+             SELECT round_id,file_version_id,dense_rank() OVER (ORDER BY min(ordinal)) AS case_ordinal
+             FROM product.checker_feedback WHERE tenant_id=%s AND suite_key=%s GROUP BY round_id,file_version_id
+           ) cases WHERE round_id=%s AND file_version_id=%s""",
+        (row["tenant_id"], row["suite_key"], row["round_id"], row["file_version_id"]),
+    ).fetchone()[0]
 
 
 def _receipt(row: dict) -> dict:
@@ -153,7 +163,7 @@ class CheckerDevelopmentStore:
                     raise ValueError("checker_operation_conflict")
                 if prior["deleted_at"] is not None:
                     raise ValueError("checker_feedback_deleted")
-                return _feedback(prior)
+                return _feedback({**prior, "case_ordinal": _case_ordinal(conn, prior)})
             head = conn.execute("SELECT result_attempt FROM product.audit_rounds WHERE id=%s AND tenant_id=%s FOR SHARE", (round_id, principal.tenant_id)).fetchone()
             if not head or head[0] != payload["result_attempt"]:
                 raise ValueError("checker_result_changed")
@@ -201,6 +211,7 @@ class CheckerDevelopmentStore:
                 ),
             )
             saved = cur.fetchone()
+            saved["case_ordinal"] = _case_ordinal(conn, saved)
             self._invalidate_proofs(conn, principal.tenant_id, suite.revision.suite_key)
             return _feedback(saved)
 
@@ -232,7 +243,9 @@ class CheckerDevelopmentStore:
                 "UPDATE product.checker_feedback SET expected_status=%s,rationale=%s,evidence=%s,reason_category=%s,revision=revision+1,updated_at=now() WHERE id=%s RETURNING *",
                 (payload["expected_status"], payload["rationale"].strip(), Jsonb(evidence), category, feedback_id),
             )
-            return _feedback(cur.fetchone())
+            saved = cur.fetchone()
+            saved["case_ordinal"] = _case_ordinal(conn, saved)
+            return _feedback(saved)
 
     def list_feedback(self, principal, round_id):
         round_id = _id(round_id)
@@ -352,7 +365,7 @@ class CheckerDevelopmentStore:
                 self._evidence(conn, principal, str(row["round_id"]), row["evidence"])
             except (KeyError, ValueError):
                 continue
-            result.append(_feedback(row))
+            result.append(_feedback({**row, "case_ordinal": _case_ordinal(conn, row)}))
         return result
 
     @staticmethod
@@ -419,7 +432,7 @@ class CheckerDevelopmentStore:
                     raise KeyError("checker_access_denied")
 
     def start(self, principal, suite_revision_id, payload):
-        from product.store.suite_releases import current_selection
+        from product.store.suite_releases import _read_lock, current_selection
 
         suite_revision_id, operation_id = _id(suite_revision_id), _id(payload["operation_id"])
         feedback_ids = sorted({_id(value) for value in payload["feedback_ids"]})
@@ -430,6 +443,7 @@ class CheckerDevelopmentStore:
             # An accepted operation cannot appear after membership retirement has
             # already cancelled that member's jobs. Deletion waits for admission.
             _member(conn, principal, lock=True)
+            _read_lock(conn, principal.tenant_id)
             conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("checker-optimization:" + operation_id,))
             cur.execute(
                 "SELECT o.*, (j.lease_until < now()) AS lease_expired FROM product.checker_optimizations o LEFT JOIN engine.jobs j ON j.id=o.job_id WHERE o.operation_id=%s AND o.tenant_id=%s",
@@ -446,14 +460,27 @@ class CheckerDevelopmentStore:
             cur.execute(
                 "SELECT * FROM product.checker_feedback WHERE tenant_id=%s AND suite_key=%s AND deleted_at IS NULL ORDER BY ordinal LIMIT 65 FOR SHARE", (principal.tenant_id, suite.revision.suite_key)
             )
-            samples = cur.fetchall()
+            samples = [{**row, "case_ordinal": _case_ordinal(conn, row)} for row in cur.fetchall()]
             if not set(feedback_ids) <= {str(row["id"]) for row in samples}:
                 raise ValueError("checker_feedback_scope_mismatch")
             if len(samples) > 64:
                 raise ValueError("checker_sample_limit")
+            confirmed_rules = payload.get("confirmed_rule_revision_id")
+            if confirmed_rules is not None and (confirmed_rules != suite_revision_id or payload.get("expected_feedback_revisions") != {str(row["id"]): row["revision"] for row in samples}):
+                raise ValueError("checker_rule_confirmation_changed")
+            current_rules = json.loads(suite.files["rules.json"])
+            current_rules["appendix"] = json.loads(suite.files.get("appendix.json", b"[]"))
+            current_clauses = {str(clause["id"]) for clause in current_rules["rules"]}
+            from product.store.rule_impact import rule_impact
+
+            try:
+                selected_id = current_selection(conn, principal.tenant_id, suite.revision.suite_key)["revision_id"]
+            except KeyError:
+                selected_id = suite.revision.base_revision_id or suite.revision.id
+            changes = rule_impact(self.suites.resolve_suite(selected_id, principal.tenant_id, conn=conn), suite)
             frozen_samples = []
             for row in samples:
-                self._authorize_round(conn, principal, str(row["round_id"]))
+                self._authorize_round(conn, principal, str(row["round_id"]), write=confirmed_rules is not None)
                 original_rule = conn.execute(
                     "SELECT rule_body FROM product.round_inputs WHERE round_id=%s AND file_version_id=%s AND rule_version_id=%s AND role='target'",
                     (row["round_id"], row["file_version_id"], row["rule_version_id"]),
@@ -463,19 +490,25 @@ class CheckerDevelopmentStore:
                 frozen_samples.append(
                     {
                         **_feedback(row),
-                        "confirmed_by": str(row["created_by"]) if row["created_by"] else "deleted-member",
-                        "expected_rule_body": original_rule[0],
+                        "confirmed_by": principal.user_id if confirmed_rules and row["rule_clause_id"] in current_clauses else str(row["created_by"]) if row["created_by"] else "deleted-member",
+                        "original_confirmed_by": str(row["created_by"]) if row["created_by"] else "deleted-member",
+                        "expected_rule_body": current_rules if confirmed_rules and row["rule_clause_id"] in current_clauses else original_rule[0],
+                        "original_expected_rule_body": original_rule[0],
+                        "rule_reconfirmed_by": principal.user_id if confirmed_rules and row["rule_clause_id"] in current_clauses else None,
                         "files": self._freeze_files(conn, principal, row, suite),
                     }
                 )
-            training = [row for row in frozen_samples if row["ordinal"] % 4]
+            from product.checker_samples import feedback_cases
+
+            feedback_cases(frozen_samples)  # Conflicting labels must be resolved before any model call.
+            training = [row for row in frozen_samples if row["case_ordinal"] % 4 and row["rule_clause_id"] in current_clauses]
             if not training:
                 raise ValueError("checker_training_sample_required")
             target = next((row for row in training if row["id"] in feedback_ids), None)
             if target is None:
                 raise ValueError("checker_training_sample_required")
             visible = {item["sha256"] for row in training for item in row["files"]}
-            if any(visible.intersection(item["sha256"] for item in row["files"]) for row in frozen_samples if row["ordinal"] % 4 == 0):
+            if any(visible.intersection(item["sha256"] for item in row["files"]) for row in frozen_samples if row["case_ordinal"] % 4 == 0):
                 raise ValueError("checker_holdout_input_exposed")
             model_identity = self.store.personal_model_identity(principal.tenant_id, principal.user_id, conn=conn) if payload["action"] == "run_tests" else {}
             if "expected_model_revision" in payload and payload["action"] == "run_tests" and payload["expected_model_revision"] != model_identity["revision"]:
@@ -497,6 +530,8 @@ class CheckerDevelopmentStore:
                 "library_revision": library_revision(),
                 "model_identity": model_identity,
                 "consume_model": payload.get("consume_model") is True,
+                "rule_changes": changes["clauses"],
+                "confirmed_rule_revision_id": confirmed_rules,
             }
             frozen["oracle_revision"] = _digest(frozen_samples)
             candidate = None
@@ -747,6 +782,7 @@ class CheckerDevelopmentStore:
                     if any(
                         _rule_semantics(sample["expected_rule_body"]) != _rule_semantics(next(item["rule_body"] for item in sample["files"] if item["role"] == "target"))
                         for sample in row["frozen"]["samples"]
+                        if sample["rule_clause_id"] in {str(clause["id"]) for clause in next(item["rule_body"] for item in sample["files"] if item["role"] == "target")["rules"]}
                     ):
                         proof = proof.model_copy(update={"reasons": tuple(dict.fromkeys((*proof.reasons, "oracle_rules_changed")))})
                     current_samples = conn.execute(

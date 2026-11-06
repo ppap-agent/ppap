@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import uuid
-from typing import Any
+from dataclasses import asdict, dataclass
+from typing import Any, Literal
 
 from audit.contracts import RuleItem
 from audit.kinds import PpapDocumentType
@@ -81,6 +82,36 @@ def latest_rule_versions(rules: list[dict]) -> list[dict]:
         if previous is None or (rule.get("created_at") or "", rule["id"]) > (previous.get("created_at") or "", previous["id"]):
             newest[root] = rule
     return sorted(newest.values(), key=lambda rule: (rule.get("type") or "", rule["title"], rule["id"]))
+
+
+@dataclass(frozen=True)
+class ClauseChange:
+    clause_id: str
+    kind: Literal["added", "removed", "changed", "unchanged"]
+    before: str | None
+    after: str | None
+    checker: str | None = None
+
+
+def diff_rules(previous: dict, current: dict) -> list[ClauseChange]:
+    """Compare exact clause identities and text, without inferred renumbering.
+
+    Ordering is presentation only. Added clauses have no inherited binding;
+    deleted clauses name the checker that previously owned them.
+    """
+    before = {str(row["id"]): row["rule_to_check"] for row in previous.get("rules", [])}
+    after = {str(row["id"]): row["rule_to_check"] for row in current.get("rules", [])}
+    bindings = previous.get("checker_binding") or {}
+    result = []
+    for clause_id in sorted(before.keys() | after.keys()):
+        kind: Literal["added", "removed", "changed", "unchanged"]
+        kind = "added" if clause_id not in before else "removed" if clause_id not in after else "unchanged" if before[clause_id] == after[clause_id] else "changed"
+        result.append(ClauseChange(clause_id, kind, before.get(clause_id), after.get(clause_id), (current.get("checker_binding") or {}).get(clause_id) if kind == "added" else bindings.get(clause_id)))
+    return result
+
+
+def rule_changes(previous: dict, current: dict) -> list[dict]:
+    return [asdict(change) for change in diff_rules(previous, current)]
 
 
 def normalize_rule_body(value: dict) -> dict:

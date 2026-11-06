@@ -1,3 +1,4 @@
+import {RuleImpactSummary} from './rule-impact'
 import {useCallback, useEffect, useId, useRef, useState} from 'react'
 import {CheckerEditor} from './checker-edit'
 import {CheckerUpgrade} from './checker-upgrade'
@@ -12,7 +13,7 @@ import {checkedAdoption, definiteCheckerRejection, nativeCheckerReleaseAdapter, 
 
 const errorText = (cause: unknown) => cause instanceof Error ? cause.message : '检查版本暂不可读。'
 /** Publish and rollback share the same server CAS command. Existing rounds are never rewritten. */
-export function CheckerRelease({scope, legacyScope, suiteKey, revisionId, optimization, onReaudit, onRevision, onVerify, verificationBusy = false, operationRunning = false, refreshKey = '', preferCurrent = false, onBusyChange, onUpgradeResult, adapter = nativeCheckerReleaseAdapter}: {scope: string; legacyScope?: string; suiteKey: string; revisionId: string; optimization?: {operationId: string; revisionId: string; explicit: boolean}; onReaudit?: () => void; onRevision?: (id: string) => void; onVerify?: (id: string) => void; verificationBusy?: boolean; operationRunning?: boolean; refreshKey?: string; preferCurrent?: boolean; onBusyChange?: (busy: boolean) => void; onUpgradeResult?: (runTests: boolean) => void; adapter?: CheckerReleaseAdapter}) {
+export function CheckerRelease({scope, legacyScope, suiteKey, revisionId, optimization, onReaudit, onRevision, onVerify, verificationBusy = false, operationRunning = false, refreshKey = '', preferCurrent = false, onBusyChange, onUpgradeResult, onRuleDraft, adapter = nativeCheckerReleaseAdapter}: {scope: string; legacyScope?: string; suiteKey: string; revisionId: string; optimization?: {operationId: string; revisionId: string; explicit: boolean}; onReaudit?: () => void; onRevision?: (id: string) => void; onVerify?: (id: string) => void; verificationBusy?: boolean; operationRunning?: boolean; refreshKey?: string; preferCurrent?: boolean; onBusyChange?: (busy: boolean) => void; onUpgradeResult?: (runTests: boolean) => void; onRuleDraft?: (id: string) => void; adapter?: CheckerReleaseAdapter}) {
   const formId = useId(), locked = useRef(false), live = useRef(true)
   const [revision, setRevision] = useState<CheckerRevision | null>(null), [active, setActive] = useState<CheckerActive | null>(null)
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [confirm, setConfirm] = useState(false), [acknowledged, setAcknowledged] = useState(false)
@@ -81,6 +82,17 @@ export function CheckerRelease({scope, legacyScope, suiteKey, revisionId, optimi
     } catch (cause) {setError(errorText(cause))}
     finally {locked.current = false; setBusy(false)}
   }
+  async function selectRuleUpdate() {
+    if (!active?.rule_update || locked.current || mutationBusy || editorBlocked || pending) return
+    locked.current = true; setBusy(true); setError('')
+    try {
+      const candidate = checkedWorkspaceRevision(await adapter.revision(active.rule_update.target_revision_id), suiteKey, active.rule_update.target_revision_id)
+      if (!live.current) return
+      select({...selection, revisionId: candidate.id, purpose: 'publish', explicit: true})
+      onRevision?.(candidate.id); onRuleDraft?.(candidate.id)
+    } catch (cause) {if (live.current) setError(errorText(cause))}
+    finally {locked.current = false; if (live.current) setBusy(false)}
+  }
   async function publish() {
     if (!revision || !active || pending || editorBlocked || selection.legacyBlocked || upgradeLocked || locked.current || !confirm || unverified && !acknowledged) return
     const input: AdoptChecker = {revision_id: revision.id, expected_revision: active.revision, operation_id: crypto.randomUUID(), force_unverified: unverified}
@@ -106,6 +118,9 @@ export function CheckerRelease({scope, legacyScope, suiteKey, revisionId, optimi
     {revision && <>
       <p className="text-sm">{revision.title || '文件检查'} · 本企业版本{revision.version ? ` v${revision.version}` : ''}{adopted ? ' · 当前使用' : purpose === 'rollback' ? ' · 历史版本' : ' · 待发布的修改'}</p>
       <p role="status" className="text-sm">{verificationText(revision.validation)}</p>{revision.validation.samples_not_rerun && <p className="text-sm text-muted-foreground">平台已更新，样本未重跑。</p>}{active && <p className="text-xs text-muted-foreground">{active.selection_mode === 'automatic_official' ? '当前自动跟随官方最新检查。发布后会固定采用所选版本。' : active.selection_mode === 'pinned' ? '当前已固定采用一个版本，不会自动升级。' : '尚未采用任何企业修改。'}</p>}
+      {active?.rule_update && <div className="space-y-3 rounded-md border p-3"><Alert><AlertTitle>规则已更新，需要重新验证</AlertTitle><AlertDescription>当前已发布检查仍基于旧规则。新审核继续使用旧规则和旧检查，直到你明确发布新版；已有结果不变。</AlertDescription></Alert><RuleImpactSummary impact={active.rule_update}/><Button disabled={mutationBusy || editorBlocked || Boolean(pending) || !onRuleDraft} onClick={() => void selectRuleUpdate()}>按新版规则起草修改</Button><p className="text-xs text-muted-foreground">先核对规则和样本，再确认使用自己的 Key。现在不会调用模型或发布。</p></div>}
+      {revision.rule_impact?.changed && <RuleImpactSummary impact={revision.rule_impact}/>}
+      {active?.official_rule_impact?.changed && <RuleImpactSummary impact={active.official_rule_impact}/>}
       {active && <CheckerUpgrade key={active.suite_key} scope={scope} active={active} revision={revision} disabled={busy || Boolean(pending) || verificationBusy || editorBlocked} editingBlocked={editorBlocked} canVerify={Boolean(onVerify)} onLockChange={setUpgradeLocked} onRefresh={() => {setActive(null); void recover()}} onCandidate={(value, runTests) => {select({...selection, revisionId: value.id, purpose: 'publish', explicit: true}); onRevision?.(value.id); onUpgradeResult?.(runTests); if (runTests) onVerify?.(value.id)}}/>}
       {unverified && <div className="space-y-2 text-sm"><p className="font-medium text-warning">需要重新验证</p>{revision.validation.reasons.map((reason, index) => <p key={index}>{checkerReason(reason)}</p>)}</div>}
       <details className="text-sm"><summary className="cursor-pointer font-medium">查看修改摘要与高级内容</summary><div className="mt-3 space-y-3"><p>修改文件：{Object.keys(revision.files).join('、') || '未提供修改文件'}</p><p className="sm:hidden text-muted-foreground">手机上仅展示摘要，可在电脑查看完整规则和代码。</p><div className="hidden sm:block">{revision.diff.map(change => <details key={change.path}><summary className="cursor-pointer break-all">{change.path}</summary><p className="mt-2">修改前</p><pre tabIndex={0} className="max-h-60 overflow-auto rounded border p-3 text-xs">{change.before ?? '新增文件'}</pre><p className="mt-2">修改后</p><pre tabIndex={0} className="max-h-60 overflow-auto rounded border p-3 text-xs">{change.after ?? '已移除'}</pre></details>)}</div></div></details>
