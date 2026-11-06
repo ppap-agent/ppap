@@ -19,6 +19,7 @@ from product.feishu import UserTokens
 from product.fixtures import RULE_A, USER_ALICE, USER_BOB
 from product.identity import SESSION_COOKIE
 from product.settings import Settings
+from product.store.suite_releases import SuiteReleaseStore
 from psycopg.types.json import Jsonb
 from pydantic import TypeAdapter
 from worker import process_claimed
@@ -1056,6 +1057,7 @@ def test_superseded_candidate_requires_explicit_rematching_before_confirmation(m
     client, worker, path, body, old = matched_task
     command = confirmation_command(client, path, 0)
     new = publish_rule(client, body["files"][0], predecessor=old["id"], title="修订要求")
+    adopt_rule_suite(worker, new)
     response = client.post(path + "/confirm", json=command)
     assert response.status_code == 409
     assert response.json() == {"error": "task_confirmation_changed"}
@@ -1319,6 +1321,7 @@ def test_linked_reaudit_keeps_provenance_but_freezes_current_suite_without_copyi
     assert worker.complete_job(job, "original", {"failure": {"code": "test_failure", "message": "受控执行失败", "retryable": False}}, outcome="failed")
     original = client.get(f"/rounds/{accepted['round_id']}").json()
     newer = publish_rule(client, body["files"][0], predecessor=old["id"], title="修订要求")
+    adopt_rule_suite(worker, newer)
     preparation = client.get(f"/rounds/{original['id']}/reaudit-inputs")
     assert preparation.status_code == 200, preparation.text
     prepared = preparation.json()
@@ -1787,6 +1790,16 @@ def test_unselected_and_removed_files_keep_provenance_without_recognition(task_s
     path = f"/audit-tasks/{task['id']}"
     assert client.get(path).json()["estimated_points"] == 0
     assert client.post(path + "/end", json={"expected_revision": 0}).status_code == 200
+
+
+def adopt_rule_suite(worker, rule):
+    """Uploading a successor does not select it for new audit rounds."""
+    api = build_product_store(worker.settings, objects=worker.objects, role="api")
+    principal = api.principal_for_fixture("alice")
+    releases = SuiteReleaseStore(api.settings, api.objects, role="api")
+    key = rule["body"]["suite_key"]
+    active = releases.active(principal, key)
+    return releases.publish(principal, key, rule["body"]["suite_revision_id"], active["revision"], str(uuid.uuid4()))
 
 
 def publish_rule(client, file, *, predecessor=None, title="客户控制计划", document_type="控制计划"):
