@@ -8,7 +8,8 @@ from typing import Any
 
 import pytest
 from corpus_contracts.oracle import DATASETS
-from corpus_contracts.replay import LIVE, Recorder, install, mode
+from corpus_contracts.replay import LIVE, Recorder, configured_model_access, install, mode, offline, replay_model_access
+from documents.model_access import model_access_scope
 
 _active: list[Recorder] = []
 
@@ -42,15 +43,29 @@ def _replay_scope(item: pytest.Item) -> str:
 
 @pytest.fixture(autouse=True)
 def model_replay(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch):
-    """Every corpus test sees recorded model answers unless the run measures the live model."""
+    """Explicit Core test scope, with existing replay/record/live semantics."""
+    strict_offline = offline()
+    access = None if strict_offline else configured_model_access()
     if mode() == LIVE:
-        yield None
+        if strict_offline:
+            pytest.fail("Live corpus evaluation conflicts with PPAP_CORPUS_OFFLINE=1")
+        if access is None:
+            pytest.fail("Live corpus evaluation requires a complete explicit test model configuration")
+        with model_access_scope(access):
+            yield None
         return
-    recorder = Recorder(_replay_scope(request.node))
+    # Cached observations need no real key. A miss without an explicit grant
+    # is blocked, including if a checker catches the transport error as UNABLE.
+    recorder = Recorder(_replay_scope(request.node), offline=strict_offline or access is None)
     install(monkeypatch, recorder)
     _active.append(recorder)
-    yield recorder
-    _active.remove(recorder)
+    try:
+        with model_access_scope(access or replay_model_access()):
+            yield recorder
+    finally:
+        _active.remove(recorder)
+        if recorder.misses:
+            pytest.fail("Offline corpus replay has missing observations: " + ", ".join(sorted(set(recorder.misses))))
 
 
 @pytest.hookimpl(hookwrapper=True)

@@ -339,7 +339,7 @@ def test_psw_xlsx_product_round_keeps_engine_statuses() -> None:
     assert not failures, failures
 
 
-def test_psw_pdf_visual_rules_match_the_xlsx_product_round() -> None:
+def test_psw_pdf_visual_rules_match_the_xlsx_product_round(model_replay) -> None:
     from audit.audits import RoundInput, RoundWork
     from audit.rule_profile import RULE_PROFILE_V2
     from audit.suite_migration import migrated_builtin_suite
@@ -348,7 +348,7 @@ def test_psw_pdf_visual_rules_match_the_xlsx_product_round() -> None:
     from product.settings import get_settings
 
     settings = get_settings()
-    if not (settings.OCR_OPENAI_API_KEY.strip() and settings.OCR_OPENAI_BASE_URL.strip() and settings.OCR_MODEL_NAME.strip()):
+    if model_replay is None and not (settings.OCR_OPENAI_API_KEY.strip() and settings.OCR_OPENAI_BASE_URL.strip() and settings.OCR_MODEL_NAME.strip()):
         pytest.fail("setup_failure: dedicated OCR configuration is missing; PDF visual audit did not start")
     pdf_path = _PAIR_ROOT.with_suffix(".pdf")
     xlsx_path = _PAIR_ROOT.with_suffix(".xlsx")
