@@ -34,6 +34,7 @@ class CheckerHttpFixture:
         self.lose_model_save = False
         self.model_error = None
         self.lose_feedback = False
+        self.lose_optimization = False
         self.lose_publish = False
         self.drop_publish_before_write = False
         self.edits = 0
@@ -158,6 +159,10 @@ class CheckerHttpFixture:
                 "created_at": "2026-11-06T00:00:00Z",
             }
             self.operations[body["operation_id"]] = response
+            if self.lose_optimization:
+                self.lose_optimization = False
+                route.abort("failed")
+                return
         elif path.startswith("/checker-optimizations/"):
             response = self.operations.get(path.split("/")[2])
             if response is None:
@@ -327,8 +332,20 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
             page.get_by_label("同意将本次资料发送至 https://api.deepseek.com，使用 deepseek-flash 修复并验证这 1 条反馈", exact=True).check()
             original_revision = fixture.model_config["revision"]
             fixture.model_config = {**fixture.model_config, "revision": "588f07c7-cd41-4a1b-a80f-e264adfdb58b", "base_url": "https://models.company.test/v1", "model": "internal-reasoner"}
-            page.get_by_role("button", name="确认开始修复", exact=True).click()
+            pending_admission = []
+            page.route("**/suite-revisions/*/optimizations", lambda route: pending_admission.append(route))
+            with page.expect_request(lambda request: request.method == "POST" and request.url.endswith("/optimizations")):
+                page.get_by_role("button", name="确认开始修复", exact=True).click()
+            # Let the pending-intent render and its effects run while POST is held.
+            # No missing-operation GET may race the authoritative rejection below.
+            page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+            self.assertIn("checkerOptimization=", page.url)
+            self.assertEqual(len(pending_admission), 1)
+            self.assertFalse(any(method == "GET" and path.startswith("/checker-optimizations/") for method, path, _ in fixture.calls))
+            page.unroute("**/suite-revisions/*/optimizations")
+            fixture.route(pending_admission.pop())
             expect(page.get_by_role("alert")).to_contain_text("模型配置已更改，本次操作未受理")
+            self.assertNotIn("checkerOptimization=", page.url)
             self.assertFalse(fixture.operations)
             attempts = [row for row in fixture.calls if row[0] == "POST" and row[1].endswith("/optimizations")]
             self.assertEqual(len(attempts), 1)
@@ -344,6 +361,59 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
             attempts = [row for row in fixture.calls if row[0] == "POST" and row[1].endswith("/optimizations")]
             self.assertEqual(len(attempts), 2)
             self.assertEqual(attempts[1][2]["expected_model_revision"], fixture.model_config["revision"])
+            browser.close()
+
+    def test_admitted_optimization_keeps_polling_while_feedback_refresh_is_pending(self):
+        with sync_playwright() as playwright:
+            browser = self.browser(playwright)
+            fixture = CheckerHttpFixture()
+            page = self.open(browser, fixture)
+            self.answer(page)
+            page.get_by_role("button", name="让 AI 修复并验证", exact=True).click()
+            page.get_by_label("同意将本次资料发送至 https://api.deepseek.com，使用 deepseek-flash 修复并验证这 1 条反馈", exact=True).check()
+            pending_refresh = []
+            page.route("**/audit-rounds/round-a/checker-feedback", lambda route: pending_refresh.append(route))
+            with (
+                page.expect_request(lambda request: request.method == "GET" and request.url.endswith("/audit-rounds/round-a/checker-feedback")),
+                page.expect_response(lambda response: response.request.method == "GET" and "/checker-optimizations/" in response.url) as first_read,
+            ):
+                page.get_by_role("button", name="确认开始修复", exact=True).click()
+            operation = first_read.value.json()
+            self.assertEqual(operation["state"], "running")
+            self.assertEqual(len(pending_refresh), 1)
+            self.assertEqual(pending_refresh[0].request.method, "GET")
+            operation_id = operation["operation_id"]
+            self.assertIn("checkerOptimization=" + operation_id, page.url)
+            expect(page.get_by_role("heading", name="正在修复与验证", exact=True)).to_be_visible()
+            with page.expect_response(lambda response: response.request.method == "GET" and response.url.endswith("/checker-optimizations/" + operation_id)):
+                fixture.operations[operation_id]["state"] = "completed"
+            expect(page.get_by_role("heading", name="修复结果", exact=True)).to_be_visible()
+            self.assertEqual(len([row for row in fixture.calls if row[0] == "POST" and row[1].endswith("/optimizations")]), 1)
+            self.assertEqual(len(pending_refresh), 1)
+            page.unroute("**/audit-rounds/round-a/checker-feedback")
+            fixture.route(pending_refresh.pop())
+            expect(page.get_by_role("heading", name="修复结果", exact=True)).to_be_visible()
+            browser.close()
+
+    def test_unknown_optimization_admission_reads_same_operation_after_refresh(self):
+        with sync_playwright() as playwright:
+            browser = self.browser(playwright)
+            fixture = CheckerHttpFixture()
+            page = self.open(browser, fixture)
+            self.answer(page)
+            page.get_by_role("button", name="让 AI 修复并验证", exact=True).click()
+            page.get_by_label("同意将本次资料发送至 https://api.deepseek.com，使用 deepseek-flash 修复并验证这 1 条反馈", exact=True).check()
+            fixture.lose_optimization = True
+            page.get_by_role("button", name="确认开始修复", exact=True).click()
+            expect(page.get_by_role("heading", name="正在修复与验证", exact=True)).to_be_visible()
+            self.assertEqual(len(fixture.operations), 1)
+            operation_id = next(iter(fixture.operations))
+            self.assertIn("checkerOptimization=" + operation_id, page.url)
+            page.reload()
+            expect(page.get_by_role("heading", name="正在修复与验证", exact=True)).to_be_visible()
+            self.assertEqual(page.get_by_role("region", name="修复与回归结果", exact=True).get_attribute("data-operation-id"), operation_id)
+            self.assertEqual(len([row for row in fixture.calls if row[0] == "POST" and row[1].endswith("/optimizations")]), 1)
+            self.assertTrue(any(row[:2] == ("GET", "/checker-optimizations/" + operation_id) for row in fixture.calls))
             browser.close()
 
     def test_mobile_manual_evidence_lost_feedback_edit_and_delete(self):

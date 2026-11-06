@@ -43,6 +43,7 @@ export function CheckerFeedbackWorkspace({roundId, fileVersionId, ruleVersionId,
   // Discovery can show a report; only a URL or user intent may replace an explicit revision.
   const [operationIntentId, setOperationIntentId] = useState(() => savedId('checkerOptimization'))
   const [operationId, setOperationId] = useState(() => savedId('checkerOptimization')), [operation, setOperation] = useState<CheckerOptimization | null>(null)
+  const [admissionPending, setAdmissionPending] = useState(false)
   const [developmentRevision, setDevelopmentRevision] = useState<string | null>(null), [workspaceBusy, setWorkspaceBusy] = useState(false)
   const [modelConfig, setModelConfig] = useState<PersonalModelConfig | null>(null), [consent, setConsent] = useState(false), [showModel, setShowModel] = useState(false), [stopConfirm, setStopConfirm] = useState(false)
   const read = useCallback(async () => checkedFeedbackView(await adapter.read(roundId), roundId), [adapter, roundId])
@@ -81,7 +82,9 @@ export function CheckerFeedbackWorkspace({roundId, fileVersionId, ruleVersionId,
     return () => {live = false}
   }, [read, fileVersionId, clauseId])
   useEffect(() => {
-    if (!operationId || !view) return
+    // The URL records intent before POST, but GET cannot resolve that intent until
+    // admission settles. A premature 404 must not replace its rejection receipt.
+    if (!operationId || !view || admissionPending) return
     if (!view.optimizations.some(row => row.operation_id === operationId) && !submittedOperations.current.has(operationId)) {setOperation(null); setError('尚未读到本轮的原优化操作，请读取原操作，不要重复开始。'); return}
     let live = true, timer: ReturnType<typeof setTimeout> | undefined
     setOperation(null)
@@ -96,7 +99,7 @@ export function CheckerFeedbackWorkspace({roundId, fileVersionId, ruleVersionId,
     }
     void poll()
     return () => {live = false; if (timer) clearTimeout(timer)}
-  }, [adapter, operationId, view])
+  }, [adapter, operationId, view, admissionPending])
   function begin() {if (locked.current) return false; locked.current = true; setBusy(true); setError(''); setNotice(''); return true}
   function end() {locked.current = false; setBusy(false)}
   function resetEditor() {setEditing(null); setExpected(''); setRationale(''); setSelectedEvidence([])}
@@ -157,15 +160,18 @@ export function CheckerFeedbackWorkspace({roundId, fileVersionId, ruleVersionId,
     if (busy || running || !revision || !batch.length || consumeModel && (!modelReady || !consent) || !begin()) return
     const id = crypto.randomUUID()
     submittedOperations.current.add(id)
+    setAdmissionPending(true)
     setOperation(null); setOperationId(id); setOperationIntentId(id); remember('checkerOptimization', id)
     try {
       setOperation(await adapter.optimize(revision, {operation_id: id, feedback_ids: batch.map(row => row.id), action, consume_model: consumeModel, ...(consumeModel ? {expected_model_revision: modelConfig?.revision ?? null} : {})})); setConsent(false)
+      // Accepted-operation polling is independent of the optional list refresh.
+      setAdmissionPending(false)
       try {setView(await read()); setSamplesTick(value => value + 1)} catch {setError('操作回执已确认，但最新列表暂不可读。请读取最新记录。')}
     } catch (cause) {
       if ((cause as {code?: string})?.code === 'personal_model_configuration_changed') {setConsent(false); setModelConfig(null)}
       if (definiteCheckerRejection(cause)) {setOperationId(null); setOperationIntentId(null); remember('checkerOptimization', null); setError(failureMessage(cause))}
       else setError('操作受理结果尚未确定。请读取原操作，不要再次开始；若已允许模型调用，可能已经消费 Token。')
-    } finally {end()}
+    } finally {setAdmissionPending(false); end()}
   }
   async function stop() {
     if (!operationId || !begin()) return
