@@ -297,7 +297,8 @@ class SuiteReleaseStore:
             "force_unverified": selection["force_unverified"],
             "validation": (
                 {**selection["validation"], "status": "stale", "verified": False, "reasons": [*selection["validation"]["reasons"], "published_rules_changed"]}
-                if needs_rule_validation else selection["validation"]
+                if needs_rule_validation
+                else selection["validation"]
             ),
             "history": history,
         }
