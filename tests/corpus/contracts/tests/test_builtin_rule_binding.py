@@ -4,8 +4,8 @@ from copy import deepcopy
 from dataclasses import replace
 
 import pytest
+from agent.execution.audit_runtime import run_audit
 from audit.audits import RoundInput, RoundWork
-from audit.contracts import RuleInput
 from audit.suite_migration import migrated_builtin_suite
 from corpus_contracts.core_round import bind_suite, freeze_suite_round, run_suite_round, unsupported_suite
 
@@ -24,12 +24,7 @@ def test_frozen_rule_identity_profile_and_scope_reach_the_checker_without_changi
         body["rule_profile"] = profile
     original = deepcopy(body)
     item = RoundInput("target", "file", "file-v2", "PFMEA.xlsx", "ready", rule_version_id="confirmed-rules-v4", rule_body=body)
-    suite = unsupported_suite(body)
-    snapshot, _, _ = freeze_suite_round(RoundWork("round", "tenant", [item]), {"file-v2": b"original"}, suites={"file-v2": suite})
-    target = snapshot.targets[0]
-    # This is the same typed RuleInput construction made inside run_audit.
-    checker_input = RuleInput.model_validate({**target.to_dict()["rules"], "rule_id": target.suite_revision_id, "appendix": target.to_dict()["appendix"]})
-    assert checker_input.model_dump(exclude={"rules"}) == {
+    expected_metadata = {
         "rule_id": "confirmed-rules-v4",
         "rule_profile": expected,
         "preset_key": None,
@@ -39,18 +34,29 @@ def test_frozen_rule_identity_profile_and_scope_reach_the_checker_without_changi
         "models": ["车型甲"],
         "parts": ["P-001", "P-002"],
     }
-    assert checker_input.rules == original["rules"]
+    program = (
+        "def check(context):\n"
+        f"    assert context.rule.model_dump(exclude={{'rules'}}) == {expected_metadata!r}\n"
+        f"    assert context.rule.rules == {original['rules']!r}\n"
+        "    return {'classification': 'metadata', 'item': 'frozen identity', 'priority': 'P0', 'status': 'PASS', "
+        "'suggestions': '', 'clause_id': context.clause_id, 'checks_performed': 2}\n"
+    ).encode()
+    source = unsupported_suite(body)
+    suite = replace(source, files={**source.files, "checker.py": program}, entrypoints={"customer-rule": "checker:check"})
+    snapshot, programs, _ = freeze_suite_round(RoundWork("round", "tenant", [item]), {"file-v2": b"original"}, suites={"file-v2": suite})
+    result = run_audit(snapshot, {"file-v2": b"original"}, programs)
+    assert [(row["clause_id"], row["status"], row["checks_performed"]) for row in result["findings"]] == [("customer-rule", "PASS", 2)]
     assert item.rule_body == original
-    assert target.binding.entrypoints == {}
+    assert dict(snapshot.targets[0].binding.entrypoints) == {"customer-rule": "checker:check"}
 
 
-@pytest.mark.parametrize(("revision", "digest"), [("", "a" * 64), ("confirmed-rules-v4", "")])
-def test_a_checker_input_requires_both_a_frozen_rule_version_and_its_snapshot(revision, digest):
+@pytest.mark.parametrize(("field", "value", "error"), [("suite_revision_id", "", "invalid_frozen_target"), ("suite_digest", "", "invalid_frozen_target"), ("rules", {}, "invalid_rule_items")])
+def test_a_checker_input_requires_both_a_frozen_rule_version_and_its_snapshot(field, value, error):
     body = {"kind": "engine", "type": "PFMEA", "rules": [{"id": "1", "rule_to_check": "检查原件"}]}
     item = RoundInput("target", "file", "file-v2", "PFMEA.xlsx", "ready", rule_version_id="confirmed-rules-v4", rule_body=body)
     snapshot, _, _ = freeze_suite_round(RoundWork("round", "tenant", [item]), {"file-v2": b"original"}, suites={"file-v2": unsupported_suite(body)})
-    with pytest.raises(ValueError, match="^invalid_frozen_target$"):
-        replace(snapshot.targets[0], suite_revision_id=revision, suite_digest=digest)
+    with pytest.raises(ValueError, match=f"^{error}$"):
+        replace(snapshot.targets[0], **{field: value})
 
 
 def test_uploaded_text_does_not_change_explicit_checker_selection():
