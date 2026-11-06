@@ -55,6 +55,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
                 "task_not_ready",
                 "task_not_zero_match",
                 "task_revision_conflict",
+                "task_confirmation_changed",
                 "task_file_provenance_required",
                 "precheck_required",
                 "audit_task_charging_unavailable",
@@ -254,10 +255,21 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
         if denied:
             return denied
         try:
-            if set(body) != {"request_id", "expected_revision"}:
+            # A missing basis can only recover an already accepted historical
+            # operation; the store rejects every new confirmation without it.
+            if set(body) not in ({"request_id", "expected_revision"}, {"request_id", "expected_revision", "expected_confirmation_basis_digest"}):
                 raise ValueError("invalid_task_confirmation")
             return JSONResponse(
-                store.confirm_audit_task(principal, task_id, body.get("request_id"), body.get("expected_revision"), usage_policy=lambda actor: quota_for(request, actor)), status_code=201
+                store.confirm_audit_task(
+                    principal,
+                    task_id,
+                    body.get("request_id"),
+                    body.get("expected_revision"),
+                    usage_policy=lambda actor: quota_for(request, actor),
+                    expected_confirmation_basis_digest=body.get("expected_confirmation_basis_digest"),
+                    require_confirmation_basis=True,
+                ),
+                status_code=201,
             )
         except (KeyError, ValueError) as exc:
             return fail(exc)

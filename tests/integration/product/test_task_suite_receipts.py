@@ -86,7 +86,7 @@ def test_confirm_and_request_readback_share_exact_current_suite_rule(system, cor
     expected = before["files"][0]["match"]["rule"]
     assert expected["body"]["suite_key"] == f"{customer}:{entry}"
     assert expected["body"]["checker_binding"] and "rule_profile" not in expected["body"]
-    command = {"request_id": str(uuid.uuid4()), "expected_revision": before["input_revision"]}
+    command = {"request_id": str(uuid.uuid4()), "expected_revision": before["input_revision"], "expected_confirmation_basis_digest": before["confirmation_basis_digest"]}
     response = client.post(path + "/confirm", json=command)
     assert response.status_code == 201, response.text
     accepted = response.json()
@@ -115,15 +115,24 @@ def test_publish_after_preview_does_not_misrepresent_new_round_as_old_rules(syst
     current = client.get(path).json()
     assert current["input_revision"] == before["input_revision"]
     assert current["files"][0]["match"]["rule"] != before["files"][0]["match"]["rule"]
-    command = {"request_id": str(uuid.uuid4()), "expected_revision": before["input_revision"]}
+    command = {"request_id": str(uuid.uuid4()), "expected_revision": before["input_revision"], "expected_confirmation_basis_digest": before["confirmation_basis_digest"]}
+    response = client.post(path + "/confirm", json=command)
+    assert response.status_code == 409 and response.json() == {"error": "task_confirmation_changed"}
+    assert client.get("/rounds").json()["rounds"] == []
+    assert client.get("/usage").json()["events"] == []
+    restored = client.get(path, params={"request_id": command["request_id"]}).json()
+    assert restored["acceptance"]["state"] == "rejected"
+    assert restored["confirmation_basis_digest"] == current["confirmation_basis_digest"] != before["confirmation_basis_digest"]
+    # A rejected operation is never reinterpreted as a fresh confirmation.
+    assert client.post(path + "/confirm", json={**command, "expected_confirmation_basis_digest": current["confirmation_basis_digest"]}).status_code == 409
+    command = {**command, "request_id": str(uuid.uuid4()), "expected_confirmation_basis_digest": current["confirmation_basis_digest"]}
     response = client.post(path + "/confirm", json=command)
     assert response.status_code == 201, response.text
     accepted = response.json()
     actual = accepted["files"][0]["audit"]["rule"]
     assert actual == accepted["files"][0]["match"]["rule"] == current["files"][0]["match"]["rule"]
     assert actual != before["files"][0]["match"]["rule"]
-    # The existing client correctly refuses to claim that this different body
-    # was the old preview. A Suite CAS is not part of the current request API.
+    # Only an explicit fresh confirmation can freeze the new enterprise head.
     frozen = client.get("/rounds/" + accepted["round_id"]).json()
     with admin._conn() as conn:
         execution = conn.execute("SELECT rule_execution FROM product.round_inputs WHERE round_id=%s AND role='target'", (frozen["id"],)).fetchone()[0]
@@ -138,7 +147,7 @@ def test_scoped_photo_keeps_customer_scope_and_reference_boundaries(system, core
     assert other.status_code == 409 and other.json()["error"] == "validation_scope_mismatch"
     before = client.get(path).json()
     assert before["files"][0]["match"]["rule"]["body"]["suite_key"] == "UAES:U13"
-    command = {"request_id": str(uuid.uuid4()), "expected_revision": 0}
+    command = {"request_id": str(uuid.uuid4()), "expected_revision": 0, "expected_confirmation_basis_digest": before["confirmation_basis_digest"]}
     # Verify the acceptance guard independently of the upload guard: persisted
     # customer state cannot make an already scoped photo valid for another scope.
     with admin._conn() as conn:
@@ -159,8 +168,8 @@ def test_reference_only_task_cannot_become_a_paid_target_from_suite_projection(s
     task = client.get(path).json()
     assert task["files"][0]["match"]["state"] == "reference"
     assert task["files"][0]["match"]["rule"] is None and task["estimated_points"] == 0
-    rejected = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0})
-    assert rejected.status_code == 409
+    rejected = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0, "expected_confirmation_basis_digest": task["confirmation_basis_digest"]})
+    assert rejected.status_code == 400 and rejected.json() == {"error": "invalid_task_confirmation"}
     assert client.get("/rounds").json()["rounds"] == []
     assert client.get("/usage").json()["events"] == []
 
