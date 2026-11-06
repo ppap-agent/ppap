@@ -14,6 +14,8 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, cast
 
+from documents.model_access import ModelUnavailable
+
 from audit.checkers.v2.base_agent import BaseAgent
 from audit.checkers.v4.pfmea_local import pair_identity
 from audit.contracts import AuditEvidence, AuditResultItem, EvidenceDiagnostic, EvidenceSource
@@ -389,6 +391,11 @@ class UaesSourceAgent(BaseAgent):
             completed = 1
         except GuardStop as exc:
             status, message = exc.status, exc.message
+        except ModelUnavailable as exc:
+            if exc.code == "personal_model_unavailable":
+                status, message = "UNABLE", "当前个人模型凭据不可用，所需原件事实尚未核实。"
+            else:
+                status, message = "ERR", "原件模型请求失败或结果尚未确认，尚未取得业务结论。"
         except Exception as exc:
             status, message = "ERR", f"原件读取或检查执行失败（{type(exc).__name__}），尚未取得业务结论。"
         suffix = Path(self.audit_file.file_url).suffix.lower().lstrip(".")

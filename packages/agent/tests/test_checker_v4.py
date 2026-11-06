@@ -324,3 +324,33 @@ def test_native_electronic_pdf_development_and_fixed_visual_guard(tmp_path, monk
     assert [result.status for result in results] == ["PASS", "UNABLE"]
     assert "尚未核实" in results[1].suggestions
     assert all(json.loads(source.locator)["file_version_id"] == "target" for result in results for source in result.evidence.sources)
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected"),
+    [("personal_model_unavailable", "UNABLE"), ("personal_model_request_failed", "ERR"), ("personal_model_request_uncertain", "ERR"), ("other", "ERR"), ("io", "ERR"), ("service", "ERR")],
+)
+def test_native_authored_checks_distinguish_missing_model_grant_from_request_faults(tmp_path, failure, expected):
+    from documents.model_access import ModelUnavailable
+
+    path = tmp_path / "special.xlsx"
+    special_file(path)
+
+    class TaskAudit(UaesSpecialCharacteristicsAgent):
+        @check_rule("视觉事实", clause_id="visual")
+        def visual_check(self):
+            if failure == "io":
+                raise OSError("private provider details")
+            if failure == "service":
+                raise RuntimeError("private provider details")
+            raise ModelUnavailable(failure)
+
+    rules = RuleInput(rule_id="r", rules=[{"id": "visual"}])
+    audit = TaskAudit(AuditInput(audit_id="target", file_url=str(path)), rules)
+    result = bind_native_checks(audit)[0].check()
+    assert result.status == expected
+    assert result.checks_performed == 0
+    assert result.evidence.sources == ()
+    assert "private provider details" not in result.suggestions
+    if expected == "UNABLE":
+        assert "尚未核实" in result.suggestions
