@@ -35,6 +35,7 @@ export function FactQuestions({roundId, files, findings = [], fileVersionId, ada
   const [error, setError] = useState(''), [notice, setNotice] = useState('')
   const [loading, setLoading] = useState(true), [saving, setSaving] = useState(false)
   const [pending, setPending] = useState(() => pendingOperation(roundId))
+  const [expanded, setExpanded] = useState(() => Boolean(pendingOperation(roundId)))
   const generation = useRef(0), busy = useRef(false), mounted = useRef(true)
   const read = useCallback(async () => {
     const token = ++generation.current
@@ -96,7 +97,10 @@ export function FactQuestions({roundId, files, findings = [], fileVersionId, ada
   const results = view?.results.filter(row => !fileVersionId || row.sources.some(source => source.file_version_id === fileVersionId)) ?? []
   if (view && !questions.length && !answers.length && !results.length && !pending && !error) return null
   const filename = (id: string) => files.find(file => file.id === id)?.original_filename || '本轮原件'
-  return <section aria-label="原件事实确认" className="min-w-0 space-y-4 border-b px-6 py-5 max-sm:px-4" data-fact-answer-state={saving ? 'saving' : pending ? 'unknown' : 'ready'}>
+  return <section aria-label="原件事实确认" className="min-w-0 border-b px-6 py-2 max-sm:px-4" data-fact-answer-state={saving ? 'saving' : pending ? 'unknown' : 'ready'}>
+    <details open={expanded} onToggle={event => setExpanded(event.currentTarget.open)}>
+    <summary className="cursor-pointer text-sm"><span className="font-medium">原件事实确认</span><span className="ml-3 text-muted-foreground">{pending ? '回答结果待核对' : error ? '读取失败，可展开重试' : loading && !view ? '读取中…' : `待确认 ${questions.filter(question => !question.answered).length} 项 · 人工确认结果 ${results.length} 项`}</span></summary>
+    <div className="space-y-4 py-4">
     <header className="flex items-start justify-between gap-3"><div><h2 className="text-lg font-semibold">核对原件中的事实</h2><p className="mt-1 text-sm text-muted-foreground">只回答这份原件中的具体事实，不修改规则。回答不消耗模型额度，也不会自动加入训练样本。</p></div><Button variant="ghost" size="icon" aria-label="读取最新事实问题" disabled={loading || saving} onClick={() => void read()}><RefreshCw className={loading ? 'animate-spin' : ''}/></Button></header>
     {loading && !view && <p role="status" className="text-sm text-muted-foreground">正在读取可确认的问题…</p>}
     {error && <Alert variant="destructive"><AlertTitle>{pending ? '回答结果待核对' : '事实确认暂不可用'}</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
@@ -113,6 +117,8 @@ export function FactQuestions({roundId, files, findings = [], fileVersionId, ada
     })}</section>}
     {answers.length > 0 && <Button variant="outline" asChild><a href={`${apiUrl}/audit-rounds/${encodeURIComponent(roundId)}/fact-answers/report`} download="original-fact-confirmations.pdf">下载人工确认报告</a></Button>}
     {answers.length > 0 && <details className="border-t pt-3 text-sm"><summary className="cursor-pointer">已记录的原件回答（{answers.length}）</summary><div className="mt-3 space-y-3">{answers.map(answer => <article key={answer.operation_id} className="space-y-1"><p>{answer.prompt}：{factValueLabel(answer.value)}</p><p className="text-xs text-muted-foreground">{filename(answer.file_version_id)} · {sourceLocation(answer.locator)} · {answer.answered_by} · <time dateTime={answer.answered_at}>{new Date(answer.answered_at).toLocaleString()}</time></p></article>)}</div></details>}
+    </div>
+    </details>
   </section>
 }
 
