@@ -127,6 +127,7 @@ class PswExcelAgent(ExcelAgent):
             row_max=120,
             col_max=25,
         )
+        sheet.ctx.record_execution()  # Evaluate the located disposition and unique selection.
         if disposition_cell is None:
             return "missing_field", [], None
         disposition_row = disposition_cell.row_index
@@ -506,6 +507,7 @@ class PswExcelAgent(ExcelAgent):
 
         if disposition == "approved":
             all_checked = self._is_submission_result_all_checked(main_sheet, checked_controls)
+            ctx.record_execution()
             if all_checked is True:
                 return "PASS", ""
             if all_checked is None:
@@ -548,6 +550,7 @@ class PswExcelAgent(ExcelAgent):
 
         today = datetime.now().date()
         days_delta = (today - approval_date).days
+        ctx.record_execution()
         if 0 <= days_delta <= 92:
             return "PASS", ""
         return "NG", "条件批准日期超出3个月。"
@@ -574,6 +577,7 @@ class PswExcelAgent(ExcelAgent):
             return "PASS", ""
 
         comments_value = self._extract_comments_value(table, main_sheet)
+        ctx.record_execution()
         if str(comments_value or "").strip().lower() not in _EMPTY_MARKERS:
             return "PASS", ""
         return "NG", "条件批准需填写补充评论。"

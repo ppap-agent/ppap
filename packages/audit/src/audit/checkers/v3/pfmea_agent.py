@@ -541,6 +541,8 @@ class PfmeaAgent(ExcelAgent):
                 for r in self._iter_data_rows(ws, data_start, func_c):
                     val = str(ws.cell(row=r, column=func_c).value or "").replace("\n", " ").replace("\r", " ").strip()
                     if val and val.lower() not in _EMPTY:
+                        ctx.note_cell(ws.title, r, func_c)
+                        ctx.record_execution()  # Evaluate this row's required dimensions.
                         normalized = val.replace(" ", "")
                         if use_soc:
                             found = {m.group(0)[0].lower() for m in re.finditer(r"[SOCsoc][:：]", normalized)}
@@ -555,6 +557,8 @@ class PfmeaAgent(ExcelAgent):
                         if not _row_has_data(r):
                             break
                         if not use_soc:
+                            ctx.note_cell(ws.title, r, func_c)
+                            ctx.record_execution()
                             return "NG", f"工作表{ws.title} 行号{r} 过程项功能内容为空"
             return "PASS", "规则3检查通过"
         except Exception as e:

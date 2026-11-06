@@ -239,6 +239,7 @@ class DimensionMeasurementExcelAgent(ExcelAgent):
                 if not row.is_present("测点号"):
                     continue
                 missing = row.missing("坐标X", "坐标Y", "坐标Z", "上公差", "下公差", "主要控制方向")
+                ctx.record_execution()  # This measured row's required-field predicate was evaluated.
                 if missing:
                     return "NG", f"工作表{row.sheet_title} 行{row.row_index}测点号不为空但字段为空: {', '.join(missing)}"
         return "PASS", "规则2检查通过"

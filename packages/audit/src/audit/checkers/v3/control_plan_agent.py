@@ -1831,6 +1831,10 @@ class ControlPlanAgent(ExcelAgent):
                         if classified_stage_type and classified_stage_type not in selected_stage_types:
                             selected_stage_types.append(classified_stage_type)
 
+                for row, col, _ in (*mark_cells, *stage_cells):
+                    ctx.note_cell(sheet.title, row, col)
+                ctx.record_execution()  # Evaluate the identified stage selection.
+
                 # 4) 统一判定：命中生产即通过，否则有勾选但无生产则不通过
                 if "production" in selected_stage_types:
                     return "Pass", "适用阶段勾选正确"
@@ -1970,7 +1974,7 @@ class ControlPlanAgent(ExcelAgent):
             found = True
             # 确定数据起始行
             is_merged = self._get_detailed_merge_info(ws, feature_type_row, feature_type_col)
-            data_start = (is_merged.max_row + 1) if is_merged else (feature_type_row + 1)
+            data_start = max(is_merged.max_row if is_merged else feature_type_row, char_row or 0, product_row or 0, process_row or 0) + 1
 
             # 确定数据结束行
             data_end = ws.max_row
@@ -2012,6 +2016,11 @@ class ControlPlanAgent(ExcelAgent):
                     ctx.note_cell(ws.title, special_cell.row, special_cell.column)
                     return "UNABLE", f"行号{r} 特殊特性分类无法确认"
                 val_special = special_cell.value
+                # A real detail row evaluates the conditional requirement even
+                # when its special-characteristic antecedent is false.
+                if any(ws.cell(r, c).value is not None for c in {table_left, feature_type_col, product_col, process_col}):
+                    ctx.note_cell(ws.title, special_cell.row, special_cell.column)
+                    ctx.record_execution()
 
                 if val_special is not None and str(val_special).strip():
                     is_merged_product = self._get_detailed_merge_info(ws, r, product_col)
@@ -2027,8 +2036,9 @@ class ControlPlanAgent(ExcelAgent):
 
                     product_cell = ws.cell(is_merged_product.min_row if is_merged_product else r, product_col)
                     process_cell = ws.cell(is_merged_process.min_row if is_merged_process else r, process_col)
-                    if any(cell.data_type != "e" and cell.value is not None and str(cell.value).strip() for cell in (product_cell, process_cell)):
-                        pass
+                    known = next((cell for cell in (product_cell, process_cell) if cell.data_type != "e" and cell.value is not None and str(cell.value).strip()), None)
+                    if known is not None:
+                        ctx.note_cell(ws.title, known.row, known.column)
                     elif any(cell.data_type == "e" for cell in (product_cell, process_cell)):
                         for cell in (product_cell, process_cell):
                             if cell.data_type == "e":
@@ -2070,7 +2080,7 @@ class ControlPlanAgent(ExcelAgent):
 
             found = True
             is_merged = self._get_detailed_merge_info(ws, feature_type_row, feature_type_col)
-            data_start = (is_merged.max_row + 1) if is_merged else (feature_type_row + 1)
+            data_start = max(is_merged.max_row if is_merged else feature_type_row, ctrl_row or 0) + 1
 
             data_end = ws.max_row
             for r in range(data_start, ws.max_row + 1):
@@ -2120,6 +2130,11 @@ class ControlPlanAgent(ExcelAgent):
                     ctx.note_cell(ws.title, special_cell.row, special_cell.column)
                     return "UNABLE", f"行号{r} 特殊特性分类无法确认"
                 val_special = special_cell.value
+                # A real detail row evaluates the conditional requirement even
+                # when its special-characteristic antecedent is false.
+                if any(ws.cell(r, c).value is not None for c in {table_left, feature_type_col, ctrl_col}):
+                    ctx.note_cell(ws.title, special_cell.row, special_cell.column)
+                    ctx.record_execution()
 
                 if val_special is not None and str(val_special).strip():
                     v = str(val_special).strip()
@@ -2130,6 +2145,7 @@ class ControlPlanAgent(ExcelAgent):
                             ctrl_col,
                         ).value
                         control_cell = ws.cell(is_merged_ctrl.min_row if is_merged_ctrl else r, ctrl_col)
+                        ctx.note_cell(ws.title, control_cell.row, control_cell.column)
                         if control_cell.data_type == "e":
                             ctx.note_cell(ws.title, control_cell.row, control_cell.column)
                             return "UNABLE", f"行号{r} 控制方法无法确认"

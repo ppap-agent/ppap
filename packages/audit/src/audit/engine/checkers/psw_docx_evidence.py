@@ -11,6 +11,7 @@ from typing import Optional, Protocol, Sequence, cast
 from xml.etree import ElementTree
 from zipfile import ZipFile
 
+from documents.model_access import ModelUnavailable
 from documents.word import WordBlock, WordDocument, WordParagraphBlock, WordTableBlock
 from openpyxl import Workbook
 from PIL import Image
@@ -92,6 +93,21 @@ class PswDocxEvidenceMixin:
         diagnostic: EvidenceDiagnostic | None = None,
         sources: tuple[EvidenceSource, ...] | None = None,
     ) -> AuditResult:
+        ops = getattr(self, "_word_ops_cache", None)
+        if sources is not None and ops is not None:
+            located = []
+            for source in sources:
+                try:
+                    raw = json.loads(source.locator)
+                except (ValueError, TypeError):
+                    located.append(source)
+                    continue
+                locator = ops.source_locator(str(raw.get("part", "")), str(raw.get("path", "")))
+                if locator is not None:
+                    locator["file_version_id"] = self._host().audit_file.audit_id
+                    source = source.model_copy(update={"locator": json.dumps(locator, ensure_ascii=False)})
+                located.append(source)
+            sources = tuple(located)
         return with_psw_evidence(
             result,
             audit=self._host().audit_file,
@@ -150,8 +166,18 @@ class PswDocxEvidenceMixin:
         )
 
     def check(self, ith: int) -> Optional[AuditResult]:
+        return self._check_docx_rule(ith, source_bound=False)
+
+    def check_source_rule(self, ith: int) -> Optional[AuditResult]:
+        """Preserve Word visuals without legacy generic-model fallback."""
+        return self._check_docx_rule(ith, source_bound=True)
+
+    def _check_docx_rule(self, ith: int, *, source_bound: bool) -> Optional[AuditResult]:
         rule_no = ith + 1
         if rule_no not in PSW_ALWAYS_VISUAL_RULES:
+            if source_bound:
+                direct_check = getattr(self, "_execute_rule_check")
+                return cast(Optional[AuditResult], direct_check(rule_no))
             parent_check = getattr(super(), "check")
             return cast(Optional[AuditResult], parent_check(ith))
 
@@ -215,15 +241,11 @@ class PswDocxEvidenceMixin:
                         native_signature, _ = read_native_signature(context, Table(context).sheet("PSW主表").ws)
                         if native_signature is True:
                             facts["authorized_signature_present"] = True
-                            observed_sources.append(
-                                (
-                                    (
-                                        {"kind": "docx_structure", "part": "word/document.xml", "file_version_id": audit.audit_id, "source_sha256": digest, "fact": "authorized_signature_present"},
-                                        "经授权的供方代表签字字段存在原生内容。",
-                                    ),
-                                    {"visual": False},
-                                )
-                            )
+                            for version, sheet, row, column in context.cell_reads():
+                                locator = ops.cell_locator(context.workbook[sheet], row, column)
+                                if locator is not None:
+                                    locator["file_version_id"] = version or audit.audit_id
+                                    observed_sources.append(((locator | {"fact": "authorized_signature_present"}, "经授权的供方代表签字字段存在原生内容。"), {"visual": False}))
                         if hashlib.sha256(Path(audit.file_url).read_bytes()).hexdigest() != digest:
                             raise ValueError("Frozen Word source changed")
                         self._docx_visual_facts = (facts, observed_sources)
@@ -234,7 +256,15 @@ class PswDocxEvidenceMixin:
                     raise cached
                 facts, observed_sources = cached
                 sources = tuple(
-                    EvidenceSource(kind="visual" if kwargs.get("visual") else "structure", locator=json.dumps(args[0], ensure_ascii=False, separators=(",", ":")), excerpt=args[1])
+                    EvidenceSource(
+                        kind="visual" if kwargs.get("visual") else "structure",
+                        locator=json.dumps(
+                            {key: value for key, value in args[0].items() if key != "fact"} if args[0].get("kind") in {"docx_cell", "docx_paragraph"} else args[0],
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        ),
+                        excerpt=args[1],
+                    )
                     for args, kwargs in observed_sources
                     if args[0].get("fact") in PSW_RULE_FIELDS[rule_no]
                 )
@@ -249,6 +279,8 @@ class PswDocxEvidenceMixin:
                     else None,
                     sources=sources,
                 )
+        except ModelUnavailable:
+            raise  # Core exposes unavailable personal model access as UNABLE.
         except GuardStop as stop:
             is_runtime_error = stop.status == "ERR"
             result = self._trace_result(

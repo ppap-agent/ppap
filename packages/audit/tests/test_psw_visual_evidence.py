@@ -160,3 +160,26 @@ def test_unknown_complete_stamp_text_cannot_be_replaced_by_the_outer_company_nam
 
 def test_confirmed_missing_stamp_does_not_need_a_transcription_of_nonexistent_text():
     assert evaluate_psw_observation(3, {"psw_stamp_present": False, "psw_stamp_ending_text": None, "authorization_table_present": False}).status == "NG"
+
+
+@pytest.mark.parametrize(
+    ("facts", "status", "count"), [({"submission_any_checked": True}, "PASS", 1), ({"submission_any_checked": False, "submission_other_present": False}, "NG", 1), ({}, "UNABLE", 0)]
+)
+def test_visual_predicate_count_does_not_turn_unknown_facts_into_checks(facts, status, count):
+    result = evaluate_psw_observation(7, facts)
+    assert (result.status, result.checks_performed) == (status, count)
+
+
+@pytest.mark.parametrize("method", ["rule_9", "_precheck_disposition"])
+def test_unknown_native_disposition_is_not_an_untriggered_condition(monkeypatch, method):
+    from types import SimpleNamespace
+
+    from audit.checkers.v4.li_auto import psw
+
+    checker = object.__new__(psw.LiAutoPswAgent)
+    checker.temp_files = []
+    checker._checked_controls = lambda sheet: []
+    checker._resolve_warrant_disposition = lambda *args: ("unknown", [], 1)
+    monkeypatch.setattr(psw, "Table", lambda ctx: SimpleNamespace(sheet=lambda name: object()))
+    context = SimpleNamespace(record_execution=lambda: None)
+    assert getattr(checker, method)(context)[0] == "UNABLE"

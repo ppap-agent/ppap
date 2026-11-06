@@ -301,3 +301,44 @@ def test_unparsed_graphic_footnote_does_not_prove_an_absent_stamp(tmp_path, monk
     )
     assert results[2].status == "UNABLE"
     assert results[4].status == "UNABLE"
+
+
+@pytest.mark.parametrize("version", ["v2", "v3"])
+def test_word_native_source_reads_bind_real_version_and_original_cell(tmp_path, version):
+    import importlib
+    import json
+
+    path = tmp_path / "psw.docx"
+    psw_document().save(path)
+    cls = importlib.import_module(f"audit.checkers.{version}.psw_docx_agent").PswDocxAgent
+    checker = cls(AuditInput(audit_id="frozen-word", file_url=str(path)), RuleInput(rule_id="r", type="零件提交保证书", rules=[{"id": str(n)} for n in range(1, 11)]))
+    try:
+        for index in (0, 1, 3, 5, 6, 7, 8, 9):
+            result = checker.check_source_rule(index)
+            assert result.status == "PASS"
+            assert result.checks_performed > 0
+            assert result.evidence.sources
+            for source in result.evidence.sources:
+                locator = json.loads(source.locator)
+                assert locator["file_version_id"] == "frozen-word"
+                assert locator["kind"] == "docx_cell"
+                assert locator["table"] in {1, 2}
+        from openpyxl import Workbook
+
+        context = checker.rule_ctx(checker._load_workbook())
+        referenced = Workbook()
+        referenced.active.title = context.workbook.worksheets[0].title
+        referenced.active["A1"] = "reference value"
+        context.bind_workbook(referenced, "reference-version")
+        context.note_cell(referenced.active.title, 1, 1, file_version_id="reference-version")
+        reference = checker._evidence_from_reads(context).sources[0]
+        assert json.loads(reference.locator) == {"kind": "xlsx_cell", "sheet": referenced.active.title, "cell": "A1", "file_version_id": "reference-version"}
+        assert reference.excerpt == "reference value"
+        referenced.close()
+        ops = checker._word_ops_cache
+        assert ops.source_locator("word/document.xml", "body/tbl[2]/tr[57]/tc[5]/p[1]/drawing[1]") == {"kind": "docx_cell", "table": 2, "row": 57, "column": 5}
+        assert ops.source_locator("word/document.xml", "body/p[1]/drawing[1]") == {"kind": "docx_paragraph", "paragraph": 1}
+        assert ops.source_locator("word/header1.xml", "body/p[1]") is None
+        assert ops.source_locator("word/document.xml", "body/tbl[999]/tr[1]/tc[1]") is None
+    finally:
+        checker.close()

@@ -196,3 +196,20 @@ def test_known_process_evidence_is_sufficient_when_product_cell_is_unknown(tmp_p
     workbook.active["F15"] = "known process"
     result = check_rule(tmp_path, workbook, 4)
     assert result.status == "PASS"
+
+
+@pytest.mark.parametrize("rule_number", [1, 4, 5])
+def test_control_plan_counts_real_stage_or_detail_predicates(tmp_path, rule_number):
+    workbook = control_plan()
+    workbook.active["A1"] = "☒ 生产"
+    result = check_rule(tmp_path, workbook, rule_number)
+    assert result.status == "PASS"
+    assert result.checks_performed > 0
+
+
+@pytest.mark.parametrize("rule_number", [4, 5])
+def test_control_plan_empty_detail_region_does_not_invent_a_check(tmp_path, rule_number):
+    workbook = control_plan()
+    workbook.active.delete_rows(14, 2)
+    result = check_rule(tmp_path, workbook, rule_number)
+    assert result.checks_performed == 0
