@@ -4,10 +4,9 @@ from io import BytesIO
 
 import pytest
 from audit.audits import RoundInput, RoundWork
-from audit.engine.checkers.rule_declarations import freeze_target_rule_execution
 from audit.presets import preset_rule_body
+from corpus_contracts.core_round import customer_suite, run_suite_round
 from openpyxl import Workbook
-from product import run_round_from_bytes
 
 
 def workbook(rows, title):
@@ -23,17 +22,19 @@ def workbook(rows, title):
 
 def run(entry, rows, title, reference=None):
     body = preset_rule_body("蔚来", entry)
-    target = RoundInput("target", "file", "version", "原件.xlsx", "ready", rule_version_id="rule", rule_body=body, rule_execution=freeze_target_rule_execution(body, "原件.xlsx"))
+    target = RoundInput("target", "file", "version", "原件.xlsx", "ready", rule_version_id="rule", rule_body=body)
     files = [target]
     contents = {"version": workbook(rows, title)}
+    reference_types = {}
     if reference:
         references = reference if isinstance(reference, list) else [reference]
         for index, (_other_entry, other_rows, other_title) in enumerate(references):
             version = "other" if index == 0 else f"other-{index}"
+            reference_types[version] = customer_suite("蔚来", _other_entry).document_type
             files.append(RoundInput("reference", version, version, other_title + ".xlsx", "ready"))
             contents[version] = workbook(other_rows, other_title)
-    result = run_round_from_bytes(RoundWork("round", "tenant", files), contents)
-    assert all(item["coverage"] == "mapped" for item in result["coverage"]["rule_items"]), result
+    result = run_suite_round(RoundWork("round", "tenant", files), contents, suites={"version": customer_suite("蔚来", entry)}, document_types=reference_types)
+    assert all(item["coverage"] == "executed" for item in result["coverage"]["rule_items"]), result
     return result["findings"]
 
 
@@ -79,10 +80,9 @@ def test_cp_pfd_pair_checks_identity_and_has_both_originals(part, name, status):
     finding = findings[5]
     assert finding["status"] == status, finding
     if status in {"PASS", "NG"}:
-        evidence = finding["locator"]["evidence"]["sources"]
-        import json
+        evidence = finding["locator"]["semantic"]["sources"]
 
-        assert {json.loads(item["locator"])["file_version_id"] for item in evidence} == {"version", "other"}
+        assert {item["file_version_id"] for item in evidence} == {"version", "other"}
 
 
 @pytest.mark.parametrize("part,revision", [("无", "A"), ("TBD", "A"), ("零件名称", "A"), ("P-1", "无"), ("P-1", "版本号")])

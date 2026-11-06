@@ -49,10 +49,9 @@ def test_nio_t12_source_clauses_run_over_the_actual_template_and_controlled_chan
     import io
 
     from audit.audits import RoundInput, RoundWork
-    from audit.engine.checkers.rule_declarations import freeze_target_rule_execution
     from audit.presets import preset_rule_body
+    from corpus_contracts.core_round import customer_suite, run_suite_round
     from openpyxl import load_workbook
-    from product import run_round_from_bytes
 
     source = ROOT / "assets/PPAP PRD v3.7/客户归类模板与规则_备份/模板/蔚来/11 特殊特性清单.xlsx"
     # Independent expected results come from N04 source clauses: title prefix
@@ -69,9 +68,9 @@ def test_nio_t12_source_clauses_run_over_the_actual_template_and_controlled_chan
         body = preset_rule_body("蔚来", "N04")
         # Source clause order is deliberately different from Checker order.
         body["rules"].reverse()
-        execution = freeze_target_rule_execution(body, "特殊特性清单.xlsx")
-        target = RoundInput("target", "source", "frozen-source", "特殊特性清单.xlsx", "ready", rule_version_id="nio-t12-source", rule_body=body, rule_execution=execution)
-        result = run_round_from_bytes(RoundWork("source-bound-round", "corpus", [target]), {"frozen-source": content.getvalue()})
+
+        target = RoundInput("target", "source", "frozen-source", "特殊特性清单.xlsx", "ready", rule_version_id="nio-t12-source", rule_body=body)
+        result = run_suite_round(RoundWork("source-bound-round", "corpus", [target]), {"frozen-source": content.getvalue()}, suites={"frozen-source": customer_suite("蔚来", "N04")})
         by_id = {finding["item_key"].split(":rule:", 1)[1]: finding["status"] for finding in result["findings"]}
         assert [by_id[clause.id] for clause in next(rule for rule in customer_presets() if rule.entry_id == "N04").clauses] == expected, [
             (row["status"], row["suggestions"]) for row in result["findings"]
@@ -83,11 +82,10 @@ def test_nio_pfmea_controlled_template_keeps_source_fields_and_scoring_sheets_se
     import io
 
     from audit.audits import RoundInput, RoundWork
-    from audit.engine.checkers.rule_declarations import freeze_target_rule_execution
     from audit.presets import preset_rule_body
+    from corpus_contracts.core_round import customer_suite, run_suite_round
     from openpyxl import load_workbook
     from openpyxl.cell.cell import MergedCell
-    from product import run_round_from_bytes
 
     source = ROOT / "assets/PPAP PRD v3.7/客户归类模板与规则_备份/模板/蔚来/9 潜在过程失效模式及后果分析.xlsx"
     book = load_workbook(source)
@@ -120,8 +118,8 @@ def test_nio_pfmea_controlled_template_keeps_source_fields_and_scoring_sheets_se
     book.save(content)
     book.close()
     body = preset_rule_body("蔚来", "N02")
-    target = RoundInput("target", "file", "version", "PFMEA.xlsx", "ready", rule_version_id="nio-n02", rule_body=body, rule_execution=freeze_target_rule_execution(body, "PFMEA.xlsx"))
-    result = run_round_from_bytes(RoundWork("round", "tenant", [target]), {"version": content.getvalue()})
+    target = RoundInput("target", "file", "version", "PFMEA.xlsx", "ready", rule_version_id="nio-n02", rule_body=body)
+    result = run_suite_round(RoundWork("round", "tenant", [target]), {"version": content.getvalue()}, suites={"version": customer_suite("蔚来", "N02")})
     # No PFD is provided: the five independent clauses must still execute.
     assert [row["status"] for row in result["findings"]] == ["PASS"] * 5 + ["UNABLE"] * 2, [(row["status"], row["suggestions"]) for row in result["findings"]]
 
@@ -130,10 +128,9 @@ def test_li_auto_equipment_template_metadata_cannot_replace_a_missing_device_sup
     import io
 
     from audit.audits import RoundInput, RoundWork
-    from audit.engine.checkers.rule_declarations import freeze_target_rule_execution
     from audit.presets import preset_rule_body
+    from corpus_contracts.core_round import customer_suite, run_suite_round
     from openpyxl import load_workbook
-    from product import run_round_from_bytes
 
     source = ROOT / "assets/PPAP PRD v3.7/客户归类模板与规则_备份/模板/理想/APQP-设备开发验收清单.xlsx"
     for missing_supplier, expected in [(False, "PASS"), (True, "NG")]:
@@ -145,21 +142,20 @@ def test_li_auto_equipment_template_metadata_cannot_replace_a_missing_device_sup
         book.save(content)
         book.close()
         body = preset_rule_body("理想", "L13")
-        target = RoundInput("target", "file", "version", "设备清单.xlsx", "ready", rule_version_id="li-l13", rule_body=body, rule_execution=freeze_target_rule_execution(body, "设备清单.xlsx"))
-        result = run_round_from_bytes(RoundWork("round", "tenant", [target]), {"version": content.getvalue()})
+        target = RoundInput("target", "file", "version", "设备清单.xlsx", "ready", rule_version_id="li-l13", rule_body=body)
+        result = run_suite_round(RoundWork("round", "tenant", [target]), {"version": content.getvalue()}, suites={"version": customer_suite("理想", "L13")})
         assert result["findings"][0]["status"] == expected, result["findings"][0]["suggestions"]
 
 
 def test_nio_measurement_template_does_not_turn_zeros_or_uncached_formulas_into_pass():
     from audit.audits import RoundInput, RoundWork
-    from audit.engine.checkers.rule_declarations import freeze_target_rule_execution
     from audit.presets import preset_rule_body
-    from product import run_round_from_bytes
+    from corpus_contracts.core_round import customer_suite, run_suite_round
 
     source = ROOT / "assets/PPAP PRD v3.7/客户归类模板与规则_备份/模板/蔚来/1-2 尺寸测量报告.xlsm"
     body = preset_rule_body("蔚来", "N01")
-    target = RoundInput("target", "file", "version", source.name, "ready", rule_version_id="nio-n01", rule_body=body, rule_execution=freeze_target_rule_execution(body, source.name))
-    result = run_round_from_bytes(RoundWork("round", "tenant", [target]), {"version": source.read_bytes()})
+    target = RoundInput("target", "file", "version", source.name, "ready", rule_version_id="nio-n01", rule_body=body)
+    result = run_suite_round(RoundWork("round", "tenant", [target]), {"version": source.read_bytes()}, suites={"version": customer_suite("蔚来", "N01")})
     findings = result["findings"]
     assert len(findings) == 11
     assert not any(row["status"] == "ERR" for row in findings), [(row["status"], row["suggestions"]) for row in findings]

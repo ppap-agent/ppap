@@ -34,9 +34,9 @@
 
 ## 3. 能力差异与证据
 
-### 3.1 当前 Deep 的实际行为
+### 3.1 该轮调查时的 Deep 行为（历史背景）
 
-当前链路是：Worker → Deep Controller → ProcessRuntime → `audit_spec()` → `run_round_from_bytes()` → 固定检查引擎。
+该轮调查时，Deep 仍转入旧的固定检查编排。此执行路径已被 Checker Core 移除；当前链路及测试入口以 [DEVELOPMENT](DEVELOPMENT.md) 和 [测试入口](../tests/README.md) 为准。以下调查结果不是当前运行状态。
 
 调查中的真实控制计划轮次包含 11 条客户规则：2 条被映射，9 条标为不支持，最终保存 2 条 finding，任务标为成功。底层可能运行了更多内置检查，但产品层只投影已映射条目；不能把这个事实表述成“11 条全部经过语义审核”。
 

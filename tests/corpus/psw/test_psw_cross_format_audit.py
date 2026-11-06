@@ -305,44 +305,46 @@ def test_real_doc_and_its_converted_docx_have_equivalent_results_and_release_tem
 
 
 def test_psw_xlsx_product_round_keeps_engine_statuses() -> None:
+    from audit.audits import RoundInput, RoundWork
     from audit.rule_profile import RULE_PROFILE_V2
+    from audit.suite_migration import migrated_builtin_suite
+    from corpus_contracts.core_round import run_suite_round
     from corpus_contracts.product_round import (
         MATCH,
         compare_file,
-        engine_rule_body,
-        execute_product_round,
     )
-    from product import run_round_from_bytes
 
     xlsx_path = _PAIR_ROOT.with_suffix(".xlsx")
     doc_type = PpapDocumentType.PSW.get_type_name()
-    body, _execution = engine_rule_body(doc_type, xlsx_path.name, RULE_PROFILE_V2)
+    import json
+
+    suite = migrated_builtin_suite(RULE_PROFILE_V2, doc_type)
+    body = json.loads(suite.files["rules.json"])
     engine_results = run_audit(
         AuditInput(audit_id="psw-xlsx-engine", file_url=str(xlsx_path)),
         RuleInput(rule_id="psw-xlsx", rule_profile=RULE_PROFILE_V2, type=doc_type, rules=body["rules"]),
     )
     expected = {index: str(getattr(result, "status", "") or "").upper() for index, result in enumerate(engine_results, 1)}
-    result, versions, setup_error = execute_product_round(
-        [(xlsx_path.name, xlsx_path, doc_type)],
-        profile=RULE_PROFILE_V2,
-        round_id="psw-xlsx",
-        runner=run_round_from_bytes,
-    )
+    work = RoundWork("psw-xlsx", "corpus", [RoundInput("target", "psw", "psw-version", xlsx_path.name, "ready", rule_version_id="psw-suite", rule_body=body)])
+    result = run_suite_round(work, {"psw-version": xlsx_path.read_bytes()}, suites={"psw-version": suite})
     verdicts = compare_file(
         file_name=xlsx_path.name,
-        version_id=versions.get(xlsx_path.name, ""),
+        version_id="psw-version",
         expected=expected,
         result=result,
-        setup_error=setup_error,
+        setup_error=None,
+        expected_coverage="executed",
     )
     failures = [item for item in verdicts if item.kind != MATCH]
     assert not failures, failures
 
 
 def test_psw_pdf_visual_rules_match_the_xlsx_product_round() -> None:
+    from audit.audits import RoundInput, RoundWork
     from audit.rule_profile import RULE_PROFILE_V2
-    from corpus_contracts.product_round import EXECUTION_FAILURE, MATCH, SETUP_FAILURE, compare_file, execute_product_round
-    from product import run_round_from_bytes
+    from audit.suite_migration import migrated_builtin_suite
+    from corpus_contracts.core_round import run_suite_round
+    from corpus_contracts.product_round import EXECUTION_FAILURE, MATCH, SETUP_FAILURE, compare_file
     from product.settings import get_settings
 
     settings = get_settings()
@@ -352,36 +354,31 @@ def test_psw_pdf_visual_rules_match_the_xlsx_product_round() -> None:
     xlsx_path = _PAIR_ROOT.with_suffix(".xlsx")
     doc_type = PpapDocumentType.PSW.get_type_name()
     visual_rules = {3, 5, 7, 8, 9, 10}
-    oracle, oracle_versions, oracle_error = execute_product_round(
-        [(xlsx_path.name, xlsx_path, doc_type)],
-        profile=RULE_PROFILE_V2,
-        round_id="psw-xlsx-oracle",
-        runner=run_round_from_bytes,
-    )
+    suite = migrated_builtin_suite(RULE_PROFILE_V2, doc_type)
+    work = RoundWork("psw-xlsx-oracle", "corpus", [RoundInput("target", "psw", "psw-version", xlsx_path.name, "ready", rule_version_id="psw-suite")])
+    oracle = run_suite_round(work, {"psw-version": xlsx_path.read_bytes()}, suites={"psw-version": suite})
     oracle_rows = compare_file(
         file_name=xlsx_path.name,
-        version_id=oracle_versions.get(xlsx_path.name, ""),
+        version_id="psw-version",
         expected={index: "PASS" for index in visual_rules},
         result=oracle,
-        setup_error=oracle_error,
+        setup_error=None,
+        expected_coverage="executed",
     )
     expected = {}
     for item in oracle_rows:
         if item.kind in {SETUP_FAILURE, EXECUTION_FAILURE} or not item.actual:
             pytest.fail(f"xlsx oracle rule {item.rule_index}: {item.kind} {item.detail}")
         expected[item.rule_index] = item.actual
-    result, versions, setup_error = execute_product_round(
-        [(pdf_path.name, pdf_path, doc_type)],
-        profile=RULE_PROFILE_V2,
-        round_id="psw-pdf-visual",
-        runner=run_round_from_bytes,
-    )
+    work = RoundWork("psw-pdf-visual", "corpus", [RoundInput("target", "psw", "psw-version", pdf_path.name, "ready", rule_version_id="psw-suite")])
+    result = run_suite_round(work, {"psw-version": pdf_path.read_bytes()}, suites={"psw-version": suite})
     verdicts = compare_file(
         file_name=pdf_path.name,
-        version_id=versions.get(pdf_path.name, ""),
+        version_id="psw-version",
         expected=expected,
         result=result,
-        setup_error=setup_error,
+        setup_error=None,
+        expected_coverage="executed",
     )
     failures = [item for item in verdicts if item.kind != MATCH]
     assert not failures, failures

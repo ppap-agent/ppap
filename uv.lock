@@ -351,6 +351,7 @@ name = "corpus-contracts"
 version = "0.1.0"
 source = { editable = "tests/corpus/contracts" }
 dependencies = [
+    { name = "agent" },
     { name = "audit" },
     { name = "documents" },
     { name = "httpx" },
@@ -360,6 +361,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "agent", editable = "packages/agent" },
     { name = "audit", editable = "packages/audit" },
     { name = "documents", editable = "packages/documents" },
     { name = "httpx", specifier = ">=0.28.1" },

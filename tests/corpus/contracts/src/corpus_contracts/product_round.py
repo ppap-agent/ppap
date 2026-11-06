@@ -3,16 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Generic, TypeVar
 
-from audit.audits import ERR, RoundInput, RoundWork
-from audit.engine.checkers.rule_declarations import (
-    declarations_for_target,
-    freeze_target_rule_execution,
-)
-from audit.engine.routing import resolve_engine_agent_class
-from audit.kinds import PpapDocumentType
+from audit.audits import ERR
 
 MATCH = "match"
 STATUS_MISMATCH = "status_mismatch"
@@ -36,78 +29,6 @@ class RuleVerdict(Generic[RuleIndex]):
     expected: str
     actual: str | None = None
     detail: str = ""
-
-
-def bound_type_name(agent_cls: type, filename: str, profile: str) -> str | None:
-    """Document type whose current route selects this corpus agent."""
-    for doc_type in PpapDocumentType:
-        if doc_type is PpapDocumentType.UNKNOWN:
-            continue
-        if resolve_engine_agent_class(doc_type, filename, profile) is agent_cls:
-            return doc_type.get_type_name()
-    return None
-
-
-def engine_rule_body(doc_type: str, filename: str, profile: str) -> tuple[dict, dict | None]:
-    declarations = declarations_for_target(doc_type, filename, profile)
-    rules = [
-        {
-            "id": str(index),
-            "category": description,
-            "priority": "P0",
-            "rule_to_check": description,
-            "type_of_rule": "text",
-        }
-        for index, (_method, description) in enumerate(declarations, 1)
-    ]
-    body = {"kind": "engine", "type": doc_type, "rule_profile": profile, "rules": rules}
-    return body, freeze_target_rule_execution(body, filename)
-
-
-def build_product_round(
-    files: list[tuple[str, Path, str]],
-    *,
-    profile: str,
-    round_id: str,
-) -> tuple[RoundWork | None, dict[str, bytes], dict[str, str], str | None]:
-    """Build one round. ``files`` is ``(filename, path, bound document type)``."""
-    inputs: list[RoundInput] = []
-    blobs: dict[str, bytes] = {}
-    version_by_name: dict[str, str] = {}
-    for index, (filename, path, doc_type) in enumerate(files, 1):
-        if not path.is_file():
-            return None, {}, {}, f"missing file: {path}"
-        version_id = f"v{index}"
-        version_by_name[filename] = version_id
-        body, execution = engine_rule_body(doc_type, filename, profile)
-        if not body["rules"]:
-            return None, {}, version_by_name, f"no builtin checks for {filename} type={doc_type}"
-        inputs.append(
-            RoundInput(
-                "target",
-                f"f{index}",
-                version_id,
-                filename,
-                "ready",
-                rule_version_id=f"rule-{index}",
-                rule_title=doc_type,
-                rule_body=body,
-                rule_execution=execution,
-            )
-        )
-        blobs[version_id] = path.read_bytes()
-    return RoundWork(round_id, "corpus", inputs), blobs, version_by_name, None
-
-
-def execute_product_round(files, *, profile: str, round_id: str, runner):
-    """Build a round and run it with the product runner."""
-    work, blobs, versions, setup_error = build_product_round(files, profile=profile, round_id=round_id)
-    if setup_error or work is None:
-        return None, versions, setup_error
-    try:
-        return runner(work, blobs), versions, None
-    except ValueError as exc:
-        return None, versions, str(exc)
 
 
 def compare_file(

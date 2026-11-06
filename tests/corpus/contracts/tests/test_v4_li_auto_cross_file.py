@@ -1,15 +1,13 @@
 """Li Auto source binding and two-original facts through the actual Round."""
 
 import io
-import json
 
 import pytest
 from audit.audits import RoundInput, RoundWork
 from audit.checkers.v4.pfmea_local import pair_identity
-from audit.engine.checkers.rule_declarations import freeze_target_rule_execution
 from audit.presets import preset_rule, preset_rule_body
+from corpus_contracts.core_round import customer_suite, run_suite_round
 from openpyxl import Workbook, load_workbook
-from product import run_round_from_bytes
 
 
 def serialized(book):
@@ -70,15 +68,17 @@ def execute(entry, content, references, *, reverse=False):
     body = preset_rule_body("理想", entry)
     if reverse:
         body["rules"].reverse()
-    target = RoundInput("target", "file", "version", "原件.xlsx", "ready", rule_version_id="li-rule", rule_body=body, rule_execution=freeze_target_rule_execution(body, "原件.xlsx"))
+    target = RoundInput("target", "file", "version", "原件.xlsx", "ready", rule_version_id="li-rule", rule_body=body)
     inputs = [target]
     blobs = {"version": content}
+    reference_types = {}
     for index, (name, ref) in enumerate(references):
         version = f"ref-{index}"
+        reference_types[version] = "过程流程图" if entry == "L07" else "零件提交保证书" if name == "交付清单.xlsx" else "控制计划" if name == "控制计划.xlsx" else "过程流程图"
         inputs.append(RoundInput("reference", version, version, name, "ready"))
         if ref is not None:
             blobs[version] = ref
-    result = run_round_from_bytes(RoundWork("round", "tenant", inputs), blobs)
+    result = run_suite_round(RoundWork("round", "tenant", inputs), blobs, suites={"version": customer_suite("理想", entry)}, document_types=reference_types)
     return {row["item_key"].split(":rule:", 1)[1]: row for row in result["findings"]}, result
 
 
@@ -86,10 +86,10 @@ def test_all_seven_original_pfmea_clauses_and_two_originals():
     findings, result = execute("L07", pfmea(), [("过程流程图.xlsx", pfd())])
     clauses = preset_rule("理想", "L07").clauses
     assert [findings[c.id]["status"] for c in clauses] == ["PASS"] * 7
-    assert all(row["coverage"] == "mapped" for row in result["coverage"]["rule_items"])
+    assert all(row["coverage"] == "executed" for row in result["coverage"]["rule_items"])
     for index in (2, 4):
-        evidence = findings[clauses[index].id]["locator"]["evidence"]["sources"]
-        assert {json.loads(row["locator"])["file_version_id"] for row in evidence} == {"version", "ref-0"}
+        evidence = findings[clauses[index].id]["locator"]["semantic"]["sources"]
+        assert {row["file_version_id"] for row in evidence} == {"version", "ref-0"}
 
 
 @pytest.mark.parametrize(("changes", "index"), [({"function": "只有内部"}, 3), ({"severity": 5}, 5), ({"detection": 8}, 6), ({"characteristic": "CC"}, 4), ({"process": "10 检查"}, 2)])
@@ -139,8 +139,8 @@ def test_warranty_uses_frozen_independent_delivery_list_with_two_original_locati
     findings, _ = execute("L17", warranty(), [("交付清单.xlsx", delivery())])
     row = findings[preset_rule("理想", "L17").clauses[0].id]
     assert row["status"] == "PASS", row
-    sources = row["locator"]["evidence"]["sources"]
-    assert {json.loads(source["locator"])["file_version_id"] for source in sources if source["locator"].startswith("{")} == {"version", "ref-0"}
+    sources = row["locator"]["semantic"]["sources"]
+    assert {source["file_version_id"] for source in sources} == {"version", "ref-0"}
 
 
 @pytest.mark.parametrize(("changes", "expected"), [({"attachment": None}, "NG"), ({"part": "OTHER"}, "UNABLE"), ({"customer": "蔚来"}, "UNABLE"), ({"revision": "B"}, "UNABLE")])
@@ -173,7 +173,7 @@ def test_pfmea_generic_category_headers_keep_original_text_in_evidence():
     findings, _ = execute("L07", pfmea(), [("过程流程图.xlsx", pfd(generic=True))])
     row = findings[preset_rule("理想", "L07").clauses[4].id]
     assert row["status"] == "PASS", row
-    assert any(source["excerpt"] == "特性类别" for source in row["locator"]["evidence"]["sources"])
+    assert any(source["excerpt"] == "特性类别" for source in row["locator"]["semantic"]["sources"])
 
 
 @pytest.mark.parametrize("part", ["P-123", "P/123", "P.123", "000123"])

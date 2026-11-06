@@ -4,10 +4,9 @@ import io
 
 import pytest
 from audit.audits import RoundInput, RoundWork
-from audit.engine.checkers.rule_declarations import freeze_target_rule_execution
 from audit.presets import preset_rule_body
+from corpus_contracts.core_round import customer_suite, run_suite_round
 from openpyxl import Workbook
-from product import run_round_from_bytes
 
 
 def workbook(sheets):
@@ -25,9 +24,9 @@ def workbook(sheets):
 
 def execute(entry, sheets):
     body = preset_rule_body("UAES", entry)
-    target = RoundInput("target", "file", "version", "原件.xlsx", "ready", rule_version_id="uaes-" + entry, rule_body=body, rule_execution=freeze_target_rule_execution(body, "原件.xlsx"))
-    result = run_round_from_bytes(RoundWork("round", "tenant", [target]), {"version": workbook(sheets)})
-    assert all(item["coverage"] == "mapped" for item in result["coverage"]["rule_items"]), result
+    target = RoundInput("target", "file", "version", "原件.xlsx", "ready", rule_version_id="uaes-" + entry, rule_body=body)
+    result = run_suite_round(RoundWork("round", "tenant", [target]), {"version": workbook(sheets)}, suites={"version": customer_suite("UAES", entry)})
+    assert all(item["coverage"] == "executed" for item in result["coverage"]["rule_items"]), result
     return result["findings"]
 
 
@@ -36,7 +35,7 @@ def test_capability_strict_threshold_and_uncalculated_formula(cpk, expected):
     findings = execute("U06", {"工艺能力认证报告": [["读数次数", 125], ["Cpk", cpk], ["Ppk", 1.68]]})
     assert findings[0]["status"] == expected, findings
     assert findings[1]["status"] == "PASS"
-    assert findings[0]["locator"]["evidence"]["sources"]
+    assert findings[0]["locator"]["semantic"]["sources"]
 
 
 @pytest.mark.parametrize(("ppk", "expected"), [(1.68, "PASS"), (1.67, "NG")])
@@ -100,14 +99,14 @@ def test_u12_uncalculated_formula_and_merged_number_never_hide_physical_row():
     content = io.BytesIO()
     book.save(content)
     body = preset_rule_body("UAES", "U12")
-    target = RoundInput("target", "file", "version", "特性.xlsx", "ready", rule_version_id="rules", rule_body=body, rule_execution=freeze_target_rule_execution(body, "特性.xlsx"))
-    result = run_round_from_bytes(RoundWork("round", "tenant", [target]), {"version": content.getvalue()})
+    target = RoundInput("target", "file", "version", "特性.xlsx", "ready", rule_version_id="rules", rule_body=body)
+    result = run_suite_round(RoundWork("round", "tenant", [target]), {"version": content.getvalue()}, suites={"version": customer_suite("UAES", "U12")})
     assert result["findings"][1]["status"] == "NG"
     sheet["C5"] = "=1+1"
     content = io.BytesIO()
     book.save(content)
     book.close()
-    result = run_round_from_bytes(RoundWork("round", "tenant", [target]), {"version": content.getvalue()})
+    result = run_suite_round(RoundWork("round", "tenant", [target]), {"version": content.getvalue()}, suites={"version": customer_suite("UAES", "U12")})
     assert result["findings"][1]["status"] == "UNABLE"
 
 

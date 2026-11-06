@@ -1,14 +1,12 @@
 """Customer-specific T12 facts are evaluated through the actual Round boundary."""
 
 import io
-import json
 
 import pytest
 from audit.audits import RoundInput, RoundWork
-from audit.engine.checkers.rule_declarations import freeze_target_rule_execution
 from audit.presets import preset_rule_body
+from corpus_contracts.core_round import customer_suite, run_suite_round
 from openpyxl import Workbook
-from product import run_round_from_bytes
 
 
 @pytest.mark.parametrize(("missing", "expected"), [(None, ["PASS", "PASS"]), ("identity", ["NG", "PASS"]), ("value", ["PASS", "NG"])])
@@ -24,15 +22,15 @@ def test_uaes_material_identity_and_characteristic_values(missing, expected):
     book.save(content)
     book.close()
     body = preset_rule_body("UAES", "U12")
-    execution = freeze_target_rule_execution(body, "特性.xlsx")
-    target = RoundInput("target", "file", "version", "特性.xlsx", "ready", rule_version_id="uaes-u12", rule_body=body, rule_execution=execution)
-    result = run_round_from_bytes(RoundWork("round", "tenant", [target]), {"version": content.getvalue()})
+
+    target = RoundInput("target", "file", "version", "特性.xlsx", "ready", rule_version_id="uaes-u12", rule_body=body)
+    result = run_suite_round(RoundWork("round", "tenant", [target]), {"version": content.getvalue()}, suites={"version": customer_suite("UAES", "U12")})
     assert [finding["status"] for finding in result["findings"]] == expected, [(f["status"], f["suggestions"]) for f in result["findings"]]
     assert result["coverage"]["unchecked"] == []
     for finding in result["findings"]:
-        sources = finding["locator"]["evidence"]["sources"]
+        sources = finding["locator"]["semantic"]["sources"]
         assert sources
-        assert all(json.loads(source["locator"])["file_version_id"] == "version" for source in sources)
+        assert all(source["file_version_id"] == "version" for source in sources)
 
 
 @pytest.mark.parametrize(
@@ -58,9 +56,9 @@ def test_li_auto_ccsc_uses_its_own_fields_and_high_risk_rule(missing, expected):
     book.save(content)
     book.close()
     body = preset_rule_body("理想", "L12")
-    execution = freeze_target_rule_execution(body, "特性.xlsx")
-    assert execution["checker"]["profile"] == "v4"
-    target = RoundInput("target", "file", "version", "特性.xlsx", "ready", rule_version_id="li-l12", rule_body=body, rule_execution=execution)
-    result = run_round_from_bytes(RoundWork("round", "tenant", [target]), {"version": content.getvalue()})
+
+    assert customer_suite("理想", "L12").suite_key == "理想:L12"
+    target = RoundInput("target", "file", "version", "特性.xlsx", "ready", rule_version_id="li-l12", rule_body=body)
+    result = run_suite_round(RoundWork("round", "tenant", [target]), {"version": content.getvalue()}, suites={"version": customer_suite("理想", "L12")})
     assert [finding["status"] for finding in result["findings"]] == expected, [(f["status"], f["suggestions"]) for f in result["findings"]]
     assert result["coverage"]["unchecked"] == []
