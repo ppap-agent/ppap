@@ -48,8 +48,8 @@ def content(source):
 
 
 @pytest.mark.parametrize(("customer", "expected_count"), [("UAES", 19), ("理想", 17), ("蔚来", 5)])
-def test_each_source_accepts_and_freezes_its_actual_customer_checker(auth_store_factory, v4_objects, customer, expected_count):
-    settings = Settings(usage_charge_enabled=False, feishu_app_id="v4-route-acceptance", git_sha="route-test")
+def test_each_source_accepts_and_freezes_its_actual_customer_checker(auth_store_factory, v4_objects, core_system, customer, expected_count):
+    settings = Settings(usage_charge_enabled=False, feishu_app_id="v4-route-acceptance", git_sha="a" * 40)
     admin = auth_store_factory(settings)
     admin.objects = v4_objects
     principal = admin.upsert_feishu_identity("routes-" + uuid.uuid4().hex, "owner")
@@ -57,6 +57,8 @@ def test_each_source_accepts_and_freezes_its_actual_customer_checker(auth_store_
     worker = build_product_store(settings, objects=admin.objects, role="worker")
     sources = [source for source in customer_presets() if source.customer == customer]
     assert len(sources) == expected_count
+    core_system.adopt_standard(admin, principal, *(f"{source.customer}:{source.entry_id}" for source in sources))
+    core_system.install(admin)
     originals = {}
     with TestClient(create_app(settings, auth_store=api)) as client:
         client.cookies.set(SESSION_COOKIE, admin.create_session(principal))
@@ -111,8 +113,8 @@ def test_each_source_accepts_and_freezes_its_actual_customer_checker(auth_store_
         with admin._conn() as conn:
             frozen = conn.execute("SELECT rule_execution FROM product.round_inputs WHERE round_id = %s AND role = 'target'", (round["id"],)).fetchall()
         assert len(frozen) == expected_count
-        assert all("audit.checkers.v4." in row[0]["checker"]["class"] for row in frozen), frozen
-        assert all(row[0]["items"] and all(item["coverage"] == "mapped" for item in row[0]["items"]) for row in frozen), frozen
+        assert all(row[0]["mode"] == "checker_core" and row[0]["suite_revision_id"] for row in frozen), frozen
+        assert all(row[0]["binding"]["entrypoints"] and row[0]["verification"] == "unverified" for row in frozen), frozen
         assert all(finding["status"] != "ERR" for finding in round["findings"]), round["findings"]
         assert client.get(path + "/prechecks/" + frozen_precheck["id"]).json() == frozen_precheck
         for _, original_path, data in originals.values():
