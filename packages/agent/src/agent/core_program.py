@@ -122,6 +122,7 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
     from pydantic import SecretStr
 
     from agent.execution.audit_runtime import run_audit
+    from agent.execution.checker_runtime import CheckerRuntime
     from agent.execution.guest_model import ModelGrant
 
     manifest = read_json(inputs, ("manifest.json",), MAX_MANIFEST)
@@ -189,7 +190,7 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
                 artifacts[target.file_version_id] = artifact
             effective = generated_snapshot(snapshot, sources, artifacts)
             programs = {artifact.program_digest: dict(artifact.files) for artifact in artifacts.values()}
-        result = run_audit(effective, sources, programs, unavailable_sources=unavailable)
+        result = run_audit(effective, sources, programs, runtime=CheckerRuntime(allow_model_tools=job.allow_model_calls), unavailable_sources=unavailable)
     payload = {
         **result,
         "operation": "execute-audit",
