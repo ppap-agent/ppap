@@ -677,6 +677,69 @@ class AuditPreviewTests(unittest.TestCase):
                     page.close()
             browser.close()
 
+    def test_certified_partial_scope_is_visible_and_gate_changes_require_new_confirmation(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            for scene in ("confirm-precheck-partial", "confirm-gate-changed"):
+                with self.subTest(scene=scene):
+                    page = browser.new_page(viewport={"width": 1440, "height": 1000})
+                    try:
+                        page.set_default_timeout(5000)
+                        page.goto(PREVIEW + "/preview/audit.html?scene=" + scene)
+                        page.get_by_role("button", name="使用三类文件示例", exact=True).click()
+                        page.get_by_role("button", name="开始识别", exact=True).click()
+                        original_task = parse_qs(urlparse(page.url).query)["task"]
+                        scope = page.get_by_role("region", name="本次审核范围", exact=True)
+                        start = page.get_by_role("button", name="开始审核", exact=True)
+                        if scene == "confirm-gate-changed":
+                            expect(scope).to_contain_text("进入审核 3 份")
+                            start.click()
+                            old_request = parse_qs(urlparse(page.url).query)["acceptRequest"]
+                            expect(page.get_by_role("alert").filter(has_text="审核依据已变化")).to_be_visible()
+                            expect(start).to_be_disabled()
+                            expect(scope).to_contain_text("进入审核 3 份")
+                            page.get_by_role("button", name="刷新审核依据", exact=True).click()
+                            expect(scope).to_contain_text("进入审核 2 份")
+                            self.assertEqual(parse_qs(urlparse(page.url).query)["acceptRequest"], old_request)
+                        expect(scope).to_contain_text("进入审核 2 份")
+                        expect(scope).to_contain_text("PFMEA.xlsx")
+                        expect(scope).to_contain_text("已认证的预检阻断：原件没有可审核内容")
+                        expect(page.get_by_role("heading", name="PFMEA.xlsx", exact=True)).to_be_visible()
+                        expect(page.get_by_text("预计 1000 点", exact=True)).to_be_visible()
+                        expect(page.get_by_role("button", name="读取审核结果", exact=True, include_hidden=True)).to_have_count(0)
+                        start.click()
+                        queue = page.get_by_role("navigation", name="文件队列", exact=True)
+                        expect(queue.get_by_role("button")).to_have_count(2)
+                        expect(queue.get_by_text("PFMEA.xlsx", exact=True)).to_have_count(0)
+                        removed = page.get_by_role("region", name="已移除文件", exact=True)
+                        expect(removed).to_contain_text("PFMEA.xlsx")
+                        expect(removed).to_contain_text("已认证的预检阻断：原件没有可审核内容")
+                        self.assertEqual(parse_qs(urlparse(page.url).query)["task"], original_task)
+                        if scene == "confirm-gate-changed":
+                            self.assertNotEqual(parse_qs(urlparse(page.url).query)["acceptRequest"], old_request)
+                    finally:
+                        page.close()
+            browser.close()
+
+    def test_hiding_an_unmatched_file_does_not_replace_the_server_exclusion_reason(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            try:
+                page.set_default_timeout(5000)
+                page.goto(PREVIEW + "/preview/audit.html?scene=partial")
+                page.get_by_role("button", name="使用三类文件示例", exact=True).click()
+                page.get_by_role("button", name="开始识别", exact=True).click()
+                page.get_by_role("heading", name="过程流程图.pdf", exact=True).locator("xpath=ancestor::section[1]").get_by_role("button", name="移除", exact=True).click()
+                scope = page.get_by_role("region", name="本次审核范围", exact=True)
+                expect(scope).to_contain_text("未匹配到规则，不进入本轮审核")
+                page.get_by_role("button", name="开始审核", exact=True).click()
+                expect(page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button")).to_have_count(2)
+                expect(page.get_by_role("region", name="已移除文件", exact=True)).to_contain_text("未匹配到规则，不进入本轮审核")
+            finally:
+                page.close()
+                browser.close()
+
     def test_verified_empty_source_is_not_described_as_missing_evidence(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

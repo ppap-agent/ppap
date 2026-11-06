@@ -5,7 +5,7 @@ import {reconcileTaskDisplay} from './display-info-contract.ts'
 
 type Task = components['schemas']['AuditTask']
 const values = {customer: '已更正客户', model: '车型 A', part_number: 'P-204', part: '零件 A'}
-const task = (): Task => ({confirmation_basis_digest: null, id: 'task-a', number: 'PPAP-A', state: 'reviewing', analysis_mode: 'standard', created_at: '', updated_at: '', source_draft_id: null, round_id: 'round-a', customer_preference: null, completion_reason: null, estimated_points: null, files: [{file: {id: 'version-a', file_id: 'file-a', original_filename: '原件.xlsx', content_type: '', byte_size: 1, status: 'ready', sha256: null}, selection: 'selected', removal_reason: null, validation: {state: 'valid', reasons: []}, match: null, display_info: {revision: 2, values}, display_edit_access: {state: 'allowed', reason: null}}]})
+const task = (): Task => ({confirmation_basis_digest: null, confirmation_scope: null, id: 'task-a', number: 'PPAP-A', state: 'reviewing', analysis_mode: 'standard', created_at: '', updated_at: '', source_draft_id: null, round_id: 'round-a', customer_preference: null, completion_reason: null, estimated_points: null, files: [{file: {id: 'version-a', file_id: 'file-a', original_filename: '原件.xlsx', content_type: '', byte_size: 1, status: 'ready', sha256: null}, selection: 'selected', removal_reason: null, validation: {state: 'valid', reasons: []}, match: null, display_info: {revision: 2, values}, display_edit_access: {state: 'allowed', reason: null}}]})
 
 test('task reads retain confirmed display values without retaining stale editing permission', () => {
   const before = task(), next = task()

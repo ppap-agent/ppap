@@ -12,6 +12,8 @@ type Check = components['schemas']['AuditClauseEvaluation']
 export function fixtureAcceptance(task: AuditTask, requestId: string): AuditTask {
   const round = `preview-round-${requestId}`
   const files = structuredClone(task.files).map(file => {
+    const excluded = task.confirmation_scope?.excluded_files.find(row => row.file_version_id === file.file.id)
+    if (excluded) return {...file, selection: 'removed' as const, removal_reason: excluded.reason, audit: null}
     if (file.selection !== 'selected') return file
     if (file.match?.state === 'reference') return {...file, audit: null}
     if (file.match?.state !== 'matched' || !file.match.rule) return {...file, selection: 'removed' as const, removal_reason: '未匹配到规则，不进入本轮审核'}
