@@ -2,7 +2,9 @@
 
 import hashlib
 import json
+import runpy
 import uuid
+from pathlib import Path
 
 import psycopg
 import pytest
@@ -16,7 +18,7 @@ from product.settings import Settings
 from product.store.suites import SuiteStore
 from psycopg.types.json import Jsonb
 
-from scripts import import_checker_history as _tool
+artifact_loader = runpy.run_path(str(Path(__file__).resolve().parents[3] / "scripts/import_checker_history.py"))["artifact_loader"]
 
 RULE = {
     "kind": "engine",
@@ -105,7 +107,7 @@ def old_round(history, *, mode="deep", artifact=True, state="completed"):
 
 def run(history, *, apply=False, digest=None, loader=None):
     store, alice, *_ = history
-    return import_history(store, tenant_id=alice.tenant_id, artifact_loader=loader or _tool.artifact_loader(store.objects), apply=apply, expected_digest=digest)
+    return import_history(store, tenant_id=alice.tenant_id, artifact_loader=loader or artifact_loader(store.objects), apply=apply, expected_digest=digest)
 
 
 def business_state(store):
@@ -296,7 +298,7 @@ def test_apply_requires_exact_reviewed_plan_and_mid_apply_object_change_fails(hi
     with pytest.raises(HistoryImportError, match="history_plan_changed_or_unconfirmed"):
         run(history, apply=True)
     plan = run(history)
-    loader = _tool.artifact_loader(store.objects)
+    loader = artifact_loader(store.objects)
     calls = 0
 
     def change_after_plan(source):
@@ -519,7 +521,7 @@ def test_concurrent_imports_resume_without_duplicate_round_identities_or_archive
             )
         second_key = first_key.replace(first, second).replace(hashlib.sha256(old_job.encode()).hexdigest(), hashlib.sha256(job_id.encode()).hexdigest())
         store.objects.data[second_key] = store.objects.data[first_key]
-    loader = _tool.artifact_loader(store.objects)
+    loader = artifact_loader(store.objects)
     plans = [import_history(store, tenant_id=alice.tenant_id, round_ids=[rid], artifact_loader=loader) for rid in (first, second)]
     barrier = threading.Barrier(2)
 
