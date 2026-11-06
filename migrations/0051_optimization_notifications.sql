@@ -7,7 +7,7 @@ CREATE UNIQUE INDEX task_notification_intent ON engine.jobs
     (tenant_id, (COALESCE(payload->>'task_id', '')), (payload->>'stage'),
      (COALESCE(payload->>'package_id', '')), (COALESCE(payload->>'operation_id', '')))
     WHERE kind = 'feishu_notification';
-CREATE UNIQUE INDEX optimization_notification_intent ON engine.jobs
+CREATE UNIQUE INDEX IF NOT EXISTS optimization_notification_intent ON engine.jobs
     (tenant_id, (payload->>'operation_id'))
     WHERE kind = 'feishu_notification' AND payload->>'stage' = 'optimization_completed';
 
