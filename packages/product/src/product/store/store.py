@@ -492,7 +492,8 @@ class AuthStore:
                         USER_CAROL,
                     ),
                 )
-                core_schema = conn.execute("SELECT to_regclass('product.suite_revisions')").fetchone()[0] is not None
+                schema_row = conn.execute("SELECT to_regclass('product.suite_revisions')").fetchone()
+                core_schema = schema_row is not None and schema_row[0] is not None
                 for rule_id, tenant_id, name in ((RULE_A, TENANT_A, "alice"), (RULE_B, TENANT_B, "carol")):
                     if conn.execute("SELECT 1 FROM product.rule_versions WHERE id=%s", (rule_id,)).fetchone():
                         continue
