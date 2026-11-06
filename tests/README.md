@@ -172,6 +172,37 @@ uv run --no-sync python -m playwright install chromium
 uv run --no-sync pytest tests/e2e
 ```
 
+### Checker workspace browser journey
+
+`tests/integration/product/test_checker_workspace_browser.py` uses the production Web,
+HTTP API, PostgreSQL migrations and roles, durable Worker queue, Controller authorization,
+Core guest entrypoint, and actual candidate/baseline/holdout execution. It starts from
+four real audit results (including false PASS, false NG and UNABLE), saves independent
+answers, checks explicit personal-key consent, save-only, refresh/re-login recovery,
+verified publication, explicit re-audit and rollback. A companion HTTP case also checks
+stale sample edits, private access and preservation of existing human reviews.
+No findings or validation reports are injected. Deterministic metadata and author adapters supply only model responses and Python
+at the model boundary; model usage is labeled `controlled`. This does not prove provider
+quality, real DeepSeek consumption, paid acceptance or willingness to configure a key.
+
+Run with the Product integration prerequisites above, including the `e2e` dependency
+group and installed Chromium:
+
+```sh
+uv run --no-sync pytest tests/integration/product/test_checker_workspace_browser.py -q
+```
+
+Default storage uses the existing real Silo fixture and Controller calls use its Unix
+socket protocol. The guest runs in a fresh local subprocess, **not a container security
+boundary**. Existing container/runtime gates remain responsible for isolation.
+For a restricted local executor only, explicitly set
+`PPAP_CHECKER_BROWSER_LOCAL_OBJECTS=1` to use persistent local objects and
+`PPAP_CHECKER_BROWSER_LOCAL_TRANSPORT=1` to replace the socket transport with serialized
+calls to the same Controller. The tests reject either override when `CI` is set; local
+success with these overrides is not S3 or UDS acceptance. `--local-postgres` creates a
+disposable TCP-only cluster. If a browser cannot launch, `-k http_receipts` runs the real
+HTTP/PG/Worker/trial/publication chain without claiming browser coverage.
+
 ## Live
 
 `tests/live` is explicit-only. For the current Deep live smoke:

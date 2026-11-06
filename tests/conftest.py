@@ -69,7 +69,8 @@ def pytest_configure(config):
 
     try:
         run([str(bindir / "initdb"), "-D", str(temporary / "data"), "-U", "ppap", "-A", "trust", "--no-locale", "-E", "UTF8"])
-        run([str(bindir / "pg_ctl"), "-D", str(temporary / "data"), "-l", str(temporary / "postgres.log"), "-o", f"-h 127.0.0.1 -p {port} -k {temporary} -c timezone=UTC", "-w", "start"])
+        # Every fixture client uses PGHOST=127.0.0.1; no Unix socket is needed.
+        run([str(bindir / "pg_ctl"), "-D", str(temporary / "data"), "-l", str(temporary / "postgres.log"), "-o", f'-h 127.0.0.1 -p {port} -k "" -c timezone=UTC', "-w", "start"])
         run([str(bindir / "psql"), "-d", "postgres", "-v", "ON_ERROR_STOP=1", "-f", str(root / "migrations/bootstrap.sql")])
         run(["sh", str(root / "migrations/apply.sh")])
     except BaseException:
