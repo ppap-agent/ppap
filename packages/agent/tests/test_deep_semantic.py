@@ -118,23 +118,6 @@ class SemanticBoundaryTests(unittest.TestCase):
                 draft = runner.run(work, "develop", CheckerDraft, 9999999999.0, reasoning_effort="medium")
         self.assertEqual(draft.clauses, ["R4"])
 
-    def test_container_ppap_label_does_not_restrict_the_model(self) -> None:
-        grant = {"base_url": "http://127.0.0.1:12345/v1", "token": "x" * 32, "model": "test", "max_turns": 2, "wall_seconds": 10}
-        environment = {"PPAP_GUEST_ISOLATION": "container-only", "PPAP_GUEST_SANDBOX": "ppap", "PATH": "/bin"}
-        with tempfile.TemporaryDirectory() as directory:
-            with patch.dict(os.environ, environment, clear=True), patch("agent.execution.guest_model.os.getuid", return_value=10001):
-                with patch("agent.execution.guest_model.subprocess.Popen") as popen:
-                    popen.return_value.poll.return_value = 0
-                    popen.return_value.returncode = 0
-                    with self.assertRaises(ModelProtocolError):
-                        GrokRunner(grant)._run(Path(directory), "test", 9999999999.0, reasoning_effort="medium")
-                    command = popen.call_args.args[0]
-                    self.assertEqual(command[command.index("--sandbox") + 1], "off")
-                    for flag in ("--tools", "--disallowed-tools", "--disable-web-search", "--no-subagents", "--no-plan", "--deny"):
-                        self.assertNotIn(flag, command)
-                    self.assertFalse((Path(directory) / "grok-home" / "sandbox.toml").exists())
-                    self.assertNotIn("GROK_SANDBOX_MODE", popen.call_args.kwargs["env"])
-
     def test_checker_receipt_rejects_a_malformed_clause_list(self) -> None:
         from agent.execution.checker_guest import CheckerDraft
 
@@ -221,11 +204,11 @@ class SemanticBoundaryTests(unittest.TestCase):
 
     def test_runner_keeps_default_tools_and_only_forwards_runtime_pythonpath(self) -> None:
         grant = {"base_url": "http://127.0.0.1:12345/v1", "token": "x" * 32, "model": "test", "max_turns": 2, "wall_seconds": 10}
-        for pythonpath in (None, "", "/app/.venv/lib/python3.12/site-packages"):
-            environment = {"PPAP_GUEST_ISOLATION": "container-only", "PPAP_GUEST_SANDBOX": "off", "UNRELATED_SECRET": "do-not-inherit", "PATH": "/untrusted/bin"}
+        for profile, pythonpath in (("off", None), ("off", ""), ("off", "/app/.venv/lib/python3.12/site-packages"), ("ppap", None)):
+            environment = {"PPAP_GUEST_ISOLATION": "container-only", "PPAP_GUEST_SANDBOX": profile, "UNRELATED_SECRET": "do-not-inherit", "PATH": "/untrusted/bin"}
             if pythonpath is not None:
                 environment["PYTHONPATH"] = pythonpath
-            with self.subTest(pythonpath=pythonpath), tempfile.TemporaryDirectory() as directory:
+            with self.subTest(profile=profile, pythonpath=pythonpath), tempfile.TemporaryDirectory() as directory:
                 with patch.dict(os.environ, environment, clear=True), patch("agent.execution.guest_model.os.getuid", return_value=10001):
                     with patch("agent.execution.guest_model.subprocess.Popen") as popen:
                         popen.return_value.poll.return_value = 0
@@ -253,36 +236,6 @@ class SemanticBoundaryTests(unittest.TestCase):
                         self.assertFalse((Path(directory) / "grok-home" / "shell-env.sh").exists())
                         self.assertNotIn("UNRELATED_SECRET", child_env)
                         self.assertNotIn("PPAP_GUEST_ISOLATION", child_env)
-
-    def test_checker_stage_has_full_tools_web_and_permissions(self) -> None:
-        from pydantic import BaseModel
-
-        class Draft(BaseModel):
-            entrypoint: str
-            files: dict[str, str]
-
-        grant = {"base_url": "http://127.0.0.1:12345/v1", "token": "x" * 32, "model": "test", "max_turns": 2, "wall_seconds": 10}
-        environment = {"PPAP_GUEST_ISOLATION": "container-only", "PPAP_GUEST_SANDBOX": "off", "PATH": "/bin"}
-        with tempfile.TemporaryDirectory() as directory:
-            with patch.dict(os.environ, environment, clear=True), patch("agent.execution.guest_model.os.getuid", return_value=10001):
-                with patch("agent.execution.guest_model.subprocess.Popen") as popen:
-                    popen.return_value.poll.return_value = 0
-                    popen.return_value.returncode = 0
-                    with self.assertRaises(ModelProtocolError):
-                        GrokRunner(grant).run(Path(directory), "write the checker", Draft, 9999999999.0, reasoning_effort="medium")
-                    command = popen.call_args.args[0]
-                    for flag in ("--tools", "--disallowed-tools", "--disable-web-search", "--no-subagents", "--no-plan", "--deny"):
-                        self.assertNotIn(flag, command)
-                    self.assertEqual(command[command.index("--permission-mode") + 1], "bypassPermissions")
-                    self.assertEqual(command[command.index("--sandbox") + 1], "off")
-                    self.assertFalse((Path(directory) / "grok-home" / "sandbox.toml").exists())
-                    config = (Path(directory) / "grok-home" / "config.toml").read_text()
-                    self.assertNotIn("[sandbox]", config)
-                    self.assertNotIn("permission_mode", config)
-                    prompt = (Path(directory) / "prompt.txt").read_text()
-                    self.assertEqual(prompt, "write the checker")
-                    self.assertNotIn("available tools", prompt)
-                    self.assertNotIn("Use tool calls", prompt)
 
     def test_runner_counts_only_stream_tool_pairs_and_compact_boundaries(self) -> None:
         grant = {

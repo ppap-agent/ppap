@@ -496,23 +496,29 @@ class GatewayGrantTests(unittest.TestCase):
         grants.record_usage(lease, {"input_tokens": 1, "output_tokens": 1})
 
     def test_unknown_provider_usage_closes_grant(self) -> None:
-        grants = Grants("test-model", requests=8, input_tokens=100, output_tokens=30)
-        token = grants.issue(uuid4())
-        lease = grants.authorize(token, {"model": "test-model", "input": "one", "max_output_tokens": 10}, 20)
-        grants.finish_unknown(lease)
-        self.assertEqual(
-            grants.usage(lease.execution_id),
-            {
-                "completed_requests": 0,
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "uncertain": True,
-                "in_flight": False,
-                "budget_exhausted": False,
-            },
-        )
-        with self.assertRaises(ValueError):
-            grants.authorize(token, {"model": "test-model", "input": "two", "max_output_tokens": 1}, 1)
+        receipts = [None, {"input_tokens": 13}, {"input_tokens": True, "output_tokens": 7}, {"input_tokens": 13, "output_tokens": -1}]
+        for receipt in receipts:
+            with self.subTest(receipt=receipt):
+                grants = Grants("test-model", requests=8, input_tokens=100, output_tokens=30)
+                token = grants.issue(uuid4())
+                lease = grants.authorize(token, {"model": "test-model", "input": "one", "max_output_tokens": 10}, 20)
+                if receipt is not None:
+                    with self.assertRaises(ValueError):
+                        grants.record_usage(lease, receipt)
+                grants.finish_unknown(lease)
+                self.assertEqual(
+                    grants.usage(lease.execution_id),
+                    {
+                        "completed_requests": 0,
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "uncertain": True,
+                        "in_flight": False,
+                        "budget_exhausted": False,
+                    },
+                )
+                with self.assertRaises(ValueError):
+                    grants.authorize(token, {"model": "test-model", "input": "two", "max_output_tokens": 1}, 1)
 
 
 class ContainerBoundaryTests(unittest.TestCase):

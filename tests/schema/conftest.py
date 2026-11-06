@@ -64,18 +64,6 @@ class SchemaTools:
     def migration_files(self) -> list[Path]:
         return sorted(self.MIGRATIONS.glob("[0-9][0-9][0-9][0-9]_*.sql"))
 
-    def latest_version(self) -> str:
-        files = self.migration_files()
-        if not files:
-            raise RuntimeError("no SQL migrations found")
-        return files[-1].name
-
-    def previous_version(self) -> str:
-        files = self.migration_files()
-        if len(files) < 2:
-            raise RuntimeError("need at least two migrations to upgrade from a previous schema")
-        return files[-2].name
-
     def bootstrap_user(self) -> str:
         return os.environ.get("PPAP_PG_BOOTSTRAP_USER") or os.environ.get("PGUSER") or "ppap"
 

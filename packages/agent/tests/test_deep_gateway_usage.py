@@ -54,15 +54,16 @@ def test_prior_stage_exhaustion_rejects_paid_request_before_provider(prior) -> N
             }
 
 
-@pytest.mark.parametrize("terminal", ["response.completed", "response.incomplete", "response.failed"])
 @pytest.mark.parametrize(
-    ("receipt", "confirmed"),
+    ("terminal", "receipt", "confirmed"),
     [
-        pytest.param({"input_tokens": 13, "output_tokens": 7}, True, id="known"),
-        pytest.param(None, False, id="missing"),
-        pytest.param({"input_tokens": 13}, False, id="missing-output"),
-        pytest.param({"input_tokens": True, "output_tokens": 7}, False, id="boolean"),
-        pytest.param({"input_tokens": 13, "output_tokens": -1}, False, id="negative"),
+        pytest.param("response.completed", {"input_tokens": 13, "output_tokens": 7}, True, id="completed-known"),
+        pytest.param("response.incomplete", {"input_tokens": 13, "output_tokens": 7}, True, id="incomplete-known"),
+        pytest.param("response.failed", {"input_tokens": 13, "output_tokens": 7}, True, id="failed-known"),
+        pytest.param("response.completed", None, False, id="completed-missing"),
+        pytest.param("response.incomplete", None, False, id="incomplete-missing"),
+        pytest.param("response.failed", None, False, id="failed-missing"),
+        pytest.param("response.completed", {"input_tokens": 13}, False, id="completed-invalid-counts"),
     ],
 )
 def test_terminal_stream_retains_confirmed_usage_without_replaying_inference(terminal: str, receipt, confirmed: bool) -> None:

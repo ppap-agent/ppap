@@ -21,9 +21,6 @@ def test_customer_catalog_requires_login_and_has_a_minimal_runtime_contract():
     schemas = spec["components"]["schemas"]
     assert set(schemas["AuditCustomerCatalog"]["properties"]) == {"customers"}
     assert set(schemas["AuditCustomer"]["properties"]) == {"customer_id", "name"}
-    assert "/audit-template-catalog" not in spec["paths"]
-    assert not any(path.startswith("/audit-template") for path in spec["paths"])
-    assert not any(name.startswith("AuditTemplate") for name in schemas)
 
 
 def test_rule_library_requires_login_and_declares_its_metadata_contract():

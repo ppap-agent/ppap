@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import os
 import unittest
-from pathlib import Path
+from contextlib import contextmanager
+from types import SimpleNamespace
 from unittest.mock import patch
 
+import worker
 from worker import run_claimed_job
-
-ROOT = Path(__file__).resolve().parents[3]
 
 
 class ClaimedJobTests(unittest.TestCase):
@@ -20,13 +20,38 @@ class ClaimedJobTests(unittest.TestCase):
 
 
 class WorkerLoopTests(unittest.TestCase):
-    def test_run_does_not_hold_a_connection_across_claim_job(self):
-        text = (ROOT / "apps/worker/src/worker/__init__.py").read_text()
-        run = text.split("def run() -> None:", 1)[1].split("if __name__", 1)[0]
-        before, after = run.split("claimed = store.claim_job(ident)", 1)
-        self.assertIn('with connect(settings, "worker") as conn:', before)
-        self.assertIn("worker_heartbeats", before)
-        self.assertNotIn("claimed = store.claim_job(ident)", before)
-        self.assertTrue(before.rstrip().endswith(")"))
-        self.assertIn("process_claimed(store, claimed, ident)", after)
-        self.assertIn("except Exception:", run)
+    def test_run_closes_heartbeat_connection_before_claiming_and_processing(self):
+        events = []
+        settings = SimpleNamespace(worker_id="test-worker", git_sha="a" * 40)
+        claimed = object()
+
+        @contextmanager
+        def connect(*_args):
+            events.append("connection_open")
+            try:
+                yield SimpleNamespace(execute=lambda *_args: events.append("heartbeat"))
+            finally:
+                events.append("connection_closed")
+
+        def claim_job(ident):
+            events.append("claim")
+            return claimed
+
+        def process_claimed(store, job, ident):
+            self.assertIs(job, claimed)
+            self.assertEqual(ident, settings.worker_id)
+            events.append("process")
+            worker.STOP = True
+
+        with (
+            patch.object(worker, "STOP", False),
+            patch.object(worker.signal, "signal"),
+            patch.object(worker, "get_settings", return_value=settings),
+            patch.object(worker, "configure_logs"),
+            patch.object(worker, "build_product_store", return_value=SimpleNamespace(claim_job=claim_job)),
+            patch.object(worker, "connect", side_effect=connect),
+            patch.object(worker, "process_claimed", side_effect=process_claimed),
+        ):
+            worker.run()
+
+        self.assertEqual(events, ["connection_open", "heartbeat", "connection_closed", "claim", "process"])

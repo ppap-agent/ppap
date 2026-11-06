@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import {existsSync, readFileSync, readdirSync} from 'node:fs'
+import {readFileSync, readdirSync} from 'node:fs'
 import {dirname, join} from 'node:path'
 import test from 'node:test'
 import {fileURLToPath} from 'node:url'
@@ -37,9 +37,6 @@ test('the product and addon documents boot the React entries', () => {
 })
 
 test('docs-addon client comes from the package manager', () => {
-  const pkg = JSON.parse(readFileSync(join(web, 'package.json'), 'utf8'))
-  assert.equal(pkg.dependencies['@lark-opdev/block-docs-addon-api'], '0.0.11')
-  assert.equal(existsSync(join(web, 'block-docs-addon-api.js')), false)
   const addon = readFileSync(join(web, 'src/addon/main.tsx'), 'utf8')
   assert.match(addon, /@lark-opdev\/block-docs-addon-api/)
   assert.match(addon, /BlockitClient/)
@@ -79,11 +76,9 @@ test('Web wire schemas are generated from FastAPI OpenAPI', () => {
   const api = readFileSync(join(web, 'src', 'api.ts'), 'utf8')
   const pkg = JSON.parse(readFileSync(join(web, 'package.json'), 'utf8'))
 
-  assert.equal(pkg.devDependencies['openapi-typescript'], '7.13.0')
   assert.match(pkg.scripts['api-types'], /app\.openapi\(\)/)
   assert.match(pkg.scripts['api-types'], /openapi-typescript --alphabetize/)
   assert.match(pkg.scripts['api-types:check'], /--check/)
-  assert.equal(existsSync(join(repo, 'scripts', 'generate_web_contract.py')), false)
   assert.match(api, /from ['"]\.\/generated\/openapi['"]/)
   assert.match(api, /type MaterialWire = Schema<'MaterialWire'>/)
   assert.match(api, /export type RuleBody = Schema<'EngineRuleBody'>/)

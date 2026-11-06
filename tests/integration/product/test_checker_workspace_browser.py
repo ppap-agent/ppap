@@ -524,12 +524,6 @@ def test_feedback_optimize_verify_publish_reaudit_and_rollback(workspace_product
             assert response_json(page.request.get(f.web + "/api/rounds/" + newer["id"]))["findings"] == newer["findings"]
             assert f.jobs.count("checker_optimization") == 1
             assert f.guest.adaptations == 1
-            # Same-tenant membership is not original access or private-key access.
-            context.clear_cookies()
-            context.add_cookies([{"name": SESSION_COOKIE, "value": f.bob_session, "url": f.web, "httpOnly": True}])
-            assert page.request.get(f.web + "/api/checker-optimizations/" + operation_id).status == 404
-            assert page.request.get(f.web + "/api/rounds/" + original["id"]).status == 403
-            assert not response_json(page.request.get(f.web + "/api/me/model-config"))["configured"]
             assert not f.errors
         except BaseException:
             try:

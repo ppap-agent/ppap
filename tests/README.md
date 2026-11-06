@@ -68,14 +68,30 @@ uv run --no-sync pytest apps/worker/tests
 docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 ```
 
-Cross-owner product integration uses the same PostgreSQL authority but remains a root system contract:
+Cross-owner product integration owns PostgreSQL and Silo before starting any pytest
+workers, and tears both down only after all workers exit. Each worker has its own
+database and S3 bucket. Keep the Compose bridge stable while browsers are running:
+creating/removing bridges mid-suite can invalidate Chromium's active connections,
+even to localhost.
+
+```sh
+python3 -m scripts.ci_shards integration
+```
+
+For a focused direct pytest run, start the same services first and keep them up
+until pytest exits (including every xdist worker). The explicit test-only endpoint
+prevents a fixture from starting a new Docker network while another worker uses
+Chromium. S3 buckets live in this disposable project's volume until teardown.
 
 ```sh
 export COMPOSE_PROJECT_NAME=ppap-product-integration
-docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
-docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
+compose=(docker compose -f deploy/isolated-dev/compose.yaml -f tests/integration/product/services.yaml)
+"${compose[@]}" up -d postgres silo --wait
+"${compose[@]}" run --rm init-db
+export PGPORT=$("${compose[@]}" port postgres 5432 | sed 's/.*://')
+export PPAP_TEST_S3_ENDPOINT=http://$("${compose[@]}" port silo 9000)
 uv run --no-sync pytest tests/integration/product
-docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
+"${compose[@]}" down -v --remove-orphans
 ```
 
 ## Corpus

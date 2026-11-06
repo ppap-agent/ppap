@@ -84,20 +84,30 @@ def run(command: list[str], *, env: dict[str, str] | None = None) -> None:
     run_with_heartbeat(command, cwd=ROOT, env=env, timeout=1800)
 
 
-def with_postgres(command: list[str], project: str) -> None:
-    """Give each service target its own database, even within one shard."""
+def with_postgres(command: list[str], project: str, *, silo: bool = False) -> None:
+    """Own service networking for the entire child process, including all xdist workers."""
     compose = ["docker", "compose", "-p", project, "-f", COMPOSE_FILE]
+    services = ["postgres"]
+    if silo:
+        compose += ["-f", "tests/integration/product/services.yaml"]
+        services.append("silo")
     env = {**os.environ, "PPAP_TEST_POSTGRES_PORT": "0"}
     try:
-        run([*compose, "up", "-d", "postgres", "--wait", "--wait-timeout", "120"], env=env)
+        run([*compose, "up", "-d", *services, "--wait", "--wait-timeout", "120"], env=env)
         binding = subprocess.check_output([*compose, "port", "postgres", "5432"], cwd=ROOT, env=env, text=True).strip()
         port = binding.rsplit(":", 1)[-1]
         if not port.isdigit():
             raise RuntimeError(f"invalid PostgreSQL port binding: {binding!r}")
         run([*compose, "run", "--rm", "init-db"], env=env)
-        run(command, env={**env, "PGPORT": port, "COMPOSE_PROJECT_NAME": project})
+        test_env = {**env, "PGPORT": port, "COMPOSE_PROJECT_NAME": project}
+        if silo:
+            binding = subprocess.check_output([*compose, "port", "silo", "9000"], cwd=ROOT, env=env, text=True).strip()
+            if not binding.startswith("127.0.0.1:") or not binding.rsplit(":", 1)[-1].isdigit():
+                raise RuntimeError(f"invalid Silo port binding: {binding!r}")
+            test_env["PPAP_TEST_S3_ENDPOINT"] = "http://" + binding
+        run(command, env=test_env)
     except (OSError, RuntimeError, subprocess.CalledProcessError):
-        for diagnostic in ([*compose, "ps", "-a"], [*compose, "logs", "--no-color", "--timestamps", "postgres", "init-db"]):
+        for diagnostic in ([*compose, "ps", "-a"], [*compose, "logs", "--no-color", "--timestamps", *services, "init-db"]):
             try:
                 subprocess.run(diagnostic, cwd=ROOT, env=env, check=False)
             except OSError as error:
@@ -133,7 +143,7 @@ def run_integration() -> None:
         "faulthandler_timeout=120",
         "--junitxml=ci-report/product.xml",
     ]
-    with_postgres(command, project)
+    with_postgres(command, project, silo=True)
 
 
 def run_target(target: Target, suite: str, project: str) -> None:
