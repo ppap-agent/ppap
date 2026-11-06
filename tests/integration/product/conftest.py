@@ -149,13 +149,14 @@ def auth_store_factory():
 
 
 @pytest.fixture
-def mcp_app(auth_store_factory):
+def mcp_app(auth_store_factory, core_system):
     from api import create_app
     from product.fixtures import APP_ID
 
-    settings = Settings(mcp_enabled=True, feishu_app_id=APP_ID, usage_charge_enabled=False)
+    settings = Settings(mcp_enabled=True, feishu_app_id=APP_ID, usage_charge_enabled=False, git_sha="a" * 40)
     store = auth_store_factory(settings)
     store.seed_isolated_dev()
+    core_system.install(store)
     store = build_product_store(settings, objects=store.objects, role="api")
     return create_app(settings, auth_store=store), store
 
@@ -221,3 +222,138 @@ def pytest_runtest_makereport(item, call):
     stacks = (f"--- {names.get(ident, ident)}\n{''.join(traceback.format_stack(frame))}" for ident, frame in sys._current_frames().items() if ident != threading.get_ident())
     report.sections.append(("Thread stacks at failure", "\n".join(stacks)))
     report.sections.append(("Web server log", item.web_log.read_text(errors="replace")[-4000:]))
+
+
+@pytest.fixture
+def core_system(monkeypatch, tmp_path):
+    """Explicit product/Core fixture, substituting RPC and guest OS boundaries only.
+
+    Admission, immutable Suite bytes, original lookup, Controller authorization,
+    Core execution, evidence mapping, and leased persistence stay production code.
+    This is not a claim of socket, container, provider, or process isolation.
+    """
+    import json
+
+    from agent.client import DeepClient
+    from agent.core_program import CoreRuntime, run_audit_manifest
+    from agent.precheck_program import run_precheck_manifest
+    from agent.protocol import PrecheckEnvelope
+    from agent.run import Controller, ExecutionContext
+    from agent.source import authorize_execution, object_file_source
+    from audit.checker_core import runtime_revision
+    from audit.standard_suites import library_revision
+    from product.fixtures import RULE_A
+    from product.store.suite_releases import SuiteReleaseStore, current_selection
+    from product.store.suites import SuiteStore
+    from worker.precheck_controller import precheck_handler
+
+    class ControlledCore:
+        calls = 0
+
+        def ready(self, operation="audit"):
+            return True
+
+        def run(self, job, inputs, work, deadline, cancelled):
+            self.calls += 1
+            if job.operation == "execute-precheck":
+                run_precheck_manifest(inputs, work)
+                return
+            grants = tmp_path / f"grants-{self.calls}"
+            grants.mkdir()
+            (grants / "model.json").write_text(
+                json.dumps(
+                    {
+                        "base_url": "http://127.0.0.1:1/v1",
+                        "token": "controlled-no-provider-credential-123456",
+                        "model": "deepseek-flash",
+                        "wall_seconds": 100,
+                        "max_turns": 20,
+                    }
+                )
+            )
+            assert not cancelled.is_set()
+            run_audit_manifest(inputs, work, grants)
+
+        def install(self, store):
+            settings = store.settings
+            settings.deep_controller_socket = "/controlled-product-core-rpc"
+            worker = build_product_store(settings, objects=store.objects, role="worker")
+            suites = SuiteStore(settings, store.objects, role="worker")
+            runtime = CoreRuntime(self, lambda spec: suites.read_snapshot(spec.round_id, spec.tenant_id), suites.resolve_suite)
+            self.controller = Controller(
+                runtime,
+                object_file_source(settings, connect=connect, objects=store.objects),
+                executor_revision=runtime_revision(settings.deep_execution_revision(), library_revision()),
+                authorize=authorize_execution(settings, connect=connect, open_store=lambda _: worker),
+                precheck_handler=precheck_handler(worker, runtime),
+            )
+
+            def execute(_client, spec, *, cancelled=None, on_progress=None):
+                context = ExecutionContext()
+                if cancelled is not None:
+                    context.cancelled = cancelled
+                if on_progress is not None:
+                    context.on_progress = on_progress
+                return self.controller.handle(spec, context)
+
+            def precheck(_client, request, *, cancelled=None):
+                context = ExecutionContext()
+                if cancelled is not None:
+                    context.cancelled = cancelled
+                return self.controller.precheck_handler(PrecheckEnvelope.model_validate(request), context)
+
+            monkeypatch.setattr(DeepClient, "execute", execute)
+            monkeypatch.setattr(DeepClient, "precheck", precheck)
+            return self
+
+        def adopt(self, store, rule_id, code, binding=None, *, subject="alice"):
+            """Explicitly adopt this test's authored, unverified implementation."""
+            principal = store.principal_for_fixture(subject)
+            releases = SuiteReleaseStore(store.settings, store.objects, role="api")
+            with store._conn() as conn:
+                body = conn.execute("SELECT body FROM product.rule_versions WHERE id=%s", (rule_id,)).fetchone()[0]
+                selected = current_selection(conn, principal.tenant_id, body["suite_key"])
+            resolved = releases.suites.resolve_suite(selected["revision_id"], principal.tenant_id)
+            rules = json.loads(resolved.files["rules.json"])
+            rules["checker_binding"] = binding if binding is not None else {str(row["id"]): "checker:check" for row in rules["rules"]}
+            candidate = releases.save_candidate(principal, selected["revision_id"], {"rules.json": json.dumps(rules, ensure_ascii=False), "checker.py": code})
+            return releases.publish(principal, body["suite_key"], candidate["id"], selected["head_revision"], str(uuid.uuid4()), force_unverified=True)
+
+        @staticmethod
+        def workbook(value="source"):
+            from io import BytesIO
+
+            from openpyxl import Workbook
+
+            book = Workbook()
+            book.active["A1"] = value
+            stream = BytesIO()
+            book.save(stream)
+            book.close()
+            return stream.getvalue()
+
+        def adopt_presence(self, store, rule_id=RULE_A):
+            return self.adopt(
+                store,
+                rule_id,
+                """import json
+from io import BytesIO
+from openpyxl import load_workbook
+from audit.contracts import AuditEvidence, AuditResultItem, EvidenceSource
+
+def check(context):
+    book = load_workbook(BytesIO(context.sources[context.audit_file.audit_id]), read_only=True)
+    try:
+        sheet = book.active
+        present = bool(sheet["A1"].value)
+        locator = json.dumps({"kind": "xlsx_cell", "sheet": sheet.title, "cell": "A1"})
+        return AuditResultItem(classification="资料", item="原件资料已经就绪", priority="P0",
+            status="PASS" if present else "NG", suggestions="已核对冻结原件A1。", clause_id=context.clause_id, checks_performed=1,
+            evidence=AuditEvidence(required="structure", used="structure", source_format="xlsx", prepared_format="xlsx",
+                sources=(EvidenceSource(kind="structure", locator=locator),)))
+    finally:
+        book.close()
+""",
+            )
+
+    return ControlledCore()
