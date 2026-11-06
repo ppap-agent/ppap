@@ -137,12 +137,10 @@ class AuthStore:
         settings: Settings,
         objects=None,
         role: str = "api",
-        rule_execution_factory=None,
     ) -> None:
         self.settings = settings
         self.objects = objects or S3Objects(settings)
         self.role = role
-        self.rule_execution_factory = rule_execution_factory
 
     def _conn(self) -> psycopg.Connection:
         return connect(self.settings, self.role)
@@ -4351,14 +4349,12 @@ class AuthStore:
                     rule = self._rule_for_tenant(conn, rid, principal.tenant_id) if rid else None
                     if not rule:
                         raise ValueError("unknown_rule")
-            execution = None
-            if rule and self.rule_execution_factory is not None:
-                execution = self.rule_execution_factory(rule[2], row.get("original_filename") or "")
             cast(dict[str, Any], row).update(
                 rule_version_id=str(rule[0]) if rule else None,
                 rule_title=rule[1] if rule else None,
                 rule_body=rule[2] if rule else None,
-                rule_execution=execution,
+                # freeze_selected_targets assigns the adopted Suite identity.
+                rule_execution=None,
             )
         return prepared
 
