@@ -19,6 +19,7 @@
 - `.doc` 转换是默认行为，没有开关变量。
 - 可选 capability 缺配置只影响该 capability，不阻止无关开发。Deep 由 `PPAP_DEEP_CONTROLLER_SOCKET` 表示是否配置；未配置时 Core 仍可启动，Deep 轮次明确失败而不回退 Standard。Live Deep 用 `deploy/isolated-dev/deep-live.yaml` 挂 UDS。Controller 工厂要求显式选择 `PPAP_DEEP_RUNTIME=container-only`，并将 `PPAP_DEEP_SANDBOX_PROFILE` 设为 `off` 或 `ppap`；这些运行配置不进入 Worker RPC，guest 命令和路径由可信 Controller 管理。生产默认不向客户提供 Deep，需显式启用 `PPAP_DEEP_CUSTOMER_ENABLED`；isolated-dev/test 仍可用于协议验证。开关、sidecar 启动和 UDS 可用均不证明客户审核质量或强隔离，具体限制见 [Deep 部署说明](../deploy/deep/README.md)。
 - 飞书任务通知由 API 进程发送，`PPAP_FEISHU_NOTIFICATIONS_ENABLED` 默认 `false`；开启还需配置该应用的 ID、Secret 和有效授权。`GET/PUT /audit-tasks/{id}/notification` 读取、保存创建人的完成通知设置，修改必须带 `expected_revision`；该设置只控制完成通知，不控制待确认或开始审核通知。通知未进入发送边界前可修改，进入后只读回状态。发送结果未知不自动重发；这些接口不证明飞书已送达或已读取。
+- Checker 优化进入真实终态时与候选、验证及回执同事务写入现有通知队列，按原操作去重；通知发给优化发起人，不借用任务创建人的身份。API 发送前重新核验飞书身份、租户成员及所有冻结原件/轮次权限；注销浏览器不取消通知，删除用户或撤销访问则不发送。完成、失败、停止和用量未知分别表达，卡片只跳回原操作结果，不自动发布或重跑模型。沿用上述通知开关和发送回执边界，配置关闭不代表通知已发送。
 - 已授权的单任务通知联调可调用 `dispatch_task_notification(..., task_id=...)`，范围在领取工作及整理过期发送状态前生效；保持常驻 API 的全局通知开关关闭，避免顺带处理历史队列。历史补发须另行授权，仍使用已有意图、阶段校验和回执，不重置已发送或未知状态。
 - 机器人已启用不代表具有发送权限；最小发送权限为 `im:message:send_as_bot`，须在发布及租户授权后实际生效。明确的飞书 2xx／4xx 非零错误码记为发送失败；超时、5xx 或无有效回执仍为未知。联调以真实消息 ID 和客户端可见性核对送达，不为此扩大聊天读取权限，也不把发送成功当作用户已读。
 - 报告附件上传使用 `im:resource`。真实接口错误仍可能列出旧的 `im:resource:upload`，但控制台不可新增该项；不能只照错误文字申请权限。资源权限不等于读取聊天消息权限；机器人或链接发送可用也不证明附件上传可用。
