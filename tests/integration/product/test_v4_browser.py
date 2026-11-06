@@ -139,9 +139,9 @@ def running_product(auth_store_factory, v4_objects, core_system, tmp_path, reque
     finally:
         stop.set()
         if worker_thread.ident:
-            worker_thread.join(timeout=30)
+            worker_thread.join()
         server.should_exit = True
-        api_thread.join(timeout=10)
+        api_thread.join()
         try:
             os.killpg(vite.pid, signal.SIGTERM)
         except ProcessLookupError:
@@ -153,6 +153,7 @@ def running_product(auth_store_factory, v4_objects, core_system, tmp_path, reque
             vite.wait(timeout=5)
         listener.close()
         log.close()
+        assert not errors, errors
 
 
 def print_page(page):
