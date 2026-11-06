@@ -28,7 +28,9 @@ def task_notification_card(task: dict, stage: str, web_url: str, report_package:
     archive_package = bool(stage == "zip_ready" and report_package and any(reference.get("task_id", task["id"]) != task["id"] for reference in report_package["reports"]))
     blocks: list[str] = []
     if stage == "confirmation":
-        matched = sum((row.get("match") or {}).get("state") == "matched" for row in targets)
+        scope = task.get("confirmation_scope")
+        excluded = {row["file_version_id"]: row["reason"] for row in scope["excluded_files"]} if scope else {}
+        matched = len(scope["target_file_version_ids"]) if scope else sum((row.get("match") or {}).get("state") == "matched" for row in targets)
         blocks.append(f"已匹配 **{matched} 份**，共 {len(targets)} 份。<br>请核对匹配结果，再决定是否开始审核。")
         blocks.append("**审核模式** · " + {"standard": "标准审核", "deep": "深度审核"}.get(task.get("analysis_mode", "standard"), "待核对"))
         for row in files:
@@ -36,10 +38,10 @@ def task_notification_card(task: dict, stage: str, web_url: str, report_package:
             if row["selection"] == "selected" and match.get("state") == "reference":
                 continue
             rule = match.get("rule") or {}
-            included = row["selection"] == "selected" and match.get("state") == "matched" and rule
-            excluded_reason = row.get("removal_reason") or ("未选择此文件" if row["selection"] == "unselected" else "未匹配到生效规则")
+            included = row["selection"] == "selected" and match.get("state") == "matched" and rule and row["file"]["id"] not in excluded
+            excluded_reason = excluded.get(row["file"]["id"]) or row.get("removal_reason") or ("未选择此文件" if row["selection"] == "unselected" else "未匹配到生效规则")
             detail = "规则：" + rule["title"] if included else "不纳入审核；" + excluded_reason
-            if row["selection"] == "selected" and not included and match.get("state") != "unmatched":
+            if row["selection"] == "selected" and not included and match.get("state") != "unmatched" and row["file"]["id"] not in excluded:
                 detail = "匹配尚未确认，请打开页面核对"
             notices = [gap for gap in match.get("gaps") or [] if gap != "metadata_uses_excerpt"]
             blocks.append("**" + _markdown(row["file"]["original_filename"]) + "**<br>" + "<br>".join(_markdown(value) for value in [detail, *notices]))

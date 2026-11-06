@@ -263,8 +263,8 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
                 store.confirm_audit_task(
                     principal,
                     task_id,
-                    body.get("request_id"),
-                    body.get("expected_revision"),
+                    body["request_id"],
+                    body["expected_revision"],
                     usage_policy=lambda actor: quota_for(request, actor),
                     expected_confirmation_basis_digest=body.get("expected_confirmation_basis_digest"),
                     require_confirmation_basis=True,

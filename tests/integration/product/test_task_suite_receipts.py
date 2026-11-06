@@ -30,7 +30,7 @@ def system(auth_store_factory, core_system):
         yield client, worker, admin, principal
 
 
-def prepare(system, core_system, customer, entry, *, reference=False, photo=False, choose_customer=True):
+def prepare(system, core_system, customer, entry, *, reference=False, photo=False, choose_customer=True, copies=1, last_reference=False):
     client, worker, admin, principal = system
     core_system.adopt_standard(admin, principal, f"{customer}:{entry}")
     stream = io.BytesIO()
@@ -42,17 +42,27 @@ def prepare(system, core_system, customer, entry, *, reference=False, photo=Fals
         book.save(stream)
         book.close()
     body = stream.getvalue()
-    file = client.post("/files", json={"original_filename": "原件.png" if photo else "原件.xlsx", "byte_size": len(body)}).json()
-    path = f"/files/{file['file_id']}/versions/{file['id']}"
-    assert client.put(path + "/blob", content=body).status_code == 200
-    assert client.post(path + "/finalize").status_code == 200
-    validation = {"request_id": str(uuid.uuid4()), "source_file_id": file["file_id"], "source_file_version_id": file["id"]}
-    if photo:
-        validation["scope"] = {"customer_preference": "UAES", "preset_key": "U13"}
-    assert client.post("/file-validations", json=validation).status_code == 202
-    process_claimed(worker, worker.claim_job("validation"), "validation")
-    selected = {"file_version_id": file["id"], "validation_id": validation["request_id"], "selection": "selected", "removal_reason": None, "reference_only": reference}
-    command = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": customer if choose_customer else None, "files": [selected]}
+    selected = []
+    for index in range(copies):
+        file = client.post("/files", json={"original_filename": "原件.png" if photo else f"原件{index}.xlsx", "byte_size": len(body)}).json()
+        path = f"/files/{file['file_id']}/versions/{file['id']}"
+        assert client.put(path + "/blob", content=body).status_code == 200
+        assert client.post(path + "/finalize").status_code == 200
+        validation = {"request_id": str(uuid.uuid4()), "source_file_id": file["file_id"], "source_file_version_id": file["id"]}
+        if photo:
+            validation["scope"] = {"customer_preference": "UAES", "preset_key": "U13"}
+        assert client.post("/file-validations", json=validation).status_code == 202
+        process_claimed(worker, worker.claim_job("validation"), "validation")
+        selected.append(
+            {
+                "file_version_id": file["id"],
+                "validation_id": validation["request_id"],
+                "selection": "selected",
+                "removal_reason": None,
+                "reference_only": reference or last_reference and index == copies - 1,
+            }
+        )
+    command = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": customer if choose_customer else None, "files": selected}
     response = client.post("/audit-tasks", json=command)
     assert response.status_code == 202, response.text
 
@@ -62,7 +72,8 @@ def prepare(system, core_system, customer, entry, *, reference=False, photo=Fals
                 return preset_document_type(preset_rule(customer, entry))
             return json.dumps({"customer": customer, "part_number": "P-1"})
 
-    process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=Metadata())
+    for _ in range(copies):
+        process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=Metadata())
     return "/audit-tasks/" + response.json()["id"], command
 
 
@@ -189,3 +200,373 @@ def test_explicit_precheck_uses_projected_suite_without_legacy_profile(system, c
     loaded = client.get(path + "/prechecks/" + receipt["id"]).json()
     assert loaded["status"] == "succeeded", loaded
     assert client.get("/rounds").json()["rounds"] == []
+
+
+def confirmation(task, *, request_id=None):
+    return {
+        "request_id": request_id or str(uuid.uuid4()),
+        "expected_revision": task["input_revision"],
+        "expected_confirmation_basis_digest": task["confirmation_basis_digest"],
+    }
+
+
+def assert_no_admission(system):
+    client, _, admin, _ = system
+    assert client.get("/rounds").json()["rounds"] == []
+    assert client.get("/usage").json()["events"] == []
+    with admin._conn() as conn:
+        assert conn.execute("SELECT count(*) FROM engine.jobs WHERE kind='audit'").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("basis", [None, "", "a" * 63, "A" * 64, 123])
+def test_public_confirmation_cannot_omit_or_fabricate_basis_format(system, core_system, basis):
+    client, _, _, _ = system
+    path, _ = prepare(system, core_system, "UAES", "U12")
+    task = client.get(path).json()
+    command = {**confirmation(task), "expected_confirmation_basis_digest": basis}
+    if basis is None:
+        command.pop("expected_confirmation_basis_digest")
+    refused = client.post(path + "/confirm", json=command)
+    assert refused.status_code == 400 and refused.json() == {"error": "invalid_task_confirmation"}
+    assert_no_admission(system)
+
+
+def test_changed_code_with_identical_visible_rules_requires_fresh_confirmation(system, core_system):
+    client, _, admin, principal = system
+    path, _ = prepare(system, core_system, "UAES", "U12")
+    before = client.get(path).json()
+    releases = SuiteReleaseStore(admin.settings, admin.objects, role="api")
+    active = releases.active(principal, "UAES:U12")
+    source = releases.suites.resolve_suite(active["current_revision_id"], principal.tenant_id)
+    candidate = releases.save_candidate(principal, source.revision.id, {"checker.py": source.files["checker.py"].decode() + "\n# reviewed code revision\n"})
+    releases.publish(principal, "UAES:U12", candidate["id"], active["revision"], str(uuid.uuid4()), force_unverified=True)
+    current = client.get(path).json()
+    assert current["files"][0]["match"]["rule"] == before["files"][0]["match"]["rule"]
+    assert current["confirmation_basis_digest"] != before["confirmation_basis_digest"]
+    refused = client.post(path + "/confirm", json=confirmation(before))
+    assert refused.status_code == 409 and refused.json()["error"] == "task_confirmation_changed"
+    assert_no_admission(system)
+
+
+def test_related_suite_publication_changes_basis_without_rewriting_target_rules(system, core_system):
+    client, _, _, _ = system
+    path, _ = prepare(system, core_system, "蔚来", "N02")
+    before = client.get(path).json()
+    publish_edit(system, "蔚来:N05")
+    current = client.get(path).json()
+    assert current["input_revision"] == before["input_revision"]
+    assert current["files"][0]["match"]["rule"] == before["files"][0]["match"]["rule"]
+    assert current["confirmation_basis_digest"] != before["confirmation_basis_digest"]
+    refused = client.post(path + "/confirm", json=confirmation(before))
+    assert refused.status_code == 409 and refused.json()["error"] == "task_confirmation_changed"
+    assert_no_admission(system)
+
+
+def test_validation_risk_change_alone_changes_confirmation_basis(system, core_system):
+    from audit.checker_core import checker_digest
+    from audit.standard_suites import library_revision
+    from product.checker_validation import CaseEvaluation, ClauseEvaluation, SuiteValidationReport
+
+    client, _, admin, principal = system
+    path, _ = prepare(system, core_system, "UAES", "U12")
+    before = client.get(path).json()
+    releases = SuiteReleaseStore(admin.settings, admin.objects, role="api")
+    active = releases.active(principal, "UAES:U12")
+    suite = releases.suites.resolve_suite(active["current_revision_id"], principal.tenant_id)
+    # Controlled host validation receipt only: exercise the risk-state boundary,
+    # without claiming a live model/oracle validated this standard Suite.
+    report = SuiteValidationReport(
+        suite_revision_id=suite.revision.id,
+        suite_digest=suite.revision.resolved_digest,
+        program_digest=checker_digest({path: body for path, body in suite.files.items() if path in {"checker.py", "resources.py"}}),
+        library_revision=library_revision(),
+        oracle_revision="controlled-confirmation-risk-receipt",
+        cases=tuple(
+            CaseEvaluation(
+                case_id=f"case-{i}",
+                ordinal=i,
+                input_digest=f"{i:064x}",
+                split="holdout" if i == 4 else "training",
+                coverage=True,
+                clauses=tuple(
+                    ClauseEvaluation(clause_id=row["id"], expected="PASS", actual="PASS", evidence_locatable=True, checks_performed=1) for row in json.loads(suite.files["rules.json"])["rules"]
+                ),
+            )
+            for i in range(1, 5)
+        ),
+    )
+    assert releases.record_validation(principal, suite.revision.id, report, expected_revision=0)["verified"] is True
+    current = client.get(path).json()
+    assert current["files"][0]["match"]["rule"] == before["files"][0]["match"]["rule"]
+    assert current["confirmation_basis_digest"] != before["confirmation_basis_digest"]
+    refused = client.post(path + "/confirm", json=confirmation(before))
+    assert refused.status_code == 409 and refused.json()["error"] == "task_confirmation_changed"
+    assert_no_admission(system)
+
+
+def test_concurrent_same_stale_request_replays_one_definite_rejection(system, core_system):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    client, _, admin, principal = system
+    path, _ = prepare(system, core_system, "UAES", "U12")
+    command = confirmation(client.get(path).json())
+    publish_edit(system, "UAES:U12")
+    barrier = Barrier(2)
+
+    def confirm():
+        barrier.wait(timeout=5)
+        try:
+            admin.confirm_audit_task(principal, path.rsplit("/", 1)[-1], **command, require_confirmation_basis=True)
+        except ValueError as error:
+            return str(error)
+        pytest.fail("A stale confirmation was accepted")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert list(pool.map(lambda _: confirm(), range(2))) == ["task_confirmation_changed"] * 2
+    receipt = client.get(path, params={"request_id": command["request_id"]}).json()["acceptance"]
+    assert receipt["state"] == "rejected"
+    assert_no_admission(system)
+    with admin._conn() as conn:
+        assert conn.execute("SELECT count(*) FROM engine.jobs WHERE id=%s AND kind='task_confirmation' AND result->>'state'='rejected'", (command["request_id"],)).fetchone()[0] == 1
+
+
+def prepare_card(system, path):
+    from product.feishu import CardAction
+
+    client, _, admin, principal = system
+    admin.settings.feishu_verification_token = "controlled-card-verification"
+    task = client.get(path).json()
+    claimed, actor = admin.claim_task_notification("notification", task_id=task["id"])
+    delivery = admin.start_task_notification(claimed, "notification", actor)
+    callback = delivery["card"]["body"]["elements"][1]["behaviors"][0]["value"]
+    assert callback == {"action": "confirm_audit_task", "notification_id": claimed.id}
+    assert admin.finish_task_notification(claimed, "notification", {"state": "sent", "reason": None, "message_id": "controlled-message"})
+    with admin._conn() as conn:
+        stored = conn.execute("SELECT payload->'confirmation' FROM engine.jobs WHERE id=%s", (claimed.id,)).fetchone()[0]
+    assert stored["expected_confirmation_basis_digest"] == task["confirmation_basis_digest"]
+    return CardAction(principal.tenant_key, principal.subject, claimed.id, "controlled-message"), stored
+
+
+def test_sent_card_cannot_confirm_new_suite_or_replace_its_operation_basis_via_http(system, core_system):
+    client, _, admin, _ = system
+    path, _ = prepare(system, core_system, "UAES", "U12")
+    action, command = prepare_card(system, path)
+    pending = admin.enqueue_task_confirmation(action)
+    assert pending["state"] == "pending"
+    publish_edit(system, "UAES:U12")
+    current = client.get(path).json()
+    replaced = client.post(path + "/confirm", json={**command, "expected_confirmation_basis_digest": current["confirmation_basis_digest"]})
+    assert replaced.status_code == 409 and replaced.json()["error"] == "idempotency_conflict"
+    assert_no_admission(system)
+    claimed = admin.claim_task_confirmation("card")
+    receipt = admin.process_task_confirmation(claimed, "card", usage_policy=lambda _actor: pytest.fail("Stale confirmation must not query quota"))
+    assert receipt["state"] == "rejected" and "审核依据已更新" in receipt["reason"]
+    assert admin.enqueue_task_confirmation(action) == receipt
+    assert client.get(path, params={"request_id": command["request_id"]}).json()["acceptance"] == receipt
+    assert_no_admission(system)
+
+
+def test_runtime_code_change_requires_new_basis_even_with_same_suite(system, core_system):
+    client, _, admin, _ = system
+    path, _ = prepare(system, core_system, "UAES", "U12")
+    before = client.get(path).json()
+    admin.settings.git_sha = "b" * 40
+    current = client.get(path).json()
+    assert current["files"][0]["match"]["rule"] == before["files"][0]["match"]["rule"]
+    assert current["confirmation_basis_digest"] != before["confirmation_basis_digest"]
+    refused = client.post(path + "/confirm", json=confirmation(before))
+    assert refused.status_code == 409 and refused.json()["error"] == "task_confirmation_changed"
+    assert_no_admission(system)
+
+
+def test_confirmation_holds_publication_lock_until_frozen_round_commits(system, core_system, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from product.store.suite_releases import _lock
+    from psycopg.errors import LockNotAvailable
+
+    client, _, admin, principal = system
+    path, _ = prepare(system, core_system, "UAES", "U12")
+    before = client.get(path).json()
+    command = confirmation(before)
+    entered, resume = Event(), Event()
+    check = admin._check_usage_policy
+
+    def pause_before_admission(*args, **kwargs):
+        entered.set()
+        assert resume.wait(timeout=10), "Test did not release admission"
+        return check(*args, **kwargs)
+
+    monkeypatch.setattr(admin, "_check_usage_policy", pause_before_admission)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(admin.confirm_audit_task, principal, before["id"], **command, require_confirmation_basis=True)
+        try:
+            assert entered.wait(timeout=10)
+            with admin._conn() as conn, conn.transaction():
+                conn.execute("SET LOCAL lock_timeout='100ms'")
+                with pytest.raises(LockNotAvailable):
+                    _lock(conn, principal.tenant_id)
+        finally:
+            resume.set()
+        accepted = future.result(timeout=10)
+    assert accepted["files"][0]["audit"]["rule"] == before["files"][0]["match"]["rule"]
+    publish_edit(system, "UAES:U12")
+    # Accepted operation recovery never needs a currently valid basis and never
+    # calls quota again. Legacy clients may recover without the new field.
+    replay = client.post(path + "/confirm", json={"request_id": command["request_id"], "expected_revision": command["expected_revision"]})
+    assert replay.status_code == 201
+    for key in ("round_id", "files", "acceptance", "confirmation_scope"):
+        assert replay.json()[key] == accepted[key]
+
+
+def certify_precheck_block(system, receipt, version_id):
+    from product.standard_policy import config_digest
+    from psycopg.types.json import Jsonb
+
+    _, _, admin, _ = system
+    source = next(row for row in receipt["input"]["files"] if row["file"]["id"] == version_id)
+    # Controlled certified evidence tests admission only, not checker accuracy.
+    result = {
+        "input_fingerprint": config_digest(receipt["input"]),
+        "execution_revision": receipt["input"]["execution_revision"],
+        "files": [
+            {
+                "file_version_id": version_id,
+                "rule_version_id": source["rule"]["id"],
+                "suite_execution": source["rule_execution"],
+                "facts": [
+                    {
+                        "source_id": "N04:S1",
+                        "status": "defect",
+                        "certainty": "confirmed",
+                        "critical": True,
+                        "certified": True,
+                        "code": "B05",
+                        "evidence": {"sources": [{"locator": json.dumps({"file_version_id": version_id, "cell": "A1"}), "excerpt": "independently confirmed missing identity"}]},
+                    }
+                ],
+            }
+        ],
+    }
+    with admin._conn() as conn:
+        conn.execute("UPDATE engine.jobs SET result=%s WHERE id=%s AND status='succeeded'", (Jsonb(result), receipt["id"]))
+
+
+@pytest.mark.parametrize("all_blocked", [False, True])
+def test_scope_keeps_references_and_excludes_only_certified_targets(system, core_system, all_blocked):
+    client, worker, admin, _ = system
+    admin.settings.precheck_gate_enforced = True
+    path, _ = prepare(system, core_system, "蔚来", "N04", copies=2 if all_blocked else 3, last_reference=True)
+    before = client.get(path).json()
+    assert before["confirmation_basis_digest"]
+    process_claimed(worker, worker.claim_job("precheck"), "precheck")
+    receipt = client.get(path).json()["precheck"]
+    bad = before["files"][0]["file"]["id"]
+    certify_precheck_block(system, receipt, bad)
+    current = client.get(path).json()
+    scope = current["confirmation_scope"]
+    assert current["input_revision"] == before["input_revision"]
+    assert current["confirmation_basis_digest"] != before["confirmation_basis_digest"]
+    assert all(file["selection"] == "selected" for file in current["files"])
+    assert scope["reference_file_version_ids"] == [before["files"][-1]["file"]["id"]]
+    assert scope["excluded_files"] == [{"file_version_id": bad, "reason": "预检已确认的阻断缺陷，需修正后重新提交"}]
+    assert scope["target_file_version_ids"] == ([] if all_blocked else [before["files"][1]["file"]["id"]])
+    assert current["estimated_points"] == (0 if all_blocked else 500)
+    refused = client.post(path + "/confirm", json=confirmation(before))
+    assert refused.status_code == 409 and refused.json()["error"] == "task_confirmation_changed"
+    assert_no_admission(system)
+    command = confirmation(current)
+    response = client.post(path + "/confirm", json=command)
+    if all_blocked:
+        assert response.status_code == 409 and response.json()["error"] == "precheck_blocked"
+        assert_no_admission(system)
+        return
+    assert response.status_code == 201, response.text
+    accepted = response.json()
+    assert accepted["confirmation_scope"] == scope
+    assert accepted["estimated_points"] == 500
+    excluded = next(file for file in accepted["files"] if file["file"]["id"] == bad)
+    assert excluded["selection"] == "removed" and excluded["removal_reason"] == scope["excluded_files"][0]["reason"] and excluded["audit"] is None
+    assert len([file for file in accepted["files"] if file["audit"]]) == 1
+    assert accepted["files"][-1]["match"]["state"] == "reference" and accepted["files"][-1]["audit"] is None
+    assert client.get("/usage").json()["events"] == []
+    # Later mutable preparation cannot rewrite the accepted range.
+    with admin._conn() as conn:
+        conn.execute("UPDATE engine.jobs SET result='{}'::jsonb WHERE id=%s", (receipt["id"],))
+    replay = client.post(path + "/confirm", json=command)
+    assert replay.status_code == 201 and replay.json()["confirmation_scope"] == scope
+    assert replay.json()["files"] == accepted["files"]
+
+
+def test_http_acceptance_and_card_enqueue_serialize_one_original_intent(system, core_system, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from psycopg.errors import LockNotAvailable
+
+    client, _, admin, _ = system
+    path, _ = prepare(system, core_system, "UAES", "U12")
+    action, command = prepare_card(system, path)
+    # The API app closes over this instance; patch its class boundary so the
+    # real HTTP route is paused only after its locks and basis comparison.
+    entered, resume = Event(), Event()
+    cls = type(admin)
+    original = cls._check_usage_policy
+
+    def pause(self, *args, **kwargs):
+        entered.set()
+        assert resume.wait(timeout=10)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(cls, "_check_usage_policy", pause)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        submitted = pool.submit(client.post, path + "/confirm", json=command)
+        try:
+            assert entered.wait(timeout=10)
+            with pytest.raises(LockNotAvailable):
+                admin.enqueue_task_confirmation(action)
+        finally:
+            resume.set()
+        response = submitted.result(timeout=10)
+    assert response.status_code == 201, response.text
+    accepted = response.json()
+    assert admin.enqueue_task_confirmation(action) == accepted["acceptance"]
+    assert client.post(path + "/confirm", json=command).json()["round_id"] == accepted["round_id"]
+    with admin._conn() as conn:
+        assert conn.execute("SELECT count(*) FROM product.audit_rounds").fetchone()[0] == 1
+        assert conn.execute("SELECT count(*) FROM engine.jobs WHERE kind='audit'").fetchone()[0] == 1
+        assert conn.execute("SELECT count(*) FROM engine.jobs WHERE id=%s AND kind='task_confirmation'", (command["request_id"],)).fetchone()[0] == 1
+    assert client.get("/usage").json()["events"] == []
+
+
+def test_sent_card_intent_is_immutable_even_before_callback_is_enqueued(system, core_system):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    client, _, admin, _ = system
+    path, _ = prepare(system, core_system, "UAES", "U12")
+    action, command = prepare_card(system, path)
+    publish_edit(system, "UAES:U12")
+    current = client.get(path).json()
+    barrier = Barrier(2)
+
+    def confirm_changed():
+        barrier.wait(timeout=5)
+        return client.post(path + "/confirm", json={**command, "expected_confirmation_basis_digest": current["confirmation_basis_digest"]})
+
+    def enqueue_original():
+        barrier.wait(timeout=5)
+        return admin.enqueue_task_confirmation(action)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        request = pool.submit(confirm_changed)
+        queued = pool.submit(enqueue_original)
+        refused, receipt = request.result(timeout=10), queued.result(timeout=10)
+    assert refused.status_code == 409 and refused.json()["error"] == "idempotency_conflict"
+    assert receipt["state"] == "pending"
+    assert_no_admission(system)
+    rejected = admin.process_task_confirmation(admin.claim_task_confirmation("card"), "card")
+    assert rejected["state"] == "rejected" and "审核依据已更新" in rejected["reason"]
+    assert_no_admission(system)

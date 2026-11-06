@@ -1230,10 +1230,22 @@ class PrecheckHistory(TypedDict):
     snapshots: list[PrecheckReceipt]
 
 
+class AuditTaskConfirmationExclusion(TypedDict):
+    file_version_id: str
+    reason: str
+
+
+class AuditTaskConfirmationScope(TypedDict):
+    target_file_version_ids: list[str]
+    reference_file_version_ids: list[str]
+    excluded_files: list[AuditTaskConfirmationExclusion]
+
+
 class AuditTask(AuditTaskIdentity):
     """Persisted Task/Round view; optional delivery operations need their own API."""
 
     confirmation_basis_digest: str | None
+    confirmation_scope: AuditTaskConfirmationScope | None
     files: list[AuditTaskFile]
     precheck: NotRequired[PrecheckReceipt | None]
     execution: NotRequired[Literal["queued", "running", "completed", "failed"]]
