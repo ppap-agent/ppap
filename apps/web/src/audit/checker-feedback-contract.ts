@@ -11,12 +11,15 @@ export type CheckerValidation = Pick<components['schemas']['ValidationView'], 'v
 export type CheckerOptimization = Omit<components['schemas']['OptimizationReceipt'], 'report' | 'usage'> & {report: (Pick<components['schemas']['DevelopmentReport'], 'verified' | 'reasons' | 'error_code'> & {validation?: CheckerValidation | null}) | null; usage: {input_tokens?: number | null; output_tokens?: number | null; total_tokens?: number | null; source?: string; uncertain?: boolean}}
 export type CheckerFeedbackView = Omit<components['schemas']['FeedbackView'], 'feedback' | 'optimizations'> & {feedback: CheckerFeedback[]; optimizations: CheckerOptimization[]}
 export type SuiteFeedbackView = Omit<components['schemas']['SuiteFeedbackView'], 'feedback'> & {feedback: CheckerFeedback[]}
+export type FeedbackGroup = components['schemas']['FeedbackGroup']
+export type AffectedRoundsView = components['schemas']['AffectedRoundsView']
 export type OptimizeInput = components['schemas']['OptimizationCreate']
 export type FeedbackUpdate = Omit<components['schemas']['FeedbackUpdate'], 'evidence'> & {evidence: FeedbackEvidence[]}
 export type FeedbackDeletion = components['schemas']['FeedbackDeletion']
 export interface CheckerFeedbackAdapter {
   read(round: string): Promise<CheckerFeedbackView>
-  samples(revision: string): Promise<SuiteFeedbackView>
+  samples(revision: string, after?: number): Promise<SuiteFeedbackView>
+  affected?(revision: string, clause: string, excludeRound: string, after?: string): Promise<AffectedRoundsView>
   save(round: string, input: CheckerFeedbackInput): Promise<CheckerFeedback>
   optimize(revision: string, input: OptimizeInput): Promise<CheckerOptimization>
   operation(id: string): Promise<CheckerOptimization>
@@ -27,7 +30,8 @@ export interface CheckerFeedbackAdapter {
 const encoded = encodeURIComponent
 export const nativeCheckerFeedbackAdapter: CheckerFeedbackAdapter = {
   read: async round => checkedFeedbackView(await request(`/audit-rounds/${encoded(round)}/checker-feedback`), round),
-  samples: revision => request(`/suite-revisions/${encoded(revision)}/checker-feedback`),
+  samples: (revision, after) => request(`/suite-revisions/${encoded(revision)}/checker-feedback${after ? `?after=${after}` : ''}`),
+  affected: (revision, clause, round, after) => request(`/suite-revisions/${encoded(revision)}/affected-rounds?clause_id=${encoded(clause)}&exclude_round_id=${encoded(round)}${after ? `&after=${encoded(after)}` : ''}`),
   save: async (round, input) => checkedFeedback(await request(`/audit-rounds/${encoded(round)}/checker-feedback`, 'POST', input), input),
   optimize: async (revision, input) => checkedOptimization(await request(`/suite-revisions/${encoded(revision)}/optimizations`, 'POST', input), input.operation_id, revision),
   edit: async (round, id, input) => checkedFeedbackEdit(await request(`/audit-rounds/${encoded(round)}/checker-feedback/${encoded(id)}`, 'PUT', input), round, id, input),
@@ -40,7 +44,7 @@ export function checkedFeedbackView(view: CheckerFeedbackView, round: string) {
   return view
 }
 export function checkedFeedback(saved: CheckerFeedback, input: CheckerFeedbackInput) {
-  if (!saved.id || !saved.suite_revision_id || saved.operation_id !== input.operation_id || saved.file_version_id !== input.file_version_id || saved.rule_version_id !== input.rule_version_id || saved.rule_clause_id !== input.rule_clause_id || saved.original_status !== input.original_status || saved.result_attempt !== input.result_attempt || saved.expected_status !== input.expected_status || saved.rationale !== input.rationale || !sameEvidence(saved.evidence, input.evidence)) throw new Error('反馈回执与本次结果或正确答案不一致，请读取原操作。')
+  if (!saved.id || !saved.suite_revision_id || saved.operation_id !== input.operation_id || saved.file_version_id !== input.file_version_id || saved.rule_version_id !== input.rule_version_id || saved.rule_clause_id !== input.rule_clause_id || saved.original_status !== input.original_status || saved.result_attempt !== input.result_attempt || saved.expected_status !== input.expected_status || saved.rationale !== input.rationale || (saved.reason_category || 'unspecified') !== (input.reason_category || 'unspecified') || !sameEvidence(saved.evidence, input.evidence)) throw new Error('反馈回执与本次结果或正确答案不一致，请读取原操作。')
   return saved
 }
 export function checkedOptimization(value: CheckerOptimization, operation: string, revision?: string) {
@@ -72,7 +76,7 @@ export function manualEvidence(file: string, kind: 'xlsx_cell' | 'pdf_page' | 'd
 }
 
 export function checkedFeedbackEdit(saved: CheckerFeedback, round: string, id: string, input: FeedbackUpdate) {
-  if (saved.round_id !== round || saved.id !== id || saved.revision !== input.expected_revision + 1 || saved.expected_status !== input.expected_status || saved.rationale !== input.rationale || !sameEvidence(saved.evidence, input.evidence)) throw new Error('样本修改回执不一致，请读取当前样本。')
+  if (saved.round_id !== round || saved.id !== id || saved.revision !== input.expected_revision + 1 || saved.expected_status !== input.expected_status || saved.rationale !== input.rationale || (saved.reason_category || 'unspecified') !== (input.reason_category || 'unspecified') || !sameEvidence(saved.evidence, input.evidence)) throw new Error('样本修改回执不一致，请读取当前样本。')
   return saved
 }
 export function checkedFeedbackDeletion(saved: FeedbackDeletion, id: string, revision: number) {
@@ -94,4 +98,9 @@ export function usageText(usage: CheckerOptimization['usage'] | null | undefined
 
 export function latestOptimization(view: CheckerFeedbackView, key: string) {
   return view.optimizations.find(row => row.suite_key === key) || null
+}
+
+export function selectedFeedback(batch: CheckerFeedback[], ids: string[] | null, currentIds: string[]) {
+  const selected = new Set(ids ?? currentIds.slice(-1))
+  return batch.filter(row => selected.has(row.id))
 }

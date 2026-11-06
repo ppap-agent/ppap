@@ -1870,6 +1870,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/suite-revisions/{revision_id}/affected-rounds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Affected Rounds */
+        get: operations["read_affected_rounds_suite_revisions__revision_id__affected_rounds_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/suite-revisions/{revision_id}/candidates": {
         parameters: {
             query?: never;
@@ -2113,6 +2130,28 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AffectedRound */
+        AffectedRound: {
+            /** Created At */
+            created_at: string;
+            /** File Version Id */
+            file_version_id: string;
+            /** Round Id */
+            round_id: string;
+            /** Rule Clause Id */
+            rule_clause_id: string;
+            /** Status */
+            status: string;
+        };
+        /** AffectedRoundsView */
+        AffectedRoundsView: {
+            /** Items */
+            items: components["schemas"]["AffectedRound"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+            /** Scanned Rounds */
+            scanned_rounds: number;
+        };
         /** Analysis */
         Analysis: {
             /** Document Type */
@@ -3760,6 +3799,12 @@ export interface components {
             original_status: "PASS" | "NG" | "NA" | "UNABLE" | "ERR";
             /** Rationale */
             rationale: string;
+            /**
+             * Reason Category
+             * @default unspecified
+             * @enum {string}
+             */
+            reason_category: "unspecified" | "missing_value" | "incorrect_reading" | "rule_application";
             /** Result Attempt */
             result_attempt: number;
             /** Rule Clause Id */
@@ -3775,6 +3820,21 @@ export interface components {
             id: string;
             /** Revision */
             revision: number;
+        };
+        /** FeedbackGroup */
+        FeedbackGroup: {
+            /** Feedback Ids */
+            feedback_ids: string[];
+            /** Id */
+            id: string;
+            /** Original Status */
+            original_status: string;
+            /** Reason Category */
+            reason_category: string;
+            /** Rule Clause Id */
+            rule_clause_id: string;
+            /** Source Field */
+            source_field: string;
         };
         /** FeedbackQuestion */
         FeedbackQuestion: {
@@ -3822,6 +3882,12 @@ export interface components {
             original_status: "PASS" | "NG" | "NA" | "UNABLE" | "ERR";
             /** Rationale */
             rationale: string;
+            /**
+             * Reason Category
+             * @default unspecified
+             * @enum {string}
+             */
+            reason_category: "unspecified" | "missing_value" | "incorrect_reading" | "rule_application";
             /** Result Attempt */
             result_attempt: number;
             /** Revision */
@@ -3898,6 +3964,12 @@ export interface components {
             expected_status: "PASS" | "NG" | "NA";
             /** Rationale */
             rationale: string;
+            /**
+             * Reason Category
+             * @default unspecified
+             * @enum {string}
+             */
+            reason_category: "unspecified" | "missing_value" | "incorrect_reading" | "rule_application";
         };
         /** FeedbackView */
         FeedbackView: {
@@ -4960,6 +5032,10 @@ export interface components {
         SuiteFeedbackView: {
             /** Feedback */
             feedback: components["schemas"]["FeedbackResponse"][];
+            /** Groups */
+            groups?: components["schemas"]["FeedbackGroup"][];
+            /** Next Cursor */
+            next_cursor?: number | null;
         };
         /** SuitePublication */
         SuitePublication: {
@@ -9656,6 +9732,42 @@ export interface operations {
             };
         };
     };
+    read_affected_rounds_suite_revisions__revision_id__affected_rounds_get: {
+        parameters: {
+            query: {
+                after?: string | null;
+                clause_id: string;
+                exclude_round_id?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                revision_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AffectedRoundsView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     suite_candidate_suite_revisions__revision_id__candidates_post: {
         parameters: {
             query?: never;
@@ -9732,7 +9844,10 @@ export interface operations {
     };
     read_suite_feedback_suite_revisions__revision_id__checker_feedback_get: {
         parameters: {
-            query?: never;
+            query?: {
+                after?: number;
+                limit?: number;
+            };
             header?: never;
             path: {
                 revision_id: string;

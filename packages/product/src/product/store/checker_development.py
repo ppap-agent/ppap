@@ -14,7 +14,15 @@ from audit.standard_suites import library_revision
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from product.feedback_groups import REASON_CATEGORIES, group_feedback
 from product.identity import Principal, can_read, can_review
+
+# SQL candidate filtering matches AuthStore._resource + can_read for alias r.
+# Keep the normal object authorization check before returning each record.
+_ROUND_READ_ACCESS = """(
+    EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id=r.id AND g.user_id=%s AND g.capability IN ('read','review'))
+    OR (NOT EXISTS (SELECT 1 FROM product.audit_drafts d WHERE d.id=r.source_draft_id AND d.task_fingerprint IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM product.deep_rule_changes c WHERE c.analysis_round_id=r.id)))"""
 
 
 def _id(value: str) -> str:
@@ -53,6 +61,7 @@ def _feedback(row: dict) -> dict:
         "ordinal",
         "expected_status",
         "rationale",
+        "reason_category",
         "evidence",
         "revision",
     )
@@ -125,6 +134,9 @@ class CheckerDevelopmentStore:
         round_id, operation_id = _id(round_id), _id(payload["operation_id"])
         version_id, rule_id = _id(payload["file_version_id"]), _id(payload["rule_version_id"])
         clause = payload["rule_clause_id"]
+        category = payload.get("reason_category", "unspecified")
+        if category not in REASON_CATEGORIES:
+            raise ValueError("checker_feedback_invalid")
         if payload["expected_status"] not in {"PASS", "NG", "NA"} or not isinstance(payload["rationale"], str) or not payload["rationale"].strip() or len(payload["rationale"]) > 8000:
             raise ValueError("checker_feedback_invalid")
         fingerprint = _digest({"round_id": round_id, "user_id": principal.user_id, **payload})
@@ -165,8 +177,8 @@ class CheckerDevelopmentStore:
             cur.execute(
                 """INSERT INTO product.checker_feedback
                    (id,operation_id,tenant_id,created_by,round_id,file_version_id,rule_version_id,rule_clause_id,result_attempt,original_status,
-                    suite_revision_id,suite_key,ordinal,expected_status,rationale,evidence,request_fingerprint)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
+                    suite_revision_id,suite_key,ordinal,expected_status,rationale,evidence,request_fingerprint,reason_category)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
                 (
                     uuid4(),
                     operation_id,
@@ -185,6 +197,7 @@ class CheckerDevelopmentStore:
                     payload["rationale"].strip(),
                     Jsonb(evidence),
                     fingerprint,
+                    category,
                 ),
             )
             saved = cur.fetchone()
@@ -211,12 +224,13 @@ class CheckerDevelopmentStore:
             if payload is None:
                 cur.execute("UPDATE product.checker_feedback SET deleted_at=now(),revision=revision+1,updated_at=now() WHERE id=%s", (feedback_id,))
                 return {"id": feedback_id, "deleted": True, "revision": expected_revision + 1}
-            if payload["expected_status"] not in {"PASS", "NG", "NA"} or not payload["rationale"].strip():
+            category = payload.get("reason_category", "unspecified")
+            if category not in REASON_CATEGORIES or payload["expected_status"] not in {"PASS", "NG", "NA"} or not payload["rationale"].strip():
                 raise ValueError("checker_feedback_invalid")
             evidence = self._evidence(conn, principal, round_id, payload["evidence"])
             cur.execute(
-                "UPDATE product.checker_feedback SET expected_status=%s,rationale=%s,evidence=%s,revision=revision+1,updated_at=now() WHERE id=%s RETURNING *",
-                (payload["expected_status"], payload["rationale"].strip(), Jsonb(evidence), feedback_id),
+                "UPDATE product.checker_feedback SET expected_status=%s,rationale=%s,evidence=%s,reason_category=%s,revision=revision+1,updated_at=now() WHERE id=%s RETURNING *",
+                (payload["expected_status"], payload["rationale"].strip(), Jsonb(evidence), category, feedback_id),
             )
             return _feedback(cur.fetchone())
 
@@ -260,18 +274,74 @@ class CheckerDevelopmentStore:
                 sources.append({"file_version_id": str(version_id), "suite_revision_id": suite.revision.id, "suite_key": suite.revision.suite_key})
             return {"round_id": round_id, "feedback": feedback, "optimizations": optimizations, "sources": sources}
 
-    def list_suite_feedback(self, principal, revision_id):
-        """Same-check samples across rounds, filtered by current object grants."""
+    def list_suite_feedback(self, principal, revision_id, *, after=0, limit=64):
+        """One bounded page; groups are suggestions within the returned page."""
+        if not 1 <= limit <= 64 or after < 0:
+            raise ValueError("checker_page_invalid")
         with self.store._conn() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
             _member(conn, principal)
             revision = self.suites.get_revision(_id(revision_id), principal.tenant_id, conn=conn)
             if revision is None:
                 raise KeyError("checker_access_denied")
             cur.execute(
-                "SELECT * FROM product.checker_feedback WHERE tenant_id=%s AND suite_key=%s AND deleted_at IS NULL ORDER BY ordinal",
-                (principal.tenant_id, revision.suite_key),
+                """SELECT f.* FROM product.checker_feedback f
+                   JOIN product.audit_rounds r ON r.id=f.round_id AND r.tenant_id=f.tenant_id
+                   JOIN product.file_versions v ON v.id=f.file_version_id AND v.tenant_id=f.tenant_id AND v.status='ready'
+                   WHERE f.tenant_id=%s AND f.suite_key=%s AND f.deleted_at IS NULL AND f.ordinal>%s
+                     AND EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id=v.file_id AND g.user_id=%s AND g.capability IN ('read','review'))
+                     AND """
+                + _ROUND_READ_ACCESS
+                + " ORDER BY f.ordinal LIMIT %s",
+                (principal.tenant_id, revision.suite_key, after, principal.user_id, principal.user_id, limit + 1),
             )
-            return {"feedback": self._readable_feedback(conn, principal, cur.fetchall())}
+            rows = cur.fetchall()
+            feedback = self._readable_feedback(conn, principal, rows[:limit])
+            return {"feedback": feedback, "groups": group_feedback(feedback, tenant_id=principal.tenant_id), "next_cursor": rows[limit - 1]["ordinal"] if len(rows) > limit else None}
+
+    def affected_rounds(self, principal, revision_id, clause_id, *, after=None, limit=25, exclude_round_id=None):
+        """Bound the scan, not just the matches, and authorize before returning history."""
+        if not 1 <= limit <= 50 or not clause_id or len(clause_id) > 200:
+            raise ValueError("checker_page_invalid")
+        cursor = _id(after) if after else "00000000-0000-0000-0000-000000000000"
+        excluded = _id(exclude_round_id) if exclude_round_id else None
+        with self.store._conn() as conn, conn.transaction():
+            _member(conn, principal)
+            revision = self.suites.get_revision(_id(revision_id), principal.tenant_id, conn=conn)
+            if revision is None:
+                raise KeyError("checker_access_denied")
+            rows = conn.execute(
+                # Match the round grant boundary before pagination: neither the
+                # cursor nor the scanned count may reveal unreadable round IDs.
+                """SELECT r.id,r.created_at,r.result_attempt FROM product.audit_rounds r
+                   WHERE r.tenant_id=%s AND r.id>%s AND """
+                + _ROUND_READ_ACCESS
+                + " ORDER BY r.id LIMIT %s",
+                (principal.tenant_id, cursor, principal.user_id, limit + 1),
+            ).fetchall()
+            items = []
+            for round_id, created_at, attempt in rows[:limit]:
+                if str(round_id) == excluded or attempt is None:
+                    continue
+                try:
+                    self._authorize_round(conn, principal, str(round_id))
+                except KeyError:
+                    continue
+                findings = conn.execute(
+                    """SELECT f.status,i.file_version_id FROM product.findings f
+                       JOIN product.round_inputs i ON i.round_id=f.round_id AND i.file_version_id::text=f.locator->>'file_version_id' AND i.role='target'
+                       WHERE f.round_id=%s AND coalesce(f.locator->'semantic'->>'clause_id', f.locator->>'rule_item_id')=%s ORDER BY i.file_version_id LIMIT 64""",
+                    (round_id, clause_id),
+                ).fetchall()
+                for status, version_id in findings:
+                    try:
+                        self.store._prepared_items(conn, principal, [{"file_version_id": str(version_id), "role": "reference"}])
+                        source = self._frozen_source(conn, principal, str(round_id), str(version_id), attempt)
+                    except (KeyError, ValueError):
+                        continue
+                    if source.revision.suite_key == revision.suite_key:
+                        items.append({"round_id": str(round_id), "file_version_id": str(version_id), "rule_clause_id": clause_id, "status": status, "created_at": created_at.isoformat()})
+                        break
+            return {"items": items, "scanned_rounds": min(limit, len(rows)), "next_cursor": str(rows[limit - 1][0]) if len(rows) > limit else None}
 
     def _readable_feedback(self, conn, principal, rows):
         result = []
@@ -373,7 +443,9 @@ class CheckerDevelopmentStore:
                 return _receipt(prior)
             suite = self.suites.resolve_suite(suite_revision_id, principal.tenant_id, conn=conn)
             related = {key: current_selection(conn, principal.tenant_id, key)["revision_id"] for key in suite.revision.related_suite_keys}
-            cur.execute("SELECT * FROM product.checker_feedback WHERE tenant_id=%s AND suite_key=%s AND deleted_at IS NULL ORDER BY ordinal FOR SHARE", (principal.tenant_id, suite.revision.suite_key))
+            cur.execute(
+                "SELECT * FROM product.checker_feedback WHERE tenant_id=%s AND suite_key=%s AND deleted_at IS NULL ORDER BY ordinal LIMIT 65 FOR SHARE", (principal.tenant_id, suite.revision.suite_key)
+            )
             samples = cur.fetchall()
             if not set(feedback_ids) <= {str(row["id"]) for row in samples}:
                 raise ValueError("checker_feedback_scope_mismatch")
@@ -399,7 +471,9 @@ class CheckerDevelopmentStore:
             training = [row for row in frozen_samples if row["ordinal"] % 4]
             if not training:
                 raise ValueError("checker_training_sample_required")
-            target = next((row for row in training if row["id"] in feedback_ids), training[0])
+            target = next((row for row in training if row["id"] in feedback_ids), None)
+            if target is None:
+                raise ValueError("checker_training_sample_required")
             visible = {item["sha256"] for row in training for item in row["files"]}
             if any(visible.intersection(item["sha256"] for item in row["files"]) for row in frozen_samples if row["ordinal"] % 4 == 0):
                 raise ValueError("checker_holdout_input_exposed")
