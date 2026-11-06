@@ -640,6 +640,42 @@ class AuditPreviewTests(unittest.TestCase):
             close_workspace_panel(page)
             browser.close()
 
+    def test_changed_confirmation_basis_requires_refresh_before_another_explicit_confirmation(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            for scene in ("confirm-basis-changed", "confirm-basis-changed-lost"):
+                with self.subTest(scene=scene):
+                    page = browser.new_page(viewport={"width": 1440, "height": 1000})
+                    page.set_default_timeout(5000)
+                    page.goto(PREVIEW + "/preview/audit.html?scene=" + scene)
+                    page.get_by_role("button", name="使用三类文件示例", exact=True).click()
+                    page.get_by_role("button", name="开始识别", exact=True).click()
+                    original_task = parse_qs(urlparse(page.url).query)["task"]
+                    original_rules = page.locator("[data-rule-version]").evaluate_all("nodes => nodes.map(node => node.dataset.ruleVersion)")
+                    start = page.get_by_role("button", name="开始审核", exact=True)
+                    start.click()
+                    request_id = parse_qs(urlparse(page.url).query)["acceptRequest"]
+                    if scene.endswith("-lost"):
+                        expect(start).to_be_disabled()
+                        page.get_by_role("button", name="读取受理结果", exact=True).click()
+                    expect(page.get_by_role("alert").filter(has_text="审核依据已变化")).to_be_visible()
+                    expect(start).to_be_disabled()
+                    expect(page.get_by_text("本次未受理", exact=True)).to_be_visible()
+                    expect(page.get_by_role("button", name="读取审核结果", exact=True, include_hidden=True)).to_have_count(0)
+                    page.get_by_role("button", name="刷新审核依据", exact=True).click()
+                    expect(page.get_by_text("已读取当前审核依据，请核对后重新确认。", exact=True)).to_be_visible()
+                    expect(page.get_by_role("button", name=re.compile("已发布新条款"))).to_have_count(3)
+                    self.assertEqual(page.locator("[data-rule-version]").evaluate_all("nodes => nodes.map(node => node.dataset.ruleVersion)"), original_rules)
+                    self.assertEqual(parse_qs(urlparse(page.url).query)["acceptRequest"], request_id)
+                    expect(page.get_by_role("button", name="读取审核结果", exact=True, include_hidden=True)).to_have_count(0)
+                    expect(start).to_be_enabled()
+                    start.click()
+                    expect(page.get_by_role("button", name="读取审核结果", exact=True, include_hidden=True)).to_be_visible()
+                    self.assertEqual(parse_qs(urlparse(page.url).query)["task"], original_task)
+                    self.assertNotEqual(parse_qs(urlparse(page.url).query)["acceptRequest"], request_id)
+                    page.close()
+            browser.close()
+
     def test_verified_empty_source_is_not_described_as_missing_evidence(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

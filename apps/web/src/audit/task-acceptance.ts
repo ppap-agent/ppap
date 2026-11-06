@@ -1,15 +1,15 @@
 import {useRef, useState} from 'react'
-import {requestTrace} from '../api'
+import {requestTrace} from '../api.ts'
 import type {components} from '../generated/openapi'
-import {sameFrozenFileInfo, sameSnapshot} from './result-projection'
-import {rememberRequest} from './routes'
+import {sameFrozenFileInfo, sameSnapshot} from './result-projection.ts'
+import {rememberRequest} from './routes.ts'
 
 type Task = components['schemas']['AuditTask']
 export type AuditAcceptanceAdapter = {
   confirm: (task: Task, requestId: string) => Promise<Task>
   readTask: (taskId: string, requestId?: string) => Promise<Task>
 }
-type Observation = {requestId: string; phase: 'sending' | 'unknown' | 'reading' | 'accepted' | 'rejected'; message: string; traceId?: string}
+type Observation = {staleBasisDigest?: string; requestId: string; phase: 'sending' | 'unknown' | 'reading' | 'accepted' | 'rejected'; message: string; traceId?: string}
 
 function acceptedSnapshot(before: Task, after: Task, requestId: string) {
   if (after.id !== before.id || after.acceptance?.request_id !== requestId || after.acceptance.state !== 'accepted' || !after.round_id || !['reviewing', 'completed'].includes(after.state) || after.analysis_mode !== before.analysis_mode) return false
@@ -20,61 +20,72 @@ function acceptedSnapshot(before: Task, after: Task, requestId: string) {
 }
 
 /** A lost response retains its request identity. Only an explicit rejection permits another command. */
-export function useTaskAcceptance(adapter: AuditAcceptanceAdapter, onAccepted: (task: Task) => void) {
-  const operations = useRef(new Map<string, Observation>())
-  const inputs = useRef(new Map<string, Task>())
-  const [observations, setObservations] = useState<Record<string, Observation>>({})
+export function createTaskAcceptance(adapter: AuditAcceptanceAdapter, onAccepted: (task: Task) => void, onObservation: (id: string, observation: Observation) => void = () => {}) {
+  const operations = new Map<string, Observation>()
+  const inputs = new Map<string, Task>()
   function remember(id: string, observation: Observation) {
-    operations.current.set(id, observation)
-    setObservations(rows => ({...rows, [id]: observation}))
+    operations.set(id, observation)
+    onObservation(id, observation)
+  }
+  function needsBasisRefresh(task: Task) {
+    const current = operations.get(task.id)
+    return current?.phase === 'rejected' && current.staleBasisDigest !== undefined && current.staleBasisDigest === task.confirmation_basis_digest
   }
   async function run(task: Task, readOnly: boolean) {
-    const current = operations.current.get(task.id)
-    if (readOnly ? current?.phase !== 'unknown' : Boolean(current && current.phase !== 'rejected')) return
+    const current = operations.get(task.id)
+    if (readOnly ? current?.phase !== 'unknown' : !task.confirmation_basis_digest || needsBasisRefresh(task) || Boolean(current && current.phase !== 'rejected')) return
     const requestId = readOnly ? current!.requestId : crypto.randomUUID()
     if (!readOnly) rememberRequest(task.id, 'acceptRequest', requestId)
     const trace = readOnly && current!.traceId ? {traceId: current!.traceId} : {}
-    if (!readOnly) inputs.current.set(requestId, structuredClone(task))
-    const input = inputs.current.get(requestId)!
+    if (!readOnly) inputs.set(requestId, structuredClone(task))
+    const input = inputs.get(requestId)!
     const observation: Observation = {requestId, ...trace, phase: readOnly ? 'reading' : 'sending', message: readOnly ? current!.message : ''}
     remember(task.id, observation)
     try {
       const next = await (readOnly ? adapter.readTask(input.id, requestId) : adapter.confirm(structuredClone(input), requestId))
-      if (operations.current.get(task.id) !== observation) return
+      if (operations.get(task.id) !== observation) return
       if (acceptedSnapshot(input, next, requestId)) {
         remember(task.id, {requestId, phase: 'accepted', message: ''}); onAccepted(next)
       } else if (next.id === task.id && next.state === 'pending_confirm' && !next.round_id && next.acceptance?.request_id === requestId && next.acceptance.state === 'rejected') {
-        remember(task.id, {requestId, phase: 'rejected', message: next.acceptance.reason || '本次请求明确未受理，可以重新确认。'})
+        remember(task.id, {requestId, phase: 'rejected', ...(input.confirmation_basis_digest && next.confirmation_basis_digest !== input.confirmation_basis_digest ? {staleBasisDigest: input.confirmation_basis_digest} : {}), message: next.acceptance.reason || '本次请求明确未受理，可以重新确认。'})
       } else {
         const reason = next.id === task.id && next.acceptance?.request_id === requestId && next.acceptance.state === 'pending' ? next.acceptance.reason : null
         remember(task.id, {requestId, ...trace, phase: 'unknown', message: reason || '受理结果尚未确认。请读取同一请求的回执，不要重复开始审核。'})
       }
     } catch (failure) {
       const traceId = requestTrace(failure) || trace.traceId
-      if (operations.current.get(task.id) === observation) remember(task.id, {requestId, ...(traceId ? {traceId} : {}), phase: 'unknown', message: '未取得受理回执。审核可能已经开始；请读取受理结果，不要重复确认。'})
+      if (operations.get(task.id) === observation) remember(task.id, {requestId, ...(traceId ? {traceId} : {}), phase: 'unknown', message: '未取得受理回执。审核可能已经开始；请读取受理结果，不要重复确认。'})
     }
   }
   function suspend(taskId: string) {
-    const current = operations.current.get(taskId)
+    const current = operations.get(taskId)
     if (current && ['sending', 'reading'].includes(current.phase)) remember(taskId, {...current, phase: 'unknown', message: '正在恢复任务，先读取原请求结果，不要重复开始审核。'})
   }
   function restore(task: Task) {
     if (task.acceptance?.state === 'accepted') {
-      const requestId = task.acceptance.request_id, current = operations.current.get(task.id), input = inputs.current.get(requestId)
+      const requestId = task.acceptance.request_id, current = operations.get(task.id), input = inputs.get(requestId)
       if (!task.round_id || !['reviewing', 'completed'].includes(task.state) || current && current.requestId !== requestId || input && !acceptedSnapshot(input, task, requestId)) return false
       remember(task.id, {requestId, phase: 'accepted', message: ''})
       return true
     }
-    if (!task.acceptance || operations.current.has(task.id)) return true
+    if (!task.acceptance || operations.has(task.id)) return true
     if (task.acceptance.state === 'rejected' && task.state === 'pending_confirm' && !task.round_id) {
       remember(task.id, {requestId: task.acceptance.request_id, phase: 'rejected', message: task.acceptance.reason || '本次请求明确未受理，可以重新确认。'})
       return true
     }
     if (task.acceptance.state !== 'pending') return true
     const requestId = task.acceptance.request_id
-    inputs.current.set(requestId, structuredClone(task))
+    inputs.set(requestId, structuredClone(task))
     remember(task.id, {requestId, phase: 'unknown', message: task.acceptance.reason || '恢复到尚未取得回执的确认请求。请读取原请求结果，不要重复开始审核。'})
     return true
   }
-  return {observations, restore, suspend, confirm: (task: Task) => run(task, false), reconcile: (task: Task) => run(task, true)}
+  return {get: (id: string) => operations.get(id), needsBasisRefresh, restore, suspend, confirm: (task: Task) => run(task, false), reconcile: (task: Task) => run(task, true)}
+}
+
+export function useTaskAcceptance(adapter: AuditAcceptanceAdapter, onAccepted: (task: Task) => void) {
+  const latest = useRef({adapter, onAccepted}); latest.current = {adapter, onAccepted}
+  const [observations, setObservations] = useState<Record<string, Observation>>({})
+  const controller = useRef<ReturnType<typeof createTaskAcceptance> | null>(null)
+  if (!controller.current) controller.current = createTaskAcceptance({confirm: (...args) => latest.current.adapter.confirm(...args), readTask: (...args) => latest.current.adapter.readTask(...args)}, task => latest.current.onAccepted(task), (id, observation) => setObservations(rows => ({...rows, [id]: observation})))
+  return {...controller.current, observations}
 }

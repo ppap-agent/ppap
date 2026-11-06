@@ -24,7 +24,7 @@ test('known ZIP rejections stay distinct from lost acceptance replies', async ()
 })
 Object.defineProperty(globalThis, 'navigator', {value: {onLine: true}, configurable: true})
 const file: Task['files'][number] = {file: {id: 'version-a', file_id: 'file-a', original_filename: 'a.xlsx', content_type: 'application/octet-stream', byte_size: 3, status: 'ready', sha256: null}, selection: 'selected', removal_reason: null, validation: {state: 'pending', reasons: []}, match: null}
-const task: Task = {id: 'task-a', number: 'PPAP-20261016-001', state: 'pending_confirm', analysis_mode: 'standard', created_at: '2026-10-16T00:00:00Z', updated_at: '2026-10-16T00:00:00Z', source_draft_id: 'task-a', round_id: null, customer_preference: null, completion_reason: null, estimated_points: 0, files: [file], input_revision: 2}
+const task: Task = {id: 'task-a', number: 'PPAP-20261016-001', state: 'pending_confirm', analysis_mode: 'standard', created_at: '2026-10-16T00:00:00Z', updated_at: '2026-10-16T00:00:00Z', source_draft_id: 'task-a', round_id: null, customer_preference: null, completion_reason: null, estimated_points: 0, files: [file], input_revision: 2, confirmation_basis_digest: 'a'.repeat(64)}
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {status, headers: {'Content-Type': 'application/json'}})
 afterEach(() => {globalThis.fetch = fetchBefore})
 
@@ -570,7 +570,7 @@ test('a lost native confirmation reply can only be read by its original request,
   globalThis.fetch = async (url, init) => {
     calls.push(`${init?.method} ${url}`)
     if (init?.method === 'POST') {
-      assert.deepEqual(JSON.parse(String(init.body)), {request_id: 'accept-a', expected_revision: 2})
+      assert.deepEqual(JSON.parse(String(init.body)), {request_id: 'accept-a', expected_revision: 2, expected_confirmation_basis_digest: task.confirmation_basis_digest})
       throw new TypeError('reply lost')
     }
     assert.equal(String(url), '/audit-tasks/task-a?request_id=accept-a')
@@ -632,6 +632,27 @@ test('a superseded rule requires recognition again instead of silently accepting
   assert.equal(current.round_id, null)
   assert.deepEqual(current.acceptance, {request_id: 'accept-stale', state: 'rejected', reason: '匹配的规则已有新版本，审核没有开始。请返回上一步重新识别，再核对规则。'})
   assert.equal(posts, 1)
+})
+
+test('missing confirmation basis cannot be posted or manufactured by the native adapter', async () => {
+  globalThis.fetch = async () => {assert.fail('no confirmation without server basis')}
+  await assert.rejects(createNativeAuditAdapter({deepOffered: false, customers: []}).confirm({...task, confirmation_basis_digest: null}, 'accept-a'), /读取当前审核依据/)
+})
+
+test('changed server basis is a definite refusal and only the viewed digest is submitted', async () => {
+  const calls: {method: string; body: unknown}[] = []
+  const fresh = {...task, confirmation_basis_digest: 'b'.repeat(64)}
+  globalThis.fetch = async (url, init) => {
+    calls.push({method: init?.method || 'GET', body: init?.body ? JSON.parse(String(init.body)) : null})
+    if (init?.method === 'POST') return json({error: 'task_confirmation_changed'}, 409)
+    assert.equal(String(url), '/audit-tasks/task-a?request_id=accept-stale')
+    return json({...fresh, acceptance: {request_id: 'accept-stale', state: 'rejected', reason: '审核依据已变化。'}})
+  }
+  const result = await createNativeAuditAdapter({deepOffered: false, customers: []}).confirm(task, 'accept-stale')
+  assert.equal(result.acceptance!.state, 'rejected')
+  assert.equal(result.confirmation_basis_digest, fresh.confirmation_basis_digest)
+  assert.equal(result.round_id, null)
+  assert.deepEqual(calls, [{method: 'POST', body: {request_id: 'accept-stale', expected_revision: 2, expected_confirmation_basis_digest: task.confirmation_basis_digest}}, {method: 'GET', body: null}])
 })
 
 test('authorization, server and unknown refusals do not grant another confirmation', async () => {

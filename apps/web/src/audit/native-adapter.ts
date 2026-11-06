@@ -1,5 +1,5 @@
 import {apiUrl, readLocalUpload, request, uploadLocalVersion, withResponseTrace, type FeishuFileImportRequest} from '../api.ts'
-import type {components} from '../generated/openapi.ts'
+import type {components, operations} from '../generated/openapi.ts'
 import type {AuditIntakeAdapter, AuditTask} from './intake.tsx'
 import type {AuditReviewAdapter} from './review-editor'
 import type {AuditDisplayAdapter} from './display-info-editor'
@@ -215,6 +215,7 @@ const removals = (task: AuditTask) => task.files.filter(row => row.selection ===
 const confirmationRefusals: Record<string, string> = {
   ...usageRefusals,
   audit_task_charging_unavailable: '当前环境尚未开放本次审核计费，审核没有开始。',
+  task_confirmation_changed: '审核依据已变化，审核没有开始。请刷新审核依据，核对后重新确认。',
   task_revision_conflict: '任务文件已在其他页面更新。本次确认未受理，请核对当前任务。',
   task_not_ready: '文件识别尚未完成。本次确认未受理，请读取当前任务。',
   rule_candidate_expired: '匹配的规则已有新版本，审核没有开始。请返回上一步重新识别，再核对规则。',
@@ -306,7 +307,8 @@ export function createNativeAuditAdapter(options: {deepOffered: boolean; custome
     readRecognition: (id, requestId) => request(`${taskPath(id)}/recognitions/${encoded(requestId)}`),
     readTask: (id, requestId) => request<AuditTask>(`${taskPath(id)}${requestId ? `?request_id=${encoded(requestId)}` : ''}`),
     async confirm(task, requestId) {
-      try {return await request<AuditTask>(`${taskPath(task.id)}/confirm`, 'POST', {request_id: requestId, expected_revision: task.input_revision ?? 0})}
+      if (!task.confirmation_basis_digest) throw new Error('请先读取当前审核依据，再确认审核。')
+      try {return await request<AuditTask, operations['audit_tasks_confirm_audit_tasks__task_id__confirm_post']['requestBody']['content']['application/json']>(`${taskPath(task.id)}/confirm`, 'POST', {request_id: requestId, expected_revision: task.input_revision ?? 0, expected_confirmation_basis_digest: task.confirmation_basis_digest})}
       catch (failure) {
         const error = failure as {status?: number; code?: string}
         const reason = error.code && confirmationRefusals[error.code]

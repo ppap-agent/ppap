@@ -20,7 +20,7 @@ export function fixtureAcceptance(task: AuditTask, requestId: string): AuditTask
     const audit: Review = {round_id: round, file_version_id: file.file.id, result_attempt: null, rule, execution: 'queued', progress: {completed: 0, total: checks.length}, failure: null, conclusion: null, counts: {pass_count: 0, ng_count: 0, unknown_count: 0, not_covered_count: 0, error_count: 0}, checks, report: {state: 'not_eligible', report_id: null, reason: '审核尚未完成。'}}
     return {...file, audit}
   })
-  return {...task, state: 'reviewing', round_id: round, acceptance: {request_id: requestId, state: 'accepted', reason: null}, progress: {completed: 0, total: files.filter(file => file.selection === 'selected' && file.match?.state !== 'reference').length}, notification_enabled: task.notification_enabled ?? true, notification_revision: task.notification_revision ?? 0, files}
+  return {...task, confirmation_basis_digest: null, state: 'reviewing', round_id: round, acceptance: {request_id: requestId, state: 'accepted', reason: null}, progress: {completed: 0, total: files.filter(file => file.selection === 'selected' && file.match?.state !== 'reference').length}, notification_enabled: task.notification_enabled ?? true, notification_revision: task.notification_revision ?? 0, files}
 }
 
 /** A fixed intermediate read: unfinished checks have neither findings nor evidence. */
