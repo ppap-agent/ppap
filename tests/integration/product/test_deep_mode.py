@@ -1,10 +1,14 @@
-"""Native Deep analysis mode. Independent protocol; does not import ppap-agent."""
+"""Core-backed Deep mode with real PostgreSQL authorization and persistence.
+
+Transport and model source generation are controlled in-process. The real Core
+manifest, checker execution and artifact storage run; this is not OS isolation,
+UDS transport, provider quality or container acceptance.
+"""
 
 from __future__ import annotations
 
+import json
 import os
-import shutil
-import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
@@ -15,9 +19,10 @@ import agent
 import pytest
 import worker
 from agent.client import DeepClient, DeepError
-from agent.mapping import passing_response, spec_from_work
+from agent.core_program import CoreRuntime, run_audit_manifest
+from agent.mapping import spec_from_work
 from agent.protocol import ExecuteRequest, RequestEnvelope
-from agent.run import Controller, ScriptedRuntime, UnixControllerServer
+from agent.run import Controller, ExecutionContext
 from agent.source import authorize_execution, object_file_source
 from api import create_app
 from audit.audits import (
@@ -32,7 +37,11 @@ from audit.audits import (
     job_payload,
     request_fingerprint,
 )
+from audit.checker_core import runtime_revision
+from audit.standard_suites import library_revision
+from documents.model_access import DEEPSEEK_MODEL
 from fastapi.testclient import TestClient
+from product import build_product_store
 from product.capabilities import report
 from product.db import connect
 from product.feishu import UserTokens
@@ -40,9 +49,61 @@ from product.fixtures import RULE_A, RULE_B
 from product.identity import SESSION_COOKIE
 from product.settings import Settings
 from product.storage import S3Objects
+from product.store.checker_development import CheckerDevelopmentStore
+from product.store.suites import SuiteStore
 from pydantic import ValidationError
 from worker import process_claimed
 from worker.deep_controller import open_store
+
+# This source checks only the exact synthetic fixture bytes. It is deliberately
+# not a PPAP business checker or a replacement for provider-semantic acceptance.
+FIXTURE_CHECKER = """from pathlib import Path
+from types import SimpleNamespace
+from audit.contracts import AuditResultItem
+
+def create_audit(audit_file, rule, group_context):
+    def check(clause):
+        matches = Path(audit_file.file_url).read_bytes() == b"target-bytes"
+        return AuditResultItem(classification="fixture", item="Fixture bytes", priority="P0",
+                               status="PASS" if matches else "NG", suggestions="Synthetic byte check",
+                               clause_id=clause, checks_performed=1)
+    return SimpleNamespace(checks=[SimpleNamespace(rule_item=SimpleNamespace(id=row["id"]),
+                           check=lambda clause=row["id"]: check(clause)) for row in rule.rules])
+"""
+
+
+class ControlledSourceRunner:
+    """Supply fixture source; production development trials still run it."""
+
+    wall_seconds = 100
+    input_tokens = output_tokens = 0
+
+    def __init__(self, _grant):
+        pass
+
+    def run(self, work, prompt, schema, deadline, **kwargs):
+        return schema(entrypoint="checker:create_audit", files={"checker.py": FIXTURE_CHECKER})
+
+
+class ControlledCoreGuest:
+    """Run the production manifest without claiming a guest OS boundary."""
+
+    def run(self, job, inputs, work, deadline, cancelled):
+        grant = work / "controlled-model-grant"
+        grant.mkdir()
+        (grant / "model.json").write_text(
+            json.dumps(
+                {
+                    "base_url": "http://127.0.0.1:1/v1",
+                    "token": "synthetic-unused-grant-1234567890",
+                    "model": DEEPSEEK_MODEL,
+                    "wall_seconds": 100,
+                    "max_turns": 20,
+                }
+            )
+        )
+        with patch("agent.execution.guest_model.PiRunner", ControlledSourceRunner):
+            run_audit_manifest(inputs, work, grant)
 
 
 def _clean_env(**extra: str):
@@ -56,8 +117,9 @@ class DeepProtocolTests(unittest.TestCase):
         spec = {
             "protocol_revision": DEEP_PROTOCOL_REVISION,
             "round_id": "r1",
-            "executor": "ppap-deep",
-            "executor_revision": DEEP_PROTOCOL_REVISION,
+            "executor": "ppap-checker-core",
+            "executor_revision": "core-runtime",
+            "checker_snapshot_digest": "a" * 64,
             "files": [
                 {
                     "file_version_id": "v1",
@@ -116,11 +178,9 @@ class DeepModeTests(unittest.TestCase):
         self.store = self.auth_store(self.settings)
         self.store.seed_isolated_dev()
         self.client = TestClient(create_app(self.settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.store))
-        self._servers: list[UnixControllerServer] = []
+        self._controllers = {}
 
     def tearDown(self):
-        for server in self._servers:
-            server.close()
         self._env.stop()
 
     def _scalar(self, query: str, params=()):
@@ -168,40 +228,66 @@ class DeepModeTests(unittest.TestCase):
         self.assertEqual(accepted.status_code, 201, accepted.text)
         return accepted.json()["id"]
 
-    def _start_controller(self, revision: str | None = None, *, runtime=None) -> str:
-        tmp = tempfile.mkdtemp(prefix="ppap-deep-")
-        self.addCleanup(lambda: shutil.rmtree(tmp, ignore_errors=True))
-        path = str(Path(tmp) / "c.sock")
-
-        # Substitute only the external S3 SDK. Authorization and object lookup use
-        # production callbacks with the real database and Worker role.
+    def _start_controller(self) -> str:
+        # Only RPC transport and the external object SDK are substituted. Tenant,
+        # lease, frozen input, byte digest and artifact publication checks are real.
         sdk_patch = patch("product.storage.s3_client")
         self.s3 = sdk_patch.start().return_value
         self.addCleanup(sdk_patch.stop)
         self.s3.get_object.side_effect = lambda **kwargs: {"Body": BytesIO(self.store.objects.get(kwargs["Key"]))}
         self.runtime_calls: list[ExecuteRequest] = []
-
-        def execute(spec: ExecuteRequest, _blobs: dict[str, bytes]):
-            self.runtime_calls.append(spec)
-            return passing_response(spec)
-
-        server = UnixControllerServer(
-            path,
-            Controller(
-                runtime if runtime is not None else ScriptedRuntime(execute),
-                object_file_source(self.settings, connect=connect, objects=S3Objects(self.settings)),
-                executor_revision=revision or self.settings.deep_execution_revision(),
-                authorize=authorize_execution(self.settings, connect=connect, open_store=open_store),
-            ),
+        controller_store = build_product_store(self.settings, objects=self.store.objects, role="worker")
+        suites = SuiteStore(self.settings, self.store.objects, role="worker")
+        runtime = CoreRuntime(
+            ControlledCoreGuest(),
+            lambda spec: suites.read_snapshot(spec.round_id, spec.tenant_id),
+            suites.resolve_suite,
+            save_round_artifacts=CheckerDevelopmentStore(controller_store).save_round_artifacts,
         )
-        server.start()
-        self._servers.append(server)
+        execute = runtime.execute
+
+        def observed_execute(spec, files, *, context):
+            self.runtime_calls.append(spec)
+            return execute(spec, files, context=context)
+
+        runtime.execute = observed_execute
+        controller = Controller(
+            runtime,
+            object_file_source(self.settings, connect=connect, objects=S3Objects(self.settings)),
+            executor_revision=runtime_revision(self.settings.deep_execution_revision(), library_revision()),
+            authorize=authorize_execution(self.settings, connect=connect, open_store=open_store),
+        )
+        path = f"controlled-core-{len(self._controllers)}"
+        self._controllers[path] = controller
+
+        def transport(client, spec, *, cancelled=None, on_progress=None):
+            context = ExecutionContext()
+            if cancelled is not None:
+                context.cancelled = cancelled
+            if on_progress is not None:
+                context.on_progress = on_progress
+            # Serialize the request and response through production envelopes.
+            response = self._controllers[client.socket_path].handle_raw(
+                {"op": "execute", "spec": spec.model_dump(mode="json")},
+                context,
+            )
+            if response["op"] == "error":
+                raise DeepError(response["code"])
+            from agent.protocol import ExecuteResponse
+
+            return ExecuteResponse.model_validate(response["result"])
+
+        transport_patch = patch.object(DeepClient, "execute", transport)
+        transport_patch.start()
+        self.addCleanup(transport_patch.stop)
         return path
 
     def _claimed_spec(self, claimed: ClaimedJob) -> ExecuteRequest:
         work = self.store.round_work(claimed.round_id)
         self.assertIsNotNone(work)
-        return spec_from_work(work, EXECUTOR_DEEP, claimed.payload["executor_revision"], DEEP_PROTOCOL_REVISION).model_copy(update={"job_id": claimed.id, "attempt": claimed.attempt})
+        return spec_from_work(work, "ppap-checker-core", claimed.payload["executor_revision"], DEEP_PROTOCOL_REVISION, checker_snapshot_digest=claimed.payload["checker_snapshot_digest"]).model_copy(
+            update={"job_id": claimed.id, "attempt": claimed.attempt}
+        )
 
     def test_default_draft_is_standard(self):
         self._login()
@@ -209,45 +295,55 @@ class DeepModeTests(unittest.TestCase):
         self.assertEqual(draft.status_code, 201)
         self.assertEqual(draft.json()["analysis_mode"], ANALYSIS_STANDARD)
 
-    def test_happy_path_writes_product_findings_without_standard_engine(self):
-        # ScriptedRuntime checks transport and persistence, not semantic audit agency.
+    def test_core_persists_generated_findings_and_artifact(self):
+        # Controlled source checks fixture bytes, not PPAP semantic audit quality.
         self._login()
         target = self._upload("report.xlsx", b"target-bytes")
-        reference = self._upload("context.pdf", b"reference-bytes")
+        reference = self._upload("context.txt", b"reference-bytes")
         self.settings.deep_controller_socket = self._start_controller()
         round_id = self._accept_deep(target, reference, key="deep-happy")
         body = self.client.get(f"/rounds/{round_id}").json()
         self.assertEqual(body["analysis_mode"], ANALYSIS_DEEP)
-        self.assertEqual(body["executor"], EXECUTOR_DEEP)
-        self.assertEqual(body["executor_revision"], self.settings.deep_execution_revision())
+        self.assertEqual(body["executor"], "ppap-checker-core")
+        self.assertEqual(body["executor_revision"], runtime_revision(self.settings.deep_execution_revision(), library_revision()))
         work = self.store.round_work(round_id)
         self.assertEqual(work.analysis_mode, ANALYSIS_DEEP)
         self.assertTrue(work.inputs[0].sha256)
-        with patch("worker.evaluate_round", side_effect=AssertionError("standard path")):
-            with patch("worker.engine_runner", side_effect=AssertionError("standard engine")):
-                claimed = self.store.claim_job("deep-worker")
-                result = process_claimed(self.store, claimed, "deep-worker")
-        self.assertEqual(result["note"], "deep_audit")
+        self.assertFalse(hasattr(worker, "evaluate_round"))
+        self.assertFalse(hasattr(worker, "engine_runner"))
+        claimed = self.store.claim_job("deep-worker")
+        result = process_claimed(self.store, claimed, "deep-worker")
+        self.assertEqual(result["note"], "checker_core_audit")
         loaded = self.client.get(f"/rounds/{round_id}").json()
         self.assertEqual(loaded["execution"], "completed")
-        self.assertEqual({row["status"] for row in loaded["findings"]}, {"PASS"})
-        self.assertTrue(any(row["item"] == "深度审核已完成" for row in loaded["findings"]))
+        self.assertEqual({row["status"] for row in loaded["findings"]}, {"PASS"}, loaded["findings"])
+        self.assertTrue(all(row["locator"]["verification_status"] == "unverified" for row in loaded["findings"]))
+        self.assertEqual(loaded["coverage"]["checker_execution"]["input_digest"], claimed.payload["checker_snapshot_digest"])
+        self.assertEqual(self._scalar("SELECT count(*) FROM product.checker_round_artifacts WHERE round_id=%s", (round_id,)), 1)
         self.assertIn("report.xlsx", loaded["coverage"]["checked"])
-        self.assertTrue(any("context.pdf" in row for row in loaded["coverage"]["unchecked"]))
+        self.assertTrue(any("context.txt" in row for row in loaded["coverage"]["unchecked"]))
         diagnostic = self._attempt_diagnostic(claimed.id, claimed.attempt)
-        self.assertEqual(diagnostic["executor"], EXECUTOR_DEEP)
+        self.assertEqual(diagnostic["executor"], "ppap-checker-core")
         self.assertIsNone(loaded["failure"])
         self.assertEqual(diagnostic["usage"], {})
+
+    def test_controlled_checker_reads_the_original_instead_of_returning_canned_pass(self):
+        self._login()
+        target = self._upload("report.xlsx", b"different-target-bytes")
+        self.settings.deep_controller_socket = self._start_controller()
+        round_id = self._accept_deep(target, key="deep-nonmatching-fixture")
+        claimed = self.store.claim_job("deep-worker")
+        process_claimed(self.store, claimed, "deep-worker")
+        loaded = self.client.get(f"/rounds/{round_id}").json()
+        self.assertEqual(loaded["execution"], "completed")
+        self.assertEqual({row["status"] for row in loaded["findings"]}, {"NG"})
+        self.assertEqual(self._scalar("SELECT count(*) FROM product.checker_round_artifacts WHERE round_id=%s", (round_id,)), 1)
 
     def test_runtime_unavailable_does_not_fall_back_to_standard(self):
         self._login()
         target = self._upload("report.xlsx", b"target-bytes")
         round_id = self._accept_deep(target, key="deep-unavailable")
-        with (
-            patch("worker.evaluate_round", side_effect=AssertionError("standard path")),
-            patch("worker.engine_runner", side_effect=AssertionError("standard engine")),
-            patch("subprocess.Popen", side_effect=AssertionError("local runtime")) as start_process,
-        ):
+        with patch("subprocess.Popen", side_effect=AssertionError("local runtime")) as start_process:
             claimed = self.store.claim_job("deep-worker")
             result = process_claimed(self.store, claimed, "deep-worker")
         start_process.assert_not_called()
@@ -263,7 +359,7 @@ class DeepModeTests(unittest.TestCase):
     def test_controller_rejects_changed_identity_and_frozen_inputs_before_object_reads(self):
         self._login()
         target = self._upload("report.xlsx", b"target-bytes")
-        reference = self._upload("context.pdf", b"reference-bytes")
+        reference = self._upload("context.txt", b"reference-bytes")
         round_id = self._accept_deep(target, reference, key="deep-authorized")
         claimed = self.store.claim_job("deep-worker")
         spec = self._claimed_spec(claimed)
@@ -289,6 +385,9 @@ class DeepModeTests(unittest.TestCase):
         }
         requests = {
             "tenant": spec.model_copy(update={"tenant_id": other_spec.tenant_id}),
+            "initiator": spec.model_copy(update={"initiating_user_id": other_spec.initiating_user_id}),
+            "snapshot": spec.model_copy(update={"checker_snapshot_digest": "0" * 64}),
+            "mode": spec.model_copy(update={"analysis_mode": "standard"}),
             "invalid identity": spec.model_copy(update={"tenant_id": "not-a-uuid"}),
             "round": spec.model_copy(update={"round_id": other_round}),
             "job": spec.model_copy(update={"job_id": other_claimed.id}),
@@ -341,11 +440,10 @@ class DeepModeTests(unittest.TestCase):
         target = self._upload("report.xlsx", b"target-bytes")
         self.settings.deep_controller_socket = self._start_controller()
         round_id = self._accept_deep(target, key="deep-revision")
-        frozen = self.settings.deep_execution_revision()
+        frozen = runtime_revision(self.settings.deep_execution_revision(), library_revision())
         self.settings.deep_executor_revision = "ppap-deep-v999"
-        with patch("worker.evaluate_round", side_effect=AssertionError("standard path")):
-            claimed = self.store.claim_job("deep-worker")
-            result = process_claimed(self.store, claimed, "deep-worker")
+        claimed = self.store.claim_job("deep-worker")
+        result = process_claimed(self.store, claimed, "deep-worker")
         self.assertEqual(result["findings"], [])
         self.assertEqual(result["failure"]["code"], "executor_revision_mismatch")
         loaded = self.client.get(f"/rounds/{round_id}").json()
@@ -364,7 +462,7 @@ class DeepModeTests(unittest.TestCase):
         old_revision = first["executor_revision"]
 
         waiting_id = self._accept_deep(target, key="policy-a-waiting")
-        self.settings.llm_model = "changed-model-with-the-same-version-label"
+        self.settings.git_sha = "b" * 40
         self.settings.deep_controller_socket = self._start_controller()
         result = process_claimed(self.store, self.store.claim_job("policy-worker"), "policy-worker")
         self.assertEqual(result["failure"]["code"], "executor_revision_mismatch")
