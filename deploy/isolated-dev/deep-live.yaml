@@ -1,23 +1,32 @@
-# Live semantic Deep overlay. The dedicated Deep image owns the Controller
-# and low-privilege guest in one container. API and Worker only share its UDS.
-# The default isolated-dev Compose still needs no Deep service or Docker socket.
+# Shared Checker Core runtime for Standard and Deep audits. The dedicated
+# image owns the Controller and low-privilege guest. API/Worker share only its
+# project-scoped UDS volume, never a Docker socket or a guest execution path.
+
+volumes:
+  deep-socket:
 
 services:
   api:
+    depends_on:
+      deep:
+        condition: service_healthy
     environment:
       PPAP_DEEP_CONTROLLER_SOCKET: /run/ppap-deep/controller.sock
       PPAP_DEEP_EXECUTOR_REVISION: ppap-deep-v2
       PPAP_DEEP_SANDBOX_PROFILE: "off"
     volumes:
-      - ${PPAP_DEEP_SOCKET_DIR:-/tmp/ppap-deep}:/run/ppap-deep
+      - deep-socket:/run/ppap-deep
 
   worker:
+    depends_on:
+      deep:
+        condition: service_healthy
     environment:
       PPAP_DEEP_CONTROLLER_SOCKET: /run/ppap-deep/controller.sock
       PPAP_DEEP_EXECUTOR_REVISION: ppap-deep-v2
       PPAP_DEEP_SANDBOX_PROFILE: "off"
     volumes:
-      - ${PPAP_DEEP_SOCKET_DIR:-/tmp/ppap-deep}:/run/ppap-deep
+      - deep-socket:/run/ppap-deep
 
   deep:
     image: ppap-deep:${PPAP_BUILD_SHA:?set PPAP_BUILD_SHA to the 40-character git SHA}
@@ -33,6 +42,7 @@ services:
       PPAP_PROFILE: isolated-dev
       PPAP_BUILD_SHA: ${PPAP_BUILD_SHA:?set PPAP_BUILD_SHA to the 40-character git SHA}
       PPAP_SERVICE: deep
+      PPAP_DEEP_LLM_API_KEY: ""
       PPAP_PG_HOST: postgres
       PPAP_PG_PORT: "5432"
       PPAP_PG_DATABASE: ppap
@@ -49,5 +59,11 @@ services:
       PPAP_DEEP_RUNTIME: container-only
       PPAP_DEEP_SANDBOX_PROFILE: "off"
     volumes:
-      - ${PPAP_DEEP_SOCKET_DIR:-/tmp/ppap-deep}:/run/ppap-deep
+      - deep-socket:/run/ppap-deep
+    healthcheck:
+      test: ["CMD", "python", "-m", "agent.readiness"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
     mem_limit: 2g

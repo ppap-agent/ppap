@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 import re
 import time
 import unittest
 import uuid
-from urllib.parse import parse_qs, urljoin, urlsplit
+from types import SimpleNamespace
+from urllib.parse import parse_qs, quote, urljoin, urlsplit
+from zipfile import BadZipFile
 
+import pytest
 from openpyxl import Workbook
 from product.fixtures import RULE_A
 
@@ -46,6 +50,98 @@ def upload_version(page, api, name, body, file_id=None):
     return version
 
 
+PRESENCE_CHECKER = """import json
+from io import BytesIO
+from openpyxl import load_workbook
+from audit.contracts import AuditEvidence, AuditResultItem, EvidenceSource
+
+def check(context):
+    book = load_workbook(BytesIO(context.sources[context.audit_file.audit_id]), read_only=True)
+    try:
+        sheet = book.active
+        present = bool(sheet["A1"].value)
+        locator = json.dumps({"kind": "xlsx_cell", "sheet": sheet.title, "cell": "A1"})
+        return AuditResultItem(classification="资料", item="冻结原件 A1 已填写", priority="P0",
+            status="PASS" if present else "NG", suggestions="已核对冻结原件 A1。", clause_id=context.clause_id, checks_performed=1,
+            evidence=AuditEvidence(required="structure", used="structure", source_format="xlsx", prepared_format="xlsx",
+                sources=(EvidenceSource(kind="structure", locator=locator),)))
+    finally:
+        book.close()
+"""
+
+
+def adopt_presence_rule(page, api):
+    """Publish an independent, explicit test Suite through the real product API.
+
+    A shared seed Rule is an unbound starter, not permission to execute a hidden
+    presence fallback. Per-test rules also avoid changing another xdist case's
+    selection while its round is being accepted.
+    """
+    stamp = uuid.uuid4().hex
+    source = upload_version(page, api, f"presence-rule-{stamp}.txt", "冻结原件 A1 必须已填写。".encode())
+    response = page.request.post(
+        f"{api}/rules",
+        data={
+            "title": f"A1 fixture {stamp}",
+            "source_file_version_id": source["id"],
+            "request_id": str(uuid.uuid4()),
+            "body": {
+                "kind": "engine",
+                "type": "控制计划",
+                "rule_profile": "v3",
+                "customers": [],
+                "models": [],
+                "parts": [],
+                "rules": [{"id": "presence", "category": "资料", "priority": "P0", "rule_to_check": "冻结原件 A1 必须已填写。", "type_of_rule": "text"}],
+            },
+        },
+    )
+    assert response.status == 201, response.text()
+    rule = response.json()
+    suite_url = f"{api}/suites/{quote(rule['body']['suite_key'], safe='')}/active"
+    response = page.request.get(suite_url)
+    assert response.status == 200, response.text()
+    active = response.json()
+    response = page.request.get(f"{api}/suite-revisions/{active['current_revision_id']}")
+    assert response.status == 200, response.text()
+    rules = json.loads(response.json()["files"]["rules.json"])
+    assert rules["checker_binding"] == {}
+    rules["checker_binding"] = {"presence": "checker:check"}
+    response = page.request.post(
+        f"{api}/suite-revisions/{active['current_revision_id']}/candidates",
+        data={"operation_id": str(uuid.uuid4()), "files": {"rules.json": json.dumps(rules, ensure_ascii=False), "checker.py": PRESENCE_CHECKER}},
+    )
+    assert response.status == 201, response.text()
+    candidate = response.json()
+    response = page.request.put(
+        suite_url,
+        data={"revision_id": candidate["id"], "expected_revision": active["revision"], "operation_id": str(uuid.uuid4()), "force_unverified": True},
+    )
+    assert response.status == 200, response.text()
+    assert response.json()["revision_id"] == candidate["id"]
+    assert response.json()["verification_status"] == "unverified"
+    return rule["id"]
+
+
+def test_presence_fixture_checks_frozen_a1_and_does_not_fabricate_pass():
+    namespace = {}
+    exec(compile(PRESENCE_CHECKER, "presence-fixture.py", "exec"), namespace)
+    for value, expected in (("Frozen original", "PASS"), (None, "NG")):
+        book = Workbook()
+        book.active["A1"] = value
+        stream = io.BytesIO()
+        book.save(stream)
+        book.close()
+        context = SimpleNamespace(audit_file=SimpleNamespace(audit_id="original"), sources={"original": stream.getvalue()}, clause_id="presence")
+        result = namespace["check"](context)
+        assert result.status == expected
+        assert result.checks_performed == 1
+        assert result.clause_id == "presence"
+        assert json.loads(result.evidence.sources[0].locator) == {"kind": "xlsx_cell", "sheet": "Sheet", "cell": "A1"}
+    with pytest.raises(BadZipFile):
+        namespace["check"](SimpleNamespace(audit_file=SimpleNamespace(audit_id="original"), sources={"original": b"broken workbook"}, clause_id="presence"))
+
+
 def completed_round(page, api, round_id):
     deadline = time.monotonic() + 20
     while True:
@@ -55,8 +151,10 @@ def completed_round(page, api, round_id):
         if result["execution"] in {"completed", "failed"}:
             assert result["execution"] == "completed", result.get("failure")
             assert result["findings"] and all(row["status"] == "PASS" for row in result["findings"])
+            assert result["executor"] == "ppap-checker-core"
+            assert all(row["locator"]["semantic"]["checks_performed"] == 1 for row in result["findings"])
             return result
-        assert time.monotonic() < deadline, "The isolated presence Worker did not finish the accepted round"
+        assert time.monotonic() < deadline, "The isolated Checker Core did not finish the accepted round"
         page.wait_for_timeout(50)
 
 
@@ -82,6 +180,7 @@ class WebAuditLoopTests(unittest.TestCase):
             page = browser.new_page(viewport={"width": 390, "height": 844})
             page.set_default_timeout(5000)
             api = isolated_dev_login(page, WEB)
+            rule_id = adopt_presence_rule(page, api)
             stamp = uuid.uuid4().hex[:8]
             name, context = f"report-{stamp}.xlsx", f"context-{stamp}.txt"
             target_bytes, reference_bytes = workbook_bytes("第一版"), b"frozen reference"
@@ -114,7 +213,7 @@ class WebAuditLoopTests(unittest.TestCase):
                 page,
                 api,
                 [
-                    {"file_version_id": target["file_version_id"], "role": "target", "rule_version_id": RULE_A},
+                    {"file_version_id": target["file_version_id"], "role": "target", "rule_version_id": rule_id},
                     {"file_version_id": reference["file_version_id"], "role": "reference", "rule_version_id": None},
                 ],
                 draft_id=draft_id,
@@ -155,7 +254,7 @@ class WebAuditLoopTests(unittest.TestCase):
                 page,
                 api,
                 [
-                    {"file_version_id": newer["id"], "role": "target", "rule_version_id": RULE_A},
+                    {"file_version_id": newer["id"], "role": "target", "rule_version_id": rule_id},
                     {"file_version_id": reference["file_version_id"], "role": "reference", "rule_version_id": None},
                 ],
                 predecessor=original["id"],
@@ -195,7 +294,7 @@ class WebAuditLoopTests(unittest.TestCase):
             prepared = {row["file_version_id"]: row for row in snapshot["files"]}
             self.assertEqual(set(prepared), {target["file_version_id"], reference["file_version_id"]})
             self.assertTrue(all(row["selection"] == "selected" for row in prepared.values()))
-            self.assertEqual(prepared[target["file_version_id"]]["preferred_rule_version_id"], RULE_A)
+            self.assertEqual(prepared[target["file_version_id"]]["preferred_rule_version_id"], rule_id)
             self.assertTrue(prepared[reference["file_version_id"]]["reference_only"])
             self.assertIsNone(page.request.get(f"{api}/drafts/{preparation['id']}/round").json())
             expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
@@ -267,10 +366,11 @@ class WebAuditLoopTests(unittest.TestCase):
             page = browser.new_page(viewport={"width": 1440, "height": 900})
             page.set_default_timeout(5000)
             api = isolated_dev_login(page, WEB)
+            rule_id = adopt_presence_rule(page, api)
             stamp = uuid.uuid4().hex[:8]
             names = [f"alpha-{stamp}.xlsx", f"beta-{stamp}.xlsx"]
             versions = [upload_version(page, api, name, workbook_bytes(name)) for name in names]
-            original = accept_round(page, api, [{"file_version_id": row["id"], "role": "target", "rule_version_id": RULE_A} for row in versions])
+            original = accept_round(page, api, [{"file_version_id": row["id"], "role": "target", "rule_version_id": rule_id} for row in versions])
             # Existing stage deep links retain their legacy review context.
             page.goto(f"{WEB}/?round={original['id']}&stage=decision")
             expect(page.get_by_role("heading", name="人工复核", exact=True)).to_be_visible()
