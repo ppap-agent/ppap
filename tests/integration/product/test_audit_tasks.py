@@ -1058,7 +1058,12 @@ def test_superseded_candidate_requires_explicit_rematching_before_confirmation(m
     new = publish_rule(client, body["files"][0], predecessor=old["id"], title="修订要求")
     response = client.post(path + "/confirm", json=command)
     assert response.status_code == 409
-    assert response.json() == {"error": "rule_candidate_expired"}
+    assert response.json() == {"error": "task_confirmation_changed"}
+    # Seeing the new Suite basis does not authorize an expired recognition.
+    refreshed = client.post(path + "/confirm", json=confirmation_command(client, path, 0))
+    assert refreshed.status_code == 409 and refreshed.json() == {"error": "rule_candidate_expired"}
+    replayed = client.post(path + "/confirm", json=command)
+    assert replayed.status_code == 409 and replayed.json() == response.json()
     current = client.get(path).json()
     assert current["state"] == "pending_confirm"
     assert current["round_id"] is None
