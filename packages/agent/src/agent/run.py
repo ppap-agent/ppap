@@ -185,8 +185,8 @@ class Controller:
             if payload.get("op") == "develop":
                 if self.development_handler is None:
                     raise DeepUnavailable()
-                request = DevelopmentEnvelope.model_validate(payload)
-                receipt = self.development_handler(request, context or ExecutionContext())
+                development_request = DevelopmentEnvelope.model_validate(payload)
+                receipt = self.development_handler(development_request, context or ExecutionContext())
                 return {"op": "development_result", "receipt": receipt}
             envelope = RequestEnvelope.model_validate(payload)
             result = self.handle(envelope.spec, context)
