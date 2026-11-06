@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import uuid
 from unittest.mock import patch
@@ -9,6 +10,7 @@ from unittest.mock import patch
 import pytest
 from api import create_app
 from api.web_contract import Round
+from documents.model_access import DEEPSEEK_BASE_URL
 from fastapi.testclient import TestClient
 from product import build_product_store
 from product.fixtures import RULE_A
@@ -59,7 +61,12 @@ def test_standard_policy_survives_replay_completion_and_new_configuration(system
     client, worker, settings, core = system
     original, draft, command = accept(client, core)
     frozen = snapshot(worker, original["id"])
-    assert frozen.model_identity == {"provider": "deepseek", "model": "deepseek-flash"}
+    assert frozen.model_identity == {
+        "provider": "deepseek",
+        "model": "deepseek-flash",
+        "revision": "unconfigured",
+        "deployment": hashlib.sha256(DEEPSEEK_BASE_URL.encode()).hexdigest(),
+    }
     assert original["executor_revision"].startswith("checker-core-v1:")
     job = worker.claim_job("policy-worker")
     process_claimed(worker, job, "policy-worker")

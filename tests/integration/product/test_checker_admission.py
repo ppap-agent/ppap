@@ -8,6 +8,7 @@ from copy import deepcopy
 import pytest
 from audit.checker_core import checker_digest
 from audit.standard_suites import library_revision
+from documents.model_access import DEEPSEEK_BASE_URL
 from product.checker_validation import CaseEvaluation, ClauseEvaluation, SuiteValidationReport
 from product.settings import Settings
 from product.store.suite_releases import SuiteReleaseStore
@@ -128,7 +129,12 @@ def test_publication_and_rollback_only_change_new_round_snapshots(admission):
     assert changed.targets[0].rules["rules"][0]["rule_to_check"] == "企业已确认的新条款"
     assert a.snapshot(first["id"]).to_dict() == original.to_dict()
     assert a.snapshot(second["id"]).to_dict() == changed.to_dict()
-    assert original.model_identity == {"provider": "deepseek", "model": "deepseek-flash"}
+    assert original.model_identity == {
+        "provider": "deepseek",
+        "model": "deepseek-flash",
+        "revision": "unconfigured",
+        "deployment": hashlib.sha256(DEEPSEEK_BASE_URL.encode()).hexdigest(),
+    }
     assert original.initiating_user_id == a.alice.user_id
     assert {(item.file_version_id, item.role, item.sha256) for item in original.inputs} == {
         (a.target.id, "target", a.target.sha256),

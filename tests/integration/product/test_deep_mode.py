@@ -7,19 +7,22 @@ UDS transport, provider quality or container acceptance.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import unittest
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
+from threading import Event
+from time import monotonic
 from unittest.mock import patch
 
 import agent
 import pytest
 import worker
 from agent.client import DeepClient, DeepError
-from agent.core_program import CoreRuntime, run_audit_manifest
+from agent.core_program import CoreRuntime, run_audit_manifest, write_audit_manifest
 from agent.mapping import spec_from_work
 from agent.protocol import ExecuteRequest, RequestEnvelope
 from agent.run import Controller, ExecutionContext
@@ -37,9 +40,9 @@ from audit.audits import (
     job_payload,
     request_fingerprint,
 )
-from audit.checker_core import runtime_revision
+from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest, runtime_revision
 from audit.standard_suites import library_revision
-from documents.model_access import DEEPSEEK_MODEL
+from documents.model_access import DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
 from fastapi.testclient import TestClient
 from product import build_product_store
 from product.capabilities import report
@@ -89,6 +92,7 @@ class ControlledCoreGuest:
     """Run the production manifest without claiming a guest OS boundary."""
 
     def run(self, job, inputs, work, deadline, cancelled):
+        identity = json.loads((inputs / "manifest.json").read_text())["snapshot"]["model_identity"]
         grant = work / "controlled-model-grant"
         grant.mkdir()
         (grant / "model.json").write_text(
@@ -96,7 +100,7 @@ class ControlledCoreGuest:
                 {
                     "base_url": "http://127.0.0.1:1/v1",
                     "token": "synthetic-unused-grant-1234567890",
-                    "model": DEEPSEEK_MODEL,
+                    **identity,
                     "wall_seconds": 100,
                     "max_turns": 20,
                 }
@@ -104,6 +108,44 @@ class ControlledCoreGuest:
         )
         with patch("agent.execution.guest_model.PiRunner", ControlledSourceRunner):
             run_audit_manifest(inputs, work, grant)
+
+
+@pytest.mark.parametrize("guest_kind", ["deep", "shared"])
+@pytest.mark.parametrize(
+    "identity",
+    [
+        {"provider": "deepseek", "model": DEEPSEEK_MODEL, "revision": "unconfigured", "deployment": hashlib.sha256(DEEPSEEK_BASE_URL.encode()).hexdigest()},
+        {"provider": "openai-compatible", "model": "frozen-model", "revision": "frozen-revision", "deployment": "a" * 64},
+    ],
+    ids=["unconfigured", "personal-endpoint"],
+)
+def test_controlled_guests_bind_full_frozen_model_identity(tmp_path, core_system, guest_kind, identity):
+    sources = {"target": b"target-bytes"}
+    programs = {"checker.py": FIXTURE_CHECKER.encode()}
+    digest = checker_digest(programs)
+    rules = {"type": "控制计划", "rules": [{"id": "presence", "rule_to_check": "Fixture bytes"}]}
+    snapshot = ExecutionSnapshot(
+        "tenant",
+        "initiator",
+        (FrozenInput("target", hashlib.sha256(sources["target"]).hexdigest(), "target", "target.txt"),),
+        (FrozenTarget("target", "suite-revision", "fixture", "b" * 64, rules, RuleBinding("fixture", digest, {"presence": "checker:create_audit"})),),
+        "runtime",
+        "library",
+        identity,
+        round_id="round",
+    )
+    inputs, work = tmp_path / "inputs", tmp_path / "work"
+    work.mkdir()
+    mode = "deep" if guest_kind == "deep" else "standard"
+    job = write_audit_manifest(inputs, snapshot, sources, {digest: programs}, analysis_mode=mode)
+    guest = ControlledCoreGuest() if guest_kind == "deep" else core_system
+
+    guest.run(job, inputs, work, monotonic() + 100, Event())
+
+    result = json.loads((work / "result" / "bundle.json").read_text())
+    assert result["accepted_input_digest"] == snapshot.input_digest
+    assert [finding["status"] for finding in result["findings"]] == ["PASS"]
+    assert json.loads((inputs / "manifest.json").read_text())["snapshot"]["model_identity"] == identity
 
 
 def _clean_env(**extra: str):
@@ -286,7 +328,7 @@ class DeepModeTests(unittest.TestCase):
         work = self.store.round_work(claimed.round_id)
         self.assertIsNotNone(work)
         return spec_from_work(work, "ppap-checker-core", claimed.payload["executor_revision"], DEEP_PROTOCOL_REVISION, checker_snapshot_digest=claimed.payload["checker_snapshot_digest"]).model_copy(
-            update={"job_id": claimed.id, "attempt": claimed.attempt}
+            update={"job_id": claimed.id, "attempt": claimed.attempt, "model_identity": dict(claimed.payload["model_identity"])}
         )
 
     def test_default_draft_is_standard(self):
@@ -387,6 +429,7 @@ class DeepModeTests(unittest.TestCase):
             "tenant": spec.model_copy(update={"tenant_id": other_spec.tenant_id}),
             "initiator": spec.model_copy(update={"initiating_user_id": other_spec.initiating_user_id}),
             "snapshot": spec.model_copy(update={"checker_snapshot_digest": "0" * 64}),
+            "missing model identity": spec.model_copy(update={"model_identity": {}}),
             "mode": spec.model_copy(update={"analysis_mode": "standard"}),
             "invalid identity": spec.model_copy(update={"tenant_id": "not-a-uuid"}),
             "round": spec.model_copy(update={"round_id": other_round}),
@@ -399,6 +442,9 @@ class DeepModeTests(unittest.TestCase):
         for name, changes in changed_targets.items():
             files = [row.model_copy(update=changes) if row.role == "target" else row for row in spec.files]
             requests[name] = spec.model_copy(update={"files": files})
+        for field in ("provider", "model", "revision", "deployment"):
+            identity = {**spec.model_identity, field: "0" * 64 if field == "deployment" else "changed"}
+            requests[f"model {field}"] = spec.model_copy(update={"model_identity": identity})
         for name, changed in requests.items():
             with self.subTest(name=name):
                 with self.assertRaises(DeepError) as caught:

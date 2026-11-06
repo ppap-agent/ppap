@@ -268,12 +268,13 @@ def core_system(monkeypatch, tmp_path):
             grants = tmp_path / f"grants-{self.calls}"
             grants.mkdir()
             if job.allow_model_calls:
+                identity = json.loads((inputs / "manifest.json").read_text())["snapshot"]["model_identity"]
                 (grants / "model.json").write_text(
                     json.dumps(
                         {
                             "base_url": "http://127.0.0.1:1/v1",
                             "token": "controlled-no-provider-credential-123456",
-                            "model": "deepseek-flash",
+                            **identity,
                             "wall_seconds": 100,
                             "max_turns": 20,
                         }
