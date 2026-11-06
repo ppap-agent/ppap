@@ -34,7 +34,6 @@ from audit.checker_core import runtime_revision
 from audit.standard_suites import library_revision
 from cryptography.fernet import Fernet
 from openpyxl import Workbook
-from playwright.sync_api import expect, sync_playwright
 from product import build_product_store
 from product.db import connect
 from product.files import ObjectExists, ObjectMissing, ObjectTooLarge
@@ -355,6 +354,8 @@ def create_round(page, f, value, index):
 
 
 def answer(page, f, round_, expected):
+    from playwright.sync_api import expect
+
     page.goto(f.web + f"/audit?round={round_['id']}")
     page.get_by_role("button", name="这条判错了 R1", exact=True).focus()
     page.keyboard.press("Enter")
@@ -370,6 +371,8 @@ def answer(page, f, round_, expected):
 
 @pytest.mark.parametrize("viewport", [{"width": 1440, "height": 1000}, {"width": 390, "height": 844}], ids=["desktop", "mobile"])
 def test_feedback_optimize_verify_publish_reaudit_and_rollback(workspace_product, viewport):
+    from playwright.sync_api import expect, sync_playwright
+
     f = workspace_product
     with sync_playwright() as playwright:
         executable = os.environ.get("PPAP_BROWSER_EXECUTABLE")
@@ -500,6 +503,8 @@ def test_feedback_optimize_verify_publish_reaudit_and_rollback(workspace_product
 
 def test_workspace_http_receipts_use_real_trials_and_frozen_reaudit(workspace_product):
     """The same stack also runs without a browser process, never seeded findings."""
+    from playwright.sync_api import sync_playwright
+
     f = workspace_product
     with sync_playwright() as playwright:
         request = playwright.request.new_context(base_url=f.web, extra_http_headers={"Cookie": SESSION_COOKIE + "=" + f.session})
