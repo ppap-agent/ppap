@@ -320,6 +320,30 @@ def core_system(monkeypatch, tmp_path):
             return releases.publish(principal, body["suite_key"], candidate["id"], selected["head_revision"], str(uuid.uuid4()), force_unverified=True)
 
         @staticmethod
+        def adopt_standard(store, principal, *keys):
+            """Use real standard source under an explicit unverified adoption."""
+            from audit.standard_suites import standard_suites
+
+            baselines = {suite.suite_key: suite for suite in standard_suites()}
+            suites = SuiteStore(store.settings, store.objects, role="migrator")
+            releases = SuiteReleaseStore(store.settings, store.objects, role="api")
+            installed = {}
+
+            def adopt(key):
+                if key in installed:
+                    return
+                baseline = baselines[key]
+                for related in baseline.related_suite_keys:
+                    adopt(related)
+                revision = suites.create_revision(tenant_id=None, suite_key=key, files=dict(baseline.files), created_by=None, related_suite_keys=baseline.related_suite_keys)
+                installed[key] = revision
+                releases.publish(principal, key, revision.id, 0, str(uuid.uuid4()), force_unverified=True)
+
+            for key in keys:
+                adopt(key)
+            return installed
+
+        @staticmethod
         def workbook(value="source"):
             from io import BytesIO
 
