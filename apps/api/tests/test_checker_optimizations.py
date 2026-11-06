@@ -568,9 +568,11 @@ def test_deleted_operator_preserves_feedback_completed_receipt_and_published_che
     assert releases.active(f.alice, "threshold")["history"][0]["published_by"] is None
     with f.store._conn() as conn:
         assert conn.execute("SELECT created_by,expected_status FROM product.checker_feedback WHERE id=%s", (sample["id"],)).fetchone() == (None, "NG")
-        assert conn.execute(
-            "SELECT initiating_user_id,state,report FROM product.checker_optimizations WHERE operation_id=%s", (body["operation_id"],)
-        ).fetchone() == (None, "completed", receipt["report"])
+        assert conn.execute("SELECT initiating_user_id,state,report FROM product.checker_optimizations WHERE operation_id=%s", (body["operation_id"],)).fetchone() == (
+            None,
+            "completed",
+            receipt["report"],
+        )
         assert conn.execute("SELECT count(*) FROM product.audit_rounds").fetchone()[0] == 1
         assert conn.execute("SELECT count(*) FROM product.findings").fetchone()[0] == 1
     # Retained human confirmation remains usable by a currently authorized member,
