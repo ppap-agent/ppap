@@ -48,17 +48,30 @@ jobs:
           OCR_OPENAI_API_KEY: ${{ secrets.OCR_OPENAI_API_KEY }}
           OCR_OPENAI_BASE_URL: ${{ secrets.OCR_OPENAI_BASE_URL }}
           OCR_MODEL_NAME: ${{ secrets.OCR_MODEL_NAME }}
-          PPAP_CORPUS_REPORT_DIR: ci-report/rules
         run: |
           set -uo pipefail
-          # Individual wrong answers are the measurement; the report decides the outcome.
-          for _ in $(seq 1 "$ROUNDS"); do
-            python3 -m scripts.ci_heartbeat --timeout 3000 -- \
-              uv run --no-sync pytest tests/corpus/test_cases.py -q -n 4 --dist=load --max-worker-restart=0 || true
+          [[ "$ROUNDS" =~ ^[1-9][0-9]*$ ]] || { echo "rounds must be a positive integer" >&2; exit 2; }
+          failed=0
+          # Every requested pass runs once. A later pass never erases a failure.
+          for round in $(seq 1 "$ROUNDS"); do
+            export PPAP_CORPUS_REPORT_DIR="ci-report/round-$round/rules"
+            if ! python3 -m scripts.ci_heartbeat --timeout 3000 -- \
+              uv run --no-sync pytest tests/corpus/test_cases.py -q -n 4 --dist=load --max-worker-restart=0; then
+              failed=1
+            fi
           done
+          exit "$failed"
       - name: Report differences from the human truth
+        if: always()
         working-directory: ${{ github.workspace }}
-        run: uv run --no-sync python -m scripts.corpus_report --results ci-report/rules --output ci-report/corpus-report.md
+        run: |
+          set -euo pipefail
+          [[ "$ROUNDS" =~ ^[1-9][0-9]*$ ]] || { echo "rounds must be a positive integer" >&2; exit 2; }
+          results=()
+          for round in $(seq 1 "$ROUNDS"); do
+            results+=(--results "ci-report/round-$round/rules")
+          done
+          uv run --no-sync python -m scripts.corpus_report "${results[@]}" --require-complete --output ci-report/corpus-report.md
       - name: Upload evaluation report
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

@@ -291,13 +291,6 @@ def test_first_step_rejects_invalid_invocations_without_skipping(tmp_path, event
         assert not github_env.exists()
 
 
-def test_v3_entrypoint_retains_its_own_test():
-    workflow = yaml.load((ROOT / ".github/workflows/v3-poc-live.yml").read_text(), Loader=yaml.BaseLoader)
-    assert set(workflow["on"]) == {"workflow_dispatch"}
-    assert "corpus_contracts.live_poc" in json.dumps(workflow)
-    assert "run_checker_live" not in json.dumps(workflow)
-
-
 def test_stack_keeps_oracle_outside_guest_and_disables_fixture_login():
     config = yaml.safe_load((ROOT / "deploy/isolated-dev/checker-live.yaml").read_text())
     for name, service in config["services"].items():

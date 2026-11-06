@@ -42,6 +42,23 @@ def read_results(directories: list[Path]) -> list[dict]:
     return rows
 
 
+def incomplete_results(cases, rows: list[dict]) -> list[str]:
+    """One complete pass has exactly one result for each current oracle identity."""
+    expected = {(case.dataset, case.case_id, file.filename, rule): item.status for case in cases for file in case.files if file.role == "target" for rule, item in file.expected.items()}
+    results = [row for row in rows if row.get("kind") == "rule"]
+    identities = Counter((row.get("dataset"), row.get("case"), row.get("file"), row.get("rule")) for row in results)
+    problems = []
+    for label, count in (
+        ("missing clause results", len(expected.keys() - identities.keys())),
+        ("unexpected clause results", len(identities.keys() - expected.keys())),
+        ("duplicate clause results", sum(count - 1 for count in identities.values())),
+        ("wrong oracle truths", sum(row.get("truth") != expected.get((row.get("dataset"), row.get("case"), row.get("file"), row.get("rule"))) for row in results)),
+    ):
+        if count:
+            problems.append(f"{label}: {count}")
+    return problems
+
+
 def summarize(rows: list[dict]) -> dict[str, dict[str, int]]:
     rules = defaultdict(list)
     for row in rows:
@@ -94,23 +111,35 @@ def render(matrix, gaps, summary, unstable, rows) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--results", type=Path, action="append", default=[], help="Directory of rule-outcome JSONL files; repeat for several rounds")
+    parser.add_argument("--require-complete", action="store_true", help="Require each results directory to contain one complete pass of the current oracle")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
-    matrix = coverage(load_oracle())
+    if args.require_complete and not args.results:
+        parser.error("--require-complete requires at least one --results directory")
+    cases = load_oracle()
+    matrix = coverage(cases)
     gaps = coverage_gaps(matrix)
-    rows = read_results(args.results)
+    rows, problems = [], []
+    if args.require_complete and len({path.resolve() for path in args.results}) != len(args.results):
+        problems.append("A results directory cannot count as more than one round")
+    for directory in args.results:
+        observed = read_results([directory])
+        rows.extend(observed)
+        if args.require_complete:
+            problems.extend(f"{directory}: {problem}" for problem in incomplete_results(cases, observed))
     if args.results and not rows:
-        print("No rule outcomes were reported", file=sys.stderr)
-        return 1
+        problems.append("No rule outcomes were reported")
     summary = summarize(rows)
     report = render(matrix, gaps, summary, unstable_rules(rows), rows)
+    if problems:
+        report = "# Incomplete corpus evaluation\n\n" + "\n".join(f"- {problem}" for problem in problems) + "\n\n" + report
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(report, encoding="utf-8")
     if step_summary := os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(step_summary, "a", encoding="utf-8") as output:
             output.write(report.split("## 覆盖矩阵", 1)[0])
-    problems = violations(summary)
+    problems.extend(violations(summary))
     print(f"clauses={len(matrix)} missing_samples={len(gaps)} datasets={json.dumps(summary, ensure_ascii=False)}")
     for problem in problems:
         print(problem, file=sys.stderr)
