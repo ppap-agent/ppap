@@ -2491,6 +2491,42 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("status").filter(has_text="文件已结束 3/3")).to_be_visible()
             browser.close()
 
+    def test_report_center_observes_pdf_completion_without_a_manual_refresh(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            for restored in (False, True):
+                with self.subTest(restored=restored):
+                    page = browser.new_page(viewport={"width": 1440, "height": 1000}, accept_downloads=True)
+                    page.set_default_timeout(5000)
+                    page.clock.install(time=datetime(2026, 10, 16, 2, tzinfo=timezone.utc))
+                    page.clock.pause_at(datetime(2026, 10, 16, 2, 1, tzinfo=timezone.utc))
+                    address = PREVIEW + "/preview/audit.html?scene=restore-observe-reports&task=preview-recovery-task"
+                    page.goto(address + ("&report=1" if restored else ""))
+                    if not restored:
+                        page.get_by_role("button", name="报告中心", exact=True).click()
+                    page.get_by_role("button", name="控制计划.xlsx 生成中", exact=True).click()
+                    download = page.get_by_role("button", name="下载当前报告", exact=True)
+                    expect(download).to_be_disabled()
+                    selected_address = page.url
+                    page.clock.run_for(3000)
+                    expect(page.get_by_text("任务观察 · preview-recovery-task · 读取 1", exact=True)).to_be_visible()
+                    # Hold the authoritative reply across another polling interval.
+                    page.clock.run_for(9000)
+                    expect(page.get_by_role("button", name=re.compile("返回示例读取"))).to_have_count(1)
+                    expect(download).to_be_disabled()
+                    page.get_by_role("button", name="返回示例读取 1", exact=True).click()
+                    expect(download).to_be_enabled()
+                    expect(page).to_have_url(selected_address)
+                    expect(page.get_by_role("region", name="当前报告", exact=True).get_by_role("heading", name="控制计划.xlsx", exact=True)).to_be_visible()
+                    with page.expect_download() as downloaded:
+                        download.click()
+                    self.assertTrue(Path(downloaded.value.path()).read_bytes().startswith(b"%PDF"))
+                    # A terminal task stops observation instead of refreshing forever.
+                    page.clock.run_for(30000)
+                    expect(page.get_by_role("button", name=re.compile("返回示例读取"))).to_have_count(0)
+                    page.close()
+            browser.close()
+
     def test_unknown_report_command_pauses_general_observation_and_keeps_its_original_receipt(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
@@ -2517,6 +2553,8 @@ class AuditPreviewTests(unittest.TestCase):
             audit_details(page).get_by_role("button", name="查看报告", exact=True).click()
             expect(page.locator('[data-request-id="preview-original-generation-request"]')).to_be_visible()
             expect(page.get_by_role("button", name="读取生成结果", exact=True)).to_be_enabled()
+            page.clock.fast_forward(30000)
+            expect(page.get_by_role("button", name=re.compile("返回示例读取"))).to_have_count(0)
             page.get_by_role("link", name="返回审核结果", exact=True).click()
             page.clock.fast_forward(30000)
             expect(page.get_by_role("button", name=re.compile("返回示例读取"))).to_have_count(0)

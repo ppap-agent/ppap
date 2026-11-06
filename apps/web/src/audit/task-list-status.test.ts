@@ -16,10 +16,14 @@ test('only the current scope success permits an empty result', () => {
   assert.deepEqual(taskListStatus({...initial, readScope: scope}, scope), {ready: true, error: '', busy: false})
 })
 
-test('a current error is not an empty result, with or without cached success', () => {
-  for (const readScope of [null, other, scope]) {
+test('a current error without current scope success is not an empty result', () => {
+  for (const readScope of [null, other]) {
     assert.deepEqual(taskListStatus({...initial, readScope, error: 'failed', errorScope: scope}, scope), {ready: false, error: 'failed', busy: false})
   }
+})
+
+test('a failed refresh retains current scope success alongside its error', () => {
+  assert.deepEqual(taskListStatus({...initial, readScope: scope, error: 'failed', errorScope: scope}, scope), {ready: true, error: 'failed', busy: false})
 })
 
 test('errors from another query cannot mask pending or successful current results', () => {

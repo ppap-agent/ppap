@@ -683,8 +683,9 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
       void readMatching(task)
     }
   }, [reviewEditor?.revision])
+  // The report center observes the same task until its PDF reaches a terminal state.
   const observedTaskEpoch = task ? taskReadEpoch.current.get(task.id) : undefined
-  useTaskObservation(task?.id, autoObserve && surface === 'audit' && !legacyRoundId && !recovery && step === 'match' && !reportView && canObserveTask(task), () => task && activeTaskId.current === task.id && surfaceRef.current === 'audit' && stepRef.current === 'match' && taskReadEpoch.current.get(task.id) === observedTaskEpoch ? readMatching(task) : Promise.resolve(null))
+  useTaskObservation(task?.id, autoObserve && surface === 'audit' && !legacyRoundId && !recovery && step === 'match' && canObserveTask(task), () => task && activeTaskId.current === task.id && surfaceRef.current === 'audit' && stepRef.current === 'match' && taskReadEpoch.current.get(task.id) === observedTaskEpoch ? readMatching(task) : Promise.resolve(null))
   // Even an empty successful read belongs to its search and state filter.
   const taskListState = surface === 'workbench' || filter === 'all' ? null : filter as AuditTask['state']
   const taskListScope = JSON.stringify([query, taskListState])

@@ -3,6 +3,7 @@ type ReadState = {readScope: string | null; errorScope: string | null; busy: boo
 /** A cache miss is not an empty server result, including before debounce fires. */
 export function taskListStatus(state: ReadState, scope: string) {
   const error = state.errorScope === scope ? state.error : ''
-  const ready = state.readScope === scope && !error
+  // A failed refresh does not erase the last successful snapshot of this scope.
+  const ready = state.readScope === scope
   return {ready, error, busy: !error && (state.busy || !ready)}
 }
