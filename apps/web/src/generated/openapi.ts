@@ -2763,6 +2763,8 @@ export interface components {
             completion_estimate?: components["schemas"]["AuditCompletionEstimate"] | null;
             /** Completion Reason */
             completion_reason: ("no_matching_rules" | "processed") | null;
+            /** Confirmation Basis Digest */
+            confirmation_basis_digest: string | null;
             /** Created At */
             created_at: string;
             /** Customer Preference */
@@ -5747,6 +5749,8 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** Expected Confirmation Basis Digest */
+                    expected_confirmation_basis_digest: string;
                     /** Expected Revision */
                     expected_revision: number;
                     /** Request Id */

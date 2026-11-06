@@ -123,6 +123,15 @@ const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' 
   },
   readValidation: async row => ({validation: driveCatalog.some(fixture => fixture.source.token === row.file.file_id) ? {state: 'valid', reasons: []} : row.validation, validation_id: `preview-validation-${row.file.id}`}),
   confirm: async (task, requestId) => {
+    if (scene.startsWith('confirm-basis-changed') && task.confirmation_basis_digest !== 'b'.repeat(64)) {
+      const current = structuredClone(task)
+      current.confirmation_basis_digest = 'b'.repeat(64)
+      current.files = current.files.map(file => file.match?.rule?.body.kind === 'engine' ? {...file, match: {...file.match, rule: {...file.match.rule, title: `${file.match.rule.title}（当前采用版）`, body: {...file.match.rule.body, rules: file.match.rule.body.rules.map((rule, index) => index === 0 ? {...rule, category: '已发布新条款', rule_to_check: '新发布的检查要求，需要重新核对。'} : rule)}}}} : file)
+      current.acceptance = {request_id: requestId, state: 'rejected', reason: '审核依据已变化，审核没有开始。请刷新审核依据，核对后重新确认。'}
+      taskStore.set(task.id, current)
+      if (scene === 'confirm-basis-changed-lost') throw new Error('preview_rejection_reply_lost')
+      return structuredClone(current)
+    }
     if (scene === 'confirm-rule-expired' && recognitionCommands === 1) {
       return {...task, acceptance: {request_id: requestId, state: 'rejected', reason: '匹配的规则已有新版本，审核没有开始。请返回上一步重新识别，再核对规则。'}}
     }
@@ -251,7 +260,7 @@ const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' 
   endTask: async task => {
     const current = taskStore.get(task.id)
     if (!current || current.input_revision !== task.input_revision) throw Object.assign(new Error('preview_input_revision_conflict'), {status: 409})
-    const next: AuditTask = {...task, state: 'completed', completion_reason: 'no_matching_rules'}
+    const next: AuditTask = {...task, confirmation_basis_digest: null, state: 'completed', completion_reason: 'no_matching_rules'}
     taskStore.set(task.id, next)
     if (scene === 'unmatched-end-unknown') throw new Error('preview_end_reply_lost')
     return next
@@ -292,7 +301,7 @@ function fixtureMatch(files: AuditTaskFile[], mode: AuditTask['analysis_mode'], 
     })
     const count = matchedFiles.filter(row => row.selection === 'selected' && row.match?.state === 'matched' && row.match.rule).length
     // Fixture display only. Real estimates remain Product API-owned.
-    return {id: previous?.id || requestId, number, state: 'pending_confirm', analysis_mode: mode, created_at: previous?.created_at || '2026-10-16T00:00:00Z', updated_at: '2026-10-16T00:00:00Z', source_draft_id: null, round_id: null, customer_preference: customer, files: matchedFiles, completion_reason: null, estimated_points: scene === 'error' ? null : count * 500, input_revision: previous?.input_revision ?? 0, recognition_request_id: requestId}
+    return {confirmation_basis_digest: count ? 'a'.repeat(64) : null, id: previous?.id || requestId, number, state: 'pending_confirm', analysis_mode: mode, created_at: previous?.created_at || '2026-10-16T00:00:00Z', updated_at: '2026-10-16T00:00:00Z', source_draft_id: null, round_id: null, customer_preference: customer, files: matchedFiles, completion_reason: null, estimated_points: scene === 'error' ? null : count * 500, input_revision: previous?.input_revision ?? 0, recognition_request_id: requestId}
 }
 
 const archiveAdapter = fixtureArchive(taskStore, scene, (id, sequence, failed, pending) => {
@@ -311,7 +320,7 @@ if (scene.startsWith('restore-') && scene !== 'restore-missing' || scene.startsW
   if (scene === 'reports-reference-first') matched.files[0] = {...matched.files[0], file: {...matched.files[0].file, original_filename: '特殊特性清单.xlsx'}, match: {state: 'reference', metadata: {customer: null, model: null, part: null}, document_type: '过程特殊特性清单', rule: null, gaps: []}}
   const seed: AuditTask = {...matched, id: scene.startsWith('reports-') ? 'preview-report-task' : 'preview-recovery-task', number: scene.startsWith('reports-') ? 'PPAP-报告示例' : 'PPAP-恢复示例', created_at: '2026-10-15T00:00:00Z', updated_at: '2026-10-15T00:00:00Z'}
   const frozen = fixtureAcceptance(seed, 'preview-recovery-request')
-  let snapshot: AuditTask = scene === 'restore-pending' || scene === 'recognition-recovery-current' ? seed : scene === 'restore-matching' ? {...seed, state: 'matching' as const} : scene === 'restore-unknown' ? {...seed, acceptance: {request_id: 'preview-recovery-request', state: 'pending' as const, reason: null}} : (['restore-progress', 'restore-task-conflict', 'restore-usage-notice'].includes(scene) || automaticObservation || scene.startsWith('restore-estimate')) ? fixtureProgress(frozen) : scene === 'restore-report-conflict' ? fixtureResults(frozen, 'reports-generating') : scene === 'restore-completed' || scene === 'restore-usage-completed' || scene.startsWith('reports-') || scene.startsWith('restore-display-') ? fixtureResults(frozen, scene) : frozen
+  let snapshot: AuditTask = scene === 'restore-pending' || scene === 'recognition-recovery-current' ? seed : scene === 'restore-matching' ? {...seed, confirmation_basis_digest: null, state: 'matching' as const} : scene === 'restore-unknown' ? {...seed, acceptance: {request_id: 'preview-recovery-request', state: 'pending' as const, reason: null}} : (['restore-progress', 'restore-task-conflict', 'restore-usage-notice'].includes(scene) || automaticObservation || scene.startsWith('restore-estimate')) ? fixtureProgress(frozen) : scene === 'restore-report-conflict' ? fixtureResults(frozen, 'reports-generating') : scene === 'restore-completed' || scene === 'restore-usage-completed' || scene.startsWith('reports-') || scene.startsWith('restore-display-') ? fixtureResults(frozen, scene) : frozen
   if (scene === 'restore-card-pending' || scene === 'restore-card-rejected') snapshot = {...seed, acceptance: {request_id: 'preview-recovery-request', state: scene === 'restore-card-pending' ? 'pending' : 'rejected', reason: scene === 'restore-card-pending' ? '已收到卡片确认，正在核对用量，尚未受理。' : '文件或审核模式已变化，请打开页面核对。'}}
   if (scene === 'restore-without-notification') delete snapshot.notification_enabled
   if (scene === 'reports-zip-link') {
@@ -407,8 +416,8 @@ function Preview() {
         taskStore.set(result.id, fixtureAcceptance(result, 'preview-other-confirmation'))
         return defer(`旧识别请求回执 · ${result.number}`, result)
       }
-      if (scene === 'recognition-progress-removal') return {...result, state: 'matching', files: result.files.map((file, index) => index === 1 && file.selection === 'selected' ? {...file, match: null} : file)}
-      return ['matching', 'observe-matching'].includes(scene) ? {...result, state: 'matching', estimated_points: null, files: result.files.map((file, index) => file.selection === 'selected' ? {...file, match: {state: index === 0 ? 'matching' : 'pending', metadata: {customer: null, model: null, part: null}, document_type: null, rule: null, gaps: []}} : file)} : result
+      if (scene === 'recognition-progress-removal') return {...result, confirmation_basis_digest: null, state: 'matching', files: result.files.map((file, index) => index === 1 && file.selection === 'selected' ? {...file, match: null} : file)}
+      return ['matching', 'observe-matching'].includes(scene) ? {...result, confirmation_basis_digest: null, state: 'matching', estimated_points: null, files: result.files.map((file, index) => file.selection === 'selected' ? {...file, match: {state: index === 0 ? 'matching' : 'pending', metadata: {customer: null, model: null, part: null}, document_type: null, rule: null, gaps: []}} : file)} : result
     },
     confirm: async (task, requestId) => {
       const result = await adapter.confirm(task, requestId)

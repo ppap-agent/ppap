@@ -173,6 +173,7 @@ class PreparationHTTP:
                 "id": self.draft["id"],
                 "number": "PPAP-恢复-001",
                 "state": "matching",
+                "confirmation_basis_digest": None,
                 "analysis_mode": "standard",
                 "customer_preference": body["customer_preference"],
                 "source_draft_id": self.draft["id"],
@@ -421,9 +422,12 @@ def test_prepared_ordinary_task_resolves_an_explicit_candidate_in_the_same_task(
         def confirm(route):
             value = route.request.post_data_json
             assert value["expected_revision"] == 1
+            assert value["expected_confirmation_basis_digest"] == http.task["confirmation_basis_digest"] == "a" * 64
             assert http.task["files"][0]["match"]["rule"]["id"] == rules[1]["id"]
             confirms.append(value)
-            http.task.update(state="reviewing", round_id="accepted-round", acceptance={"request_id": value["request_id"], "state": "accepted"}, progress={"completed": 0, "total": 1})
+            http.task.update(
+                state="reviewing", confirmation_basis_digest=None, round_id="accepted-round", acceptance={"request_id": value["request_id"], "state": "accepted"}, progress={"completed": 0, "total": 1}
+            )
             route.fulfill(json=http.task)
 
         page.route("**/api/audit-tasks", rematch)
@@ -448,7 +452,7 @@ def test_prepared_ordinary_task_resolves_an_explicit_candidate_in_the_same_task(
         assert http.task["id"] == original_id and len(http.task_commands) == 1
         page.get_by_role("button", name="按所选规则重新识别", exact=True).click()
         expect(page.get_by_role("heading", name="正在识别文件与匹配规则", exact=True)).to_be_visible()
-        http.task.update(state="pending_confirm", estimated_points=500)
+        http.task.update(state="pending_confirm", estimated_points=500, confirmation_basis_digest="a" * 64)
         http.task["files"][0]["match"] = {"state": "matched", "metadata": metadata, "document_type": "控制计划", "rule": rules[1], "gaps": []}
         page.reload()
         expect(page.get_by_text("规则 B", exact=True)).to_be_visible()
@@ -661,6 +665,7 @@ class PrecheckHTTP(PreparationHTTP):
             "id": "task-one",
             "number": "PPAP-预检-001",
             "state": "pending_confirm",
+            "confirmation_basis_digest": "a" * 64,
             "analysis_mode": "standard",
             "customer_preference": "蔚来",
             "source_draft_id": "task-one",

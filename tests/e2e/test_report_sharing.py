@@ -248,6 +248,7 @@ def test_directory_timeout_retries_the_same_page_and_ignores_its_late_reply():
             "id": task_id,
             "number": "PPAP-目录读取测试",
             "state": "completed",
+            "confirmation_basis_digest": None,
             "analysis_mode": "standard",
             "created_at": "2026-10-20T00:00:00Z",
             "updated_at": "2026-10-20T00:00:00Z",

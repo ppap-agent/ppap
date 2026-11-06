@@ -64,6 +64,7 @@ def task_routes(page, partial_error):
         "source_draft_id": TASK,
         "round_id": ROUND,
         "customer_preference": None,
+        "confirmation_basis_digest": None,
         "completion_reason": "processed",
         "estimated_points": 500,
         "acceptance": {"request_id": "original-confirmation", "state": "accepted", "reason": None},
