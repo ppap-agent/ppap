@@ -293,10 +293,12 @@ def test_psw_docx_upload_parse_publish_and_worker_result_keep_v3_frozen(native_d
         return visual_provider_response(request)
 
     monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", visual)
+    core_system.install(worker, controlled_model=True)
     target, rule, frozen = parse_publish_and_accept(client, worker, "零件提交保证书.docx", content, body, core_system, migrated_builtin_suite("v3", "零件提交保证书"))
     job = worker.claim_job("psw-word-audit")
     assert job is not None and job.kind == "audit" and job.round_id == frozen["id"]
     process_claimed(worker, job, "psw-word-audit")
+    assert core_system.audit_jobs[-1].allow_model_calls is True
     expected = ["PASS"] * 10 if include_images else ["PASS", "PASS", "NG", "PASS", "NG", "PASS", "PASS", "PASS", "PASS", "PASS"]
     calls_after_audit = len(calls)
     assert calls_after_audit == (1 if include_images else 0)

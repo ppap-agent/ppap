@@ -1,7 +1,8 @@
-"""Actual browser/API/PG/Worker journeys; only metadata transport is controlled.
+"""Actual browser/API/PG/Worker journeys with explicit Standard Suite adoption.
 
-No business HTTP response is mocked. These cases do not certify external model
-quality, Feishu delivery, production charging, or visual supplier judgments.
+Metadata transport and Core RPC/guest OS boundaries are controlled. No business
+HTTP response or Checker result is mocked. These cases do not certify process
+isolation, external model quality, Feishu delivery, charging, or visual judgments.
 """
 
 import io
@@ -74,12 +75,15 @@ def original(customer):
 
 
 @pytest.fixture
-def running_product(auth_store_factory, v4_objects, tmp_path, request):
+def running_product(auth_store_factory, v4_objects, core_system, tmp_path, request):
     customer = request.param
-    settings = Settings(usage_charge_enabled=False, feishu_app_id="native-v4", git_sha="browser-source-test")
+    settings = Settings(usage_charge_enabled=False, feishu_app_id="native-v4", git_sha="a" * 40)
     admin = auth_store_factory(settings)
     admin.objects = v4_objects
     principal = admin.upsert_feishu_identity("browser-v4", "member")
+    suites = {"UAES": ("UAES:U12",), "理想": ("理想:L12",), "蔚来": ("蔚来:N04", "蔚来:N02")}
+    core_system.adopt_standard(admin, principal, *suites[customer])
+    core_system.install(admin)
     api = build_product_store(settings, objects=admin.objects, role="api")
     worker = build_product_store(settings, objects=admin.objects, role="worker")
     listener = socket.socket()
@@ -160,7 +164,7 @@ def print_page(page):
 
 
 @pytest.mark.parametrize("running_product", ["UAES", "理想", "蔚来"], indirect=True)
-def test_customer_intake_to_original_issue_and_frozen_precheck_export(running_product, request):
+def test_customer_intake_to_original_issue_and_frozen_precheck_export(running_product, core_system, request):
     web, session, errors = running_product
     customer = request.node.callspec.params["running_product"]
     with sync_playwright() as playwright:
@@ -205,6 +209,7 @@ def test_customer_intake_to_original_issue_and_frozen_precheck_export(running_pr
             expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_enabled(timeout=30000)
             snapshot_region = page.get_by_role("region", name="免费内容预检", exact=True)
             expect(snapshot_region).to_be_visible()
+            expect(snapshot_region).to_contain_text("检查已完成", timeout=30000)
             # Polling and reload read the same actual database record.
             page.reload()
             expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_enabled()
@@ -261,6 +266,7 @@ def test_customer_intake_to_original_issue_and_frozen_precheck_export(running_pr
                 assert restored["customer_preference"] == frozen["customer_preference"] == "UAES"
                 assert restored["round_id"] == frozen["round_id"] and restored["precheck"]["input"] == frozen["precheck"]["input"]
                 assert page.url == old_url
+            assert core_system.calls >= 2, "Precheck and audit must both execute through Core"
             assert not errors, errors
         except BaseException:
             print_page(page)
@@ -273,7 +279,7 @@ def test_customer_intake_to_original_issue_and_frozen_precheck_export(running_pr
 
 @pytest.mark.parametrize("running_product", ["蔚来"], indirect=True)
 @pytest.mark.parametrize("viewport", [{"width": 1440, "height": 1000}, {"width": 390, "height": 844}], ids=["desktop", "mobile"])
-def test_cross_file_problem_opens_both_authorized_frozen_originals(running_product, viewport):
+def test_cross_file_problem_opens_both_authorized_frozen_originals(running_product, core_system, viewport):
     web, session, errors = running_product
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
@@ -323,6 +329,7 @@ def test_cross_file_problem_opens_both_authorized_frozen_originals(running_produ
             assert response.status == 202, response.text()
             page.goto(web + "/tasks/" + response.json()["id"])
             expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_enabled(timeout=30000)
+            expect(page.get_by_role("region", name="免费内容预检", exact=True)).to_contain_text("检查已完成", timeout=30000)
             page.get_by_role("button", name="开始审核", exact=True).click()
             target = page.get_by_role("button", name=re.compile(r"^PFMEA\.xlsx 不符合"))
             expect(target).to_be_visible(timeout=30000)
@@ -370,6 +377,7 @@ def test_cross_file_problem_opens_both_authorized_frozen_originals(running_produ
                 response = page.request.get(urljoin(web, link.get_attribute("href")))
                 assert response.status == 200 and response.body() == data
                 page.keyboard.press("Escape")
+            assert core_system.calls >= 2, "Precheck and audit must both execute through Core"
             assert not errors, errors
         except Exception:
             print_page(page)

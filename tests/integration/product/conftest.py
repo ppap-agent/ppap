@@ -236,7 +236,7 @@ def core_system(monkeypatch, tmp_path):
 
     from agent.client import DeepClient
     from agent.core_program import CoreRuntime, run_audit_manifest
-    from agent.precheck_program import run_precheck_manifest
+    from agent.precheck_program import execute_precheck, run_precheck_manifest
     from agent.protocol import PrecheckEnvelope
     from agent.run import Controller, ExecutionContext
     from agent.source import authorize_execution, object_file_source
@@ -248,44 +248,58 @@ def core_system(monkeypatch, tmp_path):
     from worker.precheck_controller import precheck_handler
 
     class ControlledCore:
-        calls = 0
+        def __init__(self):
+            self.calls = 0
+            self.audit_jobs = []
 
         def ready(self, operation="audit"):
             return True
 
         def run(self, job, inputs, work, deadline, cancelled):
+            assert not cancelled.is_set()
             self.calls += 1
             if job.operation == "execute-precheck":
                 run_precheck_manifest(inputs, work)
                 return
+            self.audit_jobs.append(job)
             grants = tmp_path / f"grants-{self.calls}"
             grants.mkdir()
-            (grants / "model.json").write_text(
-                json.dumps(
-                    {
-                        "base_url": "http://127.0.0.1:1/v1",
-                        "token": "controlled-no-provider-credential-123456",
-                        "model": "deepseek-flash",
-                        "wall_seconds": 100,
-                        "max_turns": 20,
-                    }
+            if job.allow_model_calls:
+                (grants / "model.json").write_text(
+                    json.dumps(
+                        {
+                            "base_url": "http://127.0.0.1:1/v1",
+                            "token": "controlled-no-provider-credential-123456",
+                            "model": "deepseek-flash",
+                            "wall_seconds": 100,
+                            "max_turns": 20,
+                        }
+                    )
                 )
-            )
-            assert not cancelled.is_set()
             run_audit_manifest(inputs, work, grants)
 
-        def install(self, store):
+        def execute_precheck(self, payload, snapshot, sources, programs, context):
+            return execute_precheck(self, payload, snapshot, sources, programs, context)
+
+        def install(self, store, *, controlled_model=False):
+            class ControlledRuntime(CoreRuntime):
+                def execute_snapshot(self, *args, **kwargs):
+                    # Model capability is opt-in only when the test provides a
+                    # controlled provider boundary, never a default credential.
+                    kwargs["allow_model_calls"] = controlled_model and kwargs.get("allow_model_calls", True)
+                    return super().execute_snapshot(*args, **kwargs)
+
             settings = store.settings
             settings.deep_controller_socket = "/controlled-product-core-rpc"
             worker = build_product_store(settings, objects=store.objects, role="worker")
             suites = SuiteStore(settings, store.objects, role="worker")
-            runtime = CoreRuntime(self, lambda spec: suites.read_snapshot(spec.round_id, spec.tenant_id), suites.resolve_suite)
+            runtime = ControlledRuntime(self, lambda spec: suites.read_snapshot(spec.round_id, spec.tenant_id), suites.resolve_suite)
             self.controller = Controller(
                 runtime,
                 object_file_source(settings, connect=connect, objects=store.objects),
                 executor_revision=runtime_revision(settings.deep_execution_revision(), library_revision()),
                 authorize=authorize_execution(settings, connect=connect, open_store=lambda _: worker),
-                precheck_handler=precheck_handler(worker, runtime),
+                precheck_handler=precheck_handler(worker, self),
             )
 
             def execute(_client, spec, *, cancelled=None, on_progress=None):
