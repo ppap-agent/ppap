@@ -588,7 +588,10 @@ def test_deleted_operator_preserves_feedback_completed_receipt_and_published_che
     identity = claim(f)
     row = CheckerDevelopmentStore(f.worker).operation_for_dispatch(identity)
     loaded, _ = materialize_request(CheckerDevelopmentStore(f.worker), row)
-    assert next(item for item in loaded.oracle if item.case_id == sample["id"]).confirmed_by == "deleted-member"
+    grouped = next(item for item in loaded.oracle if sample["id"] in item.feedback_ids)
+    assert grouped.expected == {"R1": "NG"}
+    retained_answer = next(item for item in row["frozen"]["samples"] if item["id"] == sample["id"])
+    assert retained_answer["confirmed_by"] == "deleted-member"
     assert loaded.initiating_user_id == f.alice.user_id
 
 
