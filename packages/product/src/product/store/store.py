@@ -2869,6 +2869,8 @@ class AuthStore:
                 task["estimated_points"] = None
             else:
                 match["rule"] = {**match["rule"], "body": prepared[0]["rule_body"]}
+                gaps = [gap for gap in match.get("gaps", []) if gap != "published_rules_changed"]
+                match["gaps"] = [*gaps, "published_rules_changed"] if prepared[0]["rule_execution"].get("rule_version_mismatch") else gaps
         ready = task["state"] == "pending_confirm" and all(row["validation"]["state"] == "valid" and row["match"]["state"] in {"matched", "reference", "unmatched"} for row in selected)
         if ready:
             blocked: set[str] = set()
@@ -3195,6 +3197,8 @@ class AuthStore:
                     raise ValueError("idempotency_conflict")
                 # Return the original publication, never re-adopt an old head.
             else:
+                if predecessor and conn.execute("SELECT 1 FROM product.rule_versions WHERE tenant_id=%s AND predecessor_id=%s", (principal.tenant_id, predecessor)).fetchone():
+                    raise ValueError("suite_head_conflict")
                 body = publish_custom_rule_suite(self, conn, principal, rule_id=rule_id, title=title, body=body, previous=previous[2] if previous else None)
                 conn.execute(
                     """INSERT INTO product.rule_versions

@@ -28,23 +28,28 @@ def publish_custom_rule_suite(store, conn, principal, *, rule_id: str, title: st
             "SELECT current_revision_id,revision FROM product.tenant_suite_heads WHERE tenant_id=%s AND suite_key=%s FOR UPDATE",
             (principal.tenant_id, key),
         ).fetchone()
-        # Editing an obsolete rule cannot overwrite an adopted optimized Checker
-        # or a concurrent rule publication. Such edits belong in Suite candidates.
-        if head is None or str(head[0]) != base_id:
+        if head is None:
             raise ValueError("suite_head_conflict")
+        # A new rule is a candidate against the currently adopted implementation,
+        # not permission to replace it. Preserve enterprise code and resources.
         expected = head[1]
+        base_id = str(head[0])
         base = releases.suites.resolve_suite(base_id, principal.tenant_id, conn=conn)
-    rules = {**body, "title": title, "suite_key": key, "checker_binding": {}}
+    import json
+
+    binding = json.loads(base.files["rules.json"]).get("checker_binding", {}) if base else {}
+    clause_ids = {row["id"] for row in body["rules"]}
+    rules = {**body, "title": title, "suite_key": key, "checker_binding": {key: value for key, value in binding.items() if key in clause_ids}}
     appendix = rules.pop("appendix", [])
     revision = releases.suites.create_revision(
         tenant_id=principal.tenant_id,
         suite_key=key,
-        files={"rules.json": canonical_json(rules), "appendix.json": canonical_json(appendix), "checker.py": UNIMPLEMENTED_CHECKER_SOURCE},
+        files={"rules.json": canonical_json(rules), "appendix.json": canonical_json(appendix), **({} if base else {"checker.py": UNIMPLEMENTED_CHECKER_SOURCE})},
         created_by=principal.user_id,
         base_revision_id=base_id,
         related_suite_keys=base.revision.related_suite_keys if base else (),
-        deleted_paths=("resources.py",) if base and "resources.py" in base.files else (),
         conn=conn,
     )
-    releases.publish(principal, key, revision.id, expected, rule_id, conn=conn)
+    if previous is None:
+        releases.publish(principal, key, revision.id, expected, rule_id, conn=conn)
     return {**body, "suite_key": key, "suite_revision_id": revision.id}

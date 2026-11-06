@@ -188,12 +188,14 @@ def workspace_product(auth_store_factory, tmp_path, request, monkeypatch):
     bob = admin.upsert_feishu_identity("checker-browser", "bob", "Bob")
     settings.deep_controller_socket = str(tmp_path / "controller.sock")
     suites = SuiteStore(settings, objects, role="migrator")
-    base = suites.create_revision(tenant_id=None, suite_key=RULES["suite_key"], files={"rules.json": json.dumps(RULES).encode(), "checker.py": BASELINE.encode()}, created_by=None)
+    rules = {**RULES, "rules": [{**RULES["rules"][0], "id": f"R{index}"} for index in range(1, getattr(request, "param", 1) + 1)]}
+    rules["checker_binding"] = {row["id"]: "checker:create_audit" for row in rules["rules"]}
+    base = suites.create_revision(tenant_id=None, suite_key=RULES["suite_key"], files={"rules.json": json.dumps(rules).encode(), "checker.py": BASELINE.encode()}, created_by=None)
     releases = SuiteReleaseStore(settings, objects, role="api")
     releases.publish(alice, RULES["suite_key"], base.id, 0, str(uuid4()), force_unverified=True)
     rule_id = str(uuid4())
     with admin._conn() as conn:
-        conn.execute("INSERT INTO product.rule_versions(id,tenant_id,title,body) VALUES (%s,%s,'阈值检查',%s)", (rule_id, alice.tenant_id, Jsonb(RULES)))
+        conn.execute("INSERT INTO product.rule_versions(id,tenant_id,title,body) VALUES (%s,%s,'阈值检查',%s)", (rule_id, alice.tenant_id, Jsonb({**rules, "suite_revision_id": base.id})))
     api = build_product_store(settings, objects=objects, role="api")
     worker = build_product_store(settings, objects=objects, role="worker")
     worker_suites = SuiteStore(settings, objects, role="worker")
@@ -303,6 +305,7 @@ def workspace_product(auth_store_factory, tmp_path, request, monkeypatch):
             bob=bob,
             base=base,
             rule_id=rule_id,
+            rules=rules,
             guest=guest,
             jobs=jobs,
             pause=pause,
@@ -388,7 +391,7 @@ def create_round(page, f, value, index):
         201,
     )
     completed = read_until(page, f.web + f"/api/rounds/{accepted['round_id']}", lambda r: r["execution"] == "completed")
-    assert len(completed["findings"]) == 1, completed
+    assert len(completed["findings"]) == len(f.rules["rules"]), completed
     return completed, uploaded
 
 
@@ -642,6 +645,41 @@ def test_workspace_http_receipts_use_real_trials_and_frozen_reaudit(workspace_pr
             published = response_json(request.put(active_path, data=adoption))
             assert response_json(request.put(active_path, data=adoption)) == published
             original, uploaded = rounds[0]
+            # A published wording update is a new development basis, not adoption.
+            updated = response_json(
+                request.post(
+                    f.web + "/api/rules",
+                    data={
+                        "request_id": str(uuid4()),
+                        "title": "新版阈值规则",
+                        "predecessor_id": f.rule_id,
+                        "source_file_version_id": uploaded["id"],
+                        "body": {**RULES, "rules": [{**RULES["rules"][0], "rule_to_check": "A1 的数值不得小于 10"}]},
+                    },
+                ),
+                201,
+            )
+            active = response_json(request.get(active_path))
+            assert active["current_revision_id"] == candidate and active["verification_status"] == "stale"
+            assert f.guest.adaptations == 1 and f.jobs.count("checker_optimization") == 1
+            new_basis = updated["body"]["suite_revision_id"]
+            confirmed = {
+                "operation_id": str(uuid4()),
+                "feedback_ids": [row["id"] for row in feedback],
+                "action": "run_tests",
+                "consume_model": False,
+                "confirmed_rule_revision_id": new_basis,
+                "expected_feedback_revisions": {row["id"]: row["revision"] for row in feedback},
+            }
+            response_json(request.post(f.web + f"/api/suite-revisions/{new_basis}/optimizations", data=confirmed))
+            wording = read_until(page, f.web + "/api/checker-optimizations/" + confirmed["operation_id"], lambda r: r["state"] not in {"queued", "running"}, timeout=90)
+            assert wording["state"] == "completed" and wording["report"]["validation"]["verified"], wording
+            assert wording["report"]["code_changed"] is False and wording["report"]["validation"]["total_samples"] == 4
+            assert f.guest.adaptations == 1
+            assert response_json(request.get(active_path))["current_revision_id"] == candidate
+            candidate = wording["candidate_revision_id"]
+            published = response_json(request.put(active_path, data={"revision_id": candidate, "expected_revision": active["revision"], "operation_id": str(uuid4()), "force_unverified": False}))
+            assert response_json(request.get(active_path))["rule_update"] is None
             prepared = response_json(request.get(f.web + f"/api/rounds/{original['id']}/reaudit-inputs"))
             source = prepared["files"][0]
             task = response_json(
@@ -756,3 +794,190 @@ def test_grouped_feedback_selection_and_read_only_history(workspace_product):
         finally:
             context.close()
             browser.close()
+
+
+def test_rule_wording_update_preserves_adoption_until_confirmed_browser_publication(workspace_product):
+    """A wording-only update runs all real samples, then explicitly adopts unchanged code."""
+    from playwright.sync_api import expect, sync_playwright
+
+    f = workspace_product
+    releases = SuiteReleaseStore(f.admin.settings, f.admin.objects, role="api")
+    corrected = releases.save_candidate(f.alice, f.base.id, {"checker.py": runpy.run_path(str(GUEST))["CORRECTED"]})
+    releases.publish(f.alice, RULES["suite_key"], corrected["id"], 1, str(uuid4()), force_unverified=True)
+    with sync_playwright() as playwright:
+        executable = os.environ.get("PPAP_BROWSER_EXECUTABLE")
+        browser = playwright.chromium.launch(**({"executable_path": executable} if executable else {}))
+        context = browser.new_context(viewport={"width": 1440, "height": 1000})
+        context.add_cookies([{"name": SESSION_COOKIE, "value": f.session, "url": f.web, "httpOnly": True}])
+        page = context.new_page()
+        page.set_default_timeout(20000)
+        try:
+            rounds = []
+            for index, (value, expected) in enumerate([(5, "NG"), (15, "PASS"), (16, "PASS"), (6, "NG")], 1):
+                round_, uploaded = create_round(page, f, value, index)
+                rounds.append((round_, uploaded))
+                response_json(
+                    page.request.post(
+                        f.web + f"/api/audit-rounds/{round_['id']}/checker-feedback",
+                        data={
+                            "operation_id": str(uuid4()),
+                            "file_version_id": uploaded["id"],
+                            "rule_version_id": f.rule_id,
+                            "rule_clause_id": "R1",
+                            "result_attempt": round_["result_attempt"],
+                            "original_status": expected,
+                            "expected_status": expected,
+                            "rationale": "用户核对 A1 与阈值要求。",
+                            "evidence": [{"file_version_id": uploaded["id"], "locator": {"kind": "xlsx_cell", "sheet": "Sheet", "cell": "A1"}, "excerpt": str(value)}],
+                        },
+                    )
+                )
+            original, uploaded = rounds[0]
+            body = {**RULES, "rules": [{**RULES["rules"][0], "rule_to_check": "A1 的数值不得小于 10"}]}
+            updated = response_json(
+                page.request.post(
+                    f.web + "/api/rules",
+                    data={
+                        "request_id": str(uuid4()),
+                        "title": "新版阈值规则",
+                        "body": body,
+                        "predecessor_id": f.rule_id,
+                        "source_file_version_id": uploaded["id"],
+                    },
+                ),
+                201,
+            )
+            active_path = f.web + "/api/suites/browser:threshold/active"
+            active = response_json(page.request.get(active_path))
+            assert active["current_revision_id"] == corrected["id"]
+            assert active["verification_status"] == "stale" and active["rule_update"]["changed"]
+            assert f.guest.adaptations == 0 and "checker_optimization" not in f.jobs
+            page.goto(f.web + f"/audit?round={original['id']}&file={uploaded['id']}&clause=R1&basis=1&checkerFeedbackClause=R1")
+            expect(page.get_by_text("规则已更新，需要重新验证", exact=True)).to_be_visible()
+            page.get_by_role("button", name="按新版规则起草修改", exact=True).click()
+            expect(page.get_by_role("button", name="确认开始修复", exact=True)).to_be_disabled()
+            assert f.guest.adaptations == 0
+            page.get_by_label("我已核对当前所选规则及全部样本，确认以上正确答案仍适用于当前规则", exact=True).check()
+            with page.expect_response(lambda r: r.request.method == "POST" and r.url.endswith("/optimizations")) as started:
+                page.get_by_role("button", name="只运行现有检查验证", exact=True).click()
+            operation = response_json(started.value)
+            completed = read_until(page, f.web + "/api/checker-optimizations/" + operation["operation_id"], lambda r: r["state"] not in {"queued", "running"}, timeout=90)
+            assert completed["state"] == "completed", completed
+            assert completed["report"]["validation"]["verified"]
+            assert completed["report"]["validation"]["total_samples"] == 4
+            assert completed["report"]["code_changed"] is False and f.guest.adaptations == 0
+            expect(page.get_by_text("代码无需修改，样本已通过。请核对后确认发布，才能采用新规则。", exact=True)).to_be_visible()
+            assert response_json(page.request.get(active_path))["current_revision_id"] == corrected["id"]
+            page.get_by_role("button", name="发布此修改", exact=True).click()
+            page.get_by_role("button", name="确认发布", exact=True).click()
+            expect(page.get_by_text("发布操作已完成", exact=True)).to_be_visible()
+            adopted = response_json(page.request.get(active_path))
+            assert adopted["current_revision_id"] == completed["candidate_revision_id"] and adopted["rule_update"] is None
+            assert adopted["verification_status"] == "verified"
+            assert response_json(page.request.get(f.web + "/api/rounds/" + original["id"])) == original
+            assert updated["body"]["suite_revision_id"] != adopted["current_revision_id"]
+        finally:
+            context.close()
+            browser.close()
+
+
+@pytest.mark.parametrize("workspace_product", [2], indirect=True)
+def test_multi_clause_wording_reconfirmation_verifies_four_independent_documents(workspace_product, monkeypatch):
+    """Two labels per document are one case, including a stable fourth-document holdout."""
+    from playwright.sync_api import sync_playwright
+
+    f = workspace_product
+    from worker import checker_optimizer
+
+    requests = []
+    materialize = checker_optimizer.materialize_request
+
+    def observed_materialize(*args):
+        result = materialize(*args)
+        requests.append(result[0])
+        return result
+
+    monkeypatch.setattr(checker_optimizer, "materialize_request", observed_materialize)
+    releases = SuiteReleaseStore(f.admin.settings, f.admin.objects, role="api")
+    corrected = releases.save_candidate(f.alice, f.base.id, {"checker.py": runpy.run_path(str(GUEST))["CORRECTED"]})
+    releases.publish(f.alice, RULES["suite_key"], corrected["id"], 1, str(uuid4()), force_unverified=True)
+    with sync_playwright() as playwright:
+        request = playwright.request.new_context(base_url=f.web, extra_http_headers={"Cookie": SESSION_COOKIE + "=" + f.session})
+        page = SimpleNamespace(request=request, wait_for_timeout=lambda ms: time.sleep(ms / 1000))
+        try:
+            feedback, originals = [], []
+            for index, (value, expected) in enumerate([(5, "NG"), (15, "PASS"), (16, "PASS"), (6, "NG")], 1):
+                round_, uploaded = create_round(page, f, value, index)
+                originals.append(round_)
+                for clause in f.rules["rules"]:
+                    saved = response_json(
+                        request.post(
+                            f.web + f"/api/audit-rounds/{round_['id']}/checker-feedback",
+                            data={
+                                "operation_id": str(uuid4()),
+                                "file_version_id": uploaded["id"],
+                                "rule_version_id": f.rule_id,
+                                "rule_clause_id": clause["id"],
+                                "result_attempt": round_["result_attempt"],
+                                "original_status": expected,
+                                "expected_status": expected,
+                                "rationale": f"用户独立核对 {clause['id']} 与 A1。",
+                                "evidence": [{"file_version_id": uploaded["id"], "locator": {"kind": "xlsx_cell", "sheet": "Sheet", "cell": "A1"}, "excerpt": str(value)}],
+                            },
+                        )
+                    )
+                    assert saved["case_ordinal"] == index
+                    feedback.append(saved)
+            updated = response_json(
+                request.post(
+                    f.web + "/api/rules",
+                    data={
+                        "request_id": str(uuid4()),
+                        "title": "仅 R2 措辞更新",
+                        "predecessor_id": f.rule_id,
+                        "source_file_version_id": uploaded["id"],
+                        "body": {**f.rules, "rules": [f.rules["rules"][0], {**f.rules["rules"][1], "rule_to_check": "A1 的数值不得小于 10"}]},
+                    },
+                ),
+                201,
+            )
+            revision = updated["body"]["suite_revision_id"]
+            command = {
+                "operation_id": str(uuid4()),
+                "feedback_ids": [feedback[1]["id"]],
+                "action": "run_tests",
+                "consume_model": False,
+                "confirmed_rule_revision_id": revision,
+                "expected_feedback_revisions": {row["id"]: row["revision"] for row in feedback},
+            }
+            response_json(request.post(f.web + f"/api/suite-revisions/{revision}/optimizations", data=command))
+            result = read_until(page, f.web + "/api/checker-optimizations/" + command["operation_id"], lambda row: row["state"] not in {"queued", "running"}, timeout=90)
+            assert result["state"] == "completed" and result["report"]["validation"]["verified"], result
+            report = result["report"]["validation"]
+            assert report["total_samples"] == report["passed_samples"] == 4
+            assert [row["split"] for row in report["cases"]] == ["training", "training", "training", "holdout"]
+            assert all({clause["clause_id"] for clause in row["clauses"]} == {"R1", "R2"} and len(row["feedback_ids"]) == 2 for row in report["cases"])
+            assert result["report"]["code_changed"] is False and f.guest.adaptations == 0
+            assert len(requests) == 1
+            assert requests[0].feedback == "用户独立核对 R2 与 A1。"
+            assert requests[0].oracle[0].repair_clause_ids == frozenset({"R2"})
+            assert all(not sample.repair_clause_ids for sample in requests[0].oracle[1:])
+            assert all(set(sample.expected) == {"R1", "R2"} for sample in requests[0].oracle)
+            active_path = f.web + "/api/suites/browser:threshold/active"
+            active = response_json(request.get(active_path))
+            assert active["current_revision_id"] == corrected["id"]
+            response_json(
+                request.put(
+                    active_path,
+                    data={
+                        "revision_id": result["candidate_revision_id"],
+                        "expected_revision": active["revision"],
+                        "operation_id": str(uuid4()),
+                        "force_unverified": False,
+                    },
+                )
+            )
+            assert response_json(request.get(active_path))["verification_status"] == "verified"
+            assert all(response_json(request.get(f.web + "/api/rounds/" + original["id"])) == original for original in originals)
+        finally:
+            request.dispose()

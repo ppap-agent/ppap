@@ -281,7 +281,12 @@ def freeze_selected_targets(store, conn, tenant_id: str, prepared: list[dict], *
         # Existing Round/report readers retain actual accepted text and the new
         # explicit clause mapping, without deriving coverage from method order.
         item["rule_body"] = {**rules, "suite_key": suite.revision.suite_key, "appendix": list(appendix)}
+        from product.store.rule_impact import published_rule_update
+
+        rule_update = published_rule_update(conn, suites, tenant_id, suite)
         item["rule_execution"] = {
+            "rule_version_mismatch": rule_update is not None,
+            "latest_rule_suite_revision_id": rule_update["target_revision_id"] if rule_update else None,
             "mode": "checker_core",
             "suite_revision_id": suite.revision.id,
             "binding": binding.to_dict(),

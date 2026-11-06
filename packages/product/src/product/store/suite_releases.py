@@ -263,8 +263,13 @@ class SuiteReleaseStore:
                 (suite_key,),
             )
             official = cur.fetchone()
+            from product.store.rule_impact import published_rule_update, rule_impact
+
+            rule_update = published_rule_update(conn, self.suites, principal.tenant_id, resolved)
+            official_rule_impact = rule_impact(resolved, self.suites.resolve_suite(str(official["current_revision_id"]), principal.tenant_id, conn=conn)) if official else None
             base = _official_base(conn, _revision(conn, selection["revision_id"], principal.tenant_id), principal.tenant_id)
             update = bool(official and base and base["id"] != official["current_revision_id"] and selection["selection_mode"] == "pinned")
+            needs_rule_validation = bool(rule_update or update and official_rule_impact and official_rule_impact["changed"])
             seen = (
                 not update
                 or conn.execute(
@@ -284,11 +289,16 @@ class SuiteReleaseStore:
             "latest_official_revision_id": str(official["current_revision_id"]) if official else None,
             "latest_official_version": official["revision_number"] if official else None,
             "official_base_revision_id": str(base["id"]) if base else None,
+            "rule_update": rule_update,
+            "official_rule_impact": official_rule_impact if update else None,
             "official_update_available": update,
             "official_update_notice": not seen,
-            "verification_status": selection["verification_status"],
+            "verification_status": "stale" if needs_rule_validation else selection["verification_status"],
             "force_unverified": selection["force_unverified"],
-            "validation": selection["validation"],
+            "validation": (
+                {**selection["validation"], "status": "stale", "verified": False, "reasons": [*selection["validation"]["reasons"], "published_rules_changed"]}
+                if needs_rule_validation else selection["validation"]
+            ),
             "history": history,
         }
 
@@ -505,6 +515,9 @@ class SuiteReleaseStore:
             resolved = self.suites.resolve_suite(revision_id, principal.tenant_id, conn=conn)
             validation = _validation(conn, principal.tenant_id, row)
             original = self.suites.resolve_suite(str(row["base_revision_id"]), principal.tenant_id, conn=conn) if row["base_revision_id"] else None
+            from product.store.rule_impact import rule_impact
+
+            impact = rule_impact(original, resolved) if original else None
             official_base = _official_base(conn, row, principal.tenant_id)
             changed = [path for path, digest in resolved.object_digests.items() if original is None or original.object_digests.get(path) != digest]
             if original is not None:
@@ -519,6 +532,7 @@ class SuiteReleaseStore:
             ).fetchone()
         return {
             **({"upgrade": _upgrade_provenance(upgrade)} if upgrade else {}),
+            "rule_impact": impact,
             "title": title,
             "version": row["revision_number"],
             "created_by_name": creator_name,

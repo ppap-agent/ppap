@@ -58,6 +58,7 @@ export function checkerLabel(file: Task['files'][number], snapshot?: PrecheckRec
   const frozen = Array.isArray(rows) ? record(rows.find(row => record(record(row).file).id === file.file.id)) : {}
   const target = record(frozen.suite_target), execution = record(frozen.rule_execution)
   const title = string(record(target.rules).title) || string(record(body).title) || rule?.title || `${body.type}检查`
+  if (file.match?.gaps?.includes('published_rules_changed')) return `${title} · 新规则尚未采用，本次按旧规则和已发布检查运行`
   if (execution.mode === 'checker_core' && string(target.suite_revision_id) && string(target.suite_key)) return `${title} · 本次采用的检查${target.verification === 'verified' ? '' : ' · 需要重新验证'}`
   if (execution.mode === 'unavailable') return `${title} · 尚无可运行的检查，未检查`
   if (string(record(body).suite_key).trim()) return `${title} · 按本企业采用版本预检`

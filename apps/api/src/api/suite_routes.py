@@ -41,7 +41,25 @@ class SuitePublication(TypedDict):
     published_by_name: str
 
 
+class ClauseChange(TypedDict):
+    clause_id: str
+    kind: Literal["added", "removed", "changed", "unchanged"]
+    before: str | None
+    after: str | None
+    checker: str | None
+
+
+class RuleImpact(TypedDict):
+    source_revision_id: str
+    target_revision_id: str
+    changed: bool
+    appendix_changed: bool
+    clauses: list[ClauseChange]
+
+
 class SuiteActive(TypedDict):
+    rule_update: NotRequired[RuleImpact | None]
+    official_rule_impact: NotRequired[RuleImpact | None]
     title: str
     version: int
     origin: Literal["official", "enterprise"]
@@ -92,6 +110,7 @@ class SuiteOfficialUpdateSeen(TypedDict):
 
 
 class SuiteRevisionDetail(TypedDict):
+    rule_impact: NotRequired[RuleImpact | None]
     official_base_revision_id: NotRequired[str | None]
     upgrade: NotRequired[SuiteUpgradeReceipt]
     title: str

@@ -40,7 +40,16 @@ def materialize_request(development, row):
     # One bounded request may repeat references. Count distinct original bytes.
     blobs = {}
     remaining = MAX_INPUT_TOTAL
-    for sample in frozen["samples"]:
+    from product.checker_samples import feedback_cases
+
+    groups = feedback_cases(frozen["samples"])
+    for members in groups:
+        sample = members[0]
+        target_body = next(item["rule_body"] for item in sample["files"] if item["role"] == "target")
+        clause_ids = {str(clause["id"]) for clause in target_body["rules"]}
+        applicable = [item for item in members if item["rule_clause_id"] in clause_ids]
+        if not applicable:
+            continue  # Deleted clauses are not current results or regression expectations.
         files = [FrozenFile.model_validate(item) for item in sample["files"]]
         if len(files) > MAX_INPUT_FILES:
             raise DeepError("deep_budget_exhausted")
@@ -82,21 +91,27 @@ def materialize_request(development, row):
             context,
             verified_related_bytes(spec, sample_blobs),
         )
-        original_rule = rule_for_file(target.model_copy(update={"rule_body": sample["expected_rule_body"]}))
+        expected_digests = {effective_rule_digest(rule_for_file(target.model_copy(update={"rule_body": item["expected_rule_body"]}))) for item in applicable}
+        expected_digest = next(iter(expected_digests)) if len(expected_digests) == 1 else "mixed-old-rule-bases"
+        selected_clauses = frozenset(item["rule_clause_id"] for item in applicable if item["id"] in frozen["selected_feedback_ids"])
         samples.append(
             OracleSample(
                 sample["id"],
-                sample["ordinal"],
+                sample.get("case_ordinal", sample["ordinal"]),
                 inputs,
-                {sample["rule_clause_id"]: sample["expected_status"]},
+                {item["rule_clause_id"]: item["expected_status"] for item in applicable},
                 sample["confirmed_by"],
-                effective_rule_digest(original_rule),
-                repair_selected=sample["id"] in frozen["selected_feedback_ids"],
+                expected_digest,
+                repair_selected=bool(selected_clauses),
+                repair_clause_ids=selected_clauses,
+                feedback_ids=tuple(item["id"] for item in members),
             )
         )
         specs[sample["id"]] = spec
-    target_sample = next(item for item in samples if item.case_id == frozen["target_sample_id"])
-    current_training = {sample.case_id for sample in samples if not sample.holdout and sample.expectations_current}
+    target_case_id = next(group[0]["id"] for group in groups if any(item["id"] == frozen["target_sample_id"] for item in group))
+    target_sample = next(item for item in samples if item.case_id == target_case_id)
+    current_training_cases = {sample.case_id for sample in samples if not sample.holdout and sample.expectations_current}
+    current_training = {item["id"] for group in groups if group[0]["id"] in current_training_cases for item in group}
     feedback = "\n".join(sample["rationale"] for sample in frozen["samples"] if sample["id"] in current_training and sample["id"] in frozen["selected_feedback_ids"])
     program_files = {path: data for path, data in suite.files.items() if path in {"checker.py", "resources.py"}}
     prior = SuiteCheckerProgram(
@@ -115,6 +130,7 @@ def materialize_request(development, row):
         fixed=None if frozen["consume_model"] else prior,
         allow_model_calls=frozen["consume_model"],
         feedback=feedback[:8000] or None,
+        rule_changes=tuple(frozen.get("rule_changes", [])),
         oracle_revision=frozen["oracle_revision"],
         oracle=tuple(samples),
         related_revision_ids=tuple(frozen["related_revision_ids"].values()),

@@ -45,6 +45,8 @@ class OptimizationCreate(BaseModel):
     feedback_ids: list[str] = Field(min_length=1, max_length=64)
     action: Literal["save_only", "run_tests"]
     consume_model: bool = False
+    confirmed_rule_revision_id: str | None = None
+    expected_feedback_revisions: dict[str, int] | None = None
     expected_model_revision: str | None = Field(default=None, min_length=1, max_length=64)
 
 
@@ -60,6 +62,7 @@ class FeedbackResponse(FeedbackEdit):
     suite_revision_id: str
     suite_key: str
     ordinal: int
+    case_ordinal: int | None = None
     revision: int
 
 
@@ -75,6 +78,7 @@ class ValidationView(BaseModel):
 
 class DevelopmentReport(BaseModel):
     model_config = ConfigDict(extra="allow")
+    code_changed: bool | None = None
     validation: ValidationView | None = None
     verified: bool | None = None
     reasons: list[str] = Field(default_factory=list)

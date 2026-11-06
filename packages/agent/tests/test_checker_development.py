@@ -1,6 +1,7 @@
 """Real fixed execution with a controlled author; no paid model quality claim."""
 
 import hashlib
+import json
 from dataclasses import replace
 from uuid import UUID
 
@@ -319,3 +320,57 @@ def test_controlled_grouped_and_individual_repair_keep_the_full_oracle(tmp_path)
     assert sum(outcome.usage["model_requests"] for outcome in individual) == 6
     assert grouped.usage["input_tokens"] + grouped.usage["output_tokens"] == 36
     assert sum(outcome.usage["input_tokens"] + outcome.usage["output_tokens"] for outcome in individual) == 108
+
+
+@pytest.mark.parametrize("text", ["A1至少10", "A1不得小于10"])
+def test_rule_change_context_runs_every_sample_and_reports_unchanged_code(tmp_path, text):
+    original = request(tmp_path)
+    current = replace(original.target, rule=original.target.rule.model_copy(update={"rules": [{**original.target.rule.rules[0], "rule_to_check": text}]}))
+    samples = tuple(replace(sample, inputs=replace(sample.inputs, rule=current.rule)) for sample in original.oracle)
+    prior = original.prior.model_copy(update={"files": {"checker.py": PROGRAM.encode()}})
+    runtime = Runtime(tmp_path / "rule-change")
+    outcome = develop_and_run(replace(original, target=current, oracle=samples, prior=prior, rule_changes=({"clause_id": "R1", "kind": "changed", "before": "A1至少0", "after": text},)), runtime)
+    assert outcome.error_code is None
+    assert outcome.validation.verified
+    assert outcome.code_changed is False
+    assert outcome.receipt()["code_changed"] is False
+    assert len(outcome.validation.cases) == 4
+    assert {row.case_id for row in outcome.validation.cases} == {sample.case_id for sample in samples}
+    adaptation = next(call for call in runtime.calls if call[0] == "adapt-checker")
+    assert "规则原文差异" in adaptation[2] and "A1至少0" in adaptation[2] and text in adaptation[2]
+
+
+def test_threshold_update_repairs_code_and_regresses_unchanged_clause(tmp_path):
+    original = request(tmp_path)
+    rule = original.target.rule.model_copy(
+        update={
+            "rules": [
+                *original.target.rule.rules,
+                {"id": "R2", "category": "阈值", "rule_to_check": "同一原件 A1 至少 10"},
+            ]
+        }
+    )
+    target = replace(original.target, rule=rule)
+    samples = tuple(
+        replace(sample, inputs=replace(sample.inputs, rule=rule), expected={"R1": sample.expected["R1"], "R2": sample.expected["R1"]}, repair_clause_ids=frozenset({"R2"}))
+        for sample in original.oracle
+    )
+    runtime = Runtime(tmp_path / "threshold-change")
+    outcome = develop_and_run(
+        replace(
+            original,
+            target=target,
+            oracle=samples,
+            rule_changes=(
+                {"clause_id": "R1", "kind": "changed", "before": "A1至少0", "after": "A1至少10"},
+                {"clause_id": "R2", "kind": "unchanged", "before": "同一原件 A1 至少 10", "after": "同一原件 A1 至少 10"},
+            ),
+        ),
+        runtime,
+    )
+    assert outcome.validation.verified and outcome.code_changed
+    assert len(outcome.validation.cases) == 4
+    assert all({row.clause_id for row in case.clauses} == {"R1", "R2"} for case in outcome.validation.cases)
+    generation = next(call[2] for call in runtime.calls if call[0] == "adapt-checker")
+    training = json.loads(generation.split("用户确认的训练样本（不是模型自评；不得改写预期）：\n")[1])
+    assert all(set(row["expected"]) == set(row["actual"]) == {"R2"} for row in training)

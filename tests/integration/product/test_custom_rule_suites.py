@@ -105,11 +105,23 @@ def test_successor_is_same_suite_and_old_admission_and_retries_never_drift(custo
     assert changed.revision.revision_number == 2
     assert "checker.py" not in changed.revision.overrides
     assert publish(custom, request=request) == first
-    assert releases.active(alice, changed.revision.suite_key)["current_revision_id"] == changed.revision.id
+    active = releases.active(alice, changed.revision.suite_key)
+    assert active["current_revision_id"] == first["body"]["suite_revision_id"]
+    assert active["verification_status"] == "stale"
+    assert active["rule_update"]["clauses"][0]["kind"] == "changed"
+    assert active["rule_update"]["target_revision_id"] == changed.revision.id
     assert suites.read_snapshot(accepted["id"], alice.tenant_id).to_dict() == original.to_dict()
-    # Even an old rule selection resolves the currently adopted enterprise Suite.
+    # New rule publication alone neither changes adoption nor enqueues model work.
+    _, unchanged = accept(custom, second)
+    assert unchanged.targets[0].rules["rules"][0]["rule_to_check"] == "必须填写批号"
+    with custom[0]._conn() as conn:
+        assert conn.execute("SELECT count(*) FROM engine.jobs WHERE kind='checker_optimization'").fetchone()[0] == 0
+        execution = conn.execute("SELECT rule_execution FROM product.round_inputs WHERE round_id=%s", (unchanged.round_id,)).fetchone()[0]
+        assert execution["rule_version_mismatch"] is True
+    releases.publish(alice, changed.revision.suite_key, changed.revision.id, 1, str(uuid.uuid4()))
     _, current = accept(custom, first)
     assert current.targets[0].rules["rules"][0]["rule_to_check"] == "批号与原始记录一致"
+    assert releases.active(alice, changed.revision.suite_key)["rule_update"] is None
     releases.publish(alice, changed.revision.suite_key, first["body"]["suite_revision_id"], 2, str(uuid.uuid4()))
     _, rolled_back = accept(custom, second)
     assert rolled_back.targets[0].suite_revision_id == first["body"]["suite_revision_id"]
@@ -161,7 +173,7 @@ def test_concurrent_successors_cannot_overwrite_newer_published_rules(custom):
         outcomes = list(executor.map(create, ["要求 A", "要求 B"]))
     assert sum(isinstance(value, dict) for value in outcomes) == 1
     assert "suite_head_conflict" in outcomes
-    assert counts(custom) == (2, 2, 1, 2)
+    assert counts(custom) == (2, 2, 1, 1)
 
 
 def test_empty_binding_alone_does_not_authorize_code_or_implicit_adoption(custom):
@@ -177,10 +189,12 @@ def test_empty_binding_alone_does_not_authorize_code_or_implicit_adoption(custom
     with pytest.raises(ValueError, match="suite_confirmation_required"):
         releases.publish(alice, first["body"]["suite_key"], executable["id"], 1, str(uuid.uuid4()))
     releases.publish(alice, first["body"]["suite_key"], executable["id"], 1, str(uuid.uuid4()), True)
-    before = counts(custom)
-    with pytest.raises(ValueError, match="suite_head_conflict"):
-        publish(custom, predecessor=first["id"], body=rule_body("旧页面编辑"))
-    assert counts(custom) == before
+    updated = publish(custom, predecessor=first["id"], body=rule_body("新的追溯要求"))
+    rule_candidate = releases.detail(alice, updated["body"]["suite_revision_id"])
+    assert rule_candidate["base_revision_id"] == executable["id"]
+    assert rule_candidate["files"]["checker.py"] == executable["files"]["checker.py"]
+    assert json.loads(rule_candidate["files"]["rules.json"])["checker_binding"] == {"R1": "checker:check"}
+    assert releases.active(alice, first["body"]["suite_key"])["current_revision_id"] == executable["id"]
     _, snapshot = accept(custom, first)
     assert snapshot.targets[0].binding.entrypoints == {"R1": "checker:check"}
     assert snapshot.targets[0].verification == "unverified"
