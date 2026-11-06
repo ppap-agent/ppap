@@ -48,7 +48,7 @@ def content(source):
 
 
 @pytest.mark.parametrize(("customer", "expected_count"), [("UAES", 19), ("理想", 17), ("蔚来", 5)])
-def test_each_source_accepts_and_freezes_its_actual_customer_checker(auth_store_factory, v4_objects, core_system, customer, expected_count):
+def test_each_source_accepts_and_freezes_its_actual_customer_checker(auth_store_factory, v4_objects, core_system, tmp_path, customer, expected_count):
     settings = Settings(usage_charge_enabled=False, feishu_app_id="v4-route-acceptance", git_sha="a" * 40)
     admin = auth_store_factory(settings)
     admin.objects = v4_objects
@@ -96,9 +96,11 @@ def test_each_source_accepts_and_freezes_its_actual_customer_checker(auth_store_
         assert task["estimated_points"] == 500 * expected_count
         precheck = worker.claim_job("routes-precheck")
         assert precheck.kind == "task_precheck"
+        guest_calls = core_system.calls
         process_claimed(worker, precheck, "routes-precheck")
+        assert core_system.calls == guest_calls + 1
         frozen_precheck = client.get(path).json()["precheck"]
-        assert frozen_precheck["status"] == "succeeded"
+        assert frozen_precheck["status"] == "succeeded", frozen_precheck
         dependency_facts = [fact for row in frozen_precheck["result"]["files"] for fact in row["facts"] if ":dependency:" in fact.get("id", "")]
         assert dependency_facts, "The source's applicable counterpart availability must run through the Worker"
         assert not [fact for fact in dependency_facts if fact["status"] == "error"], dependency_facts
@@ -106,7 +108,11 @@ def test_each_source_accepts_and_freezes_its_actual_customer_checker(auth_store_
         assert confirmed.status_code == 201, confirmed.text
         job = worker.claim_job("routes-audit")
         assert job.kind == "audit"
+        guest_calls = core_system.calls
         process_claimed(worker, job, "routes-audit")
+        assert core_system.calls == guest_calls + 1
+        assert [job.allow_model_calls for job in core_system.audit_jobs] == [False]
+        assert not list(tmp_path.rglob("model.json")), "No model grant is authorized by the routing fixture"
         round_path = "/rounds/" + confirmed.json()["round_id"]
         round = client.get(round_path).json()
         assert round["findings"], round
@@ -116,6 +122,10 @@ def test_each_source_accepts_and_freezes_its_actual_customer_checker(auth_store_
         assert all(row[0]["mode"] == "checker_core" and row[0]["suite_revision_id"] for row in frozen), frozen
         assert all(row[0]["binding"]["entrypoints"] and row[0]["verification"] == "unverified" for row in frozen), frozen
         assert all(finding["status"] != "ERR" for finding in round["findings"]), round["findings"]
+        if customer == "UAES":
+            photo = next(identity for identity, (source, _, _) in originals.items() if source.entry_id == "U13")
+            photo_findings = [finding for finding in round["findings"] if finding["locator"]["file_version_id"] == photo]
+            assert photo_findings and all(finding["status"] == "UNABLE" for finding in photo_findings), photo_findings
         assert client.get(path + "/prechecks/" + frozen_precheck["id"]).json() == frozen_precheck
         for _, original_path, data in originals.values():
             assert client.get(original_path + "/download").content == data
