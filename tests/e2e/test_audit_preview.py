@@ -10,6 +10,7 @@ import re
 import time
 import unittest
 from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from .conftest import pick_audit_files  # noqa: E402
@@ -1065,37 +1066,55 @@ class AuditPreviewTests(unittest.TestCase):
                 with self.subTest(completed=completed):
                     page = browser.new_page(viewport={"width": 1440, "height": 1000})
                     page.set_default_timeout(5000)
-                    page.goto(PREVIEW + "/preview/audit.html?scene=recognition-late")
-                    page.get_by_role("button", name="使用三类文件示例", exact=True).click()
-                    page.get_by_role("button", name="开始识别", exact=True).click()
-                    # The recognition promise stays held throughout these UI checkpoints.
-                    held_reply = page.get_by_role("button", name="返回示例读取 1", exact=True, include_hidden=True)
-                    expect(held_reply).to_have_count(1)
-                    listing = task_list(page)
-                    search = page.get_by_role("textbox", name="搜索任务文件", exact=True)
-                    search.fill("PFMEA")
-                    expect(search).to_have_value("PFMEA")
-                    row = listing.get_by_role("button")
-                    expect(row).to_contain_text("待确认")
-                    row.click()
-                    expect(page.get_by_role("dialog", name="审核任务", exact=True)).not_to_be_visible()
-                    expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
-                    expect(held_reply).to_have_count(1)
-                    page.get_by_role("button", name="开始审核", exact=True).click()
-                    if completed:
-                        read_results(page)
-                    status = "文件已结束 3/3" if completed else "文件已结束 0/3"
-                    expect(page.get_by_role("status").filter(has_text=status)).to_be_visible()
-                    close_workspace_panel(page)
-                    expect(held_reply).to_have_count(1)
-                    held_reply.click()
-                    task_list(page)
-                    expect(row).to_contain_text("审核异常" if completed else "审核中")
-                    row.click()
-                    # Opening a summary reads full detail; this fixture advances its real snapshot on that read.
-                    expect(page.get_by_role("status").filter(has_text="文件已结束 3/3")).to_be_visible()
-                    expect(page.get_by_role("button", name="开始审核", exact=True)).to_have_count(0)
-                    page.close()
+                    # This is a fresh synthetic preview context, never a signed-in product session.
+                    trace = page.context.tracing if urlparse(PREVIEW).hostname in {"127.0.0.1", "localhost", "::1"} else None
+                    try:
+                        if trace:
+                            trace.start(screenshots=True, snapshots=True, sources=False)
+                        page.goto(PREVIEW + "/preview/audit.html?scene=recognition-late")
+                        page.get_by_role("button", name="使用三类文件示例", exact=True).click()
+                        page.get_by_role("button", name="开始识别", exact=True).click()
+                        # The recognition promise stays held throughout these UI checkpoints.
+                        held_reply = page.get_by_role("button", name="返回示例读取 1", exact=True, include_hidden=True)
+                        expect(held_reply).to_have_count(1)
+                        listing = task_list(page)
+                        search = page.get_by_role("textbox", name="搜索任务文件", exact=True)
+                        search.fill("PFMEA")
+                        expect(search).to_have_value("PFMEA")
+                        row = listing.get_by_role("button")
+                        expect(row).to_contain_text("待确认")
+                        row.click()
+                        expect(page.get_by_role("dialog", name="审核任务", exact=True)).not_to_be_visible()
+                        expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
+                        expect(held_reply).to_have_count(1)
+                        page.get_by_role("button", name="开始审核", exact=True).click()
+                        if completed:
+                            read_results(page)
+                        status = "文件已结束 3/3" if completed else "文件已结束 0/3"
+                        expect(page.get_by_role("status").filter(has_text=status)).to_be_visible()
+                        close_workspace_panel(page)
+                        expect(held_reply).to_have_count(1)
+                        held_reply.click()
+                        task_list(page)
+                        expect(row).to_contain_text("审核异常" if completed else "审核中")
+                        row.click()
+                        # Opening a summary reads full detail; this fixture advances its real snapshot on that read.
+                        expect(page.get_by_role("status").filter(has_text="文件已结束 3/3")).to_be_visible()
+                        expect(page.get_by_role("button", name="开始审核", exact=True)).to_have_count(0)
+                    except Exception:
+                        if trace:
+                            try:
+                                directory = Path("ci-report/preview-recognition-late")
+                                directory.mkdir(parents=True, exist_ok=True)
+                                trace.stop(path=directory / ("completed.zip" if completed else "reviewing.zip"))
+                            except Exception as error:
+                                print(f"Synthetic preview trace unavailable: {type(error).__name__}")
+                        raise
+                    else:
+                        if trace:
+                            trace.stop()
+                    finally:
+                        page.close()
             browser.close()
 
     def test_late_initial_recognition_cannot_reopen_a_task_ended_from_its_server_list(self):
