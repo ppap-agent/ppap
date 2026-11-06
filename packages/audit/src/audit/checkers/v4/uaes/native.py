@@ -23,11 +23,17 @@ from audit.document_tools import ReadLimits, TableReader, ref, snapshot, source_
 from audit.engine.checkers.rule_declarations import discover_declared_rules
 from audit.engine.rule_engine.context import GuardStop
 from audit.evidence import EvidenceBudget, cell_locator
+from audit.fact_questions import BooleanFactEvaluation, FactQuestion
 from audit.kinds import PpapDocumentType
 
 
 class UnknownFact(Exception):
     """The native source does not establish the required fact."""
+
+    def __init__(self, message, *, questions=(), evaluation=None):
+        super().__init__(message)
+        self.questions = list(questions)
+        self.evaluation = evaluation
 
 
 class MissingFact(Exception):
@@ -266,6 +272,8 @@ class NativeFacts:
 
     def field(self, aliases: tuple[str, ...], *, title=(), required=True):
         values = set()
+        candidates = []
+        unknown = None
         for table in self.tables(title):
             for row in range(1, min(table["rows"], 40) + 1):
                 for column in range(1, min(table["cols"], 80) + 1):
@@ -276,7 +284,14 @@ class NativeFacts:
                     merged = next((span for span in table.get("merges", []) if span[0] <= row <= span[2] and span[1] <= column <= span[3]), None)
                     next_column = merged[3] + 1 if merged else column + 1
                     if next_column <= table["cols"]:
-                        value = self.cell(table, row, next_column)
+                        fact = self.readers[table["id"]].cell(row, next_column)
+                        locator = self.cell_location(table, row, next_column, fact)
+                        candidates.append(locator)
+                        try:
+                            value = self.cell(table, row, next_column)
+                        except UnknownFact as exc:
+                            unknown = exc
+                            continue
                         if not blank(value):
                             values.add(str(value).strip())
         # Explicit colon-separated paragraph/block fields preserve their own
@@ -288,12 +303,32 @@ class NativeFacts:
                     if len(parts) == 2 and header(parts[0], aliases) and parts[1].strip():
                         self.witness(locator, line, self.version)
                         values.add(parts[1].strip())
+        question = None
+        if len(candidates) == 1 and (unknown is not None or not values):
+            import hashlib
+
+            from audit.models import public_locator
+
+            locator = candidates[0]
+            # Strip internal extraction provenance; retain the original location.
+            locator = {name: value for name, value in locator.items() if name not in {"bbox", "source_sha256", "prepared_sheet", "prepared_cell", "prepared_sha256"}}
+            if public_locator(locator) is not None:
+                identity = json.dumps({"aliases": aliases, "title": title, "locator": locator}, ensure_ascii=False, sort_keys=True)
+                question = FactQuestion(
+                    file_version_id=self.version,
+                    field="field." + hashlib.sha256(identity.encode()).hexdigest()[:24],
+                    prompt="原件此处“" + aliases[0] + "”填写的内容是什么？",
+                    answer_type="text",
+                    locator=locator,
+                )
+        if unknown is not None:
+            raise UnknownFact(str(unknown), questions=[question] if question else [])
         if len(values) > 1:
             raise UnknownFact("身份或字段有多个不同取值，不能任取第一个。")
         if values:
             return next(iter(values))
         if required:
-            raise UnknownFact("未能唯一读取字段“" + aliases[0] + "”的对应值。")
+            raise UnknownFact("未能唯一读取字段“" + aliases[0] + "”的对应值。", questions=[question] if question else [])
         return ""
 
 
@@ -379,6 +414,7 @@ class UaesSourceAgent(BaseAgent):
     def check(self, ith):
         self._evidence_sources = []
         completed = 0
+        questions, evaluation = [], None
         try:
             status, message = self.rule_checkers[ith]()
             if status == "PASS" and not self._evidence_sources:
@@ -386,6 +422,7 @@ class UaesSourceAgent(BaseAgent):
             completed = int(status in {"PASS", "NG", "NA"})
         except UnknownFact as exc:
             status, message = "UNABLE", str(exc)
+            questions, evaluation = exc.questions, exc.evaluation
         except MissingFact as exc:
             status, message = "NG", str(exc)
             completed = 1
@@ -412,7 +449,17 @@ class UaesSourceAgent(BaseAgent):
         from audit.checkers.v4.paddle_evidence import observe_shadow
 
         observe_shadow(self, self.rule_checkers[ith].__name__)
-        return AuditResultItem(classification=self.agent_rules[ith], item=self.agent_rules[ith], status=status, suggestions=message, priority="P0", evidence=evidence, checks_performed=completed)
+        return AuditResultItem(
+            classification=self.agent_rules[ith],
+            item=self.agent_rules[ith],
+            status=status,
+            suggestions=message,
+            priority="P0",
+            evidence=evidence,
+            checks_performed=completed,
+            fact_questions=questions,
+            fact_evaluation=evaluation,
+        )
 
     def visual_pdf(self, fields: dict[str, str]):
         """Read original PDF facts through the shared bounded visual reader."""
@@ -436,7 +483,28 @@ class UaesSourceAgent(BaseAgent):
         if failed:
             return "NG", "原件确认不满足：" + "；".join(failed)
         if any(value is None for value in values.values()):
-            raise UnknownFact(description + "尚未全部核实，需人工确认原件。")
+            questions = []
+            evaluation = None
+            # A single original page has an unambiguous scope. Multi-page or
+            # unlocated facts still need an explicit observation plan.
+            if Path(self.audit_file.file_url).suffix.lower() == ".pdf":
+                import fitz
+
+                with fitz.open(self.audit_file.file_url) as document:
+                    if len(document) == 1 and not document.needs_pass:
+                        questions = [
+                            FactQuestion(
+                                file_version_id=self.audit_file.audit_id,
+                                field="visual." + name,
+                                prompt="请核对原件：" + fields[name] + "？",
+                                answer_type="boolean",
+                                locator={"kind": "pdf_page", "page": 1},
+                            )
+                            for name, value in values.items()
+                            if value is None
+                        ]
+                        evaluation = BooleanFactEvaluation(file_version_id=self.audit_file.audit_id, facts={"visual." + name: value for name, value in values.items()}, description=description)
+            raise UnknownFact(description + "尚未全部核实，需人工确认原件。", questions=questions, evaluation=evaluation)
         return "PASS", "已从完整原件核实：" + description
 
     def related(self, terms, *, require_name=False):

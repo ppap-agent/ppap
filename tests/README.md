@@ -188,6 +188,12 @@ uv run --no-sync python -m playwright install chromium
 uv run --no-sync pytest tests/e2e
 ```
 
+### Original fact confirmation
+
+`tests/integration/product/test_fact_answers.py` checks actual PostgreSQL persistence and API-role permissions for the positive source-answer path, including idempotent readback, repeatable migration, unchanged machine findings and no new Round, job or usage event. `test_fact_answers_http.py` runs the same path through the production HTTP API and downloads the separate confirmation PDF. The controlled visual boundary returns null; the source checker creates the actual question and frozen predicate.
+
+`test_fact_answers_browser.py` uses the native Web, HTTP and PostgreSQL to submit that answer and reopen its result. It requires Chromium and the product integration setup above; collecting the test does not prove browser behavior. `tests/e2e/test_fact_questions_preview.py` separately exercises the four-question display and an explicit unreadable answer in the preview.
+
 ### Checker workspace browser journey
 
 `tests/integration/product/test_checker_workspace_browser.py` uses the production Web,

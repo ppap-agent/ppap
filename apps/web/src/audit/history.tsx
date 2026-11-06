@@ -11,6 +11,8 @@ import {FileName} from '../journey/file-name'
 import {resultKey, historyShareMatches, type ArchiveDocument, type AuditArchiveAdapter, type HistoryDetail, type HistoryEntry, type ResultReference, type readArchiveAddress} from './archive-contract'
 import {AuditReviewContent, type OriginalRenderer} from './review-content'
 import {HistoryReport} from './history-report'
+import {FactQuestions} from './fact-questions'
+import {factMachineFindings} from './fact-answers-contract'
 import type {AuditReportAdapter} from './report-contract'
 import type {AuditSharingAdapter} from './sharing-contract'
 import {sameSnapshot} from './result-projection'
@@ -86,6 +88,7 @@ export function ArchiveHistory({document, documentId, initialAddress, onNavigate
       </header>
       {loading && <ReadSkeleton label="正在读取这次审核…" kind={detail ? 'inline' : 'detail'} className="px-6 py-5 max-sm:px-4"/>}
       {error && <div className="px-6 py-5 max-sm:px-4"><Alert variant="destructive"><AlertTitle>这次记录读取未完成</AlertTitle><AlertDescription>{error}<Button variant="outline" onClick={() => history ? setReload(value => value + 1) : setListReload(value => value + 1)}>重新读取这次审核</Button></AlertDescription></Alert></div>}
+      {detail && <FactQuestions key={`facts:${resultKey(detail.entry.reference)}`} roundId={detail.entry.reference.round_id} fileVersionId={detail.file.file.id} files={detail.originals.flatMap(row => row.access.state === 'allowed' && row.file ? [row.file] : [])} findings={factMachineFindings(detail.file.audit?.checks)}/>}
       {detail && <AuditReviewContent key={resultKey(detail.entry.reference)} previous={previous?.detail.file.audit ? {label: `第 ${previous.sequence} 次审核`, checks: previous.detail.file.audit.checks} : null} file={detail.file} showFileTitle={false} roundId={detail.entry.reference.round_id} frozenFileVersionIds={detail.frozen_file_version_ids} originals={detail.originals} renderOriginal={renderOriginal} onReport={() => {setReportView(true); onNavigate(detail.entry.reference, true)}}/>}
       {history && !selected && !loading && <p className="px-6 py-5 max-sm:px-4">尚无完成审核。可以选择已有记录查看进度或异常。</p>}
     </div>

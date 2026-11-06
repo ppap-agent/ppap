@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from audit.fact_questions import BooleanFactEvaluation, FactQuestion
 from audit.kinds import PpapDocumentType
 
 
@@ -120,3 +121,5 @@ class AuditResultItem(BaseModel):
     empty_scope_basis: Optional[str] = None
     scope: Optional[dict[str, int]] = None
     clarifications: list[dict[str, Any]] = Field(default_factory=list)
+    fact_questions: list[FactQuestion] = Field(default_factory=list, max_length=64)
+    fact_evaluation: BooleanFactEvaluation | None = None
