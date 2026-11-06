@@ -87,6 +87,7 @@ jobs:
           set -euo pipefail
           # No pytest rerun, transport write retry or second optimization operation.
           set -a
+          # shellcheck source=/dev/null
           source "$PPAP_CHECKER_LIVE_ENV"
           set +a
           timeout 55m uv run --no-sync python -m scripts.run_checker_live
