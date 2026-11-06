@@ -172,7 +172,8 @@ def final_readback(report, receipt):
     if report.get("accepted"):
         previous = report.get("validation") or {}
         current = (receipt.get("report") or {}).get("validation") or {}
-        mismatch = mismatch or receipt.get("state") != "completed" or receipt.get("candidate_revision_id") != report.get("candidate_revision_id") or current != previous
+        mismatch = mismatch or receipt.get("state") != "completed" or any(receipt.get(name) != report.get(name) for name in ("suite_revision_id", "candidate_revision_id")) or current != previous
+        mismatch = mismatch or receipt_snapshot(receipt)["usage"] != report.get("usage", {})
         try:
             validate_outcome(receipt, report["samples"])
         except (AcceptanceFailure, KeyError, TypeError):
