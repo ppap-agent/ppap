@@ -265,10 +265,11 @@ def test_gate_runs_inside_confirmation_and_unknown_does_not_block(system, enforc
             assert conn.execute("SELECT count(*) FROM product.audit_rounds").fetchone()[0] == 0
 
 
-def test_scoped_photo_validation_cannot_be_reused_for_another_customer(system):
+def test_scoped_photo_validation_cannot_be_reused_for_another_customer(system, core_system):
     from PIL import Image
 
-    client, worker, _, _ = system
+    client, worker, admin, principal = system
+    core_system.adopt_standard(admin, principal, "UAES:U13")
     content = io.BytesIO()
     Image.new("RGB", (16, 12), "white").save(content, format="PNG")
     data = content.getvalue()

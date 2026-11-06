@@ -88,6 +88,16 @@ from product.store.upload_preparation import PREPARATION_KEY, normalize_preparat
 from product.writeback_targets import normalize_external_ref, public_target
 
 
+def _preset_customers(body: dict) -> set[str]:
+    """Use adopted Suite identity; legacy recognition retains preset provenance."""
+    from audit.presets import customer_presets
+
+    customers = {preset.customer for preset in customer_presets() if body.get("suite_key") == f"{preset.customer}:{preset.entry_id}"}
+    if body.get("rule_profile") == "v4":
+        customers.update(body.get("customers") or [])
+    return customers
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -1554,12 +1564,7 @@ class AuthStore:
         from product.prechecks import precheck_identity
         from product.store.prechecks import freeze_task_precheck
 
-        v4_customers = {
-            customer
-            for row in task["files"]
-            for customer in (((row.get("match") or {}).get("rule") or {}).get("body") or {}).get("customers", [])
-            if ((((row.get("match") or {}).get("rule") or {}).get("body") or {}).get("rule_profile") == "v4")
-        }
+        v4_customers = {customer for row in task["files"] for customer in _preset_customers((((row.get("match") or {}).get("rule") or {}).get("body") or {}))}
         if task["customer_preference"] not in {"UAES", "理想", "蔚来"} and not v4_customers:
             return None
         if task["state"] == "matching":
@@ -2700,6 +2705,23 @@ class AuthStore:
             if share:
                 task["report_share"] = share
             return task
+        # Recognition's rule version is provenance. Show the same adopted Suite
+        # body that acceptance will freeze, without publishing or authorizing it.
+        # Accepted tasks returned above must never resolve a newer Suite head.
+        from product.store.suites import freeze_selected_targets
+
+        for file in task["files"]:
+            match = file.get("match") or {}
+            if match.get("state") != "matched" or not match.get("rule"):
+                continue
+            prepared = [{"role": "target", "file_version_id": file["file"]["id"], "rule_body": match["rule"]["body"]}]
+            try:
+                freeze_selected_targets(self, conn, principal.tenant_id, prepared, preparation=True)
+            except (KeyError, ValueError):
+                match.update(state="failed", rule=None, gaps=[*match.get("gaps", []), "checker_suite_unavailable"])
+                task["estimated_points"] = None
+            else:
+                match["rule"] = {**match["rule"], "body": prepared[0]["rule_body"]}
         return task
 
     def list_audit_tasks(self, principal: Principal, limit: int = 20, offset: int = 0, q: str = "", state: str = "") -> list[dict]:
@@ -4424,18 +4446,13 @@ class AuthStore:
                 ):
                     raise ValueError("task_not_ready")
                 if not existing:
-                    v4_customers = {
-                        customer
-                        for row in selected
-                        for customer in ((row["match"].get("rule") or {}).get("body") or {}).get("customers", [])
-                        if (((row["match"].get("rule") or {}).get("body") or {}).get("rule_profile") == "v4")
-                    }
+                    v4_customers = {customer for row in selected for customer in _preset_customers(((row["match"].get("rule") or {}).get("body") or {}))}
                     if len(v4_customers) > 1 or v4_customers and owned["customer_preference"] and v4_customers != {owned["customer_preference"]}:
                         raise ValueError("customer_scope_conflict")
                     for row in selected:
                         scope = row.get("validation_scope")
                         rule_body = ((row.get("match") or {}).get("rule") or {}).get("body") or {}
-                        if scope and row["match"]["state"] != "reference" and (owned["customer_preference"] != "UAES" or rule_body.get("rule_profile") != "v4" or rule_body.get("preset_key") != "U13"):
+                        if scope and row["match"]["state"] != "reference" and (owned["customer_preference"] != "UAES" or rule_body.get("suite_key") != "UAES:U13"):
                             raise ValueError("validation_scope_mismatch")
                     if self.settings.precheck_gate_enforced:
                         from product.prechecks import blocked_targets
