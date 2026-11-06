@@ -174,6 +174,46 @@ def ocr_transport_diagnostics(monkeypatch, caplog):
     monkeypatch.setattr(httpx.Response, "aread", read)
 
 
+def _preview_asset_path(url, origin):
+    parsed = urlsplit(url)
+    return parsed.path if (parsed.scheme, parsed.netloc) == (origin.scheme, origin.netloc) and parsed.path.startswith(("/preview/", "/src/", "/node_modules/", "/@")) else None
+
+
+class _PreviewAssetTimings:
+    """Bounded same-origin asset progress; never capture request data or queries."""
+
+    def __init__(self, clock=monotonic):
+        self.clock = clock
+        self.pending = {}
+        self.slow = deque(maxlen=12)
+        self.started = 0
+        self.finished = 0
+
+    def start(self, request, path):
+        self.started += 1
+        if len(self.pending) < 128:
+            self.pending[request] = (path, self.clock())
+
+    def finish(self, request):
+        self.finished += 1
+        entry = self.pending.pop(request, None)
+        if entry is not None:
+            path, started = entry
+            elapsed = round((self.clock() - started) * 1000)
+            if elapsed >= 1000:
+                self.slow.append({"asset": path, "elapsed_ms": elapsed})
+
+    def snapshot(self):
+        now = self.clock()
+        return {
+            "started": self.started,
+            "finished": self.finished,
+            "pending_count": self.started - self.finished,
+            "pending": [{"asset": path, "elapsed_ms": round((now - started) * 1000)} for path, started in list(self.pending.values())[:12]],
+            "slow_completed": list(self.slow),
+        }
+
+
 @pytest.fixture(autouse=True)
 def preview_failure_diagnostics(request, monkeypatch):
     preview = os.environ.get("PPAP_PREVIEW_URL", "")
@@ -186,14 +226,14 @@ def preview_failure_diagnostics(request, monkeypatch):
     pages = deque(maxlen=3)
 
     def asset_path(url):
-        parsed = urlsplit(url)
-        return parsed.path if (parsed.scheme, parsed.netloc) == (origin.scheme, origin.netloc) and parsed.path.startswith(("/preview/", "/src/", "/node_modules/", "/@")) else None
+        return _preview_asset_path(url, origin)
 
     def observe(create):
         def new_page(*args, **kwargs):
             page = create(*args, **kwargs)
             events = deque(maxlen=12)
             first_asset_failure = {}
+            timings = _PreviewAssetTimings()
 
             def failed_asset(event):
                 if path := asset_path(event.url):
@@ -222,9 +262,12 @@ def preview_failure_diagnostics(request, monkeypatch):
                 ),
             )
             page.on("console", lambda event: events.append({"console_error": True}) if event.type == "error" else None)
+            page.on("request", lambda event: timings.start(event, path) if (path := asset_path(event.url)) else None)
+            page.on("requestfinished", lambda event: timings.finish(event) if asset_path(event.url) else None)
+            page.on("requestfailed", lambda event: timings.finish(event) if asset_path(event.url) else None)
             page.on("requestfailed", failed_asset)
             page.on("response", failed_response)
-            pages.append((page, events, first_asset_failure))
+            pages.append((page, events, first_asset_failure, timings))
             return page
 
         return new_page
@@ -235,8 +278,8 @@ def preview_failure_diagnostics(request, monkeypatch):
             try:
                 yield playwright
             except BaseException:
-                for page, events, first_asset_failure in pages:
-                    result = {"first_asset_failure": first_asset_failure, "events": list(events), "closed": page.is_closed()}
+                for page, events, first_asset_failure, timings in pages:
+                    result = {"first_asset_failure": first_asset_failure, "events": list(events), "assets": timings.snapshot(), "closed": page.is_closed()}
                     if not page.is_closed():
                         try:
                             result["document"] = page.locator("body").evaluate(
