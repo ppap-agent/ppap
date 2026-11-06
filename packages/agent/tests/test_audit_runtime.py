@@ -377,3 +377,35 @@ def test_all_standard_suites_execute_explicit_clauses_without_claiming_correctne
     assert not [row for row in result["findings"] if row["status"] == "ERR"]
     assert all(row["coverage"] == "mapped" for row in result["coverage"])
     assert all(target.verification == "unverified" for target in targets)
+
+
+def test_unavailable_target_survives_real_guest_without_losing_other_targets():
+    program = PROGRAM.replace(
+        b"context.cache['count'] =",
+        b"assert context.audit_file.audit_id != 'target-0'\n    assert 'target-0' not in context.paths\n    assert 'target-0' in context.group_context.unavailable_files\n    context.cache['count'] =",
+    )
+    snapshot, sources, programs = request(program)
+    del sources["target-0"]
+    result = run_audit_process(snapshot, sources, programs, unavailable_sources=frozenset({"target-0"}))
+    assert result["process_id"] != os.getpid()
+    assert [(row["file_version_id"], row["status"]) for row in result["findings"]] == [("target-0", "ERR"), ("target-0", "ERR"), ("target-1", "PASS"), ("target-1", "PASS")]
+    assert result["input_digest"] == snapshot.input_digest
+    assert result["unavailable_sources"] == ["target-0"]
+
+
+@pytest.mark.parametrize("mutation", ["availability", "pass", "evidence"])
+def test_host_rejects_guest_fabrication_for_unavailable_sources(mutation):
+    from agent.execution.audit_runtime import _validate_output
+
+    snapshot, sources, programs = request()
+    del sources["target-0"]
+    unavailable = frozenset({"target-0"})
+    result = run_audit(snapshot, sources, programs, unavailable_sources=unavailable)
+    if mutation == "availability":
+        result["unavailable_sources"] = []
+    elif mutation == "pass":
+        result["findings"][0]["status"] = "PASS"
+    else:
+        result["findings"][-1]["evidence_file_version_ids"] = ["target-1", "target-0"]
+    with pytest.raises(AuditRunError, match="audit_output_(availability_mismatch|unavailable_source)"):
+        _validate_output(snapshot, result, unavailable_sources=unavailable)

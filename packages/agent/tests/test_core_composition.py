@@ -297,3 +297,135 @@ def test_development_freezes_reference_type_and_rules_without_requiring_a_rule()
     assert restored.rule_id == "reference-rules"
     assert restored.rules[0]["id"] == "P1"
     assert restored.appendix == [{"text": "已确认附录"}]
+
+
+def test_standard_missing_target_never_imports_its_program_and_keeps_other_results(tmp_path):
+    from dataclasses import replace
+
+    from audit.storage_errors import ObjectMissing
+
+    snapshot, sources, _, spec, suite = setup(unbound=True)
+    broken_code = {"checker.py": b"raise AssertionError('Missing original must never import its checker')\n"}
+    missing = snapshot.targets[0]
+    snapshot = replace(snapshot, targets=(replace(missing, suite_revision_id="missing-revision", binding=replace(missing.binding, checker_digest=checker_digest(broken_code))), snapshot.targets[1]))
+    spec = spec.model_copy(update={"checker_snapshot_digest": snapshot.input_digest})
+    broken_suite = SimpleNamespace(revision=SimpleNamespace(resolved_digest="a" * 64), files=broken_code)
+    reads, authorization = [], []
+
+    def source(identity, limit):
+        assert authorization == [spec]
+        reads.append(identity)
+        if identity == "file-a":
+            raise ObjectMissing("private storage details")
+        return sources[identity]
+
+    guest = ControlledGuest(tmp_path)
+    runtime = CoreRuntime(guest, lambda _: snapshot, lambda revision, _: broken_suite if revision == "missing-revision" else suite)
+    controller = Controller(runtime, source, executor_revision="runtime", protocol_revision="protocol", authorize=authorization.append)
+    context = ExecutionContext()
+    result = controller.handle(spec, context)
+    assert reads == ["file-a", "file-b", "reference"] and guest.calls == 1
+    assert [(item.locator["file_version_id"], item.status) for item in result.findings] == [("file-a", "ERR"), ("file-b", "UNABLE")]
+    assert len([row for row in result.coverage.rule_items if row["coverage"] == "unsupported"]) == 2
+    assert result.coverage.checker_execution["input_digest"] == snapshot.input_digest
+    assert result.coverage.checker_execution["unavailable_file_version_ids"] == ["file-a"]
+    assert context.unavailable_sources == frozenset()
+    assert "private storage" not in result.model_dump_json()
+
+
+@pytest.mark.parametrize("kind", ["reference-kind", None])
+def test_missing_reference_blocks_dependent_clause_but_not_independent_clause(tmp_path, kind):
+    from dataclasses import replace
+
+    snapshot, sources, _, spec, _ = setup()
+    code = b"""from audit.contracts import AuditResultItem
+
+def check(context):
+    assert 'reference' not in context.group_context.by_audit_id
+    assert 'reference' in context.group_context.unavailable_files
+    if context.clause_id == 'A':
+        context.group_context.get_files_by_type('reference-kind')
+    assert context.sources[context.audit_file.audit_id] in {b'a', b'b'}
+    return AuditResultItem(classification='test', item=context.clause_id, priority='P0', status='PASS', suggestions='Independent native check', clause_id=context.clause_id, checks_performed=1)
+"""
+    digest = checker_digest({"checker.py": code})
+    snapshot = replace(
+        snapshot,
+        inputs=tuple(replace(row, document_type=kind) if row.role == "reference" else row for row in snapshot.inputs),
+        targets=tuple(replace(row, binding=replace(row.binding, checker_digest=digest)) for row in snapshot.targets),
+    )
+    spec = spec.model_copy(update={"checker_snapshot_digest": snapshot.input_digest})
+    suite = SimpleNamespace(revision=SimpleNamespace(resolved_digest="a" * 64), files={"checker.py": code})
+
+    def source(identity, limit):
+        if identity == "reference":
+            raise DeepError("deep_input_missing")
+        return sources[identity]
+
+    guest = ControlledGuest(tmp_path)
+    runtime = CoreRuntime(guest, lambda _: snapshot, lambda *_: suite)
+    result = Controller(runtime, source, executor_revision="runtime", protocol_revision="protocol").handle(spec)
+    assert [item.status for item in result.findings] == ["UNABLE", "PASS", "UNABLE", "PASS"]
+    assert guest.calls == 1
+    assert result.coverage.checker_execution["unavailable_file_version_ids"] == ["reference"]
+
+
+@pytest.mark.parametrize("failure", ["deep_input_unauthorized", "deep_integrity_mismatch", "deep_budget_exhausted", "permission", "tampered", "unknown"])
+def test_missing_input_tolerance_never_downgrades_other_failures(tmp_path, failure):
+    snapshot, sources, _, spec, suite = setup()
+    guest = ControlledGuest(tmp_path)
+    runtime = CoreRuntime(guest, lambda _: snapshot, lambda *_: suite)
+
+    def source(identity, limit):
+        if identity == "file-a":
+            raise DeepError("deep_input_missing")
+        if failure == "permission":
+            raise PermissionError("storage permission denied")
+        if failure == "unknown":
+            raise RuntimeError("unknown source failure")
+        if failure == "tampered":
+            return b"tampered"
+        raise DeepError(failure)
+
+    with pytest.raises(DeepError):
+        Controller(runtime, source, executor_revision="runtime", protocol_revision="protocol").handle(spec)
+    assert guest.calls == 0
+
+
+def test_authorization_and_deep_missing_inputs_still_fail_before_guest(tmp_path):
+    snapshot, sources, _, spec, suite = setup(mode="deep")
+    guest = ControlledGuest(tmp_path)
+    runtime = CoreRuntime(guest, lambda _: snapshot, lambda *_: suite)
+    reads = []
+
+    def deny(_):
+        raise DeepError("deep_input_unauthorized")
+
+    controller = Controller(runtime, lambda *args: reads.append(args), executor_revision="runtime", protocol_revision="protocol", authorize=deny)
+    with pytest.raises(DeepError, match="deep_input_unauthorized"):
+        controller.handle(spec)
+    assert not reads
+
+    def source(*args):
+        raise DeepError("deep_input_missing")
+
+    controller = Controller(runtime, source, executor_revision="runtime", protocol_revision="protocol")
+    with pytest.raises(DeepError, match="deep_input_missing"):
+        controller.handle(spec)
+    assert guest.calls == 0
+
+
+def test_unavailable_sources_are_explicit_disjoint_and_change_attempt_identity(tmp_path):
+    snapshot, sources, programs, *_ = setup()
+    missing = frozenset({"file-a"})
+    reduced = {key: value for key, value in sources.items() if key not in missing}
+    snapshot.validate_sources(reduced, unavailable=missing)
+    complete = AuditJobSpec.from_snapshot(snapshot)
+    incomplete = write_audit_manifest(tmp_path / "inputs", snapshot, reduced, programs, unavailable_sources=missing, allow_model_calls=False)
+    assert incomplete.input_digest == complete.input_digest == snapshot.input_digest
+    assert incomplete.execution_id != AuditJobSpec.from_snapshot(snapshot, allow_model_calls=False).execution_id
+    for data, unavailable in [(reduced, frozenset()), (sources, missing), (reduced, frozenset({"foreign"}))]:
+        with pytest.raises(ValueError, match="snapshot_sources_mismatch"):
+            snapshot.validate_sources(data, unavailable=unavailable)
+    with pytest.raises(ValueError, match="snapshot_source_digest_mismatch"):
+        snapshot.validate_sources({**reduced, "file-b": b"changed"}, unavailable=missing)
