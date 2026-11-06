@@ -361,3 +361,23 @@ def test_post_generation_reaudit_cannot_start_an_extra_paid_request(tmp_path):
     with pytest.raises(ValueError):
         probe.observe_provider({"input": "unexpected post-generation model request"})
     assert probe.facts["provider_requests"] == 0
+
+
+def test_host_fixture_settings_use_explicit_random_credentials_and_distinct_loopback_ports():
+    from cryptography.fernet import Fernet
+
+    env = configuration()
+    env.update(
+        LIVE_PG_MIGRATOR_PASSWORD="synthetic-non-default-password",
+        LIVE_S3_ACCESS_KEY="synthetic-access",
+        LIVE_S3_SECRET_KEY="synthetic-storage-password",
+        LIVE_ENCRYPTION_KEY=Fernet.generate_key().decode(),
+    )
+    settings = acceptance.local_settings(env)
+    assert settings.profile == "remote-dev" and settings.feishu_app_id == "checker-live"
+    assert settings.pg_host == "127.0.0.1" and settings.pg_port == 15432
+    assert settings.s3_endpoint == "http://127.0.0.1:19000"
+    assert settings.personal_model_max_requests == 32 and settings.personal_model_max_input_tokens == 200000 and settings.personal_model_max_output_tokens == 32000
+    config = yaml.safe_load((ROOT / "deploy/isolated-dev/checker-live.yaml").read_text())
+    assert config["services"]["api"]["ports"] == ["127.0.0.1:18080:8080"]
+    assert config["services"]["web"]["ports"] == ["127.0.0.1:14173:4173"]

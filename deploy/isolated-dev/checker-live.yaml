@@ -14,8 +14,8 @@ x-product: &product
   PPAP_S3_ACCESS_KEY: ${LIVE_S3_ACCESS_KEY:?}
   PPAP_S3_SECRET_KEY: ${LIVE_S3_SECRET_KEY:?}
   PPAP_S3_BUCKET: checker-live
-  PPAP_WEB_URL: http://127.0.0.1:4173
-  PPAP_PUBLIC_API_URL: http://127.0.0.1:8080
+  PPAP_WEB_URL: http://127.0.0.1:14173
+  PPAP_PUBLIC_API_URL: http://127.0.0.1:18080
   PPAP_USAGE_CHARGE_ENABLED: "false"
   PPAP_FEISHU_NOTIFICATIONS_ENABLED: "false"
   FEISHU_APP_ID: checker-live
@@ -48,7 +48,7 @@ services:
       POSTGRES_USER: ppap
       POSTGRES_PASSWORD: ${LIVE_PG_BOOTSTRAP_PASSWORD:?}
       POSTGRES_DB: postgres
-    ports: ["127.0.0.1:5432:5432"]
+    ports: ["127.0.0.1:15432:5432"]
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -82,7 +82,7 @@ services:
     environment:
       MINIO_ROOT_USER: ${LIVE_S3_ACCESS_KEY:?}
       MINIO_ROOT_PASSWORD: ${LIVE_S3_SECRET_KEY:?}
-    ports: ["127.0.0.1:9000:9000"]
+    ports: ["127.0.0.1:19000:9000"]
     volumes:
       - silo-data:/data
     healthcheck:
@@ -101,7 +101,7 @@ services:
     entrypoint: [sh, -ec]
     command: ['mcli alias set live http://silo:9000 "$$ACCESS" "$$SECRET" >/dev/null && mcli mb --ignore-existing live/checker-live']
   api:
-    ports: ["127.0.0.1:8080:8080"]
+    ports: ["127.0.0.1:18080:8080"]
     image: ppap-api:${PPAP_BUILD_SHA:?}
     depends_on:
       init-db:
@@ -163,5 +163,5 @@ services:
         condition: service_healthy
     environment:
       PPAP_BUILD_SHA: ${PPAP_BUILD_SHA:?}
-      PPAP_PUBLIC_API_URL: http://127.0.0.1:8080
-    ports: ["127.0.0.1:4173:4173"]
+      PPAP_PUBLIC_API_URL: http://127.0.0.1:18080
+    ports: ["127.0.0.1:14173:4173"]
