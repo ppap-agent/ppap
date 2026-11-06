@@ -364,3 +364,9 @@ Suite 的 `checker.py` 可以提供 `precheck(context)`，返回准备事实列�
 Worker 只发送预检 Job、租户、attempt 和 lease owner。Controller 从持久 Job 核验身份并加载冻结原件和 Suite 字节，再由已有 `ContainerRuntime` 降权 guest 执行；企业 Python 不能在 Worker 或 Controller import。`execute-precheck` 不签发模型 grant，不进入付费调用/用量日志。执行前后及执行期间都核对租约，晚到结果不能覆盖新 attempt。
 
 Guest 提交的准备事实均不能自证 `certified`。既有硬阻断仍要求精确输入/执行/Suite 身份、已确认的关键缺陷、允许的阻断代码及原件定位；正式 NG 不升级为预检阻断。`tests/integration/product/test_v4_precheck_platform.py` 检查真实 PostgreSQL/API 身份、历史、免费和阻断合同，`packages/agent/tests/test_suite_prechecks.py` 检查冻结程序、无模型能力与 guest 消息合同；受控测试不替代生产 guest 的操作系统隔离验收。
+
+## 自定义规则与 Suite
+
+`POST /rules` 将已授权规则原件发布为企业自己的不可变 Suite，不需要官方基线或预设文档类型。首次发布只保存规则和没有可执行入口的固定占位文件，所有条款覆盖均为 `unsupported`，没有回归证明，不自动调用付费模型，也不复用历史 profile 路由。默认指针、发布记录和 RuleVersion 在同一事务内提交；这是仅发布规则，不是强制执行未经验证的代码。
+
+同一前置规则链共享 Suite key。后继规则产生新的 revision 并清除可执行绑定，历史 Round 保持原快照。请求重发只读回原回执，不重新采用旧版本。如果另一成员已发布新的规则或采用优化后的 Checker，旧规则编辑请求返回 `suite_head_conflict`；读取最新 Suite 后在版本工作区保存候选。生成 Checker、样本验证和采用继续使用同一 Suite 开发/发布路径，可执行未验证版本仍需明确确认。

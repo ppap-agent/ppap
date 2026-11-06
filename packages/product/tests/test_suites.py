@@ -171,3 +171,30 @@ def test_optional_program_tombstone_preserves_base_and_cannot_delete_required_as
     assets.rows["absent"] = replace(deleted, id="absent", base_revision_id="official")
     with pytest.raises(ValueError, match="suite_deleted_object_missing"):
         assets.resolve("absent")
+
+
+@pytest.mark.parametrize("change", [None, "checker", "resources", "binding"])
+def test_only_inert_unbound_starter_can_freeze_without_execution_consent(change):
+    from product.suites import UNIMPLEMENTED_CHECKER_SOURCE, is_unimplemented_suite
+
+    files = {"rules.json": b'{"rules":[{"id":"r1"}],"checker_binding":{}}', "checker.py": UNIMPLEMENTED_CHECKER_SOURCE}
+    if change == "checker":
+        files["checker.py"] = b"raise RuntimeError('do not execute')\n"
+    elif change == "resources":
+        files["resources.py"] = b"raise RuntimeError('do not import')\n"
+    elif change == "binding":
+        files["rules.json"] = b'{"rules":[{"id":"r1"}],"checker_binding":{"r1":"checker:check"}}'
+    assets = Assets()
+    assets.add("starter", owner="a", files=files)
+    suite = assets.resolve("starter")
+    code = checker_digest({path: body for path, body in files.items() if path in {"checker.py", "resources.py"}})
+    binding = RuleBinding("cp", code, json.loads(files["rules.json"])["checker_binding"])
+    args = dict(suite=suite, file_version_id="file", binding=binding, validation=None, related_suite_digests={}, library_revision="lib")
+    assert is_unimplemented_suite(suite) is (change is None)
+    if change is None:
+        frozen = freeze_execution(**args)
+        assert frozen.verification == "unverified"
+        assert frozen.binding.validated_rule_digest is None
+    else:
+        with pytest.raises(ValueError, match="suite_validation_required"):
+            freeze_execution(**args)

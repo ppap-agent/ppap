@@ -11,6 +11,9 @@ from types import MappingProxyType
 
 SUITE_PATHS = frozenset({"rules.json", "appendix.json", "checker.py", "resources.py", "templates.json", "tests.json"})
 REQUIRED_PATHS = frozenset({"rules.json", "checker.py"})
+# Deliberately has no entrypoint or import. Uploading rules does not authorize
+# model generation or execution of code guessed from a historical rule profile.
+UNIMPLEMENTED_CHECKER_SOURCE = b'"""No checker has been generated for these rules."""\n'
 MAX_SUITE_DEPTH = 16
 MAX_OBJECT_BYTES = 8 * 1024 * 1024
 DIGEST = re.compile(r"^[a-f0-9]{64}$")
@@ -67,6 +70,11 @@ class ResolvedSuite:
     def __post_init__(self) -> None:
         object.__setattr__(self, "files", MappingProxyType(dict(self.files)))
         object.__setattr__(self, "object_digests", MappingProxyType(dict(self.object_digests)))
+
+
+def is_unimplemented_suite(suite: ResolvedSuite) -> bool:
+    """Only this inert starter can be used without executable-code confirmation."""
+    return suite.files.get("checker.py") == UNIMPLEMENTED_CHECKER_SOURCE and "resources.py" not in suite.files and json.loads(suite.files["rules.json"]).get("checker_binding") == {}
 
 
 def validate_content(files: Mapping[str, bytes], *, official: bool) -> None:

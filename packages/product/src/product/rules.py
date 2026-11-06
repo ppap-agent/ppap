@@ -24,8 +24,10 @@ def rule_parse_request(request_id, source_file_id, source_file_version_id, docum
         ids = [str(uuid.UUID(str(value))) for value in (request_id, source_file_id, source_file_version_id)]
     except (ValueError, TypeError, AttributeError):
         raise ValueError("invalid_rule_request") from None
-    if not isinstance(document_type, str) or (document_type and document_type not in document_types()):
+    if not isinstance(document_type, str):
         raise ValueError("unknown_rule_type")
+    if document_type:
+        document_type = normalize_document_type(document_type)
     return ids[0], {"source_file_id": ids[1], "source_file_version_id": ids[2], "document_type": document_type}
 
 
@@ -35,6 +37,17 @@ def rule_parse_view(job_id: str, payload: dict, status: str, result, expired: bo
 
 def document_types() -> list[str]:
     return [item.get_type_name() for item in PpapDocumentType if item != PpapDocumentType.UNKNOWN]
+
+
+def normalize_document_type(value: Any) -> str:
+    """Known names are canonicalized; new enterprise document types need no seed."""
+    if not isinstance(value, str) or not value.strip() or len(value.strip()) > 200 or any(ord(char) < 32 for char in value):
+        raise ValueError("unknown_rule_type")
+    value = value.strip()
+    kind = PpapDocumentType.from_string(value)
+    if value == PpapDocumentType.UNKNOWN.get_type_name():
+        raise ValueError("unknown_rule_type")
+    return kind.get_type_name() if kind != PpapDocumentType.UNKNOWN else value
 
 
 def customer_scope(body: dict, case_context: dict | None = None) -> str:
@@ -73,10 +86,7 @@ def latest_rule_versions(rules: list[dict]) -> list[dict]:
 def normalize_rule_body(value: dict) -> dict:
     if not isinstance(value, dict) or value.get("kind", "engine") != "engine":
         raise ValueError("invalid_rule_body")
-    raw_type = value.get("type")
-    doc_type = PpapDocumentType.from_string(raw_type) if isinstance(raw_type, str) else PpapDocumentType.UNKNOWN
-    if doc_type == PpapDocumentType.UNKNOWN:
-        raise ValueError("unknown_rule_type")
+    document_type = normalize_document_type(value.get("type"))
     raw_profile = value.get("rule_profile")
     if raw_profile is not None and not isinstance(raw_profile, str):
         raise ValueError("invalid_rule_profile")
@@ -112,7 +122,7 @@ def normalize_rule_body(value: dict) -> dict:
         if not isinstance(values, list) or any(not isinstance(item, str) or not item.strip() for item in values):
             raise ValueError("invalid_rule_metadata")
         metadata[field] = [item.strip() for item in values]
-    body = {"kind": "engine", "rule_profile": profile, "type": doc_type.get_type_name(), "rules": rules, **metadata}
+    body = {"kind": "engine", "rule_profile": profile, "type": document_type, "rules": rules, **metadata}
     if "appendix" in value:
         body["appendix"] = normalize_rule_appendix(value["appendix"], ids)
     return body
