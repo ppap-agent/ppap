@@ -43,14 +43,16 @@ def result_row(source):
 def complete_coverage(payload, result):
     for source, row in zip(payload["files"], result["files"]):
         expected = [*(source.get("required_structure") or []), *(source.get("precheck_criteria") or [])]
-        observed = {item["id"] for item in row["facts"]}
+        # Element facts retain their own IDs; only the criterion's root fact
+        # reports its coverage. A satisfied element cannot stand in for it.
+        observed = {item["id"] for item in row["facts"] if item.get("source_id") == item["id"]}
         for criterion in expected:
             if criterion["id"] not in observed:
                 item = fact(criterion["id"], "not_checked", criterion["criterion"])
                 item["source_clause"] = criterion.get("source_clause") or criterion.get("source_cells")
                 item["next_step"] = "此结构准则尚未核实，请人工检查原件；不能视为通过。"
                 row["facts"].append(item)
-        actual = {item["id"]: item for item in row["facts"] if item["id"] in {criterion["id"] for criterion in expected}}
+        actual = {item["id"]: item for item in row["facts"] if item["id"] in {criterion["id"] for criterion in expected} and item.get("source_id") == item["id"]}
         row["coverage"] = {"expected": len(expected), "by_status": {status: sum(item["status"] == status for item in actual.values()) for status in sorted(STATUSES)}}
     return result
 
@@ -81,7 +83,15 @@ def validate_result(payload, result):
         if (
             not isinstance(facts, list)
             or len(facts) > 512
-            or any(not isinstance(item, dict) or not isinstance(item.get("id"), str) or item.get("source_id") != item["id"] or item.get("status") not in STATUSES for item in facts)
+            or any(
+                not isinstance(item, dict)
+                or not isinstance(item.get("id"), str)
+                or not item["id"]
+                or not isinstance(item.get("source_id"), str)
+                or not item["source_id"]
+                or item.get("status") not in STATUSES
+                for item in facts
+            )
         ):
             raise ValueError("invalid_precheck_fact")
         if len({item["id"] for item in facts}) != len(facts):
