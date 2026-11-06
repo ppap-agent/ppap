@@ -306,7 +306,8 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
         accepted = self.store.accept_draft(self.alice, draft, "per-input")
         by_id = {item["file_version_id"]: item for item in accepted["inputs"]}
         self.assertEqual(by_id[first.id]["rule"]["id"], RULE_A)
-        self.assertEqual(by_id[second.id]["rule"]["body"], self.rule_body())
+        expected_body = {**self.rule_body(), "title": "客户规则", "suite_key": rule["body"]["suite_key"], "checker_binding": {}, "appendix": []}
+        self.assertEqual(by_id[second.id]["rule"]["body"], expected_body)
         self.assertIsNone(by_id[reference.id]["rule"])
         self.assertNotIn("rule", accepted)
         self.assertEqual(self.store.accept_draft(self.alice, draft, "per-input")["id"], accepted["id"])
@@ -318,7 +319,8 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
         self.assertNotEqual(next_round["id"], accepted["id"])
         self.assertEqual(next_round["predecessor_id"], accepted["id"])
         self.assertEqual(self.store.get_round(accepted["id"])["inputs"], accepted["inputs"])
-        self.assertEqual(next(item for item in next_round["inputs"] if item["file_version_id"] == second.id)["rule"]["body"], changed)
+        expected_new = {**changed, "title": "新版客户规则", "suite_key": rule["body"]["suite_key"], "checker_binding": {}, "appendix": []}
+        self.assertEqual(next(item for item in next_round["inputs"] if item["file_version_id"] == second.id)["rule"]["body"], expected_new)
 
     def test_same_key_concurrent_acceptance_and_conflicts_check_bindings_roles_and_round_access(self):
         from product.fixtures import RULE_A

@@ -514,6 +514,9 @@ class AuthStore:
                             body={
                                 "kind": "engine",
                                 "type": "资料就绪",
+                                "customers": [],
+                                "models": [],
+                                "parts": [],
                                 "rules": [{"id": "presence", "category": "资料", "priority": "P0", "rule_to_check": "原件资料已经就绪", "type_of_rule": "text"}],
                             },
                             previous=None,

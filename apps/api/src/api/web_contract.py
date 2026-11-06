@@ -145,11 +145,15 @@ class RuleItem(TypedDict):
 
 
 class EngineRuleBody(TypedDict):
+    suite_key: NotRequired[str]
+    suite_revision_id: NotRequired[str]
+    checker_binding: NotRequired[dict[str, str]]
+    title: NotRequired[str]
     preset_key: NotRequired[str]
     appendix: NotRequired[list[dict[str, Any]]]
     kind: Literal["engine"]
     type: str
-    rule_profile: str
+    rule_profile: NotRequired[str]
     customers: list[str]
     models: list[str]
     parts: list[str]

@@ -3294,6 +3294,10 @@ export interface components {
             appendix?: {
                 [key: string]: unknown;
             }[];
+            /** Checker Binding */
+            checker_binding?: {
+                [key: string]: string;
+            };
             /** Customers */
             customers: string[];
             /**
@@ -3308,9 +3312,15 @@ export interface components {
             /** Preset Key */
             preset_key?: string;
             /** Rule Profile */
-            rule_profile: string;
+            rule_profile?: string;
             /** Rules */
             rules: components["schemas"]["RuleItem"][];
+            /** Suite Key */
+            suite_key?: string;
+            /** Suite Revision Id */
+            suite_revision_id?: string;
+            /** Title */
+            title?: string;
             /** Type */
             type: string;
         };
