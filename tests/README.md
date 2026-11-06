@@ -244,7 +244,12 @@ Checker are seeded. Eight source files and real baseline rounds use the product
 API. Chromium enters eight independent answers, configures the personal account,
 starts one real optimization, refreshes, and reopens its result in a fresh session.
 
-The six training and two held-out expectations are literal and independent. The
+The six training expectations are literal and independent. Because this repository
+is public, each run privately generates fresh non-training holdout values and
+randomly assigns the positive and negative cases to the two hidden ordinals.
+A trusted threshold Oracle freezes their answers before optimization; it never
+uses candidate code or model output. Completed artifacts cannot predict a later
+run's hidden inputs or filename/answer mapping. The
 held-out set covers PASS and NG. No corrected Checker or result is injected; the
 provider must repair a real missed detection and preserve both sets. The gate
 binds each case to the frozen original, Oracle, operation, base Suite, candidate
