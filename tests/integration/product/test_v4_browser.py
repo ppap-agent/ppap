@@ -83,7 +83,7 @@ def running_product(auth_store_factory, v4_objects, core_system, tmp_path, reque
     principal = admin.upsert_feishu_identity("browser-v4", "member")
     suites = {"UAES": ("UAES:U12",), "理想": ("理想:L12",), "蔚来": ("蔚来:N04", "蔚来:N02")}
     core_system.adopt_standard(admin, principal, *suites[customer])
-    core_system.install(admin)
+    core_system.install(admin, guest_process=True)
     api = build_product_store(settings, objects=admin.objects, role="api")
     worker = build_product_store(settings, objects=admin.objects, role="worker")
     listener = socket.socket()
@@ -116,7 +116,11 @@ def running_product(auth_store_factory, v4_objects, core_system, tmp_path, reque
                 job = worker.claim_job("native-browser")
                 if job:
                     started = time.monotonic()
-                    process_claimed(worker, job, "native-browser", rule_ai=Metadata(customer))
+                    result = process_claimed(worker, job, "native-browser", rule_ai=Metadata(customer))
+                    if job.kind == "audit":
+                        failures = [{key: row.get(key) for key in ("status", "suggestions", "item_key")} for row in result.get("findings", []) if row.get("status") == "ERR"]
+                        if result.get("error_code") or failures:
+                            print(f"audit execution diagnostics: {result.get('error_code') or failures}", flush=True)
                     print(f"worker job {job.kind} took {time.monotonic() - started:.2f}s", flush=True)
             except Exception as error:
                 errors.append(type(error).__name__)

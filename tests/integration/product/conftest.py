@@ -233,6 +233,8 @@ def core_system(monkeypatch, tmp_path):
     This is not a claim of socket, container, provider, or process isolation.
     """
     import json
+    import subprocess
+    import time
 
     from agent.client import DeepClient
     from agent.core_program import CoreRuntime, run_audit_manifest
@@ -251,6 +253,7 @@ def core_system(monkeypatch, tmp_path):
         def __init__(self):
             self.calls = 0
             self.audit_jobs = []
+            self.guest_process = False
 
         def ready(self, operation="audit"):
             return True
@@ -276,12 +279,39 @@ def core_system(monkeypatch, tmp_path):
                         }
                     )
                 )
-            run_audit_manifest(inputs, work, grants)
+            if self.guest_process:
+                # Production enters the guest on its own process's main thread.
+                # Browser workers run in a background thread; inlining the guest
+                # there makes SIGALRM clause deadlines fail before every check.
+                # Preserve the real entrypoint/deadlines, without claiming the
+                # local test process provides container or privilege isolation.
+                env = {key: value for key, value in os.environ.items() if key in {"PATH", "LANG", "LC_ALL", "VIRTUAL_ENV"}}
+                env["PYTHONPATH"] = os.pathsep.join(sys.path)
+                subprocess.run(
+                    [
+                        sys.executable,
+                        "-c",
+                        "import sys; from pathlib import Path; from agent.execution.guest import run_entrypoint; run_entrypoint(*map(Path, sys.argv[1:]))",
+                        str(inputs),
+                        str(work),
+                        str(grants),
+                    ],
+                    check=True,
+                    timeout=max(0.001, deadline - time.monotonic()),
+                    env=env,
+                    capture_output=True,
+                )
+            else:
+                run_audit_manifest(inputs, work, grants)
 
         def execute_precheck(self, payload, snapshot, sources, programs, context):
             return execute_precheck(self, payload, snapshot, sources, programs, context)
 
-        def install(self, store, *, controlled_model=False):
+        def install(self, store, *, controlled_model=False, guest_process=False):
+            if guest_process and controlled_model:
+                raise ValueError("Controlled model transport patches cannot cross the guest process boundary")
+            self.guest_process = guest_process
+
             class ControlledRuntime(CoreRuntime):
                 def execute_snapshot(self, *args, **kwargs):
                     # Model capability is opt-in only when the test provides a
