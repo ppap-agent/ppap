@@ -588,3 +588,35 @@ def test_legacy_accepted_operation_without_receipt_job_replays_without_new_write
         assert replay.json()[field] == accepted[field]
     with admin._conn() as conn:
         assert conn.execute("SELECT (SELECT count(*) FROM product.audit_rounds), (SELECT count(*) FROM engine.jobs), (SELECT count(*) FROM product.usage_events)").fetchone() == counts
+
+
+@pytest.mark.parametrize(("customer", "entry"), [("UAES", "U12"), ("理想", "L12"), ("蔚来", "N04"), ("蔚来", "N02")])
+def test_background_worker_preserves_real_guest_clause_deadlines(system, core_system, customer, entry):
+    from concurrent.futures import ThreadPoolExecutor
+
+    client, worker, admin, _ = system
+    core_system.install(admin, guest_process=True)
+    path, _ = prepare(system, core_system, customer, entry)
+    task = client.get(path).json()
+    accepted = client.post(path + "/confirm", json=confirmation(task))
+    assert accepted.status_code == 201, accepted.text
+
+    def work():
+        while True:
+            job = worker.claim_job("background-core")
+            assert job is not None
+            process_claimed(worker, job, "background-core")
+            if job.kind == "audit":
+                return
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pool.submit(work).result(timeout=30)
+    result = client.get("/rounds/" + accepted.json()["round_id"]).json()
+    assert result["execution"] == "completed", result
+    assert result["executor"] == "ppap-checker-core", result
+    assert result["findings"] and all(row["status"] != "ERR" for row in result["findings"]), result["findings"]
+    # This deliberately sparse workbook proves deadline execution, not a
+    # supplier-document oracle. Missing content stays NG/UNABLE, never PASS.
+    assert any(row["status"] in {"NG", "UNABLE"} for row in result["findings"]), result["findings"]
+    assert len(core_system.audit_jobs) == 1
+    assert core_system.audit_jobs[0].allow_model_calls is False
