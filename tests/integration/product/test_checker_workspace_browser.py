@@ -19,10 +19,8 @@ import subprocess
 import sys
 import threading
 import time
-from collections import deque
 from pathlib import Path
 from types import SimpleNamespace
-from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
@@ -411,26 +409,10 @@ def answer(page, f, round_, expected):
 
 
 @pytest.mark.parametrize("viewport", [{"width": 1440, "height": 1000}, {"width": 390, "height": 844}], ids=["desktop", "mobile"])
-def test_feedback_optimize_verify_publish_reaudit_and_rollback(workspace_product, viewport, preview_asset_timing_factory, preview_asset_path):
+def test_feedback_optimize_verify_publish_reaudit_and_rollback(workspace_product, viewport, observe_browser_assets):
     from playwright.sync_api import expect, sync_playwright
 
     f = workspace_product
-
-    def observe_startup(page):
-        # A blank body cannot distinguish missing modules from a missing result.
-        # Capture bounded same-origin paths and error types, never request data.
-        origin = urlsplit(f.web)
-        events, timings = deque(maxlen=12), preview_asset_timing_factory()
-
-        def asset_path(url):
-            return preview_asset_path(url, origin)
-
-        page.on("request", lambda request: timings.start(request, path) if (path := asset_path(request.url)) else None)
-        page.on("requestfinished", lambda request: timings.finish(request) if asset_path(request.url) else None)
-        page.on("requestfailed", lambda request: (timings.finish(request), events.append({"failed_asset": path})) if (path := asset_path(request.url)) else None)
-        page.on("response", lambda response: events.append({"asset": path, "status": response.status}) if response.status >= 400 and (path := asset_path(response.url)) else None)
-        page.on("pageerror", lambda error: events.append({"error_type": error.name}))
-        return lambda: {"events": list(events), "assets": timings.snapshot()}
 
     with sync_playwright() as playwright:
         executable = os.environ.get("PPAP_BROWSER_EXECUTABLE")
@@ -438,7 +420,7 @@ def test_feedback_optimize_verify_publish_reaudit_and_rollback(workspace_product
         context = browser.new_context(viewport=viewport)
         context.add_cookies([{"name": SESSION_COOKIE, "value": f.session, "url": f.web, "httpOnly": True}])
         page = context.new_page()
-        startup_diagnostics = observe_startup(page)
+        startup_diagnostics = observe_browser_assets(page, f.web)
         page.set_default_timeout(20000)
         writes = []
         page.on(
@@ -499,7 +481,7 @@ def test_feedback_optimize_verify_publish_reaudit_and_rollback(workspace_product
             context = browser.new_context(viewport=viewport)
             context.add_cookies([{"name": SESSION_COOKIE, "value": f.admin.create_session(f.alice), "url": f.web, "httpOnly": True}])
             page = context.new_page()
-            startup_diagnostics = observe_startup(page)
+            startup_diagnostics = observe_browser_assets(page, f.web)
             page.set_default_timeout(20000)
             page.goto(f.web + f"/audit?round={original['id']}&file={uploaded['id']}&clause=R1&basis=1&checkerFeedbackClause=R1")
             expect(page.get_by_role("heading", name="修复结果", exact=True)).to_be_visible()
@@ -551,13 +533,20 @@ def test_feedback_optimize_verify_publish_reaudit_and_rollback(workspace_product
             assert not f.errors
         except BaseException:
             try:
+                print("Browser asset diagnostics:", json.dumps(startup_diagnostics()), flush=True)
+            except Exception:
+                print("Browser asset diagnostics unavailable", flush=True)
+            try:
                 document = page.evaluate(
                     "() => ({readyState: document.readyState, appChildren: document.getElementById('app')?.childElementCount ?? null, bodyTextLength: document.body.innerText.length})"
                 )
-                print("Browser startup diagnostics:", json.dumps({**startup_diagnostics(), "document": document}), flush=True)
+                print("Browser document diagnostics:", json.dumps(document), flush=True)
+            except Exception:
+                print("Browser document diagnostics unavailable", flush=True)
+            try:
                 print(page.locator("body").aria_snapshot(timeout=1000)[:8000], flush=True)
-            except Exception as error:
-                print("Browser diagnostics unavailable:", type(error).__name__, flush=True)
+            except Exception:
+                print("Browser ARIA diagnostics unavailable", flush=True)
             raise
         finally:
             f.pause.clear()
