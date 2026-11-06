@@ -1,12 +1,12 @@
 """Real V3 dimension sample plus the human-oracle clause, assembled through core and the engine."""
 
+import json
 import unittest
 
 from audit.audits import RoundInput, RoundWork
-from audit.engine.checkers.rule_declarations import declarations_for_target, freeze_target_rule_execution
-from audit.rule_coverage import COVERAGE_MAPPED
+from audit.suite_migration import migrated_builtin_suite
+from corpus_contracts.core_round import bind_suite, run_suite_round
 from corpus_contracts.oracle import original
-from product import run_round_from_bytes
 
 
 class DimensionProjectionTests(unittest.TestCase):
@@ -19,7 +19,8 @@ class DimensionProjectionTests(unittest.TestCase):
             "“零件号”、“零件名”、“项目”、“项目阶段”、“日期”是否存在，如果不存在则不通过，否则继续识别；"
             "当“零件号”、“零件名”、“项目”、“项目阶段”、“日期”内容均不为空则通过，否则不通过；"
         )
-        declared_text = declarations_for_target("尺寸检验报告", file_name, "v3")[0][1]
+        source = migrated_builtin_suite("v3", "全功能检验报告")
+        declared_text = json.loads(source.files["rules.json"])["rules"][0]["rule_to_check"]
         body = {
             "kind": "engine",
             "type": "尺寸检验报告",
@@ -29,9 +30,8 @@ class DimensionProjectionTests(unittest.TestCase):
                 {"id": "unconfirmed-1", "category": "客户规则", "priority": "P0", "rule_to_check": customer_text},
             ],
         }
-        execution = freeze_target_rule_execution(body, file_name)
-        self.assertEqual([row["coverage"] for row in execution["items"]], [COVERAGE_MAPPED, COVERAGE_MAPPED])
-        self.assertEqual([row["checker_index"] for row in execution["items"]], [0, 1])
+        suite = bind_suite(source, body, {"declared-1": "1", "unconfirmed-1": "2"})
+        self.assertEqual(set(suite.entrypoints), {"declared-1", "unconfirmed-1"})
         target = RoundInput(
             "target",
             "file-1",
@@ -40,11 +40,11 @@ class DimensionProjectionTests(unittest.TestCase):
             "ready",
             rule_version_id="rule-1",
             rule_body=body,
-            rule_execution=execution,
         )
-        result = run_round_from_bytes(
+        result = run_suite_round(
             RoundWork("round-1", "tenant-1", [target]),
             {"version-1": asset.read_bytes()},
+            suites={"version-1": suite},
         )
         self.assertEqual([row["item_key"] for row in result["findings"]], ["version-1:rule:declared-1", "version-1:rule:unconfirmed-1"])
         self.assertEqual(result["findings"][1]["item"], customer_text)
@@ -52,6 +52,6 @@ class DimensionProjectionTests(unittest.TestCase):
         self.assertEqual(result["coverage"]["checked"], [file_name])
         self.assertEqual(
             [(row["id"], row["coverage"]) for row in result["coverage"]["rule_items"]],
-            [("declared-1", COVERAGE_MAPPED), ("unconfirmed-1", COVERAGE_MAPPED)],
+            [("declared-1", "executed"), ("unconfirmed-1", "executed")],
         )
         self.assertFalse(result["coverage"]["unchecked"])

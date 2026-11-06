@@ -5,6 +5,7 @@ description = "Corpus regression domain: human oracle, model replay, and reporti
 requires-python = "==3.12.*"
 dependencies = [
     "product",
+    "agent",
     "documents",
     "audit",
     "openpyxl>=3.1.2",
@@ -13,6 +14,7 @@ dependencies = [
 
 [tool.uv.sources]
 product = { workspace = true }
+agent = { workspace = true }
 documents = { workspace = true }
 audit = { workspace = true }
 

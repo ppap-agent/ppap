@@ -4,10 +4,9 @@ import io
 
 import pytest
 from audit.audits import RoundInput, RoundWork
-from audit.engine.checkers.rule_declarations import freeze_target_rule_execution
 from audit.presets import preset_rule_body
+from corpus_contracts.core_round import customer_suite, run_suite_round
 from openpyxl import Workbook
-from product import run_round_from_bytes
 
 
 def execute(
@@ -83,8 +82,8 @@ def execute(
                 archive.writestr(name, data)
     body = preset_rule_body("蔚来", "N01")
     body["rules"].reverse()
-    target = RoundInput("target", "file", "version", "测量报告.xlsx", "ready", rule_version_id="nio-n01", rule_body=body, rule_execution=freeze_target_rule_execution(body, "测量报告.xlsx"))
-    result = run_round_from_bytes(RoundWork("round", "tenant", [target]), {"version": content.getvalue()})
+    target = RoundInput("target", "file", "version", "测量报告.xlsx", "ready", rule_version_id="nio-n01", rule_body=body)
+    result = run_suite_round(RoundWork("round", "tenant", [target]), {"version": content.getvalue()}, suites={"version": customer_suite("蔚来", "N01")})
     # Source order is intentionally reversed; assertions use original clause IDs.
     return {finding["item_key"].split(":rule:", 1)[1].split(":")[1]: finding for finding in result["findings"]}
 

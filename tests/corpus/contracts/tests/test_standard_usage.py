@@ -7,10 +7,11 @@ import httpx
 import pytest
 from audit.audits import RoundInput, RoundWork
 from audit.engine.checkers.client import AIClient
+from audit.suite_migration import migrated_builtin_suite
 from audit.usage import get_current_request_id, get_token_tracker
+from corpus_contracts.core_round import bind_suite, run_suite_round
 from docx import Document
 from PIL import Image
-from product import run_round_from_bytes
 from product.settings import get_settings
 
 
@@ -37,13 +38,20 @@ def psw_input():
         "ready",
         rule_version_id="confirmed-psw",
         rule_body={"kind": "engine", "type": "零件提交保证书", "rule_profile": "v3", "rules": rules},
-        rule_execution={"mode": "rule_items", "items": [{**item, "coverage": "mapped", "checker_index": index} for item, index in zip(rules, (2, 4), strict=True)]},
     )
     return RoundWork("round-usage", "tenant", [target]), {target.file_version_id: content.getvalue()}
 
 
 @pytest.fixture
+def model_replay():
+    # The HTTP provider below is the controlled SDK receipt oracle, not replay.
+    return None
+
+
+@pytest.fixture
 def provider(request, monkeypatch):
+    for name in ("ALL_PROXY", "HTTPS_PROXY", "HTTP_PROXY", "all_proxy", "https_proxy", "http_proxy"):
+        monkeypatch.delenv(name, raising=False)
     calls = []
     receipt = getattr(request, "param", {"input_tokens": 9, "output_tokens": 5, "total_tokens": 14, "output_tokens_details": {"reasoning_tokens": 2}})
 
@@ -98,7 +106,7 @@ def test_standard_psw_round_makes_no_model_calls_and_releases_the_tracking_scope
     work, blobs = psw_input()
     previous = get_current_request_id()
 
-    result = run_round_from_bytes(work, blobs)
+    result = run_suite_round(work, blobs, suites={"version-psw": bind_suite(migrated_builtin_suite("v3", "零件提交保证书"), work.inputs[0].rule_body, {"stamp": "3", "signature": "5"})})
 
     assert provider == []
     assert [row["status"] for row in result["findings"]] == ["UNABLE", "UNABLE"]
@@ -113,7 +121,7 @@ def test_standard_psw_round_makes_no_model_calls_and_releases_the_tracking_scope
     assert "模型返回的不符合结论" not in json.dumps(usage, ensure_ascii=False)
     assert "test-only" not in json.dumps(usage)
 
-    second = run_round_from_bytes(work, blobs)
+    second = run_suite_round(work, blobs, suites={"version-psw": bind_suite(migrated_builtin_suite("v3", "零件提交保证书"), work.inputs[0].rule_body, {"stamp": "3", "signature": "5"})})
     assert provider == []
     assert [row["status"] for row in second["findings"]] == ["UNABLE", "UNABLE"]
     assert second["usage"]["request_id"] != usage["request_id"]
@@ -165,8 +173,8 @@ def test_failed_standard_input_restores_an_existing_tracking_scope():
     outer = tracker.start_request_tracking()
     try:
         tracker.record_token_usage(input_tokens=2, output_tokens=3)
-        with pytest.raises(ValueError, match="target_required"):
-            run_round_from_bytes(RoundWork("invalid-round", "tenant", []), {})
+        with pytest.raises(ValueError, match="snapshot_target_mismatch"):
+            run_suite_round(RoundWork("invalid-round", "tenant", []), {}, suites={})
         assert get_current_request_id() == outer
         tracker.record_token_usage(input_tokens=1, output_tokens=1)
         assert tracker.end_request_tracking(outer).total_tokens == 7

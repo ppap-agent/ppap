@@ -1,14 +1,12 @@
 """NIO source facts, including pair uncertainty, through the real Round engine."""
 
 import io
-import json
 
 import pytest
 from audit.audits import RoundInput, RoundWork
-from audit.engine.checkers.rule_declarations import freeze_target_rule_execution
 from audit.presets import preset_rule, preset_rule_body
+from corpus_contracts.core_round import customer_suite, run_suite_round
 from openpyxl import Workbook
-from product import run_round_from_bytes
 
 
 def serialized(book):
@@ -67,7 +65,7 @@ def pfd(*, part="P12345", revision="A", customer="蔚来", process="成型", mar
 
 def execute(target_content, references):
     body = preset_rule_body("蔚来", "N02")
-    target = RoundInput("target", "target-file", "target-version", "PFMEA.xlsx", "ready", rule_version_id="nio-pfmea", rule_body=body, rule_execution=freeze_target_rule_execution(body, "PFMEA.xlsx"))
+    target = RoundInput("target", "target-file", "target-version", "PFMEA.xlsx", "ready", rule_version_id="nio-pfmea", rule_body=body)
     inputs = [target]
     blobs = {"target-version": target_content}
     for index, content in enumerate(references):
@@ -75,7 +73,9 @@ def execute(target_content, references):
         inputs.append(RoundInput("reference", version, version, "过程流程图.xlsx", "ready"))
         if content is not None:
             blobs[version] = content
-    result = run_round_from_bytes(RoundWork("round", "tenant", inputs), blobs)
+    result = run_suite_round(
+        RoundWork("round", "tenant", inputs), blobs, suites={"target-version": customer_suite("蔚来", "N02")}, document_types={f"pfd-{index}": "过程流程图" for index in range(len(references))}
+    )
     findings = {row["item_key"].split(":rule:", 1)[1]: row for row in result["findings"]}
     return [findings.get(clause.id) for clause in preset_rule("蔚来", "N02").clauses], result
 
@@ -83,10 +83,10 @@ def execute(target_content, references):
 def test_nio_source_rules_execute_and_preserve_both_originals():
     findings, result = execute(pfmea(), [pfd()])
     assert [row["status"] if row else None for row in findings] == ["PASS"] * 7
-    assert all(row["coverage"] == "mapped" for row in result["coverage"]["rule_items"])
-    assert result["coverage"]["unchecked"] == ["过程流程图.xlsx（参考，未作为待审完整检查）"]
-    sources = findings[5]["locator"]["evidence"]["sources"]
-    assert {json.loads(row["locator"])["file_version_id"] for row in sources} == {"target-version", "pfd-0"}
+    assert all(row["coverage"] == "executed" for row in result["coverage"]["rule_items"])
+    assert result["coverage"]["unchecked"] == ["过程流程图.xlsx（参考资料，不单独作完整审核）"]
+    sources = findings[5]["locator"]["semantic"]["sources"]
+    assert {row["file_version_id"] for row in sources} == {"target-version", "pfd-0"}
     assert any("成型" in row["excerpt"] for row in sources)
 
 
@@ -138,8 +138,8 @@ def test_auxiliary_pfd_table_cannot_supply_the_comparison_rows():
     sheet.append([999, "无关工序", "宽度", "CC", "压力", "SC"])
     findings, _ = execute(pfmea(), [serialized(book)])
     assert [findings[index]["status"] for index in [5, 6]] == ["PASS", "PASS"]
-    sources = findings[5]["locator"]["evidence"]["sources"]
-    assert "评分数据库" not in {json.loads(row["locator"])["sheet"] for row in sources}
+    sources = findings[5]["locator"]["semantic"]["sources"]
+    assert "评分数据库" not in {row["locator"]["sheet"] for row in sources}
 
 
 def test_process_number_and_name_keep_their_field_boundary():

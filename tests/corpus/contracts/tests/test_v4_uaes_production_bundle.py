@@ -5,10 +5,9 @@ import hashlib
 import pytest
 from audit.audits import RoundInput, RoundWork
 from audit.checkers.v4.uaes.native import NativeFacts, UaesSourceAgent
-from audit.engine.checkers.rule_declarations import freeze_target_rule_execution
 from audit.presets import preset_rule_body
+from corpus_contracts.core_round import customer_suite, run_suite_round
 from corpus_contracts.oracle import original
-from product import run_round_from_bytes
 
 ENTRIES = {"PFMEA.xls": "U07", "控制计划.xlsx": "U08", "控制计划-模板3 WY.pdf": "U08", "过程流程图.xls": "U16"}
 
@@ -33,8 +32,8 @@ def test_actual_uaes_bundle_keeps_each_file_and_its_frozen_clauses(names, monkey
         version = "original:" + name
         expected[version] = {clause["id"] for clause in body["rules"]}
         blobs[version] = original(name).read_bytes()
-        inputs.append(RoundInput("target", version, version, name, "ready", rule_version_id=ENTRIES[name], rule_body=body, rule_execution=freeze_target_rule_execution(body, name)))
-    result = run_round_from_bytes(RoundWork("uaes-production-bundle", "tenant", inputs), blobs)
+        inputs.append(RoundInput("target", version, version, name, "ready", rule_version_id=ENTRIES[name], rule_body=body))
+    result = run_suite_round(RoundWork("uaes-production-bundle", "tenant", inputs), blobs, suites={"original:" + name: customer_suite("UAES", ENTRIES[name]) for name in names})
     findings = result["findings"]
     assert len(findings) == sum(map(len, expected.values()))
     assert not result["coverage"]["unchecked"]

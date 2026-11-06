@@ -4,9 +4,8 @@ from pathlib import Path
 
 import pytest
 from audit.audits import RoundInput, RoundWork
-from audit.engine.checkers.rule_declarations import freeze_target_rule_execution
 from audit.presets import preset_rule, preset_rule_body
-from product import run_round_from_bytes
+from corpus_contracts.core_round import customer_suite, run_suite_round
 
 ROOT = Path(__file__).resolve().parents[4]
 TEMPLATES = ROOT / "assets/PPAP PRD v3.7/客户归类模板与规则_备份/模板/理想"
@@ -42,12 +41,12 @@ def test_all_original_carriers_are_explicit_and_do_not_invent_an_l03_template():
 @pytest.mark.parametrize(("entry", "name"), CASES, ids=[entry + ":" + name for entry, name in CASES])
 def test_each_original_carrier_executes_the_frozen_customer_source_without_a_whole_group_error(entry, name):
     body = preset_rule_body("理想", entry)
-    target = RoundInput("target", "file", "original-version", name, "ready", rule_version_id="li-" + entry, rule_body=body, rule_execution=freeze_target_rule_execution(body, name))
-    result = run_round_from_bytes(RoundWork("offline-round", "offline-tenant", [target]), {"original-version": (TEMPLATES / name).read_bytes()})
+    target = RoundInput("target", "file", "original-version", name, "ready", rule_version_id="li-" + entry, rule_body=body)
+    result = run_suite_round(RoundWork("offline-round", "offline-tenant", [target]), {"original-version": (TEMPLATES / name).read_bytes()}, suites={"original-version": customer_suite("理想", entry)})
     findings = result["findings"]
     expected = {clause.id for clause in preset_rule("理想", entry).clauses}
     assert {row["item_key"].split(":rule:", 1)[1] for row in findings} == expected
     assert len(findings) == len(expected)
-    assert all(row["coverage"] == "mapped" for row in result["coverage"]["rule_items"])
+    assert all(row["coverage"] == "executed" for row in result["coverage"]["rule_items"])
     assert not [(row["status"], row["suggestions"]) for row in findings if row["status"] == "ERR"]
-    assert all(row["locator"]["evidence"]["sources"] for row in findings if row["status"] == "PASS")
+    assert all(row["locator"]["semantic"]["sources"] for row in findings if row["status"] == "PASS")
