@@ -4,14 +4,14 @@ import os
 import re
 import unittest
 
-from playwright.sync_api import expect, sync_playwright
-
 PREVIEW = os.environ.get("PPAP_PREVIEW_URL", "").rstrip("/")
 
 
 @unittest.skipUnless(PREVIEW, "requires the explicit UI preview")
 class ReviewHintsPreviewTests(unittest.TestCase):
     def test_review_suggestion_opens_comparison_and_records_an_ignore(self):
+        from playwright.sync_api import expect, sync_playwright
+
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(executable_path=os.environ.get("PPAP_TEST_CHROMIUM"))
             page = browser.new_page(viewport={"width": 1440, "height": 960})
