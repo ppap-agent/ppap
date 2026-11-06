@@ -22,6 +22,8 @@ import {ReviewEditorContext} from './review-editor'
 import {ResizableHandle, ResizablePanel, ResizablePanelGroup} from '../components/ui/resizable'
 import {filterChecks, needsAttention, nextUnreviewed, reviewable, reviewed} from './review-navigation'
 import {diffRounds} from './round-diff'
+import {ReviewHintDetails} from './review-hints'
+import {ReviewDocumentPairs} from './review-document-pairs'
 import {readAuditRoute, writeAuditAddress} from './routes'
 import {conclusionLabel, executionLabel, reportLabel, resultLabel, resultTone, uncoveredLabel, type ResultTone} from './status-labels'
 
@@ -102,7 +104,8 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
   // Wide enough for the basis and the original to sit side by side without burying the list.
   const sideBySide = useMinWidth(1680)
   const trigger = useRef<HTMLElement | null>(null), comparisonTrigger = useRef<HTMLButtonElement>(null)
-  const audit = file.audit, check = audit?.checks.find(row => row.rule_item.id === clause) ?? audit?.checks[0]
+  const [handledHints, setHandledHints] = useState<components['schemas']['ReviewHint'][]>([])
+  const audit = file.audit ? {...file.audit, checks: file.audit.checks.map(row => row.finding?.review_hint && handledHints.some(hint => sameSnapshot(hint, row.finding?.review_hint)) ? {...row, finding: {...row.finding, review_hint: undefined}} : row)} : file.audit, check = audit?.checks.find(row => row.rule_item.id === clause) ?? audit?.checks[0]
   const issue = frozenResultError(roundId, file, frozenFileVersionIds, frozenRule)
   const reportAccessIssue = reportAccess && reportAccess.state !== 'allowed' ? reportAccess.reason || '当前账号不能读取此报告。' : ''
   const review = check?.review !== undefined ? check.review : check?.finding?.review
@@ -191,6 +194,7 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
   const openFeedback = (row: Evaluation) => {showEvidence(row); setFeedbackClause(row.rule_item.id); const url = new URL(location.href); url.searchParams.set('checkerFeedbackClause', row.rule_item.id); url.searchParams.set('basis', '1'); writeAuditAddress(url)}
   const basis = check && <article key={check.rule_item.id} aria-label="条款判定依据" className="space-y-6 animate-in fade-in-0 duration-200 motion-reduce:animate-none">
     <div className="flex flex-wrap items-center gap-2"><Badge shape="square" variant={checkTone(check)}>{checkLabel(check)}</Badge>{review && <Badge shape="square" variant="outline">已有人工复核</Badge>}</div>
+    {check.finding?.review_hint && <ReviewHintDetails key={`${roundId}:${check.finding.item_key}`} roundId={roundId} hint={check.finding.review_hint} onHandled={() => setHandledHints(hints => [...hints, check.finding!.review_hint!])} onFeedback={() => openFeedback(check)}/>}
     <section className="space-y-2"><h3 className="font-medium">机器判定依据</h3><p className="whitespace-pre-wrap text-sm leading-relaxed">{clauseObservation(check)}</p>{check.scope && <p className="text-xs text-muted-foreground">检查范围：已查 {check.scope.checked}/{check.scope.total}，未知 {check.scope.unknown}。</p>}</section>
     <section className="space-y-2"><h3 className="font-medium">审核规则原文</h3><p className="whitespace-pre-wrap border-l-2 pl-4 text-sm leading-relaxed">{check.rule_item.rule_to_check}</p></section>
     <section className="space-y-3"><h3 className="font-medium">本轮原件与来源证据</h3>{pairedVersions.length > 1 && <Button ref={comparisonTrigger} variant="outline" onClick={showComparison}><FileSearch/>同时核对关联原件</Button>}{check.evidence.length ? check.evidence.map((evidence, index) => {
@@ -210,7 +214,7 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
   const attentionCount = filterCount('attention'), ngCount = filterCount('ng')
   // When everything that needs attention is non-conforming, one chip says it; the default filter lands on it.
   const activeFilter = filter === 'attention' && attentionCount === ngCount ? 'ng' : filter
-  const chipSpec: [string, string, ReactNode?][] = [['all', '全部'], ...(attentionCount !== ngCount ? [['attention', '需关注', <TriangleAlert key="attention" aria-hidden="true"/>] as [string, string, ReactNode]] : []), ['ng', resultLabel.NG, <X key="ng" aria-hidden="true"/>], ['unable', resultLabel.UNABLE], ['error', resultLabel.ERR], ['uncovered', uncoveredLabel], ['pass', resultLabel.PASS, <Check key="pass" aria-hidden="true"/>], ['na', resultLabel.NA], ['unreviewed', '未复核']]
+  const chipSpec: [string, string, ReactNode?][] = [['all', '全部'], ['suggested', '建议复核'], ...(attentionCount !== ngCount ? [['attention', '需关注', <TriangleAlert key="attention" aria-hidden="true"/>] as [string, string, ReactNode]] : []), ['ng', resultLabel.NG, <X key="ng" aria-hidden="true"/>], ['unable', resultLabel.UNABLE], ['error', resultLabel.ERR], ['uncovered', uncoveredLabel], ['pass', resultLabel.PASS, <Check key="pass" aria-hidden="true"/>], ['na', resultLabel.NA], ['unreviewed', '未复核']]
   const filterChips = chipSpec.map(([value, label, icon]) => ({value, label, icon, count: filterCount(value)})).filter(chip => chip.value === 'all' || chip.count > 0 || chip.value === activeFilter)
   const clearFilters = () => {setQuery(''); chooseFilter('all')}
   return <section aria-label="审核详情" className={`min-w-0 transition-all duration-300 motion-reduce:transition-none ${docked ? sideBySide ? 'pr-192 min-[1920px]:pr-256' : 'pr-112' : ''}`}>
@@ -230,6 +234,7 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
       {rule && <p className="break-words text-xs text-muted-foreground">本轮规则：<button type="button" className="underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-ring" onClick={() => setInfoOpen(true)}>{rule.title}</button></p>}
       {audit && (issue || reportAccessIssue || audit.report.state !== 'ready') && <p className="text-xs text-muted-foreground">{issue ? '报告资格待核对。' : reportAccessIssue || (audit.report.state === 'not_eligible' && audit.counts.unknown_count + audit.counts.not_covered_count + audit.counts.error_count > 0 ? '部分审核项尚未取得明确结果，不生成完整报告。' : ['pending', 'generating'].includes(audit.report.state) ? reportLabel[audit.report.state] : audit.report.reason || reportLabel[audit.report.state])}</p>}
     </header>
+    {audit?.execution === 'completed' && !issue && <div className="px-6 pt-2"><ReviewDocumentPairs key={roundId} roundId={roundId}/></div>}
     {issue && <div className="px-6 pt-4"><Alert variant="destructive"><AlertTitle>结果数据需要核对</AlertTitle><AlertDescription>{issue}</AlertDescription></Alert></div>}
     {!audit ? <p role="status">审核结果尚未取得，请读取当前记录。</p> : <>
       {audit.execution === 'review_failed' && <Alert variant="destructive"><AlertTitle>本文件审核异常，未取得完整结果。</AlertTitle><AlertDescription>{audit.failure?.message || '没有可用结果。'}</AlertDescription></Alert>}
@@ -246,7 +251,7 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
             <TableBody>{filtered.map(row => <TableRow key={row.rule_item.id} data-state={open && check?.rule_item.id === row.rule_item.id ? 'selected' : undefined} className="cursor-pointer" onClick={event => {if (!(event.target instanceof Element && event.target.closest('button, a'))) showEvidence(row)}}>
               <TableCell className="align-top"><span className="text-xs text-muted-foreground"><HighlightText text={row.rule_item.id} query={query}/></span></TableCell>
               <TableCell className="whitespace-normal align-top"><p className="break-words font-medium" title={row.rule_item.category}><HighlightText text={row.rule_item.category} query={query}/></p>{query.trim() && row.rule_item.rule_to_check.toLowerCase().includes(query.trim().toLowerCase()) && <p className="mt-1 line-clamp-2 break-words text-xs text-muted-foreground"><HighlightText text={row.rule_item.rule_to_check} query={query}/></p>}</TableCell>
-              <TableCell className="align-top"><div className="flex flex-col items-start gap-1"><Badge shape="square" variant={checkTone(row)}>{checkLabel(row)}</Badge>{diff?.added.includes(row) && <Badge shape="square" variant="outline">新增问题</Badge>}{diff?.resolved.includes(row) && <Badge shape="square" variant="outline">已解决</Badge>}</div></TableCell>
+              <TableCell className="align-top"><div className="flex flex-col items-start gap-1"><Badge shape="square" variant={checkTone(row)}>{checkLabel(row)}</Badge>{row.finding?.review_hint && <Button variant="link" size="xs" onClick={() => showEvidence(row)}>建议复核</Button>}{diff?.added.includes(row) && <Badge shape="square" variant="outline">新增问题</Badge>}{diff?.resolved.includes(row) && <Badge shape="square" variant="outline">已解决</Badge>}</div></TableCell>
               {!docked && <TableCell className="whitespace-normal align-top">{needsAttention(row) && <div className="flex items-start gap-1.5">{row.finding && !row.evidence_verified && <TriangleAlert role="img" aria-label="证据未验证" className="mt-0.5 size-3.5 shrink-0 text-warning"/>}<div className="min-w-0"><BasisText text={clauseObservation(row)} query={query}/></div></div>}</TableCell>}
               <TableCell className={docked ? 'w-12 text-right align-top' : 'w-28 text-right align-top'}><Button variant="ghost" size={docked ? 'icon-sm' : 'sm'} className="whitespace-nowrap" aria-label={'查看依据 ' + row.rule_item.id} aria-haspopup="dialog" onClick={() => showEvidence(row)}>{!docked && '查看依据'}<ArrowRight/></Button>{!issue && row.finding && <Button variant="ghost" size="sm" aria-label={'这条判错了 ' + row.rule_item.id} onClick={() => openFeedback(row)}>这条判错了</Button>}</TableCell>
             </TableRow>)}</TableBody>

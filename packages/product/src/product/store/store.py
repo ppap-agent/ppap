@@ -2803,7 +2803,7 @@ class AuthStore:
                 raise KeyError("missing")
             task["acceptance"] = {"request_id": accepted[1], "state": "accepted", "reason": None}
             task["updated_at"] = max(updated, accepted[2]).isoformat()
-            round = self._round_public(conn, str(accepted[0]))
+            round = self._round_public(conn, str(accepted[0]), principal=principal)
             if round is None:
                 raise KeyError("missing")
             reports, report_updated = self._task_file_reports(conn, principal.tenant_id, task_id, round["id"], round["result_attempt"])
@@ -3590,7 +3590,7 @@ class AuthStore:
                 with conn.transaction():
                     conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
                     return self._round_public(conn, parsed, read_view=True, principal=principal)
-            return self._round_public(conn, parsed)
+            return self._round_public(conn, parsed, principal=principal)
 
     def list_rounds(self, principal: Principal, limit: int = 50, offset: int = 0, q: str = "", execution: str = "", unreviewed: bool = False) -> list[dict]:
         needle = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
@@ -5059,7 +5059,7 @@ class AuthStore:
                        source_draft_id, result_attempt, created_at, analysis_mode, case_context,
                        EXISTS (SELECT 1 FROM product.audit_drafts d WHERE d.id = source_draft_id AND d.task_fingerprint IS NOT NULL),
                        (SELECT json_build_object('provider', provider, 'object_kind', object_kind, 'object_ref', object_ref)
-                        FROM product.round_writeback_targets WHERE round_id = a.id)
+                        FROM product.round_writeback_targets WHERE round_id = a.id), a.review_document_pairs
                 FROM product.audit_rounds a WHERE id = %s""",
                 (round_id,),
             )
@@ -5128,6 +5128,7 @@ class AuthStore:
             "analysis_mode": normalize_analysis_mode(row[7]),
             "case_context": row[8] or {},
             "writeback": public_target(row[10]),
+            "review_document_pairs": row[11],
             **_executor_public(payload),
             "progress": progress,
             "failure": diagnostic.get("failure"),
@@ -5165,6 +5166,10 @@ class AuthStore:
                 for item in findings
             ],
         }
+        if principal is not None:
+            from product.store.review_hints import annotate
+
+            annotate(self, conn, principal, body)
         if read_view:
             versions = {
                 str(item[1]): {"id": str(item[1]), "file_id": str(item[2]), "original_filename": item[3], "status": item[4], "content_type": item[8], "byte_size": int(item[9]), "sha256": item[10]}

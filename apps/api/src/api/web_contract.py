@@ -296,6 +296,11 @@ class MaterialWire(TypedDict):
     status: str
 
 
+class DocumentPair(TypedDict):
+    pdf_file_version_id: str
+    excel_file_version_id: str
+
+
 class CaseContext(TypedDict):
     customer_scope: NotRequired[Literal["all"]]
     registration: NotRequired[str]
@@ -512,7 +517,48 @@ class Review(TypedDict):
     citations: NotRequired[list[ReviewCitation]]
 
 
+class ReviewHint(TypedDict):
+    result_attempt: int
+    compared_result_attempt: int
+    item_key: str
+    reason: Literal["same_file_changed", "cross_format_differs"]
+    compared_round_id: str
+    compared_file_version_id: str
+    compared_item_key: str
+    clause_id: str
+    suite_revision_id: str
+    current_status: FindingStatus
+    compared_status: FindingStatus
+    compared_filename: str
+
+
+class ReviewDocumentPairs(TypedDict):
+    round_id: str
+    pairs: list[DocumentPair]
+
+
+class ReviewHintResponse(TypedDict):
+    hint: ReviewHint
+    item_key: str
+    action: Literal["accepted", "ignored"]
+
+
+class ReviewHintReceipt(ReviewHintResponse):
+    round_id: str
+    user_id: str
+    recorded_at: str
+
+
+class ReviewHintCounts(TypedDict):
+    accepted: int
+    ignored: int
+    responded: int
+    acceptance_ratio: float | None
+    ignore_ratio: float | None
+
+
 class Finding(TypedDict):
+    review_hint: NotRequired[ReviewHint]
     item_key: str
     status: FindingStatus
     item: str
@@ -563,6 +609,7 @@ class RoundFailure(TypedDict):
 
 
 class Round(TypedDict):
+    review_document_pairs: NotRequired[list[DocumentPair]]
     id: str
     execution: str
     coverage: Coverage

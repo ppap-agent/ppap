@@ -71,6 +71,11 @@ export function fixtureResults(task: AuditTask, scene: string): AuditTask {
     }
     if (['reports-failed', 'reports-unknown', 'reports-policy', 'reports-generate-race'].includes(scene) && !mixed && !failed) audit.report = {...audit.report, state: 'failed', artifact: null, generated_at: null, reason: 'PDF 生成失败。', regenerate_allowed: scene !== 'reports-policy', regenerate_reason: scene === 'reports-policy' ? '暂不能重新生成报告。' : null}
     if (scene === 'reports-generating' && !mixed && !failed) audit.report = {...audit.report, state: 'generating', artifact: null, generated_at: null, reason: '正在生成 PDF。'}
+    if (scene === 'reports-review-hints' && mixed) {
+      const finding = audit.checks[0].finding!
+      finding.review_hint = {item_key: finding.item_key, reason: 'same_file_changed', compared_round_id: 'previous-round', compared_file_version_id: file.file.id, compared_item_key: finding.item_key, clause_id: audit.checks[0].rule_item.id, suite_revision_id: 'preview-suite', current_status: finding.status, compared_status: 'PASS', compared_filename: file.file.original_filename, result_attempt: 1, compared_result_attempt: 1}
+    }
+
     return {...file, audit}
   })
   if (scene === 'audit-input-conflict') {

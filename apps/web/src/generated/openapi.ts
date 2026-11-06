@@ -1494,6 +1494,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/review-hints/responses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Review Hint Counts */
+        get: operations["review_hint_counts_review_hints_responses_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/rounds": {
         parameters: {
             query?: never;
@@ -1607,6 +1624,40 @@ export interface paths {
         put?: never;
         /** Rounds Resubmit */
         post: operations["rounds_resubmit_rounds__round_id__resubmit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rounds/{round_id}/review-document-pairs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Review Document Pair */
+        put: operations["review_document_pair_rounds__round_id__review_document_pairs_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rounds/{round_id}/review-hints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Review Hint Response */
+        put: operations["review_hint_response_rounds__round_id__review_hints_put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3295,6 +3346,13 @@ export interface components {
             /** Doc Links */
             doc_links: components["schemas"]["DocLink"][];
         };
+        /** DocumentPair */
+        DocumentPair: {
+            /** Excel File Version Id */
+            excel_file_version_id: string;
+            /** Pdf File Version Id */
+            pdf_file_version_id: string;
+        };
         /** DocxCellLocator */
         DocxCellLocator: {
             /** Column */
@@ -3653,6 +3711,7 @@ export interface components {
             /** Priority */
             priority: string | null;
             review: components["schemas"]["Review"] | null;
+            review_hint?: components["schemas"]["ReviewHint"];
             /**
              * Status
              * @enum {string}
@@ -4045,6 +4104,79 @@ export interface components {
             /** Location */
             location: string;
         };
+        /** ReviewDocumentPairs */
+        ReviewDocumentPairs: {
+            /** Pairs */
+            pairs: components["schemas"]["DocumentPair"][];
+            /** Round Id */
+            round_id: string;
+        };
+        /** ReviewHint */
+        ReviewHint: {
+            /** Clause Id */
+            clause_id: string;
+            /** Compared File Version Id */
+            compared_file_version_id: string;
+            /** Compared Filename */
+            compared_filename: string;
+            /** Compared Item Key */
+            compared_item_key: string;
+            /** Compared Result Attempt */
+            compared_result_attempt: number;
+            /** Compared Round Id */
+            compared_round_id: string;
+            /**
+             * Compared Status
+             * @enum {string}
+             */
+            compared_status: "PASS" | "NG" | "ERR" | "UNABLE" | "NA";
+            /**
+             * Current Status
+             * @enum {string}
+             */
+            current_status: "PASS" | "NG" | "ERR" | "UNABLE" | "NA";
+            /** Item Key */
+            item_key: string;
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "same_file_changed" | "cross_format_differs";
+            /** Result Attempt */
+            result_attempt: number;
+            /** Suite Revision Id */
+            suite_revision_id: string;
+        };
+        /** ReviewHintCounts */
+        ReviewHintCounts: {
+            /** Acceptance Ratio */
+            acceptance_ratio: number | null;
+            /** Accepted */
+            accepted: number;
+            /** Ignore Ratio */
+            ignore_ratio: number | null;
+            /** Ignored */
+            ignored: number;
+            /** Responded */
+            responded: number;
+        };
+        /** ReviewHintReceipt */
+        ReviewHintReceipt: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "accepted" | "ignored";
+            hint: components["schemas"]["ReviewHint"];
+            /** Item Key */
+            item_key: string;
+            /** Recorded At */
+            recorded_at: string;
+            /** Round Id */
+            round_id: string;
+            /** User Id */
+            user_id: string;
+        };
         /** Round */
         Round: {
             /**
@@ -4080,6 +4212,8 @@ export interface components {
             result_attempt: number | null;
             /** Result Job Id */
             result_job_id?: string | null;
+            /** Review Document Pairs */
+            review_document_pairs?: components["schemas"]["DocumentPair"][];
             /** Source Draft Id */
             source_draft_id: string | null;
             writeback: components["schemas"]["WritebackTarget"];
@@ -8406,6 +8540,26 @@ export interface operations {
             };
         };
     };
+    review_hint_counts_review_hints_responses_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewHintCounts"];
+                };
+            };
+        };
+    };
     rounds_list_rounds_get: {
         parameters: {
             query?: {
@@ -8644,6 +8798,129 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Round"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    review_document_pair_rounds__round_id__review_document_pairs_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                round_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Excel File Version Id */
+                    excel_file_version_id: string;
+                    /** Pdf File Version Id */
+                    pdf_file_version_id: string;
+                } & {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewDocumentPairs"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    review_hint_response_rounds__round_id__review_hints_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                round_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * Action
+                     * @enum {string}
+                     */
+                    action: "accepted" | "ignored";
+                    /** ReviewHint */
+                    hint: {
+                        /** Clause Id */
+                        clause_id: string;
+                        /** Compared File Version Id */
+                        compared_file_version_id: string;
+                        /** Compared Filename */
+                        compared_filename: string;
+                        /** Compared Item Key */
+                        compared_item_key: string;
+                        /** Compared Result Attempt */
+                        compared_result_attempt: number;
+                        /** Compared Round Id */
+                        compared_round_id: string;
+                        /**
+                         * Compared Status
+                         * @enum {string}
+                         */
+                        compared_status: "PASS" | "NG" | "ERR" | "UNABLE" | "NA";
+                        /**
+                         * Current Status
+                         * @enum {string}
+                         */
+                        current_status: "PASS" | "NG" | "ERR" | "UNABLE" | "NA";
+                        /** Item Key */
+                        item_key: string;
+                        /**
+                         * Reason
+                         * @enum {string}
+                         */
+                        reason: "same_file_changed" | "cross_format_differs";
+                        /** Result Attempt */
+                        result_attempt: number;
+                        /** Suite Revision Id */
+                        suite_revision_id: string;
+                    };
+                    /** Item Key */
+                    item_key: string;
+                } & {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewHintReceipt"];
                 };
             };
             /** @description Validation Error */
