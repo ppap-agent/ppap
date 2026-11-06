@@ -64,7 +64,7 @@ def inputs(root):
         pdf.new_page()
         raw = pdf.tobytes()
     (directory / "source.bin").write_bytes(raw)
-    (directory / "manifest.json").write_text(json.dumps({"operation": "execute-audit", "source_paths": {"source": "source.bin"}}))
+    (directory / "manifest.json").write_text(json.dumps({"operation": "execute-audit", "spec": {"allow_model_calls": True}, "source_paths": {"source": "source.bin"}}))
     return directory, hashlib.sha256(raw).hexdigest()
 
 
@@ -103,8 +103,12 @@ def test_uncertain_paddle_failure_is_not_replayed(tmp_path, monkeypatch):
         assert len(calls) == 1
 
 
-def test_container_adapter_passes_only_run_capability_to_real_child(tmp_path, monkeypatch):
+@pytest.mark.parametrize("allow_model_calls", [True, False])
+def test_container_adapter_passes_only_run_capability_to_real_child(tmp_path, monkeypatch, allow_model_calls):
     directory, digest = inputs(tmp_path)
+    manifest = json.loads((directory / "manifest.json").read_text())
+    manifest["spec"]["allow_model_calls"] = allow_model_calls
+    (directory / "manifest.json").write_text(json.dumps(manifest))
     (tmp_path / "work").mkdir()
     runtime = object.__new__(ContainerRuntime)
     runtime.active = {}
@@ -119,12 +123,22 @@ def test_container_adapter_passes_only_run_capability_to_real_child(tmp_path, mo
     )
     script = """import json, os
 from pathlib import Path
-from documents.ocr.paddle.reader import read_pdf_page_evidence
+from documents.ocr.paddle.reader import PaddleEvidenceUnavailable, read_pdf_page_evidence
 assert 'PADDLE_TOKEN' not in os.environ and 'PADDLE_OCR_URL' not in os.environ
 root = Path(os.environ['PPAP_GUEST_RUN'])
+manifest = json.loads((root / 'inputs' / 'manifest.json').read_text())
 source = root / 'work' / 'copy.pdf'
 source.write_bytes((root / 'inputs' / 'source.bin').read_bytes())
-evidence = read_pdf_page_evidence(source, 2)
+if manifest['spec']['allow_model_calls']:
+    evidence = read_pdf_page_evidence(source, 2)
+else:
+    assert 'PPAP_PADDLE_BRIDGE_URL' not in os.environ and 'PPAP_PADDLE_BRIDGE_TOKEN' not in os.environ
+    try:
+        read_pdf_page_evidence(source, 2)
+    except PaddleEvidenceUnavailable:
+        evidence = {'offline': True}
+    else:
+        raise AssertionError('Offline trial called Paddle')
 (root / 'work' / 'evidence.json').write_text(json.dumps(evidence))
 """
     popen = subprocess.Popen
@@ -142,11 +156,28 @@ evidence = read_pdf_page_evidence(source, 2)
     with upstream(monkeypatch) as calls:
         runtime._execute(tmp_path, time.monotonic() + 30, threading.Event(), None, uuid4())
     evidence = json.loads((tmp_path / "work" / "evidence.json").read_text())
-    assert evidence["source_sha256"] == digest
-    assert [page["page"] for page in evidence["pages"]] == [2]
-    assert len(calls) == len(launched) == 1
-    assert "PPAP_PADDLE_BRIDGE_TOKEN" in launched[0]
+    assert len(launched) == 1
+    if allow_model_calls:
+        assert evidence["source_sha256"] == digest
+        assert [page["page"] for page in evidence["pages"]] == [2]
+        assert len(calls) == 1
+        assert "PPAP_PADDLE_BRIDGE_TOKEN" in launched[0]
+    else:
+        assert evidence == {"offline": True}
+        assert calls == []
+        assert "PPAP_PADDLE_BRIDGE_TOKEN" not in launched[0]
     assert runtime.active == {}
+
+
+@pytest.mark.parametrize("policy", [{}, {"allow_model_calls": False}, {"allow_model_calls": "true"}, {"allow_model_calls": 1}])
+def test_audit_requires_explicit_model_permission_for_paddle(tmp_path, monkeypatch, policy):
+    directory, _ = inputs(tmp_path)
+    manifest = json.loads((directory / "manifest.json").read_text())
+    manifest["spec"] = policy
+    (directory / "manifest.json").write_text(json.dumps(manifest))
+    with upstream(monkeypatch) as calls, paddle_bridge(directory, time.monotonic() + 30, threading.Event()) as environment:
+        assert environment == {}
+        assert calls == []
 
 
 def test_free_precheck_never_receives_paddle_capability(tmp_path, monkeypatch):

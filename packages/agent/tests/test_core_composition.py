@@ -208,6 +208,54 @@ def test_offline_and_model_jobs_have_separate_replay_identities(tmp_path):
         run_audit_manifest(tmp_path / "inputs", tmp_path / "work", tmp_path / "nonexistent-grants")
 
 
+@pytest.mark.parametrize("allow_model_calls", [False, True])
+def test_manifest_model_permission_controls_visual_runtime_even_with_inherited_paddle_environment(tmp_path, monkeypatch, allow_model_calls):
+    from dataclasses import replace
+
+    calls = []
+    monkeypatch.setenv("PADDLE_OCR_URL", "http://127.0.0.1:1/forbidden-upstream")
+    monkeypatch.setenv("PADDLE_TOKEN", "inherited-token")
+    monkeypatch.setenv("PPAP_PADDLE_BRIDGE_URL", "http://127.0.0.1:1/paddle-page")
+    monkeypatch.setenv("PPAP_PADDLE_BRIDGE_TOKEN", "forged-capability")
+
+    def paddle(*args):
+        calls.append("paddle")
+        return {}
+
+    def ocr(**kwargs):
+        calls.append("ocr")
+        return {}
+
+    monkeypatch.setattr("documents.ocr.paddle.reader.read_pdf_page_evidence", paddle)
+    monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", ocr)
+    code = b"""from audit.contracts import AuditResultItem
+
+def check(context):
+    if context.clause_id == 'A':
+        context.runtime.read_paddle_page(context.audit_file.file_url, 1)
+    else:
+        context.runtime.read_ocr_visual_facts(images=[b'original'], prompt='Read', response_schema={})
+    return AuditResultItem(classification='rule', item=context.clause_id, priority='P0', status='PASS',
+                           suggestions='Controlled visual observation', clause_id=context.clause_id, checks_performed=1)
+"""
+    snapshot, sources, *_ = setup()
+    digest = checker_digest({"checker.py": code})
+    snapshot = replace(snapshot, targets=tuple(replace(target, binding=replace(target.binding, checker_digest=digest)) for target in snapshot.targets))
+    job = write_audit_manifest(tmp_path / "inputs", snapshot, sources, {digest: {"checker.py": code}}, allow_model_calls=allow_model_calls)
+    if allow_model_calls:
+        ControlledGuest(tmp_path).run(job, tmp_path / "inputs", tmp_path / "work", None, None)
+    else:
+        run_audit_manifest(tmp_path / "inputs", tmp_path / "work", tmp_path / "nonexistent-grants")
+    result = json.loads((tmp_path / "work" / "result" / "bundle.json").read_text())
+    assert len(result["findings"]) == 4
+    if allow_model_calls:
+        assert {row["status"] for row in result["findings"]} == {"PASS"}
+        assert calls == ["paddle", "ocr", "paddle"]
+    else:
+        assert {row["status"] for row in result["findings"]} == {"UNABLE"}
+        assert calls == []
+
+
 @pytest.mark.parametrize("oracle,allow_model_calls,expected", [((), True, True), ((), False, False), ((object(),), True, False)])
 def test_fixed_development_trials_do_not_give_models_oracle_inputs(tmp_path, monkeypatch, oracle, allow_model_calls, expected):
     from agent.auditor import SemanticRuntime

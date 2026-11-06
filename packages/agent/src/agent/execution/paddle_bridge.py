@@ -31,6 +31,11 @@ def _sources(inputs: Path) -> dict[str, bytes]:
         return {}  # Snapshot-only legacy jobs do not have a manifest or this capability.
     operation = manifest.get("operation")
     if operation == "execute-audit":
+        # Oracle evaluation and explicitly model-free trials must not send their
+        # originals to OCR, even when the controller has a configured provider.
+        spec = manifest.get("spec")
+        if not isinstance(spec, dict) or spec.get("allow_model_calls") is not True:
+            return {}
         names = list(manifest.get("source_paths", {}).values())
     elif operation in {"adapt-checker", "execute-checker"}:
         names = [manifest.get("document"), *manifest.get("related_documents", {}).values()]
