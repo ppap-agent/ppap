@@ -217,22 +217,36 @@ The separate InsForge native lifecycle remains path-filtered / manual / schedule
 
 The default merge contract is the required groups: Web, Repository contract, Python modules, Distribution closure, Schema, Corpus, and Product integration. Being external-backed does not make a test optional or live; Corpus stays a required CI Gate child even when a cache miss calls real OCR / model capability. pytest does not inject the repository root via `pythonpath`; production imports come from uv workspace packaging. `tests/live` is opt-in real-environment validation, not the set of all external tests. The final `CI Gate` runs no tests; it succeeds only when every required group succeeds. Repository-side merge-contract semantics are therefore stable even when internal matrix groups evolve; whether the hosting plan can enforce `CI Gate` through branch protection/rulesets is a separate platform capability.
 
-### Real-model Checker optimization acceptance
+### Real-model Checker optimization test and regression guard
 
-`Checker optimization live acceptance` is a separate `workflow_dispatch` only.
-It does not change `Tests` or `CI Gate`, and is not triggered by pushes, pull
-requests or a schedule. Preparing this entrypoint and passing offline regressions
-is **not a live pass**. Dispatch requires approval of the exact reviewed commit,
-provider recipient/model, synthetic sample transmission and paid limits. The
-provider is not tied to a brand or to who issued the test key.
+`Checker optimization live test` is the expensive real-model **T** in the
+red/green/refactor loop and a reusable regression guard. It uses the same product
+path and independent assertions each time, not a separate release approval
+system. A green test proves that this exact candidate, using this run's Actions
+model configuration, repaired the synthetic defect, passed independent validation,
+and worked after explicit adoption and re-audit. It is positive evidence for
+production, not a guarantee for every production scenario or permission to deploy.
 
-The inputs must match `CI_LLM_BASE_URL` / `CI_LLM_MODEL` and the selected workflow
-ref's SHA. `CI_LLM_API_KEY` is injected only into the private acceptance process
-on the disposable runner. Real Chromium saves `api_key` / `base_url` / `model`
-through the formal settings UI. The test reads back the redacted configuration
-and verifies that the UI binds optimization to its revision. No provider key is
-supplied in a Worker RPC or guest environment. Browser traces, video, request
-bodies and screenshots of the settings form are not recorded.
+It is a separate `workflow_dispatch` only, outside `Tests` / `CI Gate`, with no
+push, pull-request or schedule trigger. Clicking **Run workflow** expresses the
+intent to run one paid test; there is no second approval flag. Select the branch,
+enter its exact reviewed commit as `expected_sha`, and choose the bounded request
+and token limits. Fix implementation after a red result, run the changed SHA,
+and refactor while preserving the assertions. Offline checks are fast feedback,
+not a replacement for this live test.
+
+The sole model configuration source is `CI_LLM_BASE_URL`, `CI_LLM_MODEL`, and
+`CI_LLM_API_KEY`, the same Actions settings used for Deep. There are no duplicate
+endpoint/model inputs or fixed provider requirements. The key is injected only
+into the private test process on the disposable runner. Real Chromium saves the
+configuration through the formal settings UI. The test reads back the redacted
+configuration, checks its revision binding, and observes the authorized outbound
+model after the production gateway selects it. The requested model is recorded;
+the provider-returned model is explicitly unknown because the production gateway
+does not retain it. Neither aliases nor unknown returned model names decide the
+business assertions. No provider key is supplied in a Worker RPC or guest
+environment. Browser traces, video, request bodies and settings screenshots are
+not recorded. Product endpoint safety and per-request identity checks remain.
 
 The standalone `deploy/isolated-dev/checker-live.yaml` starts fresh PostgreSQL,
 Silo, API, Worker, Web and the production Controller/Pi guest image. Its
@@ -285,8 +299,13 @@ consumption before optimization is rejected; all observed provider requests must
 match the optimization's authoritative usage. Other product model capabilities
 are not covered by these per-execution gateway limits.
 
-No paid probe or automatic write retry is performed, and workflow reruns are
-refused. The UI-generated operation ID is saved before its request is forwarded.
+No paid probe or automatic write retry is performed. An explicit GitHub **Re-run
+jobs** or a fresh dispatch starts a new, separately paid test, with fresh random
+fixtures, credentials, storage and one new optimization operation. It does not
+recover or overwrite the old run. Stack, report and artifact identities include
+both run ID and attempt; re-entering the same runner invocation is rejected.
+Reconcile unknown prior consumption before deciding to run another test. The
+UI-generated operation ID is saved before its request is forwarded.
 Each polled receipt preserves known usage, including legal unknown receipts with
 `report: null`. Before stopping containers, an always-run step makes one final
 read-only request to that same operation. This disposable stack is **not
@@ -294,7 +313,12 @@ recoverable after cleanup**. Unknown later charges require provider-billing
 reconciliation, never automatic redispatch.
 
 Only bounded `report.json` and `controller.json` are uploaded, with known token
-and request counts. Keys, session tokens, original bytes, prompts, raw model
+and request counts. Assertions already verified are saved before the next stage,
+so failures retain progress through optimization, adoption, re-audit, rollback,
+stale-proof rejection and history checks. The GitHub run summary distinguishes
+PROVEN from NOT_PROVEN and retains known usage; timeout or missing terminal
+evidence does not by itself attribute a defect to the product. The controller's
+request observation is authorization, not proof of provider receipt or billing. Keys, session tokens, original bytes, prompts, raw model
 responses and raw service logs are not artifacts. Monetary cost stays unknown
 without a provider billing receipt. No production data, notifications or formal
 audit points are affected. The live run must actually pass before any of these

@@ -1,4 +1,4 @@
-"""Explicit paid Checker optimization acceptance, never collected by default pytest.
+"""Manual paid Checker TDD test and regression guard, outside default pytest.
 
 Only synthetic inputs are used. A private independent Oracle freezes answers
 before optimization. Fresh hidden inputs and their order are never public code.
@@ -14,12 +14,12 @@ import secrets
 import sys
 import time
 from pathlib import Path
-from re import fullmatch
-from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
 from openpyxl import Workbook
+
+from scripts.prepare_checker_live import validate_invocation
 
 TRAINING_SAMPLES = ((3, "NG"), (10, "PASS"), (20, "PASS"), (-5, "NG"), (9, "NG"), (12, "PASS"))
 HOLDOUT_MARKER = "checker-live-holdout-"
@@ -50,25 +50,23 @@ class AcceptanceFailure(Exception):
     """Only fixed, non-secret failure codes may be emitted."""
 
 
+class TestAlreadyStarted(AcceptanceFailure):
+    """A second invocation must leave the original evidence untouched."""
+
+
 def require(condition, code):
     if not condition:
         raise AcceptanceFailure(code)
 
 
-def approved_configuration(environment):
-    """Fail closed before opening product state or sending a credential."""
-    require(environment.get("PPAP_CHECKER_LIVE_APPROVED") == "true", "paid_approval_required")
-    require(environment.get("GITHUB_RUN_ATTEMPT", "1") == "1", "automatic_or_manual_rerun_forbidden")
-    base = environment.get("CI_LLM_BASE_URL", "").rstrip("/")
-    model = environment.get("CI_LLM_MODEL", "")
-    require(base == environment.get("PPAP_APPROVED_BASE_URL", "").rstrip("/"), "approved_endpoint_mismatch")
-    require(bool(model) and model == environment.get("PPAP_APPROVED_MODEL"), "approved_model_mismatch")
-    parsed = urlsplit(base)
-    require(parsed.scheme == "https" and bool(parsed.hostname) and not (parsed.username or parsed.password or parsed.query or parsed.fragment), "invalid_provider_endpoint")
+def live_configuration(environment):
+    """Use Actions configuration, preserving the product's endpoint safety rules."""
+    from product.model_endpoint import normalize_base_url, valid_model
+
+    validate_invocation(environment)
+    base = normalize_base_url(environment.get("CI_LLM_BASE_URL", ""))
+    model = valid_model(environment.get("CI_LLM_MODEL", ""))
     require(bool(environment.get("CI_LLM_API_KEY")), "missing_provider_credential")
-    run_id = environment.get("GITHUB_RUN_ID", "")
-    require(bool(fullmatch(r"[0-9]+", run_id)) and environment.get("COMPOSE_PROJECT_NAME") == "ppap-checker-live-" + run_id, "isolated_stack_required")
-    require(environment.get("GITHUB_ACTIONS") == "true", "disposable_github_runner_required")
     return base, model
 
 
@@ -100,6 +98,13 @@ def write_report(path, report):
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
     temporary.replace(path)
+
+
+def checkpoint(path, report, stage, **verified):
+    """Persist only assertions already checked, before the next fallible stage."""
+    report["stage"] = stage
+    report["journey"].update(verified)
+    write_report(path, report)
 
 
 class Client:
@@ -382,22 +387,43 @@ def local_settings(environment):
         s3_access_key=environment["LIVE_S3_ACCESS_KEY"],
         s3_secret_key=environment["LIVE_S3_SECRET_KEY"],
         web_url="http://127.0.0.1:14173",
-        llm_base_url=environment["PPAP_APPROVED_BASE_URL"],
-        llm_model=environment["PPAP_APPROVED_MODEL"],
+        llm_base_url=environment["CI_LLM_BASE_URL"],
+        llm_model=environment["CI_LLM_MODEL"],
         usage_charge_enabled=False,
         feishu_notifications_enabled=False,
         deep_executor_revision="checker-live",
         feishu_app_id="checker-live",
-        personal_model_allowed_base_urls=environment["PPAP_APPROVED_BASE_URL"],
+        personal_model_allowed_base_urls=environment["CI_LLM_BASE_URL"],
         model_credential_encryption_key=environment["LIVE_ENCRYPTION_KEY"],
     )
 
 
 def run(report_path):
-    base_url, model = approved_configuration(os.environ)
-    report = {"accepted": False, "stage": "initializing", "candidate_sha": os.environ["PPAP_BUILD_SHA"], "provider_endpoint": base_url, "model": model, "cost": "unknown", "automatic_retry": False}
+    base_url, model = live_configuration(os.environ)
+    report = {
+        "accepted": False,
+        "stage": "initializing",
+        "candidate_sha": os.environ["PPAP_BUILD_SHA"],
+        "run_id": os.environ["GITHUB_RUN_ID"],
+        "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+        "provider_endpoint": base_url,
+        "requested_model": model,
+        # Production receipts do not retain response.model. Never infer it from
+        # the request or pin a provider's alias as an acceptance requirement.
+        "provider_returned_model": None,
+        "cost": "unknown",
+        "automatic_retry": False,
+        "journey": {},
+    }
     report["limits"] = {name: int(os.environ["PPAP_PERSONAL_MODEL_MAX_" + name.upper()]) for name in ("requests", "input_tokens", "output_tokens")}
-    write_report(report_path, report)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    # One runner invocation per attempt. Re-entry may have already incurred
+    # charges, even if the prior process never obtained a terminal receipt.
+    try:
+        with report_path.open("x") as stream:
+            stream.write(json.dumps(report, indent=2) + "\n")
+    except FileExistsError:
+        raise TestAlreadyStarted("test_attempt_already_started") from None
     # Only initial identity, rule and immutable faulty Suite use trusted stores.
     # All files, real baseline rounds, personal settings, feedback, optimization
     # admission and result readback use the authenticated production HTTP routes.
@@ -436,6 +462,7 @@ def run(report_path):
     try:
         require(client.http.post("/isolated-dev/sessions", json={"subject": "alice"}).status_code == 404, "fixture_login_exposed_to_guest")
         browser = BrowserJourney(session)
+        checkpoint(report_path, report, "baseline_and_feedback")
         client.request("PUT", f"/suites/{suite_key}/active", payload={"revision_id": base.id, "expected_revision": 0, "operation_id": str(uuid4()), "force_unverified": True})
         samples = {}
         rounds = []
@@ -455,7 +482,7 @@ def run(report_path):
             require(saved["ordinal"] == ordinal, "oracle_ordinal_mismatch")
             samples[saved["id"]] = {"ordinal": ordinal, "expected": expected, "baseline": actual, "file_version_id": uploaded["id"], "sha256": uploaded["sha256"], "feedback": saved}
         report.update(stage="configuring", base_revision_id=base.id, samples={ident: {key: value for key, value in row.items() if key != "feedback"} for ident, row in samples.items()})
-        write_report(report_path, report)
+        checkpoint(report_path, report, "configuring", browser_feedback=True)
         private = report_path.parent / "private-oracle.json"
         private.write_text(
             json.dumps(
@@ -468,6 +495,7 @@ def run(report_path):
         private.chmod(0o600)
         configured, receipt = browser.configure_and_start(rounds[0], base_url, model, report, report_path)
         require(client.request("GET", "/me/model-config") == configured, "personal_configuration_readback_mismatch")
+        checkpoint(report_path, report, "waiting", browser_personal_configuration=True)
         path = f"/checker-optimizations/{report['operation_id']}"
 
         def record(current):
@@ -475,10 +503,10 @@ def run(report_path):
             write_report(report_path, report)
 
         record(receipt)
-        report["stage"] = "waiting"
         receipt = client.poll(path, lambda row: row.get("state") not in {"queued", "running"}, on_read=record)
         validate_outcome(receipt, samples)
         require(client.request("GET", path) == receipt, "optimization_readback_changed")
+        checkpoint(report_path, report, "candidate_readback", browser_optimize=True)
         detail = client.request("GET", "/suite-revisions/" + receipt["candidate_revision_id"])
         require(detail["files"]["checker.py"] != BASELINE, "checker_not_changed")
         report["candidate_checker_sha256"] = hashlib.sha256(detail["files"]["checker.py"].encode()).hexdigest()
@@ -490,8 +518,10 @@ def run(report_path):
         browser.new_session(store.create_session(principal))
         browser.read_optimization(receipt, samples)
         require(client.request("GET", path) == receipt, "reconnected_receipt_changed")
+        checkpoint(report_path, report, "publishing", reconnect_readback=True)
         browser.publish()
         require(client.request("GET", f"/suites/{suite_key}/active")["current_revision_id"] == receipt["candidate_revision_id"], "publication_not_applied")
+        checkpoint(report_path, report, "reauditing", browser_publish=True)
         newer = client.request("POST", f"/rounds/{rounds[0]['round_id']}/resubmit", payload={"idempotency_key": str(uuid4())}, status=201)
         newer = client.poll("/rounds/" + newer["id"], lambda row: row.get("execution") in {"completed", "failed"})
         require(newer.get("execution") == "completed" and newer["predecessor_id"] == rounds[0]["round_id"] and newer["findings"][0]["status"] == "NG", "explicit_reaudit_failed")
@@ -500,9 +530,11 @@ def run(report_path):
         browser.read_round(newer)
         rounds.append({"round_id": newer["id"], "history_sha256": history_fingerprint(newer, newer_snapshot.to_dict())})
         report["reaudit_round_id"] = newer["id"]
+        checkpoint(report_path, report, "rolling_back", api_explicit_reaudit_and_browser_readback=True)
         browser.rollback()
         active = client.request("GET", f"/suites/{suite_key}/active")
         require(active["current_revision_id"] == base.id, "rollback_not_applied")
+        checkpoint(report_path, report, "checking_stale", browser_rollback=True)
         first = next(iter(samples.values()))["feedback"]
         client.request(
             "PUT",
@@ -521,22 +553,13 @@ def run(report_path):
         )
         require(rejected.status_code == 409, "stale_publication_not_rejected")
         browser.stale()
+        checkpoint(report_path, report, "checking_history", stale_blocked=True)
         for old in rounds:
             current = client.request("GET", "/rounds/" + old["round_id"])
             require(history_fingerprint(current, suites.read_snapshot(old["round_id"], principal.tenant_id).to_dict()) == old["history_sha256"], "historical_result_changed")
         report["final_candidate_validation_status"] = stale["validation"]["status"]
         report["final_active_revision_id"] = base.id
-        report["journey"] = {
-            "browser_personal_configuration": True,
-            "browser_feedback": True,
-            "browser_optimize": True,
-            "reconnect_readback": True,
-            "browser_publish": True,
-            "api_explicit_reaudit_and_browser_readback": True,
-            "browser_rollback": True,
-            "stale_blocked": True,
-            "history_unchanged": True,
-        }
+        checkpoint(report_path, report, "verifying_frozen_proof", history_unchanged=True)
         with store._conn() as conn:
             from psycopg.rows import dict_row
 
@@ -565,10 +588,12 @@ def run(report_path):
             frozen=frozen,
             input_digests={sample.case_id: sample.inputs.digest for sample in frozen_request.oracle},
         )
+        checkpoint(report_path, report, "verifying_isolation", frozen_proof_bound=True)
         probe = json.loads((report_path.parent / "controller.json").read_text())
         require(
             probe.get("adaptations") == 1
             and set(probe.get("holdout_sources", [])) == {row["sha256"] for row in samples.values() if row["ordinal"] % 4 == 0}
+            and probe.get("requested_models") == [model]
             and probe.get("provider_requests") == receipt["usage"]["model_requests"]
             and 0 < probe["provider_requests"] <= report["limits"]["requests"]
             and probe.get("violation") is False
@@ -576,6 +601,7 @@ def run(report_path):
             "holdout_boundary_not_proven",
         )
         report.update(accepted=True, stage="complete", isolation_probe=probe)
+        report["journey"]["isolation_and_usage"] = True
     finally:
         # Do not revoke the configuration while a timed-out operation may still
         # own it. The entire disposable stack is stopped by workflow cleanup.
@@ -620,6 +646,8 @@ def main():
         if sys.argv[1:] == ["--snapshot"]:
             final_snapshot(path)
         else:
+            if path.exists():
+                raise TestAlreadyStarted("test_attempt_already_started")
             run(path)
         # The final read can revoke an earlier proof. Both the live process and
         # the workflow's later read-only snapshot must propagate that verdict.
@@ -627,11 +655,14 @@ def main():
         require(report.get("accepted") is True, report.get("gate_failure") or "final_acceptance_not_proven")
         print("Checker live acceptance passed; see the bounded report.")
         return 0
+    except TestAlreadyStarted:
+        print("Test attempt already started; original evidence preserved. No operation was submitted.")
+        return 1
     except Exception as exc:
         report = json.loads(path.read_text()) if path.exists() else {"accepted": False}
         report.update(accepted=False, gate_failure=str(exc) if isinstance(exc, AcceptanceFailure) else type(exc).__name__, automatic_retry=False, cost="unknown")
         write_report(path, report)
-        print("Checker live acceptance did not pass; inspect report.json. Do not rerun uncertain provider work.")
+        print("Checker live test did not pass; inspect report.json. A fresh manual test does not reconcile unknown prior consumption.")
         return 1
 
 

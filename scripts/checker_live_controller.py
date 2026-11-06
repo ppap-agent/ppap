@@ -34,7 +34,7 @@ class Probe:
         self.author_active = False
         self.hidden_ids = set()
         self.hidden_sources = set()
-        self.facts = {"adaptations": 0, "holdout_fixed_trials": 0, "provider_requests": 0, "violation": False, "holdout_sources": []}
+        self.facts = {"adaptations": 0, "holdout_fixed_trials": 0, "provider_requests": 0, "requested_models": [], "violation": False, "holdout_sources": []}
         self.save()
 
     def save(self):
@@ -81,6 +81,12 @@ class Probe:
             if not self.author_active or self.facts["adaptations"] != 1 or contains_holdout(encoded) or any(ident.encode() in encoded for ident in self.hidden_ids):
                 self.reject()
             self.facts["provider_requests"] += 1
+            # Grants.authorize selected the real outbound model, including
+            # internal CLI aliases. This is not a provider receipt or billing.
+            model = body.get("model")
+            from product.model_endpoint import valid_model
+
+            self.facts["requested_models"] = sorted(set(self.facts["requested_models"]) | {valid_model(model)})
             self.save()
 
 
