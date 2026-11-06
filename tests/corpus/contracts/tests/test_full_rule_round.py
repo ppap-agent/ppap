@@ -33,7 +33,7 @@ def process_round(rows, *, text="起始工序拆解完整性识别", bindings=No
         "rules": rules if rules is not None else [{"id": "customer-start", "category": "入料检查", "rule_to_check": text}],
     }
     if bindings is None:
-        bindings = {item["id"]: "7" if item["rule_to_check"] == FINAL_REQUIREMENT else "6" for item in body["rules"]}
+        bindings = {"customer-start": "6"}
     suite = bind_suite(migrated_builtin_suite("v3", "过程流程图"), body, bindings)
     target = RoundInput("target", "process", "process-v1", "process.xlsx", "ready", rule_version_id="rules-v1", rule_body=body)
     return run_suite_round(RoundWork("round", "tenant", [target]), {"process-v1": blob.getvalue()}, suites={"process-v1": suite})
@@ -46,7 +46,7 @@ def test_start_inspection_needs_only_the_required_process_name_column():
 
 
 def test_full_final_inspection_requirement_executes_without_unrelated_headers():
-    result = process_round([["工序名称"], ["FQC"]], text=FINAL_REQUIREMENT)
+    result = process_round([["工序名称"], ["FQC"]], text=FINAL_REQUIREMENT, bindings={"customer-start": "7"})
 
     assert [(item["item"], item["status"]) for item in result["findings"]] == [(FINAL_REQUIREMENT, "PASS")]
 
@@ -88,9 +88,9 @@ def test_merged_process_names_and_repeated_headers_do_not_hide_inspection():
     assert [item["status"] for item in result["findings"]] == ["PASS"]
 
 
-@pytest.mark.parametrize("text, value", [(START_REQUIREMENT, "IQC"), (FINAL_REQUIREMENT, "FQC")])
-def test_process_value_merged_across_the_name_column_keeps_its_left_hand_anchor(text, value):
-    result = process_round([[None, "工序名称"], [value]], text=text, merges=["A2:B2"])
+@pytest.mark.parametrize("text, value, clause", [(START_REQUIREMENT, "IQC", "6"), (FINAL_REQUIREMENT, "FQC", "7")])
+def test_process_value_merged_across_the_name_column_keeps_its_left_hand_anchor(text, value, clause):
+    result = process_round([[None, "工序名称"], [value]], text=text, merges=["A2:B2"], bindings={"customer-start": clause})
 
     assert [item["status"] for item in result["findings"]] == ["PASS"]
 
@@ -100,7 +100,7 @@ def test_explicit_source_clause_bindings_are_preserved_instead_of_remapped_by_ne
         {"id": "final", "category": "出货要求", "priority": "P1", "rule_to_check": FINAL_REQUIREMENT},
         {"id": "start", "category": "来料要求", "priority": "P0", "rule_to_check": START_REQUIREMENT},
     ]
-    result = process_round([["工序名称"], ["IQC"]], rules=rules)
+    result = process_round([["工序名称"], ["IQC"]], rules=rules, bindings={"final": "7", "start": "6"})
 
     assert [(item["item_key"], item["classification"], item["priority"], item["status"]) for item in result["findings"]] == [
         ("process-v1:rule:final", "出货要求", "P1", "NG"),
