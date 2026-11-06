@@ -20,7 +20,7 @@ from audit.protocol import ControllerFault
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent.auditor import FAULTS, SemanticRuntime
-from agent.checker_spec import CheckerArtifact
+from agent.checker_spec import CheckerArtifact, SuiteCheckerProgram
 from agent.client import DeepError
 from agent.execution.budget import MAX_INPUT_FILES, MAX_INPUT_TOTAL
 from agent.execution.secure_files import read_json, read_regular
@@ -398,14 +398,15 @@ def development_snapshot(inputs, artifact, spec):
         for identity, row in source_rows.items()
     )
     rules = inputs.rule.model_dump(mode="json")
-    key = str(rules.get("suite_key") or inputs.rule.rule_id or "development")
+    binding = artifact.binding if isinstance(artifact, SuiteCheckerProgram) else None
+    key = binding.suite_key if binding is not None else str(rules.get("suite_key") or inputs.rule.rule_id or "development")
     target = FrozenTarget(
         target_id,
         str(inputs.rule.rule_id or "development"),
         key,
         artifact.program_digest,
         rules,
-        RuleBinding(key, artifact.program_digest, {clause: "checker:create_audit" for clause in clause_ids(rules)}),
+        binding or RuleBinding(key, artifact.program_digest, {clause: "checker:create_audit" for clause in clause_ids(rules)}),
         appendix=tuple(rules.get("appendix") or ()),
     )
     return ExecutionSnapshot(

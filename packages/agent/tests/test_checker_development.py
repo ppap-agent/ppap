@@ -115,6 +115,39 @@ def request(tmp_path, *, oracle=True):
     )
 
 
+def test_existing_suite_binding_is_preserved_in_trials_and_execution_identity(tmp_path):
+    from agent.checker_development import _trial_artifact
+    from agent.checker_spec import SuiteCheckerProgram
+    from agent.core_program import AuditJobSpec, development_snapshot
+    from agent.protocol import ExecuteRequest
+    from audit.checker_core import RuleBinding, checker_digest
+
+    inputs = source(tmp_path, "original", 12)
+    files = {"checker.py": b"def first(context): return None\ndef second(context): return None\n", "resources.py": b"LIMIT = 10\n"}
+    binding = RuleBinding("tenant-suite", checker_digest(files), {"R1": "checker:first"})
+    program = SuiteCheckerProgram(input_digest=inputs.digest, executor_revision="revision", files=files, binding=binding)
+    assert SuiteCheckerProgram.model_validate_json(program.model_dump_json()) == program
+    trial_input = source(tmp_path, "new-original", 8)
+    trial = _trial_artifact(program, trial_input, "revision")
+    assert isinstance(trial, SuiteCheckerProgram)
+    assert trial.input_digest == trial_input.digest != program.input_digest
+    assert trial.binding == binding and trial.files == files
+    with pytest.raises(ValueError, match="digest mismatch"):
+        SuiteCheckerProgram(input_digest=inputs.digest, executor_revision="revision", files={"checker.py": files["checker.py"]}, binding=binding)
+    # Host-only direct bindings can never be smuggled into a generated factory.
+    with pytest.raises(ValueError):
+        CheckerArtifact.model_validate({**program.model_dump(), "entrypoint": "checker:create_audit"})
+    with pytest.raises(ValueError):
+        CheckerArtifact(input_digest=inputs.digest, executor_revision="revision", files=files, entrypoint="checker:first")
+    spec = ExecuteRequest(protocol_revision="protocol", executor="ppap-deep", executor_revision="revision", round_id="round", tenant_id="tenant", initiating_user_id="user", files=[])
+    first, _ = development_snapshot(inputs, program, spec)
+    changed = SuiteCheckerProgram(input_digest=inputs.digest, executor_revision="revision", files=files, binding=replace(binding, entrypoints={"R1": "checker:second"}))
+    second, _ = development_snapshot(inputs, changed, spec)
+    assert first.targets[0].binding == binding
+    assert first.input_digest != second.input_digest
+    assert AuditJobSpec.from_snapshot(first, allow_model_calls=False).execution_id != AuditJobSpec.from_snapshot(second, allow_model_calls=False).execution_id
+
+
 def test_deep_and_optimizer_share_real_fixed_program_loop(tmp_path):
     req = request(tmp_path)
     runtime = Runtime(tmp_path / "runtime")

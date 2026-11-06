@@ -7,15 +7,18 @@ The trusted controller loads frozen inputs and stores the result before replying
 from __future__ import annotations
 
 import hashlib
+import json
 import threading
 
 from agent.checker_development import DevelopmentOutcome, DevelopmentRequest, FrozenDevelopmentInput, OracleSample, effective_rule_digest
 from agent.checker_program import group_context_for_spec, rule_for_file, verified_related_bytes
-from agent.checker_spec import CheckerArtifact
+from agent.checker_spec import SuiteCheckerProgram
 from agent.client import DEEP_REQUEST_TIMEOUT, DeepClient, DeepError
 from agent.execution.budget import MAX_INPUT_FILES, MAX_INPUT_TOTAL
 from agent.protocol import DevelopmentEnvelope, ExecuteRequest, FrozenFile
 from audit.audits import DEEP_PROTOCOL_REVISION
+from audit.checker_core import RuleBinding, checker_digest, runtime_revision
+from audit.standard_suites import library_revision
 from documents.model_access import ModelUnavailable
 from product.logs import emit
 from product.store.checker_development import CheckerDevelopmentStore, _receipt, principal_for_operation
@@ -24,7 +27,7 @@ from product.store.checker_development import CheckerDevelopmentStore, _receipt,
 def materialize_request(development, row):
     """Holdout bytes live only in this host process until fixed evaluation starts."""
     store, frozen = development.store, row["frozen"]
-    if frozen["executor_revision"] != store.settings.deep_execution_revision():
+    if frozen["executor_revision"] != runtime_revision(store.settings.deep_execution_revision(), library_revision()):
         raise DeepError("executor_revision_mismatch")
     suite = development.suites.resolve_suite(str(row["suite_revision_id"]), str(row["tenant_id"]))
     if suite.revision.resolved_digest != frozen["suite_digest"]:
@@ -84,11 +87,12 @@ def materialize_request(development, row):
     target_sample = next(item for item in samples if item.case_id == frozen["target_sample_id"])
     current_training = {sample.case_id for sample in samples if not sample.holdout and sample.expectations_current}
     feedback = "\n".join(sample["rationale"] for sample in frozen["samples"] if sample["id"] in current_training and sample["id"] in frozen["selected_feedback_ids"])
-    prior = CheckerArtifact(
+    program_files = {path: data for path, data in suite.files.items() if path in {"checker.py", "resources.py"}}
+    prior = SuiteCheckerProgram(
         input_digest=target_sample.inputs.digest,
         executor_revision=frozen["executor_revision"],
-        entrypoint="checker:create_audit",
-        files={path: data for path, data in suite.files.items() if path in {"checker.py", "resources.py"}},
+        binding=RuleBinding(suite.revision.suite_key, checker_digest(program_files), json.loads(suite.files["rules.json"])["checker_binding"]),
+        files=program_files,
     )
     request = DevelopmentRequest(
         target=target_sample.inputs,

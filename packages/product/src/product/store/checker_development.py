@@ -7,6 +7,7 @@ import json
 from typing import Any
 from uuid import UUID, uuid4
 
+from audit.checker_core import RuleBinding, checker_digest, runtime_revision
 from audit.contracts import RuleInput
 from audit.models import public_locator
 from audit.standard_suites import library_revision
@@ -395,7 +396,7 @@ class CheckerDevelopmentStore:
                 "suite_digest": suite.revision.resolved_digest,
                 "related_revision_ids": related,
                 "related_suite_digests": {key: self.suites.resolve_suite(value, principal.tenant_id, conn=conn).revision.resolved_digest for key, value in related.items()},
-                "executor_revision": self.store.settings.deep_execution_revision() if payload["action"] == "run_tests" else "",
+                "executor_revision": runtime_revision(self.store.settings.deep_execution_revision(), library_revision()) if payload["action"] == "run_tests" else "",
                 "library_revision": library_revision(),
                 "model_identity": self.store.settings.deep_execution_policy().runtime_identity() if payload["action"] == "run_tests" else {},
                 "consume_model": payload.get("consume_model") is True,
@@ -707,7 +708,13 @@ def principal_for_operation(row: dict) -> Principal:
 
 def _candidate_files(base, artifact):
     rules = json.loads(base.files["rules.json"])
-    rules["checker_binding"] = {item["id"]: "checker:create_audit" for item in rules["rules"]}
+    binding = getattr(artifact, "binding", None)
+    if binding is not None:
+        if not isinstance(binding, RuleBinding) or binding.suite_key != base.revision.suite_key or binding.checker_digest != checker_digest(artifact.files):
+            raise ValueError("checker_artifact_identity_mismatch")
+        rules["checker_binding"] = dict(binding.entrypoints)
+    else:
+        rules["checker_binding"] = {item["id"]: "checker:create_audit" for item in rules["rules"]}
     return {**dict(artifact.files), "rules.json": json.dumps(rules, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()}
 
 
