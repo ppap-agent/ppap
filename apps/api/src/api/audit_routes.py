@@ -46,6 +46,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
                 "upload_preparation_input_conflict",
                 "file_not_ready",
                 "review_conflict",
+                "review_hint_response_conflict",
                 "deep_not_available",
                 "personal_model_configuration_changed",
                 "task_input_locked",
@@ -594,12 +595,45 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
         except (KeyError, ValueError) as exc:
             return fail(exc)
 
+    @app.put("/rounds/{round_id}/review-document-pairs", response_model=wc.ReviewDocumentPairs, openapi_extra=wc.openapi_body(wc.DocumentPair))
+    def review_document_pair(round_id: str, body: dict, request: Request):
+        from product.store.review_hints import declare_pair
+
+        principal, denied = require_object(request, round_id, review=True)
+        if denied:
+            return denied
+        try:
+            return JSONResponse(declare_pair(store, principal, round_id, body.get("pdf_file_version_id"), body.get("excel_file_version_id")))
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+
+    @app.get("/review-hints/responses", response_model=wc.ReviewHintCounts)
+    def review_hint_counts(request: Request):
+        from product.store.review_hints import response_counts
+
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        return JSONResponse(response_counts(store, principal))
+
+    @app.put("/rounds/{round_id}/review-hints", response_model=wc.ReviewHintReceipt, openapi_extra=wc.openapi_body(wc.ReviewHintResponse))
+    def review_hint_response(round_id: str, body: dict, request: Request):
+        from product.store.review_hints import respond
+
+        principal, denied = require_object(request, round_id, review=True)
+        if denied:
+            return denied
+        try:
+            return JSONResponse(respond(store, principal, round_id, body.get("item_key"), body.get("action"), body.get("hint")))
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+
     @app.get("/rounds/{round_id}", response_model=wc.Round)
     def rounds_get(round_id: str, request: Request, read_view: bool = False) -> JSONResponse:
         principal, denied = require_object(request, round_id)
         if denied:
             return denied
-        body = store.get_round(round_id, read_view=True, principal=principal) if read_view else store.get_round(round_id)
+        body = store.get_round(round_id, read_view=True, principal=principal) if read_view else store.get_round(round_id, principal=principal)
         if body is None:
             return JSONResponse({"error": "access_denied"}, status_code=403)
         return JSONResponse(body)

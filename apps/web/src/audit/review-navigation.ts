@@ -10,7 +10,7 @@ export function reviewed(check: Check) {
 export const needsAttention = (check: Check) => !(check.execution === 'completed' && check.coverage === 'executed' && ['PASS', 'NA'].includes(check.finding?.status || ''))
 export function filterChecks(checks: Check[], query: string, filter: string) {
   return checks.filter(row => (row.rule_item.id + ' ' + row.rule_item.category + ' ' + row.rule_item.rule_to_check + ' ' + clauseObservation(row)).toLowerCase().includes(query.toLowerCase()) && (
-    filter === 'all' || filter === 'unreviewed' && reviewable(row) && !reviewed(row)
+    filter === 'all' || filter === 'suggested' && Boolean(row.finding?.review_hint) || filter === 'unreviewed' && reviewable(row) && !reviewed(row)
     || filter === 'attention' && needsAttention(row)
     || filter === 'error' && (row.execution === 'failed' || row.finding?.status === 'ERR')
     || filter === 'uncovered' && row.execution === 'completed' && row.coverage !== 'executed' && row.finding?.status !== 'ERR'
