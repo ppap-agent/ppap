@@ -48,7 +48,7 @@ export function AuditRoundReader({roundId, readRound, renderOriginal, onReaudit,
   const reportTaskId = reportSource?.access.state === 'allowed' ? reportSource.task_id : null
   const versions = view?.files.map(row => row.file.id) || []
   const originals = view?.files.map(row => ({file_version_id: row.file.id, file: row.file, access: {state: 'allowed' as const, reason: null}})) || []
-  return <section aria-label="历史审核" className="mx-auto max-w-screen-2xl space-y-6">
+  return <section aria-label="历史审核" data-round-id={round?.id === roundId ? round.id : undefined} data-result-attempt={round?.id === roundId ? round.result_attempt : undefined} className="mx-auto max-w-screen-2xl space-y-6">
     {headerActions ? <><h1 className="sr-only">历史审核</h1>{createPortal(<DropdownMenu><DropdownMenuTrigger asChild><Button variant="outline" size="sm">历史操作</Button></DropdownMenuTrigger><DropdownMenuContent align="end" className="w-64">
       <DropdownMenuItem asChild><a href={returnHref}>返回工作台</a></DropdownMenuItem>
       {onReaudit && round?.id === roundId && ['completed', 'failed'].includes(round.execution) && <DropdownMenuItem onSelect={onReaudit}>补件／重新审核</DropdownMenuItem>}

@@ -81,7 +81,7 @@ jobs:
           set -euo pipefail
           uv sync --locked --group e2e
           uv run --no-sync python -m playwright install --with-deps chromium
-          uv run --no-sync pytest tests/repository/test_checker_live_acceptance.py -q
+          uv run --no-sync python -m pytest tests/repository/test_checker_live_acceptance.py -q
           docker buildx bake api worker deep web --load
           for service in api worker deep web; do
             revision=$(docker image inspect "ppap-$service:$PPAP_BUILD_SHA" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
