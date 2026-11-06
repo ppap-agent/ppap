@@ -164,21 +164,35 @@ def writeback_state(round_body: dict) -> str:
     if "" in input_versions or any(_finding_version(row) not in input_versions for row in findings):
         return "round_incomplete"
     by_version = {str(item["file_version_id"]): item for item in inputs}
+    core_round = round_body.get("executor") == "ppap-checker-core"
     for row in findings:
         semantic = _semantic(row)
         if not semantic:
-            if round_body.get("analysis_mode") == "deep":
+            if core_round or round_body.get("analysis_mode") == "deep":
                 return "round_incomplete"
             continue
-        if _scope(row) is None:
+        checker_execution = semantic.get("verification_scope") == "checker_execution"
+        if core_round and not checker_execution:
             return "round_incomplete"
+        # Checker assertion counts are not scanned-row coverage. Keep historical
+        # semantic scope validation, without fabricating a scope for Core output.
+        if not checker_execution or "scope" in semantic:
+            if _scope(row) is None:
+                return "round_incomplete"
+        if checker_execution:
+            performed = semantic.get("checks_performed")
+            basis = semantic.get("empty_scope_basis", "")
+            if (performed is not None and (type(performed) is not int or performed < 0)) or not isinstance(basis, str):
+                return "round_incomplete"
+            if row["status"] == PASS and not basis.strip() and (performed is None or performed == 0):
+                return "round_incomplete"
         target_input = by_version[_finding_version(row)]
         rule = target_input.get("rule") or {}
         if semantic.get("rule_version_id") != target_input.get("rule_version_id"):
             return "round_incomplete"
         body = rule.get("body") if isinstance(rule, dict) else None
         clauses = body.get("rules") if isinstance(body, dict) else None
-        if round_body.get("analysis_mode") == "deep" and not isinstance(clauses, list):
+        if (checker_execution or round_body.get("analysis_mode") == "deep") and not isinstance(clauses, list):
             return "round_incomplete"
         if isinstance(clauses, list):
             matches = [item for item in clauses if isinstance(item, dict) and item.get("id") == semantic.get("clause_id")]
@@ -186,6 +200,8 @@ def writeback_state(round_body: dict) -> str:
                 return "round_incomplete"
         sources = semantic.get("sources")
         if not isinstance(sources, list) or any(not isinstance(source, dict) or not _semantic_source_valid(source, by_version) for source in sources):
+            return "round_incomplete"
+        if checker_execution and row["status"] == PASS and not sources and not semantic.get("empty_scope_basis", "").strip():
             return "round_incomplete"
     groups = _group_findings(round_body)
     if not groups or any(not rows for _, rows in groups):
