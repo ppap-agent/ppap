@@ -439,6 +439,7 @@ class GatewayGrantTests(unittest.TestCase):
                 prior = {"input_tokens": confirmed["input_tokens"], "output_tokens": confirmed["output_tokens"], "model_requests": confirmed["completed_requests"]}
                 runtime = object.__new__(ContainerRuntime)
                 runtime.config = SimpleNamespace(gateway_socket=gateway.socket_path)
+                runtime.model_grant_binding = None
                 next_id = uuid4()
                 with self.assertRaises(ControllerFault) as failure:
                     runtime._write_grant(next_id, root / "unused-run", prior)
@@ -631,6 +632,7 @@ class ContainerBoundaryTests(unittest.TestCase):
             root = Path(temporary)
             with local_gateway(root / "gateway.sock", upstream="https://provider.example/v1", model="test-model", provider_key="test-provider-key", requests=2, input_tokens=100, output_tokens=30):
                 runtime = object.__new__(ContainerRuntime)
+                runtime.model_grant_binding = None
                 runtime.config = RuntimeConfig(
                     state=root,
                     gateway_socket=root / "gateway.sock",
