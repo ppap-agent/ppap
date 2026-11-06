@@ -6,7 +6,7 @@ import hashlib
 import json
 import os
 
-from documents.model_access import DEEPSEEK_BASE_URL, DEEPSEEK_MODEL, current_model_access, model_access_scoped
+from documents.model_access import current_model_access, model_access_scoped
 
 DEFAULT_MAX_FILE_SIZE = "100MB"
 DEFAULT_ALLOWED_EXTENSIONS = ".pdf,.doc,.docx,.pptx,.xlsx,.xls,.xlsm,.jpg,.jpeg,.png,.gif,.md"
@@ -38,7 +38,7 @@ def ocr_openai_base_url() -> str:
 
 def ocr_model_name() -> str:
     if model_access_scoped():
-        return DEEPSEEK_MODEL
+        return current_model_access().model
     model = _env("OCR_MODEL_NAME")
     if not model:
         raise ValueError("OCR model is not configured: set OCR_MODEL_NAME")
@@ -70,8 +70,8 @@ def ocr_policy_identity() -> str:
     """Hash actual non-secret configuration, not credentials or text defaults."""
     value = {
         "protocol": "native_paddle_responses_v3",
-        "model": DEEPSEEK_MODEL if model_access_scoped() else _env("OCR_MODEL_NAME"),
-        "endpoint_sha256": hashlib.sha256((DEEPSEEK_BASE_URL if model_access_scoped() else ocr_openai_base_url()).encode()).hexdigest(),
+        "model": current_model_access().model if model_access_scoped() else _env("OCR_MODEL_NAME"),
+        "endpoint_sha256": hashlib.sha256(ocr_openai_base_url().encode()).hexdigest(),
         "extra_body": ocr_extra_body(),
         "timeout": 20,
         "max_retries": 0,

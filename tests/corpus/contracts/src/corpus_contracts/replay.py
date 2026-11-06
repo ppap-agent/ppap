@@ -15,6 +15,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from documents.model_access import ModelAccess
+from pydantic import SecretStr
+
 REPLAY_DIR = Path(__file__).resolve().parents[5] / "assets/corpus/replay"
 REPLAY = "replay"
 LIVE = "live"
@@ -26,6 +29,44 @@ def mode() -> str:
     if value not in {REPLAY, LIVE}:
         raise ValueError(f"PPAP_CORPUS_MODEL must be {REPLAY} or {LIVE}")
     return value
+
+
+def offline() -> bool:
+    value = os.environ.get("PPAP_CORPUS_OFFLINE", "0").strip().lower()
+    if value not in {"0", "1", "false", "true", ""}:
+        raise ValueError("PPAP_CORPUS_OFFLINE must be 0 or 1")
+    return value in {"1", "true"}
+
+
+def configured_model_access() -> ModelAccess | None:
+    """One explicit test grant, never a production ambient-credential fallback.
+
+    Corpus visual regressions prefer their dedicated OCR provider. All model
+    tools in that test use this same grant. The paired key/endpoint/model must
+    come from one complete test configuration, not unrelated settings defaults.
+    """
+    for names in (
+        ("OCR_OPENAI_API_KEY", "OCR_OPENAI_BASE_URL", "OCR_MODEL_NAME"),
+        ("OPENAI_API_KEY", "OPENAI_BASE_URL", "MODEL_NAME"),
+        ("LLM_API_KEY", "LLM_BASE_URL", "LLM_MODEL"),
+    ):
+        values = tuple(os.environ.get(name, "").strip() for name in names)
+        if all(values):
+            key, endpoint, model = values
+            return ModelAccess(SecretStr(key), provider="corpus-test", base_url=endpoint, model=model)
+        if values[0]:
+            raise ValueError("Incomplete corpus test model configuration: " + ", ".join(names))
+    return None
+
+
+def replay_model_access() -> ModelAccess:
+    # This inert grant lets recorded observations pass the same scope boundary.
+    # Offline Recorder transports below reject every cache miss before sending.
+    return ModelAccess(SecretStr("corpus-replay-only"), provider="corpus-replay", model="recorded-model", base_url="http://127.0.0.1:1/v1")
+
+
+class OfflineReplayMiss(AssertionError):
+    """A request without a recording cannot authorize an external model call."""
 
 
 def _image_summary(value: str) -> str:
@@ -54,7 +95,9 @@ def shown_to_model(value: Any) -> Any:
 class Recorder:
     """New answers wait for the case verdict, so a failed case asks again next run."""
 
-    def __init__(self, scope: str, recordings: Path = REPLAY_DIR, output: Path | None = None) -> None:
+    def __init__(self, scope: str, recordings: Path = REPLAY_DIR, output: Path | None = None, *, offline: bool = False) -> None:
+        self.offline = offline
+        self.misses: list[str] = []
         relative = f"{scope}.json"
         self.path = recordings / relative
         self.output = (output or Path(os.environ.get("PPAP_CORPUS_REPLAY_OUT") or recordings)) / relative
@@ -64,6 +107,11 @@ class Recorder:
                 self.entries.extend(json.loads(path.read_text(encoding="utf-8")))
         self.pending: list[dict[str, Any]] = []
         self.lock = threading.Lock()
+
+    def require_live(self, kind: str) -> None:
+        if self.offline:
+            self.misses.append(kind)
+            raise OfflineReplayMiss(f"No {kind} recording for {self.path.name}; external model calls are disabled")
 
     def lookup(self, kind: str, request: Any) -> dict[str, Any] | None:
         shown = json.loads(json.dumps(shown_to_model(request), ensure_ascii=False, default=str))
@@ -101,6 +149,7 @@ def install(monkeypatch: Any, recorder: Recorder) -> None:
         request = {name: kwargs.get(name) for name in ("input", "text", "max_output_tokens")}
         entry = recorder.lookup("ocr", request)
         if entry is None:
+            recorder.require_live("ocr")
             response = await real_ocr(kwargs)
             if getattr(response, "status", None) == "completed":
                 recorder.add("ocr", request, response.output_text, kwargs.get("model"))
@@ -112,6 +161,7 @@ def install(monkeypatch: Any, recorder: Recorder) -> None:
         request = {"messages": messages, **dict(zip(names, args)), **{name: kwargs[name] for name in names if name in kwargs}}
         entry = recorder.lookup("text", request)
         if entry is None:
+            recorder.require_live("text")
             answer = real_text(self, messages, *args, **kwargs)
             recorder.add("text", request, answer, getattr(self.settings, "MODEL_NAME", None))
             return answer
@@ -120,6 +170,7 @@ def install(monkeypatch: Any, recorder: Recorder) -> None:
     def paddle_request(endpoint: str, payload: dict, headers: dict, timeout: float) -> object:
         entry = recorder.lookup("paddle", payload)
         if entry is None:
+            recorder.require_live("paddle")
             answer = real_paddle(endpoint, payload, headers, timeout)
             recorder.add("paddle", payload, answer)
             return answer
@@ -130,4 +181,4 @@ def install(monkeypatch: Any, recorder: Recorder) -> None:
     monkeypatch.setattr(paddle_client, "_post_page_sync", paddle_request)
 
 
-__all__ = ["LIVE", "REPLAY", "REPLAY_DIR", "Recorder", "install", "mode", "shown_to_model"]
+__all__ = ["LIVE", "REPLAY", "REPLAY_DIR", "OfflineReplayMiss", "Recorder", "configured_model_access", "install", "mode", "offline", "replay_model_access", "shown_to_model"]
