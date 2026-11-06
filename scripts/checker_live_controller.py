@@ -1,7 +1,8 @@
 """Observational live guard around the unchanged production Controller/runtime.
 
 No model, artifact, trial or provider response is supplied or replaced. The
-private client/oracle is NOT mounted here. Only this guard is mounted read-only.
+client source is not mounted here. Private Oracle identities and evidence are
+readable by this trusted Controller, but denied to the guest UID.
 """
 
 import hashlib
