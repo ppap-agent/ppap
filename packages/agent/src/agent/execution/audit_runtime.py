@@ -210,6 +210,12 @@ def run_audit(
             model_scope = contextlib.nullcontext() if model_access_scoped() else model_access_scope(None)
             with model_scope, bind_runtime(runtime), paddle_page_scope(), track_ocr_usage():
                 for index, target in enumerate(snapshot.targets):
+                    if not target.binding.entrypoints:
+                        # An unverified starter may contain arbitrary code but
+                        # authorizes no execution, including import side effects.
+                        validated = validate_results([], target=target, inputs=snapshot.inputs)
+                        coverage.extend(validated["coverage"])
+                        continue
                     digest = target.binding.checker_digest
                     if digest in loaded_programs:
                         modules = loaded_programs[digest]

@@ -5,6 +5,7 @@ import json
 from collections import Counter
 from types import SimpleNamespace
 
+import pytest
 from audit.contracts import AuditInput, GroupContextInput, RuleInput
 from audit.engine.checkers.rule_declarations import discover_declared_rules
 from audit.presets import customer_presets, preset_rule_body
@@ -25,6 +26,7 @@ def test_all_41_source_groups_have_explicit_executable_bindings():
     assert {s.suite_key for s in suites} == {f"{p.customer}:{p.entry_id}" for p in customer_presets()}
     for suite in suites:
         rules = json.loads(suite.files["rules.json"])
+        assert "rule_profile" not in rules
         source = resources(suite)
         assert set(source["methods"]) == set(suite.entrypoints)
         assert set(suite.entrypoints) <= {rule["id"] for rule in rules["rules"]}
@@ -170,3 +172,57 @@ def test_authored_collective_failure_is_not_repeated_for_later_clauses():
         with pytest.raises(RuntimeError, match="unknown provider"):
             check_factory(context, lambda *args: SimpleNamespace(checks=[SimpleNamespace(check=fail)]))
     assert calls == ["external"]
+
+
+@pytest.mark.parametrize("module", ["audit.checkers.v2.psw_pdf_agent", "audit.checkers.v3.psw_pdf_agent"])
+def test_pdf_suite_keeps_original_page_visual_policy(module, monkeypatch):
+    """Dispatch regression only: a converted grid cannot stand in for a PDF stamp."""
+    import importlib
+
+    from audit.contracts import AuditResultItem
+    from audit.engine.checkers.rule_declarations import discover_declared_rules
+    from audit.suite_migration import migrated_builtin_suite
+
+    cls = importlib.import_module(module).PswPDFAgent
+    checker = object.__new__(cls)
+    checker.temp_files = []
+    checker.audit_file = AuditInput(audit_id="frozen", file_url="/frozen/original.pdf")
+    checker.excel_agent = SimpleNamespace(_execute_rule_check=lambda *_: pytest.fail("PDF visuals must not use the converted workbook"))
+    checker.log_audit_start = checker.log_audit_result = lambda *args: None
+    calls = []
+
+    def original(ith, rule_no, **kwargs):
+        calls.append((ith, rule_no))
+        return AuditResultItem(classification="stamp", item="original PDF", priority="P0", status="UNABLE", suggestions="Original fact is unconfirmed")
+
+    checker._run_fact_rule = original
+    from audit.checkers.v4 import paddle_evidence
+
+    monkeypatch.setattr(paddle_evidence, "observe_psw_shadow", lambda *args: None)
+    suite = migrated_builtin_suite("v2" if ".v2." in module else "v3", "零件提交保证书")
+    context = SimpleNamespace(audit_file=checker.audit_file, clause_id="3", cache={("standard-checker", "frozen", f"{module}:PswPDFAgent"): checker})
+    methods = discover_declared_rules(cls.TARGET_EXCEL_AGENT_CLASS)
+    result = check_clause(context, {"carriers": {".pdf": f"{module}:PswPDFAgent"}, "methods": {"3": methods[2][0]}})
+    assert "3" in suite.entrypoints
+    assert calls == [(2, 3)]
+    assert result.status == "UNABLE" and result.clause_id == "3"
+
+
+def test_pdf_suite_keeps_conversion_page_evidence():
+    from audit.checkers.v3.pdf_excel_delegator_agent import ProcessFlowChartPdfExcelDelegatorAgent
+    from audit.checkers.v3.process_flow_chart_excel_agent import ProcessFlowChartExcelAgent
+    from audit.contracts import AuditResultItem
+    from audit.engine.checkers.rule_declarations import discover_declared_rules
+
+    cls = ProcessFlowChartPdfExcelDelegatorAgent
+    checker = object.__new__(cls)
+    checker.temp_files = []
+    checker.audit_file = AuditInput(audit_id="frozen", file_url="/frozen/original.pdf")
+    checker.excel_agent = SimpleNamespace(_execute_rule_check=lambda _: AuditResultItem(classification="field", item="field", priority="P0", status="PASS", suggestions="grid value"))
+    checker._apply_pdf_evidence = lambda result: result.model_copy(update={"status": "UNABLE", "suggestions": "original page was incomplete"})
+    implementation = f"{cls.__module__}:{cls.__name__}"
+    method = discover_declared_rules(ProcessFlowChartExcelAgent)[0][0]
+    context = SimpleNamespace(audit_file=checker.audit_file, clause_id="1", cache={("standard-checker", "frozen", implementation): checker})
+    result = check_clause(context, {"carriers": {".pdf": implementation}, "methods": {"1": method}})
+    assert result.status == "UNABLE"
+    assert result.suggestions == "original page was incomplete"

@@ -4,14 +4,16 @@ Source-clause business oracles remain in the customer owner tests. These cases
 prove actual template execution and invariance under a supplier file rename.
 """
 
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
-from audit.audits import RoundInput, RoundWork
+from agent.execution.audit_runtime import run_audit
+from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest
 from audit.document_tools import snapshot
-from audit.engine.checkers.rule_declarations import freeze_target_rule_execution
-from audit.presets import customer_presets, preset_rule_body
-from product import run_round_from_bytes
+from audit.presets import customer_presets
+from audit.standard_suites import standard_suites
 
 ROOT = Path(__file__).resolve().parents[4]
 TEMPLATES = ROOT / "assets/PPAP PRD v3.7/客户归类模板与规则_备份/模板"
@@ -35,20 +37,25 @@ TEMPLATES = ROOT / "assets/PPAP PRD v3.7/客户归类模板与规则_备份/模�
 )
 def test_actual_customer_template_runs_with_original_and_supplier_filename(customer, entry, filename):
     source = TEMPLATES / customer / filename
-    body = preset_rule_body(customer, entry)
+    suite = next(suite for suite in standard_suites() if suite.customer == customer and suite.source_entry == entry)
+    body = json.loads(suite.files["rules.json"])
+    data = source.read_bytes()
+    digest = checker_digest(suite.program_files)
     declaration = next(item for item in customer_presets() if item.entry_id == entry)
     source_ids = {clause.id for clause in declaration.clauses}
     previous = None
     for name in (filename, "供应商提交的原件" + source.suffix):
-        execution = freeze_target_rule_execution(body, name)
-        target = RoundInput("target", "file", "version", name, "ready", rule_version_id="frozen-rule", rule_body=body, rule_execution=execution)
-        result = run_round_from_bytes(RoundWork("template-round", "tenant", [target]), {"version": source.read_bytes()})
+        target = FrozenTarget("version", suite.revision_digest, suite.suite_key, suite.revision_digest, body, RuleBinding(suite.suite_key, digest, suite.entrypoints))
+        original = FrozenInput("version", hashlib.sha256(data).hexdigest(), "target", name, document_type=suite.document_type, customer=customer)
+        snapshot = ExecutionSnapshot("tenant", "initiator", (original,), (target,), "runtime", "library", {})
+        result = run_audit(snapshot, {"version": data}, {digest: suite.program_files})
         findings = result["findings"]
         assert len(findings) == len(source_ids)
-        assert {row["item_key"].split(":rule:", 1)[1] for row in findings} == source_ids
-        assert not result["coverage"]["unchecked"]
-        assert not [row for row in findings if row["status"] == "ERR"], [(row["item_key"], row["suggestions"]) for row in findings]
-        observed = {row["item_key"]: row["status"] for row in findings}
+        assert {row["clause_id"] for row in findings} == source_ids
+        assert all(row["coverage"] == "mapped" for row in result["coverage"])
+        assert target.verification == "unverified"
+        assert not [row for row in findings if row["status"] == "ERR"], [(row["clause_id"], row["suggestions"]) for row in findings]
+        observed = {row["clause_id"]: row["status"] for row in findings}
         if previous is not None:
             assert observed == previous, "Renaming a carrier cannot change customer clause decisions"
         previous = observed

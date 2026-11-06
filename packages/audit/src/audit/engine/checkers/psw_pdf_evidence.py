@@ -300,6 +300,10 @@ class PswPdfEvidenceMixin:
         return result
 
     def check(self, ith: int) -> Optional[AuditResult]:
+        return self.check_source_rule(ith)
+
+    def check_source_rule(self, ith: int) -> Optional[AuditResult]:
+        """The same original-page policy serves legacy and frozen Suite callers."""
         host = self._host()
         host.log_audit_start(ith)
         rule_no = ith + 1

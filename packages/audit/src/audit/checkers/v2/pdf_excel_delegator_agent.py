@@ -69,6 +69,12 @@ class PdfExcelDelegatorAgent(PDFAgent):
             logger.error("Delegated Excel checker failed at rule %s: %s", ith + 1, exc, exc_info=True)
             return BaseAgent.check(self, ith)
 
+    def check_source_rule(self, ith: int) -> Optional[AuditResult]:
+        """Use this carrier's native policy without a generic AI retry."""
+        if self.excel_agent is None:
+            return self._run_fallback_rule(ith)
+        return self.excel_agent._execute_rule_check(ith + 1)
+
     def _init_excel_delegate(self) -> bool:
         excel_cls = self.TARGET_EXCEL_AGENT_CLASS
         if excel_cls is None:

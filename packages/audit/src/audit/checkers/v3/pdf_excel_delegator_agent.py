@@ -136,6 +136,12 @@ class PdfExcelDelegatorAgent(PDFAgent):
             return bound[ith].check()
         return self._apply_pdf_evidence(super().check(ith))
 
+    def check_source_rule(self, ith: int) -> Optional[AuditResult]:
+        """Keep original-page evidence while executing a frozen library method."""
+        if self.excel_agent is None:
+            return self._run_fallback_rule(ith)
+        return self._apply_pdf_evidence(self.excel_agent._execute_rule_check(ith + 1))
+
     def _with_pdf_evidence_check(self, checker: Any) -> Any:
         from audit.engine.checkers.rule_check import RuleCheck
 

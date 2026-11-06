@@ -98,6 +98,7 @@ def standard_suites() -> tuple[StandardSuite, ...]:
             "def precheck(context):\n    return prepare_target(context, RESOURCES)\n"
         ).encode()
         rules = preset_rule_body(preset.customer, preset.entry_id)
+        rules.pop("rule_profile", None)
         # The data retains source provenance. Runtime selection uses only the
         # frozen suite and artifact, never rule_profile or a class-name heuristic.
         rules["checker_binding"] = dict(entrypoints)

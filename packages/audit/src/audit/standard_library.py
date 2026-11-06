@@ -50,8 +50,7 @@ def check_clause(context: Any, resources: dict[str, Any]) -> AuditResultItem:
     if getattr(type(checker), "TARGET_EXCEL_AGENT_CLASS", None) is not None:
         # The configured PDF carrier owns its conversion/native evidence policy.
         # Never call its broad .check() exception fallback into generic AI.
-        delegate = checker.excel_agent
-        item = delegate._execute_rule_check(index + 1) if delegate is not None else checker._run_fallback_rule(index)
+        item = checker.check_source_rule(index)
     else:
         direct = getattr(checker, "_execute_rule_check", None)
         item = direct(index + 1) if callable(direct) else checker.check(index)
