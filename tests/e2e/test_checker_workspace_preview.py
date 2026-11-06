@@ -24,6 +24,8 @@ class CheckerHttpFixture:
         self.head = 0
         self.lose_feedback = False
         self.lose_publish = False
+        self.drop_publish_before_write = False
+        self.edits = 0
         self.lose_upgrade = False
         self.reject_upgrade = False
         self.reject_upgrade_verification = False
@@ -154,6 +156,10 @@ class CheckerHttpFixture:
                 response = self.upgrades.get(path.split("/")[-1])
         elif path == "/suites/control-plan/active":
             if method == "PUT":
+                if self.drop_publish_before_write:
+                    self.drop_publish_before_write = False
+                    route.abort("failed")
+                    return
                 assert body["expected_revision"] == self.head
                 self.head += 1
                 response = {**body, "suite_key": "control-plan", "revision": self.head, "published_by": "alice", "published_by_name": "测试用户", "published_at": "2026-11-06T00:00:00Z"}
@@ -168,7 +174,8 @@ class CheckerHttpFixture:
         elif path.startswith("/suite-revisions/"):
             revision = path.split("/")[2]
             if path.endswith("/candidates"):
-                candidate = self.revision("revision-edited", 3)
+                self.edits += 1
+                candidate = self.revision("revision-edited" if self.edits == 1 else f"revision-edited-{self.edits}", 2 + self.edits)
                 candidate["base_revision_id"] = revision
                 candidate["files"].update(self.revisions[revision]["files"])
                 candidate["files"].update(body["files"])
@@ -427,4 +434,85 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
             self.assertEqual(upgrade["expected_revision"], 2)
             self.assertEqual(fixture.revisions["revision-upgraded"]["files"]["checker.py"], "# current enterprise change")
             self.assertEqual(fixture.current, "revision-current")
+            browser.close()
+
+    def test_two_manual_saves_restore_latest_candidate_and_unknown_publication_without_server_write(self):
+        with sync_playwright() as playwright:
+            browser = self.browser(playwright)
+            fixture = CheckerHttpFixture()
+            fixture.current = "revision-current"
+            fixture.head = 2
+            fixture.revisions[fixture.current] = fixture.revision(fixture.current, 2)
+            page = self.open(browser, fixture)
+            expect(page.get_by_text("控制计划检查 · 本企业版本 v2 · 当前使用", exact=True)).to_be_visible()
+            for version, text in [(3, "第一次保存的企业修改"), (4, "第二次保存的企业修改")]:
+                page.get_by_text("单独修改规则或模板", exact=True).click()
+                page.get_by_label("条款 U08-1 的规则原文", exact=True).fill(text)
+                page.get_by_role("button", name="仅保存这些修改", exact=True).click()
+                expect(page.get_by_text(f"控制计划检查 · 本企业版本 v{version} · 待发布的修改", exact=True)).to_be_visible()
+            self.assertNotIn("checkerDetailRoot=", page.url)
+            self.assertIn("checkerDetailScope=", page.url)
+            page.reload()
+            expect(page.get_by_text("控制计划检查 · 本企业版本 v4 · 待发布的修改", exact=True)).to_be_visible()
+            page.get_by_text("单独修改规则或模板", exact=True).click()
+            expect(page.get_by_label("条款 U08-1 的规则原文", exact=True)).to_have_value("第二次保存的企业修改")
+            self.assertEqual(fixture.edits, 2)
+            fixture.drop_publish_before_write = True
+            page.get_by_role("button", name="发布此修改", exact=True).click()
+            page.get_by_label("我已核对上述未验证项和新增错误，仍要启用", exact=True).check()
+            page.get_by_role("button", name="确认发布", exact=True).click()
+            expect(page.get_by_text("发布结果尚未确定。请读取原操作，不要重复发布或回滚。", exact=True)).to_be_visible()
+            self.assertEqual(fixture.history, [])
+            self.assertEqual(fixture.current, "revision-current")
+            page.reload()
+            expect(page.get_by_text("控制计划检查 · 本企业版本 v4 · 待发布的修改", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="发布此修改", exact=True)).to_be_disabled()
+            expect(page.get_by_role("button", name="重新运行验证样本", exact=True)).to_be_disabled()
+            page.get_by_role("button", name="读取原发布操作", exact=True).click()
+            expect(page.get_by_text("尚未读到原发布回执。不要重复发布，可以稍后继续读取。", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="发布此修改", exact=True)).to_be_disabled()
+            self.assertEqual(len([row for row in fixture.calls if row[:2] == ("PUT", "/suites/control-plan/active")]), 1)
+            self.assertEqual(fixture.edits, 2)
+            self.assertEqual(fixture.history, [])
+            browser.close()
+
+    def test_auto_discovered_operation_preserves_manual_candidate_until_same_operation_is_selected(self):
+        with sync_playwright() as playwright:
+            browser = self.browser(playwright)
+            fixture = CheckerHttpFixture()
+            page = self.open(browser, fixture)
+            self.answer(page)
+            for version, text in [(3, "第一次保存的企业修改"), (4, "第二次保存的企业修改")]:
+                page.get_by_text("单独修改规则或模板", exact=True).click()
+                page.get_by_label("条款 U08-1 的规则原文", exact=True).fill(text)
+                page.get_by_role("button", name="仅保存这些修改", exact=True).click()
+                expect(page.get_by_text(f"控制计划检查 · 本企业版本 v{version} · 待发布的修改", exact=True)).to_be_visible()
+            self.assertNotIn("checkerOptimization=", page.url)
+            # The same user finished another operation in a different window.
+            fixture.revisions["revision-other-window"] = fixture.revision("revision-other-window", 9)
+            fixture.operations["operation-other-window"] = {
+                "operation_id": "operation-other-window",
+                "suite_revision_id": "revision-base",
+                "suite_key": "control-plan",
+                "state": "saved",
+                "candidate_revision_id": "revision-other-window",
+                "report": {"verified": False, "reasons": ["tests_not_run"]},
+                "usage": {"source": "controlled", "total_tokens": 0, "uncertain": False},
+                "failure": None,
+                "cancel_requested": False,
+                "created_at": "2026-11-06T00:00:00Z",
+            }
+            with page.expect_response(lambda response: urlsplit(response.url).path == "/checker-optimizations/operation-other-window"):
+                page.reload()
+            expect(page.get_by_text("控制计划检查 · 本企业版本 v4 · 待发布的修改", exact=True)).to_be_visible()
+            page.get_by_text("单独修改规则或模板", exact=True).click()
+            expect(page.get_by_label("条款 U08-1 的规则原文", exact=True)).to_have_value("第二次保存的企业修改")
+            page.get_by_text("之前的修复记录", exact=True).click()
+            # Choosing the already displayed operation must still rerender its explicit intent.
+            page.get_by_role("button", name=re.compile("查看待验证修改$")).click()
+            expect(page.get_by_text("控制计划检查 · 本企业版本 v9 · 待发布的修改", exact=True)).to_be_visible()
+            self.assertIn("checkerOptimization=operation-other-window", page.url)
+            self.assertEqual(fixture.edits, 2)
+            self.assertFalse(any(row[0] == "POST" and row[1].endswith("/optimizations") for row in fixture.calls))
+            self.assertEqual(fixture.history, [])
             browser.close()

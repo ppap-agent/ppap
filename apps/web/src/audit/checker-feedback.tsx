@@ -39,8 +39,10 @@ export function CheckerFeedbackWorkspace({roundId, fileVersionId, ruleVersionId,
   const [editing, setEditing] = useState<CheckerFeedback | null>(null), [deleting, setDeleting] = useState<CheckerFeedback | null>(null)
   const [pendingMutation, setPendingMutation] = useState(() => savedId('checkerSampleMutation'))
   const [pendingFeedback, setPendingFeedback] = useState(() => savedId('checkerFeedbackOperation'))
+  // Discovery can show a report; only a URL or user intent may replace an explicit revision.
+  const [operationIntentId, setOperationIntentId] = useState(() => savedId('checkerOptimization'))
   const [operationId, setOperationId] = useState(() => savedId('checkerOptimization')), [operation, setOperation] = useState<CheckerOptimization | null>(null)
-  const [developmentRevision, setDevelopmentRevision] = useState<string | null>(null), [upgradeBusy, setUpgradeBusy] = useState(false)
+  const [developmentRevision, setDevelopmentRevision] = useState<string | null>(null), [workspaceBusy, setWorkspaceBusy] = useState(false)
   const [modelReady, setModelReady] = useState(false), [consent, setConsent] = useState(false), [showModel, setShowModel] = useState(false), [stopConfirm, setStopConfirm] = useState(false)
   const read = useCallback(async () => checkedFeedbackView(await adapter.read(roundId), roundId), [adapter, roundId])
   const currentFeedback = view?.feedback.filter(row => row.file_version_id === fileVersionId && row.rule_clause_id === clauseId) || []
@@ -59,7 +61,7 @@ export function CheckerFeedbackWorkspace({roundId, fileVersionId, ruleVersionId,
   const batchIdentity = batch.map(row => `${row.id}:${row.revision}`).join(',')
   useEffect(() => {setConsent(false)}, [batchIdentity, developmentRevision])
   const running = Boolean(operationId && (!operation || ['queued', 'running', 'unknown'].includes(operation.state)))
-  const readOnly = busy || upgradeBusy || Boolean(pendingFeedback || pendingMutation)
+  const readOnly = busy || workspaceBusy || Boolean(pendingFeedback || pendingMutation)
   const validSource = feedbackSourceStatus(originalStatus, resultAttempt)
   useEffect(() => {
     let live = true
@@ -152,12 +154,12 @@ export function CheckerFeedbackWorkspace({roundId, fileVersionId, ruleVersionId,
     if (busy || running || !revision || !batch.length || consumeModel && (!modelReady || !consent) || !begin()) return
     const id = crypto.randomUUID()
     submittedOperations.current.add(id)
-    setOperation(null); setOperationId(id); remember('checkerOptimization', id)
+    setOperation(null); setOperationId(id); setOperationIntentId(id); remember('checkerOptimization', id)
     try {
       setOperation(await adapter.optimize(revision, {operation_id: id, feedback_ids: batch.map(row => row.id), action, consume_model: consumeModel})); setConsent(false)
       try {setView(await read()); setSamplesTick(value => value + 1)} catch {setError('操作回执已确认，但最新列表暂不可读。请读取最新记录。')}
     } catch (cause) {
-      if (definiteCheckerRejection(cause)) {setOperationId(null); remember('checkerOptimization', null); setError(failureMessage(cause))}
+      if (definiteCheckerRejection(cause)) {setOperationId(null); setOperationIntentId(null); remember('checkerOptimization', null); setError(failureMessage(cause))}
       else setError('操作受理结果尚未确定。请读取原操作，不要再次开始；若已允许模型调用，可能已经消费 Token。')
     } finally {end()}
   }
@@ -198,8 +200,8 @@ export function CheckerFeedbackWorkspace({roundId, fileVersionId, ruleVersionId,
       {summary && report && <><p role="status" className="text-sm">修好 {summary.fixed} 条 · 新增错误 {summary.regressions} 条 · 无法判断 {summary.unknown} 条 · 技术失败 {summary.errors} 条</p><p className="text-sm">错误放行 {summary.falsePass} 条 · 错误判为不符合 {summary.falseNg} 条</p>{(report.total_samples < 4 || !report.cases.some(row => row.split === 'holdout')) && <p className="text-sm text-warning">{report.total_samples === 1 ? '只验证了这一条，没有回归样本。' : '验证样本不足或缺少独立验证样本，不能认定整体通过。'}</p>}{report.reasons.map((reason, index) => <p key={index} className="text-sm text-warning">{checkerReason(reason)}</p>)}<details className="text-sm"><summary className="cursor-pointer">逐项验证结果与正确答案</summary><div className="mt-3 space-y-3">{report.cases.map(row => <article key={row.case_id} className="space-y-2 border-t pt-2"><p>{row.split === 'holdout' ? '独立验证样本' : '修复样本'} · {row.passed ? '符合已确认答案' : '需要核对'}</p>{row.error_code && <p>技术失败：{checkerReason(row.error_code)}</p>}{row.clauses.map(item => <p key={item.clause_id}>条款 {item.clause_id} · 正确答案 {statusText(item.expected)} · 此前 {statusText(item.baseline_actual)} → 当前 {statusText(item.actual)}{item.regression ? ' · 新增错误' : ''}{!item.evidence_locatable ? ' · 原件定位未验证' : ''}</p>)}{(() => {const sample = samples?.find(item => item.id === row.case_id); return sample?.evidence.map((item, index) => sampleEvidence(sample, item, index))})()}</article>)}</div></details></>}
       <p className="text-xs text-muted-foreground">模型用量：{usageText(operation.usage)}</p>
     </section>}
-    {(operation?.candidate_revision_id || developmentRevision || suiteRevisionId) && <CheckerRelease key={operation?.candidate_revision_id || developmentRevision || suiteRevisionId} revisionId={(operation?.candidate_revision_id || developmentRevision || suiteRevisionId)!} preferCurrent={!operation?.candidate_revision_id && !developmentRevision} onReaudit={onReaudit} onRevision={setDevelopmentRevision} onUpgradeBusy={setUpgradeBusy} onUpgradeResult={runTests => setNotice(runTests ? '升级候选已创建，正在进入样本验证；尚未发布。' : '已找回升级候选，尚未自动运行样本。请重新运行验证样本后核对结果。')} onVerify={id => void optimize('run_tests', false, id)} verificationBusy={readOnly || running || !batch.length} refreshKey={batchIdentity}/>}
-    {priorOperations.length > 0 && <details className="text-sm"><summary className="cursor-pointer">之前的修复记录</summary>{priorOperations.map(row => <Button key={row.operation_id} variant="link" size="sm" disabled={upgradeBusy} onClick={() => {setOperationId(row.operation_id); remember('checkerOptimization', row.operation_id)}}>{row.created_at ? new Date(row.created_at).toLocaleString() + ' · ' : ''}{row.state === 'completed' ? '查看修复结果' : row.state === 'saved' ? '查看待验证修改' : row.state === 'failed' ? '查看失败记录' : '读取操作记录'}</Button>)}</details>}
+    {suiteRevisionId && suiteKey && <CheckerRelease key={`${scope}:${suiteKey}`} scope={`${scope}:${suiteKey}`} legacyScope={scope} suiteKey={suiteKey} revisionId={suiteRevisionId} optimization={operation?.candidate_revision_id ? {operationId: operation.operation_id, revisionId: operation.candidate_revision_id, explicit: operationIntentId === operation.operation_id} : undefined} preferCurrent onReaudit={onReaudit} onRevision={setDevelopmentRevision} onBusyChange={setWorkspaceBusy} onUpgradeResult={runTests => setNotice(runTests ? '升级候选已创建，正在进入样本验证；尚未发布。' : '已找回升级候选，尚未自动运行样本。请重新运行验证样本后核对结果。')} onVerify={id => void optimize('run_tests', false, id)} operationRunning={running} verificationBusy={readOnly || running || !batch.length} refreshKey={batchIdentity}/>}
+    {priorOperations.length > 0 && <details className="text-sm"><summary className="cursor-pointer">之前的修复记录</summary>{priorOperations.map(row => <Button key={row.operation_id} variant="link" size="sm" disabled={workspaceBusy} onClick={() => {setOperationId(row.operation_id); setOperationIntentId(row.operation_id); remember('checkerOptimization', row.operation_id)}}>{row.created_at ? new Date(row.created_at).toLocaleString() + ' · ' : ''}{row.state === 'completed' ? '查看修复结果' : row.state === 'saved' ? '查看待验证修改' : row.state === 'failed' ? '查看失败记录' : '读取操作记录'}</Button>)}</details>}
     {support && <Button variant="link" onClick={contactSupport}>没修好？联系 PPAP 支持</Button>}
   </section>
 }
