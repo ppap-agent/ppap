@@ -239,7 +239,6 @@ def check(context):
                                 **dict(frozen.model_identity),
                                 "base_url": "http://127.0.0.1:1/v1",
                                 "token": "controlled-local-capability-1234567890",
-                                "model": "test-model",
                                 "wall_seconds": 100,
                                 "max_turns": 20,
                             }

@@ -53,7 +53,7 @@ def test_replacement_rotates_identity_even_for_same_endpoint_and_revocation_is_p
     store, alice, bob = configured_store(auth_store_factory)
     key = SecretStr(str(uuid4()))
     first = store.put_personal_model_config(alice, key, base_url="https://models.company.test/v1", model="gpt-6.1-sol")
-    other = store.put_personal_model_config(bob, SecretStr(str(uuid4())), base_url="https://models.example.test", model="test-model")
+    other = store.put_personal_model_config(bob, SecretStr(str(uuid4())), base_url="https://other.company.test/inference", model="company-model")
     second = store.put_personal_model_config(alice, key, base_url="https://models.company.test/v1", model="gpt-6.1-sol")
     assert first["revision"] != second["revision"]
     store.delete_personal_model_config(alice)

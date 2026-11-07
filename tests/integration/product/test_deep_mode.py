@@ -42,6 +42,7 @@ from audit.audits import (
 )
 from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest, runtime_revision
 from audit.standard_suites import library_revision
+from documents.model_access import UNCONFIGURED_MODEL_IDENTITY
 from fastapi.testclient import TestClient
 from product import build_product_store
 from product.capabilities import report
@@ -113,7 +114,7 @@ class ControlledCoreGuest:
 @pytest.mark.parametrize(
     "identity",
     [
-        {"provider": "responses-compatible", "model": "test-model", "revision": "unconfigured", "deployment": hashlib.sha256("https://models.example.test".encode()).hexdigest()},
+        UNCONFIGURED_MODEL_IDENTITY,
         {"provider": "openai-compatible", "model": "frozen-model", "revision": "frozen-revision", "deployment": "a" * 64},
     ],
     ids=["unconfigured", "personal-endpoint"],
@@ -442,7 +443,7 @@ class DeepModeTests(unittest.TestCase):
             files = [row.model_copy(update=changes) if row.role == "target" else row for row in spec.files]
             requests[name] = spec.model_copy(update={"files": files})
         for field in ("provider", "model", "revision", "deployment"):
-            identity = {**spec.model_identity, field: "0" * 64 if field == "deployment" else "changed"}
+            identity = {**spec.model_identity, field: "f" * 64 if field == "deployment" else "changed"}
             requests[f"model {field}"] = spec.model_copy(update={"model_identity": identity})
         for name, changed in requests.items():
             with self.subTest(name=name):

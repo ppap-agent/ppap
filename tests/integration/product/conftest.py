@@ -18,6 +18,9 @@ from product.store import AuthStore
 from psycopg import sql
 from psycopg.rows import dict_row
 
+# Personal models have no built-in endpoint; tests approve their controlled one.
+os.environ.setdefault("PPAP_PERSONAL_MODEL_ALLOWED_BASE_URLS", "https://models.example.test")
+
 _CI = bool(os.environ.get("CI"))
 _XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER")
 if _XDIST_WORKER:
@@ -399,9 +402,6 @@ def core_system(monkeypatch, tmp_path):
 from io import BytesIO
 from openpyxl import load_workbook
 from audit.contracts import AuditEvidence, AuditResultItem, EvidenceSource
-
-# Personal models have no built-in endpoint; tests approve their controlled one.
-os.environ.setdefault("PPAP_PERSONAL_MODEL_ALLOWED_BASE_URLS", "https://models.example.test")
 
 def check(context):
     book = load_workbook(BytesIO(context.sources[context.audit_file.audit_id]), read_only=True)
