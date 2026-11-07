@@ -1,19 +1,24 @@
 """Positive release bridge checks using executed synthetic, human-owned fixtures.
 
 These prove the runner protocol, never real-customer correctness or permission
-to publish. No model calls, imported proof documents, or production writes.
+to publish. No paid model calls, imported proof documents, or production writes.
 """
 
 import csv
+import hashlib
 import io
 import json
 from dataclasses import replace
+from types import SimpleNamespace
 from uuid import uuid4
 
 from audit.standard_suites import StandardSuite
 from corpus_contracts import official_suites, oracle
+from corpus_contracts.official_models import LiveModels
+from documents.model_access import ModelAccess
 from openpyxl import Workbook
 from product.suites import ResolvedSuite, SuiteRevision, content_digest, resolved_digest
+from pydantic import SecretStr
 
 PROGRAM = b"""import json
 from openpyxl import load_workbook
@@ -187,3 +192,101 @@ def test_real_execution_preserves_selected_dependency_rules_when_demoting_target
     assert proof.verified and proof.passed_samples == 4
     assert proof.related_revision_ids == (dependency_revision.id,)
     assert proof.related_suite_digests == {"fixture:dependency": dependency_revision.resolved_digest}
+
+
+def test_live_text_and_visual_clients_use_one_bounded_gateway_then_record_and_publish(tmp_path, monkeypatch):
+    """Actual SDKs/process/gateway, controlled upstream, never paid quality proof."""
+    context, paths = corpus_fixture(tmp_path, monkeypatch)
+    program = PROGRAM.replace(b"assert not context.runtime.allow_model_tools", b"assert context.runtime.allow_model_tools")
+    program = program.replace(
+        b"    book.close()",
+        b"""    book.close()
+    import io
+    from PIL import Image
+    from audit.engine.checkers.client import AIClient
+    from documents.model_access import current_model_access
+    assert current_model_access().api_key.get_secret_value() != 'host-only-test-secret'
+    assert current_model_access().base_url.startswith('http://127.0.0.1:')
+    raw = io.BytesIO()
+    Image.new('RGB', (2, 2), (value, 0, 0)).save(raw, format='PNG')
+    facts = context.runtime.read_ocr_visual_facts(
+        images=[raw.getvalue()], prompt=f'Inspect synthetic fixture {value}',
+        response_schema={'name': 'fixture', 'strict': True, 'schema': {
+            'type': 'object', 'additionalProperties': False,
+            'properties': {'positive': {'type': 'boolean'}}, 'required': ['positive']}})
+    text = AIClient().response_text([{'role': 'user', 'content': f'Assess synthetic fixture {value}'}], max_tokens=32)
+    value = int(facts['positive'] and text == 'positive')""",
+    )
+    files = {**context["suite"].files, "checker.py": program}
+    objects = {name: content_digest(raw) for name, raw in files.items()}
+    revision = replace(context["suite"].revision, overrides=objects, resolved_digest=resolved_digest("fixture", (), objects))
+    context = {**context, "suite": ResolvedSuite(revision, files, objects)}
+    observations = []
+
+    class ControlledProvider:
+        sock = None
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def request(self, method, path, body, headers):
+            request = json.loads(body)
+            visual = "input_image" in body
+            assert method == "POST" and path == "/v1/responses"
+            assert headers["Authorization"] == "Bearer host-only-test-secret"
+            assert request["model"] == "controlled-vision" and request["store"] is False
+            observations.append("visual" if visual else "text")
+            response = {
+                "id": "controlled-response",
+                "object": "response",
+                "created_at": 0,
+                "status": "completed",
+                "model": "controlled-vision",
+                "output": [
+                    {
+                        "type": "message",
+                        "id": "controlled-message",
+                        "role": "assistant",
+                        "status": "completed",
+                        "content": [{"type": "output_text", "text": '{"positive":true}' if visual else "positive", "annotations": []}],
+                    }
+                ],
+                "usage": {"input_tokens": 17, "output_tokens": 4, "total_tokens": 21},
+            }
+            self.body = io.BytesIO(json.dumps(response).encode())
+
+        def getresponse(self):
+            return SimpleNamespace(status=200, read1=self.body.read1)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("agent.execution.gateway.http.client.HTTPSConnection", ControlledProvider)
+    access = ModelAccess(SecretStr("host-only-test-secret"), provider="controlled", base_url="https://provider.example/v1", model="controlled-vision")
+    models = LiveModels(access, max_requests=8, max_input_tokens=1000, max_output_tokens=1000)
+    release = ReleaseBoundary(context)
+    progress = []
+    result = official_suites.validate(release, revision.id, models=models, on_progress=progress.append, record=True, expected_validation_revision=0, **paths)
+    assert result["report"]["verified"] and result["report"]["passed_samples"] == 4
+    assert result["report"]["model_identity"] == access.identity()
+    assert observations == ["visual", "text"] * 4
+    assert result["models"]["usage"] == {"completed_requests": 8, "input_tokens": 136, "output_tokens": 32, "uncertain": False, "in_flight": False, "budget_exhausted": False}
+    assert result["models"]["monetary_cost"] == "unknown"
+    assert [row["completed_samples"] for row in progress if row["phase"] == "sample_completed"] == [1, 2, 3, 4]
+    assert "host-only-test-secret" not in json.dumps([result, progress])
+    assert "provider.example" not in json.dumps([result, progress])
+    disabled = official_suites.prepare(context, **paths)
+    assert all(a["input_digest"] != b.snapshot.input_digest for a, b in zip(result["report"]["cases"], disabled.samples, strict=True))
+    receipt = official_suites.readback(release, revision.id)
+    assert receipt["report"]["model_identity"] == access.identity()
+    official_suites.publish(release, revision.id, expected_revision=0, expected_validation_revision=1, expected_proof_digest=result["report"]["proof_digest"], **paths)
+    assert observations == ["visual", "text"] * 4
+
+
+def test_no_model_proof_keeps_its_preexisting_digest_and_serialization(tmp_path, monkeypatch):
+    context, paths = corpus_fixture(tmp_path, monkeypatch)
+    proof = official_suites.evaluate(official_suites.prepare(context, **paths))
+    payload = proof.model_dump(mode="json")
+    assert "model_identity" not in payload
+    old_digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()).hexdigest()
+    assert proof.proof_digest == old_digest

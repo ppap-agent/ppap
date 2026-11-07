@@ -67,11 +67,15 @@ class SuiteValidationReport(BaseModel):
     program_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
     oracle_revision: str | None = None
     related_revision_ids: tuple[str, ...] = ()
+    # Omit an absent identity so existing no-model proofs keep their digest.
+    model_identity: dict[str, str] = Field(default_factory=dict, exclude_if=lambda value: not value)
     cases: tuple[CaseEvaluation, ...] = ()
     reasons: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def unique_cases(self) -> SuiteValidationReport:
+        if self.model_identity and (set(self.model_identity) != {"provider", "model", "revision", "deployment"} or not self.model_identity["model"]):
+            raise ValueError("invalid validation model identity")
         if len({row.case_id for row in self.cases}) != len(self.cases) or len({row.ordinal for row in self.cases}) != len(self.cases):
             raise ValueError("duplicate oracle sample identity")
         if any(row.split != ("holdout" if row.ordinal % 4 == 0 else "training") for row in self.cases):
