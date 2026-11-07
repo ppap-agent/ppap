@@ -1,0 +1,2180 @@
+{
+  "PPAP:DV报告_PV报告_试验报告@v2": {
+    "appendix": [],
+    "document_type": "DV报告_PV报告_试验报告",
+    "entrypoints": {
+      "1": "checker:check",
+      "2": "checker:check",
+      "3": "checker:check",
+      "4": "checker:check",
+      "5": "checker:check",
+      "6": "checker:check"
+    },
+    "related_suite_keys": [],
+    "resources": {
+      "carriers": {
+        ".pdf": "audit.checkers.v2.pdf_excel_delegator_agent:DpvrPdfExcelDelegatorAgent",
+        ".xls": "audit.checkers.v2.dpvr_excel_agent:DpvrExcelAgent",
+        ".xlsm": "audit.checkers.v2.dpvr_excel_agent:DpvrExcelAgent",
+        ".xlsx": "audit.checkers.v2.dpvr_excel_agent:DpvrExcelAgent"
+      },
+      "methods": {
+        "1": "rule_1",
+        "2": "rule_2",
+        "3": "rule_3",
+        "4": "rule_4",
+        "5": "rule_5",
+        "6": "rule_6"
+      }
+    },
+    "rules": {
+      "checker_binding": {
+        "1": "checker:check",
+        "2": "checker:check",
+        "3": "checker:check",
+        "4": "checker:check",
+        "5": "checker:check",
+        "6": "checker:check"
+      },
+      "kind": "engine",
+      "rules": [
+        {
+          "category": "报告编号检查",
+          "id": "1",
+          "priority": "P0",
+          "rule_to_check": "报告编号检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "试验结果检查",
+          "id": "2",
+          "priority": "P0",
+          "rule_to_check": "试验结果检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "试验类型检查",
+          "id": "3",
+          "priority": "P0",
+          "rule_to_check": "试验类型检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "印章检查",
+          "id": "4",
+          "priority": "P0",
+          "rule_to_check": "印章检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "试验阶段图片检查",
+          "id": "5",
+          "priority": "P0",
+          "rule_to_check": "试验阶段图片检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "样品数量检查",
+          "id": "6",
+          "priority": "P0",
+          "rule_to_check": "样品数量检查",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "DV报告_PV报告_试验报告",
+      "type": "DV报告_PV报告_试验报告"
+    }
+  },
+  "PPAP:全功能检验报告@v2": {
+    "appendix": [],
+    "document_type": "全功能检验报告",
+    "entrypoints": {
+      "1": "checker:check",
+      "2": "checker:check",
+      "3": "checker:check",
+      "4": "checker:check",
+      "5": "checker:check",
+      "6": "checker:check",
+      "7": "checker:check",
+      "8": "checker:check"
+    },
+    "related_suite_keys": [],
+    "resources": {
+      "carriers": {
+        ".pdf": "audit.checkers.v2.dimension_measurement_pdf_agent:DimensionMeasurementPDFAgent",
+        ".xls": "audit.checkers.v2.dimension_measurement_excel_agent:DimensionMeasurementExcelAgent",
+        ".xlsm": "audit.checkers.v2.dimension_measurement_excel_agent:DimensionMeasurementExcelAgent",
+        ".xlsx": "audit.checkers.v2.dimension_measurement_excel_agent:DimensionMeasurementExcelAgent"
+      },
+      "methods": {
+        "1": "rule_1",
+        "2": "rule_2",
+        "3": "rule_3",
+        "4": "rule_4",
+        "5": "rule_5",
+        "6": "rule_6",
+        "7": "rule_7",
+        "8": "rule_8"
+      }
+    },
+    "rules": {
+      "checker_binding": {
+        "1": "checker:check",
+        "2": "checker:check",
+        "3": "checker:check",
+        "4": "checker:check",
+        "5": "checker:check",
+        "6": "checker:check",
+        "7": "checker:check",
+        "8": "checker:check"
+      },
+      "kind": "engine",
+      "rules": [
+        {
+          "category": "标题识别检查",
+          "id": "1",
+          "priority": "P0",
+          "rule_to_check": "标题识别检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "重要度标记检查",
+          "id": "2",
+          "priority": "P0",
+          "rule_to_check": "重要度标记检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "尺寸区数值公差带检查",
+          "id": "3",
+          "priority": "P0",
+          "rule_to_check": "尺寸区数值公差带检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "检查方法/工具列检查",
+          "id": "4",
+          "priority": "P0",
+          "rule_to_check": "检查方法/工具列检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "尺寸区数值数据唯一性检查",
+          "id": "5",
+          "priority": "P0",
+          "rule_to_check": "尺寸区数值数据唯一性检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "非尺寸数据检查",
+          "id": "6",
+          "priority": "P0",
+          "rule_to_check": "非尺寸数据检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "尺寸区OK数据方法匹配检查",
+          "id": "7",
+          "priority": "P0",
+          "rule_to_check": "尺寸区OK数据方法匹配检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "关键字段识别检查",
+          "id": "8",
+          "priority": "P0",
+          "rule_to_check": "关键字段识别检查",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "全功能检验报告",
+      "type": "全功能检验报告"
+    }
+  },
+  "PPAP:全功能检验报告@v3": {
+    "appendix": [],
+    "document_type": "全功能检验报告",
+    "entrypoints": {
+      "1": "checker:check",
+      "10": "checker:check",
+      "11": "checker:check",
+      "2": "checker:check",
+      "3": "checker:check",
+      "4": "checker:check",
+      "5": "checker:check",
+      "6": "checker:check",
+      "7": "checker:check",
+      "8": "checker:check",
+      "9": "checker:check"
+    },
+    "related_suite_keys": [],
+    "resources": {
+      "carriers": {
+        ".pdf": "audit.checkers.v3.dimension_measurement_pdf_agent:DimensionMeasurementPDFAgent",
+        ".xls": "audit.checkers.v3.dimension_measurement_excel_agent:DimensionMeasurementExcelAgent",
+        ".xlsm": "audit.checkers.v3.dimension_measurement_excel_agent:DimensionMeasurementExcelAgent",
+        ".xlsx": "audit.checkers.v3.dimension_measurement_excel_agent:DimensionMeasurementExcelAgent"
+      },
+      "methods": {
+        "1": "rule_1",
+        "10": "rule_10",
+        "11": "rule_11",
+        "2": "rule_2",
+        "3": "rule_3",
+        "4": "rule_4",
+        "5": "rule_5",
+        "6": "rule_6",
+        "7": "rule_7",
+        "8": "rule_8",
+        "9": "rule_9"
+      }
+    },
+    "rules": {
+      "checker_binding": {
+        "1": "checker:check",
+        "10": "checker:check",
+        "11": "checker:check",
+        "2": "checker:check",
+        "3": "checker:check",
+        "4": "checker:check",
+        "5": "checker:check",
+        "6": "checker:check",
+        "7": "checker:check",
+        "8": "checker:check",
+        "9": "checker:check"
+      },
+      "kind": "engine",
+      "rules": [
+        {
+          "category": "CoverSheet页存在性及内容完整性审核",
+          "id": "1",
+          "priority": "P0",
+          "rule_to_check": "CoverSheet页存在性及内容完整性审核",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "测量报告列存在性及数据非空审核",
+          "id": "2",
+          "priority": "P0",
+          "rule_to_check": "测量报告列存在性及数据非空审核",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "特定控制方向的公差NA值一致性审核",
+          "id": "3",
+          "priority": "P0",
+          "rule_to_check": "特定控制方向的公差NA值一致性审核",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "名义值为空时的偏差值存在性审核",
+          "id": "4",
+          "priority": "P0",
+          "rule_to_check": "名义值为空时的偏差值存在性审核",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "类型列内容合规性审核",
+          "id": "5",
+          "priority": "P0",
+          "rule_to_check": "类型列内容合规性审核",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "测点号与测点图标记点对应性审核",
+          "id": "6",
+          "priority": "P0",
+          "rule_to_check": "测点号与测点图标记点对应性审核",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "特定表类型的偏差值在公差范围内审核",
+          "id": "7",
+          "priority": "P0",
+          "rule_to_check": "特定表类型的偏差值在公差范围内审核",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "中性值（Centering）计算准确性审核",
+          "id": "8",
+          "priority": "P0",
+          "rule_to_check": "中性值（Centering）计算准确性审核",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "中性值（Centering）阈值判定及预警审核",
+          "id": "9",
+          "priority": "P0",
+          "rule_to_check": "中性值（Centering）阈值判定及预警审核",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "极差值（Range）计算准确性审核",
+          "id": "10",
+          "priority": "P0",
+          "rule_to_check": "极差值（Range）计算准确性审核",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "极差值（Range）阈值判定及预警审核",
+          "id": "11",
+          "priority": "P0",
+          "rule_to_check": "极差值（Range）阈值判定及预警审核",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "全功能检验报告",
+      "type": "全功能检验报告"
+    }
+  },
+  "PPAP:控制计划@v2": {
+    "appendix": [],
+    "document_type": "控制计划",
+    "entrypoints": {
+      "1": "checker:check",
+      "2": "checker:check",
+      "3": "checker:check",
+      "4": "checker:check",
+      "5": "checker:check",
+      "6": "checker:check"
+    },
+    "related_suite_keys": [],
+    "resources": {
+      "carriers": {
+        ".pdf": "audit.checkers.v2.pdf_excel_delegator_agent:ControlPlanPdfExcelDelegatorAgent",
+        ".xls": "audit.checkers.v2.control_plan_agent:ControlPlanAgent",
+        ".xlsm": "audit.checkers.v2.control_plan_agent:ControlPlanAgent",
+        ".xlsx": "audit.checkers.v2.control_plan_agent:ControlPlanAgent"
+      },
+      "methods": {
+        "1": "rule_1",
+        "2": "rule_2",
+        "3": "rule_3",
+        "4": "rule_4",
+        "5": "rule_5",
+        "6": "rule_6"
+      }
+    },
+    "rules": {
+      "checker_binding": {
+        "1": "checker:check",
+        "2": "checker:check",
+        "3": "checker:check",
+        "4": "checker:check",
+        "5": "checker:check",
+        "6": "checker:check"
+      },
+      "kind": "engine",
+      "rules": [
+        {
+          "category": "文件适用阶段检查",
+          "id": "1",
+          "priority": "P0",
+          "rule_to_check": "文件适用阶段检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "特殊特性分类列检查",
+          "id": "2",
+          "priority": "P0",
+          "rule_to_check": "特殊特性分类列检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "特殊特性分类、特性列列检查",
+          "id": "3",
+          "priority": "P0",
+          "rule_to_check": "特殊特性分类、特性列列检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "特殊特性分类、控制方法列检查",
+          "id": "4",
+          "priority": "P0",
+          "rule_to_check": "特殊特性分类、控制方法列检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "频率/频次列检查",
+          "id": "5",
+          "priority": "P0",
+          "rule_to_check": "频率/频次列检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "表头关键信息检查",
+          "id": "6",
+          "priority": "P0",
+          "rule_to_check": "表头关键信息检查",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "控制计划",
+      "type": "控制计划"
+    }
+  },
+  "PPAP:控制计划@v3": {
+    "appendix": [],
+    "document_type": "控制计划",
+    "entrypoints": {
+      "1": "checker:check",
+      "10": "checker:check",
+      "11": "checker:check",
+      "2": "checker:check",
+      "3": "checker:check",
+      "4": "checker:check",
+      "5": "checker:check",
+      "6": "checker:check",
+      "7": "checker:check",
+      "8": "checker:check",
+      "9": "checker:check"
+    },
+    "related_suite_keys": [],
+    "resources": {
+      "carriers": {
+        ".pdf": "audit.checkers.v3.pdf_excel_delegator_agent:ControlPlanPdfExcelDelegatorAgent",
+        ".xls": "audit.checkers.v3.control_plan_agent:ControlPlanAgent",
+        ".xlsm": "audit.checkers.v3.control_plan_agent:ControlPlanAgent",
+        ".xlsx": "audit.checkers.v3.control_plan_agent:ControlPlanAgent"
+      },
+      "methods": {
+        "1": "rule_1",
+        "10": "rule_10",
+        "11": "rule_11",
+        "2": "rule_2",
+        "3": "rule_3",
+        "4": "rule_4",
+        "5": "rule_5",
+        "6": "rule_6",
+        "7": "rule_7",
+        "8": "rule_8",
+        "9": "rule_9"
+      }
+    },
+    "rules": {
+      "checker_binding": {
+        "1": "checker:check",
+        "10": "checker:check",
+        "11": "checker:check",
+        "2": "checker:check",
+        "3": "checker:check",
+        "4": "checker:check",
+        "5": "checker:check",
+        "6": "checker:check",
+        "7": "checker:check",
+        "8": "checker:check",
+        "9": "checker:check"
+      },
+      "kind": "engine",
+      "rules": [
+        {
+          "category": "文件类型勾选审核",
+          "id": "1",
+          "priority": "P0",
+          "rule_to_check": "文件类型勾选审核",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "过程流程图与控制计划列项及一致性审核",
+          "id": "2",
+          "priority": "P0",
+          "rule_to_check": "过程流程图与控制计划列项及一致性审核",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "PFMEA与控制计划特殊特性一致性审核",
+          "id": "3",
+          "priority": "P0",
+          "rule_to_check": "PFMEA与控制计划特殊特性一致性审核",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "特殊特性分类与产品/过程列存在性审核",
+          "id": "4",
+          "priority": "P0",
+          "rule_to_check": "特殊特性分类与产品/过程列存在性审核",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "特殊特性分类与控制方法关联审核",
+          "id": "5",
+          "priority": "P0",
+          "rule_to_check": "特殊特性分类与控制方法关联审核",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "频率或频次列完整性审核",
+          "id": "6",
+          "priority": "P0",
+          "rule_to_check": "频率或频次列完整性审核",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "控制计划表头字段完整性及必填项审核",
+          "id": "7",
+          "priority": "P0",
+          "rule_to_check": "控制计划表头字段完整性及必填项审核",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "流程一致性审核",
+          "id": "8",
+          "priority": "P0",
+          "rule_to_check": "流程一致性审核",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "特性一致性审核",
+          "id": "9",
+          "priority": "P0",
+          "rule_to_check": "特性一致性审核",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "措施一致性审核（PFMEA与CP）",
+          "id": "10",
+          "priority": "P0",
+          "rule_to_check": "措施一致性审核（PFMEA与CP）",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "措施一致性审核（特殊特性清单与CP）",
+          "id": "11",
+          "priority": "P0",
+          "rule_to_check": "措施一致性审核（特殊特性清单与CP）",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "控制计划",
+      "type": "控制计划"
+    }
+  },
+  "PPAP:材料产品及分供清单@v2": {
+    "appendix": [],
+    "document_type": "材料产品及分供清单",
+    "entrypoints": {
+      "1": "checker:check",
+      "2": "checker:check",
+      "3": "checker:check",
+      "4": "checker:check"
+    },
+    "related_suite_keys": [],
+    "resources": {
+      "carriers": {
+        ".pdf": "audit.checkers.v2.pdf_excel_delegator_agent:SubSupplierListPdfExcelDelegatorAgent",
+        ".xls": "audit.checkers.v2.sub_supplier_list_excel_agent:SubSupplierListExcelAgent",
+        ".xlsm": "audit.checkers.v2.sub_supplier_list_excel_agent:SubSupplierListExcelAgent",
+        ".xlsx": "audit.checkers.v2.sub_supplier_list_excel_agent:SubSupplierListExcelAgent"
+      },
+      "methods": {
+        "1": "rule_1",
+        "2": "rule_2",
+        "3": "rule_3",
+        "4": "rule_4"
+      }
+    },
+    "rules": {
+      "checker_binding": {
+        "1": "checker:check",
+        "2": "checker:check",
+        "3": "checker:check",
+        "4": "checker:check"
+      },
+      "kind": "engine",
+      "rules": [
+        {
+          "category": "单件重量列存在性和数据格式检查",
+          "id": "1",
+          "priority": "P0",
+          "rule_to_check": "单件重量列存在性和数据格式检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "材料信息列存在性和数据完整性检查",
+          "id": "2",
+          "priority": "P0",
+          "rule_to_check": "材料信息列存在性和数据完整性检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "部件状态列存在性和数据唯一性检查",
+          "id": "3",
+          "priority": "P0",
+          "rule_to_check": "部件状态列存在性和数据唯一性检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "PPAP完成状态列存在性和数据关联性检查",
+          "id": "4",
+          "priority": "P0",
+          "rule_to_check": "PPAP完成状态列存在性和数据关联性检查",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "材料产品及分供清单",
+      "type": "材料产品及分供清单"
+    }
+  },
+  "PPAP:检具验收报告@v2": {
+    "appendix": [],
+    "document_type": "检具验收报告",
+    "entrypoints": {
+      "1": "checker:check",
+      "2": "checker:check",
+      "3": "checker:check"
+    },
+    "related_suite_keys": [],
+    "resources": {
+      "carriers": {
+        ".pdf": "audit.checkers.v2.checking_fixture_approval_agent:CheckingFixtureApprovalAgent",
+        ".xls": "audit.checkers.v2.checking_fixture_approval_excel_agent:CheckingFixtureApprovalExcelAgent",
+        ".xlsm": "audit.checkers.v2.checking_fixture_approval_excel_agent:CheckingFixtureApprovalExcelAgent",
+        ".xlsx": "audit.checkers.v2.checking_fixture_approval_excel_agent:CheckingFixtureApprovalExcelAgent"
+      },
+      "methods": {
+        "1": "rule_1",
+        "2": "rule_2",
+        "3": "rule_3"
+      }
+    },
+    "rules": {
+      "checker_binding": {
+        "1": "checker:check",
+        "2": "checker:check",
+        "3": "checker:check"
+      },
+      "kind": "engine",
+      "rules": [
+        {
+          "category": "文件完整性检查 (Completeness Check)",
+          "id": "1",
+          "priority": "P0",
+          "rule_to_check": "文件完整性检查 (Completeness Check)",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "前缀检查 (Prefix Check)",
+          "id": "2",
+          "priority": "P0",
+          "rule_to_check": "前缀检查 (Prefix Check)",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "不合格项与结论的关联性检查 (Correlation Check)",
+          "id": "3",
+          "priority": "P0",
+          "rule_to_check": "不合格项与结论的关联性检查 (Correlation Check)",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "检具验收报告",
+      "type": "检具验收报告"
+    }
+  },
+  "PPAP:模具验收报告@v2": {
+    "appendix": [],
+    "document_type": "模具验收报告",
+    "entrypoints": {
+      "1": "checker:check",
+      "2": "checker:check",
+      "3": "checker:check",
+      "4": "checker:check",
+      "5": "checker:check",
+      "6": "checker:check"
+    },
+    "related_suite_keys": [],
+    "resources": {
+      "carriers": {
+        ".pdf": "audit.checkers.v2.pdf_excel_delegator_agent:ToolingApprovalPdfExcelDelegatorAgent",
+        ".xls": "audit.checkers.v2.tooling_approval_agent:ToolingApprovalAgent",
+        ".xlsm": "audit.checkers.v2.tooling_approval_agent:ToolingApprovalAgent",
+        ".xlsx": "audit.checkers.v2.tooling_approval_agent:ToolingApprovalAgent"
+      },
+      "methods": {
+        "1": "rule_1",
+        "2": "rule_2",
+        "3": "rule_3",
+        "4": "rule_4",
+        "5": "rule_5",
+        "6": "rule_6"
+      }
+    },
+    "rules": {
+      "checker_binding": {
+        "1": "checker:check",
+        "2": "checker:check",
+        "3": "checker:check",
+        "4": "checker:check",
+        "5": "checker:check",
+        "6": "checker:check"
+      },
+      "kind": "engine",
+      "rules": [
+        {
+          "category": "名称和日期检查",
+          "id": "1",
+          "priority": "P0",
+          "rule_to_check": "名称和日期检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "工艺类型及相关字段检查",
+          "id": "2",
+          "priority": "P0",
+          "rule_to_check": "工艺类型及相关字段检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "模具设计尺寸格式检查",
+          "id": "3",
+          "priority": "P0",
+          "rule_to_check": "模具设计尺寸格式检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "实物照片检查",
+          "id": "4",
+          "priority": "P0",
+          "rule_to_check": "实物照片检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "编制和审核字段检查",
+          "id": "5",
+          "priority": "P0",
+          "rule_to_check": "编制和审核字段检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "实物确认检查",
+          "id": "6",
+          "priority": "P0",
+          "rule_to_check": "实物确认检查",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "模具验收报告",
+      "type": "模具验收报告"
+    }
+  },
+  "PPAP:测量系统分析评价@v2": {
+    "appendix": [],
+    "document_type": "测量系统分析评价",
+    "entrypoints": {
+      "1": "checker:check",
+      "2": "checker:check",
+      "3": "checker:check",
+      "4": "checker:check"
+    },
+    "related_suite_keys": [],
+    "resources": {
+      "carriers": {
+        ".pdf": "audit.checkers.v2.pdf_excel_delegator_agent:MsaReportPdfExcelDelegatorAgent",
+        ".xls": "audit.checkers.v2.msa_report_agent:MsaReportAgent",
+        ".xlsm": "audit.checkers.v2.msa_report_agent:MsaReportAgent",
+        ".xlsx": "audit.checkers.v2.msa_report_agent:MsaReportAgent"
+      },
+      "methods": {
+        "1": "rule_1",
+        "2": "rule_2",
+        "3": "rule_3",
+        "4": "rule_4"
+      }
+    },
+    "rules": {
+      "checker_binding": {
+        "1": "checker:check",
+        "2": "checker:check",
+        "3": "checker:check",
+        "4": "checker:check"
+      },
+      "kind": "engine",
+      "rules": [
+        {
+          "category": "检查\"任务项一\"和\"任务项二\"的状态",
+          "id": "1",
+          "priority": "P0",
+          "rule_to_check": "检查\"任务项一\"和\"任务项二\"的状态",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "检查\"测量系统分析报告(R&R)\"的填写情况",
+          "id": "2",
+          "priority": "P0",
+          "rule_to_check": "检查\"测量系统分析报告(R&R)\"的填写情况",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "检查R&R分析报告的数据完整性",
+          "id": "3",
+          "priority": "P0",
+          "rule_to_check": "检查R&R分析报告的数据完整性",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "检查R&R分析的结论",
+          "id": "4",
+          "priority": "P0",
+          "rule_to_check": "检查R&R分析的结论",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "测量系统分析评价",
+      "type": "测量系统分析评价"
+    }
+  },
+  "PPAP:潜在过程失效模式及后果分析@v2": {
+    "appendix": [],
+    "document_type": "潜在过程失效模式及后果分析",
+    "entrypoints": {
+      "1": "checker:check",
+      "2": "checker:check",
+      "3": "checker:check",
+      "4": "checker:check",
+      "5": "checker:check",
+      "6": "checker:check",
+      "7": "checker:check"
+    },
+    "related_suite_keys": [],
+    "resources": {
+      "carriers": {
+        ".pdf": "audit.checkers.v2.pdf_excel_delegator_agent:PfmeaPdfExcelDelegatorAgent",
+        ".xls": "audit.checkers.v2.pfmea_agent:PfmeaAgent",
+        ".xlsm": "audit.checkers.v2.pfmea_agent:PfmeaAgent",
+        ".xlsx": "audit.checkers.v2.pfmea_agent:PfmeaAgent"
+      },
+      "methods": {
+        "1": "rule_1",
+        "2": "rule_2",
+        "3": "rule_3",
+        "4": "rule_4",
+        "5": "rule_5",
+        "6": "rule_6",
+        "7": "rule_7"
+      }
+    },
+    "rules": {
+      "checker_binding": {
+        "1": "checker:check",
+        "2": "checker:check",
+        "3": "checker:check",
+        "4": "checker:check",
+        "5": "checker:check",
+        "6": "checker:check",
+        "7": "checker:check"
+      },
+      "kind": "engine",
+      "rules": [
+        {
+          "category": "表头字段完整性检查",
+          "id": "1",
+          "priority": "P0",
+          "rule_to_check": "表头字段完整性检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "PFMEA开始/修订日期与变更履历一致性检查",
+          "id": "2",
+          "priority": "P0",
+          "rule_to_check": "PFMEA开始/修订日期与变更履历一致性检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "过程步骤与工序名称一致性检查",
+          "id": "3",
+          "priority": "P0",
+          "rule_to_check": "过程步骤与工序名称一致性检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "过程项功能维度检查",
+          "id": "4",
+          "priority": "P0",
+          "rule_to_check": "过程项功能维度检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "特殊特性一致性检查",
+          "id": "5",
+          "priority": "P0",
+          "rule_to_check": "特殊特性一致性检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "失效模式、失效影响、失效严重度维度检查",
+          "id": "6",
+          "priority": "P0",
+          "rule_to_check": "失效模式、失效影响、失效严重度维度检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "现行探测控制及探测度维度检查",
+          "id": "7",
+          "priority": "P0",
+          "rule_to_check": "现行探测控制及探测度维度检查",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "潜在过程失效模式及后果分析",
+      "type": "潜在过程失效模式及后果分析"
+    }
+  },
+  "PPAP:潜在过程失效模式及后果分析@v3": {
+    "appendix": [],
+    "document_type": "潜在过程失效模式及后果分析",
+    "entrypoints": {
+      "1": "checker:check",
+      "2": "checker:check",
+      "3": "checker:check",
+      "4": "checker:check",
+      "5": "checker:check",
+      "6": "checker:check",
+      "7": "checker:check"
+    },
+    "related_suite_keys": [],
+    "resources": {
+      "carriers": {
+        ".pdf": "audit.checkers.v3.pdf_excel_delegator_agent:PfmeaPdfExcelDelegatorAgent",
+        ".xls": "audit.checkers.v3.pfmea_agent:PfmeaAgent",
+        ".xlsm": "audit.checkers.v3.pfmea_agent:PfmeaAgent",
+        ".xlsx": "audit.checkers.v3.pfmea_agent:PfmeaAgent"
+      },
+      "methods": {
+        "1": "rule_1_tablehead_keywords",
+        "2": "rule_2_pfmea_start_revision_date",
+        "3": "rule_3_process_item_function_dimensions",
+        "4": "rule_4_failure_effect_dimensions_severity",
+        "5": "rule_5_current_detection_controls_detection",
+        "6": "rule_6_process_steps_consistency",
+        "7": "rule_7_special_characteristics_consistency"
+      }
+    },
+    "rules": {
+      "checker_binding": {
+        "1": "checker:check",
+        "2": "checker:check",
+        "3": "checker:check",
+        "4": "checker:check",
+        "5": "checker:check",
+        "6": "checker:check",
+        "7": "checker:check"
+      },
+      "kind": "engine",
+      "rules": [
+        {
+          "category": "表头字段完整性审核",
+          "id": "1",
+          "priority": "P0",
+          "rule_to_check": "表头字段完整性审核",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "PFMEA与变更履历一致性审核",
+          "id": "2",
+          "priority": "P0",
+          "rule_to_check": "PFMEA与变更履历一致性审核",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "过程项功能维度审核",
+          "id": "3",
+          "priority": "P0",
+          "rule_to_check": "过程项功能维度审核",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "失效影响及严重度审核",
+          "id": "4",
+          "priority": "P0",
+          "rule_to_check": "失效影响及严重度审核",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "现行探测控制及探测度审核",
+          "id": "5",
+          "priority": "P0",
+          "rule_to_check": "现行探测控制及探测度审核",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "流程一致性审核",
+          "id": "6",
+          "priority": "P0",
+          "rule_to_check": "流程一致性审核",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "特性一致性审核",
+          "id": "7",
+          "priority": "P0",
+          "rule_to_check": "特性一致性审核",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "潜在过程失效模式及后果分析",
+      "type": "潜在过程失效模式及后果分析"
+    }
+  },
+  "PPAP:生产系统产能评估报告@v2": {
+    "appendix": [],
+    "document_type": "生产系统产能评估报告",
+    "entrypoints": {
+      "1": "checker:check",
+      "2": "checker:check",
+      "3": "checker:check",
+      "4": "checker:check",
+      "5": "checker:check",
+      "6": "checker:check"
+    },
+    "related_suite_keys": [],
+    "resources": {
+      "carriers": {
+        ".pdf": "audit.checkers.v2.pdf_excel_delegator_agent:PlantCapacityEvaluationPdfExcelDelegatorAgent",
+        ".xls": "audit.checkers.v2.plant_capacity_evaluation_agent:PlantCapacityEvaluationAgent",
+        ".xlsm": "audit.checkers.v2.plant_capacity_evaluation_agent:PlantCapacityEvaluationAgent",
+        ".xlsx": "audit.checkers.v2.plant_capacity_evaluation_agent:PlantCapacityEvaluationAgent"
+      },
+      "methods": {
+        "1": "rule_1",
+        "2": "rule_2",
+        "3": "rule_3",
+        "4": "rule_4",
+        "5": "rule_5",
+        "6": "rule_6"
+      }
+    },
+    "rules": {
+      "checker_binding": {
+        "1": "checker:check",
+        "2": "checker:check",
+        "3": "checker:check",
+        "4": "checker:check",
+        "5": "checker:check",
+        "6": "checker:check"
+      },
+      "kind": "engine",
+      "rules": [
+        {
+          "category": "关键字段完整性检查",
+          "id": "1",
+          "priority": "P0",
+          "rule_to_check": "关键字段完整性检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "行完整性检查",
+          "id": "2",
+          "priority": "P0",
+          "rule_to_check": "行完整性检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "风险评估检查",
+          "id": "3",
+          "priority": "P0",
+          "rule_to_check": "风险评估检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "良率计算检查",
+          "id": "4",
+          "priority": "P0",
+          "rule_to_check": "良率计算检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "产出效率检查",
+          "id": "5",
+          "priority": "P0",
+          "rule_to_check": "产出效率检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "产能预估检查",
+          "id": "6",
+          "priority": "P0",
+          "rule_to_check": "产能预估检查",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "生产系统产能评估报告",
+      "type": "生产系统产能评估报告"
+    }
+  },
+  "PPAP:设备清单@v2": {
+    "appendix": [],
+    "document_type": "设备清单",
+    "entrypoints": {
+      "1": "checker:check",
+      "2": "checker:check"
+    },
+    "related_suite_keys": [],
+    "resources": {
+      "carriers": {
+        ".docx": "audit.checkers.v2.equipment_list_docx_agent:EquipmentListDocxAgent",
+        ".pdf": "audit.checkers.v2.pdf_excel_delegator_agent:EquipmentListPdfExcelDelegatorAgent",
+        ".xls": "audit.checkers.v2.equipment_list_agent:EquipmentListAgent",
+        ".xlsm": "audit.checkers.v2.equipment_list_agent:EquipmentListAgent",
+        ".xlsx": "audit.checkers.v2.equipment_list_agent:EquipmentListAgent"
+      },
+      "methods": {
+        "1": "rule_1",
+        "2": "rule_2"
+      }
+    },
+    "rules": {
+      "checker_binding": {
+        "1": "checker:check",
+        "2": "checker:check"
+      },
+      "kind": "engine",
+      "rules": [
+        {
+          "category": "产线/工序、设备开发检查",
+          "id": "1",
+          "priority": "P0",
+          "rule_to_check": "产线/工序、设备开发检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "设备验收检查",
+          "id": "2",
+          "priority": "P0",
+          "rule_to_check": "设备验收检查",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "设备清单",
+      "type": "设备清单"
+    }
+  },
+  "PPAP:过程流程图@v2": {
+    "appendix": [],
+    "document_type": "过程流程图",
+    "entrypoints": {
+      "1": "checker:check",
+      "2": "checker:check",
+      "3": "checker:check",
+      "4": "checker:check",
+      "5": "checker:check",
+      "6": "checker:check"
+    },
+    "related_suite_keys": [],
+    "resources": {
+      "carriers": {
+        ".pdf": "audit.checkers.v2.pdf_excel_delegator_agent:ProcessFlowChartPdfExcelDelegatorAgent",
+        ".xls": "audit.checkers.v2.process_flow_chart_excel_agent:ProcessFlowChartExcelAgent",
+        ".xlsm": "audit.checkers.v2.process_flow_chart_excel_agent:ProcessFlowChartExcelAgent",
+        ".xlsx": "audit.checkers.v2.process_flow_chart_excel_agent:ProcessFlowChartExcelAgent"
+      },
+      "methods": {
+        "1": "rule_1",
+        "2": "rule_2",
+        "3": "rule_3",
+        "4": "rule_4",
+        "5": "rule_5",
+        "6": "rule_6"
+      }
+    },
+    "rules": {
+      "checker_binding": {
+        "1": "checker:check",
+        "2": "checker:check",
+        "3": "checker:check",
+        "4": "checker:check",
+        "5": "checker:check",
+        "6": "checker:check"
+      },
+      "kind": "engine",
+      "rules": [
+        {
+          "category": "表头关键字段完整性检查",
+          "id": "1",
+          "priority": "P0",
+          "rule_to_check": "表头关键字段完整性检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "产品特殊特性检查",
+          "id": "2",
+          "priority": "P0",
+          "rule_to_check": "产品特殊特性检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "过程特殊特性检查",
+          "id": "3",
+          "priority": "P0",
+          "rule_to_check": "过程特殊特性检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "工序名称与操作描述检查",
+          "id": "4",
+          "priority": "P0",
+          "rule_to_check": "工序名称与操作描述检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "工序定义完整性检查",
+          "id": "5",
+          "priority": "P0",
+          "rule_to_check": "工序定义完整性检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "工序定义完整性检查（连线）",
+          "id": "6",
+          "priority": "P0",
+          "rule_to_check": "工序定义完整性检查（连线）",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "过程流程图",
+      "type": "过程流程图"
+    }
+  },
+  "PPAP:过程流程图@v3": {
+    "appendix": [],
+    "document_type": "过程流程图",
+    "entrypoints": {
+      "1": "checker:check",
+      "2": "checker:check",
+      "3": "checker:check",
+      "4": "checker:check",
+      "5": "checker:check",
+      "6": "checker:check",
+      "7": "checker:check",
+      "8": "checker:check",
+      "9": "checker:check"
+    },
+    "related_suite_keys": [],
+    "resources": {
+      "carriers": {
+        ".pdf": "audit.checkers.v3.pdf_excel_delegator_agent:ProcessFlowChartPdfExcelDelegatorAgent",
+        ".xls": "audit.checkers.v3.process_flow_chart_excel_agent:ProcessFlowChartExcelAgent",
+        ".xlsm": "audit.checkers.v3.process_flow_chart_excel_agent:ProcessFlowChartExcelAgent",
+        ".xlsx": "audit.checkers.v3.process_flow_chart_excel_agent:ProcessFlowChartExcelAgent"
+      },
+      "methods": {
+        "1": "rule_1",
+        "2": "rule_2",
+        "3": "rule_3",
+        "4": "rule_4",
+        "5": "rule_5",
+        "6": "rule_6",
+        "7": "rule_7",
+        "8": "rule_8",
+        "9": "rule_9"
+      }
+    },
+    "rules": {
+      "checker_binding": {
+        "1": "checker:check",
+        "2": "checker:check",
+        "3": "checker:check",
+        "4": "checker:check",
+        "5": "checker:check",
+        "6": "checker:check",
+        "7": "checker:check",
+        "8": "checker:check",
+        "9": "checker:check"
+      },
+      "kind": "engine",
+      "rules": [
+        {
+          "category": "表头字段完整性检查",
+          "id": "1",
+          "priority": "P0",
+          "rule_to_check": "表头字段完整性检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "产品特殊特性及类别填写逻辑校验",
+          "id": "2",
+          "priority": "P0",
+          "rule_to_check": "产品特殊特性及类别填写逻辑校验",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "过程特殊特性及类别填写逻辑校验",
+          "id": "3",
+          "priority": "P0",
+          "rule_to_check": "过程特殊特性及类别填写逻辑校验",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "工序名称与操作描述填写逻辑校验",
+          "id": "4",
+          "priority": "P0",
+          "rule_to_check": "工序名称与操作描述填写逻辑校验",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "工序名称与图例填写逻辑校验",
+          "id": "5",
+          "priority": "P0",
+          "rule_to_check": "工序名称与图例填写逻辑校验",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "起始工序拆解完整性识别",
+          "id": "6",
+          "priority": "P0",
+          "rule_to_check": "起始工序拆解完整性识别",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "最终工序拆解完整性识别",
+          "id": "7",
+          "priority": "P0",
+          "rule_to_check": "最终工序拆解完整性识别",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "返工/返修工序检验环节识别",
+          "id": "8",
+          "priority": "P0",
+          "rule_to_check": "返工/返修工序检验环节识别",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "跨文件一致性审核（PFD与特殊特性清单）",
+          "id": "9",
+          "priority": "P0",
+          "rule_to_check": "跨文件一致性审核（PFD与特殊特性清单）",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "过程流程图",
+      "type": "过程流程图"
+    }
+  },
+  "PPAP:过程特殊特性清单@v2": {
+    "appendix": [],
+    "document_type": "过程特殊特性清单",
+    "entrypoints": {
+      "1": "checker:check",
+      "2": "checker:check",
+      "3": "checker:check"
+    },
+    "related_suite_keys": [],
+    "resources": {
+      "carriers": {
+        ".pdf": "audit.checkers.v2.pdf_excel_delegator_agent:ProcessSpecialCharacteristicPdfExcelDelegatorAgent",
+        ".xls": "audit.checkers.v2.process_special_characteristic_agent:ProcessSpecialCharacteristicAgent",
+        ".xlsm": "audit.checkers.v2.process_special_characteristic_agent:ProcessSpecialCharacteristicAgent",
+        ".xlsx": "audit.checkers.v2.process_special_characteristic_agent:ProcessSpecialCharacteristicAgent"
+      },
+      "methods": {
+        "1": "rule_1",
+        "2": "rule_2",
+        "3": "rule_3"
+      }
+    },
+    "rules": {
+      "checker_binding": {
+        "1": "checker:check",
+        "2": "checker:check",
+        "3": "checker:check"
+      },
+      "kind": "engine",
+      "rules": [
+        {
+          "category": "关键字段完整性检查",
+          "id": "1",
+          "priority": "P0",
+          "rule_to_check": "关键字段完整性检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "过程特性完整性检查",
+          "id": "2",
+          "priority": "P0",
+          "rule_to_check": "过程特性完整性检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "高风险管理项检查",
+          "id": "3",
+          "priority": "P0",
+          "rule_to_check": "高风险管理项检查",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "过程特殊特性清单",
+      "type": "过程特殊特性清单"
+    }
+  },
+  "PPAP:过程特殊特性清单@v3": {
+    "appendix": [],
+    "document_type": "过程特殊特性清单",
+    "entrypoints": {
+      "1": "checker:check",
+      "2": "checker:check"
+    },
+    "related_suite_keys": [],
+    "resources": {
+      "carriers": {
+        ".pdf": "audit.checkers.v3.pdf_excel_delegator_agent:ProcessSpecialCharacteristicPdfExcelDelegatorAgent",
+        ".xls": "audit.checkers.v3.process_special_characteristic_agent:ProcessSpecialCharacteristicAgent",
+        ".xlsm": "audit.checkers.v3.process_special_characteristic_agent:ProcessSpecialCharacteristicAgent",
+        ".xlsx": "audit.checkers.v3.process_special_characteristic_agent:ProcessSpecialCharacteristicAgent"
+      },
+      "methods": {
+        "1": "rule_1",
+        "2": "rule_2"
+      }
+    },
+    "rules": {
+      "checker_binding": {
+        "1": "checker:check",
+        "2": "checker:check"
+      },
+      "kind": "engine",
+      "rules": [
+        {
+          "category": "产品编号识别",
+          "id": "1",
+          "priority": "P0",
+          "rule_to_check": "产品编号识别",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "列完整性及内容非空检查",
+          "id": "2",
+          "priority": "P0",
+          "rule_to_check": "列完整性及内容非空检查",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "过程特殊特性清单",
+      "type": "过程特殊特性清单"
+    }
+  },
+  "PPAP:过程能力研究@v2": {
+    "appendix": [],
+    "document_type": "过程能力研究",
+    "entrypoints": {
+      "1": "checker:check",
+      "2": "checker:check",
+      "3": "checker:check"
+    },
+    "related_suite_keys": [],
+    "resources": {
+      "carriers": {
+        ".pdf": "audit.checkers.v2.pdf_excel_delegator_agent:InitialProcessCapacityPdfExcelDelegatorAgent",
+        ".xls": "audit.checkers.v2.initial_process_capacity_agent:InitialProcessCapacityAgent",
+        ".xlsm": "audit.checkers.v2.initial_process_capacity_agent:InitialProcessCapacityAgent",
+        ".xlsx": "audit.checkers.v2.initial_process_capacity_agent:InitialProcessCapacityAgent"
+      },
+      "methods": {
+        "1": "rule_1",
+        "2": "rule_2",
+        "3": "rule_3"
+      }
+    },
+    "rules": {
+      "checker_binding": {
+        "1": "checker:check",
+        "2": "checker:check",
+        "3": "checker:check"
+      },
+      "kind": "engine",
+      "rules": [
+        {
+          "category": "P阶段Cpk结果列内容检查",
+          "id": "1",
+          "priority": "P0",
+          "rule_to_check": "P阶段Cpk结果列内容检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "P阶段结果判定列内容检查",
+          "id": "2",
+          "priority": "P0",
+          "rule_to_check": "P阶段结果判定列内容检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "控制图短期过程能力检查",
+          "id": "3",
+          "priority": "P0",
+          "rule_to_check": "控制图短期过程能力检查",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "过程能力研究",
+      "type": "过程能力研究"
+    }
+  },
+  "PPAP:零件提交保证书@v2": {
+    "appendix": [],
+    "document_type": "零件提交保证书",
+    "entrypoints": {
+      "1": "checker:check",
+      "10": "checker:check",
+      "2": "checker:check",
+      "3": "checker:check",
+      "4": "checker:check",
+      "5": "checker:check",
+      "6": "checker:check",
+      "7": "checker:check",
+      "8": "checker:check",
+      "9": "checker:check"
+    },
+    "related_suite_keys": [],
+    "resources": {
+      "carriers": {
+        ".docx": "audit.checkers.v2.psw_docx_agent:PswDocxAgent",
+        ".pdf": "audit.checkers.v2.psw_pdf_agent:PswPDFAgent",
+        ".xls": "audit.checkers.v2.psw_excel_agent:PswExcelAgent",
+        ".xlsm": "audit.checkers.v2.psw_excel_agent:PswExcelAgent",
+        ".xlsx": "audit.checkers.v2.psw_excel_agent:PswExcelAgent"
+      },
+      "methods": {
+        "1": "rule_1",
+        "10": "rule_10",
+        "2": "rule_2",
+        "3": "rule_3",
+        "4": "rule_4",
+        "5": "rule_5",
+        "6": "rule_6",
+        "7": "rule_7",
+        "8": "rule_8",
+        "9": "rule_9"
+      }
+    },
+    "rules": {
+      "checker_binding": {
+        "1": "checker:check",
+        "10": "checker:check",
+        "2": "checker:check",
+        "3": "checker:check",
+        "4": "checker:check",
+        "5": "checker:check",
+        "6": "checker:check",
+        "7": "checker:check",
+        "8": "checker:check",
+        "9": "checker:check"
+      },
+      "kind": "engine",
+      "rules": [
+        {
+          "category": "附件列内容检查",
+          "id": "1",
+          "priority": "P0",
+          "rule_to_check": "附件列内容检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "重量字段检查",
+          "id": "2",
+          "priority": "P0",
+          "rule_to_check": "重量字段检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "印章检查",
+          "id": "3",
+          "priority": "P0",
+          "rule_to_check": "印章检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "供应商名称/供应商代码格式检查",
+          "id": "4",
+          "priority": "P0",
+          "rule_to_check": "供应商名称/供应商代码格式检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "签字和盖章检查",
+          "id": "5",
+          "priority": "P0",
+          "rule_to_check": "签字和盖章检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "必填字段检查",
+          "id": "6",
+          "priority": "P0",
+          "rule_to_check": "必填字段检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "提交原因检查",
+          "id": "7",
+          "priority": "P0",
+          "rule_to_check": "提交原因检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "认可情况检查",
+          "id": "8",
+          "priority": "P0",
+          "rule_to_check": "认可情况检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "条件批准日期检查",
+          "id": "9",
+          "priority": "P0",
+          "rule_to_check": "条件批准日期检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "条件批准补充评论检查",
+          "id": "10",
+          "priority": "P0",
+          "rule_to_check": "条件批准补充评论检查",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "零件提交保证书",
+      "type": "零件提交保证书"
+    }
+  },
+  "PPAP:零部件年度试验要求@v2": {
+    "appendix": [],
+    "document_type": "零部件年度试验要求",
+    "entrypoints": {
+      "1": "checker:check",
+      "2": "checker:check",
+      "3": "checker:check",
+      "4": "checker:check",
+      "5": "checker:check",
+      "6": "checker:check"
+    },
+    "related_suite_keys": [],
+    "resources": {
+      "carriers": {
+        ".pdf": "audit.checkers.v2.pdf_excel_delegator_agent:AnnualTestRequirementsPdfExcelDelegatorAgent",
+        ".xls": "audit.checkers.v2.annual_test_requirements_agent:AnnualTestRequirementsAgent",
+        ".xlsm": "audit.checkers.v2.annual_test_requirements_agent:AnnualTestRequirementsAgent",
+        ".xlsx": "audit.checkers.v2.annual_test_requirements_agent:AnnualTestRequirementsAgent"
+      },
+      "methods": {
+        "1": "rule_1",
+        "2": "rule_2",
+        "3": "rule_3",
+        "4": "rule_4",
+        "5": "rule_5",
+        "6": "rule_6"
+      }
+    },
+    "rules": {
+      "checker_binding": {
+        "1": "checker:check",
+        "2": "checker:check",
+        "3": "checker:check",
+        "4": "checker:check",
+        "5": "checker:check",
+        "6": "checker:check"
+      },
+      "kind": "engine",
+      "rules": [
+        {
+          "category": "质量等级检查",
+          "id": "1",
+          "priority": "P0",
+          "rule_to_check": "质量等级检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "测试频率检查",
+          "id": "2",
+          "priority": "P0",
+          "rule_to_check": "测试频率检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "供应商名称检查",
+          "id": "3",
+          "priority": "P0",
+          "rule_to_check": "供应商名称检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "样本数量检查",
+          "id": "4",
+          "priority": "P0",
+          "rule_to_check": "样本数量检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "试验要求检查",
+          "id": "5",
+          "priority": "P0",
+          "rule_to_check": "试验要求检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "车型检查",
+          "id": "6",
+          "priority": "P0",
+          "rule_to_check": "车型检查",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "零部件年度试验要求",
+      "type": "零部件年度试验要求"
+    }
+  },
+  "PPAP:零部件设计验证计划和报告@v2": {
+    "appendix": [],
+    "document_type": "零部件设计验证计划和报告",
+    "entrypoints": {
+      "1": "checker:check",
+      "2": "checker:check",
+      "3": "checker:check",
+      "4": "checker:check",
+      "5": "checker:check",
+      "6": "checker:check",
+      "7": "checker:check"
+    },
+    "related_suite_keys": [],
+    "resources": {
+      "carriers": {
+        ".pdf": "audit.checkers.v2.pdf_excel_delegator_agent:DvpRPdfExcelDelegatorAgent",
+        ".xls": "audit.checkers.v2.dvp_r_excel_agent:DvpRExcelAgent",
+        ".xlsm": "audit.checkers.v2.dvp_r_excel_agent:DvpRExcelAgent",
+        ".xlsx": "audit.checkers.v2.dvp_r_excel_agent:DvpRExcelAgent"
+      },
+      "methods": {
+        "1": "rule_1",
+        "2": "rule_2",
+        "3": "rule_3",
+        "4": "rule_4",
+        "5": "rule_5",
+        "6": "rule_6",
+        "7": "rule_7"
+      }
+    },
+    "rules": {
+      "checker_binding": {
+        "1": "checker:check",
+        "2": "checker:check",
+        "3": "checker:check",
+        "4": "checker:check",
+        "5": "checker:check",
+        "6": "checker:check",
+        "7": "checker:check"
+      },
+      "kind": "engine",
+      "rules": [
+        {
+          "category": "检查版本号、修订日期等字段是否存在且不为空",
+          "id": "1",
+          "priority": "P0",
+          "rule_to_check": "检查版本号、修订日期等字段是否存在且不为空",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "检查试验项目等字段是否存在且不为空",
+          "id": "2",
+          "priority": "P0",
+          "rule_to_check": "检查试验项目等字段是否存在且不为空",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "检查试验类型是否为PV且状态为硬模件",
+          "id": "3",
+          "priority": "P0",
+          "rule_to_check": "检查试验类型是否为PV且状态为硬模件",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "检查计划开始和结束日期",
+          "id": "4",
+          "priority": "P0",
+          "rule_to_check": "检查计划开始和结束日期",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "检查实际开始和结束日期",
+          "id": "5",
+          "priority": "P0",
+          "rule_to_check": "检查实际开始和结束日期",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "检查实际试验结果",
+          "id": "6",
+          "priority": "P0",
+          "rule_to_check": "检查实际试验结果",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "检查试验报告编号",
+          "id": "7",
+          "priority": "P0",
+          "rule_to_check": "检查试验报告编号",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "零部件设计验证计划和报告",
+      "type": "零部件设计验证计划和报告"
+    }
+  },
+  "PPAP:项目问题清单@v2": {
+    "appendix": [],
+    "document_type": "项目问题清单",
+    "entrypoints": {
+      "1": "checker:check",
+      "2": "checker:check",
+      "3": "checker:check",
+      "4": "checker:check"
+    },
+    "related_suite_keys": [],
+    "resources": {
+      "carriers": {
+        ".pdf": "audit.checkers.v2.pdf_excel_delegator_agent:XirAssemblyIssuePdfExcelDelegatorAgent",
+        ".xls": "audit.checkers.v2.xir_assembly_issue_agent:XirAssemblyIssueAgent",
+        ".xlsm": "audit.checkers.v2.xir_assembly_issue_agent:XirAssemblyIssueAgent",
+        ".xlsx": "audit.checkers.v2.xir_assembly_issue_agent:XirAssemblyIssueAgent"
+      },
+      "methods": {
+        "1": "rule_1",
+        "2": "rule_2",
+        "3": "rule_3",
+        "4": "rule_4"
+      }
+    },
+    "rules": {
+      "checker_binding": {
+        "1": "checker:check",
+        "2": "checker:check",
+        "3": "checker:check",
+        "4": "checker:check"
+      },
+      "kind": "engine",
+      "rules": [
+        {
+          "category": "关键字段完整性检查",
+          "id": "1",
+          "priority": "P0",
+          "rule_to_check": "关键字段完整性检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "问题描述完整性检查",
+          "id": "2",
+          "priority": "P0",
+          "rule_to_check": "问题描述完整性检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "对应措施完整性检查",
+          "id": "3",
+          "priority": "P0",
+          "rule_to_check": "对应措施完整性检查",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "整车/总成功/性能性、SOP+3产能风险、安全性、法律法规风险完整性检查",
+          "id": "4",
+          "priority": "P0",
+          "rule_to_check": "整车/总成功/性能性、SOP+3产能风险、安全性、法律法规风险完整性检查",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "项目问题清单",
+      "type": "项目问题清单"
+    }
+  },
+  "UAES:U07@v4": {
+    "appendix": [],
+    "document_type": "潜在过程失效模式及后果分析",
+    "entrypoints": {
+      "U07:1": "checker:check",
+      "U07:2": "checker:check",
+      "U07:3": "checker:check",
+      "U07:4": "checker:check"
+    },
+    "related_suite_keys": [
+      "UAES:U12"
+    ],
+    "resources": {
+      "carriers": {
+        ".docx": "audit.checkers.v4.uaes.fmea:UaesPfmeaAgent",
+        ".pdf": "audit.checkers.v4.uaes.fmea:UaesPfmeaAgent",
+        ".xls": "audit.checkers.v4.uaes.fmea:UaesPfmeaAgent",
+        ".xlsm": "audit.checkers.v4.uaes.fmea:UaesPfmeaAgent",
+        ".xlsx": "audit.checkers.v4.uaes.fmea:UaesPfmeaAgent"
+      },
+      "methods": {
+        "U07:1": "rule_1",
+        "U07:2": "rule_2",
+        "U07:3": "rule_3",
+        "U07:4": "rule_4"
+      }
+    },
+    "rules": {
+      "checker_binding": {
+        "U07:1": "checker:check",
+        "U07:2": "checker:check",
+        "U07:3": "checker:check",
+        "U07:4": "checker:check"
+      },
+      "customers": [
+        "UAES"
+      ],
+      "kind": "engine",
+      "models": [],
+      "parts": [],
+      "preset_key": "U07",
+      "rules": [
+        {
+          "category": "是否结合过往经验教训追加失效模式",
+          "id": "U07:1",
+          "priority": "P0",
+          "rule_to_check": "PFMEA中须体现\"经验教训\"作为输入（表头/附录/变更履历/修订说明中引用历史问题、客户抱怨、过往失效案例、类似产品问题）；无任何引用则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "FMEA中S、O、D打分是否合理",
+          "id": "U07:2",
+          "priority": "P0",
+          "rule_to_check": "PFMEA中S/O/D均为1~10的整数；超出范围或为空则不通过；\nS与失效后果匹配（安全/法规后果应为9~10；仅外观轻微2~4）；后果与S明显不符（导致整车召回，但S=3）则不通过；\nO与失效起因+预防控制匹配（有效预防控制存在时O为低值；无预防控制时O为高值）；O与预防控制描述矛盾则不通过；\nD与探测控制方法+时机匹配（下线检测 D 较高，在线自动检测 D 较低，无法探测 D=10）；无探测措施但D<10不通过；\n相同失效模式/相同控制条件下S/O/D应一致；同失效原因但分值不同；\n以上五项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "关键特性是否在FMEA中明确标识",
+          "id": "U07:3",
+          "priority": "P0",
+          "rule_to_check": "PFMEA “特殊特性”列或“分类”列下须存在行标注关键/重要/特殊特性符号；任一已知关键特性未标识则不通过；\n识别同批次提交的审核文件中是否存在同项目、同物料编号的特殊特性清单独立文件，如果不存在则不通过，并提示用户复审或提交特殊特性清单文件一起审核；\n如果特殊特性清单存在，识别特殊特性清单中的所有产品特性是否都在PFMEA的功能/要求/功能/产品特性列下出现并分析或在失效模式中存在与特性相关的失效模式，且对应的特性标识一致；缺项或标识不一致则不通过；\n如果特殊特性清单存在，识别特殊特性清单中的所有过程特性是否都在PFMEA的功能/要求/功能/过程特性列下出现并分析或在失效模式/失效原因中存在与特性相关的失效模式，且对应的特性标识一致；缺项或标识不一致则不通过；\n以上四项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "是否覆盖PGQP1的产品特性",
+          "id": "U07:4",
+          "priority": "P0",
+          "rule_to_check": "识别同批次提交的审核文件中是否存在同零件号的采购件质量计划独立文件且文件中包含PGQP1表，如果不存在则不通过，并提示用户用户有缺项文件；\n如果采购件质量计划文件存在且包含PGQP1表则继续识别PGQP1表中的所有重要特性是否都在PFMEA的功能/要求/功能/过程特性列下出现或在失效模式中存在与特性相关的失效模式；缺项则不通过；\n以上三项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "潜在过程失效模式及后果分析（PFMEA）审核规则",
+      "type": "潜在过程失效模式及后果分析"
+    }
+  },
+  "UAES:U08@v4": {
+    "appendix": [],
+    "document_type": "控制计划",
+    "entrypoints": {
+      "U08:1": "checker:check",
+      "U08:10": "checker:check",
+      "U08:11": "checker:check",
+      "U08:12": "checker:check",
+      "U08:13": "checker:check",
+      "U08:2": "checker:check",
+      "U08:3": "checker:check",
+      "U08:4": "checker:check",
+      "U08:6": "checker:check",
+      "U08:7": "checker:check",
+      "U08:8": "checker:check",
+      "U08:9": "checker:check"
+    },
+    "related_suite_keys": [
+      "UAES:U07",
+      "UAES:U16"
+    ],
+    "resources": {
+      "carriers": {
+        ".docx": "audit.checkers.v4.uaes.control_plan:UaesControlPlanAgent",
+        ".pdf": "audit.checkers.v4.uaes.control_plan:UaesControlPlanAgent",
+        ".xls": "audit.checkers.v4.uaes.control_plan:UaesControlPlanAgent",
+        ".xlsm": "audit.checkers.v4.uaes.control_plan:UaesControlPlanAgent",
+        ".xlsx": "audit.checkers.v4.uaes.control_plan:UaesControlPlanAgent"
+      },
+      "methods": {
+        "U08:1": "rule_1",
+        "U08:10": "rule_9",
+        "U08:11": "rule_10",
+        "U08:12": "rule_11",
+        "U08:13": "rule_12",
+        "U08:2": "rule_2",
+        "U08:3": "rule_3",
+        "U08:4": "rule_4",
+        "U08:6": "rule_5",
+        "U08:7": "rule_6",
+        "U08:8": "rule_7",
+        "U08:9": "rule_8"
+      }
+    },
+    "rules": {
+      "checker_binding": {
+        "U08:1": "checker:check",
+        "U08:10": "checker:check",
+        "U08:11": "checker:check",
+        "U08:12": "checker:check",
+        "U08:13": "checker:check",
+        "U08:2": "checker:check",
+        "U08:3": "checker:check",
+        "U08:4": "checker:check",
+        "U08:6": "checker:check",
+        "U08:7": "checker:check",
+        "U08:8": "checker:check",
+        "U08:9": "checker:check"
+      },
+      "customers": [
+        "UAES"
+      ],
+      "kind": "engine",
+      "models": [],
+      "parts": [],
+      "preset_key": "U08",
+      "rules": [
+        {
+          "category": "生产及检测设备、模具等生产资源在CP中是否有明确定义",
+          "id": "U08:1",
+          "priority": "P0",
+          "rule_to_check": "识别机器装置夹具工装列下是否写明每个工序对应的生产资源信息，或者表格中是否有列专用于阐述生产资源信息且列下内容不为空则通过，否则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "零件生产过程追溯性，及过程先进先出是否满足要求",
+          "id": "U08:2",
+          "priority": "P0",
+          "rule_to_check": "零件生产过程追溯性，及过程先进先出是否满足要求？",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "量产CP是否受控",
+          "id": "U08:3",
+          "priority": "P0",
+          "rule_to_check": "当CP文件的类型为量产或SOP，且文件中存在受控章则通过，否则不通过；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "特性类型检查",
+          "id": "U08:4",
+          "priority": "P0",
+          "rule_to_check": "识别是否包含“特性类型”或“特殊特性”列，如果不包含则不通过，否则继续识别；当“特性类型”或“特殊特性”列下存在内容，且内容包含特性标记（非空白）则通过，否则不通过。",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "跑道尺寸需要有过程能力管控（X-R图/SPC控制）",
+          "id": "U08:6",
+          "priority": "P0",
+          "rule_to_check": "跑道尺寸需要有过程能力管控（X-R图/SPC控制）",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "表头必填字段校验",
+          "id": "U08:7",
+          "priority": "P0",
+          "rule_to_check": "识别表头存在供应商名称、供应商代码、编制人、版本号、受控日期/创建日期/修订日期、零件名称、零件号字段，有一项不存在则不通过；\n识别供应商名称、供应商代码、编制人、版本号、零件名称、零件号内容都不为空，有一项为空则不通过；\n识别同批次提交的审核文件中是否存在同项目、同物料编号、同零件名称的图纸独立文件，如果不存在则不通过，并提示用户复审或提交过程流程图文件一起审核；\n如果图纸文件存在，且控制计划的变更履历的最后一条履历的日期晚于图纸文件中的日期，早于则不通过；\n以上四项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "与过程流程图、PFMEA、采购件质量计划-PGQP1的工艺流程保持一致，没有错漏",
+          "id": "U08:8",
+          "priority": "P0",
+          "rule_to_check": "识别同批次提交的审核文件中是否存在同零件号的过程流程图、PFMEA、采购件质量计划这三类独立文件，缺项则不通过，并提示用户有缺项文件；\n如果过程流程图文件存在，识别过程流程图文件中工序列下内容是否都在CP的工序名称/操作描述列下出现并分析；缺项则不通过；\n如果PFMEA文件存在，识别PFMEA文件中工序/功能/要求或过程项或过程步骤列下内容是否都在CP的工序名称/操作描述列下出现并分析；缺项则不通过；\n如果采购件质量计划文件存在且文件中包含PGQP1表则继续识别PGQP1表中的所有工艺是否都在CP的工序名称/操作描述列下出现并分析；缺项则不通过；\n以上四项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "与过程流程图、PFMEA、采购件质量计划-PGQP1的特殊特性保持一致，没有错漏",
+          "id": "U08:9",
+          "priority": "P0",
+          "rule_to_check": "识别同批次提交的审核文件中是否存在同零件号的过程流程图、PFMEA、采购件质量计划这三类独立文件，缺项则不通过，并提示用户有缺项文件；\n如果过程流程图文件存在，识别过程流程图文件中所有被标识的特性是否都在CP的产品、过程、产品/过程规格/公差列下出现并分析；缺项则不通过；\n如果PFMEA文件存在，识别PFMEA文件中所有分类或特殊特性列下存在内容的行对应的功能/要求或产品特性或过程特性列下内容是否都在CP的产品、过程、产品/过程规格/公差列下出现并分析；缺项则不通过；\n如果采购件质量计划文件存在且包含PGQP1表则继续识别PGQP1表中的所有重要特性是否都在CP的产品、过程、产品/过程规格/公差列下出现并分析；缺项则不通过；\n以上四项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "PGQP1中的所有尺寸需包含在控制计划的出货检验项内",
+          "id": "U08:10",
+          "priority": "P0",
+          "rule_to_check": "识别同批次提交的审核文件中是否存在同零件号的采购件质量计划独立文件且文件中包含PGQP1表，缺项则不通过，并提示用户有缺项文件或缺项内容；\n如果采购件质量计划文件存在且包含PGQP1表则继续识别PGQP1表中所有尺寸类特性是否都在CP文件内出货检验工序行对应的产品、过程、产品/过程规格/公差列下出现并分析；缺项则不通过；\n以上两项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "PGQP1中定义的年度材质检测及型式试验是否在CP中有定义",
+          "id": "U08:11",
+          "priority": "P0",
+          "rule_to_check": "识别同批次提交的审核文件中是否存在同零件号的采购件质量计划独立文件且文件中包含PGQP1表，缺项则不通过，并提示用户有缺项文件或缺项内容；\n如果采购件质量计划文件存在且包含PGQP1表则继续识别PGQP1表中产品审核要求表中是否有型式试验相关内容，如果存在则继续识别是否所有的型式试验都在CP文件内的产品、过程、产品/过程规格/公差列下出现并分析；缺项则不通过；\n以上两项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "与图纸比对，有过程能力要求的尺寸，需要有SPC管控",
+          "id": "U08:12",
+          "priority": "P0",
+          "rule_to_check": "识别同批次提交的审核文件中是否存在同项目、同物料编号的图纸独立文件，如果不存在则不通过，并提示用户复审或提交图纸文件一起审核；\n如果图纸文件存在，提取图纸文件中标注为特殊特性且检验方法有CPK要求的所有尺寸，并与CP进行比对，识别图纸中提取的尺寸在CP中是否有对应行，如果有则继续识别同行的频率内容是否有SPC管控；如果图纸中提取的尺寸CP中有缺项或对应频率不包含SPC管控则不通过；\n以上两项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "与图纸特殊特性保持一致，没有错漏",
+          "id": "U08:13",
+          "priority": "P0",
+          "rule_to_check": "识别同批次提交的审核文件中是否存在同项目、同物料编号的图纸独立文件，如果不存在则不通过，并提示用户复审或提交图纸文件一起审核；\n如果图纸文件存在，识别图纸文件中所有被标记为特殊特性的尺寸和要求是否都在CP的产品、过程、产品/过程规格/公差列下出现并分析；缺项则不通过；\n以上两项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "控制计划（CP）审核规则",
+      "type": "控制计划"
+    }
+  },
+  "UAES:U16@v4": {
+    "appendix": [],
+    "document_type": "过程流程图",
+    "entrypoints": {
+      "U16:1": "checker:check",
+      "U16:2": "checker:check",
+      "U16:3": "checker:check"
+    },
+    "related_suite_keys": [],
+    "resources": {
+      "carriers": {
+        ".docx": "audit.checkers.v4.uaes.engineering:UaesProcessFlowAgent",
+        ".pdf": "audit.checkers.v4.uaes.engineering:UaesProcessFlowAgent",
+        ".xls": "audit.checkers.v4.uaes.engineering:UaesProcessFlowAgent",
+        ".xlsm": "audit.checkers.v4.uaes.engineering:UaesProcessFlowAgent",
+        ".xlsx": "audit.checkers.v4.uaes.engineering:UaesProcessFlowAgent"
+      },
+      "methods": {
+        "U16:1": "rule_1",
+        "U16:2": "rule_2",
+        "U16:3": "rule_3"
+      }
+    },
+    "rules": {
+      "checker_binding": {
+        "U16:1": "checker:check",
+        "U16:2": "checker:check",
+        "U16:3": "checker:check"
+      },
+      "customers": [
+        "UAES"
+      ],
+      "kind": "engine",
+      "models": [],
+      "parts": [],
+      "preset_key": "U16",
+      "rules": [
+        {
+          "category": "关键工序及关键特性是否被标识",
+          "id": "U16:1",
+          "priority": "P0",
+          "rule_to_check": "文件中须有关键工序标记；无任何标识则不通过；\n产品特性/过程特性列中，关键/重要/特殊特性须有符号标注；所有特性描述无标识则不通过；\n须有图例或注释定义关键标识含义（如「K 表示关键过程」）；有符号无解释则不通过；\n以上三项全部满足则通过，任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "过程流程图是否按物流规范采用标示图",
+          "id": "U16:2",
+          "priority": "P0",
+          "rule_to_check": "工序活动须以标准化图形符号表达；纯文字框/文字列表则不通过；\n图内须有图例且覆盖全部使用符号；无图例或不完整则不通过；\n同一活动类型须全图使用同一符号；同义混用则不通过；\n检验类活动（进货/过程/最终/巡检/自检）须以检验符号表达，图中无法识别则不通过；\n以上四项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，但判定依据需提醒用户进行人工复核。",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "过程流程图是否受控",
+          "id": "U16:3",
+          "priority": "P0",
+          "rule_to_check": "当过程流程图中包含受控章则通过，否则不通过；如果无法辨识则不通过，但判定依据需提醒用户进行人工复核",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "过程流程图（PFD）审核规则",
+      "type": "过程流程图"
+    }
+  }
+}
