@@ -86,7 +86,22 @@ class ProductExperienceTests(unittest.TestCase):
         from product.store import AuthStore
 
         clauses = [{"id": str(number)} for number in (1, 2, 6, 10, 11)]
-        inputs = [("target", "file-version", "file", "report.xlsx", "ready", "rule-version", "客户规则", {"rules": clauses})]
+        inputs = [
+            (
+                "target",
+                "file-version",
+                "file",
+                "report.xlsx",
+                "ready",
+                "rule-version",
+                "客户规则",
+                {"rules": clauses},
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                1,
+                "a" * 64,
+                None,
+            )
+        ]
         findings = [
             (
                 f"file-version:rule:{number}",
