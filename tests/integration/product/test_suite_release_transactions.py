@@ -478,3 +478,19 @@ def test_official_head_permissions_scope_and_migration_replay(auth_store_factory
     assert platform.official_active("control-plan") == before
     assert platform.official_active("unpublished")["revision"] == 0
     assert releases.active(alice, "control-plan")["current_revision_id"] == tenant.id
+
+
+def test_official_context_reads_candidate_without_execution_or_publication(auth_store_factory):
+    store, suites, _, _, _ = seed(auth_store_factory)
+    revision = suites.create_revision(tenant_id=None, suite_key="official-readback", files=FILES, created_by=None)
+    platform = SuiteReleaseStore(store.settings, store.objects, role="migrator")
+    context = platform.official_context(revision.id)
+    assert context["suite"].revision == revision
+    assert dict(context["suite"].files) == FILES
+    assert context["head"]["revision"] == context["validation"]["write_revision"] == 0
+    assert context["report"] is None
+    assert context["related_suite_digests"] == {} and context["related_revision_ids"] == ()
+    with store._conn() as conn:
+        assert conn.execute("SELECT count(*) FROM product.suite_validations").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM product.official_suite_heads").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM engine.jobs").fetchone()[0] == 0

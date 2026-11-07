@@ -603,6 +603,34 @@ class SuiteReleaseStore:
             _lock(conn, "official")
             return self._record_validation(conn, None, None, revision_id, proof, expected_revision)
 
+    def official_context(self, revision_id: str) -> dict:
+        """Read one frozen official candidate, dependency selection and proof together.
+
+        Host-only release tooling uses this for planning and uncertain-write
+        reconciliation. It never executes code, records a proof or publishes.
+        """
+        if self.role != "migrator":
+            raise PermissionError("official_validation_read_forbidden")
+        with self._conn() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+            conn.execute("SELECT pg_advisory_xact_lock_shared(hashtextextended('suite-publication:official', 0))")
+            row = _revision(conn, revision_id, None)
+            suite = self.suites.resolve_suite(str(row["id"]), "00000000-0000-0000-0000-000000000000", conn=conn)
+            related = {key: _selected(conn, None, key)["row"] for key in row["related_suite_keys"]}
+            related_suites = {key: self.suites.resolve_suite(str(dependency["id"]), "00000000-0000-0000-0000-000000000000", conn=conn) for key, dependency in related.items()}
+            cur.execute("SELECT * FROM product.official_suite_heads WHERE suite_key = %s", (row["suite_key"],))
+            head = self._official_receipt(row["suite_key"], cur.fetchone())
+            cur.execute("SELECT proof FROM product.suite_validations WHERE tenant_id IS NULL AND revision_id = %s", (revision_id,))
+            proof = cur.fetchone()
+            return {
+                "suite": suite,
+                "head": head,
+                "validation": _validation(conn, None, row),
+                "report": proof["proof"].get("report") if proof else None,
+                "related_suites": related_suites,
+                "related_suite_digests": {key: value["resolved_digest"] for key, value in related.items()},
+                "related_revision_ids": tuple(str(related[key]["id"]) for key in sorted(related)),
+            }
+
     def official_active(self, suite_key: str) -> dict:
         """Platform release readback; an absent head is not the latest candidate."""
         with self._conn() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
@@ -621,7 +649,7 @@ class SuiteReleaseStore:
             "published_at": head["published_at"].isoformat() if head else None,
         }
 
-    def publish_official(self, revision_id: str, *, expected_revision: int, expected_validation_revision: int) -> dict:
+    def publish_official(self, revision_id: str, *, expected_revision: int, expected_validation_revision: int, expected_proof_digest: str | None = None) -> dict:
         """Activate exactly the reviewed proof under the admission/publication lock.
 
         Saving sources and recording tests never call this method. A late test
@@ -640,6 +668,16 @@ class SuiteReleaseStore:
             if (head["revision"] if head else 0) != expected_revision:
                 raise ValueError("suite_head_conflict")
             validation = _validation(conn, None, revision)
+            if expected_proof_digest is not None:
+                if validation["proof_digest"] != expected_proof_digest:
+                    raise ValueError("suite_validation_conflict")
+                cur.execute("SELECT proof FROM product.suite_validations WHERE tenant_id IS NULL AND revision_id = %s", (revision_id,))
+                stored = cur.fetchone()
+                selected_ids = tuple(str(_selected(conn, None, key)["row"]["id"]) for key in sorted(revision["related_suite_keys"]))
+                if stored is None or tuple(stored["proof"].get("report", {}).get("related_revision_ids", ())) != selected_ids:
+                    raise ValueError("suite_validation_inputs_changed")
+                for dependency_id in selected_ids:
+                    self.suites.resolve_suite(dependency_id, "00000000-0000-0000-0000-000000000000", conn=conn)
             if validation["write_revision"] != expected_validation_revision:
                 raise ValueError("suite_validation_conflict")
             if not validation["verified"] or validation["samples_not_rerun"]:
@@ -676,6 +714,10 @@ class SuiteReleaseStore:
             related_digests = _related_digests(conn, tenant_id, revision)
             if dict(proof.related_suite_digests) != related_digests or "missing" in related_digests.values():
                 raise ValueError("suite_validation_inputs_changed")
+            if tenant_id is None and proof.related_revision_ids:
+                selected_ids = tuple(str(_selected(conn, None, key)["row"]["id"]) for key in sorted(revision["related_suite_keys"]))
+                if proof.related_revision_ids != selected_ids:
+                    raise ValueError("suite_validation_inputs_changed")
             cur.execute("SELECT revision FROM product.suite_validations WHERE tenant_id IS NOT DISTINCT FROM %s::uuid AND revision_id = %s", (tenant_id, revision_id))
             previous = cur.fetchone()
             if (previous["revision"] if previous else 0) != expected_revision:
