@@ -119,6 +119,8 @@ uv run --no-sync pytest tests/integration/product
 ```sh
 # 执行全部对应样本，但不写验证或发布默认版本。
 uv run --no-sync python -m scripts.official_suites validate --revision-id <official-revision-uuid>
+# 明确授权本次真实文本/视觉模型调用，不读写 replay；额度是整套 Suite 总计。
+uv run --no-sync python -m scripts.official_suites validate --revision-id <official-revision-uuid> --model live --max-requests 32 --max-input-tokens 200000 --max-output-tokens 32000
 # 显式写入验证；CAS revision 来自 read。此步骤仍不发布。
 uv run --no-sync python -m scripts.official_suites validate --revision-id <official-revision-uuid> --record --expected-validation-revision <revision>
 # 只读：包含当前官方 head、验证 write_revision、proof_digest 和完整结构化报告。
@@ -127,7 +129,13 @@ uv run --no-sync python -m scripts.official_suites read --revision-id <official-
 uv run --no-sync python -m scripts.official_suites publish --revision-id <official-revision-uuid> --expected-head-revision <revision> --expected-validation-revision <revision> --expected-proof-digest <sha256>
 ```
 
-验证只消费仓库当前完整 corpus 中属于该 Suite 的全部目标，没有样本筛选或 proof JSON 导入选项。每个样本保留整个原件组合，只执行所选 Suite。运行正式 Core 的固定程序子进程，不提供模型授权，禁用模型工具，不录制或回放模型答案，不更改现有 timeout。它只适用于已审阅的平台程序；本地子进程不是敌对代码沙箱，不能据此声称具备生产隔离。
+验证只消费仓库当前完整 corpus 中属于该 Suite 的全部目标，没有样本筛选或 proof JSON 导入选项。每个样本保留整个原件组合，只执行所选 Suite。运行正式 Core 的固定程序子进程，默认 `--model disabled` 不提供模型授权；`--model live` 显式允许文本 LLM 和模型 OCR 读取原件。两种模式都不录制或回放模型答案，不更改现有 timeout。它只适用于已审阅的平台程序；本地子进程不是敌对代码沙箱，不能据此声称具备生产隔离。
+
+Live 沿用 corpus 的完整测试配置选择：优先 `OCR_OPENAI_API_KEY` / `OCR_OPENAI_BASE_URL` / `OCR_MODEL_NAME`，其次完整 `OPENAI_*` 或 `LLM_*`。本次文本和视觉工具共享所选模型，所以它必须支持视觉和 Responses；这不是生产分开的模型配置验收。`PPAP_CORPUS_OFFLINE=1` 与 live 冲突，普通 corpus 的 `PPAP_CORPUS_MODEL` 不会悄悄改变官方 runner 的模式。Paddle 是独立服务，当前官方子进程不获得 Paddle 凭据，不能据此宣称扫描转录已验收。密钥只留在 host gateway，子进程只拿本次 loopback 临时 grant。
+
+Live 必须显式提供请求数、输入和输出 token 限额，一个 Suite 的全部样本共享同一 grant，不按样本重置。它们不是货币上限，最后一个请求的真实输入用量可能跨过剩余输入额度；启动前须核对供应商价格与可接受费用。每个样本后输出已知用量，结束撤销授权并输出最终回执；用量未知或限额耗尽会阻断验证，不自动重试。进程被外部终止可能没有最终回执，先核对既有输出和供应商账单，不能假定没有计费。回执只保留所选模型身份、endpoint 摘要和供应商确认的 token 数，不含密钥、原件、提示词或模型原始回答；返回模型名称和货币费用仍未知。证明绑定本次模型身份，`read` / `publish` 不需要模型密钥，也不调用模型。
+
+这里的 `--record` 仅表示写入正式 validation，和模型答案录制无关。可将它与 `--model live` 及 CAS revision 同时使用；不带它仍会执行、可能计费，但不保存发布证明。跳过 replay 不能跳过人工来源、样本独立性或实际结果取证。
 
 发布要求每条人工答案有判定人、ISO 日期、人工依据和完整条款覆盖，规则含义与对应来源一致；至少四个不同原件样本，第四个及其倍数为独立验证样本，不能与训练样本共享任何原件。当前缺失的人工字段不会自动补齐。证据不足时返回 `not_started_evidence_incomplete`、具体原因和零个已执行样本，不启动检查、不把缺失当通过；返回码为 2。执行中断标记 `incomplete`，不自动重跑。只有实际结果完全符合人工答案、断言数大于零且证据可定位时才可验证；UNABLE、ERR、缺失和 known-gap 都不能豁免。
 

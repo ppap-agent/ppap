@@ -10,7 +10,8 @@ from __future__ import annotations
 import json
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from contextlib import nullcontext
+from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
 from typing import Literal, cast
@@ -23,6 +24,7 @@ from audit.contracts import AuditResultItem, RuleInput
 from audit.standard_suites import library_revision
 from product.suites import canonical_json, content_digest
 
+from corpus_contracts.official_models import LiveModels
 from corpus_contracts.oracle import CASES_PATH, ORACLE_PATH, REPO_ROOT, OracleFile, build_round, load_oracle
 
 
@@ -43,6 +45,7 @@ class OfficialPlan:
     programs: dict[str, dict[str, bytes]]
     originals: dict[Path, str]
     reasons: tuple[str, ...]
+    model_identity: dict[str, str] = field(default_factory=dict)
 
     def check_sources(self) -> None:
         if any(content_digest(path.read_bytes()) != digest for path, digest in self.originals.items()):
@@ -54,7 +57,7 @@ def _semantics(files) -> dict:
     return RuleInput.model_validate({**rules, "appendix": json.loads(files.get("appendix.json", b"[]")), "rule_id": ""}).model_dump(mode="json", exclude={"rule_id"})
 
 
-def prepare(context: dict, *, cases: Path = CASES_PATH, oracle: Path = ORACLE_PATH, root: Path = REPO_ROOT) -> OfficialPlan:
+def prepare(context: dict, *, cases: Path = CASES_PATH, oracle: Path = ORACLE_PATH, root: Path = REPO_ROOT, model_identity: dict[str, str] | None = None) -> OfficialPlan:
     """Freeze every corpus target for this Suite; callers cannot select easy cases."""
     suite = context["suite"]
     if suite.revision.tenant_id is not None:
@@ -139,6 +142,7 @@ def prepare(context: dict, *, cases: Path = CASES_PATH, oracle: Path = ORACLE_PA
                 initiating_user_id="official-corpus-runner",
                 runtime_revision=runtime_revision("official-corpus-v1", library_revision()),
                 library_revision=library_revision(),
+                model_identity=model_identity or {},
             )
             samples.append(Sample(f"{case.id}/{file.file_id}", len(samples) + 1, file, frozen, sources))
             selected_originals.append(content_digest(sources[file.file_id]))
@@ -155,7 +159,7 @@ def prepare(context: dict, *, cases: Path = CASES_PATH, oracle: Path = ORACLE_PA
     # Freeze the independent tables, including their human provenance. Originals
     # and full execution context are additionally bound by each input_digest.
     oracle_revision = content_digest(canonical_json({"cases": tables[cases], "oracle": tables[oracle]}))
-    plan = OfficialPlan(context, oracle_revision, tuple(samples), {digest: program}, originals, tuple(sorted(reasons)))
+    plan = OfficialPlan(context, oracle_revision, tuple(samples), {digest: program}, originals, tuple(sorted(reasons)), dict(model_identity or {}))
     plan.check_sources()
     return plan
 
@@ -170,20 +174,30 @@ def _report(plan: OfficialPlan, cases=(), reasons=()) -> SuiteValidationReport:
         related_suite_digests=plan.context["related_suite_digests"],
         related_revision_ids=plan.context["related_revision_ids"],
         oracle_revision=plan.oracle_revision,
+        model_identity=plan.model_identity,
         cases=tuple(cases),
         reasons=tuple(reasons),
     )
 
 
-def evaluate(plan: OfficialPlan) -> SuiteValidationReport:
-    """Execute fixed code without credentials; labels never enter the guest payload."""
+def evaluate(plan: OfficialPlan, *, models: LiveModels | None = None, on_progress: Callable[[dict], None] | None = None) -> SuiteValidationReport:
+    """Execute fixed code; live grants are explicit and labels never enter the guest."""
     if plan.reasons:
         return _report(plan, reasons=plan.reasons)
+    if plan.model_identity != (models.access.identity() if models is not None else {}):
+        raise ValueError("official_model_identity_mismatch")
+    if on_progress is not None:
+        on_progress({"phase": "execution_started", "selected_samples": len(plan.samples), "models": models.receipt() if models else {"mode": "disabled"}})
+    with models.session() if models else nullcontext(None) as grant:
+        return _evaluate(plan, models=models, grant=grant, on_progress=on_progress)
+
+
+def _evaluate(plan: OfficialPlan, *, models: LiveModels | None, grant: dict[str, str] | None, on_progress: Callable[[dict], None] | None) -> SuiteValidationReport:
     cases: list[CaseEvaluation] = []
     for sample in plan.samples:
         target = sample.snapshot.targets[0]
         try:
-            result = run_audit_process(sample.snapshot, sample.sources, plan.programs, allow_model_tools=False)
+            result = run_audit_process(sample.snapshot, sample.sources, plan.programs, allow_model_tools=models is not None, model_grant=grant)
         except AuditRunError:
             # Never promote partial/unknown execution to a successful proof.
             return _report(plan, cases, ("official_execution_incomplete",))
@@ -215,6 +229,12 @@ def evaluate(plan: OfficialPlan) -> SuiteValidationReport:
                 clauses=tuple(evaluations),
             )
         )
+        if models is not None:
+            receipt = models.receipt()
+            if on_progress is not None:
+                on_progress({"phase": "sample_completed", "completed_samples": len(cases), "models": receipt})
+            if receipt["usage"]["uncertain"] or receipt["usage"]["budget_exhausted"]:
+                return _report(plan, cases, ("official_model_usage_incomplete",))
     plan.check_sources()
     return _report(plan, cases)
 
@@ -231,19 +251,22 @@ def validate(
     record: bool = False,
     expected_validation_revision: int | None = None,
     before_record: Callable[[dict], None] | None = None,
+    models: LiveModels | None = None,
+    on_progress: Callable[[dict], None] | None = None,
     **paths,
 ) -> dict:
     context = releases.official_context(revision_id)
     if record and (type(expected_validation_revision) is not int or expected_validation_revision != context["validation"]["write_revision"]):
         raise ValueError("suite_validation_conflict")
-    plan = prepare(context, **paths)
-    proof = evaluate(plan)
+    plan = prepare(context, model_identity=models.access.identity() if models else {}, **paths)
+    proof = evaluate(plan, models=models, on_progress=on_progress)
     result = {
         "recorded": False,
         "head": context["head"],
         "report": proof.receipt(),
         "selected_samples": len(plan.samples),
         "execution": "not_started_evidence_incomplete" if plan.reasons else "incomplete" if proof.reasons else "completed",
+        "models": models.receipt() if models else {"mode": "disabled"},
     }
     if record:
         plan.check_sources()
@@ -259,10 +282,14 @@ def validate(
 def publish(releases, revision_id: str, *, expected_revision: int, expected_validation_revision: int, expected_proof_digest: str, **paths) -> dict:
     """Reconcile frozen evidence, then publish only the exact reviewed CAS heads."""
     context = releases.official_context(revision_id)
-    plan = prepare(context, **paths)
-    if plan.reasons or context["report"] is None:
+    if context["report"] is None:
         raise ValueError("official_suite_validation_required")
     proof = SuiteValidationReport.model_validate(context["report"])
+    # Publication reads the frozen public identity, not today's credentials,
+    # and never starts a gateway or replays a paid validation.
+    plan = prepare(context, model_identity=proof.model_identity, **paths)
+    if plan.reasons:
+        raise ValueError("official_suite_validation_required")
     expected = _report(plan, proof.cases, proof.reasons)
     if (
         not proof.verified
