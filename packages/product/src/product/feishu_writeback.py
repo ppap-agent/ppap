@@ -234,6 +234,9 @@ def history_text(round_body: dict, return_url: str = "", *, now: datetime | None
         lines.append("**审核内容" + str(index) + "：" + name + "**")
         lines.append("")
         lines.append("审核结果：" + _status_text(rows))
+        source = next((item for item in round_body["inputs"] if rows and item["file_version_id"] == _finding_version(rows[0])), {})
+        if source.get("checker_verification"):
+            lines.append(source["checker_verification"]["notice"])
         scope = _scope_text(rows)
         if scope:
             lines.append(scope)
@@ -385,6 +388,8 @@ def report_blocks(round_body: dict, return_url: str = "") -> list[dict]:
         source = targets[_finding_version(rows[0])]
         rule = source.get("rule") or {}
         blocks.append(_text("匹配规则：" + str(rule.get("title") or "未记录规则名称")))
+        if source.get("checker_verification"):
+            blocks.append(_text(source["checker_verification"]["notice"]))
         blocks.append(_text("待审文件版本：" + source["file_version_id"]))
         if source.get("rule_version_id"):
             blocks.append(_text("规则版本：" + source["rule_version_id"]))

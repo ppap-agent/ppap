@@ -1881,6 +1881,53 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.display_principal = None
         self.assertEqual(self.display_client.get(pdf_path, params=query).status_code, 401)
 
+    def test_all_pass_checker_disclosure_is_frozen_in_task_history_pdf_and_share(self):
+        from product.store.report_sharing import ReportShareStore
+        from product.store.suite_releases import SuiteReleaseStore
+        from worker import process_claimed
+
+        version, task, worker, _job, _result = self.prepared_query_task()
+        path = f"/audit-tasks/{task['id']}"
+        audit = self.display_client.get(path).json()["files"][0]["audit"]
+        verification = audit["checker_verification"]
+        self.assertEqual((audit["conclusion"], audit["counts"]["pass_count"], verification["status"]), ("PASS", 1, "unverified"))
+        self.assertIn("未经验证", verification["notice"])
+        self.assertIn(verification["suite_revision_id"], verification["notice"])
+        pdf_job = worker.claim_job("qualified-pdf")
+        self.assertEqual(pdf_job.payload["report_input"]["audit"]["checker_verification"], verification)
+        process_claimed(worker, pdf_job, "qualified-pdf")
+        finished = self.display_client.get(path).json()
+        final_audit = finished["files"][0]["audit"]
+        report = final_audit["report"]
+        reference = {"task_id": task["id"], "round_id": task["round_id"], "file_version_id": version.id, "result_attempt": 1, "report_id": report["report_id"]}
+        command = {"request_id": str(uuid.uuid4()), "organization_id": self.alice.tenant_key, "reports": [reference], "targets": [], "content": {"kind": "link", "artifact": None, "package_id": None}}
+        shares = ReportShareStore(self.store)
+        with self.store._conn() as conn:
+            saved = shares.accept(conn, self.alice, command, [])
+        self.assertEqual(saved["payload"]["sources"][0]["checker_verification"], verification)
+        # Publish a new immutable source; all prior-round and shared claims stay fixed.
+        releases = SuiteReleaseStore(self.settings, self.store.objects, role="api")
+        suite = releases.suites.resolve_suite(verification["suite_revision_id"], self.alice.tenant_id)
+        active = releases.active(self.alice, suite.revision.suite_key)
+        candidate = releases.save_candidate(self.alice, suite.revision.id, {"checker.py": suite.files["checker.py"].decode() + "\n# later version\n"})
+        releases.publish(self.alice, suite.revision.suite_key, candidate["id"], active["revision"], str(uuid.uuid4()), force_unverified=True)
+        self.assertEqual(self.display_client.get(path).json()["files"][0]["audit"]["checker_verification"], verification)
+        historical = self.display_client.get(f"/rounds/{task['round_id']}?read_view=true").json()
+        self.assertEqual(historical["read_view"]["files"][0]["audit"]["checker_verification"], verification)
+        with shares.operation(self.alice, command["request_id"]) as (restored, _guard):
+            self.assertEqual(restored["payload"]["sources"][0]["checker_verification"], verification)
+        pdf = self.display_client.get(
+            path + f"/reports/{report['report_id']}/pdf",
+            params={**{key: reference[key] for key in ("round_id", "file_version_id", "result_attempt")}, "artifact_id": report["artifact"]["artifact_id"]},
+        )
+        self.assertEqual(pdf.status_code, 200)
+        import pymupdf
+
+        with pymupdf.open(stream=pdf.content, filetype="pdf") as document:
+            text = "".join("".join(page.get_text().split()) for page in document)
+            self.assertIn("".join(verification["notice"].split()), text)
+            self.assertIn("审核结论：符合", text)
+
     def test_missing_verification_mark_preserves_machine_pass_and_generates_pdf(self):
         from worker import process_claimed
 
@@ -2134,6 +2181,9 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
             self.assertEqual(client.get(path, params={"attempts": json.dumps(attempts)}).json(), receipt)
             from urllib.parse import parse_qs, urlsplit
 
+            for file in completed["files"]:
+                verification = file["audit"]["checker_verification"]
+                self.assertIn(verification["notice"], json.dumps(json.loads(sent[0]["content"]), ensure_ascii=False))
             link = json.loads(sent[0]["content"])["zh_cn"]["content"][-1][0]["href"]
             self.assertIn("share=" + command["request_id"], parse_qs(urlsplit(link).query)["return_to"][0])
             active[0] = bob
@@ -2146,6 +2196,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
             self.assertEqual(shared.status_code, 200, shared.text)
             self.assertEqual([item["reference"] for item in shared.json()["reports"]], command["reports"])
             first = shared.json()["reports"][0]
+            self.assertEqual(first["checker_verification"], completed["files"][0]["audit"]["checker_verification"])
             pdf = client.get(path + "/pdf", params={"report_id": first["reference"]["report_id"], "artifact_id": first["report"]["artifact"]["artifact_id"]})
             self.assertEqual(pdf.status_code, 200)
             self.assertTrue(pdf.content.startswith(b"%PDF-"))

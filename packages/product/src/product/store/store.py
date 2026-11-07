@@ -34,6 +34,7 @@ from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from product.checker_verification import frozen_checker_verification
 from product.db import connect
 from product.feishu import CardAction, UserTokens
 from product.feishu_notifications import optimization_notification_card, task_notification_card
@@ -4055,11 +4056,19 @@ class AuthStore:
         if not head or not head[0] or not conn.execute("SELECT id FROM product.audit_drafts WHERE id = %s AND task_fingerprint IS NOT NULL", (head[0],)).fetchone():
             return
         rows = conn.execute(
-            """SELECT i.file_version_id, i.role, i.rule_version_id, i.rule_title, i.rule_body, v.original_filename
+            """SELECT i.file_version_id, i.role, i.rule_version_id, i.rule_title, i.rule_body, v.original_filename, i.rule_execution
             FROM product.round_inputs i JOIN product.file_versions v ON v.id = i.file_version_id WHERE i.round_id = %s""",
             (claimed.round_id,),
         ).fetchall()
-        inputs = [{"file_version_id": str(row[0]), "role": row[1], "rule": {"id": str(row[2]), "title": row[3], "body": row[4]} if row[2] else None} for row in rows]
+        inputs = [
+            {
+                "file_version_id": str(row[0]),
+                "role": row[1],
+                "rule": {"id": str(row[2]), "title": row[3], "body": row[4]} if row[2] else None,
+                "checker_verification": frozen_checker_verification(row[6]),
+            }
+            for row in rows
+        ]
         round = {
             "id": claimed.round_id,
             "analysis_mode": head[1],
@@ -4270,6 +4279,7 @@ class AuthStore:
             "sha256": result["sha256"],
             "rule": {key: file["audit"]["rule"][key] for key in ("id", "title")},
             "generated_at": result["generated_at"],
+            **({"checker_verification": deepcopy(payload["report_input"]["audit"]["checker_verification"])} if payload.get("report_input", {}).get("audit", {}).get("checker_verification") else {}),
         }
 
     def _report_package_sources(self, conn, principal, reports, task):
@@ -4419,7 +4429,11 @@ class AuthStore:
             "receipt": {"request_id": request_id, "state": "accepted", "reason": None},
             "state": state,
             "outcomes": [
-                {**next(item for item in outcomes if item["reference"] == reference), "filename": next(source["artifact"]["filename"] for source in sources if source["reference"] == reference)}
+                {
+                    **next(item for item in outcomes if item["reference"] == reference),
+                    "filename": next(source["artifact"]["filename"] for source in sources if source["reference"] == reference),
+                    "checker_verification": next(source.get("checker_verification") for source in sources if source["reference"] == reference),
+                }
                 for reference in request["reports"]
             ],
             "artifact": result.get("artifact") if state == "ready" else None,
@@ -5096,7 +5110,7 @@ class AuthStore:
             )
             inputs_read = conn.execute(
                 """SELECT i.role, fv.id, fv.file_id, fv.original_filename, fv.status, i.rule_version_id, i.rule_title, i.rule_body,
-                       fv.content_type, fv.byte_size, fv.sha256
+                       fv.content_type, fv.byte_size, fv.sha256, i.rule_execution
                 FROM product.round_inputs i
                 JOIN product.file_versions fv ON fv.id = i.file_version_id
                 WHERE i.round_id = %s ORDER BY i.role, fv.original_filename""",
@@ -5172,6 +5186,7 @@ class AuthStore:
                     "status": item[4],
                     "rule_version_id": str(item[5]) if item[5] else None,
                     "rule": {"id": str(item[5]), "title": item[6], "body": item[7]} if item[5] else None,
+                    "checker_verification": frozen_checker_verification(item[11]),
                 }
                 for item in inputs
             ],

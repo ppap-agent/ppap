@@ -300,6 +300,7 @@ def freeze_selected_targets(store, conn, tenant_id: str, prepared: list[dict], *
             "latest_rule_suite_revision_id": rule_update["target_revision_id"] if rule_update else None,
             "mode": "checker_core",
             "suite_revision_id": suite.revision.id,
+            "suite_revision_number": suite.revision.revision_number,
             "binding": binding.to_dict(),
             "verification": target.verification,
             "samples_not_rerun": target.samples_not_rerun,

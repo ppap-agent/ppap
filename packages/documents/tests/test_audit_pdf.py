@@ -100,3 +100,25 @@ def test_long_reports_keep_every_clause_and_treat_embedded_markup_as_source_text
             assert f"第{number:02d}条要求" in text
         assert "<b>原件文字，不是 HTML</b>" in text
         assert "不表示正式量产批准" in text
+
+
+@pytest.mark.parametrize(("status", "notice"), [("unverified", "本轮采用未经验证的检查版本；即使全部为 PASS，也不表示检查版本已通过样本验证。"), ("verified", "受理本轮时平台已更新，样本未重跑。")])
+def test_all_pass_pdf_prominently_preserves_frozen_checker_qualification(status, notice):
+    source = report_source()
+    audit = source["audit"]
+    audit["conclusion"] = "PASS"
+    audit["counts"] = {"pass_count": 1, "ng_count": 0}
+    audit["checks"][0]["finding"]["status"] = "PASS"
+    audit["checker_verification"] = {
+        "suite_revision_id": "frozen-suite-3",
+        "suite_revision_number": 3,
+        "status": status,
+        "samples_not_rerun": status == "verified",
+        "notice": notice + "检查版本：第 3 版（frozen-suite-3）。",
+    }
+    with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
+        first_page = "".join(document[0].get_text().split())
+        assert "审核结论：符合" in first_page
+        assert "".join(notice.split()) in first_page
+        assert "frozen-suite-3" in first_page
+        assert "共1项：符合1项，不符合0项" in first_page

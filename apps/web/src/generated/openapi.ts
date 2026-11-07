@@ -2286,6 +2286,25 @@ export interface components {
             /** Through Date */
             through_date: string | null;
         };
+        /**
+         * AuditCheckerVerification
+         * @description Sample validation as frozen at Round acceptance, separate from findings.
+         */
+        AuditCheckerVerification: {
+            /** Notice */
+            notice: string;
+            /** Samples Not Rerun */
+            samples_not_rerun: boolean;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "verified" | "unverified";
+            /** Suite Revision Id */
+            suite_revision_id: string;
+            /** Suite Revision Number */
+            suite_revision_number: number | null;
+        };
         /** AuditClauseEvaluation */
         AuditClauseEvaluation: {
             /**
@@ -2453,6 +2472,7 @@ export interface components {
         };
         /** AuditFileReview */
         AuditFileReview: {
+            checker_verification?: components["schemas"]["AuditCheckerVerification"] | null;
             /** Checks */
             checks: components["schemas"]["AuditClauseEvaluation"][];
             /** Conclusion */
@@ -2710,6 +2730,7 @@ export interface components {
          * @description Preparation of one frozen report, not a downloadable partial package.
          */
         AuditReportPackageOutcome: {
+            checker_verification?: components["schemas"]["AuditCheckerVerification"] | null;
             /** Filename */
             filename?: string;
             /** Reason */
@@ -2869,6 +2890,7 @@ export interface components {
         };
         /** AuditSharedReport */
         AuditSharedReport: {
+            checker_verification?: components["schemas"]["AuditCheckerVerification"] | null;
             /**
              * Conclusion
              * @enum {string}
@@ -4154,6 +4176,7 @@ export interface components {
         };
         /** MaterialWire */
         MaterialWire: {
+            checker_verification?: components["schemas"]["AuditCheckerVerification"] | null;
             /** File Id */
             file_id: string;
             /** File Version Id */

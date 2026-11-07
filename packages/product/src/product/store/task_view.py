@@ -275,6 +275,7 @@ def file_round_audit(round: dict, frozen: dict) -> dict:
         "file_version_id": version_id,
         "result_attempt": round["result_attempt"],
         "rule": rule,
+        "checker_verification": deepcopy(frozen.get("checker_verification")),
         "execution": "review_failed" if file_has_error or round["execution"] == "failed" else round["execution"],
         "progress": {"completed": len(checks) if finished else 0, "total": len(checks)},
         "failure": {"code": "file_execution_error", "message": "本文件审核执行失败，未取得完整结果。", "retryable": False}
