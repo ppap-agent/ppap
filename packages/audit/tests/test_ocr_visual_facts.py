@@ -5,7 +5,7 @@ from copy import deepcopy
 from unittest.mock import Mock
 
 import pytest
-from audit.engine.checkers.ocr_visual_facts import OcrImage, observe_ocr_images, request_ocr_visual_facts
+from audit.engine.checkers.ocr_visual_facts import CONFIRMATION_PROMPT, OcrImage, observe_ocr_images, request_ocr_visual_facts
 
 
 @pytest.fixture(autouse=True)
@@ -27,7 +27,8 @@ def install(monkeypatch, raw):
     calls = []
 
     async def read(image_paths, prompt, **kwargs):
-        calls.append((image_paths, prompt, kwargs))
+        if not prompt.startswith(CONFIRMATION_PROMPT):
+            calls.append((image_paths, prompt, kwargs))
         return deepcopy(raw)
 
     monkeypatch.setattr("documents.ocr.client.call_llm_async", read)
@@ -308,7 +309,8 @@ def test_multiple_business_pages_have_independent_requests_and_shared_aggregatio
         scopes = fields["checked"]["items"]["properties"]["scope"]["enum"]
         assert len(data) == 1 and len(scopes) == 1
         scope = scopes[0]
-        calls.append(scope)
+        if not prompt.startswith(CONFIRMATION_PROMPT):
+            calls.append(scope)
         assert ("PAGE_TWO" in prompt) == (scope == "pdf:2")
         assert ("PAGE_THREE" in prompt) == (scope == "pdf:3")
         item = fields["checked"]["items"]["properties"]
@@ -328,7 +330,8 @@ def test_successful_page_and_failed_page_are_not_requested_again(monkeypatch):
 
     async def read(data, prompt, *, response_schema, **kwargs):
         (scope,) = response_schema["schema"]["properties"]["checked"]["items"]["properties"]["scope"]["enum"]
-        calls.append(scope)
+        if not prompt.startswith(CONFIRMATION_PROMPT):
+            calls.append(scope)
         if scope == "pdf:3":
             raise ValueError("OCR visual coverage is invalid")
         return {"checked": response(False, scope=scope)}
@@ -355,7 +358,8 @@ def test_valid_unreadable_page_retains_unknown_after_another_page_is_known(monke
 
     async def read(data, prompt, *, response_schema, **kwargs):
         (scope,) = response_schema["schema"]["properties"]["checked"]["items"]["properties"]["scope"]["enum"]
-        calls.append(scope)
+        if not prompt.startswith(CONFIRMATION_PROMPT):
+            calls.append(scope)
         if scope == "pdf:5":
             return {"checked": [{"scope": scope, "value": None, "sources": [], "covered_image_indices": [], "coverage": "unreadable", "excerpt": ""}]}
         return {"checked": response(False, scope=scope)}
@@ -399,3 +403,37 @@ def test_submission_reason_on_one_warrant_page_is_not_contradicted_by_a_blank_co
     visual_facts._ocr_pdf_facts(SimpleNamespace(audit_id="v"), fields, lambda *a, **k: None, pages=[3, 5], cache={}, field_scopes={"submission_any_checked": ["pdf:3", "pdf:5"]})
     assert "submission_any_checked" in captured["any_fields"]
     assert "psw_stamp_present" not in captured["any_fields"]
+
+
+def install_readings(monkeypatch, first, second):
+    prompts = []
+
+    async def read(data, prompt, *, response_schema, **kwargs):
+        prompts.append(prompt)
+        values = second if prompt.startswith(CONFIRMATION_PROMPT) else first
+        return {field: response(values[field]) for field in response_schema["schema"]["properties"]}
+
+    monkeypatch.setattr("documents.ocr.client.call_llm_async", read)
+    return prompts
+
+
+def test_model_only_fact_needs_an_agreeing_independent_reading(monkeypatch):
+    prompts = install_readings(monkeypatch, {"signed": True}, {"signed": True})
+    witness = Mock()
+    assert observe_ocr_images(images(), {"signed": "实际签字"}, witness) == {"signed": True}
+    assert [prompt.startswith(CONFIRMATION_PROMPT) for prompt in prompts] == [False, True]
+    assert witness.call_count == 1
+
+
+def test_disagreeing_readings_leave_the_fact_unknown_without_evidence(monkeypatch):
+    install_readings(monkeypatch, {"signed": True, "stamped": True}, {"signed": False, "stamped": True})
+    witness = Mock()
+    assert observe_ocr_images(images(), {"signed": "实际签字", "stamped": "实际印章"}, witness) == {"signed": None, "stamped": True}
+    assert [call.args[0]["fact"] for call in witness.call_args_list] == ["stamped"]
+
+
+def test_unknown_first_reading_and_native_facts_are_not_read_again(monkeypatch):
+    prompts = install_readings(monkeypatch, {"signed": None, "stamped": None}, {"signed": True, "stamped": True})
+    result = observe_ocr_images(images(), {"signed": "实际签字", "stamped": "实际印章"}, Mock(), native_by_scope={"stamped": {"pdf:2": True}})
+    assert result == {"signed": None, "stamped": True}
+    assert len(prompts) == 1

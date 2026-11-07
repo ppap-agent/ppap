@@ -70,7 +70,7 @@ def ocr_extra_body() -> dict:
 def ocr_policy_identity() -> str:
     """Hash actual non-secret configuration, not credentials or text defaults."""
     value = {
-        "protocol": "native_paddle_responses_v3",
+        "protocol": "native_paddle_responses_v4",
         "model": current_model_access().model if model_access_scoped() else _env("OCR_MODEL_NAME"),
         "endpoint_sha256": hashlib.sha256(ocr_openai_base_url().encode()).hexdigest(),
         "extra_body": ocr_extra_body(),

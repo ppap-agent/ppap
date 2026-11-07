@@ -15,6 +15,7 @@ from audit.contracts import (
 )
 from audit.engine.app_runtime import run_audit_engine
 from audit.engine.checkers.client import AIClient
+from audit.engine.checkers.ocr_visual_facts import CONFIRMATION_PROMPT
 from audit.engine.checkers.psw_pdf_evidence import assess_psw_conversion_evidence
 from audit.engine.runtime import bind_runtime
 from documents.contracts import ConversionArtifact
@@ -362,7 +363,8 @@ def ocr_response_boundary(monkeypatch, response):
         monkeypatch.setenv(name, value)
 
     async def analyze(images, prompt, *, response_schema, **kwargs):
-        attempts.append(response_schema)
+        if not prompt.startswith(CONFIRMATION_PROMPT):
+            attempts.append(response_schema)
         if isinstance(response, Exception):
             raise response
         mapping = response
@@ -628,7 +630,8 @@ def test_public_multi_page_partial_success_and_protocol_failure_are_reused(tmp_p
             import ast
 
             scope = ast.literal_eval(next(line.split(": ", 1)[1] for line in prompt.splitlines() if line.startswith("图 0:")))["scope"]
-        scopes.append(scope)
+        if not prompt.startswith(CONFIRMATION_PROMPT):
+            scopes.append(scope)
         if scope == "pdf:2":
             raise ValueError("OCR visual coverage is invalid")
         return await controlled(images, prompt, response_schema=response_schema, **kwargs)

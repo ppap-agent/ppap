@@ -17,6 +17,9 @@ from documents.ocr import client as ocr_client
 
 from audit.engine.runtime import get_runtime
 
+# Marks the independent second reading of a model-only fact.
+CONFIRMATION_PROMPT = "这是独立复核：不参考任何此前的读取结果，重新完整查看图像。\n"
+
 
 @dataclass(frozen=True)
 class OcrImage:
@@ -102,8 +105,10 @@ def observe_ocr_images(
     context_by_scope: dict[str, str] | None = None,
     request_cache: dict | None = None,
 ) -> dict[str, object]:
-    """Read each original scope once, then combine facts without a vote.
+    """Read each original scope, then combine facts without a vote.
 
+    A model-only fact is established only when an independent second reading
+    of the same scope agrees; one observation can never decide a result.
     Image indices are local to that request. A later scope's failure cannot
     trigger another request for an already observed or failed scope.
     """
@@ -145,6 +150,19 @@ def observe_ocr_images(
                     field_scopes={field: [scope] for field in subset},
                     native_by_scope=local_native,
                 )
+                observed = {field: subset[field] for field, value in facts.items() if value is not None and local_native.get(field, {}).get(scope) is None}
+                if observed:
+                    confirmed = _observe_ocr_scope(
+                        frames,
+                        observed,
+                        lambda *args, **kwargs: None,
+                        context=local_context,
+                        field_scopes={field: [scope] for field in observed},
+                        confirmation=True,
+                    )
+                    disputed = {field for field in observed if confirmed[field] != facts[field]}
+                    facts = {field: None if field in disputed else value for field, value in facts.items()}
+                    sources = [(args, kwargs) for args, kwargs in sources if args[0].get("fact") not in disputed]
                 cached = (facts, sources)
             except Exception as error:
                 if request_cache is not None and key is not None:
@@ -178,6 +196,7 @@ def _observe_ocr_scope(
     field_scopes: dict[str, list[str]] | None = None,
     any_fields: frozenset[str] = frozenset(),
     native_by_scope: dict[str, dict[str, object]] | None = None,
+    confirmation: bool = False,
 ) -> dict[str, object]:
     """Validate one fact per applicable source scope; never choose a winner.
 
@@ -258,6 +277,9 @@ def _observe_ocr_scope(
             + "\n区域中的原生文字：\n"
             + context[:16000]
         )
+    if confirmation:
+        # A separate request, not a cached repeat of the first reading.
+        prompt = CONFIRMATION_PROMPT + prompt
     try:
         raw = request(images=[image.data for image in images], prompt=prompt, response_schema=response_schema)
     except GuardStop as stop:
