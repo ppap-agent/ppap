@@ -40,6 +40,7 @@ def render_audit_pdf(source: dict) -> bytes:
         f"<h2>{_text(source['filename'])}</h2>",
         f"<p>审核规则：{_text(audit['rule']['title'])}</p>",
         f"<p>审核结论：<b>{_text(CONCLUSION.get(audit['conclusion'], audit['conclusion']))}</b></p>",
+        *([f"<p><b>{_text(audit['checker_verification']['notice'])}</b></p>"] if audit.get("checker_verification") else []),
         f"<p>共 {len(audit['checks'])} 项：符合 {audit['counts']['pass_count']} 项，不符合 {audit['counts']['ng_count']} 项，不适用 {audit['counts'].get('na_count', 0)} 项。</p>",
         *(["<p class='meta'>部分判定的证据未经验证，请核对原件中的证据和检查范围。</p>"] if any(check.get("finding") and not check.get("evidence_verified") for check in audit["checks"]) else []),
         f"<p class='meta'>生成时间：{_text(source['generated_at'])}</p>",

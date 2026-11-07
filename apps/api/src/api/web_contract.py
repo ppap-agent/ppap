@@ -286,7 +286,18 @@ class RuleParseJob(TypedDict):
     document_type: NotRequired[str]
 
 
+class AuditCheckerVerification(TypedDict):
+    """Sample validation as frozen at Round acceptance, separate from findings."""
+
+    suite_revision_id: str
+    suite_revision_number: int | None
+    status: Literal["verified", "unverified"]
+    samples_not_rerun: bool
+    notice: str
+
+
 class MaterialWire(TypedDict):
+    checker_verification: NotRequired[AuditCheckerVerification | None]
     file_id: str
     file_version_id: str
     original_filename: str
@@ -920,6 +931,7 @@ class AuditFileReport(TypedDict):
 
 
 class AuditFileReview(TypedDict):
+    checker_verification: NotRequired[AuditCheckerVerification | None]
     round_id: str
     file_version_id: str
     result_attempt: int | None
@@ -971,6 +983,7 @@ class AuditReportPackageOutcome(TypedDict):
     state: Literal["pending", "prepared", "failed"]
     reason: str | None
     filename: NotRequired[str]
+    checker_verification: NotRequired[AuditCheckerVerification | None]
 
 
 class AuditReportPackage(TypedDict):
@@ -1129,6 +1142,7 @@ class AuditReportShareRetry(TypedDict):
 
 
 class AuditSharedReport(TypedDict):
+    checker_verification: NotRequired[AuditCheckerVerification | None]
     name: str
     conclusion: Literal["PASS", "NG"]
     rule: RoundSummaryRule

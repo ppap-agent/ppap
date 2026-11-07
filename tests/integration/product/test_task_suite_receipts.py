@@ -109,12 +109,18 @@ def test_confirm_and_request_readback_share_exact_current_suite_rule(system, cor
     assert file["audit"]["rule"] == expected
     assert file["audit"]["file_version_id"] == file["file"]["id"]
     assert file["audit"]["round_id"] == accepted["round_id"]
+    verification = file["audit"]["checker_verification"]
+    assert verification["status"] == "unverified"
+    assert verification["suite_revision_number"] >= 1
+    assert verification["suite_revision_id"] in verification["notice"]
+    assert "未经验证" in verification["notice"]
     assert client.get(path, params={"request_id": command["request_id"]}).json() == accepted
     assert client.post(path + "/confirm", json=command).json() == accepted
     original_round = client.get("/rounds/" + accepted["round_id"]).json()
     publish_edit(system, f"{customer}:{entry}")
     restored = client.get(path).json()
     assert restored["files"][0]["match"]["rule"] == restored["files"][0]["audit"]["rule"] == expected
+    assert restored["files"][0]["audit"]["checker_verification"] == verification
     assert client.get("/rounds/" + accepted["round_id"]).json() == original_round
 
 
@@ -739,3 +745,51 @@ def test_library_update_keeps_verified_suite_available_with_samples_notice(syste
     accepted = client.post(path + "/confirm", json=confirmation(current))
     assert accepted.status_code == 201, accepted.text
     assert accepted.json()["acceptance"]["state"] == "accepted"
+
+
+def test_round_discloses_accepted_samples_not_rerun_after_later_validation(system, core_system):
+    import hashlib
+
+    from audit.checker_core import checker_digest
+    from audit.standard_suites import library_revision
+    from product.checker_validation import CaseEvaluation, ClauseEvaluation, SuiteValidationReport
+
+    client, _, _, principal = system
+    path, _ = prepare(system, core_system, "UAES", "U12")
+    releases = SuiteReleaseStore(system[2].settings, system[2].objects, role="api")
+    active = releases.active(principal, "UAES:U12")
+    suite = releases.suites.resolve_suite(active["current_revision_id"], principal.tenant_id)
+    rules = json.loads(suite.files["rules.json"])
+    proof = SuiteValidationReport(
+        suite_revision_id=suite.revision.id,
+        suite_digest=suite.revision.resolved_digest,
+        program_digest=checker_digest({path: content for path, content in suite.files.items() if path in {"checker.py", "resources.py"}}),
+        library_revision="previous-platform-fixture",
+        oracle_revision="independent-fixture-oracle",
+        related_suite_digests={},
+        cases=tuple(
+            CaseEvaluation(
+                case_id=f"case-{i}",
+                ordinal=i,
+                split="holdout" if i == 4 else "training",
+                input_digest=hashlib.sha256(str(i).encode()).hexdigest(),
+                coverage=True,
+                clauses=tuple(ClauseEvaluation(clause_id=clause["id"], expected="PASS", actual="PASS", evidence_locatable=True, checks_performed=1) for clause in rules["rules"]),
+            )
+            for i in range(1, 5)
+        ),
+    )
+    validation = releases.record_validation(principal, suite.revision.id, proof, expected_revision=0)
+    assert validation["verified"] and validation["samples_not_rerun"]
+    releases.publish(principal, suite.revision.suite_key, suite.revision.id, active["revision"], str(uuid.uuid4()))
+    task = client.get(path).json()
+    accepted = client.post(path + "/confirm", json=confirmation(task))
+    assert accepted.status_code == 201, accepted.text
+    frozen = accepted.json()["files"][0]["audit"]["checker_verification"]
+    assert frozen["status"] == "verified" and frozen["samples_not_rerun"]
+    assert "平台已更新，样本未重跑" in frozen["notice"]
+    current_proof = proof.model_copy(update={"library_revision": library_revision()})
+    releases.record_validation(principal, suite.revision.id, current_proof, expected_revision=validation["write_revision"])
+    assert releases.active(principal, suite.revision.suite_key)["validation"]["samples_not_rerun"] is False
+    assert client.get(path).json()["files"][0]["audit"]["checker_verification"] == frozen
+    assert client.get("/rounds/" + accepted.json()["round_id"]).json()["inputs"][0]["checker_verification"] == frozen

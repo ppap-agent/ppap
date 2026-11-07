@@ -42,6 +42,18 @@ def test_shared_report_switch_download_and_denied_revisit_never_open_private_inp
                 },
             }
         )
+    from product.checker_verification import frozen_checker_verification
+
+    for index, row in enumerate(reports):
+        row["checker_verification"] = frozen_checker_verification(
+            {
+                "mode": "checker_core",
+                "suite_revision_id": f"frozen-suite-{index + 1}",
+                "suite_revision_number": index + 1,
+                "verification": "unverified" if index == 0 else "verified",
+                "samples_not_rerun": index == 1,
+            }
+        )
     zipped = io.BytesIO()
     with zipfile.ZipFile(zipped, "w") as archive:
         for row in reports:
@@ -129,6 +141,7 @@ def test_shared_report_switch_download_and_denied_revisit_never_open_private_inp
             pdf_ready[0] = True
             page.get_by_role("button", name="重新读取 PDF", exact=True).click()
         expect(page.get_by_role("img", name="控制计划.xlsx-审核报告.pdf · 第 1 页", exact=True)).to_be_visible()
+        expect(page.get_by_role("note", name="本轮验证状态")).to_contain_text(reports[0]["checker_verification"]["notice"])
         if stall:
             assert binary_reads["pdf"] == [binary_reads["pdf"][0]] * 2
         page.get_by_role("button", name="当前页文字", exact=True).click()
@@ -136,6 +149,7 @@ def test_shared_report_switch_download_and_denied_revisit_never_open_private_inp
         assert decoder_reads and all(status == 200 for _path, status in decoder_reads)
         navigation.get_by_role("button").filter(has_text="尺寸检验报告.xlsx").click()
         expect(page.get_by_role("heading", name="尺寸检验报告.xlsx", exact=True)).to_be_visible()
+        expect(page.get_by_role("note", name="本轮验证状态")).to_contain_text(reports[1]["checker_verification"]["notice"])
         expect(page.get_by_role("img", name="尺寸检验报告.xlsx-审核报告.pdf · 第 1 页", exact=True)).to_be_visible()
         if stall:
             assert len(held_pdf) == 1

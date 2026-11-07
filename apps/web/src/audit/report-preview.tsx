@@ -1,3 +1,4 @@
+import {VerificationDisclosure} from './verification-disclosure'
 import {lazy, Suspense, useEffect, useState, type ReactNode} from 'react'
 import {Download, Info} from 'lucide-react'
 import type {components} from '../generated/openapi'
@@ -17,7 +18,7 @@ export function ReportTime({value}: {value: string}) {
 }
 
 /** The same fixed-artifact reader is used by P6 and P11. */
-export function ReportPreview({name, rule, ruleVersion, reference, report, ready, issue, adapter, navigation, information, actions, children}: {name: string; rule: string; ruleVersion?: string; reference: AuditReportReference | null; report?: components['schemas']['AuditFileReport'] | null; ready: boolean; issue: string; adapter?: AuditReportAdapter; navigation?: ReactNode; information?: ReactNode; actions?: ReactNode; children?: ReactNode}) {
+export function ReportPreview({name, rule, ruleVersion, reference, report, verification, ready, issue, adapter, navigation, information, actions, children}: {name: string; rule: string; ruleVersion?: string; verification?: components['schemas']['AuditCheckerVerification'] | null; reference: AuditReportReference | null; report?: components['schemas']['AuditFileReport'] | null; ready: boolean; issue: string; adapter?: AuditReportAdapter; navigation?: ReactNode; information?: ReactNode; actions?: ReactNode; children?: ReactNode}) {
   const [pdf, setPdf] = useState<{key: string; url: string; error: string} | null>(null), [reload, setReload] = useState(0)
   const pdfKey = ready && reference ? JSON.stringify([reference, report?.artifact]) : ''
   useEffect(() => {
@@ -42,6 +43,7 @@ export function ReportPreview({name, rule, ruleVersion, reference, report, ready
       </SheetContent></Sheet>
       {actions}<Button size="sm" disabled={!currentPdf?.url} onClick={download}><Download/>下载当前报告</Button>
     </div></header>
+    {!issue && <VerificationDisclosure verification={verification}/>}
     {(!ready || issue) && <Badge className="self-start" variant="outline">{issue ? '结果待核对' : !report ? '尚未取得结果' : report.state === 'ready' ? '产物待核对' : labels[report.state]}</Badge>}
     {issue ? <Alert variant="destructive"><AlertTitle>不能展示正式报告</AlertTitle><AlertDescription>{issue}</AlertDescription></Alert> : report?.reason ? <p className="text-muted-foreground">{report.reason}</p> : null}{children}
     {ready && adapter ? currentPdf?.error ? <Alert variant="destructive"><AlertTitle>无法读取 PDF</AlertTitle><AlertDescription>{currentPdf.error}<Button variant="outline" onClick={() => {setPdf(null); setReload(value => value + 1)}}>重新读取 PDF</Button></AlertDescription></Alert> : currentPdf?.url ? <div className="h-[65dvh] min-h-96 min-w-0 flex-1 overflow-hidden rounded-md border"><Suspense fallback={<ReadSkeleton label="正在加载 PDF 阅读器…" kind="document"/>}><PdfSource key={currentPdf.url} url={currentPdf.url} name={report!.artifact!.filename}/></Suspense></div> : <ReadSkeleton label="正在读取 PDF…" kind="document" className="min-h-96 flex-1"/> : ready ? <p>暂时无法读取报告。</p> : null}

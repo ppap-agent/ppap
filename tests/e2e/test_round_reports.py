@@ -17,7 +17,7 @@ VERSION = "00000000-0000-4000-8000-000000000003"
 REPORT = "00000000-0000-4000-8000-000000000004"
 
 
-def round_report_routes(page, *, report_state="ready", access="allowed", task_denied=False):
+def round_report_routes(page, *, report_state="ready", access="allowed", task_denied=False, verification=None):
     import fitz
 
     pdf = fitz.open()
@@ -65,6 +65,11 @@ def round_report_routes(page, *, report_state="ready", access="allowed", task_de
         "summary": {"conclusion": "NG", "text": "不符合 1 项。", "corrective_actions": [], "extended_suggestions": []},
         "report": report,
     }
+    if verification:
+        audit["checker_verification"] = verification
+        audit["conclusion"] = audit["checks"][0]["finding"]["status"] = "PASS"
+        audit["counts"].update(pass_count=1, ng_count=0)
+        audit["summary"] = {"conclusion": "PASS", "text": "符合 1 项。", "corrective_actions": [], "extended_suggestions": []}
     historical_audit = copy.deepcopy(audit)
     if access != "allowed":
         historical_audit["report"] = {"state": "not_eligible", "report_id": None, "reason": "正式报告暂不可用"}
@@ -306,5 +311,32 @@ def test_round_report_generation_status_reaches_the_existing_report_recovery_ui(
             expect(preview.get_by_role("button", name="重生成同一结果", exact=True)).to_be_disabled()
         assert not any(path.endswith("/pdf") for _method, path in calls)
         assert all(method == "GET" for method, _path in calls)
+        assert page.evaluate("document.documentElement.scrollWidth") <= 390
+        browser.close()
+
+
+@pytest.mark.parametrize(("status", "not_rerun"), [("unverified", False), ("verified", True)])
+def test_all_pass_frozen_verification_remains_visible_in_result_focus_and_report(status, not_rerun):
+    from product.checker_verification import frozen_checker_verification
+
+    verification = frozen_checker_verification({"mode": "checker_core", "suite_revision_id": "frozen-checker-3", "suite_revision_number": 3, "verification": status, "samples_not_rerun": not_rerun})
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page(viewport={"width": 1057, "height": 853})
+        page.set_default_timeout(5000)
+        round_report_routes(page, verification=verification)
+        page.goto(WEB + f"/audit?round={ROUND}&file={VERSION}&clause=1")
+        notice = page.get_by_role("note", name="本轮验证状态")
+        expect(notice).to_contain_text(verification["notice"])
+        expect(notice).to_contain_text("部分判定的证据未经验证")
+        page.get_by_role("button", name="专注复核（选做）", exact=True).click()
+        expect(notice).to_be_visible()
+        expect(notice).to_contain_text(verification["notice"])
+        page.get_by_role("button", name="查看报告", exact=True).click()
+        expect(page.get_by_role("region", name="当前报告").get_by_role("note", name="本轮验证状态")).to_contain_text(verification["notice"])
+        page.go_back()
+        expect(page.get_by_role("region", name="审核详情").get_by_role("note", name="本轮验证状态")).to_contain_text(verification["notice"])
+        page.set_viewport_size({"width": 390, "height": 844})
+        expect(page.get_by_role("note", name="本轮验证状态")).to_be_visible()
         assert page.evaluate("document.documentElement.scrollWidth") <= 390
         browser.close()

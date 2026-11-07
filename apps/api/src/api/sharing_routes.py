@@ -108,7 +108,18 @@ def register_sharing_routes(app, store, session_of, http, settings):
                 if content["kind"] == "link":
                     target = settings.canonical_web_url() + "/audit?" + urlencode({"share": row["payload"]["request"]["request_id"]})
                     address = settings.canonical_web_url() + "/enter-current?" + urlencode({"return_to": target})
-                    paragraphs = [[{"tag": "text", "text": source["name"] + "：" + ("通过" if source["conclusion"] == "PASS" else "不符合")}] for source in row["payload"]["sources"]]
+                    paragraphs = [
+                        [
+                            {
+                                "tag": "text",
+                                "text": source["name"]
+                                + "："
+                                + ("通过" if source["conclusion"] == "PASS" else "不符合")
+                                + ("\n" + source["checker_verification"]["notice"] if source.get("checker_verification") else ""),
+                            }
+                        ]
+                        for source in row["payload"]["sources"]
+                    ]
                     paragraphs.append([{"tag": "a", "text": "查看审核报告", "href": address}])
                     message_type, message = "post", {"zh_cn": {"title": "PPAP 审核报告", "content": paragraphs}}
                 else:
@@ -259,6 +270,7 @@ def register_sharing_routes(app, store, session_of, http, settings):
             entries = [
                 {
                     **{key: source[key] for key in ("name", "rule", "conclusion", "reference")},
+                    "checker_verification": source.get("checker_verification"),
                     "report": {"state": "ready", "report_id": source["reference"]["report_id"], "reason": None, "artifact": source["artifact"], "generated_at": source["generated_at"]},
                 }
                 for source in payload["sources"]

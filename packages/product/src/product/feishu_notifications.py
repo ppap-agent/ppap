@@ -60,7 +60,10 @@ def task_notification_card(task: dict, stage: str, web_url: str, report_package:
         names = {row["file"]["id"]: row["file"]["original_filename"] for row in files}
         for reference in report_package["reports"]:
             outcome: dict = next((item for item in report_package.get("outcomes", []) if item["reference"] == reference), {})
-            blocks.append("**" + _markdown(outcome.get("filename") or names[reference["file_version_id"]]) + "**")
+            detail = "**" + _markdown(outcome.get("filename") or names[reference["file_version_id"]]) + "**"
+            if outcome.get("checker_verification"):
+                detail += "<br>" + _markdown(outcome["checker_verification"]["notice"])
+            blocks.append(detail)
     else:
         ready, failed = reports.count("ready"), reports.count("failed")
         errors = sum((row.get("audit") or {}).get("execution") == "review_failed" or state == "not_eligible" for row, state in zip(targets, reports, strict=True))
@@ -80,7 +83,22 @@ def task_notification_card(task: dict, stage: str, web_url: str, report_package:
             detail = f"<text_tag color='{color}'>{conclusion}</text_tag>"
             if audit.get("counts"):
                 detail += " " + _counts_text(audit["counts"])
+            verification = audit.get("checker_verification")
+            if verification:
+                detail += "<br>" + _markdown(verification["notice"])
             blocks.append("**" + _markdown(row["file"]["original_filename"]) + "**<br>" + detail)
+    if stage in {"completed", "zip_ready"}:
+        verifications = (
+            [outcome.get("checker_verification") for outcome in (report_package or {}).get("outcomes", [])]
+            if stage == "zip_ready"
+            else [(row.get("audit") or {}).get("checker_verification") for row in targets]
+        )
+        unverified = sum(bool(value and value["status"] == "unverified") for value in verifications)
+        not_rerun = sum(bool(value and value["samples_not_rerun"]) for value in verifications)
+        if unverified:
+            blocks[0] += f"<br>**{unverified} 份采用未经验证的检查版本；全部 PASS 不表示版本已通过样本验证。**"
+        if not_rerun:
+            blocks[0] += f"<br>**{not_rerun} 份在受理时平台已更新，样本未重跑。**"
     if stage != "zip_ready" and references:
         blocks.append("**比对资料**<br>" + "<br>".join(_markdown(row["file"]["original_filename"]) for row in references) + "<br><font color='grey'>已固定版本，不单独审核。</font>")
     params = {"view": "archive"} if archive_package else {"task": task["id"]}
