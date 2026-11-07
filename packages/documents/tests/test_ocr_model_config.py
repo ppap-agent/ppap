@@ -72,6 +72,7 @@ def test_explicit_model_grant_owns_ocr_model_endpoint_and_policy(monkeypatch):
         assert env.ocr_openai_api_key() == "granted-key"
         assert env.ocr_model_name() == "granted-model"
         assert env.ocr_openai_base_url() == "http://127.0.0.1:12345/model"
+        assert env.ocr_extra_body() == {}
         identity = env.ocr_policy_identity()
         assert "granted-key" not in identity
         monkeypatch.setenv("OCR_MODEL_NAME", "changed-ambient-model")

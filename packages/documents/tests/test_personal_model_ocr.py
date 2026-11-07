@@ -19,7 +19,7 @@ def controlled_transport_environment(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("usage", [None, {"input_tokens": 7, "output_tokens": 2, "total_tokens": 9}])
-async def test_visual_requests_use_personal_key_input_image_and_reasoning(monkeypatch, usage):
+async def test_visual_requests_use_personal_key_input_image_and_provider_reasoning_default(monkeypatch, usage):
     calls, receipts = [], []
     monkeypatch.setenv("OCR_OPENAI_API_KEY", "must-not-use-platform")
     monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://platform.invalid")
@@ -54,7 +54,7 @@ async def test_visual_requests_use_personal_key_input_image_and_reasoning(monkey
         assert request.headers["authorization"] == "Bearer " + key.get_secret_value()
         body = json.loads(request.content)
         assert body["model"] == "test-model"
-        assert body["reasoning"] == {"effort": "none"}
+        assert "reasoning" not in body
         assert body["input"][0]["role"] == "user"
         assert body["input"][0]["content"][1]["type"] == "input_image"
         assert body["store"] is False

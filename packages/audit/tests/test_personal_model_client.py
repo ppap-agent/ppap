@@ -63,7 +63,7 @@ def test_text_clients_use_each_callers_key_and_receipts(monkeypatch, usage, comp
         assert str(request.url) == "https://models.example.test/responses"
         body = json.loads(request.content)
         assert body["model"] == "test-model"
-        assert body["reasoning"] == {"effort": "none"}
+        assert "reasoning" not in body
         assert body["store"] is False
         assert key.get_secret_value() not in json.dumps(summary)
     with model_access_scope(None), pytest.raises(ModelUnavailable):

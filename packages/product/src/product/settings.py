@@ -245,14 +245,13 @@ class Settings(BaseSettings):
                 {
                     "identity": identity,
                     "credential_source": "initiating_user",
-                    "reasoning_effort": "none",
                     "max_retries": 0,
                 }
             ),
             tool_config_revision=config_digest(
                 {
                     "ocr_model_identity": identity,
-                    "ocr_extra_body": {"reasoning": {"effort": "none"}},
+                    "ocr_extra_body": {},
                     "vision_protocol": "native_paddle_responses_v3",
                     "paddle_endpoint": self.PADDLE_OCR_URL.strip(),
                     "paddle_http_timeout_seconds": 20,

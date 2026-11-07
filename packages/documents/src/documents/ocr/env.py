@@ -62,7 +62,8 @@ def effective_ocr_extra_body(raw: str) -> dict:
 
 def ocr_extra_body() -> dict:
     if model_access_scoped():
-        return {"reasoning": {"effort": "none"}}
+        # Reasoning values are provider-specific; a personal model uses its own default.
+        return {}
     return effective_ocr_extra_body(_env("OCR_OPENAI_EXTRA_BODY_JSON"))
 
 

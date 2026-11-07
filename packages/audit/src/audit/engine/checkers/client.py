@@ -292,7 +292,6 @@ class AIClient:
                     OPENAI_BASE_URL=access.base_url,
                     MODEL_NAME=access.model,
                     OPENAI_EXTRA_BODY_JSON="",
-                    OPENAI_REASONING_EFFORT="none",
                 ),
                 personal=True,
             )
