@@ -44,11 +44,17 @@ def suite_sources() -> dict[str, StandardSuite]:
     return result
 
 
+def _reviewed_resources(resources: dict) -> dict:
+    # Formats and clause-to-method bindings describe the reviewed scope. Class
+    # paths belong to the executable identity, not the human judgment.
+    return {**resources, "carriers": sorted(resources["carriers"])}
+
+
 def reviewed_contract(suite: StandardSuite) -> dict:
     """Meaning of existing human answers, distinct from executable identity.
 
-    Standard sources declare their actual carrier/method bindings in a literal
-    RESOURCES assignment. Read that declaration without importing or running it.
+    Read the literal RESOURCES declaration without importing or running it.
+    Preserve carrier formats and method bindings, but not implementation paths.
     """
     resources = [
         node.value for node in ast.parse(suite.files["checker.py"]).body if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "RESOURCES" for target in node.targets)
@@ -60,7 +66,7 @@ def reviewed_contract(suite: StandardSuite) -> dict:
         "rules": json.loads(suite.files["rules.json"]),
         "appendix": json.loads(suite.files["appendix.json"]),
         "entrypoints": dict(suite.entrypoints),
-        "resources": ast.literal_eval(resources[0]),
+        "resources": _reviewed_resources(ast.literal_eval(resources[0])),
         "related_suite_keys": sorted(suite.related_suite_keys),
     }
 
@@ -68,7 +74,8 @@ def reviewed_contract(suite: StandardSuite) -> dict:
 @lru_cache(maxsize=1)
 def reviewed_rules() -> dict:
     # Never regenerate this historical human-review evidence from current code.
-    return json.loads(REVIEWED_RULES_PATH.read_text(encoding="utf-8"))
+    contracts = json.loads(REVIEWED_RULES_PATH.read_text(encoding="utf-8"))
+    return {selector: {**contract, "resources": _reviewed_resources(contract["resources"])} for selector, contract in contracts.items()}
 
 
 @dataclass(frozen=True)
