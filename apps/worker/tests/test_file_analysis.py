@@ -4,6 +4,7 @@ import json
 from io import BytesIO
 
 import pytest
+from documents.model_access import ModelUnavailable
 from openpyxl import Workbook
 from worker.intake import analyze_file
 
@@ -438,3 +439,16 @@ def test_custom_document_type_does_not_bypass_customer_scope():
     )
     assert result["matched_rule_id"] is None
     assert result["matching_status"] == "unmatched"
+
+
+@pytest.mark.parametrize(
+    "code,notice",
+    [("personal_model_unavailable", "personal_model_required"), ("personal_model_request_failed", "metadata_extraction_failed")],
+)
+def test_only_a_missing_personal_model_asks_the_user_to_configure_one(code, notice) -> None:
+    class NoModel(MetadataAI):
+        def structured_completion(self, *, operation: str, **kwargs) -> str:
+            raise ModelUnavailable(code)
+
+    result = analyze_file("控制计划.xlsx", workbook_bytes(("客户", "甲客户")), [rule("customer-rule", ["甲客户"])], ai=NoModel({}), customer_preference="甲客户", scoped=True)
+    assert (result["matched_rule_id"], result["matching_status"], result["notices"]) == (None, "failed", [notice])

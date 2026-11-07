@@ -8,7 +8,13 @@ import re
 from pathlib import Path
 
 from audit.kinds import PpapDocumentType
+from documents.model_access import ModelUnavailable
 from product.rules import document_types, latest_rule_versions
+
+
+def _model_notice(error: ModelUnavailable, otherwise: str) -> str:
+    # A missing personal Key is fixed by the user, not by rereading the file.
+    return "personal_model_required" if error.code == "personal_model_unavailable" else otherwise
 
 
 def analyze_file(
@@ -89,6 +95,8 @@ def analyze_file(
                     value = "、".join(item for item in value if isinstance(item, str))
                 if isinstance(value, str):
                     metadata[field] = value.strip()[:500] or None
+        except ModelUnavailable as error:
+            notices.append(_model_notice(error, "metadata_extraction_failed"))
         except Exception:
             notices.append("metadata_extraction_failed")
 
@@ -165,6 +173,8 @@ def analyze_file(
                 inferred = PpapDocumentType.from_string(classified)
                 if not source_type and inferred == PpapDocumentType.UNKNOWN and classified.strip().casefold() not in {"未知", "unknown"}:
                     raise ValueError("invalid_document_classification")
+            except ModelUnavailable as error:
+                notices.append(_model_notice(error, "document_classification_failed"))
             except Exception:
                 notices.append("document_classification_failed")
     missing_v4_customer = unresolved_v4_customer and not (
@@ -174,7 +184,7 @@ def analyze_file(
     matched_id = None
     ambiguous_ids: list[str] = []
     matching = "unmatched"
-    if scoped and any(notice in notices for notice in ("document_text_unavailable", "empty_document_text", "metadata_extraction_failed", "document_classification_failed")):
+    if scoped and any(notice in notices for notice in ("personal_model_required", "document_text_unavailable", "empty_document_text", "metadata_extraction_failed", "document_classification_failed")):
         matching = "failed"
     elif customer_conflict:
         matching = "failed"
