@@ -5106,6 +5106,8 @@ export interface components {
         SuiteCatalog: {
             /** Suites */
             suites: components["schemas"]["SuiteActive"][];
+            /** Unavailable */
+            unavailable?: components["schemas"]["SuiteUnavailable"][];
         };
         /** SuiteDiff */
         SuiteDiff: {
@@ -5202,6 +5204,16 @@ export interface components {
             id: string;
             /** Task Id */
             task_id: string | null;
+        };
+        /** SuiteUnavailable */
+        SuiteUnavailable: {
+            /**
+             * Error
+             * @constant
+             */
+            error: "suite_unavailable";
+            /** Suite Key */
+            suite_key: string;
         };
         /** SuiteUpgradeReceipt */
         SuiteUpgradeReceipt: {

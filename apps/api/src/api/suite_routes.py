@@ -79,8 +79,14 @@ class SuiteActive(TypedDict):
     history: list[SuitePublication]
 
 
+class SuiteUnavailable(TypedDict):
+    suite_key: str
+    error: Literal["suite_unavailable"]
+
+
 class SuiteCatalog(TypedDict):
     suites: list[SuiteActive]
+    unavailable: NotRequired[list[SuiteUnavailable]]
 
 
 class SuiteRound(TypedDict):

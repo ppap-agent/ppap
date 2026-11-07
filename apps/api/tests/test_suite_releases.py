@@ -162,3 +162,44 @@ def test_first_adoption_reads_accessible_candidate_and_preserves_receipt(auth_st
         assert conn.execute("SELECT count(*) FROM product.audit_rounds").fetchone()[0] == 0
         assert conn.execute("SELECT count(*) FROM engine.jobs").fetchone()[0] == 0
         assert conn.execute("SELECT count(*) FROM product.usage_events").fetchone()[0] == 0
+
+
+def test_catalog_preserves_titles_selections_and_reuses_shared_content(auth_store_factory, monkeypatch):
+    import product.store.suite_releases as release_store
+
+    store, official, creator, _, (alice, bob, carol) = prepare_fixture(auth_store_factory)
+    second = SuiteStore(store.settings, store.objects, role="migrator").create_revision(tenant_id=None, suite_key="second-check", files=FILES, created_by=None)
+    tenant_candidate = SuiteStore(store.settings, store.objects, role="api").create_revision(
+        tenant_id=creator.tenant_id, suite_key=second.suite_key, files={"checker.py": b"def check(context): return []\n"}, created_by=creator.user_id, base_revision_id=second.id
+    )
+    assert alice.put("/suites/control-plan/active", json=command(official.id)).status_code == 200
+    expected = [bob.get(f"/suites/{key}/active").json() for key in ("control-plan", "second-check")]
+    object_reads, connections = [], []
+    get, connect = store.objects.get, release_store.connect
+
+    def read_object(key):
+        object_reads.append(key)
+        return get(key)
+
+    def open_connection(*args, **kwargs):
+        connections.append(True)
+        return connect(*args, **kwargs)
+
+    monkeypatch.setattr(store.objects, "get", read_object)
+    monkeypatch.setattr(release_store, "connect", open_connection)
+    for _ in range(2):
+        object_reads.clear()
+        connections.clear()
+        response = bob.get("/suites")
+        assert response.status_code == 200, response.text
+        assert response.json() == {"suites": expected}
+        assert [row["title"] for row in response.json()["suites"]] == ["Control plan checks", "Control plan checks"]
+        assert [row["selection_mode"] for row in response.json()["suites"]] == ["pinned", "candidate_only"]
+        assert response.json()["suites"][1]["candidate_revision_id"] == tenant_candidate.id
+        # The next HTTP read gets a fresh cache; within one read every shared
+        # immutable object is fetched once and the DB connection is reused.
+        assert len(object_reads) == len(set(object_reads)) == 3
+        assert len(connections) == 1
+    other = carol.get("/suites").json()["suites"]
+    assert [row["selection_mode"] for row in other] == ["candidate_only", "candidate_only"]
+    assert [row["candidate_revision_id"] for row in other] == [official.id, second.id]
