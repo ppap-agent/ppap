@@ -44,7 +44,7 @@ def test_ciphertext_is_authenticated_and_bound_to_tenant_and_user():
 
 def test_missing_encryption_key_never_stores_plaintext_or_uses_deployment_secret():
     with pytest.raises(ModelCredentialError, match="model_credential_encryption_unavailable"):
-        encrypt_credential(Settings(llm_api_key=str(uuid4())), str(uuid4()), str(uuid4()), SecretStr(str(uuid4())), base_url="https://models.example.test", model="test-model")
+        encrypt_credential(Settings(llm_api_key=str(uuid4()), personal_model_allowed_base_urls="https://models.example.test"), str(uuid4()), str(uuid4()), SecretStr(str(uuid4())), base_url="https://models.example.test", model="test-model")
 
 
 def test_each_model_call_resolves_the_current_initiator_and_revocation():
