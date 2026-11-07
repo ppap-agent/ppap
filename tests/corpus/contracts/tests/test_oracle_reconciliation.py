@@ -2,10 +2,11 @@
 
 import csv
 from collections import defaultdict
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from corpus_contracts.oracle import EXPECTED_COLUMNS, FILE_COLUMNS, build_round, load_oracle, original
+from corpus_contracts.oracle import EXPECTED_COLUMNS, FILE_COLUMNS, build_round, load_oracle, original, programs_for, reviewed_contract
 from corpus_contracts.product_round import BLOCKING, KNOWN_GAP, MATCH, OK, SETUP_FAILURE, STATUS_MISMATCH, RuleVerdict, compare_file, severity
 
 
@@ -13,7 +14,7 @@ def suite_columns(document_type, *, group=None):
     from audit.suite_migration import migrated_builtin_suite
 
     suite = migrated_builtin_suite("v3", document_type)
-    return ["sha256:" + suite.revision_digest, group or suite.suite_key, ";".join(suite.entrypoints)]
+    return [suite.suite_key + "@v3", group or suite.suite_key, ";".join(suite.entrypoints)]
 
 
 def write_oracle(tmp_path, *, files=None, expected=None):
@@ -97,11 +98,40 @@ def test_all_real_tables_bind_every_assertion_to_a_declared_rule():
         assert all(totals[file.file_id] >= len(file.expected) > 0 for file in case.files if file.role == "target")
 
 
+def test_readable_source_selectors_freeze_content_addressed_execution():
+    for case in load_oracle():
+        work, _, _ = build_round(case)
+        files = {file.file_id: file for file in case.files}
+        programs = programs_for(work)
+        for target in work.targets:
+            file = files[target.file_version_id]
+            suite = file.suite()
+            assert file.suite_revision.startswith(suite.suite_key + "@v")
+            assert target.suite_revision_id == "sha256:" + suite.revision_digest
+            assert target.suite_digest == suite.revision_digest
+            assert programs[target.binding.checker_digest] == suite.program_files
+
+
+def test_implementation_edit_preserves_reviewed_meaning_with_a_new_execution_identity():
+    from audit.suite_migration import migrated_builtin_suite
+
+    suite = migrated_builtin_suite("v3", "控制计划")
+    updated = replace(suite, files={**suite.files, "checker.py": suite.files["checker.py"] + b"\n# implementation clarification\n"})
+    assert reviewed_contract(updated) == reviewed_contract(suite)
+    assert updated.revision_digest != suite.revision_digest
+
+
+def test_human_provenance_is_retained_with_the_expectation(tmp_path):
+    expected = [["v3", "group", "target", "1", "PASS", "Rule", "Human evidence", "Reviewer", "2026-11-07", ""]]
+    (case,) = load_oracle(**write_oracle(tmp_path, expected=expected))
+    answer = case.files[0].expected["1"]
+    assert (answer.confirmed_by, answer.confirmed_on) == ("Reviewer", "2026-11-07")
+
+
 def test_a_case_cannot_silently_run_on_another_checker_group(tmp_path):
     files = [["v3", "group", "target", "input.xlsx", "upload.xlsx", "target", *suite_columns("控制计划", group="PPAP:潜在过程失效模式及后果分析")]]
-    (case,) = load_oracle(**write_oracle(tmp_path, files=files))
     with pytest.raises(ValueError, match="Suite revision belongs to PPAP:控制计划"):
-        build_round(case)
+        load_oracle(**write_oracle(tmp_path, files=files))
 
 
 def test_same_document_in_pdf_and_excel_has_one_truth():
