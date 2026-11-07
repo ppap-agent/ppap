@@ -27,6 +27,12 @@ export function confirmationScope(task: Task) {
   return scope
 }
 
+/** Admission follows the server's included scope, not preparation warnings. */
+export function suiteAdmissionBlocks(task: Task) {
+  const targets = confirmationScope(task)?.target_file_version_ids ?? []
+  return task.files.filter(file => targets.includes(file.file.id) && file.suite_admission?.state === 'validation_required')
+}
+
 function acceptedSnapshot(before: Task, after: Task, requestId: string) {
   if (after.id !== before.id || after.acceptance?.request_id !== requestId || after.acceptance.state !== 'accepted' || !after.round_id || !['reviewing', 'completed'].includes(after.state) || after.analysis_mode !== before.analysis_mode) return false
   if (after.state === 'completed' ? after.completion_reason !== 'processed' : after.completion_reason !== null) return false
@@ -60,7 +66,7 @@ export function createTaskAcceptance(adapter: AuditAcceptanceAdapter, onAccepted
   }
   async function run(task: Task, readOnly: boolean) {
     const current = operations.get(task.id)
-    if (readOnly ? current?.phase !== 'unknown' : !task.confirmation_basis_digest || !confirmationScope(task)?.target_file_version_ids.length || needsBasisRefresh(task) || Boolean(current && current.phase !== 'rejected')) return
+    if (readOnly ? current?.phase !== 'unknown' : !task.confirmation_basis_digest || !confirmationScope(task)?.target_file_version_ids.length || suiteAdmissionBlocks(task).length > 0 || needsBasisRefresh(task) || Boolean(current && current.phase !== 'rejected')) return
     const requestId = readOnly ? current!.requestId : crypto.randomUUID()
     if (!readOnly) rememberRequest(task.id, 'acceptRequest', requestId)
     const trace = readOnly && current!.traceId ? {traceId: current!.traceId} : {}

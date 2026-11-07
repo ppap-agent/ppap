@@ -2156,6 +2156,7 @@ class AuthStore:
                     "rule_candidate_expired": "规则已更新，请打开页面重新识别并核对。",
                     "task_revision_conflict": "文件或审核模式已变化，请打开页面核对。",
                     "task_confirmation_changed": "审核依据已更新，本次未受理。请打开页面刷新并核对后重新确认。",
+                    "suite_validation_required": "当前检查版本需要重新验证，本次未受理。请打开页面，在检查版本工作区重新验证并发布，或明确确认采用未验证版本。",
                     "usage_quota_unavailable": "当前无法确认用量，请打开页面核对后重新确认。",
                     "usage_ai_disabled": "飞书AI包开关已关闭，请联系管理员。",
                     "usage_balance_empty": "当前没有可用额度，请联系管理员。",
@@ -2441,7 +2442,7 @@ class AuthStore:
                         require_confirmation_basis=require_confirmation_basis,
                     )
             except ValueError as error:
-                if str(error) != "task_confirmation_changed":
+                if str(error) not in {"task_confirmation_changed", "suite_validation_required"}:
                     raise
                 rejection = str(error)
                 payload = {
@@ -2451,7 +2452,12 @@ class AuthStore:
                     "expected_revision": expected_revision,
                     "expected_confirmation_basis_digest": expected_confirmation_basis_digest,
                 }
-                result = {"state": "rejected", "reason": "审核依据已更新，本次未受理。请刷新并核对后重新确认。", "error": rejection}
+                reason = (
+                    "当前检查版本需要重新验证，本次未受理。请在检查版本工作区重新验证并发布，或明确确认采用未验证版本，再刷新审核依据。"
+                    if rejection == "suite_validation_required"
+                    else "审核依据已更新，本次未受理。请刷新并核对后重新确认。"
+                )
+                result = {"state": "rejected", "reason": reason, "error": rejection}
                 if prior:
                     raise ValueError("idempotency_conflict") from None
                 saved = conn.execute(
@@ -2869,6 +2875,7 @@ class AuthStore:
                 task["estimated_points"] = None
             else:
                 match["rule"] = {**match["rule"], "body": prepared[0]["rule_body"]}
+                file["suite_admission"] = prepared[0]["suite_admission"]
                 gaps = [gap for gap in match.get("gaps", []) if gap != "published_rules_changed"]
                 match["gaps"] = [*gaps, "published_rules_changed"] if prepared[0]["rule_execution"].get("rule_version_mismatch") else gaps
         ready = task["state"] == "pending_confirm" and all(row["validation"]["state"] == "valid" and row["match"]["state"] in {"matched", "reference", "unmatched"} for row in selected)
@@ -2918,7 +2925,7 @@ class AuthStore:
                     "confirmation_scope": task["confirmation_scope"],
                     "precheck_gate_enforced": self.settings.precheck_gate_enforced,
                     "precheck": {key: task["precheck"][key] for key in ("input", "result")} if self.settings.precheck_gate_enforced and task.get("precheck") else None,
-                    "files": [{key: row.get(key) for key in ("file", "selection", "removal_reason", "validation", "validation_scope", "match", "reference_only")} for row in files],
+                    "files": [{key: row.get(key) for key in ("file", "selection", "removal_reason", "validation", "validation_scope", "match", "reference_only", "suite_admission")} for row in files],
                     "targets": [target.to_dict() for target in targets],
                 }
             )

@@ -620,3 +620,122 @@ def test_background_worker_preserves_real_guest_clause_deadlines(system, core_sy
     assert any(row["status"] in {"NG", "UNABLE"} for row in result["findings"]), result["findings"]
     assert len(core_system.audit_jobs) == 1
     assert core_system.audit_jobs[0].allow_model_calls is False
+
+
+def verify_current_suite(system, key):
+    """Controlled passing host proof for the admission/recovery product journey."""
+    from audit.checker_core import checker_digest
+    from audit.standard_suites import library_revision
+    from product.checker_validation import CaseEvaluation, ClauseEvaluation, SuiteValidationReport
+    from product.store.suite_releases import current_selection
+
+    _, _, admin, principal = system
+    releases = SuiteReleaseStore(admin.settings, admin.objects, role="api")
+    active = releases.active(principal, key)
+    suite = releases.suites.resolve_suite(active["current_revision_id"], principal.tenant_id)
+    with admin._conn() as conn:
+        selected = current_selection(conn, principal.tenant_id, key)
+        related = {key: releases.suites.resolve_suite(revision, principal.tenant_id, conn=conn).revision.resolved_digest for key, revision in selected["related_revision_ids"].items()}
+    report = SuiteValidationReport(
+        suite_revision_id=suite.revision.id,
+        suite_digest=suite.revision.resolved_digest,
+        program_digest=checker_digest({path: body for path, body in suite.files.items() if path in {"checker.py", "resources.py"}}),
+        library_revision=library_revision(),
+        related_suite_digests=related,
+        oracle_revision="controlled-admission-recovery-proof",
+        cases=tuple(
+            CaseEvaluation(
+                case_id=f"case-{i}",
+                ordinal=i,
+                input_digest=f"{i:064x}",
+                split="holdout" if i == 4 else "training",
+                coverage=True,
+                clauses=tuple(
+                    ClauseEvaluation(clause_id=row["id"], expected="PASS", actual="PASS", evidence_locatable=True, checks_performed=1) for row in json.loads(suite.files["rules.json"])["rules"]
+                ),
+            )
+            for i in range(1, 5)
+        ),
+    )
+    proof = releases.record_validation(principal, suite.revision.id, report, expected_revision=selected["validation"]["write_revision"])
+    assert proof["verified"] is True
+    return releases, active
+
+
+@pytest.mark.parametrize("recovery", ["revalidate", "explicit_risk_adoption"])
+def test_operator_recovers_stale_suite_preparation_and_original_confirmation_receipt(system, core_system, recovery):
+    client, _, admin, principal = system
+    path, _ = prepare(system, core_system, "蔚来", "N02")
+    releases, active = verify_current_suite(system, "蔚来:N02")
+    releases.publish(principal, "蔚来:N02", active["current_revision_id"], active["revision"], str(uuid.uuid4()), force_unverified=False)
+    verified = client.get(path).json()
+    assert verified["files"][0]["suite_admission"]["state"] == "ready"
+    publish_edit(system, "蔚来:N05")
+    current = client.get(path).json()
+    file = current["files"][0]
+    assert file["match"] == verified["files"][0]["match"]
+    assert file["suite_admission"] == {
+        "state": "validation_required",
+        "suite_key": "蔚来:N02",
+        "suite_revision_id": active["current_revision_id"],
+        "verification_status": "stale",
+        "force_unverified": False,
+        "samples_not_rerun": False,
+    }
+    assert current["confirmation_scope"] == verified["confirmation_scope"]
+    preparation = client.post(path + "/prechecks", json={"request_id": str(uuid.uuid4()), "expected_revision": current["input_revision"]})
+    assert preparation.status_code == 202, preparation.text
+    assert preparation.json()["input"]["files"][0]["rule"] == file["match"]["rule"]
+    command = confirmation(current)
+    # Simulate losing the refusal response: only an independent read is used to
+    # settle the original operation, and the journey ends with a fresh admission.
+    client.post(path + "/confirm", json=command)
+    with TestClient(create_app(admin.settings, auth_store=build_product_store(admin.settings, objects=admin.objects, role="api"))) as reopened:
+        reopened.cookies.set(SESSION_COOKIE, admin.create_session(principal))
+        restored = reopened.get(path, params={"request_id": command["request_id"]}).json()
+        assert restored["acceptance"]["request_id"] == command["request_id"]
+        assert restored["acceptance"]["state"] == "rejected"
+        assert "重新验证" in restored["acceptance"]["reason"]
+        assert_no_admission(system)
+        if recovery == "revalidate":
+            verify_current_suite(system, "蔚来:N02")
+        else:
+            active = releases.active(principal, "蔚来:N02")
+            releases.publish(principal, "蔚来:N02", active["current_revision_id"], active["revision"], str(uuid.uuid4()), force_unverified=True)
+        ready = reopened.get(path).json()
+        assert ready["files"][0]["suite_admission"]["state"] == "ready"
+        assert ready["files"][0]["match"] == file["match"]
+        assert reopened.get(path, params={"request_id": command["request_id"]}).json()["acceptance"] == restored["acceptance"]
+        request = confirmation(ready)
+        accepted = reopened.post(path + "/confirm", json=request)
+        assert accepted.status_code == 201, accepted.text
+        assert accepted.json()["acceptance"]["state"] == "accepted"
+        assert accepted.json()["files"][0]["audit"]["rule"] == file["match"]["rule"]
+        publish_edit(system, "蔚来:N05")
+        replayed = reopened.post(path + "/confirm", json=request).json()
+        assert {key: replayed[key] for key in ("round_id", "acceptance", "confirmation_scope", "files")} == {
+            key: accepted.json()[key] for key in ("round_id", "acceptance", "confirmation_scope", "files")
+        }
+        with admin._conn() as conn:
+            assert conn.execute("SELECT count(*) FROM product.audit_rounds").fetchone()[0] == 1
+            assert conn.execute("SELECT count(*) FROM engine.jobs WHERE kind='audit'").fetchone()[0] == 1
+
+
+def test_library_update_keeps_verified_suite_available_with_samples_notice(system, core_system, monkeypatch):
+    client, _, _, principal = system
+    path, _ = prepare(system, core_system, "UAES", "U12")
+    releases, active = verify_current_suite(system, "UAES:U12")
+    releases.publish(principal, "UAES:U12", active["current_revision_id"], active["revision"], str(uuid.uuid4()), force_unverified=False)
+    monkeypatch.setattr("audit.standard_suites.library_revision", lambda: "updated-shared-library")
+    current = client.get(path).json()
+    assert current["files"][0]["suite_admission"] == {
+        "state": "ready",
+        "suite_key": "UAES:U12",
+        "suite_revision_id": active["current_revision_id"],
+        "verification_status": "verified",
+        "force_unverified": False,
+        "samples_not_rerun": True,
+    }
+    accepted = client.post(path + "/confirm", json=confirmation(current))
+    assert accepted.status_code == 201, accepted.text
+    assert accepted.json()["acceptance"]["state"] == "accepted"

@@ -24,6 +24,7 @@ export function precheckFacts(snapshot: PrecheckReceipt | null | undefined, vers
 export function preparationAction(file: Task['files'][number], facts: PrecheckFact[]): PreparationAction {
   if (file.validation.state === 'invalid') return 'process'
   if (file.validation.state !== 'valid') return 'confirm'
+  if (file.suite_admission?.state === 'validation_required') return 'confirm'
   const match = file.match
   if (match?.gaps.some(gap => ['matching_customer_required', 'matching_customer_conflict', 'matching_document_type_required', 'ambiguous_available_rules', 'matching_rules_customer_unassigned', 'matching_snapshot_invalid', 'matching_result_unknown'].includes(gap))) return 'confirm'
   if (match?.state === 'unmatched' && match.document_type && match.gaps.some(gap => ['matching_document_type_rules_missing', 'matching_customer_rules_missing', 'no_available_rules'].includes(gap))) return 'process'
@@ -58,7 +59,12 @@ export function checkerLabel(file: Task['files'][number], snapshot?: PrecheckRec
   const frozen = Array.isArray(rows) ? record(rows.find(row => record(record(row).file).id === file.file.id)) : {}
   const target = record(frozen.suite_target), execution = record(frozen.rule_execution)
   const title = string(record(target.rules).title) || string(record(body).title) || rule?.title || `${body.type}检查`
-  if (file.match?.gaps?.includes('published_rules_changed')) return `${title} · 新规则尚未采用，本次按旧规则和已发布检查运行`
+  const notices: string[] = []
+  if (file.suite_admission?.state === 'validation_required') notices.push('检查版本需要重新验证，暂不能开始审核')
+  if (file.suite_admission?.force_unverified && file.suite_admission.verification_status !== 'verified') notices.push('已明确采用未验证版本')
+  if (file.suite_admission?.samples_not_rerun) notices.push('平台已更新，样本未重跑')
+  if (file.match?.gaps?.includes('published_rules_changed')) notices.push('新规则尚未采用，本次按旧规则和已发布检查运行')
+  if (notices.length) return [title, ...notices].join(' · ')
   if (execution.mode === 'checker_core' && string(target.suite_revision_id) && string(target.suite_key)) return `${title} · 本次采用的检查${target.verification === 'verified' ? '' : ' · 需要重新验证'}`
   if (execution.mode === 'unavailable') return `${title} · 尚无可运行的检查，未检查`
   if (string(record(body).suite_key).trim()) return `${title} · 按本企业采用版本预检`

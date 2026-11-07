@@ -58,6 +58,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
                 "task_not_zero_match",
                 "task_revision_conflict",
                 "task_confirmation_changed",
+                "suite_validation_required",
                 "task_file_provenance_required",
                 "precheck_required",
                 "audit_task_charging_unavailable",

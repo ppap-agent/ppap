@@ -278,6 +278,17 @@ def freeze_selected_targets(store, conn, tenant_id: str, prepared: list[dict], *
             allow_unverified=preparation or selection["force_unverified"],
         )
         targets.append(target)
+        # Preparation remains inspectable even when formal admission needs fresh
+        # proof. Mirror freeze_execution's policy, including explicit risk
+        # adoption and unimplemented Suites; library drift alone is a notice.
+        item["suite_admission"] = {
+            "state": "ready" if verified or selection["force_unverified"] or is_unimplemented_suite(suite) else "validation_required",
+            "suite_key": suite.revision.suite_key,
+            "suite_revision_id": suite.revision.id,
+            "verification_status": selection["verification_status"],
+            "force_unverified": selection["force_unverified"],
+            "samples_not_rerun": receipt["samples_not_rerun"],
+        }
         # Existing Round/report readers retain actual accepted text and the new
         # explicit clause mapping, without deriving coverage from method order.
         item["rule_body"] = {**rules, "suite_key": suite.revision.suite_key, "appendix": list(appendix)}
