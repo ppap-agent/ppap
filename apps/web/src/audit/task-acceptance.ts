@@ -27,6 +27,9 @@ export function confirmationScope(task: Task) {
   return scope
 }
 
+/** A missing Suite is an adoption step, not a recognition failure of the file. */
+export const checkerSuiteUnavailable = (match: {gaps: string[]}) => match.gaps.includes('checker_suite_unavailable')
+
 /** Admission follows the server's included scope, not preparation warnings. */
 export function suiteAdmissionBlocks(task: Task) {
   const targets = confirmationScope(task)?.target_file_version_ids ?? []

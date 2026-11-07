@@ -60,6 +60,7 @@ test('unknown, controlled and provider usage remain distinct', () => {
   assert.match(usageText({input_tokens: 12, output_tokens: 3, source: 'provider'}), /15 Token/)
   assert.match(usageText({total_tokens: 0, source: 'controlled'}), /受控测试/)
   assert.match(checkerReason('oracle_changed'), /正确答案/)
+  assert.match(checkerReason('no_validation_proof'), /还没有用样本验证/)
   assert.equal(feedbackSourceStatus('PASS', null), false)
   assert.equal(feedbackSourceStatus('uncovered', 1), false)
   assert.equal(feedbackSourceStatus('UNABLE', 1), true)

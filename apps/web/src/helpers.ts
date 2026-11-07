@@ -66,6 +66,7 @@ const analysisNotices: Record<string, string | null> = {
   empty_document_text: '未读取到文件文字，请核对原件后重新识别。',
   document_text_unavailable: '无法读取文件文字，请核对原件后重新识别。',
   metadata_uses_excerpt: null,
+  checker_suite_unavailable: null,
   metadata_extraction_failed: '业务信息识别失败，请人工核对。',
   document_classification_failed: '无法确定文件类型，请核对原件后重新识别。',
   rule_matching_failed: '自动匹配失败，请返回检查文件后重新识别。',

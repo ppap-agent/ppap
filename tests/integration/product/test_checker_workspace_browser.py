@@ -1020,12 +1020,13 @@ def test_first_uaes_adoption_from_rule_library_freezes_dependencies(workspace_pr
                 catalog.get_by_label("选择检查", exact=True).select_option(key)
                 expect(release.get_by_text("尚未采用检查版本。发布后，本企业的新审核才会使用此版本。", exact=True)).to_be_visible()
                 expect(release.get_by_text(re.compile("官方版本 v1"))).to_be_visible()
-                release.get_by_role("button", name="发布此修改", exact=True).click()
+                release.get_by_role("button", name="采用此版本", exact=True).click()
                 confirmation = release.get_by_role("group", name="确认采用检查版本", exact=True)
                 expect(confirmation).to_contain_text("需要重新验证")
+                expect(confirmation).to_contain_text("这个版本还没有用样本验证过。")
                 confirmation.get_by_label("我已核对上述未验证项和新增错误，仍要启用", exact=True).check()
                 with page.expect_response(lambda response: response.request.method == "PUT" and response.url.endswith("/active")) as submitted:
-                    confirmation.get_by_role("button", name="确认发布", exact=True).click()
+                    confirmation.get_by_role("button", name="确认采用", exact=True).click()
                 receipt = response_json(submitted.value)
                 assert receipt["suite_key"] == key and receipt["revision_id"] == revisions[key].id
                 assert receipt["expected_revision"] == 0 and receipt["revision"] == 1

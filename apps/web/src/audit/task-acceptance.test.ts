@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {components} from '../generated/openapi.ts'
-import {confirmationScope, createTaskAcceptance, suiteAdmissionBlocks} from './task-acceptance.ts'
+import {checkerSuiteUnavailable, confirmationScope, createTaskAcceptance, suiteAdmissionBlocks} from './task-acceptance.ts'
 
 type Task = components['schemas']['AuditTask']
 function pending(digest = 'a'.repeat(64)): Task {
@@ -250,4 +250,9 @@ test('lost stale-Suite refusal settles the original operation before a fresh rea
   assert.equal(commands.length, 2)
   assert.notEqual(commands[1], originalId)
   assert.equal(results[0].acceptance?.request_id, commands[1])
+})
+
+test('a missing Suite is reported as an adoption step, not a file recognition failure', () => {
+  assert.equal(checkerSuiteUnavailable({gaps: ['metadata_uses_excerpt', 'checker_suite_unavailable']}), true)
+  assert.equal(checkerSuiteUnavailable({gaps: ['metadata_uses_excerpt']}), false)
 })
