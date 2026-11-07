@@ -193,8 +193,11 @@ def _report(plan: OfficialPlan, cases=(), reasons=()) -> SuiteValidationReport:
 
 
 @contextmanager
-def _paddle(sample: Sample) -> Iterator[dict[str, str]]:
+def _paddle(sample: Sample, *, live: bool) -> Iterator[dict[str, str]]:
     """Host keeps the upstream token; the guest gets one capability for this sample's PDFs."""
+    if not live:
+        yield {}
+        return
     with tempfile.TemporaryDirectory(prefix="ppap-official-paddle-") as work:
         root = Path(work)
         names = {key: f"source-{index}" for index, key in enumerate(sample.sources)}
@@ -222,7 +225,7 @@ def _evaluate(plan: OfficialPlan, *, models: LiveModels | None, grant: dict[str,
     for sample in plan.samples:
         target = sample.snapshot.targets[0]
         try:
-            with _paddle(sample) if models is not None else nullcontext({}) as tool_env:
+            with _paddle(sample, live=models is not None) as tool_env:
                 result = run_audit_process(sample.snapshot, sample.sources, plan.programs, allow_model_tools=models is not None, model_grant=grant, tool_env=tool_env)
         except AuditRunError:
             # Never promote partial/unknown execution to a successful proof.

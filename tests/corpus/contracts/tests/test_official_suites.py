@@ -347,7 +347,7 @@ def test_live_validation_gives_paddle_only_through_the_run_local_bridge(tmp_path
     monkeypatch.setenv("PADDLE_TOKEN", "host-only-paddle-token")
     plan = official_suites.prepare(context, **paths)
     sample = replace(plan.samples[0], sources={key: b"%PDF-1.7 fixture" for key in plan.samples[0].sources})
-    with official_suites._paddle(sample) as env:
+    with official_suites._paddle(sample, live=True) as env:
         assert set(env) == {"PPAP_PADDLE_BRIDGE_URL", "PPAP_PADDLE_BRIDGE_TOKEN"}
         assert env["PPAP_PADDLE_BRIDGE_URL"].startswith("http://127.0.0.1:")
         assert "host-only-paddle-token" not in env.values()

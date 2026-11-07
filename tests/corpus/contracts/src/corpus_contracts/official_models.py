@@ -12,7 +12,6 @@ from uuid import UUID, uuid4
 from agent.execution.gateway import LocalGateway, local_gateway
 from documents.model_access import ModelAccess
 
-
 # CI and development model use is not budget-limited; the gateway still requires a number.
 UNLIMITED = 10**12
 
