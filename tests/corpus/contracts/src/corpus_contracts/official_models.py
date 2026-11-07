@@ -13,12 +13,16 @@ from agent.execution.gateway import LocalGateway, local_gateway
 from documents.model_access import ModelAccess
 
 
+# CI and development model use is not budget-limited; the gateway still requires a number.
+UNLIMITED = 10**12
+
+
 @dataclass
 class LiveModels:
     access: ModelAccess = field(repr=False)
-    max_requests: int
-    max_input_tokens: int
-    max_output_tokens: int
+    max_requests: int = UNLIMITED
+    max_input_tokens: int = UNLIMITED
+    max_output_tokens: int = UNLIMITED
     _gateway: LocalGateway | None = field(default=None, init=False, repr=False)
     _execution_id: UUID = field(default_factory=uuid4, init=False, repr=False)
     _used: bool = field(default=False, init=False, repr=False)

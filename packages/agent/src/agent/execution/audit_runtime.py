@@ -356,6 +356,7 @@ def run_audit_process(
     cancelled: Callable[[], bool] = lambda: False,
     model_grant: dict[str, str] | None = None,
     allow_model_tools: bool = True,
+    tool_env: Mapping[str, str] | None = None,
     unavailable_sources: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """Local test harness only; production must use the existing ContainerRuntime.
@@ -388,6 +389,7 @@ def run_audit_process(
         grant.chmod(0o400)
         output = root / "output.json"
         env = {key: value for key, value in os.environ.items() if key in {"PATH", "LANG", "LC_ALL", "VIRTUAL_ENV"}}
+        env.update(tool_env or {})
         env.update(HOME=work, TMPDIR=work, PYTHONDONTWRITEBYTECODE="1")
         process = subprocess.Popen(
             [sys.executable, "-m", "agent.execution.audit_runtime", str(request), str(output), str(grant)],

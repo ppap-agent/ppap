@@ -1,7 +1,7 @@
 """Validate, read back, or explicitly publish one reviewed official Suite.
 
 Validation defaults to no model access. --model live explicitly authorizes
-bounded real text/visual inference without replay or answer recording. --record
+real text, visual and Paddle inference without replay or answer recording. --record
 writes validation evidence; publication remains a separate command.
 Do not run against production without a separately authorized release.
 """
@@ -30,9 +30,6 @@ def main(argv=None) -> int:
     verify.add_argument("--record", action="store_true", help="Explicitly write the resulting validation, even when unverified.")
     verify.add_argument("--expected-validation-revision", type=int)
     verify.add_argument("--model", choices=("disabled", "live"), default="disabled")
-    verify.add_argument("--max-requests", type=int)
-    verify.add_argument("--max-input-tokens", type=int)
-    verify.add_argument("--max-output-tokens", type=int)
     read = commands.add_parser("read", help="Read the existing proof/head after an uncertain operation; no writes or execution.")
     release = commands.add_parser("publish", help="Publish only the exact proof and official head explicitly reviewed by the operator.")
     release.add_argument("--expected-head-revision", type=int, required=True)
@@ -43,12 +40,6 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     if args.command == "validate" and args.record != (args.expected_validation_revision is not None):
         parser.error("--record and --expected-validation-revision must be supplied together")
-    if args.command == "validate":
-        limits = (args.max_requests, args.max_input_tokens, args.max_output_tokens)
-        if args.model == "live" and any(value is None or value < 1 for value in limits):
-            parser.error("--model live requires positive --max-requests, --max-input-tokens and --max-output-tokens")
-        if args.model == "disabled" and any(value is not None for value in limits):
-            parser.error("model limits require --model live")
     writing = False
     models = None
 
@@ -61,7 +52,7 @@ def main(argv=None) -> int:
         if args.command == "validate" and args.model == "live":
             if offline() or (access := configured_model_access()) is None:
                 raise ValueError("official_live_configuration_required")
-            models = LiveModels(access, args.max_requests, args.max_input_tokens, args.max_output_tokens)
+            models = LiveModels(access)
         store = build_product_store(Settings(), role="migrator")
         releases = SuiteReleaseStore(store.settings, store.objects, role="migrator")
         if args.command == "read":
