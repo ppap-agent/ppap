@@ -58,7 +58,7 @@ def _semantics(files) -> dict:
 
 
 def prepare(context: dict, *, cases: Path = CASES_PATH, oracle: Path = ORACLE_PATH, root: Path = REPO_ROOT, model_identity: dict[str, str] | None = None) -> OfficialPlan:
-    """Freeze every corpus target for this Suite; callers cannot select easy cases."""
+    """Freeze every corpus target judged under this revision's rules; callers cannot select easy cases."""
     suite = context["suite"]
     if suite.revision.tenant_id is not None:
         raise ValueError("official_validation_requires_official_suite")
@@ -73,8 +73,14 @@ def prepare(context: dict, *, cases: Path = CASES_PATH, oracle: Path = ORACLE_PA
     samples: list[Sample] = []
     originals = dict(tables)
     selected_originals = []
+    meaning = _semantics(suite.files)
+    other_rules = False
     for case in corpus:
-        selected = [file for file in case.files if file.role == "target" and file.checker_group == suite.revision.suite_key]
+        group = [file for file in case.files if file.role == "target" and file.checker_group == suite.revision.suite_key]
+        # The operator chose one exact revision. Labels judged under another
+        # generation's rules are neither evidence for it nor a reason to block it.
+        selected = [file for file in group if _semantics(file.suite().files) == meaning]
+        other_rules = other_rules or len(selected) != len(group)
         if not selected:
             continue
         snapshot, sources, _ = build_round(case)
@@ -83,8 +89,6 @@ def prepare(context: dict, *, cases: Path = CASES_PATH, oracle: Path = ORACLE_PA
             if originals.setdefault(file.path, digest_seen) != digest_seen:
                 raise ValueError("official_corpus_changed")
         for file in selected:
-            if _semantics(file.suite().files) != _semantics(suite.files):
-                reasons.add("oracle_rules_changed")
             if set(file.expected) != clauses:
                 reasons.add("oracle_clause_coverage_incomplete")
             for expected in file.expected.values():
@@ -150,6 +154,8 @@ def prepare(context: dict, *, cases: Path = CASES_PATH, oracle: Path = ORACLE_PA
             selected_originals.append(content_digest(sources[file.file_id]))
     if len(samples) < 4:
         reasons.add("insufficient_independent_samples")
+    if other_rules and not samples:
+        reasons.add("oracle_rules_changed")
     if len(set(selected_originals)) != len(selected_originals):
         reasons.add("duplicate_sample_original")
     training = {item.sha256 for sample in samples if sample.ordinal % 4 for item in sample.snapshot.inputs}

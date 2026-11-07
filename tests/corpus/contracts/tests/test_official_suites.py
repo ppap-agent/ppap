@@ -302,3 +302,40 @@ def test_no_model_proof_keeps_its_preexisting_digest_and_serialization(tmp_path,
     assert "model_identity" not in payload
     old_digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()).hexdigest()
     assert proof.proof_digest == old_digest
+
+
+def test_selected_revision_consumes_only_samples_judged_under_its_own_rules(tmp_path, monkeypatch):
+    context, paths = corpus_fixture(tmp_path, monkeypatch)
+    current = oracle.suite_sources()["fixture@v4"]
+    earlier_rules = {**json.loads(current.files["rules.json"]), "rules": [{"id": "R1", "rule_to_check": "A1 must be negative"}]}
+    earlier = replace(current, files={**current.files, "rules.json": json.dumps(earlier_rules).encode()})
+    monkeypatch.setattr(oracle, "suite_sources", lambda: {"fixture@v4": current, "fixture@v2": earlier})
+    monkeypatch.setattr(oracle, "reviewed_rules", lambda: {key: oracle.reviewed_contract(value) for key, value in oracle.suite_sources().items()})
+    workbook = Workbook()
+    workbook.active["A1"] = -1
+    workbook.save(tmp_path / "earlier.xlsx")
+    workbook.close()
+    with paths["cases"].open("a", encoding="utf-8", newline="") as stream:
+        csv.writer(stream).writerow(["fixture", "earlier", "target", "earlier.xlsx", "earlier.xlsx", "target", "fixture@v2", "fixture", "R1"])
+    with paths["oracle"].open("a", encoding="utf-8", newline="") as stream:
+        csv.writer(stream).writerow(["fixture", "earlier", "target", "R1", "NG", "A1 must be negative", "Synthetic earlier rule", "test author", "2026-11-07", ""])
+
+    plan = official_suites.prepare(context, **paths)
+    assert not plan.reasons
+    assert [sample.identity for sample in plan.samples] == [f"fixture/{number}/target" for number in range(1, 5)]
+
+    unlabeled_rules = {**earlier_rules, "rules": [{"id": "R1", "rule_to_check": "A1 must be even"}]}
+    unlabeled = replace(context["suite"], files={**context["suite"].files, "rules.json": json.dumps(unlabeled_rules).encode()})
+    plan = official_suites.prepare({**context, "suite": unlabeled}, **paths)
+    assert not plan.samples
+    assert {"oracle_rules_changed", "insufficient_independent_samples"} <= set(plan.reasons)
+
+
+@pytest.mark.parametrize(("selector", "samples"), [("PPAP:潜在过程失效模式及后果分析@v2", 10), ("PPAP:潜在过程失效模式及后果分析@v3", 9)])
+def test_real_generations_of_one_document_type_do_not_block_each_other(selector, samples):
+    source = oracle.suite_sources()[selector]
+    objects = {name: content_digest(raw) for name, raw in source.files.items()}
+    revision = SuiteRevision(str(uuid4()), None, source.suite_key, (), None, objects, resolved_digest(source.suite_key, (), objects), None)
+    plan = official_suites.prepare({"suite": ResolvedSuite(revision, dict(source.files), objects), "related_suites": {}, "related_suite_digests": {}, "related_revision_ids": ()})
+    assert len(plan.samples) == samples
+    assert "oracle_rules_changed" not in plan.reasons

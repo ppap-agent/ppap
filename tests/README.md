@@ -129,7 +129,7 @@ uv run --no-sync python -m scripts.official_suites read --revision-id <official-
 uv run --no-sync python -m scripts.official_suites publish --revision-id <official-revision-uuid> --expected-head-revision <revision> --expected-validation-revision <revision> --expected-proof-digest <sha256>
 ```
 
-验证只消费仓库当前完整 corpus 中属于该 Suite 的全部目标，没有样本筛选或 proof JSON 导入选项。每个样本保留整个原件组合，只执行所选 Suite。运行正式 Core 的固定程序子进程，默认 `--model disabled` 不提供模型授权；`--model live` 显式允许文本 LLM 和模型 OCR 读取原件。两种模式都不录制或回放模型答案，不更改现有 timeout。它只适用于已审阅的平台程序；本地子进程不是敌对代码沙箱，不能据此声称具备生产隔离。
+操作人员用 `--revision-id` 选定确切版本。验证只消费仓库当前完整 corpus 中规则含义与该版本相同的全部目标，其他代际（如 v2 与 v3）的标记不沿用也不阻断；没有样本筛选或 proof JSON 导入选项。每个样本保留整个原件组合，只执行所选 Suite。运行正式 Core 的固定程序子进程，默认 `--model disabled` 不提供模型授权；`--model live` 显式允许文本 LLM 和模型 OCR 读取原件。两种模式都不录制或回放模型答案，不更改现有 timeout。它只适用于已审阅的平台程序；本地子进程不是敌对代码沙箱，不能据此声称具备生产隔离。
 
 Live 沿用 corpus 的完整测试配置选择：优先 `OCR_OPENAI_API_KEY` / `OCR_OPENAI_BASE_URL` / `OCR_MODEL_NAME`，其次完整 `OPENAI_*` 或 `LLM_*`。本次文本和视觉工具共享所选模型，所以它必须支持视觉和 Responses；这不是生产分开的模型配置验收。`PPAP_CORPUS_OFFLINE=1` 与 live 冲突，普通 corpus 的 `PPAP_CORPUS_MODEL` 不会悄悄改变官方 runner 的模式。Paddle 是独立服务，当前官方子进程不获得 Paddle 凭据，不能据此宣称扫描转录已验收。密钥只留在 host gateway，子进程只拿本次 loopback 临时 grant。
 
