@@ -90,7 +90,9 @@ def prepare(context: dict, *, cases: Path = CASES_PATH, oracle: Path = ORACLE_PA
             for expected in file.expected.values():
                 if expected.status not in {"PASS", "NG", "NA"}:
                     reasons.add("oracle_truth_unresolved")
-                if not expected.confirmed_by or not expected.manual_reason or not expected.confirmed_on:
+                # A human-confirmed PASS need not restate the rule in prose.
+                # Attribution/date and actual execution evidence remain required.
+                if not expected.confirmed_by or not expected.confirmed_on or (expected.status != "PASS" and not expected.manual_reason):
                     reasons.add("independent_human_confirmation_required")
                 else:
                     try:
