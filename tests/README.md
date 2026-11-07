@@ -112,6 +112,29 @@ uv run --no-sync pytest tests/integration/product
 
 [`test_cases.py`](corpus/test_cases.py) 是唯一的表驱动 runner，每次执行完整组合。`--dataset` 选数据集，`--ftype` 按组合划分（含 PDF 的组合只属于 pdf），`-k` 选组合。[`regressions/`](corpus/regressions) 放针对具体原件或路径的回归，[`psw/`](corpus/psw) 在专用镜像中运行。
 
+### 官方 Suite 验证与发布
+
+`python -m scripts.official_suites` 是平台侧的显式发布工具，使用已有 Suite validation 和 official head，不新增发布台账。普通 corpus 测试通过、known-gap 放行或官方来源标签都不算发布证明。默认读取当前配置；执行前必须确认是本次授权的环境，开发测试不能借此操作生产。
+
+```sh
+# 执行全部对应样本，但不写验证或发布默认版本。
+uv run --no-sync python -m scripts.official_suites validate --revision-id <official-revision-uuid>
+# 显式写入验证；CAS revision 来自 read。此步骤仍不发布。
+uv run --no-sync python -m scripts.official_suites validate --revision-id <official-revision-uuid> --record --expected-validation-revision <revision>
+# 只读：包含当前官方 head、验证 write_revision、proof_digest 和完整结构化报告。
+uv run --no-sync python -m scripts.official_suites read --revision-id <official-revision-uuid>
+# 另行审阅并授权后，才显式发布这一个证明。
+uv run --no-sync python -m scripts.official_suites publish --revision-id <official-revision-uuid> --expected-head-revision <revision> --expected-validation-revision <revision> --expected-proof-digest <sha256>
+```
+
+验证只消费仓库当前完整 corpus 中属于该 Suite 的全部目标，没有样本筛选或 proof JSON 导入选项。每个样本保留整个原件组合，只执行所选 Suite。运行正式 Core 的固定程序子进程，不提供模型授权，禁用模型工具，不录制或回放模型答案，不更改现有 timeout。它只适用于已审阅的平台程序；本地子进程不是敌对代码沙箱，不能据此声称具备生产隔离。
+
+发布要求每条人工答案有判定人、ISO 日期、人工依据和完整条款覆盖，规则含义与对应来源一致；至少四个不同原件样本，第四个及其倍数为独立验证样本，不能与训练样本共享任何原件。当前缺失的人工字段不会自动补齐。证据不足时返回 `not_started_evidence_incomplete`、具体原因和零个已执行样本，不启动检查、不把缺失当通过；返回码为 2。执行中断标记 `incomplete`，不自动重跑。只有实际结果完全符合人工答案、断言数大于零且证据可定位时才可验证；UNABLE、ERR、缺失和 known-gap 都不能豁免。
+
+证明绑定官方 Suite revision／完整内容、程序、共享库、当前直接依赖的 revision／内容、全组合输入与两份人工表的身份。写入前检查原件仍相同；发布重新核对当前 corpus，并在现有官方事务锁下同时检查 head、validation revision、proof digest 和依赖选择。先发布直接依赖，例如 U12/U16 → U07 → U08 → U05；保存候选或完成验证不会自动更新下游。
+
+操作使用不可变、已审阅的发布 checkout 和原件；运行期间不能编辑它们。库或文件改变须重新验证。工具在写入前输出本次 proof／CAS 身份，异常不自动重试。结果未知时先用原 revision 执行 `read`，核对原 proof digest、验证 revision，以及发布后的目标和 head revision。读不到相同记录或已被后续写入覆盖时仍属未知，不能据此断言原写入未发生。测试中的四个程序化工作簿只证明执行和发布协议，不是客户效果验收或生产发布证据。
+
 ### 结果判定
 
 产品结果必须等于人工真值，没有比例容错：`UNABLE`、相反结论、ERR 和缺失都阻断。

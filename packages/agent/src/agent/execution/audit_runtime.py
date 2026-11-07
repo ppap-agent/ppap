@@ -355,6 +355,7 @@ def run_audit_process(
     clause_timeout: float = 120,
     cancelled: Callable[[], bool] = lambda: False,
     model_grant: dict[str, str] | None = None,
+    allow_model_tools: bool = True,
     unavailable_sources: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """Local test harness only; production must use the existing ContainerRuntime.
@@ -376,6 +377,7 @@ def run_audit_process(
             "sources": {key: base64.b64encode(value).decode() for key, value in sources.items()},
             "programs": {key: {name: base64.b64encode(data).decode() for name, data in files.items()} for key, files in programs.items()},
             "clause_timeout": clause_timeout,
+            "allow_model_tools": allow_model_tools,
             "unavailable_sources": sorted(unavailable_sources),
         }
         request = root / "input.json"
@@ -442,6 +444,7 @@ def _main() -> None:
             {key: base64.b64decode(value, validate=True) for key, value in payload["sources"].items()},
             {key: {name: base64.b64decode(data, validate=True) for name, data in files.items()} for key, files in payload["programs"].items()},
             clause_timeout=payload["clause_timeout"],
+            runtime=CheckerRuntime(allow_model_tools=payload.get("allow_model_tools", True)),
             unavailable_sources=frozenset(payload.get("unavailable_sources", ())),
         )
     output.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
