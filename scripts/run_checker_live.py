@@ -299,6 +299,15 @@ class BrowserJourney:
         page = self.page
         self.address = "http://127.0.0.1:14173/audit?round=" + original["round_id"] + "&file=" + original["file_version_id"] + "&clause=R1&basis=1&checkerFeedbackClause=R1"
         page.goto(self.address)
+        checkpoint(report_path, report, "selecting_feedback")
+        samples = report["samples"]
+        batch = page.get_by_role("region", name="同类文件待修复", exact=True)
+        expect(batch.get_by_role("heading", name=f"已确认的样本 {len(samples)} 条", exact=True)).to_be_visible()
+        # The product defaults to the current feedback only. This test explicitly
+        # requests one combined repair, while retaining the independent holdout.
+        batch.get_by_role("button", name="选择全部已确认样本", exact=True).click()
+        expect(batch.get_by_text(f"本次选择 {len(samples)} 条；每条正确答案均由人单独确认。分组不是根因结论，可以取消勾选拆开修复。", exact=True)).to_be_visible()
+        checkpoint(report_path, report, "configuring_model", browser_feedback_selection=True)
         page.get_by_role("button", name="让 AI 修复并验证", exact=True).click()
         page.get_by_label("Base URL", exact=True).fill(base_url)
         page.get_by_label("模型名称", exact=True).fill(model)
@@ -309,7 +318,8 @@ class BrowserJourney:
         configured = saved.value.json()
         require(configured.get("configured") is True and configured.get("base_url") == base_url and configured.get("model") == model and "api_key" not in configured, "personal_configuration_mismatch")
         expect(page.get_by_label("API Key", exact=True)).to_have_value("")
-        page.get_by_label(f"同意将本次资料发送至 {base_url}，使用 {model} 修复并验证这 8 条反馈", exact=True).check()
+        checkpoint(report_path, report, "consenting", browser_personal_configuration=True)
+        page.get_by_label(f"同意将本次资料发送至 {base_url}，使用 {model} 修复并验证这 {len(samples)} 条反馈", exact=True).check()
 
         def capture(route):
             # Persist the real UI-generated identity before forwarding its sole
@@ -319,6 +329,7 @@ class BrowserJourney:
                 return
             body = route.request.post_data_json
             require(not report.get("operation_id") and body.get("expected_model_revision") == configured["revision"], "optimization_identity_not_frozen")
+            require(len(body.get("feedback_ids", [])) == len(samples) and set(body["feedback_ids"]) == set(samples), "optimization_feedback_selection_mismatch")
             report.update(stage="admitting", operation_id=body["operation_id"])
             write_report(report_path, report)
             route.continue_()

@@ -5,8 +5,11 @@ import hashlib
 import io
 import json
 import subprocess
+import sys
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import httpx
 import pytest
@@ -59,6 +62,48 @@ def test_live_entry_requires_manual_invocation_exact_source_and_isolated_service
 
 def test_provider_is_not_tied_to_a_brand():
     assert acceptance.live_configuration(configuration()) == ("https://provider.example/v1", "arbitrary-model")
+
+
+def test_live_browser_explicitly_selects_the_full_sample_set_before_one_admission(tmp_path, monkeypatch):
+    """Driver orchestration only; native browser behavior has its separate journey."""
+    env = configuration()
+    monkeypatch.setenv("CI_LLM_API_KEY", env["CI_LLM_API_KEY"])
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", SimpleNamespace(expect=Mock()))
+    _, samples = valid_receipt()
+    report = {"journey": {}, "samples": samples}
+    report_path = tmp_path / "report.json"
+    configured = {"configured": True, "base_url": env["CI_LLM_BASE_URL"], "model": env["CI_LLM_MODEL"], "revision": "model-revision"}
+    receipt = {"operation_id": "ui-generated-operation", "state": "queued"}
+    selected = [next(iter(samples))]  # The product's current-row default.
+    page, batch, select_all, start = Mock(), Mock(), Mock(), Mock()
+    labels, captures, forwarded = {}, [], []
+    page.get_by_role.side_effect = lambda role, *, name, exact: batch if role == "region" else start if name == "确认开始修复" else Mock()
+    batch.get_by_role.side_effect = lambda role, *, name, exact: select_all if name == "选择全部已确认样本" else Mock()
+    select_all.click.side_effect = lambda: selected.__setitem__(slice(None), list(samples))
+    page.get_by_label.side_effect = lambda name, *, exact: labels.setdefault(name, Mock())
+    page.expect_response.side_effect = [nullcontext(SimpleNamespace(value=SimpleNamespace(status=200, json=Mock(return_value=result)))) for result in (configured, receipt)]
+    page.route.side_effect = lambda pattern, callback: captures.append(callback)
+
+    def admit():
+        body = {"operation_id": receipt["operation_id"], "expected_model_revision": configured["revision"], "feedback_ids": list(selected)}
+
+        def forward():
+            persisted = json.loads(report_path.read_text())
+            assert persisted["stage"] == "admitting" and persisted["operation_id"] == body["operation_id"]
+            labels[f"同意将本次资料发送至 {env['CI_LLM_BASE_URL']}，使用 {env['CI_LLM_MODEL']} 修复并验证这 8 条反馈"].check.assert_called_once()
+            forwarded.append(body)
+
+        captures[0](SimpleNamespace(request=SimpleNamespace(method="POST", post_data_json=body), continue_=forward))
+
+    start.click.side_effect = admit
+    journey = acceptance.BrowserJourney.__new__(acceptance.BrowserJourney)
+    journey.page = page
+    assert journey.configure_and_start({"round_id": "round", "file_version_id": "file"}, env["CI_LLM_BASE_URL"], env["CI_LLM_MODEL"], report, report_path) == (configured, receipt)
+    select_all.click.assert_called_once()
+    assert len(forwarded) == 1 and forwarded[0]["feedback_ids"] == list(samples)
+    assert report["journey"] == {"browser_feedback_selection": True, "browser_personal_configuration": True}
+    assert env["CI_LLM_API_KEY"] not in report_path.read_text()
+    page.reload.assert_called_once()
 
 
 @pytest.mark.parametrize("base", ["http://provider.example/v1", "https://user:secret@provider.example/v1", "https://provider.example/v1?key=secret", "https://provider.example/v1#secret"])
