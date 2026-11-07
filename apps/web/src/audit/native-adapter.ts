@@ -216,6 +216,7 @@ const confirmationRefusals: Record<string, string> = {
   ...usageRefusals,
   audit_task_charging_unavailable: '当前环境尚未开放本次审核计费，审核没有开始。',
   task_confirmation_changed: '审核依据已变化，审核没有开始。请刷新审核依据，核对后重新确认。',
+  suite_validation_required: '当前检查版本需要重新验证，审核没有开始。请在检查版本工作区重新验证并发布，或明确确认采用未验证版本，再刷新审核依据。',
   task_revision_conflict: '任务文件已在其他页面更新。本次确认未受理，请核对当前任务。',
   task_not_ready: '文件识别尚未完成。本次确认未受理，请读取当前任务。',
   rule_candidate_expired: '匹配的规则已有新版本，审核没有开始。请返回上一步重新识别，再核对规则。',
@@ -315,6 +316,7 @@ export function createNativeAuditAdapter(options: {deepOffered: boolean; custome
         if (!reason || ![400, 409].includes(error.status || 0)) throw failure
         const current = await request<AuditTask>(`${taskPath(task.id)}?request_id=${encoded(requestId)}`)
         if (current.id !== task.id) throw new Error('任务回执不属于原确认请求。')
+        if (current.acceptance?.request_id === requestId && current.acceptance.state === 'rejected') return current
         // A transport observation of an explicit refusal, not a persisted server receipt.
         return current.state === 'pending_confirm' && !current.round_id ? {...current, acceptance: {request_id: requestId, state: 'rejected', reason}} : current
       }

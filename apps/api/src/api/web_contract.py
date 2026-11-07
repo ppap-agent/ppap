@@ -1045,7 +1045,17 @@ class AuditRecognitionFile(TypedDict):
     rule_options: NotRequired[list[MatchingCandidate]]
 
 
+class AuditSuiteAdmission(TypedDict):
+    state: Literal["ready", "validation_required"]
+    suite_key: str
+    suite_revision_id: str
+    verification_status: Literal["verified", "unverified", "stale"]
+    force_unverified: bool
+    samples_not_rerun: bool
+
+
 class AuditTaskFile(AuditRecognitionFile):
+    suite_admission: NotRequired[AuditSuiteAdmission]
     validation_scope: NotRequired[FileValidationScope]
     audit: NotRequired[AuditFileReview | None]
     display_info: NotRequired[AuditFileDisplayInfo | None]

@@ -2938,6 +2938,27 @@ export interface components {
             /** Targets */
             targets: components["schemas"]["AuditShareTarget"][];
         };
+        /** AuditSuiteAdmission */
+        AuditSuiteAdmission: {
+            /** Force Unverified */
+            force_unverified: boolean;
+            /** Samples Not Rerun */
+            samples_not_rerun: boolean;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "ready" | "validation_required";
+            /** Suite Key */
+            suite_key: string;
+            /** Suite Revision Id */
+            suite_revision_id: string;
+            /**
+             * Verification Status
+             * @enum {string}
+             */
+            verification_status: "verified" | "unverified" | "stale";
+        };
         /**
          * AuditSupportInfo
          * @description Current confirmed service configuration, not invented fallback contacts.
@@ -3065,6 +3086,7 @@ export interface components {
              * @enum {string}
              */
             selection: "selected" | "unselected" | "removed";
+            suite_admission?: components["schemas"]["AuditSuiteAdmission"];
             validation: components["schemas"]["AuditFileValidation"];
             /** Validation Id */
             validation_id?: string;

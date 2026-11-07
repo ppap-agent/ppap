@@ -84,3 +84,19 @@ test('checker labels use exact frozen Suite facts and do not invent a generic fa
   assert.doesNotMatch(checkerLabel({...file, file: {...file.file, id: 'other'}}, receipt), /本次采用的检查/)
   assert.match(checkerLabel(file, {...receipt, input: {files: [{file: file.file, rule_execution: {mode: 'unavailable'}}]}}), /尚无可运行的检查，未检查/)
 })
+
+
+test('Suite preparation presents the server admission decision and actionable library or risk disclosure', () => {
+  const admission = {state: 'validation_required', suite_key: 'suite-a', suite_revision_id: 'revision-a', verification_status: 'stale', force_unverified: false, samples_not_rerun: false} as const
+  const blocked = {...file, suite_admission: admission}
+  assert.equal(preparationAction(blocked, []), 'confirm')
+  assert.match(checkerLabel(blocked), /需要重新验证，暂不能开始审核/)
+  const forced = {...file, suite_admission: {...admission, state: 'ready' as const, force_unverified: true}}
+  assert.equal(preparationAction(forced, []), 'ready')
+  assert.match(checkerLabel(forced), /已明确采用未验证版本/)
+  const library = {...file, suite_admission: {...admission, state: 'ready' as const, verification_status: 'verified' as const, samples_not_rerun: true}}
+  assert.equal(preparationAction(library, []), 'ready')
+  assert.match(checkerLabel(library), /平台已更新，样本未重跑/)
+  const combined = checkerLabel({...forced, suite_admission: {...forced.suite_admission, samples_not_rerun: true}, match: {...forced.match!, gaps: ['published_rules_changed']}})
+  for (const notice of ['已明确采用未验证版本', '平台已更新，样本未重跑', '新规则尚未采用']) assert.ok(combined.includes(notice))
+})

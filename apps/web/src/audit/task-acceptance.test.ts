@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {components} from '../generated/openapi.ts'
-import {confirmationScope, createTaskAcceptance} from './task-acceptance.ts'
+import {confirmationScope, createTaskAcceptance, suiteAdmissionBlocks} from './task-acceptance.ts'
 
 type Task = components['schemas']['AuditTask']
 function pending(digest = 'a'.repeat(64)): Task {
@@ -199,4 +199,55 @@ test('an all-blocked server scope cannot start an audit even if a stale digest r
   const controller = createTaskAcceptance({confirm: async () => {throw new Error('must not post')}, readTask: async () => {throw new Error('not read')}}, () => {})
   await controller.confirm(input)
   assert.equal(controller.get(input.id), undefined)
+})
+
+
+test('an inspectable stale Suite becomes confirmable after explicit recovery of its current admission', async () => {
+  const task = pending(), calls: string[] = [], results: Task[] = []
+  task.files[0].suite_admission = {state: 'validation_required', suite_key: 'suite-a', suite_revision_id: 'revision-a', verification_status: 'stale', force_unverified: false, samples_not_rerun: false}
+  const controller = createTaskAcceptance({confirm: async (input, id) => {calls.push(id); return accepted(input, id)}, readTask: async () => task}, result => results.push(result))
+  assert.deepEqual(suiteAdmissionBlocks(task), [task.files[0]])
+  await controller.confirm(task)
+  assert.equal(calls.length, 0)
+  const current = structuredClone(task)
+  current.confirmation_basis_digest = 'b'.repeat(64)
+  current.files[0].suite_admission = {...task.files[0].suite_admission, state: 'ready', force_unverified: true}
+  controller.restore(current)
+  await controller.confirm(current)
+  assert.equal(calls.length, 1)
+  assert.equal(results[0].acceptance?.state, 'accepted')
+  assert.deepEqual(results[0].files[0].match, task.files[0].match)
+})
+
+test('the server included scope stays confirmable when a stale Suite belongs to an excluded file', async () => {
+  const task = pending(), results: Task[] = []
+  task.files.push({...structuredClone(task.files[0]), file: {...task.files[0].file, id: 'file-excluded'}, suite_admission: {state: 'validation_required', suite_key: 'suite-other', suite_revision_id: 'revision-other', verification_status: 'stale', force_unverified: false, samples_not_rerun: false}})
+  task.confirmation_scope!.excluded_files.push({file_version_id: 'file-excluded', reason: '预检已确认的阻断缺陷，需修正后重新提交'})
+  assert.deepEqual(suiteAdmissionBlocks(task), [])
+  const controller = createTaskAcceptance({confirm: async (input, id) => accepted(input, id), readTask: async () => task}, result => results.push(result))
+  await controller.confirm(task)
+  assert.equal(results[0].acceptance?.state, 'accepted')
+  assert.equal(results[0].files[1].selection, 'removed')
+})
+
+
+test('lost stale-Suite refusal settles the original operation before a fresh ready confirmation', async () => {
+  const shown = pending(), blocked = pending('b'.repeat(64)), commands: string[] = [], results: Task[] = []
+  blocked.files[0].suite_admission = {state: 'validation_required', suite_key: 'suite-a', suite_revision_id: 'revision-a', verification_status: 'stale', force_unverified: false, samples_not_rerun: false}
+  let originalId = ''
+  const controller = createTaskAcceptance({
+    confirm: async (input, id) => {commands.push(id); if (!originalId) {originalId = id; throw new TypeError('refusal response lost')} return accepted(input, id)},
+    readTask: async (_id, requestId) => {assert.equal(requestId, originalId); return {...blocked, acceptance: {request_id: requestId!, state: 'rejected', reason: '检查版本需要重新验证，本次未受理。'}}},
+  }, result => results.push(result))
+  await controller.confirm(shown)
+  assert.equal(controller.get(shown.id)?.phase, 'unknown')
+  await controller.reconcile(blocked)
+  assert.equal(controller.get(shown.id)?.phase, 'rejected')
+  assert.match(controller.get(shown.id)!.message, /重新验证/)
+  const ready = {...blocked, confirmation_basis_digest: 'c'.repeat(64), files: blocked.files.map(file => ({...file, suite_admission: {...file.suite_admission!, state: 'ready' as const, verification_status: 'verified' as const}}))}
+  controller.restore(ready)
+  await controller.confirm(ready)
+  assert.equal(commands.length, 2)
+  assert.notEqual(commands[1], originalId)
+  assert.equal(results[0].acceptance?.request_id, commands[1])
 })
