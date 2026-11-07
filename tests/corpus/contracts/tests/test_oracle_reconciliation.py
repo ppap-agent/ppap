@@ -1,11 +1,14 @@
 """Malformed human tables must fail before any product execution."""
 
 import csv
+import json
 from collections import defaultdict
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from audit.checker_core import checker_digest
+from corpus_contracts import oracle
 from corpus_contracts.oracle import EXPECTED_COLUMNS, FILE_COLUMNS, build_round, load_oracle, original, programs_for, reviewed_contract
 from corpus_contracts.product_round import BLOCKING, KNOWN_GAP, MATCH, OK, SETUP_FAILURE, STATUS_MISMATCH, RuleVerdict, compare_file, severity
 
@@ -119,6 +122,24 @@ def test_implementation_edit_preserves_reviewed_meaning_with_a_new_execution_ide
     updated = replace(suite, files={**suite.files, "checker.py": suite.files["checker.py"] + b"\n# implementation clarification\n"})
     assert reviewed_contract(updated) == reviewed_contract(suite)
     assert updated.revision_digest != suite.revision_digest
+
+
+def test_carrier_rename_preserves_reviewed_meaning_and_frozen_execution_identity(monkeypatch):
+    file = next(file for case in load_oracle() for file in case.files if file.role == "target")
+    suite = file.suite()
+    historical = json.loads(oracle.REVIEWED_RULES_PATH.read_text(encoding="utf-8"))[file.suite_revision]
+    source = suite.files["checker.py"]
+    for index, path in enumerate(sorted(set(historical["resources"]["carriers"].values()))):
+        source = source.replace(path.encode(), f"renamed.carriers:Carrier{index}".encode())
+    renamed = replace(suite, files={**suite.files, "checker.py": source})
+    monkeypatch.setattr(oracle, "suite_sources", lambda: {file.suite_revision: renamed})
+
+    assert file.suite() is renamed
+    assert reviewed_contract(renamed) == reviewed_contract(suite)
+    assert reviewed_contract(renamed)["resources"] == {**historical["resources"], "carriers": sorted(historical["resources"]["carriers"])}
+    assert renamed.revision_digest != suite.revision_digest
+    assert checker_digest(renamed.program_files) != checker_digest(suite.program_files)
+    assert json.loads(oracle.REVIEWED_RULES_PATH.read_text(encoding="utf-8"))[file.suite_revision] == historical
 
 
 def test_human_provenance_is_retained_with_the_expectation(tmp_path):
