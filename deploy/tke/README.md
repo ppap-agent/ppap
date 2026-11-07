@@ -174,7 +174,7 @@ python3 deploy/tke/build-current.py <full-source-sha>
 python3 deploy/tke/build-current.py <full-source-sha> --run-id <run-id>
 ```
 
-构建复用 `docker-bake.hcl` 的四目标图和缓存，核对实际源版本与镜像 digest 后写入 `current.yaml`。提交这些 pin 后，使用上面的原生部署命令。
+构建使用固定 Codeup 分支 `codex/ppap-current-release`；完整 SHA 通过单次运行参数传入，作业检出该 commit 后再构建。分支后续移动不改变本次源码，流水线允许并发，不按提交创建分支。`yunxiao.yaml` 变更时同步云效定义一次；普通构建只启动和读取自己的运行，不修改共享流水线。构建复用 `docker-bake.hcl` 的四目标图和缓存，核对构建回执与镜像源码身份、digest 后写入 `current.yaml`；若清单在构建期间被改动则保留新内容，不覆盖其他操作的选择。提交这些 pin 后，使用上面的原生部署命令。
 
 构建保持四组件统一源码 SHA，一次 Bake 共享步骤并按依赖调度；不增加按文件选择组件的发布分支。固定系统工具放在应用源码之前，Deep 的 npm 安装及签名检查只依赖锁文件，runner 测试在源码层执行。依赖校验和打包后的 import 检查继续保留。
 

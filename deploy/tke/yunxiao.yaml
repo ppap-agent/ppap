@@ -8,7 +8,7 @@ sources:
     type: codeup
     name: PPAP current release source
     endpoint: https://codeup.aliyun.com/icoastline/integration/4.0/ppap-web.git
-    branch: codex/ppap-current-release-__SOURCE_SHA__
+    branch: codex/ppap-current-release
     triggerEvents: []
     certificate:
       type: serviceConnection
@@ -29,8 +29,10 @@ stages:
             with:
               run: |
                 set -eu
-                export PPAP_BUILD_SHA=__SOURCE_SHA__
+                export PPAP_BUILD_SHA="${PPAP_SOURCE_SHA:-$(git rev-parse HEAD)}"
                 export PPAP_IMAGE_PREFIX=icoastline.tencentcloudcr.com/ppap-feishu/current-
+                git cat-file -e "$PPAP_BUILD_SHA^{commit}" || git fetch origin "$PPAP_BUILD_SHA"
+                git checkout --detach "$PPAP_BUILD_SHA"
                 test "$(git rev-parse HEAD)" = "$PPAP_BUILD_SHA"
                 test "$(uname -m)" = x86_64
                 docker info --format 'Docker Engine server: {{.ServerVersion}}'
@@ -59,7 +61,7 @@ stages:
             with:
               run: |
                 set -eu
-                export PPAP_BUILD_SHA=__SOURCE_SHA__
+                export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
                 export PPAP_IMAGE_PREFIX=icoastline.tencentcloudcr.com/ppap-feishu/current-
                 test "$(git rev-parse HEAD)" = "$PPAP_BUILD_SHA"
                 git diff --exit-code

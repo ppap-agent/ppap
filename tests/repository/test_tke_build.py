@@ -24,29 +24,6 @@ def source_run(sha=SHA, status="SUCCESS"):
     }
 
 
-@pytest.mark.parametrize("bad", ["sha", "repo", "extra-source"])
-def test_flow_source_requires_exact_selected_repository_and_commit(bad):
-    observation = source_run()
-    assert BUILD["run_source"](observation, SHA)
-    if bad == "sha":
-        observation = source_run("0" * 40)
-    elif bad == "repo":
-        observation["sources"][0]["data"]["repo"] = "https://foreign.invalid/repo"
-    else:
-        observation["sources"].append(observation["sources"][0])
-    assert not BUILD["run_source"](observation, SHA)
-
-
-def test_flow_commit_history_does_not_replace_the_selected_head():
-    observation = source_run()
-    data = observation["sources"][0]["data"]
-    data["commit"] = json.dumps([{"commitId": SHA}, {"commitId": "0" * 40}])
-    assert BUILD["run_source"](observation, SHA)
-    assert not BUILD["run_source"](observation, "0" * 40)
-    data["commit"] = "[]"
-    assert not BUILD["run_source"](observation, SHA)
-
-
 @pytest.mark.parametrize("status", ["FAIL", "SUCCESS"])
 def test_resume_never_dispatches_and_failed_build_never_resolves_images(tmp_path, status):
     calls = []
@@ -77,37 +54,18 @@ def test_unknown_dispatch_is_recorded_once_and_never_retried(tmp_path):
     def cloud(method, path, body=None, query=None):
         calls.append(method)
         if method == "GET":
-            return {"pipelineConfig": {"pipelineConfigId": 1, "flow": (ROOT / "deploy/tke/yunxiao.yaml").read_text().replace("__SOURCE_SHA__", SHA)}} if path == BUILD["FLOW"] else []
+            return {"pipelineConfig": {"pipelineConfigId": 1, "flow": (ROOT / "deploy/tke/yunxiao.yaml").read_text()}} if path == BUILD["FLOW"] else []
         if method == "POST":
             assert isinstance(body["params"], str)
-            assert json.loads(body["params"])["runningBranchs"][BUILD["CODEUP"]].endswith(SHA)
+            assert json.loads(body["params"]) == {"runningBranchs": {BUILD["CODEUP"]: BUILD["SOURCE_BRANCH"]}, "envs": {"PPAP_SOURCE_SHA": SHA}}
             raise RuntimeError("response lost")
 
     operation = BUILD["yunxiao"]
-    with patch.dict(operation.__globals__, {"cloud": cloud, "source_branch": lambda *args: "codex/ppap-current-release-" + SHA}):
+    with patch.dict(operation.__globals__, {"cloud": cloud, "source_branch": lambda *args: BUILD["SOURCE_BRANCH"]}):
         with pytest.raises(RuntimeError, match="unknown"):
             operation(SHA, tmp_path, None)
     assert calls.count("POST") == 1
     assert (tmp_path / "dispatch-intent.json").exists()
-
-
-def test_existing_matching_build_is_reused_without_reconfiguring(tmp_path):
-    operation = BUILD["yunxiao"]
-    posts = []
-
-    def cloud(method, path, *args, **kwargs):
-        posts.append(method)
-        if path.endswith("/runs"):
-            return [{"pipelineRunId": 2, "status": "RUNNING"}]
-        if path.endswith("/runs/2"):
-            return source_run()
-        if path.endswith("/steps"):
-            return [{"buildId": 10}]
-        return {"logs": "\n".join(["PPAP_RELEASE_SOURCE " + SHA, *(f"PPAP_RELEASE_IMAGE {c} {IMAGES[c]}" for c in COMPONENTS)]), "more": False}
-
-    with patch.dict(operation.__globals__, {"cloud": cloud}):
-        assert operation(SHA, tmp_path, None) == IMAGES
-    assert set(posts) == {"GET"}
 
 
 @pytest.mark.parametrize("fault", [None, "source", "platform", "manifest", "config"])
@@ -217,24 +175,6 @@ def test_existing_source_images_skip_all_flow_history_and_build_calls(tmp_path, 
         operation(SHA, provider, tmp_path, None)
     assert len(checks) == 1
     assert checks[0][1] == {c: BUILD["PREFIXES"][provider] + c + ":" + SHA for c in COMPONENTS}
-
-
-def test_flow_search_only_inspects_active_runs_and_blocks_other_source(tmp_path):
-    operation = BUILD["yunxiao"]
-    queries = []
-
-    def cloud(method, path, body=None, query=None):
-        assert method == "GET", "another active source must prevent pipeline writes"
-        if path.endswith("/runs"):
-            queries.append(query)
-            return [{"pipelineRunId": 3, "status": "RUNNING"}] if query["page"] == 1 else []
-        assert path.endswith("/runs/3")
-        return source_run("0" * 40, "RUNNING")
-
-    with patch.dict(operation.__globals__, {"cloud": cloud}):
-        with pytest.raises(ValueError, match="active run"):
-            operation(SHA, tmp_path, None)
-    assert all(q["status"] == "RUNNING" and q["perPage"] == 30 for q in queries)
 
 
 def test_unknown_registry_result_cannot_dispatch_a_new_build(tmp_path):
@@ -382,3 +322,88 @@ def test_confirmed_missing_images_build_once_then_verify_before_pinning(tmp_path
         operation(SHA, "yunxiao", tmp_path, None)
     assert events == ["registry", "build", "registry"]
     assert all(ref in (tmp_path / "current.yaml").read_text() for ref in IMAGES.values())
+
+
+@pytest.mark.parametrize("branch_head", [SHA, "b" * 40])
+def test_run_uses_requested_commit_when_fixed_branch_moves(tmp_path, branch_head):
+    operation = BUILD["yunxiao"]
+    calls = []
+
+    def cloud(method, path, body=None, query=None):
+        calls.append((method, path))
+        if path == BUILD["FLOW"]:
+            assert method == "GET"
+            return {"pipelineConfig": {"pipelineConfigId": 1, "flow": (ROOT / "deploy/tke/yunxiao.yaml").read_text()}}
+        if method == "POST":
+            assert json.loads(body["params"])["envs"]["PPAP_SOURCE_SHA"] == SHA
+            return 2
+        if path.endswith("/runs/2"):
+            return source_run(branch_head)
+        if path.endswith("/steps"):
+            return [{"buildId": 10}]
+        return {"logs": "\n".join(["PPAP_RELEASE_SOURCE " + SHA, *(f"PPAP_RELEASE_IMAGE {c} {IMAGES[c]}" for c in COMPONENTS)]), "more": False}
+
+    with patch.dict(operation.__globals__, {"cloud": cloud, "source_branch": lambda *args: BUILD["SOURCE_BRANCH"]}):
+        assert operation(SHA, tmp_path, None) == IMAGES
+    assert sum(method == "POST" for method, _ in calls) == 1
+    assert not any(method == "PUT" or path == BUILD["FLOW"] or path.endswith("/runs") and method == "GET" for method, path in calls)
+
+
+def test_other_run_receipt_cannot_supply_selected_source_images(tmp_path):
+    operation = BUILD["yunxiao"]
+
+    def cloud(method, path, *args, **kwargs):
+        assert method == "GET"
+        if path.endswith("/runs/2"):
+            return source_run()
+        if path.endswith("/steps"):
+            return [{"buildId": 10}]
+        return {"logs": "\n".join(["PPAP_RELEASE_SOURCE " + "b" * 40, *(f"PPAP_RELEASE_IMAGE {c} {IMAGES[c]}" for c in COMPONENTS)]), "more": False}
+
+    with patch.dict(operation.__globals__, {"cloud": cloud}):
+        with pytest.raises(ValueError, match="four fixed-source images"):
+            operation(SHA, tmp_path, 2)
+
+
+def test_completed_build_preserves_a_concurrently_changed_manifest(tmp_path):
+    operation = BUILD["build"]
+    config = tmp_path / "current.yaml"
+    config.write_text((ROOT / "deploy/tke/current.yaml").read_text())
+
+    def registry(*args):
+        config.write_text("newer operator selection")
+        return IMAGES, CONFIGS
+
+    with patch.dict(operation.__globals__, {"HERE": tmp_path, "source_commit": lambda sha: None, "registry_images": registry}):
+        with pytest.raises(ValueError, match="changed during build"):
+            operation(SHA, "yunxiao", tmp_path, None)
+    assert config.read_text() == "newer operator selection"
+
+
+def test_fixed_source_branch_supports_advances_and_older_commits(tmp_path):
+    import subprocess
+
+    operation = BUILD["source_branch"]
+    repo, remote = tmp_path / "repo", tmp_path / "remote.git"
+    repo.mkdir()
+
+    def git(*args, cwd=repo):
+        return subprocess.check_output(["git", *args], cwd=cwd, stderr=subprocess.DEVNULL, text=True).strip()
+
+    git("init", "--bare", str(remote))
+    git("init")
+    git("config", "user.email", "test@example.invalid")
+    git("config", "user.name", "Test")
+    commits = []
+    for value in ["first", "second"]:
+        (repo / "source").write_text(value)
+        git("add", "source")
+        git("commit", "-m", value)
+        commits.append(git("rev-parse", "HEAD"))
+    with patch.dict(operation.__globals__, {"ROOT": repo, "CODEUP": str(remote)}):
+        for sha in [*commits, commits[0]]:
+            assert operation(sha, tmp_path) == BUILD["SOURCE_BRANCH"]
+    refs = git("for-each-ref", "--format=%(refname)", cwd=remote).splitlines()
+    assert refs == ["refs/heads/" + BUILD["SOURCE_BRANCH"]]
+    assert git("rev-parse", refs[0], cwd=remote) == commits[1]
+    assert not (tmp_path / "askpass.py").exists()

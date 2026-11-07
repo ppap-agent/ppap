@@ -28,6 +28,7 @@ PREFIXES = {"yunxiao": "icoastline.tencentcloudcr.com/ppap-feishu/current-", "un
 CODEUP = "https://codeup.aliyun.com/icoastline/integration/4.0/ppap-web.git"
 FLOW = "/flow/organizations/60d54c9a70ab8549fd3e10db/pipelines/5339663"
 NAMESPACE = "ppap-test"
+SOURCE_BRANCH = "codex/ppap-current-release"
 
 
 def run(args: list[str], *, data: bytes | None = None, timeout: int = 1800) -> bytes:
@@ -78,7 +79,7 @@ def cloud(method: str, path: str, body=None, query=None):
 
 
 def source_branch(sha: str, attempt: Path) -> str:
-    branch = "codex/ppap-current-release-" + sha
+    branch = SOURCE_BRANCH
     askpass = attempt / "askpass.py"
     askpass.write_text("#!/usr/bin/env python3\nimport os,sys\nprint('oauth2' if 'Username' in sys.argv[1] else os.environ['ALIYUN_DEV_OPS_TOKEN'])\n")
     askpass.chmod(0o700)
@@ -96,65 +97,27 @@ def source_branch(sha: str, attempt: Path) -> str:
 
     try:
         actual = observed()
-        require(actual in {None, sha}, "Codeup release branch already points to another commit; do not force")
-        if actual is None:
+        if actual not in {None, sha}:
+            git("fetch", "--no-tags", CODEUP, "refs/heads/" + branch)
+            if git("merge-base", sha, "FETCH_HEAD").strip() == sha:
+                return branch  # An older requested commit is already reachable.
+        if actual != sha:
             try:
                 git("push", CODEUP, sha + ":refs/heads/" + branch)
             except (RuntimeError, subprocess.TimeoutExpired):
                 require(observed() == sha, "source push outcome not confirmed; do not repeat blindly")
-        require(observed() == sha, "Codeup source readback does not match")
     finally:
         askpass.unlink(missing_ok=True)
     return branch
 
 
-def run_source(observation: dict, sha: str) -> bool:
-    sources = observation.get("sources", [])
-    if len(sources) != 1 or sources[0].get("data", {}).get("repo") != CODEUP:
-        return False
-    # Flow reports the selected head first, followed by the changed commit history.
-    commits = json.loads(sources[0]["data"].get("commit") or "[]")
-    return bool(commits) and commits[0].get("commitId") == sha
-
-
 def yunxiao(sha: str, attempt: Path, resume_run: int | None) -> dict[str, str]:
-    expected_config_id = None
     if resume_run is None:
-        # Completed builds are reused by verified registry identity in build().
-        # Query only active runs, not every successful run in the pipeline history.
-        seen = set()
-        active = False
-        for page in range(1, 101):
-            rows = cloud("GET", FLOW + "/runs", query={"page": page, "perPage": 30, "status": "RUNNING"})
-            if not rows:
-                break
-            ids = {row.get("pipelineRunId", row.get("id")) for row in rows}
-            require(not ids & seen, "Flow pagination repeated; use --run-id instead of rebuilding blindly")
-            seen.update(ids)
-            with ThreadPoolExecutor(max_workers=4) as pool:
-                observations = list(pool.map(lambda rid: cloud("GET", FLOW + f"/runs/{rid}"), ids))
-            for rid, previous in zip(ids, observations, strict=True):
-                if run_source(previous, sha) and previous["status"] not in {"FAIL", "FAILED", "CANCELED", "CANCELLED"}:
-                    return yunxiao(sha, attempt, int(rid))
-                active |= previous["status"] not in {"SUCCESS", "FAIL", "FAILED", "CANCELED", "CANCELLED"}
-        else:
-            raise ReleaseError("Flow active-run search limit reached; select --run-id")
-        require(not active, "release pipeline has an active run; do not reconfigure it")
         branch = source_branch(sha, attempt)
-        config = (HERE / "yunxiao.yaml").read_text().replace("__SOURCE_SHA__", sha)
-        readback = cloud("GET", FLOW)
-        if readback["pipelineConfig"]["flow"].strip() != config.strip():
-            try:
-                cloud("PUT", FLOW, {"name": "PPAP current release TCR", "content": config})
-            except RuntimeError:
-                pass  # Reconcile the owning resource; never repeat the PUT blindly.
-            readback = cloud("GET", FLOW)
-        require(readback["pipelineConfig"]["flow"].strip() == config.strip(), "pipeline definition readback differs; do not dispatch")
-        expected_config_id = readback["pipelineConfig"]["pipelineConfigId"]
         # No automatic POST retry. Preserve the intent even if the response is lost.
         (attempt / "dispatch-intent.json").write_text(json.dumps({"sha": sha, "branch": branch}))
         try:
-            rid = cloud("POST", FLOW + "/runs", {"params": json.dumps({"runningBranchs": {CODEUP: branch}})})
+            rid = cloud("POST", FLOW + "/runs", {"params": json.dumps({"runningBranchs": {CODEUP: branch}, "envs": {"PPAP_SOURCE_SHA": sha}})})
         except RuntimeError:
             raise RuntimeError("dispatch result unknown; inspect pipeline runs and use --run-id; never dispatch again blindly") from None
         require(isinstance(rid, (int, str)) and str(rid).isdigit(), "unexpected run response; inspect pipeline runs before retry")
@@ -165,11 +128,9 @@ def yunxiao(sha: str, attempt: Path, resume_run: int | None) -> dict[str, str]:
     while True:
         observation = cloud("GET", FLOW + f"/runs/{resume_run}")
         status = observation["status"]
-        source_known = any(source.get("data", {}).get("commit") for source in observation.get("sources", []))
-        if source_known or status == "SUCCESS":
-            require(run_source(observation, sha), "Flow run source differs from selected source")
-        if expected_config_id is not None:
-            require(observation["pipelineConfigId"] == expected_config_id, "Flow used another pipeline configuration; do not deploy")
+        sources = observation.get("sources", [])
+        if sources:
+            require(len(sources) == 1 and sources[0].get("data", {}).get("repo") == CODEUP, "Flow selected another repository")
         if status == "SUCCESS":
             break
         require(status not in {"FAIL", "FAILED", "CANCELED", "CANCELLED"}, "Yunxiao build failed; deployment is forbidden")
@@ -301,7 +262,8 @@ def registry_images(sha: str, images: dict[str, str]) -> tuple[dict[str, str], d
 
 def build(sha: str, provider: str, attempt: Path, run_id: int | None) -> None:
     source_commit(sha)
-    require(not run(["git", "status", "--porcelain", "--", "deploy/tke/current.yaml"]).strip(), "current.yaml has local edits; review/commit them before updating pins")
+    config = HERE / "current.yaml"
+    original = config.read_text()
     prefix = PREFIXES[provider]
     pins = None
     images = {c: prefix + c + ":" + sha for c in COMPONENTS}
@@ -339,14 +301,16 @@ def build(sha: str, provider: str, attempt: Path, run_id: int | None) -> None:
             require(result.returncode == 0, "unregistry build failed; do not deploy")
     if pins is None:
         pins, _ = registry_images(sha, images)
-    config = HERE / "current.yaml"
-    text = config.read_text()
+    text = original
     text, count = re.subn(r"(?m)^(  PPAP_BUILD_SHA: ).+$", lambda m: m[1] + sha, text)
     require(count == 1, "expected one application source pin")
     for component, ref in pins.items():
         text, count = re.subn(r"(?m)^([ ]+image: )(?:\S+/)?(?:ppap-|current-)?" + component + r"(?:@|:).+$", lambda m: m[1] + ref, text)
         require(count == 1, "expected one image pin for " + component)
-    config.write_text(text)
+    with (HERE / ".build.lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        require(config.read_text() == original, "current.yaml changed during build; image pins are not applied")
+        config.write_text(text)
     print("Verified all four images. Review and commit deploy/tke/current.yaml; deploy with the native commands in deploy/tke/README.md.", flush=True)
 
 
@@ -359,11 +323,9 @@ def main() -> None:
     args = parser.parse_args()
     os.chdir(ROOT)
     os.environ.setdefault("KUBECONFIG", str(Path.home() / "Projects/work/hax/runtime/tke-cls-6e71r2cz/headscale-ipv6.kubeconfig"))
-    with (HERE / ".build.lock").open("w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        attempt = Path(tempfile.mkdtemp(prefix="ppap-build-"))
-        print("Build/recovery files: " + str(attempt), flush=True)
-        build(args.source, args.provider, attempt, args.run_id)
+    attempt = Path(tempfile.mkdtemp(prefix="ppap-build-"))
+    print("Build/recovery files: " + str(attempt), flush=True)
+    build(args.source, args.provider, attempt, args.run_id)
 
 
 if __name__ == "__main__":
