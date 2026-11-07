@@ -1,194 +1,194 @@
 ﻿数据集,组合ID,文件ID,原件,提交文件名,角色,Suite版本,Checker组,Binding
-v2,1-全功能检验报告_上海亚大.pdf,f001,assets/corpus/documents/v2/1-全功能检验报告_上海亚大.pdf,1-全功能检验报告_上海亚大.pdf,target,sha256:c578b69853678b4dd43ca98544be06de7cdfef95bdce0d19c8fc52e579bf5b1f,PPAP:全功能检验报告,1;2;3;4;5;6;7;8
-v2,1-全功能检验报告_上海亚大.xlsx,f002,assets/corpus/documents/v2/1-全功能检验报告_上海亚大.xlsx,1-全功能检验报告_上海亚大.xlsx,target,sha256:c578b69853678b4dd43ca98544be06de7cdfef95bdce0d19c8fc52e579bf5b1f,PPAP:全功能检验报告,1;2;3;4;5;6;7;8
-v2,1-全功能检验报告_巨一.pdf,f003,assets/corpus/documents/v2/1-全功能检验报告_巨一.pdf,1-全功能检验报告_巨一.pdf,target,sha256:c578b69853678b4dd43ca98544be06de7cdfef95bdce0d19c8fc52e579bf5b1f,PPAP:全功能检验报告,1;2;3;4;5;6;7;8
-v2,1-全功能检验报告_巨一.xlsx,f004,assets/corpus/documents/v2/1-全功能检验报告_巨一.xlsx,1-全功能检验报告_巨一.xlsx,target,sha256:c578b69853678b4dd43ca98544be06de7cdfef95bdce0d19c8fc52e579bf5b1f,PPAP:全功能检验报告,1;2;3;4;5;6;7;8
-v2,1-全功能检验报告_继峰 - 线框被遮挡.pdf,f005,assets/corpus/documents/v2/1-全功能检验报告_继峰 - 线框被遮挡.pdf,1-全功能检验报告_继峰 - 线框被遮挡.pdf,target,sha256:c578b69853678b4dd43ca98544be06de7cdfef95bdce0d19c8fc52e579bf5b1f,PPAP:全功能检验报告,1;2;3;4;5;6;7;8
-v2,1-全功能检验报告_继峰 - 线框被遮挡.xlsx,f006,assets/corpus/documents/v2/1-全功能检验报告_继峰 - 线框被遮挡.xlsx,1-全功能检验报告_继峰 - 线框被遮挡.xlsx,target,sha256:c578b69853678b4dd43ca98544be06de7cdfef95bdce0d19c8fc52e579bf5b1f,PPAP:全功能检验报告,1;2;3;4;5;6;7;8
-v2,1-全功能检验报告_继峰 - 错误.pdf,f007,assets/corpus/documents/v2/1-全功能检验报告_继峰 - 错误.pdf,1-全功能检验报告_继峰 - 错误.pdf,target,sha256:c578b69853678b4dd43ca98544be06de7cdfef95bdce0d19c8fc52e579bf5b1f,PPAP:全功能检验报告,1;2;3;4;5;6;7;8
-v2,1-全功能检验报告_继峰 - 错误.xlsx,f008,assets/corpus/documents/v2/1-全功能检验报告_继峰 - 错误.xlsx,1-全功能检验报告_继峰 - 错误.xlsx,target,sha256:c578b69853678b4dd43ca98544be06de7cdfef95bdce0d19c8fc52e579bf5b1f,PPAP:全功能检验报告,1;2;3;4;5;6;7;8
-v2,1-全功能检验报告_继峰.pdf,f009,assets/corpus/documents/v2/1-全功能检验报告_继峰.pdf,1-全功能检验报告_继峰.pdf,target,sha256:c578b69853678b4dd43ca98544be06de7cdfef95bdce0d19c8fc52e579bf5b1f,PPAP:全功能检验报告,1;2;3;4;5;6;7;8
-v2,1-全功能检验报告_继峰.xlsx,f010,assets/corpus/documents/v2/1-全功能检验报告_继峰.xlsx,1-全功能检验报告_继峰.xlsx,target,sha256:c578b69853678b4dd43ca98544be06de7cdfef95bdce0d19c8fc52e579bf5b1f,PPAP:全功能检验报告,1;2;3;4;5;6;7;8
-v2,10-控制计划-上海亚大.pdf,f011,assets/corpus/documents/v2/10-控制计划-上海亚大.pdf,10-控制计划-上海亚大.pdf,target,sha256:272f2ecd4e9444e9ba27719a368db8c01d8ab6a754207b618ded37ca893ad586,PPAP:控制计划,1;2;3;4;5;6
-v2,10-控制计划-上海亚大.xlsx,f012,assets/corpus/documents/v2/10-控制计划-上海亚大.xlsx,10-控制计划-上海亚大.xlsx,target,sha256:272f2ecd4e9444e9ba27719a368db8c01d8ab6a754207b618ded37ca893ad586,PPAP:控制计划,1;2;3;4;5;6
-v2,10-控制计划-常州新泉.pdf,f013,assets/corpus/documents/v2/10-控制计划-常州新泉.pdf,10-控制计划-常州新泉.pdf,target,sha256:272f2ecd4e9444e9ba27719a368db8c01d8ab6a754207b618ded37ca893ad586,PPAP:控制计划,1;2;3;4;5;6
-v2,10-控制计划-常州新泉.xlsx,f014,assets/corpus/documents/v2/10-控制计划-常州新泉.xlsx,10-控制计划-常州新泉.xlsx,target,sha256:272f2ecd4e9444e9ba27719a368db8c01d8ab6a754207b618ded37ca893ad586,PPAP:控制计划,1;2;3;4;5;6
-v2,10-控制计划-继峰 - 无边框.pdf,f015,assets/corpus/documents/v2/10-控制计划-继峰 - 无边框.pdf,10-控制计划-继峰 - 无边框.pdf,target,sha256:272f2ecd4e9444e9ba27719a368db8c01d8ab6a754207b618ded37ca893ad586,PPAP:控制计划,1;2;3;4;5;6
-v2,10-控制计划-继峰 - 无边框.xlsx,f016,assets/corpus/documents/v2/10-控制计划-继峰 - 无边框.xlsx,10-控制计划-继峰 - 无边框.xlsx,target,sha256:272f2ecd4e9444e9ba27719a368db8c01d8ab6a754207b618ded37ca893ad586,PPAP:控制计划,1;2;3;4;5;6
-v2,10-控制计划-继峰 - 错误.pdf,f017,assets/corpus/documents/v2/10-控制计划-继峰 - 错误.pdf,10-控制计划-继峰 - 错误.pdf,target,sha256:272f2ecd4e9444e9ba27719a368db8c01d8ab6a754207b618ded37ca893ad586,PPAP:控制计划,1;2;3;4;5;6
-v2,10-控制计划-继峰 - 错误.xlsx,f018,assets/corpus/documents/v2/10-控制计划-继峰 - 错误.xlsx,10-控制计划-继峰 - 错误.xlsx,target,sha256:272f2ecd4e9444e9ba27719a368db8c01d8ab6a754207b618ded37ca893ad586,PPAP:控制计划,1;2;3;4;5;6
-v2,10-控制计划-继峰.pdf,f019,assets/corpus/documents/v2/10-控制计划-继峰.pdf,10-控制计划-继峰.pdf,target,sha256:272f2ecd4e9444e9ba27719a368db8c01d8ab6a754207b618ded37ca893ad586,PPAP:控制计划,1;2;3;4;5;6
-v2,10-控制计划-继峰.xlsx,f020,assets/corpus/documents/v2/10-控制计划-继峰.xlsx,10-控制计划-继峰.xlsx,target,sha256:272f2ecd4e9444e9ba27719a368db8c01d8ab6a754207b618ded37ca893ad586,PPAP:控制计划,1;2;3;4;5;6
-v2,11-过程特殊特性清单-上海大亚.pdf,f021,assets/corpus/documents/v2/11-过程特殊特性清单-上海大亚.pdf,11-过程特殊特性清单-上海大亚.pdf,target,sha256:1f96fe0330d71c7e2d4dbf05fbdc4a4c73f59460c6b9d9a6d347e167cf7d2c9b,PPAP:过程特殊特性清单,1;2;3
-v2,11-过程特殊特性清单-上海大亚.xlsx,f022,assets/corpus/documents/v2/11-过程特殊特性清单-上海大亚.xlsx,11-过程特殊特性清单-上海大亚.xlsx,target,sha256:1f96fe0330d71c7e2d4dbf05fbdc4a4c73f59460c6b9d9a6d347e167cf7d2c9b,PPAP:过程特殊特性清单,1;2;3
-v2,11-过程特殊特性清单-巨一.pdf,f023,assets/corpus/documents/v2/11-过程特殊特性清单-巨一.pdf,11-过程特殊特性清单-巨一.pdf,target,sha256:1f96fe0330d71c7e2d4dbf05fbdc4a4c73f59460c6b9d9a6d347e167cf7d2c9b,PPAP:过程特殊特性清单,1;2;3
-v2,11-过程特殊特性清单-巨一.xlsx,f024,assets/corpus/documents/v2/11-过程特殊特性清单-巨一.xlsx,11-过程特殊特性清单-巨一.xlsx,target,sha256:1f96fe0330d71c7e2d4dbf05fbdc4a4c73f59460c6b9d9a6d347e167cf7d2c9b,PPAP:过程特殊特性清单,1;2;3
-v2,11-过程特殊特性清单-继峰 - 无边框.pdf,f025,assets/corpus/documents/v2/11-过程特殊特性清单-继峰 - 无边框.pdf,11-过程特殊特性清单-继峰 - 无边框.pdf,target,sha256:1f96fe0330d71c7e2d4dbf05fbdc4a4c73f59460c6b9d9a6d347e167cf7d2c9b,PPAP:过程特殊特性清单,1;2;3
-v2,11-过程特殊特性清单-继峰 - 无边框.xlsx,f026,assets/corpus/documents/v2/11-过程特殊特性清单-继峰 - 无边框.xlsx,11-过程特殊特性清单-继峰 - 无边框.xlsx,target,sha256:1f96fe0330d71c7e2d4dbf05fbdc4a4c73f59460c6b9d9a6d347e167cf7d2c9b,PPAP:过程特殊特性清单,1;2;3
-v2,11-过程特殊特性清单-继峰 - 错误.pdf,f027,assets/corpus/documents/v2/11-过程特殊特性清单-继峰 - 错误.pdf,11-过程特殊特性清单-继峰 - 错误.pdf,target,sha256:1f96fe0330d71c7e2d4dbf05fbdc4a4c73f59460c6b9d9a6d347e167cf7d2c9b,PPAP:过程特殊特性清单,1;2;3
-v2,11-过程特殊特性清单-继峰 - 错误.xlsx,f028,assets/corpus/documents/v2/11-过程特殊特性清单-继峰 - 错误.xlsx,11-过程特殊特性清单-继峰 - 错误.xlsx,target,sha256:1f96fe0330d71c7e2d4dbf05fbdc4a4c73f59460c6b9d9a6d347e167cf7d2c9b,PPAP:过程特殊特性清单,1;2;3
-v2,11-过程特殊特性清单-继峰.pdf,f029,assets/corpus/documents/v2/11-过程特殊特性清单-继峰.pdf,11-过程特殊特性清单-继峰.pdf,target,sha256:1f96fe0330d71c7e2d4dbf05fbdc4a4c73f59460c6b9d9a6d347e167cf7d2c9b,PPAP:过程特殊特性清单,1;2;3
-v2,11-过程特殊特性清单-继峰.xlsx,f030,assets/corpus/documents/v2/11-过程特殊特性清单-继峰.xlsx,11-过程特殊特性清单-继峰.xlsx,target,sha256:1f96fe0330d71c7e2d4dbf05fbdc4a4c73f59460c6b9d9a6d347e167cf7d2c9b,PPAP:过程特殊特性清单,1;2;3
-v2,12-设备清单-上海亚大.pdf,f031,assets/corpus/documents/v2/12-设备清单-上海亚大.pdf,12-设备清单-上海亚大.pdf,target,sha256:877068e13ad0addea16631e1421fc9658bed703f4d4f69491cea00afc97cf3f2,PPAP:设备清单,1;2
-v2,12-设备清单-上海亚大.xlsx,f032,assets/corpus/documents/v2/12-设备清单-上海亚大.xlsx,12-设备清单-上海亚大.xlsx,target,sha256:877068e13ad0addea16631e1421fc9658bed703f4d4f69491cea00afc97cf3f2,PPAP:设备清单,1;2
-v2,12-设备清单-巨一.pdf,f033,assets/corpus/documents/v2/12-设备清单-巨一.pdf,12-设备清单-巨一.pdf,target,sha256:877068e13ad0addea16631e1421fc9658bed703f4d4f69491cea00afc97cf3f2,PPAP:设备清单,1;2
-v2,12-设备清单-巨一.xlsx,f034,assets/corpus/documents/v2/12-设备清单-巨一.xlsx,12-设备清单-巨一.xlsx,target,sha256:877068e13ad0addea16631e1421fc9658bed703f4d4f69491cea00afc97cf3f2,PPAP:设备清单,1;2
-v2,12-设备清单-常州新泉.pdf,f035,assets/corpus/documents/v2/12-设备清单-常州新泉.pdf,12-设备清单-常州新泉.pdf,target,sha256:877068e13ad0addea16631e1421fc9658bed703f4d4f69491cea00afc97cf3f2,PPAP:设备清单,1;2
-v2,12-设备清单-常州新泉.xlsx,f036,assets/corpus/documents/v2/12-设备清单-常州新泉.xlsx,12-设备清单-常州新泉.xlsx,target,sha256:877068e13ad0addea16631e1421fc9658bed703f4d4f69491cea00afc97cf3f2,PPAP:设备清单,1;2
-v2,12-设备清单-继峰 - 无边框.pdf,f037,assets/corpus/documents/v2/12-设备清单-继峰 - 无边框.pdf,12-设备清单-继峰 - 无边框.pdf,target,sha256:877068e13ad0addea16631e1421fc9658bed703f4d4f69491cea00afc97cf3f2,PPAP:设备清单,1;2
-v2,12-设备清单-继峰 - 无边框.xlsx,f038,assets/corpus/documents/v2/12-设备清单-继峰 - 无边框.xlsx,12-设备清单-继峰 - 无边框.xlsx,target,sha256:877068e13ad0addea16631e1421fc9658bed703f4d4f69491cea00afc97cf3f2,PPAP:设备清单,1;2
-v2,12-设备清单-继峰 - 错误.pdf,f039,assets/corpus/documents/v2/12-设备清单-继峰 - 错误.pdf,12-设备清单-继峰 - 错误.pdf,target,sha256:877068e13ad0addea16631e1421fc9658bed703f4d4f69491cea00afc97cf3f2,PPAP:设备清单,1;2
-v2,12-设备清单-继峰 - 错误.xlsx,f040,assets/corpus/documents/v2/12-设备清单-继峰 - 错误.xlsx,12-设备清单-继峰 - 错误.xlsx,target,sha256:877068e13ad0addea16631e1421fc9658bed703f4d4f69491cea00afc97cf3f2,PPAP:设备清单,1;2
-v2,12-设备清单-继峰.pdf,f041,assets/corpus/documents/v2/12-设备清单-继峰.pdf,12-设备清单-继峰.pdf,target,sha256:877068e13ad0addea16631e1421fc9658bed703f4d4f69491cea00afc97cf3f2,PPAP:设备清单,1;2
-v2,12-设备清单-继峰.xlsx,f042,assets/corpus/documents/v2/12-设备清单-继峰.xlsx,12-设备清单-继峰.xlsx,target,sha256:877068e13ad0addea16631e1421fc9658bed703f4d4f69491cea00afc97cf3f2,PPAP:设备清单,1;2
-v2,13-生产系统产能评估报告-上海亚大.pdf,f043,assets/corpus/documents/v2/13-生产系统产能评估报告-上海亚大.pdf,13-生产系统产能评估报告-上海亚大.pdf,target,sha256:d2f97f87b5ef592cb61d3de698b14c2139e4b185ce6899d42dc703e4c0b9c1be,PPAP:生产系统产能评估报告,1;2;3;4;5;6
-v2,13-生产系统产能评估报告-上海亚大.xlsx,f044,assets/corpus/documents/v2/13-生产系统产能评估报告-上海亚大.xlsx,13-生产系统产能评估报告-上海亚大.xlsx,target,sha256:d2f97f87b5ef592cb61d3de698b14c2139e4b185ce6899d42dc703e4c0b9c1be,PPAP:生产系统产能评估报告,1;2;3;4;5;6
-v2,13-生产系统产能评估报告-巨一.pdf,f045,assets/corpus/documents/v2/13-生产系统产能评估报告-巨一.pdf,13-生产系统产能评估报告-巨一.pdf,target,sha256:d2f97f87b5ef592cb61d3de698b14c2139e4b185ce6899d42dc703e4c0b9c1be,PPAP:生产系统产能评估报告,1;2;3;4;5;6
-v2,13-生产系统产能评估报告-巨一.xlsx,f046,assets/corpus/documents/v2/13-生产系统产能评估报告-巨一.xlsx,13-生产系统产能评估报告-巨一.xlsx,target,sha256:d2f97f87b5ef592cb61d3de698b14c2139e4b185ce6899d42dc703e4c0b9c1be,PPAP:生产系统产能评估报告,1;2;3;4;5;6
-v2,13-生产系统产能评估报告-常州新泉.pdf,f047,assets/corpus/documents/v2/13-生产系统产能评估报告-常州新泉.pdf,13-生产系统产能评估报告-常州新泉.pdf,target,sha256:d2f97f87b5ef592cb61d3de698b14c2139e4b185ce6899d42dc703e4c0b9c1be,PPAP:生产系统产能评估报告,1;2;3;4;5;6
-v2,13-生产系统产能评估报告-常州新泉.xlsx,f048,assets/corpus/documents/v2/13-生产系统产能评估报告-常州新泉.xlsx,13-生产系统产能评估报告-常州新泉.xlsx,target,sha256:d2f97f87b5ef592cb61d3de698b14c2139e4b185ce6899d42dc703e4c0b9c1be,PPAP:生产系统产能评估报告,1;2;3;4;5;6
-v2,13-生产系统产能评估报告-继峰 - 无边框.pdf,f049,assets/corpus/documents/v2/13-生产系统产能评估报告-继峰 - 无边框.pdf,13-生产系统产能评估报告-继峰 - 无边框.pdf,target,sha256:d2f97f87b5ef592cb61d3de698b14c2139e4b185ce6899d42dc703e4c0b9c1be,PPAP:生产系统产能评估报告,1;2;3;4;5;6
-v2,13-生产系统产能评估报告-继峰 - 无边框.xlsx,f050,assets/corpus/documents/v2/13-生产系统产能评估报告-继峰 - 无边框.xlsx,13-生产系统产能评估报告-继峰 - 无边框.xlsx,target,sha256:d2f97f87b5ef592cb61d3de698b14c2139e4b185ce6899d42dc703e4c0b9c1be,PPAP:生产系统产能评估报告,1;2;3;4;5;6
-v2,13-生产系统产能评估报告-继峰 - 错误.pdf,f051,assets/corpus/documents/v2/13-生产系统产能评估报告-继峰 - 错误.pdf,13-生产系统产能评估报告-继峰 - 错误.pdf,target,sha256:d2f97f87b5ef592cb61d3de698b14c2139e4b185ce6899d42dc703e4c0b9c1be,PPAP:生产系统产能评估报告,1;2;3;4;5;6
-v2,13-生产系统产能评估报告-继峰 - 错误.xlsx,f052,assets/corpus/documents/v2/13-生产系统产能评估报告-继峰 - 错误.xlsx,13-生产系统产能评估报告-继峰 - 错误.xlsx,target,sha256:d2f97f87b5ef592cb61d3de698b14c2139e4b185ce6899d42dc703e4c0b9c1be,PPAP:生产系统产能评估报告,1;2;3;4;5;6
-v2,13-生产系统产能评估报告-继峰.pdf,f053,assets/corpus/documents/v2/13-生产系统产能评估报告-继峰.pdf,13-生产系统产能评估报告-继峰.pdf,target,sha256:d2f97f87b5ef592cb61d3de698b14c2139e4b185ce6899d42dc703e4c0b9c1be,PPAP:生产系统产能评估报告,1;2;3;4;5;6
-v2,13-生产系统产能评估报告-继峰.xlsx,f054,assets/corpus/documents/v2/13-生产系统产能评估报告-继峰.xlsx,13-生产系统产能评估报告-继峰.xlsx,target,sha256:d2f97f87b5ef592cb61d3de698b14c2139e4b185ce6899d42dc703e4c0b9c1be,PPAP:生产系统产能评估报告,1;2;3;4;5;6
-v2,14-APQP项目问题清单-上海亚大.pdf,f055,assets/corpus/documents/v2/14-APQP项目问题清单-上海亚大.pdf,14-APQP项目问题清单-上海亚大.pdf,target,sha256:91472c8f108b4bd784ebd237570bfb0fb399f43b75326c3486d8501f229665c3,PPAP:项目问题清单,1;2;3;4
-v2,14-APQP项目问题清单-上海亚大.xlsx,f056,assets/corpus/documents/v2/14-APQP项目问题清单-上海亚大.xlsx,14-APQP项目问题清单-上海亚大.xlsx,target,sha256:91472c8f108b4bd784ebd237570bfb0fb399f43b75326c3486d8501f229665c3,PPAP:项目问题清单,1;2;3;4
-v2,14-APQP项目问题清单-巨一.pdf,f057,assets/corpus/documents/v2/14-APQP项目问题清单-巨一.pdf,14-APQP项目问题清单-巨一.pdf,target,sha256:91472c8f108b4bd784ebd237570bfb0fb399f43b75326c3486d8501f229665c3,PPAP:项目问题清单,1;2;3;4
-v2,14-APQP项目问题清单-巨一.xlsx,f058,assets/corpus/documents/v2/14-APQP项目问题清单-巨一.xlsx,14-APQP项目问题清单-巨一.xlsx,target,sha256:91472c8f108b4bd784ebd237570bfb0fb399f43b75326c3486d8501f229665c3,PPAP:项目问题清单,1;2;3;4
-v2,14-APQP项目问题清单-继峰 - 无边框.pdf,f059,assets/corpus/documents/v2/14-APQP项目问题清单-继峰 - 无边框.pdf,14-APQP项目问题清单-继峰 - 无边框.pdf,target,sha256:91472c8f108b4bd784ebd237570bfb0fb399f43b75326c3486d8501f229665c3,PPAP:项目问题清单,1;2;3;4
-v2,14-APQP项目问题清单-继峰 - 无边框.xlsx,f060,assets/corpus/documents/v2/14-APQP项目问题清单-继峰 - 无边框.xlsx,14-APQP项目问题清单-继峰 - 无边框.xlsx,target,sha256:91472c8f108b4bd784ebd237570bfb0fb399f43b75326c3486d8501f229665c3,PPAP:项目问题清单,1;2;3;4
-v2,14-APQP项目问题清单-继峰 - 错误.pdf,f061,assets/corpus/documents/v2/14-APQP项目问题清单-继峰 - 错误.pdf,14-APQP项目问题清单-继峰 - 错误.pdf,target,sha256:91472c8f108b4bd784ebd237570bfb0fb399f43b75326c3486d8501f229665c3,PPAP:项目问题清单,1;2;3;4
-v2,14-APQP项目问题清单-继峰 - 错误.xlsx,f062,assets/corpus/documents/v2/14-APQP项目问题清单-继峰 - 错误.xlsx,14-APQP项目问题清单-继峰 - 错误.xlsx,target,sha256:91472c8f108b4bd784ebd237570bfb0fb399f43b75326c3486d8501f229665c3,PPAP:项目问题清单,1;2;3;4
-v2,14-APQP项目问题清单-继峰.pdf,f063,assets/corpus/documents/v2/14-APQP项目问题清单-继峰.pdf,14-APQP项目问题清单-继峰.pdf,target,sha256:91472c8f108b4bd784ebd237570bfb0fb399f43b75326c3486d8501f229665c3,PPAP:项目问题清单,1;2;3;4
-v2,14-APQP项目问题清单-继峰.xlsx,f064,assets/corpus/documents/v2/14-APQP项目问题清单-继峰.xlsx,14-APQP项目问题清单-继峰.xlsx,target,sha256:91472c8f108b4bd784ebd237570bfb0fb399f43b75326c3486d8501f229665c3,PPAP:项目问题清单,1;2;3;4
-v2,15-零部件年度试验要求-上海亚大.pdf,f065,assets/corpus/documents/v2/15-零部件年度试验要求-上海亚大.pdf,15-零部件年度试验要求-上海亚大.pdf,target,sha256:8dbf6236c0d85eabc4c2d6458358ecc4d066a36aba8a292802e9daf600858894,PPAP:零部件年度试验要求,1;2;3;4;5;6
-v2,15-零部件年度试验要求-上海亚大.xlsx,f066,assets/corpus/documents/v2/15-零部件年度试验要求-上海亚大.xlsx,15-零部件年度试验要求-上海亚大.xlsx,target,sha256:8dbf6236c0d85eabc4c2d6458358ecc4d066a36aba8a292802e9daf600858894,PPAP:零部件年度试验要求,1;2;3;4;5;6
-v2,15-零部件年度试验要求-巨一.pdf,f067,assets/corpus/documents/v2/15-零部件年度试验要求-巨一.pdf,15-零部件年度试验要求-巨一.pdf,target,sha256:8dbf6236c0d85eabc4c2d6458358ecc4d066a36aba8a292802e9daf600858894,PPAP:零部件年度试验要求,1;2;3;4;5;6
-v2,15-零部件年度试验要求-巨一.xlsx,f068,assets/corpus/documents/v2/15-零部件年度试验要求-巨一.xlsx,15-零部件年度试验要求-巨一.xlsx,target,sha256:8dbf6236c0d85eabc4c2d6458358ecc4d066a36aba8a292802e9daf600858894,PPAP:零部件年度试验要求,1;2;3;4;5;6
-v2,15-零部件年度试验要求-常州新泉.pdf,f069,assets/corpus/documents/v2/15-零部件年度试验要求-常州新泉.pdf,15-零部件年度试验要求-常州新泉.pdf,target,sha256:8dbf6236c0d85eabc4c2d6458358ecc4d066a36aba8a292802e9daf600858894,PPAP:零部件年度试验要求,1;2;3;4;5;6
-v2,15-零部件年度试验要求-常州新泉.xlsx,f070,assets/corpus/documents/v2/15-零部件年度试验要求-常州新泉.xlsx,15-零部件年度试验要求-常州新泉.xlsx,target,sha256:8dbf6236c0d85eabc4c2d6458358ecc4d066a36aba8a292802e9daf600858894,PPAP:零部件年度试验要求,1;2;3;4;5;6
-v2,15-零部件年度试验要求-继峰 - 无边框.pdf,f071,assets/corpus/documents/v2/15-零部件年度试验要求-继峰 - 无边框.pdf,15-零部件年度试验要求-继峰 - 无边框.pdf,target,sha256:8dbf6236c0d85eabc4c2d6458358ecc4d066a36aba8a292802e9daf600858894,PPAP:零部件年度试验要求,1;2;3;4;5;6
-v2,15-零部件年度试验要求-继峰 - 无边框.xlsx,f072,assets/corpus/documents/v2/15-零部件年度试验要求-继峰 - 无边框.xlsx,15-零部件年度试验要求-继峰 - 无边框.xlsx,target,sha256:8dbf6236c0d85eabc4c2d6458358ecc4d066a36aba8a292802e9daf600858894,PPAP:零部件年度试验要求,1;2;3;4;5;6
-v2,15-零部件年度试验要求-继峰 - 错误.pdf,f073,assets/corpus/documents/v2/15-零部件年度试验要求-继峰 - 错误.pdf,15-零部件年度试验要求-继峰 - 错误.pdf,target,sha256:8dbf6236c0d85eabc4c2d6458358ecc4d066a36aba8a292802e9daf600858894,PPAP:零部件年度试验要求,1;2;3;4;5;6
-v2,15-零部件年度试验要求-继峰 - 错误.xlsx,f074,assets/corpus/documents/v2/15-零部件年度试验要求-继峰 - 错误.xlsx,15-零部件年度试验要求-继峰 - 错误.xlsx,target,sha256:8dbf6236c0d85eabc4c2d6458358ecc4d066a36aba8a292802e9daf600858894,PPAP:零部件年度试验要求,1;2;3;4;5;6
-v2,15-零部件年度试验要求-继峰.pdf,f075,assets/corpus/documents/v2/15-零部件年度试验要求-继峰.pdf,15-零部件年度试验要求-继峰.pdf,target,sha256:8dbf6236c0d85eabc4c2d6458358ecc4d066a36aba8a292802e9daf600858894,PPAP:零部件年度试验要求,1;2;3;4;5;6
-v2,15-零部件年度试验要求-继峰.xlsx,f076,assets/corpus/documents/v2/15-零部件年度试验要求-继峰.xlsx,15-零部件年度试验要求-继峰.xlsx,target,sha256:8dbf6236c0d85eabc4c2d6458358ecc4d066a36aba8a292802e9daf600858894,PPAP:零部件年度试验要求,1;2;3;4;5;6
-v2,16-零件提交保证书-上海亚大.pdf,f077,assets/corpus/documents/v2/16-零件提交保证书-上海亚大.pdf,16-零件提交保证书-上海亚大.pdf,target,sha256:6f0ceb031ee630401b9ac92052920059dff541b779854b432b3c2247ec04a119,PPAP:零件提交保证书,1;2;3;4;5;6;7;8;9;10
-v2,16-零件提交保证书-常州新泉.pdf,f078,assets/corpus/documents/v2/16-零件提交保证书-常州新泉.pdf,16-零件提交保证书-常州新泉.pdf,target,sha256:6f0ceb031ee630401b9ac92052920059dff541b779854b432b3c2247ec04a119,PPAP:零件提交保证书,1;2;3;4;5;6;7;8;9;10
-v2,16-零件提交保证书-继峰 - 无边框.pdf,f079,assets/corpus/documents/v2/16-零件提交保证书-继峰 - 无边框.pdf,16-零件提交保证书-继峰 - 无边框.pdf,target,sha256:6f0ceb031ee630401b9ac92052920059dff541b779854b432b3c2247ec04a119,PPAP:零件提交保证书,1;2;3;4;5;6;7;8;9;10
-v2,16-零件提交保证书-继峰.pdf,f080,assets/corpus/documents/v2/16-零件提交保证书-继峰.pdf,16-零件提交保证书-继峰.pdf,target,sha256:6f0ceb031ee630401b9ac92052920059dff541b779854b432b3c2247ec04a119,PPAP:零件提交保证书,1;2;3;4;5;6;7;8;9;10
-v2,2-零部件设计验证计划和报告_上海亚大.pdf,f081,assets/corpus/documents/v2/2-零部件设计验证计划和报告_上海亚大.pdf,2-零部件设计验证计划和报告_上海亚大.pdf,target,sha256:50bf41cced02ab3827d2e4221a5a64502fe9f3c00ac4cb1ebcb32b86936827f6,PPAP:零部件设计验证计划和报告,1;2;3;4;5;6;7
-v2,2-零部件设计验证计划和报告_上海亚大.xlsx,f082,assets/corpus/documents/v2/2-零部件设计验证计划和报告_上海亚大.xlsx,2-零部件设计验证计划和报告_上海亚大.xlsx,target,sha256:50bf41cced02ab3827d2e4221a5a64502fe9f3c00ac4cb1ebcb32b86936827f6,PPAP:零部件设计验证计划和报告,1;2;3;4;5;6;7
-v2,2-零部件设计验证计划和报告_继峰 - 错误.pdf,f083,assets/corpus/documents/v2/2-零部件设计验证计划和报告_继峰 - 错误.pdf,2-零部件设计验证计划和报告_继峰 - 错误.pdf,target,sha256:50bf41cced02ab3827d2e4221a5a64502fe9f3c00ac4cb1ebcb32b86936827f6,PPAP:零部件设计验证计划和报告,1;2;3;4;5;6;7
-v2,2-零部件设计验证计划和报告_继峰 - 错误.xlsx,f084,assets/corpus/documents/v2/2-零部件设计验证计划和报告_继峰 - 错误.xlsx,2-零部件设计验证计划和报告_继峰 - 错误.xlsx,target,sha256:50bf41cced02ab3827d2e4221a5a64502fe9f3c00ac4cb1ebcb32b86936827f6,PPAP:零部件设计验证计划和报告,1;2;3;4;5;6;7
-v2,2-零部件设计验证计划和报告_继峰-线框被遮挡.pdf,f085,assets/corpus/documents/v2/2-零部件设计验证计划和报告_继峰-线框被遮挡.pdf,2-零部件设计验证计划和报告_继峰-线框被遮挡.pdf,target,sha256:50bf41cced02ab3827d2e4221a5a64502fe9f3c00ac4cb1ebcb32b86936827f6,PPAP:零部件设计验证计划和报告,1;2;3;4;5;6;7
-v2,2-零部件设计验证计划和报告_继峰-线框被遮挡.xlsx,f086,assets/corpus/documents/v2/2-零部件设计验证计划和报告_继峰-线框被遮挡.xlsx,2-零部件设计验证计划和报告_继峰-线框被遮挡.xlsx,target,sha256:50bf41cced02ab3827d2e4221a5a64502fe9f3c00ac4cb1ebcb32b86936827f6,PPAP:零部件设计验证计划和报告,1;2;3;4;5;6;7
-v2,2-零部件设计验证计划和报告_继峰.pdf,f087,assets/corpus/documents/v2/2-零部件设计验证计划和报告_继峰.pdf,2-零部件设计验证计划和报告_继峰.pdf,target,sha256:50bf41cced02ab3827d2e4221a5a64502fe9f3c00ac4cb1ebcb32b86936827f6,PPAP:零部件设计验证计划和报告,1;2;3;4;5;6;7
-v2,2-零部件设计验证计划和报告_继峰.xlsx,f088,assets/corpus/documents/v2/2-零部件设计验证计划和报告_继峰.xlsx,2-零部件设计验证计划和报告_继峰.xlsx,target,sha256:50bf41cced02ab3827d2e4221a5a64502fe9f3c00ac4cb1ebcb32b86936827f6,PPAP:零部件设计验证计划和报告,1;2;3;4;5;6;7
-v2,3-动力电池 - APQP交付物2-19 产品分供方清单（含散装材料）_V2.0(1).xlsx,f089,assets/corpus/documents/v2/3-动力电池 - APQP交付物2-19 产品分供方清单（含散装材料）_V2.0(1).xlsx,3-动力电池 - APQP交付物2-19 产品分供方清单（含散装材料）_V2.0(1).xlsx,target,sha256:ad54b862792aea9702bb8557805d77b4909f21580a41aff2950469b837fe699e,PPAP:材料产品及分供清单,1;2;3;4
-v2,3-增程系统 - 材料分供方.pdf,f090,assets/corpus/documents/v2/3-增程系统 - 材料分供方.pdf,3-增程系统 - 材料分供方.pdf,target,sha256:ad54b862792aea9702bb8557805d77b4909f21580a41aff2950469b837fe699e,PPAP:材料产品及分供清单,1;2;3;4
-v2,3-底盘 - APQP交付物2-8 材料及分供方清单 v1.0 (2).xlsx,f091,assets/corpus/documents/v2/3-底盘 - APQP交付物2-8 材料及分供方清单 v1.0 (2).xlsx,3-底盘 - APQP交付物2-8 材料及分供方清单 v1.0 (2).xlsx,target,sha256:ad54b862792aea9702bb8557805d77b4909f21580a41aff2950469b837fe699e,PPAP:材料产品及分供清单,1;2;3;4
-v2,3-智能与电器 - W02 APQP交付物2-8 材料、产品及分供方清单_V3.0.pdf,f092,assets/corpus/documents/v2/3-智能与电器 - W02 APQP交付物2-8 材料、产品及分供方清单_V3.0.pdf,3-智能与电器 - W02 APQP交付物2-8 材料、产品及分供方清单_V3.0.pdf,target,sha256:ad54b862792aea9702bb8557805d77b4909f21580a41aff2950469b837fe699e,PPAP:材料产品及分供清单,1;2;3;4
-v2,3-材料产品及分供方清单_巨一.pdf,f093,assets/corpus/documents/v2/3-材料产品及分供方清单_巨一.pdf,3-材料产品及分供方清单_巨一.pdf,target,sha256:ad54b862792aea9702bb8557805d77b4909f21580a41aff2950469b837fe699e,PPAP:材料产品及分供清单,1;2;3;4
-v2,3-材料产品及分供方清单_巨一.xlsx,f094,assets/corpus/documents/v2/3-材料产品及分供方清单_巨一.xlsx,3-材料产品及分供方清单_巨一.xlsx,target,sha256:ad54b862792aea9702bb8557805d77b4909f21580a41aff2950469b837fe699e,PPAP:材料产品及分供清单,1;2;3;4
-v2,3-材料产品及分供方清单_继峰 - 表头无线框.pdf,f095,assets/corpus/documents/v2/3-材料产品及分供方清单_继峰 - 表头无线框.pdf,3-材料产品及分供方清单_继峰 - 表头无线框.pdf,target,sha256:ad54b862792aea9702bb8557805d77b4909f21580a41aff2950469b837fe699e,PPAP:材料产品及分供清单,1;2;3;4
-v2,3-材料产品及分供方清单_继峰 - 表头无线框.xlsx,f096,assets/corpus/documents/v2/3-材料产品及分供方清单_继峰 - 表头无线框.xlsx,3-材料产品及分供方清单_继峰 - 表头无线框.xlsx,target,sha256:ad54b862792aea9702bb8557805d77b4909f21580a41aff2950469b837fe699e,PPAP:材料产品及分供清单,1;2;3;4
-v2,3-材料产品及分供方清单_继峰.pdf,f097,assets/corpus/documents/v2/3-材料产品及分供方清单_继峰.pdf,3-材料产品及分供方清单_继峰.pdf,target,sha256:ad54b862792aea9702bb8557805d77b4909f21580a41aff2950469b837fe699e,PPAP:材料产品及分供清单,1;2;3;4
-v2,3-材料产品及分供方清单_继峰.xlsx,f098,assets/corpus/documents/v2/3-材料产品及分供方清单_继峰.xlsx,3-材料产品及分供方清单_继峰.xlsx,target,sha256:ad54b862792aea9702bb8557805d77b4909f21580a41aff2950469b837fe699e,PPAP:材料产品及分供清单,1;2;3;4
-v2,3-材料产品及分工清单_上海亚大.pdf,f099,assets/corpus/documents/v2/3-材料产品及分工清单_上海亚大.pdf,3-材料产品及分工清单_上海亚大.pdf,target,sha256:ad54b862792aea9702bb8557805d77b4909f21580a41aff2950469b837fe699e,PPAP:材料产品及分供清单,1;2;3;4
-v2,3-材料产品及分工清单_上海亚大.xlsx,f100,assets/corpus/documents/v2/3-材料产品及分工清单_上海亚大.xlsx,3-材料产品及分工清单_上海亚大.xlsx,target,sha256:ad54b862792aea9702bb8557805d77b4909f21580a41aff2950469b837fe699e,PPAP:材料产品及分供清单,1;2;3;4
-v2,3-热管理 - 07-08 W02材料及分供方清单20250527.pdf,f101,assets/corpus/documents/v2/3-热管理 - 07-08 W02材料及分供方清单20250527.pdf,3-热管理 - 07-08 W02材料及分供方清单20250527.pdf,target,sha256:ad54b862792aea9702bb8557805d77b4909f21580a41aff2950469b837fe699e,PPAP:材料产品及分供清单,1;2;3;4
-v2,3-电驱动 - APQP交付物2-19 产品分供方清单.xlsx,f102,assets/corpus/documents/v2/3-电驱动 - APQP交付物2-19 产品分供方清单.xlsx,3-电驱动 - APQP交付物2-19 产品分供方清单.xlsx,target,sha256:ad54b862792aea9702bb8557805d77b4909f21580a41aff2950469b837fe699e,PPAP:材料产品及分供清单,1;2;3;4
-v2,4-检具验收报告-动力电池-错误.pdf,f103,assets/corpus/documents/v2/4-检具验收报告-动力电池-错误.pdf,4-检具验收报告-动力电池-错误.pdf,target,sha256:e6c1f6f7327e40229cef6fc6c7a0283e77c746990a274eb9e7397c67ca481c97,PPAP:检具验收报告,1;2;3
-v2,4-检具验收报告-动力电池-错误.xlsx,f104,assets/corpus/documents/v2/4-检具验收报告-动力电池-错误.xlsx,4-检具验收报告-动力电池-错误.xlsx,target,sha256:e6c1f6f7327e40229cef6fc6c7a0283e77c746990a274eb9e7397c67ca481c97,PPAP:检具验收报告,1;2;3
-v2,4-检具验收报告-巨一.pdf,f105,assets/corpus/documents/v2/4-检具验收报告-巨一.pdf,4-检具验收报告-巨一.pdf,target,sha256:e6c1f6f7327e40229cef6fc6c7a0283e77c746990a274eb9e7397c67ca481c97,PPAP:检具验收报告,1;2;3
-v2,4-检具验收报告-巨一.xlsx,f106,assets/corpus/documents/v2/4-检具验收报告-巨一.xlsx,4-检具验收报告-巨一.xlsx,target,sha256:e6c1f6f7327e40229cef6fc6c7a0283e77c746990a274eb9e7397c67ca481c97,PPAP:检具验收报告,1;2;3
-v2,4-检具验收报告-继峰 - 表头缺少线框.pdf,f107,assets/corpus/documents/v2/4-检具验收报告-继峰 - 表头缺少线框.pdf,4-检具验收报告-继峰 - 表头缺少线框.pdf,target,sha256:e6c1f6f7327e40229cef6fc6c7a0283e77c746990a274eb9e7397c67ca481c97,PPAP:检具验收报告,1;2;3
-v2,4-检具验收报告-继峰 - 表头缺少线框.xlsx,f108,assets/corpus/documents/v2/4-检具验收报告-继峰 - 表头缺少线框.xlsx,4-检具验收报告-继峰 - 表头缺少线框.xlsx,target,sha256:e6c1f6f7327e40229cef6fc6c7a0283e77c746990a274eb9e7397c67ca481c97,PPAP:检具验收报告,1;2;3
-v2,4-检具验收报告-继峰.pdf,f109,assets/corpus/documents/v2/4-检具验收报告-继峰.pdf,4-检具验收报告-继峰.pdf,target,sha256:e6c1f6f7327e40229cef6fc6c7a0283e77c746990a274eb9e7397c67ca481c97,PPAP:检具验收报告,1;2;3
-v2,4-检具验收报告-继峰.xlsx,f110,assets/corpus/documents/v2/4-检具验收报告-继峰.xlsx,4-检具验收报告-继峰.xlsx,target,sha256:e6c1f6f7327e40229cef6fc6c7a0283e77c746990a274eb9e7397c67ca481c97,PPAP:检具验收报告,1;2;3
-v2,5-模具验收报告-上海亚大.pdf,f111,assets/corpus/documents/v2/5-模具验收报告-上海亚大.pdf,5-模具验收报告-上海亚大.pdf,target,sha256:5de01657dd12bea1ceb3d10ed7b46c99a56f6a321e14ed4fb3b4503c857eae03,PPAP:模具验收报告,1;2;3;4;5;6
-v2,5-模具验收报告-上海亚大.xls,f112,assets/corpus/documents/v2/5-模具验收报告-上海亚大.xls,5-模具验收报告-上海亚大.xls,target,sha256:5de01657dd12bea1ceb3d10ed7b46c99a56f6a321e14ed4fb3b4503c857eae03,PPAP:模具验收报告,1;2;3;4;5;6
-v2,5-模具验收报告-常州新泉.pdf,f113,assets/corpus/documents/v2/5-模具验收报告-常州新泉.pdf,5-模具验收报告-常州新泉.pdf,target,sha256:5de01657dd12bea1ceb3d10ed7b46c99a56f6a321e14ed4fb3b4503c857eae03,PPAP:模具验收报告,1;2;3;4;5;6
-v2,5-模具验收报告-常州新泉.xls,f114,assets/corpus/documents/v2/5-模具验收报告-常州新泉.xls,5-模具验收报告-常州新泉.xls,target,sha256:5de01657dd12bea1ceb3d10ed7b46c99a56f6a321e14ed4fb3b4503c857eae03,PPAP:模具验收报告,1;2;3;4;5;6
-v2,5-模具验收报告-继峰 - 错误.pdf,f115,assets/corpus/documents/v2/5-模具验收报告-继峰 - 错误.pdf,5-模具验收报告-继峰 - 错误.pdf,target,sha256:5de01657dd12bea1ceb3d10ed7b46c99a56f6a321e14ed4fb3b4503c857eae03,PPAP:模具验收报告,1;2;3;4;5;6
-v2,5-模具验收报告-继峰 - 错误.xls,f116,assets/corpus/documents/v2/5-模具验收报告-继峰 - 错误.xls,5-模具验收报告-继峰 - 错误.xls,target,sha256:5de01657dd12bea1ceb3d10ed7b46c99a56f6a321e14ed4fb3b4503c857eae03,PPAP:模具验收报告,1;2;3;4;5;6
-v2,5-模具验收报告-继峰 -无线框.pdf,f117,assets/corpus/documents/v2/5-模具验收报告-继峰 -无线框.pdf,5-模具验收报告-继峰 -无线框.pdf,target,sha256:5de01657dd12bea1ceb3d10ed7b46c99a56f6a321e14ed4fb3b4503c857eae03,PPAP:模具验收报告,1;2;3;4;5;6
-v2,5-模具验收报告-继峰 -无线框.xls,f118,assets/corpus/documents/v2/5-模具验收报告-继峰 -无线框.xls,5-模具验收报告-继峰 -无线框.xls,target,sha256:5de01657dd12bea1ceb3d10ed7b46c99a56f6a321e14ed4fb3b4503c857eae03,PPAP:模具验收报告,1;2;3;4;5;6
-v2,5-模具验收报告-继峰.pdf,f119,assets/corpus/documents/v2/5-模具验收报告-继峰.pdf,5-模具验收报告-继峰.pdf,target,sha256:5de01657dd12bea1ceb3d10ed7b46c99a56f6a321e14ed4fb3b4503c857eae03,PPAP:模具验收报告,1;2;3;4;5;6
-v2,5-模具验收报告-继峰.xls,f120,assets/corpus/documents/v2/5-模具验收报告-继峰.xls,5-模具验收报告-继峰.xls,target,sha256:5de01657dd12bea1ceb3d10ed7b46c99a56f6a321e14ed4fb3b4503c857eae03,PPAP:模具验收报告,1;2;3;4;5;6
-v2,6-测量系统分析评价-巨一.pdf,f121,assets/corpus/documents/v2/6-测量系统分析评价-巨一.pdf,6-测量系统分析评价-巨一.pdf,target,sha256:8fb09afbd24461f6cfa32f11f1e99515d20e76234fe7ab993a9d5f1d0cfef3d7,PPAP:测量系统分析评价,1;2;3;4
-v2,6-测量系统分析评价-巨一.xlsx,f122,assets/corpus/documents/v2/6-测量系统分析评价-巨一.xlsx,6-测量系统分析评价-巨一.xlsx,target,sha256:8fb09afbd24461f6cfa32f11f1e99515d20e76234fe7ab993a9d5f1d0cfef3d7,PPAP:测量系统分析评价,1;2;3;4
-v2,6-测量系统分析评价-常州新泉.pdf,f123,assets/corpus/documents/v2/6-测量系统分析评价-常州新泉.pdf,6-测量系统分析评价-常州新泉.pdf,target,sha256:8fb09afbd24461f6cfa32f11f1e99515d20e76234fe7ab993a9d5f1d0cfef3d7,PPAP:测量系统分析评价,1;2;3;4
-v2,6-测量系统分析评价-常州新泉.xlsx,f124,assets/corpus/documents/v2/6-测量系统分析评价-常州新泉.xlsx,6-测量系统分析评价-常州新泉.xlsx,target,sha256:8fb09afbd24461f6cfa32f11f1e99515d20e76234fe7ab993a9d5f1d0cfef3d7,PPAP:测量系统分析评价,1;2;3;4
-v2,6-测量系统分析评价-继峰 - 无线框.pdf,f125,assets/corpus/documents/v2/6-测量系统分析评价-继峰 - 无线框.pdf,6-测量系统分析评价-继峰 - 无线框.pdf,target,sha256:8fb09afbd24461f6cfa32f11f1e99515d20e76234fe7ab993a9d5f1d0cfef3d7,PPAP:测量系统分析评价,1;2;3;4
-v2,6-测量系统分析评价-继峰 - 无线框.xlsx,f126,assets/corpus/documents/v2/6-测量系统分析评价-继峰 - 无线框.xlsx,6-测量系统分析评价-继峰 - 无线框.xlsx,target,sha256:8fb09afbd24461f6cfa32f11f1e99515d20e76234fe7ab993a9d5f1d0cfef3d7,PPAP:测量系统分析评价,1;2;3;4
-v2,6-测量系统分析评价-继峰-错误.pdf,f127,assets/corpus/documents/v2/6-测量系统分析评价-继峰-错误.pdf,6-测量系统分析评价-继峰-错误.pdf,target,sha256:8fb09afbd24461f6cfa32f11f1e99515d20e76234fe7ab993a9d5f1d0cfef3d7,PPAP:测量系统分析评价,1;2;3;4
-v2,6-测量系统分析评价-继峰-错误.xlsx,f128,assets/corpus/documents/v2/6-测量系统分析评价-继峰-错误.xlsx,6-测量系统分析评价-继峰-错误.xlsx,target,sha256:8fb09afbd24461f6cfa32f11f1e99515d20e76234fe7ab993a9d5f1d0cfef3d7,PPAP:测量系统分析评价,1;2;3;4
-v2,6-测量系统分析评价-继峰.pdf,f129,assets/corpus/documents/v2/6-测量系统分析评价-继峰.pdf,6-测量系统分析评价-继峰.pdf,target,sha256:8fb09afbd24461f6cfa32f11f1e99515d20e76234fe7ab993a9d5f1d0cfef3d7,PPAP:测量系统分析评价,1;2;3;4
-v2,6-测量系统分析评价-继峰.xlsx,f130,assets/corpus/documents/v2/6-测量系统分析评价-继峰.xlsx,6-测量系统分析评价-继峰.xlsx,target,sha256:8fb09afbd24461f6cfa32f11f1e99515d20e76234fe7ab993a9d5f1d0cfef3d7,PPAP:测量系统分析评价,1;2;3;4
-v2,7-过程能力研究-巨一.pdf,f131,assets/corpus/documents/v2/7-过程能力研究-巨一.pdf,7-过程能力研究-巨一.pdf,target,sha256:ba7bc9deb468b95fe28a39a7eed38bf0b3eea5449242262860a33fd9e81e061a,PPAP:过程能力研究,1;2;3
-v2,7-过程能力研究-巨一.xlsx,f132,assets/corpus/documents/v2/7-过程能力研究-巨一.xlsx,7-过程能力研究-巨一.xlsx,target,sha256:ba7bc9deb468b95fe28a39a7eed38bf0b3eea5449242262860a33fd9e81e061a,PPAP:过程能力研究,1;2;3
-v2,7-过程能力研究-常州新泉 - 无线框.pdf,f133,assets/corpus/documents/v2/7-过程能力研究-常州新泉 - 无线框.pdf,7-过程能力研究-常州新泉 - 无线框.pdf,target,sha256:ba7bc9deb468b95fe28a39a7eed38bf0b3eea5449242262860a33fd9e81e061a,PPAP:过程能力研究,1;2;3
-v2,7-过程能力研究-常州新泉 - 无线框.xlsx,f134,assets/corpus/documents/v2/7-过程能力研究-常州新泉 - 无线框.xlsx,7-过程能力研究-常州新泉 - 无线框.xlsx,target,sha256:ba7bc9deb468b95fe28a39a7eed38bf0b3eea5449242262860a33fd9e81e061a,PPAP:过程能力研究,1;2;3
-v2,7-过程能力研究-常州新泉 - 错误.pdf,f135,assets/corpus/documents/v2/7-过程能力研究-常州新泉 - 错误.pdf,7-过程能力研究-常州新泉 - 错误.pdf,target,sha256:ba7bc9deb468b95fe28a39a7eed38bf0b3eea5449242262860a33fd9e81e061a,PPAP:过程能力研究,1;2;3
-v2,7-过程能力研究-常州新泉 - 错误.xlsx,f136,assets/corpus/documents/v2/7-过程能力研究-常州新泉 - 错误.xlsx,7-过程能力研究-常州新泉 - 错误.xlsx,target,sha256:ba7bc9deb468b95fe28a39a7eed38bf0b3eea5449242262860a33fd9e81e061a,PPAP:过程能力研究,1;2;3
-v2,7-过程能力研究-常州新泉.pdf,f137,assets/corpus/documents/v2/7-过程能力研究-常州新泉.pdf,7-过程能力研究-常州新泉.pdf,target,sha256:ba7bc9deb468b95fe28a39a7eed38bf0b3eea5449242262860a33fd9e81e061a,PPAP:过程能力研究,1;2;3
-v2,7-过程能力研究-常州新泉.xlsx,f138,assets/corpus/documents/v2/7-过程能力研究-常州新泉.xlsx,7-过程能力研究-常州新泉.xlsx,target,sha256:ba7bc9deb468b95fe28a39a7eed38bf0b3eea5449242262860a33fd9e81e061a,PPAP:过程能力研究,1;2;3
-v2,8-过程流程图-亚大.pdf,f139,assets/corpus/documents/v2/8-过程流程图-亚大.pdf,8-过程流程图-亚大.pdf,target,sha256:15859b5a7845a7b28992a9264eef7bb19b4e3083c96fca9f02a394d15c8a9985,PPAP:过程流程图,1;2;3;4;5;6
-v2,8-过程流程图-亚大.xlsx,f140,assets/corpus/documents/v2/8-过程流程图-亚大.xlsx,8-过程流程图-亚大.xlsx,target,sha256:15859b5a7845a7b28992a9264eef7bb19b4e3083c96fca9f02a394d15c8a9985,PPAP:过程流程图,1;2;3;4;5;6
-v2,8-过程流程图-巨一.pdf,f141,assets/corpus/documents/v2/8-过程流程图-巨一.pdf,8-过程流程图-巨一.pdf,target,sha256:15859b5a7845a7b28992a9264eef7bb19b4e3083c96fca9f02a394d15c8a9985,PPAP:过程流程图,1;2;3;4;5;6
-v2,8-过程流程图-巨一.xlsx,f142,assets/corpus/documents/v2/8-过程流程图-巨一.xlsx,8-过程流程图-巨一.xlsx,target,sha256:15859b5a7845a7b28992a9264eef7bb19b4e3083c96fca9f02a394d15c8a9985,PPAP:过程流程图,1;2;3;4;5;6
-v2,8-过程流程图-继峰 - 无线框.pdf,f143,assets/corpus/documents/v2/8-过程流程图-继峰 - 无线框.pdf,8-过程流程图-继峰 - 无线框.pdf,target,sha256:15859b5a7845a7b28992a9264eef7bb19b4e3083c96fca9f02a394d15c8a9985,PPAP:过程流程图,1;2;3;4;5;6
-v2,8-过程流程图-继峰 - 无线框.xlsx,f144,assets/corpus/documents/v2/8-过程流程图-继峰 - 无线框.xlsx,8-过程流程图-继峰 - 无线框.xlsx,target,sha256:15859b5a7845a7b28992a9264eef7bb19b4e3083c96fca9f02a394d15c8a9985,PPAP:过程流程图,1;2;3;4;5;6
-v2,8-过程流程图-继峰 - 错误.pdf,f145,assets/corpus/documents/v2/8-过程流程图-继峰 - 错误.pdf,8-过程流程图-继峰 - 错误.pdf,target,sha256:15859b5a7845a7b28992a9264eef7bb19b4e3083c96fca9f02a394d15c8a9985,PPAP:过程流程图,1;2;3;4;5;6
-v2,8-过程流程图-继峰 - 错误.xlsx,f146,assets/corpus/documents/v2/8-过程流程图-继峰 - 错误.xlsx,8-过程流程图-继峰 - 错误.xlsx,target,sha256:15859b5a7845a7b28992a9264eef7bb19b4e3083c96fca9f02a394d15c8a9985,PPAP:过程流程图,1;2;3;4;5;6
-v2,8-过程流程图-继峰.pdf,f147,assets/corpus/documents/v2/8-过程流程图-继峰.pdf,8-过程流程图-继峰.pdf,target,sha256:15859b5a7845a7b28992a9264eef7bb19b4e3083c96fca9f02a394d15c8a9985,PPAP:过程流程图,1;2;3;4;5;6
-v2,8-过程流程图-继峰.xlsx,f148,assets/corpus/documents/v2/8-过程流程图-继峰.xlsx,8-过程流程图-继峰.xlsx,target,sha256:15859b5a7845a7b28992a9264eef7bb19b4e3083c96fca9f02a394d15c8a9985,PPAP:过程流程图,1;2;3;4;5;6
-v2,9-潜在过程失效模式及后果分析-上海亚大.pdf,f149,assets/corpus/documents/v2/9-潜在过程失效模式及后果分析-上海亚大.pdf,9-潜在过程失效模式及后果分析-上海亚大.pdf,target,sha256:c204c2aeebb39f3a2124fbf7fc4935bd5f7592cf6582a80c2afb99fa80c1ccc2,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
-v2,9-潜在过程失效模式及后果分析-上海亚大.xlsx,f150,assets/corpus/documents/v2/9-潜在过程失效模式及后果分析-上海亚大.xlsx,9-潜在过程失效模式及后果分析-上海亚大.xlsx,target,sha256:c204c2aeebb39f3a2124fbf7fc4935bd5f7592cf6582a80c2afb99fa80c1ccc2,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
-v2,9-潜在过程失效模式及后果分析-常州新泉.pdf,f151,assets/corpus/documents/v2/9-潜在过程失效模式及后果分析-常州新泉.pdf,9-潜在过程失效模式及后果分析-常州新泉.pdf,target,sha256:c204c2aeebb39f3a2124fbf7fc4935bd5f7592cf6582a80c2afb99fa80c1ccc2,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
-v2,9-潜在过程失效模式及后果分析-常州新泉.xlsx,f152,assets/corpus/documents/v2/9-潜在过程失效模式及后果分析-常州新泉.xlsx,9-潜在过程失效模式及后果分析-常州新泉.xlsx,target,sha256:c204c2aeebb39f3a2124fbf7fc4935bd5f7592cf6582a80c2afb99fa80c1ccc2,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
-v2,9-潜在过程失效模式及后果分析-继峰 - 无边框.pdf,f153,assets/corpus/documents/v2/9-潜在过程失效模式及后果分析-继峰 - 无边框.pdf,9-潜在过程失效模式及后果分析-继峰 - 无边框.pdf,target,sha256:c204c2aeebb39f3a2124fbf7fc4935bd5f7592cf6582a80c2afb99fa80c1ccc2,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
-v2,9-潜在过程失效模式及后果分析-继峰 - 无边框.xlsx,f154,assets/corpus/documents/v2/9-潜在过程失效模式及后果分析-继峰 - 无边框.xlsx,9-潜在过程失效模式及后果分析-继峰 - 无边框.xlsx,target,sha256:c204c2aeebb39f3a2124fbf7fc4935bd5f7592cf6582a80c2afb99fa80c1ccc2,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
-v2,9-潜在过程失效模式及后果分析-继峰 - 错误.pdf,f155,assets/corpus/documents/v2/9-潜在过程失效模式及后果分析-继峰 - 错误.pdf,9-潜在过程失效模式及后果分析-继峰 - 错误.pdf,target,sha256:c204c2aeebb39f3a2124fbf7fc4935bd5f7592cf6582a80c2afb99fa80c1ccc2,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
-v2,9-潜在过程失效模式及后果分析-继峰 - 错误.xlsx,f156,assets/corpus/documents/v2/9-潜在过程失效模式及后果分析-继峰 - 错误.xlsx,9-潜在过程失效模式及后果分析-继峰 - 错误.xlsx,target,sha256:c204c2aeebb39f3a2124fbf7fc4935bd5f7592cf6582a80c2afb99fa80c1ccc2,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
-v2,9-潜在过程失效模式及后果分析-继峰.pdf,f157,assets/corpus/documents/v2/9-潜在过程失效模式及后果分析-继峰.pdf,9-潜在过程失效模式及后果分析-继峰.pdf,target,sha256:c204c2aeebb39f3a2124fbf7fc4935bd5f7592cf6582a80c2afb99fa80c1ccc2,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
-v2,9-潜在过程失效模式及后果分析-继峰.xlsx,f158,assets/corpus/documents/v2/9-潜在过程失效模式及后果分析-继峰.xlsx,9-潜在过程失效模式及后果分析-继峰.xlsx,target,sha256:c204c2aeebb39f3a2124fbf7fc4935bd5f7592cf6582a80c2afb99fa80c1ccc2,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
-v2,NJ24010097_EVB理想X04_PACK3_绝缘耐压等电位正本-DVP试验报告.pdf,f159,assets/corpus/documents/v2/NJ24010097_EVB理想X04_PACK3_绝缘耐压等电位正本-DVP试验报告.pdf,NJ24010097_EVB理想X04_PACK3_绝缘耐压等电位正本-DVP试验报告.pdf,target,sha256:09ee17522d28555e3ef498548e1446f8ffd962a3bdb8c0f3246105583b57e328,PPAP:DV报告_PV报告_试验报告,1;2;3;4;5;6
-v2,SHF03-25021669-QC-15 阻燃性 试验报告 4.pdf,f160,assets/corpus/documents/v2/SHF03-25021669-QC-15 阻燃性 试验报告 4.pdf,SHF03-25021669-QC-15 阻燃性 试验报告 4.pdf,target,sha256:09ee17522d28555e3ef498548e1446f8ffd962a3bdb8c0f3246105583b57e328,PPAP:DV报告_PV报告_试验报告,1;2;3;4;5;6
-v2,W02管路PV试验报告2025052803_QFZ.pdf,f161,assets/corpus/documents/v2/W02管路PV试验报告2025052803_QFZ.pdf,W02管路PV试验报告2025052803_QFZ.pdf,target,sha256:09ee17522d28555e3ef498548e1446f8ffd962a3bdb8c0f3246105583b57e328,PPAP:DV报告_PV报告_试验报告,1;2;3;4;5;6
-v2,座舱 - 材料分供方清单-W02底护板-25.2.24.xlsx,f162,assets/corpus/documents/v2/座舱 - 材料分供方清单-W02底护板-25.2.24.xlsx,座舱 - 材料分供方清单-W02底护板-25.2.24.xlsx,target,sha256:ad54b862792aea9702bb8557805d77b4909f21580a41aff2950469b837fe699e,PPAP:材料产品及分供清单,1;2;3;4
-v3,Aries Spoiler,f001,assets/corpus/documents/v3/Aries Spoiler/CP-NIO+Aries+Spoiler_v2.xlsx,CP-NIO+Aries+Spoiler_v2.xlsx,target,sha256:692cfa735e7f8fd81ca84b42bb436a47906aa1fdabbda05b36914ad3ee0db67f,PPAP:控制计划,1;2;3;4;5;6;7;8;9;10;11
-v3,Aries Spoiler,f002,assets/corpus/documents/v3/Aries Spoiler/过程流程图-NIO+Aries+Spoiler_v2.xlsx,过程流程图-NIO+Aries+Spoiler_v2.xlsx,target,sha256:b358c4d3ebf765733b00aa9af9e6119aba43210c105785af9584427cd3f4a65b,PPAP:过程流程图,1;2;3;4;5;6;7;8;9
-v3,Aries Spoiler,f003,assets/corpus/documents/v3/Aries Spoiler/PFMEA_NIO+Aries+Spoiler_v2.xlsx,PFMEA_NIO+Aries+Spoiler_v2.xlsx,target,sha256:b40c77826d68f6333afe1bc97132c92a087a04b9de601bbfd0fbe9366c9435a3,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
-v3,Blanc Spoiler-有特殊特性清单,f004,assets/corpus/documents/v3/Blanc Spoiler-有特殊特性清单/P0363244_扰流板总成_特殊特性清单.xlsx,P0363244_扰流板总成_特殊特性清单.xlsx,target,sha256:f57aac4432bbae4a8e94bba29d870c3c642e47c4b964212af2380f7495fd4698,PPAP:过程特殊特性清单,1;2
-v3,Blanc Spoiler-有特殊特性清单,f005,assets/corpus/documents/v3/Blanc Spoiler-有特殊特性清单/过程流程图-BLANC.xlsx,过程流程图-BLANC.xlsx,target,sha256:b358c4d3ebf765733b00aa9af9e6119aba43210c105785af9584427cd3f4a65b,PPAP:过程流程图,1;2;3;4;5;6;7;8;9
-v3,Blanc Spoiler-有特殊特性清单,f006,assets/corpus/documents/v3/Blanc Spoiler-有特殊特性清单/BLANC扰流板总成PFMEA_V3.xlsx,BLANC扰流板总成PFMEA_V3.xlsx,target,sha256:b40c77826d68f6333afe1bc97132c92a087a04b9de601bbfd0fbe9366c9435a3,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
-v3,Blanc Spoiler-特殊特性清单见原文件夹,f007,assets/corpus/documents/v3/Blanc Spoiler-特殊特性清单见原文件夹/19-BLANC尾-生产控制计划_v2.xlsx,19-BLANC尾-生产控制计划_v2.xlsx,target,sha256:692cfa735e7f8fd81ca84b42bb436a47906aa1fdabbda05b36914ad3ee0db67f,PPAP:控制计划,1;2;3;4;5;6;7;8;9;10;11
-v3,Blanc Spoiler-特殊特性清单见原文件夹,f008,assets/corpus/documents/v3/Blanc Spoiler-特殊特性清单见原文件夹/过程流程图-BLANC_v2.xlsx,过程流程图-BLANC_v2.xlsx,target,sha256:b358c4d3ebf765733b00aa9af9e6119aba43210c105785af9584427cd3f4a65b,PPAP:过程流程图,1;2;3;4;5;6;7;8;9
-v3,Blanc Spoiler-特殊特性清单见原文件夹,f009,assets/corpus/documents/v3/Blanc Spoiler-特殊特性清单见原文件夹/BLANC扰流板总成PFMEA_V4.xlsx,BLANC扰流板总成PFMEA_V4.xlsx,target,sha256:b40c77826d68f6333afe1bc97132c92a087a04b9de601bbfd0fbe9366c9435a3,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
-v3,Cetus Spoiler-有特殊特性清单,f010,assets/corpus/documents/v3/Cetus Spoiler-有特殊特性清单/控制计划 -CETUS.xls,控制计划 -CETUS.xls,target,sha256:692cfa735e7f8fd81ca84b42bb436a47906aa1fdabbda05b36914ad3ee0db67f,PPAP:控制计划,1;2;3;4;5;6;7;8;9;10;11
-v3,Cetus Spoiler-有特殊特性清单,f011,assets/corpus/documents/v3/Cetus Spoiler-有特殊特性清单/P0377535-尾门导流板总成-特殊特性清单.xlsx,P0377535-尾门导流板总成-特殊特性清单.xlsx,target,sha256:f57aac4432bbae4a8e94bba29d870c3c642e47c4b964212af2380f7495fd4698,PPAP:过程特殊特性清单,1;2
-v3,Cetus Spoiler-有特殊特性清单,f012,assets/corpus/documents/v3/Cetus Spoiler-有特殊特性清单/P0400905_尾门导流板总成_特殊特性清单.xlsx,P0400905_尾门导流板总成_特殊特性清单.xlsx,target,sha256:f57aac4432bbae4a8e94bba29d870c3c642e47c4b964212af2380f7495fd4698,PPAP:过程特殊特性清单,1;2
-v3,Cetus Spoiler-有特殊特性清单,f013,assets/corpus/documents/v3/Cetus Spoiler-有特殊特性清单/过程流程图CETUS.xlsx,过程流程图CETUS.xlsx,target,sha256:b358c4d3ebf765733b00aa9af9e6119aba43210c105785af9584427cd3f4a65b,PPAP:过程流程图,1;2;3;4;5;6;7;8;9
-v3,Cetus Spoiler-有特殊特性清单,f014,assets/corpus/documents/v3/Cetus Spoiler-有特殊特性清单/Cetus扰流板总成PFMEA.xlsx,Cetus扰流板总成PFMEA.xlsx,target,sha256:b40c77826d68f6333afe1bc97132c92a087a04b9de601bbfd0fbe9366c9435a3,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
-v3,Cetus Spoiler-特殊特性清单见原文件夹,f015,assets/corpus/documents/v3/Cetus Spoiler-特殊特性清单见原文件夹/控制计划 -CETUS_v2.xlsx,控制计划 -CETUS_v2.xlsx,target,sha256:692cfa735e7f8fd81ca84b42bb436a47906aa1fdabbda05b36914ad3ee0db67f,PPAP:控制计划,1;2;3;4;5;6;7;8;9;10;11
-v3,Cetus Spoiler-特殊特性清单见原文件夹,f016,assets/corpus/documents/v3/Cetus Spoiler-特殊特性清单见原文件夹/过程流程图CETUS_v2.xlsx,过程流程图CETUS_v2.xlsx,target,sha256:b358c4d3ebf765733b00aa9af9e6119aba43210c105785af9584427cd3f4a65b,PPAP:过程流程图,1;2;3;4;5;6;7;8;9
-v3,Cetus Spoiler-特殊特性清单见原文件夹,f017,assets/corpus/documents/v3/Cetus Spoiler-特殊特性清单见原文件夹/Cetus扰流板总成PFMEA_v2.xlsx,Cetus扰流板总成PFMEA_v2.xlsx,target,sha256:b40c77826d68f6333afe1bc97132c92a087a04b9de601bbfd0fbe9366c9435a3,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
-v3,Gemini Spoiler,f018,assets/corpus/documents/v3/Gemini Spoiler/12+CP（gemini）_v2.xlsx,12+CP（gemini）_v2.xlsx,target,sha256:692cfa735e7f8fd81ca84b42bb436a47906aa1fdabbda05b36914ad3ee0db67f,PPAP:控制计划,1;2;3;4;5;6;7;8;9;10;11
-v3,Gemini Spoiler,f019,assets/corpus/documents/v3/Gemini Spoiler/10+过程流程图（gemini）_v2.xlsx,10+过程流程图（gemini）_v2.xlsx,target,sha256:b358c4d3ebf765733b00aa9af9e6119aba43210c105785af9584427cd3f4a65b,PPAP:过程流程图,1;2;3;4;5;6;7;8;9
-v3,Gemini Spoiler,f020,assets/corpus/documents/v3/Gemini Spoiler/11+PFMEA（gemini）_v2.xlsx,11+PFMEA（gemini）_v2.xlsx,target,sha256:b40c77826d68f6333afe1bc97132c92a087a04b9de601bbfd0fbe9366c9435a3,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
-v3,POC测试样本,f021,assets/corpus/documents/v3/POC测试样本/尺寸检验报告-example.xlsm,尺寸检验报告-example.xlsm,target,sha256:c618b3f6b6097f00e7b3a55729c6386ef53550c1df625b78e69c1f494c5422f1,PPAP:全功能检验报告,1;2;3;4;5;6;7;8;9;10;11
-v3,POC测试样本,f022,assets/corpus/documents/v3/POC测试样本/PFMEA-sample.xlsx,PFMEA-sample.xlsx,target,sha256:b40c77826d68f6333afe1bc97132c92a087a04b9de601bbfd0fbe9366c9435a3,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
-v3,POC测试样本,f023,assets/corpus/documents/v3/POC测试样本/PFMEA-sample_v2.xlsx,PFMEA-sample_v2.xlsx,target,sha256:b40c77826d68f6333afe1bc97132c92a087a04b9de601bbfd0fbe9366c9435a3,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
-v3,Sirius Spoiler,f024,assets/corpus/documents/v3/Sirius Spoiler/Sirius-spolier+CP_v2.xlsx,Sirius-spolier+CP_v2.xlsx,target,sha256:692cfa735e7f8fd81ca84b42bb436a47906aa1fdabbda05b36914ad3ee0db67f,PPAP:控制计划,1;2;3;4;5;6;7;8;9;10;11
-v3,Sirius Spoiler,f025,assets/corpus/documents/v3/Sirius Spoiler/Sirius-spolier+过程流程图-NIO+Sirius+Spoiler+Cross+ASM_03.xlsx,Sirius-spolier+过程流程图-NIO+Sirius+Spoiler+Cross+ASM_03.xlsx,target,sha256:b358c4d3ebf765733b00aa9af9e6119aba43210c105785af9584427cd3f4a65b,PPAP:过程流程图,1;2;3;4;5;6;7;8;9
-v3,Sirius Spoiler,f026,assets/corpus/documents/v3/Sirius Spoiler/PFMEA-NIO+Sirius+Spoiler+Cross+ASM_02_v2.xlsx,PFMEA-NIO+Sirius+Spoiler+Cross+ASM_02_v2.xlsx,target,sha256:b40c77826d68f6333afe1bc97132c92a087a04b9de601bbfd0fbe9366c9435a3,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
-v4-uaes,CP-PFMEA-PFD,f1,assets/corpus/documents/v4-uaes/控制计划.xlsx,控制计划.xlsx,target,sha256:f640614011918ceab40bab9035efb8b77d7efff7d54db35951e48f800b23e78f,UAES:U08,U08:1;U08:2;U08:3;U08:4;U08:6;U08:7;U08:8;U08:9;U08:10;U08:11;U08:12;U08:13
-v4-uaes,CP-PFMEA-PFD,f2,assets/corpus/documents/v4-uaes/PFMEA.xls,PFMEA.xls,target,sha256:721eaaf057590ab60107a4674f9355a819cc670fd644345ef2cbb176798e3f48,UAES:U07,U07:1;U07:2;U07:3;U07:4
-v4-uaes,CP-PFMEA-PFD,f3,assets/corpus/documents/v4-uaes/过程流程图.xls,过程流程图.xls,target,sha256:684840dff180f483c9c70cc0d2f048dbde2935f7b719c0efa23a6a79cda10793,UAES:U16,U16:1;U16:2;U16:3
-v4-uaes,two-independent-CP-originals,f1,assets/corpus/documents/v4-uaes/控制计划.xlsx,控制计划.xlsx,target,sha256:f640614011918ceab40bab9035efb8b77d7efff7d54db35951e48f800b23e78f,UAES:U08,U08:1;U08:2;U08:3;U08:4;U08:6;U08:7;U08:8;U08:9;U08:10;U08:11;U08:12;U08:13
-v4-uaes,two-independent-CP-originals,f2,assets/corpus/documents/v4-uaes/控制计划-模板3 WY.pdf,控制计划-模板3 WY.pdf,target,sha256:f640614011918ceab40bab9035efb8b77d7efff7d54db35951e48f800b23e78f,UAES:U08,U08:1;U08:2;U08:3;U08:4;U08:6;U08:7;U08:8;U08:9;U08:10;U08:11;U08:12;U08:13
+v2,1-全功能检验报告_上海亚大.pdf,f001,assets/corpus/documents/v2/1-全功能检验报告_上海亚大.pdf,1-全功能检验报告_上海亚大.pdf,target,PPAP:全功能检验报告@v2,PPAP:全功能检验报告,1;2;3;4;5;6;7;8
+v2,1-全功能检验报告_上海亚大.xlsx,f002,assets/corpus/documents/v2/1-全功能检验报告_上海亚大.xlsx,1-全功能检验报告_上海亚大.xlsx,target,PPAP:全功能检验报告@v2,PPAP:全功能检验报告,1;2;3;4;5;6;7;8
+v2,1-全功能检验报告_巨一.pdf,f003,assets/corpus/documents/v2/1-全功能检验报告_巨一.pdf,1-全功能检验报告_巨一.pdf,target,PPAP:全功能检验报告@v2,PPAP:全功能检验报告,1;2;3;4;5;6;7;8
+v2,1-全功能检验报告_巨一.xlsx,f004,assets/corpus/documents/v2/1-全功能检验报告_巨一.xlsx,1-全功能检验报告_巨一.xlsx,target,PPAP:全功能检验报告@v2,PPAP:全功能检验报告,1;2;3;4;5;6;7;8
+v2,1-全功能检验报告_继峰 - 线框被遮挡.pdf,f005,assets/corpus/documents/v2/1-全功能检验报告_继峰 - 线框被遮挡.pdf,1-全功能检验报告_继峰 - 线框被遮挡.pdf,target,PPAP:全功能检验报告@v2,PPAP:全功能检验报告,1;2;3;4;5;6;7;8
+v2,1-全功能检验报告_继峰 - 线框被遮挡.xlsx,f006,assets/corpus/documents/v2/1-全功能检验报告_继峰 - 线框被遮挡.xlsx,1-全功能检验报告_继峰 - 线框被遮挡.xlsx,target,PPAP:全功能检验报告@v2,PPAP:全功能检验报告,1;2;3;4;5;6;7;8
+v2,1-全功能检验报告_继峰 - 错误.pdf,f007,assets/corpus/documents/v2/1-全功能检验报告_继峰 - 错误.pdf,1-全功能检验报告_继峰 - 错误.pdf,target,PPAP:全功能检验报告@v2,PPAP:全功能检验报告,1;2;3;4;5;6;7;8
+v2,1-全功能检验报告_继峰 - 错误.xlsx,f008,assets/corpus/documents/v2/1-全功能检验报告_继峰 - 错误.xlsx,1-全功能检验报告_继峰 - 错误.xlsx,target,PPAP:全功能检验报告@v2,PPAP:全功能检验报告,1;2;3;4;5;6;7;8
+v2,1-全功能检验报告_继峰.pdf,f009,assets/corpus/documents/v2/1-全功能检验报告_继峰.pdf,1-全功能检验报告_继峰.pdf,target,PPAP:全功能检验报告@v2,PPAP:全功能检验报告,1;2;3;4;5;6;7;8
+v2,1-全功能检验报告_继峰.xlsx,f010,assets/corpus/documents/v2/1-全功能检验报告_继峰.xlsx,1-全功能检验报告_继峰.xlsx,target,PPAP:全功能检验报告@v2,PPAP:全功能检验报告,1;2;3;4;5;6;7;8
+v2,10-控制计划-上海亚大.pdf,f011,assets/corpus/documents/v2/10-控制计划-上海亚大.pdf,10-控制计划-上海亚大.pdf,target,PPAP:控制计划@v2,PPAP:控制计划,1;2;3;4;5;6
+v2,10-控制计划-上海亚大.xlsx,f012,assets/corpus/documents/v2/10-控制计划-上海亚大.xlsx,10-控制计划-上海亚大.xlsx,target,PPAP:控制计划@v2,PPAP:控制计划,1;2;3;4;5;6
+v2,10-控制计划-常州新泉.pdf,f013,assets/corpus/documents/v2/10-控制计划-常州新泉.pdf,10-控制计划-常州新泉.pdf,target,PPAP:控制计划@v2,PPAP:控制计划,1;2;3;4;5;6
+v2,10-控制计划-常州新泉.xlsx,f014,assets/corpus/documents/v2/10-控制计划-常州新泉.xlsx,10-控制计划-常州新泉.xlsx,target,PPAP:控制计划@v2,PPAP:控制计划,1;2;3;4;5;6
+v2,10-控制计划-继峰 - 无边框.pdf,f015,assets/corpus/documents/v2/10-控制计划-继峰 - 无边框.pdf,10-控制计划-继峰 - 无边框.pdf,target,PPAP:控制计划@v2,PPAP:控制计划,1;2;3;4;5;6
+v2,10-控制计划-继峰 - 无边框.xlsx,f016,assets/corpus/documents/v2/10-控制计划-继峰 - 无边框.xlsx,10-控制计划-继峰 - 无边框.xlsx,target,PPAP:控制计划@v2,PPAP:控制计划,1;2;3;4;5;6
+v2,10-控制计划-继峰 - 错误.pdf,f017,assets/corpus/documents/v2/10-控制计划-继峰 - 错误.pdf,10-控制计划-继峰 - 错误.pdf,target,PPAP:控制计划@v2,PPAP:控制计划,1;2;3;4;5;6
+v2,10-控制计划-继峰 - 错误.xlsx,f018,assets/corpus/documents/v2/10-控制计划-继峰 - 错误.xlsx,10-控制计划-继峰 - 错误.xlsx,target,PPAP:控制计划@v2,PPAP:控制计划,1;2;3;4;5;6
+v2,10-控制计划-继峰.pdf,f019,assets/corpus/documents/v2/10-控制计划-继峰.pdf,10-控制计划-继峰.pdf,target,PPAP:控制计划@v2,PPAP:控制计划,1;2;3;4;5;6
+v2,10-控制计划-继峰.xlsx,f020,assets/corpus/documents/v2/10-控制计划-继峰.xlsx,10-控制计划-继峰.xlsx,target,PPAP:控制计划@v2,PPAP:控制计划,1;2;3;4;5;6
+v2,11-过程特殊特性清单-上海大亚.pdf,f021,assets/corpus/documents/v2/11-过程特殊特性清单-上海大亚.pdf,11-过程特殊特性清单-上海大亚.pdf,target,PPAP:过程特殊特性清单@v2,PPAP:过程特殊特性清单,1;2;3
+v2,11-过程特殊特性清单-上海大亚.xlsx,f022,assets/corpus/documents/v2/11-过程特殊特性清单-上海大亚.xlsx,11-过程特殊特性清单-上海大亚.xlsx,target,PPAP:过程特殊特性清单@v2,PPAP:过程特殊特性清单,1;2;3
+v2,11-过程特殊特性清单-巨一.pdf,f023,assets/corpus/documents/v2/11-过程特殊特性清单-巨一.pdf,11-过程特殊特性清单-巨一.pdf,target,PPAP:过程特殊特性清单@v2,PPAP:过程特殊特性清单,1;2;3
+v2,11-过程特殊特性清单-巨一.xlsx,f024,assets/corpus/documents/v2/11-过程特殊特性清单-巨一.xlsx,11-过程特殊特性清单-巨一.xlsx,target,PPAP:过程特殊特性清单@v2,PPAP:过程特殊特性清单,1;2;3
+v2,11-过程特殊特性清单-继峰 - 无边框.pdf,f025,assets/corpus/documents/v2/11-过程特殊特性清单-继峰 - 无边框.pdf,11-过程特殊特性清单-继峰 - 无边框.pdf,target,PPAP:过程特殊特性清单@v2,PPAP:过程特殊特性清单,1;2;3
+v2,11-过程特殊特性清单-继峰 - 无边框.xlsx,f026,assets/corpus/documents/v2/11-过程特殊特性清单-继峰 - 无边框.xlsx,11-过程特殊特性清单-继峰 - 无边框.xlsx,target,PPAP:过程特殊特性清单@v2,PPAP:过程特殊特性清单,1;2;3
+v2,11-过程特殊特性清单-继峰 - 错误.pdf,f027,assets/corpus/documents/v2/11-过程特殊特性清单-继峰 - 错误.pdf,11-过程特殊特性清单-继峰 - 错误.pdf,target,PPAP:过程特殊特性清单@v2,PPAP:过程特殊特性清单,1;2;3
+v2,11-过程特殊特性清单-继峰 - 错误.xlsx,f028,assets/corpus/documents/v2/11-过程特殊特性清单-继峰 - 错误.xlsx,11-过程特殊特性清单-继峰 - 错误.xlsx,target,PPAP:过程特殊特性清单@v2,PPAP:过程特殊特性清单,1;2;3
+v2,11-过程特殊特性清单-继峰.pdf,f029,assets/corpus/documents/v2/11-过程特殊特性清单-继峰.pdf,11-过程特殊特性清单-继峰.pdf,target,PPAP:过程特殊特性清单@v2,PPAP:过程特殊特性清单,1;2;3
+v2,11-过程特殊特性清单-继峰.xlsx,f030,assets/corpus/documents/v2/11-过程特殊特性清单-继峰.xlsx,11-过程特殊特性清单-继峰.xlsx,target,PPAP:过程特殊特性清单@v2,PPAP:过程特殊特性清单,1;2;3
+v2,12-设备清单-上海亚大.pdf,f031,assets/corpus/documents/v2/12-设备清单-上海亚大.pdf,12-设备清单-上海亚大.pdf,target,PPAP:设备清单@v2,PPAP:设备清单,1;2
+v2,12-设备清单-上海亚大.xlsx,f032,assets/corpus/documents/v2/12-设备清单-上海亚大.xlsx,12-设备清单-上海亚大.xlsx,target,PPAP:设备清单@v2,PPAP:设备清单,1;2
+v2,12-设备清单-巨一.pdf,f033,assets/corpus/documents/v2/12-设备清单-巨一.pdf,12-设备清单-巨一.pdf,target,PPAP:设备清单@v2,PPAP:设备清单,1;2
+v2,12-设备清单-巨一.xlsx,f034,assets/corpus/documents/v2/12-设备清单-巨一.xlsx,12-设备清单-巨一.xlsx,target,PPAP:设备清单@v2,PPAP:设备清单,1;2
+v2,12-设备清单-常州新泉.pdf,f035,assets/corpus/documents/v2/12-设备清单-常州新泉.pdf,12-设备清单-常州新泉.pdf,target,PPAP:设备清单@v2,PPAP:设备清单,1;2
+v2,12-设备清单-常州新泉.xlsx,f036,assets/corpus/documents/v2/12-设备清单-常州新泉.xlsx,12-设备清单-常州新泉.xlsx,target,PPAP:设备清单@v2,PPAP:设备清单,1;2
+v2,12-设备清单-继峰 - 无边框.pdf,f037,assets/corpus/documents/v2/12-设备清单-继峰 - 无边框.pdf,12-设备清单-继峰 - 无边框.pdf,target,PPAP:设备清单@v2,PPAP:设备清单,1;2
+v2,12-设备清单-继峰 - 无边框.xlsx,f038,assets/corpus/documents/v2/12-设备清单-继峰 - 无边框.xlsx,12-设备清单-继峰 - 无边框.xlsx,target,PPAP:设备清单@v2,PPAP:设备清单,1;2
+v2,12-设备清单-继峰 - 错误.pdf,f039,assets/corpus/documents/v2/12-设备清单-继峰 - 错误.pdf,12-设备清单-继峰 - 错误.pdf,target,PPAP:设备清单@v2,PPAP:设备清单,1;2
+v2,12-设备清单-继峰 - 错误.xlsx,f040,assets/corpus/documents/v2/12-设备清单-继峰 - 错误.xlsx,12-设备清单-继峰 - 错误.xlsx,target,PPAP:设备清单@v2,PPAP:设备清单,1;2
+v2,12-设备清单-继峰.pdf,f041,assets/corpus/documents/v2/12-设备清单-继峰.pdf,12-设备清单-继峰.pdf,target,PPAP:设备清单@v2,PPAP:设备清单,1;2
+v2,12-设备清单-继峰.xlsx,f042,assets/corpus/documents/v2/12-设备清单-继峰.xlsx,12-设备清单-继峰.xlsx,target,PPAP:设备清单@v2,PPAP:设备清单,1;2
+v2,13-生产系统产能评估报告-上海亚大.pdf,f043,assets/corpus/documents/v2/13-生产系统产能评估报告-上海亚大.pdf,13-生产系统产能评估报告-上海亚大.pdf,target,PPAP:生产系统产能评估报告@v2,PPAP:生产系统产能评估报告,1;2;3;4;5;6
+v2,13-生产系统产能评估报告-上海亚大.xlsx,f044,assets/corpus/documents/v2/13-生产系统产能评估报告-上海亚大.xlsx,13-生产系统产能评估报告-上海亚大.xlsx,target,PPAP:生产系统产能评估报告@v2,PPAP:生产系统产能评估报告,1;2;3;4;5;6
+v2,13-生产系统产能评估报告-巨一.pdf,f045,assets/corpus/documents/v2/13-生产系统产能评估报告-巨一.pdf,13-生产系统产能评估报告-巨一.pdf,target,PPAP:生产系统产能评估报告@v2,PPAP:生产系统产能评估报告,1;2;3;4;5;6
+v2,13-生产系统产能评估报告-巨一.xlsx,f046,assets/corpus/documents/v2/13-生产系统产能评估报告-巨一.xlsx,13-生产系统产能评估报告-巨一.xlsx,target,PPAP:生产系统产能评估报告@v2,PPAP:生产系统产能评估报告,1;2;3;4;5;6
+v2,13-生产系统产能评估报告-常州新泉.pdf,f047,assets/corpus/documents/v2/13-生产系统产能评估报告-常州新泉.pdf,13-生产系统产能评估报告-常州新泉.pdf,target,PPAP:生产系统产能评估报告@v2,PPAP:生产系统产能评估报告,1;2;3;4;5;6
+v2,13-生产系统产能评估报告-常州新泉.xlsx,f048,assets/corpus/documents/v2/13-生产系统产能评估报告-常州新泉.xlsx,13-生产系统产能评估报告-常州新泉.xlsx,target,PPAP:生产系统产能评估报告@v2,PPAP:生产系统产能评估报告,1;2;3;4;5;6
+v2,13-生产系统产能评估报告-继峰 - 无边框.pdf,f049,assets/corpus/documents/v2/13-生产系统产能评估报告-继峰 - 无边框.pdf,13-生产系统产能评估报告-继峰 - 无边框.pdf,target,PPAP:生产系统产能评估报告@v2,PPAP:生产系统产能评估报告,1;2;3;4;5;6
+v2,13-生产系统产能评估报告-继峰 - 无边框.xlsx,f050,assets/corpus/documents/v2/13-生产系统产能评估报告-继峰 - 无边框.xlsx,13-生产系统产能评估报告-继峰 - 无边框.xlsx,target,PPAP:生产系统产能评估报告@v2,PPAP:生产系统产能评估报告,1;2;3;4;5;6
+v2,13-生产系统产能评估报告-继峰 - 错误.pdf,f051,assets/corpus/documents/v2/13-生产系统产能评估报告-继峰 - 错误.pdf,13-生产系统产能评估报告-继峰 - 错误.pdf,target,PPAP:生产系统产能评估报告@v2,PPAP:生产系统产能评估报告,1;2;3;4;5;6
+v2,13-生产系统产能评估报告-继峰 - 错误.xlsx,f052,assets/corpus/documents/v2/13-生产系统产能评估报告-继峰 - 错误.xlsx,13-生产系统产能评估报告-继峰 - 错误.xlsx,target,PPAP:生产系统产能评估报告@v2,PPAP:生产系统产能评估报告,1;2;3;4;5;6
+v2,13-生产系统产能评估报告-继峰.pdf,f053,assets/corpus/documents/v2/13-生产系统产能评估报告-继峰.pdf,13-生产系统产能评估报告-继峰.pdf,target,PPAP:生产系统产能评估报告@v2,PPAP:生产系统产能评估报告,1;2;3;4;5;6
+v2,13-生产系统产能评估报告-继峰.xlsx,f054,assets/corpus/documents/v2/13-生产系统产能评估报告-继峰.xlsx,13-生产系统产能评估报告-继峰.xlsx,target,PPAP:生产系统产能评估报告@v2,PPAP:生产系统产能评估报告,1;2;3;4;5;6
+v2,14-APQP项目问题清单-上海亚大.pdf,f055,assets/corpus/documents/v2/14-APQP项目问题清单-上海亚大.pdf,14-APQP项目问题清单-上海亚大.pdf,target,PPAP:项目问题清单@v2,PPAP:项目问题清单,1;2;3;4
+v2,14-APQP项目问题清单-上海亚大.xlsx,f056,assets/corpus/documents/v2/14-APQP项目问题清单-上海亚大.xlsx,14-APQP项目问题清单-上海亚大.xlsx,target,PPAP:项目问题清单@v2,PPAP:项目问题清单,1;2;3;4
+v2,14-APQP项目问题清单-巨一.pdf,f057,assets/corpus/documents/v2/14-APQP项目问题清单-巨一.pdf,14-APQP项目问题清单-巨一.pdf,target,PPAP:项目问题清单@v2,PPAP:项目问题清单,1;2;3;4
+v2,14-APQP项目问题清单-巨一.xlsx,f058,assets/corpus/documents/v2/14-APQP项目问题清单-巨一.xlsx,14-APQP项目问题清单-巨一.xlsx,target,PPAP:项目问题清单@v2,PPAP:项目问题清单,1;2;3;4
+v2,14-APQP项目问题清单-继峰 - 无边框.pdf,f059,assets/corpus/documents/v2/14-APQP项目问题清单-继峰 - 无边框.pdf,14-APQP项目问题清单-继峰 - 无边框.pdf,target,PPAP:项目问题清单@v2,PPAP:项目问题清单,1;2;3;4
+v2,14-APQP项目问题清单-继峰 - 无边框.xlsx,f060,assets/corpus/documents/v2/14-APQP项目问题清单-继峰 - 无边框.xlsx,14-APQP项目问题清单-继峰 - 无边框.xlsx,target,PPAP:项目问题清单@v2,PPAP:项目问题清单,1;2;3;4
+v2,14-APQP项目问题清单-继峰 - 错误.pdf,f061,assets/corpus/documents/v2/14-APQP项目问题清单-继峰 - 错误.pdf,14-APQP项目问题清单-继峰 - 错误.pdf,target,PPAP:项目问题清单@v2,PPAP:项目问题清单,1;2;3;4
+v2,14-APQP项目问题清单-继峰 - 错误.xlsx,f062,assets/corpus/documents/v2/14-APQP项目问题清单-继峰 - 错误.xlsx,14-APQP项目问题清单-继峰 - 错误.xlsx,target,PPAP:项目问题清单@v2,PPAP:项目问题清单,1;2;3;4
+v2,14-APQP项目问题清单-继峰.pdf,f063,assets/corpus/documents/v2/14-APQP项目问题清单-继峰.pdf,14-APQP项目问题清单-继峰.pdf,target,PPAP:项目问题清单@v2,PPAP:项目问题清单,1;2;3;4
+v2,14-APQP项目问题清单-继峰.xlsx,f064,assets/corpus/documents/v2/14-APQP项目问题清单-继峰.xlsx,14-APQP项目问题清单-继峰.xlsx,target,PPAP:项目问题清单@v2,PPAP:项目问题清单,1;2;3;4
+v2,15-零部件年度试验要求-上海亚大.pdf,f065,assets/corpus/documents/v2/15-零部件年度试验要求-上海亚大.pdf,15-零部件年度试验要求-上海亚大.pdf,target,PPAP:零部件年度试验要求@v2,PPAP:零部件年度试验要求,1;2;3;4;5;6
+v2,15-零部件年度试验要求-上海亚大.xlsx,f066,assets/corpus/documents/v2/15-零部件年度试验要求-上海亚大.xlsx,15-零部件年度试验要求-上海亚大.xlsx,target,PPAP:零部件年度试验要求@v2,PPAP:零部件年度试验要求,1;2;3;4;5;6
+v2,15-零部件年度试验要求-巨一.pdf,f067,assets/corpus/documents/v2/15-零部件年度试验要求-巨一.pdf,15-零部件年度试验要求-巨一.pdf,target,PPAP:零部件年度试验要求@v2,PPAP:零部件年度试验要求,1;2;3;4;5;6
+v2,15-零部件年度试验要求-巨一.xlsx,f068,assets/corpus/documents/v2/15-零部件年度试验要求-巨一.xlsx,15-零部件年度试验要求-巨一.xlsx,target,PPAP:零部件年度试验要求@v2,PPAP:零部件年度试验要求,1;2;3;4;5;6
+v2,15-零部件年度试验要求-常州新泉.pdf,f069,assets/corpus/documents/v2/15-零部件年度试验要求-常州新泉.pdf,15-零部件年度试验要求-常州新泉.pdf,target,PPAP:零部件年度试验要求@v2,PPAP:零部件年度试验要求,1;2;3;4;5;6
+v2,15-零部件年度试验要求-常州新泉.xlsx,f070,assets/corpus/documents/v2/15-零部件年度试验要求-常州新泉.xlsx,15-零部件年度试验要求-常州新泉.xlsx,target,PPAP:零部件年度试验要求@v2,PPAP:零部件年度试验要求,1;2;3;4;5;6
+v2,15-零部件年度试验要求-继峰 - 无边框.pdf,f071,assets/corpus/documents/v2/15-零部件年度试验要求-继峰 - 无边框.pdf,15-零部件年度试验要求-继峰 - 无边框.pdf,target,PPAP:零部件年度试验要求@v2,PPAP:零部件年度试验要求,1;2;3;4;5;6
+v2,15-零部件年度试验要求-继峰 - 无边框.xlsx,f072,assets/corpus/documents/v2/15-零部件年度试验要求-继峰 - 无边框.xlsx,15-零部件年度试验要求-继峰 - 无边框.xlsx,target,PPAP:零部件年度试验要求@v2,PPAP:零部件年度试验要求,1;2;3;4;5;6
+v2,15-零部件年度试验要求-继峰 - 错误.pdf,f073,assets/corpus/documents/v2/15-零部件年度试验要求-继峰 - 错误.pdf,15-零部件年度试验要求-继峰 - 错误.pdf,target,PPAP:零部件年度试验要求@v2,PPAP:零部件年度试验要求,1;2;3;4;5;6
+v2,15-零部件年度试验要求-继峰 - 错误.xlsx,f074,assets/corpus/documents/v2/15-零部件年度试验要求-继峰 - 错误.xlsx,15-零部件年度试验要求-继峰 - 错误.xlsx,target,PPAP:零部件年度试验要求@v2,PPAP:零部件年度试验要求,1;2;3;4;5;6
+v2,15-零部件年度试验要求-继峰.pdf,f075,assets/corpus/documents/v2/15-零部件年度试验要求-继峰.pdf,15-零部件年度试验要求-继峰.pdf,target,PPAP:零部件年度试验要求@v2,PPAP:零部件年度试验要求,1;2;3;4;5;6
+v2,15-零部件年度试验要求-继峰.xlsx,f076,assets/corpus/documents/v2/15-零部件年度试验要求-继峰.xlsx,15-零部件年度试验要求-继峰.xlsx,target,PPAP:零部件年度试验要求@v2,PPAP:零部件年度试验要求,1;2;3;4;5;6
+v2,16-零件提交保证书-上海亚大.pdf,f077,assets/corpus/documents/v2/16-零件提交保证书-上海亚大.pdf,16-零件提交保证书-上海亚大.pdf,target,PPAP:零件提交保证书@v2,PPAP:零件提交保证书,1;2;3;4;5;6;7;8;9;10
+v2,16-零件提交保证书-常州新泉.pdf,f078,assets/corpus/documents/v2/16-零件提交保证书-常州新泉.pdf,16-零件提交保证书-常州新泉.pdf,target,PPAP:零件提交保证书@v2,PPAP:零件提交保证书,1;2;3;4;5;6;7;8;9;10
+v2,16-零件提交保证书-继峰 - 无边框.pdf,f079,assets/corpus/documents/v2/16-零件提交保证书-继峰 - 无边框.pdf,16-零件提交保证书-继峰 - 无边框.pdf,target,PPAP:零件提交保证书@v2,PPAP:零件提交保证书,1;2;3;4;5;6;7;8;9;10
+v2,16-零件提交保证书-继峰.pdf,f080,assets/corpus/documents/v2/16-零件提交保证书-继峰.pdf,16-零件提交保证书-继峰.pdf,target,PPAP:零件提交保证书@v2,PPAP:零件提交保证书,1;2;3;4;5;6;7;8;9;10
+v2,2-零部件设计验证计划和报告_上海亚大.pdf,f081,assets/corpus/documents/v2/2-零部件设计验证计划和报告_上海亚大.pdf,2-零部件设计验证计划和报告_上海亚大.pdf,target,PPAP:零部件设计验证计划和报告@v2,PPAP:零部件设计验证计划和报告,1;2;3;4;5;6;7
+v2,2-零部件设计验证计划和报告_上海亚大.xlsx,f082,assets/corpus/documents/v2/2-零部件设计验证计划和报告_上海亚大.xlsx,2-零部件设计验证计划和报告_上海亚大.xlsx,target,PPAP:零部件设计验证计划和报告@v2,PPAP:零部件设计验证计划和报告,1;2;3;4;5;6;7
+v2,2-零部件设计验证计划和报告_继峰 - 错误.pdf,f083,assets/corpus/documents/v2/2-零部件设计验证计划和报告_继峰 - 错误.pdf,2-零部件设计验证计划和报告_继峰 - 错误.pdf,target,PPAP:零部件设计验证计划和报告@v2,PPAP:零部件设计验证计划和报告,1;2;3;4;5;6;7
+v2,2-零部件设计验证计划和报告_继峰 - 错误.xlsx,f084,assets/corpus/documents/v2/2-零部件设计验证计划和报告_继峰 - 错误.xlsx,2-零部件设计验证计划和报告_继峰 - 错误.xlsx,target,PPAP:零部件设计验证计划和报告@v2,PPAP:零部件设计验证计划和报告,1;2;3;4;5;6;7
+v2,2-零部件设计验证计划和报告_继峰-线框被遮挡.pdf,f085,assets/corpus/documents/v2/2-零部件设计验证计划和报告_继峰-线框被遮挡.pdf,2-零部件设计验证计划和报告_继峰-线框被遮挡.pdf,target,PPAP:零部件设计验证计划和报告@v2,PPAP:零部件设计验证计划和报告,1;2;3;4;5;6;7
+v2,2-零部件设计验证计划和报告_继峰-线框被遮挡.xlsx,f086,assets/corpus/documents/v2/2-零部件设计验证计划和报告_继峰-线框被遮挡.xlsx,2-零部件设计验证计划和报告_继峰-线框被遮挡.xlsx,target,PPAP:零部件设计验证计划和报告@v2,PPAP:零部件设计验证计划和报告,1;2;3;4;5;6;7
+v2,2-零部件设计验证计划和报告_继峰.pdf,f087,assets/corpus/documents/v2/2-零部件设计验证计划和报告_继峰.pdf,2-零部件设计验证计划和报告_继峰.pdf,target,PPAP:零部件设计验证计划和报告@v2,PPAP:零部件设计验证计划和报告,1;2;3;4;5;6;7
+v2,2-零部件设计验证计划和报告_继峰.xlsx,f088,assets/corpus/documents/v2/2-零部件设计验证计划和报告_继峰.xlsx,2-零部件设计验证计划和报告_继峰.xlsx,target,PPAP:零部件设计验证计划和报告@v2,PPAP:零部件设计验证计划和报告,1;2;3;4;5;6;7
+v2,3-动力电池 - APQP交付物2-19 产品分供方清单（含散装材料）_V2.0(1).xlsx,f089,assets/corpus/documents/v2/3-动力电池 - APQP交付物2-19 产品分供方清单（含散装材料）_V2.0(1).xlsx,3-动力电池 - APQP交付物2-19 产品分供方清单（含散装材料）_V2.0(1).xlsx,target,PPAP:材料产品及分供清单@v2,PPAP:材料产品及分供清单,1;2;3;4
+v2,3-增程系统 - 材料分供方.pdf,f090,assets/corpus/documents/v2/3-增程系统 - 材料分供方.pdf,3-增程系统 - 材料分供方.pdf,target,PPAP:材料产品及分供清单@v2,PPAP:材料产品及分供清单,1;2;3;4
+v2,3-底盘 - APQP交付物2-8 材料及分供方清单 v1.0 (2).xlsx,f091,assets/corpus/documents/v2/3-底盘 - APQP交付物2-8 材料及分供方清单 v1.0 (2).xlsx,3-底盘 - APQP交付物2-8 材料及分供方清单 v1.0 (2).xlsx,target,PPAP:材料产品及分供清单@v2,PPAP:材料产品及分供清单,1;2;3;4
+v2,3-智能与电器 - W02 APQP交付物2-8 材料、产品及分供方清单_V3.0.pdf,f092,assets/corpus/documents/v2/3-智能与电器 - W02 APQP交付物2-8 材料、产品及分供方清单_V3.0.pdf,3-智能与电器 - W02 APQP交付物2-8 材料、产品及分供方清单_V3.0.pdf,target,PPAP:材料产品及分供清单@v2,PPAP:材料产品及分供清单,1;2;3;4
+v2,3-材料产品及分供方清单_巨一.pdf,f093,assets/corpus/documents/v2/3-材料产品及分供方清单_巨一.pdf,3-材料产品及分供方清单_巨一.pdf,target,PPAP:材料产品及分供清单@v2,PPAP:材料产品及分供清单,1;2;3;4
+v2,3-材料产品及分供方清单_巨一.xlsx,f094,assets/corpus/documents/v2/3-材料产品及分供方清单_巨一.xlsx,3-材料产品及分供方清单_巨一.xlsx,target,PPAP:材料产品及分供清单@v2,PPAP:材料产品及分供清单,1;2;3;4
+v2,3-材料产品及分供方清单_继峰 - 表头无线框.pdf,f095,assets/corpus/documents/v2/3-材料产品及分供方清单_继峰 - 表头无线框.pdf,3-材料产品及分供方清单_继峰 - 表头无线框.pdf,target,PPAP:材料产品及分供清单@v2,PPAP:材料产品及分供清单,1;2;3;4
+v2,3-材料产品及分供方清单_继峰 - 表头无线框.xlsx,f096,assets/corpus/documents/v2/3-材料产品及分供方清单_继峰 - 表头无线框.xlsx,3-材料产品及分供方清单_继峰 - 表头无线框.xlsx,target,PPAP:材料产品及分供清单@v2,PPAP:材料产品及分供清单,1;2;3;4
+v2,3-材料产品及分供方清单_继峰.pdf,f097,assets/corpus/documents/v2/3-材料产品及分供方清单_继峰.pdf,3-材料产品及分供方清单_继峰.pdf,target,PPAP:材料产品及分供清单@v2,PPAP:材料产品及分供清单,1;2;3;4
+v2,3-材料产品及分供方清单_继峰.xlsx,f098,assets/corpus/documents/v2/3-材料产品及分供方清单_继峰.xlsx,3-材料产品及分供方清单_继峰.xlsx,target,PPAP:材料产品及分供清单@v2,PPAP:材料产品及分供清单,1;2;3;4
+v2,3-材料产品及分工清单_上海亚大.pdf,f099,assets/corpus/documents/v2/3-材料产品及分工清单_上海亚大.pdf,3-材料产品及分工清单_上海亚大.pdf,target,PPAP:材料产品及分供清单@v2,PPAP:材料产品及分供清单,1;2;3;4
+v2,3-材料产品及分工清单_上海亚大.xlsx,f100,assets/corpus/documents/v2/3-材料产品及分工清单_上海亚大.xlsx,3-材料产品及分工清单_上海亚大.xlsx,target,PPAP:材料产品及分供清单@v2,PPAP:材料产品及分供清单,1;2;3;4
+v2,3-热管理 - 07-08 W02材料及分供方清单20250527.pdf,f101,assets/corpus/documents/v2/3-热管理 - 07-08 W02材料及分供方清单20250527.pdf,3-热管理 - 07-08 W02材料及分供方清单20250527.pdf,target,PPAP:材料产品及分供清单@v2,PPAP:材料产品及分供清单,1;2;3;4
+v2,3-电驱动 - APQP交付物2-19 产品分供方清单.xlsx,f102,assets/corpus/documents/v2/3-电驱动 - APQP交付物2-19 产品分供方清单.xlsx,3-电驱动 - APQP交付物2-19 产品分供方清单.xlsx,target,PPAP:材料产品及分供清单@v2,PPAP:材料产品及分供清单,1;2;3;4
+v2,4-检具验收报告-动力电池-错误.pdf,f103,assets/corpus/documents/v2/4-检具验收报告-动力电池-错误.pdf,4-检具验收报告-动力电池-错误.pdf,target,PPAP:检具验收报告@v2,PPAP:检具验收报告,1;2;3
+v2,4-检具验收报告-动力电池-错误.xlsx,f104,assets/corpus/documents/v2/4-检具验收报告-动力电池-错误.xlsx,4-检具验收报告-动力电池-错误.xlsx,target,PPAP:检具验收报告@v2,PPAP:检具验收报告,1;2;3
+v2,4-检具验收报告-巨一.pdf,f105,assets/corpus/documents/v2/4-检具验收报告-巨一.pdf,4-检具验收报告-巨一.pdf,target,PPAP:检具验收报告@v2,PPAP:检具验收报告,1;2;3
+v2,4-检具验收报告-巨一.xlsx,f106,assets/corpus/documents/v2/4-检具验收报告-巨一.xlsx,4-检具验收报告-巨一.xlsx,target,PPAP:检具验收报告@v2,PPAP:检具验收报告,1;2;3
+v2,4-检具验收报告-继峰 - 表头缺少线框.pdf,f107,assets/corpus/documents/v2/4-检具验收报告-继峰 - 表头缺少线框.pdf,4-检具验收报告-继峰 - 表头缺少线框.pdf,target,PPAP:检具验收报告@v2,PPAP:检具验收报告,1;2;3
+v2,4-检具验收报告-继峰 - 表头缺少线框.xlsx,f108,assets/corpus/documents/v2/4-检具验收报告-继峰 - 表头缺少线框.xlsx,4-检具验收报告-继峰 - 表头缺少线框.xlsx,target,PPAP:检具验收报告@v2,PPAP:检具验收报告,1;2;3
+v2,4-检具验收报告-继峰.pdf,f109,assets/corpus/documents/v2/4-检具验收报告-继峰.pdf,4-检具验收报告-继峰.pdf,target,PPAP:检具验收报告@v2,PPAP:检具验收报告,1;2;3
+v2,4-检具验收报告-继峰.xlsx,f110,assets/corpus/documents/v2/4-检具验收报告-继峰.xlsx,4-检具验收报告-继峰.xlsx,target,PPAP:检具验收报告@v2,PPAP:检具验收报告,1;2;3
+v2,5-模具验收报告-上海亚大.pdf,f111,assets/corpus/documents/v2/5-模具验收报告-上海亚大.pdf,5-模具验收报告-上海亚大.pdf,target,PPAP:模具验收报告@v2,PPAP:模具验收报告,1;2;3;4;5;6
+v2,5-模具验收报告-上海亚大.xls,f112,assets/corpus/documents/v2/5-模具验收报告-上海亚大.xls,5-模具验收报告-上海亚大.xls,target,PPAP:模具验收报告@v2,PPAP:模具验收报告,1;2;3;4;5;6
+v2,5-模具验收报告-常州新泉.pdf,f113,assets/corpus/documents/v2/5-模具验收报告-常州新泉.pdf,5-模具验收报告-常州新泉.pdf,target,PPAP:模具验收报告@v2,PPAP:模具验收报告,1;2;3;4;5;6
+v2,5-模具验收报告-常州新泉.xls,f114,assets/corpus/documents/v2/5-模具验收报告-常州新泉.xls,5-模具验收报告-常州新泉.xls,target,PPAP:模具验收报告@v2,PPAP:模具验收报告,1;2;3;4;5;6
+v2,5-模具验收报告-继峰 - 错误.pdf,f115,assets/corpus/documents/v2/5-模具验收报告-继峰 - 错误.pdf,5-模具验收报告-继峰 - 错误.pdf,target,PPAP:模具验收报告@v2,PPAP:模具验收报告,1;2;3;4;5;6
+v2,5-模具验收报告-继峰 - 错误.xls,f116,assets/corpus/documents/v2/5-模具验收报告-继峰 - 错误.xls,5-模具验收报告-继峰 - 错误.xls,target,PPAP:模具验收报告@v2,PPAP:模具验收报告,1;2;3;4;5;6
+v2,5-模具验收报告-继峰 -无线框.pdf,f117,assets/corpus/documents/v2/5-模具验收报告-继峰 -无线框.pdf,5-模具验收报告-继峰 -无线框.pdf,target,PPAP:模具验收报告@v2,PPAP:模具验收报告,1;2;3;4;5;6
+v2,5-模具验收报告-继峰 -无线框.xls,f118,assets/corpus/documents/v2/5-模具验收报告-继峰 -无线框.xls,5-模具验收报告-继峰 -无线框.xls,target,PPAP:模具验收报告@v2,PPAP:模具验收报告,1;2;3;4;5;6
+v2,5-模具验收报告-继峰.pdf,f119,assets/corpus/documents/v2/5-模具验收报告-继峰.pdf,5-模具验收报告-继峰.pdf,target,PPAP:模具验收报告@v2,PPAP:模具验收报告,1;2;3;4;5;6
+v2,5-模具验收报告-继峰.xls,f120,assets/corpus/documents/v2/5-模具验收报告-继峰.xls,5-模具验收报告-继峰.xls,target,PPAP:模具验收报告@v2,PPAP:模具验收报告,1;2;3;4;5;6
+v2,6-测量系统分析评价-巨一.pdf,f121,assets/corpus/documents/v2/6-测量系统分析评价-巨一.pdf,6-测量系统分析评价-巨一.pdf,target,PPAP:测量系统分析评价@v2,PPAP:测量系统分析评价,1;2;3;4
+v2,6-测量系统分析评价-巨一.xlsx,f122,assets/corpus/documents/v2/6-测量系统分析评价-巨一.xlsx,6-测量系统分析评价-巨一.xlsx,target,PPAP:测量系统分析评价@v2,PPAP:测量系统分析评价,1;2;3;4
+v2,6-测量系统分析评价-常州新泉.pdf,f123,assets/corpus/documents/v2/6-测量系统分析评价-常州新泉.pdf,6-测量系统分析评价-常州新泉.pdf,target,PPAP:测量系统分析评价@v2,PPAP:测量系统分析评价,1;2;3;4
+v2,6-测量系统分析评价-常州新泉.xlsx,f124,assets/corpus/documents/v2/6-测量系统分析评价-常州新泉.xlsx,6-测量系统分析评价-常州新泉.xlsx,target,PPAP:测量系统分析评价@v2,PPAP:测量系统分析评价,1;2;3;4
+v2,6-测量系统分析评价-继峰 - 无线框.pdf,f125,assets/corpus/documents/v2/6-测量系统分析评价-继峰 - 无线框.pdf,6-测量系统分析评价-继峰 - 无线框.pdf,target,PPAP:测量系统分析评价@v2,PPAP:测量系统分析评价,1;2;3;4
+v2,6-测量系统分析评价-继峰 - 无线框.xlsx,f126,assets/corpus/documents/v2/6-测量系统分析评价-继峰 - 无线框.xlsx,6-测量系统分析评价-继峰 - 无线框.xlsx,target,PPAP:测量系统分析评价@v2,PPAP:测量系统分析评价,1;2;3;4
+v2,6-测量系统分析评价-继峰-错误.pdf,f127,assets/corpus/documents/v2/6-测量系统分析评价-继峰-错误.pdf,6-测量系统分析评价-继峰-错误.pdf,target,PPAP:测量系统分析评价@v2,PPAP:测量系统分析评价,1;2;3;4
+v2,6-测量系统分析评价-继峰-错误.xlsx,f128,assets/corpus/documents/v2/6-测量系统分析评价-继峰-错误.xlsx,6-测量系统分析评价-继峰-错误.xlsx,target,PPAP:测量系统分析评价@v2,PPAP:测量系统分析评价,1;2;3;4
+v2,6-测量系统分析评价-继峰.pdf,f129,assets/corpus/documents/v2/6-测量系统分析评价-继峰.pdf,6-测量系统分析评价-继峰.pdf,target,PPAP:测量系统分析评价@v2,PPAP:测量系统分析评价,1;2;3;4
+v2,6-测量系统分析评价-继峰.xlsx,f130,assets/corpus/documents/v2/6-测量系统分析评价-继峰.xlsx,6-测量系统分析评价-继峰.xlsx,target,PPAP:测量系统分析评价@v2,PPAP:测量系统分析评价,1;2;3;4
+v2,7-过程能力研究-巨一.pdf,f131,assets/corpus/documents/v2/7-过程能力研究-巨一.pdf,7-过程能力研究-巨一.pdf,target,PPAP:过程能力研究@v2,PPAP:过程能力研究,1;2;3
+v2,7-过程能力研究-巨一.xlsx,f132,assets/corpus/documents/v2/7-过程能力研究-巨一.xlsx,7-过程能力研究-巨一.xlsx,target,PPAP:过程能力研究@v2,PPAP:过程能力研究,1;2;3
+v2,7-过程能力研究-常州新泉 - 无线框.pdf,f133,assets/corpus/documents/v2/7-过程能力研究-常州新泉 - 无线框.pdf,7-过程能力研究-常州新泉 - 无线框.pdf,target,PPAP:过程能力研究@v2,PPAP:过程能力研究,1;2;3
+v2,7-过程能力研究-常州新泉 - 无线框.xlsx,f134,assets/corpus/documents/v2/7-过程能力研究-常州新泉 - 无线框.xlsx,7-过程能力研究-常州新泉 - 无线框.xlsx,target,PPAP:过程能力研究@v2,PPAP:过程能力研究,1;2;3
+v2,7-过程能力研究-常州新泉 - 错误.pdf,f135,assets/corpus/documents/v2/7-过程能力研究-常州新泉 - 错误.pdf,7-过程能力研究-常州新泉 - 错误.pdf,target,PPAP:过程能力研究@v2,PPAP:过程能力研究,1;2;3
+v2,7-过程能力研究-常州新泉 - 错误.xlsx,f136,assets/corpus/documents/v2/7-过程能力研究-常州新泉 - 错误.xlsx,7-过程能力研究-常州新泉 - 错误.xlsx,target,PPAP:过程能力研究@v2,PPAP:过程能力研究,1;2;3
+v2,7-过程能力研究-常州新泉.pdf,f137,assets/corpus/documents/v2/7-过程能力研究-常州新泉.pdf,7-过程能力研究-常州新泉.pdf,target,PPAP:过程能力研究@v2,PPAP:过程能力研究,1;2;3
+v2,7-过程能力研究-常州新泉.xlsx,f138,assets/corpus/documents/v2/7-过程能力研究-常州新泉.xlsx,7-过程能力研究-常州新泉.xlsx,target,PPAP:过程能力研究@v2,PPAP:过程能力研究,1;2;3
+v2,8-过程流程图-亚大.pdf,f139,assets/corpus/documents/v2/8-过程流程图-亚大.pdf,8-过程流程图-亚大.pdf,target,PPAP:过程流程图@v2,PPAP:过程流程图,1;2;3;4;5;6
+v2,8-过程流程图-亚大.xlsx,f140,assets/corpus/documents/v2/8-过程流程图-亚大.xlsx,8-过程流程图-亚大.xlsx,target,PPAP:过程流程图@v2,PPAP:过程流程图,1;2;3;4;5;6
+v2,8-过程流程图-巨一.pdf,f141,assets/corpus/documents/v2/8-过程流程图-巨一.pdf,8-过程流程图-巨一.pdf,target,PPAP:过程流程图@v2,PPAP:过程流程图,1;2;3;4;5;6
+v2,8-过程流程图-巨一.xlsx,f142,assets/corpus/documents/v2/8-过程流程图-巨一.xlsx,8-过程流程图-巨一.xlsx,target,PPAP:过程流程图@v2,PPAP:过程流程图,1;2;3;4;5;6
+v2,8-过程流程图-继峰 - 无线框.pdf,f143,assets/corpus/documents/v2/8-过程流程图-继峰 - 无线框.pdf,8-过程流程图-继峰 - 无线框.pdf,target,PPAP:过程流程图@v2,PPAP:过程流程图,1;2;3;4;5;6
+v2,8-过程流程图-继峰 - 无线框.xlsx,f144,assets/corpus/documents/v2/8-过程流程图-继峰 - 无线框.xlsx,8-过程流程图-继峰 - 无线框.xlsx,target,PPAP:过程流程图@v2,PPAP:过程流程图,1;2;3;4;5;6
+v2,8-过程流程图-继峰 - 错误.pdf,f145,assets/corpus/documents/v2/8-过程流程图-继峰 - 错误.pdf,8-过程流程图-继峰 - 错误.pdf,target,PPAP:过程流程图@v2,PPAP:过程流程图,1;2;3;4;5;6
+v2,8-过程流程图-继峰 - 错误.xlsx,f146,assets/corpus/documents/v2/8-过程流程图-继峰 - 错误.xlsx,8-过程流程图-继峰 - 错误.xlsx,target,PPAP:过程流程图@v2,PPAP:过程流程图,1;2;3;4;5;6
+v2,8-过程流程图-继峰.pdf,f147,assets/corpus/documents/v2/8-过程流程图-继峰.pdf,8-过程流程图-继峰.pdf,target,PPAP:过程流程图@v2,PPAP:过程流程图,1;2;3;4;5;6
+v2,8-过程流程图-继峰.xlsx,f148,assets/corpus/documents/v2/8-过程流程图-继峰.xlsx,8-过程流程图-继峰.xlsx,target,PPAP:过程流程图@v2,PPAP:过程流程图,1;2;3;4;5;6
+v2,9-潜在过程失效模式及后果分析-上海亚大.pdf,f149,assets/corpus/documents/v2/9-潜在过程失效模式及后果分析-上海亚大.pdf,9-潜在过程失效模式及后果分析-上海亚大.pdf,target,PPAP:潜在过程失效模式及后果分析@v2,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
+v2,9-潜在过程失效模式及后果分析-上海亚大.xlsx,f150,assets/corpus/documents/v2/9-潜在过程失效模式及后果分析-上海亚大.xlsx,9-潜在过程失效模式及后果分析-上海亚大.xlsx,target,PPAP:潜在过程失效模式及后果分析@v2,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
+v2,9-潜在过程失效模式及后果分析-常州新泉.pdf,f151,assets/corpus/documents/v2/9-潜在过程失效模式及后果分析-常州新泉.pdf,9-潜在过程失效模式及后果分析-常州新泉.pdf,target,PPAP:潜在过程失效模式及后果分析@v2,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
+v2,9-潜在过程失效模式及后果分析-常州新泉.xlsx,f152,assets/corpus/documents/v2/9-潜在过程失效模式及后果分析-常州新泉.xlsx,9-潜在过程失效模式及后果分析-常州新泉.xlsx,target,PPAP:潜在过程失效模式及后果分析@v2,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
+v2,9-潜在过程失效模式及后果分析-继峰 - 无边框.pdf,f153,assets/corpus/documents/v2/9-潜在过程失效模式及后果分析-继峰 - 无边框.pdf,9-潜在过程失效模式及后果分析-继峰 - 无边框.pdf,target,PPAP:潜在过程失效模式及后果分析@v2,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
+v2,9-潜在过程失效模式及后果分析-继峰 - 无边框.xlsx,f154,assets/corpus/documents/v2/9-潜在过程失效模式及后果分析-继峰 - 无边框.xlsx,9-潜在过程失效模式及后果分析-继峰 - 无边框.xlsx,target,PPAP:潜在过程失效模式及后果分析@v2,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
+v2,9-潜在过程失效模式及后果分析-继峰 - 错误.pdf,f155,assets/corpus/documents/v2/9-潜在过程失效模式及后果分析-继峰 - 错误.pdf,9-潜在过程失效模式及后果分析-继峰 - 错误.pdf,target,PPAP:潜在过程失效模式及后果分析@v2,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
+v2,9-潜在过程失效模式及后果分析-继峰 - 错误.xlsx,f156,assets/corpus/documents/v2/9-潜在过程失效模式及后果分析-继峰 - 错误.xlsx,9-潜在过程失效模式及后果分析-继峰 - 错误.xlsx,target,PPAP:潜在过程失效模式及后果分析@v2,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
+v2,9-潜在过程失效模式及后果分析-继峰.pdf,f157,assets/corpus/documents/v2/9-潜在过程失效模式及后果分析-继峰.pdf,9-潜在过程失效模式及后果分析-继峰.pdf,target,PPAP:潜在过程失效模式及后果分析@v2,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
+v2,9-潜在过程失效模式及后果分析-继峰.xlsx,f158,assets/corpus/documents/v2/9-潜在过程失效模式及后果分析-继峰.xlsx,9-潜在过程失效模式及后果分析-继峰.xlsx,target,PPAP:潜在过程失效模式及后果分析@v2,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
+v2,NJ24010097_EVB理想X04_PACK3_绝缘耐压等电位正本-DVP试验报告.pdf,f159,assets/corpus/documents/v2/NJ24010097_EVB理想X04_PACK3_绝缘耐压等电位正本-DVP试验报告.pdf,NJ24010097_EVB理想X04_PACK3_绝缘耐压等电位正本-DVP试验报告.pdf,target,PPAP:DV报告_PV报告_试验报告@v2,PPAP:DV报告_PV报告_试验报告,1;2;3;4;5;6
+v2,SHF03-25021669-QC-15 阻燃性 试验报告 4.pdf,f160,assets/corpus/documents/v2/SHF03-25021669-QC-15 阻燃性 试验报告 4.pdf,SHF03-25021669-QC-15 阻燃性 试验报告 4.pdf,target,PPAP:DV报告_PV报告_试验报告@v2,PPAP:DV报告_PV报告_试验报告,1;2;3;4;5;6
+v2,W02管路PV试验报告2025052803_QFZ.pdf,f161,assets/corpus/documents/v2/W02管路PV试验报告2025052803_QFZ.pdf,W02管路PV试验报告2025052803_QFZ.pdf,target,PPAP:DV报告_PV报告_试验报告@v2,PPAP:DV报告_PV报告_试验报告,1;2;3;4;5;6
+v2,座舱 - 材料分供方清单-W02底护板-25.2.24.xlsx,f162,assets/corpus/documents/v2/座舱 - 材料分供方清单-W02底护板-25.2.24.xlsx,座舱 - 材料分供方清单-W02底护板-25.2.24.xlsx,target,PPAP:材料产品及分供清单@v2,PPAP:材料产品及分供清单,1;2;3;4
+v3,Aries Spoiler,f001,assets/corpus/documents/v3/Aries Spoiler/CP-NIO+Aries+Spoiler_v2.xlsx,CP-NIO+Aries+Spoiler_v2.xlsx,target,PPAP:控制计划@v3,PPAP:控制计划,1;2;3;4;5;6;7;8;9;10;11
+v3,Aries Spoiler,f002,assets/corpus/documents/v3/Aries Spoiler/过程流程图-NIO+Aries+Spoiler_v2.xlsx,过程流程图-NIO+Aries+Spoiler_v2.xlsx,target,PPAP:过程流程图@v3,PPAP:过程流程图,1;2;3;4;5;6;7;8;9
+v3,Aries Spoiler,f003,assets/corpus/documents/v3/Aries Spoiler/PFMEA_NIO+Aries+Spoiler_v2.xlsx,PFMEA_NIO+Aries+Spoiler_v2.xlsx,target,PPAP:潜在过程失效模式及后果分析@v3,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
+v3,Blanc Spoiler-有特殊特性清单,f004,assets/corpus/documents/v3/Blanc Spoiler-有特殊特性清单/P0363244_扰流板总成_特殊特性清单.xlsx,P0363244_扰流板总成_特殊特性清单.xlsx,target,PPAP:过程特殊特性清单@v3,PPAP:过程特殊特性清单,1;2
+v3,Blanc Spoiler-有特殊特性清单,f005,assets/corpus/documents/v3/Blanc Spoiler-有特殊特性清单/过程流程图-BLANC.xlsx,过程流程图-BLANC.xlsx,target,PPAP:过程流程图@v3,PPAP:过程流程图,1;2;3;4;5;6;7;8;9
+v3,Blanc Spoiler-有特殊特性清单,f006,assets/corpus/documents/v3/Blanc Spoiler-有特殊特性清单/BLANC扰流板总成PFMEA_V3.xlsx,BLANC扰流板总成PFMEA_V3.xlsx,target,PPAP:潜在过程失效模式及后果分析@v3,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
+v3,Blanc Spoiler-特殊特性清单见原文件夹,f007,assets/corpus/documents/v3/Blanc Spoiler-特殊特性清单见原文件夹/19-BLANC尾-生产控制计划_v2.xlsx,19-BLANC尾-生产控制计划_v2.xlsx,target,PPAP:控制计划@v3,PPAP:控制计划,1;2;3;4;5;6;7;8;9;10;11
+v3,Blanc Spoiler-特殊特性清单见原文件夹,f008,assets/corpus/documents/v3/Blanc Spoiler-特殊特性清单见原文件夹/过程流程图-BLANC_v2.xlsx,过程流程图-BLANC_v2.xlsx,target,PPAP:过程流程图@v3,PPAP:过程流程图,1;2;3;4;5;6;7;8;9
+v3,Blanc Spoiler-特殊特性清单见原文件夹,f009,assets/corpus/documents/v3/Blanc Spoiler-特殊特性清单见原文件夹/BLANC扰流板总成PFMEA_V4.xlsx,BLANC扰流板总成PFMEA_V4.xlsx,target,PPAP:潜在过程失效模式及后果分析@v3,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
+v3,Cetus Spoiler-有特殊特性清单,f010,assets/corpus/documents/v3/Cetus Spoiler-有特殊特性清单/控制计划 -CETUS.xls,控制计划 -CETUS.xls,target,PPAP:控制计划@v3,PPAP:控制计划,1;2;3;4;5;6;7;8;9;10;11
+v3,Cetus Spoiler-有特殊特性清单,f011,assets/corpus/documents/v3/Cetus Spoiler-有特殊特性清单/P0377535-尾门导流板总成-特殊特性清单.xlsx,P0377535-尾门导流板总成-特殊特性清单.xlsx,target,PPAP:过程特殊特性清单@v3,PPAP:过程特殊特性清单,1;2
+v3,Cetus Spoiler-有特殊特性清单,f012,assets/corpus/documents/v3/Cetus Spoiler-有特殊特性清单/P0400905_尾门导流板总成_特殊特性清单.xlsx,P0400905_尾门导流板总成_特殊特性清单.xlsx,target,PPAP:过程特殊特性清单@v3,PPAP:过程特殊特性清单,1;2
+v3,Cetus Spoiler-有特殊特性清单,f013,assets/corpus/documents/v3/Cetus Spoiler-有特殊特性清单/过程流程图CETUS.xlsx,过程流程图CETUS.xlsx,target,PPAP:过程流程图@v3,PPAP:过程流程图,1;2;3;4;5;6;7;8;9
+v3,Cetus Spoiler-有特殊特性清单,f014,assets/corpus/documents/v3/Cetus Spoiler-有特殊特性清单/Cetus扰流板总成PFMEA.xlsx,Cetus扰流板总成PFMEA.xlsx,target,PPAP:潜在过程失效模式及后果分析@v3,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
+v3,Cetus Spoiler-特殊特性清单见原文件夹,f015,assets/corpus/documents/v3/Cetus Spoiler-特殊特性清单见原文件夹/控制计划 -CETUS_v2.xlsx,控制计划 -CETUS_v2.xlsx,target,PPAP:控制计划@v3,PPAP:控制计划,1;2;3;4;5;6;7;8;9;10;11
+v3,Cetus Spoiler-特殊特性清单见原文件夹,f016,assets/corpus/documents/v3/Cetus Spoiler-特殊特性清单见原文件夹/过程流程图CETUS_v2.xlsx,过程流程图CETUS_v2.xlsx,target,PPAP:过程流程图@v3,PPAP:过程流程图,1;2;3;4;5;6;7;8;9
+v3,Cetus Spoiler-特殊特性清单见原文件夹,f017,assets/corpus/documents/v3/Cetus Spoiler-特殊特性清单见原文件夹/Cetus扰流板总成PFMEA_v2.xlsx,Cetus扰流板总成PFMEA_v2.xlsx,target,PPAP:潜在过程失效模式及后果分析@v3,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
+v3,Gemini Spoiler,f018,assets/corpus/documents/v3/Gemini Spoiler/12+CP（gemini）_v2.xlsx,12+CP（gemini）_v2.xlsx,target,PPAP:控制计划@v3,PPAP:控制计划,1;2;3;4;5;6;7;8;9;10;11
+v3,Gemini Spoiler,f019,assets/corpus/documents/v3/Gemini Spoiler/10+过程流程图（gemini）_v2.xlsx,10+过程流程图（gemini）_v2.xlsx,target,PPAP:过程流程图@v3,PPAP:过程流程图,1;2;3;4;5;6;7;8;9
+v3,Gemini Spoiler,f020,assets/corpus/documents/v3/Gemini Spoiler/11+PFMEA（gemini）_v2.xlsx,11+PFMEA（gemini）_v2.xlsx,target,PPAP:潜在过程失效模式及后果分析@v3,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
+v3,POC测试样本,f021,assets/corpus/documents/v3/POC测试样本/尺寸检验报告-example.xlsm,尺寸检验报告-example.xlsm,target,PPAP:全功能检验报告@v3,PPAP:全功能检验报告,1;2;3;4;5;6;7;8;9;10;11
+v3,POC测试样本,f022,assets/corpus/documents/v3/POC测试样本/PFMEA-sample.xlsx,PFMEA-sample.xlsx,target,PPAP:潜在过程失效模式及后果分析@v3,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
+v3,POC测试样本,f023,assets/corpus/documents/v3/POC测试样本/PFMEA-sample_v2.xlsx,PFMEA-sample_v2.xlsx,target,PPAP:潜在过程失效模式及后果分析@v3,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
+v3,Sirius Spoiler,f024,assets/corpus/documents/v3/Sirius Spoiler/Sirius-spolier+CP_v2.xlsx,Sirius-spolier+CP_v2.xlsx,target,PPAP:控制计划@v3,PPAP:控制计划,1;2;3;4;5;6;7;8;9;10;11
+v3,Sirius Spoiler,f025,assets/corpus/documents/v3/Sirius Spoiler/Sirius-spolier+过程流程图-NIO+Sirius+Spoiler+Cross+ASM_03.xlsx,Sirius-spolier+过程流程图-NIO+Sirius+Spoiler+Cross+ASM_03.xlsx,target,PPAP:过程流程图@v3,PPAP:过程流程图,1;2;3;4;5;6;7;8;9
+v3,Sirius Spoiler,f026,assets/corpus/documents/v3/Sirius Spoiler/PFMEA-NIO+Sirius+Spoiler+Cross+ASM_02_v2.xlsx,PFMEA-NIO+Sirius+Spoiler+Cross+ASM_02_v2.xlsx,target,PPAP:潜在过程失效模式及后果分析@v3,PPAP:潜在过程失效模式及后果分析,1;2;3;4;5;6;7
+v4-uaes,CP-PFMEA-PFD,f1,assets/corpus/documents/v4-uaes/控制计划.xlsx,控制计划.xlsx,target,UAES:U08@v4,UAES:U08,U08:1;U08:2;U08:3;U08:4;U08:6;U08:7;U08:8;U08:9;U08:10;U08:11;U08:12;U08:13
+v4-uaes,CP-PFMEA-PFD,f2,assets/corpus/documents/v4-uaes/PFMEA.xls,PFMEA.xls,target,UAES:U07@v4,UAES:U07,U07:1;U07:2;U07:3;U07:4
+v4-uaes,CP-PFMEA-PFD,f3,assets/corpus/documents/v4-uaes/过程流程图.xls,过程流程图.xls,target,UAES:U16@v4,UAES:U16,U16:1;U16:2;U16:3
+v4-uaes,two-independent-CP-originals,f1,assets/corpus/documents/v4-uaes/控制计划.xlsx,控制计划.xlsx,target,UAES:U08@v4,UAES:U08,U08:1;U08:2;U08:3;U08:4;U08:6;U08:7;U08:8;U08:9;U08:10;U08:11;U08:12;U08:13
+v4-uaes,two-independent-CP-originals,f2,assets/corpus/documents/v4-uaes/控制计划-模板3 WY.pdf,控制计划-模板3 WY.pdf,target,UAES:U08@v4,UAES:U08,U08:1;U08:2;U08:3;U08:4;U08:6;U08:7;U08:8;U08:9;U08:10;U08:11;U08:12;U08:13
