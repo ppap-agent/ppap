@@ -234,7 +234,7 @@ def history_text(round_body: dict, return_url: str = "", *, now: datetime | None
         lines.append("**审核内容" + str(index) + "：" + name + "**")
         lines.append("")
         lines.append("审核结果：" + _status_text(rows))
-        source = next((item for item in round_body["inputs"] if rows and item["file_version_id"] == _finding_version(rows[0])), {})
+        source: dict = next((item for item in round_body["inputs"] if rows and item["file_version_id"] == _finding_version(rows[0])), {})
         if source.get("checker_verification"):
             lines.append(source["checker_verification"]["notice"])
         scope = _scope_text(rows)

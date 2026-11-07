@@ -23,7 +23,9 @@ def test_known_gap_update_does_not_change_human_truth():
 
 def test_reviewed_semantics_have_the_same_independent_review_workflow():
     verify_reviewed_rules_change(
-        '{"suite": {"rule": "before"}}', '{"suite": {"rule": "after"}}', [REVIEWED_RULES, ORACLE],
+        '{"suite": {"rule": "before"}}',
+        '{"suite": {"rule": "after"}}',
+        [REVIEWED_RULES, ORACLE],
         "Oracle-Basis: Product owner independently reviewed the changed source clause.",
     )
     verify_reviewed_rules_change('{"suite": {"rule": "same"}}', '{ "suite": { "rule": "same" } }', [REVIEWED_RULES, "packages/audit/implementation.py"], "Reformat reviewed evidence")
@@ -34,7 +36,9 @@ def test_source_associations_are_reviewed_independently_of_row_or_binding_order(
     row = "v3,c,f,original.xlsx,file.xlsx,target,PPAP:控制计划@v3,PPAP:控制计划,1;2\n"
     assert case_bindings(header + row) == case_bindings(header + row.replace("1;2", "2;1"))
     verify_case_bindings_change(
-        header + row, header + row.replace("@v3", "@v2"), [CASES, ORACLE],
+        header + row,
+        header + row.replace("@v3", "@v2"),
+        [CASES, ORACLE],
         "Oracle-Basis: Product owner independently confirmed the answers against the selected source revision.",
     )
 
