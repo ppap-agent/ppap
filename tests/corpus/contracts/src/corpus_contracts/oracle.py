@@ -51,9 +51,7 @@ def reviewed_contract(suite: StandardSuite) -> dict:
     RESOURCES assignment. Read that declaration without importing or running it.
     """
     resources = [
-        node.value
-        for node in ast.parse(suite.files["checker.py"]).body
-        if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "RESOURCES" for target in node.targets)
+        node.value for node in ast.parse(suite.files["checker.py"]).body if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "RESOURCES" for target in node.targets)
     ]
     if len(resources) != 1:
         raise ValueError("Corpus Suite requires one explicit source binding: " + suite.suite_key)
@@ -215,7 +213,11 @@ def build_round(case: OracleCase) -> tuple[ExecutionSnapshot, dict[str, bytes], 
             document_type = suite.document_type
             targets.append(
                 FrozenTarget(
-                    file.file_id, "sha256:" + suite.revision_digest, suite.suite_key, suite.revision_digest, body,
+                    file.file_id,
+                    "sha256:" + suite.revision_digest,
+                    suite.suite_key,
+                    suite.revision_digest,
+                    body,
                     RuleBinding(suite.suite_key, checker_digest(suite.program_files), suite.entrypoints),
                 )
             )
