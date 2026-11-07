@@ -68,6 +68,45 @@ class UiA11yTests(unittest.TestCase):
             page.route("**/api/audit-tasks?*", lambda route: route.fulfill(json={"tasks": [], "next_offset": None}))
             page.route("**/api/rules", lambda route: route.fulfill(json={"rules": []}))
             page.route("**/api/rule-types", lambda route: route.fulfill(json={"types": ["控制计划"]}))
+            page.route(
+                "**/api/suites",
+                lambda route: route.fulfill(
+                    json={
+                        "suites": [
+                            {
+                                "title": "控制计划",
+                                "candidate_revision_id": "00000000-0000-4000-8000-000000000004",
+                                "version": 0,
+                                "origin": "official",
+                                "selection_mode": "candidate_only",
+                                "suite_key": "control-plan",
+                                "revision": 0,
+                                "current_revision_id": None,
+                                "latest_official_revision_id": None,
+                                "latest_official_version": None,
+                                "official_base_revision_id": None,
+                                "official_update_available": False,
+                                "official_update_notice": False,
+                                "verification_status": "unverified",
+                                "force_unverified": False,
+                                "validation": {
+                                    "status": "unverified",
+                                    "revision": 0,
+                                    "write_revision": 0,
+                                    "proof_scope": "none",
+                                    "total_samples": 0,
+                                    "passed_samples": 0,
+                                    "new_errors": 0,
+                                    "verified": False,
+                                    "samples_not_rerun": False,
+                                    "reasons": ["no_validation_proof"],
+                                },
+                                "history": [],
+                            }
+                        ]
+                    }
+                ),
+            )
             session = context.new_cdp_session(page)
             session.send("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 1})
             page.goto(WEB)
@@ -117,6 +156,7 @@ class UiA11yTests(unittest.TestCase):
             directory = []
             page.route("**/api/rule-library", lambda route: directory.append(route))
             page.goto(WEB + "/requirements")
+            expect(page.get_by_role("combobox", name="选择检查", exact=True)).to_contain_text("控制计划 · control-plan · 尚未采用")
             loading = page.get_by_role("status", name="正在读取审核规则", exact=True)
             expect(loading).to_be_visible()
             expect(loading.locator('[data-slot="skeleton"]')).to_have_count(25)
