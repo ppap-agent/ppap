@@ -272,3 +272,58 @@ def test_waiting_audit_cannot_use_old_transaction_time_to_revive_lease(admission
         holder.execute("SELECT pg_sleep(1.05)")
         holder.commit()
         assert future.result(timeout=3) is False
+
+
+def test_first_standard_adoption_uses_tenant_heads_and_freezes_related_checks(auth_store_factory):
+    from api import create_app
+    from audit.standard_suites import standard_suites
+    from fastapi.testclient import TestClient
+    from product import build_product_store
+    from product.identity import SESSION_COOKIE
+
+    store = auth_store_factory(Settings(feishu_app_id="first-standard-adoption", usage_charge_enabled=False, git_sha="a" * 40))
+    principal = store.upsert_feishu_identity("first-standard", "owner")
+    suites = SuiteStore(store.settings, store.objects, role="migrator")
+    ordered = ("UAES:U12", "UAES:U16", "UAES:U07", "UAES:U08")
+    baselines = {suite.suite_key: suite for suite in standard_suites() if suite.suite_key in ordered}
+    revisions = {key: suites.create_revision(tenant_id=None, suite_key=key, files=dict(baselines[key].files), created_by=None, related_suite_keys=baselines[key].related_suite_keys) for key in ordered}
+    api = build_product_store(store.settings, objects=store.objects, role="api")
+    with TestClient(create_app(store.settings, auth_store=api)) as client:
+        client.cookies.set(SESSION_COOKIE, store.create_session(principal))
+        catalog = client.get("/suites").json()["suites"]
+        assert {row["suite_key"] for row in catalog} == set(ordered)
+        assert all(row["selection_mode"] == "candidate_only" and row["current_revision_id"] is None for row in catalog)
+        for key in ordered:
+            path = f"/suites/{key}/active"
+            before = client.get(path).json()
+            candidate = client.get(f"/suite-revisions/{before['candidate_revision_id']}").json()
+            assert candidate["id"] == revisions[key].id
+            assert candidate["unadopted_related_suite_keys"] == []
+            command = {"revision_id": candidate["id"], "expected_revision": before["revision"], "operation_id": str(uuid.uuid4()), "force_unverified": True}
+            reply = client.put(path, json=command)
+            assert reply.status_code == 200, reply.text
+            receipt = reply.json()
+            assert receipt["previous_revision_id"] is None and receipt["force_unverified"] is True
+            assert receipt["verification_status"] == "unverified" and receipt["revision"] == 1
+            assert client.put(path, json=command).json() == receipt
+            assert client.get(path).json()["history"] == [receipt]
+        with store._conn() as conn:
+            assert conn.execute("SELECT count(*) FROM product.official_suite_heads").fetchone()[0] == 0
+            assert conn.execute("SELECT count(*) FROM product.audit_rounds").fetchone()[0] == 0
+            rule_id = str(uuid.uuid4())
+            conn.execute(
+                "INSERT INTO product.rule_versions(id,tenant_id,title,body) VALUES(%s,%s,'UAES 控制计划',%s)",
+                (rule_id, principal.tenant_id, Jsonb({**json.loads(baselines["UAES:U08"].files["rules.json"]), "suite_key": "UAES:U08"})),
+            )
+        raw = b"frozen original for admission"
+        staged = store.create_staging(principal, "control-plan.xlsx", "application/octet-stream", len(raw))
+        original = store.finalize_version(store.put_blob(staged, raw))
+        draft = client.post("/drafts", json={"items": [{"file_version_id": original.id, "role": "target", "rule_version_id": rule_id}]}).json()
+        accepted = client.post(f"/drafts/{draft['id']}/accept", json={"idempotency_key": "first-standard-adoption"})
+        assert accepted.status_code == 201, accepted.text
+        frozen = suites.read_snapshot(accepted.json()["id"], principal.tenant_id)
+        assert frozen.targets[0].suite_revision_id == revisions["UAES:U08"].id
+        assert frozen.targets[0].verification == "unverified"
+        assert frozen.targets[0].related_suite_digests == {key: revisions[key].resolved_digest for key in ("UAES:U07", "UAES:U16")}
+        assert client.post(f"/drafts/{draft['id']}/accept", json={"idempotency_key": "first-standard-adoption"}).json()["id"] == accepted.json()["id"]
+        assert suites.read_snapshot(accepted.json()["id"], principal.tenant_id).to_dict() == frozen.to_dict()

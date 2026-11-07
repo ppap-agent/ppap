@@ -71,6 +71,7 @@ class CheckerHttpFixture:
             "revision": self.head,
             "history": self.history,
             "selection_mode": "pinned",
+            "force_unverified": bool(self.history and self.history[-1]["force_unverified"]),
             "validation": self.revisions[self.current]["validation"],
             "latest_official_revision_id": self.latest_official,
             "latest_official_version": 4 if self.latest_official else None,
@@ -262,6 +263,29 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
         page.get_by_role("button", name="加入这处依据", exact=True).click()
         page.get_by_label("为什么应当这样判断", exact=True).fill("该单元格没有签名")
         page.get_by_role("button", name="加入待修复", exact=True).click()
+
+    def test_adopted_stale_version_can_be_explicitly_reaffirmed(self):
+        with sync_playwright() as playwright:
+            browser = self.browser(playwright)
+            fixture = CheckerHttpFixture()
+            fixture.revisions[fixture.current]["validation"].update(status="stale", reasons=["suite_inputs_changed"])
+            page = self.open(browser, fixture)
+            release = page.get_by_role("region", name="检查发布与版本记录", exact=True)
+            release.get_by_role("button", name="核对并继续使用未验证版本", exact=True).click()
+            confirmation = release.get_by_role("group", name="确认采用检查版本", exact=True)
+            confirmation.get_by_label("我已核对上述未验证项和新增错误，仍要启用", exact=True).check()
+            confirmation.get_by_role("button", name="确认发布", exact=True).click()
+            expect(release.get_by_text("发布操作已完成", exact=True)).to_be_visible()
+            self.assertEqual(len(fixture.history), 1)
+            receipt = fixture.history[0]
+            self.assertEqual(receipt["revision_id"], "revision-base")
+            self.assertEqual(receipt["expected_revision"], 0)
+            self.assertEqual(receipt["revision"], 1)
+            self.assertTrue(receipt["force_unverified"])
+            page.reload()
+            expect(page.get_by_text("控制计划检查 · 本企业版本 v1 · 当前使用", exact=True)).to_be_visible()
+            self.assertEqual(len([row for row in fixture.calls if row[:2] == ("PUT", "/suites/control-plan/active")]), 1)
+            browser.close()
 
     def test_custom_model_full_save_unknown_readback_and_destination_consent(self):
         with sync_playwright() as playwright:

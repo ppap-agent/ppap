@@ -5037,6 +5037,8 @@ export interface components {
         };
         /** SuiteActive */
         SuiteActive: {
+            /** Candidate Revision Id */
+            candidate_revision_id?: string;
             /** Current Revision Id */
             current_revision_id: string | null;
             /** Force Unverified */
@@ -5162,6 +5164,8 @@ export interface components {
             tenant_id: string | null;
             /** Title */
             title: string;
+            /** Unadopted Related Suite Keys */
+            unadopted_related_suite_keys?: string[];
             upgrade?: components["schemas"]["SuiteUpgradeReceipt"];
             validation: components["schemas"]["SuiteValidation"];
             /** Version */

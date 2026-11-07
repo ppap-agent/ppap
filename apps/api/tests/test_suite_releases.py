@@ -85,7 +85,9 @@ def test_publish_compare_and_swap_and_fixed_rollback(auth_store_factory):
     # Saving an unverified official candidate is not publication for other tenants.
     carol = TestClient(create_app(store.settings, auth_store=store))
     carol.cookies.set(SESSION_COOKIE, store.create_session(store.upsert_feishu_identity("untouched", "reader")))
-    assert carol.get(path).status_code == 403
+    untouched = carol.get(path).json()
+    assert untouched["selection_mode"] == "candidate_only"
+    assert untouched["current_revision_id"] is None
     assert carol.get(f"/suite-revisions/{second_official.id}").status_code == 200
     published = bob.put(path, json=command(second_official.id, 1)).json()
     rollback = alice.put(path, json=command(official.id, 2)).json()
@@ -126,3 +128,37 @@ def test_candidate_save_is_idempotent_and_readable_after_lost_response(auth_stor
         assert conn.execute("SELECT count(*) FROM product.suite_revisions WHERE tenant_id IS NOT NULL").fetchone()[0] == 1
         assert conn.execute("SELECT count(*) FROM product.audit_rounds").fetchone()[0] == 0
         assert conn.execute("SELECT count(*) FROM engine.jobs").fetchone()[0] == 0
+
+
+def test_first_adoption_reads_accessible_candidate_and_preserves_receipt(auth_store_factory):
+    store, official, creator, publisher, (alice, bob, carol) = prepare_fixture(auth_store_factory)
+    path = "/suites/control-plan/active"
+    available = bob.get(path)
+    assert available.status_code == 200, available.text
+    before = available.json()
+    assert before["selection_mode"] == "candidate_only"
+    assert before["current_revision_id"] is None and before["revision"] == 0
+    assert before["candidate_revision_id"] == official.id
+    assert before["history"] == []
+    assert before == next(row for row in bob.get("/suites").json()["suites"] if row["suite_key"] == "control-plan")
+    candidate = alice.post(f"/suite-revisions/{official.id}/candidates", json={"operation_id": str(uuid.uuid4()), "files": {"checker.py": "def check(context): return []\n"}}).json()
+    assert bob.get(path).json()["candidate_revision_id"] == candidate["id"]
+    request = command(candidate["id"], expected_revision=before["revision"], force=True)
+    published = bob.put(path, json=request)
+    assert published.status_code == 200, published.text
+    receipt = published.json()
+    assert receipt["previous_revision_id"] is None
+    assert receipt["revision"] == 1 and receipt["force_unverified"] is True
+    assert receipt["verification_status"] == "unverified"
+    assert receipt["published_by"] == publisher.user_id
+    assert bob.put(path, json=request).json() == receipt
+    active = alice.get(path).json()
+    assert active["current_revision_id"] == candidate["id"] and active["selection_mode"] == "pinned"
+    assert active["history"] == [receipt]
+    assert carol.get(path).json()["candidate_revision_id"] == official.id
+    assert carol.get(path).json()["current_revision_id"] is None
+    with store._conn() as conn:
+        assert conn.execute("SELECT count(*) FROM product.suite_publications").fetchone()[0] == 1
+        assert conn.execute("SELECT count(*) FROM product.audit_rounds").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM engine.jobs").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM product.usage_events").fetchone()[0] == 0

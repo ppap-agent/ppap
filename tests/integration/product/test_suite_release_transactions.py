@@ -348,8 +348,9 @@ def test_official_candidates_and_tests_never_replace_active_until_publication(au
     platform = SuiteReleaseStore(store.settings, store.objects, role="migrator")
     first = suites.create_revision(tenant_id=None, suite_key="control-plan", files=FILES, created_by=None)
     assert platform.official_active("control-plan")["revision"] == 0
-    with pytest.raises(KeyError):
-        releases.active(alice, "control-plan")
+    available = releases.active(alice, "control-plan")
+    assert available["selection_mode"] == "candidate_only"
+    assert available["current_revision_id"] is None and available["candidate_revision_id"] == first.id
     # A tenant proof cannot certify or activate the platform default for everyone.
     report = proof_for(suites, alice, first)
     releases.record_validation(alice, first.id, report, expected_revision=0)
