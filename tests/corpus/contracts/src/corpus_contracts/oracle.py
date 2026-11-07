@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import csv
 import hashlib
 import json
@@ -18,18 +19,58 @@ from audit.suite_migration import generic_standard_suites
 REPO_ROOT = Path(__file__).resolve().parents[5]
 CASES_PATH = REPO_ROOT / "assets/corpus/cases.csv"
 ORACLE_PATH = REPO_ROOT / "assets/corpus/oracle.csv"
+REVIEWED_RULES_PATH = REPO_ROOT / "assets/corpus/reviewed-rules.json"
 DATASETS = ("v2", "v3", "v4-uaes")
 FILE_COLUMNS = ("数据集", "组合ID", "文件ID", "原件", "提交文件名", "角色", "Suite版本", "Checker组", "Binding")
 EXPECTED_COLUMNS = ("数据集", "组合ID", "文件ID", "条款ID", "人工真值", "条款说明", "人工判定依据", "判定人", "判定日期", "已知差距")
 TRUTHS = frozenset({"PASS", "NG", "UNABLE", "NA"})
 # What the product still does differently from the truth, and why.
 _KNOWN_GAP = re.compile(r"^(PASS|NG|UNABLE|NA|ERR) \S.*$")
-_REVISION = re.compile(r"^sha256:[a-f0-9]{64}$")
+_REVISION = re.compile(r"^.+@v[1-9][0-9]*$")
 
 
 @lru_cache(maxsize=1)
 def suite_sources() -> dict[str, StandardSuite]:
-    return {f"sha256:{suite.revision_digest}": suite for suite in (*standard_suites(), *generic_standard_suites(include_history=True))}
+    """Exact source selectors, never a current/latest Suite lookup."""
+    sources = [(f"{suite.suite_key}@v4", suite) for suite in standard_suites()]
+    for suite in generic_standard_suites(include_history=True):
+        revision = json.loads(suite.files["tests.json"])[0]["dataset"]
+        sources.append((f"{suite.suite_key}@{revision}", suite))
+    result = {}
+    for selector, suite in sources:
+        if selector in result:
+            raise ValueError("Ambiguous corpus Suite selector: " + selector)
+        result[selector] = suite
+    return result
+
+
+def reviewed_contract(suite: StandardSuite) -> dict:
+    """Meaning of existing human answers, distinct from executable identity.
+
+    Standard sources declare their actual carrier/method bindings in a literal
+    RESOURCES assignment. Read that declaration without importing or running it.
+    """
+    resources = [
+        node.value
+        for node in ast.parse(suite.files["checker.py"]).body
+        if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "RESOURCES" for target in node.targets)
+    ]
+    if len(resources) != 1:
+        raise ValueError("Corpus Suite requires one explicit source binding: " + suite.suite_key)
+    return {
+        "document_type": suite.document_type,
+        "rules": json.loads(suite.files["rules.json"]),
+        "appendix": json.loads(suite.files["appendix.json"]),
+        "entrypoints": dict(suite.entrypoints),
+        "resources": ast.literal_eval(resources[0]),
+        "related_suite_keys": sorted(suite.related_suite_keys),
+    }
+
+
+@lru_cache(maxsize=1)
+def reviewed_rules() -> dict:
+    # Never regenerate this historical human-review evidence from current code.
+    return json.loads(REVIEWED_RULES_PATH.read_text(encoding="utf-8"))
 
 
 @dataclass(frozen=True)
@@ -38,6 +79,8 @@ class Expectation:
     rule_desc: str
     manual_reason: str
     known_gap: str = ""
+    confirmed_by: str = ""
+    confirmed_on: str = ""
 
     @property
     def gap_status(self) -> str:
@@ -63,6 +106,8 @@ class OracleFile:
             raise ValueError(f"Suite revision belongs to {suite.suite_key}, not {self.checker_group}")
         if len(set(self.binding_ids)) != len(self.binding_ids) or set(self.binding_ids) != set(suite.entrypoints):
             raise ValueError("Corpus Binding identities differ from frozen Suite")
+        if reviewed_rules().get(self.suite_revision) != reviewed_contract(suite):
+            raise ValueError("Corpus rules or bindings changed; independent human review required: " + self.suite_revision)
         return suite
 
     def rule_body(self) -> dict:
@@ -133,14 +178,15 @@ def load_oracle(dataset: str | None = None, *, cases: Path = CASES_PATH, oracle:
             raise ValueError(f"Duplicate expectation: {key} rule={rule_id}")
         if gap and (_KNOWN_GAP.fullmatch(gap) is None or gap.split(" ", 1)[0] == status):
             raise ValueError(f"Invalid known gap: {key} rule={rule_id} gap={gap!r}")
-        expectations[key][rule_id] = Expectation(status, row["条款说明"], row["人工判定依据"], gap)
+        expectations[key][rule_id] = Expectation(status, row["条款说明"], row["人工判定依据"], gap, row["判定人"], row["判定日期"])
     groups: dict[tuple[str, str], list[OracleFile]] = {}
     for key, row in indexed.items():
         if row["角色"] == "target" and not expectations[key]:
             raise ValueError(f"Target has zero assertions: {key}")
-        groups.setdefault(key[:2], []).append(
-            OracleFile(key[2], root / row["原件"], row["提交文件名"], row["角色"], row["Suite版本"], row["Checker组"], tuple(row["Binding"].split(";")) if row["Binding"] else (), expectations[key])
-        )
+        file = OracleFile(key[2], root / row["原件"], row["提交文件名"], row["角色"], row["Suite版本"], row["Checker组"], tuple(row["Binding"].split(";")) if row["Binding"] else (), expectations[key])
+        if file.role == "target":
+            file.suite()
+        groups.setdefault(key[:2], []).append(file)
     if any(not any(file.role == "target" for file in group) for group in groups.values()):
         raise ValueError("Oracle case has no targets")
     return [OracleCase(key[0], key[1], tuple(items)) for key, items in groups.items() if dataset is None or key[0] == dataset]
@@ -168,7 +214,10 @@ def build_round(case: OracleCase) -> tuple[ExecutionSnapshot, dict[str, bytes], 
             totals[file.file_id] = len(ids)
             document_type = suite.document_type
             targets.append(
-                FrozenTarget(file.file_id, file.suite_revision, suite.suite_key, suite.revision_digest, body, RuleBinding(suite.suite_key, checker_digest(suite.program_files), suite.entrypoints))
+                FrozenTarget(
+                    file.file_id, "sha256:" + suite.revision_digest, suite.suite_key, suite.revision_digest, body,
+                    RuleBinding(suite.suite_key, checker_digest(suite.program_files), suite.entrypoints),
+                )
             )
         inputs.append(FrozenInput(file.file_id, hashlib.sha256(data).hexdigest(), cast(Literal["target", "reference"], file.role), file.filename, document_type=document_type))
         blobs[file.file_id] = data
@@ -177,4 +226,5 @@ def build_round(case: OracleCase) -> tuple[ExecutionSnapshot, dict[str, bytes], 
 
 
 def programs_for(snapshot: ExecutionSnapshot) -> dict[str, dict[str, bytes]]:
-    return {target.binding.checker_digest: suite_sources()[target.suite_revision_id].program_files for target in snapshot.targets}
+    sources = {"sha256:" + suite.revision_digest: suite for suite in suite_sources().values()}
+    return {target.binding.checker_digest: sources[target.suite_revision_id].program_files for target in snapshot.targets}

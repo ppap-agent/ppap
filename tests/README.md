@@ -96,13 +96,15 @@ uv run --no-sync pytest tests/integration/product
 
 ## Corpus
 
-`assets/corpus/` 只保存三类内容：
+`assets/corpus/` 保存原件、组合、人工真值和对应的规则含义：
 
 - `documents/<数据集>/…`：原件，用提交时的文件名。
-- `cases.csv`：一次提交包含的文件。列为数据集、组合ID、文件ID、原件、提交文件名、角色、Suite版本、Checker组、Binding。Suite版本是源内容的 `sha256:<digest>`，Checker组是 Suite key，Binding 是显式条款 ID 集合。原 PDF、Excel、DOCX 使用同一文档类型的 Suite；历史样例固定各自不可变 revision，不从旧 profile 或类名选择检查器。身份或 Binding 不一致在执行前失败。表驱动 runner 调用正式 guest 的 `run_audit` 函数，进程/授权/Worker 路径由 Runtime 集成测试覆盖。
+- `cases.csv`：一次提交包含的文件。列为数据集、组合ID、文件ID、原件、提交文件名、角色、Suite版本、Checker组、Binding。Suite版本是明确的可读来源选择器，例如 `PPAP:控制计划@v3` 或 `UAES:U05@v4`；必须恰好对应一个 Suite 来源，没有 latest 或回退。Checker组是 Suite key，Binding 是显式条款 ID 集合。原 PDF、Excel、DOCX 使用同一来源的 Suite；完整内容摘要在构建执行快照时计算，仍写入不可变 Suite revision、程序和输入身份。缺失、歧义、组别或 Binding 不一致在加载完整表时失败。表驱动 runner 调用正式 guest 的 `run_audit` 函数，进程/授权/Worker 路径由 Runtime 集成测试覆盖。
 - `oracle.csv`：人工结论。列为数据集、组合ID、文件ID、条款ID、人工真值、条款说明、人工判定依据、判定人、判定日期、已知差距。
 
-规则原文和人工结果是开发 Checker 的依据。规则、附录、Binding 和程序共同进入不可变执行身份；规则正文发生变化会使旧验证失效，不能仅因条款 ID 相同沿用旧人工标签。运行时按显式 Binding 调用实现，不按规则文字猜测方法。
+- `reviewed-rules.json`：每个已使用来源对应的可读人工判定上下文，保留完整规则正文、附录、文档类型、条款入口、实际方法／载体绑定和关联 Suite。加载时与当前来源逐项比较；它不参与产品路由，也不会自动从当前实现重生成。
+
+规则原文和人工结果是开发 Checker 的依据。实现修改可保留人工判定上下文，但完整 Suite／程序／输入摘要仍改变。规则、附录或绑定改变时，旧人工真值不能直接沿用；须独立重审并在带 `Oracle-Basis:` 依据的单独提交中更新 `reviewed-rules.json` 及必要的人工答案，不能与实现或原件内容改动混在一起。`cases.csv` 里的原件／文件身份、角色和 Suite／Binding 关联修改也遵循同一独立复核流程，不能把旧答案直接改绑到另一个已存在的来源。行序与 Binding 条款顺序不改变关联。完整规则正文比较是有意保守的，正文里的描述或来源元数据变化也需要显式复核。运行时按显式 Binding 调用实现，不按规则文字猜测方法。
 
 `replay/<组合>.json` 是录制的模型回答，记录模型看到的文字、图片尺寸和回答，可以直接阅读。
 
