@@ -12,6 +12,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import runpy
 import signal
 import socket
@@ -981,3 +982,92 @@ def test_multi_clause_wording_reconfirmation_verifies_four_independent_documents
             assert all(response_json(request.get(f.web + "/api/rounds/" + original["id"])) == original for original in originals)
         finally:
             request.dispose()
+
+
+def test_first_uaes_adoption_from_rule_library_freezes_dependencies(workspace_product):
+    """A fresh UAES tenant adopts real source through Web before its first Round."""
+    from audit.standard_suites import standard_suites
+    from playwright.sync_api import expect, sync_playwright
+
+    f = workspace_product
+    ordered = ("UAES:U12", "UAES:U16", "UAES:U07", "UAES:U08")
+    baselines = {suite.suite_key: suite for suite in standard_suites() if suite.suite_key in ordered}
+    revisions = {
+        key: f.suites.create_revision(tenant_id=None, suite_key=key, files=dict(baselines[key].files), created_by=None, related_suite_keys=baselines[key].related_suite_keys) for key in ordered
+    }
+    # Keep the first accepted job queued: this test proves adoption and freezing,
+    # not a model-backed business verdict or S3/container isolation.
+    f.pause.set()
+    assert f.paused.wait(5)
+    with sync_playwright() as playwright:
+        executable = os.environ.get("PPAP_BROWSER_EXECUTABLE")
+        browser = playwright.chromium.launch(**({"executable_path": executable} if executable else {}))
+        context = browser.new_context(viewport={"width": 1440, "height": 1000})
+        context.add_cookies([{"name": SESSION_COOKIE, "value": f.session, "url": f.web, "httpOnly": True}])
+        page = context.new_page()
+        page.set_default_timeout(20000)
+        try:
+            page.goto(f.web + "/requirements?checkerSuite=UAES%3AU08")
+            catalog = page.get_by_role("region", name="企业检查版本", exact=True)
+            release = catalog.get_by_role("region", name="检查发布与版本记录", exact=True)
+            expect(release.get_by_text("先采用关联检查版本", exact=True)).to_be_visible()
+            release.get_by_role("button", name="查看 UAES:U07", exact=True).click()
+            expect(page).to_have_url(re.compile(r"checkerSuite=UAES%3AU07"))
+            release.get_by_role("button", name="查看 UAES:U12", exact=True).click()
+            expect(page).to_have_url(re.compile(r"checkerSuite=UAES%3AU12"))
+            publications = []
+            for key in ordered:
+                catalog.get_by_label("选择检查", exact=True).select_option(key)
+                expect(release.get_by_text("尚未采用检查版本。发布后，本企业的新审核才会使用此版本。", exact=True)).to_be_visible()
+                expect(release.get_by_text(re.compile("官方版本 v1"))).to_be_visible()
+                release.get_by_role("button", name="发布此修改", exact=True).click()
+                confirmation = release.get_by_role("group", name="确认采用检查版本", exact=True)
+                expect(confirmation).to_contain_text("需要重新验证")
+                confirmation.get_by_label("我已核对上述未验证项和新增错误，仍要启用", exact=True).check()
+                with page.expect_response(lambda response: response.request.method == "PUT" and response.url.endswith("/active")) as submitted:
+                    confirmation.get_by_role("button", name="确认发布", exact=True).click()
+                receipt = response_json(submitted.value)
+                assert receipt["suite_key"] == key and receipt["revision_id"] == revisions[key].id
+                assert receipt["expected_revision"] == 0 and receipt["revision"] == 1
+                assert receipt["previous_revision_id"] is None and receipt["force_unverified"] is True
+                publications.append(receipt)
+                expect(release.get_by_text("发布操作已完成", exact=True)).to_be_visible()
+                expect(release.get_by_text("当前已固定采用一个版本，不会自动升级。", exact=True)).to_be_visible()
+                page.reload()
+                catalog = page.get_by_role("region", name="企业检查版本", exact=True)
+                release = catalog.get_by_role("region", name="检查发布与版本记录", exact=True)
+                expect(release.get_by_text(re.compile("当前使用"))).to_be_visible()
+                active = response_json(page.request.get(f.web + f"/api/suites/{key}/active"))
+                assert active["history"] == [receipt]
+                assert active["current_revision_id"] == revisions[key].id
+
+            # Another tenant can read official candidates, but this adoption is
+            # not an official publication or that tenant's active selection.
+            other = f.admin.upsert_feishu_identity("checker-browser-other", "reader")
+            other_active = SuiteReleaseStore(f.admin.settings, f.admin.objects, role="api").active(other, "UAES:U08")
+            assert other_active["selection_mode"] == "candidate_only" and other_active["current_revision_id"] is None
+            with f.admin._conn() as conn:
+                assert conn.execute("SELECT count(*) FROM product.audit_rounds").fetchone()[0] == 0
+                assert conn.execute("SELECT count(*) FROM engine.jobs").fetchone()[0] == 0
+                assert conn.execute("SELECT count(*) FROM product.official_suite_heads").fetchone()[0] == 0
+                rule_id = str(uuid4())
+                conn.execute(
+                    "INSERT INTO product.rule_versions(id,tenant_id,title,body) VALUES (%s,%s,'UAES 控制计划',%s)",
+                    (rule_id, f.alice.tenant_id, Jsonb({**json.loads(baselines["UAES:U08"].files["rules.json"]), "suite_key": "UAES:U08"})),
+                )
+            raw = workbook(12, 1)
+            staged = f.admin.create_staging(f.alice, "控制计划.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", len(raw))
+            uploaded = f.admin.finalize_version(f.admin.put_blob(staged, raw))
+            draft = response_json(page.request.post(f.web + "/api/drafts", data={"items": [{"file_version_id": uploaded.id, "role": "target", "rule_version_id": rule_id}]}), 201)
+            accepted = response_json(page.request.post(f.web + f"/api/drafts/{draft['id']}/accept", data={"idempotency_key": "first-uaes-adoption"}), 201)
+            frozen = f.suites.read_snapshot(accepted["id"], f.alice.tenant_id)
+            target = frozen.targets[0]
+            assert target.suite_revision_id == revisions["UAES:U08"].id and target.verification == "unverified"
+            assert target.related_suite_digests == {key: revisions[key].resolved_digest for key in ("UAES:U07", "UAES:U16")}
+            assert len(publications) == 4 and not f.guest.jobs
+            page.reload()
+            expect(page.get_by_role("region", name="检查发布与版本记录").get_by_text(re.compile("当前使用"))).to_be_visible()
+            assert f.suites.read_snapshot(accepted["id"], f.alice.tenant_id).to_dict() == frozen.to_dict()
+        finally:
+            context.close()
+            browser.close()

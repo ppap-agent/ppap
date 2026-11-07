@@ -65,7 +65,7 @@ def _revision(conn, revision_id: str, tenant_id: str | None) -> dict:
     return row
 
 
-def _selected(conn, tenant_id: str | None, suite_key: str) -> dict:
+def _selected_or_none(conn, tenant_id: str | None, suite_key: str) -> dict | None:
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute("SELECT * FROM product.tenant_suite_heads WHERE tenant_id = %s AND suite_key = %s", (tenant_id, suite_key))
         head = cur.fetchone()
@@ -79,9 +79,14 @@ def _selected(conn, tenant_id: str | None, suite_key: str) -> dict:
                 (suite_key,),
             )
             row = cur.fetchone()
-    if row is None:
+    return {"row": row, "head": head} if row is not None else None
+
+
+def _selected(conn, tenant_id: str | None, suite_key: str) -> dict:
+    selected = _selected_or_none(conn, tenant_id, suite_key)
+    if selected is None:
         raise KeyError("suite_access_denied")
-    return {"row": row, "head": head}
+    return selected
 
 
 def _related_digests(conn, tenant_id: str | None, revision: dict) -> dict[str, str]:
@@ -221,37 +226,45 @@ class SuiteReleaseStore:
             rows = conn.execute(
                 "SELECT DISTINCT suite_key FROM product.suite_revisions WHERE NOT history_only AND (tenant_id IS NULL OR tenant_id = %s) ORDER BY suite_key", (principal.tenant_id,)
             ).fetchall()
-        # Candidate-only keys are visible but never silently become active.
-        suites = []
-        for (key,) in rows:
-            try:
-                suites.append(self.active(principal, key))
-            except KeyError:
-                suites.append(
-                    {
-                        "title": "文件检查",
-                        "version": 0,
-                        "origin": "enterprise",
-                        "selection_mode": "candidate_only",
-                        "suite_key": key,
-                        "revision": 0,
-                        "current_revision_id": None,
-                        "latest_official_revision_id": None,
-                        "latest_official_version": None,
-                        "official_base_revision_id": None,
-                        "official_update_available": False,
-                        "official_update_notice": False,
-                        "verification_status": "unverified",
-                        "force_unverified": False,
-                        "validation": empty_validation(),
-                        "history": [],
-                    }
-                )
-        return {"suites": suites}
+        return {"suites": [self.active(principal, key) for (key,) in rows]}
 
     def active(self, principal, suite_key: str) -> dict:
+        suite_key = _key(suite_key)
         with self._conn() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
             _member(conn, principal)
+            _read_lock(conn, principal.tenant_id)
+            if _selected_or_none(conn, principal.tenant_id, suite_key) is None:
+                # No adoption is a readable state only for an accessible candidate.
+                # Do not turn a missing dependency or denied/corrupt selected Suite
+                # into an empty state that invites another publication.
+                candidate = conn.execute(
+                    """SELECT id FROM product.suite_revisions WHERE suite_key = %s AND NOT history_only AND (tenant_id IS NULL OR tenant_id = %s)
+                       ORDER BY tenant_id NULLS LAST, revision_number DESC LIMIT 1""",
+                    (suite_key, principal.tenant_id),
+                ).fetchone()
+                if candidate is None:
+                    raise KeyError("suite_access_denied")
+                resolved = self.suites.resolve_suite(str(candidate[0]), principal.tenant_id, conn=conn)
+                rules = json.loads(resolved.files["rules.json"])
+                return {
+                    "title": rules.get("title") or rules.get("type") or "文件检查",
+                    "candidate_revision_id": str(candidate[0]),
+                    "version": 0,
+                    "origin": "enterprise" if resolved.revision.tenant_id else "official",
+                    "selection_mode": "candidate_only",
+                    "suite_key": suite_key,
+                    "revision": 0,
+                    "current_revision_id": None,
+                    "latest_official_revision_id": None,
+                    "latest_official_version": None,
+                    "official_base_revision_id": None,
+                    "official_update_available": False,
+                    "official_update_notice": False,
+                    "verification_status": "unverified",
+                    "force_unverified": False,
+                    "validation": empty_validation(),
+                    "history": [],
+                }
             selection = current_selection(conn, principal.tenant_id, suite_key)
             cur.execute("SELECT * FROM product.suite_publications WHERE tenant_id = %s AND suite_key = %s ORDER BY revision DESC LIMIT 100", (principal.tenant_id, suite_key))
             history = [_receipt(row, published_by_name=_display_name(conn, row["published_by"], principal.tenant_id)) for row in cur.fetchall()]
@@ -426,6 +439,8 @@ class SuiteReleaseStore:
             resolved = self.suites.resolve_suite(revision_id, principal.tenant_id, conn=conn)
             if not validation["verified"] and not force_unverified and not is_unimplemented_suite(resolved):
                 raise ValueError("suite_confirmation_required")
+            if any(_selected_or_none(conn, principal.tenant_id, key) is None for key in revision["related_suite_keys"]):
+                raise ValueError("suite_dependencies_not_adopted")
             previous = str(head["current_revision_id"]) if head else None
             if previous is None:
                 try:
@@ -515,6 +530,7 @@ class SuiteReleaseStore:
             row = _revision(conn, revision_id, principal.tenant_id)
             resolved = self.suites.resolve_suite(revision_id, principal.tenant_id, conn=conn)
             validation = _validation(conn, principal.tenant_id, row)
+            unadopted_related = [key for key in row["related_suite_keys"] if _selected_or_none(conn, principal.tenant_id, key) is None]
             original = self.suites.resolve_suite(str(row["base_revision_id"]), principal.tenant_id, conn=conn) if row["base_revision_id"] else None
             from product.store.rule_impact import rule_impact
 
@@ -546,6 +562,7 @@ class SuiteReleaseStore:
             "created_at": row["created_at"].isoformat(),
             "resolved_digest": row["resolved_digest"],
             "related_suite_keys": list(row["related_suite_keys"]),
+            "unadopted_related_suite_keys": unadopted_related,
             "files": {path: body.decode("utf-8") for path, body in resolved.files.items()},
             "changed_paths": sorted(changed),
             "diff": [{"path": path, "before": original.files.get(path, b"").decode("utf-8") if original else "", "after": resolved.files.get(path, b"").decode("utf-8")} for path in sorted(changed)],

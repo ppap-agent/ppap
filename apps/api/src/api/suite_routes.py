@@ -58,6 +58,7 @@ class RuleImpact(TypedDict):
 
 
 class SuiteActive(TypedDict):
+    candidate_revision_id: NotRequired[str]
     rule_update: NotRequired[RuleImpact | None]
     official_rule_impact: NotRequired[RuleImpact | None]
     title: str
@@ -125,6 +126,7 @@ class SuiteRevisionDetail(TypedDict):
     created_at: str
     resolved_digest: str
     related_suite_keys: list[str]
+    unadopted_related_suite_keys: NotRequired[list[str]]
     files: dict[str, str]
     changed_paths: list[str]
     validation: SuiteValidation
@@ -172,7 +174,7 @@ def register_suite_routes(app: FastAPI, store, principal_of):
                 404
                 if code == "suite_candidate_not_found"
                 else 409
-                if code in {"suite_head_conflict", "suite_official_head_conflict", "suite_operation_conflict", "suite_confirmation_required"}
+                if code in {"suite_head_conflict", "suite_official_head_conflict", "suite_operation_conflict", "suite_confirmation_required", "suite_dependencies_not_adopted"}
                 else 400
             )
             return JSONResponse({"error": code}, status_code=status, headers=headers)
