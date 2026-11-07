@@ -10,7 +10,7 @@ export function RuleUpdates({active, revision}: {active: boolean; revision: numb
     if (!active) return
     const controller = new AbortController()
     void request<components['schemas']['SuiteCatalog']>('/suites', 'GET', undefined, controller.signal).then(value => {
-      if (!controller.signal.aborted) {setSuites(value.suites.filter(suite => suite.rule_update || suite.official_rule_impact?.changed)); setError('')}
+      if (!controller.signal.aborted) {setSuites(value.suites.filter(suite => suite.rule_update || suite.official_rule_impact?.changed)); setError(value.unavailable?.length ? `部分检查的规则更新影响暂不可读：${value.unavailable.map(suite => suite.suite_key).join('、')}。请重新读取。` : '')}
     }).catch(() => {if (!controller.signal.aborted) setError('规则更新影响暂不可读，请重新读取。')})
     return () => controller.abort()
   }, [active, revision])

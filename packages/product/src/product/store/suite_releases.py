@@ -12,8 +12,9 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from product.db import connect
+from product.files import ObjectMissing
 from product.suite_releases import empty_validation, publication_fingerprint
-from product.suites import MAX_SUITE_DEPTH, canonical_json, content_digest, is_unimplemented_suite
+from product.suites import MAX_OBJECT_BYTES, MAX_SUITE_DEPTH, canonical_json, content_digest, is_unimplemented_suite
 
 if TYPE_CHECKING:
     from product.checker_validation import SuiteValidationReport
@@ -210,6 +211,24 @@ def _receipt(row: dict, *, published_by_name: str | None = None) -> dict:
     }
 
 
+class _CatalogObjects:
+    """Bounded, request-local byte reuse; Suite resolution still checks every digest."""
+
+    def __init__(self, objects):
+        self.objects = objects
+        self.cached: dict[str, bytes] = {}
+        self.remaining = MAX_OBJECT_BYTES
+
+    def get(self, key: str) -> bytes:
+        if key in self.cached:
+            return self.cached[key]
+        body = self.objects.get(key)
+        if len(body) <= self.remaining:
+            self.cached[key] = body
+            self.remaining -= len(body)
+        return body
+
+
 class SuiteReleaseStore:
     def __init__(self, settings, objects, role: str = "api"):
         from product.store.suites import SuiteStore
@@ -221,16 +240,31 @@ class SuiteReleaseStore:
         return connect(self.settings, self.role)
 
     def list_suites(self, principal) -> dict:
-        with self._conn() as conn, conn.transaction():
-            _member(conn, principal)
-            rows = conn.execute(
-                "SELECT DISTINCT suite_key FROM product.suite_revisions WHERE NOT history_only AND (tenant_id IS NULL OR tenant_id = %s) ORDER BY suite_key", (principal.tenant_id,)
-            ).fetchall()
-        return {"suites": [self.active(principal, key) for (key,) in rows]}
+        suites, unavailable = [], []
+        # Do not retain object bytes across requests or principals. Reuse only
+        # content reads, never membership checks, selection or validation state.
+        reader = SuiteReleaseStore(self.settings, _CatalogObjects(self.objects), role=self.role)
+        with self._conn() as conn:
+            with conn.transaction():
+                _member(conn, principal)
+                rows = conn.execute(
+                    "SELECT DISTINCT suite_key FROM product.suite_revisions WHERE NOT history_only AND (tenant_id IS NULL OR tenant_id = %s) ORDER BY suite_key", (principal.tenant_id,)
+                ).fetchall()
+            for (key,) in rows:
+                try:
+                    suites.append(reader.active(principal, key, conn=conn))
+                except (KeyError, ValueError, ObjectMissing):
+                    # A broken or inaccessible Suite is visible as unavailable,
+                    # never omitted or represented as an adoptable empty state.
+                    # Membership loss still fails the entire request.
+                    with conn.transaction():
+                        _member(conn, principal)
+                    unavailable.append({"suite_key": key, "error": "suite_unavailable"})
+        return {"suites": suites, **({"unavailable": unavailable} if unavailable else {})}
 
-    def active(self, principal, suite_key: str) -> dict:
+    def active(self, principal, suite_key: str, *, conn=None) -> dict:
         suite_key = _key(suite_key)
-        with self._conn() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+        with nullcontext(conn) if conn is not None else self._conn() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
             _member(conn, principal)
             _read_lock(conn, principal.tenant_id)
             if _selected_or_none(conn, principal.tenant_id, suite_key) is None:

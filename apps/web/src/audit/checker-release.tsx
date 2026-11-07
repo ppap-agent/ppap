@@ -23,7 +23,7 @@ export function CheckerRelease({scope, legacyScope, suiteKey, revisionId, optimi
   const [upgradeLocked, setUpgradeLocked] = useState(false), [editorBlocked, setEditorBlocked] = useState(false)
   const mutationBusy = busy || upgradeLocked || selection.legacyBlocked
   useEffect(() => {live.current = true; return () => {live.current = false}}, [])
-  useEffect(() => {onBusyChange?.(mutationBusy || Boolean(pending) || editorBlocked || !revision)}, [onBusyChange, mutationBusy, pending, editorBlocked, revision])
+  useEffect(() => {onBusyChange?.(mutationBusy || Boolean(pending) || editorBlocked || !revision && !error)}, [onBusyChange, mutationBusy, pending, editorBlocked, revision, error])
   useEffect(() => () => onBusyChange?.(false), [onBusyChange])
   const select = useCallback((next: CheckerSelection) => {
     writeAuditAddress(checkerSelectionAddress(new URL(location.href), scope, next))
