@@ -12,6 +12,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
 from audit.standard_suites import StandardSuite
 from corpus_contracts import official_suites, oracle
 from corpus_contracts.official_models import LiveModels
@@ -37,7 +38,7 @@ def check(context):
 """
 
 
-def corpus_fixture(tmp_path, monkeypatch):
+def corpus_fixture(tmp_path, monkeypatch, *, explain_pass=True):
     rules = {"type": "fixture", "rules": [{"id": "R1", "rule_to_check": "A1 must be positive"}], "checker_binding": {"R1": "checker:check"}}
     files = {"rules.json": json.dumps(rules).encode(), "checker.py": PROGRAM, "appendix.json": b"[]"}
     source = StandardSuite("fixture", "fixture", "", "", (), files, {"R1": "checker:check"}, "test fixture")
@@ -55,7 +56,8 @@ def corpus_fixture(tmp_path, monkeypatch):
         filename = f"original-{number}.xlsx"
         (tmp_path / filename).write_bytes(raw.getvalue())
         source_rows.append(["fixture", str(number), "target", filename, filename, "target", selector, "fixture", "R1"])
-        labels.append(["fixture", str(number), "target", "R1", "PASS", "A1 must be positive", f"Synthetic fixture A1 is {number}", "test author", "2026-11-07", ""])
+        reason = f"Synthetic fixture A1 is {number}" if explain_pass else ""
+        labels.append(["fixture", str(number), "target", "R1", "PASS", "A1 must be positive", reason, "test author", "2026-11-07", ""])
     for key, columns, rows in (("cases", oracle.FILE_COLUMNS, source_rows), ("oracle", oracle.EXPECTED_COLUMNS, labels)):
         with paths[key].open("w", encoding="utf-8", newline="") as stream:
             writer = csv.writer(stream)
@@ -104,14 +106,24 @@ class ReleaseBoundary:
         return self.context["head"]
 
 
-def test_actual_fixed_execution_then_record_readback_and_explicit_publish(tmp_path, monkeypatch):
-    context, paths = corpus_fixture(tmp_path, monkeypatch)
+@pytest.mark.parametrize("explain_pass", [True, False])
+def test_actual_fixed_execution_then_record_readback_and_explicit_publish(tmp_path, monkeypatch, explain_pass):
+    context, paths = corpus_fixture(tmp_path, monkeypatch, explain_pass=explain_pass)
+    plan = official_suites.prepare(context, **paths)
+    assert not plan.reasons
+    for sample in plan.samples:
+        answer = sample.oracle.expected["R1"]
+        assert (answer.confirmed_by, answer.confirmed_on) == ("test author", "2026-11-07")
+        assert bool(answer.manual_reason) is explain_pass
+        assert sample.snapshot.targets[0].file_version_id == sample.oracle.file_id
+        assert set(sample.snapshot.targets[0].binding.entrypoints) == set(sample.oracle.expected)
     release = ReleaseBoundary(context)
     revision_id = context["suite"].revision.id
     observed = []
     result = official_suites.validate(release, revision_id, record=True, expected_validation_revision=0, before_record=observed.append, **paths)
     report = result["report"]
     assert report["verified"] and report["passed_samples"] == 4
+    assert report["oracle_revision"] == plan.oracle_revision
     assert len({row["input_digest"] for row in report["cases"]}) == 4
     assert [row["split"] for row in report["cases"]] == ["training", "training", "training", "holdout"]
     assert all(row["clauses"][0]["checks_performed"] == 1 and row["clauses"][0]["evidence_locatable"] for row in report["cases"])
