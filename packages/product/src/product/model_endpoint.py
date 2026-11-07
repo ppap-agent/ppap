@@ -11,8 +11,6 @@ import ipaddress
 import re
 from urllib.parse import urlsplit, urlunsplit
 
-from documents.model_access import DEEPSEEK_BASE_URL
-
 
 class ModelEndpointError(ValueError):
     def __init__(self, code: str):
@@ -68,7 +66,7 @@ def normalize_base_url(value: str) -> str:
 
 def approved_base_url(settings, value: str) -> str:
     endpoint = normalize_base_url(value)
-    approved = {DEEPSEEK_BASE_URL}
+    approved = set()
     for candidate in settings.personal_model_allowed_base_urls.split(","):
         if candidate.strip():
             try:

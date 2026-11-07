@@ -42,7 +42,6 @@ from audit.audits import (
 )
 from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest, runtime_revision
 from audit.standard_suites import library_revision
-from documents.model_access import DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
 from fastapi.testclient import TestClient
 from product import build_product_store
 from product.capabilities import report
@@ -114,7 +113,7 @@ class ControlledCoreGuest:
 @pytest.mark.parametrize(
     "identity",
     [
-        {"provider": "deepseek", "model": DEEPSEEK_MODEL, "revision": "unconfigured", "deployment": hashlib.sha256(DEEPSEEK_BASE_URL.encode()).hexdigest()},
+        {"provider": "responses-compatible", "model": "test-model", "revision": "unconfigured", "deployment": hashlib.sha256("https://models.example.test".encode()).hexdigest()},
         {"provider": "openai-compatible", "model": "frozen-model", "revision": "frozen-revision", "deployment": "a" * 64},
     ],
     ids=["unconfigured", "personal-endpoint"],

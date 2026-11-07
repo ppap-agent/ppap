@@ -26,7 +26,7 @@ def response(request, usage):
             "id": "response-controlled",
             "object": "response",
             "created_at": 0,
-            "model": "deepseek-flash",
+            "model": "test-model",
             "status": "completed",
             "output": [{"type": "message", "id": "message-controlled", "role": "assistant", "status": "completed", "content": [{"type": "output_text", "text": "checked", "annotations": []}]}],
             "usage": usage,
@@ -50,7 +50,7 @@ def test_text_clients_use_each_callers_key_and_receipts(monkeypatch, usage, comp
     try:
         keys = [SecretStr(str(uuid4())), SecretStr(str(uuid4()))]
         for key in keys:
-            with model_access_scope(ModelAccess(api_key=key)):
+            with model_access_scope(ModelAccess(api_key=key, model="test-model", base_url="https://models.example.test")):
                 assert AIClient().response_text([{"role": "user", "content": "check"}], retry_limit=9) == "checked"
         summary = tracker.end_request_tracking(tracking).to_dict()
     finally:
@@ -60,9 +60,9 @@ def test_text_clients_use_each_callers_key_and_receipts(monkeypatch, usage, comp
     assert len(calls) == 2
     for key, request in zip(keys, calls):
         assert request.headers["authorization"] == "Bearer " + key.get_secret_value()
-        assert str(request.url) == "https://api.deepseek.com/responses"
+        assert str(request.url) == "https://models.example.test/responses"
         body = json.loads(request.content)
-        assert body["model"] == "deepseek-flash"
+        assert body["model"] == "test-model"
         assert body["reasoning"] == {"effort": "none"}
         assert body["store"] is False
         assert key.get_secret_value() not in json.dumps(summary)
@@ -79,7 +79,7 @@ def test_uncertain_http_request_never_retries_even_with_requested_retry_limit(mo
         raise httpx.ReadTimeout("controlled timeout", request=request)
 
     monkeypatch.setattr(httpx.Client, "send", send)
-    with model_access_scope(ModelAccess(api_key=SecretStr(str(uuid4())))), pytest.raises(Exception):
+    with model_access_scope(ModelAccess(api_key=SecretStr(str(uuid4())), model="test-model", base_url="https://models.example.test")), pytest.raises(Exception):
         AIClient().response_text([{"role": "user", "content": "check"}], retry_limit=5)
     assert len(calls) == 1
 
@@ -95,7 +95,7 @@ def test_later_clause_does_not_replay_same_uncertain_request(monkeypatch, timeou
         return response(request, None)
 
     monkeypatch.setattr(httpx.Client, "send", send)
-    with model_access_scope(ModelAccess(api_key=SecretStr(str(uuid4())))):
+    with model_access_scope(ModelAccess(api_key=SecretStr(str(uuid4())), model="test-model", base_url="https://models.example.test")):
         if timeout:
             with pytest.raises(Exception):
                 AIClient().response_text([{"role": "user", "content": "check"}])
@@ -114,7 +114,7 @@ def test_confirmed_receipt_allows_deliberate_repeat_without_cross_user_state(mon
         return response(request, {"input_tokens": 2, "output_tokens": 1, "total_tokens": 3})
 
     monkeypatch.setattr(httpx.Client, "send", send)
-    with model_access_scope(ModelAccess(api_key=SecretStr(str(uuid4())))):
+    with model_access_scope(ModelAccess(api_key=SecretStr(str(uuid4())), model="test-model", base_url="https://models.example.test")):
         for _ in range(2):
             assert AIClient().response_text([{"role": "user", "content": "check"}]) == "checked"
     assert len(calls) == 2
@@ -127,7 +127,10 @@ def test_provider_error_body_cannot_escape_as_a_personal_audit_diagnostic(monkey
         return httpx.Response(401, request=request, json={"error": {"message": key, "type": "authentication_error"}})
 
     monkeypatch.setattr(httpx.Client, "send", send)
-    with model_access_scope(ModelAccess(api_key=SecretStr(key))), pytest.raises(ModelUnavailable, match="personal_model_request_failed") as failure:
+    with (
+        model_access_scope(ModelAccess(api_key=SecretStr(key), model="test-model", base_url="https://models.example.test")),
+        pytest.raises(ModelUnavailable, match="personal_model_request_failed") as failure,
+    ):
         AIClient().response_text([{"role": "user", "content": "check"}])
     assert key not in str(failure.value)
     assert failure.value.__suppress_context__
@@ -165,6 +168,6 @@ def test_text_personal_client_disables_environment_proxy_and_redirects(monkeypat
         return response(request, {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2})
 
     monkeypatch.setattr(httpx.Client, "send", send)
-    with model_access_scope(ModelAccess(api_key=SecretStr(str(uuid4())))):
+    with model_access_scope(ModelAccess(api_key=SecretStr(str(uuid4())), model="test-model", base_url="https://models.example.test")):
         assert AIClient().response_text([{"role": "user", "content": "check"}]) == "checked"
     assert clients and not clients[0].follow_redirects and not clients[0].trust_env

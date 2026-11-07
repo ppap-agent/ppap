@@ -38,7 +38,7 @@ def test_budget_change_invalidates_frozen_execution_revision(field, value):
 
 
 def test_direct_worker_scope_rejects_config_change_without_requiring_key_for_native_work():
-    chosen = ModelAccess(api_key=SecretStr("personal-fixture-key"), revision=str(uuid4()))
+    chosen = ModelAccess(api_key=SecretStr("personal-fixture-key"), model="test-model", base_url="https://models.example.test", revision=str(uuid4()))
     current = [chosen]
     calls = []
 

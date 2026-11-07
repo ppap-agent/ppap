@@ -7,7 +7,7 @@ from worker import deep_controller
 
 
 def test_controller_wires_development_and_round_artifact_persistence(monkeypatch):
-    policy = SimpleNamespace(runtime_identity=lambda: {"model": "deepseek-flash"})
+    policy = SimpleNamespace(runtime_identity=lambda: {"model": "test-model"})
     settings = SimpleNamespace(deep_controller_socket="/not-opened-in-this-controlled-test", deep_execution_revision=lambda: "runtime", deep_execution_policy=lambda: policy)
     store = SimpleNamespace(settings=settings, objects=object(), role="worker")
     runtime = SimpleNamespace(ready=lambda: True)

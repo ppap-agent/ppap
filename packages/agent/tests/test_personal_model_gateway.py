@@ -1,4 +1,4 @@
-"""Personal DeepSeek Responses/tool transport through the existing gateway."""
+"""Personal Responses/tool transport through the existing gateway."""
 
 import http.client
 import json
@@ -18,8 +18,8 @@ from openai import OpenAI
 @contextmanager
 def personal_gateway(resolve_key):
     # Exercise the real HTTP gateway; UDS framing has separate existing tests.
-    grants = Grants("deepseek-flash")
-    server = Gateway(("127.0.0.1", 0), grants, "https://api.deepseek.com", resolve_key)
+    grants = Grants("test-model")
+    server = Gateway(("127.0.0.1", 0), grants, "https://models.example.test", resolve_key)
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -37,7 +37,7 @@ def test_existing_gateway_uses_current_user_secret_and_real_sdk_tool_shape(recei
         "id": "response-controlled",
         "object": "response",
         "created_at": 0,
-        "model": "deepseek-flash",
+        "model": "test-model",
         "status": "completed",
         "output": [{"type": "function_call", "id": "call-controlled", "call_id": "call-1", "name": "read_source", "arguments": '{"page":1}', "status": "completed"}],
         "usage": receipt,
@@ -64,11 +64,11 @@ def test_existing_gateway_uses_current_user_secret_and_real_sdk_tool_shape(recei
                     # partial provider reply cannot authorize another request.
                     with pytest.raises(Exception):
                         client.responses.create(
-                            model="deepseek-flash", input="Read page one.", tools=[{"type": "function", "name": "read_source", "parameters": {"type": "object"}}], reasoning={"effort": "high"}
+                            model="test-model", input="Read page one.", tools=[{"type": "function", "name": "read_source", "parameters": {"type": "object"}}], reasoning={"effort": "high"}
                         )
                 else:
                     result = client.responses.create(
-                        model="deepseek-flash", input="Read page one.", tools=[{"type": "function", "name": "read_source", "parameters": {"type": "object"}}], reasoning={"effort": "high"}
+                        model="test-model", input="Read page one.", tools=[{"type": "function", "name": "read_source", "parameters": {"type": "object"}}], reasoning={"effort": "high"}
                     )
                     assert result.output[0].type == "function_call"
                     assert result.output[0].name == "read_source"
@@ -82,7 +82,7 @@ def test_existing_gateway_uses_current_user_secret_and_real_sdk_tool_shape(recei
             sent = json.loads(arguments[2])
             assert sent["reasoning"] == {"effort": "high"}
             assert sent["tools"][0]["type"] == "function"
-            assert sent["model"] == "deepseek-flash"
+            assert sent["model"] == "test-model"
             assert sent["store"] is False
             assert len(resolved) == 1
 
@@ -97,7 +97,7 @@ def test_revoke_is_checked_before_any_provider_send():
             grant = {"token": gateway.grants.issue(execution_id), "base_url": f"http://127.0.0.1:{gateway.server_address[1]}/v1"}
             client = http.client.HTTPConnection("127.0.0.1", gateway.server_address[1], timeout=2)
             try:
-                client.request("POST", "/v1/responses", json.dumps({"input": "check", "model": "deepseek-flash"}), {"Authorization": "Bearer " + grant["token"]})
+                client.request("POST", "/v1/responses", json.dumps({"input": "check", "model": "test-model"}), {"Authorization": "Bearer " + grant["token"]})
                 response = client.getresponse()
                 assert response.status == 503
                 response.read()
@@ -113,14 +113,14 @@ def test_revoke_is_checked_before_any_provider_send():
 
 
 def test_rebinding_runtime_revokes_all_previous_user_grants():
-    grants = Grants("deepseek-flash")
+    grants = Grants("test-model")
     first, second = uuid4(), uuid4()
     first_token = grants.issue(first)
     grants.revoke_all()
     second_token = grants.issue(second)
     with pytest.raises(ValueError, match="Invalid execution grant"):
-        grants.authorize(first_token, {"model": "deepseek-flash", "input": "first"}, 10)
-    lease = grants.authorize(second_token, {"model": "deepseek-flash", "input": "second"}, 10)
+        grants.authorize(first_token, {"model": "test-model", "input": "first"}, 10)
+    lease = grants.authorize(second_token, {"model": "test-model", "input": "second"}, 10)
     assert lease.execution_id == second
 
 
@@ -133,9 +133,9 @@ def test_each_grant_pins_its_own_identity_even_when_host_switches_active_user():
         owner = active[0]
         return lambda: keys[owner]
 
-    grants = Grants("deepseek-flash", provider_key_factory=bind_key)
+    grants = Grants("test-model", provider_key_factory=bind_key)
     token = grants.issue(uuid4())
-    lease = grants.authorize(token, {"model": "deepseek-flash", "input": "check"}, 10)
+    lease = grants.authorize(token, {"model": "test-model", "input": "check"}, 10)
     active[0] = bob
     assert lease.provider_key() == keys[alice]
     keys[alice] = str(uuid4())

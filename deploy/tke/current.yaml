@@ -27,6 +27,7 @@ data:
   PPAP_DEEP_LLM_BASE_URL: https://api.trustedtunnel.app/backend-api/codex
   PPAP_DEEP_LLM_MODEL: gpt-6.1-sol
   PPAP_DEEP_REASONING_EFFORT: medium
+  PPAP_PERSONAL_MODEL_ALLOWED_BASE_URLS: https://grok.trustedtunnel.app/v1
   OPENAI_REASONING_EFFORT: low
   FEISHU_APP_ID: cli_a961a27719b81cc9
   FEISHU_AI_ITEM_ID: OpenApp_Lcoastline_PPAPAuditAgent

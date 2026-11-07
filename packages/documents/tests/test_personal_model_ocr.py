@@ -33,7 +33,7 @@ async def test_visual_requests_use_personal_key_input_image_and_reasoning(monkey
                 "id": "response-controlled",
                 "object": "response",
                 "created_at": 0,
-                "model": "deepseek-flash",
+                "model": "test-model",
                 "status": "completed",
                 "output": [
                     {"type": "message", "id": "message-controlled", "role": "assistant", "status": "completed", "content": [{"type": "output_text", "text": '{"present":true}', "annotations": []}]}
@@ -46,14 +46,14 @@ async def test_visual_requests_use_personal_key_input_image_and_reasoning(monkey
     schema = {"name": "fact", "schema": {"type": "object", "properties": {"present": {"type": "boolean"}}, "required": ["present"], "additionalProperties": False}, "strict": True}
     keys = [SecretStr(str(uuid4())), SecretStr(str(uuid4()))]
     for key in keys:
-        with model_access_scope(ModelAccess(api_key=key)), ocr_usage_scope(receipts.append):
+        with model_access_scope(ModelAccess(api_key=key, model="test-model", base_url="https://models.example.test")), ocr_usage_scope(receipts.append):
             assert await call_llm_async(b"controlled-image", "Read a fact.", response_schema=schema) == {"present": True}
     assert len(calls) == 2
 
     for key, request in zip(keys, calls):
         assert request.headers["authorization"] == "Bearer " + key.get_secret_value()
         body = json.loads(request.content)
-        assert body["model"] == "deepseek-flash"
+        assert body["model"] == "test-model"
         assert body["reasoning"] == {"effort": "none"}
         assert body["input"][0]["role"] == "user"
         assert body["input"][0]["content"][1]["type"] == "input_image"
@@ -75,7 +75,7 @@ async def test_uncertain_visual_request_cannot_be_replayed_by_later_clause(monke
 
     monkeypatch.setattr(httpx.AsyncClient, "send", send)
     schema = {"name": "fact", "schema": {"type": "object"}, "strict": True}
-    with model_access_scope(ModelAccess(api_key=SecretStr(str(uuid4())))):
+    with model_access_scope(ModelAccess(api_key=SecretStr(str(uuid4())), model="test-model", base_url="https://models.example.test")):
         with pytest.raises(Exception):
             await call_llm_async(b"controlled-image", "Read a fact.", response_schema=schema)
         with pytest.raises(ModelUnavailable, match="personal_model_request_uncertain"):
@@ -92,7 +92,10 @@ async def test_provider_error_body_cannot_escape_as_a_visual_diagnostic(monkeypa
 
     monkeypatch.setattr(httpx.AsyncClient, "send", send)
     schema = {"name": "fact", "schema": {"type": "object"}, "strict": True}
-    with model_access_scope(ModelAccess(api_key=SecretStr(key))), pytest.raises(ModelUnavailable, match="personal_model_request_failed") as failure:
+    with (
+        model_access_scope(ModelAccess(api_key=SecretStr(key), model="test-model", base_url="https://models.example.test")),
+        pytest.raises(ModelUnavailable, match="personal_model_request_failed") as failure,
+    ):
         await call_llm_async(b"controlled-image", "Read a fact.", response_schema=schema)
     assert key not in str(failure.value)
     assert failure.value.__suppress_context__
@@ -128,7 +131,7 @@ async def test_visual_transport_uses_custom_model_and_rejects_provider_redirect(
 async def test_visual_personal_client_disables_proxy_and_redirects():
     from documents.ocr.client import _get_llm_client
 
-    with model_access_scope(ModelAccess(api_key=SecretStr(str(uuid4())))):
+    with model_access_scope(ModelAccess(api_key=SecretStr(str(uuid4())), model="test-model", base_url="https://models.example.test")):
         client = _get_llm_client()
     try:
         assert not client._client.follow_redirects and not client._client.trust_env
@@ -162,7 +165,11 @@ async def test_success_status_malformed_provider_fields_cannot_escape_into_logs_
     schema = {"name": "fact", "schema": {"type": "object"}, "strict": True}
     from documents.ocr.client import ResponsesEvidenceError
 
-    with model_access_scope(ModelAccess(api_key=SecretStr(private), model="chosen-model")), ocr_usage_scope(receipts.append), pytest.raises(ResponsesEvidenceError) as failure:
+    with (
+        model_access_scope(ModelAccess(api_key=SecretStr(private), model="chosen-model", base_url="https://models.example.test")),
+        ocr_usage_scope(receipts.append),
+        pytest.raises(ResponsesEvidenceError) as failure,
+    ):
         await call_llm_async(b"controlled-image", "Read a fact.", response_schema=schema)
     assert private not in str(failure.value) and private not in caplog.text and private not in json.dumps(receipts)
     assert receipts[0]["model"] == "chosen-model"

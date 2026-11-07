@@ -24,9 +24,9 @@ class CheckerHttpFixture:
         self.current = "revision-base"
         self.head = 0
         self.model_config = {
-            "provider": "deepseek",
-            "base_url": "https://api.deepseek.com",
-            "model": "deepseek-flash",
+            "provider": "responses-compatible",
+            "base_url": "https://models.example.test",
+            "model": "test-model",
             "configured": True,
             "revision": "7a7cceab-e503-477a-9874-d0300f7d2dcc",
             "updated_at": None,
@@ -294,7 +294,7 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
             page = self.open(browser, fixture, 390)
             self.answer(page)
             page.get_by_role("button", name="让 AI 修复并验证", exact=True).click()
-            original_consent = page.get_by_label("同意将本次资料发送至 https://api.deepseek.com，使用 deepseek-flash 修复并验证这 1 条反馈", exact=True)
+            original_consent = page.get_by_label("同意将本次资料发送至 https://models.example.test，使用 test-model 修复并验证这 1 条反馈", exact=True)
             original_consent.check()
             expect(page.get_by_role("button", name="确认开始修复", exact=True)).to_be_enabled()
             page.get_by_label("Base URL", exact=True).fill("https://models.company.test/v1")
@@ -353,7 +353,7 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
             page = self.open(browser, fixture)
             self.answer(page)
             page.get_by_role("button", name="让 AI 修复并验证", exact=True).click()
-            page.get_by_label("同意将本次资料发送至 https://api.deepseek.com，使用 deepseek-flash 修复并验证这 1 条反馈", exact=True).check()
+            page.get_by_label("同意将本次资料发送至 https://models.example.test，使用 test-model 修复并验证这 1 条反馈", exact=True).check()
             original_revision = fixture.model_config["revision"]
             fixture.model_config = {**fixture.model_config, "revision": "588f07c7-cd41-4a1b-a80f-e264adfdb58b", "base_url": "https://models.company.test/v1", "model": "internal-reasoner"}
             pending_admission = []
@@ -394,7 +394,7 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
             page = self.open(browser, fixture)
             self.answer(page)
             page.get_by_role("button", name="让 AI 修复并验证", exact=True).click()
-            page.get_by_label("同意将本次资料发送至 https://api.deepseek.com，使用 deepseek-flash 修复并验证这 1 条反馈", exact=True).check()
+            page.get_by_label("同意将本次资料发送至 https://models.example.test，使用 test-model 修复并验证这 1 条反馈", exact=True).check()
             pending_refresh = []
             page.route("**/audit-rounds/round-a/checker-feedback", lambda route: pending_refresh.append(route))
             with (
@@ -426,7 +426,7 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
             page = self.open(browser, fixture)
             self.answer(page)
             page.get_by_role("button", name="让 AI 修复并验证", exact=True).click()
-            page.get_by_label("同意将本次资料发送至 https://api.deepseek.com，使用 deepseek-flash 修复并验证这 1 条反馈", exact=True).check()
+            page.get_by_label("同意将本次资料发送至 https://models.example.test，使用 test-model 修复并验证这 1 条反馈", exact=True).check()
             fixture.lose_optimization = True
             page.get_by_role("button", name="确认开始修复", exact=True).click()
             expect(page.get_by_role("heading", name="正在修复与验证", exact=True)).to_be_visible()
@@ -479,7 +479,7 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
             self.answer(page)
             page.get_by_role("button", name="让 AI 修复并验证", exact=True).click()
             expect(page.get_by_role("button", name="确认开始修复", exact=True)).to_be_disabled()
-            page.get_by_label("同意将本次资料发送至 https://api.deepseek.com，使用 deepseek-flash 修复并验证这 1 条反馈", exact=True).check()
+            page.get_by_label("同意将本次资料发送至 https://models.example.test，使用 test-model 修复并验证这 1 条反馈", exact=True).check()
             page.get_by_role("button", name="确认开始修复", exact=True).click()
             expect(page.get_by_role("heading", name="正在修复与验证", exact=True)).to_be_visible()
             page.reload()

@@ -23,7 +23,6 @@ from agent.run import Controller, ExecutionContext
 from audit.audits import RoundInput, RoundWork
 from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest, runtime_revision
 from audit.standard_suites import library_revision
-from documents.model_access import DEEPSEEK_MODEL
 from product.storage import ObjectMissing
 from worker import process_claimed
 
@@ -58,7 +57,7 @@ class _ControlledGuest:
                 {
                     "base_url": "http://127.0.0.1:1/v1",
                     "token": "controlled-local-capability-not-a-provider-key",
-                    "model": DEEPSEEK_MODEL,
+                    "model": "test-model",
                     "wall_seconds": 100,
                     "max_turns": 20,
                 }
@@ -103,7 +102,7 @@ class CoreRoundTests(unittest.TestCase):
 
     def execute(self, *, source=None, authorize=None, payload=None):
         self.snapshot = ExecutionSnapshot(
-            "tenant", "initiator", tuple(self.frozen_inputs), tuple(self.targets), self.revision, library_revision(), {"provider": "deepseek", "model": DEEPSEEK_MODEL}, round_id="round"
+            "tenant", "initiator", tuple(self.frozen_inputs), tuple(self.targets), self.revision, library_revision(), {"provider": "responses-compatible", "model": "test-model"}, round_id="round"
         )
         work = RoundWork("round", "tenant", self.inputs, initiating_user_id="initiator")
         claimed = SimpleNamespace(

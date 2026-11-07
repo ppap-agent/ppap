@@ -21,7 +21,7 @@ def test_standard_revision_tracks_effective_configuration(field, value):
     assert original.engine_revision().startswith("standard-v1:")
     assert changed.engine_revision() != original.engine_revision()
     assert original.app_revision == "a" * 40
-    assert original.model == "deepseek-flash"
+    assert original.model == "unconfigured"
 
 
 def test_policy_contains_no_secrets_or_raw_provider_options():
@@ -81,4 +81,4 @@ def test_personal_policy_never_inherits_deployment_model_configuration(field):
     original = settings.standard_execution_policy()
     setattr(settings, field, "ignored-deployment-value")
     assert settings.standard_execution_policy() == original
-    assert original.model == "deepseek-flash"
+    assert original.model == "unconfigured"

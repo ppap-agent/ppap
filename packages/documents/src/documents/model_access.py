@@ -19,9 +19,9 @@ from typing import Any
 
 from pydantic import SecretStr
 
-DEEPSEEK_PROVIDER = "deepseek"
-DEEPSEEK_MODEL = "deepseek-flash"
-DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+PERSONAL_MODEL_PROVIDER = "responses-compatible"
+# Frozen when the initiator has no credential; it can never resolve to a model.
+UNCONFIGURED_MODEL_IDENTITY = {"provider": "unconfigured", "model": "unconfigured", "revision": "unconfigured", "deployment": "0" * 64}
 
 
 class ModelUnavailable(RuntimeError):
@@ -35,9 +35,9 @@ class ModelUnavailable(RuntimeError):
 @dataclass(frozen=True)
 class ModelAccess:
     api_key: SecretStr = field(repr=False)
-    provider: str = DEEPSEEK_PROVIDER
-    model: str = DEEPSEEK_MODEL
-    base_url: str = DEEPSEEK_BASE_URL
+    model: str
+    base_url: str
+    provider: str = PERSONAL_MODEL_PROVIDER
     revision: str = ""
 
     def identity(self) -> dict[str, str]:

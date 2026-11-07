@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test, {afterEach} from 'node:test'
-import {defaultModelEndpoint, defaultModelName, modelConfigFailure, readPersonalModelConfig, revokePersonalModelConfig, savePersonalModelConfig} from './model-config-contract.ts'
+import {modelConfigFailure, readPersonalModelConfig, revokePersonalModelConfig, savePersonalModelConfig} from './model-config-contract.ts'
 
 const originalFetch = globalThis.fetch
 Object.defineProperty(globalThis, 'navigator', {value: {onLine: true}, configurable: true})
@@ -49,6 +49,4 @@ test('validation messages never echo arbitrary server errors or submitted key', 
     assert.ok(message)
     assert.equal(message.includes(secret), false)
   }
-  assert.equal(defaultModelEndpoint, 'https://api.deepseek.com')
-  assert.equal(defaultModelName, 'deepseek-flash')
 })

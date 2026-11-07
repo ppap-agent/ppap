@@ -36,7 +36,7 @@ class ModelGrant(Artifact):
     base_url: str
     token: str = Field(min_length=32, max_length=2048)
     model: str = Field(min_length=1, max_length=128)
-    provider: str = Field(default="deepseek", min_length=1, max_length=64)
+    provider: str = Field(default="responses-compatible", min_length=1, max_length=64)
     revision: str = Field(default="", max_length=64)
     deployment: str = Field(default="", pattern=r"^$|^[a-f0-9]{64}$")
     max_turns: int = Field(ge=1, le=128, strict=True)

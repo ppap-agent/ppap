@@ -2,8 +2,6 @@ import {request} from '../api.ts'
 import type {components} from '../generated/openapi'
 
 export type PersonalModelConfig = components['schemas']['PersonalModelConfigResponse']
-export const defaultModelEndpoint = 'https://api.deepseek.com'
-export const defaultModelName = 'deepseek-flash'
 
 // These calls only store/read settings. They never contact the configured provider.
 export const readPersonalModelConfig = (signal?: AbortSignal) => request<PersonalModelConfig>('/me/model-config', 'GET', undefined, signal)

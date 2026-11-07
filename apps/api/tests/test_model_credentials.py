@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 from api.model_credentials import register_model_credential_routes
 from cryptography.fernet import Fernet
-from documents.model_access import DEEPSEEK_BASE_URL, DEEPSEEK_MODEL, ModelUnavailable
+from documents.model_access import ModelUnavailable
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from product.settings import Settings
@@ -17,7 +17,7 @@ from pydantic import SecretStr
 
 
 def controlled_api():
-    config = Settings(model_credential_encryption_key=SecretStr(Fernet.generate_key().decode()), personal_model_allowed_base_urls="https://models.company.test/v1")
+    config = Settings(model_credential_encryption_key=SecretStr(Fernet.generate_key().decode()), personal_model_allowed_base_urls="https://models.company.test/v1,https://models.example.test")
     tenant = str(uuid4())
     alice, bob = (SimpleNamespace(tenant_id=tenant, user_id=str(uuid4())) for _ in range(2))
     principal = [alice]
@@ -30,7 +30,7 @@ def controlled_api():
         access = decrypt_credential(config, p.tenant_id, p.user_id, ciphertext)
         return public_config(updated_at, provider=access.provider, model=access.model, base_url=access.base_url, revision=access.revision)
 
-    def put(p, key, *, base_url=DEEPSEEK_BASE_URL, model=DEEPSEEK_MODEL):
+    def put(p, key, *, base_url="https://models.example.test", model="test-model"):
         rows[p.user_id] = (encrypt_credential(config, p.tenant_id, p.user_id, key, base_url=base_url, model=model, revision=str(uuid4())), datetime.now(timezone.utc))
         return get(p)
 
@@ -48,7 +48,7 @@ def test_self_service_is_owner_only_secret_safe_and_revocable():
     client, principal, alice, bob, rows, config = controlled_api()
     assert client.get("/me/model-config").json()["configured"] is False
     key = str(uuid4())
-    saved = client.put("/me/model-config", json={"api_key": key})
+    saved = client.put("/me/model-config", json={"api_key": key, "base_url": "https://models.example.test", "model": "test-model"})
     assert saved.status_code == 200
     assert saved.json()["configured"] is True
     assert saved.headers["cache-control"] == "no-store"
@@ -60,14 +60,14 @@ def test_self_service_is_owner_only_secret_safe_and_revocable():
         assert key not in result.text
     principal[0] = bob
     assert client.get("/me/model-config").json()["configured"] is False
-    assert client.put("/me/model-config", json={"api_key": str(uuid4())}).status_code == 200
+    assert client.put("/me/model-config", json={"api_key": str(uuid4()), "base_url": "https://models.example.test", "model": "test-model"}).status_code == 200
     principal[0] = alice
     assert client.delete("/me/model-config").json()["configured"] is False
     principal[0] = bob
     assert client.get("/me/model-config").json()["configured"] is True
     principal[0] = None
     assert client.get("/me/model-config").status_code == 401
-    assert client.put("/me/model-config", json={"api_key": key}).status_code == 401
+    assert client.put("/me/model-config", json={"api_key": key, "base_url": "https://models.example.test", "model": "test-model"}).status_code == 401
     assert client.delete("/me/model-config").status_code == 401
 
 
@@ -75,7 +75,7 @@ def test_invalid_configuration_is_fixed_error_not_raw_key():
     client, _, _, _, _, config = controlled_api()
     config.model_credential_encryption_key = SecretStr("")
     key = str(uuid4())
-    response = client.put("/me/model-config", json={"api_key": key})
+    response = client.put("/me/model-config", json={"api_key": key, "base_url": "https://models.example.test", "model": "test-model"})
     assert response.status_code == 503
     assert response.json() == {"error": "model_credential_encryption_unavailable"}
     assert key not in response.text
@@ -88,8 +88,8 @@ def test_personal_store_database_owner_isolation_and_membership_cleanup(auth_sto
     bob = store.upsert_feishu_identity("controlled-tenant", "bob")
     other = store.upsert_feishu_identity("other-controlled-tenant", "alice")
     alice_key, bob_key = SecretStr(str(uuid4())), SecretStr(str(uuid4()))
-    store.put_personal_model_config(alice, alice_key)
-    store.put_personal_model_config(bob, bob_key)
+    store.put_personal_model_config(alice, alice_key, base_url="https://models.example.test", model="test-model")
+    store.put_personal_model_config(bob, bob_key, base_url="https://models.example.test", model="test-model")
     assert store.personal_model_access(alice.tenant_id, alice.user_id).api_key == alice_key
     assert store.personal_model_access(bob.tenant_id, bob.user_id).api_key == bob_key
     with pytest.raises(ModelUnavailable):
@@ -115,8 +115,8 @@ def test_database_roles_encrypted_owner_binding_and_member_rejoin(auth_store_fac
     api = AuthStore(config, objects=setup.objects, role="api")
     worker = AuthStore(config, objects=setup.objects, role="worker")
     alice_key, bob_key = SecretStr(str(uuid4())), SecretStr(str(uuid4()))
-    api.put_personal_model_config(alice, alice_key)
-    api.put_personal_model_config(bob, bob_key)
+    api.put_personal_model_config(alice, alice_key, base_url="https://models.example.test", model="test-model")
+    api.put_personal_model_config(bob, bob_key, base_url="https://models.example.test", model="test-model")
     assert worker.personal_model_access(alice.tenant_id, alice.user_id).api_key == alice_key
     assert worker.personal_model_access(bob.tenant_id, bob.user_id).api_key == bob_key
     # Compromised row placement cannot lend a different owner's decrypted key.
@@ -130,14 +130,14 @@ def test_database_roles_encrypted_owner_binding_and_member_rejoin(auth_store_fac
     import psycopg
 
     with pytest.raises(psycopg.errors.InsufficientPrivilege):
-        worker.put_personal_model_config(alice, SecretStr(str(uuid4())))
+        worker.put_personal_model_config(alice, SecretStr(str(uuid4())), base_url="https://models.example.test", model="test-model")
     with pytest.raises(psycopg.errors.InsufficientPrivilege):
         worker.delete_personal_model_config(alice)
     with setup._conn() as conn:
         conn.execute("DELETE FROM product.memberships WHERE user_id=%s AND tenant_id=%s", (alice.user_id, alice.tenant_id))
         assert conn.execute("SELECT 1 FROM product.personal_model_credentials WHERE user_id=%s", (alice.user_id,)).fetchone() is None
     with pytest.raises(ModelUnavailable):
-        api.put_personal_model_config(alice, SecretStr(str(uuid4())))
+        api.put_personal_model_config(alice, SecretStr(str(uuid4())), base_url="https://models.example.test", model="test-model")
     with setup._conn() as conn:
         conn.execute("INSERT INTO product.memberships (user_id,tenant_id,role) VALUES (%s,%s,'member')", (alice.user_id, alice.tenant_id))
     assert api.personal_model_config(alice)["configured"] is False
@@ -149,7 +149,7 @@ def test_database_account_deletion_cleans_keys_after_identity_cleanup(auth_store
     config = Settings(feishu_app_id="controlled-app", model_credential_encryption_key=SecretStr(Fernet.generate_key().decode()))
     store = auth_store_factory(config)
     alice = store.upsert_feishu_identity("controlled-tenant", "alice")
-    store.put_personal_model_config(alice, SecretStr(str(uuid4())))
+    store.put_personal_model_config(alice, SecretStr(str(uuid4())), base_url="https://models.example.test", model="test-model")
     # Existing product history can retain a user row. This verifies physical
     # removal only after the existing identity/membership references are gone.
     with store._conn() as conn, conn.transaction():
@@ -173,14 +173,14 @@ def test_custom_config_is_complete_secret_safe_and_does_not_call_provider(monkey
     client, _, alice, _, rows, config = controlled_api()
     old_key, new_key = str(uuid4()), str(uuid4())
     assert client.get("/me/model-config").json()["revision"] is None
-    initial = client.put("/me/model-config", json={"api_key": old_key})
+    initial = client.put("/me/model-config", json={"api_key": old_key, "base_url": "https://models.example.test", "model": "test-model"})
     assert initial.status_code == 200
     assert initial.json()["revision"]
     destination = {"base_url": "https://models.company.test/v1", "model": "internal-reasoner"}
     # Never borrow the old key when changing a destination or model.
     rejected = client.put("/me/model-config", json=destination)
     assert rejected.status_code == 400
-    assert client.get("/me/model-config").json()["base_url"] == DEEPSEEK_BASE_URL
+    assert client.get("/me/model-config").json()["base_url"] == "https://models.example.test"
     saved = client.put("/me/model-config", json={"api_key": new_key, **destination})
     assert saved.status_code == 200
     assert saved.json() == {"provider": "responses-compatible", **destination, "configured": True, "updated_at": saved.json()["updated_at"], "revision": saved.json()["revision"]}

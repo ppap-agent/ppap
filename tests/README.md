@@ -238,7 +238,7 @@ verified publication, explicit re-audit and rollback. A companion HTTP case also
 stale sample edits, private access and preservation of existing human reviews.
 No findings or validation reports are injected. Deterministic metadata and author adapters supply only model responses and Python
 at the model boundary; model usage is labeled `controlled`. This does not prove provider
-quality, real DeepSeek consumption, paid acceptance or willingness to configure a key.
+quality, real personal-model consumption, paid acceptance or willingness to configure a key.
 
 Run with the Product integration prerequisites above, including the `e2e` dependency
 group and installed Chromium:

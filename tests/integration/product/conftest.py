@@ -400,6 +400,9 @@ from io import BytesIO
 from openpyxl import load_workbook
 from audit.contracts import AuditEvidence, AuditResultItem, EvidenceSource
 
+# Personal models have no built-in endpoint; tests approve their controlled one.
+os.environ.setdefault("PPAP_PERSONAL_MODEL_ALLOWED_BASE_URLS", "https://models.example.test")
+
 def check(context):
     book = load_workbook(BytesIO(context.sources[context.audit_file.audit_id]), read_only=True)
     try:

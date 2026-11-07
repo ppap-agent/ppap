@@ -1,6 +1,6 @@
 """Self-service personal model settings. Never echo submitted secret inputs."""
 
-from documents.model_access import DEEPSEEK_BASE_URL, DEEPSEEK_MODEL, ModelUnavailable
+from documents.model_access import ModelUnavailable
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from product.store.model_credentials import ModelCredentialError
@@ -44,10 +44,7 @@ def register_model_credential_routes(app, store, principal_of):
                 raise ValueError()
         except (ValueError, UnicodeError):
             return JSONResponse({"error": "invalid_model_credential"}, status_code=400)
-        if ("base_url" in body) != ("model" in body):
-            code = "invalid_model_endpoint" if "base_url" not in body else "invalid_model_model"
-            return JSONResponse({"error": code}, status_code=400)
-        base_url, model = body.get("base_url", DEEPSEEK_BASE_URL), body.get("model", DEEPSEEK_MODEL)
+        base_url, model = body.get("base_url"), body.get("model")
         if not isinstance(base_url, str) or not 1 <= len(base_url) <= 2048:
             return JSONResponse({"error": "invalid_model_endpoint"}, status_code=400)
         if not isinstance(model, str) or not 1 <= len(model) <= 128:

@@ -7,7 +7,7 @@ import threading
 from contextlib import contextmanager
 from pathlib import Path
 
-from documents.model_access import DEEPSEEK_BASE_URL, DEEPSEEK_MODEL, ModelUnavailable
+from documents.model_access import UNCONFIGURED_MODEL_IDENTITY, ModelUnavailable
 
 from agent.client import DeepError, PersonalModelNotStarted
 from agent.core_program import CoreRuntime
@@ -34,8 +34,8 @@ def runtime_from_env(settings, objects, *, model_access_for_request=None, model_
     # binding. Neither global endpoint nor active user is rebound between jobs.
     with local_gateway(
         state / "gateway.sock",
-        upstream=DEEPSEEK_BASE_URL,
-        model=DEEPSEEK_MODEL,
+        upstream="https://unconfigured.invalid",
+        model=UNCONFIGURED_MODEL_IDENTITY["model"],
         provider_key=unavailable,
         require_binding=True,
         requests=settings.personal_model_max_requests,

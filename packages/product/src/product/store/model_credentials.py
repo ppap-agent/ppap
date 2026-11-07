@@ -5,11 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 from contextlib import nullcontext
-from dataclasses import replace
 from uuid import UUID, uuid4
 
 from cryptography.fernet import Fernet, InvalidToken
-from documents.model_access import DEEPSEEK_BASE_URL, DEEPSEEK_MODEL, DEEPSEEK_PROVIDER, ModelAccess, ModelUnavailable
+from documents.model_access import PERSONAL_MODEL_PROVIDER, UNCONFIGURED_MODEL_IDENTITY, ModelAccess, ModelUnavailable
 from pydantic import SecretStr
 
 from product.model_endpoint import ModelEndpointError, approved_base_url, valid_model
@@ -39,12 +38,12 @@ def _identity(tenant_id: str, user_id: str) -> tuple[str, str]:
 def _configuration(settings, base_url: str, model: str) -> tuple[str, str, str]:
     try:
         endpoint = approved_base_url(settings, base_url)
-        return DEEPSEEK_PROVIDER if endpoint == DEEPSEEK_BASE_URL else "responses-compatible", endpoint, valid_model(model)
+        return PERSONAL_MODEL_PROVIDER, endpoint, valid_model(model)
     except ModelEndpointError as exc:
         raise ModelCredentialError(exc.code) from None
 
 
-def encrypt_credential(settings, tenant_id: str, user_id: str, api_key: SecretStr, *, base_url: str = DEEPSEEK_BASE_URL, model: str = DEEPSEEK_MODEL, revision: str = "") -> str:
+def encrypt_credential(settings, tenant_id: str, user_id: str, api_key: SecretStr, *, base_url: str, model: str, revision: str = "") -> str:
     tenant_id, user_id = _identity(tenant_id, user_id)
     provider, endpoint, model = _configuration(settings, base_url, model)
     key = api_key.get_secret_value().strip()
@@ -65,32 +64,22 @@ def decrypt_credential(settings, tenant_id: str, user_id: str, ciphertext: str, 
         key = body["api_key"]
         if not isinstance(key, str) or not key:
             raise ValueError()
-        # The original envelope had no endpoint fields. It remains valid only
-        # for its original official destination; migration never moves its key.
-        legacy = not any(name in body for name in ("base_url", "model", "revision"))
-        if not legacy and not all(name in body for name in ("base_url", "model", "revision")):
+        provider, endpoint, model = _configuration(settings, body["base_url"], body["model"])
+        access = ModelAccess(api_key=SecretStr(key), provider=provider, base_url=endpoint, model=model, revision=body["revision"])
+        if expected_identity is not None and access.identity() != expected_identity:
             raise ValueError()
-        provider, endpoint, model = _configuration(settings, body.get("base_url", DEEPSEEK_BASE_URL), body.get("model", DEEPSEEK_MODEL))
-        if provider != body["provider"]:
-            raise ValueError()
-        access = ModelAccess(api_key=SecretStr(key), provider=provider, base_url=endpoint, model=model, revision=body.get("revision", ""))
-        if expected_identity is not None:
-            if legacy:
-                access = replace(access, revision=expected_identity["revision"])
-            if access.identity() != expected_identity:
-                raise ValueError()
         return access
     except (InvalidToken, ValueError, KeyError, TypeError, UnicodeError):
         raise ModelUnavailable() from None
 
 
-def public_config(updated_at=None, *, provider=DEEPSEEK_PROVIDER, model=DEEPSEEK_MODEL, base_url=DEEPSEEK_BASE_URL, revision: str | None = None) -> dict:
+def public_config(updated_at=None, *, provider=PERSONAL_MODEL_PROVIDER, model="", base_url="", revision: str | None = None) -> dict:
     return {"provider": provider, "model": model, "base_url": base_url, "configured": updated_at is not None, "revision": revision, "updated_at": updated_at.isoformat() if updated_at else None}
 
 
 def _metadata_identity(row) -> dict[str, str]:
     if row is None:
-        return {"provider": DEEPSEEK_PROVIDER, "model": DEEPSEEK_MODEL, "revision": "unconfigured", "deployment": hashlib.sha256(DEEPSEEK_BASE_URL.encode()).hexdigest()}
+        return dict(UNCONFIGURED_MODEL_IDENTITY)
     return {"provider": row[0], "model": row[1], "deployment": hashlib.sha256(row[2].encode()).hexdigest(), "revision": str(row[3])}
 
 
@@ -119,7 +108,7 @@ class PersonalModelStore:
             ).fetchone()
         return _metadata_identity(row)
 
-    def put(self, principal, api_key: SecretStr, *, base_url: str = DEEPSEEK_BASE_URL, model: str = DEEPSEEK_MODEL) -> dict:
+    def put(self, principal, api_key: SecretStr, *, base_url: str, model: str) -> dict:
         provider, endpoint, model = _configuration(self.product.settings, base_url, model)
         revision = str(uuid4())
         ciphertext = encrypt_credential(self.product.settings, principal.tenant_id, principal.user_id, api_key, base_url=endpoint, model=model, revision=revision)

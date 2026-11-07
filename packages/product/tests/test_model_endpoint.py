@@ -61,7 +61,8 @@ def test_exact_https_prefix_allowlist_supports_trusted_internal_provider():
 
 def test_empty_or_broken_allowlist_does_not_grant_custom_destinations():
     settings = SimpleNamespace(personal_model_allowed_base_urls="https://,*.company.test,http://10.0.0.1/v1")
-    assert approved_base_url(settings, "https://api.deepseek.com/") == "https://api.deepseek.com"
+    with pytest.raises(ModelEndpointError, match="model_endpoint_not_allowed"):
+        approved_base_url(settings, "https://models.example.test/")
     with pytest.raises(ModelEndpointError, match="model_endpoint_not_allowed"):
         approved_base_url(settings, "https://models.company.test/v1")
 

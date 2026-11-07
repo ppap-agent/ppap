@@ -14,7 +14,6 @@ from agent.core_program import AuditJobSpec, CoreRuntime, generated_snapshot, ru
 from agent.protocol import ExecuteRequest, FrozenFile
 from agent.run import Controller, ExecutionContext
 from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest
-from documents.model_access import DEEPSEEK_MODEL
 
 CODE = b"""from audit.contracts import AuditResultItem
 
@@ -43,7 +42,7 @@ def setup(unbound=False, *, mode="standard"):
         for row in inputs
         if row.role == "target"
     )
-    snapshot = ExecutionSnapshot("tenant", "initiator", inputs, targets, "runtime", "library", {"provider": "deepseek", "model": DEEPSEEK_MODEL}, round_id="round")
+    snapshot = ExecutionSnapshot("tenant", "initiator", inputs, targets, "runtime", "library", {"provider": "responses-compatible", "model": "test-model"}, round_id="round")
     spec = ExecuteRequest(
         protocol_revision="protocol",
         executor="ppap-checker-core",
@@ -74,7 +73,7 @@ class ControlledGuest:
         grant = self.root / f"grant-{self.calls}"
         grant.mkdir()
         (grant / "model.json").write_text(
-            json.dumps({"base_url": "http://127.0.0.1:1/v1", "token": "local-short-lived-capability-1234567890", "model": DEEPSEEK_MODEL, "wall_seconds": 100, "max_turns": 20})
+            json.dumps({"base_url": "http://127.0.0.1:1/v1", "token": "local-short-lived-capability-1234567890", "model": "test-model", "wall_seconds": 100, "max_turns": 20})
         )
         run_audit_manifest(inputs, work, grant)
 
@@ -193,7 +192,7 @@ def check(context):
     digest = checker_digest({"checker.py": code})
     snapshot = replace(snapshot, targets=tuple(replace(target, binding=replace(target.binding, checker_digest=digest)) for target in snapshot.targets))
     write_audit_manifest(tmp_path / "inputs", snapshot, sources, {digest: {"checker.py": code}}, allow_model_calls=False)
-    with model_access_scope(ModelAccess(api_key=SecretStr("outer-key-never-for-the-hidden-trial"))):
+    with model_access_scope(ModelAccess(api_key=SecretStr("outer-key-never-for-the-hidden-trial"), model="test-model", base_url="https://models.example.test")):
         run_audit_manifest(tmp_path / "inputs", tmp_path / "work", tmp_path / "nonexistent-grants")
     result = json.loads((tmp_path / "work" / "result" / "bundle.json").read_text())
     assert len(result["findings"]) == 4

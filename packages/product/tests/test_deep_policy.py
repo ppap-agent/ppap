@@ -56,7 +56,7 @@ def test_deep_model_override_is_complete_and_independent_of_standard():
     )
     revision = settings.deep_execution_revision()
     assert settings.deep_model_config() == ("https://deep.example/backend-api/codex", "deep", "deep-key")
-    assert settings.deep_execution_policy().model == "deepseek-flash"
+    assert settings.deep_execution_policy().model == "unconfigured"
     assert settings.llm_api_key == "standard-key" and settings.llm_model == "standard"
     assert settings.model_copy(update={"deep_llm_api_key": "rotated"}).deep_execution_revision() == revision
     assert settings.model_copy(update={"llm_model": "other-standard"}).deep_execution_revision() == revision

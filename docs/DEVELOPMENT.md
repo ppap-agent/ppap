@@ -363,7 +363,7 @@ Excel 的图形事实通过 `audit.engine.checkers.excel_field_evidence` 读取�
 
 部署先通过 Secret 给 API、Worker 和 Controller 配置相同的 `PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY`，不提供默认值，也不自动生成持久密钥。自定义提供方另须在相同进程配置 `PPAP_PERSONAL_MODEL_ALLOWED_BASE_URLS`，值为逗号分隔的**完整 HTTPS base URL**，例如 `https://models.company.example/v1`。这是管理员对准确目的地的信任，不是通配域名或任意内网代理。管理员须控制其 DNS、TLS 和网络路由；内部 HTTPS 服务可以列入，但本机、链路本地、元数据及其它特殊 IP 不接受。不跟随重定向，也不使用环境代理。用户不能通过查询串、URL 内密码、子路径或子域名扩大授权。移出允许列表后，后续调用不可用。此变更只提供配置能力，不改变当前生产允许列表。
 
-个人模型须支持 Bearer 认证的 `POST <base_url>/responses`，以及使用路径需要的 function tools、`input_image`、严格 JSON schema、reasoning 参数和 usage 回执；不是仅实现 `/chat/completions` 就满足合同。模型和地址是用户选择的配置，不承诺远端具体权重版本或所有 OpenAI 兼容服务均可用。真实优化验收针对所选 provider 能否修复 Checker，不要求其品牌是 DeepSeek。
+个人模型须支持 Bearer 认证的 `POST <base_url>/responses`，以及使用路径需要的 function tools、`input_image`、严格 JSON schema、reasoning 参数和 usage 回执；不是仅实现 `/chat/completions` 就满足合同。模型和地址是用户选择的配置，不承诺远端具体权重版本或所有 OpenAI 兼容服务均可用。真实优化验收针对所选模型能否修复 Checker。
 
 Key、租户、用户、地址、模型及配置修订一起加密绑定，数据库非秘密元数据必须与解密值一致。每次保存生成新的配置修订。审核与优化受理冻结该修订、模型和端点摘要；执行中更换或撤销配置后，旧工作不能漂移到新 provider 或新 Key。文字、视觉和 Checker 开发循环共享此身份；guest 只获得本地网关的短期执行授权，不获得真实 Key 或外部地址。替换部署加密密钥前必须迁移既有密文，否则原配置明确不可用。
 

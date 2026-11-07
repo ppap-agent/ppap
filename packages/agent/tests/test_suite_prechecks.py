@@ -102,7 +102,7 @@ class ControlledGuest:
 
 def test_frozen_enterprise_hook_runs_free_and_formal_check_never_runs():
     payload, snapshot, sources, programs = request()
-    with model_access_scope(ModelAccess(SecretStr("host-secret-must-not-be-visible"))):
+    with model_access_scope(ModelAccess(SecretStr("host-secret-must-not-be-visible"), model="test-model", base_url="https://models.example.test")):
         result = run_precheck(payload, snapshot, sources, programs)
     assert result["files"][0]["facts"][0]["message"] == "frozen enterprise hook"
     assert result["files"][0]["facts"][0]["status"] == "defect"
@@ -265,7 +265,7 @@ def test_all_19_uaes_sources_precheck_together_without_collapsing_measurement_el
         targets.append(target)
         programs.update(one_programs)
     snapshot = replace(snapshot, inputs=tuple(inputs), targets=tuple(targets))
-    with model_access_scope(ModelAccess(SecretStr("host-secret-must-not-be-visible"))):
+    with model_access_scope(ModelAccess(SecretStr("host-secret-must-not-be-visible"), model="test-model", base_url="https://models.example.test")):
         result = execute_precheck(ControlledGuest(), payload, snapshot, sources, programs, ExecutionContext())
     assert len(result["files"]) == 19
     for source, row in zip(payload["files"], result["files"]):

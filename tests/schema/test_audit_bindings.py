@@ -164,7 +164,6 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
         from api.audit_routes import register_audit_routes
         from api.web_contract import Round
         from audit.storage_errors import ObjectTooLarge
-        from documents.model_access import DEEPSEEK_MODEL
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
         from openpyxl import Workbook
@@ -240,7 +239,7 @@ def check(context):
                                 **dict(frozen.model_identity),
                                 "base_url": "http://127.0.0.1:1/v1",
                                 "token": "controlled-local-capability-1234567890",
-                                "model": DEEPSEEK_MODEL,
+                                "model": "test-model",
                                 "wall_seconds": 100,
                                 "max_turns": 20,
                             }

@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 from functools import lru_cache
 from typing import Literal, Optional, Self
 from urllib.parse import urlsplit
 
 from audit.policy import DeepExecutionPolicy
-from documents.model_access import DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
+from documents.model_access import UNCONFIGURED_MODEL_IDENTITY
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -214,11 +213,7 @@ class Settings(BaseSettings):
     def deep_execution_policy(self, model_identity: dict[str, str] | None = None) -> DeepExecutionPolicy:
         # Product acceptance supplies the initiator's frozen non-secret identity.
         # No platform credential or endpoint is a fallback for a personal run.
-        identity = (
-            model_identity
-            if model_identity is not None
-            else {"provider": "deepseek", "model": DEEPSEEK_MODEL, "revision": "unconfigured", "deployment": hashlib.sha256(DEEPSEEK_BASE_URL.encode()).hexdigest()}
-        )
+        identity = model_identity if model_identity is not None else UNCONFIGURED_MODEL_IDENTITY
         model = identity["model"]
         return DeepExecutionPolicy.model_validate(
             {
@@ -242,7 +237,7 @@ class Settings(BaseSettings):
         return self.deep_execution_policy(model_identity).engine_revision()
 
     def standard_execution_policy(self, model_identity: dict[str, str] | None = None) -> StandardExecutionPolicy:
-        identity = model_identity or {"provider": "deepseek", "model": DEEPSEEK_MODEL, "revision": "unconfigured", "deployment": hashlib.sha256(DEEPSEEK_BASE_URL.encode()).hexdigest()}
+        identity = model_identity or UNCONFIGURED_MODEL_IDENTITY
         return StandardExecutionPolicy(
             app_revision=self.git_sha or None,
             model=identity["model"],

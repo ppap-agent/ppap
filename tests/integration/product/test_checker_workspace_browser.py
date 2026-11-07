@@ -453,10 +453,12 @@ def test_feedback_optimize_verify_publish_reaudit_and_rollback(workspace_product
             page.get_by_role("button", name="让 AI 修复并验证", exact=True).click()
             expect(page.get_by_text("尚未配置。普通审核已有的检查不需要生成代码。", exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="确认开始修复", exact=True)).to_be_disabled()
+            page.get_by_label("Base URL", exact=True).fill("https://models.example.test")
+            page.get_by_label("模型名称", exact=True).fill("test-model")
             page.get_by_label("API Key", exact=True).fill("synthetic-workspace-key-never-sent-to-provider")
             page.get_by_role("button", name="保存模型配置", exact=True).click()
             expect(page.get_by_text("已配置，仅供你发起的模型操作使用。", exact=True)).to_be_visible()
-            consent = page.get_by_label("同意将本次资料发送至 https://api.deepseek.com，使用 deepseek-flash 修复并验证这 4 条反馈", exact=True)
+            consent = page.get_by_label("同意将本次资料发送至 https://models.example.test，使用 test-model 修复并验证这 4 条反馈", exact=True)
             consent.check()
             f.pause.set()
             assert f.paused.wait(5), "Worker did not pause before admission"
@@ -624,7 +626,9 @@ def test_workspace_http_receipts_use_real_trials_and_frozen_reaudit(workspace_pr
             missing_key = request.post(path, data=command)
             assert missing_key.status == 409 and missing_key.json() == {"error": "personal_model_unavailable"}
             assert f.guest.adaptations == 0 and "checker_optimization" not in f.jobs
-            response_json(request.put(f.web + "/api/me/model-config", data={"api_key": "synthetic-workspace-key-never-sent-to-provider"}))
+            response_json(
+                request.put(f.web + "/api/me/model-config", data={"api_key": "synthetic-workspace-key-never-sent-to-provider", "base_url": "https://models.example.test", "model": "test-model"})
+            )
             f.pause.set()
             assert f.paused.wait(5), "Worker did not pause before admission"
             accepted = response_json(request.post(path, data=command))

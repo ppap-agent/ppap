@@ -64,7 +64,7 @@ def fixture(auth_store_factory, *, count=4, resources=False):
     alice = store.upsert_feishu_identity("optimizer", "alice")
     bob = store.upsert_feishu_identity("optimizer", "bob")
     other = store.upsert_feishu_identity("other", "carol")
-    store.put_personal_model_config(alice, SecretStr("test-only-no-provider-called"))
+    store.put_personal_model_config(alice, SecretStr("test-only-no-provider-called"), base_url="https://models.example.test", model="test-model")
     suite = SuiteStore(settings, objects, role="migrator").create_revision(
         tenant_id=None,
         suite_key="threshold",
@@ -261,7 +261,7 @@ def test_stop_before_dispatch_revocation_cross_user_and_missing_model(auth_store
     f.store.delete_personal_model_config(f.alice)
     response = f.clients[0].post(path, json=command(f))
     assert response.status_code == 409 and response.json()["error"] == "personal_model_unavailable"
-    f.store.put_personal_model_config(f.alice, SecretStr("test-only-no-provider-called"))
+    f.store.put_personal_model_config(f.alice, SecretStr("test-only-no-provider-called"), base_url="https://models.example.test", model="test-model")
     receipt, _ = start(f)
     identity = claim(f)
     stopped = f.clients[0].post(f"/checker-optimizations/{receipt['operation_id']}/stop")
@@ -553,7 +553,7 @@ def test_deleted_operator_preserves_feedback_completed_receipt_and_published_che
     assert receipt["state"] == "completed"
     releases = SuiteReleaseStore(f.store.settings, f.store.objects, role="api")
     releases.publish(f.bob, "threshold", receipt["candidate_revision_id"], 0, str(uuid4()), True)
-    f.store.put_personal_model_config(f.bob, SecretStr("test-only-no-provider-called"))
+    f.store.put_personal_model_config(f.bob, SecretStr("test-only-no-provider-called"), base_url="https://models.example.test", model="test-model")
     with f.store._conn() as conn, conn.transaction():
         conn.execute("DELETE FROM product.sessions WHERE user_id=%s", (f.bob.user_id,))
         conn.execute("DELETE FROM product.provider_authorizations WHERE user_id=%s", (f.bob.user_id,))
@@ -1026,7 +1026,7 @@ def test_model_revision_consent_rejects_before_optimization_admission(auth_store
     f = fixture(auth_store_factory, count=1)
     observed = f.api.personal_model_config(f.alice)["revision"]
     if expectation == "changed":
-        f.store.put_personal_model_config(f.alice, SecretStr("replacement-test-only-no-provider-called"))
+        f.store.put_personal_model_config(f.alice, SecretStr("replacement-test-only-no-provider-called"), base_url="https://models.example.test", model="test-model")
         assert f.api.personal_model_config(f.alice)["revision"] != observed
     body = command(f, consume_model=consume_model, expected_model_revision=observed if expectation == "changed" else None)
 
@@ -1051,7 +1051,7 @@ def test_matching_model_consent_freezes_identity_and_replay_preserves_original_r
     accepted_identity = f.api.personal_model_identity(f.alice.tenant_id, f.alice.user_id)
     receipt, body = start(f, command(f, expected_model_revision=accepted_identity["revision"]))
     assert receipt["state"] == "queued"
-    f.store.put_personal_model_config(f.alice, SecretStr("replacement-test-only-no-provider-called"))
+    f.store.put_personal_model_config(f.alice, SecretStr("replacement-test-only-no-provider-called"), base_url="https://models.example.test", model="test-model")
     current_identity = f.api.personal_model_identity(f.alice.tenant_id, f.alice.user_id)
     assert current_identity != accepted_identity
     # A lost response is a read-back of the accepted operation, not consent to
@@ -1083,7 +1083,7 @@ def test_model_change_after_dispatch_before_runtime_is_known_zero_send(auth_stor
     def change_after_dispatch(development, request):
         accepted = dispatch(development, request)
         assert accepted is not None
-        f.store.put_personal_model_config(f.alice, SecretStr("changed-after-dispatch-no-provider-called"))
+        f.store.put_personal_model_config(f.alice, SecretStr("changed-after-dispatch-no-provider-called"), base_url="https://models.example.test", model="test-model")
         dispatches.append(request.operation_id)
         return accepted
 
