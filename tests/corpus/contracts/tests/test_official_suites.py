@@ -423,3 +423,13 @@ def test_guest_runs_frozen_v5_u08_bytes_and_leaves_unbound_clauses_unpassed(tmp_
     (tmp_path / "checker.py").write_bytes(changed["checker.py"])
     rerun = run_audit_process(snapshot, {"target": original}, {digest: program})
     assert rerun["findings"] == result["findings"]
+
+
+def test_shared_oracle_path_is_not_stored_as_directory_identity():
+    from product.seed_standard_suites import official_source_suites, persisted_source_path
+
+    suites = official_source_suites()
+    shared = "assets/corpus/oracle.csv"
+    assert [suite.source_path for suite in suites].count(shared) > 1
+    assert persisted_source_path(shared) is None
+    assert persisted_source_path("v5/UAES/U08") == "v5/UAES/U08"

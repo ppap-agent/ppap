@@ -93,9 +93,9 @@ def test_revision_digest_matches_content_contract():
     suites = official_source_suites()
     assert len(suites) == 76
     assert max(Counter((suite.suite_key, suite.revision_digest) for suite in suites).values()) == 1
-    shared_oracle = [suite.source_path for suite in suites].count("assets/corpus/oracle.csv")
-    assert shared_oracle > 1
-    assert persisted_source_path("assets/corpus/oracle.csv") is None
+    non_directory = [suite.source_path for suite in suites if persisted_source_path(suite.source_path) is None]
+    assert len(non_directory) == 75
+    assert len(set(non_directory)) < len(non_directory)
     assert persisted_source_path("v5/UAES/U08") == "v5/UAES/U08"
     for suite in suites:
         assert suite.revision_digest == resolved_digest(suite.suite_key, suite.related_suite_keys, {key: content_digest(value) for key, value in suite.files.items()})

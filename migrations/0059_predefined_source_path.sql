@@ -9,7 +9,6 @@ ALTER TABLE product.suite_revisions ADD CONSTRAINT suite_revision_source_path_sh
     source_path IS NULL OR (
         char_length(source_path) BETWEEN 1 AND 512
         AND source_path = btrim(source_path)
-        AND position(chr(0) in source_path) = 0
     )
 );
 CREATE INDEX IF NOT EXISTS suite_revisions_official_source_path

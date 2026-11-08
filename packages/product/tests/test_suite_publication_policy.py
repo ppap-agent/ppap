@@ -49,10 +49,23 @@ def test_partial_official_directory_cannot_be_forced_into_the_active_head():
     assert partial_official_directory_slice(partial) is True
     assert adoption_block(partial, verified=True, force_unverified=True) == "partial_directory_suite_not_adoptable"
     assert adoption_block(partial, verified=False, force_unverified=True) == "partial_directory_suite_not_adoptable"
+    poisoned = {**files, "checker.py": files["checker.py"] + b'\n# check_clause\nNOTE = "check_clause"\n'}
+    poisoned_suite = _resolved(poisoned, tenant_id=None, related=directory.related_suite_keys)
+    assert b"check_clause" in poisoned["checker.py"]
+    assert adoption_block(poisoned_suite, verified=True, force_unverified=True) == "partial_directory_suite_not_adoptable"
+    assert adoption_block(poisoned_suite, verified=False, force_unverified=True) == "partial_directory_suite_not_adoptable"
+
     unmarked = json.loads(files["rules.json"])
     unmarked.pop("directory_coverage")
-    unmarked_files = {**files, "rules.json": json.dumps(unmarked).encode()}
-    assert adoption_block(_resolved(unmarked_files, tenant_id=None, related=directory.related_suite_keys), verified=True, force_unverified=True) == "partial_directory_suite_not_adoptable"
+    unmarked_suite = _resolved({**files, "rules.json": json.dumps(unmarked).encode()}, tenant_id=None, related=directory.related_suite_keys)
+    assert partial_official_directory_slice(unmarked_suite) is False
+    assert adoption_block(unmarked_suite, verified=True, force_unverified=True) is None
+    assert adoption_block(unmarked_suite, verified=False, force_unverified=False) == "suite_confirmation_required"
+
+    empty_binding = json.loads(files["rules.json"])
+    empty_binding["checker_binding"] = {}
+    empty_suite = _resolved({**files, "rules.json": json.dumps(empty_binding).encode()}, tenant_id=None, related=directory.related_suite_keys)
+    assert adoption_block(empty_suite, verified=True, force_unverified=True) == "partial_directory_suite_not_adoptable"
 
     tenant = _resolved(files, tenant_id="tenant-1", related=directory.related_suite_keys)
     assert partial_official_directory_slice(tenant) is False
@@ -66,6 +79,8 @@ def test_partial_official_directory_cannot_be_forced_into_the_active_head():
 
     rules = json.loads(files["rules.json"])
     rules["checker_binding"] = {row["id"]: "checker:create_audit" for row in rules["rules"]}
+    marked = _resolved({**files, "rules.json": json.dumps(rules).encode()}, tenant_id=None, related=directory.related_suite_keys)
+    assert partial_official_directory_slice(marked) is False
     rules["directory_coverage"] = "complete"
     complete = _resolved({**files, "rules.json": json.dumps(rules).encode()}, tenant_id=None, related=directory.related_suite_keys)
     assert partial_official_directory_slice(complete) is False

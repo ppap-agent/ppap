@@ -17,11 +17,10 @@ def publication_fingerprint(*, suite_key: str, revision_id: str, expected_revisi
 
 
 def partial_official_directory_slice(suite: ResolvedSuite) -> bool:
-    """Official directory leaf whose checker does not bind every clause.
+    """Official leaf declared partial whose binding does not cover every clause.
 
-    The revision owner is what matters. A tenant-owned copy keeps the explicit
-    ``force_unverified`` acknowledgement. Legacy carriers call ``check_clause``
-    and are not this leaf, even when their binding is narrower than the rule list.
+    Tenant copies keep explicit ``force_unverified``. The decision is the leaf's
+    ``directory_coverage`` and exact binding. Checker source text is not read.
     """
     if suite.revision.tenant_id is not None:
         return False
@@ -29,15 +28,16 @@ def partial_official_directory_slice(suite: ResolvedSuite) -> bool:
         rules = json.loads(suite.files["rules.json"])
     except (KeyError, TypeError, ValueError):
         return False
+    if rules.get("directory_coverage") != "partial":
+        return False
     rows = rules.get("rules")
     binding = rules.get("checker_binding")
     if not isinstance(rows, list) or not isinstance(binding, dict):
         return False
     ids = [row.get("id") for row in rows if isinstance(row, dict)]
-    if not ids or any(not isinstance(clause, str) for clause in ids) or set(binding) == set(ids):
+    if not ids or any(not isinstance(clause, str) for clause in ids):
         return False
-    source = suite.files.get("checker.py", b"")
-    return isinstance(source, bytes) and b"def create_audit" in source and b"check_clause" not in source
+    return set(binding) != set(ids)
 
 
 def adoption_block(suite: ResolvedSuite, *, verified: bool, force_unverified: bool) -> str | None:

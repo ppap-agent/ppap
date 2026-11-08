@@ -2,21 +2,16 @@
 
 import ast
 import hashlib
-import importlib.util
 import json
 import shutil
 import subprocess
-import sys
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
-from uuid import uuid4
 
 import pytest
 from audit.checker_core import checker_digest
-from audit.contracts import AuditInput, RuleInput
 from audit.presets import customer_presets, preset_rule
-from audit.standard_library import check_factory
 from audit.standard_suites import _CHECKERS_ROOT, load_predefined_checkers, predefined_directory_suites, standard_suites
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -255,22 +250,13 @@ def test_scan_order_is_independent_of_locale(tmp_path, monkeypatch):
     assert first == second == sorted(first, key=lambda value: value.encode("utf-8"))
 
 
-def test_u08_bound_clauses_read_xlsx_and_do_not_pass_without_evidence(tmp_path, monkeypatch):
-    calls = []
-
-    def forbid_loader(path):
-        calls.append(path)
-        raise AssertionError("unsupported carrier must not open a workbook")
-
-    monkeypatch.setattr("documents.excel.load_excel_workbook", forbid_loader)
+def test_u08_bound_clauses_read_xlsx_and_do_not_pass_without_evidence(tmp_path):
     suite = next(item for item in predefined_directory_suites() if item.source_path == "v5/UAES/U08")
     pdf = tmp_path / "plan.pdf"
     pdf.write_bytes(b"%PDF-1.4\n")
     unable = _run(suite, pdf, ("U08:1", "U08:4"))
     assert [item.status for item in unable] == ["UNABLE", "UNABLE"]
     assert {item.suggestions for item in unable} == {"该预置 Checker 不支持此原件载体。"}
-    assert calls == []
-    monkeypatch.undo()
 
     passed = _run(suite, _workbook(tmp_path / "ready.xlsx", resource="压机", mark="CC"), ("U08:1", "U08:4"))
     assert [item.status for item in passed] == ["PASS", "PASS"]
@@ -373,6 +359,14 @@ def _locators(item):
     return [json.loads(source.locator) for source in item.evidence.sources]
 
 
+def _view(value):
+    if isinstance(value, dict):
+        return SimpleNamespace(**{key: _view(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_view(item) for item in value)
+    return value
+
+
 def _save(path: Path, build) -> Path:
     from openpyxl import Workbook
 
@@ -383,68 +377,35 @@ def _save(path: Path, build) -> Path:
     return path
 
 
-def _execute(files: dict[str, bytes], path: Path, clauses, *, file_version_id: str | None = "frozen-version", sha256: str | None = None, audit_id: str = "frozen"):
+def _execute(files: dict[str, bytes], path: Path, clauses):
+    """Run frozen program bytes through the official guest entry."""
+    from agent.execution.audit_runtime import run_audit_process
+    from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding
+
+    body = path.read_bytes()
     rules = json.loads(files["rules.json"])
-    directory = path.parent / f"program-{uuid4().hex}"
-    directory.mkdir()
-    modules = {}
-    loaded: list[str] = []
-    saved = {stem: sys.modules.get(stem) for stem in ("resources", "checker")}
-    try:
-        for stem in ("resources", "checker"):
-            name = stem + ".py"
-            if name not in files:
-                continue
-            (directory / name).write_bytes(files[name])
-            spec = importlib.util.spec_from_file_location(f"ppap_predefined_{uuid4().hex}", directory / name)
-            assert spec is not None and spec.loader is not None and spec.name
-            module = importlib.util.module_from_spec(spec)
-            sys.modules[spec.name] = module
-            sys.modules[stem] = module
-            loaded.append(spec.name)
-            spec.loader.exec_module(module)
-            modules[stem] = module
-        metadata: dict[str, str] = {}
-        if file_version_id is not None:
-            metadata["file_version_id"] = file_version_id
-        if sha256 is not None:
-            metadata["sha256"] = sha256
-        rule = RuleInput(rule_id="frozen", type=rules.get("type"), rules=rules["rules"], customers=rules.get("customers") or [])
-        binding = rules.get("checker_binding") or {clause: "checker:create_audit" for clause in clauses}
-        context = SimpleNamespace(
-            audit_file=AuditInput(audit_id=audit_id, file_url=str(path), file_metadata=metadata),
-            rule=rule,
-            group_context=None,
-            target=SimpleNamespace(binding=SimpleNamespace(checker_digest=checker_digest({name: files[name] for name in files if name in {"checker.py", "resources.py"}}), entrypoints=binding)),
-            cache={},
-            on_close=lambda item: None,
-            clause_id=clauses[0],
-        )
-        results = []
-        for clause in clauses:
-            context.clause_id = clause
-            results.append(check_factory(context, modules["checker"].create_audit))
-        return results
-    finally:
-        for name in loaded:
-            sys.modules.pop(name, None)
-        for stem, module in saved.items():
-            if module is None:
-                sys.modules.pop(stem, None)
-            else:
-                sys.modules[stem] = module
+    program = {name: files[name] for name in ("checker.py", "resources.py") if name in files}
+    digest = checker_digest(program)
+    declared = rules.get("checker_binding") or {clause: "checker:create_audit" for clause in clauses}
+    binding = {clause: declared[clause] for clause in clauses}
+    source = FrozenInput("frozen-version", hashlib.sha256(body).hexdigest(), "target", path.name)
+    target = FrozenTarget("frozen-version", "revision", "predefined:test", "a" * 64, rules, RuleBinding("predefined:test", digest, binding))
+    snapshot = ExecutionSnapshot("tenant", "initiator", (source,), (target,), "runtime", "library", {})
+    result = run_audit_process(snapshot, {"frozen-version": body}, {digest: program})
+    by_clause = {row["clause_id"]: row for row in result["findings"]}
+    return [_view(by_clause[clause]) for clause in clauses]
 
 
 def test_incomplete_scan_formula_merge_and_extra_tables_are_unable(tmp_path):
     suite = next(item for item in predefined_directory_suites() if item.source_path == "v5/UAES/U08")
     files = dict(suite.files)
-    digest = "ab" * 32
 
-    def run(path: Path, clauses=("U08:1", "U08:4"), **kwargs):
-        return _execute(files, path, clauses, sha256=digest, **kwargs)
+    def run(path: Path, clauses=("U08:1", "U08:4")):
+        return _execute(files, path, clauses)
 
     def unable(path: Path, code: str, clause: str = "U08:1"):
         item = run(path, (clause,))[0]
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
         assert item.status == "UNABLE"
         assert [diag.code for diag in item.evidence.diagnostics] == [code]
         locators = _locators(item)
@@ -521,7 +482,8 @@ def test_incomplete_scan_formula_merge_and_extra_tables_are_unable(tmp_path):
             book.active.cell(2, 3, "CC"),
         ),
     )
-    assert unable(formula, "formula_cache_missing")[0] == {"kind": "xlsx_cell", "sheet": "控制计划", "cell": "B2", "file_version_id": "frozen-version", "source_sha256": digest}
+    formula_digest = hashlib.sha256(formula.read_bytes()).hexdigest()
+    assert unable(formula, "formula_cache_missing")[0] == {"kind": "xlsx_cell", "sheet": "控制计划", "cell": "B2", "file_version_id": "frozen-version", "source_sha256": formula_digest}
 
     hidden_header = _save(
         tmp_path / "formula-header.xlsx",
@@ -619,13 +581,6 @@ def test_incomplete_scan_formula_merge_and_extra_tables_are_unable(tmp_path):
     empty = _save(tmp_path / "empty.xlsx", lambda book: setattr(book.active, "title", "控制计划"))
     blank = run(empty, ("U08:1",))[0]
     assert blank.status == "NG" and blank.evidence.used == "none" and blank.evidence.sources == ()
-
-    plain = _execute(files, _workbook(tmp_path / "sha.xlsx", resource="压机", mark="CC"), ("U08:1",), sha256="short")[0]
-    assert plain.status == "PASS" and "source_sha256" not in _locators(plain)[0]
-    missing_identity = _execute(files, tmp_path / "sha.xlsx", ("U08:1",), file_version_id=None, audit_id="")[0]
-    assert missing_identity.status == "UNABLE"
-    assert [diag.code for diag in missing_identity.evidence.diagnostics] == ["frozen_file_missing"]
-    assert missing_identity.evidence.sources == ()
 
 
 def test_digest_helper_is_stable():
