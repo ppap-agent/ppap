@@ -41,6 +41,6 @@ KISS 不等于把迁移人为切成最小碎片。如果一个内聚 package、�
 
 按 [context-reduce](https://github.com/ronhuafeng/skills-release/tree/main/catalog/engineering/context-reduce) 执行：只读本次 owning Issue、直接相关的源码、测试和仍生效的文档入口；非必要不读旧分支、历史设计、旧 Issue、agent 日志或迁移记录。复用当前权威，消除无当前消费者的代码、兼容层、额外概念、重复文档和对应测试；用小范围测试守住真实不变量，重要外部效应必须读回验证。
 
-Checker 的唯一开发入口是 `checkers/v5+` 的完整叶子与 `checker_lib`；v2/v3/v4、跨版本继承/降级、历史版本族指纹和重放兼容都是**必须在 41 组迁移完成后删除**的过渡负担，不再新增任何历史兼容逻辑。迁移未完成时不得伪称旧组已迁入或将未知判为 PASS。允许破坏旧软件接口和旧版可执行性；仍须保留当前租户权限、已记录结果的真实性和不可变原件/审计证据，不做无授权的生产数据批量删除。
+**Checker artifacts 不是 legacy code。** `audit/checkers/v2`、`v3`、`v4`、`v5` 等版本目录中的 Checker 源码和资源是独立版本化 artifacts；不能因为版本旧或正在迁移 v5 就删除、覆盖、合并这些目录或其不可变 Revision。`context-reduce` 的删除范围是已证实无当前消费者的旧执行框架、隐式 fallback、重复注册/映射、无效兼容层及其过期文档和测试；不以文件名或版本号直接判定 legacy。新版本 Checker 使用自身完整代码、显式绑定及 `checker_lib`，不隐式调用其他版本；对旧执行接口不新增历史兼容保证。开发中继续保留权限、冻结版本/原件/审计证据、未知不得 PASS 等安全与正确性边界。
 
 开发命令见 [DEVELOPMENT](docs/DEVELOPMENT.md)，选择和运行测试时见 [tests/README](tests/README.md)。
