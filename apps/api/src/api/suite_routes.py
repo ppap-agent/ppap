@@ -180,7 +180,15 @@ def register_suite_routes(app: FastAPI, store, principal_of):
                 404
                 if code == "suite_candidate_not_found"
                 else 409
-                if code in {"suite_head_conflict", "suite_official_head_conflict", "suite_operation_conflict", "suite_confirmation_required", "suite_dependencies_not_adopted"}
+                if code
+                in {
+                    "suite_head_conflict",
+                    "suite_official_head_conflict",
+                    "suite_operation_conflict",
+                    "suite_confirmation_required",
+                    "suite_dependencies_not_adopted",
+                    "partial_directory_suite_not_adoptable",
+                }
                 else 400
             )
             return JSONResponse({"error": code}, status_code=status, headers=headers)

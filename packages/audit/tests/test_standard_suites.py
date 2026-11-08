@@ -10,7 +10,7 @@ from audit.contracts import AuditInput, GroupContextInput, RuleInput
 from audit.engine.checkers.rule_declarations import discover_declared_rules
 from audit.presets import customer_presets, preset_rule_body
 from audit.standard_library import check_clause
-from audit.standard_suites import library_revision, standard_suites
+from audit.standard_suites import library_revision, predefined_directory_suites, standard_suites
 
 
 def resources(suite):
@@ -37,6 +37,21 @@ def test_all_41_source_groups_have_explicit_executable_bindings():
         assert rules["checker_binding"] == dict(suite.entrypoints)
         assert all(ref["distribution"] == "reference-only" and not ref["downloadable"] for ref in json.loads(suite.files["templates.json"]))
         assert json.loads(suite.files["tests.json"])[0]["correctness"] == "independent-human-oracle-required"
+
+
+def test_directory_u08_does_not_replace_or_fall_back_from_the_legacy_carrier():
+    legacy = [suite for suite in standard_suites() if suite.suite_key == "UAES:U08"]
+    directory = [suite for suite in predefined_directory_suites() if suite.suite_key == "UAES:U08"]
+    assert len(legacy) == len(directory) == 1
+    assert legacy[0].source_path != "v5/UAES/U08"
+    assert directory[0].source_path == "v5/UAES/U08"
+    assert b"audit.checkers.v4" in legacy[0].files["checker.py"]
+    assert b"audit.checkers.v4" not in directory[0].files["checker.py"]
+    assert b"audit.checkers.v3" not in directory[0].files["checker.py"]
+    assert b"audit.checkers.v2" not in directory[0].files["checker.py"]
+    assert b"check_clause" not in directory[0].files["checker.py"]
+    assert directory[0].related_suite_keys == legacy[0].related_suite_keys == ("UAES:U07", "UAES:U16")
+    assert directory[0].entrypoints["U08:1"] == "checker:create_audit"
 
 
 def test_standard_content_and_shared_library_have_stable_identity():

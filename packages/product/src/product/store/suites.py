@@ -58,6 +58,7 @@ class SuiteStore:
         related_suite_keys: tuple[str, ...] = (),
         deleted_paths: tuple[str, ...] = (),
         history_only: bool = False,
+        source_path: str | None = None,
         conn=None,
     ) -> SuiteRevision:
         """Caller authenticates the tenant. Only the platform migrator may seed official assets.
@@ -69,6 +70,10 @@ class SuiteStore:
             raise PermissionError("history_suite_migrator_required")
         if tenant_id is None and self.role != "migrator":
             raise PermissionError("official_suite_write_forbidden")
+        if source_path is not None and (
+            tenant_id is not None or not isinstance(source_path, str) or not source_path or source_path.strip() != source_path or "\x00" in source_path or len(source_path) > 512
+        ):
+            raise ValueError("invalid_suite_source_path")
         if tenant_id is not None and not created_by:
             raise ValueError("suite_creator_required")
         if set(deleted_paths) - {"resources.py"} or set(deleted_paths).intersection(files) or deleted_paths and base_revision_id is None:
@@ -110,8 +115,9 @@ class SuiteStore:
                         raise ValueError("suite_object_digest_mismatch") from None
                 db.execute("INSERT INTO product.suite_objects (owner_scope, digest, object_key) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING", (owner, digest, key))
             db.execute(
-                """INSERT INTO product.suite_revisions (id,tenant_id,suite_key,related_suite_keys,base_revision_id,overrides,resolved_digest,created_by,revision_number,history_only)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                """INSERT INTO product.suite_revisions
+                   (id,tenant_id,suite_key,related_suite_keys,base_revision_id,overrides,resolved_digest,created_by,revision_number,history_only,source_path)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (
                     revision.id,
                     tenant_id,
@@ -123,11 +129,29 @@ class SuiteStore:
                     created_by,
                     revision.revision_number,
                     history_only,
+                    source_path,
                 ),
             )
             # The same bounded resolver used by execution rejects chains that grew too deep.
             self.resolve_suite(revision.id, lookup_tenant, conn=db, include_history=history_only)
             return revision
+
+    def official_revision_id_for_source(self, source_path: str, *, conn=None) -> str | None:
+        """Latest official revision stored for one predefined directory path.
+
+        Content digest is not part of the lookup. ``v5/UAES/U08`` and an identical
+        ``v6/UAES/U08`` therefore stay distinct. Legacy asset paths are not stored.
+        """
+        if not isinstance(source_path, str) or not source_path or source_path.strip() != source_path:
+            raise ValueError("invalid_suite_source_path")
+        with nullcontext(conn) if conn is not None else self._conn() as db:
+            row = db.execute(
+                """SELECT id FROM product.suite_revisions
+                   WHERE tenant_id IS NULL AND source_path=%s AND NOT history_only
+                   ORDER BY revision_number DESC, id DESC LIMIT 1""",
+                (source_path,),
+            ).fetchone()
+        return str(row[0]) if row else None
 
     def save_snapshot(self, conn, *, snapshot: ExecutionSnapshot) -> None:
         """Called inside acceptance, after audit_rounds exists and before its job is queued."""

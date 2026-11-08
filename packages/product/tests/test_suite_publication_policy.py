@@ -1,7 +1,10 @@
 """Publication acknowledgement is not a Checker verdict or regression proof."""
 
+import json
+
 import pytest
-from product.suite_releases import empty_validation, publication_fingerprint
+from product.suite_releases import adoption_block, empty_validation, partial_official_directory_slice, publication_fingerprint
+from product.suites import UNIMPLEMENTED_CHECKER_SOURCE, ResolvedSuite, SuiteRevision, content_digest, resolved_digest
 
 
 def test_missing_proof_is_never_verified():
@@ -29,3 +32,61 @@ def test_idempotency_identity_binds_all_consequential_inputs_and_actual_actor():
     for field, changed in (("suite_key", "other"), ("revision_id", "other"), ("expected_revision", 1), ("force_unverified", True), ("user_id", "another")):
         assert publication_fingerprint(**{**values, field: changed}) != original
     assert publication_fingerprint(**values) == original
+
+
+def _resolved(files: dict[str, bytes], *, tenant_id: str | None, suite_key: str = "UAES:U08", related: tuple[str, ...] = ()):
+    objects = {name: content_digest(body) for name, body in files.items()}
+    revision = SuiteRevision("rev", tenant_id, suite_key, related, None, objects, resolved_digest(suite_key, related, objects), None, 1)
+    return ResolvedSuite(revision, files, objects)
+
+
+def test_partial_official_directory_cannot_be_forced_into_the_active_head():
+    from audit.standard_suites import predefined_directory_suites, standard_suites
+
+    directory = next(suite for suite in predefined_directory_suites() if suite.source_path == "v5/UAES/U08")
+    files = dict(directory.files)
+    partial = _resolved(files, tenant_id=None, related=directory.related_suite_keys)
+    assert partial_official_directory_slice(partial) is True
+    assert adoption_block(partial, verified=True, force_unverified=True) == "partial_directory_suite_not_adoptable"
+    assert adoption_block(partial, verified=False, force_unverified=True) == "partial_directory_suite_not_adoptable"
+    poisoned = {**files, "checker.py": files["checker.py"] + b'\n# check_clause\nNOTE = "check_clause"\n'}
+    poisoned_suite = _resolved(poisoned, tenant_id=None, related=directory.related_suite_keys)
+    assert b"check_clause" in poisoned["checker.py"]
+    assert adoption_block(poisoned_suite, verified=True, force_unverified=True) == "partial_directory_suite_not_adoptable"
+    assert adoption_block(poisoned_suite, verified=False, force_unverified=True) == "partial_directory_suite_not_adoptable"
+
+    unmarked = json.loads(files["rules.json"])
+    unmarked.pop("directory_coverage")
+    unmarked_suite = _resolved({**files, "rules.json": json.dumps(unmarked).encode()}, tenant_id=None, related=directory.related_suite_keys)
+    assert partial_official_directory_slice(unmarked_suite) is False
+    assert adoption_block(unmarked_suite, verified=True, force_unverified=True) is None
+    assert adoption_block(unmarked_suite, verified=False, force_unverified=False) == "suite_confirmation_required"
+
+    empty_binding = json.loads(files["rules.json"])
+    empty_binding["checker_binding"] = {}
+    empty_suite = _resolved({**files, "rules.json": json.dumps(empty_binding).encode()}, tenant_id=None, related=directory.related_suite_keys)
+    assert adoption_block(empty_suite, verified=True, force_unverified=True) == "partial_directory_suite_not_adoptable"
+
+    tenant = _resolved(files, tenant_id="tenant-1", related=directory.related_suite_keys)
+    assert partial_official_directory_slice(tenant) is False
+    assert adoption_block(tenant, verified=False, force_unverified=True) is None
+    assert adoption_block(tenant, verified=False, force_unverified=False) == "suite_confirmation_required"
+
+    legacy = next(suite for suite in standard_suites() if suite.suite_key == "UAES:U08")
+    legacy_suite = _resolved(dict(legacy.files), tenant_id=None, related=legacy.related_suite_keys)
+    assert partial_official_directory_slice(legacy_suite) is False
+    assert adoption_block(legacy_suite, verified=False, force_unverified=True) is None
+
+    rules = json.loads(files["rules.json"])
+    rules["checker_binding"] = {row["id"]: "checker:create_audit" for row in rules["rules"]}
+    marked = _resolved({**files, "rules.json": json.dumps(rules).encode()}, tenant_id=None, related=directory.related_suite_keys)
+    assert partial_official_directory_slice(marked) is False
+    rules["directory_coverage"] = "complete"
+    complete = _resolved({**files, "rules.json": json.dumps(rules).encode()}, tenant_id=None, related=directory.related_suite_keys)
+    assert partial_official_directory_slice(complete) is False
+    assert adoption_block(complete, verified=True, force_unverified=False) is None
+    assert adoption_block(complete, verified=False, force_unverified=True) is None
+    assert adoption_block(complete, verified=False, force_unverified=False) == "suite_confirmation_required"
+
+    starter = {"rules.json": json.dumps({"rules": [{"id": "C1"}], "checker_binding": {}}).encode(), "checker.py": UNIMPLEMENTED_CHECKER_SOURCE}
+    assert adoption_block(_resolved(starter, tenant_id="tenant-1", suite_key="custom:X"), verified=False, force_unverified=False) is None

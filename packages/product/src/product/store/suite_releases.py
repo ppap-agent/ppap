@@ -13,8 +13,8 @@ from psycopg.types.json import Jsonb
 
 from product.db import connect
 from product.files import ObjectMissing
-from product.suite_releases import empty_validation, publication_fingerprint
-from product.suites import MAX_OBJECT_BYTES, MAX_SUITE_DEPTH, canonical_json, content_digest, is_unimplemented_suite
+from product.suite_releases import adoption_block, empty_validation, publication_fingerprint
+from product.suites import MAX_OBJECT_BYTES, MAX_SUITE_DEPTH, canonical_json, content_digest
 
 if TYPE_CHECKING:
     from product.checker_validation import SuiteValidationReport
@@ -471,8 +471,9 @@ class SuiteReleaseStore:
             # Resolve bytes at the adoption boundary: missing/corrupt artifacts are
             # never accepted merely because the caller acknowledges validation risk.
             resolved = self.suites.resolve_suite(revision_id, principal.tenant_id, conn=conn)
-            if not validation["verified"] and not force_unverified and not is_unimplemented_suite(resolved):
-                raise ValueError("suite_confirmation_required")
+            blocked = adoption_block(resolved, verified=bool(validation["verified"]), force_unverified=force_unverified)
+            if blocked:
+                raise ValueError(blocked)
             if any(_selected_or_none(conn, principal.tenant_id, key) is None for key in revision["related_suite_keys"]):
                 raise ValueError("suite_dependencies_not_adopted")
             previous = str(head["current_revision_id"]) if head else None
@@ -717,7 +718,10 @@ class SuiteReleaseStore:
             if not validation["verified"] or validation["samples_not_rerun"]:
                 raise ValueError("official_suite_validation_required")
             # Proof identity is insufficient if an object disappeared or drifted.
-            self.suites.resolve_suite(str(revision["id"]), "00000000-0000-0000-0000-000000000000", conn=conn)
+            resolved = self.suites.resolve_suite(str(revision["id"]), "00000000-0000-0000-0000-000000000000", conn=conn)
+            blocked = adoption_block(resolved, verified=True, force_unverified=False)
+            if blocked:
+                raise ValueError(blocked)
             if head:
                 cur.execute(
                     """UPDATE product.official_suite_heads SET current_revision_id = %s, revision = revision + 1,

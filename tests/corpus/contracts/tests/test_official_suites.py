@@ -361,3 +361,75 @@ def test_live_validation_gives_paddle_only_through_the_run_local_bridge(tmp_path
     monkeypatch.setattr(official_suites, "run_audit_process", stop)
     assert official_suites.evaluate(plan).reasons == ("official_execution_incomplete",)
     assert seen == [{}]
+
+
+def test_v4_oracle_selector_stays_on_the_legacy_u08_carrier():
+    from audit.standard_suites import predefined_directory_suites
+
+    legacy = oracle.suite_sources()["UAES:U08@v4"]
+    directory = next(suite for suite in predefined_directory_suites() if suite.source_path == "v5/UAES/U08")
+    assert legacy.source_path != directory.source_path
+    assert legacy.revision_digest != directory.revision_digest
+    assert b"check_clause" in legacy.files["checker.py"]
+    assert b"audit.checkers.v4" not in directory.files["checker.py"]
+    assert b"audit.checkers.v3" not in directory.files["checker.py"]
+    assert b"audit.checkers.v2" not in directory.files["checker.py"]
+
+
+def test_guest_runs_frozen_v5_u08_bytes_and_leaves_unbound_clauses_unpassed(tmp_path):
+    import hashlib
+
+    from agent.execution.audit_runtime import run_audit_process
+    from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest
+    from audit.standard_suites import predefined_directory_suites
+    from openpyxl import Workbook
+
+    suite = next(item for item in predefined_directory_suites() if item.source_path == "v5/UAES/U08")
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "控制计划"
+    sheet.append(["控制计划"])
+    sheet.append(["工序名称/操作描述", "机器/装置/夹具/工装", "特性类型"])
+    sheet.append(["装配", "压机", "CC"])
+    path = tmp_path / "control-plan.xlsx"
+    book.save(path)
+    book.close()
+    original = path.read_bytes()
+    rules = json.loads(suite.files["rules.json"])
+    program = {name: suite.files[name] for name in ("checker.py", "resources.py")}
+    digest = checker_digest(program)
+    binding = RuleBinding(suite.suite_key, digest, rules["checker_binding"])
+    source = FrozenInput("target", hashlib.sha256(original).hexdigest(), "target", "control-plan.xlsx")
+    target = FrozenTarget("target", "revision", suite.suite_key, "a" * 64, rules, binding)
+    snapshot = ExecutionSnapshot("tenant", "initiator", (source,), (target,), "runtime", "library", {})
+    result = run_audit_process(snapshot, {"target": original}, {digest: program})
+    by_clause = {row["clause_id"]: row for row in result["findings"]}
+    assert set(by_clause) == {"U08:1", "U08:4"}
+    assert by_clause["U08:1"]["status"] == by_clause["U08:4"]["status"] == "PASS"
+    assert all(row["evidence"]["sources"] for row in by_clause.values())
+    for row in by_clause.values():
+        for source in row["evidence"]["sources"]:
+            locator = json.loads(source["locator"])
+            assert locator["file_version_id"] == "target"
+            assert locator["source_sha256"] == hashlib.sha256(original).hexdigest()
+            assert locator["kind"] == "xlsx_cell"
+    coverage = {row["clause_id"]: row["coverage"] for row in result["coverage"]}
+    assert coverage["U08:1"] == coverage["U08:4"] == "mapped"
+    unbound = [clause for clause, state in coverage.items() if state == "unsupported"]
+    assert set(unbound) == {row["id"] for row in rules["rules"]} - {"U08:1", "U08:4"}
+    assert not any(row["status"] == "PASS" and row["clause_id"] in unbound for row in result["findings"])
+    changed = dict(program)
+    changed["checker.py"] = program["checker.py"].replace("已读取各工序对应的生产资源。".encode(), b"LIVE-DIRECTORY")
+    (tmp_path / "checker.py").write_bytes(changed["checker.py"])
+    rerun = run_audit_process(snapshot, {"target": original}, {digest: program})
+    assert rerun["findings"] == result["findings"]
+
+
+def test_shared_oracle_path_is_not_stored_as_directory_identity():
+    from product.seed_standard_suites import official_source_suites, persisted_source_path
+
+    suites = official_source_suites()
+    shared = "assets/corpus/oracle.csv"
+    assert [suite.source_path for suite in suites].count(shared) > 1
+    assert persisted_source_path(shared) is None
+    assert persisted_source_path("v5/UAES/U08") == "v5/UAES/U08"
