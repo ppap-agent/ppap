@@ -98,12 +98,12 @@ class PredefinedCatalogBrowserTests(unittest.TestCase):
         from playwright.sync_api import expect
 
         revisions = []
+        suite_hits = []
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch()
-            page = browser.new_context(viewport={"width": 1440, "height": 900}).new_page()
-            isolated_dev_login(page, WEB)
-            page.route("**/api/**", lambda route: self._route(route, revisions))
-            page.goto(WEB + "/requirements?checkerPath=v5%2FUAES%2FU08")
+            browser, page = self._open(playwright, revisions, suite_hits, viewport={"width": 1440, "height": 900})
+            with page.expect_response(self._catalog_response) as catalog:
+                page.goto(WEB + "/requirements?checkerPath=v5%2FUAES%2FU08")
+            self._assert_stub_catalog(suite_hits, catalog.value.json())
             directory = page.get_by_role("region", name="预定义检查目录", exact=True)
             enterprise = page.get_by_role("region", name="企业检查版本", exact=True)
             expect(directory.get_by_role("heading", name="v5", exact=True)).to_be_visible()
@@ -118,7 +118,11 @@ class PredefinedCatalogBrowserTests(unittest.TestCase):
             expect(enterprise.get_by_label("选择检查", exact=True)).to_be_visible()
             self.assertIn(OFFICIAL_V5, revisions)
             self.assertNotIn(TENANT_CURRENT, revisions)
-            page.reload()
+            seen = len(suite_hits)
+            with page.expect_response(self._catalog_response) as refreshed:
+                page.reload()
+            self.assertGreater(len(suite_hits), seen)
+            self._assert_stub_catalog(suite_hits, refreshed.value.json())
             expect(page).to_have_url(re.compile(r"checkerPath=v5%2FUAES%2FU08"))
             expect(directory.get_by_text(f"官方修订 {OFFICIAL_V5}", exact=True)).to_be_visible()
             self.assertGreaterEqual(revisions.count(OFFICIAL_V5), 2)
@@ -142,12 +146,15 @@ class PredefinedCatalogBrowserTests(unittest.TestCase):
     def test_a_broken_directory_lists_no_paths(self):
         from playwright.sync_api import expect
 
+        suite_hits = []
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch()
-            page = browser.new_context().new_page()
-            isolated_dev_login(page, WEB)
-            page.route("**/api/**", lambda route: self._route(route, [], broken=True))
-            page.goto(WEB + "/requirements?checkerPath=v5%2FUAES%2FU08")
+            browser, page = self._open(playwright, [], suite_hits, broken=True)
+            with page.expect_response(self._catalog_response) as catalog:
+                page.goto(WEB + "/requirements?checkerPath=v5%2FUAES%2FU08")
+            body = catalog.value.json()
+            self.assertGreaterEqual(len(suite_hits), 1)
+            self.assertEqual(body.get("predefined_error"), "predefined_catalog_unavailable")
+            self.assertNotIn("predefined", body)
             directory = page.get_by_role("region", name="预定义检查目录", exact=True)
             expect(directory.get_by_text("预定义检查目录不可用。未列出任何来源路径。", exact=True)).to_be_visible()
             expect(directory.get_by_role("button", name="v5/UAES/U08")).to_have_count(0)
@@ -155,8 +162,31 @@ class PredefinedCatalogBrowserTests(unittest.TestCase):
             expect(page.get_by_role("region", name="企业检查版本", exact=True).get_by_label("选择检查", exact=True)).to_be_visible()
             browser.close()
 
+    def _open(self, playwright, revisions, suite_hits, *, viewport=None, broken=False):
+        browser = playwright.chromium.launch()
+        options = {"service_workers": "block"}
+        if viewport is not None:
+            options["viewport"] = viewport
+        page = browser.new_context(**options).new_page()
+        isolated_dev_login(page, WEB)
+        # CI serves the API on its own origin. Pin the SPA to this origin's /api before the catalog load.
+        page.route("**/runtime-config.json", lambda route: route.fulfill(json={"api_url": WEB + "/api"}))
+        page.route("**/api/**", lambda route: self._route(route, revisions, suite_hits, broken=broken))
+        return browser, page
+
     @staticmethod
-    def _route(route, revisions, broken=False):
+    def _catalog_response(response) -> bool:
+        if response.request.method != "GET":
+            return False
+        return unquote(urlsplit(response.url).path).endswith("/suites")
+
+    def _assert_stub_catalog(self, suite_hits, body):
+        self.assertGreaterEqual(len(suite_hits), 1)
+        self.assertNotIn("predefined_error", body)
+        self.assertEqual([item["path"] for item in body["predefined"]], ["v5/UAES/U08", "v6/ACME/Z99"])
+
+    @staticmethod
+    def _route(route, revisions, suite_hits, broken=False):
         request = route.request
         path = unquote(urlsplit(request.url).path)
         if path.endswith("/public-config"):
@@ -197,7 +227,8 @@ class PredefinedCatalogBrowserTests(unittest.TestCase):
         if path.endswith("/rule-library"):
             route.fulfill(json={"versions": []})
             return
-        if path.endswith("/suites"):
+        if request.method == "GET" and path.endswith("/suites"):
+            suite_hits.append(request.url)
             if broken:
                 route.fulfill(json={"suites": CATALOG["suites"], "predefined_error": "predefined_catalog_unavailable"})
             else:

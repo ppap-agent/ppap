@@ -228,11 +228,17 @@ def _has_asset_leaf(version: Path) -> bool:
     return False
 
 
+def _bytecode_artifact(path: Path) -> bool:
+    # Baked images compile the leaf modules in place. That cache is not a checker asset.
+    return path.name == "__pycache__" or path.suffix == ".pyc"
+
+
 def _entries(directory: Path) -> list[Path]:
     try:
         children = list(directory.iterdir())
     except OSError:
         raise ValueError("predefined_path_escape") from None
+    children = [path for path in children if not _bytecode_artifact(path)]
     children.sort(key=lambda path: path.name.encode("utf-8"))
     return children
 
