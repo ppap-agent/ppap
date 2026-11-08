@@ -147,7 +147,7 @@ def library_revision() -> str:
 _CHECKERS_ROOT = Path(__file__).resolve().parent / "checkers"
 _VERSION_DIRECTORY = re.compile(r"^v[0-9]+$")
 _LEGACY_FAMILIES = ("v2", "v3", "v4")
-_FAMILY_TOKEN = re.compile(br"audit\.checkers\.(v2|v3|v4)(?![0-9A-Za-z_])")
+_FAMILY_TOKEN = re.compile(rb"audit\.checkers\.(v2|v3|v4)(?![0-9A-Za-z_])")
 
 
 def library_files(package: str, directory: Path) -> tuple[Path, ...]:
