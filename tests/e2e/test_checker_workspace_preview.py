@@ -38,6 +38,7 @@ class CheckerHttpFixture:
         self.lose_publish = False
         self.drop_publish_before_write = False
         self.edits = 0
+        self.tenant_override = {}
         self.lose_upgrade = False
         self.reject_upgrade = False
         self.reject_upgrade_verification = False
@@ -225,6 +226,8 @@ class CheckerHttpFixture:
                 response = candidate
             else:
                 response = self.revisions[revision]
+                if revision in self.tenant_override:
+                    response = {**response, "tenant_id": self.tenant_override[revision]}
         if response is None:
             route.fulfill(status=404, json={"error": "fixture_route_not_found"})
         else:
@@ -742,4 +745,279 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
             self.assertEqual(fixture.edits, 2)
             self.assertFalse(any(row[0] == "POST" and row[1].endswith("/optimizations") for row in fixture.calls))
             self.assertEqual(fixture.history, [])
+            browser.close()
+
+    def test_late_feedback_readback_keeps_open_rule_draft_until_save_and_revision_switch_clears_it(self):
+        with sync_playwright() as playwright:
+            browser = self.browser(playwright)
+            fixture = CheckerHttpFixture()
+            official = fixture.revision("revision-official", 5)
+            official["tenant_id"] = None
+            official["files"]["rules.json"] = json.dumps({"rules": [{"id": "U08-1", "rule_to_check": "官方冻结原文"}]}, ensure_ascii=False)
+            foreign = fixture.revision("revision-foreign", 6)
+            foreign["suite_key"] = "other-suite"
+            foreign["tenant_id"] = "tenant-b"
+            foreign["title"] = "其他套件检查"
+            foreign["files"]["rules.json"] = json.dumps({"rules": [{"id": "U08-1", "rule_to_check": "越权套件原文"}]}, ensure_ascii=False)
+            fixture.revisions[official["id"]] = official
+            fixture.revisions[foreign["id"]] = foreign
+            page = self.open(browser, fixture)
+            release = page.get_by_role("region", name="检查发布与版本记录", exact=True)
+            expect(release.get_by_text("控制计划检查 · 本企业版本 v1 · 当前使用", exact=True)).to_be_visible()
+            expect(page.get_by_text("尚无验证样本。可以查看版本和官方更新；添加正确答案后才能升级并验证。", exact=True)).to_be_visible()
+            held = []
+            page.route("**/audit-rounds/round-a/checker-feedback", lambda route: held.append(route) if route.request.method == "GET" else fixture.route(route))
+            with page.expect_request(lambda request: request.method == "GET" and urlsplit(request.url).path == "/audit-rounds/round-a/checker-feedback"):
+                self.answer(page)
+            # Let the held-route callback run. expect_request returns before that sync handler is dispatched.
+            page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+            self.assertEqual([(route.request.method, urlsplit(route.request.url).path) for route in held], [("GET", "/audit-rounds/round-a/checker-feedback")])
+            draft = "迟到读回前手写的规则"
+            editor = page.locator("details").filter(has=page.get_by_text("单独修改规则或模板", exact=True))
+            page.get_by_text("单独修改规则或模板", exact=True).click()
+            field = page.get_by_label("条款 U08-1 的规则原文", exact=True)
+            expect(field).to_be_visible()
+            field.fill(draft)
+            expect(field).to_have_value(draft)
+            # The feedback GET that follows “加入待修复” is still outstanding. Release it only after the draft exists.
+            fixture.history.extend(
+                [
+                    {
+                        "operation_id": "pub-official",
+                        "suite_key": "control-plan",
+                        "revision_id": official["id"],
+                        "revision": 1,
+                        "force_unverified": False,
+                        "published_at": "2026-11-01T00:00:00Z",
+                        "published_by_name": "官方冻结",
+                    },
+                    {
+                        "operation_id": "pub-foreign",
+                        "suite_key": "control-plan",
+                        "revision_id": foreign["id"],
+                        "revision": 2,
+                        "force_unverified": False,
+                        "published_at": "2026-11-02T00:00:00Z",
+                        "published_by_name": "越权版本",
+                    },
+                ]
+            )
+            page.unroute("**/audit-rounds/round-a/checker-feedback")
+            fixture.route(held.pop())
+            expect(page.get_by_text("已确认的样本 1 条", exact=True)).to_be_visible()
+            expect(editor).to_have_attribute("open", "")
+            expect(field).to_be_visible()
+            expect(field).to_be_editable()
+            expect(field).to_have_value(draft)
+            expect(release.get_by_text("控制计划检查 · 本企业版本 v1 · 当前使用", exact=True)).to_be_visible()
+            self.assertEqual(fixture.edits, 0)
+            self.assertFalse(any(row[0] == "POST" and row[1].endswith("/candidates") for row in fixture.calls))
+            page.get_by_role("button", name="仅保存这些修改", exact=True).click()
+            expect(release.get_by_text("控制计划检查 · 本企业版本 v3 · 待发布的修改", exact=True)).to_be_visible()
+            self.assertEqual(fixture.edits, 1)
+            self.assertEqual(json.loads(fixture.revisions["revision-edited"]["files"]["rules.json"])["rules"][0]["rule_to_check"], draft)
+            self.assertEqual(json.loads(fixture.revisions["revision-base"]["files"]["rules.json"])["rules"][0]["rule_to_check"], "需要签名")
+            page.get_by_text("单独修改规则或模板", exact=True).click()
+            expect(field).to_be_visible()
+            expect(field).to_have_value(draft)
+            release.get_by_text("版本记录与受影响审核", exact=True).click()
+            release.locator("div.border-t").filter(has_text="发布人 官方冻结").get_by_role("button", name="查看此版本／回滚", exact=True).click()
+            expect(release.get_by_text("控制计划检查 · 官方版本 v5 · 历史版本", exact=True)).to_be_visible()
+            expect(field).not_to_be_visible()
+            page.get_by_text("单独修改规则或模板", exact=True).click()
+            expect(field).to_be_editable()
+            expect(field).to_have_value("官方冻结原文")
+            self.assertNotIn(draft, field.input_value())
+            self.assertEqual(fixture.edits, 1)
+            self.assertIsNone(fixture.revisions["revision-official"]["tenant_id"])
+            fixture.tenant_override["revision-official"] = "tenant-b"
+            release.get_by_role("button", name="读取最新版本", exact=True).click()
+            expect(release.get_by_role("alert")).to_contain_text("检查版本不属于当前工作区，请核对原版本。")
+            expect(release.get_by_text("控制计划检查 · 官方版本 v5 · 历史版本", exact=True)).to_be_visible()
+            expect(field).to_have_value("官方冻结原文")
+            self.assertEqual(fixture.edits, 1)
+            self.assertIsNone(fixture.revisions["revision-official"]["tenant_id"])
+            # Switching revisions remounts this disclosure closed. Open it again for the other history row.
+            release.get_by_text("版本记录与受影响审核", exact=True).click()
+            release.locator("div.border-t").filter(has_text="发布人 越权版本").get_by_role("button", name="查看此版本／回滚", exact=True).click()
+            expect(release.get_by_role("alert")).to_contain_text("检查版本不属于当前工作区，请核对原版本。")
+            expect(page.get_by_text("越权套件原文", exact=True)).to_have_count(0)
+            expect(page.get_by_text("其他套件检查", exact=True)).to_have_count(0)
+            self.assertEqual(fixture.edits, 1)
+            self.assertFalse(any(row[:2] == ("PUT", "/suites/control-plan/active") for row in fixture.calls))
+            self.assertEqual(json.loads(fixture.revisions["revision-base"]["files"]["rules.json"])["rules"][0]["rule_to_check"], "需要签名")
+            self.assertEqual(json.loads(official["files"]["rules.json"])["rules"][0]["rule_to_check"], "官方冻结原文")
+            browser.close()
+
+    def test_failed_authoritative_refetch_retries_without_losing_dirty_draft(self):
+        with sync_playwright() as playwright:
+            browser = self.browser(playwright)
+            fixture = CheckerHttpFixture()
+            page = self.open(browser, fixture)
+            self.answer(page)
+            release = page.get_by_role("region", name="检查发布与版本记录", exact=True)
+            save = release.get_by_role("button", name="仅保存这些修改", exact=True)
+            page.get_by_text("单独修改规则或模板", exact=True).click()
+            expect(save).to_be_enabled()
+            field = page.get_by_label("条款 U08-1 的规则原文", exact=True)
+            draft = "读取失败后仍需保存的原草稿"
+            field.fill(draft)
+            held = []
+            page.route("**/suite-revisions/revision-base", lambda route: held.append(route))
+            fixture.feedback[0]["revision"] += 1
+            with page.expect_request(lambda request: urlsplit(request.url).path == "/suite-revisions/revision-base"):
+                page.get_by_role("button", name="读取最新记录", exact=True).click()
+            page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+            self.assertEqual(len(held), 1)
+            self.assertEqual(held[0].request.method, "GET")
+            expect(save).to_be_disabled()
+            expect(field).to_be_editable()
+            held.pop().fulfill(status=503, json={"error": "controlled_revision_read_failed"})
+            expect(release.get_by_role("alert")).to_contain_text("controlled_revision_read_failed")
+            expect(field).to_have_value(draft)
+            retry = release.get_by_role("button", name="读取最新版本", exact=True)
+            expect(retry).to_be_enabled()
+            expect(save).to_be_disabled()
+            calls_before_retry = len(fixture.calls)
+            # A concurrent enterprise-head change must not replace the frozen base of this dirty draft.
+            fixture.revisions["revision-new-current"] = fixture.revision("revision-new-current", 8)
+            fixture.current = "revision-new-current"
+            with page.expect_request(lambda request: urlsplit(request.url).path == "/suite-revisions/revision-base"):
+                retry.click()
+            page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+            self.assertEqual(len(held), 1)
+            expect(retry).to_be_disabled()
+            expect(save).to_be_disabled()
+            expect(field).to_have_value(draft)
+            self.assertEqual(fixture.edits, 0)
+            fixture.route(held.pop())
+            expect(save).to_be_enabled()
+            expect(field).to_be_editable()
+            expect(field).to_have_value(draft)
+            expect(release.get_by_text("控制计划检查 · 本企业版本 v1 · 待发布的修改", exact=True)).to_be_visible()
+            self.assertTrue(all(method == "GET" for method, _, _ in fixture.calls[calls_before_retry:]))
+            self.assertFalse(any(path == "/suite-revisions/revision-new-current" for _, path, _ in fixture.calls))
+            save.click()
+            expect(release.get_by_text("控制计划检查 · 本企业版本 v3 · 待发布的修改", exact=True)).to_be_visible()
+            self.assertEqual(fixture.edits, 1)
+            self.assertEqual(fixture.revisions["revision-edited"]["base_revision_id"], "revision-base")
+            self.assertEqual(json.loads(fixture.revisions["revision-edited"]["files"]["rules.json"])["rules"][0]["rule_to_check"], draft)
+            self.assertEqual(json.loads(fixture.revisions["revision-base"]["files"]["rules.json"])["rules"][0]["rule_to_check"], "需要签名")
+            self.assertFalse(fixture.operations)
+            self.assertEqual(fixture.history, [])
+            browser.close()
+
+    def test_authoritative_refetch_fences_parent_optimizer_even_after_new_consent(self):
+        with sync_playwright() as playwright:
+            browser = self.browser(playwright)
+            fixture = CheckerHttpFixture()
+            # A previous failed operation supplies a real operation-selection action, without a model call.
+            fixture.operations["prior-failed"] = {
+                "operation_id": "prior-failed",
+                "suite_revision_id": "revision-base",
+                "suite_key": "control-plan",
+                "state": "failed",
+                "candidate_revision_id": None,
+                "report": None,
+                "usage": {"source": "controlled", "total_tokens": 0, "uncertain": False},
+                "failure": None,
+                "cancel_requested": False,
+                "created_at": "2026-11-06T00:00:00Z",
+            }
+            page = self.open(browser, fixture)
+            self.answer(page)
+            release = page.get_by_role("region", name="检查发布与版本记录", exact=True)
+            page.get_by_text("之前的修复记录", exact=True).click()
+            prior = page.get_by_role("button", name=re.compile("查看(?:失败记录|待验证修改)$"))
+            prior.click()
+            expect(page.get_by_role("region", name="修复与回归结果", exact=True)).to_have_attribute("data-operation-id", "prior-failed")
+            page.get_by_role("button", name="让 AI 修复并验证", exact=True).click()
+            consent = page.get_by_label("同意将本次资料发送至 https://models.example.test，使用 test-model 修复并验证这 1 条反馈", exact=True)
+            consent.check()
+            start = page.get_by_role("button", name="确认开始修复", exact=True)
+            expect(start).to_be_enabled()
+            expect(prior).to_be_enabled()
+            original_url = page.url
+            writes_before = [row for row in fixture.calls if row[0] != "GET"]
+            held = []
+            page.route("**/suite-revisions/revision-base", lambda route: held.append(route))
+            fixture.feedback[0]["revision"] += 1
+            with page.expect_request(lambda request: urlsplit(request.url).path == "/suite-revisions/revision-base"):
+                page.get_by_role("button", name="读取最新记录", exact=True).click()
+            page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+            self.assertEqual(len(held), 1)
+            expect(consent).not_to_be_checked()
+            consent.check()
+            expect(consent).to_be_checked()
+            expect(start).to_be_disabled()
+            expect(prior).to_be_disabled()
+            expect(page.get_by_role("button", name="只运行现有检查验证", exact=True)).to_be_disabled()
+            expect(release.get_by_text("控制计划检查 · 本企业版本 v1 · 当前使用", exact=True)).to_be_visible()
+            held.pop().fulfill(status=503, json={"error": "controlled_revision_read_failed"})
+            expect(release.get_by_role("alert")).to_contain_text("controlled_revision_read_failed")
+            expect(start).to_be_disabled()
+            expect(prior).to_be_disabled()
+            # A newly read operation receipt must also wait for authoritative version recovery.
+            fixture.revisions["revision-other-window"] = fixture.revision("revision-other-window", 9)
+            fixture.operations["prior-failed"].update(state="saved", candidate_revision_id="revision-other-window", report={"verified": False, "reasons": ["tests_not_run"]})
+            page.get_by_role("button", name="读取最新记录", exact=True).click()
+            expect(page.get_by_role("region", name="修复与回归结果", exact=True)).to_have_attribute("data-candidate-revision", "revision-other-window")
+            expect(release.get_by_text("控制计划检查 · 本企业版本 v1 · 当前使用", exact=True)).to_be_visible()
+            self.assertEqual(page.url, original_url)
+            self.assertFalse(any(path == "/suite-revisions/revision-other-window" for _, path, _ in fixture.calls))
+            with page.expect_request(lambda request: urlsplit(request.url).path == "/suite-revisions/revision-base"):
+                release.get_by_role("button", name="读取最新版本", exact=True).click()
+            page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+            self.assertEqual(len(held), 1)
+            expect(start).to_be_disabled()
+            expect(release.get_by_text("控制计划检查 · 本企业版本 v1 · 当前使用", exact=True)).to_be_visible()
+            fixture.route(held.pop())
+            expect(release.get_by_text("控制计划检查 · 本企业版本 v9 · 待发布的修改", exact=True)).to_be_visible()
+            # Selecting the read-back candidate resets consent; it still does not start a model call.
+            expect(consent).not_to_be_checked()
+            expect(start).to_be_disabled()
+            consent.check()
+            expect(start).to_be_enabled()
+            expect(prior).to_be_enabled()
+            self.assertIn("checkerOptimization=prior-failed", page.url)
+            self.assertEqual(list(fixture.operations), ["prior-failed"])
+            self.assertEqual(fixture.edits, 0)
+            self.assertEqual(fixture.history, [])
+            self.assertEqual([row for row in fixture.calls if row[0] != "GET"], writes_before)
+            self.assertFalse(any(method == "POST" and path.endswith("/optimizations") for method, path, _ in fixture.calls))
+            browser.close()
+
+    def test_revision_retry_cannot_bypass_pending_or_unknown_child_save(self):
+        with sync_playwright() as playwright:
+            browser = self.browser(playwright)
+            fixture = CheckerHttpFixture()
+            page = self.open(browser, fixture)
+            self.answer(page)
+            release = page.get_by_role("region", name="检查发布与版本记录", exact=True)
+            page.get_by_text("单独修改规则或模板", exact=True).click()
+            expect(release.get_by_role("button", name="仅保存这些修改", exact=True)).to_be_enabled()
+            field = page.get_by_label("条款 U08-1 的规则原文", exact=True)
+            field.fill("保存结果未知时只读原操作")
+            held = []
+            page.route("**/suite-revisions/revision-base/candidates", lambda route: held.append(route))
+            with page.expect_request(lambda request: request.method == "POST" and urlsplit(request.url).path == "/suite-revisions/revision-base/candidates"):
+                release.get_by_role("button", name="仅保存这些修改", exact=True).click()
+            page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+            self.assertEqual(len(held), 1)
+            retry = release.get_by_role("button", name="读取最新版本", exact=True)
+            expect(retry).to_be_disabled()
+            page.route("**/suite-revisions/revision-base", lambda route: route.fulfill(status=503, json={"error": "controlled_revision_read_failed"}))
+            fixture.feedback[0]["revision"] += 1
+            page.get_by_role("button", name="读取最新记录", exact=True).click()
+            expect(release.get_by_role("alert")).to_contain_text("controlled_revision_read_failed")
+            expect(retry).to_be_disabled()
+            held.pop().abort("failed")
+            expect(release.get_by_text("保存结果待核对，请读取原保存操作，不要再次提交。", exact=True)).to_be_visible()
+            expect(retry).to_be_disabled()
+            expect(release.get_by_role("button", name="读取原保存操作", exact=True)).to_be_enabled()
+            expect(release.get_by_role("button", name="仅保存这些修改", exact=True)).to_be_disabled()
+            self.assertIn("checkerEditOperation=", page.url)
+            self.assertEqual(fixture.edits, 0)
+            self.assertEqual(fixture.history, [])
+            self.assertFalse(fixture.operations)
             browser.close()

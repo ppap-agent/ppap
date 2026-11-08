@@ -68,3 +68,13 @@ export function checkedWorkspaceRevision(value: CheckerRevision, suiteKey: strin
   if (value.id !== revisionId || value.suite_key !== suiteKey) throw new Error('检查版本不属于当前工作区，请核对原版本。')
   return value
 }
+
+/** A feedback refresh keeps the open editor only for the same scope, suite, and frozen revision. */
+export function refreshKeepsEditor(shown: {scope: string; suite: string; id: string} | null, requested: {scope: string; suite: string; id: string}) {
+  return shown !== null && shown.scope === requested.scope && shown.suite === requested.suite && shown.id === requested.id
+}
+
+/** The same frozen revision id cannot be repainted from another tenant. A different id is a real switch. */
+export function sameRevisionTenant(shown: {id: string; tenant: string | null} | null, next: {id: string; tenant_id?: string | null}) {
+  return shown === null || shown.id !== next.id || shown.tenant === (next.tenant_id ?? null)
+}
