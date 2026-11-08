@@ -6,6 +6,8 @@ import re
 import unittest
 from urllib.parse import unquote, urlsplit
 
+from .conftest import isolated_dev_login
+
 try:
     from playwright.sync_api import sync_playwright
 except ImportError:  # pragma: no cover - optional until the e2e job installs Playwright
@@ -99,6 +101,7 @@ class PredefinedCatalogBrowserTests(unittest.TestCase):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_context(viewport={"width": 1440, "height": 900}).new_page()
+            isolated_dev_login(page, WEB)
             page.route("**/api/**", lambda route: self._route(route, revisions))
             page.goto(WEB + "/requirements?checkerPath=v5%2FUAES%2FU08")
             directory = page.get_by_role("region", name="预定义检查目录", exact=True)
@@ -142,6 +145,7 @@ class PredefinedCatalogBrowserTests(unittest.TestCase):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_context().new_page()
+            isolated_dev_login(page, WEB)
             page.route("**/api/**", lambda route: self._route(route, [], broken=True))
             page.goto(WEB + "/requirements?checkerPath=v5%2FUAES%2FU08")
             directory = page.get_by_role("region", name="预定义检查目录", exact=True)
