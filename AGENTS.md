@@ -37,4 +37,10 @@ KISS 不等于把迁移人为切成最小碎片。如果一个内聚 package、�
 
 不要新增 roadmap、CURRENT、Story/proof/evidence registry、manifest 或第二套状态台账。历史信息由 Git history 和已关闭 Issue 保存。
 
+## 最小开发上下文（每次开发必遵守）
+
+按 [context-reduce](https://github.com/ronhuafeng/skills-release/tree/main/catalog/engineering/context-reduce) 执行：只读本次 owning Issue、直接相关的源码、测试和仍生效的文档入口；非必要不读旧分支、历史设计、旧 Issue、agent 日志或迁移记录。复用当前权威，消除无当前消费者的代码、兼容层、额外概念、重复文档和对应测试；用小范围测试守住真实不变量，重要外部效应必须读回验证。
+
+Checker 的唯一开发入口是 `checkers/v5+` 的完整叶子与 `checker_lib`；v2/v3/v4、跨版本继承/降级、历史版本族指纹和重放兼容都是**必须在 41 组迁移完成后删除**的过渡负担，不再新增任何历史兼容逻辑。迁移未完成时不得伪称旧组已迁入或将未知判为 PASS。允许破坏旧软件接口和旧版可执行性；仍须保留当前租户权限、已记录结果的真实性和不可变原件/审计证据，不做无授权的生产数据批量删除。
+
 开发命令见 [DEVELOPMENT](docs/DEVELOPMENT.md)，选择和运行测试时见 [tests/README](tests/README.md)。
