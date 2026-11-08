@@ -1,6 +1,7 @@
 """PDF bytes are derived from one frozen machine result, not another audit."""
 
 from copy import deepcopy
+from uuid import UUID
 
 import pymupdf
 import pytest
@@ -124,31 +125,64 @@ def test_all_pass_pdf_prominently_preserves_frozen_checker_qualification(status,
         assert "共1项：符合1项，不符合0项" in first_page
 
 
+def _on_page(document, needle: str) -> bool:
+    found = False
+    for page in document:
+        for hit in page.search_for(needle):
+            assert page.rect.contains(hit)
+            found = True
+    return found
+
+
 def test_copied_pdf_text_preserves_ascii_ff_fi_fl_identities_and_a_different_identifier():
     source = report_source()
-    identity = "1ff467a2-fi00-4fl0-ffi1-ffl2abcd"
-    distinct = "1fx467a2-fj00-4fy0-fff1-fff2abcd"
-    other_identity = "9\ufb00aaaa-9\ufb01bbbb-9\ufb02cccc-9\ufb03dddd-9\ufb04eeee"
+    # Legal UUID: hex only, with ASCII ff. fi/fl/ffi/ffl cannot appear in a real suite id.
+    identity = "1ff467a2-fa00-4a10-8abc-ff12abcd3456"
+    distinct = "9aa467a2-ab00-4b10-8def-aa12abcd7890"
+    assert str(UUID(identity)) == identity
+    assert str(UUID(distinct)) == distinct
+    assert identity != distinct
+    excerpt = "evidence excerpt keeps original ascii [fi] [fl] [ffi] [ffl]"
+    suggestions = "suggestion keeps original ascii (fi) (fl) (ffi) (ffl)"
+    preserved_ligatures = "9\ufb00aaaa-9\ufb01bbbb-9\ufb02cccc-9\ufb03dddd-9\ufb04eeee"
     audit = source["audit"]
     audit["conclusion"] = "PASS"
     audit["counts"] = {"pass_count": 1, "ng_count": 0}
-    audit["checks"][0]["finding"]["status"] = "PASS"
-    audit["checks"][0]["finding"]["suggestions"] = other_identity
-    audit["checks"][0]["evidence"][0]["excerpt"] = identity
     audit["rule"]["id"] = identity
-    notice = f"本轮采用未经验证的检查版本。检查版本：第 1 版（{identity}）。"
-    audit["checker_verification"] = {"suite_revision_id": identity, "suite_revision_number": 1, "status": "unverified", "samples_not_rerun": False, "notice": notice}
+    audit["rule"]["title"] = preserved_ligatures
+    check = audit["checks"][0]
+    check["finding"]["status"] = "PASS"
+    check["finding"]["suggestions"] = suggestions
+    check["evidence"][0]["excerpt"] = excerpt
+    # Keep the version clause on its own line so wrapping cannot split the UUID.
+    # Default get_text(), span text, and search_for then see the original code points.
+    notice = "本轮采用未经验证的检查版本。\n" + f"检查版本：第 1 版（{identity}）。"
+    audit["checker_verification"] = {
+        "suite_revision_id": identity,
+        "suite_revision_number": 1,
+        "status": "unverified",
+        "samples_not_rerun": False,
+        "notice": notice,
+    }
+    folded_identity = identity.replace("ff", "\ufb00")
+    expanded_ligatures = preserved_ligatures.replace("\ufb03", "ffi").replace("\ufb04", "ffl").replace("\ufb00", "ff").replace("\ufb01", "fi").replace("\ufb02", "fl")
     with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
         copied = "".join(page.get_text() for page in document)
         visible = "".join(span["text"] for page in document for block in page.get_text("dict")["blocks"] for line in block.get("lines", []) for span in line["spans"])
+        assert audit["checker_verification"]["suite_revision_id"] == identity
         assert identity in copied
         assert identity in visible
         assert "".join(notice.split()) in "".join(copied.split())
-        hits = document[0].search_for(identity)
-        assert hits
-        assert all(document[0].rect.contains(hit) for hit in hits)
-        assert distinct not in copied
-        assert distinct not in visible
-        assert other_identity in copied
-        folded = identity.replace("ffi", "\ufb03").replace("ffl", "\ufb04").replace("ff", "\ufb00").replace("fi", "\ufb01").replace("fl", "\ufb02")
-        assert folded not in copied
+        assert document.metadata["subject"] == f"round=round-one;file_version=version-one;result_attempt=1;rule_version={identity}"
+        assert _on_page(document, identity)
+        assert excerpt in copied and excerpt in visible and _on_page(document, excerpt)
+        assert suggestions in copied and suggestions in visible and _on_page(document, suggestions)
+        for token, ligature in (("fi", "\ufb01"), ("fl", "\ufb02"), ("ffi", "\ufb03"), ("ffl", "\ufb04")):
+            assert f"[{token}]" in copied and f"[{token}]" in visible and _on_page(document, f"[{token}]")
+            assert f"({token})" in copied and f"({token})" in visible and _on_page(document, f"({token})")
+            assert f"[{ligature}]" not in copied and f"[{ligature}]" not in visible and not _on_page(document, f"[{ligature}]")
+            assert f"({ligature})" not in copied and f"({ligature})" not in visible and not _on_page(document, f"({ligature})")
+        assert distinct not in copied and distinct not in visible and not _on_page(document, distinct)
+        assert folded_identity not in copied and folded_identity not in visible and not _on_page(document, folded_identity)
+        assert preserved_ligatures in copied and preserved_ligatures in visible and _on_page(document, preserved_ligatures)
+        assert expanded_ligatures not in copied and expanded_ligatures not in visible and not _on_page(document, expanded_ligatures)
