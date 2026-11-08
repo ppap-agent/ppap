@@ -25,7 +25,7 @@ from agent.mapping import _checker_finding
 from audit.checker_core import ExecutionSnapshot, FrozenTarget, RuleBinding, checker_digest, runtime_revision
 from audit.checker_validation import CaseEvaluation, ClauseEvaluation, SuiteValidationReport
 from audit.contracts import AuditResultItem, RuleInput
-from audit.standard_suites import suite_library_revision
+from audit.standard_suites import library_revision
 from product.suites import canonical_json, content_digest
 
 from corpus_contracts.official_models import LiveModels
@@ -145,14 +145,13 @@ def prepare(context: dict, *, cases: Path = CASES_PATH, oracle: Path = ORACLE_PA
                         appendix=tuple(json.loads(contextual_files.get("appendix.json", b"[]"))),
                     )
                 )
-            bound = suite_library_revision(suite.files)
             frozen = replace(
                 snapshot,
                 inputs=tuple(inputs),
                 targets=(target,),
                 initiating_user_id="official-corpus-runner",
-                runtime_revision=runtime_revision("official-corpus-v1", bound),
-                library_revision=bound,
+                runtime_revision=runtime_revision("official-corpus-v1", library_revision()),
+                library_revision=library_revision(),
                 model_identity=model_identity or {},
             )
             samples.append(Sample(f"{case.id}/{file.file_id}", len(samples) + 1, file, frozen, sources))
@@ -182,7 +181,7 @@ def _report(plan: OfficialPlan, cases=(), reasons=()) -> SuiteValidationReport:
     return SuiteValidationReport(
         suite_revision_id=suite.revision.id,
         suite_digest=suite.revision.resolved_digest,
-        library_revision=suite_library_revision(suite.files),
+        library_revision=library_revision(),
         program_digest=next(iter(plan.programs)),
         related_suite_digests=plan.context["related_suite_digests"],
         related_revision_ids=plan.context["related_revision_ids"],

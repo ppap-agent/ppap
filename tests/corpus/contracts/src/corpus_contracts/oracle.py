@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest
-from audit.standard_suites import StandardSuite, execution_library_revision, standard_suites
+from audit.standard_suites import StandardSuite, library_revision, standard_suites
 from audit.suite_migration import generic_standard_suites
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
@@ -206,13 +206,12 @@ def original(filename: str, *, cases: Path = CASES_PATH, root: Path = REPO_ROOT)
 
 
 def build_round(case: OracleCase) -> tuple[ExecutionSnapshot, dict[str, bytes], dict[str, int]]:
-    inputs, targets, blobs, totals, library_sources = [], [], {}, {}, []
+    inputs, targets, blobs, totals = [], [], {}, {}
     for file in case.files:
         data = file.path.read_bytes()
         document_type = ""
         if file.role == "target":
             suite = file.suite()
-            library_sources.append(suite.program_files)
             body = file.rule_body()
             ids = [str(rule["id"]) for rule in body["rules"]]
             if len(ids) != len(set(ids)) or set(file.expected) - set(ids):
@@ -231,7 +230,7 @@ def build_round(case: OracleCase) -> tuple[ExecutionSnapshot, dict[str, bytes], 
             )
         inputs.append(FrozenInput(file.file_id, hashlib.sha256(data).hexdigest(), cast(Literal["target", "reference"], file.role), file.filename, document_type=document_type))
         blobs[file.file_id] = data
-    snapshot = ExecutionSnapshot("corpus", "corpus-controlled-runner", tuple(inputs), tuple(targets), "corpus-source", execution_library_revision(library_sources), {}, round_id=case.id)
+    snapshot = ExecutionSnapshot("corpus", "corpus-controlled-runner", tuple(inputs), tuple(targets), "corpus-source", library_revision(), {}, round_id=case.id)
     return snapshot, blobs, totals
 
 

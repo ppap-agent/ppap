@@ -10,7 +10,7 @@ from agent.client import DeepError
 from agent.execution.budget import MAX_INPUT_FILES, MAX_INPUT_TOTAL
 from audit.checker_core import checker_digest
 from audit.precheck_contract import customer_conflict, input_digest, validate_result
-from audit.standard_suites import execution_library_revision, library_revision
+from audit.standard_suites import library_revision
 from product.store.prechecks import precheck_snapshot, preparation_runtime_revision
 from product.store.suites import SuiteStore
 
@@ -85,10 +85,6 @@ def precheck_handler(store, runtime):
                 if suite.revision.resolved_digest != target.suite_digest or checker_digest(code) != target.binding.checker_digest:
                     raise DeepError("deep_integrity_mismatch")
                 programs[target.binding.checker_digest] = code
-            # Public library_revision was compared above. This field is absent on
-            # older payloads. When present, a v4-only edit must not stay current.
-            if "suite_library_revision" in payload and payload["suite_library_revision"] != execution_library_revision(tuple(programs.values())):
-                raise DeepError("executor_revision_mismatch")
             if input_digest(load(identity)) != input_digest(payload):
                 raise DeepError("deep_input_unauthorized")
             result = runtime.execute_precheck(payload, snapshot, sources, programs, context)

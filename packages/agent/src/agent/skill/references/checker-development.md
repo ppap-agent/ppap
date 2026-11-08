@@ -33,13 +33,11 @@
 - `from audit.standard_library import check_clause`
 - 继承 `ExcelAgent` 或其它旧版 Checker 来补齐本版本没有的条款
 
-缺少的版本、载体或条款保持不支持 / `UNABLE` / `ERR`，不得改用更低版本的 Checker，也不得因此返回 `PASS`。显式冻结的 v2/v3/v4 历史快照仍执行该快照里的类；那是重放，不是新版本回退。同一版本内部的读取策略保持原样，例如 PDF 文字不足时的 OCR、以及 `.xls` 转工作簿。不要把它们当成跨版本回退删掉。
+缺少的版本、载体或条款保持不支持 / `UNABLE` / `ERR`，不得改用更低版本的 Checker，也不得因此返回 `PASS`。同一版本内部的读取策略保持原样，例如 PDF 文字不足时的 OCR、以及 `.xls` 转工作簿。不要把它们当成跨版本回退删掉。
 
-`library_revision()` 只哈希共享运行库，不包含任何 `checkers/vN` 业务源码。只改 v5 及以后叶子的 `checker.py` / `resources.py` 不改变它；叶子身份是 `checker_digest`。只改 v2/v3/v4 业务源码也不改变这个公共指纹。
+`library_revision()` 只哈希共享运行库，不包含任何 `checkers/vN` 业务源码。只改叶子的 `checker.py` / `resources.py` 不改变它；叶子身份是 `checker_digest`。
 
-历史 Suite 若在 `checker.py` 或 `resources.py` 中写明 `audit.checkers.v2` / `v3` / `v4`，验证和冻结比较 `suite_library_revision`：公共指纹加上该版本族的 `legacy_runtime_revision`。该族源码一变，这条 Suite 的 `samples_not_rerun` 为真，正式发布拒绝 `official_suite_validation_required`。目录叶子没有这些引用，仍只跟公共指纹。
-
-已排队的正式审核仍用公共 `library_revision()` 作为 `executor_revision`。队列之后只改 v4，不会因此中止该任务。重测信号在准入时的验证记录，以及预检载荷里的 `suite_library_revision`。
+共享库与已保存证明的 `library_revision` 不一致时，`samples_not_rerun` 为真。冻结结果按既有验证合同保留 `verified`，并披露样本未重跑。正式发布 `publish_official` 在 `samples_not_rerun` 时拒绝（`official_suite_validation_required`）。已排队任务的 `executor_revision` 使用公共 `library_revision()`。
 
 ## 判断
 
