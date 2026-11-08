@@ -6,6 +6,7 @@ import asyncio
 import copy
 import hashlib
 import json
+import logging
 import math
 import re
 from concurrent.futures import ThreadPoolExecutor
@@ -17,6 +18,9 @@ from documents.ocr import client as ocr_client
 
 from audit.engine.runtime import get_runtime
 
+from .psw_evidence_trace import psw_fact_summary
+
+logger = logging.getLogger(__name__)
 # Marks the independent second reading of a model-only fact.
 CONFIRMATION_PROMPT = "这是独立复核：不参考任何此前的读取结果，重新完整查看图像。\n"
 
@@ -141,6 +145,9 @@ def observe_ocr_images(
         cached = request_cache.get(key) if request_cache is not None and key is not None else None
         if cached is None:
             sources = []
+            first: dict[str, object] = {}
+            confirmed: dict[str, object] = {}
+            phase = "first_failed"
             try:
                 facts = _observe_ocr_scope(
                     frames,
@@ -150,8 +157,11 @@ def observe_ocr_images(
                     field_scopes={field: [scope] for field in subset},
                     native_by_scope=local_native,
                 )
+                first = facts
+                phase = "confirmation_not_requested"
                 observed = {field: subset[field] for field, value in facts.items() if value is not None and local_native.get(field, {}).get(scope) is None}
                 if observed:
+                    phase = "confirmation_failed"
                     confirmed = _observe_ocr_scope(
                         frames,
                         observed,
@@ -160,6 +170,7 @@ def observe_ocr_images(
                         field_scopes={field: [scope] for field in observed},
                         confirmation=True,
                     )
+                    phase = "completed"
                     disputed = {field for field in observed if confirmed[field] != facts[field]}
                     facts = {field: None if field in disputed else value for field, value in facts.items()}
                     sources = [(args, kwargs) for args, kwargs in sources if args[0].get("fact") not in disputed]
@@ -168,6 +179,20 @@ def observe_ocr_images(
                 if request_cache is not None and key is not None:
                     request_cache[key] = error
                 raise
+            finally:
+                if {"psw_stamp_present", "psw_stamp_ending_text", "authorization_table_present", "authorization_company_stamp_present"}.intersection(subset):
+                    # Keep failed-case evidence without recording model text,
+                    # file names, arbitrary scope strings, or provider errors.
+                    diagnostic = {
+                        "backend": "ocr_llm",
+                        "pages": sorted({page for frame in frames if type(page := frame.locator.get("page")) is int and 1 <= page <= 1_000_000}),
+                        "source_sha256": sorted({digest for frame in frames if isinstance(digest := frame.locator.get("source_sha256"), str) and re.fullmatch(r"[a-f0-9]{64}", digest)}),
+                        "phase": phase,
+                        "first": psw_fact_summary(first),
+                        "confirmation": psw_fact_summary(confirmed),
+                        "equal": {field: first[field] == confirmed[field] for field in psw_fact_summary(first) if field in confirmed},
+                    }
+                    logger.warning("PSW OCR observation: %s", json.dumps(diagnostic, sort_keys=True, separators=(",", ":")))
             if request_cache is not None and key is not None:
                 request_cache[key] = cached
         if isinstance(cached, Exception):

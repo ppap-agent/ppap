@@ -16,6 +16,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from documents.model_access import ModelAccess
+from documents.ocr.env import effective_ocr_extra_body
 from pydantic import SecretStr
 
 REPLAY_DIR = Path(__file__).resolve().parents[5] / "assets/corpus/replay"
@@ -38,6 +39,11 @@ def offline() -> bool:
     return value in {"1", "true"}
 
 
+def _ocr_test_options() -> str:
+    raw = os.environ.get("OCR_OPENAI_EXTRA_BODY_JSON", "").strip()
+    return json.dumps(effective_ocr_extra_body(raw), sort_keys=True) if raw else ""
+
+
 def configured_model_access() -> ModelAccess | None:
     """One explicit test grant, never a production ambient-credential fallback.
 
@@ -53,7 +59,8 @@ def configured_model_access() -> ModelAccess | None:
         values = tuple(os.environ.get(name, "").strip() for name in names)
         if all(values):
             key, endpoint, model = values
-            return ModelAccess(SecretStr(key), provider="corpus-test", base_url=endpoint, model=model)
+            options = _ocr_test_options() if names[0] == "OCR_OPENAI_API_KEY" else ""
+            return ModelAccess(SecretStr(key), provider="corpus-test", base_url=endpoint, model=model, ocr_extra_body_json=options)
         if values[0]:
             raise ValueError("Incomplete corpus test model configuration: " + ", ".join(names))
     return None
@@ -62,7 +69,7 @@ def configured_model_access() -> ModelAccess | None:
 def replay_model_access() -> ModelAccess:
     # This inert grant lets recorded observations pass the same scope boundary.
     # Offline Recorder transports below reject every cache miss before sending.
-    return ModelAccess(SecretStr("corpus-replay-only"), provider="corpus-replay", model="recorded-model", base_url="http://127.0.0.1:1/v1")
+    return ModelAccess(SecretStr("corpus-replay-only"), provider="corpus-replay", model="recorded-model", base_url="http://127.0.0.1:1/v1", ocr_extra_body_json=_ocr_test_options())
 
 
 class OfflineReplayMiss(AssertionError):
@@ -147,6 +154,10 @@ def install(monkeypatch: Any, recorder: Recorder) -> None:
 
     async def ocr_request(kwargs: dict[str, Any]) -> Any:
         request = {name: kwargs.get(name) for name in ("input", "text", "max_output_tokens")}
+        # Existing empty-policy recordings remain readable. An explicit policy
+        # cannot consume an answer recorded under different request parameters.
+        if kwargs.get("extra_body"):
+            request["extra_body"] = kwargs["extra_body"]
         entry = recorder.lookup("ocr", request)
         if entry is None:
             recorder.require_live("ocr")

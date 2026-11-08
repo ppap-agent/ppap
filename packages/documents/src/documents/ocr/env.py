@@ -62,8 +62,9 @@ def effective_ocr_extra_body(raw: str) -> dict:
 
 def ocr_extra_body() -> dict:
     if model_access_scoped():
-        # Reasoning values are provider-specific; a personal model uses its own default.
-        return {}
+        # Never inherit platform options. An explicit grant owns its OCR policy;
+        # ordinary personal grants leave this empty and use provider defaults.
+        return current_model_access().ocr_options()
     return effective_ocr_extra_body(_env("OCR_OPENAI_EXTRA_BODY_JSON"))
 
 
