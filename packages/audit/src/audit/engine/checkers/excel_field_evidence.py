@@ -27,9 +27,9 @@ def observe_excel_region(
     from documents.excel.visual import render_xlsx_field, render_xlsx_pdf, renderable_xlsx
     from documents.ocr.env import ocr_model_name, ocr_openai_api_key, ocr_openai_base_url, ocr_policy_identity
 
-    from audit.engine.app_runtime import _load_file_bytes
+    from audit.engine.file_bytes import load_file_bytes
 
-    original, _ = _load_file_bytes(str(audit.file_url))
+    original, _ = load_file_bytes(str(audit.file_url))
     digest = hashlib.sha256(original).hexdigest()
     expected = (audit.file_metadata or {}).get("source_sha256") or (audit.file_metadata or {}).get("sha256")
     if (expected and expected != digest) or cache.get("source_sha256", digest) != digest:
@@ -64,7 +64,7 @@ def observe_excel_region(
             region_location: dict[str, Any] = {}
             native_context: str | None = None
             if whole_field:
-                from audit.checkers.v4.visual_facts import pdf_field_region
+                from audit.engine.checkers.pdf_field_region import pdf_field_region
 
                 print_key = ("xlsx_pdf", hashlib.sha256(normalized).hexdigest(), sheet.title, cell_range)
                 if print_key not in cache:
@@ -293,7 +293,7 @@ def psw_submission_results(sheet: Any) -> bool | None:
 def check_psw_submission_reason(agent: Any, ctx: RuleContext) -> tuple[str, str]:
     from documents.excel.visual import has_region_graphics, renderable_xlsx
 
-    from audit.engine.app_runtime import _load_file_bytes
+    from audit.engine.file_bytes import load_file_bytes
     from audit.engine.rule_engine import Table
 
     sheet = Table(ctx).sheet("PSW主表")
@@ -336,7 +336,7 @@ def check_psw_submission_reason(agent: Any, ctx: RuleContext) -> tuple[str, str]
                 facts["submission_other_present"] = True
     sources = []
     if True not in facts.values():
-        original, _ = _load_file_bytes(str(agent.audit_file.file_url))
+        original, _ = load_file_bytes(str(agent.audit_file.file_url))
         normalized = renderable_xlsx(original)
         suffix = Path(unquote(urlparse(str(agent.audit_file.file_url)).path)).suffix.lower()
         if suffix in {".xls", ".xlsx", ".xlsm"} and normalized.startswith(b"PK") and has_region_graphics(normalized, sheet_name=sheet.title, cell_range=region):
@@ -363,12 +363,12 @@ def check_psw_submission_reason(agent: Any, ctx: RuleContext) -> tuple[str, str]
 def check_psw_excel_fields(agent: Any, ctx: RuleContext, rule_no: int) -> AuditResultItem:
     from documents.excel.visual import has_region_graphics, renderable_xlsx
 
-    from audit.engine.app_runtime import _load_file_bytes
+    from audit.engine.file_bytes import load_file_bytes
     from audit.engine.rule_engine import Decision, Table
 
     table = Table(ctx)
     sheet = table.sheet("PSW主表").ws
-    original, _ = _load_file_bytes(str(agent.audit_file.file_url))
+    original, _ = load_file_bytes(str(agent.audit_file.file_url))
     normalized = renderable_xlsx(original)
     facts: dict[str, Any] = dict.fromkeys(PSW_RULE_FIELDS[rule_no])
     sources: list[EvidenceSource] = []

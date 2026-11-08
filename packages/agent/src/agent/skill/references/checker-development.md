@@ -13,6 +13,32 @@
 
 完整 `RuleInput` 保留客户、车型、零件、预置来源、条款和已确认附录。V4 的 `reference-bindings.json` 是原条款 ID → 方法名；先比较本次正文和附录再复用方法，相同 ID 不能证明语义仍相同。`group_context` 包含本组全部文件，其他 `target` 也可作为关联资料；仅为当前目标执行本次条款，并按文件版本记录来源。规则中的客户适用范围不是文件中已经读到的客户身份。
 
+## 目录叶子（v5 及以后）
+
+`checkers/vN/<客户>/<组>/` 且该版本目录没有 `__init__.py` 时，这是目录叶子。直接导入函数，不要注册表、插件或客户-版本映射。
+
+允许：
+
+- `audit.checker_lib.excel`：`load_workbook`、`column_letter`
+- `audit.checker_lib.pdf`：`read_tables`、`convert_pdf_to_excel`
+- `audit.checker_lib.visual`：`observe_excel_region`（现有 Excel 区域观察；不新增观察服务）
+- `audit.checker_lib.tables`：表头、合并格、空白和范围
+- `audit.checker_lib.evidence`：原件位置、结构证据和诊断
+- `audit.contracts`，以及执行入口 `create_audit`（运行时由既有 `check_factory` 调用）
+
+`checker.py` 和 `resources.py` 禁止：
+
+- `audit.checkers`，以及 `audit.checkers.v2` / `v3` / `v4` 的类或业务 helper
+- `importlib.import_module` / `__import__` 指向这些模块；非字面量动态导入也无法审查，同样禁止
+- `from audit.standard_library import check_clause`
+- 继承 `ExcelAgent` 或其它旧版 Checker 来补齐本版本没有的条款
+
+缺少的版本、载体或条款保持不支持 / `UNABLE` / `ERR`，不得改用更低版本的 Checker，也不得因此返回 `PASS`。同一版本内部的读取策略保持原样，例如 PDF 文字不足时的 OCR、以及 `.xls` 转工作簿。不要把它们当成跨版本回退删掉。
+
+`library_revision()` 哈希共享运行库，以及 41 个正式源 Suite 仍在执行的 `checkers/v2`、`v3`、`v4` 源码。`checkers/v5` 及以后的目录叶子不进入该指纹；只改叶子的 `checker.py` / `resources.py` 不改变它，叶子身份是 `checker_digest`。
+
+共享库与已保存证明的 `library_revision` 不一致时，`samples_not_rerun` 为真。冻结结果按既有验证合同保留 `verified`，并披露样本未重跑。正式发布 `publish_official` 在 `samples_not_rerun` 时拒绝（`official_suite_validation_required`）。已排队任务的 `executor_revision` 使用公共 `library_revision()`。
+
 ## 判断
 
 以下 `ctx` 与 `row` 方法属于 Excel / Fluent 路径。UAES 原生方法使用下一节说明的事实读取和异常合同。
@@ -31,6 +57,8 @@
 - 打开关联工作簿后，先 `ctx.bind_workbook(workbook, 关联文件版本ID)`，再读取。只记录一个关联单元格时，再调用 `ctx.note_cell(表名, 行号, 列号, file_version_id=关联文件版本ID)`。版本 ID 来自该文件的 `file_metadata["file_version_id"]`。摘录只用单元格原值。
 
 ## Excel / Fluent
+
+本节只用于仍继承 `ExcelAgent` 的历史任务。目录叶子使用上一节的 `audit.checker_lib`，不要继承 `ExcelAgent`。
 
 复用 `ExcelAgent`、`@rule(..., clause_id="条款ID")` 和原 Fluent API。类属性设置 `CLAUSE_BOUND_CHECKS = True`。
 

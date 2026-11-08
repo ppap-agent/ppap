@@ -254,11 +254,9 @@ def resolve_engine_agent_class(
             checker = {"N01": NioMeasurementAgent, "N02": NioPfmeaAgent, "N03": NioControlPlanAgent, "N04": NioSpecialCharacteristicsAgent, "N05": NioProcessFlowAgent}.get(preset.entry_id)
         if checker is not None:
             return checker
-        profile = RULE_PROFILE_V3
-    file_kind = _resolve_audit_file_kind(file_url)
-    primary_map = _pick_agent_map(file_kind, V2_EXCEL_AGENTS, V2_PDF_AGENTS, V2_DOCX_AGENTS)
-    if primary_map is None:
+        # A missing v4 carrier is unsupported. It does not select v3 or v2.
         return None
+    file_kind = _resolve_audit_file_kind(file_url)
     if profile == RULE_PROFILE_V3:
         overlay_map = _pick_agent_map(
             file_kind,
@@ -266,7 +264,11 @@ def resolve_engine_agent_class(
             V3_OVERLAY_PDF_AGENTS,
             V3_OVERLAY_DOCX_AGENTS,
         )
-        return (overlay_map.get(doc_type) if overlay_map is not None else None) or primary_map.get(doc_type)
+        # Explicit v3 uses its overlay only. A miss does not select the v2 class.
+        return overlay_map.get(doc_type) if overlay_map is not None else None
+    primary_map = _pick_agent_map(file_kind, V2_EXCEL_AGENTS, V2_PDF_AGENTS, V2_DOCX_AGENTS)
+    if primary_map is None:
+        return None
     return primary_map.get(doc_type)
 
 

@@ -16,11 +16,12 @@ import ast
 import hashlib
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any
 
 from audit.presets import customer_presets, preset_document_type, preset_rule_body, preset_source_bindings
 
@@ -126,13 +127,35 @@ def standard_suites() -> tuple[StandardSuite, ...]:
 
 @lru_cache(maxsize=1)
 def library_revision() -> str:
-    """Content identity for the installed shared algorithms and document readers."""
+    """Fingerprint of shared runtime code and the carrier packages still executed.
+
+    ``standard_suites()`` still runs ``checkers/v2``, ``v3``, and ``v4`` classes,
+    so those sources stay in this hash. ``checkers/v5`` and later directory
+    leaves stay out; a leaf's identity is ``checker_digest``. A change here
+    makes ``ValidationRecord.samples_not_rerun`` true.
+    """
     import documents
 
     root = Path(__file__).parent
+    return hash_library((("audit", root), ("documents", Path(documents.__file__).parent)))
+
+
+# New predefined checkers are files on disk, not entries in a customer registry.
+# A version directory that is already a Python package is not a directory leaf.
+_CHECKERS_ROOT = Path(__file__).resolve().parent / "checkers"
+_VERSION_DIRECTORY = re.compile(r"^v[0-9]+$")
+
+
+def library_files(package: str, directory: Path) -> tuple[Path, ...]:
+    """Python files that contribute to ``library_revision`` for one package root."""
+    return tuple(path for path in sorted(directory.rglob("*.py")) if _counts_toward_library(package, directory, path))
+
+
+def hash_library(entries: tuple[tuple[str, Path], ...]) -> str:
+    """Hash the same path-and-bytes sequence ``library_revision`` uses."""
     digest = hashlib.sha256()
-    for package, directory in (("audit", root), ("documents", Path(documents.__file__).parent)):
-        for path in sorted(directory.rglob("*.py")):
+    for package, directory in entries:
+        for path in library_files(package, directory):
             digest.update(f"{package}/{path.relative_to(directory)}".encode())
             digest.update(b"\0")
             digest.update(path.read_bytes())
@@ -140,15 +163,23 @@ def library_revision() -> str:
     return digest.hexdigest()
 
 
-# New predefined checkers are files on disk, not entries in a customer registry.
-# A version directory that is already a Python package (v2/v3/v4) stays legacy.
-_CHECKERS_ROOT = Path(__file__).resolve().parent / "checkers"
-_VERSION_DIRECTORY = re.compile(r"^v[0-9]+$")
+def _counts_toward_library(package: str, directory: Path, path: Path) -> bool:
+    if package != "audit":
+        return True
+    parts = path.relative_to(directory).parts
+    if len(parts) < 2 or parts[0] != "checkers":
+        return True
+    # v5+ directory leaves are outside the public fingerprint. v2/v3/v4 stay
+    # in while the 41 legacy carriers still execute those packages.
+    if _VERSION_DIRECTORY.fullmatch(parts[1]) is None:
+        return True
+    return int(parts[1][1:]) < 5
+
+
 _LEAF_FILES = frozenset({"checker.py", "rules.json", "resources.py", "appendix.json", "templates.json", "tests.json"})
 _REQUIRED_LEAF_FILES = frozenset({"checker.py", "rules.json"})
 _OPTIONAL_JSON = frozenset({"appendix.json", "templates.json", "tests.json"})
 _PREDEFINED_ENTRYPOINT = "checker:create_audit"
-_LEGACY_CHECKER_MODULES = ("audit.checkers.v2", "audit.checkers.v3", "audit.checkers.v4")
 
 
 def predefined_directory_suites() -> tuple[StandardSuite, ...]:
@@ -159,8 +190,9 @@ def predefined_directory_suites() -> tuple[StandardSuite, ...]:
 def load_predefined_checkers(root: Path | None = None) -> tuple[StandardSuite, ...]:
     """Read ``v<digits>/<customer>/<group>`` leaves. Do not import or execute them.
 
-    Legacy version packages are skipped. Any other broken, escaping, or
-    unbound-to-the-wrong-entrypoint leaf fails; nothing is filled from v4/v3/v2.
+    Version directories that are already Python packages stay on their existing
+    loader. Any other broken, escaping, or unbound leaf fails; nothing is filled
+    from another version.
     """
     base = (root or _CHECKERS_ROOT).resolve()
     if not base.is_dir():
@@ -374,20 +406,10 @@ def _validate_python(source: bytes, syntax_code: str) -> None:
         tree = ast.parse(source)
     except SyntaxError:
         raise ValueError(syntax_code) from None
-    for node in ast.walk(tree):
-        modules: list[str] = []
-        if isinstance(node, ast.Import):
-            modules = [alias.name for alias in node.names]
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            modules = [node.module]
-        elif isinstance(node, ast.Call) and node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
-            func = node.func
-            name = func.attr if isinstance(func, ast.Attribute) else func.id if isinstance(func, ast.Name) else ""
-            if name in {"import_module", "__import__"}:
-                modules = [node.args[0].value]
-        for module in modules:
-            if any(module == banned or module.startswith(banned + ".") for banned in _LEGACY_CHECKER_MODULES):
-                raise ValueError("predefined_legacy_checker_import")
+    from audit.checker_lib.imports import import_violations
+
+    if import_violations(tree):
+        raise ValueError("predefined_legacy_checker_import")
 
 
 def _defines_create_audit(source: bytes) -> bool:
