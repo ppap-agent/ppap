@@ -6,7 +6,7 @@ import {definiteCheckerRejection, type CheckerRevision} from './checker-contract
 import {candidateChanges, checkerEditorDirty, editableRules, nativeCheckerEditAdapter} from './checker-edit-contract'
 import {writeAuditAddress} from './routes'
 
-export function CheckerEditor({scope, revision, onSaved, disabled = false, onBlockedChange}: {scope: string; revision: CheckerRevision; onSaved: (value: CheckerRevision) => void; disabled?: boolean; onBlockedChange?: (blocked: boolean) => void}) {
+export function CheckerEditor({scope, revision, onSaved, disabled = false, saveDisabled = false, onBlockedChange}: {scope: string; revision: CheckerRevision; onSaved: (value: CheckerRevision) => void; disabled?: boolean; saveDisabled?: boolean; onBlockedChange?: (blocked: boolean) => void}) {
   const id = useId(), locked = useRef(false), live = useRef(true)
   const [rules, setRules] = useState(() => {try {return editableRules(revision.files)} catch {return []}})
   const [templates, setTemplates] = useState(revision.files['templates.json'] || '[]'), [code, setCode] = useState(Object.fromEntries(Object.entries(revision.files).filter(([key]) => ['checker.py', 'resources.py'].includes(key))))
@@ -23,7 +23,7 @@ export function CheckerEditor({scope, revision, onSaved, disabled = false, onBlo
     writeAuditAddress(url)
   }
   async function save() {
-    if (locked.current || pending || disabled) return
+    if (locked.current || pending || disabled || saveDisabled) return
     let files: Record<string, string>
     try {files = candidateChanges(revision.files, rules, templates, code)} catch (cause) {setError(cause instanceof Error ? cause.message : '修改内容需要核对。'); return}
     locked.current = true; setBusy(true); onBlockedChange?.(true); setError('')
@@ -53,6 +53,6 @@ export function CheckerEditor({scope, revision, onSaved, disabled = false, onBlo
     <details className="space-y-2"><summary className="cursor-pointer">修改模板结构映射</summary><Label htmlFor={`${id}-templates`}>模板映射（JSON 对象列表）</Label><Textarea id={`${id}-templates`} value={templates} disabled={readOnly} onChange={event => setTemplates(event.target.value)} className="min-h-32"/><p>只填写有权使用的结构映射；原件不会因编辑模板而被共享。</p></details>
     <details className="space-y-2 hidden sm:block"><summary className="cursor-pointer">高级：修改 Python 检查代码</summary>{Object.entries(code).map(([path, value], index) => <div key={path} className="space-y-2"><Label htmlFor={`${id}-code-${index}`}>{path}</Label><Textarea id={`${id}-code-${index}`} value={value} disabled={readOnly} spellCheck={false} className="min-h-48" onChange={event => setCode(values => ({...values, [path]: event.target.value}))}/></div>)}</details>
     <p className="sm:hidden text-muted-foreground">代码编辑和完整对比请在电脑上进行。</p>
-    <Button variant="outline" disabled={readOnly || !rules.length} onClick={() => void save()}>仅保存这些修改</Button>{pending && <Button variant="outline" disabled={busy} onClick={() => void recover()}>读取原保存操作</Button>}
+    <Button variant="outline" disabled={readOnly || saveDisabled || !rules.length} onClick={() => void save()}>仅保存这些修改</Button>{pending && <Button variant="outline" disabled={busy} onClick={() => void recover()}>读取原保存操作</Button>}
   </details>
 }

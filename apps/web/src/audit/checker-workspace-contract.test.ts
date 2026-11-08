@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {checkerPublicationAddress, checkerSelectionAddress, checkedWorkspaceRevision, optimizationSelection, readCheckerWorkspace} from './checker-workspace-contract.ts'
+import {checkerPublicationAddress, checkerSelectionAddress, checkedWorkspaceRevision, optimizationSelection, readCheckerWorkspace, refreshKeepsEditor, sameRevisionTenant} from './checker-workspace-contract.ts'
 import type {CheckerRevision} from './checker-contract.ts'
 
 const scope = 'round-a:file-a:clause-a:suite-a', legacyScope = 'round-a:file-a:clause-a'
@@ -110,6 +110,22 @@ test('auto-discovered optimization cannot replace saved D, while choosing that s
     assert.equal(optimizationSelection(restored, auto), null)
     assert.deepEqual(optimizationSelection(restored, {...auto, explicit: true}), {revisionId: 'E', operationId: 'optimizer-2', purpose: 'publish', explicit: true})
   }
+})
+
+test('feedback refresh keeps only the same scope, suite, and frozen revision editor', () => {
+  const shown = {scope: 'round-a:file-a:clause-a:suite-a', suite: 'suite-a', id: 'revision-a', tenant: 'tenant-a'}
+  assert.equal(refreshKeepsEditor(shown, {scope: shown.scope, suite: shown.suite, id: shown.id}), true)
+  assert.equal(refreshKeepsEditor(null, {scope: shown.scope, suite: shown.suite, id: shown.id}), false)
+  assert.equal(refreshKeepsEditor(shown, {scope: 'other-scope', suite: shown.suite, id: shown.id}), false)
+  assert.equal(refreshKeepsEditor(shown, {scope: shown.scope, suite: 'other-suite', id: shown.id}), false)
+  assert.equal(refreshKeepsEditor(shown, {scope: shown.scope, suite: shown.suite, id: 'revision-b'}), false)
+  assert.equal(sameRevisionTenant(shown, {id: shown.id, tenant_id: 'tenant-a'}), true)
+  assert.equal(sameRevisionTenant(shown, {id: shown.id, tenant_id: null}), false)
+  assert.equal(sameRevisionTenant(shown, {id: shown.id}), false)
+  assert.equal(sameRevisionTenant({id: shown.id, tenant: null}, {id: shown.id, tenant_id: null}), true)
+  assert.equal(sameRevisionTenant({id: shown.id, tenant: null}, {id: shown.id}), true)
+  assert.equal(sameRevisionTenant(shown, {id: 'revision-official', tenant_id: null}), true)
+  assert.equal(sameRevisionTenant(null, {id: shown.id, tenant_id: 'tenant-b'}), true)
 })
 
 test('recovering pending edit C retains it despite an auto-discovered optimization', () => {
