@@ -407,6 +407,12 @@ def test_guest_runs_frozen_v5_u08_bytes_and_leaves_unbound_clauses_unpassed(tmp_
     assert set(by_clause) == {"U08:1", "U08:4"}
     assert by_clause["U08:1"]["status"] == by_clause["U08:4"]["status"] == "PASS"
     assert all(row["evidence"]["sources"] for row in by_clause.values())
+    for row in by_clause.values():
+        for source in row["evidence"]["sources"]:
+            locator = json.loads(source["locator"])
+            assert locator["file_version_id"] == "target"
+            assert locator["source_sha256"] == hashlib.sha256(original).hexdigest()
+            assert locator["kind"] == "xlsx_cell"
     coverage = {row["clause_id"]: row["coverage"] for row in result["coverage"]}
     assert coverage["U08:1"] == coverage["U08:4"] == "mapped"
     unbound = [clause for clause, state in coverage.items() if state == "unsupported"]

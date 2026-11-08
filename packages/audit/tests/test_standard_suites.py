@@ -49,6 +49,8 @@ def test_directory_u08_does_not_replace_or_fall_back_from_the_legacy_carrier():
     assert b"audit.checkers.v4" not in directory[0].files["checker.py"]
     assert b"audit.checkers.v3" not in directory[0].files["checker.py"]
     assert b"audit.checkers.v2" not in directory[0].files["checker.py"]
+    assert b"check_clause" not in directory[0].files["checker.py"]
+    assert directory[0].related_suite_keys == legacy[0].related_suite_keys == ("UAES:U07", "UAES:U16")
     assert directory[0].entrypoints["U08:1"] == "checker:create_audit"
 
 

@@ -94,6 +94,11 @@
       "type_of_rule": "text"
     }
   ],
+  "directory_coverage": "partial",
+  "related_suite_keys": [
+    "UAES:U07",
+    "UAES:U16"
+  ],
   "checker_binding": {
     "U08:1": "checker:create_audit",
     "U08:4": "checker:create_audit"

@@ -42,6 +42,7 @@ class StandardSuite:
 
     @property
     def revision_digest(self) -> str:
+        """Content identity. source_path is omitted, so an identical copy keeps this digest."""
         objects = {name: hashlib.sha256(body).hexdigest() for name, body in self.files.items()}
         return hashlib.sha256(_json({"suite_key": self.suite_key, "related_suite_keys": sorted(self.related_suite_keys), "objects": objects})).hexdigest()
 
@@ -271,16 +272,20 @@ def _load_leaf(root: Path, version: str, customer: str, group: Path) -> Standard
     for name in _OPTIONAL_JSON:
         if name in files:
             _json_list(files[name])
-    binding = _binding(rules)
+    binding, clause_ids = _binding(rules)
     if not _defines_create_audit(files["checker.py"]):
         raise ValueError("predefined_checker_entrypoint_missing")
+    suite_key = f"{customer}:{group.name}"
+    # The leaf declares its own business dependencies. _RELATED is the legacy
+    # carrier map and is not a fallback, a transitive walk, or a v4 import.
+    _require_coverage(rules, binding, clause_ids)
     document_type = rules.get("type") if isinstance(rules.get("type"), str) else ""
     return StandardSuite(
-        f"{customer}:{group.name}",
+        suite_key,
         document_type,
         customer,
         group.name,
-        (),
+        _related_keys(rules, suite_key),
         MappingProxyType(dict(sorted(files.items()))),
         MappingProxyType(binding),
         f"{version}/{customer}/{group.name}",
@@ -313,7 +318,7 @@ def _json_list(body: bytes) -> None:
         raise ValueError("predefined_invalid_rules")
 
 
-def _binding(rules: Mapping[str, Any]) -> dict[str, str]:
+def _binding(rules: Mapping[str, Any]) -> tuple[dict[str, str], list[str]]:
     rows = rules.get("rules")
     if not isinstance(rows, list):
         raise ValueError("predefined_invalid_rules")
@@ -334,7 +339,34 @@ def _binding(rules: Mapping[str, Any]) -> dict[str, str]:
         if not isinstance(clause, str) or clause not in known or entrypoint != _PREDEFINED_ENTRYPOINT:
             raise ValueError("predefined_invalid_binding")
         cleaned[clause] = entrypoint
-    return cleaned
+    return cleaned, ids
+
+
+def _related_keys(rules: Mapping[str, Any], suite_key: str) -> tuple[str, ...]:
+    if "related_suite_keys" not in rules:
+        return ()
+    raw = rules["related_suite_keys"]
+    if not isinstance(raw, list):
+        raise ValueError("predefined_invalid_rules")
+    keys: list[str] = []
+    for item in raw:
+        if not isinstance(item, str) or not item or item.strip() != item or len(item) > 200 or item == suite_key or any(char in item for char in "/\\\x00"):
+            raise ValueError("predefined_invalid_rules")
+        keys.append(item)
+    if len(set(keys)) != len(keys):
+        raise ValueError("predefined_invalid_rules")
+    return tuple(keys)
+
+
+def _require_coverage(rules: Mapping[str, Any], binding: Mapping[str, str], clause_ids: list[str]) -> None:
+    declared = rules.get("directory_coverage", "complete")
+    if not isinstance(declared, str) or declared not in {"partial", "complete"}:
+        raise ValueError("predefined_invalid_rules")
+    complete = set(binding) == set(clause_ids)
+    if declared == "partial" and complete:
+        raise ValueError("predefined_invalid_rules")
+    if declared == "complete" and not complete:
+        raise ValueError("predefined_partial_unmarked")
 
 
 def _validate_python(source: bytes, syntax_code: str) -> None:
