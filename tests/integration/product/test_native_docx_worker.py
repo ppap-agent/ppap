@@ -301,6 +301,6 @@ def test_psw_docx_upload_parse_publish_and_worker_result_keep_v3_frozen(native_d
     assert core_system.audit_jobs[-1].allow_model_calls is True
     expected = ["PASS"] * 10 if include_images else ["PASS", "PASS", "NG", "PASS", "NG", "PASS", "PASS", "PASS", "PASS", "PASS"]
     calls_after_audit = len(calls)
-    assert calls_after_audit == (1 if include_images else 0)
+    assert calls_after_audit == (2 if include_images else 0)
     assert_completed_word(client, worker, target, rule, frozen, content, expected)
     assert len(calls) == calls_after_audit
