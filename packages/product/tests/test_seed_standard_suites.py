@@ -61,7 +61,7 @@ def _installed(result):
 def test_seed_installs_customer_and_historical_sources_without_validation_or_publication():
     store = Store()
     result = seed_standard_suites(store)
-    assert len(store.created) == len(result) == 76
+    assert len(store.created) == len(result) == 116
     assert all(row["validation"] == "not-created" for row in result)
     u08 = [row for row in result if row["suite_key"] == "UAES:U08"]
     assert {row["source_path"] for row in u08} >= {"v5/UAES/U08"}
@@ -74,6 +74,7 @@ def test_seed_installs_customer_and_historical_sources_without_validation_or_pub
     assert directory["source_path"] == "v5/UAES/U08"
     assert directory["related_suite_keys"] == ("UAES:U07", "UAES:U16")
     assert sum(kwargs["source_path"] is None for kwargs in store.created_kwargs) == 75
+    assert sum(kwargs["source_path"] is not None for kwargs in store.created_kwargs) == 41
     again = Store(_installed(result))
     assert seed_standard_suites(again) == result
     assert again.created == []
@@ -91,7 +92,7 @@ def test_revision_digest_matches_content_contract():
     from product.suites import content_digest, resolved_digest
 
     suites = official_source_suites()
-    assert len(suites) == 76
+    assert len(suites) == 116
     assert max(Counter((suite.suite_key, suite.revision_digest) for suite in suites).values()) == 1
     non_directory = [suite.source_path for suite in suites if persisted_source_path(suite.source_path) is None]
     assert len(non_directory) == 75

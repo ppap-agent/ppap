@@ -1,0 +1,48 @@
+{
+  "kind": "engine",
+  "type": "项目问题清单",
+  "preset_key": "L15",
+  "customers": [
+    "理想"
+  ],
+  "models": [],
+  "parts": [],
+  "title": "14 APQP项目问题清单",
+  "rules": [
+    {
+      "id": "L15:1",
+      "category": "条款 1",
+      "priority": "P0",
+      "rule_to_check": "识别“项目问题清单”表中是否包含“车型”、“供应商名称”、“零件编号”、“零件名称”字段，如果不包含则不通过，否则继续识别“车型”、“供应商名称”、“零件编号”、“零件名称”字段是否均不为空，如果时则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "L15:2",
+      "category": "条款 2",
+      "priority": "P0",
+      "rule_to_check": "当“过程审核问题是否完全关闭？”、“检验体系审核问题是否完全关闭？”、“供应商追溯体系评审问题是否完全关闭？”、“其他专项问题”四个字段存在任一字段下内容为“No”时，识别“问题描述”列下是否存在内容不为空的行，如果存在则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "L15:3",
+      "category": "条款 3",
+      "priority": "P0",
+      "rule_to_check": "当“问题描述”列下内容不为空，且对应行的“对应措施”、“时间节点”、“负责人”均不为空，且“时间节点”下的内容比当前时间晚则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "L15:4",
+      "category": "条款 4",
+      "priority": "P0",
+      "rule_to_check": "当“问题描述”下内容不为空，则识别对应行的“整车/总成功/性能性、SOP+3产能风险、安全性、法律法规风险”列下内容是否为“Yes”或“No”，如果是则通过，否则不通过",
+      "type_of_rule": "text"
+    }
+  ],
+  "directory_coverage": "complete",
+  "checker_binding": {
+    "L15:1": "checker:create_audit",
+    "L15:2": "checker:create_audit",
+    "L15:3": "checker:create_audit",
+    "L15:4": "checker:create_audit"
+  }
+}

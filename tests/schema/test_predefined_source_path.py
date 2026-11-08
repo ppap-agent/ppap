@@ -63,7 +63,7 @@ def test_real_postgres_source_path_shape_and_seed_do_not_backfill_null(suite_db)
                 )
 
     first = seed_standard_suites(store)
-    assert len(first) == 76
+    assert len(first) == 116
     assert all(row["validation"] == "not-created" for row in first)
     directory_id = next(row["revision_id"] for row in first if row["suite_key"] == "UAES:U08" and row["source_path"] == "v5/UAES/U08")
     legacy_id = next(row["revision_id"] for row in first if row["suite_key"] == "UAES:U08" and row["source_path"] != "v5/UAES/U08")

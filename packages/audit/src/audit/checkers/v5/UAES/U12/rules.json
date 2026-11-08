@@ -1,0 +1,32 @@
+{
+  "kind": "engine",
+  "type": "过程特殊特性清单",
+  "preset_key": "U12",
+  "customers": [
+    "UAES"
+  ],
+  "models": [],
+  "parts": [],
+  "title": "特殊特性清单审核规则",
+  "rules": [
+    {
+      "id": "U12:1",
+      "category": "必填字段检查",
+      "priority": "P0",
+      "rule_to_check": "识别是否包含“物料名称”、“物料编号”两个字段，如果都不包含则不通过，否则继续识别；当“物料名称”、“物料编号”内容都不为空则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "U12:2",
+      "category": "必填列检查",
+      "priority": "P0",
+      "rule_to_check": "识别是否包含编号/序号、产品特性/过程特性/特殊特性名称、特性及公差/特性值、特性类型/特性类别四列，缺列则不通过，否则继续识别；当编号/序号列下内容不为空，且同行的产品特性/过程特性/特殊特性名称、特性及公差/特性值、特性类型/特性类别三列内容均不为空则通过，否则不通过。",
+      "type_of_rule": "text"
+    }
+  ],
+  "directory_coverage": "complete",
+  "checker_binding": {
+    "U12:1": "checker:create_audit",
+    "U12:2": "checker:create_audit"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "kind": "engine",
+  "type": "E10",
+  "preset_key": "U18",
+  "customers": [
+    "UAES"
+  ],
+  "models": [],
+  "parts": [],
+  "title": "零件追溯说明审核规则",
+  "rules": [
+    {
+      "id": "U18:1",
+      "category": "内容确认",
+      "priority": "P0",
+      "rule_to_check": "识别文件中是否包含“供应商零件追溯”表，且表内“基本信息”、“分供方追溯”、“生产过程追溯”、“交付追溯”、“追溯状态总结”区域都存在内容则通过，否则不通过。",
+      "type_of_rule": "text"
+    }
+  ],
+  "directory_coverage": "complete",
+  "checker_binding": {
+    "U18:1": "checker:create_audit"
+  }
+}

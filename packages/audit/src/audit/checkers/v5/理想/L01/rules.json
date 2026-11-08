@@ -1,0 +1,80 @@
+{
+  "kind": "engine",
+  "type": "全功能检验报告",
+  "preset_key": "L01",
+  "customers": [
+    "理想"
+  ],
+  "models": [],
+  "parts": [],
+  "title": "01 全功能检验报告",
+  "rules": [
+    {
+      "id": "L01:1",
+      "category": "条款 1",
+      "priority": "P0",
+      "rule_to_check": "识别报告标题为“全功能检验报告”则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "L01:2",
+      "category": "条款 2",
+      "priority": "P0",
+      "rule_to_check": "识别“重要度区分”字段，并识别“重要度区分”字段对应内容区域是否有勾选且仅有一个被勾选，如果是则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "L01:3",
+      "category": "条款 3",
+      "priority": "P0",
+      "rule_to_check": "检查“尺寸”区域的数据，当“检查数据”中的数值不超过对应行的“判定标准”内容，且对应行的“判定结果”为OK或合格则通过；否则不通过。注意：结果判定PASS或正确不能等同于OK或合格，需严格按照文字要求，另外不关注大小写。",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "L01:4",
+      "category": "条款 4",
+      "priority": "P0",
+      "rule_to_check": "当“供方检查方法/检查工具”列的内容中不包含“/”、“或”则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "L01:5",
+      "category": "条款 5",
+      "priority": "P0",
+      "rule_to_check": "检查“尺寸”区域数据，当“检查数据”中同行的数据中出现两个或两个以上数值一致则不通过，否则通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "L01:6",
+      "category": "条款 6",
+      "priority": "P0",
+      "rule_to_check": "检查“非尺寸”区域数据，当“检查数据”中的数据均为“OK”或“合格”则通过，否则不通过。注意：内容为“PASS”或“正确”不能等同于OK或合格，需严格按照文字要求，另外不关注大小写。",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "L01:7",
+      "category": "条款 7",
+      "priority": "P0",
+      "rule_to_check": "检查“尺寸”区域数据，当“尺寸”区域的“检查数据”列数据出现OK，且对应行的“供方检查方法/检查工具”列内容为“通止规”或“菲林尺”或“卡板”，则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "L01:8",
+      "category": "条款 8",
+      "priority": "P0",
+      "rule_to_check": "识别表尾是否包含“车型”、“零件名称”、“零件号”、“供应商”、“责任人”、“日期”字段，包含则继续识别。当“车型”、“零件名称”、“零件号”、“供应商”、“责任人”、“日期”内容都不为空则通过，否则不通过",
+      "type_of_rule": "text"
+    }
+  ],
+  "directory_coverage": "complete",
+  "checker_binding": {
+    "L01:1": "checker:create_audit",
+    "L01:2": "checker:create_audit",
+    "L01:3": "checker:create_audit",
+    "L01:4": "checker:create_audit",
+    "L01:5": "checker:create_audit",
+    "L01:6": "checker:create_audit",
+    "L01:7": "checker:create_audit",
+    "L01:8": "checker:create_audit"
+  }
+}

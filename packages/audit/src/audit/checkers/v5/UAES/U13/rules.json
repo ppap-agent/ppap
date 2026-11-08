@@ -1,0 +1,24 @@
+{
+  "kind": "engine",
+  "type": "E07",
+  "preset_key": "U13",
+  "customers": [
+    "UAES"
+  ],
+  "models": [],
+  "parts": [],
+  "title": "生产件样品照片审核规则",
+  "rules": [
+    {
+      "id": "U13:1",
+      "category": "生产件样品照片识别",
+      "priority": "P0",
+      "rule_to_check": "当识别到提交文件为图片格式，即审核通过，且提醒用户符合样品照片是否正确",
+      "type_of_rule": "text"
+    }
+  ],
+  "directory_coverage": "complete",
+  "checker_binding": {
+    "U13:1": "checker:create_audit"
+  }
+}

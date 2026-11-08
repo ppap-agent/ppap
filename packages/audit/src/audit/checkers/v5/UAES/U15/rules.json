@@ -1,0 +1,24 @@
+{
+  "kind": "engine",
+  "type": "E09",
+  "preset_key": "U15",
+  "customers": [
+    "UAES"
+  ],
+  "models": [],
+  "parts": [],
+  "title": "试装单审核规则",
+  "rules": [
+    {
+      "id": "U15:1",
+      "category": "试装单流程完成及结论审核",
+      "priority": "P0",
+      "rule_to_check": "识别文件中是否包含流转记录、试装结论、检验结论三个区域，缺一项不存在则不通过；\n识别流程记录中是否有“流程结束”和“流程完成”两个内容，不存在则不通过；\n识别试装结论是否勾选的是通过，如果未勾选或勾选的是未通过则不通过；\n识别检验结论是否勾选的是合格，如果未勾选或勾选的是不合格则不通过；\n以上四项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+      "type_of_rule": "text"
+    }
+  ],
+  "directory_coverage": "complete",
+  "checker_binding": {
+    "U15:1": "checker:create_audit"
+  }
+}

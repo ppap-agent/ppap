@@ -1,0 +1,32 @@
+{
+  "kind": "engine",
+  "type": "过程特殊特性清单",
+  "preset_key": "N04",
+  "customers": [
+    "蔚来"
+  ],
+  "models": [],
+  "parts": [],
+  "title": "11规则-特殊特性清单",
+  "rules": [
+    {
+      "id": "N04:1",
+      "category": "条款 1",
+      "priority": "P0",
+      "rule_to_check": "识别“特殊特性清单”表标题前是否有产品编号，如果有则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "N04:2",
+      "category": "条款 2",
+      "priority": "P0",
+      "rule_to_check": "识别“特殊特性清单”表中是否包含“零件编号”、“零件名称”、“特性分类”、“特性描述”、“特性值”、“特性类别”、“特殊特性种类”、“控制方法（制造过程）”、“防错方案描述”、“频次”、“样本数”列，如果不存在则不通过，否则继续识别；当“零件编号”、“零件名称”下内容不为空，且同行的“特性分类”、“特性描述”、“特性值”、“特性类别”、“特殊特性种类”、“控制方法（制造过程）”、“防错方案描述”、“频次”、“样本数”列下内容均不为空则通过，否则不通过",
+      "type_of_rule": "text"
+    }
+  ],
+  "directory_coverage": "complete",
+  "checker_binding": {
+    "N04:1": "checker:create_audit",
+    "N04:2": "checker:create_audit"
+  }
+}
