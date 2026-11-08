@@ -420,14 +420,35 @@ class PswRuntime:
 
 
 def test_v4_psw_pdf_does_not_execute_another_version(tmp_path):
+    import inspect
+
+    from audit.checkers.v2.psw_pdf_agent import PswPDFAgent as V2PswPDFAgent
+    from audit.checkers.v3.pdf_excel_delegator_agent import PdfExcelDelegatorAgent
+    from audit.checkers.v3.psw_excel_agent import PswExcelAgent
     from audit.checkers.v3.psw_pdf_agent import PswPDFAgent
+    from audit.checkers.v4.li_auto.psw import LiAutoPswAgent
+    from audit.checkers.v4.li_auto.psw_pdf import LiAutoPswPdfAgent
     from audit.engine.routing import resolve_engine_agent_class
     from audit.kinds import PpapDocumentType
 
     path = source(tmp_path)
     rule = psw_rules("v4")
     selected = resolve_engine_agent_class(PpapDocumentType.PSW, str(path), rule.rule_profile, preset_key=rule.preset_key, preset_customer="理想")
-    assert selected is None
+    assert selected is LiAutoPswPdfAgent
+    assert selected is not PswPDFAgent and selected is not V2PswPDFAgent
+    assert {PswPDFAgent, V2PswPDFAgent, PdfExcelDelegatorAgent, PswExcelAgent}.isdisjoint(selected.__mro__)
+    assert selected.TARGET_EXCEL_AGENT_CLASS is LiAutoPswAgent
+    module_source = inspect.getsource(inspect.getmodule(selected))
+    for banned in (
+        "audit.checkers.v2.psw_pdf_agent",
+        "audit.checkers.v2.pdf_excel_delegator_agent",
+        "audit.checkers.v2.pdf_agent",
+        "audit.checkers.v3.psw_pdf_agent",
+        "audit.checkers.v3.pdf_excel_delegator_agent",
+        "audit.checkers.v3.pdf_agent",
+        "audit.checkers.v3.psw_excel_agent",
+    ):
+        assert banned not in module_source
     assert resolve_engine_agent_class(PpapDocumentType.PSW, str(path), "v3") is PswPDFAgent
 
 

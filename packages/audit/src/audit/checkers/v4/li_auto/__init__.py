@@ -13,6 +13,7 @@ from .pfmea import LiAutoPfmeaAgent
 from .plant_capacity import LiAutoPlantCapacityAgent
 from .process_flow import LiAutoProcessFlowAgent
 from .psw import LiAutoPswAgent, LiAutoPswDocxAgent
+from .psw_pdf import LiAutoPswPdfAgent
 from .special_characteristics import LiAutoSpecialCharacteristicsAgent
 from .tooling import LiAutoToolingAgent
 from .validation_plan import LiAutoValidationPlanAgent
@@ -40,5 +41,6 @@ EXCEL_AGENTS = {
 
 DOCX_AGENTS = {"L17": LiAutoPswDocxAgent}
 
-# Verified untamplated PDF text/grid carrier; unread visual facts stay UNABLE.
-PDF_AGENTS = {"L03": LiAutoVerificationReportAgent}
+# L03: verified untamplated PDF text/grid carrier; unread visual facts stay UNABLE.
+# L17: this version's own PSW PDF class. A missing carrier stays unsupported.
+PDF_AGENTS = {"L03": LiAutoVerificationReportAgent, "L17": LiAutoPswPdfAgent}
