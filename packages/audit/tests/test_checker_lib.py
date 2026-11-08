@@ -9,21 +9,23 @@ from pathlib import Path
 import pytest
 from audit.checker_core import ValidationRecord, checker_digest
 from audit.checker_lib.imports import directory_import_violations
-from audit.standard_suites import hash_library, library_files, library_revision, load_predefined_checkers
+from audit.standard_suites import hash_library, library_files, library_revision, load_predefined_checkers, standard_suites
 
 _AUDIT = Path(__file__).resolve().parents[1] / "src" / "audit"
 _CHECKERS = _AUDIT / "checkers"
 _V5 = _CHECKERS / "v5"
 
 
-def test_installed_leaves_are_outside_the_library_fingerprint():
+def test_public_fingerprint_includes_active_carrier_packages_not_v5_leaves():
     relative = [path.relative_to(_AUDIT).as_posix() for path in library_files("audit", _AUDIT)]
     assert "checker_lib/excel.py" in relative
     assert "checker_lib/pdf.py" in relative
     assert "checker_lib/visual.py" in relative
     assert "engine/checkers/pdf_field_region.py" in relative
     assert "checkers/__init__.py" in relative
-    assert not any(item.startswith("checkers/v2/") or item.startswith("checkers/v3/") or item.startswith("checkers/v4/") for item in relative)
+    assert "checkers/v4/li_auto/psw.py" in relative
+    assert any(item.startswith("checkers/v2/") for item in relative)
+    assert any(item.startswith("checkers/v3/") for item in relative)
     assert not any(item.startswith("checkers/v5/") for item in relative)
     revision = library_revision()
     assert len(revision) == 64 and revision == library_revision()
@@ -47,7 +49,7 @@ def test_copying_v5_to_v6_changes_the_checker_digest_only(tmp_path):
     assert again["v6/UAES/U08"].revision_digest != loaded["v6/UAES/U08"].revision_digest
 
 
-def test_checker_business_edits_spare_the_public_fingerprint(tmp_path):
+def test_legacy_carrier_sources_move_the_public_fingerprint_and_v5_does_not(tmp_path):
     root = tmp_path / "audit"
     (root / "checker_lib").mkdir(parents=True)
     excel = root / "checker_lib" / "excel.py"
@@ -57,9 +59,13 @@ def test_checker_business_edits_spare_the_public_fingerprint(tmp_path):
         leaf.mkdir(parents=True)
         (leaf / "checker.py").write_text("VALUE = 1\n", encoding="utf-8")
     before = hash_library((("audit", root),))
-    for family in ("v2", "v3", "v4", "v5"):
-        (root / "checkers" / family / "checker.py").write_text("VALUE = 2\n", encoding="utf-8")
+    (root / "checkers" / "v5" / "checker.py").write_text("VALUE = 2\n", encoding="utf-8")
     assert hash_library((("audit", root),)) == before
+    for family in ("v2", "v3", "v4"):
+        (root / "checkers" / family / "checker.py").write_text("VALUE = 2\n", encoding="utf-8")
+        moved = hash_library((("audit", root),))
+        assert moved != before
+        before = moved
     excel.write_text("VALUE = 2\n", encoding="utf-8")
     after = hash_library((("audit", root),))
     assert after != before
@@ -69,7 +75,58 @@ def test_checker_business_edits_spare_the_public_fingerprint(tmp_path):
     assert record.status(**same, library_revision=after) == {"state": "verified", "samples_not_rerun": True}
     names = [path.relative_to(root).as_posix() for path in library_files("audit", root)]
     assert "checker_lib/excel.py" in names
-    assert not any(name.startswith("checkers/v2/") or name.startswith("checkers/v3/") or name.startswith("checkers/v4/") or name.startswith("checkers/v5/") for name in names)
+    assert "checkers/v2/checker.py" in names
+    assert "checkers/v3/checker.py" in names
+    assert "checkers/v4/checker.py" in names
+    assert "checkers/v5/checker.py" not in names
+
+
+def test_v4_class_edit_expires_active_legacy_proofs_and_v5_leaf_does_not(tmp_path):
+    import documents
+    from audit.checker_core import rule_digest
+
+    suites = standard_suites()
+    assert len(suites) == 41
+    audit_copy = tmp_path / "audit"
+    shutil.copytree(_AUDIT, audit_copy, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    documents_root = Path(documents.__file__).resolve().parent
+    entries = (("audit", audit_copy), ("documents", documents_root))
+    before = hash_library(entries)
+    assert before == library_revision()
+
+    def carrier_digests():
+        return {suite.suite_key: checker_digest(suite.program_files) for suite in standard_suites()}
+
+    carriers = carrier_digests()
+    v5_dir = audit_copy / "checkers" / "v5" / "UAES" / "U08"
+    v5_files = {"checker.py": (v5_dir / "checker.py").read_bytes(), "resources.py": (v5_dir / "resources.py").read_bytes()}
+    v5_before = checker_digest(v5_files)
+    checker = v5_dir / "checker.py"
+    checker.write_bytes(checker.read_bytes() + b"\n# v5 leaf only\n")
+    assert hash_library(entries) == before
+    v5_after = checker_digest({"checker.py": checker.read_bytes(), "resources.py": v5_files["resources.py"]})
+    assert v5_after != v5_before
+    assert carrier_digests() == carriers
+
+    v4_class = audit_copy / "checkers" / "v4" / "li_auto" / "psw.py"
+    v4_class.write_bytes(v4_class.read_bytes() + b"\n# v4 carrier only\n")
+    after_v4 = hash_library(entries)
+    assert after_v4 != before
+    assert carrier_digests() == carriers
+    assert checker_digest({"checker.py": checker.read_bytes(), "resources.py": v5_files["resources.py"]}) == v5_after
+    for suite in suites:
+        rules = json.loads(suite.files["rules.json"])
+        appendix = tuple(json.loads(suite.files.get("appendix.json", b"[]")))
+        digested_rules = rule_digest(rules, appendix)
+        record = ValidationRecord(suite.revision_digest, digested_rules, carriers[suite.suite_key], {}, before)
+        same = dict(suite_digest=suite.revision_digest, rule_digest=digested_rules, checker_digest=carriers[suite.suite_key], related_suite_digests={})
+        assert record.status(**same, library_revision=before) == {"state": "verified", "samples_not_rerun": False}
+        assert record.status(**same, library_revision=after_v4) == {"state": "verified", "samples_not_rerun": True}
+
+    shared = audit_copy / "checker_lib" / "excel.py"
+    shared.write_bytes(shared.read_bytes() + b"\n# shared library\n")
+    assert hash_library(entries) != after_v4
+    assert checker_digest({"checker.py": checker.read_bytes(), "resources.py": v5_files["resources.py"]}) == v5_after
 
 
 def test_installed_directory_leaves_have_no_legacy_checker_imports():

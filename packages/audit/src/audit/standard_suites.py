@@ -127,11 +127,12 @@ def standard_suites() -> tuple[StandardSuite, ...]:
 
 @lru_cache(maxsize=1)
 def library_revision() -> str:
-    """Fingerprint of shared runtime code, not of any checker version tree.
+    """Fingerprint of shared runtime code and the carrier packages still executed.
 
-    ``checkers/vN`` sources stay out of this hash. A leaf's identity is
-    ``checker_digest``. A shared-library edit changes this value.
-    ``ValidationRecord.samples_not_rerun`` compares a stored proof with it.
+    ``standard_suites()`` still runs ``checkers/v2``, ``v3``, and ``v4`` classes,
+    so those sources stay in this hash. ``checkers/v5`` and later directory
+    leaves stay out; a leaf's identity is ``checker_digest``. A change here
+    makes ``ValidationRecord.samples_not_rerun`` true.
     """
     import documents
 
@@ -166,9 +167,13 @@ def _counts_toward_library(package: str, directory: Path, path: Path) -> bool:
     if package != "audit":
         return True
     parts = path.relative_to(directory).parts
-    # Every version tree is a checker, including historical packages. Shared
-    # runtime is checker_lib, the engine, and the rest of audit.
-    return not (len(parts) >= 2 and parts[0] == "checkers" and _VERSION_DIRECTORY.fullmatch(parts[1]) is not None)
+    if len(parts) < 2 or parts[0] != "checkers":
+        return True
+    # v5+ directory leaves are outside the public fingerprint. v2/v3/v4 stay
+    # in while the 41 legacy carriers still execute those packages.
+    if _VERSION_DIRECTORY.fullmatch(parts[1]) is None:
+        return True
+    return int(parts[1][1:]) < 5
 
 
 _LEAF_FILES = frozenset({"checker.py", "rules.json", "resources.py", "appendix.json", "templates.json", "tests.json"})
