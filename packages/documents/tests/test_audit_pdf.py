@@ -186,3 +186,69 @@ def test_copied_pdf_text_preserves_ascii_ff_fi_fl_identities_and_a_different_ide
         assert folded_identity not in copied and folded_identity not in visible and not _on_page(document, folded_identity)
         assert preserved_ligatures in copied and preserved_ligatures in visible and _on_page(document, preserved_ligatures)
         assert expanded_ligatures not in copied and expanded_ligatures not in visible and not _on_page(document, expanded_ligatures)
+
+
+def _spans(document) -> list[str]:
+    return [span["text"] for page in document for block in page.get_text("dict")["blocks"] for line in block.get("lines", []) for span in line["spans"]]
+
+
+def test_long_one_line_frozen_notice_keeps_a_legal_ff_uuid_contiguous():
+    """Production verified notice is one line. Wrapping must not split the suite id."""
+    source = report_source()
+    identity = "1ff467a2-fa00-4a10-8abc-ff12abcd3456"
+    distinct = "9aa467a2-ab00-4b10-8def-aa12abcd7890"
+    assert str(UUID(identity)) == identity and str(UUID(distinct)) == distinct and identity != distinct
+    # Same concatenation as frozen_checker_verification for a verified revision. No inserted newline.
+    notice = "本轮检查版本已通过样本验证；样本验证不保证本次审核结论正确。" + f"检查版本：第 1 版（{identity}）。"
+    assert "\n" not in notice and notice.count(identity) == 1
+    identity_bytes = identity.encode()
+    audit = source["audit"]
+    audit["conclusion"] = "PASS"
+    audit["counts"] = {"pass_count": 1, "ng_count": 0}
+    audit["checks"][0]["finding"]["status"] = "PASS"
+    audit["checker_verification"] = {
+        "suite_revision_id": identity,
+        "suite_revision_number": 1,
+        "status": "verified",
+        "samples_not_rerun": False,
+        "notice": notice,
+    }
+    with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
+        copied = "".join(page.get_text() for page in document)
+        spans = _spans(document)
+        visible = "".join(spans)
+        assert audit["checker_verification"]["suite_revision_id"].encode() == identity_bytes
+        assert audit["checker_verification"]["notice"].encode() == notice.encode()
+        assert identity_bytes in audit["checker_verification"]["notice"].encode()
+        assert identity in copied and identity in visible and any(identity in span for span in spans)
+        assert _on_page(document, identity)
+        assert distinct not in copied and distinct not in visible and not _on_page(document, distinct)
+        assert "本轮检查版本已通过样本验证" in copied and "样本验证不保证本次审核结论正确" in copied
+        assert "尺寸检验报告.xlsx" in copied and "审核结论：符合" in copied and "必须填写零件号" in copied
+        assert "不表示正式量产批准" in copied and "\ufffd" not in copied
+        assert "".join(notice.split()) in "".join(copied.split())
+        assert identity.replace("ff", "\ufb00") not in copied and identity.replace("ff", "\ufb00") not in visible
+
+
+def test_absent_or_nonmatching_suite_revision_id_is_not_rewritten():
+    source = report_source()
+    identity = "1ff467a2-fa00-4a10-8abc-ff12abcd3456"
+    literal = "原文 <b>不是 HTML</b> & 保持。\n下一行仍在。"
+    audit = source["audit"]
+    audit["checker_verification"] = {"notice": literal}
+    with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
+        copied = "".join(page.get_text() for page in document)
+        assert "原文 <b>不是 HTML</b> & 保持。" in copied and "下一行仍在。" in copied
+        assert identity not in copied
+    audit["checker_verification"] = {"suite_revision_id": identity, "notice": literal}
+    with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
+        copied = "".join(page.get_text() for page in document)
+        assert "原文 <b>不是 HTML</b> & 保持。" in copied and identity not in copied
+    audit["checker_verification"] = {"suite_revision_id": "", "notice": "空标识不拆开正文。"}
+    with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
+        assert "空标识不拆开正文。" in "".join(page.get_text() for page in document)
+    # "amp" occurs only inside the escaped ampersand, not in the notice text.
+    audit["checker_verification"] = {"suite_revision_id": "amp", "notice": "A & B"}
+    with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
+        copied = "".join(page.get_text() for page in document)
+        assert "A & B" in copied and "amp" not in copied

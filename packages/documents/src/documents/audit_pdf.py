@@ -13,6 +13,19 @@ def _text(value) -> str:
     return escape(str(value if value is not None else ""))
 
 
+def _verification_notice(verification: dict) -> str:
+    # Escape the frozen notice first. Keep only an exact suite_revision_id from
+    # breaking inside the token; the line may still break before or after it.
+    # A missing or nonmatching id is not injected and is not matched in markup.
+    raw = verification["notice"]
+    notice = str(raw if raw is not None else "")
+    revision_id = verification.get("suite_revision_id")
+    if type(revision_id) is not str or revision_id == "" or revision_id not in notice:
+        return escape(notice)
+    token = '<span style="white-space:nowrap">' + escape(revision_id) + "</span>"
+    return token.join(escape(part) for part in notice.split(revision_id))
+
+
 def _location(locator: dict) -> str:
     kind = locator.get("kind")
     if kind == "xlsx_cell":
@@ -40,7 +53,7 @@ def render_audit_pdf(source: dict) -> bytes:
         f"<h2>{_text(source['filename'])}</h2>",
         f"<p>审核规则：{_text(audit['rule']['title'])}</p>",
         f"<p>审核结论：<b>{_text(CONCLUSION.get(audit['conclusion'], audit['conclusion']))}</b></p>",
-        *([f"<p><b>{_text(audit['checker_verification']['notice'])}</b></p>"] if audit.get("checker_verification") else []),
+        *([f"<p><b>{_verification_notice(audit['checker_verification'])}</b></p>"] if audit.get("checker_verification") else []),
         f"<p>共 {len(audit['checks'])} 项：符合 {audit['counts']['pass_count']} 项，不符合 {audit['counts']['ng_count']} 项，不适用 {audit['counts'].get('na_count', 0)} 项。</p>",
         *(["<p class='meta'>部分判定的证据未经验证，请核对原件中的证据和检查范围。</p>"] if any(check.get("finding") and not check.get("evidence_verified") for check in audit["checks"]) else []),
         f"<p class='meta'>生成时间：{_text(source['generated_at'])}</p>",
