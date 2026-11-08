@@ -22,12 +22,14 @@ WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
 
 
 def open_rule_library(page):
-    page.get_by_role("banner").wait_for(state="visible")
     button = page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="审核规则", exact=True)
+    menu = page.get_by_role("button", name="打开产品导航", exact=True)
+    # The login shell also has a banner; wait for authorized product navigation.
+    button.or_(menu).wait_for(state="visible")
     if button.is_visible():
         button.click()
     else:
-        page.get_by_role("button", name="打开产品导航", exact=True).click()
+        menu.click()
         page.get_by_role("dialog", name="产品导航", exact=True).get_by_role("button", name="审核规则", exact=True).click()
 
 
@@ -48,6 +50,46 @@ BODY = {
 
 @unittest.skipUnless(sync_playwright, "playwright not installed")
 class RuleInteractionTests(unittest.TestCase):
+    def test_rule_navigation_waits_for_authorized_shell_on_desktop_and_mobile(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            for width in (1440, 390):
+                with self.subTest(width=width):
+                    page = browser.new_page(viewport={"width": width, "height": 1000})
+                    try:
+                        state = self.requirement_routes(page)
+                        held, probes = [], []
+                        page.route("**/api/me", lambda route: held.append(route))
+                        page.goto(WEB + "/audit")
+                        expect(page.get_by_text("正在确认登录状态…", exact=True)).to_be_visible()
+                        self.assertEqual(len(held), 1)
+                        self.assertTrue(page.get_by_role("banner").is_visible())
+                        desktop = page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="审核规则", exact=True)
+                        mobile = page.get_by_role("button", name="打开产品导航", exact=True)
+                        self.assertFalse(desktop.is_visible())
+                        self.assertFalse(mobile.is_visible())
+
+                        def authorize():
+                            # Keep the first readiness probe in the login shell. The next
+                            # probe releases the existing /me fixture, without a new login.
+                            probes.append(True)
+                            if len(probes) == 2:
+                                self.assertFalse(desktop.is_visible())
+                                self.assertFalse(mobile.is_visible())
+                                held.pop().fallback()
+
+                        page.add_locator_handler(page.get_by_role("heading", name="登录审核工作台", exact=True), authorize, no_wait_after=True, times=2)
+                        open_rule_library(page)
+                        expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
+                        self.assertEqual(len(probes), 2)
+                        self.assertEqual(held, [])
+                        self.assertEqual(state["writes"], [])
+                    finally:
+                        page.close()
+            browser.close()
+
     def test_native_history_timeout_offers_explicit_read_of_the_same_document(self):
         from playwright.sync_api import expect
 
