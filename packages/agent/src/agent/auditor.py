@@ -474,6 +474,7 @@ class SemanticRuntime:
                 artifact=artifact,
                 prior=prior,
                 development_feedback=feedback,
+                source_files=getattr(request, "source_files", None) if operation == "adapt-checker" else None,
             )
 
         outcome = develop_and_run(request, job)
@@ -553,6 +554,7 @@ class SemanticRuntime:
         artifact: CheckerArtifact | None = None,
         related_bytes: dict[str, bytes] | None = None,
         development_feedback: str | None = None,
+        source_files: dict[str, bytes] | None = None,
     ) -> CheckerProgramBundle:
         from agent.checker_program import CheckerManifest, input_digest, scoped_rule, write_manifest
         from agent.execution.checker_guest import CheckerProgramError
@@ -573,6 +575,10 @@ class SemanticRuntime:
         from agent.checker_program import staged_document_name
 
         original_name = str((audit_file.file_metadata or {}).get("original_filename") or audit_file.file_url or "")
+        try:
+            decoded_source = {name: content.decode("utf-8") for name, content in (source_files or {}).items()} if operation == "adapt-checker" else {}
+        except UnicodeDecodeError as exc:
+            raise DeepError("checker_input_invalid") from exc
         manifest = CheckerManifest(
             operation=operation,
             reasoning_effort=getattr(getattr(self.runtime, "config", None), "reasoning_effort", "medium"),
@@ -587,6 +593,7 @@ class SemanticRuntime:
             group_context=group_context.model_dump(mode="json") if group_context is not None else None,
             development_feedback=development_feedback,
             prior_files={name: content.decode("utf-8") for name, content in prior.files.items()} if prior is not None else None,
+            source_files=decoded_source,
             artifact=artifact,
         )
         artifact_prefix = self._attempt_prefix(spec)

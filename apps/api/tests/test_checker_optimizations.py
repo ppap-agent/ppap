@@ -420,13 +420,16 @@ def test_removed_optional_module_does_not_reappear_from_base_overlay(auth_store_
     result = development_handler(f.worker, ControlledRuntime())(claim(f), ExecutionContext())
     assert result["state"] == "completed" and result["report"]["validation"]["verified"]
     candidate = SuiteStore(f.store.settings, f.store.objects, role="migrator").resolve_suite(result["candidate_revision_id"], f.alice.tenant_id)
-    assert candidate.revision.base_revision_id == f.suite.id
-    assert candidate.revision.overrides["resources.py"] is None
-    assert "resources.py" not in candidate.files and "templates.json" in candidate.files
+    assert candidate.revision.base_revision_id is None
+    assert "resources.py" not in candidate.revision.overrides
+    assert "resources.py" not in candidate.files
+    assert candidate.files["templates.json"] == b'[{"kind":"structure","columns":["A1"]}]'
+    assert candidate.revision.overrides["templates.json"]
     original = SuiteStore(f.store.settings, f.store.objects, role="migrator").resolve_suite(f.suite.id, f.alice.tenant_id)
     assert original.files["resources.py"] == b"VALUE = 1"
+    assert original.files["checker.py"] == PROGRAM
     detail = SuiteReleaseStore(f.store.settings, f.store.objects).detail(f.alice, candidate.revision.id)
-    assert {"path": "resources.py", "before": "VALUE = 1", "after": ""} in detail["diff"]
+    assert detail["base_revision_id"] is None and "resources.py" not in detail["files"]
     assert detail["validation"]["verified"]
 
 
@@ -988,14 +991,16 @@ def test_native_baseline_then_generated_factory_keeps_its_own_binding_and_tombst
     assert len(guest.generation_manifests) == 1
     assert guest.generation_manifests[0]["prior_files"] == {"checker.py": DIRECT_PROGRAM.decode(), "resources.py": DIRECT_RESOURCE.decode()}
     saved = SuiteReleaseStore(f.store.settings, f.store.objects).detail(f.alice, receipt["candidate_revision_id"])
-    generated_binding = {clause: "checker:create_audit" for clause in ("R1", "R2")}
-    assert json.loads(saved["files"]["rules.json"])["checker_binding"] == generated_binding
+    assert json.loads(saved["files"]["rules.json"])["checker_binding"] == DIRECT_RULES["checker_binding"]
     assert "resources.py" not in saved["files"]
+    assert saved["base_revision_id"] is None
+    assert "oracle_clause_coverage_incomplete" in receipt["report"]["validation"]["reasons"]
     response = f.clients[0].post(f"/suite-revisions/{saved['id']}/optimizations", json=command(f, consume_model=False))
     assert response.status_code == 200, response.text
     second = development_handler(f.worker, runtime)(claim(f), ExecutionContext())
-    assert second["state"] == "completed", second
-    assert guest.fixed_manifests[-1]["snapshot"]["targets"][0]["binding"]["entrypoints"] == generated_binding
+    assert second["state"] == "failed", second
+    assert second["candidate_revision_id"] is None
+    assert guest.fixed_manifests[-1]["snapshot"]["targets"][0]["binding"]["entrypoints"] == DIRECT_RULES["checker_binding"]
     assert len(guest.generation_manifests) == 1
 
 

@@ -316,7 +316,7 @@ class CoreRuntime(SemanticRuntime):
         finally:
             _ALLOW_MODEL_CALLS.reset(token)
 
-    def _checker_job(self, spec, audit_file, rule, file_bytes, *, role, context, group_context, operation, prior=None, artifact=None, related_bytes=None, development_feedback=None):
+    def _checker_job(self, spec, audit_file, rule, file_bytes, *, role, context, group_context, operation, prior=None, artifact=None, related_bytes=None, development_feedback=None, source_files=None):
         # Generation uses the existing granted guest. Every fixed execution,
         # including independent holdout, uses exactly the whole-audit Core.
         if operation == "adapt-checker":
@@ -333,6 +333,7 @@ class CoreRuntime(SemanticRuntime):
                 artifact=artifact,
                 related_bytes=related_bytes,
                 development_feedback=development_feedback,
+                source_files=source_files,
             )
         from agent.checker_development import FrozenDevelopmentInput
         from agent.checker_spec import CheckerJobSpec, CheckerProgramBundle

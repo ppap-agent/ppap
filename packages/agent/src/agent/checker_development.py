@@ -83,6 +83,7 @@ class DevelopmentRequest:
     oracle_revision: str | None = None
     oracle: tuple[OracleSample, ...] = ()
     allow_model_calls: bool = True
+    source_files: dict[str, bytes] = field(default_factory=dict)
 
 
 class DevelopmentJob(Protocol):
