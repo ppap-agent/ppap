@@ -122,3 +122,33 @@ def test_all_pass_pdf_prominently_preserves_frozen_checker_qualification(status,
         assert "".join(notice.split()) in first_page
         assert "frozen-suite-3" in first_page
         assert "共1项：符合1项，不符合0项" in first_page
+
+
+def test_copied_pdf_text_preserves_ascii_ff_fi_fl_identities_and_a_different_identifier():
+    source = report_source()
+    identity = "1ff467a2-fi00-4fl0-ffi1-ffl2abcd"
+    distinct = "1fx467a2-fj00-4fy0-fff1-fff2abcd"
+    other_identity = "9\ufb00aaaa-9\ufb01bbbb-9\ufb02cccc-9\ufb03dddd-9\ufb04eeee"
+    audit = source["audit"]
+    audit["conclusion"] = "PASS"
+    audit["counts"] = {"pass_count": 1, "ng_count": 0}
+    audit["checks"][0]["finding"]["status"] = "PASS"
+    audit["checks"][0]["finding"]["suggestions"] = other_identity
+    audit["checks"][0]["evidence"][0]["excerpt"] = identity
+    audit["rule"]["id"] = identity
+    notice = f"本轮采用未经验证的检查版本。检查版本：第 1 版（{identity}）。"
+    audit["checker_verification"] = {"suite_revision_id": identity, "suite_revision_number": 1, "status": "unverified", "samples_not_rerun": False, "notice": notice}
+    with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
+        copied = "".join(page.get_text() for page in document)
+        visible = "".join(span["text"] for page in document for block in page.get_text("dict")["blocks"] for line in block.get("lines", []) for span in line["spans"])
+        assert identity in copied
+        assert identity in visible
+        assert "".join(notice.split()) in "".join(copied.split())
+        hits = document[0].search_for(identity)
+        assert hits
+        assert all(document[0].rect.contains(hit) for hit in hits)
+        assert distinct not in copied
+        assert distinct not in visible
+        assert other_identity in copied
+        folded = identity.replace("ffi", "\ufb03").replace("ffl", "\ufb04").replace("ff", "\ufb00").replace("fi", "\ufb01").replace("fl", "\ufb02")
+        assert folded not in copied

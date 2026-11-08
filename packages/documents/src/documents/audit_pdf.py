@@ -72,7 +72,10 @@ def render_audit_pdf(source: dict) -> bytes:
     html = "".join(parts)
     if len(html) > 4_000_000:
         raise ValueError("report_content_too_large")
-    css = "body {font-family:sans-serif; font-size:10.5pt; line-height:1.6} h1 {font-size:20pt} h2 {font-size:13pt} "
+    # MuPDF maps sans-serif to Nimbus Sans, which shapes ff/fi/fl into compatibility
+    # ligatures (U+FB00 and neighbors). Monospace keeps those letters as ASCII, so a
+    # copied or extracted frozen identity stays the original string.
+    css = "body {font-family:monospace; font-size:10.5pt; line-height:1.6} h1 {font-size:20pt} h2 {font-size:13pt} "
     css += "h3 {font-size:11pt} p {white-space:pre-wrap} .meta {font-size:9pt; color:#555}"
     story = pymupdf.Story(html=html, user_css=css)
     output = BytesIO()
