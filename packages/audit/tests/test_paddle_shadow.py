@@ -422,12 +422,15 @@ class PswRuntime:
 def test_v4_psw_pdf_does_not_execute_another_version(tmp_path):
     import inspect
 
+    from audit.checkers.v2.base_agent import BaseAgent
+    from audit.checkers.v2.excel_agent import ExcelAgent as V2ExcelAgent
     from audit.checkers.v2.psw_pdf_agent import PswPDFAgent as V2PswPDFAgent
+    from audit.checkers.v3.excel_agent import ExcelAgent as V3ExcelAgent
     from audit.checkers.v3.pdf_excel_delegator_agent import PdfExcelDelegatorAgent
     from audit.checkers.v3.psw_excel_agent import PswExcelAgent
     from audit.checkers.v3.psw_pdf_agent import PswPDFAgent
-    from audit.checkers.v4.li_auto.psw import LiAutoPswAgent
     from audit.checkers.v4.li_auto.psw_pdf import LiAutoPswPdfAgent
+    from audit.checkers.v4.li_auto.psw_pdf_workbook import LiAutoPswPdfWorkbookAgent
     from audit.engine.routing import resolve_engine_agent_class
     from audit.kinds import PpapDocumentType
 
@@ -436,19 +439,25 @@ def test_v4_psw_pdf_does_not_execute_another_version(tmp_path):
     selected = resolve_engine_agent_class(PpapDocumentType.PSW, str(path), rule.rule_profile, preset_key=rule.preset_key, preset_customer="理想")
     assert selected is LiAutoPswPdfAgent
     assert selected is not PswPDFAgent and selected is not V2PswPDFAgent
-    assert {PswPDFAgent, V2PswPDFAgent, PdfExcelDelegatorAgent, PswExcelAgent}.isdisjoint(selected.__mro__)
-    assert selected.TARGET_EXCEL_AGENT_CLASS is LiAutoPswAgent
-    module_source = inspect.getsource(inspect.getmodule(selected))
-    for banned in (
-        "audit.checkers.v2.psw_pdf_agent",
-        "audit.checkers.v2.pdf_excel_delegator_agent",
-        "audit.checkers.v2.pdf_agent",
-        "audit.checkers.v3.psw_pdf_agent",
-        "audit.checkers.v3.pdf_excel_delegator_agent",
-        "audit.checkers.v3.pdf_agent",
-        "audit.checkers.v3.psw_excel_agent",
-    ):
-        assert banned not in module_source
+    assert selected.TARGET_EXCEL_AGENT_CLASS is LiAutoPswPdfWorkbookAgent
+    banned_bases = {BaseAgent, V2ExcelAgent, V3ExcelAgent, PswPDFAgent, V2PswPDFAgent, PdfExcelDelegatorAgent, PswExcelAgent}
+    for cls in (selected, LiAutoPswPdfWorkbookAgent):
+        assert banned_bases.isdisjoint(cls.__mro__)
+        assert not any(getattr(base, "__module__", "").startswith(("audit.checkers.v2", "audit.checkers.v3")) for base in cls.__mro__)
+        module_source = inspect.getsource(inspect.getmodule(cls))
+        for banned in (
+            "audit.checkers.v2.base_agent",
+            "audit.checkers.v2.excel_agent",
+            "audit.checkers.v2.psw_pdf_agent",
+            "audit.checkers.v2.pdf_excel_delegator_agent",
+            "audit.checkers.v2.pdf_agent",
+            "audit.checkers.v3.excel_agent",
+            "audit.checkers.v3.psw_excel_agent",
+            "audit.checkers.v3.psw_pdf_agent",
+            "audit.checkers.v3.pdf_excel_delegator_agent",
+            "audit.checkers.v3.pdf_agent",
+        ):
+            assert banned not in module_source
     assert resolve_engine_agent_class(PpapDocumentType.PSW, str(path), "v3") is PswPDFAgent
 
 

@@ -1,7 +1,8 @@
 """L17 PSW PDF carrier owned by v4.
 
 The evidence policy is the shared engine mixin. Converted rows are checked by
-``LiAutoPswAgent``. This module does not import or subclass a v2/v3 PSW class.
+``LiAutoPswPdfWorkbookAgent``. This module does not import or subclass a
+versioned PSW checker.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from audit.contracts import AuditResultItem as AuditResult
 from audit.engine.checkers.psw_pdf_evidence import PswPdfEvidenceMixin
 from audit.kinds import PpapDocumentType
 
-from .psw import LiAutoPswAgent
+from .psw_pdf_workbook import LiAutoPswPdfWorkbookAgent
 
 logger = logging.getLogger(__name__)
 
@@ -229,11 +230,11 @@ class _L17PswPdfHost:
 
 
 class LiAutoPswPdfAgent(PswPdfEvidenceMixin, _L17PswPdfHost):
-    """理想 L17 PDF。正式条款由本版本 ``LiAutoPswAgent`` 执行。"""
+    """理想 L17 PDF。正式条款由本版本的工作簿规则执行。"""
 
     DOC_TYPE = PpapDocumentType.PSW
-    TARGET_EXCEL_AGENT_CLASS = LiAutoPswAgent
-    FALLBACK_AGENT_RULES = LiAutoPswAgent.EXPECTED_RULE_CATEGORIES
+    TARGET_EXCEL_AGENT_CLASS = LiAutoPswPdfWorkbookAgent
+    FALLBACK_AGENT_RULES = LiAutoPswPdfWorkbookAgent.EXPECTED_RULE_CATEGORIES
 
 
 def _publish_same_version_clauses(pdf_cls: type[Any], excel_cls: type[Any]) -> None:
@@ -247,7 +248,7 @@ def _publish_same_version_clauses(pdf_cls: type[Any], excel_cls: type[Any]) -> N
     for name, description in discover_declared_rules(excel_cls):
 
         def marker(self: Any, *args: Any, **kwargs: Any) -> Any:
-            raise RuntimeError("l17_pdf_clause_runs_on_liauto_psw_agent")
+            raise RuntimeError("l17_pdf_clause_runs_on_pdf_workbook_agent")
 
         marker.__name__ = name
         marker.__qualname__ = f"{pdf_cls.__name__}.{name}"
@@ -255,4 +256,4 @@ def _publish_same_version_clauses(pdf_cls: type[Any], excel_cls: type[Any]) -> N
         setattr(pdf_cls, name, marker)
 
 
-_publish_same_version_clauses(LiAutoPswPdfAgent, LiAutoPswAgent)
+_publish_same_version_clauses(LiAutoPswPdfAgent, LiAutoPswPdfWorkbookAgent)
