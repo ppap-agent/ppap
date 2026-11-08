@@ -6,7 +6,7 @@ import {definiteCheckerRejection, type CheckerRevision} from './checker-contract
 import {candidateChanges, checkerEditorDirty, editableRules, nativeCheckerEditAdapter} from './checker-edit-contract'
 import {writeAuditAddress} from './routes'
 
-export function CheckerEditor({scope, revision, onSaved, disabled = false, saveDisabled = false, onBlockedChange}: {scope: string; revision: CheckerRevision; onSaved: (value: CheckerRevision) => void; disabled?: boolean; saveDisabled?: boolean; onBlockedChange?: (blocked: boolean) => void}) {
+export function CheckerEditor({scope, revision, onSaved, disabled = false, saveDisabled = false, onBlockedChange, onMutationChange}: {scope: string; revision: CheckerRevision; onSaved: (value: CheckerRevision) => void; disabled?: boolean; saveDisabled?: boolean; onBlockedChange?: (blocked: boolean) => void; onMutationChange?: (pending: boolean) => void}) {
   const id = useId(), locked = useRef(false), live = useRef(true)
   const [rules, setRules] = useState(() => {try {return editableRules(revision.files)} catch {return []}})
   const [templates, setTemplates] = useState(revision.files['templates.json'] || '[]'), [code, setCode] = useState(Object.fromEntries(Object.entries(revision.files).filter(([key]) => ['checker.py', 'resources.py'].includes(key))))
@@ -15,6 +15,8 @@ export function CheckerEditor({scope, revision, onSaved, disabled = false, saveD
   const dirty = checkerEditorDirty(revision.files, rules, templates, code)
   useEffect(() => {onBlockedChange?.(dirty || busy || Boolean(pending))}, [dirty, busy, pending, onBlockedChange])
   useEffect(() => () => onBlockedChange?.(false), [onBlockedChange])
+  useEffect(() => {onMutationChange?.(busy || Boolean(pending))}, [busy, pending, onMutationChange])
+  useEffect(() => () => onMutationChange?.(false), [onMutationChange])
   function remember(operation: string | null, expectedOperation?: string) {
     const url = new URL(location.href)
     if (!operation && (url.searchParams.get('checkerEditScope') !== scope || url.searchParams.get('checkerEditBase') !== revision.id || url.searchParams.get('checkerEditOperation') !== expectedOperation)) return
@@ -26,7 +28,7 @@ export function CheckerEditor({scope, revision, onSaved, disabled = false, saveD
     if (locked.current || pending || disabled || saveDisabled) return
     let files: Record<string, string>
     try {files = candidateChanges(revision.files, rules, templates, code)} catch (cause) {setError(cause instanceof Error ? cause.message : '修改内容需要核对。'); return}
-    locked.current = true; setBusy(true); onBlockedChange?.(true); setError('')
+    locked.current = true; setBusy(true); onBlockedChange?.(true); onMutationChange?.(true); setError('')
     const operation = crypto.randomUUID(); setPending(operation); remember(operation)
     try {
       const value = await nativeCheckerEditAdapter.save(revision.id, {operation_id: operation, files})

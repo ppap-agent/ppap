@@ -27,10 +27,12 @@ export function CheckerRelease({scope, legacyScope, suiteKey, revisionId, optimi
   const [selection, setSelection] = useState(() => readCheckerWorkspace(new URL(location.href), scope, revisionId, legacyScope))
   const [pending, setPending] = useState(selection.pending), [receipt, setReceipt] = useState<AdoptionReceipt | null>(null)
   const {revisionId: selected, purpose, explicit: explicitSelection} = selection
-  const [upgradeLocked, setUpgradeLocked] = useState(false), [editorBlocked, setEditorBlocked] = useState(false)
+  const [upgradeLocked, setUpgradeLocked] = useState(false), [editorBlocked, setEditorBlocked] = useState(false), [editorMutating, setEditorMutating] = useState(false)
   const mutationBusy = busy || upgradeLocked || selection.legacyBlocked
+  // A held authoritative read may be retried with dirty text, but never over a child mutation.
+  const recoveryBlocked = mutationBusy || editorMutating || operationRunning || editorBlocked && !writesHeld
   useEffect(() => {live.current = true; return () => {live.current = false}}, [])
-  useEffect(() => {onBusyChange?.(mutationBusy || Boolean(pending) || editorBlocked || !revision && !error)}, [onBusyChange, mutationBusy, pending, editorBlocked, revision, error])
+  useEffect(() => {onBusyChange?.(writesHeld || mutationBusy || Boolean(pending) || editorBlocked || !revision && !error)}, [onBusyChange, writesHeld, mutationBusy, pending, editorBlocked, revision, error])
   useEffect(() => () => onBusyChange?.(false), [onBusyChange])
   const select = useCallback((next: CheckerSelection) => {
     writeAuditAddress(checkerSelectionAddress(new URL(location.href), scope, next))
@@ -40,17 +42,17 @@ export function CheckerRelease({scope, legacyScope, suiteKey, revisionId, optimi
     if (!optimization || !revision) return
     // Pending edit identity exists before the editor mounts and must fence incoming optimizer receipts.
     const saved = readCheckerWorkspace(new URL(location.href), scope, selected, legacyScope)
-    const blocked = mutationBusy || Boolean(pending || saved.editPending) || editorBlocked || saved.legacy || saved.legacyBlocked
+    const blocked = writesHeld || mutationBusy || Boolean(pending || saved.editPending) || editorBlocked || saved.legacy || saved.legacyBlocked
     const next = optimizationSelection(selection, optimization, blocked)
     if (next) select(next)
-  }, [optimization?.operationId, optimization?.revisionId, optimization?.explicit, selection, mutationBusy, pending, editorBlocked, revision, scope, selected, legacyScope, select])
+  }, [optimization?.operationId, optimization?.revisionId, optimization?.explicit, selection, writesHeld, mutationBusy, pending, editorBlocked, revision, scope, selected, legacyScope, select])
   function keepPublish(input: AdoptChecker | null) {writeAuditAddress(checkerPublicationAddress(new URL(location.href), scope, input))}
-  const read = useCallback(async () => {
+  const read = useCallback(async (keepSelected = false) => {
     let next = checkedWorkspaceRevision(await adapter.revision(selected), suiteKey, selected)
     const current = await adapter.active(next.suite_key)
     if (current.suite_key !== next.suite_key) throw new Error('企业正在使用的检查与当前版本不一致。')
     // A historical report locates the Suite; it must not silently replace newer enterprise edits.
-    if (preferCurrent && !explicitSelection && current.current_revision_id && current.current_revision_id !== next.id) {
+    if (!keepSelected && preferCurrent && !explicitSelection && current.current_revision_id && current.current_revision_id !== next.id) {
       next = checkedWorkspaceRevision(await adapter.revision(current.current_revision_id), suiteKey, current.current_revision_id)
     }
     return {next, current}
@@ -105,12 +107,12 @@ export function CheckerRelease({scope, legacyScope, suiteKey, revisionId, optimi
   const firstAdoption = active?.selection_mode === 'candidate_only'
   const needsAdoption = !adopted || unverified && !active?.force_unverified
   async function recover() {
-    if (locked.current) return
+    if (locked.current || recoveryBlocked) return
     const token = ++generation.current
     const requestedScope = scope, requestedSuite = suiteKey
     locked.current = true; setBusy(true); setWriteHold(true); setError('')
     try {
-      const {next, current} = await read()
+      const {next, current} = await read(editorBlocked)
       if (generation.current !== token || !live.current) return
       commitLoaded(next, current, requestedScope, requestedSuite)
       if (pending) {
@@ -166,7 +168,7 @@ export function CheckerRelease({scope, legacyScope, suiteKey, revisionId, optimi
       {active && <CheckerUpgrade key={active.suite_key} scope={scope} active={active} revision={revision} disabled={busy || Boolean(pending) || verificationBusy || editorBlocked || writesHeld} editingBlocked={editorBlocked} canVerify={Boolean(onVerify)} onLockChange={setUpgradeLocked} onRefresh={() => {setActive(null); void recover()}} onCandidate={(value, runTests) => {select({...selection, revisionId: value.id, purpose: 'publish', explicit: true}); onRevision?.(value.id); onUpgradeResult?.(runTests); if (runTests) onVerify?.(value.id)}}/>}
       {unverified && <div className="space-y-2 text-sm"><p className="font-medium text-warning">需要重新验证</p>{revision.validation.reasons.map((reason, index) => <p key={index}>{checkerReason(reason)}</p>)}</div>}
       <details className="text-sm"><summary className="cursor-pointer font-medium">查看修改摘要与高级内容</summary><div className="mt-3 space-y-3"><p>修改文件：{Object.keys(revision.files).join('、') || '未提供修改文件'}</p><p className="sm:hidden text-muted-foreground">手机上仅展示摘要，可在电脑查看完整规则和代码。</p><div className="hidden sm:block">{revision.diff.map(change => <details key={change.path}><summary className="cursor-pointer break-all">{change.path}</summary><p className="mt-2">修改前</p><pre tabIndex={0} className="max-h-60 overflow-auto rounded border p-3 text-xs">{change.before ?? '新增文件'}</pre><p className="mt-2">修改后</p><pre tabIndex={0} className="max-h-60 overflow-auto rounded border p-3 text-xs">{change.after ?? '已移除'}</pre></details>)}</div></div></details>
-      <CheckerEditor key={revision.id} scope={scope} revision={revision} onBlockedChange={setEditorBlocked} disabled={mutationBusy || Boolean(pending) || operationRunning} saveDisabled={writesHeld} onSaved={value => select({...selection, revisionId: value.id, purpose: 'publish', explicit: true})}/>{onVerify && <Button variant="outline" disabled={mutationBusy || editorBlocked || Boolean(pending) || verificationBusy || writesHeld} onClick={() => onVerify(revision.id)}>重新运行验证样本</Button>}
+      <CheckerEditor key={revision.id} scope={scope} revision={revision} onBlockedChange={setEditorBlocked} onMutationChange={setEditorMutating} disabled={mutationBusy || Boolean(pending) || operationRunning} saveDisabled={writesHeld} onSaved={value => select({...selection, revisionId: value.id, purpose: 'publish', explicit: true})}/>{onVerify && <Button variant="outline" disabled={mutationBusy || editorBlocked || Boolean(pending) || verificationBusy || writesHeld} onClick={() => onVerify(revision.id)}>重新运行验证样本</Button>}
       {receipt && <Alert><AlertTitle>发布操作已完成</AlertTitle><AlertDescription>当次采用已保存。{active && active.revision > receipt.revision ? '企业当前采用版本可能已再次变更，请核对版本记录。' : '本企业之后的新审核使用此版本。'} 已有报告不变。</AlertDescription></Alert>}
       {adopted && onReaudit && <Button disabled={mutationBusy || editorBlocked || Boolean(pending) || writesHeld} onClick={onReaudit}>用新版本重审这份文件</Button>}
       {needsAdoption && !confirm && <Button disabled={mutationBusy || editorBlocked || Boolean(pending) || writesHeld || !active || unadoptedRelated.length > 0} onClick={() => {setConfirm(true); setAcknowledged(false)}}>{adopted ? '核对并继续使用未验证版本' : firstAdoption ? '采用此版本' : purpose === 'publish' ? '发布此修改' : '回滚到此版本'}</Button>}
@@ -178,6 +180,6 @@ export function CheckerRelease({scope, legacyScope, suiteKey, revisionId, optimi
       </div>}
       <details className="text-sm"><summary className="cursor-pointer font-medium">版本记录与受影响审核</summary><div className="mt-3 space-y-3"><p>该版本用于 {revision.round_count} 轮你有权限查看的审核；回滚不会改写它们。</p>{revision.rounds.map(round => <a key={round.id} className="block underline" href={`/audit?round=${encodeURIComponent(round.id)}`}>{round.created_at ? new Date(round.created_at).toLocaleString() : '查看审核'}</a>)}{active?.history.map(item => <div key={item.operation_id} className="flex flex-wrap items-center justify-between gap-2 border-t pt-2"><p>采用记录 {item.revision}{item.published_at ? ` · ${new Date(item.published_at).toLocaleString()}` : ''}{item.published_by_name ? ` · 发布人 ${item.published_by_name}` : ''}{item.force_unverified ? ' · 需要重新验证' : ''}</p><Button variant="outline" size="sm" disabled={mutationBusy || editorBlocked || Boolean(pending)} onClick={() => {select({...selection, revisionId: item.revision_id, purpose: 'rollback', explicit: true})}}>查看此版本／回滚</Button></div>)}</div></details>
     </>}
-    <Button variant="outline" size="sm" disabled={mutationBusy || editorBlocked} onClick={() => void recover()}>{pending ? '读取原发布操作' : '读取最新版本'}</Button>
+    <Button variant="outline" size="sm" disabled={recoveryBlocked} onClick={() => void recover()}>{pending ? '读取原发布操作' : '读取最新版本'}</Button>
   </section>
 }
