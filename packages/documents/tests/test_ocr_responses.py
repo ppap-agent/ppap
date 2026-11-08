@@ -1,6 +1,7 @@
 """OCR vision requests use the Responses API contract."""
 
 import asyncio
+import hashlib
 from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import AsyncMock, patch
@@ -62,6 +63,87 @@ class OCRResponsesTests(TestCase):
         self.assertEqual(error.exception.code, "responses_incomplete")
         self.assertEqual(len(calls), 1)
         sdk.close.assert_awaited_once()
+
+    def test_incomplete_diagnostics_classify_reason_without_provider_text(self):
+        private = "partial-private-ocr-text"
+        raw_id = "resp_private_identifier"
+        leaked_reason = "provider-said-" + private
+        provider_model = "provider-" + private
+        calls = []
+        requested = {"name": "deepseek/deepseek-v4.1-flash-1017"}
+
+        async def create(**kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                return SimpleNamespace(
+                    status="incomplete",
+                    output_text=private,
+                    id=raw_id,
+                    model=provider_model,
+                    incomplete_details=SimpleNamespace(reason="max_output_tokens", message=private),
+                    usage=SimpleNamespace(output_tokens=4096, output_tokens_details=SimpleNamespace(reasoning_tokens=4000)),
+                )
+            if len(calls) == 2:
+                return SimpleNamespace(
+                    status="incomplete",
+                    output_text=private,
+                    id=raw_id,
+                    model=provider_model,
+                    incomplete_details={"reason": leaked_reason, "message": private},
+                    usage={"output_tokens": True, "output_tokens_details": {"reasoning_tokens": -1}},
+                )
+            if len(calls) == 3:
+                return SimpleNamespace(status="incomplete", output_text=private, id="", model=provider_model, incomplete_details=SimpleNamespace(reason="content_filter"))
+            return SimpleNamespace(status="incomplete", output_text=private, id=raw_id, model=requested["name"], incomplete_details=SimpleNamespace(reason="max_output_tokens"))
+
+        sdk = SimpleNamespace(responses=SimpleNamespace(create=create), close=AsyncMock())
+        with (
+            patch.object(llm_service, "_get_llm_client", return_value=sdk),
+            patch.object(llm_service, "_get_llm_model_name", side_effect=lambda: requested["name"]),
+            self.assertLogs("documents.ocr.client", level="WARNING") as logs,
+        ):
+            with self.assertRaises(llm_service.ResponsesEvidenceError) as budget:
+                asyncio.run(llm_service.call_llm_async(b"\x89PNG", "inspect", response_schema=SCHEMA))
+            with self.assertRaises(llm_service.ResponsesEvidenceError) as filtered:
+                asyncio.run(llm_service.call_llm_async(b"\x89PNG", "inspect", response_schema=SCHEMA))
+            with self.assertRaises(llm_service.ResponsesEvidenceError) as unnamed:
+                asyncio.run(llm_service.call_llm_async(b"\x89PNG", "inspect", response_schema=SCHEMA, max_output_tokens=4096))
+            requested["name"] = "bad model\n" + private
+            with self.assertRaises(llm_service.ResponsesEvidenceError) as unsafe:
+                asyncio.run(llm_service.call_llm_async(b"\x89PNG", "inspect", response_schema=SCHEMA))
+
+        fingerprint = hashlib.sha256(raw_id.encode("utf-8")).hexdigest()[:12]
+        deployment = "deepseek/deepseek-v4.1-flash-1017"
+        message = str(budget.exception)
+        self.assertEqual(budget.exception.code, "responses_incomplete")
+        self.assertEqual(
+            message,
+            f"Responses status is incomplete; reason=max_output_tokens; output_tokens=4096; reasoning_tokens=4000; max_output_tokens=4096; model={deployment}; response_id_sha256={fingerprint}",
+        )
+        freeform = str(filtered.exception)
+        self.assertEqual(filtered.exception.code, "responses_incomplete")
+        self.assertIn("Responses status is incomplete", freeform)
+        self.assertIn("reason=unknown", freeform)
+        self.assertIn("output_tokens=unknown", freeform)
+        self.assertIn("reasoning_tokens=unknown", freeform)
+        self.assertIn(f"model={deployment}", freeform)
+        self.assertIn(f"response_id_sha256={fingerprint}", freeform)
+        self.assertNotIn(leaked_reason, freeform)
+        content_filter = str(unnamed.exception)
+        self.assertIn("reason=content_filter", content_filter)
+        self.assertIn(f"model={deployment}", content_filter)
+        self.assertIn("response_id_sha256=absent", content_filter)
+        self.assertIn("max_output_tokens=4096", content_filter)
+        redacted = str(unsafe.exception)
+        self.assertIn("model=redacted", redacted)
+        self.assertNotIn(deployment, redacted)
+        combined = "\n".join((message, freeform, content_filter, redacted, *logs.output))
+        self.assertNotIn(private, combined)
+        self.assertNotIn(raw_id, combined)
+        self.assertNotIn(provider_model, combined)
+        self.assertEqual(len(calls), 4)
+        self.assertTrue(all(call["max_output_tokens"] == 4096 and call["store"] is False for call in calls))
+        self.assertEqual(sdk.close.await_count, 4)
 
     def test_request_timeout_is_twenty_seconds_and_never_retries(self):
         import httpx

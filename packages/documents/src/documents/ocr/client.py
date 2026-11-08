@@ -1,6 +1,7 @@
 """One Responses client for local multimodal document evidence."""
 
 import base64
+import hashlib
 import json
 import logging
 import math
@@ -118,6 +119,58 @@ def _get_llm_model_name() -> str:
     return ocr_model_name()
 
 
+_INCOMPLETE_REASONS = frozenset({"max_output_tokens", "content_filter"})
+_MODEL_NAME = re.compile(r"[A-Za-z0-9._:/-]{1,80}")
+
+
+def _diagnostic_token(value: Any) -> str:
+    if type(value) is int and 0 <= value <= 1_000_000:
+        return str(value)
+    return "unknown"
+
+
+def _diagnostic_model(requested: Any) -> str:
+    # The provider's model field is untrusted and may repeat private text.
+    # Report only the deployment this process requested.
+    if isinstance(requested, str) and _MODEL_NAME.fullmatch(requested):
+        return requested
+    return "redacted"
+
+
+def _field(value: Any, name: str) -> Any:
+    if isinstance(value, dict):
+        return value.get(name)
+    return getattr(value, name, None)
+
+
+def _diagnostic_reason(response: Any) -> str:
+    reason = _field(_field(response, "incomplete_details"), "reason")
+    candidate = getattr(reason, "value", reason)
+    if isinstance(candidate, str) and candidate in _INCOMPLETE_REASONS:
+        return candidate
+    return "unknown"
+
+
+def _response_id_fingerprint(response: Any) -> str:
+    raw = _field(response, "id")
+    if isinstance(raw, str) and raw:
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+    return "absent"
+
+
+def _incomplete_message(response: Any, *, status: str, max_output_tokens: int, model: Any) -> str:
+    """Redacted incomplete status. Provider text and the raw response id stay out."""
+    usage = _field(response, "usage")
+    output_tokens = _field(usage, "output_tokens")
+    reasoning_tokens = _field(_field(usage, "output_tokens_details"), "reasoning_tokens")
+    return (
+        f"Responses status is {status}; reason={_diagnostic_reason(response)}; "
+        f"output_tokens={_diagnostic_token(output_tokens)}; reasoning_tokens={_diagnostic_token(reasoning_tokens)}; "
+        f"max_output_tokens={max_output_tokens}; model={_diagnostic_model(model)}; "
+        f"response_id_sha256={_response_id_fingerprint(response)}"
+    )
+
+
 def _prepare_messages(image_input: bytes | list[bytes], text_prompt: str) -> list[dict[str, Any]]:
     """Use the original-image PNG bytes provided by the evidence reader."""
     images = [image_input] if isinstance(image_input, bytes) else image_input
@@ -154,7 +207,10 @@ async def call_llm_async(
         status = getattr(response, "status", None)
         if status != "completed":
             safe_status = status if isinstance(status, str) and status in {"queued", "in_progress", "incomplete", "failed", "cancelled"} else "unknown"
-            raise ResponsesEvidenceError("responses_incomplete", f"Responses status is {safe_status}")
+            raise ResponsesEvidenceError(
+                "responses_incomplete",
+                _incomplete_message(response, status=safe_status, max_output_tokens=max_output_tokens, model=kwargs.get("model")),
+            )
         content_text = getattr(response, "output_text", None)
         if not isinstance(content_text, str) or not content_text.strip():
             raise ResponsesEvidenceError("responses_empty_text", "Responses completed without nonempty text")
@@ -186,7 +242,10 @@ async def call_llm_async(
             raise ResponsesEvidenceError("responses_non_object", "Responses JSON root is not an object")
         return parsed
     except ResponsesEvidenceError as exc:
-        logger.warning("Responses evidence rejected: code=%s", exc.code)
+        if exc.code == "responses_incomplete":
+            logger.warning("Responses evidence rejected: code=%s detail=%s", exc.code, exc)
+        else:
+            logger.warning("Responses evidence rejected: code=%s", exc.code)
         raise
 
 
