@@ -542,13 +542,19 @@ def _prompt(
     layout: PdfLayout | None = None,
     starting_point: str = "",
     development_feedback: str | None = None,
+    selected_source: bool = False,
 ) -> str:
     guide = GUIDE.read_text(encoding="utf-8")
+    rule_heading = (
+        "本次完整规则输入（rules 与 appendix 是本次生效规则；只修订 selected/ 中的已选 Checker，不要改用其他版本）："
+        if selected_source
+        else "本次完整规则输入（rules 与 appendix 是本次生效规则，预置来源只用于选择参考实现）："
+    )
     parts = [
         guide,
         starting_point,
         "",
-        "本次完整规则输入（rules 与 appendix 是本次生效规则，预置来源只用于选择参考实现）：",
+        rule_heading,
         _encoded(rule.model_dump(mode="json")).decode(),
         "",
         "本次文件：",
@@ -779,6 +785,19 @@ class _TargetUnread(CheckerTrialError):
     """The target PDF has no usable text grid. Do not start or continue the checker model."""
 
 
+_SELECTED_SOURCE_NAMES = frozenset({"checker.py", "rules.json", "resources.py", "appendix.json", "templates.json", "tests.json"})
+
+
+def _selected_checker_bytes(source_files: Mapping[str, str] | None) -> dict[str, str]:
+    if not source_files:
+        return {}
+    if not isinstance(source_files, Mapping) or "checker.py" not in source_files or not set(source_files) <= _SELECTED_SOURCE_NAMES:
+        raise CheckerProgramError("已选 Checker 源文件不完整")
+    if any(not isinstance(name, str) or not isinstance(body, str) or not body.strip() for name, body in source_files.items()):
+        raise CheckerProgramError("已选 Checker 源文件不完整")
+    return dict(source_files)
+
+
 def develop_checker(
     *,
     audit_file: AuditInput,
@@ -790,6 +809,7 @@ def develop_checker(
     work: Path,
     deadline: float,
     prior_files: dict[str, str] | None = None,
+    source_files: Mapping[str, str] | None = None,
     observations: list[str] | None = None,
     development_feedback: str | None = None,
     reasoning_effort: str = "medium",
@@ -831,11 +851,17 @@ def develop_checker(
         )
         return artifact
 
-    from audit.checkers.v4.uaes.native import UaesSourceAgent
+    selected = _selected_checker_bytes(source_files)
+    editing_selected = prior_files is not None or "checker.py" in selected
+    if editing_selected:
+        native = False
+    else:
+        from audit.checkers.v4.uaes.native import UaesSourceAgent
 
-    reference = task_reference(audit_file, rule)
+        reference = task_reference(audit_file, rule)
+        native = reference is not None and issubclass(reference, UaesSourceAgent)
     try:
-        layout = _prepare_pdf_layout(audit_file, group_context, work, native=reference is not None and issubclass(reference, UaesSourceAgent))
+        layout = _prepare_pdf_layout(audit_file, group_context, work, native=native)
     except _TargetUnread as exc:
         encoded = _validate_source({"checker.py": _unable_checker(str(exc))})
         run_program(encoded, work / "unable-program", audit_file, rule, group_context)
@@ -858,9 +884,17 @@ def develop_checker(
         if latest_files is not None:
             for name, source in latest_files.items():
                 (stage / f"current-{name}").write_text(source, encoding="utf-8")
-        starting_point = write_starting_point(stage, audit_file, rule)
-        if latest_files is not None:
-            starting_point += "\n先读取 current-checker.py 和 current-resources.py（若存在）。这是最近候选，按下面诊断继续修改；它尚未固定。"
+        if selected:
+            chosen = stage / "selected"
+            chosen.mkdir()
+            for name, source in selected.items():
+                (chosen / name).write_text(source, encoding="utf-8")
+        if editing_selected:
+            starting_point = "修订这份已选 Checker。先读取 selected/（若存在）和 current-*.py（若存在）。不要改用其他版本的实现。"
+        else:
+            starting_point = write_starting_point(stage, audit_file, rule)
+            if latest_files is not None:
+                starting_point += "\n先读取 current-checker.py 和 current-resources.py（若存在）。这是最近候选，按下面诊断继续修改；它尚未固定。"
         if layout is not None:
             (stage / "template-pdf-spec.py").write_text(layout.snippet, encoding="utf-8")
         try:
@@ -876,6 +910,7 @@ def develop_checker(
                     layout=layout,
                     starting_point=starting_point,
                     development_feedback=development_feedback,
+                    selected_source=editing_selected,
                 ),
                 CheckerDraft,
                 deadline,
@@ -905,7 +940,8 @@ def develop_checker(
             selection = None
         previous_files = dict(draft.files)
         try:
-            if draft.files.get("checker.py") == (stage / "template-checker.py").read_text(encoding="utf-8"):
+            template_checker = stage / "template-checker.py"
+            if template_checker.is_file() and draft.files.get("checker.py") == template_checker.read_text(encoding="utf-8"):
                 raise CheckerTrialError("模板尚未实现本次条款，不能固定")
             encoded = _validate_source(draft.files)
             results = run_program(

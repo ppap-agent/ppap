@@ -420,13 +420,16 @@ def test_removed_optional_module_does_not_reappear_from_base_overlay(auth_store_
     result = development_handler(f.worker, ControlledRuntime())(claim(f), ExecutionContext())
     assert result["state"] == "completed" and result["report"]["validation"]["verified"]
     candidate = SuiteStore(f.store.settings, f.store.objects, role="migrator").resolve_suite(result["candidate_revision_id"], f.alice.tenant_id)
-    assert candidate.revision.base_revision_id == f.suite.id
-    assert candidate.revision.overrides["resources.py"] is None
-    assert "resources.py" not in candidate.files and "templates.json" in candidate.files
+    assert candidate.revision.base_revision_id is None
+    assert "resources.py" not in candidate.revision.overrides
+    assert "resources.py" not in candidate.files
+    assert candidate.files["templates.json"] == b'[{"kind":"structure","columns":["A1"]}]'
+    assert candidate.revision.overrides["templates.json"]
     original = SuiteStore(f.store.settings, f.store.objects, role="migrator").resolve_suite(f.suite.id, f.alice.tenant_id)
     assert original.files["resources.py"] == b"VALUE = 1"
+    assert original.files["checker.py"] == PROGRAM
     detail = SuiteReleaseStore(f.store.settings, f.store.objects).detail(f.alice, candidate.revision.id)
-    assert {"path": "resources.py", "before": "VALUE = 1", "after": ""} in detail["diff"]
+    assert detail["base_revision_id"] is None and "resources.py" not in detail["files"]
     assert detail["validation"]["verified"]
 
 
@@ -991,12 +994,84 @@ def test_native_baseline_then_generated_factory_keeps_its_own_binding_and_tombst
     generated_binding = {clause: "checker:create_audit" for clause in ("R1", "R2")}
     assert json.loads(saved["files"]["rules.json"])["checker_binding"] == generated_binding
     assert "resources.py" not in saved["files"]
+    assert saved["base_revision_id"] is None
     response = f.clients[0].post(f"/suite-revisions/{saved['id']}/optimizations", json=command(f, consume_model=False))
     assert response.status_code == 200, response.text
     second = development_handler(f.worker, runtime)(claim(f), ExecutionContext())
     assert second["state"] == "completed", second
     assert guest.fixed_manifests[-1]["snapshot"]["targets"][0]["binding"]["entrypoints"] == generated_binding
     assert len(guest.generation_manifests) == 1
+
+
+def test_generated_candidate_keeps_an_independent_factory_binding_and_optimizes_again(auth_store_factory, monkeypatch):
+    from urllib.parse import quote
+
+    from audit.checker_core import checker_digest
+
+    f, candidate = direct_suite_fixture(auth_store_factory, monkeypatch)
+    suites = SuiteStore(f.store.settings, f.store.objects, role="migrator")
+    source_before = suites.resolve_suite(candidate["id"], f.alice.tenant_id)
+
+    def snapshot(sql):
+        with f.store._conn() as conn:
+            return conn.execute(sql).fetchall()
+
+    labels, rounds = (
+        snapshot("SELECT id::text, expected_status, revision FROM product.checker_feedback ORDER BY id"),
+        snapshot("SELECT id::text, execution, result_attempt FROM product.audit_rounds ORDER BY id"),
+    )
+    response = f.clients[0].post(f"/suite-revisions/{candidate['id']}/optimizations", json=command(f, consume_model=True))
+    assert response.status_code == 200, response.text
+    runtime, guest = actual_core_runtime(f, monkeypatch, generated=GENERATED_FACTORY)
+    receipt = development_handler(f.worker, runtime)(claim(f), ExecutionContext())
+    assert receipt["state"] == "completed", receipt
+    generated_binding = {clause: "checker:create_audit" for clause in ("R1", "R2")}
+    saved = SuiteReleaseStore(f.store.settings, f.store.objects).detail(f.alice, receipt["candidate_revision_id"])
+    assert json.loads(saved["files"]["rules.json"])["checker_binding"] == generated_binding
+    assert saved["files"]["checker.py"] == GENERATED_FACTORY.decode()
+    assert "resources.py" not in saved["files"]
+    assert saved["base_revision_id"] is None
+    assert receipt["report"]["validation"]["program_digest"] == checker_digest({"checker.py": GENERATED_FACTORY})
+    assert [(row["clause_id"], row["status"]) for row in receipt["report"]["results"]] == [("R1", "NG"), ("R2", "PASS")]
+    assert receipt["report"]["validation"]["verified"] is False
+    source_after = suites.resolve_suite(candidate["id"], f.alice.tenant_id)
+    assert source_after.files == source_before.files
+    assert source_after.revision.resolved_digest == source_before.revision.resolved_digest
+    assert suites.resolve_suite(f.suite.id, f.alice.tenant_id).files["checker.py"] == DIRECT_PROGRAM
+    response = f.clients[0].post(f"/suite-revisions/{saved['id']}/optimizations", json=command(f, consume_model=False))
+    assert response.status_code == 200, response.text
+    second = development_handler(f.worker, runtime)(claim(f), ExecutionContext())
+    assert second["state"] == "completed", second
+    assert guest.fixed_manifests[-1]["snapshot"]["targets"][0]["binding"]["entrypoints"] == generated_binding
+    assert len(guest.generation_manifests) == 1
+    again = SuiteReleaseStore(f.store.settings, f.store.objects).detail(f.alice, second["candidate_revision_id"])
+    assert json.loads(again["files"]["rules.json"])["checker_binding"] == generated_binding
+    assert again["base_revision_id"] is None
+    assert again["files"]["checker.py"] == GENERATED_FACTORY.decode()
+    with f.store._conn() as conn:
+        assert conn.execute("SELECT count(*) FROM product.tenant_suite_heads WHERE tenant_id=%s AND suite_key='threshold'", (f.alice.tenant_id,)).fetchone()[0] == 0
+    unconfirmed = f.clients[0].put(
+        "/suites/" + quote("threshold", safe="") + "/active",
+        json={"revision_id": saved["id"], "expected_revision": 0, "operation_id": str(uuid4()), "force_unverified": False},
+    )
+    assert unconfirmed.status_code == 409 and unconfirmed.json()["error"] == "suite_confirmation_required"
+    adopted = f.clients[0].put(
+        "/suites/" + quote("threshold", safe="") + "/active",
+        json={"revision_id": saved["id"], "expected_revision": 0, "operation_id": str(uuid4()), "force_unverified": True},
+    )
+    assert adopted.status_code == 200, adopted.text
+    active = suites.resolve_suite(saved["id"], f.alice.tenant_id)
+    assert json.loads(active.files["rules.json"])["checker_binding"] == generated_binding
+    assert active.files["checker.py"] == GENERATED_FACTORY
+    rolled = f.clients[0].put(
+        "/suites/" + quote("threshold", safe="") + "/active",
+        json={"revision_id": candidate["id"], "expected_revision": 1, "operation_id": str(uuid4()), "force_unverified": True},
+    )
+    assert rolled.status_code == 200, rolled.text
+    restored = suites.resolve_suite(candidate["id"], f.alice.tenant_id)
+    assert restored.files == source_before.files
+    assert snapshot("SELECT id::text, expected_status, revision FROM product.checker_feedback ORDER BY id") == labels
+    assert snapshot("SELECT id::text, execution, result_attempt FROM product.audit_rounds ORDER BY id") == rounds
 
 
 def test_fixed_rule_text_change_cannot_reuse_old_labels_as_verified(auth_store_factory, monkeypatch):

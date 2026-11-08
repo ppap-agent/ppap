@@ -110,6 +110,7 @@ def materialize_request(development, row):
         specs[sample["id"]] = spec
     target_case_id = next(group[0]["id"] for group in groups if any(item["id"] == frozen["target_sample_id"] for item in group))
     target_sample = next(item for item in samples if item.case_id == target_case_id)
+    _require_selected_source(suite)
     current_training_cases = {sample.case_id for sample in samples if not sample.holdout and sample.expectations_current}
     current_training = {item["id"] for group in groups if group[0]["id"] in current_training_cases for item in group}
     feedback = "\n".join(sample["rationale"] for sample in frozen["samples"] if sample["id"] in current_training and sample["id"] in frozen["selected_feedback_ids"])
@@ -136,12 +137,32 @@ def materialize_request(development, row):
         related_revision_ids=tuple(frozen["related_revision_ids"].values()),
         library_revision=frozen["library_revision"],
         related_suite_digests=frozen["related_suite_digests"],
+        source_files=dict(suite.files),
     )
     # Reject any overlap before the paid dispatch boundary, not inside the guest.
     from agent.checker_development import _validate
 
     _validate(request)
     return request, specs[target_sample.case_id]
+
+
+def _require_selected_source(suite) -> None:
+    """The selected revision is the only source. Missing or unbound bytes stop before dispatch."""
+    from product.suites import REQUIRED_PATHS, SUITE_PATHS
+
+    files = suite.files
+    if not REQUIRED_PATHS <= files.keys() or not set(files) <= SUITE_PATHS:
+        raise DeepError("checker_input_invalid")
+    try:
+        rules = json.loads(files["rules.json"])
+        decoded = [body.decode("utf-8") for body in files.values()]
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError):
+        raise DeepError("checker_input_invalid") from None
+    if not decoded or not isinstance(rules, dict) or not isinstance(rules.get("rules"), list):
+        raise DeepError("checker_input_invalid")
+    binding = rules.get("checker_binding")
+    if not isinstance(binding, dict) or not binding:
+        raise DeepError("checker_input_invalid")
 
 
 def development_handler(store, runtime):

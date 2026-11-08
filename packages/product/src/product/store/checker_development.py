@@ -776,20 +776,29 @@ class CheckerDevelopmentStore:
                 state, failure = "completed", None
             # Preserve an actual fixed artifact even if a later trial failed. It is
             # never adopted, and a failed/unknown run cannot receive verified proof.
+            # The candidate owns every file. It does not inherit the source revision.
             if outcome.artifact is not None and not row["cancel_requested"]:
                 _lock(conn, principal.tenant_id)
-                base = self.suites.resolve_suite(str(row["suite_revision_id"]), principal.tenant_id, conn=conn)
-                candidate = self.suites.create_revision(
-                    tenant_id=principal.tenant_id,
-                    suite_key=base.revision.suite_key,
-                    files=_candidate_files(base, outcome.artifact),
-                    deleted_paths=_deleted_program_paths(base, outcome.artifact),
-                    created_by=principal.user_id,
-                    base_revision_id=base.revision.id,
-                    related_suite_keys=base.revision.related_suite_keys,
-                    conn=conn,
-                )
-                if outcome.validation is not None:
+                try:
+                    base = self.suites.resolve_suite(str(row["suite_revision_id"]), principal.tenant_id, conn=conn)
+                    if str(base.revision.id) != str(row["suite_revision_id"]) or base.revision.resolved_digest != row["frozen"]["suite_digest"]:
+                        raise ValueError("checker_source_mismatch")
+                    standalone_files = _standalone_candidate_files(base, outcome.artifact)
+                    candidate = self.suites.create_revision(
+                        tenant_id=principal.tenant_id,
+                        suite_key=base.revision.suite_key,
+                        files=standalone_files,
+                        deleted_paths=(),
+                        created_by=principal.user_id,
+                        base_revision_id=None,
+                        related_suite_keys=base.revision.related_suite_keys,
+                        conn=conn,
+                    )
+                except (ValueError, KeyError) as exc:
+                    candidate = None
+                    if state == "completed":
+                        state, failure = "failed", str(exc) if str(exc) in _STANDALONE_REFUSALS else "checker_source_incomplete"
+                if candidate is not None and outcome.validation is not None:
                     _lock(conn, principal.tenant_id)
                     proof = outcome.validation.model_copy(update={"suite_revision_id": candidate.id, "suite_digest": candidate.resolved_digest})
                     if any(
@@ -807,6 +816,8 @@ class CheckerDevelopmentStore:
                         proof = proof.model_copy(update={"reasons": (*proof.reasons, "oracle_changed")})
                     if state != "completed":
                         proof = proof.model_copy(update={"reasons": (*proof.reasons, "development_incomplete")})
+                    if _saved_binding_unverified(standalone_files, outcome.artifact):
+                        proof = proof.model_copy(update={"reasons": tuple(dict.fromkeys((*proof.reasons, "oracle_clause_coverage_incomplete")))})
                     # Keep a proof of the frozen dependencies. If adoption changed
                     # during execution this proof is stored but exposed as stale.
                     _lock(conn, principal.tenant_id)
@@ -868,3 +879,89 @@ def _deleted_program_paths(base, artifact):
     # Artifact.files is the complete executed program, not a sparse edit. An
     # omitted optional module must not reappear through the Suite's base overlay.
     return ("resources.py",) if "resources.py" in base.files and "resources.py" not in artifact.files else ()
+
+
+_STANDALONE_REFUSALS = frozenset(
+    {
+        "checker_source_mismatch",
+        "checker_source_incomplete",
+        "checker_binding_required",
+        "checker_binding_expanded",
+        "checker_artifact_unavailable",
+        "checker_artifact_identity_mismatch",
+    }
+)
+_PROGRAM_PATHS = frozenset({"checker.py", "resources.py"})
+
+
+def _standalone_factory_binding(rules: dict, binding: dict, clauses: set[str]) -> dict[str, str]:
+    """Factory entrypoints for the frozen binding. Partial coverage does not gain clauses."""
+    if set(binding) == clauses:
+        # Same clause map _candidate_files writes for a generated factory.
+        return {item["id"]: "checker:create_audit" for item in rules["rules"]}
+    return {clause: "checker:create_audit" for clause in binding}
+
+
+def _standalone_candidate_files(base, artifact) -> dict[str, bytes]:
+    """Copy the selected revision.
+
+    A native program keeps that revision's checker binding. A generated factory
+    records ``checker:create_audit`` on this copy only.
+    """
+    from audit.checker_core import clause_ids
+
+    from product.suites import REQUIRED_PATHS, SUITE_PATHS
+
+    if set(artifact.files) - _PROGRAM_PATHS or "checker.py" not in artifact.files:
+        raise ValueError("checker_artifact_unavailable")
+    files = dict(base.files)
+    if not REQUIRED_PATHS <= files.keys() or not set(files) <= SUITE_PATHS:
+        raise ValueError("checker_source_incomplete")
+    try:
+        rules = json.loads(files["rules.json"])
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError):
+        raise ValueError("checker_source_incomplete") from None
+    if not isinstance(rules, dict) or not isinstance(rules.get("rules"), list):
+        raise ValueError("checker_source_incomplete")
+    binding = rules.get("checker_binding")
+    if not isinstance(binding, dict) or not binding:
+        raise ValueError("checker_binding_required")
+    try:
+        clauses = set(clause_ids(rules))
+    except ValueError:
+        raise ValueError("checker_source_incomplete") from None
+    if not set(binding) <= clauses:
+        raise ValueError("checker_binding_expanded")
+    artifact_binding = getattr(artifact, "binding", None)
+    if artifact_binding is not None:
+        if not isinstance(artifact_binding, RuleBinding) or artifact_binding.suite_key != base.revision.suite_key or artifact_binding.checker_digest != checker_digest(artifact.files):
+            raise ValueError("checker_artifact_identity_mismatch")
+        if not set(artifact_binding.entrypoints.items()) <= set(binding.items()):
+            raise ValueError("checker_binding_expanded")
+    elif getattr(artifact, "entrypoint", "checker:create_audit") != "checker:create_audit":
+        raise ValueError("checker_artifact_identity_mismatch")
+    files["checker.py"] = artifact.files["checker.py"]
+    if "resources.py" in artifact.files:
+        files["resources.py"] = artifact.files["resources.py"]
+    else:
+        files.pop("resources.py", None)
+    if artifact_binding is None:
+        mapped = _standalone_factory_binding(rules, binding, clauses)
+        # A factory whose saved entrypoints are not the program it runs is not publishable.
+        if set(mapped) > clauses or any(value != "checker:create_audit" for value in mapped.values()):
+            raise ValueError("checker_artifact_identity_mismatch")
+        if mapped != binding:
+            rules["checker_binding"] = mapped
+            files["rules.json"] = json.dumps(rules, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    return files
+
+
+def _saved_binding_unverified(files: dict[str, bytes], artifact) -> bool:
+    """A proof must not claim clauses or entrypoints the saved suite will not run."""
+    from audit.checker_core import clause_ids
+
+    rules = json.loads(files["rules.json"])
+    binding = rules["checker_binding"]
+    if set(binding) != set(clause_ids(rules)):
+        return True
+    return getattr(artifact, "binding", None) is None and any(entrypoint != "checker:create_audit" for entrypoint in binding.values())
