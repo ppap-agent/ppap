@@ -5138,6 +5138,12 @@ export interface components {
         };
         /** SuitePredefined */
         SuitePredefined: {
+            /** Bound Clause Count */
+            bound_clause_count: number;
+            /** Clause Count */
+            clause_count: number;
+            /** Evidence Reader Clause Ids */
+            evidence_reader_clause_ids: string[];
             /** Path */
             path: string;
             /** Revision Id */

@@ -4,7 +4,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
-from product.seed_standard_suites import install_official_sources, match_official_revision, official_source_suites, persisted_source_path, seed_standard_suites
+from product.seed_standard_suites import discovery_row, install_official_sources, match_official_revision, official_source_suites, persisted_source_path, seed_standard_suites
 from product.suites import validate_content
 
 
@@ -134,6 +134,37 @@ def test_identical_directory_copies_stay_distinct_without_a_new_digest():
     reused = Store({(legacy.suite_key, legacy.revision_digest): [("legacy-row", None)]})
     assert install_official_sources(reused, (legacy,))[0]["revision_id"] == "legacy-row"
     assert reused.created == []
+
+
+def test_directory_discovery_keeps_placeholders_and_states_the_reader_limit():
+    import json
+
+    from audit.standard_suites import predefined_directory_suites, standard_suites
+    from product.suite_releases import leaf_capability
+
+    physical = {suite.source_path: suite for suite in predefined_directory_suites()}
+    assert len(physical) == 41
+    official = {suite.source_path for suite in official_source_suites()}
+    assert set(physical) <= official
+    rows = {suite.source_path: discovery_row(suite) for suite in physical.values()}
+    assert sorted(clause_id for row in rows.values() for clause_id in row["capability"]["evidence_reader_clause_ids"]) == ["U08:1", "U08:4"]
+    placeholder = rows["v5/理想/L01"]
+    rules = json.loads(physical["v5/理想/L01"].files["rules.json"])
+    assert rules["directory_coverage"] == "complete"
+    assert placeholder["capability"]["evidence_reader_clause_ids"] == []
+    assert placeholder["capability"]["bound_clause_count"] == placeholder["capability"]["clause_count"] > 0
+    assert "verified" not in placeholder["capability"]
+    u08 = rows["v5/UAES/U08"]["capability"]
+    assert u08["evidence_reader_clause_ids"] == ["U08:1", "U08:4"]
+    assert u08["bound_clause_count"] == 2
+    assert u08["clause_count"] == 12
+    assert leaf_capability({"rules.json": b'{"rules":[{"id":"C1"},{"id":"C2"}],"checker_binding":{"C1":"checker:create_audit"},"directory_coverage":"complete"}'}) == {
+        "clause_count": 2,
+        "bound_clause_count": 1,
+        "evidence_reader_clause_ids": [],
+    }
+    legacy = next(suite for suite in standard_suites() if suite.suite_key == "UAES:U08")
+    assert "capability" not in discovery_row(legacy)
 
 
 def test_source_lookup_rejects_a_blank_path_before_opening_a_database():

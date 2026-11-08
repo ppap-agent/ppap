@@ -219,11 +219,16 @@ def test_predefined_catalog_binds_each_source_path_to_its_official_revision(auth
     from urllib.parse import quote
 
     from audit.standard_suites import StandardSuite, predefined_directory_suites
+    from product.suite_releases import leaf_capability
     from product.suites import content_digest
 
     store, _, creator, _, (alice, bob, carol) = prepare_fixture(auth_store_factory)
     migrator = SuiteStore(store.settings, store.objects, role="migrator")
     leaf = next(suite for suite in predefined_directory_suites() if suite.source_path == "v5/UAES/U08")
+    placeholder = next(suite for suite in predefined_directory_suites() if suite.source_path == "v5/理想/L01")
+    placeholder_revision = migrator.create_revision(
+        tenant_id=None, suite_key=placeholder.suite_key, files=dict(placeholder.files), created_by=None, related_suite_keys=placeholder.related_suite_keys, source_path=placeholder.source_path
+    )
     directory = migrator.create_revision(tenant_id=None, suite_key=leaf.suite_key, files=dict(leaf.files), created_by=None, related_suite_keys=leaf.related_suite_keys, source_path=leaf.source_path)
     updated = dict(leaf.files)
     rules = json.loads(updated["rules.json"])
@@ -270,6 +275,7 @@ def test_predefined_catalog_binds_each_source_path_to_its_official_revision(auth
     def discovered():
         return (
             leaf,
+            placeholder,
             StandardSuite("ACME:Z99", "", "ACME", "Z99", (), MappingProxyType(v6_files), MappingProxyType({}), "v6/ACME/Z99"),
             StandardSuite("ACME:MIS", "", "ACME", "MIS", (), blank, MappingProxyType({}), "v6/ACME/MIS"),
             StandardSuite("NEW:X1", "", "NEW", "X1", (), blank, MappingProxyType({}), "v6/NEW/X1"),
@@ -281,8 +287,19 @@ def test_predefined_catalog_binds_each_source_path_to_its_official_revision(auth
     assert TestClient(create_app(store.settings, auth_store=store)).get("/suites").status_code == 401
     body = alice.get("/suites").json()
     predefined = {row["path"]: row for row in body["predefined"]}
-    assert predefined["v5/UAES/U08"] == {"path": "v5/UAES/U08", "title": "目录修订二", "suite_key": "UAES:U08", "revision_id": latest.id}
-    assert predefined["v6/ACME/Z99"] == {"path": "v6/ACME/Z99", "title": "v6 示例检查", "suite_key": "ACME:Z99", "revision_id": v6.id}
+    assert predefined["v5/UAES/U08"] == {"path": "v5/UAES/U08", "title": "目录修订二", "suite_key": "UAES:U08", "revision_id": latest.id, **leaf_capability(updated)}
+    assert predefined["v5/UAES/U08"]["evidence_reader_clause_ids"] == ["U08:1", "U08:4"]
+    assert predefined["v5/UAES/U08"]["bound_clause_count"] == 2 and predefined["v5/UAES/U08"]["clause_count"] == 12
+    held = leaf_capability(placeholder.files)
+    assert held["evidence_reader_clause_ids"] == [] and held["bound_clause_count"] == held["clause_count"] > 0
+    assert predefined["v5/理想/L01"] == {
+        "path": "v5/理想/L01",
+        "title": json.loads(placeholder.files["rules.json"])["title"],
+        "suite_key": placeholder.suite_key,
+        "revision_id": placeholder_revision.id,
+        **held,
+    }
+    assert predefined["v6/ACME/Z99"] == {"path": "v6/ACME/Z99", "title": "v6 示例检查", "suite_key": "ACME:Z99", "revision_id": v6.id, **leaf_capability(v6_files)}
     assert {row["revision_id"] for row in body["predefined"]}.isdisjoint({newer.id, directory.id, secret_id, mismatch.id})
     assert {row["path"]: row["error"] for row in body["predefined_unavailable"]} == {
         "v6/ACME/MIS": "unavailable",
@@ -297,7 +314,7 @@ def test_predefined_catalog_binds_each_source_path_to_its_official_revision(auth
     del store.objects.data[f"suites/official/objects/{content_digest(updated['rules.json'])}"]
     after = alice.get("/suites").json()
     assert "v5/UAES/U08" not in {row["path"] for row in after["predefined"]}
-    assert {row["path"]: row["revision_id"] for row in after["predefined"]} == {"v6/ACME/Z99": v6.id}
+    assert {row["path"]: row["revision_id"] for row in after["predefined"]} == {"v6/ACME/Z99": v6.id, "v5/理想/L01": placeholder_revision.id}
     blocked = {row["path"]: row["error"] for row in after["predefined_unavailable"]}
     assert blocked["v5/UAES/U08"] == "unavailable"
     assert directory.id not in {row.get("revision_id") for row in after["predefined"]}
