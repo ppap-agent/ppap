@@ -780,10 +780,28 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
             field.fill(draft)
             expect(field).to_have_value(draft)
             # The feedback GET that follows “加入待修复” is still outstanding. Release it only after the draft exists.
-            fixture.history.extend([
-                {"operation_id": "pub-official", "suite_key": "control-plan", "revision_id": official["id"], "revision": 1, "force_unverified": False, "published_at": "2026-11-01T00:00:00Z", "published_by_name": "官方冻结"},
-                {"operation_id": "pub-foreign", "suite_key": "control-plan", "revision_id": foreign["id"], "revision": 2, "force_unverified": False, "published_at": "2026-11-02T00:00:00Z", "published_by_name": "越权版本"},
-            ])
+            fixture.history.extend(
+                [
+                    {
+                        "operation_id": "pub-official",
+                        "suite_key": "control-plan",
+                        "revision_id": official["id"],
+                        "revision": 1,
+                        "force_unverified": False,
+                        "published_at": "2026-11-01T00:00:00Z",
+                        "published_by_name": "官方冻结",
+                    },
+                    {
+                        "operation_id": "pub-foreign",
+                        "suite_key": "control-plan",
+                        "revision_id": foreign["id"],
+                        "revision": 2,
+                        "force_unverified": False,
+                        "published_at": "2026-11-02T00:00:00Z",
+                        "published_by_name": "越权版本",
+                    },
+                ]
+            )
             page.unroute("**/audit-rounds/round-a/checker-feedback")
             fixture.route(held.pop())
             expect(page.get_by_text("已确认的样本 1 条", exact=True)).to_be_visible()
