@@ -38,6 +38,14 @@ def _shown_locator(locator: dict[str, Any]) -> dict[str, Any]:
     return {name: value for name, value in locator.items() if name not in {"source_sha256", "prepared_sha256", "file_version_id"}}
 
 
+def _diagnostic_facts(facts: dict[str, object]) -> dict[str, object]:
+    """Only PSW categories and the generic seal boolean may enter diagnostics."""
+    summary = psw_fact_summary(facts)
+    if "seal" in facts:
+        summary["seal"] = facts["seal"] if type(facts["seal"]) is bool else None
+    return summary
+
+
 def request_ocr_visual_facts(*, images: list[bytes], prompt: str, response_schema: dict) -> dict:
     """One actual Responses request, with its own event loop and client lifetime.
 
@@ -180,7 +188,7 @@ def observe_ocr_images(
                     request_cache[key] = error
                 raise
             finally:
-                if {"psw_stamp_present", "psw_stamp_ending_text", "authorization_table_present", "authorization_company_stamp_present"}.intersection(subset):
+                if {"seal", "psw_stamp_present", "psw_stamp_ending_text", "authorization_table_present", "authorization_company_stamp_present"}.intersection(subset):
                     # Keep failed-case evidence without recording model text,
                     # file names, arbitrary scope strings, or provider errors.
                     diagnostic = {
@@ -188,11 +196,12 @@ def observe_ocr_images(
                         "pages": sorted({page for frame in frames if type(page := frame.locator.get("page")) is int and 1 <= page <= 1_000_000}),
                         "source_sha256": sorted({digest for frame in frames if isinstance(digest := frame.locator.get("source_sha256"), str) and re.fullmatch(r"[a-f0-9]{64}", digest)}),
                         "phase": phase,
-                        "first": psw_fact_summary(first),
-                        "confirmation": psw_fact_summary(confirmed),
-                        "equal": {field: first[field] == confirmed[field] for field in psw_fact_summary(first) if field in confirmed},
+                        "first": _diagnostic_facts(first),
+                        "confirmation": _diagnostic_facts(confirmed),
+                        "equal": {field: first[field] == confirmed[field] for field in _diagnostic_facts(first) if field in confirmed},
                     }
-                    logger.warning("PSW OCR observation: %s", json.dumps(diagnostic, sort_keys=True, separators=(",", ":")))
+                    message = "OCR seal observation: %s" if "seal" in subset else "PSW OCR observation: %s"
+                    logger.warning(message, json.dumps(diagnostic, sort_keys=True, separators=(",", ":")))
             if request_cache is not None and key is not None:
                 request_cache[key] = cached
         if isinstance(cached, Exception):

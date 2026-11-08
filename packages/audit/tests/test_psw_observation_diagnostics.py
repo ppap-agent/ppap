@@ -106,3 +106,42 @@ def test_seal_decision_reports_native_authorization_facts_without_changing_unkno
     assert detail["facts"]["authorization_table_present"] is True and detail["facts"]["authorization_company_stamp_present"] is False
     assert detail["source_sha256"] == "a" * 64 and detail["evidence_used"] == "none"
     assert "private-file" not in caplog.text
+
+
+@pytest.mark.parametrize("confirmation_known", [False, True], ids=["shanghai-yada-confirmation-unknown", "same-pages-confirmed-absence"])
+def test_shanghai_yada_page5_unknown_cannot_be_replaced_by_page3_absence(monkeypatch, caplog, confirmation_known):
+    """CI #42510446162: page 3 agrees on absence; page 5's second read is unknown."""
+    from audit.engine.checkers.psw_visual_evidence import evaluate_psw_observation
+
+    monkeypatch.setenv("OCR_MODEL_NAME", "controlled")
+    monkeypatch.setenv("OCR_OPENAI_API_KEY", "controlled")
+    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://controlled.invalid")
+    frames = [OcrImage(str(page).encode(), {"scope": f"pdf:{page}", "page": page, "source_sha256": "a" * 64, "context": True, "located_region": True}, 100, 100) for page in (3, 5)]
+    fields = {"psw_stamp_present": "actual seal", "psw_stamp_ending_text": "seal ending"}
+    calls = []
+
+    def read(**kwargs):
+        (image,) = kwargs["images"]
+        page = int(image)
+        confirmation = kwargs["prompt"].startswith(CONFIRMATION_PROMPT)
+        calls.append((page, confirmation))
+        values = {"psw_stamp_present": False, "psw_stamp_ending_text": None if page == 3 else ""}
+        if page == 5 and confirmation and not confirmation_known:
+            values = dict.fromkeys(fields)
+        return {field: values[field] for field in kwargs["response_schema"]["schema"]["properties"]}
+
+    monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", read)
+    cache, witness = {}, Mock()
+    facts = observe_ocr_images(frames, fields, witness, request_cache=cache)
+    assert observe_ocr_images(frames, fields, Mock(), request_cache=cache) == facts
+    assert calls == [(3, False), (3, True), (5, False), (5, True)]
+    result = evaluate_psw_observation(3, {**facts, "authorization_table_present": True, "authorization_company_stamp_present": False})
+    assert (result.status, result.checks_performed) == (("NG", 1) if confirmation_known else ("UNABLE", 0))
+    assert facts["psw_stamp_present"] is (False if confirmation_known else None)
+    if not confirmation_known:
+        assert {call.args[0]["page"] for call in witness.call_args_list} == {3}
+    details = [json.loads(record.getMessage().partition(": ")[2]) for record in caplog.records if record.getMessage().startswith("PSW OCR observation: ")]
+    assert [detail["pages"] for detail in details] == [[3], [5]]
+    assert details[1]["first"] == {"psw_stamp_present": False, "psw_stamp_ending_text": "empty"}
+    assert details[1]["confirmation"] == {"psw_stamp_present": False if confirmation_known else None, "psw_stamp_ending_text": "empty" if confirmation_known else "null"}
+    assert details[1]["equal"] == dict.fromkeys(fields, confirmation_known)
