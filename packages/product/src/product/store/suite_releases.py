@@ -266,7 +266,11 @@ class SuiteReleaseStore:
         payload: dict = {"suites": suites, **({"unavailable": unavailable} if unavailable else {})}
         if predefined_error:
             payload["predefined_error"] = predefined_error
-        else:
+        # Directory leaves not yet seeded are not accessible Suites. Retain the
+        # historical empty-tenant response while reporting real source failures.
+        elif suites or unavailable or predefined or any(
+            item["error"] != "unseeded" for item in predefined_unavailable
+        ):
             payload["predefined"] = predefined
             if predefined_unavailable:
                 payload["predefined_unavailable"] = predefined_unavailable
