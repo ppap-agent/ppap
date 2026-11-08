@@ -419,6 +419,18 @@ class PswRuntime:
         return json.dumps({"status": "UNABLE"})
 
 
+def test_v4_psw_pdf_does_not_execute_another_version(tmp_path):
+    from audit.checkers.v3.psw_pdf_agent import PswPDFAgent
+    from audit.engine.routing import resolve_engine_agent_class
+    from audit.kinds import PpapDocumentType
+
+    path = source(tmp_path)
+    rule = psw_rules("v4")
+    selected = resolve_engine_agent_class(PpapDocumentType.PSW, str(path), rule.rule_profile, preset_key=rule.preset_key, preset_customer="理想")
+    assert selected is None
+    assert resolve_engine_agent_class(PpapDocumentType.PSW, str(path), "v3") is PswPDFAgent
+
+
 def psw_agent(path, rule):
     from unittest.mock import patch
 
@@ -434,7 +446,7 @@ def psw_agent(path, rule):
         return cls(AuditInput(audit_id="frozen-version", file_url=str(path), project_id="project-a"), rule)
 
 
-@pytest.mark.parametrize("profile", ["v2", "v3", "v4"])
+@pytest.mark.parametrize("profile", ["v2", "v3"])
 def test_existing_psw_checkers_shadow_preserves_formal_result_and_reuses_page(tmp_path, profile):
     from audit.engine.runtime import bind_runtime
 
@@ -456,7 +468,7 @@ def test_existing_psw_checkers_shadow_preserves_formal_result_and_reuses_page(tm
     assert all(json.loads(item.locator)["page"] == 2 for observation in session.observations for item in observation.evidence.sources)
 
 
-@pytest.mark.parametrize("profile", ["v2", "v3", "v4"])
+@pytest.mark.parametrize("profile", ["v2", "v3"])
 def test_psw_native_part_number_is_sufficient_without_paddle(tmp_path, profile):
     from audit.engine.runtime import bind_runtime
 
@@ -609,7 +621,7 @@ class RegionWordService(Service):
         return raw
 
 
-@pytest.mark.parametrize("profile", ["v2", "v3", "v4"])
+@pytest.mark.parametrize("profile", ["v2", "v3"])
 def test_psw_region_words_keep_separate_origins_without_changing_formal_results(tmp_path, profile):
     from audit.engine.runtime import bind_runtime
 

@@ -126,13 +126,37 @@ def standard_suites() -> tuple[StandardSuite, ...]:
 
 @lru_cache(maxsize=1)
 def library_revision() -> str:
-    """Content identity for the installed shared algorithms and document readers."""
+    """Fingerprint of shared library code, not of directory-leaf checkers.
+
+    ``checkers/vN`` without ``__init__.py`` is a directory leaf. Its bytes
+    belong to ``checker_digest``. ``checker_lib``, the engine, the rest of
+    audit, documents, and the legacy v2/v3/v4 packages stay here: those
+    package bodies are not copied into the generated historical ``checker.py``.
+    A new leaf therefore does not mark every suite for retest. A public
+    library edit does, via ``ValidationRecord.samples_not_rerun``.
+    """
     import documents
 
     root = Path(__file__).parent
+    return hash_library((("audit", root), ("documents", Path(documents.__file__).parent)))
+
+
+# New predefined checkers are files on disk, not entries in a customer registry.
+# A version directory that is already a Python package (v2/v3/v4) stays legacy.
+_CHECKERS_ROOT = Path(__file__).resolve().parent / "checkers"
+_VERSION_DIRECTORY = re.compile(r"^v[0-9]+$")
+
+
+def library_files(package: str, directory: Path) -> tuple[Path, ...]:
+    """Python files that contribute to ``library_revision`` for one package root."""
+    return tuple(path for path in sorted(directory.rglob("*.py")) if _counts_toward_library(package, directory, path))
+
+
+def hash_library(entries: tuple[tuple[str, Path], ...]) -> str:
+    """Hash the same path-and-bytes sequence ``library_revision`` uses."""
     digest = hashlib.sha256()
-    for package, directory in (("audit", root), ("documents", Path(documents.__file__).parent)):
-        for path in sorted(directory.rglob("*.py")):
+    for package, directory in entries:
+        for path in library_files(package, directory):
             digest.update(f"{package}/{path.relative_to(directory)}".encode())
             digest.update(b"\0")
             digest.update(path.read_bytes())
@@ -140,15 +164,20 @@ def library_revision() -> str:
     return digest.hexdigest()
 
 
-# New predefined checkers are files on disk, not entries in a customer registry.
-# A version directory that is already a Python package (v2/v3/v4) stays legacy.
-_CHECKERS_ROOT = Path(__file__).resolve().parent / "checkers"
-_VERSION_DIRECTORY = re.compile(r"^v[0-9]+$")
+def _counts_toward_library(package: str, directory: Path, path: Path) -> bool:
+    if package != "audit":
+        return True
+    parts = path.relative_to(directory).parts
+    if len(parts) < 3 or parts[0] != "checkers" or _VERSION_DIRECTORY.fullmatch(parts[1]) is None:
+        return True
+    marker = directory / "checkers" / parts[1] / "__init__.py"
+    return marker.is_file() and not marker.is_symlink()
+
+
 _LEAF_FILES = frozenset({"checker.py", "rules.json", "resources.py", "appendix.json", "templates.json", "tests.json"})
 _REQUIRED_LEAF_FILES = frozenset({"checker.py", "rules.json"})
 _OPTIONAL_JSON = frozenset({"appendix.json", "templates.json", "tests.json"})
 _PREDEFINED_ENTRYPOINT = "checker:create_audit"
-_LEGACY_CHECKER_MODULES = ("audit.checkers.v2", "audit.checkers.v3", "audit.checkers.v4")
 
 
 def predefined_directory_suites() -> tuple[StandardSuite, ...]:
@@ -374,20 +403,10 @@ def _validate_python(source: bytes, syntax_code: str) -> None:
         tree = ast.parse(source)
     except SyntaxError:
         raise ValueError(syntax_code) from None
-    for node in ast.walk(tree):
-        modules: list[str] = []
-        if isinstance(node, ast.Import):
-            modules = [alias.name for alias in node.names]
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            modules = [node.module]
-        elif isinstance(node, ast.Call) and node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
-            func = node.func
-            name = func.attr if isinstance(func, ast.Attribute) else func.id if isinstance(func, ast.Name) else ""
-            if name in {"import_module", "__import__"}:
-                modules = [node.args[0].value]
-        for module in modules:
-            if any(module == banned or module.startswith(banned + ".") for banned in _LEGACY_CHECKER_MODULES):
-                raise ValueError("predefined_legacy_checker_import")
+    from audit.checker_lib.imports import import_violations
+
+    if import_violations(tree):
+        raise ValueError("predefined_legacy_checker_import")
 
 
 def _defines_create_audit(source: bytes) -> bool:

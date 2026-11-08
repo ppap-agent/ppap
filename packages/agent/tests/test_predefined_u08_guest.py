@@ -53,6 +53,24 @@ def test_u08_bound_clauses_read_xlsx_and_do_not_pass_without_evidence(tmp_path):
     assert unread[0].status != "PASS"
 
 
+def test_u08_unsupported_xls_and_missing_clause_do_not_pass(tmp_path):
+    suite = next(item for item in predefined_directory_suites() if item.source_path == "v5/UAES/U08")
+    assert b"audit.checkers" not in suite.files["checker.py"]
+    assert b"resolve_engine_agent_class" not in suite.files["checker.py"]
+    assert b"audit.checker_lib.excel" in suite.files["checker.py"]
+    xls = tmp_path / "plan.xls"
+    xls.write_bytes(b"not-opened")
+    unable = _execute(dict(suite.files), xls, ("U08:1",))
+    assert unable[0].status == "UNABLE"
+    assert unable[0].suggestions == "该预置 Checker 不支持此原件载体。"
+    rules = json.loads(suite.files["rules.json"])
+    rules["checker_binding"] = {**rules["checker_binding"], "U08:2": "checker:create_audit"}
+    files = {**dict(suite.files), "rules.json": json.dumps(rules).encode()}
+    missing = _execute(files, _workbook(tmp_path / "ready.xlsx"), ("U08:2",))
+    assert missing[0].status == "ERR"
+    assert missing[0].suggestions == "authored_checker_missing_binding"
+
+
 def test_execution_uses_frozen_bytes_after_the_source_directory_changes(tmp_path):
     checker = (
         "from audit.contracts import AuditResultItem\n"

@@ -7,14 +7,14 @@ It does not call another checker version.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from audit.checker_lib.evidence import content_sha256, json_locator, structure_diagnostic, structure_evidence, version_id
+from audit.checker_lib.excel import load_workbook
+from audit.checker_lib.tables import cell_span, columns_have_merge, find_headers, is_blank, sheet_has_value, window_has_merge
 from audit.contracts import AuditEvidence, AuditResultItem, EvidenceDiagnostic, EvidenceSource
-from documents.excel import ExcelLoader, ExcelLoadOptions, load_excel_workbook
-from openpyxl.utils import get_column_letter
 from resources import RESOURCE
 
 _HEADER_ROWS = 40
@@ -89,8 +89,8 @@ class _ControlPlanAudit:
     def _open(self):
         if self._book is None and not self._unreadable:
             try:
-                self._book = load_excel_workbook(str(self.audit_file.file_url))
-                self._formulas = ExcelLoader.load_workbook(str(self.audit_file.file_url), ExcelLoadOptions(data_only=False))
+                self._book = load_workbook(str(self.audit_file.file_url))
+                self._formulas = load_workbook(str(self.audit_file.file_url), formulas=True)
             except Exception:
                 self._unreadable = True
                 self.close()
@@ -163,7 +163,7 @@ class _ControlPlanAudit:
         for item in blockers:
             if item.code and item.code not in seen:
                 seen.add(item.code)
-                diagnostics.append(EvidenceDiagnostic(code=item.code, stage="structure", severity="warning", message=item.message or item.suggestion))
+                diagnostics.append(structure_diagnostic(item.code, item.message or item.suggestion))
             if item.cells:
                 sources.extend(self._cell_source(suffix, item.sheet, cell) for cell in item.cells[:8])
             elif item.scanned:
@@ -175,7 +175,7 @@ class _ControlPlanAudit:
 
     def _ranges(self, suffix: str, sheets: tuple[_Sheet, ...], code: str, message: str) -> AuditEvidence:
         sources = tuple(self._range_source(suffix, item.sheet, item.scanned[0], item.scanned[1]) for item in sheets[:8] if item.scanned)
-        diagnostic = (EvidenceDiagnostic(code=code, stage="structure", severity="warning", message=message),) if code else ()
+        diagnostic = (structure_diagnostic(code, message),) if code else ()
         return self._evidence(suffix, sources, diagnostic)
 
     def _cell_source(self, suffix: str, sheet: str, cell: str) -> EvidenceSource:
@@ -185,46 +185,19 @@ class _ControlPlanAudit:
         return EvidenceSource(kind="structure", locator=self._locator({"kind": "xlsx_range", "sheet": sheet, "start": start, "end": end}))
 
     def _evidence(self, suffix: str, sources: tuple[EvidenceSource, ...], diagnostics: tuple[EvidenceDiagnostic, ...]) -> AuditEvidence:
-        kind = _carrier(suffix)
-        return AuditEvidence(
-            required="structure",
-            used="structure" if sources else "none",
-            source_format=kind,
-            prepared_format=kind,
-            sources=sources,
-            diagnostics=diagnostics,
-        )
+        return structure_evidence(source_format=_carrier(suffix), sources=sources, diagnostics=diagnostics)
 
     def _diagnostic(self, code: str, message: str, sources: tuple[EvidenceSource, ...]) -> AuditEvidence:
-        return AuditEvidence(
-            required="structure",
-            used="none",
-            source_format="xlsx",
-            prepared_format="xlsx",
-            sources=sources,
-            diagnostics=(EvidenceDiagnostic(code=code, stage="structure", severity="warning", message=message),),
-        )
+        return structure_evidence(source_format="xlsx", sources=sources, diagnostics=(structure_diagnostic(code, message),))
 
     def _locator(self, payload: dict[str, str]) -> str:
-        body = dict(payload)
-        body["file_version_id"] = self._version()
-        digest = self._sha()
-        if digest:
-            body["source_sha256"] = digest
-        return json.dumps(body, ensure_ascii=False, separators=(",", ":"))
+        return json_locator(payload, file_version_id=self._version(), source_sha256=self._sha())
 
     def _version(self) -> str:
-        meta = self.audit_file.file_metadata if isinstance(getattr(self.audit_file, "file_metadata", None), dict) else {}
-        value = meta.get("file_version_id")
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-        audit_id = getattr(self.audit_file, "audit_id", "")
-        return audit_id.strip() if isinstance(audit_id, str) else ""
+        return version_id(self.audit_file)
 
     def _sha(self) -> str:
-        meta = self.audit_file.file_metadata if isinstance(getattr(self.audit_file, "file_metadata", None), dict) else {}
-        value = meta.get("sha256")
-        return value if isinstance(value, str) and len(value) == 64 else ""
+        return content_sha256(self.audit_file)
 
     def _item(self, clause_id: str, status: str, suggestion: str, *, evidence: AuditEvidence | None = None, checks_performed: int = 1) -> AuditResultItem:
         category = clause_id
@@ -246,49 +219,49 @@ class _ControlPlanAudit:
 
 def _inspect(sheet, formula_sheet, aliases: dict[str, tuple[str, ...]], required: str, missing: str, empty: str, gap: str, passed: str) -> _Sheet:
     max_row, max_col = int(sheet.max_row or 1), int(sheet.max_column or 1)
-    found = _headers(sheet, aliases)
+    found = find_headers(sheet, aliases, max_rows=_HEADER_ROWS, max_cols=_HEADER_COLS)
     columns = found[1] if found else {}
     header_row = found[0] if found else None
     header_found = required in columns and header_row is not None
     if not header_found:
         limit_row, limit_col = min(max_row, _HEADER_ROWS), min(max_col, _HEADER_COLS)
-        if max_row > _HEADER_ROWS or max_col > _HEADER_COLS or _window_has_merge(sheet, limit_row, limit_col):
-            return _Sheet("block", sheet.title, suggestion=_INCOMPLETE, message=_INCOMPLETE, code="scan_incomplete", scanned=_window(1, limit_row, 1, limit_col))
+        if max_row > _HEADER_ROWS or max_col > _HEADER_COLS or window_has_merge(sheet, limit_row, limit_col):
+            return _Sheet("block", sheet.title, suggestion=_INCOMPLETE, message=_INCOMPLETE, code="scan_incomplete", scanned=cell_span(1, limit_row, 1, limit_col))
     else:
         assert header_row is not None
         last_row = header_row + _DATA_ROWS
         if max_col > _HEADER_COLS:
-            return _Sheet("block", sheet.title, suggestion=_INCOMPLETE, message=_INCOMPLETE, code="scan_incomplete", scanned=_window(header_row, min(max_row, last_row), 1, _HEADER_COLS))
+            return _Sheet("block", sheet.title, suggestion=_INCOMPLETE, message=_INCOMPLETE, code="scan_incomplete", scanned=cell_span(header_row, min(max_row, last_row), 1, _HEADER_COLS))
         if _legend(sheet.title):
-            window = _window(header_row, min(max_row, last_row), 1, min(max_col, _HEADER_COLS))
+            window = cell_span(header_row, min(max_row, last_row), 1, min(max_col, _HEADER_COLS))
             return _Sheet("block", sheet.title, suggestion=_AMBIGUOUS, message=_AMBIGUOUS, code="legend_or_multiple_tables", scanned=window)
         if max_row > last_row:
             relevant = tuple(columns.values())
-            return _Sheet("block", sheet.title, suggestion=_INCOMPLETE, message=_INCOMPLETE, code="scan_incomplete", scanned=_window(header_row, last_row, min(relevant), max(relevant)))
+            return _Sheet("block", sheet.title, suggestion=_INCOMPLETE, message=_INCOMPLETE, code="scan_incomplete", scanned=cell_span(header_row, last_row, min(relevant), max(relevant)))
     hidden = _uncached_cell(sheet, formula_sheet, max_row, min(max_col, _HEADER_COLS))
     if hidden:
         return _Sheet("block", sheet.title, suggestion=_FORMULA, message=_FORMULA, code="formula_cache_missing", cells=(hidden,))
     if not header_found:
-        covered = _window(1, max_row, 1, max_col) if _nonempty(sheet, max_row, max_col) else None
+        covered = cell_span(1, max_row, 1, max_col) if sheet_has_value(sheet, max_row, max_col) else None
         return _Sheet("absent", sheet.title, scanned=covered)
     assert header_row is not None
     last_row = header_row + _DATA_ROWS
     relevant = tuple(columns.values())
-    if _table_has_merge(sheet, header_row, last_row, relevant):
-        return _Sheet("block", sheet.title, suggestion=_MERGED, message=_MERGED, code="merged_range", scanned=_window(header_row, max_row, min(relevant), max(relevant)))
+    if columns_have_merge(sheet, header_row, last_row, relevant):
+        return _Sheet("block", sheet.title, suggestion=_MERGED, message=_MERGED, code="merged_range", scanned=cell_span(header_row, max_row, min(relevant), max(relevant)))
     reads: dict[tuple[int, int], Any] = {}
     for row in range(header_row, max_row + 1):
         for col in relevant:
             reads[(row, col)] = _cached(sheet, formula_sheet, row, col)
     judged = _judge(sheet, header_row, max_row, columns, required, reads, empty, gap, passed)
-    window = _window(header_row, max_row, min(relevant), max(relevant))
+    window = cell_span(header_row, max_row, min(relevant), max(relevant))
     return _Sheet(judged.kind, judged.sheet, judged.status, judged.suggestion, judged.cells, window, judged.code, judged.message)
 
 
 def _judge(sheet, header_row: int, max_row: int, columns: dict[str, int], required: str, reads: dict[tuple[int, int], Any], empty: str, gap: str, passed: str) -> _Sheet:
     if required == "mark":
         col = columns["mark"]
-        marked = [sheet.cell(row, col).coordinate for row in range(header_row + 1, max_row + 1) if not _blank(reads[(row, col)])]
+        marked = [sheet.cell(row, col).coordinate for row in range(header_row + 1, max_row + 1) if not is_blank(reads[(row, col)])]
         if marked:
             return _Sheet("table", sheet.title, "PASS", passed, tuple(marked))
         return _Sheet("table", sheet.title, "NG", empty, (sheet.cell(header_row, col).coordinate,))
@@ -299,12 +272,12 @@ def _judge(sheet, header_row: int, max_row: int, columns: dict[str, int], requir
     for row in range(header_row + 1, max_row + 1):
         resource = reads[(row, resource_col)]
         if operation_col is None:
-            if not _blank(resource):
+            if not is_blank(resource):
                 filled.append(sheet.cell(row, resource_col).coordinate)
             continue
-        if _blank(reads[(row, operation_col)]):
+        if is_blank(reads[(row, operation_col)]):
             continue
-        if _blank(resource):
+        if is_blank(resource):
             gaps.append(sheet.cell(row, operation_col).coordinate)
         else:
             filled.append(sheet.cell(row, resource_col).coordinate)
@@ -313,23 +286,6 @@ def _judge(sheet, header_row: int, max_row: int, columns: dict[str, int], requir
     if filled:
         return _Sheet("table", sheet.title, "PASS", passed, tuple(filled))
     return _Sheet("table", sheet.title, "NG", empty, (sheet.cell(header_row, resource_col).coordinate,))
-
-
-def _headers(sheet, aliases: dict[str, tuple[str, ...]]):
-    best = None
-    limit_row = min(int(sheet.max_row or 1), _HEADER_ROWS)
-    limit_col = min(int(sheet.max_column or 1), _HEADER_COLS)
-    for row in range(1, limit_row + 1):
-        found: dict[str, int] = {}
-        for col in range(1, limit_col + 1):
-            for role, names in aliases.items():
-                if role not in found and _matches(sheet.cell(row, col).value, names):
-                    found[role] = col
-        if found and (best is None or len(found) > len(best[1])):
-            best = (row, found)
-            if len(found) == len(aliases):
-                break
-    return best
 
 
 def _uncached_cell(sheet, formula_sheet, max_row: int, max_col: int) -> str | None:
@@ -344,7 +300,7 @@ def _uncached_cell(sheet, formula_sheet, max_row: int, max_col: int) -> str | No
 def _cached(sheet, formula_sheet, row: int, col: int):
     raw = formula_sheet.cell(row, col).value
     cached = sheet.cell(row, col).value
-    if isinstance(raw, str) and raw.startswith("=") and _blank(cached):
+    if isinstance(raw, str) and raw.startswith("=") and is_blank(cached):
         return "uncached"
     if isinstance(cached, str) and cached.startswith("#"):
         return "error"
@@ -354,49 +310,6 @@ def _cached(sheet, formula_sheet, row: int, col: int):
 def _legend(title: str) -> bool:
     text = str(title or "")
     return any(word in text for word in _LEGEND) or "legend" in text.casefold()
-
-
-def _window_has_merge(sheet, max_row: int, max_col: int) -> bool:
-    for rng in sheet.merged_cells.ranges:
-        if rng.min_row <= max_row and rng.max_row >= 1 and rng.min_col <= max_col and rng.max_col >= 1:
-            return True
-    return False
-
-
-def _table_has_merge(sheet, header_row: int, last_row: int, columns: tuple[int, ...]) -> bool:
-    for rng in sheet.merged_cells.ranges:
-        if rng.max_row < header_row or rng.min_row > last_row:
-            continue
-        if any(rng.min_col <= col <= rng.max_col for col in columns):
-            return True
-    return False
-
-
-def _nonempty(sheet, max_row: int, max_col: int) -> bool:
-    for row in range(1, max_row + 1):
-        for col in range(1, max_col + 1):
-            if not _blank(sheet.cell(row, col).value):
-                return True
-    return False
-
-
-def _window(row: int, last_row: int, col: int, last_col: int) -> tuple[str, str]:
-    return f"{get_column_letter(col)}{row}", f"{get_column_letter(last_col)}{max(last_row, row)}"
-
-
-def _matches(value, aliases: tuple[str, ...]) -> bool:
-    text = _norm(value)
-    if not text:
-        return False
-    return any(text == _norm(alias) or text.startswith(_norm(alias)) for alias in aliases)
-
-
-def _norm(value) -> str:
-    return "".join(ch for ch in str(value or "").casefold() if ch not in " \t\r\n/／、，,;；:：()（）")
-
-
-def _blank(value) -> bool:
-    return value is None or not str(value).strip()
 
 
 def _carrier(suffix: str) -> Literal["xlsx", "xlsm"]:
