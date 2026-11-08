@@ -20,6 +20,7 @@ jobs:
     env:
       OPENAI_REASONING_EFFORT: low
       PPAP_CORPUS_MODEL: live
+      OCR_OPENAI_EXTRA_BODY_JSON: '{"reasoning":{"effort":"none"}}'
       ROUNDS: ${{ inputs.rounds || '3' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

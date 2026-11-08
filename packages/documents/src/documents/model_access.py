@@ -39,13 +39,30 @@ class ModelAccess:
     base_url: str
     provider: str = PERSONAL_MODEL_PROVIDER
     revision: str = ""
+    ocr_extra_body_json: str = field(default="", repr=False)
+
+    def ocr_options(self) -> dict[str, Any]:
+        """Only the grant owner can opt in to provider-specific OCR parameters."""
+        if not self.ocr_extra_body_json:
+            return {}
+        try:
+            value = json.loads(self.ocr_extra_body_json)
+        except ValueError:
+            raise ValueError("OCR grant options must contain one JSON object") from None
+        if not isinstance(value, dict):
+            raise ValueError("OCR grant options must contain one JSON object")
+        return value
 
     def identity(self) -> dict[str, str]:
         """Opaque execution identity, never a credential or private endpoint URL."""
+        options = self.ocr_options()
+        revision = self.revision
+        if options:
+            revision = hashlib.sha256(json.dumps([revision, options], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         return {
             "provider": self.provider,
             "model": self.model,
-            "revision": self.revision,
+            "revision": revision,
             "deployment": hashlib.sha256(self.base_url.encode()).hexdigest(),
         }
 

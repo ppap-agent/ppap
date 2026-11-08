@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, Protocol, cast
@@ -22,6 +23,7 @@ from .psw_evidence_trace import (
     DIAGNOSTIC_PDF_CONVERSION_FAILED,
     DIAGNOSTIC_VISUAL_RUNTIME_ERROR,
     EvidenceUse,
+    psw_fact_summary,
     with_psw_evidence,
 )
 from .psw_visual_evidence import (
@@ -443,6 +445,7 @@ class PswPdfEvidenceMixin:
 
         if not hasattr(self, "_paddle_page_cache"):
             self._paddle_page_cache: dict = {}
+        facts: dict[str, object] = {}
         try:
             slots = len(getattr(getattr(self, "rule", None), "rules", []) or [])
             batch_fields = {field: description for number, requirements in PSW_RULE_FIELDS.items() if number <= slots for field, description in requirements.items()}
@@ -461,6 +464,17 @@ class PswPdfEvidenceMixin:
             diagnostic = EvidenceDiagnostic(code=DIAGNOSTIC_VISUAL_RUNTIME_ERROR, stage="visual", severity="error", message="视觉证据读取发生技术错误，未形成业务判断。")
         source_kinds = {source.kind for source in sources}
         evidence_used: EvidenceUse = "both" if source_kinds == {"structure", "visual"} else "visual" if "visual" in source_kinds else "structure" if sources else "none"
+        if rule_no == 3:
+            metadata = host.audit_file.file_metadata or {}
+            digest = metadata.get("source_sha256") or metadata.get("sha256")
+            summary = {
+                "rule": 3,
+                "status": result.status,
+                "source_sha256": digest if isinstance(digest, str) and re.fullmatch(r"[a-f0-9]{64}", digest) else None,
+                "evidence_used": evidence_used,
+                "facts": psw_fact_summary(facts),
+            }
+            logger.warning("PSW seal decision: %s", json.dumps(summary, sort_keys=True, separators=(",", ":")))
         # The original-page predicate owns its evidence. A preceding table
         # attempt does not establish a located structural fact for this result.
         traced = self._trace_result(result, rule_no=rule_no, used=evidence_used, diagnostic=diagnostic, sources=_original_pdf_sources(host.audit_file, sources))

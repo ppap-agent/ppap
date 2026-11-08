@@ -28,6 +28,28 @@ DIAGNOSTIC_EVALUATION_RUNTIME_ERROR = "psw.evaluation.runtime_error"
 DIAGNOSTIC_EVALUATION_RULE_UNAVAILABLE = "psw.evaluation.rule_unavailable"
 
 
+def psw_fact_summary(facts: dict[str, object]) -> dict[str, object]:
+    """Allowlisted seal fact categories, never the seal wording or model text."""
+    from .psw_visual_evidence import normalize_psw_stamp_facts
+
+    summary: dict[str, object] = {}
+    for field in ("psw_stamp_present", "psw_stamp_ends_with_company", "authorization_table_present", "authorization_company_stamp_present"):
+        if field in facts:
+            value = facts[field]
+            summary[field] = value if type(value) is bool else None
+    if "psw_stamp_ending_text" in facts:
+        value = facts["psw_stamp_ending_text"]
+        if value is None:
+            category = "null"
+        elif isinstance(value, str):
+            normalized = normalize_psw_stamp_facts({"psw_stamp_ending_text": value})
+            category = "empty" if not value else "company" if normalized.get("psw_stamp_ends_with_company") is True else "other_text"
+        else:
+            category = "invalid_type"
+        summary["psw_stamp_ending_text"] = category
+    return summary
+
+
 def required_psw_evidence(rule_no: int) -> Literal["structure", "visual", "structure_or_visual"]:
     """Return the format-neutral evidence requirement for one PSW rule."""
     if rule_no in {3, 5}:

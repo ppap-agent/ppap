@@ -436,7 +436,16 @@ def _main() -> None:
         endpoint = urlsplit(grant["base_url"])
         if endpoint.hostname not in {"127.0.0.1", "localhost", "::1"} or endpoint.scheme != "http":
             raise AuditRunError("invalid_execution_grant_endpoint")
-        access = ModelAccess(provider=grant["provider"], base_url=grant["base_url"], model=grant["model"], api_key=SecretStr(grant["token"]), revision=grant.get("revision", ""))
+        access = ModelAccess(
+            provider=grant["provider"],
+            base_url=grant["base_url"],
+            model=grant["model"],
+            api_key=SecretStr(grant["token"]),
+            revision=grant.get("ocr_base_revision", grant.get("revision", "")),
+            ocr_extra_body_json=grant.get("ocr_extra_body_json", ""),
+        )
+        if access.identity()["revision"] != grant.get("revision", ""):
+            raise AuditRunError("audit_model_identity_mismatch")
     snapshot = ExecutionSnapshot.from_dict(payload["snapshot"])
     if grant is not None and any(grant.get(key, "") != snapshot.model_identity.get(key, "") for key in ("provider", "model", "revision", "deployment")):
         raise AuditRunError("audit_model_identity_mismatch")

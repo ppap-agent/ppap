@@ -63,7 +63,13 @@ class LiveModels:
                 with grants.bind(self._execution_id, self.access.identity(), lambda: self.access):
                     token = grants.issue(self._execution_id)
                     try:
-                        yield {"base_url": gateway.base_url, "token": token, **self.access.identity()}
+                        yield {
+                            "base_url": gateway.base_url,
+                            "token": token,
+                            **self.access.identity(),
+                            "ocr_base_revision": self.access.revision,
+                            "ocr_extra_body_json": self.access.ocr_extra_body_json,
+                        }
                     finally:
                         self._usage = grants.revoke(self._execution_id, require_existing=True)
                         self._gateway = None

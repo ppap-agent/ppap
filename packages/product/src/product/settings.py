@@ -251,7 +251,6 @@ class Settings(BaseSettings):
             tool_config_revision=config_digest(
                 {
                     "ocr_model_identity": identity,
-                    "ocr_extra_body": {},
                     "vision_protocol": "native_paddle_responses_v4",
                     "paddle_endpoint": self.PADDLE_OCR_URL.strip(),
                     "paddle_http_timeout_seconds": 20,
