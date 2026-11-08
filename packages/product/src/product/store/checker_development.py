@@ -894,8 +894,20 @@ _STANDALONE_REFUSALS = frozenset(
 _PROGRAM_PATHS = frozenset({"checker.py", "resources.py"})
 
 
+def _standalone_factory_binding(rules: dict, binding: dict, clauses: set[str]) -> dict[str, str]:
+    """Factory entrypoints for the frozen binding. Partial coverage does not gain clauses."""
+    if set(binding) == clauses:
+        # Same clause map _candidate_files writes for a generated factory.
+        return {item["id"]: "checker:create_audit" for item in rules["rules"]}
+    return {clause: "checker:create_audit" for clause in binding}
+
+
 def _standalone_candidate_files(base, artifact) -> dict[str, bytes]:
-    """Copy the selected revision. Only executed program bytes may change."""
+    """Copy the selected revision.
+
+    A native program keeps that revision's checker binding. A generated factory
+    records ``checker:create_audit`` on this copy only.
+    """
     from audit.checker_core import clause_ids
 
     from product.suites import REQUIRED_PATHS, SUITE_PATHS
@@ -926,11 +938,21 @@ def _standalone_candidate_files(base, artifact) -> dict[str, bytes]:
             raise ValueError("checker_artifact_identity_mismatch")
         if not set(artifact_binding.entrypoints.items()) <= set(binding.items()):
             raise ValueError("checker_binding_expanded")
+    elif getattr(artifact, "entrypoint", "checker:create_audit") != "checker:create_audit":
+        raise ValueError("checker_artifact_identity_mismatch")
     files["checker.py"] = artifact.files["checker.py"]
     if "resources.py" in artifact.files:
         files["resources.py"] = artifact.files["resources.py"]
     else:
         files.pop("resources.py", None)
+    if artifact_binding is None:
+        mapped = _standalone_factory_binding(rules, binding, clauses)
+        # A factory whose saved entrypoints are not the program it runs is not publishable.
+        if set(mapped) > clauses or any(value != "checker:create_audit" for value in mapped.values()):
+            raise ValueError("checker_artifact_identity_mismatch")
+        if mapped != binding:
+            rules["checker_binding"] = mapped
+            files["rules.json"] = json.dumps(rules, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     return files
 
 
