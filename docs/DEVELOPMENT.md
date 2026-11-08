@@ -357,6 +357,8 @@ Excel 的图形事实通过 `audit.engine.checkers.excel_field_evidence` 读取�
 
 审核规则页的「检查版本」（`/requirements?checkerSuite=...`）可在首次审核前读取可访问候选并明确采用。无企业或官方指针时，读取返回 `candidate_only`、`current_revision_id=null` 和单独的 `candidate_revision_id`，不把候选当作已生效。未验证候选须确认风险，只写本租户指针；先采用直接关联检查，UAES 顺序为 U12/U16 → U07 → U08。已采用版本因依赖变化而过期时，可重新验证，或在同一页面明确确认继续使用未验证版本。上述操作不构成官方发布，不改已有 Round。发布回包未知时只读取原操作，不自动重新发布。
 
+同一页的预定义目录（`checkerPath`）只列出 `GET /suites` 返回的已安装 v5+ 叶子路径，并按路径拆成版本、客户和规则组。每条路径打开该 `source_path` 的官方修订，不用企业当前采用的修订代替。未 seed、修订不可读、路径无效或目录扫描失败时单独标明，不回退到其他版本；企业自定义检查仍在「检查版本」中。
+
 ## Checker Core 个人模型配置
 
 `GET/PUT/DELETE /me/model-config` 管理当前登录用户的个人 Responses 兼容模型。PUT 保存完整的 `api_key`、`base_url`、`model`；修改地址或模型也必须重新输入 Key，不会把旧 Key 发往新地址。旧版仅含 `api_key` 的请求仍表示原默认地址和模型。GET 只返回 provider、model、base_url、configured、updated_at、非秘密配置 revision，不回显 Key。保存本身不调用模型。页面确认的是读回的准确目的地址、模型和配置修订；受理前其它标签页更换配置会拒绝旧同意。

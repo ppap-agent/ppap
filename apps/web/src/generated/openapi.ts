@@ -5104,6 +5104,15 @@ export interface components {
         };
         /** SuiteCatalog */
         SuiteCatalog: {
+            /** Predefined */
+            predefined?: components["schemas"]["SuitePredefined"][];
+            /**
+             * Predefined Error
+             * @constant
+             */
+            predefined_error?: "predefined_catalog_unavailable";
+            /** Predefined Unavailable */
+            predefined_unavailable?: components["schemas"]["SuitePredefinedUnavailable"][];
             /** Suites */
             suites: components["schemas"]["SuiteActive"][];
             /** Unavailable */
@@ -5126,6 +5135,27 @@ export interface components {
             groups?: components["schemas"]["FeedbackGroup"][];
             /** Next Cursor */
             next_cursor?: number | null;
+        };
+        /** SuitePredefined */
+        SuitePredefined: {
+            /** Path */
+            path: string;
+            /** Revision Id */
+            revision_id: string;
+            /** Suite Key */
+            suite_key: string;
+            /** Title */
+            title: string;
+        };
+        /** SuitePredefinedUnavailable */
+        SuitePredefinedUnavailable: {
+            /**
+             * Error
+             * @enum {string}
+             */
+            error: "unseeded" | "unavailable" | "invalid";
+            /** Path */
+            path: string;
         };
         /** SuitePublication */
         SuitePublication: {

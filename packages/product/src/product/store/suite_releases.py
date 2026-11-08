@@ -260,7 +260,68 @@ class SuiteReleaseStore:
                     with conn.transaction():
                         _member(conn, principal)
                     unavailable.append({"suite_key": key, "error": "suite_unavailable"})
-        return {"suites": suites, **({"unavailable": unavailable} if unavailable else {})}
+            with conn.transaction():
+                _member(conn, principal)
+                predefined, predefined_unavailable, predefined_error = self._predefined_sources(principal, conn)
+        payload: dict = {"suites": suites, **({"unavailable": unavailable} if unavailable else {})}
+        if predefined_error:
+            payload["predefined_error"] = predefined_error
+        else:
+            payload["predefined"] = predefined
+            if predefined_unavailable:
+                payload["predefined_unavailable"] = predefined_unavailable
+        return payload
+
+    def _predefined_sources(self, principal, conn) -> tuple[list[dict], list[dict], str | None]:
+        """Bind each installed directory leaf to its official source revision.
+
+        ``revision_id`` is the tenant-null row for that ``source_path``. It is
+        never the tenant's adopted revision. A broken scan lists no paths.
+        """
+        from audit.standard_suites import predefined_directory_suites
+
+        from product.seed_standard_suites import persisted_source_path
+
+        try:
+            discovered = predefined_directory_suites()
+        except ValueError:
+            return [], [], "predefined_catalog_unavailable"
+        ready, blocked = [], []
+        for suite in discovered:
+            path = suite.source_path
+            if persisted_source_path(path) != path:
+                blocked.append({"path": path, "error": "invalid"})
+                continue
+            try:
+                revision_id = self.suites.official_revision_id_for_source(path, conn=conn)
+            except ValueError:
+                blocked.append({"path": path, "error": "invalid"})
+                continue
+            if revision_id is None:
+                blocked.append({"path": path, "error": "unseeded"})
+                continue
+            row = conn.execute(
+                "SELECT suite_key, tenant_id, source_path FROM product.suite_revisions WHERE id = %s AND NOT history_only",
+                (revision_id,),
+            ).fetchone()
+            if row is None or row[1] is not None or row[2] != path or row[0] != suite.suite_key:
+                blocked.append({"path": path, "error": "unavailable"})
+                continue
+            try:
+                resolved = self.suites.resolve_suite(revision_id, principal.tenant_id, conn=conn)
+                if resolved.revision.tenant_id is not None or resolved.revision.suite_key != suite.suite_key:
+                    raise KeyError("suite_access_denied")
+                rules = json.loads(resolved.files["rules.json"])
+                if not isinstance(rules, dict):
+                    raise ValueError("invalid_suite_rules")
+                title = rules.get("title") or rules.get("type") or "文件检查"
+                if not isinstance(title, str) or not title.strip():
+                    title = "文件检查"
+            except (KeyError, ValueError, ObjectMissing):
+                blocked.append({"path": path, "error": "unavailable"})
+                continue
+            ready.append({"path": path, "title": title, "suite_key": suite.suite_key, "revision_id": revision_id})
+        return ready, blocked, None
 
     def active(self, principal, suite_key: str, *, conn=None) -> dict:
         suite_key = _key(suite_key)
