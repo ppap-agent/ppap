@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 from audit.checker_core import RuleBinding, checker_digest, runtime_revision
 from audit.contracts import RuleInput
 from audit.models import public_locator
-from audit.standard_suites import library_revision
+from audit.standard_suites import library_revision, suite_library_revision
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
@@ -540,7 +540,7 @@ class CheckerDevelopmentStore:
                 "related_revision_ids": related,
                 "related_suite_digests": {key: self.suites.resolve_suite(value, principal.tenant_id, conn=conn).revision.resolved_digest for key, value in related.items()},
                 "executor_revision": runtime_revision(self.store.settings.deep_execution_revision(model_identity), library_revision()) if payload["action"] == "run_tests" else "",
-                "library_revision": library_revision(),
+                "library_revision": suite_library_revision(suite.files),
                 "model_identity": model_identity,
                 "consume_model": payload.get("consume_model") is True,
                 "rule_changes": changes["clauses"],

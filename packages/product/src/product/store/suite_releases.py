@@ -111,7 +111,7 @@ def _validation(conn, tenant_id: str | None, revision: dict) -> dict:
         row = cur.fetchone()
     if row is None:
         return empty_validation()
-    from audit.standard_suites import library_revision
+    from audit.standard_suites import stored_library_needs_rerun
 
     proof = row["proof"]
     status = row["status"]
@@ -120,6 +120,9 @@ def _validation(conn, tenant_id: str | None, revision: dict) -> dict:
         status = "stale"
         reasons.append("suite_inputs_changed")
     owns_write_scope = (row["tenant_id"] is None and tenant_id is None) or str(row["tenant_id"]) == tenant_id
+    families = proof.get("legacy_families") or ()
+    if not isinstance(families, (list, tuple)) or any(not isinstance(item, str) for item in families):
+        families = ()
     return {
         "status": status,
         "revision": row["revision"],
@@ -130,7 +133,9 @@ def _validation(conn, tenant_id: str | None, revision: dict) -> dict:
         "passed_samples": proof["passed_samples"],
         "new_errors": proof["new_errors"],
         "verified": status == "verified",
-        "samples_not_rerun": proof["library_revision"] != library_revision(),
+        # Empty families compare with the public fingerprint. A historical
+        # carrier records the v2/v3/v4 packages its checker source names.
+        "samples_not_rerun": stored_library_needs_rerun(proof["library_revision"], families),
         "reasons": reasons,
         "library_revision": proof["library_revision"],
         "proof_digest": proof["proof_digest"],
@@ -765,12 +770,17 @@ class SuiteReleaseStore:
             reasons = list(proof.reasons)
             if not coverage_complete:
                 reasons.append("suite_clause_coverage_incomplete")
+            from audit.standard_suites import legacy_families
+
+            # Derived from the frozen checker bytes, not from the caller's claim.
+            families = legacy_families(resolved.files)
             stored = {
                 "proof_digest": proof.proof_digest,
                 "total_samples": proof.total_samples,
                 "passed_samples": proof.passed_samples,
                 "new_errors": proof.new_errors,
                 "library_revision": proof.library_revision,
+                "legacy_families": list(families),
                 "reasons": reasons,
                 "report": proof.model_dump(mode="json"),
             }

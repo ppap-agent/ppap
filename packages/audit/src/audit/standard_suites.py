@@ -16,11 +16,12 @@ import ast
 import hashlib
 import json
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any
 
 from audit.presets import customer_presets, preset_document_type, preset_rule_body, preset_source_bindings
 
@@ -126,14 +127,14 @@ def standard_suites() -> tuple[StandardSuite, ...]:
 
 @lru_cache(maxsize=1)
 def library_revision() -> str:
-    """Fingerprint of shared library code, not of directory-leaf checkers.
+    """Fingerprint of shared runtime code, not of any checker version tree.
 
-    ``checkers/vN`` without ``__init__.py`` is a directory leaf. Its bytes
-    belong to ``checker_digest``. ``checker_lib``, the engine, the rest of
-    audit, documents, and the legacy v2/v3/v4 packages stay here: those
-    package bodies are not copied into the generated historical ``checker.py``.
-    A new leaf therefore does not mark every suite for retest. A public
-    library edit does, via ``ValidationRecord.samples_not_rerun``.
+    ``checkers/vN`` business sources stay out. Directory leaves use
+    ``checker_digest``. Historical v2/v3/v4 packages use
+    ``legacy_runtime_revision`` and are folded in only for suites whose
+    ``checker.py`` or ``resources.py`` names that package. A v4 edit therefore
+    does not move this public fingerprint. ``ValidationRecord.samples_not_rerun``
+    still sees it for the suite that runs that package.
     """
     import documents
 
@@ -145,6 +146,8 @@ def library_revision() -> str:
 # A version directory that is already a Python package (v2/v3/v4) stays legacy.
 _CHECKERS_ROOT = Path(__file__).resolve().parent / "checkers"
 _VERSION_DIRECTORY = re.compile(r"^v[0-9]+$")
+_LEGACY_FAMILIES = ("v2", "v3", "v4")
+_FAMILY_TOKEN = re.compile(br"audit\.checkers\.(v2|v3|v4)(?![0-9A-Za-z_])")
 
 
 def library_files(package: str, directory: Path) -> tuple[Path, ...]:
@@ -168,10 +171,86 @@ def _counts_toward_library(package: str, directory: Path, path: Path) -> bool:
     if package != "audit":
         return True
     parts = path.relative_to(directory).parts
-    if len(parts) < 3 or parts[0] != "checkers" or _VERSION_DIRECTORY.fullmatch(parts[1]) is None:
-        return True
-    marker = directory / "checkers" / parts[1] / "__init__.py"
-    return marker.is_file() and not marker.is_symlink()
+    # Every version tree is a checker, including historical packages. Shared
+    # runtime is checker_lib, the engine, and the rest of audit.
+    return not (len(parts) >= 2 and parts[0] == "checkers" and _VERSION_DIRECTORY.fullmatch(parts[1]) is not None)
+
+
+def legacy_families(files: Mapping[str, bytes]) -> tuple[str, ...]:
+    """Version packages named by a suite's own checker or resources source."""
+    blob = b"\n".join(files.get(name, b"") for name in ("checker.py", "resources.py"))
+    found: list[str] = []
+    for match in _FAMILY_TOKEN.finditer(blob):
+        family = match.group(1).decode()
+        if family not in found:
+            found.append(family)
+    return tuple(found)
+
+
+def legacy_tree_revision(audit_root: Path, family: str) -> str:
+    """Hash one historical checker package. Not part of ``library_revision``."""
+    if family not in _LEGACY_FAMILIES:
+        raise ValueError("unknown_legacy_runtime")
+    directory = audit_root / "checkers" / family
+    paths = tuple(path for path in sorted(directory.rglob("*.py")) if path.is_file() and not path.is_symlink()) if directory.is_dir() else ()
+    digest = hashlib.sha256()
+    for path in paths:
+        digest.update(f"audit/{path.relative_to(audit_root)}".encode())
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+@lru_cache(maxsize=4)
+def legacy_runtime_revision(family: str) -> str:
+    """Installed fingerprint of one historical checker package."""
+    return legacy_tree_revision(Path(__file__).resolve().parent, family)
+
+
+def combine_library_revision(shared: str, family_revisions: tuple[tuple[str, str], ...]) -> str:
+    """Public fingerprint, plus each named historical package in sorted order."""
+    if not family_revisions:
+        return shared
+    digest = hashlib.sha256()
+    digest.update(b"shared\0")
+    digest.update(shared.encode())
+    digest.update(b"\0")
+    for family, revision in family_revisions:
+        digest.update(family.encode())
+        digest.update(b"\0")
+        digest.update(revision.encode())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def library_revision_for_families(families: tuple[str, ...] | list[str]) -> str:
+    """Shared fingerprint, with one installed legacy package hash per family."""
+    ordered = tuple(sorted(dict.fromkeys(families)))
+    if any(family not in _LEGACY_FAMILIES for family in ordered):
+        raise ValueError("unknown_legacy_runtime")
+    shared = library_revision()
+    return combine_library_revision(shared, tuple((family, legacy_runtime_revision(family)) for family in ordered))
+
+
+def suite_library_revision(files: Mapping[str, bytes]) -> str:
+    """Fingerprint a suite proof compares. Directory leaves stay on the public one."""
+    return library_revision_for_families(legacy_families(files))
+
+
+def execution_library_revision(groups: Sequence[Mapping[str, bytes]]) -> str:
+    """Union of legacy families actually named by the suites in one run."""
+    found: list[str] = []
+    for files in groups:
+        for family in legacy_families(files):
+            if family not in found:
+                found.append(family)
+    return library_revision_for_families(found)
+
+
+def stored_library_needs_rerun(stored_library: str, families: tuple[str, ...] | list[str]) -> bool:
+    """Same comparison ``suite_releases._validation`` uses for samples_not_rerun."""
+    return stored_library != library_revision_for_families(families)
 
 
 _LEAF_FILES = frozenset({"checker.py", "rules.json", "resources.py", "appendix.json", "templates.json", "tests.json"})

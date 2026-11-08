@@ -2,12 +2,25 @@
 
 import json
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 from audit.checker_core import ValidationRecord, checker_digest
 from audit.checker_lib.imports import directory_import_violations
-from audit.standard_suites import hash_library, library_files, library_revision, load_predefined_checkers
+from audit.standard_suites import (
+    combine_library_revision,
+    hash_library,
+    legacy_families,
+    legacy_tree_revision,
+    library_files,
+    library_revision,
+    load_predefined_checkers,
+    standard_suites,
+    stored_library_needs_rerun,
+    suite_library_revision,
+)
 
 _AUDIT = Path(__file__).resolve().parents[1] / "src" / "audit"
 _CHECKERS = _AUDIT / "checkers"
@@ -19,9 +32,9 @@ def test_installed_leaves_are_outside_the_library_fingerprint():
     assert "checker_lib/excel.py" in relative
     assert "checker_lib/pdf.py" in relative
     assert "checker_lib/visual.py" in relative
-    assert "checkers/v2/__init__.py" in relative
-    assert "checkers/v3/__init__.py" in relative
-    assert "checkers/v4/__init__.py" in relative
+    assert "engine/checkers/pdf_field_region.py" in relative
+    assert "checkers/__init__.py" in relative
+    assert not any(item.startswith("checkers/v2/") or item.startswith("checkers/v3/") or item.startswith("checkers/v4/") for item in relative)
     assert not any(item.startswith("checkers/v5/") for item in relative)
     revision = library_revision()
     assert len(revision) == 64 and revision == library_revision()
@@ -45,41 +58,63 @@ def test_copying_v5_to_v6_changes_the_checker_digest_only(tmp_path):
     assert again["v6/UAES/U08"].revision_digest != loaded["v6/UAES/U08"].revision_digest
 
 
-def test_public_library_edits_change_the_fingerprint_and_mark_retest(tmp_path):
+def _tree_bound(root: Path, files: dict[str, bytes]) -> str:
+    shared = hash_library((("audit", root),))
+    families = legacy_families(files)
+    revisions = tuple((family, legacy_tree_revision(root, family)) for family in sorted(families))
+    return combine_library_revision(shared, revisions)
+
+
+def test_v4_business_edits_spare_the_public_fingerprint_and_expire_that_suite(tmp_path):
     root = tmp_path / "audit"
     (root / "checker_lib").mkdir(parents=True)
     excel = root / "checker_lib" / "excel.py"
     excel.write_text("VALUE = 1\n", encoding="utf-8")
-    (root / "engine").mkdir()
-    (root / "engine" / "routing.py").write_text("PROFILE = 'explicit'\n", encoding="utf-8")
-    legacy = root / "checkers" / "v4"
-    legacy.mkdir(parents=True)
-    (legacy / "__init__.py").write_text("LEGACY = 1\n", encoding="utf-8")
+    for family in ("v2", "v3", "v4"):
+        package = root / "checkers" / family
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text(f"FAMILY = {family!r}\n", encoding="utf-8")
+        (package / "agent.py").write_text("class Agent:\n    pass\n", encoding="utf-8")
     leaf = root / "checkers" / "v5" / "UAES" / "U08"
     leaf.mkdir(parents=True)
     (leaf / "checker.py").write_text("def create_audit():\n    return 1\n", encoding="utf-8")
+    v5_files = {"checker.py": (leaf / "checker.py").read_bytes()}
+    historical = {"checker.py": b"from audit.checkers.v4.uaes import Agent\ndef check(context):\n    return None\n"}
+    v3_historical = {"checker.py": b"from audit.checkers.v3.excel_agent import ExcelAgent\n"}
     before = hash_library((("audit", root),))
-    shutil.copytree(root / "checkers" / "v5", root / "checkers" / "v6")
+    assert legacy_families(v5_files) == ()
+    assert legacy_families(historical) == ("v4",)
+    assert legacy_families({"checker.py": b"import audit.checkers.v40.thing\n"}) == ()
+    assert _tree_bound(root, v5_files) == before
+    v4_bound = _tree_bound(root, historical)
+    v3_bound = _tree_bound(root, v3_historical)
+    assert v4_bound != before and v3_bound != before and v4_bound != v3_bound
+
+    (root / "checkers" / "v4" / "agent.py").write_text("class Agent:\n    changed = True\n", encoding="utf-8")
     assert hash_library((("audit", root),)) == before
-    v6 = root / "checkers" / "v6" / "UAES" / "U08" / "checker.py"
-    original = v6.read_bytes()
-    v6.write_text(v6.read_text(encoding="utf-8") + "\n# v6 only\n", encoding="utf-8")
+    assert _tree_bound(root, v5_files) == before
+    after_v4 = _tree_bound(root, historical)
+    assert after_v4 != v4_bound
+    assert _tree_bound(root, v3_historical) == v3_bound
+
+    (root / "checkers" / "v3" / "agent.py").write_text("class Agent:\n    changed = True\n", encoding="utf-8")
     assert hash_library((("audit", root),)) == before
-    assert checker_digest({"checker.py": original}) != checker_digest({"checker.py": v6.read_bytes()})
-    (legacy / "__init__.py").write_text("LEGACY = 2\n", encoding="utf-8")
-    after_legacy = hash_library((("audit", root),))
-    assert after_legacy != before
+    assert _tree_bound(root, historical) == after_v4
+
+    same = dict(suite_digest="a" * 64, rule_digest="b" * 64, checker_digest="c" * 64, related_suite_digests={})
+    historical_record = ValidationRecord("a" * 64, "b" * 64, "c" * 64, {}, v4_bound)
+    directory_record = ValidationRecord("a" * 64, "b" * 64, "c" * 64, {}, before)
+    assert historical_record.status(**same, library_revision=after_v4) == {"state": "verified", "samples_not_rerun": True}
+    assert directory_record.status(**same, library_revision=before) == {"state": "verified", "samples_not_rerun": False}
+
     excel.write_text("VALUE = 2\n", encoding="utf-8")
     after_public = hash_library((("audit", root),))
-    assert after_public != after_legacy
+    assert after_public != before
+    assert _tree_bound(root, v5_files) == after_public
+    assert directory_record.status(**same, library_revision=after_public) == {"state": "verified", "samples_not_rerun": True}
     names = [path.relative_to(root).as_posix() for path in library_files("audit", root)]
-    assert "checker_lib/excel.py" in names and "checkers/v4/__init__.py" in names
-    assert not any(name.startswith("checkers/v5/") or name.startswith("checkers/v6/") for name in names)
-    # publish_official refuses samples_not_rerun with official_suite_validation_required.
-    record = ValidationRecord("a" * 64, "b" * 64, "c" * 64, {}, before)
-    same = dict(suite_digest="a" * 64, rule_digest="b" * 64, checker_digest="c" * 64, related_suite_digests={}, library_revision=before)
-    assert record.status(**same) == {"state": "verified", "samples_not_rerun": False}
-    assert record.status(**{**same, "library_revision": after_public}) == {"state": "verified", "samples_not_rerun": True}
+    assert "checker_lib/excel.py" in names
+    assert not any(name.startswith("checkers/v2/") or name.startswith("checkers/v3/") or name.startswith("checkers/v4/") or name.startswith("checkers/v5/") for name in names)
 
 
 def test_installed_directory_leaves_have_no_legacy_checker_imports():
@@ -210,6 +245,137 @@ def test_pdf_and_visual_helpers_delegate_to_existing_readers(monkeypatch):
     assert read_tables("in.pdf", spec="spec") == ("tables", "in.pdf", "spec")
     assert convert_pdf_to_excel("in.pdf", "out.xlsx", spec="spec") == ("convert", "in.pdf", "out.xlsx", "spec")
     assert observe_excel_region("sheet", whole_field=False) == {"args": ("sheet",), "whole_field": False}
+
+
+def test_installed_historical_suite_binds_its_family_and_the_directory_leaf_does_not():
+    legacy = next(suite for suite in standard_suites() if suite.suite_key == "UAES:U08")
+    directory = next(suite for suite in load_predefined_checkers() if suite.source_path == "v5/UAES/U08")
+    public = library_revision()
+    assert legacy_families(legacy.files) == ("v4",)
+    assert legacy_families(directory.files) == ()
+    historical = suite_library_revision(legacy.files)
+    assert suite_library_revision(directory.files) == public
+    assert historical != public
+    # publish_official blocks samples_not_rerun with official_suite_validation_required.
+    assert stored_library_needs_rerun(public, ()) is False
+    assert stored_library_needs_rerun(public, ("v4",)) is True
+    assert stored_library_needs_rerun(historical, ("v4",)) is False
+    assert stored_library_needs_rerun(historical, ()) is True
+
+
+def test_family_revision_change_marks_only_the_historical_suite(monkeypatch):
+    from audit import standard_suites as suites
+
+    legacy = next(suite for suite in standard_suites() if suite.suite_key == "UAES:U08")
+    directory = next(suite for suite in load_predefined_checkers() if suite.source_path == "v5/UAES/U08")
+    public = library_revision()
+    before = suite_library_revision(legacy.files)
+    real = suites.legacy_runtime_revision
+
+    def flipped(family: str) -> str:
+        if family == "v4":
+            return "f" * 64
+        return real(family)
+
+    monkeypatch.setattr(suites, "legacy_runtime_revision", flipped)
+    assert library_revision() == public
+    assert suite_library_revision(directory.files) == public
+    changed = suite_library_revision(legacy.files)
+    assert changed != before
+    same = dict(suite_digest="a" * 64, rule_digest="b" * 64, checker_digest="c" * 64, related_suite_digests={})
+    historical = ValidationRecord("a" * 64, "b" * 64, "c" * 64, {}, before)
+    directory_record = ValidationRecord("a" * 64, "b" * 64, "c" * 64, {}, public)
+    assert historical.status(**same, library_revision=changed) == {"state": "verified", "samples_not_rerun": True}
+    assert directory_record.status(**same, library_revision=public) == {"state": "verified", "samples_not_rerun": False}
+    assert stored_library_needs_rerun(before, ("v4",)) is True
+
+
+def test_whole_field_observation_does_not_import_a_v4_checker(tmp_path):
+    script = tmp_path / "whole_field.py"
+    sheet = tmp_path / "sheet.xlsx"
+    script.write_text(
+        """
+import json
+import sys
+
+import fitz
+from openpyxl import Workbook, load_workbook
+
+document = fitz.open()
+page = document.new_page(width=595, height=842)
+page.insert_text((72, 80), "SUBMISSION RESULTS", fontsize=16)
+page.insert_text((72, 420), "DECLARATION", fontsize=16)
+pdf_bytes = document.tobytes()
+document.close()
+
+book = Workbook()
+book.active.title = "Sheet1"
+book.active["A1"] = "x"
+book.save(sys.argv[1])
+book.close()
+
+import documents.excel.visual as visual
+import documents.ocr.env as env
+
+visual.render_xlsx_pdf = lambda *args, **kwargs: pdf_bytes
+
+def configured():
+    return "configured"
+
+env.ocr_model_name = configured
+env.ocr_openai_api_key = configured
+env.ocr_openai_base_url = configured
+env.ocr_policy_identity = lambda: "policy"
+
+from audit.checker_lib.visual import observe_excel_region
+import audit.engine.checkers.excel_field_evidence as evidence
+import audit.engine.checkers.pdf_field_region as region
+
+seen = {}
+original = region.pdf_field_region
+
+def wrapped(page, fields):
+    box = original(page, fields)
+    seen["box"] = [box.y0, box.y1, page.rect.y1]
+    seen["module"] = original.__module__
+    return box
+
+region.pdf_field_region = wrapped
+
+def fake_ocr(images, fields, record, context=None):
+    seen["png"] = list(images[0].data[:4])
+    seen["context"] = context or ""
+    return {name: "yes" for name in fields}
+
+evidence.observe_ocr_images = fake_ocr
+opened = load_workbook(sys.argv[1])
+from audit.contracts import AuditInput
+
+result = observe_excel_region(
+    AuditInput(audit_id="a1", file_url=sys.argv[1], file_metadata={"file_version_id": "v1"}),
+    opened.active,
+    None,
+    {"dimensional_checked": "dimensions"},
+    ("SUBMISSION RESULTS",),
+    cache={},
+    witness=lambda *args, **kwargs: None,
+    whole_field=True,
+)
+opened.close()
+legacy = sorted(name for name in sys.modules if name == "audit.checkers" or name.startswith("audit.checkers."))
+print(json.dumps({"result": result, "seen": seen, "legacy": legacy}))
+""".lstrip(),
+        encoding="utf-8",
+    )
+    completed = subprocess.run([sys.executable, str(script), str(sheet)], check=False, capture_output=True, text=True)
+    assert completed.returncode == 0, completed.stderr
+    payload = json.loads(completed.stdout)
+    assert payload["result"] == {"dimensional_checked": "yes"}
+    assert payload["seen"]["png"] == [137, 80, 78, 71]
+    assert "SUBMISSION RESULTS" in payload["seen"]["context"]
+    assert payload["seen"]["module"] == "audit.engine.checkers.pdf_field_region"
+    assert payload["seen"]["box"][1] < payload["seen"]["box"][2] - 10
+    assert payload["legacy"] == []
 
 
 def test_structure_evidence_records_the_frozen_file_without_a_pass():

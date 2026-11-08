@@ -250,18 +250,21 @@ def freeze_authorized_inputs(conn, principal, prepared: list[dict]) -> tuple[Fro
     return tuple(inputs)
 
 
-def freeze_selected_targets(store, conn, tenant_id: str, prepared: list[dict], *, require_rule_match: bool = False, preparation: bool = False) -> tuple[FrozenTarget, ...]:
+def freeze_selected_targets(
+    store, conn, tenant_id: str, prepared: list[dict], *, require_rule_match: bool = False, preparation: bool = False, library_groups: list | None = None
+) -> tuple[FrozenTarget, ...]:
     """Resolve the same adopted immutable Suite for preparation and acceptance.
 
     Preparation may inspect unverified source without publishing it or approving
     formal use. Its verification status is preserved and it never grants billing.
+    ``library_groups`` collects checker sources so the caller can hash the
+    legacy packages those suites actually name.
     """
-    from audit.standard_suites import library_revision
+    from audit.standard_suites import suite_library_revision
 
     from product.store.suite_releases import current_selection
 
     suites = SuiteStore(store.settings, store.objects, store.role)
-    library = library_revision()
     targets = []
     for item in prepared:
         if item["role"] != "target":
@@ -292,13 +295,18 @@ def freeze_selected_targets(store, conn, tenant_id: str, prepared: list[dict], *
         binding = RuleBinding(suite.revision.suite_key, code, entrypoints, rule_digest(rules, appendix) if verified else None)
         receipt = selection["validation"]
         validation = ValidationRecord(suite.revision.resolved_digest, rule_digest(rules, appendix), code, related, receipt["library_revision"]) if verified else None
+        # Historical carriers compare the public fingerprint plus their own
+        # v2/v3/v4 package. Directory leaves compare the public fingerprint.
+        bound = suite_library_revision(suite.files)
+        if library_groups is not None:
+            library_groups.append({name: suite.files[name] for name in ("checker.py", "resources.py") if name in suite.files})
         target = freeze_execution(
             suite=suite,
             file_version_id=item["file_version_id"],
             binding=binding,
             validation=validation,
             related_suite_digests=related,
-            library_revision=library,
+            library_revision=bound,
             allow_unverified=preparation or selection["force_unverified"],
         )
         targets.append(target)

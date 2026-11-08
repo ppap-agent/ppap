@@ -18,7 +18,7 @@ from agent.execution.audit_runtime import run_audit
 from agent.mapping import spec_from_work
 from audit.audits import DEEP_PROTOCOL_REVISION, RoundWork
 from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest
-from audit.standard_suites import StandardSuite, library_revision, standard_suites
+from audit.standard_suites import StandardSuite, execution_library_revision, standard_suites
 from audit.suite_migration import user_rule_files
 
 
@@ -85,7 +85,8 @@ def freeze_suite_round(work: RoundWork, blobs: dict[str, bytes], *, suites: dict
         binding = RuleBinding(selected.suite_key, checker_digest(selected.program_files), selected.entrypoints)
         targets.append(FrozenTarget(item.file_version_id, item.rule_version_id, selected.suite_key, selected.revision_digest, body, binding))
         programs[binding.checker_digest] = selected.program_files
-    snapshot = ExecutionSnapshot(work.tenant_id, "controlled-regression", tuple(inputs), tuple(targets), "controlled-core", library_revision(), {}, round_id=work.round_id)
+    library = execution_library_revision(tuple(programs.values()))
+    snapshot = ExecutionSnapshot(work.tenant_id, "controlled-regression", tuple(inputs), tuple(targets), "controlled-core", library, {}, round_id=work.round_id)
     frozen = replace(work, inputs=frozen_items, initiating_user_id=snapshot.initiating_user_id)
     spec = spec_from_work(frozen, "ppap-checker-core", snapshot.runtime_revision, DEEP_PROTOCOL_REVISION, checker_snapshot_digest=snapshot.input_digest)
     return snapshot, programs, spec

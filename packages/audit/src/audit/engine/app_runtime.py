@@ -42,6 +42,7 @@ from audit.engine.docx_quality import (
     validate_converted_docx_audit_quality,
 )
 from audit.engine.engine import run_audit
+from audit.engine.file_bytes import load_file_bytes as _load_file_bytes
 from audit.engine.routing import resolve_engine_agent_class
 from audit.engine.runtime import AuditRuntime
 from audit.kinds import PpapDocumentType
@@ -55,19 +56,6 @@ class AuditResult(BaseModel):
     suggestions: str
     evidence: Optional[AuditEvidence] = None
     checks_performed: Optional[int] = None
-
-
-def _load_file_bytes(file_url: str) -> tuple[bytes, str]:
-    parsed = urlparse(file_url)
-    file_type = Path(unquote(parsed.path or file_url)).suffix.lower() or ".pdf"
-
-    if parsed.scheme in ("http", "https"):
-        file_content, _headers = download_file_sync(file_url, max_file_size=100 * 1024 * 1024)
-        return file_content, file_type
-
-    path_str = parsed.path if parsed.scheme == "file" else file_url
-    local_path = Path(unquote(path_str))
-    return local_path.read_bytes(), local_path.suffix.lower() or file_type
 
 
 class _AppAuditRuntime(AuditRuntime):
