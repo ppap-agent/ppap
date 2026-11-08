@@ -84,9 +84,24 @@ class SuiteUnavailable(TypedDict):
     error: Literal["suite_unavailable"]
 
 
+class SuitePredefined(TypedDict):
+    path: str
+    title: str
+    suite_key: str
+    revision_id: str
+
+
+class SuitePredefinedUnavailable(TypedDict):
+    path: str
+    error: Literal["unseeded", "unavailable", "invalid"]
+
+
 class SuiteCatalog(TypedDict):
     suites: list[SuiteActive]
     unavailable: NotRequired[list[SuiteUnavailable]]
+    predefined: NotRequired[list[SuitePredefined]]
+    predefined_unavailable: NotRequired[list[SuitePredefinedUnavailable]]
+    predefined_error: NotRequired[Literal["predefined_catalog_unavailable"]]
 
 
 class SuiteRound(TypedDict):

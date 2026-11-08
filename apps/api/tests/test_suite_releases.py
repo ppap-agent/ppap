@@ -187,12 +187,21 @@ def test_catalog_preserves_titles_selections_and_reuses_shared_content(auth_stor
 
     monkeypatch.setattr(store.objects, "get", read_object)
     monkeypatch.setattr(release_store, "connect", open_connection)
+    from audit.standard_suites import predefined_directory_suites
+
+    installed = [{"path": suite.source_path, "error": "unseeded"} for suite in predefined_directory_suites()]
     for _ in range(2):
         object_reads.clear()
         connections.clear()
         response = bob.get("/suites")
         assert response.status_code == 200, response.text
-        assert response.json() == {"suites": expected}
+        body = response.json()
+        assert body["suites"] == expected
+        assert body["predefined"] == []
+        assert body["predefined_unavailable"] == installed
+        assert "predefined_error" not in body
+        assert "v5/UAES/U08" in [row["path"] for row in installed]
+        assert all(not row["path"].startswith(("v2/", "v3/", "v4/")) for row in installed)
         assert [row["title"] for row in response.json()["suites"]] == ["Control plan checks", "Control plan checks"]
         assert [row["selection_mode"] for row in response.json()["suites"]] == ["pinned", "candidate_only"]
         assert response.json()["suites"][1]["candidate_revision_id"] == tenant_candidate.id
@@ -203,3 +212,105 @@ def test_catalog_preserves_titles_selections_and_reuses_shared_content(auth_stor
     other = carol.get("/suites").json()["suites"]
     assert [row["selection_mode"] for row in other] == ["candidate_only", "candidate_only"]
     assert [row["candidate_revision_id"] for row in other] == [official.id, second.id]
+
+
+def test_predefined_catalog_binds_each_source_path_to_its_official_revision(auth_store_factory, monkeypatch):
+    from types import MappingProxyType
+    from urllib.parse import quote
+
+    from audit.standard_suites import StandardSuite, predefined_directory_suites
+    from product.suites import content_digest
+
+    store, _, creator, _, (alice, bob, carol) = prepare_fixture(auth_store_factory)
+    migrator = SuiteStore(store.settings, store.objects, role="migrator")
+    leaf = next(suite for suite in predefined_directory_suites() if suite.source_path == "v5/UAES/U08")
+    directory = migrator.create_revision(tenant_id=None, suite_key=leaf.suite_key, files=dict(leaf.files), created_by=None, related_suite_keys=leaf.related_suite_keys, source_path=leaf.source_path)
+    updated = dict(leaf.files)
+    rules = json.loads(updated["rules.json"])
+    rules["title"] = "目录修订二"
+    updated["rules.json"] = json.dumps(rules, ensure_ascii=False).encode()
+    latest = migrator.create_revision(
+        tenant_id=None,
+        suite_key=leaf.suite_key,
+        files=updated,
+        created_by=None,
+        related_suite_keys=leaf.related_suite_keys,
+        source_path=leaf.source_path,
+        base_revision_id=directory.id,
+    )
+    newer = migrator.create_revision(
+        tenant_id=None,
+        suite_key=leaf.suite_key,
+        files={"rules.json": '{"title":"无来源路径","rules":[{"id":"R1","rule_to_check":"Required"}]}'.encode(), "checker.py": b"def check(context):\n    return [1]\n"},
+        created_by=None,
+    )
+    assert newer.revision_number > latest.revision_number
+    active_path = "/suites/" + quote(leaf.suite_key, safe="") + "/active"
+    adopted = alice.put(active_path, json=command(newer.id))
+    assert adopted.status_code == 200, adopted.text
+    assert alice.get(active_path).json()["current_revision_id"] == newer.id
+    v6_files = dict(leaf.files)
+    v6_rules = json.loads(v6_files["rules.json"])
+    v6_rules["title"] = "v6 示例检查"
+    v6_files["rules.json"] = json.dumps(v6_rules, ensure_ascii=False).encode()
+    v6 = migrator.create_revision(tenant_id=None, suite_key="ACME:Z99", files=v6_files, created_by=None, source_path="v6/ACME/Z99")
+    mismatch = migrator.create_revision(tenant_id=None, suite_key="OTHER:KEY", files=FILES, created_by=None, source_path="v6/ACME/MIS")
+    # A tenant row may already carry source_path, but create_revision rejects that
+    # combination and suite_revisions reject later updates. The catalog must ignore it.
+    secret_id = str(uuid.uuid4())
+    with store._conn() as conn:
+        conn.execute(
+            """INSERT INTO product.suite_revisions
+               (id, tenant_id, revision_number, suite_key, overrides, resolved_digest, created_by, source_path)
+               VALUES (%s, %s, 1, 'SECRET:T1', '{}', %s, %s, 'v6/SECRET/T1')""",
+            (secret_id, creator.tenant_id, "ab" * 32, creator.user_id),
+        )
+    blank = MappingProxyType(dict(FILES))
+
+    def discovered():
+        return (
+            leaf,
+            StandardSuite("ACME:Z99", "", "ACME", "Z99", (), MappingProxyType(v6_files), MappingProxyType({}), "v6/ACME/Z99"),
+            StandardSuite("ACME:MIS", "", "ACME", "MIS", (), blank, MappingProxyType({}), "v6/ACME/MIS"),
+            StandardSuite("NEW:X1", "", "NEW", "X1", (), blank, MappingProxyType({}), "v6/NEW/X1"),
+            StandardSuite("BAD:KEY", "", "BAD", "KEY", (), blank, MappingProxyType({}), "not-a-directory"),
+            StandardSuite("SECRET:T1", "", "SECRET", "T1", (), blank, MappingProxyType({}), "v6/SECRET/T1"),
+        )
+
+    monkeypatch.setattr("audit.standard_suites.predefined_directory_suites", discovered)
+    assert TestClient(create_app(store.settings, auth_store=store)).get("/suites").status_code == 401
+    body = alice.get("/suites").json()
+    predefined = {row["path"]: row for row in body["predefined"]}
+    assert predefined["v5/UAES/U08"] == {"path": "v5/UAES/U08", "title": "目录修订二", "suite_key": "UAES:U08", "revision_id": latest.id}
+    assert predefined["v6/ACME/Z99"] == {"path": "v6/ACME/Z99", "title": "v6 示例检查", "suite_key": "ACME:Z99", "revision_id": v6.id}
+    assert {row["revision_id"] for row in body["predefined"]}.isdisjoint({newer.id, directory.id, secret_id, mismatch.id})
+    assert {row["path"]: row["error"] for row in body["predefined_unavailable"]} == {
+        "v6/ACME/MIS": "unavailable",
+        "v6/NEW/X1": "unseeded",
+        "not-a-directory": "invalid",
+        "v6/SECRET/T1": "unseeded",
+    }
+    assert {row["path"]: row for row in bob.get("/suites").json()["predefined"]} == predefined
+    assert {row["path"]: row for row in carol.get("/suites").json()["predefined"]} == predefined
+    assert "control-plan" not in {row["suite_key"] for row in body["predefined"]}
+    assert any(row["suite_key"] == "control-plan" for row in body["suites"])
+    del store.objects.data[f"suites/official/objects/{content_digest(updated['rules.json'])}"]
+    after = alice.get("/suites").json()
+    assert "v5/UAES/U08" not in {row["path"] for row in after["predefined"]}
+    assert {row["path"]: row["revision_id"] for row in after["predefined"]} == {"v6/ACME/Z99": v6.id}
+    blocked = {row["path"]: row["error"] for row in after["predefined_unavailable"]}
+    assert blocked["v5/UAES/U08"] == "unavailable"
+    assert directory.id not in {row.get("revision_id") for row in after["predefined"]}
+
+
+def test_predefined_catalog_scan_failure_lists_no_paths(auth_store_factory, monkeypatch):
+    store, _, _, _, (alice, _, _) = prepare_fixture(auth_store_factory)
+
+    def broken():
+        raise ValueError("predefined_bad_json")
+
+    monkeypatch.setattr("audit.standard_suites.predefined_directory_suites", broken)
+    body = alice.get("/suites").json()
+    assert body["predefined_error"] == "predefined_catalog_unavailable"
+    assert "predefined" not in body and "predefined_unavailable" not in body
+    assert any(row["suite_key"] == "control-plan" for row in body["suites"])

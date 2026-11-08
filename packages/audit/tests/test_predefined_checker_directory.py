@@ -138,6 +138,17 @@ def test_legacy_version_packages_are_not_scanned_and_a_package_leaf_conflicts(tm
         load_predefined_checkers(tmp_path)
 
 
+def test_bytecode_cache_does_not_drop_an_installed_leaf(tmp_path):
+    directory = write_leaf(tmp_path, "v5/UAES/U08")
+    cache = directory / "__pycache__"
+    cache.mkdir()
+    (cache / "checker.cpython-312.pyc").write_bytes(b"\x00pyc")
+    (directory / "resources.cpython-312.pyc").write_bytes(b"\x00pyc")
+    found = load_predefined_checkers(tmp_path)
+    assert [suite.source_path for suite in found] == ["v5/UAES/U08"]
+    assert set(found[0].files) == {"checker.py", "rules.json"}
+
+
 @pytest.mark.parametrize(
     ("mutate", "code"),
     [
