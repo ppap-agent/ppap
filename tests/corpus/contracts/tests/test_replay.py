@@ -146,6 +146,33 @@ def test_offline_recorded_observation_needs_no_provider(tmp_path, monkeypatch):
     assert calls == []
 
 
+def test_peer_visual_observations_record_and_replay_two_distinct_answers(tmp_path, monkeypatch):
+    from unittest.mock import Mock
+
+    from audit.engine.checkers.ocr_visual_facts import OcrImage, observe_ocr_images
+
+    monkeypatch.setenv("OCR_MODEL_NAME", "controlled")
+    monkeypatch.setenv("OCR_OPENAI_API_KEY", "controlled")
+    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://controlled.invalid")
+    calls = []
+
+    async def answer(kwargs):
+        calls.append(kwargs)
+        return type("Response", (), {"status": "completed", "output_text": json.dumps({"seal": len(calls) == 1}), "usage": None})()
+
+    monkeypatch.setattr(ocr_client, "_request_response", answer)
+    recorder = Recorder("peer-observations", tmp_path, tmp_path)
+    install(monkeypatch, recorder)
+    frames = [OcrImage(b"synthetic", {"scope": "pdf:1", "page": 1, "context": True, "located_region": True}, 100, 100)]
+    for _ in range(2):
+        witness = Mock()
+        assert observe_ocr_images(frames, {"seal": "actual seal"}, witness) == {"seal": None}
+        witness.assert_not_called()
+    assert len(calls) == 2 and len(recorder.pending) == 2
+    assert recorder.pending[0]["request"] != recorder.pending[1]["request"]
+    assert [json.loads(entry["answer"]) for entry in recorder.pending] == [{"seal": True}, {"seal": False}]
+
+
 def test_test_grant_preserves_the_paired_key_endpoint_and_model(monkeypatch):
     from corpus_contracts.replay import configured_model_access
 

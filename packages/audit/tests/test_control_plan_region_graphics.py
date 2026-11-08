@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 from audit.checkers.v3.control_plan_agent import ControlPlanAgent
 from audit.contracts import AuditInput, RuleInput
-from audit.engine.checkers.ocr_visual_facts import CONFIRMATION_PROMPT
+from audit.engine.checkers.ocr_visual_facts import OBSERVATION_PROMPTS
 from audit.engine.runtime import bind_runtime
 from openpyxl import Workbook
 from PIL import Image
@@ -48,7 +48,7 @@ def test_excel_region_preserves_identity_and_reuses_success_unknown_and_errors(t
     calls = []
 
     def request(**kwargs):
-        if not kwargs["prompt"].startswith(CONFIRMATION_PROMPT):
+        if not kwargs["prompt"].startswith(OBSERVATION_PROMPTS[1]):
             calls.append(kwargs)
         if value == "failure":
             raise ValueError("private provider body")

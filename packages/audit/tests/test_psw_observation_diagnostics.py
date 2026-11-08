@@ -4,7 +4,7 @@ import json
 from unittest.mock import Mock
 
 import pytest
-from audit.engine.checkers.ocr_visual_facts import CONFIRMATION_PROMPT, OcrImage, observe_ocr_images
+from audit.engine.checkers.ocr_visual_facts import OBSERVATION_PROMPTS, OcrImage, observe_ocr_images
 
 
 @pytest.mark.parametrize("confirmation,expected", [("专用章", "专用章"), (None, None), ("公司", None)])
@@ -17,7 +17,7 @@ def test_seal_reading_diagnostics_preserve_two_reads_and_the_original_decision(m
 
     def read(**kwargs):
         calls.append(kwargs)
-        value = confirmation if kwargs["prompt"].startswith(CONFIRMATION_PROMPT) else "专用章"
+        value = confirmation if kwargs["prompt"].startswith(OBSERVATION_PROMPTS[1]) else "专用章"
         return {"psw_stamp_present": True, "psw_stamp_ending_text": value}
 
     monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", read)
@@ -32,13 +32,13 @@ def test_seal_reading_diagnostics_preserve_two_reads_and_the_original_decision(m
     (record,) = [r for r in caplog.records if r.getMessage().startswith("PSW OCR observation: ")]
     detail = json.loads(record.getMessage().partition(": ")[2])
     assert detail["pages"] == [2] and detail["source_sha256"] == ["a" * 64]
-    assert detail["first"]["psw_stamp_ending_text"] == "other_text"
-    assert detail["confirmation"]["psw_stamp_ending_text"] == ("null" if confirmation is None else "company" if confirmation == "公司" else "other_text")
+    assert detail["observations"][0]["psw_stamp_ending_text"] == "other_text"
+    assert detail["observations"][1]["psw_stamp_ending_text"] == ("null" if confirmation is None else "company" if confirmation == "公司" else "other_text")
     assert detail["equal"]["psw_stamp_ending_text"] is (expected is not None)
     assert all(private not in caplog.text for private in ("专用章", "公司", "private-key", "private.invalid", "private-scope", "private-description", "private-image", "private-context"))
 
 
-def test_confirmation_failure_keeps_the_first_read_summary_and_does_not_retry(monkeypatch, caplog):
+def test_second_observation_failure_keeps_the_first_summary_and_does_not_retry(monkeypatch, caplog):
     from documents.ocr.client import ResponsesEvidenceError
 
     monkeypatch.setenv("OCR_MODEL_NAME", "controlled")
@@ -49,7 +49,7 @@ def test_confirmation_failure_keeps_the_first_read_summary_and_does_not_retry(mo
 
     def read(**kwargs):
         calls.append(kwargs)
-        if kwargs["prompt"].startswith(CONFIRMATION_PROMPT):
+        if kwargs["prompt"].startswith(OBSERVATION_PROMPTS[1]):
             raise ResponsesEvidenceError("responses_incomplete", "private-provider-body")
         return {"psw_stamp_ending_text": "公司"}
 
@@ -61,12 +61,12 @@ def test_confirmation_failure_keeps_the_first_read_summary_and_does_not_retry(mo
     assert len(calls) == 2
     (record,) = [r for r in caplog.records if r.getMessage().startswith("PSW OCR observation: ")]
     detail = json.loads(record.getMessage().partition(": ")[2])
-    assert detail["phase"] == "confirmation_failed"
-    assert detail["first"]["psw_stamp_ending_text"] == "company"
+    assert detail["phase"] == "observation_2_failed"
+    assert detail["observations"] == [{"psw_stamp_ending_text": "company"}]
     assert "private-provider-body" not in caplog.text
 
 
-def test_unknown_first_read_is_reported_without_inventing_a_confirmation(monkeypatch, caplog):
+def test_unknown_observations_are_both_reported_without_inventing_a_known_fact(monkeypatch, caplog):
     monkeypatch.setenv("OCR_MODEL_NAME", "controlled")
     monkeypatch.setenv("OCR_OPENAI_API_KEY", "controlled")
     monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://controlled.invalid")
@@ -74,11 +74,11 @@ def test_unknown_first_read_is_reported_without_inventing_a_confirmation(monkeyp
     read = Mock(return_value={"psw_stamp_ending_text": None})
     monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", read)
     assert observe_ocr_images(frames, {"psw_stamp_ending_text": "末尾"}, Mock()) == {"psw_stamp_ending_text": None}
-    assert read.call_count == 1
+    assert read.call_count == 2
     (record,) = [r for r in caplog.records if r.getMessage().startswith("PSW OCR observation: ")]
     detail = json.loads(record.getMessage().partition(": ")[2])
-    assert detail["first"] == {"psw_stamp_ending_text": "null"}
-    assert detail["phase"] == "confirmation_not_requested" and detail["confirmation"] == {} and detail["equal"] == {}
+    assert detail["observations"] == [{"psw_stamp_ending_text": "null"}, {"psw_stamp_ending_text": "null"}]
+    assert detail["phase"] == "completed" and detail["equal"] == {"psw_stamp_ending_text": True}
 
 
 def test_seal_decision_reports_native_authorization_facts_without_changing_unknown(monkeypatch, caplog):
@@ -108,8 +108,8 @@ def test_seal_decision_reports_native_authorization_facts_without_changing_unkno
     assert "private-file" not in caplog.text
 
 
-@pytest.mark.parametrize("confirmation_known", [False, True], ids=["shanghai-yada-confirmation-unknown", "same-pages-confirmed-absence"])
-def test_shanghai_yada_page5_unknown_cannot_be_replaced_by_page3_absence(monkeypatch, caplog, confirmation_known):
+@pytest.mark.parametrize("second_known", [False, True], ids=["shanghai-yada-observation-2-unknown", "same-pages-agreed-absence"])
+def test_shanghai_yada_page5_unknown_cannot_be_replaced_by_page3_absence(monkeypatch, caplog, second_known):
     """CI #42510446162: page 3 agrees on absence; page 5's second read is unknown."""
     from audit.engine.checkers.psw_visual_evidence import evaluate_psw_observation
 
@@ -123,10 +123,10 @@ def test_shanghai_yada_page5_unknown_cannot_be_replaced_by_page3_absence(monkeyp
     def read(**kwargs):
         (image,) = kwargs["images"]
         page = int(image)
-        confirmation = kwargs["prompt"].startswith(CONFIRMATION_PROMPT)
-        calls.append((page, confirmation))
+        second = kwargs["prompt"].startswith(OBSERVATION_PROMPTS[1])
+        calls.append((page, second))
         values = {"psw_stamp_present": False, "psw_stamp_ending_text": None if page == 3 else ""}
-        if page == 5 and confirmation and not confirmation_known:
+        if page == 5 and second and not second_known:
             values = dict.fromkeys(fields)
         return {field: values[field] for field in kwargs["response_schema"]["schema"]["properties"]}
 
@@ -136,12 +136,14 @@ def test_shanghai_yada_page5_unknown_cannot_be_replaced_by_page3_absence(monkeyp
     assert observe_ocr_images(frames, fields, Mock(), request_cache=cache) == facts
     assert calls == [(3, False), (3, True), (5, False), (5, True)]
     result = evaluate_psw_observation(3, {**facts, "authorization_table_present": True, "authorization_company_stamp_present": False})
-    assert (result.status, result.checks_performed) == (("NG", 1) if confirmation_known else ("UNABLE", 0))
-    assert facts["psw_stamp_present"] is (False if confirmation_known else None)
-    if not confirmation_known:
+    assert (result.status, result.checks_performed) == (("NG", 1) if second_known else ("UNABLE", 0))
+    assert facts["psw_stamp_present"] is (False if second_known else None)
+    if not second_known:
         assert {call.args[0]["page"] for call in witness.call_args_list} == {3}
     details = [json.loads(record.getMessage().partition(": ")[2]) for record in caplog.records if record.getMessage().startswith("PSW OCR observation: ")]
     assert [detail["pages"] for detail in details] == [[3], [5]]
-    assert details[1]["first"] == {"psw_stamp_present": False, "psw_stamp_ending_text": "empty"}
-    assert details[1]["confirmation"] == {"psw_stamp_present": False if confirmation_known else None, "psw_stamp_ending_text": "empty" if confirmation_known else "null"}
-    assert details[1]["equal"] == dict.fromkeys(fields, confirmation_known)
+    assert details[1]["observations"] == [
+        {"psw_stamp_present": False, "psw_stamp_ending_text": "empty"},
+        {"psw_stamp_present": False if second_known else None, "psw_stamp_ending_text": "empty" if second_known else "null"},
+    ]
+    assert details[1]["equal"] == dict.fromkeys(fields, second_known)

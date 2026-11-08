@@ -10,7 +10,7 @@ from audit.contracts import (
 )
 from audit.engine.app_runtime import run_audit_engine
 from audit.engine.checkers.client import AIClient
-from audit.engine.checkers.ocr_visual_facts import CONFIRMATION_PROMPT
+from audit.engine.checkers.ocr_visual_facts import OBSERVATION_PROMPTS
 from documents.contracts import ConversionArtifact
 from openpyxl import Workbook
 
@@ -81,7 +81,7 @@ def test_app_runtime_reads_psw_facts_directly_through_ocr_configuration(tmp_path
         return ConversionArtifact(success=False)
 
     def read(**request):
-        if not request["prompt"].startswith(CONFIRMATION_PROMPT):
+        if not request["prompt"].startswith(OBSERVATION_PROMPTS[1]):
             calls.append(request)
         output = {}
         for field, spec in request["response_schema"]["schema"]["properties"].items():

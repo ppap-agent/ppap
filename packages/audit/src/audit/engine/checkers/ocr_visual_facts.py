@@ -21,8 +21,9 @@ from audit.engine.runtime import get_runtime
 from .psw_evidence_trace import psw_fact_summary
 
 logger = logging.getLogger(__name__)
-# Marks the independent second reading of a model-only fact.
-CONFIRMATION_PROMPT = "这是独立复核：不参考任何此前的读取结果，重新完整查看图像。\n"
+# Neutral identities keep peer observations separate in runtime caches and Replay.
+# Neither request receives the other request's answers or a different task.
+OBSERVATION_PROMPTS = ("独立观察编号：1。\n", "独立观察编号：2。\n")
 
 
 @dataclass(frozen=True)
@@ -119,8 +120,8 @@ def observe_ocr_images(
 ) -> dict[str, object]:
     """Read each original scope, then combine facts without a vote.
 
-    A model-only fact is established only when an independent second reading
-    of the same scope agrees; one observation can never decide a result.
+    A model-only fact is established only when two independent observations
+    of the same inputs agree on a known value; neither observation has priority.
     Image indices are local to that request. A later scope's failure cannot
     trigger another request for an already observed or failed scope.
     """
@@ -153,33 +154,26 @@ def observe_ocr_images(
         cached = request_cache.get(key) if request_cache is not None and key is not None else None
         if cached is None:
             sources = []
-            first: dict[str, object] = {}
-            confirmed: dict[str, object] = {}
-            phase = "first_failed"
+            readings: list[dict[str, object]] = []
+            model_fields = {field for field in subset if local_native.get(field, {}).get(scope) is None}
+            phase = "observation_1_failed"
             try:
-                facts = _observe_ocr_scope(
-                    frames,
-                    subset,
-                    lambda *args, **kwargs: sources.append((args, kwargs)),
-                    context=local_context,
-                    field_scopes={field: [scope] for field in subset},
-                    native_by_scope=local_native,
-                )
-                first = facts
-                phase = "confirmation_not_requested"
-                observed = {field: subset[field] for field, value in facts.items() if value is not None and local_native.get(field, {}).get(scope) is None}
-                if observed:
-                    phase = "confirmation_failed"
-                    confirmed = _observe_ocr_scope(
+                for number in (1, 2) if model_fields else (1,):
+                    phase = f"observation_{number}_failed"
+                    reading = _observe_ocr_scope(
                         frames,
-                        observed,
-                        lambda *args, **kwargs: None,
+                        subset,
+                        (lambda *args, **kwargs: sources.append((args, kwargs))) if number == 1 else (lambda *args, **kwargs: None),
                         context=local_context,
-                        field_scopes={field: [scope] for field in observed},
-                        confirmation=True,
+                        field_scopes={field: [scope] for field in subset},
+                        native_by_scope=local_native,
+                        observation_number=number,
                     )
-                    phase = "completed"
-                    disputed = {field for field in observed if confirmed[field] != facts[field]}
+                    readings.append(reading)
+                phase = "completed"
+                facts = readings[0]
+                if model_fields:
+                    disputed = {field for field in model_fields if readings[1][field] != facts[field]}
                     facts = {field: None if field in disputed else value for field, value in facts.items()}
                     sources = [(args, kwargs) for args, kwargs in sources if args[0].get("fact") not in disputed]
                 cached = (facts, sources)
@@ -196,9 +190,8 @@ def observe_ocr_images(
                         "pages": sorted({page for frame in frames if type(page := frame.locator.get("page")) is int and 1 <= page <= 1_000_000}),
                         "source_sha256": sorted({digest for frame in frames if isinstance(digest := frame.locator.get("source_sha256"), str) and re.fullmatch(r"[a-f0-9]{64}", digest)}),
                         "phase": phase,
-                        "first": _diagnostic_facts(first),
-                        "confirmation": _diagnostic_facts(confirmed),
-                        "equal": {field: first[field] == confirmed[field] for field in _diagnostic_facts(first) if field in confirmed},
+                        "observations": [_diagnostic_facts(reading) for reading in readings],
+                        "equal": {field: readings[0][field] == readings[1][field] for field in _diagnostic_facts(readings[0])} if len(readings) == 2 else {},
                     }
                     message = "OCR seal observation: %s" if "seal" in subset else "PSW OCR observation: %s"
                     logger.warning(message, json.dumps(diagnostic, sort_keys=True, separators=(",", ":")))
@@ -230,7 +223,7 @@ def _observe_ocr_scope(
     field_scopes: dict[str, list[str]] | None = None,
     any_fields: frozenset[str] = frozenset(),
     native_by_scope: dict[str, dict[str, object]] | None = None,
-    confirmation: bool = False,
+    observation_number: int,
 ) -> dict[str, object]:
     """Validate one fact per applicable source scope; never choose a winner.
 
@@ -311,9 +304,7 @@ def _observe_ocr_scope(
             + "\n区域中的原生文字：\n"
             + context[:16000]
         )
-    if confirmation:
-        # A separate request, not a cached repeat of the first reading.
-        prompt = CONFIRMATION_PROMPT + prompt
+    prompt = OBSERVATION_PROMPTS[observation_number - 1] + prompt
     try:
         raw = request(images=[image.data for image in images], prompt=prompt, response_schema=response_schema)
     except GuardStop as stop:

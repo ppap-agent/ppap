@@ -4,7 +4,7 @@ import json
 from unittest.mock import Mock
 
 import pytest
-from audit.engine.checkers.ocr_visual_facts import CONFIRMATION_PROMPT, OcrImage, observe_ocr_images
+from audit.engine.checkers.ocr_visual_facts import OBSERVATION_PROMPTS, OcrImage, observe_ocr_images
 from documents.ocr.client import ResponsesEvidenceError
 
 
@@ -24,39 +24,38 @@ def diagnostic(caplog):
     return json.loads(record.getMessage().partition(": ")[2])
 
 
-@pytest.mark.parametrize("first,confirmation", [(True, True), (False, False), (True, None), (False, True), (None, None)])
-def test_generic_seal_diagnostic_preserves_independent_confirmation_and_unknown(monkeypatch, caplog, first, confirmation):
+@pytest.mark.parametrize("first", [True, False, None])
+@pytest.mark.parametrize("second", [True, False, None])
+def test_generic_seal_diagnostic_preserves_peer_observations_and_unknown(monkeypatch, caplog, first, second):
     calls = []
 
     def read(**kwargs):
         calls.append(kwargs)
-        return {"seal": confirmation if kwargs["prompt"].startswith(CONFIRMATION_PROMPT) else first}
+        return {"seal": second if kwargs["prompt"].startswith(OBSERVATION_PROMPTS[1]) else first}
 
     monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", read)
     cache, witness = {}, Mock()
-    expected = first if first == confirmation else None
+    expected = first if first == second else None
     for _ in range(2):
         assert observe_ocr_images(frames(), {"seal": "private-description"}, witness, context="private-context", any_fields=frozenset({"seal"}), request_cache=cache) == {"seal": expected}
-    assert len(calls) == (1 if first is None else 2)
+    assert len(calls) == 2
     if expected is None:
         witness.assert_not_called()
     detail = diagnostic(caplog)
     assert detail["backend"] == "ocr_llm" and detail["pages"] == [4] and detail["source_sha256"] == ["a" * 64]
-    assert detail["first"] == {"seal": first}
-    assert detail["confirmation"] == ({} if first is None else {"seal": confirmation})
-    assert detail["equal"] == ({} if first is None else {"seal": first == confirmation})
-    assert detail["phase"] == ("confirmation_not_requested" if first is None else "completed")
+    assert detail["observations"] == [{"seal": first}, {"seal": second}]
+    assert detail["equal"] == {"seal": first == second}
+    assert detail["phase"] == "completed"
     assert all(private not in caplog.text for private in ("private-key", "private.invalid", "private-image", "private-scope", "private-description", "private-context"))
 
 
-@pytest.mark.parametrize("failed_read", ["first", "confirmation"])
+@pytest.mark.parametrize("failed_read", [1, 2])
 def test_generic_seal_failure_records_the_stage_without_provider_text_or_retry(monkeypatch, caplog, failed_read):
     calls = []
 
     def read(**kwargs):
         calls.append(kwargs)
-        phase = "confirmation" if kwargs["prompt"].startswith(CONFIRMATION_PROMPT) else "first"
-        if phase == failed_read:
+        if len(calls) == failed_read:
             raise ResponsesEvidenceError("responses_incomplete", "private-provider-body")
         return {"seal": True}
 
@@ -65,11 +64,11 @@ def test_generic_seal_failure_records_the_stage_without_provider_text_or_retry(m
     for _ in range(2):
         with pytest.raises(ResponsesEvidenceError):
             observe_ocr_images(frames(), {"seal": "actual seal"}, Mock(), request_cache=cache)
-    assert len(calls) == (1 if failed_read == "first" else 2)
+    assert len(calls) == failed_read
     detail = diagnostic(caplog)
-    assert detail["phase"] == failed_read + "_failed"
-    assert detail["first"] == ({} if failed_read == "first" else {"seal": True})
-    assert detail["confirmation"] == {} and detail["equal"] == {}
+    assert detail["phase"] == f"observation_{failed_read}_failed"
+    assert detail["observations"] == ([] if failed_read == 1 else [{"seal": True}])
+    assert detail["equal"] == {}
     assert "private-provider-body" not in caplog.text
 
 
@@ -78,6 +77,6 @@ def test_generic_seal_diagnostic_does_not_serialize_other_requested_fields(monke
     monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", read)
     assert observe_ocr_images(frames(), {"seal": "actual seal", "private-field-name": "private-description"}, Mock()) == {"seal": True, "private-field-name": False}
     detail = diagnostic(caplog)
-    assert detail["first"] == detail["confirmation"] == {"seal": True}
+    assert detail["observations"] == [{"seal": True}, {"seal": True}]
     assert detail["equal"] == {"seal": True}
     assert "private-field-name" not in caplog.text and "private-description" not in caplog.text
