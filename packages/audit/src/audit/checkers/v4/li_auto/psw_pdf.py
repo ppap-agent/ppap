@@ -9,9 +9,9 @@ from __future__ import annotations
 import logging
 import os
 from typing import Any
+from urllib.parse import unquote
 
-from audit.checkers.v2.base_agent import BaseAgent
-from audit.contracts import AuditInput, GroupContextInput, RuleInput
+from audit.contracts import AuditInput, GroupContextInput, RuleInput, RuleItem
 from audit.contracts import AuditResultItem as AuditResult
 from audit.engine.checkers.psw_pdf_evidence import PswPdfEvidenceMixin
 from audit.kinds import PpapDocumentType
@@ -28,14 +28,21 @@ def _has_original_pages(artifact: Any) -> bool:
     return isinstance(pages, list) and any(isinstance(page, dict) for page in pages)
 
 
-class _L17PswPdfHost(BaseAgent):
-    """PDF-to-workbook host for one v4 PSW carrier."""
+class _L17PswPdfHost:
+    """PDF-to-workbook host for one v4 PSW carrier.
 
-    TARGET_EXCEL_AGENT_CLASS: type[BaseAgent] | None = None
+    The few runtime helpers below are copied for this carrier. It does not
+    inherit a versioned checker base class.
+    """
+
+    TARGET_EXCEL_AGENT_CLASS: type[Any] | None = None
     FALLBACK_AGENT_RULES: tuple[str, ...] | list[str] | None = None
 
     def __init__(self, audit_file: AuditInput, rule: RuleInput, group_context: GroupContextInput | None = None) -> None:
-        super().__init__(audit_file, rule, group_context=group_context)
+        self.audit_file = audit_file
+        self.rule = rule
+        self.group_context = group_context
+        self.logger = logging.getLogger(type(self).__name__)
         self.rule_checkers: list[Any] = []
         self.agent_rules: list[str] = []
         self.temp_files: list[str] = []
@@ -187,6 +194,38 @@ class _L17PswPdfHost(BaseAgent):
 
     def _failed_conversion_rule(self, ith: int) -> AuditResult:
         return self.create_error_result("PDF to Excel conversion failed, cannot run deterministic rule checker.", ith)
+
+    @property
+    def document_type_name(self) -> str:
+        return type(self).__name__.replace("Agent", "")
+
+    def get_rule_by_index(self, ith: int) -> dict[str, Any] | None:
+        try:
+            rules = getattr(self.rule, "rules", [])
+            if isinstance(rules, list) and 0 <= ith < len(rules):
+                rule = rules[ith]
+                if isinstance(rule, dict):
+                    return rule
+                return RuleItem.model_validate(rule).model_dump()
+            return None
+        except Exception:
+            self.logger.exception("获取规则失败")
+            return None
+
+    def create_error_result(self, error_msg: str, ith: int = -1) -> AuditResult:
+        return AuditResult(
+            classification="规则审核",
+            item=f"{self.document_type_name} - 规则{ith + 1}",
+            priority="P0",
+            status="ERR",
+            suggestions=f"审核过程中出现错误: {error_msg}",
+        )
+
+    def log_audit_start(self, ith: int) -> None:
+        self.logger.debug("开始审核 %s - 文件: %s, 规则: %s", self.document_type_name, os.path.basename(unquote(str(getattr(self.audit_file, "file_url", "") or ""))), ith + 1)
+
+    def log_audit_result(self, result: AuditResult, ith: int) -> None:
+        self.logger.debug("审核完成 %s - 规则: %s, 状态: %s, 项目: %s", self.document_type_name, ith + 1, result.status, result.item)
 
 
 class LiAutoPswPdfAgent(PswPdfEvidenceMixin, _L17PswPdfHost):
