@@ -440,9 +440,7 @@ def test_official_activation_rechecks_proof_revision_library_dependency_and_byte
     platform.record_official_validation(candidate.id, proof_for(suites, alice, candidate, related={"dependency": updated.resolved_digest}), expected_revision=2)
     key = "suites/official/objects/" + candidate.overrides["checker.py"]
     body = store.objects.data.pop(key)
-    from product.files import ObjectMissing
-
-    with pytest.raises(ObjectMissing):
+    with pytest.raises(ValueError, match="^suite_artifact_missing$"):
         platform.publish_official(candidate.id, expected_revision=0, expected_validation_revision=3)
     assert platform.official_active("reader")["revision"] == 0
     store.objects.data[key] = body
