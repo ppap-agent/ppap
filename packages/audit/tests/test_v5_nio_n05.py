@@ -47,3 +47,25 @@ def test_n05_unimplemented_cross_file_clause_is_an_explicit_gap(tmp_path, monkey
     result = execute(tmp_path, monkeypatch, "N05", "N05:9", {"过程流程图": [["工序名称"], ["IQC"]]})
     assert result["status"] == "UNABLE"
     assert "特殊特性清单" in result["suggestions"]
+
+
+def test_n05_header_reads_all_nine_original_values(tmp_path, monkeypatch):
+    labels = ("零件号", "零件名称", "项目车型", "供应商名称", "代码", "编制日期", "修订日期", "版本", "团队")
+    assert execute(tmp_path, monkeypatch, "N05", "N05:1", {"过程流程图": [[label, "实际内容"] for label in labels]})["status"] == "PASS"
+
+
+@pytest.mark.parametrize("description,expected", [("孔径", "PASS"), (None, "NG"), ("=A1", "UNABLE")])
+def test_n05_classified_product_needs_its_own_description(tmp_path, monkeypatch, description, expected):
+    rows = [["产品特殊特性", "产品特性类别"], [description, "CC"]]
+    assert execute(tmp_path, monkeypatch, "N05", "N05:2", {"过程流程图": rows})["status"] == expected
+
+
+@pytest.mark.parametrize("symbol,expected", [("●", "PASS"), (None, "NG"), ("=A1", "UNABLE")])
+def test_n05_each_operation_needs_one_actual_legend_value(tmp_path, monkeypatch, symbol, expected):
+    rows = [["工序名称", "制造", "运输", "存储", "检验", "返工", "报废"], ["成型", symbol]]
+    assert execute(tmp_path, monkeypatch, "N05", "N05:5", {"过程流程图": rows})["status"] == expected
+
+
+@pytest.mark.parametrize("name,expected", [("OQC", "PASS"), ("包装", "NG"), ("=A1", "UNABLE")])
+def test_n05_outgoing_inspection_is_an_independent_bound_clause(tmp_path, monkeypatch, name, expected):
+    assert execute(tmp_path, monkeypatch, "N05", "N05:7", {"过程流程图": [["工序名称"], [name]]})["status"] == expected

@@ -34,9 +34,16 @@ def test_n03_conflicting_column_layouts_are_unknown(tmp_path, monkeypatch):
     assert execute(tmp_path, monkeypatch, "N03", "N03:2", {"控制计划": rows})["status"] == "UNABLE"
 
 
-def test_n03_critical_characteristic_requires_control(tmp_path, monkeypatch):
-    rows = [["特殊特性分类", "控制方法"], ["[CC]", None]]
-    assert execute(tmp_path, monkeypatch, "N03", "N03:3", {"控制计划": rows})["status"] == "NG"
+@pytest.mark.parametrize("method,expected", [("量规", "PASS"), (None, "NG"), ("=A1", "UNABLE")])
+def test_n03_critical_characteristic_requires_control(tmp_path, monkeypatch, method, expected):
+    rows = [["特殊特性分类", "控制方法"], ["[CC]", method]]
+    assert execute(tmp_path, monkeypatch, "N03", "N03:3", {"控制计划": rows})["status"] == expected
+
+
+@pytest.mark.parametrize("frequency,expected", [("每件", "PASS"), (None, "NG"), ("=A1", "UNABLE")])
+def test_n03_every_operation_needs_its_own_frequency(tmp_path, monkeypatch, frequency, expected):
+    rows = [["零件/工序号", "工序名称/操作描述", "频次"], [10, "成型", frequency]]
+    assert execute(tmp_path, monkeypatch, "N03", "N03:4", {"控制计划": rows})["status"] == expected
 
 
 @pytest.mark.parametrize("stage,expected", [("☑ 生产 □ 样件", "PASS"), ("☑ 生产 ☑ 样件", "NG")])
