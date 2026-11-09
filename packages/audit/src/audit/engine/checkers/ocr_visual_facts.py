@@ -36,6 +36,13 @@ def _shown_locator(locator: dict[str, Any]) -> dict[str, Any]:
     return {name: value for name, value in locator.items() if name not in {"source_sha256", "prepared_sha256", "file_version_id"}}
 
 
+def _psw_ending(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = re.sub(r"[\s，。；、,.;:：()（）]", "", value)
+    return text if value == "" or re.fullmatch(r"[\u4e00-\u9fff]{2,6}", text) else None
+
+
 def _diagnostic_facts(facts: dict[str, object]) -> dict[str, object]:
     """Only PSW categories and the generic seal boolean may enter diagnostics."""
     summary = psw_fact_summary(facts)
@@ -154,6 +161,7 @@ def observe_ocr_scopes(
             sources: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
             readings: list[dict[str, object]] = []
             inputs: list[dict[str, object]] = []
+            stamp_suffix_equal = None
             model_fields = {field for field in subset if local_native.get(field, {}).get(scope) is None}
             phase = "observation_1_failed"
             try:
@@ -175,9 +183,23 @@ def observe_ocr_scopes(
                     readings.append(reading)
                     sources.extend(source for source in reading_sources if source not in sources)
                 phase = "completed"
-                facts = readings[0]
+                facts = dict(readings[0])
                 if model_fields:
                     disputed = {field for field in model_fields if readings[1][field] != facts[field]}
+                    ending = "psw_stamp_ending_text"
+                    if ending in model_fields:
+                        first_tail, second_tail = (_psw_ending(reading.get(ending)) for reading in readings)
+                        if first_tail and second_tail:
+                            stamp_suffix_equal = first_tail[-2:] == second_tail[-2:]
+                            if ending in disputed and stamp_suffix_equal and all(reading.get("psw_stamp_present") is True for reading in readings):
+                                # Keep the common visible suffix, never select a
+                                # disputed longer transcription as established.
+                                facts[ending] = first_tail[-2:]
+                                disputed.remove(ending)
+                        if "psw_stamp_present" in subset and (
+                            any(reading.get("psw_stamp_present") is None for reading in readings) or readings[0]["psw_stamp_present"] != readings[1]["psw_stamp_present"]
+                        ):
+                            disputed.add(ending)
                     facts = {field: None if field in disputed else value for field, value in facts.items()}
                     sources = [(args, kwargs) for args, kwargs in sources if args[0].get("fact") not in disputed]
                 cached = (facts, sources)
@@ -197,6 +219,7 @@ def observe_ocr_scopes(
                         "observations": [_diagnostic_facts(reading) for reading in readings],
                         "inputs": inputs,
                         "equal": {field: readings[0][field] == readings[1][field] for field in _diagnostic_facts(readings[0])} if len(readings) == 2 else {},
+                        "stamp_suffix_equal": stamp_suffix_equal,
                     }
                     message = "OCR seal observation: %s" if "seal" in subset else "PSW OCR observation: %s"
                     logger.warning(message, json.dumps(diagnostic, sort_keys=True, separators=(",", ":")))
@@ -386,7 +409,7 @@ def _observe_ocr_scope(
                 raise ValueError("OCR visual fact value has an invalid type")
             if field == "approval_date" and value and re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value) is None:
                 raise ValueError("OCR approval date format is invalid")
-            if field == "psw_stamp_ending_text" and (len(value) > 6 or len(value) == 1):
+            if field == "psw_stamp_ending_text" and (len(value) > 6 or len(value) == 1 or _psw_ending(value) is None):
                 raise ValueError("OCR seal ending must contain two to six original characters")
             covered = observation["covered_image_indices"]
             if not isinstance(covered, list) or any(type(index) is not int or index not in scopes[scope] for index in covered):
