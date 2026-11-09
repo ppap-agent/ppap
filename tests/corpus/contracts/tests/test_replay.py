@@ -146,6 +146,50 @@ def test_offline_recorded_observation_needs_no_provider(tmp_path, monkeypatch):
     assert calls == []
 
 
+def test_peer_visual_observations_record_and_replay_two_distinct_answers(tmp_path, monkeypatch):
+    from unittest.mock import Mock
+
+    from audit.engine.checkers.ocr_visual_facts import OcrImage, observe_ocr_images
+
+    monkeypatch.setenv("OCR_MODEL_NAME", "controlled")
+    monkeypatch.setenv("OCR_OPENAI_API_KEY", "controlled")
+    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://controlled.invalid")
+    calls = []
+
+    async def answer(kwargs):
+        calls.append(kwargs)
+        return type("Response", (), {"status": "completed", "output_text": json.dumps({"seal": len(calls) == 1}), "usage": None})()
+
+    monkeypatch.setattr(ocr_client, "_request_response", answer)
+    recorder = Recorder("peer-observations", tmp_path, tmp_path)
+    install(monkeypatch, recorder)
+    frames = [OcrImage(b"synthetic", {"scope": "pdf:1", "page": 1, "context": True, "located_region": True}, 100, 100)]
+    for _ in range(2):
+        witness = Mock()
+        assert observe_ocr_images(frames, {"seal": "actual seal"}, witness) == {"seal": None}
+        witness.assert_not_called()
+    assert len(calls) == 2 and len(recorder.pending) == 2
+    assert calls[0] == calls[1]
+    assert [entry["request"]["observation"] for entry in recorder.pending] == [1, 2]
+    requests = [{key: value for key, value in entry["request"].items() if key != "observation"} for entry in recorder.pending]
+    assert requests[0] == requests[1]
+    assert [json.loads(entry["answer"]) for entry in recorder.pending] == [{"seal": True}, {"seal": False}]
+
+
+def test_offline_second_observation_cannot_use_the_first_or_an_untagged_answer(tmp_path, monkeypatch):
+    from corpus_contracts.replay import OfflineReplayMiss
+
+    calls = _answering_model(monkeypatch, ("completed", "must not run"))
+    recorder = Recorder("peer-offline", tmp_path, tmp_path, offline=True)
+    request = {name: _ocr_kwargs()[name] for name in ("input", "text", "max_output_tokens")}
+    for identity in ({}, {"observation": 1}):
+        recorder.entries.append({"kind": "ocr", "request": {**request, **identity}, "answer": '{"seal":true}'})
+    install(monkeypatch, recorder)
+    with ocr_client.ocr_observation_scope(2), pytest.raises(OfflineReplayMiss):
+        asyncio.run(ocr_client._request_response(_ocr_kwargs()))
+    assert calls == [] and recorder.pending == []
+
+
 def test_test_grant_preserves_the_paired_key_endpoint_and_model(monkeypatch):
     from corpus_contracts.replay import configured_model_access
 

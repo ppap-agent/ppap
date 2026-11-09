@@ -450,40 +450,31 @@ class DpvrExcelAgent(ExcelAgent):
     def rule_4(self, ctx: RuleContext) -> tuple[str, str]:
         path = self._source_pdf_path()
         if path is not None:
-            import fitz
+            from audit.engine.checkers.pdf_presence import read_pdf_presence
 
-            from audit.checkers.v4.visual_facts import read_original_pdf_visual_facts
-
-            with fitz.open(path) as document:
-                count = len(document)
-            # Presence needs one located witness. Unexamined pages can never
-            # establish absence, so a negative partial observation stays unknown.
-            pages = sorted({1, count}) if count else []
             original = self.audit_file.model_copy(update={"file_url": str(path)})
             cache = getattr(self, "_dpvr_seal_cache", None)
             if cache is None:
                 cache = self._dpvr_seal_cache = {}
             sources = []
-            facts = read_original_pdf_visual_facts(
+            present = read_pdf_presence(
                 original,
-                {
-                    "seal": (
-                        "原件中是否存在实际印章。本条仅判断是否存在，不要求完整圆形、完整章名、日期或鉴真。"
-                        "被页面裁切后仍可见的印章弧线及沿弧排列的文字，足以确认印章存在。"
-                        "单独的红色线条、公司标识或印章字段文字不能代替实际印章。"
-                    )
-                },
-                lambda locator, excerpt, **kwargs: sources.append(locator),
+                field="seal",
+                description=(
+                    "原件中是否存在实际印章。本条仅判断是否存在，不要求完整圆形、完整章名、日期或鉴真。"
+                    "被页面裁切后仍可见的印章弧线及沿弧排列的文字，足以确认印章存在。"
+                    "单独的红色线条、公司标识或印章字段文字不能代替实际印章。"
+                ),
+                witness=lambda locator, excerpt, **kwargs: sources.append(locator),
                 operation="dpvr_seal",
                 cache=cache,
-                source_pages=pages,
             )
             ctx.record_execution()
-            if facts["seal"] is True:
+            if present is True:
                 located = sorted({item["page"] for item in sources if type(item.get("page")) is int and (item.get("observed_value") is True or item.get("element") == "seal")})
                 location = "第" + "、".join(map(str, located)) + "页" if located else "中"
                 return "PASS", f"原PDF{location}检测到实际印章。"
-            if facts["seal"] is False and len(pages) == count:
+            if present is False:
                 return "NG", "完整原PDF中未检测到印章。"
             return "UNABLE", "原PDF印章尚不能确认，请核对原件。"
         table = Table(ctx)

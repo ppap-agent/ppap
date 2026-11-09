@@ -10,10 +10,10 @@ from audit.checkers.v4.li_auto import PDF_AGENTS
 from audit.checkers.v4.visual_facts import read_original_pdf_visual_facts
 from audit.contracts import AuditInput, RuleInput
 from audit.engine.checkers.client import AIClient
-from audit.engine.checkers.ocr_visual_facts import CONFIRMATION_PROMPT
 from audit.engine.runtime import bind_runtime
 from audit.presets import preset_rule_body
 from documents.conversion import convert_pdf_to_excel_auto
+from documents.ocr.client import current_ocr_observation
 
 
 def original_pdf(path, count=1):
@@ -89,7 +89,7 @@ def test_l03_mixed_photo_and_seal_needs_use_one_ocr_request_and_keep_unknown(tmp
     calls, paddle_calls = [], []
 
     def read(**request):
-        if not request["prompt"].startswith(CONFIRMATION_PROMPT):
+        if current_ocr_observation() != 2:
             calls.append(request)
         return observation(request, {"seal": True if detected else None})
 
@@ -215,7 +215,7 @@ def test_native_checkbox_glyph_with_overlapping_graphics_requires_ocr_and_keeps_
     calls, paddle_calls = [], []
 
     def read(**request):
-        if not request["prompt"].startswith(CONFIRMATION_PROMPT):
+        if current_ocr_observation() != 2:
             calls.append(request)
         return observation(request, {"approved_checked": True if ocr_checked else None})
 

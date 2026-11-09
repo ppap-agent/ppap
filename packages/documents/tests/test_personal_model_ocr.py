@@ -6,7 +6,7 @@ from uuid import uuid4
 import httpx
 import pytest
 from documents.model_access import ModelAccess, ModelUnavailable, model_access_scope
-from documents.ocr.client import call_llm_async, ocr_usage_scope
+from documents.ocr.client import call_llm_async, current_ocr_observation, ocr_observation_scope, ocr_usage_scope
 from pydantic import SecretStr
 
 
@@ -81,6 +81,44 @@ async def test_uncertain_visual_request_cannot_be_replayed_by_later_clause(monke
         with pytest.raises(ModelUnavailable, match="personal_model_request_uncertain"):
             await call_llm_async(b"controlled-image", "Read a fact.", response_schema=schema)
     assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("usage", [None, {"input_tokens": 7, "output_tokens": 2, "total_tokens": 9}])
+async def test_peer_identity_stays_off_the_wire_and_cannot_bypass_uncertain_usage(monkeypatch, usage):
+    calls = []
+
+    async def send(_client, request, **kwargs):
+        calls.append(request)
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "id": "controlled",
+                "object": "response",
+                "created_at": 0,
+                "model": "test-model",
+                "status": "completed",
+                "output": [{"type": "message", "id": "message", "role": "assistant", "status": "completed", "content": [{"type": "output_text", "text": '{"present":true}', "annotations": []}]}],
+                "usage": usage,
+            },
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", send)
+    schema = {"name": "fact", "schema": {"type": "object"}, "strict": True}
+    with model_access_scope(ModelAccess(api_key=SecretStr("controlled"), model="test-model", base_url="https://models.example.test")):
+        with ocr_observation_scope(1):
+            assert await call_llm_async(b"controlled", "Read a fact.", response_schema=schema) == {"present": True}
+        with ocr_observation_scope(2):
+            if usage is None:
+                with pytest.raises(ModelUnavailable, match="personal_model_request_uncertain"):
+                    await call_llm_async(b"controlled", "Read a fact.", response_schema=schema)
+            else:
+                assert await call_llm_async(b"controlled", "Read a fact.", response_schema=schema) == {"present": True}
+    assert current_ocr_observation() is None
+    assert len(calls) == (1 if usage is None else 2)
+    if usage is not None:
+        assert calls[0].content == calls[1].content
 
 
 @pytest.mark.asyncio

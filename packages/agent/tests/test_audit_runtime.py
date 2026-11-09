@@ -179,6 +179,30 @@ def test_tools_reuse_success_and_failed_receipts(monkeypatch):
     runtime.close()
 
 
+def test_peer_visual_observations_do_not_share_one_cached_answer(monkeypatch):
+    from unittest.mock import Mock
+
+    from audit.engine.checkers import ocr_visual_facts
+    from audit.engine.runtime import bind_runtime
+
+    monkeypatch.setenv("OCR_MODEL_NAME", "controlled")
+    monkeypatch.setenv("OCR_OPENAI_API_KEY", "controlled")
+    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://controlled.invalid")
+    read = Mock(side_effect=[{"seal": True}, {"seal": False}])
+    monkeypatch.setattr(ocr_visual_facts, "request_ocr_visual_facts", read)
+    frames = [ocr_visual_facts.OcrImage(b"synthetic", {"scope": "pdf:1", "page": 1, "context": True, "located_region": True}, 100, 100)]
+    runtime = CheckerRuntime(allow_model_tools=True)
+    try:
+        with bind_runtime(runtime):
+            for _ in range(2):
+                witness = Mock()
+                assert ocr_visual_facts.observe_ocr_images(frames, {"seal": "actual seal"}, witness) == {"seal": None}
+                witness.assert_not_called()
+        assert read.call_count == 2
+    finally:
+        runtime.close()
+
+
 def test_plain_function_can_use_dataclasses_and_original_multicarrier_sources():
     import io
 

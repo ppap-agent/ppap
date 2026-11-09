@@ -74,8 +74,9 @@ class CheckerRuntime:
         if not self.allow_model_tools:
             raise GuardStop(Decision.UNABLE, "固定 checker 没有可重放的 OCR 视觉观察，需补充证据")
         from audit.engine.checkers.ocr_visual_facts import request_ocr_visual_facts
+        from documents.ocr.client import current_ocr_observation
 
-        key = ("ocr", tuple(hashlib.sha256(image).hexdigest() for image in images), prompt, json.dumps(response_schema, sort_keys=True))
+        key = ("ocr", current_ocr_observation(), tuple(hashlib.sha256(image).hexdigest() for image in images), prompt, json.dumps(response_schema, sort_keys=True))
         return self._once(key, lambda: request_ocr_visual_facts(images=images, prompt=prompt, response_schema=response_schema))
 
     def close(self) -> None:

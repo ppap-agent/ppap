@@ -6,6 +6,7 @@ Each test scope has one JSON file listing what the model was shown and what it a
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -77,7 +78,7 @@ class OfflineReplayMiss(AssertionError):
 
 
 def _image_summary(value: str) -> str:
-    """PNG bytes differ across platforms; its size says whether the crop changed."""
+    """Readable dimensions only; they do not prove image content identity."""
     _, _, encoded = value.partition(",")
     head = base64.b64decode(encoded[:64] + "=" * (-len(encoded[:64]) % 4))
     if head[:8] == b"\x89PNG\r\n\x1a\n":
@@ -97,6 +98,11 @@ def shown_to_model(value: Any) -> Any:
     if isinstance(value, str) and _BINARY.fullmatch(value):
         return "<binary>"
     return value
+
+
+def _request_sha256(request: Any) -> str:
+    """Readable summaries are lossy; match the complete request instead."""
+    return hashlib.sha256(json.dumps(request, sort_keys=True, ensure_ascii=False, separators=(",", ":"), default=str).encode()).hexdigest()
 
 
 class Recorder:
@@ -121,14 +127,16 @@ class Recorder:
             raise OfflineReplayMiss(f"No {kind} recording for {self.path.name}; external model calls are disabled")
 
     def lookup(self, kind: str, request: Any) -> dict[str, Any] | None:
-        shown = json.loads(json.dumps(shown_to_model(request), ensure_ascii=False, default=str))
+        digest = _request_sha256(request)
         with self.lock:
-            return next((entry for entry in (*self.entries, *self.pending) if entry["kind"] == kind and entry["request"] == shown), None)
+            # An old complete text request still proves its own identity.
+            # A size-only image summary cannot match current image bytes.
+            return next((entry for entry in (*self.entries, *self.pending) if entry["kind"] == kind and entry.get("request_sha256", _request_sha256(entry["request"])) == digest), None)
 
     def add(self, kind: str, request: Any, answer: Any, model: Any = None) -> None:
         shown = json.loads(json.dumps(shown_to_model(request), ensure_ascii=False, default=str))
         with self.lock:
-            self.pending.append({"kind": kind, "model": model, "request": shown, "answer": answer})
+            self.pending.append({"kind": kind, "model": model, "request": shown, "request_sha256": _request_sha256(request), "answer": answer})
 
     def finish(self, *, keep: bool) -> None:
         with self.lock:
@@ -154,6 +162,9 @@ def install(monkeypatch: Any, recorder: Recorder) -> None:
 
     async def ocr_request(kwargs: dict[str, Any]) -> Any:
         request = {name: kwargs.get(name) for name in ("input", "text", "max_output_tokens")}
+        observation = ocr_client.current_ocr_observation()
+        if observation is not None:
+            request["observation"] = observation
         # Existing empty-policy recordings remain readable. An explicit policy
         # cannot consume an answer recorded under different request parameters.
         if kwargs.get("extra_body"):
