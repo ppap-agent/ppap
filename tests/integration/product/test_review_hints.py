@@ -5,6 +5,7 @@ from io import BytesIO
 from pathlib import Path
 
 import fitz
+import pytest
 from api import create_app
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
@@ -90,3 +91,39 @@ def test_explicit_actual_pdf_excel_pair_produces_cross_format_hint(auth_store_fa
         saved = client.put(f"/rounds/{round['id']}/review-hints", json={"item_key": hints[0]["item_key"], "action": "accepted", "hint": hints[0]})
         assert saved.status_code == 200, saved.text
         assert client.get("/review-hints/responses").json()["accepted"] == 1
+
+
+@pytest.mark.parametrize("scope", ["other_tenant", "original_access_revoked"])
+def test_response_statistics_and_comparisons_do_not_reveal_inaccessible_originals(auth_store_factory, scope):
+    a = Admission(auth_store_factory(Settings(feishu_app_id="review-hints-private", usage_charge_enabled=False, git_sha="a" * 40)))
+    a.verify()
+    first, second = a.accept(), a.accept()
+    finish(a.store, first["id"], [(a.target.id, "PASS")])
+    finish(a.store, second["id"], [(a.target.id, "NG")])
+    with client_for(a) as client:
+        hint = client.get(f"/rounds/{second['id']}").json()["findings"][0]["review_hint"]
+        response = client.put(f"/rounds/{second['id']}/review-hints", json={"item_key": hint["item_key"], "action": "ignored", "hint": hint})
+        assert response.status_code == 200
+        assert client.get("/review-hints/responses").json()["responded"] == 1
+        before = a.counts()
+        if scope == "other_tenant":
+            outsider = a.store.upsert_feishu_identity("unrelated-tenant", "outsider", "Outsider")
+            client.cookies.set(SESSION_COOKIE, a.store.create_session(outsider))
+        else:
+            with a.store._conn() as conn:
+                conn.execute("DELETE FROM product.resource_grants WHERE resource_id=%s AND user_id=%s", (a.target.file_id, a.alice.user_id))
+        assert client.get("/review-hints/responses").json() == {"accepted": 0, "ignored": 0, "responded": 0, "acceptance_ratio": None, "ignore_ratio": None}
+        readback = client.get(f"/rounds/{second['id']}")
+        if scope == "other_tenant":
+            assert readback.status_code in {403, 404}
+        else:
+            # These historical tenant-readable rounds retain their existing
+            # read policy. Revoked original access must remove the comparison.
+            assert readback.status_code == 200
+            assert all(not finding.get("review_hint") for finding in readback.json()["findings"])
+        rejected = client.put(f"/rounds/{second['id']}/review-hints", json={"item_key": hint["item_key"], "action": "ignored", "hint": hint})
+        assert rejected.status_code in {403, 404}
+        assert a.counts() == before
+    with a.store._conn() as conn:
+        rows = conn.execute("SELECT round_id,status FROM product.findings WHERE round_id IN (%s,%s) ORDER BY status", (first["id"], second["id"])).fetchall()
+    assert {(str(identity), status) for identity, status in rows} == {(first["id"], "PASS"), (second["id"], "NG")}
