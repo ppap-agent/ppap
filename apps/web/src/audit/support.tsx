@@ -51,7 +51,7 @@ export function AuditSupport({adapter, snapshot, pageReference, returnTargets, o
       <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm">当前场景：{scenario}</p><Button variant="outline" size="sm" onClick={() => void copy(copyText)}>{facts.length || traceId ? '复制操作信息' : '复制场景与编号'}</Button></div>
       {facts.length > 0 && <section aria-label="操作信息" className="space-y-3"><dl className="space-y-3 text-sm">{facts.map((fact, index) => <div key={index}><dt className="text-muted-foreground">{fact.label}</dt><dd className="whitespace-pre-wrap break-all">{fact.value}</dd></div>)}</dl></section>}
       {traceId && <><Label htmlFor="support-trace">服务请求编号</Label><Input id="support-trace" readOnly value={traceId}/></>}
-      <Label htmlFor="support-page-reference">页面参考编号</Label><Input id="support-page-reference" readOnly value={pageReference}/>
+      {/* The reference is for support staff; it travels with "复制场景与编号" and stays readable to assistive tech. */}<div className="sr-only"><Label htmlFor="support-page-reference">页面参考编号</Label><Input id="support-page-reference" readOnly value={pageReference}/></div>
     </div>
     {notice && <p role="status" className="text-sm">{notice}</p>}<Button variant="outline" className="justify-self-end" onClick={onClose}>关闭</Button>
   </DialogContent></Dialog>

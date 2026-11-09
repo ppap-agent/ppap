@@ -28,7 +28,7 @@ export function programNotice(check: components['schemas']['AuditClauseEvaluatio
 export function clauseObservation(check: components['schemas']['AuditClauseEvaluation']): string {
   if (check.execution === 'queued' || check.execution === 'running') return '本项审核中…'
   const notice = programNotice(check) ? null : check.scope_notice === 'manual-only' || check.scope_notice === 'unsupported' ? '本条要求未完成自动检查，请核对原件并记录人工复核。' : check.scope_notice
-  return [...new Set([check.finding?.suggestions || check.finding?.classification, notice].filter(Boolean))].join('；') || '没有可用的机器观察。'
+  return [...new Set([check.finding?.suggestions || check.finding?.classification, notice].filter(Boolean))].join('；') || '未取得判定理由。'
 }
 
 /** Wire property order is irrelevant; array order and all snapshot values are not. */

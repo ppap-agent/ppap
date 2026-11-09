@@ -47,7 +47,8 @@ class UsagePreviewTests(unittest.TestCase):
     def test_cross_month_debit_keeps_one_original_acceptance_and_a_separate_debit_time(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            for width in (1440, 390):
+            # Phones get cards instead of the table; 768 is the narrowest width that keeps the table.
+            for width in (1440, 768):
                 page = browser.new_page(viewport={"width": width, "height": 900})
                 page.goto(PREVIEW + "/preview/audit.html?scene=usage-cross-month&view=usage&usageRange=all")
                 table = page.get_by_role("table", name="逐文件用量记录", exact=True)
@@ -63,7 +64,7 @@ class UsagePreviewTests(unittest.TestCase):
                 expect(table.get_by_role("row")).to_have_count(2)
                 for label in ("本月消费次数", "本月已扣点数", "本月待扣点数"):
                     expect(page.get_by_role("group", name=label, exact=True)).to_contain_text("0")
-                expect(page.get_by_text("按审核接收月统计；补扣不新增消费。", exact=True)).to_be_visible()
+                expect(page.get_by_text("按开始审核的月份统计；补扣不计为新的消费次数。", exact=True)).to_be_visible()
                 self.assertTrue(page.evaluate("document.documentElement.scrollWidth <= innerWidth"))
                 page.close()
             browser.close()
@@ -159,7 +160,7 @@ class UsagePreviewTests(unittest.TestCase):
             browser = playwright.chromium.launch()
             page = browser.new_page()
             page.goto(PREVIEW + "/preview/audit.html?scene=usage-unmapped&view=usage")
-            expect(page.get_by_role("alert")).to_contain_text("另有 1,200 点历史费用待核对")
+            expect(page.get_by_role("alert")).to_contain_text("另有 1,200 点历史费用待确认")
             expect(page.get_by_role("group", name="本月消费次数", exact=True)).to_contain_text("—")
             expect(page.get_by_role("row", name="消费记录 示例消费-1", exact=True)).not_to_contain_text("第 2 次审核")
             for number, reason in ((1, "尚未确认文档关联"), (4, "当前账号无权读取这次审核"), (5, "这次审核记录已删除")):
@@ -257,7 +258,7 @@ class UsagePreviewTests(unittest.TestCase):
             expect(page.get_by_role("group", name="本月待扣点数", exact=True)).to_contain_text("—")
             expect(page.get_by_role("group", name="免费额度剩余/总额", exact=True)).to_contain_text("— / —")
             row = page.get_by_role("row", name="消费记录 示例消费-3", exact=True)
-            expect(row).to_contain_text("待核对")
+            expect(row).to_contain_text("待确认")
             expect(row).to_contain_text("扣费结果待确认。")
             expect(row).to_contain_text("尚未取得飞书订单号。")
             expect(page.get_by_role("button", name="重试扣费", exact=True)).to_have_count(0)
@@ -328,7 +329,7 @@ class UsagePreviewTests(unittest.TestCase):
             self.assertIn("auditRef=", page.url)
             page.reload()
             expect_history(page, 2)
-            expect(page.get_by_role("button", name="打开来源任务", exact=True)).to_be_disabled()
+            expect(page.get_by_role("button", name="打开来源任务", exact=True)).to_have_count(0)
             page.get_by_role("button", name="返回用量记录", exact=True).click()
             expect(row).to_contain_text("第 2 次审核")
             page.get_by_role("textbox", name="搜索文件名或发起人", exact=True).fill("示例王工")

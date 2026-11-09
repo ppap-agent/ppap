@@ -26,7 +26,7 @@ export function ReportShareDialog({open, share, describe, contentFor, reports, a
   const content = job?.request.content || contentFor(reports, mode)
   const validTargets = open && targetsReady && targets.length > 0 && targets.every(target => target.eligibility === 'eligible' && target.organization_id === targets[0].organization_id)
   return <Dialog open={open} onOpenChange={open => {if (!open) onClose()}}><DialogContent className="flex max-h-[88dvh] flex-col overflow-hidden sm:max-w-xl" onCloseAutoFocus={event => {event.preventDefault(); trigger?.focus()}}>
-    <DialogHeader><DialogTitle>分享审核报告</DialogTitle><DialogDescription>发送至当前组织的人员或已核验内部群。</DialogDescription></DialogHeader>
+    <DialogHeader><DialogTitle>分享审核报告</DialogTitle><DialogDescription>发送给本组织的同事或飞书群。</DialogDescription></DialogHeader>
     <div className="min-h-0 space-y-5 overflow-y-auto">
       <section className="rounded-lg border bg-muted/30 p-3" aria-label="固定分享范围"><h3 className="sr-only">本次分享 {scope.length} 份已就绪报告</h3><ItemGroup>{scope.map(reference => {
         const row = describe(reference)

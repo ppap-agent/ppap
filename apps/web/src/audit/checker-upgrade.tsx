@@ -72,6 +72,6 @@ export function CheckerUpgrade({scope, active, revision, disabled, canVerify, ed
     <p className="text-sm">升级会把当前所选版本的企业修改带到官方新版本，生成待发布修改，并用同一批样本验证。不会调用模型或自动发布，已有报告不变。</p>
     {editingBlocked && <p role="status" className="text-sm">先保存当前修改再升级；保存结果未确认时，请先查看原保存操作。</p>}
     {error && <Alert variant="destructive"><AlertTitle>{pending ? '升级结果待确认' : '升级需要核对'}</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
-    {pending ? <><p role="status" className="text-sm">原升级操作尚待确认；刷新或返回页面不会重复提交。</p><Button variant="outline" disabled={busy} onClick={() => void recover()}>{busy ? '正在读取…' : '查看原升级操作'}</Button></> : stale ? <Button variant="outline" disabled={disabled} onClick={onRefresh}>读取最新版本后核对升级</Button> : <Button variant="outline" disabled={disabled || busy || !canVerify || !applicable} onClick={() => void start()}>{busy ? '正在创建升级候选…' : '升级并验证'}</Button>}
+    {pending ? <><p role="status" className="text-sm">原升级操作尚待确认；刷新或返回页面不会重复提交。</p><Button variant="outline" disabled={busy} onClick={() => void recover()}>{busy ? '正在读取…' : '查看原升级操作'}</Button></> : stale ? <Button variant="outline" disabled={disabled} onClick={onRefresh}>刷新后核对升级</Button> : <Button variant="outline" disabled={disabled || busy || !canVerify || !applicable} onClick={() => void start()}>{busy ? '正在创建升级候选…' : '升级并验证'}</Button>}
   </section>
 }

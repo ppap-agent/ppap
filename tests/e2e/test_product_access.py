@@ -119,7 +119,7 @@ def test_disabled_login_has_no_dead_authorization_link_and_can_recheck_configura
     expect(page.get_by_text("当前无法使用飞书登录，请稍后重试。")).to_be_visible()
     expect(page.get_by_role("link", name="使用飞书登录")).to_have_count(0)
     login_config(page)
-    page.get_by_role("button", name="重新读取登录状态").click()
+    page.get_by_role("button", name="重试").click()
     link = page.get_by_role("link", name="使用飞书登录")
     expect(link).to_be_visible()
     address = urlsplit(link.get_attribute("href"))
@@ -200,7 +200,7 @@ def test_authorization_failure_keeps_task_and_requires_an_explicit_new_login(pag
     link = page.get_by_role("link", name="使用飞书登录")
     expect(link).to_be_visible()
     assert parse_qs(urlsplit(link.get_attribute("href")).query)["return_to"] == [page.url]
-    page.get_by_role("button", name="重新读取登录状态").click()
+    page.get_by_role("button", name="重试").click()
     expect(page.get_by_role("alert")).to_contain_text(message)
     assert host_posts == []
 

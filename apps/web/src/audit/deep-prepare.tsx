@@ -110,8 +110,8 @@ export function DeepPrepare() {
     }
     finally {setBusy(false)}
   }
-  return <main className="mx-auto max-w-screen-lg space-y-7 px-6 py-8 max-sm:px-4">
-    <header className="space-y-3"><Button variant="link" asChild><a href="/workbench">返回工作台</a></Button><h1 className="text-2xl font-semibold">让 AI 深度分析</h1><p className="text-sm leading-relaxed text-muted-foreground">添加原始资料，明确哪些文件需要产生判断，并为它们选择已核对的规则。比对资料保留为本次上下文。</p></header>
+  return <section aria-label="深度分析准备" className="mx-auto max-w-screen-lg space-y-7">
+    <header className="space-y-3"><h1 className="text-2xl font-semibold">让 AI 深度分析</h1><p className="text-sm leading-relaxed text-muted-foreground">添加原始资料，明确哪些文件需要产生判断，并为它们选择已核对的规则。比对资料保留为本次上下文。</p></header>
     {error && <Alert variant="destructive"><AlertTitle>{acceptId ? '原提交结果待确认' : '准备尚未完成'}</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
     {acceptId ? <section aria-label="查看原分析请求" className="space-y-4"><p>本次资料与规则已进入接收流程。只有实际读到分析后才会显示已开始。</p><Button disabled={busy} onClick={() => void recover()}>{busy && <LoaderCircle className="animate-spin"/>}查看原分析请求</Button><Button variant="link" asChild><a href={`/?case=${encodeURIComponent(draftId)}`}>查看已保存草稿</a></Button></section> : <>
       <section className="space-y-4" aria-label="深度分析资料"><div className="flex items-center justify-between gap-3"><h2 className="text-lg font-semibold">本次资料</h2><Button variant="outline" onClick={() => picker.current?.click()} disabled={locked}><FilePlus/>添加资料</Button></div><input ref={picker} type="file" multiple accept=".xlsx,.xlsm,.xls,.docx,.pdf" className="sr-only" aria-label="选择深度分析原始资料" onChange={event => {void addFiles(event.target.files); event.target.value = ''}}/>
@@ -124,5 +124,5 @@ export function DeepPrepare() {
       <p className="text-sm text-muted-foreground">需要导入或核对新的规则时，可进入<a href="/requirements" className="underline underline-offset-4">审核规则</a>。这里使用明确选择的已发布规则，不按文件名猜测。</p>
       <section aria-label="本次分析范围" className="space-y-4 border-t pt-5"><p className="text-sm">开始后将分析 {targetCount} 份待审文件{targets.length > 0 && `：${targets.map(upload => upload.name).join('、')}`}；另外 {uploads.length - targetCount} 份作为比对资料。</p>{quotaError && <p role="alert" className="text-sm">{quotaError}</p>}{quota && <p className="text-sm text-muted-foreground">{quota.message || quota.detailed_message || (quota.usage_charge_enabled === false ? '当前环境未启用业务扣费。' : quota.estimated_points !== undefined ? `本次预估 ${quota.estimated_points} 点，以实际接收规则为准。` : '用量条件已核对。')}</p>}<PersonalModelSettings onConfig={setModelConfig}/><p className="text-sm">将把本次明确选择的待审文件、比对资料及规则发送到已保存的模型服务，使用你的 Key，可能产生 Token 费用。比普通审核更贵且更慢，不承诺精确费用封顶。关闭页面不停止已发生的消费。</p><div className="flex items-start gap-2"><Checkbox id="deep-model-consent" checked={modelConsent} disabled={locked || !modelReady} onCheckedChange={value => setModelConsent(value === true)}/><Label htmlFor="deep-model-consent">同意将本次明确选择的资料发送至 {modelConfig?.base_url || '待配置地址'}，使用 {modelConfig?.model || '待配置模型'} 分析</Label></div><Button disabled={!ready || locked || !modelReady || !modelConsent} onClick={() => void start()}>让 AI 深度分析</Button></section>
     </>}
-  </main>
+  </section>
 }
