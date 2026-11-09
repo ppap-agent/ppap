@@ -382,6 +382,11 @@ def test_wording_can_validate_unchanged_code_but_u08_must_resolve_a_real_unknown
         samples[ident].update(expected_by_clause={"U08:4": samples[ident]["expected"]}, baseline_by_clause={"U08:4": "UNABLE"})
         case["clauses"][0].update(clause_id="U08:4", baseline_actual="UNABLE")
     acceptance.validate_outcome(receipt, samples, scenario="u08")
+    for case in receipt["report"]["validation"]["cases"]:
+        samples[case["case_id"]]["baseline_by_clause"]["U08:4"] = "ERR"
+        case["clauses"][0]["baseline_actual"] = "ERR"
+    with pytest.raises(acceptance.AcceptanceFailure, match="repair_or_holdout_coverage_missing"):
+        acceptance.validate_outcome(receipt, samples, scenario="u08")
 
 
 def test_rule_change_live_cannot_omit_the_unchanged_clause_regression():

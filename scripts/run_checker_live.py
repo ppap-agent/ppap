@@ -408,7 +408,7 @@ def validate_outcome(receipt, samples, *, scenario="synthetic"):
             require(clause.get("baseline_actual") == baseline, "baseline_answer_mismatch")
             require(clause.get("evidence_locatable") is True and clause.get("checks_performed", 0) > 0 and clause.get("regression") is False, "evidence_or_regression_failed")
             repaired_misses += labels[ident] == "NG" and baseline == "PASS"
-            resolved += labels[ident] != baseline
+            resolved += labels[ident] != baseline and baseline in {"PASS", "NG", "UNABLE"}
         if split == "holdout":
             holdout_expected.add(expected["expected"])
     repair_proven = resolved > 0 if scenario == "u08" else scenario == "rule-wording" or repaired_misses > 0
@@ -788,7 +788,7 @@ def run(report_path):
             }
         if scenario == "u08":
             original = next(iter(samples.values()))
-            require(original["baseline"] != original["expected"], "u08_original_not_counterexample")
+            require(original["baseline"] in {"NG", "UNABLE"} and original["baseline"] != original["expected"], "u08_original_not_counterexample")
         current_rules, current_rule_id = rules, rule_id
         if scenario in {"rule-threshold", "rule-wording"}:
             updated = publish_rule_change(client, rules, rule_id, scenario)
