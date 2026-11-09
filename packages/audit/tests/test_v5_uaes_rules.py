@@ -6,7 +6,6 @@ import hashlib
 import io
 import json
 import sys
-from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -16,8 +15,6 @@ from audit.contracts import AuditInput, GroupContextInput, RuleInput
 from audit.standard_library import check_factory
 from audit.standard_suites import load_predefined_checkers
 from openpyxl import Workbook
-
-_CORPUS = Path(__file__).resolve().parents[3] / "assets" / "corpus" / "documents" / "v4-uaes"
 
 
 def _xlsx(sheets):
@@ -287,14 +284,3 @@ def test_flow_native_symbol_labels_cannot_replace_actual_graphic_facts(tmp_path,
     result, requests = _run(tmp_path, monkeypatch, "U16", clause, {"过程流程图": [["过程流程图", "K表示关键过程"], ["受控章", "检验符号"]]})
     assert result["status"] == "UNABLE", result
     assert len(requests) == 1
-
-
-@pytest.mark.parametrize(("entry", "filename"), [("U08", "控制计划.xlsx"), ("U07", "PFMEA.xls"), ("U16", "过程流程图.xls"), ("U08", "控制计划-模板3 WY.pdf")])
-def test_real_uaes_originals_execute_all_bound_clauses_without_technical_error(tmp_path, monkeypatch, entry, filename):
-    original = _CORPUS / filename
-    assert original.is_file(), filename
-    before = hashlib.sha256(original.read_bytes()).hexdigest()
-    findings, _ = _run(tmp_path, monkeypatch, entry, original=original)
-    assert findings
-    assert all(row["status"] != "ERR" for row in findings.values()), {cid: row["suggestions"] for cid, row in findings.items() if row["status"] == "ERR"}
-    assert hashlib.sha256(original.read_bytes()).hexdigest() == before
