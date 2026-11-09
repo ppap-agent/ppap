@@ -19,8 +19,9 @@ from .psw_visual_evidence import PSW_RULE_FIELDS, evaluate_psw_observation
 logger = logging.getLogger(__name__)
 REFERENCE = "psw_reference_content"
 _REFERENCE_DESCRIPTION = (
-    "此页是否明确作为样例、模板展示或填写说明，而非本次提交的业务表。"
-    "依据用途标记和页面构成判断，例如示范表上叠加的讲解批注；不能因缺少签字、印章、零件号或其他必填值而认定样例。"
+    "页面用途：true表示仅用作样例、模板展示或填写指导，false表示本次实际提交的业务表，不是问是否存在业务字段。"
+    "依据用途标记和整页构成判断，不要求出现EXAMPLE字样；例如背景表样上叠加多处讲解批注，是填写指导的正向证据。"
+    "不能因缺少签字、印章、零件号或其他必填值而认定样例，也不能将空白字段的false用于此用途字段。"
     "真实提交即使未填写完整也为false；真实业务与说明混排时不能将整页排除。用途无法确认返回null。"
 )
 _REFERENCE_HEADING = re.compile(r"^(?:EXAMPLE|SAMPLE|样例|示例|样张|填写说明|填表说明)(?:\s*[:：].*)?$", re.IGNORECASE)
@@ -173,13 +174,24 @@ class _Objects:
     def outcomes(self, rule_no: int, authorization=None):
         outcomes = []
         for number in self.warrants:
-            if self.roles[number] is not False or number in self.ambiguous:
+            if self.roles[number] is True or number in self.ambiguous:
                 continue
             facts = dict(self.facts[number])
             if authorization is not None:
                 facts.update(authorization_table_present=authorization[0], authorization_company_stamp_present=authorization[1])
             outcomes.append((number, evaluate_psw_observation(rule_no, facts)))
         return outcomes
+
+    def aggregate(self, rule_no: int, authorization=None):
+        outcomes = self.outcomes(rule_no, authorization)
+        business = [value for page, value in outcomes if self.roles[page] is False]
+        # ALL is unaffected by an uncertain member whose predicate is true.
+        # Such a member cannot establish that any business object exists.
+        known = not any(self.roles[page] is not True and page in self.ambiguous for page in self.warrants)
+        known &= all(value.status == "PASS" for page, value in outcomes if self.roles[page] is None)
+        if not business and not all(role is True for role in self.roles.values()):
+            known = False
+        return _all_results(rule_no, business, known), outcomes
 
     def evaluate(self, rule_no: int, witness) -> AuditResultItem:
         required = PSW_RULE_FIELDS[rule_no]
@@ -190,18 +202,13 @@ class _Objects:
         else:
             first = {field: text for field, text in required.items() if not field.startswith("authorization_")}
         self.read(self.warrants, first)
-        known = all(self.roles[page] is True or (self.roles[page] is False and page not in self.ambiguous) for page in self.warrants)
-        if not self.warrants and not all(role is True for role in self.roles.values()):
-            known = False
-        outcomes = self.outcomes(rule_no)
-        result = _all_results(rule_no, [value for _, value in outcomes], known)
+        result, outcomes = self.aggregate(rule_no)
         if result.status == "UNABLE":
             # The company-ending boolean is derived by the existing policy.
             # Asking it again cannot repair unknown canonical seal text.
             remaining = {field: text for field, text in required.items() if not field.startswith("authorization_") and field not in first and field != "psw_stamp_ends_with_company"}
             self.read(self.warrants, remaining)
-            outcomes = self.outcomes(rule_no)
-            result = _all_results(rule_no, [value for _, value in outcomes], known)
+            result, outcomes = self.aggregate(rule_no)
         if rule_no == 3 and result.status == "UNABLE":
             pages = self.authorization or self.pages
             fields = {field: text for field, text in required.items() if field.startswith("authorization_")}
@@ -209,11 +216,11 @@ class _Objects:
             auth = _exists_authorization(
                 [{**self.facts[page], REFERENCE: self.roles[page]} for page in pages], not any(page in self.ambiguous | self.authorization_ambiguous and self.roles[page] is not True for page in pages)
             )
-            outcomes = self.outcomes(rule_no, auth)
-            result = _all_results(rule_no, [value for _, value in outcomes], known)
+            result, outcomes = self.aggregate(rule_no, auth)
+        nondecisive = {page for page, value in outcomes if self.roles[page] is None and value.status == "PASS"}
         for args, kwargs in self.sources:
             locator = args[0]
-            if locator.get("fact") == REFERENCE or self.roles.get(locator.get("page")) is False:
+            if locator.get("fact") == REFERENCE or self.roles.get(locator.get("page")) is False or (result.status == "PASS" and locator.get("page") in nondecisive):
                 witness(*args, **kwargs)
         diagnostic = {
             "source_sha256": self.digest,
@@ -223,7 +230,8 @@ class _Objects:
             "reference_pages": [page for page in self.pages if self.roles[page] is True],
             "unresolved_pages": [page for page in self.warrants if self.roles[page] is None or (self.roles[page] is False and page in self.ambiguous)],
             "unresolved_authorization_pages": [page for page in self.authorization if self.roles[page] is not True and (self.roles[page] is None or page in self.authorization_ambiguous)],
-            "objects": [{"page": page, "status": value.status, "facts": psw_fact_summary(self.facts[page])} for page, value in outcomes],
+            "nondecisive_pages": sorted(nondecisive),
+            "objects": [{"page": page, "business": None if self.roles[page] is None else True, "status": value.status, "facts": psw_fact_summary(self.facts[page])} for page, value in outcomes],
         }
         logger.warning("PSW scope decision: %s", json.dumps(diagnostic, sort_keys=True, separators=(",", ":")))
         return result

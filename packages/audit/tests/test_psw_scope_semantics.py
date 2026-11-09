@@ -122,9 +122,45 @@ def test_only_filled_examples_cannot_create_a_business_pass(tmp_path):
     assert signature_result(path).status == "NG"
 
 
-def test_unresolved_role_cannot_be_silently_excluded(tmp_path):
-    path = write_pdf(tmp_path / "unknown-role.pdf", [("business", True, True), ("unknown", True, True)])
+def test_reference_plus_an_unlocated_page_does_not_prove_an_empty_business_scope(tmp_path):
+    path = write_pdf(tmp_path / "unlocated-page.pdf", [("example", True, True)])
+    with fitz.open(path) as document:
+        page = document.new_page(width=600, height=850)
+        page.insert_text((30, 40), "UNLOCATED CONTENT", fontsize=12)
+        document.saveIncr()
     assert signature_result(path).status == "UNABLE"
+
+
+def test_unresolved_role_cannot_be_silently_excluded(tmp_path):
+    path = write_pdf(tmp_path / "unknown-role.pdf", [("business", True, True), ("unknown", True, False)])
+    assert signature_result(path).status == "UNABLE"
+
+
+def test_an_unresolved_member_that_satisfies_the_predicate_cannot_change_all(tmp_path):
+    path = write_pdf(tmp_path / "nondecisive-role.pdf", [("business", True, True), ("unknown", True, True)])
+    assert signature_result(path).status == "PASS"
+
+
+def test_only_unresolved_members_cannot_prove_a_required_business_object_exists(tmp_path):
+    path = write_pdf(tmp_path / "no-established-business.pdf", [("unknown", True, True)])
+    assert signature_result(path).status == "UNABLE"
+
+
+def test_a_guides_reference_role_is_independent_of_its_blank_business_fields(tmp_path, monkeypatch, controlled_vision):
+    from documents.ocr import client
+
+    original = client.call_llm_async
+
+    async def guide_role(*args, **kwargs):
+        facts = await original(*args, **kwargs)
+        if "psw_reference_content" in facts:
+            facts["psw_reference_content"] = True
+        return facts
+
+    monkeypatch.setattr(client, "call_llm_async", guide_role)
+    path = write_pdf(tmp_path / "guided-form.pdf", [("business", True, True), ("unknown", False, False)])
+    assert signature_result(path).status == "PASS"
+    assert sum("psw_reference_content" in fields for fields in controlled_vision) == 2
 
 
 def test_removing_a_required_mark_never_removes_the_business_object(tmp_path):
@@ -205,7 +241,7 @@ def test_disagreed_role_stays_unknown_without_a_third_observation(tmp_path, monk
         return facts
 
     monkeypatch.setattr(client, "call_llm_async", disagreed_role)
-    agent = checker(write_pdf(tmp_path / "role-disagreement.pdf", [("business", True, True), ("unknown", True, True)]))
+    agent = checker(write_pdf(tmp_path / "role-disagreement.pdf", [("business", True, True), ("unknown", True, False)]))
     assert agent._run_fact_rule(4, 5).status == "UNABLE"
     assert sum("psw_reference_content" in fields for fields in controlled_vision) == 2
     count = len(controlled_vision)
@@ -314,7 +350,7 @@ def test_one_business_fact_disagreement_is_not_a_quantifier_counterexample(tmp_p
 
 
 def test_scope_diagnostics_do_not_log_page_text_or_file_name(tmp_path, caplog):
-    path = write_pdf(tmp_path / "sensitive-customer.pdf", [("business", True, True), ("unknown", True, True)])
+    path = write_pdf(tmp_path / "sensitive-customer.pdf", [("business", True, True), ("unknown", True, False)])
     assert signature_result(path).status == "UNABLE"
     assert '"unresolved_pages":[2]' in caplog.text
     assert "psw_reference_content" in caplog.text
