@@ -82,6 +82,19 @@ def test_emulation_address_space_override_is_explicit_finite_and_local_only():
             controller.local_guest_limits({**env, **change})
 
 
+def test_report_observes_actual_local_guest_override_even_if_host_omits_it():
+    env = local_configuration()
+    actual = {"policy_memory_mib": 1536, "actual_guest_as_mib": 3072, "container_memory_mib": 2048, "guest_version_probe": "1.5.0", "scope": "local_emulation_only"}
+    assert acceptance.verify_local_guest_limits(env, {}) is None
+    with pytest.raises(acceptance.AcceptanceFailure, match="unexpected_local_guest_limits"):
+        acceptance.verify_local_guest_limits(env, {"local_guest_limits": actual})
+    env["LIVE_GUEST_AS_MIB"] = "3072"
+    assert acceptance.verify_local_guest_limits(env, {"local_guest_limits": actual}) == actual
+    for wrong in ({}, {**actual, "actual_guest_as_mib": 4096}, {**actual, "guest_version_probe": None}):
+        with pytest.raises(acceptance.AcceptanceFailure, match="local_guest_startup_not_proven"):
+            acceptance.verify_local_guest_limits(env, {"local_guest_limits": wrong})
+
+
 def test_local_guest_startup_uses_finite_as_and_keeps_other_boundaries(tmp_path, monkeypatch):
     from pydantic import BaseModel
 
