@@ -369,6 +369,8 @@ UAES v5 的后续验收由 [Issue #295](https://github.com/ppap-agent/ppap/issue
 
 个人模型须支持 Bearer 认证的 `POST <base_url>/responses`，以及使用路径需要的 function tools、`input_image`、严格 JSON schema、reasoning 参数和 usage 回执；不是仅实现 `/chat/completions` 就满足合同。模型和地址是用户选择的配置，不承诺远端具体权重版本或所有 OpenAI 兼容服务均可用。真实优化验收针对所选模型能否修复 Checker。
 
+验收不限定 DeepSeek 或特定服务地址：获授权的 model/base URL 组合能通过 Responses 驱动 Pi Agent，即可作为该组合的兼容证据。工具、图像和用量按实际使用能力分别核对；一个组合通过不代表其他组合自动兼容，也不放宽上述端点授权、凭据隔离和冻结身份边界。
+
 Key、租户、用户、地址、模型及配置修订一起加密绑定，数据库非秘密元数据必须与解密值一致。每次保存生成新的配置修订。审核与优化受理冻结该修订、模型和端点摘要；执行中更换或撤销配置后，旧工作不能漂移到新 provider 或新 Key。文字、视觉和 Checker 开发循环共享此身份；guest 只获得本地网关的短期执行授权，不获得真实 Key 或外部地址。替换部署加密密钥前必须迁移既有密文，否则原配置明确不可用。
 
 缺 Key 不阻止原生或 Paddle 确定性检查，只在需要模型时报告不可用。调用不回退到部署共享模型或其他成员。SDK 和调用层不自动重试未知完成的请求。Token 只采用实际 provider 回执，缺失显示 unknown；用户应在提供方设置消费上限，Controller 的 `PPAP_PERSONAL_MODEL_MAX_REQUESTS`、`PPAP_PERSONAL_MODEL_MAX_INPUT_TOKENS`、`PPAP_PERSONAL_MODEL_MAX_OUTPUT_TOKENS` 可分别降低默认每执行 128 次、4000000 输入 Token、100000 输出 Token 的边界；API、Worker、Controller 必须一致，预算进入执行身份。输入限制依赖实际回执，一次在途请求仍可能跨过阈值，因此这些限制不是费用硬封顶，也不改变业务收费。受控 SDK/网关测试不替代实际模型质量与付费闭环验收。
