@@ -5,7 +5,9 @@ import json
 import os
 import re
 import secrets
+import socket
 import sys
+from contextlib import ExitStack
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -48,6 +50,14 @@ def prepare(environment, output):
         # actual private boundary on Linux storage; the runner copies only its
         # existing Oracle and Controller receipt through explicit root execs.
         values["LIVE_EVIDENCE_SOURCE"] = "checker-evidence"
+        ident = environment["PPAP_CHECKER_LIVE_LOCAL_ID"]
+        values["LIVE_PG_DATABASE"] = "ppap_checker_" + ident
+        values["LIVE_S3_BUCKET"] = "checker-live-" + ident
+        with ExitStack() as sockets:
+            for name in ("LIVE_PG_PORT", "LIVE_S3_PORT", "LIVE_API_PORT", "LIVE_WEB_PORT"):
+                listener = sockets.enter_context(socket.socket())
+                listener.bind(("127.0.0.1", 0))
+                values[name] = str(listener.getsockname()[1])
     output.parent.mkdir(parents=True, exist_ok=True)
     with open(output, "x", opener=lambda path, flags: os.open(path, flags, 0o600)) as stream:
         stream.write("".join(f"{name}={value}\n" for name, value in values.items()))

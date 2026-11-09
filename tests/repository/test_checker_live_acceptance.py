@@ -4,6 +4,7 @@ import copy
 import hashlib
 import io
 import json
+import socket
 import subprocess
 import sys
 from contextlib import nullcontext
@@ -67,6 +68,7 @@ def test_provider_is_not_tied_to_a_brand():
 def local_configuration():
     env = {key: value for key, value in configuration().items() if not key.startswith("GITHUB_")}
     env.update(PPAP_CHECKER_LIVE_MODE="local", PPAP_CHECKER_LIVE_LOCAL_ID="b" * 32, COMPOSE_PROJECT_NAME="ppap-checker-local-" + "b" * 32)
+    env.update(LIVE_PG_DATABASE="ppap_checker_" + "b" * 32, LIVE_S3_BUCKET="checker-live-" + "b" * 32, LIVE_PG_PORT="41001", LIVE_S3_PORT="41002", LIVE_API_PORT="41003", LIVE_WEB_PORT="41004")
     return env
 
 
@@ -77,6 +79,24 @@ def test_local_entry_is_explicit_and_never_impersonates_actions_or_live_stack(tm
     for changes in ({"COMPOSE_PROJECT_NAME": "ppap-current"}, {"CI": "true"}, {"GITHUB_ACTIONS": "false"}, {"PPAP_CHECKER_LIVE_LOCAL_ID": ""}):
         with pytest.raises(ValueError, match="isolated_local_test_required"):
             setup.validate_invocation({**env, **changes})
+
+
+def test_local_prepare_allocates_distinct_ports_and_unique_data_names(tmp_path):
+    env = local_configuration()
+    with socket.socket() as existing:
+        existing.bind(("127.0.0.1", 0))
+        occupied = existing.getsockname()[1]
+        path = tmp_path / "private.env"
+        setup.prepare(env, path)
+    values = dict(line.split("=", 1) for line in path.read_text().splitlines())
+    assert acceptance.data_names({**env, **values}) == ("ppap_checker_" + "b" * 32, "checker-live-" + "b" * 32)
+    ports = acceptance.service_ports({**env, **values})
+    assert len(set(ports.values())) == 4 and occupied not in ports.values()
+    assert values["LIVE_EVIDENCE_SOURCE"] == "checker-evidence"
+    with pytest.raises(acceptance.AcceptanceFailure, match="local_data_names_not_prepared"):
+        acceptance.data_names({**env, "LIVE_PG_DATABASE": "ppap"})
+    with pytest.raises(acceptance.AcceptanceFailure, match="local_ports_not_prepared"):
+        acceptance.service_ports({**env, "LIVE_PG_PORT": ""})
 
 
 def test_three_local_scenarios_have_one_operation_and_explicit_runtime_identity():
@@ -177,7 +197,8 @@ def test_local_running_containers_and_http_sha_must_match_this_project(monkeypat
         for name in ("api", "worker", "deep", "web", "postgres", "silo")
     ]
     next(item for item in containers if item["Id"] == "deep")["Mounts"] = [{"Destination": "/evidence", "Type": "volume", "Name": env["COMPOSE_PROJECT_NAME"] + "_checker-evidence"}]
-    for name, internal, external in (("api", "8080", "18080"), ("web", "4173", "14173"), ("postgres", "5432", "15432"), ("silo", "9000", "19000")):
+    for name, internal in (("api", "8080"), ("web", "4173"), ("postgres", "5432"), ("silo", "9000")):
+        external = str(acceptance.service_ports(env)[name])
         next(item for item in containers if item["Id"] == name)["NetworkSettings"]["Ports"][internal + "/tcp"] = [{"HostIp": "127.0.0.1", "HostPort": external}]
     monkeypatch.setattr(
         acceptance.subprocess,
@@ -196,7 +217,8 @@ def test_local_running_containers_and_http_sha_must_match_this_project(monkeypat
             return None
 
         def get(self, url):
-            assert url in {"http://127.0.0.1:18080/version", "http://127.0.0.1:14173/build-identity.json"}
+            urls = acceptance.service_urls(env)
+            assert url in {urls["api"] + "/version", urls["web"] + "/build-identity.json"}
             return SimpleNamespace(status_code=200, json=lambda: {"git_sha": env["PPAP_BUILD_SHA"]})
 
     monkeypatch.setattr(acceptance.httpx, "Client", Http)
@@ -224,6 +246,86 @@ def test_local_harness_rejects_wrong_or_dirty_source_before_business_writes(monk
     monkeypatch.setattr(acceptance.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="wrong-source"))
     with pytest.raises(acceptance.AcceptanceFailure, match="local_harness_source_mismatch"):
         acceptance.verify_local_source(env)
+
+
+def test_forwarded_pg_cluster_is_rejected_before_identity_or_s3_writes(tmp_path, monkeypatch):
+    import product
+    from product import db, storage
+
+    env = local_configuration()
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.delenv("CI", raising=False)
+    for key in ("GITHUB_ACTIONS", "GITHUB_EVENT_NAME", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(acceptance, "verify_local_source", lambda environment: None)
+    monkeypatch.setattr(acceptance, "verify_local_images", lambda environment: {})
+    monkeypatch.setattr(acceptance, "verify_local_runtime", lambda environment, images: {})
+    monkeypatch.setattr(acceptance, "local_settings", lambda environment: SimpleNamespace())
+    monkeypatch.setattr(acceptance.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="local-cluster|" + env["LIVE_PG_DATABASE"]))
+    queries = []
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def transaction(self):
+            return nullcontext()
+
+        def execute(self, query):
+            queries.append(query)
+            return SimpleNamespace(fetchone=lambda: ("forwarded-cluster", env["LIVE_PG_DATABASE"]))
+
+    monkeypatch.setattr(db, "connect", lambda *args: Connection())
+    monkeypatch.setattr(storage, "s3_client", lambda *args: pytest.fail("Wrong PG identity must stop before S3"))
+    monkeypatch.setattr(product, "build_product_store", lambda *args, **kwargs: pytest.fail("Wrong PG identity must stop before creating users or sessions"))
+    with pytest.raises(acceptance.AcceptanceFailure, match="local_pg_cluster_identity_mismatch"):
+        acceptance.run(tmp_path / "report.json")
+    assert queries[0] == "SET TRANSACTION READ ONLY"
+
+
+def test_private_database_nonce_and_authenticated_bucket_are_both_required(monkeypatch):
+    from botocore.exceptions import ClientError
+    from product import db, storage
+
+    env = local_configuration()
+    monkeypatch.setattr(acceptance, "local_settings", lambda environment: SimpleNamespace())
+    monkeypatch.setattr(acceptance.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="local-cluster|" + env["LIVE_PG_DATABASE"]))
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def transaction(self):
+            return nullcontext()
+
+        def execute(self, query):
+            return SimpleNamespace(fetchone=lambda: ("local-cluster", env["LIVE_PG_DATABASE"]))
+
+    monkeypatch.setattr(db, "connect", lambda *args: Connection())
+    reads = []
+
+    def head(**kwargs):
+        reads.append(kwargs)
+        return {"ResponseMetadata": {"HTTPStatusCode": 200}}
+
+    monkeypatch.setattr(storage, "s3_client", lambda *args: SimpleNamespace(head_bucket=head))
+    proof = acceptance.verify_local_data_services(env)
+    assert proof["pg_system_identifier"] == "local-cluster" and proof["database"] == env["LIVE_PG_DATABASE"]
+    assert reads == [{"Bucket": env["LIVE_S3_BUCKET"]}]
+
+    def unauthorized(**kwargs):
+        raise ClientError({"Error": {"Code": "InvalidAccessKeyId"}, "ResponseMetadata": {"HTTPStatusCode": 403}}, "HeadBucket")
+
+    monkeypatch.setattr(storage, "s3_client", lambda *args: SimpleNamespace(head_bucket=unauthorized))
+    with pytest.raises(acceptance.AcceptanceFailure, match="local_s3_bucket_unverified_InvalidAccessKeyId"):
+        acceptance.verify_local_data_services(env)
 
 
 def test_local_oracle_transport_preserves_bytes_without_putting_private_input_in_arguments(tmp_path, monkeypatch):
@@ -711,8 +813,12 @@ def test_host_fixture_settings_use_explicit_random_credentials_and_distinct_loop
     assert settings.s3_endpoint == "http://127.0.0.1:19000"
     assert settings.personal_model_max_requests == 32 and settings.personal_model_max_input_tokens == 200000 and settings.personal_model_max_output_tokens == 32000
     config = yaml.safe_load((ROOT / "deploy/isolated-dev/checker-live.yaml").read_text())
-    assert config["services"]["api"]["ports"] == ["127.0.0.1:18080:8080"]
-    assert config["services"]["web"]["ports"] == ["127.0.0.1:14173:4173"]
+    assert config["services"]["api"]["ports"] == ["127.0.0.1:${LIVE_API_PORT:-18080}:8080"]
+    assert config["services"]["web"]["ports"] == ["127.0.0.1:${LIVE_WEB_PORT:-14173}:4173"]
+    local = acceptance.local_settings({**env, **local_configuration()})
+    assert local.pg_port == 41001 and local.pg_database == "ppap_checker_" + "b" * 32
+    assert local.s3_endpoint == "http://127.0.0.1:41002" and local.s3_bucket == "checker-live-" + "b" * 32
+    assert local.web_url == "http://127.0.0.1:41004"
 
 
 def test_final_snapshot_preserves_gate_failure_when_product_has_no_failure(tmp_path, monkeypatch):

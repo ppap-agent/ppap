@@ -105,6 +105,31 @@ def scenario_name(environment):
     return name
 
 
+def service_ports(environment):
+    defaults = {"postgres": 15432, "silo": 19000, "api": 18080, "web": 14173}
+    if environment.get("PPAP_CHECKER_LIVE_MODE") != "local":
+        return defaults
+    names = {"postgres": "LIVE_PG_PORT", "silo": "LIVE_S3_PORT", "api": "LIVE_API_PORT", "web": "LIVE_WEB_PORT"}
+    raw = {component: environment.get(name, "") for component, name in names.items()}
+    require(all(value.isdecimal() and 1024 <= int(value) <= 65535 for value in raw.values()), "local_ports_not_prepared")
+    ports = {component: int(value) for component, value in raw.items()}
+    require(len(set(ports.values())) == 4, "local_ports_not_distinct")
+    return ports
+
+
+def service_urls(environment):
+    return {component: f"http://127.0.0.1:{port}" for component, port in service_ports(environment).items() if component != "postgres"}
+
+
+def data_names(environment):
+    if environment.get("PPAP_CHECKER_LIVE_MODE") != "local":
+        return "ppap", "checker-live"
+    ident = environment["PPAP_CHECKER_LIVE_LOCAL_ID"]
+    database, bucket = "ppap_checker_" + ident, "checker-live-" + ident
+    require(environment.get("LIVE_PG_DATABASE") == database and environment.get("LIVE_S3_BUCKET") == bucket, "local_data_names_not_prepared")
+    return database, bucket
+
+
 def runtime_images(environment):
     return {component: environment.get("LIVE_" + component.upper() + "_IMAGE") or f"ppap-{component}:{environment['PPAP_BUILD_SHA']}" for component in ("api", "worker", "deep", "web")}
 
@@ -152,14 +177,56 @@ def verify_local_runtime(environment, images):
         any(mount.get("Destination") == "/evidence" and mount.get("Type") == "volume" and mount.get("Name", "").startswith(project + "_") for mount in services["deep"].get("Mounts", [])),
         "local_evidence_requires_linux_volume",
     )
-    for component, internal, external in (("api", "8080", "18080"), ("web", "4173", "14173"), ("postgres", "5432", "15432"), ("silo", "9000", "19000")):
+    ports, urls = service_ports(environment), service_urls(environment)
+    for component, internal in (("api", "8080"), ("web", "4173"), ("postgres", "5432"), ("silo", "9000")):
+        external = str(ports[component])
         require(component in services and services[component]["NetworkSettings"]["Ports"].get(internal + "/tcp") == [{"HostIp": "127.0.0.1", "HostPort": external}], "local_loopback_service_mismatch")
     expected = environment.get("PPAP_CHECKER_LIVE_RUNTIME_SHA", environment["PPAP_BUILD_SHA"])
     with httpx.Client(timeout=5, follow_redirects=False, trust_env=False) as http:
-        api = http.get("http://127.0.0.1:18080/version")
-        web = http.get("http://127.0.0.1:14173/build-identity.json")
+        api = http.get(urls["api"] + "/version")
+        web = http.get(urls["web"] + "/build-identity.json")
         require(api.status_code == web.status_code == 200 and api.json().get("git_sha") == web.json().get("git_sha") == expected, "runtime_http_source_mismatch")
     return {component: {"container_id": services[component]["Id"], **image} for component, image in images.items()}
+
+
+def verify_local_data_services(environment):
+    """Prove the operator's actual PG/S3 targets before any business mutation.
+
+    Published port metadata alone is insufficient on Desktop: a host-native
+    port-forward can still own that address. The DB nonce and actual cluster ID
+    must match the private container, and fresh S3 credentials must read its bucket.
+    """
+    from botocore.exceptions import ClientError
+    from product.db import connect
+    from product.storage import s3_client
+
+    database, bucket = data_names(environment)
+    settings = local_settings(environment)
+    query = "SELECT system_identifier::text,current_database() FROM pg_control_system()"
+    direct = subprocess.run(
+        ["docker", "exec", environment["COMPOSE_PROJECT_NAME"] + "-postgres-1", "psql", "-U", "ppap", "-d", database, "-tA", "-c", query], capture_output=True, text=True, timeout=15
+    )
+    require(direct.returncode == 0, "local_pg_container_identity_unavailable")
+    expected = direct.stdout.strip().split("|")
+    require(len(expected) == 2 and expected[1] == database, "local_pg_database_nonce_mismatch")
+    try:
+        with connect(settings, "migrator") as conn, conn.transaction():
+            conn.execute("SET TRANSACTION READ ONLY")
+            actual = conn.execute(query).fetchone()
+            require(actual is not None and list(actual) == expected, "local_pg_cluster_identity_mismatch")
+    except AcceptanceFailure:
+        raise
+    except Exception:
+        raise AcceptanceFailure("local_pg_operator_target_unverified") from None
+    client = s3_client(settings)
+    try:
+        response = client.head_bucket(Bucket=bucket)
+    except ClientError as exc:
+        code = str(exc.response.get("Error", {}).get("Code", ""))
+        safe_code = code if code.isalnum() else "unknown"
+        raise AcceptanceFailure("local_s3_bucket_unverified_" + safe_code) from None
+    require(response["ResponseMetadata"]["HTTPStatusCode"] == 200, "local_s3_bucket_unverified")
+    return {"database": database, "pg_system_identifier": expected[0], "bucket": bucket, "authenticated_bucket_read": True}
 
 
 def transfer_private_oracle(path, environment):
@@ -395,7 +462,7 @@ class Client:
     def __init__(self, session):
         from product.identity import SESSION_COOKIE
 
-        self.http = httpx.Client(base_url="http://127.0.0.1:18080", timeout=30, follow_redirects=False, headers={"Cookie": SESSION_COOKIE + "=" + session}, trust_env=False)
+        self.http = httpx.Client(base_url=service_urls(os.environ)["api"], timeout=30, follow_redirects=False, headers={"Cookie": SESSION_COOKIE + "=" + session}, trust_env=False)
 
     def request(self, method, path, *, payload=None, content=None, status=200):
         # Never retry a write, including an uncertain optimization admission.
@@ -528,6 +595,7 @@ class BrowserJourney:
         self.playwright = sync_playwright().start()
         self.browser = self.playwright.chromium.launch()
         self.clause_id = clause_id
+        self.web_url = service_urls(os.environ)["web"]
         self.context = None
         self.new_session(session)
 
@@ -537,7 +605,7 @@ class BrowserJourney:
         if self.context:
             self.context.close()
         self.context = self.browser.new_context(viewport={"width": 1440, "height": 1000})
-        self.context.add_cookies([{"name": SESSION_COOKIE, "value": session, "url": "http://127.0.0.1:14173", "httpOnly": True}])
+        self.context.add_cookies([{"name": SESSION_COOKIE, "value": session, "url": self.web_url, "httpOnly": True}])
         self.page = self.context.new_page()
         self.page.set_default_timeout(20000)
 
@@ -546,7 +614,7 @@ class BrowserJourney:
 
         page = self.page
         clause_id = clause_id or self.clause_id
-        page.goto("http://127.0.0.1:14173/audit?round=" + result["id"])
+        page.goto(self.web_url + "/audit?round=" + result["id"])
         view = page.get_by_role("region", name="历史审核", exact=True)
         expect(view).to_have_attribute("data-round-id", result["id"])
         expect(view).to_have_attribute("data-result-attempt", str(result["result_attempt"]))
@@ -597,7 +665,14 @@ class BrowserJourney:
 
         page = self.page
         clause_id = getattr(self, "clause_id", "R1")
-        self.address = "http://127.0.0.1:14173/audit?round=" + original["round_id"] + "&file=" + original["file_version_id"] + f"&clause={clause_id}&basis=1&checkerFeedbackClause={clause_id}"
+        self.address = (
+            getattr(self, "web_url", service_urls(os.environ)["web"])
+            + "/audit?round="
+            + original["round_id"]
+            + "&file="
+            + original["file_version_id"]
+            + f"&clause={clause_id}&basis=1&checkerFeedbackClause={clause_id}"
+        )
         page.goto(self.address)
         checkpoint(report_path, report, "selecting_feedback")
         samples = report["samples"]
@@ -688,6 +763,8 @@ class BrowserJourney:
 def local_settings(environment):
     from product.settings import Settings
 
+    database, bucket = data_names(environment)
+    ports, urls = service_ports(environment), service_urls(environment)
     return Settings(
         profile="remote-dev",
         git_sha=environment.get("PPAP_CHECKER_LIVE_RUNTIME_SHA", environment["PPAP_BUILD_SHA"]),
@@ -695,14 +772,14 @@ def local_settings(environment):
         personal_model_max_input_tokens=int(environment["PPAP_PERSONAL_MODEL_MAX_INPUT_TOKENS"]),
         personal_model_max_output_tokens=int(environment["PPAP_PERSONAL_MODEL_MAX_OUTPUT_TOKENS"]),
         pg_host="127.0.0.1",
-        pg_port=15432,
-        pg_database="ppap",
+        pg_port=ports["postgres"],
+        pg_database=database,
         pg_migrator_password=environment["LIVE_PG_MIGRATOR_PASSWORD"],
-        s3_endpoint="http://127.0.0.1:19000",
-        s3_bucket="checker-live",
+        s3_endpoint=urls["silo"],
+        s3_bucket=bucket,
         s3_access_key=environment["LIVE_S3_ACCESS_KEY"],
         s3_secret_key=environment["LIVE_S3_SECRET_KEY"],
-        web_url="http://127.0.0.1:14173",
+        web_url=urls["web"],
         llm_base_url=environment["CI_LLM_BASE_URL"],
         llm_model=environment["CI_LLM_MODEL"],
         usage_charge_enabled=False,
@@ -751,6 +828,7 @@ def run(report_path):
         verify_local_source(os.environ)
         report["runtime_images"] = verify_local_images(os.environ)
         report["runtime_images"] = verify_local_runtime(os.environ, report["runtime_images"])
+        report["data_services"] = verify_local_data_services(os.environ)
         write_report(report_path, report)
     # Only initial identity, rule and immutable faulty Suite use trusted stores.
     # All files, real baseline rounds, personal settings, feedback, optimization

@@ -328,6 +328,12 @@ private Oracle and Controller receipt through explicit root execs with byte-dige
 checks; the real guest must still fail to read this directory. Linux workflow
 bind mounts keep their existing behavior. Read-only snapshots also retain the
 local Controller receipt before the disposable volume is removed.
+Local preparation also chooses four free loopback ports and UUID-specific database
+and bucket names. Before any identity, session, Suite or other business write, the
+driver compares its real PostgreSQL cluster identifier/database with a read through
+the private container and authenticates a bucket HEAD with the private S3 credentials.
+Docker's published-port metadata is insufficient: an existing host `kubectl
+port-forward` can otherwise intercept that address. Existing forwards stay untouched.
 
 ```sh
 export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
@@ -347,6 +353,7 @@ export COMPOSE_PROJECT_NAME="ppap-checker-local-$PPAP_CHECKER_LIVE_LOCAL_ID"
 export PPAP_CHECKER_LIVE_OUTPUT="$(mktemp -d /tmp/ppap-checker-local.XXXXXX)"
 export PPAP_CHECKER_LIVE_ENV="$PPAP_CHECKER_LIVE_OUTPUT/private.env"
 uv run --no-sync python -m scripts.prepare_checker_live
+# Compose reads the prepared random ports/data names from this private env file.
 docker compose --env-file "$PPAP_CHECKER_LIVE_ENV" -f deploy/isolated-dev/checker-live.yaml up -d --no-build --pull never --wait api worker web
 set -a
 . "$PPAP_CHECKER_LIVE_ENV"
