@@ -185,11 +185,17 @@ def test_v5_source_path_keeps_its_bytes_binding_and_is_not_published_or_overwrit
         published = _publish(f.clients[0], key, stub.id, 0, True)
         assert published.status_code == 200, published.text
     leaf = next(item for item in predefined_directory_suites() if item.source_path == "v5/UAES/U08")
-    rules = json.loads(leaf.files["rules.json"])
+    source_files = dict(leaf.files)
+    rules = json.loads(source_files["rules.json"])
+    # This case exercises partial-source publication, independently of the
+    # shipped leaf's current binding coverage. Business source bytes stay exact.
+    rules["directory_coverage"] = "partial"
+    rules["checker_binding"] = {clause: rules["checker_binding"][clause] for clause in ("U08:1", "U08:4")}
+    source_files["rules.json"] = json.dumps(rules, ensure_ascii=False).encode()
     official = suites.create_revision(
         tenant_id=None,
         suite_key=leaf.suite_key,
-        files=dict(leaf.files),
+        files=source_files,
         created_by=None,
         related_suite_keys=leaf.related_suite_keys,
         source_path=leaf.source_path,
@@ -203,18 +209,19 @@ def test_v5_source_path_keeps_its_bytes_binding_and_is_not_published_or_overwrit
     result = development_handler(f.worker, runtime)(opt.claim(f), ExecutionContext())
     assert result["state"] == "completed", result
     assert runtime.calls == 1
-    assert runtime.request.source_files == dict(leaf.files)
+    assert runtime.request.source_files == source_files
     candidate = suites.resolve_suite(result["candidate_revision_id"], f.alice.tenant_id)
     source = suites.resolve_suite(official.id, f.alice.tenant_id)
     assert candidate.revision.base_revision_id is None
     assert candidate.revision.related_suite_keys == tuple(sorted(leaf.related_suite_keys))
-    assert candidate.files["rules.json"] == leaf.files["rules.json"]
+    assert candidate.files["checker.py"] == leaf.files["checker.py"] + b"\n# edited\n"
+    assert candidate.files["rules.json"] == source_files["rules.json"]
     assert candidate.files["resources.py"] == leaf.files["resources.py"]
     assert json.loads(candidate.files["rules.json"])["checker_binding"] == rules["checker_binding"]
     assert set(rules["checker_binding"]) != {row["id"] for row in rules["rules"]}
     assert "oracle_clause_coverage_incomplete" in result["report"]["validation"]["reasons"]
     assert result["report"]["validation"]["verified"] is False
-    assert source.files == leaf.files
+    assert source.files == source_files
     assert _rows(f.store, "SELECT source_path, base_revision_id::text, overrides::text, resolved_digest FROM product.suite_revisions WHERE id=%s", (official.id,)) == source_before
     assert _rows(f.store, "SELECT source_path FROM product.suite_revisions WHERE id=%s", (candidate.revision.id,)) == [(None,)]
     assert _rows(f.store, "SELECT count(*) FROM product.suite_publications WHERE suite_key=%s", (leaf.suite_key,))[0][0] == 0
@@ -226,7 +233,7 @@ def test_v5_source_path_keeps_its_bytes_binding_and_is_not_published_or_overwrit
     assert adopted.status_code == 200, adopted.text
     rollback = _publish(f.clients[0], leaf.suite_key, official.id, 1, True)
     assert rollback.status_code == 409 and rollback.json()["error"] == "partial_directory_suite_not_adoptable"
-    assert suites.resolve_suite(official.id, f.alice.tenant_id).files == leaf.files
+    assert suites.resolve_suite(official.id, f.alice.tenant_id).files == source_files
     assert _feedback_snapshot(f.store) == labels and _round_snapshot(f.store) == rounds
 
 
