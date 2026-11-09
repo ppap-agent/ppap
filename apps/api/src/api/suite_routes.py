@@ -202,6 +202,7 @@ def register_suite_routes(app: FastAPI, store, principal_of):
                 if code
                 in {
                     "suite_head_conflict",
+                    "suite_artifact_missing",
                     "suite_official_head_conflict",
                     "suite_operation_conflict",
                     "suite_confirmation_required",

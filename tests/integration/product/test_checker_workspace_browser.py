@@ -1077,3 +1077,255 @@ def test_first_uaes_adoption_from_rule_library_freezes_dependencies(workspace_pr
         finally:
             context.close()
             browser.close()
+
+
+@pytest.mark.parametrize("viewport", [{"width": 1440, "height": 1000}, {"width": 390, "height": 844}], ids=["desktop", "mobile"])
+def test_directory_revision_selection_pi_and_rollback_keep_exact_frozen_sources(workspace_product, tmp_path, monkeypatch, viewport):
+    """Real directory/API/PG/Silo/UDS/guest; only authorship uses the existing controlled author."""
+    import shutil
+    from contextlib import contextmanager
+    from urllib.parse import quote
+
+    from audit import standard_suites as directory
+    from playwright.sync_api import expect, sync_playwright
+    from product.seed_standard_suites import install_official_sources
+
+    f = workspace_product
+    source_root = tmp_path / "sources"
+    shutil.copytree(directory._CHECKERS_ROOT, source_root, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    source_key = "测试客户:T01"
+    rules = {**RULES, "suite_key": source_key, "preset_key": "T01", "title": "目录修订冻结验收"}
+    rules.pop("rule_profile")
+    corrected = runpy.run_path(str(GUEST))["CORRECTED"]
+    source_files = {}
+    for version, program in (("v5", BASELINE), ("v6", corrected)):
+        leaf = source_root / version / "测试客户" / "T01"
+        leaf.mkdir(parents=True)
+        source_files[version] = {
+            "checker.py": (f"# Selected directory {version}\n" + program).encode(),
+            "rules.json": json.dumps(rules, ensure_ascii=False).encode(),
+            "resources.py": b"RESOURCE = {'clauses': {'R1': {'method': 'check'}}}\n",
+        }
+        for name, body in source_files[version].items():
+            (leaf / name).write_bytes(body)
+    monkeypatch.setattr(directory, "_CHECKERS_ROOT", source_root)
+    installed = install_official_sources(f.suites, [suite for suite in directory.predefined_directory_suites() if suite.suite_key == source_key])
+    revisions = {row["source_path"].split("/")[0]: row["revision_id"] for row in installed}
+    assert revisions["v5"] != revisions["v6"]
+    with f.admin._conn() as conn:
+        rule_id = str(uuid4())
+        conn.execute(
+            "INSERT INTO product.rule_versions(id,tenant_id,title,body) VALUES (%s,%s,'目录修订冻结验收',%s)",
+            (rule_id, f.alice.tenant_id, Jsonb(rules)),
+        )
+
+    captured = []
+    original_run = NativeGuest.run
+
+    def observe_guest(self, job, inputs, work, deadline, cancelled, **kwargs):
+        if job.operation == "adapt-checker":
+            manifest = json.loads((inputs / "manifest.json").read_text())
+            assert {name: body.encode() for name, body in manifest["source_files"].items()} == source_files["v5"]
+        result = original_run(self, job, inputs, work, deadline, cancelled, **kwargs)
+        if job.operation == "adapt-checker":
+            selected = [path for path in work.rglob("selected") if path.is_dir()]
+            assert selected
+            for path in selected:
+                assert {child.name: child.read_bytes() for child in path.iterdir()} == source_files["v5"]
+            captured.append({name: hashlib.sha256(body).hexdigest() for name, body in source_files["v5"].items()})
+        return result
+
+    monkeypatch.setattr(NativeGuest, "run", observe_guest)
+
+    @contextmanager
+    def missing_checker(version):
+        frozen = f.suites.resolve_suite(revisions[version], f.alice.tenant_id)
+        with f.admin._conn() as conn:
+            key = conn.execute("SELECT object_key FROM product.suite_objects WHERE owner_scope='official' AND digest=%s", (frozen.object_digests["checker.py"],)).fetchone()[0]
+        raw = f.suites.objects.get(key)
+        f.suites.objects.delete(key)
+        try:
+            yield
+        finally:
+            f.suites.objects.put_exclusive(key, raw, "application/octet-stream")
+            assert f.suites.objects.get(key) == raw
+
+    with sync_playwright() as playwright:
+        executable = os.environ.get("PPAP_BROWSER_EXECUTABLE")
+        browser = playwright.chromium.launch(**({"executable_path": executable} if executable else {}))
+        context = browser.new_context(viewport=viewport)
+        context.add_cookies([{"name": SESSION_COOKIE, "value": f.session, "url": f.web, "httpOnly": True}])
+        page = context.new_page()
+        page.set_default_timeout(20000)
+        request = page.request
+        active_path = f.web + "/api/suites/" + quote(source_key, safe="") + "/active"
+
+        def adopt(revision, *, force):
+            current = response_json(request.get(active_path))
+            return response_json(request.put(active_path, data={"revision_id": revision, "expected_revision": current["revision"], "operation_id": str(uuid4()), "force_unverified": force}))
+
+        def audit(value, index):
+            raw = workbook(value, index)
+            uploaded = response_json(
+                request.post(
+                    f.web + "/api/files",
+                    data={"original_filename": f"目录原件-{index}.xlsx", "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "byte_size": len(raw)},
+                ),
+                201,
+            )
+            blob = f.web + f"/api/files/{uploaded['file_id']}/versions/{uploaded['id']}"
+            response_json(request.put(blob + "/blob", data=raw, headers={"Content-Type": "application/octet-stream"}))
+            response_json(request.post(blob + "/finalize"))
+            draft = response_json(request.post(f.web + "/api/drafts", data={"items": [{"file_version_id": uploaded["id"], "role": "target", "rule_version_id": rule_id}]}), 201)
+            accepted = response_json(request.post(f.web + f"/api/drafts/{draft['id']}/accept", data={"idempotency_key": str(uuid4())}), 201)
+            completed = read_until(page, f.web + f"/api/rounds/{accepted['id']}", lambda row: row["execution"] == "completed")
+            return completed, uploaded
+
+        try:
+            # No registry or customer enum is added for this physical source.
+            catalog = response_json(request.get(f.web + "/api/suites"))
+            paths = {row["path"]: row for row in catalog["predefined"]}
+            assert all(f"v5/UAES/{entry}" in paths for entry in ("U07", "U08", "U17"))
+            assert paths["v4/uaes"]["availability"] == "historical"
+            assert "v4/UAES/U08" not in paths
+            assert paths["v5/测试客户/T01"]["revision_id"] == revisions["v5"]
+            assert paths["v6/测试客户/T01"]["revision_id"] == revisions["v6"]
+            adopt(revisions["v5"], force=True)
+            rounds, feedback = [], []
+            for index, (value, actual, expected) in enumerate(((5, "PASS", "NG"), (15, "NG", "PASS"), (16, "UNABLE", "PASS"), (6, "NG", "NG")), 1):
+                completed, uploaded = audit(value, index)
+                assert completed["findings"][0]["status"] == actual
+                frozen = f.suites.read_snapshot(completed["id"], f.alice.tenant_id)
+                assert frozen.targets[0].suite_revision_id == revisions["v5"]
+                rounds.append((completed, uploaded, frozen.to_dict()))
+                feedback.append(
+                    response_json(
+                        request.post(
+                            f.web + f"/api/audit-rounds/{completed['id']}/checker-feedback",
+                            data={
+                                "operation_id": str(uuid4()),
+                                "file_version_id": uploaded["id"],
+                                "rule_version_id": rule_id,
+                                "rule_clause_id": "R1",
+                                "result_attempt": completed["result_attempt"],
+                                "original_status": actual,
+                                "expected_status": expected,
+                                "rationale": "核对本次原件A1与大于等于10的条款。",
+                                "reason_category": "rule_application",
+                                "evidence": [{"file_version_id": uploaded["id"], "locator": {"kind": "xlsx_cell", "sheet": "Sheet", "cell": "A1"}, "excerpt": str(value)}],
+                            },
+                        )
+                    )
+                )
+            adopt(revisions["v6"], force=True)
+            # Source edits do not mutate the installed official Revision.
+            changed = source_root / "v5" / "测试客户" / "T01" / "checker.py"
+            changed.write_bytes(source_files["v5"]["checker.py"] + b"\n# Later filesystem edit\n")
+            after_edit = {path.relative_to(source_root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest() for path in source_root.rglob("*") if path.is_file()}
+            before_navigation = response_json(request.get(active_path))
+            before_navigation_jobs = tuple(f.guest.jobs)
+            page.goto(f.web + "/requirements?checkerPath=" + quote("v5/测试客户/T01", safe=""))
+            detail = page.get_by_role("region", name="Checker 来源详情", exact=True)
+            expect(detail.get_by_text("官方修订 " + revisions["v5"], exact=True)).to_be_visible()
+            expect(detail).to_contain_text(revisions["v6"])
+            page.reload()
+            expect(detail.get_by_text("官方修订 " + revisions["v5"], exact=True)).to_be_visible()
+            if viewport["width"] == 1440:
+                tree = page.get_by_role("region", name="预定义检查目录", exact=True)
+                branch = tree.get_by_role("treeitem", name="v6", exact=True)
+                if branch.get_attribute("aria-expanded") == "false":
+                    branch.click()
+                customer = tree.locator('[data-tree-path="v6/测试客户"]')
+                if customer.get_attribute("aria-expanded") == "false":
+                    customer.click()
+                target = tree.locator('[data-tree-path="v6/测试客户/T01"]')
+                expect(target).to_be_enabled()
+                target.focus()
+                expect(target).to_be_focused()
+                page.keyboard.press("Enter")
+                expect(detail.get_by_text("官方修订 " + revisions["v6"], exact=True)).to_be_visible()
+                page.go_back()
+                expect(detail.get_by_text("官方修订 " + revisions["v5"], exact=True)).to_be_visible()
+                page.go_forward()
+                expect(detail.get_by_text("官方修订 " + revisions["v6"], exact=True)).to_be_visible()
+                page.go_back()
+                expect(detail.get_by_text("官方修订 " + revisions["v5"], exact=True)).to_be_visible()
+            page.screenshot(path=str(tmp_path / f"filesystem-source-{viewport['width']}.png"), full_page=True)
+            assert response_json(request.get(active_path))["revision"] == before_navigation["revision"]
+            assert tuple(f.guest.jobs) == before_navigation_jobs
+            newer, _ = audit(5, 5)
+            assert newer["findings"][0]["status"] == "NG"
+            assert f.suites.read_snapshot(newer["id"], f.alice.tenant_id).targets[0].suite_revision_id == revisions["v6"]
+            assert f.guest.adaptations == 0
+
+            # The selected B program must not fall back to an available A.
+            uploaded = rounds[0][1]
+            refused_draft = response_json(request.post(f.web + "/api/drafts", data={"items": [{"file_version_id": uploaded["id"], "role": "target", "rule_version_id": rule_id}]}), 201)
+            with f.admin._conn() as conn:
+                round_count = conn.execute("SELECT count(*) FROM product.audit_rounds WHERE tenant_id=%s", (f.alice.tenant_id,)).fetchone()[0]
+            guest_jobs = len(f.guest.jobs)
+            with missing_checker("v6"):
+                rejected = request.post(f.web + f"/api/drafts/{refused_draft['id']}/accept", data={"idempotency_key": str(uuid4())})
+                assert rejected.status == 409, rejected.text()
+                assert rejected.json() == {"error": "suite_artifact_missing"}
+            with f.admin._conn() as conn:
+                assert conn.execute("SELECT count(*) FROM product.audit_rounds WHERE tenant_id=%s", (f.alice.tenant_id,)).fetchone()[0] == round_count
+            assert len(f.guest.jobs) == guest_jobs
+
+            response_json(
+                request.put(f.web + "/api/me/model-config", data={"api_key": "synthetic-workspace-key-never-sent-to-provider", "base_url": "https://models.example.test", "model": "test-model"})
+            )
+            operation = {"operation_id": str(uuid4()), "feedback_ids": [row["id"] for row in feedback], "action": "run_tests", "consume_model": True}
+            optimize = f.web + f"/api/suite-revisions/{revisions['v5']}/optimizations"
+            missing_operation = {**operation, "operation_id": str(uuid4())}
+            with f.admin._conn() as conn:
+                candidate_count = conn.execute("SELECT count(*) FROM product.suite_revisions WHERE tenant_id=%s AND suite_key=%s", (f.alice.tenant_id, source_key)).fetchone()[0]
+            with missing_checker("v5"):
+                missing_response = request.post(optimize, data=missing_operation)
+                assert missing_response.status == 409
+                assert missing_response.json() == {"error": "suite_artifact_missing"}
+            assert request.get(f.web + "/api/checker-optimizations/" + missing_operation["operation_id"]).status == 404
+            with f.admin._conn() as conn:
+                assert conn.execute("SELECT count(*) FROM product.suite_revisions WHERE tenant_id=%s AND suite_key=%s", (f.alice.tenant_id, source_key)).fetchone()[0] == candidate_count
+            assert f.guest.adaptations == 0
+            response_json(request.post(optimize, data=operation))
+            completed = read_until(page, f.web + "/api/checker-optimizations/" + operation["operation_id"], lambda row: row["state"] not in {"queued", "running"}, timeout=90)
+            assert completed["state"] == "completed", completed
+            assert completed["report"]["validation"]["verified"]
+            assert completed["report"]["validation"]["total_samples"] == 4
+            assert captured and f.guest.adaptations == 1
+            candidate = completed["candidate_revision_id"]
+            assert candidate not in revisions.values()
+            assert response_json(request.post(optimize, data=operation))["candidate_revision_id"] == candidate
+            assert f.guest.adaptations == 1
+            assert response_json(request.get(active_path))["current_revision_id"] == revisions["v6"]
+            assert dict(f.suites.resolve_suite(revisions["v5"], f.alice.tenant_id).files) == source_files["v5"]
+            assert {path.relative_to(source_root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest() for path in source_root.rglob("*") if path.is_file()} == after_edit
+            adopt(candidate, force=False)
+            adopted, _ = audit(5, 6)
+            assert adopted["findings"][0]["status"] == "NG"
+            adopted_snapshot = f.suites.read_snapshot(adopted["id"], f.alice.tenant_id)
+            assert adopted_snapshot.targets[0].suite_revision_id == candidate
+            adopt(revisions["v6"], force=True)
+            assert response_json(request.get(active_path))["current_revision_id"] == revisions["v6"]
+            rolled_back, _ = audit(5, 7)
+            assert rolled_back["findings"][0]["status"] == "NG"
+            assert f.suites.read_snapshot(rolled_back["id"], f.alice.tenant_id).targets[0].suite_revision_id == revisions["v6"]
+            assert f.suites.read_snapshot(adopted["id"], f.alice.tenant_id).to_dict() == adopted_snapshot.to_dict()
+            for original, _uploaded, frozen in rounds:
+                assert f.suites.read_snapshot(original["id"], f.alice.tenant_id).to_dict() == frozen
+                readback = response_json(request.get(f.web + f"/api/rounds/{original['id']}"))
+                assert [(row["item_key"], row["status"], row.get("locator")) for row in readback["findings"]] == [(row["item_key"], row["status"], row.get("locator")) for row in original["findings"]]
+
+            outsider = f.admin.upsert_feishu_identity("checker-filesystem-other", "reader")
+            foreign = playwright.request.new_context(base_url=f.web, extra_http_headers={"Cookie": SESSION_COOKIE + "=" + f.admin.create_session(outsider)})
+            try:
+                assert foreign.get(f.web + "/api/checker-optimizations/" + operation["operation_id"]).status == 404
+                assert foreign.get(f.web + "/api/suite-revisions/" + candidate).status == 403
+                assert foreign.get(f.web + "/api/rounds/" + rounds[0][0]["id"]).status == 403
+            finally:
+                foreign.dispose()
+            assert f.guest.adaptations == 1 and not f.errors
+        finally:
+            context.close()
+            browser.close()
