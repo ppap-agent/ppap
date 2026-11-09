@@ -242,14 +242,27 @@ def test_each_leaf_declares_exact_clauses_scope_and_known_gaps_without_version_i
             assert item["scope"] and item["carriers"]
             assert f"def {item['method']}(" in source
         readers += len(resource["clauses"])
-    assert readers == 67
+    assert readers == 68
 
 
 def _fields(*names):
     return [[name, f"实际内容-{index}"] for index, name in enumerate(names, 1)]
 
 
+def _msa_measurements():
+    rows = [[None] * 12 for _ in range(20)]
+    rows[0][0] = "量具重复性和再现性"
+    rows[6][2:12] = list(range(1, 11))
+    for evaluator, first in (("A", 8), ("B", 13), ("C", 18)):
+        rows[first][0] = evaluator
+        for row in range(first - 1, first + 2):
+            rows[row][1] = row - first + 2
+            rows[row][2:12] = [0] * 10
+    return {"量具重复性和再现性": rows}
+
+
 _ADDITIONAL_POSITIVES = [
+    ("L05", "L05:3", _msa_measurements()),
     ("L01", "L01:1", {"全功能检验报告": [["全功能检验报告"]]}),
     ("L01", "L01:8", {"全功能检验报告": _fields("车型", "零件名称", "零件号", "供应商", "责任人", "日期")}),
     ("L02", "L02:1", {"DVP&R": _fields("版本号", "修订日期", "修订部门/姓名", "零件/总成名称", "适用车型", "零件/总成编号", "供应商名称")}),
