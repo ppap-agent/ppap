@@ -19,7 +19,7 @@ class _Audit(SourceAudit):
         return ("PASS", "CCSC四项身份字段均有实际原件内容。")
 
     def rule_3(self):
-        rows = self.native().rows({"risk": ("现有管理方式风险评估",), "action": ("高风险管理项预防措施",)})
+        rows = self.native().rows({"risk": ("现有管理方式风险评估",), "action": ("高风险管理项预防措施",)}, title=("CCSC", "特性管理清单"))
         for row in rows:
             if row["risk"] == "高风险" and blank(row["action"]):
                 return ("NG", "高风险管理项缺少对应预防措施。")

@@ -237,3 +237,66 @@ def test_form_derived_psw_known_missing_weight_label_is_ng():
     result = run_clause("L17", "L17:2", psw_variant(missing_label=True), "原生PSW.xlsx")
     assert result["status"] == "NG", result
     assert "重量字段" in result["suggestions"]
+
+
+CCSC = TEMPLATES / "APQP-产品过程CCSC特性管理清单.xlsx"
+
+
+def ccsc_variant(changes):
+    """Derive targeted boundary inputs from the retained filled form rows."""
+    book = load_workbook(io.BytesIO(CCSC.read_bytes()))
+    for cell, value in changes.items():
+        book["特性清单"][cell] = value
+    output = io.BytesIO()
+    book.save(output)
+    book.close()
+    return output.getvalue()
+
+
+@pytest.mark.parametrize(("clause", "cells", "expected"), [("L06:1", ("AS5", "AS6", "AS7"), ("NA", 1.78, 2.27)), ("L06:2", ("AU5", "AU6", "AU7"), ("达标", "达标", "达标"))])
+def test_retained_ccsc_filled_rows_use_p_stage_not_other_result_groups(clause, cells, expected):
+    content = CCSC.read_bytes()
+    before = hashlib.sha256(content).hexdigest()
+    book = load_workbook(io.BytesIO(content), data_only=False)
+    sheet = book["特性清单"]
+    assert tuple(sheet[cell].value for cell in cells) == expected
+    assert sheet["AG4"].value == "PPV阶段\nCpk结果" and sheet["AS4"].value == "P阶段\nCpk结果"
+    book.close()
+    result = run_clause("L06", clause, content, CCSC.name)
+    assert result["status"] == "PASS", result
+    sources = result["locator"]["semantic"]["sources"]
+    assert {item["locator"].get("cell") for item in sources} >= set(cells)
+    assert all(item["locator"].get("sheet") == "特性清单" for item in sources)
+    assert hashlib.sha256(CCSC.read_bytes()).hexdigest() == before
+
+
+@pytest.mark.parametrize(("clause", "changes"), [("L06:1", {"AS6": 1.33}), ("L06:2", {"AU6": "未达标"})])
+def test_ccsc_p_stage_defect_cannot_borrow_passing_ppv_or_pp_result(clause, changes):
+    result = run_clause("L06", clause, ccsc_variant(changes), "派生CCSC.xlsx")
+    assert result["status"] == "NG", result
+
+
+def test_retained_ccsc_high_risk_has_action_while_non_high_risk_blanks_are_allowed():
+    content = CCSC.read_bytes()
+    before = hashlib.sha256(content).hexdigest()
+    book = load_workbook(io.BytesIO(content), data_only=False)
+    sheet = book["特性清单"]
+    assert sheet["AE5"].value == "中风险" and sheet["AF5"].value is None
+    assert sheet["AE6"].value == "低风险" and sheet["AF6"].value is None
+    assert sheet["AE7"].value == "高风险" and sheet["AF7"].value == "改用Atlas阿特拉斯拧紧枪"
+    book.close()
+    result = run_clause("L12", "L12:3", content, CCSC.name)
+    assert result["status"] == "PASS", result
+    assert any(item["locator"].get("cell") == "AF7" for item in result["locator"]["semantic"]["sources"])
+    assert hashlib.sha256(CCSC.read_bytes()).hexdigest() == before
+
+
+@pytest.mark.parametrize("changes", [{"AF7": None}, {"AE6": "高风险"}])
+def test_ccsc_missing_action_on_an_actual_high_risk_row_is_ng(changes):
+    result = run_clause("L12", "L12:3", ccsc_variant(changes), "派生CCSC.xlsx")
+    assert result["status"] == "NG", result
+
+
+def test_ccsc_uncalculated_high_risk_action_is_unknown_instead_of_pass():
+    result = run_clause("L12", "L12:3", ccsc_variant({"AF7": "=1+1"}), "派生CCSC.xlsx")
+    assert result["status"] == "UNABLE", result
