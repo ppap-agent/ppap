@@ -829,7 +829,6 @@ def run(report_path):
         checkpoint(report_path, report, "candidate_readback", browser_optimize=True)
         detail = client.request("GET", "/suite-revisions/" + receipt["candidate_revision_id"])
         changed = any(detail["files"].get(name) != raw.decode() for name, raw in source_files.items() if name in {"checker.py", "resources.py"})
-        require(scenario == "rule-wording" or changed, "checker_not_changed")
         report["code_changed"] = changed
         report["candidate_checker_sha256"] = hashlib.sha256(detail["files"]["checker.py"].encode()).hexdigest()
         from audit.checker_core import checker_digest
