@@ -210,6 +210,8 @@ def evaluate_psw_observation(rule_no: int, observation: Mapping[str, object], *,
             status, suggestions = "PASS", ""
         elif company is False and (authorization is False or authorization_stamp is False):
             status, suggestions = "NG", "保证书印章文字未以“公司”结尾，且没有盖有公司章的部门章授权声明。"
+        elif company is False:
+            suggestions = "原件证据不足：保证书印章不满足公司章要求，但无法确认是否存在盖有公司章的部门章授权声明。请人工核对授权页；无法辨认时保留无法判断。"
     elif rule_no == 5:
         signature = _as_bool(observation.get("authorized_signature_present"))
         stamp = _as_bool(observation.get("psw_stamp_present"))
