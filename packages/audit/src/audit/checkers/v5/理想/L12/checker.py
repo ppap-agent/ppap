@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from audit.checker_lib.source import SourceAudit, UnknownFact, blank, key
+from audit.checker_lib.source import SourceAudit, UnknownFact, blank, header, key
 from resources import RESOURCE
 
 
@@ -19,8 +19,20 @@ class _Audit(SourceAudit):
         return ("PASS", "CCSC四项身份字段均有实际原件内容。")
 
     def rule_3(self):
-        rows = self.native().rows({"risk": ("现有管理方式风险评估",), "action": ("高风险管理项预防措施",)}, title=("CCSC", "特性管理清单"))
+        facts = self.native()
+        title = ("CCSC", "特性管理清单")
+        table = facts.table(title)
+        aliases = {"risk": ("现有管理方式风险评估",), "action": ("高风险管理项预防措施",)}
+        start, _columns = facts.columns(table, aliases)
+        anchor: tuple[str, ...] = ()
+        if any(header(facts.readers[table["id"]].cell(start, column).get("value"), ("过程/流程步骤",)) for column in range(1, table["cols"] + 1)):
+            aliases["step"] = ("过程/流程步骤",)
+            anchor = ("step",)
+        rows = facts.rows(aliases, title=title, anchor=anchor, defer_unknown=True)
         for row in rows:
-            if row["risk"] == "高风险" and blank(row["action"]):
+            risk = row["risk"]
+            if risk not in ("低风险", "中风险", "高风险"):
+                raise UnknownFact("风险等级尚未确认为低风险、中风险或高风险，不能判定预防措施条件不适用。")
+            if risk == "高风险" and blank(row["action"]):
                 return ("NG", "高风险管理项缺少对应预防措施。")
         return ("PASS", "全部风险物理行已读取，高风险行均有预防措施。")

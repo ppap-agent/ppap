@@ -300,3 +300,12 @@ def test_ccsc_missing_action_on_an_actual_high_risk_row_is_ng(changes):
 def test_ccsc_uncalculated_high_risk_action_is_unknown_instead_of_pass():
     result = run_clause("L12", "L12:3", ccsc_variant({"AF7": "=1+1"}), "派生CCSC.xlsx")
     assert result["status"] == "UNABLE", result
+
+
+@pytest.mark.parametrize("risk", [None, "待确认", "中风险（待复核）", "无风险", "高风险?"])
+def test_ccsc_known_business_row_with_unconfirmed_risk_cannot_disappear_or_pass(risk):
+    # B7 still identifies a real filled process row. Blank risk + blank action
+    # cannot make that row disappear from this conditional check.
+    result = run_clause("L12", "L12:3", ccsc_variant({"AE7": risk, "AF7": None}), "派生CCSC.xlsx")
+    assert result["status"] == "UNABLE", result
+    assert any(item["locator"].get("cell") == "AE7" for item in result["locator"]["semantic"]["sources"])
