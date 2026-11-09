@@ -275,11 +275,14 @@ def test_local_image_check_rejects_missing_or_mixed_source_without_pull(monkeypa
 
     def inspect(command, **kwargs):
         calls.append(command)
-        return SimpleNamespace(returncode=0, stdout=json.dumps({"Id": "sha256:" + "d" * 64, "Config": {"Labels": {"org.opencontainers.image.revision": "c" * 40}}}))
+        metadata = {"Id": "sha256:" + "d" * 64, "Architecture": "arm64" if "deep" in command[3] else "amd64", "Os": "linux", "Config": {"Labels": {"org.opencontainers.image.revision": "c" * 40}}}
+        return SimpleNamespace(returncode=0, stdout=json.dumps(metadata))
 
     monkeypatch.setattr(acceptance.subprocess, "run", inspect)
     identities = acceptance.verify_local_images(env)
     assert set(identities) == {"api", "worker", "deep", "web"}
+    assert identities["deep"]["architecture"] == "arm64" and identities["api"]["architecture"] == "amd64"
+    assert all(image["os"] == "linux" for image in identities.values())
     assert all(command[:3] == ["docker", "image", "inspect"] for command in calls)
     monkeypatch.setattr(acceptance.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=1, stdout=""))
     with pytest.raises(acceptance.AcceptanceFailure, match="local_runtime_image_missing"):

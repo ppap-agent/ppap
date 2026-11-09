@@ -146,7 +146,7 @@ def verify_local_images(environment):
         metadata = json.loads(inspected.stdout)
         actual = (metadata.get("Config", {}).get("Labels") or {}).get("org.opencontainers.image.revision")
         require(actual == expected, "runtime_image_source_mismatch")
-        images[component] = {"reference": reference, "image_id": metadata["Id"], "source_sha": actual}
+        images[component] = {"reference": reference, "image_id": metadata["Id"], "source_sha": actual, "architecture": metadata["Architecture"], "os": metadata["Os"]}
     return images
 
 
