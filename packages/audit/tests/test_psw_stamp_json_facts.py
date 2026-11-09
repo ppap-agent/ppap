@@ -173,6 +173,8 @@ def test_incomplete_company_coverage_keeps_reason_without_claiming_a_known_false
         ("unclassified-native", 3, "UNABLE"),
         ("white-vector-blank", 3, "PASS"),
         ("unread-vector", 3, "UNABLE"),
+        ("english-native-vector", 3, "UNABLE"),
+        ("english-authorization-vector", 3, "UNABLE"),
     ],
 )
 def test_unclassified_visual_pages_keep_all_and_exists_domains_incomplete(tmp_path, monkeypatch, scenario, rule, expected):
@@ -188,7 +190,7 @@ def test_unclassified_visual_pages_keep_all_and_exists_domains_incomplete(tmp_pa
         page = document.new_page()
         for y, text in ((40, "零件提交保证书"), (100, "经授权的供方代表签字"), (200, "认可情况")):
             page.insert_text((30, y), text, fontname="china-s")
-        if scenario == "unread-authorization":
+        if scenario in {"unread-authorization", "english-authorization-vector"}:
             page = document.new_page()
             page.insert_text((30, 40), "部门章授权声明", fontname="china-s")
         page = document.new_page()
@@ -197,7 +199,12 @@ def test_unclassified_visual_pages_keep_all_and_exists_domains_incomplete(tmp_pa
                 page.insert_text((30, y), text, fontname="china-s")
         elif scenario == "unclassified-native":
             page.insert_text((30, 30), "其它原生文字不能排除图形业务表", fontname="china-s")
-        if scenario in {"white-vector-blank", "unread-vector"}:
+        elif scenario in {"english-native-vector", "english-authorization-vector"}:
+            page.insert_text((30, 30), "Department Seal Authorization" if scenario == "english-authorization-vector" else "Part Submission Warrant")
+            page.insert_text((30, 60), "Authorized Supplier Signature")
+        if scenario in {"english-native-vector", "english-authorization-vector"}:
+            page.draw_circle((120, 180), 40, color=(1, 0, 0))
+        elif scenario in {"white-vector-blank", "unread-vector"}:
             page.draw_rect(fitz.Rect(30, 90, 250, 300), color=None, fill=(1, 1, 1) if scenario == "white-vector-blank" else (0, 0, 0))
         elif scenario != "blank":
             page.insert_image(fitz.Rect(30, 90, 250, 300), stream=image)
@@ -211,9 +218,9 @@ def test_unclassified_visual_pages_keep_all_and_exists_domains_incomplete(tmp_pa
         for field, scopes in options["field_scopes"].items():
             for scope in scopes:
                 if field == COMPANY:
-                    value = scenario != "unread-authorization"
+                    value = scenario not in {"unread-authorization", "english-authorization-vector"}
                 elif field.startswith("authorization_"):
-                    value = scenario == "unread-authorization" and field == "authorization_table_present"
+                    value = scenario in {"unread-authorization", "english-authorization-vector"} and field == "authorization_table_present"
                 elif field == "authorized_signature_present":
                     value = scenario != "known-counterexample"
                 else:
@@ -227,7 +234,7 @@ def test_unclassified_visual_pages_keep_all_and_exists_domains_incomplete(tmp_pa
     _facts, result = psw_scope.evaluate_psw_pdf_rule(audit, rule, witness, {}, lambda: pytest.fail("Retired bridge must not run"))
     assert result.status == expected
     assert path.read_bytes() == before
-    assert calls and all(max(pages) <= (2 if scenario == "unread-authorization" else 1) for pages in calls)
+    assert calls and all(max(pages) <= (2 if scenario in {"unread-authorization", "english-authorization-vector"} else 1) for pages in calls)
     if scenario == "native-checklist":
         identity = next(call for call in witness.call_args_list if call.args[0].get("coverage") == "native_document_heading")
         assert identity.args[0]["page"] == 2

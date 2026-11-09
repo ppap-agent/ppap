@@ -131,7 +131,7 @@ class _Objects:
                     and not dispositions
                     and not authorizations
                     and self.roles[number] is not True
-                    and (page.get_image_info() or (not text.strip() and any(drawing["type"] != "f" or drawing["fill"] != (1.0, 1.0, 1.0) for drawing in page.get_drawings())))
+                    and (page.get_image_info() or any(drawing["type"] != "f" or drawing["fill"] != (1.0, 1.0, 1.0) for drawing in page.get_drawings()))
                 ):
                     # An unclassified visual page may contain another warrant
                     # or authorization. Do not add scanning or exclude it.
