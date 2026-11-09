@@ -239,7 +239,7 @@ class PredefinedCatalogBrowserTests(unittest.TestCase):
             controls["tenant"] = "second-tenant"
             page.evaluate("window.dispatchEvent(new Event('ppap-session-expired'))")
             expect(page.get_by_role("heading", name="登录审核工作台", exact=True)).to_be_visible()
-            page.get_by_role("button", name="重新读取登录状态", exact=True).click()
+            page.get_by_role("button", name="重试", exact=True).click()
             detail = page.get_by_role("region", name="Checker 来源详情", exact=True)
             expect(detail.get_by_text(re.compile("second-current.*不同"))).to_be_visible()
             for route in controls.get("held", []):
