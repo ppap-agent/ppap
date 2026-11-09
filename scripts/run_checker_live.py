@@ -830,6 +830,11 @@ def run(report_path):
         report["runtime_images"] = verify_local_images(os.environ)
         report["runtime_images"] = verify_local_runtime(os.environ, report["runtime_images"])
         report["data_services"] = verify_local_data_services(os.environ)
+        if os.environ.get("LIVE_GUEST_AS_MIB"):
+            probe = controller_evidence(report_path.parent / "controller.json", os.environ)
+            expected = {"policy_memory_mib": 1536, "actual_guest_as_mib": 3072, "container_memory_mib": 2048, "guest_version_probe": "1.5.0", "scope": "local_emulation_only"}
+            require(os.environ["LIVE_GUEST_AS_MIB"] == "3072" and probe.get("local_guest_limits") == expected, "local_guest_startup_not_proven")
+            report["local_guest_limits"] = expected
         write_report(report_path, report)
     # Only initial identity, rule and immutable faulty Suite use trusted stores.
     # All files, real baseline rounds, personal settings, feedback, optimization

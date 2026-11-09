@@ -72,6 +72,68 @@ def local_configuration():
     return env
 
 
+def test_emulation_address_space_override_is_explicit_finite_and_local_only():
+    env = {**local_configuration(), "LIVE_GUEST_AS_MIB": "3072"}
+    assert controller.local_guest_limits(env) == 3072
+    assert controller.local_guest_limits(configuration()) is None
+    for change in ({"PPAP_CHECKER_LIVE_MODE": "workflow"}, {"CI": "true"}, {"GITHUB_ACTIONS": "true"}, {"COMPOSE_PROJECT_NAME": "production"},
+                   {"PPAP_CHECKER_LIVE_LOCAL_ID": ""}, {"LIVE_GUEST_AS_MIB": "4096"}, {"LIVE_GUEST_AS_MIB": "unlimited"}):
+        with pytest.raises(ValueError, match="invalid_local_guest_limits"):
+            controller.local_guest_limits({**env, **change})
+
+
+def test_local_guest_startup_uses_finite_as_and_keeps_other_boundaries(tmp_path, monkeypatch):
+    from pydantic import BaseModel
+
+    wrapper = tmp_path / "prlimit"
+    memory = tmp_path / "memory.max"
+    memory.write_text("2147483648")
+    monkeypatch.setattr(controller, "Path", lambda value: memory if value.endswith("memory.max") else wrapper)
+    launches = []
+
+    def launch(args, **kwargs):
+        launches.append((args, kwargs))
+        return SimpleNamespace(returncode=0, stdout=b"1.5.0\n")
+
+    monkeypatch.setattr(controller.subprocess, "run", launch)
+
+    class Config(BaseModel):
+        memory_mib: int = 1536
+        prlimit_executable: Path = Path("/usr/bin/prlimit")
+
+    class Runtime:
+        def __init__(self, config):
+            self.config = config
+
+    facts = controller.prepare_local_guest(Runtime, {**local_configuration(), "LIVE_GUEST_AS_MIB": "3072"})
+    assert facts == {"policy_memory_mib": 1536, "actual_guest_as_mib": 3072, "container_memory_mib": 2048, "guest_version_probe": "1.5.0", "scope": "local_emulation_only"}
+    assert Runtime(Config()).config.prlimit_executable == wrapper
+    assert Runtime(Config()).config.memory_mib == 1536
+    with pytest.raises(ValueError, match="local_guest_policy_changed"):
+        Runtime(Config(memory_mib=2048))
+    args, options = launches[0]
+    assert "--nproc=256" in args and "--nofile=128" in args and "--core=0" in args
+    assert "--reuid=10001" in args and "--no-new-privs" in args
+    assert args[-2:] == ["/usr/local/bin/ppap-pi", "--version"]
+    assert "API_KEY" not in json.dumps(options)
+    # Execute only the argument transform with a controlled execv, never a model.
+    observed = []
+    monkeypatch.setattr(sys, "argv", [str(wrapper), "--as=1610612736", "--nproc=256", "--", "fixed-program"])
+    monkeypatch.setattr(controller.os, "execv", lambda program, args: observed.append((program, args)))
+    exec(compile(wrapper.read_text(), str(wrapper), "exec"), {})
+    assert observed == [("/usr/bin/prlimit", ["prlimit", "--as=3221225472", "--nproc=256", "--", "fixed-program"])]
+
+
+@pytest.mark.parametrize("memory,exit_code,version", [("max", 0, b"1.5.0"), ("2147483648", -5, b""), ("2147483648", 0, b"wrong")], ids=["unbounded-cgroup", "guest-failure", "wrong-version"])
+def test_emulation_preflight_rejects_changed_cgroup_or_failed_guest(tmp_path, monkeypatch, memory, exit_code, version):
+    wrapper, cgroup = tmp_path / "prlimit", tmp_path / "memory.max"
+    cgroup.write_text(memory)
+    monkeypatch.setattr(controller, "Path", lambda value: cgroup if value.endswith("memory.max") else wrapper)
+    monkeypatch.setattr(controller.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=exit_code, stdout=version))
+    with pytest.raises(ValueError, match="local_container_memory_limit_changed|local_guest_startup_failed"):
+        controller.prepare_local_guest(SimpleNamespace(), {**local_configuration(), "LIVE_GUEST_AS_MIB": "3072"})
+
+
 def test_local_entry_is_explicit_and_never_impersonates_actions_or_live_stack(tmp_path):
     env = local_configuration()
     assert acceptance.live_configuration(env) == (env["CI_LLM_BASE_URL"], env["CI_LLM_MODEL"])
