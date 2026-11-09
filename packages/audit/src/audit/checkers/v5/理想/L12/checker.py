@@ -12,21 +12,26 @@ def create_audit(audit_file, rule, group_context=None):
 
 
 class _Audit(SourceAudit):
-    def _business_rows(self, facts, table, start, columns, aliases):
-        """Only a wholly known blank row or a repeated header is outside scope."""
+    def _business_rows(self, facts, table, start):
+        """Physical row membership is separate from either clause's fields."""
+        reader = facts.readers[table["id"]]
+        columns = range(1, table["cols"] + 1)
+        headers = [{column: reader.cell(row, column) for column in columns} for row in (start - 1, start) if row > 0]
         found = False
         for row in range(start + 1, table["rows"] + 1):
-            raw = {name: facts.readers[table["id"]].cell(row, column) for name, column in columns.items()}
+            raw = {column: reader.cell(row, column) for column in columns}
             known = all(item.get("state") == "known" for item in raw.values())
             if known and all(blank(item.get("value")) for item in raw.values()):
                 continue
-            if known and all(blank(item.get("value")) or header(item.get("value"), aliases[name]) for name, item in raw.items()):
+            if known and any(all(reference[column].get("state") == "known" and item.get("value") == reference[column].get("value") for column, item in raw.items()) for reference in headers):
                 continue
-            if not any(item.get("state") == "known" and not blank(item.get("value")) for item in raw.values()):
-                for name, item in raw.items():
+            present = next((column for column, item in raw.items() if item.get("state") == "known" and not blank(item.get("value"))), None)
+            if present is None:
+                for column, item in raw.items():
                     if item.get("state") != "known":
-                        facts.cell(table, row, columns[name])
+                        facts.cell(table, row, column)
                 raise UnknownFact("无法确认此行是否有业务内容，不能按空行忽略。")
+            facts.cell(table, row, present)
             found = True
             yield row
         if not found:
@@ -66,8 +71,7 @@ class _Audit(SourceAudit):
             if len(matches) != 1:
                 raise UnknownFact("T1父分组内有重复叶列，不能确定逐行归属。")
             columns[name] = matches[0]
-        aliases.update({name: (name,) for name in children})
-        for row in self._business_rows(facts, table, start, columns, aliases):
+        for row in self._business_rows(facts, table, start):
             for name, column in columns.items():
                 if any(span[0] <= row <= span[2] and span[1] <= column <= span[3] for span in table.get("merges", [])):
                     raise UnknownFact("CCSC业务值存在合并，不能确认逐过程的必填范围。")
@@ -80,12 +84,8 @@ class _Audit(SourceAudit):
         title = ("CCSC", "特性管理清单")
         table = facts.table(title)
         aliases = {"risk": ("现有管理方式风险评估",), "action": ("高风险管理项预防措施",)}
-        start, _columns = facts.columns(table, aliases)
-        for name, label in (("step", "过程/流程步骤"), ("operation", "工序/流程编号"), ("characteristic", "特性名称")):
-            if any(header(facts.readers[table["id"]].cell(start, column).get("value"), (label,)) for column in range(1, table["cols"] + 1)):
-                aliases[name] = (label,)
         start, columns = facts.columns(table, aliases)
-        for row in self._business_rows(facts, table, start, columns, aliases):
+        for row in self._business_rows(facts, table, start):
             risk = facts.cell(table, row, columns["risk"])
             if risk not in ("低风险", "中风险", "高风险"):
                 raise UnknownFact("风险等级尚未确认为低风险、中风险或高风险，不能判定预防措施条件不适用。")

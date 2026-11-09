@@ -16,6 +16,7 @@ from audit.checker_lib.source import SourceAudit
 from audit.standard_suites import predefined_directory_suites
 from corpus_contracts.core_round import run_suite_round
 from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
 
 ROOT = Path(__file__).resolve().parents[4]
 TEMPLATES = ROOT / "assets/PPAP PRD v3.7/客户归类模板与规则_备份/模板/理想"
@@ -417,8 +418,48 @@ def test_ccsc_only_filled_t1_values_still_establish_a_required_business_row():
 
 
 def test_ccsc_t1_only_unknown_content_cannot_prove_an_empty_row_or_missing_step():
-    changes = {f"{column}7": None for column in (*"BCDEFGHIJ", *"NOPQRSTU")}
+    changes = {f"{get_column_letter(column)}7": None for column in range(1, 55)}
     changes["N7"] = "=1+1"
     result = run_clause("L12", "L12:2", ccsc_variant(changes), "派生CCSC.xlsx")
     assert result["status"] == "UNABLE", result
     assert any(item["locator"].get("cell") == "N7" for item in result["locator"]["semantic"]["sources"])
+
+
+def test_ccsc_risk_row_still_exists_when_only_other_business_columns_are_filled():
+    result = run_clause("L12", "L12:3", ccsc_variant({"A7": None, "B7": None, "E7": None, "AE7": None, "AF7": None}), "派生CCSC.xlsx")
+    assert result["status"] == "UNABLE", result  # D/F/G/H/I/J still have business content.
+
+
+def test_ccsc_t1_validation_fields_empty_cannot_hide_numbered_physical_row():
+    changes = {f"{column}7": None for column in (*"BCDEFGHIJ", *"NOPQRSTU")}
+    result = run_clause("L12", "L12:2", ccsc_variant(changes), "派生CCSC.xlsx")
+    assert result["status"] == "NG", result  # A7 is still OP10, with other fields/T2 filled.
+    assert "B7" in result["suggestions"]
+
+
+@pytest.mark.parametrize(("clause", "value", "expected"), [("L12:2", 0, "NG"), ("L12:3", 0, "UNABLE"), ("L12:2", "=1+1", "UNABLE"), ("L12:3", "=1+1", "UNABLE")])
+def test_ccsc_physical_row_zero_or_unknown_outside_validation_columns_is_not_empty(clause, value, expected):
+    changes = {f"{get_column_letter(column)}7": None for column in range(1, 55)}
+    changes["K7"] = value  # Unit is outside both clauses' validation field sets.
+    result = run_clause("L12", clause, ccsc_variant(changes), "派生CCSC.xlsx")
+    assert result["status"] == expected, result
+
+
+@pytest.mark.parametrize("clause", ["L12:2", "L12:3"])
+def test_ccsc_wholly_known_blank_physical_row_is_outside_business_scope(clause):
+    changes = {f"{get_column_letter(column)}7": None for column in range(1, 55)}
+    result = run_clause("L12", clause, ccsc_variant(changes), "派生CCSC.xlsx")
+    assert result["status"] == "PASS", result
+
+
+@pytest.mark.parametrize("clause", ["L12:2", "L12:3"])
+def test_ccsc_repeated_complete_leaf_header_is_not_a_business_row(clause):
+    book = load_workbook(io.BytesIO(CCSC.read_bytes()))
+    sheet = book["特性清单"]
+    for column in range(1, sheet.max_column + 1):
+        sheet.cell(8, column, sheet.cell(4, column).value)
+    output = io.BytesIO()
+    book.save(output)
+    book.close()
+    result = run_clause("L12", clause, output.getvalue(), "派生CCSC.xlsx")
+    assert result["status"] == "PASS", result
