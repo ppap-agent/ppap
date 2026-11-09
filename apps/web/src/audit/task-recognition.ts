@@ -12,7 +12,7 @@ export type AuditRecognitionAdapter = {
 }
 type RecognitionInput = {files: Task['files']; mode: Task['analysis_mode']; customer: string | null; previous: Task | null; predecessorId?: string; preparation?: {id: string; revision: number}}
 export type RecognitionObservation = {requestId: string; taskId: string; phase: 'sending' | 'reading' | 'unknown' | 'accepted' | 'rejected' | 'conflict'; message: string; traceId?: string; currentRevision?: number; currentState?: Task['state']}
-const unknownMessage = '识别请求结果尚未确认。文件与选择已保留；请读取原请求回执，不要重复开始识别。'
+const unknownMessage = '识别请求结果尚未确认。文件与选择已保留；请查看原请求结果，不要重复开始识别。'
 
 function acceptedInput(input: RecognitionInput, next: Task, requestId: string, taskId: string) {
   const revision = input.previous ? (input.previous.input_revision ?? 0) + 1 : 0
@@ -43,7 +43,7 @@ export function createTaskRecognition(adapter: AuditRecognitionAdapter, onAccept
       if (operations.get(key) !== operation) return
       const acceptedRevision = frozen.previous ? (frozen.previous.input_revision ?? 0) + 1 : 0
       if (receipt?.state === 'accepted' && receipt.request_id === requestId && receipt.task_id === taskId && receipt.input_revision === acceptedRevision && next?.id === taskId && ((next.input_revision ?? -1) > acceptedRevision || next.input_revision === acceptedRevision && ['reviewing', 'completed'].includes(next.state))) {
-        remember(key, frozen, {requestId, taskId, phase: 'conflict', currentRevision: next.input_revision, currentState: next.state, message: '原识别请求已受理，但任务已在其他页面更新。当前文件与选择已保留；请先读取当前任务。'})
+        remember(key, frozen, {requestId, taskId, phase: 'conflict', currentRevision: next.input_revision, currentState: next.state, message: '原识别请求已接收，但任务已在其他页面更新。当前文件与选择已保留；请先读取当前任务。'})
       } else if (next && (!receipt || receipt.request_id === requestId && receipt.task_id === taskId && receipt.state === 'accepted' && receipt.input_revision === next.input_revision) && acceptedInput(frozen, next, requestId, taskId)) {
         remember(key, frozen, {requestId, taskId, phase: 'accepted', message: ''}); onAccepted(next, key)
       } else remember(key, frozen, {requestId, taskId, ...trace, phase: 'unknown', message: unknownMessage})

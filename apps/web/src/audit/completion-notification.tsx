@@ -12,7 +12,7 @@ export type AuditNotificationAdapter = {
   read: (taskId: string) => Promise<Preference>
   save: (taskId: string, enabled: boolean, revision: number) => Promise<Preference>
 }
-const states: Record<Preference['delivery']['state'], string> = {not_due: '', queued: '等待发送', preparing: '正在准备通知', sending: '正在发送通知', unknown: '发送结果待核对', sent: '通知已发送', failed: '飞书未接收通知', suppressed: '本次完成通知未发送'}
+const states: Record<Preference['delivery']['state'], string> = {not_due: '', queued: '等待发送', preparing: '正在准备通知', sending: '正在发送通知', unknown: '发送结果待确认', sent: '通知已发送', failed: '飞书未接收通知', suppressed: '本次完成通知未发送'}
 function valid(value: Preference, taskId: string) {
   return value?.task_id === taskId && typeof value.enabled === 'boolean' && Number.isSafeInteger(value.revision) && value.revision >= 0 && typeof value.available === 'boolean' && typeof value.can_change === 'boolean' && value.delivery && Object.hasOwn(states, value.delivery.state) && (value.delivery.reason === null || typeof value.delivery.reason === 'string')
 }
@@ -44,7 +44,7 @@ export function CompletionNotification({task, adapter, onChange, compact = false
       if (request !== epoch.current) return
       if (next.revision !== revision + 1 || next.enabled !== enabled) throw new Error('notification_save_unconfirmed')
       apply(next)
-    } catch {if (request === epoch.current) setError('设置保存结果待核对，请读取当前设置。')}
+    } catch {if (request === epoch.current) setError('设置保存结果待确认，请读取当前设置。')}
     finally {if (request === epoch.current) setBusy(false)}
   }
   const unavailable = preference && !preference.available

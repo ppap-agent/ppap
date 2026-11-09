@@ -254,7 +254,9 @@ def test_customer_intake_to_original_issue_and_frozen_precheck_export(running_pr
             page.get_by_role("button", name="开始审核", exact=True).click()
             result_file = page.get_by_role("button", name=re.compile(r"^特殊特性清单\.xlsx 不符合"))
             expect(result_file).to_be_visible(timeout=30000)
-            expect(page.get_by_role("region", name="免费内容预检", exact=True)).to_have_count(1)
+            # After the audit starts the precheck stays reachable behind its record button.
+            expect(page.get_by_role("region", name="免费内容预检", exact=True)).to_have_count(0)
+            expect(page.get_by_role("button", name="预检记录", exact=True)).to_be_visible()
             result_file.click()
             page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name=re.compile("^不符合")).click()
             page.get_by_role("button", name=re.compile("^查看依据 ")).first.click()

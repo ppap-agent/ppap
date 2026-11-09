@@ -42,6 +42,6 @@ export const nativeCheckerEditAdapter = {
 }
 
 export function checkedCandidate(value: CheckerRevision, base: string, files?: Record<string, string>) {
-  if (!value.id || value.id === base || value.base_revision_id !== base || files && Object.entries(files).some(([path, text]) => value.files[path] !== text)) throw new Error('待发布修改与原保存操作不一致，请读取原操作。')
+  if (!value.id || value.id === base || value.base_revision_id !== base || files && Object.entries(files).some(([path, text]) => value.files[path] !== text)) throw new Error('待发布修改与原保存操作不一致，请查看原操作。')
   return value
 }

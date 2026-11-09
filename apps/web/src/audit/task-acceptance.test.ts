@@ -237,7 +237,7 @@ test('lost stale-Suite refusal settles the original operation before a fresh rea
   let originalId = ''
   const controller = createTaskAcceptance({
     confirm: async (input, id) => {commands.push(id); if (!originalId) {originalId = id; throw new TypeError('refusal response lost')} return accepted(input, id)},
-    readTask: async (_id, requestId) => {assert.equal(requestId, originalId); return {...blocked, acceptance: {request_id: requestId!, state: 'rejected', reason: '检查版本需要重新验证，本次未受理。'}}},
+    readTask: async (_id, requestId) => {assert.equal(requestId, originalId); return {...blocked, acceptance: {request_id: requestId!, state: 'rejected', reason: '检查版本需要重新验证，本次未被接收。'}}},
   }, result => results.push(result))
   await controller.confirm(shown)
   assert.equal(controller.get(shown.id)?.phase, 'unknown')

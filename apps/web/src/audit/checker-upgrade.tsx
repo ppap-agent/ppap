@@ -35,7 +35,7 @@ export function CheckerUpgrade({scope, active, revision, disabled, canVerify, ed
     // This acknowledges the notice being displayed, not consent to upgrade or publish.
     void adapter.seen(active.suite_key, target).then(value => {
       if (!current || !live.current) return
-      if (value.suite_key !== active.suite_key || value.latest_official_revision_id !== target || value.official_update_notice) throw new Error('更新提示的已读回执不一致。')
+      if (value.suite_key !== active.suite_key || value.latest_official_revision_id !== target || value.official_update_notice) throw new Error('更新提示的已读结果不一致。')
       setNoticeError('')
     }).catch(() => {if (current && live.current) setNoticeError('更新提示的已读状态暂未确认。下次进入时可能再次提示。')})
     return () => {current = false}
@@ -52,7 +52,7 @@ export function CheckerUpgrade({scope, active, revision, disabled, canVerify, ed
     } catch (cause) {
       if (!live.current) return
       if (definiteCheckerRejection(cause)) {remember(null); setStale(true); setError(`${errorText(cause)} 请读取最新版本后重新核对。`)}
-      else setError('升级结果尚未确定。请读取原升级操作，不要再次升级。')
+      else setError('升级结果尚未确定。请查看原升级操作，不要再次升级。')
     } finally {locked.current = false; if (live.current) setBusy(false)}
   }
   async function recover() {
@@ -62,7 +62,7 @@ export function CheckerUpgrade({scope, active, revision, disabled, canVerify, ed
       const candidate = checkedUpgrade(await adapter.read(pending.suite, pending.input), pending.suite, pending.input)
       if (!live.current) return
       remember(null); setNotice(null); onCandidate(candidate, false)
-    } catch (cause) {if (live.current) setError(`尚未确认原升级回执，不会重试升级。${errorText(cause)}`)}
+    } catch (cause) {if (live.current) setError(`尚未确认原升级结果，不会重试升级。${errorText(cause)}`)}
     finally {locked.current = false; if (live.current) setBusy(false)}
   }
   if (!applicable && !pending && !error) return null
@@ -70,8 +70,8 @@ export function CheckerUpgrade({scope, active, revision, disabled, canVerify, ed
     {notice === target && <Alert><AlertTitle>官方检查有新版本</AlertTitle><AlertDescription>官方已发布{active.latest_official_version ? ` v${active.latest_official_version}` : '新版本'}。本企业修改仍固定在原版本，不会自动替换。</AlertDescription></Alert>}
     {noticeError && <p role="status" className="text-xs text-muted-foreground">{noticeError}</p>}
     <p className="text-sm">升级会把当前所选版本的企业修改带到官方新版本，生成待发布修改，并用同一批样本验证。不会调用模型或自动发布，已有报告不变。</p>
-    {editingBlocked && <p role="status" className="text-sm">先保存当前修改再升级；保存结果未确认时，请先读取原保存操作。</p>}
-    {error && <Alert variant="destructive"><AlertTitle>{pending ? '升级结果待核对' : '升级需要核对'}</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
-    {pending ? <><p role="status" className="text-sm">原升级操作尚待核对；刷新或返回页面不会重复提交。</p><Button variant="outline" disabled={busy} onClick={() => void recover()}>{busy ? '正在读取…' : '读取原升级操作'}</Button></> : stale ? <Button variant="outline" disabled={disabled} onClick={onRefresh}>读取最新版本后核对升级</Button> : <Button variant="outline" disabled={disabled || busy || !canVerify || !applicable} onClick={() => void start()}>{busy ? '正在创建升级候选…' : '升级并验证'}</Button>}
+    {editingBlocked && <p role="status" className="text-sm">先保存当前修改再升级；保存结果未确认时，请先查看原保存操作。</p>}
+    {error && <Alert variant="destructive"><AlertTitle>{pending ? '升级结果待确认' : '升级需要核对'}</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
+    {pending ? <><p role="status" className="text-sm">原升级操作尚待确认；刷新或返回页面不会重复提交。</p><Button variant="outline" disabled={busy} onClick={() => void recover()}>{busy ? '正在读取…' : '查看原升级操作'}</Button></> : stale ? <Button variant="outline" disabled={disabled} onClick={onRefresh}>读取最新版本后核对升级</Button> : <Button variant="outline" disabled={disabled || busy || !canVerify || !applicable} onClick={() => void start()}>{busy ? '正在创建升级候选…' : '升级并验证'}</Button>}
   </section>
 }

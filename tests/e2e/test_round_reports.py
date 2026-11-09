@@ -329,7 +329,7 @@ def test_all_pass_frozen_verification_remains_visible_in_result_focus_and_report
         notice = page.get_by_role("note", name="本轮验证状态")
         expect(notice).to_contain_text(verification["notice"])
         expect(notice).to_contain_text("部分判定的证据未经验证")
-        page.get_by_role("button", name="专注复核（选做）", exact=True).click()
+        page.get_by_role("button", name="逐条复核", exact=True).click()
         expect(notice).to_be_visible()
         expect(notice).to_contain_text(verification["notice"])
         page.get_by_role("button", name="查看报告", exact=True).click()

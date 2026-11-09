@@ -2,7 +2,6 @@
 import {useRef, useState, type MouseEventHandler, type ReactNode} from 'react'
 import {Button} from '../components/ui/button'
 import {ReadSkeleton} from '../components/read-skeleton'
-import {Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle} from '../components/ui/item'
 import {FileIcon} from './file-name'
 import {SourceReaderDialog} from './source-reader'
 import {sourceKey, type SourceFile} from './source-documents'
@@ -13,13 +12,14 @@ export type FileReference = {id: string; name: string; role?: 'target' | 'refere
 export const fileReferences = (files: SourceFile[]): FileReference[] => files.map(file => ({id: file.material?.file_version_id || file.localFile?.id || sourceKey(file), name: file.name, role: file.material?.role, source: file, roundId: file.roundId}))
 
 export function FileList({files, label = '文件清单'}: {files: {id: string; name: string; description?: string; action?: ReactNode; onRead?: MouseEventHandler<HTMLButtonElement>; readLabel?: string}[]; label?: string}) {
-  return <ItemGroup aria-label={label}>
-    {files.map(file => <Item key={file.id} size="xs" role="listitem" className="flex-nowrap items-start">
-      <ItemMedia variant="icon" className="mt-0.5"><FileIcon name={file.name}/></ItemMedia>
-      <ItemContent className="min-w-0"><ItemTitle wrap>{file.onRead ? <Button variant="link" size="sm" className="h-auto max-w-full justify-start whitespace-normal text-left [overflow-wrap:anywhere]" aria-label={file.readLabel || `阅读 ${file.name}`} onClick={file.onRead}>{file.name}</Button> : file.name}</ItemTitle>{file.description && <ItemDescription wrap>{file.description}</ItemDescription>}</ItemContent>
-      {file.action && <ItemActions className="shrink-0">{file.action}</ItemActions>}
-    </Item>)}
-  </ItemGroup>
+  // A file list is read at a glance, so its rows stay tight.
+  return <ul aria-label={label} className="space-y-1">
+    {files.map(file => <li key={file.id} className="flex min-w-0 items-start gap-2">
+      <span className="mt-0.5 shrink-0 [&_svg]:size-4"><FileIcon name={file.name}/></span>
+      <div className="min-w-0 flex-1 text-sm font-medium leading-snug [overflow-wrap:anywhere]">{file.onRead ? <Button variant="link" size="xs" className="h-auto max-w-full justify-start whitespace-normal text-left [overflow-wrap:anywhere]" aria-label={file.readLabel || `阅读 ${file.name}`} onClick={file.onRead}>{file.name}</Button> : file.name}{file.description && <p className="text-xs font-normal text-muted-foreground">{file.description}</p>}</div>
+      {file.action && <div className="flex shrink-0 items-center gap-2">{file.action}</div>}
+    </li>)}
+  </ul>
 }
 
 /** `limit` keeps dense lists scannable; the remaining files stay one click away. */
@@ -47,7 +47,7 @@ export function FileCollection({files, context = '', limit}: {files: FileReferen
       onRead: file.source?.material || file.source?.localFile || file.roundId ? event => {trigger.current = event.currentTarget; setReading({file, files})} : undefined,
     }))}/>
     {limit !== undefined && files.length > limit && <Button variant="link" size="xs" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{expanded ? '收起文件' : `另有 ${hidden} 份文件`}</Button>}
-    {reading && !selected && <div className="space-y-2 p-2 text-sm">{readError ? <p role="alert">{readError}</p> : <ReadSkeleton label="正在读取原件入口…" kind="inline"/>}<div className="flex flex-wrap gap-2">{readError && <Button variant="outline" size="sm" onClick={round.refresh}>重新读取原件入口</Button>}<Button variant="ghost" size="sm" onClick={() => {setReading(null); trigger.current?.focus()}}>取消阅读</Button></div></div>}
+    {reading && !selected && <div className="space-y-2 p-2 text-sm">{readError ? <p role="alert">{readError}</p> : <ReadSkeleton label="正在查看原件入口…" kind="inline"/>}<div className="flex flex-wrap gap-2">{readError && <Button variant="outline" size="sm" onClick={round.refresh}>重新查看原件入口</Button>}<Button variant="ghost" size="sm" onClick={() => {setReading(null); trigger.current?.focus()}}>取消阅读</Button></div></div>}
     <SourceReaderDialog open={Boolean(selected)} onOpenChange={next => {if (!next) setReading(null)}} input={{receiptId: reading?.file.roundId || '文件清单', scope: context, files: sources, evidence: [], clarification: null}} file={selected} onCloseAutoFocus={event => {event.preventDefault(); trigger.current?.focus()}}/>
   </>
 }

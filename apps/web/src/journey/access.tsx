@@ -1,11 +1,10 @@
 // Stitch: projects/13261964020862199279/screens/5a80a77a4f524928b808862728d5677a (login)
 // and screens/9a6cb6189e92450da32d95a31820b41c (connection failure).
 import {createContext, useContext, useEffect, useRef, useState, type ReactNode} from 'react'
-import {ArrowRight, ChevronDown, ClipboardCheck, FolderClock, Gauge, LogOut} from 'lucide-react'
+import {ArrowRight, ChevronDown, ClipboardCheck, FolderClock, Gauge, Loader2, LogOut} from 'lucide-react'
 import {apiUrl, connect, feishuAppId, request, type HostLoginRequest, type PrincipalPublic} from '../api'
 import {isFeishuHost, requestHostCode} from '../hostLogin'
 import {Button} from '../components/ui/button'
-import {ReadSkeleton} from '../components/read-skeleton'
 import {Alert, AlertDescription} from '../components/ui/alert'
 import {DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger} from '../components/ui/dropdown-menu'
 import {LocalRecordsDialog} from './local-records'
@@ -97,8 +96,9 @@ export function ProductAccess({children, recordValidators = emptyValidators, rec
   return <div className={"flex min-h-dvh flex-col bg-background text-foreground"}>
     <header className={"flex items-center gap-3 p-6"}><ClipboardCheck/><strong>PPAP</strong></header>
     <main className={"m-auto flex w-full max-w-md flex-col gap-5 px-6 pb-16"}>
-      <div className="space-y-2"><h1 className={"text-2xl font-semibold tracking-tight"}>登录审核工作台</h1><p className="text-sm text-muted-foreground">按客户规则逐项审核 PPAP 文件，结果保留原件证据与报告。登录后回到当前页面。</p></div>
-      {!ready ? <ReadSkeleton label="正在确认登录状态…" kind="detail" rows={2}/> : error ? <>
+      {/* A signed-in user should not see a sign-in screen while the session is still being read. */}
+      {!ready ? <p role="status" className="flex items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 aria-hidden="true" className="size-4 animate-spin motion-reduce:animate-none"/>正在确认登录状态…</p> : <div className="space-y-2"><h1 className={"text-2xl font-semibold tracking-tight"}>登录审核工作台</h1><p className="text-sm text-muted-foreground">按客户规则逐项审核 PPAP 文件，结果保留原件证据与报告。登录后回到当前页面。</p></div>}
+      {!ready ? null : error ? <>
         <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>
         <Button onClick={() => setRevision(value => value + 1)}>{canSignIn ? '重新读取登录状态' : '重试连接'}</Button>
         {canSignIn && <Button variant="outline" asChild><a href={`${apiUrl}/login/feishu?return_to=${encodeURIComponent(location.href)}`}>使用飞书登录<ArrowRight/></a></Button>}

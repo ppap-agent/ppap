@@ -265,7 +265,7 @@ def test_begin_recognition_promotes_and_reopens_the_same_draft_without_resubmiss
         draft_id = http.draft["id"]
         page.get_by_role("button", name="开始识别", exact=True).click()
         if lose_task_reply:
-            page.get_by_role("button", name="读取识别回执", exact=True).click()
+            page.get_by_role("button", name="读取识别结果", exact=True).click()
         expect(page).to_have_url(re.compile(rf"/tasks/{draft_id}(?:\?|$)"))
         expect(page.get_by_role("heading", name="正在识别文件与匹配规则", exact=True)).to_be_visible()
         assert len(http.task_commands) == 1 and http.task_commands[0]["request_id"] != draft_id
@@ -350,7 +350,7 @@ def test_same_bytes_can_be_reselected_without_changing_the_original_upload_ident
         http.allow_receipts = True
         page.get_by_role("button", name="继续传输 待核对.xlsx", exact=True).click()
         if fail_resume_read:
-            expect(page.get_by_text("未能读取本地原件，本次未继续传输。请读取原请求，不要新建上传。", exact=True)).to_be_visible()
+            expect(page.get_by_text("未能读取本地原件，本次未继续传输。请查看原请求，不要新建上传。", exact=True)).to_be_visible()
             assert len(http.creates) == len(http.blobs) == 1
             # Read the same unresolved request, then replace only its local bytes.
             http.allow_receipts = False
@@ -500,8 +500,8 @@ def test_customer_mode_keeps_task_selection_separate_from_confirmed_default():
         server.lose_default_reply = True
         page.get_by_role("button", name="设为企业默认", exact=True).click()
         page.get_by_role("button", name="确认更改", exact=True).click()
-        expect(page.get_by_role("status")).to_contain_text("保存结果待核对")
-        expect(page.get_by_text("本次切换只影响当前任务。企业默认：蔚来。", exact=True)).to_be_visible()
+        expect(page.get_by_role("status")).to_contain_text("保存结果待确认")
+        expect(page.get_by_text("企业默认：蔚来", exact=True)).to_be_visible()
         assert len(server.default_writes) == 2
         choice.click()
         page.get_by_role("option", name="自动识别", exact=True).click()
@@ -549,7 +549,7 @@ def test_explicit_auto_selection_can_continue_while_default_read_is_pending():
         expect(page.get_by_role("button", name="选择本地文件", exact=True)).to_be_enabled()
         expect(choice).to_contain_text("自动识别")
         pending.pop().fulfill(json={"customer_preference": "UAES", "revision": 3})
-        expect(page.get_by_text("本次切换只影响当前任务。企业默认：UAES（联电）。", exact=True)).to_be_visible()
+        expect(page.get_by_text("企业默认：UAES（联电）", exact=True)).to_be_visible()
         expect(choice).to_contain_text("自动识别")
         assert server.default_writes == []
         browser.close()
@@ -767,11 +767,11 @@ def test_precheck_readback_history_and_export_keep_one_formal_action(width):
         expect(region.get_by_role("heading", name="可审核 · 1", exact=True)).to_be_visible()
         expect(page.get_by_role("button", name="开始审核", exact=True)).to_have_count(1)
         region.get_by_role("button", name="重新检查当前资料", exact=True).click()
-        expect(region.get_by_text("预检回执尚未核对。请读取原检查，已有文件仍保留。", exact=True)).to_be_visible()
+        expect(region.get_by_text("预检结果尚未核对。请查看原检查，已有文件仍保留。", exact=True)).to_be_visible()
         assert "precheckRequest=" in page.url
         page.reload()
-        expect(region.get_by_text("有预检请求待核对，请读取原检查。不会再次提交检查请求。", exact=True)).to_be_visible()
-        region.get_by_role("button", name="读取原检查", exact=True).click()
+        expect(region.get_by_text("有预检请求待确认，请查看原检查。不会再次提交检查请求。", exact=True)).to_be_visible()
+        region.get_by_role("button", name="查看原检查", exact=True).click()
         expect(region.get_by_text("部分要求未核实", exact=True)).to_be_visible()
         assert len(http.retry_commands) == 1 and http.alias_reads == [http.retry_commands[0]["request_id"]]
         expect(region.get_by_role("heading", name="需要处理 · 0", exact=True)).to_be_visible()
@@ -782,7 +782,7 @@ def test_precheck_readback_history_and_export_keep_one_formal_action(width):
         expect(region.get_by_text("签章尚未核实", exact=False)).to_be_visible()
         region.get_by_role("button", name="读取预检历史", exact=True).click()
         region.get_by_role("button", name="修订 0", exact=False).click()
-        expect(region.get_by_text("历史快照，不代表当前资料", exact=False)).to_be_visible()
+        expect(region.get_by_text("历史记录，不代表当前资料", exact=False)).to_be_visible()
         with page.expect_download() as download:
             region.get_by_role("button", name="导出此预检记录", exact=True).click()
         assert download.value.suggested_filename == "PPAP-预检-old-snapshot.html"

@@ -17,7 +17,7 @@ export const nativeSharingAdapter: AuditSharingAdapter = {
     catch (failure) {
       const error = failure as {status?: number; code?: string}
       if (![400, 401, 403, 409, 422].includes(error.status || 0) || error.code === 'share_request_pending') throw failure
-      const reason = error.code === 'share_file_too_large' ? '文件超过飞书消息的 30 MB 上限，请选择链接方式。' : error.code === 'share_target_unverified' ? '接收对象的组织或可用状态尚未核实，请重新选择。' : '分享未受理，请核对登录、报告及接收范围。'
+      const reason = error.code === 'share_file_too_large' ? '文件超过飞书消息的 30 MB 上限，请选择链接方式。' : error.code === 'share_target_unverified' ? '接收对象的组织或可用状态尚未核实，请重新选择。' : '分享未被接收，请核对登录、报告及接收范围。'
       return {request: input, receipt: {request_id: input.request_id, state: 'rejected', reason}, deliveries: input.targets.map(target => ({target: {...target, display_name: target.id, organization_id: input.organization_id, eligibility: 'unknown', reason}, attempt_id: input.request_id, state: 'failed', reason, retry_allowed: false}))}
     }
   },
@@ -72,13 +72,13 @@ export const nativeArchiveAdapter: AuditArchiveAdapter = {
 const nativeUploads: UploadAdapter = {
   async upload(input, requestId) {
     if (input.kind === 'local') {
-      if (!(input.file instanceof File)) throw new Error('请重新选择当时的原件，再读取原请求。')
+      if (!(input.file instanceof File)) throw new Error('请重新选择当时的原件，再查看原请求。')
       const receipt = await uploadLocalVersion(input.file, requestId, undefined, input.destination?.token)
       if (!input.destination || receipt.state !== 'uploading' || receipt.file?.status !== 'ready' || !receipt.resume_allowed) return receipt
       try {return await request(`/file-uploads/${encodeURIComponent(requestId)}/feishu`, 'POST')}
       catch {
         try {return await readLocalUpload(requestId)}
-        catch {return {...receipt, state: 'unknown', resume_allowed: false, reason: '未确认飞书上传结果，请读取原请求，不要重新上传。'}}
+        catch {return {...receipt, state: 'unknown', resume_allowed: false, reason: '未确认飞书上传结果，请查看原请求，不要重新上传。'}}
       }
     }
     try {
@@ -88,7 +88,7 @@ const nativeUploads: UploadAdapter = {
       if ([400, 401, 403, 404, 409, 413, 415, 422].includes(error.status || 0)) return {request_id: requestId, state: 'failed', file: null, reason: error.code === 'feishu_user_token_missing' ? '需要重新登录并授权飞书文件访问，也可以使用本地上传。' : error.message || '飞书文件未接收，请核对原文件。', retry_allowed: false}
     }
     try {return await readLocalUpload(requestId)}
-    catch {return {request_id: requestId, state: 'unknown', file: null, reason: '未读到飞书导入结果，请读取原请求，不要再次添加文件。', retry_allowed: false}}
+    catch {return {request_id: requestId, state: 'unknown', file: null, reason: '未读到飞书导入结果，请查看原请求，不要再次添加文件。', retry_allowed: false}}
   },
   readUpload: readLocalUpload,
 }
@@ -128,9 +128,9 @@ export const nativeSupportAdapter: AuditSupportAdapter = {
 
 type ValidationJob = components['schemas']['FileValidationJob']
 const usageRefusals: Record<string, string> = {
-  usage_quota_unavailable: '暂时无法确认飞书开关和额度，本次操作未受理。请恢复授权后重试。',
+  usage_quota_unavailable: '暂时无法确认飞书开关和额度，本次操作未被接收。请恢复授权后重试。',
   usage_ai_disabled: '飞书AI包开关已关闭，请联系管理员在飞书管理后台启用或联系我们获取免费额度',
-  usage_balance_empty: '当前没有可用额度，本次操作未受理。请联系管理员充值或联系我们获取免费额度。',
+  usage_balance_empty: '当前没有可用额度，本次操作未被接收。请联系管理员充值或联系我们获取免费额度。',
 }
 export const nativeReportAdapter: AuditReportAdapter = {
   async regenerate(reference, requestId) {
@@ -153,7 +153,7 @@ export const nativeReportAdapter: AuditReportAdapter = {
     try {return await request('/audit-report-packages', 'POST', {request_id: requestId, reports})}
     catch (failure) {
       const error = failure as {status?: number; code?: string}
-      const reasons: Record<string, string> = {report_package_too_large: '所选报告总量过大，请减少本次打包的报告数量。', invalid_report_package: '本次未受理，请重新核对所选报告。', report_not_ready: '所选报告尚未全部就绪，请刷新报告状态后再打包。'}
+      const reasons: Record<string, string> = {report_package_too_large: '所选报告总量过大，请减少本次打包的报告数量。', invalid_report_package: '本次未被接收，请重新核对所选报告。', report_not_ready: '所选报告尚未全部就绪，请刷新报告状态后再打包。'}
       const reason = reasons[error.code || '']
       if (![400, 409].includes(error.status || 0) || !reason) throw failure
       return {package_id: null, reports, receipt: {request_id: requestId, state: 'rejected', reason}, state: 'failed', artifact: null, reason, retry_allowed: false}
@@ -217,12 +217,12 @@ const confirmationRefusals: Record<string, string> = {
   audit_task_charging_unavailable: '当前环境尚未开放本次审核计费，审核没有开始。',
   task_confirmation_changed: '审核依据已变化，审核没有开始。请刷新审核依据，核对后重新确认。',
   suite_validation_required: '当前检查版本需要重新验证，审核没有开始。请在检查版本工作区重新验证并发布，或明确确认采用未验证版本，再刷新审核依据。',
-  task_revision_conflict: '任务文件已在其他页面更新。本次确认未受理，请核对当前任务。',
-  task_not_ready: '文件识别尚未完成。本次确认未受理，请读取当前任务。',
+  task_revision_conflict: '任务文件已在其他页面更新。本次确认未被接收，请核对当前任务。',
+  task_not_ready: '文件识别尚未完成。本次确认未被接收，请读取当前任务。',
   rule_candidate_expired: '匹配的规则已有新版本，审核没有开始。请返回上一步重新识别，再核对规则。',
   task_input_locked: '当前任务不能接受本次确认，请核对当前任务。',
   invalid_task_confirmation: '本次确认信息无效，审核没有开始。请核对当前任务。',
-  target_required: '没有可进入审核的文件，本次确认未受理。',
+  target_required: '没有可进入审核的文件，本次确认未被接收。',
   customer_scope_conflict: '本次文件属于不同客户，审核没有开始。请按客户分开任务后再确认。',
   precheck_blocked: '预检发现已认证的阻断问题，审核没有开始。请处理问题后重新预检。',
 }
@@ -234,8 +234,8 @@ export function createNativeAuditAdapter(options: {deepOffered: boolean; custome
   const sameScope = (left?: Scope | null, right?: Scope | null) => (!left && !right) || Boolean(left && right && left.customer_preference === right.customer_preference && left.preset_key === right.preset_key)
   const validationKey = (version: string, scope?: Scope | null) => `${version}:${scope ? 'UAES:U13' : 'ordinary'}`
   function validation(job: ValidationJob, file: AuditTask['files'][number], requestId?: string, scope?: Scope | null, restore = false) {
-    if (requestId && job.id !== requestId || !job.id || job.source_file_id !== file.file.file_id || job.source_file_version_id !== file.file.id || !restore && !sameScope(job.scope, scope)) throw new Error('预检查回执不属于这份文件版本、用途或原请求。')
-    if (job.scope && (job.scope.customer_preference !== 'UAES' || job.scope.preset_key !== 'U13')) throw new Error('预检查回执的用途无法核实。')
+    if (requestId && job.id !== requestId || !job.id || job.source_file_id !== file.file.file_id || job.source_file_version_id !== file.file.id || !restore && !sameScope(job.scope, scope)) throw new Error('预检查结果不属于这份文件版本、用途或原请求。')
+    if (job.scope && (job.scope.customer_preference !== 'UAES' || job.scope.preset_key !== 'U13')) throw new Error('预检查结果的用途无法核实。')
     validations.set(validationKey(file.file.id, job.scope), job.id)
     const result = job.result
     const purpose = job.scope ? {validation_scope: job.scope} : {}
@@ -282,7 +282,7 @@ export function createNativeAuditAdapter(options: {deepOffered: boolean; custome
       catch (failure) {
         // Preserve readback identity in the prepared file even if this adapter
         // is replaced after a customer-directory refresh or a page reload.
-        throw Object.assign(failure instanceof Error ? failure : new Error('预检查回执尚未核对。'), {validationRequestId: id})
+        throw Object.assign(failure instanceof Error ? failure : new Error('预检查结果尚未核对。'), {validationRequestId: id})
       }
     },
     precheck: {
@@ -315,7 +315,7 @@ export function createNativeAuditAdapter(options: {deepOffered: boolean; custome
         const reason = error.code && confirmationRefusals[error.code]
         if (!reason || ![400, 409].includes(error.status || 0)) throw failure
         const current = await request<AuditTask>(`${taskPath(task.id)}?request_id=${encoded(requestId)}`)
-        if (current.id !== task.id) throw new Error('任务回执不属于原确认请求。')
+        if (current.id !== task.id) throw new Error('任务结果不属于原确认请求。')
         if (current.acceptance?.request_id === requestId && current.acceptance.state === 'rejected') return current
         // A transport observation of an explicit refusal, not a persisted server receipt.
         return current.state === 'pending_confirm' && !current.round_id ? {...current, acceptance: {request_id: requestId, state: 'rejected', reason}} : current

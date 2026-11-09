@@ -741,7 +741,7 @@ test('validation write loss keeps its original readback identity across adapter 
 
 test('a Suite validation refusal reads the durable original receipt with its recovery guidance', async () => {
   const calls: string[] = []
-  const acceptance = {request_id: 'accept-suite', state: 'rejected' as const, reason: '当前检查版本需要重新验证，本次未受理。请在检查版本工作区重新验证并发布。'}
+  const acceptance = {request_id: 'accept-suite', state: 'rejected' as const, reason: '当前检查版本需要重新验证，本次未被接收。请在检查版本工作区重新验证并发布。'}
   globalThis.fetch = async (url, init) => {
     calls.push(`${init?.method} ${url}`)
     return init?.method === 'POST' ? json({error: 'suite_validation_required'}, 409) : json({...task, acceptance})

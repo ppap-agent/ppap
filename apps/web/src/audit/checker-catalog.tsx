@@ -1,6 +1,7 @@
 import {useCallback, useEffect, useId, useState} from 'react'
 import {request} from '../api'
 import {Button} from '../components/ui/button'
+import {ReadSkeleton} from '../components/read-skeleton'
 import {Label} from '../components/ui/label'
 import type {components} from '../generated/openapi'
 import {CheckerRelease} from './checker-release'
@@ -67,17 +68,17 @@ export function CheckerCatalog({active, revision}: {active: boolean; revision: n
   return <>
     <section aria-label="企业检查版本" className="space-y-3 rounded-md border p-4">
       <h2 className="font-semibold">检查版本</h2>
-      <p className="text-sm text-muted-foreground">开始首次审核前，可在这里核对并采用检查版本。未验证的候选需要明确确认，只对本企业之后的新审核生效。</p>
+      <p className="text-sm text-muted-foreground">检查版本是把审核规则落实为自动检查的程序。选择一项检查即可核对并采用；采用后只影响本企业之后的新审核，已有结果不变。</p>
       <Label htmlFor={selectId}>选择检查</Label>
       <select id={selectId} className="w-full rounded-md border bg-background p-2 text-sm" value={selected} disabled={busy} onChange={event => choose(event.target.value)}>
-        <option value="">选择要核对的检查版本</option>
+        <option value="">选择要核对的检查</option>
         {selected && !suite && !blocked && <option value={selected}>{selected}</option>}
-        {unavailable.map(value => <option key={value.suite_key} value={value.suite_key}>{value.suite_key} · 暂不可用</option>)}
-        {suites.map(value => <option key={value.suite_key} value={value.suite_key}>{value.title} · {value.suite_key} · {value.current_revision_id ? '已采用' : '尚未采用'}</option>)}
+        {unavailable.map((value, index) => <option key={value.suite_key} value={value.suite_key}>检查 {index + 1} · 暂不可用</option>)}
+        {suites.map(value => <option key={value.suite_key} value={value.suite_key}>{value.title} · {value.current_revision_id ? '已采用' : '尚未采用'}</option>)}
       </select>
-      {loading && <p role="status" className="text-sm">正在读取检查版本…</p>}
+      {loading && <ReadSkeleton label="正在读取检查版本…" kind="inline"/>}
       {error && <p role="alert" className="text-sm text-destructive">{error}{kept && ' 已读取的版本仍保留，请刷新核对当前状态。'}</p>}
-      {unavailable.length > 0 && <p role="alert" className="text-sm text-destructive">以下检查暂不可用：{unavailable.map(value => value.suite_key).join('、')}。需要核对权限、关联检查或版本内容；其他检查仍可选择。</p>}
+      {unavailable.length > 0 && <p role="alert" className="text-sm text-destructive">{unavailable.length} 项检查暂不可用。需要核对权限、关联检查或版本内容；其他检查仍可选择。</p>}
       {!loading && !error && !suites.length && !unavailable.length && <p className="text-sm">还没有可访问的检查候选。</p>}
       {!loading && !error && selected && !suite && !blocked && <p role="alert" className="text-sm">所选检查当前不可访问，请重新选择。</p>}
       <Button variant="outline" size="sm" disabled={loading || busy} onClick={reload}>刷新检查列表</Button>
@@ -85,8 +86,8 @@ export function CheckerCatalog({active, revision}: {active: boolean; revision: n
     </section>
     <section aria-label="预定义检查目录" className="space-y-3 rounded-md border p-4">
       <h2 className="font-semibold">预定义检查</h2>
-      <p className="text-sm text-muted-foreground">按已安装的来源路径浏览。每条路径只打开它自己的官方修订，不会换成企业当前采用的版本。</p>
-      {loading && <p role="status" className="text-sm">正在读取预定义检查…</p>}
+      <p className="text-sm text-muted-foreground">平台提供的官方检查，按版本和客户分组。打开某项只查看它的官方修订，不会改变本企业当前采用的版本。</p>
+      {loading && <ReadSkeleton label="正在读取预定义检查…" kind="inline"/>}
       {predefinedError && <p role="alert" className="text-sm text-destructive">预定义检查目录不可用。未列出任何来源路径。</p>}
       {!loading && !error && !predefinedError && !predefined.length && !predefinedUnavailable.length && <p className="text-sm">还没有已安装的预定义检查。</p>}
       {predefined.length > 0 && <p className="text-sm">{capabilitySummary(predefined)}</p>}
@@ -96,7 +97,7 @@ export function CheckerCatalog({active, revision}: {active: boolean; revision: n
           <h4 className="text-sm text-muted-foreground">{customer.customer}</h4>
           <ul className="space-y-2">{customer.entries.map(entry => {
             const parts = predefinedPath(entry.path)
-            return <li key={entry.path} className="space-y-1"><button type="button" aria-pressed={path === entry.path} className="flex min-h-11 w-full flex-col items-start break-all rounded-md border bg-background px-3 py-2 text-left text-sm focus-visible:outline focus-visible:outline-2" onClick={() => choosePath(entry.path)}><span className="font-medium">{parts?.leaf}</span><span>{entry.path}</span><span>{entry.title}</span></button><p role="status" className="text-xs text-muted-foreground">{capabilityDisclosure(entry)}</p></li>
+            return <li key={entry.path} className="space-y-1"><button type="button" aria-pressed={path === entry.path} className="flex min-h-11 w-full flex-col items-start gap-0.5 break-all rounded-md border bg-background px-3 py-2 text-left text-sm hover:bg-muted/50 aria-pressed:border-foreground aria-pressed:bg-muted/50 focus-visible:outline focus-visible:outline-2" onClick={() => choosePath(entry.path)}><span className="font-medium">{entry.title || parts?.leaf}</span><span className="text-xs text-muted-foreground">{parts?.leaf} · {entry.path}</span></button><p role="status" className="text-xs text-muted-foreground">{capabilityDisclosure(entry)}</p></li>
           })}</ul>
         </div>)}
       </section>)}

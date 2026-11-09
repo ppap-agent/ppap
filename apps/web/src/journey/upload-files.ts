@@ -7,7 +7,7 @@ export type UploadDocument = {id: string; name: string; localFile?: LocalFileRef
 export function withUploadReceipt<T extends UploadDocument>(file: T, receipt: UploadReceipt): T {
   const ref = file.localFile, version = receipt.file
   const contentType = (ref?.type || 'application/octet-stream').split(';')[0].trim().toLowerCase()
-  if (!ref || receipt.request_id !== ref.id || version && (!version.file_id || version.id !== ref.id || file.uploadReceipt?.file && version.file_id !== file.uploadReceipt.file.file_id || version.byte_size !== ref.size || version.content_type.toLowerCase() !== contentType || version.sha256 !== null && version.sha256 !== ref.digest) || receipt.state === 'ready' && (!version || version.status !== 'ready' || version.sha256 !== ref.digest)) throw new Error('上传回执与原文件不一致，请重新核对原请求。')
+  if (!ref || receipt.request_id !== ref.id || version && (!version.file_id || version.id !== ref.id || file.uploadReceipt?.file && version.file_id !== file.uploadReceipt.file.file_id || version.byte_size !== ref.size || version.content_type.toLowerCase() !== contentType || version.sha256 !== null && version.sha256 !== ref.digest) || receipt.state === 'ready' && (!version || version.status !== 'ready' || version.sha256 !== ref.digest)) throw new Error('上传结果与原文件不一致，请重新核对原请求。')
   return {...file, uploadReceipt: receipt, ...(receipt.state === 'ready' && version ? {material: {file_id: version.file_id, file_version_id: version.id, original_filename: version.original_filename, role: 'target' as const, rule_version_id: null}} : {})}
 }
 export function optionalUploadReceipt(value: unknown, localFile: unknown) {

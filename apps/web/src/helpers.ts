@@ -89,3 +89,11 @@ export function analysisNotice(notice: string): string | null {
 }
 
 export const reviewJudgments = ['认可机器判断', '有异议', '待确认'] as const
+
+/** One way to show a moment everywhere: to the minute, 24-hour, and without the year when it is this year. */
+export function displayTime(value: string | number | Date): string {
+  const date = new Date(value)
+  if (!Number.isFinite(date.getTime())) return typeof value === 'string' ? value : ''
+  const sameYear = date.getFullYear() === new Date().getFullYear()
+  return date.toLocaleString('zh-CN', {...(sameYear ? {} : {year: 'numeric'}), month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false})
+}

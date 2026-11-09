@@ -85,19 +85,19 @@ export function createTaskAcceptance(adapter: AuditAcceptanceAdapter, onAccepted
       if (acceptedSnapshot(input, next, requestId)) {
         remember(task.id, {requestId, phase: 'accepted', message: ''}); onAccepted(next)
       } else if (next.id === task.id && next.state === 'pending_confirm' && !next.round_id && next.acceptance?.request_id === requestId && next.acceptance.state === 'rejected') {
-        remember(task.id, {requestId, phase: 'rejected', ...(input.confirmation_basis_digest && next.confirmation_basis_digest !== input.confirmation_basis_digest ? {staleBasisDigest: input.confirmation_basis_digest} : {}), message: next.acceptance.reason || '本次请求明确未受理，可以重新确认。'})
+        remember(task.id, {requestId, phase: 'rejected', ...(input.confirmation_basis_digest && next.confirmation_basis_digest !== input.confirmation_basis_digest ? {staleBasisDigest: input.confirmation_basis_digest} : {}), message: next.acceptance.reason || '本次请求明确未被接收，可以重新确认。'})
       } else {
         const reason = next.id === task.id && next.acceptance?.request_id === requestId && next.acceptance.state === 'pending' ? next.acceptance.reason : null
-        remember(task.id, {requestId, ...trace, phase: 'unknown', message: reason || '受理结果尚未确认。请读取同一请求的回执，不要重复开始审核。'})
+        remember(task.id, {requestId, ...trace, phase: 'unknown', message: reason || '提交结果尚未确认。请读取同一请求的结果，不要重复开始审核。'})
       }
     } catch (failure) {
       const traceId = requestTrace(failure) || trace.traceId
-      if (operations.get(task.id) === observation) remember(task.id, {requestId, ...(traceId ? {traceId} : {}), phase: 'unknown', message: '未取得受理回执。审核可能已经开始；请读取受理结果，不要重复确认。'})
+      if (operations.get(task.id) === observation) remember(task.id, {requestId, ...(traceId ? {traceId} : {}), phase: 'unknown', message: '未取得接收结果。审核可能已经开始；请读取提交结果，不要重复确认。'})
     }
   }
   function suspend(taskId: string) {
     const current = operations.get(taskId)
-    if (current && ['sending', 'reading'].includes(current.phase)) remember(taskId, {...current, phase: 'unknown', message: '正在恢复任务，先读取原请求结果，不要重复开始审核。'})
+    if (current && ['sending', 'reading'].includes(current.phase)) remember(taskId, {...current, phase: 'unknown', message: '正在恢复任务，先查看原请求结果，不要重复开始审核。'})
   }
   function restore(task: Task) {
     if (task.acceptance?.state === 'accepted') {
@@ -111,13 +111,13 @@ export function createTaskAcceptance(adapter: AuditAcceptanceAdapter, onAccepted
     if (current && current.requestId !== task.acceptance.request_id) return true
     if (task.acceptance.state === 'rejected' && task.state === 'pending_confirm' && !task.round_id) {
       const input = inputs.get(task.acceptance.request_id)
-      remember(task.id, {requestId: task.acceptance.request_id, phase: 'rejected', ...(input?.confirmation_basis_digest && task.confirmation_basis_digest !== input.confirmation_basis_digest ? {staleBasisDigest: input.confirmation_basis_digest} : {}), message: task.acceptance.reason || '本次请求明确未受理，可以重新确认。'})
+      remember(task.id, {requestId: task.acceptance.request_id, phase: 'rejected', ...(input?.confirmation_basis_digest && task.confirmation_basis_digest !== input.confirmation_basis_digest ? {staleBasisDigest: input.confirmation_basis_digest} : {}), message: task.acceptance.reason || '本次请求明确未被接收，可以重新确认。'})
       return true
     }
     if (current || task.acceptance.state !== 'pending') return true
     const requestId = task.acceptance.request_id
     inputs.set(requestId, structuredClone(task))
-    remember(task.id, {requestId, phase: 'unknown', message: task.acceptance.reason || '恢复到尚未取得回执的确认请求。请读取原请求结果，不要重复开始审核。'})
+    remember(task.id, {requestId, phase: 'unknown', message: task.acceptance.reason || '恢复到尚未取得结果的确认请求。请查看原请求结果，不要重复开始审核。'})
     return true
   }
   return {get: (id: string) => operations.get(id), needsBasisRefresh, restore, suspend, confirm: (task: Task) => run(task, false), reconcile: (task: Task) => run(task, true)}

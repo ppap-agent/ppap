@@ -34,17 +34,17 @@ export function useShareActions<Request extends ShareInput = ShareRequest>(job: 
       const rejected = cause as {status?: number; code?: string}
       if (alive.current && current.current === observation && prior && [400, 401, 403, 409, 422].includes(rejected.status || 0) && ['share_attempt_unconfirmed', 'share_request_pending', 'access_denied', 'unauthenticated', 'invalid_share_request'].includes(rejected.code || '')) {
         save({...prior, deliveries: prior.deliveries.map(row => ({...row, retry_allowed: false}))})
-        setError('重试未受理。请读取原发送结果，核对后再操作。')
+        setError('重试未被接收。请查看原发送结果，核对后再操作。')
         return
       }
-      if (alive.current && current.current === observation) setError('未取得可靠发送回执。保留原请求与已确认结果，只读取发送结果，不重复发送。')
+      if (alive.current && current.current === observation) setError('未取得可靠发送结果。保留原请求与已确认结果，只读取发送结果，不重复发送。')
     }
   }
   async function send(input: Omit<Request, 'request_id'>, targets: ShareTarget[]) {
     if (!adapter || shareUnresolved(current.current)) return
     if (!validContent(input) || !targets.length || new Set(targets.map(targetKey)).size !== targets.length || targets.some(target => target.eligibility !== 'eligible' || target.organization_id !== input.organization_id) || !sameSnapshot(input.targets, targets.map(({kind, id}) => ({kind, id})))) {setError('分享内容或接收范围不再匹配。未发送，请关闭后重新核对。'); return}
     const request = structuredClone({...input, request_id: crypto.randomUUID()}) as Request
-    const observation: ShareOperation<Request> = {request, receipt: {request_id: request.request_id, state: 'pending', reason: '发送受理结果尚未知。'}, deliveries: targets.map(target => ({target: structuredClone(target), attempt_id: request.request_id, state: 'unknown', reason: '尚未取得本次发送回执。', retry_allowed: false}))}
+    const observation: ShareOperation<Request> = {request, receipt: {request_id: request.request_id, state: 'pending', reason: '发送提交结果尚未知。'}, deliveries: targets.map(target => ({target: structuredClone(target), attempt_id: request.request_id, state: 'unknown', reason: '尚未取得本次发送结果。', retry_allowed: false}))}
     await observe(observation, () => adapter.send(structuredClone(request)))
   }
   async function read() {
@@ -58,7 +58,7 @@ export function useShareActions<Request extends ShareInput = ShareRequest>(job: 
     const job = current.current, delivery = job?.deliveries.find(row => targetKey(row.target) === targetKey(target))
     if (!adapter || !job || !delivery || !shareRetryAllowed(job, delivery)) return
     const attemptId = crypto.randomUUID()
-    const observation: ShareOperation<Request> = {...job, deliveries: job.deliveries.map(row => row === delivery ? {...row, attempt_id: attemptId, state: 'unknown', retry_allowed: false, reason: '重试回执未知，只读取本次发送结果。'} : row)}
+    const observation: ShareOperation<Request> = {...job, deliveries: job.deliveries.map(row => row === delivery ? {...row, attempt_id: attemptId, state: 'unknown', retry_allowed: false, reason: '重试结果未知，只读取本次发送结果。'} : row)}
     await observe(observation, () => adapter.retryFailed(job.request.request_id, {kind: target.kind, id: target.id}, attemptId), job)
   }
   function suspend() {reading.current = null; setBusyRead(false); if (current.current) save(structuredClone(current.current))}

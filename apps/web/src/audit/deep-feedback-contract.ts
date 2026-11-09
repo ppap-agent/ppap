@@ -33,7 +33,7 @@ export const nativeDeepFeedbackAdapter: DeepFeedbackAdapter = {
 }
 
 export function checkedRuleChange(receipt: RuleChangeReceipt, workspaceId: string, operationId: string) {
-  if (receipt.operation_id !== operationId || receipt.workspace_id !== workspaceId) throw new Error('保存回执与本次操作不一致，请读取原操作。')
+  if (receipt.operation_id !== operationId || receipt.workspace_id !== workspaceId) throw new Error('保存结果与本次操作不一致，请查看原操作。')
   return receipt
 }
 

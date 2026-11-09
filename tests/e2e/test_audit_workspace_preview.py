@@ -65,7 +65,7 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             expect(page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button")).to_have_count(3)
             expect(page.get_by_role("region", name="审核详情", exact=True)).to_have_count(0)
             page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button").first.click()
-            page.get_by_role("button", name="专注复核（选做）", exact=True).click()
+            page.get_by_role("button", name="逐条复核", exact=True).click()
             focus = page.get_by_role("region", name="专注复核", exact=True)
             expect(focus.get_by_role("combobox", name="条款目录", exact=True)).to_be_visible()
             focus.get_by_role("button", name="下一待复核", exact=True).click()
@@ -90,7 +90,7 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="工作台", exact=True).click()
             page.get_by_role("button", name="继续当前审核", exact=True).click()
             page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name=re.compile("^不符合")).click()
-            page.get_by_role("button", name="专注复核（选做）", exact=True).click()
+            page.get_by_role("button", name="逐条复核", exact=True).click()
             focus = page.get_by_role("region", name="专注复核", exact=True)
             focus.get_by_role("button", name="下一待复核", exact=True).click()
             expect(focus.get_by_role("heading", name="1.2 · 记录完整性", exact=True)).to_be_visible()
@@ -245,6 +245,8 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             page.get_by_role("button", name="报告中心", exact=True).click()
             expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
             page.get_by_role("link", name="返回审核结果", exact=True).click()
+            # Below the wide layout the queue folds into the results header while a file is open.
+            page.get_by_role("button", name=re.compile("^切换文件")).click()
             expect(page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button")).to_have_count(3)
             browser.close()
 

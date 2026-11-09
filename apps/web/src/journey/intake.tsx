@@ -548,9 +548,9 @@ export function JourneyApp() {
     const demo = basisReady && draft.sourceMode === 'demo' && scopeKey(draft.scope) === scopeKey(demoScope)
     const preparation = draft.submitted ? checkSummary(draft.check) : null
     return {
-      id: key.slice('intake:'.length), href: caseHref({id: key.slice('intake:'.length), kind: 'case'}), title: draft.scope.part || draft.files[0]?.name || '待核对资料',
+      id: key.slice('intake:'.length), href: caseHref({id: key.slice('intake:'.length), kind: 'case'}), title: draft.scope.part || draft.files[0]?.name || '待确认资料',
       context: [currentScope.customer, currentScope.supplier, currentScope.revision ? `${change?.pending ? '拟采用' : '图纸'} Rev ${currentScope.revision}` : '修订待确认'].filter(Boolean).join(' · '),
-      state: draft.reviewView ? review?.state ?? '待复核' : !draft.submitted ? draft.scopeConfirmed && !basisReady ? '要求待确认' : '待核对' : preparation?.state ?? (!demo ? '内容未检查' : ({running: '检查中', clarification: '待澄清', failure: '局部失败', complete: '待复核'}[draft.progressScenario])),
+      state: draft.reviewView ? review?.state ?? '待复核' : !draft.submitted ? draft.scopeConfirmed && !basisReady ? '要求待确认' : '待确认' : preparation?.state ?? (!demo ? '内容未检查' : ({running: '检查中', clarification: '待澄清', failure: '局部失败', complete: '待复核'}[draft.progressScenario])),
       next: draft.reviewView ? review?.next ?? '继续复核' : !draft.submitted ? '核对资料' : preparation?.next ?? (!demo ? '查看登记' : '查看进度'),
       detail: draft.reviewView ? review?.detail ?? '继续核对发现与原件证据。' : !draft.submitted ? `${draft.files.length} 份文件 · ${draft.scopeConfirmed ? basisReady ? '要求已确认，继续逐份核对文件' : '归属已记录，审核依据待确认' : '尚未确认资料归属'}` : preparation?.detail ?? (!demo ? '已登记文件名与说明；没有执行内容检查。' : draft.clarification ? '供应商说明已记录，原件仍需核实。' : '继续查看检查结果与尚未覆盖的要求。'),
       received: draft.submitted, updatedAt,
@@ -562,14 +562,14 @@ export function JourneyApp() {
       let saved: IntakeDraft | null = null
       try {const parsed: unknown = JSON.parse(draft.case_context?.registration || 'null'); if (isIntakeDraft(parsed)) saved = parsed} catch { /* Filename still identifies older drafts. */ }
       const uncertain = saved?.check?.request && ['requesting', 'unknown'].includes(saved.check.request.phase)
-      const files = draft.items.map(material => ({name: material.original_filename, revision: '待核对', sourceVersion: 1, pending: true, material}))
-      return {id: draft.id, href: caseHref({id: draft.id, kind: 'case'}), title: saved?.scope.part || files.find(file => file.material.role === 'target')?.name || files[0]?.name || '待核对资料', files: fileReferences(files), context: saved ? [saved.scope.customer, saved.scope.supplier, saved.scope.revision && `图纸 Rev ${saved.scope.revision}`].filter(Boolean).join(' · ') : '', state: uncertain ? '受理待核对' : '审核准备', next: uncertain ? '核对受理结果' : '准备审核', detail: saved?.basis ? `${saved.basis.source.title} · ${saved.basis.source.version}` : '审核依据待选择', received: false, updatedAt: draft.updated_at, task: uncertain ? 'attention' as const : 'prepare' as const}
+      const files = draft.items.map(material => ({name: material.original_filename, revision: '待确认', sourceVersion: 1, pending: true, material}))
+      return {id: draft.id, href: caseHref({id: draft.id, kind: 'case'}), title: saved?.scope.part || files.find(file => file.material.role === 'target')?.name || files[0]?.name || '待确认资料', files: fileReferences(files), context: saved ? [saved.scope.customer, saved.scope.supplier, saved.scope.revision && `图纸 Rev ${saved.scope.revision}`].filter(Boolean).join(' · ') : '', state: uncertain ? '接收待确认' : '审核准备', next: uncertain ? '核对提交结果' : '准备审核', detail: saved?.basis ? `${saved.basis.source.title} · ${saved.basis.source.version}` : '审核依据待选择', received: false, updatedAt: draft.updated_at, task: uncertain ? 'attention' as const : 'prepare' as const}
     }) ?? []),
     ...(workbench.rounds?.rows.map(round => {
       const total = Object.entries(round.result_counts).reduce((sum, [status, count]) => sum + (status === 'NA' ? 0 : count), 0) + (round.uncovered_count ?? 0)
       const reviewed = round.execution === 'completed' && total > 0 && round.reviewed_count >= total
       const files = round.inputs.map(material => ({id: material.file_version_id, name: material.original_filename, role: material.role, roundId: round.id}))
-      return {id: round.id, href: caseHref({id: round.id, kind: 'round'}), title: round.case_title || files.find(file => file.role === 'target')?.name || files[0]?.name || '待核对资料', files, context: round.case_scope, mode: modeName(round.analysis_mode), state: reviewed ? '已复核' : round.execution === 'completed' ? '待复核' : executionLabels[round.execution] || round.execution, next: reviewed ? '查看复核' : round.execution === 'completed' ? round.reviewed_count ? '继续复核' : '开始复核' : round.execution === 'failed' ? '查看失败原因' : '查看进度', detail: '', counts: {...round.result_counts, uncovered: round.uncovered_count}, review: round.execution === 'completed' ? {saved: round.reviewed_count, total} : undefined, received: true, updatedAt: round.created_at || '', task: reviewed ? 'completed' as const : round.execution === 'completed' ? 'review' as const : round.execution === 'failed' ? 'attention' as const : 'running' as const}
+      return {id: round.id, href: caseHref({id: round.id, kind: 'round'}), title: round.case_title || files.find(file => file.role === 'target')?.name || files[0]?.name || '待确认资料', files, context: round.case_scope, mode: modeName(round.analysis_mode), state: reviewed ? '已复核' : round.execution === 'completed' ? '待复核' : executionLabels[round.execution] || round.execution, next: reviewed ? '查看复核' : round.execution === 'completed' ? round.reviewed_count ? '继续复核' : '开始复核' : round.execution === 'failed' ? '查看失败原因' : '查看进度', detail: '', counts: {...round.result_counts, uncovered: round.uncovered_count}, review: round.execution === 'completed' ? {saved: round.reviewed_count, total} : undefined, received: true, updatedAt: round.created_at || '', task: reviewed ? 'completed' as const : round.execution === 'completed' ? 'review' as const : round.execution === 'failed' ? 'attention' as const : 'running' as const}
     }) ?? []),
   ]
 
@@ -582,7 +582,7 @@ export function JourneyApp() {
       else {
         draft = await request<Draft>(`/drafts/${pathId}`, 'GET', undefined, signal)
         if (draft.status === 'accepted') round = await request<Round | null>(`/drafts/${pathId}/round`, 'GET', undefined, signal)
-        if (draft.status === 'accepted' && !round) throw new Error('审核已受理，但轮次尚未能读取。请重新读取，不要再次开始审核。')
+        if (draft.status === 'accepted' && !round) throw new Error('审核已接收，但轮次尚未能读取。请重新读取，不要再次开始审核。')
       }
       if (!current()) return
       const source = round ?? draft!
@@ -615,7 +615,7 @@ export function JourneyApp() {
         }
       }
       if (round) {
-        const current = snapshot.check ?? initialCheck(), plan = snapshot.basis ? checkPlan(snapshot.basis, snapshot.files, round.id, round.analysis_mode, false) : {key: round.id, mode: round.analysis_mode, rows: [], estimate: {low: 0, high: 0, minutes: ''}, receipt: round.id, basis: '本轮冻结规则', files: materials.map(item => item.original_filename)}
+        const current = snapshot.check ?? initialCheck(), plan = snapshot.basis ? checkPlan(snapshot.basis, snapshot.files, round.id, round.analysis_mode, false) : {key: round.id, mode: round.analysis_mode, rows: [], estimate: {low: 0, high: 0, minutes: ''}, receipt: round.id, basis: '本轮规则', files: materials.map(item => item.original_filename)}
         snapshot = {...snapshot, submitted: true, scopeConfirmed: true, step: 'progress', reviewView: round.execution === 'completed', check: {...current, mode: round.analysis_mode, request: {id: current.request?.id || round.id, runId: round.id, plan, attempt: current.request?.attempt || 1, at: current.request?.at || round.created_at || '', phase: 'accepted', remote: 'accepted', queryError: false}}}
       }
       if (!current()) return
@@ -674,7 +674,7 @@ export function JourneyApp() {
       }
     }
     if (!current()) return
-    if (prepared.id !== requestId || prepared.predecessor_id !== round.id) throw new Error('新轮准备回执与原请求不一致，未切换审核记录。')
+    if (prepared.id !== requestId || prepared.predecessor_id !== round.id) throw new Error('新轮准备结果与原请求不一致，未切换审核记录。')
     localStorage.removeItem(key)
     open(prepared.id)
   }

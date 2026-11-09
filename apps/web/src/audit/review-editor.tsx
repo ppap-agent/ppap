@@ -61,7 +61,7 @@ export function AuditReviewProvider({adapter, children}: {adapter: AuditReviewAd
     try {
       const round = await (read || !request ? adapter.read(draft.target.roundId) : adapter.save(draft.target.roundId, request))
       if (!mounted.current || observation !== draft.observation) return
-      if (!eligible(round, draft.target) || draft.base && !sameSnapshot(machineSnapshot(round), machineSnapshot(draft.base))) throw new Error('复核记录与本轮冻结结果不一致，请重新读取审核记录。')
+      if (!eligible(round, draft.target) || draft.base && !sameSnapshot(machineSnapshot(round), machineSnapshot(draft.base))) throw new Error('复核记录与本轮结果不一致，请重新读取审核记录。')
       if (!request) {draft.base = round; draft.values = valuesOf(round, draft.target.itemKey); draft.phase = 'editing'}
       else if (reviewMatches(round, request)) {
         draft.phase = 'saved'; draft.message = '人工复核已保存。'; draft.request = undefined; draft.base = round; setRevision(value => value + 1)
@@ -75,7 +75,7 @@ export function AuditReviewProvider({adapter, children}: {adapter: AuditReviewAd
         const observed = reviewOf(round, request.item_key)
         if ((observed?.version || 0) > request.version) {draft.observed = round; draft.phase = 'conflict'; draft.message = '此条复核已有其他修改。你的输入仍保留，请核对服务器记录。'}
         else {draft.phase = 'unknown'; draft.retryAllowed = sameSnapshot(observed, reviewOf(draft.base!, request.item_key)); draft.message = '尚未找到这次复核记录。可以再次核对，或重试保存相同内容。'}
-      } else throw new Error('复核回执不一致，请先核对保存结果。')
+      } else throw new Error('复核结果不一致，请先核对保存结果。')
     } catch (cause) {
       if (!mounted.current || observation !== draft.observation) return
       const status = (cause as {status?: number}).status

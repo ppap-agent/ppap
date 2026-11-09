@@ -74,7 +74,7 @@ export function ProgressPrototype({snapshot, clarification, answer, onAnswerChan
     const completed = completedEvidence?.find(row => row.id === clause.id), fallback = presets[Number(clause.id.slice(1)) - 1]
     return {id: clause.id, result: clause.applicability === 'exclude' ? '不适用' : clause.applicability !== 'apply' || !isKnownDemoClause(clause) ? '未覆盖' : scenario === 'running' ? '核对中' : scenario === 'failure' && clause.id === 'R1' ? '执行失败' : completed?.result ?? fallback ?? '未覆盖'}
   }) ?? []
-  const headline = round?.execution === 'queued' ? '审核已受理，等待执行' : scenario === 'running' ? '正在审核资料' : scenario === 'clarification' ? clarification ? '说明已记录，待核实' : '需要核实原件' : scenario === 'failure' ? '审核未能完成' : allReviewed ? '人工复核已记录' : round && !rows.length ? '未获得逐项检查结果' : '检查结束，待人工复核'
+  const headline = round?.execution === 'queued' ? '审核已接收，等待执行' : scenario === 'running' ? '正在审核资料' : scenario === 'clarification' ? clarification ? '说明已记录，待核实' : '需要核实原件' : scenario === 'failure' ? '审核未能完成' : allReviewed ? '人工复核已记录' : round && !rows.length ? '未获得逐项检查结果' : '检查结束，待人工复核'
   const groups = ['不满足', '无法判断', '未覆盖', '执行失败', '满足'].map(result => ({result, count: rows.filter(row => row.result === result).length})).filter(item => item.count)
   function simulate(next: Scenario) {setScenarioState(next); onScenario?.(next)}
   return <section className="mx-auto flex max-w-3xl flex-col gap-6 py-2 sm:py-4">

@@ -250,7 +250,7 @@ class TaskListPreviewTests(unittest.TestCase):
             release_list(page, "不存在", failed=True)
             expect(workbench.get_by_role("alert")).to_contain_text("任务列表读取失败")
             expect(workbench.get_by_text("暂无全部任务的记录。", exact=True)).to_have_count(0)
-            expect(workbench.get_by_role("tab", name=re.compile("^全部任务"))).to_contain_text("—")
+            expect(workbench.get_by_role("tab", name=re.compile("^全部任务"))).to_have_text("全部任务")
             workbench.get_by_role("button", name="刷新任务列表", exact=True).click()
             release_list(page, "不存在")
             expect(workbench.get_by_role("alert")).to_have_count(0)

@@ -46,7 +46,7 @@ export function checkerPublicationAddress(url: URL, scope: string, input: AdoptC
   let next = new URL(url)
   if (input) {
     const selection = readCheckerWorkspace(next, scope, input.revision_id)
-    if (selection.pending && selection.pending.operation_id !== input.operation_id) throw new Error('请先读取原发布操作，不能再次发布。')
+    if (selection.pending && selection.pending.operation_id !== input.operation_id) throw new Error('请先查看原发布操作，不能再次发布。')
     next = checkerSelectionAddress(next, scope, {...selection, revisionId: input.revision_id, explicit: true})
     next.searchParams.set('checkerPublishScope', scope)
     next.searchParams.set('checkerPublish', input.operation_id)

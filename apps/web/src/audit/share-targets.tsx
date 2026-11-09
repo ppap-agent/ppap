@@ -50,7 +50,7 @@ export function ShareTargets({adapter, value, onChange, onReadyChange}: {adapter
   useEffect(() => {
     if (!started.current) {
       started.current = true
-      selected.current = selected.current.map(target => ({...target, eligibility: 'unknown', reason: '接收资格待核对。'}))
+      selected.current = selected.current.map(target => ({...target, eligibility: 'unknown', reason: '接收资格待确认。'}))
       onChange(selected.current)
     }
     void load()

@@ -1,3 +1,4 @@
+import {displayTime} from '../helpers'
 import {ReadSkeleton} from '../components/read-skeleton'
 import {useContext, useEffect, useState} from 'react'
 import {createPortal} from 'react-dom'
@@ -28,7 +29,7 @@ export function AuditRoundReader({roundId, readRound, renderOriginal, onReaudit,
     void readRound(roundId, controller.signal).then(value => {
       if (controller.signal.aborted) return
       const files = value.read_view?.files
-      if (value.id !== roundId || !files || files.length !== value.inputs.length || new Set(files.map(row => row.file.id)).size !== value.inputs.length || files.some(row => !value.inputs.some(input => input.file_version_id === row.file.id && input.file_id === row.file.file_id && input.role === row.role && sameSnapshot(input.rule, row.rule)) || row.audit && (row.audit.round_id !== value.id || row.audit.file_version_id !== row.file.id || row.audit.result_attempt !== value.result_attempt || !sameSnapshot(row.audit.rule, row.rule)))) throw new Error('历史读取与本轮冻结文件不一致。')
+      if (value.id !== roundId || !files || files.length !== value.inputs.length || new Set(files.map(row => row.file.id)).size !== value.inputs.length || files.some(row => !value.inputs.some(input => input.file_version_id === row.file.id && input.file_id === row.file.file_id && input.role === row.role && sameSnapshot(input.rule, row.rule)) || row.audit && (row.audit.round_id !== value.id || row.audit.file_version_id !== row.file.id || row.audit.result_attempt !== value.result_attempt || !sameSnapshot(row.audit.rule, row.rule)))) throw new Error('历史读取与本轮文件不一致。')
       setRound(value)
     }).catch(cause => {if (!controller.signal.aborted) setError(message(cause))})
     return () => controller.abort()
@@ -54,9 +55,9 @@ export function AuditRoundReader({roundId, readRound, renderOriginal, onReaudit,
       <DropdownMenuItem asChild><a href={returnHref}>返回工作台</a></DropdownMenuItem>
       {onReaudit && round?.id === roundId && ['completed', 'failed'].includes(round.execution) && <DropdownMenuItem onSelect={onReaudit}>补件／重新审核</DropdownMenuItem>}
       <DropdownMenuItem onSelect={() => setRevision(value => value + 1)}>重新读取</DropdownMenuItem>
-      {round?.id === roundId && round.created_at && <><DropdownMenuSeparator/><DropdownMenuLabel className="whitespace-normal">审核时间：{new Date(round.created_at).toLocaleString()}</DropdownMenuLabel></>}
+      {round?.id === roundId && round.created_at && <><DropdownMenuSeparator/><DropdownMenuLabel className="whitespace-normal">审核时间：{displayTime(round.created_at)}</DropdownMenuLabel></>}
     </DropdownMenuContent></DropdownMenu>, headerActions)}</> : <header className="flex flex-wrap items-center justify-between gap-3">
-      <div className="space-y-2"><h1 className="text-2xl font-semibold">历史审核</h1>{round?.id === roundId && round.created_at && <p className="text-sm text-muted-foreground">{new Date(round.created_at).toLocaleString()}</p>}</div>
+      <div className="space-y-2"><h1 className="text-2xl font-semibold">历史审核</h1>{round?.id === roundId && round.created_at && <p className="text-sm text-muted-foreground">{displayTime(round.created_at)}</p>}</div>
       <div className="flex flex-wrap gap-2"><Button variant="outline" asChild><a href={returnHref}>返回工作台</a></Button>{onReaudit && round && ['completed', 'failed'].includes(round.execution) && <Button onClick={onReaudit}>补件／重新审核</Button>}<Button variant="outline" onClick={() => setRevision(value => value + 1)}>重新读取</Button></div>
     </header>}
     {error ? <Alert variant="destructive"><AlertTitle>历史审核暂不可用</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : !view ? <ReadSkeleton label="正在读取本轮审核…" kind={'detail'}/> : <>

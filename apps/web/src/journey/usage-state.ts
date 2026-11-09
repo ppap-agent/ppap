@@ -25,10 +25,10 @@ function missingRow(key: string, caseId: string, title: string, at: string, deta
   return {key, caseId, title, context: '历史检查', at, runId: key.split(':').at(-1) ?? key, status: '缺少用量记录', detail, held: null, actual: null, attention: true, execution: '历史记录'}
 }
 export function requestUsage(request: CheckRequest) {
-  if (request.phase === 'absent') return {status: '未受理', held: 0, actual: null, attention: false, detail: '已确认没有开始检查，预留已释放。'}
-  if (request.phase !== 'accepted') return {status: '受理待核对', held: request.plan.estimate.high, actual: null, attention: true, detail: '先核对是否受理；此检查的预留继续保留。'}
+  if (request.phase === 'absent') return {status: '未被接收', held: 0, actual: null, attention: false, detail: '已确认没有开始检查，预留已释放。'}
+  if (request.phase !== 'accepted') return {status: '接收待确认', held: request.plan.estimate.high, actual: null, attention: true, detail: '先核对是否接收；此检查的预留继续保留。'}
   if (request.settlement?.phase === 'confirmed') return {status: '已结算', held: 0, actual: request.settlement.actual, attention: false, detail: '以已确认用量替换预留，不重复叠加。'}
-  return {status: request.settlement?.phase === 'unknown' ? '结算待核对' : '待结算', held: request.plan.estimate.high, actual: null, attention: true, detail: request.settlement?.phase === 'unknown' ? '未取得结算回执，预留继续保留。' : '检查完成或失败都不等于结算完成。'}
+  return {status: request.settlement?.phase === 'unknown' ? '结算待确认' : '待结算', held: request.plan.estimate.high, actual: null, attention: true, detail: request.settlement?.phase === 'unknown' ? '未取得结算结果，预留继续保留。' : '检查完成或失败都不等于结算完成。'}
 }
 export function readUsage(current?: {caseId: string; check: CheckPreparationState; owner?: CheckOwner}) {
   const intake = scanDrafts('intake:', validUsageIntake)
@@ -39,8 +39,8 @@ export function readUsage(current?: {caseId: string; check: CheckPreparationStat
     titles.set(caseId, title)
     const check = current?.caseId === caseId && !current.owner ? current.check : value.check
     const request = check?.request
-    if (request) rows.push({key, caseId, title, context: `${value.scope.supplier} · Rev ${value.scope.revision} · ${modeName(request.plan.mode)}`, at: request.at, runId: request.runId, execution: request.phase === 'accepted' ? ({complete: '检查已结束', failure: '检查局部失败', clarification: '检查待澄清', running: '检查进行中'}[value.progressScenario] ?? '进度待核对') : request.phase === 'absent' ? '未开始检查' : '尚待确认受理', request, ...requestUsage(request)})
-    else if (value.submitted && check === undefined) rows.push(missingRow(key, caseId, title, updatedAt, '早期事项没有保存检查受理与用量；不能推断为零消费。'))
+    if (request) rows.push({key, caseId, title, context: `${value.scope.supplier} · Rev ${value.scope.revision} · ${modeName(request.plan.mode)}`, at: request.at, runId: request.runId, execution: request.phase === 'accepted' ? ({complete: '检查已结束', failure: '检查局部失败', clarification: '检查待澄清', running: '检查进行中'}[value.progressScenario] ?? '进度待确认') : request.phase === 'absent' ? '未开始检查' : '尚待确认接收', request, ...requestUsage(request)})
+    else if (value.submitted && check === undefined) rows.push(missingRow(key, caseId, title, updatedAt, '早期事项没有保存检查接收与用量；不能推断为零消费。'))
   }
   const change = scanDrafts('changes:', validUsageRounds), supplement = scanDrafts('reassessment:', validUsageRounds)
   for (const [kind, source] of [['changes', change], ['reassessment', supplement]] as const) for (const {key, value, updatedAt} of source.records) {
@@ -77,7 +77,7 @@ export function reconcileUsage(caseId: string, runId: string, outcome: UsageOutc
   const round = rounds && (Array.isArray(rounds.value.rounds) ? rounds.value.rounds.find(item => item.id === row.owner?.roundId) : rounds.value.rounds[row.owner!.roundId])
   const check = round?.check ?? intake?.value.check, request = check?.request
   if (!check || !request || request.runId !== runId) return '检查记录已改变或不可读取；没有改动原记录。'
-  if (request.phase === 'absent') return '已确认未受理，没有新增消费。'
+  if (request.phase === 'absent') return '已确认未被接收，没有新增消费。'
   if (request.settlement?.phase === 'confirmed') return `已确认 ${request.settlement.actual} 点；本次核对没有重复计入。`
   let next: CheckPreparationState
   let message: string
@@ -86,13 +86,13 @@ export function reconcileUsage(caseId: string, runId: string, outcome: UsageOutc
       ? {...check, request: {...request, phase: 'unknown', queryError: false}}
       : observeCheck({...check, queryFails: outcome === 'failed' || outcome === 'unknown'}, request.id, request.attempt, true)
     next.queryFails = check.queryFails
-    message = next.request?.phase === 'accepted' ? '已确认受理；仍保留预留，实际用量待结算。' : next.request?.phase === 'absent' ? '已确认未受理；释放本次预留，可回事项重试原请求。' : '受理仍待核对，预留没有释放。'
+    message = next.request?.phase === 'accepted' ? '已确认接收；仍保留预留，实际用量待结算。' : next.request?.phase === 'absent' ? '已确认未被接收；释放本次预留，可回事项重试原请求。' : '接收仍待确认，预留没有释放。'
   } else {
     const canSettle = round ? round.state === 'done' : intake?.value.progressScenario === 'complete'
     const confirmed = canSettle && ['normal', 'zero'].includes(outcome)
     const actual = confirmed ? outcome === 'zero' ? 0 : Math.round(request.plan.estimate.low + (request.plan.estimate.high - request.plan.estimate.low) * .4) : null
     next = {...check, request: {...request, settlement: {phase: confirmed ? 'confirmed' : outcome === 'failed' || outcome === 'unknown' ? 'unknown' : 'pending', actual, at: new Date().toISOString()}}}
-    message = confirmed ? `已取得模拟结算回执：${actual} 点，原预留已释放。` : outcome === 'failed' || outcome === 'unknown' ? '结算读取未成功，预留继续保留。' : canSettle ? '检查已结束，结算回执尚未就绪。' : '检查尚未结束；仍等待结算，不把中断或失败记为免费。'
+    message = confirmed ? `已取得模拟结算结果：${actual} 点，原预留已释放。` : outcome === 'failed' || outcome === 'unknown' ? '结算读取未成功，预留继续保留。' : canSettle ? '检查已结束，结算结果尚未就绪。' : '检查尚未结束；仍等待结算，不把中断或失败记为免费。'
   }
   try {
     if (rounds && round && row.owner) {

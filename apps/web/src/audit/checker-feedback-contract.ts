@@ -44,11 +44,11 @@ export function checkedFeedbackView(view: CheckerFeedbackView, round: string) {
   return view
 }
 export function checkedFeedback(saved: CheckerFeedback, input: CheckerFeedbackInput) {
-  if (!saved.id || !saved.suite_revision_id || saved.operation_id !== input.operation_id || saved.file_version_id !== input.file_version_id || saved.rule_version_id !== input.rule_version_id || saved.rule_clause_id !== input.rule_clause_id || saved.original_status !== input.original_status || saved.result_attempt !== input.result_attempt || saved.expected_status !== input.expected_status || saved.rationale !== input.rationale || (saved.reason_category || 'unspecified') !== (input.reason_category || 'unspecified') || !sameEvidence(saved.evidence, input.evidence)) throw new Error('反馈回执与本次结果或正确答案不一致，请读取原操作。')
+  if (!saved.id || !saved.suite_revision_id || saved.operation_id !== input.operation_id || saved.file_version_id !== input.file_version_id || saved.rule_version_id !== input.rule_version_id || saved.rule_clause_id !== input.rule_clause_id || saved.original_status !== input.original_status || saved.result_attempt !== input.result_attempt || saved.expected_status !== input.expected_status || saved.rationale !== input.rationale || (saved.reason_category || 'unspecified') !== (input.reason_category || 'unspecified') || !sameEvidence(saved.evidence, input.evidence)) throw new Error('反馈结果与本次结果或正确答案不一致，请查看原操作。')
   return saved
 }
 export function checkedOptimization(value: CheckerOptimization, operation: string, revision?: string) {
-  if (value.operation_id !== operation || revision && value.suite_revision_id !== revision || !['saved', 'queued', 'running', 'completed', 'failed', 'unknown', 'stopped'].includes(value.state)) throw new Error('优化回执与本次请求不一致，请读取原操作。')
+  if (value.operation_id !== operation || revision && value.suite_revision_id !== revision || !['saved', 'queued', 'running', 'completed', 'failed', 'unknown', 'stopped'].includes(value.state)) throw new Error('优化结果与本次请求不一致，请查看原操作。')
   return value
 }
 export function optimizationSummary(report: CheckerValidation) {
@@ -76,18 +76,18 @@ export function manualEvidence(file: string, kind: 'xlsx_cell' | 'pdf_page' | 'd
 }
 
 export function checkedFeedbackEdit(saved: CheckerFeedback, round: string, id: string, input: FeedbackUpdate) {
-  if (saved.round_id !== round || saved.id !== id || saved.revision !== input.expected_revision + 1 || saved.expected_status !== input.expected_status || saved.rationale !== input.rationale || (saved.reason_category || 'unspecified') !== (input.reason_category || 'unspecified') || !sameEvidence(saved.evidence, input.evidence)) throw new Error('样本修改回执不一致，请读取当前样本。')
+  if (saved.round_id !== round || saved.id !== id || saved.revision !== input.expected_revision + 1 || saved.expected_status !== input.expected_status || saved.rationale !== input.rationale || (saved.reason_category || 'unspecified') !== (input.reason_category || 'unspecified') || !sameEvidence(saved.evidence, input.evidence)) throw new Error('样本修改结果不一致，请读取当前样本。')
   return saved
 }
 export function checkedFeedbackDeletion(saved: FeedbackDeletion, id: string, revision: number) {
-  if (saved.id !== id || saved.deleted !== true || saved.revision !== revision + 1) throw new Error('样本删除回执不一致，请读取当前样本。')
+  if (saved.id !== id || saved.deleted !== true || saved.revision !== revision + 1) throw new Error('样本删除结果不一致，请读取当前样本。')
   return saved
 }
 export function feedbackSourceStatus(status: string, attempt: number | null): status is CheckerFeedbackInput['original_status'] {
   return ['PASS', 'NG', 'NA', 'UNABLE', 'ERR'].includes(status) && Number.isSafeInteger(attempt) && Number(attempt) >= 1
 }
 export function checkerReason(reason: string) {
-  const messages: Record<string, string> = {no_validation_proof: '这个版本还没有用样本验证过。', checker_feedback_conflicting_answers: '同一原件条款存在不同正确答案，请先改错或移除冲突答案。', published_rules_changed: '已发布新规则，当前检查仍基于旧规则，需要重新验证。', checker_rule_confirmation_changed: '规则或样本已变化，请重新读取并核对正确答案。', checker_artifact_unavailable: '该审核尚无可复用的检查版本，请读取最新结果或联系支持。', checker_feedback_scope_mismatch: '反馈不属于这项检查，请读取最新样本。', checker_sample_limit: '样本数量超过当前支持范围，请先整理样本。', checker_operation_conflict: '该操作已绑定其他内容，请先读取原操作。', suite_inputs_changed: '本检查或关联检查已更新，需要重新验证。', oracle_rules_changed: '规则原文已修改，请在新规则下重新确认正确答案。', tests_not_run: '尚未运行验证样本。', oracle_changed: '正确答案或样本已修改，需要重新验证。', related_suite_changed: '关联检查已更新，需要重新验证。', development_incomplete: '本次修复未完整执行，不能认定验证通过。', checker_cancelled: '已请求停止，已经发生的模型消费不会撤销。', personal_model_unavailable: '请先配置自己的模型地址、模型名称和 API Key。', personal_model_configuration_changed: '模型配置已更改，本次操作未受理。请读取当前配置并重新确认目标地址和模型。', checker_feedback_rules_changed: '原反馈中的条款已变更，请先核对正确答案。', checker_holdout_input_exposed: '独立验证样本与修复样本使用同一原件，需要补充不同原件。', checker_training_sample_required: '请先添加可用于修复的样本。', insufficient_samples: '样本不足，需要补充独立验证样本。', holdout_required: '缺少独立验证样本，不能认定整体通过。'}
+  const messages: Record<string, string> = {no_validation_proof: '这个版本还没有用样本验证过。', checker_feedback_conflicting_answers: '同一原件条款存在不同正确答案，请先改错或移除冲突答案。', published_rules_changed: '已发布新规则，当前检查仍基于旧规则，需要重新验证。', checker_rule_confirmation_changed: '规则或样本已变化，请重新读取并核对正确答案。', checker_artifact_unavailable: '该审核尚无可复用的检查版本，请读取最新结果或联系支持。', checker_feedback_scope_mismatch: '反馈不属于这项检查，请读取最新样本。', checker_sample_limit: '样本数量超过当前支持范围，请先整理样本。', checker_operation_conflict: '该操作已绑定其他内容，请先查看原操作。', suite_inputs_changed: '本检查或关联检查已更新，需要重新验证。', oracle_rules_changed: '规则原文已修改，请在新规则下重新确认正确答案。', tests_not_run: '尚未运行验证样本。', oracle_changed: '正确答案或样本已修改，需要重新验证。', related_suite_changed: '关联检查已更新，需要重新验证。', development_incomplete: '本次修复未完整执行，不能认定验证通过。', checker_cancelled: '已请求停止，已经发生的模型消费不会撤销。', personal_model_unavailable: '请先配置自己的模型地址、模型名称和 API Key。', personal_model_configuration_changed: '模型配置已更改，本次操作未被接收。请读取当前配置并重新确认目标地址和模型。', checker_feedback_rules_changed: '原反馈中的条款已变更，请先核对正确答案。', checker_holdout_input_exposed: '独立验证样本与修复样本使用同一原件，需要补充不同原件。', checker_training_sample_required: '请先添加可用于修复的样本。', insufficient_samples: '样本不足，需要补充独立验证样本。', holdout_required: '缺少独立验证样本，不能认定整体通过。'}
   return messages[reason] || reason
 }
 export function usageText(usage: CheckerOptimization['usage'] | null | undefined) {

@@ -1,3 +1,4 @@
+import {displayTime} from '../helpers'
 import {ReadSkeleton} from '../components/read-skeleton'
 // Stitch: projects/13261964020862199279/screens/bfd8b8db93484b159a6ce9d171447c80
 import {useEffect, useRef, useState} from 'react'
@@ -158,7 +159,7 @@ export function AuditArchive({adapter, onUpload, renderOriginal, onOpenTask, rep
         <TableCell><Checkbox aria-label={`选择 ${document.title} 档案 ${document.document_id.split('-').at(-1)}`} checked={Boolean(checked[document.document_id])} disabled={!checked[document.document_id] && (!document.latest_completed || !historyReportReady(document.latest_completed))} onCheckedChange={value => toggle(document, value === true)}/></TableCell>
         <TableCell className="whitespace-normal"><div className="space-y-1.5 py-1.5"><FileName name={document.title} colored/>{archiveMeta(document) && <p className="pl-8 text-xs leading-relaxed text-muted-foreground">{archiveMeta(document)}</p>}</div><div className="mt-3 space-y-2 md:hidden">{status(document)}<Button variant="outline" size="sm" onClick={() => openDocument(document)}>查看审核记录<ArrowRight/></Button></div></TableCell>
         <TableCell className="whitespace-normal max-md:hidden">{status(document)}</TableCell>
-        <TableCell className="max-lg:hidden">{document.latest_completed ? <time className="text-xs leading-relaxed text-muted-foreground tabular-nums" dateTime={document.latest_completed.audited_at} title={new Date(document.latest_completed.audited_at).toLocaleString('zh-CN', {hour12: false})}>{new Date(document.latest_completed.audited_at).toLocaleDateString('zh-CN')} {new Date(document.latest_completed.audited_at).toLocaleTimeString('zh-CN', {hour: '2-digit', minute: '2-digit', hour12: false})}</time> : <span className="text-muted-foreground">—</span>}</TableCell>
+        <TableCell className="max-lg:hidden">{document.latest_completed ? <time className="text-xs leading-relaxed text-muted-foreground tabular-nums" dateTime={document.latest_completed.audited_at} title={displayTime(document.latest_completed.audited_at)}>{displayTime(document.latest_completed.audited_at)}</time> : <span className="text-muted-foreground">—</span>}</TableCell>
         <TableCell className="text-right max-md:hidden"><Button variant="ghost" size="icon-sm" className="whitespace-nowrap" aria-label="查看审核记录" title="查看审核记录" onClick={() => openDocument(document)}><ChevronRight/></Button></TableCell>
       </TableRow>)}</TableBody></Table>
       {!current.documents.length && <div className="grid justify-items-center gap-3 py-12 text-center"><p className="text-sm text-muted-foreground">当前筛选下没有文档。</p>{applied.length > 0 && <Button variant="outline" size="sm" onClick={clearFilters}>清空条件</Button>}</div>}

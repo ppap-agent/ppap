@@ -38,7 +38,7 @@ export function useUploads(adapter: UploadAdapter, onReady: (file: FileVersion, 
           const latest = current.current.get(row.id)
           if (latest) save({...latest, busy: false, inputIssue: row.input.sha256 ? '本地原件暂不可读取，请重新选择当时的原件。' : undefined, receipt: {...latest.receipt,
             state: row.input.sha256 ? 'unknown' : 'failed', retry_allowed: false, resume_allowed: false,
-            reason: row.input.sha256 ? '未能读取本地原件，本次未继续传输。请读取原请求，不要新建上传。' : '本地原件无法读取，未开始上传。请排除此文件后重新选择。',
+            reason: row.input.sha256 ? '未能读取本地原件，本次未继续传输。请查看原请求，不要新建上传。' : '本地原件无法读取，未开始上传。请排除此文件后重新选择。',
           }})
           rows.splice(index--, 1); continue
         }
@@ -129,7 +129,7 @@ export function useUploads(adapter: UploadAdapter, onReady: (file: FileVersion, 
   }
   function remove(id: string) {const row = current.current.get(id); if (row) save({...row, removed: true})}
   function reset() {epoch.current += 1; current.current.clear(); setRows([])}
-  function snapshot() {return [...current.current.values()].map(row => row.busy ? {...row, busy: false, receipt: {...row.receipt, state: 'unknown' as const, retry_allowed: false, reason: '页面切换时尚未取得回执，请读取原传输请求。'}} : row)}
+  function snapshot() {return [...current.current.values()].map(row => row.busy ? {...row, busy: false, receipt: {...row.receipt, state: 'unknown' as const, retry_allowed: false, reason: '页面切换时尚未取得结果，请查看原传输请求。'}} : row)}
   function restore(saved: UploadRow[]) {reset(); for (const row of saved) current.current.set(row.id, row); setRows([...current.current.values()])}
   return {rows, add, retry, read, resume, attach, remove, reset, snapshot, restore}
 }

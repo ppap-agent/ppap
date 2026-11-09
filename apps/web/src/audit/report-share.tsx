@@ -34,7 +34,7 @@ export function ReportShareDialog({open, share, describe, contentFor, reports, a
       })}</ItemGroup></section>
       {!job && <section className="space-y-2" aria-label="发送方式"><h3 className="font-medium">发送方式</h3><Tabs value={mode} onValueChange={value => setMode(value as typeof mode)}><TabsList aria-label="交付方式"><TabsTrigger value="link">链接</TabsTrigger><TabsTrigger value="file">文件</TabsTrigger></TabsList><TabsContent value="link"><p className="text-xs text-muted-foreground">接收人需登录，并有权查看这份报告。</p></TabsContent><TabsContent value="file">{content ? <p className="[overflow-wrap:anywhere] text-xs text-muted-foreground">附件：{content.artifact?.filename}</p> : <Alert><AlertTitle>所选 ZIP 尚未就绪</AlertTitle><AlertDescription>请先打包所选报告。<Button variant="outline" onClick={onClose}>返回报告页打包</Button></AlertDescription></Alert>}</TabsContent></Tabs></section>}
       {job && job.request.content.kind !== 'link' && <p>附件：{job.request.content.artifact?.filename}</p>}
-      {actions.error && <Alert variant="destructive"><AlertTitle>回执待核对</AlertTitle><AlertDescription>{actions.error}</AlertDescription></Alert>}
+      {actions.error && <Alert variant="destructive"><AlertTitle>结果待确认</AlertTitle><AlertDescription>{actions.error}</AlertDescription></Alert>}
       {job ? <ShareResults job={job} actions={actions} support={{scenario: '审核报告分享', facts: [
         {label: '交付方式', value: {link: '链接', pdf: 'PDF 文件', zip: 'ZIP 文件'}[job.request.content.kind]},
         {label: '固定报告', value: job.request.reports.map(reference => `${describe(reference).name}-审核报告\n任务：${reference.task_id}\n审核轮次：${reference.round_id}\n文件版本：${reference.file_version_id}\n结果尝试：${reference.result_attempt}\n报告编号：${reference.report_id}`).join('\n\n')},

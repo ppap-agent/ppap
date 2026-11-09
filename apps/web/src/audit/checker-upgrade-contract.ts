@@ -18,7 +18,7 @@ export const nativeCheckerUpgradeAdapter: CheckerUpgradeAdapter = {
 
 export function checkedUpgrade(value: CheckerRevision, suite: string, input: UpgradeChecker) {
   const receipt = value.upgrade
-  if (!value.id || [input.source_revision_id, input.target_revision_id].includes(value.id) || value.suite_key !== suite || value.base_revision_id !== input.target_revision_id || !receipt || receipt.operation_id !== input.operation_id || receipt.source_revision_id !== input.source_revision_id || receipt.target_revision_id !== input.target_revision_id || receipt.expected_revision !== input.expected_revision) throw new Error('升级回执与原操作不一致，请读取原操作。')
+  if (!value.id || [input.source_revision_id, input.target_revision_id].includes(value.id) || value.suite_key !== suite || value.base_revision_id !== input.target_revision_id || !receipt || receipt.operation_id !== input.operation_id || receipt.source_revision_id !== input.source_revision_id || receipt.target_revision_id !== input.target_revision_id || receipt.expected_revision !== input.expected_revision) throw new Error('升级结果与原操作不一致，请查看原操作。')
   return value
 }
 

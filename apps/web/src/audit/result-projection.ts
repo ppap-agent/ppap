@@ -21,9 +21,13 @@ export function taskResultCounts(task: Task) {
     return total
   }, {items: 0, pass_count: 0, ng_count: 0, unknown_count: 0, not_covered_count: 0, error_count: 0})
 }
+/** A checker's run notes (assertion counts, diagnostic codes) are for whoever maintains the check, not the reason for the result. */
+export function programNotice(check: components['schemas']['AuditClauseEvaluation']): string | null {
+  return check.verification_scope === 'checker_execution' && check.scope_notice ? check.scope_notice : null
+}
 export function clauseObservation(check: components['schemas']['AuditClauseEvaluation']): string {
   if (check.execution === 'queued' || check.execution === 'running') return '本项审核中…'
-  const notice = check.scope_notice === 'manual-only' || check.scope_notice === 'unsupported' ? '本条要求未完成自动检查，请核对原件并记录人工复核。' : check.scope_notice
+  const notice = programNotice(check) ? null : check.scope_notice === 'manual-only' || check.scope_notice === 'unsupported' ? '本条要求未完成自动检查，请核对原件并记录人工复核。' : check.scope_notice
   return [...new Set([check.finding?.suggestions || check.finding?.classification, notice].filter(Boolean))].join('；') || '没有可用的机器观察。'
 }
 
@@ -93,7 +97,7 @@ export function packageOutcomeError(job: components['schemas']['AuditReportPacka
 /** A task package may use an earlier selection, never another frozen result. */
 export function taskPackageScopeError(task: Task): string {
   const job = task.report_package
-  return job && (!multipleDistinctReports(job.reports) || job.reports.some(reference => !task.files.some(row => sameSnapshot(reportReference(task, row), reference)))) ? 'ZIP 引用与当前任务的冻结审核结果不一致。' : ''
+  return job && (!multipleDistinctReports(job.reports) || job.reports.some(reference => !task.files.some(row => sameSnapshot(reportReference(task, row), reference)))) ? 'ZIP 引用与当前任务的固定审核结果不一致。' : ''
 }
 
 /** Build a send payload only for the selected frozen, ready artifacts. */
@@ -129,12 +133,12 @@ export function taskProgressError(task: Task): string {
 export function frozenResultError(roundId: string | null, row: ReviewFile, frozenFileVersionIds: string[], frozenRule = row.match?.rule): string {
   const audit = row.audit
   if (!audit) return ''
-  if (audit.file_version_id !== row.file.id || audit.round_id !== roundId || !sameSnapshot(audit.rule, frozenRule)) return '审核结果与冻结文件或规则不一致。'
+  if (audit.file_version_id !== row.file.id || audit.round_id !== roundId || !sameSnapshot(audit.rule, frozenRule)) return '审核结果与固定文件或规则不一致。'
   const rules = audit.rule.body.kind === 'engine' ? audit.rule.body.rules : []
-  if (!rules.length && audit.rule.body.kind === 'engine' || new Set(audit.checks.map(item => item.rule_item.id)).size !== audit.checks.length || audit.checks.length !== rules.length || audit.checks.some(item => !rules.some(rule => sameSnapshot(rule, item.rule_item)) || item.finding && item.finding.item_key !== item.rule_item.id) || audit.progress.total !== rules.length) return '审核项与冻结规则不一致。'
+  if (!rules.length && audit.rule.body.kind === 'engine' || new Set(audit.checks.map(item => item.rule_item.id)).size !== audit.checks.length || audit.checks.length !== rules.length || audit.checks.some(item => !rules.some(rule => sameSnapshot(rule, item.rule_item)) || item.finding && item.finding.item_key !== item.rule_item.id) || audit.progress.total !== rules.length) return '审核项与固定规则不一致。'
   if (audit.execution === 'completed' && audit.checks.some(item => ['queued', 'running'].includes(item.execution))) return '文件声称审核结束，但仍有未结束的审核项。'
   const frozen = new Set(frozenFileVersionIds)
-  if (audit.checks.some(item => item.evidence.some(source => !frozen.has(source.file_version_id)))) return '来源证据不在本轮冻结文件范围内。'
+  if (audit.checks.some(item => item.evidence.some(source => !frozen.has(source.file_version_id)))) return '来源证据不在本轮文件范围内。'
   const valid = audit.checks.filter(item => item.execution === 'completed' && item.coverage === 'executed' && item.finding)
   const counts = {pass_count: 0, ng_count: 0, unknown_count: 0, not_covered_count: 0, error_count: 0}
   let notApplicable = 0

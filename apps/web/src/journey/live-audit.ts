@@ -56,7 +56,7 @@ export function useLiveAudit({id, registration, items, state, plan, onChange, re
       const body: DraftSaveRequest = {analysis_mode: current.state.mode, items: selected.map(item => ({file_version_id: item.file_version_id, role: item.role, rule_version_id: item.role === 'target' ? item.rule_version_id : null})), case_context: {registration: JSON.stringify({...current.registration, check: checking})}}
       await request<Draft>(`/drafts/${id}`, 'PUT', body)
       const round = await request<Round>(`/drafts/${id}/accept`, 'POST', {idempotency_key: idempotency})
-      if (!sameAcceptedPlan(round, id, requestedPlan)) throw new Error('受理回执与本次方案不同，请核对原请求。')
+      if (!sameAcceptedPlan(round, id, requestedPlan)) throw new Error('接收结果与本次方案不同，请核对原请求。')
       accepted(round, record)
     } catch (cause) {
       setError(message(cause))

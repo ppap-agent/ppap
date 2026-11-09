@@ -51,8 +51,7 @@ class UsagePreviewTests(unittest.TestCase):
                 page = browser.new_page(viewport={"width": width, "height": 900})
                 page.goto(PREVIEW + "/preview/audit.html?scene=usage-cross-month&view=usage&usageRange=all")
                 table = page.get_by_role("table", name="逐文件用量记录", exact=True)
-                expect(table.get_by_role("columnheader", name="受理时间", exact=True)).to_be_visible()
-                expect(table.get_by_role("columnheader", name="实际扣费时间", exact=True)).to_have_count(1)
+                expect(table.get_by_role("columnheader", name="时间", exact=True)).to_be_visible()
                 row = page.get_by_role("row", name="消费记录 示例消费-1", exact=True)
                 expect(row).to_contain_text("待扣")
                 expect(row.locator('time[datetime="2026-10-28T10:00:00+08:00"]')).to_have_count(1)
@@ -64,7 +63,7 @@ class UsagePreviewTests(unittest.TestCase):
                 expect(table.get_by_role("row")).to_have_count(2)
                 for label in ("本月消费次数", "本月已扣点数", "本月待扣点数"):
                     expect(page.get_by_role("group", name=label, exact=True)).to_contain_text("0")
-                expect(page.get_by_text("按审核受理月统计；补扣不新增消费。", exact=True)).to_be_visible()
+                expect(page.get_by_text("按审核接收月统计；补扣不新增消费。", exact=True)).to_be_visible()
                 self.assertTrue(page.evaluate("document.documentElement.scrollWidth <= innerWidth"))
                 page.close()
             browser.close()

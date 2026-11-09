@@ -20,7 +20,7 @@ class AuditIntakeClosureTests(unittest.TestCase):
             browser = playwright.chromium.launch()
             page = browser.new_page()
             page.goto(PREVIEW + "/preview/audit.html?scene=restore-card-pending&task=preview-recovery-task")
-            reason = "已收到卡片确认，正在核对用量，尚未受理。"
+            reason = "已收到卡片确认，正在核对用量，尚未被接收。"
             expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
             expect(page.get_by_role("alert")).to_have_attribute("data-request-id", "preview-recovery-request")
             expect(page.get_by_role("alert")).to_contain_text(reason)
@@ -28,11 +28,11 @@ class AuditIntakeClosureTests(unittest.TestCase):
             page.reload()
             expect(page.get_by_role("alert")).to_contain_text(reason)
             expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_disabled()
-            page.get_by_role("button", name="读取受理结果", exact=True).click()
+            page.get_by_role("button", name="读取提交结果", exact=True).click()
             expect(page.get_by_role("alert")).to_contain_text(reason)
             expect(page.get_by_role("alert")).to_have_attribute("data-request-id", "preview-recovery-request")
             expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_disabled()
-            page.get_by_role("button", name="读取受理结果", exact=True).click()
+            page.get_by_role("button", name="读取提交结果", exact=True).click()
             expect(page.get_by_role("heading", name="审核结果", exact=True)).to_be_visible()
             browser.close()
 
@@ -42,9 +42,9 @@ class AuditIntakeClosureTests(unittest.TestCase):
             page = browser.new_page()
             page.goto(PREVIEW + "/preview/audit.html?scene=restore-card-rejected&task=preview-recovery-task")
             expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
-            expect(page.get_by_role("alert")).to_contain_text("本次未受理")
+            expect(page.get_by_role("alert")).to_contain_text("本次未被接收")
             expect(page.get_by_role("alert")).to_contain_text("文件或审核模式已变化，请打开页面核对。")
-            expect(page.get_by_role("button", name="读取受理结果", exact=True)).to_have_count(0)
+            expect(page.get_by_role("button", name="读取提交结果", exact=True)).to_have_count(0)
             expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_enabled()
             page.get_by_role("button", name="开始审核", exact=True).click()
             expect(page.get_by_role("heading", name="审核结果", exact=True)).to_be_visible()
@@ -76,20 +76,16 @@ class AuditIntakeClosureTests(unittest.TestCase):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page()
-            for scene, task, states in (
-                ("restore-progress", "preview-recovery-task", ["complete", "complete", "current"]),
-                ("reports-failed", "preview-report-task", ["complete", "complete", "current"]),
-                ("reports-generating", "preview-report-task", ["complete", "complete", "current"]),
+            # Once the audit runs, its status badge says where it stands; the intake steps would only repeat it.
+            for scene, task in (
+                ("restore-progress", "preview-recovery-task"),
+                ("reports-failed", "preview-report-task"),
+                ("reports-generating", "preview-report-task"),
+                ("reports-all-ready", "preview-report-task"),
             ):
                 page.goto(PREVIEW + f"/preview/audit.html?scene={scene}&task={task}")
                 expect(page.get_by_role("heading", name="审核结果", exact=True)).to_be_visible()
-                nodes = page.get_by_role("list", name="审核步骤", exact=True).get_by_role("listitem")
-                for index, state in enumerate(states):
-                    expect(nodes.nth(index)).to_have_attribute("data-state", state)
-            # Once every report is ready the steps have nothing left to say, so the results get the room.
-            page.goto(PREVIEW + "/preview/audit.html?scene=reports-all-ready&task=preview-report-task")
-            expect(page.get_by_role("heading", name="审核结果", exact=True)).to_be_visible()
-            expect(page.get_by_role("list", name="审核步骤", exact=True)).to_have_count(0)
+                expect(page.get_by_role("list", name="审核步骤", exact=True)).to_have_count(0)
             browser.close()
 
     def test_matching_observes_progress_without_a_manual_read_action(self):
@@ -113,6 +109,7 @@ class AuditIntakeClosureTests(unittest.TestCase):
             page.goto(PREVIEW + "/preview/audit.html?scene=with-reference")
             page.get_by_role("button", name="使用三类文件示例", exact=True).click()
             page.get_by_role("button", name="开始识别", exact=True).click()
+            page.get_by_role("button", name="查看 控制计划.xlsx 的条款", exact=True).click()
             clauses = page.get_by_role("list", name="控制计划.xlsx · 匹配条款", exact=True)
             trigger = clauses.get_by_role("button").first
             title = trigger.inner_text()

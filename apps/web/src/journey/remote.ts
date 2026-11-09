@@ -47,7 +47,7 @@ export function readAcceptance(storageKey: string): Acceptance | null {
   const raw = localStorage.getItem(storageKey)
   if (!raw) return null
   const value: unknown = JSON.parse(raw)
-  if (!value || typeof value !== 'object' || !('key' in value) || !('plan' in value) || typeof value.key !== 'string' || typeof value.plan !== 'string') throw new Error('检查请求记录无法读取，请先核对服务器受理状态。')
+  if (!value || typeof value !== 'object' || !('key' in value) || !('plan' in value) || typeof value.key !== 'string' || typeof value.plan !== 'string') throw new Error('检查请求记录无法读取，请先核对服务器接收状态。')
   return {key: value.key, plan: value.plan}
 }
 export function sameAcceptedPlan(round: Round, draftId: string, plan: string) {

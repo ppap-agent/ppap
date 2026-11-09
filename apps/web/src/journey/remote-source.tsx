@@ -46,7 +46,7 @@ function BrowserOriginal({file, roundId, source, focus}: {file: Material; roundI
     return () => {controller.abort(); if (objectUrl) URL.revokeObjectURL(objectUrl)}
   }, [file.file_id, file.file_version_id, roundId, mime, textFile, source])
   if (error) return <p role="alert" className="p-4 text-sm">{error}</p>
-  if (!url) return <ReadSkeleton label="正在读取原件…" kind="document" className="p-3"/>
+  if (!url) return <ReadSkeleton label="正在查看原件…" kind="document" className="p-3"/>
   if (original && ['xlsx', 'xlsm', 'xls', 'docx'].includes(extension)) return <Suspense fallback={<ReadSkeleton label="正在准备原件阅读器…" kind="document"/>}><div className="absolute inset-0 flex min-w-0 flex-col overflow-auto [&>div]:min-h-0">{extension === 'docx' ? <WordSource blob={original} name={file.original_filename}/> : <WorkbookSource blob={original} name={file.original_filename} focus={focus}/>}</div></Suspense>
   if (extension === 'pdf') return <iframe className="absolute inset-0 size-full border-0" src={url} title={file.original_filename + ' 原件'}/>
   if (imageTypes[extension]) return <div className="absolute inset-0 overflow-auto p-3"><img className="mx-auto max-w-full" src={url} alt={file.original_filename}/></div>
@@ -86,11 +86,11 @@ export function RemoteSourcePane({file, roundId, focus, source = productOriginal
       <span className="text-sm text-muted-foreground">原件</span>
       <div className="flex flex-wrap items-center gap-1">
         {canFullscreen && <Button variant="ghost" size="sm" onClick={() => void toggleFullscreen()}>{fullscreen ? <Minimize/> : <Maximize/>}{fullscreen ? '退出全屏' : '全屏'}</Button>}
-        <Button variant="ghost" size="icon-sm" aria-label="重新读取原件" onClick={() => setAttempt(value => value + 1)}><RotateCcw/></Button>
+        <Button variant="ghost" size="icon-sm" aria-label="重新查看原件" onClick={() => setAttempt(value => value + 1)}><RotateCcw/></Button>
         <Button variant="outline" size="sm" asChild><a href={source.url(file, roundId)} download={file.original_filename}><Download/>下载原件</a></Button>
       </div>
     </div>
-    {focus?.location && focus.location !== '位置待核对' && <p className="shrink-0 break-words text-sm text-muted-foreground">核对位置：{focus.location}</p>}
+    {focus?.location && focus.location !== '位置待确认' && <p className="shrink-0 break-words text-sm text-muted-foreground">核对位置：{focus.location}</p>}
     {notice && <p role="status" className="text-sm text-muted-foreground">{notice}</p>}
     <div className="relative min-h-80 min-w-0 flex-1">
       {browserOriginal ? <BrowserOriginal key={`${roundId}:${file.file_id}:${file.file_version_id}:${attempt}`} file={file} roundId={roundId} source={source} focus={focus}/>

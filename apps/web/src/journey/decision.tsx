@@ -94,7 +94,7 @@ export function decisionSummary(id: string, caseId = id) {
   if (draft.followup?.draft) return {recorded: false, state: '回件登记中', next: '继续处理', detail: '本批回件尚未登记，不能沿用旧判断作出决定。'}
   const check = readReceiptCheck(caseId, id, input, draft.appliedCheck)
   if (check.error) return {recorded: false, state: '检查记录待恢复', next: '继续处理', detail: check.error}
-  if (check.pending) return {recorded: false, state: check.awaitingReview ? '新检查结果待复核' : '本批检查待完成', next: '继续复核', detail: check.awaitingReview ? '先将本次结果纳入复核，再确认人工判断和决定。' : '检查中或受理结果待核对，尚不能作出决定。'}
+  if (check.pending) return {recorded: false, state: check.awaitingReview ? '新检查结果待复核' : '本批检查待完成', next: '继续复核', detail: check.awaitingReview ? '先将本次结果纳入复核，再确认人工判断和决定。' : '检查中或提交结果待确认，尚不能作出决定。'}
   const relevant = input.evidence.filter(row => row.result !== '不适用')
   const reviewed = relevant.filter(row => judgmentComplete(input, row, draft.judgments[row.id]))
   const complete = relevant.length > 0 && reviewed.length === relevant.length
@@ -206,10 +206,10 @@ export function DecisionWorkspace({id, caseId = id, input: initialInput, onBack,
   const blockers = [
     ...(!input.basis?.confirmed || !relevant.length ? ['没有完整的适用要求范围。'] : []),
     ...relevant.filter(row => !requirementSatisfied(input, row, judgments[row.id])).map(row => `${row.displayId || row.id} ${row.title}：${judgmentComplete(input, row, judgments[row.id]) ? '人工未确认满足要求' : '尚未记录完整的人工判断与依据'}`),
-    ...(changed ? ['本次资料与已保存复核的版本不同。旧决定仅适用于旧快照。'] : []),
+    ...(changed ? ['本次资料与已保存复核的版本不同。旧决定仅适用于旧记录。'] : []),
     ...(historical ? ['已有待评估变化或后续资料；请先处理当前范围，不能在旧轮次新增决定。'] : []),
     ...(followup.draft ? ['本批回件尚未登记；请先登记并复审，或放弃本批登记。'] : []),
-    ...(checking ? [checkReview.awaitingReview ? '有新的检查结果尚未纳入复核，请先使用本次结果。' : '本批检查尚未结束或受理待核对。'] : []),
+    ...(checking ? [checkReview.awaitingReview ? '有新的检查结果尚未纳入复核，请先使用本次结果。' : '本批检查尚未结束或接收待确认。'] : []),
   ]
   const canRecord = !record && !changed && !historical && !followup.draft && !checking && !saveError && !receiptCheck.saveError && !missingReview.length && Boolean(signer.trim() && reason.trim() && acknowledged && choice) && (choice !== '批准本次范围' || !blockers.length)
   useEffect(() => {
@@ -239,7 +239,7 @@ export function DecisionWorkspace({id, caseId = id, input: initialInput, onBack,
     <label className={"[&_[role=checkbox]]:mt-1 [&_[role=checkbox]]:shrink-0"}><Checkbox checked={acknowledged} disabled={changed || historical} onCheckedChange={state => setAcknowledged(state === true)}/><span>我已核对本次要求、证据和复核记录，并以有权决定的审核员身份记录此模拟决定。</span></label>
     <Button className={""} disabled={!canRecord} onClick={() => setConfirmOpen(true)}>核对并记录决定<ArrowRight/></Button>{missingReview.length > 0 && <p>先记录剩余 {missingReview.length} 项的人工判断及理由；暂不决定时可返回工作台，草稿会保留。</p>}
   </>}</section>
-  const output = <section className={""} aria-label="报告与交付"><h2>报告与交付</h2>{!record ? <p>记录决定后，生成对应快照的报告。</p> : <>
+  const output = <section className={""} aria-label="报告与交付"><h2>报告与交付</h2>{!record ? <p>记录决定后，生成对应记录的报告。</p> : <>
     <p role="status">{fulfillment ? deliveryLabel(fulfillment, Boolean(value.delivery)) : value.delivery ? '已登记系统外交付' : report === 'ready' ? '报告已就绪 · 待交付' : '准备固定版本的报告与资料包，再选择交付方式。'}</p>
     <DeliveryWorkspace record={record} documents={documents} saved={fulfillment} setSaved={setFulfillment} report={report} reportHTML={reportHTML(record)} onGenerateReport={() => setReport('generating')} onReportPrepared={() => setReport('ready')} onDownloadReport={() => {download(reportHTML(record), `${record.id}.html`, 'text/html;charset=utf-8'); setDownloadRequested(new Date().toISOString())}} onDownloadRecord={() => download(JSON.stringify(record, null, 2), `${record.id}.json`, 'application/json')} failReport={failReport} setFailReport={setFailReport} downloadRequested={downloadRequested} legacyDelivery={value.delivery} legacyDraft={value.deliveryDraft} historical={historical} saveError={saveError}/>
   </>}</section>
@@ -267,7 +267,7 @@ export function DecisionWorkspace({id, caseId = id, input: initialInput, onBack,
     </header>
     {step !== 0 && <div className="mb-3"><Button variant="ghost" size="sm" onClick={() => openTask(0)}><ArrowLeft/>返回人工复核</Button>{input.roundId && <p className="mt-2 text-sm text-muted-foreground">原型流程，仅保存本机记录。</p>}</div>}
     {latestReceiptId && latestReceiptId !== initialInput.receiptId && <p role="status" className={""}>正在查看历史批次 {snapshot.receiptId}。本页决定不适用于后续轮次。</p>}
-    {saveError && <p role="alert">{saveError}</p>}{changed && <p role="alert">资料快照已变化。这里只保留原复核和决定，不能将旧结论用于新版本。</p>}
+    {saveError && <p role="alert">{saveError}</p>}{changed && <p role="alert">资料记录已变化。这里只保留原复核和决定，不能将旧结论用于新版本。</p>}
     <div className="mb-3 flex flex-wrap items-center gap-x-4 border-b pb-2"><BasisSummary basis={snapshot.basis} compact/><Collapsible><CollapsibleTrigger asChild><Button variant="ghost" size="sm">资料与澄清 · {snapshot.files.length} 份<ChevronDown/></Button></CollapsibleTrigger><CollapsibleContent><div className="space-y-3 py-3">{snapshot.files.map(file => <p key={sourceKey(file)}>{file.name}{file.material ? ' · 本轮固定版本' : ` · Rev ${file.revision} · 原件 v${file.sourceVersion}`}</p>)}<SourceReaderButton input={snapshot} documents={documents} label="阅读本次资料"/>{snapshot.clarification && <p>收到的说明：{snapshot.clarification}</p>}</div></CollapsibleContent></Collapsible>
       {snapshot.receipts && <Collapsible><CollapsibleTrigger asChild><Button variant="ghost" size="sm">收件历史 · {snapshot.receipts.length} 批</Button></CollapsibleTrigger><CollapsibleContent>{snapshot.receipts.map(receipt => <section key={receipt.id}><h3>{receipt.source}</h3>{receipt.files.map((file, i) => <p key={i}>{file.name} · Rev {file.revision} · 原件 v{file.sourceVersion}</p>)}<p className="whitespace-pre-wrap">{receipt.notes}</p></section>)}</CollapsibleContent></Collapsible>}
     </div>

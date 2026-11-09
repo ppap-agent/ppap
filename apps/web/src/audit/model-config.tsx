@@ -35,7 +35,7 @@ export function PersonalModelSettings({onConfig}: {onConfig?: (config: PersonalM
       // Unknown mutations require explicit GET readback, never an automatic retry.
       setConfig(null); onConfig?.(null)
       const known = modelConfigFailure(cause)
-      setError(known ? `${known} 密钥输入已清除，请读取当前配置后再修改。` : '保存结果待核对。密钥输入已清除，请读取当前配置后再决定是否修改。')
+      setError(known ? `${known} 密钥输入已清除，请读取当前配置后再修改。` : '保存结果待确认。密钥输入已清除，请读取当前配置后再决定是否修改。')
     } finally {lock.current = false; setBusy(false)}
   }
   return <section aria-label="我的模型配置" className="space-y-3 rounded-md border p-3">

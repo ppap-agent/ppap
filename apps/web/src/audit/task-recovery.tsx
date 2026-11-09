@@ -1,6 +1,7 @@
 import {ReadSkeleton} from '../components/read-skeleton'
 import {Alert, AlertDescription} from '../components/ui/alert'
 import {Button} from '../components/ui/button'
+import {surfaceAddress} from './routes'
 
 export type TaskRecoveryState = {id: string; state: 'loading' | 'error' | 'unauthenticated' | 'forbidden' | 'not_found'; message: string; traceId?: string}
 
@@ -12,6 +13,6 @@ export function TaskRecovery({recovery, report, onRead, onSupport}: {recovery: T
     <header className="flex flex-wrap items-center gap-x-4 gap-y-2">
       <h1 className={loading ? 'sr-only' : 'text-2xl font-semibold'}>{title}</h1>
     </header>
-    {loading ? <ReadSkeleton label={report ? '正在打开报告…' : '正在打开任务…'} kind={report ? 'document' : 'detail'}/> : <Alert className="max-w-xl" variant={recovery.state === 'error' ? 'destructive' : 'default'}><AlertDescription><p>{recovery.message}</p><div className="mt-3 flex flex-wrap gap-2"><Button variant="outline" onClick={onRead}>{recovery.state === 'unauthenticated' ? '重新登录' : '重新读取'}</Button><Button variant="ghost" onClick={onSupport}>联系支持</Button></div></AlertDescription></Alert>}
+    {loading ? <ReadSkeleton label={report ? '正在打开报告…' : '正在打开任务…'} kind={report ? 'document' : 'detail'}/> : <Alert className="max-w-xl" variant={recovery.state === 'error' ? 'destructive' : 'default'}><AlertDescription><p>{recovery.message}</p><div className="mt-3 flex flex-wrap gap-2">{/* A task that does not exist or cannot be opened is left by going back, not by reading it again. */}{recovery.state === 'not_found' || recovery.state === 'forbidden' ? <Button asChild><a href={surfaceAddress('workbench')}>返回工作台</a></Button> : <Button variant="outline" onClick={onRead}>{recovery.state === 'unauthenticated' ? '重新登录' : '重试'}</Button>}<Button variant="ghost" onClick={onSupport}>联系支持</Button></div></AlertDescription></Alert>}
   </section>
 }

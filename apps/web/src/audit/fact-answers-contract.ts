@@ -15,7 +15,7 @@ export interface FactAnswersAdapter {
 const path = (roundId: string) => `/audit-rounds/${encodeURIComponent(roundId)}/fact-answers`
 
 export function checkedFactAnswer(receipt: FactAnswerReceipt, roundId: string, operationId: string, input?: FactAnswerRequest) {
-  if (receipt.round_id !== roundId || receipt.operation_id !== operationId || receipt.answer.round_id !== roundId || receipt.answer.operation_id !== operationId || receipt.model_calls !== 0 || input && (receipt.answer.file_version_id !== input.file_version_id || receipt.answer.field !== input.field || receipt.answer.value !== input.value)) throw new Error('回答回执与本次操作不一致，请读取原操作。')
+  if (receipt.round_id !== roundId || receipt.operation_id !== operationId || receipt.answer.round_id !== roundId || receipt.answer.operation_id !== operationId || receipt.model_calls !== 0 || input && (receipt.answer.file_version_id !== input.file_version_id || receipt.answer.field !== input.field || receipt.answer.value !== input.value)) throw new Error('回答结果与本次操作不一致，请查看原操作。')
   return receipt
 }
 

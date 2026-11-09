@@ -26,7 +26,7 @@ export function AuditReports({task, initialFile, onChoose, onRead, busy, readErr
   const rows = task.files.filter(file => file.selection === 'selected' && file.match?.state !== 'reference')
   function statusFor(row: Task['files'][number]) {
     const report = row.audit?.report
-    return resultConsistencyError(task, row) ? '结果待核对' : !report ? '尚未取得结果' : report.state === 'ready' && !reportReady(task, row) ? '产物待核对' : labels[report.state]
+    return resultConsistencyError(task, row) ? '结果待确认' : !report ? '尚未取得结果' : report.state === 'ready' && !reportReady(task, row) ? '产物待确认' : labels[report.state]
   }
   const [open, setOpen] = useState(false), [wide, setWide] = useState(() => window.matchMedia('(min-width: 900px)').matches)
   useEffect(() => {const media = window.matchMedia('(min-width: 900px)'), update = () => setWide(media.matches); media.addEventListener('change', update); return () => media.removeEventListener('change', update)}, [])
@@ -43,7 +43,7 @@ export function AuditReports({task, initialFile, onChoose, onRead, busy, readErr
   const currentTask = useRef(task); currentTask.current = task
   const contentFor = (reports: components['schemas']['AuditReportReference'][], mode: 'link' | 'file') => shareContentFor(currentTask.current, reports, mode)
   const sharing = useShareActions(task.report_share, job => {const next = {...currentTask.current, report_share: job}; currentTask.current = next; onChange(next)}, input => sameSnapshot(contentFor(input.reports, input.content.kind === 'link' ? 'link' : 'file'), input.content), sharingAdapter)
-  const describe = (reference: components['schemas']['AuditReportReference']) => {const row = task.files.find(row => sameSnapshot(reportReference(task, row), reference)); return {name: row?.file.original_filename || '历史文件', conclusion: row?.audit?.conclusion ? conclusionLabel[row.audit.conclusion] ?? '结论待核对' : '结论待核对'}}
+  const describe = (reference: components['schemas']['AuditReportReference']) => {const row = task.files.find(row => sameSnapshot(reportReference(task, row), reference)); return {name: row?.file.original_filename || '历史文件', conclusion: row?.audit?.conclusion ? conclusionLabel[row.audit.conclusion] ?? '结论待确认' : '结论待确认'}}
   const [shareScope, setShareScope] = useState<components['schemas']['AuditReportReference'][] | null>(null)
   const [sharingOpen, setSharingOpen] = useState(false)
   const shareTrigger = useRef<HTMLButtonElement | null>(null)

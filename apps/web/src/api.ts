@@ -107,7 +107,7 @@ const messages: Record<string,string> = {
   rule_source_unavailable: '暂时无法读取可定位的原文。请核对原文件是否可读取。',
   invalid_analysis_mode: '请选择标准或深度审核。',
   deep_not_available: '当前环境不提供深度审核。',
-  personal_model_configuration_changed: '模型配置已更改，本次操作未受理。请读取当前配置并重新确认目标地址和模型。',
+  personal_model_configuration_changed: '模型配置已更改，本次操作未被接收。请读取当前配置并重新确认目标地址和模型。',
   feedback_revision_conflict: '规则说明已被更新，请读取最新依据后再核对。',
   feedback_scope_conflict: '本次说明超出了可修改范围，请核对文件与要求。',
   feedback_question_expired: '该问题已随分析依据改变，请读取当前问题。',
@@ -137,7 +137,8 @@ export async function request<T, B = unknown>(path: string, method = 'GET', body
   if (!response.ok) {
     const code = result && typeof result.error === 'string' ? result.error : undefined
     if (response.status === 401 && code === 'unauthenticated' && typeof window !== 'undefined') window.dispatchEvent(new Event('ppap-session-expired'))
-    const error = new Error(code && messages[code] || `请求失败（${response.status}）：${code || '请稍后重试'}`)
+    // An unlisted code stays on the error for support; the person sees what happened and what to do.
+    const error = new Error(code && messages[code] || (response.status >= 500 ? '审核服务暂时不可用，请稍后重试。' : '请求未完成，请稍后重试。'))
     Object.assign(error, {code, status: response.status})
     throw withResponseTrace(error, response)
   }
@@ -145,12 +146,12 @@ export async function request<T, B = unknown>(path: string, method = 'GET', body
 }
 function checkLocalUpload(version: FileVersion, file: File, requestId: string, sha256: string) {
   const contentType = (file.type || 'application/octet-stream').split(';')[0].trim().toLowerCase()
-  if (version.id !== requestId || !version.file_id || !version.original_filename.trim() || version.byte_size !== file.size || version.content_type.toLowerCase() !== contentType || version.sha256 !== null && version.sha256 !== sha256 || version.status === 'ready' && version.sha256 !== sha256) throw new Error('上传回执与原文件不一致，请先核对原传输请求。')
+  if (version.id !== requestId || !version.file_id || !version.original_filename.trim() || version.byte_size !== file.size || version.content_type.toLowerCase() !== contentType || version.sha256 !== null && version.sha256 !== sha256 || version.status === 'ready' && version.sha256 !== sha256) throw new Error('上传结果与原文件不一致，请先核对原传输请求。')
   return version
 }
 export async function readLocalUpload(requestId: string): Promise<UploadReceipt> {
   const receipt = await request<UploadReceipt>(`/file-uploads/${encodeURIComponent(requestId)}`)
-  if (receipt.request_id !== requestId || receipt.file && receipt.file.id !== requestId || receipt.state === 'ready' && receipt.file?.status !== 'ready') throw new Error('上传回执与原请求不一致，请重新读取。')
+  if (receipt.request_id !== requestId || receipt.file && receipt.file.id !== requestId || receipt.state === 'ready' && receipt.file?.status !== 'ready') throw new Error('上传结果与原请求不一致，请重新读取。')
   return receipt
 }
 const fileDigests = new WeakMap<File, Promise<string>>()
@@ -184,7 +185,7 @@ export async function uploadLocalVersion(file: File, requestId: string, onStaged
       throw error
     }
     const ready = observe(await response.json() as FileVersion)
-    if (ready.status !== 'ready') throw new Error('尚未取得文件已接收的回执，请读取原传输请求。')
+    if (ready.status !== 'ready') throw new Error('尚未取得文件已接收的结果，请查看原传输请求。')
     return folderToken ? readLocalUpload(requestId) : {request_id: requestId, state: 'ready', file: ready, reason: null, retry_allowed: false}
   } catch (error) {
     if (error instanceof Error && 'status' in error && [400, 401, 403, 404, 409, 413, 415, 422].includes(Number(error.status))) return {request_id: requestId, state: 'failed', file: staged, reason: error.message, retry_allowed: false}
@@ -193,7 +194,7 @@ export async function uploadLocalVersion(file: File, requestId: string, onStaged
       if (receipt.file) observe(receipt.file)
       return receipt
     } catch {
-      return {request_id: requestId, state: 'unknown', file: staged, reason: '未取得明确传输结果，文件可能已接收。请读取原请求，不要重新上传。', retry_allowed: false}
+      return {request_id: requestId, state: 'unknown', file: staged, reason: '未取得明确传输结果，文件可能已接收。请查看原请求，不要重新上传。', retry_allowed: false}
     }
   }
 }
@@ -206,7 +207,7 @@ export async function upload(file: File, role: Material['role'], onStaged?: (mat
   })
   if (receipt.state === 'ready' && staged) return staged
   if (staged && ['unknown', 'uploading'].includes(receipt.state)) throw new UploadResultUnknown(staged, requestId)
-  const error = new Error(receipt.reason || `上传结果未确认：${file.name}。请读取原传输请求，不要重新上传。`)
+  const error = new Error(receipt.reason || `上传结果未确认：${file.name}。请查看原传输请求，不要重新上传。`)
   Object.assign(error, {requestId})
   throw error
 }

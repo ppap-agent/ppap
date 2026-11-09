@@ -68,7 +68,7 @@ export function checkSummary(state: CheckPreparationState | undefined) {
   if (!state?.request) return {state: '待开始检查', next: '准备检查', detail: '资料已登记；尚未发起检查。'}
   const request = state.request
   if (request.phase === 'accepted') return null
-  return {state: request.phase === 'absent' ? '检查未受理' : '受理待核对', next: request.phase === 'absent' ? '继续准备检查' : '核对受理状态', detail: `${request.id} · ${modeName(request.plan.mode)} · ${request.phase === 'absent' ? '已确认没有开始，可重试原请求。' : '还不能确认是否开始；先核对，不重复提交。'}`}
+  return {state: request.phase === 'absent' ? '检查未被接收' : '接收待确认', next: request.phase === 'absent' ? '继续准备检查' : '核对接收状态', detail: `${request.id} · ${modeName(request.plan.mode)} · ${request.phase === 'absent' ? '已确认没有开始，可重试原请求。' : '还不能确认是否开始；先核对，不重复提交。'}`}
 }
 export function validCheck(value: unknown): value is CheckPreparationState {
   if (!isObject(value) || !['standard', 'deep'].includes(String(value.mode)) || !['available', 'low', 'unavailable'].includes(String(value.quota)) || !['accepted', 'unknown_accepted', 'unknown_absent', 'rejected', 'waiting'].includes(String(value.outcome)) || typeof value.queryFails !== 'boolean') return false

@@ -10,7 +10,7 @@ function draft() {
   return {id: 'draft', versions: [], draft: {id: 'draft', baseId: null, scope: {customer: '', part: '', revision: '', allCustomers: true, allParts: true, allRevisions: true}, reason: '用户导入', basis: {...basis,
     source: {...basis.source, state: 'ready' as const, version: 'v1'},
     server: {body: {kind: 'engine' as const, type: '控制计划', rule_profile: 'v3', customers: [], models: [], parts: [], rules: []}, material: {file_id: 'f1', file_version_id: 'v1', original_filename: '规则.docx', role: 'reference' as const, rule_version_id: null}},
-    clauses: [{id: '1', title: '零件号', text: unit.excerpt, original: unit.excerpt, source: '规则.docx', location: '条款 1（原件位置待核对）', checked: true, applicability: 'pending' as const, reason: ''}],
+    clauses: [{id: '1', title: '零件号', text: unit.excerpt, original: unit.excerpt, source: '规则.docx', location: '条款 1（原件位置待确认）', checked: true, applicability: 'pending' as const, reason: ''}],
   }}}
 }
 test('old checked draft recovers exact original coordinates without replacing user fields or checks', () => {

@@ -388,7 +388,7 @@ class RuleInteractionTests(unittest.TestCase):
                 delete basis.server.sources;
                 for (const clause of basis.clauses) {
                     delete clause.provenance;
-                    clause.location = `条款 ${clause.id}（原件位置待核对）`;
+                    clause.location = `条款 ${clause.id}（原件位置待确认）`;
                 }
                 localStorage.setItem(key, JSON.stringify(saved));
             }""")
@@ -1290,7 +1290,7 @@ class RuleInteractionTests(unittest.TestCase):
             page.goto(WEB)
             selected = page.get_by_role("tab", name="全部任务", exact=False)
             expect(selected).to_have_attribute("aria-selected", "true")
-            expect(selected).to_have_text("全部任务—")
+            expect(selected).to_have_text("全部任务")
             selected.click()
             self.assertEqual(len(pending), 2)
             for route, body in pending:
@@ -1386,7 +1386,7 @@ class RuleInteractionTests(unittest.TestCase):
             table = page.get_by_role("table", name="全部任务审核记录", exact=True)
             expect(table.get_by_text("已读取的审核.xlsx", exact=True)).to_be_visible()
             expect(page.get_by_text("已读取的记录仍可打开；状态可能已变化。", exact=True)).to_be_visible()
-            expect(page.get_by_role("tab", name="全部任务", exact=False)).to_have_text("全部任务—")
+            expect(page.get_by_role("tab", name="全部任务", exact=False)).to_have_text("全部任务")
             drafts_failed = False
             page.get_by_role("button", name="刷新任务列表", exact=True).click()
             expect(alert).to_have_count(0)
@@ -1411,7 +1411,7 @@ class RuleInteractionTests(unittest.TestCase):
             expect(alert).to_have_count(0)
             expect(table.get_by_text("恢复的准备.xlsx", exact=True)).to_be_visible()
             expect(table.get_by_text("已读取的审核.xlsx", exact=True)).to_be_visible()
-            expect(page.get_by_role("tab", name="全部任务", exact=False)).to_have_text("全部任务—")
+            expect(page.get_by_role("tab", name="全部任务", exact=False)).to_have_text("全部任务")
             tasks_failed = False
             page.get_by_role("button", name="刷新任务列表", exact=True).click()
             expect(page.get_by_role("alert")).to_have_count(0)
@@ -1432,7 +1432,7 @@ class RuleInteractionTests(unittest.TestCase):
             page.route("**/api/rounds?*", lambda route: pending.update(rounds=route))
             page.goto(WEB)
             all_tasks = page.get_by_role("tab", name="全部任务", exact=False)
-            expect(all_tasks).to_have_text("全部任务—")
+            expect(all_tasks).to_have_text("全部任务")
             expect(page.get_by_role("button", name="刷新任务列表", exact=True)).to_be_disabled()
             deadline = time.monotonic() + 5
             while len(pending) < 3 and time.monotonic() < deadline:
@@ -1440,7 +1440,7 @@ class RuleInteractionTests(unittest.TestCase):
             self.assertEqual(set(pending), {"tasks", "drafts", "rounds"})
             pending["tasks"].fulfill(json={"tasks": [], "next_offset": None})
             pending["rounds"].fulfill(json={"rounds": [], "next_offset": None})
-            expect(all_tasks).to_have_text("全部任务—")
+            expect(all_tasks).to_have_text("全部任务")
             pending["drafts"].fulfill(json={"drafts": [], "next_offset": None})
             expect(page.get_by_role("button", name="刷新任务列表", exact=True)).to_be_enabled()
             expect(all_tasks).to_have_text("全部任务0")
@@ -1476,7 +1476,7 @@ class RuleInteractionTests(unittest.TestCase):
             page.goto(WEB)
             table = page.get_by_role("table", name="全部任务审核记录", exact=True)
             expect(table.get_by_text("history.xlsx", exact=True)).to_be_visible()
-            expect(page.get_by_role("tab", name="全部任务", exact=False)).to_have_text("全部任务—")
+            expect(page.get_by_role("tab", name="全部任务", exact=False)).to_have_text("全部任务")
             page.get_by_role("button", name="加载更多记录", exact=True).click()
             expect(table.get_by_text("second.xlsx", exact=True)).to_be_visible()
             expect(page.get_by_role("tab", name="全部任务", exact=False)).to_have_text("全部任务2")
@@ -1518,14 +1518,14 @@ class RuleInteractionTests(unittest.TestCase):
             expect(more).to_be_enabled()
             page.get_by_role("textbox", name="搜索审核任务", exact=True).fill("B")
             expect(page.get_by_role("alert").filter(has_text="任务列表读取失败。当前文件与任务仍保留。")).to_be_visible()
-            expect(page.get_by_role("tab", name="全部任务", exact=False)).to_have_text("全部任务—")
+            expect(page.get_by_role("tab", name="全部任务", exact=False)).to_have_text("全部任务")
             expect(more).to_have_count(0)
             self.assertEqual(reads, [("", 0), ("B", 0)])
             ready = True
             page.get_by_role("button", name="刷新任务列表", exact=True).click()
             expect(page.get_by_role("alert")).to_have_count(0)
             expect(more).to_be_enabled()
-            expect(page.get_by_role("tab", name="全部任务", exact=False)).to_have_text("全部任务—")
+            expect(page.get_by_role("tab", name="全部任务", exact=False)).to_have_text("全部任务")
             more.click()
             expect(page.get_by_role("tab", name="全部任务", exact=False)).to_have_text("全部任务2")
             self.assertEqual(reads, [("", 0), ("B", 0), ("B", 0), ("B", 50)])
@@ -1906,7 +1906,7 @@ class RuleInteractionTests(unittest.TestCase):
                     with page.expect_request(lambda request: request.method == "POST" and request.url.endswith("/api/drafts")):
                         page.get_by_role("button", name="准备新一轮审核", exact=True).click()
                     if mode == "mismatch":
-                        expect(page.get_by_text("新轮准备回执与原请求不一致，未切换审核记录。", exact=True)).to_be_visible()
+                        expect(page.get_by_text("新轮准备结果与原请求不一致，未切换审核记录。", exact=True)).to_be_visible()
                         expect(page.get_by_role("heading", name="审核未能完成", exact=True)).to_be_visible()
                         page.get_by_role("button", name="准备新一轮审核", exact=True).click()
                     elif mode == "read_failure":
@@ -2612,7 +2612,7 @@ class RuleInteractionTests(unittest.TestCase):
             self.check_requirement(page)
             save = page.get_by_role("button", name="确认并保存版本", exact=True)
             save.click()
-            expect(page.get_by_role("alert").filter(has_text="请求失败（500）")).to_be_visible()
+            expect(page.get_by_role("alert").filter(has_text="审核服务暂时不可用，请稍后重试。")).to_be_visible()
             expect(save).to_be_enabled()
             expect(page.get_by_label("要求名称", exact=True)).to_be_enabled()
             expect(page.get_by_label("要求名称", exact=True)).to_have_value("已核对要求")

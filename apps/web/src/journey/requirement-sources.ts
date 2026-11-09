@@ -11,7 +11,7 @@ export function restoreRequirementSources(basis: RequirementBasis, sources: Rule
   let changed = false
   const clauses = basis.clauses.map(clause => {
     // Only upgrade the old generated placeholder. Never overwrite manual edits.
-    if (clause.provenance || clause.location !== `条款 ${clause.id}（原件位置待核对）`) return clause
+    if (clause.provenance || clause.location !== `条款 ${clause.id}（原件位置待确认）`) return clause
     const matches = sources.units.filter(unit => normalized(unit.excerpt) === normalized(clause.original))
     if (matches.length !== 1) return clause
     changed = true

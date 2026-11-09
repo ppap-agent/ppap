@@ -52,7 +52,7 @@ export function ReviewWorkspace({input, documents, judgments, frozen, taskActive
   const initialFile = restoredSource ?? sourceFile(input, first)
   const initialLocation = restoredSource ? routeOptions().location : first?.sources[0]?.location
   const [selectedFile, setSelectedFile] = useState(() => initialFile ? sourceKey(initialFile) : '')
-  const [focus, setFocus] = useState<(SourceFocus & {fileKey: string; clauseId: string}) | null>(() => first && initialFile && initialLocation && initialLocation !== '位置待核对' ? {fileKey: sourceKey(initialFile), clauseId: first.id, location: initialLocation, requestId: 1} : null)
+  const [focus, setFocus] = useState<(SourceFocus & {fileKey: string; clauseId: string}) | null>(() => first && initialFile && initialLocation && initialLocation !== '位置待确认' ? {fileKey: sourceKey(initialFile), clauseId: first.id, location: initialLocation, requestId: 1} : null)
   const navigation = useRef(0), focusSequence = useRef(1), reviewStart = useRef<HTMLHeadingElement>(null), sourceStart = useRef<HTMLDivElement>(null)
   const currentTaskActive = useRef(taskActive); currentTaskActive.current = taskActive
   useEffect(() => {navigation.current++}, [taskActive])
@@ -77,7 +77,7 @@ export function ReviewWorkspace({input, documents, judgments, frozen, taskActive
     const source = sourceFile(input, nextRow), key = source ? sourceKey(source) : ''
     const location = nextRow.sources[0]?.location
     setSelectedFile(key)
-    setFocus(source && location && location !== '位置待核对' ? {fileKey: key, clauseId: nextRow.id, location, requestId: ++focusSequence.current} : null)
+    setFocus(source && location && location !== '位置待确认' ? {fileKey: key, clauseId: nextRow.id, location, requestId: ++focusSequence.current} : null)
     if (persist) writeOptions({clause: nextRow.id, reviewPane: '', reviewFile: '', reviewLocation: ''})
     requestAnimationFrame(() => {reviewStart.current?.scrollIntoView({block: 'nearest'}); reviewStart.current?.focus({preventScroll: true})})
   }
@@ -100,8 +100,8 @@ export function ReviewWorkspace({input, documents, judgments, frozen, taskActive
   function read(original?: SourceFile, location?: string) {
     const key = original ? sourceKey(original) : selectedFile
     if (original) setSelectedFile(key)
-    setFocus(key && row && location && location !== '位置待核对' ? {fileKey: key, clauseId: row.id, location, requestId: ++focusSequence.current} : null)
-    writeOptions({reviewFile: key, reviewLocation: location && location !== '位置待核对' ? location : ''})
+    setFocus(key && row && location && location !== '位置待确认' ? {fileKey: key, clauseId: row.id, location, requestId: ++focusSequence.current} : null)
+    writeOptions({reviewFile: key, reviewLocation: location && location !== '位置待确认' ? location : ''})
     showPane('source')
     if (!wide) requestAnimationFrame(() => sourceStart.current?.scrollIntoView({block: 'start'}))
   }
@@ -136,7 +136,7 @@ export function ReviewWorkspace({input, documents, judgments, frozen, taskActive
               {row.explanation && <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{row.explanation}</p>}
               {row.sources.length > 0 ? <div className="space-y-3">{row.sources.map((source, index) => {
                 const file = sourceFile(input, {sources: [source]})
-                return <div key={index} className="space-y-2">{file ? <Button variant="outline" size="sm" className="h-auto max-w-full justify-start whitespace-normal text-left" onClick={() => openSource(source)}><FileIcon name={source.file}/><span className="min-w-0 [overflow-wrap:anywhere]">{source.location === '位置待核对' ? source.file : `${source.file} · ${source.location}`}</span></Button> : <><FileName name={source.file} className="text-sm"/><p className="text-sm text-muted-foreground">此来源无法唯一对应本轮原件，请选择原件人工核对。</p></>}{source.excerpt && <blockquote className="whitespace-pre-wrap break-words border-l-2 pl-3 text-sm">{source.excerpt}</blockquote>}</div>
+                return <div key={index} className="space-y-2">{file ? <Button variant="outline" size="sm" className="h-auto max-w-full justify-start whitespace-normal text-left" onClick={() => openSource(source)}><FileIcon name={source.file}/><span className="min-w-0 [overflow-wrap:anywhere]">{source.location === '位置待确认' ? source.file : `${source.file} · ${source.location}`}</span></Button> : <><FileName name={source.file} className="text-sm"/><p className="text-sm text-muted-foreground">此来源无法唯一对应本轮原件，请选择原件人工核对。</p></>}{source.excerpt && <blockquote className="whitespace-pre-wrap break-words border-l-2 pl-3 text-sm">{source.excerpt}</blockquote>}</div>
               })}</div> : <p className="text-sm text-muted-foreground">{row.result === '未覆盖' ? '本条没有机器检查结果，可依据原件人工核对。' : '没有可定位的机器证据。'}</p>}
             </section>
             {replies[row.id]?.map((reply, index) => <section key={index} className="space-y-1 border-l-2 pl-3 text-sm"><strong>{reply.title}</strong><p>{reply.question}</p><p className="whitespace-pre-wrap break-words">{reply.text}</p></section>)}

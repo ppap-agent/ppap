@@ -400,7 +400,8 @@ def answer(page, f, round_, expected):
     from playwright.sync_api import expect
 
     page.goto(f.web + f"/audit?round={round_['id']}")
-    page.get_by_role("button", name="这条判错了 R1", exact=True).focus()
+    page.get_by_role("button", name="查看依据 R1", exact=True).click()
+    page.get_by_role("button", name="这条判错了", exact=True).focus()
     page.keyboard.press("Enter")
     page.get_by_label("正确结论", exact=True).select_option(expected)
     page.get_by_text("添加我在原件中找到的依据", exact=True).click()

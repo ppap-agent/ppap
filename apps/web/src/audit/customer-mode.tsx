@@ -1,4 +1,5 @@
 import {useEffect, useState} from 'react'
+import {Loader2} from 'lucide-react'
 import type {components} from '../generated/openapi'
 import {Button} from '../components/ui/button'
 import {Label} from '../components/ui/label'
@@ -42,8 +43,8 @@ export function CustomerMode({value, ready, options, adapter, onChange, onInitia
       // A transport failure can hide a committed write. Read the value; do not
       // retry the write or turn a matching read into proof of our operation.
       setConfirming(false)
-      try {setCurrent(await adapter.read()); setMessage('保存结果待核对。已读取当前企业默认，请核对后再决定是否修改。')}
-      catch {setCurrent(null); setMessage('保存结果待核对，请重新读取企业默认。')}
+      try {setCurrent(await adapter.read()); setMessage('保存结果待确认。已读取当前企业默认，请核对后再决定是否修改。')}
+      catch {setCurrent(null); setMessage('保存结果待确认，请重新读取企业默认。')}
     } finally {setSaving(false)}
   }
   return <div className="grid gap-2">
@@ -51,9 +52,9 @@ export function CustomerMode({value, ready, options, adapter, onChange, onInitia
     <div className="flex flex-wrap items-center gap-2">
       <Select value={ready ? value : ''} onValueChange={onChange} onOpenChange={open => {if (open) onRefresh?.()}}><SelectTrigger id="audit-customer" className="w-56"><SelectValue placeholder="请选择本次审核客户"/></SelectTrigger><SelectContent><SelectItem value="auto">自动识别</SelectItem>{choices.map(option => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select>
       <Button variant="ghost" disabled={!current || saving || !canSave} onClick={() => setConfirming(true)}>设为企业默认</Button>
+      {/* The enterprise default sits beside its action in one quiet line; choosing here changes only this task. */}
+      {current ? <span className="text-sm text-muted-foreground">企业默认：{presetCustomers.find(option => option.value === current.customer_preference)?.label || '自动识别'}</span> : !message && <span role="status" className="flex items-center gap-1.5 text-sm text-muted-foreground"><Loader2 aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none"/>正在读取企业默认…</span>}
     </div>
-    <p className="text-sm text-muted-foreground">本次切换只影响当前任务。{current && `企业默认：${presetCustomers.find(option => option.value === current.customer_preference)?.label || '自动识别'}。`}</p>
-    {!current && !message && <p role="status" className="text-sm">正在读取企业默认，或请选择本次审核客户。</p>}
     {message && <p role="status" className="text-sm">{message}<Button variant="link" onClick={() => setReadRevision(revision => revision + 1)}>重新读取企业默认</Button></p>}
     <Dialog open={confirming} onOpenChange={open => {if (!saving) setConfirming(open)}}><DialogContent><DialogHeader><DialogTitle>更改企业默认客户？</DialogTitle><DialogDescription>设为{choices.find(option => option.value === value)?.label || '自动识别'}，仅影响本企业以后新建的任务。已有任务和历史结果保持原客户模式。</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" disabled={saving} onClick={() => setConfirming(false)}>取消</Button><Button disabled={saving} onClick={() => void save()}>{saving ? '保存中…' : '确认更改'}</Button></DialogFooter></DialogContent></Dialog>
   </div>

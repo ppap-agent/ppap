@@ -207,7 +207,7 @@ def test_opened_task_remains_visible_until_its_workbench_list_is_complete():
         table = page.get_by_role("table", name="全部任务审核记录", exact=True)
         expect(table.get_by_role("row").filter(has_text="PPAP-另一任务")).to_be_visible()
         expect(table.get_by_role("row").filter(has_text="PPAP-状态核对")).to_be_visible()
-        expect(page.get_by_role("tab", name="全部任务", exact=False)).to_have_text("全部任务—")
+        expect(page.get_by_role("tab", name="全部任务", exact=False)).to_have_text("全部任务")
         page.get_by_role("button", name="加载更多记录", exact=True).click()
         expect(page.get_by_role("tab", name="全部任务", exact=False)).to_have_text("全部任务2")
         expect(table.get_by_role("row").filter(has_text="PPAP-状态核对")).to_be_visible()

@@ -27,7 +27,7 @@ export function useReportGeneration(items: ReportItem[], onChange: (reference: A
     if (readOnly ? previous.generation_request?.state !== 'pending' : previous.state !== 'failed' || !previous.regenerate_allowed || previous.generation_request?.state === 'pending') return
     const requestId = readOnly ? previous.generation_request!.request_id : crypto.randomUUID()
     pending.current.add(reference.report_id); setBusy([...pending.current])
-    const observation = {...previous, generation_request: {request_id: requestId, state: 'pending' as const, reason: '未取得报告生成回执，只读取原请求，不重复生成。'}}
+    const observation = {...previous, generation_request: {request_id: requestId, state: 'pending' as const, reason: '未取得报告生成结果，只查看原请求，不重复生成。'}}
     commit(reference, observation)
     try {
       const update = await command(structuredClone(reference), requestId)
@@ -38,7 +38,7 @@ export function useReportGeneration(items: ReportItem[], onChange: (reference: A
       commit(reference, {...(update.report || latest), generation_request: update.receipt})
     } catch {
       const latest = locate(reference)
-      if (latest === observation) commit(reference, {...latest, generation_request: {request_id: requestId, state: 'pending', reason: '报告生成结果未知。只读取原请求，不重复生成或重审。'}})
+      if (latest === observation) commit(reference, {...latest, generation_request: {request_id: requestId, state: 'pending', reason: '报告生成结果未知。只查看原请求，不重复生成或重审。'}})
     } finally {pending.current.delete(reference.report_id); if (alive.current) setBusy([...pending.current])}
   }
   return {busy, regenerate: (reference: AuditReportReference) => run(reference, false), read: (reference: AuditReportReference) => run(reference, true)}
@@ -70,7 +70,7 @@ export function useReportPackage(job: AuditReportPackage | null | undefined, onC
     const command = readOnly ? read && (() => read(requestId)) : recovery ? retry && (() => retry(structuredClone(recovery), requestId)) : create && (() => create(references, requestId))
     if (!command) return
     pending.current = true; setPackageBusy(true)
-    const observation: AuditReportPackage = readOnly ? previous! : {package_id: null, reports: references, receipt: {request_id: requestId, state: 'pending', reason: null}, state: 'pending', artifact: null, reason: 'ZIP 受理结果未知；只读取原打包请求。', retry_allowed: false}
+    const observation: AuditReportPackage = readOnly ? previous! : {package_id: null, reports: references, receipt: {request_id: requestId, state: 'pending', reason: null}, state: 'pending', artifact: null, reason: 'ZIP 提交结果未知；只查看原打包请求。', retry_allowed: false}
     if (!readOnly) commit(observation)
     try {
       const next = await command()

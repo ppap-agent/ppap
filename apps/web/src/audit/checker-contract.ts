@@ -18,7 +18,7 @@ export const nativeCheckerReleaseAdapter: CheckerReleaseAdapter = {
   adopt: async (key, input) => checkedAdoption(await request(`/suites/${encoded(key)}/active`, 'PUT', input), key, input),
 }
 export function checkedAdoption(receipt: AdoptionReceipt, key: string, input: AdoptChecker) {
-  if (receipt.operation_id !== input.operation_id || receipt.suite_key !== key || receipt.revision_id !== input.revision_id || receipt.force_unverified !== input.force_unverified || receipt.revision !== input.expected_revision + 1) throw new Error('发布回执与本次操作不一致，请读取原操作。')
+  if (receipt.operation_id !== input.operation_id || receipt.suite_key !== key || receipt.revision_id !== input.revision_id || receipt.force_unverified !== input.force_unverified || receipt.revision !== input.expected_revision + 1) throw new Error('发布结果与本次操作不一致，请查看原操作。')
   return receipt
 }
 export function verificationText(validation: ValidationSummary) {

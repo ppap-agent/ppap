@@ -61,8 +61,8 @@ def check(context):
         sheet = book.active
         present = bool(sheet["A1"].value)
         locator = json.dumps({"kind": "xlsx_cell", "sheet": sheet.title, "cell": "A1"})
-        return AuditResultItem(classification="资料", item="冻结原件 A1 已填写", priority="P0",
-            status="PASS" if present else "NG", suggestions="已核对冻结原件 A1。", clause_id=context.clause_id, checks_performed=1,
+        return AuditResultItem(classification="资料", item="固定原件 A1 已填写", priority="P0",
+            status="PASS" if present else "NG", suggestions="已核对固定原件 A1。", clause_id=context.clause_id, checks_performed=1,
             evidence=AuditEvidence(required="structure", used="structure", source_format="xlsx", prepared_format="xlsx",
                 sources=(EvidenceSource(kind="structure", locator=locator),)))
     finally:
@@ -78,7 +78,7 @@ def adopt_presence_rule(page, api):
     selection while its round is being accepted.
     """
     stamp = uuid.uuid4().hex
-    source = upload_version(page, api, f"presence-rule-{stamp}.txt", "冻结原件 A1 必须已填写。".encode())
+    source = upload_version(page, api, f"presence-rule-{stamp}.txt", "固定原件 A1 必须已填写。".encode())
     response = page.request.post(
         f"{api}/rules",
         data={
@@ -91,7 +91,7 @@ def adopt_presence_rule(page, api):
                 "customers": [],
                 "models": [],
                 "parts": [],
-                "rules": [{"id": "presence", "category": "资料", "priority": "P0", "rule_to_check": "冻结原件 A1 必须已填写。", "type_of_rule": "text"}],
+                "rules": [{"id": "presence", "category": "资料", "priority": "P0", "rule_to_check": "固定原件 A1 必须已填写。", "type_of_rule": "text"}],
             },
         },
     )
@@ -230,7 +230,7 @@ class WebAuditLoopTests(unittest.TestCase):
             original_reader = page.get_by_role("dialog", name="presence · 资料", exact=True)
             basis = original_reader.get_by_role("article", name="条款判定依据", exact=True)
             expect(basis.get_by_text("符合", exact=True)).to_be_visible()
-            expect(basis.get_by_text("冻结原件 A1 必须已填写。", exact=True)).to_be_visible()
+            expect(basis.get_by_text("固定原件 A1 必须已填写。", exact=True)).to_be_visible()
             basis.get_by_role("button", name="核对 " + name, exact=True).click()
             original_panel = original_reader.get_by_role("region", name="原件预览", exact=True)
             expect(original_panel).to_have_attribute("data-file-version", target["file_version_id"])
@@ -240,7 +240,7 @@ class WebAuditLoopTests(unittest.TestCase):
             self.assertEqual(page.request.get(download_url).body(), target_bytes)
             page.keyboard.press("Escape")
             expect(original_reader).not_to_be_visible()
-            detail.get_by_role("button", name="专注复核（选做）", exact=True).click()
+            detail.get_by_role("button", name="逐条复核", exact=True).click()
             focus = detail.get_by_role("region", name="专注复核", exact=True)
             expect(focus.get_by_text("人工已复核 0/1 · 不改变机器结果", exact=True)).to_be_visible()
             focus.get_by_role("button", name="记录人工复核", exact=True).click()
@@ -293,7 +293,7 @@ class WebAuditLoopTests(unittest.TestCase):
 
             page.goto(WEB)
             page.goto(f"{WEB}/audit?round={original['id']}")
-            detail.get_by_role("button", name="专注复核（选做）", exact=True).click()
+            detail.get_by_role("button", name="逐条复核", exact=True).click()
             recorded = focus.get_by_role("region", name="已有人工复核", exact=True)
             expect(recorded).to_contain_text("已核对第一版原件，记录不等于正式批准。")
             expect(recorded).to_contain_text("保留版本与原件。")

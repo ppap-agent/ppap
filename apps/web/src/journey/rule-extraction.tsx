@@ -11,7 +11,7 @@ import {canonical, parsedBasis} from './product'
 import {message, useRemote} from './remote'
 import {restoreRequirementSources} from './requirement-sources'
 
-const ruleParseReceiptError = '提取回执与当前原件或资料类型不一致。草稿已保留，请核对原提取请求。'
+const ruleParseReceiptError = '提取结果与当前原件或资料类型不一致。草稿已保留，请核对原提取请求。'
 function matchesSource(job: RuleParseJob, basis: RequirementBasis) {
   const server = basis.server
   // A failed job has no candidate to apply; the user may correct its type.
@@ -63,7 +63,7 @@ export function RuleExtraction({basis, onChange, readonly = false}: {basis: Requ
     } else if ('error' in result) {consumed.current = job.value!.id; setError(`要求提取未完成：${result.error}`)}
   }, [job.value, onChange, readonly])
   if (!basis.server || readonly) return null
-  if (basis.source.state === 'ready' || basis.source.state === 'manual' && basis.server.body.type) return <div className="space-y-2"><p className="text-sm text-muted-foreground">适用资料：{basis.server.body.type}</p>{sources.error && <p role="alert" className="text-sm text-destructive">无法读取原文出处。<Button variant="outline" size="sm" onClick={sources.refresh}>重新读取出处</Button></p>}</div>
+  if (basis.source.state === 'ready' || basis.source.state === 'manual' && basis.server.body.type) return <div className="space-y-2"><p className="text-sm text-muted-foreground">适用资料：{basis.server.body.type}</p>{sources.error && <p role="alert" className="text-sm text-destructive">无法查看原文出处。<Button variant="outline" size="sm" onClick={sources.refresh}>重新读取出处</Button></p>}</div>
   // A read in flight does not erase the last observation of this exact job.
   const status = job.value && !matchesSource(job.value, basis) ? null : observed.current?.id === basis.server.parseId ? observed.current?.status : null
   const pending = status === 'queued' || status === 'leased'
