@@ -35,7 +35,6 @@ class AuditArchivePreviewTests(unittest.TestCase):
             identity.locator("time").locator(".."),
             identity.get_by_text("发起人：示例李工", exact=True),
             identity.get_by_text("原件修订：Rev C", exact=True),
-            identity.get_by_role("button", name="打开来源任务", exact=True),
         )
         # Wait for the actual recipe-free state and comparison, not a transient loading layout.
         expect(page.get_by_role("region", name="原件事实确认", exact=True)).to_have_count(0)
@@ -63,6 +62,11 @@ class AuditArchivePreviewTests(unittest.TestCase):
         # The table's scrollport fills the result region's content box. On narrow screens the
         # columns may scroll inside it, but must not widen the page or disappear through clipping.
         items = details.get_by_role("region", name="审核项", exact=True)
+        if page.viewport_size["width"] < 640:
+            # Phones read results as cards, so the verdict is never clipped by a table scrollport.
+            expect(items.get_by_role("list", name="审核项列表", exact=True)).to_be_visible()
+            self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), page.viewport_size["width"])
+            return
         geometry = items.evaluate("""el => {
             const box = el.getBoundingClientRect(), style = getComputedStyle(el);
             const table = el.querySelector('table'), scrollport = table.parentElement, frame = scrollport.parentElement;

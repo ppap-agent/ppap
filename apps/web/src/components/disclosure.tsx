@@ -8,7 +8,8 @@ export function Disclosure({summary, children, className, defaultOpen, open, onO
   return <div className={className}>
     <Collapsible defaultOpen={defaultOpen} open={open} onOpenChange={onOpenChange}>
       <CollapsibleTrigger asChild><Button variant="ghost" size="sm" className="group h-auto min-h-8 max-w-full justify-start whitespace-normal text-left"><ChevronRight aria-hidden="true" className="transition-transform group-data-[state=open]:rotate-90"/><span className="min-w-0">{summary}</span></Button></CollapsibleTrigger>
-      <CollapsibleContent><div className="space-y-3 pt-2">{children}</div></CollapsibleContent>
+      {/* Like <details>, closed content stays in the page (hidden), so its state and text survive a collapse. */}
+      <CollapsibleContent forceMount className="data-[state=closed]:hidden"><div className="space-y-3 pt-2">{children}</div></CollapsibleContent>
     </Collapsible>
   </div>
 }

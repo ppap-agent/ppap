@@ -11,7 +11,7 @@ import {canonical, parsedBasis} from './product'
 import {message, useRemote} from './remote'
 import {restoreRequirementSources} from './requirement-sources'
 
-const ruleParseReceiptError = '提取结果与当前原件或资料类型不一致。草稿已保留，请核对原提取请求。'
+const ruleParseReceiptError = '提取结果与当前原件或资料类型不一致。草稿已保留，请查看提取进度。'
 function matchesSource(job: RuleParseJob, basis: RequirementBasis) {
   const server = basis.server
   // A failed job has no candidate to apply; the user may correct its type.
@@ -85,12 +85,12 @@ export function RuleExtraction({basis, onChange, readonly = false}: {basis: Requ
   }
   return <Dialog open={rerun} onOpenChange={setRerun}><section className={"flex flex-col gap-3 py-4"} aria-label="提取审核条款">
     <div className={"flex flex-wrap items-end gap-3"}><label className={"flex flex-col gap-2 text-sm"}>适用资料类型<NativeSelect value={basis.server.body.type} disabled={Boolean(basis.server.parseId && status !== 'failed')} onChange={event => onChange({...basis, server: {...basis.server!, body: {...basis.server!.body, type: event.target.value}}})}><NativeSelectOption value="">请选择</NativeSelectOption>{types.value?.types.map(type => <NativeSelectOption key={type} value={type}>{type}</NativeSelectOption>)}</NativeSelect></label>
-      <Button variant="outline" disabled={busy || !basis.server.body.type || pending && !job.error} onClick={() => void parse()}>{status === 'failed' ? '重新提取条款' : basis.server.parseId ? '核对原提取请求' : '提取条款'}</Button>
-      {basis.server.parseId && <Button variant="ghost" onClick={job.refresh}>刷新提取状态</Button>}
+      <Button disabled={busy || !basis.server.body.type || pending && !job.error} onClick={() => void parse()}>{status === 'failed' ? '重新提取条款' : basis.server.parseId ? '查看提取进度' : '提取条款'}</Button>
+      {basis.server.parseId && <Button variant="ghost" onClick={job.refresh}>刷新提取进度</Button>}
       {unknown && <DialogTrigger asChild><Button variant="outline" disabled={busy}>重新提取条款</Button></DialogTrigger>}
     </div>
     {pending && !job.error && <p role="status" className={"text-sm text-muted-foreground"}>正在提取条款，完成后逐条核对原文。</p>}
-    {unknown && <Alert><AlertTitle>提取结果暂不确定</AlertTitle><AlertDescription>原任务可能仍会完成。请先核对原提取请求；重新提取可能再次消耗模型费用。</AlertDescription></Alert>}
+    {unknown && <Alert><AlertTitle>提取结果暂不确定</AlertTitle><AlertDescription>原任务可能仍会完成。请先查看提取进度；重新提取可能再次消耗模型费用。</AlertDescription></Alert>}
     {(error || job.error || types.error) && <p role="alert" className={"text-sm text-destructive"}>{error || job.error || types.error}</p>}
   </section><DialogContent><DialogHeader><DialogTitle>重新提取条款？</DialogTitle><DialogDescription>原任务可能仍会完成。重新提取会创建一个新请求，可能再次消耗模型费用；不会取消原任务。</DialogDescription></DialogHeader><DialogFooter><DialogClose asChild><Button variant="outline">取消</Button></DialogClose><Button disabled={busy || !unknown} onClick={() => void parse(true)}>确认重新提取</Button></DialogFooter></DialogContent></Dialog>
 }

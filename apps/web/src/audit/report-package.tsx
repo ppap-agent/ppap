@@ -1,3 +1,4 @@
+import {ArrowLeft} from 'lucide-react'
 import {ReadSkeleton} from '../components/read-skeleton'
 import {useEffect, useRef, useState} from 'react'
 import type {components} from '../generated/openapi'
@@ -38,7 +39,7 @@ export function LinkedReportPackage({task, requestId, adapter, nameFor, busy, on
     finally {if (request === epoch.current) setReading(false)}
   }
   useEffect(() => {void read(); return () => {epoch.current += 1}}, [requestId, adapter])
-  return <section aria-label="通知中的 ZIP" className="space-y-3"><Button variant="ghost" onClick={onExit}>返回当前报告中心</Button>{reading && <ReadSkeleton label="正在读取此 ZIP…" kind={job ? 'inline' : 'detail'}/>}{(error || scopeError) ? <Alert variant="destructive"><AlertTitle>此 ZIP 暂不可用</AlertTitle><AlertDescription>{error || scopeError}<Button variant="outline" disabled={reading} onClick={() => void read()}>重新读取此 ZIP</Button></AlertDescription></Alert> : <ReportPackage job={job} nameFor={nameFor} busy={busy || reading || actions.packageBusy} onRead={() => void actions.readPackage()} onDownload={() => {if (job) onDownload(job)}} onRetry={() => {if (job) void actions.createPackage(job.reports)}} downloadError={downloadError}/>}</section>
+  return <section aria-label="通知中的 ZIP" className="space-y-3"><Button variant="link" onClick={onExit}><ArrowLeft aria-hidden="true"/>返回当前报告中心</Button>{reading && <ReadSkeleton label="正在读取此 ZIP…" kind={job ? 'inline' : 'detail'}/>}{(error || scopeError) ? <Alert variant="destructive"><AlertTitle>此 ZIP 暂不可用</AlertTitle><AlertDescription>{error || scopeError}<Button variant="outline" disabled={reading} onClick={() => void read()}>重新读取此 ZIP</Button></AlertDescription></Alert> : <ReportPackage job={job} nameFor={nameFor} busy={busy || reading || actions.packageBusy} onRead={() => void actions.readPackage()} onDownload={() => {if (job) onDownload(job)}} onRetry={() => {if (job) void actions.createPackage(job.reports)}} downloadError={downloadError}/>}</section>
 }
 
 export function ReportPackage({job, nameFor, busy, onRead, onDownload, onRetry, downloadError}: {job?: Job | null; nameFor: (reference: Reference) => string; busy: boolean; onRead: () => void; onDownload: () => void; onRetry: () => void; downloadError: string}) {

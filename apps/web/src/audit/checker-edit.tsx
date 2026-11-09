@@ -56,6 +56,6 @@ export function CheckerEditor({scope, revision, onSaved, disabled = false, saveD
     <Disclosure  summary={<>修改模板结构映射</>}><Label htmlFor={`${id}-templates`}>模板映射（JSON 对象列表）</Label><Textarea id={`${id}-templates`} value={templates} disabled={readOnly} onChange={event => setTemplates(event.target.value)} className="min-h-32"/><p>只填写有权使用的结构映射；原件不会因编辑模板而被共享。</p></Disclosure>
     <Disclosure className="hidden sm:block" summary={<>高级：修改 Python 检查代码</>}>{Object.entries(code).map(([path, value], index) => <div key={path} className="space-y-2"><Label htmlFor={`${id}-code-${index}`}>{path}</Label><Textarea id={`${id}-code-${index}`} value={value} disabled={readOnly} spellCheck={false} className="min-h-48" onChange={event => setCode(values => ({...values, [path]: event.target.value}))}/></div>)}</Disclosure>
     <p className="sm:hidden text-muted-foreground">代码编辑和完整对比请在电脑上进行。</p>
-    <Button variant="outline" disabled={readOnly || saveDisabled || !rules.length} onClick={() => void save()}>仅保存这些修改</Button>{pending && <Button variant="outline" disabled={busy} onClick={() => void recover()}>查看原保存操作</Button>}
+    <Button variant="outline" disabled={readOnly || saveDisabled || !rules.length} onClick={() => void save()}>保存修改</Button>{pending && <Button variant="outline" disabled={busy} onClick={() => void recover()}>查看原保存操作</Button>}
   </Disclosure>
 }

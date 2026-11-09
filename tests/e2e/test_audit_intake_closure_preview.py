@@ -20,7 +20,7 @@ class AuditIntakeClosureTests(unittest.TestCase):
             browser = playwright.chromium.launch()
             page = browser.new_page()
             page.goto(PREVIEW + "/preview/audit.html?scene=restore-card-pending&task=preview-recovery-task")
-            reason = "已收到卡片确认，正在核对用量，尚未被接收。"
+            reason = "已收到卡片确认，正在核对用量，尚未受理。"
             expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
             expect(page.get_by_role("alert")).to_have_attribute("data-request-id", "preview-recovery-request")
             expect(page.get_by_role("alert")).to_contain_text(reason)

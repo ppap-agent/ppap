@@ -181,7 +181,8 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
                     page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name=re.compile("^全部")).click()
                     actions = page.get_by_role("button", name=re.compile("^查看依据 "))
                     expect(actions).to_have_count(2)
-                    for action in actions.all():
+                    # Phones show cards whose whole face is the action; tables keep one-line actions.
+                    for action in actions.all() if width >= 640 else []:
                         self.assertEqual(action.evaluate("element => getComputedStyle(element).whiteSpace"), "nowrap")
                         self.assertGreaterEqual(action.evaluate("element => element.closest('td').getBoundingClientRect().width"), 112)
                     self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), width)

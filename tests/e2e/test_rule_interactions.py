@@ -313,7 +313,7 @@ class RuleInteractionTests(unittest.TestCase):
             self.open_requirement(page, "/audit?view=requirements", document_type="全功能检验报告")
             state["status"] = "failed"
             state["parse_patch"] = {"result": {"error": "rule_document_type_mismatch"}}
-            page.get_by_role("button", name="刷新提取状态", exact=True).click()
+            page.get_by_role("button", name="刷新提取进度", exact=True).click()
             expect(page.get_by_role("alert").filter(has_text="原件中的资料类型与所选类型不同")).to_be_visible()
             page.get_by_label("适用资料类型").select_option("控制计划")
             state["status"] = "succeeded"
@@ -352,7 +352,7 @@ class RuleInteractionTests(unittest.TestCase):
                     page.get_by_role("textbox", name="来源说明／变更原因", exact=True).fill("保留的来源说明")
                     state["parse_patch"] = patch
                     state["status"] = "succeeded"
-                    page.get_by_role("button", name="刷新提取状态", exact=True).click()
+                    page.get_by_role("button", name="刷新提取进度", exact=True).click()
                     expect(page.get_by_role("alert").filter(has_text="提取回执与当前原件或资料类型不一致")).to_be_visible()
                     expect(page.get_by_label("要求名称", exact=True)).to_have_value("保留的草稿名称")
                     expect(page.get_by_role("textbox", name="来源说明／变更原因", exact=True)).to_have_value("保留的来源说明")
@@ -361,7 +361,7 @@ class RuleInteractionTests(unittest.TestCase):
                     self.assertEqual(len(state["parses"]), 1)
                     self.assertEqual(state["saves"], [])
                     state["parse_patch"] = {}
-                    page.get_by_role("button", name="核对原提取请求", exact=True).click()
+                    page.get_by_role("button", name="查看提取进度", exact=True).click()
                     expect(page.get_by_role("article", name="条款 1", exact=True)).to_contain_text("检查 A")
                     expect(page.get_by_text("提取回执与当前原件或资料类型不一致", exact=False)).to_have_count(0)
                     expect(page.get_by_role("textbox", name="来源说明／变更原因", exact=True)).to_have_value("保留的来源说明")
@@ -2350,7 +2350,7 @@ class RuleInteractionTests(unittest.TestCase):
             self.assertEqual(len(posts), 1)
             self.assertEqual(writes, [])
             with page.expect_request("**/api/rules/parse/" + original):
-                page.get_by_role("button", name="核对原提取请求", exact=True).click()
+                page.get_by_role("button", name="查看提取进度", exact=True).click()
             expect(unknown).to_be_visible()
             self.assertEqual(len(posts), 1)
             self.assertEqual(writes, [])
@@ -2362,7 +2362,7 @@ class RuleInteractionTests(unittest.TestCase):
             self.assertEqual(writes, [])
             hold_original = True
             with page.expect_request("**/api/rules/parse/" + original):
-                page.get_by_role("button", name="刷新提取状态", exact=True).click()
+                page.get_by_role("button", name="刷新提取进度", exact=True).click()
             # The request event precedes the route callback under concurrent
             # browser load. Wait for the callback before releasing its reply.
             deadline = time.monotonic() + 5
@@ -2380,7 +2380,7 @@ class RuleInteractionTests(unittest.TestCase):
             self.assertEqual(posts[1]["document_type"], "控制计划")
             delayed[0].fulfill(json=job(original, "succeeded"))
             with page.expect_request("**/api/rules/parse/" + posts[1]["request_id"]):
-                page.get_by_role("button", name="刷新提取状态", exact=True).click()
+                page.get_by_role("button", name="刷新提取进度", exact=True).click()
             expect(unknown).to_be_visible()
             expect(page.get_by_label("要求名称", exact=True)).to_have_value("待核对要求")
             expect(page.get_by_role("region", name="要求条款", exact=True).get_by_role("article")).to_have_count(0)
