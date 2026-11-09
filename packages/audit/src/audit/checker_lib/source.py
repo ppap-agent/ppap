@@ -236,6 +236,9 @@ class NativeFacts:
             self.witness(location, page["blocks"][location["block"] - 1]["text"], self.version)
 
     def tables(self, title: tuple[str, ...] = ()):
+        unresolved = self.data.get("coverage", {}).get("unresolved_pages", [])
+        if self.format == ".pdf" and unresolved:
+            raise UnknownFact("PDF仍有未解析页面，不能确认完整表格范围：" + "、".join(map(str, unresolved)))
         if self.format == ".pdf" and self.data.get("prepared_format") != "xlsx":
             return []
         available = [table for table in self.data.get("tables", []) if not any(word in key(table["id"]) for word in ("填写指南", "填表说明", "填写说明", "评分", "準則", "准则", "数据库"))]
@@ -252,9 +255,6 @@ class NativeFacts:
 
     def table(self, title: tuple[str, ...] = ()):
         if self.format == ".pdf":
-            unresolved = self.data.get("coverage", {}).get("unresolved_pages", [])
-            if unresolved:
-                raise UnknownFact("PDF仍有未解析页面，不能确认完整表格范围：" + "、".join(map(str, unresolved)))
             if self.data.get("prepared_format") != "xlsx":
                 raise UnknownFact("PDF尚未形成可靠的Excel表格，无法检查表格内容。")
         tables = self.tables(title)
@@ -519,7 +519,8 @@ class SourceAudit:
             if self.rule_checkers[ith] is None:
                 raise UnknownFact(self.resource.get("known_gaps", {}).get(self.clause_ids[ith], "此条款尚无可用的原件证据读取器，无法检查。"))
             suffix = Path(self.audit_file.file_url).suffix.lower()
-            if suffix not in self.resource["supported_suffixes"]:
+            supported = self.resource["clauses"][self.clause_ids[ith]].get("carriers", self.resource["supported_suffixes"])
+            if suffix not in self.resource["supported_suffixes"] or suffix not in supported:
                 raise UnknownFact("此检查不支持当前原件载体，未形成业务判断。")
             if not self.audit_file.audit_id:
                 raise UnknownFact("缺少冻结原件版本，不能形成业务判断。")

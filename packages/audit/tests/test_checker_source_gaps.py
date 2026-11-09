@@ -29,3 +29,19 @@ def test_reader_and_gap_keep_exact_ids_and_distinct_execution_counts(tmp_path):
         assert read.clause_id == "C:2" and read.evidence.sources
     finally:
         audit.close()
+
+
+def test_clause_carrier_limit_stops_before_source_or_model_read(tmp_path):
+    class Audit(SourceAudit):
+        def read(self):
+            raise AssertionError("This clause cannot read PDF")
+
+    rule = RuleInput(rule_id="rules", rules=[{"id": "R1"}])
+    resource = {"supported_suffixes": (".xlsx", ".pdf"), "clauses": {"R1": {"method": "read", "carriers": (".xlsx",)}}}
+    audit = Audit(AuditInput(audit_id="frozen", file_url=str(tmp_path / "not-read.pdf")), rule, resource=resource)
+    try:
+        result = audit.evaluate("R1")
+        assert result.status == "UNABLE" and result.checks_performed == 0
+        assert "不支持" in result.suggestions
+    finally:
+        audit.close()

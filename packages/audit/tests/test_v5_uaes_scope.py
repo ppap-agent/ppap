@@ -56,6 +56,10 @@ def test_special_characteristics_pdf_with_unread_second_page_cannot_pass(tmp_pat
     factory, rule = _factory(monkeypatch, "U12")
     audit = factory(AuditInput(audit_id="original", file_url=str(path), customer="UAES"), rule)
     try:
+        from audit.checker_lib.source import UnknownFact
+
+        with pytest.raises(UnknownFact, match="未解析页面"):
+            audit.native().tables()
         result = audit.evaluate("U12:2")
         assert result.status == "UNABLE", result
         assert result.checks_performed == 0
