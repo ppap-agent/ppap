@@ -612,9 +612,13 @@ class SuiteReleaseStore:
                                 factory |= isinstance(binding, dict) and "checker:create_audit" in binding.values()
                                 tree = ast.parse(snapshot["checker.py"])
                                 factory |= any(
-                                    isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name == "create_audit"
-                                    or isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store) and node.id == "create_audit"
-                                    or isinstance(node, ast.alias) and (node.asname or node.name) == "create_audit"
+                                    isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                                    and node.name == "create_audit"
+                                    or isinstance(node, ast.Name)
+                                    and isinstance(node.ctx, ast.Store)
+                                    and node.id == "create_audit"
+                                    or isinstance(node, ast.alias)
+                                    and (node.asname or node.name) == "create_audit"
                                     for node in ast.walk(tree)
                                 )
                             except (SyntaxError, ValueError, AttributeError):
