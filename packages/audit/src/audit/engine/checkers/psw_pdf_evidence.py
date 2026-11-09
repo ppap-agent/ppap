@@ -439,7 +439,7 @@ class PswPdfEvidenceMixin:
         sources: list[EvidenceSource] = []
 
         def witness(locator: dict[str, object], excerpt: str, *, visual: bool = False) -> None:
-            if locator.get("fact") and locator["fact"] not in PSW_RULE_FIELDS[rule_no]:
+            if locator.get("fact") and locator["fact"] not in {*PSW_RULE_FIELDS[rule_no], "psw_reference_content"}:
                 return
             sources.append(EvidenceSource(kind="visual" if visual else "structure", locator=json.dumps(locator, ensure_ascii=False, separators=(",", ":")), excerpt=excerpt[:500]))
 
@@ -449,10 +449,17 @@ class PswPdfEvidenceMixin:
         try:
             slots = len(getattr(getattr(self, "rule", None), "rules", []) or [])
             batch_fields = {field: description for number, requirements in PSW_RULE_FIELDS.items() if number <= slots for field, description in requirements.items()}
-            facts = read_original_pdf_visual_facts(
-                host.audit_file, PSW_RULE_FIELDS[rule_no], witness, operation=f"psw_rule_{rule_no}", cache=self._paddle_page_cache, batch_fields=batch_fields or PSW_RULE_FIELDS[rule_no]
+            from .psw_scope import evaluate_psw_pdf_rule
+
+            facts, result = evaluate_psw_pdf_rule(
+                host.audit_file,
+                rule_no,
+                witness,
+                self._paddle_page_cache,
+                lambda: read_original_pdf_visual_facts(
+                    host.audit_file, PSW_RULE_FIELDS[rule_no], witness, operation=f"psw_rule_{rule_no}", cache=self._paddle_page_cache, batch_fields=batch_fields or PSW_RULE_FIELDS[rule_no]
+                ),
             )
-            result = evaluate_psw_observation(rule_no, facts)
             diagnostic = None
             if result.status == "UNABLE":
                 diagnostic = EvidenceDiagnostic(code="psw.paddle.fact_unconfirmed", stage="visual", severity="warning", message="原生、Paddle或OCR模型证据未能确认所需事实，请核对原件。")

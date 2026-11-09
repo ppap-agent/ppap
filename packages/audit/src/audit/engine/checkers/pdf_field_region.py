@@ -61,8 +61,10 @@ def pdf_field_region(page, fields):
             primary = fitz.Rect(max(0, anchor.x0 - 12), max(0, top), page.rect.x1, page.rect.y1)
     elif requested and requested.issubset({"psw_stamp_present", "psw_stamp_ending_text"}):
         anchors = page.search_for("公司名称")
-        if anchors:
-            anchor = anchors[-1]
+        # Repeated labels can come from instructions, not the seal field.
+        # Preserve page coverage when one complete field cannot be located.
+        if len(anchors) == 1:
+            anchor = anchors[0]
             following = [box.y0 for label in ("认可情况", "仅供理想使用") for box in page.search_for(label) if box.y0 > anchor.y1]
             bottom = min(following, default=page.rect.y1) - 2
             primary = fitz.Rect(max(0, anchor.x0 - 8), max(0, anchor.y0 - 8), page.rect.x1, bottom)

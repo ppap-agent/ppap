@@ -41,6 +41,8 @@ def _diagnostic_facts(facts: dict[str, object]) -> dict[str, object]:
     summary = psw_fact_summary(facts)
     if "seal" in facts:
         summary["seal"] = facts["seal"] if type(facts["seal"]) is bool else None
+    if "psw_reference_content" in facts:
+        summary["psw_reference_content"] = facts["psw_reference_content"] if type(facts["psw_reference_content"]) is bool else None
     return summary
 
 
@@ -103,19 +105,18 @@ def _schema(fields: dict[str, str], field_scopes: dict[str, list[str]], image_co
     return {"name": "source_visual_facts", "strict": True, "schema": {"type": "object", "additionalProperties": False, "required": list(fields), "properties": properties}}
 
 
-def observe_ocr_images(
+def observe_ocr_scopes(
     images: list[OcrImage],
     fields: dict[str, str],
     witness: Callable[..., None],
     *,
     context: str = "",
     field_scopes: dict[str, list[str]] | None = None,
-    any_fields: frozenset[str] = frozenset(),
     native_by_scope: dict[str, dict[str, object]] | None = None,
     context_by_scope: dict[str, str] | None = None,
     request_cache: dict | None = None,
-) -> dict[str, object]:
-    """Read each original scope, then combine facts without a vote.
+) -> dict[str, dict[str, object]]:
+    """Establish each scope's facts without combining different objects.
 
     A model-only fact is established only when two independent observations
     of the same inputs agree on a known value; neither observation has priority.
@@ -123,7 +124,7 @@ def observe_ocr_images(
     trigger another request for an already observed or failed scope.
     """
     if not images or not fields:
-        return dict.fromkeys(fields)
+        return {}
     scopes: dict[str, list[OcrImage]] = {}
     for image in images:
         scopes.setdefault(str(image.locator.get("scope", "document")), []).append(image)
@@ -185,7 +186,7 @@ def observe_ocr_images(
                     request_cache[key] = error
                 raise
             finally:
-                if {"seal", "psw_stamp_present", "psw_stamp_ending_text", "authorization_table_present", "authorization_company_stamp_present"}.intersection(subset):
+                if {"seal", "psw_stamp_present", "psw_stamp_ending_text", "authorization_table_present", "authorization_company_stamp_present", "psw_reference_content"}.intersection(subset):
                     # Keep failed-case evidence without recording model text,
                     # file names, arbitrary scope strings, or provider errors.
                     diagnostic = {
@@ -208,12 +209,32 @@ def observe_ocr_images(
             witness(*args, **kwargs)
         for field, value in facts.items():
             observations[field][scope] = value
+    return {scope: {field: values[scope] for field, values in observations.items() if scope in values} for scope in scopes}
+
+
+def observe_ocr_images(
+    images: list[OcrImage],
+    fields: dict[str, str],
+    witness: Callable[..., None],
+    *,
+    context: str = "",
+    field_scopes: dict[str, list[str]] | None = None,
+    any_fields: frozenset[str] = frozenset(),
+    native_by_scope: dict[str, dict[str, object]] | None = None,
+    context_by_scope: dict[str, str] | None = None,
+    request_cache: dict | None = None,
+) -> dict[str, object]:
+    """Combine observations of one fact; business quantifiers belong to callers."""
+    if not images or not fields:
+        return dict.fromkeys(fields)
+    by_scope = observe_ocr_scopes(images, fields, witness, context=context, field_scopes=field_scopes, native_by_scope=native_by_scope, context_by_scope=context_by_scope, request_cache=request_cache)
+    selected = field_scopes or {field: list(by_scope) for field in fields}
     result: dict[str, object] = dict.fromkeys(fields)
-    for field, values_by_scope in observations.items():
-        values = [values_by_scope[scope] for scope in selected[field]]
+    for field in fields:
+        values = [by_scope[scope][field] for scope in selected[field]]
         if field in any_fields and any(value is True for value in values):
             result[field] = True
-        elif all(value is not None for value in values) and len(set(values)) == 1:
+        elif values and all(value is not None for value in values) and len(set(values)) == 1:
             result[field] = values[0]
     return result
 
