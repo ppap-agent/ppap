@@ -65,9 +65,20 @@ def test_n03_all_header_values_and_exactly_one_stage(nio_execute, stage, expecte
     assert nio_execute("N03", "N03:5", {"控制计划": rows})["status"] == expected
 
 
-def test_n03_pdf_tables_use_excel_preparation_and_original_pdf_location(nio_execute):
+def test_n03_pdf_tables_use_excel_preparation_and_original_pdf_location(nio_execute, monkeypatch):
+    import hashlib
     import json
 
+    from audit.checker_lib.source import NativeFacts
+
+    original_location = NativeFacts.cell_location
+    metadata = []
+
+    def track(native, *args):
+        metadata.append(native.data)
+        return original_location(native, *args)
+
+    monkeypatch.setattr(NativeFacts, "cell_location", track)
     with fitz.open() as document:
         page = document.new_page(width=460, height=200)
         for y in (20, 60, 100, 160):
@@ -82,7 +93,12 @@ def test_n03_pdf_tables_use_excel_preparation_and_original_pdf_location(nio_exec
     assert result["evidence"]["source_format"] == "pdf"
     assert result["evidence"]["prepared_format"] == "xlsx"
     sources = [json.loads(source["locator"]) for source in result["evidence"]["sources"]]
-    assert sources and all(source["kind"] == "pdf_cell" and source["page"] == 1 and source["bbox"] and source["prepared_sheet"] for source in sources)
+    assert sources and all(source["kind"] == "pdf_page" and source["page"] == 1 and source["region"] and source["source_sha256"] == hashlib.sha256(content).hexdigest() for source in sources)
+    assert metadata and all(data["prepared_format"] == "xlsx" and data["prepared_sha256"] for data in metadata)
+    tables = metadata[0]["tables"]
+    assert tables and all(table["id"] for table in tables)
+    mapped = [item["source"] for table in tables for item in table["cells"].values() if item.get("source")]
+    assert mapped and all(item["bbox"] and item["row"] and item["column"] and item["page"] == 1 for item in mapped)
 
 
 def test_n03_unverified_related_originals_remain_explicitly_unknown(nio_execute):
