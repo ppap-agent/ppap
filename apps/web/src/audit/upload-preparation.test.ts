@@ -85,5 +85,5 @@ test('preparation-only drafts have native recovery links without replacing legac
 
 test('foreign draft receipts cannot replace the requested preparation', async () => {
   const adapter: PreparationAdapter = {readFile: noFile, read: async () => ({...draft(0), id: 'other-draft'}), save: async () => {throw new Error('unexpected_write')}}
-  await assert.rejects(createUploadPreparation(adapter).read('original-draft'), /回执不匹配/)
+  await assert.rejects(createUploadPreparation(adapter).read('original-draft'), /上传准备结果不匹配/)
 })

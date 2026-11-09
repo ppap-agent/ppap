@@ -547,7 +547,7 @@ test('native precheck reads the original validation after a lost submit reply wi
 test('native precheck refuses a result for another validation request', async () => {
   globalThis.fetch = async () => json({id: 'another-request', source_file_id: 'file-a', source_file_version_id: 'version-a', status: 'completed', result: {state: 'valid', reasons: []}})
   const adapter = createNativeAuditAdapter({deepOffered: false, customers: []})
-  await assert.rejects(adapter.readValidation({...file, validation_id: 'original-request'}), /回执/)
+  await assert.rejects(adapter.readValidation({...file, validation_id: 'original-request'}), /预检查结果不属于这份文件版本、用途或原请求/)
 })
 
 test('native matching sends all provenance and its exact input revision without a manual rule override', async () => {
@@ -694,7 +694,7 @@ test('a photo receipt cannot authorize ordinary validation or another original',
   globalThis.fetch = async () => json({id: 'original', scope, source_file_id: 'file-a', source_file_version_id: 'version-a', status: 'succeeded', result: {state: 'valid', reasons: []}})
   const adapter = createNativeAuditAdapter({deepOffered: false, customers: []})
   await assert.rejects(adapter.readValidation({...file, validation_id: 'original'}, null), /用途/)
-  await assert.rejects(adapter.readValidation({...file, file: {...file.file, id: 'other'}, validation_id: 'original', validation_scope: scope}, scope), /回执/)
+  await assert.rejects(adapter.readValidation({...file, file: {...file.file, id: 'other'}, validation_id: 'original', validation_scope: scope}, scope), /预检查结果不属于这份文件版本、用途或原请求/)
 })
 
 test('saved original validation identity restores its server-owned photo scope', async () => {

@@ -9,8 +9,8 @@ const candidate = (): CheckerRevision => ({id: 'candidate-a', suite_key: 'suite/
 
 test('upgrade receipt binds exact candidate, suite, source, target, original operation and publication CAS', () => {
   assert.equal(checkedUpgrade(candidate(), 'suite/a', input).id, 'candidate-a')
-  for (const changes of [{id: ''}, {id: input.source_revision_id}, {id: input.target_revision_id}, {suite_key: 'other'}, {base_revision_id: 'old'}, {upgrade: null}]) assert.throws(() => checkedUpgrade({...candidate(), ...changes}, 'suite/a', input), /升级回执/)
-  for (const changes of [{operation_id: 'other'}, {source_revision_id: 'other'}, {target_revision_id: 'other'}, {expected_revision: 4}]) assert.throws(() => checkedUpgrade({...candidate(), upgrade: {...input, ...changes}}, 'suite/a', input), /升级回执/)
+  for (const changes of [{id: ''}, {id: input.source_revision_id}, {id: input.target_revision_id}, {suite_key: 'other'}, {base_revision_id: 'old'}, {upgrade: null}]) assert.throws(() => checkedUpgrade({...candidate(), ...changes}, 'suite/a', input), /升级结果与原操作不一致/)
+  for (const changes of [{operation_id: 'other'}, {source_revision_id: 'other'}, {target_revision_id: 'other'}, {expected_revision: 4}]) assert.throws(() => checkedUpgrade({...candidate(), upgrade: {...input, ...changes}}, 'suite/a', input), /升级结果与原操作不一致/)
 })
 
 test('refresh preserves a complete upgrade identity and never borrows another suite or malformed CAS', () => {
