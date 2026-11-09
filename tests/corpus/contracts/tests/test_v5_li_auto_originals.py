@@ -370,3 +370,55 @@ def test_ccsc_t1_merged_business_values_cannot_fill_distinct_required_fields():
 def test_ccsc_t1_zero_is_filled_content_under_the_literal_required_field_rule():
     result = run_clause("L12", "L12:2", ccsc_variant({"H6": 0}), "派生CCSC.xlsx")
     assert result["status"] == "PASS", result
+
+
+@pytest.mark.parametrize(
+    ("step", "risk", "action", "expected"),
+    [
+        (None, "高风险", None, "NG"),
+        (None, "高风险", "已填写措施", "PASS"),
+        (None, "待确认", None, "UNABLE"),
+        (None, None, "已填写措施", "UNABLE"),
+        (None, "=1+1", "已填写措施", "UNABLE"),
+        ("编制/日期：", "高风险", None, "NG"),
+        ("审核/日期：", "待确认", "已填写措施", "UNABLE"),
+    ],
+)
+def test_ccsc_risk_or_action_row_is_not_excluded_by_empty_step_or_footer_text(step, risk, action, expected):
+    # Remove the other optional identity fields too: risk or action content
+    # must establish scope without borrowing a surviving process identity.
+    result = run_clause("L12", "L12:3", ccsc_variant({"A7": None, "B7": step, "E7": None, "AE7": risk, "AF7": action}), "派生CCSC.xlsx")
+    assert result["status"] == expected, result
+    assert any(item["locator"].get("cell") == "AE7" for item in result["locator"]["semantic"]["sources"])
+
+
+def test_ccsc_filled_characteristic_keeps_row_when_step_risk_and_action_are_blank():
+    result = run_clause("L12", "L12:3", ccsc_variant({"A7": None, "B7": None, "AE7": None, "AF7": None}), "派生CCSC.xlsx")
+    assert result["status"] == "UNABLE", result  # E7 still names 扭矩.
+
+
+@pytest.mark.parametrize("cell", ["B6", "B7"])
+def test_ccsc_t1_missing_required_step_does_not_hide_other_filled_business_values(cell):
+    result = run_clause("L12", "L12:2", ccsc_variant({cell: None}), "派生CCSC.xlsx")
+    assert result["status"] == "NG", result
+    assert cell in result["suggestions"]
+
+
+def test_ccsc_t1_unknown_step_with_filled_business_content_remains_unknown():
+    result = run_clause("L12", "L12:2", ccsc_variant({"B7": "=1+1"}), "派生CCSC.xlsx")
+    assert result["status"] == "UNABLE", result
+
+
+def test_ccsc_only_filled_t1_values_still_establish_a_required_business_row():
+    changes = {f"{column}7": None for column in "BCDEFGHIJ"}
+    result = run_clause("L12", "L12:2", ccsc_variant(changes), "派生CCSC.xlsx")
+    assert result["status"] == "NG", result
+    assert "B7" in result["suggestions"]
+
+
+def test_ccsc_t1_only_unknown_content_cannot_prove_an_empty_row_or_missing_step():
+    changes = {f"{column}7": None for column in (*"BCDEFGHIJ", *"NOPQRSTU")}
+    changes["N7"] = "=1+1"
+    result = run_clause("L12", "L12:2", ccsc_variant(changes), "派生CCSC.xlsx")
+    assert result["status"] == "UNABLE", result
+    assert any(item["locator"].get("cell") == "N7" for item in result["locator"]["semantic"]["sources"])

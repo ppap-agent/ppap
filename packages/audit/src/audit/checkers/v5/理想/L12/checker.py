@@ -12,6 +12,26 @@ def create_audit(audit_file, rule, group_context=None):
 
 
 class _Audit(SourceAudit):
+    def _business_rows(self, facts, table, start, columns, aliases):
+        """Only a wholly known blank row or a repeated header is outside scope."""
+        found = False
+        for row in range(start + 1, table["rows"] + 1):
+            raw = {name: facts.readers[table["id"]].cell(row, column) for name, column in columns.items()}
+            known = all(item.get("state") == "known" for item in raw.values())
+            if known and all(blank(item.get("value")) for item in raw.values()):
+                continue
+            if known and all(blank(item.get("value")) or header(item.get("value"), aliases[name]) for name, item in raw.items()):
+                continue
+            if not any(item.get("state") == "known" and not blank(item.get("value")) for item in raw.values()):
+                for name, item in raw.items():
+                    if item.get("state") != "known":
+                        facts.cell(table, row, columns[name])
+                raise UnknownFact("无法确认此行是否有业务内容，不能按空行忽略。")
+            found = True
+            yield row
+        if not found:
+            raise UnknownFact("没有可核对的CCSC业务行，不能按空范围通过。")
+
     def rule_1(self):
         names = ("零件名称", "零件号", "供应商名称", "供应商编码")
         for name in names:
@@ -46,13 +66,13 @@ class _Audit(SourceAudit):
             if len(matches) != 1:
                 raise UnknownFact("T1父分组内有重复叶列，不能确定逐行归属。")
             columns[name] = matches[0]
-        rows = facts.rows(aliases, title=title, anchor=("过程/流程步骤",), defer_unknown=True)
-        for row in rows:
+        aliases.update({name: (name,) for name in children})
+        for row in self._business_rows(facts, table, start, columns, aliases):
             for name, column in columns.items():
-                if any(span[0] <= row.row <= span[2] and span[1] <= column <= span[3] for span in table.get("merges", [])):
+                if any(span[0] <= row <= span[2] and span[1] <= column <= span[3] for span in table.get("merges", [])):
                     raise UnknownFact("CCSC业务值存在合并，不能确认逐过程的必填范围。")
-                if blank(facts.cell(table, row.row, column)):
-                    return "NG", f"CCSC过程行缺少{name}：{column_letter(column)}{row.row}"
+                if blank(facts.cell(table, row, column)):
+                    return "NG", f"CCSC过程行缺少{name}：{column_letter(column)}{row}"
         return "PASS", "全部已命名过程的基础字段及唯一T1分组八项内容均已填写；未借用T2内容。"
 
     def rule_3(self):
@@ -61,15 +81,14 @@ class _Audit(SourceAudit):
         table = facts.table(title)
         aliases = {"risk": ("现有管理方式风险评估",), "action": ("高风险管理项预防措施",)}
         start, _columns = facts.columns(table, aliases)
-        anchor: tuple[str, ...] = ()
-        if any(header(facts.readers[table["id"]].cell(start, column).get("value"), ("过程/流程步骤",)) for column in range(1, table["cols"] + 1)):
-            aliases["step"] = ("过程/流程步骤",)
-            anchor = ("step",)
-        rows = facts.rows(aliases, title=title, anchor=anchor, defer_unknown=True)
-        for row in rows:
-            risk = row["risk"]
+        for name, label in (("step", "过程/流程步骤"), ("operation", "工序/流程编号"), ("characteristic", "特性名称")):
+            if any(header(facts.readers[table["id"]].cell(start, column).get("value"), (label,)) for column in range(1, table["cols"] + 1)):
+                aliases[name] = (label,)
+        start, columns = facts.columns(table, aliases)
+        for row in self._business_rows(facts, table, start, columns, aliases):
+            risk = facts.cell(table, row, columns["risk"])
             if risk not in ("低风险", "中风险", "高风险"):
                 raise UnknownFact("风险等级尚未确认为低风险、中风险或高风险，不能判定预防措施条件不适用。")
-            if risk == "高风险" and blank(row["action"]):
+            if risk == "高风险" and blank(facts.cell(table, row, columns["action"])):
                 return ("NG", "高风险管理项缺少对应预防措施。")
         return ("PASS", "全部风险物理行已读取，高风险行均有预防措施。")
