@@ -144,10 +144,13 @@ def test_original_explained_warrant_blank_part_name_never_establishes_a_business
     assert no_provider == []
 
 
-@pytest.mark.parametrize(("clause", "row", "label", "fields"), [
-    ("U17:4", 35, "提交原因", {"reason_selected", "other_selected", "other_explained"}),
-    ("U17:5", 42, "要求提交的等级", {"level_exactly_one"}),
-])
+@pytest.mark.parametrize(
+    ("clause", "row", "label", "fields"),
+    [
+        ("U17:4", 35, "提交原因", {"reason_selected", "other_selected", "other_explained"}),
+        ("U17:5", 42, "要求提交的等级", {"level_exactly_one"}),
+    ],
+)
 def test_original_warrant_choice_labels_cannot_replace_unavailable_graphical_facts(no_provider, clause, row, label, fields):
     path = warrant()
     sheet = xlrd.open_workbook(path).sheet_by_name("PSW (with explanation)")

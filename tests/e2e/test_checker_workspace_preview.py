@@ -296,18 +296,18 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
             canvas = reader.get_by_role("img", name="签署原件.pdf · 第 1 页", exact=True)
             expect(canvas).to_be_visible()
             bounds = canvas.bounding_box()
-            page.mouse.move(bounds["x"] + bounds["width"] * .1, bounds["y"] + bounds["height"] * .2)
+            page.mouse.move(bounds["x"] + bounds["width"] * 0.1, bounds["y"] + bounds["height"] * 0.2)
             page.mouse.down()
-            page.mouse.move(bounds["x"] + bounds["width"] * .4, bounds["y"] + bounds["height"] * .6)
+            page.mouse.move(bounds["x"] + bounds["width"] * 0.4, bounds["y"] + bounds["height"] * 0.6)
             page.mouse.up()
             expect(reader.get_by_role("button", name="引用选区", exact=True)).to_be_visible()
             reader.get_by_role("button", name="下一页", exact=True).click()
             expect(reader.get_by_role("img", name="签署原件.pdf · 第 2 页", exact=True)).to_be_visible()
             expect(reader.get_by_role("button", name="引用当前页", exact=True)).to_be_enabled()
             bounds = reader.get_by_role("img", name="签署原件.pdf · 第 2 页", exact=True).bounding_box()
-            page.mouse.move(bounds["x"] + bounds["width"] * .1, bounds["y"] + bounds["height"] * .2)
+            page.mouse.move(bounds["x"] + bounds["width"] * 0.1, bounds["y"] + bounds["height"] * 0.2)
             page.mouse.down()
-            page.mouse.move(bounds["x"] + bounds["width"] * .4, bounds["y"] + bounds["height"] * .6)
+            page.mouse.move(bounds["x"] + bounds["width"] * 0.4, bounds["y"] + bounds["height"] * 0.6)
             page.mouse.up()
             reader.get_by_role("button", name="引用选区", exact=True).click()
             expect(page.get_by_label("页码（从 1 开始）", exact=True)).to_have_value("2")
@@ -334,7 +334,9 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
             historical["changed_paths"] = ["checker.py"]
             historical["diff"] = [{"path": "checker.py", "before": "old historical source", "after": "repaired historical source"}]
             fixture.revisions[historical["id"]] = historical
-            fixture.history = [{"operation_id": "history-op", "revision_id": historical["id"], "revision": 1, "force_unverified": True, "published_at": "2026-11-06T00:00:00Z", "published_by_name": "历史发布人"}]
+            fixture.history = [
+                {"operation_id": "history-op", "revision_id": historical["id"], "revision": 1, "force_unverified": True, "published_at": "2026-11-06T00:00:00Z", "published_by_name": "历史发布人"}
+            ]
             page = self.open(browser, fixture)
             release = page.get_by_role("region", name="检查发布与版本记录", exact=True)
             expect(release.get_by_text("控制计划检查 · 本企业版本 v1 · 当前使用", exact=True)).to_be_visible()
