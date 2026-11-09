@@ -95,6 +95,34 @@ def test_report_observes_actual_local_guest_override_even_if_host_omits_it():
             acceptance.verify_local_guest_limits(env, {"local_guest_limits": wrong})
 
 
+def test_local_frozen_inputs_use_runtime_library_without_disabling_revision_guard(monkeypatch):
+    operation = {"operation_id": "old-operation", "tenant_id": "tenant", "frozen": {"executor_revision": "old-executor", "library_revision": "old-library"}}
+    proof = {"operation_id": "old-operation", "tenant_id": "tenant", "executor_revision": "old-executor", "library_revision": "old-library", "inputs": {"case": "a" * 64}}
+    calls = []
+
+    def execute(args, **kwargs):
+        calls.append((args, kwargs))
+        return SimpleNamespace(returncode=0, stdout=json.dumps(proof).encode())
+
+    monkeypatch.setattr(acceptance.subprocess, "run", execute)
+    from audit import standard_suites
+
+    monkeypatch.setattr(standard_suites, "library_revision", lambda: "new-driver-library")
+    assert acceptance.frozen_input_digests(local_configuration(), None, operation) == {"case": "a" * 64}
+    args, options = calls[0]
+    assert args[:3] == ["docker", "exec", "-i"]
+    assert "PGOPTIONS=-c default_transaction_read_only=on" in args
+    assert "-worker-1" in args[-4]
+    assert "materialize_request" in args[-1]
+    assert json.loads(options["input"]) == {"operation_id": "old-operation", "tenant_id": "tenant"}
+    for field, bad in (("operation_id", "other"), ("tenant_id", "other"), ("library_revision", "new-driver-library"), ("executor_revision", "other"), ("inputs", {"case": "not-a-digest"})):
+        original = proof[field]
+        proof[field] = bad
+        with pytest.raises(acceptance.AcceptanceFailure, match="frozen_runtime_|invalid_frozen_runtime_inputs"):
+            acceptance.frozen_input_digests(local_configuration(), None, operation)
+        proof[field] = original
+
+
 def test_local_guest_startup_uses_finite_as_and_keeps_other_boundaries(tmp_path, monkeypatch):
     from pydantic import BaseModel
 

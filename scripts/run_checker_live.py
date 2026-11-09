@@ -10,6 +10,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -264,6 +265,51 @@ def verify_local_guest_limits(environment, probe):
     expected = {"policy_memory_mib": 1536, "actual_guest_as_mib": 3072, "container_memory_mib": 2048, "guest_version_probe": "1.5.0", "scope": "local_emulation_only"}
     require(environment["LIVE_GUEST_AS_MIB"] == "3072" and actual == expected, "local_guest_startup_not_proven")
     return expected
+
+
+def frozen_input_digests(environment, store, operation):
+    """Rebuild evidence with the actual runtime library, never the newer driver."""
+    if environment.get("PPAP_CHECKER_LIVE_MODE") != "local":
+        from product.store.checker_development import CheckerDevelopmentStore
+        from worker.checker_optimizer import materialize_request
+
+        request, _ = materialize_request(CheckerDevelopmentStore(store), operation)
+        return {sample.case_id: sample.inputs.digest for sample in request.oracle}
+    code = """import json,sys
+from psycopg.rows import dict_row
+from product.settings import load_settings
+from product.store.store import AuthStore
+from product.store.checker_development import CheckerDevelopmentStore
+from worker.checker_optimizer import materialize_request
+identity=json.load(sys.stdin)
+store=AuthStore(load_settings(),role='worker')
+with store._conn() as conn:
+ with conn.cursor(row_factory=dict_row) as cursor:
+  row=cursor.execute('SELECT * FROM product.checker_optimizations WHERE operation_id=%s AND tenant_id=%s',(identity['operation_id'],identity['tenant_id'])).fetchone()
+if row is None: raise ValueError('frozen_operation_unavailable')
+request,_=materialize_request(CheckerDevelopmentStore(store),row)
+proof={key:str(row[key]) for key in ('operation_id','tenant_id')}
+proof.update({key:row['frozen'][key] for key in ('executor_revision','library_revision')})
+proof['inputs']={sample.case_id:sample.inputs.digest for sample in request.oracle}
+print(json.dumps(proof))
+"""
+    identity = {key: str(operation[key]) for key in ("operation_id", "tenant_id")}
+    result = subprocess.run(
+        ["docker", "exec", "-i", "-e", "PGOPTIONS=-c default_transaction_read_only=on", environment["COMPOSE_PROJECT_NAME"] + "-worker-1", "python", "-c", code],
+        input=json.dumps(identity).encode(), capture_output=True, timeout=30,
+    )
+    require(result.returncode == 0 and len(result.stdout) <= 262144, "frozen_runtime_materialization_failed")
+    try:
+        proof = json.loads(result.stdout)
+    except (ValueError, TypeError):
+        raise AcceptanceFailure("invalid_frozen_runtime_proof") from None
+    frozen = operation["frozen"]
+    require(all(proof.get(key) == value for key, value in identity.items()), "frozen_runtime_operation_mismatch")
+    require(all(proof.get(key) == frozen[key] for key in ("executor_revision", "library_revision")), "frozen_runtime_revision_mismatch")
+    inputs = proof.get("inputs")
+    require(isinstance(inputs, dict) and bool(inputs)
+            and all(isinstance(key, str) and isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value) for key, value in inputs.items()), "invalid_frozen_runtime_inputs")
+    return inputs
 
 
 def snapshot_controller(path, report):
@@ -1041,17 +1087,13 @@ def run(report_path):
             require(row[0] == 1, "optimization_operation_duplicated")
             report["technical_attempts"] = row[1]
             require(conn.execute("SELECT count(*) FROM product.usage_events WHERE tenant_id=%s", (principal.tenant_id,)).fetchone()[0] == 0, "formal_audit_points_charged")
-        from product.store.checker_development import CheckerDevelopmentStore
-        from worker.checker_optimizer import materialize_request
-
-        frozen_request, _ = materialize_request(CheckerDevelopmentStore(store), operation)
         validate_bindings(
             receipt,
             operation_id=report["operation_id"],
             base_revision_id=report.get("rule_update_revision_id", base.id),
             detail=detail,
             frozen=frozen,
-            input_digests={sample.case_id: sample.inputs.digest for sample in frozen_request.oracle},
+            input_digests=frozen_input_digests(os.environ, store, operation),
         )
         checkpoint(report_path, report, "verifying_isolation", frozen_proof_bound=True)
         probe = controller_evidence(report_path.parent / "controller.json", os.environ)
