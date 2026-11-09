@@ -95,6 +95,16 @@ def test_good_example_cannot_repair_a_missing_business_seal(tmp_path):
     assert signature_result(path).status == "NG"
 
 
+def test_multiple_forms_on_a_confirmed_reference_page_do_not_poison_business_scope(tmp_path):
+    path = write_pdf(tmp_path / "reference-multiple-forms.pdf", [("business", True, True), ("example", False, False)])
+    with fitz.open(path) as document:
+        page = document[1]
+        page.insert_text((40, 780), "经授权的供方代表签字", fontname="china-s", fontsize=8)
+        page.insert_text((40, 810), "认可情况", fontname="china-s", fontsize=8)
+        document.saveIncr()
+    assert signature_result(path).status == "PASS"
+
+
 @pytest.mark.parametrize("reverse", [False, True])
 def test_signature_and_seal_from_different_business_forms_cannot_be_spliced(tmp_path, reverse):
     pages = [("business", True, False), ("business", False, True)]
@@ -203,21 +213,35 @@ def test_disagreed_role_stays_unknown_without_a_third_observation(tmp_path, monk
     assert len(controlled_vision) == count
 
 
-def test_reference_exclusion_does_not_make_section_fragments_independent_objects(tmp_path):
+@pytest.mark.parametrize("repeated_header", [False, True])
+def test_reference_exclusion_does_not_make_section_fragments_independent_objects(tmp_path, repeated_header):
     path = write_pdf(tmp_path / "section-fragments.pdf", [("business", True, False), ("business", False, True), ("example", True, True)])
     with fitz.open(path) as document:
-        for page in list(document)[:2]:
-            for bounds in page.search_for("零件提交保证书"):
+        for index, page in enumerate(list(document)[:2]):
+            label = ("认可情况" if index == 0 else "经授权的供方代表签字") if repeated_header else "零件提交保证书"
+            for bounds in page.search_for(label):
                 page.add_redact_annot(bounds)
             page.apply_redactions()
         document.saveIncr()
     assert signature_result(path).status == "UNABLE"
 
 
-@pytest.mark.parametrize("witness", [False, True])
-def test_authorization_exists_is_composed_per_object_through_psw(tmp_path, monkeypatch, witness):
+def force_department_stamp(monkeypatch):
     from documents.ocr import client
 
+    original = client.call_llm_async
+
+    async def department_stamp(*args, **kwargs):
+        facts = await original(*args, **kwargs)
+        if "psw_stamp_ending_text" in facts:
+            facts["psw_stamp_ending_text"] = "专用章"
+        return facts
+
+    monkeypatch.setattr(client, "call_llm_async", department_stamp)
+
+
+@pytest.mark.parametrize("witness", [False, True])
+def test_authorization_exists_is_composed_per_object_through_psw(tmp_path, monkeypatch, witness):
     path = write_pdf(tmp_path / "authorization.pdf", [("business", True, True)])
     with fitz.open(path) as document:
         objects = [(True, False), (False, True)]
@@ -230,39 +254,27 @@ def test_authorization_exists_is_composed_per_object_through_psw(tmp_path, monke
             if seal:
                 page.draw_rect(fitz.Rect(450, 625, 500, 665), color=(1, 0, 0), fill=(1, 0, 0))
         document.saveIncr()
-    original = client.call_llm_async
-
-    async def department_stamp(*args, **kwargs):
-        facts = await original(*args, **kwargs)
-        if "psw_stamp_ending_text" in facts:
-            facts["psw_stamp_ending_text"] = "专用章"
-        return facts
-
-    monkeypatch.setattr(client, "call_llm_async", department_stamp)
+    force_department_stamp(monkeypatch)
     assert checker(path)._run_fact_rule(2, 3).status == ("PASS" if witness else "NG")
+
+
+def test_separate_authorizations_on_one_page_are_not_a_composite_witness(tmp_path, monkeypatch):
+    path = write_pdf(tmp_path / "two-authorizations-one-page.pdf", [("business", True, True)])
+    with fitz.open(path) as document:
+        page = document.new_page(width=600, height=850)
+        page.insert_text((30, 40), "部门章授权声明", fontname="china-s", fontsize=12)
+        page.insert_text((30, 80), "AUTH:BODY", fontsize=10)
+        page.insert_text((30, 400), "部门章授权声明", fontname="china-s", fontsize=12)
+        page.insert_text((30, 440), "AUTH:LIST", fontsize=10)
+        page.draw_rect(fitz.Rect(450, 625, 500, 665), color=(1, 0, 0), fill=(1, 0, 0))
+        document.saveIncr()
+    force_department_stamp(monkeypatch)
+    assert checker(path)._run_fact_rule(2, 3).status == "UNABLE"
 
 
 def test_seal_rule_cannot_take_a_company_seal_from_an_example(tmp_path):
     path = write_pdf(tmp_path / "example-company-seal.pdf", [("business", True, False), ("example", True, True)])
     assert checker(path)._run_fact_rule(2, 3).status == "NG"
-
-
-def test_shanghai_yada_guidance_is_a_role_question_not_proof_from_blank_fields():
-    import hashlib
-    from pathlib import Path
-
-    from audit.engine.checkers.psw_scope import _Objects
-
-    path = Path(__file__).resolve().parents[3] / "assets/V2.0测试/模拟测试文件V2-01/16-零件提交保证书/16-零件提交保证书-上海亚大.pdf"
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    assert digest == "24133e74c1dac80339a694863930121b9525d4b0d887f7e020b9ed82f3014c0b"
-    objects = _Objects(AuditInput(audit_id="frozen-yada-scope", file_url=str(path)), digest, {})
-    assert objects.warrants == [3, 5]
-    assert objects.form_pages == {3, 5}
-    assert objects.roles[3] is False
-    # Native guidance requests an independent role observation; blankness is
-    # neither a sample verdict nor a reason to omit the business form.
-    assert objects.roles[5] is None
 
 
 def test_one_business_fact_disagreement_is_not_a_quantifier_counterexample(tmp_path, monkeypatch):

@@ -82,6 +82,7 @@ class _Objects:
         self.warrants: list[int] = []
         self.form_pages: set[int] = set()
         self.authorization: list[int] = []
+        self.authorization_ambiguous: set[int] = set()
         self.roles: dict[int, bool | None] = {}
         self.facts: dict[int, dict[str, object]] = {}
         self.sources: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
@@ -97,7 +98,7 @@ class _Objects:
                 signatures, dispositions = page.search_for("经授权的供方代表签字"), page.search_for("认可情况")
                 if signatures or dispositions:
                     self.warrants.append(number)
-                    if page.search_for("零件提交保证书") or page.search_for("Part Submission Warrant"):
+                    if signatures and dispositions and (page.search_for("零件提交保证书") or page.search_for("Part Submission Warrant")):
                         self.form_pages.add(number)
                     if len(signatures) > 1 or len(dispositions) > 1:
                         self.ambiguous.add(number)
@@ -109,8 +110,11 @@ class _Objects:
                         visual=False,
                     )
                     self.facts[number].update({field: value for field, value in native.items() if value is not None})
-                if page.search_for("部门章授权声明"):
+                authorizations = page.search_for("部门章授权声明")
+                if authorizations:
                     self.authorization.append(number)
+                    if len(authorizations) > 1:
+                        self.authorization_ambiguous.add(number)
                 if self.roles[number] is True:
                     self._note(
                         {
@@ -137,11 +141,12 @@ class _Objects:
 
         selected: dict[str, list[str]] = {}
         for number in pages:
-            if self.roles[number] is True or number in self.ambiguous:
+            if self.roles[number] is True:
                 continue
-            for field in fields:
-                if field not in self.facts[number]:
-                    selected.setdefault(field, []).append(f"pdf:{number}")
+            if number not in self.ambiguous:
+                for field in fields:
+                    if field not in self.facts[number] and not (field.startswith("authorization_") and number in self.authorization_ambiguous):
+                        selected.setdefault(field, []).append(f"pdf:{number}")
             if self.roles[number] is None and REFERENCE not in self.facts[number]:
                 selected.setdefault(REFERENCE, []).append(f"pdf:{number}")
         if not selected:
@@ -181,7 +186,7 @@ class _Objects:
         else:
             first = {field: text for field, text in required.items() if not field.startswith("authorization_")}
         self.read(self.warrants, first)
-        known = all(self.roles[page] is not None and page not in self.ambiguous for page in self.warrants)
+        known = all(self.roles[page] is True or (self.roles[page] is False and page not in self.ambiguous) for page in self.warrants)
         if not self.warrants and not all(role is True for role in self.roles.values()):
             known = False
         outcomes = self.outcomes(rule_no)
@@ -197,7 +202,9 @@ class _Objects:
             pages = self.authorization or self.pages
             fields = {field: text for field, text in required.items() if field.startswith("authorization_")}
             self.read(pages, fields)
-            auth = _exists_authorization([{**self.facts[page], REFERENCE: self.roles[page]} for page in pages], not self.ambiguous.intersection(pages))
+            auth = _exists_authorization(
+                [{**self.facts[page], REFERENCE: self.roles[page]} for page in pages], not any(page in self.ambiguous | self.authorization_ambiguous and self.roles[page] is not True for page in pages)
+            )
             outcomes = self.outcomes(rule_no, auth)
             result = _all_results(rule_no, [value for _, value in outcomes], known)
         for args, kwargs in self.sources:
@@ -210,7 +217,8 @@ class _Objects:
             "status": result.status,
             "business_pages": [page for page in self.warrants if self.roles[page] is False and page not in self.ambiguous],
             "reference_pages": [page for page in self.pages if self.roles[page] is True],
-            "unresolved_pages": [page for page in self.warrants if self.roles[page] is None or page in self.ambiguous],
+            "unresolved_pages": [page for page in self.warrants if self.roles[page] is None or (self.roles[page] is False and page in self.ambiguous)],
+            "unresolved_authorization_pages": [page for page in self.authorization if self.roles[page] is not True and (self.roles[page] is None or page in self.authorization_ambiguous)],
             "objects": [{"page": page, "status": value.status, "facts": psw_fact_summary(self.facts[page])} for page, value in outcomes],
         }
         logger.warning("PSW scope decision: %s", json.dumps(diagnostic, sort_keys=True, separators=(",", ":")))
@@ -233,7 +241,7 @@ def evaluate_psw_pdf_rule(audit: AuditInput, rule_no: int, witness, cache: dict,
     multiple_forms = len(objects.warrants) > 1 and objects.form_pages.issuperset(objects.warrants)
     # Repeated sections alone do not establish separate business objects.
     # The existing one-document reader preserves uncertainty between them.
-    if not multiple_forms and len(objects.authorization) <= 1 and not any(role is not False for role in objects.roles.values()) and not objects.ambiguous:
+    if not multiple_forms and len(objects.authorization) <= 1 and not any(role is not False for role in objects.roles.values()) and not objects.ambiguous and not objects.authorization_ambiguous:
         facts = read_single()
         return facts, evaluate_psw_observation(rule_no, facts)
     from documents.ocr.env import ocr_policy_identity

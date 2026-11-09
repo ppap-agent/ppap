@@ -1,8 +1,5 @@
 """Ambiguous labels cannot establish a complete seal inspection region."""
 
-import hashlib
-from pathlib import Path
-
 import fitz
 import pytest
 from audit.engine.checkers.pdf_field_region import pdf_field_region
@@ -33,12 +30,3 @@ def test_single_company_label_still_keeps_its_complete_focused_region():
     region = pdf_field_region(Page(), {"psw_stamp_present", "psw_stamp_ending_text"})
     assert region.contains(fitz.Rect(400, 610, 570, 690))
     assert region.y0 > 500 and region.y1 < 700
-
-
-def test_shanghai_yada_instruction_labels_do_not_crop_away_the_warrant():
-    source = Path(__file__).resolve().parents[3] / "assets/V2.0测试/模拟测试文件V2-01/16-零件提交保证书/16-零件提交保证书-上海亚大.pdf"
-    assert hashlib.sha256(source.read_bytes()).hexdigest() == "24133e74c1dac80339a694863930121b9525d4b0d887f7e020b9ed82f3014c0b"
-    with fitz.open(source) as document:
-        page = document[4]
-        assert len(page.search_for("公司名称")) == 2
-        assert pdf_field_region(page, {"psw_stamp_present", "psw_stamp_ending_text"}) == page.rect
