@@ -21,9 +21,6 @@ from audit.engine.runtime import get_runtime
 from .psw_evidence_trace import psw_fact_summary
 
 logger = logging.getLogger(__name__)
-# Neutral identities keep peer observations separate in runtime caches and Replay.
-# Neither request receives the other request's answers or a different task.
-OBSERVATION_PROMPTS = ("独立观察编号：1。\n", "独立观察编号：2。\n")
 
 
 @dataclass(frozen=True)
@@ -153,23 +150,29 @@ def observe_ocr_images(
             key = ("ocr_scope", ocr_policy_identity(), hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest())
         cached = request_cache.get(key) if request_cache is not None and key is not None else None
         if cached is None:
-            sources = []
+            sources: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
             readings: list[dict[str, object]] = []
+            inputs: list[dict[str, object]] = []
             model_fields = {field for field in subset if local_native.get(field, {}).get(scope) is None}
             phase = "observation_1_failed"
             try:
                 for number in (1, 2) if model_fields else (1,):
                     phase = f"observation_{number}_failed"
-                    reading = _observe_ocr_scope(
-                        frames,
-                        subset,
-                        (lambda *args, **kwargs: sources.append((args, kwargs))) if number == 1 else (lambda *args, **kwargs: None),
-                        context=local_context,
-                        field_scopes={field: [scope] for field in subset},
-                        native_by_scope=local_native,
-                        observation_number=number,
-                    )
+                    reading_sources = []
+                    request_info: dict[str, object] = {}
+                    inputs.append(request_info)
+                    with ocr_client.ocr_observation_scope(number):
+                        reading = _observe_ocr_scope(
+                            frames,
+                            subset,
+                            lambda *args, **kwargs: reading_sources.append((args, kwargs)),
+                            context=local_context,
+                            field_scopes={field: [scope] for field in subset},
+                            native_by_scope=local_native,
+                            request_info=request_info,
+                        )
                     readings.append(reading)
+                    sources.extend(source for source in reading_sources if source not in sources)
                 phase = "completed"
                 facts = readings[0]
                 if model_fields:
@@ -191,6 +194,7 @@ def observe_ocr_images(
                         "source_sha256": sorted({digest for frame in frames if isinstance(digest := frame.locator.get("source_sha256"), str) and re.fullmatch(r"[a-f0-9]{64}", digest)}),
                         "phase": phase,
                         "observations": [_diagnostic_facts(reading) for reading in readings],
+                        "inputs": inputs,
                         "equal": {field: readings[0][field] == readings[1][field] for field in _diagnostic_facts(readings[0])} if len(readings) == 2 else {},
                     }
                     message = "OCR seal observation: %s" if "seal" in subset else "PSW OCR observation: %s"
@@ -223,7 +227,7 @@ def _observe_ocr_scope(
     field_scopes: dict[str, list[str]] | None = None,
     any_fields: frozenset[str] = frozenset(),
     native_by_scope: dict[str, dict[str, object]] | None = None,
-    observation_number: int,
+    request_info: dict[str, object],
 ) -> dict[str, object]:
     """Validate one fact per applicable source scope; never choose a winner.
 
@@ -304,7 +308,12 @@ def _observe_ocr_scope(
             + "\n区域中的原生文字：\n"
             + context[:16000]
         )
-    prompt = OBSERVATION_PROMPTS[observation_number - 1] + prompt
+    # Prove which visual inputs were prepared without logging their content.
+    identity = {"images": [hashlib.sha256(image.data).hexdigest() for image in images], "prompt": prompt, "schema": response_schema}
+    request_info.update(
+        sha256=hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
+        image_sizes=[[value if type(value) is int and 1 <= value <= 1_000_000 else None for value in (image.width, image.height)] for image in images],
+    )
     try:
         raw = request(images=[image.data for image in images], prompt=prompt, response_schema=response_schema)
     except GuardStop as stop:

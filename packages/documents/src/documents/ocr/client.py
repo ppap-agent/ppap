@@ -43,6 +43,24 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 REQUEST_TIMEOUT_SECONDS = 20
 
 _USAGE: ContextVar[Callable[[dict[str, Any]], None] | None] = ContextVar("ocr_usage", default=None)
+_OBSERVATION: ContextVar[int | None] = ContextVar("ocr_observation", default=None)
+
+
+def current_ocr_observation() -> int | None:
+    """Execution identity for caches and Replay; never part of the model input."""
+    return _OBSERVATION.get()
+
+
+@contextmanager
+def ocr_observation_scope(number: int) -> Iterator[None]:
+    """Keep two peer observations distinct without changing their prompts."""
+    if type(number) is not int or number not in {1, 2}:
+        raise ValueError("OCR observation number must be 1 or 2")
+    token = _OBSERVATION.set(number)
+    try:
+        yield
+    finally:
+        _OBSERVATION.reset(token)
 
 
 @contextmanager

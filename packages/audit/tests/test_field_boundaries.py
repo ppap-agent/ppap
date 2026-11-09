@@ -12,8 +12,8 @@ from audit.checkers.v3.psw_excel_agent import PswExcelAgent as V3Psw
 from audit.checkers.v4.visual_facts import _pdf_images
 from audit.contracts import AuditInput, GroupContextInput, RuleInput
 from audit.engine.checkers.dimension_measurement_policy import check_tolerance
-from audit.engine.checkers.ocr_visual_facts import OBSERVATION_PROMPTS
 from audit.engine.runtime import bind_runtime
+from documents.ocr.client import current_ocr_observation
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as WorkbookImage
 from PIL import Image, ImageDraw
@@ -199,7 +199,7 @@ def test_overlapping_rules_reuse_the_same_located_fact_or_failure(tmp_path, monk
     calls = []
 
     def read(**request):
-        if not request["prompt"].startswith(OBSERVATION_PROMPTS[1]):
+        if current_ocr_observation() != 2:
             calls.append(request)
         if failed:
             raise TimeoutError("controlled failure")

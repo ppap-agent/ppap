@@ -4,7 +4,8 @@ import json
 from unittest.mock import Mock
 
 import pytest
-from audit.engine.checkers.ocr_visual_facts import OBSERVATION_PROMPTS, OcrImage, observe_ocr_images
+from audit.engine.checkers.ocr_visual_facts import OcrImage, observe_ocr_images
+from documents.ocr.client import current_ocr_observation
 
 
 @pytest.mark.parametrize("confirmation,expected", [("专用章", "专用章"), (None, None), ("公司", None)])
@@ -17,7 +18,7 @@ def test_seal_reading_diagnostics_preserve_two_reads_and_the_original_decision(m
 
     def read(**kwargs):
         calls.append(kwargs)
-        value = confirmation if kwargs["prompt"].startswith(OBSERVATION_PROMPTS[1]) else "专用章"
+        value = confirmation if (current_ocr_observation() == 2) else "专用章"
         return {"psw_stamp_present": True, "psw_stamp_ending_text": value}
 
     monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", read)
@@ -49,7 +50,7 @@ def test_second_observation_failure_keeps_the_first_summary_and_does_not_retry(m
 
     def read(**kwargs):
         calls.append(kwargs)
-        if kwargs["prompt"].startswith(OBSERVATION_PROMPTS[1]):
+        if current_ocr_observation() == 2:
             raise ResponsesEvidenceError("responses_incomplete", "private-provider-body")
         return {"psw_stamp_ending_text": "公司"}
 
@@ -123,7 +124,7 @@ def test_shanghai_yada_page5_unknown_cannot_be_replaced_by_page3_absence(monkeyp
     def read(**kwargs):
         (image,) = kwargs["images"]
         page = int(image)
-        second = kwargs["prompt"].startswith(OBSERVATION_PROMPTS[1])
+        second = current_ocr_observation() == 2
         calls.append((page, second))
         values = {"psw_stamp_present": False, "psw_stamp_ending_text": None if page == 3 else ""}
         if page == 5 and second and not second_known:

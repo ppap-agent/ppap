@@ -6,9 +6,9 @@ from audit.checkers.v2.checking_fixture_approval_agent import CheckingFixtureApp
 from audit.checkers.v2.dimension_measurement_pdf_agent import DimensionMeasurementPDFAgent as V2Dimension
 from audit.checkers.v3.checking_fixture_approval_agent import CheckingFixtureApprovalAgent as V3Fixture
 from audit.contracts import AuditInput, RuleInput
-from audit.engine.checkers.ocr_visual_facts import OBSERVATION_PROMPTS
 from audit.engine.runtime import bind_runtime
 from documents.contracts import ConversionArtifact
+from documents.ocr.client import current_ocr_observation
 
 
 @pytest.fixture
@@ -71,7 +71,7 @@ def test_fixture_shares_one_original_observation_across_fixed_rules(original, mo
     }
 
     def read(**request):
-        if not request["prompt"].startswith(OBSERVATION_PROMPTS[1]):
+        if current_ocr_observation() != 2:
             calls.append(request)
         return receipt(request, values)
 
@@ -106,7 +106,7 @@ def test_visual_failure_is_not_a_business_verdict_and_is_not_retried(original, m
     calls = []
 
     def read(**request):
-        if not request["prompt"].startswith(OBSERVATION_PROMPTS[1]):
+        if current_ocr_observation() != 2:
             calls.append(request)
         if isinstance(response, Exception):
             raise response

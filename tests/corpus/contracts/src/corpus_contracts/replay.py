@@ -154,6 +154,9 @@ def install(monkeypatch: Any, recorder: Recorder) -> None:
 
     async def ocr_request(kwargs: dict[str, Any]) -> Any:
         request = {name: kwargs.get(name) for name in ("input", "text", "max_output_tokens")}
+        observation = ocr_client.current_ocr_observation()
+        if observation is not None:
+            request["observation"] = observation
         # Existing empty-policy recordings remain readable. An explicit policy
         # cannot consume an answer recorded under different request parameters.
         if kwargs.get("extra_body"):

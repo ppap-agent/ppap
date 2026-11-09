@@ -169,8 +169,25 @@ def test_peer_visual_observations_record_and_replay_two_distinct_answers(tmp_pat
         assert observe_ocr_images(frames, {"seal": "actual seal"}, witness) == {"seal": None}
         witness.assert_not_called()
     assert len(calls) == 2 and len(recorder.pending) == 2
-    assert recorder.pending[0]["request"] != recorder.pending[1]["request"]
+    assert calls[0] == calls[1]
+    assert [entry["request"]["observation"] for entry in recorder.pending] == [1, 2]
+    requests = [{key: value for key, value in entry["request"].items() if key != "observation"} for entry in recorder.pending]
+    assert requests[0] == requests[1]
     assert [json.loads(entry["answer"]) for entry in recorder.pending] == [{"seal": True}, {"seal": False}]
+
+
+def test_offline_second_observation_cannot_use_the_first_or_an_untagged_answer(tmp_path, monkeypatch):
+    from corpus_contracts.replay import OfflineReplayMiss
+
+    calls = _answering_model(monkeypatch, ("completed", "must not run"))
+    recorder = Recorder("peer-offline", tmp_path, tmp_path, offline=True)
+    request = {name: _ocr_kwargs()[name] for name in ("input", "text", "max_output_tokens")}
+    for identity in ({}, {"observation": 1}):
+        recorder.entries.append({"kind": "ocr", "request": {**request, **identity}, "answer": '{"seal":true}'})
+    install(monkeypatch, recorder)
+    with ocr_client.ocr_observation_scope(2), pytest.raises(OfflineReplayMiss):
+        asyncio.run(ocr_client._request_response(_ocr_kwargs()))
+    assert calls == [] and recorder.pending == []
 
 
 def test_test_grant_preserves_the_paired_key_endpoint_and_model(monkeypatch):

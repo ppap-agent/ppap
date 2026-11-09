@@ -4,8 +4,8 @@ import json
 from unittest.mock import Mock
 
 import pytest
-from audit.engine.checkers.ocr_visual_facts import OBSERVATION_PROMPTS, OcrImage, observe_ocr_images
-from documents.ocr.client import ResponsesEvidenceError
+from audit.engine.checkers.ocr_visual_facts import OcrImage, observe_ocr_images
+from documents.ocr.client import ResponsesEvidenceError, current_ocr_observation
 
 
 @pytest.fixture(autouse=True)
@@ -31,7 +31,7 @@ def test_generic_seal_diagnostic_preserves_peer_observations_and_unknown(monkeyp
 
     def read(**kwargs):
         calls.append(kwargs)
-        return {"seal": second if kwargs["prompt"].startswith(OBSERVATION_PROMPTS[1]) else first}
+        return {"seal": second if (current_ocr_observation() == 2) else first}
 
     monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", read)
     cache, witness = {}, Mock()
@@ -46,6 +46,9 @@ def test_generic_seal_diagnostic_preserves_peer_observations_and_unknown(monkeyp
     assert detail["observations"] == [{"seal": first}, {"seal": second}]
     assert detail["equal"] == {"seal": first == second}
     assert detail["phase"] == "completed"
+    assert len(detail["inputs"]) == 2 and detail["inputs"][0] == detail["inputs"][1]
+    assert len(detail["inputs"][0]["sha256"]) == 64
+    assert detail["inputs"][0]["image_sizes"] == [[100, 100]]
     assert all(private not in caplog.text for private in ("private-key", "private.invalid", "private-image", "private-scope", "private-description", "private-context"))
 
 
