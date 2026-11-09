@@ -64,6 +64,162 @@ def test_provider_is_not_tied_to_a_brand():
     assert acceptance.live_configuration(configuration()) == ("https://provider.example/v1", "arbitrary-model")
 
 
+def local_configuration():
+    env = {key: value for key, value in configuration().items() if not key.startswith("GITHUB_")}
+    env.update(PPAP_CHECKER_LIVE_MODE="local", PPAP_CHECKER_LIVE_LOCAL_ID="b" * 32, COMPOSE_PROJECT_NAME="ppap-checker-local-" + "b" * 32)
+    return env
+
+
+def test_local_entry_is_explicit_and_never_impersonates_actions_or_live_stack(tmp_path):
+    env = local_configuration()
+    assert acceptance.live_configuration(env) == (env["CI_LLM_BASE_URL"], env["CI_LLM_MODEL"])
+    setup.prepare(env, tmp_path / "local.env")
+    for changes in ({"COMPOSE_PROJECT_NAME": "ppap-current"}, {"CI": "true"}, {"GITHUB_ACTIONS": "false"}, {"PPAP_CHECKER_LIVE_LOCAL_ID": ""}):
+        with pytest.raises(ValueError, match="isolated_local_test_required"):
+            setup.validate_invocation({**env, **changes})
+
+
+def test_three_local_scenarios_have_one_operation_and_explicit_runtime_identity():
+    sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    for scenario in ("u08", "rule-threshold", "rule-wording"):
+        env = {**local_configuration(), "PPAP_BUILD_SHA": sha, "PPAP_CHECKER_LIVE_SCENARIO": scenario, "PPAP_CHECKER_LIVE_RUNTIME_SHA": "c" * 40}
+        plan = acceptance.describe_scenario(env)
+        assert plan["harness_sha"] == sha and plan["runtime_sha"] == "c" * 40
+        assert plan["optimization_operations"] == 1 and plan["automatic_retry"] is False
+        assert plan["samples"] == 8 and plan["hidden_documents"] == 2
+        assert plan["selected_clause_ids"] == (["U08:4"] if scenario == "u08" else ["R1", "R2"])
+        assert plan["complete_u08"] is False
+        assert env["CI_LLM_API_KEY"] not in json.dumps(plan)
+    with pytest.raises(acceptance.AcceptanceFailure, match="unsupported_live_scenario"):
+        acceptance.scenario_name({"PPAP_CHECKER_LIVE_SCENARIO": "all-production"})
+
+
+def test_u08_projection_preserves_full_existing_checker_and_resource_bytes():
+    sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    original = acceptance.frozen_u08_files(sha)
+    key, rules, scoped, clause = acceptance.scenario_source("u08", sha)
+    assert key.startswith("live:UAES:U08:4:") and clause == "U08:4"
+    assert rules["rules"] == [row for row in json.loads(original["rules.json"])["rules"] if row["id"] == clause]
+    assert rules["checker_binding"] == {clause: "checker:create_audit"}
+    assert scoped["checker.py"] == original["checker.py"] and scoped["resources.py"] == original["resources.py"]
+
+
+def test_u08_private_derivatives_keep_real_layout_and_independent_mark_truth():
+    original = acceptance.U08_ORIGINAL.read_bytes()
+    samples = acceptance.u08_samples()
+    assert samples[0]["raw"] == original and samples[0]["basis"] == "existing_human_oracle"
+    assert hashlib.sha256(original).hexdigest() == acceptance.U08_ORIGINAL_SHA
+    source = load_workbook(io.BytesIO(original))
+    try:
+        original_cells = {cell.coordinate: cell.value for row in source["Table 1"] for cell in row}
+        merges = list(source["Table 1"].merged_cells.ranges)
+        for ordinal, sample in enumerate(samples, 1):
+            book = load_workbook(io.BytesIO(sample["raw"]))
+            try:
+                sheet = book["Table 1"]
+                assert list(sheet.merged_cells.ranges) == merges
+                assert {cell.coordinate: cell.value for row in sheet for cell in row if cell.coordinate not in acceptance.U08_MARK_CELLS} == {
+                    key: value for key, value in original_cells.items() if key not in acceptance.U08_MARK_CELLS
+                }
+                has_mark = any(str(sheet[cell].value or "").strip() for cell in acceptance.U08_MARK_CELLS)
+                assert sample["expected"] == ("PASS" if has_mark else "NG")
+                assert controller.contains_holdout(sample["raw"]) == (ordinal % 4 == 0)
+            finally:
+                book.close()
+    finally:
+        source.close()
+    assert {samples[index]["expected"] for index in (3, 7)} == {"PASS", "NG"}
+    assert len({hashlib.sha256(row["raw"]).hexdigest() for row in samples}) == 8
+    assert acceptance.U08_ORIGINAL.read_bytes() == original
+
+
+def test_rule_scenarios_preserve_unchanged_clause_and_wording_does_not_invent_repair():
+    for name in ("rule-threshold", "rule-wording"):
+        _, rules, files, _ = acceptance.scenario_source(name, "a" * 40)
+        assert files["checker.py"].decode() == acceptance.BASELINE
+        assert "大于等于 0" in rules["rules"][0]["rule_to_check"]
+        assert [row["id"] for row in rules["rules"]] == ["R1", "R2"]
+        samples = acceptance.scenario_samples(name)
+        assert len(samples) == 8
+        assert {samples[index]["expected"] for index in (3, 7)} == {"PASS", "NG"}
+        if name == "rule-wording":
+            assert all(sample["expected"] == ("PASS" if sample["value"] >= 0 else "NG") for sample in samples)
+
+
+def test_local_image_check_rejects_missing_or_mixed_source_without_pull(monkeypatch):
+    calls = []
+    env = {**local_configuration(), "PPAP_CHECKER_LIVE_RUNTIME_SHA": "c" * 40}
+
+    def inspect(command, **kwargs):
+        calls.append(command)
+        return SimpleNamespace(returncode=0, stdout=json.dumps({"Id": "sha256:" + "d" * 64, "Config": {"Labels": {"org.opencontainers.image.revision": "c" * 40}}}))
+
+    monkeypatch.setattr(acceptance.subprocess, "run", inspect)
+    identities = acceptance.verify_local_images(env)
+    assert set(identities) == {"api", "worker", "deep", "web"}
+    assert all(command[:3] == ["docker", "image", "inspect"] for command in calls)
+    monkeypatch.setattr(acceptance.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=1, stdout=""))
+    with pytest.raises(acceptance.AcceptanceFailure, match="local_runtime_image_missing"):
+        acceptance.verify_local_images(env)
+
+
+def test_local_running_containers_and_http_sha_must_match_this_project(monkeypatch):
+    env = local_configuration()
+    images = {name: {"reference": name, "image_id": "sha256:" + name, "source_sha": env["PPAP_BUILD_SHA"]} for name in ("api", "worker", "deep", "web")}
+    containers = [
+        {
+            "Id": name,
+            "Image": "sha256:" + name,
+            "Config": {"Labels": {"com.docker.compose.project": env["COMPOSE_PROJECT_NAME"], "com.docker.compose.service": name}},
+            "State": {"Running": True},
+            "NetworkSettings": {"Ports": {}},
+        }
+        for name in ("api", "worker", "deep", "web", "postgres", "silo")
+    ]
+    for name, internal, external in (("api", "8080", "18080"), ("web", "4173", "14173"), ("postgres", "5432", "15432"), ("silo", "9000", "19000")):
+        next(item for item in containers if item["Id"] == name)["NetworkSettings"]["Ports"][internal + "/tcp"] = [{"HostIp": "127.0.0.1", "HostPort": external}]
+    monkeypatch.setattr(
+        acceptance.subprocess,
+        "run",
+        lambda command, **kwargs: SimpleNamespace(returncode=0, stdout="\n".join(item["Id"] for item in containers) if command[:2] == ["docker", "ps"] else json.dumps(containers)),
+    )
+
+    class Http:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def get(self, url):
+            assert url in {"http://127.0.0.1:18080/version", "http://127.0.0.1:14173/build-identity.json"}
+            return SimpleNamespace(status_code=200, json=lambda: {"git_sha": env["PPAP_BUILD_SHA"]})
+
+    monkeypatch.setattr(acceptance.httpx, "Client", Http)
+    assert set(acceptance.verify_local_runtime(env, images)) == set(images)
+    containers[0]["Image"] = "wrong-image"
+    with pytest.raises(acceptance.AcceptanceFailure, match="running_image_identity_mismatch"):
+        acceptance.verify_local_runtime(env, images)
+    containers[0]["Image"] = images["api"]["image_id"]
+    containers[0]["NetworkSettings"]["Ports"]["8080/tcp"][0]["HostIp"] = "0.0.0.0"
+    with pytest.raises(acceptance.AcceptanceFailure, match="local_loopback_service_mismatch"):
+        acceptance.verify_local_runtime(env, images)
+
+
+def test_local_harness_rejects_wrong_or_dirty_source_before_business_writes(monkeypatch):
+    env = local_configuration()
+    responses = iter([SimpleNamespace(returncode=0, stdout=env["PPAP_BUILD_SHA"]), SimpleNamespace(returncode=1)])
+    monkeypatch.setattr(acceptance.subprocess, "run", lambda *args, **kwargs: next(responses))
+    with pytest.raises(acceptance.AcceptanceFailure, match="local_harness_has_uncommitted_changes"):
+        acceptance.verify_local_source(env)
+    monkeypatch.setattr(acceptance.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="wrong-source"))
+    with pytest.raises(acceptance.AcceptanceFailure, match="local_harness_source_mismatch"):
+        acceptance.verify_local_source(env)
+
+
 def test_live_browser_explicitly_selects_the_full_sample_set_before_one_admission(tmp_path, monkeypatch):
     """Driver orchestration only; native browser behavior has its separate journey."""
     env = configuration()
@@ -210,6 +366,34 @@ def test_claimed_verified_receipt_cannot_hide_broken_independent_proof(path, val
     target[path[-1]] = value
     with pytest.raises(acceptance.AcceptanceFailure):
         acceptance.validate_outcome(receipt, samples)
+
+
+def test_wording_can_validate_unchanged_code_but_u08_must_resolve_a_real_unknown():
+    receipt, samples = valid_receipt()
+    for case in receipt["report"]["validation"]["cases"]:
+        ident = case["case_id"]
+        samples[ident]["baseline"] = samples[ident]["expected"]
+        case["clauses"][0]["baseline_actual"] = samples[ident]["expected"]
+    acceptance.validate_outcome(receipt, samples, scenario="rule-wording")
+    with pytest.raises(acceptance.AcceptanceFailure, match="repair_or_holdout_coverage_missing"):
+        acceptance.validate_outcome(receipt, samples, scenario="u08")
+    for case in receipt["report"]["validation"]["cases"]:
+        ident = case["case_id"]
+        samples[ident].update(expected_by_clause={"U08:4": samples[ident]["expected"]}, baseline_by_clause={"U08:4": "UNABLE"})
+        case["clauses"][0].update(clause_id="U08:4", baseline_actual="UNABLE")
+    acceptance.validate_outcome(receipt, samples, scenario="u08")
+
+
+def test_rule_change_live_cannot_omit_the_unchanged_clause_regression():
+    receipt, samples = valid_receipt()
+    for case in receipt["report"]["validation"]["cases"]:
+        ident = case["case_id"]
+        samples[ident].update(expected_by_clause={"R1": samples[ident]["expected"], "R2": "PASS"}, baseline_by_clause={"R1": samples[ident]["baseline"], "R2": "PASS"})
+    with pytest.raises(acceptance.AcceptanceFailure, match="clause_coverage_failed"):
+        acceptance.validate_outcome(receipt, samples, scenario="rule-threshold")
+    for case in receipt["report"]["validation"]["cases"]:
+        case["clauses"].append({**case["clauses"][0], "clause_id": "R2", "expected": "PASS", "actual": "PASS", "baseline_actual": "PASS"})
+    acceptance.validate_outcome(receipt, samples, scenario="rule-threshold")
 
 
 def test_live_hidden_values_and_label_order_are_private_fresh_and_independent(monkeypatch):
@@ -437,6 +621,14 @@ def test_wrong_operation_candidate_or_frozen_oracle_cannot_pass(path):
         acceptance.validate_bindings(receipt, **context)
 
 
+def test_new_rule_operation_binds_the_reconfirmed_revision_not_old_adoption():
+    receipt, context = identity_case()
+    receipt["suite_revision_id"] = "new-rule-revision"
+    acceptance.validate_bindings(receipt, **{**context, "base_revision_id": "new-rule-revision"})
+    with pytest.raises(acceptance.AcceptanceFailure, match="operation_identity_mismatch"):
+        acceptance.validate_bindings(receipt, **context)
+
+
 @pytest.mark.parametrize("field", ["evidence", "clause_id", "suggestions", "snapshot"])
 def test_history_same_status_does_not_hide_changed_evidence_or_frozen_source(field):
     result = {"result_attempt": 1, "findings": [{"status": "PASS", "clause_id": "R1", "evidence": {"locator": "A1"}, "suggestions": "original"}]}
@@ -569,7 +761,7 @@ def test_final_readback_revokes_acceptance_if_identity_or_sealed_proof_changes(m
     ],
 )
 def test_old_pass_page_cannot_prove_a_new_ng_reaudit(rendered):
-    expected = {"id": "new", "result_attempt": 1, "findings": [{"status": "NG"}]}
+    expected = {"id": "new", "result_attempt": 1, "findings": [{"item_key": "R1", "status": "NG"}]}
     acceptance.validate_rendered_round({"round_id": "new", "attempt": "1", "status": "不符合"}, expected)
     with pytest.raises(acceptance.AcceptanceFailure, match="browser_round_identity_or_result_mismatch"):
         acceptance.validate_rendered_round(rendered, expected)

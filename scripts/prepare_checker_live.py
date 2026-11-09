@@ -12,11 +12,16 @@ from urllib.parse import urlsplit
 
 def validate_invocation(environment):
     """Each explicit dispatch/rerun is independent; never resume an old operation."""
-    if environment.get("GITHUB_ACTIONS") != "true" or environment.get("GITHUB_EVENT_NAME") != "workflow_dispatch":
-        raise ValueError("manual_github_test_required")
-    run_id, attempt = environment.get("GITHUB_RUN_ID", ""), environment.get("GITHUB_RUN_ATTEMPT", "")
-    if not all(re.fullmatch(r"[1-9][0-9]*", value) for value in (run_id, attempt)) or environment.get("COMPOSE_PROJECT_NAME") != f"ppap-checker-live-{run_id}-{attempt}":
-        raise ValueError("isolated_test_attempt_required")
+    if environment.get("PPAP_CHECKER_LIVE_MODE") == "local":
+        run_id = environment.get("PPAP_CHECKER_LIVE_LOCAL_ID", "")
+        if environment.get("GITHUB_ACTIONS") or environment.get("CI") or not re.fullmatch(r"[a-f0-9]{32}", run_id) or environment.get("COMPOSE_PROJECT_NAME") != "ppap-checker-local-" + run_id:
+            raise ValueError("isolated_local_test_required")
+    else:
+        if environment.get("GITHUB_ACTIONS") != "true" or environment.get("GITHUB_EVENT_NAME") != "workflow_dispatch":
+            raise ValueError("manual_github_test_required")
+        run_id, attempt = environment.get("GITHUB_RUN_ID", ""), environment.get("GITHUB_RUN_ATTEMPT", "")
+        if not all(re.fullmatch(r"[1-9][0-9]*", value) for value in (run_id, attempt)) or environment.get("COMPOSE_PROJECT_NAME") != f"ppap-checker-live-{run_id}-{attempt}":
+            raise ValueError("isolated_test_attempt_required")
     if environment.get("PPAP_BUILD_SHA") != environment.get("PPAP_APPROVED_SHA") or not re.fullmatch(r"[a-f0-9]{40}", environment.get("PPAP_BUILD_SHA", "")):
         raise ValueError("reviewed_source_revision_mismatch")
     for name, ceiling in (("REQUESTS", 32), ("INPUT_TOKENS", 200000), ("OUTPUT_TOKENS", 32000)):

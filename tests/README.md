@@ -305,6 +305,59 @@ and token limits. Fix implementation after a red result, run the changed SHA,
 and refactor while preserving the assertions. Offline checks are fast feedback,
 not a replacement for this live test.
 
+The same driver also has an explicit local mode and three bounded scenarios:
+`u08`, `rule-threshold`, and `rule-wording`. Each fresh run admits at most one
+optimization. U08 uses the unchanged real CP workbook plus controlled mark-only
+variants, a frozen existing Checker/resources revision, and **only U08:4**.
+It does not certify the other U08 clauses. The original PASS comes from the
+existing human Oracle; derived cases are independently rule-based, not additional
+human-reviewed corpus labels. The two rule-update scenarios test R1 and unchanged
+R2 together, upload the actual changed rule JSON with checked source units, and
+require explicit reconfirmation. Wording-only changes may keep code unchanged.
+
+For a local run, supply the approved `CI_LLM_*` values in the process, then set
+`LIVE_API_IMAGE`, `LIVE_WORKER_IMAGE`, `LIVE_DEEP_IMAGE`, `LIVE_WEB_IMAGE` to four
+existing same-source images and set `PPAP_CHECKER_LIVE_RUNTIME_SHA` to their real
+source SHA. Existing immutable pins are in `deploy/tke/current.yaml`. The driver
+never builds or pulls images. Reusing an older runtime validates that runtime,
+not the current branch: the report separates `harness_sha`, `runtime_sha` and
+`same_source_runtime`; `candidate_sha` identifies the runtime being tested.
+
+```sh
+export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
+export PPAP_APPROVED_SHA="$PPAP_BUILD_SHA"
+export PPAP_CHECKER_LIVE_MODE=local
+export PPAP_CHECKER_LIVE_SCENARIO=u08
+export PPAP_CHECKER_LIVE_BASE_SHA=951f5a1bbfe5285f92a067ea3624a34d44d2f890
+export PPAP_PERSONAL_MODEL_MAX_REQUESTS=32
+export PPAP_PERSONAL_MODEL_MAX_INPUT_TOKENS=200000
+export PPAP_PERSONAL_MODEL_MAX_OUTPUT_TOKENS=32000
+# Free plan only: no writes, credential preparation, containers or model calls.
+uv run --no-sync python -m scripts.run_checker_live --plan
+
+# After authorization for this specific paid scenario, use a fresh identity.
+export PPAP_CHECKER_LIVE_LOCAL_ID="$(uv run --no-sync python -c 'from uuid import uuid4; print(uuid4().hex)')"
+export COMPOSE_PROJECT_NAME="ppap-checker-local-$PPAP_CHECKER_LIVE_LOCAL_ID"
+export PPAP_CHECKER_LIVE_OUTPUT="$(mktemp -d /tmp/ppap-checker-local.XXXXXX)"
+export PPAP_CHECKER_LIVE_ENV="$PPAP_CHECKER_LIVE_OUTPUT/private.env"
+uv run --no-sync python -m scripts.prepare_checker_live
+docker compose --env-file "$PPAP_CHECKER_LIVE_ENV" -f deploy/isolated-dev/checker-live.yaml up -d --no-build --pull never --wait api worker web
+set -a
+. "$PPAP_CHECKER_LIVE_ENV"
+set +a
+uv run --no-sync python -m scripts.run_checker_live
+uv run --no-sync python -m scripts.run_checker_live --snapshot
+docker compose --env-file "$PPAP_CHECKER_LIVE_ENV" -f deploy/isolated-dev/checker-live.yaml down --volumes --remove-orphans
+```
+
+Run the other scenarios with new local IDs/output directories. Do not rerun a
+started operation after uncertain consumption; `--snapshot` only reads the original
+operation. The local guard requires a clean tracked source, matching actual image
+and running-container identities, this random Compose project, loopback-only PG/Silo
+and product ports, and matching API/Web SHA readback before creating test data.
+No fixture login, production credentials, notifications or formal usage charges
+are enabled. Request/token limits are existing guards, not a fixed price guarantee.
+
 The sole model configuration source is `CI_LLM_BASE_URL`, `CI_LLM_MODEL`, and
 `CI_LLM_API_KEY`, the same Actions settings used for Deep. There are no duplicate
 endpoint/model inputs or fixed provider requirements. The key is injected only
