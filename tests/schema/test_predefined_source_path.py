@@ -2,11 +2,13 @@
 
 import os
 import uuid
+from dataclasses import replace
 
 import psycopg
 import pytest
+from audit.standard_suites import predefined_directory_suites
 from product.db import connect
-from product.seed_standard_suites import seed_standard_suites
+from product.seed_standard_suites import install_official_sources, seed_standard_suites
 from product.settings import Settings
 from product.store.suites import SuiteStore
 
@@ -80,3 +82,10 @@ def test_real_postgres_source_path_shape_and_seed_do_not_backfill_null(suite_db)
         assert conn.execute("SELECT source_path FROM product.suite_revisions WHERE id=%s", (legacy_id,)).fetchone()[0] is None
         assert conn.execute("SELECT source_path FROM product.suite_revisions WHERE id=%s", (untouched.id,)).fetchone()[0] is None
         assert conn.execute("SELECT source_path FROM product.suite_revisions WHERE id=%s", (directory_id,)).fetchone()[0] == "v5/UAES/U08"
+
+    source = next(suite for suite in predefined_directory_suites() if suite.source_path == "v5/UAES/U08")
+    copies = install_official_sources(store, (source, replace(source, source_path="v6/UAES/U08")))
+    assert copies[0]["resolved_digest"] == copies[1]["resolved_digest"]
+    assert copies[0]["revision_id"] != copies[1]["revision_id"]
+    assert copies[0]["revision_id"] == directory_id
+    assert store.official_revision_id_for_source("v6/UAES/U08") == copies[1]["revision_id"]

@@ -187,7 +187,7 @@ def test_catalog_preserves_titles_selections_and_reuses_shared_content(auth_stor
 
     monkeypatch.setattr(store.objects, "get", read_object)
     monkeypatch.setattr(release_store, "connect", open_connection)
-    from audit.standard_suites import predefined_directory_suites
+    from audit.standard_suites import predefined_directory_suites, predefined_sources
 
     installed = [{"path": suite.source_path, "error": "unseeded"} for suite in predefined_directory_suites()]
     for _ in range(2):
@@ -197,7 +197,8 @@ def test_catalog_preserves_titles_selections_and_reuses_shared_content(auth_stor
         assert response.status_code == 200, response.text
         body = response.json()
         assert body["suites"] == expected
-        assert body["predefined"] == []
+        assert {row["path"] for row in body["predefined"]} == {row.path for row in predefined_sources()}
+        assert all(row["availability"] in {"unseeded", "historical"} and "revision_id" not in row for row in body["predefined"])
         assert body["predefined_unavailable"] == installed
         assert "predefined_error" not in body
         assert "v5/UAES/U08" in [row["path"] for row in installed]
@@ -257,6 +258,7 @@ def test_predefined_catalog_binds_each_source_path_to_its_official_revision(auth
     v6_files = dict(leaf.files)
     v6_rules = json.loads(v6_files["rules.json"])
     v6_rules["title"] = "v6 示例检查"
+    v6_rules["customers"], v6_rules["preset_key"] = ["ACME"], "Z99"
     v6_files["rules.json"] = json.dumps(v6_rules, ensure_ascii=False).encode()
     v6 = migrator.create_revision(tenant_id=None, suite_key="ACME:Z99", files=v6_files, created_by=None, source_path="v6/ACME/Z99")
     mismatch = migrator.create_revision(tenant_id=None, suite_key="OTHER:KEY", files=FILES, created_by=None, source_path="v6/ACME/MIS")
@@ -287,20 +289,34 @@ def test_predefined_catalog_binds_each_source_path_to_its_official_revision(auth
     assert TestClient(create_app(store.settings, auth_store=store)).get("/suites").status_code == 401
     body = alice.get("/suites").json()
     predefined = {row["path"]: row for row in body["predefined"]}
-    assert predefined["v5/UAES/U08"] == {"path": "v5/UAES/U08", "title": "目录修订二", "suite_key": "UAES:U08", "revision_id": latest.id, **leaf_capability(updated)}
+    assert predefined["v5/UAES/U08"] == {
+        "path": "v5/UAES/U08",
+        "title": json.loads(leaf.files["rules.json"])["title"],
+        "availability": "installed",
+        "suite_key": "UAES:U08",
+        "revision_id": latest.id,
+        **leaf_capability(updated),
+    }
     assert predefined["v5/UAES/U08"]["evidence_reader_clause_ids"] == [clause["id"] for clause in rules["rules"]]
     assert predefined["v5/UAES/U08"]["bound_clause_count"] == predefined["v5/UAES/U08"]["clause_count"] == 12
     held = leaf_capability(placeholder.files)
-    assert held["evidence_reader_clause_ids"] == [] and held["bound_clause_count"] == held["clause_count"] > 0
+    declaration = {}
+    exec(placeholder.files["resources.py"], declaration)
+    assert set(held["evidence_reader_clause_ids"]) == set(declaration["RESOURCE"]["clauses"])
+    assert held["bound_clause_count"] == held["clause_count"] > 0
     assert predefined["v5/理想/L01"] == {
         "path": "v5/理想/L01",
         "title": json.loads(placeholder.files["rules.json"])["title"],
+        "availability": "installed",
         "suite_key": placeholder.suite_key,
         "revision_id": placeholder_revision.id,
         **held,
     }
-    assert predefined["v6/ACME/Z99"] == {"path": "v6/ACME/Z99", "title": "v6 示例检查", "suite_key": "ACME:Z99", "revision_id": v6.id, **leaf_capability(v6_files)}
-    assert {row["revision_id"] for row in body["predefined"]}.isdisjoint({newer.id, directory.id, secret_id, mismatch.id})
+    assert predefined["v6/ACME/Z99"] == {"path": "v6/ACME/Z99", "title": "v6 示例检查", "availability": "installed", "suite_key": "ACME:Z99", "revision_id": v6.id, **leaf_capability(v6_files)}
+    assert {row.get("revision_id") for row in body["predefined"]}.isdisjoint({newer.id, directory.id, secret_id, mismatch.id})
+    for path in ("v6/NEW/X1", "v6/SECRET/T1"):
+        assert predefined[path]["availability"] == "unseeded" and "revision_id" not in predefined[path]
+    assert predefined["v6/ACME/MIS"]["availability"] == "unavailable"
     assert {row["path"]: row["error"] for row in body["predefined_unavailable"]} == {
         "v6/ACME/MIS": "unavailable",
         "v6/NEW/X1": "unseeded",
@@ -309,12 +325,13 @@ def test_predefined_catalog_binds_each_source_path_to_its_official_revision(auth
     }
     assert {row["path"]: row for row in bob.get("/suites").json()["predefined"]} == predefined
     assert {row["path"]: row for row in carol.get("/suites").json()["predefined"]} == predefined
-    assert "control-plan" not in {row["suite_key"] for row in body["predefined"]}
+    assert "control-plan" not in {row.get("suite_key") for row in body["predefined"]}
     assert any(row["suite_key"] == "control-plan" for row in body["suites"])
     del store.objects.data[f"suites/official/objects/{content_digest(updated['rules.json'])}"]
     after = alice.get("/suites").json()
-    assert "v5/UAES/U08" not in {row["path"] for row in after["predefined"]}
-    assert {row["path"]: row["revision_id"] for row in after["predefined"]} == {"v6/ACME/Z99": v6.id, "v5/理想/L01": placeholder_revision.id}
+    inaccessible = next(row for row in after["predefined"] if row["path"] == "v5/UAES/U08")
+    assert inaccessible["availability"] == "unavailable" and "revision_id" not in inaccessible
+    assert {row["path"]: row["revision_id"] for row in after["predefined"] if row["availability"] == "installed"} == {"v6/ACME/Z99": v6.id, "v5/理想/L01": placeholder_revision.id}
     blocked = {row["path"]: row["error"] for row in after["predefined_unavailable"]}
     assert blocked["v5/UAES/U08"] == "unavailable"
     assert directory.id not in {row.get("revision_id") for row in after["predefined"]}

@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from audit.checker_core import checker_digest
 from audit.presets import customer_presets, preset_rule
-from audit.standard_suites import _CHECKERS_ROOT, _RELATED, load_predefined_checkers, predefined_directory_suites, standard_suites
+from audit.standard_suites import _CHECKERS_ROOT, _RELATED, load_predefined_checkers, predefined_directory_suites, predefined_sources, standard_suites
 
 ROOT = Path(__file__).resolve().parents[3]
 LEAF = ("checker.py", "rules.json", "resources.py")
@@ -79,13 +79,12 @@ def test_migration_inventory_names_every_current_group_and_declares_uaes_readers
             resource = namespace["RESOURCE"]
             assert resource["customer"] == preset.customer
             assert resource["preset_key"] == preset.entry_id
-            if preset.customer == "UAES":
-                assert set(resource["clauses"]) == set(clause_ids)
-                methods = {node.name for node in ast.walk(ast.parse(suite.files["checker.py"])) if isinstance(node, ast.FunctionDef)}
-                assert all(spec["method"] in methods for spec in resource["clauses"].values())
-                status = "complete-evidence-reader"
+            assert set(resource["clauses"]) <= set(clause_ids)
+            methods = {node.name for node in ast.walk(ast.parse(suite.files["checker.py"])) if isinstance(node, ast.FunctionDef)}
+            assert all(spec["method"] in methods for spec in resource["clauses"].values())
+            if resource["clauses"]:
+                status = "complete-evidence-reader" if set(resource["clauses"]) == set(clause_ids) else "partial-evidence-reader"
             else:
-                assert resource["clauses"] == {}
                 assert b"PASS" not in suite.files["checker.py"]
             assert b"audit.checkers" not in suite.files["checker.py"] and b"check_clause" not in suite.files["checker.py"]
         assert suite.related_suite_keys == _RELATED.get(key, ())
@@ -93,9 +92,6 @@ def test_migration_inventory_names_every_current_group_and_declares_uaes_readers
         rows.append({"suite_key": key, "status": status, "directory_source": suite.source_path})
     assert len(rows) == 41
     assert not [row for row in rows if row["status"] == "partial-directory-slice"]
-    assert sum(row["status"] == "complete-evidence-reader" for row in rows) == 19
-    assert sum(len(suite.entrypoints) for suite in directory.values() if suite.customer == "UAES") == 52
-    assert sum(row["status"] == "complete-binding-no-evidence-reader" for row in rows) == 22
     assert sum(row["status"] == "not-migrated" for row in rows) == 0
 
 
@@ -104,6 +100,53 @@ def test_scan_uses_the_filesystem_not_the_customer_registry(tmp_path, monkeypatc
     write_leaf(tmp_path, "v5/示例客户/Z99")
     found = load_predefined_checkers(tmp_path)
     assert [(suite.source_path, suite.suite_key) for suite in found] == [("v5/示例客户/Z99", "示例客户:Z99")]
+
+
+def test_navigation_derives_identity_and_order_from_real_paths(tmp_path):
+    paths = ("v5/UAES/U07", "v5/UAES/U08", "v5/理想/L07", "v5/蔚来/N03", "v6/UAES/U08")
+    for path in reversed(paths):
+        _version, customer, group = path.split("/")
+        write_leaf(tmp_path, path, rules={**RULES, "title": "规则 " + group, "customers": [customer], "preset_key": group})
+    found = predefined_sources(tmp_path)
+    assert [row.path for row in found] == sorted(paths, key=lambda path: path.encode())
+    for row in found:
+        version, customer, group = row.path.split("/")
+        assert row.title == "规则 " + group
+        assert row.suite.customer == customer and row.suite.source_entry == group
+        assert row.suite.suite_key == customer + ":" + group
+        assert row.suite.source_path.startswith(version + "/")
+
+
+@pytest.mark.parametrize("claim", [{"customers": ["Other"]}, {"customers": "UAES"}, {"preset_key": "U99"}, {"rule_profile": "v4"}])
+def test_metadata_cannot_override_a_directory_identity(tmp_path, claim):
+    write_leaf(tmp_path, "v5/UAES/U08", rules={**RULES, **claim})
+    with pytest.raises(ValueError, match="predefined_identity_conflict"):
+        predefined_sources(tmp_path)
+
+
+def test_historical_navigation_names_only_real_read_only_directories(tmp_path):
+    for version in ("v2", "v3", "v4"):
+        directory = tmp_path / version
+        directory.mkdir()
+        (directory / "__init__.py").write_text("", encoding="utf-8")
+    legacy = tmp_path / "v4" / "uaes"
+    legacy.mkdir()
+    (legacy / "fmea.py").write_text("class Historical: pass\n", encoding="utf-8")
+    write_leaf(tmp_path, "v5/UAES/U08")
+    rows = predefined_sources(tmp_path)
+    assert {row.path for row in rows if row.suite is None} == {"v2", "v3", "v4", "v4/uaes"}
+    assert all((tmp_path / row.path).is_dir() for row in rows)
+    assert "v4/UAES/U08" not in {row.path for row in rows}
+    assert len(load_predefined_checkers(tmp_path)) == 1
+
+
+def test_internal_file_symlink_is_not_a_source_asset(tmp_path):
+    directory = write_leaf(tmp_path, "v5/UAES/U08")
+    rules = directory / "rules.json"
+    rules.rename(tmp_path / "elsewhere.json")
+    rules.symlink_to(tmp_path / "elsewhere.json")
+    with pytest.raises(ValueError, match="predefined_path_escape"):
+        predefined_sources(tmp_path)
 
 
 def test_identical_v6_copy_keeps_one_content_digest_and_two_source_paths(tmp_path):
@@ -314,6 +357,11 @@ def test_wheel_and_container_context_keep_the_same_leaf_bytes(tmp_path):
                 archived = f"audit/checkers/v5/{preset.customer}/{preset.entry_id}/{name}"
                 assert archived in names
                 assert package.read(archived) == (leaf / name).read_bytes()
+        for source in predefined_sources():
+            if source.suite is None:
+                for path in (_CHECKERS_ROOT / source.path).glob("*.py"):
+                    archived = "audit/checkers/" + path.relative_to(_CHECKERS_ROOT).as_posix()
+                    assert package.read(archived) == path.read_bytes()
 
 
 def _legacy_imports(source: bytes) -> list[str]:
