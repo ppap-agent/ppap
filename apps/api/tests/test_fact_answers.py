@@ -96,6 +96,7 @@ def test_fact_answer_routes_are_registered_on_the_production_app():
     assert "get" in paths["/audit-rounds/{round_id}/fact-answers"]
     assert "post" in paths["/audit-rounds/{round_id}/fact-answers"]
     assert "get" in paths["/audit-rounds/{round_id}/fact-answers/{operation_id}"]
+    assert "post" in paths["/audit-rounds/{round_id}/fact-answers/{operation_id}/samples"]
     assert "get" in paths["/audit-rounds/{round_id}/fact-answers/export"]
     assert "application/pdf" in paths["/audit-rounds/{round_id}/fact-answers/report"]["get"]["responses"]["200"]["content"]
 

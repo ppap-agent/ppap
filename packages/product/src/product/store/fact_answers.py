@@ -171,7 +171,7 @@ def apply_answer(store, principal, round_id, payload):
         conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("fact-answer:" + request["operation_id"],))
         # One revision boundary for answers and all affected results. No Worker,
         # queue, usage-event, new Round, rule appendix or model call is involved.
-        row = conn.execute("SELECT execution FROM product.audit_rounds WHERE id=%s FOR UPDATE", (round_id,)).fetchone()
+        row = conn.execute("SELECT execution,result_attempt FROM product.audit_rounds WHERE id=%s FOR UPDATE", (round_id,)).fetchone()
         old = conn.execute("SELECT request,receipt,answered_by,round_id FROM product.original_fact_answers WHERE operation_id=%s", (request["operation_id"],)).fetchone()
         if old:
             if old[0] != request or str(old[2]) != principal.user_id or str(old[3]) != round_id:
@@ -195,7 +195,7 @@ def apply_answer(store, principal, round_id, payload):
         ):
             raise ValueError("invalid_fact_answer_request")
         answer = {key: question[key] for key in ("file_version_id", "field", "prompt", "answer_type", "locator")}
-        answer.update(operation_id=request["operation_id"], round_id=round_id, value=value, answered_by=principal.user_id, answered_at=datetime.now(timezone.utc).isoformat())
+        answer.update(operation_id=request["operation_id"], round_id=round_id, result_attempt=row[1], value=value, answered_by=principal.user_id, answered_at=datetime.now(timezone.utc).isoformat())
         results = _recompute(_machine(conn, round_id), question, [*view["answers"], answer])
         receipt = {"operation_id": request["operation_id"], "round_id": round_id, "revision": view["revision"] + 1, "answer": answer, "results": results, "model_calls": 0}
         conn.execute(
@@ -223,3 +223,62 @@ def export_answers(store, principal, round_id):
         conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         _authorize(store, conn, principal, round_id)
         return {"schema": "original-fact-confirmations-v1", "training_eligible": False, "machine_findings": _machine(conn, round_id), **_view(conn, round_id)}
+
+
+def save_answer_sample(store, principal, round_id, answer_operation_id, payload):
+    """Explicitly use an observed answer as an ordinary, editable Checker sample.
+
+    The fact answer stays immutable. The existing feedback store owns sample
+    identity, authorization, frozen source checks and idempotent readback.
+    """
+    from product.store.checker_development import CheckerDevelopmentStore
+
+    round_id, answer_operation_id = _uuid(round_id), _uuid(answer_operation_id)
+    required = {"operation_id", "item_key", "expected_status", "rationale"}
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != required
+        or not isinstance(payload["item_key"], str)
+        or not isinstance(payload["expected_status"], str)
+        or payload["expected_status"] not in {"PASS", "NG", "NA"}
+        or not isinstance(payload["rationale"], str)
+        or not payload["rationale"].strip()
+        or len(payload["rationale"]) > 7000
+    ):
+        raise ValueError("invalid_fact_sample_request")
+    operation_id = _uuid(payload["operation_id"])
+    with store._conn() as conn, conn.transaction():
+        conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        _authorize(store, conn, principal, round_id)
+        row = conn.execute("SELECT receipt FROM product.original_fact_answers WHERE round_id=%s AND operation_id=%s AND tenant_id=%s", (round_id, answer_operation_id, principal.tenant_id)).fetchone()
+        if row is None:
+            raise ValueError("fact_answer_expired")
+        answer = row[0]["answer"]
+        if answer["value"] is None:
+            raise ValueError("fact_answer_unknown_not_sample")
+        result = next((item for item in row[0]["results"] if item["item_key"] == payload["item_key"] and answer_operation_id in item["answer_ids"]), None)
+        finding = next((item for item in _machine(conn, round_id) if item["item_key"] == payload["item_key"]), None)
+        if result is None or finding is None or finding["locator"].get("file_version_id") != answer["file_version_id"]:
+            raise ValueError("fact_answer_sample_scope_mismatch")
+        source = conn.execute(
+            """SELECT i.rule_version_id,r.result_attempt FROM product.round_inputs i
+               JOIN product.audit_rounds r ON r.id=i.round_id
+               WHERE i.round_id=%s AND i.file_version_id=%s AND i.role='target'""",
+            (round_id, answer["file_version_id"]),
+        ).fetchone()
+        if source is None or source[0] is None or source[1] is None or answer.get("result_attempt") != source[1]:
+            raise ValueError("fact_answer_expired")
+        value = answer["value"] if isinstance(answer["value"], str) else "是" if answer["value"] else "否"
+        sample = {
+            "operation_id": operation_id,
+            "file_version_id": answer["file_version_id"],
+            "rule_version_id": str(source[0]),
+            "rule_clause_id": finding["locator"].get("rule_item_id"),
+            "result_attempt": source[1],
+            "original_status": finding["status"],
+            "expected_status": payload["expected_status"],
+            "rationale": f"原件事实回答 {answer_operation_id}（{answer['answered_by']}，{answer['answered_at']}）：{payload['rationale'].strip()}",
+            "evidence": [{"file_version_id": answer["file_version_id"], "locator": answer["locator"], "excerpt": f"{answer['prompt']}：{value}"[:500]}],
+            "reason_category": "incorrect_reading",
+        }
+    return CheckerDevelopmentStore(store).save_feedback(principal, round_id, sample)

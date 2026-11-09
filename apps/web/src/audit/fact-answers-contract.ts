@@ -4,12 +4,16 @@ import type {components} from '../generated/openapi'
 export type FactAnswersView = components['schemas']['FactAnswersView']
 export type FactAnswerRequest = components['schemas']['FactAnswerRequest']
 export type FactAnswerReceipt = components['schemas']['FactAnswerReceipt']
+export type FactAnswerSampleRequest = components['schemas']['FactAnswerSampleRequest']
+export type FactAnswerSample = components['schemas']['FeedbackResponse']
 export type FactQuestion = FactAnswersView['questions'][number]
 
 export interface FactAnswersAdapter {
   read(roundId: string): Promise<FactAnswersView>
   apply(roundId: string, input: FactAnswerRequest): Promise<FactAnswerReceipt>
   readOperation(roundId: string, operationId: string): Promise<FactAnswerReceipt | null>
+  saveSample?(roundId: string, answerOperationId: string, input: FactAnswerSampleRequest): Promise<FactAnswerSample>
+  readSample?(roundId: string, operationId: string): Promise<FactAnswerSample | null>
 }
 
 const path = (roundId: string) => `/audit-rounds/${encodeURIComponent(roundId)}/fact-answers`
@@ -31,6 +35,16 @@ export const nativeFactAnswersAdapter: FactAnswersAdapter = {
   async readOperation(roundId, operationId) {
     const receipt = await request<FactAnswerReceipt | null>(`${path(roundId)}/${encodeURIComponent(operationId)}`)
     return receipt === null ? null : checkedFactAnswer(receipt, roundId, operationId)
+  },
+  async saveSample(roundId, answerOperationId, input) {
+    const sample = await request<FactAnswerSample>(`${path(roundId)}/${encodeURIComponent(answerOperationId)}/samples`, 'POST', input)
+    if (sample.round_id !== roundId || sample.operation_id !== input.operation_id || sample.expected_status !== input.expected_status) throw new Error('样本回执与本次操作不一致，请读取原操作。')
+    return sample
+  },
+  async readSample(roundId, operationId) {
+    const view = await request<components['schemas']['FeedbackView']>(`/audit-rounds/${encodeURIComponent(roundId)}/checker-feedback`)
+    if (view.round_id !== roundId) throw new Error('样本不属于本次审核，请重新读取。')
+    return view.feedback.find(row => row.operation_id === operationId && row.round_id === roundId) ?? null
   },
 }
 
