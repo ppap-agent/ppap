@@ -618,7 +618,7 @@ class BrowserJourney:
         view = page.get_by_role("region", name="历史审核", exact=True)
         expect(view).to_have_attribute("data-round-id", result["id"])
         expect(view).to_have_attribute("data-result-attempt", str(result["result_attempt"]))
-        row = view.get_by_role("row").filter(has=page.get_by_role("button", name="这条判错了 " + clause_id, exact=True))
+        row = view.get_by_role("row").filter(has=page.get_by_role("button", name="查看依据 " + clause_id, exact=True))
         expect(row).to_have_count(1)
         status = row.get_by_role("cell").nth(2)
         expect(status).to_have_text({"PASS": "符合", "NG": "不符合", "UNABLE": "无法判断", "ERR": "技术失败", "NA": "不适用"}[finding_for(result, clause_id)["status"]])
@@ -648,7 +648,8 @@ class BrowserJourney:
         page = self.page
         clause_id, locator = clause_id or self.clause_id, locator or {"sheet": "Sheet", "cell": "A1"}
         self.read_round(result, clause_id)
-        page.get_by_role("button", name="这条判错了 " + clause_id, exact=True).click()
+        page.get_by_role("button", name="查看依据 " + clause_id, exact=True).click()
+        page.get_by_role("article", name="条款判定依据", exact=True).get_by_role("button", name="这条判错了", exact=True).click()
         page.get_by_label("正确结论", exact=True).select_option(expected)
         page.get_by_text("添加我在原件中找到的依据", exact=True).click()
         page.get_by_label("工作表名称", exact=True).fill(locator["sheet"])
