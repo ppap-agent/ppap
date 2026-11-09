@@ -27,7 +27,7 @@ _REFERENCE_DESCRIPTION = (
 _REFERENCE_HEADING = re.compile(r"^(?:EXAMPLE|SAMPLE|样例|示例|样张|填写说明|填表说明)(?:\s*[:：].*)?$", re.IGNORECASE)
 _GUIDANCE = re.compile(r"填写说明|填表说明|填写为|必须手签|样例页|示例页|\b(?:EXAMPLE|SAMPLE)\b", re.IGNORECASE)
 _DISPOSITION = frozenset({"disposition_visible", "approved_checked", "conditional_checked", "rejected_checked"})
-_STAMP = frozenset({"psw_stamp_present", "psw_stamp_ending_text"})
+_STAMP = frozenset({"psw_stamp_present", "psw_stamp_ends_with_company"})
 
 
 def _reference_role(text: str) -> bool | None:
@@ -88,13 +88,15 @@ class _Objects:
         self.facts: dict[int, dict[str, object]] = {}
         self.sources: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
         self.ambiguous: set[int] = set()
+        self.unresolved_pages: set[int] = set()
         with fitz.open(audit.file_url) as document:
             if document.needs_pass:
                 raise VisualFactsUnavailable("原件访问权限尚不能确认。")
             self.pages = list(range(1, len(document) + 1))
             for number in self.pages:
                 page = document[number - 1]
-                self.roles[number] = _reference_role(page.get_text())
+                text = page.get_text()
+                self.roles[number] = _reference_role(text)
                 self.facts[number] = {}
                 signatures, dispositions = page.search_for("经授权的供方代表签字"), page.search_for("认可情况")
                 if signatures or dispositions:
@@ -116,6 +118,41 @@ class _Objects:
                     self.authorization.append(number)
                     if len(authorizations) > 1:
                         self.authorization_ambiguous.add(number)
+                lines = [line.strip() for line in text.splitlines() if line.strip()]
+                checklist = bool(lines and lines[0] == "生产件批准交付物文件清单" and all(label in re.sub(r"\s+", "", text) for label in ("序号", "项目", "确认方法", "交付形式", "附件")))
+                if checklist and not signatures and not dispositions and not authorizations:
+                    self._note(
+                        {"kind": "pdf_region", "page": number, "bbox": list(page.search_for(lines[0])[0]), "source_sha256": digest, "coverage": "native_document_heading"},
+                        "原生标题及清单列确认本页为生产件批准交付物文件清单。",
+                        visual=False,
+                    )
+                elif (
+                    not signatures
+                    and not dispositions
+                    and not authorizations
+                    and self.roles[number] is not True
+                    and (page.get_image_info() or (not text.strip() and any(drawing["type"] != "f" or drawing["fill"] != (1.0, 1.0, 1.0) for drawing in page.get_drawings())))
+                ):
+                    # An unclassified visual page may contain another warrant
+                    # or authorization. Do not add scanning or exclude it.
+                    self.unresolved_pages.add(number)
+                    self.ambiguous.add(number)
+                    self.roles[number] = None
+                    self.facts[number][REFERENCE] = None
+                    self._note(
+                        {
+                            "kind": "pdf_region",
+                            "page": number,
+                            "bbox": list(page.rect),
+                            "source_sha256": digest,
+                            "file_version_id": audit.audit_id,
+                            "fact": REFERENCE,
+                            "observed_value": None,
+                            "coverage": "unreadable",
+                        },
+                        "此页有未分类图形内容，不能排除额外保证书或授权声明。",
+                        visual=False,
+                    )
                 if self.roles[number] is True:
                     self._note(
                         {
@@ -187,7 +224,7 @@ class _Objects:
         business = [value for page, value in outcomes if self.roles[page] is False]
         # ALL is unaffected by an uncertain member whose predicate is true.
         # Such a member cannot establish that any business object exists.
-        known = not any(self.roles[page] is not True and page in self.ambiguous for page in self.warrants)
+        known = not self.unresolved_pages and not any(self.roles[page] is not True and page in self.ambiguous for page in self.warrants)
         known &= all(value.status == "PASS" for page, value in outcomes if self.roles[page] is None)
         if not business and not all(role is True for role in self.roles.values()):
             known = False
@@ -196,7 +233,7 @@ class _Objects:
     def evaluate(self, rule_no: int, witness) -> AuditResultItem:
         required = PSW_RULE_FIELDS[rule_no]
         if _STAMP.intersection(required):
-            first = {field: PSW_RULE_FIELDS[3][field] for field in PSW_RULE_FIELDS[3] if field in _STAMP}
+            first = {field: description for field, description in required.items() if field in _STAMP}
         elif _DISPOSITION.intersection(required):
             first = {field: PSW_RULE_FIELDS[8][field] for field in PSW_RULE_FIELDS[8] if field in _DISPOSITION}
         else:
@@ -204,17 +241,16 @@ class _Objects:
         self.read(self.warrants, first)
         result, outcomes = self.aggregate(rule_no)
         if result.status == "UNABLE":
-            # The company-ending boolean is derived by the existing policy.
-            # Asking it again cannot repair unknown canonical seal text.
-            remaining = {field: text for field, text in required.items() if not field.startswith("authorization_") and field not in first and field != "psw_stamp_ends_with_company"}
+            remaining = {field: text for field, text in required.items() if not field.startswith("authorization_") and field not in first}
             self.read(self.warrants, remaining)
             result, outcomes = self.aggregate(rule_no)
-        if rule_no == 3 and result.status == "UNABLE":
+        if rule_no == 3 and result.status == "UNABLE" and any(value.status == "UNABLE" for _page, value in outcomes):
             pages = self.authorization or self.pages
             fields = {field: text for field, text in required.items() if field.startswith("authorization_")}
             self.read(pages, fields)
             auth = _exists_authorization(
-                [{**self.facts[page], REFERENCE: self.roles[page]} for page in pages], not any(page in self.ambiguous | self.authorization_ambiguous and self.roles[page] is not True for page in pages)
+                [{**self.facts[page], REFERENCE: self.roles[page]} for page in pages],
+                not self.unresolved_pages and not any(page in self.ambiguous | self.authorization_ambiguous and self.roles[page] is not True for page in pages),
             )
             result, outcomes = self.aggregate(rule_no, auth)
         nondecisive = {page for page, value in outcomes if self.roles[page] is None and value.status == "PASS"}
@@ -228,7 +264,7 @@ class _Objects:
             "status": result.status,
             "business_pages": [page for page in self.warrants if self.roles[page] is False and page not in self.ambiguous],
             "reference_pages": [page for page in self.pages if self.roles[page] is True],
-            "unresolved_pages": [page for page in self.warrants if self.roles[page] is None or (self.roles[page] is False and page in self.ambiguous)],
+            "unresolved_pages": sorted(self.unresolved_pages | {page for page in self.warrants if self.roles[page] is None or (self.roles[page] is False and page in self.ambiguous)}),
             "unresolved_authorization_pages": [page for page in self.authorization if self.roles[page] is not True and (self.roles[page] is None or page in self.authorization_ambiguous)],
             "nondecisive_pages": sorted(nondecisive),
             "objects": [{"page": page, "business": None if self.roles[page] is None else True, "status": value.status, "facts": psw_fact_summary(self.facts[page])} for page, value in outcomes],
@@ -238,7 +274,7 @@ class _Objects:
 
 
 def evaluate_psw_pdf_rule(audit: AuditInput, rule_no: int, witness, cache: dict, read_single: Callable[[], dict[str, object]]) -> tuple[dict[str, object], AuditResultItem]:
-    """Keep single-object reads; plan scope explicitly when references or multiple forms occur."""
+    """Evaluate all PDF objects through one source-located scope boundary."""
     from audit.checkers.v4.visual_facts import _source_identity
 
     path = Path(audit.file_url)
@@ -250,12 +286,7 @@ def evaluate_psw_pdf_rule(audit: AuditInput, rule_no: int, witness, cache: dict,
     if key not in cache:
         cache[key] = _Objects(audit, digest, cache)
     objects = cache[key]
-    # Repeated sections alone do not establish separate business objects.
-    # The existing one-document reader preserves uncertainty between them.
-    # This choice is source-bound: resolving a role cannot discard its reads.
-    if not objects.needs_object_scope:
-        facts = read_single()
-        return facts, evaluate_psw_observation(rule_no, facts)
+    # Single and multiple PDF warrants use the same object/source boundary.
     from documents.ocr.env import ocr_policy_identity
 
     identity = ("ocr_policy", audit.audit_id)
