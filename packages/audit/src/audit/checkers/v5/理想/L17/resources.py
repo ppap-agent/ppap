@@ -1,12 +1,25 @@
-"""Evidence scope owned by this directory leaf.
-
-`clauses` is empty: this leaf has no evidence reader. Every bound clause
-stays UNABLE. Unknown is not a pass. This module does not call another checker.
-"""
+"""Clause readers and explicit unsupported scopes owned by this leaf."""
 
 RESOURCE = {
     "customer": "理想",
     "preset_key": "L17",
-    "supported_suffixes": (),
-    "clauses": {},
+    "supported_suffixes": (".xlsx", ".xlsm", ".xls", ".docx", ".pdf"),
+    "clauses": {
+        "L17:1": {"method": "rule_1", "scope": "原生字段或唯一单行表头；公式、歧义和未完整读取的范围保持未知。", "carriers": (".xlsx", ".xlsm", ".xls", ".docx", ".pdf")},
+        "L17:3": {"method": "rule_3", "scope": "已定位原图区域的具体图形事实；多页/多表关系不能完整建立时保持未知；不支持DOCX图形读取。", "carriers": (".xlsx", ".xlsm", ".xls", ".pdf")},
+        "L17:5": {"method": "rule_5", "scope": "已定位原图区域的具体图形事实；多页/多表关系不能完整建立时保持未知；不支持DOCX图形读取。", "carriers": (".xlsx", ".xlsm", ".xls", ".pdf")},
+        "L17:6": {"method": "rule_6", "scope": "原生字段或唯一单行表头；公式、歧义和未完整读取的范围保持未知。", "carriers": (".xlsx", ".xlsm", ".xls", ".docx", ".pdf")},
+        "L17:7": {"method": "rule_7", "scope": "原生字段或唯一单行表头；公式、歧义和未完整读取的范围保持未知。", "carriers": (".xlsx", ".xlsm", ".xls", ".docx", ".pdf")},
+        "L17:8": {"method": "rule_8", "scope": "已定位原图区域的具体图形事实；多页/多表关系不能完整建立时保持未知；不支持DOCX图形读取。", "carriers": (".xlsx", ".xlsm", ".xls", ".pdf")},
+    },
+    "known_gaps": {
+        "L17:2": "重量原始显示精度及四位小数格式尚未迁入，不从浮点值猜测显示位数。",
+        "L17:4": "供应商总公司身份和名称/代码的原件结构确认尚未迁入。",
+        "L17:9": "条件批准的唯一实际选择、右下角日期定位与三日历月时效尚未联合迁入。",
+        "L17:10": "条件批准的唯一实际选择与补充评论字段归属尚未联合迁入。",
+    },
+    "limitations": (
+        "原生PDF表格仅在现有PDF→Excel成功且保留完整原件位置时检查；未识别版式及扫描内容保持UNABLE。",
+        "图形事实须在原图中定位；原生空框、文字标签和图像对象数量不能认证实际勾选、签字或章文。",
+    ),
 }

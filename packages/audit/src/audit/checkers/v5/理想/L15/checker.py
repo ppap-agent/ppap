@@ -1,96 +1,53 @@
-"""Bound clauses of one predefined directory leaf.
-
-This leaf implements no evidence reader. Every bound clause is UNABLE.
-Unknown is not a pass. This file does not call another checker version.
-"""
+"""Source-owned Li Auto business clauses; unknown evidence cannot pass."""
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Literal
+from datetime import datetime, time
 
-from audit.checker_lib.evidence import structure_diagnostic, structure_evidence
-from audit.contracts import AuditEvidence, AuditResultItem
+from audit.checker_lib.source import SourceAudit, UnknownFact, blank, key
+from audit.engine.checkers.date_utils import normalize_excel_date
 from resources import RESOURCE
-
-_BOUNDARY = "本目录 Checker 没有读取本条款证据的检查，不能判定为通过。"
-_Format = Literal["xlsx", "xls", "xlsm", "pdf", "docx", "png", "jpg", "jpeg", "webp", "txt", "md"]
-_FORMATS: dict[str, _Format] = {
-    ".xlsx": "xlsx",
-    ".xlsm": "xlsm",
-    ".xls": "xls",
-    ".pdf": "pdf",
-    ".docx": "docx",
-    ".png": "png",
-    ".jpg": "jpg",
-    ".jpeg": "jpeg",
-    ".webp": "webp",
-    ".txt": "txt",
-    ".md": "md",
-}
 
 
 def create_audit(audit_file, rule, group_context=None):
-    return _BoundLeaf(audit_file, rule, group_context)
+    return _Audit(audit_file, rule, group_context, resource=RESOURCE)
 
 
-class _Clause:
-    def __init__(self, audit: _BoundLeaf, clause_id: str):
-        self.rule_item = type("_RuleItem", (), {"id": clause_id})()
-        self._audit = audit
-        self._clause_id = clause_id
+class _Audit(SourceAudit):
+    def rule_1(self):
+        names = ("车型", "供应商名称", "零件编号", "零件名称")
+        for name in names:
+            if key(self.native().field((name,))) in {key(label) for label in names}:
+                raise UnknownFact("字段只读到相邻标签，尚不能证明有实际填写内容。")
+        return ("PASS", "项目问题清单四个身份字段均有实际内容。")
 
-    def check(self) -> AuditResultItem:
-        return self._audit.evaluate(self._clause_id)
+    def rule_2(self):
+        labels = ("过程审核问题是否完全关闭？", "检验体系审核问题是否完全关闭？", "供应商追溯体系评审问题是否完全关闭？", "其他专项问题")
+        values = [self.native().field((name,)) for name in labels]
+        if any((value == "No" for value in values)):
+            rows = self.native().rows({"description": ("问题描述",)})
+            if not any((not blank(row["description"]) for row in rows)):
+                return ("NG", "存在未关闭问题，但没有实际问题描述。")
+        return ("PASS", "四个关闭状态及条件触发后的实际问题描述已读取。")
 
+    def rule_3(self):
+        aliases = {"description": ("问题描述",), "action": ("对应措施",), "date": ("时间节点",), "owner": ("负责人",)}
+        rows = self.native().rows(aliases, anchor=("description",))
+        for row in rows:
+            if any((blank(row[name]) for name in ("action", "date", "owner"))):
+                return ("NG", "问题行的对应措施、时间节点或负责人为空。")
+            raw = row["date"]
+            value = normalize_excel_date(raw)
+            if value is None:
+                raise UnknownFact("问题时间节点无法可靠解析。")
+            deadline = datetime.fromisoformat(raw) if isinstance(raw, str) and "T" in raw else datetime.combine(value, time.min)
+            if deadline <= datetime.now(deadline.tzinfo):
+                return ("NG", "问题时间节点必须晚于当前时间。")
+        return ("PASS", "所有问题整改要素完整，且期限晚于当前时间。")
 
-class _BoundLeaf:
-    def __init__(self, audit_file, rule, group_context):
-        self.audit_file = audit_file
-        self.rule = rule
-        self._group_context = group_context
-        self.checks = [_Clause(self, clause_id) for clause_id in _clause_ids(rule)]
-
-    def close(self) -> None:
-        return None
-
-    def evaluate(self, clause_id: str) -> AuditResultItem:
-        # RESOURCE["clauses"] only names readers. This file implements none.
-        # A named reader without code here stays UNABLE. It is not a pass.
-        message = f"{RESOURCE['customer']}/{RESOURCE['preset_key']}：{_BOUNDARY}"
-        return self._item(clause_id, "UNABLE", message, checks_performed=0, evidence=self._boundary(message))
-
-    def _boundary(self, message: str) -> AuditEvidence | None:
-        suffix = Path(str(getattr(self.audit_file, "file_url", "") or "")).suffix.lower()
-        source_format = _FORMATS.get(suffix)
-        if source_format is None:
-            return None
-        return structure_evidence(source_format=source_format, sources=(), diagnostics=(structure_diagnostic("evidence_reader_absent", message),))
-
-    def _item(self, clause_id: str, status: str, suggestion: str, *, evidence: AuditEvidence | None, checks_performed: int) -> AuditResultItem:
-        category = clause_id
-        for row in getattr(self.rule, "rules", ()) or ():
-            row_id = row.get("id") if isinstance(row, dict) else getattr(row, "id", None)
-            if row_id == clause_id:
-                raw = row.get("category") if isinstance(row, dict) else getattr(row, "category", None)
-                category = str(raw or clause_id)
-                break
-        return AuditResultItem(
-            classification="规则审核",
-            item=category,
-            priority="P0",
-            status=status,
-            suggestions=suggestion,
-            evidence=evidence,
-            clause_id=clause_id,
-            checks_performed=checks_performed,
-        )
-
-
-def _clause_ids(rule) -> list[str]:
-    found: list[str] = []
-    for row in getattr(rule, "rules", ()) or ():
-        clause_id = row.get("id") if isinstance(row, dict) else getattr(row, "id", None)
-        if isinstance(clause_id, str) and clause_id and clause_id not in found:
-            found.append(clause_id)
-    return found
+    def rule_4(self):
+        risk = "整车/总成功/性能性、SOP+3产能风险、安全性、法律法规风险"
+        for row in self.native().rows({"description": ("问题描述",), "risk": (risk,)}, anchor=("description",)):
+            if row["risk"] not in {"Yes", "No"}:
+                return ("NG", "问题风险分类必须严格为Yes或No。")
+        return ("PASS", "所有问题风险分类均为Yes或No。")

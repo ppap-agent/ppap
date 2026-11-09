@@ -1,96 +1,62 @@
-"""Bound clauses of one predefined directory leaf.
-
-This leaf implements no evidence reader. Every bound clause is UNABLE.
-Unknown is not a pass. This file does not call another checker version.
-"""
+"""Source-owned Li Auto business clauses; unknown evidence cannot pass."""
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Literal
+import re
 
-from audit.checker_lib.evidence import structure_diagnostic, structure_evidence
-from audit.contracts import AuditEvidence, AuditResultItem
+from audit.checker_lib.source import SourceAudit, UnknownFact, blank, header, key
 from resources import RESOURCE
-
-_BOUNDARY = "本目录 Checker 没有读取本条款证据的检查，不能判定为通过。"
-_Format = Literal["xlsx", "xls", "xlsm", "pdf", "docx", "png", "jpg", "jpeg", "webp", "txt", "md"]
-_FORMATS: dict[str, _Format] = {
-    ".xlsx": "xlsx",
-    ".xlsm": "xlsm",
-    ".xls": "xls",
-    ".pdf": "pdf",
-    ".docx": "docx",
-    ".png": "png",
-    ".jpg": "jpg",
-    ".jpeg": "jpeg",
-    ".webp": "webp",
-    ".txt": "txt",
-    ".md": "md",
-}
 
 
 def create_audit(audit_file, rule, group_context=None):
-    return _BoundLeaf(audit_file, rule, group_context)
+    return _Audit(audit_file, rule, group_context, resource=RESOURCE)
 
 
-class _Clause:
-    def __init__(self, audit: _BoundLeaf, clause_id: str):
-        self.rule_item = type("_RuleItem", (), {"id": clause_id})()
-        self._audit = audit
-        self._clause_id = clause_id
+class _Audit(SourceAudit):
+    def rule_1(self):
+        names = ("零件供应商名称", "提交日期")
+        for name in names:
+            if key(self.native().field((name,))) in {key(label) for label in names}:
+                raise UnknownFact("字段只读到相邻标签，尚不能证明有实际填写内容。")
+        return ("PASS", "供应商名称与提交日期均有实际原件内容。")
 
-    def check(self) -> AuditResultItem:
-        return self._audit.evaluate(self._clause_id)
+    def rule_2(self):
+        names = ("一级分总成零件名称", "分总成组件或分序模具名称", "模具制造供应商", "模具存放地点", "零件质量评估", "模具分供方及实物VS 数据&标准验收", "模具量产性能评估", "模具维保评估")
+        for row in self.native().rows({"process": ("工艺类型",), **{name: (name,) for name in names}}, anchor=("process",)):
+            if any((blank(row[name]) for name in names)):
+                return ("NG", "有工艺类型的模具行存在未填写的必填字段。")
+        return ("PASS", "每个有工艺类型的模具行必填内容均已填写。")
 
+    def column_rows(self, name):
+        facts = self.native()
+        table = facts.table(("模具验收",))
+        aliases = {name: (name,)}
+        start, _columns = facts.columns(table, aliases)
+        for marker in ("工艺类型", "一级分总成零件名称"):
+            if any((header(facts.readers[table["id"]].cell(start, column).get("value"), (marker,)) for column in range(1, table["cols"] + 1))):
+                aliases[marker] = (marker,)
+        return facts.rows(aliases, title=(table["id"],))
 
-class _BoundLeaf:
-    def __init__(self, audit_file, rule, group_context):
-        self.audit_file = audit_file
-        self.rule = rule
-        self._group_context = group_context
-        self.checks = [_Clause(self, clause_id) for clause_id in _clause_ids(rule)]
+    def rule_3(self):
+        for row in self.column_rows("模具设计尺寸"):
+            if re.fullmatch("\\d+(?:\\.\\d+)?×\\d+(?:\\.\\d+)?×\\d+(?:\\.\\d+)?", str(row["模具设计尺寸"] or "").strip()) is None:
+                return ("NG", "模具设计尺寸必须为数字×数字×数字。")
+        return ("PASS", "全部模具设计尺寸均符合长×宽×高格式。")
 
-    def close(self) -> None:
-        return None
-
-    def evaluate(self, clause_id: str) -> AuditResultItem:
-        # RESOURCE["clauses"] only names readers. This file implements none.
-        # A named reader without code here stays UNABLE. It is not a pass.
-        message = f"{RESOURCE['customer']}/{RESOURCE['preset_key']}：{_BOUNDARY}"
-        return self._item(clause_id, "UNABLE", message, checks_performed=0, evidence=self._boundary(message))
-
-    def _boundary(self, message: str) -> AuditEvidence | None:
-        suffix = Path(str(getattr(self.audit_file, "file_url", "") or "")).suffix.lower()
-        source_format = _FORMATS.get(suffix)
-        if source_format is None:
-            return None
-        return structure_evidence(source_format=source_format, sources=(), diagnostics=(structure_diagnostic("evidence_reader_absent", message),))
-
-    def _item(self, clause_id: str, status: str, suggestion: str, *, evidence: AuditEvidence | None, checks_performed: int) -> AuditResultItem:
-        category = clause_id
-        for row in getattr(self.rule, "rules", ()) or ():
-            row_id = row.get("id") if isinstance(row, dict) else getattr(row, "id", None)
-            if row_id == clause_id:
-                raw = row.get("category") if isinstance(row, dict) else getattr(row, "category", None)
-                category = str(raw or clause_id)
-                break
-        return AuditResultItem(
-            classification="规则审核",
-            item=category,
-            priority="P0",
-            status=status,
-            suggestions=suggestion,
-            evidence=evidence,
-            clause_id=clause_id,
-            checks_performed=checks_performed,
+    def rule_4(self):
+        return self.visual_result(
+            {"physical_photo": "实物照片列下有实际嵌入图片，文字占位和其他列图片不算；只核实图片存在，不认证照片内容是否正确。无法分辨图片与空白单元格时返回未知。"}, "实物照片列中的对应图片"
         )
 
+    def rule_5(self):
+        names = ("编制", "审核")
+        for name in names:
+            if key(self.native().field((name,))) in {key(label) for label in names}:
+                raise UnknownFact("字段只读到相邻标签，尚不能证明有实际填写内容。")
+        return ("PASS", "编制与审核字段均有实际内容。")
 
-def _clause_ids(rule) -> list[str]:
-    found: list[str] = []
-    for row in getattr(rule, "rules", ()) or ():
-        clause_id = row.get("id") if isinstance(row, dict) else getattr(row, "id", None)
-        if isinstance(clause_id, str) and clause_id and clause_id not in found:
-            found.append(clause_id)
-    return found
+    def rule_6(self):
+        for row in self.column_rows("实物确认"):
+            if row["实物确认"] not in {"有", "无"}:
+                return ("NG", "实物确认只允许有或无。")
+        return ("PASS", "实物确认列的全部业务值均为有或无。")
