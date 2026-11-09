@@ -68,7 +68,7 @@ class UaesInspectionAgent(SourceAudit):
                 if key(value) in {"要求", "requirements"}:
                     continue
                 if any(term in str(value) for term in ("供应商负责人", "Supplier responsible", "编制", "批准")):
-                    break
+                    continue
                 count += 1
                 result = facts.cell(table, row, result_column)
                 if separate_marks:

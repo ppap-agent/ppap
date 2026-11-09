@@ -83,7 +83,7 @@ class UaesCapabilityAgent(SourceAudit):
             subjects = [row[name] for name in ("characteristic", "sequence") if name in row]
             boundary = subjects if any(not blank(value) for value in subjects) else [row["cpk"], row["ppk"]]
             if any(key(value).startswith(marker) for value in boundary for marker in ("编制/日期", "审核/日期", "编制人", "批准人")):
-                break
+                continue
             checked += 1
             cpk, cpk_target, ppk, ppk_target = (number(row[name]) for name in ("cpk", "cpk_target", "ppk", "ppk_target"))
             if cpk < cpk_target or ppk < ppk_target:

@@ -33,7 +33,7 @@ class UaesMsaAgent(SourceAudit):
         for row in range(start + 1, table["rows"] + 1):
             serial = facts.cell(table, row, columns["number"])
             if any(key(serial).startswith(marker) for marker in ("编制/日期", "审核/日期", "编制人", "批准人")):
-                break
+                continue
             values = [facts.cell(table, row, column) for column in required]
             if all(blank(value) for value in values) or [key(value) for value in values] == headings:
                 continue

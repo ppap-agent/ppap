@@ -45,7 +45,7 @@ class _Audit(SourceAudit):
         for row in rows:
             number = row["编号"]
             if any((key(number).startswith(marker) for marker in ("编制/日期", "审核/日期", "编制人", "批准人"))):
-                break
+                continue
             if blank(number):
                 return ("NG", "特性业务行编号为空。")
             count += 1
