@@ -289,6 +289,8 @@ class NativeFacts:
         if len(layouts) > 1:
             raise UnknownFact("业务表中有多套不同表头，尚不能确定数据范围。")
         if best != len(aliases):
+            if table["rows"] > 60 or table["cols"] > 120:
+                raise UnknownFact("表头搜索未覆盖完整范围，不能把未找到的列判为缺失。")
             if self.has_unread_content():
                 raise UnknownFact("所需列未能全部读取，未知区域需核对。")
             missing = sorted(set(aliases) - set(matches[0][1] if matches else ()))
