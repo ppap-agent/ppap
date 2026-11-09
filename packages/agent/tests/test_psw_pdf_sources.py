@@ -1,7 +1,7 @@
 """PSW original-page results survive strict product evidence projection.
 
-Conversion and observation receipts are controlled; actual PDF bytes, shared
-PSW selection, source identity validation and product projection are real.
+Conversion, object identity and observation receipts are controlled; actual
+PDF bytes, shared PSW policy, source validation and product projection are real.
 """
 
 import hashlib
@@ -12,6 +12,7 @@ import fitz
 import pytest
 from agent.mapping import _checker_finding
 from audit.contracts import AuditInput, RuleInput
+from audit.engine.checkers.psw_visual_evidence import PSW_RULE_FIELDS, evaluate_psw_observation
 from audit.engine.runtime import bind_runtime
 from documents.contracts import ConversionArtifact
 from openpyxl import Workbook
@@ -70,7 +71,14 @@ def test_submission_visual_fallback_keeps_only_verified_original_locations(tmp_p
         witness(locator, "The located submission option is checked.", visual=True)
         return {"submission_any_checked": True, "submission_other_present": False}
 
-    monkeypatch.setattr("audit.checkers.v4.visual_facts.read_original_pdf_visual_facts", read)
+    def observe(audit, rule_no, witness, _cache, _read_single):
+        # This unit controls established facts at the current object-reader
+        # boundary. The real policy and downstream provenance checks still run.
+        assert rule_no == 7
+        facts = read(audit, PSW_RULE_FIELDS[rule_no], witness, operation=f"psw_rule_{rule_no}")
+        return facts, evaluate_psw_observation(rule_no, facts)
+
+    monkeypatch.setattr("audit.engine.checkers.psw_scope.evaluate_psw_pdf_rule", observe)
     cls = importlib.import_module(f"audit.checkers.{version}.psw_pdf_agent").PswPDFAgent
     with bind_runtime(None):
         checker = cls(
