@@ -45,6 +45,12 @@ def test_partial_official_directory_cannot_be_forced_into_the_active_head():
 
     directory = next(suite for suite in predefined_directory_suites() if suite.source_path == "v5/UAES/U08")
     files = dict(directory.files)
+    # The policy concerns a partial candidate, independently of the shipped
+    # leaf's current implementation coverage.
+    partial_rules = json.loads(files["rules.json"])
+    partial_rules["directory_coverage"] = "partial"
+    partial_rules["checker_binding"] = {clause: partial_rules["checker_binding"][clause] for clause in ("U08:1", "U08:4")}
+    files["rules.json"] = json.dumps(partial_rules).encode()
     partial = _resolved(files, tenant_id=None, related=directory.related_suite_keys)
     assert partial_official_directory_slice(partial) is True
     assert adoption_block(partial, verified=True, force_unverified=True) == "partial_directory_suite_not_adoptable"
