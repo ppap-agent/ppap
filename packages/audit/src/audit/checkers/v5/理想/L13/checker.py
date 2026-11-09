@@ -37,8 +37,11 @@ class _Audit(SourceAudit):
 
     def rule_2(self):
         for row in self.grouped_rows("设备验收", ("验收结果", "整改措施", "整改计划")):
-            if blank(row["验收结果"]):
+            result = row["验收结果"]
+            if blank(result):
                 return "NG", "设备验收结果为空。"
-            if row["验收结果"] in {"不通过", "条件通过"} and (blank(row["整改措施"]) or blank(row["整改计划"])):
+            if result not in {"通过", "不通过", "条件通过"}:
+                raise UnknownFact("设备验收结果尚未唯一读为通过、不通过或条件通过；未知文字不能当作通过。")
+            if result in {"不通过", "条件通过"} and (blank(row["整改措施"]) or blank(row["整改计划"])):
                 return "NG", "设备验收不通过或条件通过，但整改措施或计划为空。"
         return "PASS", "全部设备验收行的结果及条件整改要求已读取。"

@@ -497,3 +497,11 @@ def test_capacity_blank_risk_row_with_line_identity_cannot_disappear(tmp_path, m
     result, calls = _execute(tmp_path, monkeypatch, "L14", "L14:3", {"产能评估表": rows})
     assert result["status"] == "UNABLE", result
     assert not calls
+
+
+@pytest.mark.parametrize("verdict", ["待确认", "UNKNOWN", "???"])
+def test_equipment_unknown_acceptance_is_not_unconditional_pass(tmp_path, monkeypatch, verdict):
+    rows = [["产线/工序", "设备验收", "验收结果", "整改措施", "整改计划"], ["产线A", None, verdict, None, None]]
+    result, calls = _execute(tmp_path, monkeypatch, "L13", "L13:2", {"设备开发验收清单": rows})
+    assert result["status"] == "UNABLE", result
+    assert result["checks_performed"] == 0 and not calls
