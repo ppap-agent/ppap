@@ -35,7 +35,9 @@ export function CheckerRelease({scope, legacyScope, suiteKey, revisionId, optimi
   // A held authoritative read may be retried with dirty text, but never over a child mutation.
   const recoveryBlocked = mutationBusy || editorMutating || operationRunning || editorBlocked && !writesHeld
   useEffect(() => {live.current = true; return () => {live.current = false}}, [])
-  useEffect(() => {onBusyChange?.(writesHeld || mutationBusy || Boolean(pending) || editorBlocked || !revision && !error)}, [onBusyChange, writesHeld, mutationBusy, pending, editorBlocked, revision, error])
+  // A failed read still fences local writes, but must allow another source.
+  // Mutations, unknown publication receipts and unsaved edits still block leaving.
+  useEffect(() => {onBusyChange?.(mutationBusy || Boolean(pending) || editorBlocked || !revision && !error)}, [onBusyChange, mutationBusy, pending, editorBlocked, revision, error])
   useEffect(() => () => onBusyChange?.(false), [onBusyChange])
   const select = useCallback((next: CheckerSelection) => {
     writeAuditAddress(checkerSelectionAddress(new URL(location.href), scope, next))
