@@ -186,6 +186,7 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
                     work=target_work,
                     deadline=deadline,
                     prior_files={name: body.decode("utf-8") for name, body in programs[target.binding.checker_digest].items()},
+                    require_independent=True,
                 )
                 artifacts[target.file_version_id] = artifact
             effective = generated_snapshot(snapshot, sources, artifacts)

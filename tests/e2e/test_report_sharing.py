@@ -144,7 +144,7 @@ def test_shared_report_switch_download_and_denied_revisit_never_open_private_inp
         expect(page.get_by_role("note", name="本轮验证状态")).to_contain_text(reports[0]["checker_verification"]["notice"])
         if stall:
             assert binary_reads["pdf"] == [binary_reads["pdf"][0]] * 2
-        page.get_by_role("button", name="当前页文字", exact=True).click()
+        page.get_by_role("button", name="本页文字（可复制）", exact=True).click()
         expect(page.get_by_role("region", name="当前报告").locator("pre")).to_contain_text("冻结审核报告")
         assert decoder_reads and all(status == 200 for _path, status in decoder_reads)
         navigation.get_by_role("button").filter(has_text="尺寸检验报告.xlsx").click()

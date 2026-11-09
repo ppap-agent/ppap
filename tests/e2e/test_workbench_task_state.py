@@ -202,7 +202,7 @@ def test_opened_task_remains_visible_until_its_workbench_list_is_complete():
         page.route("**/api/audit-tasks?*", read_tasks)
         page.goto(WEB + "/tasks/" + TASK)
         expect(page.get_by_role("region", name="全部文件概览", exact=True)).to_be_visible()
-        page.get_by_role("main").get_by_role("button", name="工作台", exact=True).click()
+        page.get_by_role("navigation", name="当前位置", exact=True).get_by_role("link", name="工作台", exact=True).click()
         expect(page.get_by_role("heading", name="工作台", exact=True)).to_be_visible()
         table = page.get_by_role("table", name="全部任务审核记录", exact=True)
         expect(table.get_by_role("row").filter(has_text="PPAP-另一任务")).to_be_visible()

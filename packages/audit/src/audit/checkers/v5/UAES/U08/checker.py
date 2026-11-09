@@ -13,8 +13,10 @@ from typing import Any, Literal
 
 from audit.checker_lib.evidence import content_sha256, json_locator, structure_diagnostic, structure_evidence, version_id
 from audit.checker_lib.excel import load_workbook
+from audit.checker_lib.source import SourceAudit, UnknownFact, any_row, blank, key
 from audit.checker_lib.tables import cell_span, columns_have_merge, find_headers, is_blank, sheet_has_value, window_has_merge
 from audit.contracts import AuditEvidence, AuditResultItem, EvidenceDiagnostic, EvidenceSource
+from audit.engine.checkers.date_utils import normalize_excel_date
 from resources import RESOURCE
 
 _HEADER_ROWS = 40
@@ -27,6 +29,8 @@ _FORMULA = "单元格公式没有缓存值，不能判定本条款。"
 _MERGED = "合并单元格与待核列重叠，不能判定本条款。"
 _AMBIGUOUS = "存在多张业务表或图例表，不能判定本条款。"
 _LEGEND = ("图例", "填写说明")
+_OP = ("工序名称", "操作描述", "工序名称/操作描述", "过程名称/操作描述")
+_CHAR = ("产品/过程规格/公差", "产品特性", "过程特性", "特性名称", "产品", "过程")
 
 
 @dataclass(frozen=True)
@@ -46,7 +50,7 @@ def create_audit(audit_file, rule, group_context=None):
 
 
 class _Clause:
-    def __init__(self, audit: _ControlPlanAudit, clause_id: str):
+    def __init__(self, audit: _NativeControlPlanAudit, clause_id: str):
         self.rule_item = type("_RuleItem", (), {"id": clause_id})()
         self._audit = audit
         self._clause_id = clause_id
@@ -55,7 +59,7 @@ class _Clause:
         return self._audit.evaluate(self._clause_id)
 
 
-class _ControlPlanAudit:
+class _NativeControlPlanAudit:
     def __init__(self, audit_file, rule, group_context):
         self.audit_file = audit_file
         self.rule = rule
@@ -63,7 +67,7 @@ class _ControlPlanAudit:
         self._book = None
         self._formulas = None
         self._unreadable = False
-        self.checks = [_Clause(self, clause_id) for clause_id in sorted(RESOURCE["clauses"])]
+        self.checks = [_Clause(self, clause_id) for clause_id in ("U08:1", "U08:4")]
 
     def close(self) -> None:
         for book in (self._book, self._formulas):
@@ -314,3 +318,145 @@ def _legend(title: str) -> bool:
 
 def _carrier(suffix: str) -> Literal["xlsx", "xlsm"]:
     return "xlsm" if suffix == ".xlsm" else "xlsx"
+
+
+class _ControlPlanAudit(SourceAudit):
+    def __init__(self, audit_file, rule, group_context=None):
+        super().__init__(audit_file, rule, group_context, resource=RESOURCE)
+        self._table_audit = _NativeControlPlanAudit(audit_file, rule, group_context)
+
+    def check(self, index):
+        cid = self.clause_ids[index]
+        if cid in {"U08:1", "U08:4"} and Path(self.audit_file.file_url).suffix.lower() in {".xlsx", ".xlsm"}:
+            return self._table_audit.evaluate(cid)
+        return super().check(index)
+
+    def close(self):
+        self._table_audit.close()
+        super().close()
+
+    def rows(self, extra=None, *, defer_unknown=False):
+        return self.native().rows({"operation": _OP, **(extra or {})}, title=("控制计划", "control plan"), anchor=("operation",), defer_unknown=defer_unknown)
+
+    def rule_1(self):
+        rows = self.rows({"resources": ("机器装置夹具工装", "机器/装置/夹具/工装", "生产资源", "机器设备工装", "生产设备")}, defer_unknown=True)
+        unresourced = []
+
+        def lacks_resources(row):
+            operation = row["operation"]
+            if blank(row["resources"]):
+                unresourced.append(operation)
+                return True
+            return False
+
+        if any_row(rows, lacks_resources):
+            return ("NG", "控制计划存在未说明生产资源的工序：" + str(unresourced[0]))
+        return ("PASS", "全部工序的对应生产资源已读取。")
+
+    def rule_2(self):
+        return self.text_result(
+            {"traceability": "控制计划说明可执行的零件生产过程追溯措施，而非只有追溯性标题。", "fifo": "控制计划说明可执行的先进先出措施，并能支持生产过程先进先出；只有FIFO术语不算。"},
+            "实际生产追溯和先进先出措施",
+        )
+
+    def rule_3(self):
+        value = self.native().field(("控制计划类型", "类型", "阶段"))
+        if key(value) not in {"量产", "sop", "量产sop", "production"}:
+            raise UnknownFact("尚不能从真实选择确认控制计划类型为量产/SOP。")
+        return self.controlled_stamp()
+
+    def rule_4(self):
+        rows = self.rows({"mark": ("特性类型", "特殊特性", "特殊/特性/分类")}, defer_unknown=True)
+        if not any_row(rows, lambda row: not blank(row["mark"])):
+            return ("NG", "控制计划特性类型/特殊特性列没有实际标记。")
+        return ("PASS", "已读取实际特性标记。")
+
+    def rule_5(self):
+        rows = self.rows({"characteristic": _CHAR, "control": ("控制方法", "控制手段", "频率")})
+        found = False
+        for row in rows:
+            if "跑道" in str(row["characteristic"]):
+                found = True
+                if not any((term in key(row["control"]) for term in ("spc", "x-r", "xbar-r", "x̄-r"))):
+                    return ("NG", "跑道尺寸没有对应X-R图/SPC过程能力管控。")
+        if not found:
+            raise UnknownFact("尚不能确认跑道尺寸的适用范围，需核对原件。")
+        return ("PASS", "全部已识别跑道尺寸都有X-R/SPC过程能力管控。")
+
+    def rule_6(self):
+        drawing = self.related(("图纸", "drawing"), require_name=True)
+        facts = self.native()
+        for aliases in [("供应商名称",), ("供应商代码",), ("编制人",), ("版本号", "版本"), ("零件名称",), ("零件号",)]:
+            facts.field(aliases)
+        facts.field(("受控日期", "创建日期", "修订日期"))
+        drawing_date = normalize_excel_date(drawing.field(("日期", "图纸日期")))
+        changes = facts.rows({"date": ("变更日期", "更改日期", "修订日期")}, title=("变更履历", "修订履历"), anchor=("date",))
+        dates = [normalize_excel_date(row["date"]) for row in changes]
+        if drawing_date is None or any((item is None for item in dates)):
+            raise UnknownFact("图纸日期或CP变更履历日期无法可靠读取。")
+        last_date = dates[-1]
+        if last_date is None:
+            raise UnknownFact("CP最后一条更改日期无法读取。")
+        if last_date <= drawing_date:
+            return ("NG", "CP最后一条变更履历日期没有晚于关联图纸日期。")
+        return ("PASS", "CP身份字段及同项目零件图纸一致，最后更改日期晚于图纸日期。")
+
+    def cover(self, related, *, source_aliases, marked=False, outgoing=False, kind=None, require_spc=False):
+        aliases = {"name": source_aliases}
+        if marked:
+            aliases["mark"] = ("特殊特性", "分类", "重要特性", "特性类别")
+        if kind:
+            aliases["kind"] = ("检验方法", "检测方法", "测量方法") if kind == "CPK" else ("特性类别", "特性类型", "类别")
+        source = related.rows(aliases, anchor=("name",))
+        target = self.rows({"name": _CHAR, **({"control": ("频率",)} if require_spc else {})})
+        count = 0
+        for row in source:
+            if marked and blank(row["mark"]):
+                continue
+            if kind and key(kind) not in key(row["kind"]):
+                continue
+            count += 1
+            matches = [item for item in target if key(item["name"]) == key(row["name"]) and (not outgoing or any((term in str(item["operation"]) for term in ("出货", "GP12"))))]
+            if not matches:
+                raise UnknownFact("CP尚不能确认覆盖关联要求：" + str(row["name"]))
+            if require_spc and (not any(("spc" in key(item["control"]) for item in matches))):
+                return ("NG", "图纸特殊尺寸的对应CP行没有SPC管控。")
+        if not count:
+            raise UnknownFact("关联原件没有可确认的适用项目，不能按空范围通过。")
+        return ("PASS", "已逐项核实同批同零件关联要求在CP中的对应内容。")
+
+    def rule_7(self):
+        flow, pfmea, plan = self.related_all(("过程流程图",), ("PFMEA",), ("采购件质量计划", "PGQP1"))
+        plan.require_text("PGQP1")
+        target = self.rows()
+        for related, aliases in [(flow, ("工序", "工序名称")), (pfmea, ("工序/功能/要求", "过程项", "过程步骤")), (plan, ("工艺", "工序"))]:
+            source = related.rows({"name": aliases}, anchor=("name",))
+            for row in source:
+                if not any((key(item["operation"]) == key(row["name"]) for item in target)):
+                    raise UnknownFact("CP尚不能确认覆盖关联工序：" + str(row["name"]))
+        return ("PASS", "三类关联原件的全部工序均已在CP对应。")
+
+    def rule_8(self):
+        for related in self.related_all(("过程流程图",), ("PFMEA",), ("采购件质量计划", "PGQP1")):
+            result = self.cover(related, source_aliases=("功能/要求", "产品特性", "过程特性", "特性名称"), marked=True)
+            if result[0] != "PASS":
+                return result
+        return ("PASS", "三类关联原件全部特殊/重要特性已在CP对应。")
+
+    def rule_9(self):
+        related = self.related(("采购件质量计划", "PGQP1"))
+        related.require_text("PGQP1")
+        return self.cover(related, source_aliases=_CHAR, outgoing=True, kind="尺寸")
+
+    def rule_10(self):
+        related = self.related(("采购件质量计划", "PGQP1"))
+        related.require_text("PGQP1")
+        return self.cover(related, source_aliases=("型式试验", "试验项目"))
+
+    def rule_11(self):
+        related = self.related(("图纸", "drawing"))
+        return self.cover(related, source_aliases=("尺寸", "尺寸要求", "特性名称"), marked=True, kind="CPK", require_spc=True)
+
+    def rule_12(self):
+        related = self.related(("图纸", "drawing"))
+        return self.cover(related, source_aliases=("尺寸", "尺寸要求", "特性名称", "要求"), marked=True)

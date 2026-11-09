@@ -70,6 +70,11 @@ def _authored_error(clause: str, code: str) -> AuditResultItem:
 
 
 def _require_pdf_spec(audit: Any, context: Any) -> None:
+    from audit.checker_lib.source import SourceAudit
+
+    if isinstance(audit, SourceAudit) or Path(getattr(context.audit_file, "file_url", "")).suffix.lower() != ".pdf":
+        return
+
     from documents.pdf import PdfSpec, validate_pdf_spec
 
     from audit.checkers.v3.excel_agent import ExcelAgent

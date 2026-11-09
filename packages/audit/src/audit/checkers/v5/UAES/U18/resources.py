@@ -1,12 +1,3 @@
-"""Evidence scope owned by this directory leaf.
+"""Explicit source readers and clause bindings for U18."""
 
-`clauses` is empty: this leaf has no evidence reader. Every bound clause
-stays UNABLE. Unknown is not a pass. This module does not call another checker.
-"""
-
-RESOURCE = {
-    "customer": "UAES",
-    "preset_key": "U18",
-    "supported_suffixes": (),
-    "clauses": {},
-}
+RESOURCE = {"customer": "UAES", "preset_key": "U18", "supported_suffixes": (".xlsx", ".xls", ".xlsm", ".docx", ".pdf"), "clauses": {"U18:1": {"method": "rule_1"}}}

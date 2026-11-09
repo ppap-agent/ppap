@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import uuid
 from contextlib import nullcontext
@@ -266,9 +267,7 @@ class SuiteReleaseStore:
         payload: dict = {"suites": suites, **({"unavailable": unavailable} if unavailable else {})}
         if predefined_error:
             payload["predefined_error"] = predefined_error
-        # Directory leaves not yet seeded are not accessible Suites. Retain the
-        # historical empty-tenant response while reporting real source failures.
-        elif suites or unavailable or predefined or any(item["error"] != "unseeded" for item in predefined_unavailable):
+        else:
             payload["predefined"] = predefined
             if predefined_unavailable:
                 payload["predefined_unavailable"] = predefined_unavailable
@@ -280,17 +279,21 @@ class SuiteReleaseStore:
         ``revision_id`` is the tenant-null row for that ``source_path``. It is
         never the tenant's adopted revision. A broken scan lists no paths.
         """
-        from audit.standard_suites import predefined_directory_suites
+        from audit.standard_suites import predefined_sources, validate_source_identity
 
         from product.seed_standard_suites import persisted_source_path
 
         try:
-            discovered = predefined_directory_suites()
+            discovered = predefined_sources()
         except ValueError:
             return [], [], "predefined_catalog_unavailable"
         ready, blocked = [], []
-        for suite in discovered:
-            path = suite.source_path
+        for source in discovered:
+            path, suite = source.path, source.suite
+            if suite is None:
+                ready.append({"path": path, "title": source.title, "availability": "historical"})
+                continue
+            visible = {"path": path, "title": source.title}
             if persisted_source_path(path) != path:
                 blocked.append({"path": path, "error": "invalid"})
                 continue
@@ -298,9 +301,11 @@ class SuiteReleaseStore:
                 revision_id = self.suites.official_revision_id_for_source(path, conn=conn)
             except ValueError:
                 blocked.append({"path": path, "error": "invalid"})
+                ready.append({**visible, "availability": "unavailable"})
                 continue
             if revision_id is None:
                 blocked.append({"path": path, "error": "unseeded"})
+                ready.append({**visible, "availability": "unseeded"})
                 continue
             row = conn.execute(
                 "SELECT suite_key, tenant_id, source_path FROM product.suite_revisions WHERE id = %s AND NOT history_only",
@@ -308,6 +313,7 @@ class SuiteReleaseStore:
             ).fetchone()
             if row is None or row[1] is not None or row[2] != path or row[0] != suite.suite_key:
                 blocked.append({"path": path, "error": "unavailable"})
+                ready.append({**visible, "availability": "unavailable"})
                 continue
             try:
                 resolved = self.suites.resolve_suite(revision_id, principal.tenant_id, conn=conn)
@@ -316,16 +322,15 @@ class SuiteReleaseStore:
                 rules = json.loads(resolved.files["rules.json"])
                 if not isinstance(rules, dict):
                     raise ValueError("invalid_suite_rules")
-                title = rules.get("title") or rules.get("type") or "文件检查"
-                if not isinstance(title, str) or not title.strip():
-                    title = "文件检查"
+                validate_source_identity(path, rules)
                 from product.suite_releases import leaf_capability
 
                 capability = leaf_capability(resolved.files)
             except (KeyError, ValueError, ObjectMissing):
                 blocked.append({"path": path, "error": "unavailable"})
+                ready.append({**visible, "availability": "unavailable"})
                 continue
-            ready.append({"path": path, "title": title, "suite_key": suite.suite_key, "revision_id": revision_id, **capability})
+            ready.append({**visible, "availability": "installed", "suite_key": suite.suite_key, "revision_id": revision_id, **capability})
         return ready, blocked, None
 
     def active(self, principal, suite_key: str, *, conn=None) -> dict:
@@ -593,6 +598,41 @@ class SuiteReleaseStore:
                     raise ValueError("suite_operation_conflict")
                 revision_id = str(prior[0])
             else:
+                if {"checker.py", "resources.py"} & files.keys():
+                    selected = self.suites.resolve_suite(base_revision_id, principal.tenant_id, conn=conn)
+                    merged = {**selected.files, **{path: value.encode() for path, value in files.items()}}
+                    program = {path: body for path, body in merged.items() if path in {"checker.py", "resources.py"}}
+                    previous = {path: body for path, body in selected.files.items() if path in {"checker.py", "resources.py"}}
+                    if program != previous:
+                        factory = False
+                        for snapshot in (selected.files, merged):
+                            try:
+                                rules = json.loads(snapshot["rules.json"])
+                                binding = rules.get("checker_binding") or {}
+                                factory |= isinstance(binding, dict) and "checker:create_audit" in binding.values()
+                                tree = ast.parse(snapshot["checker.py"])
+                                factory |= any(
+                                    isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                                    and node.name == "create_audit"
+                                    or isinstance(node, ast.Name)
+                                    and isinstance(node.ctx, ast.Store)
+                                    and node.id == "create_audit"
+                                    or isinstance(node, ast.alias)
+                                    and (node.asname or node.name) == "create_audit"
+                                    for node in ast.walk(tree)
+                                )
+                            except (SyntaxError, ValueError, AttributeError):
+                                pass  # Content validation below still owns malformed revisions.
+                        if factory:
+                            from audit.checker_lib.imports import import_violations
+
+                            for source in program.values():
+                                try:
+                                    tree = ast.parse(source)
+                                except (SyntaxError, ValueError):
+                                    raise ValueError("invalid_suite_candidate") from None
+                                if import_violations(tree):
+                                    raise ValueError("checker_cross_version_import")
                 revision = self.suites.create_revision(
                     tenant_id=principal.tenant_id,
                     suite_key=base["suite_key"],

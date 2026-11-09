@@ -1,96 +1,105 @@
-"""Bound clauses of one predefined directory leaf.
+"""UAES U05 rules over frozen, source-addressed evidence.
 
-This leaf implements no evidence reader. Every bound clause is UNABLE.
-Unknown is not a pass. This file does not call another checker version.
+This leaf owns its complete business checks and does not call another version.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Literal
-
-from audit.checker_lib.evidence import structure_diagnostic, structure_evidence
-from audit.contracts import AuditEvidence, AuditResultItem
+from audit.checker_lib.source import SourceAudit, UnknownFact, blank, key
 from resources import RESOURCE
 
-_BOUNDARY = "本目录 Checker 没有读取本条款证据的检查，不能判定为通过。"
-_Format = Literal["xlsx", "xls", "xlsm", "pdf", "docx", "png", "jpg", "jpeg", "webp", "txt", "md"]
-_FORMATS: dict[str, _Format] = {
-    ".xlsx": "xlsx",
-    ".xlsm": "xlsm",
-    ".xls": "xls",
-    ".pdf": "pdf",
-    ".docx": "docx",
-    ".png": "png",
-    ".jpg": "jpg",
-    ".jpeg": "jpeg",
-    ".webp": "webp",
-    ".txt": "txt",
-    ".md": "md",
-}
+_COUNTING = ("人工", "目视", "目测", "通止规", "塞规", "塞尺")
+
+
+class UaesMsaAgent(SourceAudit):
+    PLAN = ("测量系统分析计划", "MSA计划表")
+
+    def rule_1(self):
+        facts = self.native()
+        table = facts.table(self.PLAN)
+        start, columns = facts.columns(table, {"number": ("序号", "NO", "NO.")})
+        required = []
+        reader = facts.readers[table["id"]]
+        for column in range(1, table["cols"] + 1):
+            item = reader.cell(start, column)
+            if item.get("state") != "known":
+                raise UnknownFact("MSA计划表头无法完整识别。")
+            if not blank(item.get("value")) and "备注" not in str(item["value"]):
+                required.append(column)
+        if len(required) < 2:
+            raise UnknownFact("MSA计划未能确定完整表头范围。")
+        headings = [key(facts.cell(table, start, column)) for column in required]
+        count = 0
+        for row in range(start + 1, table["rows"] + 1):
+            serial = facts.cell(table, row, columns["number"])
+            if any(key(serial).startswith(marker) for marker in ("编制/日期", "审核/日期", "编制人", "批准人")):
+                continue
+            values = [facts.cell(table, row, column) for column in required]
+            if all(blank(value) for value in values) or [key(value) for value in values] == headings:
+                continue
+            count += 1
+            if any(blank(value) for value in values):
+                return "NG", f"MSA计划第{row}行存在非备注空字段。"
+        if not count:
+            raise UnknownFact("MSA计划没有可确认的编号行，不能按空范围通过。")
+        return "PASS", "已逐编号行核实MSA计划除备注外的全部字段。"
+
+    def report(self, *, kappa, gauge_number=None, gauge_name=None):
+        terms = ("kappa",) if kappa else ("重复性", "再现性", "GRR")
+        tables = self.native().tables(terms)
+        reports = [self.native()] if tables else [self.related(terms)]
+        matched = 0
+        for facts in reports:
+            for table in facts.tables(terms):
+                title = (table["id"],)
+                if gauge_number is not None and key(facts.field(("量具编号", "测量设备编号"), title=title)) != key(gauge_number):
+                    continue
+                if gauge_name is not None and key(facts.field(("量具名称", "测量设备名称"), title=title)) not in {key(gauge_name), key("综合检具")}:
+                    continue
+                matched += 1
+                conclusion = facts.field(("结论", "最终结论", "conclusion"), title=title)
+                if key(conclusion) != key("Acceptable" if kappa else "测量系统可以接受"):
+                    return "NG", "Kappa/GRR报告最终结论不满足原规则。"
+        if not matched:
+            raise UnknownFact("尚未找到可唯一对应量具身份的Kappa/GRR报告。")
+        return "PASS", "已核对量具身份及全部适用报告的最终结论。"
+
+    def rule_2(self):
+        facts = self.native() if self.native().tables(self.PLAN) else self.related(self.PLAN)
+        rows = facts.rows({"name": ("量具名称", "测量设备名称"), "number": ("量具编号", "测量设备编号")}, title=self.PLAN, anchor=("number",))
+        for row in rows:
+            result = self.report(kappa=any(term in str(row["name"]) for term in _COUNTING), gauge_number=row["number"])
+            if result[0] != "PASS":
+                return result
+        # In addition to plan matches, verify every supplied native report.
+        for kappa, terms in [(True, ("kappa",)), (False, ("重复性", "再现性", "GRR"))]:
+            for table in self.native().tables(terms):
+                conclusion = self.native().field(("结论", "最终结论", "conclusion"), title=(table["id"],))
+                if key(conclusion) != key("Acceptable" if kappa else "测量系统可以接受"):
+                    return "NG", "存在非可接受结论的Kappa/GRR报告。"
+        return "PASS", "MSA计划全部量具已按类型编号对应且全部报告结论可接受。"
+
+    def rule_3(self):
+        facts = self.related(("采购件质量计划", "PGQP1"))
+        facts.require_text("PGQP1")
+        rows = facts.rows({"mark": ("重要特性", "特殊特性", "特性分类"), "name": ("测量设备", "测量设备名称", "量具名称"), "number": ("量具编号", "测量设备编号")}, title=("PGQP1",), anchor=("name",))
+        for row in rows:
+            if not blank(row["mark"]) and any(term in str(row["name"]) for term in ("通止规", "塞规", "塞尺")):
+                result = self.report(kappa=True, gauge_number=row["number"])
+                if result[0] != "PASS":
+                    return result
+        return "PASS", "已完整读取PGQP1；适用计数量具均已对应同编号Kappa。"
+
+    def rule_4(self):
+        facts = self.related(("控制计划",))
+        rows = facts.rows({"operation": ("工序名称", "操作描述", "工序名称/操作描述"), "method": ("评价测量技术", "评价/测量技术"), "gauge": ("量具名称", "测量设备")}, anchor=("operation",))
+        for row in rows:
+            if any(term in str(row["operation"]) for term in ("出货检验", "GP12")) and any(term in str(row["method"]) for term in ("人工", "目视", "目测")):
+                result = self.report(kappa=True, gauge_name=row["gauge"])
+                if result[0] != "PASS":
+                    return result
+        return "PASS", "已完整读取控制计划；适用人为出货检测均已对应同名或综合检具Kappa。"
 
 
 def create_audit(audit_file, rule, group_context=None):
-    return _BoundLeaf(audit_file, rule, group_context)
-
-
-class _Clause:
-    def __init__(self, audit: _BoundLeaf, clause_id: str):
-        self.rule_item = type("_RuleItem", (), {"id": clause_id})()
-        self._audit = audit
-        self._clause_id = clause_id
-
-    def check(self) -> AuditResultItem:
-        return self._audit.evaluate(self._clause_id)
-
-
-class _BoundLeaf:
-    def __init__(self, audit_file, rule, group_context):
-        self.audit_file = audit_file
-        self.rule = rule
-        self._group_context = group_context
-        self.checks = [_Clause(self, clause_id) for clause_id in _clause_ids(rule)]
-
-    def close(self) -> None:
-        return None
-
-    def evaluate(self, clause_id: str) -> AuditResultItem:
-        # RESOURCE["clauses"] only names readers. This file implements none.
-        # A named reader without code here stays UNABLE. It is not a pass.
-        message = f"{RESOURCE['customer']}/{RESOURCE['preset_key']}：{_BOUNDARY}"
-        return self._item(clause_id, "UNABLE", message, checks_performed=0, evidence=self._boundary(message))
-
-    def _boundary(self, message: str) -> AuditEvidence | None:
-        suffix = Path(str(getattr(self.audit_file, "file_url", "") or "")).suffix.lower()
-        source_format = _FORMATS.get(suffix)
-        if source_format is None:
-            return None
-        return structure_evidence(source_format=source_format, sources=(), diagnostics=(structure_diagnostic("evidence_reader_absent", message),))
-
-    def _item(self, clause_id: str, status: str, suggestion: str, *, evidence: AuditEvidence | None, checks_performed: int) -> AuditResultItem:
-        category = clause_id
-        for row in getattr(self.rule, "rules", ()) or ():
-            row_id = row.get("id") if isinstance(row, dict) else getattr(row, "id", None)
-            if row_id == clause_id:
-                raw = row.get("category") if isinstance(row, dict) else getattr(row, "category", None)
-                category = str(raw or clause_id)
-                break
-        return AuditResultItem(
-            classification="规则审核",
-            item=category,
-            priority="P0",
-            status=status,
-            suggestions=suggestion,
-            evidence=evidence,
-            clause_id=clause_id,
-            checks_performed=checks_performed,
-        )
-
-
-def _clause_ids(rule) -> list[str]:
-    found: list[str] = []
-    for row in getattr(rule, "rules", ()) or ():
-        clause_id = row.get("id") if isinstance(row, dict) else getattr(row, "id", None)
-        if isinstance(clause_id, str) and clause_id and clause_id not in found:
-            found.append(clause_id)
-    return found
+    return UaesMsaAgent(audit_file, rule, group_context, resource=RESOURCE)

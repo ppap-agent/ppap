@@ -1,4 +1,4 @@
-"""Retained journey read placeholders at the controlled public HTTP boundary."""
+"""Journey read status at the controlled public HTTP boundary."""
 
 import os
 from urllib.parse import urlsplit
@@ -39,7 +39,7 @@ def page():
         browser.close()
 
 
-def test_journey_login_read_has_a_named_skeleton_and_keeps_explicit_login(page):
+def test_journey_login_read_announces_status_and_keeps_explicit_login(page):
     pending, writes = [], []
 
     def respond(route):
@@ -56,9 +56,8 @@ def test_journey_login_read_has_a_named_skeleton_and_keeps_explicit_login(page):
 
     page.route("**/api/**", respond)
     page.goto(WEB + "/dev")
-    status = page.get_by_role("status", name="正在确认登录状态…", exact=True)
+    status = page.get_by_role("status").filter(has_text="正在确认登录状态…")
     expect(status).to_be_visible()
-    expect(status.locator('[aria-hidden="true"] [data-slot="skeleton"]').first).to_be_visible()
     expect(page.get_by_role("link", name="使用飞书登录", exact=True)).to_have_count(0)
     assert len(pending) == 1
     pending[0].fulfill(status=401, json={"error": "unauthenticated"})
@@ -104,7 +103,6 @@ def test_journey_table_read_preserves_rows_on_refresh_and_read_failure(page, wid
     page.get_by_role("tab", name="全部记录", exact=True).click()
     status = page.get_by_role("status", name="正在读取审核记录…", exact=True)
     expect(status).to_be_visible()
-    expect(status.locator('[aria-hidden="true"] [data-slot="skeleton"]').first).to_be_visible()
     finish_reads()
     filename = page.get_by_role("button", name="阅读 已固定原件.xlsx", exact=True)
     expect(filename).to_be_visible()

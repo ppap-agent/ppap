@@ -113,7 +113,19 @@ def request(tmp_path, *, oracle=True):
         oracle_revision="oracle-1" if oracle else None,
         suite_revision_id="suite-1",
         suite_digest="a" * 64,
+        source_files={**prior.files, "rules.json": json.dumps(target.rule.model_dump(mode="json")).encode()},
     )
+
+
+@pytest.mark.parametrize("source_files", [{}, {"checker.py": PROGRAM.encode()}, {"checker.py": b"different-v6-source", "rules.json": b"{}"}])
+def test_selected_revision_rejects_missing_or_different_source_before_dispatch(tmp_path, source_files):
+    selected = replace(request(tmp_path), source_files=source_files)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Invalid selected source must not invoke the runner")
+
+    with pytest.raises(ValueError, match="selected revision"):
+        develop_and_run(selected, forbidden)
 
 
 def test_existing_suite_binding_is_preserved_in_trials_and_execution_identity(tmp_path):
@@ -329,7 +341,17 @@ def test_rule_change_context_runs_every_sample_and_reports_unchanged_code(tmp_pa
     samples = tuple(replace(sample, inputs=replace(sample.inputs, rule=current.rule)) for sample in original.oracle)
     prior = original.prior.model_copy(update={"files": {"checker.py": PROGRAM.encode()}})
     runtime = Runtime(tmp_path / "rule-change")
-    outcome = develop_and_run(replace(original, target=current, oracle=samples, prior=prior, rule_changes=({"clause_id": "R1", "kind": "changed", "before": "A1至少0", "after": text},)), runtime)
+    outcome = develop_and_run(
+        replace(
+            original,
+            target=current,
+            oracle=samples,
+            prior=prior,
+            source_files={**original.source_files, **prior.files},
+            rule_changes=({"clause_id": "R1", "kind": "changed", "before": "A1至少0", "after": text},),
+        ),
+        runtime,
+    )
     assert outcome.error_code is None
     assert outcome.validation.verified
     assert outcome.code_changed is False

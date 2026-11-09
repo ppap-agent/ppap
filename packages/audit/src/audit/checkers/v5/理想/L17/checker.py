@@ -1,96 +1,84 @@
-"""Bound clauses of one predefined directory leaf.
-
-This leaf implements no evidence reader. Every bound clause is UNABLE.
-Unknown is not a pass. This file does not call another checker version.
-"""
+"""Source-owned Li Auto business clauses; unknown evidence cannot pass."""
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Literal
-
-from audit.checker_lib.evidence import structure_diagnostic, structure_evidence
-from audit.contracts import AuditEvidence, AuditResultItem
+from audit.checker_lib.source import SourceAudit, UnknownFact, blank, key
 from resources import RESOURCE
-
-_BOUNDARY = "本目录 Checker 没有读取本条款证据的检查，不能判定为通过。"
-_Format = Literal["xlsx", "xls", "xlsm", "pdf", "docx", "png", "jpg", "jpeg", "webp", "txt", "md"]
-_FORMATS: dict[str, _Format] = {
-    ".xlsx": "xlsx",
-    ".xlsm": "xlsm",
-    ".xls": "xls",
-    ".pdf": "pdf",
-    ".docx": "docx",
-    ".png": "png",
-    ".jpg": "jpg",
-    ".jpeg": "jpeg",
-    ".webp": "webp",
-    ".txt": "txt",
-    ".md": "md",
-}
 
 
 def create_audit(audit_file, rule, group_context=None):
-    return _BoundLeaf(audit_file, rule, group_context)
+    return _Audit(audit_file, rule, group_context, resource=RESOURCE)
 
 
-class _Clause:
-    def __init__(self, audit: _BoundLeaf, clause_id: str):
-        self.rule_item = type("_RuleItem", (), {"id": clause_id})()
-        self._audit = audit
-        self._clause_id = clause_id
+class _Audit(SourceAudit):
+    def rule_1(self):
+        rows = self.native().rows({"item": ("项目", "文件名称", "交付物"), "attachment": ("附件",)}, title=("生产件批准交付物文件清单", "生产件批准提交清单", "PSW交付物清单"))
+        checked = 0
+        for row in rows:
+            if row["item"] == "零件认证相关":
+                continue
+            if blank(row["item"]):
+                raise UnknownFact("交付物清单行主体未明确，不能默默忽略。")
+            checked += 1
+            if blank(row["attachment"]):
+                return ("NG", "非零件认证相关的交付物行附件为空。")
+        if not checked:
+            raise UnknownFact("没有可核实的适用交付物行。")
+        return ("PASS", "全部非零件认证相关的交付物行均有附件内容。")
 
-    def check(self) -> AuditResultItem:
-        return self._audit.evaluate(self._clause_id)
-
-
-class _BoundLeaf:
-    def __init__(self, audit_file, rule, group_context):
-        self.audit_file = audit_file
-        self.rule = rule
-        self._group_context = group_context
-        self.checks = [_Clause(self, clause_id) for clause_id in _clause_ids(rule)]
-
-    def close(self) -> None:
-        return None
-
-    def evaluate(self, clause_id: str) -> AuditResultItem:
-        # RESOURCE["clauses"] only names readers. This file implements none.
-        # A named reader without code here stays UNABLE. It is not a pass.
-        message = f"{RESOURCE['customer']}/{RESOURCE['preset_key']}：{_BOUNDARY}"
-        return self._item(clause_id, "UNABLE", message, checks_performed=0, evidence=self._boundary(message))
-
-    def _boundary(self, message: str) -> AuditEvidence | None:
-        suffix = Path(str(getattr(self.audit_file, "file_url", "") or "")).suffix.lower()
-        source_format = _FORMATS.get(suffix)
-        if source_format is None:
-            return None
-        return structure_evidence(source_format=source_format, sources=(), diagnostics=(structure_diagnostic("evidence_reader_absent", message),))
-
-    def _item(self, clause_id: str, status: str, suggestion: str, *, evidence: AuditEvidence | None, checks_performed: int) -> AuditResultItem:
-        category = clause_id
-        for row in getattr(self.rule, "rules", ()) or ():
-            row_id = row.get("id") if isinstance(row, dict) else getattr(row, "id", None)
-            if row_id == clause_id:
-                raw = row.get("category") if isinstance(row, dict) else getattr(row, "category", None)
-                category = str(raw or clause_id)
-                break
-        return AuditResultItem(
-            classification="规则审核",
-            item=category,
-            priority="P0",
-            status=status,
-            suggestions=suggestion,
-            evidence=evidence,
-            clause_id=clause_id,
-            checks_performed=checks_performed,
+    def rule_3(self):
+        return self.visual_result(
+            {
+                "company_or_authorized_department": (
+                    "零件提交保证书有实际印章，章文以公司结尾；或保证书有部门章，同时部门章授权声明表上有实际公司章。标签、公司标志、红色方块及无授权表的部门章都不满足。"
+                )
+            },
+            "实际公司章或具公司章授权声明的部门章",
         )
 
+    def rule_5(self):
+        return self.visual_result(
+            {"authorized_signature": "经授权的供方代表签字对应栏存在实际签字，不能用预印标签或打印姓名代替。", "seal": "此零件提交保证书存在实际盖章；盖章标签、公司标志或红色方块不算。"},
+            "经授权供方代表实际签字和实际盖章",
+            existential_fields=("seal",),
+        )
 
-def _clause_ids(rule) -> list[str]:
-    found: list[str] = []
-    for row in getattr(rule, "rules", ()) or ():
-        clause_id = row.get("id") if isinstance(row, dict) else getattr(row, "id", None)
-        if isinstance(clause_id, str) and clause_id and clause_id not in found:
-            found.append(clause_id)
-    return found
+    def rule_6(self):
+        names = (
+            "零件名称",
+            "理想汽车零件号",
+            "供方料号",
+            "图纸号",
+            "模具穴号",
+            "工程更改版本",
+            "版本日期",
+            "重量(kg)",
+            "供应商名称/供应商代码",
+            "街道地址",
+            "城市",
+            "省",
+            "国家",
+            "顾客名称",
+            "设计开发",
+            "采购工程",
+            "PTC",
+        )
+        for name in names:
+            if key(self.native().field((name,))) in {key(label) for label in names}:
+                raise UnknownFact("字段只读到相邻标签，尚不能证明有实际填写内容。")
+        return ("PASS", "PSW原规则十七个必填字段均有原件内容。")
+
+    def rule_7(self):
+        if self.native().field(("其他-请在下方说明",), required=False):
+            return ("PASS", "其他-请在下方说明字段已有实际内容。")
+        return self.visual_result({"reason_selected": "提交原因区域至少有一个实际选择，预印选项和空框不代表勾选。"}, "提交原因的实际选择")
+
+    def rule_8(self):
+        return self.visual_result(
+            {
+                "approved_one": "认可情况区域恰有一个实际勾选，且该选项为批准。",
+                "submitted_all": "提交结果中的尺寸测量、外观标准、材料和功能试验、统计过程数据四项全部实际勾选。",
+                "compliant_selected": "这些结果均满足所有图纸和规范要求的区域有实际选项勾选。",
+            },
+            "唯一批准及全部必要提交结果的实际选择",
+        )

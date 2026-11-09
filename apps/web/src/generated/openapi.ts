@@ -5138,18 +5138,23 @@ export interface components {
         };
         /** SuitePredefined */
         SuitePredefined: {
+            /**
+             * Availability
+             * @enum {string}
+             */
+            availability: "installed" | "unseeded" | "unavailable" | "historical";
             /** Bound Clause Count */
-            bound_clause_count: number;
+            bound_clause_count?: number;
             /** Clause Count */
-            clause_count: number;
+            clause_count?: number;
             /** Evidence Reader Clause Ids */
-            evidence_reader_clause_ids: string[];
+            evidence_reader_clause_ids?: string[];
             /** Path */
             path: string;
             /** Revision Id */
-            revision_id: string;
+            revision_id?: string;
             /** Suite Key */
-            suite_key: string;
+            suite_key?: string;
             /** Title */
             title: string;
         };

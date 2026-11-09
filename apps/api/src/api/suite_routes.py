@@ -87,11 +87,12 @@ class SuiteUnavailable(TypedDict):
 class SuitePredefined(TypedDict):
     path: str
     title: str
-    suite_key: str
-    revision_id: str
-    clause_count: int
-    bound_clause_count: int
-    evidence_reader_clause_ids: list[str]
+    availability: Literal["installed", "unseeded", "unavailable", "historical"]
+    suite_key: NotRequired[str]
+    revision_id: NotRequired[str]
+    clause_count: NotRequired[int]
+    bound_clause_count: NotRequired[int]
+    evidence_reader_clause_ids: NotRequired[list[str]]
 
 
 class SuitePredefinedUnavailable(TypedDict):
@@ -201,6 +202,7 @@ def register_suite_routes(app: FastAPI, store, principal_of):
                 if code
                 in {
                     "suite_head_conflict",
+                    "suite_artifact_missing",
                     "suite_official_head_conflict",
                     "suite_operation_conflict",
                     "suite_confirmation_required",

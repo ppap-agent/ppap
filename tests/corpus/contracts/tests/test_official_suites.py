@@ -396,6 +396,9 @@ def test_guest_runs_frozen_v5_u08_bytes_and_leaves_unbound_clauses_unpassed(tmp_
     book.close()
     original = path.read_bytes()
     rules = json.loads(suite.files["rules.json"])
+    # Freeze a deliberately partial binding; the installed leaf can gain
+    # readers without changing this unbound-clause execution contract.
+    rules["checker_binding"] = {clause: rules["checker_binding"][clause] for clause in ("U08:1", "U08:4")}
     program = {name: suite.files[name] for name in ("checker.py", "resources.py")}
     digest = checker_digest(program)
     binding = RuleBinding(suite.suite_key, digest, rules["checker_binding"])

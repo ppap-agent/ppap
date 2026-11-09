@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Protocol, TypeVar
 from uuid import UUID
 
+from audit.checker_lib.imports import import_violations
 from audit.contracts import AuditInput, AuditResultItem, GroupContextInput, RuleInput
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -789,9 +790,9 @@ _SELECTED_SOURCE_NAMES = frozenset({"checker.py", "rules.json", "resources.py", 
 
 
 def _selected_checker_bytes(source_files: Mapping[str, str] | None) -> dict[str, str]:
-    if not source_files:
+    if source_files is None:
         return {}
-    if not isinstance(source_files, Mapping) or "checker.py" not in source_files or not set(source_files) <= _SELECTED_SOURCE_NAMES:
+    if not isinstance(source_files, Mapping) or not {"checker.py", "rules.json"} <= source_files.keys() or not set(source_files) <= _SELECTED_SOURCE_NAMES:
         raise CheckerProgramError("已选 Checker 源文件不完整")
     if any(not isinstance(name, str) or not isinstance(body, str) or not body.strip() for name, body in source_files.items()):
         raise CheckerProgramError("已选 Checker 源文件不完整")
@@ -810,6 +811,7 @@ def develop_checker(
     deadline: float,
     prior_files: dict[str, str] | None = None,
     source_files: Mapping[str, str] | None = None,
+    require_independent: bool = False,
     observations: list[str] | None = None,
     development_feedback: str | None = None,
     reasoning_effort: str = "medium",
@@ -944,6 +946,10 @@ def develop_checker(
             if template_checker.is_file() and draft.files.get("checker.py") == template_checker.read_text(encoding="utf-8"):
                 raise CheckerTrialError("模板尚未实现本次条款，不能固定")
             encoded = _validate_source(draft.files)
+            if selected or require_independent:
+                for name, source in draft.files.items():
+                    if import_violations(ast.parse(source)):
+                        raise CheckerTrialError(f"checker_cross_version_import: {name}")
             results = run_program(
                 encoded,
                 stage / "program",

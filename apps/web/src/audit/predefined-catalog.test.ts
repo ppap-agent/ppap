@@ -1,30 +1,52 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {canOpenPredefined, groupPredefined, readPredefinedPath, sourceIdentity, type PredefinedEntry} from './predefined-catalog.ts'
+import {canOpenPredefined, checkerLabel, directoryParts, predefinedTree, readPredefinedPath, readRulesArea, rulesAreaAddress, sourceIdentity, type InstalledPredefinedEntry, type PredefinedEntry} from './predefined-catalog.ts'
 
-const entry = (path: string, revision = `rev-${path}`): PredefinedEntry => ({path, title: `标题 ${path}`, suite_key: path.split('/').slice(1).join(':'), revision_id: revision, clause_count: 0, bound_clause_count: 0, evidence_reader_clause_ids: []})
+const entry = (path: string, revision = `rev-${path}`): InstalledPredefinedEntry => ({path, title: `标题 ${path}`, availability: 'installed', suite_key: path.split('/').slice(1).join(':'), revision_id: revision, clause_count: 0, bound_clause_count: 0, evidence_reader_clause_ids: []})
 
-test('directory paths group version then customer then suite without a fixed registry', () => {
-  const {groups, rejected} = groupPredefined([
-    entry('v6/ACME/Z99'),
-    entry('v5/UAES/U08'),
-    entry('v5/示例客户/Z99'),
-    entry('v6/ACME/Z01'),
-    entry('legacy.csv', 'should-not-open'),
-    {...entry('v5/UAES/U12'), revision_id: ''},
-  ])
-  assert.deepEqual(rejected.map(row => row.path), ['legacy.csv', 'v5/UAES/U12'])
-  assert.deepEqual(groups.map(group => group.version), ['v6', 'v5'])
-  assert.deepEqual(groups[0]?.customers.map(row => [row.customer, row.entries.map(item => item.path)]), [['ACME', ['v6/ACME/Z99', 'v6/ACME/Z01']]])
-  assert.deepEqual(groups[1]?.customers.map(row => row.customer), ['UAES', '示例客户'])
-  assert.equal(canOpenPredefined(entry('v6/示例客户/Z99')), true)
-  assert.equal(canOpenPredefined(entry('not/a/v-path')), false)
+test('real source paths form a version/customer/group tree including uninstalled and historical directories', () => {
+  const sources: PredefinedEntry[] = [entry('v6/ACME/Z99'), entry('v5/UAES/U08'), {path: 'v5/UAES/U12', title: '特殊特性', availability: 'unseeded'}, {path: 'v4', title: 'v4', availability: 'historical'}, {path: 'v4/uaes', title: 'uaes', availability: 'historical'}, entry('legacy.csv', 'should-not-open')]
+  const {nodes, rejected} = predefinedTree(sources)
+  assert.deepEqual(nodes.map(node => node.name), ['v6', 'v5', 'v4'])
+  assert.deepEqual(nodes[1]?.children[0]?.children.map(node => [node.path, node.entry?.availability]), [['v5/UAES/U08', 'installed'], ['v5/UAES/U12', 'unseeded']])
+  assert.equal(nodes[2]?.children[0]?.path, 'v4/uaes')
+  assert.deepEqual(rejected.map(row => row.path), ['legacy.csv'])
+  assert.equal(canOpenPredefined(sources[0]!), true)
+  assert.equal(canOpenPredefined(sources[2]!), false)
+  assert.equal(canOpenPredefined({...sources[2]!, revision_id: 'forged'}), false)
+  assert.equal(canOpenPredefined({...entry('v5/UAES/U08'), availability: 'unavailable'}), false)
+  assert.equal(canOpenPredefined({...entry('v5/UAES/U08'), suite_key: 'OTHER:U08'}), false)
   assert.equal(canOpenPredefined({...entry('v5/UAES/U08'), revision_id: ''}), false)
 })
 
-test('checkerPath keeps the source path and the official revision stays distinct from the adopted revision', () => {
-  assert.equal(readPredefinedPath(new URL('https://ppap.test/requirements?checkerSuite=UAES%3AU08&checkerPath=v5%2FUAES%2FU08')), 'v5/UAES/U08')
+test('duplicate and escaping path identities are rejected instead of choosing the first source', () => {
+  const {nodes, rejected} = predefinedTree([entry('v5/UAES/U08'), entry('v5/UAES/U08', 'other'), entry('v5/../U08'), entry('v5/UAES:BAD/U08')])
+  assert.deepEqual(nodes, [])
+  assert.equal(rejected.length, 4)
+  assert.deepEqual(directoryParts('v4/uaes'), ['v4', 'uaes'])
+})
+
+test('friendly labels retain the original title and do not supply navigation identity', () => {
+  const cp = {...entry('v5/UAES/U08'), title: '控制计划（CP）审核规则'}
+  assert.equal(checkerLabel(cp), 'U08 · 控制计划')
+  assert.equal(checkerLabel({...cp, title: '潜在失效模式（PFMEA）审核规则'}), 'U08 · PFMEA')
+  assert.equal(cp.title, '控制计划（CP）审核规则')
+})
+
+test('checkerPath and existing enterprise deep links select one workspace without adoption', () => {
+  const url = new URL('https://ppap.test/requirements?checkerPath=v5%2FUAES%2FU08')
+  assert.equal(readPredefinedPath(url), 'v5/UAES/U08')
+  assert.equal(readRulesArea(url), 'predefined')
+  const enterprise = rulesAreaAddress(url, 'enterprise')
+  assert.equal(readRulesArea(enterprise), 'enterprise')
+  assert.equal(enterprise.searchParams.has('checkerPath'), false)
+  assert.equal(readRulesArea(rulesAreaAddress(url, 'requirements')), 'requirements')
+  assert.equal(readRulesArea(new URL('https://ppap.test/requirements?requirement=customer-rule')), 'requirements')
+  assert.equal(readRulesArea(rulesAreaAddress(enterprise, 'predefined')), 'predefined')
   assert.equal(readPredefinedPath(new URL('https://ppap.test/requirements?checkerSuite=UAES%3AU08')), '')
+})
+
+test('the official source revision stays distinct from the adopted enterprise revision', () => {
   const source = entry('v5/UAES/U08', 'official-v5')
   assert.match(sourceIdentity(source, 'tenant-current'), /official-v5/)
   assert.match(sourceIdentity(source, 'tenant-current'), /tenant-current/)

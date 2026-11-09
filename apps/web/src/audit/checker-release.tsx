@@ -16,7 +16,7 @@ import {ReadSkeleton} from '../components/read-skeleton'
 
 const errorText = (cause: unknown) => (cause as {code?: string})?.code === 'suite_dependencies_not_adopted' ? '关联检查尚未采用，请先核对关联检查版本。' : cause instanceof Error ? cause.message : '检查版本暂不可读。'
 /** Publish and rollback share the same server CAS command. Existing rounds are never rewritten. */
-export function CheckerRelease({scope, legacyScope, suiteKey, revisionId, optimization, onReaudit, onRevision, onVerify, verificationBusy = false, operationRunning = false, refreshKey = '', preferCurrent = false, onBusyChange, onUpgradeResult, onRuleDraft, onPublished, onDependency, adapter = nativeCheckerReleaseAdapter}: {scope: string; legacyScope?: string; suiteKey: string; revisionId: string; optimization?: {operationId: string; revisionId: string; explicit: boolean}; onReaudit?: () => void; onRevision?: (id: string) => void; onVerify?: (id: string) => void; verificationBusy?: boolean; operationRunning?: boolean; refreshKey?: string; preferCurrent?: boolean; onBusyChange?: (busy: boolean) => void; onUpgradeResult?: (runTests: boolean) => void; onRuleDraft?: (id: string) => void; onPublished?: () => void; onDependency?: (key: string) => void; adapter?: CheckerReleaseAdapter}) {
+export function CheckerRelease({scope, legacyScope, suiteKey, revisionId, optimization, onReaudit, onRevision, onVerify, verificationBusy = false, operationRunning = false, refreshKey = '', preferCurrent = false, onBusyChange, onWriteBlockedChange, onUpgradeResult, onRuleDraft, onPublished, onDependency, adapter = nativeCheckerReleaseAdapter}: {scope: string; legacyScope?: string; suiteKey: string; revisionId: string; optimization?: {operationId: string; revisionId: string; explicit: boolean}; onReaudit?: () => void; onRevision?: (id: string) => void; onVerify?: (id: string) => void; verificationBusy?: boolean; operationRunning?: boolean; refreshKey?: string; preferCurrent?: boolean; onBusyChange?: (busy: boolean) => void; onWriteBlockedChange?: (blocked: boolean) => void; onUpgradeResult?: (runTests: boolean) => void; onRuleDraft?: (id: string) => void; onPublished?: () => void; onDependency?: (key: string) => void; adapter?: CheckerReleaseAdapter}) {
   const formId = useId(), locked = useRef(false), live = useRef(true), generation = useRef(0), holdWrites = useRef(false)
   const shown = useRef<{scope: string; suite: string; id: string; tenant: string | null; validation: string} | null>(null)
   const [revision, setRevision] = useState<CheckerRevision | null>(null), [active, setActive] = useState<CheckerActive | null>(null)
@@ -35,8 +35,12 @@ export function CheckerRelease({scope, legacyScope, suiteKey, revisionId, optimi
   // A held authoritative read may be retried with dirty text, but never over a child mutation.
   const recoveryBlocked = mutationBusy || editorMutating || operationRunning || editorBlocked && !writesHeld
   useEffect(() => {live.current = true; return () => {live.current = false}}, [])
-  useEffect(() => {onBusyChange?.(writesHeld || mutationBusy || Boolean(pending) || editorBlocked || !revision && !error)}, [onBusyChange, writesHeld, mutationBusy, pending, editorBlocked, revision, error])
+  // A failed read still fences local writes, but must allow another source.
+  // Mutations, unknown publication receipts and unsaved edits still block leaving.
+  useEffect(() => {onBusyChange?.(mutationBusy || Boolean(pending) || editorBlocked || !revision && !error)}, [onBusyChange, mutationBusy, pending, editorBlocked, revision, error])
   useEffect(() => () => onBusyChange?.(false), [onBusyChange])
+  useEffect(() => {onWriteBlockedChange?.(mutationBusy || Boolean(pending) || editorBlocked || writesHeld || !revision)}, [onWriteBlockedChange, mutationBusy, pending, editorBlocked, writesHeld, revision])
+  useEffect(() => () => onWriteBlockedChange?.(false), [onWriteBlockedChange])
   const select = useCallback((next: CheckerSelection) => {
     writeAuditAddress(checkerSelectionAddress(new URL(location.href), scope, next))
     setSelection({...next, pending: null, editPending: null, legacy: false, legacyBlocked: false}); setReceipt(null); onRevision?.(next.revisionId)

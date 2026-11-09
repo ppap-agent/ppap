@@ -52,6 +52,63 @@ class StandardSuite:
         return {name: value for name, value in self.files.items() if name in {"checker.py", "resources.py"}}
 
 
+@dataclass(frozen=True)
+class PredefinedSource:
+    """One real source path; historical packages have no executable leaf."""
+
+    path: str
+    title: str
+    suite: StandardSuite | None = None
+
+
+def predefined_sources(root: Path | None = None) -> tuple[PredefinedSource, ...]:
+    """Read navigation from disk, without installing or selecting a Revision."""
+    base = (root or _CHECKERS_ROOT).resolve()
+    suites = predefined_directory_suites() if root is None else load_predefined_checkers(root)
+    result = [PredefinedSource(suite.source_path, source_title(suite), suite) for suite in suites]
+
+    def historical(directory: Path):
+        _inside(directory, base)
+        relative = directory.relative_to(base).as_posix()
+        result.append(PredefinedSource(relative, directory.name))
+        for child in _entries(directory):
+            _inside(child, base)
+            if child.is_dir():
+                historical(child)
+
+    for version in _entries(base):
+        if _VERSION_DIRECTORY.fullmatch(version.name) and version.is_dir():
+            _inside(version, base)
+            if _legacy_version_package(version):
+                historical(version)
+    paths = [row.path for row in result]
+    if len(paths) != len(set(paths)):
+        raise ValueError("predefined_duplicate_path")
+    return tuple(sorted(result, key=lambda row: row.path.encode("utf-8")))
+
+
+def source_title(suite: StandardSuite) -> str:
+    rules = _json_object(suite.files["rules.json"])
+    title = rules.get("title", suite.source_entry)
+    if not isinstance(title, str) or not title.strip():
+        raise ValueError("predefined_invalid_rules")
+    return title
+
+
+def validate_source_identity(path: str, rules: Mapping[str, Any]) -> None:
+    """Business metadata may agree with a path, but cannot replace its identity."""
+    parts = path.split("/")
+    if len(parts) != 3 or _VERSION_DIRECTORY.fullmatch(parts[0]) is None:
+        raise ValueError("predefined_invalid_name")
+    version, customer, group = parts
+    if "customers" in rules and rules["customers"] != [customer]:
+        raise ValueError("predefined_identity_conflict")
+    if "preset_key" in rules and rules["preset_key"] != group:
+        raise ValueError("predefined_identity_conflict")
+    if "rule_profile" in rules and rules["rule_profile"] != version:
+        raise ValueError("predefined_identity_conflict")
+
+
 # Only dependencies actually read by the current implementation are declared.
 # Other reference types (e.g. drawings) remain frozen source inputs, not invented suites.
 _RELATED = {
@@ -91,7 +148,12 @@ def _carriers(customer: str, entry: str) -> dict[str, str]:
 
 
 def standard_suites() -> tuple[StandardSuite, ...]:
-    """Return 41 editable source artifacts, not claims of oracle correctness."""
+    """Historical carrier artifacts retained for explicit source consumers.
+
+    product.seed_standard_suites.official_source_suites installs these identities;
+    corpus_contracts.core_round.customer_suite selects them for versioned tests.
+    New directory navigation uses predefined_sources, not this class registry.
+    """
     result = []
     for preset in customer_presets():
         key = f"{preset.customer}:{preset.entry_id}"
@@ -282,6 +344,8 @@ def _inside(path: Path, root: Path) -> None:
         raise ValueError("predefined_path_escape") from None
     if not resolved.is_relative_to(root):
         raise ValueError("predefined_path_escape")
+    if path.is_symlink():
+        raise ValueError("predefined_duplicate_path" if path.is_dir() else "predefined_path_escape")
 
 
 def _component(name: str) -> None:
@@ -307,6 +371,7 @@ def _load_leaf(root: Path, version: str, customer: str, group: Path) -> Standard
     if "resources.py" in files:
         _validate_python(files["resources.py"], "predefined_resources_syntax")
     rules = _json_object(files["rules.json"])
+    validate_source_identity(f"{version}/{customer}/{group.name}", rules)
     for name in _OPTIONAL_JSON:
         if name in files:
             _json_list(files[name])

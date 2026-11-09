@@ -68,45 +68,7 @@ class UiA11yTests(unittest.TestCase):
             page.route("**/api/audit-tasks?*", lambda route: route.fulfill(json={"tasks": [], "next_offset": None}))
             page.route("**/api/rules", lambda route: route.fulfill(json={"rules": []}))
             page.route("**/api/rule-types", lambda route: route.fulfill(json={"types": ["控制计划"]}))
-            page.route(
-                "**/api/suites",
-                lambda route: route.fulfill(
-                    json={
-                        "suites": [
-                            {
-                                "title": "控制计划",
-                                "candidate_revision_id": "00000000-0000-4000-8000-000000000004",
-                                "version": 0,
-                                "origin": "official",
-                                "selection_mode": "candidate_only",
-                                "suite_key": "control-plan",
-                                "revision": 0,
-                                "current_revision_id": None,
-                                "latest_official_revision_id": None,
-                                "latest_official_version": None,
-                                "official_base_revision_id": None,
-                                "official_update_available": False,
-                                "official_update_notice": False,
-                                "verification_status": "unverified",
-                                "force_unverified": False,
-                                "validation": {
-                                    "status": "unverified",
-                                    "revision": 0,
-                                    "write_revision": 0,
-                                    "proof_scope": "none",
-                                    "total_samples": 0,
-                                    "passed_samples": 0,
-                                    "new_errors": 0,
-                                    "verified": False,
-                                    "samples_not_rerun": False,
-                                    "reasons": ["no_validation_proof"],
-                                },
-                                "history": [],
-                            }
-                        ]
-                    }
-                ),
-            )
+            page.route("**/api/suites", lambda route: route.fulfill(json={"suites": [], "predefined": []}))
             session = context.new_cdp_session(page)
             session.send("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 1})
             page.goto(WEB)
@@ -156,13 +118,11 @@ class UiA11yTests(unittest.TestCase):
             directory = []
             page.route("**/api/rule-library", lambda route: directory.append(route))
             page.goto(WEB + "/requirements")
-            expect(page.get_by_role("combobox", name="选择检查", exact=True)).to_contain_text("控制计划 · control-plan · 尚未采用")
+            page.get_by_role("tab", name="客户要求与上传", exact=True).click()
             loading = page.get_by_role("status", name="正在读取审核规则", exact=True)
             expect(loading).to_be_visible()
-            expect(loading.locator('[data-slot="skeleton"]')).to_have_count(25)
-            self.assertEqual(loading.locator('[data-slot="skeleton"]').first.evaluate("el => getComputedStyle(el).animationName"), "none")
+            self.assertTrue(loading.evaluate("el => el.getAnimations({subtree: true}).every(animation => animation.playState !== 'running')"))
             expect(page.get_by_role("heading", name="还没有审核规则", exact=True)).to_have_count(0)
-            page.screenshot(path="/tmp/ppap-requirement-skeleton-mobile.png")
             directory.pop().fulfill(status=503, json={"error": "unavailable"})
             expect(loading).to_have_count(0)
             expect(page.get_by_role("alert")).to_contain_text("审核规则未能读取")
@@ -240,6 +200,8 @@ class UiA11yTests(unittest.TestCase):
                     )
                 elif path == f"/files/{SOURCE}/versions/{VERSION}/rule-sources":
                     route.fulfill(json={"file_version_id": VERSION, "units": [{"id": "json:0", "location": "rules[0].rule_to_check", "excerpt": BODY["rules"][0]["rule_to_check"]}]}, headers=cors)
+                elif path == "/suites":
+                    route.fulfill(json={"suites": [], "predefined": []}, headers=cors)
                 elif path == "/rule-types":
                     route.fulfill(json={"types": ["控制计划"]}, headers=cors)
                 elif path == "/rule-library":

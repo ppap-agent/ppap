@@ -157,7 +157,9 @@ def test_old_round_dry_run_apply_retry_readback_preserve_results_and_human_oracl
     assert SuiteStore(store.settings, store.objects).get_revision(suite_id, alice.tenant_id) is None
     with pytest.raises(KeyError, match="suite_missing"):
         SuiteStore(store.settings, store.objects).resolve_suite(suite_id, alice.tenant_id)
-    assert releases.list_suites(bob) == {"suites": []}
+    catalog = releases.list_suites(bob)
+    assert catalog["suites"] == []
+    assert all(row["availability"] in {"unseeded", "historical"} and "revision_id" not in row for row in catalog["predefined"])
     with pytest.raises(KeyError, match="suite_access_denied"):
         releases.detail(bob, suite_id)
     with pytest.raises(KeyError, match="suite_access_denied"):

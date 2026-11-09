@@ -1,111 +1,154 @@
-import {useCallback, useEffect, useId, useState} from 'react'
+import {useCallback, useEffect, useId, useRef, useState, type KeyboardEvent} from 'react'
+import {ArrowLeft, ChevronRight, FileCode, Folder} from 'lucide-react'
 import {request} from '../api'
 import {Button} from '../components/ui/button'
 import {ReadSkeleton} from '../components/read-skeleton'
 import {Label} from '../components/ui/label'
 import type {components} from '../generated/openapi'
 import {CheckerRelease} from './checker-release'
-import {canOpenPredefined, groupPredefined, predefinedPath, predefinedScope, readPredefinedPath, sourceIdentity, type PredefinedEntry} from './predefined-catalog'
+import {canOpenPredefined, checkerLabel, predefinedTree, predefinedScope, readPredefinedPath, sourceIdentity, type PredefinedEntry, type PredefinedNode} from './predefined-catalog'
 import {auditAddressChanged, writeAuditAddress} from './routes'
 
 const selectedSuite = () => new URL(location.href).searchParams.get('checkerSuite') || ''
 const selectedPath = () => readPredefinedPath(new URL(location.href))
-const unavailableCopy: Record<string, string> = {unseeded: '尚未安装官方修订', unavailable: '官方修订不可读', invalid: '来源路径无效'}
+const stateLabel = {installed: '', unseeded: '待安装', unavailable: '不可用', historical: '历史 · 只读'}
+const rowClass = 'flex min-h-11 w-full min-w-0 items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-muted/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-60'
 
-/** The rule library can adopt a first Checker without an existing audit round. */
-export function CheckerCatalog({active, revision}: {active: boolean; revision: number}) {
-  const selectId = useId()
+/** Source navigation never adopts a revision or calls a model. */
+export function CheckerCatalog({active, revision, mode = 'predefined', onBusyChange}: {active: boolean; revision: number; mode?: 'predefined' | 'enterprise'; onBusyChange?: (value: boolean) => void}) {
+  const selectId = useId(), groupId = useId(), tree = useRef<HTMLElement>(null), lastPath = useRef(selectedPath())
   const [suites, setSuites] = useState<components['schemas']['SuiteActive'][]>([])
   const [unavailable, setUnavailable] = useState<components['schemas']['SuiteUnavailable'][]>([])
   const [predefined, setPredefined] = useState<PredefinedEntry[]>([])
-  const [predefinedUnavailable, setPredefinedUnavailable] = useState<components['schemas']['SuitePredefinedUnavailable'][]>([])
   const [predefinedError, setPredefinedError] = useState('')
-  const [selected, setSelected] = useState(selectedSuite)
-  const [path, setPath] = useState(selectedPath)
+  const [selected, setSelected] = useState(selectedSuite), [path, setPath] = useState(selectedPath)
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [loading, setLoading] = useState(true), [error, setError] = useState(''), [busy, setBusy] = useState(false)
   const [refresh, setRefresh] = useState(0)
   const reload = useCallback(() => setRefresh(value => value + 1), [])
+  const changeBusy = useCallback((value: boolean) => {setBusy(value); onBusyChange?.(value)}, [onBusyChange])
   useEffect(() => {
     const restore = () => {setSelected(selectedSuite()); setPath(selectedPath())}
     window.addEventListener('popstate', restore); window.addEventListener(auditAddressChanged, restore)
     return () => {window.removeEventListener('popstate', restore); window.removeEventListener(auditAddressChanged, restore)}
   }, [])
   useEffect(() => {
+    if (path) {
+      lastPath.current = path
+      const parts = path.split('/')
+      setExpanded(previous => ({...previous, ...Object.fromEntries(parts.slice(0, -1).map((_, index) => [parts.slice(0, index + 1).join('/'), true]))}))
+    } else if (lastPath.current) {
+      tree.current?.querySelectorAll<HTMLButtonElement>('button[data-tree-path]').forEach(button => {if (button.dataset.treePath === lastPath.current) button.focus()})
+    }
+  }, [path])
+  useEffect(() => {
     if (!active) return
     const controller = new AbortController()
     setLoading(true); setError('')
     void request<components['schemas']['SuiteCatalog']>('/suites', 'GET', undefined, controller.signal).then(value => {
       if (controller.signal.aborted) return
-      setSuites(value.suites)
-      setUnavailable(value.unavailable || [])
+      setSuites(value.suites); setUnavailable(value.unavailable || [])
       setPredefined(value.predefined_error ? [] : value.predefined || [])
-      setPredefinedUnavailable(value.predefined_error ? [] : value.predefined_unavailable || [])
       setPredefinedError(value.predefined_error || '')
       setLoading(false)
-    }).catch(cause => {if (!controller.signal.aborted) {setError(cause instanceof Error ? cause.message : '检查版本暂不可读。'); setLoading(false)}})
+    }).catch(cause => {if (!controller.signal.aborted) {setError(cause instanceof Error ? cause.message : '检查目录暂不可读。'); setLoading(false)}})
     return () => controller.abort()
   }, [active, revision, refresh])
   function choose(key: string) {
+    if (busy) return
     const url = new URL(location.href)
-    if (key) url.searchParams.set('checkerSuite', key)
-    else url.searchParams.delete('checkerSuite')
+    url.searchParams.set('checkerSuite', key); url.searchParams.delete('checkerPath'); url.searchParams.delete('rulesArea')
     writeAuditAddress(url, 'push')
   }
   function choosePath(next: string) {
+    if (busy) return
     const url = new URL(location.href)
     if (next) url.searchParams.set('checkerPath', next)
     else url.searchParams.delete('checkerPath')
+    url.searchParams.delete('checkerSuite'); url.searchParams.delete('rulesArea')
     writeAuditAddress(url, 'push')
   }
-  const suite = suites.find(value => value.suite_key === selected)
-  const blocked = unavailable.some(value => value.suite_key === selected)
+  function moveInTree(event: KeyboardEvent<HTMLElement>) {
+    const target = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-tree-path]')
+    if (!target || !tree.current) return
+    const buttons = [...tree.current.querySelectorAll<HTMLButtonElement>('button[data-tree-path]:not([disabled])')]
+    const index = buttons.indexOf(target)
+    let next: HTMLButtonElement | undefined
+    if (event.key === 'ArrowDown') next = buttons[index + 1]
+    else if (event.key === 'ArrowUp') next = buttons[index - 1]
+    else if (event.key === 'Home') next = buttons[0]
+    else if (event.key === 'End') next = buttons.at(-1)
+    else if (event.key === 'ArrowRight') {
+      if (target.getAttribute('aria-expanded') === 'false') target.click()
+      else if (buttons[index + 1]?.dataset.treePath?.startsWith(target.dataset.treePath + '/')) next = buttons[index + 1]
+    } else if (event.key === 'ArrowLeft') {
+      if (target.getAttribute('aria-expanded') === 'true') target.click()
+      else next = buttons.find(button => button.dataset.treePath === target.dataset.treePath?.split('/').slice(0, -1).join('/'))
+    } else return
+    event.preventDefault(); next?.focus()
+  }
+  const suite = suites.find(value => value.suite_key === selected), blocked = unavailable.some(value => value.suite_key === selected)
   const revisionId = suite?.current_revision_id || suite?.candidate_revision_id
-  const {groups, rejected} = groupPredefined(predefined)
-  const selectedEntry = predefined.find(value => value.path === path)
+  const {nodes, rejected} = predefinedTree(predefined)
+  const selectedEntry = rejected.some(value => value.path === path) ? undefined : predefined.find(value => value.path === path)
   const openEntry = selectedEntry && canOpenPredefined(selectedEntry) ? selectedEntry : undefined
   const adoptedRevisionId = openEntry ? suites.find(value => value.suite_key === openEntry.suite_key)?.current_revision_id : null
-  const kept = suites.length > 0 || predefined.length > 0 || predefinedUnavailable.length > 0
-  return <>
-    <section aria-label="企业检查版本" className="space-y-3 rounded-md border p-4">
-      <h2 className="font-semibold">检查版本</h2>
-      <p className="text-sm text-muted-foreground">检查版本是把审核规则落实为自动检查的程序。选择一项检查即可核对并采用；采用后只影响本企业之后的新审核，已有结果不变。</p>
-      <Label htmlFor={selectId}>选择检查</Label>
-      <select id={selectId} className="w-full rounded-md border bg-background p-2 text-sm" value={selected} disabled={busy} onChange={event => choose(event.target.value)}>
-        <option value="">选择要核对的检查</option>
-        {selected && !suite && !blocked && <option value={selected}>{selected}</option>}
-        {unavailable.map((value, index) => <option key={value.suite_key} value={value.suite_key}>检查 {index + 1} · 暂不可用</option>)}
-        {suites.map(value => <option key={value.suite_key} value={value.suite_key}>{value.title} · {value.current_revision_id ? '已采用' : '尚未采用'}</option>)}
-      </select>
-      {loading && <ReadSkeleton label="正在读取检查版本…" kind="inline"/>}
-      {error && <p role="alert" className="text-sm text-destructive">{error}{kept && ' 已读取的版本仍保留，请刷新核对当前状态。'}</p>}
-      {unavailable.length > 0 && <p role="alert" className="text-sm text-destructive">{unavailable.length} 项检查暂不可用。需要核对权限、关联检查或版本内容；其他检查仍可选择。</p>}
-      {!loading && !error && !suites.length && !unavailable.length && <p className="text-sm">还没有可访问的检查候选。</p>}
-      {!loading && !error && selected && !suite && !blocked && <p role="alert" className="text-sm">所选检查当前不可访问，请重新选择。</p>}
-      <Button variant="outline" size="sm" disabled={loading || busy} onClick={reload}>刷新检查列表</Button>
-      {active && suite && revisionId && <CheckerRelease key={suite.suite_key} scope={`catalog:${suite.suite_key}`} suiteKey={suite.suite_key} revisionId={revisionId} onBusyChange={setBusy} onPublished={reload} onDependency={choose}/>}
-    </section>
-    <section aria-label="预定义检查目录" className="space-y-3 rounded-md border p-4">
-      <h2 className="font-semibold">预定义检查</h2>
-      <p className="text-sm text-muted-foreground">平台提供的官方检查，按版本和客户分组。打开某项只查看它的官方修订，不会改变本企业当前采用的版本。</p>
-      {loading && <ReadSkeleton label="正在读取预定义检查…" kind="inline"/>}
-      {predefinedError && <p role="alert" className="text-sm text-destructive">预定义检查目录不可用。未列出任何来源路径。</p>}
-      {!loading && !error && !predefinedError && !predefined.length && !predefinedUnavailable.length && <p className="text-sm">还没有已安装的预定义检查。</p>}
-      {groups.map(group => <section key={group.version} aria-label={`版本 ${group.version}`} className="space-y-3">
-        <h3 className="text-sm font-medium">{group.version}</h3>
-        {group.customers.map(customer => <div key={customer.customer} className="space-y-2">
-          <h4 className="text-sm text-muted-foreground">{customer.customer}</h4>
-          <ul className="space-y-2">{customer.entries.map(entry => {
-            const parts = predefinedPath(entry.path)
-            return <li key={entry.path}><button type="button" aria-pressed={path === entry.path} className="flex min-h-11 w-full flex-col items-start gap-0.5 break-all rounded-md border bg-background px-3 py-2 text-left text-sm hover:bg-muted/50 aria-pressed:border-foreground aria-pressed:bg-muted/50 focus-visible:outline focus-visible:outline-2" onClick={() => choosePath(entry.path)}><span className="font-medium">{entry.title || parts?.leaf}</span><span className="text-xs text-muted-foreground">{parts?.leaf} · {entry.path}</span></button></li>
-          })}</ul>
-        </div>)}
-      </section>)}
-      {(predefinedUnavailable.length > 0 || rejected.length > 0) && <ul aria-label="不可用的预定义来源" className="space-y-2 text-sm">{predefinedUnavailable.map(value => <li key={value.path} className="break-all" role="status">{value.path} · {unavailableCopy[value.error] || '来源不可用'}</li>)}{rejected.map(value => <li key={value.path} className="break-all" role="status">{value.path || '未提供路径'} · 来源路径无效</li>)}</ul>}
-      {!loading && !error && !predefinedError && path && !openEntry && <p role="alert" className="text-sm">所选来源当前不可访问，请重新选择。</p>}
-      {openEntry && <div className="space-y-1 text-sm"><p className="break-all">来源路径 {openEntry.path}</p><p className="break-all">官方修订 {openEntry.revision_id}</p><p>{sourceIdentity(openEntry, adoptedRevisionId)}</p>{openEntry.evidence_reader_clause_ids.length === 0 && <p role="status">此检查尚不能自动完成审核。采用前请核对规则和样本。</p>}</div>}
-      {path && <Button variant="outline" size="sm" disabled={busy} onClick={() => choosePath('')}>关闭此来源</Button>}
-      <Button variant="outline" size="sm" disabled={loading || busy} onClick={reload}>刷新预定义目录</Button>
-      {active && openEntry && <CheckerRelease key={`${openEntry.path}:${openEntry.revision_id}`} scope={predefinedScope(openEntry.path)} suiteKey={openEntry.suite_key} revisionId={openEntry.revision_id} onBusyChange={setBusy} onPublished={reload} onDependency={choose}/>}
-    </section>
-  </>
+  function renderNodes(items: PredefinedNode[], level = 1) {
+    return items.map((node, index) => {
+      const branch = node.children.length > 0
+      const defaultOpen = node.entry?.availability !== 'historical' && (path.startsWith(node.path + '/') || level <= 2 && index === 0)
+      const open = expanded[node.path] ?? defaultOpen
+      const id = groupId + encodeURIComponent(node.path)
+      return <li key={node.path} role="none">
+        {branch ? <>
+          <button type="button" role="treeitem" aria-label={node.name + (node.entry?.availability === 'historical' ? ' 历史目录，只读' : '')} aria-level={level} aria-expanded={open} aria-controls={id} aria-owns={open ? id : undefined} data-tree-path={node.path} className={rowClass + ' font-medium'} onClick={() => setExpanded(previous => ({...previous, [node.path]: !open}))}>
+            <ChevronRight aria-hidden="true" className={'size-3.5 shrink-0 transition-transform ' + (open ? 'rotate-90' : '')}/><Folder aria-hidden="true" className="size-4 shrink-0 text-muted-foreground"/><span className="min-w-0 break-words">{node.name}</span>{node.entry?.availability === 'historical' && <span className="ml-auto text-xs text-muted-foreground">只读</span>}
+          </button>
+          {open && <ul role="group" id={id} className="ml-3 border-l pl-2">{renderNodes(node.children, level + 1)}</ul>}
+        </> : node.entry && <button type="button" role="treeitem" aria-level={level} aria-selected={path === node.path} aria-label={node.path + ' ' + (node.entry.availability === 'historical' ? '历史目录，只读' : checkerLabel(node.entry))} data-tree-path={node.path} disabled={busy} className={rowClass + ' aria-selected:bg-muted aria-selected:font-medium'} onClick={() => choosePath(node.path)}>
+          {node.entry.availability === 'historical' ? <Folder aria-hidden="true" className="size-4 shrink-0 text-muted-foreground"/> : <FileCode aria-hidden="true" className="size-4 shrink-0 text-muted-foreground"/>}<span className="min-w-0 flex-1 break-words">{checkerLabel(node.entry)}</span>{stateLabel[node.entry.availability] && <span className="shrink-0 text-xs text-muted-foreground">{stateLabel[node.entry.availability]}</span>}
+        </button>}
+      </li>
+    })
+  }
+  if (mode === 'enterprise') return <section aria-label="企业检查版本" className="min-w-0 space-y-4">
+    <h2 className="text-lg font-semibold">企业检查版本</h2>
+    <p className="text-sm text-muted-foreground">核对本企业采用的版本与定制候选。发布只影响之后的新审核，已有结果不变。</p>
+    <Label htmlFor={selectId}>选择检查</Label>
+    <select id={selectId} className="w-full max-w-xl rounded-md border bg-background p-2 text-sm" value={selected} disabled={busy} onChange={event => choose(event.target.value)}>
+      <option value="">选择要核对的检查</option>
+      {selected && !suite && !blocked && <option value={selected}>{selected}</option>}
+      {unavailable.map((value, index) => <option key={value.suite_key} value={value.suite_key}>检查 {index + 1} · 暂不可用</option>)}
+      {suites.map(value => <option key={value.suite_key} value={value.suite_key}>{value.title} · {value.current_revision_id ? '已采用' : '尚未采用'}</option>)}
+    </select>
+    {loading && <ReadSkeleton label="正在读取检查版本…" kind="inline"/>}
+    {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+    {unavailable.length > 0 && <p role="alert" className="text-sm text-destructive">{unavailable.length} 项检查暂不可用。请核对权限、关联检查或版本内容。</p>}
+    {!loading && !error && selected && !suite && <p role="alert">所选检查当前不可访问，请重新选择。</p>}
+    <Button variant="outline" size="sm" disabled={loading || busy} onClick={reload}>刷新检查列表</Button>
+    {active && suite && revisionId && <CheckerRelease key={'enterprise:' + suite.suite_key} scope={`catalog:${suite.suite_key}`} suiteKey={suite.suite_key} revisionId={revisionId} onBusyChange={changeBusy} onPublished={reload} onDependency={choose}/>}
+  </section>
+  return <section aria-label="预定义检查目录" className="min-w-0 space-y-4">
+    <header className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold">Predefined Checkers</h2><p className="mt-1 text-sm text-muted-foreground">按版本与客户选择检查。打开来源只供核对，不会采用版本。</p></div><Button variant="outline" size="sm" disabled={loading || busy} onClick={reload}>刷新预定义目录</Button></header>
+    {loading && <ReadSkeleton label="正在读取预定义检查…" kind="inline"/>}
+    {error && <p role="alert" className="text-sm text-destructive">{error} 请重新读取目录。</p>}
+    {predefinedError && <p role="alert" className="text-sm text-destructive">预定义检查目录不可用。未列出任何来源路径。</p>}
+    {!loading && !error && !predefinedError && !predefined.length && <p className="text-sm">仓库中没有可读取的预定义来源。</p>}
+    <div className="grid min-w-0 gap-6 lg:grid-cols-[19rem_minmax(0,1fr)]">
+      <nav ref={tree} aria-label="Predefined Checkers" onKeyDown={moveInTree} className={'min-w-0 lg:max-h-[calc(100dvh-14rem)] lg:overflow-y-auto lg:border-r lg:pr-4 ' + (path ? 'max-lg:hidden' : '')}>
+        <ul role="tree" aria-label="Checker 版本与客户" className="space-y-1">{renderNodes(nodes)}</ul>
+        {rejected.length > 0 && <p role="alert" className="mt-3 text-sm text-destructive">{rejected.length} 项来源路径或身份无效，未作为可打开的检查显示。</p>}
+      </nav>
+      <section aria-label="Checker 来源详情" className={'min-w-0 space-y-4 ' + (!path ? 'max-lg:hidden' : '')}>
+        {path && <Button variant="ghost" size="sm" disabled={busy} onClick={() => choosePath('')}><ArrowLeft aria-hidden="true"/>返回目录</Button>}
+        {!path && <p className="py-8 text-sm text-muted-foreground">从目录中选择一项检查，查看规则、程序资源与发布快照。</p>}
+        {!loading && !predefinedError && path && !selectedEntry && <p role="alert" className="text-sm text-destructive">所选来源当前不可访问，请返回目录重新选择。</p>}
+        {selectedEntry && <header className="space-y-2 border-b pb-4"><h3 className="text-lg font-semibold">{selectedEntry.title}</h3><p className="break-all text-sm text-muted-foreground">来源路径 {selectedEntry.path}</p>
+          {!openEntry && <p role="status" className="text-sm">{selectedEntry.availability === 'historical' ? '真实历史源码目录，仅供只读浏览。它不是可采用的完整 Checker。' : selectedEntry.availability === 'unseeded' ? '待安装：仓库中存在此来源，尚未安装官方修订。当前不能打开、执行或采用。' : '官方修订当前不可读。请核对权限或文件内容，未切换到其他版本。'}</p>}
+        </header>}
+        {openEntry && <div className="space-y-2 text-sm"><p className="break-all">官方修订 {openEntry.revision_id}</p><p>{sourceIdentity(openEntry, adoptedRevisionId)}</p><p className="text-muted-foreground">声明可取证 {openEntry.evidence_reader_clause_ids?.length ?? 0}/{openEntry.clause_count ?? 0} 条款 · {openEntry.bound_clause_count ?? 0} 条已绑定</p>{(openEntry.evidence_reader_clause_ids?.length ?? 0) < (openEntry.clause_count ?? 1) && <p role="status">其余条款未知或未支持，执行时返回 UNABLE。已绑定只说明存在执行入口，不代表审核可通过。</p>}</div>}
+        {active && openEntry && <CheckerRelease key={`${openEntry.path}:${openEntry.revision_id}`} scope={predefinedScope(openEntry.path)} suiteKey={openEntry.suite_key} revisionId={openEntry.revision_id} refreshKey={`${revision}:${refresh}`} onBusyChange={changeBusy} onPublished={reload} onDependency={choose}/>}
+      </section>
+    </div>
+  </section>
 }

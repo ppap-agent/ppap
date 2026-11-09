@@ -1,12 +1,8 @@
-"""Evidence scope owned by this directory leaf.
-
-`clauses` is empty: this leaf has no evidence reader. Every bound clause
-stays UNABLE. Unknown is not a pass. This module does not call another checker.
-"""
+"""Explicit source-clause methods; no inferred ordinal binding."""
 
 RESOURCE = {
     "customer": "UAES",
     "preset_key": "U07",
-    "supported_suffixes": (),
-    "clauses": {},
+    "supported_suffixes": (".xlsx", ".xlsm", ".xls", ".pdf", ".docx"),
+    "clauses": {"U07:1": {"method": "rule_1"}, "U07:2": {"method": "rule_2"}, "U07:3": {"method": "rule_3"}, "U07:4": {"method": "rule_4"}},
 }

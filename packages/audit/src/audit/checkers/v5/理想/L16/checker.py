@@ -1,96 +1,74 @@
-"""Bound clauses of one predefined directory leaf.
-
-This leaf implements no evidence reader. Every bound clause is UNABLE.
-Unknown is not a pass. This file does not call another checker version.
-"""
+"""Source-owned Li Auto business clauses; unknown evidence cannot pass."""
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Literal
+import re
 
-from audit.checker_lib.evidence import structure_diagnostic, structure_evidence
-from audit.contracts import AuditEvidence, AuditResultItem
+from audit.checker_lib.source import SourceAudit, UnknownFact, blank, header
 from resources import RESOURCE
-
-_BOUNDARY = "本目录 Checker 没有读取本条款证据的检查，不能判定为通过。"
-_Format = Literal["xlsx", "xls", "xlsm", "pdf", "docx", "png", "jpg", "jpeg", "webp", "txt", "md"]
-_FORMATS: dict[str, _Format] = {
-    ".xlsx": "xlsx",
-    ".xlsm": "xlsm",
-    ".xls": "xls",
-    ".pdf": "pdf",
-    ".docx": "docx",
-    ".png": "png",
-    ".jpg": "jpg",
-    ".jpeg": "jpeg",
-    ".webp": "webp",
-    ".txt": "txt",
-    ".md": "md",
-}
 
 
 def create_audit(audit_file, rule, group_context=None):
-    return _BoundLeaf(audit_file, rule, group_context)
+    return _Audit(audit_file, rule, group_context, resource=RESOURCE)
 
 
-class _Clause:
-    def __init__(self, audit: _BoundLeaf, clause_id: str):
-        self.rule_item = type("_RuleItem", (), {"id": clause_id})()
-        self._audit = audit
-        self._clause_id = clause_id
+class _Audit(SourceAudit):
+    def metadata(self, name):
+        facts = self.native()
+        try:
+            return facts.field((name,))
+        except UnknownFact:
+            tables = facts.tables()
+            if len(tables) != 1 or tables[0]["cols"] != 1:
+                raise
+            rows = facts.rows({"value": (name,)})
+            values = {str(row["value"]).strip() for row in rows if not blank(row["value"])}
+            if len(values) != 1:
+                raise UnknownFact("单列元信息没有唯一可靠的内容。") from None
+            return values.pop()
 
-    def check(self) -> AuditResultItem:
-        return self._audit.evaluate(self._clause_id)
+    def annual_rows(self, aliases):
+        facts = self.native()
+        table = facts.table()
+        start, _columns = facts.columns(table, aliases)
+        aliases = dict(aliases)
+        for name in ("试验项目", "试验要求", "试验标准/方法", "样本数量"):
+            if name not in aliases and any(header(facts.readers[table["id"]].cell(start, column).get("value"), (name,)) for column in range(1, table["cols"] + 1)):
+                aliases[name] = (name,)
+        return facts.rows(aliases, title=(table["id"],))
 
+    def rule_1(self):
+        value = self.metadata("质量等级")
+        return ("PASS", "质量等级属于明确允许集合。") if value in {"关键件", "重要件", "一般件"} else ("NG", "质量等级必须为关键件、重要件或一般件。")
 
-class _BoundLeaf:
-    def __init__(self, audit_file, rule, group_context):
-        self.audit_file = audit_file
-        self.rule = rule
-        self._group_context = group_context
-        self.checks = [_Clause(self, clause_id) for clause_id in _clause_ids(rule)]
+    def rule_2(self):
+        for row in self.annual_rows({"item": ("试验项目",), "frequency": ("测试频率",)}):
+            item = row["item"]
+            if blank(item):
+                raise UnknownFact("试验项目为空，不能决定适用频率。")
+            required = {"每两年"} if str(item) in {"ELV试验", "禁限用", "EMC试验"} else {"每年", "每半年"}
+            if row["frequency"] not in required:
+                return "NG", "试验项目与同行测试频率不符合原规则。"
+        return "PASS", "每个试验项目均已按实际项目类型核对测试频率。"
 
-    def close(self) -> None:
-        return None
+    def rule_3(self):
+        value = self.metadata("供应商名称")
+        return ("PASS", "供应商名称为代码-全称格式。") if re.fullmatch(r"[A-Za-z0-9]+-.+", value) else ("NG", "供应商名称必须为供应商代码-供应商全称。")
 
-    def evaluate(self, clause_id: str) -> AuditResultItem:
-        # RESOURCE["clauses"] only names readers. This file implements none.
-        # A named reader without code here stays UNABLE. It is not a pass.
-        message = f"{RESOURCE['customer']}/{RESOURCE['preset_key']}：{_BOUNDARY}"
-        return self._item(clause_id, "UNABLE", message, checks_performed=0, evidence=self._boundary(message))
+    def rule_4(self):
+        for row in self.annual_rows({"quantity": ("样本数量",)}):
+            value = row["quantity"]
+            if re.search(r"\d", str(value if value is not None else "")) is None:
+                return "NG", "样本数量必须包含阿拉伯数字；不增加原规则没有的正数门槛。"
+        return "PASS", "每个样本数量均有原规则要求的数字。"
 
-    def _boundary(self, message: str) -> AuditEvidence | None:
-        suffix = Path(str(getattr(self.audit_file, "file_url", "") or "")).suffix.lower()
-        source_format = _FORMATS.get(suffix)
-        if source_format is None:
-            return None
-        return structure_evidence(source_format=source_format, sources=(), diagnostics=(structure_diagnostic("evidence_reader_absent", message),))
+    def rule_5(self):
+        aliases = {"item": ("试验项目",), "requirement": ("试验要求",), "standard": ("试验标准/方法",)}
+        for row in self.annual_rows(aliases):
+            if any(blank(row[name]) for name in aliases):
+                return "NG", "试验要求栏存在空白的试验项目、要求或标准/方法。"
+        return "PASS", "试验要求全部物理行的三项内容均完整。"
 
-    def _item(self, clause_id: str, status: str, suggestion: str, *, evidence: AuditEvidence | None, checks_performed: int) -> AuditResultItem:
-        category = clause_id
-        for row in getattr(self.rule, "rules", ()) or ():
-            row_id = row.get("id") if isinstance(row, dict) else getattr(row, "id", None)
-            if row_id == clause_id:
-                raw = row.get("category") if isinstance(row, dict) else getattr(row, "category", None)
-                category = str(raw or clause_id)
-                break
-        return AuditResultItem(
-            classification="规则审核",
-            item=category,
-            priority="P0",
-            status=status,
-            suggestions=suggestion,
-            evidence=evidence,
-            clause_id=clause_id,
-            checks_performed=checks_performed,
-        )
-
-
-def _clause_ids(rule) -> list[str]:
-    found: list[str] = []
-    for row in getattr(rule, "rules", ()) or ():
-        clause_id = row.get("id") if isinstance(row, dict) else getattr(row, "id", None)
-        if isinstance(clause_id, str) and clause_id and clause_id not in found:
-            found.append(clause_id)
-    return found
+    def rule_6(self):
+        self.metadata("车型")
+        return "PASS", "已读取实际车型内容。"

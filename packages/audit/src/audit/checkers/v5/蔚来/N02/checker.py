@@ -1,96 +1,34 @@
-"""Bound clauses of one predefined directory leaf.
-
-This leaf implements no evidence reader. Every bound clause is UNABLE.
-Unknown is not a pass. This file does not call another checker version.
-"""
+"""N02 native header and revision chronology belong to this directory leaf."""
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Literal
-
-from audit.checker_lib.evidence import structure_diagnostic, structure_evidence
-from audit.contracts import AuditEvidence, AuditResultItem
+from audit.checker_lib.source import SourceAudit, UnknownFact
+from audit.engine.checkers.date_utils import normalize_excel_date
 from resources import RESOURCE
-
-_BOUNDARY = "本目录 Checker 没有读取本条款证据的检查，不能判定为通过。"
-_Format = Literal["xlsx", "xls", "xlsm", "pdf", "docx", "png", "jpg", "jpeg", "webp", "txt", "md"]
-_FORMATS: dict[str, _Format] = {
-    ".xlsx": "xlsx",
-    ".xlsm": "xlsm",
-    ".xls": "xls",
-    ".pdf": "pdf",
-    ".docx": "docx",
-    ".png": "png",
-    ".jpg": "jpg",
-    ".jpeg": "jpeg",
-    ".webp": "webp",
-    ".txt": "txt",
-    ".md": "md",
-}
 
 
 def create_audit(audit_file, rule, group_context=None):
-    return _BoundLeaf(audit_file, rule, group_context)
+    return PfmeaAudit(audit_file, rule, group_context, resource=RESOURCE)
 
 
-class _Clause:
-    def __init__(self, audit: _BoundLeaf, clause_id: str):
-        self.rule_item = type("_RuleItem", (), {"id": clause_id})()
-        self._audit = audit
-        self._clause_id = clause_id
+class PfmeaAudit(SourceAudit):
+    def rule_1(self):
+        facts = self.native()
+        facts.table(("PFMEA",))
+        for name in ("公司名称", "车型项目", "零件名称", "零件号", "制造地址", "PFMEA开始日期", "PFMEA修订日期", "跨职能团队"):
+            facts.field((name,), title=("PFMEA",))
+        return "PASS", "PFMEA八项原件表头字段及对应非空内容均已读取。"
 
-    def check(self) -> AuditResultItem:
-        return self._audit.evaluate(self._clause_id)
-
-
-class _BoundLeaf:
-    def __init__(self, audit_file, rule, group_context):
-        self.audit_file = audit_file
-        self.rule = rule
-        self._group_context = group_context
-        self.checks = [_Clause(self, clause_id) for clause_id in _clause_ids(rule)]
-
-    def close(self) -> None:
-        return None
-
-    def evaluate(self, clause_id: str) -> AuditResultItem:
-        # RESOURCE["clauses"] only names readers. This file implements none.
-        # A named reader without code here stays UNABLE. It is not a pass.
-        message = f"{RESOURCE['customer']}/{RESOURCE['preset_key']}：{_BOUNDARY}"
-        return self._item(clause_id, "UNABLE", message, checks_performed=0, evidence=self._boundary(message))
-
-    def _boundary(self, message: str) -> AuditEvidence | None:
-        suffix = Path(str(getattr(self.audit_file, "file_url", "") or "")).suffix.lower()
-        source_format = _FORMATS.get(suffix)
-        if source_format is None:
-            return None
-        return structure_evidence(source_format=source_format, sources=(), diagnostics=(structure_diagnostic("evidence_reader_absent", message),))
-
-    def _item(self, clause_id: str, status: str, suggestion: str, *, evidence: AuditEvidence | None, checks_performed: int) -> AuditResultItem:
-        category = clause_id
-        for row in getattr(self.rule, "rules", ()) or ():
-            row_id = row.get("id") if isinstance(row, dict) else getattr(row, "id", None)
-            if row_id == clause_id:
-                raw = row.get("category") if isinstance(row, dict) else getattr(row, "category", None)
-                category = str(raw or clause_id)
-                break
-        return AuditResultItem(
-            classification="规则审核",
-            item=category,
-            priority="P0",
-            status=status,
-            suggestions=suggestion,
-            evidence=evidence,
-            clause_id=clause_id,
-            checks_performed=checks_performed,
-        )
-
-
-def _clause_ids(rule) -> list[str]:
-    found: list[str] = []
-    for row in getattr(rule, "rules", ()) or ():
-        clause_id = row.get("id") if isinstance(row, dict) else getattr(row, "id", None)
-        if isinstance(clause_id, str) and clause_id and clause_id not in found:
-            found.append(clause_id)
-    return found
+    def rule_2(self):
+        facts = self.native()
+        begin = normalize_excel_date(facts.field(("PFMEA开始日期",), title=("PFMEA",)))
+        revised = normalize_excel_date(facts.field(("PFMEA修订日期",), title=("PFMEA",)))
+        if begin is None or revised is None:
+            raise UnknownFact("PFMEA开始日期或修订日期无法可靠解析。")
+        rows = facts.rows({"date": ("修订日期",)}, title=("变更履历",), anchor=("date",))
+        dates = [normalize_excel_date(row["date"]) for row in rows]
+        if any(value is None for value in dates):
+            raise UnknownFact("变更履历存在无法可靠解析的有效日期。")
+        if begin != dates[0] or revised != dates[-1]:
+            return "NG", "PFMEA开始/修订日期与变更履历首/末有效物理行的日期不一致。"
+        return "PASS", "PFMEA开始/修订日期与变更履历首/末有效行一致。"

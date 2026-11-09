@@ -50,7 +50,7 @@
 
 当前合同由 [Issue #246](https://github.com/ppap-agent/ppap/issues/246) 拥有。所有适用审核使用同一流程：规则确定所需事实 → 原生提取 → 按具体缺口选择 Paddle 或 LLM OCR → 固定程序/有来源的文本语义检查。没有新旧流程开关，不把发布批准变成运行时分支。生产启用仍须产品负责人明确确认；开发完成不等于已部署。
 
-- 原生 Excel、PDF 文字和可靠表格优先。Paddle 提供扫描文字、表格、坐标和章区域；坏表不清空其他有效元素，空响应不证明没有内容。
+- 原生 Excel、PDF 文字和可靠表格优先。非扫描 PDF 的表格审核先走 PDF→Excel，保留原 PDF SHA、页码、单元格和区域映射；没有可靠转换或页面未覆盖时，不能退到 OCR 猜表格并报告通过。Paddle 提供扫描文字、表格、坐标和章区域；坏表不清空其他有效元素，空响应不证明没有内容。
 - 签字、实际勾选、照片及复杂图形事实使用原图和专用 OCR 模型，不先等待 Paddle 失败。PSW、V4、检具、尺寸和通用图像规则复用同一事实入口；专属规则用代码判定，通用规则将可定位观察交给文本语义检查。
 - `LLM_*` / `OPENAI_*` 是文本配置。`OCR_OPENAI_API_KEY`、`OCR_OPENAI_BASE_URL`、`OCR_MODEL_NAME` 是独立 OCR 配置，缺少时不能借用文本配置。OCR 事实提取默认使用 `reasoning.effort=none`（关闭推理）；推理强度与输出上限是能力约束，不保证服务必定成功。可选 `OCR_OPENAI_EXTRA_BODY_JSON` 只给 OCR；显式 `reasoning` 原样优先，实际参数进入配置摘要。Paddle 使用 `PADDLE_OCR_URL`、`PADDLE_TOKEN`。Secret 仅通过现有进程环境注入，不写日志。
 - OCR 复用 `documents.ocr.client` 的 OpenAI Responses 调用，`store=False`、严格 schema、单次 HTTP connect/read/write/pool timeout 20 秒、零自动重试；没有整页或整份文件的总墙钟预算。持续接收数据可能超过 20 秒。视觉事实每次最多 4096 tokens，包含推理与可见 JSON；截断或空白结果为技术失败，不解析残缺证据。
@@ -345,6 +345,8 @@ GitHub Actions 的外部模型测试使用 `CI_LLM_API_KEY`、`CI_LLM_BASE_URL` 
 
 Excel 的图形事实通过 `audit.engine.checkers.excel_field_evidence` 读取。XLS 先经既有 LibreOffice 隔离转换为 XLSX，保留原始绘图部分；单元格、控件和可靠原生文字优先使用。按字段文字、合并范围和相邻字段确定区域，必要时由 `documents.excel.visual` 渲染；Excel 与 PDF 共用 `pdf_field_region` 的栏目边界。签字字段不读取印刷姓名、日期或客户签字，保证书盖章与授权表盖章分别取证。缺少标签且需要证明没有盖章时，覆盖完整适用工作表，包含原生单元格范围外的绘图；不能凭局部未找到就确认不存在。模型只返回事实，坐标、文件版本和来源摘要由程序保存；未知仍为 UNABLE，调用或解析错误为 ERR。同一字段复用成功或失败结果，不自动重试。
 
+UAES v5 的后续验收由 [Issue #295](https://github.com/ppap-agent/ppap/issues/295) 拥有，首轮实现见 [#289](https://github.com/ppap-agent/ppap/issues/289)。条款在各自叶子中实现，只从 `checker_lib` 复用原件读取和取证，不调用其他版本的业务类。PFMEA 经验教训、评分描述及 CP 追溯/FIFO 措施使用有原文引用的文本语义检查；数字、日期及跨文件身份由代码检查。原图只用于实际图形事实。通用视觉读取最多十页或十个工作表；单页/单表读取不能证明多页全图关系。当前跨页仅支持调用者明确声明的“存在”事实，完整范围都为否才支持否定；全图一致性、所有签章齐全等联合事实在多页时保持未知。DOCX 的原生内容可以读取，尚无可靠位置的图形事实返回 UNABLE。扫描表格不补做整份转录。原件或模型配置变化、调用失败与事实未知分别报告，不自动重试或转成 PASS。
+
 尺寸审核把检查数据、判定标准、单位和结果绑定到同一原始记录。明确的不同量纲不能直接比较；支持的同量纲单位先换算，单位无法可靠确定时返回 UNABLE。跨文件读取绑定本轮冻结文件版本，完整匹配零件标识及工序号，保留两份原件的单元格位置。不同文档的修订计数不要求相同；两份原件都明确声明同零件的工程更改水平时，冲突不能通过。身份不足不能支持 PASS，也不借用相近编号的记录。历史文件、规则与结果不变。
 
 ## Checker Core 官方发布
@@ -357,7 +359,7 @@ Excel 的图形事实通过 `audit.engine.checkers.excel_field_evidence` 读取�
 
 审核规则页的「检查版本」（`/requirements?checkerSuite=...`）可在首次审核前读取可访问候选并明确采用。无企业或官方指针时，读取返回 `candidate_only`、`current_revision_id=null` 和单独的 `candidate_revision_id`，不把候选当作已生效。未验证候选须确认风险，只写本租户指针；先采用直接关联检查，UAES 顺序为 U12/U16 → U07 → U08。已采用版本因依赖变化而过期时，可重新验证，或在同一页面明确确认继续使用未验证版本。上述操作不构成官方发布，不改已有 Round。发布回包未知时只读取原操作，不自动重新发布。
 
-同一页的预定义目录（`checkerPath`）只列出 `GET /suites` 返回的已安装 v5+ 叶子路径，并按路径拆成版本、客户和规则组。每条路径打开该 `source_path` 的官方修订，不用企业当前采用的修订代替。未 seed、修订不可读、路径无效或目录扫描失败时单独标明，不回退到其他版本；企业自定义检查仍在「检查版本」中。
+审核规则默认打开 Predefined Checkers 主目录（`checkerPath`），按 `GET /suites` 返回的真实路径展开版本、客户和规则组。仓库存在但未安装的叶子可见，只有 `availability=installed` 且带有效官方 Revision 的来源可打开；v2/v3/v4 真实 package 目录仅只读展示，不伪造叶子。来源路径与已安装 Revision 分开显示，不用企业当前采用版本替代官方来源。未安装、不可读、身份冲突或扫描失败分别报告，不回退。企业检查版本、客户要求与上传是相邻工作区，URL 深链及浏览器前进后退恢复同一选定路径；浏览目录不安装、不采用，也不调用模型。
 
 ## Checker Core 个人模型配置
 

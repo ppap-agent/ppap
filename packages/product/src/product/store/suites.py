@@ -10,7 +10,7 @@ from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, Rul
 from psycopg.types.json import Jsonb
 
 from product.db import connect
-from product.files import ObjectExists
+from product.files import ObjectExists, ObjectMissing
 from product.storage import S3Objects
 from product.suites import MAX_OBJECT_BYTES, ResolvedSuite, SuiteRevision, content_digest, is_unimplemented_suite, resolve_suite, resolved_digest, validate_content
 
@@ -39,8 +39,11 @@ class SuiteStore:
             def load_object(owner: str | None, digest: str) -> bytes:
                 row = db.execute("SELECT object_key FROM product.suite_objects WHERE owner_scope = %s AND digest = %s", (owner or "official", digest)).fetchone()
                 if row is None:
-                    raise KeyError("suite_object_missing")
-                body = self.objects.get(row[0])
+                    raise ValueError("suite_artifact_missing")
+                try:
+                    body = self.objects.get(row[0])
+                except ObjectMissing:
+                    raise ValueError("suite_artifact_missing") from None
                 if len(body) > MAX_OBJECT_BYTES:
                     raise ValueError("suite_object_too_large")
                 return body

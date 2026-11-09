@@ -260,7 +260,7 @@ def test_customer_intake_to_original_issue_and_frozen_precheck_export(running_pr
             result_file.click()
             page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name=re.compile("^不符合")).click()
             page.get_by_role("button", name=re.compile("^查看依据 ")).first.click()
-            expect(page.get_by_role("heading", name="机器判定依据", exact=True)).to_be_visible()
+            expect(page.get_by_role("article", name="条款判定依据", exact=True)).to_be_visible()
             page.get_by_role("button", name="核对 特殊特性清单.xlsx", exact=True).first.click()
             preview = page.get_by_role("region", name="原件预览", exact=True)
             expect(preview).to_be_visible()
