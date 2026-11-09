@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import uuid
 from contextlib import nullcontext
@@ -597,6 +598,37 @@ class SuiteReleaseStore:
                     raise ValueError("suite_operation_conflict")
                 revision_id = str(prior[0])
             else:
+                if {"checker.py", "resources.py"} & files.keys():
+                    selected = self.suites.resolve_suite(base_revision_id, principal.tenant_id, conn=conn)
+                    merged = {**selected.files, **{path: value.encode() for path, value in files.items()}}
+                    program = {path: body for path, body in merged.items() if path in {"checker.py", "resources.py"}}
+                    previous = {path: body for path, body in selected.files.items() if path in {"checker.py", "resources.py"}}
+                    if program != previous:
+                        factory = False
+                        for snapshot in (selected.files, merged):
+                            try:
+                                rules = json.loads(snapshot["rules.json"])
+                                binding = rules.get("checker_binding") or {}
+                                factory |= isinstance(binding, dict) and "checker:create_audit" in binding.values()
+                                tree = ast.parse(snapshot["checker.py"])
+                                factory |= any(
+                                    isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name == "create_audit"
+                                    or isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store) and node.id == "create_audit"
+                                    or isinstance(node, ast.alias) and (node.asname or node.name) == "create_audit"
+                                    for node in ast.walk(tree)
+                                )
+                            except (SyntaxError, ValueError, AttributeError):
+                                pass  # Content validation below still owns malformed revisions.
+                        if factory:
+                            from audit.checker_lib.imports import import_violations
+
+                            for source in program.values():
+                                try:
+                                    tree = ast.parse(source)
+                                except (SyntaxError, ValueError):
+                                    raise ValueError("invalid_suite_candidate") from None
+                                if import_violations(tree):
+                                    raise ValueError("checker_cross_version_import")
                 revision = self.suites.create_revision(
                     tenant_id=principal.tenant_id,
                     suite_key=base["suite_key"],

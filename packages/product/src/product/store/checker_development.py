@@ -798,6 +798,8 @@ class CheckerDevelopmentStore:
                     candidate = None
                     if state == "completed":
                         state, failure = "failed", str(exc) if str(exc) in _STANDALONE_REFUSALS else "checker_source_incomplete"
+                    if outcome.validation is not None:
+                        report["validation"] = outcome.validation.model_copy(update={"reasons": (*outcome.validation.reasons, "candidate_rejected")}).receipt()
                 if candidate is not None and outcome.validation is not None:
                     _lock(conn, principal.tenant_id)
                     proof = outcome.validation.model_copy(update={"suite_revision_id": candidate.id, "suite_digest": candidate.resolved_digest})
@@ -864,6 +866,8 @@ def principal_for_operation(row: dict) -> Principal:
 
 
 def _candidate_files(base, artifact):
+    if getattr(artifact, "binding", None) is None:
+        _require_independent_program(artifact.files)
     rules = json.loads(base.files["rules.json"])
     binding = getattr(artifact, "binding", None)
     if binding is not None:
@@ -889,9 +893,24 @@ _STANDALONE_REFUSALS = frozenset(
         "checker_binding_expanded",
         "checker_artifact_unavailable",
         "checker_artifact_identity_mismatch",
+        "checker_cross_version_import",
     }
 )
 _PROGRAM_PATHS = frozenset({"checker.py", "resources.py"})
+
+
+def _require_independent_program(files):
+    import ast
+
+    from audit.checker_lib.imports import import_violations
+
+    for source in files.values():
+        try:
+            tree = ast.parse(source)
+        except (SyntaxError, ValueError):
+            raise ValueError("checker_source_incomplete") from None
+        if import_violations(tree):
+            raise ValueError("checker_cross_version_import")
 
 
 def _standalone_factory_binding(rules: dict, binding: dict, clauses: set[str]) -> dict[str, str]:
@@ -940,6 +959,8 @@ def _standalone_candidate_files(base, artifact) -> dict[str, bytes]:
             raise ValueError("checker_binding_expanded")
     elif getattr(artifact, "entrypoint", "checker:create_audit") != "checker:create_audit":
         raise ValueError("checker_artifact_identity_mismatch")
+    if artifact_binding is None:
+        _require_independent_program(artifact.files)
     files["checker.py"] = artifact.files["checker.py"]
     if "resources.py" in artifact.files:
         files["resources.py"] = artifact.files["resources.py"]

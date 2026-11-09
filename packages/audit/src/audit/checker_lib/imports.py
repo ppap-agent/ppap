@@ -1,4 +1,7 @@
-"""Import lint for directory leaves. Legacy v2/v3/v4 packages are not scanned."""
+"""Import lint for independent leaves and new factory candidates.
+
+Stored historical programs and v2/v3/v4 packages are not reclassified by it.
+"""
 
 from __future__ import annotations
 
@@ -9,10 +12,11 @@ from pathlib import Path
 _VERSION_DIRECTORY = re.compile(r"^v[0-9]+$")
 _LEAF_SOURCES = frozenset({"checker.py", "resources.py"})
 _DYNAMIC = frozenset({"import_module", "__import__"})
+_LEGACY_FACADES = frozenset({"audit.engine", "audit.engine.routing", "audit.engine.engine", "audit.engine.app_runtime", "audit.standard_library"})
 
 
 def _forbidden(module: str) -> bool:
-    return module == "audit.checkers" or module.startswith("audit.checkers.")
+    return module == "audit.checkers" or module.startswith("audit.checkers.") or module in _LEGACY_FACADES
 
 
 def _call_name(node: ast.Call) -> str:
@@ -39,8 +43,10 @@ def import_violations(tree: ast.AST) -> tuple[str, ...]:
             module = node.module or ""
             if _forbidden(module):
                 found.append(f"{node.lineno}: {module}")
-            if module == "audit" and any(alias.name == "checkers" for alias in node.names):
-                found.append(f"{node.lineno}: audit.checkers")
+            if module == "audit":
+                for alias in node.names:
+                    if _forbidden("audit." + alias.name):
+                        found.append(f"{node.lineno}: audit.{alias.name}")
             if module == "audit.standard_library" and any(alias.name == "check_clause" for alias in node.names):
                 found.append(f"{node.lineno}: audit.standard_library.check_clause")
         elif isinstance(node, ast.Call) and _call_name(node) in _DYNAMIC:
