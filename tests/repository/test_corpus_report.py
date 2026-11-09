@@ -108,7 +108,7 @@ def test_live_workflow_retains_execution_failure_and_separates_round_evidence(tm
     workflow = yaml.load((Path(__file__).resolve().parents[2] / ".github/workflows/corpus-eval.yml").read_text(), Loader=yaml.BaseLoader)
     step = next(step for step in workflow["jobs"]["evaluate"]["steps"] if step.get("name") == "Run every oracle case against the live model")
     command = tmp_path / "python3"
-    command.write_text('#!/bin/sh\nprintf "%s\\n" "$PPAP_CORPUS_REPORT_DIR" >> "$OBSERVED"\nif test "$(wc -l < "$OBSERVED")" = 1; then exit "$TEST_EXIT"; fi\n')
+    command.write_text('#!/bin/sh\nprintf "%s\\n" "$PPAP_CORPUS_REPORT_DIR" >> "$OBSERVED"\nif test "$(wc -l < "$OBSERVED")" -eq 1; then exit "$TEST_EXIT"; fi\n')
     command.chmod(0o755)
     observed = tmp_path / "observed"
     env = {**os.environ, "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"], "ROUNDS": "2", "OBSERVED": str(observed), "TEST_EXIT": str(status)}
