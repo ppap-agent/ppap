@@ -6,18 +6,99 @@ They prove business execution and provenance, not live model accuracy.
 
 from __future__ import annotations
 
+import hashlib
 import json
-import runpy
 import sys
-from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
+from audit.checker_core import FrozenInput, FrozenTarget, RuleBinding, checker_digest, validate_results
+from audit.checker_lib.source import SourceAudit
+from audit.contracts import AuditInput, GroupContextInput, RuleInput
+from audit.standard_library import check_factory
+from audit.standard_suites import load_predefined_checkers
+from openpyxl import Workbook
 
-_HERE = Path(__file__).parent
-_report = runpy.run_path(str(_HERE / "test_v5_uaes_reports.py"))["_execute"]
-_visual = runpy.run_path(str(_HERE / "test_v5_uaes_visual_rules.py"))["_execute"]
-_native = runpy.run_path(str(_HERE / "test_v5_uaes_rules.py"))["_run"]
+
+def _execute(tmp_path, monkeypatch, entry, clause, sheets, *, peers=(), visual=None, error=None, version="original"):
+    """One local harness owns staging, actual factory execution and Core checks."""
+    suite = next(item for item in load_predefined_checkers() if item.source_path == f"v5/UAES/{entry}")
+    resources = ModuleType("resources")
+    exec(compile(suite.files["resources.py"], f"{suite.source_path}/resources.py", "exec"), resources.__dict__)
+    monkeypatch.setitem(sys.modules, "resources", resources)
+    checker = ModuleType(f"uaes_completion_{entry}")
+    monkeypatch.setitem(sys.modules, checker.__name__, checker)
+    exec(compile(suite.files["checker.py"], f"{suite.source_path}/checker.py", "exec"), checker.__dict__)
+    body = json.loads(suite.files["rules.json"])
+    body["rules"] = [row for row in body["rules"] if row["id"] == clause]
+    body["checker_binding"] = {clause: suite.entrypoints[clause]}
+    assert len(body["rules"]) == 1
+
+    def stage(identity, filename, contents, role):
+        book = Workbook()
+        book.remove(book.active)
+        for title, rows in contents.items():
+            sheet = book.create_sheet(title)
+            for row in rows:
+                sheet.append(row)
+        path = tmp_path / (filename + ".xlsx")
+        book.save(path)
+        book.close()
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        audit = AuditInput(audit_id=identity, file_url=str(path), customer="UAES", project_id="project", file_metadata={"source_sha256": digest})
+        return audit, FrozenInput(identity, digest, role, path.name)
+
+    audit, original = stage(version, entry, sheets, "target")
+    frozen, by_type = [original], {}
+    for identity, kind, contents in peers:
+        peer, source = stage(identity, identity, contents, "reference")
+        by_type.setdefault(kind, []).append(peer)
+        frozen.append(source)
+    group = GroupContextInput(by_doc_type=by_type, by_audit_id={peer.audit_id: peer for rows in by_type.values() for peer in rows})
+    rule = RuleInput(rule_id="frozen-rule", **body)
+    binding = RuleBinding(suite.suite_key, checker_digest(suite.program_files), body["checker_binding"])
+    target = FrozenTarget(version, "revision", suite.suite_key, suite.revision_digest, body, binding)
+    requests = []
+
+    def observe(owner, fields, **_options):
+        requests.append(dict(fields))
+        if error:
+            raise error
+        values = {field: (visual or {}).get(field) for field in fields}
+        for field, value in values.items():
+            if value is not None:
+                owner.witness({"kind": "xlsx_cell", "sheet": next(iter(sheets)), "cell": "B1"}, f"{field}={value}", visual=True)
+        return values
+
+    monkeypatch.setattr(SourceAudit, "visual_pdf", observe)
+    opened = []
+    context = SimpleNamespace(audit_file=audit, rule=rule, target=target, group_context=group, cache={}, on_close=opened.append, clause_id=clause)
+    try:
+        observed = check_factory(context, checker.create_audit).model_dump(mode="json")
+        sources = (observed.get("evidence") or {}).get("sources", [])
+        observed["evidence_file_version_ids"] = sorted({version, *(json.loads(source["locator"])["file_version_id"] for source in sources)})
+        checked = validate_results([observed], target=target, inputs=frozen)
+        assert checked["coverage"] == [{"file_version_id": version, "clause_id": clause, "coverage": "mapped"}]
+        result = checked["findings"][0]
+        assert result["clause_id"] == clause
+        if result["status"] == "PASS":
+            assert result["evidence"]["sources"], result
+        return result, requests
+    finally:
+        for owner in reversed(opened):
+            owner.close()
+
+
+def _report(*args, **kwargs):
+    return _execute(*args, **kwargs)[0]
+
+
+def _visual(*args, **kwargs):
+    return _execute(*args, version="frozen-original", **kwargs)
+
+
+def _native(*args, **kwargs):
+    return _execute(*args, **kwargs)
 
 
 @pytest.fixture(autouse=True)
@@ -178,14 +259,6 @@ def test_pfmea_pgqp_characteristic_coverage_uses_actual_peer(tmp_path, monkeypat
 
 @pytest.mark.parametrize(("observed", "expected"), [(True, "PASS"), (False, "NG"), (None, "UNABLE")])
 def test_control_plan_production_type_and_actual_controlled_stamp(tmp_path, monkeypatch, observed, expected):
-    # U08 contains dataclasses. Register the exact module before exec, as the
-    # real module loader does; the older visual test helper omits this step.
-    def registered_module(name):
-        module = ModuleType(name)
-        monkeypatch.setitem(sys.modules, name, module)
-        return module
-
-    monkeypatch.setitem(_visual.__globals__, "ModuleType", registered_module)
     result, requests = _visual(tmp_path, monkeypatch, "U08", "U08:3", {"控制计划": [["控制计划类型", "量产"], ["受控章"]]}, visual={"controlled_stamp": observed})
     assert result["status"] == expected, result
     assert len(requests) == 1 and set(requests[0]) == {"controlled_stamp"}

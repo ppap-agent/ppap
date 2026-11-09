@@ -174,7 +174,7 @@ def rendered_excel(monkeypatch):
 @pytest.mark.parametrize("suffix", [".xlsx", ".xlsm", ".xls"])
 def test_excel_uses_native_workbook_and_neutral_region_reader(tmp_path, monkeypatch, suffix):
     # Content-based loading also accepts ZIP workbooks with an old extension.
-    # The separate real OLE test below exercises the actual XLS loader.
+    # The Corpus-owned OLE test exercises the actual XLS loader.
     path = workbook_source(tmp_path, suffix)
     rendering, witness = rendered_excel(monkeypatch), Mock()
     read, cache = Mock(return_value={"signature": True}), {}
@@ -189,23 +189,6 @@ def test_excel_uses_native_workbook_and_neutral_region_reader(tmp_path, monkeypa
     assert locator["cell_range"] == "B2:D6"
     assert locator["source_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
     assert locator["file_version_id"] == "file-version"
-
-
-def test_real_ole_xls_dispatch_is_not_pdf_only(tmp_path, monkeypatch):
-    from pathlib import Path
-
-    root = Path(__file__).resolve().parents[3]
-    path = root / "assets/corpus/documents/v4-uaes/过程流程图.xls"
-    assert path.read_bytes().startswith(bytes.fromhex("d0cf11e0a1b11ae1"))
-    calls = []
-
-    def observe(audit, sheet, region, fields, labels, **kwargs):
-        calls.append((sheet.title, region, labels))
-        return dict.fromkeys(fields, True)
-
-    monkeypatch.setattr("audit.checker_lib.visual.observe_excel_region", observe)
-    assert read_original_visual_facts(audit_input(path), {"flow_symbols": "原件流程图具有实际流程符号"}, Mock(), cache={}) == {"flow_symbols": True}
-    assert calls and all(region is None and labels for _, region, labels in calls)
 
 
 def test_unreadable_excel_sheet_cannot_be_covered_by_another(tmp_path, monkeypatch):

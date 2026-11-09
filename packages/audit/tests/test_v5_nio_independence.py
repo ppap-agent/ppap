@@ -2,13 +2,9 @@
 
 import ast
 import builtins
-from pathlib import Path
-from runpy import run_path
 
 import pytest
 from audit.standard_suites import _CHECKERS_ROOT
-
-execute = run_path(str(Path(__file__).with_name("test_v5_nio_support.py")))["execute"]
 
 
 @pytest.mark.parametrize(
@@ -25,7 +21,7 @@ execute = run_path(str(Path(__file__).with_name("test_v5_nio_support.py")))["exe
         ("N05", "N05:6", {"过程流程图": [["工序名称"], ["IQC"]]}),
     ],
 )
-def test_nio_leaf_program_and_resources_are_independent_of_old_routes(tmp_path, monkeypatch, entry, clause, sheets):
+def test_nio_leaf_program_and_resources_are_independent_of_old_routes(nio_execute, monkeypatch, entry, clause, sheets):
     original_import = builtins.__import__
 
     def no_historical_checker(name, *args, **kwargs):
@@ -39,4 +35,4 @@ def test_nio_leaf_program_and_resources_are_independent_of_old_routes(tmp_path, 
         assert not any(isinstance(node, ast.ImportFrom) and (node.module or "").startswith("audit.checkers.") for node in ast.walk(tree))
         assert not any(isinstance(node, ast.Import) and any(alias.name.startswith("audit.checkers.") for alias in node.names) for node in ast.walk(tree))
     monkeypatch.setattr(builtins, "__import__", no_historical_checker)
-    assert execute(tmp_path, monkeypatch, entry, clause, sheets)["status"] == "PASS"
+    assert nio_execute(entry, clause, sheets)["status"] == "PASS"
