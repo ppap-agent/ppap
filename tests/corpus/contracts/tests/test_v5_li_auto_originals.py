@@ -122,3 +122,58 @@ def test_form_derived_msa_merged_values_cannot_count_as_independent_samples():
     result = run_clause("L05", "L05:3", content.getvalue(), "合并样本MSA.xlsx")
     assert result["status"] == "UNABLE", result
     assert "合并" in result["suggestions"]
+
+
+MATERIALS = TEMPLATES / "APQP-材料、产品及分供方清单.xlsx"
+
+
+def material_variant(value=1.2, number_format="0.0000", *, second=None, formula=False, keep_images=False):
+    """Retain the original form; remove illustrations only for native-only cases."""
+    book = load_workbook(io.BytesIO(MATERIALS.read_bytes()))
+    sheet = book["清单"]
+    if not keep_images:
+        sheet._images.clear()
+        sheet._charts.clear()
+    sheet["B10"], sheet["M10"] = "P123", "=1+1" if formula else value
+    sheet["M10"].number_format = number_format
+    if second is not None:
+        sheet["B11"], sheet["M11"] = "P456", second
+        sheet["M11"].number_format = "0.000"
+    output = io.BytesIO()
+    book.save(output)
+    book.close()
+    return output.getvalue()
+
+
+def test_original_material_template_has_no_confirmed_part_rows():
+    content = MATERIALS.read_bytes()
+    before = hashlib.sha256(content).hexdigest()
+    result = run_clause("L04", "L04:1", content, MATERIALS.name)
+    assert result["status"] == "UNABLE", result
+    assert hashlib.sha256(MATERIALS.read_bytes()).hexdigest() == before
+
+
+@pytest.mark.parametrize(("value", "number_format"), [(1.2, "0.0000"), (0, "0.0000"), ("1.2300", "General")])
+def test_form_derived_material_weight_uses_original_four_place_display(value, number_format):
+    result = run_clause("L04", "L04:1", material_variant(value, number_format), "原生材料清单.xlsx")
+    assert result["status"] == "PASS", result
+    assert any(source["locator"].get("cell") == "M10" for source in result["locator"]["semantic"]["sources"])
+
+
+@pytest.mark.parametrize(("value", "number_format"), [(1.2, "0.000"), (1.2, "0.00000"), ("1.23", "0.0000"), (None, "0.0000"), ("1.2300 kg", "General"), (True, "0.0000")])
+def test_form_derived_material_weight_rejects_known_wrong_precision(value, number_format):
+    result = run_clause("L04", "L04:1", material_variant(value, number_format), "原生材料清单.xlsx")
+    assert result["status"] == "NG", result
+    assert "M10" in result["suggestions"]
+
+
+@pytest.mark.parametrize("options", [{"number_format": "General"}, {"number_format": "0.0000%"}, {"formula": True}])
+def test_material_weight_uncertain_display_or_formula_never_passes(options):
+    result = run_clause("L04", "L04:1", material_variant(**options), "原生材料清单.xlsx")
+    assert result["status"] == "UNABLE", result
+
+
+def test_material_weight_checks_second_part_instead_of_only_first():
+    result = run_clause("L04", "L04:1", material_variant(second=2.3), "原生材料清单.xlsx")
+    assert result["status"] == "NG", result
+    assert "M11" in result["suggestions"]
