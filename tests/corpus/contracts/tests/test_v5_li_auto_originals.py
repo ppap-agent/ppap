@@ -309,3 +309,64 @@ def test_ccsc_known_business_row_with_unconfirmed_risk_cannot_disappear_or_pass(
     result = run_clause("L12", "L12:3", ccsc_variant({"AE7": risk, "AF7": None}), "派生CCSC.xlsx")
     assert result["status"] == "UNABLE", result
     assert any(item["locator"].get("cell") == "AE7" for item in result["locator"]["semantic"]["sources"])
+
+
+def test_retained_ccsc_t1_group_has_all_eight_children_and_complete_filled_rows():
+    content = CCSC.read_bytes()
+    before = hashlib.sha256(content).hexdigest()
+    book = load_workbook(io.BytesIO(content), data_only=False)
+    sheet = book["特性清单"]
+    assert sheet["N3"].value == "T1-特性监控方法" and "N3:U3" in {str(span) for span in sheet.merged_cells.ranges}
+    assert sheet["V3"].value == "T2-特性监控方法"
+    assert sheet["N6"].value == sheet["V6"].value == "三坐标"
+    book.close()
+    result = run_clause("L12", "L12:2", content, CCSC.name)
+    assert result["status"] == "PASS", result
+    cells = {item["locator"].get("cell") for item in result["locator"]["semantic"]["sources"]}
+    assert {"N3", "N5", "U5", "N6", "U6", "N7", "U7"} <= cells
+    assert not {"V5", "V6", "V7"} & cells
+    assert hashlib.sha256(CCSC.read_bytes()).hexdigest() == before
+
+
+@pytest.mark.parametrize("cell", ["C6", "N6", "O6", "P6", "Q6", "R6", "S6", "T6", "U6", "U7"])
+def test_ccsc_required_t1_or_base_cell_cannot_borrow_a_filled_t2_cell(cell):
+    result = run_clause("L12", "L12:2", ccsc_variant({cell: None}), "派生CCSC.xlsx")
+    assert result["status"] == "NG", result
+    assert cell in result["suggestions"]
+
+
+def test_ccsc_t1_unknown_formula_is_not_replaced_by_the_readable_t2_value():
+    result = run_clause("L12", "L12:2", ccsc_variant({"N6": "=1+1"}), "派生CCSC.xlsx")
+    assert result["status"] == "UNABLE", result
+
+
+def test_ccsc_missing_t1_parent_cannot_promote_t2_to_t1():
+    result = run_clause("L12", "L12:2", ccsc_variant({"N3": "其他分组"}), "派生CCSC.xlsx")
+    assert result["status"] == "NG", result
+    assert "T1" in result["suggestions"]
+
+
+def test_ccsc_duplicate_t1_parent_is_unknown_instead_of_choosing_first():
+    result = run_clause("L12", "L12:2", ccsc_variant({"V3": "T1-特性监控方法"}), "派生CCSC.xlsx")
+    assert result["status"] == "UNABLE", result
+
+
+def test_ccsc_t1_missing_child_header_cannot_use_same_named_t2_header():
+    result = run_clause("L12", "L12:2", ccsc_variant({"N4": "其他设备字段"}), "派生CCSC.xlsx")
+    assert result["status"] == "NG", result
+    assert "测量设备" in result["suggestions"]
+
+
+def test_ccsc_t1_merged_business_values_cannot_fill_distinct_required_fields():
+    book = load_workbook(io.BytesIO(CCSC.read_bytes()))
+    book["特性清单"].merge_cells("N6:O6")
+    output = io.BytesIO()
+    book.save(output)
+    book.close()
+    result = run_clause("L12", "L12:2", output.getvalue(), "派生CCSC.xlsx")
+    assert result["status"] == "UNABLE", result
+
+
+def test_ccsc_t1_zero_is_filled_content_under_the_literal_required_field_rule():
+    result = run_clause("L12", "L12:2", ccsc_variant({"H6": 0}), "派生CCSC.xlsx")
+    assert result["status"] == "PASS", result

@@ -242,7 +242,7 @@ def test_each_leaf_declares_exact_clauses_scope_and_known_gaps_without_version_i
             assert item["scope"] and item["carriers"]
             assert f"def {item['method']}(" in source
         readers += len(resource["clauses"])
-    assert readers == 70
+    assert readers == 71
 
 
 def _fields(*names):
@@ -477,7 +477,7 @@ def test_declared_native_positive_cases_cover_each_reader():
     covered = {_native_case(entry, "positive")[0] for entry in (f"L{index:02}" for index in range(1, 18))}
     covered.update(case[1] for case in _VISUAL_CASES)
     covered.update(case[1] for case in _ADDITIONAL_POSITIVES)
-    covered.update({"L07:4", "L11:6"})
+    covered.update({"L07:4", "L11:6", "L12:2"})
     assert covered == expected
 
 
@@ -532,3 +532,41 @@ def test_equipment_unknown_acceptance_is_not_unconditional_pass(tmp_path, monkey
     result, calls = _execute(tmp_path, monkeypatch, "L13", "L13:2", {"设备开发验收清单": rows})
     assert result["status"] == "UNABLE", result
     assert result["checks_performed"] == 0 and not calls
+
+
+def test_ccsc_t1_native_positive_has_one_explicit_parent_for_all_eight_children(tmp_path, monkeypatch):
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "CCSC"
+    sheet["A1"] = "零件CCSC特性管理清单"
+    sheet.merge_cells("J2:Q2")
+    sheet["J2"] = "T1-特性监控方法"
+    labels = (
+        "过程/流程步骤",
+        "部件(来料检时涉及)",
+        "客户要求/功能要求",
+        "特性名称",
+        "检验岗位",
+        "产品/过程特性分类",
+        "名义值/规格中心值",
+        "规格下限",
+        "规格上限",
+        "测量设备",
+        "测量方式",
+        "防错控制",
+        "检查控制",
+        "抽样频率",
+        "SPC监控",
+        "SPC线上管理计划时间",
+        "说明（关键要求/操作参数等）",
+    )
+    for column, name in enumerate(labels, 1):
+        sheet.cell(3, column, name)
+        sheet.cell(4, column, "实际内容")
+    sheet["G4"] = 0
+    output = io.BytesIO()
+    book.save(output)
+    book.close()
+    result, calls = _execute(tmp_path, monkeypatch, "L12", "L12:2", {}, content=output.getvalue())
+    assert result["status"] == "PASS", result
+    assert not calls
