@@ -410,6 +410,8 @@ def test_cross_file_problem_opens_both_authorized_frozen_originals(running_produ
                 response = page.request.get(urljoin(web, link.get_attribute("href")))
                 assert response.status == 200 and response.body() == data
                 page.keyboard.press("Escape")
+                expect(pane).to_be_hidden()
+                expect(basis).to_be_focused()
             assert core_system.calls >= 2, "Precheck and audit must both execute through Core"
             assert not errors, errors
         except Exception:
