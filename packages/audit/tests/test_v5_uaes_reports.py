@@ -242,6 +242,16 @@ def test_initial_report_checks_all_four_reports_and_measurements(tmp_path, monke
 
 
 def test_native_pdf_capability_table_preserves_original_page_after_excel_preparation(tmp_path, monkeypatch):
+    from audit.checker_lib.source import NativeFacts
+
+    original_location = NativeFacts.cell_location
+    metadata = []
+
+    def track(native, *args):
+        metadata.append(native.data)
+        return original_location(native, *args)
+
+    monkeypatch.setattr(NativeFacts, "cell_location", track)
     with fitz.open() as document:
         page = document.new_page(width=460, height=320)
         for y in (20, 70, 120, 170, 220, 270):
@@ -269,9 +279,12 @@ def test_native_pdf_capability_table_preserves_original_page_after_excel_prepara
         locator = json.loads(source["locator"])
         assert locator["file_version_id"] == "original"
         assert locator["page"] == 1
-        assert locator["kind"] == "pdf_cell"
-        assert locator["bbox"]
+        assert locator["kind"] == "pdf_page"
+        assert locator["region"]
         assert locator["source_sha256"] == hashlib.sha256(content).hexdigest()
+    assert metadata and all(data["prepared_format"] == "xlsx" and data["prepared_sha256"] for data in metadata)
+    mapped = [item["source"] for table in metadata[0]["tables"] for item in table["cells"].values() if item.get("source")]
+    assert mapped and all(item["bbox"] and item["row"] and item["column"] and item["page"] == 1 for item in mapped)
 
 
 def test_report_resources_bind_every_clause_to_leaf_business_methods():

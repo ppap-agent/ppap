@@ -430,7 +430,16 @@ def test_negative_after_native_blank_gap_still_executes(tmp_path, monkeypatch):
 
 def test_native_pdf_table_uses_excel_preparation_and_original_pdf_locations(tmp_path, monkeypatch):
     import fitz
+    from audit.checker_lib.source import NativeFacts
 
+    original_location = NativeFacts.cell_location
+    metadata = []
+
+    def track(native, *args):
+        metadata.append(native.data)
+        return original_location(native, *args)
+
+    monkeypatch.setattr(NativeFacts, "cell_location", track)
     with fitz.open() as document:
         page = document.new_page(width=460, height=270)
         for y in (20, 70, 120, 170, 220):
@@ -447,10 +456,13 @@ def test_native_pdf_table_uses_excel_preparation_and_original_pdf_locations(tmp_
     assert not calls
     for source in result["evidence"]["sources"]:
         locator = json.loads(source["locator"])
-        assert locator["kind"] == "pdf_cell"
-        assert locator["page"] == 1 and locator["bbox"]
+        assert locator["kind"] == "pdf_page"
+        assert locator["page"] == 1 and locator["region"]
         assert locator["file_version_id"] == "frozen-original"
         assert locator["source_sha256"] == hashlib.sha256(content).hexdigest()
+    assert metadata and all(data["prepared_format"] == "xlsx" and data["prepared_sha256"] for data in metadata)
+    mapped = [item["source"] for table in metadata[0]["tables"] for item in table["cells"].values() if item.get("source")]
+    assert mapped and all(item["bbox"] and item["row"] and item["column"] and item["page"] == 1 for item in mapped)
 
 
 def test_native_source_digest_change_is_err_before_business_pass(tmp_path, monkeypatch):
