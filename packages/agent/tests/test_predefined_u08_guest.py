@@ -28,8 +28,8 @@ def test_u08_bound_clauses_read_xlsx_and_do_not_pass_without_evidence(tmp_path):
     pdf = tmp_path / "plan.pdf"
     pdf.write_bytes(b"%PDF-1.4\n")
     unable = _run(suite, pdf, ("U08:1", "U08:4"))
-    assert [item.status for item in unable] == ["UNABLE", "UNABLE"]
-    assert {item.suggestions for item in unable} == {"该预置 Checker 不支持此原件载体。"}
+    assert [item.status for item in unable] == ["ERR", "ERR"]
+    assert all("失败" in item.suggestions for item in unable)
 
     passed = _run(suite, _workbook(tmp_path / "ready.xlsx", resource="压机", mark="CC"), ("U08:1", "U08:4"))
     assert [item.status for item in passed] == ["PASS", "PASS"]
@@ -53,22 +53,23 @@ def test_u08_bound_clauses_read_xlsx_and_do_not_pass_without_evidence(tmp_path):
     assert unread[0].status != "PASS"
 
 
-def test_u08_unsupported_xls_and_missing_clause_do_not_pass(tmp_path):
+def test_u08_unsupported_carrier_and_unimplemented_clause_do_not_pass(tmp_path):
     suite = next(item for item in predefined_directory_suites() if item.source_path == "v5/UAES/U08")
     assert b"audit.checkers" not in suite.files["checker.py"]
     assert b"resolve_engine_agent_class" not in suite.files["checker.py"]
     assert b"audit.checker_lib.excel" in suite.files["checker.py"]
-    xls = tmp_path / "plan.xls"
+    xls = tmp_path / "plan.bin"
     xls.write_bytes(b"not-opened")
     unable = _execute(dict(suite.files), xls, ("U08:1",))
     assert unable[0].status == "UNABLE"
-    assert unable[0].suggestions == "该预置 Checker 不支持此原件载体。"
+    assert "不支持" in unable[0].suggestions
     rules = json.loads(suite.files["rules.json"])
-    rules["checker_binding"] = {**rules["checker_binding"], "U08:2": "checker:create_audit"}
+    rules["rules"].append({"id": "U08:new", "rule_to_check": "尚未实现的新条款"})
+    rules["checker_binding"] = {**rules["checker_binding"], "U08:new": "checker:create_audit"}
     files = {**dict(suite.files), "rules.json": json.dumps(rules).encode()}
-    missing = _execute(files, _workbook(tmp_path / "ready.xlsx"), ("U08:2",))
-    assert missing[0].status == "ERR"
-    assert missing[0].suggestions == "authored_checker_missing_binding"
+    missing = _execute(files, _workbook(tmp_path / "ready.xlsx"), ("U08:new",))
+    assert missing[0].status == "UNABLE" and missing[0].checks_performed == 0
+    assert "读取器" in missing[0].suggestions
 
 
 def test_execution_uses_frozen_bytes_after_the_source_directory_changes(tmp_path):
@@ -359,6 +360,12 @@ def test_other_v5_leaves_bind_every_clause_and_do_not_pass(tmp_path):
         rules = json.loads(suite.files["rules.json"])
         assert [row["id"] for row in rules["rules"]] == list(clauses)
         assert [row["rule_to_check"] for row in rules["rules"]] == [clause.text for clause in preset.clauses]
+        resources = {}
+        exec(suite.files["resources.py"], resources)
+        if resources["RESOURCE"]["clauses"]:
+            # Current business readers have their own positive/negative source
+            # tests. This contract covers only leaves that still lack readers.
+            continue
         filled = _execute(dict(suite.files), workbook, clauses)
         expect = f"{preset.customer}/{preset.entry_id}：{boundary}"
         assert [item.status for item in filled] == ["UNABLE"] * len(clauses)

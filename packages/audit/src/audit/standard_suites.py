@@ -148,7 +148,12 @@ def _carriers(customer: str, entry: str) -> dict[str, str]:
 
 
 def standard_suites() -> tuple[StandardSuite, ...]:
-    """Return 41 editable source artifacts, not claims of oracle correctness."""
+    """Historical carrier artifacts retained for explicit source consumers.
+
+    product.seed_standard_suites.official_source_suites installs these identities;
+    corpus_contracts.core_round.customer_suite selects them for versioned tests.
+    New directory navigation uses predefined_sources, not this class registry.
+    """
     result = []
     for preset in customer_presets():
         key = f"{preset.customer}:{preset.entry_id}"
