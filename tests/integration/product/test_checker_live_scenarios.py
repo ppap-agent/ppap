@@ -5,6 +5,10 @@ are not claimed by this protocol test; the live driver must prove them separatel
 """
 
 import json
+import sys
+from pathlib import Path
+from types import ModuleType
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
@@ -18,7 +22,12 @@ from product.store.suite_releases import SuiteReleaseStore
 from product.store.suites import SuiteStore, freeze_execution
 from psycopg.types.json import Jsonb
 
-from scripts import run_checker_live as live
+# Repository tools are not installed product packages. Scope their namespace
+# to this fixture import without changing the interpreter search path.
+_scripts = ModuleType("scripts")
+_scripts.__path__ = [str(Path(__file__).resolve().parents[3] / "scripts")]
+with patch.dict(sys.modules, {"scripts": _scripts}):
+    from scripts import run_checker_live as live
 
 
 @pytest.mark.parametrize("scenario", ["rule-threshold", "rule-wording"])
