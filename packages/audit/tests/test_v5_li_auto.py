@@ -242,7 +242,7 @@ def test_each_leaf_declares_exact_clauses_scope_and_known_gaps_without_version_i
             assert item["scope"] and item["carriers"]
             assert f"def {item['method']}(" in source
         readers += len(resource["clauses"])
-    assert readers == 69
+    assert readers == 70
 
 
 def _fields(*names):
@@ -262,6 +262,7 @@ def _msa_measurements():
 
 
 _ADDITIONAL_POSITIVES = [
+    ("L17", "L17:2", {"PSW": [["重量(kg)", "1.2300"]]}),
     ("L04", "L04:1", {"材料清单": [["零件号", "单件重量"], ["P123", "1.2300"]]}),
     ("L05", "L05:3", _msa_measurements()),
     ("L01", "L01:1", {"全功能检验报告": [["全功能检验报告"]]}),

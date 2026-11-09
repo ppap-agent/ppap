@@ -177,3 +177,63 @@ def test_material_weight_checks_second_part_instead_of_only_first():
     result = run_clause("L04", "L04:1", material_variant(second=2.3), "原生材料清单.xlsx")
     assert result["status"] == "NG", result
     assert "M11" in result["suggestions"]
+
+
+PSW = TEMPLATES / "APQP-零件提交保证书（PSW签署）.xlsx"
+
+
+def psw_variant(value=1.2, number_format="0.0000", *, formula=False, second=False, guide_only=False, missing_label=False):
+    """Explicit native-only copy; openpyxl does not retain the template shapes."""
+    book = load_workbook(io.BytesIO(PSW.read_bytes()))
+    sheet = book["PSW"]
+    sheet["P9"] = "=1+1" if formula else value
+    sheet["P9"].number_format = number_format
+    # A valid guide value must never supply a blank/wrong formal PSW value.
+    book["填表指南"]["P9"] = "9.9999"
+    if second:
+        other = book.copy_worksheet(sheet)
+        other.title = "PSW-第二份"
+    if guide_only:
+        book.remove(sheet)
+    if missing_label:
+        sheet["N9"] = "其他字段"
+    output = io.BytesIO()
+    book.save(output)
+    book.close()
+    return output.getvalue()
+
+
+def test_original_psw_blank_with_unread_shapes_cannot_use_guide_as_weight():
+    content = PSW.read_bytes()
+    before = hashlib.sha256(content).hexdigest()
+    result = run_clause("L17", "L17:2", content, PSW.name)
+    assert result["status"] == "UNABLE", result
+    assert hashlib.sha256(PSW.read_bytes()).hexdigest() == before
+
+
+@pytest.mark.parametrize(("value", "number_format"), [(1.2, "0.0000"), (0, "0.0000"), ("1.2300", "General")])
+def test_form_derived_psw_weight_uses_actual_field_and_four_place_display(value, number_format):
+    result = run_clause("L17", "L17:2", psw_variant(value, number_format), "原生PSW.xlsx")
+    assert result["status"] == "PASS", result
+    sources = result["locator"]["semantic"]["sources"]
+    assert any(source["locator"].get("cell") == "P9" and source["locator"]["sheet"] == "PSW" for source in sources)
+    assert all(source["locator"].get("sheet") != "填表指南" for source in sources)
+
+
+@pytest.mark.parametrize(("value", "number_format"), [(1.2, "0.000"), (1.2, "0.00000"), ("1.23", "0.0000"), (None, "0.0000"), ("1.2300 kg", "General"), (True, "0.0000")])
+def test_form_derived_psw_wrong_or_empty_weight_cannot_borrow_valid_guide(value, number_format):
+    result = run_clause("L17", "L17:2", psw_variant(value, number_format), "原生PSW.xlsx")
+    assert result["status"] == "NG", result
+    assert "P9" in result["suggestions"]
+
+
+@pytest.mark.parametrize("options", [{"number_format": "General"}, {"number_format": "0.0000%"}, {"formula": True}, {"second": True}, {"guide_only": True}])
+def test_psw_unknown_precision_or_form_identity_never_passes(options):
+    result = run_clause("L17", "L17:2", psw_variant(**options), "原生PSW.xlsx")
+    assert result["status"] == "UNABLE", result
+
+
+def test_form_derived_psw_known_missing_weight_label_is_ng():
+    result = run_clause("L17", "L17:2", psw_variant(missing_label=True), "原生PSW.xlsx")
+    assert result["status"] == "NG", result
+    assert "重量字段" in result["suggestions"]
