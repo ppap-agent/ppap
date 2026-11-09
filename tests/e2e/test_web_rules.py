@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import unittest
 import uuid
 from pathlib import Path
@@ -17,6 +18,16 @@ except ImportError:  # pragma: no cover - optional until the e2e job installs Pl
     sync_playwright = None
 
 WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
+
+
+def confirm_clause_source(page, clause, location, excerpt):
+    from playwright.sync_api import expect
+
+    clause.get_by_role("button", name="核对出处", exact=True).click()
+    page.get_by_role("combobox", name="原文位置", exact=True).click()
+    page.get_by_role("option", name=re.compile("^" + re.escape(location) + " ·")).click()
+    expect(page.get_by_role("blockquote")).to_contain_text(excerpt)
+    page.get_by_role("button", name="返回条款", exact=True).click()
 
 
 @unittest.skipUnless(sync_playwright, "playwright not installed")
@@ -42,7 +53,7 @@ class RulePreparationTests(unittest.TestCase):
                     publication_requests = []
                     page.on("request", lambda request, observed=publication_requests: observed.append(True) if request.method == "POST" and urlsplit(request.url).path.endswith("/rules") else None)
                     api = isolated_dev_login(page, WEB)
-                    page.goto(WEB + "/audit?view=requirements")
+                    page.goto(WEB + "/requirements?rulesArea=requirements")
                     page.get_by_label("上传共用规则文件").set_input_files(original)
                     page.get_by_label("适用资料类型").select_option(document_type)
                     with page.expect_response(lambda response: response.request.method == "POST" and urlsplit(response.url).path.endswith("/rules/parse")) as parsing:
@@ -78,8 +89,11 @@ class RulePreparationTests(unittest.TestCase):
                     for label in ("不限定客户", "不限定零件", "不限定图纸修订"):
                         page.get_by_label(label, exact=True).check()
                     page.get_by_label("来源说明／变更原因", exact=True).fill("按 POC 原始 DOCX 核对完整条款及出处。")
-                    for identity, _text in expected:
-                        clauses.get_by_label(f"{identity} 已核对来源", exact=True).check()
+                    for identity, text in expected:
+                        unit = next(unit for unit in units.json()["units"] if unit["excerpt"] == text)
+                        clause = clauses.get_by_role("article", name=f"条款 {identity}", exact=True)
+                        confirm_clause_source(page, clause, unit["location"], text)
+                        clause.get_by_label(f"{identity} 已核对来源", exact=True).check()
                     page.get_by_label("已核对本版本的来源、范围和变更", exact=True).check()
                     save = page.get_by_role("button", name="确认并保存版本", exact=True)
                     expect(save).to_be_enabled()
@@ -133,6 +147,7 @@ class RulePreparationTests(unittest.TestCase):
             page.set_default_timeout(5000)
             api = isolated_dev_login(page, WEB)
             page.get_by_role("navigation", name="产品导航").get_by_role("button", name="审核规则", exact=True).click()
+            page.get_by_role("tab", name="客户要求与上传", exact=True).click()
             page.get_by_role("button", name="上传规则", exact=True).click()
             page.get_by_label("上传共用规则文件").set_input_files({"name": "控制计划规则.json", "mimeType": "application/json", "buffer": source_bytes})
             expect(page.get_by_label("要求名称", exact=True)).to_be_visible()
@@ -140,6 +155,8 @@ class RulePreparationTests(unittest.TestCase):
             page.get_by_role("button", name="提取条款", exact=True).click()
             clauses = page.get_by_role("region", name="要求条款", exact=True)
             expect(clauses.get_by_role("article")).to_have_count(1, timeout=30000)
+            clause = clauses.get_by_role("article", name="条款 1", exact=True)
+            confirm_clause_source(page, clause, "rules[0].rule_to_check", "必须填写零件号")
             page.get_by_label("要求名称", exact=True).fill(title)
             page.get_by_label("适用客户", exact=True).fill("  测试客户  ")
             page.get_by_label("适用零件", exact=True).fill("  零件 P-1  ")
@@ -156,7 +173,7 @@ class RulePreparationTests(unittest.TestCase):
             page.get_by_role("button", name="确认并保存版本", exact=True).click()
             expect(page.get_by_role("status").filter(has_text="版本 v1 已保存")).to_be_visible()
             saved_url = page.url
-            page.get_by_role("link", name="返回审核规则", exact=True).click()
+            page.get_by_role("link", name="返回客户要求", exact=True).click()
             page.get_by_role("searchbox", name="搜索审核规则", exact=True).fill(title)
             link = page.get_by_role("link", name=title, exact=True).filter(visible=True)
             expect(link).to_have_count(1)
