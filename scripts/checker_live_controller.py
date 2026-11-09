@@ -21,11 +21,28 @@ PRIVATE_READ_PROBE = "from pathlib import Path\ntry:\n Path('/evidence/controlle
 def probe_guest_startup(policy):
     """Exercise real Pi startup with the unchanged production guest limits."""
     checked = subprocess.run(
-        ["/usr/bin/prlimit", f"--as={policy.memory_mib * 1024 * 1024}", f"--nproc={policy.max_processes}",
-         "--fsize=268435456", "--nofile=128", "--core=0", "--", "/usr/bin/setpriv",
-         "--no-new-privs", "--reuid=10001", "--regid=10001", "--clear-groups", "--bounding-set=-all", "--inh-caps=-all", "--ambient-caps=-all",
-         "--", "/usr/local/bin/ppap-pi", "--version"],
-        capture_output=True, timeout=30,
+        [
+            "/usr/bin/prlimit",
+            f"--as={policy.memory_mib * 1024 * 1024}",
+            f"--nproc={policy.max_processes}",
+            "--fsize=268435456",
+            "--nofile=128",
+            "--core=0",
+            "--",
+            "/usr/bin/setpriv",
+            "--no-new-privs",
+            "--reuid=10001",
+            "--regid=10001",
+            "--clear-groups",
+            "--bounding-set=-all",
+            "--inh-caps=-all",
+            "--ambient-caps=-all",
+            "--",
+            "/usr/local/bin/ppap-pi",
+            "--version",
+        ],
+        capture_output=True,
+        timeout=30,
         env={"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/tmp", "LANG": "C.UTF-8", "PI_OFFLINE": "1", "PI_TELEMETRY": "0"},
     )
     if checked.returncode != 0 or checked.stdout.strip() != b"1.5.0":

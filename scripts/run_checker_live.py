@@ -292,7 +292,9 @@ print(json.dumps(proof))
     identity = {key: str(operation[key]) for key in ("operation_id", "tenant_id")}
     result = subprocess.run(
         ["docker", "exec", "-i", "-e", "PGOPTIONS=-c default_transaction_read_only=on", environment["COMPOSE_PROJECT_NAME"] + "-worker-1", "python", "-c", code],
-        input=json.dumps(identity).encode(), capture_output=True, timeout=30,
+        input=json.dumps(identity).encode(),
+        capture_output=True,
+        timeout=30,
     )
     require(result.returncode == 0 and len(result.stdout) <= 262144, "frozen_runtime_materialization_failed")
     try:
@@ -303,8 +305,10 @@ print(json.dumps(proof))
     require(all(proof.get(key) == value for key, value in identity.items()), "frozen_runtime_operation_mismatch")
     require(all(proof.get(key) == frozen[key] for key in ("executor_revision", "library_revision")), "frozen_runtime_revision_mismatch")
     inputs = proof.get("inputs")
-    require(isinstance(inputs, dict) and bool(inputs)
-            and all(isinstance(key, str) and isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value) for key, value in inputs.items()), "invalid_frozen_runtime_inputs")
+    require(
+        isinstance(inputs, dict) and bool(inputs) and all(isinstance(key, str) and isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value) for key, value in inputs.items()),
+        "invalid_frozen_runtime_inputs",
+    )
     return inputs
 
 
