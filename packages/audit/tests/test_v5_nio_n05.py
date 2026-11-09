@@ -28,6 +28,11 @@ def test_n05_reads_late_rows_and_moved_headers(tmp_path, monkeypatch):
     assert execute(tmp_path, monkeypatch, "N05", "N05:4", {"过程流程图": rows})["status"] == "NG"
 
 
+def test_n05_footer_cannot_hide_late_business_rows(tmp_path, monkeypatch):
+    rows = [["工序名称", "操作描述"], ["IQC", "检查"], ["编制/日期"], ["包装", None]]
+    assert execute(tmp_path, monkeypatch, "N05", "N05:4", {"过程流程图": rows})["status"] == "NG"
+
+
 def test_n05_conflicting_headers_are_unknown(tmp_path, monkeypatch):
     rows = [["工序名称", "操作描述"], ["成型", "成型"], [None], ["操作描述", "工序名称"], ["检查", "检查"]]
     assert execute(tmp_path, monkeypatch, "N05", "N05:4", {"过程流程图": rows})["status"] == "UNABLE"

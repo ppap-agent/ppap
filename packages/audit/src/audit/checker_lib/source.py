@@ -320,7 +320,7 @@ class NativeFacts:
             if anchor and all(raw[name].get("state") == "known" and blank(raw[name].get("value")) for name in anchor):
                 continue
             if any(key(raw[name].get("value")).startswith(marker) for name in anchor for marker in ("编制/日期", "审核/日期", "编制人", "批准人")):
-                break
+                continue
             records.append(NativeRow(self, table, row, columns))
         if not records:
             raise UnknownFact("没有有效业务数据行，不能按空范围通过。")
