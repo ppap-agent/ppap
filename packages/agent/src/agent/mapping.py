@@ -146,6 +146,7 @@ def checker_response(
     rule_items: list[dict] = []
     clarifications: list[dict] = []
     file_facts = {item.file_version_id: (item.filename, item.role) for item in spec.files}
+    frozen_sha256 = {item.file_version_id: item.sha256 for item in spec.files}
     locator_gap = False
     checked: list[str] = []
     unchecked = [f"{item.filename}（参考资料，不单独作完整审核）" for item in spec.files if item.role == "reference"]
@@ -190,7 +191,7 @@ def checker_response(
             index = consumed.get(clause_id, 0)
             consumed[clause_id] = index + 1
             matched_result = bucket[index] if index < len(bucket) else None
-            status, suggestions, evidence_incomplete, sources = _checker_finding(matched_result, file_version_id=target.file_version_id, file_facts=file_facts)
+            status, suggestions, evidence_incomplete, sources = _checker_finding(matched_result, file_version_id=target.file_version_id, file_facts=file_facts, frozen_sha256=frozen_sha256)
             locator_gap = locator_gap or evidence_incomplete or not sources
             item_key = unique_item_key(f"{target.file_version_id}:rule:{clause_id}")
             semantic = {
@@ -261,7 +262,7 @@ def checker_response(
                 else:
                     extra_results.append((clause_id, result))
         for index, result in enumerate(unnamed, start=1):
-            status, suggestions, evidence_incomplete, sources = _checker_finding(result, file_version_id=target.file_version_id, file_facts=file_facts)
+            status, suggestions, evidence_incomplete, sources = _checker_finding(result, file_version_id=target.file_version_id, file_facts=file_facts, frozen_sha256=frozen_sha256)
             locator_gap = locator_gap or evidence_incomplete or not sources
             findings.append(
                 DeepFinding(
@@ -290,7 +291,7 @@ def checker_response(
                 )
             )
         for clause_id, result in extra_results:
-            status, suggestions, evidence_incomplete, sources = _checker_finding(result, file_version_id=target.file_version_id, file_facts=file_facts)
+            status, suggestions, evidence_incomplete, sources = _checker_finding(result, file_version_id=target.file_version_id, file_facts=file_facts, frozen_sha256=frozen_sha256)
             locator_gap = locator_gap or evidence_incomplete or not sources
             item_key = unique_item_key(f"{target.file_version_id}:rule:{clause_id}")
             findings.append(
@@ -320,7 +321,7 @@ def checker_response(
                 )
             )
         for clause_id, result in duplicate_results:
-            status, suggestions, evidence_incomplete, sources = _checker_finding(result, file_version_id=target.file_version_id, file_facts=file_facts)
+            status, suggestions, evidence_incomplete, sources = _checker_finding(result, file_version_id=target.file_version_id, file_facts=file_facts, frozen_sha256=frozen_sha256)
             locator_gap = locator_gap or evidence_incomplete or not sources
             item_key = unique_item_key(f"{target.file_version_id}:rule:{clause_id}")
             findings.append(
@@ -431,7 +432,9 @@ def _finished_scan_scope(result) -> dict[str, int] | None:
     return {"total": total, "checked": checked, "unknown": unknown}
 
 
-def _checker_finding(result, *, file_version_id: str, file_facts: Mapping[str, tuple[str, str]]) -> tuple[Literal["PASS", "NG", "ERR", "UNABLE", "NA"], str, bool, list[dict]]:
+def _checker_finding(
+    result, *, file_version_id: str, file_facts: Mapping[str, tuple[str, str]], frozen_sha256: Mapping[str, str] | None = None
+) -> tuple[Literal["PASS", "NG", "ERR", "UNABLE", "NA"], str, bool, list[dict]]:
     if result is None:
         return "ERR", "本项未执行，不能判为通过。", True, []
     allowed = {"PASS", "NG", "ERR", "UNABLE", "NA"}
@@ -463,7 +466,7 @@ def _checker_finding(result, *, file_version_id: str, file_facts: Mapping[str, t
     incomplete = result.evidence is None or result.evidence.used == "none" or any(item.severity in {"error", "warning"} for item in result.evidence.diagnostics)
     if result.evidence is not None:
         for source in result.evidence.sources:
-            item = _public_source(source, fallback_version=file_version_id, file_facts=file_facts)
+            item = _public_source(source, fallback_version=file_version_id, file_facts=file_facts, frozen_sha256=frozen_sha256)
             if item is None:
                 dropped_source = True
                 continue
@@ -478,11 +481,22 @@ def _checker_finding(result, *, file_version_id: str, file_facts: Mapping[str, t
     return cast(Literal["PASS", "NG", "ERR", "UNABLE", "NA"], status), suggestions, incomplete, sources
 
 
-def _public_source(source, *, fallback_version: str, file_facts: Mapping[str, tuple[str, str]]) -> dict | None:
+def _public_source(source, *, fallback_version: str, file_facts: Mapping[str, tuple[str, str]], frozen_sha256: Mapping[str, str] | None = None) -> dict | None:
     """Publish only a typed locator for a file that belongs to this round."""
     locator = source.locator
     if not isinstance(locator, str):
         return None
+    source_digest = None
+    if locator.startswith("{"):
+        try:
+            value = json.loads(locator)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(value, dict) and "source_sha256" in value:
+            source_digest = value.pop("source_sha256")
+            if not isinstance(source_digest, str) or not source_digest:
+                return None
+            locator = json.dumps(value)
     parsed = _pdf_page_locator(locator) or _typed_json_locator(locator)
     if parsed is None:
         return None
@@ -491,6 +505,8 @@ def _public_source(source, *, fallback_version: str, file_facts: Mapping[str, tu
     if facts is None:
         return None
     filename, role = facts
+    if source_digest is not None and source_digest != (frozen_sha256 or {}).get(version):
+        return None
     if role not in {"target", "reference"} or not str(filename or "").strip():
         return None
     excerpt = getattr(source, "excerpt", "")

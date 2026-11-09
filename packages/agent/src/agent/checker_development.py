@@ -207,15 +207,21 @@ def _evaluate(sample: OracleSample, results: list[AuditResultItem], baseline: li
     target = sample.inputs.audit_file
     version = str(target.file_metadata.get("file_version_id") or target.audit_id)
     file_facts = {version: (target.file_url, sample.inputs.role)}
+    frozen_sha256 = {version: hashlib.sha256(sample.inputs.file_bytes).hexdigest()}
     if sample.inputs.group_context is not None:
         for item in sample.inputs.group_context.by_audit_id.values():
             item_version = str(item.file_metadata.get("file_version_id") or item.audit_id)
             file_facts[item_version] = (item.file_url, str(item.file_metadata.get("role") or "reference"))
-    previous = {str(row.clause_id): _checker_finding(row, file_version_id=version, file_facts=file_facts)[0] for row in baseline}
+            raw = sample.inputs.related_bytes.get(item_version)
+            if raw is None:
+                raw = sample.inputs.related_bytes.get(item.audit_id)
+            if item_version != version and raw is not None:
+                frozen_sha256[item_version] = hashlib.sha256(raw).hexdigest()
+    previous = {str(row.clause_id): _checker_finding(row, file_version_id=version, file_facts=file_facts, frozen_sha256=frozen_sha256)[0] for row in baseline}
     clauses: list[ClauseEvaluation] = []
     for clause_id, expected in sample.expected.items():
         row = actual.get(clause_id)
-        status, _, incomplete, sources = _checker_finding(row, file_version_id=version, file_facts=file_facts)
+        status, _, incomplete, sources = _checker_finding(row, file_version_id=version, file_facts=file_facts, frozen_sha256=frozen_sha256)
         locatable = bool(sources) and not incomplete
         clauses.append(
             ClauseEvaluation(

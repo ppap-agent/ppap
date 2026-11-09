@@ -238,7 +238,9 @@ def _evaluate(plan: OfficialPlan, *, models: LiveModels | None, grant: dict[str,
         evaluations = []
         for clause, expected in sample.oracle.expected.items():
             row = actual.get(clause)
-            status, _, incomplete, sources = _checker_finding(row, file_version_id=target.file_version_id, file_facts=facts)
+            status, _, incomplete, sources = _checker_finding(
+                row, file_version_id=target.file_version_id, file_facts=facts, frozen_sha256={item.file_version_id: item.sha256 for item in sample.snapshot.inputs}
+            )
             evaluations.append(
                 ClauseEvaluation(
                     clause_id=clause,
