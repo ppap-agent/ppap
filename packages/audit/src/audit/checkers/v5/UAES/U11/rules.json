@@ -1,0 +1,24 @@
+{
+  "kind": "engine",
+  "type": "E06",
+  "preset_key": "U11",
+  "customers": [
+    "UAES"
+  ],
+  "models": [],
+  "parts": [],
+  "title": "样品阶段履历审核规则",
+  "rules": [
+    {
+      "id": "U11:1",
+      "category": "内容基础检查",
+      "priority": "P0",
+      "rule_to_check": "当文件中存在工程更改一览表，且表中包含项目、零件号、变更内容简述、变更原因、时间等字段或列则通过，否则不通过\n注意：字段或列名意思相近也通过",
+      "type_of_rule": "text"
+    }
+  ],
+  "directory_coverage": "complete",
+  "checker_binding": {
+    "U11:1": "checker:create_audit"
+  }
+}

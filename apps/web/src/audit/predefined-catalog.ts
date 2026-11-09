@@ -1,6 +1,6 @@
 /** Group installed directory leaves by the path the API returned. No version or customer registry. */
 
-export type PredefinedEntry = {path: string; title: string; suite_key: string; revision_id: string}
+export type PredefinedEntry = {path: string; title: string; suite_key: string; revision_id: string; clause_count: number; bound_clause_count: number; evidence_reader_clause_ids: string[]}
 export type PredefinedCustomer = {customer: string; entries: PredefinedEntry[]}
 export type PredefinedGroup = {version: string; customers: PredefinedCustomer[]}
 
@@ -42,6 +42,18 @@ export function groupPredefined(entries: PredefinedEntry[]): {groups: Predefined
 
 export function readPredefinedPath(url: URL): string {
   return url.searchParams.get('checkerPath') || ''
+}
+
+/** Declared reader ids are not a claim that those clauses are business-correct. */
+export function capabilityDisclosure(entry: Pick<PredefinedEntry, 'clause_count' | 'bound_clause_count' | 'evidence_reader_clause_ids'>): string {
+  const bound = `${entry.bound_clause_count}/${entry.clause_count}`
+  if (entry.evidence_reader_clause_ids.length === 0) return `已绑定 ${bound} 项。没有声明证据读取，不能判定为通过。`
+  return `已声明证据读取 ${entry.evidence_reader_clause_ids.join('、')}。绑定 ${bound} 项。未声明证据读取的条款不能据此判定为通过。`
+}
+
+export function capabilitySummary(entries: readonly Pick<PredefinedEntry, 'evidence_reader_clause_ids'>[]): string {
+  const readers = entries.reduce((sum, entry) => sum + entry.evidence_reader_clause_ids.length, 0)
+  return `当前列出 ${entries.length} 个预定义来源，已声明证据读取 ${readers} 项。来源数量不是业务规则准确率。`
 }
 
 export function predefinedScope(path: string): string {

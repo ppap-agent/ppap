@@ -1,0 +1,24 @@
+{
+  "kind": "engine",
+  "type": "E05",
+  "preset_key": "U10",
+  "customers": [
+    "UAES"
+  ],
+  "models": [],
+  "parts": [],
+  "title": "材料规范审核规则",
+  "rules": [
+    {
+      "id": "U10:1",
+      "category": "材料规范版本最新版本及受控判定",
+      "priority": "P0",
+      "rule_to_check": "当材料规范中包含受控章即通过，否则不通过；",
+      "type_of_rule": "text"
+    }
+  ],
+  "directory_coverage": "complete",
+  "checker_binding": {
+    "U10:1": "checker:create_audit"
+  }
+}

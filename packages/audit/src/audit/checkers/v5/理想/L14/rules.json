@@ -1,0 +1,64 @@
+{
+  "kind": "engine",
+  "type": "生产系统产能评估报告",
+  "preset_key": "L14",
+  "customers": [
+    "理想"
+  ],
+  "models": [],
+  "parts": [],
+  "title": "13 生产系统产能评估报告",
+  "rules": [
+    {
+      "id": "L14:1",
+      "category": "条款 1",
+      "priority": "P0",
+      "rule_to_check": "识别零件产能评估表中是否包含“零件名称”、“零件号”、“供应商名称”、“供应商编码”、“产能评估总体结论”字段，如果不包含则不通过，否则继续识别；当零件产能评估表中的“零件名称”、“零件号”、“供应商名称”、“供应商编码”、“产能评估总体结论”字段对应内容均不为空则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "L14:2",
+      "category": "条款 2",
+      "priority": "P0",
+      "rule_to_check": "当“线体/工序类别”列下内容不为空，且对应行的所有列均不为空则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "L14:3",
+      "category": "条款 3",
+      "priority": "P0",
+      "rule_to_check": "当“SOP+1达成风险”、“SOP+2达成风险”、“SOP+3达成风险”列下内容存在“中风险”或“高风险”，且“产能评估总体结论”对应内容包含“条件通过”或“未通过”，且“后续措施”对应内容不为空则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "L14:4",
+      "category": "条款 4",
+      "priority": "P0",
+      "rule_to_check": "识别“良率”、“合格品数”、“产出数量”三列，如果三列都存在则继续识别；当每一行的“良率”=“合格品数”÷“产出数量”则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "L14:5",
+      "category": "条款 5",
+      "priority": "P0",
+      "rule_to_check": "识别“单线体/工序总产出JPH”、“产出数量”、“净利用时间”、“参与测试线体数量”四列，如果四列都存在则继续识别；当每一行的“单线体/工序总产出JPH”=“产出数量”÷“净利用时间”÷“参与测试线体数量”则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "L14:6",
+      "category": "条款 6",
+      "priority": "P0",
+      "rule_to_check": "识别“线体/工序预估月度产能”、“单线体/工序总产出JPH”、“现有线体数”、“班次/天”、“每班净利用时间”、“每月标准工作天数”、“累积良率”七列，如果七列都存在则继续识别；当每一行的“线体/工序预估月度产能”=“单线体/工序总产出JPH”*“现有线体数”*“班次/天”*“每班净利用时间”*“每月标准工作天数”*“累积良率”则通过，否则不通过",
+      "type_of_rule": "text"
+    }
+  ],
+  "directory_coverage": "complete",
+  "checker_binding": {
+    "L14:1": "checker:create_audit",
+    "L14:2": "checker:create_audit",
+    "L14:3": "checker:create_audit",
+    "L14:4": "checker:create_audit",
+    "L14:5": "checker:create_audit",
+    "L14:6": "checker:create_audit"
+  }
+}

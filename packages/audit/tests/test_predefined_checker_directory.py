@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from audit.checker_core import checker_digest
 from audit.presets import customer_presets, preset_rule
-from audit.standard_suites import _CHECKERS_ROOT, load_predefined_checkers, predefined_directory_suites, standard_suites
+from audit.standard_suites import _CHECKERS_ROOT, _RELATED, load_predefined_checkers, predefined_directory_suites, standard_suites
 
 ROOT = Path(__file__).resolve().parents[3]
 LEAF = ("checker.py", "rules.json", "resources.py")
@@ -32,8 +32,8 @@ def write_leaf(root: Path, source_path: str, *, checker: str = CHECKER, rules: d
 
 def test_installed_u08_leaf_is_a_distinct_source_from_the_legacy_carrier():
     suites = predefined_directory_suites()
-    assert [suite.source_path for suite in suites] == ["v5/UAES/U08"]
-    suite = suites[0]
+    assert len(suites) == 41
+    suite = next(item for item in suites if item.source_path == "v5/UAES/U08")
     assert suite.suite_key == "UAES:U08"
     assert suite.customer == "UAES" and suite.source_entry == "U08" and suite.document_type == "控制计划"
     assert suite.related_suite_keys == ("UAES:U07", "UAES:U16")
@@ -59,14 +59,35 @@ def test_installed_u08_leaf_is_a_distinct_source_from_the_legacy_carrier():
 
 
 def test_migration_inventory_names_every_current_group_and_only_u08_is_partial():
-    directory = {suite.suite_key: suite.source_path for suite in predefined_directory_suites()}
+    directory = {suite.suite_key: suite for suite in predefined_directory_suites()}
     rows = []
     for preset in customer_presets():
         key = f"{preset.customer}:{preset.entry_id}"
-        rows.append({"suite_key": key, "status": "partial-directory-slice" if key in directory else "not-migrated", "directory_source": directory.get(key)})
+        suite = directory[key]
+        rules = json.loads(suite.files["rules.json"])
+        clause_ids = [clause.id for clause in preset.clauses]
+        bound = set(rules["checker_binding"])
+        if rules.get("directory_coverage") == "partial":
+            status = "partial-directory-slice"
+        elif rules.get("directory_coverage") == "complete" and bound == set(clause_ids) and rules["checker_binding"] == {clause_id: "checker:create_audit" for clause_id in clause_ids}:
+            status = "complete-binding-no-evidence-reader"
+        else:
+            status = "not-migrated"
+        if status == "complete-binding-no-evidence-reader":
+            namespace: dict = {}
+            exec(suite.files["resources.py"], namespace)
+            assert namespace["RESOURCE"]["clauses"] == {}
+            assert namespace["RESOURCE"]["customer"] == preset.customer
+            assert namespace["RESOURCE"]["preset_key"] == preset.entry_id
+            assert b"PASS" not in suite.files["checker.py"]
+            assert b"audit.checkers" not in suite.files["checker.py"] and b"check_clause" not in suite.files["checker.py"]
+        assert suite.related_suite_keys == _RELATED.get(key, ())
+        assert [row["rule_to_check"] for row in rules["rules"]] == [clause.text for clause in preset.clauses]
+        rows.append({"suite_key": key, "status": status, "directory_source": suite.source_path})
     assert len(rows) == 41
-    assert [row for row in rows if row["status"] != "not-migrated"] == [{"suite_key": "UAES:U08", "status": "partial-directory-slice", "directory_source": "v5/UAES/U08"}]
-    assert sum(row["status"] == "not-migrated" for row in rows) == 40
+    assert [row for row in rows if row["status"] == "partial-directory-slice"] == [{"suite_key": "UAES:U08", "status": "partial-directory-slice", "directory_source": "v5/UAES/U08"}]
+    assert sum(row["status"] == "complete-binding-no-evidence-reader" for row in rows) == 40
+    assert sum(row["status"] == "not-migrated" for row in rows) == 0
 
 
 def test_scan_uses_the_filesystem_not_the_customer_registry(tmp_path, monkeypatch):
@@ -278,6 +299,12 @@ def test_wheel_and_container_context_keep_the_same_leaf_bytes(tmp_path):
             archived = f"audit/checkers/v5/UAES/U08/{name}"
             assert archived in names
             assert package.read(archived) == (ROOT / "packages/audit/src/audit/checkers/v5/UAES/U08" / name).read_bytes()
+        for preset in customer_presets():
+            leaf = ROOT / "packages/audit/src/audit/checkers/v5" / preset.customer / preset.entry_id
+            for name in ("checker.py", "rules.json", "resources.py"):
+                archived = f"audit/checkers/v5/{preset.customer}/{preset.entry_id}/{name}"
+                assert archived in names
+                assert package.read(archived) == (leaf / name).read_bytes()
 
 
 def _legacy_imports(source: bytes) -> list[str]:
@@ -294,5 +321,5 @@ def _legacy_imports(source: bytes) -> list[str]:
 
 
 def test_digest_helper_is_stable():
-    suite = predefined_directory_suites()[0]
+    suite = next(item for item in predefined_directory_suites() if item.source_path == "v5/UAES/U08")
     assert hashlib.sha256(suite.files["rules.json"]).hexdigest() == hashlib.sha256((ROOT / "packages/audit/src/audit/checkers/v5/UAES/U08/rules.json").read_bytes()).hexdigest()

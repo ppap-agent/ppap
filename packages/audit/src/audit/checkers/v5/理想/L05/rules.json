@@ -1,0 +1,48 @@
+{
+  "kind": "engine",
+  "type": "测量系统分析评价",
+  "preset_key": "L05",
+  "customers": [
+    "理想"
+  ],
+  "models": [],
+  "parts": [],
+  "title": "06 测量系统分析评价",
+  "rules": [
+    {
+      "id": "L05:1",
+      "category": "条款 1",
+      "priority": "P0",
+      "rule_to_check": "识别是否包含“任务项一”和“任务项二”字段，如果包含则继续识别“任务项一”、“任务项二”的内容是否全部为OK，如果是则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "L05:2",
+      "category": "条款 2",
+      "priority": "P0",
+      "rule_to_check": "识别是否包含“测量系统分析计划”表，如果包含则继续识别；当序号/NO列下内容不为空，且对应行中除备注之外的所有列内容均不为空则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "L05:3",
+      "category": "条款 3",
+      "priority": "P0",
+      "rule_to_check": "识别是否有表格的标题包含“量具重复性和再现性”，如果有则继续识别该表格下A、B、C都至少取10个样本，且90个单元格内容不为空",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "L05:4",
+      "category": "条款 4",
+      "priority": "P0",
+      "rule_to_check": "识别是否有表格的标题包含“量具重复性和再现性”，如果没有，该项判定为NG，否则继续识别该表格下的分析结论是否勾选“判定指标R&R＜10%；该量具可接受”，如果是则判定为PASS，否则判定为NG",
+      "type_of_rule": "text"
+    }
+  ],
+  "directory_coverage": "complete",
+  "checker_binding": {
+    "L05:1": "checker:create_audit",
+    "L05:2": "checker:create_audit",
+    "L05:3": "checker:create_audit",
+    "L05:4": "checker:create_audit"
+  }
+}

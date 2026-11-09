@@ -339,3 +339,38 @@ def test_incomplete_scan_formula_merge_and_extra_tables_are_unable(tmp_path):
     empty = _save(tmp_path / "empty.xlsx", lambda book: setattr(book.active, "title", "控制计划"))
     blank = run(empty, ("U08:1",))[0]
     assert blank.status == "NG" and blank.evidence.used == "none" and blank.evidence.sources == ()
+
+
+def test_other_v5_leaves_bind_every_clause_and_do_not_pass(tmp_path):
+    from audit.checker_core import checker_digest
+    from audit.presets import customer_presets
+
+    boundary = "本目录 Checker 没有读取本条款证据的检查，不能判定为通过。"
+    leaves = [suite for suite in predefined_directory_suites() if suite.source_path != "v5/UAES/U08"]
+    presets = {f"{preset.customer}:{preset.entry_id}": preset for preset in customer_presets()}
+    assert len(leaves) == 40
+    assert len({checker_digest(suite.program_files) for suite in leaves}) == 40
+    workbook = _workbook(tmp_path / "filled.xlsx", resource="压机", mark="CC")
+    unknown = tmp_path / "note.bin"
+    unknown.write_bytes(b"not-a-known-carrier")
+    for suite in leaves:
+        preset = presets[suite.suite_key]
+        clauses = tuple(clause.id for clause in preset.clauses)
+        rules = json.loads(suite.files["rules.json"])
+        assert [row["id"] for row in rules["rules"]] == list(clauses)
+        assert [row["rule_to_check"] for row in rules["rules"]] == [clause.text for clause in preset.clauses]
+        filled = _execute(dict(suite.files), workbook, clauses)
+        expect = f"{preset.customer}/{preset.entry_id}：{boundary}"
+        assert [item.status for item in filled] == ["UNABLE"] * len(clauses)
+        assert [item.suggestions for item in filled] == [expect] * len(clauses)
+        assert [item.clause_id for item in filled] == list(clauses)
+        for item in filled:
+            assert item.status != "PASS"
+            assert item.evidence.used == "none" and item.evidence.sources == ()
+            assert item.evidence.source_format == "xlsx"
+            assert [diag.code for diag in item.evidence.diagnostics] == ["evidence_reader_absent"]
+        if suite.source_path == "v5/UAES/U01":
+            unread = _execute(dict(suite.files), unknown, clauses)
+            assert [item.status for item in unread] == ["UNABLE"] * len(clauses)
+            assert [item.suggestions for item in unread] == [expect] * len(clauses)
+            assert all(item.evidence is None for item in unread)

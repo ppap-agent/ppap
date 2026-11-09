@@ -319,10 +319,13 @@ class SuiteReleaseStore:
                 title = rules.get("title") or rules.get("type") or "文件检查"
                 if not isinstance(title, str) or not title.strip():
                     title = "文件检查"
+                from product.suite_releases import leaf_capability
+
+                capability = leaf_capability(resolved.files)
             except (KeyError, ValueError, ObjectMissing):
                 blocked.append({"path": path, "error": "unavailable"})
                 continue
-            ready.append({"path": path, "title": title, "suite_key": suite.suite_key, "revision_id": revision_id})
+            ready.append({"path": path, "title": title, "suite_key": suite.suite_key, "revision_id": revision_id, **capability})
         return ready, blocked, None
 
     def active(self, principal, suite_key: str, *, conn=None) -> dict:

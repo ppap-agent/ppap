@@ -4,7 +4,7 @@ import {Button} from '../components/ui/button'
 import {Label} from '../components/ui/label'
 import type {components} from '../generated/openapi'
 import {CheckerRelease} from './checker-release'
-import {canOpenPredefined, groupPredefined, predefinedPath, predefinedScope, readPredefinedPath, sourceIdentity, type PredefinedEntry} from './predefined-catalog'
+import {canOpenPredefined, capabilityDisclosure, capabilitySummary, groupPredefined, predefinedPath, predefinedScope, readPredefinedPath, sourceIdentity, type PredefinedEntry} from './predefined-catalog'
 import {auditAddressChanged, writeAuditAddress} from './routes'
 
 const selectedSuite = () => new URL(location.href).searchParams.get('checkerSuite') || ''
@@ -89,19 +89,20 @@ export function CheckerCatalog({active, revision}: {active: boolean; revision: n
       {loading && <p role="status" className="text-sm">正在读取预定义检查…</p>}
       {predefinedError && <p role="alert" className="text-sm text-destructive">预定义检查目录不可用。未列出任何来源路径。</p>}
       {!loading && !error && !predefinedError && !predefined.length && !predefinedUnavailable.length && <p className="text-sm">还没有已安装的预定义检查。</p>}
+      {predefined.length > 0 && <p className="text-sm">{capabilitySummary(predefined)}</p>}
       {groups.map(group => <section key={group.version} aria-label={`版本 ${group.version}`} className="space-y-3">
         <h3 className="text-sm font-medium">{group.version}</h3>
         {group.customers.map(customer => <div key={customer.customer} className="space-y-2">
           <h4 className="text-sm text-muted-foreground">{customer.customer}</h4>
           <ul className="space-y-2">{customer.entries.map(entry => {
             const parts = predefinedPath(entry.path)
-            return <li key={entry.path}><button type="button" aria-pressed={path === entry.path} className="flex min-h-11 w-full flex-col items-start break-all rounded-md border bg-background px-3 py-2 text-left text-sm focus-visible:outline focus-visible:outline-2" onClick={() => choosePath(entry.path)}><span className="font-medium">{parts?.leaf}</span><span>{entry.path}</span><span>{entry.title}</span></button></li>
+            return <li key={entry.path} className="space-y-1"><button type="button" aria-pressed={path === entry.path} className="flex min-h-11 w-full flex-col items-start break-all rounded-md border bg-background px-3 py-2 text-left text-sm focus-visible:outline focus-visible:outline-2" onClick={() => choosePath(entry.path)}><span className="font-medium">{parts?.leaf}</span><span>{entry.path}</span><span>{entry.title}</span></button><p role="status" className="text-xs text-muted-foreground">{capabilityDisclosure(entry)}</p></li>
           })}</ul>
         </div>)}
       </section>)}
       {(predefinedUnavailable.length > 0 || rejected.length > 0) && <ul aria-label="不可用的预定义来源" className="space-y-2 text-sm">{predefinedUnavailable.map(value => <li key={value.path} className="break-all" role="status">{value.path} · {unavailableCopy[value.error] || '来源不可用'}</li>)}{rejected.map(value => <li key={value.path} className="break-all" role="status">{value.path || '未提供路径'} · 来源路径无效</li>)}</ul>}
       {!loading && !error && !predefinedError && path && !openEntry && <p role="alert" className="text-sm">所选来源当前不可访问，请重新选择。</p>}
-      {openEntry && <div className="space-y-1 text-sm"><p className="break-all">来源路径 {openEntry.path}</p><p className="break-all">官方修订 {openEntry.revision_id}</p><p>{sourceIdentity(openEntry, adoptedRevisionId)}</p></div>}
+      {openEntry && <div className="space-y-1 text-sm"><p className="break-all">来源路径 {openEntry.path}</p><p className="break-all">官方修订 {openEntry.revision_id}</p><p>{capabilityDisclosure(openEntry)}</p><p>{sourceIdentity(openEntry, adoptedRevisionId)}</p></div>}
       {path && <Button variant="outline" size="sm" disabled={busy} onClick={() => choosePath('')}>关闭此来源</Button>}
       <Button variant="outline" size="sm" disabled={loading || busy} onClick={reload}>刷新预定义目录</Button>
       {active && openEntry && <CheckerRelease key={`${openEntry.path}:${openEntry.revision_id}`} scope={predefinedScope(openEntry.path)} suiteKey={openEntry.suite_key} revisionId={openEntry.revision_id} onBusyChange={setBusy} onPublished={reload} onDependency={choose}/>}

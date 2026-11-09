@@ -1,0 +1,24 @@
+{
+  "kind": "engine",
+  "type": "E02",
+  "preset_key": "U02",
+  "customers": [
+    "UAES"
+  ],
+  "models": [],
+  "parts": [],
+  "title": "测量比较报告审核规则",
+  "rules": [
+    {
+      "id": "U02:1",
+      "category": "签字确认",
+      "priority": "P0",
+      "rule_to_check": "识别文件中是否包含测量比较报告，如果包含则继续识别报告底部的供应商、UAES技术中心、UAES测量部门、UAES供应商质量开发工程师四个字段是否都存在且字段对应区域都有签字则通过，否则不通过。",
+      "type_of_rule": "text"
+    }
+  ],
+  "directory_coverage": "complete",
+  "checker_binding": {
+    "U02:1": "checker:create_audit"
+  }
+}

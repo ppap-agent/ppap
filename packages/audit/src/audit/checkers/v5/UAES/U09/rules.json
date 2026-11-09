@@ -1,0 +1,24 @@
+{
+  "kind": "engine",
+  "type": "E03",
+  "preset_key": "U09",
+  "customers": [
+    "UAES"
+  ],
+  "models": [],
+  "parts": [],
+  "title": "包装方案审核规则",
+  "rules": [
+    {
+      "id": "U09:1",
+      "category": "内容确认",
+      "priority": "P0",
+      "rule_to_check": "文件内容标题包含“包装方案”，且内容包含“零件基础信息”、“供应商基础信息”、“包装设计的基本要求”、“针对该零件包装的特殊要求”、“包装方案信息”、“包装材料清单”的内容块则通过，否则不通过",
+      "type_of_rule": "text"
+    }
+  ],
+  "directory_coverage": "complete",
+  "checker_binding": {
+    "U09:1": "checker:create_audit"
+  }
+}

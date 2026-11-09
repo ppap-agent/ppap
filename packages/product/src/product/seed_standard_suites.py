@@ -20,6 +20,16 @@ from audit.suite_migration import generic_standard_suites
 _DIRECTORY_SOURCE = re.compile(r"^v[0-9]+/[^/]+/[^/]+$")
 
 
+def discovery_row(suite) -> dict[str, Any]:
+    """One discovered source. Directory leaves also carry their stored reader limit."""
+    row = {"suite_key": suite.suite_key, "source_path": suite.source_path}
+    if persisted_source_path(suite.source_path):
+        from product.suite_releases import leaf_capability
+
+        row["capability"] = leaf_capability(suite.files)
+    return row
+
+
 def official_source_suites():
     """Legacy carriers, directory leaves, then historical generics.
 
@@ -111,7 +121,7 @@ def main() -> None:
         print(
             json.dumps(
                 {
-                    "suites": [{"suite_key": suite.suite_key, "source_path": suite.source_path} for suite in official_source_suites()],
+                    "suites": [discovery_row(suite) for suite in official_source_suites()],
                     "writes": False,
                     "validation": "not-created",
                 },

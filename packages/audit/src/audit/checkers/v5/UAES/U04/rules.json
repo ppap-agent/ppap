@@ -1,0 +1,40 @@
+{
+  "kind": "engine",
+  "type": "材料产品及分供清单",
+  "preset_key": "U04",
+  "customers": [
+    "UAES"
+  ],
+  "models": [],
+  "parts": [],
+  "title": "材料产品及分供清单审核规则",
+  "rules": [
+    {
+      "id": "U04:1",
+      "category": "模板内容",
+      "priority": "P0",
+      "rule_to_check": "除备注外其余字段不为空则通过，否则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "U04:2",
+      "category": "签字审核",
+      "priority": "P0",
+      "rule_to_check": "当供应商负责工程师签字、UAES NE工程师签字、UAES SQD/SQE工程师签字均完成则通过，否则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "U04:3",
+      "category": "信息匹配",
+      "priority": "P0",
+      "rule_to_check": "识别同批次提交的审核文件中是否存在同项目、同物料编号的图纸独立文件，如果不存在则不通过，并提示用户复审或提交图纸文件一起审核；\n如果图纸文件存在，识别图纸文件中的零件名称、零件号是否与分供方清单文件中的零件名称、零件号内容一致；不一致则不通过；\n以上两项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+      "type_of_rule": "text"
+    }
+  ],
+  "directory_coverage": "complete",
+  "checker_binding": {
+    "U04:1": "checker:create_audit",
+    "U04:2": "checker:create_audit",
+    "U04:3": "checker:create_audit"
+  }
+}

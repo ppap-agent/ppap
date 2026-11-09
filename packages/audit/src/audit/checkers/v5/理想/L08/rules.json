@@ -1,0 +1,64 @@
+{
+  "kind": "engine",
+  "type": "控制计划",
+  "preset_key": "L08",
+  "customers": [
+    "理想"
+  ],
+  "models": [],
+  "parts": [],
+  "title": "10 控制计划",
+  "rules": [
+    {
+      "id": "L08:1",
+      "category": "条款 1",
+      "priority": "P0",
+      "rule_to_check": "文件中勾选“SOP”或“生产”则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "L08:2",
+      "category": "条款 2",
+      "priority": "P0",
+      "rule_to_check": "识别是否有“特殊特性分类”列，如果没有，该项结果判定为NG；如果有，则继续识别“特殊特性分类”下的内容是否是“关键特殊特性”或“重要特殊特性”或“NA”或[G]或[Z]之一，如果是，则该项结果判定为PASS，否则判定为NG",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "L08:3",
+      "category": "条款 3",
+      "priority": "P0",
+      "rule_to_check": "识别是否有“特殊特性分类”、“特性”列，且“特性”列下存在“产品”、“过程”两列，如果没有，该项结果判定为NG；如果有，则继续识别，当“特殊特性分类”下的内容不为空，且对应行的“产品”、“特性”两列有一列内容不为空则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "L08:4",
+      "category": "条款 4",
+      "priority": "P0",
+      "rule_to_check": "识别是否有“特殊特性分类”、“控制方法”列，如果没有，该项结果判定为NG；如果有，则继续识别，当“特殊特性分类”下的内容为“关键特殊特性”或“重要特殊特性”或[G]或[Z]，且对应行的“控制方法”列内容不为空则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "L08:5",
+      "category": "条款 5",
+      "priority": "P0",
+      "rule_to_check": "识别是否有“频率”或“频次”列，如果没有则不通过，否则继续识别；当“频率”或“频次”列下所有内容均不为空则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "L08:6",
+      "category": "条款 6",
+      "priority": "P0",
+      "rule_to_check": "识别表头区域是否有“控制计划类型”、“控制计划编号”、“联系人contact/电话phone”、“日期date（编制compi.）”、“日期date（修订update）”、“版本Rev.”、“页数”、“页码”、“零件号”、“零件名称”、“多功能小组”、“公司”、“公司代码”、“公司批准/日期”、“其它批准/日期（如需要）”、“顾客工程批准/日期(如需要）”、“顾客质量批准/日期(如需要)”、“其它批准/日期(如需要)”字段，如果没有则不通过，如果有则继续识别；当“控制计划编号”、“联系人contact/电话phone”、“日期date（编制compi.）”、“日期date（修订update）”、“版本Rev.”、“页数”、“页码”、“零件号”、“零件名称”、“多功能小组”、“公司”、“公司代码”、“公司批准/日期”、“其它批准/日期（如需要）”、“顾客工程批准/日期(如需要）”、“顾客质量批准/日期(如需要)”、“其它批准/日期(如需要)”字段对应的内容不为空，且“控制计划类型”的选项有且仅有一个被勾选则通过，否则不通过；",
+      "type_of_rule": "text"
+    }
+  ],
+  "directory_coverage": "complete",
+  "checker_binding": {
+    "L08:1": "checker:create_audit",
+    "L08:2": "checker:create_audit",
+    "L08:3": "checker:create_audit",
+    "L08:4": "checker:create_audit",
+    "L08:5": "checker:create_audit",
+    "L08:6": "checker:create_audit"
+  }
+}

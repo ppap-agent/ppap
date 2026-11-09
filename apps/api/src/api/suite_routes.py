@@ -89,6 +89,9 @@ class SuitePredefined(TypedDict):
     title: str
     suite_key: str
     revision_id: str
+    clause_count: int
+    bound_clause_count: int
+    evidence_reader_clause_ids: list[str]
 
 
 class SuitePredefinedUnavailable(TypedDict):

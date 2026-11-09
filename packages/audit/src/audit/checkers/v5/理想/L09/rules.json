@@ -1,0 +1,40 @@
+{
+  "kind": "engine",
+  "type": "检具验收报告",
+  "preset_key": "L09",
+  "customers": [
+    "理想"
+  ],
+  "models": [],
+  "parts": [],
+  "title": "04 检具验收报告",
+  "rules": [
+    {
+      "id": "L09:1",
+      "category": "条款 1",
+      "priority": "P0",
+      "rule_to_check": "识别是否有“检具清单”和“检具认可报告”，如果没有，则该项判定为NG；如果有则继续识别；“检具认可报告”中除“备注”区域之外的其他内容是否为空，如果为空，则该项判定为NG，如果不为空，则继续识别；“检具清单”中，当“零件号”列有内容时，且对应行中除“备注”之外的其他列内容军不为空则通过，否则不通过；",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "L09:2",
+      "category": "条款 2",
+      "priority": "P0",
+      "rule_to_check": "识别“检具清单”的标题的前缀是否为车型代号，例如“W04项目检具清单”，如包含则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "L09:3",
+      "category": "条款 3",
+      "priority": "P0",
+      "rule_to_check": "若“所附文件”区域，有对应文件勾选“不合格”或“非完成”，则“结论”区域内容必须不能为空",
+      "type_of_rule": "text"
+    }
+  ],
+  "directory_coverage": "complete",
+  "checker_binding": {
+    "L09:1": "checker:create_audit",
+    "L09:2": "checker:create_audit",
+    "L09:3": "checker:create_audit"
+  }
+}

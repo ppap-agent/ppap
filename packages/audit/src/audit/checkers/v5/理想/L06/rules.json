@@ -1,0 +1,40 @@
+{
+  "kind": "engine",
+  "type": "过程能力研究",
+  "preset_key": "L06",
+  "customers": [
+    "理想"
+  ],
+  "models": [],
+  "parts": [],
+  "title": "07 过程能力研究",
+  "rules": [
+    {
+      "id": "L06:1",
+      "category": "条款 1",
+      "priority": "P0",
+      "rule_to_check": "识别“产品过程CCSC特性管理清单”中是否包含“P阶段Cpk结果”列，如果包含则继续识别；当“P阶段Cpk结果”列下内容为“NA”或阿拉伯数字，且阿拉伯数字>1.33则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "L06:2",
+      "category": "条款 2",
+      "priority": "P0",
+      "rule_to_check": "识别“产品过程CCSC特性管理清单”中是否包含“P阶段结果判定”列，如果包含则继续识别；当“P阶段结果判定”列下内容全部为“达标”则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "L06:3",
+      "category": "条款 3",
+      "priority": "P0",
+      "rule_to_check": "识别文件中是否包含“I-MR单值移动控制图”、“Xbar-R控制图”、“Xbar-S控制图”三张表，如果包含则继续识别三张表中是否均包含“短期过程能力”，如果包含则继续识别“短期过程能力”中的“Cpk”字段是否大于1.33，如果是则通过，否则不通过",
+      "type_of_rule": "text"
+    }
+  ],
+  "directory_coverage": "complete",
+  "checker_binding": {
+    "L06:1": "checker:create_audit",
+    "L06:2": "checker:create_audit",
+    "L06:3": "checker:create_audit"
+  }
+}

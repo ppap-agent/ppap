@@ -59,8 +59,16 @@ def suite(key, title, current):
 CATALOG = {
     "suites": [suite("UAES:U08", "企业采用的控制计划", TENANT_CURRENT), suite("ACME:Z99", "尚未采用的示例", None), suite("control-plan", "企业自定义检查", None)],
     "predefined": [
-        {"path": "v5/UAES/U08", "title": "控制计划（CP）审核规则", "suite_key": "UAES:U08", "revision_id": OFFICIAL_V5},
-        {"path": "v6/ACME/Z99", "title": "v6 示例检查", "suite_key": "ACME:Z99", "revision_id": OFFICIAL_V6},
+        {
+            "path": "v5/UAES/U08",
+            "title": "控制计划（CP）审核规则",
+            "suite_key": "UAES:U08",
+            "revision_id": OFFICIAL_V5,
+            "clause_count": 12,
+            "bound_clause_count": 2,
+            "evidence_reader_clause_ids": ["U08:1", "U08:4"],
+        },
+        {"path": "v6/ACME/Z99", "title": "v6 示例检查", "suite_key": "ACME:Z99", "revision_id": OFFICIAL_V6, "clause_count": 8, "bound_clause_count": 8, "evidence_reader_clause_ids": []},
     ],
     "predefined_unavailable": [{"path": "v6/NEW/X1", "error": "unseeded"}, {"path": "not-a-directory", "error": "invalid"}],
 }
@@ -112,6 +120,9 @@ class PredefinedCatalogBrowserTests(unittest.TestCase):
             expect(directory.get_by_role("heading", name="ACME", exact=True)).to_be_visible()
             expect(directory.get_by_text("v6/NEW/X1 · 尚未安装官方修订", exact=True)).to_be_visible()
             expect(directory.get_by_role("button", name="v6/NEW/X1")).to_have_count(0)
+            expect(directory.get_by_text("当前列出 2 个预定义来源，已声明证据读取 2 项。来源数量不是业务规则准确率。", exact=True)).to_be_visible()
+            expect(directory.get_by_text("已声明证据读取 U08:1、U08:4。绑定 2/12 项。未声明证据读取的条款不能据此判定为通过。", exact=True)).to_have_count(2)
+            expect(directory.get_by_text("已绑定 8/8 项。没有声明证据读取，不能判定为通过。", exact=True)).to_have_count(1)
             expect(directory.get_by_text("来源路径 v5/UAES/U08", exact=True)).to_be_visible()
             expect(directory.get_by_text(f"官方修订 {OFFICIAL_V5}", exact=True)).to_be_visible()
             expect(directory.get_by_text(f"来源 v5/UAES/U08 的官方修订 {OFFICIAL_V5} 与企业当前采用的修订 {TENANT_CURRENT} 不同。此目录仍只打开该来源的官方修订。", exact=True)).to_be_visible()
