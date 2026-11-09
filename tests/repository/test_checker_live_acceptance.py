@@ -176,6 +176,7 @@ def test_local_running_containers_and_http_sha_must_match_this_project(monkeypat
         }
         for name in ("api", "worker", "deep", "web", "postgres", "silo")
     ]
+    next(item for item in containers if item["Id"] == "deep")["Mounts"] = [{"Destination": "/evidence", "Type": "volume", "Name": env["COMPOSE_PROJECT_NAME"] + "_checker-evidence"}]
     for name, internal, external in (("api", "8080", "18080"), ("web", "4173", "14173"), ("postgres", "5432", "15432"), ("silo", "9000", "19000")):
         next(item for item in containers if item["Id"] == name)["NetworkSettings"]["Ports"][internal + "/tcp"] = [{"HostIp": "127.0.0.1", "HostPort": external}]
     monkeypatch.setattr(
@@ -200,6 +201,11 @@ def test_local_running_containers_and_http_sha_must_match_this_project(monkeypat
 
     monkeypatch.setattr(acceptance.httpx, "Client", Http)
     assert set(acceptance.verify_local_runtime(env, images)) == set(images)
+    evidence = next(item for item in containers if item["Id"] == "deep")["Mounts"][0]
+    evidence["Type"] = "bind"
+    with pytest.raises(acceptance.AcceptanceFailure, match="local_evidence_requires_linux_volume"):
+        acceptance.verify_local_runtime(env, images)
+    evidence["Type"] = "volume"
     containers[0]["Image"] = "wrong-image"
     with pytest.raises(acceptance.AcceptanceFailure, match="running_image_identity_mismatch"):
         acceptance.verify_local_runtime(env, images)
@@ -218,6 +224,40 @@ def test_local_harness_rejects_wrong_or_dirty_source_before_business_writes(monk
     monkeypatch.setattr(acceptance.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="wrong-source"))
     with pytest.raises(acceptance.AcceptanceFailure, match="local_harness_source_mismatch"):
         acceptance.verify_local_source(env)
+
+
+def test_local_oracle_transport_preserves_bytes_without_putting_private_input_in_arguments(tmp_path, monkeypatch):
+    path = tmp_path / "private-oracle.json"
+    raw = b'{"hidden_case_ids":["private-oracle-canary"],"hidden_source_sha256":["hidden-source"]}'
+    path.write_bytes(raw)
+    calls = []
+
+    def transfer(command, **kwargs):
+        calls.append((command, kwargs))
+        assert kwargs["input"] == raw and b"private-oracle-canary" not in repr(command).encode()
+        return SimpleNamespace(returncode=0, stdout=(hashlib.sha256(raw).hexdigest() + "\n").encode())
+
+    monkeypatch.setattr(acceptance.subprocess, "run", transfer)
+    acceptance.transfer_private_oracle(path, local_configuration())
+    assert len(calls) == 1
+    monkeypatch.setattr(acceptance.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=b"wrong-digest"))
+    with pytest.raises(acceptance.AcceptanceFailure, match="private_oracle_transport_identity_mismatch"):
+        acceptance.transfer_private_oracle(path, local_configuration())
+
+
+def test_local_controller_transport_rejects_corruption_without_overwriting_known_receipt(tmp_path, monkeypatch):
+    path = tmp_path / "controller.json"
+    raw = b'{"guest_cannot_read_evidence":true,"provider_requests":0}'
+    monkeypatch.setattr(acceptance.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=hashlib.sha256(raw).hexdigest().encode() + b"\n" + raw))
+    assert acceptance.controller_evidence(path, local_configuration())["provider_requests"] == 0
+    assert path.read_bytes() == raw
+    monkeypatch.setattr(acceptance.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=b"wrong\n" + raw))
+    with pytest.raises(acceptance.AcceptanceFailure, match="controller_evidence_transport_identity_mismatch"):
+        acceptance.controller_evidence(path, local_configuration())
+    assert path.read_bytes() == raw
+    monkeypatch.setattr(acceptance.subprocess, "run", lambda *args, **kwargs: pytest.fail("Linux workflow must keep its existing bind path"))
+    acceptance.transfer_private_oracle(path, configuration())
+    assert acceptance.controller_evidence(path, configuration())["provider_requests"] == 0
 
 
 def test_live_browser_explicitly_selects_the_full_sample_set_before_one_admission(tmp_path, monkeypatch):

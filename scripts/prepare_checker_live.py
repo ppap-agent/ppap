@@ -43,6 +43,11 @@ def prepare(environment, output):
     names = ("LIVE_PG_BOOTSTRAP_PASSWORD", "LIVE_PG_MIGRATOR_PASSWORD", "LIVE_PG_API_PASSWORD", "LIVE_PG_WORKER_PASSWORD", "LIVE_S3_ACCESS_KEY", "LIVE_S3_SECRET_KEY")
     values = {name: secrets.token_hex(24) for name in names}
     values["LIVE_ENCRYPTION_KEY"] = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()
+    if environment.get("PPAP_CHECKER_LIVE_MODE") == "local":
+        # Desktop host bind mounts can ignore Unix permission checks. Keep the
+        # actual private boundary on Linux storage; the runner copies only its
+        # existing Oracle and Controller receipt through explicit root execs.
+        values["LIVE_EVIDENCE_SOURCE"] = "checker-evidence"
     output.parent.mkdir(parents=True, exist_ok=True)
     with open(output, "x", opener=lambda path, flags: os.open(path, flags, 0o600)) as stream:
         stream.write("".join(f"{name}={value}\n" for name, value in values.items()))

@@ -40,6 +40,7 @@ volumes:
   postgres-data:
   silo-data:
   deep-socket:
+  checker-evidence:
 
 services:
   postgres:
@@ -148,7 +149,7 @@ services:
     volumes:
       - deep-socket:/run/ppap-deep
       - ../../scripts/checker_live_controller.py:/live/checker_controller.py:ro
-      - ${PPAP_CHECKER_LIVE_OUTPUT:?}:/evidence
+      - ${LIVE_EVIDENCE_SOURCE:-${PPAP_CHECKER_LIVE_OUTPUT:?}}:/evidence
     healthcheck:
       test: [CMD, python, -m, agent.readiness]
       interval: 2s

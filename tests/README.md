@@ -322,6 +322,12 @@ source SHA. Existing immutable pins are in `deploy/tke/current.yaml`. The driver
 never builds or pulls images. Reusing an older runtime validates that runtime,
 not the current branch: the report separates `harness_sha`, `runtime_sha` and
 `same_source_runtime`; `candidate_sha` identifies the runtime being tested.
+Local preparation uses a Linux named volume for private evidence: Desktop host
+bind mounts can ignore Unix permissions. The runner transfers only the existing
+private Oracle and Controller receipt through explicit root execs with byte-digest
+checks; the real guest must still fail to read this directory. Linux workflow
+bind mounts keep their existing behavior. Read-only snapshots also retain the
+local Controller receipt before the disposable volume is removed.
 
 ```sh
 export PPAP_BUILD_SHA="$(git rev-parse HEAD)"

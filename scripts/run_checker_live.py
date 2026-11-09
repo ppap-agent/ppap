@@ -148,6 +148,10 @@ def verify_local_runtime(environment, images):
         services[service] = container
     for component, image in images.items():
         require(component in services and services[component]["Image"] == image["image_id"], "running_image_identity_mismatch")
+    require(
+        any(mount.get("Destination") == "/evidence" and mount.get("Type") == "volume" and mount.get("Name", "").startswith(project + "_") for mount in services["deep"].get("Mounts", [])),
+        "local_evidence_requires_linux_volume",
+    )
     for component, internal, external in (("api", "8080", "18080"), ("web", "4173", "14173"), ("postgres", "5432", "15432"), ("silo", "9000", "19000")):
         require(component in services and services[component]["NetworkSettings"]["Ports"].get(internal + "/tcp") == [{"HostIp": "127.0.0.1", "HostPort": external}], "local_loopback_service_mismatch")
     expected = environment.get("PPAP_CHECKER_LIVE_RUNTIME_SHA", environment["PPAP_BUILD_SHA"])
@@ -156,6 +160,42 @@ def verify_local_runtime(environment, images):
         web = http.get("http://127.0.0.1:14173/build-identity.json")
         require(api.status_code == web.status_code == 200 and api.json().get("git_sha") == web.json().get("git_sha") == expected, "runtime_http_source_mismatch")
     return {component: {"container_id": services[component]["Id"], **image} for component, image in images.items()}
+
+
+def transfer_private_oracle(path, environment):
+    if environment.get("PPAP_CHECKER_LIVE_MODE") != "local":
+        return
+    raw = path.read_bytes()
+    code = (
+        "import hashlib,sys,os; from pathlib import Path; raw=sys.stdin.buffer.read(); p=Path('/evidence/private-oracle.tmp'); "
+        "p.write_bytes(raw); p.chmod(0o600); os.replace(p,'/evidence/private-oracle.json'); "
+        "print(hashlib.sha256(Path('/evidence/private-oracle.json').read_bytes()).hexdigest())"
+    )
+    result = subprocess.run(["docker", "exec", "-i", environment["COMPOSE_PROJECT_NAME"] + "-deep-1", "python", "-c", code], input=raw, capture_output=True, timeout=15)
+    require(result.returncode == 0 and result.stdout.decode().strip() == hashlib.sha256(raw).hexdigest(), "private_oracle_transport_identity_mismatch")
+
+
+def controller_evidence(path, environment):
+    if environment.get("PPAP_CHECKER_LIVE_MODE") == "local":
+        code = "import hashlib,sys; from pathlib import Path; raw=Path('/evidence/controller.json').read_bytes(); sys.stdout.buffer.write(hashlib.sha256(raw).hexdigest().encode()+b'\\n'+raw)"
+        result = subprocess.run(["docker", "exec", environment["COMPOSE_PROJECT_NAME"] + "-deep-1", "python", "-c", code], capture_output=True, timeout=15)
+        require(result.returncode == 0, "controller_evidence_readback_failed")
+        claimed, separator, raw = result.stdout.partition(b"\n")
+        require(bool(separator) and claimed.decode() == hashlib.sha256(raw).hexdigest(), "controller_evidence_transport_identity_mismatch")
+        temporary = path.with_suffix(".tmp")
+        temporary.write_bytes(raw)
+        temporary.chmod(0o600)
+        temporary.replace(path)
+    return json.loads(path.read_text())
+
+
+def snapshot_controller(path, report):
+    if os.environ.get("PPAP_CHECKER_LIVE_MODE") == "local":
+        try:
+            controller_evidence(path.parent / "controller.json", os.environ)
+            report["controller_readback"] = "read_only_completed"
+        except Exception:
+            report["controller_readback"] = "unavailable"
 
 
 def describe_scenario(environment):
@@ -813,6 +853,7 @@ def run(report_path):
             )
         )
         private.chmod(0o600)
+        transfer_private_oracle(private, os.environ)
         configured, receipt = browser.configure_and_start(rounds[0], base_url, model, report, report_path)
         require(client.request("GET", "/me/model-config") == configured, "personal_configuration_readback_mismatch")
         checkpoint(report_path, report, "waiting", browser_personal_configuration=True)
@@ -922,7 +963,7 @@ def run(report_path):
             input_digests={sample.case_id: sample.inputs.digest for sample in frozen_request.oracle},
         )
         checkpoint(report_path, report, "verifying_isolation", frozen_proof_bound=True)
-        probe = json.loads((report_path.parent / "controller.json").read_text())
+        probe = controller_evidence(report_path.parent / "controller.json", os.environ)
         require(
             probe.get("adaptations") == 1
             and set(probe.get("holdout_sources", [])) == {row["sha256"] for row in samples.values() if row["ordinal"] % 4 == 0}
@@ -944,6 +985,7 @@ def run(report_path):
                 report["final_readback"] = "read_only_completed"
             except Exception:
                 report["final_readback"] = "unavailable_known_usage_preserved"
+        snapshot_controller(report_path, report)
         report["recovery"] = "Ephemeral stack; after cleanup, reconcile unknown consumption with provider billing. Never redispatch automatically."
         write_report(report_path, report)
         if browser is not None:
@@ -968,6 +1010,7 @@ def final_snapshot(path):
         report["final_readback"] = "unavailable_known_usage_preserved"
     finally:
         report["recovery"] = "Ephemeral stack; after cleanup, reconcile unknown consumption with provider billing. Never redispatch automatically."
+        snapshot_controller(path, report)
         write_report(path, report)
         client.http.close()
 
