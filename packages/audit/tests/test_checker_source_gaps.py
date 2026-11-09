@@ -1,0 +1,31 @@
+"""A bound clause without a reader reports a gap rather than an adapter fault."""
+
+from audit.checker_lib.source import SourceAudit
+from audit.contracts import AuditInput, RuleInput
+from openpyxl import Workbook
+
+
+def test_reader_and_gap_keep_exact_ids_and_distinct_execution_counts(tmp_path):
+    path = tmp_path / "input.xlsx"
+    book = Workbook()
+    book.active.append(["零件号", "P12345"])
+    book.save(path)
+    book.close()
+
+    class Audit(SourceAudit):
+        def part(self):
+            value = self.native().field(("零件号",))
+            return ("PASS" if value == "P12345" else "NG"), "核对原件零件号"
+
+    rule = RuleInput(rule_id="rules", rules=[{"id": "C:9"}, {"id": "C:2"}])
+    resource = {"supported_suffixes": (".xlsx",), "clauses": {"C:2": {"method": "part"}}, "known_gaps": {"C:9": "尚无经过验证的跨文件读取器。"}}
+    audit = Audit(AuditInput(audit_id="frozen", file_url=str(path)), rule, resource=resource)
+    try:
+        assert [check.rule_item.id for check in audit.checks] == ["C:9", "C:2"]
+        gap, read = [check.check() for check in audit.checks]
+        assert gap.status == "UNABLE" and gap.checks_performed == 0
+        assert gap.clause_id == "C:9" and gap.suggestions == resource["known_gaps"]["C:9"]
+        assert read.status == "PASS" and read.checks_performed == 1
+        assert read.clause_id == "C:2" and read.evidence.sources
+    finally:
+        audit.close()

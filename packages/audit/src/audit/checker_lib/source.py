@@ -465,9 +465,9 @@ class SourceAudit:
         rows = getattr(rule, "rules", ()) or ()
         self._rule_rows = {str(row.get("id") if isinstance(row, dict) else row.id): row for row in rows}
         bindings = resource["clauses"]
-        self.clause_ids = [cid for cid in self._rule_rows if cid in bindings]
+        self.clause_ids = list(self._rule_rows)
         self.agent_rules = [self._category(cid) for cid in self.clause_ids]
-        self.rule_checkers = [getattr(self, bindings[cid]["method"]) for cid in self.clause_ids]
+        self.rule_checkers = [getattr(self, bindings[cid]["method"]) if cid in bindings else None for cid in self.clause_ids]
         self.checks = [_Clause(self, index, cid) for index, cid in enumerate(self.clause_ids)]
 
     def _category(self, clause_id):
@@ -516,6 +516,8 @@ class SourceAudit:
         completed = 0
         questions, evaluation = [], None
         try:
+            if self.rule_checkers[ith] is None:
+                raise UnknownFact(self.resource.get("known_gaps", {}).get(self.clause_ids[ith], "此条款尚无可用的原件证据读取器，无法检查。"))
             suffix = Path(self.audit_file.file_url).suffix.lower()
             if suffix not in self.resource["supported_suffixes"]:
                 raise UnknownFact("此检查不支持当前原件载体，未形成业务判断。")
