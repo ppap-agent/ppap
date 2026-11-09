@@ -1,96 +1,81 @@
-"""Bound clauses of one predefined directory leaf.
+"""UAES U04 rules over frozen, source-addressed evidence.
 
-This leaf implements no evidence reader. Every bound clause is UNABLE.
-Unknown is not a pass. This file does not call another checker version.
+This leaf owns its complete business checks and does not call another version.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Literal
-
-from audit.checker_lib.evidence import structure_diagnostic, structure_evidence
-from audit.contracts import AuditEvidence, AuditResultItem
+from audit.checker_lib.source import SourceAudit, UnknownFact, blank, key
 from resources import RESOURCE
 
-_BOUNDARY = "本目录 Checker 没有读取本条款证据的检查，不能判定为通过。"
-_Format = Literal["xlsx", "xls", "xlsm", "pdf", "docx", "png", "jpg", "jpeg", "webp", "txt", "md"]
-_FORMATS: dict[str, _Format] = {
-    ".xlsx": "xlsx",
-    ".xlsm": "xlsm",
-    ".xls": "xls",
-    ".pdf": "pdf",
-    ".docx": "docx",
-    ".png": "png",
-    ".jpg": "jpg",
-    ".jpeg": "jpeg",
-    ".webp": "webp",
-    ".txt": "txt",
-    ".md": "md",
-}
+
+class UaesMaterialsAgent(SourceAudit):
+    def rule_1(self):
+        facts = self.native()
+        table = facts.table(("材料", "分供方"))
+        start, columns = facts.columns(table, {"number": ("序号", "编号", "NO")})
+        for span in table.get("merges", []):
+            if span[0] <= start <= span[2] and span[3] > span[1]:
+                # Multi-tier choice groups are not one scalar required field.
+                # Their native values need a scoped selection decoder.
+                raise UnknownFact("材料清单含多层合并表头或选择组，尚不能把组内空格判为空字段。")
+        for address, item in table["cells"].items():
+            import re
+
+            if int(re.sub(r"^[A-Z]+", "", address)) >= start or item.get("state") != "known":
+                continue
+            text = str(item.get("value") or "")
+            if ":" in text or "：" in text:
+                label = re.split(r"[:：]", text, maxsplit=1)[0].strip()
+                if label:
+                    facts.field((label,))
+        headers = {}
+        reader = facts.readers[table["id"]]
+        for column in range(1, table["cols"] + 1):
+            item = reader.cell(start, column)
+            if item.get("state") != "known":
+                raise UnknownFact("材料表头存在无法读取的内容。")
+            if not blank(item.get("value")) and "备注" not in key(item["value"]):
+                headers[column] = item["value"]
+        if len(headers) < 2:
+            raise UnknownFact("尚不能确定材料清单完整字段范围。")
+        footer_labels = {
+            key(label)
+            for label in ("编制", "编制人", "编制/日期", "编制人/日期", "审核", "审核人", "审核/日期", "批准", "批准人", "供应商负责工程师签字", "UAES NE工程师签字", "UAES SQD/SQE工程师签字")
+        }
+
+        def is_footer(value):
+            return key(value).split(":", 1)[0] in footer_labels
+
+        count = 0
+        for row in range(start + 1, table["rows"] + 1):
+            serial = facts.cell(table, row, columns["number"])
+            if is_footer(serial):
+                continue
+            if blank(serial):
+                footer_columns = [column for column in headers if (item := reader.cell(row, column)).get("state") == "known" and is_footer(item.get("value"))]
+                if footer_columns:
+                    for column in footer_columns:
+                        facts.cell(table, row, column)
+                    continue
+            values = {column: facts.cell(table, row, column) for column in headers}
+            if all(blank(value) for value in values.values()) or all(key(value) == key(headers[column]) for column, value in values.items()):
+                continue
+            count += 1
+            for column, label in headers.items():
+                if blank(values[column]):
+                    return "NG", f"材料清单第{row}行的{label}内容为空。"
+        if not count:
+            raise UnknownFact("没有已编号的材料行，不能按空清单通过。")
+        return "PASS", "已逐行读取材料清单除备注外的全部表头字段。"
+
+    def rule_2(self):
+        return self.visual_result({"signatures": "供应商负责工程师、UAES NE工程师、UAES SQD/SQE工程师三处均存在实际签字，不计空栏或预印标签。"}, "三方实际签字")
+
+    def rule_3(self):
+        self.related(("图纸", "drawing"), require_name=True)
+        return "PASS", "已核实当前批次独立图纸与清单项目、零件编号、名称和版本一致。"
 
 
 def create_audit(audit_file, rule, group_context=None):
-    return _BoundLeaf(audit_file, rule, group_context)
-
-
-class _Clause:
-    def __init__(self, audit: _BoundLeaf, clause_id: str):
-        self.rule_item = type("_RuleItem", (), {"id": clause_id})()
-        self._audit = audit
-        self._clause_id = clause_id
-
-    def check(self) -> AuditResultItem:
-        return self._audit.evaluate(self._clause_id)
-
-
-class _BoundLeaf:
-    def __init__(self, audit_file, rule, group_context):
-        self.audit_file = audit_file
-        self.rule = rule
-        self._group_context = group_context
-        self.checks = [_Clause(self, clause_id) for clause_id in _clause_ids(rule)]
-
-    def close(self) -> None:
-        return None
-
-    def evaluate(self, clause_id: str) -> AuditResultItem:
-        # RESOURCE["clauses"] only names readers. This file implements none.
-        # A named reader without code here stays UNABLE. It is not a pass.
-        message = f"{RESOURCE['customer']}/{RESOURCE['preset_key']}：{_BOUNDARY}"
-        return self._item(clause_id, "UNABLE", message, checks_performed=0, evidence=self._boundary(message))
-
-    def _boundary(self, message: str) -> AuditEvidence | None:
-        suffix = Path(str(getattr(self.audit_file, "file_url", "") or "")).suffix.lower()
-        source_format = _FORMATS.get(suffix)
-        if source_format is None:
-            return None
-        return structure_evidence(source_format=source_format, sources=(), diagnostics=(structure_diagnostic("evidence_reader_absent", message),))
-
-    def _item(self, clause_id: str, status: str, suggestion: str, *, evidence: AuditEvidence | None, checks_performed: int) -> AuditResultItem:
-        category = clause_id
-        for row in getattr(self.rule, "rules", ()) or ():
-            row_id = row.get("id") if isinstance(row, dict) else getattr(row, "id", None)
-            if row_id == clause_id:
-                raw = row.get("category") if isinstance(row, dict) else getattr(row, "category", None)
-                category = str(raw or clause_id)
-                break
-        return AuditResultItem(
-            classification="规则审核",
-            item=category,
-            priority="P0",
-            status=status,
-            suggestions=suggestion,
-            evidence=evidence,
-            clause_id=clause_id,
-            checks_performed=checks_performed,
-        )
-
-
-def _clause_ids(rule) -> list[str]:
-    found: list[str] = []
-    for row in getattr(rule, "rules", ()) or ():
-        clause_id = row.get("id") if isinstance(row, dict) else getattr(row, "id", None)
-        if isinstance(clause_id, str) and clause_id and clause_id not in found:
-            found.append(clause_id)
-    return found
+    return UaesMaterialsAgent(audit_file, rule, group_context, resource=RESOURCE)

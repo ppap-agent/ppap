@@ -1,96 +1,95 @@
-"""Bound clauses of one predefined directory leaf.
-
-This leaf implements no evidence reader. Every bound clause is UNABLE.
-Unknown is not a pass. This file does not call another checker version.
-"""
+"""Source-owned UAES checks; original rules and explicit evidence decide results."""
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Literal
+import re
 
-from audit.checker_lib.evidence import structure_diagnostic, structure_evidence
-from audit.contracts import AuditEvidence, AuditResultItem
+from audit.checker_lib.source import SourceAudit, UnknownFact, blank, key, number
 from resources import RESOURCE
-
-_BOUNDARY = "本目录 Checker 没有读取本条款证据的检查，不能判定为通过。"
-_Format = Literal["xlsx", "xls", "xlsm", "pdf", "docx", "png", "jpg", "jpeg", "webp", "txt", "md"]
-_FORMATS: dict[str, _Format] = {
-    ".xlsx": "xlsx",
-    ".xlsm": "xlsm",
-    ".xls": "xls",
-    ".pdf": "pdf",
-    ".docx": "docx",
-    ".png": "png",
-    ".jpg": "jpg",
-    ".jpeg": "jpeg",
-    ".webp": "webp",
-    ".txt": "txt",
-    ".md": "md",
-}
 
 
 def create_audit(audit_file, rule, group_context=None):
-    return _BoundLeaf(audit_file, rule, group_context)
+    return _Audit(audit_file, rule, group_context, resource=RESOURCE)
 
 
-class _Clause:
-    def __init__(self, audit: _BoundLeaf, clause_id: str):
-        self.rule_item = type("_RuleItem", (), {"id": clause_id})()
-        self._audit = audit
-        self._clause_id = clause_id
+class _Audit(SourceAudit):
+    def rule_1(self):
+        facts = self.native()
+        for value, locator in facts.observations():
+            for term in ("历史问题", "客户抱怨", "过往失效案例", "类似产品问题"):
+                if term not in value or any((word in value for word in ("例如", "示例", "请填写", "填写指南"))):
+                    continue
+                detail = re.sub("[\\W_]", "", value.split(term, 1)[1])
+                if len(detail) >= 4:
+                    self.witness(locator, value)
+                    return self.text_result(
+                        {"lesson": "PFMEA引用了具体的历史问题、客户抱怨、过往失效或类似产品案例及其经验教训输入；空标题、示例、未发现问题或无相关案例的声明均不能证明实际案例输入。"},
+                        "PFMEA实际经验教训引用",
+                    )
+        raise UnknownFact("尚不能确认经验教训有实际案例输入；仅有经验教训栏标题不能证明已引用。")
 
-    def check(self) -> AuditResultItem:
-        return self._audit.evaluate(self._clause_id)
-
-
-class _BoundLeaf:
-    def __init__(self, audit_file, rule, group_context):
-        self.audit_file = audit_file
-        self.rule = rule
-        self._group_context = group_context
-        self.checks = [_Clause(self, clause_id) for clause_id in _clause_ids(rule)]
-
-    def close(self) -> None:
-        return None
-
-    def evaluate(self, clause_id: str) -> AuditResultItem:
-        # RESOURCE["clauses"] only names readers. This file implements none.
-        # A named reader without code here stays UNABLE. It is not a pass.
-        message = f"{RESOURCE['customer']}/{RESOURCE['preset_key']}：{_BOUNDARY}"
-        return self._item(clause_id, "UNABLE", message, checks_performed=0, evidence=self._boundary(message))
-
-    def _boundary(self, message: str) -> AuditEvidence | None:
-        suffix = Path(str(getattr(self.audit_file, "file_url", "") or "")).suffix.lower()
-        source_format = _FORMATS.get(suffix)
-        if source_format is None:
-            return None
-        return structure_evidence(source_format=source_format, sources=(), diagnostics=(structure_diagnostic("evidence_reader_absent", message),))
-
-    def _item(self, clause_id: str, status: str, suggestion: str, *, evidence: AuditEvidence | None, checks_performed: int) -> AuditResultItem:
-        category = clause_id
-        for row in getattr(self.rule, "rules", ()) or ():
-            row_id = row.get("id") if isinstance(row, dict) else getattr(row, "id", None)
-            if row_id == clause_id:
-                raw = row.get("category") if isinstance(row, dict) else getattr(row, "category", None)
-                category = str(raw or clause_id)
-                break
-        return AuditResultItem(
-            classification="规则审核",
-            item=category,
-            priority="P0",
-            status=status,
-            suggestions=suggestion,
-            evidence=evidence,
-            clause_id=clause_id,
-            checks_performed=checks_performed,
+    def rule_2(self):
+        rows = self.native().rows(
+            {
+                "s": ("S", "严重度", "严重度S"),
+                "o": ("O", "发生度", "频度O"),
+                "d": ("D", "探测度", "探测度D"),
+                "effect": ("失效后果", "潜在失效后果"),
+                "mode": ("失效模式", "潜在失效模式"),
+                "cause": ("失效原因", "潜在失效起因"),
+                "prevention": ("预防控制", "现行预防控制"),
+                "detection": ("探测控制", "现行探测控制"),
+            },
+            title=("PFMEA", "失效"),
+            anchor=("mode", "cause"),
+        )
+        conditions: dict[tuple[str, ...], tuple] = {}
+        for row in rows:
+            scores = tuple((number(row[name]) for name in ("s", "o", "d")))
+            if any((score != score.to_integral_value() or not 1 <= score <= 10 for score in scores)):
+                return ("NG", "PFMEA的S/O/D存在超出1至10的整数范围的评分。")
+            s, _o, d = scores
+            effect = str(row["effect"])
+            # Only literal, unqualified effects support a fixed comparison.
+            # Negations and longer engineering descriptions need text evidence.
+            if key(effect) in {"安全", "安全风险", "法规", "法规风险", "整车召回"} and s < 9:
+                return ("NG", "PFMEA安全/法规/整车召回后果的严重度低于9。")
+            if key(effect) in {"轻微外观", "轻微外观问题", "仅轻微外观问题"} and (not 2 <= s <= 4):
+                return ("NG", "仅轻微外观后果的严重度不在2至4范围。")
+            if key(row["detection"]) in {"无", "无法探测", "无探测措施", "none"} and d < 10:
+                return ("NG", "无探测措施的失效项探测度小于10。")
+            identity = tuple((key(row[name]) for name in ("mode", "cause", "prevention", "detection")))
+            if identity in conditions and conditions[identity] != scores:
+                return ("NG", "同失效模式、原因和控制条件的S/O/D评分不一致。")
+            conditions[identity] = scores
+        return self.text_result(
+            {"reasonable": "对全部PFMEA行，S与后果匹配，O与起因和预防控制匹配（有效预防O低、无预防O高），D与方法和时机匹配（下线高、在线自动低、无法探测10）。工程有效性未知时null。"},
+            "全部S/O/D评分的工程合理性",
         )
 
+    def reconcile(self, related, *, marked):
+        aliases = {"name": ("特性名称", "产品特性", "过程特性", "产品/过程特性"), "mark": ("特性类别", "特性分类", "特殊特性", "特性类型")}
+        targets = self.native().rows({"name": ("功能/要求", "产品特性", "过程特性", "功能/产品特性", "功能/过程特性"), "mark": ("特殊特性", "分类")}, title=("PFMEA", "失效"), anchor=("name",))
+        expected = related.rows(aliases, anchor=("name",))
+        count = 0
+        for item in expected:
+            if blank(item["mark"]):
+                continue
+            count += 1
+            matches = [target for target in targets if key(target["name"]) == key(item["name"])]
+            if len(matches) != 1:
+                raise UnknownFact("PFMEA尚不能唯一对应关联特性：" + str(item["name"]))
+            if marked and key(matches[0]["mark"]) != key(item["mark"]):
+                return ("NG", "关联特殊特性在PFMEA中的标识不一致。")
+        if not count:
+            raise UnknownFact("关联原件没有可确认的重要/特殊特性，不能按空范围通过。")
+        return ("PASS", "已逐项核实同零件关联清单的适用特性及标识。")
 
-def _clause_ids(rule) -> list[str]:
-    found: list[str] = []
-    for row in getattr(rule, "rules", ()) or ():
-        clause_id = row.get("id") if isinstance(row, dict) else getattr(row, "id", None)
-        if isinstance(clause_id, str) and clause_id and clause_id not in found:
-            found.append(clause_id)
-    return found
+    def rule_3(self):
+        related = self.related(("特殊特性",), require_name=True)
+        return self.reconcile(related, marked=True)
+
+    def rule_4(self):
+        related = self.related(("采购件质量计划", "PGQP1"))
+        related.require_text("PGQP1")
+        return self.reconcile(related, marked=False)

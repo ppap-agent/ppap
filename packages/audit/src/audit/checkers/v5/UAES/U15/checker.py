@@ -1,96 +1,53 @@
-"""Bound clauses of one predefined directory leaf.
+"""U15 source-backed UAES checks owned by this immutable directory leaf.
 
-This leaf implements no evidence reader. Every bound clause is UNABLE.
-Unknown is not a pass. This file does not call another checker version.
+The business implementation is local. No checker-version fallback is used.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Literal
+import re
 
-from audit.checker_lib.evidence import structure_diagnostic, structure_evidence
-from audit.contracts import AuditEvidence, AuditResultItem
+from audit.checker_lib.source import SourceAudit, UnknownFact
 from resources import RESOURCE
-
-_BOUNDARY = "本目录 Checker 没有读取本条款证据的检查，不能判定为通过。"
-_Format = Literal["xlsx", "xls", "xlsm", "pdf", "docx", "png", "jpg", "jpeg", "webp", "txt", "md"]
-_FORMATS: dict[str, _Format] = {
-    ".xlsx": "xlsx",
-    ".xlsm": "xlsm",
-    ".xls": "xls",
-    ".pdf": "pdf",
-    ".docx": "docx",
-    ".png": "png",
-    ".jpg": "jpg",
-    ".jpeg": "jpeg",
-    ".webp": "webp",
-    ".txt": "txt",
-    ".md": "md",
-}
 
 
 def create_audit(audit_file, rule, group_context=None):
-    return _BoundLeaf(audit_file, rule, group_context)
+    return TrialAudit(audit_file, rule, group_context, resource=RESOURCE)
 
 
-class _Clause:
-    def __init__(self, audit: _BoundLeaf, clause_id: str):
-        self.rule_item = type("_RuleItem", (), {"id": clause_id})()
-        self._audit = audit
-        self._clause_id = clause_id
+class TrialAudit(SourceAudit):
+    def rule_1(self):
+        facts = self.native()
+        for phrase in ("流转记录", "试装结论", "检验结论", "流程结束", "流程完成"):
+            facts.require_text(phrase)
+        visual_fields = {"trial_passed": "试装结论恰好选择了通过，未选择未通过；以实际勾选或填写状态为准。", "inspection_passed": "检验结论恰好选择了合格，未选择不合格；以实际勾选或填写状态为准。"}
+        if facts.has_unread_content():
+            return self.visual_result(visual_fields, "试装通过及检验合格的实际选择")
+        try:
+            trial = facts.field(("试装结论",))
+            inspection = facts.field(("检验结论",))
+        except UnknownFact:
+            return self.visual_result(visual_fields, "试装通过及检验合格的实际选择")
 
-    def check(self) -> AuditResultItem:
-        return self._audit.evaluate(self._clause_id)
-
-
-class _BoundLeaf:
-    def __init__(self, audit_file, rule, group_context):
-        self.audit_file = audit_file
-        self.rule = rule
-        self._group_context = group_context
-        self.checks = [_Clause(self, clause_id) for clause_id in _clause_ids(rule)]
-
-    def close(self) -> None:
-        return None
-
-    def evaluate(self, clause_id: str) -> AuditResultItem:
-        # RESOURCE["clauses"] only names readers. This file implements none.
-        # A named reader without code here stays UNABLE. It is not a pass.
-        message = f"{RESOURCE['customer']}/{RESOURCE['preset_key']}：{_BOUNDARY}"
-        return self._item(clause_id, "UNABLE", message, checks_performed=0, evidence=self._boundary(message))
-
-    def _boundary(self, message: str) -> AuditEvidence | None:
-        suffix = Path(str(getattr(self.audit_file, "file_url", "") or "")).suffix.lower()
-        source_format = _FORMATS.get(suffix)
-        if source_format is None:
+        def chosen(value, positive, negative):
+            # Match whole option tokens, longest first. A suffix mark on
+            # “未通过” must not also mark its “通过” substring as selected.
+            labels = "|".join(re.escape(label) for label in sorted((positive, negative), key=len, reverse=True))
+            marks = "☑✓√✔■"
+            pattern = rf"([{marks}□☐])\s*({labels})|({labels})\s*([{marks}□☐])"
+            options = [(match[2] or match[3], match[1] or match[4]) for match in re.finditer(pattern, str(value))]
+            selected = {label for label, mark in options if mark in marks}
+            if negative in selected:
+                return False
+            if selected == {positive} and sum(mark in marks for _label, mark in options) == 1:
+                return True
+            if not selected and {label for label, _ in options} == {positive, negative}:
+                return False
             return None
-        return structure_evidence(source_format=source_format, sources=(), diagnostics=(structure_diagnostic("evidence_reader_absent", message),))
 
-    def _item(self, clause_id: str, status: str, suggestion: str, *, evidence: AuditEvidence | None, checks_performed: int) -> AuditResultItem:
-        category = clause_id
-        for row in getattr(self.rule, "rules", ()) or ():
-            row_id = row.get("id") if isinstance(row, dict) else getattr(row, "id", None)
-            if row_id == clause_id:
-                raw = row.get("category") if isinstance(row, dict) else getattr(row, "category", None)
-                category = str(raw or clause_id)
-                break
-        return AuditResultItem(
-            classification="规则审核",
-            item=category,
-            priority="P0",
-            status=status,
-            suggestions=suggestion,
-            evidence=evidence,
-            clause_id=clause_id,
-            checks_performed=checks_performed,
-        )
-
-
-def _clause_ids(rule) -> list[str]:
-    found: list[str] = []
-    for row in getattr(rule, "rules", ()) or ():
-        clause_id = row.get("id") if isinstance(row, dict) else getattr(row, "id", None)
-        if isinstance(clause_id, str) and clause_id and clause_id not in found:
-            found.append(clause_id)
-    return found
+        results = [chosen(trial, "通过", "未通过"), chosen(inspection, "合格", "不合格")]
+        if False in results:
+            return ("NG", "试装或检验结论选中了未通过/不合格。")
+        if None in results:
+            return self.visual_result(visual_fields, "试装通过及检验合格的实际选择")
+        return ("PASS", "已核实流程结束/完成和两类通过结论的实际勾选。")

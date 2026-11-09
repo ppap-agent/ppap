@@ -1,96 +1,120 @@
-"""Bound clauses of one predefined directory leaf.
+"""UAES U01 rules over frozen, source-addressed evidence.
 
-This leaf implements no evidence reader. Every bound clause is UNABLE.
-Unknown is not a pass. This file does not call another checker version.
+This leaf owns its complete business checks and does not call another version.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Literal
+import math
+import re
 
-from audit.checker_lib.evidence import structure_diagnostic, structure_evidence
-from audit.contracts import AuditEvidence, AuditResultItem
+from audit.checker_lib.source import SourceAudit, UnknownFact, blank, key, number
+from audit.engine.checkers.dimension_measurement_policy import parse_quality_standard_range
 from resources import RESOURCE
 
-_BOUNDARY = "本目录 Checker 没有读取本条款证据的检查，不能判定为通过。"
-_Format = Literal["xlsx", "xls", "xlsm", "pdf", "docx", "png", "jpg", "jpeg", "webp", "txt", "md"]
-_FORMATS: dict[str, _Format] = {
-    ".xlsx": "xlsx",
-    ".xlsm": "xlsm",
-    ".xls": "xls",
-    ".pdf": "pdf",
-    ".docx": "docx",
-    ".png": "png",
-    ".jpg": "jpg",
-    ".jpeg": "jpeg",
-    ".webp": "webp",
-    ".txt": "txt",
-    ".md": "md",
-}
+
+class UaesInspectionAgent(SourceAudit):
+    REPORTS = ("尺寸报告", "材料报告", "功能报告", "可靠性报告")
+
+    def report(self, title):
+        facts = self.native()
+        table = facts.table((title,))
+        row, columns = facts.columns(
+            table,
+            {
+                "requirement": ("要求", "要求值", "技术要求", "Requirements"),
+                "actual": ("供应商实测结果", "供应商实测值", "Supplier Actual Measurement Results", "Actual-Value Supplier/供应商实测值/Actual-Value Customer 客户实测值", "实测值"),
+            },
+        )
+        actual = columns["actual"]
+        reader = facts.readers[table["id"]]
+        merged = next((span for span in table.get("merges", []) if span[0] <= row <= span[2] and span[1] <= actual <= span[3]), None)
+        end = merged[3] if merged else actual
+        # Some reports label each sample individually instead of a merged band.
+        if merged is None:
+            while end + 1 <= table["cols"] and re.fullmatch(r"(?:实测值|样品|sample)\s*\d+", str(reader.cell(row, end + 1).get("value", "")), re.I):
+                end += 1
+        facts.cell(table, row, actual)
+        return table, row, columns["requirement"], list(range(actual, end + 1))
+
+    def rule_1(self):
+        _table, _row, _requirement, measurements = self.report("尺寸报告")
+        count = len(measurements)
+        if count % 3:
+            return "NG", f"尺寸报告供应商实测值列数为{count}，不是3或3的倍数。" + ("请复核是否覆盖多产线/多模穴。" if count > 5 else "")
+        return "PASS", f"尺寸报告供应商实测值列数为{count}。" + ("请复核是否覆盖多产线/多模穴。" if count > 5 else "")
+
+    def rule_2(self):
+        facts = self.native()
+        near = False
+        for title in self.REPORTS:
+            table, start, requirement, measurements = self.report(title)
+            # Only a true overall result column can establish OK. Separate
+            # blank OK/NOT OK columns require the actual mark to be decoded.
+            _result_row, result_columns = facts.columns(table, {"result": ("结果", "判定", "评价", "Evaluation")})
+            result_column = result_columns["result"]
+            reader = facts.readers[table["id"]]
+            separate_marks = (
+                result_column < table["cols"]
+                and _result_row < table["rows"]
+                and key(reader.cell(_result_row + 1, result_column).get("value")) == "ok"
+                and key(reader.cell(_result_row + 1, result_column + 1).get("value")).rstrip(".") in {"notok", "nok", "ng"}
+            )
+            count = 0
+            for row in range(start + 1, table["rows"] + 1):
+                value = facts.cell(table, row, requirement)
+                if blank(value):
+                    continue
+                if key(value) in {"要求", "requirements"}:
+                    continue
+                if any(term in str(value) for term in ("供应商负责人", "Supplier responsible", "编制", "批准")):
+                    break
+                count += 1
+                result = facts.cell(table, row, result_column)
+                if separate_marks:
+                    rejected = facts.cell(table, row, result_column + 1)
+
+                    def mark(value):
+                        return bool(re.fullmatch(r"[×xX☑✓√✔]", str(value or "").strip()))
+
+                    if mark(rejected):
+                        return "NG", f"{title}第{row}行实际选中了NOT OK。"
+                    if mark(result) and blank(rejected):
+                        result = "OK"
+                    elif blank(result) and blank(rejected):
+                        raise UnknownFact("报告OK/NOT OK两栏没有可确认的实际选择。")
+                    else:
+                        raise UnknownFact("报告结果选择符号无法可靠识别或多选。")
+                if key(result) != "ok":
+                    if blank(result):
+                        raise UnknownFact("报告结果栏未能确认实际OK选择，不能以空OK标签通过。")
+                    return "NG", f"{title}第{row}行结果不是OK。"
+                limits = parse_quality_standard_range(value)
+                if limits is None:
+                    if re.search(r"\d", str(value)):
+                        raise UnknownFact("定量要求范围不能可靠解析：" + str(value))
+                    continue
+                lower, upper = limits
+                actual = [float(number(facts.cell(table, row, column))) for column in measurements]
+                if any(item < lower or item > upper for item in actual):
+                    return "NG", f"{title}第{row}行存在超出要求范围的实测值。"
+                if math.isfinite(lower) and math.isfinite(upper) and upper > lower and all(item >= upper - (upper - lower) * 0.1 for item in actual):
+                    near = True
+            if not count:
+                raise UnknownFact(title + "没有可确认的要求行，不能按空范围通过。")
+        return "PASS", "四份报告全部要求的实测值与同行OK已核实。" + ("所有实测值接近要求上限的项目，请关注过程能力分析报告。" if near else "")
+
+    def rule_3(self):
+        for title in self.REPORTS:
+            self.report(title)
+        return self.visual_result(
+            {"four_signatures": "尺寸、材料、功能、可靠性四份报告中，每份存在非空要求项的报告下方供应商负责人区域均有对应实际签字，不能是预印标签。"}, "四报告供应商负责人实际签字"
+        )
+
+    def rule_4(self):
+        self.related(("气泡图", "bubble"), require_name=True)
+        return "PASS", "当前批次独立气泡图与报告物料号、名称及版本一致。"
 
 
 def create_audit(audit_file, rule, group_context=None):
-    return _BoundLeaf(audit_file, rule, group_context)
-
-
-class _Clause:
-    def __init__(self, audit: _BoundLeaf, clause_id: str):
-        self.rule_item = type("_RuleItem", (), {"id": clause_id})()
-        self._audit = audit
-        self._clause_id = clause_id
-
-    def check(self) -> AuditResultItem:
-        return self._audit.evaluate(self._clause_id)
-
-
-class _BoundLeaf:
-    def __init__(self, audit_file, rule, group_context):
-        self.audit_file = audit_file
-        self.rule = rule
-        self._group_context = group_context
-        self.checks = [_Clause(self, clause_id) for clause_id in _clause_ids(rule)]
-
-    def close(self) -> None:
-        return None
-
-    def evaluate(self, clause_id: str) -> AuditResultItem:
-        # RESOURCE["clauses"] only names readers. This file implements none.
-        # A named reader without code here stays UNABLE. It is not a pass.
-        message = f"{RESOURCE['customer']}/{RESOURCE['preset_key']}：{_BOUNDARY}"
-        return self._item(clause_id, "UNABLE", message, checks_performed=0, evidence=self._boundary(message))
-
-    def _boundary(self, message: str) -> AuditEvidence | None:
-        suffix = Path(str(getattr(self.audit_file, "file_url", "") or "")).suffix.lower()
-        source_format = _FORMATS.get(suffix)
-        if source_format is None:
-            return None
-        return structure_evidence(source_format=source_format, sources=(), diagnostics=(structure_diagnostic("evidence_reader_absent", message),))
-
-    def _item(self, clause_id: str, status: str, suggestion: str, *, evidence: AuditEvidence | None, checks_performed: int) -> AuditResultItem:
-        category = clause_id
-        for row in getattr(self.rule, "rules", ()) or ():
-            row_id = row.get("id") if isinstance(row, dict) else getattr(row, "id", None)
-            if row_id == clause_id:
-                raw = row.get("category") if isinstance(row, dict) else getattr(row, "category", None)
-                category = str(raw or clause_id)
-                break
-        return AuditResultItem(
-            classification="规则审核",
-            item=category,
-            priority="P0",
-            status=status,
-            suggestions=suggestion,
-            evidence=evidence,
-            clause_id=clause_id,
-            checks_performed=checks_performed,
-        )
-
-
-def _clause_ids(rule) -> list[str]:
-    found: list[str] = []
-    for row in getattr(rule, "rules", ()) or ():
-        clause_id = row.get("id") if isinstance(row, dict) else getattr(row, "id", None)
-        if isinstance(clause_id, str) and clause_id and clause_id not in found:
-            found.append(clause_id)
-    return found
+    return UaesInspectionAgent(audit_file, rule, group_context, resource=RESOURCE)

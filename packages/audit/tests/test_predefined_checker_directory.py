@@ -46,19 +46,19 @@ def test_installed_u08_leaf_is_a_distinct_source_from_the_legacy_carrier():
     for name in LEAF:
         assert suite.files[name] == (disk / name).read_bytes() == (ROOT / "packages/audit/src/audit/checkers/v5/UAES/U08" / name).read_bytes()
     rules = json.loads(suite.files["rules.json"])
-    assert rules["directory_coverage"] == "partial"
+    assert rules["directory_coverage"] == "complete"
     assert rules["related_suite_keys"] == ["UAES:U07", "UAES:U16"]
     preset = preset_rule("UAES", "U08")
     assert [row["id"] for row in rules["rules"]] == [clause.id for clause in preset.clauses]
     assert [row["rule_to_check"] for row in rules["rules"]] == [clause.text for clause in preset.clauses]
-    assert rules["checker_binding"] == {"U08:1": "checker:create_audit", "U08:4": "checker:create_audit"}
+    assert rules["checker_binding"] == {clause.id: "checker:create_audit" for clause in preset.clauses}
     assert "rule_profile" not in rules
     assert suite.entrypoints == rules["checker_binding"]
     for name in LEAF[:1] + LEAF[2:]:
         assert not _legacy_imports(suite.files[name])
 
 
-def test_migration_inventory_names_every_current_group_and_only_u08_is_partial():
+def test_migration_inventory_names_every_current_group_and_declares_uaes_readers():
     directory = {suite.suite_key: suite for suite in predefined_directory_suites()}
     rows = []
     for preset in customer_presets():
@@ -76,17 +76,26 @@ def test_migration_inventory_names_every_current_group_and_only_u08_is_partial()
         if status == "complete-binding-no-evidence-reader":
             namespace: dict = {}
             exec(suite.files["resources.py"], namespace)
-            assert namespace["RESOURCE"]["clauses"] == {}
-            assert namespace["RESOURCE"]["customer"] == preset.customer
-            assert namespace["RESOURCE"]["preset_key"] == preset.entry_id
-            assert b"PASS" not in suite.files["checker.py"]
+            resource = namespace["RESOURCE"]
+            assert resource["customer"] == preset.customer
+            assert resource["preset_key"] == preset.entry_id
+            if preset.customer == "UAES":
+                assert set(resource["clauses"]) == set(clause_ids)
+                methods = {node.name for node in ast.walk(ast.parse(suite.files["checker.py"])) if isinstance(node, ast.FunctionDef)}
+                assert all(spec["method"] in methods for spec in resource["clauses"].values())
+                status = "complete-evidence-reader"
+            else:
+                assert resource["clauses"] == {}
+                assert b"PASS" not in suite.files["checker.py"]
             assert b"audit.checkers" not in suite.files["checker.py"] and b"check_clause" not in suite.files["checker.py"]
         assert suite.related_suite_keys == _RELATED.get(key, ())
         assert [row["rule_to_check"] for row in rules["rules"]] == [clause.text for clause in preset.clauses]
         rows.append({"suite_key": key, "status": status, "directory_source": suite.source_path})
     assert len(rows) == 41
-    assert [row for row in rows if row["status"] == "partial-directory-slice"] == [{"suite_key": "UAES:U08", "status": "partial-directory-slice", "directory_source": "v5/UAES/U08"}]
-    assert sum(row["status"] == "complete-binding-no-evidence-reader" for row in rows) == 40
+    assert not [row for row in rows if row["status"] == "partial-directory-slice"]
+    assert sum(row["status"] == "complete-evidence-reader" for row in rows) == 19
+    assert sum(len(suite.entrypoints) for suite in directory.values() if suite.customer == "UAES") == 52
+    assert sum(row["status"] == "complete-binding-no-evidence-reader" for row in rows) == 22
     assert sum(row["status"] == "not-migrated" for row in rows) == 0
 
 

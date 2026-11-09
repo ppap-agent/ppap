@@ -147,7 +147,9 @@ def test_directory_discovery_keeps_placeholders_and_states_the_reader_limit():
     official = {suite.source_path for suite in official_source_suites()}
     assert set(physical) <= official
     rows = {suite.source_path: discovery_row(suite) for suite in physical.values()}
-    assert sorted(clause_id for row in rows.values() for clause_id in row["capability"]["evidence_reader_clause_ids"]) == ["U08:1", "U08:4"]
+    reader_ids = [clause_id for row in rows.values() for clause_id in row["capability"]["evidence_reader_clause_ids"]]
+    assert len(reader_ids) == 52
+    assert set(reader_ids) == {clause["id"] for path, suite in physical.items() if path.startswith("v5/UAES/") for clause in json.loads(suite.files["rules.json"])["rules"]}
     placeholder = rows["v5/理想/L01"]
     rules = json.loads(physical["v5/理想/L01"].files["rules.json"])
     assert rules["directory_coverage"] == "complete"
@@ -155,8 +157,8 @@ def test_directory_discovery_keeps_placeholders_and_states_the_reader_limit():
     assert placeholder["capability"]["bound_clause_count"] == placeholder["capability"]["clause_count"] > 0
     assert "verified" not in placeholder["capability"]
     u08 = rows["v5/UAES/U08"]["capability"]
-    assert u08["evidence_reader_clause_ids"] == ["U08:1", "U08:4"]
-    assert u08["bound_clause_count"] == 2
+    assert u08["evidence_reader_clause_ids"] == [clause["id"] for clause in json.loads(physical["v5/UAES/U08"].files["rules.json"])["rules"]]
+    assert u08["bound_clause_count"] == 12
     assert u08["clause_count"] == 12
     assert leaf_capability({"rules.json": b'{"rules":[{"id":"C1"},{"id":"C2"}],"checker_binding":{"C1":"checker:create_audit"},"directory_coverage":"complete"}'}) == {
         "clause_count": 2,

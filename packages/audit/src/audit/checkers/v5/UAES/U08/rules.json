@@ -94,13 +94,23 @@
       "type_of_rule": "text"
     }
   ],
-  "directory_coverage": "partial",
+  "directory_coverage": "complete",
   "related_suite_keys": [
     "UAES:U07",
     "UAES:U16"
   ],
   "checker_binding": {
     "U08:1": "checker:create_audit",
-    "U08:4": "checker:create_audit"
+    "U08:2": "checker:create_audit",
+    "U08:3": "checker:create_audit",
+    "U08:4": "checker:create_audit",
+    "U08:6": "checker:create_audit",
+    "U08:7": "checker:create_audit",
+    "U08:8": "checker:create_audit",
+    "U08:9": "checker:create_audit",
+    "U08:10": "checker:create_audit",
+    "U08:11": "checker:create_audit",
+    "U08:12": "checker:create_audit",
+    "U08:13": "checker:create_audit"
   }
 }

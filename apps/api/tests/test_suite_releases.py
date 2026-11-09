@@ -288,8 +288,8 @@ def test_predefined_catalog_binds_each_source_path_to_its_official_revision(auth
     body = alice.get("/suites").json()
     predefined = {row["path"]: row for row in body["predefined"]}
     assert predefined["v5/UAES/U08"] == {"path": "v5/UAES/U08", "title": "目录修订二", "suite_key": "UAES:U08", "revision_id": latest.id, **leaf_capability(updated)}
-    assert predefined["v5/UAES/U08"]["evidence_reader_clause_ids"] == ["U08:1", "U08:4"]
-    assert predefined["v5/UAES/U08"]["bound_clause_count"] == 2 and predefined["v5/UAES/U08"]["clause_count"] == 12
+    assert predefined["v5/UAES/U08"]["evidence_reader_clause_ids"] == [clause["id"] for clause in rules["rules"]]
+    assert predefined["v5/UAES/U08"]["bound_clause_count"] == predefined["v5/UAES/U08"]["clause_count"] == 12
     held = leaf_capability(placeholder.files)
     assert held["evidence_reader_clause_ids"] == [] and held["bound_clause_count"] == held["clause_count"] > 0
     assert predefined["v5/理想/L01"] == {

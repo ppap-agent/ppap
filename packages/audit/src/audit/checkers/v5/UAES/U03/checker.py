@@ -1,96 +1,36 @@
-"""Bound clauses of one predefined directory leaf.
+"""UAES U03 rules over frozen, source-addressed evidence.
 
-This leaf implements no evidence reader. Every bound clause is UNABLE.
-Unknown is not a pass. This file does not call another checker version.
+This leaf owns its complete business checks and does not call another version.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Literal
+from datetime import date
 
-from audit.checker_lib.evidence import structure_diagnostic, structure_evidence
-from audit.contracts import AuditEvidence, AuditResultItem
+from audit.checker_lib.source import SourceAudit, UnknownFact
+from audit.engine.checkers.date_utils import normalize_excel_date
 from resources import RESOURCE
 
-_BOUNDARY = "本目录 Checker 没有读取本条款证据的检查，不能判定为通过。"
-_Format = Literal["xlsx", "xls", "xlsm", "pdf", "docx", "png", "jpg", "jpeg", "webp", "txt", "md"]
-_FORMATS: dict[str, _Format] = {
-    ".xlsx": "xlsx",
-    ".xlsm": "xlsm",
-    ".xls": "xls",
-    ".pdf": "pdf",
-    ".docx": "docx",
-    ".png": "png",
-    ".jpg": "jpg",
-    ".jpeg": "jpeg",
-    ".webp": "webp",
-    ".txt": "txt",
-    ".md": "md",
-}
+
+class UaesLabQualificationAgent(SourceAudit):
+    def rule_1(self):
+        facts = self.native()
+        facts.require_title("中国合格评定国家认可委员会")
+        facts.require_text("CNAS")
+        value = facts.field(("截止日期", "有效期至", "有效期截止日期", "证书有效期至"))
+        deadline = normalize_excel_date(value)
+        if deadline is None:
+            raise UnknownFact("认可证书的截止日期未能可靠识别，需人工复核。")
+        if deadline <= date.today():
+            return "NG", "实验室资质已到期，截止日期必须晚于当前日期。"
+        message = "资质截止日期晚于当前日期；CNAS标识及认可委员会名称已读取。"
+        if self.group_context and any(
+            any(term in str(file.file_metadata.get("original_filename", "")) for term in ("试验报告", "验证报告", "DVR", "DV报告", "PV报告")) for file in self.group_context.by_audit_id.values()
+        ):
+            message += "同批有试验报告，需人工比对测试机构与资质实验室是否一致。"
+        status, visual_message = self.visual_result({"cnas_mark": "资质证书存在实际CNAS认可标识，不能仅有提及CNAS或空标识占位。"}, "证书实际CNAS认可标识", existential_fields=("cnas_mark",))
+        return status, message + visual_message
 
 
 def create_audit(audit_file, rule, group_context=None):
-    return _BoundLeaf(audit_file, rule, group_context)
-
-
-class _Clause:
-    def __init__(self, audit: _BoundLeaf, clause_id: str):
-        self.rule_item = type("_RuleItem", (), {"id": clause_id})()
-        self._audit = audit
-        self._clause_id = clause_id
-
-    def check(self) -> AuditResultItem:
-        return self._audit.evaluate(self._clause_id)
-
-
-class _BoundLeaf:
-    def __init__(self, audit_file, rule, group_context):
-        self.audit_file = audit_file
-        self.rule = rule
-        self._group_context = group_context
-        self.checks = [_Clause(self, clause_id) for clause_id in _clause_ids(rule)]
-
-    def close(self) -> None:
-        return None
-
-    def evaluate(self, clause_id: str) -> AuditResultItem:
-        # RESOURCE["clauses"] only names readers. This file implements none.
-        # A named reader without code here stays UNABLE. It is not a pass.
-        message = f"{RESOURCE['customer']}/{RESOURCE['preset_key']}：{_BOUNDARY}"
-        return self._item(clause_id, "UNABLE", message, checks_performed=0, evidence=self._boundary(message))
-
-    def _boundary(self, message: str) -> AuditEvidence | None:
-        suffix = Path(str(getattr(self.audit_file, "file_url", "") or "")).suffix.lower()
-        source_format = _FORMATS.get(suffix)
-        if source_format is None:
-            return None
-        return structure_evidence(source_format=source_format, sources=(), diagnostics=(structure_diagnostic("evidence_reader_absent", message),))
-
-    def _item(self, clause_id: str, status: str, suggestion: str, *, evidence: AuditEvidence | None, checks_performed: int) -> AuditResultItem:
-        category = clause_id
-        for row in getattr(self.rule, "rules", ()) or ():
-            row_id = row.get("id") if isinstance(row, dict) else getattr(row, "id", None)
-            if row_id == clause_id:
-                raw = row.get("category") if isinstance(row, dict) else getattr(row, "category", None)
-                category = str(raw or clause_id)
-                break
-        return AuditResultItem(
-            classification="规则审核",
-            item=category,
-            priority="P0",
-            status=status,
-            suggestions=suggestion,
-            evidence=evidence,
-            clause_id=clause_id,
-            checks_performed=checks_performed,
-        )
-
-
-def _clause_ids(rule) -> list[str]:
-    found: list[str] = []
-    for row in getattr(rule, "rules", ()) or ():
-        clause_id = row.get("id") if isinstance(row, dict) else getattr(row, "id", None)
-        if isinstance(clause_id, str) and clause_id and clause_id not in found:
-            found.append(clause_id)
-    return found
+    return UaesLabQualificationAgent(audit_file, rule, group_context, resource=RESOURCE)
