@@ -213,6 +213,26 @@ def test_disagreed_role_stays_unknown_without_a_third_observation(tmp_path, monk
     assert len(controlled_vision) == count
 
 
+def test_resolving_a_business_role_keeps_the_plan_and_cached_facts(tmp_path, monkeypatch, controlled_vision):
+    from documents.ocr import client
+
+    original = client.call_llm_async
+
+    async def business_role(*args, **kwargs):
+        facts = await original(*args, **kwargs)
+        if "psw_reference_content" in facts:
+            facts["psw_reference_content"] = False
+        return facts
+
+    monkeypatch.setattr(client, "call_llm_async", business_role)
+    agent = checker(write_pdf(tmp_path / "business-with-guidance.pdf", [("unknown", True, True)]))
+    assert agent._run_fact_rule(4, 5).status == "PASS"
+    count = len(controlled_vision)
+    assert agent._run_fact_rule(4, 5).status == "PASS"
+    assert agent._run_fact_rule(2, 3).status == "PASS"
+    assert len(controlled_vision) == count
+
+
 @pytest.mark.parametrize("repeated_header", [False, True])
 def test_reference_exclusion_does_not_make_section_fragments_independent_objects(tmp_path, repeated_header):
     path = write_pdf(tmp_path / "section-fragments.pdf", [("business", True, False), ("business", False, True), ("example", True, True)])

@@ -132,6 +132,10 @@ class _Objects:
                     )
             if not self.warrants and len(document) == 1:
                 self.warrants = [1]
+        multiple_forms = len(self.warrants) > 1 and self.form_pages.issuperset(self.warrants)
+        self.needs_object_scope = multiple_forms or len(self.authorization) > 1 or any(role is not False for role in self.roles.values()) or bool(self.ambiguous | self.authorization_ambiguous)
+        if self.needs_object_scope and len(self.warrants) > 1:
+            self.ambiguous.update(set(self.warrants) - self.form_pages)
 
     def _note(self, locator, excerpt, **kwargs):
         self.sources.append((({**locator, "file_version_id": self.audit.audit_id}, excerpt), kwargs))
@@ -238,10 +242,10 @@ def evaluate_psw_pdf_rule(audit: AuditInput, rule_no: int, witness, cache: dict,
     if key not in cache:
         cache[key] = _Objects(audit, digest, cache)
     objects = cache[key]
-    multiple_forms = len(objects.warrants) > 1 and objects.form_pages.issuperset(objects.warrants)
     # Repeated sections alone do not establish separate business objects.
     # The existing one-document reader preserves uncertainty between them.
-    if not multiple_forms and len(objects.authorization) <= 1 and not any(role is not False for role in objects.roles.values()) and not objects.ambiguous and not objects.authorization_ambiguous:
+    # This choice is source-bound: resolving a role cannot discard its reads.
+    if not objects.needs_object_scope:
         facts = read_single()
         return facts, evaluate_psw_observation(rule_no, facts)
     from documents.ocr.env import ocr_policy_identity
@@ -251,8 +255,4 @@ def evaluate_psw_pdf_rule(audit: AuditInput, rule_no: int, witness, cache: dict,
     if identity in cache and cache[identity] != policy:
         raise ValueError("OCR configuration changed during the audit")
     cache[identity] = policy
-    # A section fragment is not an independently established business form.
-    # Reference exclusion must not turn such fragments into ALL objects.
-    if len(objects.warrants) > 1:
-        objects.ambiguous.update(set(objects.warrants) - objects.form_pages)
     return {}, objects.evaluate(rule_no, witness)
