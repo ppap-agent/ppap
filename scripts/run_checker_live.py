@@ -257,13 +257,9 @@ def controller_evidence(path, environment):
     return json.loads(path.read_text())
 
 
-def verify_local_guest_limits(environment, probe):
-    actual = probe.get("local_guest_limits")
-    if not environment.get("LIVE_GUEST_AS_MIB"):
-        require(actual is None, "unexpected_local_guest_limits")
-        return None
-    expected = {"policy_memory_mib": 1536, "actual_guest_as_mib": 3072, "container_memory_mib": 2048, "guest_version_probe": "1.5.0", "scope": "local_emulation_only"}
-    require(environment["LIVE_GUEST_AS_MIB"] == "3072" and actual == expected, "local_guest_startup_not_proven")
+def verify_guest_startup(probe):
+    expected = {"address_space_mib": 1536, "max_processes": 256, "pi_version": "1.5.0"}
+    require(probe.get("guest_startup") == expected, "guest_startup_not_proven")
     return expected
 
 
@@ -887,7 +883,7 @@ def run(report_path):
         report["runtime_images"] = verify_local_runtime(os.environ, report["runtime_images"])
         report["data_services"] = verify_local_data_services(os.environ)
         probe = controller_evidence(report_path.parent / "controller.json", os.environ)
-        report["local_guest_limits"] = verify_local_guest_limits(os.environ, probe)
+        report["guest_startup"] = verify_guest_startup(probe)
         write_report(report_path, report)
     # Only initial identity, rule and immutable faulty Suite use trusted stores.
     # All files, real baseline rounds, personal settings, feedback, optimization

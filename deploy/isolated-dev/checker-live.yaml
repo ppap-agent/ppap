@@ -146,10 +146,6 @@ services:
       PPAP_SERVICE: deep
       PPAP_PG_WORKER_PASSWORD: ${LIVE_PG_WORKER_PASSWORD:?}
       PPAP_DEEP_RUNTIME: container-only
-      PPAP_CHECKER_LIVE_MODE: ${PPAP_CHECKER_LIVE_MODE:-workflow}
-      PPAP_CHECKER_LIVE_LOCAL_ID: ${PPAP_CHECKER_LIVE_LOCAL_ID:-}
-      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:?}
-      LIVE_GUEST_AS_MIB: ${LIVE_GUEST_AS_MIB:-}
     command: [python, /live/checker_controller.py]
     volumes:
       - deep-socket:/run/ppap-deep

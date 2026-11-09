@@ -335,15 +335,11 @@ the private container and authenticates a bucket HEAD with the private S3 creden
 Docker's published-port metadata is insufficient: an existing host `kubectl
 port-forward` can otherwise intercept that address. Existing forwards stay untouched.
 
-For local ARM hosts running the AMD64 image through Rosetta, explicitly set
-`LIVE_GUEST_AS_MIB=3072` before Compose starts. This permits a finite 3 GiB virtual
-address space while keeping the container's 2 GiB memory limit and all other guest
-limits. The trusted local Controller runs Pi `--version` under those exact limits
-before becoming ready; the driver checks its receipt before any business write.
-The report records the actual AS limit separately from the unchanged production
-policy. This local accommodation is not evidence of identical production execution;
-workflow/production overrides and other AS values are rejected. It never retries
-a failed or uncertain operation.
+Use a native ARM64 Deep image on an ARM64 host. Other components can keep their
+same-source AMD64 images; the report records each actual image architecture.
+The trusted Controller runs Pi `--version` under the unchanged production guest
+limits before becoming ready. The driver checks that startup receipt before any
+business write. No emulation-specific resource override is used.
 
 ```sh
 export PPAP_BUILD_SHA="$(git rev-parse HEAD)"

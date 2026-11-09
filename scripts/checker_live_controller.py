@@ -1,4 +1,4 @@
-"""Observational guard around production logic, with explicit local Rosetta AS limits.
+"""Observational live guard around the unchanged production Controller/runtime.
 
 No model, artifact, trial or provider response is supplied or replaced. The
 client source is not mounted here. Private Oracle identities and evidence are
@@ -9,7 +9,6 @@ import hashlib
 import io
 import json
 import os
-import re
 import subprocess
 import threading
 import zipfile
@@ -19,47 +18,19 @@ MARKER = b"checker-live-holdout-"
 PRIVATE_READ_PROBE = "from pathlib import Path\ntry:\n Path('/evidence/controller.json').read_bytes()\nexcept PermissionError:\n pass\nelse:\n raise SystemExit(1)"
 
 
-def local_guest_limits(environment):
-    """Rosetta needs virtual address space; the container RSS limit stays 2 GiB."""
-    value = environment.get("LIVE_GUEST_AS_MIB", "")
-    if not value:
-        return None
-    ident = environment.get("PPAP_CHECKER_LIVE_LOCAL_ID", "")
-    if (value != "3072" or environment.get("PPAP_CHECKER_LIVE_MODE") != "local" or not re.fullmatch(r"[a-f0-9]{32}", ident)
-            or environment.get("COMPOSE_PROJECT_NAME") != "ppap-checker-local-" + ident or environment.get("CI") or environment.get("GITHUB_ACTIONS")):
-        raise ValueError("invalid_local_guest_limits")
-    return 3072
-
-
-def prepare_local_guest(runtime_class, environment):
-    limit = local_guest_limits(environment)
-    if limit is None:
-        return None
-    if Path("/sys/fs/cgroup/memory.max").read_text().strip() != "2147483648":
-        raise ValueError("local_container_memory_limit_changed")
-    # This executable is private to this disposable trusted Controller. Only
-    # the existing AS argument changes; no credential/model input is involved.
-    wrapper = Path("/run/ppap-live-prlimit")
-    wrapper.write_text("#!/app/.venv/bin/python\nimport os,sys\na=sys.argv[1:]\nassert a[0]=='--as=1610612736'\na[0]='--as=3221225472'\nos.execv('/usr/bin/prlimit',['prlimit',*a])\n")
-    wrapper.chmod(0o555)
+def probe_guest_startup(policy):
+    """Exercise real Pi startup with the unchanged production guest limits."""
     checked = subprocess.run(
-        [str(wrapper), "--as=1610612736", "--nproc=256", "--fsize=268435456", "--nofile=128", "--core=0", "--", "/usr/bin/setpriv",
+        ["/usr/bin/prlimit", f"--as={policy.memory_mib * 1024 * 1024}", f"--nproc={policy.max_processes}",
+         "--fsize=268435456", "--nofile=128", "--core=0", "--", "/usr/bin/setpriv",
          "--no-new-privs", "--reuid=10001", "--regid=10001", "--clear-groups", "--bounding-set=-all", "--inh-caps=-all", "--ambient-caps=-all",
          "--", "/usr/local/bin/ppap-pi", "--version"],
         capture_output=True, timeout=30,
         env={"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/tmp", "LANG": "C.UTF-8", "PI_OFFLINE": "1", "PI_TELEMETRY": "0"},
     )
     if checked.returncode != 0 or checked.stdout.strip() != b"1.5.0":
-        raise ValueError("local_guest_startup_failed")
-    initialize = runtime_class.__init__
-
-    def local_initialize(runtime, config, *args, **kwargs):
-        if config.memory_mib != 1536:
-            raise ValueError("local_guest_policy_changed")
-        return initialize(runtime, config.model_copy(update={"prlimit_executable": wrapper}), *args, **kwargs)
-
-    runtime_class.__init__ = local_initialize
-    return {"policy_memory_mib": 1536, "actual_guest_as_mib": limit, "container_memory_mib": 2048, "guest_version_probe": "1.5.0", "scope": "local_emulation_only"}
+        raise ValueError("guest_startup_failed")
+    return {"address_space_mib": policy.memory_mib, "max_processes": policy.max_processes, "pi_version": "1.5.0"}
 
 
 def contains_holdout(raw):
@@ -137,13 +108,12 @@ class Probe:
 def main():
     from agent.execution.gateway import Grants
     from agent.execution.isolation.container import ContainerRuntime
+    from product.settings import load_settings
     from worker.deep_controller import main as controller_main
 
     probe = Probe(Path("/evidence/controller.json"))
-    local_limits = prepare_local_guest(ContainerRuntime, os.environ)
-    if local_limits is not None:
-        probe.facts["local_guest_limits"] = local_limits
-        probe.save()
+    probe.facts["guest_startup"] = probe_guest_startup(load_settings().deep_execution_policy())
+    probe.save()
     # Exercise the actual guest UID against the report/oracle boundary before
     # any paid work. The client script must not exist in this container.
     if os.getuid() != 0 or Path("/live/run_checker_live.py").exists():
