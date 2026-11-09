@@ -576,7 +576,7 @@ class SemanticRuntime:
 
         original_name = str((audit_file.file_metadata or {}).get("original_filename") or audit_file.file_url or "")
         try:
-            decoded_source = {name: content.decode("utf-8") for name, content in (source_files or {}).items()} if operation == "adapt-checker" else {}
+            decoded_source = {name: content.decode("utf-8") for name, content in source_files.items()} if operation == "adapt-checker" and source_files is not None else None
         except UnicodeDecodeError as exc:
             raise DeepError("checker_input_invalid") from exc
         manifest = CheckerManifest(

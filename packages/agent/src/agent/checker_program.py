@@ -72,7 +72,7 @@ class CheckerManifest(BaseModel):
     group_context: dict[str, Any] | None = None
     related_documents: dict[str, str] = Field(default_factory=dict)
     prior_files: dict[str, str] | None = None
-    source_files: dict[str, str] = Field(default_factory=dict)
+    source_files: dict[str, str] | None = None
     development_feedback: str | None = Field(default=None, max_length=32768)
     artifact: CheckerArtifact | None = None
     reasoning_effort: Literal["xhigh", "high", "medium", "low"] = "medium"

@@ -789,9 +789,9 @@ _SELECTED_SOURCE_NAMES = frozenset({"checker.py", "rules.json", "resources.py", 
 
 
 def _selected_checker_bytes(source_files: Mapping[str, str] | None) -> dict[str, str]:
-    if not source_files:
+    if source_files is None:
         return {}
-    if not isinstance(source_files, Mapping) or "checker.py" not in source_files or not set(source_files) <= _SELECTED_SOURCE_NAMES:
+    if not isinstance(source_files, Mapping) or not {"checker.py", "rules.json"} <= source_files.keys() or not set(source_files) <= _SELECTED_SOURCE_NAMES:
         raise CheckerProgramError("已选 Checker 源文件不完整")
     if any(not isinstance(name, str) or not isinstance(body, str) or not body.strip() for name, body in source_files.items()):
         raise CheckerProgramError("已选 Checker 源文件不完整")

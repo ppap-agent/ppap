@@ -110,12 +110,35 @@ def test_unsupported_source_name_fails_before_a_model_call(tmp_path):
     assert calls == []
 
 
+@pytest.mark.parametrize("source", [{}, {"checker.py": "def create_audit(*args): return []"}, {"rules.json": '{"rules":[]}'}])
+def test_explicit_selected_source_cannot_be_missing_or_partial(tmp_path, monkeypatch, source):
+    def forbidden(*args, **kwargs):
+        pytest.fail("Missing selected bytes must stop before reference lookup or model dispatch")
+
+    monkeypatch.setattr("agent.execution.checker_guest.task_reference", forbidden)
+    with pytest.raises(CheckerProgramError, match="源文件不完整"):
+        develop_checker(
+            audit_file=_target(tmp_path / "sample.xlsx"),
+            rule=_rule(),
+            group_context=None,
+            digest="d" * 64,
+            executor_revision="current",
+            runner=_Runner(forbidden),
+            work=tmp_path / "work",
+            deadline=10**12,
+            source_files=source,
+        )
+
+
 def test_v5_u08_bytes_do_not_pass_unbound_clauses_or_unsupported_formats(tmp_path):
     from agent.execution.audit_runtime import run_audit_process
     from openpyxl import Workbook
 
     suite = next(item for item in predefined_directory_suites() if item.source_path == "v5/UAES/U08")
     rules = json.loads(suite.files["rules.json"])
+    # Exercise an explicitly incomplete binding independently of the installed
+    # leaf's current business maturity.
+    rules["checker_binding"].pop("U08:2")
     program = {name: suite.files[name] for name in ("checker.py", "resources.py")}
     digest = checker_digest(program)
     binding = RuleBinding(suite.suite_key, digest, rules["checker_binding"])
@@ -126,8 +149,8 @@ def test_v5_u08_bytes_do_not_pass_unbound_clauses_or_unsupported_formats(tmp_pat
     book.save(path)
     book.close()
     original = path.read_bytes()
-    pdf = tmp_path / "control-plan.pdf"
-    pdf.write_bytes(b"%PDF-1.4\n")
+    unsupported_file = tmp_path / "control-plan.txt"
+    unsupported_file.write_bytes(b"Unsupported carrier")
 
     def run(raw: bytes, filename: str):
         source = FrozenInput("target", hashlib.sha256(raw).hexdigest(), "target", filename)
@@ -141,7 +164,7 @@ def test_v5_u08_bytes_do_not_pass_unbound_clauses_or_unsupported_formats(tmp_pat
     assert unbound == {row["id"] for row in rules["rules"]} - set(rules["checker_binding"])
     assert unbound
     assert not any(row["clause_id"] in unbound and row["status"] == "PASS" for row in excel["findings"])
-    unsupported = run(pdf.read_bytes(), "control-plan.pdf")
+    unsupported = run(unsupported_file.read_bytes(), "control-plan.txt")
     assert unsupported["findings"]
     assert {row["status"] for row in unsupported["findings"]} == {"UNABLE"}
     assert not any(row["coverage"] == "unsupported" and row["clause_id"] in {item["clause_id"] for item in unsupported["findings"]} for row in unsupported["coverage"])

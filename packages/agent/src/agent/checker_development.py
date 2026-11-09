@@ -83,7 +83,7 @@ class DevelopmentRequest:
     oracle_revision: str | None = None
     oracle: tuple[OracleSample, ...] = ()
     allow_model_calls: bool = True
-    source_files: dict[str, bytes] = field(default_factory=dict)
+    source_files: dict[str, bytes] | None = None
 
 
 class DevelopmentJob(Protocol):
@@ -125,6 +125,16 @@ class DevelopmentOutcome:
 
 
 def _validate(request: DevelopmentRequest) -> None:
+    if request.suite_revision_id:
+        if (
+            not request.source_files
+            or not {"checker.py", "rules.json"} <= request.source_files.keys()
+            or any(not isinstance(value, bytes) or not value.strip() for value in request.source_files.values())
+        ):
+            raise ValueError("selected revision requires complete source bytes")
+        source_program = {name: value for name, value in request.source_files.items() if name in {"checker.py", "resources.py"}}
+        if request.prior is not None and source_program != request.prior.files:
+            raise ValueError("selected revision source differs from the frozen prior program")
     if not request.executor_revision or request.oracle and not request.initiating_user_id:
         raise ValueError("optimization requires the initiating user and executor revision")
     if request.oracle and not request.oracle_revision:
