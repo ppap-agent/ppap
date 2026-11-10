@@ -65,7 +65,7 @@ export function Automation({active, suites: read, onReload, onBusyChange}: {acti
           return <TableRow key={item.suite_key} className="relative">
             <TableCell className="whitespace-normal"><a className="block break-words font-medium underline-offset-4 after:absolute after:inset-0 hover:underline focus-visible:outline-ring" href={href} onClick={event => followRulesLink(event, href)}>{item.title}</a>{reason(item) && <span className="block text-xs text-muted-foreground">{reason(item)}</span>}</TableCell>
             <TableCell><Badge shape="square" variant="outline">{item.origin === 'enterprise' ? '本企业修改' : '系统提供'}</Badge></TableCell>
-            <TableCell>{item.current_revision_id ? '正在使用' : '未采用'}</TableCell>
+            <TableCell>{item.current_revision_id ? '正在使用' : '未启用'}</TableCell>
             <TableCell><Badge shape="square" variant={status.variant}>{status.label}</Badge></TableCell>
             <TableCell><ChevronRight aria-hidden="true" className="size-4 text-muted-foreground"/></TableCell>
           </TableRow>

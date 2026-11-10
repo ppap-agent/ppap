@@ -6,7 +6,7 @@ type Rule = components['schemas']['Rule']
 type Catalog = components['schemas']['SuiteCatalog']
 
 /** What an audit of this file type can do on its own; worded for the person choosing a template. */
-export type Automation = {state: 'auto' | 'partial' | 'manual' | 'stale' | 'unverified' | 'unknown' | 'unreadable'; note?: string; suiteKey?: string}
+export type Automation = {state: 'auto' | 'partial' | 'manual' | 'stale' | 'unverified' | 'inactive' | 'unknown' | 'unreadable'; note?: string; suiteKey?: string}
 export type TemplateRow = {
   type: string
   label: string
@@ -22,7 +22,7 @@ export type RuleTemplate = {key: string; name: string; source: 'system' | 'enter
 export const SHARED_TEMPLATE = 'shared'
 export const PENDING_TEMPLATE = 'pending'
 export const automationLabel: Record<Automation['state'], string> = {
-  auto: '可自动审核', partial: '部分条款需人工', manual: '还不能自动审核', stale: '需重新验证', unverified: '待验证', unknown: '正在读取…', unreadable: '暂时读不到',
+  auto: '可自动审核', partial: '部分条款需人工', manual: '还不能自动审核', stale: '需重新验证', unverified: '待验证', inactive: '未启用', unknown: '正在读取…', unreadable: '暂时读不到',
 }
 
 /** An uploaded rule belongs to the template its customer field names; unscoped rules are shared, unconfirmed ones wait to be sorted. */
@@ -63,6 +63,8 @@ function automation(catalog: Catalog | 'failed' | null, suiteKey: string | null 
     return {state: 'auto', suiteKey}
   }
   if (!summary) return {state: 'manual', note: '审核时由人工逐条判断', suiteKey}
+  // A program offered but never adopted does not run; the person enables it in automatic review.
+  if (!summary.current_revision_id) return {state: 'inactive', note: '在“自动审核”中启用后才会使用', suiteKey}
   if (summary.current_revision_id && summary.verification_status === 'verified') return {state: 'auto', suiteKey}
   return {state: 'unverified', suiteKey}
 }
