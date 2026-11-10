@@ -13,9 +13,8 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from product.db import connect
-from product.files import ObjectMissing
 from product.suite_releases import adoption_block, empty_validation, publication_fingerprint
-from product.suites import MAX_OBJECT_BYTES, MAX_SUITE_DEPTH, canonical_json, content_digest
+from product.suites import MAX_SUITE_DEPTH, canonical_json, content_digest
 
 if TYPE_CHECKING:
     from product.checker_validation import SuiteValidationReport
@@ -110,6 +109,11 @@ def _validation(conn, tenant_id: str | None, revision: dict) -> dict:
             (tenant_id, revision["id"]),
         )
         row = cur.fetchone()
+    return _validation_from(conn, tenant_id, revision, row)
+
+
+def _validation_from(conn, tenant_id: str | None, revision: dict, row: dict | None) -> dict:
+    """Status of one stored proof for this revision; the catalog passes rows it read in one query."""
     if row is None:
         return empty_validation()
     from audit.standard_suites import library_revision
@@ -212,24 +216,6 @@ def _receipt(row: dict, *, published_by_name: str | None = None) -> dict:
     }
 
 
-class _CatalogObjects:
-    """Bounded, request-local byte reuse; Suite resolution still checks every digest."""
-
-    def __init__(self, objects):
-        self.objects = objects
-        self.cached: dict[str, bytes] = {}
-        self.remaining = MAX_OBJECT_BYTES
-
-    def get(self, key: str) -> bytes:
-        if key in self.cached:
-            return self.cached[key]
-        body = self.objects.get(key)
-        if len(body) <= self.remaining:
-            self.cached[key] = body
-            self.remaining -= len(body)
-        return body
-
-
 class SuiteReleaseStore:
     def __init__(self, settings, objects, role: str = "api"):
         from product.store.suites import SuiteStore
@@ -241,29 +227,105 @@ class SuiteReleaseStore:
         return connect(self.settings, self.role)
 
     def list_suites(self, principal) -> dict:
-        suites, unavailable = [], []
-        # Do not retain object bytes across requests or principals. Reuse only
-        # content reads, never membership checks, selection or validation state.
-        reader = SuiteReleaseStore(self.settings, _CatalogObjects(self.objects), role=self.role)
-        with self._conn() as conn:
-            with conn.transaction():
-                _member(conn, principal)
-                rows = conn.execute(
-                    "SELECT DISTINCT suite_key FROM product.suite_revisions WHERE NOT history_only AND (tenant_id IS NULL OR tenant_id = %s) ORDER BY suite_key", (principal.tenant_id,)
-                ).fetchall()
-            for (key,) in rows:
-                try:
-                    suites.append(reader.active(principal, key, conn=conn))
-                except (KeyError, ValueError, ObjectMissing):
-                    # A broken or inaccessible Suite is visible as unavailable,
-                    # never omitted or represented as an adoptable empty state.
-                    # Membership loss still fails the entire request.
-                    with conn.transaction():
-                        _member(conn, principal)
+        """The catalog summary, read with a fixed number of queries whatever the number of Suites.
+
+        Titles and rule digests come from stored revision facts. Change details, history and
+        byte verification stay on the per-Suite read that opens, adopts or runs a revision.
+        """
+        from product.store.suite_facts import facts_for
+
+        tenant = principal.tenant_id
+        with self._conn() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+            _member(conn, principal)
+            _read_lock(conn, tenant)
+            cur.execute(
+                "SELECT * FROM product.suite_revisions WHERE NOT history_only AND (tenant_id IS NULL OR tenant_id = %s) ORDER BY suite_key, tenant_id NULLS LAST, revision_number DESC",
+                (tenant,),
+            )
+            revisions = {str(row["id"]): row for row in cur.fetchall()}
+            keys = sorted({row["suite_key"] for row in revisions.values()})
+            candidates: dict[str, dict] = {}
+            for row in revisions.values():
+                candidates.setdefault(row["suite_key"], row)
+            cur.execute("SELECT * FROM product.tenant_suite_heads WHERE tenant_id = %s AND suite_key = ANY(%s)", (tenant, keys))
+            heads = {row["suite_key"]: row for row in cur.fetchall()}
+            cur.execute(
+                """SELECT h.suite_key, h.current_revision_id FROM product.official_suite_heads h
+                   JOIN product.suite_revisions r ON r.id = h.current_revision_id AND r.tenant_id IS NULL WHERE h.suite_key = ANY(%s)""",
+                (keys,),
+            )
+            official = {row["suite_key"]: revisions.get(str(row["current_revision_id"])) for row in cur.fetchall()}
+            cur.execute(
+                """SELECT DISTINCT ON (body->>'suite_key') body->>'suite_key' AS suite_key, body->>'suite_revision_id' AS revision_id
+                   FROM product.rule_versions WHERE tenant_id = %s AND body->>'suite_key' = ANY(%s) AND body->>'suite_revision_id' IS NOT NULL
+                   ORDER BY body->>'suite_key', created_at DESC, id DESC""",
+                (tenant, keys),
+            )
+            ruled = {row["suite_key"]: revisions.get(row["revision_id"]) for row in cur.fetchall()}
+            selected: dict[str, tuple[dict, str] | None] = {}
+            for key in keys:
+                head = heads.get(key)
+                if head is not None:
+                    row = revisions.get(str(head["current_revision_id"]))
+                    selected[key] = (row, "pinned") if row is not None else None
+                elif (automatic := official.get(key)) is not None:
+                    selected[key] = (automatic, "automatic_official")
+                else:
+                    selected[key] = (candidates[key], "candidate_only")
+            chosen = [pick[0] for pick in selected.values() if pick is not None]
+            cur.execute(
+                """SELECT DISTINCT ON (revision_id) * FROM product.suite_validations
+                   WHERE (tenant_id = %s OR tenant_id IS NULL) AND revision_id = ANY(%s::uuid[]) ORDER BY revision_id, tenant_id NULLS LAST""",
+                (tenant, [str(row["id"]) for row in chosen]),
+            )
+            proofs = {str(row["revision_id"]): row for row in cur.fetchall()}
+            wanted = {str(row["id"]): row for row in [*chosen, *(row for row in ruled.values() if row), *(row for row in official.values() if row)]}
+            facts, broken = facts_for(conn, self.suites, tenant, wanted)
+            suites, unavailable = [], []
+            for key in keys:
+                pick = selected[key]
+                if pick is None or str(pick[0]["id"]) in broken:
                     unavailable.append({"suite_key": key, "error": "suite_unavailable"})
-            with conn.transaction():
-                _member(conn, principal)
-                predefined, predefined_unavailable, predefined_error = self._predefined_sources(principal, conn)
+                    continue
+                row, mode = pick
+                revision_id = str(row["id"])
+                title = facts[revision_id]["title"]
+                if mode == "candidate_only":
+                    suites.append(
+                        {
+                            "suite_key": key,
+                            "title": title,
+                            "origin": "enterprise" if row["tenant_id"] else "official",
+                            "selection_mode": mode,
+                            "current_revision_id": None,
+                            "candidate_revision_id": revision_id,
+                            "verification_status": "unverified",
+                            "rule_update_pending": False,
+                            "official_update_available": False,
+                        }
+                    )
+                    continue
+                digest = facts[revision_id]["rule_digest"]
+                newer_rule = ruled.get(key)
+                rule_update = bool(newer_rule and str(newer_rule["id"]) != revision_id and str(newer_rule["id"]) in facts and facts[str(newer_rule["id"])]["rule_digest"] != digest)
+                base = self._official_base_in(revisions, row)
+                latest = official.get(key)
+                update = bool(mode == "pinned" and latest is not None and base is not None and base["id"] != latest["id"])
+                official_changed = bool(update and latest is not None and str(latest["id"]) in facts and facts[str(latest["id"])]["rule_digest"] != digest)
+                validation = _validation_from(conn, tenant, row, proofs.get(revision_id))
+                suites.append(
+                    {
+                        "suite_key": key,
+                        "title": title,
+                        "origin": "enterprise" if row["tenant_id"] else "official",
+                        "selection_mode": mode,
+                        "current_revision_id": revision_id,
+                        "verification_status": "stale" if rule_update or official_changed else validation["status"],
+                        "rule_update_pending": rule_update or official_changed,
+                        "official_update_available": update,
+                    }
+                )
+            predefined, predefined_unavailable, predefined_error = self._predefined_sources(principal, conn, revisions)
         payload: dict = {"suites": suites, **({"unavailable": unavailable} if unavailable else {})}
         if predefined_error:
             payload["predefined_error"] = predefined_error
@@ -273,20 +335,45 @@ class SuiteReleaseStore:
                 payload["predefined_unavailable"] = predefined_unavailable
         return payload
 
-    def _predefined_sources(self, principal, conn) -> tuple[list[dict], list[dict], str | None]:
+    @staticmethod
+    def _official_base_in(revisions: dict[str, dict], revision: dict) -> dict | None:
+        """``_official_base`` over revisions already read; a broken chain has no official base."""
+        current, seen = revision, set()
+        for _ in range(MAX_SUITE_DEPTH):
+            if current["id"] in seen or current["suite_key"] != revision["suite_key"]:
+                return None
+            seen.add(current["id"])
+            if current["tenant_id"] is None:
+                return current
+            if current["base_revision_id"] is None:
+                return None
+            following = revisions.get(str(current["base_revision_id"]))
+            if following is None:
+                return None
+            current = following
+        return None
+
+    def _predefined_sources(self, principal, conn, revisions: dict[str, dict]) -> tuple[list[dict], list[dict], str | None]:
         """Bind each installed directory leaf to its official source revision.
 
         ``revision_id`` is the tenant-null row for that ``source_path``. It is
         never the tenant's adopted revision. A broken scan lists no paths.
         """
-        from audit.standard_suites import predefined_sources, validate_source_identity
+        from audit.standard_suites import predefined_sources
 
         from product.seed_standard_suites import persisted_source_path
+        from product.store.suite_facts import facts_for
 
         try:
             discovered = predefined_sources()
         except ValueError:
             return [], [], "predefined_catalog_unavailable"
+        latest: dict[str, dict] = {}
+        for row in sorted(revisions.values(), key=lambda item: (item["revision_number"], str(item["id"])), reverse=True):
+            if row["tenant_id"] is None and row["source_path"]:
+                latest.setdefault(row["source_path"], row)
+        bound = {source.path: latest.get(source.path) for source in discovered if source.suite is not None and persisted_source_path(source.path) == source.path}
+        facts, broken = facts_for(conn, self.suites, principal.tenant_id, {str(row["id"]): row for row in bound.values() if row})
         ready, blocked = [], []
         for source in discovered:
             path, suite = source.path, source.suite
@@ -294,43 +381,20 @@ class SuiteReleaseStore:
                 ready.append({"path": path, "title": source.title, "availability": "historical"})
                 continue
             visible = {"path": path, "title": source.title}
-            if persisted_source_path(path) != path:
+            if path not in bound:
                 blocked.append({"path": path, "error": "invalid"})
                 continue
-            try:
-                revision_id = self.suites.official_revision_id_for_source(path, conn=conn)
-            except ValueError:
-                blocked.append({"path": path, "error": "invalid"})
-                ready.append({**visible, "availability": "unavailable"})
-                continue
-            if revision_id is None:
+            bound_row = bound[path]
+            if bound_row is None:
                 blocked.append({"path": path, "error": "unseeded"})
                 ready.append({**visible, "availability": "unseeded"})
                 continue
-            row = conn.execute(
-                "SELECT suite_key, tenant_id, source_path FROM product.suite_revisions WHERE id = %s AND NOT history_only",
-                (revision_id,),
-            ).fetchone()
-            if row is None or row[1] is not None or row[2] != path or row[0] != suite.suite_key:
+            revision_id = str(bound_row["id"])
+            if bound_row["suite_key"] != suite.suite_key or revision_id in broken or not facts[revision_id]["source_identity_valid"]:
                 blocked.append({"path": path, "error": "unavailable"})
                 ready.append({**visible, "availability": "unavailable"})
                 continue
-            try:
-                resolved = self.suites.resolve_suite(revision_id, principal.tenant_id, conn=conn)
-                if resolved.revision.tenant_id is not None or resolved.revision.suite_key != suite.suite_key:
-                    raise KeyError("suite_access_denied")
-                rules = json.loads(resolved.files["rules.json"])
-                if not isinstance(rules, dict):
-                    raise ValueError("invalid_suite_rules")
-                validate_source_identity(path, rules)
-                from product.suite_releases import leaf_capability
-
-                capability = leaf_capability(resolved.files)
-            except (KeyError, ValueError, ObjectMissing):
-                blocked.append({"path": path, "error": "unavailable"})
-                ready.append({**visible, "availability": "unavailable"})
-                continue
-            ready.append({**visible, "availability": "installed", "suite_key": suite.suite_key, "revision_id": revision_id, **capability})
+            ready.append({**visible, "availability": "installed", "suite_key": suite.suite_key, "revision_id": revision_id, **facts[revision_id]["capability"]})
         return ready, blocked, None
 
     def active(self, principal, suite_key: str, *, conn=None) -> dict:

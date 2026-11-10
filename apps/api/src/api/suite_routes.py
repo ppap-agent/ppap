@@ -79,6 +79,20 @@ class SuiteActive(TypedDict):
     history: list[SuitePublication]
 
 
+class SuiteSummary(TypedDict):
+    """One catalog row. Change details, history and validation proof are read per Suite."""
+
+    suite_key: str
+    title: str
+    origin: Literal["official", "enterprise"]
+    selection_mode: Literal["automatic_official", "pinned", "candidate_only"]
+    current_revision_id: str | None
+    candidate_revision_id: NotRequired[str]
+    verification_status: str
+    rule_update_pending: bool
+    official_update_available: bool
+
+
 class SuiteUnavailable(TypedDict):
     suite_key: str
     error: Literal["suite_unavailable"]
@@ -101,7 +115,7 @@ class SuitePredefinedUnavailable(TypedDict):
 
 
 class SuiteCatalog(TypedDict):
-    suites: list[SuiteActive]
+    suites: list[SuiteSummary]
     unavailable: NotRequired[list[SuiteUnavailable]]
     predefined: NotRequired[list[SuitePredefined]]
     predefined_unavailable: NotRequired[list[SuitePredefinedUnavailable]]

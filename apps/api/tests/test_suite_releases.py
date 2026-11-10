@@ -140,7 +140,7 @@ def test_first_adoption_reads_accessible_candidate_and_preserves_receipt(auth_st
     assert before["current_revision_id"] is None and before["revision"] == 0
     assert before["candidate_revision_id"] == official.id
     assert before["history"] == []
-    assert before == next(row for row in bob.get("/suites").json()["suites"] if row["suite_key"] == "control-plan")
+    assert summary(before) == next(row for row in bob.get("/suites").json()["suites"] if row["suite_key"] == "control-plan")
     candidate = alice.post(f"/suite-revisions/{official.id}/candidates", json={"operation_id": str(uuid.uuid4()), "files": {"checker.py": "def check(context): return []\n"}}).json()
     assert bob.get(path).json()["candidate_revision_id"] == candidate["id"]
     request = command(candidate["id"], expected_revision=before["revision"], force=True)
@@ -164,7 +164,23 @@ def test_first_adoption_reads_accessible_candidate_and_preserves_receipt(auth_st
         assert conn.execute("SELECT count(*) FROM product.usage_events").fetchone()[0] == 0
 
 
-def test_catalog_preserves_titles_selections_and_reuses_shared_content(auth_store_factory, monkeypatch):
+def summary(active: dict) -> dict:
+    """The catalog row is this projection of the per-Suite read."""
+    pending = bool(active.get("rule_update") or active["official_update_available"] and (active.get("official_rule_impact") or {}).get("changed"))
+    return {
+        "suite_key": active["suite_key"],
+        "title": active["title"],
+        "origin": active["origin"],
+        "selection_mode": active["selection_mode"],
+        "current_revision_id": active["current_revision_id"],
+        **({"candidate_revision_id": active["candidate_revision_id"]} if "candidate_revision_id" in active else {}),
+        "verification_status": active["verification_status"],
+        "rule_update_pending": pending,
+        "official_update_available": active["official_update_available"],
+    }
+
+
+def test_catalog_preserves_titles_selections_and_reads_no_suite_bytes(auth_store_factory, monkeypatch):
     import product.store.suite_releases as release_store
 
     store, official, creator, _, (alice, bob, carol) = prepare_fixture(auth_store_factory)
@@ -173,7 +189,7 @@ def test_catalog_preserves_titles_selections_and_reuses_shared_content(auth_stor
         tenant_id=creator.tenant_id, suite_key=second.suite_key, files={"checker.py": b"def check(context): return []\n"}, created_by=creator.user_id, base_revision_id=second.id
     )
     assert alice.put("/suites/control-plan/active", json=command(official.id)).status_code == 200
-    expected = [bob.get(f"/suites/{key}/active").json() for key in ("control-plan", "second-check")]
+    expected = [summary(bob.get(f"/suites/{key}/active").json()) for key in ("control-plan", "second-check")]
     object_reads, connections = [], []
     get, connect = store.objects.get, release_store.connect
 
@@ -206,13 +222,44 @@ def test_catalog_preserves_titles_selections_and_reuses_shared_content(auth_stor
         assert [row["title"] for row in response.json()["suites"]] == ["Control plan checks", "Control plan checks"]
         assert [row["selection_mode"] for row in response.json()["suites"]] == ["pinned", "candidate_only"]
         assert response.json()["suites"][1]["candidate_revision_id"] == tenant_candidate.id
-        # The next HTTP read gets a fresh cache; within one read every shared
-        # immutable object is fetched once and the DB connection is reused.
-        assert len(object_reads) == len(set(object_reads)) == 3
+        # Revision facts were stored when each revision was written, so the catalog
+        # reads no Suite bytes and uses one DB connection however many Suites exist.
+        assert object_reads == []
         assert len(connections) == 1
     other = carol.get("/suites").json()["suites"]
     assert [row["selection_mode"] for row in other] == ["candidate_only", "candidate_only"]
     assert [row["candidate_revision_id"] for row in other] == [official.id, second.id]
+
+
+def test_revisions_written_before_facts_are_derived_once_and_a_broken_one_is_unavailable(auth_store_factory, monkeypatch):
+    import product.store.suite_facts as suite_facts
+    from product.suites import content_digest
+
+    store, official, creator, _, (alice, bob, carol) = prepare_fixture(auth_store_factory)
+    migrator = SuiteStore(store.settings, store.objects, role="migrator")
+    broken_rules = b'{"title":"Broken check","rules":[{"id":"B"}]}'
+    with monkeypatch.context() as legacy:
+        # Revisions written before this table existed have no facts row.
+        legacy.setattr(suite_facts, "insert_facts", lambda *args, **kwargs: None)
+        old = migrator.create_revision(tenant_id=None, suite_key="older-check", files={**FILES, "rules.json": b'{"title":"Older check","rules":[]}'}, created_by=None)
+        broken = migrator.create_revision(tenant_id=None, suite_key="broken-check", files={**FILES, "rules.json": broken_rules}, created_by=None)
+    del store.objects.data[f"suites/official/objects/{content_digest(broken_rules)}"]
+    reads = []
+    get = store.objects.get
+    monkeypatch.setattr(store.objects, "get", lambda key: reads.append(key) or get(key))
+    first = bob.get("/suites").json()
+    assert next(row for row in first["suites"] if row["suite_key"] == "older-check")["title"] == "Older check"
+    assert {"suite_key": "broken-check", "error": "suite_unavailable"} in first["unavailable"]
+    assert "broken-check" not in {row["suite_key"] for row in first["suites"]}
+    assert reads
+    with store._conn() as conn:
+        assert conn.execute("SELECT count(*) FROM product.suite_revision_facts WHERE revision_id = %s", (old.id,)).fetchone()[0] == 1
+        assert conn.execute("SELECT count(*) FROM product.suite_revision_facts WHERE revision_id = %s", (broken.id,)).fetchone()[0] == 0
+    reads.clear()
+    second = bob.get("/suites").json()
+    assert second["suites"] == first["suites"]
+    # Only the revision that still cannot be verified is tried again.
+    assert all("objects/" in key for key in reads) and len(reads) <= 2
 
 
 def test_predefined_catalog_binds_each_source_path_to_its_official_revision(auth_store_factory, monkeypatch):
@@ -328,12 +375,12 @@ def test_predefined_catalog_binds_each_source_path_to_its_official_revision(auth
     assert "control-plan" not in {row.get("suite_key") for row in body["predefined"]}
     assert any(row["suite_key"] == "control-plan" for row in body["suites"])
     del store.objects.data[f"suites/official/objects/{content_digest(updated['rules.json'])}"]
+    # The catalog lists stored facts; opening the revision still verifies its bytes and fails closed.
     after = alice.get("/suites").json()
-    inaccessible = next(row for row in after["predefined"] if row["path"] == "v5/UAES/U08")
-    assert inaccessible["availability"] == "unavailable" and "revision_id" not in inaccessible
-    assert {row["path"]: row["revision_id"] for row in after["predefined"] if row["availability"] == "installed"} == {"v6/ACME/Z99": v6.id, "v5/理想/L01": placeholder_revision.id}
-    blocked = {row["path"]: row["error"] for row in after["predefined_unavailable"]}
-    assert blocked["v5/UAES/U08"] == "unavailable"
+    assert next(row for row in after["predefined"] if row["path"] == "v5/UAES/U08")["revision_id"] == latest.id
+    opened = alice.get(f"/suite-revisions/{latest.id}")
+    assert opened.status_code == 409, opened.text
+    assert opened.json()["error"] == "suite_artifact_missing"
     assert directory.id not in {row.get("revision_id") for row in after["predefined"]}
 
 

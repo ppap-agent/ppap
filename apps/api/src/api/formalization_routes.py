@@ -151,6 +151,7 @@ _CONFLICTS = {
     "not_confirmable",
     "suite_key_mismatch",
     "source_unchecked",
+    "source_unreadable",
 }
 
 

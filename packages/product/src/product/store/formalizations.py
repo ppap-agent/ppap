@@ -150,6 +150,7 @@ class FormalizationStore:
 
     def start_generation(self, principal, rule_version_id: str, clause_id: str, body: dict) -> dict:
         rule = self._visible_rule(principal, rule_version_id)
+        self._require_source(principal, rule)
         clause, digest = source_binding(rule, clause_id)
         _require_clause_text(clause)
         operation_id = _id(body["operation_id"])
@@ -252,6 +253,7 @@ class FormalizationStore:
 
     def confirm(self, principal, rule_version_id: str, clause_id: str, body: dict) -> dict:
         rule = self._visible_rule(principal, rule_version_id)
+        self._require_source(principal, rule)
         clause, digest = source_binding(rule, clause_id)
         _require_clause_text(clause)
         operation_id = _id(body["operation_id"])
@@ -577,12 +579,19 @@ class FormalizationStore:
         return releases.detail(principal, candidate_revision_id)
 
     def _visible_rule(self, principal, rule_version_id: str) -> dict:
+        """Reading a rule's formalizations needs only the rule; its original matters when a reading is made or confirmed."""
         rule = self.store.get_rule(principal.tenant_id, rule_version_id)
         if rule is None:
             raise KeyError("access_denied")
-        if rule.get("source_file_version_id"):
-            self.store.readable_version(principal, rule["source_file_version_id"])
         return rule
+
+    def _require_source(self, principal, rule: dict) -> None:
+        if not rule.get("source_file_version_id"):
+            return
+        try:
+            self.store.readable_version(principal, rule["source_file_version_id"])
+        except (KeyError, ValueError):
+            raise ValueError("source_unreadable") from None
 
     def _owned(self, cur, conn, claimed, worker_ident: str, *, lock: bool, allow_expired: bool = False):
         if not self._owns(conn, claimed, worker_ident, lock=lock, allow_expired=allow_expired):

@@ -137,6 +137,9 @@ class SuiteStore:
             )
             # The same bounded resolver used by execution rejects chains that grew too deep.
             self.resolve_suite(revision.id, lookup_tenant, conn=db, include_history=history_only)
+            from product.store.suite_facts import derive_facts, insert_facts
+
+            insert_facts(db, revision.id, tenant_id, derive_facts(all_files, source_path))
             return revision
 
     def official_revision_id_for_source(self, source_path: str, *, conn=None) -> str | None:

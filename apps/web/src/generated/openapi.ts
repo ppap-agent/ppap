@@ -5474,7 +5474,7 @@ export interface components {
             /** Predefined Unavailable */
             predefined_unavailable?: components["schemas"]["SuitePredefinedUnavailable"][];
             /** Suites */
-            suites: components["schemas"]["SuiteActive"][];
+            suites: components["schemas"]["SuiteSummary"][];
             /** Unavailable */
             unavailable?: components["schemas"]["SuiteUnavailable"][];
         };
@@ -5605,6 +5605,36 @@ export interface components {
             id: string;
             /** Task Id */
             task_id: string | null;
+        };
+        /**
+         * SuiteSummary
+         * @description One catalog row. Change details, history and validation proof are read per Suite.
+         */
+        SuiteSummary: {
+            /** Candidate Revision Id */
+            candidate_revision_id?: string;
+            /** Current Revision Id */
+            current_revision_id: string | null;
+            /** Official Update Available */
+            official_update_available: boolean;
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "official" | "enterprise";
+            /** Rule Update Pending */
+            rule_update_pending: boolean;
+            /**
+             * Selection Mode
+             * @enum {string}
+             */
+            selection_mode: "automatic_official" | "pinned" | "candidate_only";
+            /** Suite Key */
+            suite_key: string;
+            /** Title */
+            title: string;
+            /** Verification Status */
+            verification_status: string;
         };
         /** SuiteUnavailable */
         SuiteUnavailable: {

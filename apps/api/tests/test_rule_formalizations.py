@@ -1726,8 +1726,8 @@ def test_two_candidates_cannot_both_become_current(auth_store_factory):
     assert "Ontology()" not in results["older"].text
 
 
-def test_a_member_without_the_source_file_cannot_read_the_formalization(auth_store_factory):
-    """Same-tenant membership does not grant the source file. The response has no formula."""
+def test_a_rule_and_its_original_are_shared_with_the_tenant_but_not_beyond(auth_store_factory):
+    """A published rule is a tenant asset, and so is the exact original it cites. Other tenants see neither."""
     from api import create_app
     from psycopg.types.json import Jsonb
 
@@ -1735,6 +1735,8 @@ def test_a_member_without_the_source_file_cannot_read_the_formalization(auth_sto
     store = auth_store_factory(settings)
     alice = store.upsert_feishu_identity("formalization-file-acl", "alice")
     bob = store.upsert_feishu_identity("formalization-file-acl", "bob")
+    carol = store.upsert_feishu_identity("formalization-file-acl-other", "carol")
+    assert bob.tenant_id == alice.tenant_id and carol.tenant_id != alice.tenant_id
     rule_id, file_id, version_id = (str(uuid.uuid4()) for _ in range(3))
     body = {"kind": "engine", "type": "自定义", "rules": [{"id": "c1", "category": "列", "priority": "P0", "rule_to_check": "文档要有编号", "type_of_rule": "text"}]}
     with store._conn() as conn:
@@ -1764,14 +1766,46 @@ def test_a_member_without_the_source_file_cannot_read_the_formalization(auth_sto
     visible = owner.get(f"/rules/{rule_id}/formalizations/c1")
     assert visible.status_code == 200, visible.text
     assert "秘密回译" in visible.text
+    colleague = TestClient(create_app(settings, auth_store=api))
+    colleague.cookies.set(SESSION_COOKIE, store.create_session(bob))
+    shared = colleague.get(f"/rules/{rule_id}/formalizations/c1")
+    assert shared.status_code == 200, shared.text
+    assert "秘密回译" in shared.text
+    assert api.read_file_version(bob, file_id, version_id).id == version_id
     stranger = TestClient(create_app(settings, auth_store=api))
-    stranger.cookies.set(SESSION_COOKIE, store.create_session(bob))
+    stranger.cookies.set(SESSION_COOKIE, store.create_session(carol))
     denied = stranger.get(f"/rules/{rule_id}/formalizations/c1")
     assert denied.status_code == 403, denied.text
     assert denied.json()["error"] == "access_denied"
     assert "Ontology" not in denied.text
     assert "秘密回译" not in denied.text
     assert "SecretAxiom" not in denied.text
+    try:
+        api.read_file_version(carol, file_id, version_id)
+    except KeyError:
+        pass
+    else:
+        raise AssertionError("another tenant read the rule original")
+    # An original that is really gone still leaves the rule and its readings readable; only new readings need it.
+    lost_rule, lost_version = str(uuid.uuid4()), str(uuid.uuid4())
+    with store._conn() as conn:
+        conn.execute(
+            """INSERT INTO product.file_versions(id,file_id,tenant_id,original_filename,content_type,byte_size,sha256,object_key,status)
+               VALUES (%s,%s,%s,'rule.xlsx','application/octet-stream',3,%s,'rule-object-lost','failed')""",
+            (lost_version, file_id, alice.tenant_id, "c" * 64),
+        )
+        conn.execute(
+            "INSERT INTO product.rule_versions(id,tenant_id,title,body,created_by,source_file_version_id) VALUES (%s,%s,'列',%s,%s,%s)",
+            (lost_rule, alice.tenant_id, Jsonb(body), alice.user_id, lost_version),
+        )
+    readable = colleague.get(f"/rules/{lost_rule}/formalizations/c1")
+    assert readable.status_code == 200, readable.text
+    refused = colleague.post(
+        f"/rules/{lost_rule}/formalizations/c1/generations",
+        json={"consume_model": True, "operation_id": str(uuid.uuid4()), "expected_source_digest": readable.json()["source_rule_digest"]},
+    )
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["error"] == "source_unreadable"
 
 
 def test_a_chosen_reading_confirms_and_a_new_session_reads_it(auth_store_factory):

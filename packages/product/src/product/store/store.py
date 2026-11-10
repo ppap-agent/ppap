@@ -958,13 +958,18 @@ class AuthStore:
                     EXISTS (SELECT 1 FROM product.audit_rounds a JOIN product.audit_drafts d ON d.id = a.source_draft_id
                         WHERE a.id = r.id AND d.task_fingerprint IS NOT NULL)
                     OR EXISTS (SELECT 1 FROM product.deep_rule_changes c WHERE c.analysis_round_id=r.id),
-                    ARRAY(SELECT g.capability FROM product.resource_grants g WHERE g.resource_id = r.id AND g.user_id = %s)
+                    ARRAY(SELECT g.capability FROM product.resource_grants g WHERE g.resource_id = r.id AND g.user_id = %s),
+                    EXISTS (SELECT 1 FROM product.rule_versions rv WHERE rv.tenant_id = f.tenant_id AND rv.source_file_version_id = f.id)
                 FROM product.file_versions f JOIN product.resources r ON r.id = %s
                 WHERE f.file_id = %s AND f.id = %s AND f.tenant_id = %s
                   AND (%s OR EXISTS (SELECT 1 FROM product.round_inputs i WHERE i.round_id = r.id AND i.file_version_id = f.id))""",
                 (principal.user_id, rid, fid, vid, principal.tenant_id, round_id is None),
             ).fetchone()
-        if row is None or row[11] != ("audit_round" if round_id else "file") or not can_read(principal, Resource(str(row[9]), str(row[10]), row[11], row[12]), set(row[13])):
+        # The exact original a published rule cites is shared with the rule's tenant, like the rule itself.
+        if row is None or row[11] != ("audit_round" if round_id else "file"):
+            raise KeyError("missing")
+        grants = set(row[13]) | ({"read"} if row[14] and round_id is None else set())
+        if not can_read(principal, Resource(str(row[9]), str(row[10]), row[11], row[12]), grants):
             raise KeyError("missing")
         return self._version_from_row(row[:9])
 
@@ -4599,8 +4604,9 @@ class AuthStore:
                 str(row[0]): row
                 for row in conn.execute(
                     """SELECT f.id, f.file_id, f.tenant_id, f.status, f.original_filename, r.kind, r.tenant_id,
-                EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = f.file_id
-                    AND g.user_id = %s AND g.capability IN ('read', 'review')),
+                (EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = f.file_id
+                    AND g.user_id = %s AND g.capability IN ('read', 'review'))
+                 OR EXISTS (SELECT 1 FROM product.rule_versions rv WHERE rv.tenant_id = f.tenant_id AND rv.source_file_version_id = f.id)),
                 f.upload_request->>'feishu_folder_token' IS NULL OR
                     (f.upload_request->'cloud_upload'->>'phase' = 'ready' AND EXISTS
                         (SELECT 1 FROM product.file_version_sources s WHERE s.file_version_id = f.id

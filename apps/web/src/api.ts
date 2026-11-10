@@ -126,6 +126,7 @@ const messages: Record<string,string> = {
   operation_conflict: '原操作的内容不同。请读取原操作。',
   not_confirmable: '这条理解还不完整，不能确认。',
   source_unchecked: '原文出处未核对。请先核对出处，再确认这一理解。',
+  source_unreadable: '规则原件已不可用，暂时不能解释或确认这条规则。',
   suite_key_mismatch: '这条规则不能写入所选检查版本。',
   invalid_formalization: '这次形式化请求不完整。',
   clause_not_found: '没有这条条款。',
