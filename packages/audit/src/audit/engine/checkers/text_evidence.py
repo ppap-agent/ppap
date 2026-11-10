@@ -224,4 +224,9 @@ def evaluate_located_text(audit: AuditInput, rule: RuleItem, fragments: list[dic
             return _result(audit, rule, sources, "UNABLE", "证据或检查范围尚不充分，需核对原文。", "text.fact_unconfirmed")
         return _result(audit, rule, sources, "PASS" if value["relation"] == "supports" else "NG", value["explanation"][:500], "text.semantic_observation")
     except Exception as exc:
+        from documents.model_access import ModelUnavailable
+
+        # No personal model is an unverified fact, not a checker crash.
+        if isinstance(exc, ModelUnavailable) and exc.code == "personal_model_unavailable":
+            return _result(audit, rule, sources, "UNABLE", "当前个人模型凭据不可用，所需文字事实尚未核实。", "text.model_unavailable")
         return _result(audit, rule, sources, "ERR", f"文本证据检查未完成（{type(exc).__name__}）。", "text.runtime_error")
