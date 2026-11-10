@@ -459,7 +459,7 @@ def test_feedback_optimize_verify_publish_reaudit_and_rollback(workspace_product
             expect(page.get_by_role("button", name="发布此修改", exact=True)).to_be_enabled()
             assert f.guest.adaptations == 0
             page.get_by_role("button", name="让 AI 修复并验证", exact=True).click()
-            expect(page.get_by_text("尚未配置。普通审核已有的检查不需要生成代码。", exact=True)).to_be_visible()
+            expect(page.get_by_text("尚未配置。识别文件、深度分析和让 AI 修复检查时需要。", exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="确认开始修复", exact=True)).to_be_disabled()
             page.get_by_label("Base URL", exact=True).fill("https://models.example.test")
             page.get_by_label("模型名称", exact=True).fill("test-model")

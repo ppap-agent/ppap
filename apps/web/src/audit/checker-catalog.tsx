@@ -115,7 +115,7 @@ export function CheckerCatalog({active, revision, mode = 'predefined', onBusyCha
   }
   if (mode === 'enterprise') return <section aria-label="企业检查版本" className="min-w-0 space-y-4">
     <h2 className="text-lg font-semibold">企业检查版本</h2>
-    <p className="text-sm text-muted-foreground">核对本企业采用的版本与定制候选。发布只影响之后的新审核，已有结果不变。</p>
+    <p className="text-sm text-muted-foreground">本企业每项检查正在用的版本。在审核结果里点某条“这条判错了”，打开的也是这里的同一项检查。发布只影响之后的新审核。</p>
     <Label htmlFor={selectId}>选择检查</Label>
     <Select value={selected || undefined} disabled={busy} onValueChange={choose}><SelectTrigger id={selectId} className="w-full max-w-xl"><SelectValue placeholder="选择要核对的检查"/></SelectTrigger><SelectContent>
       {selected && !suite && !blocked && <SelectItem value={selected}>所选检查</SelectItem>}

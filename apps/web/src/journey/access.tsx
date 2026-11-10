@@ -1,12 +1,14 @@
 // Stitch: projects/13261964020862199279/screens/5a80a77a4f524928b808862728d5677a (login)
 // and screens/9a6cb6189e92450da32d95a31820b41c (connection failure).
 import {createContext, useContext, useEffect, useRef, useState, type ReactNode} from 'react'
-import {ArrowRight, ChevronDown, ClipboardCheck, FolderClock, Gauge, Loader2, LogOut} from 'lucide-react'
+import {ArrowRight, Bot, ChevronDown, ClipboardCheck, FolderClock, Gauge, Loader2, LogOut} from 'lucide-react'
 import {apiUrl, connect, feishuAppId, request, type HostLoginRequest, type PrincipalPublic} from '../api'
 import {isFeishuHost, requestHostCode} from '../hostLogin'
 import {Button} from '../components/ui/button'
 import {Alert, AlertDescription} from '../components/ui/alert'
 import {DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger} from '../components/ui/dropdown-menu'
+import {Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle} from '../components/ui/dialog'
+import {PersonalModelSettings} from '../audit/model-config'
 import {LocalRecordsDialog} from './local-records'
 import type {RecordValidators} from './local-records-state'
 import {setDraftOwner} from './saved-draft'
@@ -23,17 +25,21 @@ const loginErrors: Record<string, string> = {
 export function AccountMenu({compact = false, className, onUsage, showLocalRecords = true}: {compact?: boolean; className?: string; onUsage?: () => void; showLocalRecords?: boolean}) {
   const access = useAccess()
   const name = access?.principal?.display_name || (access?.preview ? '林悦 · 演示' : '审核账号')
-  return <DropdownMenu>
+  const [modelOpen, setModelOpen] = useState(false)
+  return <><DropdownMenu>
     <DropdownMenuTrigger asChild><Button variant="ghost" className={className} size={compact ? 'profile-icon' : 'profile'} aria-label={`${name}，账号菜单`}>
       <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-sm text-foreground">{name.slice(0, 1)}</span>
       {!compact && <><span className={"min-w-0 flex-1 truncate text-left"}>{name}</span><ChevronDown/></>}
     </Button></DropdownMenuTrigger>
     <DropdownMenuContent align="end"><DropdownMenuLabel>{name}</DropdownMenuLabel><DropdownMenuSeparator/>
       {onUsage ? <DropdownMenuItem onSelect={onUsage}><Gauge/>用量记录</DropdownMenuItem> : <DropdownMenuItem asChild><a href="/?view=usage"><Gauge/>用量记录</a></DropdownMenuItem>}
+      {/* The model key is personal and needed in several places, so it has one fixed home here. */}
+      <DropdownMenuItem onSelect={() => setModelOpen(true)}><Bot/>我的模型</DropdownMenuItem>
       {showLocalRecords && <DropdownMenuItem onSelect={access?.records}><FolderClock/>本机草稿</DropdownMenuItem>}
       <DropdownMenuItem onSelect={access?.logout}><LogOut/>退出登录</DropdownMenuItem>
     </DropdownMenuContent>
   </DropdownMenu>
+  <Dialog open={modelOpen} onOpenChange={setModelOpen}><DialogContent><DialogHeader><DialogTitle>我的模型</DialogTitle><DialogDescription>识别文件、深度分析和让 AI 修复检查时，使用你自己的模型 Key。</DialogDescription></DialogHeader>{modelOpen && <PersonalModelSettings framed={false}/>}</DialogContent></Dialog></>
 }
 
 export function ProductAccess({children, recordValidators = emptyValidators, recordsReturnTo}: {children: ReactNode; recordValidators?: RecordValidators; recordsReturnTo?: string}) {

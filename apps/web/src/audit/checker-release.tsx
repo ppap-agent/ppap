@@ -182,7 +182,8 @@ export function CheckerRelease({scope, legacyScope, suiteKey, revisionId, optimi
     } finally {locked.current = false; setBusy(false)}
   }
   return <section aria-label="检查发布与版本记录" className="space-y-4 border-t pt-4">
-    <h3 className="font-medium">检查版本</h3>
+    {/* The same versions are kept under the rules page; from a result the person is told where. */}
+    <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-medium">检查版本</h3>{legacyScope !== undefined && <Button variant="link" size="sm" asChild><a href={`/requirements?checkerSuite=${encodeURIComponent(suiteKey)}`}>在审核规则中查看全部版本</a></Button>}</div>
     {selection.legacyBlocked && <Alert variant="destructive"><AlertTitle>旧修改操作需要核对</AlertTitle><AlertDescription>原修改操作缺少当前工作区标识。请回到发起操作的原审核和条款读取；这里不会清除它或重复提交。</AlertDescription></Alert>}
     {error && <Alert variant="destructive"><AlertTitle>{pending ? '发布结果待确认' : '版本需要核对'}</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
     {!revision && !error && <ReadSkeleton label="正在读取检查版本…" kind="inline"/>}

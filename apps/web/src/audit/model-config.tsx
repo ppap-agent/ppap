@@ -5,7 +5,7 @@ import {Label} from '../components/ui/label'
 import {modelConfigFailure, readPersonalModelConfig, revokePersonalModelConfig, savePersonalModelConfig, type PersonalModelConfig} from './model-config-contract'
 
 /** Only redacted settings are read back. Secrets stay in memory until submission. */
-export function PersonalModelSettings({onConfig}: {onConfig?: (config: PersonalModelConfig | null) => void}) {
+export function PersonalModelSettings({onConfig, framed = true}: {onConfig?: (config: PersonalModelConfig | null) => void; framed?: boolean}) {
   const id = useId(), lock = useRef(false), [config, setConfig] = useState<PersonalModelConfig | null>(null)
   const [key, setKey] = useState(''), [baseUrl, setBaseUrl] = useState(''), [model, setModel] = useState('')
   const [busy, setBusy] = useState(true), [error, setError] = useState(''), [revision, setRevision] = useState(0)
@@ -38,9 +38,10 @@ export function PersonalModelSettings({onConfig}: {onConfig?: (config: PersonalM
       setError(known ? `${known} 密钥输入已清除，请读取当前配置后再修改。` : '保存结果待确认。密钥输入已清除，请读取当前配置后再决定是否修改。')
     } finally {lock.current = false; setBusy(false)}
   }
-  return <section aria-label="我的模型配置" className="space-y-3 rounded-md border p-3">
-    <h3 className="text-sm font-medium">我的模型账户</h3>
-    <p role="status" className="text-sm text-muted-foreground">{config ? config.configured ? '已配置，仅供你发起的模型操作使用。' : '尚未配置。普通审核已有的检查不需要生成代码。' : '尚未读到个人配置。'}</p>
+  // Inline it is a bordered panel with its own heading; inside a titled dialog the dialog names it.
+  return <section aria-label="我的模型配置" className={framed ? 'space-y-3 rounded-md border p-3' : 'space-y-3'}>
+    {framed && <h3 className="text-sm font-medium">我的模型账户</h3>}
+    <p role="status" className="text-sm text-muted-foreground">{config ? config.configured ? '已配置，仅供你发起的模型操作使用。' : '尚未配置。识别文件、深度分析和让 AI 修复检查时需要。' : '尚未读到个人配置。'}</p>
     {config?.configured && <p className="break-all text-sm">已保存地址：{config.base_url}；模型：{config.model}</p>}
     {error && <p role="alert" className="text-sm">{error}</p>}
     <div className="space-y-2"><Label htmlFor={`${id}-url`}>Base URL</Label><Input id={`${id}-url`} type="url" autoComplete="off" spellCheck={false} maxLength={2048} value={baseUrl} disabled={busy} onChange={event => {setBaseUrl(event.target.value); onConfig?.(null)}}/></div>

@@ -208,7 +208,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
       }))
       if (mounted.current && visibility.current.active && canonical(latestSelection.current) === canonical(selected)) {
         select(savedOwner, version.id, true)
-        setFeedback({text: `版本 ${version.basis.source.version} 已保存。已有事项仍使用各自的版本。`, failed: false})
+        setFeedback({text: `版本 ${version.basis.source.version} 已保存。已有审核不受影响；如果这类文件已有检查，新审核要等检查按新规则重新验证并发布后才使用它（审核规则列表上方会提示）。`, failed: false})
       }
       onPublished?.()
     } catch (cause) {if (mounted.current) setFeedback({text: errorMessage(cause), failed: true})}
