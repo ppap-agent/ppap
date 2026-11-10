@@ -102,11 +102,9 @@ test('Web wire schemas are generated from FastAPI OpenAPI', () => {
 
 test('usage stays read-only and the client does not own audit pricing', () => {
   const sources = shippedSources()
-  assert.match(sources, /\/usage\?/)
-  assert.match(sources, /\/integrations\/feishu\/usage\/quota/)
+  // Usage is read from the audit usage view; the client neither reports usage nor prices an audit.
+  assert.match(sources, /\/audit-usage/)
   assert.doesNotMatch(sources, /\/integrations\/feishu\/usage\/report/)
   assert.doesNotMatch(sources, /AUDIT_COST_PER_FILE/)
   assert.doesNotMatch(sources, /\*\s*500/)
-  assert.match(sources, /target_count/)
-  assert.match(sources, /accept_allowed/)
 })

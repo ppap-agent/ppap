@@ -38,9 +38,6 @@
     <header class="top">
       <div class="heading"><h1>PPAP · 本地预览台</h1><p class="hint">概念原型与现有页面 · 模拟数据 · 不连接现网</p></div>
       <div class="toolbar" role="group" aria-label="预览设置">
-        <label class="group"><span class="label">页面</span><select id="page" aria-label="页面">
-          <option value="audit">V3.1 审核与用量</option><option value="intake">统一审核旅程（原型）</option><option value="progress">检查进度演示</option><option value="concept">人工复核演示</option><option value="amendment">回件登记演示</option><option value="requirements">审核要求</option>
-        </select></label>
         <label id="scenes" class="group"><span class="label">场景（切换会重置）</span><select id="scene" aria-label="场景"><optgroup label="审核与规则"><option value="populated">有数据</option><option value="empty">空状态</option><option value="error">错误</option><option value="long">长列表</option><option value="invalid">异常文件</option><option value="partial">部分匹配</option><option value="unmatched">零匹配</option><option value="checking">预检查中</option><option value="matching">识别中</option><option value="drive-loading">飞书读取中</option><option value="drive-error">飞书读取失败</option><option value="drive-denied">飞书待授权</option><option value="drive-empty">飞书空列表</option><option value="confirm-loading">受理回执中</option><option value="confirm-unknown">受理结果未知</option><option value="audit-loading">审核结果读取中</option><option value="summary-conflict">总结冲突</option><option value="evidence-outside">证据越界</option><option value="rule-conflict">条款冲突</option><option value="failed-report-ready">报告资格冲突</option></optgroup><optgroup label="传输与恢复"><option value="upload-partial">部分传输失败</option><option value="upload-loading">传输中</option><option value="restore-matching">恢复识别中</option><option value="restore-pending">恢复待确认</option><option value="restore-reviewing">恢复审核中</option><option value="restore-completed">恢复已完成</option><option value="restore-unknown">恢复受理未知</option><option value="restore-loading">恢复读取中</option><option value="restore-auth">恢复待登录</option><option value="restore-denied">恢复无权</option><option value="restore-missing">恢复不存在</option><option value="restore-error">恢复离线</option></optgroup><optgroup label="报告"><option value="reports-ready">逐文件报告</option><option value="reports-generating">报告生成中</option><option value="reports-failed">报告失败</option><option value="reports-none">无正式报告</option><option value="reports-unknown">生成回执未知</option><option value="reports-policy">重生成未开放</option><option value="reports-zip-unknown">ZIP 回执未知</option><option value="reports-zip-failed">ZIP 失败</option><option value="reports-duplicate">同名报告</option><option value="reports-pdf-race">PDF 迟到</option><option value="reports-generate-race">报告回执迟到</option></optgroup>
           <optgroup label="错误求助"><option value="confirm-traced">确认未知／服务请求编号</option><option value="recognition-traced">识别未知／服务请求编号</option></optgroup>
           <optgroup label="匹配恢复与云盘目录"><option value="matching-customer-required">客户待核对后重新匹配</option><option value="drive-folders">跨文件夹选择</option><option value="drive-folders-late">目录读取迟到</option><option value="drive-tree">并列目录与分页重试</option><option value="drive-tree-late">并列目录读取迟到</option><option value="drive-many">云盘长文件名与多选分页</option></optgroup>
@@ -71,7 +68,7 @@
     <main class="stage" aria-label="预览画布"><div id="device" class="device"><iframe id="product" title="PPAP 产品预览"></iframe></div></main>
   </div>
   <script>
-    const paths = {audit: '/preview/audit.html', concept: '/preview/concept.html', intake: '/preview/intake.html', progress: '/preview/intake.html?step=progress&variant=action&scenario=running', amendment: '/preview/concept.html?stage=response&variant=tasks', requirements: '/preview/intake.html?view=requirements'};
+    const paths = {audit: '/preview/audit.html'};
     const choices = {scene: Array.from(document.querySelectorAll('#scene option'), option => option.value), width: ['390', '820', '1440', 'fluid'], theme: ['light', 'dark']};
     const query = new URLSearchParams(location.search);
     const savedWidth = Number(query.get('width'));
@@ -87,8 +84,6 @@
         document.cookie = `ppap_preview_scene=${state.scene}; Path=/; SameSite=Lax`;
         document.cookie = `ppap_preview_theme=${state.theme}; Path=/; SameSite=Lax`;
       }
-      document.getElementById('page').value = state.page;
-      document.getElementById('scenes').hidden = state.page === 'concept' || state.page === 'intake' || state.page === 'progress' || state.page === 'amendment';
       document.getElementById('scene').value = state.scene;
       for (const option of document.querySelectorAll('#scene option')) {
         option.hidden = state.page === 'audit' ? ['empty', 'long'].includes(option.value) : !['populated', 'empty', 'error', 'long'].includes(option.value);
@@ -118,7 +113,6 @@
       history.replaceState(null, '', `/__preview?${current}`);
       if (reload) frame.src = destination;
     }
-    document.getElementById('page').addEventListener('change', event => { state.page = event.target.value; render(true); });
     document.getElementById('scene').addEventListener('change', event => { state.scene = event.target.value; state.task = state.scene.startsWith('restore-') ? 'preview-recovery-task' : state.scene.startsWith('reports-') ? 'preview-report-task' : ''; state.report = state.scene.startsWith('reports-') ? '1' : ''; state.packageRequest = ''; state.view = state.scene.startsWith('archive-') ? 'archive' : state.scene.startsWith('usage-') ? 'usage' : ''; state.archiveDoc = ''; state.auditRef = ''; state.archiveReport = ''; state.usageRange = ''; state.usageSearch = ''; state.usagePage = ''; render(true); });
     for (const button of document.querySelectorAll('[data-width]')) button.addEventListener('click', () => { state.width = button.dataset.width; render(false); });
     custom.addEventListener('change', () => { const width = Number(custom.value); if (Number.isFinite(width) && width >= 280 && width <= 2400) { state.width = String(width); render(false); } else render(false); });
@@ -140,12 +134,6 @@
       if (event.data.report != null && (typeof event.data.report !== 'string' || event.data.report.length > 256)) return;
       if (event.data.packageRequest != null && (typeof event.data.packageRequest !== 'string' || event.data.packageRequest.length > 256)) return;
       state.task = event.data.task || ''; state.report = state.task ? event.data.report || '' : ''; state.packageRequest = state.task ? event.data.packageRequest || '' : ''; state.view = ''; state.archiveDoc = ''; state.auditRef = ''; state.archiveReport = ''; render(false);
-    });
-    frame.addEventListener('load', () => {
-      const opened = new URL(frame.contentWindow.location.href);
-      const path = opened.pathname;
-      const actual = path === '/preview/audit.html' ? 'audit' : path === '/preview/concept.html' ? (opened.searchParams.get('stage') === 'response' ? 'amendment' : 'concept') : path === '/preview/intake.html' ? (opened.searchParams.get('view') === 'requirements' ? 'requirements' : opened.searchParams.get('step') === 'progress' ? 'progress' : 'intake') : null;
-      if (actual && actual !== state.page) { state.page = actual; render(false); }
     });
     render(true);
   </script>

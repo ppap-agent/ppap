@@ -115,7 +115,7 @@ def test_customer_catalog_refresh_keeps_the_restored_task_and_file_selection(pag
 def test_disabled_login_has_no_dead_authorization_link_and_can_recheck_configuration(page):
     login_config(page, "disabled")
     page.route("**/api/me", lambda route: route.fulfill(status=401, json={"error": "unauthenticated"}))
-    page.goto(WEB + "/?case=access-test&stage=decision")
+    page.goto(WEB + "/files?archiveDoc=access-test")
     expect(page.get_by_text("当前无法使用飞书登录，请稍后重试。")).to_be_visible()
     expect(page.get_by_role("link", name="使用飞书登录")).to_have_count(0)
     login_config(page)
@@ -124,7 +124,7 @@ def test_disabled_login_has_no_dead_authorization_link_and_can_recheck_configura
     expect(link).to_be_visible()
     address = urlsplit(link.get_attribute("href"))
     assert address.path == "/api/login/feishu"
-    assert parse_qs(address.query)["return_to"] == [WEB + "/?case=access-test&stage=decision"]
+    assert parse_qs(address.query)["return_to"] == [WEB + "/files?archiveDoc=access-test"]
 
 
 def test_initial_anonymous_probe_does_not_discard_a_successful_host_login(page):

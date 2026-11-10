@@ -2,7 +2,7 @@ import {request, type FileVersion, type Material, type Round, type RuleCandidate
 import {clauseSourceReady, isRequirementBasis, localBasis, type RequirementBasis} from './requirements-state.ts'
 import type {RequirementCollection, RequirementVersion} from './requirement-library-state.ts'
 import {sourceContent} from './requirement-library-state.ts'
-import type {DecisionEvidence, DecisionInput} from './decision'
+import type {DecisionEvidence, DecisionInput} from './decision-input'
 
 export function parsedBasis(basis: RequirementBasis, candidate: RuleCandidate): RequirementBasis {
   return {...basis, confirmed: null, source: {...basis.source, title: candidate.title, version: basis.source.version || 'v1', state: 'ready'},

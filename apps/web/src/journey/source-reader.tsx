@@ -12,7 +12,7 @@ import {DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMen
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '../components/ui/select'
 import {Tabs, TabsContent, TabsList, TabsTrigger} from '../components/ui/tabs'
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../components/ui/table'
-import type {DecisionEvidence, DecisionInput} from './decision'
+import type {DecisionEvidence, DecisionInput} from './decision-input'
 import {documentRows, sourceDocumentHTML, sourceKey, sourceVersionLabel, type DemoDocument, type SourceFile, type SourceFocus} from './source-documents'
 import {LocalSourcePane} from './local-source-pane'
 import {RemoteSourcePane} from './remote-source'

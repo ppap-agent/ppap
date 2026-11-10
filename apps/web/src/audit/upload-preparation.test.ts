@@ -74,12 +74,12 @@ test('restored upload intent never pretends to retain local bytes or a successfu
   assert.equal(canResumeUpload({...restored, removed: false, receipt: {...restored.receipt, state: 'uploading', resume_allowed: true}}), false)
 })
 
-test('preparation-only drafts have native recovery links without replacing legacy draft links', () => {
+test('preparation drafts reopen in the upload flow; drafts of the retired pages are not listed', () => {
   const prepared = draft(0, {...value, uploads: [{request_id: 'pending', name: '待核对.xlsx', kind: 'feishu', removed: false, drive_file: {token: 'source', name: '待核对.xlsx', type: 'file'}}]})
   const items = workbenchItems([], [prepared, {...prepared, id: 'legacy', upload_preparation: null}])
   assert.equal(items[0].href, '/tasks/new?uploadDraft=original-draft')
   assert.deepEqual(items[0].files?.map(row => row.name), ['待核对.xlsx'])
-  assert.equal(items[1].href, '/?case=legacy')
+  assert.equal(items.length, 1)
   assert.equal(workbenchItems([], [{...prepared, task_id: prepared.id}]).length, 0)
 })
 

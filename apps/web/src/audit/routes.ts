@@ -15,14 +15,6 @@ export function writeAuditAddress(url: URL | string, mode: 'push' | 'replace' = 
   window.dispatchEvent(new Event(auditAddressChanged))
 }
 
-/** Keep saved draft/stage consumers; a bare Round opens the shared historical reader. */
-export function usesLegacyJourney(url: URL): boolean {
-  if (url.searchParams.has('share')) return false
-  if (['/dev', '/rules'].includes(url.pathname)) return true
-  if (url.searchParams.has('round')) return ['stage', 'resume'].some(key => url.searchParams.has(key)) || url.pathname === '/' && url.searchParams.has('clause') && !url.searchParams.has('focus')
-  return ['case', 'draft'].some(key => url.searchParams.has(key))
-}
-
 /** A refresh must read the original command receipt, never create another command. */
 export function requestAddress(url: URL, taskId: string, kind: 'recognitionRequest' | 'acceptRequest' | 'precheckRequest', requestId: string): string {
   const next = new URL(url)
@@ -48,14 +40,19 @@ export function readAuditRoute(url: URL): {surface: ProductSurface; taskId: stri
   return {surface, taskId: url.searchParams.get('task')}
 }
 
-/** Preserve legacy identities; a Round is not a Task and a share is not a task grant. */
+/** Preserve old identities; a Round is not a Task and a share is not a task grant. */
 export function canonicalAddress(url: URL): string {
   const next = new URL(url)
-  if (next.searchParams.has('round') && !next.searchParams.has('share') && !usesLegacyJourney(next)) {
+  if (next.searchParams.has('share')) return next.pathname + next.search + next.hash
+  // Addresses of the retired first-generation pages land on their current counterparts.
+  const retiredDraft = ['case', 'draft'].some(key => next.searchParams.has(key))
+  for (const key of ['case', 'draft', 'stage', 'resume']) next.searchParams.delete(key)
+  if (next.searchParams.has('round')) {
     next.pathname = '/audit'
     return next.pathname + next.search + next.hash
   }
-  if (['case', 'draft', 'round', 'share'].some(key => next.searchParams.has(key))) return next.pathname + next.search + next.hash
+  if (next.pathname === '/rules') next.pathname = surfaceAddress('requirements')
+  else if (next.pathname === '/dev' || retiredDraft) next.pathname = surfaceAddress('workbench')
   const {surface, taskId} = readAuditRoute(next)
   next.pathname = surface === 'audit' ? taskAddress(taskId) : surfaceAddress(surface)
   next.searchParams.delete('view')

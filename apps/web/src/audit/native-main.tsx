@@ -17,8 +17,7 @@ import {SharedReports} from './shared-reports'
 import {AuditRules} from './rules'
 import {AuditWorkbench, type WorkbenchProps} from './workbench'
 import {workbenchItems} from './workbench-items'
-import {canonicalAddress, readAuditRoute, usesLegacyJourney} from './routes'
-import LegacyJourney from '../journey/intake'
+import {canonicalAddress, readAuditRoute} from './routes'
 import {useWorkbenchData} from '../journey/workbench-data'
 import {TEMPLATE_GUIDE_URL} from './template-links'
 import {Toaster} from '../components/toast'
@@ -55,4 +54,4 @@ if (['prepareDeep', 'deepDraft', 'deepAccept'].some(key => new URL(location.href
 const shareId = new URL(location.href).searchParams.get('share')
 history.replaceState(history.state, '', canonicalAddress(new URL(location.href)))
 if (readAuditRoute(new URL(location.href)).surface === 'templates') location.replace(TEMPLATE_GUIDE_URL)
-else createRoot(document.getElementById('app')!).render(usesLegacyJourney(new URL(location.href)) ? <LegacyJourney/> : <ProductAccess recordValidators={{'requirement-library': isRequirementLibrary}} recordsReturnTo="/requirements"><AuditReviewProvider adapter={nativeReviewAdapter}>{shareId ? <SharedReports key={shareId} requestId={shareId}/> : <NativeAudit/>}<Toaster/></AuditReviewProvider></ProductAccess>)
+else createRoot(document.getElementById('app')!).render(<ProductAccess recordValidators={{'requirement-library': isRequirementLibrary}} recordsReturnTo="/requirements"><AuditReviewProvider adapter={nativeReviewAdapter}>{shareId ? <SharedReports key={shareId} requestId={shareId}/> : <NativeAudit/>}<Toaster/></AuditReviewProvider></ProductAccess>)

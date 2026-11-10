@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {auditAddressChanged, canonicalAddress, readAuditRoute, requestAddress, surfaceAddress, taskAddress, usesLegacyJourney, writeAuditAddress} from './routes.ts'
+import {auditAddressChanged, canonicalAddress, readAuditRoute, requestAddress, surfaceAddress, taskAddress, writeAuditAddress} from './routes.ts'
 
 test('local address edits retain history identity and notify without a synthetic back/forward event', () => {
   const descriptors = ['window', 'history'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const)
@@ -28,17 +28,12 @@ test('archive and rules aliases retain exact detail and historical version', () 
   assert.equal(canonicalAddress(new URL('https://ppap.test/?view=requirements&requirement=r&reqVersion=draft')), '/requirements?requirement=r&reqVersion=draft')
 })
 
-test('old draft, round, review and share addresses are not rewritten as new tasks', () => {
-  for (const search of ['?case=draft&stage=decision&clause=c', '?round=r&resume=changes', '?draft=d', '?share=s&report=p']) {
-    assert.equal(canonicalAddress(new URL('https://ppap.test/' + search)), '/' + search)
-  }
-})
-
-test('old round links enter the unified reader unless they carry legacy stage context', () => {
-  for (const path of ['/?round=r', '/audit?round=r', '/?case=d&round=r', '/audit?round=r&clause=c', '/?round=r&clause=c&focus=review']) assert.equal(usesLegacyJourney(new URL(path, 'https://ppap.test')), false)
-  for (const path of ['/?case=d', '/?draft=d', '/?round=r&stage=decision', '/?round=r&resume=changes', '/?round=r&clause=c', '/dev']) assert.equal(usesLegacyJourney(new URL(path, 'https://ppap.test')), true)
-  assert.equal(usesLegacyJourney(new URL('https://ppap.test/?share=s&case=d')), false)
-  assert.equal(canonicalAddress(new URL('https://ppap.test/?round=r')), '/audit?round=r')
+test('retired first-generation addresses land on their current pages; shares stay as they are', () => {
+  assert.equal(canonicalAddress(new URL('https://ppap.test/?share=s&report=p')), '/?share=s&report=p')
+  for (const search of ['?round=r', '?case=d&round=r', '?round=r&stage=decision', '?round=r&resume=changes']) assert.equal(canonicalAddress(new URL('https://ppap.test/' + search)), '/audit?round=r')
+  assert.equal(canonicalAddress(new URL('https://ppap.test/?round=r&clause=c&focus=review')), '/audit?round=r&clause=c&focus=review')
+  for (const path of ['/?case=d', '/?draft=d&stage=decision', '/dev']) assert.equal(canonicalAddress(new URL(path, 'https://ppap.test')), '/workbench')
+  assert.equal(canonicalAddress(new URL('https://ppap.test/rules')), '/requirements')
 })
 
 test('home and new task are distinct; navigation does not carry unrelated detail', () => {

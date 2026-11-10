@@ -1,4 +1,4 @@
-import type {DecisionEvidence, DecisionInput} from './decision'
+import type {DecisionEvidence, DecisionInput} from './decision-input'
 import {isObject} from './saved-draft'
 import {sourceKey} from './source-documents'
 
