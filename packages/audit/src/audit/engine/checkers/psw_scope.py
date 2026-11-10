@@ -144,20 +144,16 @@ class _Objects:
                                 visual=False,
                             )
                 lines = [line.strip() for line in text.splitlines() if line.strip()]
-                checklist = bool(lines and lines[0] == "生产件批准交付物文件清单" and all(label in re.sub(r"\s+", "", text) for label in ("序号", "项目", "确认方法", "交付形式", "附件")))
-                if checklist and not signatures and not dispositions and not authorizations:
+                compact = re.sub(r"\s+", "", text)
+                checklist = bool(lines and lines[0] == "生产件批准交付物文件清单" and all(label in compact for label in ("序号", "项目", "确认方法", "交付形式", "附件")))
+                non_submission = bool(lines and lines[0] == "PPAP文件无法提交声明" and all(label in compact for label in ("序号", "文件类型", "无法提交", "现场查阅审核")))
+                if (checklist or non_submission) and not signatures and not dispositions and not authorizations:
                     self._note(
                         {"kind": "pdf_region", "page": number, "bbox": list(page.search_for(lines[0])[0]), "source_sha256": digest, "coverage": "native_document_heading"},
-                        "原生标题及清单列确认本页为生产件批准交付物文件清单。",
+                        f"原生标题及正文结构确认本页为{lines[0]}。",
                         visual=False,
                     )
-                elif (
-                    not signatures
-                    and not dispositions
-                    and not authorizations
-                    and self.roles[number] is not True
-                    and (page.get_image_info() or any(drawing["type"] != "f" or drawing["fill"] != (1.0, 1.0, 1.0) for drawing in page.get_drawings()))
-                ):
+                elif not signatures and not dispositions and not authorizations and self.roles[number] is not True and _region_may_hold_stamp(page, page.rect):
                     # An unclassified visual page may contain another warrant
                     # or authorization. Do not add scanning or exclude it.
                     self.unresolved_pages.add(number)

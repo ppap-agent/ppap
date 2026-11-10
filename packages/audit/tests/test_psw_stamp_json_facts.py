@@ -173,6 +173,9 @@ def test_incomplete_company_coverage_keeps_reason_without_claiming_a_known_false
         ("unclassified-native", 3, "UNABLE"),
         ("white-vector-blank", 3, "PASS"),
         ("unread-vector", 3, "UNABLE"),
+        ("neutral-vector-structure", 3, "PASS"),
+        ("native-non-submission", 3, "PASS"),
+        ("non-submission-title-only", 3, "UNABLE"),
         ("english-native-vector", 3, "UNABLE"),
         ("english-authorization-vector", 3, "UNABLE"),
     ],
@@ -182,7 +185,11 @@ def test_unclassified_visual_pages_keep_all_and_exists_domains_incomplete(tmp_pa
 
     with fitz.open() as raster:
         page = raster.new_page()
-        page.insert_text((30, 40), "企业标志" if scenario == "native-checklist" else "部门章授权声明" if scenario == "unread-authorization" else "零件提交保证书", fontname="china-s")
+        page.insert_text(
+            (30, 40),
+            "企业标志" if scenario in {"native-checklist", "native-non-submission", "non-submission-title-only"} else "部门章授权声明" if scenario == "unread-authorization" else "零件提交保证书",
+            fontname="china-s",
+        )
         page.insert_text((30, 100), "图形原件内容", fontname="china-s")
         image = page.get_pixmap().tobytes("png")
     path = tmp_path / "domain.pdf"
@@ -197,6 +204,12 @@ def test_unclassified_visual_pages_keep_all_and_exists_domains_incomplete(tmp_pa
         if scenario == "native-checklist":
             for y, text in ((30, "生产件批准交付物文件清单"), (60, "序号 项目 确认方法 交付形式 附件")):
                 page.insert_text((30, y), text, fontname="china-s")
+        elif scenario in {"native-non-submission", "non-submission-title-only"}:
+            page.insert_text((30, 30), "PPAP文件无法提交声明", fontname="china-s")
+            if scenario == "native-non-submission":
+                page.insert_text((30, 60), "序号 文件类型 无法提交，可支持现场查阅审核", fontname="china-s")
+        elif scenario == "neutral-vector-structure":
+            page.insert_text((30, 30), "Comments")
         elif scenario == "unclassified-native":
             page.insert_text((30, 30), "其它原生文字不能排除图形业务表", fontname="china-s")
         elif scenario in {"english-native-vector", "english-authorization-vector"}:
@@ -204,7 +217,9 @@ def test_unclassified_visual_pages_keep_all_and_exists_domains_incomplete(tmp_pa
             page.insert_text((30, 60), "Authorized Supplier Signature")
         if scenario in {"english-native-vector", "english-authorization-vector"}:
             page.draw_circle((120, 180), 40, color=(1, 0, 0))
-        elif scenario in {"white-vector-blank", "unread-vector"}:
+        elif scenario == "unread-vector":
+            page.draw_circle((120, 180), 40, color=(0, 0, 0))
+        elif scenario in {"white-vector-blank", "neutral-vector-structure"}:
             page.draw_rect(fitz.Rect(30, 90, 250, 300), color=None, fill=(1, 1, 1) if scenario == "white-vector-blank" else (0, 0, 0))
         elif scenario != "blank":
             page.insert_image(fitz.Rect(30, 90, 250, 300), stream=image)
@@ -243,3 +258,27 @@ def test_unclassified_visual_pages_keep_all_and_exists_domains_incomplete(tmp_pa
         assert identity.args[0]["source_sha256"] == hashlib.sha256(before).hexdigest()
         with fitz.open(path) as document:
             assert document[1].get_textbox(fitz.Rect(identity.args[0]["bbox"])).strip() == "生产件批准交付物文件清单"
+
+
+def test_original_native_appendices_do_not_create_unread_visual_scope_or_resolve_guidance():
+    import hashlib
+    from pathlib import Path
+
+    from audit.engine.checkers.psw_scope import _Objects
+
+    path = Path(__file__).resolve().parents[3] / "assets/V2.0测试/模拟测试文件V2-01/16-零件提交保证书/16-零件提交保证书-上海亚大.pdf"
+    original = path.read_bytes()
+    digest = hashlib.sha256(original).hexdigest()
+    assert digest == "24133e74c1dac80339a694863930121b9525d4b0d887f7e020b9ed82f3014c0b"
+    scope = _Objects(AuditInput(audit_id="frozen-native-appendices", file_url=str(path)), digest, {})
+    assert scope.warrants == [3, 5]
+    assert scope.authorization == [7]
+    assert scope.unresolved_pages == set()
+    assert scope.roles[5] is None  # Guidance needs independent evidence; empty fields do not exclude it.
+    identities = [args[0] for args, _kwargs in scope.sources if args[0].get("coverage") == "native_document_heading"]
+    assert [item["page"] for item in identities] == [1, 6]
+    with fitz.open(path) as document:
+        for item in identities:
+            assert item["source_sha256"] == digest
+            assert document[item["page"] - 1].get_textbox(fitz.Rect(item["bbox"])).strip() in {"生产件批准交付物文件清单", "PPAP文件无法提交声明"}
+    assert path.read_bytes() == original
