@@ -254,7 +254,7 @@ def visual_provider_response(request):
                 "sources": [{"image_index": 0, "bbox": [0, 0, 1, 1]}],
                 "covered_image_indices": list(range(len(images))),
                 "coverage": "complete",
-                "excerpt": "受控提供方观察",
+                ("reason" if field == "psw_stamp_ends_with_company" else "excerpt"): "受控提供方观察",
             }
             for scope in schema["items"]["properties"]["scope"]["enum"]
         ]

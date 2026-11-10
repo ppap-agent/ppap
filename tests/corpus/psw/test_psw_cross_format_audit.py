@@ -69,8 +69,10 @@ def _controlled_visual_facts(response_schema, image_count, prompt=""):
     values = {"authorized_signature_present": True, "psw_stamp_present": True, "submission_any_checked": True}
     result = {}
     for field, schema in response_schema["schema"]["properties"].items():
-        if "items" not in schema:  # A located region returns the bare value.
-            result[field] = values.get(field)
+        company = field == "psw_stamp_ends_with_company"
+        value = values.get(field)
+        if "items" not in schema:
+            result[field] = {"value": value, "reason": "受控测试未提供公司结尾事实"} if company else value
             continue
         observations = []
         for scope in schema["items"]["properties"]["scope"]["enum"]:
@@ -78,11 +80,11 @@ def _controlled_visual_facts(response_schema, image_count, prompt=""):
             observations.append(
                 {
                     "scope": scope,
-                    "value": values.get(field),
-                    "sources": [{"image_index": indices[0], "bbox": [0, 0, 1, 1]}],
-                    "covered_image_indices": indices,
-                    "coverage": "complete",
-                    "excerpt": "受控视觉事实",
+                    "value": value,
+                    "sources": [] if company and value is None else [{"image_index": indices[0], "bbox": [0, 0, 1, 1]}],
+                    "covered_image_indices": [] if company and value is None else indices,
+                    "coverage": "unreadable" if company and value is None else "complete",
+                    ("reason" if company else "excerpt"): "受控测试未提供公司结尾事实" if company else "受控视觉事实",
                 }
             )
         result[field] = observations
