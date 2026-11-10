@@ -2904,15 +2904,8 @@ class AuthStore:
             # is the server's exact prospective Round, including explicit reasons
             # for sources that will be removed atomically during admission.
             exclusions = [{"file_version_id": row["file"]["id"], "reason": row["removal_reason"]} for row in files if row["selection"] == "removed"]
-            version_confirmation = {
-                row["file"]["id"]
-                for row in selected
-                if "suite_version_confirmation_required" in ((row.get("match") or {}).get("gaps") or [])
-            }
-            exclusions.extend(
-                {"file_version_id": file_id, "reason": "当前是历史检查版本，需确认目录版本后才能审核"}
-                for file_id in sorted(version_confirmation)
-            )
+            version_confirmation = {row["file"]["id"] for row in selected if "suite_version_confirmation_required" in ((row.get("match") or {}).get("gaps") or [])}
+            exclusions.extend({"file_version_id": file_id, "reason": "当前是历史检查版本，需确认目录版本后才能审核"} for file_id in sorted(version_confirmation))
             exclusions.extend(
                 {"file_version_id": row["file"]["id"], "reason": "预检已确认的阻断缺陷，需修正后重新提交" if row["file"]["id"] in blocked else "未匹配到生效规则，未纳入审核"}
                 for row in selected

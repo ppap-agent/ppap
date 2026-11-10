@@ -279,10 +279,7 @@ def test_http_refuses_an_official_carrier_head_and_records_precheck_confirmation
         order.append(key)
 
     include("UAES:U08")
-    pinned = {
-        key: suites.create_revision(tenant_id=None, suite_key=key, files=dict(baselines[key].files), related_suite_keys=baselines[key].related_suite_keys, created_by=None)
-        for key in order
-    }
+    pinned = {key: suites.create_revision(tenant_id=None, suite_key=key, files=dict(baselines[key].files), related_suite_keys=baselines[key].related_suite_keys, created_by=None) for key in order}
     monkeypatch.setattr("audit.standard_library.check_clause", forbidden)
     monkeypatch.setattr("audit.standard_suites._carriers", forbidden)
     monkeypatch.setattr("audit.presets.preset_source_bindings", forbidden)
@@ -398,7 +395,6 @@ def test_http_refuses_an_official_carrier_head_and_records_precheck_confirmation
         assert calls == []
 
 
-
 def test_frozen_carrier_round_replays_its_bytes_after_the_directory_head_is_current(auth_store_factory, core_system, monkeypatch, tmp_path):
     """An already accepted carrier snapshot keeps its bytes when the head moves.
 
@@ -413,11 +409,7 @@ def test_frozen_carrier_round_replays_its_bytes_after_the_directory_head_is_curr
     admin = auth_store_factory(settings)
     principal = admin.upsert_feishu_identity("historical-replay", "operator")
     suites = SuiteStore(settings, admin.objects, role="migrator")
-    carrier_source = (
-        b"from audit.standard_library import check_clause\n"
-        b"RESOURCES = {'carriers': {}, 'methods': {'C1': 'check'}}\n"
-        b"def check(context):\n    return check_clause(context, RESOURCES)\n"
-    )
+    carrier_source = b"from audit.standard_library import check_clause\nRESOURCES = {'carriers': {}, 'methods': {'C1': 'check'}}\ndef check(context):\n    return check_clause(context, RESOURCES)\n"
     carrier_rules = {"title": "历史", "rules": [{"id": "C1"}], "checker_binding": {"C1": "checker:check"}}
     carrier = suites.create_revision(tenant_id=None, suite_key="HIST:OLD", files={"checker.py": carrier_source, "rules.json": json.dumps(carrier_rules).encode()}, created_by=None)
     directory_rules = {"title": "目录", "rules": [{"id": "C1"}], "checker_binding": {"C1": "checker:create_audit"}}
