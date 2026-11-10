@@ -141,8 +141,38 @@ class UiA11yTests(unittest.TestCase):
             browser = playwright.chromium.launch()
             page = browser.new_context().new_page()
             page.route("**/runtime-config.json", lambda route: route.fulfill(json={"api_url": WEB + "/api"}))
-            page.route("**/api/public-config", lambda route: route.fulfill(json={"git_sha": "fixture", "api_url": WEB + "/api", "profile": "isolated-dev", "login": "isolated-dev", "deep_offered": False, "feishu_app_id": "", "current_access": "allowed", "usage_charge_enabled": False}))
-            page.route("**/api/me", lambda route: route.fulfill(json={"display_name": "alice", "tenant_id": "test-tenant", "user_id": "test-user", "membership": "member", "identity": {"provider": "isolated-dev", "app_id": "test-app", "tenant_key": "test-tenant", "subject": "fixture"}}))
+            page.route(
+                "**/api/public-config",
+                lambda route: route.fulfill(
+                    json={
+                        "git_sha": "fixture",
+                        "api_url": WEB + "/api",
+                        "profile": "isolated-dev",
+                        "login": "isolated-dev",
+                        "deep_offered": False,
+                        "feishu_app_id": "",
+                        "current_access": "allowed",
+                        "usage_charge_enabled": False,
+                    }
+                ),
+            )
+            page.route(
+                "**/api/me",
+                lambda route: route.fulfill(
+                    json={
+                        "display_name": "alice",
+                        "tenant_id": "test-tenant",
+                        "user_id": "test-user",
+                        "membership": "member",
+                        "identity": {
+                            "provider": "isolated-dev",
+                            "app_id": "test-app",
+                            "tenant_key": "test-tenant",
+                            "subject": "fixture",
+                        },
+                    }
+                ),
+            )
             page.route("**/api/rules", lambda route: route.fulfill(json={"rules": []}))
             page.route("**/api/rule-types", lambda route: route.fulfill(json={"types": ["控制计划"]}))
             page.route("**/api/suites", lambda route: route.fulfill(json={"suites": [], "predefined": []}))

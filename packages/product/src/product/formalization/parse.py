@@ -6,6 +6,7 @@ The trees are render views. They are not a second rule language and they are not
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 AXIOM_NAMESPACE = "https://ppap.example/formal/v1#"
 AXIOM_ID = AXIOM_NAMESPACE + "axiomId"
@@ -232,6 +233,7 @@ class _OwlParser:
             self.lexer.pop()
             annotations.append(self._annotation())
         axiom_id = _axiom_id(annotations, len(self.axioms) + 1)
+        expr: tuple[Any, ...]
         if word == "SubClassOf":
             sub = self._class()
             sup = self._class()
@@ -665,7 +667,7 @@ def _rename(expr, source: str, target: str):
 
 def _normalized(expr: tuple) -> bool:
     def nested(term) -> bool:
-        return isinstance(term, tuple) and term and term[0] == "fn" and any(isinstance(part, tuple) and part and part[0] == "fn" for part in term[2])
+        return bool(isinstance(term, tuple) and term and term[0] == "fn" and any(isinstance(part, tuple) and part and part[0] == "fn" for part in term[2]))
 
     return any(nested(part) for part in expr[1:])
 
@@ -702,7 +704,7 @@ def serialize_owl(document: OwlDocument) -> str:
         matches = [(name, base) for name, base in prefixes.items() if value.startswith(base)]
         if matches:
             name, base = max(matches, key=lambda item: len(item[1]))
-            return f"{name}:{value[len(base):]}"
+            return f"{name}:{value[len(base) :]}"
         return f"<{value}>"
 
     def literal(expr: tuple) -> str:

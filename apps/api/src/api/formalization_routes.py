@@ -137,9 +137,9 @@ class FormalizationProblem(BaseModel):
     error: str
 
 
-_PROBLEM = {"model": FormalizationProblem}
-_READ_PROBLEMS = {401: _PROBLEM, 403: _PROBLEM, 404: _PROBLEM, 422: _PROBLEM}
-_WRITE_PROBLEMS = {401: _PROBLEM, 403: _PROBLEM, 409: _PROBLEM, 422: _PROBLEM, 503: _PROBLEM}
+_PROBLEM: dict[str, Any] = {"model": FormalizationProblem}
+_READ_PROBLEMS: dict[int | str, dict[str, Any]] = {401: _PROBLEM, 403: _PROBLEM, 404: _PROBLEM, 422: _PROBLEM}
+_WRITE_PROBLEMS: dict[int | str, dict[str, Any]] = {401: _PROBLEM, 403: _PROBLEM, 409: _PROBLEM, 422: _PROBLEM, 503: _PROBLEM}
 
 
 _CONFLICTS = {

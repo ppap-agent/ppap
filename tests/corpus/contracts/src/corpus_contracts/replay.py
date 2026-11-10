@@ -16,6 +16,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from audit.engine.checkers.client import TextCompletion
 from documents.model_access import ModelAccess
 from documents.ocr.env import effective_ocr_extra_body
 from pydantic import SecretStr
@@ -185,8 +186,9 @@ def install(monkeypatch: Any, recorder: Recorder) -> None:
         if entry is None:
             recorder.require_live("text")
             answer = real_text(self, messages, *args, **kwargs)
-            recorder.add("text", request, answer, getattr(self.settings, "MODEL_NAME", None))
-            return answer
+            text = answer.text if isinstance(answer, TextCompletion) else answer
+            recorder.add("text", request, text, getattr(self.settings, "MODEL_NAME", None))
+            return text
         return entry["answer"]
 
     def paddle_request(endpoint: str, payload: dict, headers: dict, timeout: float) -> object:

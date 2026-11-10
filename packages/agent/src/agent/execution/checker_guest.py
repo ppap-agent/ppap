@@ -110,7 +110,6 @@ def run_program(
     Supplied files already belong to the authorized guest. A partial trial
     binds only explicitly requested IDs and makes no claim about other clauses.
     """
-    import hashlib
 
     from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest, clause_ids, rule_digest
     from audit.standard_suites import library_revision

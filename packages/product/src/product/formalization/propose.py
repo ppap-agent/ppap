@@ -112,7 +112,6 @@ def refuse_ungrounded_strict(checked: dict, *, clause_text: str, clarification: 
     return check_formal_spec(payload, clause_text=clause_text)
 
 
-
 def _normalization_question() -> dict:
     return {
         "id": "normalization",
@@ -143,7 +142,14 @@ def _unspoken_role_questions(checked: dict, clause_text: str) -> list[dict]:
         "unknown": ("policy-unknown", "原文没有写明证据不足时的结论。", "证据不足即不符合", "读不到值时判不符合。", "证据不足时先标为不能判断", "读不到值时不直接判不符合。"),
         "duplicate": ("policy-duplicate", "原文没有写明重复记录是否违规。", "重复记录算违规", "同一个键出现两行时判不符合。", "重复记录不由此句判定", "同一个键出现两行时本句不判违规。"),
         "scope": ("policy-scope", "原文没有写明哪些行属于适用范围。", "只检查已声明的适用行", "标题行和返工行不在适用行内时不检查。", "检查全部行", "标题行也必须满足同一条件。"),
-        "column": ("policy-column", "原文没有写明这是表头有列，还是数据行有值。", "表头中有这一列", "表头有该列但数据行没有值时，列存在仍为真。", "数据行里要有值", "表头有该列但数据行没有值时，有值仍为假。"),
+        "column": (
+            "policy-column",
+            "原文没有写明这是表头有列，还是数据行有值。",
+            "表头中有这一列",
+            "表头有该列但数据行没有值时，列存在仍为真。",
+            "数据行里要有值",
+            "表头有该列但数据行没有值时，有值仍为假。",
+        ),
     }
     found = []
     for role, words in _ROLE_WORDS.items():
@@ -161,12 +167,6 @@ def _unspoken_role_questions(checked: dict, clause_text: str) -> list[dict]:
             }
         )
     return found
-
-
-
-
-
-
 
 
 def _sequence_text(clause_text: str) -> bool:
@@ -346,7 +346,6 @@ def _has_operator(nodes: dict, operator: str) -> bool:
     return any(walk(node.get("expr")) for node in nodes.values() if isinstance(node, dict))
 
 
-
 def _coverage_mismatch(nodes: dict, clause_text: str) -> list[dict]:
     universal = any(word in clause_text for word in ("每一", "所有", "全部", "每个", "每条", "每行"))
     some = any(word in clause_text for word in ("至少", "有一条", "存在一条", "某一"))
@@ -474,7 +473,6 @@ def _walk_ops(nodes: dict):
         if isinstance(node, dict):
             walk(node.get("expr"))
     return found
-
 
 
 def _direction_mismatch(nodes: dict, clause_text: str) -> list[dict]:

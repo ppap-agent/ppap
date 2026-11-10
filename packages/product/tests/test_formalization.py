@@ -680,7 +680,17 @@ def test_an_undecided_choice_stays_unresolved_even_when_the_model_says_complete(
     assert kept["spec"]["unresolved"][-1]["id"] == "undecided"
     assert "至少一个目标" in kept["cnl_text"]
     extra = dict(decided)
-    extra["spec"] = {**decided["spec"], "unresolved": [{"id": "policy-direction", "reason": "原文没有写明匹配方向。", "choices": [{"id": "forward", "summary": "只看源", "counterexample": "目标多出一行时不判违规。"}]}], "completeness": "partial"}
+    extra["spec"] = {
+        **decided["spec"],
+        "unresolved": [
+            {
+                "id": "policy-direction",
+                "reason": "原文没有写明匹配方向。",
+                "choices": [{"id": "forward", "summary": "只看源", "counterexample": "目标多出一行时不判违规。"}],
+            }
+        ],
+        "completeness": "partial",
+    }
     displaced = hold_if_undecided(extra, {"choice_id": "undecided"}, clause_text="条款", prior_unresolved=prior)
     assert displaced["spec"]["unresolved"][0]["id"] == "q1"
     assert displaced["spec"]["unresolved"][1]["id"] == "policy-direction"

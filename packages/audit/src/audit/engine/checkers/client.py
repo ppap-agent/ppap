@@ -145,7 +145,7 @@ class AIClient:
         self._personal_scope = False
         self._bound_personal_call = personal
         self.settings = settings
-        self.last_usage = None
+        self.last_usage: dict[str, Any] | None = None
         self.development_mode = bool(self.settings.DEVELOPMENT)
         self.langfuse_enabled = False
         self.langfuse_client = None
@@ -220,7 +220,7 @@ class AIClient:
         *,
         request_timeout: float | None = None,
         retry_limit: int | None = None,
-    ) -> str:
+    ) -> TextCompletion:
         """
         文本专用 Responses 接口
 
@@ -411,7 +411,7 @@ class AIClient:
         *,
         request_timeout: float | None = None,
         retry_limit: int | None = None,
-    ) -> str:
+    ) -> TextCompletion:
         """
         结构化完成接口
 

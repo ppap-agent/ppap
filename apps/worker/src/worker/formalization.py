@@ -12,16 +12,16 @@ def _provider_usage(result: TextCompletion | None) -> dict | None:
     """Copy known token counts only. Never copy credentials or free-form provider text."""
     if not isinstance(result, TextCompletion):
         return None
-    usage = {}
+    counts: dict[str, int] = {}
     for key in ("input_tokens", "output_tokens", "thinking_tokens"):
         value = getattr(result, key)
         if type(value) is int and value >= 0:
-            usage[key] = value
-    if "input_tokens" not in usage or "output_tokens" not in usage:
+            counts[key] = value
+    if "input_tokens" not in counts or "output_tokens" not in counts:
         return None
-    if usage.get("thinking_tokens", 0) > usage["output_tokens"]:
-        usage.pop("thinking_tokens", None)
-    usage["source"] = "provider"
+    if counts.get("thinking_tokens", 0) > counts["output_tokens"]:
+        counts.pop("thinking_tokens", None)
+    usage: dict[str, int | str] = {**counts, "source": "provider"}
     return usage
 
 

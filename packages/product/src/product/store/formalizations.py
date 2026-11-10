@@ -381,7 +381,9 @@ class FormalizationStore:
             if row is None or row["state"] not in {"queued", "running"}:
                 return None
             rule = self.store.get_rule(str(row["tenant_id"]), str(row["rule_version_id"]))
-            state, failure, candidate_id = "failed", error_code or "formalization_failed", None
+            state = "failed"
+            failure: str | None = error_code or "formalization_failed"
+            candidate_id = None
             if error_code == "stopped":
                 state, failure = "stopped", "stopped"
             elif usage_uncertain:
@@ -421,7 +423,7 @@ class FormalizationStore:
             elif rule is None:
                 state, failure = "failed", "access_denied"
             if not self._owns(conn, claimed, worker_ident, allow_expired=allow_expired):
-                return False
+                return None
             reported = usage or {}
             usage_record = {**reported, "uncertain": usage_uncertain or not usage, "source": "unreported" if not usage else reported.get("source", "reported")}
             cur.execute(

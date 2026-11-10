@@ -588,6 +588,7 @@ class SuiteReleaseStore:
                 raise ValueError("invalid_template_reference") from None
             if not isinstance(templates, list) or any(not isinstance(item, dict) or (item.get("kind") == "licensed_blank" and item.get("distributable") is not True) for item in templates):
                 raise ValueError("template_distribution_not_authorized")
+
         def _persist(conn) -> str:
             _member(conn, principal)
             base = _revision(conn, base_revision_id, principal.tenant_id)

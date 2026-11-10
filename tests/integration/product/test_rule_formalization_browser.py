@@ -77,10 +77,7 @@ _THRESHOLD_VOCAB = {
         {"iri": NS + "length", "kind": "function", "label": "长度"},
     ],
 }
-_THRESHOLD_OWL = (
-    f"Prefix(ex:=<{NS}>)\nPrefix(ppap:=<https://ppap.example/formal/v1#>)\n"
-    "Ontology(\nDeclaration(Class(ex:Row))\nDeclaration(DataProperty(ex:length))\n)\n"
-)
+_THRESHOLD_OWL = f"Prefix(ex:=<{NS}>)\nPrefix(ppap:=<https://ppap.example/formal/v1#>)\nOntology(\nDeclaration(Class(ex:Row))\nDeclaration(DataProperty(ex:length))\n)\n"
 
 
 def _reading(rule_id: str, clause_id: str, clif: str, kind: str, unresolved: list | None = None, vocabulary: dict | None = None, owl: str | None = None) -> str:
@@ -156,9 +153,11 @@ def formalization_browser(auth_store_factory, tmp_path, request):
         ("c3", "長度至少 10℃", False),
         ("c4", "日期必须填写", True),
     ]
-    body = {"kind": "engine", "type": "自定义", "rules": [
-        {"id": clause_id, "category": "条款", "priority": "P0", "rule_to_check": text, "type_of_rule": "text"} for clause_id, text, _checked in rules
-    ]}
+    body = {
+        "kind": "engine",
+        "type": "自定义",
+        "rules": [{"id": clause_id, "category": "条款", "priority": "P0", "rule_to_check": text, "type_of_rule": "text"} for clause_id, text, _checked in rules],
+    }
     from product.store.suites import SuiteStore
 
     suite_key = "custom:" + rule_id
@@ -177,18 +176,29 @@ def formalization_browser(auth_store_factory, tmp_path, request):
         files={"rules.json": json.dumps({"title": "编号检查", "type": "自定义", "rules": body["rules"]}).encode(), "checker.py": program},
         created_by=alice.user_id,
     )
+
     def cited(clause_id: str, text: str, checked: bool) -> dict:
         location = f"第 1 页 · {clause_id}"
         clause = {"id": clause_id, "title": text, "text": text, "original": text, "source": "编号.txt", "location": location, "applicability": "apply", "reason": "", "checked": checked}
         if checked:
             clause["provenance"] = {"id": f"unit-{clause_id}", "location": location, "excerpt": text, "fileVersionId": version_id}
         return clause
-    registration = {"registration": json.dumps({"basis": {
-        "source": {"id": rule_id, "title": "编号规则", "filename": "编号.txt", "version": "v1", "origin": "local", "state": "ready"},
-        "clauses": [cited(*rule) for rule in rules],
-        "conflict": {"active": False, "choice": "pending", "reason": ""},
-        "confirmed": None,
-    }, "scope": {"customer": "", "part": "", "revision": "", "allCustomers": True, "allParts": True, "allRevisions": True}, "reason": "已核对"}, ensure_ascii=False)}
+
+    registration = {
+        "registration": json.dumps(
+            {
+                "basis": {
+                    "source": {"id": rule_id, "title": "编号规则", "filename": "编号.txt", "version": "v1", "origin": "local", "state": "ready"},
+                    "clauses": [cited(*rule) for rule in rules],
+                    "conflict": {"active": False, "choice": "pending", "reason": ""},
+                    "confirmed": None,
+                },
+                "scope": {"customer": "", "part": "", "revision": "", "allCustomers": True, "allParts": True, "allRevisions": True},
+                "reason": "已核对",
+            },
+            ensure_ascii=False,
+        )
+    }
     with admin._conn() as conn:
         conn.execute("INSERT INTO product.resources(id,tenant_id,kind) VALUES (%s,%s,'file')", (file_id, alice.tenant_id))
         conn.execute("INSERT INTO product.resource_grants(resource_id,user_id,capability) VALUES (%s,%s,'read')", (file_id, alice.user_id))
@@ -205,12 +215,21 @@ def formalization_browser(auth_store_factory, tmp_path, request):
         )
         bare_id = str(uuid4())
         bare_body = {"kind": "engine", "type": "自定义", "rules": [{"id": "c1", "category": "条款", "priority": "P0", "rule_to_check": "要有名称", "type_of_rule": "text"}]}
-        bare_registration = {"registration": json.dumps({"basis": {
-            "source": {"id": bare_id, "title": "无检查规则", "filename": "编号.txt", "version": "v1", "origin": "local", "state": "ready"},
-            "clauses": [cited("c1", "要有名称", True)],
-            "conflict": {"active": False, "choice": "pending", "reason": ""},
-            "confirmed": None,
-        }, "scope": {"customer": "", "part": "", "revision": "", "allCustomers": True, "allParts": True, "allRevisions": True}, "reason": "已核对"}, ensure_ascii=False)}
+        bare_registration = {
+            "registration": json.dumps(
+                {
+                    "basis": {
+                        "source": {"id": bare_id, "title": "无检查规则", "filename": "编号.txt", "version": "v1", "origin": "local", "state": "ready"},
+                        "clauses": [cited("c1", "要有名称", True)],
+                        "conflict": {"active": False, "choice": "pending", "reason": ""},
+                        "confirmed": None,
+                    },
+                    "scope": {"customer": "", "part": "", "revision": "", "allCustomers": True, "allParts": True, "allRevisions": True},
+                    "reason": "已核对",
+                },
+                ensure_ascii=False,
+            )
+        }
         conn.execute(
             """INSERT INTO product.rule_versions(id,tenant_id,title,body,created_by,source_file_version_id,case_context)
                VALUES (%s,%s,'无检查规则',%s,%s,%s,%s)""",

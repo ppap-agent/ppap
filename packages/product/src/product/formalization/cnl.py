@@ -6,6 +6,7 @@ The text is a projection of that specification. It is not a second authority.
 from __future__ import annotations
 
 from audit.formal_digest import CNL_RENDERER_VERSION, display_digest
+
 from product.formalization.parse import _as_unique
 
 RENDERER_VERSION = CNL_RENDERER_VERSION
@@ -23,10 +24,15 @@ def verbalize(checked: dict) -> dict:
             continue
         sentence, covered = _sentence(node, labels, roles)
         if obligation["semantic_kind"] not in covered or _generic(sentence):
-            unsupported.append({
-                "id": obligation["id"], "formal_ref": obligation["formal_ref"], "reason": "kind_not_in_expression",
-                "semantic_kind": obligation["semantic_kind"], "source_span": obligation.get("source_span"),
-            })
+            unsupported.append(
+                {
+                    "id": obligation["id"],
+                    "formal_ref": obligation["formal_ref"],
+                    "reason": "kind_not_in_expression",
+                    "semantic_kind": obligation["semantic_kind"],
+                    "source_span": obligation.get("source_span"),
+                }
+            )
         pieces.append(f"{obligation['id']}：{sentence}")
     unresolved = checked["unresolved"]
     gaps = checked.get("gaps") or []

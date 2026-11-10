@@ -23,11 +23,8 @@ test-results/
 .insforge/
 .cache/
 
-# Deep lab. Shared skills under .grok/skills can be tracked. Secrets and sessions cannot.
-.grok/config.toml
-.grok/sessions/
-.grok/auth.json
-.grok/*.lock
+# Local grok agent state.
+.grok/
 output/
 
 /deploy/tke/.build.lock
