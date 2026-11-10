@@ -21,7 +21,6 @@ import {canonicalAddress, readAuditRoute, usesLegacyJourney} from './routes'
 import LegacyJourney from '../journey/intake'
 import {useWorkbenchData} from '../journey/workbench-data'
 import {TEMPLATE_GUIDE_URL} from './template-links'
-import {DeepPrepare} from './deep-prepare'
 import {Toaster} from '../components/toast'
 
 const renderOriginal: OriginalRenderer = (file, evidence, roundId) => <div className="flex h-[65dvh] min-h-96 min-w-0"><RemoteSourcePane file={{file_id: file.file_id, file_version_id: file.id, original_filename: file.original_filename, role: 'target', rule_version_id: null}} roundId={roundId} focus={evidence?.locator ? {location: sourceLocation({locator: evidence.locator}), requestId: 0} : undefined}/></div>
@@ -47,10 +46,12 @@ function NativeAudit() {
     }).catch(cause => {if (active) setError(cause instanceof Error ? cause.message : '无法读取审核规则。')})
     return () => {active = false}
   }, [revision])
-  return <>{error && <Alert variant="destructive"><AlertTitle>客户规则目录未能刷新</AlertTitle><AlertDescription><p>已保存的规则和当前待审文件仍保留。</p><Button variant="outline" onClick={() => setRevision(value => value + 1)}>重新读取客户目录</Button></AlertDescription></Alert>}<AuditIntake auditPage={new URL(location.href).searchParams.get('prepareDeep') === '1' ? <DeepPrepare/> : undefined} uploadEntry={deepOffered && new URL(location.href).pathname === '/tasks/new' ? <Button variant="link" asChild><a href="/audit?prepareDeep=1">让 AI 深度分析</a></Button> : undefined} adapter={adapter} renderWorkbench={props => <NativeWorkbench {...props}/>} onRefreshCustomers={() => setRevision(value => value + 1)} rules={(active, headerActions) => <AuditRules headerActions={headerActions} active={active} onPublished={() => setRevision(value => value + 1)}/>} archiveAdapter={nativeArchiveAdapter} usageAdapter={nativeUsageAdapter} displayAdapter={nativeDisplayAdapter} reportAdapter={nativeReportAdapter} sharingAdapter={nativeSharingAdapter} supportAdapter={nativeSupportAdapter} renderOriginal={renderOriginal}/></>
+  return <>{error && <Alert variant="destructive"><AlertTitle>客户规则目录未能刷新</AlertTitle><AlertDescription><p>已保存的规则和当前待审文件仍保留。</p><Button variant="outline" onClick={() => setRevision(value => value + 1)}>重新读取客户目录</Button></AlertDescription></Alert>}<AuditIntake adapter={adapter} renderWorkbench={props => <NativeWorkbench {...props}/>} onRefreshCustomers={() => setRevision(value => value + 1)} rules={(active, headerActions) => <AuditRules headerActions={headerActions} active={active} onPublished={() => setRevision(value => value + 1)}/>} archiveAdapter={nativeArchiveAdapter} usageAdapter={nativeUsageAdapter} displayAdapter={nativeDisplayAdapter} reportAdapter={nativeReportAdapter} sharingAdapter={nativeSharingAdapter} supportAdapter={nativeSupportAdapter} renderOriginal={renderOriginal}/></>
 }
 
 const readRound: ReadRound = (id, signal) => request(`/rounds/${encodeURIComponent(id)}?read_view=true`, 'GET', undefined, signal)
+// The former separate deep-analysis page is now the deep mode of an ordinary audit.
+if (['prepareDeep', 'deepDraft', 'deepAccept'].some(key => new URL(location.href).searchParams.has(key))) location.replace('/tasks/new')
 const shareId = new URL(location.href).searchParams.get('share')
 history.replaceState(history.state, '', canonicalAddress(new URL(location.href)))
 if (readAuditRoute(new URL(location.href)).surface === 'templates') location.replace(TEMPLATE_GUIDE_URL)

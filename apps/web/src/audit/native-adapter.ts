@@ -286,6 +286,12 @@ export function createNativeAuditAdapter(options: {deepOffered: boolean; custome
         throw Object.assign(failure instanceof Error ? failure : new Error('预检查结果尚未核对。'), {validationRequestId: id})
       }
     },
+    async ruleChoices(signal) {
+      const {rules} = await request<components['schemas']['RulesList']>('/rules', 'GET', undefined, signal)
+      // Recognition accepts only the newest version of a rule: one no other version names as its predecessor.
+      const replaced = new Set(rules.map(rule => rule.predecessor_id))
+      return rules.filter(rule => rule.kind === 'engine' && !replaced.has(rule.id)).map(rule => ({id: rule.id, title: rule.title}))
+    },
     precheck: {
       async history(id) {return (await request<components['schemas']['PrecheckHistory']>(`${taskPath(id)}/prechecks`)).snapshots},
       read: (id, snapshot) => request(`${taskPath(id)}/prechecks/${encoded(snapshot)}`),

@@ -77,6 +77,7 @@ function sample(index: number): AuditTaskFile {
 }
 const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' | 'drive'>> = {
   readRound: readHistoricalRound,
+  ruleChoices: async () => documents.map((document, index) => ({id: `preview-rule-${index + 1}`, title: document.rule})),
   notifications: {
     async read(id) {
       const task = taskStore.get(id)
