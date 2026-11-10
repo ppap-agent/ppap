@@ -3,6 +3,7 @@
 from copy import deepcopy
 from dataclasses import replace
 
+import pytest
 from product.review_hints import MAX_REVIEW_HINTS, HintResult, review_hints
 from product.store.task_view import file_round_audit
 
@@ -39,6 +40,18 @@ def test_explicit_pdf_excel_pair_is_compared_with_a_small_round_limit():
     hints = review_hints([*current, *paired], [], {frozenset({"pdf", "excel"})}, {})
     assert len(hints) == MAX_REVIEW_HINTS
     assert all(hint["reason"] == "cross_format_differs" and hint["compared_file_version_id"] == "excel" for hint in hints)
+
+
+@pytest.mark.parametrize("difference", [{"suite_revision_id": "different-revision"}, {"sha256": "b" * 64}, {"clause_id": "other-clause"}, {"status": "ERR"}, {"status": "NG"}])
+def test_changed_identity_or_nonbusiness_result_is_not_an_instability_signal(difference):
+    previous = replace(result("previous", status="PASS"), **difference)
+    assert review_hints([result()], [previous], set(), {}) == []
+
+
+def test_matching_names_without_an_explicit_format_pair_do_not_produce_a_hint():
+    pdf = replace(result(file_id="pdf"), filename="control.pdf")
+    excel = replace(result(file_id="excel", status="PASS"), sha256="b" * 64, filename="control.xlsx")
+    assert review_hints([pdf, excel], [], set(), {}) == []
 
 
 def test_hint_projection_preserves_machine_and_report_semantics():

@@ -2,6 +2,8 @@
 
 import asyncio
 import gc
+import hashlib
+import json
 from xml.etree import ElementTree
 from zipfile import ZipFile
 
@@ -16,6 +18,7 @@ from audit.contracts import (
 from audit.engine.app_runtime import run_audit_engine
 from audit.engine.checkers.client import AIClient
 from audit.engine.checkers.psw_pdf_evidence import assess_psw_conversion_evidence
+from audit.engine.checkers.psw_visual_evidence import PSW_RULE_FIELDS, evaluate_psw_observation
 from audit.engine.runtime import bind_runtime
 from documents.contracts import ConversionArtifact
 from documents.ocr.client import current_ocr_observation
@@ -86,6 +89,21 @@ def use_external_conversion(monkeypatch, source, outcome):
     monkeypatch.setattr("audit.engine.app_runtime.convert_pdf_to_excel_auto", convert)
     monkeypatch.setattr("audit.checkers.v2.pdf_agent.convert_pdf_to_excel_auto", convert)
     monkeypatch.setattr("audit.checkers.v3.pdf_agent.convert_pdf_to_excel_auto", convert)
+
+
+def use_established_psw_facts(monkeypatch, read):
+    """Isolate hybrid orchestration from the object reader, not from PSW policy.
+
+    These cases use a blue placeholder PDF. Its object identity and established
+    visual facts are controlled here; the real object/JSON path is tested below.
+    Operation labels identify fixture rule calls, not a retired backend route.
+    """
+
+    def observe(audit, rule_no, witness, cache, _read_single):
+        facts = read(audit, PSW_RULE_FIELDS[rule_no], witness, operation=f"psw_rule_{rule_no}", cache=cache)
+        return facts, evaluate_psw_observation(rule_no, facts)
+
+    monkeypatch.setattr("audit.engine.checkers.psw_scope.evaluate_psw_pdf_rule", observe)
 
 
 @pytest.mark.parametrize(
@@ -232,12 +250,19 @@ def test_actual_converted_controls_do_not_replace_original_pdf_checkbox_facts(or
     assert "checkbox_controls_observed_without_completeness_proof" in assessment.diagnostics
     use_external_conversion(monkeypatch, original_pdf, ConversionArtifact(success=True, xlsx_path=str(converted_table)))
 
+    original = original_pdf.read_bytes()
     results = run_audit_engine(AuditInput(audit_id="psw-converted-controls", file_url=str(original_pdf)), psw_rules(profile, count=8))
 
     assert len(results) == 8
     assert results[7].status == "UNABLE"
-    assert "无法判断" in results[7].suggestions
-    assert results[7].evidence.used == "none"
+    assert "业务对象范围尚不能确认" in results[7].suggestions
+    assert results[7].evidence.used == "structure"
+    for source in results[7].evidence.sources:
+        locator = json.loads(source.locator)
+        assert source.kind == "structure" and locator["page"] == 1
+        assert locator["source_sha256"] == hashlib.sha256(original).hexdigest()
+        assert locator["coverage"] == "unreadable" and locator["observed_value"] is None
+    assert original_pdf.read_bytes() == original
 
 
 @pytest.fixture(autouse=True)
@@ -264,7 +289,7 @@ def test_rule_eight_uses_native_paddle_facts_without_llm_fallback(original_pdf, 
         assert audit.file_url == str(original_pdf)
         return dict.fromkeys(fields)
 
-    monkeypatch.setattr("audit.checkers.v4.visual_facts.read_original_pdf_visual_facts", read)
+    use_established_psw_facts(monkeypatch, read)
     original = original_pdf.read_bytes()
     results = run_audit_engine(AuditInput(audit_id="psw-no-checkbox-proof", file_url=str(original_pdf)), psw_rules(profile, count=10))
 
@@ -286,7 +311,7 @@ def test_signature_rule_uses_established_facts_and_preserves_unknown(original_pd
         witness({"kind": "pdf_region", "page": 1, "engine": "paddle", "bbox": [0, 0, 20, 20]}, "已确认的原件区域", visual=True)
         return {"psw_stamp_ends_with_company": None, "authorized_signature_present": signature, "psw_stamp_present": stamp}
 
-    monkeypatch.setattr("audit.checkers.v4.visual_facts.read_original_pdf_visual_facts", read)
+    use_established_psw_facts(monkeypatch, read)
     results = run_audit_engine(AuditInput(audit_id="psw-signature-facts", file_url=str(original_pdf)), psw_rules(profile, count=5))
     assert results[4].status == expected
     assert results[1].status == "PASS"
@@ -304,7 +329,7 @@ def test_paddle_service_failure_preserves_structured_results_without_retry(origi
         calls.append(kwargs["operation"])
         raise failure("private provider detail must not appear in diagnostics")
 
-    monkeypatch.setattr("audit.checkers.v4.visual_facts.read_original_pdf_visual_facts", unavailable)
+    use_established_psw_facts(monkeypatch, unavailable)
     results = run_audit_engine(AuditInput(audit_id="psw-paddle-failed", file_url=str(original_pdf)), psw_rules(profile, count=5))
     assert results[1].status == "PASS"
     assert [results[index].status for index in (2, 4)] == ["ERR", "ERR"]
@@ -322,7 +347,7 @@ def test_unavailable_facts_are_unable_without_fallback(original_pdf, monkeypatch
     def unsupported(*args, **kwargs):
         raise VisualFactsUnavailable("unsupported visual semantics")
 
-    monkeypatch.setattr("audit.checkers.v4.visual_facts.read_original_pdf_visual_facts", unsupported)
+    use_established_psw_facts(monkeypatch, unsupported)
     results = run_audit_engine(AuditInput(audit_id="psw-native-unavailable", file_url=str(original_pdf)), psw_rules(profile, count=5))
     assert [results[index].status for index in (2, 4)] == ["UNABLE", "UNABLE"]
 
@@ -370,9 +395,17 @@ def ocr_response_boundary(monkeypatch, response):
         mapping = response
         result = {}
         for field, schema in response_schema["schema"]["properties"].items():
+            submitted = mapping.get(field)
+            if field == "psw_stamp_ends_with_company":
+                if submitted is None:
+                    submitted = {"value": None, "reason": "受控原图未能确认最终文字"}
+                assert isinstance(submitted, dict) and set(submitted) == {"value", "reason"}
+                assert submitted["value"] is None or type(submitted["value"]) is bool
+                assert isinstance(submitted["reason"], str) and 1 <= len(submitted["reason"].strip()) <= 160
             if "items" not in schema:
-                result[field] = mapping.get(field)
+                result[field] = submitted
                 continue
+            value = submitted["value"] if field == "psw_stamp_ends_with_company" else submitted
             values = []
             for scope in schema["items"]["properties"]["scope"]["enum"]:
                 # Image indices are explicit captions in the transport prompt.
@@ -380,11 +413,11 @@ def ocr_response_boundary(monkeypatch, response):
                 values.append(
                     {
                         "scope": scope,
-                        "value": mapping.get(field),
-                        "sources": [{"image_index": indices[0], "bbox": [0, 0, 1, 1]}],
-                        "covered_image_indices": indices,
-                        "coverage": "complete",
-                        "excerpt": "受控原件事实",
+                        "value": value,
+                        "sources": [{"image_index": indices[0], "bbox": [0, 0, 1, 1]}] if value is not None else [],
+                        "covered_image_indices": indices if value is not None else [],
+                        "coverage": "complete" if value is not None else "unreadable",
+                        ("reason" if field == "psw_stamp_ends_with_company" else "excerpt"): submitted["reason"] if field == "psw_stamp_ends_with_company" else "受控原件事实",
                     }
                 )
             result[field] = values
@@ -504,7 +537,8 @@ def test_psw_requests_only_facts_needed_by_the_active_branches(tmp_path, monkeyp
         **disposition_page_response(),
         "psw_stamp_present": True,
         "authorized_signature_present": True,
-        "psw_stamp_ending_text": "专用章" if department else "公司",
+        "psw_stamp_ends_with_company": {"value": not department, "reason": "实际末端为专用章" if department else "实际末端为公司"},
+        "authorization_table_present": True,
         "authorization_company_stamp_present": False,
     }
     attempts = ocr_response_boundary(monkeypatch, payload)
@@ -517,11 +551,11 @@ def test_psw_requests_only_facts_needed_by_the_active_branches(tmp_path, monkeyp
     assert [result.status for result in results] == ["NG" if department else "PASS", "PASS", "NG", "NG", "NG"]
     requested = [set(schema["schema"]["properties"]) for schema in attempts]
     assert len(attempts) == (4 if department else 3)
-    assert requested[0] == {"psw_stamp_present", "psw_stamp_ending_text"}
+    assert requested[0] == {"psw_stamp_present", "psw_stamp_ends_with_company"}
     assert {"authorized_signature_present"} in requested
     assert {"approved_checked", "conditional_checked", "rejected_checked"} in requested
     if department:
-        assert requested[1] == {"authorization_company_stamp_present"}
+        assert {"authorization_company_stamp_present"} <= requested[1] <= {"authorization_table_present", "authorization_company_stamp_present"}
     assert not any({"approval_date", "comments_present", "dimensional_checked", "submission_any_checked"}.intersection(fields) for fields in requested)
 
 
@@ -533,7 +567,7 @@ def test_blank_authorization_stamp_position_is_ng_without_a_visual_reading(tmp_p
         page.insert_text((25, 300), "公司名称（公司章）：", fontname="china-s", fontsize=11)
         page.draw_rect(fitz.Rect(20, 280, 580, 700), color=(0, 0, 0))
         document.saveIncr()
-    payload = {**disposition_page_response(), "psw_stamp_present": True, "psw_stamp_ending_text": "专用章", "authorization_company_stamp_present": None}
+    payload = {**disposition_page_response(), "psw_stamp_present": True, "psw_stamp_ends_with_company": {"value": False, "reason": "实际末端为专用章"}, "authorization_company_stamp_present": None}
     attempts = ocr_response_boundary(monkeypatch, payload)
     with bind_runtime(None):
         checker = psw_checker(monkeypatch, path, profile)
@@ -542,7 +576,7 @@ def test_blank_authorization_stamp_position_is_ng_without_a_visual_reading(tmp_p
         finally:
             checker.close()
     assert result.status == "NG"
-    assert [set(schema["schema"]["properties"]) for schema in attempts] == [{"psw_stamp_present", "psw_stamp_ending_text"}]
+    assert [set(schema["schema"]["properties"]) for schema in attempts] == [{"psw_stamp_present", "psw_stamp_ends_with_company"}]
 
 
 @pytest.mark.parametrize(
@@ -577,7 +611,7 @@ def test_conditional_date_and_comments_are_one_separate_request_only_when_applic
         **disposition_page_response(),
         "conditional_checked": True,
         "psw_stamp_present": True,
-        "psw_stamp_ending_text": "公司",
+        "psw_stamp_ends_with_company": {"value": True, "reason": "实际末端为公司"},
         "authorized_signature_present": True,
         "approval_date": date.today().isoformat(),
         "comments_present": True,

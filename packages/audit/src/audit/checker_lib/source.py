@@ -19,7 +19,7 @@ from typing import Any, cast
 from documents.model_access import ModelUnavailable
 
 from audit.contracts import AuditEvidence, AuditResultItem, EvidenceDiagnostic, EvidenceSource, RuleItem
-from audit.document_tools import ReadLimits, TableReader, ref, snapshot, source_title_location
+from audit.document_tools import ReadLimits, TableReader, snapshot, source_title_location
 from audit.engine.rule_engine.context import GuardStop
 from audit.evidence import EvidenceBudget, cell_locator
 from audit.fact_questions import BooleanFactEvaluation, FactQuestion
@@ -145,14 +145,19 @@ class NativeFacts:
             source = fact.get("source", {})
             if not all(source.get(field) for field in ("page", "row", "column", "bbox")):
                 raise UnknownFact("转换单元格尚无可核对的原 PDF 位置。")
-            locator = cell_locator(".pdf", f"page-{source['page']}", source["row"], source["column"]).model_dump(mode="json")
+            from audit.pdf_tables import valid_pdf_bbox
+
+            page = next((page for page in self.data.get("pages", []) if page["page"] == source["page"]), None)
+            if page is None or not valid_pdf_bbox(source["bbox"], page["width"], page["height"]):
+                raise UnknownFact("转换单元格的原 PDF 区域无效，不能定位原件。")
+            # The prepared grid and original cell mapping remain in native
+            # metadata. The public contract is a location on the frozen PDF,
+            # not a locator decorated with private workbook provenance.
             return {
-                **locator,
-                "bbox": source["bbox"],
+                "kind": "pdf_page",
+                "page": source["page"],
+                "region": source["bbox"],
                 "source_sha256": self.data["source"]["sha256"],
-                "prepared_sheet": table["id"],
-                "prepared_cell": ref(row, column),
-                "prepared_sha256": self.data["prepared_sha256"],
             }
         return cell_locator(self.format, table["id"], row, column).model_dump(mode="json")
 

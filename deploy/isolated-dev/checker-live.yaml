@@ -1,11 +1,11 @@
-# Standalone, manual-only synthetic acceptance. Never layer onto a live stack.
+# Standalone, manual-only acceptance. Never layer onto a live stack.
 # Fresh credentials also prevent the model guest from guessing isolated-dev
 # passwords. Only runner loopback ports; no ambient .env, Docker socket or external network.
 x-product: &product
   PPAP_PROFILE: remote-dev
-  PPAP_BUILD_SHA: ${PPAP_BUILD_SHA:?candidate SHA required}
+  PPAP_BUILD_SHA: ${PPAP_CHECKER_LIVE_RUNTIME_SHA:-${PPAP_BUILD_SHA:?candidate SHA required}}
   PPAP_PG_HOST: postgres
-  PPAP_PG_DATABASE: ppap
+  PPAP_PG_DATABASE: ${LIVE_PG_DATABASE:-ppap}
   PPAP_PG_API_PASSWORD: ""
   PPAP_PG_WORKER_PASSWORD: ""
   PPAP_PG_MIGRATOR_PASSWORD: ""
@@ -13,9 +13,9 @@ x-product: &product
   PPAP_S3_ENDPOINT: http://silo:9000
   PPAP_S3_ACCESS_KEY: ${LIVE_S3_ACCESS_KEY:?}
   PPAP_S3_SECRET_KEY: ${LIVE_S3_SECRET_KEY:?}
-  PPAP_S3_BUCKET: checker-live
-  PPAP_WEB_URL: http://127.0.0.1:14173
-  PPAP_PUBLIC_API_URL: http://127.0.0.1:18080
+  PPAP_S3_BUCKET: ${LIVE_S3_BUCKET:-checker-live}
+  PPAP_WEB_URL: http://127.0.0.1:${LIVE_WEB_PORT:-14173}
+  PPAP_PUBLIC_API_URL: http://127.0.0.1:${LIVE_API_PORT:-18080}
   PPAP_USAGE_CHARGE_ENABLED: "false"
   PPAP_FEISHU_NOTIFICATIONS_ENABLED: "false"
   FEISHU_APP_ID: checker-live
@@ -40,6 +40,7 @@ volumes:
   postgres-data:
   silo-data:
   deep-socket:
+  checker-evidence:
 
 services:
   postgres:
@@ -48,7 +49,7 @@ services:
       POSTGRES_USER: ppap
       POSTGRES_PASSWORD: ${LIVE_PG_BOOTSTRAP_PASSWORD:?}
       POSTGRES_DB: postgres
-    ports: ["127.0.0.1:15432:5432"]
+    ports: ["127.0.0.1:${LIVE_PG_PORT:-15432}:5432"]
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -65,7 +66,7 @@ services:
       PGHOST: postgres
       PGUSER: ppap
       PGPASSWORD: ${LIVE_PG_BOOTSTRAP_PASSWORD:?}
-      PPAP_PG_DATABASE: ppap
+      PPAP_PG_DATABASE: ${LIVE_PG_DATABASE:-ppap}
       PPAP_PG_MIGRATOR_USER: ppap_migrator
       PPAP_PG_MIGRATOR_PASSWORD: ${LIVE_PG_MIGRATOR_PASSWORD:?}
       PPAP_PG_API_USER: ppap_api
@@ -82,7 +83,7 @@ services:
     environment:
       MINIO_ROOT_USER: ${LIVE_S3_ACCESS_KEY:?}
       MINIO_ROOT_PASSWORD: ${LIVE_S3_SECRET_KEY:?}
-    ports: ["127.0.0.1:19000:9000"]
+    ports: ["127.0.0.1:${LIVE_S3_PORT:-19000}:9000"]
     volumes:
       - silo-data:/data
     healthcheck:
@@ -98,11 +99,12 @@ services:
     environment:
       ACCESS: ${LIVE_S3_ACCESS_KEY:?}
       SECRET: ${LIVE_S3_SECRET_KEY:?}
+      BUCKET: ${LIVE_S3_BUCKET:-checker-live}
     entrypoint: [sh, -ec]
-    command: ['mcli alias set live http://silo:9000 "$$ACCESS" "$$SECRET" >/dev/null && mcli mb --ignore-existing live/checker-live']
+    command: ['mcli alias set live http://silo:9000 "$$ACCESS" "$$SECRET" >/dev/null && mcli mb --ignore-existing "live/$$BUCKET"']
   api:
-    ports: ["127.0.0.1:18080:8080"]
-    image: ppap-api:${PPAP_BUILD_SHA:?}
+    ports: ["127.0.0.1:${LIVE_API_PORT:-18080}:8080"]
+    image: ${LIVE_API_IMAGE:-ppap-api:${PPAP_BUILD_SHA:?}}
     depends_on:
       init-db:
         condition: service_completed_successfully
@@ -122,7 +124,7 @@ services:
       timeout: 5s
       retries: 30
   worker:
-    image: ppap-worker:${PPAP_BUILD_SHA:?}
+    image: ${LIVE_WORKER_IMAGE:-ppap-worker:${PPAP_BUILD_SHA:?}}
     depends_on:
       api:
         condition: service_healthy
@@ -133,7 +135,7 @@ services:
     volumes:
       - deep-socket:/run/ppap-deep
   deep:
-    image: ppap-deep:${PPAP_BUILD_SHA:?}
+    image: ${LIVE_DEEP_IMAGE:-ppap-deep:${PPAP_BUILD_SHA:?}}
     depends_on:
       init-db:
         condition: service_completed_successfully
@@ -148,7 +150,7 @@ services:
     volumes:
       - deep-socket:/run/ppap-deep
       - ../../scripts/checker_live_controller.py:/live/checker_controller.py:ro
-      - ${PPAP_CHECKER_LIVE_OUTPUT:?}:/evidence
+      - ${LIVE_EVIDENCE_SOURCE:-${PPAP_CHECKER_LIVE_OUTPUT:?}}:/evidence
     healthcheck:
       test: [CMD, python, -m, agent.readiness]
       interval: 2s
@@ -157,11 +159,11 @@ services:
       start_period: 10s
     mem_limit: 2g
   web:
-    image: ppap-web:${PPAP_BUILD_SHA:?}
+    image: ${LIVE_WEB_IMAGE:-ppap-web:${PPAP_BUILD_SHA:?}}
     depends_on:
       api:
         condition: service_healthy
     environment:
-      PPAP_BUILD_SHA: ${PPAP_BUILD_SHA:?}
-      PPAP_PUBLIC_API_URL: http://127.0.0.1:18080
-    ports: ["127.0.0.1:14173:4173"]
+      PPAP_BUILD_SHA: ${PPAP_CHECKER_LIVE_RUNTIME_SHA:-${PPAP_BUILD_SHA:?}}
+      PPAP_PUBLIC_API_URL: http://127.0.0.1:${LIVE_API_PORT:-18080}
+    ports: ["127.0.0.1:${LIVE_WEB_PORT:-14173}:4173"]

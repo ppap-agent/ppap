@@ -230,7 +230,7 @@ class PswDocxEvidenceMixin:
                                     height,
                                 )
                             )
-                        fields = {field: description for number in (3, 5) for field, description in PSW_RULE_FIELDS[number].items() if field != "psw_stamp_ends_with_company"}
+                        fields = {field: description for number in (3, 5) for field, description in PSW_RULE_FIELDS[number].items()}
                         text_evidence = self._word_text_evidence()
                         native_text = "\n".join(f"{block.source.part}:{block.source.path}: {block.text}" for block in text_evidence)
                         facts = observe_ocr_images(images, fields, lambda *args, **kwargs: observed_sources.append((args, kwargs)), context=native_text)

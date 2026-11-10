@@ -242,14 +242,29 @@ def test_each_leaf_declares_exact_clauses_scope_and_known_gaps_without_version_i
             assert item["scope"] and item["carriers"]
             assert f"def {item['method']}(" in source
         readers += len(resource["clauses"])
-    assert readers == 67
+    assert readers == 71
 
 
 def _fields(*names):
     return [[name, f"实际内容-{index}"] for index, name in enumerate(names, 1)]
 
 
+def _msa_measurements():
+    rows = [[None] * 12 for _ in range(20)]
+    rows[0][0] = "量具重复性和再现性"
+    rows[6][2:12] = list(range(1, 11))
+    for evaluator, first in (("A", 8), ("B", 13), ("C", 18)):
+        rows[first][0] = evaluator
+        for row in range(first - 1, first + 2):
+            rows[row][1] = row - first + 2
+            rows[row][2:12] = [0] * 10
+    return {"量具重复性和再现性": rows}
+
+
 _ADDITIONAL_POSITIVES = [
+    ("L17", "L17:2", {"PSW": [["重量(kg)", "1.2300"]]}),
+    ("L04", "L04:1", {"材料清单": [["零件号", "单件重量"], ["P123", "1.2300"]]}),
+    ("L05", "L05:3", _msa_measurements()),
     ("L01", "L01:1", {"全功能检验报告": [["全功能检验报告"]]}),
     ("L01", "L01:8", {"全功能检验报告": _fields("车型", "零件名称", "零件号", "供应商", "责任人", "日期")}),
     ("L02", "L02:1", {"DVP&R": _fields("版本号", "修订日期", "修订部门/姓名", "零件/总成名称", "适用车型", "零件/总成编号", "供应商名称")}),
@@ -415,7 +430,16 @@ def test_negative_after_native_blank_gap_still_executes(tmp_path, monkeypatch):
 
 def test_native_pdf_table_uses_excel_preparation_and_original_pdf_locations(tmp_path, monkeypatch):
     import fitz
+    from audit.checker_lib.source import NativeFacts
 
+    original_location = NativeFacts.cell_location
+    metadata = []
+
+    def track(native, *args):
+        metadata.append(native.data)
+        return original_location(native, *args)
+
+    monkeypatch.setattr(NativeFacts, "cell_location", track)
     with fitz.open() as document:
         page = document.new_page(width=460, height=270)
         for y in (20, 70, 120, 170, 220):
@@ -432,10 +456,13 @@ def test_native_pdf_table_uses_excel_preparation_and_original_pdf_locations(tmp_
     assert not calls
     for source in result["evidence"]["sources"]:
         locator = json.loads(source["locator"])
-        assert locator["kind"] == "pdf_cell"
-        assert locator["page"] == 1 and locator["bbox"]
+        assert locator["kind"] == "pdf_page"
+        assert locator["page"] == 1 and locator["region"]
         assert locator["file_version_id"] == "frozen-original"
         assert locator["source_sha256"] == hashlib.sha256(content).hexdigest()
+    assert metadata and all(data["prepared_format"] == "xlsx" and data["prepared_sha256"] for data in metadata)
+    mapped = [item["source"] for table in metadata[0]["tables"] for item in table["cells"].values() if item.get("source")]
+    assert mapped and all(item["bbox"] and item["row"] and item["column"] and item["page"] == 1 for item in mapped)
 
 
 def test_native_source_digest_change_is_err_before_business_pass(tmp_path, monkeypatch):
@@ -450,7 +477,7 @@ def test_declared_native_positive_cases_cover_each_reader():
     covered = {_native_case(entry, "positive")[0] for entry in (f"L{index:02}" for index in range(1, 18))}
     covered.update(case[1] for case in _VISUAL_CASES)
     covered.update(case[1] for case in _ADDITIONAL_POSITIVES)
-    covered.update({"L07:4", "L11:6"})
+    covered.update({"L07:4", "L11:6", "L12:2"})
     assert covered == expected
 
 
@@ -505,3 +532,41 @@ def test_equipment_unknown_acceptance_is_not_unconditional_pass(tmp_path, monkey
     result, calls = _execute(tmp_path, monkeypatch, "L13", "L13:2", {"设备开发验收清单": rows})
     assert result["status"] == "UNABLE", result
     assert result["checks_performed"] == 0 and not calls
+
+
+def test_ccsc_t1_native_positive_has_one_explicit_parent_for_all_eight_children(tmp_path, monkeypatch):
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "CCSC"
+    sheet["A1"] = "零件CCSC特性管理清单"
+    sheet.merge_cells("J2:Q2")
+    sheet["J2"] = "T1-特性监控方法"
+    labels = (
+        "过程/流程步骤",
+        "部件(来料检时涉及)",
+        "客户要求/功能要求",
+        "特性名称",
+        "检验岗位",
+        "产品/过程特性分类",
+        "名义值/规格中心值",
+        "规格下限",
+        "规格上限",
+        "测量设备",
+        "测量方式",
+        "防错控制",
+        "检查控制",
+        "抽样频率",
+        "SPC监控",
+        "SPC线上管理计划时间",
+        "说明（关键要求/操作参数等）",
+    )
+    for column, name in enumerate(labels, 1):
+        sheet.cell(3, column, name)
+        sheet.cell(4, column, "实际内容")
+    sheet["G4"] = 0
+    output = io.BytesIO()
+    book.save(output)
+    book.close()
+    result, calls = _execute(tmp_path, monkeypatch, "L12", "L12:2", {}, content=output.getvalue())
+    assert result["status"] == "PASS", result
+    assert not calls

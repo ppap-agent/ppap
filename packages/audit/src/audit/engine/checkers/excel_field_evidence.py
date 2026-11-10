@@ -411,7 +411,7 @@ def check_psw_excel_fields(agent: Any, ctx: RuleContext, rule_no: int) -> AuditR
         }
         value, excerpt = read_native_signature(ctx, target, region) if signature else (False, "完整区域未包含图形印章对象")
         witness(locator, excerpt)
-        return {field: ("" if field == "psw_stamp_ending_text" and value is False else value) for field in fields}
+        return dict.fromkeys(fields, value)
 
     try:
         if rule_no == 5:
@@ -419,7 +419,7 @@ def check_psw_excel_fields(agent: Any, ctx: RuleContext, rule_no: int) -> AuditR
             facts.update(read(sheet, _SIGNATURE_LABELS, _SIGNATURE_STOPS, fields, signature=True))
             if facts["authorized_signature_present"] is False:
                 return evaluate_psw_observation(rule_no, facts)
-        stamp_fields = {field: description for field, description in PSW_RULE_FIELDS[rule_no].items() if field in {"psw_stamp_present", "psw_stamp_ending_text"}}
+        stamp_fields = {field: description for field, description in PSW_RULE_FIELDS[rule_no].items() if field in {"psw_stamp_present", "psw_stamp_ends_with_company"}}
         facts.update(read(sheet, _STAMP_LABELS, _STAMP_STOPS, stamp_fields))
         decision = evaluate_psw_observation(rule_no, facts)
         if rule_no == 3 and decision.status == "UNABLE":

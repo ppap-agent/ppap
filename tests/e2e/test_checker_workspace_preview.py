@@ -267,6 +267,106 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
         page.get_by_label("为什么应当这样判断", exact=True).fill("该单元格没有签名")
         page.get_by_role("button", name="加入待修复", exact=True).click()
 
+    def test_pdf_original_region_backfills_feedback_and_page_change_clears_selection(self):
+        import fitz
+
+        document = fitz.open()
+        for _ in range(2):
+            sheet = document.new_page(width=240, height=320)
+            sheet.insert_text((20, 30), "Original source")
+            sheet.set_rotation(90)
+        contents = document.tobytes()
+        document.close()
+        with sync_playwright() as playwright:
+            browser = self.browser(playwright)
+            fixture = CheckerHttpFixture()
+            page = self.open(browser, fixture)
+            downloads = []
+
+            def original(route):
+                downloads.append(route.request.url)
+                route.fulfill(body=contents, content_type="application/pdf")
+
+            page.route("**/rounds/round-a/files/original-pdf/versions/file-pdf/download", original)
+            page.get_by_label("正确结论", exact=True).select_option("NG")
+            page.get_by_text("添加我在原件中找到的依据", exact=True).click()
+            page.get_by_label("依据原件", exact=True).select_option("file-pdf")
+            page.get_by_role("button", name="在原件上点选位置", exact=True).click()
+            reader = page.get_by_role("region", name="原件阅读器", exact=True)
+            canvas = reader.get_by_role("img", name="签署原件.pdf · 第 1 页", exact=True)
+            expect(canvas).to_be_visible()
+            bounds = canvas.bounding_box()
+            page.mouse.move(bounds["x"] + bounds["width"] * 0.1, bounds["y"] + bounds["height"] * 0.2)
+            page.mouse.down()
+            page.mouse.move(bounds["x"] + bounds["width"] * 0.4, bounds["y"] + bounds["height"] * 0.6)
+            page.mouse.up()
+            expect(reader.get_by_role("button", name="引用选区", exact=True)).to_be_visible()
+            reader.get_by_role("button", name="下一页", exact=True).click()
+            expect(reader.get_by_role("img", name="签署原件.pdf · 第 2 页", exact=True)).to_be_visible()
+            expect(reader.get_by_role("button", name="引用当前页", exact=True)).to_be_enabled()
+            bounds = reader.get_by_role("img", name="签署原件.pdf · 第 2 页", exact=True).bounding_box()
+            page.mouse.move(bounds["x"] + bounds["width"] * 0.1, bounds["y"] + bounds["height"] * 0.2)
+            page.mouse.down()
+            page.mouse.move(bounds["x"] + bounds["width"] * 0.4, bounds["y"] + bounds["height"] * 0.6)
+            page.mouse.up()
+            reader.get_by_role("button", name="引用选区", exact=True).click()
+            expect(page.get_by_label("页码（从 1 开始）", exact=True)).to_have_value("2")
+            expect(page.get_by_text("已从原件填入位置与选区，请确认后加入依据。", exact=True)).to_be_visible()
+            self.assertFalse(fixture.feedback)
+            page.get_by_role("button", name="加入这处依据", exact=True).click()
+            page.get_by_label("为什么应当这样判断", exact=True).fill("已核对第二页签署区域。")
+            page.get_by_role("button", name="加入待修复", exact=True).click()
+            expect(page.get_by_text("已加入待修复。尚未调用模型，也没有改写本轮结果。", exact=True)).to_be_visible()
+            citation = fixture.feedback[0]["evidence"][0]
+            self.assertEqual(citation["file_version_id"], "file-pdf")
+            self.assertEqual(citation["locator"]["page"], 2)
+            for actual, expected in zip(citation["locator"]["region"], [48, 192, 144, 288], strict=True):
+                self.assertAlmostEqual(actual, expected, delta=1)
+            self.assertEqual(len(downloads), 1)
+            self.assertFalse(fixture.operations)
+            browser.close()
+
+    def test_history_reads_its_revision_on_demand_and_keeps_failed_or_wrong_receipts_unknown(self):
+        with sync_playwright() as playwright:
+            browser = self.browser(playwright)
+            fixture = CheckerHttpFixture()
+            historical = fixture.revision("revision-historical", 0)
+            historical["changed_paths"] = ["checker.py"]
+            historical["diff"] = [{"path": "checker.py", "before": "old historical source", "after": "repaired historical source"}]
+            fixture.revisions[historical["id"]] = historical
+            fixture.history = [
+                {"operation_id": "history-op", "revision_id": historical["id"], "revision": 1, "force_unverified": True, "published_at": "2026-11-06T00:00:00Z", "published_by_name": "历史发布人"}
+            ]
+            page = self.open(browser, fixture)
+            release = page.get_by_role("region", name="检查发布与版本记录", exact=True)
+            expect(release.get_by_text("控制计划检查 · 本企业版本 v1 · 当前使用", exact=True)).to_be_visible()
+            path = "/suite-revisions/revision-historical"
+            self.assertFalse(any(row[1] == path for row in fixture.calls))
+            release.get_by_text("版本记录与受影响审核", exact=True).click()
+            attempts = []
+
+            def history_read(route):
+                attempts.append(route.request.url)
+                if len(attempts) == 1:
+                    route.fulfill(status=503, json={"error": "unavailable"})
+                elif len(attempts) == 2:
+                    route.fulfill(json=fixture.revisions[fixture.current])
+                else:
+                    route.fulfill(json=historical)
+
+            page.route("**" + path, history_read)
+            release.get_by_role("button", name="本次修复内容", exact=True).click()
+            expect(release.get_by_role("alert")).to_contain_text("无法读取这次修复内容")
+            expect(release.get_by_text("修改后：repaired historical source", exact=True)).to_have_count(0)
+            release.get_by_role("button", name="重新读取修复内容", exact=True).click()
+            expect(release.get_by_role("alert")).to_contain_text("检查版本不属于当前工作区")
+            release.get_by_role("button", name="重新读取修复内容", exact=True).click()
+            expect(release.get_by_text("修改前：old historical source", exact=True)).to_be_visible()
+            expect(release.get_by_text("修改后：repaired historical source", exact=True)).to_be_visible()
+            self.assertEqual(len(attempts), 3)
+            self.assertFalse(any(row[0] in {"POST", "PUT", "DELETE"} for row in fixture.calls))
+            browser.close()
+
     def test_adopted_stale_version_can_be_explicitly_reaffirmed(self):
         with sync_playwright() as playwright:
             browser = self.browser(playwright)

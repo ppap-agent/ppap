@@ -4,6 +4,7 @@ import copy
 import hashlib
 import io
 import json
+import socket
 import subprocess
 import sys
 from contextlib import nullcontext
@@ -62,6 +63,362 @@ def test_live_entry_requires_manual_invocation_exact_source_and_isolated_service
 
 def test_provider_is_not_tied_to_a_brand():
     assert acceptance.live_configuration(configuration()) == ("https://provider.example/v1", "arbitrary-model")
+
+
+def local_configuration():
+    env = {key: value for key, value in configuration().items() if not key.startswith("GITHUB_")}
+    env.update(PPAP_CHECKER_LIVE_MODE="local", PPAP_CHECKER_LIVE_LOCAL_ID="b" * 32, COMPOSE_PROJECT_NAME="ppap-checker-local-" + "b" * 32)
+    env.update(LIVE_PG_DATABASE="ppap_checker_" + "b" * 32, LIVE_S3_BUCKET="checker-live-" + "b" * 32, LIVE_PG_PORT="41001", LIVE_S3_PORT="41002", LIVE_API_PORT="41003", LIVE_WEB_PORT="41004")
+    return env
+
+
+def test_local_frozen_inputs_use_runtime_library_without_disabling_revision_guard(monkeypatch):
+    operation = {"operation_id": "old-operation", "tenant_id": "tenant", "frozen": {"executor_revision": "old-executor", "library_revision": "old-library"}}
+    proof = {"operation_id": "old-operation", "tenant_id": "tenant", "executor_revision": "old-executor", "library_revision": "old-library", "inputs": {"case": "a" * 64}}
+    calls = []
+
+    def execute(args, **kwargs):
+        calls.append((args, kwargs))
+        return SimpleNamespace(returncode=0, stdout=json.dumps(proof).encode())
+
+    monkeypatch.setattr(acceptance.subprocess, "run", execute)
+    from audit import standard_suites
+
+    monkeypatch.setattr(standard_suites, "library_revision", lambda: "new-driver-library")
+    assert acceptance.frozen_input_digests(local_configuration(), None, operation) == {"case": "a" * 64}
+    args, options = calls[0]
+    assert args[:3] == ["docker", "exec", "-i"]
+    assert "PGOPTIONS=-c default_transaction_read_only=on" in args
+    assert "-worker-1" in args[-4]
+    assert "materialize_request" in args[-1]
+    assert json.loads(options["input"]) == {"operation_id": "old-operation", "tenant_id": "tenant"}
+    for field, bad in (("operation_id", "other"), ("tenant_id", "other"), ("library_revision", "new-driver-library"), ("executor_revision", "other"), ("inputs", {"case": "not-a-digest"})):
+        original = proof[field]
+        proof[field] = bad
+        with pytest.raises(acceptance.AcceptanceFailure, match="frozen_runtime_|invalid_frozen_runtime_inputs"):
+            acceptance.frozen_input_digests(local_configuration(), None, operation)
+        proof[field] = original
+
+
+def test_guest_startup_uses_unchanged_production_limits_and_reports_receipt(monkeypatch):
+    launches = []
+
+    def launch(args, **kwargs):
+        launches.append((args, kwargs))
+        return SimpleNamespace(returncode=0, stdout=b"1.5.0\n")
+
+    monkeypatch.setattr(controller.subprocess, "run", launch)
+    proof = controller.probe_guest_startup(SimpleNamespace(memory_mib=1536, max_processes=256))
+    assert acceptance.verify_guest_startup({"guest_startup": proof}) == proof
+    args, options = launches[0]
+    assert args[:3] == ["/usr/bin/prlimit", "--as=1610612736", "--nproc=256"]
+    assert "--nofile=128" in args and "--core=0" in args and "--fsize=268435456" in args
+    assert "--reuid=10001" in args and "--no-new-privs" in args and "--bounding-set=-all" in args
+    assert args[-2:] == ["/usr/local/bin/ppap-pi", "--version"]
+    assert "API_KEY" not in json.dumps(options)
+    for wrong in ({}, {**proof, "address_space_mib": 3072}, {**proof, "pi_version": "wrong"}):
+        with pytest.raises(acceptance.AcceptanceFailure, match="guest_startup_not_proven"):
+            acceptance.verify_guest_startup({"guest_startup": wrong})
+
+
+@pytest.mark.parametrize("exit_code,version", [(-5, b""), (0, b"wrong")], ids=["guest-failure", "wrong-version"])
+def test_guest_startup_rejects_failure_before_controller_ready(monkeypatch, exit_code, version):
+    monkeypatch.setattr(controller.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=exit_code, stdout=version))
+    with pytest.raises(ValueError, match="guest_startup_failed"):
+        controller.probe_guest_startup(SimpleNamespace(memory_mib=1536, max_processes=256))
+
+
+def test_local_entry_is_explicit_and_never_impersonates_actions_or_live_stack(tmp_path):
+    env = local_configuration()
+    assert acceptance.live_configuration(env) == (env["CI_LLM_BASE_URL"], env["CI_LLM_MODEL"])
+    setup.prepare(env, tmp_path / "local.env")
+    for changes in ({"COMPOSE_PROJECT_NAME": "ppap-current"}, {"CI": "true"}, {"GITHUB_ACTIONS": "false"}, {"PPAP_CHECKER_LIVE_LOCAL_ID": ""}):
+        with pytest.raises(ValueError, match="isolated_local_test_required"):
+            setup.validate_invocation({**env, **changes})
+
+
+def test_local_prepare_allocates_distinct_ports_and_unique_data_names(tmp_path):
+    env = local_configuration()
+    with socket.socket() as existing:
+        existing.bind(("127.0.0.1", 0))
+        occupied = existing.getsockname()[1]
+        path = tmp_path / "private.env"
+        setup.prepare(env, path)
+    values = dict(line.split("=", 1) for line in path.read_text().splitlines())
+    assert acceptance.data_names({**env, **values}) == ("ppap_checker_" + "b" * 32, "checker-live-" + "b" * 32)
+    ports = acceptance.service_ports({**env, **values})
+    assert len(set(ports.values())) == 4 and occupied not in ports.values()
+    assert values["LIVE_EVIDENCE_SOURCE"] == "checker-evidence"
+    with pytest.raises(acceptance.AcceptanceFailure, match="local_data_names_not_prepared"):
+        acceptance.data_names({**env, "LIVE_PG_DATABASE": "ppap"})
+    with pytest.raises(acceptance.AcceptanceFailure, match="local_ports_not_prepared"):
+        acceptance.service_ports({**env, "LIVE_PG_PORT": ""})
+
+
+def test_three_local_scenarios_have_one_operation_and_explicit_runtime_identity():
+    sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    for scenario in ("u08", "rule-threshold", "rule-wording"):
+        env = {**local_configuration(), "PPAP_BUILD_SHA": sha, "PPAP_CHECKER_LIVE_SCENARIO": scenario, "PPAP_CHECKER_LIVE_RUNTIME_SHA": "c" * 40}
+        plan = acceptance.describe_scenario(env)
+        assert plan["harness_sha"] == sha and plan["runtime_sha"] == "c" * 40
+        assert plan["optimization_operations"] == 1 and plan["automatic_retry"] is False
+        assert plan["samples"] == 8 and plan["hidden_documents"] == 2
+        assert plan["selected_clause_ids"] == (["U08:4"] if scenario == "u08" else ["R1", "R2"])
+        assert plan["complete_u08"] is False
+        assert env["CI_LLM_API_KEY"] not in json.dumps(plan)
+    with pytest.raises(acceptance.AcceptanceFailure, match="unsupported_live_scenario"):
+        acceptance.scenario_name({"PPAP_CHECKER_LIVE_SCENARIO": "all-production"})
+
+
+def test_u08_projection_preserves_full_existing_checker_and_resource_bytes():
+    sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    original = acceptance.frozen_u08_files(sha)
+    key, rules, scoped, clause = acceptance.scenario_source("u08", sha)
+    assert key.startswith("live:UAES:U08:4:") and clause == "U08:4"
+    assert rules["rules"] == [row for row in json.loads(original["rules.json"])["rules"] if row["id"] == clause]
+    assert rules["checker_binding"] == {clause: "checker:create_audit"}
+    assert scoped["checker.py"] == original["checker.py"] and scoped["resources.py"] == original["resources.py"]
+
+
+def test_u08_private_derivatives_keep_real_layout_and_independent_mark_truth():
+    original = acceptance.U08_ORIGINAL.read_bytes()
+    samples = acceptance.u08_samples()
+    assert samples[0]["raw"] == original and samples[0]["basis"] == "existing_human_oracle"
+    assert hashlib.sha256(original).hexdigest() == acceptance.U08_ORIGINAL_SHA
+    source = load_workbook(io.BytesIO(original))
+    try:
+        original_cells = {cell.coordinate: cell.value for row in source["Table 1"] for cell in row}
+        merges = list(source["Table 1"].merged_cells.ranges)
+        for ordinal, sample in enumerate(samples, 1):
+            book = load_workbook(io.BytesIO(sample["raw"]))
+            try:
+                sheet = book["Table 1"]
+                assert list(sheet.merged_cells.ranges) == merges
+                assert {cell.coordinate: cell.value for row in sheet for cell in row if cell.coordinate not in acceptance.U08_MARK_CELLS} == {
+                    key: value for key, value in original_cells.items() if key not in acceptance.U08_MARK_CELLS
+                }
+                has_mark = any(str(sheet[cell].value or "").strip() for cell in acceptance.U08_MARK_CELLS)
+                assert sample["expected"] == ("PASS" if has_mark else "NG")
+                assert controller.contains_holdout(sample["raw"]) == (ordinal % 4 == 0)
+            finally:
+                book.close()
+    finally:
+        source.close()
+    assert {samples[index]["expected"] for index in (3, 7)} == {"PASS", "NG"}
+    assert len({hashlib.sha256(row["raw"]).hexdigest() for row in samples}) == 8
+    assert acceptance.U08_ORIGINAL.read_bytes() == original
+
+
+def test_rule_scenarios_preserve_unchanged_clause_and_wording_does_not_invent_repair():
+    for name in ("rule-threshold", "rule-wording"):
+        _, rules, files, _ = acceptance.scenario_source(name, "a" * 40)
+        assert files["checker.py"].decode() == acceptance.BASELINE
+        assert "大于等于 0" in rules["rules"][0]["rule_to_check"]
+        assert [row["id"] for row in rules["rules"]] == ["R1", "R2"]
+        samples = acceptance.scenario_samples(name)
+        assert len(samples) == 8
+        assert {samples[index]["expected"] for index in (3, 7)} == {"PASS", "NG"}
+        if name == "rule-wording":
+            assert all(sample["expected"] == ("PASS" if sample["value"] >= 0 else "NG") for sample in samples)
+
+
+def test_local_image_check_rejects_missing_or_mixed_source_without_pull(monkeypatch):
+    calls = []
+    env = {**local_configuration(), "PPAP_CHECKER_LIVE_RUNTIME_SHA": "c" * 40}
+
+    def inspect(command, **kwargs):
+        calls.append(command)
+        metadata = {"Id": "sha256:" + "d" * 64, "Architecture": "arm64" if "deep" in command[3] else "amd64", "Os": "linux", "Config": {"Labels": {"org.opencontainers.image.revision": "c" * 40}}}
+        return SimpleNamespace(returncode=0, stdout=json.dumps(metadata))
+
+    monkeypatch.setattr(acceptance.subprocess, "run", inspect)
+    identities = acceptance.verify_local_images(env)
+    assert set(identities) == {"api", "worker", "deep", "web"}
+    assert identities["deep"]["architecture"] == "arm64" and identities["api"]["architecture"] == "amd64"
+    assert all(image["os"] == "linux" for image in identities.values())
+    assert all(command[:3] == ["docker", "image", "inspect"] for command in calls)
+    monkeypatch.setattr(acceptance.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=1, stdout=""))
+    with pytest.raises(acceptance.AcceptanceFailure, match="local_runtime_image_missing"):
+        acceptance.verify_local_images(env)
+
+
+def test_local_running_containers_and_http_sha_must_match_this_project(monkeypatch):
+    env = local_configuration()
+    images = {name: {"reference": name, "image_id": "sha256:" + name, "source_sha": env["PPAP_BUILD_SHA"]} for name in ("api", "worker", "deep", "web")}
+    containers = [
+        {
+            "Id": name,
+            "Image": "sha256:" + name,
+            "Config": {"Labels": {"com.docker.compose.project": env["COMPOSE_PROJECT_NAME"], "com.docker.compose.service": name}},
+            "State": {"Running": True},
+            "NetworkSettings": {"Ports": {}},
+        }
+        for name in ("api", "worker", "deep", "web", "postgres", "silo")
+    ]
+    next(item for item in containers if item["Id"] == "deep")["Mounts"] = [{"Destination": "/evidence", "Type": "volume", "Name": env["COMPOSE_PROJECT_NAME"] + "_checker-evidence"}]
+    for name, internal in (("api", "8080"), ("web", "4173"), ("postgres", "5432"), ("silo", "9000")):
+        external = str(acceptance.service_ports(env)[name])
+        next(item for item in containers if item["Id"] == name)["NetworkSettings"]["Ports"][internal + "/tcp"] = [{"HostIp": "127.0.0.1", "HostPort": external}]
+    monkeypatch.setattr(
+        acceptance.subprocess,
+        "run",
+        lambda command, **kwargs: SimpleNamespace(returncode=0, stdout="\n".join(item["Id"] for item in containers) if command[:2] == ["docker", "ps"] else json.dumps(containers)),
+    )
+
+    class Http:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def get(self, url):
+            urls = acceptance.service_urls(env)
+            assert url in {urls["api"] + "/version", urls["web"] + "/build-identity.json"}
+            return SimpleNamespace(status_code=200, json=lambda: {"git_sha": env["PPAP_BUILD_SHA"]})
+
+    monkeypatch.setattr(acceptance.httpx, "Client", Http)
+    assert set(acceptance.verify_local_runtime(env, images)) == set(images)
+    evidence = next(item for item in containers if item["Id"] == "deep")["Mounts"][0]
+    evidence["Type"] = "bind"
+    with pytest.raises(acceptance.AcceptanceFailure, match="local_evidence_requires_linux_volume"):
+        acceptance.verify_local_runtime(env, images)
+    evidence["Type"] = "volume"
+    containers[0]["Image"] = "wrong-image"
+    with pytest.raises(acceptance.AcceptanceFailure, match="running_image_identity_mismatch"):
+        acceptance.verify_local_runtime(env, images)
+    containers[0]["Image"] = images["api"]["image_id"]
+    containers[0]["NetworkSettings"]["Ports"]["8080/tcp"][0]["HostIp"] = "0.0.0.0"
+    with pytest.raises(acceptance.AcceptanceFailure, match="local_loopback_service_mismatch"):
+        acceptance.verify_local_runtime(env, images)
+
+
+def test_local_harness_rejects_wrong_or_dirty_source_before_business_writes(monkeypatch):
+    env = local_configuration()
+    responses = iter([SimpleNamespace(returncode=0, stdout=env["PPAP_BUILD_SHA"]), SimpleNamespace(returncode=1)])
+    monkeypatch.setattr(acceptance.subprocess, "run", lambda *args, **kwargs: next(responses))
+    with pytest.raises(acceptance.AcceptanceFailure, match="local_harness_has_uncommitted_changes"):
+        acceptance.verify_local_source(env)
+    monkeypatch.setattr(acceptance.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="wrong-source"))
+    with pytest.raises(acceptance.AcceptanceFailure, match="local_harness_source_mismatch"):
+        acceptance.verify_local_source(env)
+
+
+def test_forwarded_pg_cluster_is_rejected_before_identity_or_s3_writes(tmp_path, monkeypatch):
+    import product
+    from product import db, storage
+
+    env = local_configuration()
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.delenv("CI", raising=False)
+    for key in ("GITHUB_ACTIONS", "GITHUB_EVENT_NAME", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(acceptance, "verify_local_source", lambda environment: None)
+    monkeypatch.setattr(acceptance, "verify_local_images", lambda environment: {})
+    monkeypatch.setattr(acceptance, "verify_local_runtime", lambda environment, images: {})
+    monkeypatch.setattr(acceptance, "local_settings", lambda environment: SimpleNamespace())
+    monkeypatch.setattr(acceptance.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="local-cluster|" + env["LIVE_PG_DATABASE"]))
+    queries = []
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def transaction(self):
+            return nullcontext()
+
+        def execute(self, query):
+            queries.append(query)
+            return SimpleNamespace(fetchone=lambda: ("forwarded-cluster", env["LIVE_PG_DATABASE"]))
+
+    monkeypatch.setattr(db, "connect", lambda *args: Connection())
+    monkeypatch.setattr(storage, "s3_client", lambda *args: pytest.fail("Wrong PG identity must stop before S3"))
+    monkeypatch.setattr(product, "build_product_store", lambda *args, **kwargs: pytest.fail("Wrong PG identity must stop before creating users or sessions"))
+    with pytest.raises(acceptance.AcceptanceFailure, match="local_pg_cluster_identity_mismatch"):
+        acceptance.run(tmp_path / "report.json")
+    assert queries[0] == "SET TRANSACTION READ ONLY"
+
+
+def test_private_database_nonce_and_authenticated_bucket_are_both_required(monkeypatch):
+    from botocore.exceptions import ClientError
+    from product import db, storage
+
+    env = local_configuration()
+    monkeypatch.setattr(acceptance, "local_settings", lambda environment: SimpleNamespace())
+    monkeypatch.setattr(acceptance.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="local-cluster|" + env["LIVE_PG_DATABASE"]))
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def transaction(self):
+            return nullcontext()
+
+        def execute(self, query):
+            return SimpleNamespace(fetchone=lambda: ("local-cluster", env["LIVE_PG_DATABASE"]))
+
+    monkeypatch.setattr(db, "connect", lambda *args: Connection())
+    reads = []
+
+    def head(**kwargs):
+        reads.append(kwargs)
+        return {"ResponseMetadata": {"HTTPStatusCode": 200}}
+
+    monkeypatch.setattr(storage, "s3_client", lambda *args: SimpleNamespace(head_bucket=head))
+    proof = acceptance.verify_local_data_services(env)
+    assert proof["pg_system_identifier"] == "local-cluster" and proof["database"] == env["LIVE_PG_DATABASE"]
+    assert reads == [{"Bucket": env["LIVE_S3_BUCKET"]}]
+
+    def unauthorized(**kwargs):
+        raise ClientError({"Error": {"Code": "InvalidAccessKeyId"}, "ResponseMetadata": {"HTTPStatusCode": 403}}, "HeadBucket")
+
+    monkeypatch.setattr(storage, "s3_client", lambda *args: SimpleNamespace(head_bucket=unauthorized))
+    with pytest.raises(acceptance.AcceptanceFailure, match="local_s3_bucket_unverified_InvalidAccessKeyId"):
+        acceptance.verify_local_data_services(env)
+
+
+def test_local_oracle_transport_preserves_bytes_without_putting_private_input_in_arguments(tmp_path, monkeypatch):
+    path = tmp_path / "private-oracle.json"
+    raw = b'{"hidden_case_ids":["private-oracle-canary"],"hidden_source_sha256":["hidden-source"]}'
+    path.write_bytes(raw)
+    calls = []
+
+    def transfer(command, **kwargs):
+        calls.append((command, kwargs))
+        assert kwargs["input"] == raw and b"private-oracle-canary" not in repr(command).encode()
+        return SimpleNamespace(returncode=0, stdout=(hashlib.sha256(raw).hexdigest() + "\n").encode())
+
+    monkeypatch.setattr(acceptance.subprocess, "run", transfer)
+    acceptance.transfer_private_oracle(path, local_configuration())
+    assert len(calls) == 1
+    monkeypatch.setattr(acceptance.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=b"wrong-digest"))
+    with pytest.raises(acceptance.AcceptanceFailure, match="private_oracle_transport_identity_mismatch"):
+        acceptance.transfer_private_oracle(path, local_configuration())
+
+
+def test_local_controller_transport_rejects_corruption_without_overwriting_known_receipt(tmp_path, monkeypatch):
+    path = tmp_path / "controller.json"
+    raw = b'{"guest_cannot_read_evidence":true,"provider_requests":0}'
+    monkeypatch.setattr(acceptance.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=hashlib.sha256(raw).hexdigest().encode() + b"\n" + raw))
+    assert acceptance.controller_evidence(path, local_configuration())["provider_requests"] == 0
+    assert path.read_bytes() == raw
+    monkeypatch.setattr(acceptance.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=b"wrong\n" + raw))
+    with pytest.raises(acceptance.AcceptanceFailure, match="controller_evidence_transport_identity_mismatch"):
+        acceptance.controller_evidence(path, local_configuration())
+    assert path.read_bytes() == raw
+    monkeypatch.setattr(acceptance.subprocess, "run", lambda *args, **kwargs: pytest.fail("Linux workflow must keep its existing bind path"))
+    acceptance.transfer_private_oracle(path, configuration())
+    assert acceptance.controller_evidence(path, configuration())["provider_requests"] == 0
 
 
 def test_live_browser_explicitly_selects_the_full_sample_set_before_one_admission(tmp_path, monkeypatch):
@@ -210,6 +567,39 @@ def test_claimed_verified_receipt_cannot_hide_broken_independent_proof(path, val
     target[path[-1]] = value
     with pytest.raises(acceptance.AcceptanceFailure):
         acceptance.validate_outcome(receipt, samples)
+
+
+def test_wording_can_validate_unchanged_code_but_u08_must_resolve_a_real_unknown():
+    receipt, samples = valid_receipt()
+    for case in receipt["report"]["validation"]["cases"]:
+        ident = case["case_id"]
+        samples[ident]["baseline"] = samples[ident]["expected"]
+        case["clauses"][0]["baseline_actual"] = samples[ident]["expected"]
+    acceptance.validate_outcome(receipt, samples, scenario="rule-wording")
+    with pytest.raises(acceptance.AcceptanceFailure, match="repair_or_holdout_coverage_missing"):
+        acceptance.validate_outcome(receipt, samples, scenario="u08")
+    for case in receipt["report"]["validation"]["cases"]:
+        ident = case["case_id"]
+        samples[ident].update(expected_by_clause={"U08:4": samples[ident]["expected"]}, baseline_by_clause={"U08:4": "UNABLE"})
+        case["clauses"][0].update(clause_id="U08:4", baseline_actual="UNABLE")
+    acceptance.validate_outcome(receipt, samples, scenario="u08")
+    for case in receipt["report"]["validation"]["cases"]:
+        samples[case["case_id"]]["baseline_by_clause"]["U08:4"] = "ERR"
+        case["clauses"][0]["baseline_actual"] = "ERR"
+    with pytest.raises(acceptance.AcceptanceFailure, match="repair_or_holdout_coverage_missing"):
+        acceptance.validate_outcome(receipt, samples, scenario="u08")
+
+
+def test_rule_change_live_cannot_omit_the_unchanged_clause_regression():
+    receipt, samples = valid_receipt()
+    for case in receipt["report"]["validation"]["cases"]:
+        ident = case["case_id"]
+        samples[ident].update(expected_by_clause={"R1": samples[ident]["expected"], "R2": "PASS"}, baseline_by_clause={"R1": samples[ident]["baseline"], "R2": "PASS"})
+    with pytest.raises(acceptance.AcceptanceFailure, match="clause_coverage_failed"):
+        acceptance.validate_outcome(receipt, samples, scenario="rule-threshold")
+    for case in receipt["report"]["validation"]["cases"]:
+        case["clauses"].append({**case["clauses"][0], "clause_id": "R2", "expected": "PASS", "actual": "PASS", "baseline_actual": "PASS"})
+    acceptance.validate_outcome(receipt, samples, scenario="rule-threshold")
 
 
 def test_live_hidden_values_and_label_order_are_private_fresh_and_independent(monkeypatch):
@@ -437,6 +827,14 @@ def test_wrong_operation_candidate_or_frozen_oracle_cannot_pass(path):
         acceptance.validate_bindings(receipt, **context)
 
 
+def test_new_rule_operation_binds_the_reconfirmed_revision_not_old_adoption():
+    receipt, context = identity_case()
+    receipt["suite_revision_id"] = "new-rule-revision"
+    acceptance.validate_bindings(receipt, **{**context, "base_revision_id": "new-rule-revision"})
+    with pytest.raises(acceptance.AcceptanceFailure, match="operation_identity_mismatch"):
+        acceptance.validate_bindings(receipt, **context)
+
+
 @pytest.mark.parametrize("field", ["evidence", "clause_id", "suggestions", "snapshot"])
 def test_history_same_status_does_not_hide_changed_evidence_or_frozen_source(field):
     result = {"result_attempt": 1, "findings": [{"status": "PASS", "clause_id": "R1", "evidence": {"locator": "A1"}, "suggestions": "original"}]}
@@ -474,8 +872,12 @@ def test_host_fixture_settings_use_explicit_random_credentials_and_distinct_loop
     assert settings.s3_endpoint == "http://127.0.0.1:19000"
     assert settings.personal_model_max_requests == 32 and settings.personal_model_max_input_tokens == 200000 and settings.personal_model_max_output_tokens == 32000
     config = yaml.safe_load((ROOT / "deploy/isolated-dev/checker-live.yaml").read_text())
-    assert config["services"]["api"]["ports"] == ["127.0.0.1:18080:8080"]
-    assert config["services"]["web"]["ports"] == ["127.0.0.1:14173:4173"]
+    assert config["services"]["api"]["ports"] == ["127.0.0.1:${LIVE_API_PORT:-18080}:8080"]
+    assert config["services"]["web"]["ports"] == ["127.0.0.1:${LIVE_WEB_PORT:-14173}:4173"]
+    local = acceptance.local_settings({**env, **local_configuration()})
+    assert local.pg_port == 41001 and local.pg_database == "ppap_checker_" + "b" * 32
+    assert local.s3_endpoint == "http://127.0.0.1:41002" and local.s3_bucket == "checker-live-" + "b" * 32
+    assert local.web_url == "http://127.0.0.1:41004"
 
 
 def test_final_snapshot_preserves_gate_failure_when_product_has_no_failure(tmp_path, monkeypatch):
@@ -569,7 +971,7 @@ def test_final_readback_revokes_acceptance_if_identity_or_sealed_proof_changes(m
     ],
 )
 def test_old_pass_page_cannot_prove_a_new_ng_reaudit(rendered):
-    expected = {"id": "new", "result_attempt": 1, "findings": [{"status": "NG"}]}
+    expected = {"id": "new", "result_attempt": 1, "findings": [{"item_key": "R1", "status": "NG"}]}
     acceptance.validate_rendered_round({"round_id": "new", "attempt": "1", "status": "不符合"}, expected)
     with pytest.raises(acceptance.AcceptanceFailure, match="browser_round_identity_or_result_mismatch"):
         acceptance.validate_rendered_round(rendered, expected)

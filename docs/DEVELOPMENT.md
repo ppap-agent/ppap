@@ -46,6 +46,8 @@
 
 界面在当前结果和历史中并列显示机器结果与人工确认。`fact-answers/report` 下载单独的人工确认 PDF，包含回答人、时间和原件位置；既有机器 PDF 保持不变。`fact-answers/export` 提供同一记录的 JSON，明确标为不可自动用作训练样本。
 
+用户可将一个非空事实回答明确选为优化样本：`POST /audit-rounds/{round_id}/fact-answers/{operation_id}/samples` 复用现有 Checker 反馈，用户仍须选择正确结论并填写依据。回答、原件、条款和执行尝试必须匹配；“看不清”、旧执行尝试或权限失效不能入样本。同一操作只读回原样本，不创建审核轮次或模型请求。导出记录本身仍不自动成为训练真值；没有确定性重算方法的文本回答也不会使机器结果变成 PASS。
+
 ## 按规则读取审核证据
 
 当前合同由 [Issue #246](https://github.com/ppap-agent/ppap/issues/246) 拥有。所有适用审核使用同一流程：规则确定所需事实 → 原生提取 → 按具体缺口选择 Paddle 或 LLM OCR → 固定程序/有来源的文本语义检查。没有新旧流程开关，不把发布批准变成运行时分支。生产启用仍须产品负责人明确确认；开发完成不等于已部署。
@@ -368,6 +370,8 @@ UAES v5 的后续验收由 [Issue #295](https://github.com/ppap-agent/ppap/issue
 部署先通过 Secret 给 API、Worker 和 Controller 配置相同的 `PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY`，不提供默认值，也不自动生成持久密钥。自定义提供方另须在相同进程配置 `PPAP_PERSONAL_MODEL_ALLOWED_BASE_URLS`，值为逗号分隔的**完整 HTTPS base URL**，例如 `https://models.company.example/v1`。这是管理员对准确目的地的信任，不是通配域名或任意内网代理。管理员须控制其 DNS、TLS 和网络路由；内部 HTTPS 服务可以列入，但本机、链路本地、元数据及其它特殊 IP 不接受。不跟随重定向，也不使用环境代理。用户不能通过查询串、URL 内密码、子路径或子域名扩大授权。移出允许列表后，后续调用不可用。此变更只提供配置能力，不改变当前生产允许列表。
 
 个人模型须支持 Bearer 认证的 `POST <base_url>/responses`，以及使用路径需要的 function tools、`input_image`、严格 JSON schema、reasoning 参数和 usage 回执；不是仅实现 `/chat/completions` 就满足合同。模型和地址是用户选择的配置，不承诺远端具体权重版本或所有 OpenAI 兼容服务均可用。真实优化验收针对所选模型能否修复 Checker。
+
+验收不限定 DeepSeek 或特定服务地址：获授权的 model/base URL 组合能通过 Responses 驱动 Pi Agent，即可作为该组合的兼容证据。工具、图像和用量按实际使用能力分别核对；一个组合通过不代表其他组合自动兼容，也不放宽上述端点授权、凭据隔离和冻结身份边界。
 
 Key、租户、用户、地址、模型及配置修订一起加密绑定，数据库非秘密元数据必须与解密值一致。每次保存生成新的配置修订。审核与优化受理冻结该修订、模型和端点摘要；执行中更换或撤销配置后，旧工作不能漂移到新 provider 或新 Key。文字、视觉和 Checker 开发循环共享此身份；guest 只获得本地网关的短期执行授权，不获得真实 Key 或外部地址。替换部署加密密钥前必须迁移既有密文，否则原配置明确不可用。
 

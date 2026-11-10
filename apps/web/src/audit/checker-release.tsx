@@ -1,4 +1,5 @@
 import {displayTime} from '../helpers'
+import {checkerHistoryChanges} from './checker-history'
 import {RuleImpactSummary} from './rule-impact'
 import {useCallback, useEffect, useId, useRef, useState} from 'react'
 import {CheckerEditor} from './checker-edit'
@@ -15,6 +16,26 @@ import {Disclosure} from '../components/disclosure'
 import {ReadSkeleton} from '../components/read-skeleton'
 
 const errorText = (cause: unknown) => (cause as {code?: string})?.code === 'suite_dependencies_not_adopted' ? '关联检查尚未采用，请先核对关联检查版本。' : cause instanceof Error ? cause.message : '检查版本暂不可读。'
+/** Read this history entry only on demand. The selected editor is not its source. */
+function CheckerHistoryContent({revisionId, previousRevisionId, suiteKey, adapter}: {revisionId: string; previousRevisionId?: string; suiteKey: string; adapter: CheckerReleaseAdapter}) {
+  const [open, setOpen] = useState(false), [revision, setRevision] = useState<CheckerRevision | null>(null), [previous, setPrevious] = useState<CheckerRevision | null>(null), [error, setError] = useState(''), [attempt, setAttempt] = useState(0)
+  useEffect(() => {
+    if (!open || revision) return
+    let current = true
+    setError('')
+    void Promise.all([adapter.revision(revisionId), previousRevisionId ? adapter.revision(previousRevisionId) : Promise.resolve(null)]).then(([value, before]) => {
+      const next = checkedWorkspaceRevision(value, suiteKey, revisionId)
+      const prior = before && previousRevisionId ? checkedWorkspaceRevision(before, suiteKey, previousRevisionId) : null
+      if (current) {setPrevious(prior); setRevision(next)}
+    }).catch(cause => {if (current) setError(errorText(cause))})
+    return () => {current = false}
+  }, [open, revision, revisionId, previousRevisionId, suiteKey, adapter, attempt])
+  const changes = revision ? checkerHistoryChanges(revision, previous || undefined) : []
+  return <Disclosure className="w-full text-sm" summary={<>本次修复内容</>} open={open} onOpenChange={setOpen}>
+    {error ? <div><p role="alert">无法读取这次修复内容：{error}</p><Button variant="outline" size="sm" onClick={() => setAttempt(value => value + 1)}>重新读取修复内容</Button></div> : !revision ? <ReadSkeleton label="正在读取这次修复内容…" kind="inline"/> : changes.length ? <div className="space-y-3">{changes.map(change => <div key={change.path} className="min-w-0 space-y-1"><p className="break-all font-medium">{change.state}：{change.path}</p>{change.before && <p className="whitespace-pre-wrap break-words">修改前：{change.before}</p>}{change.after && <p className="whitespace-pre-wrap break-words">修改后：{change.after}</p>}</div>)}</div> : <p>此版本未记录文件内容变更。</p>}
+    <p className="text-xs text-muted-foreground">{previousRevisionId ? '以上与上次采用版本的原文比较，不代表修复已验证通过。' : '未提供更早采用记录，以上仅显示该版本与其基础版本的差异，不代表修复已验证通过。'}</p>
+  </Disclosure>
+}
 /** Publish and rollback share the same server CAS command. Existing rounds are never rewritten. */
 export function CheckerRelease({scope, legacyScope, suiteKey, revisionId, optimization, onReaudit, onRevision, onVerify, verificationBusy = false, operationRunning = false, refreshKey = '', preferCurrent = false, onBusyChange, onWriteBlockedChange, onUpgradeResult, onRuleDraft, onPublished, onDependency, adapter = nativeCheckerReleaseAdapter}: {scope: string; legacyScope?: string; suiteKey: string; revisionId: string; optimization?: {operationId: string; revisionId: string; explicit: boolean}; onReaudit?: () => void; onRevision?: (id: string) => void; onVerify?: (id: string) => void; verificationBusy?: boolean; operationRunning?: boolean; refreshKey?: string; preferCurrent?: boolean; onBusyChange?: (busy: boolean) => void; onWriteBlockedChange?: (blocked: boolean) => void; onUpgradeResult?: (runTests: boolean) => void; onRuleDraft?: (id: string) => void; onPublished?: () => void; onDependency?: (key: string) => void; adapter?: CheckerReleaseAdapter}) {
   const formId = useId(), locked = useRef(false), live = useRef(true), generation = useRef(0), holdWrites = useRef(false)
@@ -185,7 +206,7 @@ export function CheckerRelease({scope, legacyScope, suiteKey, revisionId, optimi
         {unverified && <><p className="text-sm text-warning">当前检查尚未验证通过。采用后，受影响的新结果和报告会持续带有“需要重新验证”标记。</p><ul className="list-inside list-disc text-sm">{revision.validation.reasons.map((reason, index) => <li key={index}>{checkerReason(reason)}</li>)}{revision.validation.new_errors > 0 && <li>新增错误 {revision.validation.new_errors} 条</li>}</ul><div className="flex items-start gap-2"><Checkbox id={`${formId}-unverified`} checked={acknowledged} onCheckedChange={value => setAcknowledged(value === true)}/><Label htmlFor={`${formId}-unverified`}>我已核对上述未验证项和新增错误，仍要启用</Label></div></>}
         <div className="flex flex-wrap gap-2"><Button disabled={mutationBusy || editorBlocked || Boolean(pending) || writesHeld || unadoptedRelated.length > 0 || unverified && !acknowledged} onClick={() => void publish()}>{busy ? '正在提交…' : firstAdoption ? '确认采用' : purpose === 'publish' ? '确认发布' : '确认回滚'}</Button><Button variant="ghost" disabled={mutationBusy || editorBlocked} onClick={() => setConfirm(false)}>取消</Button></div>
       </div>}
-      <Disclosure className="text-sm" summary={<>版本记录与受影响审核</>}><div className="space-y-3"><p>该版本用于 {revision.round_count} 轮你有权限查看的审核；回滚不会改写它们。</p>{revision.rounds.map(round => <a key={round.id} className="block underline" href={`/audit?round=${encodeURIComponent(round.id)}`}>{round.created_at ? displayTime(round.created_at) : '查看审核'}</a>)}{active?.history.map(item => <div key={item.operation_id} className="flex flex-wrap items-center justify-between gap-2 border-t pt-2"><p>采用记录 {item.revision}{item.published_at ? ` · ${displayTime(item.published_at)}` : ''}{item.published_by_name ? ` · 发布人 ${item.published_by_name}` : ''}{item.force_unverified ? ' · 需要重新验证' : ''}</p><Button variant="outline" size="sm" disabled={mutationBusy || editorBlocked || Boolean(pending)} onClick={() => {select({...selection, revisionId: item.revision_id, purpose: 'rollback', explicit: true})}}>查看此版本／回滚</Button></div>)}</div></Disclosure>
+      <Disclosure className="text-sm" summary={<>版本记录与受影响审核</>}><div className="space-y-3"><p>该版本用于 {revision.round_count} 轮你有权限查看的审核；回滚不会改写它们。</p>{revision.rounds.map(round => <a key={round.id} className="block underline" href={`/audit?round=${encodeURIComponent(round.id)}`}>{round.created_at ? displayTime(round.created_at) : '查看审核'}</a>)}{active?.history.map((item, index) => <div key={item.operation_id} className="flex flex-wrap items-center justify-between gap-2 border-t pt-2"><p>采用记录 {item.revision}{item.published_at ? ` · ${displayTime(item.published_at)}` : ''}{item.published_by_name ? ` · 发布人 ${item.published_by_name}` : ''}{item.force_unverified ? ' · 需要重新验证' : ''}</p><Button variant="outline" size="sm" disabled={mutationBusy || editorBlocked || Boolean(pending)} onClick={() => {select({...selection, revisionId: item.revision_id, purpose: 'rollback', explicit: true})}}>查看此版本／回滚</Button><CheckerHistoryContent key={`${scope}:${item.operation_id}:${active.history[index + 1]?.revision_id || ''}`} revisionId={item.revision_id} previousRevisionId={active.history[index + 1]?.revision_id} suiteKey={suiteKey} adapter={adapter}/></div>)}</div></Disclosure>
     </>}
     <Button variant="outline" size="sm" disabled={recoveryBlocked} onClick={() => void recover()}>{pending ? '查看原发布操作' : '读取最新版本'}</Button>
   </section>

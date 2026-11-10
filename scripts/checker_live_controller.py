@@ -18,6 +18,38 @@ MARKER = b"checker-live-holdout-"
 PRIVATE_READ_PROBE = "from pathlib import Path\ntry:\n Path('/evidence/controller.json').read_bytes()\nexcept PermissionError:\n pass\nelse:\n raise SystemExit(1)"
 
 
+def probe_guest_startup(policy):
+    """Exercise real Pi startup with the unchanged production guest limits."""
+    checked = subprocess.run(
+        [
+            "/usr/bin/prlimit",
+            f"--as={policy.memory_mib * 1024 * 1024}",
+            f"--nproc={policy.max_processes}",
+            "--fsize=268435456",
+            "--nofile=128",
+            "--core=0",
+            "--",
+            "/usr/bin/setpriv",
+            "--no-new-privs",
+            "--reuid=10001",
+            "--regid=10001",
+            "--clear-groups",
+            "--bounding-set=-all",
+            "--inh-caps=-all",
+            "--ambient-caps=-all",
+            "--",
+            "/usr/local/bin/ppap-pi",
+            "--version",
+        ],
+        capture_output=True,
+        timeout=30,
+        env={"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/tmp", "LANG": "C.UTF-8", "PI_OFFLINE": "1", "PI_TELEMETRY": "0"},
+    )
+    if checked.returncode != 0 or checked.stdout.strip() != b"1.5.0":
+        raise ValueError("guest_startup_failed")
+    return {"address_space_mib": policy.memory_mib, "max_processes": policy.max_processes, "pi_version": "1.5.0"}
+
+
 def contains_holdout(raw):
     if MARKER in raw:
         return True
@@ -93,9 +125,12 @@ class Probe:
 def main():
     from agent.execution.gateway import Grants
     from agent.execution.isolation.container import ContainerRuntime
+    from product.settings import load_settings
     from worker.deep_controller import main as controller_main
 
     probe = Probe(Path("/evidence/controller.json"))
+    probe.facts["guest_startup"] = probe_guest_startup(load_settings().deep_execution_policy())
+    probe.save()
     # Exercise the actual guest UID against the report/oracle boundary before
     # any paid work. The client script must not exist in this container.
     if os.getuid() != 0 or Path("/live/run_checker_live.py").exists():

@@ -38,12 +38,12 @@ PSW_RULE_LABELS = {
 PSW_RULE_FIELDS: dict[int, dict[str, str]] = {
     3: {
         "psw_stamp_present": "保证书实际盖章",
-        "psw_stamp_ending_text": (
-            "查看实际印章全部区域，按外圈公司名、内部及底部用途文字的阅读顺序，只返回末端2至6个中文汉字；"
-            "注册编号中的数字、英文字母和标点不算中文字。若还有质量部、专用章等用途文字，必须取用途文字末端，不能只取外圈公司名。"
-            "末端或顺序不明为null；无章为空字符串。"
+        "psw_stamp_ends_with_company": (
+            "验证目标：实际印章完整文字按阅读顺序最终是否以公司结尾。必须查看完整实际印章，包括外圈、内部和底部用途文字；"
+            "外圈有公司名但内部或底部还有质量部、专用章等用途文字时为false。完整可辨且最终以公司结尾才为true；"
+            "独立的纯数字防伪或备案编号不属于单位名称或用途文字，不据此否定公司结尾；无法区分编号与用途文字时为null。"
+            "清楚不符合为false；看不清、顺序不明或对象归属不明为null。reason简述原图可见依据或不确定原因，不转录全文、不输出推理过程。"
         ),
-        "psw_stamp_ends_with_company": "保证书实际印章完整文字的最后两字为公司，不能只取外圈公司名",
         "authorization_table_present": (
             "存在实际的部门章授权声明表格或授权正文（说明授权主体、部门和用章授权）；交付物清单、目录、附件列表中仅提到该文件名不算授权表。页面只有清单或保证书而没有实际授权表时为false。"
         ),
@@ -174,8 +174,18 @@ def decide_disposition_visual_rule(
 
 
 def normalize_psw_stamp_facts(observation: Mapping[str, object]) -> dict[str, object]:
-    """Keep inconsistent stamp observations unknown; use canonical source text."""
+    """Keep inconsistent stamp observations unknown before applying the rule."""
     facts = dict(observation)
+    if "psw_stamp_ending_text" not in facts:
+        present = _as_bool(facts.get("psw_stamp_present"))
+        company = _as_bool(facts.get("psw_stamp_ends_with_company"))
+        # A standalone established predicate already states an actual seal.
+        # An explicitly requested but unknown/contradictory presence does not.
+        if ("psw_stamp_present" in facts and present is None) or (present is False and company is True):
+            facts["psw_stamp_ends_with_company"] = None
+        elif present is False:
+            facts["psw_stamp_ends_with_company"] = False
+        return facts
     ending_text = facts.get("psw_stamp_ending_text")
     if not isinstance(ending_text, str):
         if facts.get("psw_stamp_present") is False:
@@ -210,6 +220,8 @@ def evaluate_psw_observation(rule_no: int, observation: Mapping[str, object], *,
             status, suggestions = "PASS", ""
         elif company is False and (authorization is False or authorization_stamp is False):
             status, suggestions = "NG", "保证书印章文字未以“公司”结尾，且没有盖有公司章的部门章授权声明。"
+        elif company is False:
+            suggestions = "原件证据不足：保证书印章不满足公司章要求，但无法确认是否存在盖有公司章的部门章授权声明。请人工核对授权页；无法辨认时保留无法判断。"
     elif rule_no == 5:
         signature = _as_bool(observation.get("authorized_signature_present"))
         stamp = _as_bool(observation.get("psw_stamp_present"))

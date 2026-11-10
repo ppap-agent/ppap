@@ -365,6 +365,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/audit-rounds/{round_id}/fact-answers/{operation_id}/samples": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Save Fact Answer Sample */
+        post: operations["save_fact_answer_sample_audit_rounds__round_id__fact_answers__operation_id__samples_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit-rounds/{round_id}/fact-answers/export": {
         parameters: {
             query?: never;
@@ -3668,6 +3685,8 @@ export interface components {
             operation_id: string;
             /** Prompt */
             prompt: string;
+            /** Result Attempt */
+            result_attempt?: number | null;
             /** Round Id */
             round_id: string;
             /** Value */
@@ -3704,6 +3723,20 @@ export interface components {
             operation_id: string;
             /** Value */
             value: boolean | string | null;
+        };
+        /** FactAnswerSampleRequest */
+        FactAnswerSampleRequest: {
+            /**
+             * Expected Status
+             * @enum {string}
+             */
+            expected_status: "PASS" | "NG" | "NA";
+            /** Item Key */
+            item_key: string;
+            /** Operation Id */
+            operation_id: string;
+            /** Rationale */
+            rationale: string;
         };
         /** FactAnswersExport */
         FactAnswersExport: {
@@ -6306,6 +6339,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FactAnswerReceipt"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_fact_answer_sample_audit_rounds__round_id__fact_answers__operation_id__samples_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                operation_id: string;
+                round_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FactAnswerSampleRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeedbackResponse"];
                 };
             };
             /** @description Validation Error */

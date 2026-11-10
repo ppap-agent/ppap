@@ -252,6 +252,18 @@ def _inspect(sheet, formula_sheet, aliases: dict[str, tuple[str, ...]], required
     last_row = header_row + _DATA_ROWS
     relevant = tuple(columns.values())
     if columns_have_merge(sheet, header_row, last_row, relevant):
+        if required == "mark":
+            # This clause asks whether a mark exists, not whether every row has
+            # one. An independent cell proves existence even when the form has
+            # merged headers or footers. Never use a merged cell as that proof.
+            col = columns["mark"]
+            marked = tuple(
+                sheet.cell(row, col).coordinate
+                for row in range(header_row + 1, max_row + 1)
+                if not is_blank(_cached(sheet, formula_sheet, row, col)) and not any(rng.min_row <= row <= rng.max_row and rng.min_col <= col <= rng.max_col for rng in sheet.merged_cells.ranges)
+            )
+            if marked:
+                return _Sheet("table", sheet.title, "PASS", passed, marked, cell_span(header_row, max_row, col, col))
         return _Sheet("block", sheet.title, suggestion=_MERGED, message=_MERGED, code="merged_range", scanned=cell_span(header_row, max_row, min(relevant), max(relevant)))
     reads: dict[tuple[int, int], Any] = {}
     for row in range(header_row, max_row + 1):

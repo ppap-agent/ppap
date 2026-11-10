@@ -1,5 +1,7 @@
 """Business scope and quantifiers stay independent of missing required facts."""
 
+import hashlib
+import json
 from types import SimpleNamespace
 
 import fitz
@@ -50,6 +52,7 @@ def controlled_vision(monkeypatch):
         values = {
             "psw_stamp_present": stamp,
             "psw_stamp_ending_text": "公司" if stamp else "",
+            "psw_stamp_ends_with_company": {"value": stamp, "reason": "受控公司章标记可见" if stamp else "受控原图没有实际章"},
             "authorized_signature_present": signature,
             "authorization_table_present": "AUTH:BODY" in prompt,
             "authorization_company_stamp_present": stamp,
@@ -208,22 +211,22 @@ def test_authorization_example_or_unknown_role_cannot_be_a_positive_witness():
     assert _exists_authorization([{**valid, REFERENCE: None}], True) == (None, None)
 
 
-def test_unknown_seal_text_is_not_asked_again_as_a_derived_boolean(tmp_path, monkeypatch, controlled_vision):
+def test_unknown_company_fact_is_not_asked_again_under_another_protocol(tmp_path, monkeypatch, controlled_vision):
     from documents.ocr import client
 
     original = client.call_llm_async
 
-    async def unknown_text(*args, **kwargs):
+    async def unknown_company(*args, **kwargs):
         facts = await original(*args, **kwargs)
-        if "psw_stamp_ending_text" in facts:
-            facts["psw_stamp_ending_text"] = None
+        if "psw_stamp_ends_with_company" in facts:
+            facts["psw_stamp_ends_with_company"] = {"value": None, "reason": "受控原图无法确认印章最终文字"}
         return facts
 
-    monkeypatch.setattr(client, "call_llm_async", unknown_text)
+    monkeypatch.setattr(client, "call_llm_async", unknown_company)
     agent = checker(write_pdf(tmp_path / "unknown-ending.pdf", [("business", True, True)] * 2))
     assert agent._run_fact_rule(2, 3).status == "UNABLE"
-    assert all("psw_stamp_ends_with_company" not in fields for fields in controlled_vision)
-    assert sum("psw_stamp_ending_text" in fields for fields in controlled_vision) == 4
+    assert all("psw_stamp_ending_text" not in fields for fields in controlled_vision)
+    assert sum("psw_stamp_ends_with_company" in fields for fields in controlled_vision) == 4
     count = len(controlled_vision)
     assert agent._run_fact_rule(2, 3).status == "UNABLE"
     assert len(controlled_vision) == count
@@ -261,12 +264,23 @@ def test_resolving_a_business_role_keeps_the_plan_and_cached_facts(tmp_path, mon
         return facts
 
     monkeypatch.setattr(client, "call_llm_async", business_role)
-    agent = checker(write_pdf(tmp_path / "business-with-guidance.pdf", [("unknown", True, True)]))
+    path = write_pdf(tmp_path / "business-with-guidance.pdf", [("unknown", True, True)])
+    source_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    agent = checker(path)
     assert agent._run_fact_rule(4, 5).status == "PASS"
     count = len(controlled_vision)
     assert agent._run_fact_rule(4, 5).status == "PASS"
-    assert agent._run_fact_rule(2, 3).status == "PASS"
     assert len(controlled_vision) == count
+    assert all("psw_stamp_ends_with_company" not in fields for fields in controlled_vision)
+    result = agent._run_fact_rule(2, 3)
+    assert result.status == "PASS"
+    assert controlled_vision[count:] == [("psw_stamp_ends_with_company",)] * 2
+    assert agent._run_fact_rule(2, 3).status == "PASS"
+    assert len(controlled_vision) == count + 2
+    assert result.evidence and result.evidence.sources
+    locations = [json.loads(source.locator) for source in result.evidence.sources]
+    assert all(location["file_version_id"] == "frozen-scope" and location["page"] == 1 for location in locations)
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == source_sha
 
 
 @pytest.mark.parametrize("repeated_header", [False, True])
@@ -289,8 +303,8 @@ def force_department_stamp(monkeypatch):
 
     async def department_stamp(*args, **kwargs):
         facts = await original(*args, **kwargs)
-        if "psw_stamp_ending_text" in facts:
-            facts["psw_stamp_ending_text"] = "专用章"
+        if "psw_stamp_ends_with_company" in facts:
+            facts["psw_stamp_ends_with_company"] = {"value": False, "reason": "受控原图显示部门专用章"}
         return facts
 
     monkeypatch.setattr(client, "call_llm_async", department_stamp)

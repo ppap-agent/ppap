@@ -5,18 +5,25 @@ import json
 import os
 import re
 import secrets
+import socket
 import sys
+from contextlib import ExitStack
 from pathlib import Path
 from urllib.parse import urlsplit
 
 
 def validate_invocation(environment):
     """Each explicit dispatch/rerun is independent; never resume an old operation."""
-    if environment.get("GITHUB_ACTIONS") != "true" or environment.get("GITHUB_EVENT_NAME") != "workflow_dispatch":
-        raise ValueError("manual_github_test_required")
-    run_id, attempt = environment.get("GITHUB_RUN_ID", ""), environment.get("GITHUB_RUN_ATTEMPT", "")
-    if not all(re.fullmatch(r"[1-9][0-9]*", value) for value in (run_id, attempt)) or environment.get("COMPOSE_PROJECT_NAME") != f"ppap-checker-live-{run_id}-{attempt}":
-        raise ValueError("isolated_test_attempt_required")
+    if environment.get("PPAP_CHECKER_LIVE_MODE") == "local":
+        run_id = environment.get("PPAP_CHECKER_LIVE_LOCAL_ID", "")
+        if environment.get("GITHUB_ACTIONS") or environment.get("CI") or not re.fullmatch(r"[a-f0-9]{32}", run_id) or environment.get("COMPOSE_PROJECT_NAME") != "ppap-checker-local-" + run_id:
+            raise ValueError("isolated_local_test_required")
+    else:
+        if environment.get("GITHUB_ACTIONS") != "true" or environment.get("GITHUB_EVENT_NAME") != "workflow_dispatch":
+            raise ValueError("manual_github_test_required")
+        run_id, attempt = environment.get("GITHUB_RUN_ID", ""), environment.get("GITHUB_RUN_ATTEMPT", "")
+        if not all(re.fullmatch(r"[1-9][0-9]*", value) for value in (run_id, attempt)) or environment.get("COMPOSE_PROJECT_NAME") != f"ppap-checker-live-{run_id}-{attempt}":
+            raise ValueError("isolated_test_attempt_required")
     if environment.get("PPAP_BUILD_SHA") != environment.get("PPAP_APPROVED_SHA") or not re.fullmatch(r"[a-f0-9]{40}", environment.get("PPAP_BUILD_SHA", "")):
         raise ValueError("reviewed_source_revision_mismatch")
     for name, ceiling in (("REQUESTS", 32), ("INPUT_TOKENS", 200000), ("OUTPUT_TOKENS", 32000)):
@@ -38,6 +45,19 @@ def prepare(environment, output):
     names = ("LIVE_PG_BOOTSTRAP_PASSWORD", "LIVE_PG_MIGRATOR_PASSWORD", "LIVE_PG_API_PASSWORD", "LIVE_PG_WORKER_PASSWORD", "LIVE_S3_ACCESS_KEY", "LIVE_S3_SECRET_KEY")
     values = {name: secrets.token_hex(24) for name in names}
     values["LIVE_ENCRYPTION_KEY"] = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()
+    if environment.get("PPAP_CHECKER_LIVE_MODE") == "local":
+        # Desktop host bind mounts can ignore Unix permission checks. Keep the
+        # actual private boundary on Linux storage; the runner copies only its
+        # existing Oracle and Controller receipt through explicit root execs.
+        values["LIVE_EVIDENCE_SOURCE"] = "checker-evidence"
+        ident = environment["PPAP_CHECKER_LIVE_LOCAL_ID"]
+        values["LIVE_PG_DATABASE"] = "ppap_checker_" + ident
+        values["LIVE_S3_BUCKET"] = "checker-live-" + ident
+        with ExitStack() as sockets:
+            for name in ("LIVE_PG_PORT", "LIVE_S3_PORT", "LIVE_API_PORT", "LIVE_WEB_PORT"):
+                listener = sockets.enter_context(socket.socket())
+                listener.bind(("127.0.0.1", 0))
+                values[name] = str(listener.getsockname()[1])
     output.parent.mkdir(parents=True, exist_ok=True)
     with open(output, "x", opener=lambda path, flags: os.open(path, flags, 0o600)) as stream:
         stream.write("".join(f"{name}={value}\n" for name, value in values.items()))

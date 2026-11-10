@@ -39,3 +39,20 @@ test('explicit human answer uses one POST and its original operation for readbac
     assert.deepEqual(JSON.parse(String(calls[0].init?.body)), input)
   } finally {globalThis.fetch = originalFetch}
 })
+
+test('explicit fact sample reuses feedback readback without repeating a write', async () => {
+  const originalFetch = globalThis.fetch, calls: Array<{url: string; init?: RequestInit}> = []
+  const input = {operation_id: 'sample-op', item_key: 'R1', expected_status: 'NG' as const, rationale: '原件未勾选'}
+  const sample = {operation_id: 'sample-op', round_id: 'round/1', expected_status: 'NG'}
+  globalThis.fetch = async (url, init) => {
+    calls.push({url: String(url), init})
+    if (init?.method === 'POST') throw new TypeError('Connection lost after write')
+    return new Response(JSON.stringify({round_id: 'round/1', feedback: [sample], optimizations: []}), {status: 200})
+  }
+  try {
+    await assert.rejects(nativeFactAnswersAdapter.saveSample!('round/1', 'answer/1', input))
+    assert.deepEqual(await nativeFactAnswersAdapter.readSample!('round/1', 'sample-op'), sample)
+    assert.deepEqual(calls.map(call => [call.url, call.init?.method]), [['/audit-rounds/round%2F1/fact-answers/answer%2F1/samples', 'POST'], ['/audit-rounds/round%2F1/checker-feedback', 'GET']])
+    assert.deepEqual(JSON.parse(String(calls[0].init?.body)), input)
+  } finally {globalThis.fetch = originalFetch}
+})
