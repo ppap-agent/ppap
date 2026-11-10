@@ -7,7 +7,7 @@ metadata:
     k8s-app: ppap-current
 data:
   PPAP_PROFILE: production
-  PPAP_BUILD_SHA: 2ec3d77100c9473617dfde8a5ff38c543df7c588
+  PPAP_BUILD_SHA: ff613d2aa0e6deade650fb848741740e34c5f696
   PPAP_WEB_URL: https://ppap.icoastline.com
   PPAP_PUBLIC_API_URL: https://ppap.icoastline.com/ppap
   PPAP_ONLYOFFICE_URL: https://ppap.icoastline.com/office
@@ -415,7 +415,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: api
-          image: icoastline.tencentcloudcr.com/ppap-feishu/current-api@sha256:901d7369334dfffbb2a409c904df6ef11a70186f4ea4ee3de1d3c29e1b1b9878
+          image: icoastline.tencentcloudcr.com/ppap-feishu/current-api@sha256:96e1d464ce2b9eda126b5f2e3241a6b6195e248763d064551e7ffa385131130e
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
@@ -569,7 +569,7 @@ spec:
           emptyDir: {}
       containers:
         - name: deep
-          image: icoastline.tencentcloudcr.com/ppap-feishu/current-deep@sha256:c166453305a42e569eb0f5ba4899f922b17d33266a0f93c3c89d089ca89553b8
+          image: icoastline.tencentcloudcr.com/ppap-feishu/current-deep@sha256:3bce0286db60bd35a4168629417a63b94a0cac5b5c167cd4b500046f3938ebda
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
@@ -668,7 +668,7 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 3
         - name: worker
-          image: icoastline.tencentcloudcr.com/ppap-feishu/current-worker@sha256:161ed6d518a3938165d62a0c3ab97869e56a38ead37029cdd3d224b284372ab2
+          image: icoastline.tencentcloudcr.com/ppap-feishu/current-worker@sha256:31140e8a4973d2303c54dac635ca2293610f689844ea18a39267f0872f2b68ee
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
@@ -810,7 +810,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: web
-          image: icoastline.tencentcloudcr.com/ppap-feishu/current-web@sha256:e00281c1709e83d407848e054f31c89d7c5d3aa2a0768a0f02adfecfaf1229df
+          image: icoastline.tencentcloudcr.com/ppap-feishu/current-web@sha256:9ea51a1f5f02c76ab25c20ffab78f462a56c5025c9fd7ebd7a349b83596d7fde
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 4173
