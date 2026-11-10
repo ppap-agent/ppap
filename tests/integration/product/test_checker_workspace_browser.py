@@ -403,7 +403,7 @@ def answer(page, f, round_, expected):
     page.get_by_role("button", name="查看依据 R1", exact=True).click()
     page.get_by_role("button", name="这条判错了", exact=True).focus()
     page.keyboard.press("Enter")
-    page.get_by_label("正确结论", exact=True).click()
+    page.get_by_role("combobox", name="正确结论", exact=True).click()
     page.get_by_role("option", name={"PASS": "符合", "NG": "不符合", "NA": "不适用"}[expected], exact=True).click()
     page.get_by_text("添加我在原件中找到的依据", exact=True).click()
     page.get_by_role("button", name="在原件上点选位置", exact=True).click()

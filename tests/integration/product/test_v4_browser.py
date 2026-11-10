@@ -263,7 +263,11 @@ def test_customer_intake_to_original_issue_and_frozen_precheck_export(running_pr
             page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name=re.compile("^无法判断" if customer == "理想" else "^不符合")).click()
             page.get_by_role("button", name=re.compile("^查看依据 ")).first.click()
             expect(page.get_by_role("article", name="条款判定依据", exact=True)).to_be_visible()
-            page.get_by_role("button", name="核对 特殊特性清单.xlsx", exact=True).first.click()
+            # A directory clause with no located evidence opens the original directly.
+            if customer == "理想":
+                page.get_by_role("dialog").get_by_role("button", name="打开原件", exact=True).click()
+            else:
+                page.get_by_role("button", name="核对 特殊特性清单.xlsx", exact=True).first.click()
             preview = page.get_by_role("region", name="原件预览", exact=True)
             expect(preview).to_be_visible()
             download_link = preview.get_by_role("link", name="下载原件", exact=True)
@@ -394,8 +398,11 @@ def test_cross_file_problem_opens_both_authorized_frozen_originals(running_produ
                 assert time.monotonic() < deadline
                 page.wait_for_timeout(100)
             page.goto(web + "/audit?round=" + queued["id"])
-            target = page.get_by_role("button", name=re.compile(r"^PFMEA\.xlsx 不符合"))
+            # Historical review names the file and shows the conclusion separately.
+            files = page.get_by_role("navigation", name="本轮文件", exact=True)
+            target = files.get_by_role("button", name="PFMEA.xlsx", exact=True)
             expect(target).to_be_visible(timeout=30000)
+            expect(page.get_by_role("region", name="审核详情", exact=True)).to_contain_text("不符合")
             target.click()
             basis = page.get_by_role("button", name=re.compile(r"^查看依据 N02:7\b"))
             basis.click()
@@ -410,7 +417,7 @@ def test_cross_file_problem_opens_both_authorized_frozen_originals(running_produ
             # layout after that animation, instead of mixing different frames.
             boxes = comparison.evaluate(
                 """async (element, versions) => {
-                    const sheet = element.closest('[data-slot="sheet-content"]');
+                    const sheet = element.closest('[data-slot="sheet-content"]') || element;
                     await Promise.all(sheet.getAnimations().map(animation => animation.finished.catch(() => {})));
                     const panes = Array.from(element.querySelectorAll('[data-file-version]'));
                     return versions.map(version => panes.find(pane => pane.dataset.fileVersion === version).getBoundingClientRect().toJSON());
