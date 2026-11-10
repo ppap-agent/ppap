@@ -34,7 +34,7 @@ class OriginalImageRuntime:
         return extract_images_from_bytes(content, ".pdf", render_all_pages=render_all_pages)
 
     def run_image_prompt(self, **kwargs):
-        return AIClient().structured_completion(**kwargs)
+        return AIClient().structured_completion(**kwargs).text
 
 
 @pytest.fixture

@@ -29,7 +29,7 @@ def analyze_file(
     validation_scope: dict | None = None,
 ) -> dict:
     """Recognize a file; scoped tasks supply their already-frozen current candidates."""
-    from audit.engine.checkers.client import AIClient
+    from audit.engine.checkers.client import AIClient, completion_text
     from audit.engine.checkers.prompts import PromptManager
     from documents.extractors import get_extractor
     from product.rule_matching import RuleMatchingAIService
@@ -76,7 +76,7 @@ def analyze_file(
     ai = ai if ai is not None else AIClient()
     if excerpt.strip():
         try:
-            response = ai.structured_completion(
+            response = completion_text(ai.structured_completion(
                 system_prompt=PromptManager.get_system_prompt("document_analyst"),
                 user_prompt=PromptManager.get_document_metadata_prompt(excerpt, filename) + "\n同时返回 part_number（零件号）；part 仅表示零件名称，无法确定时返回 null。",
                 max_tokens=1000,
@@ -85,7 +85,7 @@ def analyze_file(
                 operation="document_metadata_extraction",
                 request_timeout=120,
                 retry_limit=0,
-            )
+            ))
             parsed = json.loads(response.strip().removeprefix("```json").removesuffix("```").strip())
             if not isinstance(parsed, dict):
                 raise ValueError("invalid_metadata")
@@ -157,7 +157,7 @@ def analyze_file(
         if inferred == PpapDocumentType.UNKNOWN or not evidence[0].alias_hits:
             inferred = PpapDocumentType.UNKNOWN
             try:
-                classified = ai.structured_completion(
+                classified = completion_text(ai.structured_completion(
                     system_prompt=PromptManager.get_system_prompt("ppap_expert"),
                     user_prompt=PromptManager.get_document_classification_prompt(excerpt, "\n".join([*document_types(), *(f"{code} {title}" for code, title in source_types.items())])),
                     max_tokens=100,
@@ -165,7 +165,7 @@ def analyze_file(
                     operation="document_classification",
                     request_timeout=120,
                     retry_limit=0,
-                )
+                ))
                 if not isinstance(classified, str) or not classified.strip():
                     raise ValueError("invalid_document_classification")
                 classified_source = [code for code, title in source_types.items() if classified.strip() in {code, title, f"{code} {title}"}]

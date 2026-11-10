@@ -227,7 +227,7 @@ def test_live_text_and_visual_clients_use_one_bounded_gateway_then_record_and_pu
             'type': 'object', 'additionalProperties': False,
             'properties': {'positive': {'type': 'boolean'}}, 'required': ['positive']}})
     text = AIClient().response_text([{'role': 'user', 'content': f'Assess synthetic fixture {value}'}], max_tokens=32)
-    value = int(facts['positive'] and text == 'positive')""",
+    value = int(facts['positive'] and text.text == 'positive')""",
     )
     files = {**context["suite"].files, "checker.py": program}
     objects = {name: content_digest(raw) for name, raw in files.items()}

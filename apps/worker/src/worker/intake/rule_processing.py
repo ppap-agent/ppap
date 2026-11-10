@@ -94,12 +94,12 @@ def parse_rule_file(filename: str, content: bytes, *, document_type: str = "", a
         if rules is not None:
             return normalize_rule_body({"kind": "engine", "type": type_name, "rule_profile": "v3", "rules": rules})
     try:
-        if ai is None:
-            from audit.engine.checkers.client import AIClient
+        from audit.engine.checkers.client import AIClient, completion_text
 
+        if ai is None:
             ai = AIClient()
         if not type_name:
-            classified = ai.structured_completion(
+            classified = completion_text(ai.structured_completion(
                 system_prompt=PromptManager.get_system_prompt("ppap_expert"),
                 user_prompt=PromptManager.get_document_classification_prompt(text, "\n".join(document_types())),
                 max_tokens=100,
@@ -107,14 +107,14 @@ def parse_rule_file(filename: str, content: bytes, *, document_type: str = "", a
                 operation="document_classification",
                 request_timeout=120,
                 retry_limit=0,
-            )
+            ))
             doc_type = PpapDocumentType.from_string(classified)
             type_name = doc_type.get_type_name() if doc_type != PpapDocumentType.UNKNOWN else ""
         if not type_name:
             raise RuleParseError("unknown_rule_type")
         prompt = PromptManager.get_rule_extraction_prompt(text, type_name)
         prompt += "\n同时返回 customers、models、parts 三个字符串数组，仅包含原文明确的适用客户、型号、零件；没有则为空数组。"
-        response = ai.structured_completion(
+        response = completion_text(ai.structured_completion(
             system_prompt=PromptManager.get_system_prompt("rule_extractor"),
             user_prompt=prompt,
             max_tokens=8192,
@@ -123,7 +123,7 @@ def parse_rule_file(filename: str, content: bytes, *, document_type: str = "", a
             operation="rule_extraction",
             request_timeout=120,
             retry_limit=0,
-        )
+        ))
         parsed = json.loads(response.strip().removeprefix("```json").removesuffix("```").strip())
         if not isinstance(parsed, dict):
             raise ValueError("invalid_rule_body")

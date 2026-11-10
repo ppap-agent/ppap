@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
+from audit.engine.checkers.client import ModelTransportError, TextCompletion
 from documents.model_access import ModelUnavailable
 from product.formalization.propose import generation_prompts
 from product.store.formalizations import FormalizationStore, source_binding
 
 
-def _provider_usage(client) -> dict | None:
+def _provider_usage(result: TextCompletion | None) -> dict | None:
     """Copy known token counts only. Never copy credentials or free-form provider text."""
-    raw = getattr(client, "last_usage", None)
-    if not isinstance(raw, dict):
+    if not isinstance(result, TextCompletion):
         return None
     usage = {}
     for key in ("input_tokens", "output_tokens", "thinking_tokens"):
-        value = raw.get(key)
+        value = getattr(result, key)
         if type(value) is int and value >= 0:
             usage[key] = value
     if "input_tokens" not in usage or "output_tokens" not in usage:
@@ -64,7 +64,7 @@ def process_rule_formalization(store, claimed, ident: str, *, ai=None) -> dict:
 
             client = AIClient()
         with audit_lease(store, claimed, ident):
-            raw = client.structured_completion(
+            completed = client.structured_completion(
                 system_prompt=system,
                 user_prompt=user,
                 max_tokens=4000,
@@ -73,7 +73,8 @@ def process_rule_formalization(store, claimed, ident: str, *, ai=None) -> dict:
                 operation="rule_formalization",
                 retry_limit=0,
             )
-        usage = _provider_usage(client)
+        raw = completed.text if isinstance(completed, TextCompletion) else completed
+        usage = _provider_usage(completed if isinstance(completed, TextCompletion) else None)
         if not raw:
             formalizations.finish(claimed, ident, error_code="stopped", allow_expired=True)
             return {"operation_id": str(row["operation_id"]), "state": "stopped", "failure": "stopped"}
@@ -84,6 +85,10 @@ def process_rule_formalization(store, claimed, ident: str, *, ai=None) -> dict:
     except ModelUnavailable:
         formalizations.finish(claimed, ident, error_code="model_unavailable")
         return {"state": "failed", "failure": "model_unavailable"}
+    except ModelTransportError as exc:
+        failure = "model_unavailable" if exc.code == "request_failed" else "formalization_failed"
+        formalizations.finish(claimed, ident, error_code=failure)
+        return {"state": "failed", "failure": failure}
     except Exception as exc:
         if _unknown(exc):
             formalizations.finish(claimed, ident, error_code="execution_outcome_unknown", usage_uncertain=True)

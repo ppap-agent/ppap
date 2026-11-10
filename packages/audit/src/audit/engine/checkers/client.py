@@ -5,7 +5,7 @@ import json
 import logging
 import threading
 import time
-from collections import deque
+from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Self
 from urllib.parse import urlsplit
@@ -67,6 +67,33 @@ logger = logging.getLogger(__name__)
 
 class _InvalidAIResponseError(RuntimeError):
     """Raised when AI response schema is incomplete and may be transient."""
+
+
+class ModelTransportError(Exception):
+    """A Responses call failed. The message is only a code, never a provider body."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+@dataclass(frozen=True)
+class TextCompletion:
+    """One completed text response and its provider token counts, when known."""
+
+    text: str
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    thinking_tokens: int | None = None
+
+
+def completion_text(value: str | TextCompletion) -> str:
+    """Accept the real result or a test double that still returns text."""
+    if isinstance(value, TextCompletion):
+        return value.text
+    if isinstance(value, str):
+        return value
+    raise TypeError("model response must be text")
 
 
 def _uses_codex_transport(settings: Any) -> bool:
@@ -150,15 +177,6 @@ class AIClient:
         # Mark as initialized
         self._initialized = True
 
-        # Rate limiting setup
-        self._rate_limit_requests_per_minute = getattr(
-            self.settings,
-            "AI_RATE_LIMIT_PER_MINUTE",
-            60,
-        )  # Default 60 requests per minute
-        self._request_times: deque[float] = deque()
-        self._rate_limit_lock = threading.Lock()
-
         client_options: dict[str, Any] = {"max_retries": 0, "http_client": httpx.Client(follow_redirects=False, trust_env=False)} if personal else {}
         if self.settings.OPENAI_BASE_URL:
             self.client = openai_cls(
@@ -169,71 +187,6 @@ class AIClient:
         else:
             self.client = openai_cls(api_key=self.settings.OPENAI_API_KEY)
         self.extra_body = _parse_extra_body(self.settings.OPENAI_EXTRA_BODY_JSON)
-
-    @classmethod
-    def get_instance(cls) -> "AIClient":
-        """获取单例实例的类方法"""
-        return cls()
-
-    def _wait_for_rate_limit(self) -> None:
-        """等待直到满足速率限制要求"""
-        while True:
-            wait_time = 0.0
-            with self._rate_limit_lock:
-                current_time = time.time()
-
-                # 清理60秒前的请求记录
-                while self._request_times and current_time - self._request_times[0] >= 60:
-                    self._request_times.popleft()
-
-                if len(self._request_times) < self._rate_limit_requests_per_minute:
-                    # 记录当前请求时间
-                    self._request_times.append(current_time)
-                    logger.debug(f"AI请求记录: 当前分钟内已发送{len(self._request_times)}次请求")
-                    return
-
-                oldest_request = self._request_times[0]
-                wait_time = max(0.0, 60 - (current_time - oldest_request))
-
-            # IMPORTANT: sleep outside lock to avoid blocking other threads.
-            if wait_time > 0:
-                logger.warning(
-                    "AI请求速率限制: 已达到每分钟%s次限制，等待%.2f秒",
-                    self._rate_limit_requests_per_minute,
-                    wait_time,
-                )
-                time.sleep(wait_time)
-
-    def get_rate_limit_status(self) -> Dict[str, Any]:
-        """获取当前速率限制状态"""
-        with self._rate_limit_lock:
-            current_time = time.time()
-
-            # 清理60秒前的请求记录
-            while self._request_times and current_time - self._request_times[0] >= 60:
-                self._request_times.popleft()
-
-            remaining_requests = max(0, self._rate_limit_requests_per_minute - len(self._request_times))
-            reset_time = 0.0
-
-            if self._request_times:
-                oldest_request = self._request_times[0]
-                reset_time = oldest_request + 60
-
-            return {
-                "requests_per_minute_limit": self._rate_limit_requests_per_minute,
-                "requests_made_this_minute": len(self._request_times),
-                "remaining_requests": remaining_requests,
-                "reset_time": reset_time,
-                "seconds_until_reset": max(0, reset_time - current_time) if reset_time > 0 else 0,
-            }
-
-    def update_rate_limit(self, requests_per_minute: int) -> None:
-        """动态更新速率限制"""
-        with self._rate_limit_lock:
-            old_limit = self._rate_limit_requests_per_minute
-            self._rate_limit_requests_per_minute = max(1, requests_per_minute)  # 确保至少为1
-            logger.info(f"AI速率限制已更新: {old_limit} -> {self._rate_limit_requests_per_minute} 请求/分钟")
 
     def flush(self) -> None:
         """手动触发所有缓冲观察数据发送到Langfuse API"""
@@ -327,8 +280,6 @@ class AIClient:
             base_retry_delay = float(getattr(self.settings, "OPENAI_EMPTY_CHOICES_RETRY_DELAY_SECONDS", 1.0))
 
             for attempt in range(max_retries + 1):
-                # 应用速率限制（每次请求都需要遵守）
-                self._wait_for_rate_limit()
                 try:
                     with model_request_scope(getattr(self.settings, "OPENAI_BASE_URL", ""), request_kwargs) as settle:
                         if _uses_codex_transport(self.settings):
@@ -340,12 +291,14 @@ class AIClient:
                 except ModelUnavailable:
                     # Local refusals did not send another paid request.
                     raise
-                except Exception:
+                except Exception as exc:
                     record_unreported_usage()
                     if getattr(self, "_bound_personal_call", False):
-                        # A provider error body can echo a submitted credential.
-                        # Callers must not persist it as an audit diagnostic.
-                        raise ModelUnavailable("personal_model_request_failed") from None
+                        name = type(exc).__name__.lower()
+                        if "timeout" in name or "connection" in name or "transport" in name:
+                            raise
+                        # The provider body can echo a credential. Do not chain it.
+                        raise ModelTransportError("request_failed") from None
                     raise
 
                 # A visible provider receipt is usage even when its audit output
@@ -353,6 +306,7 @@ class AIClient:
                 usage = getattr(response, "usage", None)
                 input_tokens = getattr(usage, "input_tokens", None)
                 output_tokens = getattr(usage, "output_tokens", None)
+                thinking_tokens = None
                 if type(input_tokens) is int and input_tokens >= 0 and type(output_tokens) is int and output_tokens >= 0:
                     details = getattr(usage, "output_tokens_details", None)
                     thinking_tokens = getattr(details, "reasoning_tokens", None)
@@ -381,10 +335,15 @@ class AIClient:
                     if not content.strip():
                         raise _InvalidAIResponseError("AI response has no output text")
 
-                    return content
+                    return TextCompletion(
+                        text=content,
+                        input_tokens=input_tokens if type(input_tokens) is int and input_tokens >= 0 else None,
+                        output_tokens=output_tokens if type(output_tokens) is int and output_tokens >= 0 else None,
+                        thinking_tokens=thinking_tokens,
+                    )
                 except _InvalidAIResponseError as exc:
                     if attempt >= max_retries:
-                        raise RuntimeError(f"AI响应异常且重试后仍失败: {exc}") from exc
+                        raise ModelTransportError("incomplete") from None
 
                     delay_seconds = max(0.0, base_retry_delay) * (2**attempt)
                     logger.warning(
@@ -397,7 +356,7 @@ class AIClient:
                     if delay_seconds > 0:
                         time.sleep(delay_seconds)
 
-            raise RuntimeError("AI响应异常且未执行有效重试")
+            raise ModelTransportError("incomplete")
 
         except Exception as exc:
             logger.error("AI call failed: operation=%s error_type=%s", operation, type(exc).__name__)

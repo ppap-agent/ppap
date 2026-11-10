@@ -4,6 +4,7 @@ import unittest
 from contextlib import contextmanager
 from types import SimpleNamespace
 
+from audit.engine.checkers.client import ModelTransportError
 from audit.usage import get_current_request_id, get_token_tracker, set_current_request_id
 
 
@@ -74,14 +75,14 @@ class RuleAIClientTests(unittest.TestCase):
     def test_text_client_accepts_located_transcription_as_text(self):
         sdk = SDK(SimpleNamespace(status="completed", output_text="ok"))
         source = [{"role": "user", "content": [{"type": "input_text", "text": "Page 1, region [1, 2, 3, 4]: approved"}]}]
-        self.assertEqual(self.client(sdk).response_text(source, retry_limit=0), "ok")
+        self.assertEqual(self.client(sdk).response_text(source, retry_limit=0).text, "ok")
         self.assertEqual(sdk.calls[0]["input"], source)
 
     def test_rule_call_bounds_sdk_and_empty_response_retries_without_changing_defaults(self):
         sdk = SDK(SimpleNamespace(status="completed", output_text=""))
         client = self.client(sdk)
         with self.assertLogs("audit.engine.checkers.client", level="ERROR"):
-            with self.assertRaises(RuntimeError):
+            with self.assertRaises(ModelTransportError):
                 client.structured_completion("system", "source", request_timeout=120, retry_limit=0)
         self.assertEqual(len(sdk.calls), 1)
         self.assertEqual(sdk.direct_calls, 0)
@@ -94,14 +95,14 @@ class RuleAIClientTests(unittest.TestCase):
         self.assertNotIn("reasoning", sdk.calls[0])
         self.assertIs(client.client, sdk)
         sdk.response = SimpleNamespace(status="completed", output_text="ok")
-        self.assertEqual(client.structured_completion("system", "source"), "ok")
+        self.assertEqual(client.structured_completion("system", "source").text, "ok")
         self.assertEqual(sdk.calls[-1]["timeout"], 900)
         self.assertEqual(sdk.options, [{"max_retries": 0}])
 
     def test_default_empty_response_retry_count_is_unchanged(self):
         sdk = SDK(SimpleNamespace(status="incomplete", output_text=""))
         with self.assertLogs("audit.engine.checkers.client", level="WARNING"):
-            with self.assertRaises(RuntimeError):
+            with self.assertRaises(ModelTransportError):
                 self.client(sdk).structured_completion("system", "source")
         self.assertEqual(len(sdk.calls), 3)
         self.assertEqual(sdk.options, [])
@@ -110,7 +111,7 @@ class RuleAIClientTests(unittest.TestCase):
         sdk = SDK(SimpleNamespace(status="incomplete", output_text="", usage=SimpleNamespace(input_tokens=9, output_tokens=5)))
         with tracked_request() as request_id:
             with self.assertLogs("audit.engine.checkers.client", level="WARNING"):
-                with self.assertRaises(RuntimeError):
+                with self.assertRaises(ModelTransportError):
                     self.client(sdk).structured_completion("system", "source")
             summary = get_token_tracker().end_request_tracking(request_id).to_dict()
         self.assertEqual(len(sdk.calls), 3)
@@ -122,7 +123,7 @@ class RuleAIClientTests(unittest.TestCase):
         self.assertTrue(summary["usage_complete"])
 
     def test_empty_or_malformed_output_does_not_erase_or_duplicate_a_valid_receipt(self):
-        for status, output, error_type in [("completed", "", RuntimeError), ("failed", "discarded", RuntimeError), ("completed", None, TypeError)]:
+        for status, output, error_type in [("completed", "", ModelTransportError), ("failed", "discarded", ModelTransportError), ("completed", None, TypeError)]:
             with self.subTest(status=status, output=output):
                 sdk = SDK(SimpleNamespace(status=status, output_text=output, usage=SimpleNamespace(input_tokens=9, output_tokens=5)))
                 with tracked_request() as request_id:
@@ -151,7 +152,7 @@ class RuleAIClientTests(unittest.TestCase):
             with self.subTest(usage=label):
                 sdk = SDK(SimpleNamespace(status="completed", output_text="ok", usage=usage))
                 with tracked_request() as request_id:
-                    self.assertEqual(self.client(sdk).structured_completion("system", "source"), "ok")
+                    self.assertEqual(self.client(sdk).structured_completion("system", "source").text, "ok")
                     summary = get_token_tracker().end_request_tracking(request_id).to_dict()
                 self.assertEqual(len(sdk.calls), 1)
                 self.assertEqual(summary["llm_calls_count"], 1)
@@ -188,7 +189,7 @@ class RuleAIClientTests(unittest.TestCase):
         )
         with tracked_request() as request_id:
             with self.assertLogs("audit.engine.checkers.client", level="WARNING"):
-                self.assertEqual(self.client(sdk).structured_completion("system", "source"), "ok")
+                self.assertEqual(self.client(sdk).structured_completion("system", "source").text, "ok")
             summary = get_token_tracker().end_request_tracking(request_id).to_dict()
         self.assertEqual(len(sdk.calls), 3)
         self.assertEqual(summary["llm_calls_count"], 3)
@@ -221,7 +222,7 @@ class RuleAIClientTests(unittest.TestCase):
                     )
                 )
                 with tracked_request() as request_id:
-                    self.assertEqual(self.client(sdk).structured_completion("system", "source"), "ok")
+                    self.assertEqual(self.client(sdk).structured_completion("system", "source").text, "ok")
                     summary = get_token_tracker().end_request_tracking(request_id).to_dict()
                 self.assertEqual(len(sdk.calls), 1)
                 self.assertEqual(summary["llm_calls_count"], 1)
@@ -235,11 +236,15 @@ class RuleAIClientTests(unittest.TestCase):
 
     def test_provider_and_invalid_response_details_never_enter_client_logs(self):
         marker = "private-provider-source-marker"
-        for sdk in (SDK(error=RuntimeError(marker)), SDK(SimpleNamespace(status="failed", output_text="", error=marker))):
+        cases = (
+            (SDK(error=RuntimeError(marker)), RuntimeError),
+            (SDK(SimpleNamespace(status="failed", output_text="", error=marker)), ModelTransportError),
+        )
+        for sdk, error_type in cases:
             with self.subTest(error=bool(sdk.error)):
                 client = self.client(sdk)
                 with self.assertLogs("audit.engine.checkers.client", level="ERROR") as logs:
-                    with self.assertRaises(RuntimeError):
+                    with self.assertRaises(error_type):
                         client.structured_completion("system", marker, request_timeout=120, retry_limit=0)
                 self.assertNotIn(marker, "\n".join(logs.output))
                 self.assertEqual(len(sdk.calls), 1)

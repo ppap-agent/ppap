@@ -419,7 +419,9 @@ class RuleMatchingAIService:
             )
 
             # 调用AI服务
-            response = self.client.structured_completion(
+            from audit.engine.checkers.client import completion_text
+
+            response = completion_text(self.client.structured_completion(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 max_tokens=50,
@@ -428,7 +430,7 @@ class RuleMatchingAIService:
                 operation="rule_matching",
                 request_timeout=120,
                 retry_limit=0,
-            )
+            ))
 
             if response:
                 logger.debug("rule_matching_response_received")

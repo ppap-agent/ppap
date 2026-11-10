@@ -51,11 +51,20 @@ class ScriptedFormalizer:
         self.calls = 0
         self.before = before
 
-    def structured_completion(self, **_kwargs) -> str:
+    def structured_completion(self, **_kwargs):
+        from audit.engine.checkers.client import TextCompletion
+
         self.calls += 1
         if self.before:
             self.before()
-        return self.raw
+        usage = getattr(self, "last_usage", None)
+        numbers = usage if isinstance(usage, dict) else {}
+
+        def number(key: str) -> int | None:
+            value = numbers.get(key)
+            return value if type(value) is int and value >= 0 else None
+
+        return TextCompletion(self.raw, number("input_tokens"), number("output_tokens"), number("thinking_tokens"))
 
 
 def _proposal(rule_id: str) -> str:

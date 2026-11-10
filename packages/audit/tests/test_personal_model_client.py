@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from audit.engine.checkers.client import AIClient
+from audit.engine.checkers.client import AIClient, ModelTransportError
 from audit.usage import get_token_tracker
 from documents.model_access import ModelAccess, ModelUnavailable, model_access_scope
 from pydantic import SecretStr
@@ -51,7 +51,7 @@ def test_text_clients_use_each_callers_key_and_receipts(monkeypatch, usage, comp
         keys = [SecretStr(str(uuid4())), SecretStr(str(uuid4()))]
         for key in keys:
             with model_access_scope(ModelAccess(api_key=key, model="test-model", base_url="https://models.example.test")):
-                assert AIClient().response_text([{"role": "user", "content": "check"}], retry_limit=9) == "checked"
+                assert AIClient().response_text([{"role": "user", "content": "check"}], retry_limit=9).text == "checked"
         summary = tracker.end_request_tracking(tracking).to_dict()
     finally:
         tracker.cleanup_request(tracking)
@@ -100,7 +100,7 @@ def test_later_clause_does_not_replay_same_uncertain_request(monkeypatch, timeou
             with pytest.raises(Exception):
                 AIClient().response_text([{"role": "user", "content": "check"}])
         else:
-            assert AIClient().response_text([{"role": "user", "content": "check"}]) == "checked"
+            assert AIClient().response_text([{"role": "user", "content": "check"}]).text == "checked"
         with pytest.raises(ModelUnavailable, match="personal_model_request_uncertain"):
             AIClient().response_text([{"role": "user", "content": "check"}], request_timeout=5)
     assert len(calls) == 1
@@ -116,7 +116,7 @@ def test_confirmed_receipt_allows_deliberate_repeat_without_cross_user_state(mon
     monkeypatch.setattr(httpx.Client, "send", send)
     with model_access_scope(ModelAccess(api_key=SecretStr(str(uuid4())), model="test-model", base_url="https://models.example.test")):
         for _ in range(2):
-            assert AIClient().response_text([{"role": "user", "content": "check"}]) == "checked"
+            assert AIClient().response_text([{"role": "user", "content": "check"}]).text == "checked"
     assert len(calls) == 2
 
 
@@ -129,7 +129,7 @@ def test_provider_error_body_cannot_escape_as_a_personal_audit_diagnostic(monkey
     monkeypatch.setattr(httpx.Client, "send", send)
     with (
         model_access_scope(ModelAccess(api_key=SecretStr(key), model="test-model", base_url="https://models.example.test")),
-        pytest.raises(ModelUnavailable, match="personal_model_request_failed") as failure,
+        pytest.raises(ModelTransportError, match="request_failed") as failure,
     ):
         AIClient().response_text([{"role": "user", "content": "check"}])
     assert key not in str(failure.value)
@@ -152,7 +152,7 @@ def test_text_transport_keeps_custom_provider_identity_and_never_follows_redirec
 
     monkeypatch.setattr(httpx.Client, "__init__", controlled)
     access = ModelAccess(api_key=SecretStr(str(uuid4())), provider="responses-compatible", base_url="https://models.company.test/inference", model="gpt-6.1-sol")
-    with model_access_scope(access), pytest.raises(ModelUnavailable):
+    with model_access_scope(access), pytest.raises(ModelTransportError):
         AIClient().response_text([{"role": "user", "content": "check"}])
     assert len(calls) == 1
     assert str(calls[0].url) == "https://models.company.test/inference/responses"
@@ -169,5 +169,5 @@ def test_text_personal_client_disables_environment_proxy_and_redirects(monkeypat
 
     monkeypatch.setattr(httpx.Client, "send", send)
     with model_access_scope(ModelAccess(api_key=SecretStr(str(uuid4())), model="test-model", base_url="https://models.example.test")):
-        assert AIClient().response_text([{"role": "user", "content": "check"}]) == "checked"
+        assert AIClient().response_text([{"role": "user", "content": "check"}]).text == "checked"
     assert clients and not clients[0].follow_redirects and not clients[0].trust_env
