@@ -25,6 +25,12 @@ export function taskResultCounts(task: Task) {
 export function programNotice(check: components['schemas']['AuditClauseEvaluation']): string | null {
   return check.verification_scope === 'checker_execution' && check.scope_notice ? check.scope_notice : null
 }
+/** People know a clause by its place in the rule and its name; the source id stays in a tooltip. */
+export function clauseLabel(clauses: readonly {id: string; category: string}[], id: string): string {
+  const index = clauses.findIndex(row => row.id === id)
+  return index < 0 ? id : `第 ${index + 1} 条 · ${clauses[index].category}`
+}
+
 export function clauseObservation(check: components['schemas']['AuditClauseEvaluation']): string {
   if (check.execution === 'queued' || check.execution === 'running') return '本项审核中…'
   const notice = programNotice(check) ? null : check.scope_notice === 'manual-only' || check.scope_notice === 'unsupported' ? '本条要求未完成自动检查，请核对原件并记录人工复核。' : check.scope_notice
@@ -89,15 +95,15 @@ export function multipleDistinctReports(reports: components['schemas']['AuditRep
 export function packageOutcomeError(job: components['schemas']['AuditReportPackage']): string {
   const outcomes = job.outcomes
   if (outcomes === undefined) return ''
-  if (!Array.isArray(outcomes) || outcomes.length !== job.reports.length || job.receipt.state !== 'accepted' || outcomes.some(row => !row || !['pending', 'prepared', 'failed'].includes(row.state) || row.reason !== null && typeof row.reason !== 'string' || row.state === 'failed' && !row.reason?.trim())) return '逐报告状态不完整或缺少有效失败原因。'
-  if (outcomes.some(row => job.reports.filter(reference => sameSnapshot(reference, row.reference)).length !== 1) || job.reports.some(reference => outcomes.filter(row => sameSnapshot(reference, row.reference)).length !== 1)) return '逐报告状态与本次固定报告集合不一致。'
-  return job.state === 'ready' && outcomes.some(row => row.state !== 'prepared') ? 'ZIP 声称已就绪，但仍有未准备完成的报告。' : ''
+  if (!Array.isArray(outcomes) || outcomes.length !== job.reports.length || job.receipt.state !== 'accepted' || outcomes.some(row => !row || !['pending', 'prepared', 'failed'].includes(row.state) || row.reason !== null && typeof row.reason !== 'string' || row.state === 'failed' && !row.reason?.trim())) return '部分报告的状态读取不完整，请刷新。'
+  if (outcomes.some(row => job.reports.filter(reference => sameSnapshot(reference, row.reference)).length !== 1) || job.reports.some(reference => outcomes.filter(row => sameSnapshot(reference, row.reference)).length !== 1)) return '打包内容与报告列表不一致，请刷新。'
+  return job.state === 'ready' && outcomes.some(row => row.state !== 'prepared') ? '压缩包显示已就绪，但还有报告没有生成完，请刷新。' : ''
 }
 
 /** A task package may use an earlier selection, never another frozen result. */
 export function taskPackageScopeError(task: Task): string {
   const job = task.report_package
-  return job && (!multipleDistinctReports(job.reports) || job.reports.some(reference => !task.files.some(row => sameSnapshot(reportReference(task, row), reference)))) ? 'ZIP 引用与当前任务的固定审核结果不一致。' : ''
+  return job && (!multipleDistinctReports(job.reports) || job.reports.some(reference => !task.files.some(row => sameSnapshot(reportReference(task, row), reference)))) ? '压缩包与本次审核结果不一致，请刷新。' : ''
 }
 
 /** Build a send payload only for the selected frozen, ready artifacts. */
@@ -120,12 +126,12 @@ export function taskProgressError(task: Task): string {
   if (!task.round_id) return ''
   const selected = task.files.filter(row => row.selection === 'selected' && row.match?.state !== 'reference')
   const ended = selected.filter(row => row.audit?.execution === 'review_failed' || row.audit?.execution === 'completed' && row.audit.checks.every(item => ['completed', 'failed'].includes(item.execution))).length
-  if (task.state === 'completed' && ended !== selected.length) return '任务声称审核结束，但仍有未结束的文件。'
+  if (task.state === 'completed' && ended !== selected.length) return '任务显示已结束，但还有文件没审完，请刷新。'
   if (task.state === 'completed' && selected.some(row => {
     const report = row.audit?.report, request = report?.generation_request
     return report && ['pending', 'generating'].includes(report.state) && !(request?.request_id && ['pending', 'accepted'].includes(request.state))
-  })) return '任务声称审核结束，但仍有首次生成中的报告。'
-  if (task.progress && (task.progress.total !== selected.length || task.progress.completed !== ended)) return '任务进度与已选文件状态不一致。'
+  })) return '任务显示已结束，但还有报告在生成，请刷新。'
+  if (task.progress && (task.progress.total !== selected.length || task.progress.completed !== ended)) return '任务进度与文件状态不一致，请刷新。'
   return ''
 }
 
@@ -133,12 +139,12 @@ export function taskProgressError(task: Task): string {
 export function frozenResultError(roundId: string | null, row: ReviewFile, frozenFileVersionIds: string[], frozenRule = row.match?.rule): string {
   const audit = row.audit
   if (!audit) return ''
-  if (audit.file_version_id !== row.file.id || audit.round_id !== roundId || !sameSnapshot(audit.rule, frozenRule)) return '审核结果与固定文件或规则不一致。'
+  if (audit.file_version_id !== row.file.id || audit.round_id !== roundId || !sameSnapshot(audit.rule, frozenRule)) return '审核结果与本次文件或规则不一致，请刷新。'
   const rules = audit.rule.body.kind === 'engine' ? audit.rule.body.rules : []
-  if (!rules.length && audit.rule.body.kind === 'engine' || new Set(audit.checks.map(item => item.rule_item.id)).size !== audit.checks.length || audit.checks.length !== rules.length || audit.checks.some(item => !rules.some(rule => sameSnapshot(rule, item.rule_item)) || item.finding && item.finding.item_key !== item.rule_item.id) || audit.progress.total !== rules.length) return '审核项与固定规则不一致。'
-  if (audit.execution === 'completed' && audit.checks.some(item => ['queued', 'running'].includes(item.execution))) return '文件声称审核结束，但仍有未结束的审核项。'
+  if (!rules.length && audit.rule.body.kind === 'engine' || new Set(audit.checks.map(item => item.rule_item.id)).size !== audit.checks.length || audit.checks.length !== rules.length || audit.checks.some(item => !rules.some(rule => sameSnapshot(rule, item.rule_item)) || item.finding && item.finding.item_key !== item.rule_item.id) || audit.progress.total !== rules.length) return '审核项与本次规则不一致，请刷新。'
+  if (audit.execution === 'completed' && audit.checks.some(item => ['queued', 'running'].includes(item.execution))) return '文件显示已审完，但还有审核项没结束，请刷新。'
   const frozen = new Set(frozenFileVersionIds)
-  if (audit.checks.some(item => item.evidence.some(source => !frozen.has(source.file_version_id)))) return '来源证据不在本轮文件范围内。'
+  if (audit.checks.some(item => item.evidence.some(source => !frozen.has(source.file_version_id)))) return '部分证据不在本次审核的文件中。'
   const valid = audit.checks.filter(item => item.execution === 'completed' && item.coverage === 'executed' && item.finding)
   const counts = {pass_count: 0, ng_count: 0, unknown_count: 0, not_covered_count: 0, error_count: 0}
   let notApplicable = 0
@@ -152,11 +158,11 @@ export function frozenResultError(roundId: string | null, row: ReviewFile, froze
     else if (item.finding.status === 'NA') notApplicable += 1
   }
   const {na_count, ...observedCounts} = audit.counts
-  if (!sameSnapshot(counts, observedCounts) || na_count !== undefined && na_count !== notApplicable) return '审核计数与条目明细不一致。'
+  if (!sameSnapshot(counts, observedCounts) || na_count !== undefined && na_count !== notApplicable) return '审核项数量与明细不一致，请刷新。'
   const complete = rules.length > 0 && audit.execution === 'completed' && valid.length === rules.length && valid.every(item => ['PASS', 'NG', 'NA'].includes(item.finding!.status))
-  if (audit.progress.completed !== audit.checks.filter(item => ['completed', 'failed'].includes(item.execution)).length) return '审核进度与条目状态不一致。'
-  if (audit.conclusion === 'PASS' && (!complete || valid.some(item => item.finding?.status === 'NG'))) return 'PASS 结论缺少完整的实际审核结果。'
-  if (audit.conclusion === 'NG' && !valid.some(item => item.finding?.status === 'NG')) return 'NG 结论没有对应的不符合项。'
-  if (audit.report.state !== 'not_eligible' && (!complete || !['PASS', 'NG'].includes(audit.conclusion || ''))) return '尚未取得全部审核结果，不能生成正式 PASS/NG 报告。'
+  if (audit.progress.completed !== audit.checks.filter(item => ['completed', 'failed'].includes(item.execution)).length) return '审核进度与审核项状态不一致，请刷新。'
+  if (audit.conclusion === 'PASS' && (!complete || valid.some(item => item.finding?.status === 'NG'))) return '结论为“符合”，但审核项结果不完整，请刷新。'
+  if (audit.conclusion === 'NG' && !valid.some(item => item.finding?.status === 'NG')) return '结论为“不符合”，但找不到不符合的审核项，请刷新。'
+  if (audit.report.state !== 'not_eligible' && (!complete || !['PASS', 'NG'].includes(audit.conclusion || ''))) return '还有审核项没有结果，暂不生成正式报告。'
   return ''
 }

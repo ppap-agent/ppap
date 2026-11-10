@@ -126,7 +126,7 @@ class PageHeaderPreviewTests(unittest.TestCase):
             title = page.get_by_role("heading", name="审核文件", exact=True)
             self.assertLessEqual(title.bounding_box()["height"], 2)
             expect(page.get_by_text("12 份文件", exact=True)).to_have_count(0)
-            expect(page.get_by_text("共 12 份文档", exact=True)).to_be_visible()
+            expect(page.get_by_text("共 12 份文件", exact=True)).to_be_visible()
             page.set_viewport_size({"width": 390, "height": 844})
             expect(bar.get_by_role("button", name="上传文件", exact=True)).to_be_visible()
             self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 390)

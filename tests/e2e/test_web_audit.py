@@ -316,7 +316,7 @@ class WebAuditLoopTests(unittest.TestCase):
             page.on("request", lambda request: writes.append(request.url) if request.method == "POST" else None)
             with page.expect_response(lambda reply: reply.request.method == "POST" and reply.url == f"{api}/drafts") as preparation_saved:
                 page.get_by_role("button", name="历史操作", exact=True).click()
-                page.get_by_role("menuitem", name="补件／重新审核", exact=True).click()
+                page.get_by_role("menuitem", name="发起重审", exact=True).click()
             self.assertEqual(preparation_saved.value.status, 201)
             preparation = preparation_saved.value.json()
             self.assertIsNone(preparation["task_id"])

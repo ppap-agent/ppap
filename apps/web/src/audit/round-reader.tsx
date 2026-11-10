@@ -53,12 +53,12 @@ export function AuditRoundReader({roundId, readRound, renderOriginal, onReaudit,
   return <section aria-label="历史审核" data-round-id={round?.id === roundId ? round.id : undefined} data-result-attempt={round?.id === roundId ? round.result_attempt : undefined} className="mx-auto max-w-screen-2xl space-y-6">
     {headerActions ? <><h1 className="sr-only">历史审核</h1>{createPortal(<DropdownMenu><DropdownMenuTrigger asChild><Button variant="outline" size="sm">历史操作</Button></DropdownMenuTrigger><DropdownMenuContent align="end" className="w-64">
       <DropdownMenuItem asChild><a href={returnHref}>返回工作台</a></DropdownMenuItem>
-      {onReaudit && round?.id === roundId && ['completed', 'failed'].includes(round.execution) && <DropdownMenuItem onSelect={onReaudit}>补件／重新审核</DropdownMenuItem>}
+      {onReaudit && round?.id === roundId && ['completed', 'failed'].includes(round.execution) && <DropdownMenuItem onSelect={onReaudit}>发起重审</DropdownMenuItem>}
       <DropdownMenuItem onSelect={() => setRevision(value => value + 1)}>重新读取</DropdownMenuItem>
       {round?.id === roundId && round.created_at && <><DropdownMenuSeparator/><DropdownMenuLabel className="whitespace-normal">审核时间：{displayTime(round.created_at)}</DropdownMenuLabel></>}
     </DropdownMenuContent></DropdownMenu>, headerActions)}</> : <header className="flex flex-wrap items-center justify-between gap-3">
       <div className="space-y-2"><h1 className="text-2xl font-semibold">历史审核</h1>{round?.id === roundId && round.created_at && <p className="text-sm text-muted-foreground">{displayTime(round.created_at)}</p>}</div>
-      <div className="flex flex-wrap gap-2"><Button variant="outline" asChild><a href={returnHref}>返回工作台</a></Button>{onReaudit && round && ['completed', 'failed'].includes(round.execution) && <Button onClick={onReaudit}>补件／重新审核</Button>}<Button variant="outline" onClick={() => setRevision(value => value + 1)}>重新读取</Button></div>
+      <div className="flex flex-wrap gap-2"><Button variant="outline" asChild><a href={returnHref}>返回工作台</a></Button>{onReaudit && round && ['completed', 'failed'].includes(round.execution) && <Button onClick={onReaudit}>发起重审</Button>}<Button variant="outline" onClick={() => setRevision(value => value + 1)}>重新读取</Button></div>
     </header>}
     {error ? <Alert variant="destructive"><AlertTitle>历史审核暂不可用</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : !view ? <ReadSkeleton label="正在读取本轮审核…" kind={'detail'}/> : <>
       {round?.execution === 'completed' && <FactQuestions key={`facts:${roundId}`} roundId={roundId} files={view.files.map(row => row.file)} findings={round.findings}/>}

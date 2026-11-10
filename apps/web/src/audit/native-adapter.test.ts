@@ -195,7 +195,7 @@ test('archive reads time out without replay and allow an explicit read of the sa
       return phase === 'fetch' ? stalled : {ok: true, json: () => stalled} as unknown as Response
     }
     const before = calls.length
-    const pending = assert.rejects(read(), /读取审核档案超时，请重新读取/)
+    const pending = assert.rejects(read(), /读取审核文件超时，请重新读取/)
     await Promise.resolve()
     context.mock.timers.tick(45_000)
     await pending

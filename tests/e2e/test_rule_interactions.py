@@ -31,7 +31,7 @@ def open_customer_requirements(page):
     else:
         menu.click()
         page.get_by_role("dialog", name="产品导航", exact=True).get_by_role("button", name="审核规则", exact=True).click()
-    page.get_by_role("tab", name="客户要求与上传", exact=True).click()
+    page.get_by_role("tab", name="客户要求", exact=True).click()
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -126,7 +126,7 @@ class RuleInteractionTests(unittest.TestCase):
                 page.goto(WEB + "/files?archiveDoc=history-document")
             expect(page.get_by_text("正在读取这次审核…", exact=True)).to_be_visible()
             page.clock.fast_forward(45_000)
-            expect(page.get_by_role("alert")).to_contain_text("读取审核档案超时，请重新读取。")
+            expect(page.get_by_role("alert")).to_contain_text("读取审核文件超时，请重新读取。")
             self.assertEqual(len(reads), 1)
             ready = True
             page.get_by_role("button", name="重新读取这次审核", exact=True).click()
@@ -700,7 +700,7 @@ class RuleInteractionTests(unittest.TestCase):
                     else:
                         dialog.get_by_role("button", name="重新打开工作台", exact=True).click()
                     expect(page).to_have_url(WEB + "/requirements")
-                    expect(page.get_by_role("tab", name="Predefined Checkers", exact=True)).to_have_attribute("aria-selected", "true")
+                    expect(page.get_by_role("tab", name="客户要求", exact=True)).to_have_attribute("aria-selected", "true")
                     expect(dialog).to_have_count(0)
                     page.close()
             browser.close()

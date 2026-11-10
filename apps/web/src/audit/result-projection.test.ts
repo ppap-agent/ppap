@@ -127,8 +127,8 @@ test('a historical presence result needs no invented clause and cannot earn a fo
   const historical = {file: file.file, audit}
   assert.equal(frozenResultError('round-1', historical, ['file-v1'], audit.rule), '')
   audit.conclusion = 'PASS'
-  assert.match(frozenResultError('round-1', historical, ['file-v1'], audit.rule), /PASS 结论缺少完整/)
-  assert.match(frozenResultError('another-round', historical, ['file-v1'], audit.rule), /审核结果与固定文件或规则不一致/)
+  assert.match(frozenResultError('round-1', historical, ['file-v1'], audit.rule), /结论为“符合”，但审核项结果不完整/)
+  assert.match(frozenResultError('another-round', historical, ['file-v1'], audit.rule), /审核结果与本次文件或规则不一致，请刷新/)
 })
 test('a read cannot erase ended work or reopen a terminal file in the same frozen round', () => {
   const before = projection(), after = structuredClone(before)
@@ -157,7 +157,7 @@ test('completed execution cannot hide running checks, while whole-file failure c
   audit.checks[0] = {...audit.checks[0], execution: 'running', coverage: 'mapped', finding: null, evidence_verified: false, scope: null, evidence: []}
   audit.progress.completed = 0; audit.conclusion = null
   audit.counts.pass_count = 0; audit.report = {state: 'not_eligible', report_id: null, reason: null}
-  assert.match(error(task), /文件声称审核结束，但仍有未结束的审核项/)
+  assert.match(error(task), /文件显示已审完，但还有审核项没结束，请刷新/)
   audit.execution = 'running'
   assert.equal(error(task), '')
   audit.execution = 'review_failed'
@@ -183,7 +183,7 @@ test('task progress checks selected file endings without invalidating another fi
       audit.counts.pass_count = 0; audit.report = {state: 'not_eligible', report_id: null, reason: null}
     }
     task.files[1] = pending
-    assert.match(taskProgressError(task), /仍有未结束的文件/)
+    assert.match(taskProgressError(task), /还有文件没审完/)
     assert.equal(resultConsistencyError(task, task.files[0]), '')
     assert.ok(reportReference(task, task.files[0]))
   }
@@ -191,9 +191,9 @@ test('task progress checks selected file endings without invalidating another fi
   task.progress = {completed: 1, total: 2}
   assert.equal(taskProgressError(task), '')
   task.progress.completed = 2
-  assert.match(taskProgressError(task), /任务进度与已选文件状态不一致/)
+  assert.match(taskProgressError(task), /任务进度与文件状态不一致，请刷新/)
   task.progress = {completed: 1, total: 3}
-  assert.match(taskProgressError(task), /任务进度与已选文件状态不一致/)
+  assert.match(taskProgressError(task), /任务进度与文件状态不一致，请刷新/)
   delete task.progress
   assert.equal(taskProgressError(task), '')
   task.files[1].audit!.execution = 'review_failed'
@@ -210,7 +210,7 @@ test('task completion waits for initial reports but not an identified report reg
     report.state = state
     for (const receipt of [null, {request_id: '', state: 'accepted' as const, reason: null}, {request_id: 'rejected-1', state: 'rejected' as const, reason: null}]) {
       report.generation_request = receipt
-      assert.match(taskProgressError(task), /仍有首次生成中的报告/)
+      assert.match(taskProgressError(task), /还有报告在生成/)
     }
     for (const receiptState of ['pending', 'accepted'] as const) {
       report.generation_request = {request_id: 'regenerate-1', state: receiptState, reason: null}
@@ -221,7 +221,7 @@ test('task completion waits for initial reports but not an identified report reg
 test('a finding cannot impersonate another frozen rule item', () => {
   const task = projection()
   task.files[0].audit!.checks[0].finding!.item_key = 'other-rule'
-  assert.match(error(task), /审核项与固定规则不一致/)
+  assert.match(error(task), /审核项与本次规则不一致，请刷新/)
 })
 test('optional scope gaps do not replace actual PASS or NG or block a formal report', () => {
   const task = projection(), audit = task.files[0].audit!
@@ -397,38 +397,38 @@ test('the same frozen file cannot silently acquire another identified customer, 
 test('changed rule snapshots and item bodies cannot masquerade under the same IDs', () => {
   const task = projection(), audit = task.files[0].audit!
   audit.rule.title = '不同版本内容'
-  assert.match(error(task), /审核结果与固定文件或规则不一致/)
+  assert.match(error(task), /审核结果与本次文件或规则不一致，请刷新/)
   audit.rule.title = '冻结规则'
   audit.checks[0].rule_item.rule_to_check = '改写的要求'
-  assert.match(error(task), /审核项与固定规则不一致/)
+  assert.match(error(task), /审核项与本次规则不一致，请刷新/)
 })
 test('out-of-round evidence and contradictory counts invalidate trusted output', () => {
   const task = projection(), audit = task.files[0].audit!
   audit.checks[0].evidence[0].file_version_id = 'another-version'
-  assert.match(error(task), /来源证据不在本轮文件范围内/)
+  assert.match(error(task), /部分证据不在本次审核的文件中/)
   audit.checks[0].evidence[0].file_version_id = 'file-v1'
   audit.counts.ng_count = 1
-  assert.match(error(task), /计数与条目明细不一致/)
+  assert.match(error(task), /数量与明细不一致/)
 })
 test('unknown and failed checks cannot earn PASS or a formal report', () => {
   const task = projection(), audit = task.files[0].audit!
   audit.checks[0].finding!.status = 'UNABLE'; audit.checks[0].evidence_verified = false
   audit.counts = {pass_count: 0, ng_count: 0, unknown_count: 1, not_covered_count: 0, error_count: 0}
-  assert.match(error(task), /PASS 结论缺少完整/)
+  assert.match(error(task), /结论为“符合”，但审核项结果不完整/)
   audit.conclusion = 'UNKNOWN'
-  assert.match(error(task), /不能生成正式/)
+  assert.match(error(task), /暂不生成正式报告/)
   audit.execution = 'review_failed'; audit.checks[0].execution = 'failed'
   audit.counts = {...audit.counts, unknown_count: 0, error_count: 1}
-  assert.match(error(task), /不能生成正式/)
+  assert.match(error(task), /暂不生成正式报告/)
 })
 test('empty rules and wrong progress fail closed', () => {
   const task = projection(), audit = task.files[0].audit!
   audit.progress.completed = 0
-  assert.match(error(task), /进度与条目状态不一致/)
+  assert.match(error(task), /进度与审核项状态不一致/)
   audit.checks = []; audit.progress = {completed: 0, total: 0}
   if (audit.rule.body.kind === 'engine') audit.rule.body.rules = []
   task.files[0].match!.rule = structuredClone(audit.rule)
-  assert.match(error(task), /审核项与固定规则不一致/)
+  assert.match(error(task), /审核项与本次规则不一致，请刷新/)
 })
 
 test('the real API optional NA counter is checked without rejecting valid PASS or NG results', () => {
@@ -436,7 +436,7 @@ test('the real API optional NA counter is checked without rejecting valid PASS o
   audit.counts.na_count = 0
   assert.equal(error(task), '')
   audit.counts.na_count = 1
-  assert.match(error(task), /计数/)
+  assert.match(error(task), /数量与明细不一致/)
   const check = structuredClone(audit.checks[0]); check.rule_item.id = '2'; check.finding!.item_key = '2'; check.finding!.status = 'NA'
   audit.checks.push(check)
   if (audit.rule.body.kind === 'engine' && task.files[0].match!.rule!.body.kind === 'engine') {
@@ -446,5 +446,5 @@ test('the real API optional NA counter is checked without rejecting valid PASS o
   audit.progress = {completed: 2, total: 2}
   assert.equal(error(task), '')
   audit.counts.na_count = 0
-  assert.match(error(task), /计数/)
+  assert.match(error(task), /数量与明细不一致/)
 })

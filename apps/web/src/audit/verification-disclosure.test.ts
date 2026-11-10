@@ -16,9 +16,9 @@ test('all-PASS results visibly retain their frozen checker and evidence qualific
 })
 
 test('report surfaces preserve the accepted platform qualification with the exact version', () => {
-  const verification = {suite_revision_id: 'old-suite', suite_revision_number: 2, status: 'verified' as const, samples_not_rerun: true, notice: '受理本轮时平台已更新，样本未重跑。检查版本：第 2 版（old-suite）。'}
+  const verification = {suite_revision_id: 'old-suite', suite_revision_number: 2, status: 'verified' as const, samples_not_rerun: true, notice: '受理本轮时官方已更新，尚未重新验证。检查版本：第 2 版（old-suite）。'}
   const html = renderToStaticMarkup(createElement(VerificationDisclosure, {verification}))
-  assert.match(html, /平台已更新，样本未重跑/)
+  assert.match(html, /官方已更新，尚未重新验证/)
   assert.match(html, /第 2 版（old-suite）/)
   assert.match(html, /bg-warning/)
 })

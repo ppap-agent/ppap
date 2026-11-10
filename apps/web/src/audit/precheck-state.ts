@@ -62,7 +62,7 @@ export function checkerLabel(file: Task['files'][number], snapshot?: PrecheckRec
   const notices: string[] = []
   if (file.suite_admission?.state === 'validation_required') notices.push('检查版本需要重新验证，暂不能开始审核')
   if (file.suite_admission?.force_unverified && file.suite_admission.verification_status !== 'verified') notices.push('已明确采用未验证版本')
-  if (file.suite_admission?.samples_not_rerun) notices.push('平台已更新，样本未重跑')
+  if (file.suite_admission?.samples_not_rerun) notices.push('官方已更新，尚未重新验证')
   if (file.match?.gaps?.includes('published_rules_changed')) notices.push('新规则尚未采用，本次按旧规则和已发布检查运行')
   if (notices.length) return [title, ...notices].join(' · ')
   if (execution.mode === 'checker_core' && string(target.suite_revision_id) && string(target.suite_key)) return `${title} · 本次采用的检查${target.verification === 'verified' ? '' : ' · 需要重新验证'}`

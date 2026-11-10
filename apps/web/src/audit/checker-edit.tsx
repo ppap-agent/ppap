@@ -49,7 +49,7 @@ export function CheckerEditor({scope, revision, onSaved, disabled = false, saveD
     catch {setError('尚未读取到原保存结果，请稍后读取；不会自动重复创建修改。')} finally {locked.current = false; setBusy(false)}
   }
   const readOnly = busy || disabled || Boolean(pending)
-  return <Disclosure className="text-sm" summary={<>单独修改规则或模板</>}><p>保存为新的待发布修改，不改写原审核。规则、模板或代码修改后，需要重新验证；不会自动调用模型或发布。</p>
+  return <Disclosure className="text-sm" summary={<>单独修改规则或模板</>}><p>保存为未发布的修改，需要重新验证后才能发布。</p>
     {error && <p role="alert">{error}</p>}
     {!rules.length && <p>当前条款格式暂不支持直接编辑，请联系支持。</p>}
     {rules.map((row, index) => <div key={row.id} className="space-y-2"><Label htmlFor={`${id}-rule-${index}`}>条款 {row.id} 的规则原文</Label><Textarea id={`${id}-rule-${index}`} value={row.text} disabled={readOnly} onChange={event => setRules(values => values.map((item, at) => at === index ? {...item, text: event.target.value} : item))}/></div>)}

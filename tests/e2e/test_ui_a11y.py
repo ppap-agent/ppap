@@ -118,7 +118,7 @@ class UiA11yTests(unittest.TestCase):
             directory = []
             page.route("**/api/rule-library", lambda route: directory.append(route))
             page.goto(WEB + "/requirements")
-            page.get_by_role("tab", name="客户要求与上传", exact=True).click()
+            page.get_by_role("tab", name="客户要求", exact=True).click()
             loading = page.get_by_role("status", name="正在读取审核规则", exact=True)
             expect(loading).to_be_visible()
             self.assertTrue(loading.evaluate("el => el.getAnimations({subtree: true}).every(animation => animation.playState !== 'running')"))

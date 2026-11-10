@@ -96,7 +96,7 @@ test('Suite preparation presents the server admission decision and actionable li
   assert.match(checkerLabel(forced), /已明确采用未验证版本/)
   const library = {...file, suite_admission: {...admission, state: 'ready' as const, verification_status: 'verified' as const, samples_not_rerun: true}}
   assert.equal(preparationAction(library, []), 'ready')
-  assert.match(checkerLabel(library), /平台已更新，样本未重跑/)
+  assert.match(checkerLabel(library), /官方已更新，尚未重新验证/)
   const combined = checkerLabel({...forced, suite_admission: {...forced.suite_admission, samples_not_rerun: true}, match: {...forced.match!, gaps: ['published_rules_changed']}})
-  for (const notice of ['已明确采用未验证版本', '平台已更新，样本未重跑', '新规则尚未采用']) assert.ok(combined.includes(notice))
+  for (const notice of ['已明确采用未验证版本', '官方已更新，尚未重新验证', '新规则尚未采用']) assert.ok(combined.includes(notice))
 })

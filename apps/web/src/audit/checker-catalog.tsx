@@ -11,7 +11,7 @@ import {auditAddressChanged, writeAuditAddress} from './routes'
 
 const selectedSuite = () => new URL(location.href).searchParams.get('checkerSuite') || ''
 const selectedPath = () => readPredefinedPath(new URL(location.href))
-const stateLabel = {installed: '', unseeded: '待安装', unavailable: '不可用', historical: '历史 · 只读'}
+const stateLabel = {installed: '', unseeded: '待安装', unavailable: '不可用', historical: '只能查看'}
 const rowClass = 'flex min-h-11 w-full min-w-0 items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-muted/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-60'
 
 /** Source navigation never adopts a revision or calls a model. */
@@ -63,9 +63,10 @@ export function CheckerCatalog({active, revision, mode = 'predefined', onBusyCha
   function choosePath(next: string) {
     if (busy) return
     const url = new URL(location.href)
-    if (next) url.searchParams.set('checkerPath', next)
-    else url.searchParams.delete('checkerPath')
-    url.searchParams.delete('checkerSuite'); url.searchParams.delete('rulesArea')
+    url.searchParams.delete('checkerSuite')
+    // Back to the directory stays on this tab, which is no longer the default one.
+    if (next) {url.searchParams.set('checkerPath', next); url.searchParams.delete('rulesArea')}
+    else {url.searchParams.delete('checkerPath'); url.searchParams.set('rulesArea', 'predefined')}
     writeAuditAddress(url, 'push')
   }
   function moveInTree(event: KeyboardEvent<HTMLElement>) {
@@ -129,24 +130,24 @@ export function CheckerCatalog({active, revision, mode = 'predefined', onBusyCha
     {active && suite && revisionId && <CheckerRelease key={'enterprise:' + suite.suite_key} scope={`catalog:${suite.suite_key}`} suiteKey={suite.suite_key} revisionId={revisionId} onBusyChange={changeBusy} onPublished={reload} onDependency={choose}/>}
   </section>
   return <section aria-label="预定义检查目录" className="min-w-0 space-y-4">
-    <header className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold">Predefined Checkers</h2><p className="mt-1 text-sm text-muted-foreground">按版本与客户选择检查。打开来源只供核对，不会采用版本。</p></div><Button variant="outline" size="sm" disabled={loading || busy} onClick={reload}>刷新预定义目录</Button></header>
+    <header className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold">预定义检查</h2><p className="mt-1 text-sm text-muted-foreground">按版本与客户选择检查。打开来源只供核对，不会采用版本。</p></div><Button variant="outline" size="sm" disabled={loading || busy} onClick={reload}>刷新预定义目录</Button></header>
     {loading && <ReadSkeleton label="正在读取预定义检查…" kind="inline"/>}
     {error && <p role="alert" className="text-sm text-destructive">{error} 请重新读取目录。</p>}
     {predefinedError && <p role="alert" className="text-sm text-destructive">预定义检查目录不可用。未列出任何来源路径。</p>}
-    {!loading && !error && !predefinedError && !predefined.length && <p className="text-sm">仓库中没有可读取的预定义来源。</p>}
+    {!loading && !error && !predefinedError && !predefined.length && <p className="text-sm">暂无预定义检查。</p>}
     <div className="grid min-w-0 gap-6 lg:grid-cols-[19rem_minmax(0,1fr)]">
-      <nav ref={tree} aria-label="Predefined Checkers" onKeyDown={moveInTree} className={'min-w-0 lg:max-h-[calc(100dvh-14rem)] lg:overflow-y-auto lg:border-r lg:pr-4 ' + (path ? 'max-lg:hidden' : '')}>
-        <ul role="tree" aria-label="Checker 版本与客户" className="space-y-1">{renderNodes(nodes)}</ul>
-        {rejected.length > 0 && <p role="alert" className="mt-3 text-sm text-destructive">{rejected.length} 项来源路径或身份无效，未作为可打开的检查显示。</p>}
+      <nav ref={tree} aria-label="检查目录" onKeyDown={moveInTree} className={'min-w-0 lg:max-h-[calc(100dvh-14rem)] lg:overflow-y-auto lg:border-r lg:pr-4 ' + (path ? 'max-lg:hidden' : '')}>
+        <ul role="tree" aria-label="按版本和客户浏览" className="space-y-1">{renderNodes(nodes)}</ul>
+        {rejected.length > 0 && <p role="alert" className="mt-3 text-sm text-destructive">另有 {rejected.length} 项检查信息不完整，暂不显示。</p>}
       </nav>
-      <section aria-label="Checker 来源详情" className={'min-w-0 space-y-4 ' + (!path ? 'max-lg:hidden' : '')}>
+      <section aria-label="检查详情" className={'min-w-0 space-y-4 ' + (!path ? 'max-lg:hidden' : '')}>
         {path && <Button variant="ghost" size="sm" disabled={busy} onClick={() => choosePath('')}><ArrowLeft aria-hidden="true"/>返回目录</Button>}
-        {!path && <p className="py-8 text-sm text-muted-foreground">从目录中选择一项检查，查看规则、程序资源与发布快照。</p>}
+        {!path && !loading && <p className="py-8 text-sm text-muted-foreground">从左侧选择一项检查，查看它的规则和版本。</p>}
         {!loading && !predefinedError && path && !selectedEntry && <p role="alert" className="text-sm text-destructive">所选来源当前不可访问，请返回目录重新选择。</p>}
-        {selectedEntry && <header className="space-y-2 border-b pb-4"><h3 className="text-lg font-semibold">{selectedEntry.title}</h3><p className="break-all text-sm text-muted-foreground">来源路径 {selectedEntry.path}</p>
-          {!openEntry && <p role="status" className="text-sm">{selectedEntry.availability === 'historical' ? '真实历史源码目录，仅供只读浏览。它不是可采用的完整 Checker。' : selectedEntry.availability === 'unseeded' ? '待安装：仓库中存在此来源，尚未安装官方修订。当前不能打开、执行或采用。' : '官方修订当前不可读。请核对权限或文件内容，未切换到其他版本。'}</p>}
+        {selectedEntry && <header className="space-y-2 border-b pb-4"><h3 className="text-lg font-semibold" title={'来源 ' + selectedEntry.path}>{selectedEntry.title}</h3>
+          {!openEntry && <p role="status" className="text-sm">{selectedEntry.availability === 'historical' ? '历史目录，只能查看，不能采用。' : selectedEntry.availability === 'unseeded' ? '这项检查尚未安装，暂时不能打开或采用。' : '官方版本暂时无法读取，请稍后刷新。'}</p>}
         </header>}
-        {openEntry && <div className="space-y-2 text-sm"><p className="break-all">官方修订 {openEntry.revision_id}</p><p>{sourceIdentity(openEntry, adoptedRevisionId)}</p><p className="text-muted-foreground">声明可取证 {openEntry.evidence_reader_clause_ids?.length ?? 0}/{openEntry.clause_count ?? 0} 条款 · {openEntry.bound_clause_count ?? 0} 条已绑定</p>{(openEntry.evidence_reader_clause_ids?.length ?? 0) < (openEntry.clause_count ?? 1) && <p role="status">其余条款未知或未支持，执行时返回 UNABLE。已绑定只说明存在执行入口，不代表审核可通过。</p>}</div>}
+        {openEntry && <div className="space-y-2 text-sm"><p title={'官方修订 ' + openEntry.revision_id}>{sourceIdentity(openEntry, adoptedRevisionId)}</p><p className="text-muted-foreground">可自动检查 {openEntry.evidence_reader_clause_ids?.length ?? 0}/{openEntry.clause_count ?? 0} 条{(openEntry.evidence_reader_clause_ids?.length ?? 0) < (openEntry.clause_count ?? 1) && '；其余条款会显示为“无法判断”，需要人工核对'}。</p></div>}
         {active && openEntry && <CheckerRelease key={`${openEntry.path}:${openEntry.revision_id}`} scope={predefinedScope(openEntry.path)} suiteKey={openEntry.suite_key} revisionId={openEntry.revision_id} refreshKey={`${revision}:${refresh}`} onBusyChange={changeBusy} onPublished={reload} onDependency={choose}/>}
       </section>
     </div>

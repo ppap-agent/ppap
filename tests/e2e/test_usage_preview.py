@@ -58,7 +58,7 @@ class UsagePreviewTests(unittest.TestCase):
                 expect(row.locator('time[datetime="2026-10-28T10:00:00+08:00"]')).to_have_count(1)
                 expect(row.locator("time")).to_have_count(1)
                 page.get_by_role("button", name="刷新用量", exact=True).click()
-                expect(row).to_contain_text("示例补扣订单")
+                expect(row.get_by_title(re.compile("示例补扣订单"))).to_have_count(1)
                 expect(row.locator('time[datetime="2026-10-28T10:00:00+08:00"]')).to_have_count(1)
                 expect(row.locator('time[datetime="2026-11-03T11:00:00+08:00"]')).to_have_count(1)
                 expect(table.get_by_role("row")).to_have_count(2)
@@ -140,7 +140,8 @@ class UsagePreviewTests(unittest.TestCase):
             page = browser.new_page()
             page.goto(PREVIEW + "/preview/audit.html?scene=usage-error&view=usage")
             expect(page.get_by_role("alert")).to_contain_text("当前余额和结算状态待确认")
-            expect(page.get_by_role("group", name="本月消费次数", exact=True)).to_contain_text("—")
+            # With no summary read, no numbers are shown at all rather than placeholders.
+            expect(page.get_by_role("group", name="本月消费次数", exact=True)).to_have_count(0)
             page.get_by_role("button", name="重新读取用量", exact=True).click()
             expect(page.get_by_role("row", name="消费记录 示例消费-1", exact=True)).to_be_visible()
             for scene in ("usage-refresh-error", "usage-foreign"):
@@ -186,7 +187,8 @@ class UsagePreviewTests(unittest.TestCase):
             expect(page.get_by_text("共 12 笔 · 第 2/2 页", exact=True)).to_be_visible()
             self.assertTrue(page.evaluate("document.documentElement.scrollWidth <= innerWidth"))
             page.get_by_role("textbox", name="搜索文件名或发起人", exact=True).fill("没有这个文件")
-            page.get_by_role("form", name="筛选用量记录", exact=True).get_by_role("button", name="搜索", exact=True).click()
+            # On a phone the search button is hidden; Enter submits the same filter.
+            page.get_by_role("textbox", name="搜索文件名或发起人", exact=True).press("Enter")
             expect(page.get_by_text("当前筛选下没有消费记录。", exact=True)).to_be_visible()
             expect(page.get_by_role("group", name="本月消费次数", exact=True)).to_contain_text("12")
             browser.close()
@@ -208,7 +210,7 @@ class UsagePreviewTests(unittest.TestCase):
             page.get_by_role("row", name="消费记录 示例消费-1", exact=True).get_by_role("button", name="打开该次审核", exact=True).click()
             expect_history(page, 2)
             navigation.get_by_role("button", name="审核文件", exact=True).click()
-            expect(page.get_by_role("table", name="审核文件档案", exact=True)).to_be_visible()
+            expect(page.get_by_role("table", name="审核文件列表", exact=True)).to_be_visible()
             self.assertNotIn("auditRef=", page.url)
             browser.close()
 
@@ -231,10 +233,10 @@ class UsagePreviewTests(unittest.TestCase):
             expect(preview.get_by_role("dialog", name="历史审核记录", exact=True)).to_be_visible()
             page.frames[1].evaluate("history.go(-2)")
             expect(preview.get_by_role("dialog", name="历史审核记录", exact=True)).to_have_count(0)
-            expect(preview.get_by_role("table", name="审核文件档案", exact=True)).to_be_visible()
+            expect(preview.get_by_role("table", name="审核文件列表", exact=True)).to_be_visible()
             page.get_by_role("button", name="切换明暗主题", exact=True).click()
             page.reload()
-            expect(preview.get_by_role("table", name="审核文件档案", exact=True)).to_be_visible()
+            expect(preview.get_by_role("table", name="审核文件列表", exact=True)).to_be_visible()
             browser.close()
 
     def test_returning_to_usage_rechecks_authority_instead_of_reusing_a_hidden_account(self):
@@ -276,7 +278,7 @@ class UsagePreviewTests(unittest.TestCase):
             page.evaluate("window.postMessage({type: 'ppap-preview-read', failed: false}, location.origin)")
             expect(page.get_by_text("旧用量查询", exact=True)).to_have_count(0)
             expect(charged).to_contain_text("5,000")
-            expect(page.get_by_role("row", name="消费记录 示例消费-3", exact=True)).to_contain_text("示例飞书订单-3")
+            expect(page.get_by_role("row", name="消费记录 示例消费-3", exact=True).get_by_title(re.compile("示例飞书订单-3"))).to_have_count(1)
             browser.close()
 
     def test_preview_harness_preserves_usage_filters_history_and_theme(self):
@@ -315,7 +317,7 @@ class UsagePreviewTests(unittest.TestCase):
             page.get_by_role("button", name="刷新用量", exact=True).click()
             expect(page.get_by_role("alert")).to_contain_text("当前账号无权读取企业用量。")
             expect(page.get_by_role("table", name="逐文件用量记录", exact=True)).to_have_count(0)
-            expect(page.get_by_role("group", name="本月消费次数", exact=True)).to_contain_text("—")
+            expect(page.get_by_role("group", name="本月消费次数", exact=True)).to_have_count(0)
             browser.close()
 
     def test_usage_opens_the_charged_historical_version_and_returns_to_the_same_filter(self):

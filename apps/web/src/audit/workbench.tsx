@@ -1,6 +1,7 @@
 import {useEffect, useState} from 'react'
 import {createPortal} from 'react-dom'
 import {Plus, RefreshCw, Search} from 'lucide-react'
+import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Button} from '../components/ui/button'
 import {Input} from '../components/ui/input'
 import {Tabs, TabsList, TabsTrigger} from '../components/ui/tabs'
@@ -37,8 +38,7 @@ export function AuditWorkbench(props: WorkbenchProps) {
   return <section className="space-y-6" aria-label="工作台">
     {props.headerActions ? <><h1 className="sr-only">工作台</h1>{createPortal(actions, props.headerActions)}</> : <header className="flex flex-wrap items-center justify-between gap-4"><h1 className="text-2xl font-semibold tracking-tight">工作台</h1>{actions}</header>}
     <Tabs value={queue} onValueChange={chooseQueue}><TabsList>{queues.map(row => <TabsTrigger key={row.id} value={row.id}>{row.label}{/* A count shows only once every source is read; until then the tab says nothing rather than a placeholder. */}{props.countsKnown && !props.more && <span className="ml-1 text-xs tabular-nums text-muted-foreground">{row.id === 'all' ? items.length : items.filter(item => item.task === row.id).length}</span>}</TabsTrigger>)}</TabsList></Tabs>
-    {props.errors.map(error => <p key={error} role="alert" className="text-sm text-destructive">{error}</p>)}
-    {props.errors.length > 0 && items.length > 0 && <p className="text-sm text-muted-foreground">已读取的记录仍可打开；状态可能已变化。</p>}
+    {props.errors.length > 0 && <Alert variant="destructive"><AlertTitle>审核任务没有读取完整</AlertTitle><AlertDescription>{props.errors.map(error => <p key={error}>{error}</p>)}{items.length > 0 && <p>已读取的记录仍可打开；状态可能已变化。</p>}<Button variant="outline" size="sm" className="mt-2" disabled={props.busy} onClick={props.onRefresh}>重新读取</Button></AlertDescription></Alert>}
     <WorkItemsTable items={shown} label={queues.find(row => row.id === queue)?.label || '全部'} onOpen={props.onOpen} loading={props.loading} readFailed={props.errors.length > 0} hasMore={props.more} busy={props.busy} onLoadMore={props.more ? props.onMore : undefined} toolbar={<><label className="flex min-w-0 flex-1 items-center gap-2 max-sm:basis-full sm:max-w-md"><Search className="size-4 shrink-0 text-muted-foreground"/><span className="sr-only">搜索审核任务</span><Input value={props.query} onChange={event => props.onQuery(event.target.value)} placeholder="搜索文件名或任务"/></label><Button variant="outline" size="icon" disabled={props.busy} aria-label="刷新任务列表" onClick={props.onRefresh}><RefreshCw className={props.busy ? 'animate-spin' : ''}/></Button></>}/>
   </section>
 }

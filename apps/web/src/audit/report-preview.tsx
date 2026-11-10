@@ -10,12 +10,13 @@ import {Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTri
 import {reportShortLabel as labels} from './status-labels'
 import {readReportPdf, type AuditReportAdapter, type AuditReportReference} from './report-contract'
 import {Disclosure} from '../components/disclosure'
+import {displayTime} from '../helpers'
 
 const PdfSource = lazy(() => import('../journey/pdf-source').then(module => ({default: module.PdfSource})))
 
 export function ReportTime({value}: {value: string}) {
   const instant = new Date(value)
-  return Number.isNaN(instant.valueOf()) ? <span>待确认</span> : <time dateTime={value}>{instant.toLocaleString('zh-CN', {hour12: false, timeZoneName: 'short'})}</time>
+  return Number.isNaN(instant.valueOf()) ? <span>待确认</span> : <time dateTime={value}>{displayTime(instant)}</time>
 }
 
 /** The same fixed-artifact reader is used by P6 and P11. */

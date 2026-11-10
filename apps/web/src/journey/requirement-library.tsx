@@ -28,6 +28,7 @@ import {canonical, publishBasis} from './product'
 import {isPreview} from './access'
 import {message as errorMessage} from './remote'
 import {requirementDirectory, type ReadRequirementVersions, type RequirementDirectoryCollection, type RequirementDirectoryVersion} from './requirement-directory'
+import {displayTime} from '../helpers'
 
 const routeSelection = () => ({id: new URLSearchParams(location.search).get('requirement') ?? '', version: new URLSearchParams(location.search).get('reqVersion') ?? ''})
 const routeQuery = () => (new URLSearchParams(location.search).get('reqQuery') ?? '').slice(0, 200)
@@ -130,6 +131,8 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
     return () => controller.abort()
   }, [readVersions, active, versionIdsKey, versionKey, selection.id, loading, readError])
   // Rules are read per customer, so the list keeps each customer's rules together; shared rules lead.
+  // A column where every row says 全部零件 tells nothing; it appears once some rule names its parts.
+  const showParts = shown.some(item => partScope((item.draft ?? item.versions.at(-1)!).scope) !== '全部零件')
   const groupedShown = [...shown.reduce((groups, item) => {
     const scope = (item.draft ?? item.versions.at(-1)!).scope, customer = scope.allCustomers ? '全部客户' : scope.customer || '客户待确认'
     return groups.set(customer, [...groups.get(customer) ?? [], item])
@@ -224,7 +227,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
   function versionDetail(version: RequirementDirectoryVersion) {
     const sameName = catalogCollection?.versions.filter(item => item.version === version.version) ?? []
     if (sameName.length < 2) return ''
-    return version.at && sameName.filter(item => item.at === version.at).length === 1 ? `保存于 ${new Date(version.at).toLocaleString('zh-CN')}` : `同名版本 ${sameName.indexOf(version) + 1}`
+    return version.at && sameName.filter(item => item.at === version.at).length === 1 ? `保存于 ${displayTime(version.at)}` : `同名版本 ${sameName.indexOf(version) + 1}`
   }
   function addClause() {
     const id = `M-${crypto.randomUUID().slice(0, 6)}`
@@ -244,9 +247,9 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
       {catalogIntro}
       {(!loading || shown.length > 0) && <div role="search" aria-label="筛选审核规则" className="flex max-w-xl items-center gap-2"><Search className="size-4 shrink-0 text-muted-foreground" aria-hidden="true"/><Input aria-label="搜索审核规则" type="search" placeholder="搜索要求、客户或零件" maxLength={200} value={query} onChange={event => search(event.target.value)}/>{query && <Button variant="ghost" onClick={() => search('')}>清除</Button>}</div>}
       {shown.length ? <>
-        <div className="max-lg:hidden"><Table className="table-fixed"><TableHeader><TableRow><TableHead className="w-[40%]">要求名称</TableHead><TableHead>适用零件</TableHead><TableHead className="w-36">最近版本</TableHead><TableHead className="w-16">条款</TableHead><TableHead className="w-10"><span className="sr-only">打开</span></TableHead></TableRow></TableHeader><TableBody>{groupedShown.map(([customer, items]) => <Fragment key={customer}><TableRow><TableCell colSpan={5}><h3 className="text-xs font-medium text-muted-foreground">{customer} · {items.length} 份</h3></TableCell></TableRow>{items.map(item => {
+        <div className="max-lg:hidden"><Table className="table-fixed"><TableHeader><TableRow><TableHead className={showParts ? 'w-[40%]' : undefined}>要求名称</TableHead>{showParts && <TableHead>适用零件</TableHead>}<TableHead className="w-36">最近版本</TableHead><TableHead className="w-16">条款</TableHead><TableHead className="w-10"><span className="sr-only">打开</span></TableHead></TableRow></TableHeader><TableBody>{groupedShown.map(([customer, items]) => <Fragment key={customer}><TableRow><TableCell colSpan={showParts ? 5 : 4}><h3 className="text-xs font-medium text-muted-foreground">{customer} · {items.length} 份</h3></TableCell></TableRow>{items.map(item => {
           const latest = item.draft ?? item.versions.at(-1)!
-          return <TableRow key={item.id} className="relative"><TableCell className="whitespace-normal"><a className="flex items-start gap-2.5 py-1 text-left font-medium underline-offset-4 after:absolute after:inset-0 hover:underline focus-visible:outline-ring" href={requirementHref(item.id)} onClick={event => navigate(event, item.id)}><BookOpen className="mt-0.5 size-4 shrink-0 text-muted-foreground"/><span className="min-w-0 break-words">{latest.title || '待命名要求'}</span></a></TableCell><TableCell className="whitespace-normal break-words"><span className="text-muted-foreground">{partScope(latest.scope)}</span></TableCell><TableCell className="whitespace-normal"><div className="flex flex-wrap items-center gap-2"><span className="break-words">{latest.version || '版本待确认'}</span>{item.draft && <Badge variant="outline">草稿</Badge>}</div></TableCell><TableCell><span className="tabular-nums">{latest.clauseCount}</span></TableCell><TableCell><ChevronRight className="size-4 text-muted-foreground" aria-hidden="true"/></TableCell></TableRow>
+          return <TableRow key={item.id} className="relative"><TableCell className="whitespace-normal"><a className="flex items-start gap-2.5 py-1 text-left font-medium underline-offset-4 after:absolute after:inset-0 hover:underline focus-visible:outline-ring" href={requirementHref(item.id)} onClick={event => navigate(event, item.id)}><BookOpen className="mt-0.5 size-4 shrink-0 text-muted-foreground"/><span className="min-w-0 break-words">{latest.title || '待命名要求'}</span></a></TableCell>{showParts && <TableCell className="whitespace-normal break-words"><span className="text-muted-foreground">{partScope(latest.scope)}</span></TableCell>}<TableCell className="whitespace-normal"><div className="flex flex-wrap items-center gap-2"><span className="break-words">{latest.version || '版本待确认'}</span>{item.draft && <Badge variant="outline">草稿</Badge>}</div></TableCell><TableCell><span className="tabular-nums">{latest.clauseCount}</span></TableCell><TableCell><ChevronRight className="size-4 text-muted-foreground" aria-hidden="true"/></TableCell></TableRow>
         })}</Fragment>)}</TableBody></Table></div>
         <div className="space-y-4 lg:hidden" aria-label="要求目录">{groupedShown.map(([customer, items]) => <section key={customer} aria-label={customer}><h3 className="pb-1 text-xs font-medium text-muted-foreground">{customer} · {items.length} 份</h3><ul className="divide-y border-y" aria-label={`${customer} 的要求`}>{items.map(item => {const latest = item.draft ?? item.versions.at(-1)!; return <li key={item.id}><a className="flex items-center gap-3 py-4 text-left focus-visible:outline-ring" href={requirementHref(item.id)} onClick={event => navigate(event, item.id)}><div className="min-w-0 flex-1 space-y-1.5"><p className="break-words font-medium">{latest.title || '待命名要求'}</p><p className="break-words text-muted-foreground">{partScope(latest.scope)}</p><div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span>{latest.version || '版本待确认'} · {latest.clauseCount} 条</span>{item.draft && <Badge variant="outline">草稿</Badge>}</div></div><ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true"/></a></li>})}</ul></section>)}</div>
       </> : !loading && !readError && <div className="space-y-3 py-12 text-center"><BookOpen className="mx-auto size-7 text-muted-foreground"/><h2 className="text-lg font-semibold">{query ? '没有匹配的规则' : '还没有审核规则'}</h2><Button variant="outline" onClick={() => query ? search('') : picker.current?.click()}>{query ? '清除搜索' : '选择规则文件'}</Button></div>}
@@ -262,7 +265,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
             {draftSelected && <Badge variant="outline">草稿</Badge>}
             <span className="text-muted-foreground">{current.basis.clauses.length} 条</span>
             {active && <RequirementOriginal basis={current.basis} label="查看原件"/>}
-            {'at' in current && current.at && <time dateTime={current.at} className="text-xs text-muted-foreground">保存于 {new Date(current.at).toLocaleString('zh-CN')}</time>}
+            {'at' in current && current.at && <time dateTime={current.at} className="text-xs text-muted-foreground">保存于 {displayTime(current.at)}</time>}
         </div>
       </header>
       {draftSelected ? <fieldset disabled={locked} className="min-w-0 space-y-4">

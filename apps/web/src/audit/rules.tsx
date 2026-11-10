@@ -46,9 +46,9 @@ function RulesWorkspace({onPublished, active, headerActions}: {onPublished: () =
   }, [revision, active])
   return <>{area !== 'requirements' && <h1 className="sr-only">审核规则</h1>}<Tabs value={area} onValueChange={value => {if (!busy) writeAuditAddress(rulesAreaAddress(new URL(location.href), value as RulesArea), 'push')}} className="min-w-0">
     <TabsList aria-label="审核规则工作区" variant="line" className="h-auto max-w-full flex-wrap justify-start">
-      <TabsTrigger value="predefined" aria-label="Predefined Checkers" disabled={busy}>预定义检查</TabsTrigger>
+      <TabsTrigger value="requirements" disabled={busy}>客户要求</TabsTrigger>
       <TabsTrigger value="enterprise" disabled={busy}>企业检查版本</TabsTrigger>
-      <TabsTrigger value="requirements" disabled={busy}>客户要求与上传</TabsTrigger>
+      <TabsTrigger value="predefined" disabled={busy}>预定义检查</TabsTrigger>
     </TabsList>
     <TabsContent value={area} className="min-w-0">
       {area === 'requirements'

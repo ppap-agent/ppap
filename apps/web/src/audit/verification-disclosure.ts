@@ -10,7 +10,7 @@ export function VerificationDisclosure({verification, evidenceUnverified = false
   const version = verification?.suite_revision_number != null ? `检查版本第 ${verification.suite_revision_number} 版` : '检查版本'
   const summary = [
     verification?.status === 'unverified' && `${version}未经样本验证`,
-    verification?.samples_not_rerun && '平台已更新，样本未重跑',
+    verification?.samples_not_rerun && '官方已更新，尚未重新验证',
     verification?.status === 'verified' && !verification.samples_not_rerun && `${version}已通过样本验证`,
     evidenceUnverified && '部分证据未验证',
   ].filter(Boolean).join(' · ') + (warning ? '，结论请对照原件核对' : '')

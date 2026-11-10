@@ -767,11 +767,11 @@ def test_precheck_readback_history_and_export_keep_one_formal_action(width):
         expect(region.get_by_role("heading", name="可审核 · 1", exact=True)).to_be_visible()
         expect(page.get_by_role("button", name="开始审核", exact=True)).to_have_count(1)
         region.get_by_role("button", name="重新检查当前资料", exact=True).click()
-        expect(region.get_by_text("预检结果尚未核对。请查看原检查，已有文件仍保留。", exact=True)).to_be_visible()
+        expect(region.get_by_text("预检结果尚未确认，请点“刷新预检结果”。已有文件仍保留。", exact=True)).to_be_visible()
         assert "precheckRequest=" in page.url
         page.reload()
-        expect(region.get_by_text("有预检请求待确认，请查看原检查。不会再次提交检查请求。", exact=True)).to_be_visible()
-        region.get_by_role("button", name="查看原检查", exact=True).click()
+        expect(region.get_by_text("有预检请求待确认，请点“刷新预检结果”，不会重复提交。", exact=True)).to_be_visible()
+        region.get_by_role("button", name="刷新预检结果", exact=True).click()
         expect(region.get_by_text("部分要求未核实", exact=True)).to_be_visible()
         assert len(http.retry_commands) == 1 and http.alias_reads == [http.retry_commands[0]["request_id"]]
         expect(region.get_by_role("heading", name="需要处理 · 0", exact=True)).to_be_visible()
@@ -780,9 +780,9 @@ def test_precheck_readback_history_and_export_keep_one_formal_action(width):
         region.get_by_role("button", name="查看检查依据与未覆盖要求", exact=True).click()
         expect(region.get_by_text("图形读取失败", exact=False)).to_be_visible()
         expect(region.get_by_text("签章尚未核实", exact=False)).to_be_visible()
-        region.get_by_role("button", name="读取预检历史", exact=True).click()
-        region.get_by_role("button", name="修订 0", exact=False).click()
-        expect(region.get_by_text("历史记录，不代表当前资料", exact=False)).to_be_visible()
+        region.get_by_role("button", name="预检历史", exact=True).click()
+        region.get_by_role("button", name="资料第 1 版", exact=False).click()
+        expect(region.get_by_text("的历史记录", exact=False)).to_be_visible()
         with page.expect_download() as download:
             region.get_by_role("button", name="导出此预检记录", exact=True).click()
         assert download.value.suggested_filename == "PPAP-预检-old-snapshot.html"

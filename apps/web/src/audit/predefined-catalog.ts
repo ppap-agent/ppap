@@ -54,15 +54,18 @@ export function readPredefinedPath(url: URL): string {return url.searchParams.ge
 export function predefinedScope(path: string): string {return `predefined:${path}`}
 
 export function readRulesArea(url: URL): RulesArea {
-  if (url.searchParams.has('requirement') || url.searchParams.get('rulesArea') === 'requirements') return 'requirements'
-  if (url.searchParams.has('checkerSuite') && !url.searchParams.has('checkerPath')) return 'enterprise'
-  return 'predefined'
+  const area = url.searchParams.get('rulesArea')
+  if (url.searchParams.has('requirement') || area === 'requirements') return 'requirements'
+  if (url.searchParams.has('checkerPath') || area === 'predefined') return 'predefined'
+  if (url.searchParams.has('checkerSuite')) return 'enterprise'
+  return 'requirements'
 }
 
 export function rulesAreaAddress(url: URL, area: RulesArea): URL {
   const next = new URL(url)
   next.searchParams.delete('requirement'); next.searchParams.delete('reqVersion'); next.searchParams.delete('reqTab')
-  if (area === 'requirements') next.searchParams.set('rulesArea', area)
+  // Customer requirements are the default; naming a tab is needed only to leave a checker selection in place.
+  if (area === 'predefined' || area === 'requirements' && (next.searchParams.has('checkerPath') || next.searchParams.has('checkerSuite'))) next.searchParams.set('rulesArea', area)
   else next.searchParams.delete('rulesArea')
   if (area === 'enterprise') {next.searchParams.delete('checkerPath'); if (!next.searchParams.has('checkerSuite')) next.searchParams.set('checkerSuite', '')}
   else if (area === 'predefined') next.searchParams.delete('checkerSuite')
@@ -71,7 +74,7 @@ export function rulesAreaAddress(url: URL, area: RulesArea): URL {
 
 /** The source revision stays official even when the tenant adopted a different one. */
 export function sourceIdentity(entry: InstalledPredefinedEntry, adoptedRevisionId: string | null | undefined): string {
-  if (!adoptedRevisionId) return `来源 ${entry.path} 绑定官方修订 ${entry.revision_id}。企业尚未采用 ${entry.suite_key}。`
-  if (adoptedRevisionId === entry.revision_id) return `来源 ${entry.path} 的官方修订 ${entry.revision_id} 与企业当前采用的修订相同。`
-  return `来源 ${entry.path} 的官方修订 ${entry.revision_id} 与企业当前采用的修订 ${adoptedRevisionId} 不同。此目录仍只打开该来源的官方修订。`
+  if (!adoptedRevisionId) return '本企业尚未采用这项检查。'
+  if (adoptedRevisionId === entry.revision_id) return '本企业正在使用这个官方版本。'
+  return '本企业正在使用另一个版本；这里显示的是官方版本。'
 }

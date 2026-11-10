@@ -53,7 +53,7 @@ async function readWithDeadline<T>(read: (signal: AbortSignal) => Promise<T>, me
   }
 }
 
-const readArchive = <T>(path: string) => readWithDeadline(signal => request<T>(path, 'GET', undefined, signal), '读取审核档案超时，请重新读取。')
+const readArchive = <T>(path: string) => readWithDeadline(signal => request<T>(path, 'GET', undefined, signal), '读取审核文件超时，请重新读取。')
 
 export const nativeArchiveAdapter: AuditArchiveAdapter = {
   listDocuments(query) {

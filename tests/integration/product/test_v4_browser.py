@@ -248,9 +248,9 @@ def test_customer_intake_to_original_issue_and_frozen_precheck_export(running_pr
                 page.get_by_role("button", name="导出此预检记录", exact=True).click()
             export = Path(downloaded.value.path()).read_text()
             assert "预检" in export and "特殊特性清单.xlsx" in export
-            snapshot_region.get_by_role("button", name="读取预检历史", exact=True).click()
+            snapshot_region.get_by_role("button", name="预检历史", exact=True).click()
             expect(snapshot_region.get_by_role("list", name="预检历史", exact=True)).to_be_visible()
-            snapshot_region.get_by_role("button", name=re.compile("^修订 0")).click()
+            snapshot_region.get_by_role("button", name=re.compile("^资料第 1 版")).click()
             page.get_by_role("button", name="开始审核", exact=True).click()
             result_file = page.get_by_role("button", name=re.compile(r"^特殊特性清单\.xlsx 不符合"))
             expect(result_file).to_be_visible(timeout=30000)

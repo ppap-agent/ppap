@@ -42,16 +42,17 @@ test('checkerPath and existing enterprise deep links select one workspace withou
   assert.equal(enterprise.searchParams.has('checkerPath'), false)
   assert.equal(readRulesArea(rulesAreaAddress(url, 'requirements')), 'requirements')
   assert.equal(readRulesArea(new URL('https://ppap.test/requirements?requirement=customer-rule')), 'requirements')
+  assert.equal(readRulesArea(new URL('https://ppap.test/requirements')), 'requirements')
+  assert.equal(readRulesArea(new URL('https://ppap.test/requirements?rulesArea=predefined')), 'predefined')
   assert.equal(readRulesArea(rulesAreaAddress(enterprise, 'predefined')), 'predefined')
   assert.equal(readPredefinedPath(new URL('https://ppap.test/requirements?checkerSuite=UAES%3AU08')), '')
 })
 
 test('the official source revision stays distinct from the adopted enterprise revision', () => {
   const source = entry('v5/UAES/U08', 'official-v5')
-  assert.match(sourceIdentity(source, 'tenant-current'), /official-v5/)
-  assert.match(sourceIdentity(source, 'tenant-current'), /tenant-current/)
-  assert.match(sourceIdentity(source, 'tenant-current'), /不同/)
+  // People read which version is in use; source paths and revision ids stay out of the sentence.
+  assert.match(sourceIdentity(source, 'tenant-current'), /另一个版本/)
+  assert.doesNotMatch(sourceIdentity(source, 'tenant-current'), /official-v5|tenant-current|v5\/UAES/)
   assert.match(sourceIdentity(source, null), /尚未采用/)
-  assert.doesNotMatch(sourceIdentity(source, null), /tenant-current/)
-  assert.match(sourceIdentity(source, 'official-v5'), /相同/)
+  assert.match(sourceIdentity(source, 'official-v5'), /正在使用这个官方版本/)
 })

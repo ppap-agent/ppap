@@ -14,6 +14,7 @@ import {Progress} from '../components/ui/progress'
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '../components/ui/select'
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../components/ui/table'
 import {FileCollection, type FileReference} from './file-collection'
+import {displayTime} from '../helpers'
 import {resultLabel, resultTone, uncoveredLabel} from '../audit/status-labels'
 
 export type WorkItem = {
@@ -56,7 +57,7 @@ function ReviewCount({item}: {item: WorkItem}) {
 }
 function ItemTime({item}: {item: WorkItem}) {
   const date = new Date(item.updatedAt)
-  return Number.isFinite(date.getTime()) ? <time dateTime={item.updatedAt} title={date.toLocaleString('zh-CN')} className="whitespace-nowrap text-xs tabular-nums text-muted-foreground">{date.toLocaleString('zh-CN', {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false})}</time> : <span className="text-muted-foreground">—</span>
+  return Number.isFinite(date.getTime()) ? <time dateTime={item.updatedAt} className="whitespace-nowrap text-xs tabular-nums text-muted-foreground">{displayTime(date)}</time> : null
 }
 function SortHeading({label, sorted, onSort}: {label: string; sorted: false | 'asc' | 'desc'; onSort?: (event: unknown) => void}) {
   const Icon = sorted === 'asc' ? ArrowUp : sorted === 'desc' ? ArrowDown : ArrowUpDown
@@ -104,18 +105,12 @@ export function WorkItemsTable({items, onOpen, label, loading, readFailed, hasMo
   ]), [])
   const table = useTable({features, data: items, columns, getRowId: item => item.id, initialState: {sorting: [{id: 'time', desc: true}]}, enableSortingRemoval: false, enableMultiSort: false})
   const rows = table.getRowModel().rows
-  const states = useMemo(() => [...new Set(items.map(item => item.state))], [items])
-  const stateFilter = String(table.getColumn('state')?.getFilterValue() || 'all')
   const order = table.state.sorting[0]
   const initialLoading = loading && !items.length
-  const empty = readFailed ? '此列表尚未能完整读取，请重新读取。' : stateFilter !== 'all' ? '没有匹配此状态的已加载记录。' : hasMore ? '已加载记录中暂无此类审核。' : label === '全部' || label === '全部任务' ? '还没有审核任务。' : `没有${label}的任务。`
+  const empty = readFailed ? '此列表尚未能完整读取，请重新读取。' : hasMore ? '已加载记录中暂无此类审核。' : label === '全部' || label === '全部任务' ? '还没有审核任务。' : `没有${label}的任务。`
   return <div className="@container space-y-4">
     <div className="flex flex-wrap items-center gap-2">
       {toolbar}
-      {(states.length > 1 || stateFilter !== 'all') && <Select value={stateFilter} onValueChange={value => table.getColumn('state')?.setFilterValue(value === 'all' ? undefined : value)}>
-        <SelectTrigger aria-label="筛选审核状态"><SelectValue/></SelectTrigger>
-        <SelectContent><SelectItem value="all">全部状态</SelectItem>{[...new Set([...states, ...(stateFilter !== 'all' ? [stateFilter] : [])])].map(state => <SelectItem key={state} value={state}>{state}</SelectItem>)}</SelectContent>
-      </Select>}
       <div className="flex items-center gap-2 @min-[45rem]:ml-auto">
         <Select value={`${order?.id || 'time'}.${order?.desc ? 'desc' : 'asc'}`} onValueChange={value => {const [id, direction] = value.split('.'); table.setSorting([{id, desc: direction === 'desc'}])}}>
           <SelectTrigger aria-label="审核记录排序" className="@min-[45rem]:hidden"><SelectValue/></SelectTrigger>
@@ -124,13 +119,13 @@ export function WorkItemsTable({items, onOpen, label, loading, readFailed, hasMo
         <DropdownMenu><DropdownMenuTrigger asChild><Button variant="outline" size="icon" aria-label="选择显示列" title="选择显示列"><Columns3/></Button></DropdownMenuTrigger><DropdownMenuContent align="end">{table.getAllLeafColumns().filter(column => column.getCanHide()).map(column => <DropdownMenuCheckboxItem key={column.id} checked={column.getIsVisible()} onCheckedChange={value => column.toggleVisibility(Boolean(value))} onSelect={event => event.preventDefault()}>{columnLabels[column.id]}</DropdownMenuCheckboxItem>)}</DropdownMenuContent></DropdownMenu>
       </div>
     </div>
-    {(rows.length > 0 || initialLoading) && <div className="hidden rounded-lg border @min-[45rem]:block">
+    {/* Until the first rows arrive, a header over grey bars says nothing; the loading line below speaks instead. */}{rows.length > 0 && <div className="hidden rounded-lg border @min-[45rem]:block">
       <Table className="table-fixed" aria-label={`${label}审核记录`}>
         <TableHeader>{table.getHeaderGroups().map(group => <TableRow key={group.id}>{group.headers.map(header => <TableHead key={header.id} scope="col" aria-sort={header.column.getIsSorted() === 'asc' ? 'ascending' : header.column.getIsSorted() === 'desc' ? 'descending' : undefined} className={header.column.id === 'title' ? 'w-auto' : header.column.id === 'actions' ? 'w-28 text-right' : header.column.id === 'state' ? 'w-64' : header.column.id === 'time' ? 'w-32' : 'w-28'}>{header.isPlaceholder ? null : <table.FlexRender header={header}/>}</TableHead>)}</TableRow>)}</TableHeader>
-        <TableBody>{rows.length ? rows.map(row => <TableRow key={row.id} className="cursor-pointer" onClick={openRow(row.original)}>{row.getVisibleCells().map(cell => <TableCell key={cell.id} className={`align-top whitespace-normal ${cell.column.id === 'actions' ? 'text-right' : ''}`}><table.FlexRender cell={cell}/></TableCell>)}</TableRow>) : <TableRow><TableCell colSpan={table.getVisibleLeafColumns().length} className="h-36 whitespace-normal text-center">{initialLoading ? <ReadSkeleton label="正在读取审核记录…" kind="table" rows={4}/> : <p className="text-muted-foreground">{empty}</p>}</TableCell></TableRow>}</TableBody>
+        <TableBody>{rows.map(row => <TableRow key={row.id} className="cursor-pointer" onClick={openRow(row.original)}>{row.getVisibleCells().map(cell => <TableCell key={cell.id} className={`align-top whitespace-normal ${cell.column.id === 'actions' ? 'text-right' : ''}`}><table.FlexRender cell={cell}/></TableCell>)}</TableRow>)}</TableBody>
       </Table>
     </div>}
-    {!rows.length && !initialLoading && <p role="status" className="hidden py-10 text-center text-sm text-muted-foreground @min-[45rem]:block">{empty}</p>}
+    {!rows.length && <div className="hidden @min-[45rem]:block">{initialLoading ? <ReadSkeleton label="正在读取审核记录…" kind="list" rows={4}/> : <p role="status" className="py-10 text-center text-sm text-muted-foreground">{empty}</p>}</div>}
     <div className="space-y-3 @min-[45rem]:hidden" role={rows.length ? 'list' : undefined} aria-label={rows.length ? `${label}审核记录卡片` : undefined}>
       {rows.map(({original: item}) => <Card key={item.id} size="sm" role="listitem" className="cursor-pointer" onClick={openRow(item)}>
         <CardHeader>{workTitle(item) && <CardTitle className="min-w-0 [overflow-wrap:anywhere]">{workTitle(item)}</CardTitle>}{item.files?.length ? <FileCollection files={item.files} context={item.title} limit={2}/> : null}{(item.context || item.mode) && <CardDescription className="break-words">{[item.context, item.mode].filter(Boolean).join(' · ')}</CardDescription>}</CardHeader>
