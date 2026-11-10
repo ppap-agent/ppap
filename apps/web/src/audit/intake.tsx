@@ -46,6 +46,9 @@ import {ReviewEditorContext} from './review-editor'
 import {reconcileTaskSummary, summarizeTask, taskIsBehindSummary, type TaskSummary} from './task-summary'
 import {AuditWorkbench, type WorkbenchProps} from './workbench'
 import {auditAddressChanged, readAuditRoute, surfaceAddress, taskAddress as taskHref, writeAuditAddress} from './routes'
+import {readRulesArea} from './predefined-catalog'
+import {subscribeAutomationAttention} from './automation-attention'
+import {templateName} from './rule-templates'
 import {AuditRoundReader, type ReadRound} from './round-reader'
 import {TaskRecovery, type TaskRecoveryState} from './task-recovery'
 import {TaskSwitcher} from './task-switcher'
@@ -70,7 +73,8 @@ export type AuditIntakeAdapter = AuditAcceptanceAdapter & AuditRecognitionAdapte
   autoValidate?: boolean
   precheck?: TaskPrecheckAdapter
   /** The newest version of every rule, for choosing one by hand when recognition picked the wrong one. */
-  ruleChoices?: (signal?: AbortSignal) => Promise<{id: string; title: string}[]>
+  /** Newest rules a person may pick; `type` and `template` let one template choice set every file's rule. */
+  ruleChoices?: (signal?: AbortSignal) => Promise<RuleChoice[]>
   readValidation: (file: AuditTaskFile, scope?: components['schemas']['FileValidationScope'] | null) => Promise<{validation: AuditTaskFile['validation']; validation_id?: string; validation_scope?: components['schemas']['FileValidationScope']}>
   endTask: (task: AuditTask) => Promise<AuditTask>
   listTasks: (query: {q: string; state: AuditTask['state'] | null; offset: number; signal?: AbortSignal}) => Promise<{tasks: TaskSummary[]; next_offset: number | null}>
@@ -78,12 +82,15 @@ export type AuditIntakeAdapter = AuditAcceptanceAdapter & AuditRecognitionAdapte
   prepareReaudit?: (roundId: string) => Promise<components['schemas']['AuditReauditInputs']>
   readRound?: ReadRound
 }
+export type RuleChoice = {id: string; title: string; type?: string; template?: string}
+const lastTemplateKey = 'ppap.rule-template'
+const lastTemplate = () => {try {return localStorage.getItem(lastTemplateKey) ?? ''} catch {return ''}}
 const taskLabels = {matching: '识别中', pending_confirm: '待确认', reviewing: '审核中', completed: '已完成'}
 const productLinks = [
   {view: 'workbench', label: '工作台', icon: LayoutDashboard},
   {view: 'archive', label: '审核文件', icon: Files},
   {view: 'requirements', label: '审核规则', icon: ListChecks},
-  {view: 'templates', label: '模板库', icon: BookOpen},
+  {view: 'templates', label: '文件模板', icon: BookOpen},
   {view: 'usage', label: '用量记录', icon: ReceiptText},
 ] as const
 type ProductSurface = Exclude<typeof productLinks[number]['view'], 'templates'> | 'audit'
@@ -142,6 +149,14 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const [usageOpened, setUsageOpened] = useState(surface === 'usage')
   const [navigationMode, setNavigationMode] = useState<'auto' | 'expanded' | 'collapsed'>('auto')
   const [navigationTooltip, setNavigationTooltip] = useState<string | null>(null)
+  const [rulesArea, setRulesArea] = useState(() => readRulesArea(new URL(location.href)))
+  const [automationAttention, setAutomationAttention] = useState(0)
+  useEffect(() => {
+    const follow = () => setRulesArea(readRulesArea(new URL(location.href)))
+    window.addEventListener('popstate', follow); window.addEventListener(auditAddressChanged, follow)
+    const unsubscribe = subscribeAutomationAttention(setAutomationAttention)
+    return () => {window.removeEventListener('popstate', follow); window.removeEventListener(auditAddressChanged, follow); unsubscribe()}
+  }, [])
   const [desktopNavigation, setDesktopNavigation] = useState(() => window.matchMedia('(min-width: 64rem)').matches)
   const [wideNavigation, setWideNavigation] = useState(() => window.matchMedia('(min-width: 1281px)').matches)
   const [pageActions, setPageActions] = useState<HTMLDivElement | null>(null)
@@ -205,7 +220,8 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const listEpoch = useRef(0)
   const latestAdapter = useRef(adapter); latestAdapter.current = adapter
   // Every current rule, read once the confirm step opens, so a wrongly recognized file can be pointed at another rule.
-  const [ruleChoices, setRuleChoices] = useState<{id: string; title: string}[]>([])
+  const [ruleChoices, setRuleChoices] = useState<RuleChoice[]>([])
+  const [templateChoice, setTemplateChoice] = useState(''), [templateApply, setTemplateApply] = useState(0)
   const [ruleChanging, setRuleChanging] = useState<string[]>([])
   const [ruleSource, setRuleSource] = useState<{rule: components['schemas']['BoundRule']; clause: components['schemas']['RuleItem'] | null; filename: string} | null>(null)
   const input = useRef<HTMLInputElement>(null)
@@ -765,7 +781,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
       url.pathname = value === 'audit' ? taskHref(activeTaskId.current) : surfaceAddress(value)
       url.searchParams.delete('view'); url.searchParams.delete('task'); url.searchParams.delete('report')
       // One page's own address state (rule tabs, chosen rule or checker) must not follow the person to another page.
-      if (value !== 'requirements') for (const key of ['rulesArea', 'requirement', 'reqVersion', 'reqTab', 'checkerSuite', 'checkerPath']) url.searchParams.delete(key)
+      if (value !== 'requirements') for (const key of ['rulesArea', 'requirement', 'reqVersion', 'reqTab', 'checkerSuite', 'checkerPath', 'template', 'systemRule']) url.searchParams.delete(key)
     }
     history.pushState(history.state, '', url)
     if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-view', view: value, packageRequest: null}, location.origin)
@@ -774,6 +790,14 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     setSurface(value)
     // A repeated top-level entry leaves its detail without changing the active surface.
     if (value === surface || value === 'requirements') window.dispatchEvent(new PopStateEvent('popstate'))
+  }
+  /** The two rules pages: templates by default, automatic review on request. Either starts from its own list. */
+  function openRules(area: 'templates' | 'automation') {
+    showSurface('requirements')
+    const url = new URL(location.href)
+    for (const key of ['template', 'systemRule', 'requirement', 'reqVersion', 'reqTab', 'rulesArea', 'checkerSuite', 'checkerPath']) url.searchParams.delete(key)
+    if (area === 'automation') url.searchParams.set('rulesArea', 'automation')
+    writeAuditAddress(url)
   }
   // Text navigation must not open invisible layers that capture Escape in Sheet.
   const navigationTooltipProps = (id: string, compact = navigationCollapsed) => ({
@@ -787,7 +811,11 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     {productLinks.filter(link => link.view !== 'requirements' || rules).map(({view, label, icon: Icon}) => {
       const active = surface === view || view === 'workbench' && surface === 'audit'
       const itemClass = tiles ? 'relative' : compact ? 'justify-center' : 'justify-start'
-      return <Tooltip key={view} {...navigationTooltipProps(view, compact)}><TooltipTrigger asChild>{view === 'templates' ? <Button asChild size={tiles ? 'tile' : 'default'} className={itemClass} variant={tiles ? 'secondary' : 'ghost'}><a href={TEMPLATE_GUIDE_URL} target="_blank" rel="noopener noreferrer" aria-label="模板库（在飞书新窗口打开）"><Icon aria-hidden="true"/><span className={compact ? 'sr-only' : ''}>{label}</span>{!compact && <ExternalLink className={tiles ? 'absolute top-4 right-4 size-3 text-muted-foreground' : 'ml-auto size-3 text-muted-foreground'} aria-hidden="true"/>}</a></Button> : <Button size={tiles ? 'tile' : 'default'} className={itemClass} aria-label={label} aria-current={active ? 'page' : undefined} variant={tiles ? active ? 'default' : 'secondary' : active ? 'secondary' : 'ghost'} onClick={() => showSurface(view)}><Icon aria-hidden="true"/><span className={compact ? 'sr-only' : ''}>{label}</span></Button>}</TooltipTrigger><TooltipContent side="right">{label}</TooltipContent></Tooltip>
+      const item = <Tooltip key={view} {...navigationTooltipProps(view, compact)}><TooltipTrigger asChild>{view === 'templates' ? <Button asChild size={tiles ? 'tile' : 'default'} className={itemClass} variant={tiles ? 'secondary' : 'ghost'}><a href={TEMPLATE_GUIDE_URL} target="_blank" rel="noopener noreferrer" aria-label="文件模板（在飞书新窗口打开）"><Icon aria-hidden="true"/><span className={compact ? 'sr-only' : ''}>{label}</span>{!compact && <ExternalLink className={tiles ? 'absolute top-4 right-4 size-3 text-muted-foreground' : 'ml-auto size-3 text-muted-foreground'} aria-hidden="true"/>}</a></Button> : <Button size={tiles ? 'tile' : 'default'} className={itemClass} aria-label={label} aria-current={active ? 'page' : undefined} variant={tiles ? active ? 'default' : 'secondary' : active ? 'secondary' : 'ghost'} onClick={() => view === 'requirements' ? openRules('templates') : showSurface(view)}><Icon aria-hidden="true"/><span className={compact ? 'sr-only' : ''}>{label}</span></Button>}</TooltipTrigger><TooltipContent side="right">{label}</TooltipContent></Tooltip>
+      if (view !== 'requirements' || compact || tiles) return item
+      // The rules pages sit under their section; automatic review says how many programs need the person.
+      const sub = (area: 'templates' | 'automation', text: string, count = 0) => <Button key={area} variant={active && rulesArea === area ? 'secondary' : 'ghost'} size="sm" className="justify-start" aria-current={active && rulesArea === area ? 'page' : undefined} onClick={() => openRules(area)}><span className="min-w-0 flex-1 text-left">{text}</span>{count > 0 && <Badge variant="secondary" aria-label={`${count} 项需要处理`}>{count}</Badge>}</Button>
+      return <div key={view} className="grid gap-1">{item}<div className="grid gap-1 pl-7">{sub('templates', '规则模板')}{sub('automation', '自动审核', automationAttention)}</div></div>
     })}
     {tiles && <Button variant="secondary" size="tile" onClick={() => {setNavigationSheet(false); openSupport({scenario: supportScenario}, navigationTrigger.current)}}><HelpCircle aria-hidden="true"/>联系我们</Button>}
   </nav>
@@ -799,6 +827,19 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     void adapter.ruleChoices(controller.signal).then(setRuleChoices).catch(() => undefined)
     return () => controller.abort()
   }, [step, adapter, ruleChoices.length])
+  // Recognition reads the files as they are after the template set each file's rule.
+  useEffect(() => {if (templateApply) void startMatching()}, [templateApply])
+  const templates = [...new Set(ruleChoices.flatMap(rule => rule.template ? [rule.template] : []))].sort((a, b) => (b === lastTemplate() ? 1 : 0) - (a === lastTemplate() ? 1 : 0) || templateName(a).localeCompare(templateName(b), 'zh-CN'))
+  function chooseTemplate(key: string) {
+    setTemplateChoice(key)
+    try {localStorage.setItem(lastTemplateKey, key)} catch { /* The choice still applies; it is only not remembered. */ }
+    const byType = new Map(ruleChoices.filter(rule => rule.template === key && rule.type).map(rule => [rule.type!, rule.id]))
+    setFiles(rows => rows.map(row => {
+      const id = row.match?.document_type ? byType.get(row.match.document_type) : undefined
+      return id ? {...row, preferred_rule_version_id: id} : row
+    }))
+    setTemplateApply(value => value + 1)
+  }
   // Recognition picks a rule; a person can still point the file at another one and recognize it again.
   const ruleOptions = (row: AuditTaskFile) => {
     const match = row.match
@@ -823,15 +864,15 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     return [...batches.values()]
   }
   const matchRow = (row: typeof matchingFiles[number], grouped = false) => <section key={row.file.id} className="space-y-4 py-5 first:pt-0">
-            <div className="flex flex-wrap items-start justify-between gap-3"><h3 className="min-w-0 flex-1 font-semibold"><FileName name={row.file.original_filename}/></h3>{/* A group heading already names matched and reference files. */}{!(grouped && (row.match?.state === 'reference' || row.match?.state === 'matched' && row.match.rule)) && <Badge variant={row.match && suiteVersionConfirmationRequired(row.match) ? 'warning' : row.match?.state === 'matched' && row.match.rule ? 'success' : row.match?.state === 'reference' || matchPending(row) ? 'outline' : 'warning'}>{row.match && suiteVersionConfirmationRequired(row.match) ? '需确认检查版本' : row.match?.state === 'matched' && row.match.rule ? '已匹配' : row.match?.state === 'reference' ? '比对资料' : row.match?.state === 'unmatched' ? '未匹配' : row.match?.state === 'matching' ? '识别中' : !row.match || row.match.state === 'pending' ? '等待识别' : personalModelRequired(row.match) ? '需要配置模型' : checkerSuiteUnavailable(row.match) ? '检查版本不可用' : '识别异常'}</Badge>}</div>
+            <div className="flex flex-wrap items-start justify-between gap-3"><h3 className="min-w-0 flex-1 font-semibold"><FileName name={row.file.original_filename}/></h3>{/* A group heading already names matched and reference files. */}{!(grouped && (row.match?.state === 'reference' || row.match?.state === 'matched' && row.match.rule)) && <Badge variant={row.match && suiteVersionConfirmationRequired(row.match) ? 'warning' : row.match?.state === 'matched' && row.match.rule ? 'success' : row.match?.state === 'reference' || matchPending(row) ? 'outline' : 'warning'}>{row.match && suiteVersionConfirmationRequired(row.match) ? '需处理自动审核' : row.match?.state === 'matched' && row.match.rule ? '已匹配' : row.match?.state === 'reference' ? '比对资料' : row.match?.state === 'unmatched' ? '未匹配' : row.match?.state === 'matching' ? '识别中' : !row.match || row.match.state === 'pending' ? '等待识别' : personalModelRequired(row.match) ? '需要配置模型' : checkerSuiteUnavailable(row.match) ? '还不能自动审核' : '识别异常'}</Badge>}</div>
             {/* Only facts already read are listed; a row of dashes says nothing. */}<dl className="flex flex-wrap gap-x-5 gap-y-1 text-xs empty:hidden">{matchFields(row).filter(([label, value]) => value && !sharedFields.some(field => field[0] === label)).map(([label, value]) => <div className="flex min-w-0 gap-1.5" key={label}><dt className="text-muted-foreground">{label}</dt><dd className="break-words">{value}</dd></div>)}</dl>
-            {row.match && suiteVersionConfirmationRequired(row.match) ? <Alert><AlertTitle>当前检查版本不能用于新审核</AlertTitle><AlertDescription><p>这是历史检查版本。请在审核规则中确认并采用目录版本，再刷新审核依据。审核没有开始。</p></AlertDescription></Alert>
+            {row.match && suiteVersionConfirmationRequired(row.match) ? <Alert><AlertTitle>自动审核程序需要更新</AlertTitle><AlertDescription><p>这是旧版程序。请在“自动审核”中采用新版本，再刷新审核依据。审核没有开始。</p></AlertDescription></Alert>
               : row.match?.state === 'matched' && row.match.rule ? <Collapsible data-rule-version={row.match.rule.id}><div className="flex flex-wrap items-center justify-between gap-2"><p className="font-medium">{row.match.rule.title}</p><div className="flex flex-wrap items-center gap-1">{ruleChoiceButton(row)}<CollapsibleTrigger asChild><Button variant="ghost" size="sm" className="group" aria-label={`查看 ${row.file.original_filename} 的条款`}>{row.match.rule.body.kind === 'engine' ? `${row.match.rule.body.rules.length} 条条款` : '文件存在性检查'}<ChevronDown aria-hidden="true" className="transition-transform group-data-[state=open]:rotate-180"/></Button></CollapsibleTrigger></div></div><CollapsibleContent><ul aria-label={`${row.file.original_filename} · 匹配条款`} className="grid gap-1 pt-2">{row.match.rule.body.kind === 'engine' ? row.match.rule.body.rules.map(clause => <li key={clause.id}><Button variant="ghost" size="sm" className="h-auto max-w-full justify-start whitespace-normal text-left" onClick={event => {ruleTrigger.current = event.currentTarget; setRuleSource({rule: row.match!.rule!, clause, filename: row.file.original_filename})}}><BookOpen aria-hidden="true"/>{clauseLabel(row.match!.rule!.body.kind === 'engine' ? row.match!.rule!.body.rules : [], clause.id)}</Button></li>) : <li><Button variant="ghost" size="sm" className="justify-start" onClick={event => {ruleTrigger.current = event.currentTarget; setRuleSource({rule: row.match!.rule!, clause: null, filename: row.file.original_filename})}}>文件存在性检查</Button></li>}</ul></CollapsibleContent></Collapsible>
               : row.match?.state === 'reference' ? <p className="text-muted-foreground">仅作比对，不单独审核或收费。</p>
               : row.match?.state === 'matching' || !row.match || row.match.state === 'pending' ? <ReadSkeleton label="等待识别结果…" kind="inline"/>
               : row.match.state === 'unmatched' || row.match.gaps.some(isMatchingReason) ? <MatchingFeedback gaps={row.match.gaps} candidates={row.match.candidates} onCheck={() => setStep(row.match!.gaps.some(gap => gap === 'matching_customer_required' || gap === 'matching_customer_conflict') ? 'upload' : 'check')} onRules={rules ? () => showSurface('requirements') : undefined} onRemove={() => remove(row.file.id)}/>
               : personalModelRequired(row.match) ? <Alert><AlertTitle>还没有配置个人模型</AlertTitle><AlertDescription><p>文件本身没有问题。识别和审核都使用你自己的模型 Key；配置后返回上一步重新识别。</p></AlertDescription></Alert>
-              : checkerSuiteUnavailable(row.match) ? <Alert><AlertTitle>这类文件还没有可用的检查版本</AlertTitle><AlertDescription><p>文件本身没有问题。请在审核规则的“检查版本”中采用后，回到这里读取最新结果。</p>{rules && <Button variant="outline" size="sm" className="mt-2" onClick={() => showSurface('requirements')}>前往审核规则</Button>}</AlertDescription></Alert>
+              : checkerSuiteUnavailable(row.match) ? <Alert><AlertTitle>这类文件还不能自动审核</AlertTitle><AlertDescription><p>文件本身没有问题。请在“自动审核”中处理后，回到这里读取最新结果。</p>{rules && <Button variant="outline" size="sm" className="mt-2" onClick={() => openRules('automation')}>前往自动审核</Button>}</AlertDescription></Alert>
               : <Alert><AlertTitle>暂时无法确认匹配结果</AlertTitle><AlertDescription><p>请返回检查文件后重新识别。</p></AlertDescription></Alert>}
             {row.match?.gaps.filter(gap => !isMatchingReason(gap)).map(gap => analysisNotice(gap)).filter((notice): notice is string => Boolean(notice)).map(notice => <p key={notice} className="text-sm text-muted-foreground">{notice}</p>)}
             {row.match?.state !== 'matched' && ruleChoiceButton(row)}{ruleChoice(row)}
@@ -910,6 +951,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
         {step === 'match' && task && <>
           <div className="flex flex-wrap items-center gap-2 tabular-nums" role="status"><Badge variant="secondary">{task.state === 'matching' ? `识别中 ${matchingFiles.filter(row => row.match && ['matched', 'unmatched', 'reference', 'failed'].includes(row.match.state)).length}/${matchingFiles.length}` : taskLabels[task.state]}</Badge><span className="text-muted-foreground">{matchingFiles.length} 份文件{task.state === 'matching' ? ` · ${matched.length} 份匹配到规则` : ''}</span></div>
           {task.state === 'matching' && readStatus[task.id]?.error && <Alert variant="destructive"><AlertTitle>暂时无法读取</AlertTitle><AlertDescription><p>{readStatus[task.id].error}</p><div className="flex flex-wrap gap-2"><Button variant="outline" disabled={readStatus[task.id]?.busy} onClick={() => void readMatching(task)}>{readStatus[task.id]?.busy ? '正在读取识别结果…' : '重新读取识别结果'}</Button><Button variant="outline" size="sm" onClick={() => contactReadSupport(task)}>联系支持</Button></div></AlertDescription></Alert>}
+          {task.state === 'pending_confirm' && templates.length > 0 && <div className="flex flex-wrap items-center gap-3"><Label htmlFor="rule-template">规则模板</Label><Select value={templateChoice || undefined} disabled={recognitionLocked || confirmationLocked || Boolean(blocked)} onValueChange={chooseTemplate}><SelectTrigger id="rule-template" className="w-64 max-w-full"><SelectValue placeholder="按文件自动匹配"/></SelectTrigger><SelectContent>{templates.map(key => <SelectItem key={key} value={key}>{templateName(key)}{key === lastTemplate() ? '（上次使用）' : ''}</SelectItem>)}</SelectContent></Select><p className="text-xs text-muted-foreground">选择后按模板为每份文件设置规则并重新识别；模板中没有的文件类型保持原样。</p></div>}
           {sharedFields.length > 0 && <dl aria-label="这些文件的共同信息" className="flex flex-wrap gap-x-5 gap-y-1 rounded-lg border px-4 py-3 text-xs">{sharedFields.map(([label, value]) => <div className="flex min-w-0 gap-1.5" key={label}><dt className="text-muted-foreground">{label}</dt><dd className="break-words">{value}</dd></div>)}</dl>}
           {matchingFiles.some(row => row.match && personalModelRequired(row.match)) && <PersonalModelSettings/>}
           {matchGroups.map(group => <section key={group.title} aria-label={group.title || undefined} className="space-y-2">{group.title && <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2"><h2 className="text-sm font-semibold">{group.title} · {group.rows.length} 份</h2>{group.title === '需要处理' && group.rows.length > 1 && <Button variant="outline" size="sm" disabled={confirmationLocked} onClick={() => group.rows.forEach(row => remove(row.file.id))}>全部移除</Button>}</div>}<div className="divide-y">{(group.title === '需要处理' ? sameReasonBatches(group.rows) : group.rows.map(row => [row])).map(batch => batch.length > 1 ? <section key={batch[0].file.id} className="space-y-3 py-5 first:pt-0">
@@ -921,8 +963,8 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
           <footer className="sticky bottom-0 z-10 -mx-6 space-y-4 border-t bg-background/95 px-6 py-4 backdrop-blur-sm max-sm:-mx-4 max-sm:px-4">{noMatches && <p className="text-muted-foreground">没有可进入审核的匹配文件。可以结束任务，不扣费、不生成报告。</p>}
             {(noMatches ? endInputsDirty : recognitionDirty) && <p role="status" className="text-muted-foreground">文件或规则选择已有变更，请重新识别后再确认或结束任务。</p>}
             {confirmation?.message && <Alert data-request-id={confirmation.requestId} variant={confirmation.phase === 'rejected' ? 'default' : 'destructive'}><AlertTitle>{confirmation.phase === 'rejected' ? '本次未被接收' : '提交结果待确认'}</AlertTitle><AlertDescription><p>{confirmation.staleBasisDigest && task.confirmation_basis_digest && !basisNeedsRefresh ? '已读取当前审核依据，请核对后重新确认。' : confirmation.message}</p><Button variant="outline" size="sm" onClick={() => openSupport({scenario: '确认审核', traceId: confirmation.traceId, facts: [{label: '任务标识', value: task.id}, {label: '确认请求', value: confirmation.requestId}, {label: '接收状态', value: confirmation.phase === 'rejected' ? '明确未被接收' : '尚未确认'}, {label: '服务说明', value: confirmation.message}]})}>联系支持</Button></AlertDescription></Alert>}
-            {task.state === 'pending_confirm' && suiteBlocks.length > 0 && <Alert><AlertTitle>部分文件的检查还不能使用</AlertTitle><AlertDescription><p>处理后点“刷新审核依据”。</p><ul>{suiteBlocks.map(file => <li key={file.file.id}><FileName name={file.file.original_filename}/> · <a className="underline" href={`${surfaceAddress('requirements')}?checkerSuite=${encodeURIComponent(file.suite_admission!.suite_key)}`} onClick={event => {if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {event.preventDefault(); showSurface('requirements'); const url = new URL(location.href); url.searchParams.set('checkerSuite', file.suite_admission!.suite_key); writeAuditAddress(url)}}}>处理检查版本</a></li>)}</ul><Button variant="outline" disabled={confirmationLocked || readStatus[task.id]?.busy} onClick={() => void recover(task.id)}>刷新审核依据</Button></AlertDescription></Alert>}
-            {task.state === 'pending_confirm' && matchingFiles.some(historicalHead) && <Alert><AlertTitle>当前检查版本不能用于新审核</AlertTitle><AlertDescription><p>请确认并采用目录版本，再刷新审核依据。审核没有开始。</p></AlertDescription></Alert>}
+            {task.state === 'pending_confirm' && suiteBlocks.length > 0 && <Alert><AlertTitle>部分文件还不能自动审核</AlertTitle><AlertDescription><p>处理后点“刷新审核依据”。</p><ul>{suiteBlocks.map(file => <li key={file.file.id}><FileName name={file.file.original_filename}/> · <a className="underline" href={`${surfaceAddress('requirements')}?rulesArea=automation&checkerSuite=${encodeURIComponent(file.suite_admission!.suite_key)}`} onClick={event => {if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {event.preventDefault(); showSurface('requirements'); const url = new URL(location.href); url.searchParams.set('rulesArea', 'automation'); url.searchParams.set('checkerSuite', file.suite_admission!.suite_key); writeAuditAddress(url)}}}>去处理</a></li>)}</ul><Button variant="outline" disabled={confirmationLocked || readStatus[task.id]?.busy} onClick={() => void recover(task.id)}>刷新审核依据</Button></AlertDescription></Alert>}
+            {task.state === 'pending_confirm' && matchingFiles.some(historicalHead) && <Alert><AlertTitle>自动审核程序需要更新</AlertTitle><AlertDescription><p>请在“自动审核”中采用新版本，再刷新审核依据。审核没有开始。</p></AlertDescription></Alert>}
             {task.state === 'pending_confirm' && matched.length > 0 && !matchingFiles.some(historicalHead) && !confirmationLocked && (basisNeedsRefresh || !task.confirmation_basis_digest || !scope) && <Alert><AlertTitle>请刷新审核依据</AlertTitle><AlertDescription><p>刷新只读取当前规则，不会开始审核。核对后需要再次确认。</p><Button variant="outline" onClick={() => void recover(task.id)}>刷新审核依据</Button></AlertDescription></Alert>}
             {endStatus[task.id] === 'rejected' && <Alert><AlertTitle>结束请求已拒绝</AlertTitle><AlertDescription>输入版本可能已更新。当前文件与选择已保留，请读取当前任务后再操作。<Button variant="outline" onClick={() => void recover(task.id)}>读取当前任务</Button></AlertDescription></Alert>}
             <div className="flex flex-wrap items-center justify-between gap-3"><Button variant="outline" disabled={confirmationLocked || endStatus[task.id] === 'sending' || endStatus[task.id] === 'unknown'} onClick={() => setStep('check')}><ArrowLeft/>上一步</Button>{noMatches ? <Button disabled={Boolean(endStatus[task.id])} onClick={() => void endTask(task)}>{endStatus[task.id] === 'sending' ? '正在结束任务…' : '结束任务'}</Button> : <div className="flex flex-wrap gap-2">{confirmation && ['unknown', 'reading'].includes(confirmation.phase) && <Button variant="outline" disabled={confirmation.phase === 'reading'} onClick={() => void acceptance.reconcile(task)}>{confirmation.phase === 'reading' ? '正在读取提交结果…' : '读取提交结果'}</Button>}{task.estimated_points != null && <span className="self-center text-sm tabular-nums text-muted-foreground">预计 {task.estimated_points} 点</span>}<Button disabled={!canConfirm} onClick={() => confirm(task)}>{confirmation?.phase === 'sending' ? '正在确认…' : '开始审核'}<ArrowRight/></Button></div>}</div>

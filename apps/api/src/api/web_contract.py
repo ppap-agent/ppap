@@ -135,6 +135,8 @@ class Rule(TypedDict):
     parts: list[str] | None
     customer_scope: Literal["all", "restricted", "unconfirmed"]
     suite_key: NotRequired[str]
+    preset_key: NotRequired[str]
+    clause_count: NotRequired[int]
 
 
 class RuleItem(TypedDict):

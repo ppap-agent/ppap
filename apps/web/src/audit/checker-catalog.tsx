@@ -3,31 +3,28 @@ import type {SuitesRead} from './rules'
 import {ArrowLeft, ChevronRight, FileCode, Folder} from 'lucide-react'
 import {Button} from '../components/ui/button'
 import {ReadSkeleton} from '../components/read-skeleton'
-import {Label} from '../components/ui/label'
 import {CheckerRelease} from './checker-release'
 import {canOpenPredefined, checkerLabel, predefinedTree, predefinedScope, readPredefinedPath, sourceIdentity, type PredefinedEntry, type PredefinedNode} from './predefined-catalog'
 import {auditAddressChanged, writeAuditAddress} from './routes'
-import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '../components/ui/select'
 
-const selectedSuite = () => new URL(location.href).searchParams.get('checkerSuite') || ''
 const selectedPath = () => readPredefinedPath(new URL(location.href))
 const stateLabel = {installed: '', unseeded: '待安装', unavailable: '不可用', historical: '只能查看'}
 const rowClass = 'flex min-h-11 w-full min-w-0 items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-muted/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-60'
 
 /** Source navigation never adopts a revision or calls a model. */
-export function CheckerCatalog({active, suites: read, onReload, mode = 'predefined', onBusyChange}: {active: boolean; suites: SuitesRead; onReload: () => void; mode?: 'predefined' | 'enterprise'; onBusyChange?: (value: boolean) => void}) {
-  const selectId = useId(), groupId = useId(), tree = useRef<HTMLElement>(null), lastPath = useRef(selectedPath())
-  const suites = read.value?.suites ?? [], unavailable = read.value?.unavailable ?? []
+export function CheckerCatalog({active, suites: read, onReload, onBusyChange}: {active: boolean; suites: SuitesRead; onReload: () => void; onBusyChange?: (value: boolean) => void}) {
+  const groupId = useId(), tree = useRef<HTMLElement>(null), lastPath = useRef(selectedPath())
+  const suites = read.value?.suites ?? []
   const predefinedError = read.value?.predefined_error ?? ''
   const predefined: PredefinedEntry[] = read.value && !predefinedError ? read.value.predefined ?? [] : []
   const loading = read.loading, error = read.error
-  const [selected, setSelected] = useState(selectedSuite), [path, setPath] = useState(selectedPath)
+  const [path, setPath] = useState(selectedPath)
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [busy, setBusy] = useState(false)
   const reload = onReload
   const changeBusy = useCallback((value: boolean) => {setBusy(value); onBusyChange?.(value)}, [onBusyChange])
   useEffect(() => {
-    const restore = () => {setSelected(selectedSuite()); setPath(selectedPath())}
+    const restore = () => setPath(selectedPath())
     window.addEventListener('popstate', restore); window.addEventListener(auditAddressChanged, restore)
     return () => {window.removeEventListener('popstate', restore); window.removeEventListener(auditAddressChanged, restore)}
   }, [])
@@ -74,8 +71,6 @@ export function CheckerCatalog({active, suites: read, onReload, mode = 'predefin
     } else return
     event.preventDefault(); next?.focus()
   }
-  const suite = suites.find(value => value.suite_key === selected), blocked = unavailable.some(value => value.suite_key === selected)
-  const revisionId = suite?.current_revision_id || suite?.candidate_revision_id
   const {nodes, rejected} = predefinedTree(predefined)
   const selectedEntry = rejected.some(value => value.path === path) ? undefined : predefined.find(value => value.path === path)
   const openEntry = selectedEntry && canOpenPredefined(selectedEntry) ? selectedEntry : undefined
@@ -98,28 +93,12 @@ export function CheckerCatalog({active, suites: read, onReload, mode = 'predefin
       </li>
     })
   }
-  if (mode === 'enterprise') return <section aria-label="企业检查版本" className="min-w-0 space-y-4">
-    <h2 className="text-lg font-semibold">企业检查版本</h2>
-    <p className="text-sm text-muted-foreground">本企业每项检查正在用的版本。在审核结果里点某条“这条判错了”，打开的也是这里的同一项检查。发布只影响之后的新审核。</p>
-    <Label htmlFor={selectId}>选择检查</Label>
-    <Select value={selected || undefined} disabled={busy} onValueChange={choose}><SelectTrigger id={selectId} className="w-full max-w-xl"><SelectValue placeholder="选择要核对的检查"/></SelectTrigger><SelectContent>
-      {selected && !suite && !blocked && <SelectItem value={selected}>所选检查</SelectItem>}
-      {unavailable.map((value, index) => <SelectItem key={value.suite_key} value={value.suite_key}>检查 {index + 1} · 暂不可用</SelectItem>)}
-      {suites.map(value => <SelectItem key={value.suite_key} value={value.suite_key}>{value.title} · {value.current_revision_id ? '已采用' : '尚未采用'}</SelectItem>)}
-    </SelectContent></Select>
-    {loading && <ReadSkeleton label="正在读取检查版本…" kind="inline"/>}
-    {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-    {unavailable.length > 0 && <p role="alert" className="text-sm text-destructive">{unavailable.length} 项检查暂不可用。请核对权限、关联检查或版本内容。</p>}
-    {!loading && !error && selected && !suite && <p role="alert">所选检查当前不可访问，请重新选择。</p>}
-    <Button variant="outline" size="sm" disabled={loading || busy} onClick={reload}>刷新检查列表</Button>
-    {active && suite && revisionId && <CheckerRelease key={'enterprise:' + suite.suite_key} scope={`catalog:${suite.suite_key}`} suiteKey={suite.suite_key} revisionId={revisionId} onBusyChange={changeBusy} onPublished={reload} onDependency={choose}/>}
-  </section>
-  return <section aria-label="预定义检查目录" className="min-w-0 space-y-4">
-    <header className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold">预定义检查</h2><p className="mt-1 text-sm text-muted-foreground">按版本与客户选择检查。打开来源只供核对，不会采用版本。</p></div><Button variant="outline" size="sm" disabled={loading || busy} onClick={reload}>刷新预定义目录</Button></header>
-    {loading && <ReadSkeleton label="正在读取预定义检查…" kind="inline"/>}
+  return <section aria-label="系统程序目录" className="min-w-0 space-y-4">
+    <header className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold">系统程序目录</h2><p className="mt-1 text-sm text-muted-foreground">按版本与客户浏览系统提供的程序。打开只供查看，不会采用版本。</p></div><Button variant="outline" size="sm" disabled={loading || busy} onClick={reload}>刷新预定义目录</Button></header>
+    {loading && <ReadSkeleton label="正在读取系统程序…" kind="inline"/>}
     {error && <p role="alert" className="text-sm text-destructive">{error} 请重新读取目录。</p>}
-    {predefinedError && <p role="alert" className="text-sm text-destructive">预定义检查目录不可用。未列出任何来源路径。</p>}
-    {!loading && !error && !predefinedError && !predefined.length && <p className="text-sm">暂无预定义检查。</p>}
+    {predefinedError && <p role="alert" className="text-sm text-destructive">系统程序目录暂时不可用。</p>}
+    {!loading && !error && !predefinedError && !predefined.length && <p className="text-sm">暂无系统程序。</p>}
     <div className="grid min-w-0 gap-6 lg:grid-cols-[19rem_minmax(0,1fr)]">
       <nav ref={tree} aria-label="检查目录" onKeyDown={moveInTree} className={'min-w-0 lg:max-h-[calc(100dvh-14rem)] lg:overflow-y-auto lg:border-r lg:pr-4 ' + (path ? 'max-lg:hidden' : '')}>
         <ul role="tree" aria-label="按版本和客户浏览" className="space-y-1">{renderNodes(nodes)}</ul>

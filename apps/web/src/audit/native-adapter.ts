@@ -9,6 +9,7 @@ import type {UploadAdapter} from './uploads'
 import type {AuditArchiveAdapter} from './archive-contract'
 import type {AuditUsageAdapter} from './usage-contract'
 import type {AuditSharingAdapter} from './sharing-contract'
+import {ruleTemplateKey} from './rule-templates.ts'
 
 export const nativeSharingAdapter: AuditSharingAdapter = {
   listTargets: (query, kind, pageToken) => readWithDeadline(signal => request(`/audit-share-targets?${new URLSearchParams({query, kind, ...(pageToken ? {page_token: pageToken} : {})})}`, 'GET', undefined, signal), '读取组织目录超时，请重新读取目标。'),
@@ -291,7 +292,8 @@ export function createNativeAuditAdapter(options: {deepOffered: boolean; custome
       const {rules} = await request<components['schemas']['RulesList']>('/rules', 'GET', undefined, signal)
       // Recognition accepts only the newest version of a rule: one no other version names as its predecessor.
       const replaced = new Set(rules.map(rule => rule.predecessor_id))
-      return rules.filter(rule => rule.kind === 'engine' && !replaced.has(rule.id)).map(rule => ({id: rule.id, title: rule.title}))
+      // The same template keys the rules page shows, so a person picks a template by the name they already know.
+      return rules.filter(rule => rule.kind === 'engine' && !replaced.has(rule.id)).map(rule => ({id: rule.id, title: rule.title, type: rule.type ?? undefined, template: ruleTemplateKey(rule)}))
     },
     precheck: {
       async history(id) {return (await request<components['schemas']['PrecheckHistory']>(`${taskPath(id)}/prechecks`)).snapshots},

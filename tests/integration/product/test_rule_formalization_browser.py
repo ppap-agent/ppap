@@ -27,6 +27,29 @@ from psycopg.types.json import Jsonb
 from pydantic import SecretStr
 from worker import process_claimed
 
+
+def back_to_templates(page):
+    from playwright.sync_api import expect
+
+    page.get_by_role("navigation", name="位置", exact=True).get_by_role("link", name="规则模板", exact=True).click()
+    expect(page.get_by_role("searchbox", name="搜索规则模板", exact=True)).to_be_visible()
+
+
+def open_rule(page, title):
+    """Template list, the template that holds the rule, then the rule's file type in it."""
+    from playwright.sync_api import expect
+
+    if page.get_by_role("navigation", name="位置", exact=True).count():
+        back_to_templates(page)
+    page.get_by_role("searchbox", name="搜索规则模板", exact=True).fill(title)
+    template = page.get_by_role("main").get_by_role("listitem").get_by_role("link").first
+    expect(template).to_be_visible()
+    template.click()
+    row = page.get_by_role("row").filter(has_text=title).get_by_role("link")
+    item = page.get_by_role("link").filter(has_text=title).filter(visible=True)
+    row.or_(item).first.click()
+
+
 ROOT = Path(__file__).resolve().parents[3]
 NS = "https://example.test/ns#"
 _VOCAB = {
@@ -326,29 +349,20 @@ def test_saved_clause_confirms_against_the_real_api(formalization_browser):
         page.on("request", lambda item: generations.append(item.url) if item.method == "POST" and "/formalizations/" in item.url and item.url.endswith("/generations") else None)
         page.goto(f.web + "/requirements")
         expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
-        for label in ("客户要求", "企业检查版本", "预定义检查"):
-            expect(page.get_by_role("tab", name=label, exact=True)).to_have_count(0)
-        expect(page.get_by_role("button", name="查看系统提供的检查", exact=True)).to_be_visible()
-        page.get_by_role("searchbox", name="搜索审核规则", exact=True).fill("编号")
-        rule_link = page.get_by_role("link", name="编号规则", exact=True).first
-        numbered = page.get_by_role("row").filter(has_text="编号规则")
-        expect(numbered).to_contain_text("继续确认")
-        expect(numbered.get_by_role("link", name="编号规则", exact=True)).to_have_attribute("aria-describedby", re.compile(r"^rule-action-.+-wide$"))
-        expect(rule_link).to_be_visible()
-        # Checks have their own two entries; they are not repeated as rows among the rules.
-        expect(page.get_by_role("button", name="编号检查")).to_have_count(0)
-        page.get_by_role("button", name="查看系统提供的检查", exact=True).click()
+        navigation = page.get_by_role("navigation", name="产品导航", exact=True)
+        # Rules live in templates; programs have their own page; neither is a tab of the other.
+        expect(page.get_by_role("tab", name="企业检查版本", exact=True)).to_have_count(0)
+        navigation.get_by_role("button", name="自动审核", exact=True).click()
+        expect(page).to_have_url(re.compile(r"[?&]rulesArea=automation"))
+        page.get_by_role("tab", name=re.compile("^全部")).click()
+        expect(page.get_by_role("link", name="编号检查", exact=True)).to_be_visible()
+        page.get_by_role("link", name="浏览系统程序目录", exact=True).click()
         expect(page).to_have_url(re.compile(r"[?&]rulesArea=predefined"))
         assert "requirement=" not in page.url
         assert "reqVersion=" not in page.url
-        page.get_by_role("button", name="返回审核规则", exact=True).click()
-        page.get_by_role("button", name="企业检查版本", exact=True).click()
-        expect(page.get_by_role("region", name="企业检查版本", exact=True)).to_be_visible()
-        page.get_by_role("button", name="返回审核规则", exact=True).click()
-        expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
-        rule_link = page.get_by_role("link", name="编号规则", exact=True).first
-        rule_link.click()
-        expect(page.get_by_text("检查功能尚待完善", exact=False)).to_have_count(0)
+        navigation.get_by_role("button", name="规则模板", exact=True).click()
+        open_rule(page, "编号规则")
+        expect(page.get_by_text("还不能自动审核，审核时由人工逐条判断。", exact=True)).to_have_count(0)
         expect(page).to_have_url(re.compile(rf"[?&]requirement={f.rule_id}"))
         deep_link = page.url
         page.goto(f.web + "/requirements")
@@ -567,39 +581,19 @@ def test_saved_clause_confirms_against_the_real_api(formalization_browser):
         assert "<script" not in copied
         overflow = page.evaluate("() => document.documentElement.scrollWidth - document.documentElement.clientWidth")
         assert overflow <= 1, overflow
-        page.get_by_role("link", name="返回审核规则", exact=True).click()
-        search = page.get_by_role("searchbox", name="搜索审核规则", exact=True)
-        search.click()
-        for _ in range(15):
-            if search.evaluate("element => element === document.activeElement"):
-                break
-            page.keyboard.press("Tab")
-        expect(search).to_be_focused()
+        back_to_templates(page)
+        search = page.get_by_role("searchbox", name="搜索规则模板", exact=True)
         assert search.evaluate("element => element.getBoundingClientRect().height") >= 44
-        search.fill("编号规则")
-        page.keyboard.press("Enter")
+        open_rule(page, "编号规则")
         expect(page.get_by_role("region", name="系统是这样理解的 c1", exact=True)).to_be_visible()
-        page.get_by_role("link", name="返回审核规则", exact=True).click()
-        search = page.get_by_role("searchbox", name="搜索审核规则", exact=True)
-        search.fill("不会命中的词")
-        expect(page.get_by_role("heading", name="没有匹配的规则", exact=True)).to_be_visible()
-        expect(page.get_by_role("link", name="编号规则", exact=True)).to_have_count(0)
-        page.keyboard.press("Escape")
-        expect(search).to_have_value("")
-        expect(search).to_be_focused()
-        page.get_by_role("searchbox", name="搜索审核规则", exact=True).fill("无检查")
-        bare_row = page.get_by_role("listitem").filter(has_text="无检查规则")
-        expect(bare_row).to_contain_text("检查功能尚待完善")
-        expect(bare_row).not_to_contain_text("核对规则")
-        bare = bare_row.get_by_role("link", name="无检查规则")
-        expect(bare).to_be_visible()
-        bare.click()
-        expect(page.get_by_text("这条规则还没有对应的检查，暂时不能用于自动审核。", exact=True)).to_be_visible()
+        back_to_templates(page)
+        page.get_by_role("searchbox", name="搜索规则模板", exact=True).fill("不会命中的词")
+        expect(page.get_by_role("heading", name="没有匹配的模板", exact=True)).to_be_visible()
+        open_rule(page, "无检查规则")
+        expect(page.get_by_text("还不能自动审核，审核时由人工逐条判断。", exact=True)).to_be_visible()
         with f.store._conn() as conn:
             conn.execute("UPDATE product.rule_versions SET body = jsonb_set(body, '{rules,0,rule_to_check}', '\"另一句原文\"') WHERE id=%s", (f.rule_id,))
-        page.get_by_role("link", name="返回审核规则", exact=True).click()
-        page.get_by_role("searchbox", name="搜索审核规则", exact=True).fill("编号规则")
-        page.get_by_role("link", name="编号规则").click()
+        open_rule(page, "编号规则")
         changed = page.get_by_role("region", name="系统是这样理解的 c1", exact=True)
         expect(changed).to_contain_text("原文或范围已变化")
         expect(changed.get_by_role("button", name="确认这一理解", exact=True)).to_have_count(0)

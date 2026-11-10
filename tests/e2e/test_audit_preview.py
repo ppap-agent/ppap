@@ -1564,8 +1564,8 @@ class AuditPreviewTests(unittest.TestCase):
             for label in ("工作台", "审核文件", "用量记录"):
                 expect(navigation.get_by_role("button", name=label, exact=True)).to_be_visible()
             expect(navigation.get_by_role("button", name="工作台", exact=True)).to_have_attribute("aria-current", "page")
-            navigation.get_by_role("link", name="模板库（在飞书新窗口打开）", exact=True).hover()
-            expect(page.get_by_role("tooltip", name="模板库", exact=True)).to_be_visible()
+            navigation.get_by_role("link", name="文件模板（在飞书新窗口打开）", exact=True).hover()
+            expect(page.get_by_role("tooltip", name="文件模板", exact=True)).to_be_visible()
             support_trigger = sidebar.get_by_role("button", name="联系我们", exact=True)
             support_trigger.click()
             page.get_by_role("dialog", name="联系我们", exact=True).get_by_role("button", name="关闭", exact=True).click()
@@ -1587,7 +1587,7 @@ class AuditPreviewTests(unittest.TestCase):
             close_workspace_panel(page)
             expand.press("Enter")
             expect(collapse).to_be_focused()
-            expect(navigation.get_by_text("模板库", exact=True)).to_be_visible()
+            expect(navigation.get_by_text("文件模板", exact=True)).to_be_visible()
             browser.close()
 
     def test_navigation_collapse_keeps_mobile_labels_report_and_task_access(self):
@@ -1605,14 +1605,14 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("dialog", name="审核任务", exact=True).get_by_role("navigation", name="任务列表", exact=True).get_by_role("button")).to_have_count(1)
             page.keyboard.press("Escape")
             expect(page.get_by_role("button", name="打开审核任务", exact=True)).to_be_focused()
-            sidebar.get_by_role("link", name="模板库（在飞书新窗口打开）", exact=True).hover()
-            expect(page.get_by_role("tooltip", name="模板库", exact=True)).to_be_visible()
+            sidebar.get_by_role("link", name="文件模板（在飞书新窗口打开）", exact=True).hover()
+            expect(page.get_by_role("tooltip", name="文件模板", exact=True)).to_be_visible()
             page.set_viewport_size({"width": 390, "height": 844})
             expect(sidebar).to_have_count(0)
-            expect(page.get_by_role("tooltip", name="模板库", exact=True)).to_have_count(0)
+            expect(page.get_by_role("tooltip", name="文件模板", exact=True)).to_have_count(0)
             page.get_by_role("button", name="打开产品导航", exact=True).click()
             sheet = page.get_by_role("dialog", name="产品导航", exact=True)
-            for label in ("工作台", "审核文件", "模板库", "用量记录"):
+            for label in ("工作台", "审核文件", "文件模板", "用量记录"):
                 expect(sheet.get_by_role("navigation", name="产品导航", exact=True).get_by_text(label, exact=True)).to_be_visible()
             expect(sheet.get_by_role("button", name="联系我们", exact=True)).to_be_visible()
             page.keyboard.press("Escape")
@@ -1621,7 +1621,7 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("button", name="打开产品导航", exact=True).click()
             page.context.route("https://icoastline.feishu.cn/wiki/**", lambda route: route.fulfill(body="Template guide"))
             with page.expect_popup() as opened:
-                sheet.get_by_role("link", name="模板库（在飞书新窗口打开）", exact=True).click()
+                sheet.get_by_role("link", name="文件模板（在飞书新窗口打开）", exact=True).click()
             opened.value.close()
             page.keyboard.press("Escape")
             expect(sheet).to_have_count(0)

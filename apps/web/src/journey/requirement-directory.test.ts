@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {clearsRequirementQueryOnEscape, groupRequirementDirectory, publishedLibraryAfterRead, publishedRuleAction, requirementDirectory, requirementHaystack, requirementQueryHref, requirementSearchKeyAction} from './requirement-directory.ts'
+import {groupRequirementDirectory, publishedLibraryAfterRead, requirementDirectory} from './requirement-directory.ts'
 import {demoBasis} from './requirements-state.ts'
-import {scopeLabel, type RequirementCollection, type RequirementScope} from './requirement-library-state.ts'
+import type {RequirementCollection} from './requirement-library-state.ts'
 
 const scope = {customer: '', part: '', revision: '', allCustomers: true, allParts: true, allRevisions: true}
 
@@ -17,30 +17,7 @@ test('the requirement directory groups explicit predecessors and retains all imm
   assert.equal(directory.find(row => row.id === 'v1')!.versions.at(-1)!.clauseCount, 27)
   assert.equal(directory.find(row => row.id === 'other')!.versions[0].documentType, '全尺寸')
   assert.equal(directory.find(row => row.id === 'other')!.versions[0].suiteKey, 'custom:other')
-  assert.equal(requirementHaystack('控制计划规则', '客户', '控制计划', ['控制计划', 'Control plan']).includes('control plan'), true)
-  assert.equal(requirementHaystack('控制计划规则', '客户', '全尺寸').includes('全尺寸'), true)
-  assert.equal(requirementHaystack('控制计划规则', '客户', '控制计划').includes('全尺寸'), false)
   assert.equal(JSON.stringify(directory).includes('basis'), false)
-  assert.equal(publishedRuleAction({suiteKey: null, sourceReview: 'checked'}), '检查功能尚待完善')
-  assert.equal(publishedRuleAction({suiteKey: 'custom:1', sourceReview: 'partial'}), '继续确认')
-  assert.equal(publishedRuleAction({suiteKey: 'custom:1', sourceReview: 'checked'}), '核对规则')
-  assert.equal(publishedRuleAction({suiteKey: 'custom:1', sourceReview: 'unchecked'}), '核对出处')
-})
-
-test('a part number matches one rule and search does not push history', () => {
-  const part = (value: string): RequirementScope => ({customer: 'UAES', part: value, revision: '', allCustomers: false, allParts: false, allRevisions: true})
-  assert.equal(requirementHaystack('控制计划', scopeLabel(part('P-1')), '控制计划').includes('p-1'), true)
-  assert.equal(requirementHaystack('控制计划', scopeLabel(part('P-2')), '控制计划').includes('p-1'), false)
-  assert.equal(requirementQueryHref('https://ppap.example/requirements?requirement=1', 'P-1'), '/requirements?requirement=1&reqQuery=P-1')
-  assert.equal(requirementQueryHref('https://ppap.example/requirements?requirement=1&reqQuery=P-1', ''), '/requirements?requirement=1')
-  assert.equal(new URL('https://ppap.example' + requirementQueryHref('https://ppap.example/requirements', 'y'.repeat(250))).searchParams.get('reqQuery')!.length, 200)
-  assert.equal(clearsRequirementQueryOnEscape('P-1', 'Escape'), true)
-  assert.equal(clearsRequirementQueryOnEscape('', 'Escape'), false)
-  assert.equal(clearsRequirementQueryOnEscape('P-1', 'Enter'), false)
-  assert.equal(requirementSearchKeyAction('Escape', 'P-1'), 'clear')
-  assert.equal(requirementSearchKeyAction('Enter', 'P-1'), 'open')
-  assert.equal(requirementSearchKeyAction('Tab', 'P-1'), 'none')
-  assert.equal(requirementSearchKeyAction('Escape', ''), 'none')
 })
 
 test('directory refresh preserves local drafts and lets server metadata replace cached published labels', () => {
@@ -51,7 +28,6 @@ test('directory refresh preserves local drafts and lets server metadata replace 
   assert.equal(result[0].versions[0].title, '服务端名称')
   assert.equal(result[0].versions[0].clauseCount, 9)
   assert.deepEqual(result[0].versions[0].documentTypeAliases, ['控制计划', 'Control plan'])
-  assert.equal(requirementHaystack(result[0].versions[0].title, '', result[0].versions[0].documentType, result[0].versions[0].documentTypeAliases).includes('control plan'), true)
   assert.equal(result[0].draft!.title, '尚未保存的修改')
   assert.deepEqual(collection, before)
 })

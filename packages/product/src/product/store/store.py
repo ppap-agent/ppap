@@ -3090,12 +3090,13 @@ class AuthStore:
                 raise ValueError("customer_default_conflict")
             return {"customer_preference": row[0], "revision": row[1]}
 
-    def list_rules(self, tenant_id: str) -> list[dict]:
+    def list_rules(self, tenant_id: str, *, catalog: bool = False) -> list[dict]:
+        """``catalog`` adds display fields for the rules page; matching and fingerprints use the plain shape."""
         with self._conn() as conn:
-            return self._list_rules(conn, tenant_id)
+            return self._list_rules(conn, tenant_id, catalog=catalog)
 
     @staticmethod
-    def _list_rules(conn, tenant_id: str) -> list[dict]:
+    def _list_rules(conn, tenant_id: str, *, catalog: bool = False) -> list[dict]:
         rows = conn.execute(
             "SELECT id, title, body, created_at, predecessor_id, case_context FROM product.rule_versions WHERE tenant_id = %s ORDER BY created_at DESC, id DESC",
             (tenant_id,),
@@ -3115,6 +3116,13 @@ class AuthStore:
             suite_key = body.get("suite_key")
             if isinstance(suite_key, str) and suite_key:
                 item["suite_key"] = suite_key
+            if catalog:
+                # A product preset names its checker by customer and preset key; the rule catalog shows it without reading each rule.
+                preset_key = body.get("preset_key")
+                if isinstance(preset_key, str) and preset_key:
+                    item["preset_key"] = preset_key
+                clauses = body.get("rules")
+                item["clause_count"] = len(clauses) if isinstance(clauses, list) else 0
             out.append(item)
         return out
 

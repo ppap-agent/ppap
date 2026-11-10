@@ -87,7 +87,7 @@ class RulePreparationTests(unittest.TestCase):
                         self.assertEqual(detail.status, 200)
                         self.assertNotEqual(detail.json()["source_file_version_id"], source["source_file_version_id"], "Parsing must not publish an unconfirmed rule")
                     page.get_by_label("要求名称", exact=True).fill(title)
-                    for label in ("不限定客户", "不限定零件", "不限定图纸修订"):
+                    for label in ("放入通用规则", "不限定零件", "不限定图纸修订"):
                         page.get_by_label(label, exact=True).check()
                     page.get_by_label("来源说明／变更原因", exact=True).fill("按 POC 原始 DOCX 核对完整条款及出处。")
                     for identity, text in expected:
@@ -160,7 +160,7 @@ class RulePreparationTests(unittest.TestCase):
             clause = clauses.get_by_role("article", name="条款 1", exact=True)
             confirm_clause_source(page, clause, "rules[0].rule_to_check", "必须填写零件号")
             page.get_by_label("要求名称", exact=True).fill(title)
-            page.get_by_label("适用客户", exact=True).fill("  测试客户  ")
+            page.get_by_label("所属模板", exact=True).fill("  测试客户  ")
             page.get_by_label("适用零件", exact=True).fill("  零件 P-1  ")
             page.get_by_label("不限定图纸修订", exact=True).check()
             page.get_by_label("来源说明／变更原因", exact=True).fill("依据结构化客户规则核对首个版本。")
@@ -175,11 +175,12 @@ class RulePreparationTests(unittest.TestCase):
             page.get_by_role("button", name="确认并保存版本", exact=True).click()
             expect(page.get_by_role("status").filter(has_text="版本 v1 已保存")).to_be_visible()
             saved_url = page.url
-            page.get_by_role("link", name="返回审核规则", exact=True).click()
-            page.get_by_role("searchbox", name="搜索审核规则", exact=True).fill(title)
-            link = page.get_by_role("link", name=title, exact=True).filter(visible=True)
-            expect(link).to_have_count(1)
-            link.click()
+            page.get_by_role("navigation", name="位置", exact=True).get_by_role("link", name="规则模板", exact=True).click()
+            page.get_by_role("searchbox", name="搜索规则模板", exact=True).fill(title)
+            page.get_by_role("main").get_by_role("listitem").get_by_role("link").first.click()
+            row = page.get_by_role("row").filter(has_text=title)
+            expect(row).to_have_count(1)
+            row.get_by_role("link").click()
             saved_query, reopened_query = parse_qs(urlsplit(saved_url).query), parse_qs(urlsplit(page.url).query)
             self.assertEqual(reopened_query["requirement"], saved_query["requirement"])
             published = page.request.get(f"{api}/rules/{saved_query['reqVersion'][0]}")

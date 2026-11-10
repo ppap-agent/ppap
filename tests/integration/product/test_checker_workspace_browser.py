@@ -22,6 +22,7 @@ import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import quote
 from uuid import uuid4
 
 import httpx
@@ -1005,7 +1006,7 @@ def test_multi_clause_wording_reconfirmation_verifies_four_independent_documents
 
 def test_first_uaes_adoption_from_rule_library_freezes_dependencies(workspace_product):
     """A fresh UAES tenant adopts real source through Web before its first Round."""
-    from audit.standard_suites import predefined_directory_suites, source_title
+    from audit.standard_suites import predefined_directory_suites
     from playwright.sync_api import expect, sync_playwright
 
     f = workspace_product
@@ -1027,7 +1028,7 @@ def test_first_uaes_adoption_from_rule_library_freezes_dependencies(workspace_pr
         page.set_default_timeout(20000)
         try:
             page.goto(f.web + "/requirements?checkerSuite=UAES%3AU08")
-            catalog = page.get_by_role("region", name="企业检查版本", exact=True)
+            catalog = page.get_by_role("main")
             release = catalog.get_by_role("region", name="检查发布与版本记录", exact=True)
             expect(release.get_by_text("先采用关联检查版本", exact=True)).to_be_visible()
             release.get_by_role("button", name="查看 UAES:U07", exact=True).click()
@@ -1036,8 +1037,10 @@ def test_first_uaes_adoption_from_rule_library_freezes_dependencies(workspace_pr
             expect(page).to_have_url(re.compile(r"checkerSuite=UAES%3AU12"))
             publications = []
             for key in ordered:
-                catalog.get_by_label("选择检查", exact=True).click()
-                page.get_by_role("option", name=re.compile("^" + re.escape(source_title(baselines[key])) + " · ")).click()
+                # Each program opens from the automatic review list by its own address.
+                page.goto(f.web + "/requirements?rulesArea=automation&checkerSuite=" + quote(key, safe=""))
+                catalog = page.get_by_role("main")
+                release = catalog.get_by_role("region", name="检查发布与版本记录", exact=True)
                 expect(release.get_by_text("尚未采用检查版本。发布后，本企业的新审核才会使用此版本。", exact=True)).to_be_visible()
                 expect(release.get_by_text(re.compile("官方版本 v1"))).to_be_visible()
                 release.get_by_role("button", name="采用此版本", exact=True).click()
@@ -1055,7 +1058,7 @@ def test_first_uaes_adoption_from_rule_library_freezes_dependencies(workspace_pr
                 expect(release.get_by_text("发布操作已完成", exact=True)).to_be_visible()
                 expect(release.get_by_text("当前已固定采用一个版本，不会自动升级。", exact=True)).to_be_visible()
                 page.reload()
-                catalog = page.get_by_role("region", name="企业检查版本", exact=True)
+                catalog = page.get_by_role("main")
                 release = catalog.get_by_role("region", name="检查发布与版本记录", exact=True)
                 expect(release.get_by_text(re.compile("当前使用"))).to_be_visible()
                 active = response_json(page.request.get(f.web + f"/api/suites/{key}/active"))
@@ -1248,7 +1251,7 @@ def test_directory_revision_selection_pi_and_rollback_keep_exact_frozen_sources(
             page.reload()
             expect(detail.get_by_title("官方修订 " + revisions["v5"], exact=True)).to_be_visible()
             if viewport["width"] == 1440:
-                tree = page.get_by_role("region", name="预定义检查目录", exact=True)
+                tree = page.get_by_role("region", name="系统程序目录", exact=True)
                 branch = tree.get_by_role("treeitem", name="v6", exact=True)
                 if branch.get_attribute("aria-expanded") == "false":
                     branch.click()

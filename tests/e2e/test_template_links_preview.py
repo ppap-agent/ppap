@@ -27,7 +27,7 @@ class TemplateLinksPreviewTests(unittest.TestCase):
                     if width < 1024:
                         page.get_by_role("button", name="打开产品导航", exact=True).click()
                     nav = page.get_by_role("navigation", name="产品导航", exact=True).filter(visible=True)
-                    expect(nav.get_by_role("link", name="模板库（在飞书新窗口打开）", exact=True)).to_have_attribute("href", GUIDE)
+                    expect(nav.get_by_role("link", name="文件模板（在飞书新窗口打开）", exact=True)).to_have_attribute("href", GUIDE)
                     page.close()
             browser.close()
 

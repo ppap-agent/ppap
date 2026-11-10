@@ -361,9 +361,11 @@ UAES v5 的后续验收由 [Issue #295](https://github.com/ppap-agent/ppap/issue
 
 ## 企业首次采用检查版本
 
-审核规则页的「检查版本」（`/requirements?checkerSuite=...`）可在首次审核前读取可访问候选并明确采用。无企业或官方指针时，读取返回 `candidate_only`、`current_revision_id=null` 和单独的 `candidate_revision_id`，不把候选当作已生效。未验证候选须确认风险，只写本租户指针；先采用直接关联检查，UAES 顺序为 U12/U16 → U07 → U08。已采用版本因依赖变化而过期时，可重新验证，或在同一页面明确确认继续使用未验证版本。上述操作不构成官方发布，不改已有 Round。发布回包未知时只读取原操作，不自动重新发布。
+审核规则下有两页：「规则模板」（默认，`/requirements`）按模板组织规则——产品预置规则按客户形成系统模板，上传规则按“所属模板”（规则的客户字段）归入本企业模板，不限定客户的归入「通用规则」；「自动审核」（`?rulesArea=automation`）列出执行自动审核的程序。新建审核在确认规则时可选一个模板，按文件类型为每份文件设置规则后重新识别。
 
-审核规则默认打开 Predefined Checkers 主目录（`checkerPath`），按 `GET /suites` 返回的真实路径展开版本、客户和规则组。仓库存在但未安装的叶子可见，只有 `availability=installed` 且带有效官方 Revision 的来源可打开；v2/v3/v4 真实 package 目录仅只读展示，不伪造叶子。来源路径与已安装 Revision 分开显示，不用企业当前采用版本替代官方来源。未安装、不可读、身份冲突或扫描失败分别报告，不回退。企业检查版本、客户要求与上传是相邻工作区，URL 深链及浏览器前进后退恢复同一选定路径；浏览目录不安装、不采用，也不调用模型。
+「自动审核」中的程序页（`/requirements?rulesArea=automation&checkerSuite=...`，旧地址 `?checkerSuite=` 仍可打开）可在首次审核前读取可访问候选并明确采用。无企业或官方指针时，读取返回 `candidate_only`、`current_revision_id=null` 和单独的 `candidate_revision_id`，不把候选当作已生效。未验证候选须确认风险，只写本租户指针；先采用直接关联检查，UAES 顺序为 U12/U16 → U07 → U08。已采用版本因依赖变化而过期时，可重新验证，或在同一页面明确确认继续使用未验证版本。上述操作不构成官方发布，不改已有 Round。发布回包未知时只读取原操作，不自动重新发布。
+
+「自动审核」页底部的「系统程序目录」（`checkerPath` 或 `rulesArea=predefined`）按 `GET /suites` 返回的真实路径展开版本、客户和规则组。仓库存在但未安装的叶子可见，只有 `availability=installed` 且带有效官方 Revision 的来源可打开；v2/v3/v4 真实 package 目录仅只读展示，不伪造叶子。来源路径与已安装 Revision 分开显示，不用企业当前采用版本替代官方来源。未安装、不可读、身份冲突或扫描失败分别报告，不回退。URL 深链及浏览器前进后退恢复同一选定路径；浏览目录不安装、不采用，也不调用模型。
 
 ## Checker Core 个人模型配置
 

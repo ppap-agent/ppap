@@ -36,6 +36,36 @@ def open_customer_requirements(page):
     expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
 
 
+def back_to_templates(page):
+    """Rules sit in templates; the trail's first link returns to the template list."""
+    from playwright.sync_api import expect
+
+    page.get_by_role("navigation", name="位置", exact=True).get_by_role("link", name="规则模板", exact=True).click()
+    expect(page.get_by_role("searchbox", name="搜索规则模板", exact=True)).to_be_visible()
+
+
+def find_rule_template(page, title):
+    """Search the template list for a rule and return the one matching template link."""
+    from playwright.sync_api import expect
+
+    search = page.get_by_role("searchbox", name="搜索规则模板", exact=True)
+    search.fill(title)
+    template = page.get_by_role("main").get_by_role("listitem").get_by_role("link").first
+    expect(template).to_be_visible()
+    return template
+
+
+def open_rule(page, title):
+    """Open a rule the way a person does: template list, then its file type in that template."""
+
+    if page.get_by_role("navigation", name="位置", exact=True).count():
+        back_to_templates(page)
+    find_rule_template(page, title).click()
+    row = page.get_by_role("row").filter(has_text=title).get_by_role("link")
+    item = page.get_by_role("link").filter(has_text=title).filter(visible=True)
+    row.or_(item).first.click()
+
+
 ROOT = Path(__file__).resolve().parents[2]
 JOB = "00000000-0000-4000-8000-000000000001"
 SOURCE = "00000000-0000-4000-8000-000000000002"
@@ -208,21 +238,18 @@ class RuleInteractionTests(unittest.TestCase):
             )
             page.route("**/api/rules/rule-b1", lambda route: held.append(route))
             page.goto(WEB + "/requirements?rulesArea=requirements")
-            expect(page.get_by_role("link", name="规则 A", exact=True)).to_be_visible()
-            expect(page.get_by_role("link", name="规则 B", exact=True)).to_be_visible()
+            find_rule_template(page, "规则 B")
             self.assertEqual(reads.count("/rule-library"), 1)
             self.assertFalse(any(path.startswith(("/rules/", "/files/")) for path in reads))
-            page.get_by_role("link", name="规则 A", exact=True).click()
+            open_rule(page, "规则 A")
             expect(page.get_by_role("article", name="条款 1", exact=True)).to_contain_text("新版条款 A")
             self.assertEqual([path for path in reads if path.startswith("/rules/")], ["/rules/rule-a2", "/rules/rule-a2/formalizations/1"])
-            page.get_by_role("tab", name="版本变化", exact=True).click()
+            page.get_by_role("tab", name="版本记录", exact=True).click()
             expect(page.get_by_role("region", name="版本差异", exact=True)).to_contain_text("旧版条款 A")
             self.assertNotIn("/rules/rule-b1", reads)
-            page.get_by_role("link", name="返回审核规则", exact=True).click()
-            page.get_by_role("link", name="规则 B", exact=True).click()
+            open_rule(page, "规则 B")
             expect(page.get_by_role("status", name="正在读取规则版本…", exact=True)).to_be_visible()
-            page.get_by_role("link", name="返回审核规则", exact=True).click()
-            page.get_by_role("link", name="规则 A", exact=True).click()
+            open_rule(page, "规则 A")
             expect(page.get_by_role("article", name="条款 1", exact=True)).to_contain_text("新版条款 A")
             self.assertEqual(len(held), 1)
             with page.expect_response(lambda response: response.url.endswith("/api/rules/rule-b1")) as late:
@@ -244,13 +271,13 @@ class RuleInteractionTests(unittest.TestCase):
             self.native_rule_routes(page, state)
             self.open_requirement(page)
             expect(page.get_by_label("要求名称", exact=True)).to_have_value("规则 A")
-            notice = page.get_by_role("status").filter(has_text="客户范围尚未确认")
+            notice = page.get_by_role("status").filter(has_text="还没有选择所属模板")
             expect(notice).to_be_visible()
-            page.get_by_label("不限定客户", exact=True).check()
+            page.get_by_label("放入通用规则", exact=True).check()
             expect(notice).to_have_count(0)
-            page.get_by_label("不限定客户", exact=True).uncheck()
+            page.get_by_label("放入通用规则", exact=True).uncheck()
             expect(notice).to_be_visible()
-            page.get_by_label("适用客户", exact=True).fill("指定客户")
+            page.get_by_label("所属模板", exact=True).fill("指定客户")
             expect(notice).to_have_count(0)
             expect(page.get_by_label("要求名称", exact=True)).to_have_value("规则 A")
             self.assertEqual(state["saves"], [])
@@ -401,11 +428,12 @@ class RuleInteractionTests(unittest.TestCase):
             page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="工作台", exact=True).click()
             address = page.url
             held[0].fulfill(json={**state["source"], "status": "ready"})
-            page.locator("a").filter(has_text="迟到规则").first.wait_for(state="attached")
+            # The late reply lands as an unsorted draft in the hidden rules page, without leaving this page.
+            page.locator("a").filter(has_text="待整理").first.wait_for(state="attached")
             expect(page.get_by_role("heading", name="工作台", exact=True)).to_be_visible()
             self.assertEqual(page.url, address)
             open_customer_requirements(page)
-            expect(page.get_by_role("link", name="迟到规则", exact=True).filter(visible=True)).to_be_visible()
+            find_rule_template(page, "迟到规则")
             self.assertEqual(state["saves"], [])
             browser.close()
 
@@ -493,13 +521,13 @@ class RuleInteractionTests(unittest.TestCase):
                         expect(page.get_by_role("heading", name="已核对要求", exact=True)).to_be_visible()
                         self.assertIn("requirement=" + rule["id"], page.url)
                         self.assertIn("reqVersion=" + rule["id"], page.url)
-                        page.get_by_role("link", name="返回审核规则", exact=True).click()
+                        back_to_templates(page)
                     else:
                         expect(page.get_by_role("heading", name="审核规则" if destination == "list" else "工作台", exact=True)).to_be_visible()
                         self.assertEqual(page.url, address)
                     if destination == "audit":
                         open_customer_requirements(page)
-                    expect(page.get_by_role("link", name="已核对要求", exact=True).filter(visible=True)).to_be_visible()
+                    find_rule_template(page, "已核对要求")
                     self.assertEqual(len(state["saves"]), 1)
                     page.close()
             browser.close()
@@ -613,10 +641,9 @@ class RuleInteractionTests(unittest.TestCase):
             expect(page.get_by_label("版本号", exact=True)).to_have_value("v2")
             held = []
             page.route("**/api/rules/" + published["id"], lambda route: held.append(route))
-            page.get_by_role("tab", name="版本变化", exact=True).click()
+            page.get_by_role("tab", name="版本记录", exact=True).click()
             expect(page.get_by_role("status", name="正在读取规则版本…", exact=True)).to_be_visible()
-            page.get_by_role("link", name="返回审核规则", exact=True).click()
-            page.get_by_role("link", name="已核对要求", exact=True).filter(visible=True).click()
+            open_rule(page, "已核对要求")
             expect(page.get_by_label("版本号", exact=True)).to_have_value("v2")
             page.get_by_label("来源说明／变更原因", exact=True).fill("等待旧版本期间补充的说明")
             expect(page.get_by_label("版本号", exact=True)).to_have_value("v2")
@@ -736,8 +763,8 @@ class RuleInteractionTests(unittest.TestCase):
             page.get_by_role("option", name="控制计划", exact=True).click()
             page.get_by_role("button", name="提取条款", exact=True).click()
             self.check_requirement(page)
-            page.get_by_label("不限定客户", exact=True).uncheck()
-            page.get_by_label("适用客户", exact=True).fill("测试客户")
+            page.get_by_label("放入通用规则", exact=True).uncheck()
+            page.get_by_label("所属模板", exact=True).fill("测试客户")
             page.get_by_label("已核对本版本的来源、范围和变更", exact=True).check()
             page.get_by_role("button", name="确认并保存版本", exact=True).click()
             expect(page.get_by_role("status").filter(has_text="版本 v1 已保存")).to_be_visible()
@@ -751,7 +778,7 @@ class RuleInteractionTests(unittest.TestCase):
             expect(page.get_by_role("option", name="测试客户", exact=True)).to_be_visible()
             page.keyboard.press("Escape")
             open_customer_requirements(page)
-            page.get_by_role("link", name="已核对要求", exact=True).filter(visible=True).click()
+            open_rule(page, "已核对要求")
             page.reload()
             expect(page.get_by_role("heading", name="已核对要求", exact=True)).to_be_visible()
             expect(page.get_by_text("检查 A", exact=True)).to_be_visible()
@@ -775,7 +802,7 @@ class RuleInteractionTests(unittest.TestCase):
             page.get_by_role("dialog").get_by_role("button", name="工作台", exact=True).click()
             expect(page.get_by_role("heading", name="工作台", exact=True)).to_be_visible()
             open_customer_requirements(page)
-            page.get_by_role("link", name="未发布的规则草稿").filter(visible=True).click()
+            open_rule(page, "未发布的规则草稿")
             expect(page.get_by_label("要求名称", exact=True)).to_have_value("未发布的规则草稿")
             page.reload()
             expect(page.get_by_label("要求名称", exact=True)).to_have_value("未发布的规则草稿")
@@ -823,16 +850,19 @@ class RuleInteractionTests(unittest.TestCase):
 
         page.route("**/api/rule-library", library)
 
-    def test_rule_coverage_counts_built_in_rules_and_keeps_customer_only_types_apart(self):
+    def test_built_in_rules_form_one_system_template_per_customer(self):
         from audit.presets import customer_presets, preset_rule_body
         from playwright.sync_api import expect
         from product.rules import document_types
 
-        rules = []
+        rules, details = [], {}
         for preset in customer_presets():
             body = preset_rule_body(preset.customer, preset.entry_id)
             identity = {"id": preset.entry_id, "title": preset.title, "kind": "engine", "created_at": "2026-10-01T00:00:00Z", "predecessor_id": None}
-            rules.append({**identity, "customer_scope": "restricted", "type": body["type"], "rule_profile": "v4", "customers": body["customers"], "models": [], "parts": []})
+            listed = {"customer_scope": "restricted", "type": body["type"], "rule_profile": "v4", "customers": body["customers"], "models": [], "parts": []}
+            rules.append({**identity, **listed, "preset_key": body.get("preset_key", preset.entry_id), "clause_count": len(body["rules"])})
+            detail = {"source_file_version_id": None, "source_file_id": None, "created_by": None, "case_context": {}, "customer_scope": "restricted"}
+            details[preset.entry_id] = {**identity, "body": body, **detail}
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page(viewport={"width": 1440, "height": 1000})
@@ -840,22 +870,30 @@ class RuleInteractionTests(unittest.TestCase):
             self.native_rule_routes(page, state)
             page.route("**/api/rules", lambda route: route.fulfill(json={"rules": rules}))
             page.route("**/api/rule-types", lambda route: route.fulfill(json={"types": document_types()}))
-            page.goto(WEB + "/requirements?rulesArea=requirements")
-            page.get_by_role("button", name="覆盖情况", exact=True).click()
-            coverage = page.get_by_role("region", name="规则覆盖度", exact=True)
-            for customer, count in (("UAES", "19/28"), ("理想", "17/17"), ("蔚来", "5/17")):
-                expect(coverage.get_by_role("button").filter(has_text=customer).filter(has_text=f"已收录 {count} 类")).to_be_visible()
-            coverage.get_by_role("button", name=re.compile("^UAES")).click()
-            types = coverage.get_by_role("list", name="UAES 的文件类型", exact=True)
-            photo = types.get_by_role("listitem").filter(has_text="生产件样品照片")
-            expect(photo).to_contain_text("已收录")
-            expect(types.get_by_role("listitem").filter(has_text="检具验收报告")).to_contain_text("未收录")
-            expect(coverage).to_contain_text("已收录、已提供检查、已通过验证是三项分开的数量")
-            expect(coverage.get_by_role("button", name=re.compile("^UAES"))).to_contain_text("已提供检查 0 类")
-            expect(coverage.get_by_role("button", name=re.compile("^UAES"))).to_contain_text("已通过验证 0 类")
-            expect(types).not_to_contain_text("E07")
-            coverage.get_by_role("button", name=re.compile("^蔚来")).click()
-            expect(coverage.get_by_role("list", name="蔚来 的文件类型", exact=True)).not_to_contain_text("生产件样品照片")
+            page.route("**/api/suites", lambda route: route.fulfill(json={"suites": [], "predefined": []}))
+
+            def preset_detail(route):
+                found = details.get(urlsplit(route.request.url).path.rsplit("/", 1)[1])
+                route.fulfill(json=found) if found else route.fallback()
+
+            page.route("**/api/rules/*", preset_detail)
+            page.goto(WEB + "/requirements")
+            system = page.get_by_role("region", name="系统提供", exact=True)
+            for customer, count in (("UAES", 19), ("理想", 17), ("蔚来", 5)):
+                expect(system.get_by_role("link").filter(has_text=f"{customer} 规则").filter(has_text=f"{count} 类文件")).to_be_visible()
+            expect(page.get_by_text("检查功能尚待完善")).to_have_count(0)
+            system.get_by_role("link").filter(has_text="UAES 规则").click()
+            expect(page.get_by_role("heading", name="UAES 规则", exact=True)).to_be_visible()
+            photo = page.get_by_role("row").filter(has_text="生产件样品照片")
+            expect(photo).to_contain_text("还不能自动审核")
+            expect(page.get_by_text(re.compile("本模板没有这些文件的规则：.*检具验收报告"))).to_be_visible()
+            photo.get_by_role("link").click()
+            expect(page.get_by_role("navigation", name="位置", exact=True)).to_contain_text("UAES 规则")
+            expect(page.get_by_role("region", name="规则条款", exact=True).get_by_role("article").first).to_be_visible()
+            page.get_by_role("navigation", name="位置", exact=True).get_by_role("link", name="UAES 规则", exact=True).click()
+            page.get_by_role("navigation", name="位置", exact=True).get_by_role("link", name="规则模板", exact=True).click()
+            page.get_by_role("link").filter(has_text="蔚来 规则").click()
+            expect(page.get_by_role("main")).not_to_contain_text("生产件样品照片")
             browser.close()
 
     def test_native_rule_catalog_refresh_failure_keeps_the_saved_version(self):
@@ -947,9 +985,9 @@ class RuleInteractionTests(unittest.TestCase):
             open_customer_requirements(page)
             page.get_by_label("上传共用规则文件").set_input_files({"name": "新增规则.json", "mimeType": "application/json", "buffer": b"{}"})
             page.get_by_label("要求名称", exact=True).fill("待核对规则")
-            page.get_by_role("tab", name="版本变化", exact=True).click()
-            page.get_by_role("link", name="返回审核规则", exact=True).click()
-            page.get_by_role("searchbox", name="搜索审核规则", exact=True).fill("待核对")
+            page.get_by_role("tab", name="版本记录", exact=True).click()
+            back_to_templates(page)
+            page.get_by_role("searchbox", name="搜索规则模板", exact=True).fill("待核对")
             page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="工作台", exact=True).click()
             page.get_by_role("button", name="继续当前审核", exact=True).click()
             expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
@@ -1476,8 +1514,7 @@ class RuleInteractionTests(unittest.TestCase):
             expect(page.get_by_label("要求名称", exact=True)).to_be_visible()
             first = state["parses"][0]
             self.assertEqual(len(state["held"]), 1)
-            page.get_by_role("link", name="返回审核规则", exact=True).click()
-            expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
+            back_to_templates(page)
             page.get_by_label("上传共用规则文件").set_input_files({"name": "B.json", "mimeType": "application/json", "buffer": b"second"})
             state["status"] = "succeeded"
             page.get_by_label("适用资料类型").click()
@@ -1691,9 +1728,7 @@ class RuleInteractionTests(unittest.TestCase):
             self.assertEqual(published["source_file_version_id"], state["source"]["id"])
             expect(page.get_by_label("要求名称", exact=True)).to_have_count(0)
             state["writes"].clear()
-            page.get_by_role("link", name="返回审核规则", exact=True).click()
-            expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
-            page.get_by_role("link", name="已核对要求", exact=True).filter(visible=True).click()
+            open_rule(page, "已核对要求")
             expect(page.get_by_role("heading", name="已核对要求", exact=True)).to_be_visible()
             page.reload()
             expect(page.get_by_role("heading", name="已核对要求", exact=True)).to_be_visible()
@@ -1836,7 +1871,7 @@ class RuleInteractionTests(unittest.TestCase):
 
         expect(page.get_by_label("要求名称", exact=True)).to_have_value("规则 A")
         page.get_by_label("要求名称", exact=True).fill("已核对要求")
-        for label in ("不限定客户", "不限定零件", "不限定图纸修订"):
+        for label in ("放入通用规则", "不限定零件", "不限定图纸修订"):
             page.get_by_label(label, exact=True).check()
         page.get_by_label("来源说明／变更原因", exact=True).fill("已按原件核对。")
         clause = page.get_by_role("article", name="条款 1", exact=True)
@@ -1904,9 +1939,9 @@ class RuleInteractionTests(unittest.TestCase):
             dialog.get_by_role("button", name="放弃此草稿", exact=True).click()
             expect(dialog).to_have_count(0)
             expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
-            expect(page.get_by_role("heading", name="还没有审核规则", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="还没有规则模板", exact=True)).to_be_visible()
             page.reload()
-            expect(page.get_by_role("heading", name="还没有审核规则", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="还没有规则模板", exact=True)).to_be_visible()
             self.assertEqual(state["writes"], [])
             self.assertEqual(state["saves"], [])
             self.assertEqual(dialogs, [])
@@ -1970,8 +2005,8 @@ class RuleInteractionTests(unittest.TestCase):
             state = self.requirement_routes(page)
             self.open_requirement(page)
             self.check_requirement(page)
-            page.get_by_label("不限定客户", exact=True).uncheck()
-            page.get_by_label("适用客户", exact=True).fill("  测试客户  ")
+            page.get_by_label("放入通用规则", exact=True).uncheck()
+            page.get_by_label("所属模板", exact=True).fill("  测试客户  ")
             page.get_by_label("不限定零件", exact=True).uncheck()
             page.get_by_label("适用零件", exact=True).fill("  零件 P-1  ")
             page.get_by_label("已核对本版本的来源、范围和变更", exact=True).check()
@@ -2000,8 +2035,7 @@ class RuleInteractionTests(unittest.TestCase):
                     self.check_requirement(page)
                     page.get_by_role("button", name="确认并保存版本", exact=True).click()
                     expect(page.get_by_role("status").filter(has_text="版本 v1 已保存")).to_be_visible()
-                    page.get_by_role("link", name="返回审核规则", exact=True).click()
-                    page.get_by_role("link", name="已核对要求", exact=True).filter(visible=True).click()
+                    open_rule(page, "已核对要求")
                     section = page.get_by_role("region", name="系统是这样理解的 1", exact=True)
                     expect(section.get_by_role("heading", name="系统是这样理解的", exact=True)).to_be_visible()
                     expect(section).to_contain_text("系统还没有解释这条规则")

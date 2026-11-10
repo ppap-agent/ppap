@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {canOpenPredefined, checkerLabel, directoryParts, predefinedTree, readPredefinedPath, readRulesArea, rulesAreaAddress, sourceIdentity, type InstalledPredefinedEntry, type PredefinedEntry} from './predefined-catalog.ts'
+import {canOpenPredefined, checkerLabel, directoryParts, predefinedTree, readPredefinedPath, readRulesArea, sourceIdentity, type InstalledPredefinedEntry, type PredefinedEntry} from './predefined-catalog.ts'
 
 const entry = (path: string, revision = `rev-${path}`): InstalledPredefinedEntry => ({path, title: `标题 ${path}`, availability: 'installed', suite_key: path.split('/').slice(1).join(':'), revision_id: revision, clause_count: 0, bound_clause_count: 0, evidence_reader_clause_ids: []})
 
@@ -33,18 +33,16 @@ test('friendly labels retain the original title and do not supply navigation ide
   assert.equal(cp.title, '控制计划（CP）审核规则')
 })
 
-test('checkerPath and existing enterprise deep links select one workspace without adoption', () => {
-  const url = new URL('https://ppap.test/requirements?checkerPath=v5%2FUAES%2FU08')
-  assert.equal(readPredefinedPath(url), 'v5/UAES/U08')
-  assert.equal(readRulesArea(url), 'predefined')
-  const enterprise = rulesAreaAddress(url, 'enterprise')
-  assert.equal(readRulesArea(enterprise), 'enterprise')
-  assert.equal(enterprise.searchParams.has('checkerPath'), false)
-  assert.equal(readRulesArea(rulesAreaAddress(url, 'requirements')), 'requirements')
-  assert.equal(readRulesArea(new URL('https://ppap.test/requirements?requirement=customer-rule')), 'requirements')
-  assert.equal(readRulesArea(new URL('https://ppap.test/requirements')), 'requirements')
-  assert.equal(readRulesArea(new URL('https://ppap.test/requirements?rulesArea=predefined')), 'predefined')
-  assert.equal(readRulesArea(rulesAreaAddress(enterprise, 'predefined')), 'predefined')
+test('rule templates are the default; old checker addresses land on automatic review or the program directory', () => {
+  const area = (address: string) => readRulesArea(new URL(`https://ppap.test/requirements${address}`))
+  assert.equal(readPredefinedPath(new URL('https://ppap.test/requirements?checkerPath=v5%2FUAES%2FU08')), 'v5/UAES/U08')
+  assert.equal(area('?checkerPath=v5%2FUAES%2FU08'), 'predefined')
+  assert.equal(area('?rulesArea=predefined'), 'predefined')
+  assert.equal(area('?checkerSuite=UAES%3AU08'), 'automation')
+  assert.equal(area('?checkerSuite='), 'automation')
+  assert.equal(area('?rulesArea=enterprise'), 'automation')
+  assert.equal(area('?rulesArea=automation'), 'automation')
+  for (const address of ['', '?rulesArea=requirements', '?requirement=customer-rule', '?template=system%3AUAES', '?systemRule=r1', '?rulesArea=requirements&checkerSuite=x']) assert.equal(area(address), 'templates')
   assert.equal(readPredefinedPath(new URL('https://ppap.test/requirements?checkerSuite=UAES%3AU08')), '')
 })
 

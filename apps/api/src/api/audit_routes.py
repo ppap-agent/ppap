@@ -90,7 +90,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
         principal, denied = require_principal(request)
         if denied:
             return denied
-        return JSONResponse({"rules": store.list_rules(principal.tenant_id)})
+        return JSONResponse({"rules": store.list_rules(principal.tenant_id, catalog=True)})
 
     @app.get("/audit-archive", response_model=wc.AuditArchivePage)
     def audit_archive_list(

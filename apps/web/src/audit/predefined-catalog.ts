@@ -4,7 +4,7 @@ import type {components} from '../generated/openapi'
 export type PredefinedEntry = components['schemas']['SuitePredefined']
 export type InstalledPredefinedEntry = PredefinedEntry & {suite_key: string; revision_id: string}
 export type PredefinedNode = {path: string; name: string; entry?: PredefinedEntry; children: PredefinedNode[]}
-export type RulesArea = 'predefined' | 'enterprise' | 'requirements'
+export type RulesArea = 'templates' | 'automation' | 'predefined'
 
 export function directoryParts(value: string): string[] | null {
   const parts = value.split('/')
@@ -53,23 +53,13 @@ export function checkerLabel(entry: PredefinedEntry): string {
 export function readPredefinedPath(url: URL): string {return url.searchParams.get('checkerPath') || ''}
 export function predefinedScope(path: string): string {return `predefined:${path}`}
 
+/** Rule templates are the default. Older checker addresses keep working: a chosen Suite opens automatic review, a source path the program directory. */
 export function readRulesArea(url: URL): RulesArea {
   const area = url.searchParams.get('rulesArea')
-  if (url.searchParams.has('requirement') || area === 'requirements') return 'requirements'
+  if (url.searchParams.has('requirement') || url.searchParams.has('template') || url.searchParams.has('systemRule') || area === 'requirements') return 'templates'
   if (url.searchParams.has('checkerPath') || area === 'predefined') return 'predefined'
-  if (url.searchParams.has('checkerSuite')) return 'enterprise'
-  return 'requirements'
-}
-
-export function rulesAreaAddress(url: URL, area: RulesArea): URL {
-  const next = new URL(url)
-  next.searchParams.delete('requirement'); next.searchParams.delete('reqVersion'); next.searchParams.delete('reqTab')
-  // Customer requirements are the default; naming a tab is needed only to leave a checker selection in place.
-  if (area === 'predefined' || area === 'requirements' && (next.searchParams.has('checkerPath') || next.searchParams.has('checkerSuite'))) next.searchParams.set('rulesArea', area)
-  else next.searchParams.delete('rulesArea')
-  if (area === 'enterprise') {next.searchParams.delete('checkerPath'); if (!next.searchParams.has('checkerSuite')) next.searchParams.set('checkerSuite', '')}
-  else if (area === 'predefined') next.searchParams.delete('checkerSuite')
-  return next
+  if (url.searchParams.has('checkerSuite') || area === 'automation' || area === 'enterprise') return 'automation'
+  return 'templates'
 }
 
 /** The source revision stays official even when the tenant adopted a different one. */

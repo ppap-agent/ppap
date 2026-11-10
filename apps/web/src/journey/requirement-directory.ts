@@ -4,35 +4,6 @@ import type {RequirementCollection, RequirementDraft, RequirementScope, Requirem
 export type SourceReview = 'unchecked' | 'partial' | 'checked'
 export type RequirementDirectoryVersion = {id: string; title: string; version: string; scope: RequirementScope; at: string; baseId: string | null; clauseCount: number; documentType: string; documentTypeAliases: string[]; suiteKey: string | null; sourceReview: SourceReview}
 
-export function publishedRuleAction(version: {suiteKey: string | null; sourceReview: SourceReview}): string {
-  if (!version.suiteKey) return '检查功能尚待完善'
-  if (version.sourceReview === 'unchecked') return '核对出处'
-  if (version.sourceReview === 'partial') return '继续确认'
-  return '核对规则'
-}
-
-export function requirementHaystack(title: string, scopeText: string, documentType: string, aliases: readonly string[] = []) {
-  return `${title} ${scopeText} ${documentType} ${(aliases ?? []).join(' ')}`.toLocaleLowerCase()
-}
-
-/** Keep Back on the previous page. Typing or clearing search replaces this address only. */
-export function requirementQueryHref(current: string, query: string): string {
-  const url = new URL(current)
-  const value = query.slice(0, 200)
-  if (value) url.searchParams.set('reqQuery', value)
-  else url.searchParams.delete('reqQuery')
-  return `${url.pathname}${url.search}${url.hash}`
-}
-
-export function clearsRequirementQueryOnEscape(query: string, key: string): boolean {
-  return key === 'Escape' && query.length > 0
-}
-
-export function requirementSearchKeyAction(key: string, query: string): 'clear' | 'open' | 'none' {
-  if (clearsRequirementQueryOnEscape(query, key)) return 'clear'
-  if (key === 'Enter') return 'open'
-  return 'none'
-}
 export type RequirementDirectoryCollection = {id: string; versions: RequirementDirectoryVersion[]; draft: RequirementDirectoryVersion | null}
 export type ReadRequirementVersions = (ids: string[], signal: AbortSignal) => Promise<RequirementVersion[]>
 

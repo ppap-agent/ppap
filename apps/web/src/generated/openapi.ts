@@ -5054,6 +5054,8 @@ export interface components {
         };
         /** Rule */
         Rule: {
+            /** Clause Count */
+            clause_count?: number;
             /** Created At */
             created_at: string;
             /**
@@ -5073,6 +5075,8 @@ export interface components {
             parts: string[] | null;
             /** Predecessor Id */
             predecessor_id: string | null;
+            /** Preset Key */
+            preset_key?: string;
             /** Rule Profile */
             rule_profile: string | null;
             /** Suite Key */

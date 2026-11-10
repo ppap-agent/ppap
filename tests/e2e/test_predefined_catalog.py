@@ -127,8 +127,8 @@ class PredefinedCatalogBrowserTests(unittest.TestCase):
         with sync_playwright() as playwright:
             browser, page = self._open(playwright, revisions, hits, controls=controls)
             page.goto(WEB + "/requirements?rulesArea=predefined")
-            directory = page.get_by_role("region", name="预定义检查目录", exact=True)
-            expect(directory.get_by_role("heading", name="预定义检查", exact=True)).to_be_visible()
+            directory = page.get_by_role("region", name="系统程序目录", exact=True)
+            expect(directory.get_by_role("heading", name="系统程序目录", exact=True)).to_be_visible()
             expect(page.get_by_role("combobox", name="选择检查", exact=True)).to_have_count(0)
             v5 = directory.get_by_role("treeitem", name="v5", exact=True)
             expect(v5).to_be_visible()
@@ -186,11 +186,10 @@ class PredefinedCatalogBrowserTests(unittest.TestCase):
             expect(detail.get_by_text(re.compile("历史目录，只能查看"))).to_be_visible()
             self.assertEqual(revisions, [OFFICIAL_V5])
             self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 390)
-            page.get_by_role("button", name="返回审核规则", exact=True).click()
-            expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
-            expect(page.get_by_role("button", name="上传规则", exact=True)).to_be_visible()
-            page.get_by_role("button", name="查看系统提供的检查", exact=True).click()
-            expect(page.get_by_role("region", name="预定义检查目录", exact=True)).to_be_visible()
+            page.get_by_role("navigation", name="位置", exact=True).get_by_role("link", name="自动审核", exact=True).click()
+            expect(page.get_by_role("tab", name=re.compile("^全部"))).to_be_visible()
+            page.get_by_role("link", name="浏览系统程序目录", exact=True).click()
+            expect(page.get_by_role("region", name="系统程序目录", exact=True)).to_be_visible()
             screenshots = Path(os.environ.get("PPAP_SCREENSHOT_DIR", "/tmp/ppap291-screens"))
             screenshots.mkdir(parents=True, exist_ok=True)
             page.screenshot(path=str(screenshots / "predefined-mobile.png"), full_page=True)
@@ -203,7 +202,7 @@ class PredefinedCatalogBrowserTests(unittest.TestCase):
             with self.subTest(controls=controls), sync_playwright() as playwright:
                 browser, page = self._open(playwright, [], [], controls=controls)
                 page.goto(WEB + "/requirements?checkerPath=v5%2FUAES%2FU08")
-                directory = page.get_by_role("region", name="预定义检查目录", exact=True)
+                directory = page.get_by_role("region", name="系统程序目录", exact=True)
                 expect(directory.get_by_role("alert").first).to_be_visible()
                 expect(directory.get_by_role("treeitem")).to_have_count(0)
                 expect(directory.get_by_title("官方修订 " + OFFICIAL_V5, exact=True)).to_have_count(0)
@@ -266,7 +265,7 @@ class PredefinedCatalogBrowserTests(unittest.TestCase):
     def _select(self, page, path):
         from playwright.sync_api import expect
 
-        directory = page.get_by_role("region", name="预定义检查目录", exact=True)
+        directory = page.get_by_role("region", name="系统程序目录", exact=True)
         parts = path.split("/")
         for name in parts[:-1]:
             branch = directory.get_by_role("treeitem", name=re.compile("^" + re.escape(name) + "(?: 历史目录，只读)?$"))
