@@ -217,6 +217,7 @@ const confirmationRefusals: Record<string, string> = {
   audit_task_charging_unavailable: '当前环境尚未开放本次审核计费，审核没有开始。',
   task_confirmation_changed: '审核依据已变化，审核没有开始。请刷新审核依据，核对后重新确认。',
   suite_validation_required: '当前检查版本需要重新验证，审核没有开始。请在检查版本工作区重新验证并发布，或明确确认采用未验证版本，再刷新审核依据。',
+  suite_version_confirmation_required: '当前采用的是历史检查版本，审核没有开始。请确认并采用目录版本，再刷新审核依据。',
   suite_artifact_missing: '所选检查程序缺失，审核没有开始。请先恢复该版本的程序文件，再核对审核依据。',
   task_revision_conflict: '任务文件已在其他页面更新。本次确认未被接收，请核对当前任务。',
   task_not_ready: '文件识别尚未完成。本次确认未被接收，请读取当前任务。',

@@ -2871,7 +2871,17 @@ class AuthStore:
             prepared = [{"role": "target", "file_version_id": file["file"]["id"], "rule_body": match["rule"]["body"]}]
             try:
                 targets.extend(freeze_selected_targets(self, conn, principal.tenant_id, prepared, preparation=True))
-            except (KeyError, ValueError):
+            except ValueError as exc:
+                if str(exc) == "suite_version_confirmation_required":
+                    # Keep the matched rule. Precheck reads this same task and must
+                    # name the carrier head. Clearing the rule hides that refusal
+                    # as a missing suite and lets no other revision be chosen.
+                    gaps = [gap for gap in match.get("gaps", []) if gap != "suite_version_confirmation_required"]
+                    match["gaps"] = [*gaps, "suite_version_confirmation_required"]
+                else:
+                    match.update(state="failed", rule=None, gaps=[*match.get("gaps", []), "checker_suite_unavailable"])
+                    task["estimated_points"] = None
+            except KeyError:
                 match.update(state="failed", rule=None, gaps=[*match.get("gaps", []), "checker_suite_unavailable"])
                 task["estimated_points"] = None
             else:
@@ -2894,13 +2904,24 @@ class AuthStore:
             # is the server's exact prospective Round, including explicit reasons
             # for sources that will be removed atomically during admission.
             exclusions = [{"file_version_id": row["file"]["id"], "reason": row["removal_reason"]} for row in files if row["selection"] == "removed"]
+            version_confirmation = {
+                row["file"]["id"]
+                for row in selected
+                if "suite_version_confirmation_required" in ((row.get("match") or {}).get("gaps") or [])
+            }
+            exclusions.extend(
+                {"file_version_id": file_id, "reason": "当前是历史检查版本，需确认目录版本后才能审核"}
+                for file_id in sorted(version_confirmation)
+            )
             exclusions.extend(
                 {"file_version_id": row["file"]["id"], "reason": "预检已确认的阻断缺陷，需修正后重新提交" if row["file"]["id"] in blocked else "未匹配到生效规则，未纳入审核"}
                 for row in selected
-                if row["file"]["id"] in blocked or row["match"]["state"] == "unmatched"
+                if row["file"]["id"] not in version_confirmation and (row["file"]["id"] in blocked or row["match"]["state"] == "unmatched")
             )
             task["confirmation_scope"] = {
-                "target_file_version_ids": sorted(row["file"]["id"] for row in selected if row["match"]["state"] == "matched" and row["file"]["id"] not in blocked),
+                "target_file_version_ids": sorted(
+                    row["file"]["id"] for row in selected if row["match"]["state"] == "matched" and row["file"]["id"] not in blocked and row["file"]["id"] not in version_confirmation
+                ),
                 "reference_file_version_ids": sorted(row["file"]["id"] for row in selected if row["match"]["state"] == "reference"),
                 "excluded_files": sorted(exclusions, key=lambda row: row["file_version_id"]),
             }
@@ -4686,8 +4707,6 @@ class AuthStore:
                     raise ValueError("task_input_locked")
                 if draft_status == DRAFT_ACCEPTED and not existing:
                     raise ValueError("draft_already_accepted")
-                if not existing and require_confirmation_basis and (not isinstance(expected_confirmation_basis_digest, str) or not re.fullmatch(r"[a-f0-9]{64}", expected_confirmation_basis_digest)):
-                    raise ValueError("invalid_task_confirmation")
                 task = self._recognition_public(conn, principal, source_draft_id)
                 selected = [row for row in task["files"] if row["selection"] == "selected"]
                 recognized_metadata = {row["file"]["id"]: dict((row.get("match") or {}).get("metadata") or {}) for row in selected}
@@ -4706,11 +4725,25 @@ class AuthStore:
                         rule_body = ((row.get("match") or {}).get("rule") or {}).get("body") or {}
                         if scope and row["match"]["state"] != "reference" and (owned["customer_preference"] != "UAES" or rule_body.get("suite_key") != "UAES:U13"):
                             raise ValueError("validation_scope_mismatch")
+                    if any("suite_version_confirmation_required" in ((row.get("match") or {}).get("gaps") or []) for row in selected):
+                        raise ValueError("suite_version_confirmation_required")
+                    # A carrier-only task has no frozen target, so it has no basis digest.
+                    # Refuse that head before treating the missing digest as a bad request.
+                    basis = expected_confirmation_basis_digest
+                    basis_ready = isinstance(basis, str) and re.fullmatch(r"[a-f0-9]{64}", basis)
+                    if not existing and require_confirmation_basis and not basis_ready:
+                        raise ValueError("invalid_task_confirmation")
                     if require_confirmation_basis and task["confirmation_basis_digest"] != expected_confirmation_basis_digest:
                         raise ValueError("task_confirmation_changed")
                     if self.settings.precheck_gate_enforced:
                         scope = task["confirmation_scope"]
-                        blocked = {row["file"]["id"] for row in selected if row["match"]["state"] == "matched" and row["file"]["id"] not in scope["target_file_version_ids"]}
+                        blocked = {
+                            row["file"]["id"]
+                            for row in selected
+                            if row["match"]["state"] == "matched"
+                            and row["file"]["id"] not in scope["target_file_version_ids"]
+                            and "suite_version_confirmation_required" not in (row["match"].get("gaps") or [])
+                        }
                         if blocked:
                             selected = [row for row in selected if row["file"]["id"] not in blocked]
                             if not any(row["match"]["state"] == "matched" for row in selected):

@@ -83,6 +83,9 @@ test('checker labels use exact frozen Suite facts and do not invent a generic fa
   assert.equal(checkerLabel(file, receipt), '控制计划检查 · 本次采用的检查 · 需要重新验证')
   assert.doesNotMatch(checkerLabel({...file, file: {...file.file, id: 'other'}}, receipt), /本次采用的检查/)
   assert.match(checkerLabel(file, {...receipt, input: {files: [{file: file.file, rule_execution: {mode: 'unavailable'}}]}}), /尚无可运行的检查，未检查/)
+  const carrier = {...file, match: {...file.match!, gaps: ['suite_version_confirmation_required']}}
+  assert.match(checkerLabel(carrier, {...receipt, input: {files: [{file: file.file, rule_execution: {mode: 'unavailable', reason: 'suite_version_confirmation_required'}}]}}), /需确认目录版本后才能检查/)
+  assert.doesNotMatch(checkerLabel(carrier), /已检查/)
 })
 
 

@@ -1005,12 +1005,12 @@ def test_multi_clause_wording_reconfirmation_verifies_four_independent_documents
 
 def test_first_uaes_adoption_from_rule_library_freezes_dependencies(workspace_product):
     """A fresh UAES tenant adopts real source through Web before its first Round."""
-    from audit.standard_suites import standard_suites
+    from audit.standard_suites import predefined_directory_suites
     from playwright.sync_api import expect, sync_playwright
 
     f = workspace_product
     ordered = ("UAES:U12", "UAES:U16", "UAES:U07", "UAES:U08")
-    baselines = {suite.suite_key: suite for suite in standard_suites() if suite.suite_key in ordered}
+    baselines = {suite.suite_key: suite for suite in predefined_directory_suites() if suite.suite_key in ordered}
     revisions = {
         key: f.suites.create_revision(tenant_id=None, suite_key=key, files=dict(baselines[key].files), created_by=None, related_suite_keys=baselines[key].related_suite_keys) for key in ordered
     }

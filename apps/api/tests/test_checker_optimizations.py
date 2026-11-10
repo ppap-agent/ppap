@@ -963,21 +963,84 @@ def test_fixed_suite_preserves_multiple_explicit_entrypoints_through_saved_candi
     assert all(row["snapshot"]["targets"][0]["binding"]["entrypoints"] == DIRECT_RULES["checker_binding"] for row in guest.fixed_manifests)
 
 
-def test_native_standard_suite_can_be_validated_without_generating_a_factory(auth_store_factory, monkeypatch):
+def test_new_optimization_refuses_a_legacy_carrier_without_running_it(auth_store_factory, monkeypatch):
     from audit.standard_suites import standard_suites
 
     standard = standard_suites()[0]
+    calls = []
+    monkeypatch.setattr("audit.standard_library.check_clause", lambda *_args, **_kwargs: calls.append("check") or (_ for _ in ()).throw(AssertionError("resolver")))
+    monkeypatch.setattr("audit.standard_suites._carriers", lambda *_args, **_kwargs: calls.append("carriers"))
+    monkeypatch.setattr("audit.presets.preset_source_bindings", lambda *_args, **_kwargs: calls.append("bindings"))
+    monkeypatch.setattr("audit.engine.routing.resolve_engine_agent_class", lambda *_args, **_kwargs: calls.append("resolver") or (_ for _ in ()).throw(AssertionError("resolver")))
     monkeypatch.setitem(globals(), "RULES", json.loads(standard.files["rules.json"]))
     monkeypatch.setitem(globals(), "PROGRAM", standard.files["checker.py"])
     f = fixture(auth_store_factory, count=1)
-    start(f, command(f, consume_model=False))
-    runtime, guest = actual_core_runtime(f, monkeypatch)
+    response = f.clients[0].post(f"/suite-revisions/{f.suite.id}/optimizations", json=command(f, consume_model=False))
+    assert response.status_code == 409, response.text
+    assert response.json() == {"error": "suite_version_confirmation_required"}
+    assert f.worker.claim_job("optimizer-test") is None
+    assert calls == []
+
+
+def test_new_optimization_refuses_a_related_legacy_carrier_without_running_it(auth_store_factory):
+    from audit.standard_suites import library_revision
+
+    f = fixture(auth_store_factory, count=1)
+    suites = SuiteStore(f.store.settings, f.store.objects, role="migrator")
+    carrier_source = b"from audit.standard_library import check_clause\nRESOURCES = {'carriers': {}, 'methods': {'C1': 'check'}}\ndef check(context):\n    return check_clause(context, RESOURCES)\n"
+    carrier = suites.create_revision(
+        tenant_id=None,
+        suite_key="REL:CARRIER",
+        files={"checker.py": carrier_source, "rules.json": json.dumps({"title": "旧", "rules": [{"id": "C1"}], "checker_binding": {"C1": "checker:check"}}).encode()},
+        created_by=None,
+    )
+    directory = suites.create_revision(
+        tenant_id=None,
+        suite_key="REL:DIR",
+        files={"checker.py": b"def create_audit(context):\n    return []\n", "rules.json": json.dumps(RULES).encode()},
+        related_suite_keys=("REL:CARRIER",),
+        created_by=None,
+        source_path="v5/ACME/DIR",
+    )
+    proof = {"reasons": [], "total_samples": 4, "passed_samples": 4, "new_errors": 0, "library_revision": library_revision(), "proof_digest": "ab" * 32, "report": {"related_revision_ids": []}}
+    with f.store._conn() as conn:
+        conn.execute(
+            """INSERT INTO product.suite_validations(tenant_id, revision_id, status, revision, suite_digest, related_suite_digests, proof)
+               VALUES (NULL, %s, 'verified', 1, %s, '{}', %s)""",
+            (carrier.id, carrier.resolved_digest, Jsonb(proof)),
+        )
+        conn.execute(
+            "INSERT INTO product.official_suite_heads(suite_key, current_revision_id, revision, validation_revision) VALUES ('REL:CARRIER', %s, 1, 1)",
+            (carrier.id,),
+        )
+    response = f.clients[0].post(f"/suite-revisions/{directory.id}/optimizations", json=command(f, consume_model=False))
+    assert response.status_code == 409, response.text
+    assert response.json() == {"error": "suite_version_confirmation_required"}
+    assert f.worker.claim_job("related-carrier") is None
+
+
+def test_non_carrier_optimization_does_not_call_legacy_selectors(auth_store_factory, monkeypatch):
+    calls = []
+
+    def forbidden(name):
+        def inner(*_args, **_kwargs):
+            calls.append(name)
+            raise AssertionError(name)
+
+        return inner
+
+    monkeypatch.setattr("audit.standard_library.check_clause", forbidden("check_clause"))
+    monkeypatch.setattr("audit.standard_suites._carriers", forbidden("_carriers"))
+    monkeypatch.setattr("audit.presets.preset_source_bindings", forbidden("preset_source_bindings"))
+    monkeypatch.setattr("audit.engine.routing.resolve_engine_agent_class", forbidden("resolve_engine_agent_class"))
+    monkeypatch.setattr("agent.execution.checker_guest.task_reference", forbidden("task_reference"))
+    f, candidate = direct_suite_fixture(auth_store_factory, monkeypatch)
+    runtime, _guest = actual_core_runtime(f, monkeypatch)
+    response = f.clients[0].post(f"/suite-revisions/{candidate['id']}/optimizations", json=command(f, consume_model=False))
+    assert response.status_code == 200, response.text
     receipt = development_handler(f.worker, runtime)(claim(f), ExecutionContext())
+    assert calls == [], receipt
     assert receipt["state"] == "completed", receipt
-    assert {row["clause_id"] for row in receipt["report"]["results"]} == set(standard.entrypoints)
-    saved = SuiteReleaseStore(f.store.settings, f.store.objects).detail(f.alice, receipt["candidate_revision_id"])
-    assert json.loads(saved["files"]["rules.json"])["checker_binding"] == dict(standard.entrypoints)
-    assert guest.generation_manifests == []
 
 
 def test_native_baseline_then_generated_factory_keeps_its_own_binding_and_tombstone(auth_store_factory, monkeypatch):

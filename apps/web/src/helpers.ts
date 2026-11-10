@@ -67,6 +67,7 @@ const analysisNotices: Record<string, string | null> = {
   document_text_unavailable: '无法读取文件文字，请核对原件后重新识别。',
   metadata_uses_excerpt: null,
   checker_suite_unavailable: null,
+  suite_version_confirmation_required: null,
   personal_model_required: null,
   metadata_extraction_failed: '业务信息识别失败，请人工核对。',
   document_classification_failed: '无法确定文件类型，请核对原件后重新识别。',

@@ -64,6 +64,7 @@ export function checkerLabel(file: Task['files'][number], snapshot?: PrecheckRec
   if (file.suite_admission?.force_unverified && file.suite_admission.verification_status !== 'verified') notices.push('已明确采用未验证版本')
   if (file.suite_admission?.samples_not_rerun) notices.push('官方已更新，尚未重新验证')
   if (file.match?.gaps?.includes('published_rules_changed')) notices.push('新规则尚未采用，本次按旧规则和已发布检查运行')
+  if (file.match?.gaps?.includes('suite_version_confirmation_required') || execution.reason === 'suite_version_confirmation_required') notices.push('当前是历史检查版本，需确认目录版本后才能检查')
   if (notices.length) return [title, ...notices].join(' · ')
   if (execution.mode === 'checker_core' && string(target.suite_revision_id) && string(target.suite_key)) return `${title} · 本次采用的检查${target.verification === 'verified' ? '' : ' · 需要重新验证'}`
   if (execution.mode === 'unavailable') return `${title} · 尚无可运行的检查，未检查`

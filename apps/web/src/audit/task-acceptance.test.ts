@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {components} from '../generated/openapi.ts'
-import {checkerSuiteUnavailable, confirmationScope, personalModelRequired, createTaskAcceptance, suiteAdmissionBlocks} from './task-acceptance.ts'
+import {checkerSuiteUnavailable, confirmationScope, personalModelRequired, createTaskAcceptance, suiteAdmissionBlocks, suiteVersionConfirmationRequired} from './task-acceptance.ts'
 
 type Task = components['schemas']['AuditTask']
 function pending(digest = 'a'.repeat(64)): Task {
@@ -255,6 +255,8 @@ test('lost stale-Suite refusal settles the original operation before a fresh rea
 test('a missing Suite is reported as an adoption step, not a file recognition failure', () => {
   assert.equal(checkerSuiteUnavailable({gaps: ['metadata_uses_excerpt', 'checker_suite_unavailable']}), true)
   assert.equal(checkerSuiteUnavailable({gaps: ['metadata_uses_excerpt']}), false)
+  assert.equal(suiteVersionConfirmationRequired({gaps: ['suite_version_confirmation_required']}), true)
+  assert.equal(suiteVersionConfirmationRequired({gaps: ['checker_suite_unavailable']}), false)
 })
 
 test('a missing personal model is reported apart from a failed file recognition', () => {
