@@ -98,6 +98,7 @@ class _Objects:
             self.pages = list(range(1, len(document) + 1))
             for number in self.pages:
                 page = document[number - 1]
+                page.set_rotation(0)
                 text = page.get_text()
                 self.roles[number] = _reference_role(text)
                 self.facts[number] = {}
@@ -149,7 +150,14 @@ class _Objects:
                 non_submission = bool(lines and lines[0] == "PPAP文件无法提交声明" and all(label in compact for label in ("序号", "文件类型", "无法提交", "现场查阅审核")))
                 if (checklist or non_submission) and not signatures and not dispositions and not authorizations:
                     self._note(
-                        {"kind": "pdf_region", "page": number, "bbox": list(page.search_for(lines[0])[0]), "source_sha256": digest, "coverage": "native_document_heading"},
+                        {
+                            "kind": "pdf_region",
+                            "page": number,
+                            "bbox": list(page.search_for(lines[0])[0]),
+                            "coordinate_system": "pdf_points_unrotated",
+                            "source_sha256": digest,
+                            "coverage": "native_document_heading",
+                        },
                         f"原生标题及正文结构确认本页为{lines[0]}。",
                         visual=False,
                     )
