@@ -22,6 +22,7 @@ import uvicorn
 from api import create_app
 from openpyxl import Workbook
 from product import build_product_store
+from product.historical_carrier import queue_historical_carrier_round
 from product.identity import SESSION_COOKIE
 from product.settings import Settings
 from worker import process_claimed
@@ -139,7 +140,7 @@ def running_product(auth_store_factory, v4_objects, core_system, tmp_path, reque
             assert time.monotonic() < deadline, "Native product server startup timed out"
             time.sleep(0.1)
         worker_thread.start()
-        yield web, admin.create_session(principal), errors
+        yield web, admin.create_session(principal), errors, admin, principal
     finally:
         stop.set()
         if worker_thread.ident:
@@ -195,7 +196,7 @@ def print_page(page, *, asset_diagnostics=(), screenshot=None):
 
 @pytest.mark.parametrize("running_product", ["UAES", "理想", "蔚来"], indirect=True)
 def test_customer_intake_to_original_issue_and_frozen_precheck_export(running_product, core_system, request, observe_browser_assets):
-    web, session, errors = running_product
+    web, session, errors, _admin, _principal = running_product
     customer = request.node.callspec.params["running_product"]
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
@@ -252,16 +253,21 @@ def test_customer_intake_to_original_issue_and_frozen_precheck_export(running_pr
             expect(snapshot_region.get_by_role("list", name="预检历史", exact=True)).to_be_visible()
             snapshot_region.get_by_role("button", name=re.compile("^资料第 1 版")).click()
             page.get_by_role("button", name="开始审核", exact=True).click()
-            result_file = page.get_by_role("button", name=re.compile(r"^特殊特性清单\.xlsx 不符合"))
+            issue = "尚有未确定项" if customer == "理想" else "不符合"
+            result_file = page.get_by_role("button", name=re.compile(rf"^特殊特性清单\.xlsx {issue}"))
             expect(result_file).to_be_visible(timeout=30000)
             # After the audit starts the precheck stays reachable behind its record button.
             expect(page.get_by_role("region", name="免费内容预检", exact=True)).to_have_count(0)
             expect(page.get_by_role("button", name="预检记录", exact=True)).to_be_visible()
             result_file.click()
-            page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name=re.compile("^不符合")).click()
+            page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name=re.compile("^无法判断" if customer == "理想" else "^不符合")).click()
             page.get_by_role("button", name=re.compile("^查看依据 ")).first.click()
             expect(page.get_by_role("article", name="条款判定依据", exact=True)).to_be_visible()
-            page.get_by_role("button", name="核对 特殊特性清单.xlsx", exact=True).first.click()
+            # A directory clause with no located evidence opens the original directly.
+            if customer == "理想":
+                page.get_by_role("dialog").get_by_role("button", name="打开原件", exact=True).click()
+            else:
+                page.get_by_role("button", name="核对 特殊特性清单.xlsx", exact=True).first.click()
             preview = page.get_by_role("region", name="原件预览", exact=True)
             expect(preview).to_be_visible()
             download_link = preview.get_by_role("link", name="下载原件", exact=True)
@@ -270,12 +276,18 @@ def test_customer_intake_to_original_issue_and_frozen_precheck_export(running_pr
             assert original_response.status == 200
             assert original_response.body() == source_bytes
             page.keyboard.press("Escape")
+            if customer == "理想":
+                # Every clause is unverified, so the product does not build a complete report.
+                expect(page.get_by_text("不生成完整报告", exact=False)).to_be_visible()
             page.get_by_role("button", name="报告中心", exact=True).click()
             report_download = page.get_by_role("button", name="下载当前报告", exact=True)
-            expect(report_download).to_be_enabled(timeout=30000)
-            with page.expect_download() as report_file:
-                report_download.click()
-            assert Path(report_file.value.path()).read_bytes().startswith(b"%PDF")
+            if customer == "理想":
+                expect(report_download).to_be_disabled()
+            else:
+                expect(report_download).to_be_enabled(timeout=30000)
+                with page.expect_download() as report_file:
+                    report_download.click()
+                assert Path(report_file.value.path()).read_bytes().startswith(b"%PDF")
             page.reload()
             expect(page.get_by_role("region", name="逐文件审核报告", exact=True)).to_be_visible()
             if customer == "UAES":
@@ -313,7 +325,7 @@ def test_customer_intake_to_original_issue_and_frozen_precheck_export(running_pr
 @pytest.mark.parametrize("running_product", ["蔚来"], indirect=True)
 @pytest.mark.parametrize("viewport", [{"width": 1440, "height": 1000}, {"width": 390, "height": 844}], ids=["desktop", "mobile"])
 def test_cross_file_problem_opens_both_authorized_frozen_originals(running_product, core_system, viewport):
-    web, session, errors = running_product
+    web, session, errors, admin, principal = running_product
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         context = browser.new_context(viewport=viewport)
@@ -363,9 +375,40 @@ def test_cross_file_problem_opens_both_authorized_frozen_originals(running_produ
             page.goto(web + "/tasks/" + response.json()["id"])
             expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_enabled(timeout=30000)
             expect(page.get_by_role("region", name="免费内容预检", exact=True)).to_contain_text("检查已完成", timeout=30000)
-            page.get_by_role("button", name="开始审核", exact=True).click()
-            target = page.get_by_role("button", name=re.compile(r"^PFMEA\.xlsx 不符合"))
+            # Confirm would freeze the directory head. N02:7 pairing still lives
+            # only in the v4 carrier, so replay those bytes and open that round.
+            from audit.standard_suites import standard_suites
+
+            task_id = response.json()["id"]
+            task = page.request.get(web + "/api/audit-tasks/" + task_id).json()
+            pfmea = next(row for row in task["files"] if row["file"]["original_filename"].startswith("PFMEA"))
+            carriers = {suite.suite_key: suite for suite in standard_suites()}
+            queued = queue_historical_carrier_round(
+                admin,
+                principal,
+                [
+                    {
+                        "version_id": file["file_version_id"],
+                        "role": "reference" if file.get("reference_only") else "target",
+                        "rule_id": pfmea["match"]["rule"]["id"] if not file.get("reference_only") else None,
+                        "rule_title": pfmea["match"]["rule"]["title"] if not file.get("reference_only") else None,
+                        "rule_body": json.loads(carriers["蔚来:N02"].files["rules.json"]) if not file.get("reference_only") else None,
+                        "suite": carriers["蔚来:N02"] if not file.get("reference_only") else None,
+                        "document_type": carriers["蔚来:N05" if file.get("reference_only") else "蔚来:N02"].document_type,
+                    }
+                    for _title, _data, file in originals
+                ],
+            )
+            deadline = time.monotonic() + 90
+            while page.request.get(web + "/api/rounds/" + queued["id"]).json()["execution"] != "completed":
+                assert time.monotonic() < deadline
+                page.wait_for_timeout(100)
+            page.goto(web + "/audit?round=" + queued["id"])
+            # Historical review names the file and shows the conclusion separately.
+            files = page.get_by_role("navigation", name="本轮文件", exact=True)
+            target = files.get_by_role("button", name="PFMEA.xlsx", exact=True)
             expect(target).to_be_visible(timeout=30000)
+            expect(page.get_by_role("region", name="审核详情", exact=True)).to_contain_text("不符合")
             target.click()
             basis = page.get_by_role("button", name=re.compile(r"^查看依据 N02:7\b"))
             basis.click()
@@ -380,7 +423,7 @@ def test_cross_file_problem_opens_both_authorized_frozen_originals(running_produ
             # layout after that animation, instead of mixing different frames.
             boxes = comparison.evaluate(
                 """async (element, versions) => {
-                    const sheet = element.closest('[data-slot="sheet-content"]');
+                    const sheet = element.closest('[data-slot="sheet-content"]') || element;
                     await Promise.all(sheet.getAnimations().map(animation => animation.finished.catch(() => {})));
                     const panes = Array.from(element.querySelectorAll('[data-file-version]'));
                     return versions.map(version => panes.find(pane => pane.dataset.fileVersion === version).getBoundingClientRect().toJSON());

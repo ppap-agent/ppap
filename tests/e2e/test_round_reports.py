@@ -204,7 +204,7 @@ def test_round_opens_its_frozen_existing_report_and_back_preserves_historical_co
         expect(page).to_have_url(address)
         expect(page.get_by_role("heading", name="原控制计划.xlsx", exact=True)).to_be_visible()
         expect(page.get_by_role("region", name="专注复核", exact=True)).to_be_visible()
-        expect(page.get_by_role("heading", name="1 · 原签字要求", exact=True)).to_be_visible()
+        expect(page.get_by_role("heading", name="第 1 条 · 原签字要求", exact=True)).to_be_visible()
         assert all(method == "GET" for method, _path in calls)
         browser.close()
 

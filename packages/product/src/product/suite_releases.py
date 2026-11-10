@@ -46,6 +46,12 @@ def adoption_block(suite: ResolvedSuite, *, verified: bool, force_unverified: bo
     """Release-boundary refusal. Partial official leaves ignore force_unverified."""
     if partial_official_directory_slice(suite):
         return "partial_directory_suite_not_adoptable"
+    from product.legacy_head_cutover import legacy_carrier_program
+
+    # force_unverified can adopt an unverified directory or enterprise program.
+    # It cannot make a historical class carrier the next head.
+    if legacy_carrier_program(suite.files):
+        return "suite_version_confirmation_required"
     if not verified and not force_unverified and not is_unimplemented_suite(suite):
         return "suite_confirmation_required"
     return None

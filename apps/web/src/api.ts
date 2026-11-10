@@ -118,6 +118,7 @@ const messages: Record<string,string> = {
   share_directory_user_permission_missing: '当前飞书登录尚未授予 PPAP 所需的目录访问权限。请检查飞书登录授权；如无法授权，请联系组织管理员。你也可以切回“人员”，清空搜索后向自己发送。',
   share_directory_timeout: '读取组织目录超时，请重新读取目标。',
   upload_request_conflict: '此传输请求已固定其他文件内容，不能替换。请核对原文件。',
+  suite_version_confirmation_required: '当前是历史检查版本，不能用于新审核。请改用目录版本后再采用。',
 }
 const safeRequestTrace = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9._-]{8,128}$/.test(value) ? value : undefined
 export const requestTrace = (cause: unknown) => safeRequestTrace(cause instanceof Error && 'traceId' in cause ? cause.traceId : undefined)

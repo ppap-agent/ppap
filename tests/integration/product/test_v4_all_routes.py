@@ -101,9 +101,20 @@ def test_each_source_accepts_and_freezes_its_actual_customer_checker(auth_store_
         assert core_system.calls == guest_calls + 1
         frozen_precheck = client.get(path).json()["precheck"]
         assert frozen_precheck["status"] == "succeeded", frozen_precheck
-        dependency_facts = [fact for row in frozen_precheck["result"]["files"] for fact in row["facts"] if ":dependency:" in fact.get("id", "")]
-        assert dependency_facts, "The source's applicable counterpart availability must run through the Worker"
-        assert not [fact for fact in dependency_facts if fact["status"] == "error"], dependency_facts
+        facts = [fact for row in frozen_precheck["result"]["files"] for fact in row["facts"]]
+        assert facts and not [fact for fact in facts if ":dependency:" in fact.get("id", "")], facts
+        for row in frozen_precheck["result"]["files"]:
+            by_id = {fact["id"]: fact for fact in row["facts"]}
+            assert by_id["coverage"]["status"] == "not_checked", row
+            assert by_id["coverage"]["message"] == "此 Suite 尚未实现免费准备检查；不能视为通过。"
+            assert by_id["engineering"] == {
+                **by_id["engineering"],
+                "status": "handoff",
+                "code": "S03",
+                "message": "正式工程结论由正式审核处理；预检未声明覆盖全部规则。",
+            }
+            assert row["coverage"]["by_status"]["not_checked"] == row["coverage"]["expected"], row["coverage"]
+            assert not row["coverage"]["by_status"].get("error"), row["coverage"]
         confirmed = client.post(
             path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0, "expected_confirmation_basis_digest": client.get(path).json()["confirmation_basis_digest"]}
         )

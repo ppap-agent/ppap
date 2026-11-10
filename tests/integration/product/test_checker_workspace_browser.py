@@ -403,7 +403,7 @@ def answer(page, f, round_, expected):
     page.get_by_role("button", name="查看依据 R1", exact=True).click()
     page.get_by_role("button", name="这条判错了", exact=True).focus()
     page.keyboard.press("Enter")
-    page.get_by_label("正确结论", exact=True).click()
+    page.get_by_role("combobox", name="正确结论", exact=True).click()
     page.get_by_role("option", name={"PASS": "符合", "NG": "不符合", "NA": "不适用"}[expected], exact=True).click()
     page.get_by_text("添加我在原件中找到的依据", exact=True).click()
     page.get_by_role("button", name="在原件上点选位置", exact=True).click()
@@ -791,9 +791,9 @@ def test_grouped_feedback_selection_and_read_only_history(workspace_product):
                 answer(page, f, round_, "NG")
             first, uploaded = rounds[0]
             page.goto(f.web + f"/audit?round={first['id']}&file={uploaded['id']}&clause=R1&basis=1&checkerFeedbackClause=R1")
-            expect(page.get_by_text("这 2 条可能是同一个原因：条款 R1 · Sheet · A", exact=True)).to_be_visible()
+            expect(page.get_by_text("这 2 条可能是同一个原因：第 1 条 · 阈值 · Sheet · A", exact=True)).to_be_visible()
             page.get_by_role("button", name="选择这组一起修复", exact=True).click()
-            page.get_by_label("本次修复条款 R1 的样本 2", exact=True).uncheck()
+            page.get_by_label("本次修复第 1 条 · 阈值 的样本 2", exact=True).uncheck()
             with page.expect_response(lambda r: r.request.method == "POST" and r.url.endswith("/optimizations")) as started:
                 page.get_by_role("button", name="仅保存待发布修改", exact=True).click()
             saved = response_json(started.value)
@@ -1005,12 +1005,12 @@ def test_multi_clause_wording_reconfirmation_verifies_four_independent_documents
 
 def test_first_uaes_adoption_from_rule_library_freezes_dependencies(workspace_product):
     """A fresh UAES tenant adopts real source through Web before its first Round."""
-    from audit.standard_suites import standard_suites
+    from audit.standard_suites import predefined_directory_suites, source_title
     from playwright.sync_api import expect, sync_playwright
 
     f = workspace_product
     ordered = ("UAES:U12", "UAES:U16", "UAES:U07", "UAES:U08")
-    baselines = {suite.suite_key: suite for suite in standard_suites() if suite.suite_key in ordered}
+    baselines = {suite.suite_key: suite for suite in predefined_directory_suites() if suite.suite_key in ordered}
     revisions = {
         key: f.suites.create_revision(tenant_id=None, suite_key=key, files=dict(baselines[key].files), created_by=None, related_suite_keys=baselines[key].related_suite_keys) for key in ordered
     }
@@ -1037,7 +1037,7 @@ def test_first_uaes_adoption_from_rule_library_freezes_dependencies(workspace_pr
             publications = []
             for key in ordered:
                 catalog.get_by_label("选择检查", exact=True).click()
-                page.get_by_role("option", name=re.compile("^" + re.escape(baselines[key].title) + " · ")).click()
+                page.get_by_role("option", name=re.compile("^" + re.escape(source_title(baselines[key])) + " · ")).click()
                 expect(release.get_by_text("尚未采用检查版本。发布后，本企业的新审核才会使用此版本。", exact=True)).to_be_visible()
                 expect(release.get_by_text(re.compile("官方版本 v1"))).to_be_visible()
                 release.get_by_role("button", name="采用此版本", exact=True).click()
@@ -1241,8 +1241,10 @@ def test_directory_revision_selection_pi_and_rollback_keep_exact_frozen_sources(
             before_navigation_jobs = tuple(f.guest.jobs)
             page.goto(f.web + "/requirements?checkerPath=" + quote("v5/测试客户/T01", safe=""))
             detail = page.get_by_role("region", name="检查详情", exact=True)
+            assert before_navigation["current_revision_id"] == revisions["v6"]
             expect(detail.get_by_title("官方修订 " + revisions["v5"], exact=True)).to_be_visible()
-            expect(detail).to_contain_text(revisions["v6"])
+            expect(detail).to_contain_text("本企业正在使用另一个版本；这里显示的是官方版本。")
+            expect(detail.get_by_role("heading", name="目录修订冻结验收", exact=True)).to_be_visible()
             page.reload()
             expect(detail.get_by_title("官方修订 " + revisions["v5"], exact=True)).to_be_visible()
             if viewport["width"] == 1440:

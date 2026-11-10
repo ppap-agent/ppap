@@ -547,6 +547,11 @@ class SuiteReleaseStore:
                 raise ValueError(blocked)
             if any(_selected_or_none(conn, principal.tenant_id, key) is None for key in revision["related_suite_keys"]):
                 raise ValueError("suite_dependencies_not_adopted")
+            from product.legacy_head_cutover import refuse_related_carrier
+
+            # A directory head cannot adopt while a related head is still a carrier.
+            # Do not replace that related head with another revision of the same key.
+            refuse_related_carrier(self, conn, principal.tenant_id, revision["related_suite_keys"])
             previous = str(head["current_revision_id"]) if head else None
             if previous is None:
                 try:
@@ -828,6 +833,9 @@ class SuiteReleaseStore:
             blocked = adoption_block(resolved, verified=True, force_unverified=False)
             if blocked:
                 raise ValueError(blocked)
+            from product.legacy_head_cutover import refuse_related_carrier
+
+            refuse_related_carrier(self, conn, None, revision["related_suite_keys"])
             if head:
                 cur.execute(
                     """UPDATE product.official_suite_heads SET current_revision_id = %s, revision = revision + 1,

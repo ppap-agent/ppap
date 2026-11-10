@@ -17,6 +17,7 @@ def preparation_runtime_revision(settings):
 
 def freeze_task_precheck(store, conn, principal, task):
     targets = {}
+    refusals = {}
     for row in task["files"]:
         match = row.get("match") or {}
         if row["selection"] != "selected" or match.get("state") != "matched" or row.get("reference_only"):
@@ -25,11 +26,19 @@ def freeze_task_precheck(store, conn, principal, task):
         try:
             (target,) = freeze_selected_targets(store, conn, principal.tenant_id, prepared, preparation=True)
             targets[target.file_version_id] = target
-        except (KeyError, ValueError):
-            # Missing/invalid adopted source is a visible preparation gap. Never
-            # import a legacy checker or make recognition disappear on this path.
+        except ValueError as exc:
+            # A carrier head must stay visible as a confirmation gap. Do not import
+            # a legacy checker or replace the file with another suite_key.
+            if str(exc) == "suite_version_confirmation_required":
+                refusals[row["file"]["id"]] = str(exc)
+        except KeyError:
             pass
     payload = frozen_precheck_input(task, principal.tenant_id, store.settings.standard_execution_policy().model_dump(mode="json"), targets=targets, initiating_user_id=principal.user_id)
+    for item in payload["files"]:
+        reason = refusals.get(item["file"]["id"])
+        if reason:
+            item["suite_target"] = None
+            item["rule_execution"] = {"mode": "unavailable", "reason": reason}
     payload["runtime_revision"] = preparation_runtime_revision(store.settings)
     payload["library_revision"] = library_revision()
     return payload

@@ -271,7 +271,7 @@ def test_waiting_audit_cannot_use_old_transaction_time_to_revive_lease(admission
 
 def test_first_standard_adoption_uses_tenant_heads_and_freezes_related_checks(auth_store_factory):
     from api import create_app
-    from audit.standard_suites import standard_suites
+    from audit.standard_suites import predefined_directory_suites
     from fastapi.testclient import TestClient
     from product import build_product_store
     from product.identity import SESSION_COOKIE
@@ -280,7 +280,7 @@ def test_first_standard_adoption_uses_tenant_heads_and_freezes_related_checks(au
     principal = store.upsert_feishu_identity("first-standard", "owner")
     suites = SuiteStore(store.settings, store.objects, role="migrator")
     ordered = ("UAES:U12", "UAES:U16", "UAES:U07", "UAES:U08")
-    baselines = {suite.suite_key: suite for suite in standard_suites() if suite.suite_key in ordered}
+    baselines = {suite.suite_key: suite for suite in predefined_directory_suites() if suite.suite_key in ordered}
     revisions = {key: suites.create_revision(tenant_id=None, suite_key=key, files=dict(baselines[key].files), created_by=None, related_suite_keys=baselines[key].related_suite_keys) for key in ordered}
     api = build_product_store(store.settings, objects=store.objects, role="api")
     with TestClient(create_app(store.settings, auth_store=api)) as client:

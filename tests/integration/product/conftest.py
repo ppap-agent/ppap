@@ -359,10 +359,10 @@ def core_system(monkeypatch, tmp_path):
 
         @staticmethod
         def adopt_standard(store, principal, *keys):
-            """Use real standard source under an explicit unverified adoption."""
-            from audit.standard_suites import standard_suites
+            """Adopt the directory Checker for a new audit. Historical carriers are not a new-audit source."""
+            from audit.standard_suites import predefined_directory_suites
 
-            baselines = {suite.suite_key: suite for suite in standard_suites()}
+            baselines = {suite.suite_key: suite for suite in predefined_directory_suites()}
             suites = SuiteStore(store.settings, store.objects, role="migrator")
             releases = SuiteReleaseStore(store.settings, store.objects, role="api")
             installed = {}

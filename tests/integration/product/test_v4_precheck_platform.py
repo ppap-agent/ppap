@@ -35,14 +35,14 @@ def system(auth_store_factory, monkeypatch):
     from agent.execution.precheck_runtime import run_precheck
     from agent.protocol import PrecheckEnvelope
     from agent.run import ExecutionContext
-    from audit.standard_suites import standard_suites
+    from audit.standard_suites import predefined_directory_suites
     from product.store.suite_releases import SuiteReleaseStore
     from product.store.suites import SuiteStore
     from worker.precheck_controller import precheck_handler
 
     # This fixture explicitly adopts an unverified source. It is not fabricated
     # official validation or evidence that a customer checker is correct.
-    baseline = next(suite for suite in standard_suites() if suite.suite_key == "蔚来:N04")
+    baseline = next(suite for suite in predefined_directory_suites() if suite.suite_key == "蔚来:N04")
     suites = SuiteStore(settings, admin.objects, role="migrator")
     revision = suites.create_revision(tenant_id=None, suite_key=baseline.suite_key, files=dict(baseline.files), created_by=None)
     SuiteReleaseStore(settings, admin.objects, role="api").publish(principal, baseline.suite_key, revision.id, 0, str(uuid.uuid4()), force_unverified=True)

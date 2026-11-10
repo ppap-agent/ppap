@@ -261,6 +261,7 @@ def freeze_selected_targets(store, conn, tenant_id: str, prepared: list[dict], *
     """
     from audit.standard_suites import library_revision
 
+    from product.legacy_head_cutover import legacy_carrier_program
     from product.store.suite_releases import current_selection
 
     suites = SuiteStore(store.settings, store.objects, store.role)
@@ -277,6 +278,10 @@ def freeze_selected_targets(store, conn, tenant_id: str, prepared: list[dict], *
             raise ValueError("checker_suite_required")
         selection = current_selection(conn, tenant_id, key)
         suite = suites.resolve_suite(selection["revision_id"], tenant_id, conn=conn)
+        # A persisted carrier head is not a directory source. Do not select another
+        # revision, including another row with the same suite_key.
+        if legacy_carrier_program(suite.files):
+            raise ValueError("suite_version_confirmation_required")
         rules = json.loads(suite.files["rules.json"])
         appendix = tuple(json.loads(suite.files.get("appendix.json", b"[]")))
         if require_rule_match and rule_digest({"rules": body.get("rules")}, body.get("appendix", [])) != rule_digest({"rules": rules.get("rules")}, appendix):
@@ -290,7 +295,14 @@ def freeze_selected_targets(store, conn, tenant_id: str, prepared: list[dict], *
         if not isinstance(entrypoints, dict):
             raise ValueError("checker_binding_required")
         code = checker_digest({path: value for path, value in suite.files.items() if path in {"checker.py", "resources.py"}})
-        related = {key: suites.resolve_suite(identifier, tenant_id, conn=conn).revision.resolved_digest for key, identifier in selection["related_revision_ids"].items()}
+        related = {}
+        for related_key, identifier in selection["related_revision_ids"].items():
+            related_suite = suites.resolve_suite(identifier, tenant_id, conn=conn)
+            # A related head is part of this new audit. Do not keep a carrier there
+            # or replace it with another revision of the same key.
+            if legacy_carrier_program(related_suite.files):
+                raise ValueError("suite_version_confirmation_required")
+            related[related_key] = related_suite.revision.resolved_digest
         verified = selection["verification_status"] == "verified"
         binding = RuleBinding(suite.revision.suite_key, code, entrypoints, rule_digest(rules, appendix) if verified else None)
         receipt = selection["validation"]

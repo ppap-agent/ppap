@@ -19,6 +19,7 @@ from corpus_contracts.product_round import (
     format_verdicts,
 )
 from fastapi.testclient import TestClient
+from product.historical_carrier import queue_historical_carrier_round
 from product.settings import Settings, get_settings
 from worker import process_claimed
 
@@ -87,25 +88,20 @@ def test_v3_api_worker_preserves_representative_bundle_oracle(auth_store_factory
                     json={"title": f"{doc_type} {case.file_name}"[:200], "body": body, "source_file_version_id": version["id"]},
                 )
                 assert published.status_code == 201, published.text
-                core_system.adopt(store, published.json()["id"], checker.files["checker.py"].decode(), dict(checker.entrypoints))
+                rule = published.json()
                 items.append(
                     {
-                        "file_version_id": version["id"],
+                        "version_id": version["id"],
                         "role": "target",
-                        "rule_version_id": published.json()["id"],
+                        "rule_id": rule["id"],
+                        "rule_title": rule["title"],
+                        "rule_body": rule["body"],
+                        "suite": checker,
                     }
                 )
-            draft = client.post("/drafts")
-            assert draft.status_code == 201, draft.text
-            draft_id = draft.json()["id"]
-            saved = client.put(f"/drafts/{draft_id}", json={"items": items})
-            assert saved.status_code == 200, saved.text
-            accepted = client.post(
-                f"/drafts/{draft_id}/accept",
-                json={"idempotency_key": f"v3-oracle-{bundle_id}"},
-            )
-            assert accepted.status_code == 201, accepted.text
-            round_id = accepted.json()["id"]
+
+            frozen = queue_historical_carrier_round(store, store.principal_for_fixture("alice"), items)
+            round_id = frozen["id"]
             claimed = store.claim_job("v3-oracle-worker")
             assert claimed is not None
             assert claimed.round_id == round_id

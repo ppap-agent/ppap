@@ -469,7 +469,19 @@ class CheckerDevelopmentStore:
                 self._authorize_frozen(conn, principal, prior["frozen"])
                 return _receipt(prior)
             suite = self.suites.resolve_suite(suite_revision_id, principal.tenant_id, conn=conn)
-            related = {key: current_selection(conn, principal.tenant_id, key)["revision_id"] for key in suite.revision.related_suite_keys}
+            from product.legacy_head_cutover import legacy_carrier_program
+
+            # A new optimization is a new task. It must not execute a legacy carrier.
+            # An already queued operation returned above keeps its frozen bytes.
+            if legacy_carrier_program(suite.files):
+                raise ValueError("suite_version_confirmation_required")
+            related = {}
+            for key in suite.revision.related_suite_keys:
+                selected = current_selection(conn, principal.tenant_id, key)
+                related_suite = self.suites.resolve_suite(selected["revision_id"], principal.tenant_id, conn=conn)
+                if legacy_carrier_program(related_suite.files):
+                    raise ValueError("suite_version_confirmation_required")
+                related[key] = selected["revision_id"]
             cur.execute(
                 "SELECT * FROM product.checker_feedback WHERE tenant_id=%s AND suite_key=%s AND deleted_at IS NULL ORDER BY ordinal LIMIT 65 FOR SHARE", (principal.tenant_id, suite.revision.suite_key)
             )

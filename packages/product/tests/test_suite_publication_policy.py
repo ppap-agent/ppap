@@ -81,7 +81,8 @@ def test_partial_official_directory_cannot_be_forced_into_the_active_head():
     legacy = next(suite for suite in standard_suites() if suite.suite_key == "UAES:U08")
     legacy_suite = _resolved(dict(legacy.files), tenant_id=None, related=legacy.related_suite_keys)
     assert partial_official_directory_slice(legacy_suite) is False
-    assert adoption_block(legacy_suite, verified=False, force_unverified=True) is None
+    assert adoption_block(legacy_suite, verified=True, force_unverified=True) == "suite_version_confirmation_required"
+    assert adoption_block(legacy_suite, verified=False, force_unverified=True) == "suite_version_confirmation_required"
 
     rules = json.loads(files["rules.json"])
     rules["checker_binding"] = {row["id"]: "checker:create_audit" for row in rules["rules"]}
