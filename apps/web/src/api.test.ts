@@ -23,6 +23,22 @@ afterEach(() => {
   globalThis.fetch = originalFetch
 })
 
+test('formalization conflicts explain the next read instead of a raw error code', async () => {
+  const cases = [
+    ['operation_conflict', 409, '原操作的内容不同。请读取原操作。'],
+    ['source_changed', 409, '原文或范围已变化。请重新读取当前候选。'],
+    ['conflicting_confirmation', 409, '这条理解已被其他人确认。请重新读取当前候选。'],
+    ['not_confirmable', 409, '这条理解还不完整，不能确认。'],
+    ['source_unchecked', 409, '原文出处未核对。请先核对出处，再确认这一理解。'],
+    ['model_unavailable', 503, '个人模型还不可用。请先配置模型，然后再解释。'],
+    ['model_consumption_refused', 422, '你还没有同意使用个人模型。同意后再解释这一条款。'],
+  ] as const
+  for (const [code, status, text] of cases) {
+    installFetch(() => jsonResponse({error: code}, status))
+    await assert.rejects(request('/rules/rule-1/formalizations/c1/generations', 'POST', {}), new RegExp(text))
+  }
+})
+
 test('rule source rejection explains the required correction without claiming publication', async () => {
   installFetch(() => jsonResponse({error: 'rule_source_unverified'}, 400))
   await assert.rejects(request('/rules', 'POST', {}), /请重新选择原文位置并核对，草稿未发布/)

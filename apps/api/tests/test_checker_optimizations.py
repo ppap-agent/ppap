@@ -1322,3 +1322,153 @@ def test_feedback_granted_reference_sources_are_authorized_on_each_readback(auth
         assert listed.status_code == 200 and [row["id"] for row in listed.json()["feedback"]] == [saved.json()["id"]]
         assert listed.json()["next_cursor"] is None
         checked_sources(authorize)
+
+
+def test_finished_candidate_keeps_formalizations_and_both_related_suites(auth_store_factory):
+    """A controlled runtime proves the saved candidate. It is not model-quality acceptance."""
+    f = fixture(auth_store_factory, count=1)
+    suites = SuiteStore(f.store.settings, f.store.objects, role="migrator")
+    program = b"def create_audit(audit_file, rule, group_context=None):\n    return []\n"
+    appendix = b'[{"note":"keep-appendix"}]'
+    related_rules = {"type": "关联", "rules": [{"id": "L1", "rule_to_check": "关联条款"}], "checker_binding": {"L1": "checker:create_audit"}}
+    for key in ("custom:left", "custom:right"):
+        created = suites.create_revision(
+            tenant_id=f.alice.tenant_id,
+            suite_key=key,
+            files={"rules.json": json.dumps(related_rules).encode(), "checker.py": program},
+            created_by=f.alice.user_id,
+        )
+        adopted = f.clients[0].put(
+            f"/suites/{key}/active",
+            json={"revision_id": created.id, "expected_revision": 0, "operation_id": str(uuid4()), "force_unverified": True},
+        )
+        assert adopted.status_code == 200, adopted.text
+    rules = {
+        **RULES,
+        "formalizations": {"R1": {"cnl_text": "每一条发票至少关联一条订单", "completeness": "complete"}},
+    }
+    source = suites.create_revision(
+        tenant_id=f.alice.tenant_id,
+        suite_key="threshold",
+        files={"rules.json": json.dumps(rules).encode(), "checker.py": PROGRAM, "appendix.json": appendix},
+        related_suite_keys=("custom:left", "custom:right"),
+        created_by=f.alice.user_id,
+    )
+    before = suites.resolve_suite(source.id, f.alice.tenant_id).files["rules.json"]
+    response = f.clients[0].post(f"/suite-revisions/{source.id}/optimizations", json=command(f, consume_model=False))
+    assert response.status_code == 200, response.text
+    receipt = development_handler(f.worker, ControlledRuntime())(claim(f), ExecutionContext())
+    assert receipt["state"] == "completed", receipt
+    assert receipt["candidate_revision_id"] != source.id
+    saved = suites.resolve_suite(receipt["candidate_revision_id"], f.alice.tenant_id)
+    assert saved.revision.base_revision_id is None
+    assert list(saved.revision.related_suite_keys) == ["custom:left", "custom:right"]
+    assert saved.files["appendix.json"] == appendix
+    assert json.loads(saved.files["rules.json"])["formalizations"]["R1"]["cnl_text"] == "每一条发票至少关联一条订单"
+    assert suites.resolve_suite(source.id, f.alice.tenant_id).files["rules.json"] == before
+    replacement = json.loads(before)
+    replacement["formalizations"]["R1"]["cnl_text"] = "后来改成恰好一条"
+    suites.create_revision(
+        tenant_id=f.alice.tenant_id,
+        suite_key="threshold",
+        files={"rules.json": json.dumps(replacement).encode(), "checker.py": PROGRAM, "appendix.json": appendix},
+        related_suite_keys=("custom:left", "custom:right"),
+        created_by=f.alice.user_id,
+        base_revision_id=source.id,
+    )
+    frozen = suites.resolve_suite(receipt["candidate_revision_id"], f.alice.tenant_id)
+    assert json.loads(frozen.files["rules.json"])["formalizations"]["R1"]["cnl_text"] == "每一条发票至少关联一条订单"
+    assert "后来改成恰好一条" not in frozen.files["rules.json"].decode()
+    with f.store._conn() as conn:
+        assert conn.execute("SELECT count(*) FROM product.tenant_suite_heads WHERE tenant_id=%s AND suite_key='threshold'", (f.alice.tenant_id,)).fetchone()[0] == 0
+
+
+def test_switching_suite_revision_changes_prompt_digest_and_keeps_the_fixed_candidate(auth_store_factory):
+    """Another suite revision is another input. The fixed candidate is not rewritten.
+
+    The controlled runtime is not model-quality acceptance.
+    """
+    from agent.checker_program import input_digest, rule_for_file
+    from agent.execution.checker_guest import _prompt
+    from agent.protocol import FrozenFile
+    from audit.contracts import AuditInput
+    from audit.formal_digest import display_digest, formal_digest
+
+    f = fixture(auth_store_factory, count=1)
+    suites = SuiteStore(f.store.settings, f.store.objects, role="migrator")
+    rule_id = f.feedback[0][1]["rule_version_id"]
+
+    def sealed(reading: str, formula: str) -> dict:
+        payload = {
+            "format_version": "1",
+            "formal_profile": "owl2-plus-clif-v1",
+            "owl_content": "Ontology()",
+            "clif_content": formula,
+            "vocabulary": {},
+            "source_rule_version_id": rule_id,
+            "clause_id": "R1",
+            "obligations": [],
+            "unresolved": [],
+            "assumptions": [],
+        }
+        item = {
+            **payload,
+            "rule_version_id": rule_id,
+            "completeness": "complete",
+            "cnl_text": reading,
+            "cnl_renderer_version": "cnl-zh-1",
+            "source_rule_digest": "c" * 64,
+            "confirmed_by": f.alice.user_id,
+            "confirmed_at": "2026-11-10T00:00:00Z",
+            "confirmed_candidate_id": "cand-" + formula,
+            "source_suite_revision_id": "suite-before-switch",
+            "formal_digest": formal_digest(payload),
+        }
+        item["display_digest"] = display_digest(item["cnl_text"], item["formal_digest"], [], item["completeness"])
+        return item
+
+    def revision(reading: str, formula: str):
+        rules = {**RULES, "formalizations": {"R1": sealed(reading, formula)}}
+        return suites.create_revision(
+            tenant_id=f.alice.tenant_id,
+            suite_key="threshold",
+            files={"rules.json": json.dumps(rules).encode(), "checker.py": PROGRAM},
+            created_by=f.alice.user_id,
+        )
+
+    first = revision("FORMAL-AT-LEAST-READING", "(at-least-target)")
+    second = revision("FORMAL-EXACTLY-ONE-READING", "(exactly-one-target)")
+    first_bytes = suites.resolve_suite(first.id, f.alice.tenant_id).files["rules.json"]
+    started = f.clients[0].post(f"/suite-revisions/{first.id}/optimizations", json=command(f, consume_model=False))
+    assert started.status_code == 200, started.text
+    receipt = development_handler(f.worker, ControlledRuntime())(claim(f), ExecutionContext())
+    assert receipt["state"] == "completed", receipt
+    saved = suites.resolve_suite(receipt["candidate_revision_id"], f.alice.tenant_id)
+    saved_bytes = saved.files["rules.json"]
+    other = f.clients[0].post(f"/suite-revisions/{second.id}/optimizations", json=command(f, consume_model=False))
+    assert other.status_code == 200, other.text
+
+    def frozen_target(operation_id: str) -> dict:
+        with f.store._conn() as conn:
+            frozen = conn.execute("SELECT frozen FROM product.checker_optimizations WHERE operation_id=%s", (operation_id,)).fetchone()[0]
+        return next(item for item in frozen["samples"][0]["files"] if item["role"] == "target")
+
+    def viewed(target: dict) -> tuple[str, str]:
+        rule = rule_for_file(FrozenFile.model_validate(target))
+        audit = AuditInput(
+            audit_id=target["file_version_id"],
+            file_url=target["filename"],
+            file_metadata={"file_version_id": target["file_version_id"], "sha256": target["sha256"], "role": "target"},
+        )
+        return input_digest(audit, rule, file_sha256=target["sha256"], role="target"), _prompt(rule, None, None, audit, None)
+
+    first_target = frozen_target(started.json()["operation_id"])
+    second_target = frozen_target(other.json()["operation_id"])
+    first_digest, first_prompt = viewed(first_target)
+    second_digest, second_prompt = viewed(second_target)
+    assert first_digest != second_digest
+    assert "FORMAL-AT-LEAST-READING" in first_prompt and "(exactly-one-target)" not in first_prompt
+    assert "FORMAL-EXACTLY-ONE-READING" in second_prompt and "(at-least-target)" not in second_prompt
+    assert suites.resolve_suite(first.id, f.alice.tenant_id).files["rules.json"] == first_bytes
+    assert suites.resolve_suite(receipt["candidate_revision_id"], f.alice.tenant_id).files["rules.json"] == saved_bytes
+    assert "FORMAL-EXACTLY-ONE-READING" not in saved_bytes.decode()

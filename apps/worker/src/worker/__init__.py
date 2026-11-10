@@ -105,13 +105,22 @@ def process_file_job(store, claimed, ident, ai=None) -> dict:
 
 
 def process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> dict:
+    from documents.model_access import ModelUnavailable
     from product.model_access import personal_model_scope
 
     # Absent identity is an unavailable scope, never permission to use LLM_*.
     user_id = store.model_user_for_job(claimed) if hasattr(store, "model_user_for_job") else ""
     payload = claimed.payload if isinstance(claimed.payload, dict) else {}
-    with personal_model_scope(store, tenant_id=claimed.tenant_id or "", initiating_user_id=user_id, expected_identity=payload.get("model_identity", {})):
-        return _process_claimed(store, claimed, ident, rule_ai=rule_ai)
+    try:
+        with personal_model_scope(store, tenant_id=claimed.tenant_id or "", initiating_user_id=user_id, expected_identity=payload.get("model_identity", {})):
+            return _process_claimed(store, claimed, ident, rule_ai=rule_ai)
+    except ModelUnavailable:
+        if claimed.kind != "rule_formalization":
+            raise
+        from product.store.formalizations import FormalizationStore
+
+        FormalizationStore(store).finish(claimed, ident, error_code="model_unavailable")
+        return {"state": "failed", "failure": "model_unavailable"}
 
 
 def _process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> dict:
@@ -123,6 +132,10 @@ def _process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> 
     )
     emit("job_claimed", kind=claimed.kind)
     try:
+        if claimed.kind == "rule_formalization":
+            from worker.formalization import process_rule_formalization
+
+            return process_rule_formalization(store, claimed, ident, ai=rule_ai)
         if claimed.kind == "checker_optimization":
             from worker.checker_optimizer import process_checker_optimization
 

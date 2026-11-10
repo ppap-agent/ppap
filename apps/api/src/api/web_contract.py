@@ -134,6 +134,7 @@ class Rule(TypedDict):
     models: list[str] | None
     parts: list[str] | None
     customer_scope: Literal["all", "restricted", "unconfirmed"]
+    suite_key: NotRequired[str]
 
 
 class RuleItem(TypedDict):
@@ -222,6 +223,10 @@ class RuleLibraryEntry(TypedDict):
     created_at: str
     predecessor_id: str | None
     clause_count: int
+    document_type: str
+    document_type_aliases: list[str]
+    suite_key: str | None
+    source_review: Literal["unchecked", "partial", "checked"]
 
 
 class RuleLibrary(TypedDict):

@@ -142,7 +142,13 @@ class SchemaTools:
             directory = str(self.MIGRATIONS) if migrations_dir == "/migrations" else migrations_dir
             return subprocess.run(
                 ["sh", str(self.MIGRATIONS / "apply.sh")],
-                env={**os.environ, "PPAP_PG_DATABASE": database, "MIGRATIONS_DIR": directory},
+                env={
+                    **os.environ,
+                    "PPAP_PG_DATABASE": database,
+                    "PPAP_PG_MIGRATOR_USER": self.migrator_user(),
+                    "PPAP_PG_MIGRATOR_PASSWORD": self.migrator_password(),
+                    "MIGRATIONS_DIR": directory,
+                },
                 cwd=ROOT,
                 capture_output=True,
                 check=False,

@@ -262,6 +262,7 @@ def freeze_selected_targets(store, conn, tenant_id: str, prepared: list[dict], *
     from audit.standard_suites import library_revision
 
     from product.legacy_head_cutover import legacy_carrier_program
+    from product.store.rule_impact import semantic_rule_packet
     from product.store.suite_releases import current_selection
 
     suites = SuiteStore(store.settings, store.objects, store.role)
@@ -284,7 +285,7 @@ def freeze_selected_targets(store, conn, tenant_id: str, prepared: list[dict], *
             raise ValueError("suite_version_confirmation_required")
         rules = json.loads(suite.files["rules.json"])
         appendix = tuple(json.loads(suite.files.get("appendix.json", b"[]")))
-        if require_rule_match and rule_digest({"rules": body.get("rules")}, body.get("appendix", [])) != rule_digest({"rules": rules.get("rules")}, appendix):
+        if require_rule_match and rule_digest(semantic_rule_packet(body), body.get("appendix", [])) != rule_digest(semantic_rule_packet(rules), appendix):
             # A feedback request explicitly confirms these clauses/appendices.
             # Replacing them with the current Suite would execute different rules
             # from the user's confirmation, even when that Suite was forced on.

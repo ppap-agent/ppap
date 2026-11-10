@@ -576,7 +576,7 @@ class SuiteReleaseStore:
             result = _receipt(cur.fetchone(), published_by_name=_display_name(conn, principal.user_id, principal.tenant_id))
         return result
 
-    def save_candidate(self, principal, base_revision_id: str, files: dict[str, str], *, suite_key: str | None = None, operation_id: str | None = None) -> dict:
+    def save_candidate(self, principal, base_revision_id: str, files: dict[str, str], *, suite_key: str | None = None, operation_id: str | None = None, conn=None) -> dict:
         base_revision_id = _id(base_revision_id)
         operation_id = _id(operation_id) if operation_id is not None else str(uuid.uuid4())
         if not isinstance(files, dict) or not files or any(not isinstance(value, str) for value in files.values()):
@@ -588,7 +588,7 @@ class SuiteReleaseStore:
                 raise ValueError("invalid_template_reference") from None
             if not isinstance(templates, list) or any(not isinstance(item, dict) or (item.get("kind") == "licensed_blank" and item.get("distributable") is not True) for item in templates):
                 raise ValueError("template_distribution_not_authorized")
-        with self._conn() as conn, conn.transaction():
+        def _persist(conn) -> str:
             _member(conn, principal)
             base = _revision(conn, base_revision_id, principal.tenant_id)
             if suite_key is not None and base["suite_key"] != _key(suite_key):
@@ -653,7 +653,13 @@ class SuiteReleaseStore:
                        VALUES (%s,%s,%s,%s,%s,%s)""",
                     (principal.tenant_id, operation_id, base_revision_id, revision_id, fingerprint, principal.user_id),
                 )
-        return self.detail(principal, revision_id)
+            return revision_id
+
+        if conn is None:
+            with self._conn() as owned, owned.transaction():
+                revision_id = _persist(owned)
+            return self.detail(principal, revision_id)
+        return {"id": _persist(conn)}
 
     def read_candidate(self, principal, base_revision_id: str, operation_id: str) -> dict:
         """Read an uncertain save by its original operation, without repeating it."""

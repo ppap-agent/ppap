@@ -118,6 +118,7 @@ class AIClient:
         self._personal_scope = False
         self._bound_personal_call = personal
         self.settings = settings
+        self.last_usage = None
         self.development_mode = bool(self.settings.DEVELOPMENT)
         self.langfuse_enabled = False
         self.langfuse_client = None
@@ -296,7 +297,7 @@ class AIClient:
                 personal=True,
             )
             try:
-                return current.response_text(
+                text = current.response_text(
                     messages,
                     max_tokens,
                     temperature,
@@ -305,6 +306,8 @@ class AIClient:
                     request_timeout=request_timeout,
                     retry_limit=0,
                 )
+                self.last_usage = current.last_usage
+                return text
             finally:
                 current.client.close()
                 current.settings.OPENAI_API_KEY = ""
@@ -362,7 +365,11 @@ class AIClient:
                         model_name=self.settings.MODEL_NAME,
                         operation=operation,
                     )
+                    self.last_usage = {"input_tokens": input_tokens, "output_tokens": output_tokens, "source": "provider"}
+                    if thinking_tokens is not None:
+                        self.last_usage["thinking_tokens"] = thinking_tokens
                 else:
+                    self.last_usage = None
                     record_unreported_usage()
 
                 try:

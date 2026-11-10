@@ -22,6 +22,8 @@ WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
 
 
 def open_customer_requirements(page):
+    from playwright.sync_api import expect
+
     button = page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="审核规则", exact=True)
     menu = page.get_by_role("button", name="打开产品导航", exact=True)
     # The login shell also has a banner; wait for authorized product navigation.
@@ -31,7 +33,7 @@ def open_customer_requirements(page):
     else:
         menu.click()
         page.get_by_role("dialog", name="产品导航", exact=True).get_by_role("button", name="审核规则", exact=True).click()
-    page.get_by_role("tab", name="客户要求", exact=True).click()
+    expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -83,7 +85,7 @@ class RuleInteractionTests(unittest.TestCase):
 
                         page.add_locator_handler(page.get_by_text("正在确认登录状态…", exact=True), authorize, no_wait_after=True, times=2)
                         open_customer_requirements(page)
-                        expect(page.get_by_role("heading", name="客户要求", exact=True)).to_be_visible()
+                        expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
                         self.assertEqual(len(probes), 2)
                         self.assertEqual(held, [])
                         self.assertEqual(state["writes"], [])
@@ -216,10 +218,10 @@ class RuleInteractionTests(unittest.TestCase):
             page.get_by_role("tab", name="版本变化", exact=True).click()
             expect(page.get_by_role("region", name="版本差异", exact=True)).to_contain_text("旧版条款 A")
             self.assertNotIn("/rules/rule-b1", reads)
-            page.get_by_role("link", name="返回客户要求", exact=True).click()
+            page.get_by_role("link", name="返回审核规则", exact=True).click()
             page.get_by_role("link", name="规则 B", exact=True).click()
             expect(page.get_by_role("status", name="正在读取规则版本…", exact=True)).to_be_visible()
-            page.get_by_role("link", name="返回客户要求", exact=True).click()
+            page.get_by_role("link", name="返回审核规则", exact=True).click()
             page.get_by_role("link", name="规则 A", exact=True).click()
             expect(page.get_by_role("article", name="条款 1", exact=True)).to_contain_text("新版条款 A")
             self.assertEqual(len(held), 1)
@@ -491,9 +493,9 @@ class RuleInteractionTests(unittest.TestCase):
                         expect(page.get_by_role("heading", name="已核对要求", exact=True)).to_be_visible()
                         self.assertIn("requirement=" + rule["id"], page.url)
                         self.assertIn("reqVersion=" + rule["id"], page.url)
-                        page.get_by_role("link", name="返回客户要求", exact=True).click()
+                        page.get_by_role("link", name="返回审核规则", exact=True).click()
                     else:
-                        expect(page.get_by_role("heading", name="客户要求" if destination == "list" else "工作台", exact=True)).to_be_visible()
+                        expect(page.get_by_role("heading", name="审核规则" if destination == "list" else "工作台", exact=True)).to_be_visible()
                         self.assertEqual(page.url, address)
                     if destination == "audit":
                         open_customer_requirements(page)
@@ -613,7 +615,7 @@ class RuleInteractionTests(unittest.TestCase):
             page.route("**/api/rules/" + published["id"], lambda route: held.append(route))
             page.get_by_role("tab", name="版本变化", exact=True).click()
             expect(page.get_by_role("status", name="正在读取规则版本…", exact=True)).to_be_visible()
-            page.get_by_role("link", name="返回客户要求", exact=True).click()
+            page.get_by_role("link", name="返回审核规则", exact=True).click()
             page.get_by_role("link", name="已核对要求", exact=True).filter(visible=True).click()
             expect(page.get_by_label("版本号", exact=True)).to_have_value("v2")
             page.get_by_label("来源说明／变更原因", exact=True).fill("等待旧版本期间补充的说明")
@@ -639,7 +641,7 @@ class RuleInteractionTests(unittest.TestCase):
                     state = self.requirement_routes(page)
                     self.native_rule_routes(page, state)
                     page.goto(WEB + "/requirements?rulesArea=requirements")
-                    expect(page.get_by_role("heading", name="客户要求", exact=True)).to_be_visible()
+                    expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
                     page.get_by_role("button", name="alice，账号菜单", exact=True).click()
                     page.get_by_role("menuitem", name="本机草稿", exact=True).click()
                     dialog = page.get_by_role("dialog", name="本机记录", exact=True)
@@ -652,7 +654,7 @@ class RuleInteractionTests(unittest.TestCase):
                     else:
                         dialog.get_by_role("button", name="重新打开工作台", exact=True).click()
                     expect(page).to_have_url(WEB + "/requirements")
-                    expect(page.get_by_role("tab", name="客户要求", exact=True)).to_have_attribute("aria-selected", "true")
+                    expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
                     expect(dialog).to_have_count(0)
                     page.close()
             browser.close()
@@ -722,7 +724,7 @@ class RuleInteractionTests(unittest.TestCase):
             self.native_rule_routes(page, state)
             page.goto(WEB + "/audit")
             open_customer_requirements(page)
-            expect(page.get_by_role("heading", name="客户要求", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
             bar = page.get_by_role("banner")
             expect(bar.get_by_role("button", name="上传规则", exact=True)).to_be_visible()
             expect(page.get_by_role("status").filter(has_text="份要求")).to_have_count(0)
@@ -766,7 +768,7 @@ class RuleInteractionTests(unittest.TestCase):
             state = self.requirement_routes(page)
             self.native_rule_routes(page, state)
             page.goto(WEB + "/requirements?rulesArea=requirements")
-            expect(page.get_by_role("heading", name="客户要求", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
             page.get_by_label("上传共用规则文件").set_input_files({"name": "草稿规则.json", "mimeType": "application/json", "buffer": b"{}"})
             page.get_by_label("要求名称", exact=True).fill("未发布的规则草稿")
             page.get_by_role("button", name="打开产品导航", exact=True).click()
@@ -839,14 +841,18 @@ class RuleInteractionTests(unittest.TestCase):
             page.route("**/api/rules", lambda route: route.fulfill(json={"rules": rules}))
             page.route("**/api/rule-types", lambda route: route.fulfill(json={"types": document_types()}))
             page.goto(WEB + "/requirements?rulesArea=requirements")
+            page.get_by_role("button", name="覆盖情况", exact=True).click()
             coverage = page.get_by_role("region", name="规则覆盖度", exact=True)
             for customer, count in (("UAES", "19/28"), ("理想", "17/17"), ("蔚来", "5/17")):
-                expect(coverage.get_by_role("button").filter(has_text=customer).filter(has_text=f"已覆盖 {count} 类")).to_be_visible()
+                expect(coverage.get_by_role("button").filter(has_text=customer).filter(has_text=f"已收录 {count} 类")).to_be_visible()
             coverage.get_by_role("button", name=re.compile("^UAES")).click()
             types = coverage.get_by_role("list", name="UAES 的文件类型", exact=True)
             photo = types.get_by_role("listitem").filter(has_text="生产件样品照片")
-            expect(photo).to_contain_text("生效中")
-            expect(types.get_by_role("listitem").filter(has_text="检具验收报告")).to_contain_text("未覆盖")
+            expect(photo).to_contain_text("已收录")
+            expect(types.get_by_role("listitem").filter(has_text="检具验收报告")).to_contain_text("未收录")
+            expect(coverage).to_contain_text("已收录、已提供检查、已通过验证是三项分开的数量")
+            expect(coverage.get_by_role("button", name=re.compile("^UAES"))).to_contain_text("已提供检查 0 类")
+            expect(coverage.get_by_role("button", name=re.compile("^UAES"))).to_contain_text("已通过验证 0 类")
             expect(types).not_to_contain_text("E07")
             coverage.get_by_role("button", name=re.compile("^蔚来")).click()
             expect(coverage.get_by_role("list", name="蔚来 的文件类型", exact=True)).not_to_contain_text("生产件样品照片")
@@ -942,7 +948,7 @@ class RuleInteractionTests(unittest.TestCase):
             page.get_by_label("上传共用规则文件").set_input_files({"name": "新增规则.json", "mimeType": "application/json", "buffer": b"{}"})
             page.get_by_label("要求名称", exact=True).fill("待核对规则")
             page.get_by_role("tab", name="版本变化", exact=True).click()
-            page.get_by_role("link", name="返回客户要求", exact=True).click()
+            page.get_by_role("link", name="返回审核规则", exact=True).click()
             page.get_by_role("searchbox", name="搜索审核规则", exact=True).fill("待核对")
             page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="工作台", exact=True).click()
             page.get_by_role("button", name="继续当前审核", exact=True).click()
@@ -1470,8 +1476,8 @@ class RuleInteractionTests(unittest.TestCase):
             expect(page.get_by_label("要求名称", exact=True)).to_be_visible()
             first = state["parses"][0]
             self.assertEqual(len(state["held"]), 1)
-            page.get_by_role("link", name="返回客户要求", exact=True).click()
-            expect(page.get_by_role("heading", name="客户要求", exact=True)).to_be_visible()
+            page.get_by_role("link", name="返回审核规则", exact=True).click()
+            expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
             page.get_by_label("上传共用规则文件").set_input_files({"name": "B.json", "mimeType": "application/json", "buffer": b"second"})
             state["status"] = "succeeded"
             page.get_by_label("适用资料类型").click()
@@ -1685,8 +1691,8 @@ class RuleInteractionTests(unittest.TestCase):
             self.assertEqual(published["source_file_version_id"], state["source"]["id"])
             expect(page.get_by_label("要求名称", exact=True)).to_have_count(0)
             state["writes"].clear()
-            page.get_by_role("link", name="返回客户要求", exact=True).click()
-            expect(page.get_by_role("heading", name="客户要求", exact=True)).to_be_visible()
+            page.get_by_role("link", name="返回审核规则", exact=True).click()
+            expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
             page.get_by_role("link", name="已核对要求", exact=True).filter(visible=True).click()
             expect(page.get_by_role("heading", name="已核对要求", exact=True)).to_be_visible()
             page.reload()
@@ -1897,7 +1903,7 @@ class RuleInteractionTests(unittest.TestCase):
             page.get_by_role("button", name="放弃草稿", exact=True).click()
             dialog.get_by_role("button", name="放弃此草稿", exact=True).click()
             expect(dialog).to_have_count(0)
-            expect(page.get_by_role("heading", name="客户要求", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
             expect(page.get_by_role("heading", name="还没有审核规则", exact=True)).to_be_visible()
             page.reload()
             expect(page.get_by_role("heading", name="还没有审核规则", exact=True)).to_be_visible()
@@ -1975,6 +1981,161 @@ class RuleInteractionTests(unittest.TestCase):
             self.assertEqual(state["saves"][0]["body"]["customers"], ["测试客户"])
             self.assertEqual(state["saves"][0]["body"]["parts"], ["零件 P-1"])
             browser.close()
+
+    def test_saved_clause_confirms_one_reading_and_unknown_generation_is_not_repost(self):
+        """Scripted UI contract only. This does not accept model semantic quality."""
+        from playwright.sync_api import expect
+
+        source_digest = "ab" * 32
+        display_digest = "cd" * 32
+        cnl = "每一条记录都必须有尺寸值。"
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            for outcome in ("completed", "unknown"):
+                with self.subTest(outcome=outcome):
+                    page = browser.new_page()
+                    state = self.requirement_routes(page)
+                    formal = self.formalization_routes(page, source_digest=source_digest, display_digest=display_digest, cnl=cnl, outcome=outcome)
+                    self.open_requirement(page)
+                    self.check_requirement(page)
+                    page.get_by_role("button", name="确认并保存版本", exact=True).click()
+                    expect(page.get_by_role("status").filter(has_text="版本 v1 已保存")).to_be_visible()
+                    page.get_by_role("link", name="返回审核规则", exact=True).click()
+                    page.get_by_role("link", name="已核对要求", exact=True).filter(visible=True).click()
+                    section = page.get_by_role("region", name="系统是这样理解的 1", exact=True)
+                    expect(section.get_by_role("heading", name="系统是这样理解的", exact=True)).to_be_visible()
+                    expect(section).to_contain_text("系统还没有解释这条规则")
+                    expect(section).to_contain_text("这会使用你的个人模型。")
+                    state["writes"].clear()
+                    with page.expect_request("**/api/rule-formalization-generations/*"):
+                        section.get_by_role("button", name="让系统解释这条规则", exact=True).click()
+                    expect(section.get_by_role("status").filter(has_text="正在生成解释")).to_be_visible()
+                    expect(section.get_by_role("button", name="让系统解释这条规则", exact=True)).to_have_count(0)
+                    self.assertEqual(len(formal["generations"]), 1)
+                    self.assertEqual(formal["generations"][0]["expected_source_digest"], source_digest)
+                    self.assertEqual(len(formal["held"]), 1)
+                    formal["held"].pop().fulfill(json=formal["receipt"](formal["generations"][0]["operation_id"], outcome, None))
+                    if outcome == "unknown":
+                        expect(section.get_by_role("status").filter(has_text="生成结果尚未确定")).to_be_visible()
+                        page.reload()
+                        expect(page.get_by_role("status").filter(has_text="生成结果尚未确定")).to_be_visible()
+                        self.assertEqual(len(formal["generations"]), 1)
+                        section = page.get_by_role("region", name="系统是这样理解的 1", exact=True)
+                        expect(section.get_by_role("button", name="让系统解释这条规则", exact=True)).to_have_count(0)
+                        self.assertEqual(len(formal["generations"]), 1)
+                        with page.expect_request("**/api/rule-formalization-generations/*"):
+                            section.get_by_role("button", name="重新读取原操作", exact=True).click()
+                        operation_id = formal["generations"][0]["operation_id"]
+                        self.assertEqual(formal["reads"], [operation_id, operation_id])
+                        formal["outcome"] = "completed"
+                        formal["held"].pop().fulfill(json=formal["receipt"](operation_id, "completed", "cand-1"))
+                    clause = page.get_by_role("article", name="条款 1", exact=True)
+                    expect(clause).to_contain_text("检查 A")
+                    expect(section).to_contain_text(cnl)
+                    expect(section.get_by_role("button", name="修改理解", exact=True)).to_be_disabled()
+                    section.get_by_label("要改成的含义", exact=True).fill("编号必须逐字相等")
+                    expect(section.get_by_role("button", name="修改理解", exact=True)).to_be_enabled()
+                    section.get_by_role("button", name="查看形式化表达（高级）", exact=True).click()
+                    expect(section).to_contain_text("owl2-dl-v1")
+                    section.get_by_role("button", name="确认这一理解", exact=True).click()
+                    expect(section).to_contain_text("规则解释已确认。这只确认需求含义，不是检查功能已验证。")
+                    expect(section.get_by_role("button", name="确认这一理解", exact=True)).to_be_disabled()
+                    saved = state["rules"][state["saves"][0]["request_id"]]
+                    saved["body"] = {**saved["body"], "suite_key": "custom:" + saved["id"], "suite_revision_id": "00000000-0000-4000-8000-0000000000aa"}
+                    page.reload()
+                    confirmed_view = page.get_by_role("region", name="系统是这样理解的 1", exact=True)
+                    expect(confirmed_view).to_contain_text("规则解释已确认。这只确认需求含义，不是检查功能已验证。")
+                    expect(confirmed_view).to_contain_text(cnl)
+                    confirmed_view.get_by_role("button", name="用于检查优化", exact=True).click()
+                    expect(confirmed_view).to_contain_text("尚未发布，也不会开始审核。")
+                    self.assertEqual(len(formal["handoffs"]), 1)
+                    self.assertEqual(formal["handoffs"][0]["suite_revision_id"], "00000000-0000-4000-8000-0000000000aa")
+                    self.assertFalse(any(path.endswith("/active") for _method, path in state["writes"]))
+                    self.assertEqual(len(formal["generations"]), 1)
+                    self.assertEqual([method for method, path in state["writes"] if path.endswith("/generations")], ["POST"])
+                    self.assertEqual(len(formal["confirmations"]), 1)
+                    self.assertEqual(formal["confirmations"][0]["candidate_id"], "cand-1")
+                    self.assertEqual(formal["confirmations"][0]["expected_display_digest"], display_digest)
+                    page.close()
+            browser.close()
+
+    def formalization_routes(self, page, *, source_digest, display_digest, cnl, outcome):
+        formal = {"generations": [], "reads": [], "confirmations": [], "handoffs": [], "held": [], "confirmed": False, "outcome": outcome}
+
+        def receipt(operation_id, state_name, candidate_id):
+            return {
+                "operation_id": operation_id,
+                "state": state_name,
+                "candidate_id": candidate_id,
+                "failure": None,
+                "rule_version_id": formal.get("rule_id"),
+                "clause_id": formal.get("clause_id"),
+            }
+
+        formal["receipt"] = receipt
+
+        def detail(rule_id, clause_id):
+            candidate = {
+                "id": "cand-1",
+                "formalization_revision": 1,
+                "completeness": "complete",
+                "cnl_text": cnl,
+                "owl_content": "Class: Record",
+                "clif_content": None,
+                "unresolved": [],
+                "display_digest": display_digest,
+                "formal_profile": "owl2-dl-v1",
+                "obligations": [],
+            }
+            started = bool(formal["generations"]) and formal["outcome"] == "completed"
+            open_operation = None
+            if formal["generations"] and not formal["confirmed"] and formal["outcome"] != "completed":
+                open_operation = receipt(formal["generations"][0]["operation_id"], formal["outcome"], None)
+            return {
+                "rule_version_id": rule_id,
+                "clause_id": clause_id,
+                "source_rule_digest": source_digest,
+                "state": "confirmed" if formal["confirmed"] else "candidate" if started else "not_started",
+                "candidates": [candidate] if started or formal["confirmed"] else [],
+                "confirmations": [{"current": True, "candidate_id": "cand-1"}] if formal["confirmed"] else [],
+                "operation": open_operation,
+            }
+
+        def formalizations(route):
+            parts = [item for item in urlsplit(route.request.url).path.split("/") if item]
+            rule_id, clause_id = parts[2], parts[4]
+            tail = parts[5] if len(parts) > 5 else ""
+            if route.request.method == "GET" and not tail:
+                route.fulfill(json=detail(rule_id, clause_id))
+            elif route.request.method == "POST" and tail == "generations":
+                body = route.request.post_data_json
+                formal["rule_id"] = rule_id
+                formal["clause_id"] = clause_id
+                formal["generations"].append(body)
+                route.fulfill(status=202, json=receipt(body["operation_id"], "queued", None))
+            elif route.request.method == "POST" and tail == "confirmations":
+                formal["confirmations"].append(route.request.post_data_json)
+                formal["confirmed"] = True
+                route.fulfill(status=201, json={"current": True, "candidate_id": "cand-1"})
+            else:
+                route.fulfill(status=404, json={"error": "unexpected_formalization"})
+
+        def operations(route):
+            operation_id = urlsplit(route.request.url).path.rsplit("/", 1)[1]
+            formal["reads"].append(operation_id)
+            if not formal.get("rule_id"):
+                formal["clause_id"] = "1"
+            formal["held"].append(route)
+
+        def handoff(route):
+            self.assertEqual(route.request.method, "POST")
+            formal["handoffs"].append(route.request.post_data_json)
+            route.fulfill(status=201, json={"id": "cand-suite", "rule_impact": {"changed": True}})
+
+        page.route("**/api/rules/*/formalizations/**", formalizations)
+        page.route("**/api/rules/*/formalization-suite-candidates", handoff)
+        page.route("**/api/rule-formalization-generations/*", operations)
+        return formal
 
 
 if __name__ == "__main__":

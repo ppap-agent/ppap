@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {RuleBody, RuleDetail} from '../api.ts'
-import {basisRuleBody, publishBasis, readRuleVersions} from './product.ts'
+import {basisRuleBody, publishBasis, readRuleVersions, sourceFileLabel} from './product.ts'
 import {localBasis, type RequirementBasis} from './requirements-state.ts'
 
 Object.defineProperty(globalThis, 'navigator', {value: {onLine: true}, configurable: true})
@@ -114,4 +114,36 @@ test('content, origin, request, registration and Suite lineage conflicts still r
     incompleteBinding: rule => {const broken = structuredClone(rule); if (broken.body.kind === 'engine') delete broken.body.suite_key; return broken},
   }
   for (const [name, change] of Object.entries(changes)) await t.test(name, () => withPublicationApi(async state => {await assert.rejects(publishBasis(candidate()), /保存回执/); assert.equal(state.posts.length, 1, 'a mismatched receipt must never trigger a second publication')}, {change}))
+})
+
+test('a denied source file stays unreadable on the same rule and customer', async () => {
+  await withPublicationApi(async state => {
+    const saved = await publishBasis(candidate())
+    const id = saved.server!.ruleId!
+    const paths: string[] = []
+    const savedFetch = globalThis.fetch
+    globalThis.fetch = async (input, init) => {
+      const path = String(input)
+      paths.push(path)
+      if (path === '/files/source-file/versions/source-version') return Response.json({error: 'access_denied'}, {status: 403})
+      return savedFetch(input, init)
+    }
+    const [loaded] = await readRuleVersions([id], new AbortController().signal)
+    assert.equal(loaded.id, id)
+    assert.equal(loaded.scope.customer, '测试客户')
+    assert.equal(loaded.basis.source.filename, '控制计划.json')
+    assert.equal(loaded.basis.server!.material.original_filename, '控制计划.json')
+    assert.equal(loaded.basis.server!.material.status, 'unreadable')
+    assert.equal(loaded.basis.clauses[0].source, '控制计划.json')
+    assert.equal(sourceFileLabel(loaded.basis.source.filename, loaded.basis.server!.material.status), '控制计划.json · 原件不可读')
+    assert.deepEqual(paths.filter(path => path.includes('/files/')), ['/files/source-file/versions/source-version'])
+    assert.equal(paths.some(path => path.includes('another')), false)
+    state.records.get(id)!.case_context = {}
+    const [unnamed] = await readRuleVersions([id], new AbortController().signal)
+    assert.equal(unnamed.basis.source.filename, '原件不可读')
+    assert.notEqual(unnamed.basis.source.filename, state.records.get(id)!.title)
+    assert.equal(unnamed.scope.customer, '测试客户')
+    assert.equal(sourceFileLabel(unnamed.basis.source.filename, unnamed.basis.server!.material.status), '原件不可读')
+    assert.equal(sourceFileLabel('控制计划.json', undefined), '控制计划.json')
+  })
 })

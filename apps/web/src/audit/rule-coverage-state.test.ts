@@ -11,14 +11,14 @@ test('compares customers on standard types that have a rule and keeps customer-o
   const [li, uaes] = ruleCoverage([rule('l1', ['理想'], 'PFMEA'), rule('l2', ['理想'], 'PSW'), rule('u1', ['UAES'], 'PFMEA'), rule('u2', ['UAES'], 'E07', {title: '生产件样品照片审核规则'})], standard).sort(row => row.customer === '理想' ? -1 : 1)
   assert.deepEqual([li.customer, li.covered, li.total, li.types.map(row => row.type)], ['理想', 2, 2, ['PFMEA', 'PSW']])
   assert.deepEqual([uaes.customer, uaes.covered, uaes.total], ['UAES', 2, 3])
-  assert.deepEqual(uaes.types.at(-1), {type: 'E07', label: '生产件样品照片', rules: ['生产件样品照片审核规则']})
+  assert.deepEqual(uaes.types.at(-1), {type: 'E07', label: '生产件样品照片', rules: ['生产件样品照片审核规则'], provided: false, verified: false})
   assert.deepEqual(uaes.types.find(row => row.type === 'PSW')?.rules, [])
 })
 
 test('merges customer spelling and counts only the newest version', () => {
   const rows = ruleCoverage([rule('old', ['UAES'], 'PSW'), rule('new', ['uaes'], 'PFMEA', {predecessor_id: 'old'})], standard)
   assert.equal(rows.length, 1)
-  assert.deepEqual(rows[0].types, [{type: 'PFMEA', label: 'PFMEA', rules: ['new']}])
+  assert.deepEqual(rows[0].types, [{type: 'PFMEA', label: 'PFMEA', rules: ['new'], provided: false, verified: false}])
 })
 
 test('applies confirmed all-customer rules to everyone and ignores unconfirmed scope', () => {
@@ -31,4 +31,18 @@ test('applies confirmed all-customer rules to everyone and ignores unconfirmed s
 test('lists a rule title once when a built-in and an uploaded rule share it', () => {
   const rows = ruleCoverage([rule('built-in', ['UAES'], 'PSW', {title: 'PSW 规则'}), rule('uploaded', ['UAES'], 'PSW', {title: 'PSW 规则'})], standard)
   assert.deepEqual(rows[0].types[0].rules, ['PSW 规则'])
+})
+
+test('recorded types, provided checkers, and verified checkers stay separate', () => {
+  const rules = [
+    rule('psw', ['UAES'], 'PSW', {suite_key: 'UAES:PSW'}),
+    rule('pfmea', ['UAES'], 'PFMEA', {suite_key: 'UAES:PFMEA'}),
+    rule('plan', ['UAES'], '控制计划'),
+  ]
+  const rows = ruleCoverage(rules, standard, [
+    {key: 'UAES:PSW', provided: true, verified: true},
+    {key: 'UAES:PFMEA', provided: true, verified: false},
+  ])
+  assert.deepEqual([rows[0].covered, rows[0].provided, rows[0].verified], [3, 2, 1])
+  assert.equal(rows[0].types.find(item => item.type === '控制计划')?.provided, false)
 })

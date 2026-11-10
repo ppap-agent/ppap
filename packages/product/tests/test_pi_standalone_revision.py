@@ -19,6 +19,28 @@ def _artifact(files, binding=None):
     return SimpleNamespace(files=dict(files), binding=binding)
 
 
+def test_optimization_copy_keeps_confirmed_formalizations():
+    rules = {
+        "rules": [{"id": "R1"}, {"id": "R2"}],
+        "checker_binding": {"R1": "checker:threshold", "R2": "checker:extra"},
+        "formalizations": {"R1": {"cnl_text": "每一条发票至少关联一条订单", "completeness": "complete"}},
+    }
+    source = {
+        "rules.json": json.dumps(rules).encode(),
+        "checker.py": b"def threshold():\n    return []\n",
+        "resources.py": b"VALUE = 1\n",
+        "templates.json": b"[]",
+        "appendix.json": b'["keep-appendix"]',
+    }
+    saved = _standalone_candidate_files(_base(source), _artifact({"checker.py": b"def create_audit():\n    return ['edited']\n"}))
+    rewritten = json.loads(saved["rules.json"])
+    assert rewritten["formalizations"]["R1"]["cnl_text"] == "每一条发票至少关联一条订单"
+    assert rewritten["checker_binding"] == {"R1": "checker:create_audit", "R2": "checker:create_audit"}
+    assert saved["templates.json"] == b"[]"
+    assert saved["appendix.json"] == b'["keep-appendix"]'
+    assert source["rules.json"] == json.dumps(rules).encode()
+
+
 def test_candidate_copies_every_selected_file_and_keeps_resources():
     source = {"rules.json": RULES, "checker.py": b"def create_audit():\n    return []\n", "resources.py": b"VALUE = 1\n", "templates.json": b"[]"}
     saved = _standalone_candidate_files(_base(source), _artifact({"checker.py": b"def create_audit():\n    return ['edited']\n", "resources.py": b"VALUE = 2\n"}))

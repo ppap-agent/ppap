@@ -148,7 +148,7 @@ class RulePreparationTests(unittest.TestCase):
             page.set_default_timeout(5000)
             api = isolated_dev_login(page, WEB)
             page.get_by_role("navigation", name="产品导航").get_by_role("button", name="审核规则", exact=True).click()
-            page.get_by_role("tab", name="客户要求", exact=True).click()
+            expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
             page.get_by_role("button", name="上传规则", exact=True).click()
             page.get_by_label("上传共用规则文件").set_input_files({"name": "控制计划规则.json", "mimeType": "application/json", "buffer": source_bytes})
             expect(page.get_by_label("要求名称", exact=True)).to_be_visible()
@@ -175,7 +175,7 @@ class RulePreparationTests(unittest.TestCase):
             page.get_by_role("button", name="确认并保存版本", exact=True).click()
             expect(page.get_by_role("status").filter(has_text="版本 v1 已保存")).to_be_visible()
             saved_url = page.url
-            page.get_by_role("link", name="返回客户要求", exact=True).click()
+            page.get_by_role("link", name="返回审核规则", exact=True).click()
             page.get_by_role("searchbox", name="搜索审核规则", exact=True).fill(title)
             link = page.get_by_role("link", name=title, exact=True).filter(visible=True)
             expect(link).to_have_count(1)

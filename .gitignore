@@ -13,6 +13,7 @@ __pycache__/
 .idea/
 .vscode/
 .local/
+.pi/
 apps/web/runtime-config.json
 .artifacts/
 .pytest_cache/

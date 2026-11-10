@@ -77,6 +77,7 @@ from product.writeback_targets import public_target
 
 from api import web_contract as wc
 from api.audit_routes import register_audit_routes
+from api.formalization_routes import register_formalization_routes
 from api.mcp_confirmation import require_approved_source
 from api.notifications import run_task_notifications
 from api.office_routes import register_office_routes
@@ -956,6 +957,7 @@ def create_app(
 
     register_checker_development_routes(app, store, principal_of)
     register_rule_routes(app, store, principal_of, require_file_read)
+    register_formalization_routes(app, store, principal_of)
     register_suite_routes(app, store, principal_of)
     register_support_routes(app, principal_of, settings)
     register_sharing_routes(app, store, session_of, http, settings)

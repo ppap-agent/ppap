@@ -1,5 +1,5 @@
 // Requirement version projections. File bytes and published versions remain owned by the Product API.
-import {clauseSourceReady, demoBasis, isRequirementBasis, type RequirementBasis, type RequirementClause} from './requirements-state.ts'
+import {clauseSourceReady, isRequirementBasis, type RequirementBasis, type RequirementClause} from './requirements-state.ts'
 import {isObject} from './saved-draft.ts'
 
 export type RequirementScope = {customer: string; part: string; revision: string; allCustomers?: boolean; allParts?: boolean; allRevisions?: boolean}
@@ -9,10 +9,6 @@ export type RequirementCollection = {id: string; versions: RequirementVersion[];
 export type RequirementLibrary = {collections: RequirementCollection[]}
 export type RequirementUse = {id: string; title: string; basis: RequirementBasis; submitted: boolean}
 
-export function initialLibrary(): RequirementLibrary {
-  const basis = demoBasis()
-  return {collections: [{id: 'p204-customer', draft: null, versions: [{id: basis.source.id, basis: {...basis, clauses: basis.clauses.map(clause => ({...clause, checked: true}))}, scope: {customer: '北辰汽车', part: '支架 P-204', revision: 'B'}, reason: '已核对的示例来源。', at: '', baseId: null}]}]}
-}
 export const scopeLabel = (scope: RequirementScope) => `${scope.allCustomers ? '不限定客户' : scope.customer || '客户待确认'} · ${scope.allParts ? '不限定零件' : scope.part || '零件待确认'} · ${scope.allRevisions ? '不限定图纸修订' : scope.revision ? `图纸 Rev ${scope.revision}` : '图纸修订待确认'}`
 export const scopeFields = [{key: 'customer', flag: 'allCustomers', label: '客户'}, {key: 'part', flag: 'allParts', label: '零件'}, {key: 'revision', flag: 'allRevisions', label: '图纸修订'}] as const
 export const scopeMatches = (left: RequirementScope, right: RequirementScope) => scopeFields.every(({key, flag}) => right[flag] || left[key].trim().toLowerCase() === right[key].trim().toLowerCase())

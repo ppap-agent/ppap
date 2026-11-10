@@ -119,9 +119,24 @@ const messages: Record<string,string> = {
   share_directory_timeout: '读取组织目录超时，请重新读取目标。',
   upload_request_conflict: '此传输请求已固定其他文件内容，不能替换。请核对原文件。',
   suite_version_confirmation_required: '当前是历史检查版本，不能用于新审核。请改用目录版本后再采用。',
+  source_changed: '原文或范围已变化。请重新读取当前候选。',
+  candidate_stale: '这条理解已经变化。请重新读取当前候选。',
+  display_changed: '你看到的解释已经变化。请重新读取当前候选。',
+  conflicting_confirmation: '这条理解已被其他人确认。请重新读取当前候选。',
+  operation_conflict: '原操作的内容不同。请读取原操作。',
+  not_confirmable: '这条理解还不完整，不能确认。',
+  source_unchecked: '原文出处未核对。请先核对出处，再确认这一理解。',
+  suite_key_mismatch: '这条规则不能写入所选检查版本。',
+  invalid_formalization: '这次形式化请求不完整。',
+  clause_not_found: '没有这条条款。',
+  model_unavailable: '个人模型还不可用。请先配置模型，然后再解释。',
+  model_consumption_refused: '你还没有同意使用个人模型。同意后再解释这一条款。',
 }
 const safeRequestTrace = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9._-]{8,128}$/.test(value) ? value : undefined
 export const requestTrace = (cause: unknown) => safeRequestTrace(cause instanceof Error && 'traceId' in cause ? cause.traceId : undefined)
+export function knownRequestMessage(code?: string | null): string | undefined {
+  return code ? messages[code] : undefined
+}
 export function withResponseTrace<T extends Error>(error: T, response: Response): T {
   const traceId = safeRequestTrace(response.headers.get('X-Request-ID'))
   if (traceId) Object.assign(error, {traceId})

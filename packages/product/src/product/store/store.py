@@ -80,7 +80,7 @@ from product.identity import (
     token_hash,
 )
 from product.logs import emit
-from product.rules import FILE_PREPARATION_KINDS, customer_scope, latest_rule_versions, normalize_rule_body, rule_parse_request, rule_parse_view, rule_title
+from product.rules import FILE_PREPARATION_KINDS, customer_scope, document_type_aliases, latest_rule_versions, normalize_rule_body, rule_parse_request, rule_parse_view, rule_title, source_review
 from product.settings import Settings
 from product.storage import S3Objects
 from product.store.provider_auth import ProviderAuthStore, create_authorization
@@ -3098,24 +3098,27 @@ class AuthStore:
         out = []
         for row in rows:
             body = row[2] or {}
-            out.append(
-                {
-                    "id": str(row[0]),
-                    "title": row[1],
-                    "kind": str(body.get("kind") or "engine"),
-                    "created_at": row[3].isoformat(),
-                    "predecessor_id": str(row[4]) if row[4] else None,
-                    "customer_scope": customer_scope(body, row[5]),
-                    **{field: body.get(field) for field in ("type", "rule_profile", "customers", "models", "parts")},
-                }
-            )
+            item = {
+                "id": str(row[0]),
+                "title": row[1],
+                "kind": str(body.get("kind") or "engine"),
+                "created_at": row[3].isoformat(),
+                "predecessor_id": str(row[4]) if row[4] else None,
+                "customer_scope": customer_scope(body, row[5]),
+                **{field: body.get(field) for field in ("type", "rule_profile", "customers", "models", "parts")},
+            }
+            suite_key = body.get("suite_key")
+            if isinstance(suite_key, str) and suite_key:
+                item["suite_key"] = suite_key
+            out.append(item)
         return out
 
     def list_rule_library(self, tenant_id: str) -> list[dict]:
         with self._conn() as conn:
             rows = conn.execute(
                 """SELECT id, title, created_at, predecessor_id, body->'customers', body->'parts', case_context,
-                    CASE WHEN jsonb_typeof(body->'rules') = 'array' THEN jsonb_array_length(body->'rules') ELSE 0 END
+                    CASE WHEN jsonb_typeof(body->'rules') = 'array' THEN jsonb_array_length(body->'rules') ELSE 0 END,
+                    body->>'type', body->>'suite_key'
                 FROM product.rule_versions WHERE tenant_id = %s AND body->>'kind' = 'engine' AND source_file_version_id IS NOT NULL
                 ORDER BY created_at DESC, id DESC""",
                 (tenant_id,),
@@ -3147,6 +3150,10 @@ class AuthStore:
                     "created_at": row[2].isoformat(),
                     "predecessor_id": str(row[3]) if row[3] else None,
                     "clause_count": row[7],
+                    "document_type": row[8] if isinstance(row[8], str) else "",
+                    "document_type_aliases": document_type_aliases(row[8] if isinstance(row[8], str) else ""),
+                    "suite_key": row[9] if isinstance(row[9], str) and row[9] else None,
+                    "source_review": source_review(context),
                 }
             )
         return versions
@@ -3881,7 +3888,7 @@ class AuthStore:
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1
                     """,
-                    (["feishu_notification", "task_confirmation"], [*FILE_PREPARATION_KINDS, "checker_optimization"]),
+                    (["feishu_notification", "task_confirmation"], [*FILE_PREPARATION_KINDS, "checker_optimization", "rule_formalization"]),
                 ).fetchone()
                 if not row:
                     return None
@@ -3935,7 +3942,7 @@ class AuthStore:
                 """UPDATE engine.jobs SET lease_until = now() + interval '30 seconds', updated_at = now()
                 WHERE id = %s AND attempt = %s AND lease_owner = %s AND status = 'leased'
                   AND (kind <> 'audit' OR lease_until > clock_timestamp())
-                  AND (kind NOT IN ('task_precheck','checker_optimization') OR lease_until > now()) RETURNING id""",
+                  AND (kind NOT IN ('task_precheck','checker_optimization','rule_formalization') OR lease_until > now()) RETURNING id""",
                 (claimed.id, claimed.attempt, worker_ident),
             ).fetchone()
             return row is not None
@@ -3974,7 +3981,7 @@ class AuthStore:
                         result = CASE WHEN kind = ANY(%s) THEN %s ELSE result END
                     WHERE id = %s AND attempt = %s AND lease_owner = %s AND status = 'leased'
                       AND (kind <> 'audit' OR lease_until > clock_timestamp())
-                      AND (kind NOT IN ('task_precheck','checker_optimization') OR lease_until > now())
+                      AND (kind NOT IN ('task_precheck','checker_optimization','rule_formalization') OR lease_until > now())
                     RETURNING id
                     """,
                     (

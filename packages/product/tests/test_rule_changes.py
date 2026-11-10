@@ -1,5 +1,7 @@
 """Deterministic published-rule impact, including unchanged clauses."""
 
+import json
+
 from product.rules import diff_rules
 
 
@@ -22,3 +24,16 @@ def test_clause_identity_text_order_and_numbering_have_explicit_diffs():
     assert changes[3].checker is None
     reordered = {**previous, "rules": list(reversed(previous["rules"]))}
     assert [row.kind for row in diff_rules(previous, reordered)] == ["unchanged"] * 3
+
+
+def test_source_review_follows_checked_clauses_only():
+    from product.rules import source_review
+
+    def context(*checked):
+        clauses = [{"id": str(index), "checked": flag} for index, flag in enumerate(checked, start=1)]
+        return {"registration": json.dumps({"basis": {"clauses": clauses}})}
+
+    assert source_review(None) == "unchecked"
+    assert source_review(context(False, False)) == "unchecked"
+    assert source_review(context(True, False)) == "partial"
+    assert source_review(context(True, True)) == "checked"

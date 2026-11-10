@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_serializer
 
 from audit.fact_questions import BooleanFactEvaluation, FactQuestion
 from audit.kinds import PpapDocumentType
@@ -22,6 +22,15 @@ class RuleInput(BaseModel):
     customers: List[str] = Field(default_factory=list)
     models: List[str] = Field(default_factory=list)
     parts: List[str] = Field(default_factory=list)
+    # Frozen confirmed formalizations. Absent on every historical rule input.
+    formalizations: Optional[Dict[str, Any]] = None
+
+    @model_serializer(mode="wrap")
+    def _omit_unformalized(self, handler):
+        data = handler(self)
+        if isinstance(data, dict) and data.get("formalizations") is None:
+            data.pop("formalizations", None)
+        return data
 
 
 class RuleItem(BaseModel):

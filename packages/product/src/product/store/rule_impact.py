@@ -13,12 +13,21 @@ def suite_rule_body(suite):
     return {**json.loads(suite.files["rules.json"]), "appendix": json.loads(suite.files.get("appendix.json", b"[]"))}
 
 
+def semantic_rule_packet(body: dict | None) -> dict:
+    """Clause text plus confirmed formalizations. Text-only history stays the old packet."""
+    source = body or {}
+    payload = {"rules": source.get("rules")}
+    if source.get("formalizations"):
+        payload["formalizations"] = source["formalizations"]
+    return payload
+
+
 def rule_impact(before, after) -> dict:
     previous, current = suite_rule_body(before), suite_rule_body(after)
     return {
         "source_revision_id": before.revision.id,
         "target_revision_id": after.revision.id,
-        "changed": rule_digest({"rules": previous.get("rules")}, previous["appendix"]) != rule_digest({"rules": current.get("rules")}, current["appendix"]),
+        "changed": rule_digest(semantic_rule_packet(previous), previous["appendix"]) != rule_digest(semantic_rule_packet(current), current["appendix"]),
         "appendix_changed": previous["appendix"] != current["appendix"],
         "clauses": rule_changes(previous, current),
     }

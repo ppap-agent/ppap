@@ -34,3 +34,5 @@ apps/web -> apps/api -> PostgreSQL / object storage -> apps/worker -> packages
 - [#15 本仓生产交付与客户入口](https://github.com/ppap-agent/ppap/issues/15)
 
 这些 Issue 是验收合同，不是实施顺序。具体迁移原则、资产使用默认和开发约束见 [AGENTS.md](AGENTS.md)；不要在 README 复制 Issue 正文或迁移 baseline。
+
+审核规则的条款形式化合同见 [DATA_MODEL](docs/DATA_MODEL.md)。模型语义质量未验收。

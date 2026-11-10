@@ -40,6 +40,54 @@ def document_types() -> list[str]:
     return [item.get_type_name() for item in PpapDocumentType if item != PpapDocumentType.UNKNOWN]
 
 
+def source_review(case_context) -> str:
+    """Whether saved clause sources are unchecked, partly checked, or all checked."""
+    if not isinstance(case_context, dict):
+        return "unchecked"
+    try:
+        registration = json.loads(case_context.get("registration") or "{}")
+    except (TypeError, ValueError):
+        return "unchecked"
+    basis = registration.get("basis") if isinstance(registration, dict) else None
+    clauses = basis.get("clauses") if isinstance(basis, dict) else None
+    if not isinstance(clauses, list):
+        return "unchecked"
+    flags = [item.get("checked") is True for item in clauses if isinstance(item, dict)]
+    if not flags or not any(flags):
+        return "unchecked"
+    if all(flags):
+        return "checked"
+    return "partial"
+
+
+def clause_source_checked(case_context, clause_id: str) -> bool | None:
+    """None means this rule has no saved source review. False blocks confirmation."""
+    if not isinstance(case_context, dict) or "registration" not in case_context:
+        return None
+    try:
+        registration = json.loads(case_context.get("registration") or "{}")
+    except (TypeError, ValueError):
+        return False
+    basis = registration.get("basis") if isinstance(registration, dict) else None
+    clauses = basis.get("clauses") if isinstance(basis, dict) else None
+    if not isinstance(clauses, list):
+        return False
+    for item in clauses:
+        if isinstance(item, dict) and str(item.get("id") or "") == clause_id:
+            return item.get("checked") is True
+    return False
+
+
+def document_type_aliases(value: str) -> list[str]:
+    """Search names for one canonical type. Unknown enterprise types keep their own text."""
+    if not value:
+        return []
+    kind = PpapDocumentType.from_string(value)
+    if kind == PpapDocumentType.UNKNOWN:
+        return [value]
+    return list(kind.iter_aliases())
+
+
 def normalize_document_type(value: Any) -> str:
     """Known names are canonicalized; new enterprise document types need no seed."""
     if not isinstance(value, str) or not value.strip() or len(value.strip()) > 200 or any(ord(char) < 32 for char in value):

@@ -3736,3 +3736,94 @@ def test_a_legacy_start_object_stays_and_the_newer_generation_is_used() -> None:
     assert host.objects.get(legacy_key) == legacy_body
     assert start_generation_key(prefix, 1) in host.objects.items
     assert start_generation_key(prefix, 2) not in host.objects.items
+
+
+def test_frozen_suite_formalization_is_the_development_what(tmp_path: Path) -> None:
+    """The runner is scripted. This does not accept model semantic quality."""
+    from agent.checker_program import rule_for_file
+    from audit.formal_digest import display_digest, formal_digest
+
+    path = tmp_path / "target.xlsx"
+    raw = workbook_bytes(path)
+
+    def seal(item: dict) -> dict:
+        payload = {
+            "format_version": "1",
+            "formal_profile": item["formal_profile"],
+            "owl_content": item["owl_content"],
+            "clif_content": item["clif_content"],
+            "vocabulary": item["vocabulary"],
+            "source_rule_version_id": "rule-9",
+            "clause_id": "c1",
+            "obligations": item["obligations"],
+            "unresolved": [],
+            "assumptions": item["assumptions"],
+        }
+        sealed = {**item, **payload, "rule_version_id": "rule-9", "formal_digest": formal_digest(payload)}
+        sealed["display_digest"] = display_digest(sealed["cnl_text"], sealed["formal_digest"], [], sealed["completeness"])
+        return sealed
+
+    confirmed = seal(
+        {
+            "completeness": "complete",
+            "formal_profile": "owl2-plus-clif-v1",
+            "owl_content": "Ontology(Class(Invoice))",
+            "clif_content": "(cardinality-exists)",
+            "cnl_text": "每一条发票至少关联一条订单",
+            "display_digest": "b" * 64,
+            "source_rule_digest": "c" * 64,
+            "confirmed_by": "user-1",
+            "confirmed_at": "2026-11-10T00:00:00Z",
+            "confirmed_candidate_id": "cand-9",
+            "source_suite_revision_id": "suite-9",
+            "obligations": [],
+            "assumptions": [],
+            "vocabulary": {},
+        }
+    )
+    body = {
+        "rule_profile": "v3",
+        "type": "自定义",
+        "rules": [{"id": "c1", "rule_to_check": "每一条发票至少关联一条订单"}],
+        "appendix": [{"note": "附录甲"}],
+        "formalizations": {"c1": confirmed},
+    }
+    encoded = json.dumps(body).encode()
+
+    def frozen(payload: dict) -> RuleInput:
+        return rule_for_file(FrozenFile(file_version_id="version-1", role="target", filename="target.xlsx", sha256="a" * 64, rule_version_id="rule-9", rule_body=payload))
+
+    class Stop:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+            self.input_tokens = 0
+            self.output_tokens = 0
+
+        def run(self, work: Path, prompt: str, schema, deadline: float, *, reasoning_effort: str):
+            del work, schema, deadline, reasoning_effort
+            self.prompts.append(prompt)
+            raise ModelProtocolError("stop")
+
+    def capture(payload: dict) -> str:
+        developer = Stop()
+        host = SemanticRuntime(IsolatedRuntime(developer), MemoryObjects(), timeout=30)
+        with pytest.raises(DeepError) as caught:
+            host.adapt_checker(request(), audit_file(path), frozen(payload), raw, role="target", context=ExecutionContext())
+        assert caught.value.code == "deep_model_protocol"
+        assert developer.prompts
+        return developer.prompts[0]
+
+    prompt = capture(json.loads(encoded))
+    guidance = prompt.split("已确认形式要求只约束本次列出的条款", 1)[1]
+    assert "条款 c1 的已确认形式要求" in guidance
+    assert "cand-9" in guidance and "suite-9" in guidance
+    assert "(cardinality-exists)" in guidance and "(cardinality-unique)" not in guidance
+    assert "每一条发票至少关联一条订单" in prompt and "附录甲" in prompt
+    assert "不要把唯一匹配" in prompt
+    other = json.loads(encoded)
+    other["formalizations"]["c1"] = seal({**confirmed, "clif_content": "(cardinality-unique)", "cnl_text": "每一条发票恰好关联一条订单", "source_suite_revision_id": "suite-10"})
+    changed = capture(other)
+    assert "(cardinality-unique)" in changed and "(cardinality-exists)" not in changed
+    assert changed != prompt
+    assert input_digest(audit_file(path), frozen(json.loads(encoded)), file_sha256="a" * 64, role="target") != input_digest(audit_file(path), frozen(other), file_sha256="a" * 64, role="target")
+    assert json.loads(encoded)["formalizations"]["c1"]["clif_content"] == "(cardinality-exists)"

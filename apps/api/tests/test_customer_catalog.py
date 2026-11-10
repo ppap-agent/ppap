@@ -29,6 +29,8 @@ def test_rule_library_requires_login_and_declares_its_metadata_contract():
     assert response.headers["cache-control"] == "private, no-store"
     operation = app.openapi()["paths"]["/rule-library"]["get"]
     assert operation["responses"]["200"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/RuleLibrary"}
+    entry = app.openapi()["components"]["schemas"]["RuleLibraryEntry"]["properties"]
+    assert {"document_type", "document_type_aliases", "suite_key"} <= set(entry)
 
 
 def test_customer_catalog_keeps_latest_rule_versions_tenant_scope_and_unique_names():
@@ -106,8 +108,12 @@ def test_catalog_uses_current_tenant_published_rules_not_rule_files_or_history(a
         assert len(versions) == 6
         assert any(version["id"] == old for version in versions)
         assert any(version["predecessor_id"] == old for version in versions)
-        version_fields = {"id", "title", "version", "scope", "reason", "created_at", "predecessor_id", "clause_count"}
+        version_fields = {"id", "title", "version", "scope", "reason", "created_at", "predecessor_id", "clause_count", "document_type", "document_type_aliases", "suite_key"}
         assert all(set(version) == version_fields and version["clause_count"] == 1 for version in versions)
+        assert {version["document_type"] for version in versions} >= {"控制计划", "过程流程图", "全功能检验报告", "设计失效模式及后果分析"}
+        control_plan = next(version for version in versions if version["document_type"] == "控制计划")
+        assert "Control plan" in control_plan["document_type_aliases"]
+        assert all(isinstance(version["suite_key"], str) and version["suite_key"] for version in versions)
         assert not {version["id"] for version in versions} & {version["id"] for version in second.get("/rule-library").json()["versions"]}
         assert first.get("/audit-tasks").json()["tasks"] == []
         assert first.get("/rounds").json()["rounds"] == []

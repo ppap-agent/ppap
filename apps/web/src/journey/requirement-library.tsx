@@ -20,15 +20,19 @@ import {ReadSkeleton} from '../components/read-skeleton'
 import {clauseSourceReady, type RequirementBasis, type RequirementClause} from './requirements-state'
 import {verifiedClauseCount} from './requirement-sources'
 import {RequirementSourceSelect} from './requirement-source-select'
+import {publishedRuleAction} from './requirement-directory.ts'
 import {clauseContent, libraryDraftIssues, scopeFields, scopeLabel, type RequirementCollection, type RequirementDraft, type RequirementScope, type RequirementUse, type RequirementVersion} from './requirement-library-state'
 import {requirementFileAccept, useLocalUploads} from './local-files'
 import {RequirementOriginal} from './requirements'
 import {receiveRequirement, RuleExtraction} from './rule-extraction'
-import {canonical, publishBasis} from './product'
+import {canonical, publishBasis, sourceFileLabel} from './product'
+import {ClauseFormalization} from './requirement-formalization'
 import {isPreview} from './access'
 import {message as errorMessage} from './remote'
-import {requirementDirectory, type ReadRequirementVersions, type RequirementDirectoryCollection, type RequirementDirectoryVersion} from './requirement-directory'
+import {clearsRequirementQueryOnEscape, requirementDirectory, requirementHaystack, requirementQueryHref, requirementSearchKeyAction, type ReadRequirementVersions, type RequirementDirectoryCollection, type RequirementDirectoryVersion} from './requirement-directory'
 import {displayTime} from '../helpers'
+import {auditAddressChanged} from '../audit/routes'
+import {matchesCatalog, type CatalogRow} from '../audit/rules-catalog'
 
 const routeSelection = () => ({id: new URLSearchParams(location.search).get('requirement') ?? '', version: new URLSearchParams(location.search).get('reqVersion') ?? ''})
 const routeQuery = () => (new URLSearchParams(location.search).get('reqQuery') ?? '').slice(0, 200)
@@ -65,9 +69,11 @@ function ClauseDifference({before, after, label}: {before?: RequirementClause; a
   </article>
 }
 
-export function RequirementLibraryPanel({collections, onChange, uses, onOpen, saveError, loading, readError, onReload, title = '审核规则', uploadLabel = '上传规则', onPublished, active = true, automaticMatching = false, directory, readVersions, readRevision = 0, headerActions, catalogIntro, catalogFooter}: {
+export function RequirementLibraryPanel({collections, onChange, uses, onOpen, saveError, loading, readError, onReload, title = '审核规则', uploadLabel = '上传规则', onPublished, active = true, automaticMatching = false, directory, readVersions, readRevision = 0, headerActions, catalogIntro, catalogFooter, catalogRows = [], onOpenCatalog}: {
   catalogIntro?: ReactNode
   catalogFooter?: ReactNode
+  catalogRows?: CatalogRow[]
+  onOpenCatalog?: (row: CatalogRow) => void
   collections: RequirementCollection[]; onChange: Dispatch<SetStateAction<RequirementCollection[]>>
   uses: RequirementUse[]; onOpen: (id: string) => void; saveError: string
   loading: boolean; readError: string; onReload: () => void
@@ -111,8 +117,10 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
   const related = uses.filter(use => collection?.versions.some(version => use.basis.source.id === version.id || use.basis.library?.versionId === version.id))
   const shown = catalog.filter(item => {
     const content = item.draft ?? item.versions.at(-1)
-    return content && `${content.title} ${scopeLabel(content.scope)}`.toLowerCase().includes(query.trim().toLowerCase())
+    return content && requirementHaystack(content.title, scopeLabel(content.scope), content.documentType, content.documentTypeAliases).includes(query.trim().toLocaleLowerCase())
   })
+  const extraRows = catalogRows.filter(row => matchesCatalog(row, query))
+  const listVisible = shown.length > 0 || extraRows.length > 0
   useEffect(() => {
     if (!readVersions || !active || !versionIdsKey || loading || readError) return
     const controller = new AbortController(), key = versionKey, owner = selection.id
@@ -149,9 +157,8 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
   }
   function search(value: string) {
     setQuery(value)
-    const url = new URL(location.href)
-    if (value) url.searchParams.set('reqQuery', value); else url.searchParams.delete('reqQuery')
-    history.replaceState(history.state, '', url)
+    history.replaceState(history.state, '', requirementQueryHref(location.href, value))
+    window.dispatchEvent(new Event(auditAddressChanged))
   }
   function showContent(value: string) {
     if (value !== 'clauses' && value !== 'changes') return
@@ -245,13 +252,14 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
     {feedback && <p role={feedback.failed ? 'alert' : 'status'} className={feedback.failed ? 'text-destructive' : 'text-muted-foreground'}>{feedback.text}</p>}
     {!selection.id ? <>
       {catalogIntro}
-      {(!loading || shown.length > 0) && <div role="search" aria-label="筛选审核规则" className="flex max-w-xl items-center gap-2"><Search className="size-4 shrink-0 text-muted-foreground" aria-hidden="true"/><Input aria-label="搜索审核规则" type="search" placeholder="搜索要求、客户或零件" maxLength={200} value={query} onChange={event => search(event.target.value)}/>{query && <Button variant="ghost" onClick={() => search('')}>清除</Button>}</div>}
-      {shown.length ? <>
+      {(!loading || shown.length > 0) && <div role="search" aria-label="筛选审核规则" className="flex max-w-xl items-center gap-2"><Search className="size-4 shrink-0 text-muted-foreground" aria-hidden="true"/><Input aria-label="搜索审核规则" type="search" placeholder="搜索客户、规则名称或文件类型" maxLength={200} value={query} onChange={event => search(event.target.value)} onKeyDown={event => { const action = requirementSearchKeyAction(event.key, query); if (action === 'none') return; event.preventDefault(); if (action === 'clear') { search(''); return } const link = event.currentTarget.closest('section')?.querySelector('a[href*="requirement="]') as HTMLAnchorElement | null; const visible = [...(event.currentTarget.closest('section')?.querySelectorAll('a[href*="requirement="]') ?? [])].find(item => item.getClientRects().length > 0) as HTMLAnchorElement | undefined; (visible ?? link)?.click() }}/>{query && <Button variant="ghost" onClick={() => search('')}>清除</Button>}</div>}
+      {listVisible ? <>
         <div className="max-lg:hidden"><Table className="table-fixed"><TableHeader><TableRow><TableHead className={showParts ? 'w-[40%]' : undefined}>要求名称</TableHead>{showParts && <TableHead>适用零件</TableHead>}<TableHead className="w-36">最近版本</TableHead><TableHead className="w-16">条款</TableHead><TableHead className="w-10"><span className="sr-only">打开</span></TableHead></TableRow></TableHeader><TableBody>{groupedShown.map(([customer, items]) => <Fragment key={customer}><TableRow><TableCell colSpan={showParts ? 5 : 4}><h3 className="text-xs font-medium text-muted-foreground">{customer} · {items.length} 份</h3></TableCell></TableRow>{items.map(item => {
           const latest = item.draft ?? item.versions.at(-1)!
-          return <TableRow key={item.id} className="relative"><TableCell className="whitespace-normal"><a className="flex items-start gap-2.5 py-1 text-left font-medium underline-offset-4 after:absolute after:inset-0 hover:underline focus-visible:outline-ring" href={requirementHref(item.id)} onClick={event => navigate(event, item.id)}><BookOpen className="mt-0.5 size-4 shrink-0 text-muted-foreground"/><span className="min-w-0 break-words">{latest.title || '待命名要求'}</span></a></TableCell>{showParts && <TableCell className="whitespace-normal break-words"><span className="text-muted-foreground">{partScope(latest.scope)}</span></TableCell>}<TableCell className="whitespace-normal"><div className="flex flex-wrap items-center gap-2"><span className="break-words">{latest.version || '版本待确认'}</span>{item.draft && <Badge variant="outline">草稿</Badge>}</div></TableCell><TableCell><span className="tabular-nums">{latest.clauseCount}</span></TableCell><TableCell><ChevronRight className="size-4 text-muted-foreground" aria-hidden="true"/></TableCell></TableRow>
-        })}</Fragment>)}</TableBody></Table></div>
-        <div className="space-y-4 lg:hidden" aria-label="要求目录">{groupedShown.map(([customer, items]) => <section key={customer} aria-label={customer}><h3 className="pb-1 text-xs font-medium text-muted-foreground">{customer} · {items.length} 份</h3><ul className="divide-y border-y" aria-label={`${customer} 的要求`}>{items.map(item => {const latest = item.draft ?? item.versions.at(-1)!; return <li key={item.id}><a className="flex items-center gap-3 py-4 text-left focus-visible:outline-ring" href={requirementHref(item.id)} onClick={event => navigate(event, item.id)}><div className="min-w-0 flex-1 space-y-1.5"><p className="break-words font-medium">{latest.title || '待命名要求'}</p><p className="break-words text-muted-foreground">{partScope(latest.scope)}</p><div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span>{latest.version || '版本待确认'} · {latest.clauseCount} 条</span>{item.draft && <Badge variant="outline">草稿</Badge>}</div></div><ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true"/></a></li>})}</ul></section>)}</div>
+          return <TableRow key={item.id} className="relative"><TableCell className="whitespace-normal"><a className="flex items-start gap-2.5 py-1 text-left font-medium underline-offset-4 after:absolute after:inset-0 hover:underline focus-visible:outline-ring" href={requirementHref(item.id)} aria-describedby={!item.draft ? `rule-action-${item.id}-wide` : undefined} onClick={event => navigate(event, item.id)}><BookOpen className="mt-0.5 size-4 shrink-0 text-muted-foreground"/><span className="min-w-0 break-words">{latest.title || '待命名要求'}</span></a></TableCell>{showParts && <TableCell className="whitespace-normal break-words"><span className="text-muted-foreground">{partScope(latest.scope)}</span></TableCell>}<TableCell className="whitespace-normal"><div className="flex flex-wrap items-center gap-2"><span className="break-words">{latest.version || '版本待确认'}</span>{item.draft && <Badge variant="outline">草稿</Badge>}{!item.draft && <span id={`rule-action-${item.id}-wide`}>{publishedRuleAction(latest)}</span>}</div></TableCell><TableCell><span className="tabular-nums">{latest.clauseCount}</span></TableCell><TableCell><ChevronRight className="size-4 text-muted-foreground" aria-hidden="true"/></TableCell></TableRow>
+        })}</Fragment>)}{extraRows.map(row => <TableRow key={row.key}><TableCell colSpan={showParts ? 5 : 4}><button type="button" className="flex min-h-11 w-full items-center justify-between gap-3 py-2 text-left" onClick={() => onOpenCatalog?.(row)}><span className="min-w-0"><span className="block break-words font-medium">{row.title}</span><span className="text-xs text-muted-foreground">{row.detail ? `${row.source} · ${row.detail}` : row.source}</span></span><span className="shrink-0 text-sm">{row.action}</span></button></TableCell></TableRow>)}</TableBody></Table></div>
+        <div className="space-y-4 lg:hidden" aria-label="要求目录">{groupedShown.map(([customer, items]) => <section key={customer} aria-label={customer}><h3 className="pb-1 text-xs font-medium text-muted-foreground">{customer} · {items.length} 份</h3><ul className="divide-y border-y" aria-label={`${customer} 的要求`}>{items.map(item => {const latest = item.draft ?? item.versions.at(-1)!; return <li key={item.id}><a className="flex items-center gap-3 py-4 text-left focus-visible:outline-ring" href={requirementHref(item.id)} aria-describedby={!item.draft ? `rule-action-${item.id}-narrow` : undefined} onClick={event => navigate(event, item.id)}><div className="min-w-0 flex-1 space-y-1.5"><p className="break-words font-medium">{latest.title || '待命名要求'}</p><p className="break-words text-muted-foreground">{partScope(latest.scope)}</p><div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span>{latest.version || '版本待确认'} · {latest.clauseCount} 条</span>{item.draft && <Badge variant="outline">草稿</Badge>}</div></div><ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true"/></a>{!item.draft && <p id={`rule-action-${item.id}-narrow`} className="pb-3 text-xs text-muted-foreground">{publishedRuleAction(latest)}</p>}</li>})}</ul></section>)}</div>
+        {extraRows.length > 0 && <ul className="divide-y border-y lg:hidden" aria-label="其他检查来源">{extraRows.map(row => <li key={row.key}><button type="button" className="flex min-h-11 w-full items-center justify-between gap-3 py-3 text-left" onClick={() => onOpenCatalog?.(row)}><span className="min-w-0"><span className="block break-words font-medium">{row.title}</span><span className="text-xs text-muted-foreground">{row.detail ? `${row.source} · ${row.detail}` : row.source}</span></span><span className="shrink-0 text-sm">{row.action}</span></button></li>)}</ul>}
       </> : !loading && !readError && <div className="space-y-3 py-12 text-center"><BookOpen className="mx-auto size-7 text-muted-foreground"/><h2 className="text-lg font-semibold">{query ? '没有匹配的规则' : '还没有审核规则'}</h2><Button variant="outline" onClick={() => query ? search('') : picker.current?.click()}>{query ? '清除搜索' : '选择规则文件'}</Button></div>}
       {catalogFooter}
     </> : current && collection ? <>
@@ -266,7 +274,9 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
             <span className="text-muted-foreground">{current.basis.clauses.length} 条</span>
             {active && <RequirementOriginal basis={current.basis} label="查看原件"/>}
             {'at' in current && current.at && <time dateTime={current.at} className="text-xs text-muted-foreground">保存于 {displayTime(current.at)}</time>}
+            {!draftSelected && selectedVersion?.suiteKey && <Button type="button" variant="outline" onClick={() => {const url = new URL(location.href); url.searchParams.set('checkerSuite', selectedVersion.suiteKey!); url.searchParams.delete('checkerPath'); url.searchParams.delete('rulesArea'); history.pushState(history.state, '', `${url.pathname}${url.search}${url.hash}`); window.dispatchEvent(new Event(auditAddressChanged))}}>检查版本</Button>}
         </div>
+        {!draftSelected && selectedVersion && !selectedVersion.suiteKey && <p role="status">检查功能尚待完善。确认规则解释也不会开始审核。</p>}
       </header>
       {draftSelected ? <fieldset disabled={locked} className="min-w-0 space-y-4">
         <p className="flex items-center gap-2 rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground"><Info aria-hidden="true" className="size-3.5 shrink-0"/>草稿只保存在当前浏览器；换设备或清除浏览器数据前，请先保存版本。</p>
@@ -276,7 +286,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
         <label className="grid gap-1.5">来源说明／变更原因<Textarea value={current.reason} onChange={event => {const value = event.currentTarget.value; edit(draft => ({...draft, reason: value}))}}/></label>
       </fieldset> : <div className="space-y-4">
         {/* Scope and source read as one line of facts; the version note follows as plain text. */}
-        <dl className="flex flex-wrap gap-x-8 gap-y-2 rounded-lg border px-4 py-3">{scopeFields.map(({key, flag, label}) => <div className="flex min-w-0 items-baseline gap-2" key={key}><dt className="text-xs text-muted-foreground">适用{label}</dt><dd className="break-words">{current.scope[flag] ? '不限定' : current.scope[key] || '待确认'}</dd></div>)}<div className="flex min-w-0 items-baseline gap-2"><dt className="text-xs text-muted-foreground">来源文件</dt><dd className="min-w-0 break-words">{current.basis.source.filename}</dd></div></dl>
+        <dl className="flex flex-wrap gap-x-8 gap-y-2 rounded-lg border px-4 py-3">{scopeFields.map(({key, flag, label}) => <div className="flex min-w-0 items-baseline gap-2" key={key}><dt className="text-xs text-muted-foreground">适用{label}</dt><dd className="break-words">{current.scope[flag] ? '不限定' : current.scope[key] || '待确认'}</dd></div>)}<div className="flex min-w-0 items-baseline gap-2"><dt className="text-xs text-muted-foreground">来源文件</dt><dd className="min-w-0 break-words">{sourceFileLabel(current.basis.source.filename, current.basis.server?.material.status)}</dd></div></dl>
         {current.reason && <p className="whitespace-pre-wrap break-words text-muted-foreground">版本说明：{current.reason}</p>}
       </div>}
       {automaticMatching && !current.scope.allCustomers && !current.scope.customer.trim() && <Alert role="status"><AlertTitle>客户范围尚未确认</AlertTitle><AlertDescription>{draftSelected ? '请指定客户，或明确勾选“不限定客户”后保存。' : '此版本暂不参与自动匹配。请创建新版本，指定客户或确认“不限定客户”。已有审核依据不变。'}</AlertDescription></Alert>}
@@ -290,6 +300,8 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
                 {!repeated && clause.title.trim() && clause.text.trim() && <h2 className="break-words font-medium">{clause.title}</h2>}
                 <p className="whitespace-pre-wrap break-words leading-relaxed">{clause.text || clause.title || '尚未录入要求正文。'}</p>
                 <p className="flex flex-wrap items-center gap-x-2 break-words text-xs text-muted-foreground"><span>{clause.source !== current.basis.source.filename && `${clause.source} · `}{clause.location || '出处待补充'}</span><Button variant="link" size="xs" onClick={event => {sourceTrigger.current = event.currentTarget; setSourceClause(clause.id)}}><BookOpen/>核对出处</Button></p>
+                {!draftSelected && <ClauseFormalization ruleVersionId={current.id} clauseId={clause.id} suiteRevisionId={current.basis.server?.body.suite_revision_id}
+                  sourceVerified={clause.checked && clauseSourceReady(clause, current.basis)}/>}
               </>}
               {draftSelected && <><label className="flex min-h-9 items-center gap-2 max-md:min-h-11"><Checkbox disabled={locked || !clauseSourceReady(clause, current.basis)} aria-label={`${clause.id} 已核对来源`} checked={clause.checked && clauseSourceReady(clause, current.basis)} onCheckedChange={value => patchClause(clause.id, {checked: value === true})}/>已核对内容与出处</label>{!clauseSourceReady(clause, current.basis) && <p className="text-xs text-muted-foreground">请先核对出处，选择对应的原文位置。</p>}</>}
             </div>
