@@ -293,3 +293,33 @@ def test_native_adapter_publishes_only_actual_predicate_count(tmp_path, version,
         assert result.checks_performed == int(performed)
     finally:
         checker.close()
+
+
+def test_removed_root_reexports_stay_absent_and_version_packages_remain():
+    """The 17 root shims had no caller. v2, v3, and v4 classes stay importable."""
+    import importlib.util
+
+    removed = (
+        "annual_test",
+        "assembly_issue",
+        "checking_fixture",
+        "control_plan",
+        "dimension_measurement",
+        "dpvr",
+        "dvp_r",
+        "equipment_list",
+        "initial_process_capacity",
+        "msa",
+        "pfmea",
+        "plant_capacity",
+        "process_flow",
+        "psw",
+        "special_characteristic",
+        "sub_supplier",
+        "tooling",
+    )
+    for name in removed:
+        assert importlib.util.find_spec(f"audit.checkers.{name}") is None
+    for version in ("v2", "v3", "v4", "v5"):
+        assert importlib.util.find_spec(f"audit.checkers.{version}") is not None
+        importlib.import_module(f"audit.checkers.{version}")

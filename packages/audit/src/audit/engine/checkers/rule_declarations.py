@@ -45,12 +45,6 @@ def _agent_for_target(doc_type: str, filename: str, rule_profile: str, *, preset
     return agent_cls
 
 
-def declarations_for_target(doc_type: str, filename: str, rule_profile: str, *, preset_key: str | None = None, preset_customer: str | None = None) -> tuple[tuple[str, str], ...]:
-    """Resolve the builtin checker list for one target file without executing it."""
-    agent_cls = _agent_for_target(doc_type, filename, rule_profile, preset_key=preset_key, preset_customer=preset_customer)
-    return discover_declared_rules(agent_cls) if agent_cls else ()
-
-
 def freeze_target_rule_execution(rule_body: dict | None, filename: str):
     from audit.rule_coverage import freeze_rule_execution
 
