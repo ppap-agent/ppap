@@ -3,7 +3,7 @@ import {request, upload, type RuleParseJob, type RuleTypes, type RuleSources} fr
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Button} from '../components/ui/button'
 import {Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger} from '../components/ui/dialog'
-import {NativeSelect, NativeSelectOption} from '../components/ui/native-select'
+import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '../components/ui/select'
 import {isPreview} from './access'
 import {localBasis, type RequirementBasis} from './requirements-state'
 import type {LocalUpload} from './local-files'
@@ -84,7 +84,7 @@ export function RuleExtraction({basis, onChange, readonly = false}: {basis: Requ
     finally {working.current = false; setBusy(false)}
   }
   return <Dialog open={rerun} onOpenChange={setRerun}><section className={"flex flex-col gap-3 py-4"} aria-label="提取审核条款">
-    <div className={"flex flex-wrap items-end gap-3"}><label className={"flex flex-col gap-2 text-sm"}>适用资料类型<NativeSelect value={basis.server.body.type} disabled={Boolean(basis.server.parseId && status !== 'failed')} onChange={event => onChange({...basis, server: {...basis.server!, body: {...basis.server!.body, type: event.target.value}}})}><NativeSelectOption value="">请选择</NativeSelectOption>{types.value?.types.map(type => <NativeSelectOption key={type} value={type}>{type}</NativeSelectOption>)}</NativeSelect></label>
+    <div className={"flex flex-wrap items-end gap-3"}><label className={"flex flex-col gap-2 text-sm"}>适用资料类型<Select value={basis.server.body.type || undefined} disabled={Boolean(basis.server.parseId && status !== 'failed')} onValueChange={value => onChange({...basis, server: {...basis.server!, body: {...basis.server!.body, type: value}}})}><SelectTrigger className="w-56"><SelectValue placeholder="请选择"/></SelectTrigger><SelectContent>{types.value?.types.map(type => <SelectItem key={type} value={type}>{type}</SelectItem>)}</SelectContent></Select></label>
       <Button disabled={busy || !basis.server.body.type || pending && !job.error} onClick={() => void parse()}>{status === 'failed' ? '重新提取条款' : basis.server.parseId ? '查看提取进度' : '提取条款'}</Button>
       {basis.server.parseId && <Button variant="ghost" onClick={job.refresh}>刷新提取进度</Button>}
       {unknown && <DialogTrigger asChild><Button variant="outline" disabled={busy}>重新提取条款</Button></DialogTrigger>}

@@ -316,7 +316,8 @@ class RuleInteractionTests(unittest.TestCase):
             state["parse_patch"] = {"result": {"error": "rule_document_type_mismatch"}}
             page.get_by_role("button", name="刷新提取进度", exact=True).click()
             expect(page.get_by_role("alert").filter(has_text="原件中的资料类型与所选类型不同")).to_be_visible()
-            page.get_by_label("适用资料类型").select_option("控制计划")
+            page.get_by_label("适用资料类型").click()
+            page.get_by_role("option", name="控制计划", exact=True).click()
             state["status"] = "succeeded"
             state["parse_patch"] = {}
             page.get_by_role("button", name="重新提取条款", exact=True).click()
@@ -746,7 +747,8 @@ class RuleInteractionTests(unittest.TestCase):
             expect(retry).to_be_enabled()
             open_customer_requirements(page)
             page.get_by_label("上传共用规则文件").set_input_files({"name": "新规则.json", "mimeType": "application/json", "buffer": b"{}"})
-            page.get_by_label("适用资料类型").select_option("控制计划")
+            page.get_by_label("适用资料类型").click()
+            page.get_by_role("option", name="控制计划", exact=True).click()
             page.get_by_role("button", name="提取条款", exact=True).click()
             self.check_requirement(page)
             with page.expect_response("**/api/audit-customers"):
@@ -777,7 +779,8 @@ class RuleInteractionTests(unittest.TestCase):
                 bar.get_by_role("button", name="上传规则", exact=True).click()
             page.get_by_label("上传共用规则文件").set_input_files({"name": "客户规则.json", "mimeType": "application/json", "buffer": b"{}"})
             expect(bar.get_by_role("button", name="上传规则", exact=True)).to_have_count(0)
-            page.get_by_label("适用资料类型").select_option("控制计划")
+            page.get_by_label("适用资料类型").click()
+            page.get_by_role("option", name="控制计划", exact=True).click()
             page.get_by_role("button", name="提取条款", exact=True).click()
             self.check_requirement(page)
             page.get_by_label("不限定客户", exact=True).uncheck()
@@ -2247,7 +2250,8 @@ class RuleInteractionTests(unittest.TestCase):
             expect(page.get_by_role("heading", name="客户要求", exact=True)).to_be_visible()
             page.get_by_label("上传共用规则文件").set_input_files({"name": "B.json", "mimeType": "application/json", "buffer": b"second"})
             state["status"] = "succeeded"
-            page.get_by_label("适用资料类型").select_option("控制计划")
+            page.get_by_label("适用资料类型").click()
+            page.get_by_role("option", name="控制计划", exact=True).click()
             page.get_by_role("button", name="提取条款", exact=True).click()
             expect(page.get_by_label("要求名称", exact=True)).to_have_value("规则 A")
             page.get_by_label("要求名称", exact=True).fill("第二份要求")
@@ -2344,7 +2348,8 @@ class RuleInteractionTests(unittest.TestCase):
             page.route("**/api/rules/parse/*", read)
             page.goto(WEB + "/requirements?rulesArea=requirements")
             page.get_by_label("上传共用规则文件").set_input_files({"name": "待核对要求.json", "mimeType": "application/json", "buffer": b"{}"})
-            page.get_by_label("适用资料类型").select_option("控制计划")
+            page.get_by_label("适用资料类型").click()
+            page.get_by_role("option", name="控制计划", exact=True).click()
             page.get_by_role("button", name="提取条款", exact=True).click()
             unknown = page.get_by_role("alert").filter(has_text="提取结果暂不确定")
             expect(unknown).to_contain_text("原任务可能仍会完成")
@@ -2420,7 +2425,8 @@ class RuleInteractionTests(unittest.TestCase):
             expect(page.get_by_role("alert").filter(has_text="要求提取失败")).to_be_visible()
             first = state["parses"][0]
             state["writes"].clear()
-            page.get_by_label("适用资料类型").select_option("全功能检验报告")
+            page.get_by_label("适用资料类型").click()
+            page.get_by_role("option", name="全功能检验报告", exact=True).click()
             state["status"] = "succeeded"
             page.get_by_role("button", name="重新提取条款", exact=True).click()
             expect(page.get_by_label("要求名称", exact=True)).to_have_value("规则 A")
@@ -2591,7 +2597,8 @@ class RuleInteractionTests(unittest.TestCase):
     def open_requirement(self, page, *, document_type="控制计划"):
         page.goto(WEB + "/requirements?rulesArea=requirements")
         page.get_by_label("上传共用规则文件").set_input_files({"name": "A.json", "mimeType": "application/json", "buffer": b"{}"})
-        page.get_by_label("适用资料类型").select_option(document_type)
+        page.get_by_label("适用资料类型").click()
+        page.get_by_role("option", name=document_type, exact=True).click()
         page.get_by_role("button", name="提取条款", exact=True).click()
 
     def check_requirement(self, page):

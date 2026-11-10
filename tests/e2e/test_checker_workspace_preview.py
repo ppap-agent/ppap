@@ -258,7 +258,8 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
         return page
 
     def answer(self, page):
-        page.get_by_label("正确结论", exact=True).select_option("NG")
+        page.get_by_label("正确结论", exact=True).click()
+        page.get_by_role("option", name="不符合", exact=True).click()
         page.get_by_text("添加我在原件中找到的依据", exact=True).click()
         page.get_by_label("工作表名称", exact=True).fill("控制计划")
         page.get_by_label("单元格（例如 B12）", exact=True).fill("B12")
@@ -288,9 +289,11 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
                 route.fulfill(body=contents, content_type="application/pdf")
 
             page.route("**/rounds/round-a/files/original-pdf/versions/file-pdf/download", original)
-            page.get_by_label("正确结论", exact=True).select_option("NG")
+            page.get_by_label("正确结论", exact=True).click()
+            page.get_by_role("option", name="不符合", exact=True).click()
             page.get_by_text("添加我在原件中找到的依据", exact=True).click()
-            page.get_by_label("依据原件", exact=True).select_option("file-pdf")
+            page.get_by_label("依据原件", exact=True).click()
+            page.get_by_role("option", name="签署原件.pdf", exact=True).click()
             page.get_by_role("button", name="在原件上点选位置", exact=True).click()
             reader = page.get_by_role("region", name="原件阅读器", exact=True)
             canvas = reader.get_by_role("img", name="签署原件.pdf · 第 1 页", exact=True)
@@ -559,7 +562,8 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
             self.assertEqual(len([row for row in fixture.calls if row[:2] == ("POST", "/audit-rounds/round-a/checker-feedback")]), 1)
             page.get_by_text("查看、改错或删除样本", exact=True).click()
             page.get_by_role("button", name="改错", exact=True).click()
-            page.get_by_label("正确结论", exact=True).select_option("PASS")
+            page.get_by_label("正确结论", exact=True).click()
+            page.get_by_role("option", name="符合", exact=True).click()
             page.get_by_label("为什么应当这样判断", exact=True).fill("重新核对后确认签名有效")
             with page.expect_response(lambda response: response.request.method == "GET" and urlsplit(response.url).path == "/suite-revisions/revision-base/checker-feedback"):
                 page.get_by_role("button", name="保存正确答案修改", exact=True).click()

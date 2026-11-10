@@ -8,6 +8,7 @@ import type {components} from '../generated/openapi'
 import {CheckerRelease} from './checker-release'
 import {canOpenPredefined, checkerLabel, predefinedTree, predefinedScope, readPredefinedPath, sourceIdentity, type PredefinedEntry, type PredefinedNode} from './predefined-catalog'
 import {auditAddressChanged, writeAuditAddress} from './routes'
+import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '../components/ui/select'
 
 const selectedSuite = () => new URL(location.href).searchParams.get('checkerSuite') || ''
 const selectedPath = () => readPredefinedPath(new URL(location.href))
@@ -116,12 +117,11 @@ export function CheckerCatalog({active, revision, mode = 'predefined', onBusyCha
     <h2 className="text-lg font-semibold">企业检查版本</h2>
     <p className="text-sm text-muted-foreground">核对本企业采用的版本与定制候选。发布只影响之后的新审核，已有结果不变。</p>
     <Label htmlFor={selectId}>选择检查</Label>
-    <select id={selectId} className="w-full max-w-xl rounded-md border bg-background p-2 text-sm" value={selected} disabled={busy} onChange={event => choose(event.target.value)}>
-      <option value="">选择要核对的检查</option>
-      {selected && !suite && !blocked && <option value={selected}>{selected}</option>}
-      {unavailable.map((value, index) => <option key={value.suite_key} value={value.suite_key}>检查 {index + 1} · 暂不可用</option>)}
-      {suites.map(value => <option key={value.suite_key} value={value.suite_key}>{value.title} · {value.current_revision_id ? '已采用' : '尚未采用'}</option>)}
-    </select>
+    <Select value={selected || undefined} disabled={busy} onValueChange={choose}><SelectTrigger id={selectId} className="w-full max-w-xl"><SelectValue placeholder="选择要核对的检查"/></SelectTrigger><SelectContent>
+      {selected && !suite && !blocked && <SelectItem value={selected}>所选检查</SelectItem>}
+      {unavailable.map((value, index) => <SelectItem key={value.suite_key} value={value.suite_key}>检查 {index + 1} · 暂不可用</SelectItem>)}
+      {suites.map(value => <SelectItem key={value.suite_key} value={value.suite_key}>{value.title} · {value.current_revision_id ? '已采用' : '尚未采用'}</SelectItem>)}
+    </SelectContent></Select>
     {loading && <ReadSkeleton label="正在读取检查版本…" kind="inline"/>}
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
     {unavailable.length > 0 && <p role="alert" className="text-sm text-destructive">{unavailable.length} 项检查暂不可用。请核对权限、关联检查或版本内容。</p>}
