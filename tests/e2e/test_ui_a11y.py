@@ -333,7 +333,7 @@ class UiA11yTests(unittest.TestCase):
             original = page.get_by_role("button", name="核对出处", exact=True)
             original.focus()
             page.keyboard.press("Enter")
-            sheet = page.get_by_role("dialog", name="条款 1 · 核对出处", exact=True)
+            sheet = page.get_by_role("dialog", name="第 1 条 · 核对出处", exact=True)
             expect(sheet).to_be_visible()
             self.assertTrue(page.evaluate("() => Boolean(document.activeElement?.closest('[role=dialog]'))"))
             page.keyboard.press("Escape")

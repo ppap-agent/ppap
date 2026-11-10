@@ -334,22 +334,16 @@ def test_saved_clause_confirms_against_the_real_api(formalization_browser):
         numbered = page.get_by_role("row").filter(has_text="编号规则")
         expect(numbered).to_contain_text("继续确认")
         expect(numbered.get_by_role("link", name="编号规则", exact=True)).to_have_attribute("aria-describedby", re.compile(r"^rule-action-.+-wide$"))
-        catalog_row = page.get_by_role("button", name="编号检查").first
         expect(rule_link).to_be_visible()
-        expect(catalog_row).to_be_visible()
-        expect(catalog_row).to_contain_text("企业上传")
-        expect(rule_link).not_to_contain_text("企业上传")
-        page.get_by_role("searchbox", name="搜索审核规则", exact=True).fill("规则")
-        official = page.get_by_role("button").filter(has_text="系统提供").filter(has_text="查看规则").first
-        expect(rule_link).to_be_visible()
-        expect(official).to_be_visible()
-        expect(official).to_contain_text("系统提供")
-        expect(official).not_to_contain_text("查看系统提供的检查")
-        expect(rule_link).not_to_contain_text("系统提供")
-        official.click()
-        expect(page).to_have_url(re.compile(r"[?&]checkerPath="))
+        # Checks have their own two entries; they are not repeated as rows among the rules.
+        expect(page.get_by_role("button", name="编号检查")).to_have_count(0)
+        page.get_by_role("button", name="查看系统提供的检查", exact=True).click()
+        expect(page).to_have_url(re.compile(r"[?&]rulesArea=predefined"))
         assert "requirement=" not in page.url
         assert "reqVersion=" not in page.url
+        page.get_by_role("button", name="返回审核规则", exact=True).click()
+        page.get_by_role("button", name="企业检查版本", exact=True).click()
+        expect(page.get_by_role("region", name="企业检查版本", exact=True)).to_be_visible()
         page.get_by_role("button", name="返回审核规则", exact=True).click()
         expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
         rule_link = page.get_by_role("link", name="编号规则", exact=True).first
@@ -435,12 +429,12 @@ def test_saved_clause_confirms_against_the_real_api(formalization_browser):
         )
         assert raced.status_code == 201, raced.text
         section.get_by_role("button", name="确认这一理解", exact=True).click()
-        expect(section.get_by_role("button", name="重新读取当前候选", exact=True)).to_be_visible()
-        section.get_by_role("button", name="重新读取当前候选", exact=True).click()
-        expect(section).to_contain_text("规则解释已确认。这只确认需求含义，不是检查功能已验证。")
+        expect(section.get_by_role("button", name="重新读取当前解释", exact=True)).to_be_visible()
+        section.get_by_role("button", name="重新读取当前解释", exact=True).click()
+        expect(section).to_contain_text("已确认。这只确认规则含义，检查还需单独验证。")
         page.reload()
-        expect(page.get_by_role("region", name="系统是这样理解的 c1", exact=True)).to_contain_text("规则解释已确认。这只确认需求含义，不是检查功能已验证。")
-        expect(page.get_by_role("region", name="系统是这样理解的 c1", exact=True)).to_contain_text("检查功能仍需单独验证后才能用于审核。")
+        expect(page.get_by_role("region", name="系统是这样理解的 c1", exact=True)).to_contain_text("已确认。这只确认规则含义，检查还需单独验证。")
+        expect(page.get_by_text("检查功能仍需单独验证后才能用于审核。", exact=True)).to_be_visible()
         expect(page.get_by_text("检查功能已验证，可用于审核。", exact=True)).to_have_count(0)
         from audit.standard_suites import library_revision
 
@@ -467,7 +461,7 @@ def test_saved_clause_confirms_against_the_real_api(formalization_browser):
         verified = page.get_by_role("region", name="系统是这样理解的 c1", exact=True)
         expect(verified).to_contain_text("检查功能已验证，可用于审核。")
         expect(verified).not_to_contain_text("检查功能仍需单独验证后才能用于审核。")
-        expect(verified).to_contain_text("规则解释已确认。这只确认需求含义，不是检查功能已验证。")
+        expect(verified).to_contain_text("已确认。这只确认规则含义，检查还需单独验证。")
         with page.expect_response(lambda response: response.request.method == "POST" and response.url.endswith("/formalization-suite-candidates")) as handed:
             page.get_by_role("button", name="用于检查优化", exact=True).click()
         assert handed.value.status == 201, handed.value.text()
@@ -485,7 +479,7 @@ def test_saved_clause_confirms_against_the_real_api(formalization_browser):
         context.clear_cookies()
         context.add_cookies([{"name": SESSION_COOKIE, "value": f.renew_session(), "url": f.web, "httpOnly": True}])
         page.reload()
-        expect(page.get_by_role("region", name="系统是这样理解的 c1", exact=True)).to_contain_text("规则解释已确认。这只确认需求含义，不是检查功能已验证。")
+        expect(page.get_by_role("region", name="系统是这样理解的 c1", exact=True)).to_contain_text("已确认。这只确认规则含义，检查还需单独验证。")
         expect(page.get_by_role("region", name="系统是这样理解的 c1", exact=True)).to_contain_text("恰好关联一条")
         calls_before_switch = f.script.calls
         switched = browser.new_context()
@@ -493,7 +487,7 @@ def test_saved_clause_confirms_against_the_real_api(formalization_browser):
         switched_page = switched.new_page()
         switched_page.goto(page.url)
         switched_view = switched_page.get_by_role("region", name="系统是这样理解的 c1", exact=True)
-        expect(switched_view).to_contain_text("规则解释已确认。这只确认需求含义，不是检查功能已验证。")
+        expect(switched_view).to_contain_text("已确认。这只确认规则含义，检查还需单独验证。")
         expect(switched_view).to_contain_text("恰好关联一条")
         switched.close()
         assert f.script.calls == calls_before_switch
@@ -502,7 +496,7 @@ def test_saved_clause_confirms_against_the_real_api(formalization_browser):
         revised_section.get_by_role("button", name="修改理解", exact=True).click()
         expect(revised_section.get_by_role("status").filter(has_text="至少关联")).to_be_visible()
         revised_section.get_by_role("button", name="确认这一理解", exact=True).click()
-        expect(revised_section).to_contain_text("规则解释已确认。这只确认需求含义，不是检查功能已验证。")
+        expect(revised_section).to_contain_text("已确认。这只确认规则含义，检查还需单独验证。")
         revised = httpx.get(f"{f.api}/rules/{f.rule_id}/formalizations/c1", cookies={SESSION_COOKIE: f.session}, timeout=10)
         assert revised.status_code == 200, revised.text
         revised_body = revised.json()
@@ -545,9 +539,9 @@ def test_saved_clause_confirms_against_the_real_api(formalization_browser):
         assert state == "unknown", state
         assert f.script.calls == 7
         page.reload()
-        expect(page.get_by_role("region", name="系统是这样理解的 c3", exact=True)).to_contain_text("生成结果尚未确定。请读取原操作，不要再次生成。")
+        expect(page.get_by_role("region", name="系统是这样理解的 c3", exact=True)).to_contain_text("生成结果尚未确定。请点“刷新解释进度”，不要重复生成。")
         page.reload()
-        expect(page.get_by_role("region", name="系统是这样理解的 c3", exact=True)).to_contain_text("生成结果尚未确定。请读取原操作，不要再次生成。")
+        expect(page.get_by_role("region", name="系统是这样理解的 c3", exact=True)).to_contain_text("生成结果尚未确定。请点“刷新解释进度”，不要重复生成。")
         assert len(generations) == posts
         assert f.script.calls == 7
         removed = httpx.delete(f"{f.api}/me/model-config", cookies={SESSION_COOKIE: f.session}, timeout=10)
@@ -560,14 +554,14 @@ def test_saved_clause_confirms_against_the_real_api(formalization_browser):
         assert len(generations) == 8
         page.set_viewport_size({"width": 320, "height": 720})
         confirmed = page.get_by_role("region", name="系统是这样理解的 c1", exact=True)
-        advanced = confirmed.get_by_role("button", name="查看形式化表达（高级）", exact=True)
+        advanced = confirmed.get_by_role("button", name="查看机器可读的规则", exact=True)
         advanced.focus()
         expect(advanced).to_be_focused()
         page.keyboard.press("Enter")
-        copy = confirmed.get_by_role("button", name="复制形式规范", exact=True)
+        copy = confirmed.get_by_role("button", name="复制", exact=True)
         expect(copy).to_be_visible()
         copy.click()
-        expect(confirmed.get_by_text("形式规范已复制。", exact=True)).to_be_visible()
+        expect(confirmed.get_by_text("已复制。", exact=True)).to_be_visible()
         copied = page.evaluate("() => navigator.clipboard.readText()")
         assert copied.strip()
         assert "<script" not in copied
@@ -600,7 +594,7 @@ def test_saved_clause_confirms_against_the_real_api(formalization_browser):
         bare = bare_row.get_by_role("link", name="无检查规则")
         expect(bare).to_be_visible()
         bare.click()
-        expect(page.get_by_text("检查功能尚待完善。确认规则解释也不会开始审核。", exact=True)).to_be_visible()
+        expect(page.get_by_text("这条规则还没有对应的检查，暂时不能用于自动审核。", exact=True)).to_be_visible()
         with f.store._conn() as conn:
             conn.execute("UPDATE product.rule_versions SET body = jsonb_set(body, '{rules,0,rule_to_check}', '\"另一句原文\"') WHERE id=%s", (f.rule_id,))
         page.get_by_role("link", name="返回审核规则", exact=True).click()
@@ -608,7 +602,7 @@ def test_saved_clause_confirms_against_the_real_api(formalization_browser):
         page.get_by_role("link", name="编号规则").click()
         changed = page.get_by_role("region", name="系统是这样理解的 c1", exact=True)
         expect(changed).to_contain_text("原文或范围已变化")
-        expect(changed.get_by_role("button", name="确认这一理解", exact=True)).to_be_disabled()
+        expect(changed.get_by_role("button", name="确认这一理解", exact=True)).to_have_count(0)
         expect(changed.get_by_role("button", name="让系统解释这条规则", exact=True)).to_be_visible()
         expect(changed).to_contain_text("以前的理解仍可阅读")
         browser.close()

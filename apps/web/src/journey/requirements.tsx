@@ -27,7 +27,8 @@ const separateTitle = (clause: RequirementClause) => clause.title.trim() && !cla
 export type RequirementCatalogRead = {loading: boolean; error: string; reload: () => void}
 
 export function RequirementOriginal({basis, label = '阅读规则原件'}: {basis: RequirementBasis; label?: string}) {
-  if (!basis.source.localFile && !basis.server) return null
+  // An unreadable original cannot be opened; the source line already says so.
+  if (!basis.source.localFile && !basis.server || basis.server?.material.status === 'unreadable') return null
   const file = {name: basis.source.filename, revision: basis.source.version || '待确认', sourceVersion: 1, localFile: basis.source.localFile, material: basis.server?.material}
   return <SourceReaderButton file={file} label={label} input={{receiptId: basis.source.version || '要求草稿', scope: basis.source.title, files: [file], evidence: [], clarification: null}}/>
 }

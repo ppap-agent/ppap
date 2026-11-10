@@ -2024,7 +2024,7 @@ class RuleInteractionTests(unittest.TestCase):
                         expect(section.get_by_role("button", name="让系统解释这条规则", exact=True)).to_have_count(0)
                         self.assertEqual(len(formal["generations"]), 1)
                         with page.expect_request("**/api/rule-formalization-generations/*"):
-                            section.get_by_role("button", name="重新读取原操作", exact=True).click()
+                            section.get_by_role("button", name="刷新解释进度", exact=True).click()
                         operation_id = formal["generations"][0]["operation_id"]
                         self.assertEqual(formal["reads"], [operation_id, operation_id])
                         formal["outcome"] = "completed"
@@ -2035,16 +2035,16 @@ class RuleInteractionTests(unittest.TestCase):
                     expect(section.get_by_role("button", name="修改理解", exact=True)).to_be_disabled()
                     section.get_by_label("要改成的含义", exact=True).fill("编号必须逐字相等")
                     expect(section.get_by_role("button", name="修改理解", exact=True)).to_be_enabled()
-                    section.get_by_role("button", name="查看形式化表达（高级）", exact=True).click()
+                    section.get_by_role("button", name="查看机器可读的规则", exact=True).click()
                     expect(section).to_contain_text("owl2-dl-v1")
                     section.get_by_role("button", name="确认这一理解", exact=True).click()
-                    expect(section).to_contain_text("规则解释已确认。这只确认需求含义，不是检查功能已验证。")
-                    expect(section.get_by_role("button", name="确认这一理解", exact=True)).to_be_disabled()
+                    expect(section).to_contain_text("已确认。这只确认规则含义，检查还需单独验证。")
+                    expect(section.get_by_role("button", name="确认这一理解", exact=True)).to_have_count(0)
                     saved = state["rules"][state["saves"][0]["request_id"]]
                     saved["body"] = {**saved["body"], "suite_key": "custom:" + saved["id"], "suite_revision_id": "00000000-0000-4000-8000-0000000000aa"}
                     page.reload()
                     confirmed_view = page.get_by_role("region", name="系统是这样理解的 1", exact=True)
-                    expect(confirmed_view).to_contain_text("规则解释已确认。这只确认需求含义，不是检查功能已验证。")
+                    expect(confirmed_view).to_contain_text("已确认。这只确认规则含义，检查还需单独验证。")
                     expect(confirmed_view).to_contain_text(cnl)
                     confirmed_view.get_by_role("button", name="用于检查优化", exact=True).click()
                     expect(confirmed_view).to_contain_text("尚未发布，也不会开始审核。")

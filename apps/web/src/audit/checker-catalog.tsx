@@ -1,10 +1,9 @@
 import {useCallback, useEffect, useId, useRef, useState, type KeyboardEvent} from 'react'
+import type {SuitesRead} from './rules'
 import {ArrowLeft, ChevronRight, FileCode, Folder} from 'lucide-react'
-import {request} from '../api'
 import {Button} from '../components/ui/button'
 import {ReadSkeleton} from '../components/read-skeleton'
 import {Label} from '../components/ui/label'
-import type {components} from '../generated/openapi'
 import {CheckerRelease} from './checker-release'
 import {canOpenPredefined, checkerLabel, predefinedTree, predefinedScope, readPredefinedPath, sourceIdentity, type PredefinedEntry, type PredefinedNode} from './predefined-catalog'
 import {auditAddressChanged, writeAuditAddress} from './routes'
@@ -16,17 +15,16 @@ const stateLabel = {installed: '', unseeded: '待安装', unavailable: '不可�
 const rowClass = 'flex min-h-11 w-full min-w-0 items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-muted/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-60'
 
 /** Source navigation never adopts a revision or calls a model. */
-export function CheckerCatalog({active, revision, mode = 'predefined', onBusyChange}: {active: boolean; revision: number; mode?: 'predefined' | 'enterprise'; onBusyChange?: (value: boolean) => void}) {
+export function CheckerCatalog({active, suites: read, onReload, mode = 'predefined', onBusyChange}: {active: boolean; suites: SuitesRead; onReload: () => void; mode?: 'predefined' | 'enterprise'; onBusyChange?: (value: boolean) => void}) {
   const selectId = useId(), groupId = useId(), tree = useRef<HTMLElement>(null), lastPath = useRef(selectedPath())
-  const [suites, setSuites] = useState<components['schemas']['SuiteActive'][]>([])
-  const [unavailable, setUnavailable] = useState<components['schemas']['SuiteUnavailable'][]>([])
-  const [predefined, setPredefined] = useState<PredefinedEntry[]>([])
-  const [predefinedError, setPredefinedError] = useState('')
+  const suites = read.value?.suites ?? [], unavailable = read.value?.unavailable ?? []
+  const predefinedError = read.value?.predefined_error ?? ''
+  const predefined: PredefinedEntry[] = read.value && !predefinedError ? read.value.predefined ?? [] : []
+  const loading = read.loading, error = read.error
   const [selected, setSelected] = useState(selectedSuite), [path, setPath] = useState(selectedPath)
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
-  const [loading, setLoading] = useState(true), [error, setError] = useState(''), [busy, setBusy] = useState(false)
-  const [refresh, setRefresh] = useState(0)
-  const reload = useCallback(() => setRefresh(value => value + 1), [])
+  const [busy, setBusy] = useState(false)
+  const reload = onReload
   const changeBusy = useCallback((value: boolean) => {setBusy(value); onBusyChange?.(value)}, [onBusyChange])
   useEffect(() => {
     const restore = () => {setSelected(selectedSuite()); setPath(selectedPath())}
@@ -42,19 +40,6 @@ export function CheckerCatalog({active, revision, mode = 'predefined', onBusyCha
       tree.current?.querySelectorAll<HTMLButtonElement>('button[data-tree-path]').forEach(button => {if (button.dataset.treePath === lastPath.current) button.focus()})
     }
   }, [path])
-  useEffect(() => {
-    if (!active) return
-    const controller = new AbortController()
-    setLoading(true); setError('')
-    void request<components['schemas']['SuiteCatalog']>('/suites', 'GET', undefined, controller.signal).then(value => {
-      if (controller.signal.aborted) return
-      setSuites(value.suites); setUnavailable(value.unavailable || [])
-      setPredefined(value.predefined_error ? [] : value.predefined || [])
-      setPredefinedError(value.predefined_error || '')
-      setLoading(false)
-    }).catch(cause => {if (!controller.signal.aborted) {setError(cause instanceof Error ? cause.message : '检查目录暂不可读。'); setLoading(false)}})
-    return () => controller.abort()
-  }, [active, revision, refresh])
   function choose(key: string) {
     if (busy) return
     const url = new URL(location.href)
@@ -148,7 +133,7 @@ export function CheckerCatalog({active, revision, mode = 'predefined', onBusyCha
           {!openEntry && <p role="status" className="text-sm">{selectedEntry.availability === 'historical' ? '历史目录，只能查看，不能采用。' : selectedEntry.availability === 'unseeded' ? '这项检查尚未安装，暂时不能打开或采用。' : '官方版本暂时无法读取，请稍后刷新。'}</p>}
         </header>}
         {openEntry && <div className="space-y-2 text-sm"><p title={'官方修订 ' + openEntry.revision_id}>{sourceIdentity(openEntry, adoptedRevisionId)}</p><p className="text-muted-foreground">可自动检查 {openEntry.evidence_reader_clause_ids?.length ?? 0}/{openEntry.clause_count ?? 0} 条{(openEntry.evidence_reader_clause_ids?.length ?? 0) < (openEntry.clause_count ?? 1) && '；其余条款会显示为“无法判断”，需要人工核对'}。</p></div>}
-        {active && openEntry && <CheckerRelease key={`${openEntry.path}:${openEntry.revision_id}`} scope={predefinedScope(openEntry.path)} suiteKey={openEntry.suite_key} revisionId={openEntry.revision_id} refreshKey={`${revision}:${refresh}`} onBusyChange={changeBusy} onPublished={reload} onDependency={choose}/>}
+        {active && openEntry && <CheckerRelease key={`${openEntry.path}:${openEntry.revision_id}`} scope={predefinedScope(openEntry.path)} suiteKey={openEntry.suite_key} revisionId={openEntry.revision_id} refreshKey={String(read.revision)} onBusyChange={changeBusy} onPublished={reload} onDependency={choose}/>}
       </section>
     </div>
   </section>

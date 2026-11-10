@@ -3,24 +3,28 @@ import {knownRequestMessage, request} from '../api'
 import type {components} from '../generated/openapi.ts'
 import {meaningChangedWithoutText} from '../audit/rule-impact-state.ts'
 import {canRequestFormalization, checkerAvailability, checkerAvailabilityCopy, confirmedReadingAside, formalizationFailure, formalizationReceiptMatches, sameFormalizationTarget, textForCandidate, visibleFormalizationReadings, type CheckerValidation} from './requirement-formalization-contract.ts'
+import {Loader2} from 'lucide-react'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Button} from '../components/ui/button'
 import {Collapsible, CollapsibleContent, CollapsibleTrigger} from '../components/ui/collapsible'
+import {RadioGroup, RadioGroupItem} from '../components/ui/radio-group'
+import {Textarea} from '../components/ui/textarea'
 import {message} from './remote'
 
 type Detail = components['schemas']['ClauseFormalizationView']
 type Receipt = components['schemas']['OperationReceipt']
 
 const stateCopy: Record<string, string> = {
-  not_started: '来源已在上方。系统还没有解释这条规则。',
-  source_changed: '原文或范围已变化。以前的确认不能用于现在这条规则。',
-  candidate: '请核对系统理解。这还不是检查功能已验证。',
-  needs_clarification: '还有一个会影响判定的问题。回答之前不能确认。',
-  partial: '形式化还不完整，不能确认这一理解。',
-  confirmed: '规则解释已确认。这只确认需求含义，不是检查功能已验证。',
+  not_started: '系统还没有解释这条规则。',
+  source_changed: '原文或范围已变化，需要重新解释。',
+  candidate: '请核对这段理解，无误后确认。',
+  needs_clarification: '还有一个会影响判定的问题，回答后才能确认。',
+  partial: '这段理解还不完整，不能确认。',
+  confirmed: '已确认。这只确认规则含义，检查还需单独验证。',
 }
 
-export function ClauseFormalization({ruleVersionId, clauseId, suiteRevisionId, sourceVerified}: {ruleVersionId: string; clauseId: string; suiteRevisionId?: string; sourceVerified: boolean}) {
+/** One clause's reading. It stays one line until there is something to read or decide; checker status is said once per rule by RuleCheckerStatus. */
+export function ClauseFormalization({ruleVersionId, clauseId, suiteRevisionId, sourceVerified, explainAll = 0, modelNote = true}: {ruleVersionId: string; clauseId: string; suiteRevisionId?: string; sourceVerified: boolean; explainAll?: number; modelNote?: boolean}) {
   const [detail, setDetail] = useState<Detail | null>(null)
   const [error, setError] = useState('')
   const [readError, setReadError] = useState('')
@@ -32,7 +36,6 @@ export function ClauseFormalization({ruleVersionId, clauseId, suiteRevisionId, s
   const [conflict, setConflict] = useState(false)
   const [copied, setCopied] = useState(false)
   const [locked, setLocked] = useState(false)
-  const [checker, setChecker] = useState<'verified' | 'unverified' | 'unknown' | 'missing'>('missing')
   const busy = useRef(false)
   const shown = useRef({ruleVersionId, clauseId})
   shown.current = {ruleVersionId, clauseId}
@@ -52,15 +55,6 @@ export function ClauseFormalization({ruleVersionId, clauseId, suiteRevisionId, s
   useEffect(() => {
     setError(''); setHandoff(null); setChoice(''); setChoiceCandidate(''); setRevision(''); setRevisionCandidate(''); setConflict(false)
   }, [ruleVersionId, clauseId])
-  useEffect(() => {
-    if (!suiteRevisionId) { setChecker('missing'); return }
-    const controller = new AbortController()
-    setChecker('unknown')
-    void request<{validation?: CheckerValidation}>(`/suite-revisions/${encodeURIComponent(suiteRevisionId)}`, 'GET', undefined, controller.signal).then(value => {
-      if (!controller.signal.aborted) setChecker(checkerAvailability(value.validation))
-    }).catch(() => { if (!controller.signal.aborted) setChecker('unknown') })
-    return () => controller.abort()
-  }, [suiteRevisionId])
   useEffect(() => {
     const controller = new AbortController()
     setDetail(null); setReadError(''); setOperation(null); setRevision(''); setConflict(false); setCopied(false)
@@ -167,7 +161,7 @@ export function ClauseFormalization({ruleVersionId, clauseId, suiteRevisionId, s
       if (!stillShown(origin)) return
       setCopied(true)
       setError('')
-    }).catch(() => {if (stillShown(origin)) setError('形式规范没有复制。请展开高级内容后手动选择。')})
+    }).catch(() => {if (stillShown(origin)) setError('没有复制。请展开后手动选择。')})
   }
   function reread(operationId: string) {
     const origin = {ruleVersionId, clauseId}
@@ -177,49 +171,94 @@ export function ClauseFormalization({ruleVersionId, clauseId, suiteRevisionId, s
       if (value.state === 'completed') setPending(value.operation_id)
     }).catch(cause => {if (stillShown(origin)) setError(message(cause))})
   }
-  return <section aria-label={`系统是这样理解的 ${clauseId}`} className="space-y-3 rounded-lg border p-3">
-    <h3 className="text-base font-semibold">系统是这样理解的</h3>
-    {error && <Alert variant="destructive"><AlertTitle>解释没有完成</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
-    {!detail && !readError && <p role="status">正在读取系统理解</p>}
-    {readError && <p role="status">系统理解暂时不能读取。{readError}</p>}
-    {detail && <p id={reasonId} className="text-sm text-muted-foreground">{stateCopy[detail.state] ?? '请按页面上的下一步继续。'}</p>}
-    {checker !== 'missing' && <p role="status" className="text-sm">{checkerAvailabilityCopy(checker)}</p>}
-    {detail && !confirmed && !sourceVerified && <p id={sourceReasonId} role="status">{knownRequestMessage('source_unchecked')}</p>}
-    {previous && <p className="text-sm text-muted-foreground">原文没有被修改。</p>}
-    {previous && <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">上一次理解：{previous.cnl_text}</p>}
-    {historical && <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">以前的理解仍可阅读，但不能用于确认现在的规则：{historical.cnl_text}</p>}
-    {confirmedAside && <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">已确认的理解仍可阅读：{confirmedAside.cnl_text}</p>}
-    {candidate && <p className="whitespace-pre-wrap break-words leading-relaxed" role="status">{candidate.cnl_text}</p>}
-    {question && <fieldset className="space-y-2"><legend className="text-sm font-medium">{question.reason}</legend>
-      {(question.choices ?? []).map(item => <label key={item.id} className="block min-h-11"><input className="mr-2" type="radio" name={`${clauseId}-${question.id}`} checked={selectedChoice === item.id} onChange={() => { if (!candidate) return; setChoiceCandidate(candidate.id); setChoice(item.id) }}/>{item.summary}<span className="mt-1 block text-xs text-muted-foreground">反例：{item.counterexample}</span></label>)}
-      <Button type="button" variant="outline" disabled={!selectedChoice || locked || waiting} onClick={() => void generate({based_on_candidate_id: candidate?.id, clarification_answer: {unresolved_id: question.id, choice_id: selectedChoice}})}>按这个选择重新解释</Button>
-      <Button type="button" variant="outline" disabled={locked || waiting} onClick={() => void generate({based_on_candidate_id: candidate?.id, clarification_answer: {unresolved_id: question.id, choice_id: 'undecided'}})}>暂不确定</Button>
-    </fieldset>}
-    <div className="flex flex-wrap gap-2">
-      {canRequestFormalization(detail?.state ?? '', operation?.state) && <Button type="button" disabled={locked} onClick={() => void generate({})}>让系统解释这条规则</Button>}
-      {canRequestFormalization(detail?.state ?? '', operation?.state) && <p className="text-xs text-muted-foreground">这会使用你的个人模型。</p>}
-      <Button type="button" aria-describedby={describedBy} disabled={blocked || confirmed || locked} onClick={() => void confirm()}>确认这一理解</Button>
-      {candidate && <label className="grid min-w-0 w-full gap-1 text-sm sm:w-auto sm:min-w-60">要改成的含义<textarea className="min-h-11 w-full rounded-md border bg-transparent px-2 py-1" maxLength={2000} value={selectedRevision} onChange={event => { setRevisionCandidate(candidate.id); setRevision(event.target.value) }} /></label>}
-      {candidate && <Button type="button" variant="outline" disabled={!selectedRevision.trim() || locked || waiting} onClick={() => void generate({based_on_candidate_id: candidate.id, user_instruction: selectedRevision.trim()})}>修改理解</Button>}
-      {(operation?.state === 'queued' || operation?.state === 'running') && <p role="status">正在生成解释。请读取原操作，不要再次付费生成。</p>}
-      {operation?.state === 'unknown' && <p role="status">生成结果尚未确定。请读取原操作，不要再次生成。</p>}
-      {operation?.state === 'stopped' && <p role="status">这次解释已停止。可以重新让系统解释。</p>}
-      {operation?.state === 'failed' && operation.failure !== 'source_changed' && <p role="status">{formalizationFailure(operation.failure)}</p>}
-      {conflict && <Button type="button" variant="outline" onClick={() => {setConflict(false); setError(''); setPending(crypto.randomUUID())}}>重新读取当前候选</Button>}
-      {confirmed && suiteRevisionId && <Button type="button" variant="outline" disabled={handoff?.state === 'sending' || handoff?.state === 'saved'} onClick={() => void materialize(false)}>用于检查优化</Button>}
-      {handoff?.state === 'saved' && <p role="status">已生成待验证的检查候选。尚未发布，也不会开始审核。{handoff.meaningChanged ? '原文没有变化。已确认的含义已变化，检查需要重新验证。' : ''}</p>}
-      {handoff?.state === 'unknown' && <Button type="button" variant="outline" onClick={() => void materialize(true)}>重新读取检查候选</Button>}
-      {operation?.operation_id && operation.state !== 'completed' && <Button type="button" variant="outline" onClick={() => reread(operation.operation_id)}>重新读取原操作</Button>}
+  // "Explain all" on the rule asks each clause that has not started; a clause still loading asks once it has read its state.
+  const explained = useRef(explainAll)
+  useEffect(() => {
+    if (explainAll === explained.current || !detail) return
+    explained.current = explainAll
+    if (canRequestFormalization(detail.state, operation?.state)) void generate({})
+  }, [explainAll, detail])
+  const canRequest = canRequestFormalization(detail?.state ?? '', operation?.state)
+  return <section aria-label={`系统是这样理解的 ${clauseId}`} className="space-y-3 rounded-md bg-muted/40 px-3 py-2.5 text-sm">
+    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+      <h3 className="font-medium">系统是这样理解的</h3>
+      {!detail && !readError && <p role="status" className="text-muted-foreground">正在读取…</p>}
+      {detail && <p id={reasonId} className="text-muted-foreground">{stateCopy[detail.state] ?? '请按页面上的下一步继续。'}</p>}
+      {readError && <p role="status" className="text-muted-foreground">暂时不能读取。{readError}</p>}
     </div>
+    {error && <Alert variant="destructive"><AlertTitle>解释没有完成</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
+    {candidate && <p className="whitespace-pre-wrap break-words leading-relaxed" role="status">{candidate.cnl_text}</p>}
+    {previous && <p className="whitespace-pre-wrap break-words text-muted-foreground">上一次理解（原文没有被修改）：{previous.cnl_text}</p>}
+    {historical && <p className="whitespace-pre-wrap break-words text-muted-foreground">以前的理解仍可阅读，但不能用于确认现在的规则：{historical.cnl_text}</p>}
+    {confirmedAside && <p className="whitespace-pre-wrap break-words text-muted-foreground">已确认的理解仍可阅读：{confirmedAside.cnl_text}</p>}
+    {candidate && !confirmed && !sourceVerified && <p id={sourceReasonId} role="status" className="text-muted-foreground">{knownRequestMessage('source_unchecked')}</p>}
+    {question && <fieldset className="space-y-2"><legend className="font-medium">{question.reason}</legend>
+      <RadioGroup value={selectedChoice} onValueChange={value => { if (!candidate) return; setChoiceCandidate(candidate.id); setChoice(value) }}>
+        {(question.choices ?? []).map(item => <label key={item.id} className="flex min-h-11 items-start gap-2"><RadioGroupItem value={item.id} className="mt-0.5"/><span>{item.summary}<span className="mt-1 block text-xs text-muted-foreground">反例：{item.counterexample}</span></span></label>)}
+      </RadioGroup>
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" variant="outline" size="sm" disabled={!selectedChoice || locked || waiting} onClick={() => void generate({based_on_candidate_id: candidate?.id, clarification_answer: {unresolved_id: question.id, choice_id: selectedChoice}})}>按这个选择重新解释</Button>
+        <Button type="button" variant="ghost" size="sm" disabled={locked || waiting} onClick={() => void generate({based_on_candidate_id: candidate?.id, clarification_answer: {unresolved_id: question.id, choice_id: 'undecided'}})}>暂不确定</Button>
+      </div>
+    </fieldset>}
+    {(operation?.state === 'queued' || operation?.state === 'running') && <p role="status" className="flex items-center gap-2 text-muted-foreground"><Loader2 aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none"/>正在生成解释…</p>}
+    {operation?.state === 'unknown' && <p role="status">生成结果尚未确定。请点“刷新解释进度”，不要重复生成。</p>}
+    {operation?.state === 'stopped' && <p role="status">这次解释已停止，可以重新让系统解释。</p>}
+    {operation?.state === 'failed' && operation.failure !== 'source_changed' && <p role="status">{formalizationFailure(operation.failure)}</p>}
+    {handoff?.state === 'saved' && <p role="status">已生成新的检查草稿，尚未发布，也不会开始审核。{handoff.meaningChanged ? '已确认的含义变了，检查需要重新验证。' : ''}</p>}
+    <div className="flex flex-wrap items-center gap-2">
+      {canRequest && <><Button type="button" variant="outline" size="sm" disabled={locked} title="这会使用你的个人模型" onClick={() => void generate({})}>让系统解释这条规则</Button>{modelNote && <span className="text-xs text-muted-foreground">这会使用你的个人模型。</span>}</>}
+      {candidate && !confirmed && <Button type="button" size="sm" aria-describedby={describedBy} disabled={blocked || locked} onClick={() => void confirm()}>确认这一理解</Button>}
+      {confirmed && suiteRevisionId && <Button type="button" variant="outline" size="sm" disabled={handoff?.state === 'sending' || handoff?.state === 'saved'} onClick={() => void materialize(false)}>用于检查优化</Button>}
+      {handoff?.state === 'unknown' && <Button type="button" variant="outline" size="sm" onClick={() => void materialize(true)}>刷新检查草稿状态</Button>}
+      {conflict && <Button type="button" variant="outline" size="sm" onClick={() => {setConflict(false); setError(''); setPending(crypto.randomUUID())}}>重新读取当前解释</Button>}
+      {operation?.operation_id && operation.state !== 'completed' && <Button type="button" variant="outline" size="sm" onClick={() => reread(operation.operation_id)}>刷新解释进度</Button>}
+      {readError && <Button type="button" variant="outline" size="sm" onClick={() => setPending(crypto.randomUUID())}>重新读取</Button>}
+    </div>
+    {candidate && <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+      <label className="grid min-w-0 gap-1">要改成的含义<Textarea className="min-h-11" maxLength={2000} value={selectedRevision} onChange={event => { setRevisionCandidate(candidate.id); setRevision(event.target.value) }}/></label>
+      <Button type="button" variant="outline" size="sm" disabled={!selectedRevision.trim() || locked || waiting} onClick={() => void generate({based_on_candidate_id: candidate.id, user_instruction: selectedRevision.trim()})}>修改理解</Button>
+    </div>}
     {candidate && <Collapsible>
-      <CollapsibleTrigger asChild><Button type="button" variant="ghost" size="sm">查看形式化表达（高级）</Button></CollapsibleTrigger>
-      <CollapsibleContent>
-        <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words text-xs">
+      <CollapsibleTrigger asChild><Button type="button" variant="ghost" size="sm">查看机器可读的规则</Button></CollapsibleTrigger>
+      <CollapsibleContent><div className="space-y-2">
+        <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words text-xs">
           {candidate.formal_profile}{'\n'}{candidate.owl_content}{candidate.clif_content ? `\n${candidate.clif_content}` : ''}
         </pre>
-        <Button type="button" variant="outline" size="sm" onClick={copySpec}>复制形式规范</Button>
-        {copied && <p role="status">形式规范已复制。</p>}
-      </CollapsibleContent>
+        <Button type="button" variant="outline" size="sm" onClick={copySpec}>复制</Button>
+        {copied && <p role="status">已复制。</p>}
+      </div></CollapsibleContent>
     </Collapsible>}
   </section>
+}
+
+/** The rule's checker status, read once for the whole rule rather than once per clause. */
+export function RuleCheckerStatus({suiteRevisionId}: {suiteRevisionId?: string}) {
+  const [checker, setChecker] = useState<'verified' | 'unverified' | 'unknown' | null>(null)
+  useEffect(() => {
+    setChecker(null)
+    if (!suiteRevisionId) return
+    const controller = new AbortController()
+    void request<{validation?: CheckerValidation}>(`/suite-revisions/${encodeURIComponent(suiteRevisionId)}`, 'GET', undefined, controller.signal).then(value => {
+      if (!controller.signal.aborted) setChecker(checkerAvailability(value.validation))
+    }).catch(() => { if (!controller.signal.aborted) setChecker('unknown') })
+    return () => controller.abort()
+  }, [suiteRevisionId])
+  return checker && <p role="status" className="text-xs text-muted-foreground">{checkerAvailabilityCopy(checker)}</p>
+}
+
+/** Offers one action for every clause the system has not explained yet; each clause still runs and shows its own request. */
+export function ExplainAll({ruleVersionId, onExplain}: {ruleVersionId: string; onExplain: () => void}) {
+  const [waiting, setWaiting] = useState<number | null>(null), [started, setStarted] = useState(false)
+  useEffect(() => {
+    setWaiting(null); setStarted(false)
+    const controller = new AbortController()
+    void request<{clauses: {state?: unknown}[]}>(`/rules/${ruleVersionId}/formalizations`, 'GET', undefined, controller.signal).then(value => {
+      if (!controller.signal.aborted) setWaiting(value.clauses.filter(clause => clause.state === 'not_started').length)
+    }).catch(() => {})
+    return () => controller.abort()
+  }, [ruleVersionId])
+  if (started) return <p role="status" className="text-xs text-muted-foreground">已请系统解释 {waiting} 条，进度显示在各条款下。</p>
+  if (!waiting || waiting < 2) return null
+  return <div className="flex flex-wrap items-center gap-2"><Button type="button" size="sm" onClick={() => {setStarted(true); onExplain()}}>让系统解释全部 {waiting} 条</Button><span className="text-xs text-muted-foreground">这会使用你的个人模型。</span></div>
 }

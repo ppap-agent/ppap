@@ -12,10 +12,12 @@ import {useSavedDraft} from '../journey/saved-draft'
 import {RuleCoverage} from './rule-coverage'
 import {useAccess} from '../journey/access'
 import {auditAddressChanged, writeAuditAddress} from './routes'
-import {readRulesArea} from './predefined-catalog'
+import {readRulesArea, type RulesArea} from './predefined-catalog'
 import {Disclosure} from '../components/disclosure'
 import {Button} from '../components/ui/button'
-import {buildRuleCatalog, type CatalogRow} from './rules-catalog'
+
+/** One read of the checker catalog serves the whole rules page; it is slow, so it is never repeated per section. */
+export type SuitesRead = {value: components['schemas']['SuiteCatalog'] | null; loading: boolean; error: string; revision: number}
 
 export function AuditRules({onPublished, active, headerActions}: {onPublished: () => void; active: boolean; headerActions?: HTMLElement | null}) {
   const principal = useAccess()?.principal
@@ -28,8 +30,8 @@ function RulesWorkspace({onPublished, active, headerActions}: {onPublished: () =
   const [read, setRead] = useState({loading: true, error: ''})
   const [revision, setRevision] = useState(0)
   const [directory, setDirectory] = useState<RequirementDirectoryCollection[]>([])
-  const [entries, setEntries] = useState<components['schemas']['RuleLibraryEntry'][]>([])
-  const [suites, setSuites] = useState<{official: {path: string; title: string}[]; enterprise: {suiteKey: string; title: string; ready: boolean}[]; error: string}>({official: [], enterprise: [], error: ''})
+  const [suites, setSuites] = useState<SuitesRead>({value: null, loading: true, error: '', revision: 0})
+  const [suitesAttempt, setSuitesAttempt] = useState(0)
   const [area, setArea] = useState(() => readRulesArea(new URL(location.href)))
   const [busy, setBusy] = useState(false)
   useEffect(() => {
@@ -43,15 +45,11 @@ function RulesWorkspace({onPublished, active, headerActions}: {onPublished: () =
     setRead({loading: true, error: ''})
     void request<components['schemas']['RuleLibrary']>('/rule-library', 'GET', undefined, controller.signal).then(result => {
       if (controller.signal.aborted) return
-      const next = publishedLibraryAfterRead(false, result.versions)
-      setEntries(next.versions)
-      setDirectory(next.groups)
+      setDirectory(publishedLibraryAfterRead(false, result.versions).groups)
       setRead({loading: false, error: ''})
     }).catch(cause => {
       if (controller.signal.aborted) return
-      const next = publishedLibraryAfterRead(true, [])
-      setEntries(next.versions)
-      setDirectory(next.groups)
+      setDirectory(publishedLibraryAfterRead(true, []).groups)
       setRead({loading: false, error: message(cause)})
     })
     return () => controller.abort()
@@ -59,16 +57,13 @@ function RulesWorkspace({onPublished, active, headerActions}: {onPublished: () =
   useEffect(() => {
     if (!active) return
     const controller = new AbortController()
+    setSuites(previous => ({...previous, loading: true, error: ''}))
     void request<components['schemas']['SuiteCatalog']>('/suites', 'GET', undefined, controller.signal).then(value => {
-      if (controller.signal.aborted) return
-      setSuites({
-        official: (value.predefined_error ? [] : value.predefined ?? []).map(item => ({path: item.path, title: item.title})),
-        enterprise: (value.suites ?? []).map(item => ({suiteKey: item.suite_key, title: item.title, ready: Boolean(item.current_revision_id)})),
-        error: value.predefined_error ? '系统提供的检查目录不可用。' : '',
-      })
-    }).catch(cause => {if (!controller.signal.aborted) setSuites({official: [], enterprise: [], error: message(cause)})})
+      if (!controller.signal.aborted) setSuites(previous => ({value, loading: false, error: '', revision: previous.revision + 1}))
+    }).catch(cause => {if (!controller.signal.aborted) setSuites(previous => ({value: null, loading: false, error: message(cause), revision: previous.revision + 1}))})
     return () => controller.abort()
-  }, [active, revision])
+  }, [active, revision, suitesAttempt])
+  const reloadSuites = () => setSuitesAttempt(value => value + 1)
   function backToRules() {
     const url = new URL(location.href)
     url.searchParams.delete('checkerSuite')
@@ -76,34 +71,26 @@ function RulesWorkspace({onPublished, active, headerActions}: {onPublished: () =
     url.searchParams.delete('rulesArea')
     writeAuditAddress(url, 'push')
   }
-  function openCatalog(row: CatalogRow) {
-    if (busy || row.sourceKind === 'publishedRule') return
+  function openArea(next: Exclude<RulesArea, 'requirements'>) {
     const url = new URL(location.href)
-    url.searchParams.delete('requirement'); url.searchParams.delete('reqVersion'); url.searchParams.delete('reqTab')
-    if (row.sourceKind === 'officialSuite') {url.searchParams.set('checkerPath', row.href); url.searchParams.delete('checkerSuite')}
-    else {url.searchParams.set('checkerSuite', row.href); url.searchParams.delete('checkerPath')}
+    url.searchParams.delete('requirement'); url.searchParams.delete('reqVersion'); url.searchParams.delete('checkerSuite'); url.searchParams.delete('checkerPath'); url.searchParams.delete('rulesArea')
+    if (next === 'predefined') url.searchParams.set('rulesArea', 'predefined'); else url.searchParams.set('checkerSuite', '')
     writeAuditAddress(url, 'push')
   }
-  function openPredefined() {
-    const url = new URL(location.href)
-    url.searchParams.delete('requirement'); url.searchParams.delete('reqVersion'); url.searchParams.delete('checkerSuite'); url.searchParams.delete('checkerPath')
-    url.searchParams.set('rulesArea', 'predefined')
-    writeAuditAddress(url, 'push')
-  }
-  const catalogRows = buildRuleCatalog({
-    rules: entries.map(row => ({id: row.id, title: row.title, documentType: row.document_type, customer: row.scope.allCustomers ? '' : row.scope.customer, part: row.scope.allParts ? '' : row.scope.part, suiteKey: row.suite_key ?? null})),
-    official: suites.official,
-    enterprise: suites.enterprise,
-  }).filter(row => row.sourceKind !== 'publishedRule')
   const checker = area === 'enterprise' || area === 'predefined'
   return <>
     {checker && <div className="mb-4"><Button variant="ghost" onClick={backToRules}>返回审核规则</Button></div>}
     {checker
-      ? <CheckerCatalog active={active} revision={revision} mode={area === 'predefined' ? 'predefined' : 'enterprise'} onBusyChange={setBusy}/>
+      ? <CheckerCatalog active={active} suites={suites} onReload={reloadSuites} mode={area === 'predefined' ? 'predefined' : 'enterprise'} onBusyChange={setBusy}/>
       : <RequirementLibraryPanel
-          catalogIntro={<div className="space-y-3"><RuleUpdates active={active} revision={revision}/><Disclosure summary="覆盖情况"><RuleCoverage active={active} revision={revision}/></Disclosure><div className="flex flex-wrap items-center justify-between gap-2"><Button variant="outline" size="sm" disabled={busy} onClick={openPredefined}>查看系统提供的检查</Button>{suites.error && <p role="alert" className="text-sm text-destructive">{suites.error}</p>}</div></div>}
-          catalogRows={catalogRows}
-          onOpenCatalog={openCatalog}
+          catalogIntro={<div className="space-y-3">
+            <RuleUpdates suites={suites} onReload={reloadSuites}/>
+            <nav aria-label="检查" className="flex flex-wrap items-center gap-2">
+              <Button variant="outline" size="sm" disabled={busy} onClick={() => openArea('predefined')}>查看系统提供的检查</Button>
+              <Button variant="outline" size="sm" disabled={busy} onClick={() => openArea('enterprise')}>企业检查版本</Button>
+            </nav>
+            <Disclosure summary="覆盖情况"><RuleCoverage active={active} revision={revision} suites={suites}/></Disclosure>
+          </div>}
           headerActions={headerActions}
           title="审核规则"
           uploadLabel="上传规则"
