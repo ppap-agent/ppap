@@ -17,6 +17,7 @@ from openpyxl import Workbook
 from product import build_product_store
 from product.feishu import UserTokens
 from product.fixtures import RULE_A, USER_ALICE, USER_BOB
+from product.historical_carrier import queue_historical_carrier_round
 from product.identity import SESSION_COOKIE
 from product.settings import Settings
 from product.store.suite_releases import SuiteReleaseStore
@@ -2336,14 +2337,39 @@ def test_v4_nio_pair_keeps_frozen_dual_original_evidence_through_worker_and_api(
     assert recognized["files"][0]["match"]["rule"]["body"]["preset_key"] == "N02"
     assert recognized["files"][1]["match"]["state"] == "reference"
     assert recognized["estimated_points"] == 500
-    confirmed = client.post(path + "/confirm", json=confirmation_command(client, path, 0))
-    assert confirmed.status_code == 201, confirmed.text
-    round_id = confirmed.json()["round_id"]
-    job = worker.claim_job("nio-audit")
-    if job.kind == "task_precheck":
-        process_claimed(worker, job, "nio-audit")
-        job = worker.claim_job("nio-audit")
-    assert job.kind == "audit"
+    # Directory N02 does not implement the v4 pairing clause. Replay the frozen
+    # v4 bytes without publishing that carrier or moving the directory head.
+    from audit.standard_suites import standard_suites
+
+    carriers = {suite.suite_key: suite for suite in standard_suites()}
+    n02, n05 = carriers["蔚来:N02"], carriers["蔚来:N05"]
+    rule = recognized["files"][0]["match"]["rule"]
+    queued = queue_historical_carrier_round(
+        store,
+        principal,
+        [
+            {
+                "version_id": target["file_version_id"],
+                "role": "target",
+                "rule_id": rule["id"],
+                "rule_title": rule["title"],
+                "rule_body": json.loads(n02.files["rules.json"]),
+                "suite": n02,
+                "document_type": n02.document_type,
+            },
+            {"version_id": reference["file_version_id"], "role": "reference", "document_type": n05.document_type},
+        ],
+    )
+    round_id = queued["id"]
+    job = None
+    for _ in range(4):
+        claimed = worker.claim_job("nio-audit")
+        assert claimed is not None
+        if claimed.kind == "audit" and claimed.round_id == round_id:
+            job = claimed
+            break
+        process_claimed(worker, claimed, "nio-audit")
+    assert job is not None
     process_claimed(worker, job, "nio-audit")
     frozen = client.get("/rounds/" + round_id).json()
     cross = [finding for finding in frozen["findings"] if finding["item_key"].endswith(":rule:N02:7")][0]
@@ -2351,7 +2377,8 @@ def test_v4_nio_pair_keeps_frozen_dual_original_evidence_through_worker_and_api(
     sources = cross["locator"]["semantic"]["sources"]
     locators = [{**source["locator"], "file_version_id": source["file_version_id"]} for source in sources]
     assert {locator["file_version_id"] for locator in locators} == {target["file_version_id"], reference["file_version_id"]}
-    projected = client.get(path).json()["files"][0]["audit"]["checks"]
+    viewed = client.get("/rounds/" + round_id, params={"read_view": "true"}).json()
+    projected = next(row["audit"]["checks"] for row in viewed["read_view"]["files"] if row["role"] == "target")
     projected_cross = next(check for check in projected if check["rule_item"]["id"] == "N02:7")
     assert {source["file_version_id"] for source in projected_cross["evidence"]} == {target["file_version_id"], reference["file_version_id"]}
     assert all(source["locator"] and source["locator"]["kind"] == "xlsx_cell" for source in projected_cross["evidence"])
@@ -2359,8 +2386,7 @@ def test_v4_nio_pair_keeps_frozen_dual_original_evidence_through_worker_and_api(
     assert any(source["excerpt"] == "KPC" for source in sources)
     assert any(source["excerpt"] == "CC" for source in sources)
     assert all(locator["kind"] == "xlsx_cell" for locator in locators)
-    restored = client.get(path).json()
-    assert restored["round_id"] == round_id and restored["input_revision"] == 0
+    assert client.get(path).json()["round_id"] is None
     assert client.get("/rounds/" + round_id).json() == frozen
     other = store.upsert_feishu_identity("v4-pair-other-" + uuid.uuid4().hex, "owner")
     client.cookies.set(SESSION_COOKIE, store.create_session(other))

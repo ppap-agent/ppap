@@ -22,6 +22,7 @@ from docx import Document, oxml
 from fastapi.testclient import TestClient
 from PIL import Image
 from product import build_product_store
+from product.historical_carrier import queue_historical_carrier_round
 from product.settings import Settings
 from pydantic import TypeAdapter
 from worker import process_claimed
@@ -40,7 +41,7 @@ def native_docx_system(auth_store_factory, core_system):
         client = TestClient(create_app(settings, auth_store=store))
         assert client.post("/isolated-dev/sessions", json={"subject": "alice"}).status_code == 200
         try:
-            yield client, worker
+            yield client, worker, store
         finally:
             client.close()
 
@@ -56,15 +57,15 @@ def upload(client, filename, content):
     return finished.json()
 
 
-def parse_publish_and_accept(client, worker, filename, content, rule_body, core_system, checker_source):
+def parse_publish_and_accept(client, store, filename, content, rule_body, core_system, checker_source):
     source_bytes = json.dumps(rule_body, ensure_ascii=False).encode()
     source = upload(client, "已确认规则.json", source_bytes)
     parse_id = str(uuid.uuid4())
     queued = client.post("/rules/parse", json={"request_id": parse_id, "source_file_id": source["file_id"], "source_file_version_id": source["id"]})
     assert queued.status_code == 202, queued.text
-    parsed_job = worker.claim_job("word-rule-parse")
+    parsed_job = store.claim_job("word-rule-parse")
     assert parsed_job is not None and parsed_job.id == parse_id and parsed_job.kind == "rule_parse"
-    process_claimed(worker, parsed_job, "word-rule-parse")
+    process_claimed(store, parsed_job, "word-rule-parse")
     parsed = client.get("/rules/parse/" + parse_id).json()
     assert parsed["status"] == "succeeded", parsed
     candidate = parsed["result"]
@@ -77,17 +78,16 @@ def parse_publish_and_accept(client, worker, filename, content, rule_body, core_
     assert client.get("/rules/" + rule["id"]).json()["body"] == rule["body"]
     assert {key: rule["body"][key] for key in rule_body} == rule_body
     assert set(checker_source.entrypoints) == {row["id"] for row in rule_body["rules"]}
-    core_system.adopt(worker, rule["id"], checker_source.files["checker.py"].decode(), dict(checker_source.entrypoints))
     target = upload(client, filename, content)
-    draft = client.post("/drafts").json()["id"]
-    saved = client.put(f"/drafts/{draft}", json={"items": [{"file_version_id": target["id"], "role": "target", "rule_version_id": rule["id"]}]})
-    assert saved.status_code == 200, saved.text
-    key = "native-word-" + str(uuid.uuid4())
-    accepted = client.post(f"/drafts/{draft}/accept", json={"idempotency_key": key})
-    assert accepted.status_code == 201, accepted.text
-    frozen = accepted.json()
-    replayed = client.post(f"/drafts/{draft}/accept", json={"idempotency_key": key})
-    assert replayed.status_code == 201 and replayed.json() == frozen
+    # The published rule stays a custom starter. The carrier bytes are replayed
+    # from a revision that is not the head, so a new audit cannot select them.
+
+    frozen = queue_historical_carrier_round(
+        store,
+        store.principal_for_fixture("alice"),
+        [{"version_id": target["id"], "role": "target", "rule_id": rule["id"], "rule_title": rule["title"], "rule_body": rule["body"], "suite": checker_source}],
+    )
+    frozen = client.get("/rounds/" + frozen["id"]).json()
     assert len(frozen["inputs"]) == 1
     assert frozen["inputs"][0]["file_version_id"] == target["id"]
     assert frozen["inputs"][0]["rule_version_id"] == rule["id"]
@@ -152,7 +152,7 @@ def equipment_docx_bytes():
 
 
 def test_equipment_docx_upload_parse_publish_and_worker_result_keep_v2_frozen(native_docx_system, core_system):
-    client, worker = native_docx_system
+    client, worker, store = native_docx_system
     content = equipment_docx_bytes()
     body = {
         "kind": "engine",
@@ -166,7 +166,7 @@ def test_equipment_docx_upload_parse_publish_and_worker_result_keep_v2_frozen(na
             {"id": "2", "category": "设备验收", "priority": "P1", "rule_to_check": "核对设备验收清单。", "type_of_rule": "table"},
         ],
     }
-    target, rule, frozen = parse_publish_and_accept(client, worker, "量检具、检测试验设备清单.docx", content, body, core_system, migrated_builtin_suite("v2", "设备清单"))
+    target, rule, frozen = parse_publish_and_accept(client, store, "量检具、检测试验设备清单.docx", content, body, core_system, migrated_builtin_suite("v2", "设备清单"))
     job = worker.claim_job("equipment-word-audit")
     assert job is not None and job.kind == "audit" and job.round_id == frozen["id"]
     process_claimed(worker, job, "equipment-word-audit")
@@ -263,7 +263,7 @@ def visual_provider_response(request):
 
 @pytest.mark.parametrize("include_images", [True, False], ids=["complete-visual-evidence", "missing-required-images"])
 def test_psw_docx_upload_parse_publish_and_worker_result_keep_v3_frozen(native_docx_system, core_system, monkeypatch, include_images):
-    client, worker = native_docx_system
+    client, worker, store = native_docx_system
     content = psw_docx_bytes(include_images=include_images)
     descriptions = (
         "生产件批准交付物文件清单附件检查",
@@ -294,7 +294,7 @@ def test_psw_docx_upload_parse_publish_and_worker_result_keep_v3_frozen(native_d
 
     monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", visual)
     core_system.install(worker, controlled_model=True)
-    target, rule, frozen = parse_publish_and_accept(client, worker, "零件提交保证书.docx", content, body, core_system, migrated_builtin_suite("v3", "零件提交保证书"))
+    target, rule, frozen = parse_publish_and_accept(client, store, "零件提交保证书.docx", content, body, core_system, migrated_builtin_suite("v3", "零件提交保证书"))
     job = worker.claim_job("psw-word-audit")
     assert job is not None and job.kind == "audit" and job.round_id == frozen["id"]
     process_claimed(worker, job, "psw-word-audit")
