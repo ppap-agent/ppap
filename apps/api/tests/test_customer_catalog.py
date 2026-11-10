@@ -108,8 +108,8 @@ def test_catalog_uses_current_tenant_published_rules_not_rule_files_or_history(a
         assert len(versions) == 6
         assert any(version["id"] == old for version in versions)
         assert any(version["predecessor_id"] == old for version in versions)
-        version_fields = {"id", "title", "version", "scope", "reason", "created_at", "predecessor_id", "clause_count", "document_type", "document_type_aliases", "suite_key"}
-        assert all(set(version) == version_fields and version["clause_count"] == 1 for version in versions)
+        version_fields = {"id", "title", "version", "scope", "reason", "created_at", "predecessor_id", "clause_count", "document_type", "document_type_aliases", "suite_key", "source_review"}
+        assert all(set(version) == version_fields and version["clause_count"] == 1 and version["source_review"] == "unchecked" for version in versions)
         assert {version["document_type"] for version in versions} >= {"控制计划", "过程流程图", "全功能检验报告", "设计失效模式及后果分析"}
         control_plan = next(version for version in versions if version["document_type"] == "控制计划")
         assert "Control plan" in control_plan["document_type_aliases"]

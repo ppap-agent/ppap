@@ -293,6 +293,20 @@ class UiA11yTests(unittest.TestCase):
                     )
                 elif path == "/rules/" + RULE:
                     route.fulfill(json=rule, headers=cors)
+                elif path == f"/rules/{RULE}/formalizations/1":
+                    route.fulfill(
+                        json={
+                            "rule_version_id": RULE,
+                            "clause_id": "1",
+                            "clause_text": "检查 A",
+                            "source_rule_digest": "a" * 64,
+                            "state": "not_started",
+                            "candidates": [],
+                            "confirmations": [],
+                            "operation": None,
+                        },
+                        headers=cors,
+                    )
                 elif path == f"/files/{SOURCE}/versions/{VERSION}":
                     route.fulfill(json=source, headers=cors)
                 elif path == "/drafts":

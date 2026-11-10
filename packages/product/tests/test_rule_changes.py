@@ -1,8 +1,10 @@
 """Deterministic published-rule impact, including unchanged clauses."""
 
 import json
+from types import SimpleNamespace
 
 from product.rules import diff_rules
+from product.store.rule_impact import rule_impact
 
 
 def body(*rows):
@@ -24,6 +26,30 @@ def test_clause_identity_text_order_and_numbering_have_explicit_diffs():
     assert changes[3].checker is None
     reordered = {**previous, "rules": list(reversed(previous["rules"]))}
     assert [row.kind for row in diff_rules(previous, reordered)] == ["unchanged"] * 3
+
+
+def test_rule_impact_notices_semantic_change_without_text_change():
+    rules = {"rules": [{"id": "c1", "rule_to_check": "同一句原文"}]}
+
+    def suite(formalizations=None, revision="before"):
+        body = dict(rules)
+        if formalizations is not None:
+            body["formalizations"] = formalizations
+        files = {"rules.json": json.dumps(body).encode(), "appendix.json": b"[]"}
+        return SimpleNamespace(files=files, revision=SimpleNamespace(id=revision))
+
+    same = rule_impact(suite(), suite(revision="after"))
+    changed = rule_impact(suite(), suite({"c1": {"completeness": "complete", "cnl_text": "恰好一条"}}, revision="after"))
+    assert same["changed"] is False
+    assert changed["changed"] is True
+    assert changed["clauses"][0]["kind"] == "unchanged"
+    from audit.checker_core import rule_digest
+    from product.store.rule_impact import semantic_rule_packet
+
+    text = {"rules": [{"id": "c1", "rule_to_check": "同一句原文"}]}
+    confirmed = {**text, "formalizations": {"c1": {"completeness": "complete", "cnl_text": "恰好一条"}}}
+    assert rule_digest(semantic_rule_packet(text), []) == rule_digest(semantic_rule_packet({"rules": text["rules"]}), [])
+    assert rule_digest(semantic_rule_packet(text), []) != rule_digest(semantic_rule_packet(confirmed), [])
 
 
 def test_source_review_follows_checked_clauses_only():

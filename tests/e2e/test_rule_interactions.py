@@ -214,7 +214,7 @@ class RuleInteractionTests(unittest.TestCase):
             self.assertFalse(any(path.startswith(("/rules/", "/files/")) for path in reads))
             page.get_by_role("link", name="规则 A", exact=True).click()
             expect(page.get_by_role("article", name="条款 1", exact=True)).to_contain_text("新版条款 A")
-            self.assertEqual([path for path in reads if path.startswith("/rules/")], ["/rules/rule-a2"])
+            self.assertEqual([path for path in reads if path.startswith("/rules/")], ["/rules/rule-a2", "/rules/rule-a2/formalizations/1"])
             page.get_by_role("tab", name="版本变化", exact=True).click()
             expect(page.get_by_role("region", name="版本差异", exact=True)).to_contain_text("旧版条款 A")
             self.assertNotIn("/rules/rule-b1", reads)

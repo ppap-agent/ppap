@@ -1,7 +1,6 @@
 """Frozen formalizations change the checker prompt and the rule-impact digest."""
 
 import json
-from types import SimpleNamespace
 
 import pytest
 from agent.checker_development import effective_rule_digest
@@ -9,7 +8,6 @@ from agent.checker_program import input_digest
 from agent.execution.checker_guest import _prompt
 from audit.contracts import AuditInput, RuleInput
 from audit.formal_digest import display_digest, formal_digest
-from product.store.rule_impact import rule_impact
 
 
 def _audit() -> AuditInput:
@@ -303,30 +301,6 @@ def test_prompt_keeps_opposite_quantifiers_distinct_and_does_not_invent_defaults
     assert "x" * 80 not in huge
     assert "另一条款保持完整" in kept
     assert "(short-other)" in kept
-
-
-def test_rule_impact_notices_semantic_change_without_text_change():
-    rules = {"rules": [{"id": "c1", "rule_to_check": "同一句原文"}]}
-
-    def suite(formalizations=None, revision="before"):
-        body = dict(rules)
-        if formalizations is not None:
-            body["formalizations"] = formalizations
-        files = {"rules.json": json.dumps(body).encode(), "appendix.json": b"[]"}
-        return SimpleNamespace(files=files, revision=SimpleNamespace(id=revision))
-
-    same = rule_impact(suite(), suite(revision="after"))
-    changed = rule_impact(suite(), suite({"c1": {"completeness": "complete", "cnl_text": "恰好一条"}}, revision="after"))
-    assert same["changed"] is False
-    assert changed["changed"] is True
-    assert changed["clauses"][0]["kind"] == "unchanged"
-    from audit.checker_core import rule_digest
-    from product.store.rule_impact import semantic_rule_packet
-
-    text = {"rules": [{"id": "c1", "rule_to_check": "同一句原文"}]}
-    confirmed = {**text, "formalizations": {"c1": {"completeness": "complete", "cnl_text": "恰好一条"}}}
-    assert rule_digest(semantic_rule_packet(text), []) == rule_digest(semantic_rule_packet({"rules": text["rules"]}), [])
-    assert rule_digest(semantic_rule_packet(text), []) != rule_digest(semantic_rule_packet(confirmed), [])
 
 
 def _paired(cnl: str, clif: str, digest: str) -> dict:

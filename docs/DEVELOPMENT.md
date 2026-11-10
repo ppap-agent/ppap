@@ -67,6 +67,8 @@
 
 Local 与 CI 使用同一 ownership。CI 不再维护与目录结构脱节的测试分类。
 
+提交前在本仓库执行一次 `uv run --no-sync pre-commit install`。之后每次提交对暂存的 Python 文件运行与 CI 相同的 `ruff check --fix` 和 `ruff format`。`mypy` 仍只在 CI 的 Repository contract 中运行。
+
 Repository contract：
 
 数据库 migration ordering authority 只有 numbered filenames。Compose / InsForge / TKE / Schema CI 共用 `migrations/apply.sh`；仓库不存在 `apply.sql` 或第二份顺序清单。
