@@ -276,12 +276,18 @@ def test_customer_intake_to_original_issue_and_frozen_precheck_export(running_pr
             assert original_response.status == 200
             assert original_response.body() == source_bytes
             page.keyboard.press("Escape")
+            if customer == "理想":
+                # Every clause is unverified, so the product does not build a complete report.
+                expect(page.get_by_text("不生成完整报告", exact=False)).to_be_visible()
             page.get_by_role("button", name="报告中心", exact=True).click()
             report_download = page.get_by_role("button", name="下载当前报告", exact=True)
-            expect(report_download).to_be_enabled(timeout=30000)
-            with page.expect_download() as report_file:
-                report_download.click()
-            assert Path(report_file.value.path()).read_bytes().startswith(b"%PDF")
+            if customer == "理想":
+                expect(report_download).to_be_disabled()
+            else:
+                expect(report_download).to_be_enabled(timeout=30000)
+                with page.expect_download() as report_file:
+                    report_download.click()
+                assert Path(report_file.value.path()).read_bytes().startswith(b"%PDF")
             page.reload()
             expect(page.get_by_role("region", name="逐文件审核报告", exact=True)).to_be_visible()
             if customer == "UAES":
