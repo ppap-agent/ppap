@@ -4704,6 +4704,14 @@ class AuthStore:
                 selected = [row for row in task["files"] if row["selection"] == "selected"]
                 recognized_metadata = {row["file"]["id"]: dict((row.get("match") or {}).get("metadata") or {}) for row in selected}
                 recognized_types = {row["file"]["id"]: (row.get("match") or {}).get("document_type") for row in selected}
+                # A matched carrier has no frozen target and therefore no basis digest.
+                # Refuse that head before an empty digest or an unready task can hide it.
+                if not existing and any("suite_version_confirmation_required" in ((row.get("match") or {}).get("gaps") or []) for row in selected):
+                    raise ValueError("suite_version_confirmation_required")
+                basis = expected_confirmation_basis_digest
+                basis_ready = isinstance(basis, str) and re.fullmatch(r"[a-f0-9]{64}", basis)
+                if not existing and require_confirmation_basis and not basis_ready:
+                    raise ValueError("invalid_task_confirmation")
                 if not existing and (
                     task["state"] != "pending_confirm"
                     or any((row["match"] or {}).get("state") not in {"matched", "reference", "unmatched"} or row["validation"]["state"] != "valid" for row in selected)
@@ -4718,14 +4726,6 @@ class AuthStore:
                         rule_body = ((row.get("match") or {}).get("rule") or {}).get("body") or {}
                         if scope and row["match"]["state"] != "reference" and (owned["customer_preference"] != "UAES" or rule_body.get("suite_key") != "UAES:U13"):
                             raise ValueError("validation_scope_mismatch")
-                    if any("suite_version_confirmation_required" in ((row.get("match") or {}).get("gaps") or []) for row in selected):
-                        raise ValueError("suite_version_confirmation_required")
-                    # A carrier-only task has no frozen target, so it has no basis digest.
-                    # Refuse that head before treating the missing digest as a bad request.
-                    basis = expected_confirmation_basis_digest
-                    basis_ready = isinstance(basis, str) and re.fullmatch(r"[a-f0-9]{64}", basis)
-                    if not existing and require_confirmation_basis and not basis_ready:
-                        raise ValueError("invalid_task_confirmation")
                     if require_confirmation_basis and task["confirmation_basis_digest"] != expected_confirmation_basis_digest:
                         raise ValueError("task_confirmation_changed")
                     if self.settings.precheck_gate_enforced:
