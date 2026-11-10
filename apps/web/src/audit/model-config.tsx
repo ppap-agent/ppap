@@ -41,7 +41,7 @@ export function PersonalModelSettings({onConfig, framed = true}: {onConfig?: (co
   // Inline it is a bordered panel with its own heading; inside a titled dialog the dialog names it.
   return <section aria-label="我的模型配置" className={framed ? 'space-y-3 rounded-md border p-3' : 'space-y-3'}>
     {framed && <h3 className="text-sm font-medium">我的模型账户</h3>}
-    <p role="status" className="text-sm text-muted-foreground">{config ? config.configured ? '已配置，仅供你发起的模型操作使用。' : '尚未配置。识别文件、深度分析和让 AI 修复检查时需要。' : '尚未读到个人配置。'}</p>
+    <p role="status" className="text-sm text-muted-foreground">{config ? config.configured ? '已配置，仅供你发起的模型操作使用。' : '尚未配置。识别文件、深度分析和让 AI 修复检查时需要。' : busy ? '正在读取当前配置…' : '尚未读到个人配置。'}</p>
     {config?.configured && <p className="break-all text-sm">已保存地址：{config.base_url}；模型：{config.model}</p>}
     {error && <p role="alert" className="text-sm">{error}</p>}
     <div className="space-y-2"><Label htmlFor={`${id}-url`}>Base URL</Label><Input id={`${id}-url`} type="url" autoComplete="off" spellCheck={false} maxLength={2048} value={baseUrl} disabled={busy} onChange={event => {setBaseUrl(event.target.value); onConfig?.(null)}}/></div>
