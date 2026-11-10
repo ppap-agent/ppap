@@ -148,11 +148,11 @@ def _carriers(customer: str, entry: str) -> dict[str, str]:
 
 
 def standard_suites() -> tuple[StandardSuite, ...]:
-    """Historical carrier artifacts retained for explicit source consumers.
+    """Historical carrier artifacts for explicit replay and versioned tests.
 
-    product.seed_standard_suites.official_source_suites installs these identities;
-    corpus_contracts.core_round.customer_suite selects them for versioned tests.
-    New directory navigation uses predefined_sources, not this class registry.
+    Normal official seed does not install these identities. Corpus and explicit
+    historical repair may still read them. New directory navigation uses
+    predefined_sources, not this class registry.
     """
     result = []
     for preset in customer_presets():
@@ -189,10 +189,11 @@ def standard_suites() -> tuple[StandardSuite, ...]:
 
 @lru_cache(maxsize=1)
 def library_revision() -> str:
-    """Fingerprint of shared runtime code and the carrier packages still executed.
+    """Fingerprint of shared runtime code and packages explicit history can execute.
 
-    ``standard_suites()`` still runs ``checkers/v2``, ``v3``, and ``v4`` classes,
-    so those sources stay in this hash. ``checkers/v5`` and later directory
+    Explicit historical replay and from-scratch reference can still run
+    ``checkers/v2``, ``v3``, and ``v4``, so those sources stay in this hash.
+    New audits do not select those carriers. ``checkers/v5`` and later directory
     leaves stay out; a leaf's identity is ``checker_digest``. A change here
     makes ``ValidationRecord.samples_not_rerun`` true.
     """
@@ -232,7 +233,7 @@ def _counts_toward_library(package: str, directory: Path, path: Path) -> bool:
     if len(parts) < 2 or parts[0] != "checkers":
         return True
     # v5+ directory leaves are outside the public fingerprint. v2/v3/v4 stay
-    # in while the 41 legacy carriers still execute those packages.
+    # in because explicit historical replay can still execute those packages.
     if _VERSION_DIRECTORY.fullmatch(parts[1]) is None:
         return True
     return int(parts[1][1:]) < 5

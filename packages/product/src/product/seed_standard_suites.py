@@ -11,8 +11,7 @@ import json
 import re
 from typing import Any
 
-from audit.standard_suites import predefined_directory_suites, standard_suites
-from audit.suite_migration import generic_standard_suites
+from audit.standard_suites import predefined_directory_suites
 
 # A predefined leaf path. Asset docx paths and the shared oracle.csv path are not
 # this identity: several historical suites share that csv path, and their rows
@@ -31,12 +30,13 @@ def discovery_row(suite) -> dict[str, Any]:
 
 
 def official_source_suites():
-    """Legacy carriers, directory leaves, then historical generics.
+    """Directory leaves only. A business suite_key is not a version selector.
 
-    Directory leaves keep the business suite_key. Identical file bytes keep one
-    content digest; ``v5/UAES/U08`` and ``v6/UAES/U08`` are still two revisions.
+    Identical file bytes keep one content digest; ``v5/UAES/U08`` and
+    ``v6/UAES/U08`` are still two revisions. Historical carriers are not installed
+    or published by this path.
     """
-    return (*standard_suites(), *predefined_directory_suites(), *generic_standard_suites(include_history=True))
+    return predefined_directory_suites()
 
 
 def persisted_source_path(source_path: str) -> str | None:
@@ -44,35 +44,25 @@ def persisted_source_path(source_path: str) -> str | None:
     return source_path if _DIRECTORY_SOURCE.fullmatch(source_path) else None
 
 
-def match_official_revision(rows: list[tuple[str, str | None]], *, persisted_path: str | None, shared_content: bool) -> str | None:
-    """Pick an existing official row without collapsing two directory paths.
-
-    ``rows`` are ``(revision_id, source_path)`` for one suite_key and content
-    digest. A directory path never reuses a historical NULL row. A unique
-    legacy digest still reuses that NULL row, so old installs are not duplicated.
-    """
-    if persisted_path is not None:
-        for revision_id, stored in rows:
-            if stored == persisted_path:
-                return str(revision_id)
-        return None
-    if shared_content:
-        return None
+def match_official_revision(rows: list[tuple[str, str | None]], *, persisted_path: str) -> str | None:
+    """Pick the official row for this directory path. A NULL row is not a match."""
     for revision_id, stored in rows:
-        if stored is None:
+        if stored == persisted_path:
             return str(revision_id)
     return None
 
 
 def install_official_sources(store: Any, suites) -> list[dict[str, str]]:
+    """Install directory leaves only. This does not validate or move a head."""
     from product.suites import content_digest, resolved_digest
 
+    suites = tuple(suites)
     prepared = []
-    grouped: dict[tuple[str, str], set[str]] = {}
     for suite in suites:
+        if persisted_source_path(suite.source_path) is None:
+            raise ValueError("historical_source_not_seedable")
         digest = resolved_digest(suite.suite_key, suite.related_suite_keys, {name: content_digest(body) for name, body in suite.files.items()})
         prepared.append((suite, digest))
-        grouped.setdefault((suite.suite_key, digest), set()).add(suite.source_path)
     results = []
     with store._conn() as conn, conn.transaction():
         # All platform seeding writers use the same transaction-level lock.
@@ -88,7 +78,9 @@ def install_official_sources(store: Any, suites) -> list[dict[str, str]]:
                 ).fetchall()
             ]
             persisted = persisted_source_path(suite.source_path)
-            revision_id = match_official_revision(rows, persisted_path=persisted, shared_content=len(grouped[(suite.suite_key, digest)]) > 1)
+            if persisted is None:
+                raise ValueError("historical_source_not_seedable")
+            revision_id = match_official_revision(rows, persisted_path=persisted)
             if revision_id is None:
                 revision = store.create_revision(
                     tenant_id=None,

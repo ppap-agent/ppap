@@ -65,21 +65,19 @@ def test_real_postgres_source_path_shape_and_seed_do_not_backfill_null(suite_db)
                 )
 
     first = seed_standard_suites(store)
-    assert len(first) == 116
-    assert all(row["validation"] == "not-created" for row in first)
-    directory_id = next(row["revision_id"] for row in first if row["suite_key"] == "UAES:U08" and row["source_path"] == "v5/UAES/U08")
-    legacy_id = next(row["revision_id"] for row in first if row["suite_key"] == "UAES:U08" and row["source_path"] != "v5/UAES/U08")
+    assert len(first) == len(predefined_directory_suites())
+    assert all(row["validation"] == "not-created" and row["source_path"] for row in first)
+    directory_id = next(row["revision_id"] for row in first if row["source_path"] == "v5/UAES/U08")
     with connect(settings, "migrator") as conn:
         stored = dict(conn.execute("SELECT id::text, source_path FROM product.suite_revisions WHERE tenant_id IS NULL AND suite_key='UAES:U08'").fetchall())
-        assert stored[directory_id] == "v5/UAES/U08"
-        assert stored[legacy_id] is None
+        assert stored == {directory_id: "v5/UAES/U08"}
         assert conn.execute("SELECT source_path FROM product.suite_revisions WHERE id=%s", (untouched.id,)).fetchone()[0] is None
+        assert conn.execute("SELECT count(*) FROM product.suite_revisions WHERE tenant_id IS NULL AND source_path IS NULL AND suite_key <> 'HIST:NULL'").fetchone()[0] == 0
         before = conn.execute("SELECT count(*) FROM product.suite_revisions").fetchone()[0]
     assert store.official_revision_id_for_source("v5/UAES/U08") == directory_id
     assert seed_standard_suites(store) == first
     with connect(settings, "migrator") as conn:
         assert conn.execute("SELECT count(*) FROM product.suite_revisions").fetchone()[0] == before
-        assert conn.execute("SELECT source_path FROM product.suite_revisions WHERE id=%s", (legacy_id,)).fetchone()[0] is None
         assert conn.execute("SELECT source_path FROM product.suite_revisions WHERE id=%s", (untouched.id,)).fetchone()[0] is None
         assert conn.execute("SELECT source_path FROM product.suite_revisions WHERE id=%s", (directory_id,)).fetchone()[0] == "v5/UAES/U08"
 

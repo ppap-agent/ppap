@@ -58,23 +58,39 @@ def _installed(result):
     return existing
 
 
-def test_seed_installs_customer_and_historical_sources_without_validation_or_publication():
+def test_normal_seed_does_not_call_historical_installers(monkeypatch):
+    def boom(*_args, **_kwargs):
+        raise AssertionError("historical installer")
+
+    monkeypatch.setattr("audit.standard_suites.standard_suites", boom)
+    monkeypatch.setattr("audit.standard_suites._carriers", boom)
+    monkeypatch.setattr("audit.standard_suites.customer_presets", boom)
+    monkeypatch.setattr("audit.standard_suites.preset_source_bindings", boom)
+    monkeypatch.setattr("audit.suite_migration.generic_standard_suites", boom)
+    result = seed_standard_suites(Store())
+    assert result
+    assert all(row["source_path"] for row in result)
+
+
+def test_seed_installs_directory_sources_without_validation_or_publication():
+    from audit.standard_suites import predefined_directory_suites
+
     store = Store()
     result = seed_standard_suites(store)
-    assert len(store.created) == len(result) == 116
+    directory = predefined_directory_suites()
+    assert len(store.created) == len(result) == len(directory)
+    assert {row["source_path"] for row in result} == {suite.source_path for suite in directory}
     assert all(row["validation"] == "not-created" for row in result)
+    assert all(persisted_source_path(row["source_path"]) == row["source_path"] for row in result)
     u08 = [row for row in result if row["suite_key"] == "UAES:U08"]
-    assert {row["source_path"] for row in u08} >= {"v5/UAES/U08"}
-    # The legacy carrier and the directory leaf are different bytes, so their content digests differ.
-    assert len({row["source_path"] for row in u08}) == len({row["resolved_digest"] for row in u08}) == len({row["revision_id"] for row in u08}) == 2
+    assert [row["source_path"] for row in u08] == ["v5/UAES/U08"]
     by_id = {row["revision_id"]: row for row in result}
     for revision_id, kwargs in zip(store.created, store.created_kwargs, strict=True):
         assert kwargs["source_path"] == persisted_source_path(by_id[revision_id]["source_path"])
-    directory = next(kwargs for kwargs, row in zip(store.created_kwargs, result, strict=True) if row["source_path"] == "v5/UAES/U08")
-    assert directory["source_path"] == "v5/UAES/U08"
-    assert directory["related_suite_keys"] == ("UAES:U07", "UAES:U16")
-    assert sum(kwargs["source_path"] is None for kwargs in store.created_kwargs) == 75
-    assert sum(kwargs["source_path"] is not None for kwargs in store.created_kwargs) == 41
+    created = next(kwargs for kwargs, row in zip(store.created_kwargs, result, strict=True) if row["source_path"] == "v5/UAES/U08")
+    assert created["source_path"] == "v5/UAES/U08"
+    assert created["related_suite_keys"] == ("UAES:U07", "UAES:U16")
+    assert all(kwargs["source_path"] is not None for kwargs in store.created_kwargs)
     again = Store(_installed(result))
     assert seed_standard_suites(again) == result
     assert again.created == []
@@ -89,16 +105,18 @@ def test_api_role_cannot_install_official_sources():
 
 
 def test_revision_digest_matches_content_contract():
+    from audit.standard_suites import standard_suites
+    from audit.suite_migration import generic_standard_suites
     from product.suites import content_digest, resolved_digest
 
     suites = official_source_suites()
-    assert len(suites) == 116
+    historical = (*standard_suites(), *generic_standard_suites(include_history=True))
+    assert suites
     assert max(Counter((suite.suite_key, suite.revision_digest) for suite in suites).values()) == 1
-    non_directory = [suite.source_path for suite in suites if persisted_source_path(suite.source_path) is None]
-    assert len(non_directory) == 75
-    assert len(set(non_directory)) < len(non_directory)
+    assert all(persisted_source_path(suite.source_path) == suite.source_path for suite in suites)
+    assert historical and all(persisted_source_path(suite.source_path) is None for suite in historical)
     assert persisted_source_path("v5/UAES/U08") == "v5/UAES/U08"
-    for suite in suites:
+    for suite in (*suites, *historical):
         assert suite.revision_digest == resolved_digest(suite.suite_key, suite.related_suite_keys, {key: content_digest(value) for key, value in suite.files.items()})
 
 
@@ -111,10 +129,8 @@ def test_identical_directory_copies_stay_distinct_without_a_new_digest():
     assert directory.files == copy.files
     assert directory.revision_digest == copy.revision_digest
     assert directory.revision_digest != legacy.revision_digest
-    assert match_official_revision([("old", None)], persisted_path="v5/UAES/U08", shared_content=False) is None
-    assert match_official_revision([("old", None)], persisted_path=None, shared_content=False) == "old"
-    assert match_official_revision([("old", None)], persisted_path=None, shared_content=True) is None
-    assert match_official_revision([("v5", "v5/UAES/U08"), ("v6", "v6/UAES/U08")], persisted_path="v6/UAES/U08", shared_content=True) == "v6"
+    assert match_official_revision([("old", None)], persisted_path="v5/UAES/U08") is None
+    assert match_official_revision([("v5", "v5/UAES/U08"), ("v6", "v6/UAES/U08")], persisted_path="v6/UAES/U08") == "v6"
 
     store = Store()
     first = install_official_sources(store, (directory, copy))
@@ -132,7 +148,8 @@ def test_identical_directory_copies_stay_distinct_without_a_new_digest():
     assert [kwargs["source_path"] for kwargs in historical.created_kwargs] == ["v5/UAES/U08", "v6/UAES/U08"]
 
     reused = Store({(legacy.suite_key, legacy.revision_digest): [("legacy-row", None)]})
-    assert install_official_sources(reused, (legacy,))[0]["revision_id"] == "legacy-row"
+    with pytest.raises(ValueError, match="historical_source_not_seedable"):
+        install_official_sources(reused, (legacy,))
     assert reused.created == []
 
 
@@ -145,7 +162,11 @@ def test_directory_discovery_keeps_placeholders_and_states_the_reader_limit():
     physical = {suite.source_path: suite for suite in predefined_directory_suites()}
     assert len(physical) == 41
     official = {suite.source_path for suite in official_source_suites()}
-    assert set(physical) <= official
+    assert set(physical) == official
+    from audit.suite_migration import generic_standard_suites
+
+    historical_paths = {suite.source_path for suite in (*standard_suites(), *generic_standard_suites(include_history=True))}
+    assert not (official & historical_paths)
     rows = {suite.source_path: discovery_row(suite) for suite in physical.values()}
     reader_ids = [clause_id for row in rows.values() for clause_id in row["capability"]["evidence_reader_clause_ids"]]
     declared = set()

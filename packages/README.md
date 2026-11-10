@@ -15,7 +15,7 @@
 | `audit.engine` | 规则检查器与 worker audit runtime |
 | `product.store` | API / Worker 共用的 product PostgreSQL persistence implementation |
 
-Worker 调用 `audit.engine.app_runtime.run_audit_engine`。#11 飞书 parity 仍由对应 Issue 拥有。
+Worker 执行已冻结的 Checker Core 快照，不用 `run_audit_engine` 为新审核选路。#11 飞书 parity 仍由对应 Issue 拥有。
 
 审核引擎和完整 regression 资产的迁移合同由 #3 拥有；具体 legacy baseline 不在本文件重复。
 
