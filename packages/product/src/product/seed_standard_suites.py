@@ -106,11 +106,12 @@ def seed_standard_suites(store: Any) -> list[dict[str, str]]:
 
 
 def publish_repository_defaults(releases: Any, seeded: list[dict[str, str]]) -> list[dict]:
-    """Make each seeded leaf the official default where no official head exists yet.
+    """Make each seeded leaf the official default.
 
     Repository checkers are validated offline, so they become defaults without a
-    corpus proof row. A head that already exists is never replaced here. Leaves a
-    related program depends on are published first.
+    corpus proof row. A default that came from the repository follows the
+    repository's current leaf; a head published with a corpus proof is never
+    replaced here. Leaves a related program depends on are published first.
     """
     if releases.role != "migrator":
         raise PermissionError("official_suite_write_forbidden")
@@ -125,8 +126,10 @@ def publish_repository_defaults(releases: Any, seeded: list[dict[str, str]]) -> 
         done.add(key)
         for dependency in related.get(key, ()):
             publish(dependency)
-        if releases.official_active(key)["revision"] == 0:
-            published.append(releases.publish_official(by_key[key]["revision_id"], expected_revision=0, expected_validation_revision=None, repository_default=True))
+        head = releases.official_active(key)
+        revision_id = by_key[key]["revision_id"]
+        if head["revision"] == 0 or (head["repository_default"] and head["current_revision_id"] != revision_id):
+            published.append(releases.publish_official(revision_id, expected_revision=head["revision"], expected_validation_revision=None, repository_default=True))
 
     for key in sorted(by_key):
         publish(key)

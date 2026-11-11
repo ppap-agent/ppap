@@ -134,5 +134,10 @@ def test_real_postgres_repository_defaults_are_followed_as_verified_and_never_re
             conn.execute("UPDATE product.official_suite_heads SET repository_default=false, revision=revision+1 WHERE suite_key='蔚来:N13'")
     assert publish_repository_defaults(releases, seed_standard_suites(store)) == []
     assert releases.official_active("蔚来:N13")["revision"] == 1
+    # A changed repository leaf moves its repository default; a proof-published head would not move.
+    leaf = next(suite for suite in predefined_directory_suites() if suite.suite_key == "蔚来:N13")
+    changed = replace(leaf, files={**leaf.files, "checker.py": leaf.files["checker.py"] + b"\n# repository update\n"})
+    moved = publish_repository_defaults(releases, install_official_sources(store, (changed,)))
+    assert [(row["suite_key"], row["revision"], row["repository_default"]) for row in moved] == [("蔚来:N13", 2, True)]
     with pytest.raises(ValueError, match="invalid_official_suite_publication"):
         releases.publish_official(seeded[0]["revision_id"], expected_revision=1, expected_validation_revision=3, repository_default=True)
