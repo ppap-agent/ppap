@@ -1079,3 +1079,61 @@ def test_and_and_or_cannot_replace_each_other():
     comparable = propose_owl(intersection, "长度大于或等于 10", "conjunction", "both")
     assert comparable["completeness"] == "complete"
     assert not any(item["id"] == "policy-disjunction" for item in comparable["spec"]["unresolved"])
+
+
+_POINTS = json.dumps({"sections": [{"title": "检查", "items": ["“批号”“数量”条件成立 → 通过；否则 → 不通过"]}], "review": [], "suggested_clause": ""}, ensure_ascii=False)
+
+
+@pytest.mark.parametrize(
+    "clause_text",
+    [
+        "当“批号”列下内容不为空，且同行的“数量”内容不为空则通过，否则不通过。",
+        "如果报告类型为年度，并且报告上有签名则合格，否则不合格",
+    ],
+)
+def test_a_leading_condition_waits_for_the_person_to_choose_requirement_or_scope(clause_text):
+    from product.formalization.text import accept_text_points, clarified, text_prompts
+    from product.store.formalizations import _summary
+
+    def read(decided=None):
+        return accept_text_points(_POINTS, source_rule_version_id="rule-1", clause_id="c1", clause_text=clause_text, decided=decided)
+
+    asked = read()
+    question = asked["spec"]["unresolved"][0]
+    assert asked["completeness"] == "partial"
+    assert [item["id"] for item in question["choices"]] == ["required", "scope"]
+    assert all(item["summary"] and item["counterexample"] for item in question["choices"])
+    assert question["choices"][0]["counterexample"] != question["choices"][1]["counterexample"]
+    row = {
+        "id": "a",
+        "formalization_revision": 1,
+        "completeness": asked["completeness"],
+        "unresolved": asked["spec"]["unresolved"],
+        "display_digest": asked["display_digest"],
+        "source_rule_digest": "d",
+    }
+    assert _summary("c1", row, None, "d")["state"] == "needs_clarification"
+
+    held = read({question["id"]: "undecided"})
+    assert held["completeness"] == "partial"
+    assert [item["id"] for item in held["spec"]["unresolved"]] == [question["id"], "undecided"]
+
+    readings = {}
+    for choice in question["choices"]:
+        decided = clarified({"obligations": asked["spec"]["obligations"]}, {"unresolved_id": question["id"], "choice_id": choice["id"]})
+        chosen = read(decided)
+        assert chosen["completeness"] == "complete" and chosen["spec"]["unresolved"] == []
+        assert choice["summary"] in chosen["cnl_text"]
+        # A later revision of the chosen reading keeps the choice without asking again.
+        assert read(clarified(chosen["spec"], None))["display_digest"] == chosen["display_digest"]
+        assert choice["summary"] in text_prompts(clause_text=clause_text, chosen=[choice["summary"]])[1]
+        readings[choice["id"]] = chosen["display_digest"]
+    assert readings["required"] != readings["scope"]
+
+
+@pytest.mark.parametrize("clause_text", ["当“批号”列下内容不为空则通过，否则不通过。", "当报告类型为年度，且报告上有签名则通过，否则不适用。", "报告类型为年度且有签名"])
+def test_a_clause_without_a_separable_condition_is_not_asked(clause_text):
+    from product.formalization.text import accept_text_points
+
+    read = accept_text_points(_POINTS, source_rule_version_id="rule-1", clause_id="c1", clause_text=clause_text)
+    assert read["completeness"] == "complete" and read["spec"]["unresolved"] == []

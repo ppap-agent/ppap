@@ -7,7 +7,7 @@ import json
 import documents.ai
 from documents.ai import AIError
 from documents.model_access import ModelUnavailable
-from product.formalization.text import prior_points, text_prompts
+from product.formalization.text import chosen_readings, clarified, prior_points, text_prompts
 from product.store.formalizations import FormalizationStore, source_binding
 
 
@@ -30,7 +30,10 @@ def process_rule_formalization(store, claimed, ident: str, *, ai=None) -> dict:
         if not formalizations.allows(str(row["tenant_id"]), str(row["initiating_user_id"])):
             formalizations.finish(claimed, ident, error_code="access_denied")
             return {"state": "failed", "failure": "access_denied"}
-        system, user = text_prompts(clause_text=clause.get("rule_to_check") or "", prior_points=prior_points(formalizations.parent_snapshot(row)), instruction=row["user_instruction"])
+        parent = formalizations.parent_snapshot(row)
+        clause_text = clause.get("rule_to_check") or ""
+        chosen = chosen_readings(clause_text, clarified(parent, row.get("clarification")))
+        system, user = text_prompts(clause_text=clause_text, prior_points=prior_points(parent), instruction=row["user_instruction"], chosen=chosen)
         with audit_lease(store, claimed, ident):
             # The optimizer reasons at length to keep meaning; the output budget leaves room for that reasoning.
             completed = (ai or documents.ai.run_json)("rule_formalization", instructions=system, prompt=user, max_tokens=32000, reasoning_effort="high", timeout=600)

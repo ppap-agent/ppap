@@ -15,7 +15,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from product.formalization.spec import FormalizationError
-from product.formalization.text import accept_text_points
+from product.formalization.text import accept_text_points, clarified
 
 
 def _id(value: str) -> str:
@@ -513,7 +513,8 @@ class FormalizationStore:
                     clause, digest = source_binding(rule, row["clause_id"])
                     if digest != row["source_rule_digest"]:
                         raise FormalizationError("source_changed")
-                    checked = accept_text_points(raw, source_rule_version_id=str(row["rule_version_id"]), clause_id=row["clause_id"], clause_text=clause.get("rule_to_check") or "")
+                    decided = clarified(self.parent_snapshot(row), row.get("clarification"))
+                    checked = accept_text_points(raw, source_rule_version_id=str(row["rule_version_id"]), clause_id=row["clause_id"], clause_text=clause.get("rule_to_check") or "", decided=decided)
                     candidate_id = self._insert_candidate(cur, row, checked, digest)
                     state, failure = "completed", None
                 except FormalizationError as exc:
