@@ -469,3 +469,31 @@ def test_an_emf_stamp_placed_on_the_sheet_is_the_controlled_stamp(monkeypatch):
     body = preset_rule_body("UAES", "U16")
     agent = UaesProcessFlowAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput(rule_id="source-rules", **{key: value for key, value in body.items() if key != "kind"}))
     assert agent.check(2).status == "PASS"
+
+
+@pytest.mark.parametrize(
+    "entries,expected",
+    [
+        ({"组长": "冯立梅 2026-09-14", "审核": "周进 2026-09-14", "批准": "汪植亮 2026-09-15"}, {"组长": "冯立梅", "审核": "周进", "批准": "汪植亮"}),
+        ({"组长": "冯立梅 2026-09-14", "审核": "2026-09-14", "批准": "汪植亮 2026-09-15"}, {"组长": "冯立梅", "审核": "", "批准": "汪植亮"}),
+    ],
+    ids=["typed-names", "missing-name"],
+)
+def test_cover_signatures_are_the_typed_name_and_date_beside_each_role(tmp_path, entries, expected):
+    import fitz
+    from audit.checker_lib.uaes.approval import UaesApprovalAgent
+    from audit.contracts import AuditInput, RuleInput
+
+    path = tmp_path / "cover.pdf"
+    with fitz.open() as document:
+        page = document.new_page(width=600, height=300)
+        # The checked-by and approved-by entries share one line, as on the UAES cover.
+        for role, (x, y) in {"组长": (300, 60), "审核": (40, 160), "批准": (300, 160)}.items():
+            page.insert_text((x, y), role + "：", fontname="china-s", fontsize=11)
+            page.insert_text((x + 60, y), entries[role], fontname="china-s", fontsize=11)
+            page.insert_text((x, y + 14), "Date:", fontname="helv", fontsize=9)
+        document.save(path)
+    agent = UaesApprovalAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput(rule_id="r", rule_profile="v4", preset_key="U19"))
+    signed = agent.cover_signatures()
+    assert {role: name for role, (name, _day) in signed.items()} == expected
+    assert [str(day) for _name, day in signed.values()] == ["2026-09-14", "2026-09-14", "2026-09-15"]
