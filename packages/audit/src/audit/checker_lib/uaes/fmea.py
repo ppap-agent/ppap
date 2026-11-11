@@ -46,7 +46,7 @@ class UaesPfmeaAgent(UaesSourceAgent):
                 return "NG", "PFMEA的S/O/D存在超出1至10的整数范围的评分。"
             s, _o, d = scores
             effect = str(row["effect"])
-            if any(term in effect for term in ("安全", "法规", "整车召回")) and s < 9:
+            if any(term in effect for term in ("安全", "法规", "整车召回", "人员伤亡")) and s < 9:
                 return "NG", "PFMEA安全/法规/整车召回后果的严重度低于9。"
             if "轻微" in effect and "外观" in effect and not 2 <= s <= 4:
                 return "NG", "仅轻微外观后果的严重度不在2至4范围。"
@@ -57,7 +57,11 @@ class UaesPfmeaAgent(UaesSourceAgent):
                 return "NG", "同失效模式、原因和控制条件的S/O/D评分不一致。"
             conditions[identity] = scores
         return self.visual_result(
-            {"reasonable": "对全部PFMEA行，S与后果匹配，O与起因和预防控制匹配（有效预防O低、无预防O高），D与方法和时机匹配（下线高、在线自动低、无法探测10）。工程有效性未知时null。"},
+            {
+                "reasonable": "对全部PFMEA行，S与后果匹配，O与起因和预防控制匹配（有效预防O低、无预防O高），D与方法和时机匹配（下线高、在线自动低、无法探测10）。"
+                # Examples from the remarks column of the UAES rule document.
+                "例：「制动失效→人员伤亡」S=10且「100%在线自动检测」D=2合理；「导致整车召回」S=3不合理；无任何探测措施D=5不合理。工程有效性未知时null。"
+            },
             "全部S/O/D评分的工程合理性",
         )
 
