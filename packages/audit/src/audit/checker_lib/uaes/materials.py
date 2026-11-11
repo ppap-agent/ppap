@@ -55,7 +55,13 @@ class UaesMaterialsAgent(UaesSourceAgent):
 
     @rule("供应商及UAES两方工程师实际签字")
     def rule_2(self):
-        return self.visual_result({"signatures": "供应商负责工程师、UAES NE工程师、UAES SQD/SQE工程师三处均存在实际签字，不计空栏或预印标签。"}, "三方实际签字")
+        # One field per signature line; a single combined question is answered inconsistently.
+        labels = {
+            "supplier_signature": "供应商负责工程师签字/Supplier Authorized Signature",
+            "ne_signature": "UAES NE工程师签字/UAES NE Signature",
+            "sqe_signature": "UAES SQD/SQE工程师签字/UAES SQD/SQE Signature",
+        }
+        return self.visual_result({field: f"“{label}”标签右侧的签字横线上有实际签名（手写或签名图片）；横线空白为false。" for field, label in labels.items()}, "三方实际签字")
 
     @rule("同项目同物料独立图纸的零件名称和编号")
     def rule_3(self):
