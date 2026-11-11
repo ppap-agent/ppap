@@ -42,9 +42,12 @@ class UaesInspectionAgent(UaesSourceAgent):
     def rule_1(self):
         _table, _row, _requirement, measurements = self.report("尺寸报告")
         count = len(measurements)
+        # The rule document's remark hands more than five columns to a reviewer.
+        if count > 5:
+            return "UNABLE", f"尺寸报告供应商实测值列数为{count}，超过5列，需人工判断是否覆盖多产线/多模穴。"
         if count % 3:
-            return "NG", f"尺寸报告供应商实测值列数为{count}，不是3或3的倍数。" + ("请复核是否覆盖多产线/多模穴。" if count > 5 else "")
-        return "PASS", f"尺寸报告供应商实测值列数为{count}。" + ("请复核是否覆盖多产线/多模穴。" if count > 5 else "")
+            return "NG", f"尺寸报告供应商实测值列数为{count}，不是3或3的倍数。"
+        return "PASS", f"尺寸报告供应商实测值列数为{count}。"
 
     @rule("四报告全部要求实测范围与同行OK")
     def rule_2(self):

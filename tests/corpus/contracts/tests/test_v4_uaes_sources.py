@@ -13,9 +13,9 @@ def test_original_uaes_inspection_reference_has_ten_not_three_measurement_column
     body = preset_rule_body("UAES", "U01")
     agent = UaesInspectionAgent(AuditInput(audit_id="original-reference", file_url=str(path)), RuleInput(rule_id="source", **{key: value for key, value in body.items() if key != "kind"}))
     result = agent.check(0)
-    # The source clause requires 3 or a multiple of 3. The actual offline
-    # reference has F:O =10; its existence must not manufacture a golden PASS.
-    assert result.status == "NG", result.suggestions
+    # The actual offline reference has F:O =10. The rule document's remark
+    # hands more than five columns to a reviewer; it must not become a PASS.
+    assert result.status == "UNABLE", result.suggestions
     assert "10" in result.suggestions
     assert "多产线/多模穴" in result.suggestions
     assert result.evidence.sources
