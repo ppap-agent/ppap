@@ -45,11 +45,15 @@ def close_workspace_panel(page):
         panel = panel.and_(page.locator('[data-state="open"]'))
         if not panel.is_visible():
             continue
-        if panel.get_attribute("aria-hidden") == "true":
-            foreground = page.get_by_role("dialog")
-            if foreground.count() and foreground.first.get_attribute("data-state") == "open":
-                continue
-            expect(panel).not_to_have_attribute("aria-hidden", "true")
+        # Decide in one DOM read: a dialog that is still closing above the
+        # panel keeps aria-hidden on it until unmount, and reading the two
+        # facts separately can mistake the panel itself for the foreground.
+        covered = panel.evaluate(
+            "el => el.getAttribute('aria-hidden') === 'true' && [...document.querySelectorAll('[role=dialog][data-state=open]')].some(d => d !== el && d.getAttribute('aria-hidden') !== 'true')"
+        )
+        if covered:
+            continue
+        expect(panel).not_to_have_attribute("aria-hidden", "true")
         panel.get_by_role("button", name="关闭", exact=True, include_hidden=True).click()
 
 
