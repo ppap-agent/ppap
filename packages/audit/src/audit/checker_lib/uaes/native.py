@@ -318,10 +318,13 @@ class NativeFacts:
                 self.cell(table, row, column)
                 merged = next((span for span in table.get("merges", []) if span[0] <= row <= span[2] and span[1] <= column <= span[3]), None)
                 next_column = merged[3] + 1 if merged else column + 1
-                if numeric:
-                    # A report form may leave spacer columns between a label and its number.
-                    while next_column < min(table["cols"], column + 8) and blank(self.readers[table["id"]].cell(row, next_column).get("value")):
+                if numeric or re.search(r"[:：]\s*$", str(item.get("value"))):
+                    # A report form may leave spacer columns between a label and its number or a "label:" value.
+                    reader = self.readers[table["id"]]
+                    while next_column < min(table["cols"], column + 8) and reader.cell(row, next_column).get("state") == "known" and blank(reader.cell(row, next_column).get("value")):
                         next_column += 1
+                    if re.search(r"[:：]\s*$", str(reader.cell(row, next_column).get("value") or "")):
+                        next_column = merged[3] + 1 if merged else column + 1  # The next label starts; this value is blank.
                 if next_column <= table["cols"]:
                     fact = self.readers[table["id"]].cell(row, next_column)
                     locator = self.cell_location(table, row, next_column, fact)

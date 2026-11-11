@@ -1,12 +1,25 @@
 """UAES CP row facts and same-round source reconciliation."""
 
+import re
+
 from audit.checker_lib.nio.excel_agent import rule
 from audit.engine.checkers.date_utils import normalize_excel_date
 
-from .native import UaesSourceAgent, UnknownFact, any_row, blank, key
+from .native import MissingFact, UaesSourceAgent, UnknownFact, any_row, blank, key
 
 _OP = ("工序名称", "操作描述", "工序名称/操作描述", "过程名称/操作描述")
 _CHAR = ("产品/过程规格/公差", "产品特性", "过程特性", "特性名称", "产品", "过程")
+_SPLIT = {"product": ("产品特性", "产品"), "process": ("过程特性", "过程")}
+
+
+def _stage(value):
+    """Prototype and pre-launch first: 试生产 also contains 生产."""
+    text = key(value)
+    if any(term in text for term in ("样件", "试生产", "prototype", "protype", "prelaunch", "pre-launch")):
+        return "pre-production"
+    if any(term in text for term in ("量产", "生产", "sop", "production")):
+        return "production"
+    return None
 
 
 class UaesControlPlanAgent(UaesSourceAgent):
@@ -14,10 +27,23 @@ class UaesControlPlanAgent(UaesSourceAgent):
         # An operation's later rows leave its name blank; their characteristics still belong to it.
         return self.native().rows({"operation": _OP, **(extra or {})}, title=("控制计划", "control plan"), anchor=("operation",), defer_unknown=defer_unknown, continuation=continuation)
 
+    def characteristics(self):
+        """Templates put product and process characteristics in two columns or in one."""
+        facts = self.native()
+        try:
+            facts.columns(facts.table(("控制计划", "control plan")), {"operation": _OP, **_SPLIT})
+            return _SPLIT
+        except (MissingFact, UnknownFact):
+            return {"characteristic": _CHAR}
+
+    @staticmethod
+    def texts(row, names):
+        return [str(row[name] or "") for name in names]
+
     @rule("全部工序生产资源")
     def rule_1(self):
         # Resources are stated once per operation; its continuation rows leave them blank.
-        rows = self.rows({"resources": ("机器装置夹具工装", "机器/装置/夹具/工装", "生产资源", "机器设备工装", "生产设备")}, defer_unknown=True, continuation=False)
+        rows = self.rows({"resources": ("机器装置夹具工装", "机器/装置/夹具/工装", "生产资源", "机器设备工装", "生产设备", "设备/工装", "设备工装")}, defer_unknown=True, continuation=False)
         unresourced = []
 
         def lacks_resources(row):
@@ -39,11 +65,45 @@ class UaesControlPlanAgent(UaesSourceAgent):
             "实际生产追溯和先进先出措施",
         )
 
+    def plan_type(self):
+        """The one checked type: a form checkbox caption, or a typed field value."""
+        from audit.checker_lib.excel import load_workbook
+        from audit.engine.rule_engine.excel_ops import DefaultExcelOps
+
+        path = str(self.audit_file.file_url)
+        if path.lower().endswith((".xlsx", ".xlsm")):
+            workbook = load_workbook(path)
+            try:
+                ops = DefaultExcelOps()
+                labels = [label for sheet in workbook.worksheets for label in (ops.get_checkbox_labels(sheet, path) or [])]
+            finally:
+                workbook.close()
+            checked = [caption for caption, state in labels if state]
+            if labels:
+                if len(checked) != 1:
+                    raise UnknownFact("控制计划类型复选框没有唯一的实际勾选。")
+                self.witness({"kind": "xlsx_form_control", "caption": checked[0]}, checked[0])
+                return checked[0]
+        # A cell can list every type with its own mark, e.g. "■样件 □试生产 □生产".
+        facts = self.native()
+        for value, locator in facts.observations():
+            options = re.findall(r"([■☑✓√✔□☐])\s*([^■☑✓√✔□☐]+)", str(value))
+            if len(options) >= 2 and any(_stage(text) for _mark, text in options):
+                checked = [text.strip() for mark, text in options if mark not in "□☐"]
+                if len(checked) != 1:
+                    raise UnknownFact("控制计划类型选项没有唯一的实际勾选。")
+                facts.witness(locator, value, facts.version)
+                return checked[0]
+        return facts.field(("控制计划类型", "类型", "阶段"))
+
     @rule("量产SOP类型及真实受控章")
     def rule_3(self):
-        value = self.native().field(("控制计划类型", "类型", "阶段"))
-        if key(value) not in {"量产", "sop", "量产sop", "production"}:
+        value = self.plan_type()
+        stage = _stage(value)
+        if stage is None:
             raise UnknownFact("尚不能从真实选择确认控制计划类型为量产/SOP。")
+        if stage != "production":
+            return "NG", f"控制计划类型为“{value}”，不是量产/SOP。"
         return self.controlled_stamp()
 
     @rule("特性类型列实际特性标记")
@@ -55,10 +115,11 @@ class UaesControlPlanAgent(UaesSourceAgent):
 
     @rule("跑道尺寸过程能力控制")
     def rule_5(self):
-        rows = self.rows({"characteristic": _CHAR, "control": ("控制方法", "控制手段", "频率")})
+        names = self.characteristics()
+        rows = self.rows({**names, "control": ("控制方法", "控制手段")})
         found = False
         for row in rows:
-            if "跑道" in str(row["characteristic"]):
+            if any("跑道" in text for text in self.texts(row, names)):
                 found = True
                 if not any(term in key(row["control"]) for term in ("spc", "x-r", "xbar-r", "x̄-r")):
                     return "NG", "跑道尺寸没有对应X-R图/SPC过程能力管控。"
@@ -93,7 +154,8 @@ class UaesControlPlanAgent(UaesSourceAgent):
         if kind:
             aliases["kind"] = ("特性类别", "特性类型", "类别")
         source = related.rows(aliases, anchor=("name",))
-        target = self.rows({"name": _CHAR, **({"control": ("频率", "控制方法")} if require_spc else {})})
+        names = self.characteristics()
+        target = self.rows({**names, **({"control": ("控制方法", "控制手段")} if require_spc else {})})
         count = 0
         for row in source:
             if marked and blank(row["mark"]):
@@ -101,7 +163,9 @@ class UaesControlPlanAgent(UaesSourceAgent):
             if kind and kind not in str(row["kind"]):
                 continue
             count += 1
-            matches = [item for item in target if key(item["name"]) == key(row["name"]) and (not outgoing or any(term in str(item["operation"]) for term in ("出货", "GP12")))]
+            matches = [
+                item for item in target if key(row["name"]) in {key(text) for text in self.texts(item, names)} and (not outgoing or any(term in str(item["operation"]) for term in ("出货", "GP12")))
+            ]
             if not matches:
                 raise UnknownFact("CP尚不能确认覆盖关联要求：" + str(row["name"]))
             if require_spc and not any("spc" in key(item["control"]) for item in matches):

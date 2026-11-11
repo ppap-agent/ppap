@@ -246,6 +246,37 @@ class DefaultExcelOps:
         self._checkbox_controls_cache[cache_key] = controls
         return controls
 
+    def get_checkbox_labels(self, ws: Worksheet, source_path: str | None = None) -> list[tuple[str, bool]] | None:
+        """Each form checkbox's caption and state from the sheet's VML; None when that cannot be read."""
+        xlsx_path = str(source_path or "")
+        if not xlsx_path.lower().endswith((".xlsx", ".xlsm")) or not os.path.exists(xlsx_path):
+            return None
+        rel_id = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+        try:
+            with zipfile.ZipFile(xlsx_path, "r") as zf:
+                sheet_xml_path = self._resolve_sheet_xml_path(zf, ws.title)
+                rels_path = self._sheet_rels_path(sheet_xml_path) if sheet_xml_path else ""
+                if not rels_path or rels_path not in zf.namelist():
+                    return []
+                targets = {rel.attrib.get("Id", ""): rel.attrib.get("Target", "") for rel in ET.fromstring(zf.read(rels_path))}
+                labels = []
+                for node in ET.fromstring(zf.read(sheet_xml_path)).iter():
+                    if self._xml_local_name(node.tag) != "legacyDrawing":
+                        continue
+                    vml = self._normalize_zip_target(posixpath.dirname(sheet_xml_path), targets.get(node.attrib.get(rel_id, ""), ""))
+                    for shape in ET.fromstring(zf.read(vml)).iter():
+                        client = next((child for child in shape if self._xml_local_name(child.tag) == "ClientData"), None)
+                        if client is None or client.attrib.get("ObjectType") != "Checkbox":
+                            continue
+                        textbox = next((child for child in shape if self._xml_local_name(child.tag) == "textbox"), None)
+                        caption = " ".join("".join(textbox.itertext()).split()) if textbox is not None else ""
+                        checked = any(self._xml_local_name(child.tag) == "Checked" and (child.text or "").strip() == "1" for child in client)
+                        labels.append((caption, checked))
+                return labels
+        except (KeyError, ET.ParseError, zipfile.BadZipFile) as exc:
+            logger.warning("Failed to read checkbox labels from %s[%s]: %s", xlsx_path, ws.title, exc)
+            return None
+
     def get_sheet_images_base64(self, ws: Worksheet) -> list[str]:
         cache_key = id(ws)
         cached = self._sheet_images_base64_cache.get(cache_key)

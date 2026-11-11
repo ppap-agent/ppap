@@ -297,3 +297,66 @@ def test_pfmea_blank_failure_mode_reads_its_own_group_not_another(tmp_path):
     # only the engineering judgement, which needs the original image, remains.
     assert result.status == "UNABLE", result.suggestions
     assert "工程合理性" in result.suggestions
+
+
+def agent_for(tmp_path, agent_cls, entry, sheets):
+    book = Workbook()
+    book.remove(book.active)
+    for title, rows in sheets.items():
+        sheet = book.create_sheet(title)
+        for row in rows:
+            sheet.append(row)
+    path = tmp_path / "source.xlsx"
+    book.save(path)
+    book.close()
+    body = preset_rule_body("UAES", entry)
+    return agent_cls(AuditInput(audit_id="version", file_url=str(path)), RuleInput(rule_id="source-rules", **{key: value for key, value in body.items() if key != "kind"}))
+
+
+def test_control_plan_reads_equipment_tooling_as_production_resources(tmp_path):
+    from audit.checker_lib.uaes.control_plan import UaesControlPlanAgent
+
+    agent = agent_for(tmp_path, UaesControlPlanAgent, "U08", {"控制计划": [["控制计划"], ["工序名称/操作描述", "设备/工装"], ["压铸", None], ["机加工", "CNC"]]})
+    result = agent.check(0)
+    assert result.status == "NG", result.suggestions
+    assert "压铸" in result.suggestions
+
+
+@pytest.mark.parametrize("options,status", [("■样件 □试生产 □生产", "NG"), ("■样件 ■试生产 □生产", "UNABLE")])
+def test_control_plan_type_is_the_one_marked_option(tmp_path, options, status):
+    from audit.checker_lib.uaes.control_plan import UaesControlPlanAgent
+
+    agent = agent_for(tmp_path, UaesControlPlanAgent, "U08", {"控制计划": [["控制计划"], [options], ["工序名称", "特殊特性"], ["压铸", "3"]]})
+    assert agent.check(2).status == status
+
+
+def test_special_list_names_each_row_in_a_part_name_and_number_column(tmp_path):
+    from audit.checker_lib.uaes.special_characteristics import UaesSpecialCharacteristicsAgent
+
+    rows = [["特殊特性清单"], ["序号", "产品名称/零件号 Name/Code", "特殊特性名称", "特性值", "特性类别"], [1, "F01R10Y776机加壳体", "孔径", "Φ7±0.1", "SC"], [2, None, "平面度", "0.15", "SC"]]
+    result = agent_for(tmp_path, UaesSpecialCharacteristicsAgent, "U12", {"特殊特性清单": rows}).check(0)
+    assert result.status == "NG", result.suggestions
+    assert "第4行" in result.suggestions
+
+
+def test_capability_directory_page_can_be_its_own_sheet(tmp_path):
+    from audit.checker_lib.uaes.engineering import UaesCapabilityAgent
+
+    agent = agent_for(tmp_path, UaesCapabilityAgent, "U06", {"目录": [["序号", "特性"], [1, "孔径"]], "孔径": [["读数次数", 125]]})
+    # The directory is found; the batch then lacks the PGQP1 it is compared with.
+    assert "目录" not in agent.check(3).suggestions
+
+
+def test_a_colon_label_reads_its_value_across_spacer_cells(tmp_path):
+    from audit.checker_lib.uaes.native import NativeFacts
+
+    path = tmp_path / "grr.xlsx"
+    book = Workbook()
+    book.active.append(["量具编号:", None, None, "PE702438", None, "测量参数:", None])
+    book.active.append(["量具名称:", None, None, None, None, "参数规格:", "6.5"])
+    book.save(path)
+    book.close()
+    facts = NativeFacts(str(path), "version", lambda *args, **kwargs: None)
+    assert facts.field(("量具编号",)) == "PE702438"
+    with pytest.raises(Exception):
+        facts.field(("量具名称",))

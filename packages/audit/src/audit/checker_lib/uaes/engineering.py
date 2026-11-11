@@ -155,7 +155,11 @@ class UaesCapabilityAgent(UaesSourceAgent):
         return self.pgqp_directory(process_only=True)
 
     def pgqp_directory(self, *, process_only):
-        self.native().require_text("目录")
+        facts = self.native()
+        # The directory page is usually its own worksheet named 目录.
+        if not facts.tables(("目录",)):
+            facts.require_text("目录")
+        directory = facts.table(("目录",))
         related = self.related(("采购件质量计划", "PGQP1"))
         related.require_text("PGQP1")
         aliases: dict[str, tuple[str, ...]] = {"name": ("特性名称", "特性描述", "产品/过程特性", "过程特性")}
@@ -172,10 +176,9 @@ class UaesCapabilityAgent(UaesSourceAgent):
                 continue
             required += 1
             name = str(row["name"])
-            directory = self.native().table(("目录",))
             if not any(name.strip() == str(fact.get("value", "")).strip() for fact in directory["cells"].values() if fact.get("state") == "known"):
                 raise UnknownFact("能力目录尚不能确认覆盖关联PGQP1特性：" + name)
-            self.native().require_text(name)
+            facts.require_text(name)
         if not required:
             raise UnknownFact("关联PGQP1没有可确认的适用特性，不能按空范围通过。")
         return "PASS", "已按当前批次同零件的PGQP1核实全部适用特性目录。"

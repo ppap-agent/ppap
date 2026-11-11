@@ -12,13 +12,31 @@ _ALIASES = {
 }
 
 
+# The same synonyms the other UAES checks accept for a part's name and number.
+_IDENTITY = {
+    "物料名称": ("物料名称", "零件名称", "产品名称", "产品名称/零件号"),
+    "物料编号": ("物料编号", "零件号", "零件编号", "产品件号", "产品名称/零件号"),
+}
+
+
 class UaesSpecialCharacteristicsAgent(UaesSourceAgent):
     PRECHECK_METHODS = {"U12:1": "rule_1", "U12:2": "rule_2"}
 
     def identity(self, name):
         facts = self.native()
+        aliases = _IDENTITY[name]
+        # A list can state the identity once per numbered row instead of once in its header.
         try:
-            return facts.field((name,))
+            rows = facts.rows({"编号": _ALIASES["编号"], "value": aliases}, title=("特殊特性", "特性清单"), anchor=("编号",))
+        except (MissingFact, UnknownFact):
+            rows = None
+        if rows:
+            for row in rows:
+                if blank(row["value"]):
+                    raise MissingFact(f"第{row.row}行{name}为空。")
+            return str(rows[0]["value"])
+        try:
+            return facts.field(aliases)
         except UnknownFact:
             # Only a readable, truly empty immediate value is a proven empty
             # field. A missing/visual/ambiguous value remains unknown.
@@ -26,7 +44,7 @@ class UaesSpecialCharacteristicsAgent(UaesSourceAgent):
                 for row in range(1, min(10, table["rows"]) + 1):
                     for column in range(1, min(24, table["cols"])):
                         item = facts.readers[table["id"]].cell(row, column)
-                        if item.get("state") == "known" and header(item.get("value"), (name,)):
+                        if item.get("state") == "known" and header(item.get("value"), aliases):
                             merge = next((span for span in table.get("merges", []) if span[0] <= row <= span[2] and span[1] <= column <= span[3]), None)
                             next_column = merge[3] + 1 if merge else column + 1
                             if next_column <= table["cols"] and blank(facts.cell(table, row, next_column)):
