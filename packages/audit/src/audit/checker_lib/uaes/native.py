@@ -258,10 +258,17 @@ class NativeFacts:
             self.cell(table, start, column)
         return start, columns
 
-    def rows(self, aliases, *, title=(), anchor=(), defer_unknown=False, table=None, ignore_under=()):
+    def rows(self, aliases, *, title=(), anchor=(), defer_unknown=False, table=None, ignore_under=(), continuation=False):
+        """Business rows of one table.
+
+        With `continuation`, a row whose anchors are known blank continues the
+        anchored row above it, as forms leave "same as above" cells empty: it is
+        kept and reads that row's anchors. Its other blank cells stay blank.
+        """
         table = table if table is not None else self.table(title)
         start, columns = self.columns(table, aliases, ignore_under=ignore_under)
         records = []
+        anchored = None
         for row in range(start + 1, table["rows"] + 1):
             raw = {name: self.readers[table["id"]].cell(row, column) for name, column in columns.items()}
             if all(blank(item.get("value")) and item.get("state") == "known" for item in raw.values()):
@@ -278,9 +285,12 @@ class NativeFacts:
                     # is outside the business range, even when resources exist.
                     self.cell(table, row, columns[name])
             if anchor and all(raw[name].get("state") == "known" and blank(raw[name].get("value")) for name in anchor):
+                if continuation and anchored is not None:
+                    records.append(NativeRow(self, table, row, columns, inherited={name: anchored for name in anchor}))
                 continue
             if any(key(raw[name].get("value")).startswith(marker) for name in anchor for marker in ("编制/日期", "审核/日期", "编制人", "批准人")):
                 break
+            anchored = row
             records.append(NativeRow(self, table, row, columns))
         if not records:
             raise UnknownFact("没有有效业务数据行，不能按空范围通过。")
@@ -372,11 +382,13 @@ def any_row(rows, predicate) -> bool:
 
 
 class NativeRow(Mapping[str, Any]):
-    def __init__(self, native, table, row, columns):
+    def __init__(self, native, table, row, columns, inherited=None):
         self.native, self.table, self.row, self.columns = native, table, row, columns
+        # Continuation rows read these fields from the anchored row above.
+        self.inherited = inherited or {}
 
     def __getitem__(self, name):
-        return self.native.cell(self.table, self.row, self.columns[name])
+        return self.native.cell(self.table, self.inherited.get(name, self.row), self.columns[name])
 
     def __iter__(self):
         return iter(self.columns)

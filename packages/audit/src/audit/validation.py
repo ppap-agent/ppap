@@ -17,8 +17,45 @@ def _measured(visual: dict[str, Any]) -> dict[str, int] | None:
     return measured
 
 
+def _validate_bounds(visual: dict[str, Any]) -> None:
+    """Bounds must be what the recorded lower-bound cell sizes give for this placement."""
+    from .document_tools import _XLSX_BOUNDED_KINDS, _XLSX_REACH_CELLS, _xlsx_anchor_bounds
+
+    walked, extent = visual.get("bound_emu"), visual.get("extent_emu")
+    if (
+        visual.get("unresolved_reason") != "imprecise_anchor_geometry"
+        or visual["kind"] not in _XLSX_BOUNDED_KINDS
+        or "from" not in visual
+        or ("to" in visual) == (extent is not None)
+        or extent is not None
+        and (not isinstance(extent, dict) or set(extent) != {"row", "column"} or any(type(value) is not int or value < 0 for value in extent.values()))
+        or not isinstance(walked, dict)
+        or set(walked) != {"row", "column"}
+        or any(not isinstance(sizes, list) or len(sizes) > 2 * _XLSX_REACH_CELLS or any(type(size) is not int or size < 0 for size in sizes) for sizes in walked.values())
+    ):
+        raise ValueError("Invalid spreadsheet visual bounds")
+    remaining = {axis: iter(sizes) for axis, sizes in walked.items()}
+
+    def recorded(axis: str, _cell: int) -> int:
+        size = next(remaining[axis], None)
+        if size is None:
+            raise ValueError("Invalid spreadsheet visual bounds")
+        return size
+
+    if _xlsx_anchor_bounds(visual["from"], visual.get("to"), extent, recorded) != (visual.get("bounds"), walked) or any(next(sizes, None) is not None for sizes in remaining.values()):
+        raise ValueError("Invalid spreadsheet visual bounds")
+
+
 def _validate_xlsx_visuals(table: dict[str, Any], budget: EvidenceBudget) -> None:
-    from .document_tools import _XLSX_COORDINATE_MAX, _XLSX_COORDINATE_MIN, _archive_target, _regions_overlap, _xlsx_anchor_range, col_number
+    from .document_tools import (
+        _XLSX_COORDINATE_MAX,
+        _XLSX_COORDINATE_MIN,
+        _archive_target,
+        _regions_overlap,
+        _xlsx_anchor_range,
+        col_number,
+        visual_region,
+    )
 
     def part(value: Any) -> bool:
         return isinstance(value, str) and bool(value) and not value.startswith("/") and _archive_target("", value) == value
@@ -41,7 +78,7 @@ def _validate_xlsx_visuals(table: dict[str, Any], budget: EvidenceBudget) -> Non
     for visual in visuals:
         if (
             not isinstance(visual, dict)
-            or set(visual) - {"source", "kind", "content_observed", "range", "from", "to", "measured_emu", "unresolved_reason", "references"}
+            or set(visual) - {"source", "kind", "content_observed", "range", "from", "to", "measured_emu", "extent_emu", "bounds", "bound_emu", "unresolved_reason", "references"}
             or not {"source", "kind", "content_observed", "range"} <= set(visual)
             or visual["content_observed"] is not False
             or not isinstance(visual["kind"], str)
@@ -55,9 +92,11 @@ def _validate_xlsx_visuals(table: dict[str, Any], budget: EvidenceBudget) -> Non
             raise ValueError("Invalid spreadsheet visual marker")
         region = visual["range"]
         if region is None:
-            if visual.get("unresolved_reason") != "unsupported_anchor_geometry" or (
-                visual["kind"] == "twoCellAnchor" and "from" in visual and "to" in visual and _xlsx_anchor_range(visual["from"], visual["to"]) is not None
-            ):
+            if visual["kind"] == "twoCellAnchor" and "from" in visual and "to" in visual and _xlsx_anchor_range(visual["from"], visual["to"]) is not None:
+                raise ValueError("Invalid unresolved spreadsheet visual")
+            if "bounds" in visual or "bound_emu" in visual:
+                _validate_bounds(visual)
+            elif visual.get("unresolved_reason") != "unsupported_anchor_geometry":
                 raise ValueError("Invalid unresolved spreadsheet visual")
         elif (
             not isinstance(region, list)
@@ -69,6 +108,7 @@ def _validate_xlsx_visuals(table: dict[str, Any], budget: EvidenceBudget) -> Non
             or "to" not in visual
             or region != _xlsx_anchor_range(visual["from"], visual["to"], _measured(visual))
             or "unresolved_reason" in visual
+            or {"bounds", "bound_emu", "extent_emu"} & set(visual)
         ):
             raise ValueError("Invalid spreadsheet visual range")
         references = visual.get("references", [])
@@ -92,7 +132,7 @@ def _validate_xlsx_visuals(table: dict[str, Any], budget: EvidenceBudget) -> Non
             raise ValueError("Invalid spreadsheet visual cell")
         row, column = int(match[2]), col_number(match[1])
         region = next((span for span in table.get("merges", []) if span[0] <= row <= span[2] and span[1] <= column <= span[3]), [row, column, row, column])
-        indices = [index for index, visual in enumerate(visuals) if visual["range"] is None or _regions_overlap(region, visual["range"])]
+        indices = [index for index, visual in enumerate(visuals) if (cover := visual_region(visual)) is None or _regions_overlap(region, cover)]
         value = cell.get("value")
         if (
             not (1 <= row <= table["rows"] and 1 <= column <= table["cols"])

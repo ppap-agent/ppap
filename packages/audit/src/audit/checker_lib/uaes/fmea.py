@@ -40,6 +40,8 @@ class UaesPfmeaAgent(UaesSourceAgent):
             anchor=("mode", "cause"),
             # AIAG 4th-edition forms repeat S/O/D under the action results.
             ignore_under=("措施结果", "Actions Results"),
+            # Further causes and controls of one failure mode have their own scores.
+            continuation=True,
         )
         conditions: dict[tuple[str, ...], tuple] = {}
         for row in rows:

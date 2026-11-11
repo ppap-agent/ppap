@@ -196,3 +196,50 @@ def test_pfmea_scores_use_original_columns_not_action_results(tmp_path):
     # The post-action S/O/D repeat the labels; the original scores still decide.
     assert result.status == "NG", result.suggestions
     assert "整车召回" in result.suggestions
+
+
+def control_plan(tmp_path, rows):
+    from audit.checker_lib.uaes.control_plan import UaesControlPlanAgent
+
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "控制计划"
+    sheet.append(["控制计划"])
+    sheet.append(["工序名称", "生产设备", "特殊特性"])
+    for row in rows:
+        sheet.append(row)
+    path = tmp_path / "cp.xlsx"
+    book.save(path)
+    book.close()
+    body = preset_rule_body("UAES", "U08")
+    return UaesControlPlanAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput(rule_id="source-rules", **{key: value for key, value in body.items() if key != "kind"}))
+
+
+def test_control_plan_continuation_rows_belong_to_their_operation(tmp_path):
+    # The operation and its resources are written once; later rows leave them blank.
+    agent = control_plan(tmp_path, [["压铸", "压铸机", None], [None, None, "3,5"]])
+    assert agent.check(3).status == "PASS"
+    assert agent.check(0).status == "PASS"
+    unmarked = control_plan(tmp_path, [["压铸", "压铸机", None], [None, None, None]])
+    assert unmarked.check(3).status == "NG"
+
+
+def test_pfmea_continuation_rows_have_their_scores_checked(tmp_path):
+    from audit.checker_lib.uaes.fmea import UaesPfmeaAgent
+
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "PFMEA"
+    sheet.append(["PFMEA"])
+    sheet.append(["失效模式", "失效后果", "严重度", "失效原因", "发生度", "预防控制", "探测控制", "探测度"])
+    sheet.append(["裂纹", "外观不良", 5, "参数异常", 3, "参数监控", "目视", 6])
+    # A further control of the same failure mode leaves mode and cause blank.
+    sheet.append([None, None, 5, None, 3, "首件确认", "CMM", 11])
+    path = tmp_path / "pfmea.xlsx"
+    book.save(path)
+    book.close()
+    body = preset_rule_body("UAES", "U07")
+    agent = UaesPfmeaAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput(rule_id="source-rules", **{key: value for key, value in body.items() if key != "kind"}))
+    result = agent.check(1)
+    assert result.status == "NG", result.suggestions
+    assert "1至10" in result.suggestions

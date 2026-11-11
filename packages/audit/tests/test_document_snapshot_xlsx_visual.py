@@ -154,9 +154,9 @@ def test_visual_blank_is_lazy_source_addressed_and_merge_aliases_inherit_unknown
 
 
 def test_unlocated_visual_only_changes_empty_cells_on_its_own_sheet(tmp_path):
-    observed = snapshot(workbook(tmp_path, [anchor(kind="oneCellAnchor")], cells={"B2": False}))
+    observed = snapshot(workbook(tmp_path, [anchor(kind="absoluteAnchor")], cells={"B2": False}))
     table = observed["tables"][0]
-    assert table["visual_evidence"][0]["unresolved_reason"]
+    assert table["visual_evidence"][0]["unresolved_reason"] == "unsupported_anchor_geometry"
     assert effective(table, 7, 5)["state"] == "unknown_visual_evidence"
     assert effective(table, 2, 2)["state"] == "known"
     assert effective(observed["tables"][1], 7, 5)["state"] == "known"
@@ -243,11 +243,43 @@ def test_visual_unknown_cannot_become_a_native_fact_in_snapshot_validation(tmp_p
     assert visual["content_observed"] is False
 
 
-def test_zero_height_line_is_an_unresolved_visual_source(tmp_path):
+def test_zero_height_line_covers_the_cells_on_both_sides_of_its_boundary(tmp_path):
     observed = snapshot(workbook(tmp_path, [anchor(first=(2, 2), last=(2, 4))]))
-    assert observed["tables"][0]["visual_evidence"][0]["range"] is None
+    visual = observed["tables"][0]["visual_evidence"][0]
+    assert visual["range"] is None
+    assert visual["bounds"] == [1, 2, 2, 3]
     assert effective(observed["tables"][0], 2, 3)["state"] == "unknown_visual_evidence"
+    assert effective(observed["tables"][0], 3, 3)["state"] == "known"
     validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
+
+
+def test_one_cell_anchor_covers_the_cells_its_extent_can_reach(tmp_path):
+    observed = snapshot(workbook(tmp_path, [anchor(kind="oneCellAnchor")]))
+    table = observed["tables"][0]
+    visual = table["visual_evidence"][0]
+    assert visual["extent_emu"] == {"row": 10000, "column": 10000}
+    assert visual["bounds"] == [2, 2, 2, 2]
+    assert effective(table, 2, 2)["state"] == "unknown_visual_evidence"
+    assert effective(table, 7, 5)["state"] == "known"
+    validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
+
+
+def test_alternate_content_uses_the_anchor_inside_each_alternative(tmp_path):
+    inner = anchor().replace("<twoCellAnchor>", f'<twoCellAnchor xmlns="{XDR}">')
+    wrapped = f'<AlternateContent xmlns="http://schemas.openxmlformats.org/markup-compatibility/2006"><Choice Requires="a14">{inner}</Choice></AlternateContent>'
+    observed = snapshot(workbook(tmp_path, [wrapped]))
+    visual = observed["tables"][0]["visual_evidence"][0]
+    assert (visual["kind"], visual["range"]) == ("twoCellAnchor", [2, 2, 2, 2])
+    assert effective(observed["tables"][0], 7, 5)["state"] == "known"
+    validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
+
+
+@pytest.mark.parametrize("change", [{"bounds": [2, 2, 2, 2]}, {"bound_emu": {"row": [], "column": []}}, {"unresolved_reason": "unsupported_anchor_geometry"}])
+def test_validation_rejects_bounds_the_recorded_sizes_do_not_give(tmp_path, change):
+    observed = snapshot(sized_workbook(tmp_path, [anchor((2, 2), (2, 2), first_offsets=(1, 1), offsets=(300000, 1000))], row_height=20))
+    observed["tables"][0]["visual_evidence"][0].update(change)
+    with pytest.raises(ValueError, match="visual bounds"):
+        validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
 
 
 @pytest.mark.parametrize("endpoint", ["from", "to"])
@@ -263,8 +295,16 @@ def test_offsets_outside_the_measured_cell_are_native_hints_not_cell_coverage(tm
     visual = table["visual_evidence"][0]
     assert visual[endpoint][f"{axis}_offset_emu"] == offset
     assert visual["range"] is None
-    assert visual["unresolved_reason"] == "unsupported_anchor_geometry"
-    assert effective(table, 7, 5)["state"] == "unknown_visual_evidence"
+    if offset < 0:
+        # A placement before its own cell has no lower bound on its reach.
+        assert visual["unresolved_reason"] == "unsupported_anchor_geometry"
+        assert effective(table, 7, 5)["state"] == "unknown_visual_evidence"
+    else:
+        # An offset past every measured cell reaches the sheet edge on its own axis only.
+        assert visual["unresolved_reason"] == "imprecise_anchor_geometry"
+        assert visual["bounds"] == ([2, 2, 1048576, 2] if axis == "row" else [2, 2, 2, 16384])
+        assert effective(table, *((7, 2) if axis == "row" else (2, 7)))["state"] == "unknown_visual_evidence"
+        assert effective(table, 7, 5)["state"] == "known"
     assert all(effective(table, 2, column)["state"] == "known" for column in (2, 3, 4))
     assert effective(table, 3, 2)["state"] == "unknown_formula_cache"
     assert effective(observed["tables"][1], 7, 5)["state"] == "known"
@@ -341,21 +381,26 @@ def test_end_offset_includes_its_cell_and_a_boundary_end_does_not(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "placement,size",
+    "placement,size,bounds",
     [
-        (anchor((2, 2), (2, 2), first_offsets=(1, 1), offsets=(300000, 1000)), {"row_height": 20}),
-        (anchor((2, 2), (2, 2), first_offsets=(1, 1), offsets=(1000, 1000000)), {"column_width": 20}),
-        (anchor((2, 2), (2, 2), first_offsets=(1, 1), offsets=(1000, 1000)), {"hidden_row": True}),
-        (anchor((2, 2), (2, 2), first_offsets=(500, 1), offsets=(100, 1000)), {"row_height": 20}),
+        (anchor((2, 2), (2, 2), first_offsets=(1, 1), offsets=(300000, 1000)), {"row_height": 20}, [2, 2, 3, 2]),
+        (anchor((2, 2), (2, 2), first_offsets=(1, 1), offsets=(1000, 1000000)), {"column_width": 20}, [2, 2, 2, 3]),
+        (anchor((2, 2), (2, 2), first_offsets=(1, 1), offsets=(1000, 1000)), {"hidden_row": True}, [2, 2, 1048576, 2]),
+        (anchor((2, 2), (2, 2), first_offsets=(500, 1), offsets=(100, 1000)), {"row_height": 20}, [2, 2, 2, 2]),
     ],
     ids=["taller-than-row", "wider-than-column", "hidden-row", "reversed-in-cell"],
 )
-def test_offsets_that_do_not_fit_stay_unresolved_on_the_whole_sheet(tmp_path, placement, size):
+def test_offsets_that_do_not_fit_cover_every_cell_they_can_reach(tmp_path, placement, size, bounds):
     observed = snapshot(sized_workbook(tmp_path, [placement], **size))
     table = observed["tables"][0]
-    assert table["visual_evidence"][0]["range"] is None
-    assert "measured_emu" not in table["visual_evidence"][0]
-    assert effective(table, 7, 5)["state"] == "unknown_visual_evidence"
+    visual = table["visual_evidence"][0]
+    assert visual["range"] is None
+    assert "measured_emu" not in visual
+    assert visual["unresolved_reason"] == "imprecise_anchor_geometry"
+    # Measured sizes are lower bounds: the reach may overcount cells, never undercount.
+    assert visual["bounds"] == bounds
+    assert effective(table, min(bounds[2], 7), bounds[3])["state"] == "unknown_visual_evidence"
+    assert effective(table, 7, 5)["state"] == "known"
     validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
 
 
@@ -541,7 +586,7 @@ def test_comment_popup_does_not_make_the_worksheet_grid_unresolved(tmp_path):
 def test_local_checker_reads_only_bounded_examples_with_one_visual_index(tmp_path, monkeypatch):
     from audit import checker_tools
 
-    observed = snapshot(workbook(tmp_path, [anchor(kind="oneCellAnchor")]))
+    observed = snapshot(workbook(tmp_path, [anchor(kind="absoluteAnchor")]))
     table = observed["tables"][0]
     table["rows"] = 120
     reads = []
@@ -621,6 +666,29 @@ def test_vml_native_primitives_are_unresolved_visual_sources(tmp_path, kind):
     rewrite(path, parts)
     observed = snapshot(path)
     assert effective(observed["tables"][0], 2, 2)["state"] == "unknown_visual_evidence"
+    validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
+
+
+def test_vml_client_anchor_bounds_the_object_to_its_cells(tmp_path):
+    path = tmp_path / "legacy.xlsx"
+    book = Workbook()
+    book.active["F8"] = "End"
+    book.save(path)
+    book.close()
+    with ZipFile(path) as archive:
+        parts = {item.filename: archive.read(item) for item in archive.infolist()}
+    sheet_xml = ET.fromstring(parts["xl/worksheets/sheet1.xml"])
+    ET.SubElement(sheet_xml, f"{{{SS}}}legacyDrawing", {f"{{{REL}}}id": "legacy"})
+    parts["xl/worksheets/sheet1.xml"] = ET.tostring(sheet_xml)
+    parts["xl/worksheets/_rels/sheet1.xml.rels"] = f'<Relationships xmlns="{PKG}"><Relationship Id="legacy" Type="{REL}/vmlDrawing" Target="../drawings/legacy.vml"/></Relationships>'.encode()
+    client = '<x:ClientData ObjectType="Checkbox"><x:Anchor>1, 2, 1, 3, 1, 20, 1, 15</x:Anchor></x:ClientData>'
+    parts["xl/drawings/legacy.vml"] = f'<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:x="urn:schemas-microsoft-com:office:excel"><v:shape id="box">{client}</v:shape></xml>'.encode()
+    rewrite(path, parts)
+    observed = snapshot(path)
+    table = observed["tables"][0]
+    assert table["visual_evidence"][0]["bounds"] == [2, 2, 2, 2]
+    assert effective(table, 2, 2)["state"] == "unknown_visual_evidence"
+    assert effective(table, 7, 5)["state"] == "known"
     validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
 
 

@@ -14,6 +14,7 @@ import sqlite3
 import sys
 import zipfile
 from bisect import bisect_right
+from collections.abc import Callable
 from contextlib import ExitStack, closing
 from dataclasses import dataclass
 from datetime import date, datetime, time
@@ -157,6 +158,14 @@ _XLSX_EMU_PER_POINT = 12700
 # The narrowest digit of a common default font is 5 pixels at 9525 EMU each.
 _XLSX_EMU_PER_CHARACTER = 5 * 9525
 _XlsxExtents = tuple[dict[int, int], int, list[tuple[int, int, int]], int]
+_XLSX_LIMITS = {"row": 1048576, "column": 16384}
+_XLSX_ANCHORS = {"twoCellAnchor", "oneCellAnchor", "absoluteAnchor"}
+# Objects whose native placement names cells; their reach can be bounded.
+_XLSX_BOUNDED_KINDS = {"twoCellAnchor", "oneCellAnchor", "control", "oleObject", "legacyDrawing"}
+# An endpoint walking farther than this is bounded only by the sheet edge.
+_XLSX_REACH_CELLS = 1024
+_VML = "urn:schemas-microsoft-com:office:excel"
+_EMU_PER_PIXEL = 9525
 
 
 def _archive_target(part: str, target: str) -> str:
@@ -173,8 +182,9 @@ def _xlsx_visual_evidence(path: Path, limits: ReadLimits) -> dict[str, list[dict
     """Keep uninterpreted OOXML objects; no shape-to-business-value mapping.
 
     A two-cell anchor gives a cell intersection when its offsets fit the
-    measured cells. Other native placements stay explicitly unresolved on
-    their own worksheet.
+    measured cells. Other placements that name cells get bounds: every cell
+    they can reach given lower-bound cell sizes. Placements without cells stay
+    explicitly unresolved on their own worksheet.
     Offsets use integer EMUs; unit-qualified lengths are unsupported.
     No archive member is extracted and no external relationship is followed.
     """
@@ -226,17 +236,21 @@ def _xlsx_visual_evidence(path: Path, limits: ReadLimits) -> dict[str, list[dict
             rels: dict[str, dict[str, str]],
             location: ET.Element | None = None,
             extents: _XlsxExtents | None = None,
+            markers: tuple[dict[str, int] | None, dict[str, int] | None] | None = None,
         ) -> None:
             nonlocal count
             count += 1
             within(count, limits.blocks, "visual objects")
             item: dict[str, Any] = {"source": {"part": part, "anchor_index": index}, "kind": kind, "content_observed": False}
             location = node if location is None else location
-            first, last = _xlsx_marker(location, "from"), _xlsx_marker(location, "to")
+            first, last = markers if markers is not None else (_xlsx_marker(location, "from"), _xlsx_marker(location, "to"))
+            extent = _xlsx_extent(location) if kind == "oneCellAnchor" else None
             if first is not None:
                 item["from"] = first
             if last is not None:
                 item["to"] = last
+            if extent is not None:
+                item["extent_emu"] = extent
             item["range"] = None
             if kind == "twoCellAnchor" and first is not None and last is not None:
                 measured = _xlsx_measure(first, last, extents)
@@ -244,7 +258,14 @@ def _xlsx_visual_evidence(path: Path, limits: ReadLimits) -> dict[str, list[dict
                 if item["range"] is not None and _xlsx_has_offset(first, last):
                     item["measured_emu"] = measured
             if item["range"] is None:
-                item["unresolved_reason"] = "unsupported_anchor_geometry"
+                bounded = None
+                if kind in _XLSX_BOUNDED_KINDS and first is not None and (last is not None or extent is not None) and extents is not None:
+                    bounded = _xlsx_anchor_bounds(first, last, extent, lambda axis, cell: _xlsx_size(extents, axis, cell))
+                if bounded is None:
+                    item["unresolved_reason"] = "unsupported_anchor_geometry"
+                else:
+                    item["bounds"], item["bound_emu"] = bounded
+                    item["unresolved_reason"] = "imprecise_anchor_geometry"
             references = []
             for child in node.iter():
                 for attribute, identity in child.attrib.items():
@@ -292,7 +313,11 @@ def _xlsx_visual_evidence(path: Path, limits: ReadLimits) -> dict[str, list[dict
                     raise ValueError("Invalid spreadsheet drawing root")
                 within(sum(1 for _ in drawing_xml.iter()), limits.blocks, "visual XML nodes")
                 for index, node in enumerate(drawing_xml, 1):
-                    add(items, part, index, node.tag.rsplit("}", 1)[-1], node, rels=drawing_rels, extents=extents)
+                    kind = node.tag.rsplit("}", 1)[-1]
+                    # Each alternate representation carries its own anchor.
+                    placements = [child for child in node.iter() if child.tag.rsplit("}", 1)[-1] in _XLSX_ANCHORS] if kind == "AlternateContent" else []
+                    for placement in placements or [node]:
+                        add(items, part, index, placement.tag.rsplit("}", 1)[-1], placement, rels=drawing_rels, extents=extents)
             for index, control in enumerate(sheet_xml.iter(), 1):
                 kind = control.tag.rsplit("}", 1)[-1]
                 if kind not in {"legacyDrawing", "control", "oleObject", "picture"}:
@@ -311,10 +336,10 @@ def _xlsx_visual_evidence(path: Path, limits: ReadLimits) -> dict[str, list[dict
                     objects = (node for node in legacy.iter() if node.tag.rsplit("}", 1)[-1] in kinds)
                     for shape_index, node in enumerate(objects, 1):
                         if not any(child.get("ObjectType") == "Note" for child in node.iter()):
-                            add(items, part, shape_index, "legacyDrawing", node, rels=legacy_rels)
+                            add(items, part, shape_index, "legacyDrawing", node, rels=legacy_rels, extents=extents, markers=_vml_markers(node))
                 else:
                     placement = next((node for node in control.iter() if node.tag.rsplit("}", 1)[-1] == "anchor"), control)
-                    add(items, sheet_part, index, kind, control, rels=sheet_rels, location=placement)
+                    add(items, sheet_part, index, kind, control, rels=sheet_rels, location=placement, extents=extents)
     return result
 
 
@@ -370,20 +395,100 @@ def _xlsx_emu(value: str | None, unit: int) -> int:
         return 0
 
 
+def _xlsx_size(extents: _XlsxExtents, axis: str, number: int) -> int:
+    rows, default_row, columns, default_column = extents
+    if axis == "row":
+        return rows.get(number, default_row)
+    return next((width for start, end, width in columns if start <= number <= end), default_column)
+
+
 def _xlsx_measure(first: dict[str, int], last: dict[str, int], extents: _XlsxExtents | None) -> dict[str, int] | None:
     if extents is None:
         return None
-    rows, default_row, columns, default_column = extents
-
-    def column_width(number: int) -> int:
-        return next((width for start, end, width in columns if start <= number <= end), default_column)
-
     return {
-        "from_row": rows.get(first["row"], default_row),
-        "from_column": column_width(first["column"]),
-        "to_row": rows.get(last["row"], default_row),
-        "to_column": column_width(last["column"]),
+        "from_row": _xlsx_size(extents, "row", first["row"]),
+        "from_column": _xlsx_size(extents, "column", first["column"]),
+        "to_row": _xlsx_size(extents, "row", last["row"]),
+        "to_column": _xlsx_size(extents, "column", last["column"]),
     }
+
+
+def _xlsx_extent(anchor: ET.Element) -> dict[str, int] | None:
+    nodes = [node for node in anchor if node.tag.rsplit("}", 1)[-1] == "ext"]
+    if len(nodes) != 1:
+        return None
+    try:
+        width, height = int(nodes[0].get("cx", "")), int(nodes[0].get("cy", ""))
+    except ValueError as exc:
+        raise ValueError("Invalid visual anchor extent") from exc
+    if not (0 <= width <= _XLSX_COORDINATE_MAX and 0 <= height <= _XLSX_COORDINATE_MAX):
+        raise ValueError("Invalid visual anchor extent")
+    return {"row": height, "column": width}
+
+
+def _vml_markers(shape: ET.Element) -> tuple[dict[str, int] | None, dict[str, int] | None]:
+    """VML x:Anchor: left column, offset, top row, offset, right column, offset, bottom row, offset (zero-based cells, pixels)."""
+    anchors = [node for node in shape.iter(f"{{{_VML}}}Anchor")]
+    if len(anchors) != 1:
+        return None, None
+    try:
+        values = [int(value) for value in (anchors[0].text or "").split(",")]
+    except ValueError as exc:
+        raise ValueError("Invalid VML anchor") from exc
+    if len(values) != 8 or any(value < 0 for value in values) or max(values[0], values[4]) >= _XLSX_LIMITS["column"] or max(values[2], values[6]) >= _XLSX_LIMITS["row"]:
+        raise ValueError("Invalid VML anchor")
+
+    def marker(column: int, column_offset: int, row: int, row_offset: int) -> dict[str, int]:
+        return {"row": row + 1, "column": column + 1, "row_offset_emu": row_offset * _EMU_PER_PIXEL, "column_offset_emu": column_offset * _EMU_PER_PIXEL}
+
+    return marker(*values[:4]), marker(*values[4:])
+
+
+def _xlsx_reach(cell: int, offset: int, size_of: Callable[[int], int], limit: int) -> tuple[int, list[int]]:
+    """Last cell an endpoint `offset` EMU past `cell`'s origin can fall in, with the sizes walked.
+
+    The sizes are lower bounds, so the real endpoint lies no later. A zero size
+    is unmeasured and leaves only the sheet edge as the bound.
+    """
+    sizes: list[int] = []
+    while len(sizes) < _XLSX_REACH_CELLS and cell + len(sizes) <= limit:
+        size = size_of(cell + len(sizes))
+        sizes.append(size)
+        if size == 0:
+            break
+        if offset <= size:
+            return cell + len(sizes) - 1, sizes
+        offset -= size
+    return limit, sizes
+
+
+def _xlsx_anchor_bounds(first: dict[str, int], last: dict[str, int] | None, extent: dict[str, int] | None, size_of: Callable[[str, int], int]) -> tuple[list[int], dict[str, list[int]]] | None:
+    """Every cell a placed object can cover when its offsets do not fit the measured cells.
+
+    The object ends at `last`, or `extent` EMUs past `first`. Neither endpoint
+    lies before its own cell, and either may be the later one, so both are
+    walked. A negative offset or an end cell before the start has no bound.
+    """
+    region, walked = {}, {}
+    for axis in ("row", "column"):
+        offset = f"{axis}_offset_emu"
+        start, start_offset = first[axis], first[offset]
+        end, end_offset = (last[axis], last[offset]) if last is not None else (start, start_offset + extent[axis])  # type: ignore[index]
+        if start_offset < 0 or end_offset < 0 or end < start:
+            return None
+        walked[axis] = []
+        stop = start
+        for cell, distance in ((start, start_offset), (end, end_offset)):
+            if distance:
+                reached, sizes = _xlsx_reach(cell, distance, lambda number, axis=axis: size_of(axis, number), _XLSX_LIMITS[axis])
+                walked[axis] += sizes
+                stop = max(stop, reached)
+            elif cell > start:
+                stop = max(stop, cell - 1)  # A zero-offset end is the next cell's boundary.
+        if not start_offset and not end_offset and end == start:
+            start = max(1, start - 1)  # A zero-size object on a boundary touches both cells.
+        region[axis] = (start, stop)
+    return [region["row"][0], region["column"][0], region["row"][1], region["column"][1]], walked
 
 
 def _xlsx_has_offset(first: dict[str, int], last: dict[str, int]) -> bool:
@@ -509,8 +614,9 @@ def snapshot(path: str | Path, *, limits: ReadLimits | None = None) -> dict[str,
                             table["cols"] = max(table["cols"], visual["from"]["column"])
                 result["tables"].append(table)
         result["limitations"] = [
-            "Uninterpreted visual sources remain unknown on overlapping empty cells. Only two-cell anchors whose offsets fit the measured cells have cell coverage; "
-            "other offsets and unsupported placements affect empty cells on their worksheet. Linked external images are not fetched; local caches remain source references. "
+            "Uninterpreted visual sources remain unknown on overlapping empty cells. Two-cell anchors whose offsets fit the measured cells have exact cell coverage; "
+            "other cell-anchored objects cover every cell they can reach, and placements without cells affect empty cells on their worksheet. "
+            "Linked external images are not fetched; local caches remain source references. "
             "Only integer EMU offsets are supported. Formula caches are not recalculated."
         ]
     elif suffix == ".xls":
@@ -607,12 +713,17 @@ def _effective(table: dict[str, Any], row: int, column: int, merges: list, visua
     value = item.get("value")
     if item.get("state") == "known" and (value is None or isinstance(value, str) and not value.strip()):
         visual_sources = [
-            index for index, visual in (visuals if visuals is not None else enumerate(table.get("visual_evidence", []))) if visual["range"] is None or _regions_overlap(region, visual["range"])
+            index for index, visual in (visuals if visuals is not None else enumerate(table.get("visual_evidence", []))) if (cover := visual_region(visual)) is None or _regions_overlap(region, cover)
         ]
         if visual_sources:
             item = {**item, "state": "unknown_visual_evidence", "source": {"visual_evidence": visual_sources}}
     anchor = item.get("anchor", anchor)
     return {**item, "cell": address, "anchor": anchor, "merge": span}
+
+
+def visual_region(visual: dict[str, Any]) -> list[int] | None:
+    """Cells an object covers exactly, else every cell it can reach; None means the whole sheet."""
+    return visual["range"] if visual["range"] is not None else visual.get("bounds")
 
 
 def _regions_overlap(left: list[int], right: list[int]) -> bool:
@@ -743,7 +854,7 @@ class TableReader:
         visual_events: dict[int, list[tuple[int, dict[str, Any] | None]]] = {}
         budget.consume(2 * len(table.get("visual_evidence", [])))
         for index, visual in enumerate(table.get("visual_evidence", [])):
-            region = visual["range"]
+            region = visual_region(visual)
             first, last = (region[0], region[2]) if region is not None else (1, table["rows"])
             visual_events.setdefault(first, []).append((index, visual))
             visual_events.setdefault(last + 1, []).append((index, None))

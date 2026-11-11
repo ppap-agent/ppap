@@ -10,12 +10,14 @@ _CHAR = ("产品/过程规格/公差", "产品特性", "过程特性", "特性�
 
 
 class UaesControlPlanAgent(UaesSourceAgent):
-    def rows(self, extra=None, *, defer_unknown=False):
-        return self.native().rows({"operation": _OP, **(extra or {})}, title=("控制计划", "control plan"), anchor=("operation",), defer_unknown=defer_unknown)
+    def rows(self, extra=None, *, defer_unknown=False, continuation=True):
+        # An operation's later rows leave its name blank; their characteristics still belong to it.
+        return self.native().rows({"operation": _OP, **(extra or {})}, title=("控制计划", "control plan"), anchor=("operation",), defer_unknown=defer_unknown, continuation=continuation)
 
     @rule("全部工序生产资源")
     def rule_1(self):
-        rows = self.rows({"resources": ("机器装置夹具工装", "机器/装置/夹具/工装", "生产资源", "机器设备工装", "生产设备")}, defer_unknown=True)
+        # Resources are stated once per operation; its continuation rows leave them blank.
+        rows = self.rows({"resources": ("机器装置夹具工装", "机器/装置/夹具/工装", "生产资源", "机器设备工装", "生产设备")}, defer_unknown=True, continuation=False)
         unresourced = []
 
         def lacks_resources(row):
