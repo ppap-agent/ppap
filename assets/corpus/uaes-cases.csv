@@ -1,0 +1,78 @@
+﻿数据集,组合ID,文件ID,原件,提交文件名,角色,Suite版本,Checker组,Binding
+uaes,F01R10DP4Z_名称待确认/08 过程流程图,f01,assets/uaes/samples/F01R10DP4Z_名称待确认/测试文件/08 过程流程图/过程流程图.xls,过程流程图.xls,target,uaes/U16,UAES:U16,U16:1;U16:2;U16:3
+uaes,F01R10Y527_节气门壳体/06 测量系统分析评价,f01,assets/uaes/samples/F01R10Y527_节气门壳体/测试文件/06 测量系统分析评价/574-527-MSA (1).pdf,574-527-MSA (1).pdf,target,uaes/U05,UAES:U05,U05:1-1;U05:1-2;U05:2;U05:3
+uaes,F01R10Y776_机加壳体/03 材料及分供清单,f01,assets/uaes/samples/F01R10Y776_机加壳体/测试文件/03 材料及分供清单/7. 材料及分供方清单模板 776.xlsx,7. 材料及分供方清单模板 776.xlsx,target,uaes/U04,UAES:U04,U04:1;U04:2;U04:3
+uaes,F01R10Y776_机加壳体/03 材料及分供清单,f02,assets/uaes/samples/F01R10Y776_机加壳体/比对文件/图纸/ST_F01R10Y776.pdf,ST_F01R10Y776.pdf,reference,,,
+uaes,F01R10Y776_机加壳体/03 材料及分供清单,f03,assets/uaes/samples/F01R10Y776_机加壳体/比对文件/图纸/Z_F01R10Y776.pdf,Z_F01R10Y776.pdf,reference,,,
+uaes,F01R10Y776_机加壳体/03 材料及分供清单,f04,assets/uaes/samples/F01R10Y776_机加壳体/比对文件/采购件质量计划/F-PU-127_采购件质量计划_Purchased+Goods+Quality+Plan+PGQP1_V04 776.xlsx,F-PU-127_采购件质量计划_Purchased+Goods+Quality+Plan+PGQP1_V04 776.xlsx,reference,,,
+uaes,F01R10Y776_机加壳体/06 测量系统分析评价,f01,assets/uaes/samples/F01R10Y776_机加壳体/测试文件/06 测量系统分析评价/776-Kappa.xls,776-Kappa.xls,target,uaes/U05,UAES:U05,U05:1-1;U05:1-2;U05:2;U05:3
+uaes,F01R10Y776_机加壳体/06 测量系统分析评价,f02,assets/uaes/samples/F01R10Y776_机加壳体/测试文件/06 测量系统分析评价/MSA-1-卡尺.xls,MSA-1-卡尺.xls,target,uaes/U05,UAES:U05,U05:1-1;U05:1-2;U05:2;U05:3
+uaes,F01R10Y776_机加壳体/06 测量系统分析评价,f03,assets/uaes/samples/F01R10Y776_机加壳体/测试文件/06 测量系统分析评价/MSA-2-CMM.xls,MSA-2-CMM.xls,target,uaes/U05,UAES:U05,U05:1-1;U05:1-2;U05:2;U05:3
+uaes,F01R10Y776_机加壳体/06 测量系统分析评价,f04,assets/uaes/samples/F01R10Y776_机加壳体/测试文件/06 测量系统分析评价/MSA-3-粗糙度仪.xls,MSA-3-粗糙度仪.xls,target,uaes/U05,UAES:U05,U05:1-1;U05:1-2;U05:2;U05:3
+uaes,F01R10Y776_机加壳体/06 测量系统分析评价,f05,assets/uaes/samples/F01R10Y776_机加壳体/测试文件/06 测量系统分析评价/MSA-4-气动量仪.xls,MSA-4-气动量仪.xls,target,uaes/U05,UAES:U05,U05:1-1;U05:1-2;U05:2;U05:3
+uaes,F01R10Y776_机加壳体/06 测量系统分析评价,f06,assets/uaes/samples/F01R10Y776_机加壳体/测试文件/06 测量系统分析评价/MSA-5-塞规.xls,MSA-5-塞规.xls,target,uaes/U05,UAES:U05,U05:1-1;U05:1-2;U05:2;U05:3
+uaes,F01R10Y776_机加壳体/06 测量系统分析评价,f07,assets/uaes/samples/F01R10Y776_机加壳体/比对文件/图纸/ST_F01R10Y776.pdf,ST_F01R10Y776.pdf,reference,,,
+uaes,F01R10Y776_机加壳体/06 测量系统分析评价,f08,assets/uaes/samples/F01R10Y776_机加壳体/比对文件/图纸/Z_F01R10Y776.pdf,Z_F01R10Y776.pdf,reference,,,
+uaes,F01R10Y776_机加壳体/06 测量系统分析评价,f09,assets/uaes/samples/F01R10Y776_机加壳体/比对文件/采购件质量计划/F-PU-127_采购件质量计划_Purchased+Goods+Quality+Plan+PGQP1_V04 776.xlsx,F-PU-127_采购件质量计划_Purchased+Goods+Quality+Plan+PGQP1_V04 776.xlsx,reference,,,
+uaes,F01R10Y776_机加壳体/06 测量系统分析评价,f10,assets/uaes/samples/F01R10Y776_机加壳体/测试文件/10 控制计划/控制计划-776.xlsx,控制计划-776.xlsx,reference,,,
+uaes,F01R10Y776_机加壳体/07 过程能力研究,f01,assets/uaes/samples/F01R10Y776_机加壳体/测试文件/07 过程能力研究/776-机加CPK.xlsx,776-机加CPK.xlsx,target,uaes/U06,UAES:U06,U06:1;U06:2;U06:3;U06:4;U06:5
+uaes,F01R10Y776_机加壳体/07 过程能力研究,f02,assets/uaes/samples/F01R10Y776_机加壳体/测试文件/07 过程能力研究/776-毛坯CPK.xlsx,776-毛坯CPK.xlsx,target,uaes/U06,UAES:U06,U06:1;U06:2;U06:3;U06:4;U06:5
+uaes,F01R10Y776_机加壳体/07 过程能力研究,f03,assets/uaes/samples/F01R10Y776_机加壳体/比对文件/图纸/ST_F01R10Y776.pdf,ST_F01R10Y776.pdf,reference,,,
+uaes,F01R10Y776_机加壳体/07 过程能力研究,f04,assets/uaes/samples/F01R10Y776_机加壳体/比对文件/图纸/Z_F01R10Y776.pdf,Z_F01R10Y776.pdf,reference,,,
+uaes,F01R10Y776_机加壳体/07 过程能力研究,f05,assets/uaes/samples/F01R10Y776_机加壳体/比对文件/采购件质量计划/F-PU-127_采购件质量计划_Purchased+Goods+Quality+Plan+PGQP1_V04 776.xlsx,F-PU-127_采购件质量计划_Purchased+Goods+Quality+Plan+PGQP1_V04 776.xlsx,reference,,,
+uaes,F01R10Y776_机加壳体/08 过程流程图,f01,assets/uaes/samples/F01R10Y776_机加壳体/测试文件/08 过程流程图/流程图776.xlsx,流程图776.xlsx,target,uaes/U16,UAES:U16,U16:1;U16:2;U16:3
+uaes,F01R10Y776_机加壳体/08 过程流程图,f02,assets/uaes/samples/F01R10Y776_机加壳体/比对文件/图纸/ST_F01R10Y776.pdf,ST_F01R10Y776.pdf,reference,,,
+uaes,F01R10Y776_机加壳体/08 过程流程图,f03,assets/uaes/samples/F01R10Y776_机加壳体/比对文件/图纸/Z_F01R10Y776.pdf,Z_F01R10Y776.pdf,reference,,,
+uaes,F01R10Y776_机加壳体/08 过程流程图,f04,assets/uaes/samples/F01R10Y776_机加壳体/比对文件/采购件质量计划/F-PU-127_采购件质量计划_Purchased+Goods+Quality+Plan+PGQP1_V04 776.xlsx,F-PU-127_采购件质量计划_Purchased+Goods+Quality+Plan+PGQP1_V04 776.xlsx,reference,,,
+uaes,F01R10Y776_机加壳体/09 潜在过程失效模式及后果分析,f01,assets/uaes/samples/F01R10Y776_机加壳体/测试文件/09 潜在过程失效模式及后果分析/专用PFMEA-776.xlsx,专用PFMEA-776.xlsx,target,uaes/U07,UAES:U07,U07:1;U07:2;U07:3;U07:4
+uaes,F01R10Y776_机加壳体/09 潜在过程失效模式及后果分析,f02,assets/uaes/samples/F01R10Y776_机加壳体/比对文件/图纸/ST_F01R10Y776.pdf,ST_F01R10Y776.pdf,reference,,,
+uaes,F01R10Y776_机加壳体/09 潜在过程失效模式及后果分析,f03,assets/uaes/samples/F01R10Y776_机加壳体/比对文件/图纸/Z_F01R10Y776.pdf,Z_F01R10Y776.pdf,reference,,,
+uaes,F01R10Y776_机加壳体/09 潜在过程失效模式及后果分析,f04,assets/uaes/samples/F01R10Y776_机加壳体/比对文件/采购件质量计划/F-PU-127_采购件质量计划_Purchased+Goods+Quality+Plan+PGQP1_V04 776.xlsx,F-PU-127_采购件质量计划_Purchased+Goods+Quality+Plan+PGQP1_V04 776.xlsx,reference,,,
+uaes,F01R10Y776_机加壳体/09 潜在过程失效模式及后果分析,f05,assets/uaes/samples/F01R10Y776_机加壳体/测试文件/11 特殊特性管控清单/特殊特性清单 (1).xlsx,特殊特性清单 (1).xlsx,reference,,,
+uaes,F01R10Y776_机加壳体/09 潜在过程失效模式及后果分析,f06,assets/uaes/samples/F01R10Y776_机加壳体/测试文件/11 特殊特性管控清单/特殊特性清单.xlsx,特殊特性清单.xlsx,reference,,,
+uaes,F01R10Y776_机加壳体/10 控制计划,f01,assets/uaes/samples/F01R10Y776_机加壳体/测试文件/10 控制计划/控制计划-776.xlsx,控制计划-776.xlsx,target,uaes/U08,UAES:U08,U08:1;U08:2;U08:3;U08:4;U08:6;U08:7;U08:8;U08:9;U08:10;U08:11;U08:12;U08:13
+uaes,F01R10Y776_机加壳体/10 控制计划,f02,assets/uaes/samples/F01R10Y776_机加壳体/比对文件/图纸/ST_F01R10Y776.pdf,ST_F01R10Y776.pdf,reference,,,
+uaes,F01R10Y776_机加壳体/10 控制计划,f03,assets/uaes/samples/F01R10Y776_机加壳体/比对文件/图纸/Z_F01R10Y776.pdf,Z_F01R10Y776.pdf,reference,,,
+uaes,F01R10Y776_机加壳体/10 控制计划,f04,assets/uaes/samples/F01R10Y776_机加壳体/比对文件/采购件质量计划/F-PU-127_采购件质量计划_Purchased+Goods+Quality+Plan+PGQP1_V04 776.xlsx,F-PU-127_采购件质量计划_Purchased+Goods+Quality+Plan+PGQP1_V04 776.xlsx,reference,,,
+uaes,F01R10Y776_机加壳体/10 控制计划,f05,assets/uaes/samples/F01R10Y776_机加壳体/测试文件/08 过程流程图/流程图776.xlsx,流程图776.xlsx,reference,,,
+uaes,F01R10Y776_机加壳体/10 控制计划,f06,assets/uaes/samples/F01R10Y776_机加壳体/测试文件/09 潜在过程失效模式及后果分析/专用PFMEA-776.xlsx,专用PFMEA-776.xlsx,reference,,,
+uaes,F01R10Y776_机加壳体/11 特殊特性管控清单,f01,assets/uaes/samples/F01R10Y776_机加壳体/测试文件/11 特殊特性管控清单/特殊特性清单 (1).xlsx,特殊特性清单 (1).xlsx,target,uaes/U12,UAES:U12,U12:1;U12:2
+uaes,F01R10Y776_机加壳体/11 特殊特性管控清单,f02,assets/uaes/samples/F01R10Y776_机加壳体/测试文件/11 特殊特性管控清单/特殊特性清单.xlsx,特殊特性清单.xlsx,target,uaes/U12,UAES:U12,U12:1;U12:2
+uaes,F01R10Y776_机加壳体/11 特殊特性管控清单,f03,assets/uaes/samples/F01R10Y776_机加壳体/比对文件/图纸/ST_F01R10Y776.pdf,ST_F01R10Y776.pdf,reference,,,
+uaes,F01R10Y776_机加壳体/11 特殊特性管控清单,f04,assets/uaes/samples/F01R10Y776_机加壳体/比对文件/图纸/Z_F01R10Y776.pdf,Z_F01R10Y776.pdf,reference,,,
+uaes,F01R10Y776_机加壳体/11 特殊特性管控清单,f05,assets/uaes/samples/F01R10Y776_机加壳体/比对文件/采购件质量计划/F-PU-127_采购件质量计划_Purchased+Goods+Quality+Plan+PGQP1_V04 776.xlsx,F-PU-127_采购件质量计划_Purchased+Goods+Quality+Plan+PGQP1_V04 776.xlsx,reference,,,
+uaes,F01R10Y777_毛坯壳体/11 特殊特性管控清单,f01,assets/uaes/samples/F01R10Y777_毛坯壳体/测试文件/11 特殊特性管控清单/特殊特性清单 (1).xlsx,特殊特性清单 (1).xlsx,target,uaes/U12,UAES:U12,U12:1;U12:2
+uaes,F01R10Y777_毛坯壳体/11 特殊特性管控清单,f02,assets/uaes/samples/F01R10Y777_毛坯壳体/比对文件/图纸/Z_F01R20Y777.pdf,Z_F01R20Y777.pdf,reference,,,
+uaes,F01R204778_水管内接头/22 零件追溯说明,f01,assets/uaes/samples/F01R204778_水管内接头/测试文件/22 零件追溯说明/零件追溯检查单.xlsx,零件追溯检查单.xlsx,target,uaes/U18,UAES:U18,U18:1
+uaes,F01R20V040_磁性罩/06 测量系统分析评价,f01,assets/uaes/samples/F01R20V040_磁性罩/测试文件/06 测量系统分析评价/MSA.xls,MSA.xls,target,uaes/U05,UAES:U05,U05:1-1;U05:1-2;U05:2;U05:3
+uaes,F01R20V040_磁性罩/06 测量系统分析评价,f02,assets/uaes/samples/F01R20V040_磁性罩/测试文件/06 测量系统分析评价/kappa-MSA-检具 (1).xlsx,kappa-MSA-检具 (1).xlsx,target,uaes/U05,UAES:U05,U05:1-1;U05:1-2;U05:2;U05:3
+uaes,F01R20V040_磁性罩/06 测量系统分析评价,f03,assets/uaes/samples/F01R20V040_磁性罩/测试文件/10 控制计划/控制计划-模板3 WY (1).pdf,控制计划-模板3 WY (1).pdf,reference,,,
+uaes,F01R20V040_磁性罩/07 过程能力研究,f01,assets/uaes/samples/F01R20V040_磁性罩/测试文件/07 过程能力研究/F01R20V040 PPK (2) (1).xlsx,F01R20V040 PPK (2) (1).xlsx,target,uaes/U06,UAES:U06,U06:1;U06:2;U06:3;U06:4;U06:5
+uaes,F01R20V040_磁性罩/08 过程流程图,f01,assets/uaes/samples/F01R20V040_磁性罩/测试文件/08 过程流程图/5、Flow chart磁性罩.pdf,5、Flow chart磁性罩.pdf,target,uaes/U16,UAES:U16,U16:1;U16:2;U16:3
+uaes,F01R20V040_磁性罩/09 潜在过程失效模式及后果分析,f01,assets/uaes/samples/F01R20V040_磁性罩/测试文件/09 潜在过程失效模式及后果分析/6、P  FMEA（磁性罩）.pdf,6、P  FMEA（磁性罩）.pdf,target,uaes/U07,UAES:U07,U07:1;U07:2;U07:3;U07:4
+uaes,F01R20V040_磁性罩/09 潜在过程失效模式及后果分析,f02,assets/uaes/samples/F01R20V040_磁性罩/测试文件/11 特殊特性管控清单/special characteristic list磁性罩A0.pdf,special characteristic list磁性罩A0.pdf,reference,,,
+uaes,F01R20V040_磁性罩/10 控制计划,f01,assets/uaes/samples/F01R20V040_磁性罩/测试文件/10 控制计划/控制计划-模板3 WY (1).pdf,控制计划-模板3 WY (1).pdf,target,uaes/U08,UAES:U08,U08:1;U08:2;U08:3;U08:4;U08:6;U08:7;U08:8;U08:9;U08:10;U08:11;U08:12;U08:13
+uaes,F01R20V040_磁性罩/10 控制计划,f02,assets/uaes/samples/F01R20V040_磁性罩/测试文件/08 过程流程图/5、Flow chart磁性罩.pdf,5、Flow chart磁性罩.pdf,reference,,,
+uaes,F01R20V040_磁性罩/10 控制计划,f03,assets/uaes/samples/F01R20V040_磁性罩/测试文件/09 潜在过程失效模式及后果分析/6、P  FMEA（磁性罩）.pdf,6、P  FMEA（磁性罩）.pdf,reference,,,
+uaes,F01R20V040_磁性罩/11 特殊特性管控清单,f01,assets/uaes/samples/F01R20V040_磁性罩/测试文件/11 特殊特性管控清单/special characteristic list磁性罩A0.pdf,special characteristic list磁性罩A0.pdf,target,uaes/U12,UAES:U12,U12:1;U12:2
+uaes,F01R20Y574_节气门壳体/06 测量系统分析评价,f01,assets/uaes/samples/F01R20Y574_节气门壳体/测试文件/06 测量系统分析评价/574-527-MSA (1).pdf,574-527-MSA (1).pdf,target,uaes/U05,UAES:U05,U05:1-1;U05:1-2;U05:2;U05:3
+uaes,F01R20Y574_节气门壳体/07 过程能力研究,f01,assets/uaes/samples/F01R20Y574_节气门壳体/测试文件/07 过程能力研究/574-PPK (1) (1).pdf,574-PPK (1) (1).pdf,target,uaes/U06,UAES:U06,U06:1;U06:2;U06:3;U06:4;U06:5
+uaes,F01RD0YA40_机加工壳体/01-1 检验报告,f01,assets/uaes/samples/F01RD0YA40_机加工壳体/测试文件/01-1 检验报告/F-PU-207_样品检验报告_Sample Inspection Report_V01.xls (1).xls,F-PU-207_样品检验报告_Sample Inspection Report_V01.xls (1).xls,target,uaes/U01,UAES:U01,U01:1-1;U01:2;U01:3;U01:1-2
+uaes,F01RD0YA40_机加工壳体/07 过程能力研究,f01,assets/uaes/samples/F01RD0YA40_机加工壳体/测试文件/07 过程能力研究/A40-机加工 (2).xlsx,A40-机加工 (2).xlsx,target,uaes/U06,UAES:U06,U06:1;U06:2;U06:3;U06:4;U06:5
+uaes,F01RD0YA40_机加工壳体/08 过程流程图,f01,assets/uaes/samples/F01RD0YA40_机加工壳体/测试文件/08 过程流程图/流程图A40.xlsx,流程图A40.xlsx,target,uaes/U16,UAES:U16,U16:1;U16:2;U16:3
+uaes,F01RD0YA40_机加工壳体/09 潜在过程失效模式及后果分析,f01,assets/uaes/samples/F01RD0YA40_机加工壳体/测试文件/09 潜在过程失效模式及后果分析/专用PFMEA-A40.xlsx,专用PFMEA-A40.xlsx,target,uaes/U07,UAES:U07,U07:1;U07:2;U07:3;U07:4
+uaes,F01RD0YA40_机加工壳体/09 潜在过程失效模式及后果分析,f02,assets/uaes/samples/F01RD0YA40_机加工壳体/测试文件/11 特殊特性管控清单/特殊特性清单.xlsx,特殊特性清单.xlsx,reference,,,
+uaes,F01RD0YA40_机加工壳体/10 控制计划,f01,assets/uaes/samples/F01RD0YA40_机加工壳体/测试文件/10 控制计划/控制计划-A40.xlsx,控制计划-A40.xlsx,target,uaes/U08,UAES:U08,U08:1;U08:2;U08:3;U08:4;U08:6;U08:7;U08:8;U08:9;U08:10;U08:11;U08:12;U08:13
+uaes,F01RD0YA40_机加工壳体/10 控制计划,f02,assets/uaes/samples/F01RD0YA40_机加工壳体/测试文件/08 过程流程图/流程图A40.xlsx,流程图A40.xlsx,reference,,,
+uaes,F01RD0YA40_机加工壳体/10 控制计划,f03,assets/uaes/samples/F01RD0YA40_机加工壳体/测试文件/09 潜在过程失效模式及后果分析/专用PFMEA-A40.xlsx,专用PFMEA-A40.xlsx,reference,,,
+uaes,F01RD0YA40_机加工壳体/11 特殊特性管控清单,f01,assets/uaes/samples/F01RD0YA40_机加工壳体/测试文件/11 特殊特性管控清单/特殊特性清单.xlsx,特殊特性清单.xlsx,target,uaes/U12,UAES:U12,U12:1;U12:2
+uaes,F01RD0YA40_机加工壳体/17 顾客工程批准,f01,assets/uaes/samples/F01RD0YA40_机加工壳体/测试文件/17 顾客工程批准/[Signed]OTS封面 (4) (1).pdf,[Signed]OTS封面 (4) (1).pdf,target,uaes/U19,UAES:U19,U19:1
+uaes,F01RD0YA40_机加工壳体/20 样品阶段履历,f01,assets/uaes/samples/F01RD0YA40_机加工壳体/测试文件/20 样品阶段履历/样品阶段履历.xls,样品阶段履历.xls,target,uaes/U11,UAES:U11,U11:1
+uaes,F01RD0YC50_机加工壳体/17 顾客工程批准,f01,assets/uaes/samples/F01RD0YC50_机加工壳体/测试文件/17 顾客工程批准/偏差汇总清单F01RD0YC5001 260928 (1).pdf,偏差汇总清单F01RD0YC5001 260928 (1).pdf,reference,,,
+uaes,F01RD0YC50_机加工壳体/17 顾客工程批准,f02,assets/uaes/samples/F01RD0YC50_机加工壳体/测试文件/17 顾客工程批准/签字封面（临时偏差版） (1).pdf,签字封面（临时偏差版） (1).pdf,target,uaes/U19,UAES:U19,U19:1
+uaes,F01RL0Y033_节气门壳体/21 订单规范,f01,assets/uaes/samples/F01RL0Y033_节气门壳体/测试文件/21 订单规范/BV_F01RL0Y033_V02 (1).pdf,BV_F01RL0Y033_V02 (1).pdf,target,uaes/U14,UAES:U14,U14:1
+uaes,通用文件/其他通用文件/03 材料及分供清单,f01,assets/uaes/samples/通用文件/其他通用文件/测试文件/03 材料及分供清单/6.2 分供方清单受控.xlsx,6.2 分供方清单受控.xlsx,target,uaes/U04,UAES:U04,U04:1;U04:2;U04:3
+uaes,通用文件/其他通用文件/09 潜在过程失效模式及后果分析,f01,assets/uaes/samples/通用文件/其他通用文件/测试文件/09 潜在过程失效模式及后果分析/PFMEA_脱敏版.pdf,PFMEA_脱敏版.pdf,target,uaes/U07,UAES:U07,U07:1;U07:2;U07:3;U07:4
+uaes,通用文件/其他通用文件/10 控制计划,f01,assets/uaes/samples/通用文件/其他通用文件/测试文件/10 控制计划/CPO-45薄膜电容器控制计划.xlsx,CPO-45薄膜电容器控制计划.xlsx,target,uaes/U08,UAES:U08,U08:1;U08:2;U08:3;U08:4;U08:6;U08:7;U08:8;U08:9;U08:10;U08:11;U08:12;U08:13
+uaes,通用文件/其他通用文件/16 零件提交保证书,f01,assets/uaes/samples/通用文件/其他通用文件/测试文件/16 零件提交保证书/PSW_Bosch signed.pdf,PSW_Bosch signed.pdf,target,uaes/U17,UAES:U17,U17:1;U17:2;U17:3;U17:4;U17:5
+uaes,通用文件/通用规范/19 材料规范,f01,assets/uaes/samples/通用文件/通用规范/测试文件/19 材料规范/1.3  原材料规范N28_AS0715_S004_2019-05-06 (2).pdf,1.3  原材料规范N28_AS0715_S004_2019-05-06 (2).pdf,target,uaes/U10,UAES:U10,U10:1
