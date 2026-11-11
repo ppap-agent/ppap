@@ -28,16 +28,18 @@ class UaesPfmeaAgent(UaesSourceAgent):
         rows = self.native().rows(
             {
                 "s": ("S", "严重度", "严重度S"),
-                "o": ("O", "发生度", "频度O"),
+                "o": ("O", "发生度", "频度O", "频度"),
                 "d": ("D", "探测度", "探测度D"),
-                "effect": ("失效后果", "潜在失效后果"),
-                "mode": ("失效模式", "潜在失效模式"),
-                "cause": ("失效原因", "潜在失效起因"),
-                "prevention": ("预防控制", "现行预防控制"),
-                "detection": ("探测控制", "现行探测控制"),
+                "effect": ("失效后果", "潜在失效后果", "Potential Effect(s) of Failure"),
+                "mode": ("失效模式", "潜在失效模式", "Potential Failure Mode"),
+                "cause": ("失效原因", "潜在失效起因", "Potential Cause(s) Mechanism(s) of Failure"),
+                "prevention": ("预防控制", "现行预防控制", "Current Process Controls Prevention"),
+                "detection": ("探测控制", "现行探测控制", "Current Process Controls Detection"),
             },
             title=("PFMEA", "失效"),
             anchor=("mode", "cause"),
+            # AIAG 4th-edition forms repeat S/O/D under the action results.
+            ignore_under=("措施结果", "Actions Results"),
         )
         conditions: dict[tuple[str, ...], tuple] = {}
         for row in rows:

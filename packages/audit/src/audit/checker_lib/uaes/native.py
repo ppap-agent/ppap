@@ -215,7 +215,12 @@ class NativeFacts:
             raise UnknownFact("没有唯一可确认的业务表；缺失或多份候选需人工确认。")
         return tables[0]
 
-    def columns(self, table, aliases: dict[str, tuple[str, ...]]):
+    def columns(self, table, aliases: dict[str, tuple[str, ...]], *, ignore_under=()):
+        """`ignore_under` names group headers whose sub-columns repeat the wanted labels, such as post-action scores."""
+
+        def grouped(row, column):
+            return any(any(key(word) in key(self.readers[table["id"]].cell(above, column).get("value")) for word in ignore_under) for above in range(max(1, row - 3), row))
+
         matches = []
         best = 0
         for row in range(1, min(table["rows"], 60) + 1):
@@ -223,6 +228,8 @@ class NativeFacts:
             for column in range(1, min(table["cols"], 120) + 1):
                 item = self.readers[table["id"]].cell(row, column)
                 if item.get("state") != "known":
+                    continue
+                if ignore_under and grouped(row, column):
                     continue
                 for name, names in aliases.items():
                     if header(item.get("value"), names):
@@ -251,9 +258,9 @@ class NativeFacts:
             self.cell(table, start, column)
         return start, columns
 
-    def rows(self, aliases, *, title=(), anchor=(), defer_unknown=False, table=None):
+    def rows(self, aliases, *, title=(), anchor=(), defer_unknown=False, table=None, ignore_under=()):
         table = table if table is not None else self.table(title)
-        start, columns = self.columns(table, aliases)
+        start, columns = self.columns(table, aliases, ignore_under=ignore_under)
         records = []
         for row in range(start + 1, table["rows"] + 1):
             raw = {name: self.readers[table["id"]].cell(row, column) for name, column in columns.items()}

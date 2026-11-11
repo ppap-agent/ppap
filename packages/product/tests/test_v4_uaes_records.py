@@ -164,3 +164,35 @@ def test_l2_precheck_reports_individual_source_facts_with_no_false_certification
     assert {fact["id"] for fact in facts} == {f"U09:S{i}" for i in range(1, 8)}
     assert all(fact["status"] == "satisfied" and fact["evidence"]["sources"] for fact in facts)
     assert all(fact["certified"] is False for fact in facts)
+
+
+def test_pfmea_scores_use_original_columns_not_action_results(tmp_path):
+    from audit.checker_lib.uaes.fmea import UaesPfmeaAgent
+
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "专用PFMEA"
+    sheet.append(["PFMEA"])
+    labels = [
+        "Potential Failure Mode 潜在的故障模式",
+        "Potential Effect(s) of Failure 潜在的故障影响",
+        "SEV严重度",
+        "Potential Cause(s) Mechanism(s) of Failure 潜在的引起故障的机理",
+        "OCC频度",
+        "Current Process Controls Prevention目前的预防控制",
+        "Current Process Controls Detection 目前的探测控制",
+        "DET探测度",
+    ]
+    sheet.append([*labels, "Actions Results 措施结果", None, None])
+    sheet.merge_cells("I2:K2")
+    sheet.append([*labels, "SEV严重度", "OCC频度", "DET探测度"])
+    sheet.append(["壳体裂纹", "导致整车召回", 3, "压铸参数异常", 4, "参数监控", "100%在线检测", 2, 3, 2, 2])
+    path = tmp_path / "source.xlsx"
+    book.save(path)
+    book.close()
+    body = preset_rule_body("UAES", "U07")
+    agent = UaesPfmeaAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput(rule_id="source-rules", **{key: value for key, value in body.items() if key != "kind"}))
+    result = agent.check(1)
+    # The post-action S/O/D repeat the labels; the original scores still decide.
+    assert result.status == "NG", result.suggestions
+    assert "整车召回" in result.suggestions
