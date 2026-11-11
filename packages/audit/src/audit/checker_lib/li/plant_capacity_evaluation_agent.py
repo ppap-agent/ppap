@@ -20,7 +20,7 @@ import logging
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from typing import Tuple
 
-from audit.engine.rule_engine import RuleContext, Table
+from audit.engine.rule_engine import GuardStop, RuleContext, Table
 from audit.kinds import PpapDocumentType
 
 from .excel_agent import ExcelAgent, rule
@@ -194,6 +194,8 @@ class PlantCapacityEvaluationAgent(ExcelAgent):
                         f"第{row.row_index}行良率、合格品数或产出数量存在无效值。",
                     )
             return "PASS", ""
+        except GuardStop:
+            raise
         except Exception as exc:
             logger.error(f"良率计算检查异常: {exc}")
             return "NG", "良率计算检查发生异常，请检查表格数据格式。"
@@ -242,6 +244,8 @@ class PlantCapacityEvaluationAgent(ExcelAgent):
                         f"第{row.row_index}行JPH、产出数量、净利用时间或参与测试线体数量存在无效值。",
                     )
             return "PASS", ""
+        except GuardStop:
+            raise
         except Exception as exc:
             logger.error(f"单线体/工序总产出JPH计算检查异常: {exc}")
             return "NG", "产出效率检查发生异常，请检查表格数据格式。"
@@ -334,6 +338,8 @@ class PlantCapacityEvaluationAgent(ExcelAgent):
                         f"第{row.row_index}行月度产能计算相关字段存在无效值。",
                     )
             return "PASS", ""
+        except GuardStop:
+            raise
         except Exception as exc:
             logger.error(f"线体/工序预估月度产能计算检查异常: {exc}")
             return "NG", "产能预估检查发生异常，请检查表格数据格式。"

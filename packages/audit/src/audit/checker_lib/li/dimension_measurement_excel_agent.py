@@ -209,6 +209,7 @@ class DimensionMeasurementExcelAgent(ExcelAgent):
 
     def _check_tolerance_rows(self, ctx: RuleContext) -> tuple[str, str]:
         checked_rows = 0
+        numeric_rows = 0
         unresolved = ""
 
         for section in _iter_doc01_main_sections(ctx):
@@ -234,11 +235,14 @@ class DimensionMeasurementExcelAgent(ExcelAgent):
                     self._numeric_failure_source = self._original_measurement_source
                     location = original_location or f"工作表{row.sheet_title}第{obs.row_index}行"
                     unresolved = f"{location}{decision.reason}"
-                checked_rows += int(decision.numeric_checked)
+                checked_rows += int(decision.status == "PASS")
+                numeric_rows += int(decision.numeric_checked)
 
         if unresolved:
             return "UNABLE", unresolved
         if checked_rows == 0:
+            return "NG", "未识别到可校验的尺寸区检查数据"
+        if numeric_rows == 0:
             return "PASS", "规则3按通过处理"
         return "PASS", "所有检查数据均在公差范围内"
 

@@ -17,16 +17,14 @@ from audit.engine.rule_engine import RuleContext, Table
 from audit.kinds import PpapDocumentType
 
 from .excel_agent import ExcelAgent, rule
+from .sheet_images import image_cells
 
 _SHEET_NAME = "DPVR工作表"
 _SECTION_NAME = "DPVR主数据区"
 _VALID_TEST_TYPES = {"DV", "PV"}
 _SECTION_HEADER_PATTERN = re.compile(r"^[一二三四五六七八九十百千万\d]+、")
-_EN_PASS_TOKEN_PATTERN = re.compile(r"\b(?:p|pass)\b", flags=re.IGNORECASE)
-_EN_HARD_NEGATIVE_PATTERN = re.compile(r"\b(?:f|fail|ng)\b", flags=re.IGNORECASE)
-_CN_POSITIVE_TOKENS = ("合格", "符合", "通过")
-_CN_NEUTRAL_TOKENS = ("不做判定",)
-_CN_HARD_NEGATIVE_TOKENS = ("不合格", "未通过", "不通过")
+# The clause requires the conclusion text to be exactly one of these words.
+_PASS_CONCLUSIONS = frozenset({"符合", "通过", "合格", "p", "pass"})
 _REPORT_NUMBER_LABEL_TOKENS = {
     "试验报告编号",
     "检测报告编号",
@@ -84,18 +82,8 @@ class DpvrExcelAgent(ExcelAgent):
         return not self._is_label_only_value(compact_text, labels=labels)
 
     def _rule2_is_pass(self, value: Any) -> bool:
-        compact_text, spaced_text = self._normalize_text(value)
-        has_hard_negative = any(token in compact_text for token in _CN_HARD_NEGATIVE_TOKENS) or bool(_EN_HARD_NEGATIVE_PATTERN.search(spaced_text))
-        if has_hard_negative:
-            return False
-
-        has_positive = any(token in compact_text for token in _CN_POSITIVE_TOKENS) or bool(_EN_PASS_TOKEN_PATTERN.search(spaced_text))
-        has_neutral = any(token in compact_text for token in _CN_NEUTRAL_TOKENS)
-        if has_positive:
-            return True
-        if has_neutral:
-            return False
-        return False
+        compact_text, _ = self._normalize_text(value)
+        return compact_text in _PASS_CONCLUSIONS
 
     def _normalize_test_type(self, value: Any) -> str:
         compact_text, _ = self._normalize_text(value)
@@ -158,7 +146,7 @@ class DpvrExcelAgent(ExcelAgent):
             row.expect_condition(
                 "实际试验结果",
                 self._rule2_is_pass,
-                context="同一单元格内命中硬否定词判NG；其余需命中合格/符合/通过/P/PASS（可与“不做判定”并存）",
+                context="结论需与“符合/通过/合格/P/pass”之一严格一致",
             )
         return "PASS", ""
 
@@ -200,6 +188,7 @@ class DpvrExcelAgent(ExcelAgent):
 
         phase_columns = (("前", "试验前图片"), ("中", "试验中图片"), ("后", "试验后图片"))
         failed_sheets: list[str] = []
+        unplaced_sheets: list[str] = []
         matched_sheets = 0
 
         for fluent_sheet in sheets:
@@ -209,20 +198,30 @@ class DpvrExcelAgent(ExcelAgent):
                 continue
 
             matched_sheets += 1
+            # Text in a picture column is not a picture: a phase counts only
+            # when a worksheet picture sits in that column's data rows.
+            pictures = image_cells(fluent_sheet.ws)
+            row_min = min(row.row_index for row in rows)
+            row_max = max(fluent_sheet.ws.max_row, max(row.row_index for row in rows))
             found = {"前": False, "中": False, "后": False}
-            for row in rows:
-                for phase, column_name in phase_columns:
-                    if column_name in row.columns and row.is_present(column_name):
-                        found[phase] = True
+            for phase, column_name in phase_columns:
+                column = rows[0].columns.get(column_name)
+                if column is None:
+                    continue
+                found[phase] = pictures.in_area(row_min=row_min, row_max=row_max, col_min=column.header_col, col_max=column.header_col)
 
             missing = [phase for phase, present in found.items() if not present]
-            if missing:
+            if missing and pictures.unplaced:
+                unplaced_sheets.append(f"工作表'{fluent_sheet.title}'：有{pictures.unplaced}张图片无法定位到单元格")
+            elif missing:
                 failed_sheets.append(f"工作表'{fluent_sheet.title}'：缺少试验{','.join(missing)}阶段图片")
 
         if matched_sheets == 0:
             return "NG", "未找到有效工作表"
         if failed_sheets:
             return "NG", "；".join(failed_sheets)
+        if unplaced_sheets:
+            return "UNABLE", "；".join(unplaced_sheets) + "，不能确认试验阶段图片"
         return "PASS", f"所有{matched_sheets}个工作表的试验阶段图片检查均通过"
 
     @rule("样品数量审核")

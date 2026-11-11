@@ -146,12 +146,13 @@ class MsaReportAgent(ExcelAgent):
         """
         rr_data_sheets = Table(ctx).find_sheets("R&R数据表")
         logger.info(f"R&R数据表: {[sheet.title for sheet in rr_data_sheets]}")
-        total_data_cells = 0
-        evaluator_data = {"A": 0, "B": 0, "C": 0}
-
+        # One R&R table must be complete on its own; two half-filled tables
+        # do not add up to one complete study.
+        shortfalls: list[str] = []
         for fluent_sheet in rr_data_sheets:
+            evaluator_data = {"A": 0, "B": 0, "C": 0}
             for evaluator, (start_row, end_row) in _RULE3_EVALUATOR_RANGES.items():
-                count = len(
+                evaluator_data[evaluator] = len(
                     fluent_sheet.scan_non_empty(
                         row_min=start_row,
                         row_max=end_row,
@@ -159,15 +160,12 @@ class MsaReportAgent(ExcelAgent):
                         col_max=max(_RULE3_SAMPLE_COL_RANGE),
                     )
                 )
-                evaluator_data[evaluator] += count
-                total_data_cells += count
-        logger.info(f"评价人数据统计: {evaluator_data}, 总数据单元格数: {total_data_cells}")
-        if evaluator_data["A"] >= 10 and evaluator_data["B"] >= 10 and evaluator_data["C"] >= 10 and total_data_cells >= 90:
-            return "PASS", ""
-        return (
-            "NG",
-            f"数据完整性不符合要求: 评价人A={evaluator_data['A']}个, 评价人B={evaluator_data['B']}个, 评价人C={evaluator_data['C']}个, 总数据单元格数={total_data_cells}个",
-        )
+            total_data_cells = sum(evaluator_data.values())
+            logger.info(f"{fluent_sheet.title} 评价人数据统计: {evaluator_data}, 总数据单元格数: {total_data_cells}")
+            if evaluator_data["A"] >= 10 and evaluator_data["B"] >= 10 and evaluator_data["C"] >= 10 and total_data_cells >= 90:
+                return "PASS", f"工作表{fluent_sheet.title} 评价人A、B、C样本及90个单元格均已填写"
+            shortfalls.append(f"工作表{fluent_sheet.title}: 评价人A={evaluator_data['A']}个, 评价人B={evaluator_data['B']}个, 评价人C={evaluator_data['C']}个, 总数据单元格数={total_data_cells}个")
+        return "NG", "数据完整性不符合要求: " + "；".join(shortfalls)
 
     @rule("量具重复性和再现性结论判定审核")
     def rule_4(self, ctx: RuleContext) -> Tuple[str, str]:

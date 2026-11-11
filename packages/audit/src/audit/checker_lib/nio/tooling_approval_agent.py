@@ -2,12 +2,12 @@
 
 import logging
 import re
-from pathlib import Path
 
 from audit.engine.rule_engine import RuleContext, Table
 from audit.kinds import PpapDocumentType
 
 from .excel_agent import ExcelAgent, rule
+from .sheet_images import image_cells
 
 logger = logging.getLogger(__name__)
 
@@ -84,31 +84,20 @@ class ToolingApprovalAgent(ExcelAgent):
             return False
         return "管理部门" in normalized or "负责人" in normalized or "合作伙伴" in normalized
 
-    def _read_primary_source_bytes(self, ctx: RuleContext) -> bytes:
-        candidates: list[str] = []
-        metadata = getattr(self.audit_file, "file_metadata", None)
-        if isinstance(metadata, dict):
-            source_pdf = str(metadata.get("source_pdf_url", "") or "").strip()
-            if source_pdf:
-                candidates.append(source_pdf)
-        if ctx.source_path:
-            candidates.append(ctx.source_path)
-
-        for path in candidates:
-            try:
-                file_path = Path(path)
-                if file_path.exists():
-                    return file_path.read_bytes()
-            except Exception:
-                continue
-        return b""
-
-    def _has_signature_image_evidence(self, ctx: RuleContext) -> bool:
-        data = self._read_primary_source_bytes(ctx)
-        if not data:
-            return False
-        image_markers = data.count(b"PNG") + data.count(b"JFIF") + data.count(b"JPEG")
-        return image_markers >= 3
+    @staticmethod
+    def _signature_picture_unplaced_or_found(header: object, field_name: str, scan_width: int) -> tuple[bool, bool]:
+        """Whether a picture sits in the field's value area, and whether some picture has no cell position."""
+        resolved = header.field(field_name).resolved  # type: ignore[attr-defined]
+        if resolved is None:
+            return False, False
+        pictures = image_cells(resolved.ws)
+        found = pictures.in_area(
+            row_min=max(1, resolved.label_row - 1),
+            row_max=resolved.label_row + 1,
+            col_min=resolved.label_col,
+            col_max=resolved.label_col + scan_width,
+        )
+        return found, pictures.unplaced > 0
 
     @rule("零件供应商名称与提交日期字段检查")
     def rule_1(self, ctx: RuleContext) -> tuple[str, str]:
@@ -176,17 +165,18 @@ class ToolingApprovalAgent(ExcelAgent):
         table = Table(ctx)
         sheets = table.find_sheets("模具验收报告")
 
+        # A picture counts only when it sits in the 实物照片 column below its
+        # header; pictures elsewhere in the file (logo, signature) do not.
+        unplaced = False
         for sheet in sheets:
-            sheet.section("模具验收主数据区").columns("实物照片")
-
-        try:
-            data = Path(ctx.source_path).read_bytes() if ctx.source_path else b""
-        except Exception:
-            data = b""
-        image_markers = data.count(b"JFIF") + data.count(b"PNG")
-        if image_markers < 10:
-            return "NG", "实物照片数量不足，请补充清晰的实物照片。"
-        return "PASS", ""
+            column = sheet.section("模具验收主数据区").columns("实物照片")["实物照片"]
+            pictures = image_cells(sheet.ws)
+            if pictures.in_area(row_min=column.data_start_row, row_max=max(sheet.ws.max_row, column.data_start_row), col_min=column.header_col, col_max=column.header_col):
+                return "PASS", f"工作表 '{sheet.title}' 实物照片列下有图片"
+            unplaced = unplaced or pictures.unplaced > 0
+        if unplaced:
+            return "UNABLE", "存在无法定位到单元格的图片，不能确认实物照片列下是否有图片。"
+        return "NG", "实物照片列下没有图片，请补充清晰的实物照片。"
 
     @rule("编制与审核字段检查")
     def rule_5(self, ctx: RuleContext) -> tuple[str, str]:
@@ -194,36 +184,25 @@ class ToolingApprovalAgent(ExcelAgent):
         table.find_sheets("模具验收报告")
 
         header = table.field_block("模具验收头部字段区")
-        has_signature_image = self._has_signature_image_evidence(ctx)
-        has_compiler_label = header.exists("编制字段")
-        has_reviewer_label = header.exists("审核字段")
+        header.expect("编制字段", "审核字段", context="模具验收头部字段区")
+        scan_width = int(ctx.resource.fields["编制字段"].scan_width)
 
-        if not has_signature_image:
-            header.expect("编制字段", "审核字段", context="模具验收头部字段区")
-        else:
-            # PDF签名通常以图片存在，文本值可能为空；有图片证据时仅要求字段标签可定位。
-            missing_labels: list[str] = []
-            if not has_compiler_label:
-                missing_labels.append("编制字段")
-            if not has_reviewer_label:
-                missing_labels.append("审核字段")
-            if missing_labels:
-                return "NG", f"‘模具验收头部字段区’存在缺失的关键字段标签: {missing_labels}"
-
-        def _has_effective_signature(value: str) -> bool:
-            if self._is_placeholder_signature(value) and not has_signature_image:
-                return False
-            return bool(str(value or "").strip())
-
-        header.expect_condition(
-            "编制字段",
-            _has_effective_signature,
-            context="编制字段有效签名",
-        ).expect_condition(
-            "审核字段",
-            _has_effective_signature,
-            context="审核字段有效签名",
-        )
+        unplaced = False
+        for field_name in ("编制字段", "审核字段"):
+            value = str(header.field(field_name).value() or "")
+            if not self._is_placeholder_signature(value):
+                continue
+            # A printed "签名" placeholder counts only with a signature picture
+            # beside this field; pictures elsewhere in the file do not.
+            found, field_unplaced = self._signature_picture_unplaced_or_found(header, field_name, scan_width)
+            if found:
+                continue
+            if field_unplaced:
+                unplaced = True
+                continue
+            return "NG", f"‘模具验收头部字段区’{field_name}只有签名占位文字，没有签名"
+        if unplaced:
+            return "UNABLE", "存在无法定位到单元格的图片，不能确认编制/审核是否已签名。"
         return "PASS", ""
 
     @rule("实物确认列内容检查")

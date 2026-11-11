@@ -617,7 +617,8 @@ def iter_anchor_rows(
             seen_data = True
             blank_streak = 0
             yield row
-            merged = None if section_spec.row_expand_merged_anchors else ops.get_detailed_merge_info(ws, row, anchor_col)
+            expand = section_spec.row_expand_merged_anchors or section_spec.row_anchor_match == "any"
+            merged = None if expand else ops.get_detailed_merge_info(ws, row, anchor_col)
             if direction == "down":
                 row = (merged.max_row + 1) if merged else (row + 1)
             else:

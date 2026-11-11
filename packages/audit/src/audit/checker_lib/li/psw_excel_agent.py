@@ -26,7 +26,7 @@ from audit.engine.checkers.date_utils import normalize_excel_date
 from audit.engine.checkers.psw_evidence_trace import (
     finalize_excel_psw_result,
 )
-from audit.engine.rule_engine import RuleContext, Sheet, Table
+from audit.engine.rule_engine import Cell, RuleContext, Sheet, Table
 from audit.kinds import PpapDocumentType
 
 from .excel_agent import ExcelAgent, RuleEvidencePhase, rule
@@ -113,8 +113,51 @@ class PswExcelAgent(ExcelAgent):
 
         return classify_psw_disposition(sheet, checked_row, checked_col, disposition_row)
 
+    @staticmethod
+    def _displayed_text(ctx: RuleContext, field) -> str:
+        """A number reads as Excel shows it: “0.0000” displays 0.12 as 0.1200."""
+        raw = field.value()
+        resolved = field.resolved
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)) or resolved is None or resolved.value_row is None or resolved.value_col is None:
+            return str(raw or "")
+        number_format = Cell(ctx, resolved.ws, resolved.value_row, resolved.value_col).number_format().split(";", 1)[0]
+        if number_format.lower() in {"", "general", "@"} or "%" in number_format or not re.search(r"[0#?]", number_format):
+            return str(raw)
+        decimals = re.search(r"\.([0#?]+)", number_format)
+        return f"{raw:.{len(decimals.group(1)) if decimals else 0}f}"
+
     def _checked_controls(self, sheet: Sheet) -> list[tuple[int, int]]:
         return [(row, col) for row, col, checked in sheet.checkbox_controls() if checked]
+
+    @staticmethod
+    def _checked_glyphs(sheet: Sheet, row_min: int, row_max: int) -> list[tuple[int, int, str]]:
+        """Checked glyphs written in cells, e.g. “☑批准”, with the text that follows each glyph."""
+        glyphs: list[tuple[int, int, str]] = []
+        for row in sheet.ws.iter_rows(min_row=row_min, max_row=row_max, max_col=min(sheet.ws.max_column, 30)):
+            for cell in row:
+                if cell.data_type == "e":
+                    continue
+                segments = re.findall(r"([☑☒✓✔√□☐])([^☑☒✓✔√□☐]*)", str(cell.value or ""))
+                checked = [text for mark, text in segments if mark not in "□☐"]
+                if checked:
+                    sheet.ctx.note_cell(sheet.title, cell.row, cell.column)
+                glyphs.extend((cell.row, cell.column, text) for text in checked)
+        return glyphs
+
+    @staticmethod
+    def _glyph_option(text: str) -> str:
+        compact = re.sub(r"\s+", "", text).lower()
+        ordinary = re.sub(r"条件批准|conditional(?:approved)?", "", compact)
+        options = [
+            name
+            for name, found in (
+                ("conditional", "条件批准" in compact or "conditional" in compact),
+                ("rejected", "拒绝" in compact or "rejected" in compact),
+                ("approved", "批准" in ordinary or "approved" in ordinary),
+            )
+            if found
+        ]
+        return options[0] if len(options) == 1 else "unknown"
 
     def _resolve_warrant_disposition(
         self,
@@ -132,9 +175,20 @@ class PswExcelAgent(ExcelAgent):
             return "missing_field", [], None
         disposition_row = disposition_cell.row_index
 
-        disposition_checks = [(row, col) for row, col in checked_controls if max(1, disposition_row - 2) <= row <= min(ws.max_row, disposition_row + 3)]
-        if len(disposition_checks) != 1:
-            return "invalid_selection", disposition_checks, disposition_row
+        row_min, row_max = max(1, disposition_row - 2), min(ws.max_row, disposition_row + 3)
+        disposition_checks = [(row, col) for row, col in checked_controls if row_min <= row <= row_max]
+        # 单元格里写的勾选符号（如“☑批准”）与表单控件同样计为勾选。
+        glyphs = [glyph for glyph in self._checked_glyphs(sheet, row_min, row_max) if glyph[:2] not in disposition_checks]
+        if len(disposition_checks) + len(glyphs) != 1:
+            return "invalid_selection", disposition_checks + [glyph[:2] for glyph in glyphs], disposition_row
+
+        if glyphs:
+            checked_row, checked_col, text = glyphs[0]
+            option = self._glyph_option(text)
+            if option != "unknown":
+                sheet.ctx.note_cell(sheet.title, checked_row, checked_col)
+                return option, [(checked_row, checked_col)], disposition_row
+            disposition_checks = [(checked_row, checked_col)]
 
         checked_row, checked_col = disposition_checks[0]
         option = self._classify_disposition_option(
@@ -183,7 +237,8 @@ class PswExcelAgent(ExcelAgent):
 
         return True
 
-    def _parse_date_from_text(self, value: object) -> date | None:
+    def _parse_date_from_text(self, value: object) -> date | str | None:
+        """A date; "invalid" for a written year-month-day that is not a calendar date; None when no date is seen."""
         normalized_date = normalize_excel_date(value)
         if normalized_date is not None:
             return normalized_date
@@ -196,6 +251,7 @@ class PswExcelAgent(ExcelAgent):
             r"(20\d{2})\D{0,3}(1[0-2]|0?[1-9])\D{0,3}(3[01]|[12]\d|0?[1-9])",
             r"(20\d{2})[./-](1[0-2]|0?[1-9])[./-](3[01]|[12]\d|0?[1-9])",
         ]
+        invalid = False
         for pattern in patterns:
             match = re.search(pattern, text)
             if not match:
@@ -204,10 +260,10 @@ class PswExcelAgent(ExcelAgent):
             try:
                 return datetime(year, month, day).date()
             except ValueError:
-                continue
-        return None
+                invalid = True
+        return "invalid" if invalid else None
 
-    def _extract_conditional_approval_date(self, sheet: Sheet, disposition_row: int) -> date | None:
+    def _extract_conditional_approval_date(self, sheet: Sheet, disposition_row: int) -> date | str | None:
         ws = sheet.ws
         candidate_values: list[str] = []
         row_min = max(1, disposition_row - 2)
@@ -240,11 +296,13 @@ class PswExcelAgent(ExcelAgent):
                 ):
                     candidate_values.append(str(candidate_cell.value() or ""))
 
+        invalid = False
         for value in candidate_values:
             parsed_date = self._parse_date_from_text(value)
-            if parsed_date is not None:
+            if isinstance(parsed_date, date):
                 return parsed_date
-        return None
+            invalid = invalid or parsed_date == "invalid"
+        return "invalid" if invalid else None
 
     def _extract_comments_value(self, table: Table, sheet: Sheet) -> str:
         comments_field = table.field_block("PSW主表字段区").field("补充评论字段")
@@ -316,7 +374,7 @@ class PswExcelAgent(ExcelAgent):
         field_block.expect("重量字段", context="PSW主表字段区")
 
         weight_field = field_block.field("重量字段")
-        weight_value = str(weight_field.value() or "").replace("\n", "").replace("\r", "").strip()
+        weight_value = self._displayed_text(ctx, weight_field).replace("\n", "").replace("\r", "").strip()
 
         numeric_match = re.search(r"[-+]?\d+(?:\.\d+)?", weight_value.replace(",", ""))
         if not numeric_match:
@@ -546,7 +604,9 @@ class PswExcelAgent(ExcelAgent):
 
         approval_date = self._extract_conditional_approval_date(main_sheet, disposition_row)
         if approval_date is None:
-            return "NG", "无法识别条件批准日期。"
+            return "UNABLE", "无法识别条件批准日期。"
+        if not isinstance(approval_date, date):
+            return "NG", "无法识别条件批准日期：日期无效。"
 
         today = datetime.now().date()
         days_delta = (today - approval_date).days

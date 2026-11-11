@@ -63,7 +63,8 @@ def _to_float(value: Any) -> float | None:
     text = str(value).strip().replace(",", "")
     if not text:
         return None
-    if _normalize_text(text) in {"none", "nan", "#ref!", "na", "n/a"}:
+    if _normalize_text(text) in {"none", "nan", "na", "n/a"} or text.startswith("#"):
+        # An Excel error literal such as #DIV/0! or #REF! is not a number.
         return None
 
     try:
@@ -78,6 +79,11 @@ def _to_float(value: Any) -> float | None:
         return float(match.group(0))
     except (TypeError, ValueError):
         return None
+
+
+def _is_unknown_number(value: Any) -> bool:
+    """A filled cell that is neither NA nor a number cannot be compared."""
+    return not _is_blank(value) and not _is_na(value) and _to_float(value) is None
 
 
 def _numeric_values(raw_values: list[Any]) -> list[float]:
@@ -292,10 +298,8 @@ class DimensionMeasurementExcelAgent(ExcelAgent):
     @rule("测点号与测点图标记点对应性审核")
     def rule_6(self, ctx: RuleContext) -> tuple[str, str]:
         marker_pattern = re.compile(r"[A-Za-z]{1,4}\d{1,4}")
-        for _sheet, section, columns in self._sections(ctx, "测点号", optional=("测点图/截面",)):
+        for _sheet, section, columns in self._sections(ctx, "测点号", "测点图/截面"):
             point_set = {_normalize_text(row.value("测点号")).upper() for row in section.rows_from(columns) if row.is_present("测点号")}
-            if "测点图/截面" not in columns:
-                continue
             markers: set[str] = set()
             for row in section.rows_from(columns):
                 raw = row.value("测点图/截面")
@@ -309,6 +313,7 @@ class DimensionMeasurementExcelAgent(ExcelAgent):
 
     @rule("特定表类型的偏差值在公差范围内审核")
     def rule_7(self, ctx: RuleContext) -> tuple[str, str]:
+        unknown_rows: list[str] = []
         for sheet, section, columns in self._sections(
             ctx,
             "测点号",
@@ -322,25 +327,30 @@ class DimensionMeasurementExcelAgent(ExcelAgent):
             if not self._is_target_measurement_sheet(sheet.title):
                 continue
             for row in section.rows_from(columns):
+                if not row.is_present("测点号"):
+                    continue
                 part_values = _part_measurement_values(row, columns)
                 if not part_values:
-                    continue
+                    return "NG", f"工作表{row.sheet_title} 行{row.row_index} 测量偏差值为空"
                 upper = _to_float(row.value("上公差"))
                 lower = _to_float(row.value("下公差"))
-                if upper is None or lower is None:
+                nominal_raw = row.value("名义值")
+                nominal = 0.0 if _is_blank(nominal_raw) else _to_float(nominal_raw)
+                if upper is None or lower is None or nominal is None:
+                    unknown_rows.append(f"{row.sheet_title} 行{row.row_index}")
                     continue
-                nominal = _to_float(row.value("名义值"))
-                if nominal is None:
-                    nominal = 0.0
                 min_bound = min(nominal + lower, nominal + upper)
                 max_bound = max(nominal + lower, nominal + upper)
                 for value in part_values:
                     if value < min_bound - 1e-9 or value > max_bound + 1e-9:
                         return "NG", f"工作表{row.sheet_title} 行{row.row_index} 偏差值{value}超出公差范围[{min_bound}, {max_bound}]"
+        if unknown_rows:
+            return "UNABLE", f"名义值或上下公差不是数值，无法确定公差范围: {', '.join(unknown_rows[:8])}"
         return "PASS", "规则7检查通过"
 
     @rule("中性值（Centering）计算准确性审核")
     def rule_8(self, ctx: RuleContext) -> tuple[str, str]:
+        unknown_rows: list[str] = []
         for _sheet, section, columns in self._sections(
             ctx,
             "测点号",
@@ -365,24 +375,34 @@ class DimensionMeasurementExcelAgent(ExcelAgent):
                 lower = _to_float(lower_raw)
                 if upper is None or lower is None or _is_na(upper_raw) or _is_na(lower_raw) or abs(upper - lower) < 1e-9:
                     continue
-                nominal = _to_float(row.value("名义值")) or 0.0
+                nominal_raw = row.value("名义值")
+                nominal = 0.0 if _is_blank(nominal_raw) else _to_float(nominal_raw)
+                if nominal is None:
+                    unknown_rows.append(f"{row.sheet_title} 行{row.row_index}")
+                    continue
                 expected = (-nominal + (sum(part_values) / len(part_values))) / (upper - lower)
                 actual = _to_float(row.value("Centering"))
                 if actual is None:
                     return "NG", f"工作表{row.sheet_title} 行{row.row_index} Centering为空或不是有效数字"
                 if actual is not None and abs(actual - expected) > 0.02:
                     return "NG", f"工作表{row.sheet_title} 行{row.row_index} Centering不一致: 期望{expected:.4f}, 实际{actual:.4f}"
+        if unknown_rows:
+            return "UNABLE", f"名义值不是数值，无法计算中性值: {', '.join(unknown_rows[:8])}"
         return "PASS", "Centering计算校验通过"
 
     @rule("中性值（Centering）阈值判定及预警审核")
     def rule_9(self, ctx: RuleContext) -> tuple[str, str]:
         over_066: list[tuple[str, int, int, float]] = []
         warn_033: list[tuple[str, int, int, float]] = []
+        unknown: list[tuple[str, int, int, float]] = []
         for _sheet, section, columns in self._sections(ctx, "测点号", "Centering"):
             centering_col = columns["Centering"].header_col
             for row in section.rows_from(columns):
-                value = _to_float(row.value("Centering"))
+                raw = row.value("Centering")
+                value = _to_float(raw)
                 if value is None:
+                    if _is_unknown_number(raw):
+                        unknown.append((row.sheet_title, row.row_index, centering_col, 0.0))
                     continue
                 abs_value = abs(value)
                 if abs_value > 0.66:
@@ -391,6 +411,8 @@ class DimensionMeasurementExcelAgent(ExcelAgent):
                     warn_033.append((row.sheet_title, row.row_index, centering_col, abs_value))
         if over_066:
             return "NG", f"Centering绝对值>0.66: {_format_threshold_preview(over_066, 'Centering')}"
+        if unknown:
+            return "UNABLE", f"Centering不是数值，无法判断阈值: {_format_threshold_preview(unknown, 'Centering')}"
         if warn_033:
             return "PASS", f"通过，但以下行Centering绝对值>0.33: {_format_threshold_preview(warn_033, 'Centering')}"
         return "PASS", "Centering阈值检查通过"
@@ -433,11 +455,15 @@ class DimensionMeasurementExcelAgent(ExcelAgent):
     def rule_11(self, ctx: RuleContext) -> tuple[str, str]:
         over_066: list[tuple[str, int, int, float]] = []
         warn_033: list[tuple[str, int, int, float]] = []
+        unknown: list[tuple[str, int, int, float]] = []
         for _sheet, section, columns in self._sections(ctx, "测点号", "Range"):
             range_col = columns["Range"].header_col
             for row in section.rows_from(columns):
-                value = _to_float(row.value("Range"))
+                raw = row.value("Range")
+                value = _to_float(raw)
                 if value is None:
+                    if _is_unknown_number(raw):
+                        unknown.append((row.sheet_title, row.row_index, range_col, 0.0))
                     continue
                 abs_value = abs(value)
                 if abs_value > 0.66:
@@ -446,6 +472,8 @@ class DimensionMeasurementExcelAgent(ExcelAgent):
                     warn_033.append((row.sheet_title, row.row_index, range_col, abs_value))
         if over_066:
             return "NG", f"Range绝对值>0.66: {_format_threshold_preview(over_066, 'Range')}"
+        if unknown:
+            return "UNABLE", f"Range不是数值，无法判断阈值: {_format_threshold_preview(unknown, 'Range')}"
         if warn_033:
             return "PASS", f"通过，但以下行Range绝对值>0.33: {_format_threshold_preview(warn_033, 'Range')}"
         return "PASS", "Range阈值检查通过"

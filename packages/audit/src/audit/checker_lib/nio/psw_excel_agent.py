@@ -26,13 +26,26 @@ from audit.engine.checkers.date_utils import normalize_excel_date
 from audit.engine.checkers.psw_evidence_trace import (
     finalize_excel_psw_result,
 )
-from audit.engine.rule_engine import RuleContext, Sheet, Table
+from audit.engine.rule_engine import Cell, RuleContext, Sheet, Table
 from audit.kinds import PpapDocumentType
 
 from .excel_agent import ExcelAgent, RuleEvidencePhase, rule
 
 logger = logging.getLogger(__name__)
 _EMPTY_MARKERS = {"", "none", "nan"}
+
+
+def _displayed_decimal_places(number_format: str) -> int | None:
+    """Decimal places Excel shows for a stored number; None when the format does not fix them."""
+    section = str(number_format or "").split(";", 1)[0]
+    section = re.sub(r'"[^"]*"|\\.|\[[^\]]*\]', "", section)
+    if not section or section.lower() == "general" or "%" in section or "e" in section.lower():
+        return None
+    if "." not in section:
+        return 0 if re.search(r"[0#?]", section) else None
+    return len(section.split(".", 1)[1]) - len(section.split(".", 1)[1].lstrip("0#?"))
+
+
 _RULE6_LABEL_NOISE_RAW = (
     "重量(kg)",
     "重量",
@@ -152,8 +165,12 @@ class PswExcelAgent(ExcelAgent):
         disposition_row = disposition_cell.row_index
 
         disposition_checks = [(row, col) for row, col in checked_controls if max(1, disposition_row - 2) <= row <= disposition_row + 3]
-        if len(disposition_checks) != 1:
+        # A mark typed into a cell (☑批准) is a selection just like a form control.
+        marked_options = self._marked_dispositions(sheet, disposition_row)
+        if len(disposition_checks) + len(marked_options) != 1:
             return "invalid_selection", disposition_checks, disposition_row
+        if marked_options:
+            return marked_options[0], disposition_checks, disposition_row
 
         checked_row, checked_col = disposition_checks[0]
         option = self._classify_disposition_option(
@@ -163,6 +180,40 @@ class PswExcelAgent(ExcelAgent):
             disposition_row=disposition_row,
         )
         return option, disposition_checks, disposition_row
+
+    def _marked_dispositions(self, sheet: Sheet, disposition_row: int) -> list[str]:
+        """Disposition options selected by a checked mark character in a cell near the 认可情况 label."""
+        options: list[str] = []
+        ws = sheet.ws
+        # A cell whose mark is already read as a control (Word checkbox) is not counted twice.
+        control_cells = {(row, col) for row, col, _checked in sheet.checkbox_controls()}
+        for row in ws.iter_rows(min_row=max(1, disposition_row - 2), max_row=disposition_row + 3, max_col=min(ws.max_column, 30)):
+            for cell in row:
+                if cell.data_type == "e" or not isinstance(cell.value, str) or (cell.row, cell.column) in control_cells:
+                    continue
+                for mark, label in re.findall(r"([☑☒✓✔√■□☐])([^☑☒✓✔√■□☐]*)", cell.value):
+                    if mark in "□☐":
+                        continue
+                    text = self._compact_token(label)
+                    if text:
+                        ordinary = re.sub(r"条件批准|conditional(?:approved)?", "", text)
+                        found = [
+                            name
+                            for name, hit in (
+                                ("conditional", "条件批准" in text or "conditional" in text),
+                                ("rejected", "拒绝" in text or "rejected" in text),
+                                ("approved", "批准" in ordinary or "approved" in ordinary),
+                            )
+                            if hit
+                        ]
+                        if not found:
+                            continue  # a mark on some other option, not a disposition
+                        option = found[0] if len(found) == 1 else "unknown"
+                    else:
+                        option = self._classify_disposition_option(sheet, checked_row=cell.row, checked_col=cell.column, disposition_row=disposition_row)
+                    sheet.ctx.note_cell(sheet.title, cell.row, cell.column)
+                    options.append(option)
+        return options
 
     @staticmethod
     def _compact_token(value: object) -> str:
@@ -226,7 +277,8 @@ class PswExcelAgent(ExcelAgent):
                 continue
         return None
 
-    def _extract_conditional_approval_date(self, sheet: Sheet, disposition_row: int) -> date | None:
+    def _extract_conditional_approval_date(self, sheet: Sheet, disposition_row: int) -> date | str | None:
+        """The approval date; "invalid" when a written date is not a calendar date; None when no date is found."""
         candidate_values: list[str] = []
         row_min = max(1, disposition_row - 2)
         row_max = disposition_row + 8
@@ -262,6 +314,8 @@ class PswExcelAgent(ExcelAgent):
             parsed_date = self._parse_date_from_text(value)
             if parsed_date is not None:
                 return parsed_date
+        if any(re.search(r"20\d{2}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日|20\d{2}[./-]\d{1,2}[./-]\d{1,2}", value) for value in candidate_values):
+            return "invalid"
         return None
 
     def _extract_comments_value(self, table: Table, sheet: Sheet) -> str:
@@ -334,7 +388,16 @@ class PswExcelAgent(ExcelAgent):
         field_block.expect("重量字段", context="PSW主表字段区")
 
         weight_field = field_block.field("重量字段")
-        weight_value = str(weight_field.value() or "").replace("\n", "").replace("\r", "").strip()
+        raw_weight = weight_field.value()
+        resolved = weight_field.resolved
+        if isinstance(raw_weight, (int, float)) and not isinstance(raw_weight, bool) and resolved is not None and resolved.value_row is not None and resolved.value_col is not None:
+            # A stored number is read as Excel shows it: 0.12 with format 0.0000 is "0.1200".
+            places = _displayed_decimal_places(Cell(ctx, resolved.ws, resolved.value_row, resolved.value_col).number_format())
+            if places is not None:
+                if places == 4:
+                    return "PASS", ""
+                return "NG", f"重量小数位数应为4位，识别值={raw_weight:.{places}f}，小数位={places}"
+        weight_value = str(raw_weight or "").replace("\n", "").replace("\r", "").strip()
 
         numeric_match = re.search(r"[-+]?\d+(?:\.\d+)?", weight_value.replace(",", ""))
         if not numeric_match:
@@ -563,8 +626,11 @@ class PswExcelAgent(ExcelAgent):
             return "NG", "条件批准行定位失败。"
 
         approval_date = self._extract_conditional_approval_date(main_sheet, disposition_row)
-        if approval_date is None:
-            return "NG", "无法识别条件批准日期。"
+        if approval_date == "invalid":
+            return "NG", "条件批准日期不是有效日期，无法识别条件批准日期。"
+        if not isinstance(approval_date, date):
+            # Not found in the searched area or written in an unsupported form.
+            return "UNABLE", "无法识别条件批准日期。"
 
         today = datetime.now().date()
         days_delta = (today - approval_date).days

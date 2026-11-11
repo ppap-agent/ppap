@@ -170,10 +170,15 @@ class ControlPlanAgent(ExcelAgent):
         self,
         cells: list[tuple[int, int, str]],
         token_groups: tuple[tuple[str, ...], ...],
+        masked_tokens: tuple[str, ...] = (),
     ) -> bool:
         mark_cells = {(row, col) for row, col, text in cells if self._contains_check_mark(text)}
         for row, col, text in cells:
-            if not any(all(token in text for token in group) for group in token_groups):
+            # “生产”是“试生产”的子串：先去掉包含本阶段词的其他阶段词再匹配。
+            option_text = text
+            for token in masked_tokens:
+                option_text = option_text.replace(token, "")
+            if not any(all(token in option_text for token in group) for group in token_groups):
                 continue
             if self._contains_check_mark(text):
                 return True
@@ -191,10 +196,26 @@ class ControlPlanAgent(ExcelAgent):
             "pre_launch": block.checked_count("阶段试生产字段") > 0,
             "production": block.checked_count("阶段生产字段") > 0,
         }
-        for stage_name, groups in self._normalized_stage_token_groups().items():
+        stage_groups = self._normalized_stage_token_groups()
+        for stage_name, groups in stage_groups.items():
             if flags[stage_name]:
                 continue
-            flags[stage_name] = self._is_stage_checked(stage_cells, groups)
+            own_tokens = {token for group in groups for token in group}
+            masked_tokens = tuple(
+                sorted(
+                    {
+                        other
+                        for other_name, other_groups in stage_groups.items()
+                        if other_name != stage_name
+                        for other_group in other_groups
+                        for other in other_group
+                        if any(token != other and token in other for token in own_tokens)
+                    },
+                    key=len,
+                    reverse=True,
+                )
+            )
+            flags[stage_name] = self._is_stage_checked(stage_cells, groups, masked_tokens)
         return flags
 
     def _iter_detail_rows(self, section: Any, columns: dict[str, Any]) -> list[Any]:

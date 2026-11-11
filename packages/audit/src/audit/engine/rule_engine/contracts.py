@@ -123,6 +123,8 @@ class SectionModel(BaseModel):
     header_compact_match: bool = False
     column_band: int = Field(default=2, ge=0)
     row_expand_merged_anchors: bool = False
+    # "any": a row exists when any row anchor is filled, and each physical row is visited.
+    row_anchor_match: Literal["first", "any"] = "first"
     row_stop_on_first_blank: bool = True
     row_max_blank_streak: int = Field(default=8, ge=1)
     row_stop_markers: tuple[str, ...] = ()

@@ -29,6 +29,16 @@ class PfmeaAgent(ExcelAgent):
 
     DOC_TYPE = PpapDocumentType.PFMEA
 
+    @staticmethod
+    def _cross_table_result(ctx: RuleContext) -> Tuple[str, str]:
+        """No 过程流程图 table fails the clause; comparing a present one is not implemented."""
+        Table(ctx).sheet("PFMEA主表")
+        flow_sheets = [ws.title for ws in ctx.workbook.worksheets if ws.sheet_state == "visible" and ("流程图" in ws.title or "flow" in ws.title.lower())]
+        ctx.record_execution()
+        if not flow_sheets:
+            return "NG", "未包含过程流程图表。"
+        return "UNABLE", "PFMEA与过程流程图的逐行比对尚未实现，需人工核对。"
+
     @rule("表头字段完整性检查")
     def rule_1(self, ctx: RuleContext) -> Tuple[str, str]:
         """
@@ -107,8 +117,7 @@ class PfmeaAgent(ExcelAgent):
         规则3：识别是否有PFMEA表、过程流程图表，如果不包含则不通过，否则继续识别PFMEA表中是否包含“过程步骤”列，过程流程图中是否包含“工序号”、“工序名称”列，
         如果包含则继续识别，PFMEA表中的“过程步骤”列下内容是否与过程流程图中的“工序名称”内容一致，如果是则通过，否则不通过
         """
-        logger.debug("开始执行规则1：三大文件对应性检查")
-        return "NG", "此规则需要跨文件比较，无法在单个PFMEA文件中完成"
+        return self._cross_table_result(ctx)
 
     @rule("过程项功能维度检查")
     def rule_4(self, ctx: RuleContext) -> Tuple[str, str]:
@@ -166,8 +175,7 @@ class PfmeaAgent(ExcelAgent):
         如果包含则继续识别。当过程流程图中的“特性类别”列下内容为“【G】”或“【Z】”时，则以对应行的“工序名称”的内容在PFMEA表中“过程步骤”列下识别是否有内容相同的行，
         如果存在则继续在PFMEA表中识别对应行的“特殊特性”列下内容是否同样为“G”或“Z”则通过，否则不通过
         """
-        logger.debug("开始执行规则5：特殊特性一致性检查")
-        return "NG", "此规则需要跨文件比较，无法在单个PFMEA文件中完成"
+        return self._cross_table_result(ctx)
 
     @rule("失效模式、失效影响、失效严重度维度检查")
     def rule_6(self, ctx: RuleContext) -> Tuple[str, str]:
@@ -187,8 +195,12 @@ class PfmeaAgent(ExcelAgent):
         def has_enough_dimensions(val: Any) -> bool:
             return len(re.split(r"[，,;:：/\n\r]+", str(val or ""))) >= 3
 
+        def severity_scores(val: Any) -> list[int]:
+            # “100%产品返工”中的百分数是失效描述，不是严重度分值。
+            return [int(x) for x in re.findall(r"\d+", re.sub(r"\d+(?:\.\d+)?\s*[%％]", "", str(val or "")))]
+
         def has_enough_scores(val: Any) -> bool:
-            return len(re.findall(r"\d+", str(val or ""))) >= 3
+            return len(severity_scores(val)) >= 3
 
         for row in rows:
             row.expect("失效影响", "严重度", context="失效影响及严重度")
@@ -197,7 +209,7 @@ class PfmeaAgent(ExcelAgent):
             row.expect_condition("失效影响", has_enough_scores, context="失效影响严重度分值数量")
 
             failure_effect_value = row.value("失效影响", compact=True)
-            effect_scores = [int(x) for x in re.findall(r"\d+", str(failure_effect_value or ""))]
+            effect_scores = severity_scores(failure_effect_value)
             if not effect_scores:
                 row.expect_condition("失效影响", lambda _value: False, context="失效影响严重度分值数量")
             max_severity_score = max(effect_scores) if effect_scores else -1

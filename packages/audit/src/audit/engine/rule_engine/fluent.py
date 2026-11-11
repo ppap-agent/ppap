@@ -616,8 +616,18 @@ class Section:
                 f"数据区[{self.resolved.section_name}]未命中任何行锚点列: {list(section_spec.row_anchors)}",
             )
 
+        anchor_cols = [anchor_col]
+        if section_spec.row_anchor_match == "any":
+            for name in section_spec.row_anchors:
+                if name == anchor_col.column_name:
+                    continue
+                extra = columns[name] if name in columns else self.ctx.optional_column(self.resolved, name)
+                if extra is not None:
+                    anchor_cols.append(extra)
+
         scan_columns = dict(columns)
-        scan_columns.setdefault(anchor_col.column_name, anchor_col)
+        for column in anchor_cols:
+            scan_columns.setdefault(column.column_name, column)
         direction = section_spec.direction
         normalized_stop_markers = tuple(marker.strip().lower() for marker in section_spec.row_stop_markers if marker.strip())
         compact_alias_tokens_by_column: dict[str, tuple[str, ...]] = {}
@@ -695,7 +705,7 @@ class Section:
                 self.resolved.ws,
                 anchor_col=anchor_col.header_col,
                 start_row=start_row,
-                anchor_is_filled=lambda row_idx: _anchor_filled(row_idx, anchor_col),
+                anchor_is_filled=lambda row_idx: any(_anchor_filled(row_idx, column) for column in anchor_cols),
                 stop_row_predicate=(_row_hits_stop_marker if normalized_stop_markers else None),
             ):
                 if _row_is_repeated_header(row_index):

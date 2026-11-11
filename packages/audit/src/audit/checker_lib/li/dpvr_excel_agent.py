@@ -23,11 +23,8 @@ _SHEET_NAME = "DPVR工作表"
 _SECTION_NAME = "DPVR主数据区"
 _VALID_TEST_TYPES = {"DV", "PV"}
 _SECTION_HEADER_PATTERN = re.compile(r"^[一二三四五六七八九十百千万\d]+、")
-_EN_PASS_TOKEN_PATTERN = re.compile(r"\b(?:p|pass)\b", flags=re.IGNORECASE)
-_EN_HARD_NEGATIVE_PATTERN = re.compile(r"\b(?:f|fail|ng)\b", flags=re.IGNORECASE)
-_CN_POSITIVE_TOKENS = ("合格", "符合", "通过")
-_CN_NEUTRAL_TOKENS = ("不做判定",)
-_CN_HARD_NEGATIVE_TOKENS = ("不合格", "未通过", "不通过")
+# 条款要求结论文字严格一致，不接受意思相近的描述（英文不区分大小写）。
+_PASS_CONCLUSIONS = {"符合", "通过", "合格", "p", "pass"}
 _REPORT_NUMBER_LABEL_TOKENS = {
     "试验报告编号",
     "检测报告编号",
@@ -134,18 +131,8 @@ class DpvrExcelAgent(ExcelAgent):
         return not self._is_label_only_value(compact_text, labels=labels)
 
     def _rule2_is_pass(self, value: Any) -> bool:
-        compact_text, spaced_text = self._normalize_text(value)
-        has_hard_negative = any(token in compact_text for token in _CN_HARD_NEGATIVE_TOKENS) or bool(_EN_HARD_NEGATIVE_PATTERN.search(spaced_text))
-        if has_hard_negative:
-            return False
-
-        has_positive = any(token in compact_text for token in _CN_POSITIVE_TOKENS) or bool(_EN_PASS_TOKEN_PATTERN.search(spaced_text))
-        has_neutral = any(token in compact_text for token in _CN_NEUTRAL_TOKENS)
-        if has_positive:
-            return True
-        if has_neutral:
-            return False
-        return False
+        compact_text, _ = self._normalize_text(value)
+        return compact_text in _PASS_CONCLUSIONS
 
     def _normalize_test_type(self, value: Any) -> str:
         compact_text, _ = self._normalize_text(value)
@@ -331,8 +318,17 @@ class DpvrExcelAgent(ExcelAgent):
     def _layered_sample_quantities(self, table: Table) -> list[str]:
         return self._layered_values_for_labels(table, _SAMPLE_QUANTITY_FIELD_LABELS)
 
-    def _layered_phase_hits(self, table: Table) -> set[str]:
-        hits: set[str] = set()
+    def _phase_keys(self, value: Any) -> set[str]:
+        key = self._label_key(value)
+        return {
+            phase
+            for phase, tokens in (("前", ("试验前", "beforethetest")), ("中", ("试验中", "inprocess")), ("后", ("试验后", "afterthetest", "afterthetes")))
+            if any(token in key for token in tokens)
+        }
+
+    def _layered_phase_hits(self, table: Table) -> dict[str, set[str]]:
+        """Phase label -> titles of the sheets where that label is written."""
+        hits: dict[str, set[str]] = {}
         sheets = table.find_sheets(_SHEET_NAME, on_missing=Decision.IGNORE)
         for sheet in sheets:
             for cell in sheet.scan_non_empty(
@@ -341,14 +337,27 @@ class DpvrExcelAgent(ExcelAgent):
                 col_min=1,
                 col_max=min(sheet.ws.max_column, 80),
             ):
-                key = self._label_key(cell.value())
-                if "试验前" in key or "beforethetest" in key:
-                    hits.add("前")
-                if "试验中" in key or "inprocess" in key:
-                    hits.add("中")
-                if "试验后" in key or "afterthetest" in key or "afterthetes" in key:
-                    hits.add("后")
+                for phase in self._phase_keys(cell.value()):
+                    hits.setdefault(phase, set()).add(sheet.title)
         return hits
+
+    def _source_pdf_phase_pictures(self) -> dict[str, bool] | None:
+        """Per phase: does an original PDF page carrying that label also carry a picture? None when unreadable."""
+        path = self._source_pdf_path()
+        if path is None:
+            return None
+        try:
+            import fitz
+
+            found: dict[str, bool] = {}
+            with fitz.open(str(path)) as doc:
+                for page in doc:
+                    has_picture = bool(page.get_images())
+                    for phase in self._phase_keys(page.get_text("text")):
+                        found[phase] = found.get(phase, False) or has_picture
+            return found
+        except Exception:
+            return None
 
     def _is_section_header_serial(self, serial_value: Any) -> bool:
         compact_text = re.sub(r"\s+", "", str(serial_value or "").strip())
@@ -419,7 +428,7 @@ class DpvrExcelAgent(ExcelAgent):
             row.expect_condition(
                 "实际试验结果",
                 self._rule2_is_pass,
-                context="同一单元格内命中硬否定词判NG；其余需命中合格/符合/通过/P/PASS（可与“不做判定”并存）",
+                context="结论须严格为符合/通过/合格/P/pass",
             )
         return "PASS", ""
 
@@ -491,7 +500,17 @@ class DpvrExcelAgent(ExcelAgent):
             missing = [phase for phase in ("前", "中", "后") if phase not in phase_hits]
             if missing:
                 return "NG", f"试验报告缺少试验{','.join(missing)}阶段图片证据"
-            return "PASS", "试验报告包含试验前、中、后阶段图片证据"
+            # 阶段文字只说明位置，必须有图片才算该阶段的图片。
+            if self._source_pdf_path() is not None:
+                pictures = self._source_pdf_phase_pictures()
+                if pictures is None or any(phase not in pictures for phase in ("前", "中", "后")):
+                    return "UNABLE", "无法在原PDF中定位试验前、中、后阶段图片，需人工核对。"
+            else:
+                pictures = {phase: any(getattr(ctx.workbook[title], "_images", None) for title in titles) for phase, titles in phase_hits.items()}
+            without_picture = [phase for phase in ("前", "中", "后") if not pictures[phase]]
+            if without_picture:
+                return "NG", f"试验{','.join(without_picture)}阶段只有文字，未见图片"
+            return "PASS", "试验报告包含试验前、中、后阶段图片"
 
         sheets = table.find_sheets(_SHEET_NAME)
         rows_by_sheet: dict[str, list[Any]] = {}
@@ -513,11 +532,18 @@ class DpvrExcelAgent(ExcelAgent):
                 continue
 
             matched_sheets += 1
+            # 图片浮在单元格上：只认锚定在该阶段图片列、数据行范围内的图片，单元格文字不算。
+            anchors = set()
+            for image in getattr(fluent_sheet.ws, "_images", None) or ():
+                start = getattr(getattr(image, "anchor", None), "_from", None)
+                if start is not None:
+                    anchors.add((start.row + 1, start.col + 1))
+            data_rows = {row.row_index for row in rows}
             found = {"前": False, "中": False, "后": False}
-            for row in rows:
-                for phase, column_name in phase_columns:
-                    if column_name in row.columns and row.is_present(column_name):
-                        found[phase] = True
+            for phase, column_name in phase_columns:
+                column = rows[0].columns.get(column_name)
+                if column is not None:
+                    found[phase] = any(col == column.header_col and min(data_rows) <= row_index <= max(data_rows) for row_index, col in anchors)
 
             missing = [phase for phase, present in found.items() if not present]
             if missing:

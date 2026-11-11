@@ -426,8 +426,8 @@ class PfmeaAgent(ExcelAgent):
                 return "NG", "未找到PFMEA工作表"
 
             field_specs = [
-                ("公司名称", ["公司名称", "客户名称"]),
-                ("车型项目", ["车型项目", "项目"]),
+                ("公司名称", ["公司名称"]),
+                ("车型项目", ["车型项目"]),
                 ("零件名称", ["零件名称"]),
                 ("零件号", ["零件号", "零件编号"]),
                 ("制造地址", ["制造地址", "工程地点"]),
@@ -512,9 +512,9 @@ class PfmeaAgent(ExcelAgent):
                 return "NG", "未找到PFMEA工作表"
 
             required_classic = {
-                "内部": ["内部", "工厂内", "厂内", "内"],
+                "内部": ["内部", "工厂内", "厂内"],
                 "客户工厂": ["客户工厂", "主机厂", "OEM", "顾客工厂"],
-                "最终用户": ["最终用户", "用户", "终端用户", "消费者", "客户", "OEM"],
+                "最终用户": ["最终用户", "终端用户", "消费者"],
             }
             required_soc = {"s", "o", "c"}
 
@@ -723,7 +723,7 @@ class PfmeaAgent(ExcelAgent):
                             issues.append(("dimension_lt_3", r, content_val, None, False))
                             continue
 
-                        scores = list(map(int, re.findall(r"(\d+)", content_val)))
+                        scores = self._dimension_scores(content_val)
                         if len(scores) < 3:
                             issues.append(("missing_dimension_score", r, None, None, False))
                             continue
@@ -755,6 +755,18 @@ class PfmeaAgent(ExcelAgent):
             return "PASS", "严重度检查通过"
         except Exception as e:
             return "NG", f"Excel处理过程中出现错误: {e}"
+
+    def _dimension_scores(self, text: str) -> list[int]:
+        """Severity scores of the effect dimensions; numbers such as 100% are not scores."""
+        bracket_scores = [int(v) for v in re.findall(r"[（(]\s*(\d{1,2})\s*[）)]", text or "")]
+        if bracket_scores:
+            return bracket_scores
+        scores: list[int] = []
+        for segment in re.split(r"[，,;；\n\r]+", text or ""):
+            score = self._extract_dimension_score(segment)
+            if score is not None:
+                scores.append(score)
+        return scores
 
     def _extract_dimension_score(self, text: str) -> Optional[int]:
         """Extract severity score from one dimension sentence, ignoring percentages."""
@@ -858,10 +870,6 @@ class PfmeaAgent(ExcelAgent):
                 and (op_key == step_key or op_key in step_key or step_key in op_key)
                 for step_key, step_info in pfmea_steps.items()
             ):
-                continue
-
-            normalized_process_code = op_info["normalized_process_code"]
-            if normalized_process_code and any(step_info["normalized_process_code"] == normalized_process_code for step_info in pfmea_steps.values() if step_info["normalized_process_code"]):
                 continue
 
             missing_issues.append(prepend_row_location(op_info["row"], f"PFD工序'{op_info['raw']}'在PFMEA过程步骤中未找到对应行"))

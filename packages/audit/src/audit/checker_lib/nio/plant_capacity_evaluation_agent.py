@@ -20,7 +20,7 @@ import logging
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from typing import Any, Tuple
 
-from audit.engine.rule_engine import RuleContext, Table
+from audit.engine.rule_engine import GuardStop, RuleContext, Table
 from audit.kinds import PpapDocumentType
 
 from .excel_agent import ExcelAgent, rule
@@ -156,6 +156,7 @@ class PlantCapacityEvaluationAgent(ExcelAgent):
         识别“良率”、“合格品数”、“产出数量”三列，如果三列都存在则继续识别；当每一行的“良率”=“合格品数”÷“产出数量”则通过，否则不通过
         """
         try:
+            unreadable_rows: list[str] = []
             section = Table(ctx).sheet("主表").section("产能数据区")
             columns = section.columns("良率", "合格品数", "产出数量")
             is_ocr_table = self._is_ocr_table_sheet(section.sheet_title)
@@ -184,12 +185,18 @@ class PlantCapacityEvaluationAgent(ExcelAgent):
                     if yield_value in {"", "none", "nan"} and qualified_qty_value in {"", "none", "nan"} and output_qty_value in {"", "none", "nan"}:
                         continue
                     if is_ocr_table:
+                        # A converted PDF table may have misread this row; it cannot pass unseen.
+                        unreadable_rows.append(self._row_label(row, *columns))
                         continue
                     return (
                         "NG",
                         f"第{self._row_label(row, '良率', '合格品数', '产出数量')}行良率、合格品数或产出数量存在无效值。",
                     )
+            if unreadable_rows:
+                return "UNABLE", f"PDF识别表第{'、'.join(unreadable_rows[:8])}行数值无法识别，不能核对计算。"
             return "PASS", ""
+        except GuardStop:
+            raise
         except Exception as exc:
             logger.error(f"良率计算检查异常: {exc}")
             return "NG", "良率计算检查发生异常，请检查表格数据格式。"
@@ -201,10 +208,9 @@ class PlantCapacityEvaluationAgent(ExcelAgent):
         当每一行的“单线体/工序总产出JPH”=“产出数量”÷“净利用时间”÷“参与测试线体数量”则通过，否则不通过
         """
         try:
+            unreadable_rows: list[str] = []
             section = Table(ctx).sheet("主表").section("产能数据区")
             is_ocr_table = self._is_ocr_table_sheet(section.sheet_title)
-            if is_ocr_table:
-                return "PASS", ""
             columns = section.columns(
                 "单线体/工序总产出JPH",
                 "产出数量",
@@ -238,12 +244,18 @@ class PlantCapacityEvaluationAgent(ExcelAgent):
                     if jph_value in {"", "none", "nan"} and output_qty_value in {"", "none", "nan"} and net_util_time_value in {"", "none", "nan"} and test_line_qty_value in {"", "none", "nan"}:
                         continue
                     if is_ocr_table:
+                        # A converted PDF table may have misread this row; it cannot pass unseen.
+                        unreadable_rows.append(self._row_label(row, *columns))
                         continue
                     return (
                         "NG",
                         f"第{self._row_label(row, '单线体/工序总产出JPH', '产出数量', '净利用时间（h）', '参与测试线体数量')}行JPH、产出数量、净利用时间或参与测试线体数量存在无效值。",
                     )
+            if unreadable_rows:
+                return "UNABLE", f"PDF识别表第{'、'.join(unreadable_rows[:8])}行数值无法识别，不能核对计算。"
             return "PASS", ""
+        except GuardStop:
+            raise
         except Exception as exc:
             logger.error(f"单线体/工序总产出JPH计算检查异常: {exc}")
             return "NG", "产出效率检查发生异常，请检查表格数据格式。"
@@ -255,6 +267,7 @@ class PlantCapacityEvaluationAgent(ExcelAgent):
         计算值有小数时，“线体/工序预估月度产能”在向下取整值和向上取整值之间则通过；计算值为整数时必须等于计算值。
         """
         try:
+            unreadable_rows: list[str] = []
             section = Table(ctx).sheet("主表").section("产能数据区")
             columns = section.columns(
                 "线体/工序预估月度产能",
@@ -319,6 +332,8 @@ class PlantCapacityEvaluationAgent(ExcelAgent):
                     ):
                         continue
                     if is_ocr_table:
+                        # A converted PDF table may have misread this row; it cannot pass unseen.
+                        unreadable_rows.append(self._row_label(row, *columns))
                         continue
                     row_label = self._row_label(
                         row,
@@ -334,7 +349,11 @@ class PlantCapacityEvaluationAgent(ExcelAgent):
                         "NG",
                         f"第{row_label}行月度产能计算相关字段存在无效值。",
                     )
+            if unreadable_rows:
+                return "UNABLE", f"PDF识别表第{'、'.join(unreadable_rows[:8])}行数值无法识别，不能核对计算。"
             return "PASS", ""
+        except GuardStop:
+            raise
         except Exception as exc:
             logger.error(f"线体/工序预估月度产能计算检查异常: {exc}")
             return "NG", "产能预估检查发生异常，请检查表格数据格式。"

@@ -34,6 +34,7 @@ _DOC10_RESOURCE_MODEL = RuleResourceModel(
             header_search_max_col=80,
             header_compact_match=True,
             column_band=2,
+            row_expand_merged_anchors=True,
             row_stop_on_first_blank=False,
             row_max_blank_streak=20,
             row_stop_markers=("反应计划", "reaction plan", "reactionplan", "备注"),

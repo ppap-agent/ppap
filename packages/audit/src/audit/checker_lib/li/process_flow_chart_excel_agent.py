@@ -161,15 +161,12 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
         table = Table(ctx)
         block = table.field_block("过程流程图头部字段区")
 
-        # 保持历史行为：代码字段不做非空校验，只要求存在。
-        # block.field() 找不到字段会自动抛出 GuardStop
-        block.field("代码字段")
-
         required_non_empty_field_names = (
             "零件号字段",
             "零件名称字段",
             "项目车型字段",
             "供应商名称字段",
+            "代码字段",
             "编制日期字段",
             "版本字段",
             "团队字段",
@@ -415,29 +412,27 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
             return "NG", "过程流程工序定义区未识别到有效工序行。"
 
         column_indices = [column.header_col for column in columns.values()]
-        connector_rows: set[int] | None = None
-
-        def load_connector_rows() -> set[int]:
-            nonlocal connector_rows
-            if connector_rows is None:
-                process_row_indices = [row_index for row_index, _ in ordered_rows]
-                connector_rows = self._rows_with_connector_evidence(
-                    ws,
-                    row_min=min(process_row_indices),
-                    row_max=max(process_row_indices),
-                    col_min=min(column_indices),
-                    col_max=max(column_indices),
-                )
-            return connector_rows
-
-        evidence_rows = load_connector_rows()
+        process_row_indices = [row_index for row_index, _ in ordered_rows]
+        # None：连线证据无法读取（如 .xls），只能据此判断的行不能判 NG。
+        connector_evidence = self._rows_with_connector_evidence(
+            ws,
+            row_min=min(process_row_indices),
+            row_max=max(process_row_indices),
+            col_min=min(column_indices),
+            col_max=max(column_indices),
+        )
+        evidence_rows = connector_evidence or set()
 
         def row_is_connected(row_index: int, present_columns: set[str]) -> bool:
             # 严格语义：行有效 = 图例列有命中 或 连线证据覆盖该行
             return bool(present_columns) or row_index in evidence_rows
 
+        unknown_rows: list[int] = []
         unresolved_rows: list[int] = []
         for row_index, present_columns in ordered_rows:
+            if connector_evidence is None and not present_columns:
+                unknown_rows.append(row_index)
+                continue
             row_obj = process_rows_by_index.get(row_index)
             if row_obj is None:
                 if not row_is_connected(row_index, present_columns):
@@ -464,14 +459,20 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
             if has_direct_column_overlap:
                 continue
 
+            if connector_evidence is None:
+                unknown_rows.append(row_index)
+                continue
             segment_has_connector_coverage = all(candidate_row in evidence_rows for candidate_row in range(prev_row_index, row_index + 1))
             if not segment_has_connector_coverage:
                 row_breakpoints.append(row_index)
 
         unresolved_rows = sorted(set(unresolved_rows + row_breakpoints))
-        if not unresolved_rows:
-            return "PASS", ""
-        return "NG", f"存在流程断点行: {', '.join(str(r) for r in unresolved_rows[:3])}"
+        if unresolved_rows:
+            return "NG", f"存在流程断点行: {', '.join(str(r) for r in unresolved_rows[:3])}"
+        if unknown_rows:
+            shown = ", ".join(str(r) for r in sorted(set(unknown_rows))[:3])
+            return "UNABLE", f"无法读取流程图连线，不能确认以下行是否连通: {shown}"
+        return "PASS", ""
 
     def _xml_local_name(self, tag: str) -> str:
         return tag.split("}", 1)[-1]
@@ -526,14 +527,14 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
         row_max: int,
         col_min: int,
         col_max: int,
-    ) -> set[int]:
+    ) -> set[int] | None:
         """
         Return rows covered by connectors whose endpoints attach to process symbols.
-        Fail-closed: parsing failure returns an empty set.
+        None means the drawing could not be read (unsupported format or parse failure).
         """
         source_path = str(self._source_path or "")
         if not source_path.lower().endswith((".xlsx", ".xlsm")) or not os.path.exists(source_path):
-            return set()
+            return None
 
         evidence_rows: set[int] = set()
         excel_ops = DefaultExcelOps()
@@ -544,7 +545,7 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
             with zipfile.ZipFile(source_path, "r") as zf:
                 sheet_xml_path = self._resolve_sheet_xml_path(zf, ws.title)
                 if not sheet_xml_path:
-                    return set()
+                    return None
 
                 sheet_xml = ET.fromstring(zf.read(sheet_xml_path))
                 rels_path = self._sheet_rels_path(sheet_xml_path)
@@ -654,7 +655,7 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
             return evidence_rows
         except Exception as exc:
             logger.warning("流程图连线解析失败: %s", exc)
-            return set()
+            return None
 
     def _connector_endpoint_is_attached(
         self,

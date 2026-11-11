@@ -921,8 +921,6 @@ class ControlPlanAgent(ExcelAgent):
                 for cp_key, cp_info in cp_operations.items()
             ):
                 continue
-            if pfd_operation_no_key and any(operation_number_key(cp_info.get("operation_no", "")) == pfd_operation_no_key for cp_info in cp_operations.values()):
-                continue
 
             row_ref = {
                 "__sheet_name": pfd_info.get("sheet_name", ""),
@@ -2624,9 +2622,14 @@ class ControlPlanAgent(ExcelAgent):
                 continue  # 当前 sheet 缺少字段，尝试下一个 sheet
 
             # ---- 检查"控制计划类型"是否有且仅有一个选项被勾选 ----
+            # Only the option rows of the control plan type belong to this
+            # choice; a mark in the data table is not a control plan type.
             marks = {"■", "☑", "✓", "√"}
             selected_stage_types: List[str] = []
+            type_rows = range(_control_plan_type_row - 1, _control_plan_type_row + 3) if _control_plan_type_row is not None else range(0)
             for (_r, _c), cleaned in all_cells.items():
+                if _r not in type_rows:
+                    continue
                 if any(m in cleaned for m in marks):
                     for stage_type in self._extract_selected_stages_from_cell(cleaned):
                         if stage_type not in selected_stage_types:
