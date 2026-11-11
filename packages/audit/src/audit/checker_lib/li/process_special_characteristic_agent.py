@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Tuple
 
-from audit.engine.rule_engine import RuleContext, Table
+from audit.engine.rule_engine import Row, RuleContext, Table
 from audit.kinds import PpapDocumentType
 
 from .excel_agent import ExcelAgent, rule
@@ -15,7 +15,15 @@ class ProcessSpecialCharacteristicAgent(ExcelAgent):
 
     DOC_TYPE = PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST
     # 合并单元格覆盖的每一行都是数据行，各自检查。
-    RESOURCE_OVERRIDES = {"sections": {"主数据区": {"row_expand_merged_anchors": True}}}
+    # 风险评估列也是行锚点（排在最后，只在不取“过程/流程步骤”列时生效），高风险行即使步骤为空也能读到。
+    RESOURCE_OVERRIDES = {
+        "sections": {
+            "主数据区": {
+                "row_expand_merged_anchors": True,
+                "row_anchors": ("序号", "过程/流程步骤", "零件编号", "特性分类", "现有管理方式风险评估"),
+            }
+        }
+    }
 
     @rule("关键字段完整性检查")
     def rule_1(self, ctx: RuleContext) -> Tuple[str, str]:
@@ -101,10 +109,12 @@ class ProcessSpecialCharacteristicAgent(ExcelAgent):
             "高风险管理项预防措施",
         )
 
-        for row in section.rows_from(columns):
-            if not row.is_present("过程/流程步骤"):
-                continue
-
+        # 步骤列有内容的行与风险评估列有内容的行都检查。
+        risk_columns = {name: columns[name] for name in ("现有管理方式风险评估", "高风险管理项预防措施")}
+        row_indices = {row.row_index for row in section.rows_from(columns)}
+        row_indices |= {row.row_index for row in section.rows_from(risk_columns)}
+        for row_index in sorted(row_indices):
+            row = Row(ctx, section.resolved.ws, columns, row_index, section.resolved)
             is_high_risk = row.exact(
                 "现有管理方式风险评估",
                 "高风险",
@@ -122,6 +132,6 @@ class ProcessSpecialCharacteristicAgent(ExcelAgent):
             if not is_high_risk:
                 continue
 
-            row.expect("高风险管理项预防措施", context="高风险管理项")
+            row.expect("过程/流程步骤", "高风险管理项预防措施", context="高风险管理项")
 
         return "PASS", ""

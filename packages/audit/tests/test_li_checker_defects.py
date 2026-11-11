@@ -845,3 +845,110 @@ def test_li_control_plan_header_version_is_not_the_revision_history_label(tmp_pa
     result = check(tmp_path, ControlPlanAgent, workbook, 6)
 
     assert result.status == "PASS", result.suggestions
+
+
+SUPPLIER_HEADER = ["零件号", "单件重量", "材料执行标准", "材料类型", "材料牌号", "材料规格/尺寸", "材料供应商名称", "通过何种质量管理体系认证", "自制", "外协-国产", "外协-进口", "领用件", "完成PPAP"]
+
+
+@pytest.mark.parametrize(
+    ("marks", "expected"),
+    [
+        (("×", None, None, None), "PASS"),
+        (("☒", "N", "N", "N"), "PASS"),
+        (("Y", "否", "/", "-"), "PASS"),
+        (("—", "no", "n/a", "√"), "PASS"),
+        (("√", "×", None, None), "NG"),
+        (("N", "N", "N", "NA"), "NG"),
+    ],
+    ids=["cross", "box-and-n", "y-and-placeholders", "dash-no-na", "two-selected", "none-selected"],
+)
+def test_supplier_status_n_and_placeholders_are_not_a_selection(tmp_path, marks, expected):
+    from audit.checker_lib.li.sub_supplier_list_excel_agent import SubSupplierListExcelAgent
+
+    workbook = Workbook()
+    workbook.active.title = "材料清单"
+    workbook.active.append(SUPPLIER_HEADER)
+    workbook.active.append(["P001", "0.1200", "GB", "PP", "PP-T20", "2mm", "供应商A", "IATF16949", *marks, "Y"])
+
+    result = check(tmp_path, SubSupplierListExcelAgent, workbook, 3)
+
+    assert result.status == expected, result.suggestions
+
+
+def ccsc(*rows: list[object]) -> Workbook:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "产品过程CCSC特性管理清单"
+    sheet.append(["工序流程编号", "P阶段Cpk结果", "P阶段结果判定"])
+    for values in rows:
+        sheet.append(values)
+    return workbook
+
+
+@pytest.mark.parametrize("rule_number", [1, 2])
+def test_ccsc_rows_numbered_na_are_skipped(tmp_path, rule_number):
+    from audit.checker_lib.li.initial_process_capacity_agent import InitialProcessCapacityAgent
+
+    result = check(tmp_path, InitialProcessCapacityAgent, ccsc(["OP10", 1.5, "达标"], ["NA", 0.5, "未达标"]), rule_number)
+
+    assert result.status == "PASS", result.suggestions
+
+
+@pytest.mark.parametrize("rule_number", [1, 2])
+def test_ccsc_rows_after_a_blank_number_are_checked(tmp_path, rule_number):
+    from audit.checker_lib.li.initial_process_capacity_agent import InitialProcessCapacityAgent
+
+    result = check(tmp_path, InitialProcessCapacityAgent, ccsc(["OP10", 1.5, "达标"], [None, None, None], ["OP30", 0.5, "未达标"]), rule_number)
+
+    assert result.status == "NG", result.suggestions
+
+
+@pytest.mark.parametrize(("step", "risk", "expected"), [("装配", "高风险", "PASS"), (None, "高风险", "NG"), (None, "低风险", "PASS")])
+def test_high_risk_row_without_step_is_checked(tmp_path, step, risk, expected):
+    from audit.checker_lib.li.process_special_characteristic_agent import ProcessSpecialCharacteristicAgent
+
+    workbook = Workbook()
+    workbook.active.title = "过程特殊特性清单"
+    workbook.active.append(["序号", "过程/流程步骤", "现有管理方式风险评估", "高风险管理项预防措施"])
+    workbook.active.append([1, "焊接", "低风险", None])
+    workbook.active.append([2, step, risk, "防错"])
+
+    result = check(tmp_path, ProcessSpecialCharacteristicAgent, workbook, 3)
+
+    assert result.status == expected, result.suggestions
+
+
+@pytest.mark.parametrize(("rule_number", "orphan"), [(1, [3, None, None, "供应商B"]), (2, [3, None, None, None, None, None, None, None, None, None, None, "通过"])])
+def test_equipment_row_with_content_in_any_column_is_a_data_row(tmp_path, rule_number, orphan):
+    from audit.checker_lib.li.equipment_list_agent import EquipmentListAgent
+
+    full = [1, "L1", "设备A", "供应商A", "M1", 1, 0, "通用", "2026-01-01", "2026-01-01", "已验收", "通过", None, None]
+
+    result = check(tmp_path, EquipmentListAgent, equipment(full, orphan), rule_number)
+
+    assert result.status == "NG", result.suggestions
+
+
+@pytest.mark.parametrize("header", ["整车/总成功/性能性、SOP+3产能风险、安全性、法律法规风险", "整车/总成/性能性、SOP+3产能风险、安全性、法律法规风险"])
+@pytest.mark.parametrize(("answer", "expected"), [("Yes", "PASS"), ("待定", "NG")])
+def test_issue_risk_header_with_either_wording(tmp_path, header, answer, expected):
+    from audit.checker_lib.li.xir_assembly_issue_agent import XirAssemblyIssueAgent
+
+    workbook = xir(("YES", "YES", "YES", "YES"))
+    workbook.active["I7"] = header
+    workbook.active["C8"], workbook.active["I8"] = "装配异响", answer
+
+    result = check(tmp_path, XirAssemblyIssueAgent, workbook, 4)
+
+    assert result.status == expected, result.suggestions
+
+
+def test_flow_process_with_six_empty_columns_fails_even_under_a_connector(tmp_path, monkeypatch):
+    workbook = flow_chart()
+    workbook.active.append(["包装"])
+    workbook.active.append(["入库", None, None, None, None, None, None, None, "▽"])
+    monkeypatch.setattr(ProcessFlowChartExcelAgent, "_rows_with_connector_evidence", lambda self, ws, **_: set(range(1, 20)))
+
+    result = check(tmp_path, ProcessFlowChartExcelAgent, workbook, 6)
+
+    assert result.status == "NG", result.suggestions

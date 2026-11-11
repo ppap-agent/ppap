@@ -41,6 +41,14 @@ def _is_decimal_with_four_places(value: object, number_format: str) -> bool:
     return decimal_value.is_finite() and decimal_value.as_tuple().exponent == -4
 
 
+# “N”“否”与占位写法表示没有选这一列；“×”“√”“☒”“Y”等其他内容都算选中。
+_UNSELECTED = frozenset({"n", "no", "否", "/", "-", "—", "na", "n/a"})
+
+
+def _is_selected(text: str) -> bool:
+    return bool(text) and text.lower() not in _UNSELECTED
+
+
 class SubSupplierListExcelAgent(ExcelAgent):
     """材料、产品及分供方清单 Excel 文件专业审核代理。"""
 
@@ -136,8 +144,8 @@ class SubSupplierListExcelAgent(ExcelAgent):
                 checked_rows += 1
                 row.expect_condition(
                     status_columns[0],
-                    lambda _value: row.count_present(*status_columns) == 1,
-                    context="部件状态列必须且仅能有一列有内容",
+                    lambda _value: sum(_is_selected(row.value(name, compact=True)) for name in status_columns) == 1,
+                    context="部件状态列必须且仅能勾选一列",
                 )
             if checked_rows == 0:
                 return "NG", f"工作表[{sheet.title}]未识别到有效零件号数据行"

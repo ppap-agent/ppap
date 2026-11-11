@@ -425,29 +425,20 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
         )
         evidence_rows = connector_evidence or set()
 
-        def row_is_connected(row_index: int, present_columns: set[str]) -> bool:
-            # 严格语义：行有效 = 图例列有命中 或 连线证据覆盖该行
-            return bool(present_columns) or row_index in evidence_rows
-
         unknown_rows: list[int] = []
         unresolved_rows: list[int] = []
+        # 工序行的六列须至少一列有内容；连线经过该行也不能代替。
         for row_index, present_columns in ordered_rows:
-            if connector_evidence is None and not present_columns:
-                unknown_rows.append(row_index)
-                continue
             row_obj = process_rows_by_index.get(row_index)
             if row_obj is None:
-                if not row_is_connected(row_index, present_columns):
+                if not present_columns:
                     unresolved_rows.append(row_index)
                 continue
             try:
                 row_obj.expect_condition(
                     "工序定义-工序名称",
-                    lambda _value, current_row=row_index, current_columns=present_columns: row_is_connected(
-                        current_row,
-                        current_columns,
-                    ),
-                    context="图例列非空或存在连线覆盖",
+                    lambda _value, current_columns=present_columns: bool(current_columns),
+                    context="制造/运输/存储/检验/返工/报废至少一列有内容",
                 )
             except GuardStop:
                 unresolved_rows.append(row_index)

@@ -39,6 +39,11 @@ class InitialProcessCapacityAgent(ExcelAgent):
     """初始过程能力研究专业审核代理。"""
 
     DOC_TYPE = PpapDocumentType.INITIAL_PROCESS_CAPACITY_STUDY
+    # 检查到表格末尾，不在第一个空白“工序流程编号”处停止；编号为“NA”的行不检查。
+    RESOURCE_OVERRIDES = {
+        "sections": {"CCSC数据区": {"row_stop_on_first_blank": False, "row_max_blank_streak": 200}},
+        "columns": {"工序流程编号": {"missing_tokens": ("", "none", "nan", "na")}},
+    }
 
     @rule("P阶段Cpk结果列内容检查")
     def rule_1(self, ctx: RuleContext) -> Tuple[str, str]:

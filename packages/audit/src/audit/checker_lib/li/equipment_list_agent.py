@@ -14,6 +14,26 @@ class EquipmentListAgent(ExcelAgent):
     """设备清单专业审核代理。"""
 
     DOC_TYPE = PpapDocumentType.EQUIPMENT_LIST
+    # 任一列有内容的行都是数据行，不只看“产线/工序”和“设备”。
+    RESOURCE_OVERRIDES = {
+        "sections": {
+            "主数据区": {
+                "row_anchors": (
+                    "产线/工序",
+                    "设备",
+                    "供应商",
+                    "设备型号",
+                    "利旧设备数量",
+                    "新采购设备数量",
+                    "设备通用情况",
+                    "计划到位时间",
+                    "验收结果",
+                    "整改措施",
+                    "整改计划",
+                ),
+            }
+        }
+    }
 
     @rule("产线/工序、设备开发检查")
     def rule_1(self, ctx: RuleContext) -> Tuple[str, str]:
