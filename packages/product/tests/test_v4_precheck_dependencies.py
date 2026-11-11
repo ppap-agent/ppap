@@ -5,7 +5,7 @@ import json
 import pytest
 from audit.contracts import AuditInput, GroupContextInput
 from audit.kinds import PpapDocumentType as T
-from audit.precheck_dependencies import dependency_facts
+from audit.precheck.dependencies import dependency_facts
 from openpyxl import Workbook
 
 
@@ -278,7 +278,7 @@ def test_psw_title_is_not_its_delivery_list_title(tmp_path):
 def test_native_text_blocks_require_a_complete_title(surface, text, expected):
     from types import SimpleNamespace
 
-    from audit.precheck_dependencies import _has_title
+    from audit.precheck.dependencies import _has_title
 
     data = {"paragraphs": [{"text": text}]} if surface == "paragraphs" else {"pages": [{"blocks": [{"text": text}]}]}
     assert _has_title(SimpleNamespace(data=data), ("特殊特性清单",)) is expected
@@ -301,7 +301,7 @@ def test_native_text_blocks_require_a_complete_title(surface, text, expected):
 def test_native_split_label_and_title_preserves_own_title_context(surface, middle, label, title, expected):
     from types import SimpleNamespace
 
-    from audit.precheck_dependencies import _has_title
+    from audit.precheck.dependencies import _has_title
 
     blocks = [{"text": label}, *([{"text": middle}] if middle is not None else []), {"text": title}]
     if surface == "tables":

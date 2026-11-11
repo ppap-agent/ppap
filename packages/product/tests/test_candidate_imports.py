@@ -20,9 +20,9 @@ def base(files=None):
 @pytest.mark.parametrize(
     "old_import",
     [
-        b"from audit.checkers.v4.uaes.control_plan import UaesControlPlanAgent\n",
+        b"from audit.checker_lib.uaes.control_plan import UaesControlPlanAgent\n",
         b"from audit.standard_library import check_clause\n",
-        b"import importlib\nOLD = importlib.import_module('audit.checkers.v4.uaes.control_plan')\n",
+        b"import importlib\nOLD = importlib.import_module('audit.checker_lib.uaes.control_plan')\n",
     ],
     ids=["old-class", "old-helper", "literal-import"],
 )

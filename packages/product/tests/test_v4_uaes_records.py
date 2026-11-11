@@ -1,7 +1,7 @@
 """Independent source facts for UAES's simple records and photo boundary."""
 
 import pytest
-from audit.checkers.v4.uaes.records import UaesEngineeringHistoryAgent, UaesLabQualificationAgent, UaesPackagingAgent, UaesPhotoAgent, UaesTraceabilityAgent, UaesTrialAgent
+from audit.checker_lib.uaes.records import UaesEngineeringHistoryAgent, UaesLabQualificationAgent, UaesPackagingAgent, UaesPhotoAgent, UaesTraceabilityAgent, UaesTrialAgent
 from audit.contracts import AuditInput, RuleInput
 from audit.presets import preset_rule_body
 from openpyxl import Workbook
@@ -70,7 +70,7 @@ def test_controlled_stamp_uses_located_paddle_seal_facts_not_preprinted_labels(t
     from types import SimpleNamespace
 
     import fitz
-    from audit.checkers.v4.uaes.records import UaesControlledDocumentAgent
+    from audit.checker_lib.uaes.records import UaesControlledDocumentAgent
     from audit.engine.runtime import bind_runtime
     from documents.ocr.paddle import build_evidence
 
@@ -115,7 +115,7 @@ def test_controlled_stamp_uses_located_paddle_seal_facts_not_preprinted_labels(t
     ("variant", "expected"), [("same", "PASS"), ("wrong_part", "UNABLE"), ("wrong_customer", "UNABLE"), ("wrong_revision", "UNABLE"), ("duplicate", "UNABLE"), ("unreadable", "ERR")]
 )
 def test_materials_only_pairs_current_unique_matching_originals(tmp_path, variant, expected):
-    from audit.checkers.v4.uaes.materials import UaesMaterialsAgent
+    from audit.checker_lib.uaes.materials import UaesMaterialsAgent
     from audit.contracts import GroupContextInput
 
     def original(filename, *, part="P12345", customer="UAES", revision="A"):

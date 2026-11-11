@@ -2,9 +2,9 @@
 
 import json
 
-from audit.checkers.v4.uaes import CLASS_BY_ENTRY
+from audit.checker_lib.uaes import CLASS_BY_ENTRY
 from audit.contracts import AuditInput, RuleInput
-from audit.precheck_sources import l1_criteria
+from audit.precheck.sources import l1_criteria
 from audit.presets import preset_rule_body
 from openpyxl import Workbook
 
@@ -274,7 +274,7 @@ def test_msa_percent_sign_does_not_hide_out_of_range_values(tmp_path):
 
 
 def test_measurement_batch_checks_use_only_frozen_typed_originals(tmp_path):
-    from audit.checkers.v4.uaes.precheck_l1 import Facts, _mcr_batch
+    from audit.checker_lib.uaes.precheck_l1 import Facts, _mcr_batch
     from audit.contracts import GroupContextInput
 
     def original(filename, version, date_value, stage="PP"):
@@ -302,7 +302,7 @@ def test_measurement_batch_checks_use_only_frozen_typed_originals(tmp_path):
 
 
 def test_dual_form_filename_and_part_are_not_enough_to_establish_project_and_customer(tmp_path):
-    from audit.checkers.v4.uaes.precheck_l1 import _paired_original_fact
+    from audit.checker_lib.uaes.precheck_l1 import _paired_original_fact
     from audit.contracts import GroupContextInput
     from docx import Document
 

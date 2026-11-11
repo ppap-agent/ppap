@@ -41,9 +41,9 @@ def _resolved(files: dict[str, bytes], *, tenant_id: str | None, suite_key: str 
 
 
 def test_partial_official_directory_cannot_be_forced_into_the_active_head():
-    from audit.standard_suites import predefined_directory_suites, standard_suites
+    from audit.standard_suites import predefined_directory_suites
 
-    directory = next(suite for suite in predefined_directory_suites() if suite.source_path == "UAES/U08")
+    directory = next(suite for suite in predefined_directory_suites() if suite.source_path == "uaes/U08")
     files = dict(directory.files)
     # The policy concerns a partial candidate, independently of the shipped
     # leaf's current implementation coverage.
@@ -78,8 +78,11 @@ def test_partial_official_directory_cannot_be_forced_into_the_active_head():
     assert adoption_block(tenant, verified=False, force_unverified=True) is None
     assert adoption_block(tenant, verified=False, force_unverified=False) == "suite_confirmation_required"
 
-    legacy = next(suite for suite in standard_suites() if suite.suite_key == "UAES:U08")
-    legacy_suite = _resolved(dict(legacy.files), tenant_id=None, related=legacy.related_suite_keys)
+    carrier = {
+        "checker.py": b"from audit.standard_library import check_clause\nRESOURCES = {'carriers': {}, 'methods': {}}\ndef check(context):\n    return check_clause(context, RESOURCES)\n",
+        "rules.json": b'{"rules": [{"id": "U08:1"}], "checker_binding": {"U08:1": "checker:check"}}',
+    }
+    legacy_suite = _resolved(carrier, tenant_id=None, related=("UAES:U07", "UAES:U16"))
     assert partial_official_directory_slice(legacy_suite) is False
     assert adoption_block(legacy_suite, verified=True, force_unverified=True) == "suite_version_confirmation_required"
     assert adoption_block(legacy_suite, verified=False, force_unverified=True) == "suite_version_confirmation_required"

@@ -20,7 +20,7 @@ def assert_source_matches(path, table, row, column):
 
 
 def test_original_control_plan_nested_clause_matches_the_original_rule_source():
-    path = Path(__file__).resolve().parents[3] / "assets/理想/历史/规则V2.0/10 控制计划.docx"
+    path = Path(__file__).resolve().parents[3] / "assets/li/history/规则V2.0/10 控制计划.docx"
     assert_source_matches(path, 2, 1, 1)
 
 

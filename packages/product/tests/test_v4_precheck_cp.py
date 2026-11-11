@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 from audit.contracts import AuditInput
-from audit.precheck_cp import cp_precheck
+from audit.precheck.cp import cp_precheck
 from openpyxl import Workbook
 
 
@@ -268,7 +268,7 @@ def test_inline_reference_and_matching_attachment_are_executed(tmp_path):
 def test_same_part_versions_need_baseline_and_different_parts_are_not_duplicates(tmp_path):
     from audit.contracts import GroupContextInput
     from audit.kinds import PpapDocumentType
-    from audit.precheck_cp import cp_precheck
+    from audit.precheck.cp import cp_precheck
 
     audit = amend(original(tmp_path), fields={"零件号": "P-1"})
     other_path = tmp_path / "other"
@@ -362,7 +362,7 @@ def test_unknown_row_identity_is_not_silently_dropped_from_scope(tmp_path):
 def test_existing_target_reference_roles_select_baseline_without_new_state(tmp_path):
     from audit.contracts import GroupContextInput
     from audit.kinds import PpapDocumentType
-    from audit.precheck_cp import cp_precheck
+    from audit.precheck.cp import cp_precheck
 
     audit = amend(original(tmp_path), fields={"零件号": "P-1"})
     other_path = tmp_path / "baseline-ref"

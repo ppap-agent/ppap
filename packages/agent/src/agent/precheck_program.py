@@ -10,7 +10,7 @@ from typing import Literal
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from audit.checker_core import ExecutionSnapshot
-from audit.precheck_contract import input_digest, validate_result
+from audit.precheck.contract import input_digest, validate_result
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent.core_program import MAX_BUNDLE, MAX_MANIFEST, _read_staged, write_audit_manifest

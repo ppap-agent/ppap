@@ -4,10 +4,10 @@ import json
 
 import fitz
 import pytest
-from audit.checkers.v2 import pdf_agent as v2_pdf
-from audit.checkers.v2.psw_pdf_agent import PswPDFAgent as V2PswPDFAgent
-from audit.checkers.v3 import pdf_agent as v3_pdf
-from audit.checkers.v3.psw_pdf_agent import PswPDFAgent as V3PswPDFAgent
+from audit.checker_lib.li import pdf_agent as v2_pdf
+from audit.checker_lib.li.psw_pdf_agent import PswPDFAgent as V2PswPDFAgent
+from audit.checker_lib.nio import pdf_agent as v3_pdf
+from audit.checker_lib.nio.psw_pdf_agent import PswPDFAgent as V3PswPDFAgent
 from audit.contracts import (
     AuditInput,
     RuleInput,

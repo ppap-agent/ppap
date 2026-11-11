@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import pytest
-from audit.checkers.v3.control_plan_agent import ControlPlanAgent
+from audit.checker_lib.nio.control_plan_agent import ControlPlanAgent
 from audit.contracts import AuditInput, AuditResultItem, RuleInput
 from openpyxl import Workbook
 

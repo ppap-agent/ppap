@@ -145,7 +145,7 @@ class SuiteStore:
     def official_revision_id_for_source(self, source_path: str, *, conn=None) -> str | None:
         """Latest official revision stored for one predefined directory path.
 
-        Content digest is not part of the lookup, so ``UAES/U08`` and an identical
+        Content digest is not part of the lookup, so ``uaes/U08`` and an identical
         leaf at another path stay distinct. Legacy asset paths are not stored.
         """
         if not isinstance(source_path, str) or not source_path or source_path.strip() != source_path:

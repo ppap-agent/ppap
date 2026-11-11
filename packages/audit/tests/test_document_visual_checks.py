@@ -2,9 +2,9 @@
 
 import fitz
 import pytest
-from audit.checkers.v2.checking_fixture_approval_agent import CheckingFixtureApprovalAgent as V2Fixture
-from audit.checkers.v2.dimension_measurement_pdf_agent import DimensionMeasurementPDFAgent as V2Dimension
-from audit.checkers.v3.checking_fixture_approval_agent import CheckingFixtureApprovalAgent as V3Fixture
+from audit.checker_lib.li.checking_fixture_approval_agent import CheckingFixtureApprovalAgent as V2Fixture
+from audit.checker_lib.li.dimension_measurement_pdf_agent import DimensionMeasurementPDFAgent as V2Dimension
+from audit.checker_lib.nio.checking_fixture_approval_agent import CheckingFixtureApprovalAgent as V3Fixture
 from audit.contracts import AuditInput, RuleInput
 from audit.engine.runtime import bind_runtime
 from documents.contracts import ConversionArtifact
@@ -23,7 +23,7 @@ def original(tmp_path, monkeypatch):
     monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://ocr.invalid/v1")
     monkeypatch.setenv("OCR_MODEL_NAME", "configured-ocr")
     for version in ("v2", "v3"):
-        monkeypatch.setattr(f"audit.checkers.{version}.pdf_agent.convert_pdf_to_excel_auto", lambda *args, **kwargs: ConversionArtifact(success=False))
+        monkeypatch.setattr(f"audit.checker_lib.{'li' if version == 'v2' else 'nio'}.pdf_agent.convert_pdf_to_excel_auto", lambda *args, **kwargs: ConversionArtifact(success=False))
     monkeypatch.setattr("documents.ai.run_json", lambda *args, **kwargs: pytest.fail("Fixed visual predicates must not use the text model"))
     return source
 

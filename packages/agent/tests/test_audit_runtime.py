@@ -394,16 +394,16 @@ def create_audit(audit_file, rule, group_context):
     assert "Unbound code must not run" not in json.dumps(result)
 
 
-@pytest.mark.parametrize("customer,count", [("UAES", 19), ("理想", 17), ("蔚来", 5)])
+@pytest.mark.parametrize("customer,count", [("UAES", 19), ("理想", 17), ("蔚来", 17)])
 def test_all_standard_suites_execute_explicit_clauses_without_claiming_correctness(customer, count):
     """Synthetic source smoke, separate from independently labelled corpus results."""
     import io
 
-    from audit.standard_suites import standard_suites
+    from audit.standard_suites import predefined_directory_suites
     from openpyxl import Workbook
     from PIL import Image
 
-    suites = [suite for suite in standard_suites() if suite.customer == customer]
+    suites = [suite for suite in predefined_directory_suites() if suite.customer == customer]
     assert len(suites) == count
     inputs, targets, sources, programs = [], [], {}, {}
     for suite in suites:

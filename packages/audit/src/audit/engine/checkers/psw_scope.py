@@ -75,9 +75,9 @@ class _Objects:
     """One execution-local projection; original files and business rules stay fixed."""
 
     def __init__(self, audit: AuditInput, digest: str, cache: dict):
-        from audit.checkers.v4.visual_facts import VisualFactsUnavailable, _native_disposition_texts, _region_may_hold_stamp
         from audit.engine.checkers.pdf_field_region import pdf_field_region
         from audit.engine.checkers.psw_checkbox_evidence import read_disposition_facts
+        from audit.engine.checkers.visual_facts import VisualFactsUnavailable, _native_disposition_texts, _region_may_hold_stamp
         from audit.pdf_tables import valid_pdf_bbox
 
         self.audit, self.digest, self.cache = audit, digest, cache
@@ -204,7 +204,7 @@ class _Objects:
         self.sources.append((({**locator, "file_version_id": self.audit.audit_id}, excerpt), kwargs))
 
     def read(self, pages: list[int], fields: dict[str, str]) -> None:
-        from audit.checkers.v4.visual_facts import VisualFactsUnavailable, _pdf_images
+        from audit.engine.checkers.visual_facts import VisualFactsUnavailable, _pdf_images
 
         selected: dict[str, list[str]] = {}
         for number in pages:
@@ -360,7 +360,7 @@ class _Objects:
 
 def evaluate_psw_pdf_rule(audit: AuditInput, rule_no: int, witness, cache: dict, read_single: Callable[[], dict[str, object]]) -> tuple[dict[str, object], AuditResultItem]:
     """Evaluate all PDF objects through one source-located scope boundary."""
-    from audit.checkers.v4.visual_facts import _source_identity
+    from audit.engine.checkers.visual_facts import _source_identity
 
     path = Path(audit.file_url)
     if path.suffix.lower() != ".pdf" or not path.is_file():

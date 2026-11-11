@@ -4,7 +4,7 @@ import hashlib
 import json
 
 import pytest
-from audit.checkers.v2.base_agent import BaseAgent
+from audit.checker_lib.li.base_agent import BaseAgent
 from audit.contracts import AuditInput, RuleInput, RuleItem
 from audit.engine.checkers.text_evidence import evaluate_located_text, evaluate_text_rule
 from docx import Document

@@ -98,8 +98,8 @@ uv run --no-sync pytest tests/integration/product
 
 `assets/corpus/` 保存原件、组合、人工真值和对应的规则含义：
 
-- `documents/<数据集>/…`：原件，用提交时的文件名。数据集按客户划分：`li-auto`（理想，按文档类型分目录）、`nio`（蔚来，按零件分目录）、`uaes`（UAES，按零件分目录，每个零件下分 `测试文件` 和 `比对文件`；`通用文件` 放空白表单模板和通用规范；`零件-文件对应统计表.xlsx` 记录归类依据和未纳入的扫描件）。零件目录整体保留，不拆分。
-- `cases.csv`：一次提交包含的文件。列为数据集、组合ID、文件ID、原件、提交文件名、角色、Suite版本、Checker组、Binding。Suite版本是明确的可读来源选择器，例如 `PPAP:控制计划@v3` 或 `UAES:U05@v4`；必须恰好对应一个 Suite 来源，没有 latest 或回退。Checker组是 Suite key，Binding 是显式条款 ID 集合。原 PDF、Excel、DOCX 使用同一来源的 Suite；完整内容摘要在构建执行快照时计算，仍写入不可变 Suite revision、程序和输入身份。缺失、歧义、组别或 Binding 不一致在加载完整表时失败。表驱动 runner 调用正式 guest 的 `run_audit` 函数，进程/授权/Worker 路径由 Runtime 集成测试覆盖。
+- 原件放在各公司目录 `assets/<公司>/samples/…`（`uaes`、`li`、`nio`），保留原测试分组，用提交时的文件名；`cases.csv` 的数据集名就是公司目录名。每家公司下另有 `rules`（客户规则原文）、`templates`（空白模板）和必要时的 `history`；UAES 的预检规则在 `uaes/prechecks`。
+- `cases.csv`：一次提交包含的文件。列为数据集、组合ID、文件ID、原件、提交文件名、角色、Suite版本、Checker组、Binding。Suite版本是检查程序目录路径，例如 `li/L08` 或 `uaes/U05`；必须恰好对应一个 Suite 来源，没有 latest 或回退。Checker组是 Suite key，Binding 是显式条款 ID 集合。原 PDF、Excel、DOCX 使用同一来源的 Suite；完整内容摘要在构建执行快照时计算，仍写入不可变 Suite revision、程序和输入身份。缺失、歧义、组别或 Binding 不一致在加载完整表时失败。表驱动 runner 调用正式 guest 的 `run_audit` 函数，进程/授权/Worker 路径由 Runtime 集成测试覆盖。
 - `oracle.csv`：人工结论。列为数据集、组合ID、文件ID、条款ID、人工真值、条款说明、人工判定依据、判定人、判定日期、已知差距。
 
 - `reviewed-rules.json`：每个已使用来源对应的可读人工判定上下文，保留完整规则正文、附录、文档类型、条款入口、实际方法／载体绑定和关联 Suite。加载时与当前来源逐项比较，仅忽略载体实现的 Python 类路径；支持的文件格式与条款到方法的绑定仍须一致。历史类路径保留为复核时的记录，不随实现重命名刷新；实际执行路径仍进入完整 Suite／程序摘要并接受测试。它不参与产品路由，也不会自动从当前实现重生成。
@@ -180,7 +180,7 @@ docker buildx bake worker
 docker build \
   --build-arg PPAP_WORKER_IMAGE="ppap-worker:${PPAP_BUILD_SHA}" \
   --build-context psw-tests=tests \
-  --build-context psw-assets="assets/理想/样本/模拟测试文件V2-01/16-零件提交保证书" \
+  --build-context psw-assets="assets/li/samples/模拟测试文件V2-01/16-零件提交保证书" \
   -f tests/corpus/Dockerfile.psw \
   -t "ppap-psw-test:${PPAP_BUILD_SHA}" \
   .

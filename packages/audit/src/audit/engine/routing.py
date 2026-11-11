@@ -15,36 +15,37 @@ from urllib.parse import unquote, urlparse
 
 from documents.files import get_file_extension_from_url
 
-from audit.checkers.v2.annual_test_requirements_agent import (
+from audit.checker_lib import uaes as uaes_checkers
+from audit.checker_lib.li.annual_test_requirements_agent import (
     AnnualTestRequirementsAgent,
 )
-from audit.checkers.v2.base_agent import BaseAgent
-from audit.checkers.v2.checking_fixture_approval_agent import (
+from audit.checker_lib.li.base_agent import BaseAgent
+from audit.checker_lib.li.checking_fixture_approval_agent import (
     CheckingFixtureApprovalAgent,
 )
-from audit.checkers.v2.checking_fixture_approval_excel_agent import (
+from audit.checker_lib.li.checking_fixture_approval_excel_agent import (
     CheckingFixtureApprovalExcelAgent,
 )
-from audit.checkers.v2.control_plan_agent import ControlPlanAgent
-from audit.checkers.v2.dimension_measurement_excel_agent import (
+from audit.checker_lib.li.control_plan_agent import ControlPlanAgent
+from audit.checker_lib.li.dimension_measurement_excel_agent import (
     DimensionMeasurementExcelAgent,
 )
-from audit.checkers.v2.dimension_measurement_pdf_agent import (
+from audit.checker_lib.li.dimension_measurement_pdf_agent import (
     DimensionMeasurementPDFAgent,
 )
-from audit.checkers.v2.dpvr_excel_agent import DpvrExcelAgent
-from audit.checkers.v2.dvp_r_excel_agent import DvpRExcelAgent
-from audit.checkers.v2.equipment_list_agent import (
+from audit.checker_lib.li.dpvr_excel_agent import DpvrExcelAgent
+from audit.checker_lib.li.dvp_r_excel_agent import DvpRExcelAgent
+from audit.checker_lib.li.equipment_list_agent import (
     EquipmentListAgent,
 )
-from audit.checkers.v2.equipment_list_docx_agent import (
+from audit.checker_lib.li.equipment_list_docx_agent import (
     EquipmentListDocxAgent,
 )
-from audit.checkers.v2.initial_process_capacity_agent import (
+from audit.checker_lib.li.initial_process_capacity_agent import (
     InitialProcessCapacityAgent,
 )
-from audit.checkers.v2.msa_report_agent import MsaReportAgent
-from audit.checkers.v2.pdf_excel_delegator_agent import (
+from audit.checker_lib.li.msa_report_agent import MsaReportAgent
+from audit.checker_lib.li.pdf_excel_delegator_agent import (
     AnnualTestRequirementsPdfExcelDelegatorAgent,
     ControlPlanPdfExcelDelegatorAgent,
     DpvrPdfExcelDelegatorAgent,
@@ -60,40 +61,33 @@ from audit.checkers.v2.pdf_excel_delegator_agent import (
     ToolingApprovalPdfExcelDelegatorAgent,
     XirAssemblyIssuePdfExcelDelegatorAgent,
 )
-from audit.checkers.v2.pfmea_agent import PfmeaAgent
-from audit.checkers.v2.plant_capacity_evaluation_agent import (
+from audit.checker_lib.li.pfmea_agent import PfmeaAgent
+from audit.checker_lib.li.plant_capacity_evaluation_agent import (
     PlantCapacityEvaluationAgent,
 )
-from audit.checkers.v2.process_flow_chart_excel_agent import (
+from audit.checker_lib.li.process_flow_chart_excel_agent import (
     ProcessFlowChartExcelAgent,
 )
-from audit.checkers.v2.process_special_characteristic_agent import (
+from audit.checker_lib.li.process_special_characteristic_agent import (
     ProcessSpecialCharacteristicAgent,
 )
-from audit.checkers.v2.psw_docx_agent import PswDocxAgent
-from audit.checkers.v2.psw_excel_agent import PswExcelAgent
-from audit.checkers.v2.psw_pdf_agent import PswPDFAgent
-from audit.checkers.v2.sub_supplier_list_excel_agent import (
+from audit.checker_lib.li.psw_docx_agent import PswDocxAgent
+from audit.checker_lib.li.psw_excel_agent import PswExcelAgent
+from audit.checker_lib.li.psw_pdf_agent import PswPDFAgent
+from audit.checker_lib.li.sub_supplier_list_excel_agent import (
     SubSupplierListExcelAgent,
 )
-from audit.checkers.v2.tooling_approval_agent import (
+from audit.checker_lib.li.tooling_approval_agent import (
     ToolingApprovalAgent,
 )
-from audit.checkers.v2.xir_assembly_issue_agent import (
+from audit.checker_lib.li.xir_assembly_issue_agent import (
     XirAssemblyIssueAgent,
 )
-from audit.checkers.v3 import (
+from audit.checker_lib.nio import (
     V3_OVERLAY_DOCX_AGENTS,
     V3_OVERLAY_EXCEL_AGENTS,
     V3_OVERLAY_PDF_AGENTS,
 )
-from audit.checkers.v4 import li_auto as li_auto_checkers
-from audit.checkers.v4 import uaes as uaes_checkers
-from audit.checkers.v4.nio.control_plan import NioControlPlanAgent
-from audit.checkers.v4.nio.measurement import NioMeasurementAgent
-from audit.checkers.v4.nio.pfmea import NioPfmeaAgent
-from audit.checkers.v4.nio.process_flow import NioProcessFlowAgent
-from audit.checkers.v4.nio.special_characteristics import NioSpecialCharacteristicsAgent
 from audit.kinds import PpapDocumentType
 from audit.rule_profile import RULE_PROFILE_V2, RULE_PROFILE_V3, RULE_PROFILE_V4, normalize_rule_profile
 
@@ -240,27 +234,11 @@ def resolve_engine_agent_class(
         if doc_type != expected_type:
             raise ValueError("preset_document_type_mismatch")
         extension = get_file_extension_from_url(str(file_url)).lower()
-        checker: type[Any] | None = None
         if preset.customer == "UAES":
             candidate = uaes_checkers.CLASS_BY_ENTRY.get(preset.entry_id)
-            checker = candidate if candidate and extension in candidate.SUPPORTED_EXTENSIONS else None
-        elif preset.customer == "理想":
-            carrier_map = (
-                li_auto_checkers.EXCEL_AGENTS
-                if extension in EXCEL_EXTENSIONS
-                else li_auto_checkers.DOCX_AGENTS
-                if extension in DOCX_EXTENSIONS
-                else getattr(li_auto_checkers, "PDF_AGENTS", {})
-                if extension in PDF_EXTENSIONS
-                else {}
-            )
-            checker = carrier_map.get(preset.entry_id)
-        elif preset.customer == "蔚来" and extension in EXCEL_EXTENSIONS | PDF_EXTENSIONS:
-            checker = {"N01": NioMeasurementAgent, "N02": NioPfmeaAgent, "N03": NioControlPlanAgent, "N04": NioSpecialCharacteristicsAgent, "N05": NioProcessFlowAgent}.get(preset.entry_id)
-        if checker is not None:
-            return checker
-        # A missing v4 carrier is unsupported. It does not select v3 or v2.
-        return None
+            return candidate if candidate and extension in candidate.SUPPORTED_EXTENSIONS else None
+        # Li Auto runs the li implementations and NIO the nio ones, by document type.
+        profile = RULE_PROFILE_V3 if preset.customer == "蔚来" else RULE_PROFILE_V2
     file_kind = _resolve_audit_file_kind(file_url)
     if profile == RULE_PROFILE_V3:
         overlay_map = _pick_agent_map(

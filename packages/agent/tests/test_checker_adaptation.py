@@ -217,7 +217,7 @@ def test_older_checker_source_remains_available_with_current_execution_contract(
     target, rules = inputs(tmp_path / "source.xlsx")
     rules.rule_profile = "v2"
     prompt = write_starting_point(tmp_path, target, rules)
-    assert "audit.checkers.v2.process_special_characteristic_agent" in prompt
+    assert "audit.checker_lib.li.process_special_characteristic_agent" in prompt
     assert "class ProcessSpecialCharacteristicAgent" in (tmp_path / "reference-checker.py").read_text()
     assert "class TaskAudit(ExcelAgent)" in (tmp_path / "template-checker.py").read_text()
 

@@ -16,7 +16,7 @@ from openpyxl import Workbook
 
 REVISION = "checker-test-revision"
 VALID_PROGRAM = """
-from audit.checkers.v3.excel_agent import ExcelAgent, rule
+from audit.checker_lib.nio.excel_agent import ExcelAgent, rule
 from audit.engine.rule_engine.context import RuleContext
 from audit.kinds import PpapDocumentType
 
@@ -54,7 +54,7 @@ RESOURCE = RuleResource(
 )
 """
 RESOURCE_CHECKER = """
-from audit.checkers.v3.excel_agent import ExcelAgent, rule
+from audit.checker_lib.nio.excel_agent import ExcelAgent, rule
 from audit.engine.rule_engine.context import RuleContext
 from audit.kinds import PpapDocumentType
 
@@ -411,7 +411,7 @@ def test_a_fixed_checker_records_the_question_source_and_unanswered_state(tmp_pa
     book.close()
     raw = path.read_bytes()
     program = """
-from audit.checkers.v3.excel_agent import ExcelAgent, rule
+from audit.checker_lib.nio.excel_agent import ExcelAgent, rule
 from audit.engine.rule_engine.context import RuleContext
 from audit.kinds import PpapDocumentType
 
@@ -1556,7 +1556,7 @@ def test_development_prompt_names_framework_modules_and_hides_acceptance_samples
     host.adapt_checker(request(), audit_file(path), rules(), raw, role="target", context=ExecutionContext())
 
     prompt = developer.prompts[0]
-    assert "from audit.checkers.v3.excel_agent import ExcelAgent, rule" in prompt
+    assert "from audit.checker_lib.nio.excel_agent import ExcelAgent, rule" in prompt
     assert "from audit.engine.rule_engine.fluent import Table" in prompt
     assert "from documents.pdf import PdfSpec" in prompt
     assert "不要按文档类型或文件名选择预设" in prompt
@@ -1694,7 +1694,7 @@ def test_development_prompt_previews_a_related_workbook_and_a_pdf(tmp_path: Path
 
 
 def test_related_pdf_requires_the_spec_for_its_file_version(tmp_path: Path) -> None:
-    from audit.checkers.v3.excel_agent import ExcelAgent
+    from audit.checker_lib.nio.excel_agent import ExcelAgent
     from audit.contracts import GroupContextInput
     from documents.pdf import PdfSpec, StitchSpec
 
@@ -1721,7 +1721,7 @@ def test_a_pdf_target_must_declare_its_own_spec(tmp_path: Path) -> None:
 
     source = "\n".join(
         [
-            "from audit.checkers.v3.excel_agent import ExcelAgent, rule",
+            "from audit.checker_lib.nio.excel_agent import ExcelAgent, rule",
             "class TaskAudit(ExcelAgent):",
             "    CLAUSE_BOUND_CHECKS = True",
             "    @rule('标题', clause_id='1')",
@@ -1741,7 +1741,7 @@ def test_a_pdf_target_must_declare_its_own_spec(tmp_path: Path) -> None:
 
 
 def test_a_related_pdf_gap_cannot_remain_pass(tmp_path: Path) -> None:
-    from audit.checkers.v3.excel_agent import ExcelAgent
+    from audit.checker_lib.nio.excel_agent import ExcelAgent
     from audit.contracts import AuditResultItem
     from documents.contracts import ConversionArtifact
 
@@ -2795,7 +2795,7 @@ def test_a_program_without_clause_binding_is_revised_before_it_is_fixed(tmp_path
 
 
 CELL_PROGRAM = """
-from audit.checkers.v3.excel_agent import ExcelAgent, rule
+from audit.checker_lib.nio.excel_agent import ExcelAgent, rule
 from audit.engine.rule_engine.context import RuleContext
 from audit.engine.rule_engine.fluent import Table
 from audit.kinds import PpapDocumentType
@@ -2939,7 +2939,7 @@ def test_a_related_cell_keeps_its_own_file_version(tmp_path: Path) -> None:
 
 
 DUPLICATE_PROGRAM = """
-from audit.checkers.v3.excel_agent import ExcelAgent, rule
+from audit.checker_lib.nio.excel_agent import ExcelAgent, rule
 from audit.engine.rule_engine.context import RuleContext
 from audit.kinds import PpapDocumentType
 
@@ -3018,7 +3018,7 @@ def test_a_fixed_program_reports_a_missing_clause_binding_without_dropping_the_o
 
 
 EXTRA_PROGRAM = """
-from audit.checkers.v3.excel_agent import ExcelAgent, rule
+from audit.checker_lib.nio.excel_agent import ExcelAgent, rule
 from audit.engine.rule_engine.context import RuleContext
 from audit.kinds import PpapDocumentType
 
@@ -3104,7 +3104,7 @@ def test_an_extra_clause_binding_is_reported_without_dropping_the_rule_clause(tm
 
 
 RELATED_CELL_PROGRAM = """
-from audit.checkers.v3.excel_agent import ExcelAgent, rule
+from audit.checker_lib.nio.excel_agent import ExcelAgent, rule
 from audit.engine.rule_engine.context import RuleContext
 from audit.kinds import PpapDocumentType
 from documents.excel import load_excel_workbook
@@ -3210,7 +3210,7 @@ def test_a_related_workbook_cell_is_attributed_to_that_file_version(tmp_path: Pa
 
 
 UNNUMBERED_PROGRAM = """
-from audit.checkers.v3.excel_agent import ExcelAgent, rule
+from audit.checker_lib.nio.excel_agent import ExcelAgent, rule
 from audit.engine.rule_engine.context import RuleContext
 from audit.kinds import PpapDocumentType
 
@@ -3449,7 +3449,7 @@ def test_an_open_question_reaches_product_clarification_without_trace_verificati
     path = tmp_path / "target.xlsx"
     raw = workbook_bytes(path)
     program = """
-from audit.checkers.v3.excel_agent import ExcelAgent, rule
+from audit.checker_lib.nio.excel_agent import ExcelAgent, rule
 from audit.engine.rule_engine.context import RuleContext
 from audit.kinds import PpapDocumentType
 

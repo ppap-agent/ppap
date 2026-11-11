@@ -384,7 +384,7 @@ class PswPdfEvidenceMixin:
 
         if result is not None:
             host.log_audit_result(result, ith)
-        from audit.checkers.v4.paddle_evidence import observe_psw_shadow
+        from audit.engine.checkers.paddle_evidence import observe_psw_shadow
 
         observe_psw_shadow(self, rule_no)
         return result
@@ -426,7 +426,7 @@ class PswPdfEvidenceMixin:
         ith: int,
         rule_no: int,
     ) -> AuditResult:
-        from audit.checkers.v4.visual_facts import VisualFactsUnavailable, read_original_pdf_visual_facts
+        from audit.engine.checkers.visual_facts import VisualFactsUnavailable, read_original_pdf_visual_facts
 
         host = self._host()
         if not host.get_rule_by_index(ith):

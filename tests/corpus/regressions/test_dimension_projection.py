@@ -4,8 +4,7 @@ import json
 import unittest
 
 from audit.audits import RoundInput, RoundWork
-from audit.suite_migration import migrated_builtin_suite
-from corpus_contracts.core_round import bind_suite, run_suite_round
+from corpus_contracts.core_round import bind_suite, leaf_suite, run_suite_round
 from corpus_contracts.oracle import original
 
 
@@ -19,7 +18,7 @@ class DimensionProjectionTests(unittest.TestCase):
             "“零件号”、“零件名”、“项目”、“项目阶段”、“日期”是否存在，如果不存在则不通过，否则继续识别；"
             "当“零件号”、“零件名”、“项目”、“项目阶段”、“日期”内容均不为空则通过，否则不通过；"
         )
-        source = migrated_builtin_suite("v3", "全功能检验报告")
+        source = leaf_suite("nio", "全功能检验报告")
         declared_text = json.loads(source.files["rules.json"])["rules"][0]["rule_to_check"]
         body = {
             "kind": "engine",

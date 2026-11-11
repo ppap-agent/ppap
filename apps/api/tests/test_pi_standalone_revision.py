@@ -184,7 +184,7 @@ def test_source_path_keeps_its_bytes_binding_and_is_not_published_or_overwritten
         stub = suites.create_revision(tenant_id=None, suite_key=key, files=STUB_FILES, created_by=None)
         published = _publish(f.clients[0], key, stub.id, 0, True)
         assert published.status_code == 200, published.text
-    leaf = next(item for item in predefined_directory_suites() if item.source_path == "UAES/U08")
+    leaf = next(item for item in predefined_directory_suites() if item.source_path == "uaes/U08")
     source_files = dict(leaf.files)
     rules = json.loads(source_files["rules.json"])
     # This case exercises partial-source publication, independently of the

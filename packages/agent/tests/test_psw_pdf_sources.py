@@ -46,8 +46,8 @@ def test_submission_visual_fallback_keeps_only_verified_original_locations(tmp_p
         assert file_ref.location == str(pdf)
         return ConversionArtifact(success=True, xlsx_path=str(prepared))
 
-    monkeypatch.setattr(f"audit.checkers.{version}.pdf_agent.convert_pdf_to_excel_auto", convert)
-    monkeypatch.setattr("audit.checkers.v4.paddle_evidence.observe_psw_shadow", lambda *args: None)
+    monkeypatch.setattr(f"audit.checker_lib.{'li' if version == 'v2' else 'nio'}.pdf_agent.convert_pdf_to_excel_auto", convert)
+    monkeypatch.setattr("audit.engine.checkers.paddle_evidence.observe_psw_shadow", lambda *args: None)
     calls = []
 
     def read(audit, fields, witness, *, operation, **kwargs):
@@ -79,7 +79,7 @@ def test_submission_visual_fallback_keeps_only_verified_original_locations(tmp_p
         return facts, evaluate_psw_observation(rule_no, facts)
 
     monkeypatch.setattr("audit.engine.checkers.psw_scope.evaluate_psw_pdf_rule", observe)
-    cls = importlib.import_module(f"audit.checkers.{version}.psw_pdf_agent").PswPDFAgent
+    cls = importlib.import_module(f"audit.checker_lib.{'li' if version == 'v2' else 'nio'}.psw_pdf_agent").PswPDFAgent
     with bind_runtime(None):
         checker = cls(
             AuditInput(audit_id="frozen-pdf", file_url=str(pdf), file_metadata={"source_sha256": digest}),

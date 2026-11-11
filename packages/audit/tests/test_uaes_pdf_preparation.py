@@ -5,8 +5,8 @@ import json
 
 import fitz
 import pytest
-from audit.checkers.v4.uaes.control_plan import UaesControlPlanAgent
-from audit.checkers.v4.uaes.native import MissingFact, UnknownFact
+from audit.checker_lib.uaes.control_plan import UaesControlPlanAgent
+from audit.checker_lib.uaes.native import MissingFact, UnknownFact
 from audit.contracts import AuditInput, GroupContextInput, RuleInput
 
 
@@ -89,7 +89,7 @@ def test_a_missing_source_decides_the_clause_before_unknowns_about_others(tmp_pa
 
 
 def test_a_row_proving_the_fact_decides_even_with_unknown_rows():
-    from audit.checkers.v4.uaes.native import any_row
+    from audit.checker_lib.uaes.native import any_row
 
     def unknown(_row):
         raise UnknownFact("unknown")

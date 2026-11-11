@@ -12,7 +12,7 @@ def read_pdf_presence(audit: AuditInput, *, field: str, description: str, witnes
     Technical failures propagate. The reader owns paired observations and caches
     completed, unknown and failed requests; this loop never retries a page.
     """
-    from audit.checkers.v4.visual_facts import read_original_pdf_visual_facts
+    from audit.engine.checkers.visual_facts import read_original_pdf_visual_facts
 
     with fitz.open(audit.file_url) as document:
         count = len(document)

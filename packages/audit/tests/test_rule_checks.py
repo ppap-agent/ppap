@@ -1,8 +1,8 @@
 from pathlib import Path
 from types import MappingProxyType
 
-from audit.checkers.v3.excel_agent import ExcelAgent, rule
-from audit.checkers.v3.process_flow_chart_excel_agent import ProcessFlowChartExcelAgent
+from audit.checker_lib.nio.excel_agent import ExcelAgent, rule
+from audit.checker_lib.nio.process_flow_chart_excel_agent import ProcessFlowChartExcelAgent
 from audit.contracts import AuditInput, RuleInput, RuleItem
 from audit.engine.engine import _execute_agent, run_audit
 from audit.engine.rule_engine.context import RuleContext
@@ -268,7 +268,7 @@ def test_rerun_shares_the_workbook_but_not_the_previous_assertions(tmp_path: Pat
         assert agent.starts == [[]]
         assert "已收集的不合格" not in probed.suggestions
         cached = agent._workbook_cache
-        import audit.checkers.v3.excel_agent as excel_agent_module
+        import audit.checker_lib.nio.excel_agent as excel_agent_module
 
         original_loader = excel_agent_module.load_excel_workbook
 

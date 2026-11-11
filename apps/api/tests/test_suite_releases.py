@@ -219,7 +219,7 @@ def test_catalog_preserves_titles_selections_and_reads_no_suite_bytes(auth_store
         assert all(row["availability"] in {"unseeded", "historical"} and "revision_id" not in row for row in body["predefined"])
         assert body["predefined_unavailable"] == installed
         assert "predefined_error" not in body
-        assert "UAES/U08" in [row["path"] for row in installed]
+        assert "uaes/U08" in [row["path"] for row in installed]
         assert all(not row["path"].startswith(("v2/", "v3/", "v4/")) for row in installed)
         assert [row["title"] for row in response.json()["suites"]] == ["Control plan checks", "Control plan checks"]
         assert [row["selection_mode"] for row in response.json()["suites"]] == ["pinned", "candidate_only"]
@@ -274,8 +274,8 @@ def test_predefined_catalog_binds_each_source_path_to_its_official_revision(auth
 
     store, _, creator, _, (alice, bob, carol) = prepare_fixture(auth_store_factory)
     migrator = SuiteStore(store.settings, store.objects, role="migrator")
-    leaf = next(suite for suite in predefined_directory_suites() if suite.source_path == "UAES/U08")
-    placeholder = next(suite for suite in predefined_directory_suites() if suite.source_path == "理想/L01")
+    leaf = next(suite for suite in predefined_directory_suites() if suite.source_path == "uaes/U08")
+    placeholder = next(suite for suite in predefined_directory_suites() if suite.source_path == "li/L01")
     placeholder_revision = migrator.create_revision(
         tenant_id=None, suite_key=placeholder.suite_key, files=dict(placeholder.files), created_by=None, related_suite_keys=placeholder.related_suite_keys, source_path=placeholder.source_path
     )
@@ -338,23 +338,23 @@ def test_predefined_catalog_binds_each_source_path_to_its_official_revision(auth
     assert TestClient(create_app(store.settings, auth_store=store)).get("/suites").status_code == 401
     body = alice.get("/suites").json()
     predefined = {row["path"]: row for row in body["predefined"]}
-    assert predefined["UAES/U08"] == {
-        "path": "UAES/U08",
+    assert predefined["uaes/U08"] == {
+        "path": "uaes/U08",
         "title": json.loads(leaf.files["rules.json"])["title"],
         "availability": "installed",
         "suite_key": "UAES:U08",
         "revision_id": latest.id,
         **leaf_capability(updated),
     }
-    assert predefined["UAES/U08"]["evidence_reader_clause_ids"] == [clause["id"] for clause in rules["rules"]]
-    assert predefined["UAES/U08"]["bound_clause_count"] == predefined["UAES/U08"]["clause_count"] == 12
+    assert predefined["uaes/U08"]["evidence_reader_clause_ids"] == [clause["id"] for clause in rules["rules"]]
+    assert predefined["uaes/U08"]["bound_clause_count"] == predefined["uaes/U08"]["clause_count"] == 12
     held = leaf_capability(placeholder.files)
     declaration = {}
     exec(placeholder.files["resources.py"], declaration)
-    assert set(held["evidence_reader_clause_ids"]) == set(declaration["RESOURCE"]["clauses"])
+    assert set(held["evidence_reader_clause_ids"]) == set(declaration["RESOURCE"]["methods"])
     assert held["bound_clause_count"] == held["clause_count"] > 0
-    assert predefined["理想/L01"] == {
-        "path": "理想/L01",
+    assert predefined["li/L01"] == {
+        "path": "li/L01",
         "title": json.loads(placeholder.files["rules.json"])["title"],
         "availability": "installed",
         "suite_key": placeholder.suite_key,
@@ -379,7 +379,7 @@ def test_predefined_catalog_binds_each_source_path_to_its_official_revision(auth
     del store.objects.data[f"suites/official/objects/{content_digest(updated['rules.json'])}"]
     # The catalog lists stored facts; opening the revision still verifies its bytes and fails closed.
     after = alice.get("/suites").json()
-    assert next(row for row in after["predefined"] if row["path"] == "UAES/U08")["revision_id"] == latest.id
+    assert next(row for row in after["predefined"] if row["path"] == "uaes/U08")["revision_id"] == latest.id
     opened = alice.get(f"/suite-revisions/{latest.id}")
     assert opened.status_code == 409, opened.text
     assert opened.json()["error"] == "suite_artifact_missing"

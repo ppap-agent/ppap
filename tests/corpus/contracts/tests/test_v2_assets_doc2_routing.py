@@ -19,11 +19,11 @@ def test_explicit_doc_type_keeps_distinct_route(doc_type, suffix, agent):
 
 
 def test_removed_fallback_does_not_execute_another_frozen_version():
-    """An explicit historical route stays on that version. A missing v4 carrier does not."""
-    from audit.checkers.v2.equipment_list_docx_agent import EquipmentListDocxAgent as V2EquipmentListDocxAgent
-    from audit.checkers.v3.equipment_list_docx_agent import EquipmentListDocxAgent as V3EquipmentListDocxAgent
+    """Each route stays on its own implementation; a Li Auto preset runs the li one."""
+    from audit.checker_lib.li.equipment_list_docx_agent import EquipmentListDocxAgent as V2EquipmentListDocxAgent
+    from audit.checker_lib.nio.equipment_list_docx_agent import EquipmentListDocxAgent as V3EquipmentListDocxAgent
 
     kind = PpapDocumentType.EQUIPMENT_LIST
     assert resolve_engine_agent_class(kind, "equipment.docx", "v2") is V2EquipmentListDocxAgent
     assert resolve_engine_agent_class(kind, "equipment.docx", "v3") is V3EquipmentListDocxAgent
-    assert resolve_engine_agent_class(kind, "equipment.docx", "v4", preset_key="L13", preset_customer="理想") is None
+    assert resolve_engine_agent_class(kind, "equipment.docx", "v4", preset_key="L13", preset_customer="理想") is V2EquipmentListDocxAgent

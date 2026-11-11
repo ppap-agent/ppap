@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ast
 import csv
 import hashlib
 import json
@@ -13,60 +12,35 @@ from pathlib import Path
 from typing import Literal, cast
 
 from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest
-from audit.standard_suites import StandardSuite, library_revision, standard_suites
-from audit.suite_migration import generic_standard_suites
+from audit.standard_suites import StandardSuite, library_revision, predefined_directory_suites
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
 CASES_PATH = REPO_ROOT / "assets/corpus/cases.csv"
 ORACLE_PATH = REPO_ROOT / "assets/corpus/oracle.csv"
 REVIEWED_RULES_PATH = REPO_ROOT / "assets/corpus/reviewed-rules.json"
-DATASETS = ("理想", "蔚来", "UAES")
+DATASETS = ("li", "nio", "uaes")
 FILE_COLUMNS = ("数据集", "组合ID", "文件ID", "原件", "提交文件名", "角色", "Suite版本", "Checker组", "Binding")
 EXPECTED_COLUMNS = ("数据集", "组合ID", "文件ID", "条款ID", "人工真值", "条款说明", "人工判定依据", "判定人", "判定日期", "已知差距")
 TRUTHS = frozenset({"PASS", "NG", "UNABLE", "NA"})
 # What the product still does differently from the truth, and why.
 _KNOWN_GAP = re.compile(r"^(PASS|NG|UNABLE|NA|ERR) \S.*$")
-_REVISION = re.compile(r"^.+@v[1-9][0-9]*$")
+# A Suite is named by its checker leaf path, e.g. ``li/L08``.
+_REVISION = re.compile(r"^[^/@\s]+/[^/@\s]+$")
 
 
 @lru_cache(maxsize=1)
 def suite_sources() -> dict[str, StandardSuite]:
-    """Exact source selectors, never a current/latest Suite lookup."""
-    sources = [(f"{suite.suite_key}@v4", suite) for suite in standard_suites()]
-    for suite in generic_standard_suites(include_history=True):
-        revision = json.loads(suite.files["tests.json"])[0]["dataset"]
-        sources.append((f"{suite.suite_key}@{revision}", suite))
-    result = {}
-    for selector, suite in sources:
-        if selector in result:
-            raise ValueError("Ambiguous corpus Suite selector: " + selector)
-        result[selector] = suite
-    return result
-
-
-def _reviewed_resources(resources: dict) -> dict:
-    # Formats and clause-to-method bindings describe the reviewed scope. Class
-    # paths belong to the executable identity, not the human judgment.
-    return {**resources, "carriers": sorted(resources["carriers"])}
+    """Exact leaf paths, never a current/latest Suite lookup."""
+    return {suite.source_path: suite for suite in predefined_directory_suites()}
 
 
 def reviewed_contract(suite: StandardSuite) -> dict:
-    """Meaning of existing human answers, distinct from executable identity.
-
-    Read the literal RESOURCES declaration without importing or running it.
-    Preserve carrier formats and method bindings, but not implementation paths.
-    """
-    resources = [
-        node.value for node in ast.parse(suite.files["checker.py"]).body if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "RESOURCES" for target in node.targets)
-    ]
-    if len(resources) != 1:
-        raise ValueError("Corpus Suite requires one explicit source binding: " + suite.suite_key)
+    """Meaning of existing human answers, distinct from executable identity."""
     return {
         "document_type": suite.document_type,
         "rules": json.loads(suite.files["rules.json"]),
-        "appendix": json.loads(suite.files["appendix.json"]),
+        "appendix": json.loads(suite.files.get("appendix.json", b"[]")),
         "entrypoints": dict(suite.entrypoints),
-        "resources": _reviewed_resources(ast.literal_eval(resources[0])),
         "related_suite_keys": sorted(suite.related_suite_keys),
     }
 
@@ -74,8 +48,7 @@ def reviewed_contract(suite: StandardSuite) -> dict:
 @lru_cache(maxsize=1)
 def reviewed_rules() -> dict:
     # Never regenerate this historical human-review evidence from current code.
-    contracts = json.loads(REVIEWED_RULES_PATH.read_text(encoding="utf-8"))
-    return {selector: {**contract, "resources": _reviewed_resources(contract["resources"])} for selector, contract in contracts.items()}
+    return json.loads(REVIEWED_RULES_PATH.read_text(encoding="utf-8"))
 
 
 @dataclass(frozen=True)

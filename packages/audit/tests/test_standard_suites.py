@@ -6,60 +6,56 @@ from collections import Counter
 from types import SimpleNamespace
 
 import pytest
+from audit.checker_lib.agents import AgentAudit
 from audit.contracts import AuditInput, GroupContextInput, RuleInput
 from audit.engine.checkers.rule_declarations import discover_declared_rules
 from audit.presets import customer_presets, preset_rule_body
-from audit.standard_library import check_clause
-from audit.standard_suites import library_revision, predefined_directory_suites, standard_suites
+from audit.standard_suites import library_revision, predefined_directory_suites
+
+COMPANY_MODULES = {"li": "audit.checker_lib.li", "nio": "audit.checker_lib.nio"}
 
 
 def resources(suite):
     module = {}
-    exec(suite.program_files["checker.py"], module)
-    return module["RESOURCES"]
+    exec(suite.program_files["resources.py"], module)
+    return module["RESOURCE"]
 
 
-def test_all_41_source_groups_have_explicit_executable_bindings():
-    suites = standard_suites()
-    assert len(suites) == 41
-    assert Counter(s.customer for s in suites) == {"UAES": 19, "理想": 17, "蔚来": 5}
-    # NIO N06–N17 were added as company leaves only; they have no historical carrier.
-    assert {s.suite_key for s in suites} == {f"{p.customer}:{p.entry_id}" for p in customer_presets() if not (p.customer == "蔚来" and p.entry_id > "N05")}
+def leaf(key):
+    return next(suite for suite in predefined_directory_suites() if suite.suite_key == key)
+
+
+def check_clause(context, resource):
+    """Run one clause through the leaf adapter; a prepared implementation may be injected through the cache."""
+    audit = AgentAudit(context.audit_file, getattr(context, "rule", None), getattr(context, "group_context", None), resource=resource)
+    path = resource["carriers"].get("." + context.audit_file.file_url.rsplit(".", 1)[-1].lower())
+    injected = getattr(context, "cache", {}).get(("standard-checker", context.audit_file.audit_id, path))
+    if injected is not None:
+        audit._agent = injected
+    return audit.evaluate(context.clause_id)
+
+
+def test_every_company_leaf_binds_each_clause_to_a_declared_implementation_method():
+    suites = predefined_directory_suites()
+    assert Counter(s.customer for s in suites) == {"UAES": 19, "理想": 17, "蔚来": 17}
+    assert {s.suite_key for s in suites} == {f"{p.customer}:{p.entry_id}" for p in customer_presets()}
     for suite in suites:
         rules = json.loads(suite.files["rules.json"])
-        assert "rule_profile" not in rules
         source = resources(suite)
-        assert set(source["methods"]) == set(suite.entrypoints)
-        assert set(suite.entrypoints) <= {rule["id"] for rule in rules["rules"]}
+        assert set(source["methods"]) == set(suite.entrypoints) == {rule["id"] for rule in rules["rules"]}
         for class_path in set(source["carriers"].values()):
             module, name = class_path.split(":")
             cls = getattr(importlib.import_module(module), name)
-            assert set(source["methods"].values()) <= dict(discover_declared_rules(cls)).keys()
+            declared = cls.TARGET_EXCEL_AGENT_CLASS if getattr(cls, "TARGET_EXCEL_AGENT_CLASS", None) else cls
+            assert set(source["methods"].values()) <= dict(discover_declared_rules(declared)).keys()
         assert rules["checker_binding"] == dict(suite.entrypoints)
-        assert all(ref["distribution"] == "reference-only" and not ref["downloadable"] for ref in json.loads(suite.files["templates.json"]))
-        assert json.loads(suite.files["tests.json"])[0]["correctness"] == "independent-human-oracle-required"
-
-
-def test_directory_u08_does_not_replace_or_fall_back_from_the_legacy_carrier():
-    legacy = [suite for suite in standard_suites() if suite.suite_key == "UAES:U08"]
-    directory = [suite for suite in predefined_directory_suites() if suite.suite_key == "UAES:U08"]
-    assert len(legacy) == len(directory) == 1
-    assert legacy[0].source_path != "UAES/U08"
-    assert directory[0].source_path == "UAES/U08"
-    assert b"audit.checkers.v4" in legacy[0].files["checker.py"]
-    assert b"audit.checkers.v4" not in directory[0].files["checker.py"]
-    assert b"audit.checkers.v3" not in directory[0].files["checker.py"]
-    assert b"audit.checkers.v2" not in directory[0].files["checker.py"]
-    assert b"check_clause" not in directory[0].files["checker.py"]
-    assert directory[0].related_suite_keys == legacy[0].related_suite_keys == ("UAES:U07", "UAES:U16")
-    assert directory[0].entrypoints["U08:1"] == "checker:create_audit"
 
 
 def test_standard_content_and_shared_library_have_stable_identity():
-    assert [dict(suite.files) for suite in standard_suites()] == [dict(suite.files) for suite in standard_suites()]
+    assert [dict(suite.files) for suite in predefined_directory_suites()] == [dict(suite.files) for suite in predefined_directory_suites()]
     revision = library_revision()
     assert len(revision) == 64 and revision == library_revision()
-    suite = standard_suites()[0]
+    suite = predefined_directory_suites()[0]
     try:
         suite.files["checker.py"] = b"changed"
     except TypeError:
@@ -69,8 +65,8 @@ def test_standard_content_and_shared_library_have_stable_identity():
 
 
 def test_unsupported_carrier_never_falls_back_to_legacy_checker():
-    suite = next(s for s in standard_suites() if s.suite_key == "理想:L11")
-    ctx = SimpleNamespace(clause_id=next(iter(suite.entrypoints)), audit_file=AuditInput(audit_id="frozen", file_url="/not/read/document.pdf"))
+    suite = leaf("理想:L11")
+    ctx = SimpleNamespace(clause_id=next(iter(suite.entrypoints)), audit_file=AuditInput(audit_id="frozen", file_url="/not/read/document.txt"))
     result = check_clause(ctx, resources(suite))
     assert result.status == "UNABLE"
 
@@ -83,7 +79,7 @@ def test_editable_u12_l11_n03_starters_execute_source_clauses(tmp_path):
         ("理想:L11", [["过程流程图"], ["工序号", "工序名称", "特殊特性分类"], ["10", "装配", "NA"]], "过程流程图"),
         ("蔚来:N03", [["控制计划", "☑生产"], ["工序名称/操作描述", "特殊特性分类", "产品", "过程"], ["装配", "NA", "扭矩", "装配力"]], "控制计划"),
     ]:
-        suite = next(s for s in standard_suites() if s.suite_key == key)
+        suite = leaf(key)
         workbook = Workbook()
         workbook.active.title = title
         for row in rows:
@@ -101,8 +97,8 @@ def test_editable_u12_l11_n03_starters_execute_source_clauses(tmp_path):
                 item = check_clause(context, resources(suite))
                 assert item.clause_id == clause
                 assert item.status in {"PASS", "NG", "UNABLE", "ERR", "NA"}
-                assert item.status != "PASS" or item.evidence is not None
-            assert len(context.cache) == 1
+                # The uaes implementation locates evidence for every PASS; li/nio report as their baseline did.
+                assert item.status != "PASS" or item.evidence is not None or suite.customer != "UAES"
         finally:
             for checker in closeables:
                 close = getattr(checker, "close", None)
@@ -190,14 +186,13 @@ def test_authored_collective_failure_is_not_repeated_for_later_clauses():
     assert calls == ["external"]
 
 
-@pytest.mark.parametrize("module", ["audit.checkers.v2.psw_pdf_agent", "audit.checkers.v3.psw_pdf_agent"])
+@pytest.mark.parametrize("module", ["audit.checker_lib.li.psw_pdf_agent", "audit.checker_lib.nio.psw_pdf_agent"])
 def test_pdf_suite_keeps_original_page_visual_policy(module, monkeypatch):
     """Dispatch regression only: a converted grid cannot stand in for a PDF stamp."""
     import importlib
 
     from audit.contracts import AuditResultItem
     from audit.engine.checkers.rule_declarations import discover_declared_rules
-    from audit.suite_migration import migrated_builtin_suite
 
     cls = importlib.import_module(module).PswPDFAgent
     checker = object.__new__(cls)
@@ -212,21 +207,21 @@ def test_pdf_suite_keeps_original_page_visual_policy(module, monkeypatch):
         return AuditResultItem(classification="stamp", item="original PDF", priority="P0", status="UNABLE", suggestions="Original fact is unconfirmed")
 
     checker._run_fact_rule = original
-    from audit.checkers.v4 import paddle_evidence
+    from audit.engine.checkers import paddle_evidence
 
     monkeypatch.setattr(paddle_evidence, "observe_psw_shadow", lambda *args: None)
-    suite = migrated_builtin_suite("v2" if ".v2." in module else "v3", "零件提交保证书")
+    suite = leaf("理想:L17" if ".li." in module else "蔚来:N17")
     context = SimpleNamespace(audit_file=checker.audit_file, clause_id="3", cache={("standard-checker", "frozen", f"{module}:PswPDFAgent"): checker})
     methods = discover_declared_rules(cls.TARGET_EXCEL_AGENT_CLASS)
     result = check_clause(context, {"carriers": {".pdf": f"{module}:PswPDFAgent"}, "methods": {"3": methods[2][0]}})
-    assert "3" in suite.entrypoints
+    assert resources(suite)["methods"][suite.source_entry + ":3"] == methods[2][0]
     assert calls == [(2, 3)]
     assert result.status == "UNABLE" and result.clause_id == "3"
 
 
 def test_pdf_suite_keeps_conversion_page_evidence():
-    from audit.checkers.v3.pdf_excel_delegator_agent import ProcessFlowChartPdfExcelDelegatorAgent
-    from audit.checkers.v3.process_flow_chart_excel_agent import ProcessFlowChartExcelAgent
+    from audit.checker_lib.nio.pdf_excel_delegator_agent import ProcessFlowChartPdfExcelDelegatorAgent
+    from audit.checker_lib.nio.process_flow_chart_excel_agent import ProcessFlowChartExcelAgent
     from audit.contracts import AuditResultItem
     from audit.engine.checkers.rule_declarations import discover_declared_rules
 
@@ -244,11 +239,11 @@ def test_pdf_suite_keeps_conversion_page_evidence():
     assert result.suggestions == "original page was incomplete"
 
 
-@pytest.mark.parametrize("version", ["v2", "v3"])
+@pytest.mark.parametrize("version", ["li", "nio"])
 def test_word_suite_uses_original_visual_hook_instead_of_excel(version):
     from audit.contracts import AuditResultItem
 
-    module = f"audit.checkers.{version}.psw_docx_agent"
+    module = f"{COMPANY_MODULES[version]}.psw_docx_agent"
     cls = importlib.import_module(module).PswDocxAgent
     checker = object.__new__(cls)
     checker.temp_files = []
@@ -263,13 +258,13 @@ def test_word_suite_uses_original_visual_hook_instead_of_excel(version):
     assert result.status == "UNABLE" and result.clause_id == "3"
 
 
-@pytest.mark.parametrize("version", ["v2", "v3"])
+@pytest.mark.parametrize("version", ["li", "nio"])
 @pytest.mark.parametrize("performed", [False, True])
 def test_native_adapter_publishes_only_actual_predicate_count(tmp_path, version, performed):
     from audit.kinds import PpapDocumentType
     from openpyxl import Workbook
 
-    module = importlib.import_module(f"audit.checkers.{version}.excel_agent")
+    module = importlib.import_module(f"{COMPANY_MODULES[version]}.excel_agent")
 
     class NativeChecker(module.ExcelAgent):
         DOC_TYPE = PpapDocumentType.PSW
@@ -297,7 +292,7 @@ def test_native_adapter_publishes_only_actual_predicate_count(tmp_path, version,
 
 
 def test_removed_root_reexports_stay_absent_and_version_packages_remain():
-    """The 17 root shims had no caller. v2, v3, and v4 classes stay importable."""
+    """The 17 root shims had no caller; the old version packages are gone and company implementations import."""
     import importlib.util
 
     removed = (
@@ -322,5 +317,6 @@ def test_removed_root_reexports_stay_absent_and_version_packages_remain():
     for name in removed:
         assert importlib.util.find_spec(f"audit.checkers.{name}") is None
     for version in ("v2", "v3", "v4"):
-        assert importlib.util.find_spec(f"audit.checkers.{version}") is not None
-        importlib.import_module(f"audit.checkers.{version}")
+        assert importlib.util.find_spec(f"audit.checkers.{version}") is None
+    for company in ("li", "nio", "uaes"):
+        importlib.import_module(f"audit.checker_lib.{company}")

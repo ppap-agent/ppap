@@ -10,8 +10,8 @@ from types import MappingProxyType
 from audit.checker_core import checker_digest
 from audit.contracts import AuditInput, GroupContextInput, RuleInput
 from audit.engine.runtime import bind_runtime
-from audit.precheck_contract import STATUSES, complete_coverage, customer_conflict, empty_result, fact, result_row, validate_result
-from audit.precheck_sources import l1_spec, structure_source
+from audit.precheck.contract import STATUSES, complete_coverage, customer_conflict, empty_result, fact, result_row, validate_result
+from audit.precheck.sources import l1_spec, structure_source
 from documents.model_access import model_access_scope
 
 from agent.execution.audit_runtime import CheckerContext, ClauseTimeout, _clause_deadline, _load_program, _restore_modules

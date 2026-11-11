@@ -213,7 +213,7 @@ def create_audit(
 
 #### 例：列完整性与内容非空
 
-以 [现有特殊特性 checker 的 `rule_2`](../audit/src/audit/checkers/v3/process_special_characteristic_agent.py) 为解释样例，不改变特殊特性清单在产品中的参考文件角色。设 R 是本次完整确定的数据范围。其现有成员过滤和空范围处理可写成：
+以 [现有特殊特性 checker 的 `rule_2`](../audit/src/audit/checker_lib/nio/process_special_characteristic_agent.py) 为解释样例，不改变特殊特性清单在产品中的参考文件角色。设 R 是本次完整确定的数据范围。其现有成员过滤和空范围处理可写成：
 
 ```text
 K = {零件编号, 零件名称}

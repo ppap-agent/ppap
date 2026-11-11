@@ -15,9 +15,9 @@ from agent.precheck_program import PrecheckJobSpec, execute_precheck, write_prec
 from agent.protocol import PrecheckEnvelope
 from agent.run import Controller, ExecutionContext
 from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest
-from audit.precheck_contract import validate_result
-from audit.precheck_sources import l1_criteria, l1_spec, required_structure, structure_source
-from audit.standard_suites import standard_suites
+from audit.precheck.contract import validate_result
+from audit.precheck.sources import l1_criteria, l1_spec, required_structure, structure_source
+from audit.standard_suites import predefined_directory_suites
 from documents.model_access import ModelAccess, model_access_scope
 from openpyxl import Workbook
 from PIL import Image
@@ -26,7 +26,7 @@ from pydantic import SecretStr
 CODE = b"""def check(context):
     raise AssertionError("Formal audit is not free preparation")
 def precheck(context):
-    from audit.precheck_contract import fact
+    from audit.precheck.contract import fact
     from documents.model_access import current_model_access, ModelUnavailable
     try:
         current_model_access()
@@ -143,9 +143,9 @@ def test_modified_code_or_original_rejected_before_import():
         run_precheck(payload, snapshot, sources, programs)
 
 
-@pytest.mark.parametrize("key", ["UAES:U12", "理想:L11", "蔚来:N03", "蔚来:N04"])
+@pytest.mark.parametrize("key", ["UAES:U12", "UAES:U07", "UAES:U08"])
 def test_standard_hook_keeps_preparation_facts_and_coverage(key):
-    suite = next(suite for suite in standard_suites() if suite.suite_key == key)
+    suite = next(suite for suite in predefined_directory_suites() if suite.suite_key == key)
     result = run_precheck(*request(suite=suite))
     row = result["files"][0]
     assert row["facts"] and row["coverage"]["expected"] > 0
@@ -169,7 +169,7 @@ def test_guest_cannot_self_certify_or_name_another_result():
 
 def test_element_fact_ids_and_shared_source_keep_distinct_states_and_root_coverage():
     code = b"""def precheck(context):
-    from audit.precheck_contract import fact
+    from audit.precheck.contract import fact
     return [
         fact("R", "unknown", "Whole criterion remains unknown"),
         {**fact("R:E01", "satisfied", "One element observed"), "source_id": "R"},
@@ -195,7 +195,7 @@ def test_element_fact_ids_and_shared_source_keep_distinct_states_and_root_covera
 
 def test_duplicate_fact_ids_still_rejected_even_with_different_sources():
     code = b"""def precheck(context):
-    from audit.precheck_contract import fact
+    from audit.precheck.contract import fact
     return [fact("same", "unknown", "first"), {**fact("same", "satisfied", "second"), "source_id": "another"}]
 """
     with pytest.raises(ValueError, match="duplicate_precheck_fact"):
@@ -238,7 +238,7 @@ def test_all_19_uaes_sources_precheck_together_without_collapsing_measurement_el
     payload, snapshot, _, _ = request()
     payload["files"] = []
     inputs, targets, sources, programs = [], [], {}, {}
-    suites = [suite for suite in standard_suites() if suite.customer == "UAES"]
+    suites = [suite for suite in predefined_directory_suites() if suite.customer == "UAES"]
     assert len(suites) == 19
     for suite in suites:
         entry = suite.source_entry

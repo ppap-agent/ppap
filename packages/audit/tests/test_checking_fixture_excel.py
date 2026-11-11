@@ -1,8 +1,8 @@
 """Checking-fixture field contracts through real files and public checks."""
 
 import pytest
-from audit.checkers.v2.checking_fixture_approval_excel_agent import CheckingFixtureApprovalExcelAgent as V2Agent
-from audit.checkers.v3.checking_fixture_approval_excel_agent import CheckingFixtureApprovalExcelAgent as V3Agent
+from audit.checker_lib.li.checking_fixture_approval_excel_agent import CheckingFixtureApprovalExcelAgent as V2Agent
+from audit.checker_lib.nio.checking_fixture_approval_excel_agent import CheckingFixtureApprovalExcelAgent as V3Agent
 from audit.contracts import AuditInput, RuleInput
 from openpyxl import Workbook
 

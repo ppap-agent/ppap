@@ -9,7 +9,7 @@ from uuid import UUID
 from agent.client import DeepError
 from agent.execution.budget import MAX_INPUT_FILES, MAX_INPUT_TOTAL
 from audit.checker_core import checker_digest
-from audit.precheck_contract import customer_conflict, input_digest, validate_result
+from audit.precheck.contract import customer_conflict, input_digest, validate_result
 from audit.standard_suites import library_revision
 from product.store.prechecks import precheck_snapshot, preparation_runtime_revision
 from product.store.suites import SuiteStore

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from audit.checkers.v4.uaes.native import UaesSourceAgent
+from audit.checker_lib.uaes.native import UaesSourceAgent
 from audit.contracts import RuleItem
 from audit.engine.checkers.rule_check import RuleCheck
 from audit.engine.checkers.rule_declarations import discover_declared_rules

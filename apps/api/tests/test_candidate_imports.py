@@ -26,7 +26,7 @@ from psycopg.types.json import Jsonb
 from worker.checker_optimizer import development_handler, materialize_request
 
 FACTORY = b"def create_audit(audit_file, rule, group_context=None):\n    return None\n"
-OLD_IMPORT = b"from audit.checkers.v4.uaes.control_plan import UaesControlPlanAgent\n"
+OLD_IMPORT = b"from audit.checker_lib.uaes.control_plan import UaesControlPlanAgent\n"
 RULES = {
     "kind": "engine",
     "type": "自定义",
@@ -74,7 +74,7 @@ def system(auth_store_factory):
     [
         {"checker.py": (OLD_IMPORT + FACTORY).decode()},
         {"resources.py": OLD_IMPORT.decode()},
-        {"resources.py": "import importlib\nOLD = importlib.import_module('audit.checkers.v4.uaes.control_plan')\n"},
+        {"resources.py": "import importlib\nOLD = importlib.import_module('audit.checker_lib.uaes.control_plan')\n"},
         {
             "checker.py": (OLD_IMPORT + b"def check(context):\n    return []\n").decode(),
             "rules.json": json.dumps({**RULES, "checker_binding": {"R1": "checker:check"}}),
@@ -108,7 +108,7 @@ def test_manual_factory_change_checks_the_inherited_resource(auth_store_factory)
     "source",
     [
         OLD_IMPORT + FACTORY,
-        b"from audit.checkers.v4.uaes.control_plan import UaesControlPlanAgent as create_audit\n",
+        b"from audit.checker_lib.uaes.control_plan import UaesControlPlanAgent as create_audit\n",
         OLD_IMPORT + b"create_audit = UaesControlPlanAgent\n",
     ],
     ids=["factory-definition", "factory-import", "factory-assignment"],

@@ -66,8 +66,8 @@ def freeze_target_rule_execution(rule_body: dict | None, filename: str):
     if preset:
         from audit.presets import preset_source_bindings
 
-        checker_profile = "v4" if agent_cls and ".v4." in agent_cls.__module__ else "v3" if agent_cls and ".v3." in agent_cls.__module__ else "v2" if agent_cls else None
-        frozen = freeze_rule_execution(rule_body, declarations, source_bindings=preset_source_bindings(preset, checker_profile=checker_profile or ""))
+        checker_profile = agent_cls.__module__.split(".")[2] if agent_cls and agent_cls.__module__.startswith("audit.checker_lib.") else None
+        frozen = freeze_rule_execution(rule_body, declarations, source_bindings=preset_source_bindings(preset) if agent_cls else {})
         if frozen is not None:
             frozen["checker"] = {
                 "profile": checker_profile,

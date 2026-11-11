@@ -10,8 +10,8 @@ from uuid import uuid4
 import fitz
 import pytest
 from audit.checker_core import ExecutionSnapshot, FrozenInput, RuleBinding, checker_digest
-from audit.checkers.v3.excel_agent import rule
-from audit.checkers.v4.uaes.native import UaesSourceAgent
+from audit.checker_lib.nio.excel_agent import rule
+from audit.checker_lib.uaes.native import UaesSourceAgent
 from audit.contracts import AuditInput, RuleInput
 from product import build_product_store
 from product.settings import Settings
@@ -43,7 +43,7 @@ def prepare_fact_round(auth_store_factory, tmp_path, monkeypatch):
         observed.append("model observation")
         return {"sop": None}
 
-    monkeypatch.setattr("audit.checkers.v4.visual_facts.read_original_pdf_visual_facts", observe)
+    monkeypatch.setattr("audit.engine.checkers.visual_facts.read_original_pdf_visual_facts", observe)
     checker = SourceCheck(AuditInput(audit_id=version["id"], file_url=str(path)), RuleInput(rule_id="frozen-rule"))
     machine = checker.check(0)
     rid, rule_id = str(uuid4()), str(uuid4())

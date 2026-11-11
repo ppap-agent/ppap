@@ -2,9 +2,9 @@ import json
 from pathlib import Path
 
 import pytest
-from audit.checkers.v3.pfmea_agent import PfmeaAgent
-from audit.checkers.v3.process_flow_chart_excel_agent import ProcessFlowChartExcelAgent
-from audit.checkers.v3.process_special_characteristic_agent import ProcessSpecialCharacteristicAgent
+from audit.checker_lib.nio.pfmea_agent import PfmeaAgent
+from audit.checker_lib.nio.process_flow_chart_excel_agent import ProcessFlowChartExcelAgent
+from audit.checker_lib.nio.process_special_characteristic_agent import ProcessSpecialCharacteristicAgent
 from audit.contracts import (
     AuditInput,
     AuditResultItem,
@@ -341,7 +341,7 @@ def test_flow_cross_file_agreement_can_pass_after_the_rows_are_compared(tmp_path
 
 
 def test_related_characteristic_workbook_is_closed_after_the_check(tmp_path, monkeypatch):
-    from audit.checkers.v3 import process_flow_chart_excel_agent as flow_agent
+    from audit.checker_lib.nio import process_flow_chart_excel_agent as flow_agent
 
     closed: list[object] = []
     real_load = flow_agent._load_workbook_auto

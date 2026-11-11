@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from agent.protocol import ExecuteRequest, FrozenFile
-from audit.checkers.v3.excel_agent import ExcelAgent, rule
+from audit.checker_lib.nio.excel_agent import ExcelAgent, rule
 from audit.contracts import AuditInput, RuleInput
 from audit.engine.rule_engine import RuleContext
 from audit.engine.runtime import bind_runtime

@@ -58,7 +58,7 @@ def test_preset_execution_requires_source_identity_and_explicit_equivalence():
     uaes = freeze_target_rule_execution(preset_rule_body("UAES", "U07"), "PFMEA.xlsx")
     assert all(row["coverage"] == "mapped" for row in uaes["items"])
     assert [row["checker_method"] for row in uaes["items"]] == ["rule_1", "rule_2", "rule_3", "rule_4"]
-    assert uaes["checker"]["class"] == "audit.checkers.v4.uaes.fmea.UaesPfmeaAgent"
+    assert uaes["checker"]["class"] == "audit.checker_lib.uaes.fmea.UaesPfmeaAgent"
     nio["rules"].reverse()
     assert [row["checker_method"] for row in freeze_target_rule_execution(nio, "特殊特性清单.xlsx")["items"]] == ["rule_2", "rule_1"]
     nio["rules"][0]["id"] = "不存在的条款"
@@ -67,38 +67,21 @@ def test_preset_execution_requires_source_identity_and_explicit_equivalence():
 
 
 def test_customer_resolver_never_borrows_another_customer_identity():
-    from audit.checkers.v4.nio.special_characteristics import NioSpecialCharacteristicsAgent
+    from audit.checker_lib.nio.process_special_characteristic_agent import ProcessSpecialCharacteristicAgent
     from audit.engine.routing import resolve_engine_agent_class
     from audit.kinds import PpapDocumentType
 
     kind = PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST
-    assert resolve_engine_agent_class(kind, "source.xlsx", "v4", preset_key="N04", preset_customer="蔚来") is NioSpecialCharacteristicsAgent
+    assert resolve_engine_agent_class(kind, "source.xlsx", "v4", preset_key="N04", preset_customer="蔚来") is ProcessSpecialCharacteristicAgent
     with pytest.raises(ValueError, match="unknown_customer_rule"):
         resolve_engine_agent_class(kind, "source.xlsx", "v4", preset_key="N04", preset_customer="UAES")
     with pytest.raises(ValueError, match="preset_document_type_mismatch"):
         resolve_engine_agent_class(PpapDocumentType.CONTROL_PLAN, "source.xlsx", "v4", preset_key="N04", preset_customer="蔚来")
 
 
-def test_missing_v4_carrier_does_not_select_v3_or_v2():
-    from audit.checkers.v2.equipment_list_docx_agent import EquipmentListDocxAgent as V2EquipmentListDocxAgent
-    from audit.checkers.v3.equipment_list_docx_agent import EquipmentListDocxAgent as V3EquipmentListDocxAgent
-    from audit.engine.checkers.rule_declarations import freeze_target_rule_execution
-    from audit.engine.routing import resolve_engine_agent_class
-    from audit.kinds import PpapDocumentType
-    from audit.presets import preset_rule_body
-
-    kind = PpapDocumentType.EQUIPMENT_LIST
-    assert resolve_engine_agent_class(kind, "equipment.docx", "v4", preset_key="L13", preset_customer="理想") is None
-    assert resolve_engine_agent_class(kind, "equipment.docx", "v3") is V3EquipmentListDocxAgent
-    assert resolve_engine_agent_class(kind, "equipment.docx", "v2") is V2EquipmentListDocxAgent
-    frozen = freeze_target_rule_execution(preset_rule_body("理想", "L13"), "equipment.docx")
-    assert frozen["checker"]["class"] is None and frozen["checker"]["profile"] is None
-    assert all(row["coverage"] == "unsupported" for row in frozen["items"])
-
-
 def test_missing_v3_overlay_does_not_select_v2(monkeypatch):
-    from audit.checkers.v2.control_plan_agent import ControlPlanAgent
-    from audit.checkers.v4.uaes.control_plan import UaesControlPlanAgent
+    from audit.checker_lib.li.control_plan_agent import ControlPlanAgent
+    from audit.checker_lib.uaes.control_plan import UaesControlPlanAgent
     from audit.engine import routing
     from audit.kinds import PpapDocumentType
 
@@ -107,18 +90,3 @@ def test_missing_v3_overlay_does_not_select_v2(monkeypatch):
     assert routing.resolve_engine_agent_class(kind, "control.xlsx", "v3") is None
     assert routing.resolve_engine_agent_class(kind, "control.xlsx", "v2") is ControlPlanAgent
     assert routing.resolve_engine_agent_class(kind, "control.xlsx", "v4", preset_key="U08", preset_customer="UAES") is UaesControlPlanAgent
-
-
-def test_registered_customer_checker_failure_does_not_select_a_generic_checker(monkeypatch):
-    from audit.engine import routing
-    from audit.kinds import PpapDocumentType
-
-    class FailingChecker:
-        def check(self):
-            raise OSError("original unavailable")
-
-    monkeypatch.setitem(routing.li_auto_checkers.EXCEL_AGENTS, "L13", FailingChecker)
-    selected = routing.resolve_engine_agent_class(PpapDocumentType.EQUIPMENT_LIST, "equipment.xlsx", "v4", preset_key="L13", preset_customer="理想")
-    assert selected is FailingChecker
-    with pytest.raises(OSError, match="original unavailable"):
-        selected().check()

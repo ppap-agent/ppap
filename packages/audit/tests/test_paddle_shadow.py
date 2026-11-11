@@ -8,10 +8,10 @@ from types import SimpleNamespace
 
 import fitz
 import pytest
-from audit.checkers.v4.paddle_evidence import PaddleShadowSession, ShadowTarget, paddle_shadow_scope
-from audit.checkers.v4.uaes.bindings import BINDINGS
-from audit.checkers.v4.uaes.control_plan import UaesControlPlanAgent
+from audit.checker_lib.uaes.bindings import BINDINGS
+from audit.checker_lib.uaes.control_plan import UaesControlPlanAgent
 from audit.contracts import AuditInput, RuleInput
+from audit.engine.checkers.paddle_evidence import PaddleShadowSession, ShadowTarget, paddle_shadow_scope
 
 
 def source(tmp_path, *, text=""):
@@ -215,7 +215,7 @@ def test_bad_original_page_does_not_consume_an_external_request(tmp_path):
 
 
 def test_elapsed_scope_time_does_not_discard_valid_returned_facts(tmp_path, monkeypatch):
-    from audit.checkers.v4 import paddle_evidence
+    from audit.engine.checkers import paddle_evidence
 
     clock = [0.0]
     monkeypatch.setattr(paddle_evidence, "time", SimpleNamespace(monotonic=lambda: clock[0]))
@@ -394,7 +394,7 @@ def psw_rules(profile="v2"):
 
 
 def psw_targets(path, rule, numbers=(3, 6)):
-    from audit.checkers.v4.paddle_evidence import psw_shadow_clause_id
+    from audit.engine.checkers.paddle_evidence import psw_shadow_clause_id
 
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     return [ShadowTarget("frozen-version", digest, psw_shadow_clause_id(rule, number), 2) for number in numbers]
@@ -419,48 +419,6 @@ class PswRuntime:
         return json.dumps({"status": "UNABLE"})
 
 
-def test_v4_psw_pdf_does_not_execute_another_version(tmp_path):
-    import inspect
-
-    from audit.checkers.v2.base_agent import BaseAgent
-    from audit.checkers.v2.excel_agent import ExcelAgent as V2ExcelAgent
-    from audit.checkers.v2.psw_pdf_agent import PswPDFAgent as V2PswPDFAgent
-    from audit.checkers.v3.excel_agent import ExcelAgent as V3ExcelAgent
-    from audit.checkers.v3.pdf_excel_delegator_agent import PdfExcelDelegatorAgent
-    from audit.checkers.v3.psw_excel_agent import PswExcelAgent
-    from audit.checkers.v3.psw_pdf_agent import PswPDFAgent
-    from audit.checkers.v4.li_auto.psw_pdf import LiAutoPswPdfAgent
-    from audit.checkers.v4.li_auto.psw_pdf_workbook import LiAutoPswPdfWorkbookAgent
-    from audit.engine.routing import resolve_engine_agent_class
-    from audit.kinds import PpapDocumentType
-
-    path = source(tmp_path)
-    rule = psw_rules("v4")
-    selected = resolve_engine_agent_class(PpapDocumentType.PSW, str(path), rule.rule_profile, preset_key=rule.preset_key, preset_customer="理想")
-    assert selected is LiAutoPswPdfAgent
-    assert selected is not PswPDFAgent and selected is not V2PswPDFAgent
-    assert selected.TARGET_EXCEL_AGENT_CLASS is LiAutoPswPdfWorkbookAgent
-    banned_bases = {BaseAgent, V2ExcelAgent, V3ExcelAgent, PswPDFAgent, V2PswPDFAgent, PdfExcelDelegatorAgent, PswExcelAgent}
-    for cls in (selected, LiAutoPswPdfWorkbookAgent):
-        assert banned_bases.isdisjoint(cls.__mro__)
-        assert not any(getattr(base, "__module__", "").startswith(("audit.checkers.v2", "audit.checkers.v3")) for base in cls.__mro__)
-        module_source = inspect.getsource(inspect.getmodule(cls))
-        for banned in (
-            "audit.checkers.v2.base_agent",
-            "audit.checkers.v2.excel_agent",
-            "audit.checkers.v2.psw_pdf_agent",
-            "audit.checkers.v2.pdf_excel_delegator_agent",
-            "audit.checkers.v2.pdf_agent",
-            "audit.checkers.v3.excel_agent",
-            "audit.checkers.v3.psw_excel_agent",
-            "audit.checkers.v3.psw_pdf_agent",
-            "audit.checkers.v3.pdf_excel_delegator_agent",
-            "audit.checkers.v3.pdf_agent",
-        ):
-            assert banned not in module_source
-    assert resolve_engine_agent_class(PpapDocumentType.PSW, str(path), "v3") is PswPDFAgent
-
-
 def psw_agent(path, rule):
     from unittest.mock import patch
 
@@ -474,7 +432,7 @@ def psw_agent(path, rule):
     runtime = get_runtime()
     assert isinstance(runtime, PswRuntime)
     # V2 converts at this external boundary directly; V3 uses bind_runtime.
-    with patch("audit.checkers.v2.pdf_agent.convert_pdf_to_excel_auto", side_effect=runtime.convert_pdf_to_excel):
+    with patch("audit.checker_lib.li.pdf_agent.convert_pdf_to_excel_auto", side_effect=runtime.convert_pdf_to_excel):
         return cls(AuditInput(audit_id="frozen-version", file_url=str(path), project_id="project-a"), rule)
 
 
@@ -591,8 +549,8 @@ def test_psw_late_result_cannot_be_attributed_to_changed_frozen_rules(tmp_path, 
 
 
 def test_uaes_psw_existing_checker_consumes_selected_stamp_and_field_shadows(tmp_path):
-    from audit.checkers.v4.paddle_evidence import psw_shadow_clause_id
-    from audit.checkers.v4.uaes.warrant import UaesWarrantAgent
+    from audit.checker_lib.uaes.warrant import UaesWarrantAgent
+    from audit.engine.checkers.paddle_evidence import psw_shadow_clause_id
     from audit.presets import preset_rule_body
 
     path = source(tmp_path)
@@ -613,8 +571,8 @@ def test_uaes_psw_existing_checker_consumes_selected_stamp_and_field_shadows(tmp
 @pytest.mark.parametrize("known", [False, True])
 @pytest.mark.parametrize("change", ["elapsed", "cancel", "source"])
 def test_native_read_must_revalidate_the_scope_before_skip_or_dispatch(tmp_path, monkeypatch, known, change):
-    from audit.checkers.v4 import paddle_evidence as module
-    from audit.checkers.v4.uaes.native import NativeFacts, UnknownFact
+    from audit.checker_lib.uaes.native import NativeFacts, UnknownFact
+    from audit.engine.checkers import paddle_evidence as module
 
     path, service, clock = source(tmp_path), Service(), [0.0]
     cancelled = [False]
@@ -775,7 +733,7 @@ def no_live_transports(monkeypatch):
 @pytest.mark.parametrize("consumer", ["u08", "psw"])
 @pytest.mark.parametrize("stop", ["elapsed", "cancel"])
 def test_identity_read_cannot_dispatch_after_the_scope_stops(tmp_path, monkeypatch, consumer, stop):
-    from audit.checkers.v4 import paddle_evidence as module
+    from audit.engine.checkers import paddle_evidence as module
     from audit.engine.runtime import bind_runtime
 
     path, service, clock, cancelled = source(tmp_path), Service(), [0.0], [False]
@@ -815,7 +773,7 @@ def test_identity_read_cannot_dispatch_after_the_scope_stops(tmp_path, monkeypat
 
 
 def test_dispatch_uses_one_twenty_second_http_timeout(tmp_path, monkeypatch):
-    from audit.checkers.v4 import paddle_evidence as module
+    from audit.engine.checkers import paddle_evidence as module
 
     class Capture(Service):
         def __init__(self):

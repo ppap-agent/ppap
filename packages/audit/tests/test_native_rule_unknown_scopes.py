@@ -1,9 +1,9 @@
 """Fixed native predicates read their own source cells, not unrelated errors."""
 
 import pytest
-from audit.checkers.v2.msa_report_agent import MsaReportAgent as V2Msa
-from audit.checkers.v3.msa_report_agent import MsaReportAgent as V3Msa
-from audit.checkers.v3.process_flow_chart_excel_agent import ProcessFlowChartExcelAgent
+from audit.checker_lib.li.msa_report_agent import MsaReportAgent as V2Msa
+from audit.checker_lib.nio.msa_report_agent import MsaReportAgent as V3Msa
+from audit.checker_lib.nio.process_flow_chart_excel_agent import ProcessFlowChartExcelAgent
 from audit.contracts import AuditInput, RuleInput
 from openpyxl import Workbook
 

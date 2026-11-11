@@ -9,7 +9,6 @@ import os
 import uuid
 
 import pytest
-from audit.standard_library import check_clause
 from audit.standard_suites import library_revision
 from product.db import connect
 from product.legacy_head_cutover import apply_legacy_head_cutover, inspect_legacy_heads, legacy_carrier_program
@@ -107,13 +106,10 @@ def test_legacy_heads_reject_new_admission_until_explicit_directory_publish(cuto
         calls.append("legacy")
         raise AssertionError("legacy resolver")
 
-    monkeypatch.setattr("audit.standard_library.check_clause", forbidden)
-    monkeypatch.setattr("audit.standard_suites._carriers", forbidden)
     monkeypatch.setattr("audit.presets.preset_source_bindings", forbidden)
     monkeypatch.setattr("audit.engine.routing.resolve_engine_agent_class", forbidden)
     assert legacy_carrier_program(CARRIER) is True
     assert legacy_carrier_program(DIRECTORY) is False
-    assert check_clause.__name__ == "check_clause"
 
     official_key, pinned_key, directory_key = "OFFICIAL:OLD", "PIN:OLD", "PIN:V5"
     official_carrier = _install(suites, official_key, CARRIER, None)
@@ -468,8 +464,6 @@ def test_directory_admission_refuses_a_related_carrier_head(cutover_db, monkeypa
         calls.append("legacy")
         raise AssertionError("legacy resolver")
 
-    monkeypatch.setattr("audit.standard_library.check_clause", forbidden)
-    monkeypatch.setattr("audit.standard_suites._carriers", forbidden)
     monkeypatch.setattr("audit.presets.preset_source_bindings", forbidden)
     monkeypatch.setattr("audit.engine.routing.resolve_engine_agent_class", forbidden)
     settings, objects = cutover_db

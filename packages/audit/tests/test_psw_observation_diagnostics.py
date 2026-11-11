@@ -89,7 +89,7 @@ def test_seal_decision_reports_native_authorization_facts_without_changing_unkno
     from audit.engine.checkers.psw_pdf_evidence import PswPdfEvidenceMixin
 
     facts = {"psw_stamp_present": True, "psw_stamp_ending_text": None, "authorization_table_present": True, "authorization_company_stamp_present": False}
-    monkeypatch.setattr("audit.checkers.v4.visual_facts.read_original_pdf_visual_facts", lambda *args, **kwargs: facts)
+    monkeypatch.setattr("audit.engine.checkers.visual_facts.read_original_pdf_visual_facts", lambda *args, **kwargs: facts)
     host = SimpleNamespace(
         audit_file=AuditInput(audit_id="frozen", file_url="private-file.pdf", file_metadata={"sha256": "a" * 64}),
         get_rule_by_index=lambda index: True,

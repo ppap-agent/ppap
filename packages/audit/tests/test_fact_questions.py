@@ -3,8 +3,8 @@
 from copy import deepcopy
 
 import fitz
-from audit.checkers.v3.excel_agent import rule
-from audit.checkers.v4.uaes.native import UaesSourceAgent
+from audit.checker_lib.nio.excel_agent import rule
+from audit.checker_lib.uaes.native import UaesSourceAgent
 from audit.contracts import AuditInput, RuleInput
 from audit.fact_questions import BooleanFactEvaluation
 from openpyxl import Workbook
@@ -32,7 +32,7 @@ def test_located_checkbox_question_preserves_machine_and_recomputes_frozen_facts
         calls.append("observe")
         return {"sop_checked": None, "signed": True}
 
-    monkeypatch.setattr("audit.checkers.v4.visual_facts.read_original_pdf_visual_facts", observe)
+    monkeypatch.setattr("audit.engine.checkers.visual_facts.read_original_pdf_visual_facts", observe)
     checker = SourceQuestions(AuditInput(audit_id="source-version", file_url=str(path)), RuleInput(rule_id="rule"))
     original = checker.check(0)
     before = deepcopy(original.model_dump(mode="json"))

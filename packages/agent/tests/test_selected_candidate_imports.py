@@ -11,10 +11,10 @@ from audit.contracts import AuditInput, RuleInput
 
 FACTORY = "def create_audit(audit_file, rule, group_context=None):\n    return None\n"
 OLD_IMPORTS = (
-    "from audit.checkers.v4.uaes.control_plan import UaesControlPlanAgent\n",
+    "from audit.checker_lib.uaes.control_plan import UaesControlPlanAgent\n",
     "from audit.standard_library import check_clause\n",
-    "import importlib\nOLD = importlib.import_module('audit.checkers.v4.uaes.control_plan')\n",
-    "OLD = __import__('audit.checkers.v4.uaes.control_plan')\n",
+    "import importlib\nOLD = importlib.import_module('audit.checker_lib.uaes.control_plan')\n",
+    "OLD = __import__('audit.checker_lib.uaes.control_plan')\n",
     "def load(name):\n    return __import__(name)\n",
     "from audit.engine import resolve_engine_agent_class\n",
     "import audit.standard_library as old\n",

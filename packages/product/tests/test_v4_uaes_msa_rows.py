@@ -1,7 +1,7 @@
 """U05 plan completeness uses physical business rows, including blank serials."""
 
 import pytest
-from audit.checkers.v4.uaes.msa import UaesMsaAgent
+from audit.checker_lib.uaes.msa import UaesMsaAgent
 from audit.contracts import AuditInput, RuleInput
 from audit.presets import preset_rule_body
 from openpyxl import Workbook

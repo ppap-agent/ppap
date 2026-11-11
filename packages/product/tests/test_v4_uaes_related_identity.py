@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-from audit.checkers.v4.uaes.fmea import UaesPfmeaAgent
+from audit.checker_lib.uaes.fmea import UaesPfmeaAgent
 from audit.contracts import AuditInput, GroupContextInput, RuleInput
 from audit.kinds import PpapDocumentType
 from audit.presets import preset_rule_body
@@ -163,7 +163,7 @@ def test_docx_native_title_keeps_split_field_context(tmp_path, label, expected):
     result = check(target, [reference], typed=False)
     assert result.status == expected, result.suggestions
 
-    from audit.precheck_dependencies import dependency_facts
+    from audit.precheck.dependencies import dependency_facts
 
     group = GroupContextInput(by_audit_id={"reference": reference})
     observed = next(row for row in dependency_facts(target, "U07", group) if row["id"].endswith(":characteristics"))
@@ -214,7 +214,7 @@ def test_unavailable_required_or_unclassified_type_keeps_its_execution_error(tmp
 
 
 def test_msa_broad_type_keeps_its_actual_kappa_subtype_available(tmp_path):
-    from audit.checkers.v4.uaes.msa import UaesMsaAgent
+    from audit.checker_lib.uaes.msa import UaesMsaAgent
 
     target = original(tmp_path, "target", target=True)
     reference = original(tmp_path, "reference", title="Kappa分析报告")

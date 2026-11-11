@@ -5,7 +5,7 @@ import re
 
 import fitz
 import pytest
-from audit.checkers.v2.dpvr_excel_agent import DpvrExcelAgent
+from audit.checker_lib.li.dpvr_excel_agent import DpvrExcelAgent
 from audit.contracts import AuditInput, RuleInput
 from audit.engine.runtime import bind_runtime
 from documents.ocr.observation import current_ocr_observation
@@ -42,7 +42,7 @@ def observations(monkeypatch):
     monkeypatch.setenv("OCR_MODEL_NAME", "controlled")
     monkeypatch.setenv("OCR_OPENAI_API_KEY", "controlled")
     monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://controlled.invalid")
-    monkeypatch.setattr("audit.checkers.v4.visual_facts._read_paddle_visual_facts", lambda *args, **kwargs: {"seal": None})
+    monkeypatch.setattr("audit.engine.checkers.visual_facts._read_paddle_visual_facts", lambda *args, **kwargs: {"seal": None})
     calls = []
 
     def read(*, images, prompt, response_schema):

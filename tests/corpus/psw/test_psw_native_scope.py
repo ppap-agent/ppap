@@ -10,7 +10,7 @@ def test_original_native_appendices_do_not_create_unread_visual_scope_or_resolve
 
     from audit.engine.checkers.psw_scope import _Objects
 
-    path = Path(__file__).resolve().parents[3] / "assets/理想/样本/模拟测试文件V2-01/16-零件提交保证书/16-零件提交保证书-上海亚大.pdf"
+    path = Path(__file__).resolve().parents[3] / "assets/li/samples/模拟测试文件V2-01/16-零件提交保证书/16-零件提交保证书-上海亚大.pdf"
     original = path.read_bytes()
     digest = hashlib.sha256(original).hexdigest()
     assert digest == "24133e74c1dac80339a694863930121b9525d4b0d887f7e020b9ed82f3014c0b"

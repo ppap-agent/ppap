@@ -1,7 +1,7 @@
 """U12 numbered business rows cannot hide behind an empty sequence cell."""
 
 import pytest
-from audit.checkers.v4.uaes.special_characteristics import UaesSpecialCharacteristicsAgent
+from audit.checker_lib.uaes.special_characteristics import UaesSpecialCharacteristicsAgent
 from audit.contracts import AuditInput, RuleInput
 from audit.presets import preset_rule_body
 from openpyxl import Workbook

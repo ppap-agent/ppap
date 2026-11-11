@@ -1,17 +1,11 @@
-"""Compatibility at the implementation boundary, never business routing.
-
-The Suite source owns carrier and clause-to-method identities. Existing native
-readers and evidence-producing checkers are reused without inheriting fallback.
-"""
+"""Run authored checker factories at the Core boundary, never business routing."""
 
 from __future__ import annotations
 
-import importlib
 from pathlib import Path
 from typing import Any, Callable
 
 from audit.contracts import AuditResultItem
-from audit.engine.checkers.rule_declarations import discover_declared_rules
 
 
 def _once(context: Any, key: tuple, operation: Callable[[], Any]) -> Any:
@@ -26,39 +20,6 @@ def _once(context: Any, key: tuple, operation: Callable[[], Any]) -> Any:
             context.cache[failure] = exc
             raise
     return context.cache[key]
-
-
-def check_clause(context: Any, resources: dict[str, Any]) -> AuditResultItem:
-    method = resources["methods"].get(context.clause_id)
-    implementation = resources["carriers"].get(Path(context.audit_file.file_url).suffix.lower())
-    if method is None or implementation is None:
-        return AuditResultItem(classification="规则审核", item=context.clause_id, priority="P0", status="UNABLE", suggestions="该标准套件尚不支持此条款或原件载体。", clause_id=context.clause_id)
-    key = ("standard-checker", context.audit_file.audit_id, implementation)
-    checker = context.cache.get(key)
-    if checker is None:
-        module, name = implementation.split(":", 1)
-        cls = getattr(importlib.import_module(module), name)
-        checker = _once(context, key, lambda: cls(context.audit_file, context.rule, group_context=context.group_context))
-        context.on_close(checker)
-    # Index is an internal adapter for a named, explicit library method. It
-    # never assigns business clauses by order or infers coverage from a class.
-    declaration_type = getattr(type(checker), "TARGET_EXCEL_AGENT_CLASS", None) or type(checker)
-    names = [name for name, _ in discover_declared_rules(declaration_type)]
-    if method not in names:
-        raise ValueError("standard_suite_method_missing")
-    index = names.index(method)
-    source_check = getattr(checker, "check_source_rule", None)
-    if callable(source_check):
-        # The configured carrier owns its conversion/native evidence policy.
-        # Never call its broad .check() exception fallback into generic AI.
-        item = source_check(index)
-    else:
-        direct = getattr(checker, "_execute_rule_check", None)
-        item = direct(index + 1) if callable(direct) else checker.check(index)
-    if item is None:
-        raise ValueError("standard_suite_missing_result")
-    result = AuditResultItem.model_validate(item.model_dump())
-    return result.model_copy(update={"clause_id": context.clause_id})
 
 
 class AuthoredCheckerError(ValueError):
@@ -77,8 +38,8 @@ def _require_pdf_spec(audit: Any, context: Any) -> None:
 
     from documents.pdf import PdfSpec, validate_pdf_spec
 
-    from audit.checkers.v3.excel_agent import ExcelAgent
-    from audit.checkers.v4.uaes.native import UaesSourceAgent
+    from audit.checker_lib.nio.excel_agent import ExcelAgent
+    from audit.checker_lib.uaes.native import UaesSourceAgent
 
     # Native readers and plain callable checkers need no grid specification.
     if not isinstance(audit, ExcelAgent) or isinstance(audit, UaesSourceAgent) or Path(context.audit_file.file_url).suffix.lower() != ".pdf":
@@ -185,45 +146,3 @@ def check_factory(context: Any, factory: Any) -> AuditResultItem:
 
     results = _once(context, (*key, "results"), collect)
     return results.get(context.clause_id) or _authored_error(context.clause_id, "authored_checker_missing_result")
-
-
-def prepare_target(context: Any, resources: dict[str, Any]) -> list[dict]:
-    """Free preparation hook owned by the frozen Suite, executed only in guest.
-
-    This reuses the original preparation algorithms, never promotes formal NG,
-    and never derives the selected implementation from profile/filename routing.
-    """
-    from audit.precheck_contract import fact
-    from audit.precheck_dependencies import dependency_facts
-
-    entry = context.rule.preset_key
-    facts = list(dependency_facts(context.audit_file, entry, context.group_context))
-    implementation = resources["carriers"].get(Path(context.audit_file.file_url).suffix.lower())
-    if implementation is None:
-        return [*facts, fact("coverage", "not_checked", "此套件尚不支持原件载体的准备检查。")]
-    module, name = implementation.split(":", 1)
-    cls = getattr(importlib.import_module(module), name)
-    checker = cls(context.audit_file, context.rule, group_context=context.group_context)
-    context.on_close(checker)
-    declarations = discover_declared_rules(cls)
-    for source_id, method in getattr(cls, "PRECHECK_METHODS", {}).items():
-        indices = [index for index, (name, _) in enumerate(declarations) if name == method]
-        if len(indices) != 1:
-            facts.append(fact(source_id, "error", "预检方法绑定无效。"))
-            continue
-        observed = checker.check(indices[0])
-        status, evidence = getattr(observed, "status", None), getattr(observed, "evidence", None)
-        mapped = "satisfied" if status == "PASS" and evidence and evidence.sources else "error" if status == "ERR" else "unknown"
-        facts.append(fact(source_id, mapped, getattr(observed, "suggestions", "未取得检查结论。"), evidence=evidence.model_dump(mode="json") if evidence else None))
-    if entry in {"U07", "L07", "N02"}:
-        from audit.precheck_pfmea import pfmea_precheck
-
-        facts.extend(pfmea_precheck(context.audit_file, entry, context.group_context))
-    if entry in {"U08", "L08", "N03"}:
-        from audit.precheck_cp import cp_precheck
-
-        facts.extend(cp_precheck(context.audit_file, entry, context.group_context))
-    custom = getattr(checker, "precheck", None)
-    if custom:
-        facts.extend(custom())
-    return facts

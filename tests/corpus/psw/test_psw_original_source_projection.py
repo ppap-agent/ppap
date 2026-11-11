@@ -14,7 +14,7 @@ from audit.contracts import AuditEvidence, AuditInput, AuditResultItem, Evidence
 from audit.engine.checkers.psw_pdf_evidence import _original_pdf_sources
 from audit.engine.checkers.psw_scope import _Objects
 
-ORIGINAL = Path(__file__).resolve().parents[3] / "assets/理想/样本/模拟测试文件V2-01/16-零件提交保证书/16-零件提交保证书-上海亚大.pdf"
+ORIGINAL = Path(__file__).resolve().parents[3] / "assets/li/samples/模拟测试文件V2-01/16-零件提交保证书/16-零件提交保证书-上海亚大.pdf"
 ORIGINAL_SHA = "24133e74c1dac80339a694863930121b9525d4b0d887f7e020b9ed82f3014c0b"
 VERSION = "frozen-psw-version"
 

@@ -32,7 +32,7 @@ def discovery_row(suite) -> dict[str, Any]:
 def official_source_suites():
     """Directory leaves only. A business suite_key is not a version selector.
 
-    Identical file bytes keep one content digest; the leaf path (``UAES/U08``)
+    Identical file bytes keep one content digest; the leaf path (``uaes/U08``)
     is stored beside it. Historical carriers are not installed or published by
     this path.
     """

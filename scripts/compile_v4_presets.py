@@ -13,6 +13,8 @@ from collections import Counter
 from pathlib import Path
 from zipfile import ZipFile
 
+from audit.standard_suites import customer_directory
+
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "assets"
 OUTPUT = ROOT / "packages/audit/src/audit/preset_rules.json"
@@ -105,7 +107,7 @@ def compile_presets() -> str:
         prefix = {"UAES": "U", "理想": "L", "蔚来": "N"}[customer]
         for index, (kind, filename) in enumerate(entries, 1):
             entry = f"{prefix}{index:02d}"
-            path = ASSETS / customer / "规则" / filename
+            path = ASSETS / customer_directory(customer) / "rules" / filename
             expected_files.add(path)
             with ZipFile(path) as archive:
                 document = ET.fromstring(archive.read("word/document.xml"))
@@ -146,7 +148,7 @@ def compile_presets() -> str:
         number, name = row["title"].split(" ", 1)
         clauses = [{**clause, "id": entry + clause["id"][len(source) :]} for clause in row["clauses"]]
         result.append({**row, "customer": "蔚来", "entry_id": entry, "title": f"{number}规则-{name}", "clauses": clauses})
-    if {path for customer in FILES for path in (ASSETS / customer / "规则").glob("*.docx")} != expected_files:
+    if {path for customer in FILES for path in (ASSETS / customer_directory(customer) / "rules").glob("*.docx")} != expected_files:
         raise ValueError("Source files changed; reconcile the authoritative 00-A matrix")
     return json.dumps(result, ensure_ascii=False, indent=2) + "\n"
 

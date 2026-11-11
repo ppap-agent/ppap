@@ -6,8 +6,8 @@ import inspect
 import json
 from pathlib import Path
 
-from audit.checkers.v3.excel_agent import ExcelAgent
-from audit.checkers.v4.uaes.native import UaesSourceAgent
+from audit.checker_lib.nio.excel_agent import ExcelAgent
+from audit.checker_lib.uaes.native import UaesSourceAgent
 from audit.contracts import AuditInput, RuleInput
 from audit.engine.checkers.rule_declarations import _agent_for_target, discover_declared_rules
 from audit.engine.rule_engine import get_doc_resource_by_doc_type
@@ -50,13 +50,12 @@ def write_starting_point(work: Path, audit_file: AuditInput, rule: RuleInput) ->
         from audit.presets import preset_source_bindings, validate_preset_source
 
         preset = validate_preset_source(rule.model_dump(mode="json"))
-        profile = "v4" if ".v4." in reference.__module__ else "v3" if ".v3." in reference.__module__ else "v2"
-        bindings = preset_source_bindings(preset, checker_profile=profile)
+        bindings = preset_source_bindings(preset)
         (work / "reference-bindings.json").write_text(json.dumps(bindings, ensure_ascii=False, indent=2), encoding="utf-8")
     lines = [
         "from pathlib import Path",
         f"from {base.__module__} import {base.__name__}",
-        "from audit.checkers.v3.excel_agent import rule",
+        "from audit.checker_lib.nio.excel_agent import rule",
         "from audit.engine.rule_engine.context import RuleContext",
         "",
         f"class TaskAudit({base.__name__}):",

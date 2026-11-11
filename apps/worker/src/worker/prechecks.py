@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 
 from agent.client import DeepClient
-from audit.precheck_contract import complete_coverage, customer_conflict, empty_result, fact, input_digest, result_row, validate_result
+from audit.precheck.contract import complete_coverage, customer_conflict, empty_result, fact, input_digest, result_row, validate_result
 
 
 def unavailable_result(payload):

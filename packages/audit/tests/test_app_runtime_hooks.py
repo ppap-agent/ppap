@@ -39,7 +39,7 @@ def test_app_runtime_pdf_conversion_uses_actual_values_and_releases_temporary_fi
         return ConversionArtifact(success=True, xlsx_path=str(converted), temp_files=[str(converted), str(auxiliary)])
 
     monkeypatch.setattr("audit.engine.app_runtime.convert_pdf_to_excel_auto", convert)
-    monkeypatch.setattr("audit.checkers.v2.pdf_agent.convert_pdf_to_excel_auto", convert)
+    monkeypatch.setattr("audit.checker_lib.li.pdf_agent.convert_pdf_to_excel_auto", convert)
     rules = RuleInput(
         rule_id="confirmed-supplier-rules",
         rule_profile=profile,
@@ -130,7 +130,7 @@ def test_app_runtime_reads_psw_facts_directly_through_ocr_configuration(tmp_path
         return output
 
     monkeypatch.setattr("audit.engine.app_runtime.convert_pdf_to_excel_auto", convert)
-    monkeypatch.setattr("audit.checkers.v2.pdf_agent.convert_pdf_to_excel_auto", convert)
+    monkeypatch.setattr("audit.checker_lib.li.pdf_agent.convert_pdf_to_excel_auto", convert)
     monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", read)
     monkeypatch.setattr("documents.ai.run_json", lambda *a, **k: pytest.fail("PSW images must not enter text LLM"))
     monkeypatch.setattr("documents.ocr.paddle.reader.read_pdf_page_evidence", lambda *a, **k: pytest.fail("PSW must not wait for Paddle first"))
@@ -158,7 +158,7 @@ def test_app_runtime_reads_psw_facts_directly_through_ocr_configuration(tmp_path
 def test_fixed_runtime_missing_paddle_replay_stays_unknown_and_does_not_fall_through_to_network(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
-    from audit.checkers.v4.visual_facts import VisualFactsUnavailable, read_original_pdf_visual_facts
+    from audit.engine.checkers.visual_facts import VisualFactsUnavailable, read_original_pdf_visual_facts
     from audit.engine.rule_engine import Decision, GuardStop
     from audit.engine.runtime import bind_runtime
 

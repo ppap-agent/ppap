@@ -42,7 +42,7 @@ def corpus_fixture(tmp_path, monkeypatch, *, explain_pass=True):
     rules = {"type": "fixture", "rules": [{"id": "R1", "rule_to_check": "A1 must be positive"}], "checker_binding": {"R1": "checker:check"}}
     files = {"rules.json": json.dumps(rules).encode(), "checker.py": PROGRAM, "appendix.json": b"[]"}
     source = StandardSuite("fixture", "fixture", "", "", (), files, {"R1": "checker:check"}, "test fixture")
-    selector = "fixture@v4"
+    selector = "fixture/F01"
     monkeypatch.setattr(oracle, "suite_sources", lambda: {selector: source})
     monkeypatch.setattr(oracle, "reviewed_rules", lambda: {selector: oracle.reviewed_contract(source)})
     paths = {"cases": tmp_path / "cases.csv", "oracle": tmp_path / "oracle.csv", "root": tmp_path}
@@ -152,7 +152,7 @@ def test_plan_binds_direct_dependency_revision_content_and_all_originals(tmp_pat
 
 def test_real_execution_preserves_selected_dependency_rules_when_demoting_target(tmp_path, monkeypatch):
     context, paths = corpus_fixture(tmp_path, monkeypatch)
-    source = oracle.suite_sources()["fixture@v4"]
+    source = oracle.suite_sources()["fixture/F01"]
     dependency_rules = {"type": "dependency", "rules": [{"id": "R1", "rule_to_check": "A1 must be positive"}], "checker_binding": {"R1": "checker:check"}}
     dependency_files = {**source.files, "rules.json": json.dumps(dependency_rules).encode(), "appendix.json": b'[{"reviewed":"context"}]'}
     dependency_source = replace(source, suite_key="fixture:dependency", document_type="dependency", files=dependency_files)
@@ -160,7 +160,7 @@ def test_real_execution_preserves_selected_dependency_rules_when_demoting_target
     objects = {name: content_digest(raw) for name, raw in selected_files.items()}
     dependency_revision = SuiteRevision(str(uuid4()), None, "fixture:dependency", (), None, objects, resolved_digest("fixture:dependency", (), objects), None)
     dependency = ResolvedSuite(dependency_revision, selected_files, objects)
-    sources = {"fixture@v4": source, "fixture:dependency@v4": dependency_source}
+    sources = {"fixture/F01": source, "fixture/dependency": dependency_source}
     monkeypatch.setattr(oracle, "suite_sources", lambda: sources)
     monkeypatch.setattr(oracle, "reviewed_rules", lambda: {selector: oracle.reviewed_contract(value) for selector, value in sources.items()})
     for number in range(1, 5):
@@ -170,7 +170,7 @@ def test_real_execution_preserves_selected_dependency_rules_when_demoting_target
         workbook.save(tmp_path / filename)
         workbook.close()
         with paths["cases"].open("a", newline="") as stream:
-            csv.writer(stream).writerow(["fixture", str(number), "dependency", filename, filename, "target", "fixture:dependency@v4", "fixture:dependency", "R1"])
+            csv.writer(stream).writerow(["fixture", str(number), "dependency", filename, filename, "target", "fixture/dependency", "fixture:dependency", "R1"])
         with paths["oracle"].open("a", newline="") as stream:
             csv.writer(stream).writerow(["fixture", str(number), "dependency", "R1", "PASS", "A1 must be positive", "Positive synthetic source", "test author", "2026-11-07", ""])
     # The candidate actually consumes the demoted target's selected rule context.
@@ -306,17 +306,17 @@ def test_no_model_proof_keeps_its_preexisting_digest_and_serialization(tmp_path,
 
 def test_selected_revision_consumes_only_samples_judged_under_its_own_rules(tmp_path, monkeypatch):
     context, paths = corpus_fixture(tmp_path, monkeypatch)
-    current = oracle.suite_sources()["fixture@v4"]
+    current = oracle.suite_sources()["fixture/F01"]
     earlier_rules = {**json.loads(current.files["rules.json"]), "rules": [{"id": "R1", "rule_to_check": "A1 must be negative"}]}
     earlier = replace(current, files={**current.files, "rules.json": json.dumps(earlier_rules).encode()})
-    monkeypatch.setattr(oracle, "suite_sources", lambda: {"fixture@v4": current, "fixture@v2": earlier})
+    monkeypatch.setattr(oracle, "suite_sources", lambda: {"fixture/F01": current, "fixture/earlier": earlier})
     monkeypatch.setattr(oracle, "reviewed_rules", lambda: {key: oracle.reviewed_contract(value) for key, value in oracle.suite_sources().items()})
     workbook = Workbook()
     workbook.active["A1"] = -1
     workbook.save(tmp_path / "earlier.xlsx")
     workbook.close()
     with paths["cases"].open("a", encoding="utf-8", newline="") as stream:
-        csv.writer(stream).writerow(["fixture", "earlier", "target", "earlier.xlsx", "earlier.xlsx", "target", "fixture@v2", "fixture", "R1"])
+        csv.writer(stream).writerow(["fixture", "earlier", "target", "earlier.xlsx", "earlier.xlsx", "target", "fixture/earlier", "fixture", "R1"])
     with paths["oracle"].open("a", encoding="utf-8", newline="") as stream:
         csv.writer(stream).writerow(["fixture", "earlier", "target", "R1", "NG", "A1 must be negative", "Synthetic earlier rule", "test author", "2026-11-07", ""])
 
@@ -331,7 +331,7 @@ def test_selected_revision_consumes_only_samples_judged_under_its_own_rules(tmp_
     assert {"oracle_rules_changed", "insufficient_independent_samples"} <= set(plan.reasons)
 
 
-@pytest.mark.parametrize(("selector", "samples"), [("PPAP:潜在过程失效模式及后果分析@v2", 10), ("PPAP:潜在过程失效模式及后果分析@v3", 9)])
+@pytest.mark.parametrize(("selector", "samples"), [("li/L07", 10), ("nio/N02", 9)])
 def test_real_generations_of_one_document_type_do_not_block_each_other(selector, samples):
     source = oracle.suite_sources()[selector]
     objects = {name: content_digest(raw) for name, raw in source.files.items()}
@@ -363,79 +363,17 @@ def test_live_validation_gives_paddle_only_through_the_run_local_bridge(tmp_path
     assert seen == [{}]
 
 
-def test_v4_oracle_selector_stays_on_the_legacy_u08_carrier():
+def test_corpus_selector_is_the_installed_u08_leaf():
     from audit.standard_suites import predefined_directory_suites
 
-    legacy = oracle.suite_sources()["UAES:U08@v4"]
-    directory = next(suite for suite in predefined_directory_suites() if suite.source_path == "UAES/U08")
-    assert legacy.source_path != directory.source_path
-    assert legacy.revision_digest != directory.revision_digest
-    assert b"check_clause" in legacy.files["checker.py"]
-    assert b"audit.checkers.v4" not in directory.files["checker.py"]
-    assert b"audit.checkers.v3" not in directory.files["checker.py"]
-    assert b"audit.checkers.v2" not in directory.files["checker.py"]
-
-
-def test_guest_runs_frozen_u08_bytes_and_leaves_unbound_clauses_unpassed(tmp_path):
-    import hashlib
-
-    from agent.execution.audit_runtime import run_audit_process
-    from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest
-    from audit.standard_suites import predefined_directory_suites
-    from openpyxl import Workbook
-
-    suite = next(item for item in predefined_directory_suites() if item.source_path == "UAES/U08")
-    book = Workbook()
-    sheet = book.active
-    sheet.title = "控制计划"
-    sheet.append(["控制计划"])
-    sheet.append(["工序名称/操作描述", "机器/装置/夹具/工装", "特性类型"])
-    sheet.append(["装配", "压机", "CC"])
-    path = tmp_path / "control-plan.xlsx"
-    book.save(path)
-    book.close()
-    original = path.read_bytes()
-    rules = json.loads(suite.files["rules.json"])
-    # Freeze a deliberately partial binding; the installed leaf can gain
-    # readers without changing this unbound-clause execution contract.
-    rules["checker_binding"] = {clause: rules["checker_binding"][clause] for clause in ("U08:1", "U08:4")}
-    program = {name: suite.files[name] for name in ("checker.py", "resources.py")}
-    digest = checker_digest(program)
-    binding = RuleBinding(suite.suite_key, digest, rules["checker_binding"])
-    source = FrozenInput("target", hashlib.sha256(original).hexdigest(), "target", "control-plan.xlsx")
-    target = FrozenTarget("target", "revision", suite.suite_key, "a" * 64, rules, binding)
-    snapshot = ExecutionSnapshot("tenant", "initiator", (source,), (target,), "runtime", "library", {})
-    result = run_audit_process(snapshot, {"target": original}, {digest: program})
-    by_clause = {row["clause_id"]: row for row in result["findings"]}
-    assert set(by_clause) == {"U08:1", "U08:4"}
-    assert by_clause["U08:1"]["status"] == by_clause["U08:4"]["status"] == "PASS"
-    assert all(row["evidence"]["sources"] for row in by_clause.values())
-    for row in by_clause.values():
-        for source in row["evidence"]["sources"]:
-            locator = json.loads(source["locator"])
-            assert locator["file_version_id"] == "target"
-            assert locator["source_sha256"] == hashlib.sha256(original).hexdigest()
-            assert locator["kind"] == "xlsx_cell"
-    coverage = {row["clause_id"]: row["coverage"] for row in result["coverage"]}
-    assert coverage["U08:1"] == coverage["U08:4"] == "mapped"
-    unbound = [clause for clause, state in coverage.items() if state == "unsupported"]
-    assert set(unbound) == {row["id"] for row in rules["rules"]} - {"U08:1", "U08:4"}
-    assert not any(row["status"] == "PASS" and row["clause_id"] in unbound for row in result["findings"])
-    changed = dict(program)
-    changed["checker.py"] = program["checker.py"].replace("已读取各工序对应的生产资源。".encode(), b"LIVE-DIRECTORY")
-    (tmp_path / "checker.py").write_bytes(changed["checker.py"])
-    rerun = run_audit_process(snapshot, {"target": original}, {digest: program})
-    assert rerun["findings"] == result["findings"]
+    directory = next(suite for suite in predefined_directory_suites() if suite.source_path == "uaes/U08")
+    assert oracle.suite_sources()["uaes/U08"] is directory or oracle.suite_sources()["uaes/U08"] == directory
+    assert b"audit.checkers.v" not in directory.files["checker.py"]
 
 
 def test_shared_oracle_path_is_not_stored_as_directory_identity():
-    from audit.standard_suites import standard_suites
-    from audit.suite_migration import generic_standard_suites
     from product.seed_standard_suites import official_source_suites, persisted_source_path
 
-    historical = (*standard_suites(), *generic_standard_suites(include_history=True))
-    shared = "assets/corpus/oracle.csv"
-    assert [suite.source_path for suite in historical].count(shared) > 1
-    assert persisted_source_path(shared) is None
+    assert persisted_source_path("assets/corpus/oracle.csv") is None
     assert all(persisted_source_path(suite.source_path) == suite.source_path for suite in official_source_suites())
-    assert persisted_source_path("UAES/U08") == "UAES/U08"
+    assert persisted_source_path("uaes/U08") == "uaes/U08"

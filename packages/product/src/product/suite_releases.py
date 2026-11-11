@@ -60,7 +60,8 @@ def adoption_block(suite: ResolvedSuite, *, verified: bool, force_unverified: bo
 def leaf_capability(files: Mapping[str, bytes]) -> dict[str, Any]:
     """Counts already stored on one leaf. This is not a business-correctness verdict.
 
-    ``evidence_reader_clause_ids`` are the clause ids named by ``RESOURCE["clauses"]``.
+    ``evidence_reader_clause_ids`` are the clause ids named by ``RESOURCE["methods"]``
+    (company leaves) or ``RESOURCE["clauses"]`` (authored leaves).
     An empty list means no reader is declared. ``directory_coverage`` is not copied
     here: a complete binding is not evidence that a clause can be judged.
     """
@@ -97,7 +98,8 @@ def _declared_reader_clause_ids(source: bytes) -> list[str]:
             value = ast.literal_eval(node.value)
         except (ValueError, SyntaxError, MemoryError):
             return []
-        clauses = value.get("clauses") if isinstance(value, dict) else None
+        # Company leaves name an implementation method per clause; authored leaves name readers.
+        clauses = (value.get("methods") or value.get("clauses")) if isinstance(value, dict) else None
         if not isinstance(clauses, dict):
             return []
         return [clause_id for clause_id in clauses if isinstance(clause_id, str)]

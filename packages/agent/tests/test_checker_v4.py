@@ -13,9 +13,9 @@ from agent.execution.checker_context import write_starting_point
 from agent.execution.checker_guest import CheckerTrialError, run_program
 from agent.execution.checker_native import bind_native_checks
 from agent.protocol import ExecuteRequest, FrozenFile
-from audit.checkers.v3.excel_agent import rule as check_rule
-from audit.checkers.v4.uaes.native import UnknownFact
-from audit.checkers.v4.uaes.special_characteristics import UaesSpecialCharacteristicsAgent
+from audit.checker_lib.nio.excel_agent import rule as check_rule
+from audit.checker_lib.uaes.native import UnknownFact
+from audit.checker_lib.uaes.special_characteristics import UaesSpecialCharacteristicsAgent
 from audit.contracts import AuditInput, RuleInput
 from audit.presets import preset_rule, preset_rule_body, validate_preset_body
 from openpyxl import Workbook
@@ -61,7 +61,9 @@ def program(work, target, rule, actions):
     return source.encode()
 
 
-@pytest.mark.parametrize(("customer", "entry", "module"), [("蔚来", "N03", "nio.control_plan"), ("理想", "L11", "li_auto.process_flow"), ("UAES", "U12", "uaes.special_characteristics")])
+@pytest.mark.parametrize(
+    ("customer", "entry", "module"), [("蔚来", "N03", "nio.control_plan_agent"), ("理想", "L11", "li.process_flow_chart_excel_agent"), ("UAES", "U12", "uaes.special_characteristics")]
+)
 def test_starting_point_uses_customer_resolver_and_source_bindings(tmp_path, customer, entry, module):
     rule = rule_for_file(frozen("target", entry, customer=customer))
     target = AuditInput(audit_id="target", file_url="target.xlsx")

@@ -132,7 +132,7 @@ def test_pdf_context_and_crops_bound_actual_render_allocations(monkeypatch):
     from types import SimpleNamespace
 
     import fitz
-    from audit.checkers.v4.visual_facts import _pdf_images
+    from audit.engine.checkers.visual_facts import _pdf_images
 
     allocations = []
 
@@ -173,7 +173,7 @@ def test_pdf_context_and_crops_bound_actual_render_allocations(monkeypatch):
         def __exit__(self, *args):
             pass
 
-    monkeypatch.setattr("audit.checkers.v4.visual_facts.fitz.open", lambda path: Document())
+    monkeypatch.setattr("audit.engine.checkers.visual_facts.fitz.open", lambda path: Document())
     _pdf_images(SimpleNamespace(file_url="unallocated.pdf", audit_id="frozen"), [1], "a" * 64)
     assert allocations
     assert all(width * height <= 12_000_000 and max(width, height) <= 4096 for width, height in allocations)
@@ -207,7 +207,7 @@ def test_universal_positive_fact_cannot_skip_original_context(monkeypatch, field
 
 
 def test_psw_stamp_presence_conflicts_across_business_pages_stay_unknown(monkeypatch):
-    from audit.checkers.v4.visual_facts import _EXISTENCE_FIELDS
+    from audit.engine.checkers.visual_facts import _EXISTENCE_FIELDS
 
     frames = images() + [OcrImage(b"other", {"scope": "pdf:3", "page": 3, "context": True}, 100, 200)]
     install_scoped(monkeypatch, {"pdf:2": False, "pdf:3": True})
@@ -218,7 +218,7 @@ def test_psw_image_plan_only_magnifies_requested_regions(monkeypatch):
     from types import SimpleNamespace
 
     import fitz
-    from audit.checkers.v4.visual_facts import _pdf_images
+    from audit.engine.checkers.visual_facts import _pdf_images
 
     labels = {"经授权的供方代表签字": (60, 610, 180, 622), "认可情况": (60, 700, 110, 712), "提交结果": (60, 420, 110, 432)}
 
@@ -258,7 +258,7 @@ def test_psw_image_plan_only_magnifies_requested_regions(monkeypatch):
         def __exit__(self, *args):
             pass
 
-    monkeypatch.setattr("audit.checkers.v4.visual_facts.fitz.open", lambda path: Document())
+    monkeypatch.setattr("audit.engine.checkers.visual_facts.fitz.open", lambda path: Document())
     audit = SimpleNamespace(file_url="unallocated.pdf", audit_id="frozen")
     core, _ = _pdf_images(audit, [1], "a" * 64, {"psw_stamp_ending_text": "末端原字", "authorized_signature_present": "签字", "approved_checked": "批准"})
     assert len(core) == 4
@@ -388,8 +388,7 @@ def test_located_field_uses_application_coordinates_and_preserves_unknown(monkey
 def test_submission_reason_on_one_warrant_page_is_not_contradicted_by_a_blank_copy(monkeypatch):
     from types import SimpleNamespace
 
-    from audit.checkers.v4 import visual_facts
-    from audit.engine.checkers import ocr_visual_facts
+    from audit.engine.checkers import ocr_visual_facts, visual_facts
 
     captured = {}
 

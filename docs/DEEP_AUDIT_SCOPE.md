@@ -192,7 +192,7 @@ Standard 的承诺是执行已声明、已验证适用范围的内置检查集�
 - [客户规则原件](../../ppap-agent/assets/poc测试/poc规则/)：`10规则-控制计划.docx`、`8规则-过程流程图.docx`、`9规则-潜在过程失效模式及后果分析（PFMEA）.docx`。注意 Markdown 副本、原件和已发布修订未必一致。
 - 用户提供的联电附件二：`控制计划.xlsx`、`过程流程图.xls`、`PFMEA.xls`、`CPO-45薄膜电容器控制计划.xlsx`，以及产能 Word 文件。
 - [POC 真实样本](../../ppap-agent/assets/poc测试/POC测试样本/)中的 `尺寸检验报告-example.xlsm` 和文本型 PDF 控制计划。
-- Standard 使用现有 [corpus](../tests/corpus/test_cases.py) 的 v2 与 v3 数据集 及对应人工 expected；不能修改 expected 来迎合实现。
+- Standard 使用现有 [corpus](../tests/corpus/test_cases.py) 的理想（li）与蔚来（nio）数据集 及对应人工 expected；不能修改 expected 来迎合实现。
 
 验收中的变更只作用于样例副本和明确测试记录，不修改客户原件、其他测试者任务或既有历史结果。共享队列不是任意修改共享业务数据的授权。
 

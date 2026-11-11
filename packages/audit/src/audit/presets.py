@@ -107,10 +107,14 @@ def validate_preset_body(body: dict) -> CustomerPreset:
     return preset
 
 
-def preset_source_bindings(preset: CustomerPreset, *, checker_profile: str) -> dict[str, str]:
-    from audit.checkers.v4.li_auto.bindings import BINDINGS as li_auto
-    from audit.checkers.v4.nio.bindings import BINDINGS as nio
-    from audit.checkers.v4.uaes.bindings import BINDINGS as uaes
+def preset_source_bindings(preset: CustomerPreset) -> dict[str, str]:
+    """Clause → implementation method declared by the preset's checker leaf."""
+    import ast
 
-    bindings = {"UAES": uaes, "理想": li_auto, "蔚来": nio}[preset.customer].get(checker_profile, {})
-    return {clause.id: bindings[clause.id] for clause in preset.clauses if clause.id in bindings}
+    from audit.standard_suites import _CHECKERS_ROOT, customer_directory
+
+    source = (_CHECKERS_ROOT / customer_directory(preset.customer) / preset.entry_id / "resources.py").read_text(encoding="utf-8")
+    (resource,) = [
+        ast.literal_eval(node.value) for node in ast.parse(source).body if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "RESOURCE" for target in node.targets)
+    ]
+    return {clause.id: resource["methods"][clause.id] for clause in preset.clauses if clause.id in resource["methods"]}

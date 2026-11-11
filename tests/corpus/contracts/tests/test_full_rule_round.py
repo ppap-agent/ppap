@@ -2,8 +2,7 @@ from io import BytesIO
 
 import pytest
 from audit.audits import RoundInput, RoundWork
-from audit.suite_migration import migrated_builtin_suite
-from corpus_contracts.core_round import bind_suite, run_suite_round
+from corpus_contracts.core_round import bind_suite, leaf_suite, run_suite_round
 from openpyxl import Workbook
 
 START_REQUIREMENT = "识别“工序名称”列是否存在，如果存在则继续识别；当“工序名称”列下包含“进料检验”或“IQC”或相近词义的内容则通过，否则不通过"
@@ -34,7 +33,7 @@ def process_round(rows, *, text="起始工序拆解完整性识别", bindings=No
     }
     if bindings is None:
         bindings = {"customer-start": "6"}
-    suite = bind_suite(migrated_builtin_suite("v3", "过程流程图"), body, bindings)
+    suite = bind_suite(leaf_suite("nio", "过程流程图"), body, bindings)
     target = RoundInput("target", "process", "process-v1", "process.xlsx", "ready", rule_version_id="rules-v1", rule_body=body)
     return run_suite_round(RoundWork("round", "tenant", [target]), {"process-v1": blob.getvalue()}, suites={"process-v1": suite})
 
@@ -139,7 +138,7 @@ def test_same_named_files_use_their_own_frozen_bytes_and_keep_distinct_result_so
             )
         )
 
-    suites = {item.file_version_id: bind_suite(migrated_builtin_suite("v3", "过程流程图"), item.rule_body, {"start": "6"}) for item in inputs}
+    suites = {item.file_version_id: bind_suite(leaf_suite("nio", "过程流程图"), item.rule_body, {"start": "6"}) for item in inputs}
     result = run_suite_round(RoundWork("frozen-round", "tenant", inputs), blobs, suites=suites)
 
     assert [(row["item_key"], row["status"], row["locator"]["file_id"], row["locator"]["file_version_id"], row["locator"]["filename"]) for row in result["findings"]] == [

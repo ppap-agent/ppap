@@ -9,23 +9,23 @@ from pathlib import Path
 import pytest
 from audit.checker_core import ValidationRecord, checker_digest
 from audit.checker_lib.imports import directory_import_violations
-from audit.standard_suites import hash_library, library_files, library_revision, load_predefined_checkers, standard_suites
+from audit.standard_suites import hash_library, library_files, library_revision, load_predefined_checkers
 
 _AUDIT = Path(__file__).resolve().parents[1] / "src" / "audit"
 _CHECKERS = _AUDIT / "checkers"
-_COMPANIES = ("UAES", "理想", "蔚来")
+_COMPANIES = ("uaes", "li", "nio")
 
 
-def test_public_fingerprint_includes_active_carrier_packages_not_company_leaves():
+def test_public_fingerprint_includes_company_implementations_not_company_leaves():
     relative = [path.relative_to(_AUDIT).as_posix() for path in library_files("audit", _AUDIT)]
     assert "checker_lib/excel.py" in relative
     assert "checker_lib/pdf.py" in relative
     assert "checker_lib/visual.py" in relative
     assert "engine/checkers/pdf_field_region.py" in relative
     assert "checkers/__init__.py" in relative
-    assert "checkers/v4/li_auto/psw.py" in relative
-    assert any(item.startswith("checkers/v2/") for item in relative)
-    assert any(item.startswith("checkers/v3/") for item in relative)
+    assert "checker_lib/li/psw_excel_agent.py" in relative
+    assert any(item.startswith("checker_lib/nio/") for item in relative)
+    assert any(item.startswith("checker_lib/uaes/") for item in relative)
     assert not any(item.split("/")[1] in _COMPANIES for item in relative if item.startswith("checkers/"))
     revision = library_revision()
     assert len(revision) == 64 and revision == library_revision()
@@ -37,35 +37,29 @@ def test_editing_a_company_leaf_changes_only_its_checker_digest(tmp_path):
         shutil.copytree(_CHECKERS / company, root / company, ignore=shutil.ignore_patterns("__pycache__"))
     loaded = {suite.source_path: suite for suite in load_predefined_checkers(root)}
     before = library_revision()
-    checker = root / "UAES" / "U08" / "checker.py"
+    checker = root / "uaes" / "U08" / "checker.py"
     checker.write_text(checker.read_text(encoding="utf-8") + "\n# business change only\n", encoding="utf-8")
     library_revision.cache_clear()
     assert library_revision() == before
     again = {suite.source_path: suite for suite in load_predefined_checkers(root)}
-    assert checker_digest(again["UAES/U07"].program_files) == checker_digest(loaded["UAES/U07"].program_files)
-    assert checker_digest(again["UAES/U08"].program_files) != checker_digest(loaded["UAES/U08"].program_files)
-    assert again["UAES/U07"].revision_digest == loaded["UAES/U07"].revision_digest
-    assert again["UAES/U08"].revision_digest != loaded["UAES/U08"].revision_digest
+    assert checker_digest(again["uaes/U07"].program_files) == checker_digest(loaded["uaes/U07"].program_files)
+    assert checker_digest(again["uaes/U08"].program_files) != checker_digest(loaded["uaes/U08"].program_files)
+    assert again["uaes/U07"].revision_digest == loaded["uaes/U07"].revision_digest
+    assert again["uaes/U08"].revision_digest != loaded["uaes/U08"].revision_digest
 
 
-def test_legacy_carrier_sources_move_the_public_fingerprint_and_company_leaves_do_not(tmp_path):
+def test_implementation_sources_move_the_public_fingerprint_and_company_leaves_do_not(tmp_path):
     root = tmp_path / "audit"
-    (root / "checker_lib").mkdir(parents=True)
-    excel = root / "checker_lib" / "excel.py"
-    excel.write_text("VALUE = 1\n", encoding="utf-8")
-    for family in ("v2", "v3", "v4", "UAES"):
-        leaf = root / "checkers" / family
-        leaf.mkdir(parents=True)
-        (leaf / "checker.py").write_text("VALUE = 1\n", encoding="utf-8")
+    for folder in ("checker_lib/li", "checkers/uaes/U08"):
+        (root / folder).mkdir(parents=True)
+    implementation = root / "checker_lib" / "li" / "agent.py"
+    implementation.write_text("VALUE = 1\n", encoding="utf-8")
+    leaf = root / "checkers" / "uaes" / "U08" / "checker.py"
+    leaf.write_text("VALUE = 1\n", encoding="utf-8")
     before = hash_library((("audit", root),))
-    (root / "checkers" / "UAES" / "checker.py").write_text("VALUE = 2\n", encoding="utf-8")
+    leaf.write_text("VALUE = 2\n", encoding="utf-8")
     assert hash_library((("audit", root),)) == before
-    for family in ("v2", "v3", "v4"):
-        (root / "checkers" / family / "checker.py").write_text("VALUE = 2\n", encoding="utf-8")
-        moved = hash_library((("audit", root),))
-        assert moved != before
-        before = moved
-    excel.write_text("VALUE = 2\n", encoding="utf-8")
+    implementation.write_text("VALUE = 2\n", encoding="utf-8")
     after = hash_library((("audit", root),))
     assert after != before
     same = dict(suite_digest="a" * 64, rule_digest="b" * 64, checker_digest="c" * 64, related_suite_digests={})
@@ -73,31 +67,24 @@ def test_legacy_carrier_sources_move_the_public_fingerprint_and_company_leaves_d
     assert record.status(**same, library_revision=before) == {"state": "verified", "samples_not_rerun": False}
     assert record.status(**same, library_revision=after) == {"state": "verified", "samples_not_rerun": True}
     names = [path.relative_to(root).as_posix() for path in library_files("audit", root)]
-    assert "checker_lib/excel.py" in names
-    assert "checkers/v2/checker.py" in names
-    assert "checkers/v3/checker.py" in names
-    assert "checkers/v4/checker.py" in names
-    assert "checkers/UAES/checker.py" not in names
+    assert "checker_lib/li/agent.py" in names and "checkers/uaes/U08/checker.py" not in names
 
 
-def test_v4_class_edit_expires_active_legacy_proofs_and_company_leaf_does_not(tmp_path):
+def test_implementation_edit_expires_proofs_and_company_leaf_edit_does_not(tmp_path):
     import documents
     from audit.checker_core import rule_digest
+    from audit.standard_suites import predefined_directory_suites
 
-    suites = standard_suites()
-    assert len(suites) == 41
+    suites = predefined_directory_suites()
     audit_copy = tmp_path / "audit"
     shutil.copytree(_AUDIT, audit_copy, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     documents_root = Path(documents.__file__).resolve().parent
     entries = (("audit", audit_copy), ("documents", documents_root))
     before = hash_library(entries)
     assert before == library_revision()
+    leaves = {suite.suite_key: checker_digest(suite.program_files) for suite in suites}
 
-    def carrier_digests():
-        return {suite.suite_key: checker_digest(suite.program_files) for suite in standard_suites()}
-
-    carriers = carrier_digests()
-    leaf_dir = audit_copy / "checkers" / "UAES" / "U08"
+    leaf_dir = audit_copy / "checkers" / "uaes" / "U08"
     leaf_files = {"checker.py": (leaf_dir / "checker.py").read_bytes(), "resources.py": (leaf_dir / "resources.py").read_bytes()}
     leaf_before = checker_digest(leaf_files)
     checker = leaf_dir / "checker.py"
@@ -105,41 +92,36 @@ def test_v4_class_edit_expires_active_legacy_proofs_and_company_leaf_does_not(tm
     assert hash_library(entries) == before
     leaf_after = checker_digest({"checker.py": checker.read_bytes(), "resources.py": leaf_files["resources.py"]})
     assert leaf_after != leaf_before
-    assert carrier_digests() == carriers
 
-    v4_class = audit_copy / "checkers" / "v4" / "li_auto" / "psw.py"
-    v4_class.write_bytes(v4_class.read_bytes() + b"\n# v4 carrier only\n")
-    after_v4 = hash_library(entries)
-    assert after_v4 != before
-    assert carrier_digests() == carriers
-    assert checker_digest({"checker.py": checker.read_bytes(), "resources.py": leaf_files["resources.py"]}) == leaf_after
+    implementation = audit_copy / "checker_lib" / "li" / "psw_excel_agent.py"
+    implementation.write_bytes(implementation.read_bytes() + b"\n# implementation only\n")
+    after_implementation = hash_library(entries)
+    assert after_implementation != before
     for suite in suites:
         rules = json.loads(suite.files["rules.json"])
         appendix = tuple(json.loads(suite.files.get("appendix.json", b"[]")))
         digested_rules = rule_digest(rules, appendix)
-        record = ValidationRecord(suite.revision_digest, digested_rules, carriers[suite.suite_key], {}, before)
-        same = dict(suite_digest=suite.revision_digest, rule_digest=digested_rules, checker_digest=carriers[suite.suite_key], related_suite_digests={})
+        record = ValidationRecord(suite.revision_digest, digested_rules, leaves[suite.suite_key], {}, before)
+        same = dict(suite_digest=suite.revision_digest, rule_digest=digested_rules, checker_digest=leaves[suite.suite_key], related_suite_digests={})
         assert record.status(**same, library_revision=before) == {"state": "verified", "samples_not_rerun": False}
-        assert record.status(**same, library_revision=after_v4) == {"state": "verified", "samples_not_rerun": True}
+        assert record.status(**same, library_revision=after_implementation) == {"state": "verified", "samples_not_rerun": True}
 
     shared = audit_copy / "checker_lib" / "excel.py"
     shared.write_bytes(shared.read_bytes() + b"\n# shared library\n")
-    assert hash_library(entries) != after_v4
+    assert hash_library(entries) != after_implementation
     assert checker_digest({"checker.py": checker.read_bytes(), "resources.py": leaf_files["resources.py"]}) == leaf_after
 
 
 def test_installed_directory_leaves_have_no_legacy_checker_imports():
     assert directory_import_violations(_CHECKERS) == ()
-    checker = (_CHECKERS / "UAES" / "U08" / "checker.py").read_text(encoding="utf-8")
-    assert "audit.checker_lib.excel" in checker
-    assert "audit.checker_lib.tables" in checker
-    assert "audit.checker_lib.evidence" in checker
+    checker = (_CHECKERS / "uaes" / "U08" / "checker.py").read_text(encoding="utf-8")
+    assert "audit.checker_lib.agents" in checker
     assert "resolve_engine_agent_class" not in checker
     assert "audit.checkers" not in checker
 
 
 def test_import_lint_flags_static_and_dynamic_legacy_imports(tmp_path):
-    leaf = tmp_path / "UAES" / "U08"
+    leaf = tmp_path / "uaes" / "U08"
     leaf.mkdir(parents=True)
     (leaf / "checker.py").write_text(
         "\n".join(
@@ -155,14 +137,14 @@ def test_import_lint_flags_static_and_dynamic_legacy_imports(tmp_path):
                 "import_module('audit.checker_lib.excel')",
                 "name = 'audit.checkers.v2'",
                 "import_module(name)",
-                "# import audit.checkers.v4.visual_facts",
+                "# import audit.engine.checkers.visual_facts",
                 "",
             ]
         ),
         encoding="utf-8",
     )
     (leaf / "resources.py").write_text("from audit.checkers.v3.excel_agent import ExcelAgent\nRESOURCE = {}\n", encoding="utf-8")
-    clean = tmp_path / "UAES" / "U99"
+    clean = tmp_path / "uaes" / "U99"
     clean.mkdir()
     (clean / "checker.py").write_text("# from audit.checkers.v4.uaes import Agent\nfrom audit.checker_lib.excel import load_workbook\n", encoding="utf-8")
     legacy = tmp_path / "v4"
@@ -190,7 +172,7 @@ def test_import_lint_flags_static_and_dynamic_legacy_imports(tmp_path):
     ],
 )
 def test_loader_rejects_imports_the_lint_reports(tmp_path, source):
-    leaf = tmp_path / "UAES" / "U08"
+    leaf = tmp_path / "uaes" / "U08"
     leaf.mkdir(parents=True)
     (leaf / "checker.py").write_text(source, encoding="utf-8")
     rules = {"rules": [{"id": "C1", "rule_to_check": "clause"}], "checker_binding": {"C1": "checker:create_audit"}}
@@ -200,7 +182,7 @@ def test_loader_rejects_imports_the_lint_reports(tmp_path, source):
 
 
 def test_loading_directory_leaves_does_not_fill_the_v3_overlay():
-    from audit.checkers.v3 import V3_OVERLAY_DOCX_AGENTS, V3_OVERLAY_EXCEL_AGENTS, V3_OVERLAY_PDF_AGENTS
+    from audit.checker_lib.nio import V3_OVERLAY_DOCX_AGENTS, V3_OVERLAY_EXCEL_AGENTS, V3_OVERLAY_PDF_AGENTS
 
     before = (dict(V3_OVERLAY_EXCEL_AGENTS), dict(V3_OVERLAY_PDF_AGENTS), dict(V3_OVERLAY_DOCX_AGENTS))
     load_predefined_checkers()

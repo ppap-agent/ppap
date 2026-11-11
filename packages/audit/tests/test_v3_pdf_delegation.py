@@ -3,7 +3,7 @@ import gc
 from pathlib import Path
 
 import pytest
-from audit.checkers.v3.pdf_excel_delegator_agent import ControlPlanPdfExcelDelegatorAgent, ProcessFlowChartPdfExcelDelegatorAgent
+from audit.checker_lib.nio.pdf_excel_delegator_agent import ControlPlanPdfExcelDelegatorAgent, ProcessFlowChartPdfExcelDelegatorAgent
 from audit.contracts import (
     AuditInput,
     GroupContextInput,

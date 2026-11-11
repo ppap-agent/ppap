@@ -78,9 +78,10 @@ class OpenAPIContractTests(unittest.TestCase):
     def test_suite_rule_contract_does_not_require_historical_routing_metadata(self):
         import json
 
-        from audit.suite_migration import migrated_builtin_suite
+        from audit.standard_suites import predefined_directory_suites
 
-        body = json.loads(migrated_builtin_suite("v3", "控制计划").files["rules.json"])
+        leaf = next(suite for suite in predefined_directory_suites() if suite.source_path == "nio/N03")
+        body = {key: value for key, value in json.loads(leaf.files["rules.json"]).items() if key not in {"customers", "preset_key", "models", "parts"}}
         observed = TypeAdapter(wc.EngineRuleBody).validate_python(body)
         self.assertEqual(observed["rules"], body["rules"])
         self.assertEqual(observed["checker_binding"], body["checker_binding"])

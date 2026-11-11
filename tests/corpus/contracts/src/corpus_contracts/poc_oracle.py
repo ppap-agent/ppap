@@ -123,7 +123,7 @@ def build_group_context_for_bundle(bundle_cases: List[PocCase]) -> GroupContextI
 def load_poc_cases(bundle: str | None = None, seq_set: set[str] | None = None) -> List[PocCase]:
     by_type = {typ.get_type_name(): seq for seq, typ in POC_SEQ_TO_DOC_TYPE.items()}
     cases = []
-    for group in load_oracle("蔚来"):
+    for group in load_oracle("nio"):
         if bundle and group.case_id != bundle:
             continue
         for file in group.files:
@@ -134,6 +134,12 @@ def load_poc_cases(bundle: str | None = None, seq_set: set[str] | None = None) -
             if seq_set and seq not in seq_set:
                 continue
             cases.append(
-                PocCase(file.filename, seq, file.path, group.case_id, {int(index): OracleRuleExpectation(int(index), e.status, e.rule_desc, e.manual_reason) for index, e in file.expected.items()})
+                PocCase(
+                    file.filename,
+                    seq,
+                    file.path,
+                    group.case_id,
+                    {number: OracleRuleExpectation(number, e.status, e.rule_desc, e.manual_reason) for number, e in ((int(index.rsplit(":", 1)[-1]), e) for index, e in file.expected.items())},
+                )
             )
     return sorted(cases, key=lambda case: (case.bundle_id, case.file_seq, case.file_name))

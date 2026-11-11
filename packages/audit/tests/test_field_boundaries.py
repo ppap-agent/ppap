@@ -6,12 +6,12 @@ from types import SimpleNamespace
 
 import fitz
 import pytest
-from audit.checkers.v2.psw_excel_agent import PswExcelAgent as V2Psw
-from audit.checkers.v3.control_plan_agent import ControlPlanAgent
-from audit.checkers.v3.psw_excel_agent import PswExcelAgent as V3Psw
-from audit.checkers.v4.visual_facts import _pdf_images
+from audit.checker_lib.li.psw_excel_agent import PswExcelAgent as V2Psw
+from audit.checker_lib.nio.control_plan_agent import ControlPlanAgent
+from audit.checker_lib.nio.psw_excel_agent import PswExcelAgent as V3Psw
 from audit.contracts import AuditInput, GroupContextInput, RuleInput
 from audit.engine.checkers.dimension_measurement_policy import check_tolerance
+from audit.engine.checkers.visual_facts import _pdf_images
 from audit.engine.runtime import bind_runtime
 from documents.ocr.observation import current_ocr_observation
 from openpyxl import Workbook
@@ -121,7 +121,7 @@ def test_measurement_units_use_the_bound_record_unit(measurement, unit, expected
 def test_numeric_public_check_preserves_the_record_unit_and_both_source_cells(tmp_path, measurement, expected):
     import json
 
-    from audit.checkers.v2.dimension_measurement_excel_agent import DimensionMeasurementExcelAgent
+    from audit.checker_lib.li.dimension_measurement_excel_agent import DimensionMeasurementExcelAgent
 
     path = tmp_path / "measurement.xlsx"
     book = Workbook()
@@ -155,7 +155,7 @@ def test_standard_and_header_units_keep_their_own_meaning():
 
 @pytest.mark.parametrize("label,left,right", [("零件号", "ABC/123", "ABC/124"), ("零件号/最新更改水平", "P001/A01", "P002/A01")])
 def test_compound_identity_does_not_match_a_shared_prefix_or_change_level(label, left, right):
-    from audit.checkers.v3.cross_file_extractors import part_numbers_compatible, read_part_number_keys
+    from audit.checker_lib.nio.cross_file_extractors import part_numbers_compatible, read_part_number_keys
 
     books = [Workbook(), Workbook()]
     try:
@@ -168,7 +168,7 @@ def test_compound_identity_does_not_match_a_shared_prefix_or_change_level(label,
 
 
 def test_same_part_with_explicit_different_change_levels_is_not_the_same_object(tmp_path):
-    from audit.checkers.v3.cross_file_extractors import check_reference_identity
+    from audit.checker_lib.nio.cross_file_extractors import check_reference_identity
     from audit.engine.rule_engine import GuardStop
 
     target, reference = Workbook(), Workbook()
@@ -302,7 +302,7 @@ def test_submission_result_options_cannot_share_a_neighbouring_checked_control(t
 
 
 def test_submission_reason_sends_each_small_box_enlarged_beside_its_label():
-    source = Path(__file__).resolve().parents[3].joinpath("assets", "理想", "样本", "补充样本", "零件提交保证书", "16-零件提交保证书-上海亚大.pdf")
+    source = Path(__file__).resolve().parents[3].joinpath("assets", "li", "samples", "extra", "零件提交保证书", "16-零件提交保证书-上海亚大.pdf")
     images, _ = _pdf_images(SimpleNamespace(file_url=str(source), audit_id="v"), [2], "a" * 64, {"submission_any_checked", "submission_other_present"})
     section, *options = images
     assert section.locator["context"] is True

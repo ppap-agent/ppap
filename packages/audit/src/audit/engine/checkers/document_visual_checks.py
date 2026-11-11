@@ -30,7 +30,7 @@ _FIXTURE_FIELDS = {
 
 
 def _observe(agent: Any, fields: dict[str, str], operation: str) -> tuple[dict[str, Any], AuditEvidence]:
-    from audit.checkers.v4.visual_facts import read_original_pdf_visual_facts
+    from audit.engine.checkers.visual_facts import read_original_pdf_visual_facts
 
     sources: list[EvidenceSource] = []
 
@@ -71,7 +71,7 @@ def _result(agent: Any, index: int, status: str, message: str, evidence: AuditEv
 
 
 def _failure(agent: Any, index: int, exc: Exception) -> AuditResultItem:
-    from audit.checkers.v4.visual_facts import VisualFactsUnavailable
+    from audit.engine.checkers.visual_facts import VisualFactsUnavailable
     from audit.engine.rule_engine import GuardStop
 
     unavailable = isinstance(exc, VisualFactsUnavailable) or (isinstance(exc, GuardStop) and str(exc.status) == "UNABLE")
@@ -159,7 +159,7 @@ def generic_image_check(agent: Any, rule: Any) -> AuditResultItem:
     try:
         source = Path(agent.audit_file.file_url)
         if not source.is_file():
-            from audit.checkers.v4.visual_facts import VisualFactsUnavailable
+            from audit.engine.checkers.visual_facts import VisualFactsUnavailable
 
             raise VisualFactsUnavailable("需要本轮可读取的冻结原件。")
         if source.stat().st_size > 64 * 1024 * 1024:
@@ -253,7 +253,7 @@ def generic_image_check(agent: Any, rule: Any) -> AuditResultItem:
                     runtime = get_runtime()
                     hook = getattr(runtime, "read_ocr_visual_facts", None)
                     if runtime is not None and not callable(hook):
-                        from audit.checkers.v4.visual_facts import VisualFactsUnavailable
+                        from audit.engine.checkers.visual_facts import VisualFactsUnavailable
 
                         raise VisualFactsUnavailable("执行环境没有可重放的原件图形观察。")
                     raw = (hook or request_ocr_visual_facts)(images=[image], prompt=prompt, response_schema=schema)
@@ -306,7 +306,7 @@ def generic_image_check(agent: Any, rule: Any) -> AuditResultItem:
             return _custom_result(rule, "UNABLE", "原件图形未形成可确认的观察，不能据此判定通过或不符合。")
         return evaluate_located_text(agent.audit_file, rule, fragments, complete=complete, cache=cache)
     except Exception as exc:
-        from audit.checkers.v4.visual_facts import VisualFactsUnavailable
+        from audit.engine.checkers.visual_facts import VisualFactsUnavailable
         from audit.engine.rule_engine import GuardStop
 
         unavailable = isinstance(exc, VisualFactsUnavailable) or (isinstance(exc, GuardStop) and str(exc.status) == "UNABLE")

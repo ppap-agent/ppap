@@ -7,6 +7,7 @@ The runtime/process authorization boundary has separate integration coverage.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 from dataclasses import replace
@@ -18,38 +19,40 @@ from agent.execution.audit_runtime import run_audit
 from agent.mapping import spec_from_work
 from audit.audits import DEEP_PROTOCOL_REVISION, RoundWork
 from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest
-from audit.standard_suites import StandardSuite, library_revision, standard_suites
-from audit.suite_migration import user_rule_files
+from audit.standard_suites import StandardSuite, library_revision, predefined_directory_suites
 
 
 @lru_cache(maxsize=None)
 def customer_suite(customer: str, entry: str) -> StandardSuite:
-    return next(suite for suite in standard_suites() if suite.suite_key == f"{customer}:{entry}")
+    return next(suite for suite in predefined_directory_suites() if suite.suite_key == f"{customer}:{entry}")
+
+
+def leaf_suite(company: str, document_type: str) -> StandardSuite:
+    """The company leaf for one document type, e.g. ``leaf_suite("nio", "过程流程图")``."""
+    return next(suite for suite in predefined_directory_suites() if suite.source_path.startswith(company + "/") and suite.document_type == document_type)
 
 
 def bind_suite(suite: StandardSuite, rules: dict, aliases: dict[str, str]) -> StandardSuite:
-    """Author an explicit fixture variant; aliases name source clauses, not indices."""
-    if set(aliases.values()) - set(suite.entrypoints):
+    """Author an explicit fixture variant; aliases name source clauses (``N05:6`` or ``6``), not indices."""
+    resource = ast.literal_eval(suite.files["resources.py"].decode().split("RESOURCE = ", 1)[1])
+    sources = {alias: source if source in suite.entrypoints else f"{suite.source_entry}:{source}" for alias, source in aliases.items()}
+    if set(sources.values()) - set(suite.entrypoints):
         raise ValueError("fixture_unknown_source_clause")
-    program = (
-        suite.program_files["checker.py"]
-        + (
-            "\nfrom dataclasses import replace\n"
-            f"CLAUSES = {aliases!r}\n"
-            f"SOURCE_RULES = {json.loads(suite.files['rules.json'])['rules']!r}\n"
-            "source_check = check\n"
-            "def check(context):\n"
-            "    library_rule = context.rule.model_copy(update={'rules': SOURCE_RULES})\n"
-            "    result = source_check(replace(context, clause_id=CLAUSES[context.clause_id], rule=library_rule))\n"
-            "    return result.model_copy(update={'clause_id': context.clause_id})\n"
-        ).encode()
-    )
-    files = {**suite.files, "checker.py": program, "rules.json": json.dumps(rules, ensure_ascii=False).encode()}
-    return replace(suite, files=files, entrypoints=dict.fromkeys(aliases, "checker:check"))
+    resource = {**resource, "methods": {alias: resource["methods"][source] for alias, source in sources.items()}}
+    binding = dict.fromkeys(aliases, "checker:create_audit")
+    files = {**suite.files, "resources.py": f"RESOURCE = {resource!r}\n".encode(), "rules.json": json.dumps({**rules, "checker_binding": binding}, ensure_ascii=False).encode()}
+    return replace(suite, files=files, entrypoints=binding)
 
 
 def unsupported_suite(rules: dict) -> StandardSuite:
-    return StandardSuite("fixture:unbound", rules.get("type", ""), "", "", (), user_rule_files(rules), {}, "")
+    files = {
+        "checker.py": b'"""No generated checker yet; all clauses are unsupported."""\n',
+        "rules.json": json.dumps({**rules, "checker_binding": {}}, ensure_ascii=False).encode(),
+        "appendix.json": b"[]",
+        "templates.json": b"[]",
+        "tests.json": b"[]",
+    }
+    return StandardSuite("fixture:unbound", rules.get("type", ""), "", "", (), files, {}, "")
 
 
 def freeze_suite_round(work: RoundWork, blobs: dict[str, bytes], *, suites: dict[str, StandardSuite], document_types: dict[str, str] | None = None):

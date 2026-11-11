@@ -6,14 +6,14 @@ from xml.etree import ElementTree
 from zipfile import ZipFile
 
 import pytest
-from audit.checkers.v2 import psw_excel_agent as psw_v2
-from audit.checkers.v2.dvp_r_excel_agent import DvpRExcelAgent as V2DvpRAgent
-from audit.checkers.v2.pfmea_agent import PfmeaAgent as V2PfmeaAgent
-from audit.checkers.v2.xir_assembly_issue_agent import XirAssemblyIssueAgent as V2XirAgent
-from audit.checkers.v3 import psw_excel_agent as psw_v3
-from audit.checkers.v3.dvp_r_excel_agent import DvpRExcelAgent as V3DvpRAgent
-from audit.checkers.v3.pfmea_agent import PfmeaAgent as V3PfmeaAgent
-from audit.checkers.v3.xir_assembly_issue_agent import XirAssemblyIssueAgent as V3XirAgent
+from audit.checker_lib.li import psw_excel_agent as psw_v2
+from audit.checker_lib.li.dvp_r_excel_agent import DvpRExcelAgent as V2DvpRAgent
+from audit.checker_lib.li.pfmea_agent import PfmeaAgent as V2PfmeaAgent
+from audit.checker_lib.li.xir_assembly_issue_agent import XirAssemblyIssueAgent as V2XirAgent
+from audit.checker_lib.nio import psw_excel_agent as psw_v3
+from audit.checker_lib.nio.dvp_r_excel_agent import DvpRExcelAgent as V3DvpRAgent
+from audit.checker_lib.nio.pfmea_agent import PfmeaAgent as V3PfmeaAgent
+from audit.checker_lib.nio.xir_assembly_issue_agent import XirAssemblyIssueAgent as V3XirAgent
 from audit.contracts import AuditInput, RuleInput
 from openpyxl import Workbook
 

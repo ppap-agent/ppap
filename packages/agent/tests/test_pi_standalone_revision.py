@@ -134,7 +134,7 @@ def test_u08_bytes_do_not_pass_unbound_clauses_or_unsupported_formats(tmp_path):
     from agent.execution.audit_runtime import run_audit_process
     from openpyxl import Workbook
 
-    suite = next(item for item in predefined_directory_suites() if item.source_path == "UAES/U08")
+    suite = next(item for item in predefined_directory_suites() if item.source_path == "uaes/U08")
     rules = json.loads(suite.files["rules.json"])
     # Exercise an explicitly incomplete binding independently of the installed
     # leaf's current business maturity.

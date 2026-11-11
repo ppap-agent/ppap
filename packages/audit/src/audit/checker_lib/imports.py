@@ -1,6 +1,6 @@
 """Import lint for independent leaves and new factory candidates.
 
-Stored historical programs and v2/v3/v4 packages are not reclassified by it.
+Stored historical programs are not reclassified by it.
 """
 
 from __future__ import annotations
@@ -15,8 +15,12 @@ _DYNAMIC = frozenset({"import_module", "__import__"})
 _LEGACY_FACADES = frozenset({"audit.engine", "audit.engine.routing", "audit.engine.engine", "audit.engine.app_runtime", "audit.standard_library"})
 
 
+# Company reader implementations run only through a leaf's declared resource, never by import.
+_IMPLEMENTATIONS = ("audit.checker_lib.li", "audit.checker_lib.nio", "audit.checker_lib.uaes")
+
+
 def _forbidden(module: str) -> bool:
-    return module == "audit.checkers" or module.startswith("audit.checkers.") or module in _LEGACY_FACADES
+    return module == "audit.checkers" or module.startswith("audit.checkers.") or module in _LEGACY_FACADES or any(module == name or module.startswith(name + ".") for name in _IMPLEMENTATIONS)
 
 
 def _call_name(node: ast.Call) -> str:

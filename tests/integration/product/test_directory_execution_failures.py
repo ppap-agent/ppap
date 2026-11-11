@@ -12,7 +12,7 @@ from uuid import uuid4
 import pytest
 from api import create_app
 from audit.checker_core import checker_digest
-from audit.standard_suites import predefined_directory_suites, standard_suites
+from audit.standard_suites import predefined_directory_suites
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from product import build_product_store
@@ -32,7 +32,7 @@ def test_u08_api_worker_keeps_selected_source_under_failures(auth_store_factory,
     suites = SuiteStore(settings, v4_objects, role="migrator")
     available = {suite.suite_key: suite for suite in predefined_directory_suites()}
     selected_source = available["UAES:U08"]
-    assert selected_source.source_path == "UAES/U08"
+    assert selected_source.source_path == "uaes/U08"
     order = []
 
     def include(key):
@@ -45,8 +45,17 @@ def test_u08_api_worker_keeps_selected_source_under_failures(auth_store_factory,
     include("UAES:U08")
     installed = install_official_sources(suites, [available[key] for key in order])
     revisions = {row["suite_key"]: row["revision_id"] for row in installed}
-    legacy_source = next(suite for suite in standard_suites() if suite.suite_key == "UAES:U08")
-    legacy = suites.create_revision(tenant_id=None, suite_key=legacy_source.suite_key, files=dict(legacy_source.files), related_suite_keys=legacy_source.related_suite_keys, created_by=None)
+    # A stored historical carrier: its program dispatches through the removed class loader.
+    legacy = suites.create_revision(
+        tenant_id=None,
+        suite_key="UAES:U08",
+        files={
+            "checker.py": b"from audit.standard_library import check_clause\nRESOURCES = {'carriers': {}, 'methods': {}}\ndef check(context):\n    return check_clause(context, RESOURCES)\n",
+            "rules.json": json.dumps({"rules": [{"id": "U08:1"}], "checker_binding": {"U08:1": "checker:check"}}).encode(),
+        },
+        related_suite_keys=("UAES:U07", "UAES:U16"),
+        created_by=None,
+    )
     assert b"check_clause" in suites.resolve_suite(legacy.id, principal.tenant_id).files["checker.py"]
     core_system.install(admin, guest_process=True)
     worker = build_product_store(settings, objects=v4_objects, role="worker")
@@ -92,7 +101,7 @@ def test_u08_api_worker_keeps_selected_source_under_failures(auth_store_factory,
                 "INSERT INTO product.rule_versions(id,tenant_id,title,body) VALUES(%s,%s,'U08 boundary',%s)",
                 (rule_id, principal.tenant_id, Jsonb({**json.loads(selected_source.files["rules.json"]), "suite_key": "UAES:U08"})),
             )
-            assert conn.execute("SELECT source_path FROM product.suite_revisions WHERE id=%s", (revisions["UAES:U08"],)).fetchone()[0] == "UAES/U08"
+            assert conn.execute("SELECT source_path FROM product.suite_revisions WHERE id=%s", (revisions["UAES:U08"],)).fetchone()[0] == "uaes/U08"
         book = Workbook()
         book.active.title = "控制计划"
         book.active.append(["控制计划"])

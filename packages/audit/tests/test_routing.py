@@ -3,29 +3,29 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from audit.checkers.v2.control_plan_agent import (
+from audit.checker_lib.li.control_plan_agent import (
     ControlPlanAgent as V2ControlPlanAgent,
 )
-from audit.checkers.v2.dimension_measurement_excel_agent import (
+from audit.checker_lib.li.dimension_measurement_excel_agent import (
     DimensionMeasurementExcelAgent,
 )
-from audit.checkers.v2.equipment_list_docx_agent import (
+from audit.checker_lib.li.equipment_list_docx_agent import (
     EquipmentListDocxAgent,
 )
-from audit.checkers.v2.pdf_excel_delegator_agent import (
+from audit.checker_lib.li.pdf_excel_delegator_agent import (
     ControlPlanPdfExcelDelegatorAgent,
 )
-from audit.checkers.v2.psw_docx_agent import PswDocxAgent
-from audit.checkers.v3.control_plan_agent import (
+from audit.checker_lib.li.psw_docx_agent import PswDocxAgent
+from audit.checker_lib.nio.control_plan_agent import (
     ControlPlanAgent as V3OverlayControlPlanAgent,
 )
-from audit.checkers.v3.equipment_list_docx_agent import (
+from audit.checker_lib.nio.equipment_list_docx_agent import (
     EquipmentListDocxAgent as V3EquipmentListDocxAgent,
 )
-from audit.checkers.v3.pdf_excel_delegator_agent import (
+from audit.checker_lib.nio.pdf_excel_delegator_agent import (
     ControlPlanPdfExcelDelegatorAgent as V3ControlPlanPdfExcelDelegatorAgent,
 )
-from audit.checkers.v3.psw_docx_agent import (
+from audit.checker_lib.nio.psw_docx_agent import (
     PswDocxAgent as V3PswDocxAgent,
 )
 from audit.engine.routing import (

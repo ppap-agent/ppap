@@ -12,7 +12,7 @@ import subprocess
 from uuid import uuid4
 
 from api import create_app
-from audit.standard_suites import predefined_directory_suites, standard_suites
+from audit.standard_suites import predefined_directory_suites
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from product import build_product_store
@@ -42,16 +42,23 @@ def test_api_refuses_a_carrier_pin_and_the_worker_runs_the_directory_revision(au
     include("UAES:U08")
     installed = install_official_sources(suites, [available[key] for key in order])
     revisions = {row["suite_key"]: row["revision_id"] for row in installed}
-    legacy = next(suite for suite in standard_suites() if suite.suite_key == "UAES:U08")
-    carrier = suites.create_revision(tenant_id=None, suite_key=legacy.suite_key, files=dict(legacy.files), related_suite_keys=legacy.related_suite_keys, created_by=None)
+    # A stored historical carrier: its program dispatches through the removed class loader.
+    carrier = suites.create_revision(
+        tenant_id=None,
+        suite_key="UAES:U08",
+        files={
+            "checker.py": b"from audit.standard_library import check_clause\nRESOURCES = {'carriers': {}, 'methods': {}}\ndef check(context):\n    return check_clause(context, RESOURCES)\n",
+            "rules.json": json.dumps({"rules": [{"id": "U08:1"}], "checker_binding": {"U08:1": "checker:check"}}).encode(),
+        },
+        related_suite_keys=("UAES:U07", "UAES:U16"),
+        created_by=None,
+    )
     calls = []
 
     def forbidden(*_args, **_kwargs):
         calls.append("legacy")
         raise AssertionError("legacy selector")
 
-    monkeypatch.setattr("audit.standard_library.check_clause", forbidden)
-    monkeypatch.setattr("audit.standard_suites._carriers", forbidden)
     monkeypatch.setattr("audit.presets.preset_source_bindings", forbidden)
     monkeypatch.setattr("audit.engine.routing.resolve_engine_agent_class", forbidden)
     hook = tmp_path / "legacy-hook"
@@ -62,10 +69,7 @@ def test_api_refuses_a_carrier_pin_and_the_worker_runs_the_directory_revision(au
         f"    open({str(marker)!r}, 'w').write('called')\n"
         "    raise SystemExit(86)\n"
         "import audit.standard_library as library\n"
-        "library.check_clause = _boom\n"
-        "library.prepare_target = _boom\n"
-        "import audit.standard_suites as suites\n"
-        "suites._carriers = _boom\n"
+        "library.check_factory = library.check_factory\n"
         "import audit.presets as presets\n"
         "presets.preset_source_bindings = _boom\n"
         "import audit.engine.routing as routing\n"
@@ -268,20 +272,15 @@ def test_http_refuses_an_official_carrier_head_and_records_precheck_confirmation
 
     include_directory("UAES:U08")
     installed = {row["suite_key"]: row["revision_id"] for row in install_official_sources(suites, [directory[key] for key in directory_order])}
-    baselines = {suite.suite_key: suite for suite in standard_suites()}
-    order = []
+    # Stored historical carriers with their former dependencies.
+    carrier_related = {"UAES:U12": (), "UAES:U07": ("UAES:U12",), "UAES:U16": (), "UAES:U08": ("UAES:U07", "UAES:U16")}
 
-    def include(key):
-        if key in order:
-            return
-        for related in baselines[key].related_suite_keys:
-            include(related)
-        order.append(key)
+    def carrier_files(key):
+        program = b"from audit.standard_library import check_clause\nRESOURCES = {'carriers': {}, 'methods': {}}\ndef check(context):\n    return check_clause(context, RESOURCES)\n"
+        clause = key.split(":", 1)[1] + ":1"
+        return {"checker.py": program, "rules.json": json.dumps({"rules": [{"id": clause}], "checker_binding": {clause: "checker:check"}}).encode()}
 
-    include("UAES:U08")
-    pinned = {key: suites.create_revision(tenant_id=None, suite_key=key, files=dict(baselines[key].files), related_suite_keys=baselines[key].related_suite_keys, created_by=None) for key in order}
-    monkeypatch.setattr("audit.standard_library.check_clause", forbidden)
-    monkeypatch.setattr("audit.standard_suites._carriers", forbidden)
+    pinned = {key: suites.create_revision(tenant_id=None, suite_key=key, files=carrier_files(key), related_suite_keys=related, created_by=None) for key, related in carrier_related.items()}
     monkeypatch.setattr("audit.presets.preset_source_bindings", forbidden)
     monkeypatch.setattr("audit.engine.routing.resolve_engine_agent_class", forbidden)
     core_system.install(admin, guest_process=False)

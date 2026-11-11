@@ -5,7 +5,7 @@ from corpus_contracts.oracle import original
 def test_giant_measurement_failure_names_an_actual_out_of_tolerance_record(request):
     if request.config.getoption("--ftype", default=None) not in (None, "pdf"):
         pytest.skip("Original PDF regression")
-    from audit.checkers.v2.dimension_measurement_pdf_agent import DimensionMeasurementPDFAgent
+    from audit.checker_lib.li.dimension_measurement_pdf_agent import DimensionMeasurementPDFAgent
     from audit.contracts import AuditInput, RuleInput
 
     source = original("1-全功能检验报告_巨一.pdf")

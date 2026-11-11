@@ -6,7 +6,7 @@ from pathlib import Path
 
 from audit.kinds import PpapDocumentType
 
-_CONTROL_PLAN = Path(__file__).resolve().parents[3] / "assets" / "蔚来" / "历史" / "poc规则" / "10规则-控制计划.docx"
+_CONTROL_PLAN = Path(__file__).resolve().parents[3] / "assets" / "nio" / "history" / "poc规则" / "10规则-控制计划.docx"
 _MARKDOWN = _CONTROL_PLAN.parent / "markdown" / (_CONTROL_PLAN.name + ".md")
 
 

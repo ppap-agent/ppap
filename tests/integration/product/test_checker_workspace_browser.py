@@ -1223,9 +1223,9 @@ def test_directory_revision_selection_pi_and_rollback_keep_exact_frozen_sources(
             # No registry or customer enum is added for this physical source.
             catalog = response_json(request.get(f.web + "/api/suites"))
             paths = {row["path"]: row for row in catalog["predefined"]}
-            assert all(f"UAES/{entry}" in paths for entry in ("U07", "U08", "U17"))
+            assert all(f"uaes/{entry}" in paths for entry in ("U07", "U08", "U17"))
             assert paths["v4/uaes"]["availability"] == "historical"
-            assert "v4/UAES/U08" not in paths
+            assert "v4/uaes/U08" not in paths
             assert paths["测试客户/T01"]["revision_id"] == revisions["v6"]
             adopt(revisions["v5"], force=True)
             rounds, feedback = [], []

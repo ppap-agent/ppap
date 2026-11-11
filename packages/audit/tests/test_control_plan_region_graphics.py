@@ -6,7 +6,7 @@ from io import BytesIO
 from types import SimpleNamespace
 
 import pytest
-from audit.checkers.v3.control_plan_agent import ControlPlanAgent
+from audit.checker_lib.nio.control_plan_agent import ControlPlanAgent
 from audit.contracts import AuditInput, RuleInput
 from audit.engine.runtime import bind_runtime
 from documents.ocr.observation import current_ocr_observation

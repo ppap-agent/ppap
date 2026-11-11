@@ -28,14 +28,14 @@
 
 `checker.py` 和 `resources.py` 禁止：
 
-- `audit.checkers`，以及 `audit.checkers.v2` / `v3` / `v4` 的类或业务 helper
+- `audit.checkers`，以及 `audit.checker_lib.li` / `v3` / `v4` 的类或业务 helper
 - `importlib.import_module` / `__import__` 指向这些模块；非字面量动态导入也无法审查，同样禁止
 - `from audit.standard_library import check_clause`
 - 继承 `ExcelAgent` 或其它旧版 Checker 来补齐本版本没有的条款
 
 缺少的版本、载体或条款保持不支持 / `UNABLE` / `ERR`，不得改用更低版本的 Checker，也不得因此返回 `PASS`。同一版本内部的读取策略保持原样，例如 PDF 文字不足时的 OCR、以及 `.xls` 转工作簿。不要把它们当成跨版本回退删掉。
 
-`library_revision()` 哈希共享运行库，以及 41 个正式源 Suite 仍在执行的 `checkers/v2`、`v3`、`v4` 源码。`checkers/<客户>/` 下的目录叶子不进入该指纹；只改叶子的 `checker.py` / `resources.py` 不改变它，叶子身份是 `checker_digest`。
+`library_revision()` 哈希共享运行库，包括 `checker_lib/` 下各公司的读取实现。`checkers/<客户>/` 下的目录叶子不进入该指纹；只改叶子的 `checker.py` / `resources.py` 不改变它，叶子身份是 `checker_digest`。
 
 共享库与已保存证明的 `library_revision` 不一致时，`samples_not_rerun` 为真。冻结结果按既有验证合同保留 `verified`，并披露样本未重跑。正式发布 `publish_official` 在 `samples_not_rerun` 时拒绝（`official_suite_validation_required`）。已排队任务的 `executor_revision` 使用公共 `library_revision()`。
 
@@ -64,7 +64,7 @@
 
 直接导入：
 
-- `from audit.checkers.v3.excel_agent import ExcelAgent, rule`
+- `from audit.checker_lib.nio.excel_agent import ExcelAgent, rule`
 - `from audit.engine.rule_engine.context import RuleContext`
 - `from audit.engine.rule_engine.fluent import Table`
 - `from audit.engine.rule_engine.contracts import RuleResource`

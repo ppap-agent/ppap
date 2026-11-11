@@ -3,8 +3,8 @@
 from io import BytesIO
 
 import pytest
-from audit.checkers.v2.psw_excel_agent import PswExcelAgent as V2PswAgent
-from audit.checkers.v3.psw_excel_agent import PswExcelAgent as V3PswAgent
+from audit.checker_lib.li.psw_excel_agent import PswExcelAgent as V2PswAgent
+from audit.checker_lib.nio.psw_excel_agent import PswExcelAgent as V3PswAgent
 from audit.contracts import AuditInput, RuleInput
 from audit.engine.runtime import bind_runtime
 from openpyxl import Workbook, load_workbook

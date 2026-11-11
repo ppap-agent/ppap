@@ -977,16 +977,14 @@ def test_fixed_suite_preserves_multiple_explicit_entrypoints_through_saved_candi
 
 
 def test_new_optimization_refuses_a_legacy_carrier_without_running_it(auth_store_factory, monkeypatch):
-    from audit.standard_suites import standard_suites
-
-    standard = standard_suites()[0]
     calls = []
-    monkeypatch.setattr("audit.standard_library.check_clause", lambda *_args, **_kwargs: calls.append("check") or (_ for _ in ()).throw(AssertionError("resolver")))
-    monkeypatch.setattr("audit.standard_suites._carriers", lambda *_args, **_kwargs: calls.append("carriers"))
     monkeypatch.setattr("audit.presets.preset_source_bindings", lambda *_args, **_kwargs: calls.append("bindings"))
     monkeypatch.setattr("audit.engine.routing.resolve_engine_agent_class", lambda *_args, **_kwargs: calls.append("resolver") or (_ for _ in ()).throw(AssertionError("resolver")))
-    monkeypatch.setitem(globals(), "RULES", json.loads(standard.files["rules.json"]))
-    monkeypatch.setitem(globals(), "PROGRAM", standard.files["checker.py"])
+    # A stored historical carrier dispatches through the removed class loader.
+    monkeypatch.setitem(globals(), "RULES", {"rules": [{"id": "C1", "rule_to_check": "clause"}], "checker_binding": {"C1": "checker:check"}})
+    monkeypatch.setitem(
+        globals(), "PROGRAM", b"from audit.standard_library import check_clause\nRESOURCES = {'carriers': {}, 'methods': {}}\ndef check(context):\n    return check_clause(context, RESOURCES)\n"
+    )
     f = fixture(auth_store_factory, count=1)
     response = f.clients[0].post(f"/suite-revisions/{f.suite.id}/optimizations", json=command(f, consume_model=False))
     assert response.status_code == 409, response.text
@@ -1042,8 +1040,6 @@ def test_non_carrier_optimization_does_not_call_legacy_selectors(auth_store_fact
 
         return inner
 
-    monkeypatch.setattr("audit.standard_library.check_clause", forbidden("check_clause"))
-    monkeypatch.setattr("audit.standard_suites._carriers", forbidden("_carriers"))
     monkeypatch.setattr("audit.presets.preset_source_bindings", forbidden("preset_source_bindings"))
     monkeypatch.setattr("audit.engine.routing.resolve_engine_agent_class", forbidden("resolve_engine_agent_class"))
     monkeypatch.setattr("agent.execution.checker_guest.task_reference", forbidden("task_reference"))

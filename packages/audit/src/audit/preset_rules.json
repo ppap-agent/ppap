@@ -5,7 +5,7 @@
     "source_type": "E01",
     "level": "L1",
     "title": "初始样品检验报告审核规则",
-    "source_path": "assets/UAES/规则/初始样品检验报告审核规则.docx",
+    "source_path": "assets/uaes/rules/初始样品检验报告审核规则.docx",
     "clauses": [
       {
         "id": "U01:1-1",
@@ -43,7 +43,7 @@
     "source_type": "E02",
     "level": "L1",
     "title": "测量比较报告审核规则",
-    "source_path": "assets/UAES/规则/测量比较报告审核规则.docx",
+    "source_path": "assets/uaes/rules/测量比较报告审核规则.docx",
     "clauses": [
       {
         "id": "U02:1",
@@ -60,7 +60,7 @@
     "source_type": "E04",
     "level": "L1",
     "title": "实验室资质证书审核规则",
-    "source_path": "assets/UAES/规则/实验室资质证书审核规则.docx",
+    "source_path": "assets/uaes/rules/实验室资质证书审核规则.docx",
     "clauses": [
       {
         "id": "U03:1",
@@ -77,7 +77,7 @@
     "source_type": "T04",
     "level": "L1",
     "title": "材料产品及分供清单审核规则",
-    "source_path": "assets/UAES/规则/材料产品及分供清单审核规则.docx",
+    "source_path": "assets/uaes/rules/材料产品及分供清单审核规则.docx",
     "clauses": [
       {
         "id": "U04:1",
@@ -108,7 +108,7 @@
     "source_type": "T07",
     "level": "L1",
     "title": "测量系统分析评价审核规则",
-    "source_path": "assets/UAES/规则/测量系统分析评价审核规则.docx",
+    "source_path": "assets/uaes/rules/测量系统分析评价审核规则.docx",
     "clauses": [
       {
         "id": "U05:1-1",
@@ -146,7 +146,7 @@
     "source_type": "T08",
     "level": "L1",
     "title": "过程能力研究审核规则",
-    "source_path": "assets/UAES/规则/过程能力研究审核规则.docx",
+    "source_path": "assets/uaes/rules/过程能力研究审核规则.docx",
     "clauses": [
       {
         "id": "U06:1",
@@ -191,7 +191,7 @@
     "source_type": "T10",
     "level": "L1",
     "title": "潜在过程失效模式及后果分析（PFMEA）审核规则",
-    "source_path": "assets/UAES/规则/潜在过程失效模式及后果分析（PFMEA）审核规则.docx",
+    "source_path": "assets/uaes/rules/潜在过程失效模式及后果分析（PFMEA）审核规则.docx",
     "clauses": [
       {
         "id": "U07:1",
@@ -229,7 +229,7 @@
     "source_type": "T11",
     "level": "L1",
     "title": "控制计划（CP）审核规则",
-    "source_path": "assets/UAES/规则/控制计划（CP）审核规则.docx",
+    "source_path": "assets/uaes/rules/控制计划（CP）审核规则.docx",
     "clauses": [
       {
         "id": "U08:1",
@@ -323,7 +323,7 @@
     "source_type": "E03",
     "level": "L2",
     "title": "包装方案审核规则",
-    "source_path": "assets/UAES/规则/包装方案审核规则.docx",
+    "source_path": "assets/uaes/rules/包装方案审核规则.docx",
     "clauses": [
       {
         "id": "U09:1",
@@ -340,7 +340,7 @@
     "source_type": "E05",
     "level": "L2",
     "title": "材料规范审核规则",
-    "source_path": "assets/UAES/规则/材料规范审核规则.docx",
+    "source_path": "assets/uaes/rules/材料规范审核规则.docx",
     "clauses": [
       {
         "id": "U10:1",
@@ -357,7 +357,7 @@
     "source_type": "E06",
     "level": "L2",
     "title": "样品阶段履历审核规则",
-    "source_path": "assets/UAES/规则/样品阶段履历审核规则.docx",
+    "source_path": "assets/uaes/rules/样品阶段履历审核规则.docx",
     "clauses": [
       {
         "id": "U11:1",
@@ -374,7 +374,7 @@
     "source_type": "T12",
     "level": "L2",
     "title": "特殊特性清单审核规则",
-    "source_path": "assets/UAES/规则/特殊特性清单审核规则.docx",
+    "source_path": "assets/uaes/rules/特殊特性清单审核规则.docx",
     "clauses": [
       {
         "id": "U12:1",
@@ -398,7 +398,7 @@
     "source_type": "E07",
     "level": "L2",
     "title": "生产件样品照片审核规则",
-    "source_path": "assets/UAES/规则/生产件样品照片审核规则.docx",
+    "source_path": "assets/uaes/rules/生产件样品照片审核规则.docx",
     "clauses": [
       {
         "id": "U13:1",
@@ -415,7 +415,7 @@
     "source_type": "E08",
     "level": "L2",
     "title": "订货规范审核规则",
-    "source_path": "assets/UAES/规则/订货规范审核规则.docx",
+    "source_path": "assets/uaes/rules/订货规范审核规则.docx",
     "clauses": [
       {
         "id": "U14:1",
@@ -432,7 +432,7 @@
     "source_type": "E09",
     "level": "L2",
     "title": "试装单审核规则",
-    "source_path": "assets/UAES/规则/试装单审核规则.docx",
+    "source_path": "assets/uaes/rules/试装单审核规则.docx",
     "clauses": [
       {
         "id": "U15:1",
@@ -449,7 +449,7 @@
     "source_type": "T09",
     "level": "L2",
     "title": "过程流程图（PFD）审核规则",
-    "source_path": "assets/UAES/规则/过程流程图（PFD）审核规则.docx",
+    "source_path": "assets/uaes/rules/过程流程图（PFD）审核规则.docx",
     "clauses": [
       {
         "id": "U16:1",
@@ -480,7 +480,7 @@
     "source_type": "T17",
     "level": "L2",
     "title": "零件提交保证书（PSW）审核规则",
-    "source_path": "assets/UAES/规则/零件提交保证书（PSW）审核规则.docx",
+    "source_path": "assets/uaes/rules/零件提交保证书（PSW）审核规则.docx",
     "clauses": [
       {
         "id": "U17:1",
@@ -525,7 +525,7 @@
     "source_type": "E10",
     "level": "L2",
     "title": "零件追溯说明审核规则",
-    "source_path": "assets/UAES/规则/零件追溯说明审核规则.docx",
+    "source_path": "assets/uaes/rules/零件追溯说明审核规则.docx",
     "clauses": [
       {
         "id": "U18:1",
@@ -542,7 +542,7 @@
     "source_type": "E11",
     "level": "L2",
     "title": "顾客工程批准审核规则",
-    "source_path": "assets/UAES/规则/顾客工程批准审核规则.docx",
+    "source_path": "assets/uaes/rules/顾客工程批准审核规则.docx",
     "clauses": [
       {
         "id": "U19:1",
@@ -559,7 +559,7 @@
     "source_type": "T01",
     "level": "L1",
     "title": "01 全功能检验报告",
-    "source_path": "assets/理想/规则/01 全功能检验报告.docx",
+    "source_path": "assets/li/rules/01 全功能检验报告.docx",
     "clauses": [
       {
         "id": "L01:1",
@@ -625,7 +625,7 @@
     "source_type": "T02",
     "level": "L1",
     "title": "02 零部件设计验证计划和报告",
-    "source_path": "assets/理想/规则/02 零部件设计验证计划和报告.docx",
+    "source_path": "assets/li/rules/02 零部件设计验证计划和报告.docx",
     "clauses": [
       {
         "id": "L02:1",
@@ -684,7 +684,7 @@
     "source_type": "T03",
     "level": "L1",
     "title": "02 零部件设计验证报告（DV报告_PV报告_试验报告）",
-    "source_path": "assets/理想/规则/02 零部件设计验证报告（DV报告_PV报告_试验报告）.docx",
+    "source_path": "assets/li/rules/02 零部件设计验证报告（DV报告_PV报告_试验报告）.docx",
     "clauses": [
       {
         "id": "L03:1",
@@ -736,7 +736,7 @@
     "source_type": "T04",
     "level": "L1",
     "title": "03 材料产品及分供清单",
-    "source_path": "assets/理想/规则/03 材料产品及分供清单.docx",
+    "source_path": "assets/li/rules/03 材料产品及分供清单.docx",
     "clauses": [
       {
         "id": "L04:1",
@@ -774,7 +774,7 @@
     "source_type": "T07",
     "level": "L1",
     "title": "06 测量系统分析评价",
-    "source_path": "assets/理想/规则/06 测量系统分析评价.docx",
+    "source_path": "assets/li/rules/06 测量系统分析评价.docx",
     "clauses": [
       {
         "id": "L05:1",
@@ -812,7 +812,7 @@
     "source_type": "T08",
     "level": "L1",
     "title": "07 过程能力研究",
-    "source_path": "assets/理想/规则/07 过程能力研究.docx",
+    "source_path": "assets/li/rules/07 过程能力研究.docx",
     "clauses": [
       {
         "id": "L06:1",
@@ -843,7 +843,7 @@
     "source_type": "T10",
     "level": "L1",
     "title": "09 潜在过程失效模式及后果分析",
-    "source_path": "assets/理想/规则/09 潜在过程失效模式及后果分析.docx",
+    "source_path": "assets/li/rules/09 潜在过程失效模式及后果分析.docx",
     "clauses": [
       {
         "id": "L07:1",
@@ -902,7 +902,7 @@
     "source_type": "T11",
     "level": "L1",
     "title": "10 控制计划",
-    "source_path": "assets/理想/规则/10 控制计划.docx",
+    "source_path": "assets/li/rules/10 控制计划.docx",
     "clauses": [
       {
         "id": "L08:1",
@@ -954,7 +954,7 @@
     "source_type": "T05",
     "level": "L2",
     "title": "04 检具验收报告",
-    "source_path": "assets/理想/规则/04 检具验收报告.docx",
+    "source_path": "assets/li/rules/04 检具验收报告.docx",
     "clauses": [
       {
         "id": "L09:1",
@@ -985,7 +985,7 @@
     "source_type": "T06",
     "level": "L2",
     "title": "05 模具验收报告",
-    "source_path": "assets/理想/规则/05 模具验收报告.docx",
+    "source_path": "assets/li/rules/05 模具验收报告.docx",
     "clauses": [
       {
         "id": "L10:1",
@@ -1037,7 +1037,7 @@
     "source_type": "T09",
     "level": "L2",
     "title": "08 过程流程图",
-    "source_path": "assets/理想/规则/08 过程流程图.docx",
+    "source_path": "assets/li/rules/08 过程流程图.docx",
     "clauses": [
       {
         "id": "L11:1",
@@ -1089,7 +1089,7 @@
     "source_type": "T12",
     "level": "L2",
     "title": "11 过程特殊特性清单",
-    "source_path": "assets/理想/规则/11 过程特殊特性清单.docx",
+    "source_path": "assets/li/rules/11 过程特殊特性清单.docx",
     "clauses": [
       {
         "id": "L12:1",
@@ -1120,7 +1120,7 @@
     "source_type": "T13",
     "level": "L2",
     "title": "12 设备清单",
-    "source_path": "assets/理想/规则/12 设备清单.docx",
+    "source_path": "assets/li/rules/12 设备清单.docx",
     "clauses": [
       {
         "id": "L13:1",
@@ -1144,7 +1144,7 @@
     "source_type": "T14",
     "level": "L2",
     "title": "13 生产系统产能评估报告",
-    "source_path": "assets/理想/规则/13 生产系统产能评估报告.docx",
+    "source_path": "assets/li/rules/13 生产系统产能评估报告.docx",
     "clauses": [
       {
         "id": "L14:1",
@@ -1196,7 +1196,7 @@
     "source_type": "T15",
     "level": "L2",
     "title": "14 APQP项目问题清单",
-    "source_path": "assets/理想/规则/14 APQP项目问题清单.docx",
+    "source_path": "assets/li/rules/14 APQP项目问题清单.docx",
     "clauses": [
       {
         "id": "L15:1",
@@ -1234,7 +1234,7 @@
     "source_type": "T16",
     "level": "L2",
     "title": "15 零部件年度试验要求",
-    "source_path": "assets/理想/规则/15 零部件年度试验要求.docx",
+    "source_path": "assets/li/rules/15 零部件年度试验要求.docx",
     "clauses": [
       {
         "id": "L16:1",
@@ -1286,7 +1286,7 @@
     "source_type": "T17",
     "level": "L2",
     "title": "16 零件提交保证书",
-    "source_path": "assets/理想/规则/16 零件提交保证书.docx",
+    "source_path": "assets/li/rules/16 零件提交保证书.docx",
     "clauses": [
       {
         "id": "L17:1",
@@ -1366,7 +1366,7 @@
     "source_type": "T01",
     "level": "L1",
     "title": "1-2规则-测量报告",
-    "source_path": "assets/蔚来/规则/1-2规则-测量报告.docx",
+    "source_path": "assets/nio/rules/1-2规则-测量报告.docx",
     "clauses": [
       {
         "id": "N01:1",
@@ -1453,7 +1453,7 @@
     "source_type": "T10",
     "level": "L1",
     "title": "9规则-潜在过程失效模式及后果分析（PFMEA）",
-    "source_path": "assets/蔚来/规则/9规则-潜在过程失效模式及后果分析（PFMEA）.docx",
+    "source_path": "assets/nio/rules/9规则-潜在过程失效模式及后果分析（PFMEA）.docx",
     "clauses": [
       {
         "id": "N02:1",
@@ -1512,7 +1512,7 @@
     "source_type": "T11",
     "level": "L1",
     "title": "10规则-控制计划",
-    "source_path": "assets/蔚来/规则/10规则-控制计划.docx",
+    "source_path": "assets/nio/rules/10规则-控制计划.docx",
     "clauses": [
       {
         "id": "N03:1",
@@ -1592,7 +1592,7 @@
     "source_type": "T12",
     "level": "L2",
     "title": "11规则-特殊特性清单",
-    "source_path": "assets/蔚来/规则/11规则-特殊特性清单.docx",
+    "source_path": "assets/nio/rules/11规则-特殊特性清单.docx",
     "clauses": [
       {
         "id": "N04:1",
@@ -1616,7 +1616,7 @@
     "source_type": "T09",
     "level": "L2",
     "title": "8规则-过程流程图",
-    "source_path": "assets/蔚来/规则/8规则-过程流程图.docx",
+    "source_path": "assets/nio/rules/8规则-过程流程图.docx",
     "clauses": [
       {
         "id": "N05:1",
@@ -1689,7 +1689,7 @@
     "source_type": "T02",
     "level": "L1",
     "title": "02规则-零部件设计验证计划和报告",
-    "source_path": "assets/理想/规则/02 零部件设计验证计划和报告.docx",
+    "source_path": "assets/li/rules/02 零部件设计验证计划和报告.docx",
     "clauses": [
       {
         "id": "N06:1",
@@ -1748,7 +1748,7 @@
     "source_type": "T03",
     "level": "L1",
     "title": "02规则-零部件设计验证报告（DV报告_PV报告_试验报告）",
-    "source_path": "assets/理想/规则/02 零部件设计验证报告（DV报告_PV报告_试验报告）.docx",
+    "source_path": "assets/li/rules/02 零部件设计验证报告（DV报告_PV报告_试验报告）.docx",
     "clauses": [
       {
         "id": "N07:1",
@@ -1800,7 +1800,7 @@
     "source_type": "T04",
     "level": "L1",
     "title": "03规则-材料产品及分供清单",
-    "source_path": "assets/理想/规则/03 材料产品及分供清单.docx",
+    "source_path": "assets/li/rules/03 材料产品及分供清单.docx",
     "clauses": [
       {
         "id": "N08:1",
@@ -1838,7 +1838,7 @@
     "source_type": "T07",
     "level": "L1",
     "title": "06规则-测量系统分析评价",
-    "source_path": "assets/理想/规则/06 测量系统分析评价.docx",
+    "source_path": "assets/li/rules/06 测量系统分析评价.docx",
     "clauses": [
       {
         "id": "N09:1",
@@ -1876,7 +1876,7 @@
     "source_type": "T08",
     "level": "L1",
     "title": "07规则-过程能力研究",
-    "source_path": "assets/理想/规则/07 过程能力研究.docx",
+    "source_path": "assets/li/rules/07 过程能力研究.docx",
     "clauses": [
       {
         "id": "N10:1",
@@ -1907,7 +1907,7 @@
     "source_type": "T05",
     "level": "L2",
     "title": "04规则-检具验收报告",
-    "source_path": "assets/理想/规则/04 检具验收报告.docx",
+    "source_path": "assets/li/rules/04 检具验收报告.docx",
     "clauses": [
       {
         "id": "N11:1",
@@ -1938,7 +1938,7 @@
     "source_type": "T06",
     "level": "L2",
     "title": "05规则-模具验收报告",
-    "source_path": "assets/理想/规则/05 模具验收报告.docx",
+    "source_path": "assets/li/rules/05 模具验收报告.docx",
     "clauses": [
       {
         "id": "N12:1",
@@ -1990,7 +1990,7 @@
     "source_type": "T13",
     "level": "L2",
     "title": "12规则-设备清单",
-    "source_path": "assets/理想/规则/12 设备清单.docx",
+    "source_path": "assets/li/rules/12 设备清单.docx",
     "clauses": [
       {
         "id": "N13:1",
@@ -2014,7 +2014,7 @@
     "source_type": "T14",
     "level": "L2",
     "title": "13规则-生产系统产能评估报告",
-    "source_path": "assets/理想/规则/13 生产系统产能评估报告.docx",
+    "source_path": "assets/li/rules/13 生产系统产能评估报告.docx",
     "clauses": [
       {
         "id": "N14:1",
@@ -2066,7 +2066,7 @@
     "source_type": "T15",
     "level": "L2",
     "title": "14规则-APQP项目问题清单",
-    "source_path": "assets/理想/规则/14 APQP项目问题清单.docx",
+    "source_path": "assets/li/rules/14 APQP项目问题清单.docx",
     "clauses": [
       {
         "id": "N15:1",
@@ -2104,7 +2104,7 @@
     "source_type": "T16",
     "level": "L2",
     "title": "15规则-零部件年度试验要求",
-    "source_path": "assets/理想/规则/15 零部件年度试验要求.docx",
+    "source_path": "assets/li/rules/15 零部件年度试验要求.docx",
     "clauses": [
       {
         "id": "N16:1",
@@ -2156,7 +2156,7 @@
     "source_type": "T17",
     "level": "L2",
     "title": "16规则-零件提交保证书",
-    "source_path": "assets/理想/规则/16 零件提交保证书.docx",
+    "source_path": "assets/li/rules/16 零件提交保证书.docx",
     "clauses": [
       {
         "id": "N17:1",

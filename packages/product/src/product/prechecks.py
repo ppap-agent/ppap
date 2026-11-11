@@ -6,7 +6,7 @@ import html
 import json
 import uuid
 
-from audit.precheck_sources import l1_criteria, l1_spec, required_structure, structure_source
+from audit.precheck.sources import l1_criteria, l1_spec, required_structure, structure_source
 
 from product.standard_policy import config_digest
 

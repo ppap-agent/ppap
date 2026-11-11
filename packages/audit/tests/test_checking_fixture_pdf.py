@@ -4,10 +4,10 @@ import json
 
 import fitz
 import pytest
-from audit.checkers.v2 import pdf_agent as v2_pdf
-from audit.checkers.v2.checking_fixture_approval_agent import CheckingFixtureApprovalAgent as V2Agent
-from audit.checkers.v3 import pdf_agent as v3_pdf
-from audit.checkers.v3.checking_fixture_approval_agent import CheckingFixtureApprovalAgent as V3Agent
+from audit.checker_lib.li import pdf_agent as v2_pdf
+from audit.checker_lib.li.checking_fixture_approval_agent import CheckingFixtureApprovalAgent as V2Agent
+from audit.checker_lib.nio import pdf_agent as v3_pdf
+from audit.checker_lib.nio.checking_fixture_approval_agent import CheckingFixtureApprovalAgent as V3Agent
 from audit.contracts import (
     AuditInput,
     RuleInput,

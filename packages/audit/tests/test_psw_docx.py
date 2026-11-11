@@ -309,7 +309,7 @@ def test_word_native_source_reads_bind_real_version_and_original_cell(tmp_path, 
 
     path = tmp_path / "psw.docx"
     psw_document().save(path)
-    cls = importlib.import_module(f"audit.checkers.{version}.psw_docx_agent").PswDocxAgent
+    cls = importlib.import_module(f"audit.checker_lib.{'li' if version == 'v2' else 'nio'}.psw_docx_agent").PswDocxAgent
     checker = cls(AuditInput(audit_id="frozen-word", file_url=str(path)), RuleInput(rule_id="r", type="零件提交保证书", rules=[{"id": str(n)} for n in range(1, 11)]))
     try:
         for index in (0, 1, 3, 5, 6, 7, 8, 9):

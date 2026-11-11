@@ -9,8 +9,8 @@ from zipfile import ZipFile
 
 import fitz
 import pytest
-from audit.checkers.v2.psw_pdf_agent import PswPDFAgent as V2PswPDFAgent
-from audit.checkers.v3.psw_pdf_agent import PswPDFAgent as V3PswPDFAgent
+from audit.checker_lib.li.psw_pdf_agent import PswPDFAgent as V2PswPDFAgent
+from audit.checker_lib.nio.psw_pdf_agent import PswPDFAgent as V3PswPDFAgent
 from audit.contracts import (
     AuditInput,
     RuleInput,
@@ -86,8 +86,8 @@ def use_external_conversion(monkeypatch, source, outcome):
         return outcome
 
     monkeypatch.setattr("audit.engine.app_runtime.convert_pdf_to_excel_auto", convert)
-    monkeypatch.setattr("audit.checkers.v2.pdf_agent.convert_pdf_to_excel_auto", convert)
-    monkeypatch.setattr("audit.checkers.v3.pdf_agent.convert_pdf_to_excel_auto", convert)
+    monkeypatch.setattr("audit.checker_lib.li.pdf_agent.convert_pdf_to_excel_auto", convert)
+    monkeypatch.setattr("audit.checker_lib.nio.pdf_agent.convert_pdf_to_excel_auto", convert)
 
 
 def use_established_psw_facts(monkeypatch, read):
@@ -128,7 +128,7 @@ def test_failed_table_conversion_does_not_become_a_business_ng(original_pdf, mon
         return ConversionArtifact(success=False, diagnostics={"error_code": error_code})
 
     monkeypatch.setattr("audit.engine.app_runtime.convert_pdf_to_excel_auto", convert)
-    monkeypatch.setattr("audit.checkers.v2.pdf_agent.convert_pdf_to_excel_auto", convert)
+    monkeypatch.setattr("audit.checker_lib.li.pdf_agent.convert_pdf_to_excel_auto", convert)
 
     results = run_audit_engine(AuditInput(audit_id="psw-conversion-failed", file_url=str(original_pdf)), psw_rules(profile, count=2))
 
@@ -339,7 +339,7 @@ def test_paddle_service_failure_preserves_structured_results_without_retry(origi
 
 
 def test_unavailable_facts_are_unable_without_fallback(original_pdf, monkeypatch, profile):
-    from audit.checkers.v4.visual_facts import VisualFactsUnavailable
+    from audit.engine.checkers.visual_facts import VisualFactsUnavailable
 
     use_external_conversion(monkeypatch, original_pdf, ConversionArtifact(success=False))
 
@@ -593,7 +593,7 @@ def test_blank_authorization_stamp_position_is_ng_without_a_visual_reading(tmp_p
     ids=["blank", "black-rectangle", "black-text", "image", "curve", "red-rectangle", "red-text", "annotation"],
 )
 def test_only_form_structure_counts_as_an_empty_stamp_region(mark, expected):
-    from audit.checkers.v4.visual_facts import _region_may_hold_stamp
+    from audit.engine.checkers.visual_facts import _region_may_hold_stamp
 
     with fitz.open() as document:
         page = document.new_page(width=300, height=300)

@@ -4,7 +4,7 @@ from pathlib import Path
 
 from agent.checker_spec import CheckerArtifact
 from agent.execution.checker_guest import execute_fixed_checker
-from audit.checkers.v3.excel_agent import ExcelAgent, rule
+from audit.checker_lib.nio.excel_agent import ExcelAgent, rule
 from audit.contracts import AuditInput, GroupContextInput, RuleInput
 from audit.engine.rule_engine import RuleContext
 from audit.engine.runtime import bind_runtime
@@ -14,7 +14,7 @@ from documents.pdf import PdfSpec
 from openpyxl import Workbook
 
 PROGRAM = """
-from audit.checkers.v3.excel_agent import ExcelAgent, rule
+from audit.checker_lib.nio.excel_agent import ExcelAgent, rule
 from audit.engine.rule_engine import RuleContext, Table
 from audit.kinds import PpapDocumentType
 from documents.excel import load_excel_workbook

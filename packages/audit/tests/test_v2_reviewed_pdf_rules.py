@@ -2,7 +2,7 @@
 
 import fitz
 import pytest
-from audit.checkers.v2.dpvr_excel_agent import DpvrExcelAgent
+from audit.checker_lib.li.dpvr_excel_agent import DpvrExcelAgent
 from audit.contracts import AuditInput, RuleInput
 from openpyxl import Workbook
 

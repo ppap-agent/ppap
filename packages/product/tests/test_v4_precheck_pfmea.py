@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 from audit.contracts import AuditInput
-from audit.precheck_facts import UnknownFact
-from audit.precheck_pfmea import control_scores, pfmea_precheck
+from audit.precheck.facts import UnknownFact
+from audit.precheck.pfmea import control_scores, pfmea_precheck
 from openpyxl import Workbook
 
 

@@ -1007,7 +1007,7 @@ def develop_checker(
     if editing_selected:
         native = False
     else:
-        from audit.checkers.v4.uaes.native import UaesSourceAgent
+        from audit.checker_lib.uaes.native import UaesSourceAgent
 
         reference = task_reference(audit_file, rule)
         native = reference is not None and issubclass(reference, UaesSourceAgent)

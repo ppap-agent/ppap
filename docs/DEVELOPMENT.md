@@ -143,10 +143,10 @@ single-owner Python tests 位于各自 `packages/*/tests`、`apps/api/tests`、`
 
 ## POC 规则资产导出
 
-原始 DOCX 是规则资产的内容依据；[`POC Rule Assets`](../assets/蔚来/历史/poc规则/AGENTS.md) 规定生成文件和媒体路径。仅在需要重新生成资产时，从仓库根目录执行：
+原始 DOCX 是规则资产的内容依据；[`POC Rule Assets`](../assets/nio/history/poc规则/AGENTS.md) 规定生成文件和媒体路径。仅在需要重新生成资产时，从仓库根目录执行：
 
 ```sh
-cd assets/蔚来/历史/poc规则/markdown
+cd assets/nio/history/poc规则/markdown
 pandoc '../10规则-控制计划.docx' --wrap=none -t gfm -o '10规则-控制计划.docx.md' --extract-media='media/10规则-控制计划'
 ```
 
@@ -365,7 +365,7 @@ UAES 目录叶子的后续验收由 [Issue #295](https://github.com/ppap-agent/p
 
 「自动审核」中的程序页（`/requirements?rulesArea=automation&checkerSuite=...`，旧地址 `?checkerSuite=` 仍可打开）可在首次审核前读取可访问候选并明确采用。无企业或官方指针时，读取返回 `candidate_only`、`current_revision_id=null` 和单独的 `candidate_revision_id`，不把候选当作已生效。未验证候选须确认风险，只写本租户指针；先采用直接关联检查，UAES 顺序为 U12/U16 → U07 → U08。已采用版本因依赖变化而过期时，可重新验证，或在同一页面明确确认继续使用未验证版本。上述操作不构成官方发布，不改已有 Round。发布回包未知时只读取原操作，不自动重新发布。
 
-「自动审核」页底部的「系统程序目录」（`checkerPath` 或 `rulesArea=predefined`）按 `GET /suites` 返回的真实路径展开版本、客户和规则组。仓库存在但未安装的叶子可见，只有 `availability=installed` 且带有效官方 Revision 的来源可打开；v2/v3/v4 真实 package 目录仅只读展示，不伪造叶子。来源路径与已安装 Revision 分开显示，不用企业当前采用版本替代官方来源。未安装、不可读、身份冲突或扫描失败分别报告，不回退。URL 深链及浏览器前进后退恢复同一选定路径；浏览目录不安装、不采用，也不调用模型。
+「自动审核」页底部的「系统程序目录」（`checkerPath` 或 `rulesArea=predefined`）按 `GET /suites` 返回的真实路径展开版本、客户和规则组。仓库存在但未安装的叶子可见，只有 `availability=installed` 且带有效官方 Revision 的来源可打开。来源路径与已安装 Revision 分开显示，不用企业当前采用版本替代官方来源。未安装、不可读、身份冲突或扫描失败分别报告，不回退。URL 深链及浏览器前进后退恢复同一选定路径；浏览目录不安装、不采用，也不调用模型。
 
 ## 模型来源：平台默认 + 企业 Key
 

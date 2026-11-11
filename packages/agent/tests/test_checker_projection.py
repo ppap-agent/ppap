@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from audit.checkers.v3.excel_agent import ExcelAgent, rule
+from audit.checker_lib.nio.excel_agent import ExcelAgent, rule
 from audit.contracts import AuditInput, RuleInput
 from audit.engine.rule_engine.context import RuleContext
 from audit.kinds import PpapDocumentType

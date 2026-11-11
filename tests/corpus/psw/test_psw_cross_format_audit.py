@@ -11,7 +11,7 @@ from threading import Thread
 from typing import Any
 
 import pytest
-from audit.checkers.v2.psw_excel_agent import PswExcelAgent
+from audit.checker_lib.li.psw_excel_agent import PswExcelAgent
 from audit.contracts import (
     AuditInput,
     AuditResultItem,
@@ -38,7 +38,7 @@ from documents.word import (
 from openpyxl import load_workbook
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_PAIR_ROOT = _REPO_ROOT / "assets" / "理想" / "样本" / "模拟测试文件V2-01" / "16-零件提交保证书" / "16-零件提交保证书-上海亚大"
+_PAIR_ROOT = _REPO_ROOT / "assets" / "li" / "samples" / "模拟测试文件V2-01" / "16-零件提交保证书" / "16-零件提交保证书-上海亚大"
 _LEGACY_DOC = _REPO_ROOT / "tests" / "corpus" / "fixtures" / "legacy_doc" / "psw.doc"
 
 

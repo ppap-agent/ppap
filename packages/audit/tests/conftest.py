@@ -40,7 +40,7 @@ def nio_execute(tmp_path, monkeypatch):
         # Exercise the production leaf parser without reading unrelated leaves
         # while other workers are editing them in the shared checkout.
         root = _CHECKERS_ROOT.resolve()
-        suite = _load_leaf(root, "蔚来", root / "蔚来" / entry)
+        suite = _load_leaf(root, "nio", root / "nio" / entry)
         resources = ModuleType("resources")
         exec(compile(suite.files["resources.py"], f"{suite.source_path}/resources.py", "exec"), resources.__dict__)
         monkeypatch.setitem(sys.modules, "resources", resources)

@@ -1,7 +1,7 @@
 """U06 summary covers populated rows even when both printed results are blank."""
 
 import pytest
-from audit.checkers.v4.uaes.engineering import UaesCapabilityAgent
+from audit.checker_lib.uaes.engineering import UaesCapabilityAgent
 from audit.contracts import AuditInput, RuleInput
 from audit.presets import preset_rule_body
 from openpyxl import Workbook

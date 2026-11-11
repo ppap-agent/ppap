@@ -1,11 +1,11 @@
 """A selected unreadable cell is unknown, not a nonempty business value."""
 
 import pytest
-from audit.checkers.v2.excel_agent import ExcelAgent as V2Excel
-from audit.checkers.v2.psw_excel_agent import PswExcelAgent as V2Psw
-from audit.checkers.v3.excel_agent import ExcelAgent as V3Excel
-from audit.checkers.v3.excel_agent import rule
-from audit.checkers.v3.psw_excel_agent import PswExcelAgent as V3Psw
+from audit.checker_lib.li.excel_agent import ExcelAgent as V2Excel
+from audit.checker_lib.li.psw_excel_agent import PswExcelAgent as V2Psw
+from audit.checker_lib.nio.excel_agent import ExcelAgent as V3Excel
+from audit.checker_lib.nio.excel_agent import rule
+from audit.checker_lib.nio.psw_excel_agent import PswExcelAgent as V3Psw
 from audit.contracts import AuditInput, RuleInput
 from audit.engine.rule_engine import Table
 from audit.kinds import PpapDocumentType

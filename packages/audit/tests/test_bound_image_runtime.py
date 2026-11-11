@@ -7,7 +7,7 @@ from threading import Thread
 
 import fitz
 import pytest
-from audit.checkers.v2.base_agent import BaseAgent
+from audit.checker_lib.li.base_agent import BaseAgent
 from audit.contracts import AuditInput, RuleInput
 from audit.engine.runtime import bind_runtime, get_runtime
 from documents.files import download_file_sync
