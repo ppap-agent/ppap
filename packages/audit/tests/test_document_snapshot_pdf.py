@@ -202,6 +202,15 @@ def test_unsupported_page_transform_preserves_blocks_without_claiming_grid(tmp_p
     assert data["coverage"]["unresolved_reasons"] == {"1": "unsupported_page_transform"}
 
 
+def test_a_page_with_more_line_segments_than_the_budget_keeps_text_without_a_grid(tmp_path):
+    # Seven lines draw the grid; a budget of six gives that page up instead of reconstructing it.
+    data = checked(original_pdf(tmp_path), limits=ReadLimits(page_lines=6))
+    assert data["tables"] == []
+    assert data["pages"][0]["blocks"]
+    assert data["coverage"]["unresolved_reasons"] == {"1": "page_line_budget_exceeded"}
+    assert checked(original_pdf(tmp_path), limits=ReadLimits(page_lines=7))["coverage"]["grid_pages"] == [1]
+
+
 def test_merge_anchors_uncovered_slots_and_bad_geometry_are_distinct(tmp_path, monkeypatch):
     native_result(
         monkeypatch,

@@ -40,6 +40,8 @@ class ReadLimits:
     paragraphs: int = 100_000
     pages: int = 1000
     blocks: int = 100_000
+    # Line segments one PDF page may hand to table grid reconstruction; a page past it is skipped.
+    page_lines: int = 20_000
     output_bytes: int = 16 * 1024 * 1024
 
     def __post_init__(self) -> None:

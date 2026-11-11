@@ -308,6 +308,9 @@ def snapshot_pdf(raw: bytes, limits: ReadLimits) -> dict[str, Any]:
             )
             if page.rotation or crop_origin != [0.0, 0.0]:
                 unresolved[str(number)] = "unsupported_page_transform"
+            elif sum(1 for drawing in page.get_drawings() for item in drawing["items"] if item[0] in {"l", "re"}) > limits.page_lines:
+                # Grid reconstruction grows quadratically with segments; past the budget the page is skipped.
+                unresolved[str(number)] = "page_line_budget_exceeded"
             else:
                 eligible.append(page.number)
         observations: dict[int, Any] = {}
