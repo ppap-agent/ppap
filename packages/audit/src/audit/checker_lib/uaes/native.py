@@ -483,13 +483,22 @@ class UaesSourceAgent(BaseAgent):
         """Read original graphics: PDF pages through the PDF reader, worksheets through the shared bounded reader."""
         from audit.checker_lib.visual_facts import VisualFactsUnavailable as SheetFactsUnavailable
         from audit.checker_lib.visual_facts import read_original_visual_facts
+        from audit.engine.checkers.pdf_presence import read_pdf_presence
         from audit.engine.checkers.visual_facts import VisualFactsUnavailable, read_original_pdf_visual_facts
 
         try:
             if not hasattr(self, "_paddle_page_cache"):
                 self._paddle_page_cache: dict[Any, Any] = {}
             if Path(self.audit_file.file_url).suffix.lower() == ".pdf":
-                return read_original_pdf_visual_facts(self.audit_file, fields, self.witness, operation="uaes_original_visual_facts", cache=self._paddle_page_cache)
+                # Existence holds on any page, so long documents are read page by page.
+                observed = {
+                    field: read_pdf_presence(self.audit_file, field=field, description=fields[field], witness=self.witness, cache=self._paddle_page_cache, operation="uaes_original_visual_facts")
+                    for field in existential_fields
+                }
+                rest = {field: description for field, description in fields.items() if field not in observed}
+                if rest:
+                    observed |= read_original_pdf_visual_facts(self.audit_file, rest, self.witness, operation="uaes_original_visual_facts", cache=self._paddle_page_cache)
+                return observed
             return read_original_visual_facts(
                 self.audit_file, fields, self.witness, operation="uaes_original_visual_facts", cache=self._paddle_page_cache, existential_fields=frozenset(existential_fields)
             )
