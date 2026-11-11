@@ -1,6 +1,6 @@
 // Stitch: projects/13261964020862199279/screens/0efd7637e4a343919cd039650cdf6847.
-import {useEffect, useRef, useState, type ReactNode} from 'react'
-import {ArrowLeft, Check, FileUp, Loader2} from 'lucide-react'
+import {useEffect, useRef, useState} from 'react'
+import {ArrowLeft, Check, ChevronLeft, ChevronRight, FileText, FileUp, Loader2} from 'lucide-react'
 import {request, uploadLocalVersion} from '../api'
 import type {components} from '../generated/openapi'
 import {Badge} from '../components/ui/badge'
@@ -56,54 +56,6 @@ export function RuleProgramCard({ruleVersionId, onPrepare}: {ruleVersionId: stri
   </StatusCard>
 }
 
-/** The full-page steps that make or update an uploaded rule's program. */
-export function ProgramWizard({ruleVersionId, updating, onClose, onAdopt}: {ruleVersionId: string; updating: boolean; onClose: () => void; onAdopt: Adopt}) {
-  const title = updating ? '更新检查程序' : '生成检查程序'
-  return <div className="space-y-6">
-    <div className="space-y-2">
-      <Button variant="ghost" size="sm" className="-ml-2" onClick={onClose}><ArrowLeft/>返回规则</Button>
-      <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
-    </div>
-    <CheckPoints ruleVersionId={ruleVersionId} action={title} onStarted={onClose} onCancel={onClose} onAdopt={onAdopt}/>
-  </div>
-}
-
-/** Check points arrive as section headings followed by their statements; a reading without headings is one group. */
-function groupPoints(lines: string[]): {title: string; items: string[]}[] {
-  const groups: {title: string; items: string[]}[] = []
-  for (const line of lines) {
-    if (line.startsWith('# ')) groups.push({title: line.slice(2), items: []})
-    else if (groups.length) groups.at(-1)!.items.push(line)
-    else groups.push({title: '', items: [line]})
-  }
-  return groups.filter(group => group.items.length)
-}
-
-/** The suggested wording split into kept and added runs, so a person sees what would change. */
-function insertions(before: string, after: string): {text: string; added: boolean}[] {
-  const a = [...before], b = [...after]
-  // Longest common subsequence over characters; clauses are short enough for the full table.
-  const table = Array.from({length: a.length + 1}, () => new Array<number>(b.length + 1).fill(0))
-  for (let i = a.length - 1; i >= 0; i--) for (let j = b.length - 1; j >= 0; j--) table[i]![j] = a[i] === b[j] ? table[i + 1]![j + 1]! + 1 : Math.max(table[i + 1]![j]!, table[i]![j + 1]!)
-  const parts: {text: string; added: boolean}[] = []
-  const push = (text: string, added: boolean) => {const last = parts.at(-1); if (last && last.added === added) last.text += text; else parts.push({text, added})}
-  let i = 0, j = 0
-  while (j < b.length) {
-    if (i < a.length && a[i] === b[j]) {push(b[j]!, false); i++; j++}
-    else if (i < a.length && table[i + 1]![j]! >= table[i]![j + 1]!) i++
-    else {push(b[j]!, true); j++}
-  }
-  return parts
-}
-
-/** A step of the wizard: its number until it is done, then a check. */
-function StepTitle({step, done, id, children}: {step: number; done: boolean; id?: string; children: ReactNode}) {
-  return <h3 id={id} className="flex items-center gap-2.5 text-lg font-semibold">
-    <span aria-hidden="true" className={`flex size-6 shrink-0 items-center justify-center rounded-full text-xs ${done ? 'bg-success text-background' : 'bg-foreground text-background'}`}>{done ? <Check className="size-3.5"/> : step}</span>
-    <span>{children}{done && <span className="sr-only">（已完成）</span>}</span>
-  </h3>
-}
-
 function generationFailure(operation: Generation) {
   if (operation.state === 'stopped') return '已停止。'
   return formalizationFailure(operation.failure)
@@ -135,12 +87,82 @@ function GenerationProgress({initial, onChanged}: {initial: Generation; onChange
   </div>
 }
 
-/** Every clause is prepared on request and confirmed one by one; the example file and the final start belong to the same step. */
-function CheckPoints({ruleVersionId, action, onStarted, onCancel, onAdopt}: {ruleVersionId: string; action: string; onStarted: () => void; onCancel: () => void; onAdopt: Adopt}) {
+/** The full-page steps that make or update an uploaded rule's program. */
+export function ProgramWizard({ruleVersionId, ruleTitle, version, updating, onClose, onAdopt}: {ruleVersionId: string; ruleTitle: string; version: string; updating: boolean; onClose: () => void; onAdopt: Adopt}) {
+  const title = updating ? '更新检查程序' : '生成检查程序'
+  return <div className="space-y-6">
+    <header className="space-y-1">
+      <Button variant="ghost" size="sm" className="-ml-2 max-w-full" onClick={onClose}><ArrowLeft/><span className="truncate">{ruleTitle} · 版本 {version}</span></Button>
+      <h2 className="text-2xl font-semibold tracking-tight">{title}</h2>
+    </header>
+    <CheckPoints ruleVersionId={ruleVersionId} action={title} onStarted={onClose} onAdopt={onAdopt}/>
+  </div>
+}
+
+/** Where a clause stands, as the list beside the clause shows it. */
+type Status = 'waiting' | 'running' | 'failed' | 'question' | 'review' | 'ready' | 'confirmed'
+type Report = {state: string; status: Status; text: string}
+const statusLabel: Record<Status, string> = {waiting: '待整理', running: '整理中', failed: '没整理出来', question: '要选择', review: '有疑问', ready: '待确认', confirmed: '已确认'}
+
+function StatusMark({status}: {status?: Status}) {
+  if (!status) return null
+  const mark = status === 'confirmed' ? <Check className="size-4 text-success"/>
+    : status === 'running' ? <Loader2 className="size-4 animate-spin text-muted-foreground motion-reduce:animate-none"/>
+    : <span className={`size-2 rounded-full ${status === 'review' || status === 'question' ? 'bg-warning' : status === 'failed' ? 'bg-destructive' : status === 'ready' ? 'bg-foreground' : 'border border-muted-foreground/60'}`}/>
+  return <span className="flex size-4 shrink-0 items-center justify-center" title={statusLabel[status]}>{mark}<span className="sr-only">{statusLabel[status]}</span></span>
+}
+
+/** Check points arrive as section headings followed by their statements; a reading without headings is one group. */
+function groupPoints(lines: string[]): {title: string; items: string[]}[] {
+  const groups: {title: string; items: string[]}[] = []
+  for (const line of lines) {
+    if (line.startsWith('# ')) groups.push({title: line.slice(2), items: []})
+    else if (groups.length) groups.at(-1)!.items.push(line)
+    else groups.push({title: '', items: [line]})
+  }
+  return groups.filter(group => group.items.length)
+}
+
+/** The suggested wording split into kept and added runs, so a person sees what would change. */
+function insertions(before: string, after: string): {text: string; added: boolean}[] {
+  const a = [...before], b = [...after]
+  // Longest common subsequence over characters; clauses are short enough for the full table.
+  const table = Array.from({length: a.length + 1}, () => new Array<number>(b.length + 1).fill(0))
+  for (let i = a.length - 1; i >= 0; i--) for (let j = b.length - 1; j >= 0; j--) table[i]![j] = a[i] === b[j] ? table[i + 1]![j + 1]! + 1 : Math.max(table[i + 1]![j]!, table[i]![j + 1]!)
+  const parts: {text: string; added: boolean}[] = []
+  const push = (text: string, added: boolean) => {const last = parts.at(-1); if (last && last.added === added) last.text += text; else parts.push({text, added})}
+  let i = 0, j = 0
+  while (j < b.length) {
+    if (i < a.length && a[i] === b[j]) {push(b[j]!, false); i++; j++}
+    else if (i < a.length && table[i + 1]![j]! >= table[i]![j + 1]!) i++
+    else {push(b[j]!, true); j++}
+  }
+  return parts
+}
+
+/** Long unchanged stretches shrink to their edges, so only the changes and a little context remain. */
+function changesOnly(parts: {text: string; added: boolean}[]): {text: string; added: boolean}[] {
+  const edge = 14
+  return parts.map((part, index) => {
+    if (part.added || part.text.length <= edge * 2 + 4) return part
+    const chars = [...part.text]
+    const head = index === 0 ? '' : chars.slice(0, edge).join('')
+    const tail = index === parts.length - 1 ? '' : chars.slice(-edge).join('')
+    return {text: `${head}…${tail}`, added: false}
+  })
+}
+
+function Changes({parts}: {parts: {text: string; added: boolean}[]}) {
+  return <p className="whitespace-pre-wrap break-words leading-relaxed">{parts.map((part, index) => part.added ? <mark key={index} className="rounded-sm bg-success/15 px-0.5 text-foreground">{part.text}</mark> : <span key={index} className="text-muted-foreground">{part.text}</span>)}</p>
+}
+
+/** Every clause is prepared on request and confirmed one at a time; the example file and the start stay in reach at the bottom. */
+function CheckPoints({ruleVersionId, action, onStarted, onAdopt}: {ruleVersionId: string; action: string; onStarted: () => void; onAdopt: Adopt}) {
   const [clauses, setClauses] = useState<string[] | null>(null)
   const [readError, setReadError] = useState('')
   const [attempt, setAttempt] = useState(0)
-  const [states, setStates] = useState<Record<string, string>>({})
+  const [reports, setReports] = useState<Record<string, Report>>({})
+  const [selected, setSelected] = useState('')
   const [prepare, setPrepare] = useState(0)
   const [carryable, setCarryable] = useState<string[]>([]), [carrying, setCarrying] = useState(false)
   const [example, setExample] = useState<{name: string; id: string} | null>(null)
@@ -149,17 +171,40 @@ function CheckPoints({ruleVersionId, action, onStarted, onCancel, onAdopt}: {rul
   const [starting, setStarting] = useState(false)
   const operationId = useRef(crypto.randomUUID())
   const picker = useRef<HTMLInputElement>(null)
+  const detail = useRef<HTMLDivElement>(null)
+  const placed = useRef(false)
   useEffect(() => {
     const controller = new AbortController()
-    setClauses(null); setReadError(''); setStates({})
+    setClauses(null); setReadError(''); setReports({})
     void request<{clauses: {clause_id: string}[]; carryable?: string[]}>(`/rules/${ruleVersionId}/formalizations`, 'GET', undefined, controller.signal)
       .then(value => {if (!controller.signal.aborted) {setClauses(value.clauses.map(item => item.clause_id)); setCarryable(value.carryable ?? [])}})
       .catch(cause => {if (!controller.signal.aborted) setReadError(message(cause))})
     return () => controller.abort()
   }, [ruleVersionId, attempt])
-  const confirmed = clauses?.filter(id => states[id] === 'confirmed').length ?? 0
   const total = clauses?.length ?? 0
-  const waiting = clauses?.filter(id => unprepared(states[id])).length ?? 0
+  const confirmed = clauses?.filter(id => reports[id]?.status === 'confirmed').length ?? 0
+  const waiting = clauses?.filter(id => unprepared(reports[id]?.state)).length ?? 0
+  const current = clauses?.includes(selected) ? selected : clauses?.[0] ?? ''
+  const index = clauses?.indexOf(current) ?? -1
+  // Once every clause has been read, open on the first one still waiting for the person.
+  useEffect(() => {
+    if (placed.current || !clauses?.length || clauses.some(id => !reports[id])) return
+    placed.current = true
+    setSelected(clauses.find(id => reports[id]?.status !== 'confirmed') ?? clauses[0]!)
+  }, [clauses, reports])
+  function show(clauseId: string) {
+    placed.current = true
+    setSelected(clauseId)
+    const top = detail.current?.getBoundingClientRect().top
+    if (top !== undefined && top < 0) detail.current?.scrollIntoView({block: 'start'})
+  }
+  function next(after: string) {
+    if (!clauses) return
+    const from = clauses.indexOf(after)
+    const rest = [...clauses.slice(from + 1), ...clauses.slice(0, from)]
+    const target = rest.find(id => reports[id]?.status !== 'confirmed')
+    if (target) show(target)
+  }
   /** Unchanged clauses confirmed in the previous version are confirmed here in one step; each can still be withdrawn. */
   async function carryOver() {
     setCarrying(true); setError('')
@@ -188,38 +233,53 @@ function CheckPoints({ruleVersionId, action, onStarted, onCancel, onAdopt}: {rul
       setError(message(cause))
     } finally {setStarting(false)}
   }
-  return <section aria-labelledby="check-points-title" className="space-y-5">
-    <header className="flex flex-wrap items-end justify-between gap-4 border-b pb-5">
-      <div className="min-w-0 space-y-1.5">
-        <StepTitle id="check-points-title" step={1} done={total > 0 && confirmed === total}>逐条确认</StepTitle>
-        
+  const status = confirmed === 0 ? '至少确认一条，才能生成。' : !example ? '还要一份示例文件。' : confirmed < total ? `还有 ${total - confirmed} 条没确认，审核时这几条交给人判断。` : '都确认好了。'
+  const currentStatus = reports[current]?.status
+  return <section aria-label="逐条确认" className="space-y-5">
+    {readError && <div role="alert" className="flex flex-wrap items-center gap-3"><span>暂时读不到。{readError}</span><Button variant="outline" size="sm" onClick={() => setAttempt(value => value + 1)}>重新读取</Button></div>}
+    {!clauses && !readError && <Skeleton className="h-64 w-full"/>}
+    {carryable.length > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3"><span>上一版确认过的 {carryable.length} 条，原文没变。</span><Button disabled={carrying} onClick={() => void carryOver()}>沿用这 {carryable.length} 条</Button></div>}
+    {waiting > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3"><span>{waiting} 条还没整理。</span><Button onClick={() => setPrepare(value => value + 1)}>开始整理</Button></div>}
+    {total > 0 && <div className="grid gap-8 lg:grid-cols-[16rem_minmax(0,1fr)]">
+      <nav aria-label="条款" className="space-y-3 self-start max-lg:hidden lg:sticky lg:top-6">
+        <div className="flex items-center gap-3 px-3 text-muted-foreground"><span className="shrink-0 tabular-nums">已确认 {confirmed} / {total}</span><Progress aria-label="已确认的条款" value={confirmed * 100 / total}/></div>
+        <ol className="max-h-[calc(100dvh-8rem)] space-y-0.5 overflow-y-auto">{clauses!.map((clauseId, position) => <li key={clauseId}>
+          <button type="button" aria-current={clauseId === current ? 'step' : undefined} onClick={() => show(clauseId)}
+            className={`flex w-full items-start gap-3 rounded-md px-3 py-2 text-left hover:bg-muted focus-visible:outline-ring ${clauseId === current ? 'bg-muted text-foreground' : 'text-muted-foreground'}`}>
+            <span className="pt-px text-xs tabular-nums">{String(position + 1).padStart(2, '0')}</span>
+            <span className="line-clamp-2 min-w-0 flex-1 break-words">{reports[clauseId]?.text || ' '}</span>
+            <span className="pt-0.5"><StatusMark status={reports[clauseId]?.status}/></span>
+          </button>
+        </li>)}</ol>
+      </nav>
+      <div ref={detail} className="min-w-0 scroll-mt-6 space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <p className="flex items-center gap-2 font-medium"><span>第 {index + 1} 条</span><span className="font-normal text-muted-foreground">共 {total} 条<span className="lg:hidden">，已确认 {confirmed} 条</span></span>{currentStatus && <Badge shape="square" variant={currentStatus === 'confirmed' ? 'success' : currentStatus === 'review' || currentStatus === 'question' ? 'warning' : 'outline'}>{statusLabel[currentStatus]}</Badge>}</p>
+          <div className="flex gap-1">
+            <Button variant="ghost" size="icon" aria-label="上一条" disabled={index <= 0} onClick={() => show(clauses![index - 1]!)}><ChevronLeft/></Button>
+            <Button variant="ghost" size="icon" aria-label="下一条" disabled={index >= total - 1} onClick={() => show(clauses![index + 1]!)}><ChevronRight/></Button>
+          </div>
+        </div>
+        {clauses!.map(clauseId => <div key={`${ruleVersionId}:${clauseId}`} hidden={clauseId !== current}>
+          <ClauseCheckPoints ruleVersionId={ruleVersionId} clauseId={clauseId} prepare={prepare} onAdopt={onAdopt} onConfirmed={() => next(clauseId)}
+            onReport={report => setReports(previous => {const old = previous[clauseId]; return old && old.state === report.state && old.status === report.status && old.text === report.text ? previous : {...previous, [clauseId]: report}})}/>
+        </div>)}
       </div>
-      {total > 0 && <div className="flex w-48 items-center gap-3 text-sm text-muted-foreground"><span className="shrink-0 tabular-nums">已确认 {confirmed} / {total}</span><Progress aria-label="已确认的条款" value={confirmed * 100 / total}/></div>}
-    </header>
-    {readError && <div role="alert" className="flex flex-wrap items-center gap-3 text-sm"><span>暂时读不到。{readError}</span><Button variant="outline" size="sm" onClick={() => setAttempt(value => value + 1)}>重新读取</Button></div>}
-    {!clauses && !readError && <Skeleton className="h-32 w-full"/>}
-    {carryable.length > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3 text-sm"><span>上一版确认过的 {carryable.length} 条，原文没变。</span><Button disabled={carrying} onClick={() => void carryOver()}>沿用这 {carryable.length} 条</Button></div>}
-    {waiting > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3 text-sm"><span>{waiting} 条还没整理。</span><Button onClick={() => setPrepare(value => value + 1)}>开始整理</Button></div>}
-    {clauses?.map((clauseId, index) => <ClauseCheckPoints key={`${ruleVersionId}:${clauseId}`} number={index + 1} ruleVersionId={ruleVersionId} clauseId={clauseId} prepare={prepare} onAdopt={onAdopt}
-      onState={state => setStates(previous => previous[clauseId] === state ? previous : {...previous, [clauseId]: state})}/>)}
-    {total > 0 && <footer className="space-y-4 border-t pt-5 text-sm">
-      <div className="space-y-2">
-        <StepTitle step={2} done={Boolean(example)}>示例文件</StepTitle>
-        
+    </div>}
+    {total > 0 && <footer className="sticky bottom-0 z-10 -mx-6 flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-t bg-background/95 px-6 py-4 backdrop-blur-sm max-sm:-mx-4 max-sm:px-4">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
         <input hidden ref={picker} type="file" aria-label="选择示例文件" onChange={event => {const file = event.target.files?.[0]; if (file) void upload(file); event.target.value = ''}}/>
-        <div className="flex flex-wrap items-center gap-3"><Button variant="outline" disabled={uploading || starting} onClick={() => picker.current?.click()}>{uploading ? <Loader2 className="animate-spin motion-reduce:animate-none"/> : <FileUp/>}{example ? '换一份' : '选择文件'}</Button>{example && <span className="break-words">{example.name}</span>}</div>
+        {example
+          ? <span className="flex min-w-0 items-center gap-2"><FileText aria-hidden="true" className="size-4 shrink-0 text-muted-foreground"/><span className="truncate">{example.name}</span><Button variant="ghost" size="sm" disabled={uploading || starting} onClick={() => picker.current?.click()}>{uploading && <Loader2 className="animate-spin motion-reduce:animate-none"/>}换一份</Button></span>
+          : <Button variant="outline" disabled={uploading || starting} onClick={() => picker.current?.click()}>{uploading ? <Loader2 className="animate-spin motion-reduce:animate-none"/> : <FileUp/>}选择示例文件</Button>}
+        {error ? <p role="alert" className="text-destructive">{error}</p> : <p role="status" className="text-muted-foreground">{status}</p>}
       </div>
-      {error && <p role="alert" className="text-destructive">{error}</p>}
-      <StepTitle step={3} done={false}>生成</StepTitle>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p role="status" className="text-muted-foreground">{confirmed === 0 ? '至少确认一条，才能生成。' : confirmed < total ? `还有 ${total - confirmed} 条没确认，审核时这几条交给人判断。` : '都确认好了。'}</p>
-        <div className="flex gap-2"><Button variant="ghost" disabled={starting} onClick={onCancel}>取消</Button><Button disabled={confirmed === 0 || !example || uploading || starting} onClick={() => void start()}>{starting && <Loader2 className="animate-spin motion-reduce:animate-none"/>}{action}</Button></div>
-      </div>
+      <Button disabled={confirmed === 0 || !example || uploading || starting} onClick={() => void start()}>{starting && <Loader2 className="animate-spin motion-reduce:animate-none"/>}{action}</Button>
     </footer>}
   </section>
 }
 
-function ClauseCheckPoints({number, ruleVersionId, clauseId, prepare, onAdopt, onState}: {number: number; ruleVersionId: string; clauseId: string; prepare: number; onAdopt: Adopt; onState: (state: string) => void}) {
+function ClauseCheckPoints({ruleVersionId, clauseId, prepare, onAdopt, onReport, onConfirmed}: {ruleVersionId: string; clauseId: string; prepare: number; onAdopt: Adopt; onReport: (report: Report) => void; onConfirmed: () => void}) {
   const [detail, setDetail] = useState<Detail | null>(null)
   const [readError, setReadError] = useState('')
   const [error, setError] = useState('')
@@ -227,7 +287,7 @@ function ClauseCheckPoints({number, ruleVersionId, clauseId, prepare, onAdopt, o
   const [operation, setOperation] = useState<Receipt | null>(null)
   const [choice, setChoice] = useState(''), [choiceCandidate, setChoiceCandidate] = useState('')
   const [revision, setRevision] = useState(''), [revisionCandidate, setRevisionCandidate] = useState('')
-  const [editing, setEditing] = useState(false), [reopened, setReopened] = useState(false), [original, setOriginal] = useState(false)
+  const [editing, setEditing] = useState(false), [original, setOriginal] = useState(false), [whole, setWhole] = useState(false)
   const [locked, setLocked] = useState(false)
   const busy = useRef(false)
   const prepared = useRef(prepare)
@@ -250,7 +310,6 @@ function ClauseCheckPoints({number, ruleVersionId, clauseId, prepare, onAdopt, o
     void request<Detail>(`/rules/${ruleVersionId}/formalizations/${encodeURIComponent(clauseId)}`, 'GET', undefined, controller.signal).then(value => {
       if (controller.signal.aborted || value.rule_version_id !== ruleVersionId || value.clause_id !== clauseId) return
       setDetail(value)
-      onState(value.state)
       const open = value.operation
       if (open && running(open.state)) {setOperation(open); void follow(open)}
       else if (open && (open.state === 'unknown' || open.state === 'stopped' || open.state === 'failed')) setOperation(open)
@@ -258,7 +317,7 @@ function ClauseCheckPoints({number, ruleVersionId, clauseId, prepare, onAdopt, o
     }).catch(cause => {if (!controller.signal.aborted) setReadError(message(cause))})
     return () => controller.abort()
   }, [ruleVersionId, clauseId, pending])
-  // The page's "整理检查要点" asks each clause that has none; a clause still loading asks once it has read its state.
+  // The page's "开始整理" asks each clause that has none; a clause still loading asks once it has read its state.
   useEffect(() => {
     if (prepare === prepared.current || !detail) return
     prepared.current = prepare
@@ -327,14 +386,12 @@ function ClauseCheckPoints({number, ruleVersionId, clauseId, prepare, onAdopt, o
         ...(currentConfirmation ? {expected_current_confirmation_id: currentConfirmation.id} : {}),
       })
       if (!stillShown(origin)) return
-      setReopened(false)
       setPending(candidate.id)
+      onConfirmed()
     } catch (cause) {
       if (stillShown(origin)) setError(message(cause))
     } finally {finish()}
   }
-  const lines = candidate ? checkPointLines(candidate.cnl_text, (candidate.obligations as {id?: unknown}[]).flatMap(item => typeof item?.id === 'string' ? [item.id] : [])) : []
-  // Ambiguities the original leaves open are listed apart from the points; nothing resolves them for the person.
   async function revoke() {
     const current = detail?.confirmations.find(item => item.current)
     if (!current || !begin()) return
@@ -346,60 +403,57 @@ function ClauseCheckPoints({number, ruleVersionId, clauseId, prepare, onAdopt, o
     } catch (cause) {if (stillShown(origin)) setError(message(cause))}
     finally {finish()}
   }
+  const lines = candidate ? checkPointLines(candidate.cnl_text, (candidate.obligations as {id?: unknown}[]).flatMap(item => typeof item?.id === 'string' ? [item.id] : [])) : []
+  // Ambiguities the original leaves open are listed apart from the points; nothing resolves them for the person.
   const points = lines.filter(line => !line.startsWith('待澄清：')), review = lines.filter(line => line.startsWith('待澄清：')).map(line => line.slice('待澄清：'.length))
   const suggestion = ((candidate?.assumptions ?? []) as {kind?: unknown; text?: unknown}[]).find(item => item?.kind === 'suggested_clause' && typeof item.text === 'string')?.text as string | undefined
   const clauseText = detail?.clause_text ?? ''
-  const numberLabel = String(number).padStart(2, '0')
-  if (confirmed && !reopened && !waiting && !error) return <article aria-label={`条款 ${clauseId}`} className="flex flex-wrap items-start gap-x-4 gap-y-2 rounded-lg border bg-muted/30 px-4 py-4 sm:px-5">
-    <span aria-hidden="true" className="pt-0.5 text-xs tabular-nums text-muted-foreground">{numberLabel}</span>
-    <div className="min-w-0 flex-1 space-y-1">
-      <p className="flex flex-wrap items-center gap-2"><span className="min-w-0 break-words line-clamp-1">{clauseText}</span><Badge shape="square" variant="success">已确认</Badge></p>
-      {review.length > 0 && <p className="text-sm text-muted-foreground">有 {review.length} 处没说清，审核时交给人判断。</p>}
-    </div>
-    <Button variant="ghost" size="sm" onClick={() => setReopened(true)}>查看</Button>
-  </article>
-  return <article aria-label={`条款 ${clauseId}`} className="space-y-4 rounded-lg border bg-card px-4 py-4 sm:px-5">
-    <header className="flex items-start gap-4">
-      <span aria-hidden="true" className="pt-0.5 text-xs tabular-nums text-muted-foreground">{numberLabel}</span>
-      <div className="min-w-0 flex-1 space-y-1 text-sm text-muted-foreground">
-        {detail ? <p className={`whitespace-pre-wrap break-words leading-relaxed ${original ? '' : 'line-clamp-2'}`}>{clauseText}</p> : !readError && <Skeleton className="h-4 w-3/4"/>}
-        {clauseText.length > 80 && <button type="button" className="underline underline-offset-4" aria-expanded={original} onClick={() => setOriginal(value => !value)}>{original ? '收起' : '展开原文'}</button>}
-      </div>
-      {confirmed && <Badge shape="square" variant="success">已确认</Badge>}
-    </header>
-    {readError && <div role="alert" className="flex flex-wrap items-center gap-3 text-sm"><span>暂时读不到。{readError}</span><Button variant="outline" size="sm" onClick={() => setPending(crypto.randomUUID())}>重新读取</Button></div>}
-    {running(operation?.state) ? <div role="status" className="space-y-2.5"><p className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none"/>正在整理…</p><Skeleton className="h-4 w-full"/><Skeleton className="h-4 w-2/3"/></div>
-      : operation?.state === 'unknown' ? <div role="status" className="flex flex-wrap items-center gap-3 text-sm"><span>还不知道整理结果。刷新看看，不要重新开始。</span><Button variant="outline" size="sm" onClick={() => reread(operation.operation_id)}>刷新</Button></div>
-      : (operation?.state === 'failed' && operation.failure !== 'source_changed') || operation?.state === 'stopped' ? <div role="status" className="flex flex-wrap items-center gap-3 text-sm"><span>{operation.state === 'stopped' ? '这条没整理出来。' : formalizationFailure(operation.failure)}</span><Button variant="outline" size="sm" disabled={locked} onClick={() => void generate({})}>再试一次</Button></div>
-      : detail && !candidate && !error && unprepared(detail.state) ? <p className="text-sm text-muted-foreground">还没整理。</p>
+  const failed = !candidate && ((operation?.state === 'failed' && operation.failure !== 'source_changed') || operation?.state === 'stopped' || operation?.state === 'unknown')
+  const status: Status | null = !detail ? null : running(operation?.state) ? 'running' : confirmed ? 'confirmed' : failed ? 'failed' : !candidate ? 'waiting' : question ? 'question' : review.length ? 'review' : 'ready'
+  useEffect(() => {if (detail && status) onReport({state: detail.state, status, text: clauseText})}, [detail?.state, status, clauseText])
+  const parts = suggestion ? insertions(clauseText, suggestion) : []
+  const longOriginal = clauseText.length > 360
+  return <article aria-label={`条款 ${clauseId}`} className="space-y-6 rounded-lg border bg-card px-5 py-5 sm:px-6">
+    <section className="space-y-2">
+      <h3 className="font-medium">原文</h3>
+      {detail ? <p className={`whitespace-pre-wrap break-words leading-relaxed ${longOriginal && !original ? 'line-clamp-6' : ''}`}>{clauseText}</p> : !readError && <Skeleton className="h-4 w-3/4"/>}
+      {longOriginal && <button type="button" className="text-muted-foreground underline underline-offset-4 hover:text-foreground" aria-expanded={original} onClick={() => setOriginal(value => !value)}>{original ? '收起' : '展开'}</button>}
+    </section>
+    {readError && <div role="alert" className="flex flex-wrap items-center gap-3"><span>暂时读不到。{readError}</span><Button variant="outline" size="sm" onClick={() => setPending(crypto.randomUUID())}>重新读取</Button></div>}
+    {running(operation?.state) ? <div role="status" className="space-y-2.5"><p className="flex items-center gap-2 text-muted-foreground"><Loader2 aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none"/>正在整理，大约一两分钟。</p><Skeleton className="h-4 w-full"/><Skeleton className="h-4 w-2/3"/></div>
+      : operation?.state === 'unknown' ? <div role="status" className="flex flex-wrap items-center gap-3"><span>还不知道整理结果。刷新看看，不要重新开始。</span><Button variant="outline" size="sm" onClick={() => reread(operation.operation_id)}>刷新</Button></div>
+      : (operation?.state === 'failed' && operation.failure !== 'source_changed') || operation?.state === 'stopped' ? <div role="status" className="flex flex-wrap items-center gap-3"><span>{operation.state === 'stopped' ? '这条没整理出来。' : formalizationFailure(operation.failure)}</span><Button variant="outline" size="sm" disabled={locked} onClick={() => void generate({})}>再试一次</Button></div>
+      : detail && !candidate && !error && unprepared(detail.state) ? <div className="flex flex-wrap items-center gap-3"><span className="text-muted-foreground">还没整理。</span><Button variant="outline" size="sm" disabled={locked} onClick={() => void generate({})}>整理这条</Button></div>
       : null}
-    {error && <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-destructive"><span>{error}</span>{!candidate && detail && <Button variant="outline" size="sm" disabled={locked} onClick={() => void generate({})}>再试一次</Button>}{candidate && <Button variant="outline" size="sm" onClick={() => {setError(''); setPending(crypto.randomUUID())}}>重新读取</Button>}</div>}
+    {error && <div role="alert" className="flex flex-wrap items-center gap-3 text-destructive"><span>{error}</span>{!candidate && detail && <Button variant="outline" size="sm" disabled={locked} onClick={() => void generate({})}>再试一次</Button>}{candidate && <Button variant="outline" size="sm" onClick={() => {setError(''); setPending(crypto.randomUUID())}}>重新读取</Button>}</div>}
     {candidate && !waiting && !question && <>
-      <section className="space-y-2.5">
-        <h3 className="text-sm text-muted-foreground">系统会这样检查</h3>
-        <div className="space-y-3">{groupPoints(points).map((group, index) => <div key={index} className="space-y-1.5">
-          {group.title && <h4 className="text-sm font-medium">{group.title}</h4>}
+      {review.length > 0 && <section className="space-y-3 rounded-md border border-warning/30 bg-warning/5 px-4 py-4">
+        <h3 className="font-medium">原文有 {review.length} 处没说清</h3>
+        <ul className="list-disc space-y-1.5 pl-5">{review.map((item, position) => <li key={position} className="break-words">{item}</li>)}</ul>
+        {suggestion && <div className="space-y-2 border-t border-warning/20 pt-3">
+          <h4 className="font-medium">建议这样改</h4>
+          <Changes parts={whole ? parts : changesOnly(parts)}/>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <button type="button" className="text-muted-foreground underline underline-offset-4 hover:text-foreground" aria-expanded={whole} onClick={() => setWhole(value => !value)}>{whole ? '只看改动' : '看改后全文'}</button>
+            <Button variant="outline" size="sm" onClick={() => onAdopt(clauseId, suggestion, review.join('；').slice(0, 300))}>用建议改规则</Button>
+          </div>
+        </div>}
+      </section>}
+      <section className="space-y-3">
+        <h3 className="font-medium">检查步骤</h3>
+        <div className="space-y-4">{groupPoints(points).map((group, position) => <div key={position} className="space-y-1.5">
+          {group.title && <h4 className="text-muted-foreground">{group.title}</h4>}
           <ul className="list-disc space-y-1.5 pl-5 leading-relaxed">{group.items.map((point, item) => <li key={item} className="break-words">{point.replace(/^【[^】]{1,12}】\s*/, '')}</li>)}</ul>
         </div>)}</div>
       </section>
-      {review.length > 0 && <section className="space-y-3 rounded-md border border-warning/30 bg-warning/5 px-4 py-3">
-        <h3 className="font-medium">原文有 {review.length} 处没说清</h3>
-        <ul className="list-disc space-y-1.5 pl-5 text-sm">{review.map((item, index) => <li key={index} className="break-words">{item}</li>)}</ul>
-        {suggestion && <div className="space-y-1 border-t border-warning/20 pt-3 text-sm"><p className="text-muted-foreground">建议改成</p><p className="whitespace-pre-wrap break-words">{insertions(clauseText, suggestion).map((part, index) => part.added ? <mark key={index} className="rounded-sm bg-success/15 px-0.5 text-foreground">{part.text}</mark> : <span key={index}>{part.text}</span>)}</p></div>}
-      </section>}
-      {incomplete && <p role="status" className="text-sm text-muted-foreground">这条还不完整。</p>}
+      {incomplete && <p role="status" className="text-muted-foreground">这条还不完整。</p>}
       {(editing || incomplete) && <div className="grid gap-2">
-        <label className="grid gap-1.5 text-sm">哪里写得不对？<Textarea className="min-h-20" maxLength={2000} value={selectedRevision} onChange={event => {setRevisionCandidate(candidate.id); setRevision(event.target.value)}}/></label>
+        <label className="grid gap-1.5">哪里写得不对？<Textarea className="min-h-20" maxLength={2000} value={selectedRevision} onChange={event => {setRevisionCandidate(candidate.id); setRevision(event.target.value)}}/></label>
         <div className="flex justify-end gap-2">{!incomplete && <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>取消</Button>}<Button variant="outline" size="sm" disabled={!selectedRevision.trim() || locked} onClick={() => void generate({based_on_candidate_id: candidate.id, user_instruction: selectedRevision.trim()})}>重新整理</Button></div>
       </div>}
-      <footer className="space-y-2 border-t pt-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          {!editing && !incomplete ? <Button variant="ghost" size="sm" disabled={locked} onClick={() => setEditing(true)}>写得不对？</Button> : <span/>}
-          <div className="flex flex-wrap gap-2">
-            {review.length > 0 && suggestion && <Button variant="outline" onClick={() => onAdopt(clauseId, suggestion, review.join('；').slice(0, 300))}>用建议改规则</Button>}
-            {confirmed ? <><Button variant="outline" disabled={locked} onClick={() => void revoke()}>撤销确认</Button><Button variant="outline" onClick={() => setReopened(false)}>收起</Button></> : <Button disabled={locked || incomplete || candidate.unresolved.length > 0} onClick={() => void confirm()}>{review.length ? '保持原文，确认' : '确认'}</Button>}
-          </div>
-        </div>
+      <footer className="flex flex-wrap items-center justify-between gap-2 border-t pt-4">
+        {!editing && !incomplete && !confirmed ? <Button variant="outline" disabled={locked} onClick={() => setEditing(true)}>写得不对</Button> : <span/>}
+        {confirmed ? <Button variant="outline" disabled={locked} onClick={() => void revoke()}>撤销确认</Button> : <Button disabled={locked || incomplete || candidate.unresolved.length > 0} onClick={() => void confirm()}>{review.length ? '保持原文，确认' : '确认'}</Button>}
       </footer>
     </>}
     {question && !waiting && <fieldset className="space-y-3"><legend className="mb-3 font-medium">{question.reason}</legend>
