@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from documents.model_access import ModelUnavailable
+from openpyxl.utils.cell import coordinate_to_tuple
 
 from audit.checker_lib.li.base_agent import BaseAgent
 from audit.contracts import AuditEvidence, AuditResultItem, EvidenceDiagnostic, EvidenceSource
@@ -60,7 +61,7 @@ def number(value: Any) -> Decimal:
         raise UnknownFact("数值无法可靠读取，需人工核对原件。") from None
 
 
-def header(value: Any, aliases: tuple[str, ...]) -> bool:
+def header(value: Any, aliases: tuple[str, ...], *, exact: bool = False) -> bool:
     actual = key(value)
     for alias in aliases:
         wanted = key(alias)
@@ -70,8 +71,16 @@ def header(value: Any, aliases: tuple[str, ...]) -> bool:
         wanted_chinese = "".join(re.findall(r"[\u4e00-\u9fff]", wanted))
         if wanted_chinese and not re.search(r"[a-z]", wanted) and actual_chinese == wanted_chinese:
             return True
-        if actual.startswith(wanted) and re.fullmatch(r"[a-z0-9/()_.:—-]+", actual[len(wanted) :]):
+        # An exact label keeps "Number of readings per subgroup" apart from "Number of readings".
+        if not exact and actual.startswith(wanted) and re.fullmatch(r"[a-z0-9/()_.:—-]+", actual[len(wanted) :]):
             return True
+        # A bilingual label ("データ数 Number of readings") names the same field as its English words, in any order.
+        if re.fullmatch(r"[a-z0-9/()_.:—-]+", wanted) and re.search(r"[^\x00-\x7f]", actual):
+            words = re.findall(r"[a-z0-9]+", unicodedata.normalize("NFKC", str(value or "")).casefold())
+            wanted_words = re.findall(r"[a-z0-9]+", unicodedata.normalize("NFKC", alias).casefold())
+            # Only a multi-word English phrase identifies a field; a lone "CPK" also heads "CPK目标值".
+            if len(wanted_words) > 1 and sorted(words) == sorted(wanted_words):
+                return True
     return False
 
 
@@ -242,8 +251,8 @@ class NativeFacts:
             self.cell(table, start, column)
         return start, columns
 
-    def rows(self, aliases, *, title=(), anchor=(), defer_unknown=False):
-        table = self.table(title)
+    def rows(self, aliases, *, title=(), anchor=(), defer_unknown=False, table=None):
+        table = table if table is not None else self.table(title)
         start, columns = self.columns(table, aliases)
         records = []
         for row in range(start + 1, table["rows"] + 1):
@@ -270,33 +279,42 @@ class NativeFacts:
             raise UnknownFact("没有有效业务数据行，不能按空范围通过。")
         return records
 
-    def field(self, aliases: tuple[str, ...], *, title=(), required=True):
+    def field(self, aliases: tuple[str, ...], *, title=(), required=True, numeric=False, table=None, exact=False):
         values = set()
         candidates = []
         unknown = None
-        for table in self.tables(title):
-            for row in range(1, min(table["rows"], 40) + 1):
-                for column in range(1, min(table["cols"], 80) + 1):
-                    item = self.readers[table["id"]].cell(row, column)
-                    if item.get("state") != "known" or not header(item.get("value"), aliases):
+        whole_sheet = table is not None
+        for table in [table] if whole_sheet else self.tables(title):
+            # A named report sheet places labelled results anywhere; a document field sits in its header band.
+            if whole_sheet:
+                cells = [coordinate_to_tuple(address) for address in table["cells"]]
+            else:
+                cells = [(row, column) for row in range(1, min(table["rows"], 40) + 1) for column in range(1, min(table["cols"], 80) + 1)]
+            for row, column in cells:
+                item = self.readers[table["id"]].cell(row, column)
+                if item.get("state") != "known" or not header(item.get("value"), aliases, exact=exact):
+                    continue
+                self.cell(table, row, column)
+                merged = next((span for span in table.get("merges", []) if span[0] <= row <= span[2] and span[1] <= column <= span[3]), None)
+                next_column = merged[3] + 1 if merged else column + 1
+                if numeric:
+                    # A report form may leave spacer columns between a label and its number.
+                    while next_column < min(table["cols"], column + 8) and blank(self.readers[table["id"]].cell(row, next_column).get("value")):
+                        next_column += 1
+                if next_column <= table["cols"]:
+                    fact = self.readers[table["id"]].cell(row, next_column)
+                    locator = self.cell_location(table, row, next_column, fact)
+                    candidates.append(locator)
+                    try:
+                        value = self.cell(table, row, next_column)
+                    except UnknownFact as exc:
+                        unknown = exc
                         continue
-                    self.cell(table, row, column)
-                    merged = next((span for span in table.get("merges", []) if span[0] <= row <= span[2] and span[1] <= column <= span[3]), None)
-                    next_column = merged[3] + 1 if merged else column + 1
-                    if next_column <= table["cols"]:
-                        fact = self.readers[table["id"]].cell(row, next_column)
-                        locator = self.cell_location(table, row, next_column, fact)
-                        candidates.append(locator)
-                        try:
-                            value = self.cell(table, row, next_column)
-                        except UnknownFact as exc:
-                            unknown = exc
-                            continue
-                        if not blank(value):
-                            values.add(str(value).strip())
+                    if not blank(value):
+                        values.add(str(value).strip())
         # Explicit colon-separated paragraph/block fields preserve their own
         # value scope; no free text search or arbitrary next line borrowing.
-        if not title and self.format in {".docx", ".pdf"}:
+        if not title and not whole_sheet and self.format in {".docx", ".pdf"}:
             for text, locator in self.observations():
                 for line in text.splitlines():
                     parts = re.split(r"[:：]", line, maxsplit=1)
@@ -461,15 +479,21 @@ class UaesSourceAgent(BaseAgent):
             fact_evaluation=evaluation,
         )
 
-    def visual_pdf(self, fields: dict[str, str]):
-        """Read original PDF facts through the shared bounded visual reader."""
+    def visual_pdf(self, fields: dict[str, str], *, existential_fields=()):
+        """Read original graphics: PDF pages through the PDF reader, worksheets through the shared bounded reader."""
+        from audit.checker_lib.visual_facts import VisualFactsUnavailable as SheetFactsUnavailable
+        from audit.checker_lib.visual_facts import read_original_visual_facts
         from audit.engine.checkers.visual_facts import VisualFactsUnavailable, read_original_pdf_visual_facts
 
         try:
             if not hasattr(self, "_paddle_page_cache"):
                 self._paddle_page_cache: dict[Any, Any] = {}
-            return read_original_pdf_visual_facts(self.audit_file, fields, self.witness, operation="uaes_original_visual_facts", cache=self._paddle_page_cache)
-        except VisualFactsUnavailable as exc:
+            if Path(self.audit_file.file_url).suffix.lower() == ".pdf":
+                return read_original_pdf_visual_facts(self.audit_file, fields, self.witness, operation="uaes_original_visual_facts", cache=self._paddle_page_cache)
+            return read_original_visual_facts(
+                self.audit_file, fields, self.witness, operation="uaes_original_visual_facts", cache=self._paddle_page_cache, existential_fields=frozenset(existential_fields)
+            )
+        except (VisualFactsUnavailable, SheetFactsUnavailable) as exc:
             raise UnknownFact(str(exc)) from exc
 
     def precheck(self):
@@ -507,6 +531,13 @@ class UaesSourceAgent(BaseAgent):
             raise UnknownFact(description + "尚未全部核实，需人工确认原件。", questions=questions, evaluation=evaluation)
         return "PASS", "已从完整原件核实：" + description
 
+    def related_facts(self, item):
+        """Read each same-batch original once per target; every clause reuses it."""
+        cache = self.__dict__.setdefault("_related_facts", {})
+        if item.audit_id not in cache:
+            cache[item.audit_id] = NativeFacts(item.file_url, item.audit_id, self.witness)
+        return cache[item.audit_id]
+
     def related(self, terms, *, require_name=False):
         """Use only this frozen GroupContext; pair by source identity, never order."""
         if self.group_context is None:
@@ -533,7 +564,7 @@ class UaesSourceAgent(BaseAgent):
             # A broad type (for example MSA) does not identify its Kappa/GRR
             # subtype. An unclassified reference can also carry the source.
             # Read its own title; an upload name or a body reference is not identity.
-            original = NativeFacts(item.file_url, item.audit_id, self.witness)
+            original = self.related_facts(item)
             try:
                 original.require_source_title(terms)
             except UnknownFact:
@@ -549,7 +580,7 @@ class UaesSourceAgent(BaseAgent):
         item = next(iter(candidates.values()))
         if not self.audit_file.project_id or self.audit_file.project_id != item.project_id:
             raise UnknownFact("关联原件项目身份尚未确认一致。")
-        other = NativeFacts(item.file_url, item.audit_id, self.witness)
+        other = self.related_facts(item)
         project_aliases = ("项目", "项目名称", "项目号", "UAES项目编号", "车型项目")
         project_required = self.rule.preset_key == "U04"
         own_project = self.native().field(project_aliases, required=project_required)
@@ -595,6 +626,6 @@ class UaesSourceAgent(BaseAgent):
         return sources
 
     def controlled_stamp(self):
-        observed = self.visual_pdf({"controlled_stamp": "文件中存在真实盖上的受控章；只有“受控章/受控/盖章处”文字标签、空白盖章栏时不算。"})
+        observed = self.visual_pdf({"controlled_stamp": "文件中存在真实盖上的受控章；只有“受控章/受控/盖章处”文字标签、空白盖章栏时不算。"}, existential_fields=("controlled_stamp",))
         fact = observed["controlled_stamp"]
         return ("PASS", "已从原件核实受控章。") if fact is True else ("NG", "原件没有受控章。") if fact is False else ("UNABLE", "受控章尚未核实，需人工核对。")

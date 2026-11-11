@@ -18,6 +18,9 @@ class UaesMsaAgent(UaesSourceAgent):
     @rule("MSA计划逐编号行除备注外内容完整")
     def rule_1(self):
         facts = self.native()
+        if not facts.tables(self.PLAN):
+            # The clause applies only "如果包含" an MSA plan table.
+            return "NA", "文件不包含测量系统分析计划或MSA计划表，本条前提不成立。"
         table = facts.table(self.PLAN)
         start, columns = facts.columns(table, {"number": ("序号", "NO", "NO.")})
         required = []
@@ -26,7 +29,7 @@ class UaesMsaAgent(UaesSourceAgent):
             item = reader.cell(start, column)
             if item.get("state") != "known":
                 raise UnknownFact("MSA计划表头无法完整识别。")
-            if not blank(item.get("value")) and "备注" not in str(item["value"]):
+            if not blank(item.get("value")) and "备注" not in key(item["value"]):
                 required.append(column)
         if len(required) < 2:
             raise UnknownFact("MSA计划未能确定完整表头范围。")

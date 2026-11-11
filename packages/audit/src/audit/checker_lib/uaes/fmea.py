@@ -19,7 +19,9 @@ class UaesPfmeaAgent(UaesSourceAgent):
                 if len(detail) >= 4:
                     self.witness(locator, value)
                     return "PASS", "PFMEA存在实际经验教训引用：" + value
-        raise UnknownFact("尚不能确认经验教训有实际案例输入；仅有经验教训栏标题不能证明已引用。")
+        if facts.has_unread_content():
+            raise UnknownFact("可读文字中没有经验教训引用，原件中的图像或未读内容仍需核对。")
+        return "NG", "PFMEA未引用历史问题、客户抱怨、过往失效案例或类似产品问题等经验教训输入，请人工复核。"
 
     @rule("逐行SOD整数及后果控制一致性")
     def rule_2(self):
