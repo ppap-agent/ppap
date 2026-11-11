@@ -1,7 +1,10 @@
-"""Compile product-owned DOCX rule text for shipping with audit wheels.
+"""Compile the customer rule presets shipped with audit wheels.
 
-This performs source extraction only. It neither generates Checker code nor
-claims that an extracted clause is implemented. Run --check in Corpus tests.
+Clause text comes from each checker leaf's rules.json, the current authority.
+The DOCX files are the historical import archive: they only supply document
+identity, clause numbering, category and locator, never clause text.
+This neither generates Checker code nor claims that a clause is implemented.
+Run --check in Corpus tests.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ from audit.standard_suites import customer_directory
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "assets"
 OUTPUT = ROOT / "packages/audit/src/audit/preset_rules.json"
+LEAVES = ROOT / "packages/audit/src/audit/checkers"
 NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 # Explicit source identity. Sorting filenames would swap L02/L03 and U07/U08.
 FILES = {
@@ -148,6 +152,13 @@ def compile_presets() -> str:
         number, name = row["title"].split(" ", 1)
         clauses = [{**clause, "id": entry + clause["id"][len(source) :]} for clause in row["clauses"]]
         result.append({**row, "customer": "蔚来", "entry_id": entry, "title": f"{number}规则-{name}", "clauses": clauses})
+    for row in result:
+        leaf = LEAVES / customer_directory(row["customer"]) / row["entry_id"] / "rules.json"
+        texts = {item["id"]: item["rule_to_check"] for item in json.loads(leaf.read_text(encoding="utf-8"))["rules"]}
+        if list(texts) != [clause["id"] for clause in row["clauses"]]:
+            raise ValueError(f"Clause identities differ from the checker leaf: {leaf.relative_to(ROOT)}")
+        for clause in row["clauses"]:
+            clause["text"] = texts[clause["id"]]
     if {path for customer in FILES for path in (ASSETS / customer_directory(customer) / "rules").glob("*.docx")} != expected_files:
         raise ValueError("Source files changed; reconcile the authoritative 00-A matrix")
     return json.dumps(result, ensure_ascii=False, indent=2) + "\n"
