@@ -302,7 +302,20 @@ class ContainerJournalTests(unittest.TestCase):
     def _assert_failed_execution_is_not_replayed(self, *, unknown: bool):
         if unknown:
             event = b'data: {"type":"response.created"}\n\n'
-            self.provider.getresponse.side_effect = lambda: SimpleNamespace(status=200, read1=io.BytesIO(event).read1)
+
+            def cut_stream():
+                # The provider connection drops mid-stream: no terminal event, no clean end.
+                chunks = iter((event,))
+
+                def read1(_size):
+                    chunk = next(chunks, None)
+                    if chunk is None:
+                        raise http.client.IncompleteRead(b"")
+                    return chunk
+
+                return SimpleNamespace(status=200, read1=read1)
+
+            self.provider.getresponse.side_effect = cut_stream
         spec = self._submission()
         first = self._work("failed")
         with patch("subprocess.Popen", side_effect=self._guest(fault=True, incomplete_response=unknown)) as spawn:
