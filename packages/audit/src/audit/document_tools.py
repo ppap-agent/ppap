@@ -6,6 +6,7 @@ This module does not decide audit status or select customer templates.
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import json
 import posixpath
@@ -469,7 +470,8 @@ def _xlsx_anchor_bounds(first: dict[str, int], last: dict[str, int] | None, exte
     lies before its own cell, and either may be the later one, so both are
     walked. A negative offset or an end cell before the start has no bound.
     """
-    region, walked = {}, {}
+    region: dict[str, tuple[int, int]] = {}
+    walked: dict[str, list[int]] = {}
     for axis in ("row", "column"):
         offset = f"{axis}_offset_emu"
         start, start_offset = first[axis], first[offset]
@@ -480,7 +482,7 @@ def _xlsx_anchor_bounds(first: dict[str, int], last: dict[str, int] | None, exte
         stop = start
         for cell, distance in ((start, start_offset), (end, end_offset)):
             if distance:
-                reached, sizes = _xlsx_reach(cell, distance, lambda number, axis=axis: size_of(axis, number), _XLSX_LIMITS[axis])
+                reached, sizes = _xlsx_reach(cell, distance, functools.partial(size_of, axis), _XLSX_LIMITS[axis])
                 walked[axis] += sizes
                 stop = max(stop, reached)
             elif cell > start:
