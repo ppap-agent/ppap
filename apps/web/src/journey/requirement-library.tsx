@@ -23,15 +23,16 @@ import {requirementFileAccept, useLocalUploads} from './local-files'
 import {RequirementOriginal} from './requirements'
 import {receiveRequirement, RuleExtraction} from './rule-extraction'
 import {canonical, publishBasis, sourceFileLabel} from './product'
-import {ClauseFormalization, ExplainAll, RuleCheckerStatus} from './requirement-formalization'
 import {isPreview} from './access'
 import {message as errorMessage} from './remote'
 import {requirementDirectory, type ReadRequirementVersions, type RequirementDirectoryCollection, type RequirementDirectoryVersion} from './requirement-directory'
 import {displayTime} from '../helpers'
 import {auditAddressChanged} from '../audit/routes'
+import {ProgramWizard, RuleProgramCard} from '../audit/check-points'
 
 const routeSelection = () => ({id: new URLSearchParams(location.search).get('requirement') ?? '', version: new URLSearchParams(location.search).get('reqVersion') ?? ''})
 const routeContent = () => new URLSearchParams(location.search).get('reqTab') === 'changes' ? 'changes' : 'clauses'
+const routeWizard = (): 'generate' | 'update' | null => {const step = new URLSearchParams(location.search).get('reqStep'); return step === 'generate' || step === 'update' ? step : null}
 function reviewedBasisContent(basis: RequirementBasis) {
   return canonical({
     ...basis,
@@ -75,6 +76,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
 }) {
   const [selection, setSelection] = useState(routeSelection)
   const [content, setContent] = useState(routeContent)
+  const [wizard, setWizard] = useState(routeWizard)
   const [feedback, setFeedback] = useState<{text: string; failed: boolean} | null>(null)
   const [ack, setAck] = useState(false), [discard, setDiscard] = useState(false)
   const [publishing, setPublishing] = useState(false)
@@ -86,7 +88,6 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
   const changeCollections = useRef(onChange); changeCollections.current = onChange
   const [versionRead, setVersionRead] = useState<{key: string; versions: RequirementVersion[]; error: string; loading: boolean}>({key: '', versions: [], error: '', loading: false})
   const [versionRetry, setVersionRetry] = useState(0)
-  const [explainAll, setExplainAll] = useState(0)
   if (visibility.current.active !== active) visibility.current = {active, revision: visibility.current.revision + 1}
   const latestSelection = useRef(selection); latestSelection.current = selection
   useEffect(() => {if (!active) {setSourceClause(null); setDiscard(false)}}, [active])
@@ -127,12 +128,20 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
   function select(id: string, version = '', replace = false) {
     setSelection({id, version}); setAck(false); setFeedback(null); setEditing(null); setSourceClause(null)
     history[replace ? 'replaceState' : 'pushState'](history.state, '', requirementHref(id, version))
-    setContent(routeContent())
+    setContent(routeContent()); setWizard(routeWizard())
     window.scrollTo({top: 0})
   }
   function navigate(event: MouseEvent<HTMLAnchorElement>, id = '', version = '') {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
     event.preventDefault(); select(id, version)
+  }
+  /** Generating or updating a program takes the whole page; leaving it returns to the rule, whose card shows the outcome. */
+  function showWizard(step: 'generate' | 'update' | null) {
+    setWizard(step)
+    const url = new URL(location.href)
+    if (step) url.searchParams.set('reqStep', step); else url.searchParams.delete('reqStep')
+    history.pushState(history.state, '', url)
+    window.scrollTo({top: 0})
   }
   function showContent(value: string) {
     if (value !== 'clauses' && value !== 'changes') return
@@ -147,7 +156,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
       const requested = routeSelection(), next = savedSelections.current.get(canonical(requested)) ?? requested
       if (next !== requested) history.replaceState(history.state, '', requirementHref(next.id, next.version))
       if (next.id !== latestSelection.current.id || next.version !== latestSelection.current.version) {setAck(false); setFeedback(null); setEditing(null)}
-      setSelection(next); setContent(routeContent()); setSourceClause(null)
+      setSelection(next); setContent(routeContent()); setWizard(routeWizard()); setSourceClause(null)
     }
     // Template pages move between rules by address; follow them as well as Back and Forward.
     window.addEventListener('popstate', sync); window.addEventListener(auditAddressChanged, sync)
@@ -190,7 +199,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
       }))
       if (mounted.current && visibility.current.active && canonical(latestSelection.current) === canonical(selected)) {
         select(savedOwner, version.id, true)
-        setFeedback({text: `版本 ${version.basis.source.version} 已保存。已有审核不受影响；如果这类文件可以自动审核，新审核要等程序按新规则重新验证并发布后才使用它（“自动审核”中会提示）。`, failed: false})
+        setFeedback({text: `版本 ${version.basis.source.version} 已保存。已有审核不受影响；如果这条规则已有检查程序，新审核要等在“检查程序”中采用按新规则的版本后才使用它。`, failed: false})
       }
       onPublished?.()
     } catch (cause) {if (mounted.current) setFeedback({text: errorMessage(cause), failed: true})}
@@ -207,9 +216,10 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
   const removed = base?.basis.clauses.filter(old => !current?.basis.clauses.some(clause => clause.id === old.id)) ?? []
   const source = current?.basis.clauses.find(clause => clause.id === sourceClause)
   const sourceNumber = source && current ? current.basis.clauses.indexOf(source) + 1 : 0
-  // Without the original, every clause reading is refused for the same reason; say it once instead of under each clause.
   const originalUnreadable = current?.basis.server?.material.status === 'unreadable'
-  const explains = Boolean(current && !draftSelected && !originalUnreadable && current.basis.server)
+  // Only uploaded rules get their program here; platform rules are updated by administrators.
+  const programmable = Boolean(!draftSelected && selectedVersion?.suiteKey?.startsWith('custom:'))
+  const narrowing = current ? scopeFields.filter(({key, flag}) => key !== 'customer' && !current.scope[flag]) : []
   function versionDetail(version: RequirementDirectoryVersion) {
     const sameName = catalogCollection?.versions.filter(item => item.version === version.version) ?? []
     if (sameName.length < 2) return ''
@@ -237,13 +247,10 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
               <SelectContent position="popper" align="start" className="max-w-[calc(100vw-2rem)]">{[...(catalogCollection?.versions ?? [])].reverse().map(version => <SelectItem key={version.id} value={version.id} textValue={`${version.version} ${versionDetail(version)}`}><span className="grid min-w-0 gap-0.5 whitespace-normal break-words"><span>{version.version} · 已保存</span>{versionDetail(version) && <span className="text-xs text-muted-foreground">{versionDetail(version)}</span>}</span></SelectItem>)}{collection.draft && <SelectItem value="draft">{collection.draft.basis.source.version || '新版本'} · 草稿</SelectItem>}</SelectContent>
             </Select>
             {draftSelected && <Badge variant="outline">草稿</Badge>}
-            <span className="text-muted-foreground">{current.basis.clauses.length} 条</span>
-            {active && <RequirementOriginal basis={current.basis} label="查看原件"/>}
-            {'at' in current && current.at && <time dateTime={current.at} className="text-xs text-muted-foreground">保存于 {displayTime(current.at)}</time>}
-            {!draftSelected && selectedVersion?.suiteKey && <Button type="button" variant="outline" onClick={() => {const url = new URL(location.href); for (const key of ['requirement', 'reqVersion', 'reqTab', 'template', 'systemRule', 'checkerPath']) url.searchParams.delete(key); url.searchParams.set('rulesArea', 'automation'); url.searchParams.set('checkerSuite', selectedVersion.suiteKey!); history.pushState(history.state, '', `${url.pathname}${url.search}${url.hash}`); window.dispatchEvent(new Event(auditAddressChanged))}}>自动审核程序</Button>}
+            <span className="text-muted-foreground">{current.basis.clauses.length} 条条款</span>
+            {'at' in current && current.at && <time dateTime={current.at} className="text-muted-foreground">保存于 {displayTime(current.at)}</time>}
+            {active && !originalUnreadable ? <RequirementOriginal basis={current.basis} label={current.basis.source.filename} variant="ghost"/> : !draftSelected && <span className="break-words text-muted-foreground">{sourceFileLabel(current.basis.source.filename, current.basis.server?.material.status)}</span>}
         </div>
-        {!draftSelected && selectedVersion && !selectedVersion.suiteKey && <p role="status">还不能自动审核，审核时由人工逐条判断。</p>}
-        {!draftSelected && originalUnreadable && <p role="status" className="text-muted-foreground">规则原件读不到，系统暂时不能解释这些条款。</p>}
       </header>
       {draftSelected ? <fieldset disabled={locked} className="min-w-0 space-y-4">
         <p className="flex items-center gap-2 rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground"><Info aria-hidden="true" className="size-3.5 shrink-0"/>草稿只保存在当前浏览器；换设备或清除浏览器数据前，请先保存版本。</p>
@@ -251,32 +258,26 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
         <div className="grid gap-4 md:grid-cols-2"><label className="grid gap-1.5">要求名称<Input value={current.basis.source.title} onChange={event => {const value = event.currentTarget.value; edit(draft => ({...draft, basis: {...draft.basis, source: {...draft.basis.source, title: value}}}))}}/></label><label className="grid gap-1.5">版本号<Input value={current.basis.source.version} onChange={event => {const value = event.currentTarget.value; edit(draft => ({...draft, basis: {...draft.basis, source: {...draft.basis.source, version: value}}}))}}/></label></div>
         <div className="grid gap-4 lg:grid-cols-3">{scopeFields.map(({key, flag, label}) => <div className="min-w-0 space-y-1.5" key={key}><label className="grid gap-1.5">{key === 'customer' ? '所属模板' : `适用${label}`}<Input disabled={locked || current.scope[flag] === true} value={current.scope[key]} onChange={event => {const value = event.currentTarget.value; edit(draft => ({...draft, scope: {...draft.scope, [key]: value}}))}}/></label><label className="flex min-h-9 items-center gap-2 text-muted-foreground max-md:min-h-11"><Checkbox disabled={locked} checked={current.scope[flag] === true} onCheckedChange={value => edit(draft => ({...draft, scope: {...draft.scope, [flag]: value === true}}))}/>{key === 'customer' ? '放入通用规则' : `不限定${label}`}</label></div>)}</div>
         <label className="grid gap-1.5">来源说明／变更原因<Textarea value={current.reason} onChange={event => {const value = event.currentTarget.value; edit(draft => ({...draft, reason: value}))}}/></label>
-      </fieldset> : <div className="space-y-4">
-        {/* Scope and source read as one line of facts; the version note follows as plain text. */}
-        {/* The template is in the trail; parts and drawing revisions earn space only when they narrow the rule. */}
-        <dl className="flex flex-wrap gap-x-8 gap-y-2 rounded-lg border px-4 py-3">{scopeFields.filter(({key, flag}) => key !== 'customer' && !current.scope[flag]).map(({key, label}) => <div className="flex min-w-0 items-baseline gap-2" key={key}><dt className="text-xs text-muted-foreground">适用{label}</dt><dd className="break-words">{current.scope[key] || '待确认'}</dd></div>)}<div className="flex min-w-0 items-baseline gap-2"><dt className="text-xs text-muted-foreground">来源文件</dt><dd className="min-w-0 break-words">{sourceFileLabel(current.basis.source.filename, current.basis.server?.material.status)}</dd></div></dl>
-        {current.reason && <p className="whitespace-pre-wrap break-words text-muted-foreground">版本说明：{current.reason}</p>}
-      </div>}
+      </fieldset> : narrowing.length > 0 && <dl className="flex flex-wrap gap-x-8 gap-y-2 rounded-lg border px-4 py-3">{narrowing.map(({key, label}) => <div className="flex min-w-0 items-baseline gap-2" key={key}><dt className="text-xs text-muted-foreground">适用{label}</dt><dd className="break-words">{current.scope[key] || '待确认'}</dd></div>)}</dl>}
+      {programmable && active && !wizard && <RuleProgramCard key={current.id} ruleVersionId={current.id} onPrepare={updating => showWizard(updating ? 'update' : 'generate')}/>}
       {automaticMatching && !current.scope.allCustomers && !current.scope.customer.trim() && <Alert role="status"><AlertTitle>还没有选择所属模板</AlertTitle><AlertDescription>{draftSelected ? '请填写所属模板，或勾选“放入通用规则”后保存。' : '此版本暂不参与自动匹配。请创建新版本并选择所属模板。已有审核依据不变。'}</AlertDescription></Alert>}
-      <Tabs value={content} onValueChange={showContent}><div className="flex flex-wrap items-center justify-between gap-3 border-b pb-1"><TabsList variant="line" aria-label="要求内容"><TabsTrigger value="clauses">条款</TabsTrigger><TabsTrigger value="changes">版本记录</TabsTrigger></TabsList>{draftSelected && <p className="text-xs text-muted-foreground">已核对 {verifiedClauseCount(current.basis)}/{current.basis.clauses.length} 条</p>}{explains && <div className="flex flex-wrap items-center gap-3"><RuleCheckerStatus suiteRevisionId={current.basis.server?.body.suite_revision_id}/>{current.basis.clauses.length > 1 && <ExplainAll key={current.id} ruleVersionId={current.id} onExplain={() => setExplainAll(value => value + 1)}/>}</div>}</div>
-        <TabsContent value="clauses"><section aria-label="要求条款" className="divide-y">{current.basis.clauses.map((clause, index) => {
+      {programmable && wizard ? <ProgramWizard key={current.id} ruleVersionId={current.id} updating={wizard === 'update'} onClose={() => showWizard(null)}/> : <Tabs value={content} onValueChange={showContent}><div className="flex flex-wrap items-center justify-between gap-3 border-b pb-1"><TabsList variant="line" aria-label="要求内容"><TabsTrigger value="clauses">条款 {current.basis.clauses.length}</TabsTrigger><TabsTrigger value="changes">版本记录</TabsTrigger></TabsList>{draftSelected && <p className="text-xs text-muted-foreground">已核对 {verifiedClauseCount(current.basis)}/{current.basis.clauses.length} 条</p>}</div>
+        <TabsContent value="clauses"><section aria-label="要求条款" className="space-y-3 pt-4">{current.basis.clauses.map((clause, index) => {
           const repeated = Boolean(clause.title.trim()) && clause.text.trim().startsWith(clause.title.trim())
-          return <article key={clause.id} aria-label={`条款 ${clause.id}`} className={`grid grid-cols-[1.5rem_minmax(0,1fr)] gap-x-3 gap-y-3 py-5 sm:gap-x-4 ${draftSelected ? 'sm:grid-cols-[1.5rem_minmax(0,1fr)_auto]' : ''}`}>
+          return <article key={clause.id} aria-label={`条款 ${clause.id}`} className={`grid grid-cols-[1.5rem_minmax(0,1fr)] gap-x-3 gap-y-3 rounded-lg border bg-card px-4 py-4 sm:gap-x-4 sm:px-5 ${draftSelected ? 'sm:grid-cols-[1.5rem_minmax(0,1fr)_auto]' : ''}`}>
             <span className="pt-0.5 text-xs tabular-nums text-muted-foreground" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
             <div className="min-w-0 space-y-2">
               {draftSelected && editing === clause.id ? <fieldset disabled={locked} className="grid min-w-0 gap-3 lg:grid-cols-2"><legend className="mb-3 font-medium" title={`条款 ${clause.id}`}>编辑第 {index + 1} 条</legend><label className="grid gap-1.5">条款名称<Input value={clause.title} onChange={event => patchClause(clause.id, {title: event.target.value})}/></label><label className="grid gap-1.5">出处位置<Input readOnly={Boolean(current.basis.server)} value={clause.location} onChange={event => patchClause(clause.id, {location: event.target.value})}/></label><label className="grid gap-1.5 lg:col-span-2">来源文件<Input readOnly={Boolean(current.basis.server)} value={clause.source} onChange={event => patchClause(clause.id, {source: event.target.value})}/></label><label className="grid gap-1.5 lg:col-span-2">要执行的要求<Textarea value={clause.text} onChange={event => patchClause(clause.id, {text: event.target.value})}/></label><label className="grid gap-1.5 lg:col-span-2">来源摘录<Textarea readOnly={Boolean(current.basis.server)} value={clause.original} onChange={event => patchClause(clause.id, {original: event.target.value})}/></label></fieldset> : <>
                 {!repeated && clause.title.trim() && clause.text.trim() && <h2 className="break-words font-medium">{clause.title}</h2>}
                 <p className="whitespace-pre-wrap break-words leading-relaxed">{clause.text || clause.title || '尚未录入要求正文。'}</p>
-                <p className="flex flex-wrap items-center gap-x-2 break-words text-xs text-muted-foreground"><span>{clause.source !== current.basis.source.filename && `${clause.source} · `}{clause.location || '出处待补充'}</span><Button variant="link" size="xs" onClick={event => {sourceTrigger.current = event.currentTarget; setSourceClause(clause.id)}}><BookOpen/>核对出处</Button></p>
-                {explains && <ClauseFormalization ruleVersionId={current.id} clauseId={clause.id} suiteRevisionId={current.basis.server?.body.suite_revision_id}
-                  sourceVerified={clause.checked && clauseSourceReady(clause, current.basis)} explainAll={explainAll} modelNote={current.basis.clauses.length === 1}/>}
+                <p className="flex flex-wrap items-center justify-between gap-x-2 border-t pt-3 break-words text-xs text-muted-foreground"><span>出处　{clause.source !== current.basis.source.filename && `${clause.source} · `}{clause.location || '待补充'}</span><Button variant="ghost" size="xs" onClick={event => {sourceTrigger.current = event.currentTarget; setSourceClause(clause.id)}}><BookOpen/>核对出处</Button></p>
               </>}
               {draftSelected && <><label className="flex min-h-9 items-center gap-2 max-md:min-h-11"><Checkbox disabled={locked || !clauseSourceReady(clause, current.basis)} aria-label={`${clause.id} 已核对来源`} checked={clause.checked && clauseSourceReady(clause, current.basis)} onCheckedChange={value => patchClause(clause.id, {checked: value === true})}/>已核对内容与出处</label>{!clauseSourceReady(clause, current.basis) && <p className="text-xs text-muted-foreground">请先核对出处，选择对应的原文位置。</p>}</>}
             </div>
             {draftSelected && <div className="col-start-2 flex flex-wrap items-center gap-2 sm:col-start-3 sm:flex-col sm:items-stretch"><><Button variant="ghost" size="sm" disabled={locked} aria-expanded={editing === clause.id} onClick={() => setEditing(editing === clause.id ? null : clause.id)}>{editing === clause.id ? '完成编辑' : '编辑条款'}</Button><Button variant="ghost" size="icon-sm" disabled={locked} aria-label={`移除草稿条款 ${clause.id}`} onClick={() => edit(draft => ({...draft, basis: {...draft.basis, clauses: draft.basis.clauses.filter(item => item.id !== clause.id)}}))}><Trash2/></Button></></div>}
         </article>})}{draftSelected && <div className="py-4"><Button variant="outline" disabled={locked} onClick={addClause}><Plus/>录入条款</Button></div>}</section></TabsContent>
-        <TabsContent value="changes"><section className="space-y-3 pt-4" aria-label="版本差异"><h2 className="font-semibold">{base ? `相对 ${base.basis.source.version}` : '首个版本'}</h2>{base && <p className="text-muted-foreground">新增或修改 {changed.length} 条，移除 {removed.length} 条。</p>}{base && scopeLabel(base.scope) !== scopeLabel(current.scope) && <p className="break-words">适用范围：{scopeLabel(base.scope)} → {scopeLabel(current.scope)}</p>}{base && base.basis.source.title !== current.basis.source.title && <p className="break-words">要求名称：{base.basis.source.title} → {current.basis.source.title}</p>}{changed.map(clause => <ClauseDifference key={clause.id} before={base?.basis.clauses.find(old => old.id === clause.id)} after={clause} label={draftSelected ? '草稿' : current.basis.source.version}/>)}{removed.map(clause => <article key={clause.id} className="space-y-2 border-t py-4"><h3 className="font-semibold" title={`条款 ${clause.id}`}>移除：{clause.title || clause.text.slice(0, 40)}</h3><p className="whitespace-pre-wrap break-words">{clause.text}</p><p className="text-xs text-muted-foreground">{clause.source} · {clause.location}</p></article>)}{!changed.length && !removed.length && <p className="text-muted-foreground">{base ? '条款内容与出处未变化。' : '尚无条款。'}</p>}</section></TabsContent>
-      </Tabs>
+        <TabsContent value="changes"><section className="space-y-3 pt-4" aria-label="版本差异"><h2 className="font-semibold">{base ? `相对 ${base.basis.source.version}` : '首个版本'}</h2>{!draftSelected && current.reason && <p className="whitespace-pre-wrap break-words text-muted-foreground">版本说明：{current.reason}</p>}{base && <p className="text-muted-foreground">新增或修改 {changed.length} 条，移除 {removed.length} 条。</p>}{base && scopeLabel(base.scope) !== scopeLabel(current.scope) && <p className="break-words">适用范围：{scopeLabel(base.scope)} → {scopeLabel(current.scope)}</p>}{base && base.basis.source.title !== current.basis.source.title && <p className="break-words">要求名称：{base.basis.source.title} → {current.basis.source.title}</p>}{changed.map(clause => <ClauseDifference key={clause.id} before={base?.basis.clauses.find(old => old.id === clause.id)} after={clause} label={draftSelected ? '草稿' : current.basis.source.version}/>)}{removed.map(clause => <article key={clause.id} className="space-y-2 border-t py-4"><h3 className="font-semibold" title={`条款 ${clause.id}`}>移除：{clause.title || clause.text.slice(0, 40)}</h3><p className="whitespace-pre-wrap break-words">{clause.text}</p><p className="text-xs text-muted-foreground">{clause.source} · {clause.location}</p></article>)}{!changed.length && !removed.length && <p className="text-muted-foreground">{base ? '条款内容与出处未变化。' : '尚无条款。'}</p>}</section></TabsContent>
+      </Tabs>}
       {draftSelected && <footer className="space-y-4 border-t pt-5">
         {issues.length > 0 && <Alert><AlertTitle>还有 {issues.length} 项待确认</AlertTitle><AlertDescription><p>{issues[0]}</p>{issues.length > 1 && <Collapsible><CollapsibleTrigger asChild><Button variant="outline" size="sm"><ChevronDown/>查看全部待确认项</Button></CollapsibleTrigger><CollapsibleContent><ul className="list-disc space-y-1 pt-3 pl-4">{issues.map(issue => <li key={issue}>{issue}</li>)}</ul></CollapsibleContent></Collapsible>}</AlertDescription></Alert>}
         <label className="flex min-h-9 items-center gap-2 max-md:min-h-11"><Checkbox disabled={locked} checked={ack} onCheckedChange={value => setAck(value === true)}/>已核对本版本的来源、范围和变更</label>

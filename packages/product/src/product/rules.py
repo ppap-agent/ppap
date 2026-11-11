@@ -13,6 +13,9 @@ from audit.rule_profile import normalize_rule_profile
 
 RULE_FILE_EXTENSIONS = {".xlsx", ".xls", ".xlsm", ".doc", ".docx", ".md", ".pdf", ".json"}
 FILE_PREPARATION_KINDS = ("rule_parse", "file_analysis", "file_validation")
+# Preparing rules and programs waits behind audits and is limited per tenant (a soft cap: concurrent claims may briefly exceed it).
+BACKGROUND_JOB_KINDS = ("rule_formalization", "checker_optimization")
+BACKGROUND_JOBS_PER_TENANT = 2
 MAX_RULE_TEXT = 20000  # The migrated extraction prompt accepts this much source text.
 
 

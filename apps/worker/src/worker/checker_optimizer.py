@@ -36,6 +36,8 @@ def materialize_request(development, row):
         related = development.suites.resolve_suite(ident, str(row["tenant_id"]))
         if related.revision.resolved_digest != frozen["related_suite_digests"][key]:
             raise DeepError("deep_integrity_mismatch")
+    if frozen.get("generation"):
+        return _generation_request(development, row, suite)
     samples, specs = [], {}
     # One bounded request may repeat references. Count distinct original bytes.
     blobs = {}
@@ -144,6 +146,66 @@ def materialize_request(development, row):
 
     _validate(request)
     return request, specs[target_sample.case_id]
+
+
+def _generation_request(development, row, suite):
+    """A first program written against one example file. Nobody labeled it, so nothing is graded."""
+    store, frozen = development.store, row["frozen"]
+    files = [FrozenFile.model_validate(item) for item in frozen["generation"]["example"]]
+    spec = ExecuteRequest(
+        protocol_revision=DEEP_PROTOCOL_REVISION,
+        round_id=str(row["operation_id"]),
+        files=files,
+        executor="ppap-deep",
+        executor_revision=frozen["executor_revision"],
+        model_identity=frozen["model_identity"],
+        tenant_id=str(row["tenant_id"]),
+        job_id=str(row["job_id"]),
+        initiating_user_id=str(row["initiating_user_id"]),
+    )
+    blobs = {}
+    for item in files:
+        version = store.get_version(item.file_id, item.file_version_id)
+        if version is None or version.tenant_id != str(row["tenant_id"]) or version.status != "ready" or version.sha256 != item.sha256:
+            raise DeepError("deep_input_unauthorized")
+        raw = store.objects.get(version.object_key, max_bytes=MAX_INPUT_TOTAL)
+        if len(raw) > MAX_INPUT_TOTAL or hashlib.sha256(raw).hexdigest() != item.sha256:
+            raise DeepError("deep_integrity_mismatch")
+        blobs[item.file_version_id] = raw
+    context = group_context_for_spec(spec)
+    if context is None:
+        raise DeepError("deep_input_invalid")
+    target = next(item for item in files if item.role == "target")
+    inputs = FrozenDevelopmentInput(
+        context.by_audit_id[target.file_version_id],
+        context.rules_by_id[target.file_version_id],
+        blobs[target.file_version_id],
+        "target",
+        context,
+        verified_related_bytes(spec, blobs),
+    )
+    _require_selected_source(suite)
+    program_files = {path: data for path, data in suite.files.items() if path in {"checker.py", "resources.py"}}
+    prior = SuiteCheckerProgram(
+        input_digest=inputs.digest,
+        executor_revision=frozen["executor_revision"],
+        binding=RuleBinding(suite.revision.suite_key, checker_digest(program_files), json.loads(suite.files["rules.json"])["checker_binding"]),
+        files=program_files,
+    )
+    request = DevelopmentRequest(
+        target=inputs,
+        executor_revision=frozen["executor_revision"],
+        initiating_user_id=str(row["initiating_user_id"]),
+        suite_revision_id=str(row["suite_revision_id"]),
+        suite_digest=frozen["suite_digest"],
+        prior=prior,
+        library_revision=frozen["library_revision"],
+        source_files=dict(suite.files),
+    )
+    from agent.checker_development import _validate
+
+    _validate(request)
+    return request, spec
 
 
 def _require_selected_source(suite) -> None:

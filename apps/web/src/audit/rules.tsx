@@ -1,4 +1,3 @@
-import {CheckerCatalog} from './checker-catalog'
 import {useEffect, useState} from 'react'
 import {RequirementLibraryPanel} from '../journey/requirement-library'
 import {isRequirementLibrary} from '../journey/requirement-library-state'
@@ -10,13 +9,12 @@ import {message} from '../journey/remote'
 import {useSavedDraft} from '../journey/saved-draft'
 import {useAccess} from '../journey/access'
 import {auditAddressChanged} from './routes'
-import {readRulesArea} from './predefined-catalog'
-import {Automation, attentionCount} from './automation'
 import {buildTemplates, enterpriseTemplateKey} from './rule-templates'
 import {rulesAddress, RulesTrail, SystemRuleDetail, TemplateDetail, TemplateList} from './rule-templates-view'
-import {publishAutomationAttention} from './automation-attention'
+import {ProgramStatus} from './program-status'
+import {writeAuditAddress} from './routes'
 
-/** One read of the checker catalog serves the whole rules page; it is never repeated per section. */
+/** One read of the program catalog labels every template row; it is never repeated per row. */
 export type SuitesRead = {value: components['schemas']['SuiteCatalog'] | null; loading: boolean; error: string; revision: number}
 
 export function AuditRules({onPublished, active, headerActions}: {onPublished: () => void; active: boolean; headerActions?: HTMLElement | null}) {
@@ -26,7 +24,7 @@ export function AuditRules({onPublished, active, headerActions}: {onPublished: (
 
 const routeParams = () => {
   const url = new URL(location.href)
-  return {area: readRulesArea(url), template: url.searchParams.get('template') ?? '', systemRule: url.searchParams.get('systemRule') ?? ''}
+  return {template: url.searchParams.get('template') ?? '', systemRule: url.searchParams.get('systemRule') ?? ''}
 }
 
 function RulesWorkspace({onPublished, active, headerActions}: {onPublished: () => void; active: boolean; headerActions?: HTMLElement | null}) {
@@ -36,9 +34,7 @@ function RulesWorkspace({onPublished, active, headerActions}: {onPublished: () =
   const [revision, setRevision] = useState(0)
   const [directory, setDirectory] = useState<RequirementDirectoryCollection[]>([])
   const [suites, setSuites] = useState<SuitesRead>({value: null, loading: true, error: '', revision: 0})
-  const [suitesAttempt, setSuitesAttempt] = useState(0)
   const [route, setRoute] = useState(routeParams)
-  const [, setBusy] = useState(false)
   useEffect(() => {
     const restore = () => setRoute(routeParams())
     window.addEventListener('popstate', restore); window.addEventListener(auditAddressChanged, restore)
@@ -72,17 +68,28 @@ function RulesWorkspace({onPublished, active, headerActions}: {onPublished: () =
       if (!controller.signal.aborted) setSuites(previous => ({value, loading: false, error: '', revision: previous.revision + 1}))
     }).catch(cause => {if (!controller.signal.aborted) setSuites(previous => ({value: null, loading: false, error: message(cause), revision: previous.revision + 1}))})
     return () => controller.abort()
-  }, [active, revision, suitesAttempt])
-  useEffect(() => {if (!suites.loading) publishAutomationAttention(attentionCount(suites))}, [suites])
-  const reloadSuites = () => setSuitesAttempt(value => value + 1)
+  }, [active, revision])
   const catalog = suites.loading ? null : suites.value
   const templates = buildTemplates({rules: read.rules, library: requirementDirectory(collections, directory), catalog: suites.error ? 'failed' : catalog, standardTypes: read.types})
   const template = templates.find(item => item.key === route.template)
   const systemTemplate = route.systemRule ? templates.find(item => item.rows.some(row => row.target.kind === 'system' && row.target.id === route.systemRule)) : undefined
-  if (route.area === 'automation') return <Automation active={active} suites={suites} onReload={reloadSuites} onBusyChange={setBusy}/>
-  if (route.area === 'predefined') return <div className="space-y-6"><RulesTrail items={[{label: '自动审核', href: rulesAddress({rulesArea: 'automation'})}, {label: '系统程序目录'}]}/><CheckerCatalog active={active} suites={suites} onReload={reloadSuites} onBusyChange={setBusy}/></div>
+  const systemRow = systemTemplate?.rows.find(row => row.target.id === route.systemRule)
+  // A platform program is adopted on its rule's page; a related program opens the rule that owns it.
+  const suite = systemRow?.automation.suiteKey ? catalog?.suites.find(item => item.suite_key === systemRow.automation.suiteKey) : undefined
+  const related = (key: string) => {
+    const owner = templates.flatMap(item => item.rows).find(row => row.automation.suiteKey === key)
+    return owner && {label: owner.label, open: () => writeAuditAddress(owner.target.kind === 'system' ? rulesAddress({systemRule: owner.target.id}) : rulesAddress({requirement: owner.target.id}), 'push')}
+  }
+  const program = active && suite ? <ProgramStatus key={suite.suite_key} suiteKey={suite.suite_key} related={related} onChanged={() => setRevision(value => value + 1)}/> : undefined
+  // Links from elsewhere (an audit's repair) name a program; its rule page is where it is adopted.
+  useEffect(() => {
+    const key = new URL(location.href).searchParams.get('ruleSuite')
+    if (!key || read.loading) return
+    const owner = templates.flatMap(item => item.rows).find(row => row.automation.suiteKey === key)
+    writeAuditAddress(owner ? owner.target.kind === 'system' ? rulesAddress({systemRule: owner.target.id}) : rulesAddress({requirement: owner.target.id}) : rulesAddress({}), 'replace')
+  })
   const listView = route.systemRule
-    ? <SystemRuleDetail ruleId={route.systemRule} template={systemTemplate} row={systemTemplate?.rows.find(row => row.target.id === route.systemRule)}/>
+    ? <SystemRuleDetail ruleId={route.systemRule} template={systemTemplate} row={systemRow} program={program}/>
     : route.template ? <TemplateDetail template={read.loading && !template ? undefined : template} catalogKnown={catalog !== null}/>
       : <TemplateList templates={templates} loading={read.loading} failed={Boolean(read.error)} catalogKnown={catalog !== null}/>
   return <RequirementLibraryPanel

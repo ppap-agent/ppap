@@ -174,7 +174,7 @@ def test_optional_program_tombstone_preserves_base_and_cannot_delete_required_as
 
 
 @pytest.mark.parametrize("change", [None, "checker", "resources", "binding"])
-def test_only_inert_unbound_starter_can_freeze_without_execution_consent(change):
+def test_inert_starter_is_never_audited_and_other_unverified_programs_need_consent(change):
     from product.suites import UNIMPLEMENTED_CHECKER_SOURCE, is_unimplemented_suite
 
     files = {"rules.json": b'{"rules":[{"id":"r1"}],"checker_binding":{}}', "checker.py": UNIMPLEMENTED_CHECKER_SOURCE}
@@ -191,10 +191,9 @@ def test_only_inert_unbound_starter_can_freeze_without_execution_consent(change)
     binding = RuleBinding("cp", code, json.loads(files["rules.json"])["checker_binding"])
     args = dict(suite=suite, file_version_id="file", binding=binding, validation=None, related_suite_digests={}, library_revision="lib")
     assert is_unimplemented_suite(suite) is (change is None)
+    # An uploaded rule is audited only after its program is generated; consent cannot run the starter either.
+    with pytest.raises(ValueError, match="checker_not_generated" if change is None else "suite_validation_required"):
+        freeze_execution(**args)
     if change is None:
-        frozen = freeze_execution(**args)
-        assert frozen.verification == "unverified"
-        assert frozen.binding.validated_rule_digest is None
-    else:
-        with pytest.raises(ValueError, match="suite_validation_required"):
-            freeze_execution(**args)
+        with pytest.raises(ValueError, match="checker_not_generated"):
+            freeze_execution(**args, allow_unverified=True)

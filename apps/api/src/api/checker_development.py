@@ -50,6 +50,12 @@ class OptimizationCreate(BaseModel):
     expected_model_revision: str | None = Field(default=None, min_length=1, max_length=64)
 
 
+class GenerationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    operation_id: str
+    file_version_id: str
+
+
 class FeedbackResponse(FeedbackEdit):
     id: str
     operation_id: str
@@ -96,6 +102,15 @@ class OptimizationReceipt(BaseModel):
     failure: str | None
     cancel_requested: bool
     created_at: str
+
+
+class GenerationView(BaseModel):
+    rule_version_id: str
+    suite_key: str | None = None
+    program: Literal["missing", "unverified", "verified", "unavailable"]
+    current_revision_id: str | None = None
+    operation: OptimizationReceipt | None
+    adoption_refusal: str | None = None
 
 
 class CheckerSource(BaseModel):
@@ -199,6 +214,14 @@ def register_checker_development_routes(app, store, principal_of):
     @app.post("/suite-revisions/{revision_id}/optimizations", response_model=OptimizationReceipt, response_model_exclude_unset=True)
     def start_optimization(revision_id: str, body: OptimizationCreate, request: Request):
         return call(request, lambda principal: development().start(principal, revision_id, body.model_dump(exclude_unset=True)))
+
+    @app.post("/rules/{rule_version_id}/checker-generations", response_model=OptimizationReceipt, response_model_exclude_unset=True)
+    def start_generation(rule_version_id: str, body: GenerationCreate, request: Request):
+        return call(request, lambda principal: development().start_generation(principal, rule_version_id, body.model_dump()))
+
+    @app.get("/rules/{rule_version_id}/checker-generation", response_model=GenerationView, response_model_exclude_unset=True)
+    def read_generation(rule_version_id: str, request: Request):
+        return call(request, lambda principal: development().generation_view(principal, rule_version_id))
 
     @app.get("/checker-optimizations/{operation_id}", response_model=OptimizationReceipt, response_model_exclude_unset=True)
     def read_optimization(operation_id: str, request: Request):

@@ -22,7 +22,7 @@ export type RuleTemplate = {key: string; name: string; source: 'system' | 'enter
 export const SHARED_TEMPLATE = 'shared'
 export const PENDING_TEMPLATE = 'pending'
 export const automationLabel: Record<Automation['state'], string> = {
-  auto: '可自动审核', partial: '部分条款需人工', manual: '还不能自动审核', stale: '需重新验证', unverified: '待验证', inactive: '未启用', unknown: '正在读取…', unreadable: '暂时读不到',
+  auto: '可用于审核', partial: '部分条款由人判断', manual: '尚无检查程序', stale: '规则已更新', unverified: '未经验证', inactive: '未启用', unknown: '正在读取…', unreadable: '暂时读不到',
 }
 
 /** An uploaded rule belongs to the template its customer field names; unscoped rules are shared, unconfirmed ones wait to be sorted. */
@@ -50,7 +50,7 @@ export function templateName(key: string): string {
 const typeLabel = (type: string, title: string, standard: string[]) => standard.includes(type) || !type ? type || title : title.replace(/(?:审核)?规则$/, '').replace(/^[\d-]+\s*规则-?/, '').trim() || type
 
 function automation(catalog: Catalog | 'failed' | null, suiteKey: string | null | undefined, preset: boolean): Automation {
-  if (!suiteKey) return {state: 'manual', note: '审核时由人工逐条判断'}
+  if (!suiteKey) return {state: 'manual', note: '审核时由人判断'}
   if (catalog === 'failed') return {state: 'unreadable', suiteKey}
   if (!catalog) return {state: 'unknown', suiteKey}
   const summary = catalog.suites.find(item => item.suite_key === suiteKey)
@@ -58,13 +58,15 @@ function automation(catalog: Catalog | 'failed' | null, suiteKey: string | null 
   const entry = preset ? catalog.predefined?.find(item => item.suite_key === suiteKey && item.availability === 'installed') : undefined
   if (entry) {
     const readers = entry.evidence_reader_clause_ids?.length ?? 0, total = entry.clause_count ?? 0
-    if (!readers) return {state: 'manual', note: '审核时由人工逐条判断', suiteKey}
-    if (total && readers < total) return {state: 'partial', note: `${total} 条中 ${readers} 条可自动审核`, suiteKey}
+    if (!readers) return {state: 'manual', note: '审核时由人判断', suiteKey}
+    if (total && readers < total) return {state: 'partial', note: `${total} 条中 ${readers} 条有检查`, suiteKey}
     return {state: 'auto', suiteKey}
   }
-  if (!summary) return {state: 'manual', note: '审核时由人工逐条判断', suiteKey}
-  // A program offered but never adopted does not run; the person enables it in automatic review.
-  if (!summary.current_revision_id) return {state: 'inactive', note: '在“自动审核”中启用后才会使用', suiteKey}
+  if (!summary) return {state: 'manual', note: '审核时由人判断', suiteKey}
+  // An uploaded rule is offered for audit only once its program is generated on the rule page.
+  if (summary.program_missing) return {state: 'manual', note: '在规则页生成检查程序后才能用于审核', suiteKey}
+  // A program offered but never adopted does not run; the person adopts it on the rule page.
+  if (!summary.current_revision_id) return {state: 'inactive', note: '在规则页“检查程序”中采用后才会使用', suiteKey}
   if (summary.current_revision_id && summary.verification_status === 'verified') return {state: 'auto', suiteKey}
   return {state: 'unverified', suiteKey}
 }

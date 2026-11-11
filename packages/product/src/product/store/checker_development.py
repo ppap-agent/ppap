@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 
 from audit.checker_core import RuleBinding, checker_digest, runtime_revision
 from audit.contracts import RuleInput
@@ -438,11 +438,11 @@ class CheckerDevelopmentStore:
         _member(conn, principal)
         for round_id in frozen["source_round_ids"]:
             self._authorize_round(conn, principal, round_id)
-        for sample in frozen["samples"]:
-            for item in sample["files"]:
-                resource = self.store._resource(conn, item["file_id"])
-                if resource is None or not can_read(principal, resource, self.store._grants(conn, item["file_id"], principal.user_id)):
-                    raise KeyError("checker_access_denied")
+        files = [item for sample in frozen["samples"] for item in sample["files"]] + frozen.get("generation", {}).get("example", [])
+        for item in files:
+            resource = self.store._resource(conn, item["file_id"])
+            if resource is None or not can_read(principal, resource, self.store._grants(conn, item["file_id"], principal.user_id)):
+                raise KeyError("checker_access_denied")
 
     def start(self, principal, suite_revision_id, payload):
         from product.store.suite_releases import _read_lock, current_selection
@@ -594,6 +594,211 @@ class CheckerDevelopmentStore:
                 ),
             )
             return _receipt(cur.fetchone())
+
+    def start_generation(self, principal, rule_version_id, payload):
+        """A program for an uploaded rule from its confirmed check points plus one unlabeled example file.
+
+        Unconfirmed clauses stay unbound and are judged by people. The first program replaces the
+        never-audited starter and is adopted unverified; a later one is a version the person adopts.
+        """
+        from product.store.formalizations import FormalizationStore
+        from product.store.suite_releases import _read_lock, current_selection
+        from product.suites import canonical_json, is_unimplemented_suite
+
+        rule_version_id, operation_id, file_version_id = _id(rule_version_id), _id(payload["operation_id"]), _id(payload["file_version_id"])
+        fingerprint = _digest({"generation": rule_version_id, "user_id": principal.user_id, "file_version_id": file_version_id})
+
+        def replay(conn, cur):
+            cur.execute(
+                "SELECT o.*, (j.lease_until < now()) AS lease_expired FROM product.checker_optimizations o LEFT JOIN engine.jobs j ON j.id=o.job_id WHERE o.operation_id=%s AND o.tenant_id=%s",
+                (operation_id, principal.tenant_id),
+            )
+            prior = cur.fetchone()
+            if prior is None:
+                return None
+            if prior["request_fingerprint"] != fingerprint:
+                raise ValueError("checker_operation_conflict")
+            self._authorize_frozen(conn, principal, prior["frozen"])
+            return _receipt(prior)
+
+        def generatable(conn, suite_key):
+            # Only the newest rule version carries the clauses the next program must check.
+            latest = conn.execute(
+                "SELECT id::text FROM product.rule_versions WHERE tenant_id=%s AND body->>'suite_key'=%s ORDER BY created_at DESC, id DESC LIMIT 1", (principal.tenant_id, suite_key)
+            ).fetchone()
+            if latest is None or latest[0] != rule_version_id:
+                raise ValueError("checker_rule_version_stale")
+            selection = current_selection(conn, principal.tenant_id, suite_key)
+            return selection, is_unimplemented_suite(self.suites.resolve_suite(selection["revision_id"], principal.tenant_id, conn=conn))
+
+        with self.store._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+            _member(conn, principal)
+            if (receipt := replay(conn, cur)) is not None:
+                return receipt
+        rule = self.store.get_rule(principal.tenant_id, rule_version_id)
+        if rule is None:
+            raise KeyError("checker_access_denied")
+        body = rule.get("body") or {}
+        suite_key, base_id = body.get("suite_key"), body.get("suite_revision_id")
+        if not isinstance(suite_key, str) or not suite_key.startswith("custom:") or not isinstance(base_id, str):
+            raise ValueError("checker_generation_unavailable")
+        with self.store._conn() as conn, conn.transaction():
+            selection, first = generatable(conn, suite_key)
+            # A new program builds on the one in use while that one checks this version's clauses;
+            # after a rule change the rule's own candidate already carries the program in use.
+            current = self.suites.resolve_suite(selection["revision_id"], principal.tenant_id, conn=conn)
+            published = self.suites.resolve_suite(base_id, principal.tenant_id, conn=conn)
+            if not first and json.loads(current.files["rules.json"]).get("rules") == json.loads(published.files["rules.json"]).get("rules"):
+                base_id = selection["revision_id"]
+        # Copies only confirmed, complete check points; replays by its derived operation.
+        materialized = FormalizationStore(self.store).materialize_candidate(principal, rule_version_id, {"operation_id": str(uuid5(_GENERATION, operation_id)), "suite_revision_id": base_id})
+        with self.store._conn() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+            _member(conn, principal, lock=True)
+            _read_lock(conn, principal.tenant_id)
+            conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("checker-optimization:" + operation_id,))
+            if (receipt := replay(conn, cur)) is not None:
+                return receipt
+            selection, first = generatable(conn, suite_key)
+            source = self.suites.resolve_suite(materialized["id"], principal.tenant_id, conn=conn)
+            if source.revision.related_suite_keys:
+                raise ValueError("checker_generation_unavailable")
+            rules = json.loads(source.files["rules.json"])
+            clause_ids = sorted(rules.get("formalizations") or {})
+            # Clauses the program in use already checks stay bound; newly confirmed ones join them.
+            rules["checker_binding"] = dict.fromkeys(sorted({*clause_ids, *(rules.get("checker_binding") or {})}), "checker:create_audit")
+            bound = self.suites.create_revision(
+                tenant_id=principal.tenant_id,
+                suite_key=suite_key,
+                files={"rules.json": canonical_json(rules)},
+                created_by=principal.user_id,
+                base_revision_id=source.revision.id,
+                related_suite_keys=(),
+                conn=conn,
+            )
+            bound_suite = self.suites.resolve_suite(bound.id, principal.tenant_id, conn=conn)
+            example = self._freeze_example(conn, principal, file_version_id, bound_suite, rule)
+            model = self.store.model_selection(principal.tenant_id, conn=conn)
+            model.access("coding")  # Readiness only; no model call and no secret enters frozen JSON.
+            frozen = {
+                "suite_key": suite_key,
+                "samples": [],
+                "target_sample_id": None,
+                "selected_feedback_ids": [],
+                "source_round_ids": [],
+                "suite_digest": bound.resolved_digest,
+                "related_revision_ids": {},
+                "related_suite_digests": {},
+                "executor_revision": runtime_revision(self.store.settings.deep_execution_revision(model.identity), library_revision()),
+                "library_revision": library_revision(),
+                "model_identity": model.identity,
+                "consume_model": True,
+                "rule_changes": [],
+                "confirmed_rule_revision_id": None,
+                "oracle_revision": _digest([]),
+                "generation": {
+                    "rule_version_id": rule_version_id,
+                    "example": example,
+                    "clause_ids": clause_ids,
+                    "base_revision_id": base_id,
+                    "head_revision": selection["head_revision"],
+                    "adopt": first,
+                },
+            }
+            job_id = uuid4()
+            conn.execute(
+                "INSERT INTO engine.jobs(id,tenant_id,kind,payload,status) VALUES (%s,%s,'checker_optimization',%s,'queued')",
+                (job_id, principal.tenant_id, Jsonb({"operation_id": operation_id, "initiating_user_id": principal.user_id, "executor_revision": frozen["executor_revision"]})),
+            )
+            cur.execute(
+                """INSERT INTO product.checker_optimizations(operation_id,tenant_id,initiating_user_id,suite_revision_id,action,request_fingerprint,frozen,job_id,state)
+                   VALUES (%s,%s,%s,%s,'run_tests',%s,%s,%s,'queued') RETURNING *""",
+                (operation_id, principal.tenant_id, principal.user_id, bound.id, fingerprint, Jsonb(frozen), job_id),
+            )
+            return _receipt(cur.fetchone())
+
+    def generation_view(self, principal, rule_version_id):
+        """What the rule page shows: whether the rule has a program and this member's latest generation."""
+        from product.store.suite_releases import SuiteReleaseStore, current_selection
+        from product.suites import is_unimplemented_suite
+
+        rule = self.store.get_rule(principal.tenant_id, _id(rule_version_id))
+        if rule is None:
+            raise KeyError("checker_access_denied")
+        body = rule.get("body") or {}
+        suite_key = body.get("suite_key")
+        with self.store._conn() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+            _member(conn, principal)
+            if not isinstance(suite_key, str) or not suite_key.startswith("custom:"):
+                return {"rule_version_id": str(rule["id"]), "program": "unavailable", "operation": None}
+            selection = current_selection(conn, principal.tenant_id, suite_key)
+            current = self.suites.resolve_suite(selection["revision_id"], principal.tenant_id, conn=conn)
+            program = "missing" if is_unimplemented_suite(current) else "verified" if selection["verification_status"] == "verified" else "unverified"
+            current_revision_id = selection["revision_id"]
+            cur.execute(
+                """SELECT o.*, (j.lease_until < now()) AS lease_expired FROM product.checker_optimizations o LEFT JOIN engine.jobs j ON j.id=o.job_id
+                   WHERE o.tenant_id=%s AND o.initiating_user_id=%s AND o.frozen->'generation'->>'rule_version_id'=%s ORDER BY o.created_at DESC LIMIT 1""",
+                (principal.tenant_id, principal.user_id, str(rule["id"])),
+            )
+            row = cur.fetchone()
+            operation, refusal = None, None
+            if row is not None:
+                self._authorize_frozen(conn, principal, row["frozen"])
+                operation = _receipt(row)
+            if program == "missing" and operation and operation["state"] == "completed" and operation["candidate_revision_id"] and row["frozen"]["generation"].get("adopt", True):
+                # The member asked for a usable program. Adoption needs the API's authority, so the first read after
+                # completion adopts it unverified; a rule published meanwhile keeps the starter and is reported.
+                releases = SuiteReleaseStore(self.store.settings, self.store.objects, role=self.store.role)
+                try:
+                    with conn.transaction():
+                        releases.publish(
+                            principal,
+                            suite_key,
+                            operation["candidate_revision_id"],
+                            row["frozen"]["generation"]["head_revision"],
+                            str(uuid5(_GENERATION, "adopt:" + operation["operation_id"])),
+                            force_unverified=True,
+                            conn=conn,
+                        )
+                    program, current_revision_id = "unverified", operation["candidate_revision_id"]
+                except ValueError as exc:
+                    refusal = str(exc)
+        return {
+            "rule_version_id": str(rule["id"]),
+            "suite_key": suite_key,
+            "program": program,
+            "current_revision_id": current_revision_id,
+            "operation": operation,
+            **({"adoption_refusal": refusal} if refusal else {}),
+        }
+
+    def _freeze_example(self, conn, principal, file_version_id, suite, rule):
+        """The example is the generation target only; nobody has labeled its answers."""
+        row = conn.execute(
+            "SELECT v.id,v.file_id,v.original_filename,v.sha256,v.content_type,v.status FROM product.file_versions v WHERE v.id=%s AND v.tenant_id=%s",
+            (file_version_id, principal.tenant_id),
+        ).fetchone()
+        if row is None:
+            raise KeyError("checker_access_denied")
+        resource = self.store._resource(conn, str(row[1]))
+        if resource is None or not can_read(principal, resource, self.store._grants(conn, str(row[1]), principal.user_id)):
+            raise KeyError("checker_access_denied")
+        if row[5] != "ready" or not row[3]:
+            raise ValueError("checker_input_unavailable")
+        body = {**json.loads(suite.files["rules.json"]), "appendix": json.loads(suite.files.get("appendix.json", b"[]"))}
+        return [
+            {
+                "file_version_id": str(row[0]),
+                "file_id": str(row[1]),
+                "role": "target",
+                "filename": row[2],
+                "sha256": row[3],
+                "content_type": row[4] or "",
+                "rule_version_id": str(rule["id"]),
+                "rule_title": rule.get("title"),
+                "rule_body": body,
+                "rule_execution": None,
+            }
+        ]
 
     def read(self, principal, operation_id):
         with self.store._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
@@ -844,6 +1049,7 @@ class CheckerDevelopmentStore:
                             raise
                         proof = proof.model_copy(update={"reasons": (*proof.reasons, "related_suite_changed")})
                     report["validation"] = proof.receipt()
+            generation = row["frozen"].get("generation")
             if not self._owns(conn, request):
                 raise ValueError("checker_lease_lost")
             cur.execute(
@@ -866,8 +1072,9 @@ class CheckerDevelopmentStore:
                 "UPDATE engine.attempts SET finished_at=now(),outcome=%s,diagnostic=%s WHERE job_id=%s AND attempt=%s",
                 ("succeeded" if state == "completed" else "failed", Jsonb({"state": state, "failure": failure}), request.job_id, request.attempt),
             )
-            target = next(sample for sample in row["frozen"]["samples"] if sample["id"] == row["frozen"]["target_sample_id"])
-            self.store._queue_task_notification(conn, None, "optimization_completed", target["round_id"], operation_id=request.operation_id)
+            if not generation:
+                target = next(sample for sample in row["frozen"]["samples"] if sample["id"] == row["frozen"]["target_sample_id"])
+                self.store._queue_task_notification(conn, None, "optimization_completed", target["round_id"], operation_id=request.operation_id)
             return True
 
 
@@ -909,6 +1116,8 @@ _STANDALONE_REFUSALS = frozenset(
     }
 )
 _PROGRAM_PATHS = frozenset({"checker.py", "resources.py"})
+# Derives the check-point copy and the adoption of one generation from its operation id.
+_GENERATION = UUID("6f1d2c3a-8b4e-4f5a-9c7d-0e1f2a3b4c5d")
 
 
 def _require_independent_program(files):

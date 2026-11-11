@@ -17,7 +17,7 @@ test('recognition notices hide internal excerpt details without hiding actionabl
   assert.match(analysisNotice('ambiguous_available_rules')!, /多份生效规则.*未自动选择.*重新识别/)
   assert.equal(analysisNotice('matching_result_unknown'), '尚未取得完整匹配结果，请读取识别结果。')
   assert.match(analysisNotice('matching_customer_required')!, /选择客户.*重新识别/)
-  assert.match(analysisNotice('matching_document_type_rules_missing')!, /没有此类文件的生效规则/)
+  assert.match(analysisNotice('matching_document_type_rules_missing')!, /没有此类文件可用的规则/)
   assert.match(analysisNotice('matching_customer_rules_missing')!, /适用于该客户和文件类型/)
   assert.match(analysisNotice('matching_rules_customer_unassigned')!, /尚未确认客户范围.*不限定客户/)
   assert.match(analysisNotice('matching_document_type_required')!, /核对原件/)

@@ -26,11 +26,11 @@ const applicability = {pending: '待确认', apply: '适用', exclude: '不适�
 const separateTitle = (clause: RequirementClause) => clause.title.trim() && !clause.text.trim().startsWith(clause.title.trim())
 export type RequirementCatalogRead = {loading: boolean; error: string; reload: () => void}
 
-export function RequirementOriginal({basis, label = '阅读规则原件'}: {basis: RequirementBasis; label?: string}) {
+export function RequirementOriginal({basis, label = '阅读规则原件', variant}: {basis: RequirementBasis; label?: string; variant?: 'outline' | 'ghost' | 'link'}) {
   // An unreadable original cannot be opened; the source line already says so.
   if (!basis.source.localFile && !basis.server || basis.server?.material.status === 'unreadable') return null
   const file = {name: basis.source.filename, revision: basis.source.version || '待确认', sourceVersion: 1, localFile: basis.source.localFile, material: basis.server?.material}
-  return <SourceReaderButton file={file} label={label} input={{receiptId: basis.source.version || '要求草稿', scope: basis.source.title, files: [file], evidence: [], clarification: null}}/>
+  return <SourceReaderButton file={file} label={label} variant={variant} input={{receiptId: basis.source.version || '要求草稿', scope: basis.source.title, files: [file], evidence: [], clarification: null}}/>
 }
 
 export function BasisSummary({basis, compact = false}: {basis: RequirementBasis | null | undefined; compact?: boolean}) {

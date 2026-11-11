@@ -12,7 +12,7 @@ from psycopg.types.json import Jsonb
 from product.db import connect
 from product.files import ObjectExists, ObjectMissing
 from product.storage import S3Objects
-from product.suites import MAX_OBJECT_BYTES, ResolvedSuite, SuiteRevision, content_digest, is_unimplemented_suite, resolve_suite, resolved_digest, validate_content
+from product.suites import MAX_OBJECT_BYTES, UNIMPLEMENTED_CHECKER_SOURCE, ResolvedSuite, SuiteRevision, content_digest, is_unimplemented_suite, resolve_suite, resolved_digest, validate_content
 
 
 class SuiteStore:
@@ -194,6 +194,9 @@ def freeze_execution(
     allow_unverified: bool = False,
 ) -> FrozenTarget:
     """Freeze one target after object authorization; aggregate targets into ExecutionSnapshot."""
+    if is_unimplemented_suite(suite):
+        # An uploaded rule is offered for audit only after its program is generated on the rule page.
+        raise ValueError("checker_not_generated")
     revision = suite.revision
     rules = json.loads(suite.files["rules.json"])
     appendix = tuple(json.loads(suite.files.get("appendix.json", b"[]")))
@@ -209,7 +212,7 @@ def freeze_execution(
         else {"state": "unverified", "samples_not_rerun": False}
     )
     verified = status["state"] == "verified" and binding.validated_rule_digest == rules_digest
-    if not verified and not allow_unverified and not is_unimplemented_suite(suite):
+    if not verified and not allow_unverified:
         raise ValueError("suite_validation_required")
     return FrozenTarget(
         file_version_id,
@@ -254,6 +257,28 @@ def freeze_authorized_inputs(conn, principal, prepared: list[dict]) -> tuple[Fro
             )
         )
     return tuple(inputs)
+
+
+def programless_suite_keys(conn, tenant_id: str, suite_keys) -> set[str]:
+    """Adopted heads whose program is still the inert starter. Their rules cannot be chosen for audit."""
+    keys = sorted(set(suite_keys))
+    if not keys:
+        return set()
+    rows = conn.execute(
+        """WITH RECURSIVE chain AS (
+               SELECT h.suite_key, r.base_revision_id, r.overrides, 0 AS depth
+               FROM product.tenant_suite_heads h JOIN product.suite_revisions r ON r.id = h.current_revision_id
+               WHERE h.tenant_id = %s AND h.suite_key = ANY(%s)
+               UNION ALL
+               SELECT c.suite_key, r.base_revision_id, r.overrides, c.depth + 1
+               FROM chain c JOIN product.suite_revisions r ON r.id = c.base_revision_id
+           )
+           SELECT DISTINCT ON (suite_key) suite_key, overrides->>'checker.py' FROM chain
+           WHERE overrides ? 'checker.py' ORDER BY suite_key, depth""",
+        (tenant_id, keys),
+    ).fetchall()
+    programs = {row[0]: row[1] for row in rows}
+    return {key for key in keys if programs.get(key) in {None, content_digest(UNIMPLEMENTED_CHECKER_SOURCE)}}
 
 
 def freeze_selected_targets(store, conn, tenant_id: str, prepared: list[dict], *, require_rule_match: bool = False, preparation: bool = False) -> tuple[FrozenTarget, ...]:
@@ -323,9 +348,9 @@ def freeze_selected_targets(store, conn, tenant_id: str, prepared: list[dict], *
         targets.append(target)
         # Preparation remains inspectable even when formal admission needs fresh
         # proof. Mirror freeze_execution's policy, including explicit risk
-        # adoption and unimplemented Suites; library drift alone is a notice.
+        # adoption; library drift alone is a notice.
         item["suite_admission"] = {
-            "state": "ready" if verified or selection["force_unverified"] or is_unimplemented_suite(suite) else "validation_required",
+            "state": "ready" if verified or selection["force_unverified"] else "validation_required",
             "suite_key": suite.revision.suite_key,
             "suite_revision_id": suite.revision.id,
             "verification_status": selection["verification_status"],

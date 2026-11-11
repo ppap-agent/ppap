@@ -740,12 +740,10 @@ class BrowserJourney:
         # requests one combined repair, while retaining the independent holdout.
         batch.get_by_role("button", name="选择全部已确认样本", exact=True).click()
         expect(batch.get_by_text(f"本次选择 {len(selected_ids)} 条；每条正确答案均由人单独确认。分组不是根因结论，可以取消勾选拆开修复。", exact=True)).to_be_visible()
-        checkpoint(report_path, report, "consenting", browser_feedback_selection=True)
-        page.get_by_role("button", name="按新版规则起草修改" if report.get("rule_update_revision_id") else "让 AI 修复并验证", exact=True).click()
+        checkpoint(report_path, report, "starting", browser_feedback_selection=True)
         if report.get("rule_update_revision_id"):
+            page.get_by_role("button", name="按新版规则起草修改", exact=True).click()
             page.get_by_label("我已核对当前所选规则及全部样本，确认以上正确答案仍适用于当前规则", exact=True).check()
-        # The platform model serves the operation; the customer only consents.
-        page.get_by_label(f"同意由 AI 修复并验证这 {len(selected_ids)} 条反馈", exact=True).check()
 
         def capture(route):
             # Persist the real UI-generated identity before forwarding its sole
@@ -754,7 +752,7 @@ class BrowserJourney:
                 route.continue_()
                 return
             body = route.request.post_data_json
-            require(not report.get("operation_id") and body.get("consume_model") is True, "optimization_model_consent_missing")
+            require(not report.get("operation_id") and body.get("consume_model") is True, "optimization_repair_not_requested")
             require(len(body.get("feedback_ids", [])) == len(selected_ids) and set(body["feedback_ids"]) == selected_ids, "optimization_feedback_selection_mismatch")
             if report.get("rule_update_revision_id"):
                 require(body.get("confirmed_rule_revision_id") == report["rule_update_revision_id"], "new_rule_confirmation_missing")
@@ -764,7 +762,7 @@ class BrowserJourney:
 
         page.route("**/suite-revisions/*/optimizations", capture)
         with page.expect_response(lambda response: response.request.method == "POST" and response.url.endswith("/optimizations")) as started:
-            page.get_by_role("button", name="确认开始修复", exact=True).click()
+            page.get_by_role("button", name="修复并验证", exact=True).click()
         require(started.value.status == 200, "browser_optimization_admission_failed")
         receipt = started.value.json()
         page.reload()

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {canRequestFormalization, checkerAvailability, checkerAvailabilityCopy, confirmedReadingAside, formalizationFailure, formalizationReceiptMatches, sameFormalizationTarget, textForCandidate, visibleFormalizationReadings} from './requirement-formalization-contract.ts'
+import {canRequestFormalization, checkPointLines, formalizationFailure, formalizationReceiptMatches, sameFormalizationTarget, textForCandidate, visibleFormalizationReadings} from './requirement-formalization-contract.ts'
 
 const view = {ruleVersionId: 'rule-1', clauseId: 'c1'}
 
@@ -16,7 +16,7 @@ test('a changed source keeps the old reading visible but not confirmable', () =>
   assert.equal(stale.historical, latest)
 })
 
-test('a stopped explanation can be requested again after a candidate exists', () => {
+test('stopped check points can be prepared again after a candidate exists', () => {
   assert.equal(canRequestFormalization('not_started'), true)
   assert.equal(canRequestFormalization('not_started', 'unknown'), false)
   assert.equal(canRequestFormalization('not_started', 'queued'), false)
@@ -26,20 +26,10 @@ test('a stopped explanation can be requested again after a candidate exists', ()
   assert.equal(canRequestFormalization('confirmed', 'stopped'), true)
   assert.equal(canRequestFormalization('candidate', 'completed'), false)
   assert.equal(canRequestFormalization('needs_clarification', 'unknown'), false)
-  assert.equal(formalizationFailure('model_unavailable'), '模型服务暂不可用，本次没有调用模型。请稍后重试；如持续出现，请联系管理员。')
-  assert.equal(formalizationFailure('model_consumption_refused'), '你还没有同意调用模型。同意后再解释这一条款。')
-  assert.equal(formalizationFailure('source_unchecked'), '原文出处未核对。请先核对出处，再确认这一理解。')
-  assert.equal(formalizationFailure('formalization_failed'), '这次解释没有完成。可以重新让系统解释。')
-  assert.equal(formalizationFailure('source_changed'), '这次解释没有完成。可以重新让系统解释。')
-})
-
-test('an older confirmation stays readable when a newer candidate is showing', () => {
-  const older = {id: 'old', cnl_text: '至少关联一条'}
-  const latest = {id: 'new', cnl_text: '恰好关联一条'}
-  assert.equal(confirmedReadingAside('old', [older, latest], [latest])?.cnl_text, '至少关联一条')
-  assert.equal(confirmedReadingAside('new', [older, latest], [latest]), null)
-  assert.equal(confirmedReadingAside('old', [older, latest], [{id: 'other', cnl_text: '至少关联一条'}]), null)
-  assert.equal(confirmedReadingAside('missing', [latest], []), null)
+  assert.equal(formalizationFailure('model_unavailable'), '服务暂时不可用，请稍后重试；如持续出现，请联系管理员。')
+  assert.equal(formalizationFailure('source_unchecked'), '原文出处未核对。请先在规则页核对出处，再确认。')
+  assert.equal(formalizationFailure('formalization_failed'), '暂时没能整理出检查要点。')
+  assert.equal(formalizationFailure('source_changed'), '暂时没能整理出检查要点。')
 })
 
 test('a clarification choice does not carry to the next candidate', () => {
@@ -72,15 +62,11 @@ test('a receipt applies only to the same operation and clause', () => {
 })
 
 
-test('a verified checker is not described as still awaiting verification', () => {
-  const verified = {verified: true, samples_not_rerun: false}
-  assert.equal(checkerAvailability(verified), 'verified')
-  assert.equal(checkerAvailability({verified: true, samples_not_rerun: true}), 'unverified')
-  assert.equal(checkerAvailability({verified: false, samples_not_rerun: false}), 'unverified')
-  assert.equal(checkerAvailability({verified: true}), 'unverified')
-  assert.equal(checkerAvailability(null), 'unknown')
-  assert.equal(checkerAvailabilityCopy('verified'), '检查功能已验证，可用于审核。')
-  assert.equal(checkerAvailabilityCopy('unverified'), '检查功能仍需单独验证后才能用于审核。')
-  assert.equal(checkerAvailabilityCopy('verified').includes('仍需单独验证'), false)
-  assert.equal(checkerAvailabilityCopy('unverified').includes('已验证，可用于审核'), false)
+test('check points are listed once, without the numbering the text already carries', () => {
+  assert.deepEqual(checkPointLines('1. 文件包含测量比较报告\n2、底部有四个字段\n\n- 每个字段都有签字'), ['文件包含测量比较报告', '底部有四个字段', '每个字段都有签字'])
+  assert.deepEqual(checkPointLines('检验日期 ≥ 样件生产日期。'), ['检验日期 ≥ 样件生产日期。'])
+  assert.deepEqual(checkPointLines('（1）编号一致\n(2) 名称一致'), ['编号一致', '名称一致'])
+  assert.deepEqual(checkPointLines('o1：每一条都有编号。\no2：编号不重复。', ['o1', 'o2']), ['每一条都有编号。', '编号不重复。'])
+  // An incomplete reading hides its diagnostics; it cannot be confirmed, but its reading stays visible.
+  assert.deepEqual(checkPointLines('尚不能确定：\n- uncovered_obligation：s\n- 义务 o1 没有被形式表达式覆盖（kind_not_in_expression：s）\n\n候选理解（未确认）：\no1：至少一条记录有编号。\n已声明前提：编号印在页脚', ['o1']), ['至少一条记录有编号。', '已声明前提：编号印在页脚'])
 })

@@ -1834,6 +1834,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/rules/{rule_version_id}/checker-generation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Generation */
+        get: operations["read_generation_rules__rule_version_id__checker_generation_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rules/{rule_version_id}/checker-generations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Generation */
+        post: operations["start_generation_rules__rule_version_id__checker_generations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/rules/{rule_version_id}/formalization-suite-candidates": {
         parameters: {
             query?: never;
@@ -2272,6 +2306,35 @@ export interface components {
             result?: components["schemas"]["Analysis"] | components["schemas"]["JobError"] | null;
             /** Status */
             status: string;
+        };
+        /** GenerationCreate */
+        api__checker_development__GenerationCreate: {
+            /** File Version Id */
+            file_version_id: string;
+            /** Operation Id */
+            operation_id: string;
+        };
+        /** GenerationCreate */
+        api__formalization_routes__GenerationCreate: {
+            /** Based On Candidate Id */
+            based_on_candidate_id?: string | null;
+            /** Clarification Answer */
+            clarification_answer?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Consume Model
+             * @default false
+             */
+            consume_model: boolean;
+            /** Expected Model Revision */
+            expected_model_revision?: string | null;
+            /** Expected Source Digest */
+            expected_source_digest: string;
+            /** Operation Id */
+            operation_id: string;
+            /** User Instruction */
+            user_instruction?: string | null;
         };
         /** AuditAcceptance */
         AuditAcceptance: {
@@ -4401,27 +4464,22 @@ export interface components {
             /** Reason */
             reason: string;
         };
-        /** GenerationCreate */
-        GenerationCreate: {
-            /** Based On Candidate Id */
-            based_on_candidate_id?: string | null;
-            /** Clarification Answer */
-            clarification_answer?: {
-                [key: string]: unknown;
-            } | null;
+        /** GenerationView */
+        GenerationView: {
+            /** Adoption Refusal */
+            adoption_refusal?: string | null;
+            /** Current Revision Id */
+            current_revision_id?: string | null;
+            operation: components["schemas"]["OptimizationReceipt"] | null;
             /**
-             * Consume Model
-             * @default false
+             * Program
+             * @enum {string}
              */
-            consume_model: boolean;
-            /** Expected Model Revision */
-            expected_model_revision?: string | null;
-            /** Expected Source Digest */
-            expected_source_digest: string;
-            /** Operation Id */
-            operation_id: string;
-            /** User Instruction */
-            user_instruction?: string | null;
+            program: "missing" | "unverified" | "verified" | "unavailable";
+            /** Rule Version Id */
+            rule_version_id: string;
+            /** Suite Key */
+            suite_key?: string | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -5430,6 +5488,8 @@ export interface components {
             latest_official_revision_id: string | null;
             /** Latest Official Version */
             latest_official_version: number | null;
+            /** Offered Revision Id */
+            offered_revision_id?: string | null;
             /** Official Base Revision Id */
             official_base_revision_id: string | null;
             official_rule_impact?: components["schemas"]["RuleImpact"] | null;
@@ -5620,6 +5680,8 @@ export interface components {
              * @enum {string}
              */
             origin: "official" | "enterprise";
+            /** Program Missing */
+            program_missing: boolean;
             /** Rule Update Pending */
             rule_update_pending: boolean;
             /**
@@ -10217,6 +10279,72 @@ export interface operations {
             };
         };
     };
+    read_generation_rules__rule_version_id__checker_generation_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                rule_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GenerationView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_generation_rules__rule_version_id__checker_generations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                rule_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["api__checker_development__GenerationCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OptimizationReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     materialize_formalization_rules__rule_version_id__formalization_suite_candidates_post: {
         parameters: {
             query?: never;
@@ -10489,7 +10617,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["GenerationCreate"];
+                "application/json": components["schemas"]["api__formalization_routes__GenerationCreate"];
             };
         };
         responses: {

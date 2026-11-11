@@ -255,10 +255,12 @@ class SuiteReleaseStore:
                 (keys,),
             )
             official = {row["suite_key"]: revisions.get(str(row["current_revision_id"])) for row in cur.fetchall()}
+            from product.store.rule_impact import PUBLISHED_RULE_REVISION
+
             cur.execute(
-                """SELECT DISTINCT ON (body->>'suite_key') body->>'suite_key' AS suite_key, body->>'suite_revision_id' AS revision_id
-                   FROM product.rule_versions WHERE tenant_id = %s AND body->>'suite_key' = ANY(%s) AND body->>'suite_revision_id' IS NOT NULL
-                   ORDER BY body->>'suite_key', created_at DESC, id DESC""",
+                f"""SELECT DISTINCT ON (v.body->>'suite_key') v.body->>'suite_key' AS suite_key, {PUBLISHED_RULE_REVISION} AS revision_id
+                    FROM product.rule_versions v WHERE v.tenant_id = %s AND v.body->>'suite_key' = ANY(%s) AND v.body->>'suite_revision_id' IS NOT NULL
+                    ORDER BY v.body->>'suite_key', v.created_at DESC, v.id DESC""",
                 (tenant, keys),
             )
             ruled = {row["suite_key"]: revisions.get(row["revision_id"]) for row in cur.fetchall()}
@@ -325,6 +327,11 @@ class SuiteReleaseStore:
                         "official_update_available": update,
                     }
                 )
+            from product.store.suites import programless_suite_keys
+
+            programless = programless_suite_keys(conn, tenant, [row["suite_key"] for row in suites if row["current_revision_id"]])
+            for row in suites:
+                row["program_missing"] = row["suite_key"] in programless if row["current_revision_id"] else False
             predefined, predefined_unavailable, predefined_error = self._predefined_sources(principal, conn, revisions)
         payload: dict = {"suites": suites, **({"unavailable": unavailable} if unavailable else {})}
         if predefined_error:
@@ -452,6 +459,15 @@ class SuiteReleaseStore:
             base = _official_base(conn, _revision(conn, selection["revision_id"], principal.tenant_id), principal.tenant_id)
             update = bool(official and base and base["id"] != official["current_revision_id"] and selection["selection_mode"] == "pinned")
             needs_rule_validation = bool(rule_update or update and official_rule_impact and official_rule_impact["changed"])
+            # A repair or a regeneration finished after the version in use was adopted waits on the rule page.
+            offered = conn.execute(
+                """SELECT o.candidate_revision_id::text FROM product.checker_optimizations o
+                   LEFT JOIN product.tenant_suite_heads h ON h.tenant_id = o.tenant_id AND h.suite_key = o.frozen->>'suite_key'
+                   WHERE o.tenant_id = %s AND o.frozen->>'suite_key' = %s AND o.state = 'completed' AND o.candidate_revision_id IS NOT NULL
+                     AND o.candidate_revision_id <> %s AND o.completed_at > COALESCE(h.published_at, '-infinity')
+                   ORDER BY o.completed_at DESC LIMIT 1""",
+                (principal.tenant_id, suite_key, selection["revision_id"]),
+            ).fetchone()
             seen = (
                 not update
                 or conn.execute(
@@ -475,6 +491,7 @@ class SuiteReleaseStore:
             "official_rule_impact": official_rule_impact if update else None,
             "official_update_available": update,
             "official_update_notice": not seen,
+            "offered_revision_id": offered[0] if offered else None,
             "verification_status": "stale" if needs_rule_validation else selection["verification_status"],
             "force_unverified": selection["force_unverified"],
             "validation": (

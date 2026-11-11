@@ -5,7 +5,6 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-from agent.execution.audit_runtime import run_audit
 from api.rule_routes import register_rule_routes
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -60,7 +59,7 @@ def counts(custom):
         return (rules, *(conn.execute(f"SELECT count(*) FROM product.{table}").fetchone()[0] for table in ("suite_revisions", "tenant_suite_heads", "suite_publications")))
 
 
-def test_api_new_type_publishes_baseless_suite_and_real_runtime_reports_unsupported(custom):
+def test_api_new_type_publishes_baseless_suite_that_cannot_be_audited_until_generated(custom):
     store, alice, bob, _, source, suites, releases = custom
     app = FastAPI()
     register_rule_routes(app, store, lambda request: alice, None)
@@ -81,33 +80,39 @@ def test_api_new_type_publishes_baseless_suite_and_real_runtime_reports_unsuppor
     assert active["force_unverified"] is False
     assert active["validation"]["total_samples"] == 0
     assert counts(custom) == (1, 1, 1, 1)
-    _, snapshot = accept(custom, rule)
-    assert snapshot.targets[0].suite_revision_id == resolved.revision.id
-    assert snapshot.targets[0].verification == "unverified"
-    assert snapshot.targets[0].binding.entrypoints == {}
-    result = run_audit(snapshot, {source.id: b"{}"}, {snapshot.targets[0].binding.checker_digest: {"checker.py": resolved.files["checker.py"]}})
-    assert [item["coverage"] for item in result["coverage"]] == ["unsupported"]
-    assert result["findings"] == []  # Unsupported clauses are coverage, never invented PASS findings.
+    # The starter is never run: the rule is offered for audit only after its program is generated.
+    with pytest.raises(ValueError, match="checker_not_generated"):
+        accept(custom, rule)
     with store._conn() as conn:
         assert conn.execute("SELECT count(*) FROM product.suite_validations").fetchone()[0] == 0
         assert conn.execute("SELECT count(*) FROM product.usage_events").fetchone()[0] == 0
+
+
+def generated(custom, rule):
+    """Stands in for the rule page's generation: a bound program adopted unverified."""
+    _, alice, _, _, _, _, releases = custom
+    rules = json.loads(releases.detail(alice, rule["body"]["suite_revision_id"])["files"]["rules.json"])
+    rules["checker_binding"] = {"R1": "checker:check"}
+    program = releases.save_candidate(alice, rule["body"]["suite_revision_id"], {"rules.json": json.dumps(rules), "checker.py": "def check(context): return []\n"})
+    releases.publish(alice, rule["body"]["suite_key"], program["id"], 1, str(uuid.uuid4()), True)
+    return program["id"]
 
 
 def test_successor_is_same_suite_and_old_admission_and_retries_never_drift(custom):
     _, alice, _, _, _, suites, releases = custom
     request = str(uuid.uuid4())
     first = publish(custom, request=request)
+    program = generated(custom, first)
     accepted, original = accept(custom, first)
     second = publish(custom, body=rule_body("批号与原始记录一致"), predecessor=first["id"])
     assert first["body"]["suite_key"] == second["body"]["suite_key"]
     changed = suites.resolve_suite(second["body"]["suite_revision_id"], alice.tenant_id)
-    assert changed.revision.base_revision_id == first["body"]["suite_revision_id"]
-    assert changed.revision.revision_number == 2
+    assert changed.revision.base_revision_id == program
+    assert changed.revision.revision_number == 3
     assert "checker.py" not in changed.revision.overrides
     assert publish(custom, request=request) == first
     active = releases.active(alice, changed.revision.suite_key)
-    assert active["current_revision_id"] == first["body"]["suite_revision_id"]
-    assert active["verification_status"] == "stale"
+    assert active["current_revision_id"] == program
     assert active["rule_update"]["clauses"][0]["kind"] == "changed"
     assert active["rule_update"]["target_revision_id"] == changed.revision.id
     assert suites.read_snapshot(accepted["id"], alice.tenant_id).to_dict() == original.to_dict()
@@ -118,13 +123,13 @@ def test_successor_is_same_suite_and_old_admission_and_retries_never_drift(custo
         assert conn.execute("SELECT count(*) FROM engine.jobs WHERE kind='checker_optimization'").fetchone()[0] == 0
         execution = conn.execute("SELECT rule_execution FROM product.round_inputs WHERE round_id=%s", (unchanged.round_id,)).fetchone()[0]
         assert execution["rule_version_mismatch"] is True
-    releases.publish(alice, changed.revision.suite_key, changed.revision.id, 1, str(uuid.uuid4()))
+    releases.publish(alice, changed.revision.suite_key, changed.revision.id, 2, str(uuid.uuid4()), True)
     _, current = accept(custom, first)
     assert current.targets[0].rules["rules"][0]["rule_to_check"] == "批号与原始记录一致"
     assert releases.active(alice, changed.revision.suite_key)["rule_update"] is None
-    releases.publish(alice, changed.revision.suite_key, first["body"]["suite_revision_id"], 2, str(uuid.uuid4()))
+    releases.publish(alice, changed.revision.suite_key, program, 3, str(uuid.uuid4()), True)
     _, rolled_back = accept(custom, second)
-    assert rolled_back.targets[0].suite_revision_id == first["body"]["suite_revision_id"]
+    assert rolled_back.targets[0].suite_revision_id == program
     assert suites.read_snapshot(accepted["id"], alice.tenant_id).to_dict() == original.to_dict()
 
 

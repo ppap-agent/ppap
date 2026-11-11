@@ -80,7 +80,19 @@ from product.identity import (
     token_hash,
 )
 from product.logs import emit
-from product.rules import FILE_PREPARATION_KINDS, customer_scope, document_type_aliases, latest_rule_versions, normalize_rule_body, rule_parse_request, rule_parse_view, rule_title, source_review
+from product.rules import (
+    BACKGROUND_JOB_KINDS,
+    BACKGROUND_JOBS_PER_TENANT,
+    FILE_PREPARATION_KINDS,
+    customer_scope,
+    document_type_aliases,
+    latest_rule_versions,
+    normalize_rule_body,
+    rule_parse_request,
+    rule_parse_view,
+    rule_title,
+    source_review,
+)
 from product.settings import Settings
 from product.storage import S3Objects
 from product.store.provider_auth import ProviderAuthStore, create_authorization
@@ -515,6 +527,21 @@ class AuthStore:
                             },
                             previous=None,
                         )
+                        from product.store.suite_releases import SuiteReleaseStore
+
+                        # Development audits use this rule, so it carries an adopted program instead of the
+                        # never-audited starter. The program binds no clause: results stay "unsupported".
+                        releases = SuiteReleaseStore(self.settings, self.objects, role=self.role)
+                        program = releases.suites.create_revision(
+                            tenant_id=tenant_id,
+                            suite_key=body["suite_key"],
+                            files={"checker.py": b"def create_audit(audit_file, rule, group_context=None):\n    return []\n"},
+                            created_by=principal.user_id,
+                            base_revision_id=body["suite_revision_id"],
+                            related_suite_keys=(),
+                            conn=conn,
+                        )
+                        releases.publish(principal, body["suite_key"], program.id, 1, str(uuid.uuid5(uuid.NAMESPACE_URL, "isolated-dev-program:" + rule_id)), True, conn=conn)
                     conn.execute(
                         "INSERT INTO product.rule_versions (id,tenant_id,title,body) VALUES (%s,%s,%s,%s)",
                         (rule_id, tenant_id, "资料就绪", Jsonb(body)),
@@ -1422,7 +1449,11 @@ class AuthStore:
             if row["selection"] != "removed" and validation.get("scope") and (customer != "UAES" or validation["scope"] != {"customer_preference": "UAES", "preset_key": "U13"}):
                 raise ValueError("validation_scope_mismatch")
         all_rules = self.list_rules(principal.tenant_id)
-        candidates = latest_rule_versions(all_rules)
+        from product.store.suites import programless_suite_keys
+
+        # An uploaded rule without a generated program is not offered for audit.
+        programless = programless_suite_keys(conn, principal.tenant_id, [rule["suite_key"] for rule in all_rules if str(rule.get("suite_key") or "").startswith("custom:")])
+        candidates = [rule for rule in latest_rule_versions(all_rules) if rule.get("suite_key") not in programless]
         draft = self._recognition_owner(conn, principal, task_id)
         predecessor = self._reaudit_source(conn, principal, str(draft["predecessor_id"])) if draft["predecessor_id"] else None
         replacements = [row["replacement_of_file_version_id"] for row in files if row["selection"] == "selected" and row.get("replacement_of_file_version_id")]
@@ -3874,16 +3905,27 @@ class AuthStore:
             with conn.transaction():
                 row = conn.execute(
                     """
-                    SELECT id, kind, payload, tenant_id FROM engine.jobs
+                    SELECT id, kind, payload, tenant_id FROM engine.jobs j
                     WHERE kind <> ALL(%s) AND (
                         (status = 'queued' AND (lease_until IS NULL OR lease_until < now()))
                         OR (status = 'leased' AND kind <> ALL(%s) AND lease_until IS NOT NULL AND lease_until < now())
+                    ) AND NOT (
+                        kind = ANY(%s) AND (
+                            SELECT count(*) FROM engine.jobs busy
+                            WHERE busy.tenant_id = j.tenant_id AND busy.kind = j.kind AND busy.status = 'leased' AND busy.lease_until > now()
+                        ) >= %s
                     )
-                    ORDER BY created_at
+                    ORDER BY kind = ANY(%s), created_at
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1
                     """,
-                    (["feishu_notification", "task_confirmation"], [*FILE_PREPARATION_KINDS, "checker_optimization", "rule_formalization"]),
+                    (
+                        ["feishu_notification", "task_confirmation"],
+                        [*FILE_PREPARATION_KINDS, "checker_optimization", "rule_formalization"],
+                        list(BACKGROUND_JOB_KINDS),
+                        BACKGROUND_JOBS_PER_TENANT,
+                        list(BACKGROUND_JOB_KINDS),
+                    ),
                 ).fetchone()
                 if not row:
                     return None

@@ -73,6 +73,7 @@ class SuiteActive(TypedDict):
     official_base_revision_id: str | None
     official_update_available: bool
     official_update_notice: bool
+    offered_revision_id: NotRequired[str | None]
     verification_status: str
     force_unverified: bool
     validation: SuiteValidation
@@ -91,6 +92,7 @@ class SuiteSummary(TypedDict):
     verification_status: str
     rule_update_pending: bool
     official_update_available: bool
+    program_missing: bool
 
 
 class SuiteUnavailable(TypedDict):

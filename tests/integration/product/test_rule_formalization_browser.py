@@ -18,7 +18,12 @@ from uuid import uuid4
 import httpx
 import pytest
 import uvicorn
+from agent.checker_development import DevelopmentOutcome
+from agent.checker_spec import CheckerArtifact
+from agent.protocol import DevelopmentEnvelope
+from agent.run import ExecutionContext
 from api import create_app
+from audit.checker_validation import SuiteValidationReport
 from cryptography.fernet import Fernet
 from product import build_product_store
 from product.identity import SESSION_COOKIE
@@ -27,6 +32,7 @@ from product.store.model_credentials import TenantModelStore
 from psycopg.types.json import Jsonb
 from pydantic import SecretStr
 from worker import process_claimed
+from worker.checker_optimizer import development_handler
 
 
 def back_to_templates(page):
@@ -124,6 +130,26 @@ def _reading(rule_id: str, clause_id: str, clif: str, kind: str, unresolved: lis
     )
 
 
+class ControlledRuntime:
+    """Writes a fixed program for the example; the program author is not under test here."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def develop_and_run(self, request, *, spec, context):
+        self.calls += 1
+        program = b"def create_audit(audit_file, rule, group_context=None):\n    return []\n"
+        artifact = CheckerArtifact(input_digest=request.target.digest, executor_revision=request.executor_revision, entrypoint="checker:create_audit", files={"checker.py": program})
+        proof = SuiteValidationReport(
+            suite_revision_id=request.suite_revision_id,
+            suite_digest=request.suite_digest,
+            library_revision=request.library_revision,
+            program_digest=artifact.program_digest,
+            reasons=("no_independent_oracle",),
+        )
+        return DevelopmentOutcome(artifact, [], ["controlled fixture"], {"model_requests": 1}, validation=proof, usage_source="controlled")
+
+
 class ScriptedFormalizer:
     def __init__(self, rule_id: str):
         self.rule_id = rule_id
@@ -187,16 +213,24 @@ def formalization_browser(auth_store_factory, tmp_path, request):
         "type": "自定义",
         "rules": [{"id": clause_id, "category": "条款", "priority": "P0", "rule_to_check": text, "type_of_rule": "text"} for clause_id, text, _checked in rules],
     }
+    from product.store.suite_releases import SuiteReleaseStore
     from product.store.suites import SuiteStore
+    from product.suites import UNIMPLEMENTED_CHECKER_SOURCE
 
     suite_key = "custom:" + rule_id
     program = b"def create_audit(audit_file, rule, group_context=None):\n    return []\n"
+    # An uploaded rule starts with the never-audited starter as its adopted program.
     suite = SuiteStore(settings, admin.objects, role="migrator").create_revision(
         tenant_id=alice.tenant_id,
         suite_key=suite_key,
-        files={"rules.json": json.dumps({"type": "自定义", "rules": body["rules"]}).encode(), "checker.py": program},
+        files={
+            "rules.json": json.dumps({"type": "自定义", "title": "编号规则", "suite_key": suite_key, "rules": body["rules"], "checker_binding": {}}).encode(),
+            "appendix.json": b"[]",
+            "checker.py": UNIMPLEMENTED_CHECKER_SOURCE,
+        },
         created_by=alice.user_id,
     )
+    SuiteReleaseStore(settings, admin.objects).publish(alice, suite_key, suite.id, 0, str(uuid4()))
     body["suite_key"] = suite_key
     body["suite_revision_id"] = suite.id
     SuiteStore(settings, admin.objects, role="migrator").create_revision(
@@ -267,6 +301,7 @@ def formalization_browser(auth_store_factory, tmp_path, request):
     api = build_product_store(settings, objects=admin.objects, role="api")
     worker = build_product_store(settings, objects=admin.objects, role="worker")
     script = ScriptedFormalizer(rule_id)
+    runtime = ControlledRuntime()
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
     api_url = f"http://127.0.0.1:{listener.getsockname()[1]}"
@@ -294,6 +329,11 @@ def formalization_browser(auth_store_factory, tmp_path, request):
                 job = worker.claim_job("formalization-browser")
                 if job and job.kind == "rule_formalization":
                     process_claimed(worker, job, "formalization-browser", rule_ai=script)
+                elif job and job.kind == "checker_optimization":
+                    envelope = DevelopmentEnvelope(
+                        op="develop", operation_id=job.payload["operation_id"], job_id=job.id, tenant_id=job.tenant_id, attempt=job.attempt, lease_owner="formalization-browser"
+                    )
+                    development_handler(worker, runtime)(envelope, ExecutionContext())
             except Exception as error:
                 errors.append(repr(error))
                 return
@@ -321,6 +361,11 @@ def formalization_browser(auth_store_factory, tmp_path, request):
             tenant_id=alice.tenant_id,
             store=admin,
             script=script,
+            runtime=runtime,
+            starter_id=suite.id,
+            model_key=lambda: models.put(
+                alice.tenant_id, models.candidate(alice.tenant_id, SecretStr("test-only-no-provider-called"), base_url="https://models.example.test", text_model="test-model"), operator="test"
+            ),
             errors=errors,
         )
     finally:
@@ -339,15 +384,15 @@ def formalization_browser(auth_store_factory, tmp_path, request):
         assert not errors, errors
 
 
-def test_saved_clause_confirms_against_the_real_api(formalization_browser):
+def test_rule_program_is_generated_from_confirmed_check_points_against_the_real_api(formalization_browser):
     pytest.importorskip("playwright")
     from playwright.sync_api import expect, sync_playwright
 
     f = formalization_browser
+    shots = Path("/private/tmp/claude-501/-Users-bef0rewind-Projects-work-ppap/1fe405b6-a54a-4e2e-a578-ee1705025761/scratchpad")
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         context = browser.new_context()
-        context.grant_permissions(["clipboard-read", "clipboard-write"])
         context.add_cookies([{"name": SESSION_COOKIE, "value": f.session, "url": f.web, "httpOnly": True}])
         page = context.new_page()
         page.set_default_timeout(20000)
@@ -355,20 +400,7 @@ def test_saved_clause_confirms_against_the_real_api(formalization_browser):
         page.on("request", lambda item: generations.append(item.url) if item.method == "POST" and "/formalizations/" in item.url and item.url.endswith("/generations") else None)
         page.goto(f.web + "/requirements")
         expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
-        navigation = page.get_by_role("navigation", name="产品导航", exact=True)
-        # Rules live in templates; programs have their own page; neither is a tab of the other.
-        expect(page.get_by_role("tab", name="企业检查版本", exact=True)).to_have_count(0)
-        navigation.get_by_role("button", name="自动审核", exact=True).click()
-        expect(page).to_have_url(re.compile(r"[?&]rulesArea=automation"))
-        page.get_by_role("tab", name=re.compile("^全部")).click()
-        expect(page.get_by_role("link", name="编号检查", exact=True)).to_be_visible()
-        page.get_by_role("link", name="浏览系统程序目录", exact=True).click()
-        expect(page).to_have_url(re.compile(r"[?&]rulesArea=predefined"))
-        assert "requirement=" not in page.url
-        assert "reqVersion=" not in page.url
-        navigation.get_by_role("button", name="规则模板", exact=True).click()
         open_rule(page, "编号规则")
-        expect(page.get_by_text("还不能自动审核，审核时由人工逐条判断。", exact=True)).to_have_count(0)
         expect(page).to_have_url(re.compile(rf"[?&]requirement={f.rule_id}"))
         deep_link = page.url
         page.goto(f.web + "/requirements")
@@ -377,64 +409,96 @@ def test_saved_clause_confirms_against_the_real_api(formalization_browser):
         page.go_back()
         expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
         page.go_forward()
-        section = page.get_by_role("region", name="系统是这样理解的 c1", exact=True)
-        expect(section.get_by_role("heading", name="系统是这样理解的", exact=True)).to_be_visible()
         expect(page.get_by_text("文档要有编号").first).to_be_visible()
-        section.get_by_role("button", name="让系统解释这条规则", exact=True).click()
-        expect(section).to_contain_text("至少一个目标")
-        expect(section).to_contain_text("恰好一个目标")
+        # The rule page shows the rule itself; nothing about programs or check points is generated by reading it.
+        for removed in ("系统是这样理解的", "还不能自动审核，审核时由人工逐条判断。", "AI 模型", "让系统解释"):
+            expect(page.get_by_text(removed)).to_have_count(0)
+        page.get_by_role("tab", name="检查程序", exact=True).click()
+        expect(page).to_have_url(re.compile(r"[?&]reqTab=program"))
+        expect(page.get_by_text("这条规则还没有检查程序，不能用于审核。", exact=True)).to_be_visible()
+        page.screenshot(path=str(shots / "rp-missing.png"), full_page=True)
+
+        def open_points():
+            page.get_by_role("button", name="生成检查程序", exact=True).click()
+            expect(page.get_by_role("heading", name="确认检查要点", exact=True)).to_be_visible()
+
+        def clause(clause_id: str):
+            return page.get_by_role("article", name=f"条款 {clause_id}", exact=True)
+
+        def choose(article, answer: str):
+            # A choice belongs to the candidate on screen; a re-read candidate clears it, so wait for a settled one.
+            confirm = article.get_by_role("button", name="确认选择", exact=True)
+            for _ in range(10):
+                article.get_by_role("radio", name=answer).check()
+                try:
+                    expect(confirm).to_be_enabled(timeout=1000)
+                    break
+                except AssertionError:
+                    continue
+            confirm.click()
 
         def latest(clause_id: str) -> dict:
             detail = httpx.get(f"{f.api}/rules/{f.rule_id}/formalizations/{clause_id}", cookies={SESSION_COOKIE: f.session}, timeout=10)
             assert detail.status_code == 200, detail.text
             return detail.json()["candidates"][-1]
 
+        open_points()
+        expect(page.get_by_text("已确认 0 / 4", exact=True)).to_be_visible()
+        expect(page.get_by_text("4 条还没有整理检查要点。", exact=True)).to_be_visible()
+        expect(clause("c1")).to_contain_text("尚未整理。")
+        assert generations == [] and f.script.calls == 0
+        page.get_by_role("button", name="整理检查要点", exact=True).click()
+        c1 = clause("c1")
+        expect(c1.get_by_text("需要你选择", exact=True)).to_be_visible()
+        expect(c1).to_contain_text("至少一个目标")
+        expect(c1).to_contain_text("恰好一个目标")
+        expect(clause("c2")).to_contain_text("先按键再对名称")
+        expect(clause("c3").get_by_role("button", name="确认", exact=True)).to_be_visible()
+        expect(clause("c4").get_by_text("需要你选择", exact=True)).to_be_visible()
+        # One explicit click prepares each clause once.
+        assert len(generations) == 4 and f.script.calls == 4
         opened = latest("c1")
         assert "forall (t2)" not in opened["clif_content"]
-        expect(section.get_by_role("button", name="确认这一理解", exact=True)).to_be_disabled()
-        section.get_by_role("button", name="暂不确定", exact=True).click()
-        expect(section).to_contain_text("用户还不能在这些理解中选择")
-        expect(section.get_by_role("button", name="确认这一理解", exact=True)).to_be_disabled()
-        section.get_by_role("radio", name="恰好一个目标").check()
-        section.get_by_role("button", name="按这个选择重新解释", exact=True).click()
-        expect(section).to_contain_text("恰好关联一条")
+        c1.get_by_role("button", name="暂不确定", exact=True).click()
+        undecided = opened
+        for _ in range(100):
+            undecided = latest("c1")
+            if undecided["id"] != opened["id"]:
+                break
+            time.sleep(0.1)
+        # Not deciding keeps the question open; nothing becomes confirmable.
+        assert undecided["id"] != opened["id"] and undecided["unresolved"]
+        expect(c1.get_by_text("需要你选择", exact=True)).to_be_visible()
+        expect(c1.get_by_role("button", name="确认选择", exact=True)).to_be_disabled()
+        choose(c1, "恰好一个目标")
+        expect(c1).to_contain_text("恰好关联一条")
         chosen = latest("c1")
         assert chosen["id"] != opened["id"]
         assert chosen["formal_digest"] != opened["formal_digest"]
         assert "forall (t2)" in chosen["clif_content"]
         assert "恰好" in chosen["cnl_text"]
-        expect(section).to_contain_text("原文没有被修改")
-        expect(section).to_contain_text("上一次理解")
-        confirm = section.get_by_role("button", name="确认这一理解", exact=True)
-        expect(confirm).to_be_enabled()
-        expect(confirm).to_have_attribute("aria-describedby", "formal-reason-c1")
-        expect(section.locator("#formal-reason-c1")).to_contain_text("请核对这段理解，无误后确认。")
-        other = page.get_by_role("region", name="系统是这样理解的 c2", exact=True)
-        other.get_by_role("button", name="让系统解释这条规则", exact=True).click()
-        expect(other).to_contain_text("先按键再对名称")
-        expect(other).to_contain_text("键和名称一起匹配")
+        c2 = clause("c2")
         open_match = latest("c2")
         assert "forall (u)" in open_match["clif_content"]
-        other.get_by_role("radio", name="键和名称一起匹配").check()
-        other.get_by_role("button", name="按这个选择重新解释", exact=True).click()
-        expect(other).to_contain_text("同时满足")
+        choose(c2, "键和名称一起匹配")
+        expect(c2).to_contain_text("同时满足")
         matched = latest("c2")
         assert "(= (ex:name s) (ex:name t))" in matched["clif_content"]
         assert "forall (u)" not in matched["clif_content"]
-        assert matched["completeness"] == "complete"
-        assert matched["unresolved"] == []
+        assert matched["completeness"] == "complete" and matched["unresolved"] == []
         assert matched["formal_digest"] != open_match["formal_digest"]
-        measured = page.get_by_role("region", name="系统是这样理解的 c3", exact=True)
-        measured.get_by_role("button", name="让系统解释这条规则", exact=True).click()
+        assert len(generations) == 7 and f.script.calls == 7
+        c3 = clause("c3")
         expect(page.get_by_text("長度至少 10℃").first).to_be_visible()
-        expect(measured).to_contain_text("大于或等于 10")
-        expect(measured).not_to_contain_text("mm")
-        expect(measured.get_by_role("radio")).to_have_count(0)
-        expect(measured.get_by_role("button", name="确认这一理解", exact=True)).to_be_disabled()
-        expect(measured).to_contain_text("原文出处未核对。请先核对出处，再确认这一理解。")
-        detail = httpx.get(f"{f.api}/rules/{f.rule_id}/formalizations/c1", cookies={SESSION_COOKIE: f.session}, timeout=10)
-        assert detail.status_code == 200, detail.text
-        candidate = detail.json()["candidates"][-1]
+        expect(c3).to_contain_text("大于或等于 10")
+        expect(c3).not_to_contain_text("mm")
+        expect(c3.get_by_role("radio")).to_have_count(0)
+        # A clause whose source was never checked cannot be confirmed.
+        c3.get_by_role("button", name="确认", exact=True).click()
+        expect(c3).to_contain_text("原文出处未核对。请先在规则页核对出处，再确认。")
+        # Someone else confirms c1 first: this page's confirmation is refused, not merged.
+        detail = httpx.get(f"{f.api}/rules/{f.rule_id}/formalizations/c1", cookies={SESSION_COOKIE: f.session}, timeout=10).json()
+        candidate = detail["candidates"][-1]
         raced = httpx.post(
             f"{f.api}/rules/{f.rule_id}/formalizations/c1/confirmations",
             cookies={SESSION_COOKIE: f.session},
@@ -443,103 +507,35 @@ def test_saved_clause_confirms_against_the_real_api(formalization_browser):
                 "operation_id": str(uuid4()),
                 "candidate_id": candidate["id"],
                 "expected_candidate_revision": candidate["formalization_revision"],
-                "expected_source_digest": detail.json()["source_rule_digest"],
+                "expected_source_digest": detail["source_rule_digest"],
                 "expected_display_digest": candidate["display_digest"],
             },
         )
         assert raced.status_code == 201, raced.text
-        section.get_by_role("button", name="确认这一理解", exact=True).click()
-        expect(section.get_by_role("button", name="重新读取当前解释", exact=True)).to_be_visible()
-        section.get_by_role("button", name="重新读取当前解释", exact=True).click()
-        expect(section).to_contain_text("已确认。这只确认规则含义，检查还需单独验证。")
-        page.reload()
-        expect(page.get_by_role("region", name="系统是这样理解的 c1", exact=True)).to_contain_text("已确认。这只确认规则含义，检查还需单独验证。")
-        expect(page.get_by_text("检查功能仍需单独验证后才能用于审核。", exact=True)).to_be_visible()
-        expect(page.get_by_text("检查功能已验证，可用于审核。", exact=True)).to_have_count(0)
-        from audit.standard_suites import library_revision
-
-        with f.store._conn() as conn:
-            revision_id, digest = conn.execute(
-                """SELECT r.id::text, r.resolved_digest
-                   FROM product.rule_versions v
-                   JOIN product.suite_revisions r ON r.id = (v.body->>'suite_revision_id')::uuid
-                   WHERE v.id=%s""",
-                (f.rule_id,),
-            ).fetchone()
-            conn.execute(
-                """INSERT INTO product.suite_validations(tenant_id, revision_id, status, revision, suite_digest, related_suite_digests, proof)
-                   VALUES (%s, %s, 'verified', 1, %s, %s, %s)""",
-                (
-                    f.tenant_id,
-                    revision_id,
-                    digest,
-                    Jsonb({}),
-                    Jsonb({"reasons": [], "total_samples": 4, "passed_samples": 4, "new_errors": 0, "library_revision": library_revision(), "proof_digest": "ab" * 32, "report": {}}),
-                ),
-            )
-        page.reload()
-        verified = page.get_by_role("region", name="系统是这样理解的 c1", exact=True)
-        # The checker status is said once for the rule, not inside each clause.
-        expect(page.get_by_role("status").filter(has_text="检查功能已验证，可用于审核。")).to_have_count(1)
-        expect(page.get_by_text("检查功能仍需单独验证后才能用于审核。")).to_have_count(0)
-        expect(verified).to_contain_text("已确认。这只确认规则含义，检查还需单独验证。")
-        with page.expect_response(lambda response: response.request.method == "POST" and response.url.endswith("/formalization-suite-candidates")) as handed:
-            page.get_by_role("button", name="用于检查优化", exact=True).click()
-        assert handed.value.status == 201, handed.value.text()
-        saved = handed.value.json()
-        assert saved["validation"]["status"] == "unverified"
-        assert saved["validation"]["verified"] is False
-        expect(page.get_by_text("已生成新的检查草稿，尚未发布，也不会开始审核。")).to_be_visible()
-        expect(page.get_by_text("已确认的含义变了，检查需要重新验证。")).to_be_visible()
-        with f.store._conn() as conn:
-            heads = conn.execute(
-                "SELECT count(*) FROM product.tenant_suite_heads WHERE tenant_id=%s AND suite_key=%s",
-                (f.tenant_id, f.suite_key),
-            ).fetchone()[0]
-        assert heads == 0
-        context.clear_cookies()
-        context.add_cookies([{"name": SESSION_COOKIE, "value": f.renew_session(), "url": f.web, "httpOnly": True}])
-        page.reload()
-        expect(page.get_by_role("region", name="系统是这样理解的 c1", exact=True)).to_contain_text("已确认。这只确认规则含义，检查还需单独验证。")
-        expect(page.get_by_role("region", name="系统是这样理解的 c1", exact=True)).to_contain_text("恰好关联一条")
-        calls_before_switch = f.script.calls
-        switched = browser.new_context()
-        switched.add_cookies(context.cookies())
-        switched_page = switched.new_page()
-        switched_page.goto(page.url)
-        switched_view = switched_page.get_by_role("region", name="系统是这样理解的 c1", exact=True)
-        expect(switched_view).to_contain_text("已确认。这只确认规则含义，检查还需单独验证。")
-        expect(switched_view).to_contain_text("恰好关联一条")
-        switched.close()
-        assert f.script.calls == calls_before_switch
-        revised_section = page.get_by_role("region", name="系统是这样理解的 c1", exact=True)
-        revised_section.get_by_role("textbox", name="要改成的含义", exact=True).fill("改成至少一条")
-        revised_section.get_by_role("button", name="修改理解", exact=True).click()
-        expect(revised_section.get_by_role("status").filter(has_text="至少关联")).to_be_visible()
-        revised_section.get_by_role("button", name="确认这一理解", exact=True).click()
-        expect(revised_section).to_contain_text("已确认。这只确认规则含义，检查还需单独验证。")
-        revised = httpx.get(f"{f.api}/rules/{f.rule_id}/formalizations/c1", cookies={SESSION_COOKIE: f.session}, timeout=10)
-        assert revised.status_code == 200, revised.text
-        revised_body = revised.json()
-        assert len(revised_body["confirmations"]) == 2
-        assert sum(item["current"] for item in revised_body["confirmations"]) == 1
-        current_confirmation = next(item for item in revised_body["confirmations"] if item["current"])
-        latest_candidate = revised_body["candidates"][-1]
-        assert current_confirmation["candidate_id"] == latest_candidate["id"]
-        assert "至少关联" in latest_candidate["cnl_text"]
-        assert "forall (t2)" not in latest_candidate["clif_content"]
-        from product.store.suites import SuiteStore
-
-        frozen = SuiteStore(f.store.settings, f.store.objects, role="migrator").resolve_suite(saved["id"], f.tenant_id)
-        frozen_rules = json.loads(frozen.files["rules.json"])
-        handed_rules = json.loads(saved["files"]["rules.json"])
-        assert frozen_rules["formalizations"]["c1"]["cnl_text"] == handed_rules["formalizations"]["c1"]["cnl_text"]
-        assert frozen_rules["formalizations"]["c1"]["confirmed_candidate_id"] == handed_rules["formalizations"]["c1"]["confirmed_candidate_id"]
-        assert latest_candidate["id"] != handed_rules["formalizations"]["c1"]["confirmed_candidate_id"]
-        assert "至少关联" not in frozen_rules["formalizations"]["c1"]["cnl_text"]
-        assert f.script.calls == 7
-        assert len(generations) == 7
-        posts = len(generations)
+        c1.get_by_role("button", name="确认", exact=True).click()
+        expect(c1.get_by_role("alert")).to_be_visible()
+        c1.get_by_role("button", name="重新读取", exact=True).click()
+        expect(c1.get_by_text("已确认", exact=True)).to_be_visible()
+        expect(c1.get_by_role("button", name="重新核对", exact=True)).to_be_visible()
+        c2.get_by_role("button", name="确认", exact=True).click()
+        expect(c2.get_by_role("button", name="重新核对", exact=True)).to_be_visible()
+        expect(page.get_by_text("已确认 2 / 4", exact=True)).to_be_visible()
+        page.screenshot(path=str(shots / "rp-points.png"), full_page=True)
+        # A confirmed clause can be corrected and confirmed again; only one confirmation stays current.
+        c1.get_by_role("button", name="重新核对", exact=True).click()
+        c1.get_by_role("button", name="需要修改", exact=True).click()
+        c1.get_by_role("textbox", name="需要怎样修改", exact=True).fill("改成至少一条")
+        c1.get_by_role("button", name="提交修改", exact=True).click()
+        expect(c1).to_contain_text("至少关联")
+        c1.get_by_role("button", name="确认", exact=True).click()
+        expect(c1.get_by_role("button", name="重新核对", exact=True)).to_be_visible()
+        revised = httpx.get(f"{f.api}/rules/{f.rule_id}/formalizations/c1", cookies={SESSION_COOKIE: f.session}, timeout=10).json()
+        assert len(revised["confirmations"]) == 2
+        assert sum(item["current"] for item in revised["confirmations"]) == 1
+        assert next(item for item in revised["confirmations"] if item["current"])["candidate_id"] == revised["candidates"][-1]["id"]
+        assert "至少关联" in revised["candidates"][-1]["cnl_text"]
+        assert len(generations) == 8 and f.script.calls == 8
+        # An unknown provider outcome is read back, never posted again by reloading or refreshing.
         f.script.fail_next = True
         digest = httpx.get(f"{f.api}/rules/{f.rule_id}/formalizations/c3", cookies={SESSION_COOKIE: f.session}, timeout=10).json()["source_rule_digest"]
         unknown = httpx.post(
@@ -549,62 +545,68 @@ def test_saved_clause_confirms_against_the_real_api(formalization_browser):
             json={"consume_model": True, "operation_id": str(uuid4()), "expected_source_digest": digest},
         )
         assert unknown.status_code == 202, unknown.text
-        operation_id = unknown.json()["operation_id"]
         state = ""
         for _ in range(50):
-            receipt = httpx.get(f"{f.api}/rule-formalization-generations/{operation_id}", cookies={SESSION_COOKIE: f.session}, timeout=10)
-            state = receipt.json().get("state", "")
+            state = httpx.get(f"{f.api}/rule-formalization-generations/{unknown.json()['operation_id']}", cookies={SESSION_COOKIE: f.session}, timeout=10).json().get("state", "")
             if state == "unknown":
                 break
             time.sleep(0.1)
         assert state == "unknown", state
-        assert f.script.calls == 7
-        page.reload()
-        expect(page.get_by_role("region", name="系统是这样理解的 c3", exact=True)).to_contain_text("生成结果尚未确定。请点“刷新解释进度”，不要重复生成。")
-        page.reload()
-        expect(page.get_by_role("region", name="系统是这样理解的 c3", exact=True)).to_contain_text("生成结果尚未确定。请点“刷新解释进度”，不要重复生成。")
-        assert len(generations) == posts
-        assert f.script.calls == 7
+        for _ in range(2):
+            page.reload()
+            open_points()
+            expect(clause("c3")).to_contain_text("整理结果尚未确定。请刷新，不要重复开始。")
+        clause("c3").get_by_role("button", name="刷新", exact=True).click()
+        expect(clause("c3")).to_contain_text("整理结果尚未确定。请刷新，不要重复开始。")
+        assert len(generations) == 8 and f.script.calls == 8
+        # Without a usable model the request is refused and said plainly.
         from product.store.model_credentials import TenantModelStore
 
         TenantModelStore(f.store).delete(f.tenant_id)
         page.reload()
-        plain = page.get_by_role("region", name="系统是这样理解的 c4", exact=True)
-        plain.get_by_role("button", name="让系统解释这条规则", exact=True).click()
-        expect(plain).to_contain_text("模型服务暂不可用，本次没有调用模型。请稍后重试；如持续出现，请联系管理员。")
-        assert f.script.calls == 7
-        assert len(generations) == 8
+        open_points()
+        c4 = clause("c4")
+        choose(c4, "至少一个目标")
+        expect(c4).to_contain_text("服务暂时不可用，请稍后重试；如持续出现，请联系管理员。")
+        assert len(generations) == 9 and f.script.calls == 8
+        f.model_key()
+        # A changed clause loses its check points until someone prepares it again.
+        with f.store._conn() as conn:
+            conn.execute("UPDATE product.rule_versions SET body = jsonb_set(body, '{rules,3,rule_to_check}', '\"日期必须完整填写\"') WHERE id=%s", (f.rule_id,))
+        page.reload()
+        open_points()
+        expect(page.get_by_text("1 条还没有整理检查要点。", exact=True)).to_be_visible()
+        expect(clause("c4").get_by_role("button", name="确认", exact=True)).to_have_count(0)
         page.set_viewport_size({"width": 320, "height": 720})
-        confirmed = page.get_by_role("region", name="系统是这样理解的 c1", exact=True)
-        advanced = confirmed.get_by_role("button", name="查看机器可读的规则", exact=True)
-        advanced.focus()
-        expect(advanced).to_be_focused()
-        page.keyboard.press("Enter")
-        copy = confirmed.get_by_role("button", name="复制", exact=True)
-        expect(copy).to_be_visible()
-        copy.click()
-        expect(confirmed.get_by_text("已复制。", exact=True)).to_be_visible()
-        copied = page.evaluate("() => navigator.clipboard.readText()")
-        assert copied.strip()
-        assert "<script" not in copied
         overflow = page.evaluate("() => document.documentElement.scrollWidth - document.documentElement.clientWidth")
         assert overflow <= 1, overflow
-        back_to_templates(page)
-        search = page.get_by_role("searchbox", name="搜索规则模板", exact=True)
-        assert search.evaluate("element => element.getBoundingClientRect().height") >= 44
-        open_rule(page, "编号规则")
-        expect(page.get_by_role("region", name="系统是这样理解的 c1", exact=True)).to_be_visible()
-        back_to_templates(page)
-        page.get_by_role("searchbox", name="搜索规则模板", exact=True).fill("不会命中的词")
-        expect(page.get_by_role("heading", name="没有匹配的模板", exact=True)).to_be_visible()
-        open_rule(page, "无检查规则")
-        expect(page.get_by_text("还不能自动审核，审核时由人工逐条判断。", exact=True)).to_be_visible()
+        page.set_viewport_size({"width": 1280, "height": 900})
+        # Two confirmed clauses go into the program; the example file is not labeled.
+        expect(page.get_by_text("未确认的 2 条不进入程序，审核时由人判断。", exact=True)).to_be_visible()
+        expect(page.get_by_role("button", name="生成检查程序", exact=True).last).to_be_disabled()
+        page.get_by_label("选择示例文件").set_input_files({"name": "示例.txt", "mimeType": "text/plain", "buffer": "编号 A-001".encode()})
+        expect(page.get_by_text("示例.txt", exact=True)).to_be_visible()
+        with page.expect_response(lambda response: response.request.method == "POST" and response.url.endswith("/checker-generations")) as started:
+            page.get_by_role("button", name="生成检查程序", exact=True).last.click()
+        assert started.value.status == 200, started.value.text()
+        expect(page.get_by_text("未经验证", exact=True)).to_be_visible(timeout=60000)
+        expect(page.get_by_text("这条规则已有检查程序，可以用于审核。")).to_be_visible()
+        page.screenshot(path=str(shots / "rp-done.png"), full_page=True)
+        assert f.runtime.calls == 1
         with f.store._conn() as conn:
-            conn.execute("UPDATE product.rule_versions SET body = jsonb_set(body, '{rules,0,rule_to_check}', '\"另一句原文\"') WHERE id=%s", (f.rule_id,))
-        open_rule(page, "编号规则")
-        changed = page.get_by_role("region", name="系统是这样理解的 c1", exact=True)
-        expect(changed).to_contain_text("原文或范围已变化")
-        expect(changed.get_by_role("button", name="确认这一理解", exact=True)).to_have_count(0)
-        expect(changed.get_by_role("button", name="让系统解释这条规则", exact=True)).to_be_visible()
-        expect(changed).to_contain_text("以前的理解仍可阅读")
+            head, forced = conn.execute("SELECT current_revision_id::text, force_unverified FROM product.tenant_suite_heads WHERE tenant_id=%s AND suite_key=%s", (f.tenant_id, f.suite_key)).fetchone()
+        assert head != f.starter_id and forced is True
+        from product.store.suites import SuiteStore
+
+        adopted = SuiteStore(f.store.settings, f.store.objects, role="migrator").resolve_suite(head, f.tenant_id)
+        rules = json.loads(adopted.files["rules.json"])
+        assert rules["checker_binding"] == {"c1": "checker:create_audit", "c2": "checker:create_audit"}
+        assert "至少关联" in rules["formalizations"]["c1"]["cnl_text"]
+        page.reload()
+        expect(page.get_by_text("这条规则已有检查程序，可以用于审核。")).to_be_visible()
+        assert f.runtime.calls == 1
+        # A rule without its own program has no program tab.
+        open_rule(page, "无检查规则")
+        expect(page.get_by_text("要有名称").first).to_be_visible()
+        expect(page.get_by_role("tab", name="检查程序", exact=True)).to_have_count(0)
         browser.close()

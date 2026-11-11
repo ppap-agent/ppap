@@ -28,7 +28,7 @@ def core_response(spec: ExecuteRequest, snapshot: ExecutionSnapshot, result: dic
         row["verification_status"] = target.verification
         row["samples_not_rerun"] = target.samples_not_rerun
         if (version, clause) in unsupported:
-            row.update(coverage="unsupported", reason="未检查：没有现成的检查，可明确选择让 AI 深度分析。")
+            row.update(coverage="unsupported", reason="未检查：这条没有对应的检查，由人判断。")
             row.pop("item_key", None)
             row.pop("status", None)
     response.coverage.checker_execution = {

@@ -77,7 +77,7 @@ export function FactQuestions({roundId, files, findings = [], fileVersionId, ada
   async function accepted(receipt: FactAnswerReceipt) {
     if (!mounted.current) return
     setPending(null); keepOperation(roundId, null)
-    setNotice(receipt.answer.value === null ? '已记录“看不清”。相关条款仍为无法判断。' : '回答已保存，只重算相关条款。原机器结果保留，未调用模型。')
+    setNotice(receipt.answer.value === null ? '已记录“看不清”。相关条款仍为无法判断。' : '回答已保存，只重算相关条款。原机器结果保留。')
     await read()
   }
   async function apply(question: FactQuestion, value: boolean | string | null) {
@@ -174,7 +174,7 @@ function FactSampleForm({roundId, answerId, itemKey, adapter, pending, onPending
     } catch (cause) {if (mounted.current) setError(message(cause))}
     finally {busy.current = false; if (mounted.current) setSaving(false)}
   }
-  if (saved) return <p role="status">已加入优化样本。未启动模型优化，原机器结果保留。</p>
+  if (saved) return <p role="status">已加入优化样本，原机器结果保留。</p>
   return <div className="space-y-2">
     <Button variant="outline" size="sm" onClick={() => setOpen(value => !value)} aria-expanded={open}>{open ? '收起样本选择' : '作为优化样本'}</Button>
     {open && <form className="space-y-3" onSubmit={event => {event.preventDefault(); void save()}}>

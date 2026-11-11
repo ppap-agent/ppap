@@ -444,7 +444,7 @@ def answer(page, f, round_, expected):
     page.get_by_role("option", name="规则适用或判断不准确", exact=True).click()
     page.get_by_label("为什么应当这样判断", exact=True).fill("我已核对原件 A1 与大于等于 10 的要求。")
     page.get_by_role("button", name="加入待修复", exact=True).click()
-    expect(page.get_by_text("已加入待修复。尚未调用模型，也没有改写本轮结果。", exact=True)).to_be_visible()
+    expect(page.get_by_text("已加入待修复，没有改写本轮结果。", exact=True)).to_be_visible()
 
 
 @pytest.mark.parametrize("viewport", [{"width": 1440, "height": 1000}, {"width": 390, "height": 844}], ids=["desktop", "mobile"])
@@ -477,23 +477,19 @@ def test_feedback_optimize_verify_publish_reaudit_and_rollback(workspace_product
                 answer(page, f, round_, expected)
             original, uploaded = rounds[0]
             page.goto(f.web + f"/audit?round={original['id']}&file={uploaded['id']}&clause=R1&basis=1&checkerFeedbackClause=R1")
-            expect(page.get_by_role("button", name="让 AI 修复并验证", exact=True)).to_be_enabled()
+            expect(page.get_by_role("button", name="修复并验证", exact=True)).to_be_enabled()
             page.get_by_role("button", name="选择全部已确认样本", exact=True).click()
             # Save-only neither executes nor manufactures a validation proof.
             page.get_by_role("button", name="仅保存待发布修改", exact=True).click()
             expect(page.get_by_role("heading", name="已保存，尚未验证", exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="发布此修改", exact=True)).to_be_enabled()
             assert f.guest.adaptations == 0
-            # The operator set the tenant's own key; the customer only consents.
+            # The operator set the tenant's own key; the customer starts the repair directly.
             put_tenant_key(f.admin, f.alice)
-            page.get_by_role("button", name="让 AI 修复并验证", exact=True).click()
-            expect(page.get_by_role("button", name="确认开始修复", exact=True)).to_be_disabled()
-            consent = page.get_by_label("同意由 AI 修复并验证这 4 条反馈", exact=True)
-            consent.check()
             f.pause.set()
             assert f.paused.wait(5), "Worker did not pause before admission"
             with page.expect_response(lambda r: r.request.method == "POST" and r.url.endswith("/optimizations")) as started:
-                page.get_by_role("button", name="确认开始修复", exact=True).click()
+                page.get_by_role("button", name="修复并验证", exact=True).click()
             operation = response_json(started.value)
             assert operation["state"] == "queued"
             operation_id = operation["operation_id"]
@@ -894,7 +890,6 @@ def test_rule_wording_update_preserves_adoption_until_confirmed_browser_publicat
             page.goto(f.web + f"/audit?round={original['id']}&file={uploaded['id']}&clause=R1&basis=1&checkerFeedbackClause=R1")
             expect(page.get_by_text("规则已更新，需要重新验证", exact=True)).to_be_visible()
             page.get_by_role("button", name="按新版规则起草修改", exact=True).click()
-            expect(page.get_by_role("button", name="确认开始修复", exact=True)).to_be_disabled()
             assert f.guest.adaptations == 0
             page.get_by_label("我已核对当前所选规则及全部样本，确认以上正确答案仍适用于当前规则", exact=True).check()
             with page.expect_response(lambda r: r.request.method == "POST" and r.url.endswith("/optimizations")) as started:
@@ -1045,18 +1040,23 @@ def test_first_uaes_adoption_from_rule_library_freezes_dependencies(workspace_pr
         page = context.new_page()
         page.set_default_timeout(20000)
         try:
-            page.goto(f.web + "/requirements?checkerSuite=UAES%3AU08")
+            # A platform program is adopted on its rule's page; each preset rule names its program.
+            presets = {key: str(uuid4()) for key in ordered}
+            with f.admin._conn() as conn:
+                for key, preset_id in presets.items():
+                    body = {**json.loads(baselines[key].files["rules.json"]), "kind": "engine", "rule_profile": "v4", "customers": ["UAES"], "preset_key": key.split(":")[1], "suite_key": key}
+                    conn.execute("INSERT INTO product.rule_versions(id,tenant_id,title,body) VALUES (%s,%s,%s,%s)", (preset_id, f.alice.tenant_id, key, Jsonb(body)))
+            page.goto(f.web + "/requirements?systemRule=" + presets["UAES:U08"])
             catalog = page.get_by_role("main")
             release = catalog.get_by_role("region", name="检查发布与版本记录", exact=True)
             expect(release.get_by_text("先采用关联检查版本", exact=True)).to_be_visible()
             release.get_by_role("button", name="查看 UAES:U07", exact=True).click()
-            expect(page).to_have_url(re.compile(r"checkerSuite=UAES%3AU07"))
+            expect(page).to_have_url(re.compile("systemRule=" + presets["UAES:U07"]))
             release.get_by_role("button", name="查看 UAES:U12", exact=True).click()
-            expect(page).to_have_url(re.compile(r"checkerSuite=UAES%3AU12"))
+            expect(page).to_have_url(re.compile("systemRule=" + presets["UAES:U12"]))
             publications = []
             for key in ordered:
-                # Each program opens from the automatic review list by its own address.
-                page.goto(f.web + "/requirements?rulesArea=automation&checkerSuite=" + quote(key, safe=""))
+                page.goto(f.web + "/requirements?systemRule=" + presets[key])
                 catalog = page.get_by_role("main")
                 release = catalog.get_by_role("region", name="检查发布与版本记录", exact=True)
                 expect(release.get_by_text("尚未采用检查版本。发布后，本企业的新审核才会使用此版本。", exact=True)).to_be_visible()
@@ -1120,10 +1120,9 @@ def test_directory_revision_selection_pi_and_rollback_keep_exact_frozen_sources(
     """Real directory/API/PG/Silo/UDS/guest; only authorship uses the existing controlled author."""
     import shutil
     from contextlib import contextmanager
-    from urllib.parse import quote
 
     from audit import standard_suites as directory
-    from playwright.sync_api import expect, sync_playwright
+    from playwright.sync_api import sync_playwright
     from product.seed_standard_suites import install_official_sources
 
     f = workspace_product
@@ -1260,35 +1259,7 @@ def test_directory_revision_selection_pi_and_rollback_keep_exact_frozen_sources(
             after_edit = {path.relative_to(source_root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest() for path in source_root.rglob("*") if path.is_file()}
             before_navigation = response_json(request.get(active_path))
             before_navigation_jobs = tuple(f.guest.jobs)
-            page.goto(f.web + "/requirements?checkerPath=" + quote("v5/测试客户/T01", safe=""))
-            detail = page.get_by_role("region", name="检查详情", exact=True)
             assert before_navigation["current_revision_id"] == revisions["v6"]
-            expect(detail.get_by_title("官方修订 " + revisions["v5"], exact=True)).to_be_visible()
-            expect(detail).to_contain_text("本企业正在使用另一个版本；这里显示的是官方版本。")
-            expect(detail.get_by_role("heading", name="目录修订冻结验收", exact=True)).to_be_visible()
-            page.reload()
-            expect(detail.get_by_title("官方修订 " + revisions["v5"], exact=True)).to_be_visible()
-            if viewport["width"] == 1440:
-                tree = page.get_by_role("region", name="系统程序目录", exact=True)
-                branch = tree.get_by_role("treeitem", name="v6", exact=True)
-                if branch.get_attribute("aria-expanded") == "false":
-                    branch.click()
-                customer = tree.locator('[data-tree-path="v6/测试客户"]')
-                if customer.get_attribute("aria-expanded") == "false":
-                    customer.click()
-                target = tree.locator('[data-tree-path="v6/测试客户/T01"]')
-                expect(target).to_be_enabled()
-                target.focus()
-                expect(target).to_be_focused()
-                page.keyboard.press("Enter")
-                expect(detail.get_by_title("官方修订 " + revisions["v6"], exact=True)).to_be_visible()
-                page.go_back()
-                expect(detail.get_by_title("官方修订 " + revisions["v5"], exact=True)).to_be_visible()
-                page.go_forward()
-                expect(detail.get_by_title("官方修订 " + revisions["v6"], exact=True)).to_be_visible()
-                page.go_back()
-                expect(detail.get_by_title("官方修订 " + revisions["v5"], exact=True)).to_be_visible()
-            page.screenshot(path=str(tmp_path / f"filesystem-source-{viewport['width']}.png"), full_page=True)
             assert response_json(request.get(active_path))["revision"] == before_navigation["revision"]
             assert tuple(f.guest.jobs) == before_navigation_jobs
             newer, _ = audit(5, 5)

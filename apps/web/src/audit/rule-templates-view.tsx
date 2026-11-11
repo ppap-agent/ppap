@@ -13,10 +13,10 @@ import {message} from '../journey/remote'
 import {writeAuditAddress} from './routes'
 import {automatedCount, automationLabel, pendingRows, type Automation, type RuleTemplate, type TemplateRow} from './rule-templates'
 
-/** Rules-page addresses: a template, a preset rule, an uploaded rule, or the automation pages. Every other rules key is dropped. */
+/** Rules-page addresses: a template, a preset rule or an uploaded rule. Every other rules key is dropped, including retired ones. */
 export function rulesAddress(params: Record<string, string>): string {
   const url = new URL(location.href)
-  for (const key of ['template', 'systemRule', 'requirement', 'reqVersion', 'reqTab', 'reqQuery', 'rulesArea', 'checkerSuite', 'checkerPath']) url.searchParams.delete(key)
+  for (const key of ['template', 'systemRule', 'requirement', 'reqVersion', 'reqTab', 'reqStep', 'reqQuery', 'ruleSuite', 'rulesArea', 'checkerSuite', 'checkerPath']) url.searchParams.delete(key)
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value)
   return `${url.pathname}${url.search}${url.hash}`
 }
@@ -40,7 +40,7 @@ export function RulesTrail({items}: {items: {label: string; href?: string}[]}) {
   </Fragment>)}</nav>
 }
 
-const summaryLine = (template: RuleTemplate, known: boolean) => known ? `${template.rows.length} 类文件 · 可自动审核 ${automatedCount(template)} 类` : `${template.rows.length} 类文件`
+const summaryLine = (template: RuleTemplate, known: boolean) => known ? `${template.rows.length} 类文件 · 有检查程序 ${automatedCount(template)} 类` : `${template.rows.length} 类文件`
 
 export function TemplateList({templates, loading, failed, catalogKnown}: {templates: RuleTemplate[]; loading: boolean; failed: boolean; catalogKnown: boolean}) {
   const [query, setQuery] = useState('')
@@ -63,7 +63,7 @@ export function TemplateList({templates, loading, failed, catalogKnown}: {templa
             <span className="min-w-0 flex-1 basis-48 break-words font-medium">{template.name}</span>
             <span className="text-sm tabular-nums text-muted-foreground">{summaryLine(template, catalogKnown)}</span>
             {pending > 0 && <Badge shape="square" variant="warning">{pending} 项规则更新</Badge>}
-            {catalogKnown && template.rows.length > 0 && automatedCount(template) === 0 && <Badge shape="square" variant="outline">还不能自动审核</Badge>}
+            {catalogKnown && template.rows.length > 0 && automatedCount(template) === 0 && <Badge shape="square" variant="outline">尚无检查程序</Badge>}
             <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground"/>
           </a></li>
         })}</ul>
@@ -86,8 +86,8 @@ export function TemplateDetail({template, catalogKnown}: {template: RuleTemplate
       <div className="flex flex-wrap items-center gap-3"><h1 className="text-2xl font-semibold tracking-tight">{template.name}</h1><Badge shape="square" variant="outline">{template.source === 'system' ? '系统提供' : '本企业'}</Badge></div>
       <p className="text-muted-foreground">{summaryLine(template, catalogKnown)}</p>
     </header>
-    {pending.length > 0 && <Alert><AlertCircle aria-hidden="true"/><AlertTitle>{pending.map(row => row.label).join('、')}的规则已更新，需重新验证后新审核才会使用。</AlertTitle><AlertDescription><a className="underline underline-offset-4" href={rulesAddress({rulesArea: 'automation'})} onClick={event => followRulesLink(event, rulesAddress({rulesArea: 'automation'}))}>去处理</a></AlertDescription></Alert>}
-    <div className="max-md:hidden"><Table className="table-fixed"><TableHeader><TableRow><TableHead className="w-1/4">文件类型</TableHead><TableHead>审核规则</TableHead><TableHead className="w-20">条款</TableHead><TableHead className="w-44">自动审核</TableHead><TableHead className="w-10"><span className="sr-only">打开</span></TableHead></TableRow></TableHeader>
+    {pending.length > 0 && <Alert><AlertCircle aria-hidden="true"/><AlertTitle>{pending.map(row => row.label).join('、')}的规则已更新，在规则页“检查程序”中采用新版本后新审核才会使用。</AlertTitle></Alert>}
+    <div className="max-md:hidden"><Table className="table-fixed"><TableHeader><TableRow><TableHead className="w-1/4">文件类型</TableHead><TableHead>审核规则</TableHead><TableHead className="w-20">条款</TableHead><TableHead className="w-44">检查程序</TableHead><TableHead className="w-10"><span className="sr-only">打开</span></TableHead></TableRow></TableHeader>
       <TableBody>{template.rows.map(row => <TableRow key={`${row.target.kind}:${row.target.id}`} className="relative">
         <TableCell className="whitespace-normal break-words"><a className="font-medium underline-offset-4 after:absolute after:inset-0 hover:underline focus-visible:outline-ring" href={rowHref(row)} onClick={event => followRulesLink(event, rowHref(row))}>{row.label || '未识别类型'}</a></TableCell>
         <TableCell className="whitespace-normal break-words">{row.ruleTitle}{row.version && <span className="text-muted-foreground"> · {row.version}</span>}{row.draft && <Badge className="ml-2" variant="outline">草稿</Badge>}</TableCell>
@@ -105,8 +105,8 @@ export function TemplateDetail({template, catalogKnown}: {template: RuleTemplate
 
 type RuleDetail = {id: string; title: string; created_at: string; body: {type?: string; customers?: string[]; rules?: {id: string; rule_to_check: string; category?: string}[]}}
 
-/** A product preset has no uploaded original; its clauses are read as published and are not edited here. */
-export function SystemRuleDetail({ruleId, template, row, actions}: {ruleId: string; template: RuleTemplate | undefined; row: TemplateRow | undefined; actions?: ReactNode}) {
+/** A product preset has no uploaded original; its clauses are read as published and are not edited here. Its program's card leads the page. */
+export function SystemRuleDetail({ruleId, template, row, actions, program}: {ruleId: string; template: RuleTemplate | undefined; row: TemplateRow | undefined; actions?: ReactNode; program?: ReactNode}) {
   const [read, setRead] = useState<{rule: RuleDetail | null; error: string}>({rule: null, error: ''})
   const [attempt, setAttempt] = useState(0)
   useEffect(() => {
@@ -127,6 +127,7 @@ export function SystemRuleDetail({ruleId, template, row, actions}: {ruleId: stri
         <div className="flex flex-wrap items-start justify-between gap-4"><h1 className="min-w-0 break-words text-2xl font-semibold tracking-tight">{read.rule.title}</h1>{actions}</div>
         <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground"><Badge shape="square" variant="outline">系统提供</Badge><span>{read.rule.body.rules?.length ?? 0} 条</span>{row && <AutomationBadge automation={row.automation}/>}</div>
       </header>
+      {program}
       <section aria-label="规则条款" className="divide-y border-t">{(read.rule.body.rules ?? []).map((clause, index) => <article key={clause.id} aria-label={`第 ${index + 1} 条`} className="grid grid-cols-[1.5rem_minmax(0,1fr)] gap-x-3 py-5 sm:gap-x-4">
         <span className="pt-0.5 text-xs tabular-nums text-muted-foreground" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
         <div className="min-w-0 space-y-1">{clause.category && <h2 className="break-words font-medium">{clause.category}</h2>}<p className="whitespace-pre-wrap break-words leading-relaxed">{clause.rule_to_check}</p></div>

@@ -286,7 +286,7 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
             page.get_by_role("button", name="加入这处依据", exact=True).click()
             page.get_by_label("为什么应当这样判断", exact=True).fill("已核对第二页签署区域。")
             page.get_by_role("button", name="加入待修复", exact=True).click()
-            expect(page.get_by_text("已加入待修复。尚未调用模型，也没有改写本轮结果。", exact=True)).to_be_visible()
+            expect(page.get_by_text("已加入待修复，没有改写本轮结果。", exact=True)).to_be_visible()
             citation = fixture.feedback[0]["evidence"][0]
             self.assertEqual(citation["file_version_id"], "file-pdf")
             self.assertEqual(citation["locator"]["page"], 2)
@@ -368,15 +368,14 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
             fixture = CheckerHttpFixture()
             page = self.open(browser, fixture)
             self.answer(page)
-            page.get_by_role("button", name="让 AI 修复并验证", exact=True).click()
-            page.get_by_label("同意由 AI 修复并验证这 1 条反馈", exact=True).check()
+            expect(page.get_by_role("button", name="修复并验证", exact=True)).to_be_enabled()
             pending_refresh = []
             page.route("**/audit-rounds/round-a/checker-feedback", lambda route: pending_refresh.append(route))
             with (
                 page.expect_request(lambda request: request.method == "GET" and request.url.endswith("/audit-rounds/round-a/checker-feedback")),
                 page.expect_response(lambda response: response.request.method == "GET" and "/checker-optimizations/" in response.url) as first_read,
             ):
-                page.get_by_role("button", name="确认开始修复", exact=True).click()
+                page.get_by_role("button", name="修复并验证", exact=True).click()
             operation = first_read.value.json()
             self.assertEqual(operation["state"], "running")
             self.assertEqual(len(pending_refresh), 1)
@@ -400,10 +399,8 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
             fixture = CheckerHttpFixture()
             page = self.open(browser, fixture)
             self.answer(page)
-            page.get_by_role("button", name="让 AI 修复并验证", exact=True).click()
-            page.get_by_label("同意由 AI 修复并验证这 1 条反馈", exact=True).check()
             fixture.lose_optimization = True
-            page.get_by_role("button", name="确认开始修复", exact=True).click()
+            page.get_by_role("button", name="修复并验证", exact=True).click()
             expect(page.get_by_role("heading", name="正在修复与验证", exact=True)).to_be_visible()
             self.assertEqual(len(fixture.operations), 1)
             operation_id = next(iter(fixture.operations))
@@ -447,16 +444,13 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
             self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 390)
             browser.close()
 
-    def test_explicit_model_consent_stop_save_rule_force_publish_recovery_and_reaudit(self):
+    def test_repair_stop_save_rule_force_publish_recovery_and_reaudit(self):
         with sync_playwright() as playwright:
             browser = self.browser(playwright)
             fixture = CheckerHttpFixture()
             page = self.open(browser, fixture)
             self.answer(page)
-            page.get_by_role("button", name="让 AI 修复并验证", exact=True).click()
-            expect(page.get_by_role("button", name="确认开始修复", exact=True)).to_be_disabled()
-            page.get_by_label("同意由 AI 修复并验证这 1 条反馈", exact=True).check()
-            page.get_by_role("button", name="确认开始修复", exact=True).click()
+            page.get_by_role("button", name="修复并验证", exact=True).click()
             expect(page.get_by_role("heading", name="正在修复与验证", exact=True)).to_be_visible()
             page.reload()
             expect(page.get_by_role("heading", name="正在修复与验证", exact=True)).to_be_visible()
@@ -880,7 +874,7 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
             self.assertEqual(fixture.history, [])
             browser.close()
 
-    def test_authoritative_refetch_fences_parent_optimizer_even_after_new_consent(self):
+    def test_authoritative_refetch_fences_parent_optimizer_after_reselection(self):
         with sync_playwright() as playwright:
             browser = self.browser(playwright)
             fixture = CheckerHttpFixture()
@@ -904,10 +898,7 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
             prior = page.get_by_role("button", name=re.compile("查看(?:失败记录|待验证修改)$"))
             prior.click()
             expect(page.get_by_role("region", name="修复与回归结果", exact=True)).to_have_attribute("data-operation-id", "prior-failed")
-            page.get_by_role("button", name="让 AI 修复并验证", exact=True).click()
-            consent = page.get_by_label("同意由 AI 修复并验证这 1 条反馈", exact=True)
-            consent.check()
-            start = page.get_by_role("button", name="确认开始修复", exact=True)
+            start = page.get_by_role("button", name="修复并验证", exact=True)
             expect(start).to_be_enabled()
             expect(prior).to_be_enabled()
             original_url = page.url
@@ -919,9 +910,6 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
                 page.get_by_role("button", name="读取最新记录", exact=True).click()
             page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
             self.assertEqual(len(held), 1)
-            expect(consent).not_to_be_checked()
-            consent.check()
-            expect(consent).to_be_checked()
             expect(start).to_be_disabled()
             expect(prior).to_be_disabled()
             expect(page.get_by_role("button", name="只运行现有检查验证", exact=True)).to_be_disabled()
@@ -946,10 +934,7 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
             expect(release.get_by_text("控制计划检查 · 本企业版本 v1 · 当前使用", exact=True)).to_be_visible()
             fixture.route(held.pop())
             expect(release.get_by_text("控制计划检查 · 本企业版本 v9 · 未发布的修改", exact=True)).to_be_visible()
-            # Selecting the read-back candidate resets consent; it still does not start a model call.
-            expect(consent).not_to_be_checked()
-            expect(start).to_be_disabled()
-            consent.check()
+            # Selecting the read-back candidate does not start a repair by itself.
             expect(start).to_be_enabled()
             expect(prior).to_be_enabled()
             self.assertIn("checkerOptimization=prior-failed", page.url)

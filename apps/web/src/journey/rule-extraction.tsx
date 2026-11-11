@@ -90,7 +90,7 @@ export function RuleExtraction({basis, onChange, readonly = false}: {basis: Requ
       {unknown && <DialogTrigger asChild><Button variant="outline" disabled={busy}>重新提取条款</Button></DialogTrigger>}
     </div>
     {pending && !job.error && <p role="status" className={"text-sm text-muted-foreground"}>正在提取条款，完成后逐条核对原文。</p>}
-    {unknown && <Alert><AlertTitle>提取结果暂不确定</AlertTitle><AlertDescription>原任务可能仍会完成。请先查看提取进度；重新提取可能再次消耗模型费用。</AlertDescription></Alert>}
+    {unknown && <Alert><AlertTitle>提取结果暂不确定</AlertTitle><AlertDescription>原任务可能仍会完成。请先查看提取进度，再决定是否重新提取。</AlertDescription></Alert>}
     {(error || job.error || types.error) && <p role="alert" className={"text-sm text-destructive"}>{error || job.error || types.error}</p>}
-  </section><DialogContent><DialogHeader><DialogTitle>重新提取条款？</DialogTitle><DialogDescription>原任务可能仍会完成。重新提取会创建一个新请求，可能再次消耗模型费用；不会取消原任务。</DialogDescription></DialogHeader><DialogFooter><DialogClose asChild><Button variant="outline">取消</Button></DialogClose><Button disabled={busy || !unknown} onClick={() => void parse(true)}>确认重新提取</Button></DialogFooter></DialogContent></Dialog>
+  </section><DialogContent><DialogHeader><DialogTitle>重新提取条款？</DialogTitle><DialogDescription>原任务可能仍会完成。重新提取会重新开始，不会取消原任务。</DialogDescription></DialogHeader><DialogFooter><DialogClose asChild><Button variant="outline">取消</Button></DialogClose><Button disabled={busy || !unknown} onClick={() => void parse(true)}>确认重新提取</Button></DialogFooter></DialogContent></Dialog>
 }

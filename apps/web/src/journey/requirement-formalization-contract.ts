@@ -17,7 +17,26 @@ export function canRequestFormalization(state: string, operationState?: string):
 
 export function formalizationFailure(code?: string | null): string {
   const message = code && code !== 'source_changed' ? knownRequestMessage(code) : undefined
-  return message ?? '这次解释没有完成。可以重新让系统解释。'
+  return message ?? '暂时没能整理出检查要点。'
+}
+
+/**
+ * The check points a person reads. Rendered lines start with internal obligation ids, and an incomplete
+ * reading first lists diagnostics; only the readings and stated premises are shown, each numbered once.
+ */
+export function checkPointLines(text: string, obligationIds: string[] = []): string[] {
+  let lines = text.split(/\n/)
+  if (lines[0]?.trim() === '尚不能确定：') {
+    const start = lines.findIndex(line => line.trim() === '候选理解（未确认）：')
+    lines = [...start < 0 ? [] : lines.slice(start + 1), ...lines.filter(line => line.startsWith('已声明前提：'))]
+  }
+  const shown = lines
+    .map(line => {
+      const owner = obligationIds.find(id => line.startsWith(`${id}：`))
+      return (owner ? line.slice(owner.length + 1) : line).replace(/^\s*(?:[-*•]|\d+[.、)）]|[（(]\d+[)）])\s*/, '').trim()
+    })
+    .filter(Boolean)
+  return [...new Set(shown)]
 }
 
 export function confirmedReadingAside<T extends {id: string; cnl_text: string}>(confirmedId: string | undefined, candidates: T[], shown: {id?: string; cnl_text?: string | null}[]): T | null {
@@ -40,19 +59,4 @@ export function formalizationReceiptMatches(view: FormalizationView, receipt: Fo
   if (!receipt.clause_id || receipt.clause_id !== view.clauseId) return false
   if (view.candidateId && receipt.candidate_id !== view.candidateId) return false
   return true
-}
-
-
-export type CheckerValidation = {verified?: boolean; samples_not_rerun?: boolean}
-
-export function checkerAvailability(validation: CheckerValidation | null | undefined): 'verified' | 'unverified' | 'unknown' {
-  if (!validation || typeof validation.verified !== 'boolean') return 'unknown'
-  if (validation.verified === true && validation.samples_not_rerun === false) return 'verified'
-  return 'unverified'
-}
-
-export function checkerAvailabilityCopy(state: 'verified' | 'unverified' | 'unknown'): string {
-  if (state === 'verified') return '检查功能已验证，可用于审核。'
-  if (state === 'unverified') return '检查功能仍需单独验证后才能用于审核。'
-  return '检查状态暂时不能读取。'
 }

@@ -13,7 +13,7 @@ const version = (id: string, scope: Partial<RequirementDirectoryVersion['scope']
   ({id, title: `${id} 规则`, version: 'v1', scope: {customer: '', part: '', revision: '', allCustomers: false, allParts: true, allRevisions: true, ...scope}, at: '2026-11-01', baseId: null, clauseCount: 3, documentType: '控制计划', documentTypeAliases: [], suiteKey: null, sourceReview: 'checked', ...extra})
 const collection = (latest: RequirementDirectoryVersion, draft = false): RequirementDirectoryCollection => draft ? {id: latest.id, versions: [], draft: latest} : {id: latest.id, versions: [latest], draft: null}
 const summary = (key: string, extra: Partial<Catalog['suites'][number]> = {}) =>
-  ({suite_key: key, title: key, origin: 'official', selection_mode: 'automatic_official', current_revision_id: 'r', verification_status: 'verified', rule_update_pending: false, official_update_available: false, ...extra}) as Catalog['suites'][number]
+  ({suite_key: key, title: key, origin: 'official', selection_mode: 'automatic_official', current_revision_id: 'r', verification_status: 'verified', rule_update_pending: false, official_update_available: false, program_missing: false, ...extra}) as Catalog['suites'][number]
 
 test('presets form one system template per customer and say what each file type can do on its own', () => {
   const catalog: Catalog = {
@@ -26,7 +26,7 @@ test('presets form one system template per customer and say what each file type 
   const [uaes] = buildTemplates({rules: [preset('cp', 'UAES', '控制计划', 'U08'), preset('pf', 'UAES', 'PFMEA', 'U01'), preset('pfd', 'UAES', '过程流程图', 'U02'), preset('ph', 'UAES', 'E07', 'U09', {title: '生产件样品照片审核规则'})], library: [], catalog, standardTypes: standard})
   assert.equal(uaes.name, 'UAES 规则')
   assert.deepEqual(uaes.rows.map(row => [row.label, row.automation.state, row.automation.note ?? '']), [
-    ['控制计划', 'stale', ''], ['PFMEA', 'auto', ''], ['过程流程图', 'partial', '4 条中 1 条可自动审核'], ['生产件样品照片', 'manual', '审核时由人工逐条判断'],
+    ['控制计划', 'stale', ''], ['PFMEA', 'auto', ''], ['过程流程图', 'partial', '4 条中 1 条有检查'], ['生产件样品照片', 'manual', '审核时由人判断'],
   ])
   assert.equal(automatedCount(uaes), 3)
   assert.deepEqual(pendingRows(uaes).map(row => row.type), ['控制计划'])
@@ -45,6 +45,10 @@ test('uploaded rules form templates by customer; shared and unconfirmed rules ha
   const [offered] = buildTemplates({rules: [preset('cp', 'UAES', '控制计划', 'U08')], library: [], catalog: {suites: [summary('UAES:U08', {selection_mode: 'candidate_only', current_revision_id: null, verification_status: 'unverified'})]}, standardTypes: standard})
   assert.equal(offered.rows[0].automation.state, 'inactive')
   assert.equal(automatedCount(offered), 0)
+  // An uploaded rule whose program was never generated is not offered for audit, whatever its verification says.
+  const [starter] = buildTemplates({rules: [], library: [collection(version('d', {allCustomers: true}, {suiteKey: 'custom:d'}))], catalog: {suites: [summary('custom:d', {origin: 'enterprise', verification_status: 'unverified', program_missing: true})]}, standardTypes: standard})
+  assert.deepEqual([starter.rows[0].automation.state, starter.rows[0].automation.note], ['manual', '在规则页生成检查程序后才能用于审核'])
+  assert.equal(automatedCount(starter), 0)
   assert.equal(templates[2].rows[0].draft, true)
   assert.deepEqual(templates[1].rows[0].target, {kind: 'requirement', id: 'a'})
 })

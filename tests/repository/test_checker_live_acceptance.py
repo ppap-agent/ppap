@@ -430,7 +430,7 @@ def test_live_browser_explicitly_selects_the_full_sample_set_before_one_admissio
     selected = [next(iter(samples))]  # The product's current-row default.
     page, batch, select_all, start = Mock(), Mock(), Mock(), Mock()
     labels, captures, forwarded = {}, [], []
-    page.get_by_role.side_effect = lambda role, *, name, exact: batch if role == "region" else start if name == "确认开始修复" else Mock()
+    page.get_by_role.side_effect = lambda role, *, name, exact: batch if role == "region" else start if name == "修复并验证" else Mock()
     batch.get_by_role.side_effect = lambda role, *, name, exact: select_all if name == "选择全部已确认样本" else Mock()
     select_all.click.side_effect = lambda: selected.__setitem__(slice(None), list(samples))
     page.get_by_label.side_effect = lambda name, *, exact: labels.setdefault(name, Mock())
@@ -443,7 +443,6 @@ def test_live_browser_explicitly_selects_the_full_sample_set_before_one_admissio
         def forward():
             persisted = json.loads(report_path.read_text())
             assert persisted["stage"] == "admitting" and persisted["operation_id"] == body["operation_id"]
-            labels["同意由 AI 修复并验证这 8 条反馈"].check.assert_called_once()
             forwarded.append(body)
 
         captures[0](SimpleNamespace(request=SimpleNamespace(method="POST", post_data_json=body), continue_=forward))

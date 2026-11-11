@@ -197,7 +197,7 @@ class RulePreparationTests(unittest.TestCase):
             expect(page.get_by_role("region", name="要求条款", exact=True)).to_contain_text("必须填写零件号和版本")
             expect(page.get_by_role("main")).to_contain_text("测试客户")
             expect(page.get_by_role("combobox", name="规则版本", exact=True)).to_contain_text("v1")
-            page.get_by_role("button", name="查看原件 · 控制计划规则.json", exact=True).click()
+            page.get_by_role("button", name="阅读 控制计划规则.json", exact=True).click()
             reader = page.get_by_role("dialog", name="原件与证据", exact=True)
             expect(reader).to_be_visible()
             downloaded = page.request.get(urljoin(page.url, reader.get_by_role("link", name="下载原件", exact=True).get_attribute("href")))

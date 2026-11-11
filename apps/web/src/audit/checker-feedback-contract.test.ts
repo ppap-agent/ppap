@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {checkedFeedback, checkedFeedbackView, checkedOptimization, nativeCheckerFeedbackAdapter, optimizationSummary, type CheckerFeedbackInput, type CheckerOptimization, checkerReason, feedbackEvidence, manualEvidence, usageText, checkedFeedbackEdit, checkedFeedbackDeletion, feedbackSourceStatus, latestOptimization} from './checker-feedback-contract.ts'
+import {checkedFeedback, checkedFeedbackView, checkedOptimization, nativeCheckerFeedbackAdapter, optimizationSummary, type CheckerFeedbackInput, type CheckerOptimization, checkerReason, feedbackEvidence, manualEvidence, checkedFeedbackEdit, checkedFeedbackDeletion, feedbackSourceStatus, latestOptimization} from './checker-feedback-contract.ts'
 
 Object.defineProperty(globalThis, 'navigator', {value: {onLine: true}, configurable: true})
 const input: CheckerFeedbackInput = {operation_id: 'op-a', file_version_id: 'file-a', rule_version_id: 'rule-a', rule_clause_id: 'U08-1', original_status: 'PASS', result_attempt: 1, expected_status: 'NG', rationale: '原件缺少必填内容', evidence: [{file_version_id: 'file-a', locator: {kind: 'xlsx_cell', sheet: 'Sheet1', cell: 'B2'}, excerpt: '原文'}]}
@@ -54,11 +54,7 @@ test('sample mutations validate identity, CAS and answer before reporting succes
   assert.throws(() => checkedFeedbackDeletion({id: 'sample-a', deleted: false, revision: 2}, 'sample-a', 1))
   assert.deepEqual(checkedFeedbackDeletion({id: 'sample-a', deleted: true, revision: 2}, 'sample-a', 1), {id: 'sample-a', deleted: true, revision: 2})
 })
-test('unknown, controlled and provider usage remain distinct', () => {
-  assert.match(usageText({total_tokens: 0, uncertain: true}), /未知/)
-  assert.match(usageText({total_tokens: 0, source: 'unknown'}), /未知/)
-  assert.match(usageText({input_tokens: 12, output_tokens: 3, source: 'provider'}), /15 Token/)
-  assert.match(usageText({total_tokens: 0, source: 'controlled'}), /受控测试/)
+test('checker reasons and feedback source status read plainly', () => {
   assert.match(checkerReason('oracle_changed'), /正确答案/)
   assert.match(checkerReason('no_validation_proof'), /还没有用样本验证/)
   assert.equal(feedbackSourceStatus('PASS', null), false)
