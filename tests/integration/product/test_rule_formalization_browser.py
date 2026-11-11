@@ -314,7 +314,6 @@ def test_rule_program_is_generated_from_confirmed_check_points_against_the_real_
     from playwright.sync_api import expect, sync_playwright
 
     f = formalization_browser
-    shots = Path("/private/tmp/claude-501/-Users-bef0rewind-Projects-work-ppap/1fe405b6-a54a-4e2e-a578-ee1705025761/scratchpad")
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         context = browser.new_context()
@@ -340,7 +339,6 @@ def test_rule_program_is_generated_from_confirmed_check_points_against_the_real_
             expect(page.get_by_text(removed)).to_have_count(0)
         program_card = page.get_by_role("region", name="检查程序", exact=True)
         expect(program_card).to_contain_text("还不能用于审核")
-        page.screenshot(path=str(shots / "rp-missing.png"), full_page=True)
         wizard = page.get_by_role("region", name="逐条确认", exact=True)
         nav = wizard.get_by_role("navigation", name="条款", exact=True)
         heading = page.get_by_role("heading", name="生成检查程序", exact=True)
@@ -403,7 +401,6 @@ def test_rule_program_is_generated_from_confirmed_check_points_against_the_real_
         # An open question can be kept as written: the person confirms the original wording.
         clause("c2").get_by_role("button", name="保持原文，确认", exact=True).click()
         expect(nav.get_by_text("已确认 2 / 4", exact=True)).to_be_visible()
-        page.screenshot(path=str(shots / "rp-points.png"), full_page=True)
         # A confirmed clause can be withdrawn, corrected and confirmed again; only one confirmation stays current.
         c1 = clause("c1")
         c1.get_by_role("button", name="撤销确认", exact=True).click()
@@ -478,7 +475,6 @@ def test_rule_program_is_generated_from_confirmed_check_points_against_the_real_
         assert started.value.status == 200, started.value.text()
         expect(program_card.get_by_text("可用于审核", exact=True)).to_be_visible(timeout=60000)
         expect(program_card.get_by_text(re.compile(r"^第 \d+ 版 · 未验证$"))).to_be_visible()
-        page.screenshot(path=str(shots / "rp-done.png"), full_page=True)
         assert f.runtime.calls == 1
         with f.store._conn() as conn:
             head, forced = conn.execute("SELECT current_revision_id::text, force_unverified FROM product.tenant_suite_heads WHERE tenant_id=%s AND suite_key=%s", (f.tenant_id, f.suite_key)).fetchone()
