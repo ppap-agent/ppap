@@ -24,6 +24,7 @@ from audit.evidence import cell_locator
 from audit.precheck.facts import DefectFact, SourceFacts, UnknownFact, key, state_fact
 from audit.precheck.sources import l1_criteria
 
+from .native import _IDENTITY
 from .native import header as native_header
 
 _ERRORS = {"#REF!", "#VALUE!", "#DIV/0!", "#N/A", "#NAME?", "#NUM!", "#NULL!"}
@@ -1352,7 +1353,7 @@ def precheck_materials(agent):
         },
     )
     facts = Facts(agent.audit_file)
-    related = _related_fact(agent, facts, ("图纸", "drawing"), "U04:PC-D7", customer_owned=True)
+    related = _related_fact(agent, facts, ("图纸", "drawing"), "U04:PC-D7", same=("project", "part"), customer_owned=True)
     paired = _paired_original_fact(agent, "U04:PC-E3", measurement=False)
     return [related if row["id"] == "U04:PC-D7" else paired if row["id"] == "U04:PC-E3" else row for row in result]
 
@@ -1412,7 +1413,7 @@ def _material_certifications(facts):
             raise UnknownFact("体系认证表述未能按源标准可靠归一化，需人工核对。")
 
 
-def _related_fact(agent, facts, terms, source_id, *, customer_owned=False):
+def _related_fact(agent, facts, terms, source_id, *, same, customer_owned=False):
     context = agent.group_context
     if context is None:
         return state_fact(source_id, None, "当前冻结上下文没有关联文件集合，尚不能判断是否已到。", status="unknown")
@@ -1440,23 +1441,15 @@ def _related_fact(agent, facts, terms, source_id, *, customer_owned=False):
         return state_fact(source_id, None, "已提供关联原件无法读取，未取得比对结论。", status="error")
 
     def compare():
-        aliases = ("零件号", "零件编号", "物料编号", "Part number", "Part No")
-        left = facts.one(aliases, before=13)
-        right = other.one(aliases, before=13)
-        facts.sources.extend(other.sources)
-        if compact(left) != compact(right):
-            raise UnknownFact("关联文件零件号不同，不能用来完成本件核对。")
-        for pair_aliases, label in [(("零件名称", "物料名称", "Part name"), "零件名称"), (("UAES项目编号", "项目号", "项目名称"), "项目"), (("版本号", "版本", "Revision"), "版本")]:
-            current = facts.one(pair_aliases, before=13)
-            reference = other.one(pair_aliases, before=13)
+        # Only the identities the clause names (同零件号、同项目、同名称) pair the two originals.
+        for name in same:
+            label, aliases = _IDENTITY[name]
+            current = facts.one(aliases, before=13)
+            reference = other.one(aliases, before=13)
             facts.sources.extend(other.sources)
             if compact(current) != compact(reference):
                 raise UnknownFact("关联原件" + label + "不一致，不能用于当前对象核对。")
-        customer = other.one(("客户名称", "客户", "Customer"), before=13)
-        facts.sources.extend(other.sources)
-        if compact(customer) not in {"uaes", "联合汽车电子", "联合汽车电子有限公司"}:
-            raise UnknownFact("关联原件客户身份不能确认是UAES。")
-        return "已在本批冻结集合定位同零件的" + terms[0] + "原件；未用文件名替代零件身份。"
+        return "已在本批冻结集合定位" + "、".join(_IDENTITY[name][0] for name in same) + "相同的" + terms[0] + "原件；未用文件名替代零件身份。"
 
     return facts.observe(source_id, compare)
 
@@ -1822,7 +1815,7 @@ def precheck_capacity(agent):
     chart_objects = any(table.get("visual_evidence") for table in facts.tables())
     if not chart_declared and not chart_objects:
         result = [state_fact("U06:PRE-08", "S01", "本能力载体不含控制图；UAES没有强制三图要求，未套用理想要求。", status="not_checked") if item["id"] == "U06:PRE-08" else item for item in result]
-    result.append(_related_fact(agent, facts, ("采购件质量计划", "PGQP1"), "U06:PRE-04:PGQP1"))
+    result.append(_related_fact(agent, facts, ("采购件质量计划", "PGQP1"), "U06:PRE-04:PGQP1", same=("part",)))
     result.append(state_fact("U06:customer_thresholds", "S03", "UAES读数125及Cpk>1.33、Ppk>1.67属于正式审核；预检不将不达标转成阻断。", status="handoff"))
     return result
 
@@ -2040,7 +2033,7 @@ def precheck_inspection(agent):
     result = execute(agent, "U01", operations, states=states)
     original = Facts(agent.audit_file)
     result.append(original.observe("U01:four_reports", lambda: _inspection_quartet(original)))
-    related = _related_fact(agent, Facts(agent.audit_file), ("气泡图", "bubble"), "U01:IR-15", customer_owned=False)
+    related = _related_fact(agent, Facts(agent.audit_file), ("气泡图", "bubble"), "U01:IR-15", same=("part", "name"), customer_owned=False)
     return [related if row["id"] == "U01:IR-15" else row for row in result]
 
 

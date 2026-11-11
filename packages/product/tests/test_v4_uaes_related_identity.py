@@ -54,10 +54,17 @@ def test_filename_alone_cannot_turn_an_untyped_unrelated_original_into_a_counter
     assert result.status == "UNABLE"
 
 
-@pytest.mark.parametrize("changes", [{"part": "P2"}, {"customer": "理想"}, {"revision": "B"}, {"project": "M2"}, {"project": None}])
-def test_typed_counterpart_still_requires_matching_original_identity(tmp_path, changes):
+@pytest.mark.parametrize("changes", [{"part": "P2"}, {"project": "M2"}, {"project": None}])
+def test_counterpart_must_share_the_identities_its_clause_names(tmp_path, changes):
+    # U07:3 asks for 同项目、同物料编号 and nothing else.
     result = check(original(tmp_path, "target", target=True), [original(tmp_path, "reference", **changes)])
-    assert result.status == "UNABLE"
+    assert result.status == "UNABLE", result.suggestions
+
+
+@pytest.mark.parametrize("changes", [{"customer": "理想"}, {"customer": None}, {"revision": "B"}, {"revision": None}])
+def test_identities_the_clause_does_not_name_do_not_pair_files(tmp_path, changes):
+    result = check(original(tmp_path, "target", target=True), [original(tmp_path, "reference", **changes)])
+    assert result.status == "PASS", result.suggestions
 
 
 @pytest.mark.parametrize("part", ["无", "/", "TBD", "XXX", "待定"])
@@ -224,12 +231,12 @@ def test_msa_broad_type_keeps_its_actual_kappa_subtype_available(tmp_path):
     )
     body = preset_rule_body("UAES", "U05")
     rule = RuleInput(rule_id="frozen-rule", **{name: value for name, value in body.items() if name != "kind"})
-    assert UaesMsaAgent(target, rule, group).related(("kappa",)).version == "reference"
+    assert UaesMsaAgent(target, rule, group).related(("kappa",), same=("part",)).version == "reference"
 
 
 @pytest.mark.parametrize(
     "field,value",
-    [("part", "待确认"), ("part", "none"), ("part", "-"), ("part", "工程更改版本"), ("part", "ＴＢＤ"), ("revision", "版本号"), ("revision", "待确认"), ("project", "待确认")],
+    [("part", "待确认"), ("part", "none"), ("part", "-"), ("part", "工程更改版本"), ("part", "ＴＢＤ"), ("project", "待确认")],
 )
 def test_equal_unknown_source_identity_cannot_certify_a_formal_pair(tmp_path, field, value):
     target = original(tmp_path, "target", target=True, **{field: value})
@@ -242,6 +249,5 @@ def test_valid_source_part_identity_retains_punctuation_and_leading_zeros(tmp_pa
     assert check(original(tmp_path, "target", target=True, part=part), [original(tmp_path, "reference", part=part)]).status == "PASS"
 
 
-def test_formal_pair_keeps_optional_project_and_required_revision_contract(tmp_path):
-    assert check(original(tmp_path, "target", target=True, project=None), [original(tmp_path, "reference", project=None)]).status == "PASS"
-    assert check(original(tmp_path, "target", target=True, revision=None), [original(tmp_path, "reference", revision=None)]).status == "UNABLE"
+def test_a_clause_naming_the_project_needs_it_on_both_originals(tmp_path):
+    assert check(original(tmp_path, "target", target=True, project=None), [original(tmp_path, "reference", project=None)]).status == "UNABLE"

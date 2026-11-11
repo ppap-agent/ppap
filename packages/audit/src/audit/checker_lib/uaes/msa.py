@@ -52,10 +52,10 @@ class UaesMsaAgent(UaesSourceAgent):
             raise UnknownFact("MSA计划没有可确认的编号行，不能按空范围通过。")
         return "PASS", "已逐编号行核实MSA计划除备注外的全部字段。"
 
-    def report(self, *, kappa, gauge_number=None, gauge_name=None):
+    def report(self, *, kappa, same, gauge_number=None, gauge_name=None):
         terms = ("kappa",) if kappa else ("重复性", "再现性", "GRR")
         tables = self.native().tables(terms)
-        reports = [self.native()] if tables else [self.related(terms)]
+        reports = [self.native()] if tables else [self.related(terms, same=same)]
         matched = 0
         for facts in reports:
             for table in facts.tables(terms):
@@ -74,10 +74,10 @@ class UaesMsaAgent(UaesSourceAgent):
 
     @rule("计划每行量具类型编号与全部GRR/Kappa结论")
     def rule_2(self):
-        facts = self.native() if self.native().tables(self.PLAN) else self.related(self.PLAN)
+        facts = self.native() if self.native().tables(self.PLAN) else self.related(self.PLAN, same=())
         rows = facts.rows({"name": _GAUGE_NAME, "number": _GAUGE_NUMBER}, title=self.PLAN, anchor=("number",))
         for row in rows:
-            result = self.report(kappa=any(term in str(row["name"]) for term in _COUNTING), gauge_number=row["number"])
+            result = self.report(kappa=any(term in str(row["name"]) for term in _COUNTING), same=(), gauge_number=row["number"])
             if result[0] != "PASS":
                 return result
         # In addition to plan matches, verify every supplied native report.
@@ -90,23 +90,23 @@ class UaesMsaAgent(UaesSourceAgent):
 
     @rule("PGQP1重要特性计数型量具同编号Kappa")
     def rule_3(self):
-        facts = self.related(("采购件质量计划", "PGQP1"))
+        facts = self.related(("采购件质量计划", "PGQP1"), same=())
         facts.require_text("PGQP1")
         rows = facts.rows({"mark": ("重要特性", "特殊特性", "特性分类"), "name": ("测量设备", *_GAUGE_NAME), "number": _GAUGE_NUMBER}, title=("PGQP1",), anchor=("name",))
         for row in rows:
             if not blank(row["mark"]) and any(term in str(row["name"]) for term in ("通止规", "塞规", "塞尺")):
-                result = self.report(kappa=True, gauge_number=row["number"])
+                result = self.report(kappa=True, same=("part",), gauge_number=row["number"])
                 if result[0] != "PASS":
                     return result
         return "PASS", "已完整读取PGQP1；适用计数量具均已对应同编号Kappa。"
 
     @rule("CP出货或GP12人工检测同名或综合检具Kappa")
     def rule_4(self):
-        facts = self.related(("控制计划",))
+        facts = self.related(("控制计划",), same=())
         rows = facts.rows({"operation": ("工序名称", "操作描述", "工序名称/操作描述"), "method": ("评价测量技术", "评价/测量技术"), "gauge": ("量具名称", "测量设备")}, anchor=("operation",))
         for row in rows:
             if any(term in str(row["operation"]) for term in ("出货检验", "GP12")) and any(term in str(row["method"]) for term in ("人工", "目视", "目测")):
-                result = self.report(kappa=True, gauge_name=row["gauge"])
+                result = self.report(kappa=True, same=("part",), gauge_name=row["gauge"])
                 if result[0] != "PASS":
                     return result
         return "PASS", "已完整读取控制计划；适用人为出货检测均已对应同名或综合检具Kappa。"

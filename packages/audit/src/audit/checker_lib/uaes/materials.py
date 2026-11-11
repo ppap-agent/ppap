@@ -65,5 +65,9 @@ class UaesMaterialsAgent(UaesSourceAgent):
 
     @rule("同项目同物料独立图纸的零件名称和编号")
     def rule_3(self):
-        self.related(("图纸", "drawing"), require_name=True)
-        return "PASS", "已核实当前批次独立图纸与清单项目、零件编号、名称和版本一致。"
+        drawing = self.related(("图纸", "drawing"), same=("project", "part"))
+        # Then the drawing's part name must equal the list's.
+        aliases = ("零件名称", "物料名称", "part name")
+        if key(drawing.field(aliases)) != key(self.native().field(aliases)):
+            return "NG", "图纸零件名称与分供方清单零件名称不一致。"
+        return "PASS", "当前批次同项目同物料编号的图纸零件名称、零件号与清单一致。"

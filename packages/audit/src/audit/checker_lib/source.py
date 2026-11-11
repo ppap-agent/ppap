@@ -44,7 +44,7 @@ class MissingFact(Exception):
 
 
 class SourceMismatch(UnknownFact):
-    """The related original is present but identifies another part or version.
+    """The related original is present but names another identity its clause requires to match.
 
     It cannot be compared, so the clause stays unknown; the result names the
     file to replace instead of reporting a content defect or a missing file.
@@ -430,6 +430,15 @@ def any_row(rows, predicate) -> bool:
     return False
 
 
+# Identities a cross-file clause can name, with the labels that state them.
+_IDENTITY = {
+    "part": ("零件号", ("零件号", "零件编号", "物料编号", "客户零件号", "part number")),
+    "project": ("项目", ("项目", "项目名称", "项目号", "UAES项目编号", "车型项目")),
+    "name": ("零件名称", ("零件名称", "物料名称", "part name")),
+}
+_IDENTITY_LABELS = {key(alias) for _label, aliases in _IDENTITY.values() for alias in aliases} | {key("版本"), key("日期")}
+
+
 class NativeRow(Mapping[str, Any]):
     def __init__(self, native, table, row, columns):
         self.native, self.table, self.row, self.columns = native, table, row, columns
@@ -654,8 +663,8 @@ class SourceAudit:
             raise UnknownFact(description + "尚未全部核实，需人工确认原件。", questions=questions, evaluation=evaluation)
         return "PASS", "已从完整原件核实：" + description
 
-    def related(self, terms, *, require_name=False):
-        """Use only this frozen GroupContext; pair by source identity, never order."""
+    def related(self, terms, *, same):
+        """The one original of `terms` in this frozen GroupContext; `same` lists the identities its clause names, never order."""
         if self.group_context is None:
             raise UnknownFact("当前批次没有关联资料，需补充同零件的独立原件。")
         for kind in self.group_context.unavailable_files.values():
@@ -694,63 +703,34 @@ class SourceAudit:
         if len(candidates) != 1 or undetermined:
             raise UnknownFact("当前批次缺少唯一关联原件，需补充或确认候选，不能任取一份。")
         item = next(iter(candidates.values()))
-        if not self.audit_file.project_id or self.audit_file.project_id != item.project_id:
-            raise UnknownFact("关联原件项目身份尚未确认一致。")
         other = self._source_facts(item)
-        project_aliases = ("项目", "项目名称", "项目号", "UAES项目编号", "车型项目")
-        project_required = self.resource["preset_key"] == "U04"
-        own_project = self.native().field(project_aliases, required=project_required)
-        peer_project = other.field(project_aliases, required=project_required)
-        part_aliases = ("零件号", "零件编号", "物料编号", "客户零件号", "part number")
-        left, right = self.native().field(part_aliases), other.field(part_aliases)
 
-        def mismatch(difference):
+        def mismatch(label, mine, theirs):
             # Both identities were read from the originals and differ: the file
             # must be replaced. This is neither a content defect nor a missing file.
-            def readable(value):
-                return str(value).strip()[:200] if pair_identity(key(value)) else None
+            parts = {"part_number": mine[:200], "found_part_number": theirs[:200]} if label == _IDENTITY["part"][0] else {}
+            need = {"kind": "source_mismatch", "document": terms[0], **parts, "found_file_version_id": item.audit_id}
+            return SourceMismatch(f"比对源《{terms[0]}》{label} {theirs} 与被审文件{label} {mine} 不一致，该项无法比对，请换交与被审文件一致的{terms[0]}。", need=need)
 
-            need = {"kind": "source_mismatch", "document": terms[0], "part_number": readable(left), "found_part_number": readable(right), "found_file_version_id": item.audit_id}
-            return SourceMismatch(f"比对源《{terms[0]}》{difference}，该项无法比对，请换交与被审文件一致的{terms[0]}。", need=need)
-
-        if (own_project or peer_project) and (not pair_identity(key(own_project)) or not pair_identity(key(peer_project)) or key(own_project) != key(peer_project)):
-            if pair_identity(key(own_project)) and pair_identity(key(peer_project)):
-                raise mismatch(f"项目 {peer_project} 与被审文件项目 {own_project} 不一致")
-            raise UnknownFact("关联原件实际项目身份不一致或缺失，尚不能用于当前项目。")
-        customer_aliases = ("客户名称", "客户", "customer")
-        left_customer = self.audit_file.customer or self.native().field(customer_aliases)
-        right_customer = item.customer or other.field(customer_aliases)
-        if key(left_customer) != key(right_customer) or key(left_customer) not in {"uaes", "联合汽车电子", "联合汽车电子有限公司"}:
-            raise UnknownFact("关联原件客户身份尚未确认一致。")
-        labels = {key(name) for name in (*part_aliases, "零件名称", "物料名称", "版本", "日期")}
-        if not pair_identity(key(left)) or not pair_identity(key(right)):
-            raise UnknownFact("关联原件零件号尚未确认，不能用占位值配对。")
-        if key(left) in labels or key(right) in labels:
-            raise UnknownFact("关联原件零件号值可能是相邻字段标签，需核对原件。")
-        if key(left) != key(right):
-            # Literal comparison only: no "looks like the same part" relaxation.
-            raise mismatch(f"零件号 {right} 与被审文件零件号 {left} 不一致")
-        # Frozen version identity must also be known. Do not infer a revision
-        # from upload order or borrow the current document's revision.
-        revision_aliases = ("版本", "版次", "修订版次", "revision")
-        own_raw, peer_raw = self.native().field(revision_aliases), other.field(revision_aliases)
-        own_revision, peer_revision = key(own_raw), key(peer_raw)
-        if not pair_identity(own_revision) or not pair_identity(peer_revision):
-            raise UnknownFact("关联原件版本不一致，需确认适用版本。")
-        if own_revision != peer_revision:
-            raise mismatch(f"版本 {peer_raw} 与被审文件版本 {own_raw} 不一致")
-        if require_name:
-            part_name_aliases = ("零件名称", "物料名称", "part name")
-            if key(self.native().field(part_name_aliases)) != key(other.field(part_name_aliases)):
-                raise MissingFact("同项目同零件编号原件的零件名称不一致。")
+        # Only the identities the clause names (同零件号、同项目、同名称) pair the two originals.
+        for name in same:
+            label, aliases = _IDENTITY[name]
+            mine, theirs = str(self.native().field(aliases)).strip(), str(other.field(aliases)).strip()
+            if not pair_identity(key(mine)) or not pair_identity(key(theirs)):
+                raise UnknownFact(f"关联原件{label}尚未确认，不能用占位值配对。")
+            if key(mine) in _IDENTITY_LABELS or key(theirs) in _IDENTITY_LABELS:
+                raise UnknownFact(f"关联原件{label}值可能是相邻字段标签，需核对原件。")
+            if key(mine) != key(theirs):
+                # Literal comparison only: no "looks like the same part" relaxation.
+                raise mismatch(label, mine, theirs)
         return other
 
-    def related_all(self, *term_sets):
+    def related_all(self, *term_sets, same):
         """A missing source fails the clause, whatever is still unknown about the other sources."""
         sources, unknown = [], None
         for terms in term_sets:
             try:
-                sources.append(self.related(terms))
+                sources.append(self.related(terms, same=same))
             except UnknownFact as exc:
                 unknown = unknown or exc
         if unknown is not None:

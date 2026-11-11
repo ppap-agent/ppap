@@ -40,7 +40,7 @@ class UaesApprovalAgent(UaesSourceAgent):
         deadline = max(item for item in dates if item is not None)
         if deadline <= date.today():
             return "NG", f"封面条件认可时间({deadline})早于或等于当前({date.today()})，请确认整改是否逾期或已闭环。"
-        related = cover if cover.tables(("偏差认可汇总",)) else self.related(("偏差认可汇总",), require_name=True)
+        related = cover if cover.tables(("偏差认可汇总",)) else self.related(("偏差认可汇总",), same=("part", "name"))
         # Same-document deviation rows still require their own identity.
         for aliases in [("零件号", "零件编号"), ("零件名称",)]:
             if key(cover.field(aliases, title=("封面", "cover"))) != key(related.field(aliases, title=("偏差认可汇总",))):

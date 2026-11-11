@@ -253,7 +253,8 @@ def test_v4_round_develops_replays_and_uses_other_targets_as_related_sources(tmp
                 assert job.operation == "execute-checker"
                 run_execute_manifest(inputs, work)
 
-    identity = [["客户", "UAES"], ["零件号", "P1"], ["零件名称", "支架"], ["版本", "A"]]
+    # U07:3 pairs the list by 同项目、同物料编号.
+    identity = [["项目", "M1"], ["零件号", "P1"], ["零件名称", "支架"]]
     pfmea_raw = workbook([*identity, ["功能/要求", "特殊特性"], ["孔径", "CC"]], "PFMEA")
     special_raw = workbook([*identity, ["物料名称", "支架"], ["物料编号", "P1"], ["特性名称", "特性类别"], ["孔径", "CC"]])
     pfmea_rule = preset_rule_body("UAES", "U07")["rules"][2]

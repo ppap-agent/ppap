@@ -130,7 +130,7 @@ class UaesControlPlanAgent(UaesSourceAgent):
     @rule("CP身份字段图纸身份及最后更改日期")
     def rule_6(self):
         # The clause fails without a drawing, however the identity fields read.
-        drawing = self.related(("图纸", "drawing"), require_name=True)
+        drawing = self.related(("图纸", "drawing"), same=("project", "part", "name"))
         facts = self.native()
         for aliases in [("供应商名称",), ("供应商代码",), ("编制人",), ("版本号", "版本"), ("零件名称",), ("零件号",)]:
             facts.field(aliases)
@@ -176,7 +176,7 @@ class UaesControlPlanAgent(UaesSourceAgent):
 
     @rule("PFD PFMEA PGQP1全部工序覆盖")
     def rule_7(self):
-        flow, pfmea, plan = self.related_all(("过程流程图",), ("PFMEA",), ("采购件质量计划", "PGQP1"))
+        flow, pfmea, plan = self.related_all(("过程流程图",), ("PFMEA",), ("采购件质量计划", "PGQP1"), same=("part",))
         plan.require_text("PGQP1")
         target = self.rows()
         for related, aliases in [(flow, ("工序", "工序名称")), (pfmea, ("工序/功能/要求", "过程项", "过程步骤")), (plan, ("工艺", "工序"))]:
@@ -188,7 +188,7 @@ class UaesControlPlanAgent(UaesSourceAgent):
 
     @rule("PFD PFMEA PGQP1全部特殊特性覆盖")
     def rule_8(self):
-        for related in self.related_all(("过程流程图",), ("PFMEA",), ("采购件质量计划", "PGQP1")):
+        for related in self.related_all(("过程流程图",), ("PFMEA",), ("采购件质量计划", "PGQP1"), same=("part",)):
             result = self.cover(related, source_aliases=("功能/要求", "产品特性", "过程特性", "特性名称"), marked=True)
             if result[0] != "PASS":
                 return result
@@ -196,22 +196,22 @@ class UaesControlPlanAgent(UaesSourceAgent):
 
     @rule("PGQP1尺寸类特性出货检验覆盖")
     def rule_9(self):
-        related = self.related(("采购件质量计划", "PGQP1"))
+        related = self.related(("采购件质量计划", "PGQP1"), same=("part",))
         related.require_text("PGQP1")
         return self.cover(related, source_aliases=_CHAR, outgoing=True, kind="尺寸")
 
     @rule("PGQP1产品审核型式试验覆盖")
     def rule_10(self):
-        related = self.related(("采购件质量计划", "PGQP1"))
+        related = self.related(("采购件质量计划", "PGQP1"), same=("part",))
         related.require_text("PGQP1")
         return self.cover(related, source_aliases=("型式试验", "试验项目"))
 
     @rule("图纸CPK特殊尺寸对应SPC控制")
     def rule_11(self):
-        related = self.related(("图纸", "drawing"))
+        related = self.related(("图纸", "drawing"), same=("project", "part"))
         return self.cover(related, source_aliases=("尺寸", "尺寸要求", "特性名称"), marked=True, kind="CPK", require_spc=True)
 
     @rule("图纸全部特殊尺寸和要求覆盖")
     def rule_12(self):
-        related = self.related(("图纸", "drawing"))
+        related = self.related(("图纸", "drawing"), same=("project", "part"))
         return self.cover(related, source_aliases=("尺寸", "尺寸要求", "特性名称", "要求"), marked=True)

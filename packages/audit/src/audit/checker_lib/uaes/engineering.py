@@ -160,7 +160,7 @@ class UaesCapabilityAgent(UaesSourceAgent):
         if not facts.tables(("目录",)):
             facts.require_text("目录")
         directory = facts.table(("目录",))
-        related = self.related(("采购件质量计划", "PGQP1"))
+        related = self.related(("采购件质量计划", "PGQP1"), same=("part",))
         related.require_text("PGQP1")
         aliases: dict[str, tuple[str, ...]] = {"name": ("特性名称", "特性描述", "产品/过程特性", "过程特性")}
         if process_only:

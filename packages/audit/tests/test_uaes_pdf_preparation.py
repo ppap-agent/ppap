@@ -71,7 +71,7 @@ def test_only_a_proven_absence_of_the_related_source_is_a_failure(tmp_path, by_t
         task_group_id="group", by_doc_type=grouped, by_audit_id={item.audit_id: item for item in (target, *others, *(entry for items in grouped.values() for entry in items))}
     )
     with pytest.raises(expected):
-        agent.related(("图纸", "drawing") if "测量系统分析" not in by_type else ("kappa",))
+        agent.related(("图纸", "drawing") if "测量系统分析" not in by_type else ("kappa",), same=("part",))
 
 
 def test_a_missing_source_decides_the_clause_before_unknowns_about_others(tmp_path, monkeypatch):
@@ -85,7 +85,7 @@ def test_a_missing_source_decides_the_clause_before_unknowns_about_others(tmp_pa
 
     monkeypatch.setattr(agent, "related", related)
     with pytest.raises(MissingFact):
-        agent.related_all(("flow",), ("plan",))
+        agent.related_all(("flow",), ("plan",), same=("part",))
 
 
 def test_a_row_proving_the_fact_decides_even_with_unknown_rows():

@@ -119,5 +119,5 @@ class UaesInspectionAgent(UaesSourceAgent):
 
     @rule("同物料号及名称的独立气泡图")
     def rule_4(self):
-        self.related(("气泡图", "bubble"), require_name=True)
+        self.related(("气泡图", "bubble"), same=("part", "name"))
         return "PASS", "当前批次独立气泡图与报告物料号、名称及版本一致。"

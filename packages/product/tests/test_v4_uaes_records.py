@@ -111,9 +111,8 @@ def test_controlled_stamp_uses_located_paddle_seal_facts_not_preprinted_labels(t
     assert path.read_bytes() == original
 
 
-@pytest.mark.parametrize(
-    ("variant", "expected"), [("same", "PASS"), ("wrong_part", "UNABLE"), ("wrong_customer", "UNABLE"), ("wrong_revision", "UNABLE"), ("duplicate", "UNABLE"), ("unreadable", "ERR")]
-)
+# U04:3 names 同项目、同物料编号 only; customer and revision do not pair the drawing.
+@pytest.mark.parametrize(("variant", "expected"), [("same", "PASS"), ("wrong_part", "UNABLE"), ("wrong_customer", "PASS"), ("wrong_revision", "PASS"), ("duplicate", "UNABLE"), ("unreadable", "ERR")])
 def test_materials_only_pairs_current_unique_matching_originals(tmp_path, variant, expected):
     from audit.checker_lib.uaes.materials import UaesMaterialsAgent
     from audit.contracts import GroupContextInput

@@ -91,11 +91,11 @@ class UaesPfmeaAgent(UaesSourceAgent):
 
     @rule("特殊特性清单全部产品过程特性和一致标识")
     def rule_3(self):
-        related = self.related(("特殊特性",), require_name=True)
+        related = self.related(("特殊特性",), same=("project", "part"))
         return self.reconcile(related, marked=True)
 
     @rule("PGQP1重要特性覆盖")
     def rule_4(self):
-        related = self.related(("采购件质量计划", "PGQP1"))
+        related = self.related(("采购件质量计划", "PGQP1"), same=("part",))
         related.require_text("PGQP1")
         return self.reconcile(related, marked=False)
