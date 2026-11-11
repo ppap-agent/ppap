@@ -88,6 +88,23 @@ def digest(path: str | Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def emf_text(data: bytes) -> list[str]:
+    """Strings an EMF picture draws as text (EMR_EXTTEXTOUTW records); its shapes stay unread."""
+    import struct
+
+    texts, position = [], 0
+    while position + 8 <= len(data):
+        kind, size = struct.unpack_from("<II", data, position)
+        if size < 8 or position + size > len(data):
+            break
+        if kind == 84 and size >= 76:
+            count, offset = struct.unpack_from("<II", data, position + 44)
+            if offset + 2 * count <= size:
+                texts.append(data[position + offset : position + offset + 2 * count].decode("utf-16-le", "replace"))
+        position += size
+    return texts
+
+
 def col_name(number: int) -> str:
     text = ""
     while number:

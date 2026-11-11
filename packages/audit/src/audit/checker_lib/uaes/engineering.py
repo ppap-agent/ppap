@@ -2,37 +2,85 @@
 
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 
 from audit.checker_lib.nio.excel_agent import rule
 
 from .native import MissingFact, UaesSourceAgent, UnknownFact, blank, header, key, number
 
+# Operations that inspect or test the product (U16:2, clarified with the user).
+_INSPECTION = re.compile(r"检验|检查|检测|测试|试验|气密|泄漏|inspect|check|test|GP12", re.I)
+
 
 class UaesProcessFlowAgent(UaesSourceAgent):
+    # Definitions come from the remarks column of the UAES rule document.
+    KEY_MARKS = {
+        "key_operation": "全图至少有一道工序带实际关键工序标记：K、K1…、★、◆、加粗、底色、虚框等任一形式。",
+        "characteristic_marks": "产品/过程特性中的关键、重要或特殊特性有实际符号标注（CC、SC、YC、YS、★等）；不能只有未标注的文字描述。",
+        "legend": "原件图例或注释定义了上述每种关键标记的含义。",
+    }
+    SYMBOL_FIELDS = {
+        "standard_shapes": "全部工序活动（加工/操作、移动/搬运、存储/存取/贮存、检验、返工/返修、报废）用标准化流程图形表达，不能只是纯文字框或列表；各图形含义以本图图例为准。",
+        "complete_legend": "图例覆盖了全图实际使用的全部符号。",
+        "consistent": "同一活动类型在全图使用相同符号。",
+        "inspection_shapes": "所有进货、过程、最终、巡检、自检活动使用检验符号，且可与图例核对。",
+    }
+
+    def chart(self):
+        """The flow chart read from cells, or None when its layout is not one the cells can express."""
+        from .flowchart import FlowChart
+
+        try:
+            return FlowChart(self.native())
+        except UnknownFact:
+            return None
+
     @rule("关键工序及特性标识与图例")
     def rule_1(self):
-        return self.visual_result(
-            {
-                # Definitions come from the remarks column of the UAES rule document.
-                "key_operation": "全图至少有一道工序带实际关键工序标记：K、K1…、★、◆、加粗、底色、虚框等任一形式。",
-                "characteristic_marks": "产品/过程特性中的关键、重要或特殊特性有实际符号标注（CC、SC、YC、YS、★等）；不能只有未标注的文字描述。",
-                "legend": "原件图例或注释定义了上述每种关键标记的含义。",
-            },
-            "关键工序、特性标记和标记定义",
-        )
+        chart = self.chart()
+        marked = None if chart is None else chart.key_operation()
+        if marked is False:
+            return "NG", "全部工序没有关键工序标记（K、★、◆、加粗、底色或虚框均未使用），条款第一项不满足。"
+        fields = {name: text for name, text in self.KEY_MARKS.items() if not (marked and name == "key_operation")}
+        return self.visual_result(fields, "关键工序、特性标记和标记定义")
 
     @rule("全图活动符号一致性与检验图例")
     def rule_2(self):
-        return self.visual_result(
-            {
-                "standard_shapes": "全部工序活动（加工/操作、移动/搬运、存储/存取/贮存、检验、返工/返修、报废）用标准化流程图形表达，不能只是纯文字框或列表；各图形含义以本图图例为准。",
-                "complete_legend": "图例覆盖了全图实际使用的全部符号。",
-                "consistent": "同一活动类型在全图使用相同符号。",
-                "inspection_shapes": "所有进货、过程、最终、巡检、自检活动使用检验符号，且可与图例核对。",
-            },
-            "全图标准符号、完整图例、一致性及检验符号",
-        )
+        chart = self.chart()
+        if chart is None:
+            return self.visual_result(self.SYMBOL_FIELDS, "全图标准符号、完整图例、一致性及检验符号")
+        operations = chart.operations
+        for operation in operations:
+            if not operation.symbols:
+                if operation.unread_lane:
+                    raise UnknownFact(f"工序“{operation.description}”的符号列有未读图形，尚不能确认其符号。")
+                return "NG", f"工序“{operation.description}”没有标准图形符号，只有文字。"
+        legend = chart.legend()
+        if not legend:
+            if self.native().has_unread_content():
+                raise UnknownFact("未在单元格中找到符号图例，图形内容仍需核对。")
+            return "NG", "过程流程图没有符号图例。"
+        undefined = sorted({symbol for operation in operations for symbol in operation.symbols} - set(legend))
+        if undefined:
+            return "NG", "图例没有定义所用符号：" + "、".join(undefined)
+        for column, name in chart.typed_lanes().items():
+            used = {symbol for operation in operations for lane, symbol in operation.marks if lane == column}
+            if len(used) > 1:
+                return "NG", f"“{name}”列使用了多种符号：{'、'.join(sorted(used))}，同类活动符号混用。"
+        # Inspection activities, as decided for this clause: inspection and test operations.
+        inspected = [operation for operation in operations if _INSPECTION.search(operation.description)]
+        symbols = [symbol for symbol, name in legend.items() if re.search(r"检验|inspection", name, re.I)]
+        if inspected and len(symbols) != 1:
+            if not symbols:
+                return "NG", "图例没有定义检验符号，检验类活动无法以检验符号表达。"
+            raise UnknownFact("图例中有多个检验符号，尚不能确定检验类活动应使用哪一个。")
+        for operation in inspected:
+            if symbols[0] not in operation.symbols:
+                if operation.unread_lane:
+                    raise UnknownFact(f"工序“{operation.description}”的符号列有未读图形，尚不能确认其符号。")
+                return "NG", f"检验类工序“{operation.description}”未使用检验符号{symbols[0]}，实际符号为{''.join(operation.symbols)}。"
+        return "PASS", "全部工序以图例定义的符号表达，各活动列符号一致，检验类工序使用检验符号。"
 
     @rule("过程流程图实际受控章")
     def rule_3(self):

@@ -6,6 +6,7 @@ customer rule description, generate checks, or choose a customer/engine route.
 
 from __future__ import annotations
 
+import io
 import json
 import re
 import unicodedata
@@ -87,7 +88,7 @@ def header(value: Any, aliases: tuple[str, ...], *, exact: bool = False) -> bool
 class NativeFacts:
     def __init__(self, path: str, version: str, witness):
         self.data = snapshot(path, limits=ReadLimits())
-        self.version, self.witness = version, witness
+        self.path, self.version, self.witness = path, version, witness
         self.format = self.data["source"]["format"]
         if self.format == ".pdf" and len(self.data["tables"]) > 1 and not self.data.get("coverage", {}).get("unresolved_pages"):
             from audit.pdf_tables import prepare_pdf_workbook
@@ -148,6 +149,29 @@ class NativeFacts:
             for index, block in enumerate(page.get("blocks", []), 1):
                 if block.get("text", "").strip():
                     yield block["text"], {"kind": "pdf_block", "page": page["page"], "block": index}
+
+    def drawn_texts(self):
+        """Text drawn inside each placed EMF picture, with the table and the anchor it sits on."""
+        if self.format not in {".xlsx", ".xlsm"}:
+            return []
+        import hashlib
+        import zipfile
+
+        from audit.document_tools import emf_text
+
+        raw = Path(self.path).read_bytes()
+        if hashlib.sha256(raw).hexdigest() != self.data["source"]["sha256"]:
+            raise ValueError("Frozen source identity changed")
+        found = []
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            for table in self.data["tables"]:
+                for visual in table.get("visual_evidence", []):
+                    for reference in visual.get("references", []):
+                        if str(reference.get("part", "")).lower().endswith(".emf"):
+                            text = "".join(emf_text(archive.read(reference["part"])))
+                            if text.strip():
+                                found.append((table, visual, text))
+        return found
 
     def has_unread_content(self):
         return (
@@ -716,6 +740,14 @@ class UaesSourceAgent(BaseAgent):
         return sources
 
     def controlled_stamp(self):
+        facts = self.native()
+        # A placed picture that draws the words 受控 is the stamp itself, not a printed label.
+        for table, visual, text in facts.drawn_texts():
+            area = visual.get("range") or visual.get("bounds") or ([visual["from"]["row"], visual["from"]["column"]] * 2 if "from" in visual else None)
+            if "受控" in key(text) and area:
+                first_row, first_column, last_row, last_column = area
+                facts.witness({"kind": "xlsx_range", "sheet": table["id"], "start": ref(first_row, first_column), "end": ref(last_row, last_column)}, text, facts.version)
+                return "PASS", "原件中盖有受控章（图片内文字“" + text.strip() + "”）。"
         observed = self.visual_pdf({"controlled_stamp": "文件中存在真实盖上的受控章；只有“受控章/受控/盖章处”文字标签、空白盖章栏时不算。"}, existential_fields=("controlled_stamp",))
         fact = observed["controlled_stamp"]
         return ("PASS", "已从原件核实受控章。") if fact is True else ("NG", "原件没有受控章。") if fact is False else ("UNABLE", "受控章尚未核实，需人工核对。")

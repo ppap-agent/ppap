@@ -60,9 +60,11 @@ class UaesControlPlanAgent(UaesSourceAgent):
 
     @rule("生产追溯及先进先出实际措施")
     def rule_2(self):
-        return self.visual_result(
-            {"traceability": "控制计划说明可执行的零件生产过程追溯措施，而非只有追溯性标题。", "fifo": "控制计划说明可执行的先进先出措施，并能支持生产过程先进先出；只有FIFO术语不算。"},
-            "实际生产追溯和先进先出措施",
+        # Rejected with the user: the clause states no checkable standard.
+        return "UNABLE", (
+            "条款原文只有“零件生产过程追溯性，及过程先进先出是否满足要求？”一句，"
+            "没有说明满足要求的判定标准（须追溯哪些信息、以何种方式标识或记录、先进先出须在哪些工序以何种方式体现），"
+            "本条款已拒绝自动判定，请人工复核。"
         )
 
     def plan_type(self):

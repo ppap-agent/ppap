@@ -293,9 +293,9 @@ def test_pfmea_blank_failure_mode_reads_its_own_group_not_another(tmp_path):
     agent = UaesPfmeaAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput(rule_id="source-rules", **{key: value for key, value in body.items() if key != "kind"}))
     result = agent.check(1)
     # Same cause and controls under different failure modes may score differently;
-    # only the engineering judgement, which needs the original image, remains.
+    # only the rejected engineering-reasonableness parts remain, for a reviewer.
     assert result.status == "UNABLE", result.suggestions
-    assert "工程合理性" in result.suggestions
+    assert "已拒绝自动判定" in result.suggestions
 
 
 def agent_for(tmp_path, agent_cls, entry, sheets):
@@ -390,3 +390,82 @@ def test_a_part_number_is_the_labelled_value_that_has_digits(tmp_path, sheets, e
             facts.field(_IDENTITY["part"][1], accept=_ACCEPT["part"])
     else:
         assert facts.field(_IDENTITY["part"][1], accept=_ACCEPT["part"]) == expected
+
+
+def _flow_chart(*operations, legend=("加工", "搬运", "贮存", "检验"), symbols=("◇", "○", "△", "□")):
+    rows = [["工序号", *legend, "过程描述"], [None, *symbols, None]]
+    for step, description, lane in operations:
+        rows.append([step, *(symbols[index] if index == lane else None for index in range(len(legend))), description])
+    return {"PFD": rows}
+
+
+@pytest.mark.parametrize(
+    "operations,status",
+    [
+        ([(10, "进料检验", 3), (20, "机加工", 0), (30, "入库", 2)], "PASS"),
+        # A test is an inspection activity and must use the inspection symbol.
+        ([(10, "进料检验", 3), (20, "气密", 0)], "NG"),
+        # One activity column holds one symbol.
+        ([(10, "机加工", 0), (20, "清洗", 3)], "PASS"),
+    ],
+    ids=["symbols-follow-legend", "test-with-machining-symbol", "plain-operations"],
+)
+def test_flow_chart_symbols_are_read_from_cells(tmp_path, operations, status):
+    from audit.checker_lib.uaes.engineering import UaesProcessFlowAgent
+
+    agent = agent_for(tmp_path, UaesProcessFlowAgent, "U16", _flow_chart(*operations))
+    assert agent.check(1).status == status
+
+
+def test_flow_chart_symbol_outside_the_legend_fails(tmp_path):
+    from audit.checker_lib.uaes.engineering import UaesProcessFlowAgent
+
+    sheets = _flow_chart((10, "进料检验", 3), (20, "机加工", 0))
+    sheets["PFD"][3][1] = "▽"
+    assert agent_for(tmp_path, UaesProcessFlowAgent, "U16", sheets).check(1).status == "NG"
+
+
+def test_flow_chart_without_any_key_operation_mark_fails_without_an_image(tmp_path, monkeypatch):
+    from audit.checker_lib.uaes.engineering import UaesProcessFlowAgent
+
+    monkeypatch.setattr(UaesProcessFlowAgent, "visual_result", lambda *args, **kwargs: pytest.fail("no image is needed"))
+    agent = agent_for(tmp_path, UaesProcessFlowAgent, "U16", _flow_chart((10, "进料检验", 3), (20, "机加工", 0)))
+    assert agent.check(0).status == "NG"
+
+
+@pytest.mark.parametrize("mark", ["K", "★"])
+def test_flow_chart_key_mark_leaves_only_the_other_facts_to_the_image(tmp_path, monkeypatch, mark):
+    from audit.checker_lib.uaes.engineering import UaesProcessFlowAgent
+
+    asked = []
+    monkeypatch.setattr(UaesProcessFlowAgent, "visual_result", lambda self, fields, description: asked.append(set(fields)) or ("PASS", description))
+    agent = agent_for(tmp_path, UaesProcessFlowAgent, "U16", _flow_chart((10, "进料检验", 3), (20, f"机加工 {mark}", 0)))
+    agent.check(0)
+    assert asked == [{"characteristic_marks", "legend"}]
+
+
+def test_emf_text_reads_the_words_an_emf_picture_draws():
+    import struct
+
+    from audit.document_tools import emf_text
+
+    text = "受 控".encode("utf-16-le")
+    record = bytearray(76) + text
+    struct.pack_into("<II", record, 0, 84, len(record))
+    struct.pack_into("<II", record, 44, len("受 控"), 76)
+    end = struct.pack("<II", 14, 8)
+    assert emf_text(bytes(record) + end) == ["受 控"]
+    assert emf_text(struct.pack("<II", 84, 4)) == []
+
+
+def test_an_emf_stamp_placed_on_the_sheet_is_the_controlled_stamp(monkeypatch):
+    from pathlib import Path
+
+    from audit.checker_lib.uaes.engineering import UaesProcessFlowAgent
+    from audit.contracts import AuditInput, RuleInput
+
+    path = next((Path(__file__).parents[3] / "assets/uaes/samples").glob("F01R10Y776*/**/流程图776.xlsx"))
+    monkeypatch.setattr(UaesProcessFlowAgent, "visual_pdf", lambda *args, **kwargs: pytest.fail("no image is needed"))
+    body = preset_rule_body("UAES", "U16")
+    agent = UaesProcessFlowAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput(rule_id="source-rules", **{key: value for key, value in body.items() if key != "kind"}))
+    assert agent.check(2).status == "PASS"

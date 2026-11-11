@@ -62,13 +62,11 @@ class UaesPfmeaAgent(UaesSourceAgent):
             if identity in conditions and conditions[identity] != scores:
                 return "NG", "同失效模式、原因和控制条件的S/O/D评分不一致。"
             conditions[identity] = scores
-        return self.visual_result(
-            {
-                "reasonable": "对全部PFMEA行，S与后果匹配，O与起因和预防控制匹配（有效预防O低、无预防O高），D与方法和时机匹配（下线高、在线自动低、无法探测10）。"
-                # Examples from the remarks column of the UAES rule document.
-                "例：「制动失效→人员伤亡」S=10且「100%在线自动检测」D=2合理；「导致整车召回」S=3不合理；无任何探测措施D=5不合理。工程有效性未知时null。"
-            },
-            "全部S/O/D评分的工程合理性",
+        # Rejected with the user: the clause gives no checkable standard for these parts.
+        return "UNABLE", (
+            "S/O/D范围、安全/法规后果S≥9、仅轻微外观S为2~4、无探测措施D=10、相同条件评分一致均已核对无误；"
+            "但条款中“O与失效起因和预防控制匹配”“D与探测方法和时机匹配”“后果与S明显不符”没有给出可程序化的判定标准"
+            "（何为有效预防、各类探测方法对应的D值、何为明显不符均未定义），本部分已拒绝自动判定，请人工复核。"
         )
 
     def reconcile(self, related, *, marked):
