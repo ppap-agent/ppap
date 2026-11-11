@@ -84,17 +84,30 @@ def _model(access: ModelAccess, timeout: float) -> OpenAIResponsesModel:
     return OpenAIResponsesModel(access.model, provider=OpenAIProvider(openai_client=client))
 
 
-def _settings(access: ModelAccess, max_tokens: int, timeout: float) -> OpenAIResponsesModelSettings:
+def _settings(access: ModelAccess, max_tokens: int, timeout: float, reasoning_effort: str | None = None) -> OpenAIResponsesModelSettings:
     settings = OpenAIResponsesModelSettings(openai_store=False, max_tokens=max_tokens, timeout=timeout)
-    if access.reasoning_effort:
-        settings["openai_reasoning_effort"] = access.reasoning_effort  # type: ignore[typeddict-item]
+    # A task that only reformats text may ask for less reasoning than the deployment default.
+    effort = reasoning_effort or access.reasoning_effort
+    if effort:
+        settings["openai_reasoning_effort"] = effort  # type: ignore[typeddict-item]
     extra = access.extra_body()
     if extra:
         settings["extra_body"] = extra
     return settings
 
 
-async def _run(access: ModelAccess, *, purpose: ModelPurpose, instructions: str, prompt: str, images: Sequence[bytes], schema: dict[str, Any] | None, max_tokens: int, timeout: float) -> AIResult:
+async def _run(
+    access: ModelAccess,
+    *,
+    purpose: ModelPurpose,
+    instructions: str,
+    prompt: str,
+    images: Sequence[bytes],
+    schema: dict[str, Any] | None,
+    max_tokens: int,
+    timeout: float,
+    reasoning_effort: str | None = None,
+) -> AIResult:
     output_type = StructuredDict(schema or _OBJECT, name=(schema or {}).get("title") or "answer")
     # Vision keeps the provider's native JSON Schema contract; text asks for JSON in the
     # prompt, which every Responses-compatible endpoint we use accepts.
@@ -102,7 +115,7 @@ async def _run(access: ModelAccess, *, purpose: ModelPurpose, instructions: str,
     model = _model(access, timeout)
     agent: Agent[None, dict[str, Any]] = Agent(model, output_type=output, instructions=instructions or None, retries=OUTPUT_RETRIES)
     content: list[Any] = [prompt, *(BinaryContent(image, media_type="image/png") for image in images)]
-    settings = _settings(access, max_tokens, timeout)
+    settings = _settings(access, max_tokens, timeout, reasoning_effort)
     try:
         if _streams(access):
             async with agent.run_stream(content, model_settings=settings) as run:
@@ -143,13 +156,14 @@ async def run_json_async(
     schema: dict[str, Any] | None = None,
     max_tokens: int = 1000,
     timeout: float = 900,
+    reasoning_effort: str | None = None,
 ) -> AIResult:
     """Ask the model for one JSON object. The model and key come from the current scope."""
     access = current_model_access(purpose)
     started = time.monotonic()
     observer = _OBSERVER.get()
     try:
-        result = await _run(access, purpose=purpose, instructions=instructions, prompt=prompt, images=images, schema=schema, max_tokens=max_tokens, timeout=timeout)
+        result = await _run(access, purpose=purpose, instructions=instructions, prompt=prompt, images=images, schema=schema, max_tokens=max_tokens, timeout=timeout, reasoning_effort=reasoning_effort)
     except BaseException as exc:
         if observer is not None:
             observer(task, None, time.monotonic() - started)

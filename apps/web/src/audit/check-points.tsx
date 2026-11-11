@@ -288,7 +288,9 @@ function ClauseCheckPoints({number, ruleVersionId, clauseId, prepare, onState}: 
       if (stillShown(origin)) setError(message(cause))
     } finally {finish()}
   }
-  const points = candidate ? checkPointLines(candidate.cnl_text, (candidate.obligations as {id?: unknown}[]).flatMap(item => typeof item?.id === 'string' ? [item.id] : [])) : []
+  const lines = candidate ? checkPointLines(candidate.cnl_text, (candidate.obligations as {id?: unknown}[]).flatMap(item => typeof item?.id === 'string' ? [item.id] : [])) : []
+  // Ambiguities the original leaves open are listed apart from the points; nothing resolves them for the person.
+  const points = lines.filter(line => !line.startsWith('待澄清：')), review = lines.filter(line => line.startsWith('待澄清：')).map(line => line.slice('待澄清：'.length))
   const clauseText = detail?.clause_text ?? ''
   const numberLabel = String(number).padStart(2, '0')
   if (confirmed && !reopened && !waiting && !error) return <article aria-label={`条款 ${clauseId}`} className="flex flex-wrap items-start gap-x-4 gap-y-2 rounded-lg border bg-muted/30 px-4 py-4 sm:px-5">
@@ -319,6 +321,7 @@ function ClauseCheckPoints({number, ruleVersionId, clauseId, prepare, onState}: 
     {candidate && !waiting && !question && <div className="space-y-3">
       <h3 className="text-sm font-medium">检查要点</h3>
       <ol className="space-y-2.5">{points.map((point, index) => <li key={index} className="grid grid-cols-[1.5rem_minmax(0,1fr)] gap-2 leading-relaxed"><span className="pt-1 text-xs tabular-nums text-muted-foreground">{index + 1}.</span><span className="break-words">{point}</span></li>)}</ol>
+      {review.length > 0 && <div className="space-y-1.5 rounded-md border border-warning/30 bg-warning/5 px-3 py-2.5 text-sm"><p className="font-medium text-warning">原文待澄清</p><ul className="list-disc space-y-1 pl-5">{review.map((item, index) => <li key={index} className="break-words">{item}</li>)}</ul></div>}
       {incomplete && <p role="status" className="text-sm text-muted-foreground">这条还不完整，请说明需要怎样修改。</p>}
     </div>}
     {question && !waiting && <fieldset className="space-y-3"><legend className="mb-3 font-medium">{question.reason}</legend>

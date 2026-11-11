@@ -7,7 +7,7 @@ import json
 import documents.ai
 from documents.ai import AIError
 from documents.model_access import ModelUnavailable
-from product.formalization.propose import generation_prompts
+from product.formalization.text import prior_points, text_prompts
 from product.store.formalizations import FormalizationStore, source_binding
 
 
@@ -30,17 +30,10 @@ def process_rule_formalization(store, claimed, ident: str, *, ai=None) -> dict:
         if not formalizations.allows(str(row["tenant_id"]), str(row["initiating_user_id"])):
             formalizations.finish(claimed, ident, error_code="access_denied")
             return {"state": "failed", "failure": "access_denied"}
-        system, user = generation_prompts(
-            clause_text=clause.get("rule_to_check") or "",
-            source_rule_version_id=str(row["rule_version_id"]),
-            clause_id=row["clause_id"],
-            scope={"customers": (rule.get("body") or {}).get("customers") or [], "parts": (rule.get("body") or {}).get("parts") or []},
-            prior=formalizations.parent_snapshot(row),
-            clarification=row["clarification"] or None,
-            instruction=row["user_instruction"],
-        )
+        system, user = text_prompts(clause_text=clause.get("rule_to_check") or "", prior_points=prior_points(formalizations.parent_snapshot(row)), instruction=row["user_instruction"])
         with audit_lease(store, claimed, ident):
-            completed = (ai or documents.ai.run_json)("rule_formalization", instructions=system, prompt=user, max_tokens=4000)
+            # Tidying text needs little reasoning; the default effort spent minutes per clause.
+            completed = (ai or documents.ai.run_json)("rule_formalization", instructions=system, prompt=user, max_tokens=4000, reasoning_effort="low", timeout=180)
         # The store validates the reading strictly; it receives the model's JSON as text.
         raw = json.dumps(completed.output, ensure_ascii=False) if completed.output else ""
         usage = completed.usage()

@@ -84,6 +84,7 @@ from product.rules import (
     BACKGROUND_JOB_KINDS,
     BACKGROUND_JOBS_PER_TENANT,
     FILE_PREPARATION_KINDS,
+    PARALLEL_FORMALIZATIONS,
     customer_scope,
     document_type_aliases,
     latest_rule_versions,
@@ -3913,7 +3914,7 @@ class AuthStore:
                         kind = ANY(%s) AND (
                             SELECT count(*) FROM engine.jobs busy
                             WHERE busy.tenant_id = j.tenant_id AND busy.kind = j.kind AND busy.status = 'leased' AND busy.lease_until > now()
-                        ) >= %s
+                        ) >= CASE j.kind WHEN 'rule_formalization' THEN %s ELSE %s END
                     )
                     ORDER BY kind = ANY(%s), created_at
                     FOR UPDATE SKIP LOCKED
@@ -3923,6 +3924,7 @@ class AuthStore:
                         ["feishu_notification", "task_confirmation"],
                         [*FILE_PREPARATION_KINDS, "checker_optimization", "rule_formalization"],
                         list(BACKGROUND_JOB_KINDS),
+                        PARALLEL_FORMALIZATIONS,
                         BACKGROUND_JOBS_PER_TENANT,
                         list(BACKGROUND_JOB_KINDS),
                     ),

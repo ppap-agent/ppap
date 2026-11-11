@@ -14,8 +14,8 @@ from documents.model_access import ModelUnavailable
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from product.formalization.propose import accept_model_proposal, hold_if_undecided
 from product.formalization.spec import FormalizationError
+from product.formalization.text import accept_text_points
 
 
 def _id(value: str) -> str:
@@ -349,14 +349,14 @@ class FormalizationStore:
             return None
         with self.store._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
-                """SELECT owl_content, clif_content, formal_digest FROM product.rule_formalizations
+                """SELECT formal_profile, obligations, owl_content, clif_content, formal_digest FROM product.rule_formalizations
                    WHERE id=%s AND tenant_id=%s AND rule_version_id=%s AND clause_id=%s""",
                 (row["based_on_candidate_id"], row["tenant_id"], row["rule_version_id"], row["clause_id"]),
             )
             found = cur.fetchone()
         if found is None:
             return None
-        return {"owl_content": found["owl_content"], "clif_content": found["clif_content"], "formal_digest": found["formal_digest"]}
+        return dict(found)
 
     def dispatch(self, claimed, worker_ident: str) -> dict | None:
         with self.store._conn() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
@@ -397,29 +397,7 @@ class FormalizationStore:
                     clause, digest = source_binding(rule, row["clause_id"])
                     if digest != row["source_rule_digest"]:
                         raise FormalizationError("source_changed")
-                    checked = accept_model_proposal(
-                        raw,
-                        source_rule_version_id=str(row["rule_version_id"]),
-                        clause_id=row["clause_id"],
-                        clause_text=clause.get("rule_to_check") or "",
-                        clarification=row.get("clarification") if isinstance(row.get("clarification"), dict) else None,
-                        instruction=row.get("user_instruction") if isinstance(row.get("user_instruction"), str) else None,
-                    )
-                    prior_unresolved = None
-                    clarification = row.get("clarification") or {}
-                    if isinstance(clarification, dict) and clarification.get("choice_id") == "undecided" and row.get("based_on_candidate_id"):
-                        cur.execute(
-                            "SELECT unresolved FROM product.rule_formalizations WHERE id=%s AND tenant_id=%s AND rule_version_id=%s AND clause_id=%s",
-                            (row["based_on_candidate_id"], row["tenant_id"], row["rule_version_id"], row["clause_id"]),
-                        )
-                        prior = cur.fetchone()
-                        prior_unresolved = prior["unresolved"] if prior else None
-                    checked = hold_if_undecided(
-                        checked,
-                        clarification,
-                        clause_text=clause.get("rule_to_check") or "",
-                        prior_unresolved=prior_unresolved,
-                    )
+                    checked = accept_text_points(raw, source_rule_version_id=str(row["rule_version_id"]), clause_id=row["clause_id"], clause_text=clause.get("rule_to_check") or "")
                     candidate_id = self._insert_candidate(cur, row, checked, digest)
                     state, failure = "completed", None
                 except FormalizationError as exc:

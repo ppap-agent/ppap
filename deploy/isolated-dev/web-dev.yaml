@@ -7,7 +7,7 @@ services:
       - ../../apps/web:/web
       - web-dev-modules:/web/node_modules
     environment:
-      PPAP_PUBLIC_API_URL: http://127.0.0.1:8080
+      PPAP_PUBLIC_API_URL: http://api:8080
       PPAP_VITE_DOCKER: "1"
       COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
     command:

@@ -289,7 +289,19 @@ def run() -> None:
     ident = worker_id(settings.worker_id)
     started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     store = build_product_store(settings, role="worker")
+    # Check points for one rule are short, independent model calls; they run side by side
+    # while every other job keeps this loop's one-at-a-time order.
+    from concurrent.futures import ThreadPoolExecutor
+
+    from product.rules import PARALLEL_FORMALIZATIONS
+
+    side = ThreadPoolExecutor(max_workers=PARALLEL_FORMALIZATIONS, thread_name_prefix="ppap-formalization")
+    running: set = set()
     while not STOP:
+        running = {future for future in running if not future.done()}
+        if len(running) >= PARALLEL_FORMALIZATIONS:
+            time.sleep(0.2)
+            continue
         try:
             with connect(settings, "worker") as conn:
                 conn.execute(
@@ -305,10 +317,14 @@ def run() -> None:
         except Exception:
             time.sleep(2)
             continue
+        if claimed and claimed.kind == "rule_formalization":
+            running.add(side.submit(process_claimed, store, claimed, ident))
+            continue
         if claimed:
             process_claimed(store, claimed, ident)
             continue
         time.sleep(1)
+    side.shutdown(wait=True)
 
 
 if __name__ == "__main__":

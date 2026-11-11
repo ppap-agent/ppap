@@ -23,6 +23,8 @@ FORMAL_DIGEST_KEYS = (
 )
 
 CNL_RENDERER_VERSION = "cnl-zh-1"
+# Check points written as the clause text tidied, with no OWL to render from.
+TEXT_RENDERER_VERSION = "rule-text-v1"
 
 
 def _canonical(payload: dict) -> str:
