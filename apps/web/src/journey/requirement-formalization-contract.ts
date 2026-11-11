@@ -17,7 +17,7 @@ export function canRequestFormalization(state: string, operationState?: string):
 
 export function formalizationFailure(code?: string | null): string {
   const message = code && code !== 'source_changed' ? knownRequestMessage(code) : undefined
-  return message ?? '暂时没能整理出检查要点。'
+  return message ?? '这条没整理出来。'
 }
 
 /**

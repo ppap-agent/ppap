@@ -46,8 +46,8 @@ export function ProgramStatus({suiteKey, offered, onUpdate, related, extra, onCh
     })().catch(cause => {if (!controller.signal.aborted) setReadError(message(cause))})
     return () => controller.abort()
   }, [suiteKey, offered, attempt])
-  if (readError) return <StatusCard badge="暂时读不到" title="检查程序的状态暂时不能读取" action={<Button variant="outline" onClick={() => setAttempt(value => value + 1)}>重新读取</Button>}>{readError}</StatusCard>
-  if (!active) return <StatusCard badge="正在读取" title="正在读取检查程序…"/>
+  if (readError) return <StatusCard badge="暂时读不到" title="检查程序的状态没读到" action={<Button variant="outline" onClick={() => setAttempt(value => value + 1)}>重新读取</Button>}>{readError}</StatusCard>
+  if (!active) return <StatusCard badge="正在读取" title="正在读取…"/>
   const verified = offer?.validation.verified === true
   const waiting = offer?.unadopted_related_suite_keys ?? []
   const inUse = Boolean(active.current_revision_id)
@@ -67,9 +67,9 @@ export function ProgramStatus({suiteKey, offered, onUpdate, related, extra, onCh
       if (status && status < 500) {
         pending.current = null
         const code = (cause as {code?: string}).code
-        setError(code === 'suite_dependencies_not_adopted' ? '需要先采用它读取的其他检查程序。' : code === 'suite_head_conflict' ? '版本刚被其他人更改，已重新读取。' : message(cause))
+        setError(code === 'suite_dependencies_not_adopted' ? '要先采用它依赖的其他规则的检查程序。' : code === 'suite_head_conflict' ? '有人刚改过版本，已刷新。' : message(cause))
         setAttempt(value => value + 1)
-      } else setError('采用结果尚未确定。请稍后再点一次，系统会读取同一次操作，不会重复采用。')
+      } else setError('还不知道是否采用成功。稍后再点一次，不会重复采用。')
     } finally {setBusy(false)}
   }
   const changed = Boolean(onUpdate && active.rule_update)
@@ -80,17 +80,17 @@ export function ProgramStatus({suiteKey, offered, onUpdate, related, extra, onCh
     <StatusCard
       badge={inUse ? '可用于审核' : '还不能用于审核'}
       tone={inUse ? 'success' : 'outline'}
-      title={inUse ? `第 ${active.version} 版 · ${active.verification_status === 'verified' ? '已验证' : '未经验证'}` : '尚未采用检查程序'}
+      title={inUse ? `第 ${active.version} 版 · ${active.verification_status === 'verified' ? '已验证' : '未验证'}` : '还没采用'}
       action={action}
     >
-      {!inUse && <p>采用后，本企业之后的审核才会使用它。</p>}
+      {!inUse && <p>采用后，之后的审核才会用它。</p>}
       {changed && <p>规则已改，检查程序还按上一版规则检查。</p>}
-      {offer && <p className="flex flex-wrap items-center gap-2 text-foreground">{inUse ? '有新版本：' : '可采用：'}第 {offer.version} 版<Badge shape="square" variant={verified ? 'success' : 'outline'}>{verified ? '已验证' : '未经验证'}</Badge></p>}
-      {offer && waiting.length > 0 && <div className="space-y-2"><p>这个版本还会读取其他规则的检查程序，请先采用它们：</p><div className="flex flex-wrap gap-2">{waiting.map(key => {
+      {offer && <p className="flex flex-wrap items-center gap-2 text-foreground">{inUse ? '有新版本：' : '可以采用：'}第 {offer.version} 版<Badge shape="square" variant={verified ? 'success' : 'outline'}>{verified ? '已验证' : '未验证'}</Badge></p>}
+      {offer && waiting.length > 0 && <div className="space-y-2"><p>这个版本依赖下面这些规则的检查程序，先采用它们：</p><div className="flex flex-wrap gap-2">{waiting.map(key => {
         const target = related?.(key)
         return target ? <Button key={key} variant="outline" size="sm" onClick={target.open}>{target.label}</Button> : <span key={key}>{key}</span>
       })}</div></div>}
-      {inUse && !offer && !changed && onUpdate && <p>审核结果判错时，在结果里标出正确答案即可修复；要改某条检查什么，点“更新检查程序”。</p>}
+      {inUse && !offer && !changed && onUpdate && <p>判错了？在审核结果里标出正确答案。要改检查方式，点“更新检查程序”。</p>}
       {extra}
       {error && !confirming && <p role="alert" className="text-destructive">{error}</p>}
     </StatusCard>
@@ -98,7 +98,7 @@ export function ProgramStatus({suiteKey, offered, onUpdate, related, extra, onCh
       <DialogContent>
         <DialogHeader>
           <DialogTitle>采用第 {offer?.version} 版？</DialogTitle>
-          <DialogDescription>之后的新审核会使用这个版本，已有的审核结果不变。{verified ? '' : '这个版本还没有用人工确认的样本验证过，审核结果需要人工确认。'}</DialogDescription>
+          <DialogDescription>之后的审核会用这个版本，已有结果不变。{verified ? '' : '它还没验证过，结果要人工确认。'}</DialogDescription>
         </DialogHeader>
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
         <div className="flex justify-end gap-2"><Button variant="outline" disabled={busy} onClick={() => setConfirming(false)}>取消</Button><Button disabled={busy} onClick={() => void adopt()}>采用</Button></div>

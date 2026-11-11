@@ -27,9 +27,9 @@ test('stopped check points can be prepared again after a candidate exists', () =
   assert.equal(canRequestFormalization('candidate', 'completed'), false)
   assert.equal(canRequestFormalization('needs_clarification', 'unknown'), false)
   assert.equal(formalizationFailure('model_unavailable'), '服务暂时不可用，请稍后重试；如持续出现，请联系管理员。')
-  assert.equal(formalizationFailure('source_unchecked'), '原文出处未核对。请先在规则页核对出处，再确认。')
-  assert.equal(formalizationFailure('formalization_failed'), '暂时没能整理出检查要点。')
-  assert.equal(formalizationFailure('source_changed'), '暂时没能整理出检查要点。')
+  assert.equal(formalizationFailure('source_unchecked'), '这条的出处还没核对。先在规则页核对出处。')
+  assert.equal(formalizationFailure('formalization_failed'), '这条没整理出来。')
+  assert.equal(formalizationFailure('source_changed'), '这条没整理出来。')
 })
 
 test('a clarification choice does not carry to the next candidate', () => {

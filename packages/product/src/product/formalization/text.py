@@ -29,9 +29,14 @@ DELIVERY IN THIS SYSTEM
 - The ORIGINAL PROMPT is `clause_text` in the user message: one audit rule clause.
 - `prior_points` and `instruction`, when present, are a previous rewrite and a reviewer's wording request; they never change the meaning of `clause_text`.
 - Write in the language of `clause_text`. Keep its field names, table and column names, quoted terms, numbers, units and verdict words (such as 通过, 不通过, PASS, NG) exactly as written.
-- Return only one JSON object: {"points": [...], "review": [...]}.
+- Return only one JSON object: {"points": [...], "review": [...], "suggested_clause": "..."}.
   - points: the OPTIMIZED PROMPT, one line per item, in order. Put the section name in 【】 at the start of a line instead of a separate header line. No numbering.
-  - review: the SEMANTIC REVIEW, one string per issue covering Source, Issue, Impact and Clarification; [] when there is none.
+  - review: the SEMANTIC REVIEW for a quality engineer, one string per issue: a single short question in the clause's language
+    that the engineer can answer, naming the situation the original leaves open (for example "“过程流程图”表不存在时，判通过还是不通过？").
+    No labels such as Source, Issue, Impact or Clarification. [] when there is none.
+  - suggested_clause: when review is not empty, `clause_text` revised as little as possible so that every reviewed issue is settled
+    by its Clarification, in the clause's own language and style, every other word unchanged. It is a proposal for a person to adopt
+    or reject; it never enters points. "" when review is empty.
 """
 SYSTEM_PROMPT = OPTIMIZER_PROMPT.rstrip() + "\n" + DELIVERY
 
@@ -76,6 +81,10 @@ def accept_text_points(raw: str, *, source_rule_version_id: str, clause_id: str,
     review = [" ".join(item.split()) for item in review if item.strip()]
     if any(len(item) > MAX_POINT for item in review):
         raise FormalizationError("invalid_formalization", "待澄清项过长")
+    suggestion = payload.get("suggested_clause") or ""
+    if not isinstance(suggestion, str) or len(suggestion) > MAX_TEXT:
+        raise FormalizationError("invalid_formalization", "建议的条款写法格式不对")
+    suggestion = suggestion.strip() if review else ""
     spec = {
         "format_version": "1",
         "formal_profile": TEXT_PROFILE,
@@ -87,7 +96,11 @@ def accept_text_points(raw: str, *, source_rule_version_id: str, clause_id: str,
         "obligations": [{"id": f"p{index}", "text": item} for index, item in enumerate(points, start=1)],
         "unresolved": [],
         # Ambiguities the original leaves open; they are shown, bound with the points, and never resolved here.
-        "assumptions": [{"id": f"r{index}", "text": item} for index, item in enumerate(review, start=1)],
+        # A suggested rewording changes the rule, so it is kept beside the points for a person to adopt as a new version.
+        "assumptions": [
+            *({"id": f"r{index}", "text": item} for index, item in enumerate(review, start=1)),
+            *([{"id": "suggestion", "kind": "suggested_clause", "text": suggestion}] if suggestion and suggestion != clause_text.strip() else []),
+        ],
     }
     formal = formal_digest(spec)
     cnl = "\n".join([*points, *(REVIEW_PREFIX + item for item in review)])

@@ -29,7 +29,7 @@ test('formalization conflicts explain the next read instead of a raw error code'
     ['source_changed', 409, '原文或范围已变化。请重新读取当前候选。'],
     ['conflicting_confirmation', 409, '这条检查要点已被其他人确认。请重新读取。'],
     ['not_confirmable', 409, '这条检查要点还不完整，不能确认。'],
-    ['source_unchecked', 409, '原文出处未核对。请先在规则页核对出处，再确认。'],
+    ['source_unchecked', 409, '这条的出处还没核对。先在规则页核对出处。'],
     ['model_unavailable', 503, '服务暂时不可用，请稍后重试；如持续出现，请联系管理员。'],
     ['model_consumption_refused', 422, '暂时无法处理，请稍后重试。'],
   ] as const
