@@ -23,6 +23,7 @@ from cryptography.fernet import Fernet
 from product import build_product_store
 from product.identity import SESSION_COOKIE
 from product.settings import Settings
+from product.store.model_credentials import TenantModelStore
 from psycopg.types.json import Jsonb
 from pydantic import SecretStr
 from worker import process_claimed
@@ -129,12 +130,16 @@ class ScriptedFormalizer:
         self.calls = 0
         self.fail_next = False
 
-    def structured_completion(self, **kwargs) -> str:
+    def __call__(self, task, **kwargs):
+        from documents.ai import AIError, AIResult
+
         if self.fail_next:
             self.fail_next = False
-            raise TimeoutError("formalization outcome unknown")
+            raise AIError("timeout")
         self.calls += 1
-        prompt = kwargs.get("user_prompt") or ""
+        return AIResult(json.loads(self._answer(kwargs.get("prompt") or "")))
+
+    def _answer(self, prompt: str) -> str:
         payload = json.loads(prompt[prompt.index("{") :])
         clause_id = payload["clause_id"]
         choice = (payload.get("clarification") or {}).get("choice_id")
@@ -168,7 +173,8 @@ def formalization_browser(auth_store_factory, tmp_path, request):
     )
     admin = auth_store_factory(settings)
     alice = admin.upsert_feishu_identity("formalization-browser", "alice", "Alice")
-    admin.put_personal_model_config(alice, SecretStr("test-only-no-provider-called"), base_url="https://models.example.test", model="test-model")
+    models = TenantModelStore(admin)
+    models.put(alice.tenant_id, models.candidate(alice.tenant_id, SecretStr("test-only-no-provider-called"), base_url="https://models.example.test", text_model="test-model"), operator="test")
     rule_id, file_id, version_id = str(uuid4()), str(uuid4()), str(uuid4())
     rules = [
         ("c1", "文档要有编号", True),
@@ -402,7 +408,7 @@ def test_saved_clause_confirms_against_the_real_api(formalization_browser):
         confirm = section.get_by_role("button", name="确认这一理解", exact=True)
         expect(confirm).to_be_enabled()
         expect(confirm).to_have_attribute("aria-describedby", "formal-reason-c1")
-        expect(section.locator("#formal-reason-c1")).to_contain_text("这还不是检查功能已验证")
+        expect(section.locator("#formal-reason-c1")).to_contain_text("请核对这段理解，无误后确认。")
         other = page.get_by_role("region", name="系统是这样理解的 c2", exact=True)
         other.get_by_role("button", name="让系统解释这条规则", exact=True).click()
         expect(other).to_contain_text("先按键再对名称")
@@ -473,8 +479,9 @@ def test_saved_clause_confirms_against_the_real_api(formalization_browser):
             )
         page.reload()
         verified = page.get_by_role("region", name="系统是这样理解的 c1", exact=True)
-        expect(verified).to_contain_text("检查功能已验证，可用于审核。")
-        expect(verified).not_to_contain_text("检查功能仍需单独验证后才能用于审核。")
+        # The checker status is said once for the rule, not inside each clause.
+        expect(page.get_by_role("status").filter(has_text="检查功能已验证，可用于审核。")).to_have_count(1)
+        expect(page.get_by_text("检查功能仍需单独验证后才能用于审核。")).to_have_count(0)
         expect(verified).to_contain_text("已确认。这只确认规则含义，检查还需单独验证。")
         with page.expect_response(lambda response: response.request.method == "POST" and response.url.endswith("/formalization-suite-candidates")) as handed:
             page.get_by_role("button", name="用于检查优化", exact=True).click()
@@ -482,8 +489,8 @@ def test_saved_clause_confirms_against_the_real_api(formalization_browser):
         saved = handed.value.json()
         assert saved["validation"]["status"] == "unverified"
         assert saved["validation"]["verified"] is False
-        expect(page.get_by_text("已生成待验证的检查候选。尚未发布，也不会开始审核。")).to_be_visible()
-        expect(page.get_by_text("原文没有变化。已确认的含义已变化，检查需要重新验证。")).to_be_visible()
+        expect(page.get_by_text("已生成新的检查草稿，尚未发布，也不会开始审核。")).to_be_visible()
+        expect(page.get_by_text("已确认的含义变了，检查需要重新验证。")).to_be_visible()
         with f.store._conn() as conn:
             heads = conn.execute(
                 "SELECT count(*) FROM product.tenant_suite_heads WHERE tenant_id=%s AND suite_key=%s",
@@ -558,12 +565,13 @@ def test_saved_clause_confirms_against_the_real_api(formalization_browser):
         expect(page.get_by_role("region", name="系统是这样理解的 c3", exact=True)).to_contain_text("生成结果尚未确定。请点“刷新解释进度”，不要重复生成。")
         assert len(generations) == posts
         assert f.script.calls == 7
-        removed = httpx.delete(f"{f.api}/me/model-config", cookies={SESSION_COOKIE: f.session}, timeout=10)
-        assert removed.status_code == 200, removed.text
+        from product.store.model_credentials import TenantModelStore
+
+        TenantModelStore(f.store).delete(f.tenant_id)
         page.reload()
         plain = page.get_by_role("region", name="系统是这样理解的 c4", exact=True)
         plain.get_by_role("button", name="让系统解释这条规则", exact=True).click()
-        expect(plain).to_contain_text("个人模型还不可用。请先配置模型，然后再解释。")
+        expect(plain).to_contain_text("模型服务暂不可用，本次没有调用模型。请稍后重试；如持续出现，请联系管理员。")
         assert f.script.calls == 7
         assert len(generations) == 8
         page.set_viewport_size({"width": 320, "height": 720})

@@ -29,6 +29,7 @@ import httpx
 import pytest
 import uvicorn
 from agent.core_program import CoreRuntime
+from agent.execution.guest_model import ModelGrant
 from agent.run import Controller, UnixControllerServer
 from agent.source import authorize_execution, object_file_source
 from api import create_app
@@ -95,14 +96,24 @@ class LocalObjects:
         self.path(key).unlink(missing_ok=True)
 
 
+def put_tenant_key(store, principal):
+    from product.store.model_credentials import TenantModelStore
+
+    models = TenantModelStore(store)
+    key = SecretStr("synthetic-workspace-key-never-sent-to-provider")
+    models.put(principal.tenant_id, models.candidate(principal.tenant_id, key, base_url="https://models.example.test", text_model="test-model"), operator="test")
+
+
 class DeterministicMetadata:
     """The model metadata boundary only; extraction, matching and receipts stay real."""
 
-    def structured_completion(self, *, operation, **kwargs):
+    def __call__(self, operation, **kwargs):
+        from documents.ai import AIResult
+
         if operation == "document_metadata_extraction":
-            return json.dumps({"customer": "测试客户", "part_number": "P-1"})
+            return AIResult({"customer": "测试客户", "part_number": "P-1"})
         if operation == "document_classification":
-            return "控制计划"
+            return AIResult({"document_type": "控制计划"})
         raise AssertionError("Unexpected model capability in a native XLSX journey")
 
 
@@ -140,11 +151,10 @@ class NativeGuest:
             (grants / "model.json").write_text(
                 json.dumps(
                     {
-                        **self.model_identity,
+                        **ModelGrant.fields_for(self.model_identity),
                         "base_url": "http://127.0.0.1:1/v1",
                         "token": "synthetic-unused-workspace-grant-1234567890",
                         "wall_seconds": 60,
-                        "max_turns": 1,
                     }
                 )
             )
@@ -179,6 +189,21 @@ def workbook(value, index):
 
 @pytest.fixture
 def workspace_product(auth_store_factory, tmp_path, request, monkeypatch):
+    # Only a tenant key set by the journey may serve a model.
+    for name in (
+        "LLM_API_KEY",
+        "LLM_BASE_URL",
+        "LLM_MODEL",
+        "OPENAI_API_KEY",
+        "OCR_OPENAI_API_KEY",
+        "OCR_OPENAI_BASE_URL",
+        "OCR_MODEL_NAME",
+        "PPAP_DEEP_LLM_API_KEY",
+        "PPAP_DEEP_LLM_BASE_URL",
+        "PPAP_DEEP_LLM_MODEL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr("documents.model_access.ISOLATED_DEV_LLM_BASE_URL", "")
     if os.environ.get("CI") and any(os.environ.get(name) == "1" for name in ("PPAP_CHECKER_BROWSER_LOCAL_OBJECTS", "PPAP_CHECKER_BROWSER_LOCAL_TRANSPORT")):
         pytest.fail("Local workspace substitutes must not replace the CI S3/UDS boundaries")
     objects = LocalObjects(tmp_path / "objects") if os.environ.get("PPAP_CHECKER_BROWSER_LOCAL_OBJECTS") == "1" else request.getfixturevalue("v4_objects")
@@ -459,15 +484,11 @@ def test_feedback_optimize_verify_publish_reaudit_and_rollback(workspace_product
             expect(page.get_by_role("heading", name="已保存，尚未验证", exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="发布此修改", exact=True)).to_be_enabled()
             assert f.guest.adaptations == 0
+            # The operator set the tenant's own key; the customer only consents.
+            put_tenant_key(f.admin, f.alice)
             page.get_by_role("button", name="让 AI 修复并验证", exact=True).click()
-            expect(page.get_by_text("尚未配置。识别文件、深度分析和让 AI 修复检查时需要。", exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="确认开始修复", exact=True)).to_be_disabled()
-            page.get_by_label("服务地址", exact=True).fill("https://models.example.test")
-            page.get_by_label("模型名称", exact=True).fill("test-model")
-            page.get_by_label("API Key", exact=True).fill("synthetic-workspace-key-never-sent-to-provider")
-            page.get_by_role("button", name="保存", exact=True).click()
-            expect(page.get_by_role("region", name="我的模型配置", exact=True).get_by_text("已配置", exact=True)).to_be_visible()
-            consent = page.get_by_label("同意将本次资料发送至 https://models.example.test，使用 test-model 修复并验证这 4 条反馈", exact=True)
+            consent = page.get_by_label("同意由 AI 修复并验证这 4 条反馈", exact=True)
             consent.check()
             f.pause.set()
             assert f.paused.wait(5), "Worker did not pause before admission"
@@ -640,11 +661,9 @@ def test_workspace_http_receipts_use_real_trials_and_frozen_reaudit(workspace_pr
             path = f.web + f"/api/suite-revisions/{saved['candidate_revision_id']}/optimizations"
             command = {"operation_id": str(uuid4()), "feedback_ids": [row["id"] for row in feedback], "action": "run_tests", "consume_model": True}
             missing_key = request.post(path, data=command)
-            assert missing_key.status == 409 and missing_key.json() == {"error": "personal_model_unavailable"}
+            assert missing_key.status == 409 and missing_key.json() == {"error": "model_unavailable"}
             assert f.guest.adaptations == 0 and "checker_optimization" not in f.jobs
-            response_json(
-                request.put(f.web + "/api/me/model-config", data={"api_key": "synthetic-workspace-key-never-sent-to-provider", "base_url": "https://models.example.test", "model": "test-model"})
-            )
+            put_tenant_key(f.admin, f.alice)
             f.pause.set()
             assert f.paused.wait(5), "Worker did not pause before admission"
             accepted = response_json(request.post(path, data=command))
@@ -764,7 +783,6 @@ def test_workspace_http_receipts_use_real_trials_and_frozen_reaudit(workspace_pr
             try:
                 assert stranger.get(f.web + "/api/checker-optimizations/" + command["operation_id"]).status == 404
                 assert stranger.get(f.web + "/api/rounds/" + original["id"]).status == 403
-                assert not response_json(stranger.get(f.web + "/api/me/model-config"))["configured"]
             finally:
                 stranger.dispose()
         finally:
@@ -1292,9 +1310,7 @@ def test_directory_revision_selection_pi_and_rollback_keep_exact_frozen_sources(
                 assert conn.execute("SELECT count(*) FROM product.audit_rounds WHERE tenant_id=%s", (f.alice.tenant_id,)).fetchone()[0] == round_count
             assert len(f.guest.jobs) == guest_jobs
 
-            response_json(
-                request.put(f.web + "/api/me/model-config", data={"api_key": "synthetic-workspace-key-never-sent-to-provider", "base_url": "https://models.example.test", "model": "test-model"})
-            )
+            put_tenant_key(f.admin, f.alice)
             operation = {"operation_id": str(uuid4()), "feedback_ids": [row["id"] for row in feedback], "action": "run_tests", "consume_model": True}
             optimize = f.web + f"/api/suite-revisions/{revisions['v5']}/optimizations"
             missing_operation = {**operation, "operation_id": str(uuid4())}
