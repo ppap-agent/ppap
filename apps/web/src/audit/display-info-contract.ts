@@ -8,9 +8,9 @@ export type DisplayRequest = components['schemas']['AuditFileDisplayRequest']
 export type DisplayReceipt = components['schemas']['AuditFileDisplayReceipt']
 type Task = components['schemas']['AuditTask']
 type File = components['schemas']['AuditTaskFile']
-export const displayFields = [['customer', '客户'], ['model', '车型'], ['part_number', '零件号'], ['part', '零件名称']] as const
+export const displayFields = [['project', '项目名称'], ['customer', '客户'], ['model', '车型'], ['part_number', '零件号'], ['part', '零件名称']] as const
 export function validDisplayInfo(info: DisplayInfo | null | undefined): info is DisplayInfo {
-  return Boolean(info && Number.isSafeInteger(info.revision) && info.revision >= 0 && info.values && Object.keys(info.values).length === 4 && displayFields.every(([key]) => info.values[key] === null || typeof info.values[key] === 'string'))
+  return Boolean(info && Number.isSafeInteger(info.revision) && info.revision >= 0 && info.values && Object.keys(info.values).length === displayFields.length && displayFields.every(([key]) => info.values[key] === null || typeof info.values[key] === 'string'))
 }
 export function unconfirmedDisplayAccess(access: File['display_edit_access'], reason: string): NonNullable<File['display_edit_access']> {
   return access?.state === 'denied' || access?.state === 'deleted' ? access : {state: 'unknown', reason}
@@ -32,5 +32,5 @@ export function reconcileTaskDisplay(previous: Task | null | undefined, next: Ta
 export function fileDisplayValues(file: Partial<Pick<File, 'display_info' | 'match'>>): DisplayValues {
   if (validDisplayInfo(file.display_info)) return file.display_info.values
   const metadata = file.match?.metadata
-  return {customer: metadata?.customer ?? null, model: metadata?.model ?? null, part_number: metadata?.part_number ?? null, part: metadata?.part ?? null}
+  return {customer: metadata?.customer ?? null, model: metadata?.model ?? null, project: metadata?.project ?? null, part_number: metadata?.part_number ?? null, part: metadata?.part ?? null}
 }

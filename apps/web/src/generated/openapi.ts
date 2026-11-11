@@ -2539,6 +2539,8 @@ export interface components {
         /**
          * AuditFileDisplayValues
          * @description Complete display snapshot; null clears a value, part is the part name.
+         *
+         *     Receipts saved before ``project`` existed have no such key.
          */
         AuditFileDisplayValues: {
             /** Customer */
@@ -2549,6 +2551,8 @@ export interface components {
             part: string | null;
             /** Part Number */
             part_number: string | null;
+            /** Project */
+            project?: string | null;
         };
         /** AuditFileReport */
         AuditFileReport: {
@@ -4510,6 +4514,8 @@ export interface components {
             part: string | null;
             /** Part Number */
             part_number?: string | null;
+            /** Project */
+            project?: string | null;
         };
         /** OfficePreviewResponse */
         OfficePreviewResponse: {
@@ -5338,6 +5344,7 @@ export interface components {
             scope?: components["schemas"]["SemanticScope"];
             /** Sources */
             sources: components["schemas"]["SemanticSource"][];
+            supply?: components["schemas"]["SupplyNeed"];
             /** Verification Scope */
             verification_scope?: string;
         };
@@ -5659,6 +5666,25 @@ export interface components {
             verified: boolean;
             /** Write Revision */
             write_revision: number;
+        };
+        /**
+         * SupplyNeed
+         * @description Related original to supply (missing) or replace (source_mismatch).
+         */
+        SupplyNeed: {
+            /** Document */
+            document: string;
+            /** Found File Version Id */
+            found_file_version_id?: string;
+            /** Found Part Number */
+            found_part_number?: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "missing" | "source_mismatch";
+            /** Part Number */
+            part_number?: string;
         };
         /** UsageEvent */
         UsageEvent: {
@@ -7092,6 +7118,8 @@ export interface operations {
                     /**
                      * AuditFileDisplayValues
                      * @description Complete display snapshot; null clears a value, part is the part name.
+                     *
+                     *     Receipts saved before ``project`` existed have no such key.
                      */
                     values: {
                         /** Customer */
@@ -7102,6 +7130,8 @@ export interface operations {
                         part: string | null;
                         /** Part Number */
                         part_number: string | null;
+                        /** Project */
+                        project?: string | null;
                     };
                 } & {
                     [key: string]: unknown;

@@ -38,6 +38,22 @@ class UnknownFact(Exception):
 class MissingFact(Exception):
     """An observed complete structure lacks a required literal fact."""
 
+    def __init__(self, message, *, need=None):
+        super().__init__(message)
+        self.need = need
+
+
+class SourceMismatch(UnknownFact):
+    """The related original is present but identifies another part or version.
+
+    It cannot be compared, so the clause stays unknown; the result names the
+    file to replace instead of reporting a content defect or a missing file.
+    """
+
+    def __init__(self, message, *, need):
+        super().__init__(message)
+        self.need = need
+
 
 def key(value: Any) -> str:
     return "".join(unicodedata.normalize("NFKC", str(value or "")).split()).casefold().rstrip(":：")
@@ -521,7 +537,7 @@ class SourceAudit:
     def check(self, ith):
         self._evidence_sources = []
         completed = 0
-        questions, evaluation = [], None
+        questions, evaluation, supply = [], None, None
         try:
             if self.rule_checkers[ith] is None:
                 raise UnknownFact(self.resource.get("known_gaps", {}).get(self.clause_ids[ith], "此条款尚无可用的原件证据读取器，无法检查。"))
@@ -538,9 +554,11 @@ class SourceAudit:
         except UnknownFact as exc:
             status, message = "UNABLE", str(exc)
             questions, evaluation = exc.questions, exc.evaluation
+            supply = getattr(exc, "need", None)
         except MissingFact as exc:
             status, message = "NG", str(exc)
             completed = 1
+            supply = exc.need
         except GuardStop as exc:
             status, message = exc.status, exc.message
         except ModelUnavailable as exc:
@@ -572,6 +590,7 @@ class SourceAudit:
             checks_performed=completed,
             fact_questions=questions,
             fact_evaluation=evaluation,
+            supply=supply,
         )
 
     def visual_pdf(self, fields: dict[str, str], *, existential_fields=()):
@@ -667,7 +686,7 @@ class SourceAudit:
                 continue
             candidates[item.audit_id] = item
         if not candidates and not undetermined:
-            raise MissingFact("当前批次缺少所需关联原件（" + terms[0] + "），请补充后复审。")
+            raise MissingFact("当前批次缺少所需关联原件（" + terms[0] + "），请补充后复审。", need={"kind": "missing", "document": terms[0]})
         if len(candidates) != 1 or undetermined:
             raise UnknownFact("当前批次缺少唯一关联原件，需补充或确认候选，不能任取一份。")
         item = next(iter(candidates.values()))
@@ -678,28 +697,44 @@ class SourceAudit:
         project_required = self.resource["preset_key"] == "U04"
         own_project = self.native().field(project_aliases, required=project_required)
         peer_project = other.field(project_aliases, required=project_required)
+        part_aliases = ("零件号", "零件编号", "物料编号", "客户零件号", "part number")
+        left, right = self.native().field(part_aliases), other.field(part_aliases)
+
+        def mismatch(difference):
+            # Both identities were read from the originals and differ: the file
+            # must be replaced. This is neither a content defect nor a missing file.
+            def readable(value):
+                return str(value).strip()[:200] if pair_identity(key(value)) else None
+
+            need = {"kind": "source_mismatch", "document": terms[0], "part_number": readable(left), "found_part_number": readable(right), "found_file_version_id": item.audit_id}
+            return SourceMismatch(f"比对源《{terms[0]}》{difference}，该项无法比对，请换交与被审文件一致的{terms[0]}。", need=need)
+
         if (own_project or peer_project) and (not pair_identity(key(own_project)) or not pair_identity(key(peer_project)) or key(own_project) != key(peer_project)):
+            if pair_identity(key(own_project)) and pair_identity(key(peer_project)):
+                raise mismatch(f"项目 {peer_project} 与被审文件项目 {own_project} 不一致")
             raise UnknownFact("关联原件实际项目身份不一致或缺失，尚不能用于当前项目。")
         customer_aliases = ("客户名称", "客户", "customer")
         left_customer = self.audit_file.customer or self.native().field(customer_aliases)
         right_customer = item.customer or other.field(customer_aliases)
         if key(left_customer) != key(right_customer) or key(left_customer) not in {"uaes", "联合汽车电子", "联合汽车电子有限公司"}:
             raise UnknownFact("关联原件客户身份尚未确认一致。")
-        part_aliases = ("零件号", "零件编号", "物料编号", "客户零件号", "part number")
-        left, right = self.native().field(part_aliases), other.field(part_aliases)
         labels = {key(name) for name in (*part_aliases, "零件名称", "物料名称", "版本", "日期")}
         if not pair_identity(key(left)) or not pair_identity(key(right)):
             raise UnknownFact("关联原件零件号尚未确认，不能用占位值配对。")
         if key(left) in labels or key(right) in labels:
             raise UnknownFact("关联原件零件号值可能是相邻字段标签，需核对原件。")
         if key(left) != key(right):
-            raise UnknownFact("关联原件零件号不一致，不能用于当前零件核对。")
+            # Literal comparison only: no "looks like the same part" relaxation.
+            raise mismatch(f"零件号 {right} 与被审文件零件号 {left} 不一致")
         # Frozen version identity must also be known. Do not infer a revision
         # from upload order or borrow the current document's revision.
         revision_aliases = ("版本", "版次", "修订版次", "revision")
-        own_revision, peer_revision = key(self.native().field(revision_aliases)), key(other.field(revision_aliases))
-        if not pair_identity(own_revision) or not pair_identity(peer_revision) or own_revision != peer_revision:
+        own_raw, peer_raw = self.native().field(revision_aliases), other.field(revision_aliases)
+        own_revision, peer_revision = key(own_raw), key(peer_raw)
+        if not pair_identity(own_revision) or not pair_identity(peer_revision):
             raise UnknownFact("关联原件版本不一致，需确认适用版本。")
+        if own_revision != peer_revision:
+            raise mismatch(f"版本 {peer_raw} 与被审文件版本 {own_raw} 不一致")
         if require_name:
             part_name_aliases = ("零件名称", "物料名称", "part name")
             if key(self.native().field(part_name_aliases)) != key(other.field(part_name_aliases)):

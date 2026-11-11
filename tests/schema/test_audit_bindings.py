@@ -1590,7 +1590,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         files, task, worker = self.prepared_display_task()
         path = f"/audit-tasks/{task['id']}"
         before = self.store.get_round(task["round_id"])
-        values = {"customer": "更正客户", "model": None, "part_number": "P-2", "part": "更正零件"}
+        values = {"customer": "更正客户", "model": None, "project": "更正项目", "part_number": "P-2", "part": "更正零件"}
         command = {"request_id": str(uuid.uuid4()), "reference": {"task_id": task["id"], "round_id": task["round_id"], "file_version_id": files[0].id}, "expected_revision": 0, "values": values}
         response = self.display_client.post(path + "/display-info", json=command)
         self.assertEqual(response.status_code, 200, response.text)
@@ -1603,6 +1603,17 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(self.store.get_round(task["round_id"]), before)
         self.assertEqual(self.store.list_usage_events(self.alice), [])
         self.assertIsNone(worker.claim_job("no-display-job"))
+
+    def test_a_display_request_without_project_still_saves_and_reads_back_project_as_none(self):
+        files, task, _worker = self.prepared_display_task()
+        path = f"/audit-tasks/{task['id']}/display-info"
+        legacy = {"customer": "更正客户", "model": None, "part_number": None, "part": None}
+        command = {"request_id": str(uuid.uuid4()), "reference": {"task_id": task["id"], "round_id": task["round_id"], "file_version_id": files[0].id}, "expected_revision": 0, "values": legacy}
+        receipt = self.display_client.post(path, json=command).json()
+        self.assertEqual(receipt["request"], command)
+        self.assertEqual(receipt["info"], {"revision": 1, "values": {**legacy, "project": None}})
+        self.assertEqual(self.display_client.post(path, json=command).json(), receipt)
+        self.assertEqual(self.display_client.get(f"/audit-tasks/{task['id']}").json()["files"][0]["display_info"], receipt["info"])
 
     def test_display_cas_replay_and_conflicts_keep_the_original_receipt(self):
         files, task, _worker = self.prepared_display_task()
@@ -1722,7 +1733,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         _files, second, _worker = self.prepared_display_task(files)
         path = f"/audit-tasks/{second['id']}"
         loaded = self.display_client.get(path).json()
-        self.assertEqual(loaded["files"][0]["display_info"], {"revision": 0, "values": {"customer": "测试客户", "model": "M1", "part_number": "P-1", "part": "原零件"}})
+        self.assertEqual(loaded["files"][0]["display_info"], {"revision": 0, "values": {"customer": "测试客户", "model": "M1", "project": None, "part_number": "P-1", "part": "原零件"}})
         second_command = {**command, "reference": {**command["reference"], "task_id": second["id"], "round_id": second["round_id"]}, "values": {**command["values"], "part": "第二轮名称"}}
         self.assertEqual(self.display_client.post(path + "/display-info", json=second_command).status_code, 409)
         self.assertIsNone(self.display_client.get(path + "/display-info/" + command["request_id"]).json())

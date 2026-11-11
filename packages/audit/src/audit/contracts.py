@@ -116,6 +116,16 @@ class AuditEvidence(BaseModel):
     diagnostics: tuple[EvidenceDiagnostic, ...] = ()
 
 
+class SupplyNeed(BaseModel):
+    """A related original this clause needs: absent, or present for another part."""
+
+    kind: Literal["missing", "source_mismatch"]
+    document: str = Field(min_length=1, max_length=200)
+    part_number: Optional[str] = Field(default=None, max_length=200)
+    found_part_number: Optional[str] = Field(default=None, max_length=200)
+    found_file_version_id: Optional[str] = Field(default=None, max_length=200)
+
+
 class AuditResultItem(BaseModel):
     """Engine-side audit output item."""
 
@@ -132,3 +142,4 @@ class AuditResultItem(BaseModel):
     clarifications: list[dict[str, Any]] = Field(default_factory=list)
     fact_questions: list[FactQuestion] = Field(default_factory=list, max_length=64)
     fact_evaluation: BooleanFactEvaluation | None = None
+    supply: SupplyNeed | None = None

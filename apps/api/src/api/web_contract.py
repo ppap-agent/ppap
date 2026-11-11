@@ -112,6 +112,7 @@ class Metadata(TypedDict):
     model: str | None
     part: str | None
     part_number: NotRequired[str | None]
+    project: NotRequired[str | None]
 
 
 class Analysis(TypedDict):
@@ -481,6 +482,16 @@ class SemanticDiagnostic(TypedDict):
     message: str
 
 
+class SupplyNeed(TypedDict):
+    """Related original to supply (missing) or replace (source_mismatch)."""
+
+    kind: Literal["missing", "source_mismatch"]
+    document: str
+    part_number: NotRequired[str]
+    found_part_number: NotRequired[str]
+    found_file_version_id: NotRequired[str]
+
+
 class SemanticEvidence(TypedDict):
     rule_version_id: str
     clause_id: str
@@ -495,6 +506,7 @@ class SemanticEvidence(TypedDict):
     binding: NotRequired[str]
     evidence_incomplete: NotRequired[bool]
     diagnostics: NotRequired[list[SemanticDiagnostic]]
+    supply: NotRequired[SupplyNeed]
 
 
 class EvidenceSource(TypedDict):
@@ -1008,10 +1020,14 @@ class AuditReportPackage(TypedDict):
 
 
 class AuditFileDisplayValues(TypedDict):
-    """Complete display snapshot; null clears a value, part is the part name."""
+    """Complete display snapshot; null clears a value, part is the part name.
+
+    Receipts saved before ``project`` existed have no such key.
+    """
 
     customer: str | None
     model: str | None
+    project: NotRequired[str | None]
     part_number: str | None
     part: str | None
 

@@ -3827,3 +3827,27 @@ def test_frozen_suite_formalization_is_the_development_what(tmp_path: Path) -> N
     assert changed != prompt
     assert input_digest(audit_file(path), frozen(json.loads(encoded)), file_sha256="a" * 64, role="target") != input_digest(audit_file(path), frozen(other), file_sha256="a" * 64, role="target")
     assert json.loads(encoded)["formalizations"]["c1"]["clif_content"] == "(cardinality-exists)"
+
+
+def test_a_supply_need_reaches_the_finding_only_for_an_unfinished_clause() -> None:
+    from agent.mapping import checker_response
+    from agent.protocol import FrozenFile
+    from audit.contracts import AuditResultItem, SupplyNeed
+
+    frozen = FrozenFile(
+        file_version_id="version-1",
+        file_id="file-1",
+        role="target",
+        filename="target.xlsx",
+        sha256="a" * 64,
+        rule_version_id="same-rule",
+        rule_body={"rules": [{"id": "R1", "category": "对端", "rule_to_check": "与图纸一致"}, {"id": "R2", "category": "对端", "rule_to_check": "与图纸一致"}]},
+    )
+    need = SupplyNeed(kind="source_mismatch", document="图纸", part_number="P1", found_part_number="P2")
+    unfinished = AuditResultItem(classification="对端", item="R1", priority="P0", status="UNABLE", suggestions="比对源《图纸》零件号不一致", clause_id="R1", supply=need)
+    passed = AuditResultItem(classification="对端", item="R2", priority="P0", status="PASS", suggestions="一致", clause_id="R2", supply=need)
+    response = checker_response(request().model_copy(update={"files": [frozen]}), [(frozen, [unfinished, passed])])
+
+    semantic = {finding.locator["rule_item_id"]: finding.locator["semantic"] for finding in response.findings}
+    assert semantic["R1"]["supply"] == {"kind": "source_mismatch", "document": "图纸", "part_number": "P1", "found_part_number": "P2"}
+    assert "supply" not in semantic["R2"]

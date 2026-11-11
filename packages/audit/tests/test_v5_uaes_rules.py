@@ -165,6 +165,32 @@ def test_pfmea_special_characteristics_match_frozen_part_and_revision(tmp_path, 
     assert result["status"] == expected, result
     if expected == "PASS":
         assert result["evidence_file_version_ids"] == ["characteristics", "original"]
+        assert result["supply"] is None
+
+
+@pytest.mark.parametrize(
+    ("part", "revision", "found"),
+    [("P99999", "A", "P99999"), ("P12345", "B", "P12345")],
+)
+def test_related_original_for_another_part_or_revision_is_a_source_mismatch(tmp_path, monkeypatch, part, revision, found):
+    """Present but different: replace it. Not a content defect, not a missing file."""
+    target = {"PFMEA": [["PFMEA"], *_identity(), ["功能/要求", "特殊特性"], ["孔径", "CC"]]}
+    peer = ("characteristics", "特殊特性", {"特殊特性清单": [["特殊特性清单"], *_identity(part=part, revision=revision), ["特性名称", "特性类别"], ["孔径", "CC"]]})
+    result, _ = _run(tmp_path, monkeypatch, "U07", "U07:3", target, peers=[peer])
+    assert result["status"] == "UNABLE", result
+    assert result["supply"] == {"kind": "source_mismatch", "document": "特殊特性", "part_number": "P12345", "found_part_number": found, "found_file_version_id": "characteristics"}
+    assert "比对源《特殊特性》" in result["suggestions"]
+
+
+def test_absent_related_original_is_missing_and_unreadable_identity_is_unknown(tmp_path, monkeypatch):
+    target = {"PFMEA": [["PFMEA"], *_identity(), ["功能/要求", "特殊特性"], ["孔径", "CC"]]}
+    missing, _ = _run(tmp_path, monkeypatch, "U07", "U07:3", target)
+    assert missing["status"] == "NG", missing
+    assert missing["supply"]["kind"] == "missing"
+    unreadable = ("characteristics", "特殊特性", {"特殊特性清单": [["特殊特性清单"], *_identity(part="待填"), ["特性名称", "特性类别"], ["孔径", "CC"]]})
+    unknown, _ = _run(tmp_path, monkeypatch, "U07", "U07:3", target, peers=[unreadable])
+    assert unknown["status"] == "UNABLE", unknown
+    assert unknown["supply"] is None
 
 
 @pytest.mark.parametrize(("control", "expected"), [("SPC X-R图", "PASS"), ("人工抽检", "NG"), ("=1+1", "UNABLE")])

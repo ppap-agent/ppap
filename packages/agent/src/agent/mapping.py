@@ -205,6 +205,9 @@ def checker_response(
                 semantic["fact_questions"] = [question.model_dump(mode="json") for question in matched_result.fact_questions if question.file_version_id == target.file_version_id]
                 if matched_result.fact_evaluation is not None and matched_result.fact_evaluation.file_version_id == target.file_version_id:
                     semantic["fact_evaluation"] = matched_result.fact_evaluation.model_dump(mode="json")
+            # Only an unfinished or failed clause can ask for another original.
+            if matched_result and matched_result.supply is not None and matched_result.status in {"UNABLE", "NG"}:
+                semantic["supply"] = matched_result.supply.model_dump(mode="json", exclude_none=True)
             if evidence_incomplete:
                 semantic["evidence_incomplete"] = True
             performed = getattr(matched_result, "checks_performed", None) if matched_result is not None else None

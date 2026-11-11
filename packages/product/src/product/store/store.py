@@ -89,6 +89,13 @@ from product.store.upload_preparation import PREPARATION_KEY, normalize_preparat
 from product.writeback_targets import normalize_external_ref, public_target
 
 _MODEL_REVISION_UNSPECIFIED = object()
+# Display corrections cover these recognized fields. Receipts saved before
+# `project` existed keep their four keys; their project reads back as None.
+DISPLAY_FIELDS = ("customer", "model", "project", "part_number", "part")
+
+
+def _display_values(values: dict) -> dict:
+    return {key: values.get(key) for key in DISPLAY_FIELDS}
 
 
 def _preset_customers(body: dict) -> set[str]:
@@ -1472,7 +1479,7 @@ class AuthStore:
                         "matching_status": "reference" if reference_only else "matched",
                         "matched_rule_id": preferred,
                         "document_type": (inherited["rule"] or {}).get("body", {}).get("type") or inherited["recognition"].get("document_type"),
-                        "metadata": inherited["recognition"].get("metadata") or {"customer": None, "model": None, "part": None, "part_number": None},
+                        "metadata": inherited["recognition"].get("metadata") or {"customer": None, "model": None, "project": None, "part": None, "part_number": None},
                         "notices": [],
                     }
                 if receipt_id:
@@ -1610,7 +1617,7 @@ class AuthStore:
                 match = {
                     "state": state,
                     "document_type": result.get("document_type") if bound else None,
-                    "metadata": result.get("metadata") or {"customer": None, "model": None, "part": None, "part_number": None},
+                    "metadata": result.get("metadata") or {"customer": None, "model": None, "project": None, "part": None, "part_number": None},
                     "gaps": result.get("notices") or (["rule_matching_failed"] if state == "failed" else []),
                     "rule": None,
                 }
@@ -2221,7 +2228,7 @@ class AuthStore:
             audit = file_round_audit(round, frozen)
             if vid in reports:
                 audit["report"] = reports[vid]
-            metadata = {"customer": None, "model": None, "part": None, "part_number": None}
+            metadata = {"customer": None, "model": None, "project": None, "part": None, "part_number": None}
             result = file["analysis_result"] or {}
             bound = self._analysis_snapshot_bound(file["analysis_payload"] or {}, result, task_id, draft["input_revision"], vid)
             terminal = file["analysis_status"] in {"succeeded", "failed", "cancelled"}
@@ -2231,7 +2238,7 @@ class AuthStore:
                     "file": {"id": vid, "original_filename": file["original_filename"]},
                     "audit": audit,
                     "match": match,
-                    "display_info": {"values": {key: match["metadata"].get(key) for key in ("customer", "model", "part_number", "part")}},
+                    "display_info": {"values": {key: match["metadata"].get(key) for key in DISPLAY_FIELDS}},
                 }
             )
         return {"round_id": round_id, "files": projected}
@@ -2483,7 +2490,11 @@ class AuthStore:
         return {
             "request": request,
             "state": row["state"],
-            "info": {"revision": row["expected_revision"] + 1, "values": row["display_values"]} if row["state"] == "saved" else row["conflict_info"],
+            "info": {"revision": row["expected_revision"] + 1, "values": _display_values(row["display_values"])}
+            if row["state"] == "saved"
+            else {**row["conflict_info"], "values": _display_values(row["conflict_info"]["values"])}
+            if row["conflict_info"]
+            else None,
             "reason": None if row["state"] == "saved" else "显示信息已有更新，请核对最新版本。" if row["state"] == "conflict" else "显示版本无效，请重新读取任务。",
         }
 
@@ -2496,7 +2507,7 @@ class AuthStore:
                 ORDER BY file_version_id, expected_revision DESC""",
                 (reference["task_id"], reference["round_id"]),
             )
-            saved = {str(row["file_version_id"]): {"revision": row["expected_revision"] + 1, "values": row["display_values"]} for row in cur.fetchall()}
+            saved = {str(row["file_version_id"]): {"revision": row["expected_revision"] + 1, "values": _display_values(row["display_values"])} for row in cur.fetchall()}
         editable = {
             str(row[0])
             for row in conn.execute(
@@ -2507,7 +2518,7 @@ class AuthStore:
             if file["selection"] != "selected" or not file.get("audit"):
                 continue
             metadata = (file.get("match") or {}).get("metadata") or {}
-            file["display_info"] = saved.get(file["file"]["id"], {"revision": 0, "values": {key: metadata.get(key) for key in ("customer", "model", "part_number", "part")}})
+            file["display_info"] = saved.get(file["file"]["id"], {"revision": 0, "values": {key: metadata.get(key) for key in DISPLAY_FIELDS}})
             file["display_edit_access"] = {"state": "allowed" if editable else "denied", "reason": None if editable else "你目前没有更正显示信息的权限。"}
         return task
 
@@ -2525,7 +2536,7 @@ class AuthStore:
             or type(body.get("expected_revision")) is not int
             or not 0 <= body["expected_revision"] < 9007199254740991
             or not isinstance(values, dict)
-            or set(values) != {"customer", "model", "part_number", "part"}
+            or set(values) not in ({*DISPLAY_FIELDS}, {*DISPLAY_FIELDS} - {"project"})
             or any(value is not None and not isinstance(value, str) for value in values.values())
             or len(json.dumps(body, ensure_ascii=False).encode()) > 262144
         ):
@@ -2691,7 +2702,7 @@ class AuthStore:
                 status = row["analysis_status"]
                 match = {
                     "state": "pending" if status == "queued" else "matching",
-                    "metadata": {"customer": None, "model": None, "part": None, "part_number": None},
+                    "metadata": {"customer": None, "model": None, "project": None, "part": None, "part_number": None},
                     "document_type": None,
                     "rule": None,
                     "gaps": [],

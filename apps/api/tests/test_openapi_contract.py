@@ -255,7 +255,8 @@ class OpenAPIContractTests(unittest.TestCase):
         schemas = spec["components"]["schemas"]
         values = schemas["AuditFileDisplayValues"]
         self.assertEqual(set(values["required"]), {"customer", "model", "part_number", "part"})
-        self.assertEqual(set(values["properties"]), set(values["required"]))
+        # Receipts saved before project existed have no project key.
+        self.assertEqual(set(values["properties"]), {*values["required"], "project"})
         reference = schemas["AuditFileDisplayReference"]
         self.assertEqual(set(reference["required"]), {"task_id", "round_id", "file_version_id"})
         request = schemas["AuditFileDisplayRequest"]

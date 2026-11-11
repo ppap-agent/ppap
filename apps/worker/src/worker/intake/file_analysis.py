@@ -30,7 +30,7 @@ def analyze_file(
 
     if validation_scope is not None:
         result = {
-            "metadata": {"customer": None, "model": None, "part": None, "part_number": None},
+            "metadata": {"customer": None, "model": None, "project": None, "part": None, "part_number": None},
             "document_type": None,
             "matched_rule_id": None,
             "matching_status": "failed",
@@ -66,13 +66,13 @@ def analyze_file(
     if len(text) > 20000:
         notices.append("metadata_uses_excerpt")
     excerpt = text[:20000]
-    metadata: dict[str, str | None] = {"customer": None, "model": None, "part": None, "part_number": None}
+    metadata: dict[str, str | None] = {"customer": None, "model": None, "project": None, "part": None, "part_number": None}
     if excerpt.strip():
         try:
             parsed = ai(
                 "document_metadata_extraction",
                 instructions=PromptManager.get_system_prompt("document_analyst"),
-                prompt=PromptManager.get_document_metadata_prompt(excerpt, filename) + "\n同时返回 part_number（零件号）；part 仅表示零件名称，无法确定时返回 null。",
+                prompt=PromptManager.get_document_metadata_prompt(excerpt, filename) + "\n同时返回 part_number（零件号）与 project（项目名称或项目号）；part 仅表示零件名称，无法确定时返回 null。",
                 max_tokens=1000,
                 timeout=120,
             ).output
