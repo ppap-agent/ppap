@@ -1,0 +1,15 @@
+[
+ {
+  "kind": "text",
+  "model": "deepseek/deepseek-v4.1-flash-1017",
+  "request": {
+   "task": "document_metadata_extraction",
+   "instructions": "你是一个专业的文档分析师，擅长从技术文档中提取关键信息。",
+   "prompt": "\n请分析以下文档内容和文件名（如果提供），提取关键信息：\n\n文件名是: \"PSW_Bosch signed.pdf\".\n\n文档内容：\n/360593958\n6580\nPUR: Frentz, Andreas (M/PUR21.2) \n/01\n17.03.2022\nBOM ECR:1039K06187 \nApproval for cavity 1&2\nFrentz, Andreas (M/PUR21.2)\npki, BOSCH, EMEA, \nG, E, Gergely.Halasz\nDigitálisan aláírta:  pki, BOSCH, EMEA, \nG, E, Gergely.Halasz \nDátum: 2023.07.12 13:15:09 +02'00'\n...\n\n请提取以下信息并以JSON格式返回：\n- customer: 客户名称\n- model: 车型\n- part: 零件名称\n\n如果某个信息无法确定，请返回null。\n\n同时返回 part_number（零件号）与 project（项目名称或项目号）；part 仅表示零件名称，无法确定时返回 null。",
+   "schema": null,
+   "max_tokens": 4000
+  },
+  "request_sha256": "4bf527ab5f921d43aa89a5513cc48a7c62830d01565535fb35a66b8bab8b6e42",
+  "answer": "{\"customer\": \"Bosch\", \"model\": null, \"part\": null, \"part_number\": \"360593958\", \"project\": \"BOM ECR:1039K06187\"}"
+ }
+]

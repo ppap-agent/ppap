@@ -44,6 +44,22 @@ class PromptManager:
 """
 
     @staticmethod
+    def get_submitted_document_classification_prompt(content: str, ppap_types_str: str) -> str:
+        """Classify a submitted PPAP document, not a rule document."""
+        return f"""判断下面这份提交审核的 PPAP 文件本身属于哪一类，从下列候选中选择。每项冒号后是该类文件审核规则的要点，说明这类文件包含什么。
+文件里引用、列举或提到其他文件的名称（如封面清单、参考文件、缩写），不代表本文件就是那一类。
+
+候选类型：
+{ppap_types_str}
+
+只返回冒号前的类型名称；没有一项符合时返回 "未知"。
+
+文件内容：
+'''
+{content[:4000]}
+'''"""
+
+    @staticmethod
     def get_document_classification_prompt(content: str, ppap_types_str: str) -> str:
         """构建文档分类提示"""
         return f"""分析包含规则审核逻辑的文档的 PPAP 类型，从下列候选：

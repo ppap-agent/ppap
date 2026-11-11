@@ -107,7 +107,8 @@ def test_missing_preferred_scope_falls_back_to_the_customer_identified_in_the_fi
         "供应商资料.xlsx",
         workbook_bytes(("客户", "乙客户"), ("文件类型", "过程流程图")),
         [rule("other-type", ["甲客户"]), rule("identified", ["乙客户"], "过程流程图")],
-        ai=MetadataAI({"customer": "乙客户"}),
+        # The opaque filename leaves the type to the model reading the text.
+        ai=MetadataAI({"customer": "乙客户"}, "过程流程图"),
         customer_preference="甲客户",
         scoped=True,
     )

@@ -1,0 +1,15 @@
+[
+ {
+  "kind": "text",
+  "model": "deepseek/deepseek-v4.1-flash-1017",
+  "request": {
+   "task": "document_metadata_extraction",
+   "instructions": "你是一个专业的文档分析师，擅长从技术文档中提取关键信息。",
+   "prompt": "\n请分析以下文档内容和文件名（如果提供），提取关键信息：\n\n文件名是: \"12-设备清单-巨一.pdf\".\n\n文档内容：\n表单编号： JL-APQP-4-25/V1.0\n理想项目设备开发/验收清单   \n设备开发\n设备验收\n车型\nL6\n零件名称\n前电驱动总成\n零件号\nTestPart001\n供应商\n巨一\n验收结论\n通过\n序号\n产线/工序\n设备\n供应商\n设备型号\n利旧设备数量\n新采购设备数量\n设备通用情况\n计划到位时间\n实际到位时间\n验收状态\n验收结果\n整改措施\n整改计划\n3\n推吸板一体机\n科恒达\nXKHD-4533L\n1\n4\n翻板机\n科恒达\nXKHD-350L\n1\n5\n清洁机\n科恒达\nXKHD-350C\n1\n6\n0.5米轨道\n科恒达\nXKHD-500M\n1\n7\n锡膏印刷机\nDEK Neohorizon \n03iX\n1\n8\n0.5m缓存机\n科恒达\nXKHD-300L\n1\n9\nSPI\n思泰克\nInSPIre 510-B\n1\n10\n0.5m缓存机\n科恒达\nXKHD-300L\n1\n11\nSIplace（含飞\n达）\nASM\nX3 S\n1\n12\nSIplace（含飞\n达）\nASM\nX2 S\n1\n13\n1m接驳台\n科恒达\nXKHD-1MD\n1\n14\n炉前AOI\n思泰克\nS510\n1\n15\n0.5米轨道\n科恒达\nXKHD-500M\n1\n16\n回流焊11温区\nVXC Nitro \nVXC Nitro \n3.8/834\n1\n17\n0.5m接驳台\n智晟威\n0.5m\n1\n18\n0.5m缓存机\n科恒达\nXKHD-300ZC\n1\n19\n炉后AOI\n思泰克\nA510\n1\n20\n1m工作检查站\n科恒达\nXKHD-1MJ\n1\n21\n收板机\n科恒达\nXKHD-4633L\n1\n22\n自动上下料一体\n板机\n脉巨\nMJ-H735J 非标\n1\n23\n0.5米单轨皮带\n接驳台\n脉巨\nC050SL\n1\n24\n移栽机\n脉巨\nMJ-1365Z  非标\n1\n25\n单板老化炉\n脉巨\nMJ-TR761J  非\n标\n1\n26\n移栽机\n脉巨\nMJ-1365Z  非标\n1\n27\n0.5米单轨皮带\n接驳台\n脉巨\nC050SL\n1\n28\n1米双段接驳台\n脉巨\nMJ-H765J 非标\n1\n29\n1米双段接驳台\n脉巨\nMJ-H765J 非标\n1\n30\n焊接AOI\n镭晨\nAIS303-L\n1\n31\n单段式接驳台\n拓仕达\nHT-JB90\n1\n32\n自动上下料一体\n板机\n脉巨\nMJ-H735J 非标\n1\n33\n分板机（线外）\n华益达\nHYD-S600（下吸\n尘）\n1\n34\n2.5m手工插件线\n华实旺\n2.5米插件段\n1\n35\n选择焊（带喷雾\n机）\nVERSAFLOW \nVERSAFLOW 3/35\n1\n36\n1.5m冷却接驳台\n华实旺\n1.5m链条式冷却\n接驳台\n1\n37\n2m链条线（四段\n式）补焊台\n华实旺\n2m4段式补焊台\n1\n38\n冷却缓存机\n拓仕达\n1.8米冷却缓存\n机\n1\n39\n接驳台\n拓仕达\n0.8米接驳台\n1\n40\n双单面AOI\n轻蜓视觉\nDelta-2D\n1\n41\n缓存机\n华实旺\nNG缓存机\n1\n42\n点胶机\n法罗威\nFDI-1000U\n1\n43\n收板机\n华实旺\n伸缩式收板机\n1\n44\nFCT+ICT\n方科迅\n/\n1\n45\n上板机\n智晟威\nBC-L-TN\n1\n46\n1M轨道\n智晟威\nBC-100M-NS\n1\n47\n选择性涂覆机\n海派\nHP-6302\n1\n48\n密封检测台\n海派\nHP-212\n1\n49\nUV固化炉\n海派\nHP-UV106CM\n1\n50\n自动翻板机\n海派\nHP-450F\n1\n51\n选择性涂覆机\n海派\nHP-8302\n1\n52\n密封检测台\n海派\nHP-212\n1\n53\nUV固化炉\n海派\nHP-UV106CM\n1\n54\n密封检测台\n海派\nHP-212\n1\n\n55\n涂覆AOI\n恒茂\nSC900\n1\n56\n收板机\n智晟威\nBC-L-TN\n1\n编制/日期\n石伟君 2025/8/25\n审核/日期\n薛王华\n/2025/5/8\n批准/日期\n刘号召/2025/5/8\n...\n\n请提取以下信息并以JSON格式返回：\n- customer: 客户名称\n- model: 车型\n- part: 零件名称\n\n如果某个信息无法确定，请返回null。\n\n同时返回 part_number（零件号）与 project（项目名称或项目号）；part 仅表示零件名称，无法确定时返回 null。",
+   "schema": null,
+   "max_tokens": 4000
+  },
+  "request_sha256": "3a930ca1ab68b861c791bd928f95ef29b3bd26bddd4bf3c8046080721efac0a8",
+  "answer": "{\"customer\": \"理想\", \"model\": \"L6\", \"part\": \"前电驱动总成\", \"part_number\": \"TestPart001\", \"project\": \"理想项目\"}"
+ }
+]

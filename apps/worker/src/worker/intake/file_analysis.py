@@ -10,6 +10,9 @@ import documents.ai
 from audit.kinds import PpapDocumentType
 from product.rules import document_types, latest_rule_versions
 
+# Both answers are short JSON, but some providers count hidden reasoning in the cap.
+_ANSWER_TOKENS = 4000
+
 
 def analyze_file(
     filename: str,
@@ -73,7 +76,7 @@ def analyze_file(
                 "document_metadata_extraction",
                 instructions=PromptManager.get_system_prompt("document_analyst"),
                 prompt=PromptManager.get_document_metadata_prompt(excerpt, filename) + "\n同时返回 part_number（零件号）与 project（项目名称或项目号）；part 仅表示零件名称，无法确定时返回 null。",
-                max_tokens=1000,
+                max_tokens=_ANSWER_TOKENS,
                 timeout=120,
             ).output
             for field in metadata:
@@ -101,8 +104,15 @@ def analyze_file(
     candidates = [rule for rule in candidates if rule.get("rule_profile") != "v4"] + (customer_presets if v4_mode else [])
     source_type = None
     source_types = {}
+    # What each of the customer's rules expects the document to contain, from the rule itself.
+    described: dict[str, str] = {}
     if v4_mode:
         from audit.presets import customer_presets as source_presets
+        from audit.presets import preset_document_type
+
+        described = {
+            preset_document_type(preset): re.sub(r"\s+", " ", preset.clauses[0].text)[:120] for preset in source_presets() if preset.customer.casefold() == selected_customer and preset.clauses
+        }
 
         # E document identities are source-owned. They do not extend the old
         # enum or use an unrelated customer's nearest document type.
@@ -136,18 +146,27 @@ def analyze_file(
     custom_matches = [kind for kind in custom_types if kind in Path(filename).stem]
     if source_type is None and len(custom_matches) == 1:
         source_type = custom_matches[0]
-    inferred = PpapDocumentType.infer_from_signals(filename=filename, content=excerpt[:2000], min_margin=1 if scoped else 0)
+    # Body text cites other documents (cover checklists, Cp next to CP), so only
+    # the submitted filename decides a scoped type; otherwise the model reads the text.
+    signal_content = "" if scoped else excerpt[:2000]
+    inferred = PpapDocumentType.infer_from_signals(filename=filename, content=signal_content, min_margin=1 if scoped else 0)
     if scoped and not source_type and excerpt.strip() and "metadata_extraction_failed" not in notices:
-        evidence = PpapDocumentType.rank_from_signals(filename=filename, content=excerpt[:2000])
-        if inferred == PpapDocumentType.UNKNOWN or not evidence[0].alias_hits:
+        evidence = PpapDocumentType.rank_from_signals(filename=filename)
+        if inferred == PpapDocumentType.UNKNOWN or not evidence or not evidence[0].alias_hits:
             inferred = PpapDocumentType.UNKNOWN
             try:
                 classified = ai(
                     "document_classification",
                     instructions=PromptManager.get_system_prompt("ppap_expert"),
-                    prompt=PromptManager.get_document_classification_prompt(excerpt, "\n".join([*document_types(), *(f"{code} {title}" for code, title in source_types.items())]))
-                    + '\n只返回 JSON：{"document_type": "上面列表中的一项，无法判断时为 未知"}',
-                    max_tokens=100,
+                    prompt=PromptManager.get_submitted_document_classification_prompt(
+                        excerpt,
+                        "\n".join(
+                            f"{option}：{described[kind]}" if kind in described else option
+                            for option, kind in [*((name, name) for name in document_types()), *((f"{code} {title}", code) for code, title in source_types.items())]
+                        ),
+                    )
+                    + '\n只返回 JSON：{"document_type": "上面列表中的一项类型名称，无法判断时为 未知"}',
+                    max_tokens=_ANSWER_TOKENS,
                     timeout=120,
                 ).output.get("document_type")
                 if not isinstance(classified, str) or not classified.strip():
