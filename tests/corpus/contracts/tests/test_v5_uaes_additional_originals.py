@@ -194,7 +194,7 @@ def test_original_blank_pgqp_identity_cannot_be_paired_with_another_pfmea(no_pro
     assert str(next(item for item in sheet.merged_cells.ranges if item.start_cell.coordinate == "J2")) == "J2:L2"
     assert sheet["J2"].value is None
     book.close()
-    pfmea = ROOT / "assets/corpus/documents/v4-uaes/PFMEA.xls"
+    pfmea = ROOT / "assets/corpus/documents/uaes/通用文件/表单模板/测试文件/09 潜在过程失效模式及后果分析/PFMEA.xls"
     result = run_clause(pfmea, "U07", "U07:4", reference=path)
     assert result["status"] == "UNABLE" and "身份" in result["suggestions"]
     assert any(version == "reference-version" and sheet == "PGQP1" for version, sheet, _cell in locations(result))

@@ -14,7 +14,8 @@ from corpus_contracts.core_round import run_suite_round
 from openpyxl import load_workbook
 
 ROOT = Path(__file__).resolve().parents[4]
-ORIGINAL = ROOT / "assets/corpus/documents/v4-uaes/控制计划.xlsx"
+ORIGINAL = ROOT / "assets/corpus/documents/uaes/通用文件/表单模板/测试文件/10 控制计划/控制计划.xlsx"
+PDF = ROOT / "assets/corpus/documents/uaes/F01R20V040_磁性罩/测试文件/10 控制计划/控制计划-模板3 WY (1).pdf"
 MARKS = ("G20", "G21", "G22", "G34", "G35", "G36")
 
 
@@ -95,7 +96,7 @@ def test_uncached_formula_is_not_ignored_even_when_other_marks_exist():
 
 
 def test_native_pdf_mark_reaches_final_finding_with_original_page_region(monkeypatch):
-    pdf = ORIGINAL.with_name("控制计划-模板3 WY.pdf")
+    pdf = PDF
     content = pdf.read_bytes()
     before = hashlib.sha256(content).hexdigest()
     original_location = NativeFacts.cell_location
@@ -125,7 +126,7 @@ def test_native_pdf_mark_reaches_final_finding_with_original_page_region(monkeyp
 
 @pytest.mark.parametrize("corruption", ["sha", "frozen-version"])
 def test_pdf_mark_cannot_pass_with_wrong_source_identity(monkeypatch, corruption):
-    pdf = ORIGINAL.with_name("控制计划-模板3 WY.pdf")
+    pdf = PDF
     if corruption == "sha":
         original_location = NativeFacts.cell_location
 

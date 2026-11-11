@@ -98,7 +98,7 @@ uv run --no-sync pytest tests/integration/product
 
 `assets/corpus/` 保存原件、组合、人工真值和对应的规则含义：
 
-- `documents/<数据集>/…`：原件，用提交时的文件名。
+- `documents/<数据集>/…`：原件，用提交时的文件名。数据集按客户划分：`li-auto`（理想，按文档类型分目录）、`nio`（蔚来，按零件分目录）、`uaes`（UAES，按零件分目录，每个零件下分 `测试文件` 和 `比对文件`；`通用文件` 放空白表单模板和通用规范；`零件-文件对应统计表.xlsx` 记录归类依据和未纳入的扫描件）。零件目录整体保留，不拆分。
 - `cases.csv`：一次提交包含的文件。列为数据集、组合ID、文件ID、原件、提交文件名、角色、Suite版本、Checker组、Binding。Suite版本是明确的可读来源选择器，例如 `PPAP:控制计划@v3` 或 `UAES:U05@v4`；必须恰好对应一个 Suite 来源，没有 latest 或回退。Checker组是 Suite key，Binding 是显式条款 ID 集合。原 PDF、Excel、DOCX 使用同一来源的 Suite；完整内容摘要在构建执行快照时计算，仍写入不可变 Suite revision、程序和输入身份。缺失、歧义、组别或 Binding 不一致在加载完整表时失败。表驱动 runner 调用正式 guest 的 `run_audit` 函数，进程/授权/Worker 路径由 Runtime 集成测试覆盖。
 - `oracle.csv`：人工结论。列为数据集、组合ID、文件ID、条款ID、人工真值、条款说明、人工判定依据、判定人、判定日期、已知差距。
 

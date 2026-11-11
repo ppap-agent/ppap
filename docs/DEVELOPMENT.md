@@ -135,7 +135,7 @@ uv run --no-sync pytest tests/schema
 docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 ```
 
-Browser E2E 是 Python Playwright（`uv run --no-sync pytest tests/e2e`），对着 isolated-dev。生产 runtime/backup 是 `uv run --no-sync pytest tests/integration/runtime`。Corpus 的 v2/v3/v4、Pairs 和 PSW 命令见 [测试入口](../tests/README.md)。回归和 PSW 分别由 `tests/corpus/regressions` 与 `tests/corpus/psw` 的物理目录发现；纯 Corpus contract tests 跟随 `corpus-contracts` owner。
+Browser E2E 是 Python Playwright（`uv run --no-sync pytest tests/e2e`），对着 isolated-dev。生产 runtime/backup 是 `uv run --no-sync pytest tests/integration/runtime`。Corpus 的理想、蔚来、UAES 数据集、Pairs 和 PSW 命令见 [测试入口](../tests/README.md)。回归和 PSW 分别由 `tests/corpus/regressions` 与 `tests/corpus/psw` 的物理目录发现；纯 Corpus contract tests 跟随 `corpus-contracts` owner。
 
 默认 merge contract 是 required groups：Web、Repository contract、Python modules、Distribution closure、Schema、Corpus、Product integration。`CI Gate` 只汇总这些 required groups，不把“是否 deterministic”当成入 Gate 的条件。Corpus 即使 cache miss 调用真实 OCR / model 仍是 required。当前不做 change-aware path skipping。`tests/live` 表示不进入默认 merge contract、需要显式执行的真实环境验证，不是所有带外部依赖的测试；InsForge native lifecycle 同样不进入默认 Gate。
 
