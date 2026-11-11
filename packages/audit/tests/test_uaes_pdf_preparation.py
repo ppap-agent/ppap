@@ -100,3 +100,54 @@ def test_a_row_proving_the_fact_decides_even_with_unknown_rows():
     with pytest.raises(UnknownFact):
         any_row(["unknown", "nothing"], lambda row: unknown(row) if row == "unknown" else False)
     assert any_row(["nothing"], lambda row: False) is False
+
+
+def test_pages_repeating_one_header_row_continue_one_table_after_a_different_form(tmp_path):
+    from audit.checker_lib.uaes.native import NativeFacts
+
+    path = tmp_path / "cover-and-plan.pdf"
+    pages = ((("封面", ""), ("零件号", "F01")), (("工序名称", "生产资源"), ("工序1", "设备1")), (("工序名称", "生产资源"), ("工序2", "设备2")))
+    with fitz.open() as document:
+        for rows in pages:
+            page = document.new_page(width=400, height=220)
+            for top in (20, 60, 100):
+                page.draw_line((20, top), (380, top))
+            for left in (20, 200, 380):
+                page.draw_line((left, 20), (left, 100))
+            for row, values in enumerate(rows):
+                for column, text in enumerate(values):
+                    if text:
+                        page.insert_text((40 + 180 * column, 45 + 40 * row), text, fontname="china-s", fontsize=11)
+        document.save(path)
+    cover, plan = NativeFacts(str(path), "v", lambda *args, **kwargs: None).data["tables"]
+    assert {address: cell["source"]["page"] for address, cell in cover["cells"].items()} == dict.fromkeys(("A1", "A2", "B1", "B2"), 1)
+    assert [(plan["cells"][f"A{row}"]["value"], plan["cells"][f"B{row}"]["value"], plan["cells"][f"B{row}"]["source"]["page"]) for row in (2, 3)] == [("工序1", "设备1", 2), ("工序2", "设备2", 3)]
+
+
+@pytest.mark.parametrize("outlined_page,expected", [(False, "NA"), (True, "UNABLE")])
+def test_a_page_without_text_cannot_prove_the_msa_plan_is_absent(tmp_path, outlined_page, expected):
+    from audit.checker_lib.uaes.msa import UaesMsaAgent
+
+    path = tmp_path / "msa.pdf"
+    with fitz.open() as document:
+        if outlined_page:
+            # Text drawn as vector outlines leaves no text layer to read a title from.
+            page = document.new_page(width=400, height=220)
+            page.draw_rect((40, 40, 120, 60))
+        page = document.new_page(width=400, height=220)
+        page.insert_text((40, 45), "重复性及再现性分析报告", fontname="china-s", fontsize=11)
+        document.save(path)
+    agent = UaesMsaAgent(AuditInput(audit_id="msa", file_url=str(path)), RuleInput(rule_id="uaes-msa", rule_profile="v4", preset_key="U05"))
+    assert agent.check(0).status == expected
+
+
+def test_a_page_without_a_reconstructed_grid_cannot_prove_the_capability_summary_is_absent(tmp_path):
+    from audit.checker_lib.uaes.engineering import UaesCapabilityAgent
+
+    path = tmp_path / "ppk.pdf"
+    with fitz.open() as document:
+        # The summary's text is readable, but no table grid is rebuilt for it.
+        document.new_page(width=400, height=220).insert_text((40, 45), "Ppk能力值汇总  PPK结果值  PPK目标值  反应计划", fontname="china-s", fontsize=11)
+        document.save(path)
+    agent = UaesCapabilityAgent(AuditInput(audit_id="ppk", file_url=str(path)), RuleInput(rule_id="uaes-ppk", rule_profile="v4", preset_key="U06"))
+    assert agent.check(2).status == "UNABLE"

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import math
 import re
+from bisect import bisect_left, bisect_right
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -12,44 +13,76 @@ from typing import Any
 from .document_tools import ReadLimits, col_number, ref, within
 
 
+class _LayoutMismatch(ValueError):
+    """A candidate page layout did not reproduce the original page grids."""
+
+
+def _normalize_heading(value: Any) -> str:
+    text = re.sub(r"(?m)^\s*\d+\s*/\s*\d+\s*$", "", str(value or ""))
+    return re.sub(r"\s+", "", text).casefold()
+
+
+def _first_row(table: dict[str, Any]) -> tuple[str, ...]:
+    values = [_normalize_heading(item.get("value")) for address, item in sorted(table["cells"].items()) if re.fullmatch(r"[A-Z]+1", address) and item.get("state") == "known"]
+    return tuple(value for value in values if value)
+
+
+def _layout_specs(original: dict[str, Any]) -> list[Any]:
+    """Page layouts to try, most specific first; the per-page grids remain the basic fallback."""
+    from documents.pdf import DEFAULT_SPEC, GroupingMode, GroupingSpec, PdfSpec
+
+    from .kinds import PpapDocumentType
+
+    rows = [_first_row(table) for table in original["tables"]]
+    specs = []
+    known = {_normalize_heading(alias) for kind in PpapDocumentType if kind != PpapDocumentType.UNKNOWN for alias in kind.iter_aliases()}
+    if rows and all(len(set(row)) == 1 for row in rows) and len({row[0] for row in rows}) == 1 and rows[0][0] in known:
+        specs.append(DEFAULT_SPEC)  # One titled form printed across every page.
+    # Consecutive pages that repeat their first row continue one table.
+    ranges, start = [], 0
+    for index in range(1, len(rows) + 1):
+        if index == len(rows) or not rows[index] or rows[index] != rows[start]:
+            ranges.append((start, index - 1))
+            start = index
+    if any(last > first for first, last in ranges):
+        specs.append(PdfSpec(grouping=GroupingSpec(mode=GroupingMode.EXPLICIT_RANGES, explicit_ranges=tuple(ranges))))
+    return specs
+
+
 def prepare_pdf_workbook(path: str, original: dict[str, Any], limits: ReadLimits) -> dict[str, Any]:
     """Consume the existing converter's workbook without losing original cell facts."""
+    if [table["page"] for table in original["tables"]] != list(range(1, len(original["tables"]) + 1)):
+        return original
+    for spec in _layout_specs(original):
+        try:
+            return _prepare_with(path, original, limits, spec)
+        except _LayoutMismatch:
+            continue
+    return original
+
+
+def _prepare_with(path: str, original: dict[str, Any], limits: ReadLimits, spec: Any) -> dict[str, Any]:
     from documents.pdf import convert_pdf_to_excel
     from documents.pdf._stitch import _build_boundary_index_map, _remap_cell_columns
 
     from .document_tools import snapshot
-    from .kinds import PpapDocumentType
 
-    def normalize(value):
-        text = re.sub(r"(?m)^\s*\d+\s*/\s*\d+\s*$", "", str(value or ""))
-        return re.sub(r"\s+", "", text).casefold()
-
-    titles = []
-    for table in original["tables"]:
-        values = {normalize(item.get("value")) for address, item in table["cells"].items() if re.fullmatch(r"[A-Z]+1", address) and item.get("state") == "known" and item.get("value")}
-        values.discard("")
-        if len(values) != 1:
-            return original
-        titles.append(next(iter(values)))
-    known_titles = {normalize(alias) for kind in PpapDocumentType if kind != PpapDocumentType.UNKNOWN for alias in kind.iter_aliases()}
-    if not titles or len(set(titles)) != 1 or titles[0] not in known_titles:
-        return original  # Different forms are not continuation pages.
     raw = Path(path).read_bytes()
     if hashlib.sha256(raw).hexdigest() != original["source"]["sha256"]:
         raise ValueError("PDF source changed during preparation")
     with TemporaryDirectory(prefix="ppap-uaes-pdf-") as directory:
         target = Path(directory) / "prepared.xlsx"
-        converted = convert_pdf_to_excel(raw, str(target))
+        converted = convert_pdf_to_excel(raw, str(target), spec=spec)
         prepared = snapshot(target, limits=limits)
     groups = [group for group in converted.extraction.groups if group.success and group.table_grid is not None]
     if len(groups) != len(prepared["tables"]):
-        raise ValueError("PDF workbook groups do not match their extracted sources")
+        raise _LayoutMismatch("PDF workbook groups do not match their extracted sources")
     originals = {table["page"]: table for table in original["tables"]}
     for group, table in zip(groups, prepared["tables"]):
         grid = group.table_grid
         assert grid is not None
         if table["rows"] != len(grid.rows) - 1 or table["cols"] != len(grid.cols) - 1:
-            raise ValueError("PDF workbook dimensions do not match extraction")
+            raise _LayoutMismatch("PDF workbook dimensions do not match extraction")
         for row in range(1, table["rows"] + 1):
             for column in range(1, table["cols"] + 1):
                 item = table["cells"].setdefault(ref(row, column), {"value": None, "state": "known"})
@@ -82,7 +115,7 @@ def prepare_pdf_workbook(path: str, original: dict[str, Any], limits: ReadLimits
                 item["source"] = {**fact["source"], "row": cell.row_start + 1, "column": cell.col_start + 1}
             offset += source["rows"] - skip
         if offset != table["rows"]:
-            raise ValueError("PDF workbook rows do not match their source pages")
+            raise _LayoutMismatch("PDF workbook rows do not match their source pages")
         for first_row, first_column, last_row, last_column in table["merges"]:
             for row in range(first_row, last_row + 1):
                 for column in range(first_column, last_column + 1):
@@ -204,6 +237,23 @@ def _vector_inside(path: dict[str, Any], cell: list[float], tolerance: float, al
     return bool(path.get("closePath") and first is not None and last is not None and _line_inside(last, first, cell, tolerance))
 
 
+def _path_bounds(path: dict[str, Any]) -> tuple[float, float, float, float]:
+    """Every point a path check can touch, including curve control points."""
+    xs, ys = [path["rect"][0], path["rect"][2]], [path["rect"][1], path["rect"][3]]
+    for item in path["items"]:
+        if item[0] == "re":
+            xs += [item[1][0], item[1][2]]
+            ys += [item[1][1], item[1][3]]
+        elif item[0] == "qu":
+            points = (item[1].ul, item[1].ur, item[1].lr, item[1].ll)
+            xs += [point.x for point in points]
+            ys += [point.y for point in points]
+        else:
+            xs += [point.x for point in item[1:]]
+            ys += [point.y for point in item[1:]]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
 def _table(grid: Any, page: Any, limits: ReadLimits, geometry_tolerance: float) -> dict[str, Any]:
     axes = (grid.rows, grid.cols)
     if any(len(axis) < 2 or not all(_finite(value) for value in axis) or any(a >= b for a, b in zip(axis, axis[1:])) for axis in axes):
@@ -224,10 +274,19 @@ def _table(grid: Any, page: Any, limits: ReadLimits, geometry_tolerance: float) 
         and all(any(abs(item[1][edge] - bound) <= geometry_tolerance for bound in axes) for edges, axes in (((0, 2), grid.cols), ((1, 3), grid.rows)) for edge in edges)
     }
 
+    # Index paths by grid row band. A path can only reach a cell its bounds overlap,
+    # so this narrows the candidates without changing any per-cell decision.
+    bounds = [_path_bounds(drawing) for drawing in drawings]
+    bands: list[list[int]] = [[] for _ in range(rows)]
+    for index, (_x0, y0, _x1, y1) in enumerate(bounds):
+        for band in range(max(0, bisect_left(grid.rows, y0) - 1), min(rows, bisect_right(grid.rows, y1))):
+            bands[band].append(index)
+
     def observed(row: int, column: int, last_row: int, last_column: int, value: str | None, *, reconstructed: bool) -> dict[str, Any]:
         bbox = [grid.cols[column], grid.rows[row], grid.cols[last_column + 1], grid.rows[last_row + 1]]
         overlap = any(_intersects(bbox, image) for image in images)
-        vector_paths = [index for index, drawing in enumerate(drawings, 1) if _vector_inside(drawing, bbox, geometry_tolerance, aligned_fills)]
+        candidates = sorted({index for band in range(row, last_row + 1) for index in bands[band] if bounds[index][0] <= bbox[2] and bounds[index][2] >= bbox[0]})
+        vector_paths = [index + 1 for index in candidates if _vector_inside(drawings[index], bbox, geometry_tolerance, aligned_fills)]
         if not valid_pdf_bbox(bbox, page.rect.width, page.rect.height):
             state = "unknown_geometry"
         elif not reconstructed:

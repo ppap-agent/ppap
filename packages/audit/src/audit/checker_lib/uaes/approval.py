@@ -13,18 +13,34 @@ class UaesApprovalAgent(UaesSourceAgent):
     @rule("UAES封面首要备注与实际否决签批及偏差期限")
     def rule_1(self):
         cover = self.native()
-        rows = cover.rows({"item": ("项目", "检验项目", "试验项目"), "reject": ("否决", "Reject")}, title=("封面", "cover"), anchor=("item",))
-        seen = set()
+        # A table titled 封面/cover, otherwise the first page, which is what a cover is.
+        titled = cover.tables(("封面", "cover"))
+        page = titled[0] if len(titled) == 1 else cover.data["tables"][0] if not titled and cover.data["tables"] else None
+        if page is None:
+            raise UnknownFact("尚不能确定唯一的封面页。")
+        rows = cover.rows({"item": ("项目", "检验项目", "试验项目", "报告内容"), "reject": ("否决", "Reject")}, table=page, anchor=("item",))
+        seen, drawn = set(), False
         for row in rows:
             name = str(row["item"])
             for category in ("尺寸", "材料", "性能", "试装"):
                 if category in name:
                     seen.add(category)
-                    if re.search(r"[×xX☑✓√✔]", str(row["reject"] or "")):
+                    try:
+                        mark = row["reject"]
+                    except UnknownFact:
+                        drawn = True  # A box drawn over by a graphic mark is read from the original image.
+                        continue
+                    if re.search(r"[×xX☑✓√✔]", str(mark or "")):
                         return "NG", "封面否决列有实际标记：" + name
         if len(seen) != 4:
             raise UnknownFact("尚不能完整识别尺寸、材料、性能、试装的否决列状态。")
-        remarks = cover.field(("UAES批准的前提/备注", "UAES 批准的前提/备注"), title=("封面", "cover"))
+        if drawn:
+            marked = self.visual_pdf({"reject_marked": "封面“否决 Reject”列中，尺寸、材料、性能、试装任一行有实际的勾或叉标记；空框为false。"})["reject_marked"]
+            if marked is True:
+                return "NG", "封面否决列有实际标记。"
+            if marked is not False:
+                raise UnknownFact("封面否决列的勾选尚未核实，需人工确认原件。")
+        remarks = cover.field(("UAES批准的前提/备注", "UAES 批准的前提/备注"), table=page, inline=True)
         full = "完全认可" in remarks
         conditional = any(term in remarks for term in ("偏差认可", "条件认可", "超差", "不合格", "整改"))
         if full and conditional or not full and not conditional:
@@ -43,7 +59,7 @@ class UaesApprovalAgent(UaesSourceAgent):
         related = cover if cover.tables(("偏差认可汇总",)) else self.related(("偏差认可汇总",), same=("part", "name"))
         # Same-document deviation rows still require their own identity.
         for aliases in [("零件号", "零件编号"), ("零件名称",)]:
-            if key(cover.field(aliases, title=("封面", "cover"))) != key(related.field(aliases, title=("偏差认可汇总",))):
+            if key(cover.field(aliases, table=page)) != key(related.field(aliases, title=("偏差认可汇总",))):
                 raise UnknownFact("偏差汇总与封面零件身份不一致。")
         deviations = related.rows({"item": ("偏差项",), "assessment": ("UAES评估确认",), "needed": ("是否需要偏差",), "remarks": ("备注",)}, title=("偏差认可汇总",), anchor=("item",))
         for row in deviations:

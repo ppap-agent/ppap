@@ -97,6 +97,9 @@ class UaesCapabilityAgent(UaesSourceAgent):
                 continue
             found.append(table)
         if not found:
+            # A PDF page whose grid was not reconstructed may hold the list.
+            if facts.data.get("coverage", {}).get("unresolved_pages"):
+                raise UnknownFact("未能在可读取的表格中找到能力值汇总清单，未读页面仍需核对。")
             raise MissingFact("文件中不存在能力值汇总清单（CPK/PPK结果值、目标值及反应计划）。")
         if len(found) != 1:
             raise UnknownFact("能力值汇总清单有多份候选，需人工确认。")

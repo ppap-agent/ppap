@@ -258,6 +258,13 @@ class NativeFacts:
             self.cell(table, start, column)
         return start, columns
 
+    def _has_columns(self, table, aliases, ignore_under=()):
+        try:
+            self.columns(table, aliases, ignore_under=ignore_under)
+        except (MissingFact, UnknownFact):
+            return False
+        return True
+
     def rows(self, aliases, *, title=(), anchor=(), defer_unknown=False, table=None, ignore_under=(), continuation=False, footer=None):
         """Business rows of one table.
 
@@ -267,7 +274,11 @@ class NativeFacts:
         `footer(table, row)` may confirm that an unreadable anchor row begins
         the area after the business rows; only a confirmed True ends them.
         """
-        table = table if table is not None else self.table(title)
+        if table is None:
+            titled = self.tables(title)
+            # Several titled tables (a cover page and its stitched body): the one with every column is the business table.
+            fitting = [candidate for candidate in titled if self._has_columns(candidate, aliases, ignore_under)] if len(titled) > 1 else []
+            table = fitting[0] if len(fitting) == 1 else self.table(title)
         start, columns = self.columns(table, aliases, ignore_under=ignore_under)
         records = []
         filled: dict[str, int] = {}
@@ -300,10 +311,14 @@ class NativeFacts:
             raise UnknownFact("没有有效业务数据行，不能按空范围通过。")
         return records
 
-    def field(self, aliases: tuple[str, ...], *, title=(), required=True, numeric=False, table=None, exact=False):
+    def field(self, aliases: tuple[str, ...], *, title=(), required=True, numeric=False, table=None, exact=False, accept=None, inline=False):
+        """`accept` tells a plausible value; a label whose right value fails it is read under the label, as in a header band.
+
+        With `inline`, a label whose right side is empty may carry its value in its own cell, after the label line.
+        """
         values = set()
         candidates = []
-        unknown = None
+        unknown = rejected = None
         whole_sheet = table is not None
         for table in [table] if whole_sheet else self.tables(title):
             # A named report sheet places labelled results anywhere; a document field sits in its header band.
@@ -313,12 +328,13 @@ class NativeFacts:
                 cells = [(row, column) for row in range(1, min(table["rows"], 40) + 1) for column in range(1, min(table["cols"], 80) + 1)]
             for row, column in cells:
                 item = self.readers[table["id"]].cell(row, column)
-                if item.get("state") != "known" or not header(item.get("value"), aliases, exact=exact):
+                label = str(item.get("value") or "").strip().split("\n", 1)[0] if inline else item.get("value")
+                if item.get("state") != "known" or not header(label, aliases, exact=exact):
                     continue
                 self.cell(table, row, column)
                 merged = next((span for span in table.get("merges", []) if span[0] <= row <= span[2] and span[1] <= column <= span[3]), None)
                 next_column = merged[3] + 1 if merged else column + 1
-                if numeric or re.search(r"[:：]\s*$", str(item.get("value"))):
+                if next_column <= table["cols"] and (numeric or re.search(r"[:：]\s*$", str(label))):
                     # A report form may leave spacer columns between a label and its number or a "label:" value.
                     reader = self.readers[table["id"]]
                     while next_column < min(table["cols"], column + 8) and reader.cell(row, next_column).get("state") == "known" and blank(reader.cell(row, next_column).get("value")):
@@ -326,16 +342,31 @@ class NativeFacts:
                     if re.search(r"[:：]\s*$", str(reader.cell(row, next_column).get("value") or "")):
                         next_column = merged[3] + 1 if merged else column + 1  # The next label starts; this value is blank.
                 if next_column <= table["cols"]:
-                    fact = self.readers[table["id"]].cell(row, next_column)
-                    locator = self.cell_location(table, row, next_column, fact)
+                    position = (row, next_column)
+                    reader = self.readers[table["id"]]
+                    if accept is not None and not accept(reader.cell(*position).get("value")):
+                        below = ((merged[2] if merged else row) + 1, merged[1] if merged else column)
+                        if below[0] <= table["rows"] and accept(reader.cell(*below).get("value")):
+                            position = below
+                    fact = reader.cell(*position)
+                    locator = self.cell_location(table, *position, fact)
                     candidates.append(locator)
                     try:
-                        value = self.cell(table, row, next_column)
+                        value = self.cell(table, *position)
                     except UnknownFact as exc:
                         unknown = exc
                         continue
                     if not blank(value):
+                        if accept is not None and not accept(value):
+                            # A label beside something else ("Part number: 节气门") does not state this field.
+                            rejected = value
+                            continue
                         values.add(str(value).strip())
+                        continue
+                if inline:
+                    remainder = str(item.get("value")).strip().split("\n", 1)[1:]
+                    if remainder and remainder[0].strip():
+                        values.add(remainder[0].strip())
         # Explicit colon-separated paragraph/block fields preserve their own
         # value scope; no free text search or arbitrary next line borrowing.
         if not title and not whole_sheet and self.format in {".docx", ".pdf"}:
@@ -369,6 +400,8 @@ class NativeFacts:
             raise UnknownFact("身份或字段有多个不同取值，不能任取第一个。")
         if values:
             return next(iter(values))
+        if rejected is not None:
+            raise UnknownFact(f"“{aliases[0]}”旁的内容不像该字段的值：{rejected}")
         if required:
             raise UnknownFact("未能唯一读取字段“" + aliases[0] + "”的对应值。", questions=[question] if question else [])
         return ""
@@ -390,10 +423,12 @@ def any_row(rows, predicate) -> bool:
 
 # Identities a cross-file clause can name, with the labels that state them.
 _IDENTITY = {
-    "part": ("零件号", ("零件号", "零件编号", "物料编号", "客户零件号", "part number", "part no")),
+    "part": ("零件号", ("零件号", "零件号码", "零件编号", "物料编号", "客户零件号", "part number", "part no")),
     "project": ("项目", ("项目", "项目名称", "项目号", "UAES项目编号", "车型项目")),
     "name": ("零件名称", ("零件名称", "物料名称", "part name")),
 }
+# A part number carries digits; a label beside it does not.
+_ACCEPT = {"part": lambda value: bool(re.search(r"\d", str(value or "")))}
 _IDENTITY_LABELS = {key(alias) for _label, aliases in _IDENTITY.values() for alias in aliases} | {key("版本"), key("日期")}
 
 
@@ -657,7 +692,7 @@ class UaesSourceAgent(BaseAgent):
         # Only the identities the clause names (同零件号、同项目、同名称) pair the two originals.
         for name in same:
             label, aliases = _IDENTITY[name]
-            mine, theirs = key(self.native().field(aliases)), key(other.field(aliases))
+            mine, theirs = key(self.native().field(aliases, accept=_ACCEPT.get(name))), key(other.field(aliases, accept=_ACCEPT.get(name)))
             if not pair_identity(mine) or not pair_identity(theirs):
                 raise UnknownFact(f"关联原件{label}尚未确认，不能用占位值配对。")
             if mine in _IDENTITY_LABELS or theirs in _IDENTITY_LABELS:

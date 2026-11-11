@@ -22,6 +22,9 @@ class UaesMsaAgent(UaesSourceAgent):
     def rule_1(self):
         facts = self.native()
         if not facts.tables(self.PLAN):
+            # A page without a text layer, or a plan title outside every read table, leaves the premise open.
+            if any(not page.get("text", "").strip() for page in facts.data.get("pages", [])) or any(facts.contains(title) for title in self.PLAN):
+                raise UnknownFact("原件有未读取的页面或未读出的计划表，尚不能确认是否包含MSA计划表。")
             # The clause applies only "如果包含" an MSA plan table.
             return "NA", "文件不包含测量系统分析计划或MSA计划表，本条前提不成立。"
         table = facts.table(self.PLAN)

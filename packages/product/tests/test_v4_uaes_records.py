@@ -359,3 +359,34 @@ def test_a_colon_label_reads_its_value_across_spacer_cells(tmp_path):
     assert facts.field(("量具编号",)) == "PE702438"
     with pytest.raises(Exception):
         facts.field(("量具名称",))
+
+
+@pytest.mark.parametrize(
+    "sheets,expected",
+    [
+        # A report labels the name "Part number:"; the directory states the actual number.
+        ({"目录": [["零件号码", "F01RD0Y776"]], "孔径": [["Part number:", "节气门"], ["Drawing number", "F01RD0Y776"]]}, "F01RD0Y776"),
+        # A header band prints the number under its label.
+        ({"控制计划": [["零件号", "客户", "零件名称"], ["F01RD0Y776", "UAES", "节气门壳体"]]}, "F01RD0Y776"),
+        ({"孔径": [["Part number:", "节气门"]]}, None),
+    ],
+    ids=["mislabelled-report", "value-under-label", "only-a-name"],
+)
+def test_a_part_number_is_the_labelled_value_that_has_digits(tmp_path, sheets, expected):
+    from audit.checker_lib.uaes.native import _ACCEPT, _IDENTITY, NativeFacts, UnknownFact
+
+    path = tmp_path / "source.xlsx"
+    book = Workbook()
+    book.remove(book.active)
+    for title, rows in sheets.items():
+        sheet = book.create_sheet(title)
+        for row in rows:
+            sheet.append(row)
+    book.save(path)
+    book.close()
+    facts = NativeFacts(str(path), "version", lambda *args, **kwargs: None)
+    if expected is None:
+        with pytest.raises(UnknownFact):
+            facts.field(_IDENTITY["part"][1], accept=_ACCEPT["part"])
+    else:
+        assert facts.field(_IDENTITY["part"][1], accept=_ACCEPT["part"]) == expected
