@@ -23,7 +23,7 @@ class WorkerLoopTests(unittest.TestCase):
     def test_run_closes_heartbeat_connection_before_claiming_and_processing(self):
         events = []
         settings = SimpleNamespace(worker_id="test-worker", git_sha="a" * 40)
-        claimed = object()
+        claimed = SimpleNamespace(kind="file_validation")
 
         @contextmanager
         def connect(*_args):

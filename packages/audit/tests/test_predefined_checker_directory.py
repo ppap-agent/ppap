@@ -219,14 +219,14 @@ def test_symlink_escape_and_duplicate_real_path_fail(tmp_path):
     outside = tmp_path / "outside"
     write_leaf(outside, "secret")
     root = tmp_path / "checkers"
-    (root / "UAES").mkdir(parents=True)
+    (root / "uaes").mkdir(parents=True)
     (root / "uaes" / "U08").symlink_to(outside / "secret", target_is_directory=True)
     with pytest.raises(ValueError, match="predefined_path_escape"):
         load_predefined_checkers(root)
     shutil.rmtree(root)
     write_leaf(root, "uaes/U08")
-    (root / "UAES2").mkdir(parents=True)
-    (root / "UAES2" / "U08").symlink_to(root / "uaes" / "U08", target_is_directory=True)
+    (root / "uaes2").mkdir(parents=True)
+    (root / "uaes2" / "U08").symlink_to(root / "uaes" / "U08", target_is_directory=True)
     with pytest.raises(ValueError, match="predefined_duplicate_path"):
         load_predefined_checkers(root)
 
