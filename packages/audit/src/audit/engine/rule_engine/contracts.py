@@ -9,6 +9,8 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 MatchMode = Literal["exact", "contains"]
+# "prefix": the label cell starts with the alias, optionally followed by the value written into the same cell.
+FieldLabelMatchMode = Literal["exact", "contains", "prefix"]
 Direction = Literal["up", "down"]
 FieldValueMode = Literal["self", "right", "left", "below", "below_right", "right_band"]
 MarkerSource = int | str
@@ -277,7 +279,7 @@ class FieldModel(BaseModel):
     canonical_name: str
     block_name: str
     aliases: tuple[str, ...]
-    label_match_mode: MatchMode = "exact"
+    label_match_mode: FieldLabelMatchMode = "exact"
     value_mode: FieldValueMode = "right"
     scan_width: int = Field(default=8, ge=1)
     missing_tokens: tuple[str, ...] = ()

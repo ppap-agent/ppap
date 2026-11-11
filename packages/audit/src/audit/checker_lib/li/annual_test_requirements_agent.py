@@ -38,6 +38,9 @@ class AnnualTestRequirementsAgent(ExcelAgent):
     """零部件年度试验要求专业审核代理。"""
 
     DOC_TYPE = PpapDocumentType.ANNUAL_TEST_REQUIREMENTS
+    # 试验要求栏的表格到“签署栏”为止，中间的空行不结束表格。
+    _TABLE_UNTIL_SIGNATURE = {"row_stop_on_first_blank": False, "row_max_blank_streak": 30, "row_stop_markers": ("签署栏",)}
+    RESOURCE_OVERRIDES = {"sections": {"试验频率区": _TABLE_UNTIL_SIGNATURE, "试验要求区": _TABLE_UNTIL_SIGNATURE, "样本数量区": _TABLE_UNTIL_SIGNATURE}}
 
     @rule("质量等级检查")
     def rule_1(self, ctx: RuleContext) -> Tuple[str, str]:

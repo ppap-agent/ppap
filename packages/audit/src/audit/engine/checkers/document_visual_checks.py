@@ -126,17 +126,18 @@ def fixture_visual_check(agent: Any, index: int, *, attachments: bool) -> AuditR
 def importance_visual_check(agent: Any, index: int) -> AuditResultItem:
     try:
         fields = {
-            "importance_marks_present": (
-                "尺寸报告实际检测项目中是否可见重要度区分标记（关键、重要、一般或表中明确定义的对应符号）。"
-                "只读原件；目录、规则说明或空白图例不能代替项目实际标记。完整检查相关项目区域仍无标记才false，不可读或含义不明为null。"
+            "importance_single_option_checked": (
+                "原件“重要度区分”字段对应的选项中，是否恰好勾选了一个选项（√、✓、✔、X、×、☒、■、●等勾选符号合计恰好一个）。"
+                "只读原件；目录、规则说明或空白图例不能代替实际勾选。字段完整可读且恰好一个勾选为true；"
+                "完整可读但没有勾选、勾选多个或找不到该字段为false；不可读、模糊或含义不明为null。"
             )
         }
         facts, evidence = _observe(agent, fields, "dimension_importance_facts")
     except Exception as exc:
         return _failure(agent, index, exc)
-    value = facts.get("importance_marks_present")
+    value = facts.get("importance_single_option_checked")
     status = "PASS" if value is True else "NG" if value is False else "UNABLE"
-    message = {"PASS": "原件检测项目中存在重要度区分标记。", "NG": "原件相关检测项目中未标记重要度区分。", "UNABLE": "无法确认原件中的重要度区分标记。"}[status]
+    message = {"PASS": "原件“重要度区分”恰好勾选一个选项。", "NG": "原件“重要度区分”没有勾选、勾选多个或缺少该字段。", "UNABLE": "无法确认原件“重要度区分”的勾选数量。"}[status]
     return _result(agent, index, status, message, evidence)
 
 

@@ -11,9 +11,10 @@
 
 import re
 from collections.abc import Iterator
+from types import MappingProxyType
 from typing import Any
 
-from audit.engine.rule_engine import RuleContext, Table
+from audit.engine.rule_engine import GuardStop, RuleContext, Table
 from audit.kinds import PpapDocumentType
 
 from .excel_agent import ExcelAgent, rule
@@ -57,6 +58,8 @@ class DpvrExcelAgent(ExcelAgent):
     """零部件设计验证计划和报告(DVP&R)审核代理"""
 
     DOC_TYPE = PpapDocumentType.DPVR
+    # Every row of a vertically merged 序号 block is a test item row.
+    SECTION_OPTIONS = MappingProxyType({_SECTION_NAME: {"row_expand_merged_anchors": True}})
     EXPECTED_RULE_CATEGORIES = (
         "文件编号审核",
         "试验结论审核",
@@ -118,9 +121,39 @@ class DpvrExcelAgent(ExcelAgent):
                     continue
                 yield fluent_sheet, row
 
+    def _header_report_number(self, fluent_sheet: Any) -> str | None:
+        """Read a report-level number above the item table.
+
+        Returns None when the sheet has no such label, "" when the label has no value.
+        """
+        try:
+            header_row = fluent_sheet.section(_SECTION_NAME).resolved.header_row
+        except GuardStop:
+            header_row = None
+        last_row = header_row - 1 if header_row else 20
+        labels = sorted(_REPORT_NUMBER_LABEL_TOKENS, key=len, reverse=True)
+        for cell in fluent_sheet.scan_non_empty(row_min=1, row_max=last_row, col_min=1, col_max=40):
+            compact, _ = self._normalize_text(cell.value())
+            label = next((item for item in labels if compact.rstrip(":：") == item or compact.startswith((f"{item}:", f"{item}："))), None)
+            if label is None:
+                continue
+            inline = compact[len(label) :].lstrip(":：")
+            if inline:
+                return inline
+            right = cell.find_right(max_offset=8)
+            value = "" if right is None else str(right.value() or "").strip()
+            return "" if self._is_label_only_value(self._normalize_text(value)[0], labels=_REPORT_NUMBER_LABEL_TOKENS) else value
+        return None
+
     @rule("文件编号审核")
     def rule_1(self, ctx: RuleContext) -> tuple[str, str]:
         table = Table(ctx)
+        header_numbers = [self._header_report_number(sheet) for sheet in table.find_sheets(_SHEET_NAME)]
+        if any(number is not None for number in header_numbers):
+            # A report-level 报告编号/文件编号 field decides the clause; the item table is not needed.
+            if all(number for number in header_numbers if number is not None):
+                return "PASS", ""
+            return "NG", "报告编号字段的内容为空"
         rows_with_sheet = list(self._iter_main_rows(table, required=("序号", "试验报告编号")))
         if not rows_with_sheet:
             return "NG", "未找到有效数据行"

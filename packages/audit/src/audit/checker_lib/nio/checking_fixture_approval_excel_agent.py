@@ -147,10 +147,14 @@ class CheckingFixtureApprovalExcelAgent(ExcelAgent):
 
         list_section = table.sheet("检具清单").section("检具清单数据区")
         list_columns = list_section.columns("序号", "零件号", "零件名称", "检具号", "检具名称", "检具数量", optional=("备注",))
+        listed = 0
         for row in list_section.rows_from(list_columns):
             if not row.is_present("序号"):
                 break
+            listed += 1
             row.expect("零件号", "零件名称", "检具号", "检具名称", "检具数量", context="检具清单序号")
+        if not listed:
+            return "NG", "检具清单没有任何序号数据行"
 
         return "PASS", ""
 

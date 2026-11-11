@@ -22,8 +22,13 @@ def _parse_deadline_dates(raw_value: object) -> tuple[datetime, ...]:
         return (datetime.combine(raw_value, datetime.min.time()),)
 
     text = "" if raw_value is None else str(raw_value)
-    matched = re.findall(r"\d{4}/\d{2}/\d{2}", text)
-    return tuple(datetime.strptime(item, "%Y/%m/%d") for item in matched)
+    dates = []
+    for year, month, day in re.findall(r"(\d{4})\s*(?:[/.-]|年)\s*(\d{1,2})\s*(?:[/.-]|月)\s*(\d{1,2})", text):
+        try:
+            dates.append(datetime(int(year), int(month), int(day)))
+        except ValueError:
+            continue
+    return tuple(dates)
 
 
 class XirAssemblyIssueAgent(ExcelAgent):
@@ -54,8 +59,16 @@ class XirAssemblyIssueAgent(ExcelAgent):
             ("状态-追溯体系区", "状态-追溯体系"),
             ("状态-其他专项区", "状态-其他专项"),
         )
-        status_values = [sheet.section(section_name).first_value(column_name, lower=True, compact=True) for section_name, column_name in status_specs]
 
+        def status_value(section_name: str, column_name: str) -> str:
+            # 状态只取标题正下方的单元格；空着时不能读到下面问题表的表头。
+            column = sheet.section(section_name).columns(column_name)[column_name]
+            return str(sheet.cell(column.data_start_row, column.header_col).value(compact=True) or "").lower()
+
+        status_values = [status_value(section_name, column_name) for section_name, column_name in status_specs]
+
+        if not any(status_values):
+            return "NG", "规则 2 审核不通过: 专项审核问题关闭情况均未填写"
         if not any(value == "no" for value in status_values):
             return "PASS", ""
 
@@ -83,7 +96,7 @@ class XirAssemblyIssueAgent(ExcelAgent):
             row.expect_condition(
                 "时间节点列",
                 lambda value: bool(_parse_deadline_dates(value)),
-                context="时间节点必须包含至少一个YYYY/MM/DD格式日期",
+                context="时间节点必须包含至少一个有效的年/月/日日期",
             )
             row.expect_condition(
                 "时间节点列",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from types import MappingProxyType
 from typing import Tuple
 
 from audit.engine.rule_engine import RuleContext, Table
@@ -15,6 +16,8 @@ class ProcessSpecialCharacteristicAgent(ExcelAgent):
     """过程特性管理清单专业审核代理。"""
 
     DOC_TYPE = PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST
+    # Every row of a vertically merged 零件编号 block is a row of the list.
+    SECTION_OPTIONS = MappingProxyType({"主数据区": {"row_expand_merged_anchors": True}})
     EXPECTED_RULE_CATEGORIES = (
         "产品编号识别",
         "列完整性及内容非空检查",

@@ -14,6 +14,8 @@ class ProcessSpecialCharacteristicAgent(ExcelAgent):
     """过程特性管理清单专业审核代理。"""
 
     DOC_TYPE = PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST
+    # 合并单元格覆盖的每一行都是数据行，各自检查。
+    RESOURCE_OVERRIDES = {"sections": {"主数据区": {"row_expand_merged_anchors": True}}}
 
     @rule("关键字段完整性检查")
     def rule_1(self, ctx: RuleContext) -> Tuple[str, str]:
@@ -77,11 +79,15 @@ class ProcessSpecialCharacteristicAgent(ExcelAgent):
             "说明（关键要求/操作参数等）",
         )
 
+        checked_rows = 0
         for row in section.rows_from(columns):
             if not row.is_present("过程/流程步骤"):
                 continue
+            checked_rows += 1
             row.expect(*required_columns, context="过程/流程步骤")
 
+        if checked_rows == 0:
+            return "NG", "主数据区未识别到任何“过程/流程步骤”有内容的数据行"
         return "PASS", ""
 
     @rule("高风险管理项检查")

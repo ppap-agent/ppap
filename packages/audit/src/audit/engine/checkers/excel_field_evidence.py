@@ -360,7 +360,8 @@ def check_psw_submission_reason(agent: Any, ctx: RuleContext) -> tuple[str, str]
     return result.status, result.suggestions
 
 
-def check_psw_excel_fields(agent: Any, ctx: RuleContext, rule_no: int) -> AuditResultItem:
+def check_psw_excel_fields(agent: Any, ctx: RuleContext, rule_no: int, *, typed_text_signs: bool = True) -> AuditResultItem:
+    """typed_text_signs=False: text typed into the signature box is not a signature; only a placed picture is."""
     from documents.excel.visual import has_region_graphics, renderable_xlsx
 
     from audit.engine.file_bytes import load_file_bytes
@@ -410,6 +411,8 @@ def check_psw_excel_fields(agent: Any, ctx: RuleContext, rule_no: int) -> AuditR
             "file_version_id": str((agent.audit_file.file_metadata or {}).get("file_version_id") or agent.audit_file.audit_id),
         }
         value, excerpt = read_native_signature(ctx, target, region) if signature else (False, "完整区域未包含图形印章对象")
+        if signature and value and not typed_text_signs:
+            value, excerpt = False, "签字栏只有输入的文字，没有签名图片：" + excerpt
         witness(locator, excerpt)
         return dict.fromkeys(fields, value)
 

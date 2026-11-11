@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 _NEGATIVE_KEYWORDS = ("不合格", "未完成", "非完成")
 _SELECTED_MARKS = ("√", "✔", "☑", "✅")
+_NEGATIVE_TICK = re.compile("(?:{words})[（(]?[{marks}]|[{marks}](?:{words})".format(words="|".join(_NEGATIVE_KEYWORDS), marks="".join(_SELECTED_MARKS)))
 _RESPONSIBLE_PERSON_PATTERN = re.compile(
     r"检具(?:认可)?负责人\s*[:：]?\s*([^\s_,，。;；:：]{2,40})",
     re.IGNORECASE,
@@ -33,10 +34,12 @@ class CheckingFixtureApprovalExcelAgent(ExcelAgent):
     """检具验收报告审核代理（规则1~3）。"""
 
     DOC_TYPE = PpapDocumentType.CHECKING_FIXTURE_APPROVAL_REPORT
+    # 合并单元格覆盖的每一行都是数据行，各自检查。
+    RESOURCE_OVERRIDES = {"sections": {"检具清单数据区": {"row_expand_merged_anchors": True}}}
 
     def _contains_negative_checked_mark(self, value: Any) -> bool:
-        text = str(value or "").lower()
-        return bool(text) and any(keyword in text for keyword in _NEGATIVE_KEYWORDS) and any(marker in text for marker in _SELECTED_MARKS)
+        # 勾选须落在“不合格/未完成”选项自己的括号内或紧挨该选项，其他选项的勾不算。
+        return bool(_NEGATIVE_TICK.search("".join(str(value or "").split())))
 
     def _conclusion_candidates(self, block: Any) -> list[str] | None:
         if block.missing_fields("结论字段"):

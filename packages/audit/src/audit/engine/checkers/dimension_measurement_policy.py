@@ -287,14 +287,14 @@ def check_tolerance(standard: Any, measurements: tuple[Any, ...], result: Any, m
         return MeasurementCheck("NG", f"检查数据非数值或占位符: {invalid_value}")
 
     standard_kind, quality_range = classify_quality_standard(standard_text)
-    if standard_kind == "recognized_non_range":
-        return MeasurementCheck("NA")
-    if standard_kind != "numeric_range" or quality_range is None:
-        return MeasurementCheck("NG", f"判定标准无法解析: {standard_text}")
+    if standard_kind not in {"numeric_range", "recognized_non_range"} or (standard_kind == "numeric_range" and quality_range is None):
+        return MeasurementCheck("UNABLE", f"判定标准无法解析: {standard_text}")
     if not is_strict_ok_text(result_text):
         return MeasurementCheck("NG", f"判定结果不规范: {result_text}")
+    if standard_kind == "recognized_non_range":
+        return MeasurementCheck("NA")
     row_numbers = [number for numbers in parsed_groups for number in numbers]
-    if not row_numbers:
+    if not row_numbers or quality_range is None:
         return MeasurementCheck("NA")
     lower, upper = quality_range
     for measured_number in row_numbers:

@@ -36,6 +36,7 @@ from audit.checker_lib.nio.control_plan_shared import (
     value_matches,
 )
 from audit.checker_lib.nio.cross_file_extractors import (
+    REFERENCE_IDENTITY_UNRESOLVED,
     build_struct_key,
     extract_rows_from_workbook,
     filter_pfd_process_rows,
@@ -61,6 +62,9 @@ from audit.kinds import PpapDocumentType
 logger = logging.getLogger(__name__)
 
 _SCL_FILE_NAME_KEY = "__file_name"
+MULTIPLE_RELATED_FILES = "存在多份文档，无法判定主文档"
+CP_NO_DETAIL_ROWS = "控制计划数据区没有任何明细行"
+CP_STRAY_MARK = "表头有勾选符号，但旁边没有可识别的控制计划类型文字，无法确认勾选了哪一类"
 _SCL_SHEET_KEYWORD = "特殊特性清单"
 _SCL_VALID_CHAR_CLASS_KEYS = {
     normalize_key("产品"),
@@ -311,8 +315,23 @@ class ControlPlanAgent(ExcelAgent):
         if not files:
             return None, f"缺少关联文档: {doc_type.get_type_name()}"
         if len(files) > 1:
-            return None, f"{doc_type.get_type_name()}存在多份文档，无法判定主文档"
+            return None, f"{doc_type.get_type_name()}{MULTIPLE_RELATED_FILES}"
         return files[0], ""
+
+    @staticmethod
+    def _related_error_status(error: str) -> str:
+        """Several candidate reference files leave the main one unknown; that is not a missing file."""
+        return "UNABLE" if MULTIPLE_RELATED_FILES in error else "NG"
+
+    def _identity_check(self, left_keys: list[str], right_keys: list[str]) -> Tuple[str, str] | None:
+        """Different part numbers fail; a missing one leaves an otherwise passing comparison unresolved."""
+        if not left_keys or not right_keys:
+            if self._shared_rule_context is not None:
+                self._shared_rule_context.note_unresolved(REFERENCE_IDENTITY_UNRESOLVED)
+            return None
+        if not part_numbers_compatible(left_keys, right_keys):
+            return "NG", "请上传同零件号的待审文件进行审核"
+        return None
 
     def _extract_cp_rows(self, wb: Any) -> Any:
         return extract_rows_from_workbook(
@@ -473,9 +492,9 @@ class ControlPlanAgent(ExcelAgent):
         return read_part_number_keys(ws, (lambda sheet, row, column: ctx.note_cell(sheet, row, column, file_version_id=ctx.version_for_worksheet(ws))) if ctx else None)
 
     def _get_cross_rule_9_pfmea_sheet_and_rows(self) -> tuple[Any, list[dict[str, str]] | None, str]:
-        related_file, _error = self._require_single_related_file(PpapDocumentType.PFMEA)
+        related_file, error = self._require_single_related_file(PpapDocumentType.PFMEA)
         if related_file is None:
-            return None, None, "缺少PFMEA，请补充"
+            return None, None, error if MULTIPLE_RELATED_FILES in error else "缺少PFMEA，请补充"
 
         file_url = str(getattr(related_file, "file_url", "") or "")
         if not file_url:
@@ -499,9 +518,9 @@ class ControlPlanAgent(ExcelAgent):
         return pfmea_ws, pfmea_rows, ""
 
     def _get_cross_rule_7_pfd_sheet_and_rows(self) -> tuple[Any, list[dict[str, str]] | None, str]:
-        related_file, _error = self._require_single_related_file(PpapDocumentType.PROCESS_FLOW_CHART)
+        related_file, error = self._require_single_related_file(PpapDocumentType.PROCESS_FLOW_CHART)
         if related_file is None:
-            return None, None, "缺少过程流程图，请补充"
+            return None, None, error if MULTIPLE_RELATED_FILES in error else "缺少过程流程图，请补充"
 
         file_url = str(getattr(related_file, "file_url", "") or "")
         if not file_url:
@@ -757,7 +776,7 @@ class ControlPlanAgent(ExcelAgent):
             required_fields=("process_step",),
         )
         if pfmea_rows is None:
-            return "NG", error
+            return self._related_error_status(error), error
 
         # 检查 PFMEA 是否识别到了 special_char 列
         if pfmea_rows and "special_char" not in pfmea_rows[0]:
@@ -887,7 +906,7 @@ class ControlPlanAgent(ExcelAgent):
 
         pfd_ws, pfd_rows, pfd_error = self._get_cross_rule_7_pfd_sheet_and_rows()
         if pfd_error:
-            return "NG", pfd_error
+            return self._related_error_status(pfd_error), pfd_error
 
         cp_ws = self._find_control_plan_worksheet(wb)
         if cp_ws is None:
@@ -895,10 +914,9 @@ class ControlPlanAgent(ExcelAgent):
 
         pfd_part_keys = self._extract_cross_rule_part_number_from_sheet(pfd_ws)
         cp_part_keys = self._extract_cross_rule_part_number_from_sheet(cp_ws)
-        if not pfd_part_keys or not cp_part_keys:
-            return "NG", "请补充文件的零件编号信息"
-        if not part_numbers_compatible(pfd_part_keys, cp_part_keys):
-            return "NG", "请上传同零件号的待审文件进行审核"
+        identity_failure = self._identity_check(pfd_part_keys, cp_part_keys)
+        if identity_failure is not None:
+            return identity_failure
 
         cp_rows = self._extract_cp_rows(wb)
         if not cp_rows:
@@ -964,10 +982,9 @@ class ControlPlanAgent(ExcelAgent):
             return "NG", "特殊特性清单未提取到有效特性项"
 
         cp_part_keys = self._extract_cross_rule_part_number_from_sheet(cp_ws)
-        if not cp_part_keys or not scl_part_keys:
-            return "NG", "请补充文件的零件编号信息"
-        if not part_numbers_compatible(cp_part_keys, scl_part_keys):
-            return "NG", "请上传同零件号的待审文件进行审核"
+        identity_failure = self._identity_check(cp_part_keys, scl_part_keys)
+        if identity_failure is not None:
+            return identity_failure
 
         scl_entries = self._build_cross_rule_8_scl_entries(special_rows)
         if not scl_entries:
@@ -1007,7 +1024,7 @@ class ControlPlanAgent(ExcelAgent):
 
         pfmea_ws, pfmea_rows, pfmea_error = self._get_cross_rule_9_pfmea_sheet_and_rows()
         if pfmea_error:
-            return "NG", pfmea_error
+            return self._related_error_status(pfmea_error), pfmea_error
 
         cp_ws = self._find_control_plan_worksheet(wb)
         if cp_ws is None:
@@ -1015,10 +1032,9 @@ class ControlPlanAgent(ExcelAgent):
 
         pfmea_part_keys = self._extract_cross_rule_part_number_from_sheet(pfmea_ws)
         cp_part_keys = self._extract_cross_rule_part_number_from_sheet(cp_ws)
-        if not pfmea_part_keys or not cp_part_keys:
-            return "NG", "请补充文件的零件编号信息"
-        if not part_numbers_compatible(pfmea_part_keys, cp_part_keys):
-            return "NG", "请上传同零件号的待审文件进行审核"
+        identity_failure = self._identity_check(pfmea_part_keys, cp_part_keys)
+        if identity_failure is not None:
+            return identity_failure
 
         cp_rows = self._extract_cp_rows(wb)
         if not cp_rows:
@@ -1120,10 +1136,9 @@ class ControlPlanAgent(ExcelAgent):
             return "NG", "特殊特性清单未提取到可比对项目"
 
         cp_part_keys = self._extract_cross_rule_part_number_from_sheet(cp_ws)
-        if not cp_part_keys or not scl_part_keys:
-            return "NG", "请补充文件的零件编号信息"
-        if not part_numbers_compatible(cp_part_keys, scl_part_keys):
-            return "NG", "请上传同零件号的待审文件进行审核"
+        identity_failure = self._identity_check(cp_part_keys, scl_part_keys)
+        if identity_failure is not None:
+            return identity_failure
 
         # SCL 按 (特性分类, 特性描述) 建索引
         scl_index: Dict[str, Dict[str, str]] = {}
@@ -1776,6 +1791,7 @@ class ControlPlanAgent(ExcelAgent):
         - 无标记时返回 NG（而非 ERR）
         """
         wb = self._workbook_from_ctx(ctx)
+        stray_marks = False
         try:
             for sheet in wb.worksheets:
                 max_r = min(_HEADER_SCAN_ROWS, sheet.max_row)
@@ -1803,6 +1819,10 @@ class ControlPlanAgent(ExcelAgent):
 
                 if not mark_cells and not stage_cells:
                     continue  # 这个 sheet 没有相关信息，看下一个
+                if not stage_cells:
+                    # A tick with no stage text anywhere on the sheet does not say which type was chosen.
+                    stray_marks = True
+                    continue
 
                 # 2) 汇总所有已识别的勾选阶段，统一判定，避免首个非生产阶段提前返回
                 selected_stage_types: List[str] = []
@@ -1838,8 +1858,6 @@ class ControlPlanAgent(ExcelAgent):
                     return "Pass", "适用阶段勾选正确"
                 if selected_stage_types:
                     return "NG", "勾选了非生产/SOP阶段"
-                if mark_cells:
-                    return "NG", "勾选了非生产/SOP阶段"
 
                 # 5) 有 stage 关键词但无 mark → 未勾选任何阶段
                 if stage_cells:
@@ -1852,9 +1870,12 @@ class ControlPlanAgent(ExcelAgent):
                 source_candidates = (file_url.lower(), source_url.lower())
                 if any(candidate.endswith(".pdf") for candidate in source_candidates) and any(self._classify_stage_text(scl) == "production" for _sr, _sc, scl in stage_cells):
                     return "UNABLE", "尚未从PDF原件确认实际阶段勾选；生产阶段文字不能代替选择。"
-                if stage_cells:
-                    return "NG", "未勾选任何控制计划类型"
+                if mark_cells:
+                    return "UNABLE", CP_STRAY_MARK
+                return "NG", "未勾选任何控制计划类型"
 
+            if stray_marks:
+                return "UNABLE", CP_STRAY_MARK
             return "NG", "未检测到任何适用阶段信息"
 
         except Exception as exc:
@@ -1924,6 +1945,7 @@ class ControlPlanAgent(ExcelAgent):
         """
         wb = self._workbook_from_ctx(ctx)
         found = False
+        detail_rows = 0
         for ws in wb.worksheets:
             feature_type_row, feature_type_col = self._find_special_char_column(ws)
             if feature_type_row is None or feature_type_col is None:
@@ -2017,6 +2039,7 @@ class ControlPlanAgent(ExcelAgent):
                 # A real detail row evaluates the conditional requirement even
                 # when its special-characteristic antecedent is false.
                 if any(ws.cell(r, c).value is not None for c in {table_left, feature_type_col, product_col, process_col}):
+                    detail_rows += 1
                     ctx.note_cell(ws.title, special_cell.row, special_cell.column)
                     ctx.record_execution()
 
@@ -2045,9 +2068,14 @@ class ControlPlanAgent(ExcelAgent):
                     elif (val_product is None or str(val_product).strip() == "") and (val_process is None or str(val_process).strip() == ""):
                         return "NG", f"行号{r} 特殊特性分类对应行的产品、过程列均为空"
 
-                r = (is_merged_cell.max_row + 1) if is_merged_cell else (r + 1)
+                # Every row of a merged 特殊特性分类 block is checked against its own 产品/过程.
+                r += 1
 
-        return ("Pass", "特殊特性分类、特性列符合要求") if found else ("NG", "未找到'特殊特性分类'或'特性'列")
+        if not found:
+            return "NG", "未找到'特殊特性分类'或'特性'列"
+        if not detail_rows:
+            return "NG", CP_NO_DETAIL_ROWS
+        return "Pass", "特殊特性分类、特性列符合要求"
 
     @rule("特殊特性分类与控制方法关联审核")
     def rule_5(self, ctx: RuleContext) -> Tuple[str, str]:
@@ -2058,6 +2086,7 @@ class ControlPlanAgent(ExcelAgent):
         """
         wb = self._workbook_from_ctx(ctx)
         found = False
+        detail_rows = 0
         for ws in wb.worksheets:
             feature_type_row, feature_type_col = self._find_special_char_column(ws)
             if feature_type_row is None or feature_type_col is None:
@@ -2131,6 +2160,7 @@ class ControlPlanAgent(ExcelAgent):
                 # A real detail row evaluates the conditional requirement even
                 # when its special-characteristic antecedent is false.
                 if any(ws.cell(r, c).value is not None for c in {table_left, feature_type_col, ctrl_col}):
+                    detail_rows += 1
                     ctx.note_cell(ws.title, special_cell.row, special_cell.column)
                     ctx.record_execution()
 
@@ -2150,9 +2180,14 @@ class ControlPlanAgent(ExcelAgent):
                         if val_ctrl is None or str(val_ctrl).strip() == "":
                             return "NG", f"行号{r} 特殊特性分类对应行的控制方法列为空"
 
-                r = (is_merged_cell.max_row + 1) if is_merged_cell else (r + 1)
+                # Every row of a merged 特殊特性分类 block is checked against its own 控制方法.
+                r += 1
 
-        return ("Pass", "特殊特性分类、控制方法列符合要求") if found else ("NG", "未找到'特殊特性分类'或'控制方法'列")
+        if not found:
+            return "NG", "未找到'特殊特性分类'或'控制方法'列"
+        if not detail_rows:
+            return "NG", CP_NO_DETAIL_ROWS
+        return "Pass", "特殊特性分类、控制方法列符合要求"
 
     @rule("频率或频次列完整性审核")
     def rule_6(self, ctx: RuleContext) -> Tuple[str, str]:
@@ -2195,6 +2230,7 @@ class ControlPlanAgent(ExcelAgent):
             )
 
             r = data_start
+            detail_rows = 0
 
             while r <= data_end:
                 # 跳过 PDF 转换后的重复页眉行
@@ -2230,11 +2266,14 @@ class ControlPlanAgent(ExcelAgent):
                     r += 1
                     continue
 
+                detail_rows += 1
                 if val_freq is None or str(val_freq).strip() == "":
                     return "NG", f"行号{r} 频率/频次列为空"
 
                 r = (is_merged_cell.max_row + 1) if is_merged_cell else (r + 1)
 
+            if not detail_rows:
+                return "NG", CP_NO_DETAIL_ROWS
             return "Pass", "频率/频次列符合要求"
 
         return "NG", "未找到'频率'或'频次'列"

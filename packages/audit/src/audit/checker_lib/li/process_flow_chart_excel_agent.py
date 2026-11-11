@@ -49,6 +49,8 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
     """过程流程图Excel文件专用审核代理"""
 
     DOC_TYPE = PpapDocumentType.PROCESS_FLOW_CHART
+    # 合并单元格覆盖的每一行都是数据行，各自检查。
+    RESOURCE_OVERRIDES = {"sections": {"过程流程主数据区": {"row_expand_merged_anchors": True}}}
 
     def _original_flow_rows(self):
         """Locate original cells when conversion joins distinct process records."""

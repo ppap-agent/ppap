@@ -22,8 +22,14 @@ def _parse_deadline_dates(raw_value: object) -> tuple[datetime, ...]:
         return (datetime.combine(raw_value, datetime.min.time()),)
 
     text = "" if raw_value is None else str(raw_value)
-    matched = re.findall(r"\d{4}/\d{2}/\d{2}", text)
-    return tuple(datetime.strptime(item, "%Y/%m/%d") for item in matched)
+    dates: list[datetime] = []
+    # Year-month-day separated by "/", "-" or ".", with one- or two-digit month and day.
+    for year, month, day in re.findall(r"(?<!\d)(\d{4})[/.-](\d{1,2})[/.-](\d{1,2})(?!\d)", text):
+        try:
+            dates.append(datetime(int(year), int(month), int(day)))
+        except ValueError:
+            continue
+    return tuple(dates)
 
 
 class XirAssemblyIssueAgent(ExcelAgent):

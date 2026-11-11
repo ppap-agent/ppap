@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
+from types import MappingProxyType
 from typing import Tuple
 
 from audit.engine.rule_engine import (
@@ -39,10 +40,20 @@ def _is_decimal_with_four_places(value: object, number_format: str) -> bool:
     return decimal_value.is_finite() and decimal_value.as_tuple().exponent == -4
 
 
+# “N”“否”与占位写法表示没有选这一列；“×”“√”“☒”等其他内容都算选中。
+_UNSELECTED = frozenset({"n", "no", "否", "/", "-", "—", "na", "n/a"})
+
+
+def _is_selected(text: str) -> bool:
+    return bool(text) and text.lower() not in _UNSELECTED
+
+
 class SubSupplierListExcelAgent(ExcelAgent):
     """材料、产品及分供方清单 Excel 文件专业审核代理。"""
 
     DOC_TYPE = PpapDocumentType.SUB_SUPPLIER_LIST
+    # Every row of a vertically merged 零件号 block is a row of the list.
+    SECTION_OPTIONS = MappingProxyType({"主数据区": {"row_expand_merged_anchors": True}})
     EXPECTED_RULE_CATEGORIES = (
         "单件重量列及精度审核",
         "材料信息列完整性及非空审核",
@@ -124,9 +135,11 @@ class SubSupplierListExcelAgent(ExcelAgent):
 
         for sheet in sheets:
             section = sheet.section("主数据区")
+            # 零件号 is required: without it no row can be identified, which is 不通过, not an error.
             columns = section.columns(
                 *status_columns,
-                optional=("序号", "零件号"),
+                "零件号",
+                optional=("序号",),
             )
             rows = list(section.rows_from(columns))
             if not rows:
@@ -140,8 +153,8 @@ class SubSupplierListExcelAgent(ExcelAgent):
                 checked_rows += 1
                 row.expect_condition(
                     status_columns[0],
-                    lambda _value: row.count_present(*status_columns) == 1,
-                    context="部件状态列必须且仅能有一列有内容",
+                    lambda _value: sum(_is_selected(row.value(name, compact=True)) for name in status_columns) == 1,
+                    context="部件状态列必须且仅能勾选一列",
                 )
             if checked_rows == 0:
                 return "NG", f"工作表[{sheet.title}]未识别到有效零件号数据行"

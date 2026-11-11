@@ -17,7 +17,7 @@
 import logging
 from typing import Tuple
 
-from audit.engine.rule_engine import Cell, Decision, RuleContext, Table
+from audit.engine.rule_engine import Cell, Decision, GuardStop, RuleContext, Table
 from audit.kinds import PpapDocumentType
 
 from .excel_agent import ExcelAgent, rule
@@ -114,13 +114,21 @@ class MsaReportAgent(ExcelAgent):
         logger.info(f"测量系统分析计划表: {[sheet.title for sheet in rr_sheets]}")
 
         is_any_rr_sheet_filled = False
+        plan_tables = []
+        first_failure: GuardStop | None = None
         for fluent_sheet in rr_sheets:
-            section = fluent_sheet.section("计划主数据区")
-            columns = section.columns(
-                "序号",
-                *_RULE2_REQUIRED_COLUMNS,
-                optional=("备注",),
-            )
+            # A sheet matched only by its name (e.g. any "MSA" sheet) without the plan table is not the plan.
+            try:
+                section = fluent_sheet.section("计划主数据区")
+                columns = section.columns("序号", *_RULE2_REQUIRED_COLUMNS, optional=("备注",))
+            except GuardStop as failure:
+                first_failure = first_failure or failure
+                continue
+            plan_tables.append((fluent_sheet, section, columns))
+        if not plan_tables and first_failure is not None:
+            raise first_failure
+
+        for fluent_sheet, section, columns in plan_tables:
             logger.info(f"检查表: {fluent_sheet.title}")
 
             has_data_row = False

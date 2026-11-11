@@ -22,7 +22,8 @@ _CONDITIONAL_APPROVAL_WINDOW_DAYS = 92
 _UNDECIDABLE = "原件证据不足，无法判断所需事实；请核对原件。"
 _SELECTION_NG = "“认可情况”需且仅需勾选一个选项。"
 _MISSING_FIELD_NG = "未找到“认可情况”字段。"
-_DATE_MISSING_NG = "无法识别条件批准日期。"
+DATE_MISSING_NG = "无法识别条件批准日期。"
+_DATE_INVALID_NG = "条件批准日期不是有效的日历日期。"
 _DATE_WINDOW_NG = "条件批准日期超出3个月。"
 _COMMENTS_NG = "条件批准需填写补充评论。"
 _SUBMISSION_NG = "“批准”状态下提交结果勾选不完整。"
@@ -96,7 +97,8 @@ def _as_bool(value: object) -> bool | None:
     return None
 
 
-def _parse_approval_date(value: object) -> date | None:
+def _parse_approval_date(value: object) -> date | str | None:
+    """A date; "invalid" for a written year-month-day that is not a calendar date; None when no date is seen."""
     text = str(value or "").strip()
     if not text or text.lower() in {"null", "none", "n/a", "na", "无"}:
         return None
@@ -107,7 +109,7 @@ def _parse_approval_date(value: object) -> date | None:
     try:
         return datetime(year, month, day).date()
     except ValueError:
-        return None
+        return "invalid"
 
 
 def decide_disposition_visual_rule(
@@ -159,7 +161,9 @@ def decide_disposition_visual_rule(
             return "UNABLE", _UNDECIDABLE
         approval_date = _parse_approval_date(observation.get("approval_date"))
         if approval_date is None:
-            return "NG", _DATE_MISSING_NG
+            return "NG", DATE_MISSING_NG
+        if not isinstance(approval_date, date):
+            return "NG", _DATE_INVALID_NG
         days_delta = (today - approval_date).days
         if 0 <= days_delta <= _CONDITIONAL_APPROVAL_WINDOW_DAYS:
             return "PASS", ""

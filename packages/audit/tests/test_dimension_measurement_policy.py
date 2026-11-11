@@ -57,7 +57,8 @@ def test_tolerance_preserves_source_cell_compaction_and_known_non_range_behavior
     assert check_tolerance("平面度0.05", (0.0987,), "OK", "三坐标").status == "NG"
     assert check_tolerance("Φ14（0.2，0.1）", (14.05,), "OK", "卡尺").status == "NG"
     assert check_tolerance("12.5±0.1", ("12.47/12.48\n12.49/12.50",), "OK", "三坐标").status == "PASS"
-    assert check_tolerance("10", (10,), None, None).status == "NA"
+    assert check_tolerance("10", (10,), "OK", None).status == "NA"
+    assert check_tolerance("10", (10,), None, None).reason == "判定结果不规范: "
     assert check_tolerance("未给定", (10,), "OK", "卡尺").reason == "判定标准无法解析: 未给定"
     assert check_tolerance(None, (), None, None).status == "NA"
 

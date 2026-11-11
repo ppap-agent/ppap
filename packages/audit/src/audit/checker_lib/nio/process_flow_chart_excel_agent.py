@@ -13,6 +13,7 @@
 import logging
 import re
 from bisect import bisect_left, bisect_right
+from types import MappingProxyType
 from typing import Any, cast
 
 from audit.checker_lib.nio.cross_file_extractors import (
@@ -23,11 +24,42 @@ from audit.checker_lib.nio.cross_file_extractors import (
     normalize_text,
 )
 from audit.engine.rule_engine import RuleContext, Sheet, Table
+from audit.engine.rule_engine.contracts import DomainTokensModel, RuleResource
+from audit.engine.rule_engine.resources.doc08_process_flow_chart import get_doc08_resource_view
 from audit.kinds import PpapDocumentType
 
 from .excel_agent import ExcelAgent, rule
 
 logger = logging.getLogger(__name__)
+
+CHARACTERISTIC_SECTION = "过程流程特性区"
+CHARACTERISTIC_PREFIX = "特性区-"
+
+
+def _characteristic_rows_resource() -> RuleResource:
+    """The main data area, scanned row by row: a row exists when 工序名称 or a 特性类别 is filled.
+
+    Clauses 2 and 3 read it so that rows inside a merged 工序名称 block and 类别 rows without
+    工序名称 are checked; clause 4 keeps the main data area unchanged.
+    """
+    base = get_doc08_resource_view()
+    names = ("工序名称", "产品特殊特性", "产品特性类别", "过程特殊特性", "过程特性类别")
+    section = base.sections["过程流程主数据区"].model_copy(
+        update={
+            "canonical_name": CHARACTERISTIC_SECTION,
+            "row_anchors": tuple(CHARACTERISTIC_PREFIX + name for name in ("工序名称", "产品特性类别", "过程特性类别")),
+            "row_anchor_match": "any",
+        }
+    )
+    columns = {CHARACTERISTIC_PREFIX + name: base.columns[name].model_copy(update={"canonical_name": CHARACTERISTIC_PREFIX + name, "section_name": CHARACTERISTIC_SECTION}) for name in names}
+    return RuleResource(
+        sheets=MappingProxyType({}),
+        sections=MappingProxyType({CHARACTERISTIC_SECTION: section}),
+        columns=MappingProxyType(columns),
+        field_blocks=MappingProxyType({}),
+        fields=MappingProxyType({}),
+        tokens=DomainTokensModel(),
+    )
 
 
 def _split_non_empty_lines(value: object) -> list[str]:
@@ -183,6 +215,8 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
 
     DOC_TYPE = PpapDocumentType.PROCESS_FLOW_CHART
     CLAUSE_BOUND_CHECKS = True
+    SECTION_OPTIONS = MappingProxyType({"过程流程工序定义区": {"row_expand_merged_anchors": True}})
+    EXTRA_RESOURCE = _characteristic_rows_resource()
     POSITIONAL_CLAUSE_CHECKS = True
     EXPECTED_RULE_CATEGORIES = (
         "表头字段完整性检查",
@@ -330,13 +364,14 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
         table = Table(ctx)
         sheets = table.find_sheets("过程流程图")
 
-        section = sheets[0].section("过程流程主数据区")
-        columns = section.columns("产品特殊特性", "产品特性类别")
+        section = sheets[0].section(CHARACTERISTIC_SECTION)
+        special, category = CHARACTERISTIC_PREFIX + "产品特殊特性", CHARACTERISTIC_PREFIX + "产品特性类别"
+        columns = section.columns(special, category)
         rows = list(section.rows_from(columns))
         if not rows:
             return "NG", "过程流程主数据区为空表。"
         for row in rows:
-            if row.is_present("产品特性类别") and not row.is_present("产品特殊特性"):
+            if row.is_present(category) and not row.is_present(special):
                 return (
                     "NG",
                     f"工作表 {row.sheet_title} 行号{row.row_index} “产品特性类别”不为空，但“产品特殊特性”为空。",
@@ -357,13 +392,14 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
         table = Table(ctx)
         sheets = table.find_sheets("过程流程图")
 
-        section = sheets[0].section("过程流程主数据区")
-        columns = section.columns("过程特殊特性", "过程特性类别")
+        section = sheets[0].section(CHARACTERISTIC_SECTION)
+        special, category = CHARACTERISTIC_PREFIX + "过程特殊特性", CHARACTERISTIC_PREFIX + "过程特性类别"
+        columns = section.columns(special, category)
         rows = list(section.rows_from(columns))
         if not rows:
             return "NG", "过程流程主数据区为空表。"
         for row in rows:
-            if row.is_present("过程特性类别") and not row.is_present("过程特殊特性"):
+            if row.is_present(category) and not row.is_present(special):
                 return (
                     "NG",
                     f"工作表 {row.sheet_title} 行号{row.row_index} “过程特性类别”不为空，但“过程特殊特性”为空。",

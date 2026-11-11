@@ -32,6 +32,7 @@ class EquipmentListAgent(ExcelAgent):
             "计划到位时间",
         )
 
+        checked_rows = 0
         for sheet in table.find_sheets("主表"):
             section = sheet.section("主数据区")
             columns = section.columns(
@@ -46,8 +47,11 @@ class EquipmentListAgent(ExcelAgent):
                 if not has_line_process:
                     continue
 
+                checked_rows += 1
                 row.expect(*key_columns, context="产线/工序")
 
+        if not checked_rows:
+            return "NG", "未识别到任何有效的“产线/工序”数据行。"
         return "PASS", ""
 
     @rule("设备验收列完整性与整改逻辑审核")

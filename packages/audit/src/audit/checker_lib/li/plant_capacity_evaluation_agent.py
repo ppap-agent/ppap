@@ -119,8 +119,12 @@ class PlantCapacityEvaluationAgent(ExcelAgent):
         )
         columns = section.columns(*required_columns)
 
+        checked_rows = 0
         for row in section.rows_from(columns):
+            checked_rows += 1
             row.expect(*required_columns, context="线体/工序类别")
+        if checked_rows == 0:
+            return "NG", "产能数据区未识别到任何“线体/工序类别”数据行"
         return "PASS", ""
 
     @rule("风险评估检查")
@@ -137,7 +141,7 @@ class PlantCapacityEvaluationAgent(ExcelAgent):
         )
 
         header = table.field_block("头部字段区")
-        header.expect("产能评估总体结论", "后续措施", context="产能评估头部字段区")
+        header.expect("产能评估总体结论", context="产能评估头部字段区")
 
         conclusion_value = header.value("产能评估总体结论", compact=True).lower()
         has_valid_conclusion = ("条件通过" in conclusion_value) or ("未通过" in conclusion_value)

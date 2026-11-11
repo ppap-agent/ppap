@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+from types import MappingProxyType
 from typing import Tuple
 
 from audit.engine.rule_engine import RuleContext, Table
@@ -38,6 +39,8 @@ class AnnualTestRequirementsAgent(ExcelAgent):
     """零部件年度试验要求专业审核代理。"""
 
     DOC_TYPE = PpapDocumentType.ANNUAL_TEST_REQUIREMENTS
+    # A blank spacer row does not end these tables; six blank rows in a row still do.
+    SECTION_OPTIONS = MappingProxyType({"试验频率区": {"row_stop_on_first_blank": False}, "试验要求区": {"row_stop_on_first_blank": False}})
     EXPECTED_RULE_CATEGORIES = (
         "质量等级字段识别",
         "试验项目与测试频率一致性",

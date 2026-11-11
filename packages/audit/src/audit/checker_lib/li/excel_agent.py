@@ -8,6 +8,7 @@ Excel文件专用审核代理基类
 import logging
 import os
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Callable, List, Literal, Optional, Tuple, cast
 from urllib.parse import unquote, urlparse
 
@@ -27,6 +28,7 @@ from audit.engine.rule_engine import (
     RuleContext,
     get_doc_resource_by_doc_type,
 )
+from audit.engine.rule_engine.contracts import RuleResource
 from audit.kinds import PpapDocumentType
 
 from .base_agent import BaseAgent
@@ -49,6 +51,23 @@ def rule(description: str) -> Callable[[Any], Any]:
     return decorator
 
 
+def override_rule_resource(resource: RuleResource | None, overrides: dict[str, dict[str, Any]]) -> RuleResource | None:
+    """Apply this company's per-document resource changes over the shared resource.
+
+    Each entry maps a canonical name to a field update dict, or to a whole model
+    that replaces or adds the entry. Other companies keep the shared resource.
+    """
+    if resource is None or not overrides:
+        return resource
+    maps: dict[str, Any] = {}
+    for kind in ("sheets", "sections", "columns", "field_blocks", "fields"):
+        data = dict(getattr(resource, kind))
+        for name, change in overrides.get(kind, {}).items():
+            data[name] = data[name].model_copy(update=change) if isinstance(change, dict) else change
+        maps[kind] = MappingProxyType(data)
+    return RuleResource(tokens=resource.tokens, **maps)
+
+
 class ExcelAgent(BaseAgent):
     """
     Excel文件专用审核代理基类
@@ -62,6 +81,8 @@ class ExcelAgent(BaseAgent):
 
     DOC_TYPE: PpapDocumentType | None = None
     NG_COLLECTION_TOPN: int | None = None
+    # 理想 only: changes to the shared document resource, see override_rule_resource.
+    RESOURCE_OVERRIDES: dict[str, dict[str, Any]] = {}
 
     @classmethod
     def declared_rules(cls) -> tuple[tuple[str, str], ...]:
@@ -105,7 +126,8 @@ class ExcelAgent(BaseAgent):
         # Cached workbook – loaded once, reused across all rule checks.
         self._workbook_cache: Optional[Workbook] = None
         self._doc_type = self._resolve_resource_doc_type()
-        self._rule_resource = get_doc_resource_by_doc_type(self._doc_type) if self._doc_type is not None else None
+        registered = get_doc_resource_by_doc_type(self._doc_type) if self._doc_type is not None else None
+        self._rule_resource = override_rule_resource(registered, self.RESOURCE_OVERRIDES)
         self._source_path = self._resolve_local_file_path(str(getattr(self.audit_file, "file_url", "") or ""))
 
     def _resolve_resource_doc_type(self) -> PpapDocumentType | None:

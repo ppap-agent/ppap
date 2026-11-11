@@ -91,7 +91,7 @@ def test_fixture_shares_one_original_observation_across_fixed_rules(original, mo
 @pytest.mark.parametrize("cls", [V2Dimension])
 @pytest.mark.parametrize("value,expected", [(True, "PASS"), (False, "NG"), (None, "UNABLE")])
 def test_dimension_uses_the_same_ocr_fact_boundary(original, monkeypatch, cls, value, expected):
-    monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", lambda **request: receipt(request, {"importance_marks_present": value}))
+    monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", lambda **request: receipt(request, {"importance_single_option_checked": value}))
     with bind_runtime(None):
         agent = make_agent(cls, original, fixture=False)
         try:

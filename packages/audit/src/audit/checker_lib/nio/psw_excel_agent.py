@@ -278,7 +278,8 @@ class PswExcelAgent(ExcelAgent):
         return None
 
     def _extract_conditional_approval_date(self, sheet: Sheet, disposition_row: int) -> date | str | None:
-        """The approval date; "invalid" when a written date is not a calendar date; None when no date is found."""
+        """The approval date; "invalid" when a written date is not a calendar date; "blank" when the 日期
+        label in the approval area has no value; None when no date is found."""
         candidate_values: list[str] = []
         row_min = max(1, disposition_row - 2)
         row_max = disposition_row + 8
@@ -296,6 +297,7 @@ class PswExcelAgent(ExcelAgent):
             row_max=row_max,
             col_max=50,
         )
+        label_is_blank = False
         if date_label is not None:
             if date_label.row_index >= row_min and date_label.col_index >= col_min:
                 right_value_cell = date_label.find_right(
@@ -304,11 +306,13 @@ class PswExcelAgent(ExcelAgent):
                 )
                 if right_value_cell is not None:
                     candidate_values.append(str(right_value_cell.value() or ""))
-                for candidate_cell in date_label.scan_nearby(
+                nearby = date_label.scan_nearby(
                     row_span=2,
                     col_span=8,
-                ):
+                )
+                for candidate_cell in nearby:
                     candidate_values.append(str(candidate_cell.value() or ""))
+                label_is_blank = right_value_cell is None and not nearby
 
         for value in candidate_values:
             parsed_date = self._parse_date_from_text(value)
@@ -316,6 +320,8 @@ class PswExcelAgent(ExcelAgent):
                 return parsed_date
         if any(re.search(r"20\d{2}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日|20\d{2}[./-]\d{1,2}[./-]\d{1,2}", value) for value in candidate_values):
             return "invalid"
+        if label_is_blank:
+            return "blank"
         return None
 
     def _extract_comments_value(self, table: Table, sheet: Sheet) -> str:
@@ -367,11 +373,14 @@ class PswExcelAgent(ExcelAgent):
         table = Table(ctx)
         section = table.sheet("PSW交付物清单").section("PSW交付物清单数据区")
         columns = section.columns("项目", "附件")
+        checked_rows = 0
         for row in section.rows_from(columns):
             if (not row.is_present("项目")) or row.exact("项目", "零件认证相关", case_insensitive=False, compact=True):
                 continue
+            checked_rows += 1
             row.expect("附件", context="PSW交付物清单")
-        logger.info("")
+        if not checked_rows:
+            return "NG", "生产件批准交付物文件清单没有任何项目行。"
         return "PASS", ""
 
     @rule("重量字段格式检查")
@@ -445,8 +454,9 @@ class PswExcelAgent(ExcelAgent):
             return "NG", "供应商名称/供应商代码字段为空。"
 
         if "/" in supplier_value:
-            parts = [part.strip() for part in supplier_value.split("/") if part.strip()]
-            if len(parts) == 2:
+            # Exactly one "/" with text on both sides: "A//B" and "A/B/" are not name/code.
+            parts = [part.strip() for part in supplier_value.split("/")]
+            if len(parts) == 2 and all(parts):
                 logger.info("")
                 return "PASS", ""
         logger.error("规则4检查未通过，“供应商名称/供应商代码”内容格式不正确，应为“总公司名称/代码”格式")
@@ -462,7 +472,8 @@ class PswExcelAgent(ExcelAgent):
         """
         from audit.engine.checkers.excel_field_evidence import check_psw_excel_fields
 
-        result = check_psw_excel_fields(self, ctx, 5)
+        # 签字栏里输入的文字不算签字，只认签名图片。
+        result = check_psw_excel_fields(self, ctx, 5, typed_text_signs=False)
         return result.status, result.suggestions
 
     @rule("关键字段非空检查")
@@ -628,6 +639,9 @@ class PswExcelAgent(ExcelAgent):
         approval_date = self._extract_conditional_approval_date(main_sheet, disposition_row)
         if approval_date == "invalid":
             return "NG", "条件批准日期不是有效日期，无法识别条件批准日期。"
+        if approval_date == "blank":
+            # Same as a PDF page whose date is visibly blank.
+            return "NG", "条件批准日期为空。"
         if not isinstance(approval_date, date):
             # Not found in the searched area or written in an unsupported form.
             return "UNABLE", "无法识别条件批准日期。"

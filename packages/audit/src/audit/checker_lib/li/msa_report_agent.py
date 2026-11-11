@@ -53,6 +53,8 @@ class MsaReportAgent(ExcelAgent):
     """测量系统分析报告专业审核代理"""
 
     DOC_TYPE = PpapDocumentType.MSA_REPORT
+    # The 理想 template names its summary sheet “汇总任务页”.
+    RESOURCE_OVERRIDES = {"sheets": {"任务状态表": {"include_keywords": ("汇总任务页", "汇总页", "summary", "任务状态汇总"), "match_mode": "contains"}}}
 
     def _get_rule_priority(self, rule_no: int) -> str:
         """
@@ -140,7 +142,7 @@ class MsaReportAgent(ExcelAgent):
         """
         rr_data_sheets = Table(ctx).find_sheets("R&R数据表")
         logger.info(f"R&R数据表: {[sheet.title for sheet in rr_data_sheets]}")
-        # 每张 R&R 表单独计数：两张各填一半不能凑成一张完整的表。
+        # 每张 R&R 表单独计数：两张各填一半不能凑成一张完整的表；每张都须完整。
         failures: list[str] = []
         for fluent_sheet in rr_data_sheets:
             evaluator_data = {
@@ -157,12 +159,16 @@ class MsaReportAgent(ExcelAgent):
             total_data_cells = sum(evaluator_data.values())
             logger.info(f"{fluent_sheet.title} 评价人数据统计: {evaluator_data}, 总数据单元格数: {total_data_cells}")
             if all(count >= 10 for count in evaluator_data.values()) and total_data_cells >= 90:
-                return "PASS", ""
+                continue
             failures.append(
                 f"数据完整性不符合要求: 评价人A={evaluator_data['A']}个, 评价人B={evaluator_data['B']}个, 评价人C={evaluator_data['C']}个, 总数据单元格数={total_data_cells}个"
                 + (f"（{fluent_sheet.title}）" if len(rr_data_sheets) > 1 else "")
             )
-        return "NG", "；".join(failures) or "未找到量具重复性和再现性数据表"
+        if not rr_data_sheets:
+            return "NG", "未找到量具重复性和再现性数据表"
+        if failures:
+            return "NG", "；".join(failures)
+        return "PASS", ""
 
     @rule("检查R&R分析的结论")
     def rule_4(self, ctx: RuleContext) -> Tuple[str, str]:

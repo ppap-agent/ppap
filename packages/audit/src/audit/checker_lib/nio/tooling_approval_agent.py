@@ -2,6 +2,7 @@
 
 import logging
 import re
+from types import MappingProxyType
 
 from audit.engine.rule_engine import RuleContext, Table
 from audit.kinds import PpapDocumentType
@@ -68,6 +69,8 @@ class ToolingApprovalAgent(ExcelAgent):
     """工装模具认可报告专业审核代理"""
 
     DOC_TYPE = PpapDocumentType.TOOLING_APPROVAL_REPORT
+    # Every row of a vertically merged 工艺类型 block is a tooling row.
+    SECTION_OPTIONS = MappingProxyType({"模具验收主数据区": {"row_expand_merged_anchors": True}})
     EXPECTED_RULE_CATEGORIES = (
         "零件供应商名称与提交日期字段检查",
         "关键列完整性与内容非空检查",
@@ -229,7 +232,8 @@ class ToolingApprovalAgent(ExcelAgent):
             blank_streak = 0
 
             for row_index in range(start_row, sheet.ws.max_row + 1):
-                row_cells = [sheet.ws.cell(row=row_index, column=col_index).value for col_index in range(scan_col_min, scan_col_max + 1)]
+                # Cells read through merged areas: a merged 工艺类型/实物确认 covers every row of its block.
+                row_cells = [sheet.cell(row_index, col_index).value() for col_index in range(scan_col_min, scan_col_max + 1)]
                 row_texts = [_compact(value) for value in row_cells]
                 if stop_markers and any(any(marker in text for marker in stop_markers) for text in row_texts if text):
                     break
@@ -242,7 +246,7 @@ class ToolingApprovalAgent(ExcelAgent):
                     continue
                 blank_streak = 0
 
-                process_type = _compact(sheet.ws.cell(row=row_index, column=process_col.header_col).value)
+                process_type = _compact(sheet.cell(row_index, process_col.header_col).value())
                 if "请填写" in process_type:
                     continue
 
@@ -251,7 +255,7 @@ class ToolingApprovalAgent(ExcelAgent):
                     continue
 
                 has_data_row = True
-                object_confirm_value = _compact(sheet.ws.cell(row=row_index, column=confirm_col.header_col).value)
+                object_confirm_value = _compact(sheet.cell(row_index, confirm_col.header_col).value())
                 if object_confirm_value in _VALID_OBJECT_CONFIRM_VALUES:
                     continue
 

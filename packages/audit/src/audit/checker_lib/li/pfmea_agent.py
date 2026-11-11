@@ -24,6 +24,47 @@ from .excel_agent import ExcelAgent, rule
 logger = logging.getLogger(__name__)
 
 
+_REQUIRED_DIMENSIONS = {
+    "内部": ("内部", "工厂内", "厂内", "内"),
+    "客户工厂": ("客户工厂", "主机厂", "OEM", "顾客工厂"),
+    # 维度别名必须保持独立，避免同一别名同时满足多个维度导致误判PASS。
+    "最终用户": ("最终用户", "用户", "终端用户", "消费者"),
+}
+# 分值写在括号中，紧跟在其维度或措施之后，如“返工（4）”。
+_BRACKET_SCORE = re.compile(r"[（(]\s*(\d+)\s*[）)]")
+
+
+def _dimension_scores(value: Any) -> list[int] | None:
+    """One bracketed score per dimension; None when a dimension or its score is missing."""
+    text = "".join(str(value or "").split())
+    starts = []
+    for aliases in _REQUIRED_DIMENSIONS.values():
+        positions = [text.find(alias) for alias in aliases if alias in text]
+        if not positions:
+            return None
+        starts.append(min(positions))
+    if len(set(starts)) != len(starts):
+        return None
+    bounds = sorted(starts) + [len(text)]
+    scores = []
+    for start, end in zip(bounds, bounds[1:]):
+        found = [int(item) for item in _BRACKET_SCORE.findall(text[start:end])]
+        if not found:
+            return None
+        scores.append(max(found))
+    return scores
+
+
+def _measure_scores(value: Any) -> list[int] | None:
+    """Each detection measure ends with its bracketed score; None when any measure has none."""
+    text = "".join(str(value or "").split())
+    scores = [int(item) for item in _BRACKET_SCORE.findall(text)]
+    rest = _BRACKET_SCORE.split(text)[-1]
+    if not scores or re.sub(r"[，,;；。.、/:：]", "", rest):
+        return None
+    return scores
+
+
 class PfmeaAgent(ExcelAgent):
     """PFMEA专业审核代理"""
 
@@ -128,18 +169,11 @@ class PfmeaAgent(ExcelAgent):
         section = sheet.section("PFMEA主数据区")
         columns = section.columns("过程项功能")
 
-        required_dimensions = {
-            "内部": ["内部", "工厂内", "厂内", "内"],
-            "客户工厂": ["客户工厂", "主机厂", "OEM", "顾客工厂"],
-            # 维度别名必须保持独立，避免同一别名同时满足多个维度导致误判PASS。
-            "最终用户": ["最终用户", "用户", "终端用户", "消费者"],
-        }
-
         def has_all_dimensions(raw_value: Any) -> bool:
             if raw_value is None:
                 return False
             cell_value = "".join(str(raw_value).split())
-            for aliases in required_dimensions.values():
+            for aliases in _REQUIRED_DIMENSIONS.values():
                 if not any(alias in cell_value for alias in aliases):
                     return False
             return True
@@ -192,26 +226,12 @@ class PfmeaAgent(ExcelAgent):
         if not rows:
             return "NG", "PFMEA主数据区未找到有效数据行。"
 
-        def has_enough_dimensions(val: Any) -> bool:
-            return len(re.split(r"[，,;:：/\n\r]+", str(val or ""))) >= 3
-
-        def severity_scores(val: Any) -> list[int]:
-            # “100%产品返工”中的百分数是失效描述，不是严重度分值。
-            return [int(x) for x in re.findall(r"\d+", re.sub(r"\d+(?:\.\d+)?\s*[%％]", "", str(val or "")))]
-
-        def has_enough_scores(val: Any) -> bool:
-            return len(severity_scores(val)) >= 3
-
         for row in rows:
             row.expect("失效影响", "严重度", context="失效影响及严重度")
 
-            row.expect_condition("失效影响", has_enough_dimensions, context="失效影响维度数量")
-            row.expect_condition("失效影响", has_enough_scores, context="失效影响严重度分值数量")
+            row.expect_condition("失效影响", lambda value: _dimension_scores(value) is not None, context="失效影响三个维度及各自严重度分值")
 
-            failure_effect_value = row.value("失效影响", compact=True)
-            effect_scores = severity_scores(failure_effect_value)
-            if not effect_scores:
-                row.expect_condition("失效影响", lambda _value: False, context="失效影响严重度分值数量")
+            effect_scores = _dimension_scores(row.value("失效影响", compact=True)) or []
             max_severity_score = max(effect_scores) if effect_scores else -1
 
             def matches_max_score(val: Any) -> bool:
@@ -239,24 +259,12 @@ class PfmeaAgent(ExcelAgent):
         if not rows:
             return "NG", "PFMEA主数据区未找到有效数据行。"
 
-        def has_measures(val: Any) -> bool:
-            val_str = re.sub(r"\d+[.、]", "", str(val or ""))
-            return len(re.split(r"[，,;:：/\n\r]+", val_str)) >= 1
-
-        def has_scores(val: Any) -> bool:
-            val_str = re.sub(r"\d+[.、]", "", str(val or ""))
-            return bool(re.search(r"\d+", val_str))
-
         for row in rows:
             row.expect("现行探测控制", "探测度", context="现行探测控制及探测度")
 
-            row.expect_condition("现行探测控制", has_measures, context="现行探测控制有效措施")
-            row.expect_condition("现行探测控制", has_scores, context="现行探测控制探测度分值")
+            row.expect_condition("现行探测控制", lambda value: _measure_scores(value) is not None, context="每个探测措施后的探测度分值")
 
-            val_str = re.sub(r"\d+[.、]", "", str(row.value("现行探测控制", compact=True) or ""))
-            detection_scores = [int(x) for x in re.findall(r"\d+", val_str)]
-            if not detection_scores:
-                row.expect_condition("现行探测控制", lambda _value: False, context="现行探测控制探测度分值")
+            detection_scores = _measure_scores(row.value("现行探测控制", compact=True)) or []
             min_detection_score = min(detection_scores) if detection_scores else 10**9
 
             def matches_min_score(val: Any) -> bool:

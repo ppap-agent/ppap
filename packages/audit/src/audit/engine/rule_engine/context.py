@@ -790,6 +790,8 @@ class RuleContext:
         block_field_specs = tuple(spec for spec in self._resource.fields.values() if spec.block_name == block.block_name)
         blocked_aliases = tuple(alias for spec in block_field_specs for alias in spec.aliases)
         stop_tokens = tuple(alias for spec in block_field_specs if spec.canonical_name != canonical_name for alias in spec.aliases)
+        # A label found by prefix may carry its value in the same cell; it still ends another field's value scan.
+        prefix_stop_tokens = tuple(alias for spec in block_field_specs if spec.canonical_name != canonical_name and spec.label_match_mode == "prefix" for alias in spec.aliases)
         missing_tokens = tuple(field_spec.missing_tokens) + tuple(self._resource.tokens.missing_tokens)
         value_reject_tokens = tuple(field_spec.value_reject_tokens)
         for ws in block.worksheets:
@@ -828,6 +830,7 @@ class RuleContext:
                         value_reject_tokens=value_reject_tokens,
                         stop_tokens=stop_tokens,
                         stop_on_next_label=field_spec.stop_on_next_label,
+                        prefix_stop_tokens=prefix_stop_tokens,
                     )
                 except Exception as exc:
                     self._raise_or_ignore(

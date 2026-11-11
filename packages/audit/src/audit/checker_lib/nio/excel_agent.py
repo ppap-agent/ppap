@@ -5,6 +5,7 @@ Excel文件专用审核代理基类
 所有处理Excel文件的PPAP审核代理都应该继承此类。
 """
 
+import dataclasses
 import hashlib
 import json
 import logging
@@ -95,6 +96,14 @@ def merge_rule_resources(registered: RuleResource | None, explicit: RuleResource
     )
 
 
+def with_section_options(resource: RuleResource, options: Mapping[str, Mapping[str, Any]]) -> RuleResource:
+    """Return the resource with nio-specific row-scan options set on named sections."""
+    sections = dict(resource.sections)
+    for name, update in options.items():
+        sections[name] = sections[name].model_copy(update=dict(update))
+    return dataclasses.replace(resource, sections=MappingProxyType(sections))
+
+
 def _merge_domain_tokens(base: DomainTokensModel, explicit: DomainTokensModel) -> DomainTokensModel:
     filled = {str(token).strip().lower(): str(token).strip() for token in base.filled_tokens if str(token).strip()}
     missing = {str(token).strip().lower(): str(token).strip() for token in base.missing_tokens if str(token).strip()}
@@ -135,6 +144,11 @@ class ExcelAgent(BaseAgent):
     SOURCE_CLAUSE_IDS = False
     # Builtin checkers keep declaration order when the rule ids are not their clause ids.
     POSITIONAL_CLAUSE_CHECKS = False
+    # Row-scan options this document's checks set on registered sections, e.g. reading every
+    # row of a vertically merged row anchor instead of only its first row.
+    SECTION_OPTIONS: Mapping[str, Mapping[str, Any]] = MappingProxyType({})
+    # Extra sections/columns this document's checks read on top of the registered resource.
+    EXTRA_RESOURCE: RuleResource | None = None
 
     @classmethod
     def declared_rules(cls) -> tuple[tuple[str, str], ...]:
@@ -187,7 +201,9 @@ class ExcelAgent(BaseAgent):
         self._conversion_artifact: ConversionArtifact | None = None
         self._doc_type = self._resolve_resource_doc_type()
         registered = get_doc_resource_by_doc_type(self._doc_type) if self._doc_type is not None else None
-        self._rule_resource = merge_rule_resources(registered, resource)
+        self._rule_resource = merge_rule_resources(merge_rule_resources(registered, type(self).EXTRA_RESOURCE), resource)
+        if self._rule_resource is not None and type(self).SECTION_OPTIONS:
+            self._rule_resource = with_section_options(self._rule_resource, type(self).SECTION_OPTIONS)
         self._source_path = self._resolve_local_file_path(str(getattr(self.audit_file, "file_url", "") or ""))
         self.checks: tuple[RuleCheck, ...] | None = None
         self._declared_checks: tuple[_DeclaredClause, ...] = ()

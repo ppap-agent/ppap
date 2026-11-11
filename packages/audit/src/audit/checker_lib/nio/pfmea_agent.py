@@ -40,6 +40,7 @@ _CHINESE_TEXT_PATTERN = re.compile(r"[\u4e00-\u9fff]+")
 _ENGLISH_TEXT_PATTERN = re.compile(r"[A-Za-z]+")
 _RULE7_PFD_SPECIAL_MARKS = frozenset({"cc", "sc"})
 _RULE7_PFMEA_SPECIAL_MARKS = frozenset({"cc", "sc", "kpc", "kcc"})
+MULTIPLE_PFD_MESSAGE = "存在多份过程流程图，无法确定主文档"
 
 
 class PfmeaAgent(ExcelAgent):
@@ -173,6 +174,13 @@ class PfmeaAgent(ExcelAgent):
             if merged_range.min_row <= row <= merged_range.max_row and merged_range.min_col <= col <= merged_range.max_col:
                 return merged_range
         return None
+
+    def _merged_anchor_value(self, ws: Worksheet, row: int, col: int) -> Any:
+        """A cell inside a merged block reads the block's top-left value."""
+        merged = self._get_detailed_merge_info(ws, row, col)
+        if merged is not None:
+            return ws.cell(row=merged.min_row, column=merged.min_col).value
+        return ws.cell(row=row, column=col).value
 
     def _data_start_row_below_anchor(self, ws: Worksheet, row: int, col: int) -> int:
         start = row + 1
@@ -349,6 +357,8 @@ class PfmeaAgent(ExcelAgent):
         return None
 
     def _get_rule_6_pfd_sheet_and_rows(self) -> tuple[Any, list[dict[str, str]] | None, str]:
+        if len(self.get_related_files(PpapDocumentType.PROCESS_FLOW_CHART)) > 1:
+            return None, None, MULTIPLE_PFD_MESSAGE
         related_file, _error = self._require_single_related_file(PpapDocumentType.PROCESS_FLOW_CHART)
         if related_file is None:
             return None, None, "缺少过程流程图，请补充"
@@ -539,7 +549,7 @@ class PfmeaAgent(ExcelAgent):
                     return any(ws.cell(row=row, column=c).value is not None and str(ws.cell(row=row, column=c).value).strip() for c in range(1, ws.max_column + 1))
 
                 for r in self._iter_data_rows(ws, data_start, func_c):
-                    val = str(ws.cell(row=r, column=func_c).value or "").replace("\n", " ").replace("\r", " ").strip()
+                    val = str(self._merged_anchor_value(ws, r, func_c) or "").replace("\n", " ").replace("\r", " ").strip()
                     if val and val.lower() not in _EMPTY:
                         ctx.note_cell(ws.title, r, func_c)
                         ctx.record_execution()  # Evaluate this row's required dimensions.
@@ -807,8 +817,10 @@ class PfmeaAgent(ExcelAgent):
                     scores.extend(bracket_scores)
                     continue
                 tail_match = re.search(r"(?<!\d)(10|[1-9])\s*[。；;，,、]?\s*$", seg)
-                if tail_match:
-                    scores.append(int(tail_match.group(1)))
+                if not tail_match:
+                    # Every detection measure needs its own score; one unscored measure leaves the minimum unknown.
+                    return []
+                scores.append(int(tail_match.group(1)))
             return scores
 
         def _build_missing_score_message(sheet_name: str, rows: list[int]) -> str:
@@ -840,7 +852,7 @@ class PfmeaAgent(ExcelAgent):
 
         pfd_ws, pfd_rows, pfd_error = self._get_rule_6_pfd_sheet_and_rows()
         if pfd_error:
-            return "NG", pfd_error
+            return ("UNABLE" if pfd_error == MULTIPLE_PFD_MESSAGE else "NG"), pfd_error
 
         pfmea_sheets = self._find_pfmea_worksheets(workbook)
         if not pfmea_sheets:
@@ -888,7 +900,7 @@ class PfmeaAgent(ExcelAgent):
 
         pfd_ws, pfd_rows, pfd_error = self._get_rule_6_pfd_sheet_and_rows()
         if pfd_error:
-            return "NG", pfd_error
+            return ("UNABLE" if pfd_error == MULTIPLE_PFD_MESSAGE else "NG"), pfd_error
 
         pfmea_sheets = self._find_pfmea_worksheets(workbook)
         if not pfmea_sheets:

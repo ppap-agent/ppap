@@ -28,6 +28,7 @@ class EquipmentListAgent(ExcelAgent):
             "计划到位时间",
         )
 
+        any_line_process = False
         for sheet in table.find_sheets("主表"):
             section = sheet.section("主数据区")
             columns = section.columns(
@@ -38,6 +39,7 @@ class EquipmentListAgent(ExcelAgent):
 
             for row in section.rows_from(columns):
                 has_line_process = row.is_present("产线/工序")
+                any_line_process = any_line_process or has_line_process
 
                 if not has_line_process:
 
@@ -53,6 +55,8 @@ class EquipmentListAgent(ExcelAgent):
 
                 row.expect(*key_columns, context="产线/工序")
 
+        if not any_line_process:
+            return "NG", "未识别到任何有效的“产线/工序”数据行。"
         return "PASS", ""
 
     @rule("设备验收检查")

@@ -63,6 +63,7 @@
         - **NG**: 内容为空。
 """
 
+import re
 from typing import Any, Tuple
 
 from audit.engine.checkers.control_plan_section_headers import (
@@ -91,20 +92,39 @@ _STAGE_TOKEN_GROUPS = {
 }
 
 
+# 理想模板把内容写在字段名单元格内（如“零件号part number: P001”），字段名按开头识别。
+_INLINE_FIELD_NAMES = ("版本字段", "零件号字段", "零件名称字段", "多功能小组字段", "公司字段", "公司代码字段", "公司批准日期字段", "其它批准日期字段", "顾客工程批准日期字段", "顾客质量批准日期字段")
+_OTHER_APPROVAL_LABELS = ("其它批准/日期(如需要)", "其它批准/日期")
+
+
+def _compact_label_text(value: object) -> str:
+    return "".join(str(value or "").split()).lower().replace("（", "(").replace("）", ")")
+
+
+def _strip_label_prefix(text: str, aliases: tuple[str, ...]) -> str:
+    keys = sorted({_compact_label_text(alias) for alias in aliases if str(alias).strip()}, key=len, reverse=True)
+    stripped = True
+    while stripped:
+        stripped = False
+        for key in keys:
+            if text.startswith(key):
+                text = text[len(key) :].lstrip(":：")
+                stripped = True
+                break
+    return text
+
+
 class ControlPlanAgent(ExcelAgent):
     """Control Plan 审核代理（规则 1-6）。"""
 
     DOC_TYPE = PpapDocumentType.CONTROL_PLAN
+    RESOURCE_OVERRIDES = {
+        "fields": {name: {"label_match_mode": "prefix"} for name in _INLINE_FIELD_NAMES},
+    }
 
     def _extract_inline_value(self, raw_value: object, aliases: tuple[str, ...]) -> str:
-        text = str(raw_value or "").lower()
-        if not text:
-            return ""
-        for alias in aliases:
-            alias_key = str(alias or "").lower()
-            if alias_key and alias_key in text:
-                text = text.replace(alias_key, "")
-        return text.replace("：", "").replace(":", "").strip()
+        """Value written after the Chinese and English field names in the same cell."""
+        return _strip_label_prefix(_compact_label_text(raw_value), aliases).strip()
 
     @staticmethod
     def _normalize_stage_text(value: Any) -> str:
@@ -138,13 +158,25 @@ class ControlPlanAgent(ExcelAgent):
                 seen.add(key)
                 cells.append(key)
 
+        # 选项在“控制计划类型”所在行上下两行内；其他表头字段（如“页数（pp.）”“appr.”）不是选项。
+        type_label = block.field("控制计划类型字段").resolved
+        row_min, row_max = (1, _STAGE_WINDOW_MAX_ROW) if type_label is None else (max(1, type_label.label_row - _STAGE_SCAN_ROW_PADDING), type_label.label_row + _STAGE_SCAN_ROW_PADDING)
+        header_labels = tuple(
+            resolver.normalize_label_text(alias)
+            for name, spec in main_sheet.ctx.resource.fields.items()
+            if spec.block_name == "控制计划头部字段区" and name not in _STAGE_FIELD_NAMES
+            for alias in spec.aliases
+        )
         for cell in main_sheet.scan_non_empty(
-            row_min=1,
-            row_max=_STAGE_WINDOW_MAX_ROW,
+            row_min=row_min,
+            row_max=row_max,
             col_min=1,
             col_max=_STAGE_WINDOW_MAX_COL,
         ):
-            _append_cell(cell.row_index, cell.col_index, self._normalize_stage_text(cell.value()))
+            text = self._normalize_stage_text(cell.value())
+            if any(label and text.startswith(label) for label in header_labels):
+                continue
+            _append_cell(cell.row_index, cell.col_index, text)
 
         for field_name in _STAGE_FIELD_NAMES:
             field = block.field(field_name)
@@ -172,13 +204,24 @@ class ControlPlanAgent(ExcelAgent):
         token_groups: tuple[tuple[str, ...], ...],
         masked_tokens: tuple[str, ...] = (),
     ) -> bool:
-        mark_cells = {(row, col) for row, col, text in cells if self._contains_check_mark(text)}
-        for row, col, text in cells:
+        def is_option(text: str) -> bool:
             # “生产”是“试生产”的子串：先去掉包含本阶段词的其他阶段词再匹配。
-            option_text = text
             for token in masked_tokens:
-                option_text = option_text.replace(token, "")
-            if not any(all(token in option_text for token in group) for group in token_groups):
+                text = text.replace(token, "")
+            # 英文缩写（pp、ots、sop）须为独立的词，“appr.”中的pp不算。
+            return any(all(re.search(r"(?<![a-z])" + re.escape(token) + r"(?![a-z])", text) if token.isascii() else token in text for token in group) for group in token_groups)
+
+        mark_cells = {(row, col) for row, col, text in cells if self._contains_check_mark(text)}
+        box_pattern = "[" + re.escape("".join((*_CHECKED_MARKS, *_UNCHECKED_MARKS))) + "]"
+        for row, col, text in cells:
+            # 一个单元格写了多个选项时（如模板“样件 sample □ 试生产 pre-launch □ 生产 production ■”），
+            # 方框属于它前面的选项文字。
+            options = re.findall(r"([^" + box_pattern[1:-1] + r"]+)(" + box_pattern + ")", text)
+            if len(options) >= 2:
+                if any(is_option(option) and mark in _CHECKED_MARKS for option, mark in options):
+                    return True
+                continue
+            if not is_option(text):
                 continue
             if self._contains_check_mark(text):
                 return True
@@ -403,15 +446,15 @@ class ControlPlanAgent(ExcelAgent):
             )
 
         inline_fields = {
-            "版本Rev.": ("版本rev.", "版本rev", "版本"),
-            "零件号": ("零件号partnumber", "零件号"),
-            "零件名称": ("零件名称partname", "零件名称"),
-            "多功能小组": ("多功能小组mulfunctionteam", "多功能小组"),
-            "公司": ("公司company", "公司"),
-            "公司代码": ("公司代码companycode", "公司代码"),
-            "公司批准/日期": ("公司批准/日期", "companyappr./date", "companyappr/date"),
-            "其它批准/日期（如需要）": ("其它批准/日期（如需要）", "其它批准/日期(如需要)", "otherappro./date(ifneed)"),
-            "顾客工程批准/日期(如需要）": ("顾客工程批准/日期(如需要）", "customerengneeringappro./date(ifneed)"),
+            "版本Rev.": ("版本", "rev.", "rev"),
+            "零件号": ("零件号", "partnumber", "partno."),
+            "零件名称": ("零件名称", "partname"),
+            "多功能小组": ("多功能小组", "mulfunctionteam", "multifunctionteam"),
+            "公司": ("公司", "company"),
+            "公司代码": ("公司代码", "companycode"),
+            "公司批准/日期": ("公司批准/日期", "companyappr./date", "companyappr/date", "comparyappr./date"),
+            "其它批准/日期（如需要）": (*_OTHER_APPROVAL_LABELS, "otherappro./date(ifneed)"),
+            "顾客工程批准/日期(如需要）": ("顾客工程批准/日期(如需要)", "customerengneeringappro./date(ifneed)", "customerengineeringappro./date(ifneed)"),
             "顾客质量批准/日期(如需要)": ("顾客质量批准/日期(如需要)", "customerqualityappro./date(ifneed)"),
         }
         for display_name, aliases in inline_fields.items():
@@ -425,5 +468,12 @@ class ControlPlanAgent(ExcelAgent):
                 has_inline_value,
                 context=f"{display_name}字段值不能为空",
             )
+
+        # 模板中“其它批准/日期(如需要)”出现两处，每一处都须填写。
+        other_aliases = inline_fields["其它批准/日期（如需要）"]
+        for cell in main_sheet.scan_non_empty(row_min=1, row_max=_STAGE_WINDOW_MAX_ROW, col_min=1, col_max=_STAGE_WINDOW_MAX_COL):
+            text = _compact_label_text(cell.value())
+            if any(text.startswith(_compact_label_text(label)) for label in _OTHER_APPROVAL_LABELS) and self._extract_inline_value(cell.value(), other_aliases) in {"", "none", "na"}:
+                return "NG", f"第{cell.row_index}行“其它批准/日期(如需要)”字段值不能为空"
 
         return "PASS", ""

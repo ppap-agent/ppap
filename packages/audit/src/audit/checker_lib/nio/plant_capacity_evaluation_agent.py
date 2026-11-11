@@ -17,7 +17,9 @@
 """
 
 import logging
+import math
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
+from types import MappingProxyType
 from typing import Any, Tuple
 
 from audit.engine.rule_engine import GuardStop, RuleContext, Table
@@ -32,6 +34,8 @@ class PlantCapacityEvaluationAgent(ExcelAgent):
     """生产系统产能评估报告专业审核代理"""
 
     DOC_TYPE = PpapDocumentType.PLANT_CAPACITY_EVALUATION_REPORT
+    # Every row of a vertically merged 线体/工序类别 block is a capacity row.
+    SECTION_OPTIONS = MappingProxyType({"产能数据区": {"row_expand_merged_anchors": True}})
     EXPECTED_RULE_CATEGORIES = (
         "基础字段完整性与内容校验",
         "线体工序数据完整性校验",
@@ -45,10 +49,15 @@ class PlantCapacityEvaluationAgent(ExcelAgent):
         if isinstance(value, str) and value.strip() == "":
             return False
         try:
-            float(str(value))
-            return True
+            # "nan"/"inf" parse as floats but are not quantities and compare as equal to nothing.
+            return math.isfinite(float(str(value)))
         except (TypeError, ValueError):
             return False
+
+    def _no_rows(self, section: Any) -> Tuple[str, str]:
+        if self._is_ocr_table_sheet(section.sheet_title):
+            return "UNABLE", "PDF识别表中未识别到“线体/工序类别”数据行，不能确认产能数据。"
+        return "NG", "产能数据区没有任何“线体/工序类别”数据行。"
 
     def _is_ocr_table_sheet(self, sheet_name: str) -> bool:
         return str(sheet_name or "").lower().startswith("table_")
@@ -111,7 +120,10 @@ class PlantCapacityEvaluationAgent(ExcelAgent):
         )
         columns = section.columns(*required_columns)
 
-        for row in section.rows_from(columns):
+        rows = list(section.rows_from(columns))
+        if not rows:
+            return self._no_rows(section)
+        for row in rows:
             row.expect(*required_columns, context="线体/工序类别")
         return "PASS", ""
 
@@ -134,7 +146,10 @@ class PlantCapacityEvaluationAgent(ExcelAgent):
         conclusion_value = header.value("产能评估总体结论", compact=True).lower()
         has_valid_conclusion = ("条件通过" in conclusion_value) or ("未通过" in conclusion_value)
 
-        for row in section.rows_from(risk_columns):
+        rows = list(section.rows_from(risk_columns))
+        if not rows:
+            return self._no_rows(section)
+        for row in rows:
             risk_values = {
                 row.value("SOP+1达成风险", compact=True).lower(),
                 row.value("SOP+2达成风险", compact=True).lower(),
@@ -161,7 +176,10 @@ class PlantCapacityEvaluationAgent(ExcelAgent):
             columns = section.columns("良率", "合格品数", "产出数量")
             is_ocr_table = self._is_ocr_table_sheet(section.sheet_title)
 
-            for row in section.rows_from(columns):
+            rows = list(section.rows_from(columns))
+            if not rows:
+                return self._no_rows(section)
+            for row in rows:
                 yield_value = row.value("良率", compact=True).lower()
                 qualified_qty_value = row.value("合格品数", compact=True).lower()
                 output_qty_value = row.value("产出数量", compact=True).lower()
@@ -218,7 +236,10 @@ class PlantCapacityEvaluationAgent(ExcelAgent):
                 "参与测试线体数量",
             )
 
-            for row in section.rows_from(columns):
+            rows = list(section.rows_from(columns))
+            if not rows:
+                return self._no_rows(section)
+            for row in rows:
                 jph_value = row.value("单线体/工序总产出JPH", compact=True).lower()
                 output_qty_value = row.value("产出数量", compact=True).lower()
                 net_util_time_value = row.value("净利用时间（h）", compact=True).lower()
@@ -280,7 +301,10 @@ class PlantCapacityEvaluationAgent(ExcelAgent):
             )
 
             is_ocr_table = self._is_ocr_table_sheet(section.sheet_title)
-            for row in section.rows_from(columns):
+            rows = list(section.rows_from(columns))
+            if not rows:
+                return self._no_rows(section)
+            for row in rows:
                 monthly_capacity_value = row.value("线体/工序预估月度产能", compact=True).lower()
                 jph_value = row.value("单线体/工序总产出JPH", compact=True).lower()
                 existing_line_qty_value = row.value("现有线体数", compact=True).lower()

@@ -195,7 +195,8 @@ def extract_rows_from_workbook(
         return ""
 
     def _extract_cell_text(sheet: Worksheet, row: int, col: int, field_name: str) -> str:
-        cell = sheet.cell(row=row, column=col)
+        # A row inside a vertically merged block reads the block's top value.
+        cell = sheet.cell(row=vertical_merge_top.get((row, col), row), column=col)
         if field_name.endswith("_no"):
             formatted_value = _format_numeric_by_cell_pattern(cell.value, cell.number_format)
             if formatted_value:
@@ -260,6 +261,13 @@ def extract_rows_from_workbook(
     rows: List[Dict[str, str]] = []
     empty_row_count = 0
     data_start_row = best_row + best_header_span
+    field_columns = set(best_columns.values())
+    vertical_merge_top: Dict[tuple[int, int], int] = {}
+    for merged in getattr(getattr(best_sheet, "merged_cells", None), "ranges", ()):
+        if merged.min_col != merged.max_col or merged.min_col not in field_columns or merged.max_row < data_start_row:
+            continue
+        for merged_row in range(max(merged.min_row + 1, data_start_row), merged.max_row + 1):
+            vertical_merge_top[(merged_row, merged.min_col)] = merged.min_row
     for row in range(data_start_row, best_sheet.max_row + 1):
         item: Dict[str, str] = {
             SOURCE_SHEET_KEY: str(best_sheet.title),

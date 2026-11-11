@@ -133,6 +133,8 @@ def test_equipment_requirements_only_apply_to_process_rows(tmp_path, process, ex
     workbook = Workbook()
     workbook.active.title = "设备开发计划"
     workbook.active.append(["产线/工序", "设备开发", "设备", "供应商", "设备型号", "利旧设备数量", "新采购设备数量", "设备通用情况", "计划到位时间"])
+    # One complete process row: a list with no 产线/工序 row at all is 不通过 on its own.
+    workbook.active.append(["焊接", "新增", "设备B", "供应商B", "W-1", "0", "1", "通用", "2026-01-01"])
     workbook.active.append([process, None, "设备A"])
 
     result = check_workbook(tmp_path, EquipmentListAgent, workbook, 1)

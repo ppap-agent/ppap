@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 from openpyxl.worksheet.worksheet import Worksheet
 
-from .contracts import Direction, MatchMode, SectionModel
+from .contracts import Direction, FieldLabelMatchMode, SectionModel
 
 if TYPE_CHECKING:
     from .context import ExcelOps
@@ -84,6 +84,14 @@ def _read_cell_text(ops: ExcelOps, ws: Worksheet, row: int, col: int) -> str:
 
 def _read_compact_cell_text(ops: ExcelOps, ws: Worksheet, row: int, col: int) -> str:
     return _compact_text(_read_cell_text(ops, ws, row, col))
+
+
+def label_prefix_match(text: str, alias: str) -> bool:
+    """Compact text starts with the alias and no CJK word continues it (公司 is not 公司代码)."""
+    if not alias or not text.startswith(alias):
+        return False
+    rest = text[len(alias) :]
+    return not rest or not _has_cjk(rest[0])
 
 
 def _contains_alias_with_boundary(text: str, alias: str) -> bool:
@@ -284,7 +292,7 @@ def find_field_label(
     aliases: tuple[str, ...],
     max_row: int,
     max_col: int,
-    match_mode: MatchMode = "exact",
+    match_mode: FieldLabelMatchMode = "exact",
 ) -> tuple[int, int] | None:
     normalized_aliases = [alias.rstrip(":：") for alias in _normalize_compact_aliases(aliases)]
     normalized_aliases = [alias for alias in normalized_aliases if alias]
@@ -299,6 +307,10 @@ def find_field_label(
             text = _read_compact_cell_text(ops, ws, row, col).rstrip(":：")
             if not text:
                 continue
+            # A prefix label is the first one in reading order, so a header field is not
+            # replaced by the same label in a lower table (e.g. a revision history).
+            if match_mode == "prefix" and any(label_prefix_match(text, alias) for alias in normalized_aliases):
+                return row, col
             if text in normalized_aliases:
                 return row, col
             if match_mode == "contains" and any(alias in text for alias in normalized_aliases):
@@ -385,8 +397,10 @@ def _find_value_horizontally(
     value_reject_tokens: tuple[str, ...] = (),
     stop_tokens: tuple[str, ...] = (),
     stop_on_next_label: bool = True,
+    prefix_stop_tokens: tuple[str, ...] = (),
 ) -> tuple[int, int] | None:
     blocked = _normalize_compact_tokens(blocked_aliases)
+    prefix_stops = _normalize_compact_aliases(prefix_stop_tokens)
     missing = _normalize_compact_tokens(missing_tokens)
     rejects = _normalize_compact_tokens(value_reject_tokens)
     stops = _normalize_compact_tokens(stop_tokens)
@@ -398,6 +412,8 @@ def _find_value_horizontally(
         if not text:
             continue
         if stop_on_next_label and text in stops:
+            break
+        if stop_on_next_label and any(label_prefix_match(text, token) for token in prefix_stops):
             break
         if text in blocked:
             continue
@@ -421,6 +437,7 @@ def find_value_right_of_label(
     value_reject_tokens: tuple[str, ...] = (),
     stop_tokens: tuple[str, ...] = (),
     stop_on_next_label: bool = True,
+    prefix_stop_tokens: tuple[str, ...] = (),
 ) -> tuple[int, int] | None:
     merged = ops.get_detailed_merge_info(ws, row, col)
     start_col = merged.max_col + 1 if merged else col + 1
@@ -437,6 +454,7 @@ def find_value_right_of_label(
         value_reject_tokens=value_reject_tokens,
         stop_tokens=stop_tokens,
         stop_on_next_label=stop_on_next_label,
+        prefix_stop_tokens=prefix_stop_tokens,
     )
 
 

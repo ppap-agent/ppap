@@ -19,7 +19,7 @@ PSW零件提交保证书Excel文件审核代理
 import logging
 import re
 from datetime import date, datetime
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 from audit.contracts import AuditResultItem as AuditResult
 from audit.engine.checkers.date_utils import normalize_excel_date
@@ -325,11 +325,6 @@ class PswExcelAgent(ExcelAgent):
             right_value = str(right_value_cell.value() or "").replace("\n", "").replace("\r", "").strip()
             if right_value:
                 return right_value
-
-        for candidate_cell in label_cell.scan_nearby(row_span=2, col_span=16):
-            value = str(candidate_cell.value() or "").replace("\n", "").replace("\r", "").strip()
-            if value:
-                return value
         return ""
 
     def _is_submission_result_all_checked(
@@ -340,6 +335,13 @@ class PswExcelAgent(ExcelAgent):
         from audit.engine.checkers.excel_field_evidence import psw_submission_results
 
         return psw_submission_results(sheet)
+
+    @staticmethod
+    def _merged_min_col(cell: Any) -> int:
+        for merged in cell.ws.merged_cells.ranges:
+            if merged.min_row <= cell.row_index <= merged.max_row and merged.min_col <= cell.col_index <= merged.max_col:
+                return merged.min_col
+        return cell.col_index
 
     @rule("附件列内容检查")
     def rule_1(self, ctx: RuleContext) -> Tuple[str, str]:
@@ -353,10 +355,14 @@ class PswExcelAgent(ExcelAgent):
         table = Table(ctx)
         section = table.sheet("PSW交付物清单").section("PSW交付物清单数据区")
         columns = section.columns("项目", "附件")
+        checked_rows = 0
         for row in section.rows_from(columns):
             if (not row.is_present("项目")) or row.exact("项目", "零件认证相关", case_insensitive=False, compact=True):
                 continue
+            checked_rows += 1
             row.expect("附件", context="PSW交付物清单")
+        if checked_rows == 0:
+            return "NG", "PSW交付物清单未识别到任何“项目”数据行"
         logger.info("")
         return "PASS", ""
 
@@ -518,6 +524,9 @@ class PswExcelAgent(ExcelAgent):
                         row_span=row_span,
                         col_span=col_span,
                     ):
+                        # 只看字段名所在列及其右侧、且不属于左侧字段合并区的单元格，空字段不借用相邻字段的值。
+                        if self._merged_min_col(nearby_cell) < label_cell.col_index:
+                            continue
                         if self._is_effective_business_value(
                             nearby_cell.value(),
                             missing_tokens=missing_tokens,

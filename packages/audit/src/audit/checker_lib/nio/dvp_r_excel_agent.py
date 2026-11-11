@@ -4,6 +4,7 @@ import logging
 import re
 from collections.abc import Iterator
 from datetime import date
+from types import MappingProxyType
 from typing import Any
 
 from audit.engine.checkers.date_utils import normalize_excel_date
@@ -24,6 +25,8 @@ class DvpRExcelAgent(ExcelAgent):
     """零部件设计验证计划和报告(DVP&R)审核代理"""
 
     DOC_TYPE = PpapDocumentType.DVP_R
+    # Every row of a vertically merged 序号 block is a test item row.
+    SECTION_OPTIONS = MappingProxyType({_SECTION_NAME: {"row_expand_merged_anchors": True}})
     EXPECTED_RULE_CATEGORIES = (
         "基础信息字段完整性审核",
         "试验计划列完整性审核",

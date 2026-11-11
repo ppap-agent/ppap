@@ -78,6 +78,15 @@ class ToolingApprovalAgent(ExcelAgent):
     """工装模具认可报告专业审核代理"""
 
     DOC_TYPE = PpapDocumentType.TOOLING_APPROVAL_REPORT
+    # 合并的“工艺类型”覆盖的每一行都是数据行；合并块中整行其余为空的行不检查。
+    RESOURCE_OVERRIDES = {"sections": {"模具验收主数据区": {"row_expand_merged_anchors": True}}}
+
+    @staticmethod
+    def _is_blank_merged_subrow(row: Any, process_col: int) -> bool:
+        ws = row.ws
+        if type(ws.cell(row=row.row_index, column=process_col)).__name__ != "MergedCell":
+            return False
+        return all(str(ws.cell(row=row.row_index, column=col).value or "").strip() == "" for col in range(1, ws.max_column + 1) if col != process_col)
 
     @staticmethod
     def _is_placeholder_signature(value: str) -> bool:
@@ -160,6 +169,18 @@ class ToolingApprovalAgent(ExcelAgent):
 
     def _signature_picture_anchors(self, ctx: RuleContext, ws: object) -> list[tuple[int, int, int, int]]:
         source_path = str(ctx.source_path or "")
+        metadata = getattr(self.audit_file, "file_metadata", None)
+        converted = isinstance(metadata, dict) and bool(metadata.get("source_pdf_url"))
+        if source_path.lower().endswith((".xlsx", ".xlsm")) and not converted:
+            # openpyxl keeps embedded pictures with zero-based anchors.
+            anchors = []
+            for image in getattr(ws, "_images", ()):
+                start = getattr(image.anchor, "_from", None)
+                if start is None:
+                    continue
+                end = getattr(image.anchor, "to", None) or start
+                anchors.append((start.row + 1, start.col + 1, end.row + 1, end.col + 1))
+            return anchors
         if not source_path.lower().endswith(".xls"):
             return []
         try:
@@ -310,7 +331,7 @@ class ToolingApprovalAgent(ExcelAgent):
             has_data_row = False
             for row in section.rows_from(columns):
                 process_type = row.value("工艺类型", compact=True).lower()
-                if not process_type or "请填写" in process_type:
+                if not process_type or "请填写" in process_type or self._is_blank_merged_subrow(row, columns["工艺类型"].header_col):
                     continue
                 has_data_row = True
                 row.expect(*_RULE2_REQUIRED_NON_EMPTY_COLUMNS, context="工艺类型")
@@ -329,7 +350,7 @@ class ToolingApprovalAgent(ExcelAgent):
             has_data_row = False
             for row in section.rows_from(columns):
                 process_type = row.value("工艺类型", compact=True).lower()
-                if not process_type or "请填写" in process_type:
+                if not process_type or "请填写" in process_type or self._is_blank_merged_subrow(row, columns["工艺类型"].header_col):
                     continue
                 has_data_row = True
                 row.expect("模具设计尺寸", context="工艺类型")

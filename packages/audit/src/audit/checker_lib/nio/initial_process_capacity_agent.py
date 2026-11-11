@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from types import MappingProxyType
 from typing import Tuple
 
 from audit.engine.rule_engine import RuleContext, Table
@@ -39,6 +40,8 @@ class InitialProcessCapacityAgent(ExcelAgent):
     """初始过程能力研究专业审核代理。"""
 
     DOC_TYPE = PpapDocumentType.INITIAL_PROCESS_CAPACITY_STUDY
+    # Every row of a vertically merged 工序流程编号 block is a characteristic row.
+    SECTION_OPTIONS = MappingProxyType({"CCSC数据区": {"row_expand_merged_anchors": True}})
     EXPECTED_RULE_CATEGORIES = (
         "P阶段Cpk结果列审核",
         "P阶段结果判定列审核",

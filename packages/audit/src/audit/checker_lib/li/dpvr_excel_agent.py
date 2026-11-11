@@ -182,19 +182,24 @@ class DpvrExcelAgent(ExcelAgent):
         text = self._source_pdf_text()
         if not text:
             return []
+        # A bare "编号" right after another CJK word is a different number
+        # (零件编号、订单编号、样品编号); a report number carries a digit.
         matches = re.findall(
-            r"(?:试验报告编号|检测报告编号|报告编号|文件编号|编号\s*(?:No\.?)?)\s*[:：]?\s*([A-Za-z0-9][A-Za-z0-9_-]{3,})",
+            r"(?:试验报告编号|检测报告编号|报告编号|文件编号|(?<![\u4e00-\u9fff])编号)"
+            r"\s*(?:[(（]?\s*Report\s*No\s*[)）]?\s*\.?|No\.?)?\s*[:：]?\s*([A-Za-z0-9][A-Za-z0-9_-]{3,})",
             text,
             flags=re.IGNORECASE,
         )
-        return self._dedupe_values(matches)
+        return self._dedupe_values([value for value in matches if re.search(r"\d", value)])
 
     def _source_pdf_test_types(self) -> list[str]:
         text = self._source_pdf_text()
         if not text:
             return []
+        # The whole written value up to the line end is the test type; a value
+        # on the next line belongs to a label that ends its own line.
         matches = re.findall(
-            r"(?:试验类型|试验阶段|测试阶段|项目阶段|Test\s*type)\s*[:：]?\s*((?:D\s*V|P\s*V)\s*(?:测试|阶段)?)",
+            r"(?:试验类型|试验阶段|测试阶段|项目阶段|Test\s*type)(?:[ \t]*(?:Test\s*type|Project\s*Phase))?[ \t]*[:：][ \t]*(?:\n[ \t]*)?([^\n]*\S)",
             text,
             flags=re.IGNORECASE,
         )
@@ -227,8 +232,16 @@ class DpvrExcelAgent(ExcelAgent):
         reject_labels = tuple(dict.fromkeys((*labels, *_LAYERED_VALUE_REJECT_LABELS)))
         return not self._matches_any_label(text, reject_labels)
 
-    def _layered_values_for_labels(self, table: Table, labels: tuple[str, ...]) -> list[str]:
+    def _is_label_only_cell(self, value: Any, labels: tuple[str, ...]) -> bool:
+        key = self._label_key(value)
+        for label in sorted((self._label_key(item) for item in labels), key=len, reverse=True):
+            if label:
+                key = key.replace(label, "")
+        return not key
+
+    def _layered_values_for_labels(self, table: Table, labels: tuple[str, ...], *, keep_empty: bool = False) -> list[str]:
         values: list[Any] = []
+        empty_label = False
         sheets = table.find_sheets(_SHEET_NAME, on_missing=Decision.IGNORE)
         for sheet in sheets:
             for cell in sheet.scan_non_empty(
@@ -242,6 +255,7 @@ class DpvrExcelAgent(ExcelAgent):
                 if not self._matches_any_label(cell.value(), labels):
                     continue
 
+                found = len(values)
                 right = cell.find_right(max_offset=8)
                 if right is not None and self._is_layered_value(right.value(), labels=labels):
                     values.append(right.value())
@@ -258,7 +272,14 @@ class DpvrExcelAgent(ExcelAgent):
                     if not self._is_layered_value(below, labels=labels):
                         break
                     values.append(below)
-        return self._dedupe_values(tuple(values)) or self._source_pdf_field_values(labels)
+                # A field written only as its label, with no value beside or
+                # below it, is an empty field, not an absent one.
+                if keep_empty and len(values) == found and self._is_label_only_cell(cell.value(), labels):
+                    empty_label = True
+        found_values = self._dedupe_values(tuple(values))
+        if empty_label:
+            return [*found_values, ""]
+        return found_values or self._source_pdf_field_values(labels)
 
     def _source_pdf_field_values(self, labels: tuple[str, ...]) -> list[str]:
         """Bind native report fields to their table cell or explicit inline value.
@@ -313,7 +334,7 @@ class DpvrExcelAgent(ExcelAgent):
         return self._source_pdf_test_types() or self._layered_values_for_labels(table, _TEST_TYPE_FIELD_LABELS)
 
     def _layered_result_values(self, table: Table) -> list[str]:
-        return self._layered_values_for_labels(table, _RESULT_FIELD_LABELS)
+        return self._layered_values_for_labels(table, _RESULT_FIELD_LABELS, keep_empty=True)
 
     def _layered_sample_quantities(self, table: Table) -> list[str]:
         return self._layered_values_for_labels(table, _SAMPLE_QUANTITY_FIELD_LABELS)
@@ -415,6 +436,8 @@ class DpvrExcelAgent(ExcelAgent):
         layered_values = self._layered_result_values(table)
         if layered_values:
             for value in layered_values:
+                if not str(value).strip():
+                    return "NG", "结果判定字段为空"
                 if not self._rule2_is_pass(value):
                     return "NG", f"结果判定字段值不合格: {value}"
             return "PASS", ""
