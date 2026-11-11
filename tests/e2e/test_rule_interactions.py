@@ -97,6 +97,11 @@ class RuleInteractionTests(unittest.TestCase):
                         page.route("**/api/me", lambda route: held.append(route))
                         page.goto(WEB + "/audit")
                         expect(page.get_by_text("正在确认登录状态…", exact=True)).to_be_visible()
+                        # The page may render before Playwright runs the route callback; wait for it, bounded.
+                        deadline = time.monotonic() + 5
+                        while not held:
+                            self.assertLess(time.monotonic(), deadline, "The /me read did not reach its route handler")
+                            page.wait_for_timeout(10)
                         self.assertEqual(len(held), 1)
                         self.assertTrue(page.get_by_role("banner").is_visible())
                         desktop = page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="审核规则", exact=True)
