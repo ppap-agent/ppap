@@ -16,7 +16,7 @@ def test_new_enterprise_receives_all_preset_rules_without_upload(auth_store_fact
     client.cookies.set(SESSION_COOKIE, store.create_session(principal))
     rules = client.get("/rules").json()["rules"]
     presets = [rule for rule in rules if rule["rule_profile"] == "v4"]
-    assert len(presets) == 41
+    assert len(presets) == 53
     assert {row["name"] for row in client.get("/audit-customers").json()["customers"]} == {"UAES", "理想", "蔚来"}
     first_ids = {row["id"] for row in presets}
     store.upsert_feishu_identity(tenant, "first")
@@ -32,7 +32,7 @@ def test_new_enterprise_receives_all_preset_rules_without_upload(auth_store_fact
         assert actual.json()["source_file_version_id"] is None
     other = store.upsert_feishu_identity("other-" + uuid.uuid4().hex, "first")
     other_ids = {row["id"] for row in store.list_rules(other.tenant_id) if row["rule_profile"] == "v4"}
-    assert len(other_ids) == 41 and not first_ids & other_ids
+    assert len(other_ids) == 53 and not first_ids & other_ids
     assert store.get_rule(other.tenant_id, next(iter(first_ids))) is None
     assert client.get("/rounds").json()["rounds"] == []
     assert client.get("/usage").json()["events"] == []
@@ -66,5 +66,5 @@ def test_customer_upload_cannot_mint_or_replace_product_presets(auth_store_facto
     independent = client.post("/rules", json={**request, "body": legacy})
     assert independent.status_code == 201
     assert client.get("/rules/" + preset["id"]).json()["body"] == original
-    assert len([rule for rule in client.get("/rules").json()["rules"] if rule["rule_profile"] == "v4"]) == 41
+    assert len([rule for rule in client.get("/rules").json()["rules"] if rule["rule_profile"] == "v4"]) == 53
     client.close()

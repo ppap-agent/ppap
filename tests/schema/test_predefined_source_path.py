@@ -108,3 +108,30 @@ def test_real_postgres_company_path_migration_moves_only_version_prefixed_offici
         assert conn.execute("SELECT resolved_digest FROM product.suite_revisions WHERE id=%s", (old.id,)).fetchone()[0] == digest
         with pytest.raises(psycopg.Error):
             conn.execute("UPDATE product.suite_revisions SET source_path='ACME/X' WHERE id=%s", (old.id,))
+
+
+def test_real_postgres_repository_defaults_are_followed_as_verified_and_never_replaced(suite_db):
+    from product.seed_standard_suites import publish_repository_defaults
+    from product.store.suite_releases import SuiteReleaseStore, current_selection
+
+    settings, objects, *_rest = suite_db
+    store = SuiteStore(settings, objects, role="migrator")
+    releases = SuiteReleaseStore(settings, objects, role="migrator")
+    seeded = seed_standard_suites(store)
+    published = publish_repository_defaults(releases, seeded)
+    assert {row["suite_key"] for row in published} == {row["suite_key"] for row in seeded}
+    assert all(row["repository_default"] and row["validation_revision"] is None and row["revision"] == 1 for row in published)
+    keys = [row["suite_key"] for row in published]
+    # A program's related leaves become defaults before it.
+    assert keys.index("UAES:U07") < keys.index("UAES:U08") and keys.index("UAES:U16") < keys.index("UAES:U08")
+    with connect(settings, "migrator") as conn:
+        selection = current_selection(conn, str(uuid.uuid4()), "蔚来:N13")
+        assert selection["selection_mode"] == "automatic_official" and selection["repository_default"] is True
+        assert selection["verification_status"] == "verified" and selection["force_unverified"] is False
+        # Dropping the repository mark without a proof is refused.
+        with pytest.raises(psycopg.Error, match="official_suite_validation_required"):
+            conn.execute("UPDATE product.official_suite_heads SET repository_default=false, revision=revision+1 WHERE suite_key='蔚来:N13'")
+    assert publish_repository_defaults(releases, seed_standard_suites(store)) == []
+    assert releases.official_active("蔚来:N13")["revision"] == 1
+    with pytest.raises(ValueError, match="invalid_official_suite_publication"):
+        releases.publish_official(seeded[0]["revision_id"], expected_revision=1, expected_validation_revision=3, repository_default=True)

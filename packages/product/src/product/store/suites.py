@@ -332,7 +332,9 @@ def freeze_selected_targets(store, conn, tenant_id: str, prepared: list[dict], *
             if legacy_carrier_program(related_suite.files):
                 raise ValueError("suite_version_confirmation_required")
             related[related_key] = related_suite.revision.resolved_digest
-        verified = selection["verification_status"] == "verified"
+        # A repository default is validated offline: it is admitted without a proof row to freeze.
+        verified = selection["verification_status"] == "verified" and not selection["repository_default"]
+        accepted = verified or selection["force_unverified"] or selection["repository_default"]
         binding = RuleBinding(suite.revision.suite_key, code, entrypoints, rule_digest(rules, appendix) if verified else None)
         receipt = selection["validation"]
         validation = ValidationRecord(suite.revision.resolved_digest, rule_digest(rules, appendix), code, related, receipt["library_revision"]) if verified else None
@@ -343,14 +345,14 @@ def freeze_selected_targets(store, conn, tenant_id: str, prepared: list[dict], *
             validation=validation,
             related_suite_digests=related,
             library_revision=library,
-            allow_unverified=preparation or selection["force_unverified"],
+            allow_unverified=preparation or accepted,
         )
         targets.append(target)
         # Preparation remains inspectable even when formal admission needs fresh
         # proof. Mirror freeze_execution's policy, including explicit risk
         # adoption; library drift alone is a notice.
         item["suite_admission"] = {
-            "state": "ready" if verified or selection["force_unverified"] else "validation_required",
+            "state": "ready" if accepted else "validation_required",
             "suite_key": suite.revision.suite_key,
             "suite_revision_id": suite.revision.id,
             "verification_status": selection["verification_status"],

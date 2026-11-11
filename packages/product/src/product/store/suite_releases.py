@@ -70,17 +70,20 @@ def _selected_or_none(conn, tenant_id: str | None, suite_key: str) -> dict | Non
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute("SELECT * FROM product.tenant_suite_heads WHERE tenant_id = %s AND suite_key = %s", (tenant_id, suite_key))
         head = cur.fetchone()
+        repository_default = False
         if head:
             row = _revision(conn, str(head["current_revision_id"]), tenant_id)
         else:
             cur.execute(
-                """SELECT r.* FROM product.official_suite_heads h
+                """SELECT r.*, h.repository_default AS official_repository_default FROM product.official_suite_heads h
                    JOIN product.suite_revisions r ON r.id = h.current_revision_id
                    WHERE h.suite_key = %s AND r.tenant_id IS NULL""",
                 (suite_key,),
             )
             row = cur.fetchone()
-    return {"row": row, "head": head} if row is not None else None
+            if row is not None:
+                repository_default = row.pop("official_repository_default")
+    return {"row": row, "head": head, "repository_default": repository_default} if row is not None else None
 
 
 def _selected(conn, tenant_id: str | None, suite_key: str) -> dict:
@@ -161,8 +164,10 @@ def current_selection(conn, tenant_id: str, suite_key: str) -> dict:
         "selection_mode": "pinned" if head else "automatic_official",
         "version": row["revision_number"],
         "origin": "enterprise" if row["tenant_id"] else "official",
-        "verification_status": validation["status"],
+        # A checker shipped in the repository is validated offline; following it needs no proof row.
+        "verification_status": "verified" if selected["repository_default"] else validation["status"],
         "force_unverified": head["force_unverified"] if head else False,
+        "repository_default": selected["repository_default"],
         "related_revision_ids": related,
         "validation": validation,
     }
@@ -880,19 +885,29 @@ class SuiteReleaseStore:
             "current_revision_id": str(head["current_revision_id"]) if head else None,
             "revision": head["revision"] if head else 0,
             "validation_revision": head["validation_revision"] if head else None,
+            "repository_default": head["repository_default"] if head else False,
             "published_at": head["published_at"].isoformat() if head else None,
         }
 
-    def publish_official(self, revision_id: str, *, expected_revision: int, expected_validation_revision: int, expected_proof_digest: str | None = None) -> dict:
+    def publish_official(
+        self, revision_id: str, *, expected_revision: int, expected_validation_revision: int | None, expected_proof_digest: str | None = None, repository_default: bool = False
+    ) -> dict:
         """Activate exactly the reviewed proof under the admission/publication lock.
 
         Saving sources and recording tests never call this method. A late test
         cannot promote its old candidate, and a stale publisher cannot overwrite
         a newer release. Deliberate rollback is the same explicit CAS operation.
+        ``repository_default`` publishes a checker shipped in the repository, which is
+        validated offline; the repository is its validation and no proof row is read.
         """
         if self.role != "migrator":
             raise PermissionError("official_suite_write_forbidden")
-        if type(expected_revision) is not int or expected_revision < 0 or type(expected_validation_revision) is not int or expected_validation_revision < 1:
+        if type(expected_revision) is not int or expected_revision < 0 or type(repository_default) is not bool:
+            raise ValueError("invalid_official_suite_publication")
+        if repository_default:
+            if expected_validation_revision is not None or expected_proof_digest is not None:
+                raise ValueError("invalid_official_suite_publication")
+        elif type(expected_validation_revision) is not int or expected_validation_revision < 1:
             raise ValueError("invalid_official_suite_publication")
         with self._conn() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
             _lock(conn, "official")
@@ -901,21 +916,22 @@ class SuiteReleaseStore:
             head = cur.fetchone()
             if (head["revision"] if head else 0) != expected_revision:
                 raise ValueError("suite_head_conflict")
-            validation = _validation(conn, None, revision)
-            if expected_proof_digest is not None:
-                if validation["proof_digest"] != expected_proof_digest:
+            if not repository_default:
+                validation = _validation(conn, None, revision)
+                if expected_proof_digest is not None:
+                    if validation["proof_digest"] != expected_proof_digest:
+                        raise ValueError("suite_validation_conflict")
+                    cur.execute("SELECT proof FROM product.suite_validations WHERE tenant_id IS NULL AND revision_id = %s", (revision_id,))
+                    stored = cur.fetchone()
+                    selected_ids = tuple(str(_selected(conn, None, key)["row"]["id"]) for key in sorted(revision["related_suite_keys"]))
+                    if stored is None or tuple(stored["proof"].get("report", {}).get("related_revision_ids", ())) != selected_ids:
+                        raise ValueError("suite_validation_inputs_changed")
+                    for dependency_id in selected_ids:
+                        self.suites.resolve_suite(dependency_id, "00000000-0000-0000-0000-000000000000", conn=conn)
+                if validation["write_revision"] != expected_validation_revision:
                     raise ValueError("suite_validation_conflict")
-                cur.execute("SELECT proof FROM product.suite_validations WHERE tenant_id IS NULL AND revision_id = %s", (revision_id,))
-                stored = cur.fetchone()
-                selected_ids = tuple(str(_selected(conn, None, key)["row"]["id"]) for key in sorted(revision["related_suite_keys"]))
-                if stored is None or tuple(stored["proof"].get("report", {}).get("related_revision_ids", ())) != selected_ids:
-                    raise ValueError("suite_validation_inputs_changed")
-                for dependency_id in selected_ids:
-                    self.suites.resolve_suite(dependency_id, "00000000-0000-0000-0000-000000000000", conn=conn)
-            if validation["write_revision"] != expected_validation_revision:
-                raise ValueError("suite_validation_conflict")
-            if not validation["verified"] or validation["samples_not_rerun"]:
-                raise ValueError("official_suite_validation_required")
+                if not validation["verified"] or validation["samples_not_rerun"]:
+                    raise ValueError("official_suite_validation_required")
             # Proof identity is insufficient if an object disappeared or drifted.
             resolved = self.suites.resolve_suite(str(revision["id"]), "00000000-0000-0000-0000-000000000000", conn=conn)
             blocked = adoption_block(resolved, verified=True, force_unverified=False)
@@ -927,14 +943,14 @@ class SuiteReleaseStore:
             if head:
                 cur.execute(
                     """UPDATE product.official_suite_heads SET current_revision_id = %s, revision = revision + 1,
-                         validation_revision = %s, published_at = now() WHERE suite_key = %s AND revision = %s RETURNING *""",
-                    (revision["id"], expected_validation_revision, revision["suite_key"], expected_revision),
+                         validation_revision = %s, repository_default = %s, published_at = now() WHERE suite_key = %s AND revision = %s RETURNING *""",
+                    (revision["id"], expected_validation_revision, repository_default, revision["suite_key"], expected_revision),
                 )
             else:
                 cur.execute(
-                    """INSERT INTO product.official_suite_heads (suite_key, current_revision_id, revision, validation_revision)
-                       VALUES (%s, %s, 1, %s) RETURNING *""",
-                    (revision["suite_key"], revision["id"], expected_validation_revision),
+                    """INSERT INTO product.official_suite_heads (suite_key, current_revision_id, revision, validation_revision, repository_default)
+                       VALUES (%s, %s, 1, %s, %s) RETURNING *""",
+                    (revision["suite_key"], revision["id"], expected_validation_revision, repository_default),
                 )
             return self._official_receipt(revision["suite_key"], cur.fetchone())
 

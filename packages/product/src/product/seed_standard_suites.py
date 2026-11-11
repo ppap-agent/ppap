@@ -105,10 +105,41 @@ def seed_standard_suites(store: Any) -> list[dict[str, str]]:
     return install_official_sources(store, official_source_suites())
 
 
+def publish_repository_defaults(releases: Any, seeded: list[dict[str, str]]) -> list[dict]:
+    """Make each seeded leaf the official default where no official head exists yet.
+
+    Repository checkers are validated offline, so they become defaults without a
+    corpus proof row. A head that already exists is never replaced here. Leaves a
+    related program depends on are published first.
+    """
+    if releases.role != "migrator":
+        raise PermissionError("official_suite_write_forbidden")
+    by_key = {row["suite_key"]: row for row in seeded}
+    related = {suite.suite_key: suite.related_suite_keys for suite in official_source_suites()}
+    published: list[dict] = []
+    done: set[str] = set()
+
+    def publish(key: str) -> None:
+        if key in done or key not in by_key:
+            return
+        done.add(key)
+        for dependency in related.get(key, ()):
+            publish(dependency)
+        if releases.official_active(key)["revision"] == 0:
+            published.append(releases.publish_official(by_key[key]["revision_id"], expected_revision=0, expected_validation_revision=None, repository_default=True))
+
+    for key in sorted(by_key):
+        publish(key)
+    return published
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="Write official revisions using configured migrator and object storage credentials.")
+    parser.add_argument("--publish-defaults", action="store_true", help="With --apply: make each leaf the official default where no official head exists.")
     args = parser.parse_args()
+    if args.publish_defaults and not args.apply:
+        parser.error("--publish-defaults requires --apply")
     if not args.apply:
         print(
             json.dumps(
@@ -124,7 +155,15 @@ def main() -> None:
     from product.settings import Settings
     from product.store.suites import SuiteStore
 
-    print(json.dumps(seed_standard_suites(SuiteStore(Settings(), role="migrator")), ensure_ascii=False))
+    store = SuiteStore(Settings(), role="migrator")
+    seeded = seed_standard_suites(store)
+    if not args.publish_defaults:
+        print(json.dumps(seeded, ensure_ascii=False))
+        return
+    from product.store.suite_releases import SuiteReleaseStore
+
+    releases = SuiteReleaseStore(store.settings, store.objects, role="migrator")
+    print(json.dumps({"seeded": seeded, "published": publish_repository_defaults(releases, seeded)}, ensure_ascii=False))
 
 
 if __name__ == "__main__":
