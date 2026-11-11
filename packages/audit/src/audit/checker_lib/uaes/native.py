@@ -258,17 +258,19 @@ class NativeFacts:
             self.cell(table, start, column)
         return start, columns
 
-    def rows(self, aliases, *, title=(), anchor=(), defer_unknown=False, table=None, ignore_under=(), continuation=False):
+    def rows(self, aliases, *, title=(), anchor=(), defer_unknown=False, table=None, ignore_under=(), continuation=False, footer=None):
         """Business rows of one table.
 
-        With `continuation`, a row whose anchors are known blank continues the
-        anchored row above it, as forms leave "same as above" cells empty: it is
-        kept and reads that row's anchors. Its other blank cells stay blank.
+        With `continuation`, forms leave "same as above" anchor cells empty: each
+        known-blank anchor reads the nearest filled one above, and a row whose
+        anchors are all blank is kept as a continuation. Other blank cells stay blank.
+        `footer(table, row)` may confirm that an unreadable anchor row begins
+        the area after the business rows; only a confirmed True ends them.
         """
         table = table if table is not None else self.table(title)
         start, columns = self.columns(table, aliases, ignore_under=ignore_under)
         records = []
-        anchored = None
+        filled: dict[str, int] = {}
         for row in range(start + 1, table["rows"] + 1):
             raw = {name: self.readers[table["id"]].cell(row, column) for name, column in columns.items()}
             if all(blank(item.get("value")) and item.get("state") == "known" for item in raw.values()):
@@ -279,19 +281,21 @@ class NativeFacts:
                 and all(header(item.get("value"), aliases[name]) for name, item in raw.items() if not blank(item.get("value")))
             ):
                 continue
+            if footer is not None and records and not defer_unknown and any(raw[name].get("state") != "known" for name in anchor) and footer(table, row) is True:
+                break
             for name in anchor:
                 if raw[name].get("state") != "known" and not defer_unknown:
                     # An unreadable scope anchor cannot establish that the row
                     # is outside the business range, even when resources exist.
                     self.cell(table, row, columns[name])
-            if anchor and all(raw[name].get("state") == "known" and blank(raw[name].get("value")) for name in anchor):
-                if continuation and anchored is not None:
-                    records.append(NativeRow(self, table, row, columns, inherited={name: anchored for name in anchor}))
+            empty = {name for name in anchor if raw[name].get("state") == "known" and blank(raw[name].get("value"))}
+            if anchor and len(empty) == len(anchor) and not (continuation and filled):
                 continue
             if any(key(raw[name].get("value")).startswith(marker) for name in anchor for marker in ("编制/日期", "审核/日期", "编制人", "批准人")):
                 break
-            anchored = row
-            records.append(NativeRow(self, table, row, columns))
+            inherited = {name: filled[name] for name in empty if name in filled} if continuation else {}
+            filled.update({name: row for name in anchor if name not in empty})
+            records.append(NativeRow(self, table, row, columns, inherited=inherited))
         if not records:
             raise UnknownFact("没有有效业务数据行，不能按空范围通过。")
         return records
@@ -523,6 +527,37 @@ class UaesSourceAgent(BaseAgent):
             )
         except (VisualFactsUnavailable, SheetFactsUnavailable) as exc:
             raise UnknownFact(str(exc)) from exc
+
+    def table_footer(self, table, row):
+        """Whether the rows from `row` to the end hold no business record, as seen on the rendered original."""
+        from documents.excel.visual import ExcelRegionRenderError
+        from openpyxl.utils.cell import get_column_letter
+
+        from audit.checker_lib.excel import load_workbook
+        from audit.checker_lib.visual import observe_excel_region
+
+        facts = self.native()
+        if facts.format not in {".xlsx", ".xlsm", ".xls"} or facts.data.get("prepared_format") or table["rows"] - row >= 20:
+            return None
+        cache = self.__dict__.setdefault("_footer_cache", {})
+        if "workbook" not in cache:
+            cache["workbook"] = load_workbook(str(self.audit_file.file_url))
+        sheet = cache["workbook"][table["id"]]
+        cell_range = f"A{row}:{get_column_letter(table['cols'])}{table['rows']}"
+        reader = facts.readers[table["id"]]
+        texts = (str(reader.cell(number, column).get("value") or "").strip() for number in range(row, table["rows"] + 1) for column in range(1, table["cols"] + 1))
+        keywords = tuple(dict.fromkeys(text[:80] for text in texts if text))[:16]
+        if not keywords:
+            return None
+        fields = {
+            "footer": "图中从第一行起直到末尾，都是表格之后的图例、符号说明、备注或签字区，不包含任何业务记录（如逐行填写的条目、评分或措施）。"
+            "全部属于这类区域返回true；含有任何业务记录返回false；无法确定返回null。"
+        }
+        try:
+            observed = observe_excel_region(self.audit_file, sheet, cell_range, fields, keywords, cache=cache.setdefault("regions", {}), witness=self.witness, whole_field=True)
+        except (ExcelRegionRenderError, ValueError):
+            return None
+        return observed.get("footer")
 
     def precheck(self):
         from .precheck import structural_facts

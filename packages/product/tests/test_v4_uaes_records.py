@@ -243,3 +243,57 @@ def test_pfmea_continuation_rows_have_their_scores_checked(tmp_path):
     result = agent.check(1)
     assert result.status == "NG", result.suggestions
     assert "1至10" in result.suggestions
+
+
+@pytest.mark.parametrize("confirmed", [True, None, False])
+def test_unreadable_trailing_row_ends_the_rows_only_when_confirmed_as_footer(tmp_path, confirmed):
+    from audit.checker_lib.uaes.native import NativeFacts, UnknownFact
+
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "PFMEA"
+    sheet.append(["失效模式", "严重度"])
+    sheet.append(["裂纹", 5])
+    # An uncached formula stands for any anchor the reader cannot establish.
+    sheet.append(["=1+1", "符号说明"])
+    path = tmp_path / "footer.xlsx"
+    book.save(path)
+    book.close()
+    asked = []
+
+    def footer(_table, row):
+        asked.append(row)
+        return confirmed
+
+    facts = NativeFacts(str(path), "version", lambda *args, **kwargs: None)
+    if confirmed is True:
+        assert [row.row for row in facts.rows({"mode": ("失效模式",), "s": ("严重度",)}, anchor=("mode",), footer=footer)] == [2]
+    else:
+        with pytest.raises(UnknownFact):
+            facts.rows({"mode": ("失效模式",), "s": ("严重度",)}, anchor=("mode",), footer=footer)
+    assert asked == [3]
+
+
+def test_pfmea_blank_failure_mode_reads_its_own_group_not_another(tmp_path):
+    from audit.checker_lib.uaes.fmea import UaesPfmeaAgent
+
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "PFMEA"
+    sheet.append(["PFMEA"])
+    sheet.append(["失效模式", "失效后果", "严重度", "失效原因", "发生度", "预防控制", "探测控制", "探测度"])
+    # Each failure mode is written once; its further causes leave it blank.
+    sheet.append(["裂纹", "外观不良", 5, "参数异常", 3, "参数监控", "目视", 6])
+    sheet.append([None, "外观不良", 5, "排气不良", 3, "模具评审", "试模记录", 3])
+    sheet.append(["气孔", "泄漏", 7, "熔液含气", 3, "除气", "气密", 3])
+    sheet.append([None, "泄漏", 7, "排气不良", 3, "模具评审", "试模记录", 3])
+    path = tmp_path / "pfmea.xlsx"
+    book.save(path)
+    book.close()
+    body = preset_rule_body("UAES", "U07")
+    agent = UaesPfmeaAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput(rule_id="source-rules", **{key: value for key, value in body.items() if key != "kind"}))
+    result = agent.check(1)
+    # Same cause and controls under different failure modes may score differently;
+    # only the engineering judgement, which needs the original image, remains.
+    assert result.status == "UNABLE", result.suggestions
+    assert "工程合理性" in result.suggestions

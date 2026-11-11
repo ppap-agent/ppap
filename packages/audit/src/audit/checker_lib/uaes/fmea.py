@@ -42,6 +42,8 @@ class UaesPfmeaAgent(UaesSourceAgent):
             ignore_under=("措施结果", "Actions Results"),
             # Further causes and controls of one failure mode have their own scores.
             continuation=True,
+            # A legend row with symbol pictures follows the last failure item.
+            footer=self.table_footer,
         )
         conditions: dict[tuple[str, ...], tuple] = {}
         for row in rows:
