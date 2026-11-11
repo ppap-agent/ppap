@@ -49,10 +49,10 @@ def test_recognized_part_number_is_separate_from_part_name() -> None:
         "控制计划.xlsx",
         workbook_bytes(("零件名称", "外壳"), ("零件号", "P-204")),
         [],
-        ai=MetadataAI({"customer": "甲客户", "model": "M1", "part": "外壳", "part_number": "P-204"}),
+        ai=MetadataAI({"customer": "甲客户", "model": "M1", "project": "项目A", "part": "外壳", "part_number": "P-204"}),
     )
 
-    assert result["metadata"] == {"customer": "甲客户", "model": "M1", "part": "外壳", "part_number": "P-204"}
+    assert result["metadata"] == {"customer": "甲客户", "model": "M1", "project": "项目A", "part": "外壳", "part_number": "P-204"}
 
 
 def rule(rule_id: str, customers: list[str], document_type: str = "控制计划", **fields) -> dict:
