@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from typing import Any
 
 from audit.formal_digest import TEXT_RENDERER_VERSION, display_digest, formal_digest
 
@@ -99,7 +100,7 @@ def accept_text_points(raw: str, *, source_rule_version_id: str, clause_id: str,
     if not isinstance(suggestion, str) or len(suggestion) > MAX_TEXT:
         raise FormalizationError("invalid_formalization", "建议的条款写法格式不对")
     suggestion = suggestion.strip() if review else ""
-    spec = {
+    spec: dict[str, Any] = {
         "format_version": "1",
         "formal_profile": TEXT_PROFILE,
         "owl_content": None,
