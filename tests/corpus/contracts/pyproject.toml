@@ -8,6 +8,7 @@ dependencies = [
     "agent",
     "documents",
     "audit",
+    "worker",
     "openpyxl>=3.1.2",
     "httpx>=0.28.1",
 ]
@@ -17,6 +18,7 @@ product = { workspace = true }
 agent = { workspace = true }
 documents = { workspace = true }
 audit = { workspace = true }
+worker = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

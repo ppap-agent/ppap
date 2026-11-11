@@ -178,11 +178,43 @@ def original(filename: str, *, cases: Path = CASES_PATH, root: Path = REPO_ROOT)
     return root / paths.pop()
 
 
-def build_round(case: OracleCase) -> tuple[ExecutionSnapshot, dict[str, bytes], dict[str, int]]:
+def customer_rules(customer: str) -> list[dict]:
+    """Every preset of one customer, as a task offers them for recognition."""
+    from audit.presets import customer_presets, preset_document_type
+
+    return [
+        {"id": preset.entry_id, "title": preset.title, "kind": "engine", "type": preset_document_type(preset), "customers": [customer], "rule_profile": "v4"}
+        for preset in customer_presets()
+        if preset.customer == customer
+    ]
+
+
+def case_customer(case: OracleCase) -> str:
+    customers = {file.checker_group.split(":", 1)[0] for file in case.files if file.role == "target"}
+    if len(customers) != 1:
+        raise ValueError(f"{case.id}: targets must share one customer")
+    return customers.pop()
+
+
+def recognize_references(case: OracleCase) -> dict[str, dict]:
+    """Recognize each reference with the product's upload pipeline, never from the table."""
+    from worker.intake.file_analysis import analyze_file
+
+    customer = case_customer(case)
+    rules = customer_rules(customer)
+    return {file.file_id: analyze_file(file.filename, file.path.read_bytes(), rules, customer_preference=customer, scoped=True, reference_only=True) for file in case.files if file.role == "reference"}
+
+
+def build_round(case: OracleCase, recognized: dict[str, dict] | None = None) -> tuple[ExecutionSnapshot, dict[str, bytes], dict[str, int]]:
+    """`recognized` gives references their pipeline type and facts, as an uploaded task freezes them."""
     inputs, targets, blobs, totals = [], [], {}, {}
     for file in case.files:
         data = file.path.read_bytes()
         document_type = ""
+        metadata: dict = {}
+        if file.role == "reference" and recognized is not None:
+            document_type = recognized[file.file_id].get("document_type") or ""
+            metadata = recognized[file.file_id].get("metadata") or {}
         if file.role == "target":
             suite = file.suite()
             body = file.rule_body()
@@ -201,7 +233,18 @@ def build_round(case: OracleCase) -> tuple[ExecutionSnapshot, dict[str, bytes], 
                     RuleBinding(suite.suite_key, checker_digest(suite.program_files), suite.entrypoints),
                 )
             )
-        inputs.append(FrozenInput(file.file_id, hashlib.sha256(data).hexdigest(), cast(Literal["target", "reference"], file.role), file.filename, document_type=document_type))
+        inputs.append(
+            FrozenInput(
+                file.file_id,
+                hashlib.sha256(data).hexdigest(),
+                cast(Literal["target", "reference"], file.role),
+                file.filename,
+                document_type=document_type,
+                customer=metadata.get("customer"),
+                model=metadata.get("model"),
+                part=metadata.get("part"),
+            )
+        )
         blobs[file.file_id] = data
     snapshot = ExecutionSnapshot("corpus", "corpus-controlled-runner", tuple(inputs), tuple(targets), "corpus-source", library_revision(), {}, round_id=case.id)
     return snapshot, blobs, totals

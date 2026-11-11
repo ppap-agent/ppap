@@ -2,8 +2,7 @@
 
 import csv
 
-from audit.presets import customer_presets, preset_document_type
-from corpus_contracts.oracle import CASES_PATH, REPO_ROOT
+from corpus_contracts.oracle import CASES_PATH, REPO_ROOT, customer_rules
 from worker.intake.file_analysis import analyze_file
 
 
@@ -19,15 +18,6 @@ def _targets() -> list[tuple[str, object, str]]:
 _TARGETS = _targets()
 
 
-def _rules(customer: str) -> list[dict]:
-    # A task offers every preset of its customer, as the product does.
-    return [
-        {"id": preset.entry_id, "title": preset.title, "kind": "engine", "type": preset_document_type(preset), "customers": [customer], "rule_profile": "v4"}
-        for preset in customer_presets()
-        if preset.customer == customer
-    ]
-
-
 def pytest_generate_tests(metafunc):
     if "target" not in metafunc.fixturenames:
         return
@@ -39,5 +29,5 @@ def pytest_generate_tests(metafunc):
 def test_target_matches_its_customer_rule(target):
     group, path, filename = target
     customer, entry = group.split(":")
-    result = analyze_file(filename, path.read_bytes(), _rules(customer), customer_preference=customer, scoped=True)
+    result = analyze_file(filename, path.read_bytes(), customer_rules(customer), customer_preference=customer, scoped=True)
     assert (result["matching_status"], result["matched_rule_id"]) == ("matched", entry), result["notices"]

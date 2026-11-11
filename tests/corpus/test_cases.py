@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 from agent.execution.audit_runtime import run_audit
-from corpus_contracts.oracle import OracleCase, build_round, load_oracle, programs_for
+from corpus_contracts.oracle import OracleCase, build_round, load_oracle, programs_for, recognize_references
 from corpus_contracts.product_round import BLOCKING, compare_file, format_verdicts, severity
 
 
@@ -39,7 +39,8 @@ def _write_report(rows: list[dict]) -> None:
 
 @pytest.mark.usefixtures("ocr_transport_diagnostics")
 def test_audit_case(audit_case: OracleCase, model_replay):
-    work, blobs, totals = build_round(audit_case)
+    # References carry the types the upload pipeline recognizes, as in a real task.
+    work, blobs, totals = build_round(audit_case, recognize_references(audit_case))
     result = run_audit(work, blobs, programs_for(work))
     rows, failures = [], []
     for file in audit_case.files:
