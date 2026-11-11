@@ -117,12 +117,12 @@ def test_legacy_heads_reject_new_admission_until_explicit_directory_publish(cuto
 
     official_key, pinned_key, directory_key = "OFFICIAL:OLD", "PIN:OLD", "PIN:V5"
     official_carrier = _install(suites, official_key, CARRIER, None)
-    official_directory = _install(suites, official_key, DIRECTORY, "v5/ACME/OFF")
-    official_unverified = _install(suites, official_key, DIRECTORY, "v6/ACME/OFF")
+    official_directory = _install(suites, official_key, DIRECTORY, "ACME/OFF")
+    official_unverified = _install(suites, official_key, DIRECTORY, "ACME-v6/OFF")
     pinned_carrier = _install(suites, pinned_key, CARRIER, None)
-    pinned_directory = _install(suites, pinned_key, DIRECTORY, "v5/ACME/PIN")
+    pinned_directory = _install(suites, pinned_key, DIRECTORY, "ACME/PIN")
     selected_carrier = _install(suites, directory_key, CARRIER, None)
-    selected_directory = _install(suites, directory_key, DIRECTORY, "v5/ACME/SEL")
+    selected_directory = _install(suites, directory_key, DIRECTORY, "ACME/SEL")
     tenant_pin, tenant_directory, tenant_open, user, round_id = (str(uuid.uuid4()) for _ in range(5))
 
     with connect(settings, "migrator") as conn:
@@ -348,7 +348,7 @@ def test_remaining_head_states_do_not_move_a_pointer_when_apply_is_interrupted(c
     ready_directory = _install(suites, ready_key, dict(ready_leaf.files), ready_leaf.source_path)
     verified_directory = _install(suites, verified_key, dict(verified_leaf.files), verified_leaf.source_path)
     broken_carrier = _install(suites, broken_key, CARRIER, None)
-    broken_directory = _install(suites, broken_key, {**DIRECTORY, "checker.py": DIRECTORY["checker.py"] + b"\n# broken\n"}, "v5/ACME/BROKEN")
+    broken_directory = _install(suites, broken_key, {**DIRECTORY, "checker.py": DIRECTORY["checker.py"] + b"\n# broken\n"}, "ACME/BROKEN")
     dependency_carrier = _install(suites, dependency_key, CARRIER, None)
     dependency_directory = suites.create_revision(
         tenant_id=None,
@@ -356,12 +356,12 @@ def test_remaining_head_states_do_not_move_a_pointer_when_apply_is_interrupted(c
         files=DIRECTORY,
         created_by=None,
         related_suite_keys=("MISSING:DEP",),
-        source_path="v5/ACME/DEP",
+        source_path="ACME/DEP",
     )
     first_carrier = _install(suites, "INT:A", CARRIER, None)
-    first_directory = _install(suites, "INT:A", DIRECTORY, "v5/ACME/INTA")
+    first_directory = _install(suites, "INT:A", DIRECTORY, "ACME/INTA")
     second_carrier = _install(suites, "INT:B", CARRIER, None)
-    second_directory = _install(suites, "INT:B", DIRECTORY, "v5/ACME/INTB")
+    second_directory = _install(suites, "INT:B", DIRECTORY, "ACME/INTB")
     with connect(settings, "migrator") as conn:
         validated = (
             missing_carrier,
@@ -482,7 +482,7 @@ def test_directory_admission_refuses_a_related_carrier_head(cutover_db, monkeypa
         files=DIRECTORY,
         related_suite_keys=("REL:CARRIER",),
         created_by=None,
-        source_path="v5/ACME/DIR",
+        source_path="ACME/DIR",
     )
     tenant, user = (str(uuid.uuid4()) for _ in range(2))
     with connect(settings, "migrator") as conn:
@@ -520,7 +520,7 @@ def test_concurrent_apply_publishes_one_directory_head(cutover_db):
     releases = SuiteReleaseStore(settings, objects, role="migrator")
     key = "RACE:OLD"
     carrier = _install(suites, key, CARRIER, None)
-    directory = _install(suites, key, DIRECTORY, "v5/ACME/RACE")
+    directory = _install(suites, key, DIRECTORY, "ACME/RACE")
     with connect(settings, "migrator") as conn:
         _validate(conn, carrier.id, carrier.resolved_digest)
         _validate(conn, directory.id, directory.resolved_digest)

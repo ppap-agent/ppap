@@ -35,7 +35,7 @@ class RulePreparationTests(unittest.TestCase):
     def test_original_docx_rules_are_reviewed_saved_and_restored(self):
         from playwright.sync_api import expect
 
-        rule_root = Path(__file__).resolve().parents[2] / "assets" / "poc测试" / "poc规则"
+        rule_root = Path(__file__).resolve().parents[2] / "assets" / "蔚来" / "历史" / "poc规则"
         sources = [
             ("8规则-过程流程图.docx", "过程流程图", 9),
             ("9规则-潜在过程失效模式及后果分析（PFMEA）.docx", "潜在过程失效模式及后果分析", 7),

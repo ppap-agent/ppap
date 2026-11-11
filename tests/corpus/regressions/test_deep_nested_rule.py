@@ -12,7 +12,7 @@ def cell(data, table, row, column):
 
 
 def test_original_control_plan_nested_clause_retains_exact_source_text():
-    path = Path(__file__).resolve().parents[3] / "assets/V2.0测试/规则V2.0/10 控制计划.docx"
+    path = Path(__file__).resolve().parents[3] / "assets/理想/历史/规则V2.0/10 控制计划.docx"
     original = path.read_bytes()
     data = snapshot(path)
     observed = cell(data, 2, 1, 1)

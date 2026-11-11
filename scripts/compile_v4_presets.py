@@ -14,7 +14,7 @@ from pathlib import Path
 from zipfile import ZipFile
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCES = ROOT / "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则"
+ASSETS = ROOT / "assets"
 OUTPUT = ROOT / "packages/audit/src/audit/preset_rules.json"
 NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 # Explicit source identity. Sorting filenames would swap L02/L03 and U07/U08.
@@ -67,6 +67,21 @@ FILES = {
         ("T09", "8规则-过程流程图.docx"),
     ],
 }
+# NIO has no own rule document for these types; it uses the Li Auto clause text under its own entries.
+NIO_FROM_LI = [
+    ("N06", "L02"),
+    ("N07", "L03"),
+    ("N08", "L04"),
+    ("N09", "L05"),
+    ("N10", "L06"),
+    ("N11", "L09"),
+    ("N12", "L10"),
+    ("N13", "L13"),
+    ("N14", "L14"),
+    ("N15", "L15"),
+    ("N16", "L16"),
+    ("N17", "L17"),
+]
 
 
 def cell_text(cell: ET.Element) -> str:
@@ -90,7 +105,7 @@ def compile_presets() -> str:
         prefix = {"UAES": "U", "理想": "L", "蔚来": "N"}[customer]
         for index, (kind, filename) in enumerate(entries, 1):
             entry = f"{prefix}{index:02d}"
-            path = SOURCES / customer / filename
+            path = ASSETS / customer / "规则" / filename
             expected_files.add(path)
             with ZipFile(path) as archive:
                 document = ET.fromstring(archive.read("word/document.xml"))
@@ -125,7 +140,13 @@ def compile_presets() -> str:
                     "clauses": clauses,
                 }
             )
-    if set(SOURCES.rglob("*.docx")) != expected_files:
+    li = {row["entry_id"]: row for row in result if row["customer"] == "理想"}
+    for entry, source in NIO_FROM_LI:
+        row = li[source]
+        number, name = row["title"].split(" ", 1)
+        clauses = [{**clause, "id": entry + clause["id"][len(source) :]} for clause in row["clauses"]]
+        result.append({**row, "customer": "蔚来", "entry_id": entry, "title": f"{number}规则-{name}", "clauses": clauses})
+    if {path for customer in FILES for path in (ASSETS / customer / "规则").glob("*.docx")} != expected_files:
         raise ValueError("Source files changed; reconcile the authoritative 00-A matrix")
     return json.dumps(result, ensure_ascii=False, indent=2) + "\n"
 

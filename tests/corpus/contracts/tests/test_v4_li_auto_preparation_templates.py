@@ -25,7 +25,7 @@ def test_each_l2_source_subcriterion_runs_on_actual_customer_template(entry, nam
 
     from audit.precheck_sources import required_structure
 
-    root = Path(__file__).resolve().parents[4] / "assets/PPAP PRD v3.7/客户归类模板与规则_备份/模板/理想"
+    root = Path(__file__).resolve().parents[4] / "assets/理想/模板"
     path = next(path for path in root.iterdir() if name in path.name)
     agent = EXCEL_AGENTS[entry](AuditInput(audit_id="template-version", file_url=str(path)), RuleInput(rule_id="r", **preset_rule_body("理想", entry)))
     try:
@@ -41,7 +41,7 @@ def test_each_l2_source_subcriterion_runs_on_actual_customer_template(entry, nam
 def test_blank_fixture_template_labels_and_unchecked_options_are_not_content():
     from pathlib import Path
 
-    path = Path(__file__).resolve().parents[4] / "assets/PPAP PRD v3.7/客户归类模板与规则_备份/模板/理想/APQP-检具认可报告.xlsx"
+    path = Path(__file__).resolve().parents[4] / "assets/理想/模板/APQP-检具认可报告.xlsx"
     agent = EXCEL_AGENTS["L09"](AuditInput(audit_id="blank-fixture", file_url=str(path)), RuleInput(rule_id="r", **preset_rule_body("理想", "L09")))
     try:
         facts = {row["id"]: row for row in agent.precheck()}
@@ -55,7 +55,7 @@ def test_source_dvp_two_tier_timeline_and_blank_actuals(tmp_path):
 
     from openpyxl import load_workbook
 
-    source = Path(__file__).resolve().parents[4] / "assets/PPAP PRD v3.7/客户归类模板与规则_备份/模板/理想/APQP-零部件设计验证计划.xlsx"
+    source = Path(__file__).resolve().parents[4] / "assets/理想/模板/APQP-零部件设计验证计划.xlsx"
     workbook = load_workbook(source)
     sheet = workbook["DVP&R"]
     sheet["M10"] = "2024-05-01"

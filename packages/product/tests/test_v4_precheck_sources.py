@@ -8,7 +8,7 @@ from audit.precheck_sources import required_structure, structure_source
 
 
 def test_l2_criteria_are_exact_original_155_and_template_identity_additions():
-    source = Path(__file__).resolve().parents[3] / "assets" / "PPAP PRD v3.7" / "预检规则" / structure_source()["source"]
+    source = Path(__file__).resolve().parents[3] / "assets" / "UAES" / "预检规则" / structure_source()["source"]
     assert hashlib.sha256(source.read_bytes()).hexdigest() == structure_source()["source_sha256"]
     section = source.read_text().split("## 2. L2 条目的")[1].split("## 3.")[0]
     entries, current = {}, None
@@ -31,7 +31,7 @@ def test_l1_spec_wording_is_frozen_for_all_nineteen_customer_entries():
     from audit.precheck_sources import l1_criteria, l1_spec
 
     entries = ["U01", "U02", "U03", "U04", "U05", "U06", "U07", "U08", "L01", "L02", "L03", "L04", "L05", "L06", "L07", "L08", "N01", "N02", "N03"]
-    root = Path(__file__).resolve().parents[3] / "assets" / "PPAP PRD v3.7" / "预检规则"
+    root = Path(__file__).resolve().parents[3] / "assets" / "UAES" / "预检规则"
     for entry in entries:
         spec = l1_spec(entry)
         assert spec and hashlib.sha256((root / spec["source"]).read_bytes()).hexdigest() == spec["source_sha256"]

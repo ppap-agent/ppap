@@ -1,0 +1,64 @@
+{
+  "kind": "engine",
+  "type": "DV报告_PV报告_试验报告",
+  "preset_key": "N07",
+  "customers": [
+    "蔚来"
+  ],
+  "models": [],
+  "parts": [],
+  "title": "02规则-零部件设计验证报告（DV报告_PV报告_试验报告）",
+  "rules": [
+    {
+      "id": "N07:1",
+      "category": "条款 1",
+      "priority": "P0",
+      "rule_to_check": "不限模板，是供应商自己做的报告还是三方机构做的报告，识别文件中是否有“文件编号”或“报告编号”或“编号”字段，且内容不为空则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "N07:2",
+      "category": "条款 2",
+      "priority": "P0",
+      "rule_to_check": "当实验的判定或结论为“符合”或“通过”或“合格”或“P”或“pass”时则通过，否则不通过。若为F，则不通过。注意文字需要严格一致，不经过语言翻译之后的结果，不接受意思相近的其他文字描述；",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "N07:3",
+      "category": "条款 3",
+      "priority": "P0",
+      "rule_to_check": "识别是否有“试验类型”字段，且该字段对应的值为“DV”或“PV”则通过，否则不通过。注意：“DV”或“PV”无需考虑英文的大小写。",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "N07:4",
+      "category": "条款 4",
+      "priority": "P0",
+      "rule_to_check": "当文件中包含印章则通过，否则不通过。",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "N07:5",
+      "category": "条款 5",
+      "priority": "P0",
+      "rule_to_check": "当文件中包含“试验前”、“实验中”、“试验后”的图片则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "N07:6",
+      "category": "条款 6",
+      "priority": "P0",
+      "rule_to_check": "识别报告中是否包含“样品数量”或“样本数量”字段，如果包含则继续识别；当“样品数量”或“样本数量”对应内容不为空则通过，否则不通过。",
+      "type_of_rule": "text"
+    }
+  ],
+  "directory_coverage": "complete",
+  "checker_binding": {
+    "N07:1": "checker:create_audit",
+    "N07:2": "checker:create_audit",
+    "N07:3": "checker:create_audit",
+    "N07:4": "checker:create_audit",
+    "N07:5": "checker:create_audit",
+    "N07:6": "checker:create_audit"
+  }
+}

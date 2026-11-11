@@ -8,7 +8,7 @@ from audit.presets import preset_rule, preset_rule_body
 from corpus_contracts.core_round import customer_suite, run_suite_round
 
 ROOT = Path(__file__).resolve().parents[4]
-TEMPLATES = ROOT / "assets/PPAP PRD v3.7/客户归类模板与规则_备份/模板/理想"
+TEMPLATES = ROOT / "assets/理想/模板"
 CASES = [
     ("L01", "APQP-尺寸检验报告.xlsx"),
     ("L02", "APQP-零部件设计验证计划.xlsx"),

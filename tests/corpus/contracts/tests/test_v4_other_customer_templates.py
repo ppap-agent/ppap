@@ -16,7 +16,7 @@ from audit.presets import customer_presets
 from audit.standard_suites import standard_suites
 
 ROOT = Path(__file__).resolve().parents[4]
-TEMPLATES = ROOT / "assets/PPAP PRD v3.7/客户归类模板与规则_备份/模板"
+ASSETS = ROOT / "assets"
 
 
 @pytest.mark.parametrize(
@@ -36,7 +36,7 @@ TEMPLATES = ROOT / "assets/PPAP PRD v3.7/客户归类模板与规则_备份/模�
     ],
 )
 def test_actual_customer_template_runs_with_original_and_supplier_filename(customer, entry, filename):
-    source = TEMPLATES / customer / filename
+    source = ASSETS / customer / "模板" / filename
     suite = next(suite for suite in standard_suites() if suite.customer == customer and suite.source_entry == entry)
     body = json.loads(suite.files["rules.json"])
     data = source.read_bytes()
@@ -61,10 +61,10 @@ def test_actual_customer_template_runs_with_original_and_supplier_filename(custo
         previous = observed
 
 
-def test_pgqp1_template_is_read_as_an_original_reference_without_a_42nd_rule():
-    source = TEMPLATES / "UAES/F-PU-127_采购件质量计划_Purchased Goods Quality Plan PGQP1_V06 (1).xlsx"
+def test_pgqp1_template_is_read_as_an_original_reference_without_a_rule_of_its_own():
+    source = ASSETS / "UAES/模板/F-PU-127_采购件质量计划_Purchased Goods Quality Plan PGQP1_V06 (1).xlsx"
     observed = snapshot(str(source))
     assert observed["tables"]
     assert "PGQP1" in str(observed)
-    assert len(customer_presets()) == 41
+    assert len(customer_presets()) == 53
     assert "E12" not in {item.source_type for item in customer_presets()}

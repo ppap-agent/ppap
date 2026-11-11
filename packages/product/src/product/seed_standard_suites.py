@@ -16,7 +16,7 @@ from audit.standard_suites import predefined_directory_suites
 # A predefined leaf path. Asset docx paths and the shared oracle.csv path are not
 # this identity: several historical suites share that csv path, and their rows
 # stay addressable by content digest.
-_DIRECTORY_SOURCE = re.compile(r"^v[0-9]+/[^/]+/[^/]+$")
+_DIRECTORY_SOURCE = re.compile(r"^(?!v[0-9]+/)[^/]+/[^/]+$")
 
 
 def discovery_row(suite) -> dict[str, Any]:
@@ -32,9 +32,9 @@ def discovery_row(suite) -> dict[str, Any]:
 def official_source_suites():
     """Directory leaves only. A business suite_key is not a version selector.
 
-    Identical file bytes keep one content digest; ``v5/UAES/U08`` and
-    ``v6/UAES/U08`` are still two revisions. Historical carriers are not installed
-    or published by this path.
+    Identical file bytes keep one content digest; the leaf path (``UAES/U08``)
+    is stored beside it. Historical carriers are not installed or published by
+    this path.
     """
     return predefined_directory_suites()
 

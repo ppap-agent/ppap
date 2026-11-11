@@ -420,7 +420,7 @@ def test_frozen_carrier_round_replays_its_bytes_after_the_directory_head_is_curr
         suite_key="HIST:OLD",
         files={"checker.py": b"def create_audit(context):\n    raise SystemExit('directory-selected')\n", "rules.json": json.dumps(directory_rules).encode()},
         created_by=None,
-        source_path="v5/ACME/HIST",
+        source_path="ACME/HIST",
     )
     proof = {"reasons": [], "total_samples": 4, "passed_samples": 4, "new_errors": 0, "library_revision": library_revision(), "proof_digest": "ab" * 32, "report": {"related_revision_ids": []}}
     with admin._conn() as conn:

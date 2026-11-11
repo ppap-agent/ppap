@@ -177,6 +177,8 @@ def summary(active: dict) -> dict:
         "verification_status": active["verification_status"],
         "rule_update_pending": pending,
         "official_update_available": active["official_update_available"],
+        # Official programs are never empty shells; only an uploaded rule's starter program is missing.
+        "program_missing": False,
     }
 
 
@@ -217,7 +219,7 @@ def test_catalog_preserves_titles_selections_and_reads_no_suite_bytes(auth_store
         assert all(row["availability"] in {"unseeded", "historical"} and "revision_id" not in row for row in body["predefined"])
         assert body["predefined_unavailable"] == installed
         assert "predefined_error" not in body
-        assert "v5/UAES/U08" in [row["path"] for row in installed]
+        assert "UAES/U08" in [row["path"] for row in installed]
         assert all(not row["path"].startswith(("v2/", "v3/", "v4/")) for row in installed)
         assert [row["title"] for row in response.json()["suites"]] == ["Control plan checks", "Control plan checks"]
         assert [row["selection_mode"] for row in response.json()["suites"]] == ["pinned", "candidate_only"]
@@ -272,8 +274,8 @@ def test_predefined_catalog_binds_each_source_path_to_its_official_revision(auth
 
     store, _, creator, _, (alice, bob, carol) = prepare_fixture(auth_store_factory)
     migrator = SuiteStore(store.settings, store.objects, role="migrator")
-    leaf = next(suite for suite in predefined_directory_suites() if suite.source_path == "v5/UAES/U08")
-    placeholder = next(suite for suite in predefined_directory_suites() if suite.source_path == "v5/理想/L01")
+    leaf = next(suite for suite in predefined_directory_suites() if suite.source_path == "UAES/U08")
+    placeholder = next(suite for suite in predefined_directory_suites() if suite.source_path == "理想/L01")
     placeholder_revision = migrator.create_revision(
         tenant_id=None, suite_key=placeholder.suite_key, files=dict(placeholder.files), created_by=None, related_suite_keys=placeholder.related_suite_keys, source_path=placeholder.source_path
     )
@@ -307,8 +309,8 @@ def test_predefined_catalog_binds_each_source_path_to_its_official_revision(auth
     v6_rules["title"] = "v6 示例检查"
     v6_rules["customers"], v6_rules["preset_key"] = ["ACME"], "Z99"
     v6_files["rules.json"] = json.dumps(v6_rules, ensure_ascii=False).encode()
-    v6 = migrator.create_revision(tenant_id=None, suite_key="ACME:Z99", files=v6_files, created_by=None, source_path="v6/ACME/Z99")
-    mismatch = migrator.create_revision(tenant_id=None, suite_key="OTHER:KEY", files=FILES, created_by=None, source_path="v6/ACME/MIS")
+    v6 = migrator.create_revision(tenant_id=None, suite_key="ACME:Z99", files=v6_files, created_by=None, source_path="ACME/Z99")
+    mismatch = migrator.create_revision(tenant_id=None, suite_key="OTHER:KEY", files=FILES, created_by=None, source_path="ACME/MIS")
     # A tenant row may already carry source_path, but create_revision rejects that
     # combination and suite_revisions reject later updates. The catalog must ignore it.
     secret_id = str(uuid.uuid4())
@@ -316,7 +318,7 @@ def test_predefined_catalog_binds_each_source_path_to_its_official_revision(auth
         conn.execute(
             """INSERT INTO product.suite_revisions
                (id, tenant_id, revision_number, suite_key, overrides, resolved_digest, created_by, source_path)
-               VALUES (%s, %s, 1, 'SECRET:T1', '{}', %s, %s, 'v6/SECRET/T1')""",
+               VALUES (%s, %s, 1, 'SECRET:T1', '{}', %s, %s, 'SECRET/T1')""",
             (secret_id, creator.tenant_id, "ab" * 32, creator.user_id),
         )
     blank = MappingProxyType(dict(FILES))
@@ -325,50 +327,50 @@ def test_predefined_catalog_binds_each_source_path_to_its_official_revision(auth
         return (
             leaf,
             placeholder,
-            StandardSuite("ACME:Z99", "", "ACME", "Z99", (), MappingProxyType(v6_files), MappingProxyType({}), "v6/ACME/Z99"),
-            StandardSuite("ACME:MIS", "", "ACME", "MIS", (), blank, MappingProxyType({}), "v6/ACME/MIS"),
-            StandardSuite("NEW:X1", "", "NEW", "X1", (), blank, MappingProxyType({}), "v6/NEW/X1"),
+            StandardSuite("ACME:Z99", "", "ACME", "Z99", (), MappingProxyType(v6_files), MappingProxyType({}), "ACME/Z99"),
+            StandardSuite("ACME:MIS", "", "ACME", "MIS", (), blank, MappingProxyType({}), "ACME/MIS"),
+            StandardSuite("NEW:X1", "", "NEW", "X1", (), blank, MappingProxyType({}), "NEW/X1"),
             StandardSuite("BAD:KEY", "", "BAD", "KEY", (), blank, MappingProxyType({}), "not-a-directory"),
-            StandardSuite("SECRET:T1", "", "SECRET", "T1", (), blank, MappingProxyType({}), "v6/SECRET/T1"),
+            StandardSuite("SECRET:T1", "", "SECRET", "T1", (), blank, MappingProxyType({}), "SECRET/T1"),
         )
 
     monkeypatch.setattr("audit.standard_suites.predefined_directory_suites", discovered)
     assert TestClient(create_app(store.settings, auth_store=store)).get("/suites").status_code == 401
     body = alice.get("/suites").json()
     predefined = {row["path"]: row for row in body["predefined"]}
-    assert predefined["v5/UAES/U08"] == {
-        "path": "v5/UAES/U08",
+    assert predefined["UAES/U08"] == {
+        "path": "UAES/U08",
         "title": json.loads(leaf.files["rules.json"])["title"],
         "availability": "installed",
         "suite_key": "UAES:U08",
         "revision_id": latest.id,
         **leaf_capability(updated),
     }
-    assert predefined["v5/UAES/U08"]["evidence_reader_clause_ids"] == [clause["id"] for clause in rules["rules"]]
-    assert predefined["v5/UAES/U08"]["bound_clause_count"] == predefined["v5/UAES/U08"]["clause_count"] == 12
+    assert predefined["UAES/U08"]["evidence_reader_clause_ids"] == [clause["id"] for clause in rules["rules"]]
+    assert predefined["UAES/U08"]["bound_clause_count"] == predefined["UAES/U08"]["clause_count"] == 12
     held = leaf_capability(placeholder.files)
     declaration = {}
     exec(placeholder.files["resources.py"], declaration)
     assert set(held["evidence_reader_clause_ids"]) == set(declaration["RESOURCE"]["clauses"])
     assert held["bound_clause_count"] == held["clause_count"] > 0
-    assert predefined["v5/理想/L01"] == {
-        "path": "v5/理想/L01",
+    assert predefined["理想/L01"] == {
+        "path": "理想/L01",
         "title": json.loads(placeholder.files["rules.json"])["title"],
         "availability": "installed",
         "suite_key": placeholder.suite_key,
         "revision_id": placeholder_revision.id,
         **held,
     }
-    assert predefined["v6/ACME/Z99"] == {"path": "v6/ACME/Z99", "title": "v6 示例检查", "availability": "installed", "suite_key": "ACME:Z99", "revision_id": v6.id, **leaf_capability(v6_files)}
+    assert predefined["ACME/Z99"] == {"path": "ACME/Z99", "title": "v6 示例检查", "availability": "installed", "suite_key": "ACME:Z99", "revision_id": v6.id, **leaf_capability(v6_files)}
     assert {row.get("revision_id") for row in body["predefined"]}.isdisjoint({newer.id, directory.id, secret_id, mismatch.id})
-    for path in ("v6/NEW/X1", "v6/SECRET/T1"):
+    for path in ("NEW/X1", "SECRET/T1"):
         assert predefined[path]["availability"] == "unseeded" and "revision_id" not in predefined[path]
-    assert predefined["v6/ACME/MIS"]["availability"] == "unavailable"
+    assert predefined["ACME/MIS"]["availability"] == "unavailable"
     assert {row["path"]: row["error"] for row in body["predefined_unavailable"]} == {
-        "v6/ACME/MIS": "unavailable",
-        "v6/NEW/X1": "unseeded",
+        "ACME/MIS": "unavailable",
+        "NEW/X1": "unseeded",
         "not-a-directory": "invalid",
-        "v6/SECRET/T1": "unseeded",
+        "SECRET/T1": "unseeded",
     }
     assert {row["path"]: row for row in bob.get("/suites").json()["predefined"]} == predefined
     assert {row["path"]: row for row in carol.get("/suites").json()["predefined"]} == predefined
@@ -377,7 +379,7 @@ def test_predefined_catalog_binds_each_source_path_to_its_official_revision(auth
     del store.objects.data[f"suites/official/objects/{content_digest(updated['rules.json'])}"]
     # The catalog lists stored facts; opening the revision still verifies its bytes and fails closed.
     after = alice.get("/suites").json()
-    assert next(row for row in after["predefined"] if row["path"] == "v5/UAES/U08")["revision_id"] == latest.id
+    assert next(row for row in after["predefined"] if row["path"] == "UAES/U08")["revision_id"] == latest.id
     opened = alice.get(f"/suite-revisions/{latest.id}")
     assert opened.status_code == 409, opened.text
     assert opened.json()["error"] == "suite_artifact_missing"

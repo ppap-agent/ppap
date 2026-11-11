@@ -27,7 +27,7 @@ TRAINING_SAMPLES = ((3, "NG"), (10, "PASS"), (20, "PASS"), (-5, "NG"), (9, "NG")
 HOLDOUT_MARKER = "checker-live-holdout-"
 SCENARIOS = {"synthetic", "u08", "rule-threshold", "rule-wording"}
 ROOT = Path(__file__).resolve().parents[1]
-U08_ORIGINAL = ROOT / "assets/corpus/documents/uaes/通用文件/表单模板/测试文件/10 控制计划/控制计划.xlsx"
+U08_ORIGINAL = ROOT / "assets/UAES/样本/通用文件/表单模板/测试文件/10 控制计划/控制计划.xlsx"
 U08_ORIGINAL_SHA = "777dc22645a73dc11ce5ed5aa1b2883b32709469a4c3d9aea1df4f3ffadbf54f"
 U08_MARK_CELLS = ("G20", "G21", "G22", "G34", "G35", "G36")
 BASELINE = """import json
@@ -351,7 +351,7 @@ def frozen_u08_files(source_sha):
     require(len(source_sha) == 40 and all(char in "0123456789abcdef" for char in source_sha), "invalid_u08_source_sha")
     files = {}
     for name in ("checker.py", "resources.py", "rules.json"):
-        result = subprocess.run(["git", "show", f"{source_sha}:packages/audit/src/audit/checkers/v5/UAES/U08/{name}"], cwd=ROOT, capture_output=True, timeout=10)
+        result = subprocess.run(["git", "show", f"{source_sha}:packages/audit/src/audit/checkers/UAES/U08/{name}"], cwd=ROOT, capture_output=True, timeout=10)
         require(result.returncode == 0, "u08_source_not_available")
         files[name] = result.stdout
     return files

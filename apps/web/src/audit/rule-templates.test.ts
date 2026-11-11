@@ -19,8 +19,8 @@ test('presets form one system template per customer and say what each file type 
   const catalog: Catalog = {
     suites: [summary('UAES:U08', {rule_update_pending: true})],
     predefined: [
-      {path: 'v5/UAES/U01', title: 'PFMEA', availability: 'installed', suite_key: 'UAES:U01', revision_id: 'a', clause_count: 4, evidence_reader_clause_ids: ['1', '2', '3', '4']},
-      {path: 'v5/UAES/U02', title: '流程图', availability: 'installed', suite_key: 'UAES:U02', revision_id: 'b', clause_count: 4, evidence_reader_clause_ids: ['1']},
+      {path: 'UAES/U01', title: 'PFMEA', availability: 'installed', suite_key: 'UAES:U01', revision_id: 'a', clause_count: 4, evidence_reader_clause_ids: ['1', '2', '3', '4']},
+      {path: 'UAES/U02', title: '流程图', availability: 'installed', suite_key: 'UAES:U02', revision_id: 'b', clause_count: 4, evidence_reader_clause_ids: ['1']},
     ],
   }
   const [uaes] = buildTemplates({rules: [preset('cp', 'UAES', '控制计划', 'U08'), preset('pf', 'UAES', 'PFMEA', 'U01'), preset('pfd', 'UAES', '过程流程图', 'U02'), preset('ph', 'UAES', 'E07', 'U09', {title: '生产件样品照片审核规则'})], library: [], catalog, standardTypes: standard})

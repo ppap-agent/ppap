@@ -1,5 +1,5 @@
-"""Versioned checkers live under vN/.
+"""Predefined checkers are grouped by customer: ``<customer>/<group>/``.
 
-v5 leaves use ``vN/<customer>/<group>/``. v2, v3, and v4 classes stay on their
-current import paths because frozen carrier bytes load those modules by name.
+The v2, v3, and v4 packages stay on their import paths because frozen carrier
+bytes stored in historical revisions load those modules by name.
 """

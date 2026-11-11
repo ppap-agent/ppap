@@ -32,7 +32,7 @@ def test_u08_api_worker_keeps_selected_source_under_failures(auth_store_factory,
     suites = SuiteStore(settings, v4_objects, role="migrator")
     available = {suite.suite_key: suite for suite in predefined_directory_suites()}
     selected_source = available["UAES:U08"]
-    assert selected_source.source_path == "v5/UAES/U08"
+    assert selected_source.source_path == "UAES/U08"
     order = []
 
     def include(key):
@@ -92,7 +92,7 @@ def test_u08_api_worker_keeps_selected_source_under_failures(auth_store_factory,
                 "INSERT INTO product.rule_versions(id,tenant_id,title,body) VALUES(%s,%s,'U08 boundary',%s)",
                 (rule_id, principal.tenant_id, Jsonb({**json.loads(selected_source.files["rules.json"]), "suite_key": "UAES:U08"})),
             )
-            assert conn.execute("SELECT source_path FROM product.suite_revisions WHERE id=%s", (revisions["UAES:U08"],)).fetchone()[0] == "v5/UAES/U08"
+            assert conn.execute("SELECT source_path FROM product.suite_revisions WHERE id=%s", (revisions["UAES:U08"],)).fetchone()[0] == "UAES/U08"
         book = Workbook()
         book.active.title = "控制计划"
         book.active.append(["控制计划"])

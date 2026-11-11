@@ -5,7 +5,7 @@
     "source_type": "E01",
     "level": "L1",
     "title": "初始样品检验报告审核规则",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/UAES/初始样品检验报告审核规则.docx",
+    "source_path": "assets/UAES/规则/初始样品检验报告审核规则.docx",
     "clauses": [
       {
         "id": "U01:1-1",
@@ -43,7 +43,7 @@
     "source_type": "E02",
     "level": "L1",
     "title": "测量比较报告审核规则",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/UAES/测量比较报告审核规则.docx",
+    "source_path": "assets/UAES/规则/测量比较报告审核规则.docx",
     "clauses": [
       {
         "id": "U02:1",
@@ -60,7 +60,7 @@
     "source_type": "E04",
     "level": "L1",
     "title": "实验室资质证书审核规则",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/UAES/实验室资质证书审核规则.docx",
+    "source_path": "assets/UAES/规则/实验室资质证书审核规则.docx",
     "clauses": [
       {
         "id": "U03:1",
@@ -77,7 +77,7 @@
     "source_type": "T04",
     "level": "L1",
     "title": "材料产品及分供清单审核规则",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/UAES/材料产品及分供清单审核规则.docx",
+    "source_path": "assets/UAES/规则/材料产品及分供清单审核规则.docx",
     "clauses": [
       {
         "id": "U04:1",
@@ -108,7 +108,7 @@
     "source_type": "T07",
     "level": "L1",
     "title": "测量系统分析评价审核规则",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/UAES/测量系统分析评价审核规则.docx",
+    "source_path": "assets/UAES/规则/测量系统分析评价审核规则.docx",
     "clauses": [
       {
         "id": "U05:1-1",
@@ -146,7 +146,7 @@
     "source_type": "T08",
     "level": "L1",
     "title": "过程能力研究审核规则",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/UAES/过程能力研究审核规则.docx",
+    "source_path": "assets/UAES/规则/过程能力研究审核规则.docx",
     "clauses": [
       {
         "id": "U06:1",
@@ -191,7 +191,7 @@
     "source_type": "T10",
     "level": "L1",
     "title": "潜在过程失效模式及后果分析（PFMEA）审核规则",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/UAES/潜在过程失效模式及后果分析（PFMEA）审核规则.docx",
+    "source_path": "assets/UAES/规则/潜在过程失效模式及后果分析（PFMEA）审核规则.docx",
     "clauses": [
       {
         "id": "U07:1",
@@ -229,7 +229,7 @@
     "source_type": "T11",
     "level": "L1",
     "title": "控制计划（CP）审核规则",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/UAES/控制计划（CP）审核规则.docx",
+    "source_path": "assets/UAES/规则/控制计划（CP）审核规则.docx",
     "clauses": [
       {
         "id": "U08:1",
@@ -323,7 +323,7 @@
     "source_type": "E03",
     "level": "L2",
     "title": "包装方案审核规则",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/UAES/包装方案审核规则.docx",
+    "source_path": "assets/UAES/规则/包装方案审核规则.docx",
     "clauses": [
       {
         "id": "U09:1",
@@ -340,7 +340,7 @@
     "source_type": "E05",
     "level": "L2",
     "title": "材料规范审核规则",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/UAES/材料规范审核规则.docx",
+    "source_path": "assets/UAES/规则/材料规范审核规则.docx",
     "clauses": [
       {
         "id": "U10:1",
@@ -357,7 +357,7 @@
     "source_type": "E06",
     "level": "L2",
     "title": "样品阶段履历审核规则",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/UAES/样品阶段履历审核规则.docx",
+    "source_path": "assets/UAES/规则/样品阶段履历审核规则.docx",
     "clauses": [
       {
         "id": "U11:1",
@@ -374,7 +374,7 @@
     "source_type": "T12",
     "level": "L2",
     "title": "特殊特性清单审核规则",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/UAES/特殊特性清单审核规则.docx",
+    "source_path": "assets/UAES/规则/特殊特性清单审核规则.docx",
     "clauses": [
       {
         "id": "U12:1",
@@ -398,7 +398,7 @@
     "source_type": "E07",
     "level": "L2",
     "title": "生产件样品照片审核规则",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/UAES/生产件样品照片审核规则.docx",
+    "source_path": "assets/UAES/规则/生产件样品照片审核规则.docx",
     "clauses": [
       {
         "id": "U13:1",
@@ -415,7 +415,7 @@
     "source_type": "E08",
     "level": "L2",
     "title": "订货规范审核规则",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/UAES/订货规范审核规则.docx",
+    "source_path": "assets/UAES/规则/订货规范审核规则.docx",
     "clauses": [
       {
         "id": "U14:1",
@@ -432,7 +432,7 @@
     "source_type": "E09",
     "level": "L2",
     "title": "试装单审核规则",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/UAES/试装单审核规则.docx",
+    "source_path": "assets/UAES/规则/试装单审核规则.docx",
     "clauses": [
       {
         "id": "U15:1",
@@ -449,7 +449,7 @@
     "source_type": "T09",
     "level": "L2",
     "title": "过程流程图（PFD）审核规则",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/UAES/过程流程图（PFD）审核规则.docx",
+    "source_path": "assets/UAES/规则/过程流程图（PFD）审核规则.docx",
     "clauses": [
       {
         "id": "U16:1",
@@ -480,7 +480,7 @@
     "source_type": "T17",
     "level": "L2",
     "title": "零件提交保证书（PSW）审核规则",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/UAES/零件提交保证书（PSW）审核规则.docx",
+    "source_path": "assets/UAES/规则/零件提交保证书（PSW）审核规则.docx",
     "clauses": [
       {
         "id": "U17:1",
@@ -525,7 +525,7 @@
     "source_type": "E10",
     "level": "L2",
     "title": "零件追溯说明审核规则",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/UAES/零件追溯说明审核规则.docx",
+    "source_path": "assets/UAES/规则/零件追溯说明审核规则.docx",
     "clauses": [
       {
         "id": "U18:1",
@@ -542,7 +542,7 @@
     "source_type": "E11",
     "level": "L2",
     "title": "顾客工程批准审核规则",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/UAES/顾客工程批准审核规则.docx",
+    "source_path": "assets/UAES/规则/顾客工程批准审核规则.docx",
     "clauses": [
       {
         "id": "U19:1",
@@ -559,7 +559,7 @@
     "source_type": "T01",
     "level": "L1",
     "title": "01 全功能检验报告",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/理想/01 全功能检验报告.docx",
+    "source_path": "assets/理想/规则/01 全功能检验报告.docx",
     "clauses": [
       {
         "id": "L01:1",
@@ -625,7 +625,7 @@
     "source_type": "T02",
     "level": "L1",
     "title": "02 零部件设计验证计划和报告",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/理想/02 零部件设计验证计划和报告.docx",
+    "source_path": "assets/理想/规则/02 零部件设计验证计划和报告.docx",
     "clauses": [
       {
         "id": "L02:1",
@@ -684,7 +684,7 @@
     "source_type": "T03",
     "level": "L1",
     "title": "02 零部件设计验证报告（DV报告_PV报告_试验报告）",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/理想/02 零部件设计验证报告（DV报告_PV报告_试验报告）.docx",
+    "source_path": "assets/理想/规则/02 零部件设计验证报告（DV报告_PV报告_试验报告）.docx",
     "clauses": [
       {
         "id": "L03:1",
@@ -736,7 +736,7 @@
     "source_type": "T04",
     "level": "L1",
     "title": "03 材料产品及分供清单",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/理想/03 材料产品及分供清单.docx",
+    "source_path": "assets/理想/规则/03 材料产品及分供清单.docx",
     "clauses": [
       {
         "id": "L04:1",
@@ -774,7 +774,7 @@
     "source_type": "T07",
     "level": "L1",
     "title": "06 测量系统分析评价",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/理想/06 测量系统分析评价.docx",
+    "source_path": "assets/理想/规则/06 测量系统分析评价.docx",
     "clauses": [
       {
         "id": "L05:1",
@@ -812,7 +812,7 @@
     "source_type": "T08",
     "level": "L1",
     "title": "07 过程能力研究",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/理想/07 过程能力研究.docx",
+    "source_path": "assets/理想/规则/07 过程能力研究.docx",
     "clauses": [
       {
         "id": "L06:1",
@@ -843,7 +843,7 @@
     "source_type": "T10",
     "level": "L1",
     "title": "09 潜在过程失效模式及后果分析",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/理想/09 潜在过程失效模式及后果分析.docx",
+    "source_path": "assets/理想/规则/09 潜在过程失效模式及后果分析.docx",
     "clauses": [
       {
         "id": "L07:1",
@@ -902,7 +902,7 @@
     "source_type": "T11",
     "level": "L1",
     "title": "10 控制计划",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/理想/10 控制计划.docx",
+    "source_path": "assets/理想/规则/10 控制计划.docx",
     "clauses": [
       {
         "id": "L08:1",
@@ -954,7 +954,7 @@
     "source_type": "T05",
     "level": "L2",
     "title": "04 检具验收报告",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/理想/04 检具验收报告.docx",
+    "source_path": "assets/理想/规则/04 检具验收报告.docx",
     "clauses": [
       {
         "id": "L09:1",
@@ -985,7 +985,7 @@
     "source_type": "T06",
     "level": "L2",
     "title": "05 模具验收报告",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/理想/05 模具验收报告.docx",
+    "source_path": "assets/理想/规则/05 模具验收报告.docx",
     "clauses": [
       {
         "id": "L10:1",
@@ -1037,7 +1037,7 @@
     "source_type": "T09",
     "level": "L2",
     "title": "08 过程流程图",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/理想/08 过程流程图.docx",
+    "source_path": "assets/理想/规则/08 过程流程图.docx",
     "clauses": [
       {
         "id": "L11:1",
@@ -1089,7 +1089,7 @@
     "source_type": "T12",
     "level": "L2",
     "title": "11 过程特殊特性清单",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/理想/11 过程特殊特性清单.docx",
+    "source_path": "assets/理想/规则/11 过程特殊特性清单.docx",
     "clauses": [
       {
         "id": "L12:1",
@@ -1120,7 +1120,7 @@
     "source_type": "T13",
     "level": "L2",
     "title": "12 设备清单",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/理想/12 设备清单.docx",
+    "source_path": "assets/理想/规则/12 设备清单.docx",
     "clauses": [
       {
         "id": "L13:1",
@@ -1144,7 +1144,7 @@
     "source_type": "T14",
     "level": "L2",
     "title": "13 生产系统产能评估报告",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/理想/13 生产系统产能评估报告.docx",
+    "source_path": "assets/理想/规则/13 生产系统产能评估报告.docx",
     "clauses": [
       {
         "id": "L14:1",
@@ -1196,7 +1196,7 @@
     "source_type": "T15",
     "level": "L2",
     "title": "14 APQP项目问题清单",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/理想/14 APQP项目问题清单.docx",
+    "source_path": "assets/理想/规则/14 APQP项目问题清单.docx",
     "clauses": [
       {
         "id": "L15:1",
@@ -1234,7 +1234,7 @@
     "source_type": "T16",
     "level": "L2",
     "title": "15 零部件年度试验要求",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/理想/15 零部件年度试验要求.docx",
+    "source_path": "assets/理想/规则/15 零部件年度试验要求.docx",
     "clauses": [
       {
         "id": "L16:1",
@@ -1286,7 +1286,7 @@
     "source_type": "T17",
     "level": "L2",
     "title": "16 零件提交保证书",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/理想/16 零件提交保证书.docx",
+    "source_path": "assets/理想/规则/16 零件提交保证书.docx",
     "clauses": [
       {
         "id": "L17:1",
@@ -1366,7 +1366,7 @@
     "source_type": "T01",
     "level": "L1",
     "title": "1-2规则-测量报告",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/蔚来/1-2规则-测量报告.docx",
+    "source_path": "assets/蔚来/规则/1-2规则-测量报告.docx",
     "clauses": [
       {
         "id": "N01:1",
@@ -1453,7 +1453,7 @@
     "source_type": "T10",
     "level": "L1",
     "title": "9规则-潜在过程失效模式及后果分析（PFMEA）",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/蔚来/9规则-潜在过程失效模式及后果分析（PFMEA）.docx",
+    "source_path": "assets/蔚来/规则/9规则-潜在过程失效模式及后果分析（PFMEA）.docx",
     "clauses": [
       {
         "id": "N02:1",
@@ -1512,7 +1512,7 @@
     "source_type": "T11",
     "level": "L1",
     "title": "10规则-控制计划",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/蔚来/10规则-控制计划.docx",
+    "source_path": "assets/蔚来/规则/10规则-控制计划.docx",
     "clauses": [
       {
         "id": "N03:1",
@@ -1592,7 +1592,7 @@
     "source_type": "T12",
     "level": "L2",
     "title": "11规则-特殊特性清单",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/蔚来/11规则-特殊特性清单.docx",
+    "source_path": "assets/蔚来/规则/11规则-特殊特性清单.docx",
     "clauses": [
       {
         "id": "N04:1",
@@ -1616,7 +1616,7 @@
     "source_type": "T09",
     "level": "L2",
     "title": "8规则-过程流程图",
-    "source_path": "assets/PPAP PRD v3.7/客户归类模板与规则_备份/规则/蔚来/8规则-过程流程图.docx",
+    "source_path": "assets/蔚来/规则/8规则-过程流程图.docx",
     "clauses": [
       {
         "id": "N05:1",
@@ -1680,6 +1680,553 @@
         "category": "跨文件：PFD（过程流程图）和特殊特性清单",
         "text": "比对列：过程流程图：“产品特殊特性”、“产品特性类别”、“过程特殊特性”、“过程特性类别”\n特殊特性清单：“特性分类”、“特性描述”、“特性值”、“特殊特性类别”\n审核判定逻辑：\n未找到“过程流程图”表则直接判定NG，判定依据为“缺少过程流程图，请补充”；否则继续执行下一步；\n当特殊特性清单文件不存在，或特殊特性清单文件存在但特殊特性清单文件中未找到“特殊特性清单”表则直接判定NG，判定依据为“缺少特殊特性清单，请补充”；否则继续执行下一步；\n提取特殊特性清单文件中“特殊特性清单”表的“特性分类”、“特性描述”、“特性值”、“特殊特性种类”四列下的全部内容，并将每一行的“特性分类”、“特性描述”、“特性值”、“特殊特性种类”拼接起来，拼接格式为“【特性分类】”+“【特殊特性种类】”+“特性描述”+“：”+“特性值”；注意：当特性描述和特性值全部为空时，忽略该行；另外拼接好的内容需要去重处理\n当过程流程图中“产品特性类别”内容不为空时，提取对应行的“产品特殊特性”，并拼接位“【产品】【产品特性类别】”+“产品特殊特性”；当过程流程图中“过程特性类别”内容不为空时，提取对应行的“过程特殊特性”，并拼接位“【过程】【过程特性类别】”+“过程特殊特性”；注意：当产品特殊特性或过程特殊特性内容为空时，忽略该行；另外拼接好的内容需要去重处理\n将特殊特性清单文件中提取拼接的内容与过程流程图文件中提取拼接的内容进行逐项比对，当特殊特性清单中的每一项内容均在过程流程图中找到对应内容则判定为PASS，否则判定为NG，NG判定依据需要说明特殊特性清单中的哪一项内容在过程流程图中未体现",
         "locator": "table:1/row:10"
+      }
+    ]
+  },
+  {
+    "customer": "蔚来",
+    "entry_id": "N06",
+    "source_type": "T02",
+    "level": "L1",
+    "title": "02规则-零部件设计验证计划和报告",
+    "source_path": "assets/理想/规则/02 零部件设计验证计划和报告.docx",
+    "clauses": [
+      {
+        "id": "N06:1",
+        "source_number": "1",
+        "category": "条款 1",
+        "text": "识别“零部件设计验证计划和报告（DVP&R）”表中是否包含“版本号”、“修订日期”、“修订部门/姓名”、“零件/总成名称”、“适用车型”、“零件/总成编号”、“供应商名称”字段，包含则继续识别。当“版本号”、“修订日期”、“修订部门/姓名”、“零件/总成名称”、“适用车型”、“零件/总成编号”、“供应商名称”内容都不为空则通过，否则不通过",
+        "locator": "table:1/row:2"
+      },
+      {
+        "id": "N06:2",
+        "source_number": "2",
+        "category": "条款 2",
+        "text": "识别“零部件设计验证计划和报告（DVP&R）”表中是否包含“序号”、“试验项目”、“试验要求”、“试验标准/方法”、“试验类型”、“完成节点”、“试验地点”、“数量”、“状态”、“外观属性”、“计划开始”、“计划结束”列，包含则继续识别；当“序号”、“试验项目”、“试验要求”、“试验标准/方法”、“试验类型”、“完成节点”、“试验地点”、“数量”、“状态”、“外观属性”、“计划开始”、“计划结束”列下内容均不为空则通过，否则不通过。注意：整行合并的行不检查。",
+        "locator": "table:1/row:3"
+      },
+      {
+        "id": "N06:3",
+        "source_number": "3",
+        "category": "条款 3",
+        "text": "识别是否有“试验类型”、“试验样本描述”列，如果有则继续识别“试验样本描述”列下是否有“状态”列，如果有则继续识别；当“试验类型”列下内容显示为“PV”且对应行的“试验样本描述-状态”列下内容为“硬模件”则通过，否则不通过。注意：“PV”不关注英文的大小写，整行合并的行不检查。",
+        "locator": "table:1/row:4"
+      },
+      {
+        "id": "N06:4",
+        "source_number": "4",
+        "category": "条款 4",
+        "text": "识别是否有“试验样本描述”列，如果有则继续识别“试验样本描述”列下是否有“计划开始”、“计划结束”两列，如果有则继续识别；当“计划开始”列的内容早于同行的“计划结束”列的内容则通过，否则不通过。注意：整行合并的行不检查。",
+        "locator": "table:1/row:5"
+      },
+      {
+        "id": "N06:5",
+        "source_number": "5",
+        "category": "条款 5",
+        "text": "识别是否有“试验报告栏”列，如果有则继续识别“试验报告栏”列下是否有“试验实际开始日期”、“试验实际结束日期”两列，如果有则继续识别；当“试验实际开始日期”列的内容早于同行的“试验实际结束日期”列的内容则通过，否则不通过。注意：整行合并的行不检查。",
+        "locator": "table:1/row:6"
+      },
+      {
+        "id": "N06:6",
+        "source_number": "6",
+        "category": "条款 6",
+        "text": "识别是否有“试验报告栏”列，如果有则继续识别“试验报告栏”列下是否有“实际试验结果”列，如果有则继续识别；当“实际试验结果”列的内容为“合格”或“视同”或“偏差认可”则通过，否则不通过。注意：整行合并的行不检查。",
+        "locator": "table:1/row:7"
+      },
+      {
+        "id": "N06:7",
+        "source_number": "7",
+        "category": "条款 7",
+        "text": "识别是否有“试验报告栏”列，如果有则继续识别“试验报告栏”列下是否有“试验报告编号”列，如果有则继续识别；当“试验报告编号”列的内容不为空则通过，否则不通过。注意：整行合并的行不检查。",
+        "locator": "table:1/row:8"
+      }
+    ]
+  },
+  {
+    "customer": "蔚来",
+    "entry_id": "N07",
+    "source_type": "T03",
+    "level": "L1",
+    "title": "02规则-零部件设计验证报告（DV报告_PV报告_试验报告）",
+    "source_path": "assets/理想/规则/02 零部件设计验证报告（DV报告_PV报告_试验报告）.docx",
+    "clauses": [
+      {
+        "id": "N07:1",
+        "source_number": "1",
+        "category": "条款 1",
+        "text": "不限模板，是供应商自己做的报告还是三方机构做的报告，识别文件中是否有“文件编号”或“报告编号”或“编号”字段，且内容不为空则通过，否则不通过",
+        "locator": "table:1/row:2"
+      },
+      {
+        "id": "N07:2",
+        "source_number": "2",
+        "category": "条款 2",
+        "text": "当实验的判定或结论为“符合”或“通过”或“合格”或“P”或“pass”时则通过，否则不通过。若为F，则不通过。注意文字需要严格一致，不经过语言翻译之后的结果，不接受意思相近的其他文字描述；",
+        "locator": "table:1/row:3"
+      },
+      {
+        "id": "N07:3",
+        "source_number": "3",
+        "category": "条款 3",
+        "text": "识别是否有“试验类型”字段，且该字段对应的值为“DV”或“PV”则通过，否则不通过。注意：“DV”或“PV”无需考虑英文的大小写。",
+        "locator": "table:1/row:4"
+      },
+      {
+        "id": "N07:4",
+        "source_number": "4",
+        "category": "条款 4",
+        "text": "当文件中包含印章则通过，否则不通过。",
+        "locator": "table:1/row:5"
+      },
+      {
+        "id": "N07:5",
+        "source_number": "5",
+        "category": "条款 5",
+        "text": "当文件中包含“试验前”、“实验中”、“试验后”的图片则通过，否则不通过",
+        "locator": "table:1/row:6"
+      },
+      {
+        "id": "N07:6",
+        "source_number": "6",
+        "category": "条款 6",
+        "text": "识别报告中是否包含“样品数量”或“样本数量”字段，如果包含则继续识别；当“样品数量”或“样本数量”对应内容不为空则通过，否则不通过。",
+        "locator": "table:1/row:7"
+      }
+    ]
+  },
+  {
+    "customer": "蔚来",
+    "entry_id": "N08",
+    "source_type": "T04",
+    "level": "L1",
+    "title": "03规则-材料产品及分供清单",
+    "source_path": "assets/理想/规则/03 材料产品及分供清单.docx",
+    "clauses": [
+      {
+        "id": "N08:1",
+        "source_number": "1",
+        "category": "条款 1",
+        "text": "识别是否有“单件重量”列，如果没有，则该项判定为NG，如果有，则继续识别“零件号”列下有内容时，“单件重量”列下同行的值是否保留小数点后四位，如果有，则判定为PASS，否则判定为NG",
+        "locator": "table:1/row:2"
+      },
+      {
+        "id": "N08:2",
+        "source_number": "2",
+        "category": "条款 2",
+        "text": "识别是否有“材料执行标准”、“材料类型”、“材料牌号”、“材料规格/尺寸”、“材料供应商名称（包括生产地点）”、“通过何种质量管理体系认证”6列，只要有一列没有，该项结果判定为NG；如果6列都存在，则继续识别；\n“零件号”列下存在内容时，“材料执行标准”、“材料类型”、“材料牌号”、“材料规格/尺寸”、“材料供应商名称（包括生产地点）”、“通过何种质量管理体系认证”6列下对应行的内容不能为空，如果存在为空情况，该项结果判定为NG；否则判定为PASS；",
+        "locator": "table:1/row:3"
+      },
+      {
+        "id": "N08:3",
+        "source_number": "3",
+        "category": "条款 3",
+        "text": "识别部件状态是否有“自制”“外协-国产”、“外协-进口”、“领用件”四列，如果没有，该审核项判定为NG； 如果有，则继续判定这四列下每一行，“自制”“外协-国产”、“外协-进口”、“领用件”仅有一个有内容则通过； 一行内“自制”“外协-国产”、“外协-进口”、“领用件”四个都没有勾选，或勾选两个及以上，则该审核项判定为NG；",
+        "locator": "table:1/row:4"
+      },
+      {
+        "id": "N08:4",
+        "source_number": "4",
+        "category": "条款 4",
+        "text": "识别是否有“完成PPAP”列，如果没有，该审核项判定为NG；如果有，则继续识别； “零件号”列下存在内容时，如果对应行的“外协-进口”或“外协-国产”内容不为空，则“完成PPAP”对应行的内容必须是“Y”，则通过；否则不通过。",
+        "locator": "table:1/row:5"
+      }
+    ]
+  },
+  {
+    "customer": "蔚来",
+    "entry_id": "N09",
+    "source_type": "T07",
+    "level": "L1",
+    "title": "06规则-测量系统分析评价",
+    "source_path": "assets/理想/规则/06 测量系统分析评价.docx",
+    "clauses": [
+      {
+        "id": "N09:1",
+        "source_number": "1",
+        "category": "条款 1",
+        "text": "识别是否包含“任务项一”和“任务项二”字段，如果包含则继续识别“任务项一”、“任务项二”的内容是否全部为OK，如果是则通过，否则不通过",
+        "locator": "table:1/row:2"
+      },
+      {
+        "id": "N09:2",
+        "source_number": "2",
+        "category": "条款 2",
+        "text": "识别是否包含“测量系统分析计划”表，如果包含则继续识别；当序号/NO列下内容不为空，且对应行中除备注之外的所有列内容均不为空则通过，否则不通过",
+        "locator": "table:1/row:3"
+      },
+      {
+        "id": "N09:3",
+        "source_number": "3",
+        "category": "条款 3",
+        "text": "识别是否有表格的标题包含“量具重复性和再现性”，如果有则继续识别该表格下A、B、C都至少取10个样本，且90个单元格内容不为空",
+        "locator": "table:1/row:4"
+      },
+      {
+        "id": "N09:4",
+        "source_number": "4",
+        "category": "条款 4",
+        "text": "识别是否有表格的标题包含“量具重复性和再现性”，如果没有，该项判定为NG，否则继续识别该表格下的分析结论是否勾选“判定指标R&R＜10%；该量具可接受”，如果是则判定为PASS，否则判定为NG",
+        "locator": "table:1/row:5"
+      }
+    ]
+  },
+  {
+    "customer": "蔚来",
+    "entry_id": "N10",
+    "source_type": "T08",
+    "level": "L1",
+    "title": "07规则-过程能力研究",
+    "source_path": "assets/理想/规则/07 过程能力研究.docx",
+    "clauses": [
+      {
+        "id": "N10:1",
+        "source_number": "1",
+        "category": "条款 1",
+        "text": "识别“产品过程CCSC特性管理清单”中是否包含“P阶段Cpk结果”列，如果包含则继续识别；当“P阶段Cpk结果”列下内容为“NA”或阿拉伯数字，且阿拉伯数字>1.33则通过，否则不通过",
+        "locator": "table:1/row:2"
+      },
+      {
+        "id": "N10:2",
+        "source_number": "2",
+        "category": "条款 2",
+        "text": "识别“产品过程CCSC特性管理清单”中是否包含“P阶段结果判定”列，如果包含则继续识别；当“P阶段结果判定”列下内容全部为“达标”则通过，否则不通过",
+        "locator": "table:1/row:3"
+      },
+      {
+        "id": "N10:3",
+        "source_number": "3",
+        "category": "条款 3",
+        "text": "识别文件中是否包含“I-MR单值移动控制图”、“Xbar-R控制图”、“Xbar-S控制图”三张表，如果包含则继续识别三张表中是否均包含“短期过程能力”，如果包含则继续识别“短期过程能力”中的“Cpk”字段是否大于1.33，如果是则通过，否则不通过",
+        "locator": "table:1/row:4"
+      }
+    ]
+  },
+  {
+    "customer": "蔚来",
+    "entry_id": "N11",
+    "source_type": "T05",
+    "level": "L2",
+    "title": "04规则-检具验收报告",
+    "source_path": "assets/理想/规则/04 检具验收报告.docx",
+    "clauses": [
+      {
+        "id": "N11:1",
+        "source_number": "1",
+        "category": "条款 1",
+        "text": "识别是否有“检具清单”和“检具认可报告”，如果没有，则该项判定为NG；如果有则继续识别；“检具认可报告”中除“备注”区域之外的其他内容是否为空，如果为空，则该项判定为NG，如果不为空，则继续识别；“检具清单”中，当“零件号”列有内容时，且对应行中除“备注”之外的其他列内容军不为空则通过，否则不通过；",
+        "locator": "table:1/row:2"
+      },
+      {
+        "id": "N11:2",
+        "source_number": "2",
+        "category": "条款 2",
+        "text": "识别“检具清单”的标题的前缀是否为车型代号，例如“W04项目检具清单”，如包含则通过，否则不通过",
+        "locator": "table:1/row:3"
+      },
+      {
+        "id": "N11:3",
+        "source_number": "3",
+        "category": "条款 3",
+        "text": "若“所附文件”区域，有对应文件勾选“不合格”或“非完成”，则“结论”区域内容必须不能为空",
+        "locator": "table:1/row:4"
+      }
+    ]
+  },
+  {
+    "customer": "蔚来",
+    "entry_id": "N12",
+    "source_type": "T06",
+    "level": "L2",
+    "title": "05规则-模具验收报告",
+    "source_path": "assets/理想/规则/05 模具验收报告.docx",
+    "clauses": [
+      {
+        "id": "N12:1",
+        "source_number": "1",
+        "category": "条款 1",
+        "text": "识别模具验收报告中是否有“零件供应商名称”、“提交日期”字段，如果包含则继续识别；当“零件供应商名称”、“提交日期”字段内容不为空则通过，否则不通过。",
+        "locator": "table:1/row:2"
+      },
+      {
+        "id": "N12:2",
+        "source_number": "2",
+        "category": "条款 2",
+        "text": "识别模具验收报告中是否包含“工艺类型”、“一级分总成零件名称”、“分总成组件或分序模具名称”、“模具制造供应商”、“模具存放地点”、“零件质量评估”、“模具分供方及实物VS 数据&标准验收”、“模具量产性能评估”、“模具维保评估”列，如果不包含则不通过，否则继续识别；当“工艺类型”下存在内容，对应行的“一级分总成零件名称”、“分总成组件或分序模具名称”、“模具制造供应商”、“模具存放地点”、“零件质量评估”、“模具分供方及实物VS 数据&标准验收”、“模具量产性能评估”、“模具维保评估”列内容均不为空则通过，否则不通过",
+        "locator": "table:1/row:3"
+      },
+      {
+        "id": "N12:3",
+        "source_number": "3",
+        "category": "条款 3",
+        "text": "识别模具验收报告中是否包含“模具设计尺寸”列，如果不包含则不通过，否则继续识别“模具设计尺寸”列下的内容是否是按照长×宽×高的格式进行填写的，如果是则通过，否则不通过；注意：长×宽×高的格式可视为数字×数字×数字的格式",
+        "locator": "table:1/row:4"
+      },
+      {
+        "id": "N12:4",
+        "source_number": "4",
+        "category": "条款 4",
+        "text": "识别模具验收报告中是否包含“实物照片”列，如果包含则继续识别“实物照片”列下内容是否有图片存在，如果存在则通过，否则不通过",
+        "locator": "table:1/row:5"
+      },
+      {
+        "id": "N12:5",
+        "source_number": "5",
+        "category": "条款 5",
+        "text": "识别模具验收报告中是否包含“编制”、“审核”字段，如果包含则继续识别，当“编制”、“审核”内容均不为空则通过，否则不通过",
+        "locator": "table:1/row:6"
+      },
+      {
+        "id": "N12:6",
+        "source_number": "6",
+        "category": "条款 6",
+        "text": "识别模具验收报告中是否包含“实物确认”列，如果包含则继续识别，当“实物确认”列下的内容为“有”或“无”则通过，否则不通过",
+        "locator": "table:1/row:7"
+      }
+    ]
+  },
+  {
+    "customer": "蔚来",
+    "entry_id": "N13",
+    "source_type": "T13",
+    "level": "L2",
+    "title": "12规则-设备清单",
+    "source_path": "assets/理想/规则/12 设备清单.docx",
+    "clauses": [
+      {
+        "id": "N13:1",
+        "source_number": "1",
+        "category": "条款 1",
+        "text": "识别设备开发/验收清单表中是否包含“产线/工序”、“设备开发”列，如果不包含则不通过，否则继续识别“设备开发”下是否包含“设备”、“供应商”、“设备型号”、“利旧设备数量”、“新采购设备数量”、“设备通用情况”、“计划到位时间”列，如果不包含则不通过，否则继续识别；当“产线/工序”列下内容不为空，且“设备开发”列下对应行的“设备”、“供应商”、“设备型号”、“利旧设备数量”、“新采购设备数量”、“设备通用情况”、“计划到位时间”列内容均不为空则通过，否则不通过",
+        "locator": "table:1/row:2"
+      },
+      {
+        "id": "N13:2",
+        "source_number": "2",
+        "category": "条款 2",
+        "text": "识别设备开发/验收清单表中是否包含“设备验收”列，且“设备验收”列下包含“验收结果”、“整改措施”、“整改计划”列，如果不包含则不通过，否则继续识别；当“产线/工序”列下内容不为空，“设备验收”列下“验收结果”内容为空则不通过，否则继续识别；当“设备验收”列下的“验收结果”内容为“不通过”或“条件通过”，且对应行的“整改措施”、“整改计划”列内容均不为空则通过，否则不通过；",
+        "locator": "table:1/row:3"
+      }
+    ]
+  },
+  {
+    "customer": "蔚来",
+    "entry_id": "N14",
+    "source_type": "T14",
+    "level": "L2",
+    "title": "13规则-生产系统产能评估报告",
+    "source_path": "assets/理想/规则/13 生产系统产能评估报告.docx",
+    "clauses": [
+      {
+        "id": "N14:1",
+        "source_number": "1",
+        "category": "条款 1",
+        "text": "识别零件产能评估表中是否包含“零件名称”、“零件号”、“供应商名称”、“供应商编码”、“产能评估总体结论”字段，如果不包含则不通过，否则继续识别；当零件产能评估表中的“零件名称”、“零件号”、“供应商名称”、“供应商编码”、“产能评估总体结论”字段对应内容均不为空则通过，否则不通过",
+        "locator": "table:1/row:2"
+      },
+      {
+        "id": "N14:2",
+        "source_number": "2",
+        "category": "条款 2",
+        "text": "当“线体/工序类别”列下内容不为空，且对应行的所有列均不为空则通过，否则不通过",
+        "locator": "table:1/row:3"
+      },
+      {
+        "id": "N14:3",
+        "source_number": "3",
+        "category": "条款 3",
+        "text": "当“SOP+1达成风险”、“SOP+2达成风险”、“SOP+3达成风险”列下内容存在“中风险”或“高风险”，且“产能评估总体结论”对应内容包含“条件通过”或“未通过”，且“后续措施”对应内容不为空则通过，否则不通过",
+        "locator": "table:1/row:4"
+      },
+      {
+        "id": "N14:4",
+        "source_number": "4",
+        "category": "条款 4",
+        "text": "识别“良率”、“合格品数”、“产出数量”三列，如果三列都存在则继续识别；当每一行的“良率”=“合格品数”÷“产出数量”则通过，否则不通过",
+        "locator": "table:1/row:5"
+      },
+      {
+        "id": "N14:5",
+        "source_number": "5",
+        "category": "条款 5",
+        "text": "识别“单线体/工序总产出JPH”、“产出数量”、“净利用时间”、“参与测试线体数量”四列，如果四列都存在则继续识别；当每一行的“单线体/工序总产出JPH”=“产出数量”÷“净利用时间”÷“参与测试线体数量”则通过，否则不通过",
+        "locator": "table:1/row:6"
+      },
+      {
+        "id": "N14:6",
+        "source_number": "6",
+        "category": "条款 6",
+        "text": "识别“线体/工序预估月度产能”、“单线体/工序总产出JPH”、“现有线体数”、“班次/天”、“每班净利用时间”、“每月标准工作天数”、“累积良率”七列，如果七列都存在则继续识别；当每一行的“线体/工序预估月度产能”=“单线体/工序总产出JPH”*“现有线体数”*“班次/天”*“每班净利用时间”*“每月标准工作天数”*“累积良率”则通过，否则不通过",
+        "locator": "table:1/row:7"
+      }
+    ]
+  },
+  {
+    "customer": "蔚来",
+    "entry_id": "N15",
+    "source_type": "T15",
+    "level": "L2",
+    "title": "14规则-APQP项目问题清单",
+    "source_path": "assets/理想/规则/14 APQP项目问题清单.docx",
+    "clauses": [
+      {
+        "id": "N15:1",
+        "source_number": "1",
+        "category": "条款 1",
+        "text": "识别“项目问题清单”表中是否包含“车型”、“供应商名称”、“零件编号”、“零件名称”字段，如果不包含则不通过，否则继续识别“车型”、“供应商名称”、“零件编号”、“零件名称”字段是否均不为空，如果时则通过，否则不通过",
+        "locator": "table:1/row:2"
+      },
+      {
+        "id": "N15:2",
+        "source_number": "2",
+        "category": "条款 2",
+        "text": "当“过程审核问题是否完全关闭？”、“检验体系审核问题是否完全关闭？”、“供应商追溯体系评审问题是否完全关闭？”、“其他专项问题”四个字段存在任一字段下内容为“No”时，识别“问题描述”列下是否存在内容不为空的行，如果存在则通过，否则不通过",
+        "locator": "table:1/row:3"
+      },
+      {
+        "id": "N15:3",
+        "source_number": "3",
+        "category": "条款 3",
+        "text": "当“问题描述”列下内容不为空，且对应行的“对应措施”、“时间节点”、“负责人”均不为空，且“时间节点”下的内容比当前时间晚则通过，否则不通过",
+        "locator": "table:1/row:4"
+      },
+      {
+        "id": "N15:4",
+        "source_number": "4",
+        "category": "条款 4",
+        "text": "当“问题描述”下内容不为空，则识别对应行的“整车/总成功/性能性、SOP+3产能风险、安全性、法律法规风险”列下内容是否为“Yes”或“No”，如果是则通过，否则不通过",
+        "locator": "table:1/row:5"
+      }
+    ]
+  },
+  {
+    "customer": "蔚来",
+    "entry_id": "N16",
+    "source_type": "T16",
+    "level": "L2",
+    "title": "15规则-零部件年度试验要求",
+    "source_path": "assets/理想/规则/15 零部件年度试验要求.docx",
+    "clauses": [
+      {
+        "id": "N16:1",
+        "source_number": "1",
+        "category": "条款 1",
+        "text": "识别是否有“质量等级”字段，如果没有，该项结果判定为NG；如果有，则继续识别该字段的内容是否为“关键件”、“重要件”、“一般件”之一；",
+        "locator": "table:1/row:2"
+      },
+      {
+        "id": "N16:2",
+        "source_number": "2",
+        "category": "条款 2",
+        "text": "当“试验项目”的内容为“ELV试验”或“禁限用”或“EMC试验”时，对应行的“测试频率”列内容必须为“每两年”；当“试验项目”为其他试验时，对应行的“测试频率”列内容必须为“每年”或“每半年”；满足则通过，否则不通过",
+        "locator": "table:1/row:3"
+      },
+      {
+        "id": "N16:3",
+        "source_number": "3",
+        "category": "条款 3",
+        "text": "供应商名称内容必填，且填写格式必须是：供应商代码-供应商全称\n例：3DA-宁波均胜汽车安全系统有限公司",
+        "locator": "table:1/row:4"
+      },
+      {
+        "id": "N16:4",
+        "source_number": "4",
+        "category": "条款 4",
+        "text": "识别是否有“样本数量”列，如果没有则该项判定为NG；如果有则继续识别该列内容是否包含阿拉伯数字，例：3、3pcs、3件/次；如果是，则该项判定为PASS，否则判定为NG；",
+        "locator": "table:1/row:5"
+      },
+      {
+        "id": "N16:5",
+        "source_number": "5",
+        "category": "条款 5",
+        "text": "识别“试验要求栏”是否有“试验项目”、“试验要求”、“试验标准/方法”三列，如果有则继续识别；当这三列下的内容均不为空则通过，否则不通过",
+        "locator": "table:1/row:6"
+      },
+      {
+        "id": "N16:6",
+        "source_number": "6",
+        "category": "条款 6",
+        "text": "识别是否有“车型”字段，如果没有则不通过，否则继续识别；当“车型”字段对应的内容不为空则通过，否则不通过",
+        "locator": "table:1/row:7"
+      }
+    ]
+  },
+  {
+    "customer": "蔚来",
+    "entry_id": "N17",
+    "source_type": "T17",
+    "level": "L2",
+    "title": "16规则-零件提交保证书",
+    "source_path": "assets/理想/规则/16 零件提交保证书.docx",
+    "clauses": [
+      {
+        "id": "N17:1",
+        "source_number": "1",
+        "category": "条款 1",
+        "text": "识别“生产件批准交付物文件清单”表中除“零件认证相关”行之外的所有行，对应的“附件”列内容是否为空，如果不为空则通过，否则不通过",
+        "locator": "table:1/row:2"
+      },
+      {
+        "id": "N17:2",
+        "source_number": "2",
+        "category": "条款 2",
+        "text": "识别“零件提交保证书”中是否包含“重量”字段，如果不包含则不通过，否则继续识别；当“重量”对应的内容为数值，且数值保留小数点后四位则通过，否则不通过",
+        "locator": "table:1/row:3"
+      },
+      {
+        "id": "N17:3",
+        "source_number": "3",
+        "category": "条款 3",
+        "text": "识别“零件提交保证书”中是否包含印章，如果印章中文字的最后两个字为“公司”，则直接通过；否则继续识别文件中是否包含“部门章授权声明”表格，如果不包含则不通过，否则继续识别；当“部门章授权声明”表格中有公司章则通过，否则不通过",
+        "locator": "table:1/row:4"
+      },
+      {
+        "id": "N17:4",
+        "source_number": "4",
+        "category": "条款 4",
+        "text": "识别“零件提交保证书”中“供应商名称/供应商代码”的内容是否为“总公司名称/代码”这种格式",
+        "locator": "table:1/row:5"
+      },
+      {
+        "id": "N17:5",
+        "source_number": "5",
+        "category": "条款 5",
+        "text": "“经授权的供方代表签字”和“盖章”缺一不可",
+        "locator": "table:1/row:6"
+      },
+      {
+        "id": "N17:6",
+        "source_number": "6",
+        "category": "条款 6",
+        "text": "当“零件名称”、“理想汽车零件号”、“供方料号”、“图纸号”、“模具穴号”、“工程更改版本”、“版本日期”、“重量(kg)”、“供应商名称/供应商代码”、“街道地址”、“城市”、“省”、“国家”、“顾客名称”、“设计开发”、“采购工程”、“PTC”的内容均不为空则通过，否则不通过",
+        "locator": "table:1/row:7"
+      },
+      {
+        "id": "N17:7",
+        "source_number": "7",
+        "category": "条款 7",
+        "text": "“提交原因”区域的选项至少有一个选项被选中，或者“其他-请在下方说明”下的内容不为空则通过，否则不通过；",
+        "locator": "table:1/row:8"
+      },
+      {
+        "id": "N17:8",
+        "source_number": "8",
+        "category": "条款 8",
+        "text": "识别PSW是否包含“认可情况”字段，如果不包含则不通过，否则继续识别；“认可情况”字段是否有且仅有一个选项被勾选，如果不是则不通过，否则继续识别；当“认可情况”的“批准”选项被勾选，且“提交结果”区域的选项“尺寸测量”、“外观标准”、“材料和功能试验”、“统计过程数据”均被勾选则通过，且“这些结果均满足所有图纸和规范要求”也有选项被勾选则通过，否则不通过",
+        "locator": "table:1/row:9"
+      },
+      {
+        "id": "N17:9",
+        "source_number": "9",
+        "category": "条款 9",
+        "text": "当认可情况勾选“条件批准”，则继续识别识别文件右下角日期和当前日期是否在3个月之内，在3个月内则通过，否则不通过",
+        "locator": "table:1/row:10"
+      },
+      {
+        "id": "N17:10",
+        "source_number": "10",
+        "category": "条款 10",
+        "text": "当认可情况勾选“条件批准”，且补充评论内容不为空则通过，否则不通过；",
+        "locator": "table:1/row:11"
       }
     ]
   }

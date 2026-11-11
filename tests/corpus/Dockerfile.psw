@@ -8,7 +8,7 @@ WORKDIR /workspace
 COPY pyproject.toml /workspace/pyproject.toml
 COPY --from=psw-tests corpus/contracts /app/tests/corpus/contracts
 COPY --from=psw-tests . /workspace/tests
-COPY --from=psw-assets . /workspace/assets/V2.0测试/模拟测试文件V2-01/16-零件提交保证书
+COPY --from=psw-assets . /workspace/assets/理想/样本/模拟测试文件V2-01/16-零件提交保证书
 
 # The worker image is the locked production install (`--no-dev --no-editable`).
 # PSW needs the default dev dependency group from that same lock.

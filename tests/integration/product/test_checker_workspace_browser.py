@@ -1133,9 +1133,12 @@ def test_directory_revision_selection_pi_and_rollback_keep_exact_frozen_sources(
     rules.pop("rule_profile")
     corrected = runpy.run_path(str(GUEST))["CORRECTED"]
     source_files = {}
+    revisions = {}
+    monkeypatch.setattr(directory, "_CHECKERS_ROOT", source_root)
+    leaf = source_root / "测试客户" / "T01"
+    leaf.mkdir(parents=True)
+    # The same leaf path is installed twice: the baseline, then the corrected program in place.
     for version, program in (("v5", BASELINE), ("v6", corrected)):
-        leaf = source_root / version / "测试客户" / "T01"
-        leaf.mkdir(parents=True)
         source_files[version] = {
             "checker.py": (f"# Selected directory {version}\n" + program).encode(),
             "rules.json": json.dumps(rules, ensure_ascii=False).encode(),
@@ -1143,9 +1146,9 @@ def test_directory_revision_selection_pi_and_rollback_keep_exact_frozen_sources(
         }
         for name, body in source_files[version].items():
             (leaf / name).write_bytes(body)
-    monkeypatch.setattr(directory, "_CHECKERS_ROOT", source_root)
-    installed = install_official_sources(f.suites, [suite for suite in directory.predefined_directory_suites() if suite.suite_key == source_key])
-    revisions = {row["source_path"].split("/")[0]: row["revision_id"] for row in installed}
+        (installed,) = install_official_sources(f.suites, [suite for suite in directory.predefined_directory_suites() if suite.suite_key == source_key])
+        assert installed["source_path"] == "测试客户/T01"
+        revisions[version] = installed["revision_id"]
     assert revisions["v5"] != revisions["v6"]
     with f.admin._conn() as conn:
         rule_id = str(uuid4())
@@ -1220,11 +1223,10 @@ def test_directory_revision_selection_pi_and_rollback_keep_exact_frozen_sources(
             # No registry or customer enum is added for this physical source.
             catalog = response_json(request.get(f.web + "/api/suites"))
             paths = {row["path"]: row for row in catalog["predefined"]}
-            assert all(f"v5/UAES/{entry}" in paths for entry in ("U07", "U08", "U17"))
+            assert all(f"UAES/{entry}" in paths for entry in ("U07", "U08", "U17"))
             assert paths["v4/uaes"]["availability"] == "historical"
             assert "v4/UAES/U08" not in paths
-            assert paths["v5/测试客户/T01"]["revision_id"] == revisions["v5"]
-            assert paths["v6/测试客户/T01"]["revision_id"] == revisions["v6"]
+            assert paths["测试客户/T01"]["revision_id"] == revisions["v6"]
             adopt(revisions["v5"], force=True)
             rounds, feedback = [], []
             for index, (value, actual, expected) in enumerate(((5, "PASS", "NG"), (15, "NG", "PASS"), (16, "UNABLE", "PASS"), (6, "NG", "NG")), 1):
@@ -1254,7 +1256,7 @@ def test_directory_revision_selection_pi_and_rollback_keep_exact_frozen_sources(
                 )
             adopt(revisions["v6"], force=True)
             # Source edits do not mutate the installed official Revision.
-            changed = source_root / "v5" / "测试客户" / "T01" / "checker.py"
+            changed = source_root / "测试客户" / "T01" / "checker.py"
             changed.write_bytes(source_files["v5"]["checker.py"] + b"\n# Later filesystem edit\n")
             after_edit = {path.relative_to(source_root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest() for path in source_root.rglob("*") if path.is_file()}
             before_navigation = response_json(request.get(active_path))

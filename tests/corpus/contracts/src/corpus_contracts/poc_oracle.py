@@ -123,7 +123,7 @@ def build_group_context_for_bundle(bundle_cases: List[PocCase]) -> GroupContextI
 def load_poc_cases(bundle: str | None = None, seq_set: set[str] | None = None) -> List[PocCase]:
     by_type = {typ.get_type_name(): seq for seq, typ in POC_SEQ_TO_DOC_TYPE.items()}
     cases = []
-    for group in load_oracle("v3"):
+    for group in load_oracle("蔚来"):
         if bundle and group.case_id != bundle:
             continue
         for file in group.files:

@@ -175,7 +175,7 @@ def test_exact_revision_becomes_a_standalone_candidate_and_a_different_revision_
         assert f.store.objects.data[f"suites/{f.alice.tenant_id}/objects/{digest}"] == candidate.files[path]
 
 
-def test_v5_source_path_keeps_its_bytes_binding_and_is_not_published_or_overwritten(auth_store_factory):
+def test_source_path_keeps_its_bytes_binding_and_is_not_published_or_overwritten(auth_store_factory):
     from audit.standard_suites import predefined_directory_suites
 
     f = opt.fixture(auth_store_factory, count=1)
@@ -184,7 +184,7 @@ def test_v5_source_path_keeps_its_bytes_binding_and_is_not_published_or_overwrit
         stub = suites.create_revision(tenant_id=None, suite_key=key, files=STUB_FILES, created_by=None)
         published = _publish(f.clients[0], key, stub.id, 0, True)
         assert published.status_code == 200, published.text
-    leaf = next(item for item in predefined_directory_suites() if item.source_path == "v5/UAES/U08")
+    leaf = next(item for item in predefined_directory_suites() if item.source_path == "UAES/U08")
     source_files = dict(leaf.files)
     rules = json.loads(source_files["rules.json"])
     # This case exercises partial-source publication, independently of the

@@ -13,7 +13,7 @@ from corpus_contracts.product_round import compare_file, failing_verdicts, forma
 from worker.intake import parse_rule_file
 from worker.intake.rule_sources import rule_sources
 
-RULE_ROOT = Path(__file__).resolve().parents[3] / "assets" / "poc测试" / "poc规则"
+RULE_ROOT = Path(__file__).resolve().parents[3] / "assets" / "蔚来" / "历史" / "poc规则"
 SOURCES = {
     "1": "1-2规则-尺寸检验报告.docx",
     "8": "8规则-过程流程图.docx",

@@ -1,0 +1,64 @@
+{
+  "kind": "engine",
+  "type": "零部件年度试验要求",
+  "preset_key": "N16",
+  "customers": [
+    "蔚来"
+  ],
+  "models": [],
+  "parts": [],
+  "title": "15规则-零部件年度试验要求",
+  "rules": [
+    {
+      "id": "N16:1",
+      "category": "条款 1",
+      "priority": "P0",
+      "rule_to_check": "识别是否有“质量等级”字段，如果没有，该项结果判定为NG；如果有，则继续识别该字段的内容是否为“关键件”、“重要件”、“一般件”之一；",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "N16:2",
+      "category": "条款 2",
+      "priority": "P0",
+      "rule_to_check": "当“试验项目”的内容为“ELV试验”或“禁限用”或“EMC试验”时，对应行的“测试频率”列内容必须为“每两年”；当“试验项目”为其他试验时，对应行的“测试频率”列内容必须为“每年”或“每半年”；满足则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "N16:3",
+      "category": "条款 3",
+      "priority": "P0",
+      "rule_to_check": "供应商名称内容必填，且填写格式必须是：供应商代码-供应商全称\n例：3DA-宁波均胜汽车安全系统有限公司",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "N16:4",
+      "category": "条款 4",
+      "priority": "P0",
+      "rule_to_check": "识别是否有“样本数量”列，如果没有则该项判定为NG；如果有则继续识别该列内容是否包含阿拉伯数字，例：3、3pcs、3件/次；如果是，则该项判定为PASS，否则判定为NG；",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "N16:5",
+      "category": "条款 5",
+      "priority": "P0",
+      "rule_to_check": "识别“试验要求栏”是否有“试验项目”、“试验要求”、“试验标准/方法”三列，如果有则继续识别；当这三列下的内容均不为空则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "N16:6",
+      "category": "条款 6",
+      "priority": "P0",
+      "rule_to_check": "识别是否有“车型”字段，如果没有则不通过，否则继续识别；当“车型”字段对应的内容不为空则通过，否则不通过",
+      "type_of_rule": "text"
+    }
+  ],
+  "directory_coverage": "complete",
+  "checker_binding": {
+    "N16:1": "checker:create_audit",
+    "N16:2": "checker:create_audit",
+    "N16:3": "checker:create_audit",
+    "N16:4": "checker:create_audit",
+    "N16:5": "checker:create_audit",
+    "N16:6": "checker:create_audit"
+  }
+}

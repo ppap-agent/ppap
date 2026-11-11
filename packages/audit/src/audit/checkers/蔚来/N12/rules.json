@@ -1,0 +1,64 @@
+{
+  "kind": "engine",
+  "type": "模具验收报告",
+  "preset_key": "N12",
+  "customers": [
+    "蔚来"
+  ],
+  "models": [],
+  "parts": [],
+  "title": "05规则-模具验收报告",
+  "rules": [
+    {
+      "id": "N12:1",
+      "category": "条款 1",
+      "priority": "P0",
+      "rule_to_check": "识别模具验收报告中是否有“零件供应商名称”、“提交日期”字段，如果包含则继续识别；当“零件供应商名称”、“提交日期”字段内容不为空则通过，否则不通过。",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "N12:2",
+      "category": "条款 2",
+      "priority": "P0",
+      "rule_to_check": "识别模具验收报告中是否包含“工艺类型”、“一级分总成零件名称”、“分总成组件或分序模具名称”、“模具制造供应商”、“模具存放地点”、“零件质量评估”、“模具分供方及实物VS 数据&标准验收”、“模具量产性能评估”、“模具维保评估”列，如果不包含则不通过，否则继续识别；当“工艺类型”下存在内容，对应行的“一级分总成零件名称”、“分总成组件或分序模具名称”、“模具制造供应商”、“模具存放地点”、“零件质量评估”、“模具分供方及实物VS 数据&标准验收”、“模具量产性能评估”、“模具维保评估”列内容均不为空则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "N12:3",
+      "category": "条款 3",
+      "priority": "P0",
+      "rule_to_check": "识别模具验收报告中是否包含“模具设计尺寸”列，如果不包含则不通过，否则继续识别“模具设计尺寸”列下的内容是否是按照长×宽×高的格式进行填写的，如果是则通过，否则不通过；注意：长×宽×高的格式可视为数字×数字×数字的格式",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "N12:4",
+      "category": "条款 4",
+      "priority": "P0",
+      "rule_to_check": "识别模具验收报告中是否包含“实物照片”列，如果包含则继续识别“实物照片”列下内容是否有图片存在，如果存在则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "N12:5",
+      "category": "条款 5",
+      "priority": "P0",
+      "rule_to_check": "识别模具验收报告中是否包含“编制”、“审核”字段，如果包含则继续识别，当“编制”、“审核”内容均不为空则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "N12:6",
+      "category": "条款 6",
+      "priority": "P0",
+      "rule_to_check": "识别模具验收报告中是否包含“实物确认”列，如果包含则继续识别，当“实物确认”列下的内容为“有”或“无”则通过，否则不通过",
+      "type_of_rule": "text"
+    }
+  ],
+  "directory_coverage": "complete",
+  "checker_binding": {
+    "N12:1": "checker:create_audit",
+    "N12:2": "checker:create_audit",
+    "N12:3": "checker:create_audit",
+    "N12:4": "checker:create_audit",
+    "N12:5": "checker:create_audit",
+    "N12:6": "checker:create_audit"
+  }
+}

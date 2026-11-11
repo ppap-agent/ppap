@@ -1,0 +1,96 @@
+{
+  "kind": "engine",
+  "type": "零件提交保证书",
+  "preset_key": "N17",
+  "customers": [
+    "蔚来"
+  ],
+  "models": [],
+  "parts": [],
+  "title": "16规则-零件提交保证书",
+  "rules": [
+    {
+      "id": "N17:1",
+      "category": "条款 1",
+      "priority": "P0",
+      "rule_to_check": "识别“生产件批准交付物文件清单”表中除“零件认证相关”行之外的所有行，对应的“附件”列内容是否为空，如果不为空则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "N17:2",
+      "category": "条款 2",
+      "priority": "P0",
+      "rule_to_check": "识别“零件提交保证书”中是否包含“重量”字段，如果不包含则不通过，否则继续识别；当“重量”对应的内容为数值，且数值保留小数点后四位则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "N17:3",
+      "category": "条款 3",
+      "priority": "P0",
+      "rule_to_check": "识别“零件提交保证书”中是否包含印章，如果印章中文字的最后两个字为“公司”，则直接通过；否则继续识别文件中是否包含“部门章授权声明”表格，如果不包含则不通过，否则继续识别；当“部门章授权声明”表格中有公司章则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "N17:4",
+      "category": "条款 4",
+      "priority": "P0",
+      "rule_to_check": "识别“零件提交保证书”中“供应商名称/供应商代码”的内容是否为“总公司名称/代码”这种格式",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "N17:5",
+      "category": "条款 5",
+      "priority": "P0",
+      "rule_to_check": "“经授权的供方代表签字”和“盖章”缺一不可",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "N17:6",
+      "category": "条款 6",
+      "priority": "P0",
+      "rule_to_check": "当“零件名称”、“理想汽车零件号”、“供方料号”、“图纸号”、“模具穴号”、“工程更改版本”、“版本日期”、“重量(kg)”、“供应商名称/供应商代码”、“街道地址”、“城市”、“省”、“国家”、“顾客名称”、“设计开发”、“采购工程”、“PTC”的内容均不为空则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "N17:7",
+      "category": "条款 7",
+      "priority": "P0",
+      "rule_to_check": "“提交原因”区域的选项至少有一个选项被选中，或者“其他-请在下方说明”下的内容不为空则通过，否则不通过；",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "N17:8",
+      "category": "条款 8",
+      "priority": "P0",
+      "rule_to_check": "识别PSW是否包含“认可情况”字段，如果不包含则不通过，否则继续识别；“认可情况”字段是否有且仅有一个选项被勾选，如果不是则不通过，否则继续识别；当“认可情况”的“批准”选项被勾选，且“提交结果”区域的选项“尺寸测量”、“外观标准”、“材料和功能试验”、“统计过程数据”均被勾选则通过，且“这些结果均满足所有图纸和规范要求”也有选项被勾选则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "N17:9",
+      "category": "条款 9",
+      "priority": "P0",
+      "rule_to_check": "当认可情况勾选“条件批准”，则继续识别识别文件右下角日期和当前日期是否在3个月之内，在3个月内则通过，否则不通过",
+      "type_of_rule": "text"
+    },
+    {
+      "id": "N17:10",
+      "category": "条款 10",
+      "priority": "P0",
+      "rule_to_check": "当认可情况勾选“条件批准”，且补充评论内容不为空则通过，否则不通过；",
+      "type_of_rule": "text"
+    }
+  ],
+  "directory_coverage": "complete",
+  "checker_binding": {
+    "N17:1": "checker:create_audit",
+    "N17:2": "checker:create_audit",
+    "N17:3": "checker:create_audit",
+    "N17:4": "checker:create_audit",
+    "N17:5": "checker:create_audit",
+    "N17:6": "checker:create_audit",
+    "N17:7": "checker:create_audit",
+    "N17:8": "checker:create_audit",
+    "N17:9": "checker:create_audit",
+    "N17:10": "checker:create_audit"
+  }
+}

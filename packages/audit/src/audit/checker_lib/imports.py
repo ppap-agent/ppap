@@ -65,16 +65,13 @@ def _scan(path: Path) -> tuple[str, ...]:
 def directory_import_violations(root: Path) -> tuple[str, ...]:
     """Static imports and literal ``import_module`` / ``__import__`` calls.
 
-    A version directory with ``__init__.py`` is a legacy package and is skipped.
+    Customer directories hold the leaves; the historical ``v2``/``v3``/``v4`` packages are skipped.
     """
     problems: list[str] = []
     if not root.is_dir():
         return ()
-    for version in sorted(path for path in root.iterdir() if path.is_dir() and _VERSION_DIRECTORY.fullmatch(path.name)):
-        marker = version / "__init__.py"
-        if marker.is_file() and not marker.is_symlink():
-            continue
-        for path in sorted(version.rglob("*")):
+    for customer in sorted(path for path in root.iterdir() if path.is_dir() and not _VERSION_DIRECTORY.fullmatch(path.name)):
+        for path in sorted(customer.rglob("*")):
             if path.name not in _LEAF_SOURCES or not path.is_file() or path.is_symlink():
                 continue
             problems.extend(_scan(path))

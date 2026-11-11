@@ -1013,7 +1013,7 @@ def test_new_optimization_refuses_a_related_legacy_carrier_without_running_it(au
         files={"checker.py": b"def create_audit(context):\n    return []\n", "rules.json": json.dumps(RULES).encode()},
         related_suite_keys=("REL:CARRIER",),
         created_by=None,
-        source_path="v5/ACME/DIR",
+        source_path="ACME/DIR",
     )
     proof = {"reasons": [], "total_samples": 4, "passed_samples": 4, "new_errors": 0, "library_revision": library_revision(), "proof_digest": "ab" * 32, "report": {"related_revision_ids": []}}
     with f.store._conn() as conn:

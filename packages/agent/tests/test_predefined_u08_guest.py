@@ -24,7 +24,7 @@ def write_leaf(root: Path, source_path: str, *, checker: str = CHECKER, rules: d
 
 
 def test_u08_bound_clauses_read_xlsx_and_do_not_pass_without_evidence(tmp_path):
-    suite = next(item for item in predefined_directory_suites() if item.source_path == "v5/UAES/U08")
+    suite = next(item for item in predefined_directory_suites() if item.source_path == "UAES/U08")
     pdf = tmp_path / "plan.pdf"
     pdf.write_bytes(b"%PDF-1.4\n")
     unable = _run(suite, pdf, ("U08:1", "U08:4"))
@@ -54,7 +54,7 @@ def test_u08_bound_clauses_read_xlsx_and_do_not_pass_without_evidence(tmp_path):
 
 
 def test_u08_unsupported_carrier_and_unimplemented_clause_do_not_pass(tmp_path):
-    suite = next(item for item in predefined_directory_suites() if item.source_path == "v5/UAES/U08")
+    suite = next(item for item in predefined_directory_suites() if item.source_path == "UAES/U08")
     assert b"audit.checkers" not in suite.files["checker.py"]
     assert b"resolve_engine_agent_class" not in suite.files["checker.py"]
     assert b"audit.checker_lib.excel" in suite.files["checker.py"]
@@ -84,9 +84,9 @@ def test_execution_uses_frozen_bytes_after_the_source_directory_changes(tmp_path
         "def create_audit(audit_file, rule, group_context=None):\n"
         "    return type('Audit', (), {'checks': [_Check()], 'close': lambda self: None})()\n"
     )
-    write_leaf(tmp_path, "v5/UAES/U08", checker=checker)
+    write_leaf(tmp_path, "UAES/U08", checker=checker)
     frozen = dict(load_predefined_checkers(tmp_path)[0].files)
-    path = tmp_path / "v5" / "UAES" / "U08" / "checker.py"
+    path = tmp_path / "UAES" / "U08" / "checker.py"
     path.write_text(checker.replace("ORIGINAL", "LIVE"), encoding="utf-8")
     assert b"LIVE" in load_predefined_checkers(tmp_path)[0].files["checker.py"]
     target = tmp_path / "ignored.xlsx"
@@ -156,7 +156,7 @@ def _execute(files: dict[str, bytes], path: Path, clauses):
 
 
 def test_incomplete_scan_formula_merge_and_extra_tables_are_unable(tmp_path):
-    suite = next(item for item in predefined_directory_suites() if item.source_path == "v5/UAES/U08")
+    suite = next(item for item in predefined_directory_suites() if item.source_path == "UAES/U08")
     files = dict(suite.files)
 
     def run(path: Path, clauses=("U08:1", "U08:4")):

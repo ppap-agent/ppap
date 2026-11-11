@@ -41,6 +41,6 @@ KISS 不等于把迁移人为切成最小碎片。如果一个内聚 package、�
 
 按 [context-reduce](https://github.com/ronhuafeng/skills-release/tree/main/catalog/engineering/context-reduce) 执行：只读本次 owning Issue、直接相关的源码、测试和仍生效的文档入口；非必要不读旧分支、历史设计、旧 Issue、agent 日志或迁移记录。复用当前权威，消除无当前消费者的代码、兼容层、额外概念、重复文档和对应测试；用小范围测试守住真实不变量，重要外部效应必须读回验证。
 
-**Checker artifacts 与对应测试都是需保留的资产，不是 legacy code。** `audit/checkers/v2`、`v3`、`v4`、`v5+` 的 Checker 源码、规则、资源，以及这些版本对应的测试文件、fixtures、样本和人工 Oracle 均必须保留；不得因版本旧、迁移 v5 或删除 legacy 而删除、覆盖、合并、清空或篡改这些资产及不可变 Revision。`context-reduce` 的清理范围仅限有证据表明无当前必要性的旧执行基础设施、隐式 fallback、重复注册/映射、无效兼容层及其独立的过期说明；**版本化测试资产不在删除范围内**。新版本使用完整 Checker 和 `checker_lib`，不隐式调用其他版本；不另建历史软件兼容机制。现有租户授权、冻结原件/代码/结果、证据定位、未知不得 PASS 等正确性边界保持不变。
+**Checker artifacts 与对应测试都是需保留的资产，不是 legacy code。** `audit/checkers/v2`、`v3`、`v4` 历史包和 `audit/checkers/<公司>/` 目录叶子的 Checker 源码、规则、资源，以及这些版本对应的测试文件、fixtures、样本和人工 Oracle 均必须保留；不得因版本旧、按公司重组或删除 legacy 而删除、覆盖、合并、清空或篡改这些资产及不可变 Revision。`context-reduce` 的清理范围仅限有证据表明无当前必要性的旧执行基础设施、隐式 fallback、重复注册/映射、无效兼容层及其独立的过期说明；**版本化测试资产不在删除范围内**。新版本使用完整 Checker 和 `checker_lib`，不隐式调用其他版本；不另建历史软件兼容机制。现有租户授权、冻结原件/代码/结果、证据定位、未知不得 PASS 等正确性边界保持不变。
 
 开发命令见 [DEVELOPMENT](docs/DEVELOPMENT.md)，选择和运行测试时见 [tests/README](tests/README.md)。

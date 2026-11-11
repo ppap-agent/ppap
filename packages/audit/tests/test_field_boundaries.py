@@ -302,7 +302,7 @@ def test_submission_result_options_cannot_share_a_neighbouring_checked_control(t
 
 
 def test_submission_reason_sends_each_small_box_enlarged_beside_its_label():
-    source = next((Path(__file__).resolve().parents[3] / "assets").rglob("16-零件提交保证书-上海亚大.40603.pdf"))
+    source = Path(__file__).resolve().parents[3].joinpath("assets", "理想", "样本", "补充样本", "零件提交保证书", "16-零件提交保证书-上海亚大.pdf")
     images, _ = _pdf_images(SimpleNamespace(file_url=str(source), audit_id="v"), [2], "a" * 64, {"submission_any_checked", "submission_other_present"})
     section, *options = images
     assert section.locator["context"] is True

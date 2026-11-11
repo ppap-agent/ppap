@@ -367,7 +367,7 @@ def test_v4_oracle_selector_stays_on_the_legacy_u08_carrier():
     from audit.standard_suites import predefined_directory_suites
 
     legacy = oracle.suite_sources()["UAES:U08@v4"]
-    directory = next(suite for suite in predefined_directory_suites() if suite.source_path == "v5/UAES/U08")
+    directory = next(suite for suite in predefined_directory_suites() if suite.source_path == "UAES/U08")
     assert legacy.source_path != directory.source_path
     assert legacy.revision_digest != directory.revision_digest
     assert b"check_clause" in legacy.files["checker.py"]
@@ -376,7 +376,7 @@ def test_v4_oracle_selector_stays_on_the_legacy_u08_carrier():
     assert b"audit.checkers.v2" not in directory.files["checker.py"]
 
 
-def test_guest_runs_frozen_v5_u08_bytes_and_leaves_unbound_clauses_unpassed(tmp_path):
+def test_guest_runs_frozen_u08_bytes_and_leaves_unbound_clauses_unpassed(tmp_path):
     import hashlib
 
     from agent.execution.audit_runtime import run_audit_process
@@ -384,7 +384,7 @@ def test_guest_runs_frozen_v5_u08_bytes_and_leaves_unbound_clauses_unpassed(tmp_
     from audit.standard_suites import predefined_directory_suites
     from openpyxl import Workbook
 
-    suite = next(item for item in predefined_directory_suites() if item.source_path == "v5/UAES/U08")
+    suite = next(item for item in predefined_directory_suites() if item.source_path == "UAES/U08")
     book = Workbook()
     sheet = book.active
     sheet.title = "控制计划"
@@ -438,4 +438,4 @@ def test_shared_oracle_path_is_not_stored_as_directory_identity():
     assert [suite.source_path for suite in historical].count(shared) > 1
     assert persisted_source_path(shared) is None
     assert all(persisted_source_path(suite.source_path) == suite.source_path for suite in official_source_suites())
-    assert persisted_source_path("v5/UAES/U08") == "v5/UAES/U08"
+    assert persisted_source_path("UAES/U08") == "UAES/U08"

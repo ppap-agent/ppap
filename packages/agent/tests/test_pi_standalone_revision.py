@@ -130,11 +130,11 @@ def test_explicit_selected_source_cannot_be_missing_or_partial(tmp_path, monkeyp
         )
 
 
-def test_v5_u08_bytes_do_not_pass_unbound_clauses_or_unsupported_formats(tmp_path):
+def test_u08_bytes_do_not_pass_unbound_clauses_or_unsupported_formats(tmp_path):
     from agent.execution.audit_runtime import run_audit_process
     from openpyxl import Workbook
 
-    suite = next(item for item in predefined_directory_suites() if item.source_path == "v5/UAES/U08")
+    suite = next(item for item in predefined_directory_suites() if item.source_path == "UAES/U08")
     rules = json.loads(suite.files["rules.json"])
     # Exercise an explicitly incomplete binding independently of the installed
     # leaf's current business maturity.

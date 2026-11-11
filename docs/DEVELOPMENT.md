@@ -143,10 +143,10 @@ single-owner Python tests 位于各自 `packages/*/tests`、`apps/api/tests`、`
 
 ## POC 规则资产导出
 
-原始 DOCX 是规则资产的内容依据；[`POC Rule Assets`](../assets/poc测试/poc规则/AGENTS.md) 规定生成文件和媒体路径。仅在需要重新生成资产时，从仓库根目录执行：
+原始 DOCX 是规则资产的内容依据；[`POC Rule Assets`](../assets/蔚来/历史/poc规则/AGENTS.md) 规定生成文件和媒体路径。仅在需要重新生成资产时，从仓库根目录执行：
 
 ```sh
-cd assets/poc测试/poc规则/markdown
+cd assets/蔚来/历史/poc规则/markdown
 pandoc '../10规则-控制计划.docx' --wrap=none -t gfm -o '10规则-控制计划.docx.md' --extract-media='media/10规则-控制计划'
 ```
 
@@ -349,13 +349,13 @@ GitHub Actions 的外部模型测试使用 `CI_LLM_API_KEY`、`CI_LLM_BASE_URL` 
 
 Excel 的图形事实通过 `audit.engine.checkers.excel_field_evidence` 读取。XLS 先经既有 LibreOffice 隔离转换为 XLSX，保留原始绘图部分；单元格、控件和可靠原生文字优先使用。按字段文字、合并范围和相邻字段确定区域，必要时由 `documents.excel.visual` 渲染；Excel 与 PDF 共用 `pdf_field_region` 的栏目边界。签字字段不读取印刷姓名、日期或客户签字，保证书盖章与授权表盖章分别取证。缺少标签且需要证明没有盖章时，覆盖完整适用工作表，包含原生单元格范围外的绘图；不能凭局部未找到就确认不存在。模型只返回事实，坐标、文件版本和来源摘要由程序保存；未知仍为 UNABLE，调用或解析错误为 ERR。同一字段复用成功或失败结果，不自动重试。
 
-UAES v5 的后续验收由 [Issue #295](https://github.com/ppap-agent/ppap/issues/295) 拥有，首轮实现见 [#289](https://github.com/ppap-agent/ppap/issues/289)。条款在各自叶子中实现，只从 `checker_lib` 复用原件读取和取证，不调用其他版本的业务类。PFMEA 经验教训、评分描述及 CP 追溯/FIFO 措施使用有原文引用的文本语义检查；数字、日期及跨文件身份由代码检查。原图只用于实际图形事实。通用视觉读取最多十页或十个工作表；单页/单表读取不能证明多页全图关系。当前跨页仅支持调用者明确声明的“存在”事实，完整范围都为否才支持否定；全图一致性、所有签章齐全等联合事实在多页时保持未知。DOCX 的原生内容可以读取，尚无可靠位置的图形事实返回 UNABLE。扫描表格不补做整份转录。原件或模型配置变化、调用失败与事实未知分别报告，不自动重试或转成 PASS。
+UAES 目录叶子的后续验收由 [Issue #295](https://github.com/ppap-agent/ppap/issues/295) 拥有，首轮实现见 [#289](https://github.com/ppap-agent/ppap/issues/289)。条款在各自叶子中实现，只从 `checker_lib` 复用原件读取和取证，不调用其他版本的业务类。PFMEA 经验教训、评分描述及 CP 追溯/FIFO 措施使用有原文引用的文本语义检查；数字、日期及跨文件身份由代码检查。原图只用于实际图形事实。通用视觉读取最多十页或十个工作表；单页/单表读取不能证明多页全图关系。当前跨页仅支持调用者明确声明的“存在”事实，完整范围都为否才支持否定；全图一致性、所有签章齐全等联合事实在多页时保持未知。DOCX 的原生内容可以读取，尚无可靠位置的图形事实返回 UNABLE。扫描表格不补做整份转录。原件或模型配置变化、调用失败与事实未知分别报告，不自动重试或转成 PASS。
 
 尺寸审核把检查数据、判定标准、单位和结果绑定到同一原始记录。明确的不同量纲不能直接比较；支持的同量纲单位先换算，单位无法可靠确定时返回 UNABLE。跨文件读取绑定本轮冻结文件版本，完整匹配零件标识及工序号，保留两份原件的单元格位置。不同文档的修订计数不要求相同；两份原件都明确声明同零件的工程更改水平时，冲突不能通过。身份不足不能支持 PASS，也不借用相近编号的记录。历史文件、规则与结果不变。
 
 ## Checker Core 官方发布
 
-官方 Suite 的安装、回归与发布是三个动作。`product.seed_standard_suites --apply` 只保存 `checkers/vN/<客户>/<规则组>/` 目录叶子的不可变候选，不安装 `standard_suites()` 或历史 generic carrier，也不因相同 `suite_key` 选择旧 carrier。企业 `PUT /suites/{key}/active` 即使带 `force_unverified` 也不能把历史 carrier 设为下一个头；数据库里已有的 carrier 头保持不动，新审核、预检和优化会要求确认目录版本。关联套件的当前头如果是 carrier，企业采用和官方发布同样拒绝，不会改用同名的其他版本。平台以 migrator 角色调用 `SuiteReleaseStore.record_official_validation` 保存独立回归证明，再调用 `publish_official(revision_id, expected_revision=..., expected_validation_revision=...)` 发布。发布前用 `official_active(suite_key)` 读取官方指针修订；首次为 0，验证修订取刚确认的证明。发布在同一事务内重查证明、当前关联 Suite、共享库版本及对象字节，并以 CAS 更新唯一官方指针。过期发布请求须先读回，不自动用新修订重发。验证或保存新候选不会替换当前官方版本；回滚也须显式发布准确旧版本。
+官方 Suite 的安装、回归与发布是三个动作。`product.seed_standard_suites --apply` 只保存 `checkers/<客户>/<规则组>/` 目录叶子的不可变候选，不安装 `standard_suites()` 或历史 generic carrier，也不因相同 `suite_key` 选择旧 carrier。企业 `PUT /suites/{key}/active` 即使带 `force_unverified` 也不能把历史 carrier 设为下一个头；数据库里已有的 carrier 头保持不动，新审核、预检和优化会要求确认目录版本。关联套件的当前头如果是 carrier，企业采用和官方发布同样拒绝，不会改用同名的其他版本。平台以 migrator 角色调用 `SuiteReleaseStore.record_official_validation` 保存独立回归证明，再调用 `publish_official(revision_id, expected_revision=..., expected_validation_revision=...)` 发布。发布前用 `official_active(suite_key)` 读取官方指针修订；首次为 0，验证修订取刚确认的证明。发布在同一事务内重查证明、当前关联 Suite、共享库版本及对象字节，并以 CAS 更新唯一官方指针。过期发布请求须先读回，不自动用新修订重发。验证或保存新候选不会替换当前官方版本；回滚也须显式发布准确旧版本。
 
 首次启用先按关联依赖顺序验证并发布官方 Suite，再受理跟随官方版本的审核。迁移 `0048_official_suite_heads.sql` 不把既有 latest 或验证记录猜成发布批准，未激活的官方源仍可按 revision 查看；既有企业固定指针和历史 Round 不变。没有固定企业版本的租户仅跟随已发布官方指针，企业明确固定某个官方或企业 revision 后不会被后续官方发布覆盖。官方或企业指针若仍指向旧 carrier，新受理和预检拒绝并要求确认版本，不自动改选同 key 的目录版本，也不解除已有 pin。显式发布只影响之后的新 Round。已冻结 Round 继续使用原修订。
 

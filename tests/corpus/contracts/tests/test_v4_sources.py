@@ -17,7 +17,7 @@ NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 
 
 def test_all_41_source_documents_and_route_entries_match_shipped_rule_inputs():
-    route = (ROOT / "assets/PPAP PRD v3.7/预检规则/PPAP-00-A_客户与文件类型覆盖矩阵_路由表_v1.7.md").read_text()
+    route = (ROOT / "assets/UAES/预检规则/PPAP-00-A_客户与文件类型覆盖矩阵_路由表_v1.7.md").read_text()
     matrix = {}
     for line in route.splitlines():
         if re.match(r"\| [ULN]\d{2} \|", line):
@@ -26,7 +26,14 @@ def test_all_41_source_documents_and_route_entries_match_shipped_rule_inputs():
                 matrix[cells[0]] = (cells[2].strip("`"), cells[4].strip("*"))
     assert len(matrix) == 41
     presets = customer_presets()
-    assert {rule.entry_id: (rule.source_type, rule.level) for rule in presets} == matrix
+    assert {rule.entry_id: (rule.source_type, rule.level) for rule in presets if rule.entry_id in matrix} == matrix
+    # NIO entries outside the matrix carry the Li Auto document of the same type, clause for clause.
+    by_entry = {rule.entry_id: rule for rule in presets}
+    derived = [rule for rule in presets if rule.entry_id not in matrix]
+    assert {rule.customer for rule in derived} == {"蔚来"} and len(derived) == 12
+    for rule in derived:
+        (source,) = [other for other in presets if other.customer == "理想" and other.source_path == rule.source_path]
+        assert rule.source_type == source.source_type and [clause.text for clause in rule.clauses] == [clause.text for clause in by_entry[source.entry_id].clauses]
     for rule in presets:
         source = ROOT / rule.source_path
         with ZipFile(source) as archive:
@@ -53,7 +60,7 @@ def test_nio_t12_source_clauses_run_over_the_actual_template_and_controlled_chan
     from corpus_contracts.core_round import customer_suite, run_suite_round
     from openpyxl import load_workbook
 
-    source = ROOT / "assets/PPAP PRD v3.7/客户归类模板与规则_备份/模板/蔚来/11 特殊特性清单.xlsx"
+    source = ROOT / "assets/蔚来/模板/11 特殊特性清单.xlsx"
     # Independent expected results come from N04 source clauses: title prefix
     # is required; a row with part number/name requires every listed field.
     for missing, expected in ((None, ["PASS", "PASS"]), ("title", ["NG", "PASS"]), ("frequency", ["PASS", "NG"])):
@@ -87,7 +94,7 @@ def test_nio_pfmea_controlled_template_keeps_source_fields_and_scoring_sheets_se
     from openpyxl import load_workbook
     from openpyxl.cell.cell import MergedCell
 
-    source = ROOT / "assets/PPAP PRD v3.7/客户归类模板与规则_备份/模板/蔚来/9 潜在过程失效模式及后果分析.xlsx"
+    source = ROOT / "assets/蔚来/模板/9 潜在过程失效模式及后果分析.xlsx"
     book = load_workbook(source)
     sheet = book["第五版PFMEA表格"]
     for row in sheet.iter_rows(min_row=10):
@@ -132,7 +139,7 @@ def test_li_auto_equipment_template_metadata_cannot_replace_a_missing_device_sup
     from corpus_contracts.core_round import customer_suite, run_suite_round
     from openpyxl import load_workbook
 
-    source = ROOT / "assets/PPAP PRD v3.7/客户归类模板与规则_备份/模板/理想/APQP-设备开发验收清单.xlsx"
+    source = ROOT / "assets/理想/模板/APQP-设备开发验收清单.xlsx"
     for missing_supplier, expected in [(False, "PASS"), (True, "NG")]:
         book = load_workbook(source)
         sheet = book["设备开发验收清单"]
@@ -152,7 +159,7 @@ def test_nio_measurement_template_does_not_turn_zeros_or_uncached_formulas_into_
     from audit.presets import preset_rule_body
     from corpus_contracts.core_round import customer_suite, run_suite_round
 
-    source = ROOT / "assets/PPAP PRD v3.7/客户归类模板与规则_备份/模板/蔚来/1-2 尺寸测量报告.xlsm"
+    source = ROOT / "assets/蔚来/模板/1-2 尺寸测量报告.xlsm"
     body = preset_rule_body("蔚来", "N01")
     target = RoundInput("target", "file", "version", source.name, "ready", rule_version_id="nio-n01", rule_body=body)
     result = run_suite_round(RoundWork("round", "tenant", [target]), {"version": source.read_bytes()}, suites={"version": customer_suite("蔚来", "N01")})

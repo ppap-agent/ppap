@@ -23,7 +23,8 @@ def test_all_41_source_groups_have_explicit_executable_bindings():
     suites = standard_suites()
     assert len(suites) == 41
     assert Counter(s.customer for s in suites) == {"UAES": 19, "理想": 17, "蔚来": 5}
-    assert {s.suite_key for s in suites} == {f"{p.customer}:{p.entry_id}" for p in customer_presets()}
+    # NIO N06–N17 were added as company leaves only; they have no historical carrier.
+    assert {s.suite_key for s in suites} == {f"{p.customer}:{p.entry_id}" for p in customer_presets() if not (p.customer == "蔚来" and p.entry_id > "N05")}
     for suite in suites:
         rules = json.loads(suite.files["rules.json"])
         assert "rule_profile" not in rules
@@ -43,8 +44,8 @@ def test_directory_u08_does_not_replace_or_fall_back_from_the_legacy_carrier():
     legacy = [suite for suite in standard_suites() if suite.suite_key == "UAES:U08"]
     directory = [suite for suite in predefined_directory_suites() if suite.suite_key == "UAES:U08"]
     assert len(legacy) == len(directory) == 1
-    assert legacy[0].source_path != "v5/UAES/U08"
-    assert directory[0].source_path == "v5/UAES/U08"
+    assert legacy[0].source_path != "UAES/U08"
+    assert directory[0].source_path == "UAES/U08"
     assert b"audit.checkers.v4" in legacy[0].files["checker.py"]
     assert b"audit.checkers.v4" not in directory[0].files["checker.py"]
     assert b"audit.checkers.v3" not in directory[0].files["checker.py"]
@@ -320,6 +321,6 @@ def test_removed_root_reexports_stay_absent_and_version_packages_remain():
     )
     for name in removed:
         assert importlib.util.find_spec(f"audit.checkers.{name}") is None
-    for version in ("v2", "v3", "v4", "v5"):
+    for version in ("v2", "v3", "v4"):
         assert importlib.util.find_spec(f"audit.checkers.{version}") is not None
         importlib.import_module(f"audit.checkers.{version}")

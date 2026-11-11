@@ -43,7 +43,7 @@ def _resolved(files: dict[str, bytes], *, tenant_id: str | None, suite_key: str 
 def test_partial_official_directory_cannot_be_forced_into_the_active_head():
     from audit.standard_suites import predefined_directory_suites, standard_suites
 
-    directory = next(suite for suite in predefined_directory_suites() if suite.source_path == "v5/UAES/U08")
+    directory = next(suite for suite in predefined_directory_suites() if suite.source_path == "UAES/U08")
     files = dict(directory.files)
     # The policy concerns a partial candidate, independently of the shipped
     # leaf's current implementation coverage.

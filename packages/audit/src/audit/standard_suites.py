@@ -4,8 +4,8 @@ The imports below identify library implementations, not runtime routing tiers.
 Unsupported carriers never fall through to another customer's/general checker.
 Templates are provenance references only: no customer's originals are published.
 
-Directory leaves under ``checkers/vN/<customer>/<group>`` are a separate source
-identity (``v5/UAES/U08``). They are not merged into ``standard_suites()``:
+Directory leaves under ``checkers/<customer>/<group>`` are a separate source
+identity (``UAES/U08``). They are not merged into ``standard_suites()``:
 that tuple stays the historical 41 carrier artifacts, looked up by business
 ``suite_key``. A missing leaf is an assembly error, never a legacy carrier.
 """
@@ -98,14 +98,12 @@ def source_title(suite: StandardSuite) -> str:
 def validate_source_identity(path: str, rules: Mapping[str, Any]) -> None:
     """Business metadata may agree with a path, but cannot replace its identity."""
     parts = path.split("/")
-    if len(parts) != 3 or _VERSION_DIRECTORY.fullmatch(parts[0]) is None:
+    if len(parts) != 2 or _VERSION_DIRECTORY.fullmatch(parts[0]) is not None:
         raise ValueError("predefined_invalid_name")
-    version, customer, group = parts
+    customer, group = parts
     if "customers" in rules and rules["customers"] != [customer]:
         raise ValueError("predefined_identity_conflict")
     if "preset_key" in rules and rules["preset_key"] != group:
-        raise ValueError("predefined_identity_conflict")
-    if "rule_profile" in rules and rules["rule_profile"] != version:
         raise ValueError("predefined_identity_conflict")
 
 
@@ -126,7 +124,7 @@ def _class_name(cls: type[Any]) -> str:
     return f"{cls.__module__}:{cls.__name__}"
 
 
-def _carriers(customer: str, entry: str) -> dict[str, str]:
+def _carriers(customer: str, entry: str) -> dict[str, str] | None:
     from audit.checkers.v4 import li_auto, uaes
     from audit.checkers.v4.nio.control_plan import NioControlPlanAgent
     from audit.checkers.v4.nio.measurement import NioMeasurementAgent
@@ -144,6 +142,9 @@ def _carriers(customer: str, entry: str) -> dict[str, str]:
                 carriers[extension] = _class_name(classes[entry])
         return carriers
     nio_classes = {"N01": NioMeasurementAgent, "N02": NioPfmeaAgent, "N03": NioControlPlanAgent, "N04": NioSpecialCharacteristicsAgent, "N05": NioProcessFlowAgent}
+    # Later NIO entries exist only as company leaves; they have no historical carrier.
+    if entry not in nio_classes:
+        return None
     return {extension: _class_name(nio_classes[entry]) for extension in (".xlsx", ".xls", ".xlsm", ".pdf")}
 
 
@@ -157,8 +158,10 @@ def standard_suites() -> tuple[StandardSuite, ...]:
     result = []
     for preset in customer_presets():
         key = f"{preset.customer}:{preset.entry_id}"
-        methods = preset_source_bindings(preset, checker_profile="v4")
         carriers = _carriers(preset.customer, preset.entry_id)
+        if carriers is None:
+            continue
+        methods = preset_source_bindings(preset, checker_profile="v4")
         # Binding identities are independent of the declaration's position/name.
         entrypoints = {clause: "checker:check" for clause in methods}
         resources = {"carriers": carriers, "methods": methods}
@@ -193,8 +196,8 @@ def library_revision() -> str:
 
     Explicit historical replay and from-scratch reference can still run
     ``checkers/v2``, ``v3``, and ``v4``, so those sources stay in this hash.
-    New audits do not select those carriers. ``checkers/v5`` and later directory
-    leaves stay out; a leaf's identity is ``checker_digest``. A change here
+    New audits do not select those carriers. Company directory leaves
+    (``checkers/<customer>/<group>``) stay out; a leaf's identity is ``checker_digest``. A change here
     makes ``ValidationRecord.samples_not_rerun`` true.
     """
     import documents
@@ -203,8 +206,8 @@ def library_revision() -> str:
     return hash_library((("audit", root), ("documents", Path(documents.__file__).parent)))
 
 
-# New predefined checkers are files on disk, not entries in a customer registry.
-# A version directory that is already a Python package is not a directory leaf.
+# Predefined checkers are files on disk, grouped by customer, not entries in a registry.
+# ``v2``/``v3``/``v4`` are the historical Python packages stored programs still import.
 _CHECKERS_ROOT = Path(__file__).resolve().parent / "checkers"
 _VERSION_DIRECTORY = re.compile(r"^v[0-9]+$")
 
@@ -232,11 +235,9 @@ def _counts_toward_library(package: str, directory: Path, path: Path) -> bool:
     parts = path.relative_to(directory).parts
     if len(parts) < 2 or parts[0] != "checkers":
         return True
-    # v5+ directory leaves are outside the public fingerprint. v2/v3/v4 stay
-    # in because explicit historical replay can still execute those packages.
-    if _VERSION_DIRECTORY.fullmatch(parts[1]) is None:
-        return True
-    return int(parts[1][1:]) < 5
+    # Company leaves are outside the public fingerprint. v2/v3/v4 stay in
+    # because explicit historical replay can still execute those packages.
+    return len(parts) == 2 or _VERSION_DIRECTORY.fullmatch(parts[1]) is not None
 
 
 _LEAF_FILES = frozenset({"checker.py", "rules.json", "resources.py", "appendix.json", "templates.json", "tests.json"})
@@ -251,46 +252,41 @@ def predefined_directory_suites() -> tuple[StandardSuite, ...]:
 
 
 def load_predefined_checkers(root: Path | None = None) -> tuple[StandardSuite, ...]:
-    """Read ``v<digits>/<customer>/<group>`` leaves. Do not import or execute them.
+    """Read ``<customer>/<group>`` leaves. Do not import or execute them.
 
-    Version directories that are already Python packages stay on their existing
+    The historical ``v2``/``v3``/``v4`` Python packages stay on their existing
     loader. Any other broken, escaping, or unbound leaf fails; nothing is filled
-    from another version.
+    from another customer or package.
     """
     base = (root or _CHECKERS_ROOT).resolve()
     if not base.is_dir():
         raise ValueError("predefined_root_missing")
     suites: list[StandardSuite] = []
     seen: set[Path] = set()
-    for version in _entries(base):
-        if not _VERSION_DIRECTORY.fullmatch(version.name):
+    for customer in _entries(base):
+        if customer.name == "__init__.py" and customer.is_file() and not customer.is_symlink():
             continue
-        _inside(version, base)
-        if not version.is_dir():
+        _component(customer.name)
+        _inside(customer, base)
+        if not customer.is_dir():
             raise ValueError("predefined_unknown_asset")
-        if _legacy_version_package(version):
-            continue
-        customers = _entries(version)
-        if not customers:
+        if _VERSION_DIRECTORY.fullmatch(customer.name):
+            if _legacy_version_package(customer):
+                continue
+            raise ValueError("predefined_invalid_name")
+        groups = _entries(customer)
+        if not groups:
             raise ValueError("predefined_missing_leaf_file")
-        for customer in customers:
-            _component(customer.name)
-            _inside(customer, base)
-            if not customer.is_dir():
+        for group in groups:
+            _component(group.name)
+            _inside(group, base)
+            if not group.is_dir():
                 raise ValueError("predefined_unknown_asset")
-            groups = _entries(customer)
-            if not groups:
-                raise ValueError("predefined_missing_leaf_file")
-            for group in groups:
-                _component(group.name)
-                _inside(group, base)
-                if not group.is_dir():
-                    raise ValueError("predefined_unknown_asset")
-                real = group.resolve()
-                if real in seen:
-                    raise ValueError("predefined_duplicate_path")
-                seen.add(real)
-                suites.append(_load_leaf(base, version.name, customer.name, group))
+            real = group.resolve()
+            if real in seen:
+                raise ValueError("predefined_duplicate_path")
+            seen.add(real)
+            suites.append(_load_leaf(base, customer.name, group))
     return tuple(sorted(suites, key=lambda suite: suite.source_path.encode("utf-8")))
 
 
@@ -354,7 +350,7 @@ def _component(name: str) -> None:
         raise ValueError("predefined_invalid_name")
 
 
-def _load_leaf(root: Path, version: str, customer: str, group: Path) -> StandardSuite:
+def _load_leaf(root: Path, customer: str, group: Path) -> StandardSuite:
     files: dict[str, bytes] = {}
     for child in _entries(group):
         _inside(child, root)
@@ -372,7 +368,7 @@ def _load_leaf(root: Path, version: str, customer: str, group: Path) -> Standard
     if "resources.py" in files:
         _validate_python(files["resources.py"], "predefined_resources_syntax")
     rules = _json_object(files["rules.json"])
-    validate_source_identity(f"{version}/{customer}/{group.name}", rules)
+    validate_source_identity(f"{customer}/{group.name}", rules)
     for name in _OPTIONAL_JSON:
         if name in files:
             _json_list(files[name])
@@ -392,7 +388,7 @@ def _load_leaf(root: Path, version: str, customer: str, group: Path) -> Standard
         _related_keys(rules, suite_key),
         MappingProxyType(dict(sorted(files.items()))),
         MappingProxyType(binding),
-        f"{version}/{customer}/{group.name}",
+        f"{customer}/{group.name}",
     )
 
 

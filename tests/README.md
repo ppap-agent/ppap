@@ -180,7 +180,7 @@ docker buildx bake worker
 docker build \
   --build-arg PPAP_WORKER_IMAGE="ppap-worker:${PPAP_BUILD_SHA}" \
   --build-context psw-tests=tests \
-  --build-context psw-assets="assets/V2.0测试/模拟测试文件V2-01/16-零件提交保证书" \
+  --build-context psw-assets="assets/理想/样本/模拟测试文件V2-01/16-零件提交保证书" \
   -f tests/corpus/Dockerfile.psw \
   -t "ppap-psw-test:${PPAP_BUILD_SHA}" \
   .
