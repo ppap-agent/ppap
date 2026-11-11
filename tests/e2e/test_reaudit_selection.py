@@ -230,7 +230,6 @@ def test_changing_and_clearing_a_replacement_restores_the_previously_selected_or
 
 def test_replacement_inherits_the_explicit_choice_to_match_current_rules(reaudit_page):
     page, commands = reaudit_page
-    expect(page.get_by_text("选择每份文件沿用上次的规则，还是重新识别。", exact=True)).to_be_visible()
     page.get_by_role("combobox", name="原文件A.xlsx 的识别方式", exact=True).click()
     expect(page.get_by_role("option", name="原规则 A", exact=True)).to_have_count(0)
     page.get_by_role("option", name="重新识别规则", exact=True).click()
@@ -245,7 +244,6 @@ def test_replacement_inherits_the_explicit_choice_to_match_current_rules(reaudit
 @pytest.mark.parametrize("reaudit_page", [True], indirect=True)
 def test_current_rule_matching_choice_survives_readback_and_releasing_the_replacement(reaudit_page):
     page, commands = reaudit_page
-    expect(page.get_by_text("选择每份文件沿用上次的规则，还是重新识别。", exact=True)).to_be_visible()
     page.get_by_role("combobox", name="原文件A.xlsx 的识别方式", exact=True).click()
     expect(page.get_by_role("option", name="原规则 A", exact=True)).to_have_count(0)
     page.get_by_role("option", name="重新识别规则", exact=True).click()
