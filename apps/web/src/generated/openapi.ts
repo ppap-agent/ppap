@@ -1868,6 +1868,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/rules/{rule_version_id}/formalization-carry-overs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Carry Over Formalizations */
+        post: operations["carry_over_formalizations_rules__rule_version_id__formalization_carry_overs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/rules/{rule_version_id}/formalization-suite-candidates": {
         parameters: {
             query?: never;
@@ -1930,6 +1947,23 @@ export interface paths {
         put?: never;
         /** Confirm Formalization */
         post: operations["confirm_formalization_rules__rule_version_id__formalizations__clause_id__confirmations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rules/{rule_version_id}/formalizations/{clause_id}/confirmations/{confirmation_id}/revocation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Revoke Formalization */
+        post: operations["revoke_formalization_rules__rule_version_id__formalizations__clause_id__confirmations__confirmation_id__revocation_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3538,6 +3572,18 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** CarryOverCreate */
+        CarryOverCreate: {
+            /** Operation Id */
+            operation_id: string;
+        };
+        /** CarryOverReceipt */
+        CarryOverReceipt: {
+            /** Carried */
+            carried: string[];
+            /** Rule Version Id */
+            rule_version_id: string;
+        };
         /** CaseContext */
         CaseContext: {
             /**
@@ -4441,6 +4487,11 @@ export interface components {
         };
         /** FormalizationList */
         FormalizationList: {
+            /**
+             * Carryable
+             * @default []
+             */
+            carryable: string[];
             /** Clauses */
             clauses: {
                 [key: string]: unknown;
@@ -10345,6 +10396,77 @@ export interface operations {
             };
         };
     };
+    carry_over_formalizations_rules__rule_version_id__formalization_carry_overs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                rule_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CarryOverCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CarryOverReceipt"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FormalizationProblem"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FormalizationProblem"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FormalizationProblem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FormalizationProblem"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FormalizationProblem"];
+                };
+            };
+        };
+    };
     materialize_formalization_rules__rule_version_id__formalization_suite_candidates_post: {
         parameters: {
             query?: never;
@@ -10551,6 +10673,75 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfirmationReceipt"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FormalizationProblem"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FormalizationProblem"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FormalizationProblem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FormalizationProblem"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FormalizationProblem"];
+                };
+            };
+        };
+    };
+    revoke_formalization_rules__rule_version_id__formalizations__clause_id__confirmations__confirmation_id__revocation_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                clause_id: string;
+                confirmation_id: string;
+                rule_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

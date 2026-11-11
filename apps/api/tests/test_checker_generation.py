@@ -213,13 +213,13 @@ def test_audits_are_claimed_before_background_preparation_and_preparation_is_cap
     f = prepare(auth_store_factory)
     tenant = f.alice.tenant_id
     with f.store._conn() as conn:
-        for _ in range(3):
+        for _ in range(5):
             conn.execute("INSERT INTO engine.jobs(id,tenant_id,kind,payload,status,created_at) VALUES (%s,%s,'rule_formalization','{}','queued',now() - interval '1 minute')", (uuid4(), tenant))
         audit = uuid4()
         conn.execute("INSERT INTO engine.jobs(id,tenant_id,kind,payload,status) VALUES (%s,%s,'report_pdf','{}','queued')", (audit, tenant))
     first = f.worker.claim_job("w1")
     assert str(first.id) == str(audit)
-    assert f.worker.claim_job("w2").kind == "rule_formalization"
-    assert f.worker.claim_job("w3").kind == "rule_formalization"
-    # A third preparation for the same tenant waits while two are running.
-    assert f.worker.claim_job("w4") is None
+    for index in range(4):
+        assert f.worker.claim_job(f"w{index + 2}").kind == "rule_formalization"
+    # A fifth check-point job for the same tenant waits while four are running.
+    assert f.worker.claim_job("w6") is None

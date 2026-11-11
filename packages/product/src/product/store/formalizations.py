@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 
 from documents.model_access import ModelUnavailable
 from psycopg.rows import dict_row
@@ -33,6 +33,10 @@ def _require_clause_text(clause: dict) -> None:
     text = clause.get("rule_to_check")
     if not isinstance(text, str) or not text.strip():
         raise ValueError("invalid_formalization")
+
+
+# Derives each carried confirmation from its request, so a replay adds nothing.
+_CARRY = UUID("3c1f9d7e-52a8-4b6e-9f0d-7a2e6c4b8d15")
 
 
 def source_binding(rule: dict, clause_id: str) -> tuple[dict, str]:
@@ -106,7 +110,119 @@ class FormalizationStore:
             current = confirmed.get(str(clause["id"]))
             _bound, digest = source_binding(rule, str(clause["id"]))
             clauses.append(_summary(str(clause["id"]), latest, current, digest))
-        return {"rule_version_id": rule["id"], "clauses": clauses}
+        with self.store._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+            carryable = [clause_id for clause_id, _row in self._carryable(cur, principal, rule, grouped)]
+        return {"rule_version_id": rule["id"], "clauses": clauses, "carryable": carryable}
+
+    def _carryable(self, cur, principal, rule: dict, grouped: dict) -> list[tuple[str, dict]]:
+        """Clauses this version states exactly as its predecessor did, whose tidied text was confirmed there."""
+        from product.formalization.text import TEXT_PROFILE
+        from product.rules import clause_source_checked
+
+        previous = self.store.get_rule(principal.tenant_id, str(rule["predecessor_id"])) if rule.get("predecessor_id") else None
+        if previous is None:
+            return []
+        keys = ("type", "customers", "models", "parts")
+        body, before = rule.get("body") or {}, previous.get("body") or {}
+        if any((body.get(key) or None) != (before.get(key) or None) for key in keys):
+            return []
+        fields = ("id", "category", "priority", "rule_to_check", "type_of_rule")
+        earlier = {str(item.get("id")): {key: item.get(key) for key in fields} for item in before.get("rules") or []}
+        cur.execute(
+            """SELECT f.*, c.id AS confirmation_id FROM product.rule_formalization_confirmations c
+               JOIN product.rule_formalizations f ON f.id = c.candidate_id
+               WHERE c.tenant_id=%s AND c.rule_version_id=%s AND c.current AND f.formal_profile=%s""",
+            (principal.tenant_id, previous["id"], TEXT_PROFILE),
+        )
+        confirmed = {row["clause_id"]: row for row in cur.fetchall()}
+        result = []
+        for clause in body.get("rules") or []:
+            clause_id = str(clause.get("id"))
+            same = earlier.get(clause_id) == {key: clause.get(key) for key in fields}
+            if same and clause_id in confirmed and not grouped.get(clause_id) and clause_source_checked(rule.get("case_context"), clause_id) is not False:
+                result.append((clause_id, confirmed[clause_id]))
+        return result
+
+    def carry_over(self, principal, rule_version_id: str, body: dict) -> dict:
+        """Confirm, in this version, the tidied text the person confirmed for the same unchanged clauses before."""
+        from audit.formal_digest import display_digest, formal_digest
+
+        rule = self._visible_rule(principal, rule_version_id)
+        operation_id = _id(body["operation_id"])
+        carried = []
+        with self.store._conn() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+            _member(conn, principal)
+            _lock(conn, f"rule-formalization-carry:{principal.tenant_id}:{rule['id']}")
+            cur.execute(
+                "SELECT clause_id FROM product.rule_formalizations WHERE tenant_id=%s AND rule_version_id=%s",
+                (principal.tenant_id, rule["id"]),
+            )
+            grouped: dict[str, list] = {}
+            for row in cur.fetchall():
+                grouped.setdefault(row["clause_id"], []).append(row)
+            for index, (clause_id, previous) in enumerate(self._carryable(cur, principal, rule, grouped)):
+                _clause, digest = source_binding(rule, clause_id)
+                spec = {
+                    "format_version": "1",
+                    "formal_profile": previous["formal_profile"],
+                    "owl_content": previous["owl_content"],
+                    "clif_content": previous["clif_content"],
+                    "vocabulary": previous["vocabulary"],
+                    "source_rule_version_id": str(rule["id"]),
+                    "clause_id": clause_id,
+                    "obligations": previous["obligations"],
+                    "unresolved": previous["unresolved"],
+                    "assumptions": previous["assumptions"],
+                }
+                formal = formal_digest(spec)
+                checked = {
+                    "spec": spec,
+                    "completeness": previous["completeness"],
+                    "cnl_text": previous["cnl_text"],
+                    "cnl_renderer_version": previous["cnl_renderer_version"],
+                    "formal_digest": formal,
+                    "display_digest": display_digest(previous["cnl_text"], formal, previous["unresolved"], previous["completeness"], renderer=previous["cnl_renderer_version"]),
+                }
+                step = uuid5(_CARRY, f"{operation_id}:{clause_id}")
+                row = {
+                    "tenant_id": principal.tenant_id,
+                    "rule_version_id": rule["id"],
+                    "clause_id": clause_id,
+                    "based_on_candidate_id": None,
+                    "initiating_user_id": principal.user_id,
+                    "operation_id": None,
+                }
+                candidate_id = self._insert_candidate(cur, row, checked, digest)
+                cur.execute(
+                    """INSERT INTO product.rule_formalization_confirmations(
+                           id,operation_id,tenant_id,rule_version_id,clause_id,candidate_id,formalization_revision,
+                           source_rule_digest,display_digest,confirmed_by)
+                       VALUES (%s,%s,%s,%s,%s,%s,1,%s,%s,%s)""",
+                    (uuid4(), step, principal.tenant_id, rule["id"], clause_id, candidate_id, digest, checked["display_digest"], principal.user_id),
+                )
+                carried.append(clause_id)
+        return {"rule_version_id": str(rule["id"]), "carried": carried}
+
+    def revoke(self, principal, rule_version_id: str, clause_id: str, confirmation_id: str) -> dict:
+        """Withdraw the current confirmation. The record stays as history; the clause waits to be confirmed again."""
+        rule = self._visible_rule(principal, rule_version_id)
+        with self.store._conn() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+            _member(conn, principal)
+            _lock(conn, f"rule-formalization:{principal.tenant_id}:{rule['id']}:{clause_id}")
+            cur.execute(
+                "SELECT * FROM product.rule_formalization_confirmations WHERE id=%s AND tenant_id=%s AND rule_version_id=%s AND clause_id=%s FOR UPDATE",
+                (_id(confirmation_id), principal.tenant_id, rule["id"], clause_id),
+            )
+            row = cur.fetchone()
+            if row is None:
+                raise KeyError("access_denied")
+            if row["current"]:
+                cur.execute(
+                    "UPDATE product.rule_formalization_confirmations SET current=false, revoked_by=%s, revoked_at=now() WHERE id=%s RETURNING *",
+                    (principal.user_id, row["id"]),
+                )
+                row = cur.fetchone()
+            return _confirmation(row)
 
     def read_clause(self, principal, rule_version_id: str, clause_id: str) -> dict:
         rule = self._visible_rule(principal, rule_version_id)
@@ -653,6 +769,7 @@ def _confirmation(row: dict) -> dict:
         "confirmed_by": str(row["confirmed_by"]),
         "confirmed_at": row["confirmed_at"].isoformat(),
         "current": row["current"],
+        **({"revoked_at": row["revoked_at"].isoformat()} if row.get("revoked_at") else {}),
     }
 
 

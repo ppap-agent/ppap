@@ -115,6 +115,17 @@ class FormalizationList(BaseModel):
     model_config = ConfigDict(extra="allow")
     rule_version_id: str
     clauses: list[dict]
+    carryable: list[str] = []
+
+
+class CarryOverCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    operation_id: str
+
+
+class CarryOverReceipt(BaseModel):
+    rule_version_id: str
+    carried: list[str]
 
 
 class ConfirmationReceipt(BaseModel):
@@ -227,6 +238,26 @@ def register_formalization_routes(app: FastAPI, store, principal_of):
         try:
             receipt = formalizations.materialize_candidate(current, rule_version_id, body.model_dump(mode="json"))
             return JSONResponse(receipt, status_code=201, headers={"Cache-Control": "private, no-store"})
+        except (KeyError, ValueError, ModelUnavailable) as exc:
+            return fail(exc)
+
+    @app.post("/rules/{rule_version_id}/formalization-carry-overs", response_model=CarryOverReceipt, responses=_WRITE_PROBLEMS)
+    def carry_over_formalizations(rule_version_id: str, request: Request, body: CarryOverCreate):
+        current, error = principal(request)
+        if error:
+            return error
+        try:
+            return JSONResponse(formalizations.carry_over(current, rule_version_id, body.model_dump(mode="json")), headers={"Cache-Control": "private, no-store"})
+        except (KeyError, ValueError, ModelUnavailable) as exc:
+            return fail(exc)
+
+    @app.post("/rules/{rule_version_id}/formalizations/{clause_id}/confirmations/{confirmation_id}/revocation", response_model=ConfirmationReceipt, responses=_WRITE_PROBLEMS)
+    def revoke_formalization(rule_version_id: str, clause_id: str, confirmation_id: str, request: Request):
+        current, error = principal(request)
+        if error:
+            return error
+        try:
+            return JSONResponse(formalizations.revoke(current, rule_version_id, clause_id, confirmation_id), headers={"Cache-Control": "private, no-store"})
         except (KeyError, ValueError, ModelUnavailable) as exc:
             return fail(exc)
 

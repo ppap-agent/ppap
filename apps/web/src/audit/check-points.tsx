@@ -131,6 +131,7 @@ function CheckPoints({ruleVersionId, action, onStarted, onCancel, onAdopt}: {rul
   const [attempt, setAttempt] = useState(0)
   const [states, setStates] = useState<Record<string, string>>({})
   const [prepare, setPrepare] = useState(0)
+  const [carryable, setCarryable] = useState<string[]>([]), [carrying, setCarrying] = useState(false)
   const [example, setExample] = useState<{name: string; id: string} | null>(null)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
@@ -140,14 +141,22 @@ function CheckPoints({ruleVersionId, action, onStarted, onCancel, onAdopt}: {rul
   useEffect(() => {
     const controller = new AbortController()
     setClauses(null); setReadError(''); setStates({})
-    void request<{clauses: {clause_id: string}[]}>(`/rules/${ruleVersionId}/formalizations`, 'GET', undefined, controller.signal)
-      .then(value => {if (!controller.signal.aborted) setClauses(value.clauses.map(item => item.clause_id))})
+    void request<{clauses: {clause_id: string}[]; carryable?: string[]}>(`/rules/${ruleVersionId}/formalizations`, 'GET', undefined, controller.signal)
+      .then(value => {if (!controller.signal.aborted) {setClauses(value.clauses.map(item => item.clause_id)); setCarryable(value.carryable ?? [])}})
       .catch(cause => {if (!controller.signal.aborted) setReadError(message(cause))})
     return () => controller.abort()
   }, [ruleVersionId, attempt])
   const confirmed = clauses?.filter(id => states[id] === 'confirmed').length ?? 0
   const total = clauses?.length ?? 0
   const waiting = clauses?.filter(id => unprepared(states[id])).length ?? 0
+  /** Unchanged clauses confirmed in the previous version are confirmed here in one step; each can still be withdrawn. */
+  async function carryOver() {
+    setCarrying(true); setError('')
+    try {
+      await request(`/rules/${ruleVersionId}/formalization-carry-overs`, 'POST', {operation_id: crypto.randomUUID()})
+      setAttempt(value => value + 1)
+    } catch (cause) {setError(message(cause))} finally {setCarrying(false)}
+  }
   async function upload(file: File) {
     setUploading(true); setError('')
     try {
@@ -178,6 +187,7 @@ function CheckPoints({ruleVersionId, action, onStarted, onCancel, onAdopt}: {rul
     </header>
     {readError && <div role="alert" className="flex flex-wrap items-center gap-3 text-sm"><span>暂时读不到。{readError}</span><Button variant="outline" size="sm" onClick={() => setAttempt(value => value + 1)}>重新读取</Button></div>}
     {!clauses && !readError && <Skeleton className="h-32 w-full"/>}
+    {carryable.length > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3 text-sm"><span>上一版确认过的 {carryable.length} 条，原文没变。</span><Button disabled={carrying} onClick={() => void carryOver()}>沿用这 {carryable.length} 条</Button></div>}
     {waiting > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3 text-sm"><span>{waiting} 条还没整理。</span><Button onClick={() => setPrepare(value => value + 1)}>开始整理</Button></div>}
     {clauses?.map((clauseId, index) => <ClauseCheckPoints key={`${ruleVersionId}:${clauseId}`} number={index + 1} ruleVersionId={ruleVersionId} clauseId={clauseId} prepare={prepare} onAdopt={onAdopt}
       onState={state => setStates(previous => previous[clauseId] === state ? previous : {...previous, [clauseId]: state})}/>)}
@@ -314,6 +324,17 @@ function ClauseCheckPoints({number, ruleVersionId, clauseId, prepare, onAdopt, o
   }
   const lines = candidate ? checkPointLines(candidate.cnl_text, (candidate.obligations as {id?: unknown}[]).flatMap(item => typeof item?.id === 'string' ? [item.id] : [])) : []
   // Ambiguities the original leaves open are listed apart from the points; nothing resolves them for the person.
+  async function revoke() {
+    const current = detail?.confirmations.find(item => item.current)
+    if (!current || !begin()) return
+    const origin = {ruleVersionId, clauseId}
+    setError('')
+    try {
+      await request(`/rules/${ruleVersionId}/formalizations/${encodeURIComponent(clauseId)}/confirmations/${current.id}/revocation`, 'POST')
+      if (stillShown(origin)) setPending(crypto.randomUUID())
+    } catch (cause) {if (stillShown(origin)) setError(message(cause))}
+    finally {finish()}
+  }
   const points = lines.filter(line => !line.startsWith('待澄清：')), review = lines.filter(line => line.startsWith('待澄清：')).map(line => line.slice('待澄清：'.length))
   const suggestion = ((candidate?.assumptions ?? []) as {kind?: unknown; text?: unknown}[]).find(item => item?.kind === 'suggested_clause' && typeof item.text === 'string')?.text as string | undefined
   const clauseText = detail?.clause_text ?? ''
@@ -361,8 +382,8 @@ function ClauseCheckPoints({number, ruleVersionId, clauseId, prepare, onAdopt, o
         <div className="flex flex-wrap items-center justify-between gap-2">
           {!editing && !incomplete ? <Button variant="ghost" size="sm" disabled={locked} onClick={() => setEditing(true)}>写得不对？</Button> : <span/>}
           <div className="flex flex-wrap gap-2">
-            {review.length > 0 && suggestion && !confirmed && <Button variant="outline" onClick={() => onAdopt(clauseId, suggestion, review.join('；').slice(0, 300))}>用建议改规则</Button>}
-            {confirmed ? <Button variant="outline" onClick={() => setReopened(false)}>收起</Button> : <Button disabled={locked || incomplete || candidate.unresolved.length > 0} onClick={() => void confirm()}>{review.length ? '保持原文，确认' : '确认'}</Button>}
+            {review.length > 0 && suggestion && <Button variant="outline" onClick={() => onAdopt(clauseId, suggestion, review.join('；').slice(0, 300))}>用建议改规则</Button>}
+            {confirmed ? <><Button variant="outline" disabled={locked} onClick={() => void revoke()}>撤销确认</Button><Button variant="outline" onClick={() => setReopened(false)}>收起</Button></> : <Button disabled={locked || incomplete || candidate.unresolved.length > 0} onClick={() => void confirm()}>{review.length ? '保持原文，确认' : '确认'}</Button>}
           </div>
         </div>
       </footer>

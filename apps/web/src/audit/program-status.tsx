@@ -4,6 +4,7 @@ import {Badge} from '../components/ui/badge'
 import {Button} from '../components/ui/button'
 import {Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle} from '../components/ui/dialog'
 import {message} from '../journey/remote'
+import {displayTime} from '../helpers'
 import {nativeCheckerReleaseAdapter, type CheckerActive, type CheckerRevision} from './checker-contract'
 
 type Related = (suiteKey: string) => {label: string; open: () => void} | undefined
@@ -28,7 +29,8 @@ export function ProgramStatus({suiteKey, offered, onUpdate, related, extra, onCh
   const [offer, setOffer] = useState<CheckerRevision | null>(null)
   const [readError, setReadError] = useState('')
   const [error, setError] = useState('')
-  const [confirming, setConfirming] = useState(false)
+  // The version being adopted: the newer one on offer, or an earlier one the person goes back to.
+  const [choice, setChoice] = useState<CheckerRevision | null>(null)
   const [busy, setBusy] = useState(false)
   const [attempt, setAttempt] = useState(0)
   // A lost response is read back with the same operation; only a refusal frees it for a new one.
@@ -51,15 +53,23 @@ export function ProgramStatus({suiteKey, offered, onUpdate, related, extra, onCh
   const verified = offer?.validation.verified === true
   const waiting = offer?.unadopted_related_suite_keys ?? []
   const inUse = Boolean(active.current_revision_id)
+  const earlier = [...new Map(active.history.filter(row => row.revision_id !== active.current_revision_id).map(row => [row.revision_id, row])).values()].slice(0, 5)
+  const confirming = Boolean(choice)
+  const back = choice !== null && choice.id !== offer?.id
+  async function pick(revisionId: string) {
+    setError('')
+    try {setChoice(await request<CheckerRevision>(`/suite-revisions/${encodeURIComponent(revisionId)}`))} catch (cause) {setError(message(cause))}
+  }
   async function adopt() {
-    if (!active || !offer || busy) return
+    if (!active || !choice || busy) return
+    const chosenVerified = choice.validation.verified === true
     setBusy(true); setError('')
     const operationId = pending.current ?? crypto.randomUUID()
     pending.current = operationId
     try {
-      await nativeCheckerReleaseAdapter.adopt(suiteKey, {revision_id: offer.id, expected_revision: active.revision, operation_id: operationId, force_unverified: !verified})
+      await nativeCheckerReleaseAdapter.adopt(suiteKey, {revision_id: choice.id, expected_revision: active.revision, operation_id: operationId, force_unverified: !chosenVerified})
       pending.current = null
-      setConfirming(false)
+      setChoice(null)
       setAttempt(value => value + 1)
       onChanged?.()
     } catch (cause) {
@@ -74,7 +84,7 @@ export function ProgramStatus({suiteKey, offered, onUpdate, related, extra, onCh
   }
   const changed = Boolean(onUpdate && active.rule_update)
   const action = offer
-    ? <Button disabled={busy || waiting.length > 0} onClick={() => {setError(''); setConfirming(true)}}>{inUse ? '采用新版本' : '采用'}</Button>
+    ? <Button disabled={busy || waiting.length > 0} onClick={() => {setError(''); setChoice(offer)}}>{inUse ? '采用新版本' : '采用'}</Button>
     : onUpdate ? <Button variant={changed ? 'default' : 'outline'} onClick={onUpdate}>更新检查程序</Button> : undefined
   return <>
     <StatusCard
@@ -90,16 +100,17 @@ export function ProgramStatus({suiteKey, offered, onUpdate, related, extra, onCh
         return target ? <Button key={key} variant="outline" size="sm" onClick={target.open}>{target.label}</Button> : <span key={key}>{key}</span>
       })}</div></div>}
       {extra}
+      {earlier.length > 0 && <details className="pt-1"><summary className="cursor-pointer text-foreground">以前的版本</summary><ul className="mt-2 space-y-1.5">{earlier.map(row => <li key={row.revision_id} className="flex flex-wrap items-center justify-between gap-2"><span>{displayTime(row.published_at)} · {row.published_by_name || '已离开的成员'}采用</span><Button variant="outline" size="sm" disabled={busy} onClick={() => void pick(row.revision_id)}>改回这个版本</Button></li>)}</ul></details>}
       {error && !confirming && <p role="alert" className="text-destructive">{error}</p>}
     </StatusCard>
-    <Dialog open={confirming} onOpenChange={open => !busy && setConfirming(open)}>
+    <Dialog open={confirming} onOpenChange={open => !busy && !open && setChoice(null)}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>采用第 {offer?.version} 版？</DialogTitle>
-          <DialogDescription>之后的审核会用这个版本，已有结果不变。{verified ? '' : '它还没验证过，结果要人工确认。'}</DialogDescription>
+          <DialogTitle>{back ? '改回' : '采用'}第 {choice?.version} 版？</DialogTitle>
+          <DialogDescription>之后的审核会用这个版本，已有结果不变。{choice?.validation.verified === true ? '' : '它还没验证过，结果要人工确认。'}</DialogDescription>
         </DialogHeader>
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-        <div className="flex justify-end gap-2"><Button variant="outline" disabled={busy} onClick={() => setConfirming(false)}>取消</Button><Button disabled={busy} onClick={() => void adopt()}>采用</Button></div>
+        <div className="flex justify-end gap-2"><Button variant="outline" disabled={busy} onClick={() => setChoice(null)}>取消</Button><Button disabled={busy} onClick={() => void adopt()}>{back ? '改回' : '采用'}</Button></div>
       </DialogContent>
     </Dialog>
   </>
