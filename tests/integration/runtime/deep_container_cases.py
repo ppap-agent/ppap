@@ -313,7 +313,7 @@ class ContainerJournalTests(unittest.TestCase):
         self.provider.request.assert_called_once()
         self.assertFalse((first / "result").exists())
         diagnostic = json.loads((first / "diagnostic.json").read_text())
-        self.assertEqual(diagnostic["usage"]["uncertain"], unknown)
+        self.assertEqual(diagnostic["usage"]["usage_known"], not unknown)
         self.assertFalse(diagnostic["usage"]["in_flight"])
         self.assertEqual(diagnostic["usage"]["completed_requests"], 0 if unknown else 1)
         self.assertEqual(diagnostic["usage"]["input_tokens"], 0 if unknown else 3)

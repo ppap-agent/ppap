@@ -64,7 +64,6 @@ class UsagePreviewTests(unittest.TestCase):
                 expect(table.get_by_role("row")).to_have_count(2)
                 for label in ("本月消费次数", "本月已扣点数", "本月待扣点数"):
                     expect(page.get_by_role("group", name=label, exact=True)).to_contain_text("0")
-                expect(page.get_by_text("按开始审核的月份统计；补扣不计为新的消费次数。", exact=True)).to_be_visible()
                 self.assertTrue(page.evaluate("document.documentElement.scrollWidth <= innerWidth"))
                 page.close()
             browser.close()

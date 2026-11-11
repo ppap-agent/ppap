@@ -427,7 +427,7 @@ def test_expiry_during_object_write_rolls_back_candidate_and_proof(auth_store_fa
     put = f.worker.objects.put_exclusive
 
     def slow_put(*args, **kwargs):
-        time.sleep(0.3)
+        time.sleep(1.0)
         return put(*args, **kwargs)
 
     monkeypatch.setattr(f.worker.objects, "put_exclusive", slow_put)

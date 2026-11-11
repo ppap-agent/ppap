@@ -116,7 +116,7 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             edit.focus()
             page.keyboard.press("Enter")
             editor = page.get_by_role("dialog", name="更正显示信息", exact=True)
-            expect(editor.get_by_role("textbox", name="客户", exact=True)).to_be_focused()
+            expect(editor.get_by_role("textbox", name="项目名称", exact=True)).to_be_focused()
             page.keyboard.press("Escape")
             expect(editor).to_have_count(0)
             expect(info).to_be_visible()

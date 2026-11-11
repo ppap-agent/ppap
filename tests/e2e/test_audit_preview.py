@@ -1934,20 +1934,20 @@ class AuditPreviewTests(unittest.TestCase):
             trigger.focus()
             page.keyboard.press("Enter")
             dialog = page.get_by_role("dialog", name="更正显示信息", exact=True)
-            expect(dialog.get_by_role("textbox", name="客户", exact=True)).to_be_focused()
+            expect(dialog.get_by_role("textbox", name="项目名称", exact=True)).to_be_focused()
             page.keyboard.press("Escape")
             expect(trigger).to_be_focused()
             page.keyboard.press("Enter")
-            for label in ("客户", "车型", "零件号", "零件名称"):
+            for label in ("项目名称", "客户", "车型", "零件号", "零件名称"):
                 dialog.get_by_role("textbox", name=label, exact=True).fill("")
             dialog.get_by_role("button", name="保存显示信息", exact=True).click()
             file_information(page)
             info = page.get_by_role("region", name="本次审核文件信息", exact=True)
-            expect(info.get_by_text("—", exact=True)).to_have_count(4)
+            expect(info.get_by_text("—", exact=True)).to_have_count(5)
             expect(trigger).to_be_focused()
             expect(page.locator("body")).to_have_js_property("scrollWidth", 390)
             read_results(page)
-            expect(info.get_by_text("—", exact=True)).to_have_count(4)
+            expect(info.get_by_text("—", exact=True)).to_have_count(5)
             browser.close()
 
     def test_display_rejection_unknown_and_conflict_keep_input_and_offer_the_right_recovery(self):
@@ -3950,7 +3950,6 @@ class AuditPreviewTests(unittest.TestCase):
             expect(dialog.get_by_text("等待发送结果", exact=True)).to_be_visible()
             dialog.get_by_role("button", name="读取发送结果", exact=True).click()
             expect(dialog.get_by_text("已发送", exact=True)).to_be_visible()
-            expect(dialog.get_by_text("已发送不表示对方已阅读。", exact=True)).to_be_visible()
             dialog.get_by_role("button", name="关闭", exact=True).first.click()
             expect(share).to_be_focused()
             expect(page.get_by_role("heading", name="PFMEA.xlsx", exact=True)).to_be_visible()

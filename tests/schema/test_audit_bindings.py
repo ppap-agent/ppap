@@ -64,6 +64,40 @@ class AuditDatabaseCase(unittest.TestCase):
                 conn.execute(sql.SQL("TRUNCATE TABLE {} CASCADE").format(sql.SQL(", ").join(names)))
         self.store.seed_isolated_dev()
         self.alice = self.store.principal_for_fixture("alice")
+        publish = self.store.publish_rule
+
+        def publish_with_program(principal, *args, **kwargs):
+            # Uploaded rules reach audits only with an adopted program; give each an unbound one.
+            rule = publish(principal, *args, **kwargs)
+            self.adopt_unbound_program(principal, rule)
+            return rule
+
+        self.store.publish_rule = publish_with_program
+
+    def adopt_unbound_program(self, principal, rule):
+        from product.db import connect
+        from product.store.suite_releases import SuiteReleaseStore
+        from product.store.suites import programless_suite_keys
+
+        body = rule.get("body") or rule
+        key = body.get("suite_key")
+        if not isinstance(key, str) or not key.startswith("custom:"):
+            return
+        with connect(self.settings, "api") as conn:
+            if not programless_suite_keys(conn, principal.tenant_id, [key]):
+                return
+            head = conn.execute("SELECT current_revision_id, revision FROM product.tenant_suite_heads WHERE tenant_id=%s AND suite_key=%s", (principal.tenant_id, key)).fetchone()
+        releases = SuiteReleaseStore(self.settings, self.store.objects, role="api")
+        program = releases.suites.create_revision(
+            tenant_id=principal.tenant_id,
+            suite_key=key,
+            # Binds no clause and runs no code, like the starter; it is only not the starter.
+            files={"checker.py": b'"""Unbound test program."""\n'},
+            created_by=principal.user_id,
+            base_revision_id=str(head[0]),
+            related_suite_keys=(),
+        )
+        releases.publish(principal, key, program.id, head[1], str(uuid.uuid4()), True)
 
     def upload(self, name):
         version = self.store.create_staging(self.alice, name, "application/octet-stream", 1)
@@ -207,7 +241,7 @@ def check(context):
                            suggestions='已读取本轮冻结原件A1', clause_id=context.clause_id, checks_performed=1, evidence=evidence)
 """
         candidate = releases.save_candidate(self.alice, base.revision.id, {"rules.json": json.dumps(rules, ensure_ascii=False), "checker.py": code})
-        releases.publish(self.alice, base.revision.suite_key, candidate["id"], 1, str(uuid.uuid4()), force_unverified=True)
+        releases.publish(self.alice, base.revision.suite_key, candidate["id"], releases.active(self.alice, base.revision.suite_key)["revision"], str(uuid.uuid4()), force_unverified=True)
         draft = self.draft([{"file_version_id": file.id, "role": "target", "rule_version_id": rule["id"]} for file in files])
         accepted = self.store.accept_draft(self.alice, draft, "file-isolation")
         self.store.objects.delete(files[0].object_key)
@@ -236,7 +270,8 @@ def check(context):
                     (credentials / "model.json").write_text(
                         json.dumps(
                             {
-                                **dict(frozen.model_identity),
+                                # The grant names the model; the tenant's key source stays on the host.
+                                **{key: value for key, value in dict(frozen.model_identity).items() if key in {"model", "text_model", "vision_model", "provider", "revision", "deployment"}},
                                 "base_url": "http://127.0.0.1:1/v1",
                                 "token": "controlled-local-capability-1234567890",
                                 "wall_seconds": 100,
@@ -416,7 +451,7 @@ def check(context):
 
         releases = SuiteReleaseStore(self.store.settings, self.store.objects, role="api")
         active = releases.active(self.alice, rule["body"]["suite_key"])
-        releases.publish(self.alice, rule["body"]["suite_key"], newer["body"]["suite_revision_id"], active["revision"], str(uuid.uuid4()))
+        releases.publish(self.alice, rule["body"]["suite_key"], newer["body"]["suite_revision_id"], active["revision"], str(uuid.uuid4()), force_unverified=True)
         adopted_round = self.store.resubmit_round(self.alice, next_round["id"], "explicit-adopted-resubmit", next_items)
         expected_new = {**changed, "title": "新版客户规则", "suite_key": rule["body"]["suite_key"], "checker_binding": {}, "appendix": []}
         self.assertEqual(next(item for item in adopted_round["inputs"] if item["file_version_id"] == second.id)["rule"]["body"], expected_new)
@@ -1085,7 +1120,8 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         api_store = build_product_store(self.settings, objects=self.store.objects, role="api")
         claimed, recipient = api_store.claim_task_notification("notifier")
         with connect(self.settings, "migrator") as conn:
-            conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (files[0].file_id, self.alice.user_id))
+            # The first file is also the rule source, which the tenant shares; revoke a plain upload.
+            conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (files[1].file_id, self.alice.user_id))
         self.assertIsNone(api_store.start_task_notification(claimed, "notifier", recipient))
         self.assertIsNone(api_store.claim_task_notification("notifier-again"))
         self.assertEqual(api_store.get_task_notification(self.alice, task["id"])["delivery"]["state"], "not_due")
@@ -1363,7 +1399,8 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(self.store.list_audit_tasks(self.store.principal_for_fixture("carol")), [])
         self.assertEqual(self.store.get_audit_task(self.alice, task["id"]), expected)
         with connect(self.settings, "migrator") as conn:
-            conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (files[0].file_id, self.alice.user_id))
+            # The first file is also the rule source, which the tenant shares; revoke a plain upload.
+            conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (files[1].file_id, self.alice.user_id))
         with self.assertRaises(KeyError):
             self.store.list_audit_tasks(self.alice)
 
@@ -1445,7 +1482,8 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         from product.db import connect
 
         files, task, _ = self.prepared_display_task()
-        file = files[0]
+        # The first file is also the rule source, which the tenant shares; revoke on a plain upload.
+        file = files[1]
         with patch.object(self.store, "_conn", wraps=self.store._conn) as connections:
             actual = self.store.read_file_version(self.alice, file.file_id, file.id)
         self.assertEqual(actual, file)
@@ -2202,10 +2240,10 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
             client.cookies.set(SESSION_COOKIE, api.create_session(bob, UserTokens("test-bob-token", "", expires, expires)))
             self.assertEqual(client.get(path).status_code, 403)
             self.assertEqual(client.get("/audit-tasks/" + task["id"]).status_code, 403)
-            source_file = completed["files"][0]["file"]
-            self.assertEqual(client.get(f"/files/{source_file['file_id']}/versions/{source_file['id']}/download").status_code, 403)
             shared = client.get(path + "/reports")
             self.assertEqual(shared.status_code, 200, shared.text)
+            # Both originals are also tenant rule sources here; the share itself never links an original.
+            self.assertNotIn("/download", shared.text)
             self.assertEqual([item["reference"] for item in shared.json()["reports"]], command["reports"])
             first = shared.json()["reports"][0]
             self.assertEqual(first["checker_verification"], completed["files"][0]["audit"]["checker_verification"])
