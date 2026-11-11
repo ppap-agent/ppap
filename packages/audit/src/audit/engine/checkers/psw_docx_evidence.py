@@ -280,7 +280,7 @@ class PswDocxEvidenceMixin:
                     sources=sources,
                 )
         except ModelUnavailable:
-            raise  # Core exposes unavailable personal model access as UNABLE.
+            raise  # Core exposes an unavailable model as UNABLE.
         except GuardStop as stop:
             is_runtime_error = stop.status == "ERR"
             result = self._trace_result(

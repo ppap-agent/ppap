@@ -48,7 +48,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
                 "review_conflict",
                 "review_hint_response_conflict",
                 "deep_not_available",
-                "personal_model_configuration_changed",
+                "model_configuration_changed",
                 "task_input_locked",
                 "validation_scope_mismatch",
                 "customer_scope_conflict",
@@ -555,7 +555,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
             if "expected_model_revision" in body:
                 expected = body["expected_model_revision"]
                 if expected is not None and (not isinstance(expected, str) or not 1 <= len(expected) <= 64):
-                    raise ValueError("personal_model_configuration_changed")
+                    raise ValueError("model_configuration_changed")
                 model_consent["expected_model_revision"] = expected
             round_body = store.accept_draft(
                 principal, draft_id, cast(str, body.get("idempotency_key")), body.get("predecessor_id"), usage_policy=lambda actor: quota_for(request, actor), **model_consent

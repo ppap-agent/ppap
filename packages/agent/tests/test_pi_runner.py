@@ -1,4 +1,4 @@
-"""Pi must prove terminal success and retain execution budgets and file receipts."""
+"""Pi must prove terminal success and keep file receipts; usage is observed, never a budget."""
 
 import json
 import os
@@ -7,9 +7,9 @@ from unittest.mock import patch
 
 import pytest
 from agent.execution.checker_guest import CheckerDraft
-from agent.execution.guest_model import ModelBudgetError, ModelProtocolError, PiRunner
+from agent.execution.guest_model import ModelProtocolError, PiRunner
 
-GRANT = {"base_url": "http://127.0.0.1:12345/v1", "token": "x" * 48, "model": "test-model", "max_turns": 3, "max_total_turns": 4, "wall_seconds": 10}
+GRANT = {"base_url": "http://127.0.0.1:12345/v1", "token": "x" * 48, "model": "test-model", "wall_seconds": 10}
 SOURCE = "def create_audit(audit_file, rule, group_context=None): return None\n"
 
 
@@ -53,13 +53,14 @@ def test_pi_uses_scoped_grant_and_accounts_for_completed_work(tmp_path, guest):
     with patch("agent.execution.guest_model.subprocess.Popen", side_effect=launch([terminal()], write_checker=True)) as process:
         draft = runner.run(tmp_path, "develop", CheckerDraft, 10**12, reasoning_effort="medium")
     assert draft.submitted and draft.files == {"checker.py": SOURCE}
-    assert (runner.input_tokens, runner.output_tokens, runner.remaining_turns) == (13, 5, 2)
+    assert (runner.input_tokens, runner.output_tokens, runner.usage_known) == (13, 5, True)
     assert (runner.tool_calls, runner.completed_tool_calls, runner.compactions) == (2, 1, 1)
     command = process.call_args.args[0]
     config = json.loads((tmp_path / "pi-home/request.json").read_text())
     assert command == ["/usr/local/bin/ppap-pi", str(tmp_path / "pi-home/request.json")]
     assert GRANT["token"] not in command
-    assert config["token"] == GRANT["token"] and config["max_turns"] == 3
+    assert config["token"] == GRANT["token"]
+    assert not {"max_turns", "max_tokens"} & set(config)
     assert (tmp_path / "pi-home/request.json").stat().st_mode & 0o777 == 0o600
     env = process.call_args.kwargs["env"]
     assert "UNRELATED_SECRET" not in env and env["PYTHONPATH"] == "/trusted/packages"
@@ -75,9 +76,6 @@ def test_pi_uses_scoped_grant_and_accounts_for_completed_work(tmp_path, guest):
         ([terminal()], 1),
         ([terminal(is_error=True)], 0),
         ([terminal(stop_reason="length")], 0),
-        ([terminal(usage={"input_tokens": True, "output_tokens": 2})], 0),
-        ([terminal(num_turns=4)], 0),
-        ([terminal(tool_calls=-1)], 0),
     ],
 )
 def test_pi_rejects_missing_failed_or_invalid_completion(tmp_path, guest, events, returncode):
@@ -92,16 +90,10 @@ def test_failed_pi_can_recover_candidate_but_cannot_submit_it(tmp_path, guest):
     assert draft.files == {"checker.py": SOURCE} and draft.submitted is False
 
 
-def test_budget_exhaustion_stops_development_even_if_files_exist(tmp_path, guest):
-    with patch("agent.execution.guest_model.subprocess.Popen", side_effect=launch([terminal(budget_exhausted=True)], write_checker=True)):
-        with pytest.raises(ModelBudgetError):
-            PiRunner(GRANT).run(tmp_path, "develop", CheckerDraft, 10**12, reasoning_effort="low")
-
-
-def test_pi_enforces_remaining_budget_before_launch(tmp_path, guest):
+@pytest.mark.parametrize("usage", [None, {"input_tokens": True, "output_tokens": 2}, {"input_tokens": 3}])
+def test_missing_or_invalid_usage_does_not_reject_a_completed_stage(tmp_path, guest, usage):
     runner = PiRunner(GRANT)
-    runner.remaining_turns = 0
-    with patch("agent.execution.guest_model.subprocess.Popen") as process:
-        with pytest.raises(ModelBudgetError):
-            runner._run(tmp_path, "develop", 10**12, reasoning_effort="low")
-    process.assert_not_called()
+    with patch("agent.execution.guest_model.subprocess.Popen", side_effect=launch([terminal(usage=usage, tool_calls=-1)], write_checker=True)):
+        draft = runner.run(tmp_path, "develop", CheckerDraft, 10**12, reasoning_effort="low")
+    assert draft.submitted and draft.files == {"checker.py": SOURCE}
+    assert (runner.input_tokens, runner.output_tokens, runner.usage_known) == (0, 0, False)

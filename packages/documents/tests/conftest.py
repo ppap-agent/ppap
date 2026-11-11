@@ -3,6 +3,7 @@
 from urllib.parse import urlsplit
 
 import httpx
+import httpx2
 import pytest
 import requests
 
@@ -11,6 +12,7 @@ import requests
 def deny_live_document_services(monkeypatch):
     attempted = []
     sync_send, async_send, request_send = httpx.Client.send, httpx.AsyncClient.send, requests.Session.send
+    model_send = httpx2.AsyncClient.send
 
     def local(url):
         return urlsplit(str(url)).hostname in {"localhost", "127.0.0.1", "::1"}
@@ -27,6 +29,13 @@ def deny_live_document_services(monkeypatch):
             raise AssertionError("Documents owner tests must not contact a live service")
         return await async_send(client, request, *args, **kwargs)
 
+    async def model(client, request, *args, **kwargs):
+        # The model SDK's own HTTP client (documents.ai).
+        if not local(request.url) and not isinstance(client._transport, httpx2.MockTransport):
+            attempted.append("model-httpx2")
+            raise AssertionError("Documents owner tests must not contact a live service")
+        return await model_send(client, request, *args, **kwargs)
+
     def rsend(session, request, *args, **kwargs):
         if not local(request.url):
             attempted.append("requests")
@@ -35,6 +44,7 @@ def deny_live_document_services(monkeypatch):
 
     monkeypatch.setattr(httpx.Client, "send", send)
     monkeypatch.setattr(httpx.AsyncClient, "send", asend)
+    monkeypatch.setattr(httpx2.AsyncClient, "send", model)
     monkeypatch.setattr(requests.Session, "send", rsend)
     yield
     assert not attempted, "A caught exception must not hide a live provider attempt"

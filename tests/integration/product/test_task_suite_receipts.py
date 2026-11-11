@@ -7,6 +7,7 @@ import uuid
 import pytest
 from api import create_app
 from audit.presets import preset_document_type, preset_rule
+from documents.ai import AIResult
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from PIL import Image
@@ -67,10 +68,10 @@ def prepare(system, core_system, customer, entry, *, reference=False, photo=Fals
     assert response.status_code == 202, response.text
 
     class Metadata:
-        def structured_completion(self, *, operation, **_kwargs):
+        def __call__(self, operation, **_kwargs):
             if operation == "document_classification":
-                return preset_document_type(preset_rule(customer, entry))
-            return json.dumps({"customer": customer, "part_number": "P-1"})
+                return AIResult({"document_type": preset_document_type(preset_rule(customer, entry))})
+            return AIResult({"customer": customer, "part_number": "P-1"})
 
     for _ in range(copies):
         process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=Metadata())

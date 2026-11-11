@@ -14,7 +14,7 @@ from contextvars import copy_context
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from documents.ocr import client as ocr_client
+from documents.ocr.observation import current_ocr_observation, ocr_observation_scope
 
 from audit.engine.runtime import get_runtime
 
@@ -47,13 +47,22 @@ def _diagnostic_facts(facts: dict[str, object]) -> dict[str, object]:
     return summary
 
 
+async def read_visual_facts(images: list[bytes], prompt: str, *, response_schema: dict, max_output_tokens: int = 4096) -> dict:
+    """The one vision model call. Tests replace this seam, never a provider transport."""
+    from documents.ai import run_json_async
+
+    schema = {**response_schema["schema"], "title": response_schema.get("name", "answer")}
+    completed = await run_json_async("ocr_evidence", purpose="vision", prompt=prompt, images=images, schema=schema, max_tokens=max_output_tokens, timeout=20)
+    return completed.output
+
+
 def request_ocr_visual_facts(*, images: list[bytes], prompt: str, response_schema: dict) -> dict:
-    """One actual Responses request, with its own event loop and client lifetime.
+    """One vision request with the provider's native JSON Schema contract.
 
     This is the app runtime's transport hook. It deliberately does not consult
-    the runtime again, and never routes images through the text LLM client.
+    the runtime again, and never routes images through the text model.
     """
-    operation = ocr_client.call_llm_async(images, prompt, response_schema=response_schema, max_output_tokens=4096)
+    operation = read_visual_facts(images, prompt, response_schema=response_schema, max_output_tokens=4096)
     try:
         asyncio.get_running_loop()
     except RuntimeError:
@@ -164,7 +173,7 @@ def observe_ocr_scopes(
                     reading_sources = []
                     request_info: dict[str, object] = {}
                     inputs.append(request_info)
-                    with ocr_client.ocr_observation_scope(number):
+                    with ocr_observation_scope(number):
                         reading = _observe_ocr_scope(
                             frames,
                             subset,
@@ -272,11 +281,11 @@ def _observe_ocr_scope(
     result: dict[str, object] = dict.fromkeys(fields)
     if not images or not fields:
         return result
-    from documents.ocr.env import ocr_model_name, ocr_openai_api_key, ocr_openai_base_url
+    from documents.model_access import ModelUnavailable, current_model_access
 
     try:
-        configured = bool(ocr_model_name() and ocr_openai_api_key() and ocr_openai_base_url())
-    except ValueError:
+        configured = bool(current_model_access("vision").model)
+    except (ModelUnavailable, ValueError):
         configured = False
     if not configured:
         return result
@@ -418,7 +427,7 @@ def _observe_ocr_scope(
                 coverage=coverage,
                 observed_value=None,
                 reported_value=reported,
-                observation=ocr_client.current_ocr_observation(),
+                observation=current_ocr_observation(),
             )
             witness(locator, reason, visual=True)
 
@@ -492,7 +501,7 @@ def _observe_ocr_scope(
                 ]
                 locator.update(engine="ocr_llm", fact=field, image_index=index, coverage="complete", observed_value=value)
                 if field == _COMPANY_FACT:
-                    locator["observation"] = ocr_client.current_ocr_observation()
+                    locator["observation"] = current_ocr_observation()
                 observed_sources.append(locator)
             for locator in observed_sources:
                 witness(locator, excerpt, visual=True)

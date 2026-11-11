@@ -2,7 +2,6 @@
 
 import hashlib
 import json
-from types import SimpleNamespace
 
 import pytest
 from audit.checkers.v2.base_agent import BaseAgent
@@ -28,7 +27,7 @@ def original(tmp_path, text="检验职责由质量工程师承担。", *, suffix
 
 
 @pytest.fixture
-def model(monkeypatch):
+def model(text_model, monkeypatch):
     calls = []
     behavior = {"relation": "supports", "scope": "local"}
 
@@ -48,7 +47,7 @@ def model(monkeypatch):
             response.update(behavior["replace"])
         return json.dumps(response, ensure_ascii=False)
 
-    monkeypatch.setattr("audit.engine.checkers.client.AIClient", lambda: SimpleNamespace(structured_completion=request))
+    text_model(request)
     return calls, behavior
 
 
@@ -69,7 +68,7 @@ def test_public_fallback_uses_original_text_locations_and_one_clause(tmp_path, m
     payload = json.loads(request["user_prompt"])
     assert payload["clause"] == "说明检验职责"
     assert payload["document_count"] == 1
-    assert request["request_timeout"] == 20 and request["retry_limit"] == 0
+    assert request["request_timeout"] == 20
     assert request["operation"] == "rule_text_evidence"
     assert "DO NOT SEND" not in request["user_prompt"]
     assert "Unlocated content" not in request["user_prompt"]

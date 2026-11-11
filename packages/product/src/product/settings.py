@@ -8,7 +8,6 @@ from typing import Literal, Optional, Self
 from urllib.parse import urlsplit
 
 from audit.policy import DeepExecutionPolicy
-from documents.model_access import UNCONFIGURED_MODEL_IDENTITY
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -33,10 +32,11 @@ class Settings(BaseSettings):
 
     model_credential_encryption_key: SecretStr = Field(default=SecretStr(""), alias="PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY", repr=False, exclude=True)
 
-    personal_model_allowed_base_urls: str = Field(default="", alias="PPAP_PERSONAL_MODEL_ALLOWED_BASE_URLS")
-    personal_model_max_requests: int = Field(default=128, ge=1, le=128, alias="PPAP_PERSONAL_MODEL_MAX_REQUESTS")
-    personal_model_max_input_tokens: int = Field(default=4_000_000, ge=1, le=4_000_000, alias="PPAP_PERSONAL_MODEL_MAX_INPUT_TOKENS")
-    personal_model_max_output_tokens: int = Field(default=100_000, ge=1, le=100_000, alias="PPAP_PERSONAL_MODEL_MAX_OUTPUT_TOKENS")
+    # Exact HTTPS base URLs a tenant's own model key may be sent to.
+    tenant_model_allowed_base_urls: str = Field(default="", alias="PPAP_TENANT_MODEL_ALLOWED_BASE_URLS")
+    # A Deep attempt stops after this many model requests. It only halts a runaway loop:
+    # it is not a cost settlement and never decides whether an artifact is valid.
+    deep_model_max_requests: int = Field(default=200, ge=1, le=1000, alias="PPAP_DEEP_MODEL_MAX_REQUESTS")
 
     llm_api_key: str = Field(default="", alias="LLM_API_KEY")
     llm_base_url: str = Field(default="", alias="LLM_BASE_URL")
@@ -211,10 +211,9 @@ class Settings(BaseSettings):
         return base_url, model, key
 
     def deep_execution_policy(self, model_identity: dict[str, str] | None = None) -> DeepExecutionPolicy:
-        # Product acceptance supplies the initiator's frozen non-secret identity.
-        # No platform credential or endpoint is a fallback for a personal run.
-        identity = model_identity if model_identity is not None else UNCONFIGURED_MODEL_IDENTITY
-        model = identity["model"]
+        # Acceptance freezes the tenant's model selection (its key or the platform's).
+        identity = dict(model_identity) if model_identity is not None else {"source": "unconfigured"}
+        model = identity.get("coding_model", "unconfigured")
         return DeepExecutionPolicy.model_validate(
             {
                 "app_revision": self.git_sha,
@@ -223,9 +222,7 @@ class Settings(BaseSettings):
                 "model_revision": config_digest(
                     {
                         "identity": identity,
-                        "max_requests": self.personal_model_max_requests,
-                        "max_input_tokens": self.personal_model_max_input_tokens,
-                        "max_output_tokens": self.personal_model_max_output_tokens,
+                        "max_requests": self.deep_model_max_requests,
                     }
                 ),
                 "sandbox_profile": self.deep_sandbox_profile,
@@ -237,21 +234,21 @@ class Settings(BaseSettings):
         return self.deep_execution_policy(model_identity).engine_revision()
 
     def standard_execution_policy(self, model_identity: dict[str, str] | None = None) -> StandardExecutionPolicy:
-        identity = model_identity or UNCONFIGURED_MODEL_IDENTITY
+        identity = dict(model_identity) if model_identity else {"source": "unconfigured"}
         return StandardExecutionPolicy(
             app_revision=self.git_sha or None,
-            model=identity["model"],
+            model=identity.get("model", "unconfigured"),
             model_config_revision=config_digest(
                 {
                     "identity": identity,
-                    "credential_source": "initiating_user",
+                    "credential_source": identity.get("source", "unconfigured"),
                     "max_retries": 0,
                 }
             ),
             tool_config_revision=config_digest(
                 {
                     "ocr_model_identity": identity,
-                    "vision_protocol": "native_paddle_responses_v4",
+                    "vision_protocol": "native_paddle_responses_v5",
                     "paddle_endpoint": self.PADDLE_OCR_URL.strip(),
                     "paddle_http_timeout_seconds": 20,
                     "ocr_http_timeout_seconds": 20,

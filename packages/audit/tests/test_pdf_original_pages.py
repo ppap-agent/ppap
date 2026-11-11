@@ -12,7 +12,6 @@ from audit.contracts import (
     AuditInput,
     RuleInput,
 )
-from audit.engine.checkers.client import AIClient
 from audit.engine.runtime import bind_runtime
 from documents.contracts import ConversionArtifact
 from PIL import Image
@@ -46,7 +45,7 @@ def check_original_image(monkeypatch, agent_profile, source, observation=None):
         return json.dumps(observation if observation is not None else {"psw_stamp_ends_with_company": True})
 
     monkeypatch.setattr(pdf_module, "convert_pdf_to_excel_auto", convert)
-    monkeypatch.setattr(AIClient, "structured_completion", analyze)
+    monkeypatch.setattr("documents.ai.run_json", analyze)
     with bind_runtime(None):
         agent = agent_class(AuditInput(audit_id="original", file_url=source), stamp_rules(profile))
         result = agent.check(2)
@@ -118,7 +117,7 @@ def test_keyword_selection_reads_matching_original_pages_or_all_pages(original_p
         return ConversionArtifact(success=False)
 
     monkeypatch.setattr(pdf_module, "convert_pdf_to_excel_auto", convert)
-    monkeypatch.setattr(AIClient, "structured_completion", lambda self, **kwargs: "No additional OCR text")
+    monkeypatch.setattr("documents.ai.run_json", lambda self, **kwargs: "No additional OCR text")
     with bind_runtime(None):
         agent = agent_class(AuditInput(audit_id="selected-pages", file_url=str(original_pdf)), stamp_rules(profile))
 

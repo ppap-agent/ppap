@@ -14,12 +14,14 @@ const config = JSON.parse(readFileSync(process.argv[2], "utf8"));
 const emit = (event) => process.stdout.write(JSON.stringify(event).replaceAll(config.token, "[redacted]") + "\n");
 const usage = { input_tokens: 0, output_tokens: 0 };
 let turns = 0, toolCalls = 0, completedToolCalls = 0, compactions = 0;
-let budgetExceeded = false, invalidUsage = false, lastMessage, session;
+// Token counts are observations. A missing count never fails the stage; the gateway's
+// request limit is the only model limit, and the wall deadline stops the process.
+let usageKnown = true, lastMessage, session;
 const recordUsage = (value) => {
   // Pi separates cached input from uncached input. Provider input includes both.
   const counts = [value?.input, value?.output, value?.cacheRead, value?.cacheWrite];
   if (counts.some((count) => !Number.isSafeInteger(count) || count < 0)) {
-    invalidUsage = true;
+    usageKnown = false;
     return;
   }
   usage.input_tokens += counts[0] + counts[2] + counts[3];
@@ -28,7 +30,8 @@ const recordUsage = (value) => {
 try {
   if (version !== "1.5.0") throw new Error("Pi version mismatch");
   const settingsManager = SettingsManager.inMemory({
-    retry: { enabled: false, maxRetries: 0, provider: { maxRetries: 0 } },
+    // A transient provider failure may be retried a little; the gateway bounds requests.
+    retry: { enabled: true, maxRetries: 2, baseDelayMs: 1000, provider: { maxRetries: 0 } },
     cacheWarming: "off",
   });
   const modelRuntime = await ModelRuntime.create({
@@ -53,10 +56,6 @@ try {
   }));
   const prepareRequest = session.agent.prepareRequest;
   session.agent.prepareRequest = async (...args) => {
-    if (turns >= config.max_turns || usage.input_tokens + usage.output_tokens >= config.max_tokens) {
-      budgetExceeded = true;
-      throw new Error("Model budget exhausted");
-    }
     turns += 1;
     return prepareRequest?.(...args);
   };
@@ -81,16 +80,16 @@ try {
   });
   await session.prompt(readFileSync(config.prompt, "utf8"));
   // prompt resolves after automatic work settles. End-of-turn alone is insufficient.
-  const success = !invalidUsage && !budgetExceeded && lastMessage?.stopReason === "stop";
+  const success = lastMessage?.stopReason === "stop";
   emit({ type: "result", subtype: success ? "success" : "error", is_error: !success,
-    stop_reason: success ? "end_turn" : "error", budget_exhausted: budgetExceeded,
+    stop_reason: success ? "end_turn" : "error", usage_known: usageKnown,
     result: lastMessage?.content.filter((block) => block.type === "text").map((block) => block.text).join("\n") ?? "",
     num_turns: turns, usage, tool_calls: toolCalls, completed_tool_calls: completedToolCalls, compactions });
   process.exitCode = success ? 0 : 1;
 } catch {
   // Raw SDK errors can include headers, provider responses, or credentials.
   emit({ type: "result", subtype: "error", is_error: true, stop_reason: "error",
-    budget_exhausted: budgetExceeded, num_turns: turns, usage,
+    usage_known: usageKnown, num_turns: turns, usage,
     tool_calls: toolCalls, completed_tool_calls: completedToolCalls, compactions });
   process.exitCode = 1;
 } finally {

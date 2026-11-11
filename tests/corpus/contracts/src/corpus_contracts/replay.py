@@ -13,12 +13,9 @@ import re
 import struct
 import threading
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
-from audit.engine.checkers.client import TextCompletion
-from documents.model_access import ModelAccess
-from documents.ocr.env import effective_ocr_extra_body
+from documents.model_access import ModelAccess, ModelPurpose, effective_vision_extra_body
 from pydantic import SecretStr
 
 REPLAY_DIR = Path(__file__).resolve().parents[5] / "assets/corpus/replay"
@@ -43,7 +40,7 @@ def offline() -> bool:
 
 def _ocr_test_options() -> str:
     raw = os.environ.get("OCR_OPENAI_EXTRA_BODY_JSON", "").strip()
-    return json.dumps(effective_ocr_extra_body(raw), sort_keys=True) if raw else ""
+    return json.dumps(effective_vision_extra_body(raw), sort_keys=True) if raw else ""
 
 
 def configured_model_access() -> ModelAccess | None:
@@ -62,7 +59,7 @@ def configured_model_access() -> ModelAccess | None:
         if all(values):
             key, endpoint, model = values
             options = _ocr_test_options() if names[0] == "OCR_OPENAI_API_KEY" else ""
-            return ModelAccess(SecretStr(key), provider="corpus-test", base_url=endpoint, model=model, ocr_extra_body_json=options)
+            return ModelAccess(SecretStr(key), provider="corpus-test", base_url=endpoint, model=model, extra_body_json=options)
         if values[0]:
             raise ValueError("Incomplete corpus test model configuration: " + ", ".join(names))
     return None
@@ -71,7 +68,7 @@ def configured_model_access() -> ModelAccess | None:
 def replay_model_access() -> ModelAccess:
     # This inert grant lets recorded observations pass the same scope boundary.
     # Offline Recorder transports below reject every cache miss before sending.
-    return ModelAccess(SecretStr("corpus-replay-only"), provider="corpus-replay", model="recorded-model", base_url="http://127.0.0.1:1/v1", ocr_extra_body_json=_ocr_test_options())
+    return ModelAccess(SecretStr("corpus-replay-only"), provider="corpus-replay", model="recorded-model", base_url="http://127.0.0.1:1/v1", extra_body_json=_ocr_test_options())
 
 
 class OfflineReplayMiss(AssertionError):
@@ -151,45 +148,57 @@ class Recorder:
         temporary.replace(self.output)
 
 
+def ocr_request(images: list[bytes], prompt: str, response_schema: dict, max_output_tokens: int) -> dict[str, Any]:
+    """The recorded identity of one vision call: what the model is shown and asked to return.
+
+    It keeps the shape recorded before the direct model layer, so existing answers stay valid.
+    """
+    from documents.model_access import current_model_access
+    from documents.ocr.observation import current_ocr_observation
+
+    shown = [{"type": "input_text", "text": prompt}, *({"type": "input_image", "image_url": "data:image/png;base64," + base64.b64encode(image).decode("ascii"), "detail": "high"} for image in images)]
+    request: dict[str, Any] = {"input": [{"role": "user", "content": shown}], "text": {"format": {"type": "json_schema", **response_schema}}, "max_output_tokens": max_output_tokens}
+    observation = current_ocr_observation()
+    if observation is not None:
+        request["observation"] = observation
+    # An explicit policy cannot consume an answer recorded under different request options.
+    extra = current_model_access("vision").extra_body()
+    if extra:
+        request["extra_body"] = extra
+    return request
+
+
 def install(monkeypatch: Any, recorder: Recorder) -> None:
-    """Replace the three model transports below every product decision."""
-    from audit.engine.checkers.client import AIClient
-    from documents.ocr import client as ocr_client
+    """Replace the model and Paddle calls below every product decision."""
+    import documents.ai
+    from audit.engine.checkers import ocr_visual_facts
     from documents.ocr.paddle import client as paddle_client
 
-    real_ocr = ocr_client._request_response
-    real_text = AIClient.response_text
+    real_vision = ocr_visual_facts.read_visual_facts
+    real_direct = documents.ai.run_json_async
     real_paddle = paddle_client._post_page_sync
 
-    async def ocr_request(kwargs: dict[str, Any]) -> Any:
-        request = {name: kwargs.get(name) for name in ("input", "text", "max_output_tokens")}
-        observation = ocr_client.current_ocr_observation()
-        if observation is not None:
-            request["observation"] = observation
-        # Existing empty-policy recordings remain readable. An explicit policy
-        # cannot consume an answer recorded under different request parameters.
-        if kwargs.get("extra_body"):
-            request["extra_body"] = kwargs["extra_body"]
+    async def vision_request(images: list[bytes], prompt: str, *, response_schema: dict, max_output_tokens: int = 4096) -> dict:
+        request = ocr_request(images, prompt, response_schema, max_output_tokens)
         entry = recorder.lookup("ocr", request)
         if entry is None:
             recorder.require_live("ocr")
-            response = await real_ocr(kwargs)
-            if getattr(response, "status", None) == "completed":
-                recorder.add("ocr", request, response.output_text, kwargs.get("model"))
-            return response
-        return SimpleNamespace(status="completed", output_text=entry["answer"], usage=None, model=entry.get("model"), incomplete_details=None)
+            answer = await real_vision(images, prompt, response_schema=response_schema, max_output_tokens=max_output_tokens)
+            recorder.add("ocr", request, json.dumps(answer, ensure_ascii=False), current_model_access_name("vision"))
+            return answer
+        return json.loads(entry["answer"])
 
-    def text_request(self: Any, messages: Any, *args: Any, **kwargs: Any) -> str:
-        names = ("max_tokens", "temperature", "text_format")
-        request = {"messages": messages, **dict(zip(names, args)), **{name: kwargs[name] for name in names if name in kwargs}}
+    async def direct_request(task: str, **kwargs: Any) -> Any:
+        if kwargs.get("purpose", "text") != "text":
+            return await real_direct(task, **kwargs)
+        request = {"task": task, **{name: kwargs.get(name) for name in ("instructions", "prompt", "schema", "max_tokens")}}
         entry = recorder.lookup("text", request)
         if entry is None:
             recorder.require_live("text")
-            answer = real_text(self, messages, *args, **kwargs)
-            text = answer.text if isinstance(answer, TextCompletion) else answer
-            recorder.add("text", request, text, getattr(self.settings, "MODEL_NAME", None))
-            return text
-        return entry["answer"]
+            answer = await real_direct(task, **kwargs)
+            recorder.add("text", request, json.dumps(answer.output, ensure_ascii=False), answer.model)
+            return answer
+        return documents.ai.AIResult(json.loads(entry["answer"]), model=entry.get("model") or "")
 
     def paddle_request(endpoint: str, payload: dict, headers: dict, timeout: float) -> object:
         entry = recorder.lookup("paddle", payload)
@@ -200,9 +209,18 @@ def install(monkeypatch: Any, recorder: Recorder) -> None:
             return answer
         return entry["answer"]
 
-    monkeypatch.setattr(ocr_client, "_request_response", ocr_request)
-    monkeypatch.setattr(AIClient, "response_text", text_request)
+    monkeypatch.setattr(ocr_visual_facts, "read_visual_facts", vision_request)
+    monkeypatch.setattr(documents.ai, "run_json_async", direct_request)
     monkeypatch.setattr(paddle_client, "_post_page_sync", paddle_request)
 
 
-__all__ = ["LIVE", "REPLAY", "REPLAY_DIR", "OfflineReplayMiss", "Recorder", "configured_model_access", "install", "mode", "offline", "replay_model_access", "shown_to_model"]
+def current_model_access_name(purpose: ModelPurpose) -> str | None:
+    from documents.model_access import ModelUnavailable, current_model_access
+
+    try:
+        return current_model_access(purpose).model
+    except ModelUnavailable:
+        return None
+
+
+__all__ = ["LIVE", "REPLAY", "REPLAY_DIR", "OfflineReplayMiss", "Recorder", "configured_model_access", "install", "mode", "ocr_request", "offline", "replay_model_access", "shown_to_model"]

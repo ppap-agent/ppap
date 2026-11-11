@@ -71,7 +71,6 @@ def test_controlled_stamp_uses_located_paddle_seal_facts_not_preprinted_labels(t
 
     import fitz
     from audit.checkers.v4.uaes.records import UaesControlledDocumentAgent
-    from audit.engine.checkers.client import AIClient
     from audit.engine.runtime import bind_runtime
     from documents.ocr.paddle import build_evidence
 
@@ -99,7 +98,7 @@ def test_controlled_stamp_uses_located_paddle_seal_facts_not_preprinted_labels(t
         }
         return build_evidence(raw, page_count=1, pdf_path=file_path, source_pages=[page_number])
 
-    monkeypatch.setattr(AIClient, "structured_completion", lambda *args, **kwargs: calls.append(kwargs))
+    monkeypatch.setattr("documents.ai.run_json", lambda *args, **kwargs: calls.append(kwargs))
     body = preset_rule_body("UAES", "U10")
     agent = UaesControlledDocumentAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput(rule_id="rules", **{key: value for key, value in body.items() if key != "kind"}))
     with bind_runtime(SimpleNamespace(read_paddle_page=read)):

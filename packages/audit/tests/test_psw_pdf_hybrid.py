@@ -16,12 +16,11 @@ from audit.contracts import (
     RuleInput,
 )
 from audit.engine.app_runtime import run_audit_engine
-from audit.engine.checkers.client import AIClient
 from audit.engine.checkers.psw_pdf_evidence import assess_psw_conversion_evidence
 from audit.engine.checkers.psw_visual_evidence import PSW_RULE_FIELDS, evaluate_psw_observation
 from audit.engine.runtime import bind_runtime
 from documents.contracts import ConversionArtifact
-from documents.ocr.client import current_ocr_observation
+from documents.ocr.observation import current_ocr_observation
 from openpyxl import Workbook, load_workbook
 
 
@@ -164,7 +163,7 @@ def test_table_diagnostics_do_not_replace_the_actual_weight_decision(original_pd
         model_calls.append(kwargs)
         raise AssertionError("Structured PSW rules must not request image analysis")
 
-    monkeypatch.setattr(AIClient, "structured_completion", reject_visual)
+    monkeypatch.setattr("documents.ai.run_json", reject_visual)
 
     results = run_audit_engine(AuditInput(audit_id="psw-structured", file_url=str(original_pdf)), psw_rules(profile, count=2))
 
@@ -273,7 +272,7 @@ def no_psw_llm_or_render(monkeypatch):
         attempts.append("LLM or image rendering")
         raise AssertionError("PSW facts must use native/Paddle only")
 
-    monkeypatch.setattr(AIClient, "structured_completion", reject)
+    monkeypatch.setattr("documents.ai.run_json", reject)
     monkeypatch.setattr(V2PswPDFAgent, "_get_pdf_images_sync", reject)
     monkeypatch.setattr(V3PswPDFAgent, "_get_pdf_images_sync", reject)
     yield
@@ -423,7 +422,7 @@ def ocr_response_boundary(monkeypatch, response):
             result[field] = values
         return result
 
-    monkeypatch.setattr("documents.ocr.client.call_llm_async", analyze)
+    monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.read_visual_facts", analyze)
     return attempts
 
 
@@ -649,11 +648,11 @@ def test_public_psw_raster_uses_the_same_dedicated_ocr_fact_path(tmp_path, monke
 
 
 def test_public_multi_page_partial_success_and_protocol_failure_are_reused(tmp_path, monkeypatch, profile):
-    from documents.ocr import client
+    from audit.engine.checkers import ocr_visual_facts as client
 
     path = write_disposition_pdf(tmp_path / "page-local-failure.pdf", ("批准", "条件批准", "拒绝"), copies=2)
     ocr_response_boundary(monkeypatch, disposition_page_response())
-    controlled = client.call_llm_async
+    controlled = client.read_visual_facts
     scopes = []
 
     async def per_page(images, prompt, *, response_schema, **kwargs):
@@ -670,7 +669,7 @@ def test_public_multi_page_partial_success_and_protocol_failure_are_reused(tmp_p
             raise ValueError("OCR visual coverage is invalid")
         return await controlled(images, prompt, response_schema=response_schema, **kwargs)
 
-    monkeypatch.setattr(client, "call_llm_async", per_page)
+    monkeypatch.setattr(client, "read_visual_facts", per_page)
     with bind_runtime(None):
         checker = psw_checker(monkeypatch, path, profile)
         try:

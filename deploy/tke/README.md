@@ -88,10 +88,13 @@ export KUBECONFIG="$HOME/Projects/work/hax/runtime/tke-cls-6e71r2cz/headscale-ip
 | 配置项 | 存放位置 | 容器引用 |
 |---|---|---|
 | `LLM_MODEL`、`LLM_BASE_URL` | ConfigMap `ppap-current` | API、Worker；Deep 沿用其需要的公共配置 |
-| `LLM_API_KEY` | Secret `ppap-current-text-model-v1` | API、Worker |
+| `LLM_API_KEY` | Secret `ppap-current-text-model-v1` | API、Worker、Deep Controller（Checker 试跑的文本调用经本地网关）|
 | `PPAP_DEEP_LLM_API_KEY` | Secret `ppap-current-deep-model-v1` | Deep Controller |
 | `OCR_MODEL_NAME`、`OCR_OPENAI_BASE_URL`、`OCR_OPENAI_EXTRA_BODY_JSON`、`PADDLE_OCR_URL` | Secret `ppap-current` | API、Worker、Deep 的配置身份 |
-| `OCR_OPENAI_API_KEY`、`PADDLE_TOKEN` | Secret `ppap-current` | API、Worker；不向 Deep guest 注入 |
+| `OCR_OPENAI_API_KEY` | Secret `ppap-current` | API、Worker、Deep Controller；不向 Deep guest 注入 |
+| `PADDLE_TOKEN` | Secret `ppap-current` | API、Worker；不向 Deep guest 注入 |
+| `PPAP_TENANT_MODEL_ALLOWED_BASE_URLS`、`PPAP_DEEP_MODEL_MAX_REQUESTS` | ConfigMap `ppap-current` | API、Worker、Deep（企业 Key 的允许地址；每个 Deep Attempt 的请求次数熔断）|
+| 企业 Key（企业 BYOK） | 表 `product.tenant_model_credentials`（密文） | 运营用 `python -m product.tenant_models` 设置；无客户接口 |
 
 已有 Secret 使用按 key 合并更新，保留其余数据。例如，`PPAP_SECRET_ENV_FILE` 指向权限为 `0600`、不入 Git 的生产文件，且**只包含本次已确认要更新到 `ppap-current` 的 key**。下面的管道自动更新这些 key，不将密钥放入命令参数或输出：
 

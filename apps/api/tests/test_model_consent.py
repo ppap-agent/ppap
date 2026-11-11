@@ -17,7 +17,7 @@ def test_optimization_forwards_exact_consent_to_atomic_admission(monkeypatch, ex
 
     def start(self, principal, revision_id, payload):
         received.append(payload)
-        raise ValueError("personal_model_configuration_changed")
+        raise ValueError("model_configuration_changed")
 
     monkeypatch.setattr(CheckerDevelopmentStore, "start", start)
     app = FastAPI()
@@ -26,7 +26,7 @@ def test_optimization_forwards_exact_consent_to_atomic_admission(monkeypatch, ex
         "/suite-revisions/suite-a/optimizations", json={"operation_id": str(uuid4()), "feedback_ids": [str(uuid4())], "action": "run_tests", "consume_model": True, **expectation}
     )
     assert response.status_code == 409
-    assert response.json() == {"error": "personal_model_configuration_changed"}
+    assert response.json() == {"error": "model_configuration_changed"}
     assert {key: value for key, value in received[0].items() if key == "expected_model_revision"} == expectation
 
 
@@ -37,14 +37,14 @@ def test_deep_accept_forwards_exact_consent_to_atomic_admission(expectation):
 
     def accept(*args, **kwargs):
         received.append(kwargs)
-        raise ValueError("personal_model_configuration_changed")
+        raise ValueError("model_configuration_changed")
 
     store = SimpleNamespace(resource=lambda identity: SimpleNamespace(tenant_id="tenant-a", kind="draft"), grants=lambda *args: {"read"}, accept_draft=accept)
     app = FastAPI()
     register_audit_routes(app, store, lambda request: principal, lambda *args: {})
     response = TestClient(app).post("/drafts/draft-a/accept", json={"idempotency_key": str(uuid4()), **expectation})
     assert response.status_code == 409
-    assert response.json() == {"error": "personal_model_configuration_changed"}
+    assert response.json() == {"error": "model_configuration_changed"}
     assert {key: value for key, value in received[0].items() if key == "expected_model_revision"} == expectation
 
 
@@ -55,4 +55,4 @@ def test_deep_rejects_invalid_revision_before_admission():
     for invalid in ([], {}, 3, "x" * 65):
         response = TestClient(app).post("/drafts/draft-a/accept", json={"idempotency_key": str(uuid4()), "expected_model_revision": invalid})
         assert response.status_code == 409
-        assert response.json() == {"error": "personal_model_configuration_changed"}
+        assert response.json() == {"error": "model_configuration_changed"}

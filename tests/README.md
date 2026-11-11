@@ -155,7 +155,7 @@ CI 和开发环境的模型与 Paddle 用量属于开发预算，不设限额。
 
 本地无付费验证使用 `PPAP_CORPUS_OFFLINE=1`；即使环境已有 Key，也只回放缓存，任何缺失记录都令测试失败且不会调用提供方。没有测试凭据时同样只读回放。`PPAP_CORPUS_MODEL=live` 必须有完整测试配置，不能与 offline 同时使用。回放验证取证和判定逻辑，不验证新模型或部署的能力；真实视觉验收使用预先固定的样本和运行次数，并保留全部运行结果。
 
-专用 OCR 测试授权选中完整 `OCR_*` 配置时，可显式带入 `OCR_OPENAI_EXTRA_BODY_JSON`；该参数不进入文本请求，不沿用到 `OPENAI_*` / `LLM_*` 替代测试授权或普通个人模型。实际 OCR 参数进入授权身份、OCR 配置摘要和 Replay 请求键；旧参数的回答不能用来验证新参数。当前 CI 专用 OpenRouter `deepseek/deepseek-v4.1-flash-1017` 已用合成图像核验 `reasoning.effort=none`，仍使用 4096 输出上限和零自动重试。更换端点或模型须先核对其支持的参数。
+专用 OCR 测试授权选中完整 `OCR_*` 配置时，可显式带入 `OCR_OPENAI_EXTRA_BODY_JSON`；该参数不进入文本请求，不沿用到 `OPENAI_*` / `LLM_*` 替代测试授权或普通文本模型。实际 OCR 参数进入授权身份、OCR 配置摘要和 Replay 请求键；旧参数的回答不能用来验证新参数。当前 CI 专用 OpenRouter `deepseek/deepseek-v4.1-flash-1017` 已用合成图像核验 `reasoning.effort=none`，仍使用 4096 输出上限和零自动重试。更换端点或模型须先核对其支持的参数。
 
 CI 把新回答放进任务产物的 `replay/`。下载后提交，之后的运行就不再调用这些请求：
 
@@ -347,9 +347,7 @@ export PPAP_APPROVED_SHA="$PPAP_BUILD_SHA"
 export PPAP_CHECKER_LIVE_MODE=local
 export PPAP_CHECKER_LIVE_SCENARIO=u08
 export PPAP_CHECKER_LIVE_BASE_SHA=951f5a1bbfe5285f92a067ea3624a34d44d2f890
-export PPAP_PERSONAL_MODEL_MAX_REQUESTS=32
-export PPAP_PERSONAL_MODEL_MAX_INPUT_TOKENS=200000
-export PPAP_PERSONAL_MODEL_MAX_OUTPUT_TOKENS=32000
+export PPAP_DEEP_MODEL_MAX_REQUESTS=32
 # Free plan only: no writes, credential preparation, containers or model calls.
 uv run --no-sync python -m scripts.run_checker_live --plan
 
@@ -360,6 +358,7 @@ export PPAP_CHECKER_LIVE_OUTPUT="$(mktemp -d /tmp/ppap-checker-local.XXXXXX)"
 export PPAP_CHECKER_LIVE_ENV="$PPAP_CHECKER_LIVE_OUTPUT/private.env"
 uv run --no-sync python -m scripts.prepare_checker_live
 # Compose reads the prepared random ports/data names from this private env file.
+# The stack's API/Worker/Deep services read the platform test key CI_LLM_API_KEY from this shell.
 docker compose --env-file "$PPAP_CHECKER_LIVE_ENV" -f deploy/isolated-dev/checker-live.yaml up -d --no-build --pull never --wait api worker web
 set -a
 . "$PPAP_CHECKER_LIVE_ENV"

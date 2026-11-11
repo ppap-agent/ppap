@@ -106,8 +106,8 @@ def no_live_model_calls(monkeypatch):
     def forbidden(*args, **kwargs):
         pytest.fail("Live provider calls are outside this controlled acceptance")
 
-    monkeypatch.setattr("audit.engine.checkers.client.AIClient", forbidden)
-    monkeypatch.setattr("documents.ocr.client.AsyncOpenAI", forbidden)
+    monkeypatch.setattr("documents.ai.run_json", forbidden)
+    monkeypatch.setattr("documents.ai.AsyncOpenAI", forbidden)
 
 
 def _identity(*, part="P12345", revision="A", name="支架"):

@@ -111,7 +111,7 @@ def test_electronic_pdf_spec_can_be_repaired_in_the_checker_loop(tmp_path: Path,
     def no_ocr(*args, **kwargs):
         pytest.fail("fixed checker must not start OCR")
 
-    monkeypatch.setattr("documents.ocr.client._get_llm_client", no_ocr)
+    monkeypatch.setattr("documents.ai.run_json_async", no_ocr)
     monkeypatch.setattr("documents.ocr.paddle.client.PaddleStructureService.analyze_page", no_ocr)
     path = tmp_path / "source.pdf"
     document = fitz.open()

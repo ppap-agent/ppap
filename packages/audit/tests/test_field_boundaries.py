@@ -13,7 +13,7 @@ from audit.checkers.v4.visual_facts import _pdf_images
 from audit.contracts import AuditInput, GroupContextInput, RuleInput
 from audit.engine.checkers.dimension_measurement_policy import check_tolerance
 from audit.engine.runtime import bind_runtime
-from documents.ocr.client import current_ocr_observation
+from documents.ocr.observation import current_ocr_observation
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as WorkbookImage
 from PIL import Image, ImageDraw

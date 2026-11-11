@@ -1,9 +1,9 @@
 """Current file preparation preserves deterministic suggestions and version scope."""
 
-import json
 from io import BytesIO
 
 import pytest
+from documents.ai import AIResult
 from openpyxl import Workbook
 from product.rule_matching import RuleMatchingAIService
 from product.rules import latest_rule_versions
@@ -17,12 +17,12 @@ class MatchingAI:
         self.selections = iter(selections)
         self.requests: list[dict] = []
 
-    def structured_completion(self, **request) -> str:
-        self.requests.append(request)
-        if request["operation"] == "document_metadata_extraction":
-            return "{}"
-        if request["operation"] == "rule_matching":
-            return json.dumps({"candidateId": next(self.selections)})
+    def __call__(self, operation: str, **request) -> AIResult:
+        self.requests.append({"operation": operation, **request})
+        if operation == "document_metadata_extraction":
+            return AIResult({})
+        if operation == "rule_matching":
+            return AIResult({"candidateId": next(self.selections)})
         raise AssertionError("unexpected_external_request")
 
 
@@ -122,7 +122,7 @@ def test_late_content_does_not_drive_rule_selection_outside_the_matching_excerpt
     assert (result["matched_rule_id"], result["matching_status"]) == (None, "unmatched")
     requests = [request for request in ai.requests if request["operation"] == "rule_matching"]
     assert len(requests) == 1
-    assert "FILE-LATE-SIGNAL" not in requests[0]["user_prompt"]
+    assert "FILE-LATE-SIGNAL" not in requests[0]["prompt"]
 
 
 def test_cached_selection_is_reused_only_for_the_same_current_rule_versions() -> None:

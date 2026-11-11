@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 const runner = fileURLToPath(new URL("./pi-runner.mjs", import.meta.url));
-function respond(response, item, number, status = "completed") {
+function respond(response, item, number, status = "completed", reportUsage = true) {
   response.writeHead(200, { "Content-Type": "text/event-stream" });
   const send = (event) => response.write(`data: ${JSON.stringify(event)}\n\n`);
   const metadata = { id: `resp_${number}`, model: "test-model", output: [], status: "in_progress" };
@@ -26,7 +26,7 @@ function respond(response, item, number, status = "completed") {
   send({ type: status === "completed" ? "response.completed" : "response.incomplete",
     response: { ...metadata, status, output: [item],
       ...(status === "incomplete" ? { incomplete_details: { reason: "max_output_tokens" } } : {}),
-      usage: { input_tokens: 13, output_tokens: 5, total_tokens: 18, input_tokens_details: { cached_tokens: 10 } } } });
+      ...(reportUsage ? { usage: { input_tokens: 13, output_tokens: 5, total_tokens: 18, input_tokens_details: { cached_tokens: 10 } } } : {}) } });
   response.end();
 }
 const textItem = { type: "message", id: "msg_1", role: "assistant", status: "completed",
@@ -34,7 +34,7 @@ const textItem = { type: "message", id: "msg_1", role: "assistant", status: "com
 const writeItem = { type: "function_call", id: "fc_1", call_id: "call_1", name: "write",
   arguments: JSON.stringify({ path: "checker.py", content: "def create_audit(audit_file, rule, group_context=None): return None\n" }) };
 
-async function runFixture(t, handler, maxTurns = 3, addressSpaceLimit = false) {
+async function runFixture(t, handler, addressSpaceLimit = false) {
   const work = await mkdtemp(join(tmpdir(), "ppap-pi-test-"));
   t.after(() => rm(work, { recursive: true, force: true }));
   let calls = 0;
@@ -53,7 +53,7 @@ async function runFixture(t, handler, maxTurns = 3, addressSpaceLimit = false) {
   await writeFile(join(work, "request.json"), JSON.stringify({
     home: join(work, "home"), prompt: join(work, "prompt.txt"), token: "test-grant-secret",
     base_url: `http://127.0.0.1:${server.address().port}/v1`, model: "test-model",
-    reasoning_effort: "low", max_turns: maxTurns, max_tokens: 10000,
+    reasoning_effort: "low",
   }));
   const command = addressSpaceLimit ? "prlimit" : runner;
   const args = [...(addressSpaceLimit ? ["--as=1610612736", "--core=0", "--", runner] : []), join(work, "request.json")];
@@ -63,7 +63,7 @@ async function runFixture(t, handler, maxTurns = 3, addressSpaceLimit = false) {
   let stdout = "", stderr = "";
   child.stdout.on("data", (chunk) => { stdout += chunk; });
   child.stderr.on("data", (chunk) => { stderr += chunk; });
-  const timer = setTimeout(() => child.kill("SIGKILL"), 20000);
+  const timer = setTimeout(() => child.kill("SIGKILL"), 30000);
   const code = await new Promise((resolve) => child.on("close", resolve));
   clearTimeout(timer);
   assert.equal(stderr, "");
@@ -75,7 +75,7 @@ async function runFixture(t, handler, maxTurns = 3, addressSpaceLimit = false) {
 test("production launcher completes HTTP and file work under the 1536 MiB guest address limit", {
   skip: process.platform !== "linux",
 }, async (t) => {
-  const run = await runFixture(t, (response, calls) => respond(response, calls === 1 ? writeItem : textItem, calls), 3, true);
+  const run = await runFixture(t, (response, calls) => respond(response, calls === 1 ? writeItem : textItem, calls), true);
   assert.equal(run.code, 0);
   assert.equal(run.calls, 2);
   assert.equal(run.result.is_error, false);
@@ -97,21 +97,35 @@ test("Pi SDK writes the actual file, settles, and counts cached input once", asy
   assert.ok(run.events.filter((event) => event.type === "message_end").every((event) => !("cost" in event.message.usage)));
 });
 
-test("Pi turn limit stops before the next paid request", async (t) => {
-  const run = await runFixture(t, (response, calls) => respond(response, writeItem, calls), 1);
-  assert.equal(run.calls, 1);
-  assert.equal(run.code, 1);
-  assert.equal(run.result.budget_exhausted, true);
+test("A completed stage without provider token usage is still a success", async (t) => {
+  const run = await runFixture(t, (response, calls) => respond(response, calls === 1 ? writeItem : textItem, calls, "completed", false));
+  assert.equal(run.code, 0);
+  assert.equal(run.result.is_error, false);
+  assert.match(await readFile(join(run.work, "checker.py"), "utf8"), /def create_audit/);
 });
 
-test("Pi and provider retries stay disabled after HTTP failure", async (t) => {
+test("A transient provider failure is retried a bounded number of times, then fails", async (t) => {
   const run = await runFixture(t, (response) => {
     response.writeHead(503, { "Content-Type": "application/json" });
     response.end(JSON.stringify({ error: { message: "unavailable" } }));
   });
-  assert.equal(run.calls, 1);
+  assert.equal(run.calls, 3);
   assert.equal(run.code, 1);
   assert.equal(run.result.is_error, true);
+});
+
+test("A retried provider failure can still complete the stage", async (t) => {
+  const run = await runFixture(t, (response, calls) => {
+    if (calls === 1) {
+      response.writeHead(503, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ error: { message: "unavailable" } }));
+      return;
+    }
+    respond(response, calls === 2 ? writeItem : textItem, calls);
+  });
+  assert.equal(run.code, 0);
+  assert.equal(run.result.is_error, false);
+  assert.match(await readFile(join(run.work, "checker.py"), "utf8"), /def create_audit/);
 });
 
 test("Pi cannot report success for truncated output", async (t) => {

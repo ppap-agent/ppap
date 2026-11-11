@@ -158,43 +158,14 @@ class AuthStore:
     def _conn(self) -> psycopg.Connection:
         return connect(self.settings, self.role)
 
-    def model_user_for_job(self, claimed) -> str:
-        """Read the accepted initiator, never trust a caller-supplied user/key."""
-        with self._conn() as conn:
-            row = conn.execute(
-                """SELECT COALESCE(r.created_by::text, j.payload->>'initiating_user_id', '')
-                   FROM engine.jobs j LEFT JOIN product.audit_rounds r
-                     ON r.id=j.audit_round_id AND r.tenant_id=j.tenant_id
-                   WHERE j.id=%s AND j.tenant_id=%s AND j.attempt=%s
-                     AND j.status='leased' AND j.lease_until > now()""",
-                (claimed.id, claimed.tenant_id, claimed.attempt),
-            ).fetchone()
-        return str(row[0]) if row else ""
+    def model_selection(self, tenant_id: str, *, conn=None):
+        """The tenant's own model key if it has one, otherwise the platform models."""
+        from product.store.model_credentials import TenantModelStore
 
-    def personal_model_config(self, principal: Principal) -> dict:
-        from product.store.model_credentials import PersonalModelStore
+        return TenantModelStore(self).selection(tenant_id, conn=conn)
 
-        return PersonalModelStore(self).config(principal)
-
-    def put_personal_model_config(self, principal: Principal, api_key, **configuration) -> dict:
-        from product.store.model_credentials import PersonalModelStore
-
-        return PersonalModelStore(self).put(principal, api_key, **configuration)
-
-    def delete_personal_model_config(self, principal: Principal) -> dict:
-        from product.store.model_credentials import PersonalModelStore
-
-        return PersonalModelStore(self).delete(principal)
-
-    def personal_model_identity(self, tenant_id: str, initiating_user_id: str, *, conn=None) -> dict[str, str]:
-        from product.store.model_credentials import PersonalModelStore
-
-        return PersonalModelStore(self).identity(tenant_id, initiating_user_id, conn=conn)
-
-    def personal_model_access(self, tenant_id: str, initiating_user_id: str):
-        from product.store.model_credentials import PersonalModelStore
-
-        return PersonalModelStore(self).access(tenant_id, initiating_user_id)
+    def model_identity(self, tenant_id: str, *, conn=None) -> dict[str, str]:
+        return self.model_selection(tenant_id, conn=conn).identity
 
     def save_state(self, raw_state: str, return_to: str, ttl_seconds: int = 600) -> None:
         with self._conn() as conn:
@@ -1110,7 +1081,7 @@ class AuthStore:
                 prepared = self._prepared_items(conn, principal, [{"file_version_id": payload["source_file_version_id"], "role": "reference"}])
                 if prepared[0]["file_id"] != payload["source_file_id"]:
                     raise KeyError("missing")
-                payload["model_identity"] = self.personal_model_identity(principal.tenant_id, principal.user_id, conn=conn)
+                payload["model_identity"] = self.model_identity(principal.tenant_id, conn=conn)
                 conn.execute(
                     """INSERT INTO engine.jobs (id, tenant_id, kind, payload, status)
                     VALUES (%s, %s, %s, %s, 'queued') ON CONFLICT (id) DO NOTHING""",
@@ -1479,7 +1450,7 @@ class AuthStore:
                     "task_id": task_id,
                     "initiating_user_id": principal.user_id,
                     "task_revision": revision,
-                    "model_identity": self.personal_model_identity(principal.tenant_id, principal.user_id, conn=conn),
+                    "model_identity": self.model_identity(principal.tenant_id, conn=conn),
                     "source_file_id": source["file_id"],
                     "source_file_version_id": row["file_version_id"],
                     "document_type": "",
@@ -2929,7 +2900,7 @@ class AuthStore:
             # transaction. Bind source identity, clauses, code, related Suites
             # and verification risk, not merely visible rule text or input_revision.
             library = library_revision()
-            model_identity = self.personal_model_identity(principal.tenant_id, principal.user_id, conn=conn)
+            model_identity = self.model_identity(principal.tenant_id, conn=conn)
             task["confirmation_basis_digest"] = config_digest(
                 {
                     "task_id": task_id,
@@ -4843,7 +4814,7 @@ class AuthStore:
 
         snapshot = freeze_round_execution(self, conn, principal, round_id=round_id, prepared=prepared, analysis_mode=analysis_mode, require_rule_match=feedback_inputs is not None)
         if expected_model_revision is not _MODEL_REVISION_UNSPECIFIED and expected_model_revision != snapshot.model_identity.get("revision"):
-            raise ValueError("personal_model_configuration_changed")
+            raise ValueError("model_configuration_changed")
         execution_payload: dict[str, Any] = {
             "round_id": round_id,
             "executor": "ppap-checker-core",

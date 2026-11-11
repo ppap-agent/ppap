@@ -1,4 +1,4 @@
-"""Exact administrator-owned destinations for personal Responses credentials.
+"""Exact administrator-owned destinations for tenant Responses credentials.
 
 No user-controlled URL is an open network capability. Administrators explicitly
 trust each full HTTPS base URL, including internal providers, and own its DNS,
@@ -67,7 +67,7 @@ def normalize_base_url(value: str) -> str:
 def approved_base_url(settings, value: str) -> str:
     endpoint = normalize_base_url(value)
     approved = set()
-    for candidate in settings.personal_model_allowed_base_urls.split(","):
+    for candidate in settings.tenant_model_allowed_base_urls.split(","):
         if candidate.strip():
             try:
                 approved.add(normalize_base_url(candidate.strip()))

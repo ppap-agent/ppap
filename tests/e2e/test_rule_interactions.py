@@ -2039,7 +2039,7 @@ class RuleInteractionTests(unittest.TestCase):
                     section = page.get_by_role("region", name="系统是这样理解的 1", exact=True)
                     expect(section.get_by_role("heading", name="系统是这样理解的", exact=True)).to_be_visible()
                     expect(section).to_contain_text("系统还没有解释这条规则")
-                    expect(section).to_contain_text("这会使用你的个人模型。")
+                    expect(section).to_contain_text("这会调用 AI 模型。")
                     state["writes"].clear()
                     with page.expect_request("**/api/rule-formalization-generations/*"):
                         section.get_by_role("button", name="让系统解释这条规则", exact=True).click()

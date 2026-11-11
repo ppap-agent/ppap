@@ -9,7 +9,6 @@ import fitz
 import pytest
 from audit.checkers.v2.base_agent import BaseAgent
 from audit.contracts import AuditInput, RuleInput
-from audit.engine.checkers.client import AIClient
 from audit.engine.runtime import bind_runtime, get_runtime
 from documents.files import download_file_sync
 from documents.images.image import extract_images_from_bytes
@@ -34,7 +33,9 @@ class OriginalImageRuntime:
         return extract_images_from_bytes(content, ".pdf", render_all_pages=render_all_pages)
 
     def run_image_prompt(self, **kwargs):
-        return AIClient().structured_completion(**kwargs).text
+        import documents.ai
+
+        return documents.ai.run_json("image_prompt", **kwargs)
 
 
 @pytest.fixture
@@ -83,7 +84,7 @@ def image_agent(url):
 def test_public_image_check_keeps_unsupported_semantics_unknown_without_external_work(image_source, monkeypatch, bound, valid_source):
     url, content, reads = image_source
     calls = []
-    monkeypatch.setattr(AIClient, "structured_completion", lambda self, **kwargs: calls.append(kwargs))
+    monkeypatch.setattr("documents.ai.run_json", lambda self, **kwargs: calls.append(kwargs))
     if not valid_source:
         content[0] = b"not a PDF"
     runtime = OriginalImageRuntime() if bound else None

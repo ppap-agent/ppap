@@ -1,10 +1,8 @@
 """OCR uses dedicated settings and never inherits a text-model credential."""
 
-import asyncio
-from unittest.mock import patch
-
 import pytest
-from documents.ocr import client, env
+from documents.model_access import ModelUnavailable, current_model_access
+from documents.ocr import env
 
 
 def test_ocr_configuration_does_not_inherit_text_settings(monkeypatch):
@@ -12,16 +10,21 @@ def test_ocr_configuration_does_not_inherit_text_settings(monkeypatch):
         monkeypatch.setenv(key, "text-only")
     for key in ("OCR_MODEL_NAME", "OCR_OPENAI_API_KEY", "OCR_OPENAI_BASE_URL"):
         monkeypatch.delenv(key, raising=False)
-    assert env.ocr_openai_api_key() == env.ocr_openai_base_url() == ""
-    with pytest.raises(ValueError, match="OCR model is not configured"):
-        env.ocr_model_name()
-    with patch.object(client, "_get_llm_client") as provider:
-        with pytest.raises(ValueError, match="OCR model is not configured"):
-            asyncio.run(client.call_llm_async(b"PNG", "inspect", response_schema={}))
-        provider.assert_not_called()
+    for read in (env.ocr_openai_api_key, env.ocr_openai_base_url, env.ocr_model_name):
+        with pytest.raises(ValueError, match="Vision model is not configured"):
+            read()
+    with pytest.raises(ModelUnavailable, match="platform_model_unconfigured"):
+        current_model_access("vision")
 
 
-def test_ocr_dedicated_model_and_extra_body_are_canonical(monkeypatch):
+@pytest.fixture
+def vision_key(monkeypatch):
+    monkeypatch.setenv("OCR_OPENAI_API_KEY", "dedicated-ocr-key")
+    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://ocr.example.test/v1")
+    monkeypatch.setenv("OCR_MODEL_NAME", "dedicated-ocr-model")
+
+
+def test_ocr_dedicated_model_and_extra_body_are_canonical(monkeypatch, vision_key):
     monkeypatch.setenv("OCR_MODEL_NAME", "dedicated-ocr-model")
     monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://ocr.example.test/v1")
     monkeypatch.setenv("OCR_OPENAI_EXTRA_BODY_JSON", '{"reasoning":true,"a":1}')
@@ -34,7 +37,7 @@ def test_ocr_dedicated_model_and_extra_body_are_canonical(monkeypatch):
     assert env.ocr_policy_identity() != first
 
 
-def test_ocr_transcription_defaults_to_no_reasoning_without_overriding_user(monkeypatch):
+def test_ocr_transcription_defaults_to_no_reasoning_without_overriding_user(monkeypatch, vision_key):
     monkeypatch.delenv("OCR_OPENAI_EXTRA_BODY_JSON", raising=False)
     assert env.ocr_extra_body() == {"reasoning": {"effort": "none"}}
     default_identity = env.ocr_policy_identity()
@@ -44,7 +47,7 @@ def test_ocr_transcription_defaults_to_no_reasoning_without_overriding_user(monk
 
 
 @pytest.mark.parametrize("raw", ["[]", "null", "not-json"])
-def test_invalid_ocr_extra_body_fails_without_network(monkeypatch, raw):
+def test_invalid_ocr_extra_body_fails_without_network(monkeypatch, vision_key, raw):
     monkeypatch.setenv("OCR_OPENAI_EXTRA_BODY_JSON", raw)
     with pytest.raises(ValueError, match="one JSON object"):
         env.ocr_extra_body()
@@ -53,11 +56,10 @@ def test_invalid_ocr_extra_body_fails_without_network(monkeypatch, raw):
 def test_missing_ocr_credential_cannot_use_text_credential(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "text-only")
     monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://ocr.example.test/v1")
+    monkeypatch.setenv("OCR_MODEL_NAME", "dedicated-ocr-model")
     monkeypatch.delenv("OCR_OPENAI_API_KEY", raising=False)
-    with patch.object(client, "AsyncOpenAI") as sdk:
-        with pytest.raises(ValueError, match="OCR endpoint and credential"):
-            client._get_llm_client()
-        sdk.assert_not_called()
+    with pytest.raises(ModelUnavailable, match="platform_model_unconfigured"):
+        current_model_access("vision")
 
 
 def test_explicit_model_grant_owns_ocr_model_endpoint_and_policy(monkeypatch):
@@ -86,12 +88,14 @@ def test_explicit_model_grant_owns_ocr_model_endpoint_and_policy(monkeypatch):
 
 
 def test_unavailable_model_scope_never_borrows_ambient_ocr_configuration(monkeypatch):
-    from documents.model_access import ModelUnavailable, model_access_scope
+    from documents.model_access import model_access_scope
 
     monkeypatch.setenv("OCR_OPENAI_API_KEY", "ambient-key")
     monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://ambient.invalid/v1")
     monkeypatch.setenv("OCR_MODEL_NAME", "ambient-model")
+    ambient = env.ocr_policy_identity()
     with model_access_scope(None):
-        for read in (env.ocr_openai_api_key, env.ocr_openai_base_url, env.ocr_model_name, env.ocr_policy_identity):
-            with pytest.raises(ModelUnavailable):
+        for read in (env.ocr_openai_api_key, env.ocr_openai_base_url, env.ocr_model_name):
+            with pytest.raises(ValueError, match="Vision model is not configured"):
                 read()
+        assert env.ocr_policy_identity() != ambient

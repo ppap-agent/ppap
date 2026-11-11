@@ -16,7 +16,7 @@ from psycopg import sql
 from psycopg.rows import dict_row
 
 # Personal models have no built-in endpoint; tests approve their controlled one.
-os.environ.setdefault("PPAP_PERSONAL_MODEL_ALLOWED_BASE_URLS", "https://models.example.test")
+os.environ.setdefault("PPAP_TENANT_MODEL_ALLOWED_BASE_URLS", "https://models.example.test")
 
 _CI = bool(os.environ.get("CI"))
 _XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER")

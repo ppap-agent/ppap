@@ -214,7 +214,7 @@ def test_control_plan_spc_in_control_method_does_not_replace_required_frequency(
 
 @pytest.mark.parametrize(("relation", "expected"), [("supports", "PASS"), ("contradicts", "NG"), ("unknown", "UNABLE")])
 @pytest.mark.parametrize(("entry", "clause"), [("U07", "U07:1"), ("U07", "U07:2"), ("U08", "U08:2")])
-def test_semantic_clauses_use_configured_text_client_with_original_quotes(tmp_path, monkeypatch, entry, clause, relation, expected):
+def test_semantic_clauses_use_configured_text_client_with_original_quotes(text_model, tmp_path, monkeypatch, entry, clause, relation, expected):
     calls = []
 
     def request(**kwargs):
@@ -223,7 +223,7 @@ def test_semantic_clauses_use_configured_text_client_with_original_quotes(tmp_pa
         source = next((item for item in payload["sources"] if "历史问题" in item["text"] or "追溯" in item["text"]), payload["sources"][-1])
         return json.dumps({"relation": relation, "scope": "local", "citations": [{"id": source["id"], "quote": source["text"]}], "explanation": "按所引原件内容核对当前条款。"}, ensure_ascii=False)
 
-    monkeypatch.setattr("audit.engine.checkers.client.AIClient", lambda: SimpleNamespace(structured_completion=request))
+    text_model(request)
     if clause == "U07:1":
         sheets = {"PFMEA": [["历史问题：2025年孔径偏小造成总装返工，已追加失效模式及预防措施。"]]}
     elif clause == "U07:2":
@@ -236,13 +236,13 @@ def test_semantic_clauses_use_configured_text_client_with_original_quotes(tmp_pa
     assert len(calls) == 1 and requests == [{"__text__": True}]
     assert "image_base64_list" not in calls[0]
     assert calls[0]["operation"] == "rule_text_evidence"
-    assert calls[0]["request_timeout"] == 20 and calls[0]["retry_limit"] == 0
+    assert calls[0]["request_timeout"] == 20
     for source in result["evidence"]["sources"]:
         assert source["kind"] == "structure"
         assert json.loads(source["locator"])["file_version_id"] == "original"
 
 
-def test_pdf_text_semantics_follow_native_excel_preparation(tmp_path, monkeypatch):
+def test_pdf_text_semantics_follow_native_excel_preparation(text_model, tmp_path, monkeypatch):
     import audit.pdf_tables
     import fitz
 
@@ -260,7 +260,7 @@ def test_pdf_text_semantics_follow_native_excel_preparation(tmp_path, monkeypatc
         return json.dumps({"relation": "supports", "scope": "local", "citations": [{"id": source["id"], "quote": source["text"]}], "explanation": "原文说明了追溯和先进先出措施。"}, ensure_ascii=False)
 
     monkeypatch.setattr(audit.pdf_tables, "prepare_pdf_workbook", prepared)
-    monkeypatch.setattr("audit.engine.checkers.client.AIClient", lambda: SimpleNamespace(structured_completion=request))
+    text_model(request)
     path = tmp_path / "native-control.pdf"
     with fitz.open() as document:
         page = document.new_page(width=600, height=200)

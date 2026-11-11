@@ -1,33 +1,14 @@
-"""One formalization generation. Unknown provider outcome is not another charge."""
+"""One formalization generation. A timed-out generation is reported, not silently repeated."""
 
 from __future__ import annotations
 
-from audit.engine.checkers.client import ModelTransportError, TextCompletion
+import json
+
+import documents.ai
+from documents.ai import AIError
 from documents.model_access import ModelUnavailable
 from product.formalization.propose import generation_prompts
 from product.store.formalizations import FormalizationStore, source_binding
-
-
-def _provider_usage(result: TextCompletion | None) -> dict | None:
-    """Copy known token counts only. Never copy credentials or free-form provider text."""
-    if not isinstance(result, TextCompletion):
-        return None
-    counts: dict[str, int] = {}
-    for key in ("input_tokens", "output_tokens", "thinking_tokens"):
-        value = getattr(result, key)
-        if type(value) is int and value >= 0:
-            counts[key] = value
-    if "input_tokens" not in counts or "output_tokens" not in counts:
-        return None
-    if counts.get("thinking_tokens", 0) > counts["output_tokens"]:
-        counts.pop("thinking_tokens", None)
-    usage: dict[str, int | str] = {**counts, "source": "provider"}
-    return usage
-
-
-def _unknown(exc: Exception) -> bool:
-    name = type(exc).__name__.lower()
-    return "timeout" in name or "connection" in name or "transport" in name
 
 
 def process_rule_formalization(store, claimed, ident: str, *, ai=None) -> dict:
@@ -58,23 +39,11 @@ def process_rule_formalization(store, claimed, ident: str, *, ai=None) -> dict:
             clarification=row["clarification"] or None,
             instruction=row["user_instruction"],
         )
-        client = ai
-        if client is None:
-            from audit.engine.checkers.client import AIClient
-
-            client = AIClient()
         with audit_lease(store, claimed, ident):
-            completed = client.structured_completion(
-                system_prompt=system,
-                user_prompt=user,
-                max_tokens=4000,
-                temperature=0,
-                json_format=True,
-                operation="rule_formalization",
-                retry_limit=0,
-            )
-        raw = completed.text if isinstance(completed, TextCompletion) else completed
-        usage = _provider_usage(completed if isinstance(completed, TextCompletion) else None)
+            completed = (ai or documents.ai.run_json)("rule_formalization", instructions=system, prompt=user, max_tokens=4000)
+        # The store validates the reading strictly; it receives the model's JSON as text.
+        raw = json.dumps(completed.output, ensure_ascii=False) if completed.output else ""
+        usage = completed.usage()
         if not raw:
             formalizations.finish(claimed, ident, error_code="stopped", allow_expired=True)
             return {"operation_id": str(row["operation_id"]), "state": "stopped", "failure": "stopped"}
@@ -85,13 +54,13 @@ def process_rule_formalization(store, claimed, ident: str, *, ai=None) -> dict:
     except ModelUnavailable:
         formalizations.finish(claimed, ident, error_code="model_unavailable")
         return {"state": "failed", "failure": "model_unavailable"}
-    except ModelTransportError as exc:
-        failure = "model_unavailable" if exc.code == "request_failed" else "formalization_failed"
-        formalizations.finish(claimed, ident, error_code=failure)
-        return {"state": "failed", "failure": failure}
-    except Exception as exc:
-        if _unknown(exc):
+    except AIError as exc:
+        if exc.code == "timeout":
             formalizations.finish(claimed, ident, error_code="execution_outcome_unknown", usage_uncertain=True)
             return {"state": "unknown", "failure": "execution_outcome_unknown"}
+        failure = "model_unavailable" if exc.code in {"request_failed", "provider_status"} else "formalization_failed"
+        formalizations.finish(claimed, ident, error_code=failure)
+        return {"state": "failed", "failure": failure}
+    except Exception:
         formalizations.finish(claimed, ident, error_code="formalization_failed")
         return {"state": "failed", "failure": "formalization_failed"}

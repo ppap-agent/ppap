@@ -463,10 +463,6 @@ def create_app(
     def enter_legacy(request: Request) -> RedirectResponse | JSONResponse:
         return _enter_edition(request, "legacy")
 
-    from api.model_credentials import register_model_credential_routes
-
-    register_model_credential_routes(app, store, principal_of)
-
     @app.get("/me", response_model=wc.PrincipalPublic)
     def me(request: Request) -> JSONResponse:
         principal = principal_of(request)

@@ -23,6 +23,7 @@ import pytest
 import worker
 from agent.client import DeepClient, DeepError
 from agent.core_program import CoreRuntime, run_audit_manifest, write_audit_manifest
+from agent.execution.guest_model import ModelGrant
 from agent.mapping import spec_from_work
 from agent.protocol import ExecuteRequest, RequestEnvelope
 from agent.run import Controller, ExecutionContext
@@ -42,7 +43,6 @@ from audit.audits import (
 )
 from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest, runtime_revision
 from audit.standard_suites import library_revision
-from documents.model_access import UNCONFIGURED_MODEL_IDENTITY
 from fastapi.testclient import TestClient
 from product import build_product_store
 from product.capabilities import report
@@ -53,6 +53,7 @@ from product.identity import SESSION_COOKIE
 from product.settings import Settings
 from product.storage import S3Objects
 from product.store.checker_development import CheckerDevelopmentStore
+from product.store.model_credentials import platform_selection
 from product.store.suites import SuiteStore
 from pydantic import ValidationError
 from worker import process_claimed
@@ -100,9 +101,8 @@ class ControlledCoreGuest:
                 {
                     "base_url": "http://127.0.0.1:1/v1",
                     "token": "synthetic-unused-grant-1234567890",
-                    **identity,
+                    **ModelGrant.fields_for(identity),
                     "wall_seconds": 100,
-                    "max_turns": 20,
                 }
             )
         )
@@ -114,10 +114,10 @@ class ControlledCoreGuest:
 @pytest.mark.parametrize(
     "identity",
     [
-        UNCONFIGURED_MODEL_IDENTITY,
-        {"provider": "openai-compatible", "model": "frozen-model", "revision": "frozen-revision", "deployment": "a" * 64},
+        {"source": "platform", "provider": "responses-compatible", "model": "unavailable", "vision_model": "unavailable", "coding_model": "unavailable", "revision": "0" * 64, "deployment": "0" * 64},
+        {"source": "tenant", "provider": "responses-compatible", "model": "text-model", "vision_model": "vision-model", "coding_model": "coding-model", "revision": "a" * 64, "deployment": "b" * 64},
     ],
-    ids=["unconfigured", "personal-endpoint"],
+    ids=["platform-unconfigured", "tenant-key"],
 )
 def test_controlled_guests_bind_full_frozen_model_identity(tmp_path, core_system, guest_kind, identity):
     sources = {"target": b"target-bytes"}
@@ -297,6 +297,8 @@ class DeepModeTests(unittest.TestCase):
             runtime,
             object_file_source(self.settings, connect=connect, objects=S3Objects(self.settings)),
             executor_revision=runtime_revision(self.settings.deep_execution_revision(), library_revision()),
+            # As in production: the Controller's configuration at start, with the frozen identity.
+            executor_revision_for_request=lambda spec, started=self.settings.model_copy(): runtime_revision(started.deep_execution_revision(spec.model_identity), library_revision()),
             authorize=authorize_execution(self.settings, connect=connect, open_store=open_store),
         )
         path = f"controlled-core-{len(self._controllers)}"
@@ -347,7 +349,7 @@ class DeepModeTests(unittest.TestCase):
         body = self.client.get(f"/rounds/{round_id}").json()
         self.assertEqual(body["analysis_mode"], ANALYSIS_DEEP)
         self.assertEqual(body["executor"], "ppap-checker-core")
-        self.assertEqual(body["executor_revision"], runtime_revision(self.settings.deep_execution_revision(), library_revision()))
+        self.assertEqual(body["executor_revision"], runtime_revision(self.settings.deep_execution_revision(platform_selection().identity), library_revision()))
         work = self.store.round_work(round_id)
         self.assertEqual(work.analysis_mode, ANALYSIS_DEEP)
         self.assertTrue(work.inputs[0].sha256)
@@ -449,7 +451,10 @@ class DeepModeTests(unittest.TestCase):
             with self.subTest(name=name):
                 with self.assertRaises(DeepError) as caught:
                     client.execute(changed)
-                self.assertEqual(caught.exception.code, "deep_input_unauthorized")
+                # A changed model identity also selects another execution revision, so the
+                # Controller may reject it as a revision mismatch first; both precede object reads.
+                expected = {"deep_input_unauthorized", "executor_revision_mismatch"} if "model" in name else {"deep_input_unauthorized"}
+                self.assertIn(caught.exception.code, expected)
                 self.s3.get_object.assert_not_called()
                 self.assertEqual(self.runtime_calls, [])
 
@@ -486,7 +491,7 @@ class DeepModeTests(unittest.TestCase):
         target = self._upload("report.xlsx", b"target-bytes")
         self.settings.deep_controller_socket = self._start_controller()
         round_id = self._accept_deep(target, key="deep-revision")
-        frozen = runtime_revision(self.settings.deep_execution_revision(), library_revision())
+        frozen = runtime_revision(self.settings.deep_execution_revision(platform_selection().identity), library_revision())
         self.settings.deep_executor_revision = "ppap-deep-v999"
         claimed = self.store.claim_job("deep-worker")
         result = process_claimed(self.store, claimed, "deep-worker")

@@ -21,8 +21,8 @@ def test_u08_resource_clause_has_native_positive_negative_and_unknown_evidence(t
     def forbidden(*_args, **_kwargs):
         pytest.fail("Native U08:1 must not call a live text or OCR provider")
 
-    monkeypatch.setattr("audit.engine.checkers.client.AIClient", forbidden)
-    monkeypatch.setattr("documents.ocr.client.AsyncOpenAI", forbidden)
+    monkeypatch.setattr("documents.ai.run_json", forbidden)
+    monkeypatch.setattr("documents.ai.AsyncOpenAI", forbidden)
     sheets = {"控制计划": [["控制计划"], ["工序名称/操作描述", "机器/装置/夹具/工装"], ["装配", resource]]}
     raw = _xlsx(sheets)
     digest = hashlib.sha256(raw).hexdigest()

@@ -27,7 +27,8 @@ data:
   PPAP_DEEP_LLM_BASE_URL: https://api.trustedtunnel.app/backend-api/codex
   PPAP_DEEP_LLM_MODEL: gpt-6.1-sol
   PPAP_DEEP_REASONING_EFFORT: medium
-  PPAP_PERSONAL_MODEL_ALLOWED_BASE_URLS: https://grok.trustedtunnel.app/v1
+  PPAP_TENANT_MODEL_ALLOWED_BASE_URLS: https://grok.trustedtunnel.app/v1
+  PPAP_DEEP_MODEL_MAX_REQUESTS: "200"
   OPENAI_REASONING_EFFORT: low
   FEISHU_APP_ID: cli_a961a27719b81cc9
   FEISHU_AI_ITEM_ID: OpenApp_Lcoastline_PPAPAuditAgent
@@ -489,30 +490,6 @@ spec:
                   name: ppap-current
                   key: FEISHU_VERIFICATION_TOKEN
                   optional: true
-            - name: PPAP_PERSONAL_MODEL_MAX_REQUESTS
-              valueFrom:
-                configMapKeyRef:
-                  name: ppap-current
-                  key: PPAP_PERSONAL_MODEL_MAX_REQUESTS
-                  optional: true
-            - name: PPAP_PERSONAL_MODEL_MAX_INPUT_TOKENS
-              valueFrom:
-                configMapKeyRef:
-                  name: ppap-current
-                  key: PPAP_PERSONAL_MODEL_MAX_INPUT_TOKENS
-                  optional: true
-            - name: PPAP_PERSONAL_MODEL_MAX_OUTPUT_TOKENS
-              valueFrom:
-                configMapKeyRef:
-                  name: ppap-current
-                  key: PPAP_PERSONAL_MODEL_MAX_OUTPUT_TOKENS
-                  optional: true
-            - name: PPAP_PERSONAL_MODEL_ALLOWED_BASE_URLS
-              valueFrom:
-                configMapKeyRef:
-                  name: ppap-current
-                  key: PPAP_PERSONAL_MODEL_ALLOWED_BASE_URLS
-                  optional: true
             - name: PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY
               valueFrom:
                 secretKeyRef:
@@ -615,35 +592,23 @@ spec:
                 secretKeyRef:
                   name: ppap-current-deep-model-v1
                   key: PPAP_DEEP_LLM_API_KEY
+            # The trusted Controller holds the platform text and vision keys for checker
+            # trials; guests receive only a local grant.
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current-text-model-v1
+                  key: LLM_API_KEY
+            - name: OCR_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: OCR_OPENAI_API_KEY
             - name: LLM_BASE_URL
               valueFrom:
                 configMapKeyRef:
                   name: ppap-current
                   key: LLM_BASE_URL
-            - name: PPAP_PERSONAL_MODEL_MAX_REQUESTS
-              valueFrom:
-                configMapKeyRef:
-                  name: ppap-current
-                  key: PPAP_PERSONAL_MODEL_MAX_REQUESTS
-                  optional: true
-            - name: PPAP_PERSONAL_MODEL_MAX_INPUT_TOKENS
-              valueFrom:
-                configMapKeyRef:
-                  name: ppap-current
-                  key: PPAP_PERSONAL_MODEL_MAX_INPUT_TOKENS
-                  optional: true
-            - name: PPAP_PERSONAL_MODEL_MAX_OUTPUT_TOKENS
-              valueFrom:
-                configMapKeyRef:
-                  name: ppap-current
-                  key: PPAP_PERSONAL_MODEL_MAX_OUTPUT_TOKENS
-                  optional: true
-            - name: PPAP_PERSONAL_MODEL_ALLOWED_BASE_URLS
-              valueFrom:
-                configMapKeyRef:
-                  name: ppap-current
-                  key: PPAP_PERSONAL_MODEL_ALLOWED_BASE_URLS
-                  optional: true
             - name: PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY
               valueFrom:
                 secretKeyRef:
@@ -734,30 +699,6 @@ spec:
                 secretKeyRef:
                   name: ppap-current
                   key: FEISHU_APP_SECRET
-            - name: PPAP_PERSONAL_MODEL_MAX_REQUESTS
-              valueFrom:
-                configMapKeyRef:
-                  name: ppap-current
-                  key: PPAP_PERSONAL_MODEL_MAX_REQUESTS
-                  optional: true
-            - name: PPAP_PERSONAL_MODEL_MAX_INPUT_TOKENS
-              valueFrom:
-                configMapKeyRef:
-                  name: ppap-current
-                  key: PPAP_PERSONAL_MODEL_MAX_INPUT_TOKENS
-                  optional: true
-            - name: PPAP_PERSONAL_MODEL_MAX_OUTPUT_TOKENS
-              valueFrom:
-                configMapKeyRef:
-                  name: ppap-current
-                  key: PPAP_PERSONAL_MODEL_MAX_OUTPUT_TOKENS
-                  optional: true
-            - name: PPAP_PERSONAL_MODEL_ALLOWED_BASE_URLS
-              valueFrom:
-                configMapKeyRef:
-                  name: ppap-current
-                  key: PPAP_PERSONAL_MODEL_ALLOWED_BASE_URLS
-                  optional: true
             - name: PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY
               valueFrom:
                 secretKeyRef:

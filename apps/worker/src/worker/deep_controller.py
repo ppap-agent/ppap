@@ -29,6 +29,16 @@ def _stop(_signum, _frame) -> None:
     STOP.set()
 
 
+def model_access(store, spec, purpose):
+    """The model for one use, only while the tenant's selection equals the frozen one."""
+    from documents.model_access import ModelUnavailable
+
+    selection = store.model_selection(spec.tenant_id)
+    if selection.identity != dict(spec.model_identity):
+        raise ModelUnavailable("model_configuration_changed")
+    return selection.access(purpose)
+
+
 def open_store(settings):
     return AuthStore(settings, role="worker")
 
@@ -49,8 +59,8 @@ def main() -> int:
     with runtime_from_env(
         settings,
         objects,
-        model_identity_for_request=lambda spec: store.personal_model_identity(spec.tenant_id, spec.initiating_user_id),
-        model_access_for_request=lambda spec: store.personal_model_access(spec.tenant_id, spec.initiating_user_id),
+        model_identity_for_request=lambda spec: store.model_identity(spec.tenant_id),
+        model_access_for_request=lambda spec, purpose: model_access(store, spec, purpose),
         snapshot_for_request=lambda spec: suites.read_snapshot(spec.round_id, spec.tenant_id),
         suite_for_revision=suites.resolve_suite,
         save_round_artifacts=development.save_round_artifacts,

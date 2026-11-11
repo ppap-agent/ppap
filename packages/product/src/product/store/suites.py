@@ -363,7 +363,7 @@ def freeze_round_execution(store, conn, principal, *, round_id: str, prepared: l
     if analysis_mode not in {"standard", "deep"}:
         raise ValueError("invalid_analysis_mode")
     library = library_revision()
-    identity = store.personal_model_identity(principal.tenant_id, principal.user_id, conn=conn)
+    identity = store.model_identity(principal.tenant_id, conn=conn)
     policy = store.settings.deep_execution_policy(identity)
     targets = freeze_selected_targets(store, conn, principal.tenant_id, prepared, require_rule_match=require_rule_match)
     return ExecutionSnapshot(

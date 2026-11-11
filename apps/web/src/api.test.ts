@@ -30,8 +30,8 @@ test('formalization conflicts explain the next read instead of a raw error code'
     ['conflicting_confirmation', 409, '这条理解已被其他人确认。请重新读取当前候选。'],
     ['not_confirmable', 409, '这条理解还不完整，不能确认。'],
     ['source_unchecked', 409, '原文出处未核对。请先核对出处，再确认这一理解。'],
-    ['model_unavailable', 503, '个人模型还不可用。请先配置模型，然后再解释。'],
-    ['model_consumption_refused', 422, '你还没有同意使用个人模型。同意后再解释这一条款。'],
+    ['model_unavailable', 503, '模型服务暂不可用，本次没有调用模型。请稍后重试；如持续出现，请联系管理员。'],
+    ['model_consumption_refused', 422, '你还没有同意调用模型。同意后再解释这一条款。'],
   ] as const
   for (const [code, status, text] of cases) {
     installFetch(() => jsonResponse({error: code}, status))

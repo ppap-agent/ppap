@@ -544,8 +544,8 @@ class SourceAudit:
         except GuardStop as exc:
             status, message = exc.status, exc.message
         except ModelUnavailable as exc:
-            if exc.code == "personal_model_unavailable":
-                status, message = "UNABLE", "当前个人模型凭据不可用，所需原件事实尚未核实。"
+            if exc.code in {"model_unavailable", "platform_model_unconfigured", "tenant_model_unavailable", "model_configuration_changed", "model_contract_retired"}:
+                status, message = "UNABLE", "当前模型不可用，所需原件事实尚未核实。"
             else:
                 status, message = "ERR", "原件模型请求失败或结果尚未确认，尚未取得业务结论。"
         except Exception as exc:

@@ -56,7 +56,7 @@ def test_precheck_is_recoverable_without_creating_an_audit(validation_system):
     assert client.post("/file-validations", json=body).json() == accepted.json()
     claimed = worker.claim_job("precheck-worker")
     assert claimed.kind == "file_validation"
-    with patch("audit.engine.checkers.client.AIClient", side_effect=AssertionError("precheck_must_not_call_model")):
+    with patch("documents.ai.run_json", side_effect=AssertionError("precheck_must_not_call_model")):
         process_claimed(worker, claimed, "precheck-worker")
     recovered = client.get(f"/file-validations/{request_id}")
     assert recovered.status_code == 200

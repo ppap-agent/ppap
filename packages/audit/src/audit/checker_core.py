@@ -15,6 +15,11 @@ from audit.contracts import AuditResultItem
 _DIGEST = re.compile(r"^[a-f0-9]{64}$")
 _ENTRYPOINT = re.compile(r"^[a-zA-Z_]\w*:[a-zA-Z_]\w*$")
 
+# The non-secret identity of the models an operation froze. Historical rows carry the
+# first four keys; current ones also name their source and their vision and coding models.
+LEGACY_MODEL_IDENTITY_KEYS = frozenset({"provider", "model", "revision", "deployment"})
+MODEL_IDENTITY_KEYS = LEGACY_MODEL_IDENTITY_KEYS | {"source", "vision_model", "coding_model"}
+
 
 def _json(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()
@@ -201,7 +206,7 @@ class ExecutionSnapshot:
         if not self.tenant_id or not self.initiating_user_id or not self.runtime_revision or not self.library_revision:
             raise ValueError("incomplete_execution_identity")
         # Identity is an allowlist, never a copy of Settings or provider config.
-        if not set(self.model_identity) <= {"provider", "model", "revision", "deployment"} or any(not isinstance(value, str) for value in self.model_identity.values()):
+        if not set(self.model_identity) <= MODEL_IDENTITY_KEYS or any(not isinstance(value, str) for value in self.model_identity.values()):
             raise ValueError("invalid_model_identity")
         inputs, targets = tuple(self.inputs), tuple(self.targets)
         by_id = {item.file_version_id: item for item in inputs}

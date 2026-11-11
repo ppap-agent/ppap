@@ -94,43 +94,25 @@ def parse_rule_file(filename: str, content: bytes, *, document_type: str = "", a
         if rules is not None:
             return normalize_rule_body({"kind": "engine", "type": type_name, "rule_profile": "v3", "rules": rules})
     try:
-        from audit.engine.checkers.client import AIClient, completion_text
+        from documents.ai import run_json
 
         if ai is None:
-            ai = AIClient()
+            ai = run_json
         if not type_name:
-            classified = completion_text(
-                ai.structured_completion(
-                    system_prompt=PromptManager.get_system_prompt("ppap_expert"),
-                    user_prompt=PromptManager.get_document_classification_prompt(text, "\n".join(document_types())),
-                    max_tokens=100,
-                    temperature=0.0,
-                    operation="document_classification",
-                    request_timeout=120,
-                    retry_limit=0,
-                )
-            )
-            doc_type = PpapDocumentType.from_string(classified)
+            classified = ai(
+                "document_classification",
+                instructions=PromptManager.get_system_prompt("ppap_expert"),
+                prompt=PromptManager.get_document_classification_prompt(text, "\n".join(document_types())) + '\n只返回 JSON：{"document_type": "上面列表中的一项，无法判断时为 未知"}',
+                max_tokens=100,
+                timeout=120,
+            ).output.get("document_type")
+            doc_type = PpapDocumentType.from_string(classified if isinstance(classified, str) else "")
             type_name = doc_type.get_type_name() if doc_type != PpapDocumentType.UNKNOWN else ""
         if not type_name:
             raise RuleParseError("unknown_rule_type")
         prompt = PromptManager.get_rule_extraction_prompt(text, type_name)
         prompt += "\n同时返回 customers、models、parts 三个字符串数组，仅包含原文明确的适用客户、型号、零件；没有则为空数组。"
-        response = completion_text(
-            ai.structured_completion(
-                system_prompt=PromptManager.get_system_prompt("rule_extractor"),
-                user_prompt=prompt,
-                max_tokens=8192,
-                temperature=0.0,
-                json_format=True,
-                operation="rule_extraction",
-                request_timeout=120,
-                retry_limit=0,
-            )
-        )
-        parsed = json.loads(response.strip().removeprefix("```json").removesuffix("```").strip())
-        if not isinstance(parsed, dict):
-            raise ValueError("invalid_rule_body")
+        parsed = ai("rule_extraction", instructions=PromptManager.get_system_prompt("rule_extractor"), prompt=prompt, max_tokens=8192, timeout=120).output
         return normalize_rule_body({**parsed, "type": type_name, "rule_profile": "v3"})
     except RuleParseError:
         raise

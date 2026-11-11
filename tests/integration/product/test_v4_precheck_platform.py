@@ -7,6 +7,7 @@ from copy import deepcopy
 
 import pytest
 from api import create_app
+from documents.ai import AIResult
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from product import build_product_store
@@ -18,10 +19,10 @@ from worker import process_claimed
 
 
 class Recognition:
-    def structured_completion(self, **request):
-        if request["operation"] == "document_classification":
-            return "过程特殊特性清单"
-        return json.dumps({"customer": "蔚来", "model": "M1", "part": "零件A", "part_number": "P-1"}, ensure_ascii=False)
+    def __call__(self, operation, **request):
+        if operation == "document_classification":
+            return AIResult({"document_type": "过程特殊特性清单"})
+        return AIResult({"customer": "蔚来", "model": "M1", "part": "零件A", "part_number": "P-1"})
 
 
 @pytest.fixture

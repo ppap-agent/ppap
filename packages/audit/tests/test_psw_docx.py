@@ -9,7 +9,6 @@ import pytest
 from audit.contracts import AuditInput, RuleInput
 from audit.engine import run_audit
 from audit.engine.app_runtime import run_audit_engine
-from audit.engine.checkers.client import AIClient
 from audit.kinds import PpapDocumentType
 from docx import Document, oxml
 from PIL import Image
@@ -167,7 +166,7 @@ def test_docx_native_fields_remain_known_and_unsupported_visual_facts_stay_unabl
         attempts.append(kwargs)
         raise AssertionError("DOCX must not call LLM vision")
 
-    monkeypatch.setattr(AIClient, "structured_completion", reject)
+    monkeypatch.setattr("documents.ai.run_json", reject)
     results = run_audit_engine(
         AuditInput(audit_id="psw-word-native", file_url=str(path)),
         RuleInput(rule_id="confirmed-psw-rules", rule_profile=profile, type=PpapDocumentType.PSW.get_type_name(), rules=[{"id": str(index)} for index in range(1, 11)]),

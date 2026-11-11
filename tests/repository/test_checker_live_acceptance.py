@@ -36,9 +36,7 @@ def configuration():
         "GITHUB_ACTIONS": "true",
         "GITHUB_RUN_ID": "123",
         "COMPOSE_PROJECT_NAME": "ppap-checker-live-123-1",
-        "PPAP_PERSONAL_MODEL_MAX_REQUESTS": "32",
-        "PPAP_PERSONAL_MODEL_MAX_INPUT_TOKENS": "200000",
-        "PPAP_PERSONAL_MODEL_MAX_OUTPUT_TOKENS": "32000",
+        "PPAP_DEEP_MODEL_MAX_REQUESTS": "32",
     }
 
 
@@ -48,7 +46,6 @@ def configuration():
         ("GITHUB_EVENT_NAME", "push"),
         ("GITHUB_RUN_ATTEMPT", "0"),
         ("PPAP_APPROVED_SHA", "b" * 40),
-        ("CI_LLM_API_KEY", ""),
         ("GITHUB_ACTIONS", "false"),
         ("GITHUB_RUN_ID", "not-a-run"),
         ("COMPOSE_PROJECT_NAME", "production"),
@@ -429,7 +426,6 @@ def test_live_browser_explicitly_selects_the_full_sample_set_before_one_admissio
     _, samples = valid_receipt()
     report = {"journey": {}, "samples": samples}
     report_path = tmp_path / "report.json"
-    configured = {"configured": True, "base_url": env["CI_LLM_BASE_URL"], "model": env["CI_LLM_MODEL"], "revision": "model-revision"}
     receipt = {"operation_id": "ui-generated-operation", "state": "queued"}
     selected = [next(iter(samples))]  # The product's current-row default.
     page, batch, select_all, start = Mock(), Mock(), Mock(), Mock()
@@ -438,16 +434,16 @@ def test_live_browser_explicitly_selects_the_full_sample_set_before_one_admissio
     batch.get_by_role.side_effect = lambda role, *, name, exact: select_all if name == "选择全部已确认样本" else Mock()
     select_all.click.side_effect = lambda: selected.__setitem__(slice(None), list(samples))
     page.get_by_label.side_effect = lambda name, *, exact: labels.setdefault(name, Mock())
-    page.expect_response.side_effect = [nullcontext(SimpleNamespace(value=SimpleNamespace(status=200, json=Mock(return_value=result)))) for result in (configured, receipt)]
+    page.expect_response.side_effect = [nullcontext(SimpleNamespace(value=SimpleNamespace(status=200, json=Mock(return_value=receipt))))]
     page.route.side_effect = lambda pattern, callback: captures.append(callback)
 
     def admit():
-        body = {"operation_id": receipt["operation_id"], "expected_model_revision": configured["revision"], "feedback_ids": list(selected)}
+        body = {"operation_id": receipt["operation_id"], "consume_model": True, "feedback_ids": list(selected)}
 
         def forward():
             persisted = json.loads(report_path.read_text())
             assert persisted["stage"] == "admitting" and persisted["operation_id"] == body["operation_id"]
-            labels[f"同意将本次资料发送至 {env['CI_LLM_BASE_URL']}，使用 {env['CI_LLM_MODEL']} 修复并验证这 8 条反馈"].check.assert_called_once()
+            labels["同意由 AI 修复并验证这 8 条反馈"].check.assert_called_once()
             forwarded.append(body)
 
         captures[0](SimpleNamespace(request=SimpleNamespace(method="POST", post_data_json=body), continue_=forward))
@@ -455,10 +451,10 @@ def test_live_browser_explicitly_selects_the_full_sample_set_before_one_admissio
     start.click.side_effect = admit
     journey = acceptance.BrowserJourney.__new__(acceptance.BrowserJourney)
     journey.page = page
-    assert journey.configure_and_start({"round_id": "round", "file_version_id": "file"}, env["CI_LLM_BASE_URL"], env["CI_LLM_MODEL"], report, report_path) == (configured, receipt)
+    assert journey.start({"round_id": "round", "file_version_id": "file"}, report, report_path) == receipt
     select_all.click.assert_called_once()
     assert len(forwarded) == 1 and forwarded[0]["feedback_ids"] == list(samples)
-    assert report["journey"] == {"browser_feedback_selection": True, "browser_personal_configuration": True}
+    assert report["journey"] == {"browser_feedback_selection": True}
     assert env["CI_LLM_API_KEY"] not in report_path.read_text()
     page.reload.assert_called_once()
 
@@ -488,9 +484,8 @@ def test_ephemeral_setup_uses_private_unique_credentials_and_never_overwrites(tm
         ("GITHUB_RUN_ATTEMPT", "0"),
         ("PPAP_APPROVED_SHA", "b" * 40),
         ("CI_LLM_MODEL", ""),
-        ("PPAP_PERSONAL_MODEL_MAX_REQUESTS", "33"),
-        ("PPAP_PERSONAL_MODEL_MAX_INPUT_TOKENS", "200001"),
-        ("PPAP_PERSONAL_MODEL_MAX_OUTPUT_TOKENS", "0"),
+        ("PPAP_DEEP_MODEL_MAX_REQUESTS", "33"),
+        ("PPAP_DEEP_MODEL_MAX_REQUESTS", "0"),
     ],
 )
 def test_setup_rejects_changed_source_or_excessive_budget(tmp_path, key, value):
@@ -524,7 +519,7 @@ def valid_receipt():
         "state": "completed",
         "suite_revision_id": "base",
         "candidate_revision_id": "candidate",
-        "usage": {"source": "provider", "uncertain": False, "input_tokens": 500, "output_tokens": 100, "model_requests": 2},
+        "usage": {"source": "provider", "input_tokens": 500, "output_tokens": 100, "model_requests": 2},
         "report": {"validation": {"verified": True, "total_samples": 8, "passed_samples": 8, "cases": cases}},
     }, samples
 
@@ -541,9 +536,6 @@ def test_gate_accepts_only_real_usage_and_independent_positive_negative_holdout(
         (("state",), "failed"),
         (("candidate_revision_id",), None),
         (("usage", "source"), "controlled"),
-        (("usage", "uncertain"), True),
-        (("usage", "input_tokens"), 0),
-        (("usage", "model_requests"), 0),
         (("report", "validation", "verified"), False),
         (("report", "validation", "cases", 0, "clauses", 0, "actual"), "PASS"),
         (("report", "validation", "cases", 3, "clauses", 0, "actual"), "UNABLE"),
@@ -690,14 +682,15 @@ def checker_workflow():
 def test_workflow_is_manual_only_bounded_and_not_in_default_gate():
     workflow = checker_workflow()
     assert set(workflow["on"]) == {"workflow_dispatch"}
-    assert set(workflow["on"]["workflow_dispatch"]["inputs"]) == {"expected_sha", "max_model_requests", "max_input_tokens", "max_output_tokens"}
+    assert set(workflow["on"]["workflow_dispatch"]["inputs"]) == {"expected_sha", "max_model_requests"}
     job = workflow["jobs"]["live"]
     assert "if" not in job
     assert workflow["concurrency"]["cancel-in-progress"] == "false"
     assert "checker-optimization-live" not in (ROOT / ".github/workflows/tests.yml").read_text()
     assert "CI_LLM_API_KEY" not in json.dumps(job["env"])
+    # Only the step that starts the stack gives the platform key to its services.
     steps_with_key = [step for step in job["steps"] if "CI_LLM_API_KEY" in step.get("env", {})]
-    assert len(steps_with_key) == 1
+    assert [step["name"] for step in steps_with_key] == ["Start only the independent candidate stack"]
     assert "uv run --no-sync python -m pytest tests/repository/test_checker_live_acceptance.py" in json.dumps(workflow)
     assert job["env"]["COMPOSE_PROJECT_NAME"].endswith("${{ github.run_id }}-${{ github.run_attempt }}")
     upload = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact@"))
@@ -735,8 +728,7 @@ def test_stack_keeps_oracle_outside_guest_and_disables_fixture_login():
         assert not service.get("restart")
         if name in {"api", "worker", "deep"}:
             assert service["environment"]["PPAP_PROFILE"] == "remote-dev"
-            assert service["environment"]["LLM_API_KEY"] == ""
-            assert "CI_LLM_API_KEY" not in service["environment"]
+            assert service["environment"]["LLM_API_KEY"] == "${CI_LLM_API_KEY:-}"
             assert service["environment"]["PPAP_USAGE_CHARGE_ENABLED"] == "false"
         assert "run_checker_live.py" not in json.dumps(service)
     mounts = config["services"]["deep"]["volumes"]
@@ -870,7 +862,7 @@ def test_host_fixture_settings_use_explicit_random_credentials_and_distinct_loop
     assert settings.profile == "remote-dev" and settings.feishu_app_id == "checker-live"
     assert settings.pg_host == "127.0.0.1" and settings.pg_port == 15432
     assert settings.s3_endpoint == "http://127.0.0.1:19000"
-    assert settings.personal_model_max_requests == 32 and settings.personal_model_max_input_tokens == 200000 and settings.personal_model_max_output_tokens == 32000
+    assert settings.deep_model_max_requests == 32
     config = yaml.safe_load((ROOT / "deploy/isolated-dev/checker-live.yaml").read_text())
     assert config["services"]["api"]["ports"] == ["127.0.0.1:${LIVE_API_PORT:-18080}:8080"]
     assert config["services"]["web"]["ports"] == ["127.0.0.1:${LIVE_WEB_PORT:-14173}:4173"]
@@ -1018,7 +1010,7 @@ def test_actions_model_configuration_is_the_only_source_for_all_stack_consumers(
     for service in ("api", "worker", "deep"):
         values = config["services"][service]["environment"]
         assert values["LLM_MODEL"] == "${CI_LLM_MODEL:?}"
-        assert values["LLM_BASE_URL"] == values["PPAP_PERSONAL_MODEL_ALLOWED_BASE_URLS"] == "${CI_LLM_BASE_URL:?}"
+        assert values["LLM_BASE_URL"] == values["PPAP_TENANT_MODEL_ALLOWED_BASE_URLS"] == "${CI_LLM_BASE_URL:?}"
 
 
 def test_requested_model_records_the_gateway_selection_without_copying_private_content(tmp_path):
@@ -1032,7 +1024,7 @@ def test_requested_model_records_the_gateway_selection_without_copying_private_c
     model = "provider/arbitrary-model-alias"
     grants = Grants(model)
     body = {"model": "cli-internal-alias", "input": "private-synthetic-content"}
-    grants.authorize(grants.issue(uuid4()), body, 100, select_model=True)
+    grants.authorize(grants.issue(uuid4()), body, 100)
     probe.observe_provider(body)
     saved = json.loads(probe.path.read_text())
     assert saved["requested_models"] == [model]

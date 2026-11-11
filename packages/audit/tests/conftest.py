@@ -17,6 +17,22 @@ from openpyxl import Workbook
 
 
 @pytest.fixture
+def text_model(monkeypatch):
+    """Answer direct text model calls with a stub that reads the request and returns JSON text."""
+
+    def install(stub):
+        from documents.ai import AIResult
+
+        def run(task, *, prompt, instructions="", max_tokens=1000, timeout=900, **kwargs):
+            raw = stub(operation=task, system_prompt=instructions, user_prompt=prompt, max_tokens=max_tokens, request_timeout=timeout, **kwargs)
+            return AIResult(json.loads(raw) if isinstance(raw, str) else raw)
+
+        monkeypatch.setattr("documents.ai.run_json", run)
+
+    return install
+
+
+@pytest.fixture
 def nio_execute(tmp_path, monkeypatch):
     """Execute one NIO frozen leaf through its production adapter and Core."""
 

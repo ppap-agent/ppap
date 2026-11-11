@@ -40,11 +40,11 @@ from product.model_endpoint import ModelEndpointError, approved_base_url, normal
 )
 def test_invalid_destinations_rejected_even_if_operator_lists_them(url):
     with pytest.raises(ModelEndpointError, match="invalid_model_endpoint"):
-        approved_base_url(SimpleNamespace(personal_model_allowed_base_urls=url), url)
+        approved_base_url(SimpleNamespace(tenant_model_allowed_base_urls=url), url)
 
 
 def test_exact_https_prefix_allowlist_supports_trusted_internal_provider():
-    settings = SimpleNamespace(personal_model_allowed_base_urls="https://models.company.test/v1,https://10.25.2.10:8443/inference,https://inference.internal/v1")
+    settings = SimpleNamespace(tenant_model_allowed_base_urls="https://models.company.test/v1,https://10.25.2.10:8443/inference,https://inference.internal/v1")
     assert approved_base_url(settings, "https://MODELS.company.test:443/v1/") == "https://models.company.test/v1"
     assert approved_base_url(settings, "https://10.25.2.10:8443/inference") == "https://10.25.2.10:8443/inference"
     assert approved_base_url(settings, "https://inference.internal/v1") == "https://inference.internal/v1"
@@ -60,7 +60,7 @@ def test_exact_https_prefix_allowlist_supports_trusted_internal_provider():
 
 
 def test_empty_or_broken_allowlist_does_not_grant_custom_destinations():
-    settings = SimpleNamespace(personal_model_allowed_base_urls="https://,*.company.test,http://10.0.0.1/v1")
+    settings = SimpleNamespace(tenant_model_allowed_base_urls="https://,*.company.test,http://10.0.0.1/v1")
     with pytest.raises(ModelEndpointError, match="model_endpoint_not_allowed"):
         approved_base_url(settings, "https://models.example.test/")
     with pytest.raises(ModelEndpointError, match="model_endpoint_not_allowed"):

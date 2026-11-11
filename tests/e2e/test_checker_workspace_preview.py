@@ -23,16 +23,6 @@ class CheckerHttpFixture:
         self.history = []
         self.current = "revision-base"
         self.head = 0
-        self.model_config = {
-            "provider": "responses-compatible",
-            "base_url": "https://models.example.test",
-            "model": "test-model",
-            "configured": True,
-            "revision": "7a7cceab-e503-477a-9874-d0300f7d2dcc",
-            "updated_at": None,
-        }
-        self.lose_model_save = False
-        self.model_error = None
         self.lose_feedback = False
         self.lose_optimization = False
         self.lose_publish = False
@@ -88,27 +78,7 @@ class CheckerHttpFixture:
         body = request.post_data_json if request.post_data else None
         self.calls.append((method, path, body))
         response = None
-        if path == "/me/model-config":
-            if method == "PUT":
-                if self.model_error:
-                    route.fulfill(status=400, json={"error": self.model_error, "detail": body["api_key"]})
-                    return
-                self.model_config = {
-                    "provider": "responses-compatible",
-                    "base_url": body["base_url"],
-                    "model": body["model"],
-                    "configured": True,
-                    "revision": "9376ad10-0771-4cad-9f52-d08483163387",
-                    "updated_at": "2026-11-06T00:00:00Z",
-                }
-                if self.lose_model_save:
-                    self.lose_model_save = False
-                    route.abort("failed")
-                    return
-            elif method == "DELETE":
-                self.model_config = {**self.model_config, "configured": False, "revision": None}
-            response = self.model_config
-        elif path == "/audit-rounds/round-a/checker-feedback":
+        if path == "/audit-rounds/round-a/checker-feedback":
             if method == "GET":
                 response = {
                     "round_id": "round-a",
@@ -135,9 +105,6 @@ class CheckerHttpFixture:
         elif path.startswith("/suite-revisions/") and path.endswith("/checker-feedback"):
             response = {"feedback": self.feedback}
         elif path.startswith("/suite-revisions/") and path.endswith("/optimizations"):
-            if body.get("consume_model") and body.get("expected_model_revision") != self.model_config["revision"]:
-                route.fulfill(status=409, json={"error": "personal_model_configuration_changed"})
-                return
             revision = path.split("/")[2]
             if revision == "revision-upgraded" and self.reject_upgrade_verification:
                 route.fulfill(status=409, json={"error": "checker_feedback_rules_changed"})
@@ -395,112 +362,6 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
             self.assertEqual(len([row for row in fixture.calls if row[:2] == ("PUT", "/suites/control-plan/active")]), 1)
             browser.close()
 
-    def test_custom_model_full_save_unknown_readback_and_destination_consent(self):
-        with sync_playwright() as playwright:
-            browser = self.browser(playwright)
-            fixture = CheckerHttpFixture()
-            page = self.open(browser, fixture, 390)
-            self.answer(page)
-            page.get_by_role("button", name="让 AI 修复并验证", exact=True).click()
-            original_consent = page.get_by_label("同意将本次资料发送至 https://models.example.test，使用 test-model 修复并验证这 1 条反馈", exact=True)
-            original_consent.check()
-            expect(page.get_by_role("button", name="确认开始修复", exact=True)).to_be_enabled()
-            # A saved model is a summary; changing it opens the form.
-            page.get_by_role("button", name="更换模型或 Key", exact=True).click()
-            page.get_by_label("服务地址", exact=True).fill("https://models.company.test/v1")
-            page.get_by_label("模型名称", exact=True).fill("internal-reasoner")
-            save = page.get_by_role("button", name="保存", exact=True)
-            expect(save).to_be_disabled()
-            expect(page.get_by_role("button", name="确认开始修复", exact=True)).to_be_disabled()
-            page.get_by_label("API Key", exact=True).fill("synthetic-new-key")
-            fixture.lose_model_save = True
-            save.click()
-            expect(page.get_by_text("保存结果待确认。密钥输入已清除，请读取当前配置后再决定是否修改。", exact=True)).to_be_visible()
-            # Until the saved state is read back, the form (and its key) is gone and nothing can be saved again.
-            expect(page.get_by_label("API Key", exact=True)).to_have_count(0)
-            expect(save).to_have_count(0)
-            self.assertEqual(len([row for row in fixture.calls if row[:2] == ("PUT", "/me/model-config")]), 1)
-            self.assertFalse(fixture.operations)
-            self.assertNotIn("synthetic-new-key", page.locator("body").inner_text())
-            page.get_by_role("button", name="读取当前配置", exact=True).click()
-            summary = page.get_by_role("region", name="我的模型配置", exact=True)
-            expect(summary.get_by_text("internal-reasoner", exact=True)).to_be_visible()
-            expect(summary.get_by_title("https://models.company.test/v1", exact=True)).to_be_visible()
-            consent = page.get_by_label("同意将本次资料发送至 https://models.company.test/v1，使用 internal-reasoner 修复并验证这 1 条反馈", exact=True)
-            expect(consent).not_to_be_checked()
-            expect(page.get_by_role("button", name="确认开始修复", exact=True)).to_be_disabled()
-            self.assertEqual(len([row for row in fixture.calls if row[:2] == ("PUT", "/me/model-config")]), 1)
-            consent.check()
-            expect(page.get_by_role("button", name="确认开始修复", exact=True)).to_be_enabled()
-            page.get_by_role("button", name="撤销 Key", exact=True).click()
-            page.get_by_role("button", name="取消", exact=True).click()
-            self.assertTrue(fixture.model_config["configured"])
-            self.assertFalse(any(row[:2] == ("DELETE", "/me/model-config") for row in fixture.calls))
-            self.assertFalse(fixture.operations)
-            self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 390)
-            browser.close()
-
-    def test_model_rejection_clears_secret_without_echoing_error_payload(self):
-        with sync_playwright() as playwright:
-            browser = self.browser(playwright)
-            fixture = CheckerHttpFixture()
-            fixture.model_error = "model_endpoint_not_allowed"
-            page = self.open(browser, fixture)
-            self.answer(page)
-            page.get_by_role("button", name="让 AI 修复并验证", exact=True).click()
-            page.get_by_role("button", name="更换模型或 Key", exact=True).click()
-            page.get_by_label("服务地址", exact=True).fill("https://unapproved.test/v1")
-            page.get_by_label("API Key", exact=True).fill("synthetic-secret-in-error")
-            page.get_by_role("button", name="保存", exact=True).click()
-            expect(page.get_by_role("alert")).to_contain_text("这个服务地址尚未获准使用")
-            # A rejection saved nothing: the form stays to correct it, with the key cleared.
-            expect(page.get_by_label("API Key", exact=True)).to_have_value("")
-            self.assertNotIn("synthetic-secret-in-error", page.locator("body").inner_text())
-            expect(page.get_by_role("button", name="确认开始修复", exact=True)).to_be_disabled()
-            self.assertFalse(fixture.operations)
-            browser.close()
-
-    def test_changed_model_before_admission_rejects_until_readback_and_new_consent(self):
-        with sync_playwright() as playwright:
-            browser = self.browser(playwright)
-            fixture = CheckerHttpFixture()
-            page = self.open(browser, fixture)
-            self.answer(page)
-            page.get_by_role("button", name="让 AI 修复并验证", exact=True).click()
-            page.get_by_label("同意将本次资料发送至 https://models.example.test，使用 test-model 修复并验证这 1 条反馈", exact=True).check()
-            original_revision = fixture.model_config["revision"]
-            fixture.model_config = {**fixture.model_config, "revision": "588f07c7-cd41-4a1b-a80f-e264adfdb58b", "base_url": "https://models.company.test/v1", "model": "internal-reasoner"}
-            pending_admission = []
-            page.route("**/suite-revisions/*/optimizations", lambda route: pending_admission.append(route))
-            with page.expect_request(lambda request: request.method == "POST" and request.url.endswith("/optimizations")):
-                page.get_by_role("button", name="确认开始修复", exact=True).click()
-            # Let the pending-intent render and its effects run while POST is held.
-            # No missing-operation GET may race the authoritative rejection below.
-            page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
-            self.assertIn("checkerOptimization=", page.url)
-            self.assertEqual(len(pending_admission), 1)
-            self.assertFalse(any(method == "GET" and path.startswith("/checker-optimizations/") for method, path, _ in fixture.calls))
-            page.unroute("**/suite-revisions/*/optimizations")
-            fixture.route(pending_admission.pop())
-            expect(page.get_by_role("alert")).to_contain_text("模型配置已更改，本次操作未被接收")
-            self.assertNotIn("checkerOptimization=", page.url)
-            self.assertFalse(fixture.operations)
-            attempts = [row for row in fixture.calls if row[0] == "POST" and row[1].endswith("/optimizations")]
-            self.assertEqual(len(attempts), 1)
-            self.assertEqual(attempts[0][2]["expected_model_revision"], original_revision)
-            expect(page.get_by_role("button", name="确认开始修复", exact=True)).to_be_disabled()
-            page.get_by_role("button", name="读取当前配置", exact=True).click()
-            consent = page.get_by_label("同意将本次资料发送至 https://models.company.test/v1，使用 internal-reasoner 修复并验证这 1 条反馈", exact=True)
-            expect(consent).not_to_be_checked()
-            expect(page.get_by_role("button", name="确认开始修复", exact=True)).to_be_disabled()
-            consent.check()
-            page.get_by_role("button", name="确认开始修复", exact=True).click()
-            expect(page.get_by_role("heading", name="正在修复与验证", exact=True)).to_be_visible()
-            attempts = [row for row in fixture.calls if row[0] == "POST" and row[1].endswith("/optimizations")]
-            self.assertEqual(len(attempts), 2)
-            self.assertEqual(attempts[1][2]["expected_model_revision"], fixture.model_config["revision"])
-            browser.close()
-
     def test_admitted_optimization_keeps_polling_while_feedback_refresh_is_pending(self):
         with sync_playwright() as playwright:
             browser = self.browser(playwright)
@@ -508,7 +369,7 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
             page = self.open(browser, fixture)
             self.answer(page)
             page.get_by_role("button", name="让 AI 修复并验证", exact=True).click()
-            page.get_by_label("同意将本次资料发送至 https://models.example.test，使用 test-model 修复并验证这 1 条反馈", exact=True).check()
+            page.get_by_label("同意由 AI 修复并验证这 1 条反馈", exact=True).check()
             pending_refresh = []
             page.route("**/audit-rounds/round-a/checker-feedback", lambda route: pending_refresh.append(route))
             with (
@@ -540,7 +401,7 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
             page = self.open(browser, fixture)
             self.answer(page)
             page.get_by_role("button", name="让 AI 修复并验证", exact=True).click()
-            page.get_by_label("同意将本次资料发送至 https://models.example.test，使用 test-model 修复并验证这 1 条反馈", exact=True).check()
+            page.get_by_label("同意由 AI 修复并验证这 1 条反馈", exact=True).check()
             fixture.lose_optimization = True
             page.get_by_role("button", name="确认开始修复", exact=True).click()
             expect(page.get_by_role("heading", name="正在修复与验证", exact=True)).to_be_visible()
@@ -594,7 +455,7 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
             self.answer(page)
             page.get_by_role("button", name="让 AI 修复并验证", exact=True).click()
             expect(page.get_by_role("button", name="确认开始修复", exact=True)).to_be_disabled()
-            page.get_by_label("同意将本次资料发送至 https://models.example.test，使用 test-model 修复并验证这 1 条反馈", exact=True).check()
+            page.get_by_label("同意由 AI 修复并验证这 1 条反馈", exact=True).check()
             page.get_by_role("button", name="确认开始修复", exact=True).click()
             expect(page.get_by_role("heading", name="正在修复与验证", exact=True)).to_be_visible()
             page.reload()
@@ -1044,7 +905,7 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
             prior.click()
             expect(page.get_by_role("region", name="修复与回归结果", exact=True)).to_have_attribute("data-operation-id", "prior-failed")
             page.get_by_role("button", name="让 AI 修复并验证", exact=True).click()
-            consent = page.get_by_label("同意将本次资料发送至 https://models.example.test，使用 test-model 修复并验证这 1 条反馈", exact=True)
+            consent = page.get_by_label("同意由 AI 修复并验证这 1 条反馈", exact=True)
             consent.check()
             start = page.get_by_role("button", name="确认开始修复", exact=True)
             expect(start).to_be_enabled()

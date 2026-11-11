@@ -4,6 +4,7 @@ import json
 from io import BytesIO
 
 import pytest
+from documents.ai import AIResult
 from documents.model_access import ModelUnavailable
 from openpyxl import Workbook
 from worker.intake import analyze_file
@@ -14,11 +15,11 @@ class MetadataAI:
         self.metadata = metadata
         self.classification = classification
 
-    def structured_completion(self, *, operation: str, **kwargs) -> str:
+    def __call__(self, operation: str, **kwargs) -> AIResult:
         if operation == "document_metadata_extraction":
-            return json.dumps(self.metadata)
+            return AIResult(json.loads(json.dumps(self.metadata)))
         if operation == "document_classification":
-            return self.classification
+            return AIResult({"document_type": self.classification})
         raise AssertionError("unexpected_external_request")
 
 
@@ -27,10 +28,10 @@ class UnavailableAI(MetadataAI):
         super().__init__({"customer": "甲客户"})
         self.operation = operation
 
-    def structured_completion(self, *, operation: str, **kwargs) -> str:
+    def __call__(self, operation: str, **kwargs) -> AIResult:
         if operation == self.operation:
             raise TimeoutError("private_external_error")
-        return super().structured_completion(operation=operation, **kwargs)
+        return super().__call__(operation, **kwargs)
 
 
 def workbook_bytes(*rows: tuple[str, str]) -> bytes:
@@ -311,7 +312,7 @@ def test_explicit_validated_uaes_photo_scope_routes_without_inventing_text(refer
     Image.new("RGB", (2, 2), "white").save(content, format="PNG")
 
     class NoTextModel:
-        def structured_completion(self, **kwargs):
+        def __call__(self, *args, **kwargs):
             raise AssertionError("A validated photo must not require a text model")
 
     result = analyze_file(
@@ -441,13 +442,10 @@ def test_custom_document_type_does_not_bypass_customer_scope():
     assert result["matching_status"] == "unmatched"
 
 
-@pytest.mark.parametrize(
-    "code,notice",
-    [("personal_model_unavailable", "personal_model_required"), ("personal_model_request_failed", "metadata_extraction_failed")],
-)
-def test_only_a_missing_personal_model_asks_the_user_to_configure_one(code, notice) -> None:
+@pytest.mark.parametrize("code,notice", [("platform_model_unconfigured", "metadata_extraction_failed"), ("tenant_model_unavailable", "metadata_extraction_failed")])
+def test_an_unavailable_model_is_a_safe_recognition_failure(code, notice) -> None:
     class NoModel(MetadataAI):
-        def structured_completion(self, *, operation: str, **kwargs) -> str:
+        def __call__(self, operation: str, **kwargs) -> AIResult:
             raise ModelUnavailable(code)
 
     result = analyze_file("控制计划.xlsx", workbook_bytes(("客户", "甲客户")), [rule("customer-rule", ["甲客户"])], ai=NoModel({}), customer_preference="甲客户", scoped=True)

@@ -215,30 +215,6 @@ def end_request_tracking(request_id: str) -> RequestTokenSummary:
     return _token_tracker.end_request_tracking(request_id)
 
 
-def record_token_usage(
-    input_tokens: int,
-    output_tokens: int,
-    thinking_tokens: Optional[int] = None,
-    model_name: str = "",
-    operation: str = "",
-    request_id: Optional[str] = None,
-) -> None:
-    """记录token使用情况"""
-    _token_tracker.record_token_usage(
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        thinking_tokens=thinking_tokens,
-        model_name=model_name,
-        operation=operation,
-        request_id=request_id,
-    )
-
-
-def record_unreported_usage() -> None:
-    """Record one SDK call whose provider usage receipt is unavailable."""
-    _token_tracker.record_unreported_usage()
-
-
 def get_current_request_id() -> Optional[str]:
     """获取当前线程的请求ID"""
     return _token_tracker.get_current_request_id()
@@ -250,39 +226,27 @@ def set_current_request_id(request_id: Optional[str]) -> None:
 
 
 @contextmanager
-def track_ocr_usage() -> Iterator[None]:
-    """Join document OCR receipts to the existing audit request across threads."""
-    from documents.ocr.client import ocr_usage_scope
+def track_model_usage() -> Iterator[None]:
+    """Join every direct model call (text and vision) to the current audit request across threads."""
+    from documents.ai import AIResult, usage_observer
 
     request_id = _token_tracker.get_current_request_id()
 
-    def observe(receipt: dict[str, Any]) -> None:
+    def observe(task: str, result: AIResult | None, seconds: float) -> None:
         if request_id is None:
             return
-        input_tokens, output_tokens = receipt.get("input_tokens"), receipt.get("output_tokens")
-        if type(input_tokens) is not int or input_tokens < 0 or type(output_tokens) is not int or output_tokens < 0:
+        usage = result.usage() if result is not None else None
+        if usage is None:
             _token_tracker.record_unreported_usage(request_id)
             return
-        reasoning = receipt.get("reasoning_tokens")
-        if type(reasoning) is not int or not 0 <= reasoning <= output_tokens:
-            reasoning = None
-
-        def number(key: str) -> float | None:
-            value = receipt.get(key)
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
-                return None
-            return float(value)
-
         _token_tracker.record_token_usage(
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            thinking_tokens=reasoning,
-            model_name=str(receipt.get("model") or ""),
-            operation="ocr_evidence",
+            input_tokens=usage["input_tokens"],
+            output_tokens=usage["output_tokens"],
+            model_name=result.model if result is not None else "",
+            operation=task,
             request_id=request_id,
-            provider_cost_usd=number("cost_usd"),
-            elapsed_seconds=number("elapsed_seconds"),
+            elapsed_seconds=seconds if math.isfinite(seconds) and seconds >= 0 else None,
         )
 
-    with ocr_usage_scope(observe):
+    with usage_observer(observe):
         yield

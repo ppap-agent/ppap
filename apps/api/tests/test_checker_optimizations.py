@@ -27,6 +27,7 @@ from product.files import ObjectExists, ObjectMissing
 from product.identity import SESSION_COOKIE
 from product.settings import Settings
 from product.store.checker_development import CheckerDevelopmentStore
+from product.store.model_credentials import TenantModelStore
 from product.store.suite_releases import SuiteReleaseStore
 from product.store.suites import SuiteStore
 from psycopg.types.json import Jsonb
@@ -56,6 +57,34 @@ PROGRAM = b"def create_audit(audit_file, rule, group_context=None):\n    return 
 RULES = {"type": "自定义", "rules": [{"id": "R1", "category": "阈值", "rule_to_check": "A1 must be >=10"}], "checker_binding": {"R1": "checker:create_audit"}}
 
 
+def put_tenant_key(store, principal, key="test-only-no-provider-called"):
+    models = TenantModelStore(store)
+    models.put(principal.tenant_id, models.candidate(principal.tenant_id, SecretStr(key), base_url="https://models.example.test", text_model="test-model"), operator="test")
+
+
+def delete_tenant_key(store, principal):
+    TenantModelStore(store).delete(principal.tenant_id)
+
+
+@pytest.fixture(autouse=True)
+def no_platform_model(monkeypatch):
+    # Only the tenant key set by each test may serve a model.
+    for name in (
+        "LLM_API_KEY",
+        "LLM_BASE_URL",
+        "LLM_MODEL",
+        "OPENAI_API_KEY",
+        "OCR_OPENAI_API_KEY",
+        "OCR_OPENAI_BASE_URL",
+        "OCR_MODEL_NAME",
+        "PPAP_DEEP_LLM_API_KEY",
+        "PPAP_DEEP_LLM_BASE_URL",
+        "PPAP_DEEP_LLM_MODEL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr("documents.model_access.ISOLATED_DEV_LLM_BASE_URL", "")
+
+
 def fixture(auth_store_factory, *, count=4, resources=False):
     clause_id = RULES["rules"][0]["id"]
     objects = Objects()
@@ -64,7 +93,7 @@ def fixture(auth_store_factory, *, count=4, resources=False):
     alice = store.upsert_feishu_identity("optimizer", "alice")
     bob = store.upsert_feishu_identity("optimizer", "bob")
     other = store.upsert_feishu_identity("other", "carol")
-    store.put_personal_model_config(alice, SecretStr("test-only-no-provider-called"), base_url="https://models.example.test", model="test-model")
+    put_tenant_key(store, alice)
     suite = SuiteStore(settings, objects, role="migrator").create_revision(
         tenant_id=None,
         suite_key="threshold",
@@ -258,10 +287,10 @@ def test_stop_before_dispatch_revocation_cross_user_and_missing_model(auth_store
     path = f"/suite-revisions/{f.suite.id}/optimizations"
     assert f.clients[1].post(path, json=command(f)).status_code == 404  # no access to the original file
     assert f.clients[2].post(path, json=command(f)).status_code == 409  # unrelated tenant has no samples
-    f.store.delete_personal_model_config(f.alice)
+    delete_tenant_key(f.store, f.alice)
     response = f.clients[0].post(path, json=command(f))
-    assert response.status_code == 409 and response.json()["error"] == "personal_model_unavailable"
-    f.store.put_personal_model_config(f.alice, SecretStr("test-only-no-provider-called"), base_url="https://models.example.test", model="test-model")
+    assert response.status_code == 409 and response.json()["error"] == "model_unavailable"
+    put_tenant_key(f.store, f.alice)
     receipt, _ = start(f)
     identity = claim(f)
     stopped = f.clients[0].post(f"/checker-optimizations/{receipt['operation_id']}/stop")
@@ -314,9 +343,9 @@ def test_idempotent_replay_and_lists_recheck_revoked_objects(auth_store_factory)
     assert listing.status_code == 200 and listing.json()["optimizations"] == []
 
 
-def test_model_free_regression_has_no_personal_key_requirement(auth_store_factory):
+def test_model_free_regression_needs_no_model(auth_store_factory):
     f = fixture(auth_store_factory)
-    f.store.delete_personal_model_config(f.alice)
+    delete_tenant_key(f.store, f.alice)
     receipt, _ = start(f, command(f, consume_model=False))
     runtime = ControlledRuntime()
     result = development_handler(f.worker, runtime)(claim(f), ExecutionContext())
@@ -356,10 +385,10 @@ def test_key_revoked_before_dispatch_is_known_failure_without_a_model_call(auth_
     f = fixture(auth_store_factory, count=1)
     receipt, _ = start(f)
     identity = claim(f)
-    f.store.delete_personal_model_config(f.alice)
+    delete_tenant_key(f.store, f.alice)
     runtime = ControlledRuntime()
     result = development_handler(f.worker, runtime)(identity, ExecutionContext())
-    assert result["state"] == "failed" and result["failure"] == "personal_model_unavailable"
+    assert result["state"] == "failed" and result["failure"] == "model_unavailable"
     assert result["usage"]["uncertain"] is False and runtime.calls == 0
     with f.store._conn() as conn:
         assert conn.execute("SELECT model_started_at FROM product.checker_optimizations WHERE operation_id=%s", (receipt["operation_id"],)).fetchone()[0] is None
@@ -458,8 +487,6 @@ def test_changed_rules_run_current_candidate_but_old_labels_cannot_verify(auth_s
 @pytest.mark.parametrize("dispatched", [False, True])
 @pytest.mark.parametrize("consume_model", [False, True])
 def test_membership_removal_atomically_revokes_optimizer_fence_and_key(auth_store_factory, dispatched, consume_model):
-    from documents.model_access import ModelUnavailable
-
     f = fixture(auth_store_factory, count=1)
     receipt, _ = start(f, command(f, consume_model=consume_model))
     identity = claim(f)
@@ -469,8 +496,6 @@ def test_membership_removal_atomically_revokes_optimizer_fence_and_key(auth_stor
         assert development.active(identity)
     with f.store._conn() as conn, conn.transaction():
         conn.execute("DELETE FROM product.memberships WHERE user_id=%s AND tenant_id=%s", (f.alice.user_id, f.alice.tenant_id))
-    with pytest.raises(ModelUnavailable):
-        f.worker.personal_model_access(f.alice.tenant_id, f.alice.user_id)
     assert development.active(identity) is False
     assert development.finish(identity, DevelopmentOutcome(None, [], [], {}, error_code="late-result")) is False
     runtime = ControlledRuntime()
@@ -488,20 +513,15 @@ def test_membership_removal_atomically_revokes_optimizer_fence_and_key(auth_stor
         assert bool(usage.get("uncertain")) is (dispatched and consume_model)
         assert conn.execute("SELECT status,lease_until FROM engine.jobs WHERE id=%s", (identity.job_id,)).fetchone() == ("cancelled", None)
         assert conn.execute("SELECT outcome,finished_at IS NOT NULL FROM engine.attempts WHERE job_id=%s", (identity.job_id,)).fetchone() == ("cancelled", True)
-        assert conn.execute("SELECT count(*) FROM product.personal_model_credentials WHERE user_id=%s", (f.alice.user_id,)).fetchone()[0] == 0
         assert conn.execute("SELECT count(*) FROM product.checker_feedback").fetchone()[0] == 1
         assert conn.execute("SELECT count(*) FROM product.audit_rounds").fetchone()[0] == 1
-    # Rejoining never reactivates the previous job or restores the removed key.
+    # Rejoining never reactivates the previous job.
     with f.store._conn() as conn:
         conn.execute("INSERT INTO product.memberships(user_id,tenant_id,role) VALUES (%s,%s,'member')", (f.alice.user_id, f.alice.tenant_id))
     assert f.worker.claim_job("rejoined") is None
-    with pytest.raises(ModelUnavailable):
-        f.worker.personal_model_access(f.alice.tenant_id, f.alice.user_id)
 
 
-def test_running_membership_revocation_cancels_controller_and_blocks_next_model_access(auth_store_factory):
-    from documents.model_access import ModelUnavailable
-
+def test_running_membership_revocation_cancels_controller(auth_store_factory):
     f = fixture(auth_store_factory, count=1)
     receipt, _ = start(f)
     entered = threading.Event()
@@ -510,13 +530,11 @@ def test_running_membership_revocation_cancels_controller_and_blocks_next_model_
 
     class WaitingRuntime:
         def develop_and_run(self, request, *, spec, context):
-            # This boundary reads the same live credential accessor as production,
-            # but sends no model request. Never cache this access for later calls.
-            f.worker.personal_model_access(spec.tenant_id, spec.initiating_user_id)
+            # This boundary reads the same live model selection as production,
+            # but sends no model request.
+            f.worker.model_selection(spec.tenant_id).access("coding")
             entered.set()
             assert continue_call.wait(timeout=5)
-            with pytest.raises(ModelUnavailable):
-                f.worker.personal_model_access(spec.tenant_id, spec.initiating_user_id)
             assert context.cancelled.wait(timeout=5)
             context.raise_if_cancelled()
 
@@ -535,8 +553,6 @@ def test_running_membership_revocation_cancels_controller_and_blocks_next_model_
 
 
 def test_deleted_operator_preserves_feedback_completed_receipt_and_published_checker(auth_store_factory):
-    from documents.model_access import ModelUnavailable
-
     f = fixture(auth_store_factory, count=1)
     round_id, original, _ = f.feedback[0]
     with f.store._conn() as conn:
@@ -556,7 +572,6 @@ def test_deleted_operator_preserves_feedback_completed_receipt_and_published_che
     assert receipt["state"] == "completed"
     releases = SuiteReleaseStore(f.store.settings, f.store.objects, role="api")
     releases.publish(f.bob, "threshold", receipt["candidate_revision_id"], 0, str(uuid4()), True)
-    f.store.put_personal_model_config(f.bob, SecretStr("test-only-no-provider-called"), base_url="https://models.example.test", model="test-model")
     with f.store._conn() as conn, conn.transaction():
         conn.execute("DELETE FROM product.sessions WHERE user_id=%s", (f.bob.user_id,))
         conn.execute("DELETE FROM product.provider_authorizations WHERE user_id=%s", (f.bob.user_id,))
@@ -569,8 +584,6 @@ def test_deleted_operator_preserves_feedback_completed_receipt_and_published_che
         assert (
             conn.execute("SELECT result->>'reason' FROM engine.jobs WHERE kind='feishu_notification' AND payload->>'operation_id'=%s", (body["operation_id"],)).fetchone()[0] == "recipient_unavailable"
         )
-    with pytest.raises(ModelUnavailable):
-        f.worker.personal_model_access(f.bob.tenant_id, f.bob.user_id)
     retained = releases.detail(f.alice, receipt["candidate_revision_id"])
     assert retained["created_by"] is None and retained["created_by_name"] == "已删除成员"
     assert retained["files"]["checker.py"] == PROGRAM.decode() + "# fixed candidate\n"
@@ -603,14 +616,14 @@ def test_membership_retirement_serializes_with_atomic_admission(auth_store_facto
 
     f = fixture(auth_store_factory, count=1)
     entered, release = threading.Event(), threading.Event()
-    access = f.api.personal_model_access
+    access = f.api.model_selection
 
-    def paused_access(*args):
+    def paused_access(*args, **kwargs):
         entered.set()
         assert release.wait(timeout=5)
-        return access(*args)
+        return access(*args, **kwargs)
 
-    monkeypatch.setattr(f.api, "personal_model_access", paused_access)
+    monkeypatch.setattr(f.api, "model_selection", paused_access)
     with ThreadPoolExecutor(max_workers=1) as pool:
         future = pool.submit(CheckerDevelopmentStore(f.api).start, f.alice, f.suite.id, command(f))
         try:
@@ -1162,20 +1175,20 @@ def test_fixed_rule_text_change_cannot_reuse_old_labels_as_verified(auth_store_f
 @pytest.mark.parametrize("consume_model", [False, True])
 def test_model_revision_consent_rejects_before_optimization_admission(auth_store_factory, monkeypatch, expectation, consume_model):
     f = fixture(auth_store_factory, count=1)
-    observed = f.api.personal_model_config(f.alice)["revision"]
+    observed = f.api.model_identity(f.alice.tenant_id)["revision"]
     if expectation == "changed":
-        f.store.put_personal_model_config(f.alice, SecretStr("replacement-test-only-no-provider-called"), base_url="https://models.example.test", model="test-model")
-        assert f.api.personal_model_config(f.alice)["revision"] != observed
+        put_tenant_key(f.store, f.alice, "replacement-test-only-no-provider-called")
+        assert f.api.model_identity(f.alice.tenant_id)["revision"] != observed
     body = command(f, consume_model=consume_model, expected_model_revision=observed if expectation == "changed" else None)
 
     def forbidden(*args, **kwargs):
         pytest.fail("A rejected consent must not resolve credentials or call a provider")
 
-    monkeypatch.setattr(f.api, "personal_model_access", forbidden)
+    monkeypatch.setattr("documents.ai.run_json_async", forbidden)
     with f.store._conn() as conn:
         suites_before = conn.execute("SELECT count(*) FROM product.suite_revisions").fetchone()[0]
     response = f.clients[0].post(f"/suite-revisions/{f.suite.id}/optimizations", json=body)
-    assert response.status_code == 409 and response.json()["error"] == "personal_model_configuration_changed", response.text
+    assert response.status_code == 409 and response.json()["error"] == "model_configuration_changed", response.text
     with f.store._conn() as conn:
         assert conn.execute("SELECT count(*) FROM product.checker_optimizations WHERE operation_id=%s", (body["operation_id"],)).fetchone()[0] == 0
         assert conn.execute("SELECT count(*) FROM engine.jobs WHERE payload->>'operation_id'=%s", (body["operation_id"],)).fetchone()[0] == 0
@@ -1186,11 +1199,11 @@ def test_model_revision_consent_rejects_before_optimization_admission(auth_store
 
 def test_matching_model_consent_freezes_identity_and_replay_preserves_original_receipt(auth_store_factory):
     f = fixture(auth_store_factory, count=1)
-    accepted_identity = f.api.personal_model_identity(f.alice.tenant_id, f.alice.user_id)
+    accepted_identity = f.api.model_identity(f.alice.tenant_id)
     receipt, body = start(f, command(f, expected_model_revision=accepted_identity["revision"]))
     assert receipt["state"] == "queued"
-    f.store.put_personal_model_config(f.alice, SecretStr("replacement-test-only-no-provider-called"), base_url="https://models.example.test", model="test-model")
-    current_identity = f.api.personal_model_identity(f.alice.tenant_id, f.alice.user_id)
+    put_tenant_key(f.store, f.alice, "replacement-test-only-no-provider-called")
+    current_identity = f.api.model_identity(f.alice.tenant_id)
     assert current_identity != accepted_identity
     # A lost response is a read-back of the accepted operation, not consent to
     # use today's provider or another opportunity to enqueue paid work.
@@ -1201,7 +1214,7 @@ def test_matching_model_consent_freezes_identity_and_replay_preserves_original_r
         assert conn.execute("SELECT count(*) FROM engine.jobs WHERE payload->>'operation_id'=%s", (body["operation_id"],)).fetchone()[0] == 1
     runtime = ControlledRuntime()
     result = development_handler(f.worker, runtime)(claim(f), ExecutionContext())
-    assert result["state"] == "failed" and result["failure"] == "personal_model_unavailable"
+    assert result["state"] == "failed" and result["failure"] == "model_unavailable"
     assert result["usage"]["uncertain"] is False and runtime.calls == 0
     with f.store._conn() as conn:
         assert conn.execute("SELECT model_started_at FROM product.checker_optimizations WHERE operation_id=%s", (receipt["operation_id"],)).fetchone()[0] is None
@@ -1221,7 +1234,7 @@ def test_model_change_after_dispatch_before_runtime_is_known_zero_send(auth_stor
     def change_after_dispatch(development, request):
         accepted = dispatch(development, request)
         assert accepted is not None
-        f.store.put_personal_model_config(f.alice, SecretStr("changed-after-dispatch-no-provider-called"), base_url="https://models.example.test", model="test-model")
+        put_tenant_key(f.store, f.alice, "changed-after-dispatch-no-provider-called")
         dispatches.append(request.operation_id)
         return accepted
 
@@ -1254,11 +1267,11 @@ def test_model_change_after_dispatch_before_runtime_is_known_zero_send(auth_stor
         f.worker.settings,
         f.worker.objects,
         model_access_for_request=forbidden,
-        model_identity_for_request=lambda spec: f.worker.personal_model_identity(spec.tenant_id, spec.initiating_user_id),
+        model_identity_for_request=lambda spec: f.worker.model_identity(spec.tenant_id),
     ) as runtime:
         result = development_handler(f.worker, runtime)(identity, ExecutionContext())
     assert dispatches == [receipt["operation_id"]] and len(runtimes) == 1
-    assert result["state"] == "failed" and result["failure"] == "personal_model_unavailable"
+    assert result["state"] == "failed" and result["failure"] == "model_unavailable"
     assert result["usage"] == {"model_requests": 0, "input_tokens": 0, "output_tokens": 0, "source": "controlled", "uncertain": False}
     assert result["candidate_revision_id"] is None
     assert start(f, body)[0] == result
@@ -1282,10 +1295,10 @@ def test_generic_runtime_model_error_without_prestart_proof_remains_uncertain(au
             # Ordinary runtime errors do not prove that earlier turns were free.
             if error_type == "model_unavailable":
                 raise ModelUnavailable()
-            raise DeepError("personal_model_unavailable")
+            raise DeepError("model_unavailable")
 
     result = development_handler(f.worker, Runtime())(claim(f), ExecutionContext())
-    assert result["state"] == "unknown" and result["failure"] == "personal_model_unavailable"
+    assert result["state"] == "unknown" and result["failure"] == "model_unavailable"
     assert result["usage"]["uncertain"] is True
     assert start(f, body)[0] == result
     assert f.worker.claim_job("no-unknown-replay") is None

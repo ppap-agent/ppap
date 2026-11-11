@@ -8,7 +8,7 @@ import pytest
 from audit.checkers.v2.dpvr_excel_agent import DpvrExcelAgent
 from audit.contracts import AuditInput, RuleInput
 from audit.engine.runtime import bind_runtime
-from documents.ocr.client import current_ocr_observation
+from documents.ocr.observation import current_ocr_observation
 from openpyxl import Workbook
 from PIL import Image, ImageChops
 

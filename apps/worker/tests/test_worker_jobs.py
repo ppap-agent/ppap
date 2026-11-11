@@ -12,16 +12,6 @@ import worker
 from worker import run_claimed_job
 
 
-def test_formalization_usage_keeps_token_counts_and_drops_secrets():
-    from audit.engine.checkers.client import TextCompletion
-    from worker.formalization import _provider_usage
-
-    reported = _provider_usage(TextCompletion("ok", 11, 7, 9))
-    assert reported == {"input_tokens": 11, "output_tokens": 7, "source": "provider"}
-    assert _provider_usage(TextCompletion("ok", -1, 1)) is None
-    assert _provider_usage(None) is None
-
-
 class ClaimedJobTests(unittest.TestCase):
     def test_non_audit_jobs_do_not_import_the_engine(self):
         with patch.dict(os.environ, {}, clear=False):

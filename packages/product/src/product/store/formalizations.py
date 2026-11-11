@@ -10,7 +10,7 @@ import hashlib
 import json
 from uuid import UUID, uuid4
 
-from documents.model_access import UNCONFIGURED_MODEL_IDENTITY, ModelUnavailable
+from documents.model_access import ModelUnavailable
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
@@ -167,9 +167,11 @@ class FormalizationStore:
             raise ValueError("invalid_formalization")
         if body.get("consume_model") is not True:
             raise ValueError("model_consumption_refused")
-        identity = self.store.personal_model_identity(principal.tenant_id, principal.user_id)
-        if identity == UNCONFIGURED_MODEL_IDENTITY or identity.get("revision") in {None, "", "unconfigured"}:
-            raise ModelUnavailable()
+        selection = self.store.model_selection(principal.tenant_id)
+        # This process makes the text call, so its key must be present now.
+        if not selection.access("text").api_key.get_secret_value():
+            raise ModelUnavailable("platform_model_unconfigured")
+        identity = selection.identity
         if body.get("expected_model_revision") not in {None, identity["revision"]}:
             raise ModelUnavailable()
         fingerprint = _digest(

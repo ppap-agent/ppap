@@ -216,7 +216,8 @@ def run_pi(work: Path, effort: str, *, max_turns: int = 16, timeout: float = 900
         with local_gateway(Path(temporary) / "g.sock", upstream=base_url, model=model, provider_key=key, requests=max_turns) as gateway:
             execution_id = uuid4()
             grant = grant_request(str(gateway.socket_path), "issue", execution_id)
-            config = {**grant, "home": str(home), "prompt": str(work / "prompt.txt"), "reasoning_effort": effort, "max_turns": max_turns, "max_tokens": grant["max_total_tokens"]}
+            # The gateway's request limit is the only model limit; Pi has no turn or token budget.
+            config = {**grant, "home": str(home), "prompt": str(work / "prompt.txt"), "reasoning_effort": effort}
             request = home / "request.json"
             request.write_text(json.dumps(config), encoding="utf-8")
             request.chmod(0o600)
@@ -235,7 +236,7 @@ def run_pi(work: Path, effort: str, *, max_turns: int = 16, timeout: float = 900
                     process.wait()
                     usage = grant_request(str(gateway.socket_path), "revoke_and_usage", execution_id)
             (work / "provider-usage.json").write_text(json.dumps(usage), encoding="utf-8")
-            if usage.get("uncertain") or usage.get("in_flight"):
+            if usage.get("in_flight") or usage.get("budget_exhausted"):
                 return 1
             return code
 

@@ -10,6 +10,7 @@ import uuid
 
 import psycopg
 import pytest
+from agent.execution.guest_model import ModelGrant
 from product import build_product_store
 from product.db import connect
 from product.files import ObjectExists, ObjectMissing, ObjectTooLarge
@@ -19,7 +20,7 @@ from psycopg import sql
 from psycopg.rows import dict_row
 
 # Personal models have no built-in endpoint; tests approve their controlled one.
-os.environ.setdefault("PPAP_PERSONAL_MODEL_ALLOWED_BASE_URLS", "https://models.example.test")
+os.environ.setdefault("PPAP_TENANT_MODEL_ALLOWED_BASE_URLS", "https://models.example.test")
 
 _CI = bool(os.environ.get("CI"))
 _XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER")
@@ -267,9 +268,8 @@ def core_system(monkeypatch, tmp_path):
                         {
                             "base_url": "http://127.0.0.1:1/v1",
                             "token": "controlled-no-provider-credential-123456",
-                            **identity,
+                            **ModelGrant.fields_for(identity),
                             "wall_seconds": 100,
-                            "max_turns": 20,
                         }
                     )
                 )
@@ -322,6 +322,9 @@ def core_system(monkeypatch, tmp_path):
                 runtime,
                 object_file_source(settings, connect=connect, objects=store.objects),
                 executor_revision=runtime_revision(settings.deep_execution_revision(), library_revision()),
+                # As in production: the Controller's own configuration, captured when it starts,
+                # with the model identity frozen at acceptance.
+                executor_revision_for_request=lambda spec, started=settings.model_copy(): runtime_revision(started.deep_execution_revision(spec.model_identity), library_revision()),
                 authorize=authorize_execution(settings, connect=connect, open_store=lambda _: worker),
                 precheck_handler=precheck_handler(worker, self),
             )

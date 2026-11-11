@@ -32,7 +32,6 @@ export const checkerSuiteUnavailable = (match: {gaps: string[]}) => match.gaps.i
 
 export const suiteVersionConfirmationRequired = (match: {gaps: string[]}) => match.gaps.includes('suite_version_confirmation_required')
 
-export const personalModelRequired = (match: {gaps: string[]}) => match.gaps.includes('personal_model_required')
 
 /** Admission follows the server's included scope, not preparation warnings. */
 export function suiteAdmissionBlocks(task: Task) {

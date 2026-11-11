@@ -102,10 +102,8 @@ def test_revocation_interrupts_silent_provider_and_releases_next_execution(stage
                         if stage != "headers":
                             assert streaming.wait(2), "first provider stream was not forwarded"
                         pending = grant_request(str(gateway.socket_path), "usage", first_id)
-                        if stage == "terminal":
-                            assert pending == {"completed_requests": 1, "input_tokens": 3, "output_tokens": 2, "uncertain": False, "in_flight": False, "budget_exhausted": False}
-                        else:
-                            assert pending["in_flight"] and pending["uncertain"]
+                        # A request is finished only when its response ends, even after a terminal event.
+                        assert pending["in_flight"] and not pending["usage_known"]
                         assert grant_request(str(gateway.socket_path), "revoke", first_id) == {"ok": True}
                         following = executor.submit(post, gateway, next_token, "next")
                         assert disconnected.wait(2), "revocation did not interrupt the silent provider"
@@ -118,7 +116,7 @@ def test_revocation_interrupts_silent_provider_and_releases_next_execution(stage
                             assert first_result == (200, terminal if stage == "terminal" else created)
                         assert inputs == ["first", "next"]
                         usage = grant_request(str(gateway.socket_path), "usage", next_id)
-                        assert usage == {"completed_requests": 1, "input_tokens": 3, "output_tokens": 2, "uncertain": False, "in_flight": False, "budget_exhausted": False}
+                        assert usage == {"completed_requests": 1, "input_tokens": 3, "output_tokens": 2, "usage_known": True, "in_flight": False, "budget_exhausted": False}
                     finally:
                         for peer in peers:
                             try:

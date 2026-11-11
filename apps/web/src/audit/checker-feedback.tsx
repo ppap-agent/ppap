@@ -7,8 +7,6 @@ import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '../
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {sourceLocation, displayTime} from '../helpers'
 import {writeAuditAddress} from './routes'
-import {PersonalModelSettings} from './model-config'
-import type {PersonalModelConfig} from './model-config-contract'
 import {CheckerRelease} from './checker-release'
 import {AffectedFeedbackRounds} from './checker-feedback-groups'
 import {CheckerEvidenceInput, type EvidenceOriginal} from './checker-evidence'
@@ -59,7 +57,7 @@ export function CheckerFeedbackWorkspace({roundId, fileVersionId, ruleVersionId,
   const [admissionPending, setAdmissionPending] = useState(false)
   const [developmentRevision, setDevelopmentRevision] = useState<string | null>(null), [workspaceBusy, setWorkspaceBusy] = useState(false)
   const [ruleConfirmed, setRuleConfirmed] = useState(false)
-  const [modelConfig, setModelConfig] = useState<PersonalModelConfig | null>(null), [consent, setConsent] = useState(false), [showModel, setShowModel] = useState(false), [stopConfirm, setStopConfirm] = useState(false)
+  const [consent, setConsent] = useState(false), [showModel, setShowModel] = useState(false), [stopConfirm, setStopConfirm] = useState(false)
   const read = useCallback(async () => checkedFeedbackView(await adapter.read(roundId), roundId), [adapter, roundId])
   const currentFeedback = view?.feedback.filter(row => row.file_version_id === fileVersionId && row.rule_clause_id === clauseId) || []
   const frozenSource = view?.sources?.find(row => row.file_version_id === fileVersionId)
@@ -79,8 +77,6 @@ export function CheckerFeedbackWorkspace({roundId, fileVersionId, ruleVersionId,
   const batchIdentity = batch.map(row => `${row.id}:${row.revision}`).join(',')
   const selectedIdentity = selectedBatch.map(row => row.id).join(',')
   useEffect(() => {setConsent(false); setRuleConfirmed(false)}, [batchIdentity, selectedIdentity, developmentRevision])
-  const modelReady = modelConfig?.configured === true && Boolean(modelConfig.revision)
-  useEffect(() => {setConsent(false)}, [modelConfig])
   const running = Boolean(operationId && (!operation || ['queued', 'running', 'unknown'].includes(operation.state)))
   const readOnly = busy || workspaceBusy || Boolean(pendingFeedback || pendingMutation)
   const validSource = feedbackSourceStatus(originalStatus, resultAttempt)
@@ -175,18 +171,18 @@ export function CheckerFeedbackWorkspace({roundId, fileVersionId, ruleVersionId,
     } finally {end()}
   }
   async function optimize(action: OptimizeInput['action'], consumeModel: boolean, revision = developmentRevision || operation?.candidate_revision_id || suiteRevisionId) {
-    if (busy || running || !revision || !hasSelectedTraining || consumeModel && (readOnly || !modelReady || !consent) || !begin()) return
+    if (busy || running || !revision || !hasSelectedTraining || consumeModel && (readOnly || !consent) || !begin()) return
     const id = crypto.randomUUID()
     submittedOperations.current.add(id)
     setAdmissionPending(true)
     setOperation(null); setOperationId(id); setOperationIntentId(id); remember('checkerOptimization', id)
     try {
-      setOperation(await adapter.optimize(revision, {operation_id: id, feedback_ids: selectedBatch.map(row => row.id), action, consume_model: consumeModel, ...(ruleConfirmed ? {confirmed_rule_revision_id: revision, expected_feedback_revisions: Object.fromEntries(batch.map(row => [row.id, row.revision]))} : {}), ...(consumeModel ? {expected_model_revision: modelConfig?.revision ?? null} : {})})); setConsent(false)
+      setOperation(await adapter.optimize(revision, {operation_id: id, feedback_ids: selectedBatch.map(row => row.id), action, consume_model: consumeModel, ...(ruleConfirmed ? {confirmed_rule_revision_id: revision, expected_feedback_revisions: Object.fromEntries(batch.map(row => [row.id, row.revision]))} : {})})); setConsent(false)
       // Accepted-operation polling is independent of the optional list refresh.
       setAdmissionPending(false)
       try {setView(await read()); setSamplesTick(value => value + 1)} catch {setError('操作结果已确认，但最新列表暂不可读。请读取最新记录。')}
     } catch (cause) {
-      if ((cause as {code?: string})?.code === 'personal_model_configuration_changed') {setConsent(false); setModelConfig(null)}
+      if ((cause as {code?: string})?.code === 'model_configuration_changed') setConsent(false)
       if (definiteCheckerRejection(cause)) {setOperationId(null); setOperationIntentId(null); remember('checkerOptimization', null); setError(failureMessage(cause))}
       else setError('操作提交结果尚未确定。请查看原操作，不要再次开始；若已允许模型调用，可能已经消费 Token。')
     } finally {setAdmissionPending(false); end()}
@@ -228,7 +224,7 @@ export function CheckerFeedbackWorkspace({roundId, fileVersionId, ruleVersionId,
       {deleting && <div role="group" aria-label="确认删除样本" className="space-y-2 border p-3"><p className="text-sm">删除“{clauseName(deleting.rule_clause_id)}”的这条样本后，相关验证需要重新执行；已有报告不变。</p><Button variant="destructive" disabled={readOnly} onClick={() => void remove()}>确认删除样本</Button><Button variant="ghost" disabled={readOnly} onClick={() => setDeleting(null)}>取消</Button></div>}
       <div className="flex items-start gap-2"><Checkbox id={`${formId}-rule-confirmation`} checked={ruleConfirmed} disabled={readOnly || running} onCheckedChange={value => setRuleConfirmed(value === true)}/><Label htmlFor={`${formId}-rule-confirmation`}>我已核对当前所选规则及全部样本，确认以上正确答案仍适用于当前规则</Label></div><p className="text-xs text-muted-foreground">规则变化后必须由你重新确认答案，模型不会代为确认；未确认的旧答案不会产生已验证结论。</p>
       <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={readOnly || running || !hasSelectedTraining} onClick={() => void optimize('save_only', false)}>仅保存待发布修改</Button><Button variant="outline" disabled={readOnly || running || !hasSelectedTraining} onClick={() => void optimize('run_tests', false)}>只运行现有检查验证</Button><Button disabled={readOnly || running || !hasSelectedTraining} onClick={() => setShowModel(value => !value)}>让 AI 修复并验证</Button></div><p className="text-xs text-muted-foreground">仅保存不运行测试。只验证不会生成代码或调用模型，需要模型的条目会如实显示无法判断。以上操作均不自动发布。</p>
-      {showModel && <div className="space-y-3"><PersonalModelSettings onConfig={setModelConfig}/><p className="text-sm">将把本次明确选择的反馈、样本资料及规则发送到已保存的模型服务，使用你的 Key，可能产生 Token 费用。比普通审核更贵且更慢，无法承诺精确费用封顶。关闭或离开页面不停止已经发生的消费；返回时读取同一操作。</p><div className="flex items-start gap-2"><Checkbox id={`${formId}-consent`} checked={consent} disabled={!modelReady} onCheckedChange={value => setConsent(value === true)}/><Label htmlFor={`${formId}-consent`}>同意将本次资料发送至 {modelConfig?.base_url || '待配置地址'}，使用 {modelConfig?.model || '待配置模型'} 修复并验证这 {selectedBatch.length} 条反馈</Label></div><Button disabled={readOnly || running || !hasSelectedTraining || !modelReady || !consent} onClick={() => void optimize('run_tests', true)}>确认开始修复</Button></div>}
+      {showModel && <div className="space-y-3"><p className="text-sm">将把本次明确选择的反馈、样本资料及规则交给 AI 修复检查并用样本验证。比普通审核更慢；关闭或离开页面不会停止已开始的修复，返回时读取同一操作。</p><div className="flex items-start gap-2"><Checkbox id={`${formId}-consent`} checked={consent} onCheckedChange={value => setConsent(value === true)}/><Label htmlFor={`${formId}-consent`}>同意由 AI 修复并验证这 {selectedBatch.length} 条反馈</Label></div><Button disabled={readOnly || running || !hasSelectedTraining || !consent} onClick={() => void optimize('run_tests', true)}>确认开始修复</Button></div>}
     </section>}
     {suiteRevisionId && <AffectedFeedbackRounds key={`${suiteRevisionId}:${clauseId}:${roundId}`} revision={suiteRevisionId} clause={clauseId} round={roundId} adapter={adapter}/>}
     {operation && <section aria-label="修复与回归结果" data-operation-id={operation.operation_id} data-candidate-revision={operation.candidate_revision_id} className="space-y-3 border-t pt-3"><h4 className="font-medium">{operation.state === 'saved' ? '已保存，尚未验证' : operation.state === 'completed' ? '修复结果' : operation.state === 'failed' ? '本次修复未完成' : operation.state === 'stopped' ? '已停止' : operation.state === 'unknown' ? '模型消费与执行结果待确认' : '正在修复与验证'}</h4>{['queued', 'running'].includes(operation.state) && <><p role="status" className="text-sm">可以离开页面。操作在后台继续，返回后读取同一记录；不会自动发布。</p><Button variant="outline" disabled={busy || operation.cancel_requested} onClick={() => setStopConfirm(true)}>{operation.cancel_requested ? '已请求停止，等待读回' : '停止后续执行'}</Button></>}{stopConfirm && <div role="group" aria-label="确认停止修复" className="space-y-2"><p className="text-sm">停止后续执行不会撤销已经发生的消费。</p><Button variant="destructive" disabled={busy} onClick={() => void stop()}>确认停止</Button><Button variant="ghost" disabled={busy} onClick={() => setStopConfirm(false)}>继续执行</Button></div>}{operation.failure && <p role="alert" className="text-sm">{checkerReason(operation.failure)}</p>}{operation.report?.reasons?.map(reason => <p key={reason} className="text-sm">{checkerReason(reason)}</p>)}

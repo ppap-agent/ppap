@@ -7,13 +7,12 @@ import os
 import subprocess
 import sys
 import tempfile
-import tomllib
 import unittest
 from datetime import date, datetime, time
 from pathlib import Path
 from unittest.mock import patch
 
-from agent.execution.guest_model import GrokRunner, ModelProtocolError, sandbox_profile
+from agent.execution.guest_model import ModelProtocolError, PiRunner, sandbox_profile
 from audit.checker_tools import CheckRequest, check_fields
 from audit.document_tools import snapshot
 
@@ -83,7 +82,7 @@ class SemanticBoundaryTests(unittest.TestCase):
     def test_checker_program_files_survive_a_missing_receipt(self) -> None:
         from agent.execution.checker_guest import CheckerDraft
 
-        runner = GrokRunner({"base_url": "https://example.invalid/v1", "token": "x" * 32, "model": "test", "max_turns": 2, "wall_seconds": 10})
+        runner = PiRunner({"base_url": "https://example.invalid/v1", "token": "x" * 32, "model": "test", "wall_seconds": 10})
         with tempfile.TemporaryDirectory() as directory:
             work = Path(directory)
 
@@ -106,7 +105,7 @@ class SemanticBoundaryTests(unittest.TestCase):
     def test_checker_receipt_can_name_a_partial_trial(self) -> None:
         from agent.execution.checker_guest import CheckerDraft
 
-        runner = GrokRunner({"base_url": "https://example.invalid/v1", "token": "x" * 32, "model": "test", "max_turns": 2, "wall_seconds": 10})
+        runner = PiRunner({"base_url": "https://example.invalid/v1", "token": "x" * 32, "model": "test", "wall_seconds": 10})
         with tempfile.TemporaryDirectory() as directory:
             work = Path(directory)
 
@@ -121,7 +120,7 @@ class SemanticBoundaryTests(unittest.TestCase):
     def test_checker_receipt_rejects_a_malformed_clause_list(self) -> None:
         from agent.execution.checker_guest import CheckerDraft
 
-        runner = GrokRunner({"base_url": "https://example.invalid/v1", "token": "x" * 32, "model": "test", "max_turns": 2, "wall_seconds": 10})
+        runner = PiRunner({"base_url": "https://example.invalid/v1", "token": "x" * 32, "model": "test", "wall_seconds": 10})
         for receipt in (
             '{"completed":true,"artifact":"checker.py","clauses":[]}',
             '{"completed":true,"artifact":"checker.py","clauses":[1]}',
@@ -202,127 +201,27 @@ class SemanticBoundaryTests(unittest.TestCase):
             saved = json.loads(output.read_text())
             self.assertEqual(saved["checks"][0]["violations"][0]["citation"]["locator"]["cell"], "A3")
 
-    def test_runner_keeps_default_tools_and_only_forwards_runtime_pythonpath(self) -> None:
-        grant = {"base_url": "http://127.0.0.1:12345/v1", "token": "x" * 32, "model": "test", "max_turns": 2, "wall_seconds": 10}
-        for profile, pythonpath in (("off", None), ("off", ""), ("off", "/app/.venv/lib/python3.12/site-packages"), ("ppap", None)):
-            environment = {"PPAP_GUEST_ISOLATION": "container-only", "PPAP_GUEST_SANDBOX": profile, "UNRELATED_SECRET": "do-not-inherit", "PATH": "/untrusted/bin"}
-            if pythonpath is not None:
-                environment["PYTHONPATH"] = pythonpath
-            with self.subTest(profile=profile, pythonpath=pythonpath), tempfile.TemporaryDirectory() as directory:
-                with patch.dict(os.environ, environment, clear=True), patch("agent.execution.guest_model.os.getuid", return_value=10001):
-                    with patch("agent.execution.guest_model.subprocess.Popen") as popen:
-                        popen.return_value.poll.return_value = 0
-                        popen.return_value.returncode = 0
-                        with self.assertRaises(ModelProtocolError):
-                            GrokRunner(grant)._run(Path(directory), "test", 9999999999.0, reasoning_effort="medium")
-                        command = popen.call_args.args[0]
-                        self.assertEqual(command[command.index("--agent") + 1], "grok-build")
-                        for flag in ("--tools", "--disallowed-tools", "--disable-web-search", "--no-subagents", "--no-plan", "--deny"):
-                            self.assertNotIn(flag, command)
-                        self.assertEqual(command[command.index("--permission-mode") + 1], "bypassPermissions")
-                        self.assertNotIn("--json-schema", command)
-                        self.assertFalse((Path(directory) / "output_schema.json").exists())
-                        self.assertEqual(command[command.index("--sandbox") + 1], "off")
-                        self.assertFalse((Path(directory) / "grok-home" / "sandbox.toml").exists())
-                        config = (Path(directory) / "grok-home" / "config.toml").read_text()
-                        self.assertNotIn("[sandbox]", config)
-                        self.assertNotIn("permission_mode", config)
-                        self.assertNotIn("web_fetch", config)
-                        child_env = popen.call_args.kwargs["env"]
-                        self.assertEqual(child_env.get("PYTHONPATH"), pythonpath or None)
-                        self.assertEqual(child_env["PATH"], "/usr/local/bin:/usr/bin:/bin")
-                        for name in ("SHELL", "GROK_SHELL", "GROK_SANDBOX", "GROK_SANDBOX_MODE", "BASH_ENV", "GROK_WEB_FETCH"):
-                            self.assertNotIn(name, child_env)
-                        self.assertFalse((Path(directory) / "grok-home" / "shell-env.sh").exists())
-                        self.assertNotIn("UNRELATED_SECRET", child_env)
-                        self.assertNotIn("PPAP_GUEST_ISOLATION", child_env)
-
-    def test_runner_counts_only_stream_tool_pairs_and_compact_boundaries(self) -> None:
-        grant = {
-            "base_url": "http://127.0.0.1:12345/v1",
-            "token": "x" * 32,
-            "model": "test",
-            "max_turns": 2,
-            "wall_seconds": 10,
-        }
-        events = [
-            {"type": "system", "subtype": "init"},
-            {
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {"type": "tool_use", "id": "call-1", "name": "read_file", "input": {}},
-                        {"type": "tool_use", "id": "call-2", "name": "read_file", "input": {}},
-                    ]
-                },
-            },
-            {
-                "type": "user",
-                "message": {
-                    "content": [
-                        {"type": "tool_result", "tool_use_id": "call-1", "content": "ok", "is_error": False},
-                        {"type": "tool_result", "tool_use_id": "orphan", "content": "?", "is_error": False},
-                        {"type": "tool_result", "tool_use_id": "call-1", "content": "duplicate", "is_error": False},
-                    ]
-                },
-            },
-            {"type": "system", "subtype": "compact_boundary"},
-            {"type": "result", "stop_reason": "end_turn", "is_error": False, "usage": {"input_tokens": 10, "output_tokens": 5}},
-        ]
-
-        def launch(*_args: object, **kwargs: object) -> object:
-            stdout = kwargs["stdout"]
-            for event in events:
-                stdout.write((json.dumps(event) + "\n").encode())
-            stdout.flush()
-
-            class FinishedProcess:
-                returncode = 0
-
-                def poll(self) -> int:
-                    return 0
-
-                def wait(self) -> int:
-                    return 0
-
-            return FinishedProcess()
-
-        with patch.dict(os.environ, {"PPAP_GUEST_ISOLATION": "container-only", "PPAP_GUEST_SANDBOX": "off"}, clear=True):
-            with patch("agent.execution.guest_model.os.getuid", return_value=10001):
-                runner = GrokRunner(grant)
-                with tempfile.TemporaryDirectory() as directory:
-                    with patch("agent.execution.guest_model.subprocess.Popen", side_effect=launch):
-                        for index in range(2):
-                            stage = Path(directory) / str(index)
-                            stage.mkdir()
-                            runner._run(stage, "test", 9999999999.0, reasoning_effort="low")
-                            config = tomllib.loads((stage / "grok-home/config.toml").read_text())
-                            self.assertNotIn("session", config)
-                            self.assertNotIn("context_window", config["model"]["test"])
-        self.assertEqual((runner.tool_calls, runner.completed_tool_calls, runner.compactions), (4, 2, 2))
-        self.assertEqual((runner.input_tokens, runner.output_tokens), (20, 10))
-
     def test_loopback_http_gateway_requires_explicit_low_privilege_container_mode(self) -> None:
-        grant = {"base_url": "http://127.0.0.1:12345/v1", "token": "x" * 32, "model": "test", "max_turns": 2, "wall_seconds": 10}
+        grant = {"base_url": "http://127.0.0.1:12345/v1", "token": "x" * 32, "model": "test", "wall_seconds": 10}
         with patch.dict(os.environ, {"PPAP_GUEST_ISOLATION": "container-only", "PPAP_GUEST_SANDBOX": "off"}, clear=True):
             with patch("agent.execution.guest_model.os.getuid", return_value=10001):
-                GrokRunner(grant)
-                GrokRunner({**grant, "base_url": "http://localhost:12345/v1"})
+                PiRunner(grant)
+                PiRunner({**grant, "base_url": "http://localhost:12345/v1"})
                 with self.assertRaises(ValueError):
-                    GrokRunner({**grant, "base_url": "http://example.test:12345/v1"})
+                    PiRunner({**grant, "base_url": "http://example.test:12345/v1"})
             with patch("agent.execution.guest_model.os.getuid", return_value=0):
                 with self.assertRaises(ValueError):
-                    GrokRunner(grant)
+                    PiRunner(grant)
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(ValueError):
-                GrokRunner(grant)
-            GrokRunner({**grant, "base_url": "https://example.test/v1"})
+                PiRunner(grant)
+            PiRunner({**grant, "base_url": "https://example.test/v1"})
 
     def test_container_runner_does_not_start_or_kill_its_own_process_group(self) -> None:
-        grant = {"base_url": "http://127.0.0.1:12345/v1", "token": "x" * 32, "model": "test", "max_turns": 2, "wall_seconds": 10}
+        grant = {"base_url": "http://127.0.0.1:12345/v1", "token": "x" * 32, "model": "test", "wall_seconds": 10}
         with patch.dict(os.environ, {"PPAP_GUEST_ISOLATION": "container-only", "PPAP_GUEST_SANDBOX": "off"}, clear=True):
             with patch("agent.execution.guest_model.os.getuid", return_value=10001):
-                runner = GrokRunner(grant)
+                runner = PiRunner(grant)
                 with tempfile.TemporaryDirectory() as directory:
                     with patch("agent.execution.guest_model.subprocess.Popen") as popen:
                         popen.return_value.poll.return_value = 0

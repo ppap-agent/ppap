@@ -4,7 +4,7 @@ from unittest.mock import Mock
 
 import pytest
 from audit.engine.checkers.ocr_visual_facts import OcrImage, observe_ocr_images
-from documents.ocr.client import current_ocr_observation
+from documents.ocr.observation import current_ocr_observation
 
 
 @pytest.mark.parametrize("unknown_observation", [1, 2])
@@ -116,7 +116,7 @@ async def test_observation_identity_reaches_the_threaded_async_transport(monkeyp
         numbers.append(current_ocr_observation())
         return {"seal": True}
 
-    monkeypatch.setattr("documents.ocr.client.call_llm_async", read)
+    monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.read_visual_facts", read)
     frames = [OcrImage(b"synthetic", {"scope": "pdf:2", "page": 2, "context": True, "located_region": True}, 100, 100)]
     assert observe_ocr_images(frames, {"seal": "actual seal"}, Mock()) == {"seal": True}
     assert numbers == [1, 2]

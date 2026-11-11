@@ -6,8 +6,6 @@ import hashlib
 import json
 import os
 
-from documents.model_access import current_model_access, model_access_scoped
-
 DEFAULT_MAX_FILE_SIZE = "100MB"
 DEFAULT_ALLOWED_EXTENSIONS = ".pdf,.doc,.docx,.pptx,.xlsx,.xls,.xlsm,.jpg,.jpeg,.png,.gif,.md"
 
@@ -24,59 +22,45 @@ def allowed_extensions() -> str:
     return _env("ALLOWED_EXTENSIONS") or DEFAULT_ALLOWED_EXTENSIONS
 
 
+def _vision():
+    from documents.model_access import ModelUnavailable, current_model_access
+
+    try:
+        return current_model_access("vision")
+    except ModelUnavailable:
+        # Versioned checkers read "not configured" as ValueError and keep evidence unknown.
+        raise ValueError("Vision model is not configured") from None
+
+
+# Stable reads of the vision model for versioned checkers; the key itself never leaves trusted code.
 def ocr_openai_api_key() -> str:
-    if model_access_scoped():
-        return current_model_access().api_key.get_secret_value()
-    return _env("OCR_OPENAI_API_KEY")
+    return _vision().api_key.get_secret_value()
 
 
 def ocr_openai_base_url() -> str:
-    if model_access_scoped():
-        return current_model_access().base_url
-    return _env("OCR_OPENAI_BASE_URL")
+    return _vision().base_url
 
 
 def ocr_model_name() -> str:
-    if model_access_scoped():
-        return current_model_access().model
-    model = _env("OCR_MODEL_NAME")
-    if not model:
-        raise ValueError("OCR model is not configured: set OCR_MODEL_NAME")
-    return model
-
-
-def effective_ocr_extra_body(raw: str) -> dict:
-    """One actual OCR parameter default shared by requests and policy hashes."""
-    defaults = {"reasoning": {"effort": "none"}}
-    raw = raw.strip()
-    if not raw:
-        return defaults
-    try:
-        value = json.loads(raw)
-    except ValueError:
-        raise ValueError("OCR_OPENAI_EXTRA_BODY_JSON must contain one JSON object") from None
-    if not isinstance(value, dict):
-        raise ValueError("OCR_OPENAI_EXTRA_BODY_JSON must contain one JSON object")
-    return {**defaults, **value}
+    return _vision().model
 
 
 def ocr_extra_body() -> dict:
-    if model_access_scoped():
-        # Never inherit platform options. An explicit grant owns its OCR policy;
-        # ordinary personal grants leave this empty and use provider defaults.
-        return current_model_access().ocr_options()
-    return effective_ocr_extra_body(_env("OCR_OPENAI_EXTRA_BODY_JSON"))
+    return _vision().extra_body()
 
 
 def ocr_policy_identity() -> str:
-    """Hash actual non-secret configuration, not credentials or text defaults."""
+    """Hash the vision model identity and Paddle endpoint, never credentials."""
+    from documents.model_access import ModelUnavailable, current_model_access
+
+    try:
+        model = current_model_access("vision").identity()
+    except ModelUnavailable:
+        model = {"source": "unavailable"}
     value = {
-        "protocol": "native_paddle_responses_v4",
-        "model": current_model_access().model if model_access_scoped() else _env("OCR_MODEL_NAME"),
-        "endpoint_sha256": hashlib.sha256(ocr_openai_base_url().encode()).hexdigest(),
-        "extra_body": ocr_extra_body(),
+        "protocol": "native_paddle_responses_v5",
+        "model": model,
         "timeout": 20,
-        "max_retries": 0,
         "paddle_endpoint_sha256": hashlib.sha256(_env("PADDLE_OCR_URL").encode()).hexdigest(),
     }
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()

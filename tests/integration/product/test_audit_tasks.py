@@ -12,6 +12,7 @@ import psycopg
 import pytest
 from api import create_app
 from api import web_contract as wc
+from documents.ai import AIResult
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from product import build_product_store
@@ -299,14 +300,14 @@ def assert_task_summary(summary, task):
 
 
 class MetadataAI:
-    def structured_completion(self, **request):
-        if request["operation"] == "document_classification":
-            return "控制计划"
-        return json.dumps({"customer": "测试客户", "model": "M1", "part": "零件A", "part_number": "P-1"}, ensure_ascii=False)
+    def __call__(self, operation, **request):
+        if operation == "document_classification":
+            return AIResult({"document_type": "控制计划"})
+        return AIResult({"customer": "测试客户", "model": "M1", "part": "零件A", "part_number": "P-1"})
 
 
 class NoRecognitionAI:
-    def structured_completion(self, **request):
+    def __call__(self, operation, **request):
         raise AssertionError("an unchanged, explicitly inherited binding must not invoke AI")
 
 
@@ -1230,8 +1231,8 @@ def test_customer_recovery_rematches_and_finishes_the_original_task_without_chan
     core_system.adopt(worker, rule["id"], PART_NUMBER_CHECKER)
 
     class CustomerUnknownAI(MetadataAI):
-        def structured_completion(self, **request):
-            return "{}" if request["operation"] == "document_metadata_extraction" else super().structured_completion(**request)
+        def __call__(self, operation, **request):
+            return AIResult({}) if operation == "document_metadata_extraction" else super().__call__(operation, **request)
 
     body = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [file]}
     task = client.post("/audit-tasks", json=body).json()
@@ -1733,7 +1734,7 @@ def test_superseded_queued_recognition_does_not_read_the_file_or_call_the_model(
     old = worker.claim_job("superseded")
 
     class MustNotCallAI:
-        def structured_completion(self, **_request):
+        def __call__(self, *_args, **_request):
             pytest.fail("superseded recognition must not start model work")
 
     assert process_claimed(worker, old, "superseded", rule_ai=MustNotCallAI()) == {"error": "recognition_superseded"}
@@ -2179,7 +2180,7 @@ def test_failed_and_unknown_recognition_are_not_definitive_zero_matches(task_sys
     assert not worker.complete_job(job, "replacement", {"matching_status": "unmatched"})
 
     class UnavailableAI:
-        def structured_completion(self, **_request):
+        def __call__(self, *_args, **_request):
             raise RuntimeError("private provider failure")
 
     process_claimed(worker, job, "original", rule_ai=UnavailableAI())

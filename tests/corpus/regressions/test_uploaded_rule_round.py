@@ -24,7 +24,7 @@ SOURCES = {
 
 
 class NoRuleRewrite:
-    def structured_completion(self, **kwargs):
+    def __call__(self, *args, **kwargs):
         raise AssertionError("A structured source must not be paraphrased for checker matching")
 
 

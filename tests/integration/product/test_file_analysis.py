@@ -2,6 +2,7 @@ import io
 import json
 import unittest
 
+from documents.ai import AIResult
 from product.rule_matching import RuleMatchingAIService
 from product.rules import latest_rule_versions
 from worker.intake import analyze_file
@@ -24,11 +25,11 @@ class AnalysisAI:
         self.fail = fail
         self.requests = []
 
-    def structured_completion(self, **request):
-        self.requests.append(request)
+    def __call__(self, operation, **request):
+        self.requests.append({"operation": operation, **request})
         if self.fail:
             raise RuntimeError("private provider detail")
-        return json.dumps({"customer": "测试客户", "model": "M1", "part": ["零件A"]})
+        return AIResult({"customer": "测试客户", "model": "M1", "part": ["零件A"]})
 
 
 class FileAnalysisTests(unittest.TestCase):
@@ -51,7 +52,7 @@ class FileAnalysisTests(unittest.TestCase):
         self.assertEqual(result["metadata"]["part"], "零件A")
         self.assertEqual(result["matched_rule_id"], "r1")
         self.assertEqual(len(ai.requests), 1)
-        self.assertEqual(ai.requests[0]["retry_limit"], 0)
+        self.assertEqual(ai.requests[0]["timeout"], 120)
 
     def test_metadata_failure_does_not_hide_deterministic_match(self):
         result = analyze_file("控制计划.xlsx", excel_rule(), [{"id": "r", "title": "控制计划", "type": "控制计划", "kind": "engine"}], ai=AnalysisAI(True))

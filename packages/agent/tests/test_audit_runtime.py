@@ -255,14 +255,15 @@ def check(context):
     assert [row["suggestions"] for row in result["findings"]] == ["native Excel", "native PDF", "native DOCX"]
 
 
-def test_no_personal_model_access_never_uses_environment_key(monkeypatch):
+def test_an_operation_without_model_access_never_uses_environment_key(monkeypatch):
     from documents.model_access import model_access_scope
 
     program = PROGRAM.replace(b"context.cache['count'] =", b"from documents.model_access import current_model_access\n    current_model_access()\n    context.cache['count'] =")
     monkeypatch.setenv("OPENAI_API_KEY", "host-key")
+    monkeypatch.setenv("LLM_API_KEY", "host-key")
     with model_access_scope(None):
         result = run_audit(*request(program))
-    assert all(row["status"] == "UNABLE" and row["suggestions"] == "personal_model_unavailable_or_uncertain" for row in result["findings"])
+    assert all(row["status"] == "UNABLE" and row["suggestions"] == "model_unavailable" for row in result["findings"])
 
 
 def test_clause_deadline_cannot_be_swallowed_by_legacy_fallback():
@@ -286,7 +287,9 @@ def test_usage_receipts_are_returned_and_parent_scope_restored():
 
     tracker = get_token_tracker()
     parent = tracker.start_request_tracking()
-    program = PROGRAM.replace(b"context.cache['count'] =", b"from audit.usage import record_token_usage\n    record_token_usage(3, 2, model_name='controlled')\n    context.cache['count'] =")
+    program = PROGRAM.replace(
+        b"context.cache['count'] =", b"from audit.usage import get_token_tracker\n    get_token_tracker().record_token_usage(3, 2, model_name='controlled')\n    context.cache['count'] ="
+    )
     try:
         result = run_audit(*request(program, targets=1))
         assert result["usage"]["total_tokens"] == 10
@@ -300,7 +303,7 @@ def test_usage_receipts_are_returned_and_parent_scope_restored():
 
 
 def test_unknown_usage_never_becomes_zero():
-    program = PROGRAM.replace(b"context.cache['count'] =", b"from audit.usage import record_unreported_usage\n    record_unreported_usage()\n    context.cache['count'] =")
+    program = PROGRAM.replace(b"context.cache['count'] =", b"from audit.usage import get_token_tracker\n    get_token_tracker().record_unreported_usage()\n    context.cache['count'] =")
     usage = run_audit(*request(program, targets=1))["usage"]
     assert usage["total_tokens"] is None
     assert not usage["usage_complete"]

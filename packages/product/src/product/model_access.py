@@ -1,23 +1,32 @@
-"""Personal model access composition. Secrets never enter frozen product inputs."""
+"""The model scope of one tenant's operation. Secrets never enter frozen product inputs."""
 
 from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from documents.model_access import ModelUnavailable, model_access_scope
+from documents.model_access import ModelPurpose, ModelUnavailable, model_access_scope
+
+# Operations accepted before tenant BYOK froze a personal identity without a source.
+RETIRED_IDENTITY = "model_contract_retired"
 
 
 @contextmanager
-def personal_model_scope(store, *, tenant_id: str, initiating_user_id: str, expected_identity: dict[str, str] | None = None) -> Iterator[None]:
-    # Resolve again on each call so revoke/replace/membership removal is effective.
+def tenant_model_scope(store, *, tenant_id: str, expected_identity: dict[str, str] | None = None) -> Iterator[None]:
+    """Use the tenant's key, else the platform models, and only as frozen at acceptance.
+
+    Resolve again on each call so a key rotation or removal takes effect. A changed
+    selection fails the call instead of running a frozen operation on another model.
+    """
     frozen = dict(expected_identity) if expected_identity is not None else None
 
-    def resolve():
-        access = store.personal_model_access(tenant_id, initiating_user_id)
-        if frozen is not None and access.identity() != frozen:
-            raise ModelUnavailable()
-        return access
+    def resolve(purpose: ModelPurpose):
+        if frozen is not None and "source" not in frozen:
+            raise ModelUnavailable(RETIRED_IDENTITY)
+        selection = store.model_selection(tenant_id)
+        if frozen is not None and selection.identity != frozen:
+            raise ModelUnavailable("model_configuration_changed")
+        return selection.access(purpose)
 
     with model_access_scope(resolve):
         yield

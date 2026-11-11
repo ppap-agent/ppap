@@ -26,7 +26,9 @@ class ControlledContainer:
 
     def __init__(self, root, monkeypatch):
         self.root, self.calls, self.grants = root, [], []
-        self.uncertain = False
+        # An interrupted attempt has an unknown outcome; unknown token counts alone do not.
+        self.interrupted = False
+        self.usage_known = True
         self.runtime = object.__new__(ContainerRuntime)
         self.runtime.slot = threading.Lock()
         self.runtime.degraded = False
@@ -35,7 +37,9 @@ class ControlledContainer:
         monkeypatch.setattr(self.runtime, "_new_run_dir", self.new_run)
         monkeypatch.setattr(self.runtime, "_execute", self.execute)
         monkeypatch.setattr(self.runtime, "_write_grant", lambda identity, *_: self.grants.append(identity))
-        monkeypatch.setattr(self.runtime, "_seal_usage", lambda *_args, **_kwargs: {"completed_requests": 1, "input_tokens": 3, "output_tokens": 5, "uncertain": self.uncertain, "in_flight": False})
+        monkeypatch.setattr(
+            self.runtime, "_seal_usage", lambda *_args, **_kwargs: {"completed_requests": 1, "input_tokens": 3, "output_tokens": 5, "usage_known": self.usage_known, "in_flight": False}
+        )
 
     def new_run(self, identity, inputs):
         run = self.root / ("run-" + identity.hex)
@@ -46,6 +50,8 @@ class ControlledContainer:
     def execute(self, run, *_args):
         manifest = json.loads((run / "input" / "manifest.json").read_text())
         self.calls.append(manifest)
+        if self.interrupted:
+            raise ControllerFault("MODEL_TIMEOUT")
         payload = {"prior_files": manifest.get("prior_files"), "feedback": manifest.get("development_feedback"), "round_id": manifest.get("snapshot", {}).get("round_id")}
         (run / "work" / "result" / "bundle.json").write_text(json.dumps(payload))
 
@@ -85,13 +91,24 @@ def test_new_adaptation_operation_never_reads_previous_job_bundle(tmp_path, monk
     assert original["model_requests"] == latest["model_requests"] == 1
 
 
+def test_unknown_provider_usage_keeps_a_valid_result_without_counts(tmp_path, monkeypatch):
+    container = ControlledContainer(tmp_path, monkeypatch)
+    container.usage_known = False
+    first = adaptation(tmp_path / "first")
+    result = container.run(*first)
+    assert result["prior_files"] == {"checker.py": "first"}
+    assert not {"input_tokens", "output_tokens", "model_requests"} & set(result)
+    assert container.run(*first) == result
+    assert len(container.calls) == 1
+
+
 def test_unknown_adaptation_fence_survives_replay_and_changed_feedback(tmp_path, monkeypatch):
     container = ControlledContainer(tmp_path, monkeypatch)
     first = adaptation(tmp_path / "first")
-    container.uncertain = True
-    with pytest.raises(ControllerFault, match="MODEL_PROTOCOL_ERROR"):
+    container.interrupted = True
+    with pytest.raises(ControllerFault, match="MODEL_TIMEOUT"):
         container.run(*first)
-    container.uncertain = False
+    container.interrupted = False
     # Same job is not made safe by a new automatic attempt or edited feedback.
     replay = adaptation(tmp_path / "replay", prior="changed", feedback="changed")
     with pytest.raises(ControllerFault, match="MODEL_PROTOCOL_ERROR"):
@@ -143,14 +160,14 @@ def test_model_enabled_core_fixed_trials_already_bind_the_frozen_operation(tmp_p
     snapshot, sources, programs = frozen_trial()
     first_inputs = tmp_path / "first"
     first = write_audit_manifest(first_inputs, snapshot, sources, programs)
-    container.uncertain = unknown
+    container.interrupted = unknown
     if unknown:
-        with pytest.raises(ControllerFault, match="MODEL_PROTOCOL_ERROR"):
+        with pytest.raises(ControllerFault, match="MODEL_TIMEOUT"):
             container.run(first, first_inputs)
     else:
         original = container.run(first, first_inputs)
         assert container.run(first, first_inputs) == original
-    container.uncertain = False
+    container.interrupted = False
     second_inputs = tmp_path / "second"
     second = write_audit_manifest(second_inputs, replace(snapshot, round_id="explicit-new-operation"), sources, programs)
     assert first.execution_id != second.execution_id

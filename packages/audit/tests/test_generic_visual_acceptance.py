@@ -31,7 +31,7 @@ def agent(path):
 
 
 @pytest.fixture
-def configured(monkeypatch):
+def configured(text_model, monkeypatch):
     monkeypatch.setenv("OCR_OPENAI_API_KEY", "controlled-ocr-key")
     monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://ocr.invalid/v1")
     monkeypatch.setenv("OCR_MODEL_NAME", "existing-ocr-model")
@@ -42,7 +42,7 @@ def configured(monkeypatch):
         source = json.loads(kwargs["user_prompt"])["sources"][0]
         return json.dumps({"relation": "supports", "scope": "all", "citations": [{"id": source["id"], "quote": source["text"]}], "explanation": "已提供的区域观察符合条款。"}, ensure_ascii=False)
 
-    monkeypatch.setattr("audit.engine.checkers.client.AIClient", lambda: SimpleNamespace(structured_completion=compare))
+    text_model(compare)
     return text_calls
 
 

@@ -12,7 +12,6 @@ from audit.contracts import (
     AuditInput,
     RuleInput,
 )
-from audit.engine.checkers.client import AIClient
 from audit.engine.runtime import bind_runtime
 from documents.contracts import ConversionArtifact
 
@@ -33,7 +32,7 @@ def checker(request, monkeypatch):
                 raise model_response
             return model_response
 
-        monkeypatch.setattr(AIClient, "structured_completion", analyze)
+        monkeypatch.setattr("documents.ai.run_json", analyze)
         rules = RuleInput(
             rule_id="confirmed-fixture-rules",
             rule_profile=profile,

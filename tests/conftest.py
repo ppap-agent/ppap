@@ -17,7 +17,6 @@ from pathlib import Path
 from time import monotonic
 from urllib.parse import urlsplit
 
-import httpx
 import pytest
 
 
@@ -98,11 +97,13 @@ def pytest_unconfigure(config):
 @pytest.fixture
 def ocr_transport_diagnostics(monkeypatch, caplog):
     """Observe real requests without reading bodies, URLs, headers or trace info."""
+    import httpx2
+
     logger = logging.getLogger("tests.ocr_transport")
     caplog.set_level(logging.INFO, logger=logger.name)
-    original = httpx.AsyncClient.send
-    original_close = httpx.AsyncClient.aclose
-    original_read = httpx.Response.aread
+    original = httpx2.AsyncClient.send
+    original_close = httpx2.AsyncClient.aclose
+    original_read = httpx2.Response.aread
     sequence = itertools.count(1)
     clients = {}
     requests = {}
@@ -170,9 +171,9 @@ def ocr_transport_diagnostics(monkeypatch, caplog):
             )
             raise
 
-    monkeypatch.setattr(httpx.AsyncClient, "send", send)
-    monkeypatch.setattr(httpx.AsyncClient, "aclose", close)
-    monkeypatch.setattr(httpx.Response, "aread", read)
+    monkeypatch.setattr(httpx2.AsyncClient, "send", send)
+    monkeypatch.setattr(httpx2.AsyncClient, "aclose", close)
+    monkeypatch.setattr(httpx2.Response, "aread", read)
 
 
 def _preview_asset_path(url, origin):

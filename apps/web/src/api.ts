@@ -107,7 +107,7 @@ const messages: Record<string,string> = {
   rule_source_unavailable: '暂时无法读取可定位的原文。请核对原文件是否可读取。',
   invalid_analysis_mode: '请选择标准或深度审核。',
   deep_not_available: '当前环境不提供深度审核。',
-  personal_model_configuration_changed: '模型配置已更改，本次操作未被接收。请读取当前配置并重新确认目标地址和模型。',
+  model_configuration_changed: '模型配置已由管理员更新，本次操作未被接收。请重新确认后再开始。',
   feedback_revision_conflict: '规则说明已被更新，请读取最新依据后再核对。',
   feedback_scope_conflict: '本次说明超出了可修改范围，请核对文件与要求。',
   feedback_question_expired: '该问题已随分析依据改变，请读取当前问题。',
@@ -130,8 +130,8 @@ const messages: Record<string,string> = {
   suite_key_mismatch: '这条规则不能写入所选检查版本。',
   invalid_formalization: '这次形式化请求不完整。',
   clause_not_found: '没有这条条款。',
-  model_unavailable: '个人模型还不可用。请先配置模型，然后再解释。',
-  model_consumption_refused: '你还没有同意使用个人模型。同意后再解释这一条款。',
+  model_unavailable: '模型服务暂不可用，本次没有调用模型。请稍后重试；如持续出现，请联系管理员。',
+  model_consumption_refused: '你还没有同意调用模型。同意后再解释这一条款。',
 }
 const safeRequestTrace = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9._-]{8,128}$/.test(value) ? value : undefined
 export const requestTrace = (cause: unknown) => safeRequestTrace(cause instanceof Error && 'traceId' in cause ? cause.traceId : undefined)

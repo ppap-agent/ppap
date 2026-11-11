@@ -327,10 +327,12 @@ def test_http_refuses_an_official_carrier_head_and_records_precheck_confirmation
         process_claimed(worker, worker.claim_job("official-validation"), "official-validation")
 
         class Metadata:
-            def structured_completion(self, *, operation, **_kwargs):
+            def __call__(self, operation, **_kwargs):
+                from documents.ai import AIResult
+
                 if operation == "document_classification":
-                    return preset_document_type(preset_rule("UAES", "U08"))
-                return json.dumps({"customer": "UAES", "part_number": "P-1"})
+                    return AIResult({"document_type": preset_document_type(preset_rule("UAES", "U08"))})
+                return AIResult({"customer": "UAES", "part_number": "P-1"})
 
         task = client.post(
             "/audit-tasks",
@@ -453,7 +455,7 @@ def test_frozen_carrier_round_replays_its_bytes_after_the_directory_head_is_curr
         library_revision=library_revision(),
         allow_unverified=True,
     )
-    identity = admin.personal_model_identity(principal.tenant_id, principal.user_id)
+    identity = admin.model_identity(principal.tenant_id)
     library = library_revision()
     round_id = str(uuid4())
     snapshot = ExecutionSnapshot(

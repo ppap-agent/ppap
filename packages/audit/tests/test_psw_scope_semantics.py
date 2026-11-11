@@ -60,7 +60,7 @@ def controlled_vision(monkeypatch):
         }
         return {field: values.get(field) for field in response_schema["schema"]["properties"]}
 
-    monkeypatch.setattr("documents.ocr.client.call_llm_async", observe)
+    monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.read_visual_facts", observe)
     return calls
 
 
@@ -150,9 +150,9 @@ def test_only_unresolved_members_cannot_prove_a_required_business_object_exists(
 
 
 def test_a_guides_reference_role_is_independent_of_its_blank_business_fields(tmp_path, monkeypatch, controlled_vision):
-    from documents.ocr import client
+    from audit.engine.checkers import ocr_visual_facts as client
 
-    original = client.call_llm_async
+    original = client.read_visual_facts
 
     async def guide_role(*args, **kwargs):
         facts = await original(*args, **kwargs)
@@ -160,7 +160,7 @@ def test_a_guides_reference_role_is_independent_of_its_blank_business_fields(tmp
             facts["psw_reference_content"] = True
         return facts
 
-    monkeypatch.setattr(client, "call_llm_async", guide_role)
+    monkeypatch.setattr(client, "read_visual_facts", guide_role)
     path = write_pdf(tmp_path / "guided-form.pdf", [("business", True, True), ("unknown", False, False)])
     assert signature_result(path).status == "PASS"
     assert sum("psw_reference_content" in fields for fields in controlled_vision) == 2
@@ -212,9 +212,9 @@ def test_authorization_example_or_unknown_role_cannot_be_a_positive_witness():
 
 
 def test_unknown_company_fact_is_not_asked_again_under_another_protocol(tmp_path, monkeypatch, controlled_vision):
-    from documents.ocr import client
+    from audit.engine.checkers import ocr_visual_facts as client
 
-    original = client.call_llm_async
+    original = client.read_visual_facts
 
     async def unknown_company(*args, **kwargs):
         facts = await original(*args, **kwargs)
@@ -222,7 +222,7 @@ def test_unknown_company_fact_is_not_asked_again_under_another_protocol(tmp_path
             facts["psw_stamp_ends_with_company"] = {"value": None, "reason": "受控原图无法确认印章最终文字"}
         return facts
 
-    monkeypatch.setattr(client, "call_llm_async", unknown_company)
+    monkeypatch.setattr(client, "read_visual_facts", unknown_company)
     agent = checker(write_pdf(tmp_path / "unknown-ending.pdf", [("business", True, True)] * 2))
     assert agent._run_fact_rule(2, 3).status == "UNABLE"
     assert all("psw_stamp_ending_text" not in fields for fields in controlled_vision)
@@ -233,9 +233,9 @@ def test_unknown_company_fact_is_not_asked_again_under_another_protocol(tmp_path
 
 
 def test_disagreed_role_stays_unknown_without_a_third_observation(tmp_path, monkeypatch, controlled_vision):
-    from documents.ocr import client
+    from audit.engine.checkers import ocr_visual_facts as client
 
-    original = client.call_llm_async
+    original = client.read_visual_facts
 
     async def disagreed_role(*args, **kwargs):
         facts = await original(*args, **kwargs)
@@ -243,7 +243,7 @@ def test_disagreed_role_stays_unknown_without_a_third_observation(tmp_path, monk
             facts["psw_reference_content"] = client.current_ocr_observation() == 1
         return facts
 
-    monkeypatch.setattr(client, "call_llm_async", disagreed_role)
+    monkeypatch.setattr(client, "read_visual_facts", disagreed_role)
     agent = checker(write_pdf(tmp_path / "role-disagreement.pdf", [("business", True, True), ("unknown", True, False)]))
     assert agent._run_fact_rule(4, 5).status == "UNABLE"
     assert sum("psw_reference_content" in fields for fields in controlled_vision) == 2
@@ -253,9 +253,9 @@ def test_disagreed_role_stays_unknown_without_a_third_observation(tmp_path, monk
 
 
 def test_resolving_a_business_role_keeps_the_plan_and_cached_facts(tmp_path, monkeypatch, controlled_vision):
-    from documents.ocr import client
+    from audit.engine.checkers import ocr_visual_facts as client
 
-    original = client.call_llm_async
+    original = client.read_visual_facts
 
     async def business_role(*args, **kwargs):
         facts = await original(*args, **kwargs)
@@ -263,7 +263,7 @@ def test_resolving_a_business_role_keeps_the_plan_and_cached_facts(tmp_path, mon
             facts["psw_reference_content"] = False
         return facts
 
-    monkeypatch.setattr(client, "call_llm_async", business_role)
+    monkeypatch.setattr(client, "read_visual_facts", business_role)
     path = write_pdf(tmp_path / "business-with-guidance.pdf", [("unknown", True, True)])
     source_sha = hashlib.sha256(path.read_bytes()).hexdigest()
     agent = checker(path)
@@ -297,9 +297,9 @@ def test_reference_exclusion_does_not_make_section_fragments_independent_objects
 
 
 def force_department_stamp(monkeypatch):
-    from documents.ocr import client
+    from audit.engine.checkers import ocr_visual_facts as client
 
-    original = client.call_llm_async
+    original = client.read_visual_facts
 
     async def department_stamp(*args, **kwargs):
         facts = await original(*args, **kwargs)
@@ -307,7 +307,7 @@ def force_department_stamp(monkeypatch):
             facts["psw_stamp_ends_with_company"] = {"value": False, "reason": "受控原图显示部门专用章"}
         return facts
 
-    monkeypatch.setattr(client, "call_llm_async", department_stamp)
+    monkeypatch.setattr(client, "read_visual_facts", department_stamp)
 
 
 @pytest.mark.parametrize("witness", [False, True])
@@ -348,9 +348,9 @@ def test_seal_rule_cannot_take_a_company_seal_from_an_example(tmp_path):
 
 
 def test_one_business_fact_disagreement_is_not_a_quantifier_counterexample(tmp_path, monkeypatch):
-    from documents.ocr import client
+    from audit.engine.checkers import ocr_visual_facts as client
 
-    original = client.call_llm_async
+    original = client.read_visual_facts
 
     async def disagreed_seal(*args, **kwargs):
         facts = await original(*args, **kwargs)
@@ -358,7 +358,7 @@ def test_one_business_fact_disagreement_is_not_a_quantifier_counterexample(tmp_p
             facts["psw_stamp_present"] = client.current_ocr_observation() == 1
         return facts
 
-    monkeypatch.setattr(client, "call_llm_async", disagreed_seal)
+    monkeypatch.setattr(client, "read_visual_facts", disagreed_seal)
     path = write_pdf(tmp_path / "one-fact.pdf", [("business", True, True), ("example", True, True)])
     assert signature_result(path).status == "UNABLE"
 

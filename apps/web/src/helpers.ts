@@ -68,7 +68,6 @@ const analysisNotices: Record<string, string | null> = {
   metadata_uses_excerpt: null,
   checker_suite_unavailable: null,
   suite_version_confirmation_required: null,
-  personal_model_required: null,
   metadata_extraction_failed: '业务信息识别失败，请人工核对。',
   document_classification_failed: '无法确定文件类型，请核对原件后重新识别。',
   rule_matching_failed: '自动匹配失败，请返回检查文件后重新识别。',

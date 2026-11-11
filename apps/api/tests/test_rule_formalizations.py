@@ -45,14 +45,23 @@ def test_formalization_problems_are_in_the_openapi_contract():
     assert "503" in generate
 
 
+def put_tenant_key(store, principal):
+    from product.store.model_credentials import TenantModelStore
+
+    models = TenantModelStore(store)
+    models.put(principal.tenant_id, models.candidate(principal.tenant_id, SecretStr("test-only-no-provider-called"), base_url="https://models.example.test", text_model="test-model"), operator="test")
+
+
 class ScriptedFormalizer:
+    """Stands in for the direct model call; it never reaches a provider."""
+
     def __init__(self, raw: str, before=None):
         self.raw = raw
         self.calls = 0
         self.before = before
 
-    def structured_completion(self, **_kwargs):
-        from audit.engine.checkers.client import TextCompletion
+    def __call__(self, task, **_kwargs):
+        from documents.ai import AIError, AIResult
 
         self.calls += 1
         if self.before:
@@ -64,7 +73,12 @@ class ScriptedFormalizer:
             value = numbers.get(key)
             return value if type(value) is int and value >= 0 else None
 
-        return TextCompletion(self.raw, number("input_tokens"), number("output_tokens"), number("thinking_tokens"))
+        try:
+            output = json.loads(self.raw) if self.raw else {}
+        except ValueError:
+            # The direct layer reports an unparsable answer as a code, never as text.
+            raise AIError("invalid_output") from None
+        return AIResult(output, number("input_tokens"), number("output_tokens"))
 
 
 def _proposal(rule_id: str) -> str:
@@ -145,7 +159,7 @@ def test_generation_confirmation_is_durable_authorized_and_not_retried(auth_stor
     assert loose.status_code == 422
     assert loose.json()["error"] == "invalid_formalization"
 
-    store.put_personal_model_config(alice, SecretStr("test-only-no-provider-called"), base_url="https://models.example.test", model="test-model")
+    put_tenant_key(store, alice)
     created = client.post(f"/rules/{rule_id}/formalizations/c1/generations", json={"consume_model": True, "operation_id": operation_id, "expected_source_digest": digest})
     assert created.status_code == 202
     queued = client.get(f"/rules/{rule_id}/formalizations/c1").json()
@@ -547,9 +561,11 @@ def test_generation_confirmation_is_durable_authorized_and_not_retried(auth_stor
         def __init__(self):
             self.calls = 0
 
-        def structured_completion(self, **_kwargs) -> str:
+        def __call__(self, task, **_kwargs):
+            from documents.ai import AIError
+
             self.calls += 1
-            raise TimeoutError("provider timed out")
+            raise AIError("timeout")
 
     retry = str(uuid.uuid4())
     second = client.post(f"/rules/{rule_id}/formalizations/c1/generations", json={"consume_model": True, "operation_id": retry, "expected_source_digest": digest, "user_instruction": "再读一次"})
@@ -584,7 +600,6 @@ def test_generation_confirmation_is_durable_authorized_and_not_retried(auth_stor
     assert posted.json()["error"] == "invalid_formalization"
     with store._conn() as conn:
         assert conn.execute("SELECT count(*) FROM product.rule_formalization_operations WHERE rule_version_id=%s", (rule_id,)).fetchone()[0] == before_undecided
-    store.put_personal_model_config(auditor, SecretStr("test-only-no-provider-called"), base_url="https://models.example.test", model="auditor-model")
     with store._conn() as conn:
         conn.execute(
             "UPDATE product.rule_versions SET body = jsonb_set(body, '{rules}', (body->'rules') || %s::jsonb) WHERE id=%s",
@@ -646,7 +661,7 @@ def test_clauses_confirm_separately_and_a_new_version_does_not_inherit(auth_stor
     settings = Settings(feishu_app_id="formalization-clauses", git_sha="b" * 40, usage_charge_enabled=False, model_credential_encryption_key=SecretStr(Fernet.generate_key().decode()))
     store = auth_store_factory(settings)
     alice = store.upsert_feishu_identity("formalization-clauses", "alice")
-    store.put_personal_model_config(alice, SecretStr("test-only-no-provider-called"), base_url="https://models.example.test", model="test-model")
+    put_tenant_key(store, alice)
     rule_id, successor = str(uuid.uuid4()), str(uuid.uuid4())
     body = {
         "kind": "engine",
@@ -757,7 +772,7 @@ def test_revoked_membership_cannot_read_or_spend_a_model_call(auth_store_factory
     settings = Settings(feishu_app_id="formalization-revoke", git_sha="c" * 40, usage_charge_enabled=False, model_credential_encryption_key=SecretStr(Fernet.generate_key().decode()))
     store = auth_store_factory(settings)
     alice = store.upsert_feishu_identity("formalization-revoke", "alice")
-    store.put_personal_model_config(alice, SecretStr("test-only-no-provider-called"), base_url="https://models.example.test", model="test-model")
+    put_tenant_key(store, alice)
     rule_id = str(uuid.uuid4())
     body = {"kind": "engine", "type": "自定义", "rules": [{"id": "c1", "category": "列", "priority": "P0", "rule_to_check": "文档要有编号", "type_of_rule": "text"}]}
     with store._conn() as conn:
@@ -807,7 +822,7 @@ def test_a_newer_confirmation_must_name_the_current_one_and_an_empty_model_stops
     settings = Settings(feishu_app_id="formalization-replace", git_sha="d" * 40, usage_charge_enabled=False, model_credential_encryption_key=SecretStr(Fernet.generate_key().decode()))
     store = auth_store_factory(settings)
     alice = store.upsert_feishu_identity("formalization-replace", "alice")
-    store.put_personal_model_config(alice, SecretStr("test-only-no-provider-called"), base_url="https://models.example.test", model="test-model")
+    put_tenant_key(store, alice)
     rule_id = str(uuid.uuid4())
     body = {"kind": "engine", "type": "自定义", "rules": [{"id": "c1", "category": "列", "priority": "P0", "rule_to_check": "文档要有编号", "type_of_rule": "text"}]}
     with store._conn() as conn:
@@ -986,7 +1001,7 @@ def test_known_provider_usage_is_saved_without_credentials(auth_store_factory):
     settings = Settings(feishu_app_id="formalization-usage", git_sha="e" * 40, usage_charge_enabled=False, model_credential_encryption_key=SecretStr(Fernet.generate_key().decode()))
     store = auth_store_factory(settings)
     alice = store.upsert_feishu_identity("formalization-usage", "alice")
-    store.put_personal_model_config(alice, SecretStr("test-only-no-provider-called"), base_url="https://models.example.test", model="test-model")
+    put_tenant_key(store, alice)
     rule_id = str(uuid.uuid4())
     body = {"kind": "engine", "type": "自定义", "rules": [{"id": "c1", "category": "列", "priority": "P0", "rule_to_check": "文档要有编号", "type_of_rule": "text"}]}
     with store._conn() as conn:
@@ -1009,7 +1024,6 @@ def test_known_provider_usage_is_saved_without_credentials(auth_store_factory):
     assert usage["source"] == "provider"
     assert usage["input_tokens"] == 11
     assert usage["output_tokens"] == 7
-    assert usage["thinking_tokens"] == 2
     assert "secret-value" not in receipt.text
     assert "test-only-no-provider-called" not in receipt.text
 
@@ -1026,7 +1040,7 @@ def test_generation_and_confirmation_leave_older_rows_unchanged(auth_store_facto
     settings = Settings(feishu_app_id="rule-formalization-bytes", git_sha="b" * 40, usage_charge_enabled=False, model_credential_encryption_key=SecretStr(Fernet.generate_key().decode()))
     store = auth_store_factory(settings)
     alice = store.upsert_feishu_identity("formalization-bytes", "alice")
-    store.put_personal_model_config(alice, SecretStr("test-only-no-provider-called"), base_url="https://models.example.test", model="test-model")
+    put_tenant_key(store, alice)
     rule_id, file_id, version_id, round_id, report_id = (str(uuid.uuid4()) for _ in range(5))
     marker = "OLD-RULE-BYTES"
     body = {"kind": "engine", "type": "自定义", "rules": [{"id": "c1", "category": "列", "priority": "P0", "rule_to_check": marker, "type_of_rule": "text"}]}
@@ -1123,7 +1137,7 @@ def test_refusing_model_consumption_does_not_queue_a_provider_job(auth_store_fac
     settings = Settings(feishu_app_id="rule-formalization-consent", git_sha="c" * 40, usage_charge_enabled=False, model_credential_encryption_key=SecretStr(Fernet.generate_key().decode()))
     store = auth_store_factory(settings)
     alice = store.upsert_feishu_identity("formalization-consent", "alice")
-    store.put_personal_model_config(alice, SecretStr("test-only-no-provider-called"), base_url="https://models.example.test", model="test-model")
+    put_tenant_key(store, alice)
     rule_id = str(uuid.uuid4())
     body = {"kind": "engine", "type": "自定义", "rules": [{"id": "c1", "category": "列", "priority": "P0", "rule_to_check": "文档要有编号", "type_of_rule": "text"}]}
     with store._conn() as conn:
@@ -1201,7 +1215,7 @@ def test_an_oversized_model_result_is_rejected_without_a_candidate(auth_store_fa
     settings = Settings(feishu_app_id="formalization-size", git_sha="f" * 40, usage_charge_enabled=False, model_credential_encryption_key=SecretStr(Fernet.generate_key().decode()))
     store = auth_store_factory(settings)
     alice = store.upsert_feishu_identity("formalization-size", "alice")
-    store.put_personal_model_config(alice, SecretStr("test-only-no-provider-called"), base_url="https://models.example.test", model="test-model")
+    put_tenant_key(store, alice)
     rule_id = str(uuid.uuid4())
     body = {"kind": "engine", "type": "自定义", "rules": [{"id": "c1", "category": "列", "priority": "P0", "rule_to_check": "文档要有编号", "type_of_rule": "text"}]}
     with store._conn() as conn:
@@ -1219,7 +1233,7 @@ def test_an_oversized_model_result_is_rejected_without_a_candidate(auth_store_fa
     )
     assert created.status_code == 202, created.text
     claimed = worker.claim_job("oversize-owner")
-    huge = marker + ("x" * 200001)
+    huge = json.dumps({"owl_content": marker + ("x" * 200001)})
     process_claimed(worker, claimed, "oversize-owner", rule_ai=ScriptedFormalizer(huge))
     receipt = client.get(f"/rule-formalization-generations/{operation_id}")
     assert receipt.status_code == 200, receipt.text
@@ -1241,7 +1255,7 @@ def test_removing_the_model_key_before_dispatch_does_not_call_the_provider(auth_
     settings = Settings(feishu_app_id="formalization-revoke", git_sha="9" * 40, usage_charge_enabled=False, model_credential_encryption_key=SecretStr(Fernet.generate_key().decode()))
     store = auth_store_factory(settings)
     alice = store.upsert_feishu_identity("formalization-revoke", "alice")
-    store.put_personal_model_config(alice, SecretStr("test-only-no-provider-called"), base_url="https://models.example.test", model="test-model")
+    put_tenant_key(store, alice)
     rule_id = str(uuid.uuid4())
     body = {"kind": "engine", "type": "自定义", "rules": [{"id": "c1", "category": "列", "priority": "P0", "rule_to_check": "文档要有编号", "type_of_rule": "text"}]}
     with store._conn() as conn:
@@ -1259,19 +1273,16 @@ def test_removing_the_model_key_before_dispatch_does_not_call_the_provider(auth_
     assert created.status_code == 202, created.text
     claimed = worker.claim_job("revoke-key-owner")
     assert claimed is not None
-    store.delete_personal_model_config(alice)
-    from audit.engine.checkers.client import AIClient
+    from product.store.model_credentials import TenantModelStore
 
+    TenantModelStore(store).delete(alice.tenant_id)
     calls = []
-    original = AIClient.response_text
 
-    def response_text(self, *args, **kwargs):
-        if getattr(self, "_bound_personal_call", False):
-            calls.append("provider")
-            raise AssertionError("revoked model key still called the provider")
-        return original(self, *args, **kwargs)
+    async def provider(*args, **kwargs):
+        calls.append("provider")
+        raise AssertionError("a removed tenant key still called the provider")
 
-    monkeypatch.setattr(AIClient, "response_text", response_text)
+    monkeypatch.setattr("documents.ai._run", provider)
     result = process_claimed(worker, claimed, "revoke-key-owner")
     assert calls == []
     assert result["failure"] == "model_unavailable"
@@ -1292,7 +1303,7 @@ def test_an_unchecked_source_cannot_be_confirmed(auth_store_factory):
     settings = Settings(feishu_app_id="formalization-source", git_sha="8" * 40, usage_charge_enabled=False, model_credential_encryption_key=SecretStr(Fernet.generate_key().decode()))
     store = auth_store_factory(settings)
     alice = store.upsert_feishu_identity("formalization-source", "alice")
-    store.put_personal_model_config(alice, SecretStr("test-only-no-provider-called"), base_url="https://models.example.test", model="test-model")
+    put_tenant_key(store, alice)
     api = build_product_store(settings, objects=store.objects, role="api")
     worker = build_product_store(settings, objects=store.objects, role="worker")
     client = TestClient(create_app(settings, auth_store=api))
@@ -1816,7 +1827,7 @@ def test_a_chosen_reading_confirms_and_a_new_session_reads_it(auth_store_factory
     settings = Settings(feishu_app_id="formalization-choice", git_sha="2" * 40, usage_charge_enabled=False, model_credential_encryption_key=SecretStr(Fernet.generate_key().decode()))
     store = auth_store_factory(settings)
     alice = store.upsert_feishu_identity("formalization-choice", "alice")
-    store.put_personal_model_config(alice, SecretStr("test-only-no-provider-called"), base_url="https://models.example.test", model="test-model")
+    put_tenant_key(store, alice)
     rule_id = str(uuid.uuid4())
     clause = "每条源记录都要在目标里出现"
     body = {"kind": "engine", "type": "自定义", "rules": [{"id": "c1", "category": "列", "priority": "P0", "rule_to_check": clause, "type_of_rule": "text"}]}

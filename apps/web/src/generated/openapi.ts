@@ -1493,25 +1493,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/me/model-config": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Model Config */
-        get: operations["model_config_me_model_config_get"];
-        /** Put Model Config */
-        put: operations["put_model_config_me_model_config_put"];
-        post?: never;
-        /** Delete Model Config */
-        delete: operations["delete_model_config_me_model_config_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/office/content": {
         parameters: {
             query?: never;
@@ -4657,21 +4638,6 @@ export interface components {
             page: number;
             /** Region */
             region?: (number | null)[];
-        };
-        /** PersonalModelConfigResponse */
-        PersonalModelConfigResponse: {
-            /** Base Url */
-            base_url: string;
-            /** Configured */
-            configured: boolean;
-            /** Model */
-            model: string;
-            /** Provider */
-            provider: string;
-            /** Revision */
-            revision: string | null;
-            /** Updated At */
-            updated_at: string | null;
         };
         /** PrecheckHistory */
         PrecheckHistory: {
@@ -9441,66 +9407,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PrincipalPublic"];
-                };
-            };
-        };
-    };
-    model_config_me_model_config_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PersonalModelConfigResponse"];
-                };
-            };
-        };
-    };
-    put_model_config_me_model_config_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PersonalModelConfigResponse"];
-                };
-            };
-        };
-    };
-    delete_model_config_me_model_config_delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PersonalModelConfigResponse"];
                 };
             };
         };

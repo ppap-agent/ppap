@@ -215,7 +215,7 @@ def test_live_text_and_visual_clients_use_one_bounded_gateway_then_record_and_pu
         b"""    book.close()
     import io
     from PIL import Image
-    from audit.engine.checkers.client import AIClient
+    from documents.ai import run_json
     from documents.model_access import current_model_access
     assert current_model_access().api_key.get_secret_value() != 'host-only-test-secret'
     assert current_model_access().base_url.startswith('http://127.0.0.1:')
@@ -226,8 +226,8 @@ def test_live_text_and_visual_clients_use_one_bounded_gateway_then_record_and_pu
         response_schema={'name': 'fixture', 'strict': True, 'schema': {
             'type': 'object', 'additionalProperties': False,
             'properties': {'positive': {'type': 'boolean'}}, 'required': ['positive']}})
-    text = AIClient().response_text([{'role': 'user', 'content': f'Assess synthetic fixture {value}'}], max_tokens=32)
-    value = int(facts['positive'] and text.text == 'positive')""",
+    text = run_json('fixture_text', prompt=f'Assess synthetic fixture {value}', max_tokens=32).output
+    value = int(facts['positive'] and text.get('verdict') == 'positive')""",
     )
     files = {**context["suite"].files, "checker.py": program}
     objects = {name: content_digest(raw) for name, raw in files.items()}
@@ -260,7 +260,7 @@ def test_live_text_and_visual_clients_use_one_bounded_gateway_then_record_and_pu
                         "id": "controlled-message",
                         "role": "assistant",
                         "status": "completed",
-                        "content": [{"type": "output_text", "text": '{"positive":true}' if visual else "positive", "annotations": []}],
+                        "content": [{"type": "output_text", "text": '{"positive":true}' if visual else '{"verdict":"positive"}', "annotations": []}],
                     }
                 ],
                 "usage": {"input_tokens": 17, "output_tokens": 4, "total_tokens": 21},
@@ -275,14 +275,14 @@ def test_live_text_and_visual_clients_use_one_bounded_gateway_then_record_and_pu
 
     monkeypatch.setattr("agent.execution.gateway.http.client.HTTPSConnection", ControlledProvider)
     access = ModelAccess(SecretStr("host-only-test-secret"), provider="controlled", base_url="https://provider.example/v1", model="controlled-vision")
-    models = LiveModels(access, max_requests=8, max_input_tokens=1000, max_output_tokens=1000)
+    models = LiveModels(access, max_requests=8)
     release = ReleaseBoundary(context)
     progress = []
     result = official_suites.validate(release, revision.id, models=models, on_progress=progress.append, record=True, expected_validation_revision=0, **paths)
     assert result["report"]["verified"] and result["report"]["passed_samples"] == 4
-    assert result["report"]["model_identity"] == access.identity()
+    assert result["report"]["model_identity"] == models.identity()
     assert observations == ["visual", "text"] * 4
-    assert result["models"]["usage"] == {"completed_requests": 8, "input_tokens": 136, "output_tokens": 32, "uncertain": False, "in_flight": False, "budget_exhausted": False}
+    assert result["models"]["usage"] == {"completed_requests": 8, "input_tokens": 136, "output_tokens": 32, "usage_known": True, "in_flight": False, "budget_exhausted": False}
     assert result["models"]["monetary_cost"] == "unknown"
     assert [row["completed_samples"] for row in progress if row["phase"] == "sample_completed"] == [1, 2, 3, 4]
     assert "host-only-test-secret" not in json.dumps([result, progress])
@@ -290,7 +290,7 @@ def test_live_text_and_visual_clients_use_one_bounded_gateway_then_record_and_pu
     disabled = official_suites.prepare(context, **paths)
     assert all(a["input_digest"] != b.snapshot.input_digest for a, b in zip(result["report"]["cases"], disabled.samples, strict=True))
     receipt = official_suites.readback(release, revision.id)
-    assert receipt["report"]["model_identity"] == access.identity()
+    assert receipt["report"]["model_identity"] == models.identity()
     official_suites.publish(release, revision.id, expected_revision=0, expected_validation_revision=1, expected_proof_digest=result["report"]["proof_digest"], **paths)
     assert observations == ["visual", "text"] * 4
 

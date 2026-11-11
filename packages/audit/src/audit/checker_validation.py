@@ -8,6 +8,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from audit.checker_core import LEGACY_MODEL_IDENTITY_KEYS, MODEL_IDENTITY_KEYS
+
 
 class ClauseEvaluation(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -74,7 +76,7 @@ class SuiteValidationReport(BaseModel):
 
     @model_validator(mode="after")
     def unique_cases(self) -> SuiteValidationReport:
-        if self.model_identity and (set(self.model_identity) != {"provider", "model", "revision", "deployment"} or not self.model_identity["model"]):
+        if self.model_identity and (set(self.model_identity) not in (LEGACY_MODEL_IDENTITY_KEYS, MODEL_IDENTITY_KEYS) or not self.model_identity["model"]):
             raise ValueError("invalid validation model identity")
         if len({row.case_id for row in self.cases}) != len(self.cases) or len({row.ordinal for row in self.cases}) != len(self.cases):
             raise ValueError("duplicate oracle sample identity")

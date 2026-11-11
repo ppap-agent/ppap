@@ -367,19 +367,25 @@ UAES v5 的后续验收由 [Issue #295](https://github.com/ppap-agent/ppap/issue
 
 「自动审核」页底部的「系统程序目录」（`checkerPath` 或 `rulesArea=predefined`）按 `GET /suites` 返回的真实路径展开版本、客户和规则组。仓库存在但未安装的叶子可见，只有 `availability=installed` 且带有效官方 Revision 的来源可打开；v2/v3/v4 真实 package 目录仅只读展示，不伪造叶子。来源路径与已安装 Revision 分开显示，不用企业当前采用版本替代官方来源。未安装、不可读、身份冲突或扫描失败分别报告，不回退。URL 深链及浏览器前进后退恢复同一选定路径；浏览目录不安装、不采用，也不调用模型。
 
-## Checker Core 个人模型配置
+## 模型来源：平台默认 + 企业 Key
 
-`GET/PUT/DELETE /me/model-config` 管理当前登录用户的个人 Responses 兼容模型。PUT 保存完整的 `api_key`、`base_url`、`model`；修改地址或模型也必须重新输入 Key，不会把旧 Key 发往新地址。旧版仅含 `api_key` 的请求仍表示原默认地址和模型。GET 只返回 provider、model、base_url、configured、updated_at、非秘密配置 revision，不回显 Key。保存本身不调用模型。页面确认的是读回的准确目的地址、模型和配置修订；受理前其它标签页更换配置会拒绝旧同意。
+客户不选模型。没有企业 Key 时，审核、识别、规则解释与 Checker 修复都使用平台模型：文本 `LLM_*`，视觉 `OCR_*`，Deep 编码 `PPAP_DEEP_LLM_*`（未配置时沿用 `LLM_*`）。企业配置了自己的 Key（企业 BYOK）后，文本、视觉、编码三种用途全部改用该企业的地址、Key 与模型；企业 Key 不可用时报告不可用，不静默换回平台模型。收费按业务结果计，与模型来源无关。
 
-部署先通过 Secret 给 API、Worker 和 Controller 配置相同的 `PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY`，不提供默认值，也不自动生成持久密钥。自定义提供方另须在相同进程配置 `PPAP_PERSONAL_MODEL_ALLOWED_BASE_URLS`，值为逗号分隔的**完整 HTTPS base URL**，例如 `https://models.company.example/v1`。这是管理员对准确目的地的信任，不是通配域名或任意内网代理。管理员须控制其 DNS、TLS 和网络路由；内部 HTTPS 服务可以列入，但本机、链路本地、元数据及其它特殊 IP 不接受。不跟随重定向，也不使用环境代理。用户不能通过查询串、URL 内密码、子路径或子域名扩大授权。移出允许列表后，后续调用不可用。此变更只提供配置能力，不改变当前生产允许列表。
+企业 Key 只由运营设置，客户没有对应 API 或页面：
 
-个人模型须支持 Bearer 认证的 `POST <base_url>/responses`，以及使用路径需要的 function tools、`input_image`、严格 JSON schema、reasoning 参数和 usage 回执；不是仅实现 `/chat/completions` 就满足合同。模型和地址是用户选择的配置，不承诺远端具体权重版本或所有 OpenAI 兼容服务均可用。真实优化验收针对所选模型能否修复 Checker。
+```sh
+python -m product.tenant_models show --tenant-id <uuid>
+python -m product.tenant_models set --tenant-id <uuid> --base-url <https url> --text-model <model> [--vision-model <model>] [--coding-model <model>] --operator <name> < key-file
+python -m product.tenant_models delete --tenant-id <uuid>
+```
 
-验收不限定 DeepSeek 或特定服务地址：获授权的 model/base URL 组合能通过 Responses 驱动 Pi Agent，即可作为该组合的兼容证据。工具、图像和用量按实际使用能力分别核对；一个组合通过不代表其他组合自动兼容，也不放宽上述端点授权、凭据隔离和冻结身份边界。
+Key 只从标准输入读取，不打印。保存前先用该 Key 完成一次文本、一次结构化和一次视觉调用；任一失败则不保存，并列出不支持的用途。地址必须在 `PPAP_TENANT_MODEL_ALLOWED_BASE_URLS`（逗号分隔的完整 HTTPS base URL）内：不跟随重定向、不用环境代理、不接受本机及特殊 IP。API、Worker、Controller 须配置相同的 `PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY`。Key 与租户、地址、三个模型及配置修订一起加密绑定，复制或改写数据库行不能借用或重定向。
 
-Key、租户、用户、地址、模型及配置修订一起加密绑定，数据库非秘密元数据必须与解密值一致。每次保存生成新的配置修订。审核与优化受理冻结该修订、模型和端点摘要；执行中更换或撤销配置后，旧工作不能漂移到新 provider 或新 Key。文字、视觉和 Checker 开发循环共享此身份；guest 只获得本地网关的短期执行授权，不获得真实 Key 或外部地址。替换部署加密密钥前必须迁移既有密文，否则原配置明确不可用。
+受理时冻结非秘密身份 `{source, provider, model, vision_model, coding_model, revision, deployment}`；之后每次调用都按当前选择重新解析，与冻结身份不一致即 `model_configuration_changed`，不在新模型上继续旧操作。旧版本冻结的个人模型身份返回 `model_contract_retired`。
 
-缺 Key 不阻止原生或 Paddle 确定性检查，只在需要模型时报告不可用。调用不回退到部署共享模型或其他成员。SDK 和调用层不自动重试未知完成的请求。Token 只采用实际 provider 回执，缺失显示 unknown；用户应在提供方设置消费上限，Controller 的 `PPAP_PERSONAL_MODEL_MAX_REQUESTS`、`PPAP_PERSONAL_MODEL_MAX_INPUT_TOKENS`、`PPAP_PERSONAL_MODEL_MAX_OUTPUT_TOKENS` 可分别降低默认每执行 128 次、4000000 输入 Token、100000 输出 Token 的边界；API、Worker、Controller 必须一致，预算进入执行身份。输入限制依赖实际回执，一次在途请求仍可能跨过阈值，因此这些限制不是费用硬封顶，也不改变业务收费。受控 SDK/网关测试不替代实际模型质量与付费闭环验收。
+普通模型请求（文件识别、规则提取/形式化、规则匹配、文字证据、视觉事实）统一经 `documents.ai.run_json`，底层为 PydanticAI 的 OpenAI Responses 模型：文本用 Prompted JSON 输出，视觉用原生 JSON Schema；Codex 端点（`/backend-api/codex`）以流式读取。单次调用最多一次输出校正，不做传输重试，失败只返回代码（`timeout`、`invalid_output`、`provider_status`、`request_failed`）。Schema 合法不等于业务正确，PPAP 仍执行原有业务校验，未知不得 PASS。Token 用量只在 provider 回报时记录，缺失记为未知，不影响结果有效性。
+
+Deep（Pi）只通过本地网关取得短期 Grant，Guest 内没有真实 Key。网关按冻结身份为每个请求选模型：Pi 的请求用编码模型，Checker 试跑中的文本与视觉调用分别用冻结的文本、视觉模型，并补上部署选项（如视觉 `reasoning.effort=none`）。每个 Attempt 只有一个请求次数熔断 `PPAP_DEEP_MODEL_MAX_REQUESTS`（默认 200），用于停止失控循环：触发后不发布产物，按资源上限结束。没有累计 Token/Turn 预算，缺少 usage 回执不拒绝有效产物；墙钟时限、容器资源限制、取消与产物身份核对保持不变。SDK 可对瞬时错误做少量重试，由请求熔断兜底。
 
 ## Checker Core 免费预检
 
@@ -397,7 +403,7 @@ Guest 提交的准备事实均不能自证 `certified`。既有硬阻断仍要�
 
 同一前置规则链共享 Suite key。后继规则只保存待发布候选，继承当前采用的 Checker 与资源，保留仍存在条款的绑定，删除条款的绑定移除，新增条款未绑定时为未检查。发布规则不会替换当前检查、起草代码或入队模型工作。新审核继续冻结已采用版本的旧规则与代码，并显示新版规则尚未采用；历史 Round 保持原快照。读取时按条款 ID 比较原文，分别显示新增、删除、正文变化和未变化，不猜测改编号的对应关系。规则页及检查工作区立即提示需要重新验证，旧规则下的原有证明仍只用于旧版执行。请求重发只读回原回执；同一前置规则已有后继时返回 `suite_head_conflict`，不能覆盖并发规则发布。
 
-用户在检查工作区选择新版规则后，沿用现有个人模型地址、Key、费用确认和开发操作回执；不会自动调用模型或采用结果。只改措辞也需重新运行全部样本。用户明确确认完整样本答案仍适用时，请求绑定候选 revision 和全部反馈修订，服务端核验 review 权限，将新确认及原答案依据一起冻结在本次操作中，不修改历史反馈。没有明确确认的旧依据仍使验证失效。代码字节未变化且独立样本全部通过时显示“代码无需修改，样本已通过”，之后仍须明确发布。
+用户在检查工作区选择新版规则后，沿用现有模型、调用确认和开发操作回执；不会自动调用模型或采用结果。只改措辞也需重新运行全部样本。用户明确确认完整样本答案仍适用时，请求绑定候选 revision 和全部反馈修订，服务端核验 review 权限，将新确认及原答案依据一起冻结在本次操作中，不修改历史反馈。没有明确确认的旧依据仍使验证失效。代码字节未变化且独立样本全部通过时显示“代码无需修改，样本已通过”，之后仍须明确发布。
 
 同一冻结 Round 与文件的多个条款答案组成一个独立验证 case，必须覆盖当前全部条款。case 顺序由各组历史最早反馈的顺序派生，已删除反馈与组仍参与排序，避免删除答案重排训练／holdout；每第四个文档 case 为 holdout。所有适用样本执行，包括未变化条款；只有用户选中的训练条款答案传给起草模型，其余答案只由 host 评价。回归结果保留该 case 的全部反馈 ID，原件依据可逐条读回。
 

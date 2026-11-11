@@ -7,7 +7,7 @@ import pytest
 from audit.contracts import AuditInput
 from audit.engine.checkers.ocr_visual_facts import OcrImage, observe_ocr_images
 from audit.engine.checkers.psw_visual_evidence import PSW_RULE_FIELDS, evaluate_psw_observation
-from documents.ocr.client import current_ocr_observation
+from documents.ocr.observation import current_ocr_observation
 
 COMPANY = "psw_stamp_ends_with_company"
 
@@ -17,7 +17,7 @@ def no_live_provider(monkeypatch):
     monkeypatch.setenv("OCR_MODEL_NAME", "controlled-ocr")
     monkeypatch.setenv("OCR_OPENAI_API_KEY", "controlled-noncredential")
     monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://ocr.invalid/v1")
-    monkeypatch.setattr("documents.ocr.client.AsyncOpenAI", lambda **kwargs: pytest.fail("This regression must not call a live provider"))
+    monkeypatch.setattr("documents.ai.AsyncOpenAI", lambda **kwargs: pytest.fail("This regression must not call a live provider"))
 
 
 def read_pair(monkeypatch, first, second, *, located=False, source=True, mutate=None):
@@ -47,7 +47,7 @@ def read_pair(monkeypatch, first, second, *, located=False, source=True, mutate=
             mutate(raw, located)
         return raw
 
-    monkeypatch.setattr("documents.ocr.client.call_llm_async", read)
+    monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.read_visual_facts", read)
     location = {"scope": "pdf:2", "page": 2, "bbox": [10, 20, 110, 220], "context": True}
     if located:
         location["located_region"] = True

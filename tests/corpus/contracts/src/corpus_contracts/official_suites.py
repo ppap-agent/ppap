@@ -212,7 +212,7 @@ def evaluate(plan: OfficialPlan, *, models: LiveModels | None = None, on_progres
     """Execute fixed code; live grants are explicit and labels never enter the guest."""
     if plan.reasons:
         return _report(plan, reasons=plan.reasons)
-    if plan.model_identity != (models.access.identity() if models is not None else {}):
+    if plan.model_identity != (models.identity() if models is not None else {}):
         raise ValueError("official_model_identity_mismatch")
     if on_progress is not None:
         on_progress({"phase": "execution_started", "selected_samples": len(plan.samples), "models": models.receipt() if models else {"mode": "disabled"}})
@@ -264,7 +264,7 @@ def _evaluate(plan: OfficialPlan, *, models: LiveModels | None, grant: dict[str,
             receipt = models.receipt()
             if on_progress is not None:
                 on_progress({"phase": "sample_completed", "completed_samples": len(cases), "models": receipt})
-            if receipt["usage"]["uncertain"] or receipt["usage"]["budget_exhausted"]:
+            if receipt["usage"]["budget_exhausted"]:
                 return _report(plan, cases, ("official_model_usage_incomplete",))
     plan.check_sources()
     return _report(plan, cases)
@@ -289,7 +289,7 @@ def validate(
     context = releases.official_context(revision_id)
     if record and (type(expected_validation_revision) is not int or expected_validation_revision != context["validation"]["write_revision"]):
         raise ValueError("suite_validation_conflict")
-    plan = prepare(context, model_identity=models.access.identity() if models else {}, **paths)
+    plan = prepare(context, model_identity=models.identity() if models else {}, **paths)
     proof = evaluate(plan, models=models, on_progress=on_progress)
     result = {
         "recorded": False,

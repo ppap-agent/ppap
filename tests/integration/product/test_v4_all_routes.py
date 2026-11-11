@@ -5,13 +5,13 @@ API/Worker/frozen-source path, not the quality of real supplier documents.
 """
 
 import io
-import json
 import re
 import uuid
 
 import pytest
 from api import create_app
 from audit.presets import customer_presets, preset_document_type
+from documents.ai import AIResult
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from PIL import Image
@@ -22,13 +22,13 @@ from worker import process_claimed
 
 
 class SourceIdentity:
-    def structured_completion(self, *, operation, user_prompt, **kwargs):
+    def __call__(self, operation, *, prompt, **kwargs):
         if operation == "document_metadata_extraction":
-            return json.dumps({"part_number": "P-1"})
+            return AIResult({"part_number": "P-1"})
         if operation == "document_classification":
-            match = re.search(r"\b([ULN]\d{2})\b", user_prompt)
+            match = re.search(r"\b([ULN]\d{2})\b", prompt)
             assert match, "The original must identify the controlled routing fixture"
-            return next(preset_document_type(source) for source in customer_presets() if source.entry_id == match[1])
+            return AIResult({"document_type": next(preset_document_type(source) for source in customer_presets() if source.entry_id == match[1])})
         raise AssertionError("No external model operation is authorized by this routing test")
 
 

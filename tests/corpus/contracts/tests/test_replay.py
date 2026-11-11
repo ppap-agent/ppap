@@ -6,8 +6,10 @@ import json
 import struct
 
 import pytest
-from corpus_contracts.replay import LIVE, REPLAY, Recorder, install, mode, shown_to_model
-from documents.ocr import client as ocr_client
+from audit.engine.checkers import ocr_visual_facts
+from corpus_contracts.replay import LIVE, REPLAY, OfflineReplayMiss, Recorder, install, mode, ocr_request, shown_to_model
+from documents.ai import AIError, AIResult, run_json
+from documents.ocr.observation import ocr_observation_scope
 
 
 def test_recorded_request_is_readable_and_keeps_only_the_image_size():
@@ -26,105 +28,132 @@ def test_mode_defaults_to_replay_and_rejects_unknown(monkeypatch):
         mode()
 
 
-def _ocr_kwargs():
-    return {"model": "any", "input": [{"text": "shown"}], "text": {"format": {}}, "max_output_tokens": 10}
+SCHEMA = {"name": "seal", "strict": True, "schema": {"type": "object", "properties": {"seal": {"type": ["boolean", "null"]}}, "required": ["seal"], "additionalProperties": False}}
+
+
+import documents.ai  # noqa: E402
+
+# The corpus conftest replays every test; these tests exercise the seams themselves.
+_SEAMS = {(ocr_visual_facts, "read_visual_facts"): ocr_visual_facts.read_visual_facts, (documents.ai, "run_json_async"): documents.ai.run_json_async}
+
+
+@pytest.fixture(autouse=True)
+def vision(monkeypatch):
+    for (owner, name), original in _SEAMS.items():
+        monkeypatch.setattr(owner, name, original)
+    monkeypatch.setenv("OCR_MODEL_NAME", "controlled")
+    monkeypatch.setenv("OCR_OPENAI_API_KEY", "controlled")
+    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://controlled.invalid/v1")
+    monkeypatch.setenv("OCR_OPENAI_EXTRA_BODY_JSON", "{}")
+    monkeypatch.setenv("LLM_MODEL", "controlled-text")
+    monkeypatch.setenv("LLM_API_KEY", "controlled")
+    monkeypatch.setenv("LLM_BASE_URL", "https://controlled.invalid/v1")
 
 
 def _answering_model(monkeypatch, answer):
+    """The provider below the direct layer; it records what reached it."""
     calls = []
 
-    async def request(kwargs):
+    async def run(access, **kwargs):
         calls.append(kwargs)
-        return type("Response", (), {"status": answer[0], "output_text": answer[1], "usage": None})()
+        if isinstance(answer, Exception):
+            raise answer
+        return AIResult(answer(len(calls)) if callable(answer) else answer, model=access.model)
 
-    monkeypatch.setattr(ocr_client, "_request_response", request)
+    monkeypatch.setattr("documents.ai._run", run)
     return calls
 
 
+def _read(prompt="shown", image=b"synthetic-image"):
+    return asyncio.run(ocr_visual_facts.read_visual_facts([image], prompt, response_schema=SCHEMA))
+
+
 def test_new_answer_is_recorded_only_when_the_case_passes_then_replayed(tmp_path, monkeypatch):
-    calls = _answering_model(monkeypatch, ("completed", '{"seal": false}'))
+    calls = _answering_model(monkeypatch, {"seal": False})
     with pytest.MonkeyPatch.context() as patched:
         recorder = Recorder("case", tmp_path, tmp_path)
         install(patched, recorder)
-        asyncio.run(ocr_client._request_response(_ocr_kwargs()))
-        asyncio.run(ocr_client._request_response(_ocr_kwargs()))
+        _read()
+        _read()
         recorder.finish(keep=False)
         assert list(tmp_path.iterdir()) == []
-        asyncio.run(ocr_client._request_response({**_ocr_kwargs(), "model": "other"}))
+        _read()
         recorder.finish(keep=True)
     assert len(calls) == 2
     (entry,) = json.loads((tmp_path / "case.json").read_text())
-    assert entry["answer"] == '{"seal": false}'
-    assert entry["request"]["input"] == [{"text": "shown"}]
+    assert json.loads(entry["answer"]) == {"seal": False}
+    assert entry["request"]["input"][0]["content"][0] == {"type": "input_text", "text": "shown"}
 
     with pytest.MonkeyPatch.context() as patched:
         calls.clear()
         recorder = Recorder("case", tmp_path, tmp_path)
         install(patched, recorder)
-        response = asyncio.run(ocr_client._request_response(_ocr_kwargs()))
+        answer = _read()
         recorder.finish(keep=True)
     assert calls == []
-    assert (response.status, response.output_text) == ("completed", '{"seal": false}')
+    assert answer == {"seal": False}
 
 
 def test_a_changed_prompt_or_crop_asks_again(tmp_path, monkeypatch):
-    calls = _answering_model(monkeypatch, ("completed", "{}"))
+    calls = _answering_model(monkeypatch, {"seal": None})
+    with pytest.MonkeyPatch.context() as patched:
+        install(patched, Recorder("case", tmp_path, tmp_path))
+        _read()
+        _read(prompt="changed")
+        _read(image=b"another-crop")
+    assert len(calls) == 3
+
+
+def test_a_failed_answer_is_never_recorded(tmp_path, monkeypatch):
+    _answering_model(monkeypatch, AIError("invalid_output"))
     with pytest.MonkeyPatch.context() as patched:
         recorder = Recorder("case", tmp_path, tmp_path)
         install(patched, recorder)
-        asyncio.run(ocr_client._request_response(_ocr_kwargs()))
-        asyncio.run(ocr_client._request_response({**_ocr_kwargs(), "input": [{"text": "changed"}]}))
-    assert len(calls) == 2
-
-
-def test_incomplete_answer_is_never_recorded(tmp_path, monkeypatch):
-    _answering_model(monkeypatch, ("incomplete", ""))
-    with pytest.MonkeyPatch.context() as patched:
-        recorder = Recorder("case", tmp_path, tmp_path)
-        install(patched, recorder)
-        asyncio.run(ocr_client._request_response(_ocr_kwargs()))
+        with pytest.raises(AIError):
+            _read()
         recorder.finish(keep=True)
     assert list(tmp_path.iterdir()) == []
 
 
 def test_new_answers_can_go_to_a_separate_output(tmp_path, monkeypatch):
-    _answering_model(monkeypatch, ("completed", "{}"))
+    _answering_model(monkeypatch, {"seal": None})
     recordings, output = tmp_path / "recordings", tmp_path / "out"
     recordings.mkdir()
     with pytest.MonkeyPatch.context() as patched:
         recorder = Recorder("case", recordings, output)
         install(patched, recorder)
-        asyncio.run(ocr_client._request_response(_ocr_kwargs()))
+        _read()
         recorder.finish(keep=True)
     assert list(recordings.iterdir()) == []
     assert (output / "case.json").is_file()
 
 
+def test_text_answers_are_recorded_and_replayed_through_the_direct_layer(tmp_path, monkeypatch):
+    calls = _answering_model(monkeypatch, {"relation": "supports"})
+    for expected_calls in (1, 1):
+        with pytest.MonkeyPatch.context() as patched:
+            recorder = Recorder("text", tmp_path, tmp_path)
+            install(patched, recorder)
+            assert run_json("rule_text_evidence", instructions="judge", prompt="shown", max_tokens=10).output == {"relation": "supports"}
+            recorder.finish(keep=True)
+        assert len(calls) == expected_calls
+    (entry,) = json.loads((tmp_path / "text.json").read_text())
+    assert entry["request"] == {"task": "rule_text_evidence", "instructions": "judge", "prompt": "shown", "schema": None, "max_tokens": 10}
+
+
 @pytest.mark.parametrize("kind", ["ocr", "text", "paddle"])
 def test_offline_miss_never_calls_or_records_a_provider(kind, tmp_path, monkeypatch):
-    from audit.engine.checkers.client import AIClient
-    from corpus_contracts.replay import OfflineReplayMiss
     from documents.ocr.paddle import client as paddle_client
 
-    calls = []
-
-    def denied(*args, **kwargs):
-        calls.append(kind)
-        raise AssertionError("external provider must not run")
-
-    async def denied_async(*args, **kwargs):
-        return denied(*args, **kwargs)
-
-    monkeypatch.setattr(ocr_client, "_request_response", denied_async)
-    monkeypatch.setattr(AIClient, "response_text", denied)
-    monkeypatch.setattr(paddle_client, "_post_page_sync", denied)
+    calls = _answering_model(monkeypatch, AssertionError("external provider must not run"))
+    monkeypatch.setattr(paddle_client, "_post_page_sync", lambda *args: calls.append("paddle"))
     recorder = Recorder("offline", tmp_path, tmp_path, offline=True)
     install(monkeypatch, recorder)
     with pytest.raises(OfflineReplayMiss, match="external model calls are disabled"):
         if kind == "ocr":
-            asyncio.run(ocr_client._request_response(_ocr_kwargs()))
+            _read()
         elif kind == "text":
-            AIClient().response_text([{"role": "user", "content": "shown"}])
+            run_json("probe", prompt="shown")
         else:
             paddle_client._post_page_sync("https://provider.invalid", {"file": "shown"}, {}, 1)
     recorder.finish(keep=True)
@@ -134,14 +163,11 @@ def test_offline_miss_never_calls_or_records_a_provider(kind, tmp_path, monkeypa
 
 
 def test_offline_recorded_observation_needs_no_provider(tmp_path, monkeypatch):
-    calls = _answering_model(monkeypatch, ("completed", "must not be read"))
+    calls = _answering_model(monkeypatch, AssertionError("must not run"))
     recorder = Recorder("offline", tmp_path, tmp_path, offline=True)
-    request = {name: _ocr_kwargs()[name] for name in ("input", "text", "max_output_tokens")}
-    recorder.entries.append({"kind": "ocr", "request": request, "answer": '{"seal": false}', "model": "recorded"})
+    recorder.entries.append({"kind": "ocr", "request": ocr_request([b"synthetic-image"], "shown", SCHEMA, 4096), "answer": '{"seal": false}', "model": "recorded"})
     install(monkeypatch, recorder)
-    response = asyncio.run(ocr_client._request_response(_ocr_kwargs()))
-    assert response.output_text == '{"seal": false}'
-    assert response.model == "recorded"
+    assert _read() == {"seal": False}
     assert recorder.misses == []
     assert calls == []
 
@@ -151,16 +177,7 @@ def test_peer_visual_observations_record_and_replay_two_distinct_answers(tmp_pat
 
     from audit.engine.checkers.ocr_visual_facts import OcrImage, observe_ocr_images
 
-    monkeypatch.setenv("OCR_MODEL_NAME", "controlled")
-    monkeypatch.setenv("OCR_OPENAI_API_KEY", "controlled")
-    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://controlled.invalid")
-    calls = []
-
-    async def answer(kwargs):
-        calls.append(kwargs)
-        return type("Response", (), {"status": "completed", "output_text": json.dumps({"seal": len(calls) == 1}), "usage": None})()
-
-    monkeypatch.setattr(ocr_client, "_request_response", answer)
+    calls = _answering_model(monkeypatch, lambda number: {"seal": number == 1})
     recorder = Recorder("peer-observations", tmp_path, tmp_path)
     install(monkeypatch, recorder)
     frames = [OcrImage(b"synthetic", {"scope": "pdf:1", "page": 1, "context": True, "located_region": True}, 100, 100)]
@@ -177,16 +194,14 @@ def test_peer_visual_observations_record_and_replay_two_distinct_answers(tmp_pat
 
 
 def test_offline_second_observation_cannot_use_the_first_or_an_untagged_answer(tmp_path, monkeypatch):
-    from corpus_contracts.replay import OfflineReplayMiss
-
-    calls = _answering_model(monkeypatch, ("completed", "must not run"))
+    calls = _answering_model(monkeypatch, AssertionError("must not run"))
     recorder = Recorder("peer-offline", tmp_path, tmp_path, offline=True)
-    request = {name: _ocr_kwargs()[name] for name in ("input", "text", "max_output_tokens")}
+    request = ocr_request([b"synthetic-image"], "shown", SCHEMA, 4096)
     for identity in ({}, {"observation": 1}):
         recorder.entries.append({"kind": "ocr", "request": {**request, **identity}, "answer": '{"seal":true}'})
     install(monkeypatch, recorder)
-    with ocr_client.ocr_observation_scope(2), pytest.raises(OfflineReplayMiss):
-        asyncio.run(ocr_client._request_response(_ocr_kwargs()))
+    with ocr_observation_scope(2), pytest.raises(OfflineReplayMiss):
+        _read()
     assert calls == [] and recorder.pending == []
 
 

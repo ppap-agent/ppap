@@ -29,6 +29,7 @@ class RuleMatchingAIService:
     _match_cache: "OrderedDict[str, Tuple[float, str]]" = OrderedDict()
 
     def __init__(self, ai=None, prompt_manager=None) -> None:
+        # ai is documents.ai.run_json or a test double with its signature.
         self.client = ai
         self.prompt_manager = prompt_manager
 
@@ -301,14 +302,8 @@ class RuleMatchingAIService:
         return best.candidate_id
 
     @classmethod
-    def _parse_candidate_id(cls, response: str, candidate_to_rule_id: Dict[str, str]) -> Optional[str]:
-        result = response.strip()
-        if not result:
-            return None
-        if result.lower() == "unknown":
-            return None
-
-        parsed = json.loads(result)
+    def _parse_candidate_id(cls, response: Dict[str, Any], candidate_to_rule_id: Dict[str, str]) -> Optional[str]:
+        parsed = response
         if not isinstance(parsed, dict):
             logger.error("规则匹配返回内容不是 JSON 对象")
             return None
@@ -418,21 +413,7 @@ class RuleMatchingAIService:
                 ],
             )
 
-            # 调用AI服务
-            from audit.engine.checkers.client import completion_text
-
-            response = completion_text(
-                self.client.structured_completion(
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    max_tokens=50,
-                    temperature=0.0,
-                    json_format=True,
-                    operation="rule_matching",
-                    request_timeout=120,
-                    retry_limit=0,
-                )
-            )
+            response = self.client("rule_matching", instructions=system_prompt, prompt=user_prompt, max_tokens=50, timeout=120).output
 
             if response:
                 logger.debug("rule_matching_response_received")

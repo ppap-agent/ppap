@@ -3,18 +3,12 @@
 from __future__ import annotations
 
 import html
-import json
 import re
 from pathlib import Path
 
+import documents.ai
 from audit.kinds import PpapDocumentType
-from documents.model_access import ModelUnavailable
 from product.rules import document_types, latest_rule_versions
-
-
-def _model_notice(error: ModelUnavailable, otherwise: str) -> str:
-    # A missing personal Key is fixed by the user, not by rereading the file.
-    return "personal_model_required" if error.code == "personal_model_unavailable" else otherwise
 
 
 def analyze_file(
@@ -29,7 +23,7 @@ def analyze_file(
     validation_scope: dict | None = None,
 ) -> dict:
     """Recognize a file; scoped tasks supply their already-frozen current candidates."""
-    from audit.engine.checkers.client import AIClient, completion_text
+    ai = ai or documents.ai.run_json
     from audit.engine.checkers.prompts import PromptManager
     from documents.extractors import get_extractor
     from product.rule_matching import RuleMatchingAIService
@@ -73,32 +67,21 @@ def analyze_file(
         notices.append("metadata_uses_excerpt")
     excerpt = text[:20000]
     metadata: dict[str, str | None] = {"customer": None, "model": None, "part": None, "part_number": None}
-    ai = ai if ai is not None else AIClient()
     if excerpt.strip():
         try:
-            response = completion_text(
-                ai.structured_completion(
-                    system_prompt=PromptManager.get_system_prompt("document_analyst"),
-                    user_prompt=PromptManager.get_document_metadata_prompt(excerpt, filename) + "\n同时返回 part_number（零件号）；part 仅表示零件名称，无法确定时返回 null。",
-                    max_tokens=1000,
-                    temperature=0.1,
-                    json_format=True,
-                    operation="document_metadata_extraction",
-                    request_timeout=120,
-                    retry_limit=0,
-                )
-            )
-            parsed = json.loads(response.strip().removeprefix("```json").removesuffix("```").strip())
-            if not isinstance(parsed, dict):
-                raise ValueError("invalid_metadata")
+            parsed = ai(
+                "document_metadata_extraction",
+                instructions=PromptManager.get_system_prompt("document_analyst"),
+                prompt=PromptManager.get_document_metadata_prompt(excerpt, filename) + "\n同时返回 part_number（零件号）；part 仅表示零件名称，无法确定时返回 null。",
+                max_tokens=1000,
+                timeout=120,
+            ).output
             for field in metadata:
                 value = parsed.get(field)
                 if isinstance(value, list):
                     value = "、".join(item for item in value if isinstance(item, str))
                 if isinstance(value, str):
                     metadata[field] = value.strip()[:500] or None
-        except ModelUnavailable as error:
-            notices.append(_model_notice(error, "metadata_extraction_failed"))
         except Exception:
             notices.append("metadata_extraction_failed")
 
@@ -159,17 +142,14 @@ def analyze_file(
         if inferred == PpapDocumentType.UNKNOWN or not evidence[0].alias_hits:
             inferred = PpapDocumentType.UNKNOWN
             try:
-                classified = completion_text(
-                    ai.structured_completion(
-                        system_prompt=PromptManager.get_system_prompt("ppap_expert"),
-                        user_prompt=PromptManager.get_document_classification_prompt(excerpt, "\n".join([*document_types(), *(f"{code} {title}" for code, title in source_types.items())])),
-                        max_tokens=100,
-                        temperature=0.0,
-                        operation="document_classification",
-                        request_timeout=120,
-                        retry_limit=0,
-                    )
-                )
+                classified = ai(
+                    "document_classification",
+                    instructions=PromptManager.get_system_prompt("ppap_expert"),
+                    prompt=PromptManager.get_document_classification_prompt(excerpt, "\n".join([*document_types(), *(f"{code} {title}" for code, title in source_types.items())]))
+                    + '\n只返回 JSON：{"document_type": "上面列表中的一项，无法判断时为 未知"}',
+                    max_tokens=100,
+                    timeout=120,
+                ).output.get("document_type")
                 if not isinstance(classified, str) or not classified.strip():
                     raise ValueError("invalid_document_classification")
                 classified_source = [code for code, title in source_types.items() if classified.strip() in {code, title, f"{code} {title}"}]
@@ -177,8 +157,6 @@ def analyze_file(
                 inferred = PpapDocumentType.from_string(classified)
                 if not source_type and inferred == PpapDocumentType.UNKNOWN and classified.strip().casefold() not in {"未知", "unknown"}:
                     raise ValueError("invalid_document_classification")
-            except ModelUnavailable as error:
-                notices.append(_model_notice(error, "document_classification_failed"))
             except Exception:
                 notices.append("document_classification_failed")
     missing_v4_customer = unresolved_v4_customer and not (
@@ -188,7 +166,7 @@ def analyze_file(
     matched_id = None
     ambiguous_ids: list[str] = []
     matching = "unmatched"
-    if scoped and any(notice in notices for notice in ("personal_model_required", "document_text_unavailable", "empty_document_text", "metadata_extraction_failed", "document_classification_failed")):
+    if scoped and any(notice in notices for notice in ("document_text_unavailable", "empty_document_text", "metadata_extraction_failed", "document_classification_failed")):
         matching = "failed"
     elif customer_conflict:
         matching = "failed"

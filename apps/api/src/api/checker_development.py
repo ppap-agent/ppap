@@ -157,7 +157,7 @@ def register_checker_development_routes(app, store, principal_of):
         try:
             return operation(principal)
         except ModelUnavailable:
-            return JSONResponse({"error": "personal_model_unavailable"}, status_code=409)
+            return JSONResponse({"error": "model_unavailable"}, status_code=409)
         except KeyError:
             return JSONResponse({"error": "checker_access_denied"}, status_code=404)
         except ValueError as exc:

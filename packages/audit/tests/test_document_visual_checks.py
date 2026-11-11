@@ -8,7 +8,7 @@ from audit.checkers.v3.checking_fixture_approval_agent import CheckingFixtureApp
 from audit.contracts import AuditInput, RuleInput
 from audit.engine.runtime import bind_runtime
 from documents.contracts import ConversionArtifact
-from documents.ocr.client import current_ocr_observation
+from documents.ocr.observation import current_ocr_observation
 
 
 @pytest.fixture
@@ -24,7 +24,7 @@ def original(tmp_path, monkeypatch):
     monkeypatch.setenv("OCR_MODEL_NAME", "configured-ocr")
     for version in ("v2", "v3"):
         monkeypatch.setattr(f"audit.checkers.{version}.pdf_agent.convert_pdf_to_excel_auto", lambda *args, **kwargs: ConversionArtifact(success=False))
-    monkeypatch.setattr("audit.engine.checkers.client.AIClient.structured_completion", lambda *args, **kwargs: pytest.fail("Fixed visual predicates must not use the text model"))
+    monkeypatch.setattr("documents.ai.run_json", lambda *args, **kwargs: pytest.fail("Fixed visual predicates must not use the text model"))
     return source
 
 

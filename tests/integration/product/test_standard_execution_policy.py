@@ -9,11 +9,11 @@ from unittest.mock import patch
 import pytest
 from api import create_app
 from api.web_contract import Round
-from documents.model_access import UNCONFIGURED_MODEL_IDENTITY
 from fastapi.testclient import TestClient
 from product import build_product_store
 from product.fixtures import RULE_A
 from product.settings import Settings
+from product.store.model_credentials import platform_selection
 from pydantic import TypeAdapter
 from worker import process_claimed
 
@@ -60,7 +60,8 @@ def test_standard_policy_survives_replay_completion_and_new_configuration(system
     client, worker, settings, core = system
     original, draft, command = accept(client, core)
     frozen = snapshot(worker, original["id"])
-    assert frozen.model_identity == UNCONFIGURED_MODEL_IDENTITY
+    # Without its own key, the tenant freezes the platform selection.
+    assert frozen.model_identity == platform_selection().identity
     assert original["executor_revision"].startswith("checker-core-v1:")
     job = worker.claim_job("policy-worker")
     process_claimed(worker, job, "policy-worker")
@@ -138,7 +139,7 @@ def test_legacy_label_is_not_backfilled_and_new_policy_cannot_be_silently_lost(s
 
 
 @pytest.mark.parametrize("field,value", [("MODEL_NAME", "ignored-legacy-model"), ("OCR_MODEL_NAME", "ignored-legacy-ocr")])
-def test_legacy_model_environment_does_not_replace_personal_core_identity(system, field, value):
+def test_legacy_model_environment_does_not_replace_the_frozen_identity(system, field, value):
     client, worker, settings, core = system
     original, _, _ = accept(client, core)
     frozen = snapshot(worker, original["id"])

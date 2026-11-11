@@ -234,6 +234,7 @@ def test_all_19_uaes_sources_precheck_together_without_collapsing_measurement_el
 
     monkeypatch.setattr(httpx.Client, "send", forbidden)
     monkeypatch.setattr(httpx.AsyncClient, "send", forbidden)
+    monkeypatch.setattr("httpx2.AsyncClient.send", forbidden)
     payload, snapshot, _, _ = request()
     payload["files"] = []
     inputs, targets, sources, programs = [], [], {}, {}

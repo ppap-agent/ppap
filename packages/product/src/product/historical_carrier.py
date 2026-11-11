@@ -83,7 +83,7 @@ def queue_historical_carrier_round(store, principal, items: list[dict]) -> dict:
             rules = json.loads(resolved.files["rules.json"])
         prepared.append((item, row, rules, target))
 
-    identity = store.personal_model_identity(principal.tenant_id, principal.user_id)
+    identity = store.model_identity(principal.tenant_id)
     library = library_revision()
     round_id = str(uuid.uuid4())
     snapshot = ExecutionSnapshot(

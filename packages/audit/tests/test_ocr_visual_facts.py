@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 from audit.engine.checkers.ocr_visual_facts import OcrImage, observe_ocr_images, request_ocr_visual_facts
-from documents.ocr.client import current_ocr_observation
+from documents.ocr.observation import current_ocr_observation
 
 
 @pytest.fixture(autouse=True)
@@ -32,7 +32,7 @@ def install(monkeypatch, raw):
             calls.append((image_paths, prompt, kwargs))
         return deepcopy(raw)
 
-    monkeypatch.setattr("documents.ocr.client.call_llm_async", read)
+    monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.read_visual_facts", read)
     return calls
 
 
@@ -42,7 +42,7 @@ def install_scoped(monkeypatch, values):
         (scope,) = next(iter(fields.values()))["items"]["properties"]["scope"]["enum"]
         return {field: response(values[scope], scope=scope) for field in fields}
 
-    monkeypatch.setattr("documents.ocr.client.call_llm_async", read)
+    monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.read_visual_facts", read)
 
 
 def test_source_located_ocr_fact_uses_dedicated_responses(monkeypatch):
@@ -319,7 +319,7 @@ def test_multiple_business_pages_have_independent_requests_and_shared_aggregatio
         assert item["covered_image_indices"]["items"]["enum"] == [0]
         return {field: response(scope == "pdf:3", scope=scope) for field in fields}
 
-    monkeypatch.setattr("documents.ocr.client.call_llm_async", read)
+    monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.read_visual_facts", read)
     result = observe_ocr_images(frames, {"checked": "实际勾选", "seal": "实际印章"}, Mock(), any_fields=frozenset({"seal"}), context_by_scope={"pdf:2": "PAGE_TWO", "pdf:3": "PAGE_THREE"})
     assert result == {"checked": None, "seal": True}
     assert calls == ["pdf:2", "pdf:3"]
@@ -337,7 +337,7 @@ def test_successful_page_and_failed_page_are_not_requested_again(monkeypatch):
             raise ValueError("OCR visual coverage is invalid")
         return {"checked": response(False, scope=scope)}
 
-    monkeypatch.setattr("documents.ocr.client.call_llm_async", read)
+    monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.read_visual_facts", read)
     cache = {}
     for _ in range(2):
         with pytest.raises(ValueError, match="coverage is invalid"):
@@ -365,7 +365,7 @@ def test_valid_unreadable_page_retains_unknown_after_another_page_is_known(monke
             return {"checked": [{"scope": scope, "value": None, "sources": [], "covered_image_indices": [], "coverage": "unreadable", "excerpt": ""}]}
         return {"checked": response(False, scope=scope)}
 
-    monkeypatch.setattr("documents.ocr.client.call_llm_async", read)
+    monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.read_visual_facts", read)
     assert observe_ocr_images(frames, {"checked": "实际勾选"}, Mock()) == {"checked": None}
     assert calls == ["pdf:2", "pdf:5"]
 
@@ -414,7 +414,7 @@ def install_readings(monkeypatch, first, second):
         values = second if (current_ocr_observation() == 2) else first
         return {field: response(values[field]) for field in response_schema["schema"]["properties"]}
 
-    monkeypatch.setattr("documents.ocr.client.call_llm_async", read)
+    monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.read_visual_facts", read)
     return prompts
 
 

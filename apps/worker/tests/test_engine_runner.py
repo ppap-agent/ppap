@@ -59,7 +59,6 @@ class _ControlledGuest:
                     "token": "controlled-local-capability-not-a-provider-key",
                     "model": "test-model",
                     "wall_seconds": 100,
-                    "max_turns": 20,
                 }
             )
         )

@@ -10,17 +10,9 @@ on:
         type: string
         required: true
       max_model_requests:
-        description: 'Maximum model requests for the single optimization (1-32)'
+        description: 'Model request limit for the single optimization (1-32); stops a runaway loop'
         type: number
         default: 32
-      max_input_tokens:
-        description: 'Input-token guard (1-200000); final request usage can overshoot'
-        type: number
-        default: 200000
-      max_output_tokens:
-        description: 'Output-token guard (1-32000), not a billing guarantee'
-        type: number
-        default: 32000
 
 permissions:
   contents: read
@@ -39,9 +31,7 @@ jobs:
       COMPOSE_PROJECT_NAME: ppap-checker-live-${{ github.run_id }}-${{ github.run_attempt }}
       CI_LLM_BASE_URL: ${{ secrets.CI_LLM_BASE_URL }}
       CI_LLM_MODEL: ${{ secrets.CI_LLM_MODEL }}
-      PPAP_PERSONAL_MODEL_MAX_REQUESTS: ${{ inputs.max_model_requests }}
-      PPAP_PERSONAL_MODEL_MAX_INPUT_TOKENS: ${{ inputs.max_input_tokens }}
-      PPAP_PERSONAL_MODEL_MAX_OUTPUT_TOKENS: ${{ inputs.max_output_tokens }}
+      PPAP_DEEP_MODEL_MAX_REQUESTS: ${{ inputs.max_model_requests }}
     steps:
       - name: Check manual test invocation and prepare isolated runner paths
         run: |
@@ -77,12 +67,12 @@ jobs:
             test "$revision" = "$PPAP_BUILD_SHA"
           done
       - name: Start only the independent candidate stack
+        env:
+          CI_LLM_API_KEY: ${{ secrets.CI_LLM_API_KEY }}
         run: |
           set -euo pipefail
           docker compose --env-file "$PPAP_CHECKER_LIVE_ENV" -f deploy/isolated-dev/checker-live.yaml up -d --no-build --wait --wait-timeout 180 api worker web
-      - name: One real optimization through personal settings and the production stack
-        env:
-          CI_LLM_API_KEY: ${{ secrets.CI_LLM_API_KEY }}
+      - name: One real optimization with the platform model through the production stack
         run: |
           set -euo pipefail
           # No pytest rerun, transport write retry or second optimization operation.

@@ -23,7 +23,7 @@ def test_control_plan_markdown_keeps_the_frozen_rule_and_media_contract() -> Non
 
 
 class NoModelRewrite:
-    def structured_completion(self, **kwargs):
+    def __call__(self, *args, **kwargs):
         raise AssertionError("Explicit DOCX rule tables do not require model rewriting")
 
 

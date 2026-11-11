@@ -29,11 +29,17 @@ class FakeRuleAI:
         self.response = json.dumps(response if response is not None else rule_body(), ensure_ascii=False)
         self.requests = []
 
-    def structured_completion(self, **request):
-        self.requests.append(request)
-        if request["operation"] == "document_classification":
-            return "控制计划"
-        return self.response
+    def __call__(self, operation, **request):
+        from documents.ai import AIError, AIResult
+
+        self.requests.append({"operation": operation, **request})
+        if operation == "document_classification":
+            return AIResult({"document_type": "控制计划"})
+        answer = json.loads(self.response)
+        if not isinstance(answer, dict):
+            # The direct layer reports a non-object answer as a code.
+            raise AIError("invalid_output")
+        return AIResult(answer)
 
 
 def excel_rule():
@@ -55,11 +61,10 @@ class RuleParsingTests(unittest.TestCase):
         ai = FakeRuleAI()
         body = parse_rule_file("控制计划规则.xlsx", excel_rule(), ai=ai)
         self.assertEqual(body, rule_body())
-        self.assertIn("必须填写零件号", ai.requests[0]["user_prompt"])
-        self.assertIn("<SHEET name=", ai.requests[0]["user_prompt"])
+        self.assertIn("必须填写零件号", ai.requests[0]["prompt"])
+        self.assertIn("<SHEET name=", ai.requests[0]["prompt"])
         self.assertEqual(len(ai.requests), 1)
-        self.assertEqual(ai.requests[0]["request_timeout"], 120)
-        self.assertEqual(ai.requests[0]["retry_limit"], 0)
+        self.assertEqual(ai.requests[0]["timeout"], 120)
 
     def test_word_rules_use_the_actual_word_extractor(self):
         from docx import Document
@@ -73,7 +78,7 @@ class RuleParsingTests(unittest.TestCase):
         body = parse_rule_file("审核条款.docx", stream.getvalue(), ai=ai)
         self.assertEqual(body["rules"][0]["rule_to_check"], "必须填写零件号")
         self.assertEqual([row["operation"] for row in ai.requests], ["document_classification", "rule_extraction"])
-        self.assertIn("控制计划规则：必须填写零件号", ai.requests[-1]["user_prompt"])
+        self.assertIn("控制计划规则：必须填写零件号", ai.requests[-1]["prompt"])
 
     def test_json_import_and_parse_failures_do_not_make_empty_professional_rules(self):
         from product.rules import RuleParseError
@@ -116,7 +121,7 @@ class RuleApiTests(unittest.TestCase):
         self.store = self.auth_store(self.settings)
         self.store.seed_isolated_dev()
         self.ai = FakeRuleAI()
-        self.ai_boundary = patch("audit.engine.checkers.client.AIClient", return_value=self.ai)
+        self.ai_boundary = patch("documents.ai.run_json", self.ai)
         self.ai_boundary.start()
         self.client = TestClient(create_app(self.settings, lambda _: {"state": "ok"}, lambda _: {"state": "ok"}, self.store))
         self.login("alice")
@@ -190,8 +195,9 @@ class RuleApiTests(unittest.TestCase):
             self.assertEqual(rejected.json()["error"], "rule_source_unverified")
         self.assertEqual(self.client.post("/rules", json=payload(clause)).status_code, 201)
         self.login("bob")
-        self.assertEqual(self.client.get(path).status_code, 403)
-        self.assertEqual(self.client.post("/rules", json=payload(clause)).status_code, 403)
+        # Once a rule cites it, the original is shared with that rule inside the tenant.
+        self.assertEqual(self.client.get(path).status_code, 200)
+        self.assertEqual(self.client.post("/rules", json=payload(clause)).status_code, 201)
         self.client.cookies.clear()
         self.assertEqual(self.client.get(path).status_code, 401)
 
@@ -238,9 +244,10 @@ class RuleApiTests(unittest.TestCase):
         published = self.client.post("/rules", json=payload).json()
         self.login("bob")
         self.assertEqual(self.client.get("/rules/" + published["id"]).status_code, 200)
-        self.assertEqual(self.client.get(f"/files/{source['file_id']}/versions/{source['id']}/download").status_code, 403)
-        self.assertEqual(self.client.post("/rules", json=payload).status_code, 403)
-        self.assertEqual(self.submit_parse(source).status_code, 403)
+        # The original a published rule cites is shared with the rule inside the tenant.
+        self.assertEqual(self.client.get(f"/files/{source['file_id']}/versions/{source['id']}/download").status_code, 200)
+        self.assertEqual(self.client.post("/rules", json=payload).status_code, 201)
+        self.assertEqual(self.submit_parse(source).status_code, 202)
         self.login("carol")
         self.assertEqual(self.client.get("/rules/" + published["id"]).status_code, 403)
         self.assertEqual(self.client.post("/rules", json=payload).status_code, 403)
@@ -366,11 +373,13 @@ class FileAnalysisAI:
         self.fail = fail
         self.requests = []
 
-    def structured_completion(self, **request):
-        self.requests.append(request)
+    def __call__(self, operation, **request):
+        from documents.ai import AIResult
+
+        self.requests.append({"operation": operation, **request})
         if self.fail:
             raise RuntimeError("private provider detail")
-        return json.dumps({"customer": "测试客户", "model": "M1", "part": ["零件A"]})
+        return AIResult({"customer": "测试客户", "model": "M1", "part": ["零件A"]})
 
 
 class FileAnalysisApiTests(RuleApiTests):
@@ -391,11 +400,15 @@ class FileAnalysisApiTests(RuleApiTests):
         self.assertEqual(result["result"]["matched_rule_id"], published.json()["id"])
         latest_path = f"/files/{source['file_id']}/versions/{source['id']}/analysis"
         self.assertEqual(self.client.get(latest_path).json()["analysis"]["id"], job.id)
-        for subject in ("bob", "carol"):
-            self.login(subject)
-            self.assertEqual(self.client.get("/file-analyses/" + job.id).status_code, 403)
-            self.assertEqual(self.client.get(latest_path).status_code, 403)
-            self.assertEqual(self.client.post("/file-analyses", json=body).status_code, 403)
+        # A colleague reads the analysis of the original a published rule shares; another tenant cannot.
+        self.login("bob")
+        self.assertEqual(self.client.get("/file-analyses/" + job.id).status_code, 200)
+        self.assertEqual(self.client.get(latest_path).status_code, 200)
+        self.assertEqual(self.client.post("/file-analyses", json=body).status_code, 400)
+        self.login("carol")
+        self.assertEqual(self.client.get("/file-analyses/" + job.id).status_code, 403)
+        self.assertEqual(self.client.get(latest_path).status_code, 403)
+        self.assertEqual(self.client.post("/file-analyses", json=body).status_code, 403)
 
 
 if __name__ == "__main__":

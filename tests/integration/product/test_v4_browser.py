@@ -28,6 +28,7 @@ from product.settings import Settings
 from worker import process_claimed
 
 pytest.importorskip("playwright.sync_api")
+from documents.ai import AIResult
 from playwright.sync_api import expect, sync_playwright  # noqa: E402
 
 
@@ -35,11 +36,11 @@ class Metadata:
     def __init__(self, customer):
         self.customer = customer
 
-    def structured_completion(self, *, operation, **kwargs):
+    def __call__(self, operation, **kwargs):
         if operation == "document_metadata_extraction":
-            return json.dumps({"customer": self.customer, "part_number": "P12345"})
+            return AIResult({"customer": self.customer, "part_number": "P12345"})
         if operation == "document_classification":
-            return "过程特殊特性清单"
+            return AIResult({"document_type": "过程特殊特性清单"})
         raise AssertionError("Unexpected external operation in a native XLSX journey")
 
 

@@ -26,10 +26,9 @@ def validate_invocation(environment):
             raise ValueError("isolated_test_attempt_required")
     if environment.get("PPAP_BUILD_SHA") != environment.get("PPAP_APPROVED_SHA") or not re.fullmatch(r"[a-f0-9]{40}", environment.get("PPAP_BUILD_SHA", "")):
         raise ValueError("reviewed_source_revision_mismatch")
-    for name, ceiling in (("REQUESTS", 32), ("INPUT_TOKENS", 200000), ("OUTPUT_TOKENS", 32000)):
-        value = int(environment.get("PPAP_PERSONAL_MODEL_MAX_" + name, "0"))
-        if not 1 <= value <= ceiling:
-            raise ValueError("test_budget_out_of_range")
+    # A runaway-loop limit for the one optimization, not a cost budget.
+    if not 1 <= int(environment.get("PPAP_DEEP_MODEL_MAX_REQUESTS", "0")) <= 32:
+        raise ValueError("test_budget_out_of_range")
 
 
 def prepare(environment, output):

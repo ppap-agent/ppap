@@ -70,7 +70,7 @@ class RuleParseDatabaseTests(unittest.TestCase):
             self.assertEqual(api.get_rule_parse(alice, job.id)["status"], "unknown")
             self.assertIsNone(worker.claim_job("second"))
             self.assertEqual(accept()["status"], "unknown")
-            with patch("audit.engine.checkers.client.AIClient", side_effect=AssertionError("unexpected external model call")):
+            with patch("documents.ai.run_json", side_effect=AssertionError("unexpected external model call")):
                 process_claimed(worker, job, "owner")
             result = api.get_rule_parse(alice, job.id)
             self.assertEqual(result["status"], "succeeded")

@@ -118,8 +118,7 @@ def _read_staged(inputs: Path, name: object, remaining: int) -> bytes:
 
 def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
     """Called only by the existing guest entrypoint, after UID/capability drop."""
-    from documents.model_access import ModelAccess, model_access_scope
-    from pydantic import SecretStr
+    from documents.model_access import model_access_scope
 
     from agent.execution.audit_runtime import run_audit
     from agent.execution.checker_runtime import CheckerRuntime
@@ -145,7 +144,6 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
 
     sources = {key: read(name) for key, name in manifest["source_paths"].items()}
     programs = {key: {name: read(path) for name, path in paths.items()} for key, paths in manifest["program_paths"].items()}
-    access = None
     grant = None
     if job.allow_model_calls:
         grant = ModelGrant.model_validate(read_json(credentials, ("model.json",), 16384))
@@ -153,17 +151,14 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
         from urllib.parse import urlsplit
 
         endpoint = urlsplit(grant.base_url)
-        if endpoint.scheme != "http" or endpoint.hostname not in {"127.0.0.1", "localhost", "::1"} or endpoint.username or endpoint.password or grant.model != snapshot.model_identity.get("model"):
-            raise ValueError("audit_model_grant_mismatch")
-        access = ModelAccess(provider=grant.provider, base_url=grant.base_url, model=grant.model, api_key=SecretStr(grant.token), revision=grant.revision)
-        if any(getattr(grant, key) != snapshot.model_identity.get(key, "") for key in ("provider", "model", "revision", "deployment")):
+        if endpoint.scheme != "http" or endpoint.hostname not in {"127.0.0.1", "localhost", "::1"} or endpoint.username or endpoint.password or not grant.matches(snapshot.model_identity):
             raise ValueError("audit_model_grant_mismatch")
     elif job.analysis_mode == "deep":
         raise ValueError("audit_generation_requires_model")
     artifacts: dict[str, CheckerArtifact] = {}
     effective = snapshot
     snapshot.validate_sources(sources, unavailable=unavailable)
-    with model_access_scope(access):
+    with grant.access_scope() if grant is not None else model_access_scope(None):
         if job.analysis_mode == "deep":
             from agent.execution.checker_guest import develop_checker
             from agent.execution.guest_model import PiRunner

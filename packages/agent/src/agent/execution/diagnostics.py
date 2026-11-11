@@ -20,7 +20,7 @@ def failure_facts(raw: object) -> dict:
     usage = raw.get("usage")
     if isinstance(usage, dict):
         facts["usage"] = _counts(usage, ("completed_requests", "input_tokens", "output_tokens"))
-        facts["usage"].update({key: usage[key] for key in ("uncertain", "in_flight", "budget_exhausted") if type(usage.get(key)) is bool})
+        facts["usage"].update({key: usage[key] for key in ("usage_known", "in_flight", "budget_exhausted") if type(usage.get(key)) is bool})
     stages = raw.get("stages")
     if isinstance(stages, list):
         facts["stages"] = []
@@ -52,11 +52,11 @@ def failure_facts(raw: object) -> dict:
     if isinstance(failure, dict):
         saved = _counts(failure, ("response_bytes", "provider_status", "elapsed_ms", "headers_ms", "first_chunk_ms", "last_chunk_ms", "last_chunk_gap_ms", "max_chunk_gap_ms", "chunk_count"))
         allowed = {
-            "phase": ("request", "provider_request", "provider_headers", "client_headers", "provider_read", "response_limits", "provider_event", "provider_usage"),
+            "phase": ("request", "provider_request", "provider_headers", "client_headers", "provider_read", "response_limits"),
             "error_type": (
                 "IncompleteResponse",
                 "ProviderStatus",
-                "PersonalModelUnavailable",
+                "ModelUnavailable",
                 "IncompleteRead",
                 "RemoteDisconnected",
                 "TimeoutError",

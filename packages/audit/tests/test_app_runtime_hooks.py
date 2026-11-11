@@ -10,9 +10,8 @@ from audit.contracts import (
     RuleInput,
 )
 from audit.engine.app_runtime import run_audit_engine
-from audit.engine.checkers.client import AIClient
 from documents.contracts import ConversionArtifact
-from documents.ocr.client import current_ocr_observation
+from documents.ocr.observation import current_ocr_observation
 from openpyxl import Workbook
 
 
@@ -133,7 +132,7 @@ def test_app_runtime_reads_psw_facts_directly_through_ocr_configuration(tmp_path
     monkeypatch.setattr("audit.engine.app_runtime.convert_pdf_to_excel_auto", convert)
     monkeypatch.setattr("audit.checkers.v2.pdf_agent.convert_pdf_to_excel_auto", convert)
     monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", read)
-    monkeypatch.setattr(AIClient, "structured_completion", lambda *a, **k: pytest.fail("PSW images must not enter text LLM"))
+    monkeypatch.setattr("documents.ai.run_json", lambda *a, **k: pytest.fail("PSW images must not enter text LLM"))
     monkeypatch.setattr("documents.ocr.paddle.reader.read_pdf_page_evidence", lambda *a, **k: pytest.fail("PSW must not wait for Paddle first"))
     rules = RuleInput(
         rule_id="confirmed-psw-rules",

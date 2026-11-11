@@ -7,6 +7,7 @@ from io import BytesIO
 
 import pytest
 from audit.rule_profile import RULE_PROFILE_V2, RULE_PROFILE_V3
+from documents.ai import AIResult
 from product.rules import RuleParseError
 from worker.intake import parse_rule_file
 
@@ -30,7 +31,7 @@ def test_structured_word_requirements_keep_exact_original_text_and_use_v3(docume
     doc.save(out)
 
     class NoModel:
-        def structured_completion(self, **kwargs):
+        def __call__(self, *args, **kwargs):
             raise AssertionError("A complete rule table must not be rewritten by a model")
 
     body = parse_rule_file("renamed-requirements.docx", out.getvalue(), document_type=document_type, ai=NoModel())
@@ -76,10 +77,10 @@ def test_structured_word_extraction_does_not_drop_scope_or_choose_ambiguous_head
     class ReadAllInstructions:
         called = False
 
-        def structured_completion(self, **kwargs):
+        def __call__(self, operation, **kwargs):
             self.called = True
-            assert ("只适用于客户指定的版本。" if extra == "paragraph" else "需保留的额外信息") in kwargs["user_prompt"]
-            return json.dumps({"type": "控制计划", "rules": [_item()]})
+            assert ("只适用于客户指定的版本。" if extra == "paragraph" else "需保留的额外信息") in kwargs["prompt"]
+            return AIResult({"type": "控制计划", "rules": [_item()]})
 
     model = ReadAllInstructions()
     body = parse_rule_file("renamed.docx", out.getvalue(), document_type="控制计划", ai=model)
@@ -126,10 +127,10 @@ def test_json_parse_rejects_a_different_requested_document_type() -> None:
 
 def test_unstructured_custom_rule_type_is_preserved_in_extraction_without_reclassification():
     class Extract:
-        def structured_completion(self, **kwargs):
-            assert kwargs["operation"] == "rule_extraction"
-            assert "供应商自定义追溯记录" in kwargs["user_prompt"]
-            return json.dumps({"rules": [_item()]})
+        def __call__(self, operation, **kwargs):
+            assert operation == "rule_extraction"
+            assert "供应商自定义追溯记录" in kwargs["prompt"]
+            return AIResult({"rules": [_item()]})
 
     result = parse_rule_file("requirements.md", "必须填写零件号".encode(), document_type="供应商自定义追溯记录", ai=Extract())
     assert result["type"] == "供应商自定义追溯记录"

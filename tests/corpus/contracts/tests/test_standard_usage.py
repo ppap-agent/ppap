@@ -4,12 +4,13 @@ import json
 from io import BytesIO
 
 import httpx
+import httpx2
 import pytest
 from audit.audits import RoundInput, RoundWork
-from audit.engine.checkers.client import AIClient
 from audit.suite_migration import migrated_builtin_suite
-from audit.usage import get_current_request_id, get_token_tracker
+from audit.usage import get_current_request_id, get_token_tracker, track_model_usage
 from corpus_contracts.core_round import bind_suite, run_suite_round
+from documents.ai import run_json
 from docx import Document
 from PIL import Image
 from product.settings import get_settings
@@ -87,18 +88,17 @@ def provider(request, monkeypatch):
     monkeypatch.setenv("DEVELOPMENT", "false")
 
     async def send_async(client, request, **kwargs):
-        return send(client, request, **kwargs)
+        reply = send(client, request, **kwargs)
+        # The model SDK sends through its own HTTP client package.
+        return httpx2.Response(reply.status_code, request=request, content=reply.content, headers=reply.headers)
 
-    monkeypatch.setattr(AIClient, "_instance", None)
     monkeypatch.setattr(httpx.Client, "send", send)
     monkeypatch.setattr(httpx.AsyncClient, "send", send_async)
+    monkeypatch.setattr(httpx2.AsyncClient, "send", send_async)
     get_settings.cache_clear()
     try:
         yield calls
     finally:
-        instance = AIClient._instance
-        if instance is not None:
-            instance.client.close()
         get_settings.cache_clear()
 
 
@@ -144,13 +144,14 @@ def test_text_model_usage_keeps_visible_receipts_and_unknown_usage_separate(prov
     previous = get_current_request_id()
     request_id = tracker.start_request_tracking()
     try:
-        for _ in range(2):
-            AIClient().structured_completion(system_prompt="Return JSON", user_prompt="Test receipt", operation="text_receipt_test")
+        with track_model_usage():
+            for _ in range(2):
+                run_json("text_receipt_test", instructions="Return JSON", prompt="Test receipt")
         usage = tracker.end_request_tracking(request_id).to_dict()
         assert len(provider) == usage["llm_calls_count"] == 2
         assert usage["usage_complete"] is complete
         if complete:
-            assert (usage["total_input_tokens"], usage["total_output_tokens"], usage["total_thinking_tokens"], usage["total_tokens"]) == (18, 10, 4, 28)
+            assert (usage["total_input_tokens"], usage["total_output_tokens"], usage["total_tokens"]) == (18, 10, 28)
             assert usage["unreported_calls_count"] == 0
             assert len(usage["llm_calls"]) == 2
             assert all(call["operation"] == "text_receipt_test" for call in usage["llm_calls"])

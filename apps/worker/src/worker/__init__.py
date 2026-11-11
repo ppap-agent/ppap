@@ -106,13 +106,13 @@ def process_file_job(store, claimed, ident, ai=None) -> dict:
 
 def process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> dict:
     from documents.model_access import ModelUnavailable
-    from product.model_access import personal_model_scope
+    from product.model_access import tenant_model_scope
 
-    # Absent identity is an unavailable scope, never permission to use LLM_*.
-    user_id = store.model_user_for_job(claimed) if hasattr(store, "model_user_for_job") else ""
+    # A job without a frozen identity resolves the tenant's current selection; one with an
+    # identity runs only while the selection is unchanged.
     payload = claimed.payload if isinstance(claimed.payload, dict) else {}
     try:
-        with personal_model_scope(store, tenant_id=claimed.tenant_id or "", initiating_user_id=user_id, expected_identity=payload.get("model_identity", {})):
+        with tenant_model_scope(store, tenant_id=claimed.tenant_id or "", expected_identity=payload.get("model_identity")):
             return _process_claimed(store, claimed, ident, rule_ai=rule_ai)
     except ModelUnavailable:
         if claimed.kind != "rule_formalization":

@@ -7,9 +7,9 @@ import threading
 from contextlib import contextmanager
 from pathlib import Path
 
-from documents.model_access import UNCONFIGURED_MODEL_IDENTITY, ModelUnavailable
+from documents.model_access import ModelUnavailable
 
-from agent.client import DeepError, PersonalModelNotStarted
+from agent.client import DeepError, ModelNotStarted
 from agent.core_program import CoreRuntime
 from agent.execution.isolation import ContainerRuntime, RuntimeConfig, local_gateway
 
@@ -35,18 +35,16 @@ def runtime_from_env(settings, objects, *, model_access_for_request=None, model_
     with local_gateway(
         state / "gateway.sock",
         upstream="https://unconfigured.invalid",
-        model=UNCONFIGURED_MODEL_IDENTITY["model"],
+        model="unconfigured",
         provider_key=unavailable,
         require_binding=True,
-        requests=settings.personal_model_max_requests,
-        input_tokens=settings.personal_model_max_input_tokens,
-        output_tokens=settings.personal_model_max_output_tokens,
+        requests=settings.deep_model_max_requests,
     ) as gateway:
         config = RuntimeConfig(state=state, gateway_socket=gateway.socket_path, gateway_host="127.0.0.1", **policy.model_dump())
         bootstrap = ContainerRuntime(config)
         bootstrap.recover()
 
-        class PersonalRuntime:
+        class TenantModelRuntime:
             def ready(self):
                 return bootstrap.ready()
 
@@ -67,13 +65,12 @@ def runtime_from_env(settings, objects, *, model_access_for_request=None, model_
                         raise DeepError("deep_runtime_unavailable")
                     expected = dict(spec.model_identity) if spec is not None else None
 
-                    def resolve_access():
+                    def resolve_access(purpose):
+                        # The product callback returns the model for this use only while
+                        # the tenant's selection still equals the frozen identity.
                         if spec is None or model_access_for_request is None:
                             raise ModelUnavailable()
-                        access = model_access_for_request(spec)
-                        if access.identity() != expected:
-                            raise ModelUnavailable()
-                        return access
+                        return model_access_for_request(spec, purpose)
 
                     runtime = None
                     try:
@@ -87,7 +84,7 @@ def runtime_from_env(settings, objects, *, model_access_for_request=None, model_
                             except ModelUnavailable:
                                 # Dispatch may already be persisted, but no
                                 # guest or provider request has started here.
-                                raise PersonalModelNotStarted() from None
+                                raise ModelNotStarted() from None
                         selected = settings.deep_execution_policy(expected)
                         runtime = ContainerRuntime(
                             RuntimeConfig(state=state, gateway_socket=gateway.socket_path, gateway_host="127.0.0.1", **selected.model_dump()),
@@ -96,7 +93,7 @@ def runtime_from_env(settings, objects, *, model_access_for_request=None, model_
                         semantic = CoreRuntime(runtime, snapshot_for_request, suite_for_revision, objects=objects, save_round_artifacts=save_round_artifacts)
                         return operation(semantic, runtime)
                     except ModelUnavailable:
-                        raise DeepError("personal_model_unavailable") from None
+                        raise DeepError("model_unavailable") from None
                     finally:
                         # Leases retain their own resolver, identity and upstream
                         # connection even if a late HTTP handler is still draining.
@@ -104,4 +101,4 @@ def runtime_from_env(settings, objects, *, model_access_for_request=None, model_
                         if runtime is not None and runtime.degraded:
                             bootstrap.degraded = True
 
-        yield PersonalRuntime()
+        yield TenantModelRuntime()

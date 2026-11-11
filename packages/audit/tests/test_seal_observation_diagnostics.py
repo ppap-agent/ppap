@@ -5,7 +5,8 @@ from unittest.mock import Mock
 
 import pytest
 from audit.engine.checkers.ocr_visual_facts import OcrImage, observe_ocr_images
-from documents.ocr.client import ResponsesEvidenceError, current_ocr_observation
+from documents.ai import AIError
+from documents.ocr.observation import current_ocr_observation
 
 
 @pytest.fixture(autouse=True)
@@ -59,13 +60,13 @@ def test_generic_seal_failure_records_the_stage_without_provider_text_or_retry(m
     def read(**kwargs):
         calls.append(kwargs)
         if len(calls) == failed_read:
-            raise ResponsesEvidenceError("responses_incomplete", "private-provider-body")
+            raise AIError("invalid_output")
         return {"seal": True}
 
     monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", read)
     cache = {}
     for _ in range(2):
-        with pytest.raises(ResponsesEvidenceError):
+        with pytest.raises(AIError):
             observe_ocr_images(frames(), {"seal": "actual seal"}, Mock(), request_cache=cache)
     assert len(calls) == failed_read
     detail = diagnostic(caplog)

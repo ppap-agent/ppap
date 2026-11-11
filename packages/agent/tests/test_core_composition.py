@@ -72,9 +72,7 @@ class ControlledGuest:
         self.calls += 1
         grant = self.root / f"grant-{self.calls}"
         grant.mkdir()
-        (grant / "model.json").write_text(
-            json.dumps({"base_url": "http://127.0.0.1:1/v1", "token": "local-short-lived-capability-1234567890", "model": "test-model", "wall_seconds": 100, "max_turns": 20})
-        )
+        (grant / "model.json").write_text(json.dumps({"base_url": "http://127.0.0.1:1/v1", "token": "local-short-lived-capability-1234567890", "model": "test-model", "wall_seconds": 100}))
         run_audit_manifest(inputs, work, grant)
 
 

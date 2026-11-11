@@ -72,8 +72,8 @@ def live_configuration(environment):
 
     validate_invocation(environment)
     base = normalize_base_url(environment.get("CI_LLM_BASE_URL", ""))
+    # The provider key is given only to the stack's services, never to this runner.
     model = valid_model(environment.get("CI_LLM_MODEL", ""))
-    require(bool(environment.get("CI_LLM_API_KEY")), "missing_provider_credential")
     return base, model
 
 
@@ -340,7 +340,7 @@ def describe_scenario(environment):
         "hidden_documents": 2,
         "optimization_operations": 1,
         "automatic_retry": False,
-        "limits": {name: int(environment.get("PPAP_PERSONAL_MODEL_MAX_" + name.upper(), default)) for name, default in (("requests", "32"), ("input_tokens", "200000"), ("output_tokens", "32000"))},
+        "limits": {"requests": int(environment.get("PPAP_DEEP_MODEL_MAX_REQUESTS", "32"))},
         "oracle_basis": "existing_human_original_plus_rule_derived_variants" if name == "u08" else "independent_synthetic_rule",
         "original_sha256": U08_ORIGINAL_SHA if name == "u08" else None,
     }
@@ -548,8 +548,8 @@ def validate_outcome(receipt, samples, *, scenario="synthetic"):
     require(receipt.get("state") == "completed", "optimization_not_completed")
     require(bool(receipt.get("candidate_revision_id")), "candidate_missing")
     usage = receipt.get("usage", {})
-    require(usage.get("source") == "provider" and usage.get("uncertain") is False, "provider_usage_unconfirmed")
-    require(all(type(usage.get(name)) is int and usage[name] > 0 for name in ("input_tokens", "output_tokens", "model_requests")), "provider_usage_missing")
+    # Provider token counts are observations; an unknown count never decides acceptance.
+    require(usage.get("source") in {"provider", "unknown"}, "provider_usage_source_unexpected")
     report = (receipt.get("report") or {}).get("validation") or {}
     require(report.get("verified") is True and report.get("total_samples") == report.get("passed_samples") == len(samples), "independent_validation_failed")
     cases = report.get("cases", [])
@@ -717,7 +717,7 @@ class BrowserJourney:
         require(changed.value.status == 200, "browser_feedback_failed")
         return changed.value.json()
 
-    def configure_and_start(self, original, base_url, model, report, report_path):
+    def start(self, original, report, report_path):
         from playwright.sync_api import expect
 
         page = self.page
@@ -740,21 +740,12 @@ class BrowserJourney:
         # requests one combined repair, while retaining the independent holdout.
         batch.get_by_role("button", name="选择全部已确认样本", exact=True).click()
         expect(batch.get_by_text(f"本次选择 {len(selected_ids)} 条；每条正确答案均由人单独确认。分组不是根因结论，可以取消勾选拆开修复。", exact=True)).to_be_visible()
-        checkpoint(report_path, report, "configuring_model", browser_feedback_selection=True)
+        checkpoint(report_path, report, "consenting", browser_feedback_selection=True)
         page.get_by_role("button", name="按新版规则起草修改" if report.get("rule_update_revision_id") else "让 AI 修复并验证", exact=True).click()
         if report.get("rule_update_revision_id"):
             page.get_by_label("我已核对当前所选规则及全部样本，确认以上正确答案仍适用于当前规则", exact=True).check()
-        page.get_by_label("Base URL", exact=True).fill(base_url)
-        page.get_by_label("模型名称", exact=True).fill(model)
-        page.get_by_label("API Key", exact=True).fill(os.environ["CI_LLM_API_KEY"])
-        with page.expect_response(lambda response: response.request.method == "PUT" and response.url.endswith("/me/model-config")) as saved:
-            page.get_by_role("button", name="保存模型配置", exact=True).click()
-        require(saved.value.status == 200, "browser_configuration_failed")
-        configured = saved.value.json()
-        require(configured.get("configured") is True and configured.get("base_url") == base_url and configured.get("model") == model and "api_key" not in configured, "personal_configuration_mismatch")
-        expect(page.get_by_label("API Key", exact=True)).to_have_value("")
-        checkpoint(report_path, report, "consenting", browser_personal_configuration=True)
-        page.get_by_label(f"同意将本次资料发送至 {base_url}，使用 {model} 修复并验证这 {len(selected_ids)} 条反馈", exact=True).check()
+        # The platform model serves the operation; the customer only consents.
+        page.get_by_label(f"同意由 AI 修复并验证这 {len(selected_ids)} 条反馈", exact=True).check()
 
         def capture(route):
             # Persist the real UI-generated identity before forwarding its sole
@@ -763,7 +754,7 @@ class BrowserJourney:
                 route.continue_()
                 return
             body = route.request.post_data_json
-            require(not report.get("operation_id") and body.get("expected_model_revision") == configured["revision"], "optimization_identity_not_frozen")
+            require(not report.get("operation_id") and body.get("consume_model") is True, "optimization_model_consent_missing")
             require(len(body.get("feedback_ids", [])) == len(selected_ids) and set(body["feedback_ids"]) == selected_ids, "optimization_feedback_selection_mismatch")
             if report.get("rule_update_revision_id"):
                 require(body.get("confirmed_rule_revision_id") == report["rule_update_revision_id"], "new_rule_confirmation_missing")
@@ -777,7 +768,7 @@ class BrowserJourney:
         require(started.value.status == 200, "browser_optimization_admission_failed")
         receipt = started.value.json()
         page.reload()
-        return configured, receipt
+        return receipt
 
     def publish(self):
         from playwright.sync_api import expect
@@ -825,9 +816,7 @@ def local_settings(environment):
     return Settings(
         profile="remote-dev",
         git_sha=environment.get("PPAP_CHECKER_LIVE_RUNTIME_SHA", environment["PPAP_BUILD_SHA"]),
-        personal_model_max_requests=int(environment["PPAP_PERSONAL_MODEL_MAX_REQUESTS"]),
-        personal_model_max_input_tokens=int(environment["PPAP_PERSONAL_MODEL_MAX_INPUT_TOKENS"]),
-        personal_model_max_output_tokens=int(environment["PPAP_PERSONAL_MODEL_MAX_OUTPUT_TOKENS"]),
+        deep_model_max_requests=int(environment["PPAP_DEEP_MODEL_MAX_REQUESTS"]),
         pg_host="127.0.0.1",
         pg_port=ports["postgres"],
         pg_database=database,
@@ -843,7 +832,7 @@ def local_settings(environment):
         feishu_notifications_enabled=False,
         deep_executor_revision="checker-live",
         feishu_app_id="checker-live",
-        personal_model_allowed_base_urls=environment["CI_LLM_BASE_URL"],
+        tenant_model_allowed_base_urls=environment["CI_LLM_BASE_URL"],
         model_credential_encryption_key=environment["LIVE_ENCRYPTION_KEY"],
     )
 
@@ -872,7 +861,7 @@ def run(report_path):
         "automatic_retry": False,
         "journey": {},
     }
-    report["limits"] = {name: int(os.environ["PPAP_PERSONAL_MODEL_MAX_" + name.upper()]) for name in ("requests", "input_tokens", "output_tokens")}
+    report["limits"] = {"requests": int(os.environ["PPAP_DEEP_MODEL_MAX_REQUESTS"])}
     report_path.parent.mkdir(parents=True, exist_ok=True)
     # One runner invocation per attempt. Re-entry may have already incurred
     # charges, even if the prior process never obtained a terminal receipt.
@@ -890,7 +879,7 @@ def run(report_path):
         report["guest_startup"] = verify_guest_startup(probe)
         write_report(report_path, report)
     # Only initial identity, rule and immutable faulty Suite use trusted stores.
-    # All files, real baseline rounds, personal settings, feedback, optimization
+    # All files, real baseline rounds, model consent, feedback, optimization
     # admission and result readback use the authenticated production HTTP routes.
     from product import build_product_store
     from product.storage import S3Objects
@@ -991,9 +980,8 @@ def run(report_path):
         )
         private.chmod(0o600)
         transfer_private_oracle(private, os.environ)
-        configured, receipt = browser.configure_and_start(rounds[0], base_url, model, report, report_path)
-        require(client.request("GET", "/me/model-config") == configured, "personal_configuration_readback_mismatch")
-        checkpoint(report_path, report, "waiting", browser_personal_configuration=True)
+        receipt = browser.start(rounds[0], report, report_path)
+        checkpoint(report_path, report, "waiting", browser_model_consent=True)
         path = f"/checker-optimizations/{report['operation_id']}"
 
         def record(current):

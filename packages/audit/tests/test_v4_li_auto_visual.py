@@ -9,11 +9,10 @@ import pytest
 from audit.checkers.v4.li_auto import PDF_AGENTS
 from audit.checkers.v4.visual_facts import read_original_pdf_visual_facts
 from audit.contracts import AuditInput, RuleInput
-from audit.engine.checkers.client import AIClient
 from audit.engine.runtime import bind_runtime
 from audit.presets import preset_rule_body
 from documents.conversion import convert_pdf_to_excel_auto
-from documents.ocr.client import current_ocr_observation
+from documents.ocr.observation import current_ocr_observation
 
 
 def original_pdf(path, count=1):
@@ -47,7 +46,7 @@ def forbid_text_model(monkeypatch):
         attempts.append(True)
         raise AssertionError("Fixed visual facts must not use the text model")
 
-    monkeypatch.setattr(AIClient, "structured_completion", reject)
+    monkeypatch.setattr("documents.ai.run_json", reject)
     # Ambient credentials cannot turn an offline test into an OCR request.
     monkeypatch.setenv("OCR_MODEL_NAME", "")
     monkeypatch.setenv("OCR_OPENAI_API_KEY", "")

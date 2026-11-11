@@ -32,7 +32,7 @@ from agent.checker_spec import CheckerJobSpec
 from agent.core_program import AuditJobSpec
 from agent.execution.budget import MAX_INPUT_FILES, MAX_INPUT_TOTAL
 from agent.execution.gateway import grant_request
-from agent.execution.guest_model import ModelBudgetError, ModelGrant
+from agent.execution.guest_model import ModelGrant
 from agent.execution.secure_files import read_json, read_regular
 from agent.precheck_program import PrecheckJobSpec
 
@@ -203,13 +203,9 @@ class ContainerRuntime:
             raise
         return run
 
-    def _write_grant(self, execution_id: UUID, run: Path, prior_usage: dict[str, Any] | None = None) -> None:
-        kwargs = {"prior_usage": prior_usage} if prior_usage is not None else {}
-        try:
-            with self.model_grant_binding(execution_id) if self.model_grant_binding is not None else nullcontext():
-                grant = ModelGrant.model_validate(grant_request(str(self.config.gateway_socket), "issue", execution_id, **kwargs))
-        except ModelBudgetError:
-            raise ControllerFault("RESOURCE_LIMIT") from None
+    def _write_grant(self, execution_id: UUID, run: Path) -> None:
+        with self.model_grant_binding(execution_id) if self.model_grant_binding is not None else nullcontext():
+            grant = ModelGrant.model_validate(grant_request(str(self.config.gateway_socket), "issue", execution_id))
         url = urlsplit(grant.base_url)
         if (
             url.scheme != "http"
@@ -372,6 +368,7 @@ class ContainerRuntime:
                         raise ControllerFault("RESOURCE_LIMIT")
                     raise
             else:
+                # The request limit stopped a runaway loop: no artifact from it is published.
                 if usage.get("budget_exhausted") is True:
                     raise ControllerFault("RESOURCE_LIMIT")
             decoded = json.loads(raw)
@@ -383,16 +380,16 @@ class ContainerRuntime:
                 fault = GuestFault.model_validate(decoded)
                 raise ControllerFault(fault.code, fault.diagnostic)
             if model_operation:
-                if (
-                    usage.get("uncertain") is not False
-                    or usage.get("in_flight") is not False
-                    or any(type(usage.get(key)) is not int or usage[key] < 0 for key in ("completed_requests", "input_tokens", "output_tokens"))
-                    or (usage["completed_requests"] == 0 and (usage["input_tokens"] or usage["output_tokens"]))
-                ):
-                    raise ValueError("Unconfirmed provider usage")
-                decoded["input_tokens"] = usage["input_tokens"]
-                decoded["output_tokens"] = usage["output_tokens"]
-                decoded["model_requests"] = usage["completed_requests"]
+                if usage.get("budget_exhausted") is True:
+                    raise ControllerFault("RESOURCE_LIMIT")
+                # Provider token counts are observations. Unknown counts leave the result
+                # valid; they are reported only when every request reported them.
+                for key in ("input_tokens", "output_tokens", "model_requests"):
+                    decoded.pop(key, None)
+                if usage.get("usage_known") is True and all(type(usage.get(key)) is int and usage[key] >= 0 for key in ("completed_requests", "input_tokens", "output_tokens")):
+                    decoded["input_tokens"] = usage["input_tokens"]
+                    decoded["output_tokens"] = usage["output_tokens"]
+                    decoded["model_requests"] = usage["completed_requests"]
                 write_json(self.journal / (execution_id.hex + ".json"), decoded)
             write_json(work / "result" / "bundle.json", decoded)
         except ControllerFault:
@@ -407,7 +404,6 @@ class ContainerRuntime:
         job_id: str,
         source_attempt: int,
         current_attempt: int,
-        prior_usage: dict[str, Any] | None,
     ) -> None:
         """The latest durable attempt, not a chosen old source, owns replay."""
         job_key = hashlib.sha256(job_id.encode()).hexdigest()
@@ -416,14 +412,12 @@ class ContainerRuntime:
             return  # Repeated completed recovery only reads its saved result.
         try:
             previous = read_json(self.attempts, (spec.execution_id.hex + ".json",), 8192)
-            expected_usage = {key: (prior_usage or {}).get(key, 0) for key in ("model_requests", "input_tokens", "output_tokens")}
             allowed = (
                 source_attempt < current_attempt
                 and previous.get("uncertain") is False
                 and type(previous.get("attempt")) is int
                 and previous["attempt"] == source_attempt
                 and previous.get("job_key") == job_key
-                and previous.get("usage") == expected_usage
             )
         except (OSError, ValueError, AttributeError):
             allowed = False
@@ -438,7 +432,6 @@ class ContainerRuntime:
         deadline: float,
         cancelled: threading.Event,
         on_progress: Callable[[Progress], None] | None = None,
-        prior_usage: dict[str, Any] | None = None,
     ) -> None:
         runtime_id = spec.execution_id
         runtime_attempt, source_attempt, job_key = 1, None, ""
@@ -491,7 +484,7 @@ class ContainerRuntime:
                 return
             audit_marker = self.attempts / (spec.execution_id.hex + ".json") if isinstance(spec, SubmissionSpec) else None
             if isinstance(spec, SubmissionSpec) and source_attempt is not None:
-                self.validate_recovery(spec, job_id=manifest.runtime_job_id or "", source_attempt=source_attempt, current_attempt=runtime_attempt, prior_usage=prior_usage)
+                self.validate_recovery(spec, job_id=manifest.runtime_job_id or "", source_attempt=source_attempt, current_attempt=runtime_attempt)
             attempt = self.attempts / (runtime_id.hex + ".json")
             if model_operation and attempt.exists():
                 raise ControllerFault("MODEL_PROTOCOL_ERROR")
@@ -501,8 +494,8 @@ class ContainerRuntime:
                 if model_operation:
                     write_json(attempt, {})
                     if audit_marker is not None:
-                        write_json(audit_marker, {"attempt": runtime_attempt, "job_key": job_key, "uncertain": True, "usage": prior_usage})
-                    self._write_grant(runtime_id, run, prior_usage)
+                        write_json(audit_marker, {"attempt": runtime_attempt, "job_key": job_key, "uncertain": True})
+                    self._write_grant(runtime_id, run)
                 self._execute(run, deadline, cancelled, on_progress, runtime_id)
                 if cancelled.is_set() or time.monotonic() >= deadline:
                     raise ControllerFault("CANCELLED" if cancelled.is_set() else "MODEL_TIMEOUT")
@@ -529,22 +522,12 @@ class ContainerRuntime:
                         except ControllerFault:
                             pass
                     if audit_marker is not None:
-                        # This existing fence is pessimistic until the gateway
-                        # confirms consumption. A later attempt cannot skip an
-                        # unknown or newer source, or reset accumulated usage.
+                        # The fence stays unknown until the grant is closed with no
+                        # request in flight. A later attempt cannot skip an
+                        # unfinished or newer source.
                         try:
-                            facts = final_usage or {}
-                            known = (
-                                facts.get("uncertain") is False
-                                and facts.get("in_flight") is False
-                                and all(type(facts.get(key)) is int and facts[key] >= 0 for key in ("completed_requests", "input_tokens", "output_tokens"))
-                            )
-                            known = known and (facts["completed_requests"] > 0 or not (facts["input_tokens"] or facts["output_tokens"]))
-                            totals = {key: (prior_usage or {}).get(key, 0) for key in ("model_requests", "input_tokens", "output_tokens")}
-                            if known:
-                                for source, target in (("completed_requests", "model_requests"), ("input_tokens", "input_tokens"), ("output_tokens", "output_tokens")):
-                                    totals[target] += facts[source]
-                            write_json(audit_marker, {"attempt": runtime_attempt, "job_key": job_key, "uncertain": not known, "usage": totals})
+                            settled = final_usage is not None and final_usage.get("in_flight") is False
+                            write_json(audit_marker, {"attempt": runtime_attempt, "job_key": job_key, "uncertain": not settled})
                         except (OSError, ValueError, TypeError):
                             pass  # The pre-send unknown marker remains authoritative.
                 shutil.rmtree(run)
@@ -604,7 +587,8 @@ class ContainerRuntime:
                 stages.append(json.loads(raw.replace(token, "[redacted]")) if token else facts)
         payload: dict[str, Any] = {"code": code, "stages": stages}
         if usage is not None:
-            payload["usage"] = {key: usage[key] for key in ("completed_requests", "input_tokens", "output_tokens", "uncertain", "in_flight", "budget_exhausted") if type(usage.get(key)) in (int, bool)}
+            names = ("completed_requests", "input_tokens", "output_tokens", "usage_known", "in_flight", "budget_exhausted")
+            payload["usage"] = {key: usage[key] for key in names if type(usage.get(key)) in (int, bool)}
             failure = usage.get("transport_failure")
             if isinstance(failure, dict):
                 payload["transport_failure"] = {key: failure[key] for key in ("phase", "error_type", "response_bytes", "last_event", "provider_status") if type(failure.get(key)) in (int, str)}

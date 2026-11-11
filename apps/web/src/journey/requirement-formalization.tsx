@@ -207,7 +207,7 @@ export function ClauseFormalization({ruleVersionId, clauseId, suiteRevisionId, s
     {operation?.state === 'failed' && operation.failure !== 'source_changed' && <p role="status">{formalizationFailure(operation.failure)}</p>}
     {handoff?.state === 'saved' && <p role="status">已生成新的检查草稿，尚未发布，也不会开始审核。{handoff.meaningChanged ? '已确认的含义变了，检查需要重新验证。' : ''}</p>}
     <div className="flex flex-wrap items-center gap-2">
-      {canRequest && <><Button type="button" variant="outline" size="sm" disabled={locked} title="这会使用你的个人模型" onClick={() => void generate({})}>让系统解释这条规则</Button>{modelNote && <span className="text-xs text-muted-foreground">这会使用你的个人模型。</span>}</>}
+      {canRequest && <><Button type="button" variant="outline" size="sm" disabled={locked} title="这会调用 AI 模型" onClick={() => void generate({})}>让系统解释这条规则</Button>{modelNote && <span className="text-xs text-muted-foreground">这会调用 AI 模型。</span>}</>}
       {candidate && !confirmed && <Button type="button" size="sm" aria-describedby={describedBy} disabled={blocked || locked} onClick={() => void confirm()}>确认这一理解</Button>}
       {confirmed && suiteRevisionId && <Button type="button" variant="outline" size="sm" disabled={handoff?.state === 'sending' || handoff?.state === 'saved'} onClick={() => void materialize(false)}>用于检查优化</Button>}
       {handoff?.state === 'unknown' && <Button type="button" variant="outline" size="sm" onClick={() => void materialize(true)}>刷新检查草稿状态</Button>}
@@ -260,5 +260,5 @@ export function ExplainAll({ruleVersionId, onExplain}: {ruleVersionId: string; o
   }, [ruleVersionId])
   if (started) return <p role="status" className="text-xs text-muted-foreground">已请系统解释 {waiting} 条，进度显示在各条款下。</p>
   if (!waiting || waiting < 2) return null
-  return <div className="flex flex-wrap items-center gap-2"><Button type="button" size="sm" onClick={() => {setStarted(true); onExplain()}}>让系统解释全部 {waiting} 条</Button><span className="text-xs text-muted-foreground">这会使用你的个人模型。</span></div>
+  return <div className="flex flex-wrap items-center gap-2"><Button type="button" size="sm" onClick={() => {setStarted(true); onExplain()}}>让系统解释全部 {waiting} 条</Button><span className="text-xs text-muted-foreground">这会调用 AI 模型。</span></div>
 }

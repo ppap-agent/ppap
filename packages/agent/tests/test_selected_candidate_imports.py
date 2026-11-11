@@ -78,9 +78,7 @@ def test_core_deep_rejects_a_new_legacy_delegate_before_trial(tmp_path, monkeypa
     inputs, work, credentials = tmp_path / "inputs", tmp_path / "work", tmp_path / "credentials"
     work.mkdir()
     credentials.mkdir()
-    (credentials / "model.json").write_text(
-        json.dumps({"base_url": "http://127.0.0.1:1/v1", "token": "local-test-capability-never-sent-1234567890", "model": "test-model", "wall_seconds": 100, "max_turns": 2})
-    )
+    (credentials / "model.json").write_text(json.dumps({"base_url": "http://127.0.0.1:1/v1", "token": "local-test-capability-never-sent-1234567890", "model": "test-model", "wall_seconds": 100}))
     write_audit_manifest(inputs, snapshot, {"original": raw}, {digest: program}, analysis_mode="deep")
 
     class Runner:

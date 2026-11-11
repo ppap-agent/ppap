@@ -52,18 +52,12 @@ self-hosted InsForge Custom Compute 需要把宿主机 `docker.sock` 挂进 InsF
 
 LLM、飞书、Partner AI 和其它可访问远程环境可以直接用于相关开发/验证；它们的临时不可用不阻塞无关 Core 路径。
 
-## 个人模型凭据
+## 模型凭据
 
-个人模型 Key 使用 `PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY`（Fernet）加密存入 `personal_model_credentials`。部署密钥只注入 API、Worker 和可信 Controller，不进入 guest、Artifact、日志或接口回执。密文包含租户、用户、规范化 base URL、模型及配置修订绑定，复制到另一用户记录或只修改地址元数据不能借用或重定向 Key。删除成员记录或物理删除用户行会级联清理个人凭据；企业 Checker 不引用凭据表。
+平台模型 Key 只在部署 Secret（`LLM_API_KEY`、`OCR_OPENAI_API_KEY`、`PPAP_DEEP_LLM_API_KEY`）中。企业 Key（企业 BYOK）由运营通过 `python -m product.tenant_models` 从标准输入写入，用 `PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY`（Fernet）加密存入 `tenant_model_credentials`；客户没有读写它的 API。部署密钥只注入 API、Worker 和可信 Controller，不进入 guest、Artifact、日志或接口回执。密文绑定租户、规范化 base URL、三个用途的模型和配置修订，复制到另一租户或只改地址元数据都不能借用或重定向 Key。删除租户会级联清理其 Key。
 
-移除成员或物理删除用户时，同一事务撤销尚未结束的优化任务及其执行租约；已进入模型边界的任务保留用量未知，不自动重试。反馈、已完成优化回执与企业版本保留，物理删除操作员后署名外键置空；冻结历史仍保留当时的确认记录，不再授权执行。删除不能撤回已经发出的供应商请求，后续模型请求重新检查当前成员和凭据。
+每次模型调用按当前选择重新解析：有企业 Key 用企业 Key，否则用平台模型。企业 Key 损坏或解密失败时报告不可用，不回退平台模型或其他租户的 Key。受理时冻结非秘密身份；当前选择与之不一致即拒绝调用（`model_configuration_changed`），晚到请求不能借用新配置。已发送的请求无法撤回，未知用量保持未知。
 
-历史业务外键可能阻止物理删除用户，当前没有账户匿名化产品入口；以后保留用户行的匿名化必须在同一事务显式清理凭据和授权，不能把外键级联当作已完成匿名化的证明。
+企业 Key 的地址不是通用 URL 导入。部署管理员在 `PPAP_TENANT_MODEL_ALLOWED_BASE_URLS` 精确批准 HTTPS 前缀，并负责对应 DNS、TLS 和网络路由。拒绝 URL 内身份、查询串、片段、路径遍历和本机/链路本地/元数据地址；SDK 不继承代理环境，网关和 SDK 均不跟随重定向。它不宣称是管理员受控 DNS 被攻破后的通用网络隔离机制。
 
-调用身份取本次受理的 `initiating_user_id`，不取 Artifact 作者。文字、视觉与模型 OCR 使用同一 scope，每次模型调用重新读取当前凭据；缺少、撤销、成员资格失效或解密失败均不回退部署 `LLM_*`、`OCR_*` 或其他人的 Key。可信 Controller 的既有 Responses gateway 只向 guest 发短期执行 grant。
-
-个人模型 SDK 不自动重试。同一执行 scope 仅记录请求摘要，阻止后续条款重发仍在进行或用量未知的相同请求；完整 Token 回执才解除这项阻止。该内存保护不跨进程崩溃或新执行，不能替代持久任务的未知状态处理，也不证明服务商退款或停止计费。凭据缺失在发送前被拒绝时，网关记录已知未发送，不伪造已完成请求或未知费用。
-
-个人模型地址不是通用 URL 导入。部署管理员在 `PPAP_PERSONAL_MODEL_ALLOWED_BASE_URLS` 精确批准 HTTPS 前缀，并负责对应 DNS、TLS 和网络路由；既有默认目的地保持兼容。用户只能在这些目的地之间用完整新 Key 保存配置。私网提供方必须经此部署信任边界批准，不能自行输入任意内网服务。拒绝 URL 内身份、查询串、片段、路径遍历和本机/链路本地/元数据地址；SDK 不继承代理环境，网关和 SDK 均不跟随重定向。它不宣称是管理员受控 DNS 被攻破后的通用网络隔离机制。
-
-受理时冻结非秘密 provider、model、配置修订和端点摘要。网关 grant 绑定该身份及原始发起人，调用前重新核对当前配置；替换 Key/地址/模型会使旧配置修订失效，晚到请求不能借用下一操作的目的地或凭据。已发送的请求无法撤回，未知用量保持未知。
+直接模型调用不做传输重试，只允许一次输出校正；错误只保留代码，不记录 provider 响应正文。Deep guest 只获得本地网关的短期 Grant：网关为每个请求选择冻结的模型和 Key，guest 不接触真实 Key 或外部地址；每个 Attempt 的请求次数熔断只停止失控循环，触发后不发布产物。

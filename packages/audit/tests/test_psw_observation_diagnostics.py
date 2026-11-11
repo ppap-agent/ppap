@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 from audit.engine.checkers.ocr_visual_facts import OcrImage, observe_ocr_images
-from documents.ocr.client import current_ocr_observation
+from documents.ocr.observation import current_ocr_observation
 
 
 @pytest.mark.parametrize("confirmation,expected", [("专用章", "专用章"), (None, None), ("公司", None)])
@@ -40,7 +40,7 @@ def test_seal_reading_diagnostics_preserve_two_reads_and_the_original_decision(m
 
 
 def test_second_observation_failure_keeps_the_first_summary_and_does_not_retry(monkeypatch, caplog):
-    from documents.ocr.client import ResponsesEvidenceError
+    from documents.ai import AIError
 
     monkeypatch.setenv("OCR_MODEL_NAME", "controlled")
     monkeypatch.setenv("OCR_OPENAI_API_KEY", "controlled")
@@ -51,13 +51,13 @@ def test_second_observation_failure_keeps_the_first_summary_and_does_not_retry(m
     def read(**kwargs):
         calls.append(kwargs)
         if current_ocr_observation() == 2:
-            raise ResponsesEvidenceError("responses_incomplete", "private-provider-body")
+            raise AIError("invalid_output")
         return {"psw_stamp_ending_text": "公司"}
 
     monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", read)
     cache = {}
     for _ in range(2):
-        with pytest.raises(ResponsesEvidenceError):
+        with pytest.raises(AIError):
             observe_ocr_images(frames, {"psw_stamp_ending_text": "末尾"}, Mock(), request_cache=cache)
     assert len(calls) == 2
     (record,) = [r for r in caplog.records if r.getMessage().startswith("PSW OCR observation: ")]

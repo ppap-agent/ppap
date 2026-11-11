@@ -209,7 +209,7 @@ def run_audit(
             unavailable_files={source.file_version_id: source.document_type for source in snapshot.inputs if source.file_version_id in unavailable_sources},
         )
         try:
-            from audit.usage import get_token_tracker, track_ocr_usage
+            from audit.usage import get_token_tracker, track_model_usage
             from documents.model_access import ModelUnavailable, model_access_scope, model_access_scoped
             from documents.ocr.paddle.reader import paddle_page_scope
 
@@ -217,7 +217,7 @@ def run_audit(
             previous_request = tracker.get_current_request_id()
             request_id = tracker.start_request_tracking()
             model_scope = contextlib.nullcontext() if model_access_scoped() else model_access_scope(None)
-            with model_scope, bind_runtime(runtime), paddle_page_scope(), track_ocr_usage():
+            with model_scope, bind_runtime(runtime), paddle_page_scope(), track_model_usage():
                 for index, target in enumerate(snapshot.targets):
                     if target.file_version_id in unavailable_sources:
                         results = [_evidence_references(_error(clause, "ERR", "checker_input_unavailable"), target.file_version_id) for clause in target.binding.entrypoints]
@@ -277,7 +277,7 @@ def run_audit(
                             except ClauseTimeout:
                                 item = _error(clause, "ERR", "checker_clause_timeout_external_usage_unknown")
                             except ModelUnavailable:
-                                item = _error(clause, "UNABLE", "personal_model_unavailable_or_uncertain")
+                                item = _error(clause, "UNABLE", "model_unavailable")
                             except UnavailableSourceError:
                                 item = _error(clause, "UNABLE", "checker_reference_unavailable")
                             except GuardStop as exc:
@@ -369,8 +369,11 @@ def run_audit_process(
     snapshot.validate_sources(sources, unavailable=unavailable_sources)
     if cancelled():
         raise AuditRunError("audit_cancelled")
-    if model_grant is not None and any(model_grant.get(key, "") != snapshot.model_identity.get(key, "") for key in ("provider", "model", "revision", "deployment")):
-        raise AuditRunError("audit_model_identity_mismatch")
+    if model_grant is not None:
+        from agent.execution.guest_model import ModelGrant
+
+        if not ModelGrant.model_validate(model_grant).matches(snapshot.model_identity):
+            raise AuditRunError("audit_model_identity_mismatch")
     with tempfile.TemporaryDirectory(prefix="ppap-audit-run-") as work:
         root = Path(work)
         payload = {
@@ -424,32 +427,25 @@ def _main() -> None:
     request, output, credentials = map(Path, sys.argv[1:])
     payload = json.loads(request.read_bytes())
     grant = json.loads(credentials.read_bytes())
-    # BYOK scope is mandatory: a missing personal grant must not use environment
-    # or deployment credentials. Provider keys are never accepted by this entry.
-    from documents.model_access import ModelAccess, model_access_scope
-    from pydantic import SecretStr
+    # A missing grant must not use environment or deployment credentials.
+    # Provider keys are never accepted by this entry.
+    from documents.model_access import model_access_scope
 
-    access = None
+    from agent.execution.guest_model import ModelGrant
+
+    snapshot = ExecutionSnapshot.from_dict(payload["snapshot"])
+    scope = model_access_scope(None)
     if grant is not None:
         from urllib.parse import urlsplit
 
-        endpoint = urlsplit(grant["base_url"])
+        selected = ModelGrant.model_validate(grant)
+        endpoint = urlsplit(selected.base_url)
         if endpoint.hostname not in {"127.0.0.1", "localhost", "::1"} or endpoint.scheme != "http":
             raise AuditRunError("invalid_execution_grant_endpoint")
-        access = ModelAccess(
-            provider=grant["provider"],
-            base_url=grant["base_url"],
-            model=grant["model"],
-            api_key=SecretStr(grant["token"]),
-            revision=grant.get("ocr_base_revision", grant.get("revision", "")),
-            ocr_extra_body_json=grant.get("ocr_extra_body_json", ""),
-        )
-        if access.identity()["revision"] != grant.get("revision", ""):
+        if not selected.matches(snapshot.model_identity):
             raise AuditRunError("audit_model_identity_mismatch")
-    snapshot = ExecutionSnapshot.from_dict(payload["snapshot"])
-    if grant is not None and any(grant.get(key, "") != snapshot.model_identity.get(key, "") for key in ("provider", "model", "revision", "deployment")):
-        raise AuditRunError("audit_model_identity_mismatch")
-    with model_access_scope(access):
+        scope = selected.access_scope()
+    with scope:
         result = run_audit(
             snapshot,
             {key: base64.b64decode(value, validate=True) for key, value in payload["sources"].items()},

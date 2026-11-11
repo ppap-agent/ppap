@@ -17,6 +17,7 @@ from uuid import uuid4
 import httpx
 import pytest
 from api import create_app
+from documents.ai import AIResult
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from product import build_product_store
@@ -393,9 +394,9 @@ def test_rule_parse_recovers_original_job_after_reply_loss_and_api_restart(mcp_a
     requests = []
 
     class ParseAI:
-        def structured_completion(self, **request):
-            requests.append(request)
-            return "控制计划" if request["operation"] == "document_classification" else json.dumps(body, ensure_ascii=False)
+        def __call__(self, operation, **request):
+            requests.append({"operation": operation, **request})
+            return AIResult({"document_type": "控制计划"}) if operation == "document_classification" else AIResult(body)
 
     worker = build_product_store(store.settings, objects=store.objects, role="worker")
     with TestClient(create_app(store.settings, auth_store=store), base_url="http://127.0.0.1:8080") as restored:
@@ -413,7 +414,7 @@ def test_rule_parse_recovers_original_job_after_reply_loss_and_api_restart(mcp_a
             assert requests == []
         else:
             assert sum(row["operation"] == "rule_extraction" for row in requests) == 1
-            assert "必须填写零件号" in requests[-1]["user_prompt"]
+            assert "必须填写零件号" in requests[-1]["prompt"]
         sources = call(restored, token, "get_rule_sources", file_id=source["file_id"], version_id=source["id"])["data"]["value"]
         assert any("必须填写零件号" in unit["excerpt"] for unit in sources["units"])
         # Parsing alone does not publish its candidate.
@@ -559,8 +560,8 @@ def completed_mcp_task(client, store, token, core_system, *, publish_new_rule=Tr
     assert prepared["status"] == "ok", prepared
 
     class MetadataAI:
-        def structured_completion(self, **request):
-            return "控制计划" if request["operation"] == "document_classification" else json.dumps({"customer": "测试客户", "model": "M1", "part": "零件A", "part_number": "P-1"})
+        def __call__(self, operation, **request):
+            return AIResult({"document_type": "控制计划"}) if operation == "document_classification" else AIResult({"customer": "测试客户", "model": "M1", "part": "零件A", "part_number": "P-1"})
 
     process_claimed(worker, worker.claim_job("share-match"), "share-match", rule_ai=MetadataAI())
     task_id = prepared["data"]["id"]
@@ -858,8 +859,8 @@ def test_mcp_review_replacement_and_linked_reaudit_preserve_frozen_suite_history
         assert call(client, token, "prepare_task", request_id=request_id, body=body)["data"] == linked["data"]
 
         class MetadataAI:
-            def structured_completion(self, **request):
-                return "控制计划" if request["operation"] == "document_classification" else json.dumps({"customer": "测试客户", "model": "M1", "part": "零件A", "part_number": "P-1"})
+            def __call__(self, operation, **request):
+                return AIResult({"document_type": "控制计划"}) if operation == "document_classification" else AIResult({"customer": "测试客户", "model": "M1", "part": "零件A", "part_number": "P-1"})
 
         process_claimed(worker, worker.claim_job("replacement-match"), "replacement-match", rule_ai=MetadataAI())
         next_task_id = linked["data"]["id"]
@@ -1240,10 +1241,10 @@ def test_mcp_precheck_rule_publication_prepare_and_human_confirm_once(mcp_app, c
         assert call(client, token, "prepare_task", **args)["data"]["id"] == task["id"]
 
         class MetadataAI:
-            def structured_completion(self, **request):
-                if request["operation"] == "document_classification":
-                    return "控制计划"
-                return json.dumps({"customer": "测试客户", "model": "M1", "part": "零件A", "part_number": "P-1"})
+            def __call__(self, operation, **request):
+                if operation == "document_classification":
+                    return AIResult({"document_type": "控制计划"})
+                return AIResult({"customer": "测试客户", "model": "M1", "part": "零件A", "part_number": "P-1"})
 
         # Only external model metadata is controlled. Actual validation,
         # recognition, binding, acceptance and PostgreSQL jobs execute here.

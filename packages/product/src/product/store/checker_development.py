@@ -535,13 +535,13 @@ class CheckerDevelopmentStore:
             visible = {item["sha256"] for row in training for item in row["files"]}
             if any(visible.intersection(item["sha256"] for item in row["files"]) for row in frozen_samples if row["case_ordinal"] % 4 == 0):
                 raise ValueError("checker_holdout_input_exposed")
-            model_identity = self.store.personal_model_identity(principal.tenant_id, principal.user_id, conn=conn) if payload["action"] == "run_tests" else {}
+            selection = self.store.model_selection(principal.tenant_id, conn=conn) if payload["action"] == "run_tests" else None
+            model_identity = selection.identity if selection is not None else {}
             if "expected_model_revision" in payload and payload["action"] == "run_tests" and payload["expected_model_revision"] != model_identity["revision"]:
-                raise ValueError("personal_model_configuration_changed")
-            if payload["action"] == "run_tests" and payload.get("consume_model") is True:
-                # Key readiness only; no model call and no secret enters frozen JSON.
-                if self.store.personal_model_access(principal.tenant_id, principal.user_id).identity() != model_identity:
-                    raise ValueError("personal_model_configuration_changed")
+                raise ValueError("model_configuration_changed")
+            if selection is not None and payload.get("consume_model") is True:
+                # Readiness only; no model call and no secret enters frozen JSON.
+                selection.access("coding")
             frozen = {
                 "suite_key": suite.revision.suite_key,
                 "samples": frozen_samples,
