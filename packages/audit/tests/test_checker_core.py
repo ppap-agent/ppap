@@ -77,3 +77,34 @@ def test_verified_target_rejects_unchanged_id_with_changed_text():
     frozen = target()
     with pytest.raises(ValueError, match="rule_digest"):
         replace(frozen, rules={"rules": [{"id": "first", "rule_to_check": "changed"}, {"id": "second"}]})
+
+
+def graded_target():
+    return target(rules={"rules": [{"id": "first", "rule_to_check": "Same text", "severity": "B"}, {"id": "second", "rule_to_check": "Same text"}]})
+
+
+def test_an_ng_takes_the_frozen_rule_level_and_a_pass_has_none():
+    output = validate_results([result(status="NG"), result("second", status="PASS", severity="A", severity_reason="不会出现在通过项上")], target=graded_target(), inputs=inputs())
+    by_clause = {row["clause_id"]: row for row in output["findings"]}
+    assert (by_clause["first"]["status"], by_clause["first"]["severity"], by_clause["first"]["severity_override"]) == ("NG", "B", None)
+    assert by_clause["second"]["severity"] is None and by_clause["second"]["severity_override"] is None
+
+
+def test_an_override_needs_a_factual_reason_and_never_changes_the_verdict():
+    reason = "孔径超差会导致总装干涉，影响安全"
+    rows = [result(status="NG", severity="A", severity_reason=reason), result("second", status="NG", severity="C", severity_reason="缺少标题行格式")]
+    output = validate_results(rows, target=graded_target(), inputs=inputs())
+    by_clause = {row["clause_id"]: row for row in output["findings"]}
+    assert by_clause["first"]["status"] == "NG" and by_clause["first"]["severity"] == "A"
+    assert by_clause["first"]["severity_override"] == {"default": "B", "level": "A", "reason": reason}
+    assert by_clause["second"]["severity_override"] == {"default": None, "level": "C", "reason": "缺少标题行格式"}
+    # The runtime validates guest output again; the override is reproduced, not lost.
+    again = validate_results(output["findings"], target=graded_target(), inputs=inputs())
+    assert again["findings"] == output["findings"]
+
+
+@pytest.mark.parametrize("reason", [None, "", "按经验", "综合判断。", "C"])
+def test_an_override_without_a_factual_reason_is_an_execution_error(reason):
+    output = validate_results([result(status="NG", severity="C", severity_reason=reason)], target=graded_target(), inputs=inputs())
+    first = next(row for row in output["findings"] if row["clause_id"] == "first")
+    assert first["status"] == "ERR" and first.get("severity") is None

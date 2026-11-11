@@ -3851,3 +3851,43 @@ def test_a_supply_need_reaches_the_finding_only_for_an_unfinished_clause() -> No
     semantic = {finding.locator["rule_item_id"]: finding.locator["semantic"] for finding in response.findings}
     assert semantic["R1"]["supply"] == {"kind": "source_mismatch", "document": "图纸", "part_number": "P1", "found_part_number": "P2"}
     assert "supply" not in semantic["R2"]
+
+
+def test_a_graded_ng_carries_its_level_and_override_into_the_finding() -> None:
+    from agent.mapping import checker_response
+    from agent.protocol import FrozenFile
+    from audit.contracts import AuditEvidence, AuditResultItem, EvidenceSource
+
+    frozen = FrozenFile(
+        file_version_id="version-1",
+        file_id="file-1",
+        role="target",
+        filename="target.xlsx",
+        sha256="a" * 64,
+        rule_version_id="same-rule",
+        rule_body={"rules": [{"id": "R1", "category": "孔径", "rule_to_check": "孔径在公差内", "severity": "B"}]},
+    )
+    evidence = AuditEvidence(
+        required="structure",
+        used="structure",
+        source_format="xlsx",
+        prepared_format="xlsx",
+        sources=(EvidenceSource(kind="structure", locator='{"kind":"xlsx_cell","sheet":"检验","cell":"A2","file_version_id":"version-1"}'),),
+    )
+    result = AuditResultItem.model_validate(
+        {
+            "classification": "孔径",
+            "item": "R1",
+            "priority": "P0",
+            "status": "NG",
+            "suggestions": "孔径超差",
+            "clause_id": "R1",
+            "checks_performed": 1,
+            "evidence": evidence.model_dump(),
+            "severity": "A",
+            "severity_override": {"default": "B", "level": "A", "reason": "超差导致总装干涉"},
+        }
+    )
+    semantic = checker_response(request().model_copy(update={"files": [frozen]}), [(frozen, [result])]).findings[0].locator["semantic"]
+    assert semantic["severity"] == "A"
+    assert semantic["severity_override"] == {"default": "B", "level": "A", "reason": "超差导致总装干涉"}

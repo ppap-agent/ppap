@@ -208,6 +208,12 @@ def checker_response(
             # Only an unfinished or failed clause can ask for another original.
             if matched_result and matched_result.supply is not None and matched_result.status in {"UNABLE", "NG"}:
                 semantic["supply"] = matched_result.supply.model_dump(mode="json", exclude_none=True)
+            # Level and its override are report facts; the verdict is unchanged.
+            if matched_result and matched_result.status == "NG" and status == "NG":
+                if matched_result.severity:
+                    semantic["severity"] = matched_result.severity
+                if matched_result.severity_override is not None:
+                    semantic["severity_override"] = matched_result.severity_override.model_dump(mode="json")
             if evidence_incomplete:
                 semantic["evidence_incomplete"] = True
             performed = getattr(matched_result, "checks_performed", None) if matched_result is not None else None

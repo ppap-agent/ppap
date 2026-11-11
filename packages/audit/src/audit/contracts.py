@@ -126,6 +126,14 @@ class SupplyNeed(BaseModel):
     found_file_version_id: Optional[str] = Field(default=None, max_length=200)
 
 
+class SeverityOverride(BaseModel):
+    """A checker-assigned level that differs from the rule's default."""
+
+    default: Optional[Literal["A", "B", "C"]] = None
+    level: Literal["A", "B", "C"]
+    reason: str = Field(min_length=4, max_length=500)
+
+
 class AuditResultItem(BaseModel):
     """Engine-side audit output item."""
 
@@ -143,3 +151,9 @@ class AuditResultItem(BaseModel):
     fact_questions: list[FactQuestion] = Field(default_factory=list, max_length=64)
     fact_evaluation: BooleanFactEvaluation | None = None
     supply: SupplyNeed | None = None
+    # A level the checker assigns to an NG. It overrides the rule's default and
+    # needs a factual reason; validate_results keeps level and verdict apart.
+    severity: Optional[Literal["A", "B", "C"]] = None
+    severity_reason: Optional[str] = Field(default=None, max_length=500)
+    # Set only by validate_results: the recorded override of the rule default.
+    severity_override: SeverityOverride | None = None

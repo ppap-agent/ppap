@@ -492,6 +492,14 @@ class SupplyNeed(TypedDict):
     found_file_version_id: NotRequired[str]
 
 
+class SeverityOverride(TypedDict):
+    """Checker-assigned level of an NG that differs from the rule default."""
+
+    default: Literal["A", "B", "C"] | None
+    level: Literal["A", "B", "C"]
+    reason: str
+
+
 class SemanticEvidence(TypedDict):
     rule_version_id: str
     clause_id: str
@@ -507,6 +515,8 @@ class SemanticEvidence(TypedDict):
     evidence_incomplete: NotRequired[bool]
     diagnostics: NotRequired[list[SemanticDiagnostic]]
     supply: NotRequired[SupplyNeed]
+    severity: NotRequired[Literal["A", "B", "C"]]
+    severity_override: NotRequired[SeverityOverride]
 
 
 class EvidenceSource(TypedDict):

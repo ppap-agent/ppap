@@ -264,6 +264,29 @@ def clause_ids(rules: Mapping[str, Any]) -> tuple[str, ...]:
     return ids  # type: ignore[return-value]
 
 
+SEVERITIES = ("A", "B", "C")
+# A reason must state the actual consequence, not a stance.
+_EMPTY_REASONS = {"按经验", "经验判断", "综合判断", "综合考虑", "酌情", "视情况"}
+
+
+def _graded(checked: dict, rule: Mapping[str, Any]) -> dict:
+    """Final level = the rule default, or a checker override with a factual reason.
+
+    Only an NG has a level. The level never changes the verdict.
+    """
+    default = rule.get("severity") if rule.get("severity") in SEVERITIES else None
+    assigned, reason = checked.pop("severity", None), (checked.pop("severity_reason", None) or "").strip()
+    checked.update(severity=None, severity_override=None)
+    if checked["status"] != "NG":
+        return checked
+    if assigned and assigned != default:
+        if len(reason) < 4 or reason.strip("。.，, ") in _EMPTY_REASONS:
+            return {**checked, "status": "ERR", "suggestions": "级别覆盖缺少可核实的理由，未取得业务结论。"}
+        checked["severity_override"] = {"default": default, "level": assigned, "reason": reason}
+    checked["severity"] = assigned or default
+    return checked
+
+
 def validate_results(results: Sequence[AuditResultItem | dict], *, target: FrozenTarget, inputs: Sequence[FrozenInput]) -> dict:
     """Results are attributed by explicit clause ID, never output position."""
     input_ids = {item.file_version_id for item in inputs}
@@ -285,6 +308,10 @@ def validate_results(results: Sequence[AuditResultItem | dict], *, target: Froze
         if not isinstance(references, (list, tuple)) or not references or any(value not in input_ids for value in references) or len(references) != len(set(references)):
             raise ValueError("result_invalid_file_reference")
         # Validate the existing product evidence format and retain its source refs.
+        override = data.pop("severity_override", None)
+        if isinstance(override, Mapping) and not data.get("severity_reason"):
+            # Re-validating an already graded result reproduces the same override.
+            data["severity_reason"] = override.get("reason")
         checked = AuditResultItem.model_validate(data).model_dump(mode="json")
         for source in (checked.get("evidence") or {}).get("sources") or []:
             locator = source["locator"]
@@ -296,7 +323,8 @@ def validate_results(results: Sequence[AuditResultItem | dict], *, target: Froze
                 referenced = location.get("file_version_id") or location.get("document_id")
                 if referenced is not None and referenced not in references:
                     raise ValueError("result_invalid_file_reference")
-        by_clause[clause] = {**checked, "file_version_id": target.file_version_id, "evidence_file_version_ids": list(references)}
+        rule = next(row for row in target.rules["rules"] if row.get("id") == clause)
+        by_clause[clause] = {**_graded(checked, rule), "file_version_id": target.file_version_id, "evidence_file_version_ids": list(references)}
     findings, coverage = [], []
     for clause in clause_ids(target.rules):
         mapped = clause in target.binding.entrypoints

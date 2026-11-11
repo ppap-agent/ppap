@@ -52,6 +52,7 @@ COVER_FIELDS = (("customer", "客户名称"), ("project", "项目名称"), ("mod
 READER_FIELDS = ("供应商名称", "PPAP 版本", "SQE 工程师")
 # A long table repeats its header only by starting a new chunk; rows are short.
 TABLE_ROWS = 20
+LEVELS = ("A", "B", "C")
 PAGE = pymupdf.Rect(0, 0, 595, 842)
 # A4 portrait, single column: 20 mm top/bottom and 18 mm left/right margins.
 BODY = pymupdf.Rect(51, 57, 544, 785)
@@ -74,9 +75,41 @@ def _first_location(source: dict, check: dict) -> str:
     return "未提供具体位置"
 
 
+def _semantic(check: dict) -> dict:
+    semantic = ((check["finding"] or {}).get("locator") or {}).get("semantic")
+    return semantic if isinstance(semantic, dict) else {}
+
+
 def _supply(check: dict) -> dict | None:
-    supply = (((check["finding"] or {}).get("locator") or {}).get("semantic") or {}).get("supply")
+    supply = _semantic(check).get("supply")
     return supply if isinstance(supply, dict) and supply.get("kind") in {"missing", "source_mismatch"} else None
+
+
+def _level(check: dict) -> str | None:
+    """Final level of an NG; None when neither the rule nor the checker gave one."""
+    level = _semantic(check).get("severity")
+    return level if check["finding"]["status"] == "NG" and level in LEVELS else None
+
+
+def _rating(audit: dict) -> str:
+    """An NG without a level is not shown to be minor, so it cannot pass with conditions."""
+    failed = [check for check in audit["checks"] if check["finding"]["status"] == "NG"]
+    if audit["conclusion"] == "PASS" and not failed:
+        return "通过"
+    if audit["conclusion"] == "NG" and failed and all(_level(check) == "C" for check in failed):
+        return "有条件通过"
+    return "不通过" if failed else CONCLUSION.get(audit["conclusion"], audit["conclusion"])
+
+
+def _grading_note(check: dict) -> str | None:
+    level = _level(check)
+    if level is None:
+        return None
+    override = _semantic(check).get("severity_override")
+    if isinstance(override, dict) and override.get("level") == level:
+        prefix = f"规则默认 {override['default']} → " if override.get("default") else ""
+        return f"{prefix}判定 {level} ｜ 理由：{override.get('reason')}"
+    return f"严重程度 {level}（规则默认）"
 
 
 def _cover(source: dict, audited_on: str) -> str:
@@ -90,7 +123,7 @@ def _cover(source: dict, audited_on: str) -> str:
         [
             "<h1>PPAP 审核报告</h1>",
             f"<h2>{_text(source['filename'])}</h2>",
-            f"<p>审核结论：<b>{_text(CONCLUSION.get(audit['conclusion'], audit['conclusion']))}</b></p>",
+            f"<p>审核结论：<b>{_text(CONCLUSION.get(audit['conclusion'], audit['conclusion']))}</b>　总评：<b>{_rating(audit)}</b></p>",
             f"<p>共 {len(audit['checks'])} 项：符合 {counts['pass_count']} 项，不符合 {counts['ng_count']} 项，不适用 {counts.get('na_count', 0)} 项。</p>",
             *([f"<p><b>{_verification_notice(audit['checker_verification'])}</b></p>"] if audit.get("checker_verification") else []),
             f"<table>{table}</table>",
@@ -105,10 +138,16 @@ def _overview(source: dict) -> str:
     supplies = [supply for check in audit["checks"] if (supply := _supply(check))]
     parts = [
         "<h1>1 检查概览</h1>",
-        f"<p>审核结论：<b>{_text(CONCLUSION.get(audit['conclusion'], audit['conclusion']))}</b></p>",
+        f"<p>审核结论：<b>{_text(CONCLUSION.get(audit['conclusion'], audit['conclusion']))}</b>　总评：<b>{_rating(audit)}</b></p>",
         "<table><tr><th>检查项</th><th>符合</th><th>不符合</th><th>不适用</th></tr>",
         f"<tr><td>{len(audit['checks'])}</td><td>{counts['pass_count']}</td><td>{counts['ng_count']}</td><td>{counts.get('na_count', 0)}</td></tr></table>",
     ]
+    failed = [check for check in audit["checks"] if check["finding"]["status"] == "NG"]
+    if failed:
+        levels = [_level(check) for check in failed]
+        cells = "".join(f"<td>{levels.count(level)}</td>" for level in (*LEVELS, None))
+        parts.append(f"<table><tr><th>A 类</th><th>B 类</th><th>C 类</th><th>未定级</th></tr><tr>{cells}</tr></table>")
+        parts.append("<p class='meta'>未定级的不符合项按「不通过」计入总评。</p>")
     scopes = [check["scope"] for check in audit["checks"] if check.get("scope")]
     if scopes:
         parts.append(f"<p>检查范围：已查 {sum(scope['checked'] for scope in scopes)}/{sum(scope['total'] for scope in scopes)}，未知 {sum(scope['unknown'] for scope in scopes)}。</p>")
@@ -122,10 +161,11 @@ def _detail_tables(source: dict) -> list[str]:
     checks = source["audit"]["checks"]
     rows = [
         f"<tr class='{'ng' if check['finding']['status'] == 'NG' else ''}'><td>{number}</td><td>{_text(check['rule_item']['id'])} · {_text(check['rule_item']['category'])}</td>"
-        f"<td>{_text(STATUS.get(check['finding']['status'], check['finding']['status']))}</td><td>{_text(_first_location(source, check))}</td></tr>"
+        f"<td>{_text(STATUS.get(check['finding']['status'], check['finding']['status']))}</td>"
+        f"<td>{(_level(check) or '未定级') if check['finding']['status'] == 'NG' else '—'}</td><td>{_text(_first_location(source, check))}</td></tr>"
         for number, check in enumerate(checks, 1)
     ]
-    head = "<tr><th>序号</th><th>审核项</th><th>结果</th><th>位置</th></tr>"
+    head = "<tr><th>序号</th><th>审核项</th><th>结果</th><th>严重程度</th><th>位置</th></tr>"
     chunks = [rows[index : index + TABLE_ROWS] for index in range(0, len(rows), TABLE_ROWS)] or [[]]
     return [("<h1>2 问题详情</h1><h3>检查结果一览</h3>" if index == 0 else "<h3>检查结果一览（续表）</h3>") + f"<table>{head}{''.join(chunk)}</table>" for index, chunk in enumerate(chunks)]
 
@@ -141,6 +181,8 @@ def _details(source: dict) -> str:
                 f"<p><b>判定说明</b>　{_text(finding.get('suggestions') or finding.get('classification'))}</p>",
             ]
         )
+        if note := _grading_note(check):
+            parts.append(f"<p><b>说明</b>　{_text(note)}</p>")
         scope = check.get("scope")
         if scope:
             parts.append(f"<p class='meta'>检查范围：已查 {scope['checked']}/{scope['total']}，未知 {scope['unknown']}。</p>")
@@ -163,18 +205,26 @@ def _remediation(source: dict) -> str:
     failed = [(number, check) for number, check in enumerate(source["audit"]["checks"], 1) if check["finding"]["status"] == "NG"]
     if not failed:
         return "<h1>3 整改建议</h1><p>本次未发现问题项，无需整改。</p>"
-    groups: dict[str, list] = {}
-    for number, check in failed:
-        groups.setdefault(_first_location(source, check), []).append((number, check))
-    parts = ["<h1>3 整改建议</h1><p>以下按检查项顺序列出不符合项；同一位置的多项合并为一条。</p>"]
+    graded = any(_level(check) for _number, check in failed)
+    order = "A → B → C → 未定级、再按检查项顺序" if graded else "检查项顺序"
+    parts = ["<h1>3 整改建议</h1>", f"<p>以下按{order}列出不符合项；同一位置的多项合并为一条。</p>"]
     marks = "①②③④⑤⑥⑦⑧⑨⑩"
-    for index, (location, items) in enumerate(groups.items(), 1):
-        parts.append(f"<h3>{index}. 位置：{_text(location)}</h3>")
-        for position, (number, check) in enumerate(items):
-            mark = marks[position] if len(items) > 1 and position < len(marks) else ""
-            rule = check["rule_item"]
-            parts.append(f"<p>{mark}【{_text(rule['category'])}】{_text(check['finding'].get('suggestions'))}</p>")
-            parts.append(f"<p class='meta'>依据：第 {number} 项 · 检查项 {_text(rule['id'])}</p>")
+    index = 0
+    for level in (*LEVELS, None) if graded else (None,):
+        groups: dict[str, list] = {}
+        for number, check in failed:
+            if not graded or _level(check) == level:
+                groups.setdefault(_first_location(source, check), []).append((number, check))
+        if graded:
+            parts.append(f"<h2>{level + ' 类' if level else '未定级'}</h2>" + ("" if groups else f"<p>本次无{level + ' 类' if level else '未定级'}问题。</p>"))
+        for location, items in groups.items():
+            index += 1
+            parts.append(f"<h3>{index}. 位置：{_text(location)}</h3>")
+            for position, (number, check) in enumerate(items):
+                mark = marks[position] if len(items) > 1 and position < len(marks) else ""
+                rule = check["rule_item"]
+                parts.append(f"<p>{mark}【{_text(rule['category'])}】{_text(check['finding'].get('suggestions'))}</p>")
+                parts.append(f"<p class='meta'>依据：第 {number} 项 · 检查项 {_text(rule['id'])}</p>")
     supplies = [supply for _number, check in failed if (supply := _supply(check)) and supply["kind"] == "missing"]
     if supplies:
         parts.append("<h3>需补交文件清单</h3>")

@@ -317,3 +317,50 @@ def test_all_pass_report_says_no_remediation_and_no_supply():
         assert "本次未发现问题项，无需整改。" in text
         assert "本次没有需补交或换交的关联文件。" in text
         assert "客户名称—" in text
+
+
+def _graded_source(levels):
+    source = report_source()
+    base = source["audit"]["checks"][0]
+    checks = []
+    for number, (level, override) in enumerate(levels, 1):
+        check = deepcopy(base)
+        check["rule_item"].update(id=f"R{number}", category=f"类别{number}")
+        semantic = {"severity": level} if level else {}
+        if override:
+            semantic["severity_override"] = override
+        check["finding"] = {"status": "NG", "suggestions": f"第{number}项缺值。", "locator": {"semantic": semantic}}
+        check["evidence"][0]["locator"] = {"kind": "xlsx_cell", "sheet": "检验", "cell": f"A{number}"}
+        checks.append(check)
+    source["audit"]["checks"] = checks
+    source["audit"]["counts"] = {"pass_count": 0, "ng_count": len(checks)}
+    return source
+
+
+@pytest.mark.parametrize(
+    ("levels", "rating"),
+    [
+        ([("C", None), ("C", None)], "有条件通过"),
+        ([("C", None), ("B", None)], "不通过"),
+        ([("C", None), (None, None)], "不通过"),
+    ],
+)
+def test_rating_comes_only_from_final_levels_and_an_unleveled_ng_fails(levels, rating):
+    with pymupdf.open(stream=render_audit_pdf(_graded_source(levels)), filetype="pdf") as document:
+        pages = _pages(document)
+        assert f"总评：{rating}" in pages[0] and f"总评：{rating}" in pages[1]
+
+
+def test_levels_order_remediation_and_overrides_are_explained():
+    override = {"default": "C", "level": "A", "reason": "孔径超差会导致总装干涉"}
+    source = _graded_source([("C", None), ("A", override), (None, None), ("B", None)])
+    with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
+        text = "".join(_pages(document))
+        assert "A类B类C类未定级1111" in text
+        assert "规则默认C→判定A｜理由：孔径超差会导致总装干涉" in text
+        assert "严重程度C（规则默认）" in text
+        remediation = text[text.index("3整改建议") : text.index("4附录")]
+        order = [remediation.index(f"第{number}项缺值") for number in (2, 4, 1, 3)]
+        assert order == sorted(order)
+        groups = remediation[remediation.index("合并为一条。") :]
+        assert groups.index("A类") < groups.index("B类") < groups.index("C类") < groups.index("未定级")

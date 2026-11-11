@@ -5342,6 +5342,12 @@ export interface components {
             /** Rule Version Id */
             rule_version_id: string;
             scope?: components["schemas"]["SemanticScope"];
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity?: "A" | "B" | "C";
+            severity_override?: components["schemas"]["SeverityOverride"];
             /** Sources */
             sources: components["schemas"]["SemanticSource"][];
             supply?: components["schemas"]["SupplyNeed"];
@@ -5377,6 +5383,21 @@ export interface components {
              * @enum {string}
              */
             role: "target" | "reference";
+        };
+        /**
+         * SeverityOverride
+         * @description Checker-assigned level of an NG that differs from the rule default.
+         */
+        SeverityOverride: {
+            /** Default */
+            default: ("A" | "B" | "C") | null;
+            /**
+             * Level
+             * @enum {string}
+             */
+            level: "A" | "B" | "C";
+            /** Reason */
+            reason: string;
         };
         /** StandardExecutionPolicy */
         StandardExecutionPolicy: {

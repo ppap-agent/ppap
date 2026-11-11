@@ -537,7 +537,7 @@ class SourceAudit:
     def check(self, ith):
         self._evidence_sources = []
         completed = 0
-        questions, evaluation, supply = [], None, None
+        questions, evaluation, supply, grade = [], None, None, (None, None)
         try:
             if self.rule_checkers[ith] is None:
                 raise UnknownFact(self.resource.get("known_gaps", {}).get(self.clause_ids[ith], "此条款尚无可用的原件证据读取器，无法检查。"))
@@ -547,7 +547,9 @@ class SourceAudit:
                 raise UnknownFact("此检查不支持当前原件载体，未形成业务判断。")
             if not self.audit_file.audit_id:
                 raise UnknownFact("缺少冻结原件版本，不能形成业务判断。")
-            status, message = self.rule_checkers[ith]()
+            status, message, *graded = self.rule_checkers[ith]()
+            # An optional third value grades an NG: (level, factual reason).
+            grade = graded[0] if graded and status == "NG" else (None, None)
             if status == "PASS" and not self._evidence_sources:
                 status, message = "UNABLE", "未取得可追溯的原件事实，不能判为通过。"
             completed = int(status in {"PASS", "NG", "NA"})
@@ -591,6 +593,8 @@ class SourceAudit:
             fact_questions=questions,
             fact_evaluation=evaluation,
             supply=supply,
+            severity=grade[0],
+            severity_reason=grade[1],
         )
 
     def visual_pdf(self, fields: dict[str, str], *, existential_fields=()):
