@@ -68,6 +68,17 @@ export function ProgramWizard({ruleVersionId, updating, onClose, onAdopt}: {rule
   </div>
 }
 
+/** Check points arrive as section headings followed by their statements; a reading without headings is one group. */
+function groupPoints(lines: string[]): {title: string; items: string[]}[] {
+  const groups: {title: string; items: string[]}[] = []
+  for (const line of lines) {
+    if (line.startsWith('# ')) groups.push({title: line.slice(2), items: []})
+    else if (groups.length) groups.at(-1)!.items.push(line)
+    else groups.push({title: '', items: [line]})
+  }
+  return groups.filter(group => group.items.length)
+}
+
 /** The suggested wording split into kept and added runs, so a person sees what would change. */
 function insertions(before: string, after: string): {text: string; added: boolean}[] {
   const a = [...before], b = [...after]
@@ -366,7 +377,10 @@ function ClauseCheckPoints({number, ruleVersionId, clauseId, prepare, onAdopt, o
     {candidate && !waiting && !question && <>
       <section className="space-y-2.5">
         <h3 className="text-sm text-muted-foreground">系统会这样检查</h3>
-        <ul className="list-disc space-y-1.5 pl-5 leading-relaxed">{points.map((point, index) => <li key={index} className="break-words">{point.replace(/^【[^】]{1,12}】\s*/, '')}</li>)}</ul>
+        <div className="space-y-3">{groupPoints(points).map((group, index) => <div key={index} className="space-y-1.5">
+          {group.title && <h4 className="text-sm font-medium">{group.title}</h4>}
+          <ul className="list-disc space-y-1.5 pl-5 leading-relaxed">{group.items.map((point, item) => <li key={item} className="break-words">{point.replace(/^【[^】]{1,12}】\s*/, '')}</li>)}</ul>
+        </div>)}</div>
       </section>
       {review.length > 0 && <section className="space-y-3 rounded-md border border-warning/30 bg-warning/5 px-4 py-3">
         <h3 className="font-medium">原文有 {review.length} 处没说清</h3>

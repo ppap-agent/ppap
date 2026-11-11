@@ -32,8 +32,8 @@ def process_rule_formalization(store, claimed, ident: str, *, ai=None) -> dict:
             return {"state": "failed", "failure": "access_denied"}
         system, user = text_prompts(clause_text=clause.get("rule_to_check") or "", prior_points=prior_points(formalizations.parent_snapshot(row)), instruction=row["user_instruction"])
         with audit_lease(store, claimed, ident):
-            # Tidying text needs little reasoning; the default effort spent minutes per clause.
-            completed = (ai or documents.ai.run_json)("rule_formalization", instructions=system, prompt=user, max_tokens=4000, reasoning_effort="low", timeout=180)
+            # The optimizer reasons at length to keep meaning; the output budget leaves room for that reasoning.
+            completed = (ai or documents.ai.run_json)("rule_formalization", instructions=system, prompt=user, max_tokens=32000, reasoning_effort="high", timeout=600)
         # The store validates the reading strictly; it receives the model's JSON as text.
         raw = json.dumps(completed.output, ensure_ascii=False) if completed.output else ""
         usage = completed.usage()
