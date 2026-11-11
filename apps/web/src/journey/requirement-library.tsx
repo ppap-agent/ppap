@@ -79,7 +79,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
   const [content, setContent] = useState(routeContent)
   const [wizard, setWizard] = useState(routeWizard)
   const [feedback, setFeedback] = useState<{text: string; failed: boolean} | null>(null)
-  const [ack, setAck] = useState(false), [discard, setDiscard] = useState(false)
+  const [attempted, setAttempted] = useState(false), [discard, setDiscard] = useState(false)
   const [publishing, setPublishing] = useState(false)
   const [editing, setEditing] = useState<string | null>(null), [sourceClause, setSourceClause] = useState<string | null>(null)
   const picker = useRef<HTMLInputElement>(null), working = useRef(false), mounted = useRef(true)
@@ -107,6 +107,8 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
   const current = !remoteRequired ? storedCurrent : remoteReady ? draftSelected ? storedCurrent : versionRead.versions.find(version => version.id === selectedVersion?.id) : undefined
   const base = baseId ? readVersions ? versionRead.key === versionKey ? versionRead.versions.find(version => version.id === baseId) : undefined : collection?.versions.find(version => version.id === baseId) : undefined
   const issues = collection ? libraryDraftIssues(collection) : []
+  const versionTaken = Boolean(collection?.draft && collection.versions.some(version => version.basis.source.version.trim().toLowerCase() === collection.draft!.basis.source.version.trim().toLowerCase()))
+  const missing = (empty: boolean, text = '必填') => attempted && (empty || text !== '必填') ? <span className="text-xs font-normal text-destructive">{text}</span> : null
   if (collection?.draft && catalogCollection?.versions.some(version => version.version.trim().toLowerCase() === collection.draft!.basis.source.version.trim().toLowerCase()) && !issues.includes('这个版本号已经用过了，换一个。')) issues.push('这个版本号已经用过了，换一个。')
   const related = uses.filter(use => collection?.versions.some(version => use.basis.source.id === version.id || use.basis.library?.versionId === version.id))
   useEffect(() => {
@@ -127,7 +129,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
     return () => controller.abort()
   }, [readVersions, active, versionIdsKey, versionKey, selection.id, loading, readError])
   function select(id: string, version = '', replace = false) {
-    setSelection({id, version}); setAck(false); setFeedback(null); setEditing(null); setSourceClause(null)
+    setSelection({id, version}); setAttempted(false); setFeedback(null); setEditing(null); setSourceClause(null)
     history[replace ? 'replaceState' : 'pushState'](history.state, '', requirementHref(id, version))
     setContent(routeContent()); setWizard(routeWizard())
     window.scrollTo({top: 0})
@@ -156,7 +158,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
     const sync = () => {
       const requested = routeSelection(), next = savedSelections.current.get(canonical(requested)) ?? requested
       if (next !== requested) history.replaceState(history.state, '', requirementHref(next.id, next.version))
-      if (next.id !== latestSelection.current.id || next.version !== latestSelection.current.version) {setAck(false); setFeedback(null); setEditing(null)}
+      if (next.id !== latestSelection.current.id || next.version !== latestSelection.current.version) {setAttempted(false); setFeedback(null); setEditing(null)}
       setSelection(next); setContent(routeContent()); setWizard(routeWizard()); setSourceClause(null)
     }
     // Template pages move between rules by address; follow them as well as Back and Forward.
@@ -165,7 +167,6 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
   }, [])
   function edit(update: (draft: RequirementDraft) => RequirementDraft, invalidateAcknowledgement = true) {
     if (working.current || loading || !collection?.draft || !draftSelected) return
-    if (invalidateAcknowledgement) setAck(false)
     setFeedback(null)
     onChange(items => items.map(item => item.id === collection.id && item.draft ? {...item, draft: update(item.draft)} : item))
   }
@@ -193,7 +194,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
     onChange(items => items.map(item => item.id === collection.id ? {...item, draft} : item)); select(collection.id, 'draft')
   }
   async function save() {
-    if (working.current || loading || readError || upload.busy || !collection?.draft || libraryDraftIssues(collection).length || !ack || saveError) return
+    if (working.current || loading || readError || upload.busy || !collection?.draft || libraryDraftIssues(collection).length || saveError) return
     const owner = collection.id, snapshot = structuredClone(collection.draft), signature = canonical(snapshot), selected = {...selection}
     working.current = true; setPublishing(true); setFeedback(null)
     try {
@@ -268,16 +269,17 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
       {draftSelected ? <fieldset disabled={locked} className="min-w-0 space-y-4">
         <p className="flex items-center gap-2 rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground"><Info aria-hidden="true" className="size-3.5 shrink-0"/>草稿只存在这台电脑的浏览器里，记得保存。</p>
         <RuleExtraction basis={current.basis} readonly={locked} onChange={basis => edit(draft => ({...draft, basis}), reviewedBasisContent(current.basis) !== reviewedBasisContent(basis))}/>
-        <div className="grid gap-4 md:grid-cols-2"><label className="grid gap-1.5">规则名称<Input value={current.basis.source.title} onChange={event => {const value = event.currentTarget.value; edit(draft => ({...draft, basis: {...draft.basis, source: {...draft.basis.source, title: value}}}))}}/></label><label className="grid gap-1.5">版本号<Input value={current.basis.source.version} onChange={event => {const value = event.currentTarget.value; edit(draft => ({...draft, basis: {...draft.basis, source: {...draft.basis.source, version: value}}}))}}/></label></div>
-        <div className="grid gap-4 lg:grid-cols-3">{scopeFields.map(({key, flag, label}) => <div className="min-w-0 space-y-1.5" key={key}><label className="grid gap-1.5">{key === 'customer' ? '所属模板' : `适用${label}`}<Input disabled={locked || current.scope[flag] === true} value={current.scope[key]} onChange={event => {const value = event.currentTarget.value; edit(draft => ({...draft, scope: {...draft.scope, [key]: value}}))}}/></label><label className="flex min-h-9 items-center gap-2 text-muted-foreground max-md:min-h-11"><Checkbox disabled={locked} checked={current.scope[flag] === true} onCheckedChange={value => edit(draft => ({...draft, scope: {...draft.scope, [flag]: value === true}}))}/>{key === 'customer' ? '放入通用规则' : `不限定${label}`}</label></div>)}</div>
-        <label className="grid gap-1.5">这次改了什么<Textarea value={current.reason} onChange={event => {const value = event.currentTarget.value; edit(draft => ({...draft, reason: value}))}}/></label>
+        <div className="grid gap-4 md:grid-cols-2"><label className="grid gap-1.5">规则名称{missing(!current.basis.source.title.trim())}<Input aria-invalid={attempted && !current.basis.source.title.trim()} value={current.basis.source.title} onChange={event => {const value = event.currentTarget.value; edit(draft => ({...draft, basis: {...draft.basis, source: {...draft.basis.source, title: value}}}))}}/></label><label className="grid gap-1.5">版本号{missing(!current.basis.source.version.trim(), versionTaken ? '这个版本号已经用过了' : '必填')}<Input aria-invalid={attempted && (!current.basis.source.version.trim() || versionTaken)} value={current.basis.source.version} onChange={event => {const value = event.currentTarget.value; edit(draft => ({...draft, basis: {...draft.basis, source: {...draft.basis.source, version: value}}}))}}/></label></div>
+        <div className="grid gap-4 lg:grid-cols-3">{scopeFields.map(({key, flag, label}) => <div className="min-w-0 space-y-1.5" key={key}><label className="grid gap-1.5">{key === 'customer' ? '所属模板' : `适用${label}`}{missing(current.scope[flag] !== true && !current.scope[key].trim())}<Input aria-invalid={attempted && current.scope[flag] !== true && !current.scope[key].trim()} disabled={locked || current.scope[flag] === true} value={current.scope[key]} onChange={event => {const value = event.currentTarget.value; edit(draft => ({...draft, scope: {...draft.scope, [key]: value}}))}}/></label><label className="flex min-h-9 items-center gap-2 text-muted-foreground max-md:min-h-11"><Checkbox disabled={locked} checked={current.scope[flag] === true} onCheckedChange={value => edit(draft => ({...draft, scope: {...draft.scope, [flag]: value === true}}))}/>{key === 'customer' ? '放入通用规则' : `不限定${label}`}</label></div>)}</div>
+        <label className="grid gap-1.5">这次改了什么{missing(!current.reason.trim())}<Textarea aria-invalid={attempted && !current.reason.trim()} value={current.reason} onChange={event => {const value = event.currentTarget.value; edit(draft => ({...draft, reason: value}))}}/></label>
       </fieldset> : narrowing.length > 0 && <dl className="flex flex-wrap gap-x-8 gap-y-2 rounded-lg border px-4 py-3">{narrowing.map(({key, label}) => <div className="flex min-w-0 items-baseline gap-2" key={key}><dt className="text-xs text-muted-foreground">适用{label}</dt><dd className="break-words">{current.scope[key] || '待确认'}</dd></div>)}</dl>}
       {programmable && active && !wizard && <RuleProgramCard key={current.id} ruleVersionId={current.id} onPrepare={updating => showWizard(updating ? 'update' : 'generate')}/>}
       {automaticMatching && !current.scope.allCustomers && !current.scope.customer.trim() && <Alert role="status"><AlertTitle>还没选模板</AlertTitle><AlertDescription>{draftSelected ? '填写所属模板，或勾选“放入通用规则”。' : '这个版本没有模板，审核时不会自动匹配到它。新建版本时选一个模板。'}</AlertDescription></Alert>}
       {programmable && wizard ? <ProgramWizard key={current.id} ruleVersionId={current.id} updating={wizard === 'update'} onClose={() => showWizard(null)} onAdopt={adoptSuggestion}/> : <Tabs value={content} onValueChange={showContent}><div className="flex flex-wrap items-center justify-between gap-3 border-b pb-1"><TabsList variant="line" aria-label="规则内容"><TabsTrigger value="clauses">条款 {current.basis.clauses.length}</TabsTrigger><TabsTrigger value="changes">版本记录</TabsTrigger></TabsList>{draftSelected && <p className="text-xs text-muted-foreground">已核对 {verifiedClauseCount(current.basis)}/{current.basis.clauses.length} 条</p>}</div>
         <TabsContent value="clauses"><section aria-label="规则条款" className="space-y-3 pt-4">{current.basis.clauses.map((clause, index) => {
           const repeated = Boolean(clause.title.trim()) && clause.text.trim().startsWith(clause.title.trim())
-          return <article key={clause.id} aria-label={`条款 ${clause.id}`} className={`grid grid-cols-[1.5rem_minmax(0,1fr)] gap-x-3 gap-y-3 rounded-lg border bg-card px-4 py-4 sm:gap-x-4 sm:px-5 ${draftSelected ? 'sm:grid-cols-[1.5rem_minmax(0,1fr)_auto]' : ''}`}>
+          const unchecked = draftSelected && attempted && !(clause.checked && clauseSourceReady(clause, current.basis))
+          return <article key={clause.id} aria-label={`条款 ${clause.id}`} data-issue={unchecked || undefined} className={`grid grid-cols-[1.5rem_minmax(0,1fr)] gap-x-3 gap-y-3 rounded-lg border bg-card px-4 py-4 sm:gap-x-4 sm:px-5 ${draftSelected ? 'sm:grid-cols-[1.5rem_minmax(0,1fr)_auto]' : ''} ${unchecked ? 'border-destructive' : ''}`}>
             <span className="pt-0.5 text-xs tabular-nums text-muted-foreground" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
             <div className="min-w-0 space-y-2">
               {draftSelected && editing === clause.id ? <fieldset disabled={locked} className="grid min-w-0 gap-3 lg:grid-cols-2"><legend className="mb-3 font-medium" title={`条款 ${clause.id}`}>编辑第 {index + 1} 条</legend><label className="grid gap-1.5">条款名称<Input value={clause.title} onChange={event => patchClause(clause.id, {title: event.target.value})}/></label><label className="grid gap-1.5">出处位置<Input readOnly={Boolean(current.basis.server)} value={clause.location} onChange={event => patchClause(clause.id, {location: event.target.value})}/></label><label className="grid gap-1.5 lg:col-span-2">来源文件<Input readOnly={Boolean(current.basis.server)} value={clause.source} onChange={event => patchClause(clause.id, {source: event.target.value})}/></label><label className="grid gap-1.5 lg:col-span-2">条款内容<Textarea value={clause.text} onChange={event => patchClause(clause.id, {text: event.target.value})}/></label><label className="grid gap-1.5 lg:col-span-2">原文<Textarea readOnly={Boolean(current.basis.server)} value={clause.original} onChange={event => patchClause(clause.id, {original: event.target.value})}/></label></fieldset> : <>
@@ -292,9 +294,12 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
         <TabsContent value="changes"><section className="space-y-3 pt-4" aria-label="版本差异"><h2 className="font-semibold">{base ? `和 ${base.basis.source.version} 相比` : '首个版本'}</h2>{!draftSelected && current.reason && <p className="whitespace-pre-wrap break-words text-muted-foreground">版本说明：{current.reason}</p>}{base && <p className="text-muted-foreground">新增或修改 {changed.length} 条，移除 {removed.length} 条。</p>}{base && scopeLabel(base.scope) !== scopeLabel(current.scope) && <p className="break-words">适用范围：{scopeLabel(base.scope)} → {scopeLabel(current.scope)}</p>}{base && base.basis.source.title !== current.basis.source.title && <p className="break-words">规则名称：{base.basis.source.title} → {current.basis.source.title}</p>}{changed.map(clause => <ClauseDifference key={clause.id} before={base?.basis.clauses.find(old => old.id === clause.id)} after={clause} label={draftSelected ? '草稿' : current.basis.source.version}/>)}{removed.map(clause => <article key={clause.id} className="space-y-2 border-t py-4"><h3 className="font-semibold" title={`条款 ${clause.id}`}>移除：{clause.title || clause.text.slice(0, 40)}</h3><p className="whitespace-pre-wrap break-words">{clause.text}</p><p className="text-xs text-muted-foreground">{clause.source} · {clause.location}</p></article>)}{!changed.length && !removed.length && <p className="text-muted-foreground">{base ? '条款和出处都没变。' : '还没有条款。'}</p>}</section></TabsContent>
       </Tabs>}
       {draftSelected && <footer className="space-y-4 border-t pt-5">
-        {issues.length > 0 && <Alert><AlertTitle>还有 {issues.length} 项待确认</AlertTitle><AlertDescription><p>{issues[0]}</p>{issues.length > 1 && <Collapsible><CollapsibleTrigger asChild><Button variant="outline" size="sm"><ChevronDown/>查看全部</Button></CollapsibleTrigger><CollapsibleContent><ul className="list-disc space-y-1 pt-3 pl-4">{issues.map(issue => <li key={issue}>{issue}</li>)}</ul></CollapsibleContent></Collapsible>}</AlertDescription></Alert>}
-        <label className="flex min-h-9 items-center gap-2 max-md:min-h-11"><Checkbox disabled={locked} checked={ack} onCheckedChange={value => setAck(value === true)}/>我已核对这个版本</label>
-        <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2"><DialogTrigger asChild><Button variant="ghost" disabled={locked}>放弃草稿</Button></DialogTrigger><Button disabled={locked || Boolean(readError) || issues.length > 0 || !ack || Boolean(saveError)} onClick={() => void save()}>{publishing ? <Loader2 className="animate-spin motion-reduce:animate-none"/> : <Check/>}{publishing ? '正在保存…' : '保存版本'}</Button></div></div>
+        <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2"><DialogTrigger asChild><Button variant="ghost" disabled={locked}>放弃草稿</Button></DialogTrigger>{attempted && issues.length > 0 && <span role="status" className="text-sm text-destructive">还差 {issues.length} 处</span>}<Button disabled={locked || Boolean(readError) || Boolean(saveError)} onClick={() => {
+          if (!issues.length) {void save(); return}
+          // What is missing is marked where it is; saving goes to the first of them.
+          setAttempted(true)
+          window.requestAnimationFrame(() => document.querySelector('[aria-invalid="true"], [data-issue]')?.scrollIntoView({behavior: 'smooth', block: 'center'}))
+        }}>{publishing ? <Loader2 className="animate-spin motion-reduce:animate-none"/> : <Check/>}{publishing ? '正在保存…' : '保存版本'}</Button></div></div>
       </footer>}
       {related.length > 0 && <section className="border-t pt-4"><Collapsible><CollapsibleTrigger asChild><Button variant="ghost" size="sm">在这台电脑上用过它的审核 · {related.length}</Button></CollapsibleTrigger><CollapsibleContent><div className="divide-y">{related.map(use => <div className="flex flex-wrap items-center justify-between gap-3 py-3" key={use.id}><div className="min-w-0 space-y-1"><p className="break-words font-medium">{use.title}</p><p className="text-xs text-muted-foreground">{use.basis.source.version} · {use.submitted ? '已用于审核' : '未提交'}</p></div><Button variant="ghost" onClick={() => onOpen(use.id)}>查看审核<ArrowRight/></Button></div>)}</div></CollapsibleContent></Collapsible></section>}
     </> : remoteRequired && !loading && !readError ? versionRead.key === versionKey && versionRead.error ? <Alert variant="destructive"><AlertTitle>这个版本没读到</AlertTitle><AlertDescription><p>{versionRead.error}</p><Button variant="outline" onClick={() => setVersionRetry(value => value + 1)}>重新读取</Button></AlertDescription></Alert> : <ReadSkeleton label="正在读取…" kind="detail" rows={6}/> : loading && selection.id ? <ReadSkeleton label="正在读取…" kind="detail" rows={6}/> : !loading && !readError && <div className="space-y-3 py-12 text-center"><h1 className="text-xl font-semibold">打不开这个版本</h1><p className="text-muted-foreground">可能已被删除，或你没有权限。</p><Button asChild variant="outline"><a href={requirementHref()} onClick={event => navigate(event)}>返回规则列表</a></Button></div>}
