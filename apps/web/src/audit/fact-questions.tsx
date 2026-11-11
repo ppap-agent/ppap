@@ -120,7 +120,7 @@ export function FactQuestions({roundId, files, findings = [], fileVersionId, ada
   return <section aria-label="原件事实确认" className="min-w-0 border-b px-6 py-2 max-sm:px-4" data-fact-answer-state={saving ? 'saving' : pending ? 'unknown' : 'ready'}>
     <Disclosure open={expanded || Boolean(error)} onOpenChange={setExpanded} summary={<><span className="font-medium">原件事实确认</span><span className="ml-3 text-muted-foreground">{pending ? '回答结果待确认' : error ? '读取失败' : loading && !view ? '读取中…' : `待确认 ${questions.filter(question => !question.answered).length} 项 · 人工确认结果 ${results.length} 项`}</span></>}>
     <div className="space-y-4 py-4">
-    <header className="flex items-start justify-between gap-3"><div><h2 className="text-lg font-semibold">核对原件中的事实</h2><p className="mt-1 text-sm text-muted-foreground">只回答原件里的事实，不会修改规则，也不消耗额度。</p></div><Button variant="ghost" size="icon" aria-label="读取最新事实问题" disabled={loading || saving} onClick={() => void read()}><RefreshCw className={loading ? 'animate-spin' : ''}/></Button></header>
+    <header className="flex items-start justify-between gap-3"><div><h2 className="text-lg font-semibold">核对原件中的事实</h2></div><Button variant="ghost" size="icon" aria-label="读取最新事实问题" disabled={loading || saving} onClick={() => void read()}><RefreshCw className={loading ? 'animate-spin' : ''}/></Button></header>
     {loading && !view && <p role="status" className="text-sm text-muted-foreground">正在读取可确认的问题…</p>}
     {error && <Alert variant="destructive"><AlertTitle>{pending ? '回答结果待确认' : '事实确认暂不可用'}</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
     {notice && <p role="status" className="text-sm">{notice}</p>}
@@ -129,7 +129,7 @@ export function FactQuestions({roundId, files, findings = [], fileVersionId, ada
       const question = (row: FactQuestion) => <FactQuestionForm key={`${row.file_version_id}:${row.field}:${row.fingerprint}`} question={row} file={files.find(file => file.id === row.file_version_id)} roundId={roundId} disabled={loading || saving || Boolean(pending)} onAnswer={value => void apply(row, value)}/>
       return <section key={group.fileVersionId} aria-label={`${filename(group.fileVersionId)}的事实问题`} className="space-y-4 border-t pt-4"><h3 className="font-medium"><FileName name={filename(group.fileVersionId)}/></h3>{group.visible.map(question)}{group.folded.length > 0 && <Disclosure  summary={<>更多待确认事实（{group.folded.length}）</>}><div className="space-y-4">{group.folded.map(question)}</div></Disclosure>}</section>
     })}
-    {results.length > 0 && <section aria-label="人工确认结果" className="space-y-4 border-t pt-4"><h3 className="font-medium">人工确认结果</h3><p className="text-xs text-muted-foreground">下方单独记录使用人工回答的确定性重算，原机器结果未被替换。</p>{results.map(result => {
+    {results.length > 0 && <section aria-label="人工确认结果" className="space-y-4 border-t pt-4"><h3 className="font-medium">人工确认结果</h3>{results.map(result => {
       const machine = findings.find(row => row.item_key === result.item_key)
       const clause = questions.find(row => row.item_keys.includes(result.item_key))?.clause_ids.join('、')
       const sampleAnswer = answers.find(answer => result.answer_ids.includes(answer.operation_id) && answer.value !== null)
@@ -178,7 +178,7 @@ function FactSampleForm({roundId, answerId, itemKey, adapter, pending, onPending
   return <div className="space-y-2">
     <Button variant="outline" size="sm" onClick={() => setOpen(value => !value)} aria-expanded={open}>{open ? '收起样本选择' : '作为优化样本'}</Button>
     {open && <form className="space-y-3" onSubmit={event => {event.preventDefault(); void save()}}>
-      <p className="text-xs text-muted-foreground">确认本条款的正确结果和依据后，才加入优化样本。不会自动优化或发布规则。</p>
+      
       <fieldset disabled={saving || Boolean(pending)} className="flex flex-wrap gap-4"><legend className="mb-2">本条款的正确结果</legend>{(['PASS', 'NG', 'NA'] as const).map(value => <label key={value} className="flex items-center gap-2"><input type="radio" name={`sample-${answerId}-${itemKey}`} checked={expected === value} onChange={() => setExpected(value)}/>{resultLabel[value]}</label>)}</fieldset>
       <Input aria-label="样本判定依据" value={rationale} maxLength={7000} disabled={saving || Boolean(pending)} onChange={event => setRationale(event.target.value)}/>
       <Button type="submit" size="sm" disabled={!expected || !rationale.trim() || saving || Boolean(pending)}>确认加入优化样本</Button>
@@ -203,7 +203,7 @@ function FactQuestionForm({question, file, roundId, disabled, onAnswer}: {questi
         {question.answer_type === 'boolean' ? [['yes', '是'], ['no', '否']].map(([value, label]) => <label key={value} className="flex items-center gap-2 text-sm"><input type="radio" name={id} checked={choice === value} onChange={() => setChoice(value)}/>{label}</label>) : <label className="flex items-center gap-2 text-sm"><input type="radio" name={id} checked={choice === 'text'} onChange={() => setChoice('text')}/>填写原件内容</label>}
         <label className="flex items-center gap-2 text-sm"><input type="radio" name={id} checked={choice === 'unknown'} onChange={() => setChoice('unknown')}/>看不清</label>
       </div>{question.answer_type === 'text' && choice === 'text' && <Input aria-label="原件内容" value={text} onChange={event => setText(event.target.value)} maxLength={2000}/>}
-      {choice === 'unknown' && <p className="text-xs text-muted-foreground">只记录看不清，相关条款保持无法判断。</p>}<Button type="submit" size="sm" disabled={!ready || disabled}>保存回答</Button></fieldset>
+      <Button type="submit" size="sm" disabled={!ready || disabled}>保存回答</Button></fieldset>
     </form>
   </article>
 }

@@ -77,7 +77,7 @@ function DisplayInformation({file, onEdit}: {file: File; onEdit?: () => void}) {
   return <section aria-label="本次审核文件信息" className="space-y-3">
     <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-medium">页面显示信息{corrected ? ' · 已更正' : ''}</p>{onEdit && <Button variant="outline" size="sm" disabled={!validDisplayInfo(file.display_info)} onClick={onEdit}>更正显示信息</Button>}</div>
     <dl className="grid grid-cols-2 gap-4 text-sm">{displayFields.map(([field, label]) => <div className="min-w-0" key={field}><dt className="text-xs text-muted-foreground">{label}</dt><dd className="mt-1 break-words">{values[field] || '—'}</dd></div>)}</dl>
-    {corrected && <Collapsible><CollapsibleTrigger asChild><Button variant="ghost" size="sm">查看原始识别信息</Button></CollapsibleTrigger><CollapsibleContent><section aria-label="原始识别信息" className="space-y-2 pt-2"><p className="text-xs text-muted-foreground">当次审核依据未改变，既有报告不会随显示更正更新。</p><dl className="grid grid-cols-2 gap-3 text-sm">{displayFields.map(([field, label]) => <div key={field}><dt className="text-xs text-muted-foreground">{label}</dt><dd className="break-words">{file.match?.metadata[field] || '—'}</dd></div>)}</dl></section></CollapsibleContent></Collapsible>}
+    {corrected && <Collapsible><CollapsibleTrigger asChild><Button variant="ghost" size="sm">查看原始识别信息</Button></CollapsibleTrigger><CollapsibleContent><section aria-label="原始识别信息" className="space-y-2 pt-2"><dl className="grid grid-cols-2 gap-3 text-sm">{displayFields.map(([field, label]) => <div key={field}><dt className="text-xs text-muted-foreground">{label}</dt><dd className="break-words">{file.match?.metadata[field] || '—'}</dd></div>)}</dl></section></CollapsibleContent></Collapsible>}
   </section>
 }
 

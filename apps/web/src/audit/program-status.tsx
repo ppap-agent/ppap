@@ -83,14 +83,12 @@ export function ProgramStatus({suiteKey, offered, onUpdate, related, extra, onCh
       title={inUse ? `第 ${active.version} 版 · ${active.verification_status === 'verified' ? '已验证' : '未验证'}` : '还没采用'}
       action={action}
     >
-      {!inUse && <p>采用后，之后的审核才会用它。</p>}
       {changed && <p>规则已改，检查程序还按上一版规则检查。</p>}
       {offer && <p className="flex flex-wrap items-center gap-2 text-foreground">{inUse ? '有新版本：' : '可以采用：'}第 {offer.version} 版<Badge shape="square" variant={verified ? 'success' : 'outline'}>{verified ? '已验证' : '未验证'}</Badge></p>}
       {offer && waiting.length > 0 && <div className="space-y-2"><p>这个版本依赖下面这些规则的检查程序，先采用它们：</p><div className="flex flex-wrap gap-2">{waiting.map(key => {
         const target = related?.(key)
         return target ? <Button key={key} variant="outline" size="sm" onClick={target.open}>{target.label}</Button> : <span key={key}>{key}</span>
       })}</div></div>}
-      {inUse && !offer && !changed && onUpdate && <p>判错了？在审核结果里标出正确答案。要改检查方式，点“更新检查程序”。</p>}
       {extra}
       {error && !confirming && <p role="alert" className="text-destructive">{error}</p>}
     </StatusCard>

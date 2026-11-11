@@ -49,7 +49,7 @@ export function TemplateList({templates, loading, failed, catalogKnown}: {templa
   // Before the read finishes only this browser's drafts are known; a partial list would look complete.
   if (loading) return <ReadSkeleton label="正在读取规则模板…" kind="list" rows={5}/>
   return <div className="space-y-6">
-    <p className="text-muted-foreground">审核文件时选用一个模板。每个模板按文件类型给出审核要求。</p>
+    
     <div role="search" className="flex items-center gap-2 max-w-md"><Search aria-hidden="true" className="size-4 shrink-0 text-muted-foreground"/><Input aria-label="搜索规则模板" type="search" placeholder="搜索模板或文件类型" maxLength={200} value={query} onChange={event => setQuery(event.target.value)}/></div>
     {(['system', 'enterprise'] as const).map(source => {
       const group = shown.filter(template => template.source === source)

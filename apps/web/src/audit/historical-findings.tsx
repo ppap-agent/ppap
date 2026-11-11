@@ -22,7 +22,7 @@ export function HistoricalFindings({findings, roundId, resultAttempt, versions, 
   const originalFor = (id: string) => frozenOriginal(originals, versions, id)
   const original = valid && selected ? originalFor(selected.version) : undefined
   if (!findings.length) return null
-  return <section aria-label={title} className="space-y-4 border-t pt-4"><h3 className="font-semibold">{title}</h3><p className="text-sm text-muted-foreground">这些记录来自旧版审核，没有对应到具体条款，不计入本次结果。</p><ItemGroup>{findings.map(row => {
+  return <section aria-label={title} className="space-y-4 border-t pt-4"><h3 className="font-semibold">{title}</h3><ItemGroup>{findings.map(row => {
     const version = row.locator?.file_version_id || fileVersionId || ''
     return <Item role="listitem" key={row.item_key}><ItemContent className="min-w-0">
       <ItemTitle wrap>{row.item || row.classification || '历史审核记录'}</ItemTitle><Badge variant={resultTone(row.status)}>原结论：{resultLabel[row.status]}</Badge>

@@ -51,7 +51,6 @@ export function RuleProgramCard({ruleVersionId, onPrepare}: {ruleVersionId: stri
   }
   if (working) return <StatusCard badge="生成中" title="正在生成检查程序">{working}</StatusCard>
   return <StatusCard badge="未生成" title="还不能用于审核" action={<Button onClick={() => onPrepare(false)}>生成检查程序</Button>}>
-    <p>生成检查程序后，审核时才能选这条规则。需要你逐条确认，并给一份示例文件。</p>
     {operation && (operation.state === 'failed' || operation.state === 'stopped') && <p className="text-foreground">上次生成没有完成：{generationFailure(operation)}</p>}
     {operation?.state === 'completed' && <p className="text-foreground">上次生成期间规则改过，没有启用。请重新生成。</p>}
   </StatusCard>
@@ -173,7 +172,7 @@ function CheckPoints({ruleVersionId, action, onStarted, onCancel, onAdopt}: {rul
     <header className="flex flex-wrap items-end justify-between gap-4 border-b pb-5">
       <div className="min-w-0 space-y-1.5">
         <StepTitle id="check-points-title" step={1} done={total > 0 && confirmed === total}>逐条确认</StepTitle>
-        <p className="text-muted-foreground">系统把每条规则整理成检查步骤。看一遍，没问题就确认。</p>
+        
       </div>
       {total > 0 && <div className="flex w-48 items-center gap-3 text-sm text-muted-foreground"><span className="shrink-0 tabular-nums">已确认 {confirmed} / {total}</span><Progress aria-label="已确认的条款" value={confirmed * 100 / total}/></div>}
     </header>
@@ -185,7 +184,7 @@ function CheckPoints({ruleVersionId, action, onStarted, onCancel, onAdopt}: {rul
     {total > 0 && <footer className="space-y-4 border-t pt-5 text-sm">
       <div className="space-y-2">
         <StepTitle step={2} done={Boolean(example)}>示例文件</StepTitle>
-        <p className="text-muted-foreground">选一份这类文件，用来试运行检查程序。不需要标答案。</p>
+        
         <input hidden ref={picker} type="file" aria-label="选择示例文件" onChange={event => {const file = event.target.files?.[0]; if (file) void upload(file); event.target.value = ''}}/>
         <div className="flex flex-wrap items-center gap-3"><Button variant="outline" disabled={uploading || starting} onClick={() => picker.current?.click()}>{uploading ? <Loader2 className="animate-spin motion-reduce:animate-none"/> : <FileUp/>}{example ? '换一份' : '选择文件'}</Button>{example && <span className="break-words">{example.name}</span>}</div>
       </div>
@@ -319,7 +318,6 @@ function ClauseCheckPoints({number, ruleVersionId, clauseId, prepare, onAdopt, o
   const suggestion = ((candidate?.assumptions ?? []) as {kind?: unknown; text?: unknown}[]).find(item => item?.kind === 'suggested_clause' && typeof item.text === 'string')?.text as string | undefined
   const clauseText = detail?.clause_text ?? ''
   const numberLabel = String(number).padStart(2, '0')
-  const consequence = review.length > 0 && <p className="text-xs text-muted-foreground">保持原文时，没说清的情形在审核时交给人判断。</p>
   if (confirmed && !reopened && !waiting && !error) return <article aria-label={`条款 ${clauseId}`} className="flex flex-wrap items-start gap-x-4 gap-y-2 rounded-lg border bg-muted/30 px-4 py-4 sm:px-5">
     <span aria-hidden="true" className="pt-0.5 text-xs tabular-nums text-muted-foreground">{numberLabel}</span>
     <div className="min-w-0 flex-1 space-y-1">
@@ -352,9 +350,9 @@ function ClauseCheckPoints({number, ruleVersionId, clauseId, prepare, onAdopt, o
       {review.length > 0 && <section className="space-y-3 rounded-md border border-warning/30 bg-warning/5 px-4 py-3">
         <h3 className="font-medium">原文有 {review.length} 处没说清</h3>
         <ul className="list-disc space-y-1.5 pl-5 text-sm">{review.map((item, index) => <li key={index} className="break-words">{item}</li>)}</ul>
-        {suggestion && <div className="space-y-1 border-t border-warning/20 pt-3 text-sm"><p className="text-muted-foreground">建议把这条改成（高亮为新增）</p><p className="whitespace-pre-wrap break-words">{insertions(clauseText, suggestion).map((part, index) => part.added ? <mark key={index} className="rounded-sm bg-success/15 px-0.5 text-foreground">{part.text}</mark> : <span key={index}>{part.text}</span>)}</p></div>}
+        {suggestion && <div className="space-y-1 border-t border-warning/20 pt-3 text-sm"><p className="text-muted-foreground">建议改成</p><p className="whitespace-pre-wrap break-words">{insertions(clauseText, suggestion).map((part, index) => part.added ? <mark key={index} className="rounded-sm bg-success/15 px-0.5 text-foreground">{part.text}</mark> : <span key={index}>{part.text}</span>)}</p></div>}
       </section>}
-      {incomplete && <p role="status" className="text-sm text-muted-foreground">这条还不完整。告诉系统哪里不对，再整理一次。</p>}
+      {incomplete && <p role="status" className="text-sm text-muted-foreground">这条还不完整。</p>}
       {(editing || incomplete) && <div className="grid gap-2">
         <label className="grid gap-1.5 text-sm">哪里写得不对？<Textarea className="min-h-20" maxLength={2000} value={selectedRevision} onChange={event => {setRevisionCandidate(candidate.id); setRevision(event.target.value)}}/></label>
         <div className="flex justify-end gap-2">{!incomplete && <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>取消</Button>}<Button variant="outline" size="sm" disabled={!selectedRevision.trim() || locked} onClick={() => void generate({based_on_candidate_id: candidate.id, user_instruction: selectedRevision.trim()})}>重新整理</Button></div>
@@ -367,7 +365,6 @@ function ClauseCheckPoints({number, ruleVersionId, clauseId, prepare, onAdopt, o
             {confirmed ? <Button variant="outline" onClick={() => setReopened(false)}>收起</Button> : <Button disabled={locked || incomplete || candidate.unresolved.length > 0} onClick={() => void confirm()}>{review.length ? '保持原文，确认' : '确认'}</Button>}
           </div>
         </div>
-        {!confirmed && consequence}
       </footer>
     </>}
     {question && !waiting && <fieldset className="space-y-3"><legend className="mb-3 font-medium">{question.reason}</legend>

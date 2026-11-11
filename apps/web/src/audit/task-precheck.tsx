@@ -114,7 +114,7 @@ export function TaskPrecheck({task, adapter, files: workingFiles = task.files, d
   }
   const groups = (['ready', 'process', 'confirm'] as const).map(action => ({action, files: files.filter(file => actionFor(file) === action)}))
   const content = <>
-    <div className="flex flex-wrap items-center justify-between gap-3"><div>{!task.round_id && <h2 className="font-semibold">资料准备与免费预检</h2>}<p className="mt-1 text-sm text-muted-foreground">预检不扣点。正式审核按待审文件计费；比对资料不单独收费。</p></div>{snapshot && <Badge variant={snapshot.status === 'succeeded' ? 'success' : snapshot.status === 'failed' || snapshot.status === 'unknown' ? 'warning' : 'outline'}>{statusLabels[snapshot.status]}</Badge>}</div>
+    <div className="flex flex-wrap items-center justify-between gap-3"><div>{!task.round_id && <h2 className="font-semibold">资料准备与免费预检</h2>}</div>{snapshot && <Badge variant={snapshot.status === 'succeeded' ? 'success' : snapshot.status === 'failed' || snapshot.status === 'unknown' ? 'warning' : 'outline'}>{statusLabels[snapshot.status]}</Badge>}</div>
     {pendingId && <p role="status" className="text-sm">有预检请求待确认，请点“刷新预检结果”，不会重复提交。</p>}
     {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
     {dirty && <p className="text-sm">资料或用途已改变，请重新识别；旧记录不代表本次资料。</p>}
