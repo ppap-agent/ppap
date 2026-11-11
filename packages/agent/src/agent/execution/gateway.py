@@ -26,7 +26,7 @@ from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 from audit.checker_core import MODEL_IDENTITY_KEYS
-from documents.model_access import ModelAccess, ModelPurpose, ModelUnavailable
+from documents.model_access import ModelAccess, ModelPurpose, ModelUnavailable, streams_only
 
 from agent.execution.budget import DEEP_TOTAL_SECONDS
 from agent.execution.secure_files import reject_constant, unique_object
@@ -374,6 +374,12 @@ class Handler(BaseHTTPRequestHandler):
                 provider_key = selected_key() if callable(selected_key) else selected_key
             if not provider_key or not self.server.grants.active(lease):
                 raise ModelUnavailable()
+            # A guest cannot know that its model answers only as a stream. Stream upstream and
+            # return the completed response object, as a non-streaming request expects.
+            collapse = streams_only(url.geturl()) and not body.get("stream")
+            if collapse:
+                body["stream"] = True
+            completed_response: Any = None
             phase = "provider_request"
             # The 3.12 typeshed types this port as str. Runtime still needs an int.
             upstream = http.client.HTTPSConnection(str(url.hostname), port=cast(Any, url.port or 443), timeout=min(300, max(1, lease.expires - time.monotonic())))
@@ -398,7 +404,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             phase = "client_headers"
             self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream" if body.get("stream") else "application/json")
+            self.send_header("Content-Type", "text/event-stream" if body.get("stream") and not collapse else "application/json")
             self.send_header("Transfer-Encoding", "chunked")
             self.send_header("Connection", "close")
             self.end_headers()
@@ -437,8 +443,9 @@ class Handler(BaseHTTPRequestHandler):
                         kind = event.get("type") if isinstance(event, dict) else None
                         last_event = kind if kind in {"response.created", "response.in_progress", "response.completed", "response.failed", "response.incomplete", "error"} else "other"
                         if kind in {"response.completed", "response.incomplete", "response.failed"}:
-                            provider_usage = (event.get("response") or {}).get("usage")
-                if client_connected:
+                            completed_response = event.get("response")
+                            provider_usage = (completed_response or {}).get("usage")
+                if client_connected and not collapse:
                     try:
                         self.wfile.write(f"{len(chunk):x}\r\n".encode() + chunk + b"\r\n")
                         self.wfile.flush()
@@ -454,6 +461,12 @@ class Handler(BaseHTTPRequestHandler):
                     provider_usage = json.loads(pending).get("usage")
                 except (ValueError, AttributeError):
                     provider_usage = None
+            if collapse:
+                if not isinstance(completed_response, dict):
+                    raise ValueError("Incomplete provider stream")
+                answer = json.dumps(completed_response).encode()
+                if client_connected:
+                    self.wfile.write(f"{len(answer):x}\r\n".encode() + answer + b"\r\n")
             self.server.grants.record_usage(lease, provider_usage)
             settled = True
             if client_connected:

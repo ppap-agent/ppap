@@ -177,3 +177,38 @@ def test_bound_grant_sends_each_use_to_its_frozen_model_with_deployment_options(
     assert coding[0] == "/v1/responses" and coding[2] == "Bearer coding-key"
     assert coding[1]["model"] == "coding-m" and coding[1]["reasoning"] == {"effort": "medium"}
     assert token not in json.dumps([vision, coding])
+
+
+def test_a_stream_only_model_answers_a_non_streaming_guest_request_with_the_completed_response():
+    from documents.model_access import ModelAccess
+    from pydantic import SecretStr
+
+    identity = {"source": "platform", "provider": "responses-compatible", "model": "m", "vision_model": "m", "coding_model": "m", "revision": "r" * 64, "deployment": "d" * 64}
+    access = ModelAccess(api_key=SecretStr("coding-key"), model="m", base_url="https://models.example.test/backend-api/codex")
+    completed = {"id": "r", "object": "response", "status": "completed", "output": [], "usage": {"input_tokens": 3, "output_tokens": 2}}
+    stream = b'data: {"type":"response.created","response":{"id":"r"}}\n\n' + b"data: " + json.dumps({"type": "response.completed", "response": completed}).encode() + b"\n\n"
+    with patch("agent.execution.gateway.http.client.HTTPSConnection") as upstream:
+        upstream.return_value.getresponse.return_value = type("R", (), {"status": 200, "read1": BytesIO(stream).read1})()
+        grants = Grants("unconfigured", require_binding=True)
+        server = Gateway(("127.0.0.1", 0), grants, "https://unconfigured.invalid", lambda: "")
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            execution = uuid4()
+            with grants.bind(execution, identity, lambda purpose: access):
+                token = grants.issue(execution)
+            client = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=2)
+            try:
+                client.request("POST", "/v1/responses", json.dumps({"input": "x", "model": "m"}), {"Authorization": "Bearer " + token})
+                response = client.getresponse()
+                assert response.status == 200 and response.getheader("Content-Type") == "application/json"
+                assert json.loads(response.read()) == completed
+            finally:
+                client.close()
+            assert grants.usage(execution)["input_tokens"] == 3
+        finally:
+            server.shutdown()
+            thread.join()
+            server.server_close()
+    sent = json.loads(upstream.return_value.request.call_args.args[2])
+    assert sent["stream"] is True and upstream.return_value.request.call_args.args[1] == "/backend-api/codex/responses"

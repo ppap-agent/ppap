@@ -17,6 +17,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import SecretStr
 
@@ -73,6 +74,11 @@ class ModelAccess:
             "revision": revision,
             "deployment": hashlib.sha256(self.base_url.encode()).hexdigest(),
         }
+
+
+def streams_only(base_url: str) -> bool:
+    """The Codex Responses endpoint answers only as a stream and rejects sampling options."""
+    return urlsplit(base_url).path.rstrip("/").endswith("/backend-api/codex")
 
 
 ModelResolver = Callable[[ModelPurpose], ModelAccess]

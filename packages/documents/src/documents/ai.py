@@ -16,7 +16,6 @@ from contextlib import contextmanager
 from contextvars import ContextVar, copy_context
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlsplit
 
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
 
@@ -27,7 +26,7 @@ from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior  # no
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings  # noqa: E402
 from pydantic_ai.providers.openai import OpenAIProvider  # noqa: E402
 
-from documents.model_access import ModelAccess, ModelPurpose, ModelUnavailable, current_model_access  # noqa: E402
+from documents.model_access import ModelAccess, ModelPurpose, ModelUnavailable, current_model_access, streams_only  # noqa: E402
 
 # One correction of an unparsable answer; an operation never loops on the model.
 OUTPUT_RETRIES = 1
@@ -70,8 +69,7 @@ def usage_observer(callback: Callable[[str, AIResult | None, float], None]) -> I
 
 
 def _streams(access: ModelAccess) -> bool:
-    # The Codex Responses endpoint only answers as a stream and rejects sampling options.
-    return urlsplit(access.base_url).path.rstrip("/").endswith("/backend-api/codex")
+    return streams_only(access.base_url)
 
 
 def _model(access: ModelAccess, timeout: float) -> OpenAIResponsesModel:
