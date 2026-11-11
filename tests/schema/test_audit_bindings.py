@@ -1903,6 +1903,10 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertIn(verification["suite_revision_id"], verification["notice"])
         pdf_job = worker.claim_job("qualified-pdf")
         self.assertEqual(pdf_job.payload["report_input"]["audit"]["checker_verification"], verification)
+        # The cover uses the accepted recognition, not a later display correction.
+        recognized = self.display_client.get(path).json()["files"][0]["match"]["metadata"]
+        self.assertEqual(pdf_job.payload["report_input"]["recognition"], {key: recognized.get(key) for key in ("customer", "model", "project", "part_number", "part")})
+        self.assertTrue(pdf_job.payload["report_input"]["audited_at"])
         process_claimed(worker, pdf_job, "qualified-pdf")
         finished = self.display_client.get(path).json()
         final_audit = finished["files"][0]["audit"]

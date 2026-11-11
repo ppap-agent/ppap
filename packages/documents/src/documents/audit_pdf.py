@@ -1,7 +1,9 @@
 """Render an already accepted, frozen per-file machine result as a PDF."""
 
+from datetime import datetime
 from html import escape
 from io import BytesIO
+from zoneinfo import ZoneInfo
 
 import pymupdf
 
@@ -45,26 +47,98 @@ def _location(locator: dict) -> str:
     raise ValueError("report_locator_unavailable")
 
 
-def render_audit_pdf(source: dict) -> bytes:
-    """No model calls, current document reads, human reviews or display edits."""
+# Cover: recognized fields first, then fields the reader completes after download.
+COVER_FIELDS = (("customer", "客户名称"), ("project", "项目名称"), ("model", "车型"), ("part_number", "零件号"), ("part", "零件名称"))
+READER_FIELDS = ("供应商名称", "PPAP 版本", "SQE 工程师")
+# A long table repeats its header only by starting a new chunk; rows are short.
+TABLE_ROWS = 20
+PAGE = pymupdf.Rect(0, 0, 595, 842)
+# A4 portrait, single column: 20 mm top/bottom and 18 mm left/right margins.
+BODY = pymupdf.Rect(51, 57, 544, 785)
+# MuPDF maps sans-serif to Nimbus Sans, which shapes ff/fi/fl into compatibility
+# ligatures (U+FB00 and neighbors); its CJK font does the same and CSS cannot turn
+# that off. Monospace keeps those letters as ASCII, so a copied or extracted frozen
+# identity stays the original string. Chinese text uses MuPDF's embedded CJK fallback.
+CSS = (
+    "body {font-family:monospace; font-size:10.5pt; line-height:1.6} h1 {font-size:20pt} h2 {font-size:14pt} "
+    "h3 {font-size:11pt} p {white-space:pre-wrap} .meta {font-size:9pt; color:#555} "
+    "table {border-collapse:collapse; width:100%} th, td {border:0.5pt solid #888; padding:2pt 4pt; font-size:9pt; line-height:1.4; text-align:left; vertical-align:top} "
+    "th {background-color:#eee} .ng {font-weight:bold; background-color:#ddd}"
+)
+
+
+def _first_location(source: dict, check: dict) -> str:
+    for evidence in check["evidence"]:
+        if evidence.get("locator"):
+            return f"{source['originals'][evidence['file_version_id']]} · {_location(evidence['locator'])}"
+    return "未提供具体位置"
+
+
+def _supply(check: dict) -> dict | None:
+    supply = (((check["finding"] or {}).get("locator") or {}).get("semantic") or {}).get("supply")
+    return supply if isinstance(supply, dict) and supply.get("kind") in {"missing", "source_mismatch"} else None
+
+
+def _cover(source: dict, audited_on: str) -> str:
+    audit, recognition = source["audit"], source.get("recognition") or {}
+    counts = audit["counts"]
+    rows = [(label, recognition.get(key) or "—") for key, label in COVER_FIELDS]
+    rows += [("审核规则", audit["rule"]["title"]), ("检查日期", audited_on)]
+    rows += [(label, "") for label in READER_FIELDS]
+    table = "".join(f"<tr><th>{_text(label)}</th><td>{_text(value)}</td></tr>" for label, value in rows)
+    return "".join(
+        [
+            "<h1>PPAP 审核报告</h1>",
+            f"<h2>{_text(source['filename'])}</h2>",
+            f"<p>审核结论：<b>{_text(CONCLUSION.get(audit['conclusion'], audit['conclusion']))}</b></p>",
+            f"<p>共 {len(audit['checks'])} 项：符合 {counts['pass_count']} 项，不符合 {counts['ng_count']} 项，不适用 {counts.get('na_count', 0)} 项。</p>",
+            *([f"<p><b>{_verification_notice(audit['checker_verification'])}</b></p>"] if audit.get("checker_verification") else []),
+            f"<table>{table}</table>",
+            "<p class='meta'>供应商名称、PPAP 版本与 SQE 工程师请下载后自行补充。</p>",
+        ]
+    )
+
+
+def _overview(source: dict) -> str:
     audit = source["audit"]
+    counts = audit["counts"]
+    supplies = [supply for check in audit["checks"] if (supply := _supply(check))]
     parts = [
-        '<html lang="zh"><body><h1>PPAP 审核报告</h1>',
-        f"<h2>{_text(source['filename'])}</h2>",
-        f"<p>审核规则：{_text(audit['rule']['title'])}</p>",
+        "<h1>1 检查概览</h1>",
         f"<p>审核结论：<b>{_text(CONCLUSION.get(audit['conclusion'], audit['conclusion']))}</b></p>",
-        *([f"<p><b>{_verification_notice(audit['checker_verification'])}</b></p>"] if audit.get("checker_verification") else []),
-        f"<p>共 {len(audit['checks'])} 项：符合 {audit['counts']['pass_count']} 项，不符合 {audit['counts']['ng_count']} 项，不适用 {audit['counts'].get('na_count', 0)} 项。</p>",
-        *(["<p class='meta'>部分判定的证据未经验证，请核对原件中的证据和检查范围。</p>"] if any(check.get("finding") and not check.get("evidence_verified") for check in audit["checks"]) else []),
-        f"<p class='meta'>生成时间：{_text(source['generated_at'])}</p>",
+        "<table><tr><th>检查项</th><th>符合</th><th>不符合</th><th>不适用</th></tr>",
+        f"<tr><td>{len(audit['checks'])}</td><td>{counts['pass_count']}</td><td>{counts['ng_count']}</td><td>{counts.get('na_count', 0)}</td></tr></table>",
     ]
-    for check in audit["checks"]:
+    scopes = [check["scope"] for check in audit["checks"] if check.get("scope")]
+    if scopes:
+        parts.append(f"<p>检查范围：已查 {sum(scope['checked'] for scope in scopes)}/{sum(scope['total'] for scope in scopes)}，未知 {sum(scope['unknown'] for scope in scopes)}。</p>")
+    if any(check.get("finding") and not check.get("evidence_verified") for check in audit["checks"]):
+        parts.append("<p class='meta'>部分判定的证据未经验证，请核对原件中的证据和检查范围。</p>")
+    parts.append(f"<p>需补交或换交的关联文件：{len(supplies)} 份。</p>" if supplies else "<p>本次没有需补交或换交的关联文件。</p>")
+    return "".join(parts)
+
+
+def _detail_tables(source: dict) -> list[str]:
+    checks = source["audit"]["checks"]
+    rows = [
+        f"<tr class='{'ng' if check['finding']['status'] == 'NG' else ''}'><td>{number}</td><td>{_text(check['rule_item']['id'])} · {_text(check['rule_item']['category'])}</td>"
+        f"<td>{_text(STATUS.get(check['finding']['status'], check['finding']['status']))}</td><td>{_text(_first_location(source, check))}</td></tr>"
+        for number, check in enumerate(checks, 1)
+    ]
+    head = "<tr><th>序号</th><th>审核项</th><th>结果</th><th>位置</th></tr>"
+    chunks = [rows[index : index + TABLE_ROWS] for index in range(0, len(rows), TABLE_ROWS)] or [[]]
+    return [("<h1>2 问题详情</h1><h3>检查结果一览</h3>" if index == 0 else "<h3>检查结果一览（续表）</h3>") + f"<table>{head}{''.join(chunk)}</table>" for index, chunk in enumerate(chunks)]
+
+
+def _details(source: dict) -> str:
+    parts = ["<h3>逐项判定依据</h3>"]
+    for number, check in enumerate(source["audit"]["checks"], 1):
         rule, finding = check["rule_item"], check["finding"]
         parts.extend(
             [
-                f"<hr><h2>{_text(rule['id'])} · {_text(rule['category'])} - {_text(STATUS.get(finding['status'], finding['status']))}</h2>",
-                f"<h3>审核规则</h3><p>{_text(rule['rule_to_check'])}</p>",
-                f"<h3>判定说明</h3><p>{_text(finding.get('suggestions') or finding.get('classification'))}</p>",
+                f"<hr><h3>{number}. {_text(rule['id'])} · {_text(rule['category'])} - {_text(STATUS.get(finding['status'], finding['status']))}</h3>",
+                f"<p><b>审核规则</b>　{_text(rule['rule_to_check'])}</p>",
+                f"<p><b>判定说明</b>　{_text(finding.get('suggestions') or finding.get('classification'))}</p>",
             ]
         )
         scope = check.get("scope")
@@ -72,7 +146,7 @@ def render_audit_pdf(source: dict) -> bytes:
             parts.append(f"<p class='meta'>检查范围：已查 {scope['checked']}/{scope['total']}，未知 {scope['unknown']}。</p>")
         if check.get("scope_notice"):
             parts.append(f"<p class='meta'>{_text(check['scope_notice'])}</p>")
-        parts.append("<h3>来源证据</h3>")
+        parts.append("<p><b>来源证据</b></p>")
         if not check["evidence"]:
             parts.append("<p class='meta'>未提供原件定位与摘录。</p>")
         for evidence in check["evidence"]:
@@ -81,37 +155,98 @@ def render_audit_pdf(source: dict) -> bytes:
             location = _location(locator) if locator else evidence.get("location_gap") or "未提供具体位置。"
             excerpt = evidence.get("excerpt") or ("该位置内容为空。" if locator else "未提供摘录。")
             parts.append(f"<p>{_text(name)} · {_text(location)}</p><p>{_text(excerpt)}</p>")
-    parts.append("<hr><p class='meta'>本报告记录所选文件版本和冻结要求的机器审核结果，不表示正式量产批准。</p></body></html>")
-    html = "".join(parts)
-    if len(html) > 4_000_000:
+    return "".join(parts)
+
+
+def _remediation(source: dict) -> str:
+    """Only frozen checker findings: no rewritten advice, no model call."""
+    failed = [(number, check) for number, check in enumerate(source["audit"]["checks"], 1) if check["finding"]["status"] == "NG"]
+    if not failed:
+        return "<h1>3 整改建议</h1><p>本次未发现问题项，无需整改。</p>"
+    groups: dict[str, list] = {}
+    for number, check in failed:
+        groups.setdefault(_first_location(source, check), []).append((number, check))
+    parts = ["<h1>3 整改建议</h1><p>以下按检查项顺序列出不符合项；同一位置的多项合并为一条。</p>"]
+    marks = "①②③④⑤⑥⑦⑧⑨⑩"
+    for index, (location, items) in enumerate(groups.items(), 1):
+        parts.append(f"<h3>{index}. 位置：{_text(location)}</h3>")
+        for position, (number, check) in enumerate(items):
+            mark = marks[position] if len(items) > 1 and position < len(marks) else ""
+            rule = check["rule_item"]
+            parts.append(f"<p>{mark}【{_text(rule['category'])}】{_text(check['finding'].get('suggestions'))}</p>")
+            parts.append(f"<p class='meta'>依据：第 {number} 项 · 检查项 {_text(rule['id'])}</p>")
+    supplies = [supply for _number, check in failed if (supply := _supply(check)) and supply["kind"] == "missing"]
+    if supplies:
+        parts.append("<h3>需补交文件清单</h3>")
+        for supply in supplies:
+            part = f"（零件号 {supply['part_number']}）" if supply.get("part_number") else ""
+            parts.append(f"<p>补交：{_text(supply['document'])}{_text(part)}</p>")
+    return "".join(parts)
+
+
+def _appendix(source: dict) -> str:
+    audit = source["audit"]
+    files = "".join(f"<tr><td>{_text(name)}</td><td>{'本报告被审文件' if version == audit['file_version_id'] else '同轮文件'}</td></tr>" for version, name in source["originals"].items())
+    return "".join(
+        [
+            "<h1>4 附录</h1><h3>受检文件集</h3>",
+            f"<table><tr><th>文件</th><th>角色</th></tr>{files}</table>",
+            f"<h3>审核规则</h3><p>{_text(audit['rule']['title'])}</p>",
+            *([f"<h3>检查版本</h3><p>{_verification_notice(audit['checker_verification'])}</p>"] if audit.get("checker_verification") else []),
+            f"<p class='meta'>生成时间：{_text(source['generated_at'])}</p>",
+            "<p class='meta'>本报告记录所选文件版本和冻结要求的机器审核结果，不表示正式量产批准。</p>",
+        ]
+    )
+
+
+def _audited_on(source: dict) -> str:
+    moment = datetime.fromisoformat(source.get("audited_at") or source["generated_at"])
+    return moment.astimezone(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d")
+
+
+def render_audit_pdf(source: dict) -> bytes:
+    """No model calls, current document reads, human reviews or display edits."""
+    audit = source["audit"]
+    audited_on = _audited_on(source)
+    # Each section starts a new page. MuPDF loops on CSS page breaks, so every
+    # section is a separate story.
+    sections = [_cover(source, audited_on), _overview(source), *_detail_tables(source), _details(source), _remediation(source), _appendix(source)]
+    if sum(len(section) for section in sections) > 4_000_000:
         raise ValueError("report_content_too_large")
-    # MuPDF maps sans-serif to Nimbus Sans, which shapes ff/fi/fl into compatibility
-    # ligatures (U+FB00 and neighbors). Monospace keeps those letters as ASCII, so a
-    # copied or extracted frozen identity stays the original string.
-    # Known tradeoff: the whole audit-report body uses monospace, so Latin width,
-    # wrapping, and pagination can change. This is not an identity-only style.
-    # render_fact_confirmation_pdf stays on sans-serif and is outside this fix.
-    css = "body {font-family:monospace; font-size:10.5pt; line-height:1.6} h1 {font-size:20pt} h2 {font-size:13pt} "
-    css += "h3 {font-size:11pt} p {white-space:pre-wrap} .meta {font-size:9pt; color:#555}"
-    story = pymupdf.Story(html=html, user_css=css)
     output = BytesIO()
+    pages = 0
     with pymupdf.DocumentWriter(output) as writer:
-
-        def page_rect(number, filled):
-            if number >= 500:
-                raise ValueError("report_page_limit")
-            return pymupdf.Rect(0, 0, 595, 842), pymupdf.Rect(42, 42, 553, 786), None
-
-        story.write(writer, page_rect)
+        for section in sections:
+            story = pymupdf.Story(html=f'<html lang="zh"><body>{section}</body></html>', user_css=CSS)
+            more = 1
+            while more:
+                if pages >= 500:
+                    raise ValueError("report_page_limit")
+                device = writer.begin_page(PAGE)
+                more, _filled = story.place(BODY)
+                story.draw(device)
+                writer.end_page()
+                pages += 1
+    title = source["filename"] + "-审核报告"
     with pymupdf.open(stream=output.getvalue(), filetype="pdf") as document:
         document.set_metadata(
             {
-                "title": source["filename"] + "-审核报告",
+                "title": title,
                 "subject": f"round={audit['round_id']};file_version={audit['file_version_id']};result_attempt={audit['result_attempt']};rule_version={audit['rule']['id']}",
             }
         )
+        # The cover has no header or footer; page numbers start on the first body page.
+        # Same fonts as the body, so the header keeps ASCII identities unshaped.
+        margin = "body {font-family:monospace; font-size:8pt; color:#666} p {margin:0}"
+        header = _text(title if len(title) <= 50 else title[:49] + "…")
         for index, page in enumerate(document):
-            page.insert_text((275, 814), f"{index + 1} / {len(document)}", fontsize=9, color=(0.4, 0.4, 0.4))
+            if index == 0:
+                continue
+            page.insert_htmlbox(pymupdf.Rect(51, 30, 400, 50), f"<p>{header}</p>", css=margin)
+            page.insert_htmlbox(pymupdf.Rect(400, 30, 544, 50), "<p style='text-align:right'>PPAP 审核报告</p>", css=margin)
+            page.draw_line((51, 48), (544, 48), color=(0.6, 0.6, 0.6), width=0.5)
+            page.insert_htmlbox(pymupdf.Rect(51, 800, 300, 820), f"<p>{audited_on}</p>", css=margin)
+            page.insert_htmlbox(pymupdf.Rect(300, 800, 544, 820), f"<p style='text-align:right'>第 {index} / {len(document) - 1} 页</p>", css=margin)
         document.subset_fonts()
         return document.tobytes(garbage=4, deflate=True)
 

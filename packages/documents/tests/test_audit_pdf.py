@@ -1,5 +1,6 @@
 """PDF bytes are derived from one frozen machine result, not another audit."""
 
+import re
 from copy import deepcopy
 from uuid import UUID
 
@@ -252,3 +253,67 @@ def test_absent_or_nonmatching_suite_revision_id_is_not_rewritten():
     with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
         copied = "".join(page.get_text() for page in document)
         assert "A & B" in copied and "amp" not in copied
+
+
+def _pages(document) -> list[str]:
+    return ["".join(page.get_text().split()) for page in document]
+
+
+def test_report_has_cover_and_four_sections_each_starting_a_page_with_frozen_recognition():
+    source = report_source()
+    source["recognition"] = {"customer": "联合汽车电子", "project": "项目A", "model": "M1", "part_number": "F01RD0Y776", "part": None}
+    source["audited_at"] = "2026-11-10T17:30:00+00:00"
+    with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
+        pages = _pages(document)
+        cover = pages[0]
+        for text in ("客户名称联合汽车电子", "项目名称项目A", "车型M1", "零件号F01RD0Y776", "零件名称—", "检查日期2026-11-11", "供应商名称", "PPAP版本", "SQE工程师"):
+            assert text in cover, text
+        assert "请下载后自行补充" in cover
+        # The cover has no running header or page number.
+        assert cover.count("PPAP审核报告") == 1 and not re.search(r"第\d+/\d+页", cover)
+        starts = [next(index for index, page in enumerate(pages) if page.startswith(heading)) for heading in ("1检查概览", "2问题详情", "3整改建议", "4附录")]
+        assert starts == sorted(starts) and starts[0] == 1
+        for number, page in enumerate(pages[1:], 1):
+            assert page.endswith(f"尺寸检验报告.xlsx-审核报告PPAP审核报告2026-11-11第{number}/{len(pages) - 1}页"), page
+
+
+def test_every_check_is_listed_and_remediation_holds_only_failed_items_merged_by_location():
+    source = report_source()
+    base = source["audit"]["checks"][0]
+    checks = []
+    for number in range(1, 46):
+        check = deepcopy(base)
+        check["rule_item"].update(id=f"R{number}", category=f"类别{number}")
+        check["finding"] = {"status": "NG", "suggestions": f"第{number}项缺值。"} if number in {3, 7} else {"status": "PASS", "suggestions": "已核实。"}
+        checks.append(check)
+    missing = deepcopy(base)
+    missing["rule_item"].update(id="R46", category="图纸")
+    missing["evidence"] = []
+    missing["finding"] = {"status": "NG", "suggestions": "缺少图纸。", "locator": {"semantic": {"supply": {"kind": "missing", "document": "图纸", "part_number": "P1"}}}}
+    source["audit"]["checks"] = [*checks, missing]
+    source["audit"]["counts"] = {"pass_count": 43, "ng_count": 3}
+    with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
+        pages = _pages(document)
+        text = "".join(pages)
+        for number in range(1, 47):
+            assert f"R{number}·" in text
+        assert sum("检查结果一览" in page for page in pages) == 3
+        assert sum("（续表）" in page for page in pages) == 2
+        remediation = text[text.index("3整改建议") : text.index("4附录")]
+        assert "①【类别3】第3项缺值。" in remediation and "②【类别7】第7项缺值。" in remediation
+        assert "已核实" not in remediation
+        assert "补交：图纸（零件号P1）" in remediation
+        assert "需补交或换交的关联文件：1份" in text
+
+
+def test_all_pass_report_says_no_remediation_and_no_supply():
+    source = report_source()
+    audit = source["audit"]
+    audit["conclusion"] = "PASS"
+    audit["counts"] = {"pass_count": 1, "ng_count": 0}
+    audit["checks"][0]["finding"] = {"status": "PASS", "suggestions": "已核实。"}
+    with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
+        text = "".join(_pages(document))
+        assert "本次未发现问题项，无需整改。" in text
+        assert "本次没有需补交或换交的关联文件。" in text
+        assert "客户名称—" in text

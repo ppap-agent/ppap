@@ -4097,6 +4097,8 @@ class AuthStore:
             **_executor_public(claimed.payload),
         }
         originals = {str(row[0]): row[5] for row in rows}
+        recognition = self._frozen_recognition(conn, str(head[0]))
+        audited_at = conn.execute("SELECT now()").fetchone()[0].isoformat()
         for frozen in inputs:
             if frozen["role"] != "target" or not frozen["rule"]:
                 continue
@@ -4114,13 +4116,35 @@ class AuthStore:
                 "source_round_id": claimed.round_id,
                 "source_file_version_id": frozen["file_version_id"],
                 "result_attempt": claimed.attempt,
-                "report_input": {"filename": originals[frozen["file_version_id"]], "originals": originals, "audit": audit},
+                "report_input": {
+                    "filename": originals[frozen["file_version_id"]],
+                    "originals": originals,
+                    "audit": audit,
+                    # Frozen recognition, never later display corrections.
+                    "recognition": recognition.get(frozen["file_version_id"], dict.fromkeys(DISPLAY_FIELDS)),
+                    "audited_at": audited_at,
+                },
             }
             conn.execute(
                 """INSERT INTO engine.jobs (id, tenant_id, audit_round_id, kind, payload, status)
                 VALUES (%s, %s, %s, 'report_pdf', %s, 'queued') ON CONFLICT DO NOTHING""",
                 (uuid.uuid4(), claimed.tenant_id, claimed.round_id, Jsonb(payload)),
             )
+
+    def _frozen_recognition(self, conn, task_id: str) -> dict[str, dict]:
+        """Recognized file information of the accepted Task; corrections are separate."""
+        draft = conn.execute("SELECT input_revision FROM product.audit_drafts WHERE id = %s", (task_id,)).fetchone()
+        rows = conn.execute(
+            """SELECT i.file_version_id, j.status, j.payload, j.result FROM product.draft_items i
+            LEFT JOIN engine.jobs j ON j.id = i.analysis_job_id WHERE i.draft_id = %s""",
+            (task_id,),
+        ).fetchall()
+        recognized = {}
+        for version_id, status, payload, result in rows:
+            if draft and status in {"succeeded", "failed", "cancelled"} and self._analysis_snapshot_bound(payload or {}, result or {}, task_id, draft[0], str(version_id)):
+                metadata = (result or {}).get("metadata") or {}
+                recognized[str(version_id)] = {key: metadata.get(key) for key in DISPLAY_FIELDS}
+        return recognized
 
     def _task_file_reports(self, conn, tenant_id, task_id, round_id, result_attempt) -> tuple[dict, datetime | None]:
         rows = conn.execute(
