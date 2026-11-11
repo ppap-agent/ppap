@@ -253,18 +253,18 @@ def test_customer_intake_to_original_issue_and_frozen_precheck_export(running_pr
             expect(snapshot_region.get_by_role("list", name="预检历史", exact=True)).to_be_visible()
             snapshot_region.get_by_role("button", name=re.compile("^资料第 1 版")).click()
             page.get_by_role("button", name="开始审核", exact=True).click()
-            issue = "尚有未确定项" if customer == "理想" else "不符合"
+            issue = "不符合"
             result_file = page.get_by_role("button", name=re.compile(rf"^特殊特性清单\.xlsx {issue}"))
             expect(result_file).to_be_visible(timeout=30000)
             # After the audit starts the precheck stays reachable behind its record button.
             expect(page.get_by_role("region", name="免费内容预检", exact=True)).to_have_count(0)
             expect(page.get_by_role("button", name="预检记录", exact=True)).to_be_visible()
             result_file.click()
-            page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name=re.compile("^无法判断" if customer == "理想" else "^不符合")).click()
+            page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name=re.compile("^不符合")).click()
             page.get_by_role("button", name=re.compile("^查看依据 ")).first.click()
             expect(page.get_by_role("article", name="条款判定依据", exact=True)).to_be_visible()
-            # A directory clause with no located evidence opens the original directly.
-            if customer == "理想":
+            # The 蔚来 reader reports this finding without a cell locator; its original opens directly.
+            if customer == "蔚来":
                 page.get_by_role("dialog").get_by_role("button", name="打开原件", exact=True).click()
             else:
                 page.get_by_role("button", name="核对 特殊特性清单.xlsx", exact=True).first.click()
@@ -276,18 +276,12 @@ def test_customer_intake_to_original_issue_and_frozen_precheck_export(running_pr
             assert original_response.status == 200
             assert original_response.body() == source_bytes
             page.keyboard.press("Escape")
-            if customer == "理想":
-                # Every clause is unverified, so the product does not build a complete report.
-                expect(page.get_by_text("不生成完整报告", exact=False)).to_be_visible()
             page.get_by_role("button", name="报告中心", exact=True).click()
             report_download = page.get_by_role("button", name="下载当前报告", exact=True)
-            if customer == "理想":
-                expect(report_download).to_be_disabled()
-            else:
-                expect(report_download).to_be_enabled(timeout=30000)
-                with page.expect_download() as report_file:
-                    report_download.click()
-                assert Path(report_file.value.path()).read_bytes().startswith(b"%PDF")
+            expect(report_download).to_be_enabled(timeout=30000)
+            with page.expect_download() as report_file:
+                report_download.click()
+            assert Path(report_file.value.path()).read_bytes().startswith(b"%PDF")
             page.reload()
             expect(page.get_by_role("region", name="逐文件审核报告", exact=True)).to_be_visible()
             if customer == "UAES":

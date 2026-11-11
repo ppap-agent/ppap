@@ -57,7 +57,7 @@ RULES = {
     "kind": "engine",
     "type": "控制计划",
     "rule_profile": "v3",
-    "suite_key": "browser:threshold",
+    "suite_key": "custom:browser-threshold",
     "customers": ["测试客户"],
     "models": [],
     "parts": [],
@@ -217,12 +217,19 @@ def workspace_product(auth_store_factory, tmp_path, request, monkeypatch):
     suites = SuiteStore(settings, objects, role="migrator")
     rules = {**RULES, "rules": [{**RULES["rules"][0], "id": f"R{index}"} for index in range(1, getattr(request, "param", 1) + 1)]}
     rules["checker_binding"] = {row["id"]: "checker:create_audit" for row in rules["rules"]}
-    base = suites.create_revision(tenant_id=None, suite_key=RULES["suite_key"], files={"rules.json": json.dumps(rules).encode(), "checker.py": BASELINE.encode()}, created_by=None)
+    # An uploaded rule's program is the tenant's own custom Suite.
+    base = suites.create_revision(tenant_id=alice.tenant_id, suite_key=RULES["suite_key"], files={"rules.json": json.dumps(rules).encode(), "checker.py": BASELINE.encode()}, created_by=alice.user_id)
     releases = SuiteReleaseStore(settings, objects, role="api")
     releases.publish(alice, RULES["suite_key"], base.id, 0, str(uuid4()), force_unverified=True)
     rule_id = str(uuid4())
+    # An uploaded rule keeps its source file; the rule library lists it by that file.
+    staged = admin.create_staging(alice, "阈值规则.json", "application/json", 2)
+    source = admin.finalize_version(admin.put_blob(staged, b"{}"))
     with admin._conn() as conn:
-        conn.execute("INSERT INTO product.rule_versions(id,tenant_id,title,body) VALUES (%s,%s,'阈值检查',%s)", (rule_id, alice.tenant_id, Jsonb({**rules, "suite_revision_id": base.id})))
+        conn.execute(
+            "INSERT INTO product.rule_versions(id,tenant_id,title,body,source_file_version_id) VALUES (%s,%s,'阈值检查',%s,%s)",
+            (rule_id, alice.tenant_id, Jsonb({**rules, "suite_revision_id": base.id}), source.id),
+        )
     api = build_product_store(settings, objects=objects, role="api")
     worker = build_product_store(settings, objects=objects, role="worker")
     worker_suites = SuiteStore(settings, objects, role="worker")
@@ -482,7 +489,6 @@ def test_feedback_optimize_verify_publish_reaudit_and_rollback(workspace_product
             # Save-only neither executes nor manufactures a validation proof.
             page.get_by_role("button", name="仅保存待发布修改", exact=True).click()
             expect(page.get_by_role("heading", name="已保存，尚未验证", exact=True)).to_be_visible()
-            expect(page.get_by_role("button", name="发布此修改", exact=True)).to_be_enabled()
             assert f.guest.adaptations == 0
             # The operator set the tenant's own key; the customer starts the repair directly.
             put_tenant_key(f.admin, f.alice)
@@ -505,12 +511,9 @@ def test_feedback_optimize_verify_publish_reaudit_and_rollback(workspace_product
             expect(page.get_by_role("heading", name="修复结果", exact=True)).to_be_visible(timeout=15000)
             expect(page.get_by_text("修好 3 条 · 新增错误 0 条 · 无法判断 0 条 · 技术失败 0 条", exact=True)).to_be_visible()
             candidate = completed["candidate_revision_id"]
-            page.get_by_text("查看修改摘要与高级内容", exact=True).click()
             if viewport["width"] < 640:
-                expect(page.get_by_text("手机上仅展示摘要，可在电脑查看完整规则和代码。", exact=True)).to_be_visible()
                 assert page.evaluate("document.documentElement.scrollWidth") <= viewport["width"]
             # Re-login in a clean browser storage reads the same durable receipt.
-            address = page.url
             context.close()
             context = browser.new_context(viewport=viewport)
             context.add_cookies([{"name": SESSION_COOKIE, "value": f.admin.create_session(f.alice), "url": f.web, "httpOnly": True}])
@@ -524,44 +527,37 @@ def test_feedback_optimize_verify_publish_reaudit_and_rollback(workspace_product
             # Authorized replay returns one candidate, not a second model job.
             start_write = [r for r in writes if r[1].endswith("/optimizations")][-1]
             assert response_json(page.request.post(start_write[1], data=start_write[2]))["candidate_revision_id"] == candidate
-            page.get_by_role("button", name="发布此修改", exact=True).click()
-            expect(page.get_by_role("group", name="确认采用检查版本")).to_contain_text("已有报告不变")
-            expect(page.get_by_label("我已核对上述未验证项和新增错误，仍要启用", exact=True)).to_have_count(0)
-            page.get_by_role("button", name="确认发布", exact=True).click()
-            expect(page.get_by_text("发布操作已完成", exact=True)).to_be_visible()
-            active = response_json(page.request.get(f.web + "/api/suites/browser:threshold/active"))
+            # The repaired version is adopted on its rule's page, never from the audit.
+            expect(page.get_by_role("status").filter(has_text="修复后的新版本已生成")).to_be_visible()
+            page.get_by_role("link", name="打开规则", exact=True).click()
+            program = page.get_by_role("main").get_by_role("region", name="检查程序", exact=True)
+            expect(program).to_contain_text("有新版本：")
+            program.get_by_role("button", name="采用新版本", exact=True).click()
+            confirmation = page.get_by_role("dialog", name=re.compile(r"^采用第 \d+ 版？$"))
+            expect(confirmation).to_contain_text("已有结果不变")
+            expect(confirmation).not_to_contain_text("它还没验证过")
+            confirmation.get_by_role("button", name="采用", exact=True).click()
+            expect(confirmation).to_have_count(0)
+            expect(program.get_by_text(re.compile(r"^第 \d+ 版 · 已验证$"))).to_be_visible()
+            active = response_json(page.request.get(f.web + "/api/suites/custom:browser-threshold/active"))
             assert active["current_revision_id"] == candidate and not active["force_unverified"]
-            page.get_by_role("button", name="用新版本重审这份文件", exact=True).click()
-            expect(page.get_by_text("新建关联重审", exact=True)).to_be_visible()
-            page.get_by_role("button", name="开始识别", exact=True).click()
-            expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_enabled(timeout=30000)
-            with page.expect_response(lambda r: r.request.method == "POST" and r.url.endswith("/confirm")) as confirmed:
-                page.get_by_role("button", name="开始审核", exact=True).click()
-            task = response_json(confirmed.value, 201)
-            newer = read_until(page, f.web + "/api/rounds/" + task["round_id"], lambda r: r["execution"] == "completed")
-            assert newer["id"] != original["id"] and newer["predecessor_id"] == original["id"]
+            # A new audit of the same original freezes the adopted version; the original round is unchanged.
+            draft = response_json(page.request.post(f.web + "/api/drafts", data={"items": [{"file_version_id": uploaded["id"], "role": "target", "rule_version_id": f.rule_id}]}), 201)
+            accepted = response_json(page.request.post(f.web + f"/api/drafts/{draft['id']}/accept", data={"idempotency_key": str(uuid4())}), 201)
+            newer = read_until(page, f.web + "/api/rounds/" + accepted["id"], lambda r: r["execution"] == "completed")
+            assert newer["id"] != original["id"]
             assert newer["findings"][0]["status"] == "NG"
             assert f.suites.read_snapshot(newer["id"], f.alice.tenant_id).targets[0].suite_revision_id == candidate
             unchanged = response_json(page.request.get(f.web + "/api/rounds/" + original["id"]))
             assert unchanged["findings"] == original["findings"]
             assert f.suites.read_snapshot(original["id"], f.alice.tenant_id).targets[0].suite_revision_id == f.base.id
-            page.goto(address)
-            expect(page.get_by_role("button", name="用新版本重审这份文件", exact=True)).to_be_visible()
-            page.get_by_text("版本记录与受影响审核", exact=True).click()
-            history = page.get_by_role("region", name="检查发布与版本记录", exact=True)
-            # Each history row reads its own frozen revision, not the currently selected editor.
-            history.get_by_role("button", name="本次修复内容", exact=True).first.click()
-            expect(history.get_by_text("修改：checker.py", exact=True)).to_be_visible()
-            expect(history.get_by_text(re.compile(r"修改后：.*"), exact=False)).to_contain_text("10")
-            history.get_by_role("button", name="本次修复内容", exact=True).last.click()
-            expect(history.get_by_text("新增：checker.py", exact=True)).to_be_visible()
-            page.get_by_role("button", name="查看此版本／回滚", exact=True).last.click()
-            page.get_by_role("button", name="回滚到此版本", exact=True).click()
-            expect(page.get_by_role("button", name="确认回滚", exact=True)).to_be_disabled()
-            page.get_by_label("我已核对上述未验证项和新增错误，仍要启用", exact=True).check()
-            page.get_by_role("button", name="确认回滚", exact=True).click()
-            expect(page.get_by_text("发布操作已完成", exact=True)).to_be_visible()
-            assert response_json(page.request.get(f.web + "/api/suites/browser:threshold/active"))["current_revision_id"] == f.base.id
+            # Going back is an explicit, confirmed adoption of the earlier version.
+            program.get_by_text("以前的版本", exact=True).click()
+            program.get_by_role("button", name="改回这个版本", exact=True).click()
+            rollback = page.get_by_role("dialog", name=re.compile(r"^改回第 \d+ 版？$"))
+            rollback.get_by_role("button", name="改回", exact=True).click()
+            expect(rollback).to_have_count(0)
+            assert response_json(page.request.get(f.web + "/api/suites/custom:browser-threshold/active"))["current_revision_id"] == f.base.id
             assert response_json(page.request.get(f.web + "/api/rounds/" + newer["id"]))["findings"] == newer["findings"]
             assert f.jobs.count("checker_optimization") == 1
             assert f.guest.adaptations == 1
@@ -674,7 +670,7 @@ def test_workspace_http_receipts_use_real_trials_and_frozen_reaudit(workspace_pr
             assert f.guest.adaptations == 1 and f.jobs.count("checker_optimization") == 1
             candidate = completed["candidate_revision_id"]
             assert response_json(request.post(path, data=command))["candidate_revision_id"] == candidate
-            active_path = f.web + "/api/suites/browser:threshold/active"
+            active_path = f.web + "/api/suites/custom:browser-threshold/active"
             active = response_json(request.get(active_path))
             assert active["current_revision_id"] == f.base.id
             adoption = {"revision_id": candidate, "expected_revision": active["revision"], "operation_id": str(uuid4()), "force_unverified": False}
@@ -831,8 +827,8 @@ def test_grouped_feedback_selection_and_read_only_history(workspace_product):
             browser.close()
 
 
-def test_rule_wording_update_preserves_adoption_until_confirmed_browser_publication(workspace_product):
-    """A wording-only update runs all real samples, then explicitly adopts unchanged code."""
+def test_rule_wording_update_preserves_adoption_and_offers_a_program_update(workspace_product):
+    """A wording update keeps the adopted program; the rule page says so and offers the update."""
     from playwright.sync_api import expect, sync_playwright
 
     f = workspace_product
@@ -882,34 +878,20 @@ def test_rule_wording_update_preserves_adoption_until_confirmed_browser_publicat
                 ),
                 201,
             )
-            active_path = f.web + "/api/suites/browser:threshold/active"
+            active_path = f.web + "/api/suites/custom:browser-threshold/active"
             active = response_json(page.request.get(active_path))
             assert active["current_revision_id"] == corrected["id"]
             assert active["verification_status"] == "stale" and active["rule_update"]["changed"]
             assert f.guest.adaptations == 0 and "checker_optimization" not in f.jobs
-            page.goto(f.web + f"/audit?round={original['id']}&file={uploaded['id']}&clause=R1&basis=1&checkerFeedbackClause=R1")
-            expect(page.get_by_text("规则已更新，需要重新验证", exact=True)).to_be_visible()
-            page.get_by_role("button", name="按新版规则起草修改", exact=True).click()
-            assert f.guest.adaptations == 0
-            page.get_by_label("我已核对当前所选规则及全部样本，确认以上正确答案仍适用于当前规则", exact=True).check()
-            with page.expect_response(lambda r: r.request.method == "POST" and r.url.endswith("/optimizations")) as started:
-                page.get_by_role("button", name="只运行现有检查验证", exact=True).click()
-            operation = response_json(started.value)
-            completed = read_until(page, f.web + "/api/checker-optimizations/" + operation["operation_id"], lambda r: r["state"] not in {"queued", "running"}, timeout=90)
-            assert completed["state"] == "completed", completed
-            assert completed["report"]["validation"]["verified"]
-            assert completed["report"]["validation"]["total_samples"] == 4
-            assert completed["report"]["code_changed"] is False and f.guest.adaptations == 0
-            expect(page.get_by_text("代码无需修改，样本已通过。请核对后确认发布，才能采用新规则。", exact=True)).to_be_visible()
+            page.goto(f.web + "/requirements?ruleSuite=" + quote("custom:browser-threshold", safe=""))
+            program = page.get_by_role("main").get_by_role("region", name="检查程序", exact=True)
+            expect(program.get_by_text("规则已改，检查程序还按上一版规则检查。", exact=True)).to_be_visible()
+            expect(program.get_by_role("button", name="更新检查程序", exact=True)).to_be_enabled()
+            # Nothing runs or changes until the person updates the program.
+            assert f.guest.adaptations == 0 and "checker_optimization" not in f.jobs
             assert response_json(page.request.get(active_path))["current_revision_id"] == corrected["id"]
-            page.get_by_role("button", name="发布此修改", exact=True).click()
-            page.get_by_role("button", name="确认发布", exact=True).click()
-            expect(page.get_by_text("发布操作已完成", exact=True)).to_be_visible()
-            adopted = response_json(page.request.get(active_path))
-            assert adopted["current_revision_id"] == completed["candidate_revision_id"] and adopted["rule_update"] is None
-            assert adopted["verification_status"] == "verified"
             assert response_json(page.request.get(f.web + "/api/rounds/" + original["id"])) == original
-            assert updated["body"]["suite_revision_id"] != adopted["current_revision_id"]
+            assert updated["body"]["suite_revision_id"] != corrected["id"]
         finally:
             context.close()
             browser.close()
@@ -997,7 +979,7 @@ def test_multi_clause_wording_reconfirmation_verifies_four_independent_documents
             assert requests[0].oracle[0].repair_clause_ids == frozenset({"R2"})
             assert all(not sample.repair_clause_ids for sample in requests[0].oracle[1:])
             assert all(set(sample.expected) == {"R1", "R2"} for sample in requests[0].oracle)
-            active_path = f.web + "/api/suites/browser:threshold/active"
+            active_path = f.web + "/api/suites/custom:browser-threshold/active"
             active = response_json(request.get(active_path))
             assert active["current_revision_id"] == corrected["id"]
             response_json(
@@ -1047,38 +1029,34 @@ def test_first_uaes_adoption_from_rule_library_freezes_dependencies(workspace_pr
                     body = {**json.loads(baselines[key].files["rules.json"]), "kind": "engine", "rule_profile": "v4", "customers": ["UAES"], "preset_key": key.split(":")[1], "suite_key": key}
                     conn.execute("INSERT INTO product.rule_versions(id,tenant_id,title,body) VALUES (%s,%s,%s,%s)", (preset_id, f.alice.tenant_id, key, Jsonb(body)))
             page.goto(f.web + "/requirements?systemRule=" + presets["UAES:U08"])
-            catalog = page.get_by_role("main")
-            release = catalog.get_by_role("region", name="检查发布与版本记录", exact=True)
-            expect(release.get_by_text("先采用关联检查版本", exact=True)).to_be_visible()
-            release.get_by_role("button", name="查看 UAES:U07", exact=True).click()
+            program = page.get_by_role("main").get_by_role("region", name="检查程序", exact=True)
+            # Its dependencies come first; each opens the rule page that owns that program.
+            expect(program.get_by_text("这个版本依赖下面这些规则的检查程序，先采用它们：", exact=True)).to_be_visible()
+            expect(program.get_by_role("button", name="采用", exact=True)).to_be_disabled()
+            program.get_by_role("button", name=baselines["UAES:U07"].document_type, exact=True).click()
             expect(page).to_have_url(re.compile("systemRule=" + presets["UAES:U07"]))
-            release.get_by_role("button", name="查看 UAES:U12", exact=True).click()
+            program.get_by_role("button", name=baselines["UAES:U12"].document_type, exact=True).click()
             expect(page).to_have_url(re.compile("systemRule=" + presets["UAES:U12"]))
             publications = []
             for key in ordered:
                 page.goto(f.web + "/requirements?systemRule=" + presets[key])
-                catalog = page.get_by_role("main")
-                release = catalog.get_by_role("region", name="检查发布与版本记录", exact=True)
-                expect(release.get_by_text("尚未采用检查版本。发布后，本企业的新审核才会使用此版本。", exact=True)).to_be_visible()
-                expect(release.get_by_text(re.compile("官方版本 v1"))).to_be_visible()
-                release.get_by_role("button", name="采用此版本", exact=True).click()
-                confirmation = release.get_by_role("group", name="确认采用检查版本", exact=True)
-                expect(confirmation).to_contain_text("需要重新验证")
-                expect(confirmation).to_contain_text("这个版本还没有用样本验证过。")
-                confirmation.get_by_label("我已核对上述未验证项和新增错误，仍要启用", exact=True).check()
+                program = page.get_by_role("main").get_by_role("region", name="检查程序", exact=True)
+                expect(program.get_by_text("还没采用", exact=True)).to_be_visible()
+                expect(program).to_contain_text("可以采用：第 1 版")
+                program.get_by_role("button", name="采用", exact=True).click()
+                confirmation = page.get_by_role("dialog", name="采用第 1 版？", exact=True)
+                expect(confirmation).to_contain_text("它还没验证过，结果要人工确认。")
                 with page.expect_response(lambda response: response.request.method == "PUT" and response.url.endswith("/active")) as submitted:
-                    confirmation.get_by_role("button", name="确认采用", exact=True).click()
+                    confirmation.get_by_role("button", name="采用", exact=True).click()
                 receipt = response_json(submitted.value)
                 assert receipt["suite_key"] == key and receipt["revision_id"] == revisions[key].id
                 assert receipt["expected_revision"] == 0 and receipt["revision"] == 1
                 assert receipt["previous_revision_id"] is None and receipt["force_unverified"] is True
                 publications.append(receipt)
-                expect(release.get_by_text("发布操作已完成", exact=True)).to_be_visible()
-                expect(release.get_by_text("当前已固定采用一个版本，不会自动升级。", exact=True)).to_be_visible()
+                expect(program.get_by_text("可用于审核", exact=True)).to_be_visible()
                 page.reload()
-                catalog = page.get_by_role("main")
-                release = catalog.get_by_role("region", name="检查发布与版本记录", exact=True)
-                expect(release.get_by_text(re.compile("当前使用"))).to_be_visible()
+                program = page.get_by_role("main").get_by_role("region", name="检查程序", exact=True)
+                expect(program.get_by_text("第 1 版 · 未验证", exact=True)).to_be_visible()
                 active = response_json(page.request.get(f.web + f"/api/suites/{key}/active"))
                 assert active["history"] == [receipt]
                 assert active["current_revision_id"] == revisions[key].id
@@ -1108,7 +1086,7 @@ def test_first_uaes_adoption_from_rule_library_freezes_dependencies(workspace_pr
             assert target.related_suite_digests == {key: revisions[key].resolved_digest for key in ("UAES:U07", "UAES:U16")}
             assert len(publications) == 4 and not f.guest.jobs
             page.reload()
-            expect(page.get_by_role("region", name="检查发布与版本记录").get_by_text(re.compile("当前使用"))).to_be_visible()
+            expect(page.get_by_role("region", name="检查程序").get_by_text("可用于审核", exact=True)).to_be_visible()
             assert f.suites.read_snapshot(accepted["id"], f.alice.tenant_id).to_dict() == frozen.to_dict()
         finally:
             context.close()
@@ -1224,8 +1202,8 @@ def test_directory_revision_selection_pi_and_rollback_keep_exact_frozen_sources(
             catalog = response_json(request.get(f.web + "/api/suites"))
             paths = {row["path"]: row for row in catalog["predefined"]}
             assert all(f"uaes/{entry}" in paths for entry in ("U07", "U08", "U17"))
-            assert paths["v4/uaes"]["availability"] == "historical"
-            assert "v4/uaes/U08" not in paths
+            # Checkers are organized by company; no version-named directory remains.
+            assert not [path for path in paths if re.match(r"^v[0-9]+/", path)]
             assert paths["测试客户/T01"]["revision_id"] == revisions["v6"]
             adopt(revisions["v5"], force=True)
             rounds, feedback = [], []

@@ -91,7 +91,7 @@ def test_confirm_original_fact_in_native_history(auth_store_factory, tmp_path, m
                 result.get_by_role("radio", name="符合", exact=True).check()
                 result.get_by_role("textbox", name="样本判定依据", exact=True).fill("已对照原件确认SOP勾选，作为明确的条款预期")
                 result.get_by_role("button", name="确认加入优化样本", exact=True).click()
-                expect(result).to_contain_text("已加入优化样本。未启动模型优化，原机器结果保留。")
+                expect(result).to_contain_text("已加入优化样本，原机器结果保留。")
                 sample = CheckerDevelopmentStore(api).list_feedback(alice, round_id)["feedback"]
                 assert len(sample) == 1
                 assert sample[0]["original_status"] == "UNABLE" and sample[0]["expected_status"] == "PASS"
