@@ -27,6 +27,9 @@ from product.identity import ProviderAuthError
 from product.mcp import SCOPES, pkce_challenge
 from worker import process_claimed
 
+# Uploaded rules in this module stand for rules with a generated program.
+pytestmark = pytest.mark.usefixtures("generated_rules")
+
 
 def connection(client, store, *, person="alice", scopes="identity:read files:read files:write audits:read", exchange_now=True, browser_session=None):
     principal = store.principal_for_fixture(person)

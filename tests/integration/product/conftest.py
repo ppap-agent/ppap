@@ -153,6 +153,42 @@ def auth_store_factory():
 
 
 @pytest.fixture
+def generated_rules(monkeypatch):
+    """Uploaded rules here stand for rules whose program was generated on the rule page.
+
+    The adopted program binds no clause and runs no code, like the starter; it is only not
+    the starter, so the rule is offered for audit and its clauses stay unsupported.
+    """
+    from product.store.suite_releases import SuiteReleaseStore
+    from product.store.suites import programless_suite_keys
+
+    publish = AuthStore.publish_rule
+
+    def publish_generated(self, principal, *args, **kwargs):
+        rule = publish(self, principal, *args, **kwargs)
+        key = (rule.get("body") or {}).get("suite_key")
+        if not isinstance(key, str) or not key.startswith("custom:"):
+            return rule
+        with connect(self.settings, "api") as conn:
+            if not programless_suite_keys(conn, principal.tenant_id, [key]):
+                return rule
+            head = conn.execute("SELECT current_revision_id, revision FROM product.tenant_suite_heads WHERE tenant_id=%s AND suite_key=%s", (principal.tenant_id, key)).fetchone()
+        releases = SuiteReleaseStore(self.settings, self.objects, role="api")
+        program = releases.suites.create_revision(
+            tenant_id=principal.tenant_id,
+            suite_key=key,
+            files={"checker.py": b'"""Unbound test program."""\n'},
+            created_by=principal.user_id,
+            base_revision_id=str(head[0]),
+            related_suite_keys=(),
+        )
+        releases.publish(principal, key, program.id, head[1], str(uuid.uuid4()), True)
+        return rule
+
+    monkeypatch.setattr(AuthStore, "publish_rule", publish_generated)
+
+
+@pytest.fixture
 def mcp_app(auth_store_factory, core_system):
     from api import create_app
     from product.fixtures import APP_ID

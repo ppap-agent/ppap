@@ -47,7 +47,7 @@ def content(source):
     return stream.getvalue(), ".xlsx"
 
 
-@pytest.mark.parametrize(("customer", "expected_count"), [("UAES", 19), ("理想", 17), ("蔚来", 5)])
+@pytest.mark.parametrize(("customer", "expected_count"), [("UAES", 19), ("理想", 17), ("蔚来", 17)])
 def test_each_source_accepts_and_freezes_its_actual_customer_checker(auth_store_factory, v4_objects, core_system, tmp_path, customer, expected_count):
     settings = Settings(usage_charge_enabled=False, feishu_app_id="v4-route-acceptance", git_sha="a" * 40)
     admin = auth_store_factory(settings)
@@ -102,8 +102,14 @@ def test_each_source_accepts_and_freezes_its_actual_customer_checker(auth_store_
         frozen_precheck = client.get(path).json()["precheck"]
         assert frozen_precheck["status"] == "succeeded", frozen_precheck
         facts = [fact for row in frozen_precheck["result"]["files"] for fact in row["facts"]]
-        assert facts and not [fact for fact in facts if ":dependency:" in fact.get("id", "")], facts
-        for row in frozen_precheck["result"]["files"]:
+        assert facts, frozen_precheck
+        if customer == "UAES":
+            # UAES runs its own prechecks; none of them may error.
+            for row in frozen_precheck["result"]["files"]:
+                assert not row["coverage"]["by_status"].get("error"), row["coverage"]
+        # Other companies have no prechecks: every expected check stays not checked.
+        for row in [] if customer == "UAES" else frozen_precheck["result"]["files"]:
+            assert not [fact for fact in row["facts"] if ":dependency:" in fact.get("id", "")], row
             by_id = {fact["id"]: fact for fact in row["facts"]}
             assert by_id["coverage"]["status"] == "not_checked", row
             assert by_id["coverage"]["message"] == "此 Suite 尚未实现免费准备检查；不能视为通过。"

@@ -15,6 +15,9 @@ from product.store.suite_releases import SuiteReleaseStore
 from product.store.suites import SuiteStore
 from psycopg.types.json import Jsonb
 
+# Uploaded rules in this module stand for rules with a generated program.
+pytestmark = pytest.mark.usefixtures("generated_rules")
+
 
 def _adopt_confirmed_appendix(store, round_id, appendix):
     """Explicit tenant adoption of exact confirmed bytes, never a freeze bypass."""

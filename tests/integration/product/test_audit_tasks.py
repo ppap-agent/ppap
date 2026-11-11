@@ -25,6 +25,9 @@ from psycopg.types.json import Jsonb
 from pydantic import TypeAdapter
 from worker import process_claimed
 
+# Uploaded rules in this module stand for rules with a generated program.
+pytestmark = pytest.mark.usefixtures("generated_rules")
+
 
 @pytest.fixture
 def task_system(auth_store_factory, core_system):
@@ -1362,8 +1365,10 @@ def test_linked_reaudit_keeps_provenance_but_freezes_current_suite_without_copyi
                 ([original["id"], frozen["id"]],),
             ).fetchall()
         }
-    assert executions[original["id"]]["suite_revision_id"] == old["body"]["suite_revision_id"]
-    assert executions[frozen["id"]]["suite_revision_id"] == newer["body"]["suite_revision_id"]
+        # Each round runs the program generated on its own rule revision.
+        bases = {rid: conn.execute("SELECT base_revision_id::text FROM product.suite_revisions WHERE id=%s", (execution["suite_revision_id"],)).fetchone()[0] for rid, execution in executions.items()}
+    assert bases[original["id"]] == old["body"]["suite_revision_id"]
+    assert bases[frozen["id"]] == newer["body"]["suite_revision_id"]
     assert frozen["findings"] == []
     assert client.get(f"/rounds/{original['id']}").json() == original
 
@@ -1595,7 +1600,9 @@ def test_native_preparation_ambiguity_is_resolved_by_explicit_rematching_before_
     assert source["rule"]["body"]["rules"] == chosen["body"]["rules"]
     with worker._conn() as conn:
         execution = conn.execute("SELECT rule_execution FROM product.round_inputs WHERE round_id=%s AND role='target'", (frozen["id"],)).fetchone()[0]
-    assert execution["suite_revision_id"] == chosen["body"]["suite_revision_id"]
+        base = conn.execute("SELECT base_revision_id::text FROM product.suite_revisions WHERE id=%s", (execution["suite_revision_id"],)).fetchone()[0]
+    # The chosen rule's generated program runs, built on that rule's own revision.
+    assert base == chosen["body"]["suite_revision_id"]
     assert execution["binding"]["entrypoints"] == {}
     assert source["rule"]["body"]["checker_binding"] == {}
     assert client.post(path + "/confirm", json=confirmation).json()["round_id"] == frozen["id"]
@@ -1800,7 +1807,16 @@ def adopt_rule_suite(worker, rule):
     releases = SuiteReleaseStore(api.settings, api.objects, role="api")
     key = rule["body"]["suite_key"]
     active = releases.active(principal, key)
-    return releases.publish(principal, key, rule["body"]["suite_revision_id"], active["revision"], str(uuid.uuid4()))
+    # Adopting a successor means adopting its generated program, built on the successor's rules.
+    program = releases.suites.create_revision(
+        tenant_id=principal.tenant_id,
+        suite_key=key,
+        files={"checker.py": b'"""Unbound test program."""\n'},
+        created_by=principal.user_id,
+        base_revision_id=rule["body"]["suite_revision_id"],
+        related_suite_keys=(),
+    )
+    return releases.publish(principal, key, program.id, active["revision"], str(uuid.uuid4()), True)
 
 
 def publish_rule(client, file, *, predecessor=None, title="客户控制计划", document_type="控制计划"):

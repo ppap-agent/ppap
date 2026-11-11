@@ -83,8 +83,8 @@ def test_u08_api_worker_keeps_selected_source_under_failures(auth_store_factory,
             rules.pop("checker_binding")
             changes["rules.json"] = json.dumps(rules, ensure_ascii=False)
         elif fault == "no-reader":
-            resource = ast.literal_eval(ast.parse(selected_source.files["resources.py"]).body[1].value)
-            resource["clauses"].pop("U08:6")
+            resource = ast.literal_eval(selected_source.files["resources.py"].decode().split("RESOURCE = ", 1)[1])
+            resource["methods"].pop("U08:6")
             changes["resources.py"] = "RESOURCE = " + repr(resource) + "\n"
         if changes:
             saved = client.post(f"/suite-revisions/{selected}/candidates", json={"operation_id": str(uuid4()), "files": changes})

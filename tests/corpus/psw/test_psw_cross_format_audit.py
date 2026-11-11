@@ -306,10 +306,24 @@ def test_real_doc_and_its_converted_docx_have_equivalent_results_and_release_tem
     assert docx_path.read_bytes() == converted
 
 
+def _li_psw_suite():
+    """The 理想 PSW leaf with numeric clause aliases, as the comparison keys rules by index."""
+    import ast
+    import json
+
+    from corpus_contracts.core_round import bind_suite, leaf_suite
+
+    leaf = leaf_suite("li", PpapDocumentType.PSW.get_type_name())
+    resource = ast.literal_eval(leaf.files["resources.py"].decode().split("RESOURCE = ", 1)[1])
+    body = json.loads(leaf.files["rules.json"])
+    rules = [{**row, "id": row["id"].rsplit(":", 1)[-1]} for row in body["rules"]]
+    suite = bind_suite(leaf, {**body, "rules": rules}, {row["id"]: row["id"] for row in rules})
+    return suite, resource["implementation_rules"]
+
+
 def test_psw_xlsx_product_round_keeps_engine_statuses() -> None:
     from audit.audits import RoundInput, RoundWork
     from audit.rule_profile import RULE_PROFILE_V2
-    from audit.suite_migration import migrated_builtin_suite
     from corpus_contracts.core_round import run_suite_round
     from corpus_contracts.product_round import (
         MATCH,
@@ -320,13 +334,16 @@ def test_psw_xlsx_product_round_keeps_engine_statuses() -> None:
     doc_type = PpapDocumentType.PSW.get_type_name()
     import json
 
-    suite = migrated_builtin_suite(RULE_PROFILE_V2, doc_type)
+    suite, implementation_rules = _li_psw_suite()
     body = json.loads(suite.files["rules.json"])
     engine_results = run_audit(
         AuditInput(audit_id="psw-xlsx-engine", file_url=str(xlsx_path)),
-        RuleInput(rule_id="psw-xlsx", rule_profile=RULE_PROFILE_V2, type=doc_type, rules=body["rules"]),
+        RuleInput(rule_id="psw-xlsx", rule_profile=RULE_PROFILE_V2, type=doc_type, rules=implementation_rules),
     )
-    expected = {index: str(getattr(result, "status", "") or "").upper() for index, result in enumerate(engine_results, 1)}
+    # Rules 3 and 5 read the seal and signature visually; the direct engine call has no model replay,
+    # so only the deterministic rules are compared here. The PDF test covers the visual rules.
+    visual = {3, 5}
+    expected = {index: str(getattr(result, "status", "") or "").upper() for index, result in enumerate(engine_results, 1) if index not in visual}
     work = RoundWork("psw-xlsx", "corpus", [RoundInput("target", "psw", "psw-version", xlsx_path.name, "ready", rule_version_id="psw-suite", rule_body=body)])
     result = run_suite_round(work, {"psw-version": xlsx_path.read_bytes()}, suites={"psw-version": suite})
     verdicts = compare_file(
@@ -343,8 +360,6 @@ def test_psw_xlsx_product_round_keeps_engine_statuses() -> None:
 
 def test_psw_pdf_visual_rules_match_the_xlsx_product_round(model_replay) -> None:
     from audit.audits import RoundInput, RoundWork
-    from audit.rule_profile import RULE_PROFILE_V2
-    from audit.suite_migration import migrated_builtin_suite
     from corpus_contracts.core_round import run_suite_round
     from corpus_contracts.product_round import EXECUTION_FAILURE, MATCH, SETUP_FAILURE, compare_file
     from product.settings import get_settings
@@ -354,9 +369,8 @@ def test_psw_pdf_visual_rules_match_the_xlsx_product_round(model_replay) -> None
         pytest.fail("setup_failure: dedicated OCR configuration is missing; PDF visual audit did not start")
     pdf_path = _PAIR_ROOT.with_suffix(".pdf")
     xlsx_path = _PAIR_ROOT.with_suffix(".xlsx")
-    doc_type = PpapDocumentType.PSW.get_type_name()
     visual_rules = {3, 5, 7, 8, 9, 10}
-    suite = migrated_builtin_suite(RULE_PROFILE_V2, doc_type)
+    suite, _implementation_rules = _li_psw_suite()
     work = RoundWork("psw-xlsx-oracle", "corpus", [RoundInput("target", "psw", "psw-version", xlsx_path.name, "ready", rule_version_id="psw-suite")])
     oracle = run_suite_round(work, {"psw-version": xlsx_path.read_bytes()}, suites={"psw-version": suite})
     oracle_rows = compare_file(

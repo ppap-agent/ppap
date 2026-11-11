@@ -11,6 +11,9 @@ from unittest.mock import patch
 
 import pytest
 
+# Uploaded rules in this module stand for rules with a generated program.
+pytestmark = pytest.mark.usefixtures("generated_rules")
+
 
 def rule_body():
     return {

@@ -619,13 +619,10 @@ class AuditFlowTests(unittest.TestCase):
         self.assertEqual(uploaded.status_code, 201)
         draft = self.client.post("/drafts", json={"items": [{"file_version_id": source["id"], "role": "target", "rule_version_id": uploaded.json()["id"]}]}).json()
         accepted = self.client.post(f"/drafts/{draft['id']}/accept", json={"idempotency_key": "unimplemented-upload"})
-        self.assertEqual(accepted.status_code, 201)
-        self._finish_worker()
-        result = self.client.get("/rounds/" + accepted.json()["id"]).json()
-        self.assertEqual(result["execution"], "completed")
-        self.assertEqual(result["findings"], [])
-        self.assertEqual([row["coverage"] for row in result["coverage"]["rule_items"]], ["unsupported"])
-        self.assertEqual(self.core.calls, 1)
+        # Without a generated program the rule is not offered: nothing runs, so nothing can pass.
+        self.assertEqual(accepted.status_code, 400)
+        self.assertEqual(accepted.json()["error"], "checker_not_generated")
+        self.assertEqual(self.core.calls, 0)
 
     def test_selected_rule_items_are_frozen_in_confirmed_order(self):
         self._login("alice")
