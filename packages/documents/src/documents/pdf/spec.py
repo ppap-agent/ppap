@@ -133,6 +133,11 @@ class OutputSpec:
     embedded_image_max_per_sheet: int = 24
     embedded_image_max_width: int = 900
     embedded_image_min_bytes: int = 256
+    # Vector marks (a drawn circle, a hand-drawn tick, a stamp made of paths) are rendered
+    # to pictures and placed like embedded images; table rulings are not. Excel pictures
+    # are bitmaps, so the marks are rasterised at this resolution.
+    rasterize_vector_graphics: bool = False
+    vector_graphic_dpi: int = 200
 
 
 @dataclass(frozen=True)
@@ -187,6 +192,8 @@ def validate_pdf_spec(spec: PdfSpec) -> None:
         raise ValueError("output.embedded_image_max_width must be > 0")
     if spec.output.embedded_image_min_bytes < 0:
         raise ValueError("output.embedded_image_min_bytes must be >= 0")
+    if not (0 < spec.output.vector_graphic_dpi <= 1200):
+        raise ValueError("output.vector_graphic_dpi must be between 1 and 1200")
 
     if spec.grouping.mode == GroupingMode.EXPLICIT_RANGES and not spec.grouping.explicit_ranges:
         raise ValueError("grouping.explicit_ranges is required when grouping.mode=explicit_ranges")

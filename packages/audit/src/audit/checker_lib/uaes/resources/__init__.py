@@ -19,7 +19,14 @@ WHOLE_SHEET_COLS = 10_000
 # then each page on its own (the basic reading).
 # Embedded pictures are placed on the converted sheets as well (the converter leaves this off),
 # with no small count cap and no size floor: a stamp or a tick mark may be a tiny picture.
-PICTURES: dict[str, Any] = {"preserve_pdf_embedded_images": True, "embedded_image_max_per_sheet": 10_000, "embedded_image_min_bytes": 0}
+# Marks drawn as vector paths (a circled item, a hand-drawn tick or cross, a path-drawn stamp)
+# are rendered to pictures too; table rulings are not.
+PICTURES: dict[str, Any] = {
+    "preserve_pdf_embedded_images": True,
+    "embedded_image_max_per_sheet": 10_000,
+    "embedded_image_min_bytes": 0,
+    "rasterize_vector_graphics": True,
+}
 STITCHED = PdfSpec(grouping=GroupingSpec(mode=GroupingMode.ALL_PAGES), output=OutputSpec(**PICTURES))
 PER_PAGE = PdfSpec(grouping=GroupingSpec(mode=GroupingMode.ALL_PAGES), stitch=StitchSpec(mode=StitchMode.NO_STITCH), output=OutputSpec(**PICTURES))
 

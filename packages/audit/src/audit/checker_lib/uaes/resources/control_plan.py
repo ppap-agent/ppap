@@ -18,8 +18,6 @@ DOCUMENT = (
             row_anchors=("评价测量技术",),
             row_stop_on_first_blank=False,
             row_max_blank_streak=WHOLE_SHEET_ROWS,
-            # An operation is named on its first row only (776 operation 150).
-            row_carry_columns=("工序名称",),
         ),
     ),
     (

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from bisect import bisect_right
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,17 @@ from .spec import OutputMode, OutputSpec, SheetNameMode
 
 logger = logging.getLogger(__name__)
 _PDF_POINT_TO_PIXEL = 96.0 / 72.0
+# A path whose every segment is horizontal or vertical is a table ruling, cell border,
+# underline or shading; anything else (a slanted stroke, a curve) is a mark. A segment
+# counts as horizontal/vertical when it leaves the axis by at most 0.5 pt or by 1 degree
+# (producers emit long rulings slightly skewed; a drawn mark is clearly slanted).
+_RULING_AXIS_TOLERANCE = 0.5
+_RULING_AXIS_SLOPE = math.tan(math.radians(1.0))
+# Neighbouring marks closer than this (pt) form one graphic (PyMuPDF's default).
+_VECTOR_CLUSTER_TOLERANCE = 3.0
+# A cluster smaller than 1 pt (about 0.35 mm, a normal stroke width) in both directions
+# has no visible shape; it is skipped.
+_VECTOR_MIN_EXTENT = 1.0
 
 
 def write_workbook(
@@ -38,7 +50,7 @@ def write_workbook(
     sheets = [(_sheet_name(group, output, index), group.table_grid) for index, group in enumerate(successful_groups, start=1) if group.table_grid is not None]
     workbook = build_workbook_from_table_grids(sheets)
 
-    if output.preserve_pdf_embedded_images and source is not None:
+    if (output.preserve_pdf_embedded_images or output.rasterize_vector_graphics) and source is not None:
         _attach_pdf_embedded_images(
             workbook,
             successful_groups,
@@ -90,6 +102,8 @@ def _attach_pdf_embedded_images(
                 group,
                 max_per_sheet=max_per_sheet,
                 min_bytes=min_bytes,
+                embedded_images=output.preserve_pdf_embedded_images,
+                vector_dpi=output.vector_graphic_dpi if output.rasterize_vector_graphics else None,
             )
             if unit_placements:
                 placements = _unit_placements_to_pixel_placements(worksheet, unit_placements)
@@ -128,6 +142,8 @@ def _collect_group_image_placements(
     *,
     max_per_sheet: int,
     min_bytes: int,
+    embedded_images: bool = True,
+    vector_dpi: int | None = None,
 ) -> tuple[list[tuple[float, float, float, float, bytes]], list[bytes]]:
     page_layouts = _build_group_page_layouts(group)
     if not page_layouts:
@@ -149,7 +165,7 @@ def _collect_group_image_placements(
         layout = page_layouts.get(page_index)
         rects_by_xref: dict[int, list[Any]] = {}
         candidates: list[tuple[float, int, Any | None, bytes]] = []
-        for image_meta in page.get_images(full=True):
+        for image_meta in page.get_images(full=True) if embedded_images else ():
             if not image_meta:
                 continue
 
@@ -204,8 +220,85 @@ def _collect_group_image_placements(
             placements.append((row_start, col_start, row_end, col_end, image_bytes))
             image_count += 1
 
+        # A page without a text layer is not read; its words may be drawn as paths, which are no marks.
+        if vector_dpi is None or not page.get_text().strip():
+            continue
+        for rect, image_bytes in _render_vector_graphics(page, dpi=vector_dpi, limit=max_per_sheet - image_count):
+            geometry = _map_rect_to_sheet_geometry(rect, layout) if layout is not None else None
+            if geometry is None:
+                fallback_images.append(image_bytes)
+            else:
+                placements.append((*geometry, image_bytes))
+            image_count += 1
+
     placements.sort(key=lambda item: (item[0], item[1]))
     return (placements, fallback_images)
+
+
+def _render_vector_graphics(page: Any, *, dpi: int, limit: int) -> list[tuple[Any, bytes]]:
+    """Render each vector graphic on the page that is not a table ruling to a PNG.
+
+    Returns (page rect, png bytes) per graphic in reading order, at most ``limit``.
+    """
+    import fitz
+
+    if limit <= 0:
+        return []
+    try:
+        drawings = page.get_drawings()
+    except Exception as exc:
+        logger.warning("Failed to read vector graphics of page %s: %s", page.number, exc)
+        return []
+    marks = [drawing for drawing in drawings if not _is_ruling(drawing)]
+    if not marks:
+        return []
+    clusters = page.cluster_drawings(
+        drawings=marks,
+        x_tolerance=_VECTOR_CLUSTER_TOLERANCE,
+        y_tolerance=_VECTOR_CLUSTER_TOLERANCE,
+        final_filter=False,
+    )
+    # A path's rect is its geometry; a stroke extends half its width beyond it.
+    pad = max((float(drawing.get("width") or 0.0) for drawing in marks), default=0.0) / 2.0
+    zoom = float(dpi) / 72.0
+    display_list = None
+    rendered: list[tuple[Any, bytes]] = []
+    for cluster in clusters:
+        if len(rendered) >= limit:
+            break
+        if max(cluster.width, cluster.height) < _VECTOR_MIN_EXTENT:
+            continue
+        clip = (cluster + (-pad, -pad, pad, pad)) & page.rect
+        if clip.is_empty:
+            continue
+        if display_list is None:
+            display_list = page.get_displaylist()
+        pixmap = display_list.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=clip, alpha=False)
+        rendered.append((clip, pixmap.tobytes("png")))
+    return rendered
+
+
+def _is_ruling(drawing: dict[str, Any]) -> bool:
+    """True for a path made only of axis-aligned lines and rectangles (grid, borders, shading)."""
+    for item in drawing.get("items") or ():
+        operator = item[0]
+        if operator == "re":
+            continue
+        if operator == "l":
+            segments = [(item[1], item[2])]
+        elif operator == "qu":
+            quad = item[1]
+            segments = [(quad.ul, quad.ur), (quad.ur, quad.lr), (quad.lr, quad.ll), (quad.ll, quad.ul)]
+        else:
+            return False
+        if not all(_axis_aligned(start, end) for start, end in segments):
+            return False
+    return True
+
+
+def _axis_aligned(start: Any, end: Any) -> bool:
+    short, long = sorted((abs(float(end.x) - float(start.x)), abs(float(end.y) - float(start.y))))
+    return short <= max(_RULING_AXIS_TOLERANCE, _RULING_AXIS_SLOPE * long)
 
 
 def _build_group_page_layouts(group: GroupExtraction) -> dict[int, dict[str, int | list[float]]]:

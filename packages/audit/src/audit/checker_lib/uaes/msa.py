@@ -9,6 +9,7 @@ from typing import Any
 from audit.checker_lib.nio.excel_agent import rule
 from audit.engine.rule_engine import Decision, RuleContext, Sheet, Table
 
+from .control_plan import operation_owners
 from .excel import UaesExcelAgent, compact, unable
 from .resources import combine, control_plan, pgqp1
 from .resources import msa as resources
@@ -202,23 +203,35 @@ class UaesMsaAgent(UaesExcelAgent):
         plan = self.only(_CP, "控制计划")
         if plan is None:
             return "NG", "同批次没有控制计划。"
+        # (operation, method, place, whether the drawing leaves the row between that operation and a neighbour)
         manual = []
         with self.reading(ctx, plan, control_plan):
             for sheet in Table(ctx).find_sheets("控制计划", on_missing=Decision.IGNORE):
-                for row in self.section(sheet, "控制计划区").rows("工序名称", "评价测量技术"):
-                    operation, method = str(row.value("工序名称") or ""), str(row.value("评价测量技术") or "")
-                    if any(term in operation for term in ("出货检验", "GP12")) and any(term in method for term in _HUMAN):
+                section = self.section(sheet, "控制计划区")
+                rows = list(section.rows("评价测量技术"))
+                if not rows:
+                    continue
+                owners = operation_owners(sheet, section.columns("工序名称")["工序名称"].header_col, range(rows[0].row_index, rows[-1].row_index + 1), set())
+                for row in rows:
+                    names, method = owners.get(row.row_index, ()), str(row.value("评价测量技术") or "")
+                    outgoing = [name for name in names if any(term in name for term in ("出货检验", "GP12"))]
+                    if outgoing and any(term in method for term in _HUMAN):
                         # AIAG control plans name the gauge in the evaluation/measurement technique column.
-                        manual.append((operation.strip(), method.strip(), f"“{sheet.title}”第{row.row_index}行"))
+                        manual.append((outgoing[0], method.strip(), f"“{sheet.title}”第{row.row_index}行", len(names) > 1))
         if not manual:
             return "PASS", "控制计划出货检验/GP12工序没有人工、目视、目测检测。"
+        open_ = "，该行位于两个工序名称之间且原件没有分隔线，尚不能确定是否属于该工序，需人工复核"
         kappas = self.kappas(ctx)
         if not kappas:
+            if all(between for *_rest, between in manual):
+                raise unable(f"控制计划{manual[0][2]}“{manual[0][0]}”采用{manual[0][1]}，同批次没有Kappa报告{open_}。")
             return "NG", "控制计划出货检验/GP12有人为检测，但同批次没有Kappa报告。"
-        for operation, method, where in manual:
+        for operation, method, where, between in manual:
             if any(compact("综合检具") in report.names or any(name and name in compact(method) for name in report.names) for report in kappas):
                 continue
             if any(not report.names for report in kappas):
                 raise unable(f"控制计划{where}“{operation}”采用{method}，同批次Kappa报告未写量具名称，尚不能确认量具名称相同或为综合检具，需人工复核。")
+            if between:
+                raise unable(f"控制计划{where}“{operation}”采用{method}，同批次没有量具名称相同或为综合检具的Kappa报告{open_}。")
             return "NG", f"控制计划{where}“{operation}”采用{method}，同批次没有量具名称相同或为综合检具的Kappa报告。"
         return "PASS", "控制计划出货检验/GP12的人为检测均有量具名称相同或为综合检具的Kappa报告。"

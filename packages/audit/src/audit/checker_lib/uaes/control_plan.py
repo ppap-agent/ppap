@@ -78,9 +78,49 @@ class PlanRow:
     cells: dict[str, str] = field(default_factory=dict)
     sheet: Any = None
     columns: dict[str, int] = field(default_factory=dict)
+    # The two operations a row lies between when the original draws no line separating them.
+    candidates: tuple[str, ...] = ()
 
     def text(self, *names: str) -> str:
         return " ".join(self.cells.get(name, "") for name in names)
+
+
+def operation_owners(sheet: Sheet, column: int, rows: range, skipped: set[int]) -> dict[int, tuple[str, ...]]:
+    """The operation(s) each row belongs to, read from how the operation name column is drawn.
+
+    Horizontal lines in the name column split it into blocks; no line is drawn inside a merged cell. A name owns
+    its own cell (all rows of a merged one, wherever its text is aligned). A row of a block outside every name
+    belongs to the one name above or below it, and to both when it lies between two: the drawing leaves it open.
+    """
+    ws, ops = sheet.ws, sheet.ctx.ops
+
+    def span(row: int) -> tuple[int, int]:
+        merged = ops.get_detailed_merge_info(ws, row, column)
+        return (merged.min_row, merged.max_row) if merged else (row, row)
+
+    def line_above(row: int) -> bool:
+        if span(row)[0] != row:
+            return False
+        return bool(getattr(ws.cell(row, column).border.top, "style", None) or getattr(ws.cell(row - 1, column).border.bottom, "style", None))
+
+    blocks: list[list[int]] = []
+    for row in rows:
+        if not blocks or line_above(row):
+            blocks.append([])
+        blocks[-1].append(row)
+    owners: dict[int, tuple[str, ...]] = {}
+    for block in blocks:
+        names = []
+        for row in block:
+            top, bottom = span(row)
+            if top == row and row not in skipped and (name := str(sheet.cell(row, column).value() or "").strip()):
+                names.append((name, top, bottom))
+        for row in block:
+            inside = [name for name, top, bottom in names if top <= row <= bottom]
+            above = [name for name, _top, bottom in names if bottom < row][-1:]
+            below = [name for name, top, _bottom in names if top > row][:1]
+            owners[row] = tuple(inside) or tuple(dict.fromkeys((*above, *below)))
+    return owners
 
 
 class UaesControlPlanAgent(UaesExcelAgent):
@@ -123,16 +163,23 @@ class UaesControlPlanAgent(UaesExcelAgent):
             start = max(column.data_start_row for column in columns.values())
             _rows, width = self.extent(sheet)
             header = [self._cells(sheet, row, width) for row in range(1, start)]
-            operation = ""
+            kept, repeated = [], set()
             for row in section.rows_from(columns):
                 cells = self._cells(sheet, row.row_index, width)
                 # A PDF page repeats the title block and column headings: each such row is one of the first page's.
                 if cells and any(cells <= block for block in header if block):
-                    continue
-                named = str(sheet.cell(row.row_index, columns["工序名称"].header_col).value() or "").strip()
-                operation = named or operation
+                    repeated.add(row.row_index)
+                else:
+                    kept.append(row)
+            if not kept:
+                continue
+            owners = operation_owners(sheet, columns["工序名称"].header_col, range(kept[0].row_index, kept[-1].row_index + 1), repeated)
+            for row in kept:
+                names = owners.get(row.row_index, ())
                 values = {name: str(row.value(name) or "").strip() for name in columns if name != "工序名称"}
-                rows.append(PlanRow(row.row_index, f"“{sheet.title}”第{row.row_index}行", operation, values, sheet, {name: column.header_col for name, column in columns.items()}))
+                where = f"“{sheet.title}”第{row.row_index}行"
+                operation, between = (names[0], ()) if len(names) == 1 else ("", names)
+                rows.append(PlanRow(row.row_index, where, operation, values, sheet, {name: column.header_col for name, column in columns.items()}, between))
         return rows
 
     @staticmethod
@@ -316,12 +363,26 @@ class UaesControlPlanAgent(UaesExcelAgent):
                 operations.setdefault((row.operation, start), []).append(row)
         if not operations:
             raise unable("控制计划没有读出写有工序名称的业务行，不能按空范围通过。")
-        lacking = [f"“{' '.join(name.split())}”（{items[0].where}起）" for (name, _start), items in operations.items() if all(compact(item.cells.get("CP生产资源")) in _PLACEHOLDERS for item in items)]
+
+        def written(item: PlanRow) -> bool:
+            return compact(item.cells.get("CP生产资源")) not in _PLACEHOLDERS
+
+        # A resource written between two operations with no line drawn between them may be either's.
+        between = [item for item in rows if item.candidates and written(item)]
+        lacking: list[str] = []
+        open_: list[str] = []
+        for (name, _start), items in operations.items():
+            if not any(written(item) for item in items):
+                label = f"“{' '.join(name.split())}”（{items[0].where}起）"
+                (open_ if any(name in item.candidates for item in between) else lacking).append(label)
         if lacking:
             # A PDF converts text only: a resource drawn into the cell is not an empty cell.
             if where := self.graphic_in_blank([item for (name, start), items in operations.items() for item in items], "CP生产资源"):
                 raise unable(f"控制计划{where}生产资源格内有图形或无法对应原页位置，检查程序未能读取其内容，需人工复核。")
-            return "NG", f"控制计划共{len(operations)}个工序，其中{len(lacking)}个工序的生产资源列为空：{'、'.join(lacking[:12])}{'等' if len(lacking) > 12 else ''}。"
+            note = f"；另{'、'.join(open_)}本身各行为空，{between[0].where}的生产资源夹在两个工序之间、原件未画分隔线，归属待人工确认" if open_ else ""
+            return "NG", f"控制计划共{len(operations)}个工序，其中{len(lacking)}个工序的生产资源列为空：{'、'.join(lacking[:12])}{'等' if len(lacking) > 12 else ''}{note}。"
+        if open_:
+            raise unable(f"控制计划{'、'.join(open_)}本身各行的生产资源为空；{between[0].where}写有生产资源，但位于两个工序名称之间且原件没有分隔线，检查程序不能确定它属于哪一工序，需人工复核。")
         return "PASS", f"控制计划全部{len(operations)}个工序都写明了生产资源。"
 
     @rule("生产追溯及先进先出实际措施")
@@ -574,11 +635,24 @@ class UaesControlPlanAgent(UaesExcelAgent):
         dimensions = [(name, spec, where) for name, spec, where in self.important(ctx, plan) if not any(word in name + spec for word in _NOT_DIMENSION)]
         if not dimensions:
             raise unable("PGQP1重要特性清单中没有读出尺寸类特性，不能按空范围通过，需人工复核。")
-        outgoing = [row for row in self.plan(ctx) if any(word in compact(row.operation) for word in ("出货检验", "outgoinginspection"))]
+        plan_rows = self.plan(ctx)
+
+        def outgoing_(name: str) -> bool:
+            return any(word in compact(name) for word in ("出货检验", "outgoinginspection"))
+
+        outgoing = [row for row in plan_rows if outgoing_(row.operation)]
         if not outgoing:
             raise unable("控制计划中未找到出货检验工序，尚不能核对PGQP1尺寸是否在出货检验中，需人工复核。")
         text = self.characteristics(ctx, outgoing)
-        absent = [f"{where}“{name} {spec}”" for name, spec, where in dimensions if not _written(spec, text) and not _written(name, text)]
+        # Rows between the outgoing inspection and a neighbour with no line drawn between them may be either's.
+        between = [row for row in plan_rows if any(outgoing_(name) for name in row.candidates)]
+        maybe = self.characteristics(ctx, between) if between else ""
+        missing = [(name, spec, where) for name, spec, where in dimensions if not _written(spec, text) and not _written(name, text)]
+        if missing and all(_written(spec, maybe) or _written(name, maybe) for name, spec, _where in missing):
+            listed = "、".join(f"“{name} {spec}”" for name, spec, _where in missing[:8])
+            raise unable(f"PGQP1尺寸类特性{listed}只出现在{between[0].where}等行，这些行位于出货检验与相邻工序之间且原件没有分隔线，检查程序不能确定其归属，需人工复核。")
+        missing = [item for item in missing if not (_written(item[1], maybe) or _written(item[0], maybe))]
+        absent = [f"{where}“{name} {spec}”" for name, spec, where in missing]
         differ = [f"{where}“{name} {spec}”" for name, spec, where in dimensions if not _written(spec, text) and _written(name, text)]
         if absent:
             extra = f"；另{len(differ)}项名称出现但规格写法与PGQP1不同：{'、'.join(differ[:5])}" if differ else ""
