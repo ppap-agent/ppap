@@ -296,7 +296,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     if (activate) activeTaskId.current = next.id
     setTask(current => activate || updateActive && current?.id === next.id ? mergeTaskSnapshot(current?.id === next.id ? current : undefined, combined) : current)
     setTasks(rows => rows.some(row => row.id === next.id) ? rows.map(row => row.id === next.id ? mergeTaskSnapshot(row, combined) : row) : [...rows, combined])
-    setSummaries(rows => rows.some(row => row.id === next.id) ? rows.map(row => row.id === next.id ? reconcileTaskSummary(row, summarizeTask(combined)) : row) : [...rows, summarizeTask(combined)])
+    setSummaries(rows => rows.some(row => row.id === next.id) ? rows.map(row => row.id === next.id ? reconcileTaskSummary(row, summarizeTask(combined)) : row) : [summarizeTask(combined), ...rows])
     return combined
   }
   function changeDisplay(reference: DisplayReference, info: DisplayInfo) {
