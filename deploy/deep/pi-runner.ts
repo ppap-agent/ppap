@@ -1,4 +1,4 @@
-#!/usr/bin/env -S node --disable-wasm-trap-handler
+#!/usr/bin/env -S node --disable-wasm-trap-handler --max-old-space-size=768
 // Fixed SDK entrypoint. The Python adapter supplies only an execution-scoped grant.
 // Pi loads its fixed instructions (AGENTS.md) and reference skills natively from the
 // agent directory the adapter prepared; nothing in the work directory is trusted.

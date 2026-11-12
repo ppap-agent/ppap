@@ -305,7 +305,12 @@ class PiRunner(ModelRunner):
                     raise ModelProtocolError("Duplicate terminal model result")
                 terminal = event
         if terminal is None:
-            raise ModelProtocolError("Missing terminal model result (exit " + str(process.returncode) + ")")
+            # A crashed runtime (for example V8 out of memory) leaves no result; its last stderr says why.
+            try:
+                tail = read_regular(work, ("stderr.log",), 1024 * 1024).decode("utf-8", "replace").strip()[-200:]
+            except ValueError:
+                tail = ""
+            raise ModelProtocolError(f"Missing terminal model result (exit {process.returncode}){': ' + tail if tail else ''}")
         # Usage and tool counts are observations. Missing counts never reject a stage.
         usage = terminal.get("usage")
         counts = [usage.get(name) if isinstance(usage, dict) else None for name in ("input_tokens", "output_tokens")]
