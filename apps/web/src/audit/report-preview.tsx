@@ -31,23 +31,26 @@ export function ReportPreview({name, rule, ruleVersion, reference, report, verif
     return () => {current = false; if (url) URL.revokeObjectURL(url)}
   }, [pdfKey, adapter, reload])
   const currentPdf = pdf?.key === pdfKey ? pdf : null
+  const generated = report?.generated_at ? <ReportTime value={report.generated_at}/> : report?.state === 'ready' ? '未记录' : '尚未生成'
   function download() {if (currentPdf?.url && report?.artifact) {const link = document.createElement('a'); link.href = currentPdf.url; link.download = report.artifact.filename; link.click()}}
   return <section className="flex h-full min-w-0 flex-col gap-3" aria-label="当前报告" data-file-version={reference?.file_version_id} data-result-attempt={reference?.result_attempt}>
-    <header className="flex flex-wrap items-center gap-2">{navigation}<h2 className="min-w-0 flex-1 basis-48 [overflow-wrap:anywhere] text-base font-semibold">{name}</h2><div className="flex flex-wrap items-center gap-1">
+    <header className="space-y-2 border-b pb-3"><div className="flex flex-wrap items-center gap-2">{navigation}<p className="min-w-0 flex-1 basis-24 font-semibold">报告预览</p><div className="flex flex-wrap items-center gap-1">
       <Sheet><SheetTrigger asChild><Button variant="ghost" size="sm"><Info/>报告信息</Button></SheetTrigger><SheetContent><SheetHeader><SheetTitle>报告信息</SheetTitle><SheetDescription>查看本报告的来源与审核记录。</SheetDescription></SheetHeader>
         <div className="min-h-0 space-y-6 overflow-y-auto px-4 pb-6 text-sm">
           <div className="space-y-1 border-b pb-5"><p className="text-xs text-muted-foreground">原始文件</p><h3 className="[overflow-wrap:anywhere] text-base font-semibold">{name}</h3></div>
           <dl className="grid gap-4 [&>div]:grid [&>div]:grid-cols-[5rem_minmax(0,1fr)] [&>div]:gap-3 [&_dt]:text-muted-foreground [&_dd]:[overflow-wrap:anywhere]">
-            {information}<div><dt>审核规则</dt><dd>{rule}</dd></div><div><dt>生成时间</dt><dd>{report?.generated_at ? <ReportTime value={report.generated_at}/> : report?.state === 'ready' ? '未记录' : '尚未生成'}</dd></div>
+            {information}<div><dt>审核规则</dt><dd>{rule}</dd></div><div><dt>生成时间</dt><dd>{generated}</dd></div>
           </dl>
           {(reference || ruleVersion) && <Disclosure className="border-t pt-4" summary={<>追溯信息</>}><dl className="mt-4 grid gap-4 [&_dt]:mb-1 [&_dt]:text-xs [&_dt]:text-muted-foreground [&_dd]:[overflow-wrap:anywhere] [&_dd]:font-mono [&_dd]:text-xs">{ruleVersion && <div><dt>规则版本标识</dt><dd>{ruleVersion}</dd></div>}{reference && <><div><dt>任务标识</dt><dd>{reference.task_id}</dd></div><div><dt>审核轮次标识</dt><dd>{reference.round_id}</dd></div><div><dt>文件版本标识</dt><dd>{reference.file_version_id}</dd></div><div><dt>结果尝试</dt><dd>{reference.result_attempt}</dd></div><div><dt>报告标识</dt><dd>{reference.report_id}</dd></div></>}</dl></Disclosure>}
         </div>
       </SheetContent></Sheet>
       {actions}<Button size="sm" disabled={!currentPdf?.url} onClick={download}><Download/>下载当前报告</Button>
-    </div></header>
+    </div></div>
+      <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] [&>div]:flex [&>div]:min-w-0 [&>div]:gap-1 [&_dd]:min-w-0 [&_dt]:shrink-0 [&_dt]:text-muted-foreground"><div><dt>报告名称：</dt><dd><h2 className="[overflow-wrap:anywhere] font-medium">{name}</h2></dd></div><div><dt>生成时间：</dt><dd>{generated}</dd></div></dl>
+    </header>
     {!issue && <VerificationDisclosure verification={verification}/>}
     {(!ready || issue) && <Badge className="self-start" variant="outline">{issue ? '结果待确认' : !report ? '尚未取得结果' : report.state === 'ready' ? '产物待确认' : labels[report.state]}</Badge>}
     {issue ? <Alert variant="destructive"><AlertTitle>不能展示正式报告</AlertTitle><AlertDescription>{issue}</AlertDescription></Alert> : report?.reason ? <p className="text-muted-foreground">{report.reason}</p> : null}{children}
-    {ready && adapter ? currentPdf?.error ? <Alert variant="destructive"><AlertTitle>无法读取 PDF</AlertTitle><AlertDescription>{currentPdf.error}<Button variant="outline" onClick={() => {setPdf(null); setReload(value => value + 1)}}>重新读取 PDF</Button></AlertDescription></Alert> : currentPdf?.url ? <div className="h-[65dvh] min-h-96 min-w-0 flex-1 overflow-hidden rounded-md border"><Suspense fallback={<ReadSkeleton label="正在加载 PDF 阅读器…" kind="document"/>}><PdfSource key={currentPdf.url} url={currentPdf.url} name={report!.artifact!.filename}/></Suspense></div> : <ReadSkeleton label="正在读取 PDF…" kind="document" className="min-h-96 flex-1"/> : ready ? <p>暂时无法读取报告。</p> : null}
+    {ready && adapter ? currentPdf?.error ? <Alert variant="destructive"><AlertTitle>无法读取 PDF</AlertTitle><AlertDescription>{currentPdf.error}<Button variant="outline" onClick={() => {setPdf(null); setReload(value => value + 1)}}>重新读取 PDF</Button></AlertDescription></Alert> : currentPdf?.url ? <div className="flex min-w-0 flex-1 justify-center rounded-lg bg-muted p-4 max-sm:p-2">{/* The fixed PDF reads as one paper sheet over a muted desk. */}<div className="h-[65dvh] min-h-96 w-full max-w-4xl overflow-hidden rounded-sm bg-card shadow-md ring-1 ring-border"><Suspense fallback={<ReadSkeleton label="正在加载 PDF 阅读器…" kind="document"/>}><PdfSource key={currentPdf.url} url={currentPdf.url} name={report!.artifact!.filename}/></Suspense></div></div> : <ReadSkeleton label="正在读取 PDF…" kind="document" className="min-h-96 flex-1"/> : ready ? <p>暂时无法读取报告。</p> : null}
   </section>
 }

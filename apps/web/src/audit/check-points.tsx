@@ -281,8 +281,8 @@ function CheckPoints({ruleVersionId, action, onStarted, onAdopt}: {ruleVersionId
   return <section aria-label="逐条确认" className="space-y-5">
     {readError && <div role="alert" className="flex flex-wrap items-center gap-3"><span>暂时读不到。{readError}</span><Button variant="outline" size="sm" onClick={() => setAttempt(value => value + 1)}>重新读取</Button></div>}
     {!clauses && !readError && <Skeleton className="h-64 w-full"/>}
-    {carryable.length > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3"><span>上一版确认过的 {carryable.length} 条，原文没变。</span><Button disabled={carrying} onClick={() => void carryOver()}>沿用这 {carryable.length} 条</Button></div>}
-    {waiting > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3"><span>{waiting} 条还没整理。</span><Button onClick={() => setPrepare(value => value + 1)}>开始整理</Button></div>}
+    {carryable.length > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card px-4 py-3"><span>上一版确认过的 {carryable.length} 条，原文没变。</span><Button disabled={carrying} onClick={() => void carryOver()}>沿用这 {carryable.length} 条</Button></div>}
+    {waiting > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card px-4 py-3"><span>{waiting} 条还没整理。</span><Button onClick={() => setPrepare(value => value + 1)}>开始整理</Button></div>}
     {jumps.length > 0 && <nav aria-label="按要做的事跳转" className="flex flex-wrap items-center gap-2"><span className="text-muted-foreground">先处理：</span>{jumps.map(({kind, ids}) => <Button key={kind} variant="outline" size="sm" onClick={() => show(ids.find(id => clauses!.indexOf(id) > index) ?? ids[0]!)}>{statusLabel[kind]} {ids.length}</Button>)}</nav>}
     {total > 0 && <div className="grid gap-8 lg:grid-cols-[16rem_minmax(0,1fr)]">
       <nav aria-label="条款" className="space-y-3 self-start max-lg:hidden lg:sticky lg:top-6">

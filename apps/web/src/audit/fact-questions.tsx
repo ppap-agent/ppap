@@ -194,7 +194,7 @@ function FactQuestionForm({question, file, roundId, disabled, onAnswer}: {questi
   const focus = useMemo(() => ({location, requestId: 0}), [location])
   const id = `fact-${question.fingerprint}`
   const ready = choice === 'unknown' || question.answer_type === 'boolean' && ['yes', 'no'].includes(choice) || question.answer_type === 'text' && choice === 'text' && Boolean(text.trim())
-  return <article className="space-y-3 rounded-md border p-4" aria-label={question.prompt}>
+  return <article className="space-y-3 rounded-lg border bg-card p-4" aria-label={question.prompt}>
     <div className="space-y-1"><h4 className="font-medium">{question.prompt}</h4><p className="text-xs text-muted-foreground">{location} · 关联条款：{question.clause_ids.join('、')}（{question.item_keys.length} 项结果）</p></div>
     {file && <Button type="button" variant="outline" size="sm" aria-expanded={open} onClick={() => setOpen(value => !value)}>{open ? '收起原件' : '对照原件'}</Button>}
     {open && file && <div className="flex h-[26rem] min-w-0"><RemoteSourcePane nativeOffice file={{file_id: file.file_id, file_version_id: file.id, original_filename: file.original_filename, role: 'target', rule_version_id: null}} roundId={roundId} focus={focus}/></div>}

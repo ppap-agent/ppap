@@ -94,7 +94,17 @@ def audit_details(page):
     return page.get_by_role("region", name="审核详情", exact=True)
 
 
+def history_rail(page):
+    """Wide screens (>= 1280px) list the rounds in a rail; narrower ones use the sheet."""
+    expect(page.get_by_role("region", name="文档历史审核", exact=True)).to_be_attached()
+    rail = page.get_by_role("complementary", name="历史版本", exact=True)
+    return rail if rail.is_visible() else None
+
+
 def history_records(page):
+    rail = history_rail(page)
+    if rail:
+        return rail
     panel = page.get_by_role("dialog", name="历史审核记录", exact=True)
     if not panel.is_visible():
         close_workspace_panel(page)
@@ -105,11 +115,20 @@ def history_records(page):
 def select_history(page, sequence):
     panel = history_records(page)
     panel.get_by_role("button", name=f"选择第 {sequence} 次审核", exact=True).click()
-    expect(panel).to_have_count(0)
+    if not history_rail(page):
+        expect(panel).to_have_count(0)
+
+
+def expect_history_current(page, sequence):
+    rail = history_rail(page)
+    if rail:
+        expect(rail.get_by_role("button", name=f"选择第 {sequence} 次审核", exact=True)).to_have_attribute("aria-pressed", "true")
+    else:
+        expect(page.get_by_role("button", name="历史审核记录", exact=True)).to_contain_text(f"第 {sequence} 次审核")
 
 
 def expect_history_selected(page, sequence):
-    expect(page.get_by_role("button", name="历史审核记录", exact=True)).to_contain_text(f"第 {sequence} 次审核")
+    expect_history_current(page, sequence)
     panel = history_records(page)
     expect(panel.get_by_role("button", name=f"选择第 {sequence} 次审核", exact=True)).to_have_attribute("aria-pressed", "true")
     close_workspace_panel(page)
@@ -222,7 +241,7 @@ class AuditPreviewTests(unittest.TestCase):
             close_workspace_panel(page)
             page.get_by_role("button", name="报告中心", exact=True).click()
             expect(page.get_by_text("所选报告不可用，请从清单中重新选择。", exact=True)).to_have_count(0)
-            expect(page.get_by_role("table", name="逐文件报告清单").get_by_text("特殊特性清单.xlsx", exact=True)).to_have_count(0)
+            expect(page.get_by_role("list", name="逐文件报告清单").get_by_text("特殊特性清单.xlsx", exact=True)).to_have_count(0)
             page.get_by_role("link", name="返回审核结果", exact=True).click()
             expect(page.get_by_role("navigation", name="文件队列").get_by_role("button", name=re.compile("特殊特性清单.xlsx"))).to_be_visible()
             browser.close()
@@ -2216,7 +2235,7 @@ class AuditPreviewTests(unittest.TestCase):
                         expect(page.get_by_role("table", name="逐文件用量记录", exact=True)).to_be_visible()
                     elif view == "archive":
                         page.get_by_role("row", name=re.compile("档案 A001")).get_by_role("button", name="查看审核记录", exact=True).click()
-                        expect(page.get_by_role("button", name="历史审核记录", exact=True)).to_contain_text("第 3 次审核")
+                        expect_history_current(page, 3)
                     navigation.get_by_role("button", name="工作台", exact=True).click()
                     page.get_by_role("button", name="继续当前审核", exact=True).click()
                     page.get_by_role("button", name="开始识别", exact=True).click()
@@ -3081,7 +3100,7 @@ class AuditPreviewTests(unittest.TestCase):
                     for key in ("archiveDoc", "auditRef", "archiveReport"):
                         self.assertNotIn(key, parse_qs(urlparse(page.url).query, keep_blank_values=True))
             page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready&view=archive&archiveDoc=preview-archive-A001")
-            expect(page.get_by_role("button", name="历史审核记录", exact=True)).to_contain_text("第 3 次审核")
+            expect_history_current(page, 3)
             browser.close()
 
     def test_archive_small_screen_keeps_filename_readable_and_history_in_sheet(self):
@@ -3299,7 +3318,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_text("未提供修订标识")).to_have_count(0)
             close_workspace_panel(page)
             page.get_by_role("button", name="返回示例读取 1", exact=True).click()
-            expect(page.get_by_role("button", name="历史审核记录", exact=True)).to_contain_text("第 1 次审核")
+            expect_history_current(page, 1)
             expect(page.get_by_text("原件修订：Rev B", exact=True)).to_have_count(0)
             browser.close()
 
@@ -3968,8 +3987,8 @@ class AuditPreviewTests(unittest.TestCase):
             page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task&report=1")
             original = "2026-10-16T10:00:00+08:00"
             current = page.get_by_role("region", name="当前报告", exact=True)
-            listing = page.get_by_role("table", name="逐文件报告清单", exact=True)
-            expect(listing.locator("tbody tr")).to_have_count(3)
+            listing = page.get_by_role("list", name="逐文件报告清单", exact=True)
+            expect(listing.get_by_role("listitem")).to_have_count(3)
             expect(listing.locator("time")).to_have_count(0)
             for filename in ("控制计划.xlsx", "PFMEA.xlsx"):
                 listing.get_by_role("button", name=filename + " 就绪", exact=True).click()
@@ -4002,9 +4021,9 @@ class AuditPreviewTests(unittest.TestCase):
             page = browser.new_page(viewport={"width": 1012, "height": 853})
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task&report=preview-recovery-version-1")
-            table = page.get_by_role("table", name="逐文件报告清单", exact=True)
+            table = page.get_by_role("list", name="逐文件报告清单", exact=True)
             expect(table).to_be_visible()
-            expect(table.get_by_role("row")).to_have_count(4)
+            expect(table.get_by_role("listitem")).to_have_count(3)
             expect(table.get_by_text("就绪", exact=True)).to_have_count(0)
             expect(table.locator("time")).to_have_count(0)
             current = page.get_by_role("region", name="当前报告", exact=True)
@@ -4107,7 +4126,7 @@ class AuditPreviewTests(unittest.TestCase):
             record.get_by_role("button", name="关闭", exact=True).click()
             page.get_by_role("checkbox", name="选择报告 控制计划.xlsx", exact=True).uncheck()
             self.assertEqual(len(package_references(package)), 2)
-            expect(page.get_by_role("table", name="逐文件报告清单", exact=True).get_by_text("上次打包：控制计划 PDF 暂时无法读取。", exact=True)).to_be_visible()
+            expect(page.get_by_role("list", name="逐文件报告清单", exact=True).get_by_text("上次打包：控制计划 PDF 暂时无法读取。", exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
             page.get_by_role("button", name="重试同一报告集合打包", exact=True).click()
             page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()

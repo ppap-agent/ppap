@@ -176,7 +176,7 @@ class RulePreparationTests(unittest.TestCase):
             page.get_by_role("navigation", name="位置", exact=True).get_by_role("link", name="规则模板", exact=True).click()
             page.get_by_role("searchbox", name="搜索规则模板", exact=True).fill(title)
             page.get_by_role("main").get_by_role("listitem").get_by_role("link").first.click()
-            row = page.get_by_role("row").filter(has_text=title)
+            row = page.get_by_role("list", name=re.compile("的文件类型$")).get_by_role("listitem").filter(has_text=title)
             expect(row).to_have_count(1)
             row.get_by_role("link").click()
             saved_query, reopened_query = parse_qs(urlsplit(saved_url).query), parse_qs(urlsplit(page.url).query)

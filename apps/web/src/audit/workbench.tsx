@@ -16,6 +16,7 @@ export type WorkbenchProps = {
   headerActions?: HTMLElement | null
 }
 const queues = [{id: 'all', label: '全部任务'}, {id: 'attention', label: '需要处理'}, {id: 'running', label: '进行中'}, {id: 'completed', label: '已完成'}] as const
+const queueTone: Record<(typeof queues)[number]['id'], string> = {all: 'text-foreground', attention: 'text-warning', running: 'text-primary', completed: 'text-success'}
 const storedQueue = () => queues.find(row => row.id === history.state?.workbenchQueue)?.id || 'all'
 
 /** Uses the original workbench table, file list, responsive cards and column controls. */
@@ -37,7 +38,7 @@ export function AuditWorkbench(props: WorkbenchProps) {
   const actions = <div className="flex flex-wrap gap-2">{props.onResume && <Button variant="outline" onClick={props.onResume}>继续当前审核</Button>}<Button onClick={props.onNew}><Plus/>新建审核</Button></div>
   return <section className="space-y-6" aria-label="工作台">
     {props.headerActions ? <><h1 className="sr-only">工作台</h1>{createPortal(actions, props.headerActions)}</> : <header className="flex flex-wrap items-center justify-between gap-4"><h1 className="text-2xl font-semibold tracking-tight">工作台</h1>{actions}</header>}
-    <Tabs value={queue} onValueChange={chooseQueue}><TabsList>{queues.map(row => <TabsTrigger key={row.id} value={row.id}>{row.label}{/* A count shows only once every source is read; until then the tab says nothing rather than a placeholder. */}{props.countsKnown && !props.more && <span className="ml-1 text-xs tabular-nums text-muted-foreground">{row.id === 'all' ? items.length : items.filter(item => item.task === row.id).length}</span>}</TabsTrigger>)}</TabsList></Tabs>
+    <Tabs value={queue} onValueChange={chooseQueue}><TabsList variant="cards">{queues.map(row => <TabsTrigger key={row.id} value={row.id}><span className="text-xs font-normal text-muted-foreground">{row.label}</span>{/* A count shows only once every source is read; until then the card says nothing rather than a placeholder. */}{props.countsKnown && !props.more && <span className={`text-2xl font-semibold tabular-nums ${queueTone[row.id]}`}>{row.id === 'all' ? items.length : items.filter(item => item.task === row.id).length}</span>}</TabsTrigger>)}</TabsList></Tabs>
     {props.errors.length > 0 && <Alert variant="destructive"><AlertTitle>审核任务没有读取完整</AlertTitle><AlertDescription>{props.errors.map(error => <p key={error}>{error}</p>)}{items.length > 0 && <p>已读取的记录仍可打开；状态可能已变化。</p>}<Button variant="outline" size="sm" className="mt-2" disabled={props.busy} onClick={props.onRefresh}>重新读取</Button></AlertDescription></Alert>}
     <WorkItemsTable items={shown} label={queues.find(row => row.id === queue)?.label || '全部'} onOpen={props.onOpen} loading={props.loading} readFailed={props.errors.length > 0} hasMore={props.more} busy={props.busy} onLoadMore={props.more ? props.onMore : undefined} toolbar={<><label className="flex min-w-0 flex-1 items-center gap-2 max-sm:basis-full sm:max-w-md"><Search className="size-4 shrink-0 text-muted-foreground"/><span className="sr-only">搜索审核任务</span><Input value={props.query} onChange={event => props.onQuery(event.target.value)} placeholder="搜索文件名或任务"/></label><Button variant="outline" size="icon" disabled={props.busy} aria-label="刷新任务列表" onClick={props.onRefresh}><RefreshCw className={props.busy ? 'animate-spin' : ''}/></Button></>}/>
   </section>

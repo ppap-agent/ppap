@@ -64,8 +64,11 @@ CSS = (
     "body {font-family:monospace; font-size:10.5pt; line-height:1.6} h1 {font-size:20pt} h2 {font-size:14pt} "
     "h3 {font-size:11pt} p {white-space:pre-wrap} .meta {font-size:9pt; color:#555} "
     "table {border-collapse:collapse; width:100%} th, td {border:0.5pt solid #888; padding:2pt 4pt; font-size:9pt; line-height:1.4; text-align:left; vertical-align:top} "
-    "th {background-color:#eee} .ng {font-weight:bold; background-color:#ddd}"
+    "th {background-color:#eee} .ng {font-weight:bold; background-color:#ddd} "
+    ".stats td {border:0.5pt solid #dee0e3; background-color:#f5f6f7; padding:6pt 18pt; text-align:center; font-size:10pt} .stats b {font-size:18pt}"
 )
+# Cover stat boxes: the same four counts as the cover line, never a risk grade.
+STAT_COLORS = (("符合", "pass_count", "#2ea121"), ("不符合", "ng_count", "#d83931"), ("无法判断", "unknown_count", "#de7802"), ("不适用", "na_count", "#8f959e"))
 
 
 def _first_location(source: dict, check: dict) -> str:
@@ -130,6 +133,7 @@ def _cover(source: dict, audited_on: str) -> str:
             *([f"<p><b>{_verification_notice(audit['checker_verification'])}</b></p>"] if audit.get("checker_verification") else []),
             f"<table>{table}</table>",
             "<p class='meta'>供应商名称、PPAP 版本与 SQE 工程师请下载后自行补充。</p>",
+            "<table class='stats'><tr>" + "".join(f"<td>{label}<br/><b style='color:{color}'>{counts.get(key, 0)}</b></td>" for label, key, color in STAT_COLORS) + "</tr></table>",
         ]
     )
 

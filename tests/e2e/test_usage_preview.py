@@ -12,7 +12,12 @@ if PREVIEW:
 
 def expect_history(surface, sequence):
     expect(surface.get_by_role("region", name="文档历史审核", exact=True)).to_be_visible()
-    expect(surface.get_by_role("button", name="历史审核记录", exact=True)).to_contain_text(f"第 {sequence} 次审核")
+    # Wide screens list the rounds in a rail; narrower ones name the current round on the sheet trigger.
+    rail = surface.get_by_role("complementary", name="历史版本", exact=True)
+    if rail.is_visible():
+        expect(rail.get_by_role("button", name=f"选择第 {sequence} 次审核", exact=True)).to_have_attribute("aria-pressed", "true")
+    else:
+        expect(surface.get_by_role("button", name="历史审核记录", exact=True)).to_contain_text(f"第 {sequence} 次审核")
     expect(surface.get_by_role("region", name="审核详情", exact=True)).to_be_visible()
 
 
@@ -36,7 +41,7 @@ class UsagePreviewTests(unittest.TestCase):
                     page.go_back()
                     expect(row).to_be_visible()
                     expect(page.get_by_role("region", name="文档历史审核", exact=True)).to_have_count(0)
-                    expect(page.get_by_role("combobox", name="用量时间范围", exact=True)).to_have_text("全部")
+                    expect(page.get_by_role("group", name="用量时间范围", exact=True).get_by_role("button", name="全部记录", exact=True)).to_have_attribute("aria-pressed", "true")
                     expect(page.get_by_role("textbox", name="搜索文件名或发起人", exact=True)).to_have_value("示例")
                     expect(page.get_by_text("共 12 笔 · 第 2/2 页", exact=True)).to_be_visible()
                     page.go_forward()
@@ -100,8 +105,7 @@ class UsagePreviewTests(unittest.TestCase):
             page = browser.new_page(permissions=["clipboard-read", "clipboard-write"])
             for scene, notice in notices.items():
                 page.goto(PREVIEW + f"/preview/audit.html?scene={scene}&view=usage")
-                page.get_by_role("combobox", name="用量时间范围", exact=True).click()
-                page.get_by_role("option", name="全部", exact=True).click()
+                page.get_by_role("group", name="用量时间范围", exact=True).get_by_role("button", name="全部记录", exact=True).click()
                 page.get_by_role("textbox", name="搜索文件名或发起人", exact=True).fill("示例")
                 page.get_by_role("form", name="筛选用量记录", exact=True).get_by_role("button", name="搜索", exact=True).click()
                 page.get_by_role("button", name="下一页", exact=True).click()
@@ -122,7 +126,7 @@ class UsagePreviewTests(unittest.TestCase):
                 page.keyboard.press("Escape")
                 self.assertEqual(page.url, address)
                 expect(page.get_by_role("textbox", name="搜索文件名或发起人", exact=True)).to_have_value("示例")
-                expect(page.get_by_role("combobox", name="用量时间范围", exact=True)).to_have_text("全部")
+                expect(page.get_by_role("group", name="用量时间范围", exact=True).get_by_role("button", name="全部记录", exact=True)).to_have_attribute("aria-pressed", "true")
                 expect(page.get_by_text("共 12 笔 · 第 2/2 页", exact=True)).to_be_visible()
                 expect(page.get_by_role("row", name="消费记录 示例消费-11", exact=True)).to_be_visible()
                 page.get_by_role("navigation", name="产品导航").get_by_role("button", name="工作台", exact=True).click()
@@ -178,9 +182,8 @@ class UsagePreviewTests(unittest.TestCase):
             browser = playwright.chromium.launch()
             page = browser.new_page(viewport={"width": 390, "height": 844})
             page.goto(PREVIEW + "/preview/audit.html?scene=usage-ready&view=usage")
-            for label in ("最近7天", "最近90天", "全部"):
-                page.get_by_role("combobox", name="用量时间范围", exact=True).click()
-                page.get_by_role("option", name=label, exact=True).click()
+            for label in ("最近 7 天", "最近 90 天", "全部记录"):
+                page.get_by_role("group", name="用量时间范围", exact=True).get_by_role("button", name=label, exact=True).click()
                 expect(page.get_by_role("group", name="本月消费次数", exact=True)).to_contain_text("12")
             page.get_by_role("button", name="下一页", exact=True).click()
             expect(page.get_by_text("共 12 笔 · 第 2/2 页", exact=True)).to_be_visible()

@@ -376,5 +376,7 @@ def test_an_undecided_clause_is_counted_and_keeps_minor_failures_from_a_conditio
     with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
         pages = _pages(document)
     assert "无法判断1项" in pages[0]
+    # The cover stat boxes repeat the same counts; 无法判断 stays its own box, not PASS.
+    assert "符合0不符合1无法判断1不适用0" in pages[0]
     assert "总评：不通过" in pages[0] and "有条件通过" not in "".join(pages)
     assert "签字区域未能读取，需人工复核。" in "".join(pages)

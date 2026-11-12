@@ -268,5 +268,5 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             expect(page.get_by_role("region", name="比对资料原件", exact=True)).to_be_visible()
             expect(page.get_by_role("status").filter(has_text="文件已结束 2/2")).to_be_visible()
             page.get_by_role("button", name="报告中心", exact=True).click()
-            expect(page.get_by_role("table", name="逐文件报告清单").get_by_text("特殊特性清单.xlsx", exact=True)).to_have_count(0)
+            expect(page.get_by_role("list", name="逐文件报告清单").get_by_text("特殊特性清单.xlsx", exact=True)).to_have_count(0)
             browser.close()

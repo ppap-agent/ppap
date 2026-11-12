@@ -22,19 +22,23 @@ PREVIEW = os.environ.get("PPAP_PREVIEW_URL", "").rstrip("/")
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires the explicit UI preview and Playwright")
 class AuditArchivePreviewTests(unittest.TestCase):
     def assert_history_reader_layout(self, page, filename):
-        """Identity and actions fit; results use the reader width and begin in view."""
+        """Identity and actions fit; results fill the reader beside the round rail and begin in view."""
         heading = page.get_by_role("heading", name=filename, exact=True)
         identity = heading.locator("xpath=ancestor::header")
         details = page.get_by_role("region", name="审核详情", exact=True)
-        selector = page.get_by_role("button", name="历史审核记录", exact=True)
+        information = page.get_by_role("region", name="本次审核信息", exact=True)
+        wide = page.viewport_size["width"] >= 1280
+        rail = page.get_by_role("complementary", name="历史版本", exact=True)
+        expect(rail).to_have_count(1 if wide else 0)
+        selector = rail.locator('[aria-pressed="true"]') if wide else page.get_by_role("button", name="历史审核记录", exact=True)
         report = details.get_by_role("button", name="查看报告", exact=True)
         search = details.get_by_role("textbox", name="搜索审核项", exact=True)
         filters = details.get_by_role("group", name="审核结果筛选", exact=True)
-        source_notice = identity.get_by_text("无权查看来源任务。", exact=True)
+        source_notice = information.get_by_text("无权查看来源任务。", exact=True)
         provenance = (
-            identity.locator("time").locator(".."),
-            identity.get_by_text("发起人：示例李工", exact=True),
-            identity.get_by_text("原件修订：Rev C", exact=True),
+            information.locator("time").locator(".."),
+            information.get_by_text("发起人：示例李工", exact=True),
+            information.get_by_text("原件修订：Rev C", exact=True),
         )
         # Wait for the actual recipe-free state and comparison, not a transient loading layout.
         expect(page.get_by_role("region", name="原件事实确认", exact=True)).to_have_count(0)
@@ -55,10 +59,16 @@ class AuditArchivePreviewTests(unittest.TestCase):
                 or second["y"] + second["height"] <= first["y"],
                 f"Identity or controls overlap: {first}, {second}",
             )
-        identity_box, reader_box = identity.bounding_box(), details.bounding_box()
-        self.assertGreaterEqual(reader_box["y"], identity_box["y"] + identity_box["height"])
-        self.assertEqual(reader_box["x"], identity_box["x"], "Results must start at the available reader's left edge")
-        self.assertEqual(reader_box["width"], identity_box["width"], "History must not reserve a side column beside results")
+        identity_box, information_box, reader_box = identity.bounding_box(), information.bounding_box(), details.bounding_box()
+        self.assertGreaterEqual(information_box["y"], identity_box["y"] + identity_box["height"])
+        self.assertGreaterEqual(reader_box["y"], information_box["y"] + information_box["height"])
+        self.assertEqual(reader_box["x"] + reader_box["width"], identity_box["x"] + identity_box["width"], "Results must end at the available reader's right edge")
+        if wide:
+            rail_box = rail.bounding_box()
+            self.assertEqual(rail_box["x"], identity_box["x"], "The round rail starts at the reader's left edge")
+            self.assertEqual(reader_box["x"], rail_box["x"] + rail_box["width"], "Results start right after the round rail")
+        else:
+            self.assertEqual(reader_box["x"], identity_box["x"], "Without the rail, results start at the reader's left edge")
         # The table's scrollport fills the result region's content box. On narrow screens the
         # columns may scroll inside it, but must not widen the page or disappear through clipping.
         items = details.get_by_role("region", name="审核项", exact=True)
@@ -226,13 +236,14 @@ class AuditArchivePreviewTests(unittest.TestCase):
                     page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready&view=archive")
                     table = page.get_by_role("table", name="审核文件列表", exact=True)
                     expect(table).to_be_visible()
-                    expect(page.get_by_role("navigation", name="车型与零件", exact=True)).to_have_count(0)
+                    # From lg the model and part tree is a side panel; below it opens from the toolbar.
+                    expect(page.get_by_role("navigation", name="车型与零件", exact=True)).to_have_count(1 if width >= 1024 else 0)
                     first = table.get_by_role("row", name=re.compile("档案 A001"))
                     filename = first.get_by_text("控制计划.xlsx", exact=True)
                     expect(filename).to_be_visible()
                     self.assertLess(filename.bounding_box()["height"], 30)
-                    self.assertGreater(table.bounding_box()["width"] / page.get_by_role("main").bounding_box()["width"], 0.9)
-                    self.assertGreater(first.get_by_role("cell").nth(1).bounding_box()["width"], 250 if width < 1280 else 400)
+                    self.assertGreater(table.bounding_box()["width"] / table.locator("xpath=..").bounding_box()["width"], 0.99)
+                    self.assertGreater(first.get_by_role("cell").nth(1).bounding_box()["width"], 250)
                     for action in table.get_by_role("button", name="查看审核记录", exact=True).all():
                         if action.is_visible():
                             self.assertEqual(action.evaluate("element => getComputedStyle(element).whiteSpace"), "nowrap")
@@ -246,7 +257,7 @@ class AuditArchivePreviewTests(unittest.TestCase):
     def test_classification_is_on_demand_and_returns_keyboard_focus(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 1079, "height": 853})
+            page = browser.new_page(viewport={"width": 900, "height": 853})
             page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready&view=archive")
             trigger = page.get_by_role("button", name="车型与零件", exact=True)
             trigger.focus()
@@ -275,11 +286,8 @@ class AuditArchivePreviewTests(unittest.TestCase):
             expect(selected.get_by_text("控制计划.xlsx · 第 3 次审核", exact=True)).to_be_visible()
             page.get_by_role("button", name="下一页", exact=True).click()
             expect(page.get_by_text("第 2 页 · 每页 10 份", exact=True)).to_be_visible()
-            page.get_by_role("button", name="更多筛选", exact=True).click()
-            panel = page.get_by_role("dialog", name="筛选审核文件", exact=True)
-            panel.get_by_role("combobox", name="全部客户", exact=True).click()
+            page.get_by_role("combobox", name="全部客户", exact=True).click()
             page.get_by_role("option", name="示例客户 B", exact=True).click()
-            panel.get_by_role("button", name="查看筛选结果", exact=True).click()
             expect(page.get_by_text("第 1 页 · 每页 10 份", exact=True)).to_be_visible()
             table = page.get_by_role("table", name="审核文件列表", exact=True)
             expect(table.get_by_role("row")).to_have_count(2)
@@ -312,8 +320,12 @@ class AuditArchivePreviewTests(unittest.TestCase):
                     heading = page.get_by_role("heading", name="控制计划.xlsx", exact=True)
                     expect(heading).to_be_visible()
                     expect(page.get_by_role("main").get_by_text("控制计划.xlsx", exact=True)).to_have_count(1)
-                    expect(page.get_by_role("navigation", name="历次审核", exact=True)).to_have_count(0)
-                    expect(page.get_by_role("button", name="历史审核记录", exact=True)).to_contain_text("第 3 次审核")
+                    if width >= 1280:
+                        rail = page.get_by_role("complementary", name="历史版本", exact=True)
+                        expect(rail.get_by_role("button", name="选择第 3 次审核", exact=True)).to_have_attribute("aria-pressed", "true")
+                    else:
+                        expect(page.get_by_role("navigation", name="历次审核", exact=True)).to_have_count(0)
+                        expect(page.get_by_role("button", name="历史审核记录", exact=True)).to_contain_text("第 3 次审核")
                     details = page.get_by_role("region", name="审核详情", exact=True)
                     expect(details.get_by_role("button", name="查看报告", exact=True)).to_be_enabled()
                     expect(details.get_by_role("button", name="符合 2", exact=True)).to_be_visible()
@@ -340,13 +352,18 @@ class AuditArchivePreviewTests(unittest.TestCase):
                     page.get_by_role("region", name="审核详情", exact=True).get_by_role("button", name="查看报告", exact=True).click()
                     expect(page.get_by_role("region", name="当前报告", exact=True).get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
                     page.get_by_role("button", name="返回本次审核", exact=True).click()
-                    selector = page.get_by_role("button", name="历史审核记录", exact=True)
-                    selector.focus()
-                    page.keyboard.press("Enter")
-                    history = page.get_by_role("dialog", name="历史审核记录", exact=True)
-                    history.get_by_role("button", name="选择第 2 次审核", exact=True).click()
-                    expect(selector).to_contain_text("第 2 次审核")
-                    expect(selector).to_be_focused()
+                    if width >= 1280:
+                        choice = page.get_by_role("complementary", name="历史版本", exact=True).get_by_role("button", name="选择第 2 次审核", exact=True)
+                        choice.click()
+                        expect(choice).to_have_attribute("aria-pressed", "true")
+                    else:
+                        selector = page.get_by_role("button", name="历史审核记录", exact=True)
+                        selector.focus()
+                        page.keyboard.press("Enter")
+                        history = page.get_by_role("dialog", name="历史审核记录", exact=True)
+                        history.get_by_role("button", name="选择第 2 次审核", exact=True).click()
+                        expect(selector).to_contain_text("第 2 次审核")
+                        expect(selector).to_be_focused()
                     expect(heading).to_be_visible()
                     expect(page.get_by_text("原件修订：Rev B", exact=True)).to_be_visible()
                     page.close()

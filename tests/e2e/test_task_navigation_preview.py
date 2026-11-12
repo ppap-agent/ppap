@@ -25,7 +25,7 @@ class TaskNavigationPreviewTests(unittest.TestCase):
             current = page.get_by_role("region", name="当前报告", exact=True)
             expect(current.get_by_role("heading", name="控制计划.xlsx", exact=True)).to_be_visible()
             expect(current.get_by_role("toolbar", name="PDF 阅读工具", exact=True)).to_be_visible()
-            table = page.get_by_role("table", name="逐文件报告清单", exact=True)
+            table = page.get_by_role("list", name="逐文件报告清单", exact=True)
             expect(table.get_by_text("特殊特性清单.xlsx", exact=True)).to_have_count(0)
             page.reload()
             expect(current.get_by_role("heading", name="控制计划.xlsx", exact=True)).to_be_visible()

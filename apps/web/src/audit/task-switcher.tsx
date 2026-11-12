@@ -58,3 +58,20 @@ export function TaskSwitcher({open, onOpenChange, currentId, tasks, labels, quer
   </Sheet>
 }
 import {ReadSkeleton} from '../components/read-skeleton'
+
+/** On a wide desktop the task list stays beside the results, so moving between tasks never leaves the page. */
+export function TaskRail({currentId, tasks, labels, query, onQuery, onOpen, onNew}: {currentId?: string; tasks: TaskSummary[]; labels: Record<TaskSummary['state'], string>; query: string; onQuery: (value: string) => void; onOpen: (id: string) => void; onNew: () => void}) {
+  return <nav aria-label="审核任务列表" className="grid content-start gap-3 p-3">
+    <h2 className="px-1 text-sm font-semibold">审核任务</h2>
+    <label className="flex items-center gap-2"><span className="sr-only">搜索审核任务</span><Search aria-hidden="true" className="size-4 shrink-0 text-muted-foreground"/><Input placeholder="搜索任务编号或文件名" value={query} onChange={event => onQuery(event.target.value)}/></label>
+    <Button variant="soft" onClick={onNew}><Plus aria-hidden="true"/>新建审核任务</Button>
+    <ul className="grid gap-1.5">{tasks.map(task => {
+      const current = task.id === currentId, files = task.files.filter(file => file.selection === 'selected')
+      return <li key={task.id}><button type="button" aria-current={current ? 'page' : undefined} onClick={() => onOpen(task.id)} className={`grid w-full gap-1 rounded-lg border px-3 py-2 text-left transition-colors ${current ? 'border-primary/40 bg-primary/5' : 'border-transparent hover:bg-muted'}`}>
+        <span className="flex items-center justify-between gap-2"><span className={`truncate text-sm font-medium ${current ? 'text-primary' : ''}`}>{task.number}</span><Badge variant={hasExecutionError(task) ? 'destructive' : task.state === 'completed' ? 'success' : task.state === 'pending_confirm' ? 'warning' : 'info'}>{hasExecutionError(task) ? '审核异常' : labels[task.state]}</Badge></span>
+        {files[0] && <span className="truncate text-xs text-muted-foreground">{files[0].file.original_filename}</span>}
+        <span className="text-xs text-muted-foreground">共 {files.length} 份文件</span>
+      </button></li>
+    })}</ul>
+  </nav>
+}

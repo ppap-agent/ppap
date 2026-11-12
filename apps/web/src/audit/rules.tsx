@@ -10,7 +10,7 @@ import {useSavedDraft} from '../journey/saved-draft'
 import {useAccess} from '../journey/access'
 import {auditAddressChanged} from './routes'
 import {buildTemplates, enterpriseTemplateKey} from './rule-templates'
-import {rulesAddress, RulesTrail, SystemRuleDetail, TemplateDetail, TemplateList} from './rule-templates-view'
+import {rulesAddress, RulesTrail, SystemRuleDetail, TemplateBrowser} from './rule-templates-view'
 import {ProgramStatus} from './program-status'
 import {writeAuditAddress} from './routes'
 
@@ -71,7 +71,6 @@ function RulesWorkspace({onPublished, active, headerActions}: {onPublished: () =
   }, [active, revision])
   const catalog = suites.loading ? null : suites.value
   const templates = buildTemplates({rules: read.rules, library: requirementDirectory(collections, directory), catalog: suites.error ? 'failed' : catalog, standardTypes: read.types})
-  const template = templates.find(item => item.key === route.template)
   const systemTemplate = route.systemRule ? templates.find(item => item.rows.some(row => row.target.kind === 'system' && row.target.id === route.systemRule)) : undefined
   const systemRow = systemTemplate?.rows.find(row => row.target.id === route.systemRule)
   // A platform program is adopted on its rule's page; a related program opens the rule that owns it.
@@ -90,8 +89,7 @@ function RulesWorkspace({onPublished, active, headerActions}: {onPublished: () =
   })
   const listView = route.systemRule
     ? <SystemRuleDetail ruleId={route.systemRule} template={systemTemplate} row={systemRow} program={program}/>
-    : route.template ? <TemplateDetail template={read.loading && !template ? undefined : template} catalogKnown={catalog !== null}/>
-      : <TemplateList templates={templates} loading={read.loading} failed={Boolean(read.error)} catalogKnown={catalog !== null}/>
+    : <TemplateBrowser templates={templates} selectedKey={route.template} loading={read.loading} failed={Boolean(read.error)} catalogKnown={catalog !== null}/>
   return <RequirementLibraryPanel
     listView={listView}
     trail={version => {

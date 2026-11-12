@@ -12,11 +12,13 @@ const badgeVariants = cva(
         secondary:
           "bg-secondary text-secondary-foreground [a]:hover:bg-secondary/80",
         destructive:
-          "bg-destructive/10 text-destructive focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:focus-visible:ring-destructive/40 [a]:hover:bg-destructive/20",
+          "border-destructive/30 bg-destructive/5 text-destructive focus-visible:ring-destructive/20 dark:bg-destructive/15 dark:focus-visible:ring-destructive/40 [a]:hover:bg-destructive/15",
         success:
           "border-success/30 bg-success/5 text-success",
         warning:
-          "border-warning/30 bg-warning/10 text-warning",
+          "border-warning/30 bg-warning/5 text-warning",
+        info:
+          "border-primary/30 bg-primary/5 text-primary",
         outline:
           "border-border text-foreground [a]:hover:bg-muted [a]:hover:text-muted-foreground",
         ghost:
@@ -30,7 +32,7 @@ const badgeVariants = cva(
     },
     defaultVariants: {
       variant: "default",
-      shape: "pill",
+      shape: "square",
     },
   }
 )
@@ -38,7 +40,7 @@ const badgeVariants = cva(
 function Badge({
   className,
   variant = "default",
-  shape = "pill",
+  shape = "square",
   asChild = false,
   ...props
 }: React.ComponentProps<"span"> &
