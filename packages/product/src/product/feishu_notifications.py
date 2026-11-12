@@ -44,6 +44,8 @@ def task_notification_card(task: dict, stage: str, web_url: str, report_package:
                 detail = "匹配尚未确认，请打开页面核对"
             notices = [gap for gap in match.get("gaps") or [] if gap != "metadata_uses_excerpt"]
             blocks.append("**" + _markdown(row["file"]["original_filename"]) + "**<br>" + "<br>".join(_markdown(value) for value in [detail, *notices]))
+        if task.get("deep_mode"):
+            blocks.append("**深度模式**（点数按 1.5 倍计；未完成深度复核的文件按 500 点计）")
         blocks.append(f"**预计点数：{task.get('estimated_points') if task.get('estimated_points') is not None else '待核对'}**")
     elif stage == "started":
         blocks.append(f"本次审核 **{len(targets)} 份文件**。<br>可离开页面，稍后打开审核查看进度。")
@@ -150,7 +152,10 @@ def task_notification_card(task: dict, stage: str, web_url: str, report_package:
                 "behaviors": [{"type": "callback", "value": {"action": "confirm_audit_task", "notification_id": confirmation_id}}],
                 "confirm": {
                     "title": {"tag": "plain_text", "content": "开始本次审核？"},
-                    "text": {"tag": "plain_text", "content": f"按卡片所列规则审核 {matched} 份文件。未匹配文件不纳入审核。预计点数：{task['estimated_points']}。"},
+                    "text": {
+                        "tag": "plain_text",
+                        "content": f"按卡片所列规则{'以深度模式' if task.get('deep_mode') else ''}审核 {matched} 份文件。未匹配文件不纳入审核。预计点数：{task['estimated_points']}。",
+                    },
                 },
             },
         )
@@ -163,65 +168,6 @@ def task_notification_card(task: dict, stage: str, web_url: str, report_package:
     if len(json.dumps(card, ensure_ascii=False).encode()) > 26000:
         raise ValueError("notification_card_too_large")
     return card
-
-
-def optimization_notification_card(operation: dict, sample: dict, web_url: str) -> dict:
-    """Recall the same operation; never imply a candidate is already published."""
-    state = operation["state"]
-    title = {
-        "completed": "检查优化已完成",
-        "failed": "检查优化未完成",
-        "unknown": "检查优化结果待核对",
-        "stopped": "检查优化已停止",
-    }[state]
-    validation = (operation.get("report") or {}).get("validation")
-    if state == "completed" and validation:
-        summary = f"已验证 {validation['passed_samples']}/{validation['total_samples']} 条样本 · 新增错误 {validation['new_errors']} 条。"
-        summary += "<br>" + ("验证通过。" if validation.get("verified") else "需要重新验证，请核对未通过项或样本不足的原因。")
-    elif state == "unknown":
-        summary = "执行回执或模型用量未知，请打开原操作核对。不会自动重试模型请求。"
-    elif state == "stopped":
-        summary = "已停止后续执行；停止前可能已经产生模型用量，请打开原操作核对。"
-    else:
-        summary = "尚未得到完整验证结果，请打开原操作查看原因与下一步。"
-    summary += "<br>未自动发布，已有审核结果不变。"
-    target = (
-        web_url.rstrip("/")
-        + "/audit?"
-        + urlencode(
-            {
-                "round": sample["round_id"],
-                "file": sample["file_version_id"],
-                "clause": sample["rule_clause_id"],
-                "basis": "1",
-                "checkerOptimization": operation["operation_id"],
-                "checkerFeedbackClause": sample["rule_clause_id"],
-                "checkerFeedbackScope": f"{sample['round_id']}:{sample['file_version_id']}:{sample['rule_clause_id']}",
-            }
-        )
-    )
-    link = web_url.rstrip("/") + "/enter-current?" + urlencode({"return_to": target})
-    return {
-        "schema": "2.0",
-        "config": {"update_multi": True, "summary": {"content": title}},
-        "header": {"template": "blue", "title": {"tag": "plain_text", "content": title}},
-        "body": {
-            "direction": "vertical",
-            "padding": "16px",
-            "vertical_spacing": "12px",
-            "elements": [
-                {"tag": "markdown", "content": summary},
-                {
-                    "tag": "button",
-                    "text": {"tag": "plain_text", "content": "查看本次修复结果"},
-                    "type": "primary_filled",
-                    "size": "large",
-                    "width": "fill",
-                    "behaviors": [{"type": "open_url", "default_url": link}],
-                },
-            ],
-        },
-    }
 
 
 # What each clause waits for, in the order a person should take them up.

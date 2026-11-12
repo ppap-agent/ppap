@@ -260,10 +260,9 @@ class SuiteReleaseStore:
                 (keys,),
             )
             official = {row["suite_key"]: revisions.get(str(row["current_revision_id"])) for row in cur.fetchall()}
-            from product.store.rule_impact import PUBLISHED_RULE_REVISION
-
+            # A rule version's meaning is the revision it was published with.
             cur.execute(
-                f"""SELECT DISTINCT ON (v.body->>'suite_key') v.body->>'suite_key' AS suite_key, {PUBLISHED_RULE_REVISION} AS revision_id
+                """SELECT DISTINCT ON (v.body->>'suite_key') v.body->>'suite_key' AS suite_key, v.body->>'suite_revision_id' AS revision_id
                     FROM product.rule_versions v WHERE v.tenant_id = %s AND v.body->>'suite_key' = ANY(%s) AND v.body->>'suite_revision_id' IS NOT NULL
                     ORDER BY v.body->>'suite_key', v.created_at DESC, v.id DESC""",
                 (tenant, keys),
@@ -464,15 +463,6 @@ class SuiteReleaseStore:
             base = _official_base(conn, _revision(conn, selection["revision_id"], principal.tenant_id), principal.tenant_id)
             update = bool(official and base and base["id"] != official["current_revision_id"] and selection["selection_mode"] == "pinned")
             needs_rule_validation = bool(rule_update or update and official_rule_impact and official_rule_impact["changed"])
-            # A repair or a regeneration finished after the version in use was adopted waits on the rule page.
-            offered = conn.execute(
-                """SELECT o.candidate_revision_id::text FROM product.checker_optimizations o
-                   LEFT JOIN product.tenant_suite_heads h ON h.tenant_id = o.tenant_id AND h.suite_key = o.frozen->>'suite_key'
-                   WHERE o.tenant_id = %s AND o.frozen->>'suite_key' = %s AND o.state = 'completed' AND o.candidate_revision_id IS NOT NULL
-                     AND o.candidate_revision_id <> %s AND o.completed_at > COALESCE(h.published_at, '-infinity')
-                   ORDER BY o.completed_at DESC LIMIT 1""",
-                (principal.tenant_id, suite_key, selection["revision_id"]),
-            ).fetchone()
             seen = (
                 not update
                 or conn.execute(
@@ -496,7 +486,6 @@ class SuiteReleaseStore:
             "official_rule_impact": official_rule_impact if update else None,
             "official_update_available": update,
             "official_update_notice": not seen,
-            "offered_revision_id": offered[0] if offered else None,
             "verification_status": "stale" if needs_rule_validation else selection["verification_status"],
             "force_unverified": selection["force_unverified"],
             "validation": (
@@ -523,7 +512,7 @@ class SuiteReleaseStore:
         return self.active(principal, suite_key)
 
     def upgrade_official(self, principal, suite_key: str, source_revision_id: str, target_revision_id: str, expected_revision: int, operation_id: str) -> dict:
-        """Save a candidate only. Existing optimization and explicit publication own the next steps."""
+        """Save a candidate only. Validation and explicit publication own the next steps."""
         from product.suite_upgrades import carry_enterprise_changes
 
         suite_key, source_revision_id, target_revision_id, operation_id = _key(suite_key), _id(source_revision_id), _id(target_revision_id), _id(operation_id)

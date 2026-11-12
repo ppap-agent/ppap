@@ -33,6 +33,9 @@ class ExecuteRequest(BaseModel):
     executor_revision: str
     tenant_id: str = ""
     initiating_user_id: str = ""
+    # Frozen at acceptance. Deep writes a task-specific program per target, starting
+    # from the target's Suite program; a target whose development fails runs the Suite.
+    analysis_mode: Literal["standard", "deep"] = "standard"
     model_identity: dict[str, str] = Field(default_factory=dict)
     checker_snapshot_digest: str = Field(default="", pattern=r"^$|^[a-f0-9]{64}$")
     job_id: str = ""
@@ -130,15 +133,3 @@ class ErrorEnvelope(BaseModel):
 
     op: Literal["error"]
     code: str = Field(min_length=1)
-
-
-class DevelopmentEnvelope(BaseModel):
-    """Only durable identities cross the worker/controller optimization boundary."""
-
-    model_config = ConfigDict(extra="forbid")
-    op: Literal["develop"]
-    operation_id: str = Field(min_length=36, max_length=36)
-    job_id: str = Field(min_length=36, max_length=36)
-    tenant_id: str = Field(min_length=36, max_length=36)
-    attempt: int = Field(ge=1, strict=True)
-    lease_owner: str = Field(min_length=1, max_length=200)

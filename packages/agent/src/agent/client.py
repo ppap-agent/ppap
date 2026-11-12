@@ -15,6 +15,8 @@ from agent.protocol import ErrorEnvelope, ExecuteRequest, ExecuteResponse, Progr
 
 MAX_FRAME = 32 * 1024 * 1024
 DEEP_REQUEST_TIMEOUT = DEEP_TOTAL_SECONDS + 30.0
+# A deep audit whose guest fails as a whole re-runs the Suite programs in a second guest.
+DEEP_MODE_REQUEST_TIMEOUT = 2 * DEEP_TOTAL_SECONDS + 60.0
 
 
 class DeepError(Exception):
@@ -121,14 +123,6 @@ class DeepClient:
     def execute(self, spec: ExecuteRequest, *, cancelled: threading.Event | None = None, on_progress: Callable[[dict], None] | None = None) -> ExecuteResponse:
         raw = self._request(RequestEnvelope(op="execute", spec=spec).model_dump(), cancelled=cancelled, on_progress=on_progress)
         return ResultEnvelope.model_validate(raw).result
-
-    def develop(self, request, *, cancelled: threading.Event | None = None, on_progress: Callable[[dict], None] | None = None) -> dict:
-        from agent.protocol import DevelopmentEnvelope
-
-        raw = self._request(DevelopmentEnvelope.model_validate(request).model_dump(), cancelled=cancelled, on_progress=on_progress)
-        if set(raw) != {"op", "receipt"} or raw["op"] != "development_result" or not isinstance(raw["receipt"], dict):
-            raise DeepError("deep_protocol_invalid")
-        return raw["receipt"]
 
     def _request(self, payload: dict, *, cancelled=None, on_progress=None) -> dict:
         deadline = time.monotonic() + self.timeout

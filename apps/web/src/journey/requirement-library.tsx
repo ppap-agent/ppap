@@ -28,11 +28,10 @@ import {message as errorMessage} from './remote'
 import {requirementDirectory, type ReadRequirementVersions, type RequirementDirectoryCollection, type RequirementDirectoryVersion} from './requirement-directory'
 import {displayTime} from '../helpers'
 import {auditAddressChanged} from '../audit/routes'
-import {ProgramWizard, RuleProgramCard} from '../audit/check-points'
+import {ProgramStatus} from '../audit/program-status'
 
 const routeSelection = () => ({id: new URLSearchParams(location.search).get('requirement') ?? '', version: new URLSearchParams(location.search).get('reqVersion') ?? ''})
 const routeContent = () => new URLSearchParams(location.search).get('reqTab') === 'changes' ? 'changes' : 'clauses'
-const routeWizard = (): 'generate' | 'update' | null => {const step = new URLSearchParams(location.search).get('reqStep'); return step === 'generate' || step === 'update' ? step : null}
 function reviewedBasisContent(basis: RequirementBasis) {
   return canonical({
     ...basis,
@@ -48,7 +47,6 @@ function requirementHref(id = '', version = '') {
     if (value) url.searchParams.set(key, value); else url.searchParams.delete(key)
   }
   if (!id || id !== routeSelection().id) url.searchParams.delete('reqTab')
-  url.searchParams.delete('reqStep')
   return `${url.pathname}${url.search}${url.hash}`
 }
 
@@ -77,7 +75,6 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
 }) {
   const [selection, setSelection] = useState(routeSelection)
   const [content, setContent] = useState(routeContent)
-  const [wizard, setWizard] = useState(routeWizard)
   const [feedback, setFeedback] = useState<{text: string; failed: boolean} | null>(null)
   const [attempted, setAttempted] = useState(false), [discard, setDiscard] = useState(false)
   const [publishing, setPublishing] = useState(false)
@@ -131,20 +128,12 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
   function select(id: string, version = '', replace = false) {
     setSelection({id, version}); setAttempted(false); setFeedback(null); setEditing(null); setSourceClause(null)
     history[replace ? 'replaceState' : 'pushState'](history.state, '', requirementHref(id, version))
-    setContent(routeContent()); setWizard(routeWizard())
+    setContent(routeContent())
     window.scrollTo({top: 0})
   }
   function navigate(event: MouseEvent<HTMLAnchorElement>, id = '', version = '') {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
     event.preventDefault(); select(id, version)
-  }
-  /** Generating or updating a program takes the whole page; leaving it returns to the rule, whose card shows the outcome. */
-  function showWizard(step: 'generate' | 'update' | null) {
-    setWizard(step)
-    const url = new URL(location.href)
-    if (step) url.searchParams.set('reqStep', step); else url.searchParams.delete('reqStep')
-    history.pushState(history.state, '', url)
-    window.scrollTo({top: 0})
   }
   function showContent(value: string) {
     if (value !== 'clauses' && value !== 'changes') return
@@ -159,7 +148,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
       const requested = routeSelection(), next = savedSelections.current.get(canonical(requested)) ?? requested
       if (next !== requested) history.replaceState(history.state, '', requirementHref(next.id, next.version))
       if (next.id !== latestSelection.current.id || next.version !== latestSelection.current.version) {setAttempted(false); setFeedback(null); setEditing(null)}
-      setSelection(next); setContent(routeContent()); setWizard(routeWizard()); setSourceClause(null)
+      setSelection(next); setContent(routeContent()); setSourceClause(null)
     }
     // Template pages move between rules by address; follow them as well as Back and Forward.
     window.addEventListener('popstate', sync); window.addEventListener(auditAddressChanged, sync)
@@ -182,15 +171,6 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
     for (const version of ['', 'draft']) savedSelections.current.delete(canonical({id: collection.id, version}))
     if (collection.draft) {select(collection.id, 'draft'); return}
     const draft = freshDraft(current)
-    onChange(items => items.map(item => item.id === collection.id ? {...item, draft} : item)); select(collection.id, 'draft')
-  }
-  /** A suggested rewording changes the rule itself, so it becomes a new version draft the person checks and saves. */
-  function adoptSuggestion(clauseId: string, text: string, note: string) {
-    if (working.current || !collection || !current) return
-    for (const version of ['', 'draft']) savedSelections.current.delete(canonical({id: collection.id, version}))
-    const base = collection.draft ?? freshDraft(current)
-    const line = `第 ${clauseId} 条按建议改写：${note}`
-    const draft = {...base, reason: base.reason.trim() ? `${base.reason}\n${line}` : line, basis: {...base.basis, clauses: base.basis.clauses.map(clause => clause.id === clauseId ? {...clause, text, checked: false} : clause)}}
     onChange(items => items.map(item => item.id === collection.id ? {...item, draft} : item)); select(collection.id, 'draft')
   }
   async function save() {
@@ -231,7 +211,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
   const source = current?.basis.clauses.find(clause => clause.id === sourceClause)
   const sourceNumber = source && current ? current.basis.clauses.indexOf(source) + 1 : 0
   const originalUnreadable = current?.basis.server?.material.status === 'unreadable'
-  // Only uploaded rules get their program here; platform rules are updated by administrators.
+  // Uploaded rules show their program's status here; the platform prepares programs offline.
   const programmable = Boolean(!draftSelected && selectedVersion?.suiteKey?.startsWith('custom:'))
   const narrowing = current ? scopeFields.filter(({key, flag}) => key !== 'customer' && !current.scope[flag]) : []
   function versionDetail(version: RequirementDirectoryVersion) {
@@ -252,7 +232,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
     {readError && <Alert variant="destructive"><AlertTitle>规则没读到</AlertTitle><AlertDescription>{readError}<div><Button variant="outline" disabled={locked} onClick={onReload}>重新读取</Button></div></AlertDescription></Alert>}
     {(upload.error || saveError) && <Alert variant="destructive"><AlertTitle>没保存成功</AlertTitle><AlertDescription>{upload.error || saveError}</AlertDescription></Alert>}
     {feedback && <p role={feedback.failed ? 'alert' : 'status'} className={feedback.failed ? 'text-destructive' : 'text-muted-foreground'}>{feedback.text}</p>}
-    {!selection.id ? listView : current && collection ? programmable && wizard ? <ProgramWizard key={current.id} ruleVersionId={current.id} ruleTitle={current.basis.source.title || '规则'} version={current.basis.source.version} updating={wizard === 'update'} onClose={() => showWizard(null)} onAdopt={adoptSuggestion}/> : <>
+    {!selection.id ? listView : current && collection ? <>
       <header className="space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-4"><h1 className="min-w-0 break-words text-2xl font-semibold tracking-tight">{current.basis.source.title || '新规则'}</h1>{!draftSelected && <Button variant="outline" disabled={locked} onClick={startVersion}><GitBranch/>{collection.draft ? '继续编辑草稿' : '创建新版本'}</Button>}</div>
         <div className="flex min-w-0 max-w-full flex-wrap items-center gap-3">
@@ -273,7 +253,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
         <div className="grid gap-4 grid-cols-3">{scopeFields.map(({key, flag, label}) => <div className="min-w-0 space-y-1.5" key={key}><label className="grid gap-1.5">{key === 'customer' ? '所属模板' : `适用${label}`}{missing(current.scope[flag] !== true && !current.scope[key].trim())}<Input aria-invalid={attempted && current.scope[flag] !== true && !current.scope[key].trim()} disabled={locked || current.scope[flag] === true} value={current.scope[key]} onChange={event => {const value = event.currentTarget.value; edit(draft => ({...draft, scope: {...draft.scope, [key]: value}}))}}/></label><label className="flex min-h-9 items-center gap-2 text-muted-foreground"><Checkbox disabled={locked} checked={current.scope[flag] === true} onCheckedChange={value => edit(draft => ({...draft, scope: {...draft.scope, [flag]: value === true}}))}/>{key === 'customer' ? '放入通用规则' : `不限定${label}`}</label></div>)}</div>
         <label className="grid gap-1.5">这次改了什么{missing(!current.reason.trim())}<Textarea aria-invalid={attempted && !current.reason.trim()} value={current.reason} onChange={event => {const value = event.currentTarget.value; edit(draft => ({...draft, reason: value}))}}/></label>
       </fieldset> : narrowing.length > 0 && <dl className="flex flex-wrap gap-x-8 gap-y-2 rounded-lg border bg-card px-4 py-3">{narrowing.map(({key, label}) => <div className="flex min-w-0 items-baseline gap-2" key={key}><dt className="text-xs text-muted-foreground">适用{label}</dt><dd className="break-words">{current.scope[key] || '待确认'}</dd></div>)}</dl>}
-      {programmable && active && <RuleProgramCard key={current.id} ruleVersionId={current.id} onPrepare={updating => showWizard(updating ? 'update' : 'generate')}/>}
+      {programmable && active && selectedVersion?.suiteKey && <ProgramStatus key={current.id} suiteKey={selectedVersion.suiteKey}/>}
       {automaticMatching && !current.scope.allCustomers && !current.scope.customer.trim() && <Alert role="status"><AlertTitle>还没选模板</AlertTitle><AlertDescription>{draftSelected ? '填写所属模板，或勾选“放入通用规则”。' : '这个版本没有模板，审核时不会自动匹配到它。新建版本时选一个模板。'}</AlertDescription></Alert>}
       <Tabs value={content} onValueChange={showContent}><div className="flex flex-wrap items-center justify-between gap-3 border-b pb-1"><TabsList variant="line" aria-label="规则内容"><TabsTrigger value="clauses">条款 {current.basis.clauses.length}</TabsTrigger><TabsTrigger value="changes">版本记录</TabsTrigger></TabsList>{draftSelected && <p className="text-xs text-muted-foreground">已核对 {verifiedClauseCount(current.basis)}/{current.basis.clauses.length} 条</p>}</div>
         <TabsContent value="clauses"><section aria-label="规则条款" className="space-y-3 pt-4">{current.basis.clauses.map((clause, index) => {

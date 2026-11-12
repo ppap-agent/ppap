@@ -17,9 +17,8 @@
 - isolated-dev Compose 默认关闭业务收费，避免无飞书授权的浏览器流程测试调用真实计费；需要验证收费时显式设置 `PPAP_USAGE_CHARGE_ENABLED=true` 并提供额度接口。此默认值不改变生产 Compose 或 Settings 的收费政策。
 - 把 API/Worker 接到已有的 self-hosted InsForge PostgreSQL 时，用 `docker compose -f deploy/insforge/compose.yaml --env-file deploy/insforge/env.example up -d`。该 overlay 不启动 postgres，加入外部 `insforge-network`。Custom Compute 规格在 `deploy/insforge/compute/`。
 - `.doc` 转换是默认行为，没有开关变量。
-- 可选 capability 缺配置只影响该 capability，不阻止无关开发。Deep 由 `PPAP_DEEP_CONTROLLER_SOCKET` 表示是否配置；未配置时 Core 仍可启动，但审核执行与探索模式都明确失败，不回退。Live Deep 用 `deploy/isolated-dev/deep-live.yaml` 挂 UDS。Controller 工厂要求显式选择 `PPAP_DEEP_RUNTIME=container-only`，并将 `PPAP_DEEP_SANDBOX_PROFILE` 设为 `off` 或 `ppap`；这些运行配置不进入 Worker RPC，guest 命令和路径由可信 Controller 管理。客户审核只有一种，执行已验证的 Suite，没有审核模式；同一运行时供探索模式生成、修复检查程序（#322）。开关、sidecar 启动和 UDS 可用均不证明客户审核质量或强隔离，具体限制见 [Deep 部署说明](../deploy/deep/README.md)。
+- 可选 capability 缺配置只影响该 capability，不阻止无关开发。Deep 由 `PPAP_DEEP_CONTROLLER_SOCKET` 表示是否配置；未配置时 Core 仍可启动，但审核执行明确失败，不回退。Live Deep 用 `deploy/isolated-dev/deep-live.yaml` 挂 UDS。Controller 工厂要求显式选择 `PPAP_DEEP_RUNTIME=container-only`，并将 `PPAP_DEEP_SANDBOX_PROFILE` 设为 `off` 或 `ppap`；这些运行配置不进入 Worker RPC，guest 命令和路径由可信 Controller 管理。客户规则的检查程序由平台离线准备，产品内不生成、不修复检查程序。开关、sidecar 启动和 UDS 可用均不证明客户审核质量或强隔离，具体限制见 [Deep 部署说明](../deploy/deep/README.md)。
 - 飞书任务通知由 API 进程发送，`PPAP_FEISHU_NOTIFICATIONS_ENABLED` 默认 `false`；开启还需配置该应用的 ID、Secret 和有效授权。`GET/PUT /audit-tasks/{id}/notification` 读取、保存创建人的完成通知设置，修改必须带 `expected_revision`；该设置只控制完成通知，不控制待确认或开始审核通知。通知未进入发送边界前可修改，进入后只读回状态。发送结果未知不自动重发；这些接口不证明飞书已送达或已读取。
-- Checker 优化进入真实终态时与候选、验证及回执同事务写入现有通知队列，按原操作去重；通知发给优化发起人，不借用任务创建人的身份。API 发送前重新核验飞书身份、租户成员及所有冻结原件/轮次权限；注销浏览器不取消通知，删除用户或撤销访问则不发送。完成、失败、停止和用量未知分别表达，卡片只跳回原操作结果，不自动发布或重跑模型。沿用上述通知开关和发送回执边界，配置关闭不代表通知已发送。
 - 已授权的单任务通知联调可调用 `dispatch_task_notification(..., task_id=...)`，范围在领取工作及整理过期发送状态前生效；保持常驻 API 的全局通知开关关闭，避免顺带处理历史队列。历史补发须另行授权，仍使用已有意图、阶段校验和回执，不重置已发送或未知状态。
 - 机器人已启用不代表具有发送权限；最小发送权限为 `im:message:send_as_bot`，须在发布及租户授权后实际生效。明确的飞书 2xx／4xx 非零错误码记为发送失败；超时、5xx 或无有效回执仍为未知。联调以真实消息 ID 和客户端可见性核对送达，不为此扩大聊天读取权限，也不把发送成功当作用户已读。
 - 报告附件上传使用 `im:resource`。真实接口错误仍可能列出旧的 `im:resource:upload`，但控制台不可新增该项；不能只照错误文字申请权限。资源权限不等于读取聊天消息权限；机器人或链接发送可用也不证明附件上传可用。
@@ -40,13 +39,11 @@
 
 ## 原件事实确认
 
-审核结果中的原件事实问题与 Deep 规则含义澄清分开保存。`/audit-rounds/{round_id}/fact-answers` 只允许当前租户成员且有本轮复核和全部冻结原件读取权限的人使用。回答绑定轮次、文件版本、字段和所见问题；一个回答事务记录单独的人工确认结果，不覆盖机器结果、不入队新审核、不消耗模型额度，也不自动建立优化样本。
+审核结果中的原件事实问题与 Deep 规则含义澄清分开保存。`/audit-rounds/{round_id}/fact-answers` 只允许当前租户成员且有本轮复核和全部冻结原件读取权限的人使用。回答绑定轮次、文件版本、字段和所见问题；一个回答事务记录单独的人工确认结果，不覆盖机器结果、不入队新审核、不消耗模型额度。
 
 当前可确定性重算的是 UAES 单页 PDF `visual_result` 已冻结的全满足布尔检查。原生 `field()` 能唯一定位到未读值单元格时也会产生文字问题，但没有完整复算依据时只保存回答，结果仍为 UNABLE；多页和其它 Checker 尚不借此推定通过。未知答案保留 UNABLE；其它依赖已确定的条款不再追问。已经记录的回答不可原地改写。
 
 界面在当前结果和历史中并列显示机器结果与人工确认。`fact-answers/report` 下载单独的人工确认 PDF，包含回答人、时间和原件位置；既有机器 PDF 保持不变。`fact-answers/export` 提供同一记录的 JSON，明确标为不可自动用作训练样本。
-
-用户可将一个非空事实回答明确选为优化样本：`POST /audit-rounds/{round_id}/fact-answers/{operation_id}/samples` 复用现有 Checker 反馈，用户仍须选择正确结论并填写依据。回答、原件、条款和执行尝试必须匹配；“看不清”、旧执行尝试或权限失效不能入样本。同一操作只读回原样本，不创建审核轮次或模型请求。导出记录本身仍不自动成为训练真值；没有确定性重算方法的文本回答也不会使机器结果变成 PASS。
 
 ## 按规则读取审核证据
 
@@ -353,7 +350,7 @@ UAES 目录叶子的后续验收由 [Issue #295](https://github.com/ppap-agent/p
 
 ## Checker Core 官方发布
 
-官方 Suite 的安装、回归与发布是三个动作。仓库自带的目录叶子已离线验证，`product.seed_standard_suites --apply --publish-defaults` 在入库后直接把每个叶子设为官方默认（`repository_default`，不需要语料证明行），已有官方指针的规则组不会被覆盖，关联叶子先发布；企业未自选时自动跟随，显示为已验证。`product.seed_standard_suites --apply` 只保存 `checkers/<客户>/<规则组>/` 目录叶子的不可变候选，不安装 `standard_suites()` 或历史 generic carrier，也不因相同 `suite_key` 选择旧 carrier。企业 `PUT /suites/{key}/active` 即使带 `force_unverified` 也不能把历史 carrier 设为下一个头；数据库里已有的 carrier 头保持不动，新审核、预检和优化会要求确认目录版本。关联套件的当前头如果是 carrier，企业采用和官方发布同样拒绝，不会改用同名的其他版本。平台以 migrator 角色调用 `SuiteReleaseStore.record_official_validation` 保存独立回归证明，再调用 `publish_official(revision_id, expected_revision=..., expected_validation_revision=...)` 发布。发布前用 `official_active(suite_key)` 读取官方指针修订；首次为 0，验证修订取刚确认的证明。发布在同一事务内重查证明、当前关联 Suite、共享库版本及对象字节，并以 CAS 更新唯一官方指针。过期发布请求须先读回，不自动用新修订重发。验证或保存新候选不会替换当前官方版本；回滚也须显式发布准确旧版本。
+官方 Suite 的安装、回归与发布是三个动作。仓库自带的目录叶子已离线验证，`product.seed_standard_suites --apply --publish-defaults` 在入库后直接把每个叶子设为官方默认（`repository_default`，不需要语料证明行），已有官方指针的规则组不会被覆盖，关联叶子先发布；企业未自选时自动跟随，显示为已验证。`product.seed_standard_suites --apply` 只保存 `checkers/<客户>/<规则组>/` 目录叶子的不可变候选，不安装 `standard_suites()` 或历史 generic carrier，也不因相同 `suite_key` 选择旧 carrier。企业 `PUT /suites/{key}/active` 即使带 `force_unverified` 也不能把历史 carrier 设为下一个头；数据库里已有的 carrier 头保持不动，新审核和预检会要求确认目录版本。关联套件的当前头如果是 carrier，企业采用和官方发布同样拒绝，不会改用同名的其他版本。平台以 migrator 角色调用 `SuiteReleaseStore.record_official_validation` 保存独立回归证明，再调用 `publish_official(revision_id, expected_revision=..., expected_validation_revision=...)` 发布。发布前用 `official_active(suite_key)` 读取官方指针修订；首次为 0，验证修订取刚确认的证明。发布在同一事务内重查证明、当前关联 Suite、共享库版本及对象字节，并以 CAS 更新唯一官方指针。过期发布请求须先读回，不自动用新修订重发。验证或保存新候选不会替换当前官方版本；回滚也须显式发布准确旧版本。
 
 首次启用先按关联依赖顺序验证并发布官方 Suite，再受理跟随官方版本的审核。迁移 `0048_official_suite_heads.sql` 不把既有 latest 或验证记录猜成发布批准，未激活的官方源仍可按 revision 查看；既有企业固定指针和历史 Round 不变。没有固定企业版本的租户仅跟随已发布官方指针，企业明确固定某个官方或企业 revision 后不会被后续官方发布覆盖。官方或企业指针若仍指向旧 carrier，新受理和预检拒绝并要求确认版本，不自动改选同 key 的目录版本，也不解除已有 pin。显式发布只影响之后的新 Round。已冻结 Round 继续使用原修订。
 
@@ -367,7 +364,7 @@ UAES 目录叶子的后续验收由 [Issue #295](https://github.com/ppap-agent/p
 
 ## 模型来源：平台默认 + 企业 Key
 
-客户不选模型。没有企业 Key 时，审核、识别、规则解释与 Checker 修复都使用平台模型：文本 `LLM_*`，视觉 `OCR_*`，Deep 编码 `PPAP_DEEP_LLM_*`（未配置时沿用 `LLM_*`）。企业配置了自己的 Key（企业 BYOK）后，文本、视觉、编码三种用途全部改用该企业的地址、Key 与模型；企业 Key 不可用时报告不可用，不静默换回平台模型。收费按业务结果计，与模型来源无关。
+客户不选模型。没有企业 Key 时，审核、识别与规则解释都使用平台模型：文本 `LLM_*`，视觉 `OCR_*`，Deep 编码 `PPAP_DEEP_LLM_*`（未配置时沿用 `LLM_*`）。企业配置了自己的 Key（企业 BYOK）后，文本、视觉、编码三种用途全部改用该企业的地址、Key 与模型；企业 Key 不可用时报告不可用，不静默换回平台模型。收费按业务结果计，与模型来源无关。
 
 企业 Key 只由运营设置，客户没有对应 API 或页面：
 
@@ -387,13 +384,9 @@ Deep（Pi）只通过本地网关取得短期 Grant，Guest 内没有真实 Key�
 
 ## 自定义规则与 Suite
 
-`POST /rules` 将已授权规则原件发布为企业自己的不可变 Suite，不需要官方基线或预设文档类型。首次发布只保存规则和没有可执行入口的固定占位文件，所有条款覆盖均为 `unsupported`，没有回归证明，不自动调用付费模型，也不复用历史 profile 路由。默认指针、发布记录和 RuleVersion 在同一事务内提交；这是仅发布规则，不是强制执行未经验证的代码。
+`POST /rules` 将已授权规则原件发布为企业自己的不可变 Suite，不需要官方基线或预设文档类型。首次发布只保存规则和没有可执行入口的固定占位文件，所有条款覆盖均为 `unsupported`，没有回归证明，不自动调用付费模型，也不复用历史 profile 路由。默认指针、发布记录和 RuleVersion 在同一事务内提交；这是仅发布规则，不是强制执行未经验证的代码。新规则的检查程序由平台离线准备后作为新 revision 提供，客户在产品内不能生成或修复检查程序。
 
 同一前置规则链共享 Suite key。后继规则只保存待发布候选，继承当前采用的 Checker 与资源，保留仍存在条款的绑定，删除条款的绑定移除，新增条款未绑定时为未检查。发布规则不会替换当前检查、起草代码或入队模型工作。新审核继续冻结已采用版本的旧规则与代码，并显示新版规则尚未采用；历史 Round 保持原快照。读取时按条款 ID 比较原文，分别显示新增、删除、正文变化和未变化，不猜测改编号的对应关系。规则页及检查工作区立即提示需要重新验证，旧规则下的原有证明仍只用于旧版执行。请求重发只读回原回执；同一前置规则已有后继时返回 `suite_head_conflict`，不能覆盖并发规则发布。
-
-用户在检查工作区选择新版规则后，沿用现有模型、调用确认和开发操作回执；不会自动调用模型或采用结果。只改措辞也需重新运行全部样本。用户明确确认完整样本答案仍适用时，请求绑定候选 revision 和全部反馈修订，服务端核验 review 权限，将新确认及原答案依据一起冻结在本次操作中，不修改历史反馈。没有明确确认的旧依据仍使验证失效。代码字节未变化且独立样本全部通过时显示“代码无需修改，样本已通过”，之后仍须明确发布。
-
-同一冻结 Round 与文件的多个条款答案组成一个独立验证 case，必须覆盖当前全部条款。case 顺序由各组历史最早反馈的顺序派生，已删除反馈与组仍参与排序，避免删除答案重排训练／holdout；每第四个文档 case 为 holdout。所有适用样本执行，包括未变化条款；只有用户选中的训练条款答案传给起草模型，其余答案只由 host 评价。回归结果保留该 case 的全部反馈 ID，原件依据可逐条读回。
 
 ## 企业 Suite 的官方升级
 
@@ -401,7 +394,7 @@ Deep（Pi）只通过本地网关取得短期 Grant，Guest 内没有真实 Key�
 
 `POST /suites/{suite_key}/upgrades` 将所选企业 revision 相对原官方基线的净文件差量带到当前已发布官方 revision。请求固定 source、target、企业发布指针修订与 operation ID；服务端在官方／企业发布锁下校验，原子保存新候选和升级回执。未修改或已还原的文件继承新官方内容，企业修改过的文件完整保留，即使官方同时改过该文件；资源删除及关联 Suite 增删也保留。没有 Python 文本合并或规则语义猜测，不覆盖原 revision，不把最新官方当成企业发布批准。
 
-“升级并验证”先创建候选，再显式调用既有优化入口的 `run_tests`／`consume_model=false`，实际执行、样本隔离、规则变更及验证保存沿用同一 Checker 开发循环。不足样本或原规则已变更不能 verified；如需模型适配，仍由用户另行明确授权。当前采用版本和历史审核不变，验证后的候选仍需单独发布。升级响应未知时通过 `GET /suites/{suite_key}/upgrades/{operation_id}` 读回原候选；刷新、读回均不重复升级或自动运行样本。
+升级只创建候选，不运行样本或模型；当前采用版本和历史审核不变，候选仍需单独验证和发布。升级响应未知时通过 `GET /suites/{suite_key}/upgrades/{operation_id}` 读回原候选；刷新、读回均不重复升级或自动运行样本。
 
 
 ## 建议复核（确定性提示）
@@ -415,4 +408,4 @@ Deep（Pi）只通过本地网关取得短期 Grant，Guest 内没有真实 Key�
 已关联的文件不能重复分配到另一组关系；未确认或有歧义的关系不产生跨载体提示。
 
 忽略或采纳通过 `PUT /rounds/{id}/review-hints` 保存到已有 finding 的独立回执字段，绑定完整对比对象及两边的 result_attempt。
-采纳只进入“这条判错了”反馈，不启动模型优化。`GET /review-hints/responses` 返回当前用户可读轮次保留的采纳/忽略回执计数和比例，分母为已明确处理的提示，不把读取当作曝光。
+采纳只保存回执，不启动模型、不改机器结果。`GET /review-hints/responses` 返回当前用户可读轮次保留的采纳/忽略回执计数和比例，分母为已明确处理的提示，不把读取当作曝光。

@@ -8,7 +8,7 @@ import {sameSnapshot} from './result-projection'
 import {reviewHintText, reviewHintUrl} from './review-hints-contract'
 
 type Hint = components['schemas']['ReviewHint']
-export function ReviewHintDetails({roundId, hint, onHandled, onFeedback}: {roundId: string; hint: Hint; onHandled: () => void; onFeedback: () => void}) {
+export function ReviewHintDetails({roundId, hint, onHandled}: {roundId: string; hint: Hint; onHandled: () => void}) {
   const [busy, setBusy] = useState(false), [error, setError] = useState('')
   async function respond(action: 'accepted' | 'ignored') {
     if (busy) return
@@ -17,7 +17,6 @@ export function ReviewHintDetails({roundId, hint, onHandled, onFeedback}: {round
       const receipt = await request<components['schemas']['ReviewHintReceipt']>(`/rounds/${encodeURIComponent(roundId)}/review-hints`, 'PUT', {item_key: hint.item_key, action, hint})
       if (receipt.round_id !== roundId || receipt.item_key !== hint.item_key || receipt.action !== action || !sameSnapshot(receipt.hint, hint)) throw new Error('提示记录已变化，请重新读取结果。')
       onHandled()
-      if (action === 'accepted') onFeedback()
     } catch (cause) {setError(message(cause))} finally {setBusy(false)}
   }
   return <section aria-label="建议复核对比" className="space-y-3 rounded-md border p-3 text-sm">

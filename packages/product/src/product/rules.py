@@ -13,9 +13,9 @@ from audit.rule_profile import normalize_rule_profile
 
 RULE_FILE_EXTENSIONS = {".xlsx", ".xls", ".xlsm", ".doc", ".docx", ".md", ".pdf", ".json"}
 FILE_PREPARATION_KINDS = ("rule_parse", "file_analysis", "file_validation")
-# Preparing rules and programs waits behind audits and is limited per tenant (a soft cap: concurrent claims may briefly exceed it).
-# Check points are short calls run side by side in one worker; a program generation is a long Deep run.
-BACKGROUND_JOB_KINDS = ("rule_formalization", "checker_optimization")
+# Preparing rules waits behind audits and is limited per tenant (a soft cap: concurrent claims may briefly exceed it).
+# Check points are short calls run side by side in one worker.
+BACKGROUND_JOB_KINDS = ("rule_formalization",)
 PARALLEL_FORMALIZATIONS = 4
 # Of those, readings queued by saving a version leave the rest for a person's own request.
 BATCH_FORMALIZATIONS = 2

@@ -74,7 +74,7 @@ function automation(catalog: Catalog | 'failed' | null, suiteKey: string | null 
   }
   if (!summary) return {state: 'manual', note: '审核时由人判断', suiteKey}
   // An uploaded rule is offered for audit only once its program is generated on the rule page.
-  if (summary.program_missing) return {state: 'manual', note: '在规则页生成检查程序后才能用于审核', suiteKey}
+  if (summary.program_missing) return {state: 'manual', note: '检查程序由平台离线准备，准备好后才能用于审核', suiteKey}
   // A program offered but never adopted does not run; the person adopts it on the rule page.
   if (!summary.current_revision_id) return {state: 'inactive', note: '在规则页“检查程序”中采用后才会使用', suiteKey}
   if (summary.current_revision_id && summary.verification_status === 'verified') return {state: 'auto', suiteKey}

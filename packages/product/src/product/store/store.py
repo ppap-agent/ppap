@@ -34,9 +34,17 @@ from psycopg.types.json import Jsonb
 from product.checker_verification import frozen_checker_verification
 from product.db import connect
 from product.feishu import CardAction, UserTokens
-from product.feishu_notifications import formalization_notification_card, optimization_notification_card, task_notification_card
+from product.feishu_notifications import formalization_notification_card, task_notification_card
 from product.feishu_personal_upload import PersonalDriveClient, UploadRejected, UploadUnknown
-from product.feishu_usage import FeishuUsageError, PartnerAiItem, audit_usage_points, remaining_trial_points, split_trial_and_partner
+from product.feishu_usage import (
+    DEEP_SURCHARGE_PER_FILE,
+    FeishuUsageError,
+    PartnerAiItem,
+    audit_estimate_points,
+    audit_usage_points,
+    remaining_trial_points,
+    split_trial_and_partner,
+)
 from product.files import (
     FAILED,
     MAX_UPLOAD_BYTES,
@@ -126,6 +134,14 @@ def _as_uuid(value: str) -> str | None:
         return str(uuid.UUID(value))
     except (ValueError, TypeError, AttributeError):
         return None
+
+
+def _deep_reviews(coverage: dict) -> dict[str, dict]:
+    """Each target's committed deep review state; absent until a result is committed."""
+    execution = coverage.get("checker_execution") or {}
+    if execution.get("analysis_mode") != "deep":
+        return {}
+    return {str(target["file_version_id"]): dict(target["deep_review"]) for target in execution.get("targets") or [] if isinstance(target.get("deep_review"), dict)}
 
 
 def _executor_public(payload) -> dict:
@@ -1590,25 +1606,41 @@ class AuthStore:
             )
             return self._notification_preference(conn, self._recognition_owner(conn, principal, task_id))
 
-    def _queue_task_notification(self, conn, task_id: str | None, stage: str, round_id: str | None = None, *, package_id: str | None = None, operation_id: str | None = None) -> None:
-        if stage == "optimization_completed":
-            # The original operation, not a browser session or task creator,
-            # owns this intent. Bare historical Rounds need no artificial Task.
-            owner = conn.execute(
-                """SELECT o.tenant_id, r.source_draft_id FROM product.checker_optimizations o
-                   JOIN product.audit_rounds r ON r.id=%s AND r.tenant_id=o.tenant_id
-                   WHERE o.operation_id=%s AND o.completed_at IS NOT NULL
-                   AND o.state IN ('completed','failed','unknown','stopped')""",
-                (round_id, operation_id),
-            ).fetchone()
-            if not owner:
-                return
-            task_id = str(owner[1]) if owner[1] else None
-        else:
-            owner = conn.execute("SELECT tenant_id FROM product.audit_drafts WHERE id=%s AND task_fingerprint IS NOT NULL", (task_id,)).fetchone()
-            if not owner:
-                return
-        payload = {"stage": stage, **({"task_id": task_id} if task_id else {}), **({"package_id": package_id} if package_id else {}), **({"operation_id": operation_id} if operation_id else {})}
+    def _deep_mode_option(self, conn, tenant_id: str) -> dict:
+        """Deep mode needs the deep runtime and the tenant's coding model; never a silent fallback."""
+        if not (self.settings and self.settings.deep_controller_socket.strip()):
+            return {"available": False, "reason": "深度审核运行环境暂不可用。"}
+        try:
+            identity = self.model_identity(tenant_id, conn=conn)
+        except Exception:
+            identity = {}
+        if identity.get("coding_model", "unavailable") == "unavailable":
+            return {"available": False, "reason": "当前企业没有可用于深度审核的模型。"}
+        return {"available": True, "reason": None}
+
+    def save_task_deep_mode(self, principal: Principal, task_id: str, body: dict) -> dict:
+        """Deep mode is chosen on the confirmation step and frozen at acceptance."""
+        if set(body) != {"deep_mode", "expected_revision"} or type(body.get("deep_mode")) is not bool or type(body.get("expected_revision")) is not int or body["expected_revision"] < 0:
+            raise ValueError("invalid_deep_mode")
+        with self._conn() as conn, conn.transaction():
+            draft = self._recognition_owner(conn, principal, task_id, lock=True)
+            if draft["input_revision"] != body["expected_revision"]:
+                raise ValueError("task_revision_conflict")
+            if draft["status"] != DRAFT_OPEN or draft["task_completion_reason"]:
+                raise ValueError("task_input_locked")
+            if conn.execute("SELECT 1 FROM product.audit_rounds WHERE source_draft_id = %s", (draft["id"],)).fetchone():
+                raise ValueError("draft_already_accepted")
+            if body["deep_mode"] and not self._deep_mode_option(conn, principal.tenant_id)["available"]:
+                raise ValueError("deep_mode_unavailable")
+            if draft["deep_mode"] != body["deep_mode"]:
+                conn.execute("UPDATE product.audit_drafts SET deep_mode = %s, updated_at = now() WHERE id = %s", (body["deep_mode"], draft["id"]))
+            return self._recognition_public(conn, principal, str(draft["id"]))
+
+    def _queue_task_notification(self, conn, task_id: str, stage: str, round_id: str | None = None, *, package_id: str | None = None) -> None:
+        owner = conn.execute("SELECT tenant_id FROM product.audit_drafts WHERE id=%s AND task_fingerprint IS NOT NULL", (task_id,)).fetchone()
+        if not owner:
+            return
+        payload = {"stage": stage, "task_id": task_id, **({"package_id": package_id} if package_id else {})}
         conn.execute(
             """INSERT INTO engine.jobs (id, tenant_id, audit_round_id, kind, payload, status, result)
             VALUES (gen_random_uuid(), %s, %s, 'feishu_notification', %s, 'queued', %s)
@@ -1660,15 +1692,6 @@ class AuthStore:
                 from product.store.formalizations import FormalizationStore
 
                 identities = FormalizationStore(self).notification_recipients(conn, row[1], _as_uuid(str(row[3].get("operation_id") or "")), self.settings.feishu_app_id)
-            elif row[3].get("stage") == "optimization_completed":
-                identities = conn.execute(
-                    """SELECT i.user_id, i.provider, i.app_id, i.tenant_key, i.subject, m.role, i.display_name
-                    FROM product.checker_optimizations o JOIN product.tenants t ON t.id=o.tenant_id
-                    JOIN product.memberships m ON m.tenant_id=t.id AND m.user_id=o.initiating_user_id
-                    JOIN product.identities i ON i.user_id=o.initiating_user_id AND i.provider=t.provider AND i.tenant_key=t.external_key
-                    WHERE o.operation_id=%s AND o.tenant_id=%s AND i.app_id=%s AND m.role='member'""",
-                    (_as_uuid(str(row[3].get("operation_id") or "")), row[1], self.settings.feishu_app_id),
-                ).fetchall()
             else:
                 identities = conn.execute(
                     """SELECT i.user_id, i.provider, i.app_id, i.tenant_key, i.subject, m.role, i.display_name
@@ -1726,9 +1749,9 @@ class AuthStore:
     def start_task_notification(self, claimed: ClaimedJob, worker_ident: str, principal: Principal) -> dict | None:
         task_id, stage = _as_uuid(str(claimed.payload.get("task_id") or "")), claimed.payload.get("stage")
         package_id = _as_uuid(str(claimed.payload.get("package_id") or "")) if stage == "zip_ready" else None
-        operation_scoped = stage in {"optimization_completed", "formalization_ready"}
+        operation_scoped = stage == "formalization_ready"
         operation_id = _as_uuid(str(claimed.payload.get("operation_id") or "")) if operation_scoped else None
-        if stage not in {"confirmation", "started", "completed", "zip_ready", "optimization_completed", "formalization_ready"}:
+        if stage not in {"confirmation", "started", "completed", "zip_ready", "formalization_ready"}:
             raise ValueError("invalid_notification_scope")
         if operation_scoped and not operation_id or not operation_scoped and not task_id or stage == "zip_ready" and not package_id:
             raise ValueError("invalid_notification_scope")
@@ -1749,12 +1772,7 @@ class AuthStore:
                 ).fetchone()
                 if not identity or not self.settings.tenant_allowed(principal.tenant_key):
                     raise KeyError("recipient_unavailable")
-                if stage == "optimization_completed":
-                    from product.store.checker_development import CheckerDevelopmentStore
-
-                    operation, sample = CheckerDevelopmentStore(self).notification_context(conn, principal, operation_id)
-                    card = optimization_notification_card(operation, sample, self.settings.canonical_web_url())
-                elif stage == "formalization_ready":
+                if stage == "formalization_ready":
                     from product.store.formalizations import FormalizationStore
 
                     card = formalization_notification_card(FormalizationStore(self).notification_context(conn, principal, operation_id), self.settings.canonical_web_url())
@@ -2619,7 +2637,11 @@ class AuthStore:
             "completion_reason": draft["task_completion_reason"],
             "confirmation_basis_digest": None,
             "confirmation_scope": None,
-            "estimated_points": None if matching or any(row["match"]["state"] == "failed" for row in selected) else sum(row["match"]["state"] == "matched" for row in selected) * 500,
+            "estimated_points": None
+            if matching or any(row["match"]["state"] == "failed" for row in selected)
+            else audit_estimate_points(sum(row["match"]["state"] == "matched" for row in selected), deep_mode=draft["deep_mode"]),
+            "deep_mode": draft["deep_mode"],
+            "deep_mode_option": self._deep_mode_option(conn, principal.tenant_id),
         }
         if draft["predecessor_id"]:
             task["predecessor_id"] = str(draft["predecessor_id"])
@@ -2744,7 +2766,7 @@ class AuthStore:
                 "reference_file_version_ids": sorted(row["file"]["id"] for row in selected if row["match"]["state"] == "reference"),
                 "excluded_files": sorted(exclusions, key=lambda row: row["file_version_id"]),
             }
-            task["estimated_points"] = len(task["confirmation_scope"]["target_file_version_ids"]) * 500
+            task["estimated_points"] = audit_estimate_points(len(task["confirmation_scope"]["target_file_version_ids"]), deep_mode=task["deep_mode"])
         if targets and ready:
             # current_selection holds the publication locks through admission's
             # transaction. Bind source identity, clauses, code, related Suites
@@ -2758,6 +2780,8 @@ class AuthStore:
                     "created_by": principal.user_id,
                     "input_revision": task["input_revision"],
                     "customer_preference": task["customer_preference"],
+                    # Only a deep task names its mode, so standard digests keep their identity.
+                    **({"deep_mode": True} if task["deep_mode"] else {}),
                     "estimated_points": task["estimated_points"],
                     "library_revision": library,
                     "runtime_revision": runtime_revision(self.settings.deep_execution_policy(model_identity).engine_revision(), library),
@@ -2789,7 +2813,8 @@ class AuthStore:
                       AND NOT (p.payload ? 'regeneration_request_id'))) THEN 'completed'
                     WHEN r.id IS NOT NULL THEN 'reviewing'
                     WHEN EXISTS (SELECT 1 FROM product.draft_items i JOIN engine.jobs j ON j.id = i.analysis_job_id WHERE i.draft_id = d.id AND j.status IN ('queued', 'leased')) THEN 'matching'
-                    ELSE 'pending_confirm' END AS state
+                    ELSE 'pending_confirm' END AS state,
+                COALESCE(r.deep_mode, d.deep_mode) AS deep_mode
                 FROM product.audit_drafts d
                 LEFT JOIN product.audit_rounds r ON r.source_draft_id = d.id
                 WHERE d.tenant_id = %s AND d.created_by = %s AND d.task_fingerprint IS NOT NULL
@@ -2838,6 +2863,7 @@ class AuthStore:
                     "completion_reason": row[6] or ("processed" if row[7] and row[8] == "completed" else None),
                     "round_id": str(row[7]) if row[7] else None,
                     "state": row[8],
+                    "deep_mode": bool(row[9]),
                     "files": grouped.get(str(row[0]), []),
                     **({"subject": subjects[str(row[0])]} if str(row[0]) in subjects else {}),
                     **({key: histories[str(row[7])][key] for key in ("execution", "has_execution_error", "result_counts", "reviewed_count", "uncovered_count")} if row[7] else {}),
@@ -3628,7 +3654,7 @@ class AuthStore:
         with self._conn() as conn:
             head = conn.execute(
                 """
-                SELECT id, tenant_id, result_attempt, created_by
+                SELECT id, tenant_id, result_attempt, created_by, deep_mode
                 FROM product.audit_rounds WHERE id = %s
                 """,
                 (parsed,),
@@ -3671,6 +3697,7 @@ class AuthStore:
             ],
             head[2],
             str(head[3]) if head[3] else "",
+            "deep" if head[4] else "standard",
         )
 
     def claim_job(self, worker_ident: str, *, formalizations: str = "any") -> ClaimedJob | None:
@@ -3705,7 +3732,7 @@ class AuthStore:
                         ["feishu_notification", "task_confirmation"],
                         formalizations,
                         formalizations,
-                        [*FILE_PREPARATION_KINDS, "checker_optimization", "rule_formalization"],
+                        [*FILE_PREPARATION_KINDS, "rule_formalization"],
                         list(BACKGROUND_JOB_KINDS),
                         PARALLEL_FORMALIZATIONS,
                         BACKGROUND_JOBS_PER_TENANT,
@@ -3764,7 +3791,7 @@ class AuthStore:
                 """UPDATE engine.jobs SET lease_until = now() + interval '30 seconds', updated_at = now()
                 WHERE id = %s AND attempt = %s AND lease_owner = %s AND status = 'leased'
                   AND (kind <> 'audit' OR lease_until > clock_timestamp())
-                  AND (kind NOT IN ('checker_optimization','rule_formalization') OR lease_until > now()) RETURNING id""",
+                  AND (kind <> 'rule_formalization' OR lease_until > now()) RETURNING id""",
                 (claimed.id, claimed.attempt, worker_ident),
             ).fetchone()
             return row is not None
@@ -3803,7 +3830,7 @@ class AuthStore:
                         result = CASE WHEN kind = ANY(%s) THEN %s ELSE result END
                     WHERE id = %s AND attempt = %s AND lease_owner = %s AND status = 'leased'
                       AND (kind <> 'audit' OR lease_until > clock_timestamp())
-                      AND (kind NOT IN ('checker_optimization','rule_formalization') OR lease_until > now())
+                      AND (kind <> 'rule_formalization' OR lease_until > now())
                     RETURNING id
                     """,
                     (
@@ -3884,10 +3911,63 @@ class AuthStore:
                         ),
                     )
                 if outcome == "succeeded":
+                    self._record_deep_surcharge(conn, claimed, coverage)
                     self._queue_file_reports(conn, claimed, result)
                 if task_id:
                     self._queue_finished_notification(conn, task_id, claimed.round_id)
                 return True
+
+    def _record_deep_surcharge(self, conn, claimed: ClaimedJob, coverage: dict) -> None:
+        """Commit-time 250-point surcharge for each file whose deep result this commit holds.
+
+        Acceptance already recorded 500 per target file. A file that fell back to its
+        Suite program, or a failed round, adds nothing. Without an acceptance charge
+        (charging off at acceptance) there is nothing to add to.
+        """
+        completed = sorted(version for version, review in _deep_reviews(coverage).items() if review.get("state") == "completed")
+        if not completed:
+            return
+        round_id = str(claimed.round_id)
+        head = conn.execute("SELECT tenant_id, deep_mode FROM product.audit_rounds WHERE id = %s", (round_id,)).fetchone()
+        if not head or not head[1]:
+            return
+        tenant_id = str(head[0])
+        for version in completed:
+            base = conn.execute(
+                """SELECT ai_item_id, user_id FROM product.usage_events
+                   WHERE tenant_id = %s AND round_id = %s AND file_version_id = %s AND charge = 'audit' ORDER BY created_at, id LIMIT 1""",
+                (tenant_id, round_id, version),
+            ).fetchone()
+            if not base:
+                continue
+            item_id, user_id = base[0], str(base[1])
+            conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("usage:" + tenant_id + ":" + item_id,))
+            if conn.execute(
+                "SELECT 1 FROM product.usage_events WHERE tenant_id = %s AND round_id = %s AND file_version_id = %s AND charge = 'deep_surcharge'", (tenant_id, round_id, version)
+            ).fetchone():
+                continue
+            remaining = remaining_trial_points(self.settings.feishu_free_trial_quota_points, self._trial_ledger_consumed(conn, tenant_id, item_id))
+            for amount, trial in split_trial_and_partner(remaining, DEEP_SURCHARGE_PER_FILE):
+                conn.execute(
+                    """INSERT INTO product.usage_events
+                       (id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial,
+                        external_status, trace_id, round_id, file_version_id, charge)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'deep_surcharge') ON CONFLICT DO NOTHING""",
+                    (
+                        str(uuid.uuid4()),
+                        tenant_id,
+                        user_id,
+                        item_id,
+                        amount,
+                        trial,
+                        "none" if trial else "pending",
+                        round_id + ":" + version + ":deep" + (":trial" if trial else ":partner"),
+                        round_id,
+                        version,
+                    ),
+                )
+                if trial:
+                    remaining -= amount
 
     def _queue_file_reports(self, conn, claimed: ClaimedJob, result: dict) -> None:
         head = conn.execute("SELECT source_draft_id FROM product.audit_rounds WHERE id = %s AND tenant_id = %s", (claimed.round_id, claimed.tenant_id)).fetchone()
@@ -4517,6 +4597,7 @@ class AuthStore:
         if existing and str(existing[3]) != source_draft_id and conn.execute("SELECT 1 FROM product.audit_drafts WHERE id = %s AND task_fingerprint IS NOT NULL", (existing[3],)).fetchone():
             raise ValueError("idempotency_conflict")
         draft_status = None
+        deep_mode = False
         recognized_metadata: dict[str, dict] = {}
         recognized_types: dict[str, str | None] = {}
         if source_draft_id:
@@ -4545,6 +4626,7 @@ class AuthStore:
                     raise ValueError("task_input_locked")
                 if draft_status == DRAFT_ACCEPTED and not existing:
                     raise ValueError("draft_already_accepted")
+                deep_mode = bool(owned["deep_mode"])
                 task = self._recognition_public(conn, principal, source_draft_id)
                 selected = [row for row in task["files"] if row["selection"] == "selected"]
                 recognized_metadata = {row["file"]["id"]: dict((row.get("match") or {}).get("metadata") or {}) for row in selected}
@@ -4573,6 +4655,9 @@ class AuthStore:
                             raise ValueError("validation_scope_mismatch")
                     if require_confirmation_basis and task["confirmation_basis_digest"] != expected_confirmation_basis_digest:
                         raise ValueError("task_confirmation_changed")
+                    if deep_mode and not task["deep_mode_option"]["available"]:
+                        # Accepting a deep task as standard would be a silent fallback.
+                        raise ValueError("deep_mode_unavailable")
                 items = [
                     {
                         "file_version_id": row["file"]["id"],
@@ -4636,6 +4721,9 @@ class AuthStore:
             "checker_snapshot_digest": snapshot.input_digest,
             "model_identity": dict(snapshot.model_identity),
         }
+        if deep_mode:
+            # Standard payloads stay byte-identical; only deep jobs name a mode.
+            execution_payload["analysis_mode"] = "deep"
         self._check_usage_policy(conn, principal, usage_policy)
         job_id = str(uuid.uuid4())
         conn.execute(
@@ -4647,9 +4735,9 @@ class AuthStore:
             INSERT INTO product.audit_rounds (
                 id, tenant_id, created_by, source_draft_id, predecessor_id,
                 idempotency_key,
-                request_fingerprint, execution
+                request_fingerprint, execution, deep_mode
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 round_id,
@@ -4660,6 +4748,7 @@ class AuthStore:
                 key,
                 fingerprint,
                 EXEC_QUEUED,
+                deep_mode,
             ),
         )
         for row in prepared:
@@ -4933,7 +5022,7 @@ class AuthStore:
                        source_draft_id, result_attempt, created_at, case_context,
                        EXISTS (SELECT 1 FROM product.audit_drafts d WHERE d.id = source_draft_id AND d.task_fingerprint IS NOT NULL),
                        (SELECT json_build_object('provider', provider, 'object_kind', object_kind, 'object_ref', object_ref)
-                        FROM product.round_writeback_targets WHERE round_id = a.id), a.review_document_pairs
+                        FROM product.round_writeback_targets WHERE round_id = a.id), a.review_document_pairs, a.deep_mode
                 FROM product.audit_rounds a WHERE id = %s""",
                 (round_id,),
             )
@@ -4989,6 +5078,7 @@ class AuthStore:
         reviews = {review[0]: {"judgment": review[1], "rationale": review[2], "next_step": review[3], "version": review[4], "citations": review[5] or []} for review in reviews_read.fetchall()}
         if coverage.get("rule_items"):
             coverage["rule_items"] = [{**item, "review": reviews.get(f"coverage:{item.get('file_version_id')}:{item.get('id')}")} for item in coverage["rule_items"]]
+        deep_reviews = _deep_reviews(coverage) if row[11] else {}
         body = {
             "id": str(row[0]),
             "execution": row[1],
@@ -5002,6 +5092,7 @@ class AuthStore:
             "case_context": row[7] or {},
             "writeback": public_target(row[9]),
             "review_document_pairs": row[10],
+            "deep_mode": bool(row[11]),
             **_executor_public(payload),
             "progress": progress,
             "failure": diagnostic.get("failure"),
@@ -5015,6 +5106,7 @@ class AuthStore:
                     "rule_version_id": str(item[5]) if item[5] else None,
                     "rule": {"id": str(item[5]), "title": item[6], "body": item[7]} if item[5] else None,
                     "checker_verification": frozen_checker_verification(item[11]),
+                    **({"deep_review": deep_reviews.get(str(item[1]))} if row[11] and item[0] == "target" else {}),
                 }
                 for item in inputs
             ],
@@ -5174,6 +5266,7 @@ class AuthStore:
                 "created_at",
                 "round_id",
                 "file_version_id",
+                "charge",
             )
         }
         for key in ("id", "user_id", "round_id", "file_version_id"):

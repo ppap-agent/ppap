@@ -16,9 +16,8 @@ import httpx
 import uvicorn
 from api import create_app
 from product.identity import SESSION_COOKIE
-from product.store.checker_development import CheckerDevelopmentStore
 
-from .test_fact_answers import freeze_fact_source, prepare_fact_round
+from .test_fact_answers import prepare_fact_round
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -27,7 +26,6 @@ def test_confirm_original_fact_in_native_history(auth_store_factory, tmp_path, m
     from playwright.sync_api import expect, sync_playwright
 
     store, api, alice, round_id, version, observed = prepare_fact_round(auth_store_factory, tmp_path, monkeypatch)
-    freeze_fact_source(store, alice, round_id, version)
     original = api.get_round(round_id)
     question = api.read_fact_answers(alice, round_id)["questions"][0]
     listener = socket.socket()
@@ -86,18 +84,7 @@ def test_confirm_original_fact_in_native_history(auth_store_factory, tmp_path, m
                 assert saved["model_calls"] == 0
                 assert api.get_round(round_id) == original
                 assert observed == ["model observation"]
-                assert CheckerDevelopmentStore(api).list_feedback(alice, round_id)["feedback"] == []
-                result.get_by_role("button", name="作为优化样本", exact=True).click()
-                result.get_by_role("radio", name="符合", exact=True).check()
-                result.get_by_role("textbox", name="样本判定依据", exact=True).fill("已对照原件确认SOP勾选，作为明确的条款预期")
-                result.get_by_role("button", name="确认加入优化样本", exact=True).click()
-                expect(result).to_contain_text("已加入优化样本，原机器结果保留。")
-                sample = CheckerDevelopmentStore(api).list_feedback(alice, round_id)["feedback"]
-                assert len(sample) == 1
-                assert sample[0]["original_status"] == "UNABLE" and sample[0]["expected_status"] == "PASS"
-                assert saved["answers"][0]["operation_id"] in sample[0]["rationale"]
-                assert api.get_round(round_id) == original
-                assert observed == ["model observation"]
+                expect(result.get_by_role("button", name="作为优化样本", exact=True)).to_have_count(0)
                 with page.expect_download() as download:
                     section.get_by_role("link", name="下载人工确认报告", exact=True).click()
                 assert download.value.suggested_filename == "original-fact-confirmations.pdf"
@@ -108,7 +95,6 @@ def test_confirm_original_fact_in_native_history(auth_store_factory, tmp_path, m
                 expect(result).to_contain_text(alice.user_id)
                 expect(prompt).to_have_count(0)
                 assert len(api.read_fact_answers(alice, round_id)["answers"]) == 1
-                assert CheckerDevelopmentStore(api).list_feedback(alice, round_id)["feedback"] == sample
                 page.set_viewport_size({"width": 390, "height": 844})
                 expect(result).to_contain_text("原机器结果：无法判断")
                 assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")

@@ -20,6 +20,8 @@ from product.feishu import UserTokens
 from product.fixtures import RULE_A, USER_ALICE, USER_BOB
 from product.identity import SESSION_COOKIE
 from product.settings import Settings
+from product.store.deep_artifacts import DeepArtifactStore
+from product.store.store import AuthStore
 from product.store.suite_releases import SuiteReleaseStore
 from psycopg.types.json import Jsonb
 from pydantic import TypeAdapter
@@ -2307,3 +2309,162 @@ def test_v4_t12_explicit_reference_remains_free_and_restores_its_role(auth_store
     assert client.get("/rounds").json()["rounds"] == []
     assert client.get("/usage").json()["events"] == []
     client.close()
+
+
+# Task-level deep mode: choice, acceptance, per-file fallback and billing. The controlled
+# Core guest has no model and cannot write a program, so execution exercises the fallback to
+# the Suite programs; the committed-deep-result surcharge goes through the worker's commit path.
+
+
+@pytest.fixture
+def deep_offered(monkeypatch):
+    # The deep runtime and the tenant's coding model are deployment facts; this
+    # test fixes them as available. test_deep_mode_is_refused_when_unavailable keeps the real check.
+    monkeypatch.setattr(AuthStore, "_deep_mode_option", lambda self, conn, tenant_id: {"available": True, "reason": None})
+
+
+def choose_deep(client, path, revision=0):
+    response = client.put(path + "/deep-mode", json={"deep_mode": True, "expected_revision": revision})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_deep_mode_is_chosen_before_acceptance_frozen_on_the_round_and_estimated_at_1_5x(matched_task, deep_offered):
+    client, worker, path, _body, _rule = matched_task
+    task = client.get(path).json()
+    assert task["deep_mode"] is False and task["estimated_points"] == 500
+    assert task["deep_mode_option"] == {"available": True, "reason": None}
+    standard = confirmation_command(client, path, 0)
+
+    deep = choose_deep(client, path)
+    TypeAdapter(wc.AuditTask).validate_python(deep)
+    assert deep["deep_mode"] is True and deep["estimated_points"] == 750
+    assert deep["input_revision"] == 0
+    assert deep["confirmation_basis_digest"] not in {None, standard["expected_confirmation_basis_digest"]}
+    conflict = client.put(path + "/deep-mode", json={"deep_mode": False, "expected_revision": 1})
+    assert conflict.status_code == 409 and conflict.json()["error"] == "task_revision_conflict"
+    # A confirmation made against the standard basis cannot start a deep audit.
+    stale = client.post(path + "/confirm", json=standard)
+    assert stale.status_code == 409 and stale.json()["error"] == "task_confirmation_changed"
+
+    accepted = client.post(path + "/confirm", json=confirmation_command(client, path, 0))
+    assert accepted.status_code == 201, accepted.text
+    assert accepted.json()["deep_mode"] is True
+    round_id = accepted.json()["round_id"]
+    with worker._conn() as conn:
+        assert conn.execute("SELECT deep_mode FROM product.audit_rounds WHERE id=%s", (round_id,)).fetchone() == (True,)
+        payload = conn.execute("SELECT payload FROM engine.jobs WHERE audit_round_id=%s AND kind='audit'", (round_id,)).fetchone()[0]
+    assert payload["analysis_mode"] == "deep"
+    assert client.get(f"/rounds/{round_id}").json()["deep_mode"] is True
+    summary = next(row for row in client.get("/audit-tasks").json()["tasks"] if row["id"] == accepted.json()["id"])
+    assert summary["deep_mode"] is True
+    locked = client.put(path + "/deep-mode", json={"deep_mode": False, "expected_revision": 0})
+    assert locked.status_code == 409
+
+
+def test_a_standard_task_keeps_its_job_payload_without_a_mode(matched_task):
+    client, worker, path, _body, _rule = matched_task
+    accepted = client.post(path + "/confirm", json=confirmation_command(client, path, 0))
+    assert accepted.status_code == 201, accepted.text
+    assert accepted.json()["deep_mode"] is False
+    with worker._conn() as conn:
+        payload = conn.execute("SELECT payload FROM engine.jobs WHERE audit_round_id=%s AND kind='audit'", (accepted.json()["round_id"],)).fetchone()[0]
+    assert set(payload) == {"round_id", "executor", "executor_revision", "checker_snapshot_digest", "model_identity"}
+
+
+def test_deep_mode_is_refused_when_unavailable(matched_task):
+    client, worker, path, _body, _rule = matched_task
+    # Without the deep runtime the switch is off with a reason; acceptance never falls back silently.
+    socket, worker.settings.deep_controller_socket = worker.settings.deep_controller_socket, ""
+    task = client.get(path).json()
+    assert task["deep_mode_option"] == {"available": False, "reason": "深度审核运行环境暂不可用。"}
+    refused = client.put(path + "/deep-mode", json={"deep_mode": True, "expected_revision": 0})
+    assert refused.status_code == 409 and refused.json()["error"] == "deep_mode_unavailable"
+    assert client.get(path).json()["deep_mode"] is False
+    # A deep choice saved while the runtime was available is not accepted as standard after it goes away.
+    worker.settings.deep_controller_socket = socket
+    if client.get(path).json()["deep_mode_option"]["available"]:
+        choose_deep(client, path)
+        worker.settings.deep_controller_socket = ""
+        rejected = client.post(path + "/confirm", json=confirmation_command(client, path, 0))
+        assert rejected.status_code == 409 and rejected.json()["error"] == "deep_mode_unavailable"
+        with worker._conn() as conn:
+            assert conn.execute("SELECT count(*) FROM product.audit_rounds WHERE source_draft_id = %s", (task["id"],)).fetchone() == (0,)
+
+
+def test_a_file_whose_deep_review_did_not_complete_is_billed_500_and_says_so(executable_task, core_system, deep_offered):
+    _client, worker, path, body, _rule = executable_task
+    core_system.controller.runtime.save_round_artifacts = DeepArtifactStore(worker).save_round_artifacts
+    worker.settings.feishu_free_trial_quota_points = 10_000
+    client, http, _calls = billing_client(worker, {"enabled": True, "user_quota": 0, "ai_package_purchased": False})
+    try:
+        choose_deep(client, path)
+        accepted = client.post(path + "/confirm", json=confirmation_command(client, path, 0))
+        assert accepted.status_code == 201, accepted.text
+        # The controlled guest has no model, so the deep guest fails and the Suite programs run.
+        process_claimed(worker, worker.claim_job("deep-audit"), "deep-audit")
+        task = client.get(path).json()
+        TypeAdapter(wc.AuditTask).validate_python(task)
+        target = next(row for row in task["files"] if row["file"]["id"] == body["files"][0]["file_version_id"])
+        assert task["deep_mode"] is True and target["audit"]["execution"] == "completed"
+        assert target["deep_review"] == {"state": "degraded", "reason": "deep_runtime_failed"}
+        events = client.get("/usage").json()["events"]
+        assert [(row["consumed_points"], row["charge"]) for row in events] == [(500, "audit")]
+        assert [row["points"] for row in client.get("/audit-usage").json()["entries"]] == [500]
+        assert core_system.audit_jobs[-1].analysis_mode == "standard"
+        with worker._conn() as conn:
+            assert conn.execute("SELECT count(*) FROM product.deep_round_programs").fetchone() == (0,)
+    finally:
+        client.close()
+        http.close()
+
+
+@pytest.mark.parametrize("state", ["completed", "degraded"])
+def test_the_surcharge_is_recorded_once_and_only_with_a_committed_deep_result(matched_task, deep_offered, state):
+    _client, worker, path, body, _rule = matched_task
+    worker.settings.feishu_free_trial_quota_points = 600
+    client, http, _calls = billing_client(worker, {"enabled": True, "user_quota": 10_000, "ai_package_purchased": True})
+    try:
+        choose_deep(client, path)
+        accepted = client.post(path + "/confirm", json=confirmation_command(client, path, 0))
+        assert accepted.status_code == 201, accepted.text
+        # Acceptance charges 500 per file whatever the mode.
+        assert sorted(row["consumed_points"] for row in client.get("/usage").json()["events"]) == [500]
+        version = body["files"][0]["file_version_id"]
+        claimed = worker.claim_job("deep-commit")
+        review = {"state": "completed"} if state == "completed" else {"state": "degraded", "reason": "deep_development_failed"}
+        result = {"findings": [], "coverage": {"checker_execution": {"analysis_mode": "deep", "targets": [{"file_version_id": version, "deep_review": review}]}}}
+        assert worker.complete_job(claimed, "deep-commit", result, "succeeded") is True
+        assert worker.complete_job(claimed, "deep-commit", result, "succeeded") is False
+        events = client.get("/usage").json()["events"]
+        surcharge = sorted((row["consumed_points"], row["is_free_trial"]) for row in events if row["charge"] == "deep_surcharge")
+        entries = client.get("/audit-usage").json()["entries"]
+        round_input = next(row for row in client.get(f"/rounds/{accepted.json()['round_id']}").json()["inputs"] if row["file_version_id"] == version)
+        assert round_input["deep_review"] == review
+        if state == "completed":
+            # 100 free points remained after the 500 audit slice; the rest is a partner charge.
+            assert surcharge == [(100, True), (150, False)]
+            assert [row["points"] for row in entries] == [750]
+            assert entries[0]["allocation"]["free_points"] + entries[0]["allocation"]["paid_points"] == 750
+        else:
+            assert surcharge == []
+            assert [row["points"] for row in entries] == [500]
+    finally:
+        client.close()
+        http.close()
+
+
+def test_a_failed_deep_round_adds_no_surcharge(matched_task, deep_offered):
+    _client, worker, path, body, _rule = matched_task
+    worker.settings.feishu_free_trial_quota_points = 10_000
+    client, http, _calls = billing_client(worker, {"enabled": True, "user_quota": 0, "ai_package_purchased": False})
+    try:
+        choose_deep(client, path)
+        assert client.post(path + "/confirm", json=confirmation_command(client, path, 0)).status_code == 201
+        claimed = worker.claim_job("deep-failed")
+        coverage = {"checker_execution": {"analysis_mode": "deep", "targets": [{"file_version_id": body["files"][0]["file_version_id"], "deep_review": {"state": "completed"}}]}}
+        assert worker.complete_job(claimed, "deep-failed", {"findings": [], "coverage": coverage, "note": str(uuid.uuid4())}, "failed") is True
+        assert [row["charge"] for row in client.get("/usage").json()["events"]] == ["audit"]
+    finally:
+        client.close()
+        http.close()

@@ -136,10 +136,6 @@ def _process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> 
             from worker.formalization import process_rule_formalization
 
             return process_rule_formalization(store, claimed, ident, ai=rule_ai)
-        if claimed.kind == "checker_optimization":
-            from worker.checker_optimizer import process_checker_optimization
-
-            return process_checker_optimization(store, claimed, ident)
         if claimed.kind in {"report_pdf", "report_zip"}:
             return process_report_job(store, claimed, ident)
         if claimed.kind in FILE_PREPARATION_KINDS:
@@ -223,7 +219,7 @@ def audit_lease(store, claimed, ident):
 
 def run_core_round(store: AuthStore, claimed, work, ident: str = "") -> tuple[dict, str]:
     """All admitted audits share the frozen Core and existing leased UDS boundary."""
-    from agent.client import DEEP_REQUEST_TIMEOUT, DeepClient, DeepError
+    from agent.client import DEEP_MODE_REQUEST_TIMEOUT, DEEP_REQUEST_TIMEOUT, DeepClient, DeepError
     from agent.failures import failure_result
     from agent.mapping import product_result, spec_from_work
     from agent.protocol import DeepProgress
@@ -259,7 +255,9 @@ def run_core_round(store: AuthStore, claimed, work, ident: str = "") -> tuple[di
                     cancelled.set()
                     raise DeepError("deep_lease_lost")
 
-            response = DeepClient(socket_path, timeout=DEEP_REQUEST_TIMEOUT).execute(
+            # A deep round may run a second (Suite) guest after its deep guest failed.
+            timeout = DEEP_MODE_REQUEST_TIMEOUT if spec.analysis_mode == "deep" else DEEP_REQUEST_TIMEOUT
+            response = DeepClient(socket_path, timeout=timeout).execute(
                 spec,
                 cancelled=cancelled,
                 on_progress=progress,

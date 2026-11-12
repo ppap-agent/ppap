@@ -322,7 +322,8 @@ def task_round_view(task: dict, round: dict, reports: dict[str, dict] | None = N
         match = deepcopy(row.get("match"))
         if isinstance(match, dict):
             match["rule"] = deepcopy(frozen["rule"])
-        files.append({**row, "match": match, "audit": audit})
+        deep = {"deep_review": deepcopy(frozen.get("deep_review"))} if round.get("deep_mode") else {}
+        files.append({**row, "match": match, "audit": audit, **deep})
     references = {item["file_version_id"] for item in round["inputs"] if item["role"] == "reference"}
     selected = [row for row in files if row["selection"] == "selected" and row["file"]["id"] not in references]
     ended = sum(bool(row.get("audit") and row["audit"]["execution"] in {"completed", "review_failed"}) for row in selected)
@@ -334,6 +335,8 @@ def task_round_view(task: dict, round: dict, reports: dict[str, dict] | None = N
     return {
         **task,
         "round_id": round["id"],
+        # The accepted Round's mode is the truth once a Task is accepted.
+        "deep_mode": bool(round.get("deep_mode")),
         "execution": round["execution"],
         "has_execution_error": has_execution_error(round["execution"], round.get("coverage") or {}, round.get("findings", [])),
         "state": "completed" if task_finished else "reviewing",

@@ -17,7 +17,6 @@ import {FileName} from '../journey/file-name'
 import {clauseLabel, clauseObservation, frozenResultError, programNotice, sameSnapshot, type ReviewFile} from './result-projection'
 import {displayFields, fileDisplayValues, validDisplayInfo} from './display-info-contract'
 import {RecordedReview, frozenOriginal} from './recorded-review'
-import {CheckerFeedbackWorkspace} from './checker-feedback'
 import {HistoricalFindings} from './historical-findings'
 import {ReviewEditorContext} from './review-editor'
 import {ResizableHandle, ResizablePanel, ResizablePanelGroup} from '../components/ui/resizable'
@@ -31,7 +30,7 @@ import {conclusionLabel, documentTypeLabel, executionLabel, reportLabel, resultL
 type File = ReviewFile
 type Evaluation = components['schemas']['AuditClauseEvaluation']
 type ReviewCitation = components['schemas']['ReviewCitation']
-type SelectedSource = {kind: 'machine' | 'feedback'; reference: AuditEvidence} | {kind: 'review'; reference: ReviewCitation}
+type SelectedSource = {kind: 'machine'; reference: AuditEvidence} | {kind: 'review'; reference: ReviewCitation}
 export type AuditEvidence = components['schemas']['AuditEvidenceReference']
 export type OriginalRenderer = (file: components['schemas']['FileVersion'], evidence: AuditEvidence | null, roundId?: string) => ReactNode
 const evidenceText = (evidence: AuditEvidence, verified: boolean) => evidence.excerpt || (verified ? '该位置内容为空。' : '未提供摘录。')
@@ -82,21 +81,13 @@ function DisplayInformation({file, onEdit}: {file: File; onEdit?: () => void}) {
 }
 
 /** P5 and historical readers share the same frozen results, evidence and review actions. */
-export function AuditReviewContent({file, roundId, taskId, frozenRule = file.match?.rule, frozenFileVersionIds, originals, renderOriginal, onReport, reportAccess, onEditDisplay, showFileTitle = true, previous, onReaudit, facts = []}: {facts?: {label: string; value: string}[]; file: File; roundId: string; taskId?: string; frozenRule?: components['schemas']['BoundRule'] | null; frozenFileVersionIds: string[]; originals: components['schemas']['AuditArchiveOriginal'][]; renderOriginal?: OriginalRenderer; onReport?: () => void; reportAccess?: components['schemas']['AuditArchiveAccess']; onEditDisplay?: () => void; showFileTitle?: boolean; previous?: {label: string; checks: Evaluation[]} | null; onReaudit?: () => void}) {
+export function AuditReviewContent({file, roundId, taskId, frozenRule = file.match?.rule, frozenFileVersionIds, originals, renderOriginal, onReport, reportAccess, onEditDisplay, showFileTitle = true, previous, facts = []}: {facts?: {label: string; value: string}[]; file: File; roundId: string; taskId?: string; frozenRule?: components['schemas']['BoundRule'] | null; frozenFileVersionIds: string[]; originals: components['schemas']['AuditArchiveOriginal'][]; renderOriginal?: OriginalRenderer; onReport?: () => void; reportAccess?: components['schemas']['AuditArchiveAccess']; onEditDisplay?: () => void; showFileTitle?: boolean; previous?: {label: string; checks: Evaluation[]} | null}) {
   const reviewEditor = useContext(ReviewEditorContext)
   // On a desktop-wide screen the basis stays beside the list from the start, on the first item that needs attention.
   const [autoBasis] = useState(() => !new URL(location.href).searchParams.has('clause') && window.matchMedia('(min-width: 1680px)').matches ? file.audit && filterChecks(file.audit.checks, '', 'attention')[0]?.rule_item.id || '' : '')
   const [clause, setClause] = useState(() => new URL(location.href).searchParams.get('clause') || autoBasis), [chosenSource, setSource] = useState<SelectedSource | null>(null)
   const [focus, setFocus] = useState(() => new URL(location.href).searchParams.get('focus') === 'review')
   const [originalId, setOriginalId] = useState(file.file.id)
-  const [feedbackClause, setFeedbackClause] = useState(() => new URL(location.href).searchParams.get('checkerFeedbackClause') || '')
-  function openChecker(clauseId: string) {
-    setFeedbackClause(clauseId)
-    const url = new URL(location.href)
-    if (clauseId) {url.searchParams.set('checkerFeedbackClause', clauseId); url.searchParams.set('basis', '1')}
-    else url.searchParams.delete('checkerFeedbackClause')
-    writeAuditAddress(url)
-  }
   const editorHost = useRef<HTMLDivElement>(null), currentEditor = useRef(reviewEditor); currentEditor.current = reviewEditor
   const [open, setOpenState] = useState(() => new URL(location.href).searchParams.get('basis') === '1' || Boolean(autoBasis))
   // Opened by the page, not the person: focus stays where they are.
@@ -116,7 +107,7 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
   const issue = frozenResultError(roundId, file, frozenFileVersionIds, frozenRule)
   const reportAccessIssue = reportAccess && reportAccess.state !== 'allowed' ? reportAccess.reason || '当前账号不能读取此报告。' : ''
   const review = check?.review !== undefined ? check.review : check?.finding?.review
-  const chosen = chosenSource && ((chosenSource.kind === 'feedback' && frozenFileVersionIds.includes(chosenSource.reference.file_version_id)) || (chosenSource.kind === 'machine' ? check?.evidence : review?.citations)?.some(row => sameSnapshot(row, chosenSource.reference))) ? chosenSource : null
+  const chosen = chosenSource && (chosenSource.kind === 'machine' ? check?.evidence : review?.citations)?.some(row => sameSnapshot(row, chosenSource.reference)) ? chosenSource : null
   const citation = chosen?.kind === 'review' ? chosen.reference : null
   const authorizedOriginal = (id: string) => frozenOriginal(originals, frozenFileVersionIds, id)
   // Side by side, stepping through items keeps the original on the current item's evidence.
@@ -165,7 +156,7 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
     const restore = () => {
       const url = new URL(location.href), route = readAuditRoute(url)
       if (taskId && (route.surface !== 'audit' || route.taskId !== taskId || url.searchParams.get('file') !== file.file.id)) return
-      setClause(url.searchParams.get('clause') || ''); setFeedbackClause(url.searchParams.get('checkerFeedbackClause') || ''); setFocus(url.searchParams.get('focus') === 'review'); setFilter(url.searchParams.get('checkFilter') || (file.audit && filterChecks(file.audit.checks, '', 'attention').length ? 'attention' : 'all'))
+      setClause(url.searchParams.get('clause') || ''); setFocus(url.searchParams.get('focus') === 'review'); setFilter(url.searchParams.get('checkFilter') || (file.audit && filterChecks(file.audit.checks, '', 'attention').length ? 'attention' : 'all'))
     }
     window.addEventListener('popstate', restore); return () => window.removeEventListener('popstate', restore)
   }, [taskId, file.file.id])
@@ -198,11 +189,10 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
       </section>
     })}</div>
   </section>
-  const openFeedback = (row: Evaluation) => {showEvidence(row); setFeedbackClause(row.rule_item.id); const url = new URL(location.href); url.searchParams.set('checkerFeedbackClause', row.rule_item.id); url.searchParams.set('basis', '1'); writeAuditAddress(url)}
   const basis = check && <article key={check.rule_item.id} aria-label="条款判定依据" className={`flex flex-col gap-6 animate-in ${focus ? '' : 'min-h-[calc(100dvh-9rem)]'} fade-in-0 duration-200 motion-reduce:animate-none`}>
     {/* The verdict and its reason lead; everything else supports them. */}
     <section className={`space-y-2 rounded-lg border-l-4 bg-muted/40 p-4 ${verdictAccent[checkTone(check)] ?? 'border-l-border'}`}><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-xs font-medium text-muted-foreground">判定理由</h3><div className="flex flex-wrap gap-1.5"><Badge shape="square" variant={checkTone(check)}>{checkLabel(check)}</Badge>{review && <Badge shape="square" variant="outline">已有人工复核</Badge>}</div></div><p className="whitespace-pre-wrap text-base leading-relaxed">{clauseObservation(check)}</p>{check.scope && (check.scope.unknown > 0 || check.scope.checked < check.scope.total) && <p className="text-xs text-muted-foreground">检查范围：已查 {check.scope.checked}/{check.scope.total}，未知 {check.scope.unknown}。</p>}</section>
-    {check.finding?.review_hint && <ReviewHintDetails key={`${roundId}:${check.finding.item_key}`} roundId={roundId} hint={check.finding.review_hint} onHandled={() => setHandledHints(hints => [...hints, check.finding!.review_hint!])} onFeedback={() => openFeedback(check)}/>}
+    {check.finding?.review_hint && <ReviewHintDetails key={`${roundId}:${check.finding.item_key}`} roundId={roundId} hint={check.finding.review_hint} onHandled={() => setHandledHints(hints => [...hints, check.finding!.review_hint!])}/>}
     {/* A rule that only repeats the title says nothing new. */}
     {check.rule_item.rule_to_check.trim() !== check.rule_item.category.trim() && <section className="space-y-2"><h3 className="text-xs font-medium text-muted-foreground">审核规则原文</h3><p className="whitespace-pre-wrap border-l-2 pl-4 text-sm leading-relaxed">{check.rule_item.rule_to_check}</p></section>}
     <section className="space-y-3"><h3 className="text-xs font-medium text-muted-foreground">证据</h3>{pairedVersions.length > 1 && <Button ref={comparisonTrigger} variant="outline" onClick={showComparison}><FileSearch/>同时核对关联原件</Button>}{check.evidence.length ? check.evidence.map((evidence, index) => {
@@ -216,9 +206,8 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
     }) : <div className="space-y-3"><p className="text-sm text-muted-foreground">未提供来源证据，请核对原件。</p><Button variant="outline" size="sm" onClick={() => {setSource(null); setPane('original')}}>打开原件</Button></div>}</section>
     {programNotice(check) && <Collapsible><CollapsibleTrigger asChild><Button variant="ghost" size="xs" className="group"><ChevronDown aria-hidden="true" className="transition-transform group-data-[state=open]:rotate-180"/>程序执行说明</Button></CollapsibleTrigger><CollapsibleContent><p className="whitespace-pre-wrap break-words pt-1 text-xs leading-relaxed text-muted-foreground">{programNotice(check)}</p></CollapsibleContent></Collapsible>}
     {review && <RecordedReview review={review} originalFor={authorizedOriginal} onCitation={cite => {setSource({kind: 'review', reference: cite}); setPane('original')}}/>}
-    {/* One action row: recording a review is the main step; disputing the result opens the checker and its versions. */}
-    {((reviewEditor && !issue && check.review_item_key && ['completed', 'failed'].includes(check.execution)) || (!issue && check.finding && rule)) && <div className="sticky bottom-0 mt-auto flex flex-wrap items-center gap-2 border-t bg-background py-3">{reviewEditor && !issue && check.review_item_key && ['completed', 'failed'].includes(check.execution) && <Button size="sm" onClick={() => reviewEditor.open({roundId, itemKey: check.review_item_key!, title: clauseLabel(clauses, check.rule_item.id), attempt: audit!.result_attempt, files: originals.filter(row => frozenFileVersionIds.includes(row.file_version_id)).map(row => ({id: row.file_version_id, name: row.file?.original_filename || '本轮原件'}))}, focus ? {container: editorHost.current || undefined, onContinue: next ? () => navigateClause(next.rule_item.id, true) : undefined} : undefined)}>记录人工复核</Button>}{!issue && check.finding && rule && <><Button variant="outline" size="sm" aria-expanded={feedbackClause === check.rule_item.id} onClick={() => openChecker(feedbackClause === check.rule_item.id ? '' : check.rule_item.id)}>这条判错了</Button></>}</div>}
-    {!issue && check.finding && rule && feedbackClause === check.rule_item.id && <CheckerFeedbackWorkspace key={`${roundId}:${file.file.id}:${check.rule_item.id}`} roundId={roundId} fileVersionId={file.file.id} ruleVersionId={rule.id} clauseId={check.rule_item.id} clauseName={id => clauseLabel(clauses, id)} originalStatus={check.finding.status} resultAttempt={audit?.result_attempt ?? null} evidence={check.evidence} originals={originals.filter(item => frozenFileVersionIds.includes(item.file_version_id) && item.access.state === 'allowed').map(item => ({id: item.file_version_id, file_id: item.file?.file_id, name: item.file?.original_filename || '本轮原件'}))} onEvidence={item => {setOriginalId(item.file_version_id); setSource({kind: 'feedback', reference: {...item, rendition: 'original', derived_file_version_id: null, location_gap: '用户选择的依据，尚未独立验证。'}}); setPane('original')}} onReaudit={onReaudit}/>}
+    {/* One action row: recording a review is the step for a result that looks wrong. */}
+    {reviewEditor && !issue && check.review_item_key && ['completed', 'failed'].includes(check.execution) && <div className="sticky bottom-0 mt-auto flex flex-wrap items-center gap-2 border-t bg-background py-3">{reviewEditor && !issue && check.review_item_key && ['completed', 'failed'].includes(check.execution) && <Button size="sm" onClick={() => reviewEditor.open({roundId, itemKey: check.review_item_key!, title: clauseLabel(clauses, check.rule_item.id), attempt: audit!.result_attempt, files: originals.filter(row => frozenFileVersionIds.includes(row.file_version_id)).map(row => ({id: row.file_version_id, name: row.file?.original_filename || '本轮原件'}))}, focus ? {container: editorHost.current || undefined, onContinue: next ? () => navigateClause(next.rule_item.id, true) : undefined} : undefined)}>记录人工复核</Button>}</div>}
   </article>
   // Every pane docks beside the list on wide screens; originals take a wider column but never cover the list.
   const docked = open
@@ -309,7 +298,7 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
     <HistoricalFindings findings={audit?.unmapped_findings || []} roundId={roundId} resultAttempt={audit?.result_attempt ?? null} versions={frozenFileVersionIds} originals={originals} renderOriginal={renderOriginal} fileVersionId={file.file.id}/>
     <Sheet modal={false} open={open} onOpenChange={setOpen}><SheetContent overlay={false} onInteractOutside={event => event.preventDefault()} className={viewingOriginal ? 'overflow-y-auto data-[side=right]:w-full data-[side=right]:max-w-2xl' : sideBySide ? 'overflow-hidden data-[side=right]:w-full data-[side=right]:max-w-3xl min-[1920px]:data-[side=right]:max-w-5xl' : 'overflow-y-auto data-[side=right]:w-full data-[side=right]:max-w-md'} onOpenAutoFocus={event => {if (autoOpened.current) {autoOpened.current = false; event.preventDefault()}}} onCloseAutoFocus={event => {event.preventDefault(); if (trigger.current?.isConnected) trigger.current.focus()}}>
       <div className="flex items-start gap-2 pr-8"><div className="min-w-0 flex-1"><SheetHeader><SheetTitle title={check?.rule_item.id}>{check ? clauseLabel(clauses, check.rule_item.id) : file.file.original_filename}</SheetTitle><SheetDescription className="sr-only">查看本轮审核依据与固定原件</SheetDescription></SheetHeader></div>{listed >= 0 && filtered.length > 1 && <div className="flex shrink-0 items-center gap-1" aria-label="切换审核项"><span className="mr-1 text-xs tabular-nums text-muted-foreground">{listed + 1}/{filtered.length}</span><Button variant="outline" size="icon-sm" aria-label="上一项" title="上一项（K）" disabled={listed <= 0} onClick={() => stepTo(-1)}><ChevronUp/></Button><Button variant="outline" size="icon-sm" aria-label="下一项" title="下一项（J）" disabled={listed >= filtered.length - 1} onClick={() => stepTo(1)}><ChevronDown/></Button></div>}</div>
-      <Tabs value={activePane} onValueChange={setPane}><TabsList variant="line"><TabsTrigger value="details">审核详情</TabsTrigger>{!sideBySide && <TabsTrigger value="original">核对原件</TabsTrigger>}{pairedVersions.length > 1 && <TabsTrigger value="comparison">关联原件对照</TabsTrigger>}</TabsList><TabsContent value="details" forceMount={feedbackClause ? true : undefined} hidden={activePane !== 'details'}><div className={sideBySide ? 'grid grid-cols-5 gap-6 pt-4' : 'pt-4'}><div className={sideBySide ? 'col-span-2 max-h-[calc(100dvh-8rem)] overflow-y-auto pr-2' : undefined}>{issue && <Alert variant="destructive"><AlertTitle>结果数据需要核对</AlertTitle><AlertDescription>{issue}</AlertDescription></Alert>}{basis}</div>{sideBySide && <div className="col-span-3 max-h-[calc(100dvh-8rem)] overflow-y-auto">{originalPanel}</div>}</div></TabsContent>{!sideBySide && <TabsContent value="original"><div className="pt-4">{originalPanel}</div></TabsContent>}{pairedVersions.length > 1 && <TabsContent value="comparison"><div className="pt-4">{comparison}</div></TabsContent>}</Tabs>
+      <Tabs value={activePane} onValueChange={setPane}><TabsList variant="line"><TabsTrigger value="details">审核详情</TabsTrigger>{!sideBySide && <TabsTrigger value="original">核对原件</TabsTrigger>}{pairedVersions.length > 1 && <TabsTrigger value="comparison">关联原件对照</TabsTrigger>}</TabsList><TabsContent value="details"><div className={sideBySide ? 'grid grid-cols-5 gap-6 pt-4' : 'pt-4'}><div className={sideBySide ? 'col-span-2 max-h-[calc(100dvh-8rem)] overflow-y-auto pr-2' : undefined}>{issue && <Alert variant="destructive"><AlertTitle>结果数据需要核对</AlertTitle><AlertDescription>{issue}</AlertDescription></Alert>}{basis}</div>{sideBySide && <div className="col-span-3 max-h-[calc(100dvh-8rem)] overflow-y-auto">{originalPanel}</div>}</div></TabsContent>{!sideBySide && <TabsContent value="original"><div className="pt-4">{originalPanel}</div></TabsContent>}{pairedVersions.length > 1 && <TabsContent value="comparison"><div className="pt-4">{comparison}</div></TabsContent>}</Tabs>
     </SheetContent></Sheet>
   </section>
 }

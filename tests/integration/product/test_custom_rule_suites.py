@@ -116,11 +116,10 @@ def test_successor_is_same_suite_and_old_admission_and_retries_never_drift(custo
     assert active["rule_update"]["clauses"][0]["kind"] == "changed"
     assert active["rule_update"]["target_revision_id"] == changed.revision.id
     assert suites.read_snapshot(accepted["id"], alice.tenant_id).to_dict() == original.to_dict()
-    # New rule publication alone neither changes adoption nor enqueues model work.
+    # New rule publication alone does not change adoption.
     _, unchanged = accept(custom, second)
     assert unchanged.targets[0].rules["rules"][0]["rule_to_check"] == "必须填写批号"
     with custom[0]._conn() as conn:
-        assert conn.execute("SELECT count(*) FROM engine.jobs WHERE kind='checker_optimization'").fetchone()[0] == 0
         execution = conn.execute("SELECT rule_execution FROM product.round_inputs WHERE round_id=%s", (unchanged.round_id,)).fetchone()[0]
         assert execution["rule_version_mismatch"] is True
     releases.publish(alice, changed.revision.suite_key, changed.revision.id, 2, str(uuid.uuid4()), True)

@@ -38,9 +38,13 @@ def usage_page(rows: list[dict], query: dict, organization: dict, free: dict, ar
         row = min(slices, key=lambda item: item["created_at"])
         accepted_at = _time(row["accepted_at"])
         acceptance_times = {_time(row["accepted_at"]) for row in slices}
-        if accepted_at is None or acceptance_times != {accepted_at} or sum(row["consumed_points"] for row in slices) != 500 or len({row["ai_item_id"] for row in slices}) != 1:
+        # 500 at acceptance; a committed deep result adds one 250-point surcharge.
+        audit_points = sum(item["consumed_points"] for item in slices if (item.get("charge") or "audit") == "audit")
+        surcharge_points = sum(item["consumed_points"] for item in slices if item.get("charge") == "deep_surcharge")
+        if accepted_at is None or acceptance_times != {accepted_at} or audit_points != 500 or surcharge_points not in {0, 250} or len({row["ai_item_id"] for row in slices}) != 1:
             unattributed.extend(slices)
             continue
+        points = audit_points + surcharge_points
         reference = {"task_id": row["task_id"], "round_id": round_id, "file_version_id": version_id, "result_attempt": row["result_attempt"]}
         history = archive.get((row["task_id"], version_id))
         free_points = sum(item["consumed_points"] for item in slices if item["is_free_trial"])
@@ -73,8 +77,8 @@ def usage_page(rows: list[dict], query: dict, organization: dict, free: dict, ar
                 "filename": row["filename"],
                 "audit_sequence": history["sequence"] if history else None,
                 "initiator": row["initiator"],
-                "points": 500,
-                "allocation": {"free_points": free_points, "paid_points": 500 - free_points, "reason": None},
+                "points": points,
+                "allocation": {"free_points": free_points, "paid_points": points - free_points, "reason": None},
                 "orders": orders,
                 "order_reason": None if debited_at else "全部使用免费额度，无飞书订单。" if not paid else "尚未取得可核对的飞书订单号。",
                 "settlement": settlement,

@@ -277,30 +277,6 @@ def test_completed_card_uses_actual_counts_without_changing_ng_or_inventing_pass
     assert card["header"]["template"] != "green"
 
 
-@pytest.mark.parametrize("state", ["completed", "failed", "unknown", "stopped"])
-def test_optimization_recall_does_not_claim_publication_or_unknown_success(state):
-    from urllib.parse import parse_qs, urlsplit
-
-    from product.feishu_notifications import optimization_notification_card
-
-    operation = {
-        "operation_id": "operation-a",
-        "state": state,
-        "report": {"validation": {"passed_samples": 1, "total_samples": 1, "new_errors": 0, "verified": False}},
-    }
-    sample = {"round_id": "round-a", "file_version_id": "file-a", "rule_clause_id": "R1 & <b>", "rationale": "private", "evidence": [{"excerpt": "private original"}]}
-    card = optimization_notification_card(operation, sample, "https://ppap.example.test")
-    assert card["schema"] == "2.0" and "未自动发布" in _text(card)
-    assert "private" not in json.dumps(card)
-    assert "验证通过" not in _text(card)
-    if state == "completed":
-        assert "需要重新验证" in _text(card) and "1/1" in _text(card)
-    if state == "unknown":
-        assert "未知" in _text(card) and "不会自动重试" in _text(card)
-    target = parse_qs(urlsplit(card["body"]["elements"][1]["behaviors"][0]["default_url"]).query)["return_to"][0]
-    assert parse_qs(urlsplit(target).query)["clause"] == ["R1 & <b>"]
-
-
 @pytest.mark.parametrize("all_blocked", [False, True])
 def test_confirmation_card_displays_only_server_admission_scope_and_exclusion_reasons(all_blocked):
     task = {

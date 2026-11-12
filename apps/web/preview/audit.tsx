@@ -289,6 +289,15 @@ const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' 
     const task = recognitionReceipts.get(requestId)
     return !task || task.id !== taskId || ['recognition-unknown', 'recognition-traced'].includes(scene) && reads === 1 ? {task_id: taskId, request_id: requestId, state: 'unknown', input_revision: null, task: null} : {task_id: taskId, request_id: requestId, state: 'accepted', input_revision: task.input_revision!, task: structuredClone(scene === 'recognition-superseded' ? taskStore.get(taskId)! : task)}
   },
+  deepMode: async (task, deepMode) => {
+    const current = taskStore.get(task.id)
+    if (!current || current.input_revision !== task.input_revision) throw Object.assign(new Error('preview_input_revision_conflict'), {status: 409})
+    // Fixture display only: the server owns the 1.5x estimate and the basis digest.
+    const files = current.confirmation_scope?.target_file_version_ids.length ?? 0
+    const next: AuditTask = {...current, deep_mode: deepMode, estimated_points: current.estimated_points === null ? null : files * (deepMode ? 750 : 500), confirmation_basis_digest: current.confirmation_basis_digest && (deepMode ? 'd' : 'a').repeat(64)}
+    taskStore.set(task.id, next)
+    return structuredClone(next)
+  },
   endTask: async task => {
     const current = taskStore.get(task.id)
     if (!current || current.input_revision !== task.input_revision) throw Object.assign(new Error('preview_input_revision_conflict'), {status: 409})
@@ -333,7 +342,7 @@ function fixtureMatch(files: AuditTaskFile[], customer: string | null, previous:
     })
     const count = matchedFiles.filter(row => row.selection === 'selected' && row.match?.state === 'matched' && row.match.rule).length
     // Fixture display only. Real estimates and acceptance scope remain Product API-owned.
-    const task: AuditTask = {confirmation_scope: {target_file_version_ids: matchedFiles.filter(row => row.selection === 'selected' && row.match?.state === 'matched' && row.match.rule).map(row => row.file.id).sort(), reference_file_version_ids: matchedFiles.filter(row => row.selection === 'selected' && row.match?.state === 'reference').map(row => row.file.id).sort(), excluded_files: matchedFiles.flatMap(row => row.selection === 'removed' ? [{file_version_id: row.file.id, reason: row.removal_reason!}] : row.selection === 'selected' && row.match?.state === 'unmatched' ? [{file_version_id: row.file.id, reason: '未匹配到规则，不进入本轮审核'}] : []).sort((a, b) => a.file_version_id.localeCompare(b.file_version_id))}, confirmation_basis_digest: count ? 'a'.repeat(64) : null, id: previous?.id || requestId, number, state: 'pending_confirm', created_at: previous?.created_at || '2026-10-16T00:00:00Z', updated_at: '2026-10-16T00:00:00Z', source_draft_id: null, round_id: null, customer_preference: customer, files: matchedFiles, completion_reason: null, estimated_points: scene === 'error' ? null : count * 500, input_revision: previous?.input_revision ?? 0, recognition_request_id: requestId}
+    const task: AuditTask = {confirmation_scope: {target_file_version_ids: matchedFiles.filter(row => row.selection === 'selected' && row.match?.state === 'matched' && row.match.rule).map(row => row.file.id).sort(), reference_file_version_ids: matchedFiles.filter(row => row.selection === 'selected' && row.match?.state === 'reference').map(row => row.file.id).sort(), excluded_files: matchedFiles.flatMap(row => row.selection === 'removed' ? [{file_version_id: row.file.id, reason: row.removal_reason!}] : row.selection === 'selected' && row.match?.state === 'unmatched' ? [{file_version_id: row.file.id, reason: '未匹配到规则，不进入本轮审核'}] : []).sort((a, b) => a.file_version_id.localeCompare(b.file_version_id))}, confirmation_basis_digest: count ? 'a'.repeat(64) : null, id: previous?.id || requestId, number, state: 'pending_confirm', created_at: previous?.created_at || '2026-10-16T00:00:00Z', updated_at: '2026-10-16T00:00:00Z', source_draft_id: null, round_id: null, customer_preference: customer, files: matchedFiles, completion_reason: null, estimated_points: scene === 'error' ? null : count * 500, input_revision: previous?.input_revision ?? 0, recognition_request_id: requestId, deep_mode: false, deep_mode_option: scene === 'deep-unavailable' ? {available: false, reason: '当前企业没有可用于深度审核的模型。'} : {available: true, reason: null}}
     return task
 }
 

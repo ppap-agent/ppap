@@ -1,28 +1,17 @@
 """Candidate guards use real tenant transactions and controlled, model-free authors."""
 
-import io
 import json
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from agent.checker_development import DevelopmentOutcome
-from agent.checker_spec import CheckerArtifact
-from agent.protocol import DevelopmentEnvelope
-from agent.run import ExecutionContext
 from api import create_app
-from audit.checker_validation import CaseEvaluation, ClauseEvaluation, SuiteValidationReport
 from fastapi.testclient import TestClient
-from openpyxl import Workbook
 from product import build_product_store
 from product.files import ObjectExists, ObjectMissing
-from product.fixtures import freeze_round_suite
 from product.identity import SESSION_COOKIE
 from product.settings import Settings
-from product.store.checker_development import CheckerDevelopmentStore
 from product.store.suites import SuiteStore
-from psycopg.types.json import Jsonb
-from worker.checker_optimizer import development_handler, materialize_request
 
 FACTORY = b"def create_audit(audit_file, rule, group_context=None):\n    return None\n"
 OLD_IMPORT = b"from audit.checker_lib.uaes.control_plan import UaesControlPlanAgent\n"
@@ -132,108 +121,3 @@ def test_unchanged_historical_program_can_be_read_and_have_rules_edited(auth_sto
     resolved = SuiteStore(f.store.settings, f.store.objects).resolve_suite(response.json()["id"], f.principal.tenant_id)
     assert resolved.files["checker.py"] == OLD_IMPORT + FACTORY
     assert f.client.get(f"/suite-revisions/{selected.id}").status_code == 200
-
-
-def test_api_selected_pi_passes_full_sources_and_host_rejects_a_guest_bypass(auth_store_factory):
-    f = system(auth_store_factory)
-    rule_id = str(uuid4())
-    with f.store._conn() as conn:
-        conn.execute("INSERT INTO product.rule_versions(id,tenant_id,title,body) VALUES(%s,%s,'Threshold',%s)", (rule_id, f.principal.tenant_id, Jsonb(RULES)))
-    feedback = []
-    for value in (5, 15, 16, 6):
-        book = Workbook()
-        book.active["A1"] = value
-        buffer = io.BytesIO()
-        book.save(buffer)
-        book.close()
-        raw = buffer.getvalue()
-        version = f.store.create_staging(f.principal, "sample.xlsx", "application/octet-stream", len(raw))
-        version = f.store.finalize_version(f.store.put_blob(version, raw))
-        round_id = str(uuid4())
-        with f.store._conn() as conn:
-            conn.execute("INSERT INTO product.resources(id,tenant_id,kind) VALUES(%s,%s,'audit_round')", (round_id, f.principal.tenant_id))
-            conn.execute("INSERT INTO product.resource_grants(resource_id,user_id,capability) VALUES(%s,%s,'review')", (round_id, f.principal.user_id))
-            conn.execute(
-                "INSERT INTO product.audit_rounds(id,tenant_id,created_by,idempotency_key,request_fingerprint,execution,result_attempt) VALUES(%s,%s,%s,%s,'test','completed',1)",
-                (round_id, f.principal.tenant_id, f.principal.user_id, round_id),
-            )
-            conn.execute(
-                "INSERT INTO product.round_inputs(round_id,file_version_id,role,rule_version_id,rule_title,rule_body) VALUES(%s,%s,'target',%s,'Threshold',%s)",
-                (round_id, version.id, rule_id, Jsonb(RULES)),
-            )
-            conn.execute(
-                "INSERT INTO product.findings(id,round_id,item_key,classification,item,status,locator) VALUES(%s,%s,'R1','rule','Threshold','PASS',%s)",
-                (uuid4(), round_id, Jsonb({"file_version_id": version.id, "rule_item_id": "R1"})),
-            )
-        freeze_round_suite(f.store, f.principal, round_id, version.id, version.sha256, f.selected.id)
-        response = f.client.post(
-            f"/audit-rounds/{round_id}/checker-feedback",
-            json={
-                "operation_id": str(uuid4()),
-                "file_version_id": version.id,
-                "rule_version_id": rule_id,
-                "rule_clause_id": "R1",
-                "result_attempt": 1,
-                "original_status": "PASS",
-                "expected_status": "NG" if value < 10 else "PASS",
-                "rationale": "Controlled original A1",
-                "evidence": [{"file_version_id": version.id, "locator": {"kind": "xlsx_cell", "sheet": "Sheet", "cell": "A1"}, "excerpt": str(value)}],
-            },
-        )
-        assert response.status_code == 200, response.text
-        feedback.append(response.json()["id"])
-    command = {"operation_id": str(uuid4()), "feedback_ids": [feedback[0]], "action": "run_tests", "consume_model": False}
-    path = f"/suite-revisions/{f.selected.id}/optimizations"
-    admitted = f.client.post(path, json=command)
-    assert admitted.status_code == 200, admitted.text
-    job = f.worker.claim_job("candidate-guard")
-    envelope = DevelopmentEnvelope(op="develop", operation_id=job.payload["operation_id"], job_id=job.id, tenant_id=job.tenant_id, attempt=job.attempt, lease_owner="candidate-guard")
-    selected = SuiteStore(f.store.settings, f.store.objects).resolve_suite(f.selected.id, f.principal.tenant_id)
-    development = CheckerDevelopmentStore(f.worker)
-    request, _ = materialize_request(development, development.operation_for_dispatch(envelope))
-    assert request.suite_revision_id == f.selected.id
-    assert request.source_files == dict(selected.files)
-    assert request.prior.files == {path: body for path, body in selected.files.items() if path in {"checker.py", "resources.py"}}
-    artifact = CheckerArtifact(input_digest=request.target.digest, executor_revision=request.executor_revision, entrypoint="checker:create_audit", files={"checker.py": OLD_IMPORT + FACTORY})
-    proof = SuiteValidationReport(
-        suite_revision_id=request.suite_revision_id,
-        suite_digest=request.suite_digest,
-        library_revision=request.library_revision,
-        program_digest=artifact.program_digest,
-        oracle_revision=request.oracle_revision,
-        cases=tuple(
-            CaseEvaluation(
-                case_id=sample.case_id,
-                ordinal=sample.ordinal,
-                input_digest=sample.inputs.digest,
-                split="holdout" if sample.holdout else "training",
-                coverage=True,
-                clauses=(ClauseEvaluation(clause_id="R1", expected=sample.expected["R1"], actual=sample.expected["R1"], evidence_locatable=True, checks_performed=1),),
-            )
-            for sample in request.oracle
-        ),
-    )
-
-    class Bypass:
-        calls = 0
-
-        def develop_and_run(self, request, *, spec, context):
-            self.calls += 1
-            self.source_files = request.source_files
-            return DevelopmentOutcome(artifact, [], [], {"model_requests": 0}, validation=proof, usage_source="controlled")
-
-    runtime = Bypass()
-    result = development_handler(f.worker, runtime)(envelope, ExecutionContext())
-    assert runtime.calls == 1, result
-    assert runtime.source_files == dict(selected.files)
-    assert result["state"] == "failed", result
-    assert result["failure"] == "checker_cross_version_import"
-    assert result["candidate_revision_id"] is None
-    assert result["report"]["validation"]["verified"] is False
-    assert "candidate_rejected" in result["report"]["validation"]["reasons"]
-    assert f.client.post(path, json=command).json() == result
-    assert runtime.calls == 1
-    with f.store._conn() as conn:
-        assert conn.execute("SELECT count(*) FROM product.suite_revisions WHERE tenant_id IS NOT NULL").fetchone()[0] == 0
-        assert conn.execute("SELECT count(*) FROM product.suite_publications").fetchone()[0] == 0
-    assert admitted.json()["suite_revision_id"] == f.selected.id

@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import tempfile
 import time
-from contextvars import ContextVar
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Literal
 from uuid import NAMESPACE_URL, UUID, uuid5
@@ -19,15 +19,17 @@ from audit.protocol import ControllerFault
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent.auditor import FAULTS, SemanticRuntime
-from agent.checker_spec import SuiteCheckerProgram
+from agent.checker_spec import CheckerArtifact
 from agent.client import DeepError
-from agent.execution.budget import MAX_INPUT_FILES, MAX_INPUT_TOTAL
+from agent.execution.budget import DEEP_DEVELOPMENT_SECONDS, MAX_INPUT_FILES, MAX_INPUT_TOTAL
 from agent.execution.secure_files import read_json, read_regular
 from agent.run import ExecutionContext
 
 MAX_MANIFEST = 4 * 1024 * 1024
 MAX_BUNDLE = 16 * 1024 * 1024
-_ALLOW_MODEL_CALLS: ContextVar[bool] = ContextVar("core_allow_model_calls", default=True)
+AnalysisMode = Literal["standard", "deep"]
+# Why one target's deep review did not complete; that target ran its Suite program.
+DEEP_DEGRADE_REASONS = frozenset({"deep_timeout", "deep_development_failed", "deep_input_missing", "deep_runtime_failed"})
 
 
 class AuditJobSpec(BaseModel):
@@ -36,19 +38,21 @@ class AuditJobSpec(BaseModel):
     execution_id: UUID
     input_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
     executor_revision: str = Field(min_length=1)
+    analysis_mode: AnalysisMode = "standard"
     allow_model_calls: bool = True
     unavailable_sources: tuple[str, ...] = ()
 
     @classmethod
-    def from_snapshot(cls, snapshot: ExecutionSnapshot, allow_model_calls: bool = True, unavailable_sources: frozenset[str] = frozenset()) -> AuditJobSpec:
+    def from_snapshot(cls, snapshot: ExecutionSnapshot, allow_model_calls: bool = True, unavailable_sources: frozenset[str] = frozenset(), analysis_mode: AnalysisMode = "standard") -> AuditJobSpec:
         unavailable = tuple(sorted(unavailable_sources))
         # A restored object cannot replay the outcome of an unavailable attempt.
         availability = ":" + json.dumps(unavailable, separators=(",", ":")) if unavailable else ""
-        # "standard" keeps execution ids of existing audits stable; there is one audit kind.
+        # The mode is part of the identity; standard ids are unchanged from before deep mode returned.
         return cls(
-            execution_id=uuid5(NAMESPACE_URL, "ppap-audit:standard:" + str(allow_model_calls) + ":" + snapshot.input_digest + availability),
+            execution_id=uuid5(NAMESPACE_URL, "ppap-audit:" + analysis_mode + ":" + str(allow_model_calls) + ":" + snapshot.input_digest + availability),
             input_digest=snapshot.input_digest,
             executor_revision=snapshot.runtime_revision,
+            analysis_mode=analysis_mode,
             allow_model_calls=allow_model_calls,
             unavailable_sources=unavailable,
         )
@@ -60,9 +64,12 @@ def write_audit_manifest(
     sources: dict[str, bytes],
     programs: dict[str, dict[str, bytes]],
     *,
+    analysis_mode: AnalysisMode = "standard",
     allow_model_calls: bool = True,
     unavailable_sources: frozenset[str] = frozenset(),
 ) -> AuditJobSpec:
+    if analysis_mode == "deep" and not allow_model_calls:
+        raise DeepError("deep_requires_model")
     snapshot.validate_sources(sources, unavailable=unavailable_sources)
     expected = {target.binding.checker_digest for target in snapshot.targets}
     if set(programs) != expected or any(checker_digest(files) != digest for digest, files in programs.items()):
@@ -93,7 +100,7 @@ def write_audit_manifest(
             staged = f"program-{index}-{name}"
             stage(staged, body)
             program_paths[digest][name] = staged
-    job = AuditJobSpec.from_snapshot(snapshot, allow_model_calls, unavailable_sources)
+    job = AuditJobSpec.from_snapshot(snapshot, allow_model_calls, unavailable_sources, analysis_mode)
     raw = json.dumps(
         {"operation": "execute-audit", "spec": job.model_dump(mode="json"), "snapshot": snapshot.to_dict(), "source_paths": source_paths, "program_paths": program_paths}, ensure_ascii=False
     ).encode()
@@ -123,8 +130,10 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
     snapshot = ExecutionSnapshot.from_dict(manifest["snapshot"])
     job = AuditJobSpec.model_validate(manifest["spec"])
     unavailable = frozenset(job.unavailable_sources)
-    if job != AuditJobSpec.from_snapshot(snapshot, job.allow_model_calls, unavailable):
+    if job != AuditJobSpec.from_snapshot(snapshot, job.allow_model_calls, unavailable, job.analysis_mode):
         raise ValueError("audit_manifest_identity_mismatch")
+    if job.analysis_mode == "deep" and not job.allow_model_calls:
+        raise ValueError("audit_generation_requires_model")
     total = 0
 
     def read(name: str) -> bytes:
@@ -145,8 +154,16 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
         if endpoint.scheme != "http" or endpoint.hostname not in {"127.0.0.1", "localhost", "::1"} or endpoint.username or endpoint.password or not grant.matches(snapshot.model_identity):
             raise ValueError("audit_model_grant_mismatch")
     snapshot.validate_sources(sources, unavailable=unavailable)
+    artifacts: dict[str, CheckerArtifact] = {}
+    deep: dict[str, dict[str, str]] = {}
+    effective = snapshot
     with grant.access_scope() if grant is not None else model_access_scope(None):
-        result = run_audit(snapshot, sources, programs, runtime=CheckerRuntime(allow_model_tools=job.allow_model_calls), unavailable_sources=unavailable)
+        if job.analysis_mode == "deep":
+            assert grant is not None
+            artifacts, deep = _develop_targets(snapshot, sources, programs, grant, work, unavailable)
+            effective = generated_snapshot(snapshot, sources, artifacts)
+            programs = _effective_programs(effective, programs, artifacts)
+        result = run_audit(effective, sources, programs, runtime=CheckerRuntime(allow_model_tools=job.allow_model_calls), unavailable_sources=unavailable)
     payload = {
         **result,
         "operation": "execute-audit",
@@ -154,6 +171,9 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
         "executor_revision": snapshot.runtime_revision,
         "accepted_input_digest": snapshot.input_digest,
     }
+    if job.analysis_mode == "deep":
+        payload["generated_artifacts"] = {identity: value.model_dump(mode="json") for identity, value in artifacts.items()}
+        payload["deep_targets"] = deep
     encoded = json.dumps(payload, ensure_ascii=False).encode()
     if len(encoded) > MAX_BUNDLE:
         raise ValueError("audit_output_limit")
@@ -161,13 +181,65 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
     (work / "result" / "bundle.json").write_bytes(encoded)
 
 
+def _develop_targets(snapshot, sources, programs, grant, work: Path, unavailable: frozenset[str]):
+    """Write one task-specific program per target, starting from its Suite program.
+
+    A target whose development fails or runs out of time keeps its Suite program
+    and is reported as not deep-reviewed; it is never left without a result.
+    """
+    from agent.execution.checker_guest import develop_checker
+    from agent.execution.guest_model import PiRunner
+
+    deep = {target.file_version_id: {"state": "degraded", "reason": "deep_input_missing"} for target in snapshot.targets}
+    if unavailable:
+        # Generation reads every frozen source; a missing one cannot be traced.
+        return {}, deep
+    runner = PiRunner(grant.model_dump(mode="json"))
+    deadline = time.monotonic() + min(runner.wall_seconds, DEEP_DEVELOPMENT_SECONDS)
+    development = snapshot_development_inputs(snapshot, sources, directory=work / "development-sources")
+    artifacts: dict[str, CheckerArtifact] = {}
+    for index, target in enumerate(snapshot.targets):
+        if time.monotonic() >= deadline:
+            deep[target.file_version_id] = {"state": "degraded", "reason": "deep_timeout"}
+            continue
+        item = development[target.file_version_id]
+        target_work = work / f"development-{index}"
+        target_work.mkdir()
+        try:
+            artifact = develop_checker(
+                audit_file=item.audit_file,
+                rule=item.rule,
+                group_context=item.group_context,
+                digest=item.digest,
+                executor_revision=snapshot.runtime_revision,
+                runner=runner,
+                work=target_work,
+                deadline=deadline,
+                prior_files={name: body.decode("utf-8") for name, body in programs[target.binding.checker_digest].items()},
+                require_independent=True,
+            )
+        except Exception:
+            # One target's failed development never stops the audit of the others.
+            deep[target.file_version_id] = {"state": "degraded", "reason": "deep_timeout" if time.monotonic() >= deadline else "deep_development_failed"}
+            continue
+        artifacts[target.file_version_id] = artifact
+        deep[target.file_version_id] = {"state": "completed"}
+    return artifacts, deep
+
+
+def _effective_programs(effective, programs, artifacts):
+    by_digest = {artifact.program_digest: dict(artifact.files) for artifact in artifacts.values()}
+    return {target.binding.checker_digest: by_digest.get(target.binding.checker_digest) or programs[target.binding.checker_digest] for target in effective.targets}
+
+
 class CoreRuntime(SemanticRuntime):
     """Trusted host adapter: resolve immutable content, then run one audit guest."""
 
-    def __init__(self, runtime: Any, snapshot_for_request, suite_for_revision, *, objects=None, timeout: float = 2400) -> None:
+    def __init__(self, runtime: Any, snapshot_for_request, suite_for_revision, *, objects=None, save_round_artifacts=None, timeout: float = 2400) -> None:
         self.runtime, self.snapshot_for_request, self.suite_for_revision = runtime, snapshot_for_request, suite_for_revision
         self.timeout = timeout
         self.objects = objects
+        self.save_round_artifacts = save_round_artifacts
 
     def execution_revision(self) -> str:
         from audit.checker_core import runtime_revision
@@ -185,8 +257,10 @@ class CoreRuntime(SemanticRuntime):
         programs: dict[str, dict[str, bytes]],
         context: ExecutionContext,
         *,
+        analysis_mode: AnalysisMode = "standard",
         allow_model_calls: bool = True,
-    ) -> dict:
+    ) -> tuple[dict, dict[str, CheckerArtifact], dict[str, dict[str, str]]]:
+        """One guest run. Returns the validated result, generated programs and per-target deep states."""
         from agent.execution.audit_runtime import _validate_output
 
         context.raise_if_cancelled()
@@ -194,7 +268,7 @@ class CoreRuntime(SemanticRuntime):
             root = Path(root_name)
             work, inputs = root / "work", root / "inputs"
             work.mkdir()
-            job = write_audit_manifest(inputs, snapshot, sources, programs, allow_model_calls=allow_model_calls, unavailable_sources=context.unavailable_sources)
+            job = write_audit_manifest(inputs, snapshot, sources, programs, analysis_mode=analysis_mode, allow_model_calls=allow_model_calls, unavailable_sources=context.unavailable_sources)
             try:
                 self.runtime.run(job, inputs, work, time.monotonic() + self.timeout, context.cancelled)
                 result = read_json(work, ("result", "bundle.json"), MAX_BUNDLE)
@@ -207,12 +281,19 @@ class CoreRuntime(SemanticRuntime):
             context.raise_if_cancelled()
             if result.get("accepted_input_digest") != snapshot.input_digest:
                 raise DeepError("deep_output_identity_mismatch")
-            if "generated_artifacts" in result:
-                raise DeepError("deep_output_invalid")
-            return _validate_output(snapshot, result, unavailable_sources=context.unavailable_sources)
+            raw_artifacts, raw_deep = result.pop("generated_artifacts", None), result.pop("deep_targets", None)
+            if analysis_mode == "standard":
+                if raw_artifacts is not None or raw_deep is not None:
+                    raise DeepError("deep_output_invalid")
+                return _validate_output(snapshot, result, unavailable_sources=context.unavailable_sources), {}, {}
+            artifacts, deep = _deep_output(snapshot, raw_artifacts, raw_deep)
+            # The host re-derives every generated identity; it never imports generated code.
+            effective = generated_snapshot(snapshot, sources, artifacts)
+            return _validate_output(effective, result, unavailable_sources=context.unavailable_sources), artifacts, deep
 
     def execute(self, spec, files: dict[str, bytes], *, context: ExecutionContext):
         from agent.core_result import core_response
+        from agent.execution.audit_runtime import AuditRunError
 
         snapshot = self.snapshot_for_request(spec)
         if (
@@ -235,121 +316,129 @@ class CoreRuntime(SemanticRuntime):
                 raise DeepError("deep_integrity_mismatch")
             programs[target.binding.checker_digest] = code
         context.progress({"phase": "checking"})
-        result = self.execute_snapshot(snapshot, files, programs, context)
-        context.progress({"phase": "validating"})
-        return core_response(spec, snapshot, result)
-
-    def develop_and_run(self, request, *, spec, context):
-        # Fixed Oracle evaluation must never give the model hidden documents.
-        # Adaptation remains the explicitly authorized model operation; every
-        # candidate/baseline trial is credential-free once an Oracle is present.
-        token = _ALLOW_MODEL_CALLS.set(getattr(request, "allow_model_calls", True) and not request.oracle)
+        if spec.analysis_mode != "deep":
+            result, _, _ = self.execute_snapshot(snapshot, files, programs, context)
+            context.progress({"phase": "validating"})
+            return core_response(spec, snapshot, result)
+        if self.save_round_artifacts is None:
+            raise DeepError("deep_artifact_persistence_unavailable")
         try:
-            return super().develop_and_run(request, spec=spec, context=context)
-        finally:
-            _ALLOW_MODEL_CALLS.reset(token)
-
-    def _checker_job(self, spec, audit_file, rule, file_bytes, *, role, context, group_context, operation, prior=None, artifact=None, related_bytes=None, development_feedback=None, source_files=None):
-        # Generation uses the existing granted guest. Every fixed execution,
-        # including independent holdout, uses exactly the whole-audit Core.
-        if operation == "adapt-checker":
-            return super()._checker_job(
-                spec,
-                audit_file,
-                rule,
-                file_bytes,
-                role=role,
-                context=context,
-                group_context=group_context,
-                operation=operation,
-                prior=prior,
-                artifact=artifact,
-                related_bytes=related_bytes,
-                development_feedback=development_feedback,
-                source_files=source_files,
+            result, artifacts, deep = self.execute_snapshot(snapshot, files, programs, context, analysis_mode="deep")
+        except (DeepError, AuditRunError, ValueError) as exc:
+            # The whole deep guest failed. Its attempt marker stays, so this exact
+            # deep execution is never repeated; the Suite programs still give a result.
+            context.raise_if_cancelled()
+            if isinstance(exc, DeepError) and exc.code in {"deep_input_unauthorized", "deep_integrity_mismatch", "model_unavailable", "deep_lease_lost"}:
+                raise
+            result, _, _ = self.execute_snapshot(snapshot, files, programs, context)
+            context.progress({"phase": "validating"})
+            degraded = {target.file_version_id: {"state": "degraded", "reason": "deep_runtime_failed"} for target in snapshot.targets}
+            return core_response(spec, snapshot, result, deep=degraded)
+        effective = generated_snapshot(snapshot, files, artifacts)
+        if artifacts:
+            adopted = self.save_round_artifacts(spec, snapshot, artifacts)
+            if set(adopted) != set(artifacts):
+                raise DeepError("deep_output_identity_mismatch")
+            # History names the exact generated program of each deep-reviewed target.
+            effective = replace(
+                effective,
+                targets=tuple(
+                    replace(target, suite_revision_id=adopted[target.file_version_id]["suite_revision_id"], suite_digest=adopted[target.file_version_id]["suite_digest"])
+                    if target.file_version_id in adopted
+                    else target
+                    for target in effective.targets
+                ),
             )
-        from agent.checker_development import FrozenDevelopmentInput
-        from agent.checker_spec import CheckerJobSpec, CheckerProgramBundle
+        context.progress({"phase": "validating"})
+        return core_response(spec, effective, result, deep=deep)
 
-        if artifact is None:
+
+def _deep_output(snapshot, raw_artifacts, raw_deep) -> tuple[dict[str, CheckerArtifact], dict[str, dict[str, str]]]:
+    targets = {target.file_version_id for target in snapshot.targets}
+    if not isinstance(raw_artifacts, dict) or not isinstance(raw_deep, dict) or set(raw_deep) != targets or not set(raw_artifacts) <= targets:
+        raise DeepError("deep_output_invalid")
+    artifacts = {identity: CheckerArtifact.model_validate(raw) for identity, raw in raw_artifacts.items()}
+    deep: dict[str, dict[str, str]] = {}
+    for identity, state in raw_deep.items():
+        if state == {"state": "completed"} and identity in artifacts:
+            deep[identity] = {"state": "completed"}
+        elif isinstance(state, dict) and set(state) == {"state", "reason"} and state["state"] == "degraded" and state["reason"] in DEEP_DEGRADE_REASONS and identity not in artifacts:
+            deep[identity] = {"state": "degraded", "reason": state["reason"]}
+        else:
             raise DeepError("deep_output_invalid")
-        inputs = FrozenDevelopmentInput(audit_file, rule, file_bytes, role, group_context, related_bytes or {})
-        if artifact.input_digest != inputs.digest or artifact.executor_revision != spec.executor_revision:
+    return artifacts, deep
+
+
+def snapshot_development_inputs(snapshot, sources, *, directory=None):
+    """Use one canonical input identity on both trusted host and guest."""
+    from audit.contracts import AuditInput, GroupContextInput, RuleInput
+
+    from agent.checker_development import FrozenDevelopmentInput
+
+    snapshot.validate_sources(sources)
+    if directory is not None:
+        directory.mkdir()
+    audits, by_type = {}, {}
+    rules = {
+        source.file_version_id: RuleInput.model_validate({**source.to_dict()["rules"], "rule_id": source.rule_revision_id, "appendix": source.to_dict()["appendix"]})
+        for source in snapshot.inputs
+        if source.rules is not None
+    }
+    rules.update(
+        {target.file_version_id: RuleInput.model_validate({**target.to_dict()["rules"], "rule_id": target.suite_revision_id, "appendix": target.to_dict()["appendix"]}) for target in snapshot.targets}
+    )
+    for index, source in enumerate(snapshot.inputs):
+        filename = source.filename
+        if directory is not None:
+            path = directory / f"source-{index}{Path(filename).suffix.lower()}"
+            path.write_bytes(sources[source.file_version_id])
+            path.chmod(0o400)
+            filename = str(path)
+        audit = AuditInput(
+            audit_id=source.file_version_id,
+            file_url=filename,
+            project_id=source.project_id,
+            customer=source.customer,
+            model=source.model,
+            part=source.part,
+            file_metadata={"file_version_id": source.file_version_id, "sha256": source.sha256, "role": source.role, "original_filename": source.filename},
+        )
+        audits[source.file_version_id] = audit
+        if source.document_type:
+            by_type.setdefault(source.document_type, []).append(audit)
+    group = GroupContextInput(task_group_id=snapshot.round_id, by_audit_id=audits, by_doc_type=by_type, rules_by_id=rules)
+    return {
+        target.file_version_id: FrozenDevelopmentInput(audits[target.file_version_id], rules[target.file_version_id], sources[target.file_version_id], "target", group, dict(sources))
+        for target in snapshot.targets
+    }
+
+
+def generated_snapshot(snapshot, sources, artifacts):
+    """Bind each deep-reviewed target to its generated program; the others keep their Suite.
+
+    The host independently checks generated code identity; it never imports it.
+    """
+    from audit.checker_core import RuleBinding, clause_ids
+
+    if not artifacts:
+        return snapshot
+    expected = snapshot_development_inputs(snapshot, sources)
+    if not set(artifacts) <= set(expected):
+        raise DeepError("deep_output_identity_mismatch")
+    targets = []
+    for target in snapshot.targets:
+        artifact = artifacts.get(target.file_version_id)
+        if artifact is None:
+            targets.append(target)
+            continue
+        if artifact.input_digest != expected[target.file_version_id].digest or artifact.executor_revision != snapshot.runtime_revision or artifact.program_digest != checker_digest(artifact.files):
             raise DeepError("deep_output_identity_mismatch")
-        snapshot, sources = development_snapshot(inputs, artifact, spec)
-        result = self.execute_snapshot(snapshot, sources, {artifact.program_digest: dict(artifact.files)}, context, allow_model_calls=_ALLOW_MODEL_CALLS.get())
-        job = CheckerJobSpec(execution_id=UUID(int=0), operation="execute-checker", input_digest=inputs.digest, executor_revision=spec.executor_revision)
-        return CheckerProgramBundle(
-            operation="execute-checker",
-            execution_id=job.expected_execution_id(),
-            input_digest=inputs.digest,
-            executor_revision=spec.executor_revision,
-            results=result["findings"],
-            **{key: result[key] for key in ("input_tokens", "output_tokens", "model_requests") if type(result.get(key)) is int},
+        targets.append(
+            replace(
+                target,
+                binding=RuleBinding(target.suite_key, artifact.program_digest, {clause: "checker:create_audit" for clause in clause_ids(target.rules)}),
+                verification="unverified",
+                samples_not_rerun=False,
+            )
         )
-
-
-def development_snapshot(inputs, artifact, spec):
-    """Convert authorized trial inputs to the same immutable clause contract."""
-    import hashlib
-
-    from audit.checker_core import FrozenInput, FrozenTarget, RuleBinding, clause_ids
-    from audit.standard_suites import library_revision
-
-    target_id = str(inputs.audit_file.file_metadata.get("file_version_id") or inputs.audit_file.audit_id)
-    source_rows = {target_id: inputs.audit_file}
-    source_types = {target_id: inputs.rule.type}
-    source_rules = {target_id: inputs.rule}
-    if inputs.group_context is not None:
-        source_rows.update({str(row.file_metadata.get("file_version_id") or row.audit_id): row for row in inputs.group_context.by_audit_id.values()})
-        for kind, rows in inputs.group_context.by_doc_type.items():
-            for row in rows:
-                identity = str(row.file_metadata.get("file_version_id") or row.audit_id)
-                if identity in source_types and source_types[identity] != kind:
-                    raise DeepError("deep_input_invalid")
-                source_types[identity] = kind
-        source_rules.update(inputs.group_context.rules_by_id)
-        source_rules[target_id] = inputs.rule
-    sources = dict(inputs.related_bytes)
-    sources[target_id] = inputs.file_bytes
-    if set(source_rows) != set(sources):
-        raise DeepError("deep_input_invalid")
-    frozen = tuple(
-        FrozenInput(
-            identity,
-            hashlib.sha256(sources[identity]).hexdigest(),
-            "target" if identity == target_id else "reference",
-            str(row.file_metadata.get("original_filename") or Path(row.file_url).name),
-            document_type=source_types.get(identity),
-            customer=row.customer,
-            model=row.model,
-            part=row.part,
-            project_id=row.project_id,
-            rule_revision_id=source_rules[identity].rule_id if identity in source_rules else "",
-            rules=source_rules[identity].model_dump(mode="json") if identity in source_rules else None,
-            appendix=tuple(source_rules[identity].model_dump(mode="json").get("appendix") or ()) if identity in source_rules else (),
-        )
-        for identity, row in source_rows.items()
-    )
-    rules = inputs.rule.model_dump(mode="json")
-    binding = artifact.binding if isinstance(artifact, SuiteCheckerProgram) else None
-    key = binding.suite_key if binding is not None else str(rules.get("suite_key") or inputs.rule.rule_id or "development")
-    target = FrozenTarget(
-        target_id,
-        str(inputs.rule.rule_id or "development"),
-        key,
-        artifact.program_digest,
-        rules,
-        binding or RuleBinding(key, artifact.program_digest, {clause: "checker:create_audit" for clause in clause_ids(rules)}),
-        appendix=tuple(rules.get("appendix") or ()),
-    )
-    return ExecutionSnapshot(
-        tenant_id=spec.tenant_id,
-        initiating_user_id=spec.initiating_user_id,
-        inputs=frozen,
-        targets=(target,),
-        runtime_revision=spec.executor_revision,
-        library_revision=library_revision(),
-        model_identity=dict(spec.model_identity),
-        round_id=spec.round_id,
-    ), sources
+    return replace(snapshot, targets=tuple(targets))

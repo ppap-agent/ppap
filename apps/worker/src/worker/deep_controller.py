@@ -15,10 +15,9 @@ from audit.standard_suites import library_revision
 from product.db import connect
 from product.settings import load_settings
 from product.storage import S3Objects
+from product.store.deep_artifacts import DeepArtifactStore
 from product.store.store import AuthStore
 from product.store.suites import SuiteStore
-
-from worker.checker_optimizer import development_handler
 
 STOP = threading.Event()
 
@@ -60,6 +59,7 @@ def main() -> int:
         model_access_for_request=lambda spec, purpose: model_access(store, spec, purpose),
         snapshot_for_request=lambda spec: suites.read_snapshot(spec.round_id, spec.tenant_id),
         suite_for_revision=suites.resolve_suite,
+        save_round_artifacts=DeepArtifactStore(store).save_round_artifacts,
     ) as runtime:
         server = UnixControllerServer(
             socket_path,
@@ -71,7 +71,6 @@ def main() -> int:
                 authorize=authorize_execution(settings, connect=connect, open_store=open_store),
                 readiness=runtime.ready,
                 configuration=settings.deep_execution_policy().runtime_identity(),
-                development_handler=development_handler(store, runtime),
             ),
             request_timeout=DEEP_REQUEST_TIMEOUT,
         )

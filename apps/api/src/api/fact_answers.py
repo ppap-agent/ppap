@@ -9,7 +9,6 @@ from fastapi.responses import JSONResponse, Response
 from product.mcp import Delegation, McpError
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
 
-from api.checker_development import FeedbackResponse
 from api.mcp_confirmation import require_approved_source
 
 
@@ -33,14 +32,6 @@ class FactAnswerRequest(BaseModel):
     field: str = Field(min_length=1, max_length=256)
     expected_question_fingerprint: str = Field(pattern="^[a-f0-9]{64}$")
     value: StrictBool | Annotated[StrictStr, Field(max_length=2000)] | None
-
-
-class FactAnswerSampleRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    operation_id: str
-    item_key: str = Field(min_length=1, max_length=1000)
-    expected_status: Literal["PASS", "NG", "NA"]
-    rationale: str = Field(min_length=1, max_length=7000)
 
 
 class FactAnswer(BaseModel):
@@ -141,20 +132,6 @@ def register_fact_answer_routes(app: FastAPI, store, principal_of) -> None:
     @app.get("/audit-rounds/{round_id}/fact-answers/export", response_model=FactAnswersExport, response_model_exclude_unset=True)
     def export_fact_answers(round_id: str, request: Request):
         return call(request, lambda principal: store.export_fact_answers(principal, round_id))
-
-    @app.post("/audit-rounds/{round_id}/fact-answers/{operation_id}/samples", response_model=FeedbackResponse)
-    def save_fact_answer_sample(round_id: str, operation_id: str, body: FactAnswerSampleRequest, request: Request):
-        from product.store.fact_answers import save_answer_sample
-
-        def save(principal):
-            delegated = request.scope.get("ppap.delegation")
-            if isinstance(delegated, Delegation):
-                delegated.require("audits:read")
-                delegated.require("reviews:write")
-                require_approved_source(request, f"/audit-rounds/{round_id}/fact-answers", FactAnswersView.model_validate(store.read_fact_answers(principal, round_id)).model_dump(mode="json"))
-            return save_answer_sample(store, principal, round_id, operation_id, body.model_dump())
-
-        return call(request, save)
 
     @app.get("/audit-rounds/{round_id}/fact-answers/report", responses={200: {"content": {"application/pdf": {"schema": {"type": "string", "format": "binary"}}}}})
     def fact_confirmation_report(round_id: str, request: Request):

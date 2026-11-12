@@ -128,10 +128,7 @@ const messages: Record<string,string> = {
   model_unavailable: '服务暂时不可用，请稍后重试；如持续出现，请联系管理员。',
   model_consumption_refused: '暂时无法处理，请稍后重试。',
   meaning_changed: '整理时漏了原文内容，没有采用。再试一次。',
-  checker_not_generated: '这条规则还没有生成检查程序，不能用于审核。请先在规则页生成检查程序。',
-  checker_rule_version_stale: '这不是这条规则的最新版本。请打开最新版本后再生成。',
-  checker_generation_unavailable: '这条规则不能在这里生成检查程序。',
-  checker_input_unavailable: '示例文件还没有准备好，请稍后再试或换一份文件。',
+  checker_not_generated: '这条规则还没有检查程序，不能用于审核。检查程序由平台离线准备，如需准备请联系我们。',
 }
 const safeRequestTrace = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9._-]{8,128}$/.test(value) ? value : undefined
 export const requestTrace = (cause: unknown) => safeRequestTrace(cause instanceof Error && 'traceId' in cause ? cause.traceId : undefined)

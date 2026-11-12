@@ -347,6 +347,7 @@ export function createNativeAuditAdapter(options: {customers: string[]; personal
         return current.state === 'pending_confirm' && !current.round_id ? {...current, acceptance: {request_id: requestId, state: 'rejected', reason}} : current
       }
     },
+    deepMode: (task, deepMode) => request<AuditTask>(`${taskPath(task.id)}/deep-mode`, 'PUT', {deep_mode: deepMode, expected_revision: task.input_revision ?? 0}),
     endTask: task => request<AuditTask>(`${taskPath(task.id)}/end`, 'POST', {expected_revision: task.input_revision ?? 0, removals: removals(task), unselected_file_version_ids: task.files.filter(row => row.selection === 'unselected').map(row => row.file.id)}),
     listTasks: ({q, state, offset, signal}) => request(`/audit-tasks?${new URLSearchParams({q, state: state || '', offset: String(offset)})}`, 'GET', undefined, signal),
     authenticate: async () => {await request('/me')},

@@ -48,7 +48,7 @@ test('uploaded rules form templates by customer; shared and unconfirmed rules ha
   assert.deepEqual(coverage(offered), {effective: 0, total: 1, known: true})
   // An uploaded rule whose program was never generated is not offered for audit, whatever its verification says.
   const [starter] = buildTemplates({rules: [], library: [collection(version('d', {allCustomers: true}, {suiteKey: 'custom:d'}))], catalog: {suites: [summary('custom:d', {origin: 'enterprise', verification_status: 'unverified', program_missing: true})]}, standardTypes: standard})
-  assert.deepEqual([starter.rows[0].automation.state, starter.rows[0].automation.note], ['manual', '在规则页生成检查程序后才能用于审核'])
+  assert.deepEqual([starter.rows[0].automation.state, starter.rows[0].automation.note], ['manual', '检查程序由平台离线准备，准备好后才能用于审核'])
   assert.deepEqual(coverage(starter), {effective: 0, total: 1, known: true})
   assert.equal(templates[2].rows[0].draft, true)
   assert.deepEqual(templates[1].rows[0].target, {kind: 'requirement', id: 'a'})

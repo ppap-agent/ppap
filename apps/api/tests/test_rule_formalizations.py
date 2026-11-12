@@ -757,3 +757,20 @@ def test_a_rule_and_its_original_are_shared_with_the_tenant_but_not_beyond(auth_
     )
     assert refused.status_code == 409, refused.text
     assert refused.json()["error"] == "source_unreadable"
+
+
+def test_audits_are_claimed_before_background_preparation_and_preparation_is_capped(auth_store_factory):
+    store = auth_store_factory(Settings(feishu_app_id="background-claims", git_sha="b" * 40, usage_charge_enabled=False))
+    tenant = store.upsert_feishu_identity("background-claims", "alice").tenant_id
+    worker = build_product_store(store.settings, objects=store.objects, role="worker")
+    with store._conn() as conn:
+        for _ in range(5):
+            conn.execute("INSERT INTO engine.jobs(id,tenant_id,kind,payload,status,created_at) VALUES (%s,%s,'rule_formalization','{}','queued',now() - interval '1 minute')", (uuid.uuid4(), tenant))
+        audit = uuid.uuid4()
+        conn.execute("INSERT INTO engine.jobs(id,tenant_id,kind,payload,status) VALUES (%s,%s,'report_pdf','{}','queued')", (audit, tenant))
+    first = worker.claim_job("w1")
+    assert str(first.id) == str(audit)
+    for index in range(4):
+        assert worker.claim_job(f"w{index + 2}").kind == "rule_formalization"
+    # A fifth check-point job for the same tenant waits while four are running.
+    assert worker.claim_job("w6") is None

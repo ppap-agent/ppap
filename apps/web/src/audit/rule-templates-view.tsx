@@ -16,7 +16,7 @@ import {automationLabel, coverage, effective, pendingRows, typeCode, typeGroups,
 /** Rules-page addresses: a template, a preset rule or an uploaded rule. Every other rules key is dropped, including retired ones. */
 export function rulesAddress(params: Record<string, string>): string {
   const url = new URL(location.href)
-  for (const key of ['template', 'systemRule', 'requirement', 'reqVersion', 'reqTab', 'reqStep', 'reqQuery', 'ruleSuite', 'rulesArea', 'checkerSuite', 'checkerPath']) url.searchParams.delete(key)
+  for (const key of ['template', 'systemRule', 'requirement', 'reqVersion', 'reqTab', 'reqQuery', 'ruleSuite', 'rulesArea', 'checkerSuite', 'checkerPath']) url.searchParams.delete(key)
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value)
   return `${url.pathname}${url.search}${url.hash}`
 }
@@ -88,13 +88,13 @@ export function TemplateBrowser({templates, selectedKey, loading, failed}: {temp
         </section>
       })}
       {/* A refused read is not an empty library; the page above says it could not read. */}{!failed && !shown.length && <div className="space-y-3 py-8 text-center"><h3 className="text-lg font-semibold">{query ? '没有匹配的模板' : '还没有规则模板'}</h3>{query && <Button variant="outline" onClick={() => setQuery('')}>清除搜索</Button>}</div>}
-      <p className="border-t pt-3 text-xs leading-relaxed text-muted-foreground">规则由本企业自行上传：确认条款、生成并验证检查程序后生效。系统提供的规则可直接使用。</p>
+      <p className="border-t pt-3 text-xs leading-relaxed text-muted-foreground">规则由本企业自行上传，检查程序由平台离线准备，准备好后生效。系统提供的规则可直接使用。</p>
     </aside>
     <div className="min-w-0 space-y-4">
       <header className="space-y-1.5">
         <p className="text-sm text-muted-foreground">PPAP Audit<span aria-hidden="true" className="mx-1 text-muted-foreground/60">/</span>规则库</p>
         {/* The page's heading is the shell's; this is its visible form. */}
-        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1"><p aria-hidden="true" className="text-2xl font-semibold leading-tight">规则库</p><p className="text-xs text-muted-foreground">按客户归集审核规则；上传客户要求后确认条款、生成检查程序并验证，生效的文件类型计入覆盖度。</p></div>
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1"><p aria-hidden="true" className="text-2xl font-semibold leading-tight">规则库</p><p className="text-xs text-muted-foreground">按客户归集审核规则；上传客户要求后由平台离线准备检查程序，生效的文件类型计入覆盖度。</p></div>
       </header>
       {template ? <TemplateDetail key={`${template.key}:${focus}`} template={template} focus={focus}/> : selectedKey && <p role="alert" className="rounded-md border bg-card p-4">这个模板已不存在，请从左侧另选一个模板。</p>}
     </div>

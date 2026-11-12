@@ -836,7 +836,7 @@ def create_app(
         )
 
     @app.get("/integrations/feishu/usage/quota", response_model=wc.QuotaEstimate)
-    def feishu_usage_quota(request: Request, ai_item_id: str = "", target_count: int | None = Query(None, ge=0, le=200)) -> JSONResponse:
+    def feishu_usage_quota(request: Request, ai_item_id: str = "", target_count: int | None = Query(None, ge=0, le=200), deep_mode: bool = False) -> JSONResponse:
         from product.feishu_usage import estimate_audit
 
         session = session_of(request)
@@ -865,7 +865,7 @@ def create_app(
             body = quota_payload(partner, remaining)
             body["usage_charge_enabled"] = settings.usage_charge_enabled
             return JSONResponse(body)
-        return JSONResponse(estimate_audit(target_count, remaining, partner, settings.usage_charge_enabled))
+        return JSONResponse(estimate_audit(target_count, remaining, partner, settings.usage_charge_enabled, deep_mode=deep_mode))
 
     @app.post("/integrations/feishu/usage/events/{event_id}/report")
     def feishu_usage_report(event_id: str, request: Request) -> JSONResponse:
@@ -951,9 +951,6 @@ def create_app(
     from api.fact_answers import register_fact_answer_routes
 
     register_fact_answer_routes(app, store, principal_of)
-    from api.checker_development import register_checker_development_routes
-
-    register_checker_development_routes(app, store, principal_of)
     register_rule_routes(app, store, principal_of, require_file_read)
     register_formalization_routes(app, store, principal_of)
     register_suite_routes(app, store, principal_of)

@@ -4,7 +4,7 @@
 
 ## 审核接入与协议能力
 
-`/mcp` 是唯一客户端入口，由锁定的 FastMCP / MCP SDK 提供 Streamable HTTP、工具、Resources 和 Prompts。`prepare_task` 与 `confirm_task` 启动审核。审核只有一种，执行已验证的 Suite，没有审核模式可选。原深度审核及其反馈工具（`read_audit`、`apply_rule_change`、`start_analysis`、`get_rule_change`）已下线（[#322](https://github.com/ppap-agent/ppap/issues/322)）；规则澄清走规则整理，检查程序改进走探索模式。真实第三方客户端联调不由本地协议测试替代。
+`/mcp` 是唯一客户端入口，由锁定的 FastMCP / MCP SDK 提供 Streamable HTTP、工具、Resources 和 Prompts。`prepare_task` 与 `confirm_task` 启动审核。审核只有一种，执行已验证的 Suite，没有审核模式可选。原深度审核及其反馈工具（`read_audit`、`apply_rule_change`、`start_analysis`、`get_rule_change`）已下线（[#322](https://github.com/ppap-agent/ppap/issues/322)）；规则澄清走规则整理，检查程序由平台离线准备和改进。真实第三方客户端联调不由本地协议测试替代。
 
 ## 服务与授权
 

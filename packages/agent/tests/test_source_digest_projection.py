@@ -1,13 +1,11 @@
 """A source digest is checked against its frozen file before public projection."""
 
-import hashlib
 import json
 
 import pytest
-from agent.checker_development import FrozenDevelopmentInput, OracleSample, _evaluate
 from agent.mapping import checker_response
 from agent.protocol import ExecuteRequest, FrozenFile
-from audit.contracts import AuditEvidence, AuditInput, AuditResultItem, EvidenceSource, GroupContextInput, RuleInput
+from audit.contracts import AuditEvidence, AuditResultItem, EvidenceSource
 
 
 def observation(version, digest, **extra):
@@ -69,28 +67,3 @@ def test_declared_digest_without_frozen_hash_context_is_not_accepted(frozen_sha2
 
     status, _, _, sources = _checker_finding(observation("target", "a" * 64), file_version_id="target", file_facts={"target": ("target.xlsx", "target")}, frozen_sha256=frozen_sha256)
     assert status == "UNABLE" and not sources
-
-
-@pytest.mark.parametrize(
-    ("version", "wrong_digest", "include_peer"),
-    [
-        ("target", False, True),
-        ("peer", False, True),
-        ("target", True, True),
-        ("peer", True, True),
-        ("peer", False, False),
-    ],
-)
-def test_pi_evaluation_uses_frozen_bytes_for_target_and_peer(version, wrong_digest, include_peer):
-    target = AuditInput(audit_id="target", file_url="/not-read/target.xlsx", file_metadata={"file_version_id": "target", "sha256": "f" * 64})
-    peer = AuditInput(audit_id="peer-alias", file_url="/not-read/peer.xlsx", file_metadata={"file_version_id": "peer", "sha256": "f" * 64, "role": "reference"})
-    rule = RuleInput(rule_id="rule", type="自定义", rules=[{"id": "R1", "category": "value", "rule_to_check": "Required"}])
-    group = GroupContextInput(task_group_id="test-group", by_audit_id={"target": target, "peer-alias": peer})
-    inputs = FrozenDevelopmentInput(target, rule, b"target original", group_context=group, related_bytes={"peer-alias": b"peer original"} if include_peer else {})
-    sample = OracleSample("sample", 1, inputs, {"R1": "PASS"}, "reviewer")
-    digest = "f" * 64 if wrong_digest else hashlib.sha256(b"target original" if version == "target" else b"peer original").hexdigest()
-    result = observation(version, digest)
-    evaluated = _evaluate(sample, [result], [result], None).clauses[0]
-    expected = "PASS" if not wrong_digest and (version == "target" or include_peer) else "UNABLE"
-    assert evaluated.actual == evaluated.baseline_actual == expected
-    assert evaluated.evidence_locatable is (expected == "PASS")

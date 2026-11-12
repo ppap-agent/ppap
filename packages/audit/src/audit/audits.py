@@ -87,6 +87,7 @@ class RoundWork:
     inputs: list[RoundInput]
     result_attempt: int | None = None
     initiating_user_id: str = ""
+    analysis_mode: str = "standard"
 
 
 @dataclass

@@ -12,9 +12,9 @@ from uuid import UUID
 import pytest
 from agent.checker_development import FrozenDevelopmentInput
 from agent.checker_program import CheckerManifest
-from agent.checker_spec import CheckerArtifact, CheckerJobSpec
+from agent.checker_spec import CheckerJobSpec
 from agent.client import DeepError
-from agent.core_program import CoreRuntime, development_snapshot, write_audit_manifest
+from agent.core_program import CoreRuntime, write_audit_manifest
 from agent.execution.isolation.container import ContainerRuntime
 from agent.protocol import ExecuteRequest
 from agent.run import ExecutionContext
@@ -201,12 +201,8 @@ def test_trusted_host_keeps_job_identity_across_attempts_not_across_new_operatio
     base = ExecuteRequest(
         protocol_revision="protocol", round_id="operation-one", executor="ppap-checker-core", executor_revision="revision", job_id="job-one", tenant_id="tenant", initiating_user_id="user", files=[]
     )
-    artifact = CheckerArtifact(input_digest=inputs.digest, executor_revision="revision", entrypoint="checker:create_audit", files={"checker.py": b"fixed"})
-    fixed = []
     for spec in (base, base.model_copy(update={"attempt": 2}), base.model_copy(update={"job_id": "job-two", "round_id": "operation-two"})):
         with pytest.raises(DeepError, match="deep_cancelled"):
             runtime._checker_job(spec, inputs.audit_file, inputs.rule, inputs.file_bytes, role=inputs.role, context=ExecutionContext(), group_context=inputs.group_context, operation="adapt-checker")
-        fixed.append(development_snapshot(inputs, artifact, spec)[0].input_digest)
     assert [row.runtime_job_id for row in captured] == ["job-one", "job-one", "job-two"]
     assert captured[0].spec == captured[1].spec == captured[2].spec
-    assert fixed[0] == fixed[1] != fixed[2]

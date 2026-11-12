@@ -48,7 +48,7 @@ PostgreSQL 中 `product` 保存产品事实，`engine` 保存执行任务/尝试
 
 Worker 用短数据库事务 claim 工作（含过期 `leased` 重试，同一 round 只增加 attempt），事务外执行，并用当前 attempt/claim 提交结果。技术重试不创建新产品轮次；用户主动重审才创建新轮次。
 
-审核只有一种（#322）。Worker 只执行 job 中冻结的 `ppap-checker-core` 与 Suite 快照，经 bounded UDS 调用独立 Controller；缺快照或执行修订不符即失败。整次执行失败时写回结构化 failure 并将 job/round 标为 failed，不伪造业务判定，不回退到其他执行器。取消、预算或整体协议故障不转为局部成功。Controller 协议 `extra=forbid`，不接受 host path、command、mount、image 或 env；Worker 不持有 Docker socket。`PPAP_DEEP_CONTROLLER_SOCKET` 只表示 Deep capability 是否配置；Core `/ready` 仍只探 PostgreSQL 与对象存储。
+审核由 Worker 执行 job 中冻结的 `ppap-checker-core` 与 Suite 快照；任务选了深度模式时，job 另带 `analysis_mode: "deep"`，guest 先按每份待审文件以其 Suite 程序为起点写一份任务专用检查程序再执行，某份文件开发失败或超时即对该文件执行原 Suite 程序（见 [DATA_MODEL](DATA_MODEL.md) 深度模式一节）。Worker 经 bounded UDS 调用独立 Controller；缺快照或执行修订不符即失败。整次执行失败时写回结构化 failure 并将 job/round 标为 failed，不伪造业务判定，不回退到其他执行器。取消、预算或整体协议故障不转为局部成功。Controller 协议 `extra=forbid`，不接受 host path、command、mount、image 或 env；Worker 不持有 Docker socket。`PPAP_DEEP_CONTROLLER_SOCKET` 只表示 Deep capability 是否配置；Core `/ready` 仍只探 PostgreSQL 与对象存储。
 
 Controller 进程是 `python -m agent`。生产工厂要求显式设置 `PPAP_DEEP_RUNTIME=container-only`，并将 `PPAP_DEEP_SANDBOX_PROFILE` 设为 `off` 或 `ppap`，没有默认 process/checker 后端。`SemanticRuntime` 消费冻结的有效规则和文件版本，通过 `ContainerRuntime` 与可信模型 gateway 执行；guest 命令、模型 endpoint 和 provider key 不来自 Worker RPC。`off` 是降权容器执行，不保证独立文件系统或 egress 隔离，不能称为 gVisor/VM。具体运行与限制见 [Deep 部署说明](../deploy/deep/README.md)；启动或 UDS 可用不证明审核质量或强隔离。
 
@@ -56,9 +56,9 @@ Controller 进程是 `python -m agent`。生产工厂要求显式设置 `PPAP_DE
 
 规则检查、模型推断和文档抽取可以替换实现，但不能改变产品输入版本、授权和结果语义。只有真实当前需求证明价值时才新增服务、框架或隔离层。
 
-Deep 的核心目标设计见 [规则约束下的文档理解与反馈](../packages/agent/DESIGN.md)，未来产品架构、UI 与 MCP 见 [Deep 产品设计](../packages/agent/PRODUCT.md)：业务输入只有 `rules + documents`，已确认附录包含在 rules 中。客户审核不再按本次文件现写 checker（深度审核已下线，#322）：审核只执行已验证的 Suite，探索模式在审核之外生成或修复 checker，人工采用后成为 Suite 新版本。目标是持续的审核工作区，Web 与原生 MCP 平等调用同一个 Audit Application；界面、确认方式、协议和部署均可重构，业务事实与审核语义保持单一拥有者。原生 snapshot 保持无损。尚不因此宣称任意布局和规则均能被模型正确解释。
+Deep 的核心目标设计见 [规则约束下的文档理解与反馈](../packages/agent/DESIGN.md)，未来产品架构、UI 与 MCP 见 [Deep 产品设计](../packages/agent/PRODUCT.md)：业务输入只有 `rules + documents`，已确认附录包含在 rules 中。客户审核不再按本次文件现写 checker（深度审核已下线，#322）：审核只执行已验证的 Suite，客户规则的 checker 由平台离线准备，采用后成为 Suite 新版本；产品内不生成、不修复 checker。目标是持续的审核工作区，Web 与原生 MCP 平等调用同一个 Audit Application；界面、确认方式、协议和部署均可重构，业务事实与审核语义保持单一拥有者。原生 snapshot 保持无损。尚不因此宣称任意布局和规则均能被模型正确解释。
 
-深度反馈（规则变更与重新分析）已随深度审核下线（#322）；其回执表 `product.deep_rule_changes` 与 Deep 轮次产物表 `product.checker_round_artifacts` 已由 migration 0070 删除。
+深度反馈（规则变更与重新分析）、检查程序优化与产品内生成均已下线；客户规则的检查程序由平台离线准备。migration 0070 删除了 `deep_rule_changes` 与 `checker_round_artifacts`，0072 删除 `checker_feedback` / `checker_optimizations`，并以 `deep_round_programs` 记录深度模式轮次实际执行的生成程序。
 
 当前执行入口只开发并执行固定 checker。宿主只能证明程序和范围的重放，不能独立证明规则理解、关联身份或表头映射正确。
 

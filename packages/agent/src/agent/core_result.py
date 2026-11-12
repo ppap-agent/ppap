@@ -8,7 +8,8 @@ from agent.mapping import checker_response
 from agent.protocol import ExecuteRequest, ExecuteResponse
 
 
-def core_response(spec: ExecuteRequest, snapshot: ExecutionSnapshot, result: dict) -> ExecuteResponse:
+def core_response(spec: ExecuteRequest, snapshot: ExecutionSnapshot, result: dict, *, deep: dict[str, dict[str, str]] | None = None) -> ExecuteResponse:
+    """``deep`` is given exactly for a deep-mode round: each target's deep review state."""
     targets = {target.file_version_id: target for target in snapshot.targets}
     executed = [(item, [finding for finding in result["findings"] if finding["file_version_id"] == item.file_version_id]) for item in spec.files if item.role == "target"]
     usage = {key: result[key] for key in ("input_tokens", "output_tokens", "model_requests") if type(result.get(key)) is int and result[key] >= 0}
@@ -45,9 +46,12 @@ def core_response(spec: ExecuteRequest, snapshot: ExecutionSnapshot, result: dic
                 "checker_digest": target.binding.checker_digest,
                 "verification_status": target.verification,
                 "samples_not_rerun": target.samples_not_rerun,
+                **({"deep_review": dict(deep[target.file_version_id])} if deep is not None else {}),
             }
             for target in snapshot.targets
         ],
     }
+    if deep is not None:
+        response.coverage.checker_execution["analysis_mode"] = "deep"
     response.note = "checker_core_audit"
     return response

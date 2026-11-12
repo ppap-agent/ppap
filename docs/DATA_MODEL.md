@@ -79,7 +79,7 @@ audit_round
   -> human reviews
 ```
 
-审核只有一种，没有审核模式（#322）。生产 Deep 数据删除后，migration 0070 删除了 `audit_drafts.analysis_mode` / `audit_rounds.analysis_mode` 列、`deep_rule_changes` 与 `checker_round_artifacts` 表，并清除已保存上传准备里的 `analysis_mode` 键。API 不接收也不返回审核模式；旧客户端仍发送的 `analysis_mode` 被忽略。`request_fingerprint` 只覆盖文件版本/角色/规则绑定。SHA-256 只用于执行完整性校验，不替代 `file_version_id`。
+深度模式（2026-11-12 产品负责人决定）：任务级开关 `audit_drafts.deep_mode`，受理前可改（按 `input_revision` 冲突校验，不触发重新识别），受理时冻结到 `audit_rounds.deep_mode` 并写入确认依据摘要；重审任务默认关闭。深度模式需要 Deep 运行环境和企业的编码模型，不可用时拒绝开启和受理（`deep_mode_unavailable`），不静默按标准受理。执行时每份待审文件以其 Suite 程序为起点开发一份任务专用程序；生成程序保存为不发布的 Suite revision，`deep_round_programs` 按轮次、文件和结果 attempt 记录，结果 coverage 的 `checker_execution.targets[].deep_review` 记录该文件深度复核完成或未完成（`degraded` 及原因）。开发失败或超时的文件执行原 Suite 程序。计费：受理时每份 500 点（`usage_events.charge='audit'`）；某文件的深度结果提交时，在同一事务另记 250 点 `deep_surcharge`，未完成深度复核的文件只计 500。模型可判 PASS 或 NG，但须有可定位证据；未知仍不变成 PASS。migration 0070 删除了旧 `analysis_mode` 列、`deep_rule_changes` 与 `checker_round_artifacts` 表（0072 因此用新名，避免每次重放 0070 时被删）。`request_fingerprint` 只覆盖文件版本/角色/规则绑定。SHA-256 只用于执行完整性校验，不替代 `file_version_id`。
 
 新 Deep 受理将 `DeepExecutionPolicy` 的实际配置摘要写入既有 job 的 `executor_revision`；`protocol_revision` 仅标识传输协议。API、Worker 与 runtime 共用非密钥策略字段及计算方法，包含应用、模型配置、隔离与资源配置和显式标签。执行端在读取缓存、启动 guest 或模型工作前核对实际摘要；配置变化不能自动替换旧轮次的策略。原确认重放返回原回执，旧结果不补标或重写；旧标签本身不能证明配置冻结。模型配置摘要不保证远端权重不变或输出逐位复现。
 

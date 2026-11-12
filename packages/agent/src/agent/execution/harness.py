@@ -15,7 +15,7 @@ from agent.execution.isolation import ContainerRuntime, RuntimeConfig, local_gat
 
 
 @contextmanager
-def runtime_from_env(settings, objects, *, model_access_for_request=None, model_identity_for_request=None, snapshot_for_request=None, suite_for_revision=None):
+def runtime_from_env(settings, objects, *, model_access_for_request=None, model_identity_for_request=None, snapshot_for_request=None, suite_for_revision=None, save_round_artifacts=None):
     if os.environ.get("PPAP_DEEP_RUNTIME", "") != "container-only":
         raise ValueError("PPAP_DEEP_RUNTIME must explicitly select container-only")
     profile = os.environ.get("PPAP_DEEP_SANDBOX_PROFILE", "")
@@ -51,9 +51,6 @@ def runtime_from_env(settings, objects, *, model_access_for_request=None, model_
             def execute(self, spec, files, *, context):
                 return self._invoke(spec, lambda semantic, runtime: semantic.execute(spec, files, context=context))
 
-            def develop_and_run(self, request, *, spec, context):
-                return self._invoke(spec, lambda semantic, runtime: semantic.develop_and_run(request, spec=spec, context=context))
-
             def _invoke(self, spec, operation):
                 with slot:
                     if bootstrap.degraded:
@@ -85,7 +82,7 @@ def runtime_from_env(settings, objects, *, model_access_for_request=None, model_
                             RuntimeConfig(state=state, gateway_socket=gateway.socket_path, gateway_host="127.0.0.1", **selected.model_dump()),
                             model_grant_binding=lambda execution_id: gateway.http.grants.bind(execution_id, expected or {}, resolve_access),
                         )
-                        semantic = CoreRuntime(runtime, snapshot_for_request, suite_for_revision, objects=objects)
+                        semantic = CoreRuntime(runtime, snapshot_for_request, suite_for_revision, objects=objects, save_round_artifacts=save_round_artifacts)
                         return operation(semantic, runtime)
                     except ModelUnavailable:
                         raise DeepError("model_unavailable") from None

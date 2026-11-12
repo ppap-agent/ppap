@@ -39,13 +39,14 @@ def authorize_execution(settings: Any, *, connect: Callable, open_store: Callabl
             or row[0].get("executor_revision") != spec.executor_revision
             or row[0].get("checker_snapshot_digest", "") != spec.checker_snapshot_digest
             or row[0].get("model_identity", {}) != spec.model_identity
+            or row[0].get("analysis_mode", "standard") != spec.analysis_mode
         ):
             raise DeepError("deep_input_unauthorized")
         work = store.round_work(spec.round_id)
         if work is None or work.tenant_id != spec.tenant_id:
             raise DeepError("deep_input_unauthorized")
         expected = spec_from_work(work, spec.executor, spec.executor_revision, spec.protocol_revision, checker_snapshot_digest=spec.checker_snapshot_digest)
-        if expected.files != spec.files or expected.initiating_user_id != spec.initiating_user_id:
+        if expected.files != spec.files or expected.initiating_user_id != spec.initiating_user_id or expected.analysis_mode != spec.analysis_mode:
             raise DeepError("deep_input_unauthorized")
 
     return authorize

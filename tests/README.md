@@ -231,15 +231,9 @@ uv run --no-sync pytest tests/e2e
 ### Checker workspace browser journey
 
 `tests/integration/product/test_checker_workspace_browser.py` uses the production Web,
-HTTP API, PostgreSQL migrations and roles, durable Worker queue, Controller authorization,
-Core guest entrypoint, and actual candidate/baseline/holdout execution. It starts from
-four real audit results (including false PASS, false NG and UNABLE), saves independent
-answers, checks explicit personal-key consent, save-only, refresh/re-login recovery,
-verified publication, explicit re-audit and rollback. A companion HTTP case also checks
-stale sample edits, private access and preservation of existing human reviews.
-No findings or validation reports are injected. Deterministic metadata and author adapters supply only model responses and Python
-at the model boundary; model usage is labeled `controlled`. This does not prove provider
-quality, real personal-model consumption, paid acceptance or willingness to configure a key.
+HTTP API, PostgreSQL migrations and roles, Controller authorization and Core guest
+entrypoint. A fresh UAES tenant adopts the platform programs on their rule pages, in
+dependency order, and its first accepted Round freezes those exact revisions.
 
 Run with the Product integration prerequisites above, including the `e2e` dependency
 group and installed Chromium:
@@ -250,14 +244,10 @@ uv run --no-sync pytest tests/integration/product/test_checker_workspace_browser
 
 Default storage uses the existing real Silo fixture and Controller calls use its Unix
 socket protocol. The guest runs in a fresh local subprocess, **not a container security
-boundary**. Existing container/runtime gates remain responsible for isolation.
-For a restricted local executor only, explicitly set
+boundary**. For a restricted local executor only, explicitly set
 `PPAP_CHECKER_BROWSER_LOCAL_OBJECTS=1` to use persistent local objects and
 `PPAP_CHECKER_BROWSER_LOCAL_TRANSPORT=1` to replace the socket transport with serialized
-calls to the same Controller. The tests reject either override when `CI` is set; local
-success with these overrides is not S3 or UDS acceptance. `--local-postgres` creates a
-disposable TCP-only cluster. If a browser cannot launch, `-k http_receipts` runs the real
-HTTP/PG/Worker/trial/publication chain without claiming browser coverage.
+calls to the same Controller. The tests reject either override when `CI` is set.
 
 ## Outside the CI Gate
 
@@ -266,200 +256,3 @@ The separate InsForge native lifecycle remains path-filtered / manual / schedule
 ## CI Gate
 
 The default merge contract is the required groups: Web, Repository contract, Python modules, Distribution closure, Schema, Corpus, and Product integration. Being external-backed does not make a test optional or live; Corpus stays a required CI Gate child even when a cache miss calls real OCR / model capability. pytest does not inject the repository root via `pythonpath`; production imports come from uv workspace packaging. The final `CI Gate` runs no tests; it succeeds only when every required group succeeds. Repository-side merge-contract semantics are therefore stable even when internal matrix groups evolve; whether the hosting plan can enforce `CI Gate` through branch protection/rulesets is a separate platform capability.
-
-### Feedback grouping controlled comparison (#258)
-
-`packages/product/tests/test_feedback_groups.py` covers deterministic category/column grouping.
-`test_grouped_feedback_selection_and_read_only_history` in the workspace browser suite exercises
-real results, explicit group selection, removing one item, preserving the full regression set,
-and read-only authorized history. Grouping and history never dispatch a model or a re-audit.
-
-`test_controlled_grouped_and_individual_repair_keep_the_full_oracle` compares the same four
-confirmed samples through the real fixed execution loop with a controlled author: one grouped
-request records 2 model requests and 36 synthetic tokens; three separate requests record 6
-and 108. All four samples pass in each run. These are adapter receipts, not provider billing or
-real-model quality evidence. Grouped repair therefore remains an explicit opt-in, not the default.
-
-### Real-model Checker optimization test and regression guard
-
-`Checker optimization live test` is the expensive real-model **T** in the
-red/green/refactor loop and a reusable regression guard. It uses the same product
-path and independent assertions each time, not a separate release approval
-system. A green test proves that this exact candidate, using this run's Actions
-model configuration, repaired the synthetic defect, passed independent validation,
-and worked after explicit adoption and re-audit. It is positive evidence for
-production, not a guarantee for every production scenario or permission to deploy.
-
-It is a separate `workflow_dispatch` only, outside `Tests` / `CI Gate`, with no
-push, pull-request or schedule trigger. Clicking **Run workflow** expresses the
-intent to run one paid test; there is no second approval flag. Select the branch,
-enter its exact reviewed commit as `expected_sha`, and choose the bounded request
-and token limits. Fix implementation after a red result, run the changed SHA,
-and refactor while preserving the assertions. Offline checks are fast feedback,
-not a replacement for this live test.
-
-The same driver also has an explicit local mode and three bounded scenarios:
-`u08`, `rule-threshold`, and `rule-wording`. Each fresh run admits at most one
-optimization. U08 uses the unchanged real CP workbook plus controlled mark-only
-variants, a frozen existing Checker/resources revision, and **only U08:4**.
-It does not certify the other U08 clauses. The original PASS comes from the
-existing human Oracle; derived cases are independently rule-based, not additional
-human-reviewed corpus labels. The two rule-update scenarios test R1 and unchanged
-R2 together, upload the actual changed rule JSON with checked source units, and
-require explicit reconfirmation. Wording-only changes may keep code unchanged.
-
-For a local run, supply the approved `CI_LLM_*` values in the process, then set
-`LIVE_API_IMAGE`, `LIVE_WORKER_IMAGE`, `LIVE_DEEP_IMAGE`, `LIVE_WEB_IMAGE` to four
-existing same-source images and set `PPAP_CHECKER_LIVE_RUNTIME_SHA` to their real
-source SHA. Existing immutable pins are in `deploy/tke/current.yaml`. The driver
-never builds or pulls images. Reusing an older runtime validates that runtime,
-not the current branch: the report separates `harness_sha`, `runtime_sha` and
-`same_source_runtime`; `candidate_sha` identifies the runtime being tested.
-Local preparation uses a Linux named volume for private evidence: Desktop host
-bind mounts can ignore Unix permissions. The runner transfers only the existing
-private Oracle and Controller receipt through explicit root execs with byte-digest
-checks; the real guest must still fail to read this directory. Linux workflow
-bind mounts keep their existing behavior. Read-only snapshots also retain the
-local Controller receipt before the disposable volume is removed.
-Local preparation also chooses four free loopback ports and UUID-specific database
-and bucket names. Before any identity, session, Suite or other business write, the
-driver compares its real PostgreSQL cluster identifier/database with a read through
-the private container and authenticates a bucket HEAD with the private S3 credentials.
-Docker's published-port metadata is insufficient: an existing host `kubectl
-port-forward` can otherwise intercept that address. Existing forwards stay untouched.
-
-Use a native ARM64 Deep image on an ARM64 host. Other components can keep their
-same-source AMD64 images; the report records each actual image architecture.
-The trusted Controller runs Pi `--version` under the unchanged production guest
-limits before becoming ready. The driver checks that startup receipt before any
-business write. No emulation-specific resource override is used.
-
-```sh
-export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
-export PPAP_APPROVED_SHA="$PPAP_BUILD_SHA"
-export PPAP_CHECKER_LIVE_MODE=local
-export PPAP_CHECKER_LIVE_SCENARIO=u08
-export PPAP_CHECKER_LIVE_BASE_SHA=951f5a1bbfe5285f92a067ea3624a34d44d2f890
-export PPAP_DEEP_MODEL_MAX_REQUESTS=32
-# Free plan only: no writes, credential preparation, containers or model calls.
-uv run --no-sync python -m scripts.run_checker_live --plan
-
-# After authorization for this specific paid scenario, use a fresh identity.
-export PPAP_CHECKER_LIVE_LOCAL_ID="$(uv run --no-sync python -c 'from uuid import uuid4; print(uuid4().hex)')"
-export COMPOSE_PROJECT_NAME="ppap-checker-local-$PPAP_CHECKER_LIVE_LOCAL_ID"
-export PPAP_CHECKER_LIVE_OUTPUT="$(mktemp -d /tmp/ppap-checker-local.XXXXXX)"
-export PPAP_CHECKER_LIVE_ENV="$PPAP_CHECKER_LIVE_OUTPUT/private.env"
-uv run --no-sync python -m scripts.prepare_checker_live
-# Compose reads the prepared random ports/data names from this private env file.
-# The stack's API/Worker/Deep services read the platform test key CI_LLM_API_KEY from this shell.
-docker compose --env-file "$PPAP_CHECKER_LIVE_ENV" -f deploy/isolated-dev/checker-live.yaml up -d --no-build --pull never --wait api worker web
-set -a
-. "$PPAP_CHECKER_LIVE_ENV"
-set +a
-uv run --no-sync python -m scripts.run_checker_live
-uv run --no-sync python -m scripts.run_checker_live --snapshot
-docker compose --env-file "$PPAP_CHECKER_LIVE_ENV" -f deploy/isolated-dev/checker-live.yaml down --volumes --remove-orphans
-```
-
-Run the other scenarios with new local IDs/output directories. Do not rerun a
-started operation after uncertain consumption; `--snapshot` only reads the original
-operation. The local guard requires a clean tracked source, matching actual image
-and running-container identities, this random Compose project, loopback-only PG/Silo
-and product ports, and matching API/Web SHA readback before creating test data.
-No fixture login, production credentials, notifications or formal usage charges
-are enabled. Request/token limits are existing guards, not a fixed price guarantee.
-
-The sole model configuration source is `CI_LLM_BASE_URL`, `CI_LLM_MODEL`, and
-`CI_LLM_API_KEY`, the same Actions settings used for Deep. There are no duplicate
-endpoint/model inputs or fixed provider requirements. The key is injected only
-into the private test process on the disposable runner. Real Chromium saves the
-configuration through the formal settings UI. The test reads back the redacted
-configuration, checks its revision binding, and observes the authorized outbound
-model after the production gateway selects it. The requested model is recorded;
-the provider-returned model is explicitly unknown because the production gateway
-does not retain it. Neither aliases nor unknown returned model names decide the
-business assertions. No provider key is supplied in a Worker RPC or guest
-environment. Browser traces, video, request bodies and settings screenshots are
-not recorded. Product endpoint safety and per-request identity checks remain.
-
-The standalone `deploy/isolated-dev/checker-live.yaml` starts fresh PostgreSQL,
-Silo, API, Worker, Web and the production Controller/Pi guest image. Its
-`remote-dev` profile disables the fixture-login endpoint. Per-run random database
-and S3 credentials replace guessable defaults. Ports are bound only to the
-runner's loopback; there is no external network attachment, ambient `.env` file
-or Docker socket. Only the synthetic identity/session, rule and faulty immutable
-Checker are seeded. Eight source files and real baseline rounds use the product
-API. Chromium enters eight independent answers, configures the personal account,
-starts one real optimization, refreshes, and reopens its result in a fresh session.
-
-The six training expectations are literal and independent. Because this repository
-is public, each run privately generates fresh non-training holdout values and
-randomly assigns the positive and negative cases to the two hidden ordinals.
-A trusted threshold Oracle freezes their answers before optimization; it never
-uses candidate code or model output. Completed artifacts cannot predict a later
-run's hidden inputs or filename/answer mapping. The
-held-out set covers PASS and NG. No corrected Checker or result is injected; the
-provider must repair a real missed detection and preserve both sets. The gate
-binds each case to the frozen original, Oracle, operation, base Suite, candidate
-and actual program digest, and checks evidence and nonempty coverage separately.
-
-A small observational guard wraps the unchanged runtime and gateway. It rejects
-holdout document canaries, exact held-out source identities and hidden case IDs
-at the author boundary, and rejects canaries or hidden IDs in provider requests.
-The label-only leak regression carries no workbook marker. Holdout execution
-must be credential-free. The guard also exercises the actual guest UID against
-the private evidence directory. Only the guard code is mounted into the Controller; the client source is not.
-The private Oracle identities and evidence directory are available to the trusted
-Controller, but are root/runner-private and denied to the guest UID. The existing
-`container-only` runtime is not a general hostile-code isolation proof.
-
-After real independent validation, Chromium explicitly publishes the candidate
-in the disposable tenant. The client explicitly requests a linked re-audit by
-the formal API and Chromium opens the new result. Chromium then rolls back the
-active Suite. A later sample edit must make the old proof stale, block ordinary
-API publication and require the browser's unverified confirmation. The gate
-hashes complete historical findings and frozen snapshots to prove that none of
-these actions changed the old results. This covers the synthetic self-service
-repair journey, not every #255 customer scenario, OAuth login, mobile layout or
-the browser's separate file-recognition/re-audit preparation flow.
-
-One optimization may have up to 32 model requests, a 200,000 input-token guard
-and 32,000 output-token guard, each reducible at dispatch. These are not currency
-ceilings: the final input usage is only known after the response and may exceed
-its remaining input allowance. Confirm endpoint pricing and acceptable spend
-before running. This run deliberately avoids model-backed metadata preparation;
-its initial and repeat audits use fixed native Checkers. Any unexpected gateway
-consumption before optimization is rejected; all observed provider requests must
-match the optimization's authoritative usage. Other product model capabilities
-are not covered by these per-execution gateway limits.
-
-No paid probe or automatic write retry is performed. An explicit GitHub **Re-run
-jobs** or a fresh dispatch starts a new, separately paid test, with fresh random
-fixtures, credentials, storage and one new optimization operation. It does not
-recover or overwrite the old run. Stack, report and artifact identities include
-both run ID and attempt; re-entering the same runner invocation is rejected.
-Reconcile unknown prior consumption before deciding to run another test. The
-UI-generated operation ID is saved before its request is forwarded.
-Each polled receipt preserves known usage, including legal unknown receipts with
-`report: null`. Before stopping containers, an always-run step makes one final
-read-only request to that same operation. This disposable stack is **not
-recoverable after cleanup**. Unknown later charges require provider-billing
-reconciliation, never automatic redispatch.
-
-Only bounded `report.json` and `controller.json` are uploaded, with known token
-and request counts. Assertions already verified are saved before the next stage,
-so failures retain progress through optimization, adoption, re-audit, rollback,
-stale-proof rejection and history checks. The GitHub run summary distinguishes
-PROVEN from NOT_PROVEN and retains known usage; timeout or missing terminal
-evidence does not by itself attribute a defect to the product. The controller's
-request observation is authorization, not proof of provider receipt or billing. Keys, session tokens, original bytes, prompts, raw model
-responses and raw service logs are not artifacts. Monetary cost stays unknown
-without a provider billing receipt. No production data, notifications or formal
-audit points are affected. The live run must actually pass before any of these
-prepared assertions count as acceptance.
-
-Offline false-accept and safety regressions:
-
-```sh
-uv run --no-sync python -m pytest tests/repository/test_checker_live_acceptance.py -q
-```

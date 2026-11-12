@@ -10,11 +10,13 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
+from agent.checker_spec import CheckerArtifact
 from agent.client import DeepError
 from agent.core_program import AuditJobSpec, CoreRuntime, run_audit_manifest, write_audit_manifest
 from agent.protocol import ExecuteRequest, FrozenFile
 from agent.run import Controller, ExecutionContext
 from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest
+from audit.protocol import ControllerFault
 
 CODE = b"""from audit.contracts import AuditResultItem
 
@@ -233,42 +235,6 @@ def check(context):
         assert calls == []
 
 
-@pytest.mark.parametrize("oracle,allow_model_calls,expected", [((), True, True), ((), False, False), ((object(),), True, False)])
-def test_fixed_development_trials_do_not_give_models_oracle_inputs(tmp_path, monkeypatch, oracle, allow_model_calls, expected):
-    from agent.auditor import SemanticRuntime
-    from agent.checker_spec import CheckerArtifact
-
-    snapshot, sources, _, spec, suite = setup()
-    inputs = development_input(snapshot, sources)
-    artifact = CheckerArtifact(input_digest=inputs.digest, executor_revision="runtime", entrypoint="checker:create_audit", files={"checker.py": FACTORY})
-    runtime = CoreRuntime(ControlledGuest(tmp_path), lambda _spec: snapshot, lambda *_: suite)
-    observed = []
-
-    def execute_snapshot(*args, **kwargs):
-        observed.append(kwargs["allow_model_calls"])
-        return {"findings": []}
-
-    def fixed_job():
-        return runtime._checker_job(
-            spec,
-            inputs.audit_file,
-            inputs.rule,
-            inputs.file_bytes,
-            role=inputs.role,
-            context=ExecutionContext(),
-            group_context=inputs.group_context,
-            related_bytes=inputs.related_bytes,
-            operation="execute-checker",
-            artifact=artifact,
-        )
-
-    monkeypatch.setattr(runtime, "execute_snapshot", execute_snapshot)
-    monkeypatch.setattr(SemanticRuntime, "develop_and_run", lambda self, request, **kwargs: fixed_job())
-    runtime.develop_and_run(SimpleNamespace(oracle=oracle, allow_model_calls=allow_model_calls), spec=spec, context=ExecutionContext())
-    fixed_job()
-    assert observed == [expected, True]  # The request's scope never leaks into another execution.
-
-
 def test_container_offline_audit_never_issues_a_model_grant(tmp_path, monkeypatch):
     import threading
     import time
@@ -296,33 +262,6 @@ def test_container_offline_audit_never_issues_a_model_grant(tmp_path, monkeypatc
     assert exported == [False]
     assert not run.exists()
     assert not runtime.attempts.exists()
-
-
-def test_development_freezes_reference_type_and_rules_without_requiring_a_rule():
-    from dataclasses import replace
-
-    from agent.checker_spec import CheckerArtifact
-    from agent.core_program import development_snapshot
-    from audit.contracts import RuleInput
-
-    snapshot, sources, _, spec, _ = setup()
-    reference = replace(snapshot.inputs[-1], document_type="过程流程图")
-    snapshot = replace(snapshot, inputs=(*snapshot.inputs[:-1], reference))
-    prepared = development_input(snapshot, sources)
-    artifact = CheckerArtifact(input_digest=prepared.digest, executor_revision="runtime", entrypoint="checker:create_audit", files={"checker.py": FACTORY})
-    frozen, _ = development_snapshot(prepared, artifact, spec)
-    row = next(row for row in frozen.inputs if row.file_version_id == "reference")
-    assert row.document_type == "过程流程图"
-    assert row.rules is None
-    rules = RuleInput(rule_id="reference-rules", type="过程流程图", rules=[{"id": "P1", "rule_to_check": "工序顺序"}], appendix=[{"text": "已确认附录"}])
-    with_rules = development_input(snapshot, sources, rules_by_id={"reference": rules})
-    assert with_rules.digest != prepared.digest
-    frozen_with_rules, _ = development_snapshot(with_rules, artifact, spec)
-    assert frozen_with_rules.input_digest != frozen.input_digest
-    restored = next(row for row in frozen_with_rules.inputs if row.file_version_id == "reference")
-    assert restored.rule_revision_id == "reference-rules"
-    assert restored.rules["rules"][0]["id"] == "P1"
-    assert restored.appendix == ({"text": "已确认附录"},)
 
 
 def test_standard_missing_target_never_imports_its_program_and_keeps_other_results(tmp_path):
@@ -448,3 +387,124 @@ def test_unavailable_sources_are_explicit_disjoint_and_change_attempt_identity(t
             snapshot.validate_sources(data, unavailable=unavailable)
     with pytest.raises(ValueError, match="snapshot_source_digest_mismatch"):
         snapshot.validate_sources({**reduced, "file-b": b"changed"}, unavailable=missing)
+
+
+# Deep mode: a task-specific program per target, and per-target fallback to the Suite program.
+# The guest runs in-process with a controlled development function; no model is called.
+
+
+def _controlled_development(monkeypatch, failing: set[str]):
+    from agent.execution import checker_guest, guest_model
+
+    class Runner:
+        wall_seconds = 100
+
+        def __init__(self, _grant):
+            pass
+
+    calls = []
+
+    def develop(*, audit_file, digest, executor_revision, prior_files, require_independent, **_):
+        calls.append(audit_file.audit_id)
+        # Development starts from the target's Suite program and must be independent.
+        assert prior_files and require_independent
+        if audit_file.audit_id in failing:
+            raise checker_guest.CheckerProgramError("could not write a program")
+        return CheckerArtifact(input_digest=digest, executor_revision=executor_revision, entrypoint="checker:create_audit", files={"checker.py": FACTORY})
+
+    monkeypatch.setattr(guest_model, "PiRunner", Runner)
+    monkeypatch.setattr(checker_guest, "develop_checker", develop)
+    return calls
+
+
+def _deep_runtime(tmp_path, snapshot, suite, saved, runner=None):
+    def save(spec, original, artifacts):
+        saved.append((spec.round_id, original.input_digest, sorted(artifacts)))
+        return {identity: {"suite_revision_id": "generated-" + identity, "suite_digest": "c" * 64} for identity in artifacts}
+
+    return CoreRuntime(runner or ControlledGuest(tmp_path), lambda _spec: snapshot, lambda *_: suite, save_round_artifacts=save)
+
+
+def test_standard_execution_id_is_unchanged_and_deep_has_its_own():
+    snapshot, *_ = setup()
+    standard = uuid.uuid5(uuid.NAMESPACE_URL, f"ppap-audit:standard:True:{snapshot.input_digest}")
+    assert AuditJobSpec.from_snapshot(snapshot).execution_id == standard
+    assert AuditJobSpec.from_snapshot(snapshot, analysis_mode="standard").execution_id == standard
+    deep = AuditJobSpec.from_snapshot(snapshot, analysis_mode="deep")
+    assert deep.execution_id == uuid.uuid5(uuid.NAMESPACE_URL, f"ppap-audit:deep:True:{snapshot.input_digest}")
+    assert deep.analysis_mode == "deep"
+
+
+def test_a_target_whose_development_failed_runs_its_suite_and_says_so(tmp_path, monkeypatch):
+    snapshot, sources, _, spec, suite = setup()
+    calls = _controlled_development(monkeypatch, failing={"file-b"})
+    saved: list = []
+    controller = Controller(_deep_runtime(tmp_path, snapshot, suite, saved), lambda identity, limit: sources[identity], executor_revision="runtime", protocol_revision="protocol")
+
+    result = controller.handle(spec.model_copy(update={"analysis_mode": "deep"}))
+
+    assert calls == ["file-a", "file-b"]
+    execution = result.coverage.checker_execution
+    assert execution["analysis_mode"] == "deep"
+    targets = {row["file_version_id"]: row for row in execution["targets"]}
+    assert targets["file-a"]["deep_review"] == {"state": "completed"}
+    # History names the exact generated program of the deep-reviewed target only.
+    assert targets["file-a"]["suite_revision_id"] == "generated-file-a" and targets["file-a"]["verification_status"] == "unverified"
+    assert targets["file-b"]["deep_review"] == {"state": "degraded", "reason": "deep_development_failed"}
+    assert targets["file-b"]["suite_revision_id"] == "revision"
+    assert saved == [("round", snapshot.input_digest, ["file-a"])]
+    by_file = {}
+    for row in result.findings:
+        by_file.setdefault(row.locator["file_version_id"], set()).add(row.locator["suite_revision_id"])
+    assert by_file == {"file-a": {"generated-file-a"}, "file-b": {"revision"}}
+    # Unknown stays unknown in deep mode too.
+    assert {row.status for row in result.findings} == {"UNABLE"}
+
+
+def test_a_failed_deep_guest_falls_back_to_the_suite_programs_without_repeating_deep(tmp_path, monkeypatch):
+    snapshot, sources, _, spec, suite = setup()
+    _controlled_development(monkeypatch, failing=set())
+
+    class FailingDeepGuest(ControlledGuest):
+        def __init__(self, root):
+            super().__init__(root)
+            self.modes = []
+
+        def run(self, job, inputs, work, deadline, cancelled):
+            self.modes.append(job.analysis_mode)
+            if job.analysis_mode == "deep":
+                raise ControllerFault("MODEL_TIMEOUT")
+            return super().run(job, inputs, work, deadline, cancelled)
+
+    guest, saved = FailingDeepGuest(tmp_path), []
+    controller = Controller(_deep_runtime(tmp_path, snapshot, suite, saved, guest), lambda identity, limit: sources[identity], executor_revision="runtime", protocol_revision="protocol")
+
+    result = controller.handle(spec.model_copy(update={"analysis_mode": "deep"}))
+
+    assert guest.modes == ["deep", "standard"]
+    assert saved == []
+    assert {row["file_version_id"]: row["deep_review"] for row in result.coverage.checker_execution["targets"]} == {
+        "file-a": {"state": "degraded", "reason": "deep_runtime_failed"},
+        "file-b": {"state": "degraded", "reason": "deep_runtime_failed"},
+    }
+    assert {row["suite_revision_id"] for row in result.coverage.checker_execution["targets"]} == {"revision"}
+
+
+def test_a_standard_round_never_accepts_generated_output(tmp_path, monkeypatch):
+    snapshot, sources, _, spec, suite = setup()
+    _controlled_development(monkeypatch, failing=set())
+    controller = Controller(_deep_runtime(tmp_path, snapshot, suite, []), lambda identity, limit: sources[identity], executor_revision="runtime", protocol_revision="protocol")
+
+    result = controller.handle(spec)
+
+    assert "analysis_mode" not in result.coverage.checker_execution
+    assert all("deep_review" not in row for row in result.coverage.checker_execution["targets"])
+
+
+def test_deep_without_persistence_is_refused_before_any_guest_runs(tmp_path):
+    snapshot, sources, _, spec, suite = setup()
+    guest = ControlledGuest(tmp_path)
+    controller = Controller(CoreRuntime(guest, lambda _spec: snapshot, lambda *_: suite), lambda identity, limit: sources[identity], executor_revision="runtime", protocol_revision="protocol")
+    with pytest.raises(DeepError, match="deep_artifact_persistence_unavailable"):
+        controller.handle(spec.model_copy(update={"analysis_mode": "deep"}))
+    assert guest.calls == 0

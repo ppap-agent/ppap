@@ -297,7 +297,8 @@ class OpenAPIContractTests(unittest.TestCase):
         for field in ("usage_id", "reference", "document_id", "audit_access", "orders", "allocation", "settlement", "initiator", "occurred_at"):
             self.assertIn(field, entry)
         self.assertEqual(entry["reference"]["$ref"], "#/components/schemas/AuditResultReference")
-        self.assertEqual(entry["points"]["const"], 500)
+        # 500 per file; a file whose deep result was committed carries the 250 surcharge.
+        self.assertEqual(entry["points"]["enum"], [500, 750])
         metric = schemas["AuditUsageMetric"]["properties"]
         self.assertTrue(any(option["type"] == "null" for option in metric["value"]["anyOf"]))
         self.assertEqual(schemas["AuditUsageQuery"]["properties"]["page_size"]["const"], 10)

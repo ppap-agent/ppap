@@ -21,7 +21,6 @@ from agent.client import DeepError, DeepUnavailable, read_frame, write_frame
 from agent.execution.budget import MAX_INPUT_FILES, MAX_INPUT_TOTAL
 from agent.protocol import (
     DeepProgress,
-    DevelopmentEnvelope,
     ErrorEnvelope,
     ExecuteRequest,
     ExecuteResponse,
@@ -79,10 +78,8 @@ class Controller:
         authorize: Callable[[ExecuteRequest], None] | None = None,
         readiness: Callable[[], bool] | None = None,
         configuration: dict[str, str] | None = None,
-        development_handler: Callable[[DevelopmentEnvelope, ExecutionContext], dict] | None = None,
     ):
         self.runtime = runtime
-        self.development_handler = development_handler
         self.file_source = file_source
         self.executor_revision = str(executor_revision or "").strip() or DEEP_PROTOCOL_REVISION
         self.executor_revision_for_request = executor_revision_for_request
@@ -194,12 +191,6 @@ class Controller:
                 ready = False
             return {"op": "ready", "ready": ready}
         try:
-            if payload.get("op") == "develop":
-                if self.development_handler is None:
-                    raise DeepUnavailable()
-                development_request = DevelopmentEnvelope.model_validate(payload)
-                receipt = self.development_handler(development_request, context or ExecutionContext())
-                return {"op": "development_result", "receipt": receipt}
             envelope = RequestEnvelope.model_validate(payload)
             result = self.handle(envelope.spec, context)
             return ResultEnvelope(op="result", result=result).model_dump()

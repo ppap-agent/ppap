@@ -33,19 +33,10 @@ def rule_impact(before, after) -> dict:
     }
 
 
-# A rule version's meaning: the revision it was published with, or, once a program was generated from its
-# confirmed check points, the revision carrying them. Both state the same clause text.
-PUBLISHED_RULE_REVISION = """COALESCE(
-    (SELECT o.suite_revision_id::text FROM product.checker_optimizations o
-     WHERE o.tenant_id = v.tenant_id AND o.state = 'completed' AND o.frozen->'generation'->>'rule_version_id' = v.id::text
-     ORDER BY o.completed_at DESC LIMIT 1),
-    v.body->>'suite_revision_id')"""
-
-
 def published_rule_update(conn, suites, tenant_id: str, active):
     """A row publication is development input, never implicit Suite adoption."""
     row = conn.execute(
-        f"""SELECT {PUBLISHED_RULE_REVISION} FROM product.rule_versions v
+        """SELECT v.body->>'suite_revision_id' FROM product.rule_versions v
             WHERE v.tenant_id=%s AND v.body->>'suite_key'=%s AND v.body->>'suite_revision_id' IS NOT NULL
             ORDER BY v.created_at DESC, v.id DESC LIMIT 1""",
         (tenant_id, active.revision.suite_key),

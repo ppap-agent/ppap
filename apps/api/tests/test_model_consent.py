@@ -5,29 +5,8 @@ from uuid import uuid4
 
 import pytest
 from api.audit_routes import register_audit_routes
-from api.checker_development import register_checker_development_routes
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from product.store.checker_development import CheckerDevelopmentStore
-
-
-@pytest.mark.parametrize("expectation", [{}, {"expected_model_revision": None}, {"expected_model_revision": str(uuid4())}])
-def test_optimization_forwards_exact_consent_to_atomic_admission(monkeypatch, expectation):
-    received = []
-
-    def start(self, principal, revision_id, payload):
-        received.append(payload)
-        raise ValueError("model_configuration_changed")
-
-    monkeypatch.setattr(CheckerDevelopmentStore, "start", start)
-    app = FastAPI()
-    register_checker_development_routes(app, SimpleNamespace(settings=SimpleNamespace(), objects=object(), role="api"), lambda request: SimpleNamespace(user_id="actor"))
-    response = TestClient(app).post(
-        "/suite-revisions/suite-a/optimizations", json={"operation_id": str(uuid4()), "feedback_ids": [str(uuid4())], "action": "run_tests", "consume_model": True, **expectation}
-    )
-    assert response.status_code == 409
-    assert response.json() == {"error": "model_configuration_changed"}
-    assert {key: value for key, value in received[0].items() if key == "expected_model_revision"} == expectation
 
 
 @pytest.mark.parametrize("expectation", [{}, {"expected_model_revision": None}, {"expected_model_revision": str(uuid4())}])

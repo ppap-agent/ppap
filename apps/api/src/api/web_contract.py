@@ -302,8 +302,23 @@ class AuditCheckerVerification(TypedDict):
     notice: str
 
 
+class AuditDeepReview(TypedDict):
+    """One target of a deep-mode round: its own program ran ("completed"), or its
+    deep review did not complete and its Suite program ran instead ("degraded"),
+    billed at 500 instead of 750."""
+
+    state: Literal["completed", "degraded"]
+    reason: NotRequired[Literal["deep_timeout", "deep_development_failed", "deep_input_missing", "deep_runtime_failed"]]
+
+
+class AuditDeepModeOption(TypedDict):
+    available: bool
+    reason: str | None
+
+
 class MaterialWire(TypedDict):
     checker_verification: NotRequired[AuditCheckerVerification | None]
+    deep_review: NotRequired[AuditDeepReview | None]
     file_id: str
     file_version_id: str
     original_filename: str
@@ -664,6 +679,7 @@ class Round(TypedDict):
     executor: NotRequired[str]
     executor_revision: NotRequired[str]
     execution_policy: NotRequired[StandardExecutionPolicy]
+    deep_mode: NotRequired[bool]
 
 
 class RoundSummaryRule(TypedDict):
@@ -693,6 +709,7 @@ class RoundSummary(TypedDict):
     uncovered_count: NotRequired[int]
     case_title: str
     case_scope: str
+    deep_mode: NotRequired[bool]
 
 
 class RoundList(TypedDict):
@@ -725,6 +742,7 @@ class UsageEvent(TypedDict):
     external_record_id: NotRequired[str | None]
     external_confirmed_at: NotRequired[str | None]
     ai_item_id: NotRequired[str]
+    charge: NotRequired[Literal["audit", "deep_surcharge"]]
 
 
 class UsageList(TypedDict):
@@ -1095,6 +1113,7 @@ class AuditSuiteAdmission(TypedDict):
 
 class AuditTaskFile(AuditRecognitionFile):
     suite_admission: NotRequired[AuditSuiteAdmission]
+    deep_review: NotRequired[AuditDeepReview | None]
     validation_scope: NotRequired[FileValidationScope]
     audit: NotRequired[AuditFileReview | None]
     display_info: NotRequired[AuditFileDisplayInfo | None]
@@ -1281,6 +1300,7 @@ class AuditTaskSummary(TypedDict):
     updated_at: str
     round_id: str | None
     completion_reason: Literal["no_matching_rules", "processed"] | None
+    deep_mode: bool
     files: list[AuditTaskSummaryFile]
     subject: NotRequired[AuditTaskSubject]
     execution: NotRequired[Literal["queued", "running", "completed", "failed"]]
@@ -1309,6 +1329,11 @@ class AuditNotificationPreferenceRequest(TypedDict):
     expected_revision: int
 
 
+class AuditTaskDeepModeRequest(TypedDict):
+    deep_mode: bool
+    expected_revision: int
+
+
 class AuditTaskConfirmationExclusion(TypedDict):
     file_version_id: str
     reason: str
@@ -1325,6 +1350,8 @@ class AuditTask(AuditTaskIdentity):
 
     confirmation_basis_digest: str | None
     confirmation_scope: AuditTaskConfirmationScope | None
+    deep_mode: bool
+    deep_mode_option: NotRequired[AuditDeepModeOption]
     files: list[AuditTaskFile]
     execution: NotRequired[Literal["queued", "running", "completed", "failed"]]
     has_execution_error: NotRequired[bool]
@@ -1520,7 +1547,7 @@ class AuditUsageEntry(TypedDict):
     filename: str
     audit_sequence: int | None
     initiator: str
-    points: Literal[500]
+    points: Literal[500, 750]
     allocation: AuditUsageAllocation
     orders: list[AuditUsageOrder]
     order_reason: str | None

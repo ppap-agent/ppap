@@ -20,11 +20,11 @@ export function StatusCard({badge, tone = 'outline', title, children, action, la
   </section>
 }
 
-/**
- * A program that exists: the version later audits use and, when there is one, a newer version to adopt.
- * Uploaded rules can also update their program after the rule changed. Repairs from audit results arrive here.
- */
-export function ProgramStatus({suiteKey, offered, onUpdate, related, extra, onChanged}: {suiteKey: string; offered?: string | null; onUpdate?: () => void; related?: Related; extra?: ReactNode; onChanged?: () => void}) {
+/** The platform prepares checker programs offline; nothing on a rule page generates or changes one. */
+export const OFFLINE_PROGRAM_NOTE = '检查程序由平台离线准备；如需为这条规则准备或更新检查程序，请联系我们。'
+
+/** The version later audits use and, when there is one, a newer version to adopt. */
+export function ProgramStatus({suiteKey, offered, related, extra, onChanged}: {suiteKey: string; offered?: string | null; related?: Related; extra?: ReactNode; onChanged?: () => void}) {
   const [active, setActive] = useState<CheckerActive | null>(null)
   const [offer, setOffer] = useState<CheckerRevision | null>(null)
   const [readError, setReadError] = useState('')
@@ -41,13 +41,14 @@ export function ProgramStatus({suiteKey, offered, onUpdate, related, extra, onCh
     void (async () => {
       const current = await request<CheckerActive>(`/suites/${encodeURIComponent(suiteKey)}/active`, 'GET', undefined, controller.signal)
       const officialUpdate = current.origin === 'official' && current.official_update_available ? current.latest_official_revision_id : null
-      const offerId = [offered, current.offered_revision_id, current.current_revision_id ? null : current.candidate_revision_id, officialUpdate].find(id => id && id !== current.current_revision_id)
+      const offerId = [offered, current.current_revision_id ? null : current.candidate_revision_id, officialUpdate].find(id => id && id !== current.current_revision_id)
       const next = offerId ? await request<CheckerRevision>(`/suite-revisions/${encodeURIComponent(offerId)}`, 'GET', undefined, controller.signal) : null
       if (controller.signal.aborted) return
       setActive(current); setOffer(next)
-    })().catch(cause => {if (!controller.signal.aborted) setReadError(message(cause))})
+    })().catch(cause => {if (!controller.signal.aborted) setReadError((cause as {status?: number}).status === 404 ? 'missing' : message(cause))})
     return () => controller.abort()
   }, [suiteKey, offered, attempt])
+  if (readError === 'missing') return <StatusCard badge="还不能用于审核" title="还没有检查程序"><p>{OFFLINE_PROGRAM_NOTE}</p></StatusCard>
   if (readError) return <StatusCard badge="暂时读不到" title="检查程序的状态没读到" action={<Button variant="outline" onClick={() => setAttempt(value => value + 1)}>重新读取</Button>}>{readError}</StatusCard>
   if (!active) return <StatusCard badge="正在读取" title="正在读取…"/>
   const verified = offer?.validation.verified === true
@@ -82,10 +83,8 @@ export function ProgramStatus({suiteKey, offered, onUpdate, related, extra, onCh
       } else setError('还不知道是否采用成功。稍后再点一次，不会重复采用。')
     } finally {setBusy(false)}
   }
-  const changed = Boolean(onUpdate && active.rule_update)
-  const action = offer
-    ? <Button disabled={busy || waiting.length > 0} onClick={() => {setError(''); setChoice(offer)}}>{inUse ? '采用新版本' : '采用'}</Button>
-    : onUpdate ? <Button variant={changed ? 'default' : 'outline'} onClick={onUpdate}>更新检查程序</Button> : undefined
+  const changed = Boolean(active.rule_update)
+  const action = offer ? <Button disabled={busy || waiting.length > 0} onClick={() => {setError(''); setChoice(offer)}}>{inUse ? '采用新版本' : '采用'}</Button> : undefined
   return <>
     <StatusCard
       badge={inUse ? '可用于审核' : '还不能用于审核'}
@@ -94,6 +93,7 @@ export function ProgramStatus({suiteKey, offered, onUpdate, related, extra, onCh
       action={action}
     >
       {changed && <p>规则已改，检查程序还按上一版规则检查。</p>}
+      {(changed || !inUse) && <p>{OFFLINE_PROGRAM_NOTE}</p>}
       {offer && <p className="flex flex-wrap items-center gap-2 text-foreground">{inUse ? '有新版本：' : '可以采用：'}第 {offer.version} 版<Badge shape="square" variant={verified ? 'success' : 'outline'}>{verified ? '已验证' : '未验证'}</Badge></p>}
       {offer && waiting.length > 0 && <div className="space-y-2"><p>这个版本依赖下面这些规则的检查程序，先采用它们：</p><div className="flex flex-wrap gap-2">{waiting.map(key => {
         const target = related?.(key)

@@ -42,6 +42,7 @@ def spec_from_work(work: RoundWork, executor: str, executor_revision: str, proto
         executor_revision=executor_revision,
         tenant_id=work.tenant_id,
         initiating_user_id=work.initiating_user_id,
+        analysis_mode=cast(Literal["standard", "deep"], work.analysis_mode),
         checker_snapshot_digest=checker_snapshot_digest,
     )
 

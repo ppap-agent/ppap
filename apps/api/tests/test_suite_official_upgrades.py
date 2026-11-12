@@ -1,7 +1,6 @@
 """Real PostgreSQL upgrade commands; official regression fixtures are synthetic, never live quality evidence."""
 
 import hashlib
-import json
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
@@ -208,54 +207,6 @@ def test_upgrade_receipt_scope_immutability_and_creator_deletion(auth_store_fact
     assert preserved.json()["id"] == candidate["id"] and preserved.json()["created_by"] is None
 
 
-@pytest.mark.parametrize("rules_changed", [False, True])
-def test_upgrade_uses_existing_no_model_development_loop_and_never_inherits_old_oracle_proof(auth_store_factory, monkeypatch, rules_changed):
-    from agent.run import ExecutionContext
-    from worker.checker_optimizer import development_handler
-
-    from . import test_checker_optimizations as development
-
-    rules = {**development.DIRECT_RULES, "rules": development.DIRECT_RULES["rules"][:1], "checker_binding": {"R1": "checker:threshold"}}
-    monkeypatch.setattr(development, "RULES", rules)
-    monkeypatch.setattr(development, "PROGRAM", development.DIRECT_PROGRAM)
-    f = development.fixture(auth_store_factory)
-    publish_official(f.store, f.suite)
-    releases = SuiteReleaseStore(f.store.settings, f.store.objects)
-    source = releases.save_candidate(f.alice, f.suite.id, {"checker.py": development.DIRECT_PROGRAM.decode() + "# Enterprise-maintained file\n"})
-    releases.publish(f.alice, "threshold", source["id"], 0, str(uuid.uuid4()), True)
-    new_rules = {**rules, "rules": [{**rules["rules"][0], "rule_to_check": "A1 must be >=100"}]} if rules_changed else rules
-    target = SuiteStore(f.store.settings, f.store.objects, role="migrator").create_revision(
-        tenant_id=None,
-        suite_key="threshold",
-        files={"rules.json": json.dumps(new_rules).encode(), "checker.py": development.DIRECT_PROGRAM, "resources.py": b"OFFICIAL_RESOURCE = 2"},
-        created_by=None,
-    )
-    publish_official(f.store, target)
-    response = f.clients[0].post("/suites/threshold/upgrades", json={"source_revision_id": source["id"], "target_revision_id": target.id, "expected_revision": 1, "operation_id": str(uuid.uuid4())})
-    assert response.status_code == 201, response.text
-    candidate = response.json()
-    run = f.clients[0].post(f"/suite-revisions/{candidate['id']}/optimizations", json=development.command(f, consume_model=False))
-    assert run.status_code == 200, run.text
-    runtime, guest = development.actual_core_runtime(f, monkeypatch)
-    result = development_handler(f.worker, runtime)(development.claim(f), ExecutionContext())
-    assert result["state"] == "completed", result
-    assert guest.generation_manifests == []
-    assert len(guest.fixed_manifests) >= 4
-    proof = result["report"]["validation"]
-    assert proof["total_samples"] == 4
-    assert proof["verified"] is (not rules_changed)
-    if rules_changed:
-        assert "oracle_rules_changed" in proof["reasons"]
-    saved = releases.detail(f.alice, result["candidate_revision_id"])
-    assert "Enterprise-maintained" in saved["files"]["checker.py"]
-    assert saved["files"]["resources.py"] == "OFFICIAL_RESOURCE = 2"
-    assert saved["validation"]["verified"] is (not rules_changed)
-    assert releases.active(f.alice, "threshold")["current_revision_id"] == source["id"]
-    with f.store._conn() as conn:
-        assert conn.execute("SELECT count(*) FROM product.audit_rounds").fetchone()[0] == 4
-        assert conn.execute("SELECT count(*) FROM product.usage_events").fetchone()[0] == 0
-
-
 def test_enterprise_resource_removal_is_a_real_tombstone_against_new_official_base(auth_store_factory, monkeypatch):
     monkeypatch.setitem(FILES, "resources.py", b"OLD_OFFICIAL_RESOURCE = 1")
     store, _, source, target, alice, _, (client, _, _), payload = setup_upgrade(auth_store_factory)
@@ -274,19 +225,3 @@ def test_enterprise_resource_removal_is_a_real_tombstone_against_new_official_ba
     assert "resources.py" not in candidate["files"]
     assert SuiteStore(store.settings, store.objects).get_revision(candidate["id"], alice.tenant_id).overrides["resources.py"] is None
     assert client.get(ACTIVE).json()["current_revision_id"] == source.id
-
-
-def test_round_without_feedback_exposes_only_authorized_actual_suite_sources(auth_store_factory):
-    from . import test_checker_optimizations as development
-
-    f = development.fixture(auth_store_factory, count=1)
-    round_id, original, sample = f.feedback[0]
-    response = f.clients[0].delete(f"/audit-rounds/{round_id}/checker-feedback/{sample['id']}?expected_revision=1")
-    assert response.status_code == 200
-    view = f.clients[0].get(f"/audit-rounds/{round_id}/checker-feedback").json()
-    assert view["feedback"] == [] and view["optimizations"] == []
-    assert view["sources"] == [{"file_version_id": original["file_version_id"], "suite_revision_id": f.suite.id, "suite_key": f.suite.suite_key}]
-    with f.store._conn() as conn:
-        conn.execute("DELETE FROM product.resource_grants WHERE user_id=%s AND resource_id=(SELECT file_id FROM product.file_versions WHERE id=%s)", (f.alice.user_id, original["file_version_id"]))
-    assert f.clients[0].get(f"/audit-rounds/{round_id}/checker-feedback").json()["sources"] == []
-    assert f.clients[2].get(f"/audit-rounds/{round_id}/checker-feedback").status_code == 404

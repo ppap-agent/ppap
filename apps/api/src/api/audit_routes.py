@@ -77,6 +77,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
                 "report_package_recovery_unavailable",
                 "notification_revision_conflict",
                 "notification_already_dispatched",
+                "deep_mode_unavailable",
             }
             else 400
         )
@@ -203,6 +204,16 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
             return denied
         try:
             return JSONResponse(store.save_task_notification(principal, task_id, body))
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+
+    @app.put("/audit-tasks/{task_id}/deep-mode", response_model=wc.AuditTask, openapi_extra=wc.openapi_body(wc.AuditTaskDeepModeRequest))
+    def audit_task_deep_mode_save(task_id: str, body: dict, request: Request) -> JSONResponse:
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        try:
+            return JSONResponse(store.save_task_deep_mode(principal, task_id, body))
         except (KeyError, ValueError) as exc:
             return fail(exc)
 

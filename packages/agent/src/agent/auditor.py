@@ -456,7 +456,7 @@ class SemanticRuntime:
         return checker_response(spec, executed)
 
     def develop_and_run(self, request, *, spec: ExecuteRequest, context: ExecutionContext):
-        """Shared Deep/Optimizer host loop; publication is deliberately absent."""
+        """Adapt-then-run host loop for one round target; publication is deliberately absent."""
         from agent.checker_development import develop_and_run
 
         def job(inputs, *, operation, artifact=None, prior=None, feedback=None):
@@ -474,7 +474,6 @@ class SemanticRuntime:
                 artifact=artifact,
                 prior=prior,
                 development_feedback=feedback,
-                source_files=getattr(request, "source_files", None) if operation == "adapt-checker" else None,
             )
 
         outcome = develop_and_run(request, job)

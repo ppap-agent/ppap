@@ -260,42 +260,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/audit-rounds/{round_id}/checker-feedback": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Read Feedback */
-        get: operations["read_feedback_audit_rounds__round_id__checker_feedback_get"];
-        put?: never;
-        /** Create Feedback */
-        post: operations["create_feedback_audit_rounds__round_id__checker_feedback_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/audit-rounds/{round_id}/checker-feedback/{feedback_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /** Edit Feedback */
-        put: operations["edit_feedback_audit_rounds__round_id__checker_feedback__feedback_id__put"];
-        post?: never;
-        /** Delete Feedback */
-        delete: operations["delete_feedback_audit_rounds__round_id__checker_feedback__feedback_id__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/audit-rounds/{round_id}/fact-answers": {
         parameters: {
             query?: never;
@@ -325,23 +289,6 @@ export interface paths {
         get: operations["read_fact_answer_operation_audit_rounds__round_id__fact_answers__operation_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/audit-rounds/{round_id}/fact-answers/{operation_id}/samples": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Save Fact Answer Sample */
-        post: operations["save_fact_answer_sample_audit_rounds__round_id__fact_answers__operation_id__samples_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -445,6 +392,23 @@ export interface paths {
         put?: never;
         /** Audit Tasks Confirm */
         post: operations["audit_tasks_confirm_audit_tasks__task_id__confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-tasks/{task_id}/deep-mode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Audit Task Deep Mode Save */
+        put: operations["audit_task_deep_mode_save_audit_tasks__task_id__deep_mode_put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -670,40 +634,6 @@ export interface paths {
         get: operations["capabilities_capabilities_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/checker-optimizations/{operation_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Read Optimization */
-        get: operations["read_optimization_checker_optimizations__operation_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/checker-optimizations/{operation_id}/stop": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Stop Optimization */
-        post: operations["stop_optimization_checker_optimizations__operation_id__stop_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1768,40 +1698,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/rules/{rule_version_id}/checker-generation": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Read Generation */
-        get: operations["read_generation_rules__rule_version_id__checker_generation_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/rules/{rule_version_id}/checker-generations": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Start Generation */
-        post: operations["start_generation_rules__rule_version_id__checker_generations_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/rules/{rule_version_id}/formalization-carry-overs": {
         parameters: {
             query?: never;
@@ -1992,23 +1888,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/suite-revisions/{revision_id}/affected-rounds": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Read Affected Rounds */
-        get: operations["read_affected_rounds_suite_revisions__revision_id__affected_rounds_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/suite-revisions/{revision_id}/candidates": {
         parameters: {
             query?: never;
@@ -2037,40 +1916,6 @@ export interface paths {
         get: operations["suite_candidate_receipt_suite_revisions__revision_id__candidates__operation_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/suite-revisions/{revision_id}/checker-feedback": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Read Suite Feedback */
-        get: operations["read_suite_feedback_suite_revisions__revision_id__checker_feedback_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/suite-revisions/{revision_id}/optimizations": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Start Optimization */
-        post: operations["start_optimization_suite_revisions__revision_id__optimizations_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2337,28 +2182,6 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** AffectedRound */
-        AffectedRound: {
-            /** Created At */
-            created_at: string;
-            /** File Version Id */
-            file_version_id: string;
-            /** Round Id */
-            round_id: string;
-            /** Rule Clause Id */
-            rule_clause_id: string;
-            /** Status */
-            status: string;
-        };
-        /** AffectedRoundsView */
-        AffectedRoundsView: {
-            /** Items */
-            items: components["schemas"]["AffectedRound"][];
-            /** Next Cursor */
-            next_cursor: string | null;
-            /** Scanned Rounds */
-            scanned_rounds: number;
-        };
         /** Analysis */
         Analysis: {
             /** Document Type */
@@ -2379,35 +2202,6 @@ export interface components {
             result?: components["schemas"]["Analysis"] | components["schemas"]["JobError"] | null;
             /** Status */
             status: string;
-        };
-        /** GenerationCreate */
-        api__checker_development__GenerationCreate: {
-            /** File Version Id */
-            file_version_id: string;
-            /** Operation Id */
-            operation_id: string;
-        };
-        /** GenerationCreate */
-        api__formalization_routes__GenerationCreate: {
-            /** Based On Candidate Id */
-            based_on_candidate_id?: string | null;
-            /** Clarification Answer */
-            clarification_answer?: {
-                [key: string]: unknown;
-            } | null;
-            /**
-             * Consume Model
-             * @default false
-             */
-            consume_model: boolean;
-            /** Expected Model Revision */
-            expected_model_revision?: string | null;
-            /** Expected Source Digest */
-            expected_source_digest: string;
-            /** Operation Id */
-            operation_id: string;
-            /** User Instruction */
-            user_instruction?: string | null;
         };
         /** AuditAcceptance */
         AuditAcceptance: {
@@ -2620,6 +2414,31 @@ export interface components {
             customer_preference: ("UAES" | "理想" | "蔚来") | null;
             /** Revision */
             revision: number;
+        };
+        /** AuditDeepModeOption */
+        AuditDeepModeOption: {
+            /** Available */
+            available: boolean;
+            /** Reason */
+            reason: string | null;
+        };
+        /**
+         * AuditDeepReview
+         * @description One target of a deep-mode round: its own program ran ("completed"), or its
+         *     deep review did not complete and its Suite program ran instead ("degraded"),
+         *     billed at 500 instead of 750.
+         */
+        AuditDeepReview: {
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason?: "deep_timeout" | "deep_development_failed" | "deep_input_missing" | "deep_runtime_failed";
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "completed" | "degraded";
         };
         /** AuditEvidenceReference */
         AuditEvidenceReference: {
@@ -3271,6 +3090,9 @@ export interface components {
             created_at: string;
             /** Customer Preference */
             customer_preference: string | null;
+            /** Deep Mode */
+            deep_mode: boolean;
+            deep_mode_option?: components["schemas"]["AuditDeepModeOption"];
             /** Estimated Points */
             estimated_points: number | null;
             /**
@@ -3336,6 +3158,7 @@ export interface components {
         /** AuditTaskFile */
         AuditTaskFile: {
             audit?: components["schemas"]["AuditFileReview"] | null;
+            deep_review?: components["schemas"]["AuditDeepReview"] | null;
             display_edit_access?: components["schemas"]["AuditArchiveAccess"];
             display_info?: components["schemas"]["AuditFileDisplayInfo"] | null;
             file: components["schemas"]["FileVersion"];
@@ -3395,6 +3218,8 @@ export interface components {
             completion_reason: ("no_matching_rules" | "processed") | null;
             /** Created At */
             created_at: string;
+            /** Deep Mode */
+            deep_mode: boolean;
             /**
              * Execution
              * @enum {string}
@@ -3527,9 +3352,9 @@ export interface components {
             orders: components["schemas"]["AuditUsageOrder"][];
             /**
              * Points
-             * @constant
+             * @enum {integer}
              */
-            points: 500;
+            points: 500 | 750;
             reference: components["schemas"]["AuditResultReference"];
             settlement: components["schemas"]["AuditUsageSettlement"];
             /** Usage Id */
@@ -3665,26 +3490,6 @@ export interface components {
             /** Registration */
             registration?: string;
         };
-        /** CheckerFeedbackEvidence */
-        CheckerFeedbackEvidence: {
-            /** Excerpt */
-            excerpt: string;
-            /** File Version Id */
-            file_version_id: string;
-            /** Locator */
-            locator: {
-                [key: string]: unknown;
-            };
-        };
-        /** CheckerSource */
-        CheckerSource: {
-            /** File Version Id */
-            file_version_id: string;
-            /** Suite Key */
-            suite_key: string;
-            /** Suite Revision Id */
-            suite_revision_id: string;
-        };
         /** ClauseChange */
         ClauseChange: {
             /** After */
@@ -3765,20 +3570,6 @@ export interface components {
             verification?: {
                 [key: string]: string | number;
             } | null;
-        };
-        /** DevelopmentReport */
-        DevelopmentReport: {
-            /** Code Changed */
-            code_changed?: boolean | null;
-            /** Error Code */
-            error_code?: string | null;
-            /** Reasons */
-            reasons?: string[];
-            validation?: components["schemas"]["ValidationView"] | null;
-            /** Verified */
-            verified?: boolean | null;
-        } & {
-            [key: string]: unknown;
         };
         /** DocLink */
         DocLink: {
@@ -3984,20 +3775,6 @@ export interface components {
             /** Value */
             value: boolean | string | null;
         };
-        /** FactAnswerSampleRequest */
-        FactAnswerSampleRequest: {
-            /**
-             * Expected Status
-             * @enum {string}
-             */
-            expected_status: "PASS" | "NG" | "NA";
-            /** Item Key */
-            item_key: string;
-            /** Operation Id */
-            operation_id: string;
-            /** Rationale */
-            rationale: string;
-        };
         /** FactAnswersExport */
         FactAnswersExport: {
             /** Answers */
@@ -4124,141 +3901,6 @@ export interface components {
             };
             /** Prompt */
             prompt: string;
-        };
-        /** FeedbackCreate */
-        FeedbackCreate: {
-            /** Evidence */
-            evidence: components["schemas"]["CheckerFeedbackEvidence"][];
-            /**
-             * Expected Status
-             * @enum {string}
-             */
-            expected_status: "PASS" | "NG" | "NA";
-            /** File Version Id */
-            file_version_id: string;
-            /** Operation Id */
-            operation_id: string;
-            /**
-             * Original Status
-             * @enum {string}
-             */
-            original_status: "PASS" | "NG" | "NA" | "UNABLE" | "ERR";
-            /** Rationale */
-            rationale: string;
-            /**
-             * Reason Category
-             * @default unspecified
-             * @enum {string}
-             */
-            reason_category: "unspecified" | "missing_value" | "incorrect_reading" | "rule_application";
-            /** Result Attempt */
-            result_attempt: number;
-            /** Rule Clause Id */
-            rule_clause_id: string;
-            /** Rule Version Id */
-            rule_version_id: string;
-        };
-        /** FeedbackDeletion */
-        FeedbackDeletion: {
-            /** Deleted */
-            deleted: boolean;
-            /** Id */
-            id: string;
-            /** Revision */
-            revision: number;
-        };
-        /** FeedbackGroup */
-        FeedbackGroup: {
-            /** Feedback Ids */
-            feedback_ids: string[];
-            /** Id */
-            id: string;
-            /** Original Status */
-            original_status: string;
-            /** Reason Category */
-            reason_category: string;
-            /** Rule Clause Id */
-            rule_clause_id: string;
-            /** Source Field */
-            source_field: string;
-        };
-        /** FeedbackResponse */
-        FeedbackResponse: {
-            /** Case Ordinal */
-            case_ordinal?: number | null;
-            /** Evidence */
-            evidence: components["schemas"]["CheckerFeedbackEvidence"][];
-            /**
-             * Expected Status
-             * @enum {string}
-             */
-            expected_status: "PASS" | "NG" | "NA";
-            /** File Version Id */
-            file_version_id: string;
-            /** Id */
-            id: string;
-            /** Operation Id */
-            operation_id: string;
-            /** Ordinal */
-            ordinal: number;
-            /**
-             * Original Status
-             * @enum {string}
-             */
-            original_status: "PASS" | "NG" | "NA" | "UNABLE" | "ERR";
-            /** Rationale */
-            rationale: string;
-            /**
-             * Reason Category
-             * @default unspecified
-             * @enum {string}
-             */
-            reason_category: "unspecified" | "missing_value" | "incorrect_reading" | "rule_application";
-            /** Result Attempt */
-            result_attempt: number;
-            /** Revision */
-            revision: number;
-            /** Round Id */
-            round_id: string;
-            /** Rule Clause Id */
-            rule_clause_id: string;
-            /** Rule Version Id */
-            rule_version_id: string;
-            /** Suite Key */
-            suite_key: string;
-            /** Suite Revision Id */
-            suite_revision_id: string;
-        };
-        /** FeedbackUpdate */
-        FeedbackUpdate: {
-            /** Evidence */
-            evidence: components["schemas"]["CheckerFeedbackEvidence"][];
-            /** Expected Revision */
-            expected_revision: number;
-            /**
-             * Expected Status
-             * @enum {string}
-             */
-            expected_status: "PASS" | "NG" | "NA";
-            /** Rationale */
-            rationale: string;
-            /**
-             * Reason Category
-             * @default unspecified
-             * @enum {string}
-             */
-            reason_category: "unspecified" | "missing_value" | "incorrect_reading" | "rule_application";
-        };
-        /** FeedbackView */
-        FeedbackView: {
-            /** Feedback */
-            feedback: components["schemas"]["FeedbackResponse"][];
-            /** Optimizations */
-            optimizations: components["schemas"]["OptimizationReceipt"][];
-            /** Round Id */
-            round_id: string;
-            /** Sources */
-            sources?: components["schemas"]["CheckerSource"][];
         };
         /** FileValidationJob */
         FileValidationJob: {
@@ -4473,22 +4115,27 @@ export interface components {
              */
             scope: "clause" | "part";
         };
-        /** GenerationView */
-        GenerationView: {
-            /** Adoption Refusal */
-            adoption_refusal?: string | null;
-            /** Current Revision Id */
-            current_revision_id?: string | null;
-            operation: components["schemas"]["OptimizationReceipt"] | null;
+        /** GenerationCreate */
+        GenerationCreate: {
+            /** Based On Candidate Id */
+            based_on_candidate_id?: string | null;
+            /** Clarification Answer */
+            clarification_answer?: {
+                [key: string]: unknown;
+            } | null;
             /**
-             * Program
-             * @enum {string}
+             * Consume Model
+             * @default false
              */
-            program: "missing" | "unverified" | "verified" | "unavailable";
-            /** Rule Version Id */
-            rule_version_id: string;
-            /** Suite Key */
-            suite_key?: string | null;
+            consume_model: boolean;
+            /** Expected Model Revision */
+            expected_model_revision?: string | null;
+            /** Expected Source Digest */
+            expected_source_digest: string;
+            /** Operation Id */
+            operation_id: string;
+            /** User Instruction */
+            user_instruction?: string | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -4582,6 +4229,7 @@ export interface components {
         /** MaterialWire */
         MaterialWire: {
             checker_verification?: components["schemas"]["AuditCheckerVerification"] | null;
+            deep_review?: components["schemas"]["AuditDeepReview"] | null;
             /** File Id */
             file_id: string;
             /** File Version Id */
@@ -4652,58 +4300,6 @@ export interface components {
             usage?: {
                 [key: string]: unknown;
             } | null;
-        };
-        /** OptimizationCreate */
-        OptimizationCreate: {
-            /**
-             * Action
-             * @enum {string}
-             */
-            action: "save_only" | "run_tests";
-            /** Confirmed Rule Revision Id */
-            confirmed_rule_revision_id?: string | null;
-            /**
-             * Consume Model
-             * @default false
-             */
-            consume_model: boolean;
-            /** Expected Feedback Revisions */
-            expected_feedback_revisions?: {
-                [key: string]: number;
-            } | null;
-            /** Expected Model Revision */
-            expected_model_revision?: string | null;
-            /** Feedback Ids */
-            feedback_ids: string[];
-            /** Operation Id */
-            operation_id: string;
-        };
-        /** OptimizationReceipt */
-        OptimizationReceipt: {
-            /** Cancel Requested */
-            cancel_requested: boolean;
-            /** Candidate Revision Id */
-            candidate_revision_id: string | null;
-            /** Created At */
-            created_at: string;
-            /** Failure */
-            failure: string | null;
-            /** Operation Id */
-            operation_id: string;
-            report: components["schemas"]["DevelopmentReport"] | null;
-            /**
-             * State
-             * @enum {string}
-             */
-            state: "saved" | "queued" | "running" | "completed" | "failed" | "unknown" | "stopped";
-            /** Suite Key */
-            suite_key: string;
-            /** Suite Revision Id */
-            suite_revision_id: string;
-            /** Usage */
-            usage: {
-                [key: string]: unknown;
-            };
         };
         /** PdfBlockLocator */
         PdfBlockLocator: {
@@ -5087,6 +4683,8 @@ export interface components {
             coverage: components["schemas"]["Coverage"];
             /** Created At */
             created_at: string | null;
+            /** Deep Mode */
+            deep_mode?: boolean;
             /** Execution */
             execution: string;
             execution_policy?: components["schemas"]["StandardExecutionPolicy"];
@@ -5155,6 +4753,8 @@ export interface components {
             case_title: string;
             /** Created At */
             created_at: string | null;
+            /** Deep Mode */
+            deep_mode?: boolean;
             /** Execution */
             execution: string;
             /** Has Execution Error */
@@ -5550,8 +5150,6 @@ export interface components {
             latest_official_revision_id: string | null;
             /** Latest Official Version */
             latest_official_version: number | null;
-            /** Offered Revision Id */
-            offered_revision_id?: string | null;
             /** Official Base Revision Id */
             official_base_revision_id: string | null;
             official_rule_impact?: components["schemas"]["RuleImpact"] | null;
@@ -5606,15 +5204,6 @@ export interface components {
             before: string;
             /** Path */
             path: string;
-        };
-        /** SuiteFeedbackView */
-        SuiteFeedbackView: {
-            /** Feedback */
-            feedback: components["schemas"]["FeedbackResponse"][];
-            /** Groups */
-            groups?: components["schemas"]["FeedbackGroup"][];
-            /** Next Cursor */
-            next_cursor?: number | null;
         };
         /** SuitePredefined */
         SuitePredefined: {
@@ -5882,6 +5471,11 @@ export interface components {
         UsageEvent: {
             /** Ai Item Id */
             ai_item_id?: string;
+            /**
+             * Charge
+             * @enum {string}
+             */
+            charge?: "audit" | "deep_surcharge";
             /** Consumed Points */
             consumed_points: number;
             /** Created At */
@@ -5916,25 +5510,6 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
-        };
-        /** ValidationView */
-        ValidationView: {
-            /** Cases */
-            cases?: {
-                [key: string]: unknown;
-            }[];
-            /** New Errors */
-            new_errors: number;
-            /** Passed Samples */
-            passed_samples: number;
-            /** Reasons */
-            reasons?: string[];
-            /** Total Samples */
-            total_samples: number;
-            /** Verified */
-            verified: boolean;
-        } & {
-            [key: string]: unknown;
         };
         /** WritebackResponse */
         WritebackResponse: {
@@ -6602,142 +6177,6 @@ export interface operations {
             };
         };
     };
-    read_feedback_audit_rounds__round_id__checker_feedback_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                round_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FeedbackView"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_feedback_audit_rounds__round_id__checker_feedback_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                round_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FeedbackCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FeedbackResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    edit_feedback_audit_rounds__round_id__checker_feedback__feedback_id__put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                feedback_id: string;
-                round_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FeedbackUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FeedbackResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_feedback_audit_rounds__round_id__checker_feedback__feedback_id__delete: {
-        parameters: {
-            query: {
-                expected_revision: number;
-            };
-            header?: never;
-            path: {
-                feedback_id: string;
-                round_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FeedbackDeletion"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     read_fact_answers_audit_rounds__round_id__fact_answers_get: {
         parameters: {
             query?: never;
@@ -6823,42 +6262,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FactAnswerReceipt"] | null;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    save_fact_answer_sample_audit_rounds__round_id__fact_answers__operation_id__samples_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                operation_id: string;
-                round_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FactAnswerSampleRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FeedbackResponse"];
                 };
             };
             /** @description Validation Error */
@@ -7131,6 +6534,48 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditTask"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    audit_task_deep_mode_save_audit_tasks__task_id__deep_mode_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Deep Mode */
+                    deep_mode: boolean;
+                    /** Expected Revision */
+                    expected_revision: number;
+                } & {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -7682,68 +7127,6 @@ export interface operations {
                             [key: string]: string;
                         };
                     };
-                };
-            };
-        };
-    };
-    read_optimization_checker_optimizations__operation_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                operation_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OptimizationReceipt"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    stop_optimization_checker_optimizations__operation_id__stop_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                operation_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OptimizationReceipt"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -9203,6 +8586,7 @@ export interface operations {
         parameters: {
             query?: {
                 ai_item_id?: string;
+                deep_mode?: boolean;
                 target_count?: number | null;
             };
             header?: never;
@@ -10201,72 +9585,6 @@ export interface operations {
             };
         };
     };
-    read_generation_rules__rule_version_id__checker_generation_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                rule_version_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GenerationView"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    start_generation_rules__rule_version_id__checker_generations_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                rule_version_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["api__checker_development__GenerationCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OptimizationReceipt"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     carry_over_formalizations_rules__rule_version_id__formalization_carry_overs_post: {
         parameters: {
             query?: never;
@@ -10679,7 +9997,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["api__formalization_routes__GenerationCreate"];
+                "application/json": components["schemas"]["GenerationCreate"];
             };
         };
         responses: {
@@ -10915,42 +10233,6 @@ export interface operations {
             };
         };
     };
-    read_affected_rounds_suite_revisions__revision_id__affected_rounds_get: {
-        parameters: {
-            query: {
-                after?: string | null;
-                clause_id: string;
-                exclude_round_id?: string | null;
-                limit?: number;
-            };
-            header?: never;
-            path: {
-                revision_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AffectedRoundsView"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     suite_candidate_suite_revisions__revision_id__candidates_post: {
         parameters: {
             query?: never;
@@ -11012,75 +10294,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SuiteRevisionDetail"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    read_suite_feedback_suite_revisions__revision_id__checker_feedback_get: {
-        parameters: {
-            query?: {
-                after?: number;
-                limit?: number;
-            };
-            header?: never;
-            path: {
-                revision_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SuiteFeedbackView"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    start_optimization_suite_revisions__revision_id__optimizations_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                revision_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["OptimizationCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OptimizationReceipt"];
                 };
             };
             /** @description Validation Error */
