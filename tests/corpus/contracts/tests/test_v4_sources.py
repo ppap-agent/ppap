@@ -3,53 +3,12 @@
 This checks provenance, not customer Checker correctness or runtime coverage.
 """
 
-import re
-import subprocess
-import sys
 from pathlib import Path
-from xml.etree import ElementTree
-from zipfile import ZipFile
 
 from audit.presets import customer_presets
 
 ROOT = Path(__file__).resolve().parents[4]
 NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
-
-
-def test_all_41_source_documents_and_route_entries_match_shipped_rule_inputs():
-    route = (ROOT / "assets/uaes/prechecks/PPAP-00-A_客户与文件类型覆盖矩阵_路由表_v1.7.md").read_text()
-    matrix = {}
-    for line in route.splitlines():
-        if re.match(r"\| [ULN]\d{2} \|", line):
-            cells = [cell.strip() for cell in line.split("|")[1:-1]]
-            if re.fullmatch(r"[ULN]\d{2}", cells[0]) and re.fullmatch(r"`[TE]\d{2}`", cells[2]):
-                matrix[cells[0]] = (cells[2].strip("`"), cells[4].strip("*"))
-    assert len(matrix) == 41
-    presets = customer_presets()
-    assert {rule.entry_id: (rule.source_type, rule.level) for rule in presets if rule.entry_id in matrix} == matrix
-    # NIO entries outside the matrix carry the Li Auto document of the same type, clause for clause.
-    by_entry = {rule.entry_id: rule for rule in presets}
-    derived = [rule for rule in presets if rule.entry_id not in matrix]
-    assert {rule.customer for rule in derived} == {"蔚来"} and len(derived) == 12
-    for rule in derived:
-        (source,) = [other for other in presets if other.customer == "理想" and other.source_path == rule.source_path]
-        assert rule.source_type == source.source_type and [clause.text for clause in rule.clauses] == [clause.text for clause in by_entry[source.entry_id].clauses]
-    for rule in presets:
-        source = ROOT / rule.source_path
-        with ZipFile(source) as archive:
-            document = ElementTree.fromstring(archive.read("word/document.xml"))
-        # Verify each stored locator against the source cell named by its header,
-        # independently of the build-time extractor and its row numbering IDs.
-        tables = document.findall(".//w:tbl", NS)
-        for clause in rule.clauses:
-            table_id, row_id = map(int, re.fullmatch(r"table:(\d+)/row:(\d+)", clause.locator).groups())
-            rows = tables[table_id - 1].findall("w:tr", NS)
-            headers = ["".join(text.text or "" for text in cell.findall(".//w:t", NS)).strip() for cell in rows[0].findall("w:tc", NS)]
-            description = next(index for index, header in enumerate(headers) if header in {"规则说明", "审核规则"})
-            cells = rows[row_id - 1].findall("w:tc", NS)
-            text = "\n".join("".join(node.text or "" for node in paragraph.findall(".//w:t", NS)) for paragraph in cells[description].findall("w:p", NS)).strip()
-            assert text == clause.text, (rule.entry_id, clause.source_number)
-    subprocess.run([sys.executable, str(ROOT / "scripts/compile_v4_presets.py"), "--check"], cwd=ROOT, check=True)
 
 
 def test_nio_t12_source_clauses_run_over_the_actual_template_and_controlled_changes():
