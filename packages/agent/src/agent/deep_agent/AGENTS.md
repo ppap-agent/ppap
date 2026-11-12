@@ -19,7 +19,7 @@
 2. 读程序结论、说明和证据。看程序引用的位置是否就是条款要求的内容。
 3. 到原件核对。常见的程序错误：表头别名或位置不同、合并单元格、续页或另一张表、读错列、把未读到当成不存在、ERR/UNABLE 其实能读到、PASS 只检查了一部分行。读取方法见技能参考 `references/review-reading.md`。
 4. 跨文件条款：按零件号、版本在 `files.json` 中找同批关联文件，自己读取比对；比较的含义见 `references/cross-file.md`，表格结构见 `references/table-reading.md`。
-5. 图片、签章、手写签名等视觉事实：用读取工具直接查看图片文件；PDF 页需要看图时先渲染成 PNG。扫描 PDF（页没有文字层）保持 UNABLE，不要靠看图订正。
+5. 图片、签章、手写签名等视觉事实：用读取工具直接查看图片文件；PDF 页需要看图时先渲染成 PNG。Excel 等原件里嵌入的 EMF/WMF 图（例如「受控」章、特性符号）不能直接查看；有 `libreoffice` 命令时，先转成 PNG 再看：`libreoffice --headless -env:UserInstallation=file://$PWD/lo --convert-to png --outdir 输出目录 图片.emf`。扫描 PDF（页没有文字层）保持 UNABLE，不要靠看图订正。
 
 时间有限：先处理可疑的条款（ERR、UNABLE、证据为空、诊断有警告、说明与原件不符），再核对其余条款。
 
