@@ -34,7 +34,7 @@ export function validUsagePage(page: UsagePage, query: UsageQuery, organization?
     const parts = new Intl.DateTimeFormat('en', {timeZone: summary.timezone, year: 'numeric', month: '2-digit'}).formatToParts(new Date(summary.as_of))
     if (summary.month !== `${parts.find(row => row.type === 'year')?.value}-${parts.find(row => row.type === 'month')?.value}`) return false
   } catch {return false}
-  if (![summary.consumption_count, summary.charged_points, summary.pending_points, summary.free_remaining, summary.free_total].every(metricValid) || summary.free_remaining.value !== null && summary.free_total.value !== null && summary.free_remaining.value > summary.free_total.value) return false
+  if (![summary.consumption_count, summary.previous_consumption_count, summary.charged_points, summary.pending_points, summary.free_remaining, summary.free_total].every(metricValid) || summary.free_remaining.value !== null && summary.free_total.value !== null && summary.free_remaining.value > summary.free_total.value) return false
   if (page.unattributed && (!count(page.unattributed.slice_count) || !count(page.unattributed.points) || page.unattributed.slice_count > 0 && !page.unattributed.reason)) return false
   if (!/^\d{4}-\d{2}-\d{2}$/.test(page.through_date) || page.from_date !== null && (!/^\d{4}-\d{2}-\d{2}$/.test(page.from_date) || page.from_date > page.through_date) || page.notices.some(notice => !(notice in usageNotices))) return false
   if (new Set(page.entries.map(row => row.usage_id)).size !== page.entries.length || new Set(page.entries.map(row => JSON.stringify([row.reference.round_id, row.reference.file_version_id]))).size !== page.entries.length) return false

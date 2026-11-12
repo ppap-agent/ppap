@@ -187,12 +187,12 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
                     heading = page.get_by_role("heading", name="审核结果", exact=True).bounding_box()
                     table = details.get_by_role("table").bounding_box()
                     self.assertLess(table["y"] - heading["y"], 260)
-                    title = details.get_by_role("heading", name=re.compile(r"^审核项 \(")).bounding_box()
+                    title = details.get_by_role("heading", name=re.compile(r"^审核详情")).bounding_box()
                     search = details.get_by_role("textbox", name="搜索审核项", exact=True).bounding_box()
                     self.assertLessEqual(abs(title["y"] + title["height"] / 2 - search["y"] - search["height"] / 2), 4)
                     for file in queue.get_by_role("button").all():
                         self.assertEqual(file.evaluate("element => getComputedStyle(element).borderRadius"), "0px")
-                    expect(page.get_by_role("banner").get_by_role("button", name="报告中心", exact=True)).to_be_visible()
+                    expect(page.get_by_role("banner").get_by_role("button", name="审核报告", exact=True)).to_be_visible()
                     # At the narrowest desktop the product navigation folds to its icon rail.
                     if width == 1280:
                         self.assertEqual(page.get_by_role("complementary", name="产品侧栏", exact=True).evaluate("element => element.getBoundingClientRect().width"), 64)
@@ -240,7 +240,7 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             page.keyboard.press("Escape")
             expect(page.get_by_role("region", name="审核详情", exact=True).get_by_role("heading", name="PFMEA.xlsx", exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="查看报告", exact=True)).to_be_enabled()
-            page.get_by_role("button", name="报告中心", exact=True).click()
+            page.get_by_role("button", name="审核报告", exact=True).click()
             expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
             page.get_by_role("link", name="返回审核结果", exact=True).click()
             # The file queue stays beside the open file.
@@ -263,6 +263,6 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             reference.click()
             expect(page.get_by_role("region", name="比对资料原件", exact=True)).to_be_visible()
             expect(page.get_by_role("status").filter(has_text="文件已结束 2/2")).to_be_visible()
-            page.get_by_role("button", name="报告中心", exact=True).click()
+            page.get_by_role("button", name="审核报告", exact=True).click()
             expect(page.get_by_role("list", name="逐文件报告清单").get_by_text("特殊特性清单.xlsx", exact=True)).to_have_count(0)
             browser.close()

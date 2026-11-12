@@ -89,17 +89,17 @@ function RulesWorkspace({onPublished, active, headerActions}: {onPublished: () =
   })
   const listView = route.systemRule
     ? <SystemRuleDetail ruleId={route.systemRule} template={systemTemplate} row={systemRow} program={program}/>
-    : <TemplateBrowser templates={templates} selectedKey={route.template} loading={read.loading} failed={Boolean(read.error)} catalogKnown={catalog !== null}/>
+    : <TemplateBrowser templates={templates} selectedKey={route.template} loading={read.loading} failed={Boolean(read.error)}/>
   return <RequirementLibraryPanel
     listView={listView}
     trail={version => {
       const key = version ? enterpriseTemplateKey(version.scope) : ''
       const owner = templates.find(item => item.key === key)
       const row = version && owner?.rows.find(item => item.type === version.documentType)
-      return <RulesTrail items={[{label: '规则模板', href: rulesAddress({})}, ...owner ? [{label: owner.name, href: rulesAddress({template: owner.key})}] : [], {label: row?.label || version?.documentType || version?.title || '规则'}]}/>
+      return <RulesTrail items={[{label: '规则库', href: rulesAddress({})}, ...owner ? [{label: owner.name, href: rulesAddress({template: owner.key})}] : [], {label: row?.label || version?.documentType || version?.title || '规则'}]}/>
     }}
     headerActions={headerActions}
-    title="审核规则"
+    title="规则库"
     uploadLabel="上传规则"
     automaticMatching
     active={active}

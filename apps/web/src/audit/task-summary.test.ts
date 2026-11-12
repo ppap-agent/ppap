@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {components} from '../generated/openapi.ts'
-import {reconcileTaskSummary, summarizeTask, taskIsBehindSummary} from './task-summary.ts'
+import {reconcileTaskSummary, subjectLabel, summarizeTask, taskIsBehindSummary, taskSubject} from './task-summary.ts'
 import {workbenchItems} from './workbench-items.ts'
 
 test('task summaries preserve every file identity and selection without result bodies', () => {
@@ -40,4 +40,14 @@ test('opening partial execution faults preserves the Round terminal state and wo
   const running = {...legacy, state: 'reviewing' as const, execution: 'running' as const}
   assert.equal(summarizeTask(running).has_execution_error, false)
   assert.equal(workbenchItems([summarizeTask(running)])[0].task, 'running')
+})
+
+test('the task title comes from the first selected file that names a customer, model or part, preferring corrected display values', () => {
+  const file = (selection: string, metadata: Record<string, string | null>, display?: Record<string, string | null>) => ({selection, match: {metadata}, ...display ? {display_info: {revision: 1, values: {project: null, part_number: null, customer: null, model: null, part: null, ...display}}} : {}})
+  const task = {files: [file('removed', {customer: '蔚来', model: 'ES6', part: '门板'}), file('selected', {customer: null, model: null, part: null}), file('selected', {customer: '理想', model: 'BLANC', part: '尾板'}, {customer: '理想汽车', model: 'BLANC', part: '尾板'})]} as unknown as components['schemas']['AuditTask']
+  assert.deepEqual(taskSubject(task), {customer: '理想汽车', model: 'BLANC', part: '尾板'})
+  assert.equal(subjectLabel(taskSubject(task)), '理想汽车 · BLANC 尾板')
+  assert.equal(subjectLabel({customer: null, model: 'BLANC', part: null}), 'BLANC')
+  assert.equal(subjectLabel(undefined), '')
+  assert.equal(taskSubject({files: [file('selected', {customer: null, model: null, part: null})]} as unknown as components['schemas']['AuditTask']), undefined)
 })

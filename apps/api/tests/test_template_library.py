@@ -56,9 +56,25 @@ def test_catalog_lists_clean_names_and_only_present_files(tmp_path):
     approval = next(row for row in customers["uaes"]["templates"] if row["id"] == "uaes-sample-approval")
     size = len("模板:uaes-sample-approval".encode())
     # The part number and " (1)" copy suffix stay in the original only.
-    assert approval == {"id": "uaes-sample-approval", "name": "样品认可报告", "document_type": "样品认可报告", "extension": ".xls", "filename": "样品认可报告.xls", "byte_size": size}
+    expected = {"id": "uaes-sample-approval", "name": "样品认可报告", "document_type": "样品认可报告", "extension": ".xls", "filename": "样品认可报告.xls", "byte_size": size}
+    # Which PPAP type a sample approval report is has not been decided, so it counts for no type.
+    assert approval == {**expected, "type_code": None}
     for customer in library.CUSTOMERS:
         assert len({template.id for template in customer.templates}) == len(customer.templates)
+
+
+def test_coverage_counts_against_each_customers_own_rule_types(tmp_path):
+    from audit.presets import customer_presets
+
+    body = client_for(template_root(tmp_path), signed_in()).get("/template-library").json()
+    rows = {row["id"]: row for row in body["customers"]}
+    for template_customer, preset_customer in library.PRESET_CUSTOMERS.items():
+        assert rows[template_customer]["standard_type_codes"] == sorted({preset.source_type for preset in customer_presets() if preset.customer == preset_customer})
+    # UAES counts its own E types; 理想 and 蔚来 the seventeen T types.
+    assert {key: len(row["standard_type_codes"]) for key, row in rows.items()} == {"li": 17, "nio": 17, "uaes": 19}
+    covered = {key: {template["type_code"] for template in row["templates"]} & set(row["standard_type_codes"]) for key, row in rows.items()}
+    # 理想 has no DV/PV test report template (T03); an undecided type and UAES's PGQP (E12, no built-in rule) count for nothing.
+    assert (len(covered["li"]), len(covered["nio"]), len(covered["uaes"])) == (16, 5, 5)
 
 
 def test_download_one_template_with_utf8_filename(tmp_path):

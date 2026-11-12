@@ -1394,6 +1394,11 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(summary["files"], [{"file": row["file"], "selection": row["selection"]} for row in expected["files"]])
         self.assertNotIn("progress", summary)
         self.assertNotIn("audit", summary["files"][0])
+        # The list title is the first selected file's recognized customer, model and part, read with the summary.
+        fields = ("customer", "model", "part")
+        named = [row["match"]["metadata"] for row in expected["files"] if row["selection"] == "selected" and row.get("match") and any(row["match"]["metadata"].get(key) for key in fields)]
+        recognized = named[0] if named else None
+        self.assertEqual(summary.get("subject"), recognized and {key: recognized.get(key) or None for key in fields})
         self.assertEqual(self.store.list_audit_tasks(self.store.principal_for_fixture("bob")), [])
         self.assertEqual(self.store.list_audit_tasks(self.store.principal_for_fixture("carol")), [])
         self.assertEqual(self.store.get_audit_task(self.alice, task["id"]), expected)

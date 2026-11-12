@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {components} from '../generated/openapi'
 import type {RequirementDirectoryCollection, RequirementDirectoryVersion} from '../journey/requirement-directory'
-import {automatedCount, buildTemplates, enterpriseTemplateKey, pendingRows, ruleTemplateKey, templateName} from './rule-templates.ts'
+import {buildTemplates, coverage, enterpriseTemplateKey, pendingRows, ruleTemplateKey, templateName, typeCode, typeGroups} from './rule-templates.ts'
 
 type Rule = components['schemas']['Rule']
 type Catalog = components['schemas']['SuiteCatalog']
@@ -28,7 +28,8 @@ test('presets form one system template per customer and say what each file type 
   assert.deepEqual(uaes.rows.map(row => [row.label, row.automation.state, row.automation.note ?? '']), [
     ['控制计划', 'stale', ''], ['PFMEA', 'auto', ''], ['过程流程图', 'partial', '4 条中 1 条有检查'], ['生产件样品照片', 'manual', '审核时由人判断'],
   ])
-  assert.equal(automatedCount(uaes), 3)
+  // A rule update or a missing program leaves the type out of the coverage until the program is ready again.
+  assert.deepEqual(coverage(uaes), {effective: 2, total: 4, known: true})
   assert.deepEqual(pendingRows(uaes).map(row => row.type), ['控制计划'])
   assert.deepEqual(uaes.rows[0].target, {kind: 'system', id: 'cp'})
 })
@@ -44,11 +45,11 @@ test('uploaded rules form templates by customer; shared and unconfirmed rules ha
   assert.deepEqual(templates.map(template => template.rows[0].automation.state), ['unverified', 'manual', 'manual'])
   const [offered] = buildTemplates({rules: [preset('cp', 'UAES', '控制计划', 'U08')], library: [], catalog: {suites: [summary('UAES:U08', {selection_mode: 'candidate_only', current_revision_id: null, verification_status: 'unverified'})]}, standardTypes: standard})
   assert.equal(offered.rows[0].automation.state, 'inactive')
-  assert.equal(automatedCount(offered), 0)
+  assert.deepEqual(coverage(offered), {effective: 0, total: 1, known: true})
   // An uploaded rule whose program was never generated is not offered for audit, whatever its verification says.
   const [starter] = buildTemplates({rules: [], library: [collection(version('d', {allCustomers: true}, {suiteKey: 'custom:d'}))], catalog: {suites: [summary('custom:d', {origin: 'enterprise', verification_status: 'unverified', program_missing: true})]}, standardTypes: standard})
   assert.deepEqual([starter.rows[0].automation.state, starter.rows[0].automation.note], ['manual', '在规则页生成检查程序后才能用于审核'])
-  assert.equal(automatedCount(starter), 0)
+  assert.deepEqual(coverage(starter), {effective: 0, total: 1, known: true})
   assert.equal(templates[2].rows[0].draft, true)
   assert.deepEqual(templates[1].rows[0].target, {kind: 'requirement', id: 'a'})
 })
@@ -56,10 +57,19 @@ test('uploaded rules form templates by customer; shared and unconfirmed rules ha
 test('a template never claims what the unread checker catalog has not said', () => {
   const [template] = buildTemplates({rules: [preset('cp', '理想', '控制计划', 'L08')], library: [], catalog: null, standardTypes: standard})
   assert.equal(template.rows[0].automation.state, 'unknown')
-  assert.equal(automatedCount(template), 0)
+  assert.equal(coverage(template).known, false)
   assert.deepEqual(template.missing, ['PFMEA', '过程流程图'])
   const [failed] = buildTemplates({rules: [preset('cp', '理想', '控制计划', 'L08')], library: [], catalog: 'failed', standardTypes: standard})
   assert.equal(failed.rows[0].automation.state, 'unreadable')
+})
+
+test('rules of one file type share a group; the group counts once and carries the product code', () => {
+  const library = [collection(version('a', {customer: '海岸线'}, {suiteKey: 'custom:a'})), collection(version('b', {customer: '海岸线'}, {suiteKey: 'custom:b'})), collection(version('c', {customer: '海岸线'}, {documentType: 'PFMEA'}))]
+  const [template] = buildTemplates({rules: [], library, catalog: {suites: [summary('custom:a', {origin: 'enterprise'}), summary('custom:b', {origin: 'enterprise', program_missing: true})]}, standardTypes: standard})
+  assert.deepEqual(typeGroups(template).map(group => [group.type, group.rows.length]), [['控制计划', 2], ['PFMEA', 1]])
+  assert.deepEqual(coverage(template), {effective: 1, total: 2, known: true})
+  assert.equal(template.rows[0].updatedAt, '2026-11-01')
+  assert.deepEqual([typeCode('控制计划'), typeCode('全功能检验报告'), typeCode('E07'), typeCode('设计失效模式及后果分析')], ['T11', 'T01', 'E07', ''])
 })
 
 test('template keys and names follow the customer field', () => {

@@ -97,7 +97,7 @@ class UiA11yTests(unittest.TestCase):
             directory = []
             page.route("**/api/rule-library", lambda route: directory.append(route))
             page.goto(WEB + "/requirements")
-            expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="规则库", exact=True)).to_be_visible()
             loading = page.get_by_role("status", name="正在读取规则模板…", exact=True)
             expect(loading).to_be_visible()
             self.assertTrue(loading.evaluate("el => el.getAnimations({subtree: true}).every(animation => animation.playState !== 'running')"))

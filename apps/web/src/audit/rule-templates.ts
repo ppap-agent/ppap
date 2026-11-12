@@ -16,6 +16,8 @@ export type TemplateRow = {
   target: {kind: 'requirement' | 'system'; id: string}
   automation: Automation
   draft: boolean
+  /** When this rule version was published or the draft last saved; empty when unknown. */
+  updatedAt: string
 }
 export type RuleTemplate = {key: string; name: string; source: 'system' | 'enterprise'; rows: TemplateRow[]; missing: string[]}
 
@@ -46,6 +48,14 @@ export function templateName(key: string): string {
   if (key.startsWith('system:')) return `${key.slice('system:'.length)} 规则`
   return key.replace(/^customer:/, '')
 }
+
+// The product's preset codes for the standard types (audit/presets.py); UAES source types are stored as their E code.
+const standardCodes: Record<string, string> = {
+  全功能检验报告: 'T01', 零部件设计验证计划和报告: 'T02', DV报告_PV报告_试验报告: 'T03', 材料产品及分供清单: 'T04', 检具验收报告: 'T05', 模具验收报告: 'T06',
+  测量系统分析评价: 'T07', 过程能力研究: 'T08', 过程流程图: 'T09', 潜在过程失效模式及后果分析: 'T10', 控制计划: 'T11', 过程特殊特性清单: 'T12',
+  设备清单: 'T13', 生产系统产能评估报告: 'T14', 项目问题清单: 'T15', 零部件年度试验要求: 'T16', 零件提交保证书: 'T17',
+}
+export const typeCode = (type: string) => standardCodes[type] ?? (/^E\d{2}$/.test(type) ? type : '')
 
 const typeLabel = (type: string, title: string, standard: string[]) => standard.includes(type) || !type ? type || title : title.replace(/(?:审核)?规则$/, '').replace(/^[\d-]+\s*规则-?/, '').trim() || type
 
@@ -97,7 +107,7 @@ export function buildTemplates(input: {rules: Rule[]; library: RequirementDirect
     const type = rule.type ?? ''
     add(`system:${customer}`, 'system', {
       type, label: typeLabel(type, rule.title, standardTypes), ruleTitle: rule.title, version: '', clauses: rule.clause_count ?? null,
-      target: {kind: 'system', id: rule.id}, automation: automation(catalog, rule.suite_key ?? (rule.preset_key ? `${customer}:${rule.preset_key}` : null), true), draft: false,
+      target: {kind: 'system', id: rule.id}, automation: automation(catalog, rule.suite_key ?? (rule.preset_key ? `${customer}:${rule.preset_key}` : null), true), draft: false, updatedAt: rule.created_at,
     })
   }
   for (const collection of library) {
@@ -106,7 +116,7 @@ export function buildTemplates(input: {rules: Rule[]; library: RequirementDirect
     add(enterpriseTemplateKey(latest.scope), 'enterprise', {
       type: latest.documentType, label: typeLabel(latest.documentType, latest.title || '待命名规则', standardTypes), ruleTitle: latest.title || '待命名规则',
       version: latest.version, clauses: latest.clauseCount, target: {kind: 'requirement', id: collection.id},
-      automation: collection.draft ? {state: 'manual', note: '草稿保存后才会用于审核'} : automation(catalog, latest.suiteKey, false), draft: Boolean(collection.draft),
+      automation: collection.draft ? {state: 'manual', note: '草稿保存后才会用于审核'} : automation(catalog, latest.suiteKey, false), draft: Boolean(collection.draft), updatedAt: latest.at,
     })
   }
   const order = (template: RuleTemplate) => template.source === 'system' ? 0 : template.key === SHARED_TEMPLATE ? 1 : template.key === PENDING_TEMPLATE ? 3 : 2
@@ -116,5 +126,26 @@ export function buildTemplates(input: {rules: Rule[]; library: RequirementDirect
   }).sort((a, b) => order(a) - order(b) || a.name.localeCompare(b.name, 'zh-CN'))
 }
 
-export const automatedCount = (template: RuleTemplate) => template.rows.filter(row => ['auto', 'partial', 'stale'].includes(row.automation.state)).length
+/** A ready program runs in new audits; one with some clauses left to people still runs. Anything else does not count toward coverage. */
+export const effective = (automation: Automation) => automation.state === 'auto' || automation.state === 'partial'
+
+/** Rows of one file type, in the template's order. */
+export function typeGroups(template: RuleTemplate): {type: string; rows: TemplateRow[]}[] {
+  const groups = new Map<string, TemplateRow[]>()
+  for (const row of template.rows) groups.set(row.type || row.label, [...groups.get(row.type || row.label) ?? [], row])
+  return [...groups].map(([type, rows]) => ({type, rows}))
+}
+
+/**
+ * File types with an effective program out of the file types this template has rules for.
+ * `known` is false until the checker catalog is read, so no number is shown in the meantime.
+ */
+export function coverage(template: RuleTemplate) {
+  const groups = typeGroups(template)
+  return {
+    effective: groups.filter(group => group.rows.some(row => effective(row.automation))).length,
+    total: groups.length,
+    known: template.rows.every(row => row.automation.state !== 'unknown' && row.automation.state !== 'unreadable'),
+  }
+}
 export const pendingRows = (template: RuleTemplate) => template.rows.filter(row => row.automation.state === 'stale')

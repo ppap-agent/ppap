@@ -1,5 +1,6 @@
 import type {components} from '../generated/openapi.ts'
 import {reviewed} from './review-navigation.ts'
+import {fileDisplayValues} from './display-info-contract.ts'
 
 export type TaskSummary = components['schemas']['AuditTaskSummary']
 type Task = components['schemas']['AuditTask']
@@ -8,6 +9,18 @@ export function hasExecutionError(value: {has_execution_error?: boolean; executi
   if (value.has_execution_error !== undefined) return value.has_execution_error
   const finished = value.execution ? ['completed', 'failed'].includes(value.execution) : value.state === 'completed'
   return finished && (value.execution === 'failed' || (value.result_counts?.ERR ?? 0) > 0)
+}
+
+type Subject = NonNullable<TaskSummary['subject']>
+/** The task's title in lists: "客户 · 车型 零件名" from the first selected file that names any of them. */
+export function subjectLabel(subject: Subject | null | undefined): string {
+  if (!subject) return ''
+  const item = [subject.model, subject.part].filter(Boolean).join(' ')
+  return [subject.customer, item].filter(Boolean).join(' · ')
+}
+export function taskSubject(task: Pick<Task, 'files'>): Subject | undefined {
+  const values = task.files.filter(row => row.selection === 'selected').map(row => fileDisplayValues(row)).find(row => row.customer || row.model || row.part)
+  return values && {customer: values.customer, model: values.model, part: values.part}
 }
 
 export function summarizeTask(task: Task): TaskSummary {
@@ -19,6 +32,7 @@ export function summarizeTask(task: Task): TaskSummary {
   const finished = task.execution ? ['completed', 'failed'].includes(task.execution) : task.state === 'completed'
   return {id, number, state, created_at, updated_at, round_id, completion_reason, input_revision: task.input_revision ?? 0,
     ...(round_id ? {execution: task.execution ?? (finished && audits.length > 0 && audits.every(audit => audit.execution === 'completed') ? 'completed' as const : undefined), has_execution_error: task.has_execution_error ?? (finished && (task.execution === 'failed' || audits.some(audit => audit.execution === 'review_failed') || counts.ERR > 0)), result_counts: counts, uncovered_count: checks.filter(check => check.coverage !== 'executed').length, reviewed_count: checks.filter(reviewed).length} : {}),
+    ...(taskSubject(task) ? {subject: taskSubject(task)} : {}),
     files: task.files.map(({file, selection}) => ({file, selection}))}
 }
 

@@ -44,3 +44,21 @@ def test_result_filter_pages_over_all_matches_and_keeps_facets():
     # A document whose result could not be projected is not counted as any result.
     assert archive_page(documents, {**QUERY, "result": "PASS"}, {})["total"] == 0
     assert archive_page(documents, QUERY)["total"] == 13
+
+
+def test_customer_groups_nest_the_vehicle_tree_and_search_reads_part_numbers():
+    documents = [document(f"d{index}", None, None) for index in range(4)]
+    for row, (customer, model, part, number) in zip(documents, [("理想汽车", "L7", "尾门", "P01"), ("理想汽车", "L7", None, None), ("蔚来汽车", "ES6", "侧围", "P02"), (None, "L7", "尾门", None)]):
+        row["metadata"] = {"customer": customer, "model": model, "part": part, "part_number": number}
+        row["latest_activity"] = {"initiator": "Alice", "audited_at": row["updated_at"]}
+    page = archive_page(documents, QUERY)
+    groups = {group["label"]: group for group in page["customer_groups"]}
+    # A document without a customer stays in the whole tree only.
+    assert [(group["label"], group["count"]) for group in page["customer_groups"]] == [("理想汽车", 2), ("蔚来汽车", 1)]
+    assert [(row["label"], row["count"], [(part["label"], part["count"]) for part in row["parts"]]) for row in groups["理想汽车"]["categories"]] == [("L7", 2, [("其他", 1), ("尾门", 1)])]
+    assert page["categories"][1]["count"] == 3
+    # A customer plus one of its vehicle ids narrows to that customer's documents.
+    l7 = groups["理想汽车"]["categories"][0]["id"]
+    assert [row["document_id"] for row in archive_page(documents, {**QUERY, "customer": "理想汽车", "category_id": l7})["documents"]] == ["d1", "d0"]
+    assert [row["document_id"] for row in archive_page(documents, {**QUERY, "search": "p02"})["documents"]] == ["d2"]
+    assert [row["document_id"] for row in archive_page(documents, {**QUERY, "search": "尾门"})["documents"]] == ["d3", "d0"]

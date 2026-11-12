@@ -1266,6 +1266,12 @@ class AuditTaskSummaryFile(TypedDict):
     selection: Literal["selected", "unselected", "removed"]
 
 
+class AuditTaskSubject(TypedDict):
+    customer: str | None
+    model: str | None
+    part: str | None
+
+
 class AuditTaskSummary(TypedDict):
     id: str
     number: str
@@ -1276,6 +1282,7 @@ class AuditTaskSummary(TypedDict):
     round_id: str | None
     completion_reason: Literal["no_matching_rules", "processed"] | None
     files: list[AuditTaskSummaryFile]
+    subject: NotRequired[AuditTaskSubject]
     execution: NotRequired[Literal["queued", "running", "completed", "failed"]]
     has_execution_error: NotRequired[bool]
     result_counts: NotRequired[dict[str, int]]
@@ -1383,6 +1390,14 @@ class AuditArchivePart(TypedDict):
     count: int
 
 
+class AuditArchiveCustomer(TypedDict):
+    """One customer's documents as the same vehicle/part tree; filter by `customer` plus a category id."""
+
+    label: str
+    count: int
+    categories: list[AuditArchiveCategory]
+
+
 class AuditArchiveQuery(TypedDict):
     search: str
     category_id: str | None
@@ -1402,6 +1417,7 @@ class AuditArchivePage(TypedDict):
     total: int
     document_count: int
     categories: list[AuditArchiveCategory]
+    customer_groups: list[AuditArchiveCustomer]
     document_types: list[str]
     customers: list[str]
     initiators: list[str]
@@ -1470,6 +1486,7 @@ class AuditUsageSummary(TypedDict):
     timezone: str
     as_of: str
     consumption_count: AuditUsageMetric
+    previous_consumption_count: AuditUsageMetric
     charged_points: AuditUsageMetric
     pending_points: AuditUsageMetric
     free_remaining: AuditUsageMetric
@@ -1576,12 +1593,15 @@ class LibraryTemplate(TypedDict):
     extension: str
     filename: str
     byte_size: int
+    type_code: str | None
 
 
 class LibraryCustomer(TypedDict):
     id: str
     name: str
     templates: list[LibraryTemplate]
+    # The document types this customer's built-in rules cover; its template coverage counts against these.
+    standard_type_codes: list[str]
 
 
 class TemplateLibrary(TypedDict):

@@ -345,7 +345,7 @@ def test_directory_timeout_retries_the_same_page_and_ignores_its_late_reply():
         expect(page.get_by_role("toolbar", name="PDF 阅读工具", exact=True)).to_be_visible()
         page.clock.install()
         page.get_by_role("button", name="分享", exact=True).click()
-        panel = page.get_by_role("dialog", name="分享审核报告", exact=True)
+        panel = page.get_by_role("dialog", name="分享报告", exact=True)
         search = panel.get_by_role("button", name="搜索", exact=True)
         expect(search).to_be_enabled()
         field = panel.get_by_role("textbox", name="搜索人员或群组", exact=True)

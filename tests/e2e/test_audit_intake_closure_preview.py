@@ -142,7 +142,7 @@ class AuditIntakeClosureTests(unittest.TestCase):
             expect(page.get_by_role("checkbox", name="选择 PFMEA.xlsx", exact=True)).not_to_be_checked()
             expect(page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True)).to_be_checked()
             page.get_by_role("button", name="上一步", exact=True).click()
-            page.get_by_role("button", name="从飞书选择", exact=True).click()
+            page.get_by_role("button", name="从飞书云文档选择", exact=True).click()
             picker = page.get_by_role("dialog", name="从飞书选择文件", exact=True)
             picker.get_by_role("checkbox", name="选择飞书文件 控制计划（飞书表格）", exact=True).check()
             picker.get_by_role("button", name="添加 1 份文件", exact=True).click()

@@ -2808,6 +2808,22 @@ class AuthStore:
                 ([str(row[0]) for row in rows],),
             ).fetchall()
             self._prepared_items(conn, principal, [{"file_version_id": vid, "role": "reference"} for vid in dict.fromkeys(str(file[2]) for file in files)])
+            # The list names a task by its first selected file's recognized customer, model and part; unbound or unfinished recognition names nothing.
+            revisions = {str(row[0]): row[1] for row in rows}
+            subjects: dict[str, dict] = {}
+            for draft_id, version_id, status, payload, result in conn.execute(
+                """SELECT i.draft_id, i.file_version_id, j.status, j.payload, j.result
+                FROM product.draft_items i JOIN engine.jobs j ON j.id = i.analysis_job_id
+                WHERE i.draft_id = ANY(%s::uuid[]) AND i.selection = 'selected' ORDER BY i.draft_id, i.position""",
+                (list(revisions),),
+            ).fetchall():
+                key, result = str(draft_id), result or {}
+                if key in subjects or status not in {"succeeded", "failed", "cancelled"} or not self._analysis_snapshot_bound(payload or {}, result, key, revisions[key], str(version_id)):
+                    continue
+                metadata = result.get("metadata") or {}
+                subject = {field: metadata.get(field) or None for field in ("customer", "model", "part")}
+                if any(subject.values()):
+                    subjects[key] = subject
             grouped: dict[str, list] = {}
             for file in files:
                 grouped.setdefault(str(file[0]), []).append({"file": self._version_from_row(file[2:]).public(), "selection": file[1]})
@@ -2823,6 +2839,7 @@ class AuthStore:
                     "round_id": str(row[7]) if row[7] else None,
                     "state": row[8],
                     "files": grouped.get(str(row[0]), []),
+                    **({"subject": subjects[str(row[0])]} if str(row[0]) in subjects else {}),
                     **({key: histories[str(row[7])][key] for key in ("execution", "has_execution_error", "result_counts", "reviewed_count", "uncovered_count")} if row[7] else {}),
                 }
                 for row in rows

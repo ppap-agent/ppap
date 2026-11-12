@@ -5,7 +5,7 @@ import {Badge} from '../components/ui/badge'
 import {Button} from '../components/ui/button'
 import {Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle} from '../components/ui/dialog'
 import {Item, ItemContent, ItemGroup} from '../components/ui/item'
-import {Tabs, TabsContent, TabsList, TabsTrigger} from '../components/ui/tabs'
+import {RadioGroup, RadioGroupItem} from '../components/ui/radio-group'
 import {FileName} from '../journey/file-name'
 import {ShareTargets} from './share-targets'
 import type {AuditSharingAdapter, ShareTarget} from './sharing-contract'
@@ -26,19 +26,31 @@ export function ReportShareDialog({open, share, describe, contentFor, reports, a
   const content = job?.request.content || contentFor(reports, mode)
   const validTargets = open && targetsReady && targets.length > 0 && targets.every(target => target.eligibility === 'eligible' && target.organization_id === targets[0].organization_id)
   return <Dialog open={open} onOpenChange={open => {if (!open) onClose()}}><DialogContent className="flex max-h-[88dvh] flex-col overflow-hidden sm:max-w-xl" onCloseAutoFocus={event => {event.preventDefault(); trigger?.focus()}}>
-    <DialogHeader><DialogTitle>分享审核报告</DialogTitle><DialogDescription>发送给本组织的同事或飞书群。</DialogDescription></DialogHeader>
+    <DialogHeader><DialogTitle>分享报告</DialogTitle><DialogDescription>发送给本组织的飞书用户或群组。</DialogDescription></DialogHeader>
     <div className="min-h-0 space-y-5 overflow-y-auto">
       <section className="rounded-lg border bg-muted/30 p-3" aria-label="分享的报告"><h3 className="sr-only">本次分享 {scope.length} 份已就绪报告</h3><ItemGroup>{scope.map(reference => {
         const row = describe(reference)
         return <Item role="listitem" size="xs" key={JSON.stringify(reference)}><ItemContent><FileName name={`${row.name}-审核报告`} format="pdf"/>{row.context && <p className="text-xs text-muted-foreground">{row.context}</p>}</ItemContent><Badge variant="outline">{row.conclusion}</Badge></Item>
       })}</ItemGroup></section>
-      {!job && <section className="space-y-2" aria-label="发送方式"><h3 className="font-medium">发送方式</h3><Tabs value={mode} onValueChange={value => setMode(value as typeof mode)}><TabsList aria-label="交付方式"><TabsTrigger value="link">链接</TabsTrigger><TabsTrigger value="file">文件</TabsTrigger></TabsList><TabsContent value="link"></TabsContent><TabsContent value="file">{content ? <p className="[overflow-wrap:anywhere] text-xs text-muted-foreground">附件：{content.artifact?.filename}</p> : <Alert><AlertTitle>所选 ZIP 尚未就绪</AlertTitle><AlertDescription>请先打包所选报告。<Button variant="outline" onClick={onClose}>返回报告页打包</Button></AlertDescription></Alert>}</TabsContent></Tabs></section>}
       {job && job.request.content.kind !== 'link' && <p>附件：{job.request.content.artifact?.filename}</p>}
       {actions.error && <Alert variant="destructive"><AlertTitle>结果待确认</AlertTitle><AlertDescription>{actions.error}</AlertDescription></Alert>}
       {job ? <ShareResults job={job} actions={actions} support={{scenario: '审核报告分享', facts: [
         {label: '交付方式', value: {link: '链接', pdf: 'PDF 文件', zip: 'ZIP 文件'}[job.request.content.kind]},
         {label: '固定报告', value: job.request.reports.map(reference => `${describe(reference).name}-审核报告\n任务：${reference.task_id}\n审核轮次：${reference.round_id}\n文件版本：${reference.file_version_id}\n结果尝试：${reference.result_attempt}\n报告编号：${reference.report_id}`).join('\n\n')},
-      ]}}/> : open && <ShareTargets adapter={adapter} value={targets} onChange={setTargets} onReadyChange={setTargetsReady}/>}
+      ]}}/> : open && <>
+        <ShareTargets adapter={adapter} value={targets} onChange={setTargets} onReadyChange={setTargetsReady}/>
+        <section className="space-y-2" aria-label="发送内容"><h3 className="text-xs text-muted-foreground">发送内容</h3>
+          <RadioGroup aria-label="发送内容" className="flex flex-wrap" value={mode} onValueChange={value => setMode(value as typeof mode)}>
+            <label className="mr-6 flex items-center gap-2"><RadioGroupItem value="link"/>报告链接</label>
+            <label className="flex items-center gap-2"><RadioGroupItem value="file"/>报告文件</label>
+          </RadioGroup>
+          {mode === 'file' && (content ? <p className="[overflow-wrap:anywhere] text-xs text-muted-foreground">附件：{content.artifact?.filename}</p> : <Alert><AlertTitle>所选 ZIP 尚未就绪</AlertTitle><AlertDescription>请先打包所选报告。<Button variant="outline" onClick={onClose}>返回报告页打包</Button></AlertDescription></Alert>)}
+        </section>
+        {/* What the recipient gets, as the sharing service delivers it (api/sharing_routes.py, product/store/report_sharing.py). */}
+        <p className="rounded-sm bg-primary-soft px-3 py-2 text-xs leading-relaxed text-primary">{mode === 'link'
+          ? '分享后对方会在飞书收到“查看审核报告”链接，登录 PPAP 后查看；链接仅限本组织成员打开，不设有效期。'
+          : `分享后对方会在飞书直接收到报告${scope.length > 1 ? ' ZIP 包' : ' PDF'}，文件不超过 30 MB。`}</p>
+      </>}
     </div>
     <div className="shrink-0 border-t pt-4"><DialogFooter className="flex-row flex-wrap items-center"><Button variant="outline" onClick={onClose}>关闭</Button>{job && !shareUnresolved(job) && contentFor(reports, 'link') && <Button variant="outline" onClick={() => {setTargets([]); setMode('link'); setComposingAfter(job.request.request_id)}}>新的分享</Button>}{!job && <Button disabled={!validTargets || !content} onClick={() => {if (content) void actions.send({organization_id: targets[0].organization_id, reports, targets: targets.map(({kind, id}) => ({kind, id})), content}, targets)}}>{targets.length ? `发送给 ${targets.length} 个目标` : '选择接收人后发送'}</Button>}</DialogFooter></div>
   </DialogContent></Dialog>

@@ -178,3 +178,13 @@ def test_settlement_filter_and_export_cover_every_matching_entry_not_one_page():
     # Times are Beijing time; a formula-looking name stays text.
     assert lines[1] == "2026-11-01 00:00,,'=HYPERLINK(1).xlsx,待扣费,张工,500"
     assert lines[-1] == "2026-10-31 08:00,,文件00.xlsx,免费额度已扣,Alice,500"
+
+
+def test_previous_month_count_is_read_from_the_same_ledger():
+    rows = [fee(), fee("round-october", created_at="2026-10-31T15:59:59+00:00"), fee("round-september", created_at="2026-09-30T15:00:00+00:00")]
+    page = usage_page(rows, QUERY, ORG, FREE, {}, AS_OF)
+    assert page["summary"]["consumption_count"] == {"value": 1, "reason": None}
+    # 23:59:59 Beijing time on 31 October is still October.
+    assert page["summary"]["previous_consumption_count"] == {"value": 1, "reason": None}
+    unattributed = {**fee("round-unknown", created_at="2026-10-05T00:00:00+00:00"), "round_id": None}
+    assert usage_page(rows + [unattributed], QUERY, ORG, FREE, {}, AS_OF)["summary"]["previous_consumption_count"]["value"] is None

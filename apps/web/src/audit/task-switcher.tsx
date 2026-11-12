@@ -6,7 +6,7 @@ import {Input} from '../components/ui/input'
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '../components/ui/select'
 import {Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger} from '../components/ui/sheet'
 import {FileName} from '../journey/file-name'
-import {hasExecutionError, type TaskSummary} from './task-summary'
+import {hasExecutionError, subjectLabel, type TaskSummary} from './task-summary'
 
 const stateTone = {matching: 'outline', pending_confirm: 'warning', reviewing: 'secondary', completed: 'outline'} as const
 
@@ -70,7 +70,7 @@ export function TaskRail({currentId, tasks, labels, query, onQuery, onOpen, onNe
       const current = task.id === currentId, files = task.files.filter(file => file.selection === 'selected')
       return <li key={task.id}><button type="button" aria-current={current ? 'page' : undefined} onClick={() => onOpen(task.id)} className={`flex w-full items-start gap-2.5 rounded-md border px-2 py-3.5 text-left transition-colors ${current ? 'border-primary bg-primary-soft' : 'border-transparent border-b-border hover:bg-header'}`}>
         <ClipboardList aria-hidden="true" className="mt-0.5 size-4.5 shrink-0 text-primary"/><span className="grid min-w-0 flex-1 gap-1"><span className="flex items-center justify-between gap-2"><span className={`truncate text-sm ${current ? 'font-semibold text-primary' : 'font-medium'}`}>{task.number}</span><Badge variant={hasExecutionError(task) ? 'destructive' : task.state === 'completed' ? 'success' : task.state === 'pending_confirm' ? 'warning' : 'info'}>{hasExecutionError(task) ? '审核异常' : labels[task.state]}</Badge></span>
-        {files[0] && <span className="truncate text-xs text-muted-foreground">{files[0].file.original_filename}</span>}
+        {subjectLabel(task.subject) ? <span className="truncate text-xs text-foreground/80" title={subjectLabel(task.subject)}>{subjectLabel(task.subject)}</span> : files[0] && <span className="truncate text-xs text-muted-foreground">{files[0].file.original_filename}</span>}
         <span className="text-xs text-muted-foreground">共 {files.length} 份文件 · {displayTime(task.created_at)}</span></span>
       </button></li>
     })}</ul>

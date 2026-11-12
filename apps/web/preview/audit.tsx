@@ -37,6 +37,7 @@ const delayedDisplay = scene === 'restore-display-loading' || scene === 'restore
 const supportAdapter = fixtureSupport(scene)
 const factAnswersAdapter = fixtureFactAnswers(scene)
 document.documentElement.classList.toggle('dark', query.get('theme') === 'dark')
+const standardTypes = ['全功能检验报告', '零部件设计验证计划和报告', 'DV报告_PV报告_试验报告', '材料产品及分供清单', '检具验收报告', '模具验收报告', '测量系统分析评价', '过程能力研究', '过程流程图', '潜在过程失效模式及后果分析', '控制计划', '过程特殊特性清单', '设备清单', '生产系统产能评估报告', '项目问题清单', '零部件年度试验要求', '零件提交保证书']
 const documents = [
   ...reportSamples.documents,
   {type: '过程流程图', name: '过程流程图.pdf', rule: '示例过程流程图规则 · v3', mime: 'application/pdf'},
@@ -89,10 +90,12 @@ const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' 
       const files = (taskStore.get(id)?.files ?? []).filter(row => row.selection === 'selected')
       const first = files.find(row => row.match?.state === 'matched')
       const warnings = first ? [{number: 'W-01', code: 'W02', title: '字段为空或未识别', level: 'warn' as const, file_version_id: first.file.id, filename: first.file.original_filename, location: first.file.original_filename, evidence: '(空)', problem: '文件中未识别到零件号。', action: '在文件表头填写零件号，与图纸和其他 PPAP 文件保持一致。', responsibility: '材料侧', scope: 'file' as const}] : []
-      const level = (row: AuditTaskFile) => row.match?.state === 'reference' ? 'reference' as const : row.match?.state === 'unmatched' ? 'unmatched' as const : row.file.id === first?.file.id ? 'warn' as const : 'ok' as const
+      const second = scene === 'precheck-block' ? files.filter(row => row.match?.state === 'matched')[1] : undefined
+      const blocks = second ? [{number: 'B-01', code: 'B04', title: '核心结构缺失', level: 'block' as const, file_version_id: second.file.id, filename: second.file.original_filename, location: 'Sheet1', evidence: '未找到工序行', problem: '文件类型已识别，但缺少工序行，相关条款无法逐行核对。', action: '补齐工序行后重新上传。', responsibility: '材料侧', scope: 'content' as const}] : []
+      const level = (row: AuditTaskFile) => row.match?.state === 'reference' ? 'reference' as const : row.match?.state === 'unmatched' ? 'unmatched' as const : row.file.id === second?.file.id ? 'block' as const : row.file.id === first?.file.id ? 'warn' as const : 'ok' as const
       const rows = files.map(row => ({file_version_id: row.file.id, filename: row.file.original_filename, level: level(row), document_type: row.match?.document_type ?? null, customer: row.match?.metadata.customer ?? null}))
       const count = (value: string) => rows.filter(row => row.level === value).length
-      return {outline_version: 'PPAP-00 v0.14', conclusion: 'pass', files: rows, blocks: [], warnings, statuses: [], counts: {ok: count('ok'), warn: count('warn'), block: 0, unmatched: count('unmatched'), reference: count('reference'), pending: 0}}
+      return {outline_version: 'PPAP-00 v0.14', conclusion: blocks.length ? 'fail' : 'pass', files: rows, blocks, warnings, statuses: [], counts: {ok: count('ok'), warn: count('warn'), block: count('block'), unmatched: count('unmatched'), reference: count('reference'), pending: 0}}
     },
     report: async () => new Blob(['%PDF-1.4 preview'], {type: 'application/pdf'}),
   },
@@ -111,6 +114,8 @@ const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' 
     },
   },
   customers: [{value: 'sample-customer', label: '示例客户'}],
+  // Preview coverage: the sample customer has rules for the sample documents among the seventeen standard types.
+  coverage: async () => ({types: standardTypes, catalog: {suites: [], predefined: []}, rules: documents.map((document, index) => ({id: `preview-rule-${index + 1}`, title: document.rule, kind: 'engine', created_at: '2026-11-01T08:00:00+00:00', predecessor_id: null, customer_scope: 'restricted' as const, type: standardTypes.includes(document.type) ? document.type : standardTypes[index], rule_profile: 'v4', customers: ['sample-customer'], models: [], parts: []}))}),
   authenticate: async () => {authenticated = true},
   drive: {
     list: async ({folderToken, pageToken} = {}) => {

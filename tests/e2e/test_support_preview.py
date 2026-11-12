@@ -50,7 +50,7 @@ class SupportPreviewTests(unittest.TestCase):
             expect(dialog.get_by_role("button", name="复制电话", exact=True)).to_be_enabled()
             expect(dialog.get_by_role("link", name="support@example.invalid", exact=True)).to_be_visible()
             dialog.get_by_role("button", name="关闭", exact=True).click()
-            expect(page.get_by_role("heading", name="上传 PPAP 文件", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="PPAP Audit", exact=True)).to_be_visible()
             browser.close()
 
     def test_support_read_failure_can_reread_the_configured_contacts(self):
@@ -91,7 +91,7 @@ class SupportPreviewTests(unittest.TestCase):
             expect(enlarged).to_have_count(0)
             expect(dialog.get_by_role("button", name="放大服务二维码", exact=True)).to_be_focused()
             dialog.get_by_role("button", name="关闭", exact=True).click()
-            expect(page.get_by_role("heading", name="上传 PPAP 文件", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="PPAP Audit", exact=True)).to_be_visible()
             browser.close()
 
     def test_browser_back_closes_support_and_preserves_pre_task_files(self):

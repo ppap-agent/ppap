@@ -2443,6 +2443,18 @@ export interface components {
             parts: components["schemas"]["AuditArchivePart"][];
         };
         /**
+         * AuditArchiveCustomer
+         * @description One customer's documents as the same vehicle/part tree; filter by `customer` plus a category id.
+         */
+        AuditArchiveCustomer: {
+            /** Categories */
+            categories: components["schemas"]["AuditArchiveCategory"][];
+            /** Count */
+            count: number;
+            /** Label */
+            label: string;
+        };
+        /**
          * AuditArchiveDocument
          * @description Opaque product identity mapped to a confirmed provider document, not file_id.
          */
@@ -2475,6 +2487,8 @@ export interface components {
         AuditArchivePage: {
             /** Categories */
             categories: components["schemas"]["AuditArchiveCategory"][];
+            /** Customer Groups */
+            customer_groups: components["schemas"]["AuditArchiveCustomer"][];
             /** Customers */
             customers: string[];
             /** Document Count */
@@ -3366,6 +3380,15 @@ export interface components {
             /** Warnings */
             warnings: components["schemas"]["PrecheckFinding"][];
         };
+        /** AuditTaskSubject */
+        AuditTaskSubject: {
+            /** Customer */
+            customer: string | null;
+            /** Model */
+            model: string | null;
+            /** Part */
+            part: string | null;
+        };
         /** AuditTaskSummary */
         AuditTaskSummary: {
             /** Completion Reason */
@@ -3400,6 +3423,7 @@ export interface components {
              * @enum {string}
              */
             state: "matching" | "pending_confirm" | "reviewing" | "completed";
+            subject?: components["schemas"]["AuditTaskSubject"];
             /** Uncovered Count */
             uncovered_count?: number;
             /** Updated At */
@@ -3597,6 +3621,7 @@ export interface components {
             /** Month */
             month: string;
             pending_points: components["schemas"]["AuditUsageMetric"];
+            previous_consumption_count: components["schemas"]["AuditUsageMetric"];
             /** Timezone */
             timezone: string;
         };
@@ -4500,6 +4525,8 @@ export interface components {
             id: string;
             /** Name */
             name: string;
+            /** Standard Type Codes */
+            standard_type_codes: string[];
             /** Templates */
             templates: components["schemas"]["LibraryTemplate"][];
         };
@@ -4520,6 +4547,8 @@ export interface components {
             id: string;
             /** Name */
             name: string;
+            /** Type Code */
+            type_code: string | null;
         };
         /** MatchingCandidate */
         MatchingCandidate: {

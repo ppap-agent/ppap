@@ -24,6 +24,7 @@ def usage_page(rows: list[dict], query: dict, organization: dict, free: dict, ar
     through = local.date()
     start = through - timedelta(days=int(query["range"][:-1]) - 1) if query["range"] != "all" else None
     month = local.strftime("%Y-%m")
+    previous_month = (local.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
     groups: dict[tuple, list[dict]] = {}
     unattributed = []
     for row in rows:
@@ -105,6 +106,8 @@ def usage_page(rows: list[dict], query: dict, organization: dict, free: dict, ar
     omitted = [row for row in unattributed if in_range(row)]
     monthly_unknown = any(local_day(row).strftime("%Y-%m") == month for row in unattributed)
     monthly = [row for row in entries if local_day(row).strftime("%Y-%m") == month]
+    previous_unknown = any(local_day(row).strftime("%Y-%m") == previous_month for row in unattributed)
+    previous = sum(1 for row in entries if local_day(row).strftime("%Y-%m") == previous_month)
     uncertain = monthly_unknown or any(row["settlement"]["state"] in {"unknown", "processing"} for row in monthly)
     unknown = {"value": None, "reason": "本月受理的费用还有扣费结果待核对，已扣／待扣合计暂不确定。"}
     charged = sum(row["allocation"]["free_points"] + (row["allocation"]["paid_points"] if row["settlement"]["state"] == "charged" else 0) for row in monthly)
@@ -119,6 +122,7 @@ def usage_page(rows: list[dict], query: dict, organization: dict, free: dict, ar
             "timezone": "Asia/Shanghai",
             "as_of": as_of.isoformat(),
             "consumption_count": {"value": None, "reason": "本月还有无法准确拆分到文件的历史费用。"} if monthly_unknown else {"value": len(monthly), "reason": None},
+            "previous_consumption_count": {"value": None, "reason": "上月还有无法准确拆分到文件的历史费用。"} if previous_unknown else {"value": previous, "reason": None},
             "charged_points": unknown if uncertain else {"value": charged, "reason": None},
             "pending_points": unknown if uncertain else {"value": pending, "reason": None},
             **free,
