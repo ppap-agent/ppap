@@ -11,7 +11,7 @@ dependencies = [
     "pydantic-settings>=2.12.0",
     "pydantic>=2.10.6",
     "audit",
-    "psycopg[binary]>=3.2.6",
+    "psycopg[binary]>=3.3.4",
 ]
 
 [tool.uv.sources]
