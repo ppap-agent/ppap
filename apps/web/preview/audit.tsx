@@ -1,4 +1,6 @@
 import {fixtureTemplates} from './audit-templates'
+import {installRuleFixtures} from './audit-rules'
+import {AuditRules} from '../src/audit/rules'
 import {createRoot} from 'react-dom/client'
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react'
 import '../src/index.css'
@@ -57,6 +59,7 @@ const accepted = new Map<string, ReturnType<typeof fixtureAcceptance>>()
 const confirmationInputs = new Map<string, AuditTask>()
 const taskStore = new Map<string, AuditTask>()
 const templateFixture = fixtureTemplates(scene)
+installRuleFixtures()
 const displayAdapter = fixtureDisplay(taskStore, scene)
 const reportAdapter = fixtureReports(taskStore, scene)
 const sharingAdapter = fixtureSharing(taskStore, scene)
@@ -558,7 +561,7 @@ function Preview() {
     },
   }), [])
   const content = <>{window.parent === window && <p role="note" className="border-b px-4 py-2 text-xs text-muted-foreground">模拟预览 · 不连接现网</p>}{(automaticObservation || delayedDisplay || scene.startsWith('recognition-') || scene.startsWith('task-list-controlled') || scene.startsWith('restore-review-edit') || ['checking-loading', 'matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'upload-resume', 'restore-loading', 'restore-race', 'reports-pdf-race', 'reports-generate-race', 'reports-share-race', 'reports-share-directory-loading', 'archive-history-race', 'archive-history-loads', 'usage-race', 'original-loading', 'support-loading'].includes(scene)) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>预览事件</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}
-    <AuditIntake templateAdapter={templateFixture} adapter={controlled} autoObserve={automaticObservation} reportAdapter={controlledReports} sharingAdapter={controlledSharing} archiveAdapter={controlledArchive} usageAdapter={controlledUsage} supportAdapter={controlledSupport} displayAdapter={scene.startsWith('restore-display-') ? controlledDisplay : undefined} renderOriginal={(file, evidence) => scene.startsWith('original-') && file.original_filename.endsWith('.xlsx') ? <FixtureRemoteOriginal key={file.id} file={file} office={originalOffice}/> : <FixtureOriginal file={file} evidence={evidence}/>}/></>
+    <AuditIntake rules={(active, headerActions) => <AuditRules active={active} headerActions={headerActions} onPublished={() => {}}/>} templateAdapter={templateFixture} adapter={controlled} autoObserve={automaticObservation} reportAdapter={controlledReports} sharingAdapter={controlledSharing} archiveAdapter={controlledArchive} usageAdapter={controlledUsage} supportAdapter={controlledSupport} displayAdapter={scene.startsWith('restore-display-') ? controlledDisplay : undefined} renderOriginal={(file, evidence) => scene.startsWith('original-') && file.original_filename.endsWith('.xlsx') ? <FixtureRemoteOriginal key={file.id} file={file} office={originalOffice}/> : <FixtureOriginal file={file} evidence={evidence}/>}/></>
   return scene.startsWith('restore-review-edit') ? <AuditReviewProvider adapter={reviewAdapter}>{content}</AuditReviewProvider> : content
 }
 function HistoricalPreview() {

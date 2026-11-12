@@ -1549,14 +1549,17 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True).uncheck()
             page.get_by_role("button", name="开始识别", exact=True).click()
             address = page.url
-            collapse = page.get_by_role("button", name="折叠产品导航", exact=True)
-            expect(collapse).to_be_visible()
-            sidebar = page.get_by_role("complementary", name="产品侧栏", exact=True)
-            wide = sidebar.bounding_box()["width"]
-            collapse.press("Enter")
+            # The navigation starts collapsed to an icon rail.
             expand = page.get_by_role("button", name="展开产品导航", exact=True)
+            expect(expand).to_be_visible()
+            sidebar = page.get_by_role("complementary", name="产品侧栏", exact=True)
+            compact = sidebar.bounding_box()["width"]
+            expand.press("Enter")
+            collapse = page.get_by_role("button", name="折叠产品导航", exact=True)
+            expect(collapse).to_be_focused()
+            self.assertGreater(sidebar.bounding_box()["width"], compact)
+            collapse.press("Enter")
             expect(expand).to_be_focused()
-            self.assertLess(sidebar.bounding_box()["width"], wide)
             navigation = sidebar.get_by_role("navigation", name="产品导航", exact=True)
             for label in ("PPAP Audit", "审核文件", "用量记录"):
                 expect(navigation.get_by_role("button", name=label, exact=True)).to_be_visible()
@@ -1594,7 +1597,7 @@ class AuditPreviewTests(unittest.TestCase):
             page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task&report=1")
             expect(page.get_by_role("heading", name="审核报告", exact=True)).to_be_visible()
             report_address = page.url
-            page.get_by_role("button", name="折叠产品导航", exact=True).click()
+            expect(page.get_by_role("button", name="展开产品导航", exact=True)).to_be_visible()
             sidebar = page.get_by_role("complementary", name="产品侧栏", exact=True)
             compact_width = sidebar.bounding_box()["width"]
             page.get_by_role("button", name="打开审核任务", exact=True).click()

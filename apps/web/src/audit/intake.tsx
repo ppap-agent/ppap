@@ -144,16 +144,10 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const [rulesOpened, setRulesOpened] = useState(surface === 'requirements')
   const [usageOpened, setUsageOpened] = useState(surface === 'usage')
   const [templatesOpened, setTemplatesOpened] = useState(surface === 'templates')
-  const [navigationMode, setNavigationMode] = useState<'auto' | 'expanded' | 'collapsed'>('auto')
+  // The product navigation starts as an icon rail; the person may expand it.
+  const [navigationMode, setNavigationMode] = useState<'expanded' | 'collapsed'>('collapsed')
   const [navigationTooltip, setNavigationTooltip] = useState<string | null>(null)
-  const [wideNavigation, setWideNavigation] = useState(() => window.matchMedia('(min-width: 1281px)').matches)
   const [pageActions, setPageActions] = useState<HTMLDivElement | null>(null)
-  useEffect(() => {
-    const wide = window.matchMedia('(min-width: 1281px)')
-    const update = () => {setWideNavigation(wide.matches); setNavigationTooltip(null)}
-    wide.addEventListener('change', update)
-    return () => wide.removeEventListener('change', update)
-  }, [])
   const [supportSnapshot, setSupportSnapshot] = useState<SupportSnapshot | null>(null)
   const supportReturnTargets = useRef<(HTMLElement | null)[]>([])
   function openSupport(snapshot: SupportSnapshot, returnTo?: HTMLElement | null) {
@@ -278,7 +272,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const endInputsDirty = Boolean(task && (task.customer_preference !== (customer === 'auto' ? null : customer) || !onlyEndExclusions(task.files, files)))
   const canEnd = noMatches && !endInputsDirty
   const workbench = task?.state === 'reviewing' || task?.state === 'completed' && task.completion_reason === 'processed'
-  const navigationCollapsed = navigationMode === 'collapsed' || navigationMode === 'auto' && workbench && surface === 'audit' && !wideNavigation
+  const navigationCollapsed = navigationMode === 'collapsed'
   function saveTask(next: AuditTask, {activate = false, updateActive = true} = {}) {
     const listed = mergeTaskSnapshot(latestTasks.current.find(row => row.id === next.id), next)
     const combined = mergeTaskSnapshot(task?.id === next.id ? task : undefined, listed)
@@ -877,9 +871,9 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const recognitionSupport = recognitionState && <Button variant="outline" size="sm" onClick={() => openSupport({scenario: '识别文件与匹配规则', traceId: recognitionState.traceId, facts: [{label: '任务标识', value: recognitionState.taskId}, {label: '识别请求', value: recognitionState.requestId}, {label: '文件', value: files.map(row => row.file.original_filename).join('\n')}, {label: '服务说明', value: recognitionState.message}]})}>联系支持</Button>
   const pageContext = surface !== 'audit' ? productLinks.find(link => link.view === surface)?.label : legacyRoundId ? '历史审核' : task ? task.number : recovery ? reportView ? '审核报告' : '审核任务' : '新建审核'
   const workbenchCrumb = <><li><a href={surfaceAddress('workbench')} className="text-muted-foreground hover:text-foreground hover:underline" onClick={event => {if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {event.preventDefault(); showSurface('workbench')}}}>PPAP Audit</a></li><li aria-hidden="true" className="text-muted-foreground">/</li></>
-  return <TooltipProvider><SupportEntryContext.Provider value={openSupport}><div className="flex min-h-dvh bg-canvas text-sm text-foreground">
+  return <TooltipProvider><SupportEntryContext.Provider value={openSupport}><div className="flex h-dvh overflow-hidden bg-canvas text-sm text-foreground">
     <a href="#audit-main" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-background focus:p-3 focus-visible:outline-ring focus-visible:ring-2 focus-visible:ring-ring">跳到主要内容</a>
-    <aside aria-label="产品侧栏" className={`sticky top-0 flex h-dvh shrink-0 flex-col gap-5 border-r bg-card pt-3.5 pb-2.5 ${navigationCollapsed ? 'w-18 px-3' : 'w-55 px-3'}`}>
+    <aside aria-label="产品侧栏" className={`flex h-dvh shrink-0 flex-col overflow-y-auto gap-5 border-r bg-card pt-3.5 pb-2.5 ${navigationCollapsed ? 'w-18 px-3' : 'w-55 px-3'}`}>
       <div className={`flex items-center gap-2 px-2 pt-1 text-base font-semibold ${navigationCollapsed ? 'justify-center' : ''}`}><span className="flex size-6.5 shrink-0 items-center justify-center rounded-md bg-linear-135 from-brand-light to-primary text-primary-foreground"><Sparkles aria-hidden="true" className="size-3.5"/></span><span className={navigationCollapsed ? 'sr-only' : ''}>PPAP Audit</span></div>
       {navigation(navigationCollapsed)}
       <div className={`mt-auto flex gap-1.5 border-t pt-2.5 ${navigationCollapsed ? 'flex-col items-center' : 'items-center'}`}>
@@ -887,8 +881,8 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
         <Tooltip {...navigationTooltipProps('toggle')}><TooltipTrigger asChild><Button size="icon" variant="quiet" aria-label={navigationCollapsed ? '展开产品导航' : '折叠产品导航'} onClick={() => {setNavigationTooltip(null); setNavigationMode(navigationCollapsed ? 'expanded' : 'collapsed')}}>{navigationCollapsed ? <PanelLeftOpen aria-hidden="true"/> : <PanelLeftClose aria-hidden="true"/>}<span className="sr-only">{navigationCollapsed ? '展开导航' : '折叠导航'}</span></Button></TooltipTrigger><TooltipContent side="right">展开产品导航</TooltipContent></Tooltip>
       </div>
     </aside>
-    <div className="min-w-0 flex-1">
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b bg-card px-6 py-2"><div className="flex min-w-0 items-center gap-3">
+    <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b bg-card px-6 py-2"><div className="flex min-w-0 items-center gap-3">
         {surface === 'audit' && !legacyRoundId && reportView ? <nav aria-label="当前位置" className="min-w-0"><ol className="flex flex-wrap items-center gap-x-2 gap-y-1">
           {workbenchCrumb}
           <li className="flex min-w-0 items-center gap-1">{task && !recovery ? <a href={taskResultsAddress().href} aria-label="返回审核结果" className="font-medium hover:underline" onClick={event => {if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {event.preventDefault(); showTaskResults()}}}>{task.number}</a> : <span className="text-muted-foreground">审核任务</span>}{taskSwitcher}</li>
@@ -896,16 +890,17 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
         </ol></nav> : <nav aria-label="当前位置" className="min-w-0"><ol className="flex flex-wrap items-center gap-x-2 gap-y-1">{surface === 'audit' && workbenchCrumb}<li aria-current="page" className="flex min-w-0 items-center gap-1 font-medium"><span className="min-w-0 truncate">{pageContext}</span>{taskSwitcher}</li></ol></nav>}
       </div><div className="flex shrink-0 items-center gap-2"><div ref={setPageActions} role="group" aria-label="页面操作" className="flex min-w-0 flex-wrap items-center gap-2"/>{access?.principal && <AccountMenu compact onUsage={() => showSurface('usage')} showLocalRecords={Boolean(rules)}/>}</div></header>
       {/* While preparing a task the task list stays on the left, as on the task pages. */}
-      <main id="audit-main" tabIndex={-1} className="flex w-full">
-        {preparing && <aside aria-label="审核任务" className="sticky top-0 h-[calc(100dvh-3.25rem)] w-72 shrink-0 overflow-y-auto border-r bg-card">{taskRail}</aside>}
-        <div className={surface === 'audit' && workbench && !reportView ? 'w-full min-w-0' : `mx-auto w-full min-w-0 space-y-6 p-6 ${recovery || workbench || surface !== 'audit' ? '' : step === 'match' ? 'max-w-7xl' : 'max-w-5xl'}`}>
+      <main id="audit-main" tabIndex={-1} className="flex min-h-0 w-full flex-1 overflow-hidden">
+        {preparing && <aside aria-label="审核任务" className="w-72 shrink-0 overflow-y-auto border-r bg-card">{taskRail}</aside>}
+        <div className={surface === 'audit' && workbench && !reportView ? 'h-full w-full min-w-0' : 'min-w-0 flex-1 overflow-y-auto p-6'}>
+        <div className={surface === 'audit' && workbench && !reportView ? 'h-full' : `mx-auto w-full space-y-6 ${recovery || workbench || surface !== 'audit' ? '' : step === 'match' ? 'max-w-7xl' : 'max-w-5xl'}`}>
         {surface === 'workbench' && (renderWorkbench || (props => <AuditWorkbench {...props}/>))({headerActions: pageActions, tasks: workbenchTasks, query, onQuery: setQuery, onNew: newTask, onResume: auditReturn.current || activeTaskId.current || activeUploadDraftId.current ? () => showSurface('audit') : undefined, onOpen: href => {const route = readAuditRoute(new URL(href, location.href)); if (route.taskId) {taskAddress(route.taskId); void recover(route.taskId)} else location.assign(href)}, loading: listStatus.busy, countsKnown: listStatus.ready, busy: listStatus.busy, errors: listStatus.error ? [listStatus.error] : [], more: taskListNext !== null, onMore: () => void loadTasks(taskListNext || 0), onRefresh: () => void loadTasks()})}
         {archiveOpened && <div hidden={surface !== 'archive'}>{archiveAdapter ? <AuditArchive headerActions={surface === 'archive' ? pageActions : null} active={surface === 'archive'} adapter={archiveAdapter} onUpload={newTask} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter} renderOriginal={renderOriginal} onOpenTask={id => {taskAddress(id); void recover(id)}}/> : <Alert><AlertTitle>审核文件暂不可用</AlertTitle><AlertDescription>请稍后重试。</AlertDescription></Alert>}</div>}
         {rulesOpened && <div hidden={surface !== 'requirements'}>{rules?.(surface === 'requirements', surface === 'requirements' ? pageActions : null)}</div>}
         {templatesOpened && templateAdapter && <div hidden={surface !== 'templates'}><TemplateLibraryPage adapter={templateAdapter} headerActions={surface === 'templates' ? pageActions : null} onRules={rules ? () => openRules('templates') : undefined}/></div>}
         {usageOpened && <div hidden={surface !== 'usage'}><AuditUsage headerActions={surface === 'usage' ? pageActions : null} active={surface === 'usage'} adapter={usageAdapter} archiveAdapter={archiveAdapter} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter} renderOriginal={renderOriginal} onOpenTask={id => {taskAddress(id); void recover(id)}} onSupport={notice => openSupport({scenario: `用量记录 · ${notice}`})}/></div>}
         {surface === 'audit' && legacyRoundId && adapter.readRound && <AuditRoundReader headerActions={pageActions} roundId={legacyRoundId} readRound={adapter.readRound} renderOriginal={renderOriginal} onReaudit={adapter.prepareReaudit ? () => void prepareReaudit(legacyRoundId) : undefined} onReport={reportAdapter ? openRoundReport : undefined} returnHref="/workbench"/>}
-        <div hidden={surface !== 'audit' || Boolean(legacyRoundId)} className={workbench && !reportView ? '' : 'space-y-6'}>
+        <div hidden={surface !== 'audit' || Boolean(legacyRoundId)} className={workbench && !reportView ? 'flex h-full flex-col' : 'space-y-6'}>
         {!reportView && !workbench && <div className={workbench ? 'flex flex-wrap items-center gap-x-6 gap-y-2 px-6 pt-3' : 'space-y-6'}>
         {!recovery && <ol aria-label="审核步骤" className={workbench ? 'flex flex-wrap gap-3 text-sm' : 'flex flex-wrap gap-4 border-b pb-4 text-sm'}>{['上传与检查', '确认规则', '审核'].map((label, index) => {
           const current = workbench ? 2 : step === 'match' ? 1 : 0
@@ -967,6 +962,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
 
         </fieldset>
         </>}
+        </div>
         </div>
         </div>
       </main>
