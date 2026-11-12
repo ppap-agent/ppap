@@ -5,11 +5,11 @@ from __future__ import annotations
 import os
 import uuid
 
-import psycopg
 import pytest
 from product import build_product_store
 from product.db import connect
 from product.files import ObjectExists, ObjectMissing
+from product.fixtures import create_test_database, test_database_name
 from product.settings import ISOLATED_DEV_SECRET, Settings
 from product.store import AuthStore
 from psycopg import sql
@@ -19,22 +19,10 @@ from psycopg.rows import dict_row
 os.environ.setdefault("PPAP_TENANT_MODEL_ALLOWED_BASE_URLS", "https://models.example.test")
 
 _CI = bool(os.environ.get("CI"))
-_XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER")
-if _XDIST_WORKER:
-    # Tests reset the whole schema, so each xdist worker owns one database in the shared container.
-    os.environ["PPAP_PG_DATABASE"] = f"ppap_{_XDIST_WORKER}"
-
-
-def pytest_sessionstart(session: pytest.Session) -> None:
-    """Clone the migrated database for each worker before any of them connects to it."""
-    workers = session.config.getoption("numprocesses", None)
-    if _XDIST_WORKER or not workers or not os.environ.get("PGPORT"):
-        return
-    with psycopg.connect(host="127.0.0.1", port=int(os.environ["PGPORT"]), dbname="postgres", user="ppap", password=ISOLATED_DEV_SECRET, autocommit=True) as conn:
-        for index in range(workers):
-            database = sql.Identifier(f"ppap_gw{index}")
-            conn.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(database))
-            conn.execute(sql.SQL("CREATE DATABASE {} TEMPLATE ppap").format(database))
+# Tests reset the whole schema, so each test process owns a database it creates and migrates
+# itself; the isolated-dev `ppap` database is never connected to, cloned or truncated.
+os.environ["PPAP_PG_DATABASE"] = test_database_name()
+_CREATED: set[str] = set()
 
 
 class MemoryObjects:
@@ -58,6 +46,8 @@ class MemoryObjects:
 
 
 def reset_product_database(settings: Settings) -> None:
+    if not settings.pg_database.startswith("ppap_test_"):
+        raise RuntimeError(f"refusing to truncate non-test database {settings.pg_database!r}")
     with connect(settings, "migrator") as conn:
         tables = conn.execute(
             """
@@ -85,7 +75,10 @@ def make_auth_store(
     settings = settings or Settings()
     settings.pg_host = "127.0.0.1"
     settings.pg_port = int(os.environ.get("PGPORT", "5432"))
-    settings.pg_database = f"ppap_{_XDIST_WORKER}" if _XDIST_WORKER else "ppap"
+    settings.pg_database = test_database_name()
+    if settings.pg_database not in _CREATED:
+        create_test_database(settings.pg_host, settings.pg_port)
+        _CREATED.add(settings.pg_database)
     settings.pg_migrator_user = "ppap_migrator"
     settings.pg_migrator_password = ISOLATED_DEV_SECRET
     if reset:

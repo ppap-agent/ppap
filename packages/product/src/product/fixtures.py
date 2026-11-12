@@ -19,3 +19,30 @@ SUBJECTS = {
     "bob": {"user_id": USER_BOB, "tenant_id": TENANT_A, "tenant_key": "isolated-dev-a", "subject": "ou_bob"},
     "carol": {"user_id": USER_CAROL, "tenant_id": TENANT_B, "tenant_key": "isolated-dev-b", "subject": "ou_carol"},
 }
+
+
+def test_database_name() -> str:
+    """This test process's own database; tests never run in the isolated-dev `ppap` database."""
+    import os
+
+    return "ppap_test_" + os.environ.get("PYTEST_XDIST_WORKER", "main")
+
+
+def create_test_database(host: str, port: int) -> str:
+    """Drop, recreate and migrate this process's test database from the repository migrations."""
+    from pathlib import Path
+
+    import psycopg
+    from psycopg import sql
+
+    from product.settings import ISOLATED_DEV_SECRET
+
+    name = test_database_name()
+    with psycopg.connect(host=host, port=port, dbname="postgres", user="ppap", password=ISOLATED_DEV_SECRET, autocommit=True) as conn:
+        conn.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(name)))
+        conn.execute(sql.SQL("CREATE DATABASE {} OWNER ppap_migrator").format(sql.Identifier(name)))
+    migrations = Path(__file__).resolve().parents[4] / "migrations"
+    with psycopg.connect(host=host, port=port, dbname=name, user="ppap_migrator", password=ISOLATED_DEV_SECRET, autocommit=True) as conn:
+        for migration in sorted(migrations.glob("[0-9][0-9][0-9][0-9]_*.sql")):
+            conn.execute(migration.read_text(encoding="utf-8"))
+    return name
