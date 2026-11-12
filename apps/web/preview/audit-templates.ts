@@ -16,7 +16,7 @@ const library: TemplateLibrary = {customers: [
     tpl('li-pfmea', '潜在过程失效模式及后果分析（PFMEA）', '潜在过程失效模式及后果分析（PFMEA）', 'T10'),
     tpl('li-control-plan', '生产控制计划', '控制计划', 'T11'),
     tpl('li-special-characteristics', '过程特殊特性清单', '过程特殊特性清单', 'T12'),
-    tpl('li-ccsc', '产品过程CCSC特性管理清单', 'CC/SC 特性管理清单', null),
+    tpl('li-ccsc', '产品过程CCSC特性管理清单', 'CC/SC 特性管理清单', 'T12'),
     tpl('li-equipment', '设备开发验收清单', '设备清单', 'T13'),
     tpl('li-capacity', '产能评估表', '生产系统产能评估报告', 'T14'),
     tpl('li-issue-list', '项目问题清单', 'APQP项目问题清单', 'T15'),
@@ -34,7 +34,7 @@ const library: TemplateLibrary = {customers: [
     tpl('uaes-pgqp', '采购件质量计划 PGQP1（F-PU-127）', '采购件质量计划', 'E12'),
     tpl('uaes-measure-comparison', '测量比较报告（F-PU-166）', '测量比较报告', 'E02', '.xls'),
     tpl('uaes-sample-inspection', '样品检验报告（F-PU-207）', '初始样品检验报告', 'E01', '.xls'),
-    tpl('uaes-sample-approval', '样品认可报告', '样品认可报告', null, '.xls'),
+    tpl('uaes-sample-approval', '样品认可报告', '样品认可报告', 'E11', '.xls'),
     tpl('uaes-material-supplier-list', '材料及分供方清单', '材料产品及分供清单', 'T04'),
     tpl('uaes-traceability', '零件追溯检查单', '零件追溯说明', 'E10')]}
 ]}
