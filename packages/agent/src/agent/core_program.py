@@ -7,6 +7,7 @@ The controller resolves the immutable Suite and stages a bounded flat directory.
 from __future__ import annotations
 
 import json
+import logging
 import tempfile
 import time
 from dataclasses import replace
@@ -28,6 +29,7 @@ from agent.run import ExecutionContext
 MAX_MANIFEST = 4 * 1024 * 1024
 MAX_BUNDLE = 16 * 1024 * 1024
 AnalysisMode = Literal["standard", "deep"]
+logger = logging.getLogger(__name__)
 # Why one target's deep review did not complete; that target ran its Suite program.
 DEEP_DEGRADE_REASONS = frozenset({"deep_timeout", "deep_development_failed", "deep_input_missing", "deep_runtime_failed"})
 
@@ -218,9 +220,14 @@ def _develop_targets(snapshot, sources, programs, grant, work: Path, unavailable
                 prior_files={name: body.decode("utf-8") for name, body in programs[target.binding.checker_digest].items()},
                 require_independent=True,
             )
-        except Exception:
-            # One target's failed development never stops the audit of the others.
-            deep[target.file_version_id] = {"state": "degraded", "reason": "deep_timeout" if time.monotonic() >= deadline else "deep_development_failed"}
+        except Exception as exc:
+            # One target's failed development never stops the audit of the others. The short
+            # detail is for the operator log only; the product record keeps state and reason.
+            deep[target.file_version_id] = {
+                "state": "degraded",
+                "reason": "deep_timeout" if time.monotonic() >= deadline else "deep_development_failed",
+                "detail": f"{type(exc).__name__}: {exc}"[:300],
+            }
             continue
         artifacts[target.file_version_id] = artifact
         deep[target.file_version_id] = {"state": "completed"}
@@ -362,7 +369,16 @@ def _deep_output(snapshot, raw_artifacts, raw_deep) -> tuple[dict[str, CheckerAr
     for identity, state in raw_deep.items():
         if state == {"state": "completed"} and identity in artifacts:
             deep[identity] = {"state": "completed"}
-        elif isinstance(state, dict) and set(state) == {"state", "reason"} and state["state"] == "degraded" and state["reason"] in DEEP_DEGRADE_REASONS and identity not in artifacts:
+        elif (
+            isinstance(state, dict)
+            and set(state) - {"detail"} == {"state", "reason"}
+            and state["state"] == "degraded"
+            and state["reason"] in DEEP_DEGRADE_REASONS
+            and isinstance(state.get("detail", ""), str)
+            and identity not in artifacts
+        ):
+            if state.get("detail"):
+                logger.warning("deep_review_degraded %s %s: %s", identity, state["reason"], state["detail"][:300])
             deep[identity] = {"state": "degraded", "reason": state["reason"]}
         else:
             raise DeepError("deep_output_invalid")
