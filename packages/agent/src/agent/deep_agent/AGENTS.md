@@ -1,138 +1,59 @@
-# PPAP 深度审核：任务专用检查程序
+# PPAP 深度复核
 
-你在隔离的工作目录中，为本次一份目标文件编写并固定一个任务专用检查程序。本次规则、文件清单、预览、旧程序及试跑诊断都在用户消息中；本文件是每次都适用的固定要求。
+客户审核时，已验证的检查程序已经对目标文件的每条生效条款给出结论、证据和诊断。你在隔离的工作目录中逐条复核这些结论：对照条款原文和原件，认可，或用能在原件定位的证据订正。你不修改、不调用、不重写检查程序。本次规则、文件和程序结论都在工作目录中；本文件是每次都适用的固定要求。
 
-## 固定要求
+用户消息写明“本次任务：检查程序开发”时，本文件的复核要求不适用，改按技能 `ppap-semantic-audit` 的 `references/checker-development.md` 执行。
 
-- 生效条款和本次文件决定审核要求。程序可执行不等于业务判断正确；正式结果只来自固定 checker 的实际执行。
-- NG、UNABLE 和 NA 可以是最终结果。不要为了让全部条款变成 PASS 而修改判断。未知保持未知；独立已知违反仍可 NG。
-- 规则输入中的 appendix 是本次已确认附录，是规则的一部分，不是上次结论或系统建议。
-- 用户消息中的旧程序只是起点，必须按本次输入重新核对，不能直接沿用到其他文件。
-- 预览只截取部分单元格，不是完整扫描。关联文件的预览不能记到目标文件。
-- 原件只读。教学与开发只使用提供的规则、文件和实现；不要读取或推测测试预期、评分或历史最终判定。
+## 输入
 
-表格读取、PDF 建模、跨文件比较、原件命令和写法反例见技能 `ppap-semantic-audit`；遇到对应情形时先读取相关参考文档。
+- `files.json`：同批全部文件（本次目标、同批其他待审文件、参考文件），含 `file_version_id`、原文件名、文档类型和工作目录内的只读路径。
+- `rules.json`：本次冻结的条款原文与已确认附录。附录是规则的一部分。
+- `program-results.json`：程序对每条的结论（PASS / NG / NA / UNABLE / ERR）、说明、证据位置与摘录、诊断、检查范围。
+- `resources-hint.py`（若有）：该类型检查程序的表名、表头锚点、列别名、PDF 配置。只是“在哪找”的线索，不是本文件的版式。
 
-按本次生效条款和目标文件开发任务专用检查。正式结果来自程序执行。
+原件只读。不要读取或推测测试预期、评分或历史结论。
 
-1. 有 `current-checker.py` / `current-resources.py` 时，先复制为本轮的 `checker.py` / `resources.py`，避免中断丢失起点。然后读取 `reference-checker.py` 的相关原方法和 `reference-resources.json`（若存在）。用 `template-checker.py` 的任务类继承原 checker；优先调用语义相符的父类方法和辅助函数。原编号与本次条款身份分开。
-2. 若有 `current-checker.py` / `current-resources.py`，它们是最近候选，包含失败或局部试跑版本。结合本次诊断继续修改这些源码。
-3. 写入 `checker.py` 和必要的 `resources.py`。按每个实际条款绑定一个入口；模板只把本次方法装配为 `checks`，保留父类辅助能力。
-4. 尽早写出可试跑候选，再按缺口检查原件。提交试跑回执。阅读执行反馈，修复资源、扫描或判断错误。全部条款跑完并核对规则后，再提交同一程序以固定。
+## 怎么复核
 
-原源码是经验依据；本次条款和文件决定适用性。源数据只读。教学与开发只使用提供的规则、文件和实现；测试预期、其他实验评分和历史最终判定不参与生成。
+1. 读条款原文和附录，明确要满足什么：检查范围、全部满足还是至少一个、跨文件比较的方向与基数。
+2. 读程序结论、说明和证据。看程序引用的位置是否就是条款要求的内容。
+3. 到原件核对。常见的程序错误：表头别名或位置不同、合并单元格、续页或另一张表、读错列、把未读到当成不存在、ERR/UNABLE 其实能读到、PASS 只检查了一部分行。读取方法见技能参考 `references/review-reading.md`。
+4. 跨文件条款：按零件号、版本在 `files.json` 中找同批关联文件，自己读取比对；比较的含义见 `references/cross-file.md`，表格结构见 `references/table-reading.md`。
+5. 图片、签章、手写签名等视觉事实：用读取工具直接查看图片文件；PDF 页需要看图时先渲染成 PNG。扫描 PDF（页没有文字层）保持 UNABLE，不要靠看图订正。
 
-检查写入 `checker.py`，并提供 `create_audit(audit_file, rule, group_context=None)`。它返回带 `checks` 的审核对象；持有需要释放的资源时实现 `close()`。需要本次文件自己的资源时，再写 `resources.py`。
+时间有限：先处理可疑的条款（ERR、UNABLE、证据为空、诊断有警告、说明与原件不符），再核对其余条款。
 
-完整 `RuleInput` 保留客户、车型、零件、预置来源、条款和已确认附录。V4 的 `reference-bindings.json` 是原条款 ID → 方法名；先比较本次正文和附录再复用方法，相同 ID 不能证明语义仍相同。`group_context` 包含本组全部文件，其他 `target` 也可作为关联资料；仅为当前目标执行本次条款，并按文件版本记录来源。规则中的客户适用范围不是文件中已经读到的客户身份。
+## 判定
 
-## 目录叶子
+- 认可（`confirmed`）：程序结论与原件相符，或你没有找到足以推翻它的证据。拿不准时认可。
+- 订正（`corrected`）：你在原件中找到证据，证明程序结论错误。NG→PASS、PASS→NG、UNABLE/ERR/NA→有证据的结论、PASS/NG→UNABLE（条款要求的内容确实无法从原件确定）都允许。
+- 未知不能成为 PASS：PASS 要证明条款要求的每一部分都满足（全部行、全部页、全部关联文件）；只看到一部分不能 PASS。
+- NG 要有至少一处明确违反的证据。读不到、不适用、技术失败分别是 UNABLE、NA，不要写成 NG。
+- 说明中写有“已按用户决定拒绝自动判定”的条款，以及含义尚待用户确认（`clarifications`）的条款，不要订正为 PASS。
 
-`checkers/<客户>/<组>/` 是目录叶子，按客户分组。直接导入函数，不要注册表、插件或客户-版本映射。
+## 证据（宿主逐条核对）
 
-允许：
+订正至少给一项证据，最多 12 项。每项包含 `file_version_id`、`kind`（`structure` 或 `visual`）、`locator` 和 `excerpt`：
 
-- `audit.checker_lib.excel`：`load_workbook`、`column_letter`
-- `audit.checker_lib.pdf`：`read_tables`、`convert_pdf_to_excel`
-- `audit.checker_lib.visual`：`observe_excel_region`（现有 Excel 区域观察；不新增观察服务）
-- `audit.checker_lib.tables`：表头、合并格、空白和范围
-- `audit.checker_lib.evidence`：原件位置、结构证据和诊断
-- `audit.contracts`，以及执行入口 `create_audit`（运行时由既有 `check_factory` 调用）
+- Excel 单元格：`{"kind":"xlsx_cell","sheet":"工作表名","cell":"B7"}`；区域：`{"kind":"xlsx_range","sheet":"工作表名","start":"A5","end":"F5"}`。
+- PDF 页：`{"kind":"pdf_page","page":3}`，摘录取自该页文字层。
+- Word：`{"kind":"docx_paragraph","paragraph":12}` 或 `{"kind":"docx_cell","table":1,"row":3,"column":2}`，均从 1 开始。
+- 图片文件：`kind` 为 `visual`，`locator` 为 `{"kind":"pdf_page","page":1}`，摘录写你看到的内容。有文字层的 PDF 页上的签章等视觉事实：`kind` 为 `visual`，`locator` 为该页。
 
-`checker.py` 和 `resources.py` 禁止：
+`structure` 证据的摘录必须逐字取自原件该位置（单元格原值、页内原文），不要改写、拼接、翻译或补全。宿主用同样的读取方法比对（去掉空白后，摘录必须是该位置原文的一部分）；任何一项核对不过，这条订正作废，保留程序结论。
 
-- `audit.checkers`，以及 `audit.checker_lib.li` / `v3` / `v4` 的类或业务 helper
-- `importlib.import_module` / `__import__` 指向这些模块；非字面量动态导入也无法审查，同样禁止
-- `from audit.standard_library import check_clause`
-- 继承 `ExcelAgent` 或其它旧版 Checker 来补齐本版本没有的条款
+## 输出
 
-缺少的版本、载体或条款保持不支持 / `UNABLE` / `ERR`，不得改用更低版本的 Checker，也不得因此返回 `PASS`。同一版本内部的读取策略保持原样，例如 PDF 文字不足时的 OCR、以及 `.xls` 转工作簿。不要把它们当成跨版本回退删掉。
+结果写入 `execution.json`：
 
-`library_revision()` 哈希共享运行库，包括 `checker_lib/` 下各公司的读取实现。`checkers/<客户>/` 下的目录叶子不进入该指纹；只改叶子的 `checker.py` / `resources.py` 不改变它，叶子身份是 `checker_digest`。
-
-共享库与已保存证明的 `library_revision` 不一致时，`samples_not_rerun` 为真。冻结结果按既有验证合同保留 `verified`，并披露样本未重跑。正式发布 `publish_official` 在 `samples_not_rerun` 时拒绝（`official_suite_validation_required`）。已排队任务的 `executor_revision` 使用公共 `library_revision()`。
-
-## 判断
-
-以下 `ctx` 与 `row` 方法属于 Excel / Fluent 路径。UAES 原生方法使用下一节说明的事实读取和异常合同。
-
-- 一个条款一个入口、一项结果。条款 ID 来自本次生效规则。
-- 读不到、不适用、技术失败分别是 `UNABLE`、`NA`、`ERR`。
-- 空范围、零断言或未执行不能是 `PASS`。规则写明空范围时，调用 `ctx.record_empty_scope(状态, 依据)`。状态只能是 `PASS`、`NA` 或 `UNABLE`，依据不能为空。这不能掩盖已收集的 NG。
-- 方法末尾的 `PASS` 不能掩盖已经收集到的 NG。
-- 规则要求全部满足时，先调用 `ctx.require_all()`。范围被提前打断，或仍有未解问题时，不能保持 `PASS`。
-- 规则只要求存在一个时，先调用 `ctx.require_one()`，并用 `ctx.mark_witness()` 记录有效见证。
-- 搜索未完成时调用 `ctx.note_search(found=False, exhausted=False, label="...")`。不能把未完成搜索写成确认不存在。
-- 明确反例可以是 `NG`。其他未解问题用 `ctx.note_unresolved()` 保留。
-- 含义需要用户决定时，调用 `ctx.ask(问题编号, 问题, ((候选编号, 名称, 解释), ...))`。至少两个候选。这不能因此返回 `PASS`。
-- `row.observation(列名)` 只有 `state` 和 `value`。不要读取 `unreadable`、`known` 或 `missing` 属性。`state` 只能是 `known`、`blank`、`missing` 或 `unresolved`。`0` 和 `False` 仍是 `known`。`blank` 不是确认不存在。`unresolved` 不能当成已知值，也不能因此返回 `PASS`。
-- 关联文件的条款在 `group_context.rules_by_id`，键是关联文件的版本 ID。不要用目标文件的条款代替它。预览不是完整扫描，也不能把关联单元格记到目标文件。
-- 打开关联工作簿后，先 `ctx.bind_workbook(workbook, 关联文件版本ID)`，再读取。只记录一个关联单元格时，再调用 `ctx.note_cell(表名, 行号, 列号, file_version_id=关联文件版本ID)`。版本 ID 来自该文件的 `file_metadata["file_version_id"]`。摘录只用单元格原值。
-
-## Excel / Fluent
-
-本节只用于仍继承 `ExcelAgent` 的历史任务。目录叶子使用上一节的 `audit.checker_lib`，不要继承 `ExcelAgent`。
-
-复用 `ExcelAgent`、`@rule(..., clause_id="条款ID")` 和原 Fluent API。类属性设置 `CLAUSE_BOUND_CHECKS = True`。
-
-直接导入：
-
-- `from audit.checker_lib.nio.excel_agent import ExcelAgent, rule`
-- `from audit.engine.rule_engine.context import RuleContext`
-- `from audit.engine.rule_engine.fluent import Table`
-- `from audit.engine.rule_engine.contracts import RuleResource`
-- `from documents.pdf import PdfSpec`
-
-同一文档类型的 PDF 可以有不同版式。不要按文档类型或文件名选择预设。预设是其他文件的例子，不是本文件的版式。
-
-此路径的目标 PDF 必须把 spec 赋给类属性 `PDF_SPEC`。关联 PDF 写入类属性 `PDF_SPECS`，键是 `file_version_id`，并用 `self.load_related_pdf(file_version_id)` 打开，再调用 `ctx.bind_workbook` 记录来源。开发期间可以修订 spec；`template-pdf-spec.py` 只提供候选。配置变化后重新转换并完整试跑。没有可用文字网格，或转换后定位不完整时，保持 `UNABLE`，不要改成 `PASS`。
-
-`resources.py` 定义 `RESOURCE`，并由 `ExcelAgent(..., resource=RESOURCE)` 传入。任务资源与该文档类型的注册表资源进入同一个 `ctx.resource`。同名项以任务资源为准。试跑出现「未定义数据区规范」时，按目标文件的实际表名和列名写资源。尖括号只是占位，不能原样执行：
-
-```python
-from types import MappingProxyType
-
-from audit.engine.rule_engine.contracts import ColumnModel, DomainTokensModel, RuleResource, SectionModel, SheetModel
-
-SHEET = SheetModel(canonical_name="<本次工作表>", include_keywords=("<本次工作表>",))
-SECTION = SectionModel(
-    canonical_name="<本次数据区>",
-    sheet_name="<本次工作表>",
-    header_anchors=("<列甲>", "<列乙>"),
-    row_anchors=("<列甲>",),
-)
-COLUMN_A = ColumnModel(canonical_name="<列甲>", section_name="<本次数据区>", aliases=("<列甲>",))
-COLUMN_B = ColumnModel(canonical_name="<列乙>", section_name="<本次数据区>", aliases=("<列乙>",))
-RESOURCE = RuleResource(
-    sheets=MappingProxyType({SHEET.canonical_name: SHEET}),
-    sections=MappingProxyType({SECTION.canonical_name: SECTION}),
-    columns=MappingProxyType({COLUMN_A.canonical_name: COLUMN_A, COLUMN_B.canonical_name: COLUMN_B}),
-    field_blocks=MappingProxyType({}),
-    fields=MappingProxyType({}),
-    tokens=DomainTokensModel(),
-)
+```json
+{
+  "file_version_id": "目标文件的 file_version_id",
+  "reviews": [
+    {"clause_id": "条款ID", "decision": "confirmed", "reason": "简短依据"},
+    {"clause_id": "条款ID", "decision": "corrected", "status": "NG", "reason": "原件位置与内容，以及程序为什么错", "evidence": [{"file_version_id": "…", "kind": "structure", "locator": {"kind": "xlsx_cell", "sheet": "PFMEA", "cell": "H12"}, "excerpt": "原值"}]}
+  ]
+}
 ```
 
-## UAES 原生方法
-
-模板直接继承 Resolver 选出的 UAES 类。保留模板中的 `bind_native_checks(self)`；它使用原 `RuleItem` / `RuleCheck`，按显式 `clause_id` 调用原 `check(ith)`，并保留每项独立的证据与完成计数。数量与顺序由本次条款决定，继承的方法只提供实现经验。任务方法无 `ctx` 参数，例如：
-
-```python
-@rule("本次条款", clause_id="本次条款ID")
-def check_001(self) -> tuple[str, str]:
-    return super().rule_1()  # 已核对它与本次条款及附录一致时复用
-```
-
-布局适配沿用参考实现的别名、`native().field(...)`、`native().rows(...)`、`related(...)` 和 `witness(...)`；可将本次别名写在 `resources.py` 后显式导入。确认缺失的业务事实用 `MissingFact`，未知事实用 `UnknownFact`；读取或程序故障保留 `ERR`。成功读取仍须按规则完成比较和范围扫描；仅有来源不能证明规则实现正确。无业务行时保持原方法的未知处理，不能把空循环当作通过。
-
-`NativeFacts` 可以直接读取电子 PDF 的文字块与位置，此时不需要表格 `PDF_SPEC`。改走网格/Fluent 路径时使用上节合同。原件视觉方法通过现有运行时执行；没有固定的视觉观察时返回 `UNABLE`，不得自行增加模型调用。
-
-## 试跑回执
-
-宿主执行 `check()`。回执不包含审核结果。
-
-- `{"completed":true,"artifact":"checker.py"}`：运行全部生效条款。
-- `{"completed":true,"artifact":"checker.py","clauses":["条款ID"]}`：只运行这些条款。局部试跑不能固定程序。
-- 修改 `resources.py`，或修改条款方法以外的共享函数后，下一次运行全部生效条款。
-- 覆盖全部条款后，先看已有诊断和候选；只对未解决的依据补读。若判断符合本次条款，再次提交同一程序且不要带 `clauses`。成功结束的模型轮和相同程序一起构成固定提交；中断、预算耗尽时留下的文件只是候选。不要只为风格、注释或导入顺序重写已核对的候选。
-- 修复读取或实现错误后，可以依据新的执行证据改变判定，并说明原因。业务标准仍以本次规则为准。可执行只说明程序跑完，不说明业务判断正确。
+`reviews` 恰好覆盖 `program-results.json` 的全部 `clause_id`，每条一项。`reason` 用中文写给审核员，说明依据。

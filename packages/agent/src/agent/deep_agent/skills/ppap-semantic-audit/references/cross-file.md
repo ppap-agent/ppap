@@ -1,15 +1,14 @@
 # 跨文件比较
 
-条款要求目标文件与关联文件一致时（例如“PFD 每项工序均在 CP 中体现”“特殊特性清单的特性在 PFMEA 中标注”），按本节读取关联文件并比较。
+条款要求目标文件与关联文件一致时（例如“PFD 每项工序均在 CP 中体现”“特殊特性清单的特性在 PFMEA 中标注”），按本节找到关联文件并比较。复核时直接读取关联原件，证据写关联文件自己的 `file_version_id` 和位置；“记录来源”一节只用于编写检查程序。
 
 ## 找到关联文件
 
-- `group_context.by_audit_id` 是本组全部文件，键是文件版本 ID；`group_context.by_doc_type` 按文档类型分组。
-- 关联文件的条款在 `group_context.rules_by_id`，键是关联文件的版本 ID。不要用目标文件的条款代替它。
+- 复核时同批全部文件在 `files.json`。编写检查程序时，`group_context.by_audit_id` 是本组全部文件，键是文件版本 ID；`group_context.by_doc_type` 按文档类型分组；关联文件的条款在 `group_context.rules_by_id`，不要用目标文件的条款代替它。
 - 按零件、版本和原文要求确认文件关联。文件名和相似标题只帮助导航；无法确认是同一零件、同一版本时，相关判断保持未解决，不能当作已关联。
 - 规则要求的关联文件不在本组时，相关条款为 `UNABLE` 并写明缺少哪份文件，不能因此返回 `PASS`。
 
-## 记录来源
+## 记录来源（编写检查程序）
 
 - 打开关联工作簿后先 `ctx.bind_workbook(workbook, 关联文件版本ID)`，再读取。记录单个关联单元格用 `ctx.note_cell(表名, 行号, 列号, file_version_id=关联文件版本ID)`。版本 ID 来自该文件的 `file_metadata["file_version_id"]`。
 - 关联 PDF 用 `self.load_related_pdf(file_version_id)` 打开，配置写在 `PDF_SPECS[file_version_id]`。
@@ -26,5 +25,5 @@
 
 - 一侧的值读不到、公式无缓存或记录身份不确定时，相关比较是未知，不能当作一致，也不能当作不一致。
 - 明确的不一致（同一身份的记录取值不同、要求覆盖的项目在关联文件中确认不存在）是 `NG`，并同时记录两侧来源。
-- 搜索未完成时用 `ctx.note_search(found=False, exhausted=False, label="...")`，不能写成确认不存在。
+- 搜索未完成时不能写成确认不存在（检查程序中用 `ctx.note_search(found=False, exhausted=False, label="...")`）。
 - 旧 checker 中的子串匹配、删除标点后比较、只取最佳单表等做法，必须先核对原文；不能作为通用的相等或范围定义。

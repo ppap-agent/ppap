@@ -1,6 +1,6 @@
 # 工具命令
 
-读取工具只提供观察，帮助编写检查程序；正式结果只来自固定 checker 的执行。documents.json 由下面的 inspect 生成。
+读取工具只提供观察：复核时用来查看原件，开发时用来编写检查程序。documents.json 由下面的 inspect 生成。
 
 ```sh
 python -m audit.document_tools view documents.json --document DOCUMENT_ID --table Sheet1 --rows 1:15 --columns A:F

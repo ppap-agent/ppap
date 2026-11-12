@@ -15,7 +15,7 @@ from audit.kinds import PpapDocumentType
 from openpyxl import Workbook
 
 # Pi loads these natively; the prompt carries only this run's inputs.
-SHIPPED = (DEEP_AGENT / "AGENTS.md").read_text(encoding="utf-8")
+SHIPPED = (DEEP_AGENT / "skills" / "ppap-semantic-audit" / "references" / "checker-development.md").read_text(encoding="utf-8")
 PDF_REFERENCE = (DEEP_AGENT / "skills" / "ppap-semantic-audit" / "references" / "pdf-reading.md").read_text(encoding="utf-8")
 
 REVISION = "checker-test-revision"

@@ -758,6 +758,7 @@ def _prompt(
         else "本次完整规则输入（rules 与 appendix 是本次生效规则，预置来源只用于选择参考实现）："
     )
     parts = [
+        f"本次任务：检查程序开发。先读取技能 {SKILL} 的 references/checker-development.md，按其要求执行。",
         starting_point,
         "",
         rule_heading,
@@ -768,8 +769,8 @@ def _prompt(
     ]
     formal = _formal_requirement(rule)
     if formal:
-        parts.insert(4, "")
-        parts.insert(5, formal)
+        parts.insert(5, "")
+        parts.insert(6, formal)
     preview = _development_previews(audit_file, group_context, None if layout is None else layout.previews)
     if preview:
         parts.extend(["", preview])
@@ -1157,7 +1158,7 @@ def develop_checker(
             if selected or require_independent:
                 for name, source in draft.files.items():
                     if violations := import_violations(ast.parse(source)):
-                        raise CheckerTrialError(f"checker_cross_version_import: {name} 第 {'; 第 '.join(violations[:5])}。只能导入 AGENTS.md「目录叶子」允许的模块。")
+                        raise CheckerTrialError(f"checker_cross_version_import: {name} 第 {'; 第 '.join(violations[:5])}。只能导入 checker-development.md「目录叶子」允许的模块。")
             type_check(draft.files, stage / "typecheck")
             results = run_program(
                 encoded,

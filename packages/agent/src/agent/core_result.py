@@ -8,8 +8,14 @@ from agent.mapping import checker_response
 from agent.protocol import ExecuteRequest, ExecuteResponse
 
 
-def core_response(spec: ExecuteRequest, snapshot: ExecutionSnapshot, result: dict, *, deep: dict[str, dict[str, str]] | None = None) -> ExecuteResponse:
-    """``deep`` is given exactly for a deep-mode round: each target's deep review state."""
+def core_response(
+    spec: ExecuteRequest, snapshot: ExecutionSnapshot, result: dict, *, deep: dict[str, dict[str, str]] | None = None, reviews: dict[tuple[str, str], dict] | None = None
+) -> ExecuteResponse:
+    """``deep`` is given exactly for a deep-mode round: each target's deep review state.
+
+    ``reviews`` holds the deep reviewer's record per (file, clause): confirmed, corrected
+    (the finding already carries the corrected verdict) or rejected (the program verdict stays).
+    """
     targets = {target.file_version_id: target for target in snapshot.targets}
     executed = [(item, [finding for finding in result["findings"] if finding["file_version_id"] == item.file_version_id]) for item in spec.files if item.role == "target"]
     usage = {key: result[key] for key in ("input_tokens", "output_tokens", "model_requests") if type(result.get(key)) is int and result[key] >= 0}
@@ -21,6 +27,10 @@ def core_response(spec: ExecuteRequest, snapshot: ExecutionSnapshot, result: dic
         if version in targets:
             target = targets[version]
             finding.locator = {**(finding.locator or {}), "suite_revision_id": target.suite_revision_id, "checker_digest": target.binding.checker_digest, "verification_status": target.verification}
+            record = (reviews or {}).get((version, str((finding.locator or {}).get("rule_item_id"))))
+            if record is not None and isinstance(finding.locator.get("semantic"), dict):
+                # Kept apart from human review; evidence of a correction is already the finding's sources.
+                finding.locator["semantic"]["deep_review"] = {key: value for key, value in record.items() if key not in {"clause_id", "evidence"}}
     for row in response.coverage.rule_items:
         version, clause = row["file_version_id"], row["rule_item_id"]
         target = targets[version]

@@ -135,7 +135,8 @@ class SchemaUpgradeTests(unittest.TestCase):
             )
             self.schema.require(deep, "read removed audit mode schema")
             self.assertEqual(deep.stdout.strip(), b"0")
-            # Checker optimization/generation are retired; deep mode is a task choice frozen on the Round.
+            # Checker optimization/generation are retired; deep mode is a task choice frozen on the Round
+            # and reviews program results, so generated round programs are no longer recorded.
             retired = self.schema.psql(
                 self.schema.migrator_user(),
                 self.schema.migrator_password(),
@@ -149,7 +150,7 @@ class SchemaUpgradeTests(unittest.TestCase):
                 " (SELECT indexdef LIKE '%(round_id, file_version_id, charge, is_free_trial)%' FROM pg_indexes WHERE indexname='usage_events_file_slice_idx')",
             )
             self.schema.require(retired, "read deep mode schema")
-            self.assertEqual(retired.stdout.strip(), b"0|2|1|t")
+            self.assertEqual(retired.stdout.strip(), b"0|2|0|t")
 
             tables = self.schema.psql(
                 self.schema.migrator_user(),

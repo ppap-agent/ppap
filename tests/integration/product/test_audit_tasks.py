@@ -20,7 +20,6 @@ from product.feishu import UserTokens
 from product.fixtures import RULE_A, USER_ALICE, USER_BOB
 from product.identity import SESSION_COOKIE
 from product.settings import Settings
-from product.store.deep_artifacts import DeepArtifactStore
 from product.store.store import AuthStore
 from product.store.suite_releases import SuiteReleaseStore
 from psycopg.types.json import Jsonb
@@ -2394,7 +2393,6 @@ def test_deep_mode_is_refused_when_unavailable(matched_task):
 
 def test_a_file_whose_deep_review_did_not_complete_is_billed_500_and_says_so(executable_task, core_system, deep_offered):
     _client, worker, path, body, _rule = executable_task
-    core_system.controller.runtime.save_round_artifacts = DeepArtifactStore(worker).save_round_artifacts
     worker.settings.feishu_free_trial_quota_points = 10_000
     client, http, _calls = billing_client(worker, {"enabled": True, "user_quota": 0, "ai_package_purchased": False})
     try:
@@ -2412,8 +2410,6 @@ def test_a_file_whose_deep_review_did_not_complete_is_billed_500_and_says_so(exe
         assert [(row["consumed_points"], row["charge"]) for row in events] == [(500, "audit")]
         assert [row["points"] for row in client.get("/audit-usage").json()["entries"]] == [500]
         assert core_system.audit_jobs[-1].analysis_mode == "standard"
-        with worker._conn() as conn:
-            assert conn.execute("SELECT count(*) FROM product.deep_round_programs").fetchone() == (0,)
     finally:
         client.close()
         http.close()
@@ -2432,7 +2428,7 @@ def test_the_surcharge_is_recorded_once_and_only_with_a_committed_deep_result(ma
         assert sorted(row["consumed_points"] for row in client.get("/usage").json()["events"]) == [500]
         version = body["files"][0]["file_version_id"]
         claimed = worker.claim_job("deep-commit")
-        review = {"state": "completed"} if state == "completed" else {"state": "degraded", "reason": "deep_development_failed"}
+        review = {"state": "completed"} if state == "completed" else {"state": "degraded", "reason": "deep_review_failed"}
         result = {"findings": [], "coverage": {"checker_execution": {"analysis_mode": "deep", "targets": [{"file_version_id": version, "deep_review": review}]}}}
         assert worker.complete_job(claimed, "deep-commit", result, "succeeded") is True
         assert worker.complete_job(claimed, "deep-commit", result, "succeeded") is False

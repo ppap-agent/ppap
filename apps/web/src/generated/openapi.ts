@@ -2424,16 +2424,16 @@ export interface components {
         };
         /**
          * AuditDeepReview
-         * @description One target of a deep-mode round: its own program ran ("completed"), or its
-         *     deep review did not complete and its Suite program ran instead ("degraded"),
-         *     billed at 500 instead of 750.
+         * @description One target of a deep-mode round: every clause result was reviewed against the
+         *     originals ("completed"), or the review did not complete and the program results
+         *     stand unreviewed ("degraded"), billed at 500 instead of 750.
          */
         AuditDeepReview: {
             /**
              * Reason
              * @enum {string}
              */
-            reason?: "deep_timeout" | "deep_development_failed" | "deep_input_missing" | "deep_runtime_failed";
+            reason?: "deep_timeout" | "deep_review_failed" | "deep_review_invalid" | "deep_input_missing" | "deep_runtime_failed";
             /**
              * State
              * @enum {string}
@@ -3570,6 +3570,36 @@ export interface components {
             verification?: {
                 [key: string]: string | number;
             } | null;
+        };
+        /**
+         * DeepClauseReview
+         * @description The deep reviewer's record for one clause, kept apart from human review.
+         *
+         *     corrected: the finding carries the reviewer's verdict and its checked evidence;
+         *     rejected: the proposed correction failed the evidence check and the program verdict stands.
+         */
+        DeepClauseReview: {
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "confirmed" | "corrected" | "rejected";
+            /**
+             * Program Status
+             * @enum {string}
+             */
+            program_status: "PASS" | "NG" | "NA" | "UNABLE" | "ERR";
+            /** Proposed Status */
+            proposed_status?: ("PASS" | "NG" | "NA" | "UNABLE") | null;
+            /** Reason */
+            reason: string;
+            /** Rejection */
+            rejection?: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status?: "PASS" | "NG" | "NA" | "UNABLE";
         };
         /** DocLink */
         DocLink: {
@@ -5047,6 +5077,7 @@ export interface components {
             checks_performed?: number;
             /** Clause Id */
             clause_id: string;
+            deep_review?: components["schemas"]["DeepClauseReview"];
             /** Diagnostic */
             diagnostic?: string;
             /** Diagnostics */

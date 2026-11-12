@@ -1,4 +1,4 @@
-"""Production composition: deep-mode rounds persist their generated programs through the product store."""
+"""Production composition: the Deep Controller wires product state and no development RPC."""
 
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from worker import deep_controller
 
 
-def test_controller_wires_round_program_persistence_and_no_development_rpc(monkeypatch):
+def test_controller_wires_no_round_program_persistence_and_no_development_rpc(monkeypatch):
     policy = SimpleNamespace(runtime_identity=lambda: {"model": "test-model"})
     settings = SimpleNamespace(deep_controller_socket="/not-opened-in-this-controlled-test", deep_execution_revision=lambda: "runtime", deep_execution_policy=lambda: policy)
     store = SimpleNamespace(settings=settings, objects=object(), role="worker")
@@ -40,6 +40,5 @@ def test_controller_wires_round_program_persistence_and_no_development_rpc(monke
     monkeypatch.setattr(deep_controller.signal, "signal", lambda *args: None)
     assert deep_controller.main() == 0
     assert not hasattr(captured["controller"], "development_handler")
-    persist = captured["save_round_artifacts"]
-    assert persist.__func__ is deep_controller.DeepArtifactStore.save_round_artifacts and persist.__self__.store is store
+    assert "save_round_artifacts" not in captured
     assert captured["started"] and captured["closed"]

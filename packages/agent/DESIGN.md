@@ -1,5 +1,7 @@
 # Deep：开发任务专用的审核 Checker
 
+> 现状（2026-11-12）：客户审核中的深度模式不再写程序，改为复核 Suite 程序的结论（见 [DATA_MODEL](../../docs/DATA_MODEL.md) 深度模式一节）。本文的开发流程只用于平台离线开发检查程序（`scripts/deep_lab.py`），Pi 的开发要求在 `deep_agent/skills/ppap-semantic-audit/references/checker-development.md`。
+
 本文定义 checker 路径的合同；具体行为以源码和测试为准。**Deep 根据本次 rules 和文件，开发、试跑并交付一组可独立执行的 checker。** 原 checker、资源类型和 Fluent API 是直接使用的实现基础。允许重构职责和接口，已有算法与有效行为继续保留。
 
 本文拥有任务 checker 的接口、资源语义与开发流程；[PRODUCT](PRODUCT.md) 拥有用户确认旅程，[DATA_MODEL](../../docs/DATA_MODEL.md) 拥有输入、确认与轮次的数据不变量，部署与授权沿用 [ARCHITECTURE 的执行边界](../../docs/ARCHITECTURE.md#执行)。当前实现是固定 checker，不是 RulePlan / AuditTrace。条款形式化的数据合同见 DATA_MODEL。第 6 节区分现有能力与验证缺口。

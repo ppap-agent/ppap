@@ -303,12 +303,27 @@ class AuditCheckerVerification(TypedDict):
 
 
 class AuditDeepReview(TypedDict):
-    """One target of a deep-mode round: its own program ran ("completed"), or its
-    deep review did not complete and its Suite program ran instead ("degraded"),
-    billed at 500 instead of 750."""
+    """One target of a deep-mode round: every clause result was reviewed against the
+    originals ("completed"), or the review did not complete and the program results
+    stand unreviewed ("degraded"), billed at 500 instead of 750."""
 
     state: Literal["completed", "degraded"]
-    reason: NotRequired[Literal["deep_timeout", "deep_development_failed", "deep_input_missing", "deep_runtime_failed"]]
+    reason: NotRequired[Literal["deep_timeout", "deep_review_failed", "deep_review_invalid", "deep_input_missing", "deep_runtime_failed"]]
+
+
+class DeepClauseReview(TypedDict):
+    """The deep reviewer's record for one clause, kept apart from human review.
+
+    corrected: the finding carries the reviewer's verdict and its checked evidence;
+    rejected: the proposed correction failed the evidence check and the program verdict stands.
+    """
+
+    decision: Literal["confirmed", "corrected", "rejected"]
+    program_status: Literal["PASS", "NG", "NA", "UNABLE", "ERR"]
+    reason: str
+    status: NotRequired[Literal["PASS", "NG", "NA", "UNABLE"]]
+    proposed_status: NotRequired[Literal["PASS", "NG", "NA", "UNABLE"] | None]
+    rejection: NotRequired[str]
 
 
 class AuditDeepModeOption(TypedDict):
@@ -527,6 +542,7 @@ class SemanticEvidence(TypedDict):
     supply: NotRequired[SupplyNeed]
     severity: NotRequired[Literal["A", "B", "C"]]
     severity_override: NotRequired[SeverityOverride]
+    deep_review: NotRequired[DeepClauseReview]
 
 
 class EvidenceSource(TypedDict):
