@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import signal
 import subprocess
 import time
@@ -16,6 +17,10 @@ from audit.models import Artifact
 from pydantic import BaseModel, Field, ValidationError
 
 from agent.execution.secure_files import read_json, read_regular, reject_constant, unique_object
+
+# What Pi loads natively from its agent directory: the fixed instructions (AGENTS.md) and the
+# reference skills. Each run gets a fresh read-only copy; nothing from the work directory is trusted.
+DEEP_AGENT = Path(__file__).resolve().parents[1] / "deep_agent"
 
 T = TypeVar("T", bound=BaseModel)
 ReasoningEffort = Literal["xhigh", "high", "medium", "low"]
@@ -204,6 +209,16 @@ class ModelRunner:
         raise NotImplementedError
 
 
+def install_deep_agent(home: Path) -> None:
+    """Copy AGENTS.md and skills/ into Pi's agent directory, read-only, exactly as shipped."""
+    shutil.copy2(DEEP_AGENT / "AGENTS.md", home / "AGENTS.md")
+    shutil.copytree(DEEP_AGENT / "skills", home / "skills")
+    for path in [home / "AGENTS.md", *(home / "skills").rglob("*")]:
+        # Files are read-only; directories stay removable with the work directory.
+        if path.is_file():
+            path.chmod(0o400)
+
+
 class PiRunner(ModelRunner):
     """Fixed Pi SDK process with the same artifact and execution-grant contract."""
 
@@ -213,6 +228,7 @@ class PiRunner(ModelRunner):
         sandbox_profile()
         home = work / "pi-home"
         home.mkdir(mode=0o700)
+        install_deep_agent(home)
         (work / "prompt.txt").write_text(prompt, encoding="utf-8")
         config = {
             "home": str(home),

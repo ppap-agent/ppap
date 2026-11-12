@@ -5,6 +5,8 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import subprocess
+import sys
 import time
 from collections import Counter
 from collections.abc import Mapping
@@ -24,12 +26,54 @@ from agent.execution.guest_model import ModelProtocolError
 T = TypeVar("T", bound=BaseModel)
 MAX_TRIALS = 6
 MAX_FILE_BYTES = 256 * 1024
-GUIDE = Path(__file__).resolve().parents[1] / "skill" / "references" / "checker-development.md"
-PDF_GUIDE = Path(__file__).resolve().parents[1] / "skill" / "references" / "pdf-reading.md"
+# Pi loads the fixed instructions and this reference skill natively (guest_model.DEEP_AGENT);
+# the prompt carries only this run's rule, files and diagnostics.
+SKILL = "ppap-semantic-audit"
 
 
 class CheckerProgramError(ValueError):
     """The checker program could not be fixed. This is not an empty success."""
+
+
+# The deep image ships pyright with the Pi runner. Every verified checker leaf passes this
+# configuration: strict, except that method parameters may stay unannotated.
+PYRIGHT = Path("/opt/ppap-pi/node_modules/.bin/pyright")
+TYPE_CHECK = {
+    "typeCheckingMode": "strict",
+    "pythonVersion": "3.12",
+    "reportMissingParameterType": "none",
+    "reportUnknownParameterType": "none",
+    "reportMissingModuleSource": "none",
+    "reportMissingTypeStubs": "none",
+}
+
+
+def type_check(files: Mapping[str, str], work: Path, *, pyright: Path = PYRIGHT) -> None:
+    """Type errors go back to the next trial before the program runs. Without pyright (outside
+    the deep image) there is nothing to run; a pyright that cannot run stops development."""
+    if not pyright.is_file():
+        return
+    program = work / "program"
+    program.mkdir(parents=True)
+    for name, source in files.items():
+        (program / name).write_text(source, encoding="utf-8")
+    config = work / "pyrightconfig.json"
+    config.write_text(json.dumps({**TYPE_CHECK, "extraPaths": [str(program)]}), encoding="utf-8")
+    try:
+        completed = subprocess.run(
+            [str(pyright), "--project", str(config), "--pythonpath", sys.executable, "--outputjson", *sorted(str(program / name) for name in files)],
+            capture_output=True,
+            text=True,
+            timeout=180,
+            check=False,
+        )
+        report = json.loads(completed.stdout)
+    except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+        raise CheckerProgramError("类型检查无法执行") from exc
+    errors = [item for item in report.get("generalDiagnostics", []) if item.get("severity") == "error"]
+    if errors:
+        lines = [f"{Path(item['file']).name}:{item['range']['start']['line'] + 1}: {item['message']} ({item.get('rule', '')})" for item in errors[:30]]
+        raise CheckerTrialError("类型检查未通过（pyright strict）：\n" + "\n".join(lines))
 
 
 class CheckerTrialError(CheckerProgramError):
@@ -706,14 +750,12 @@ def _prompt(
     development_feedback: str | None = None,
     selected_source: bool = False,
 ) -> str:
-    guide = GUIDE.read_text(encoding="utf-8")
     rule_heading = (
         "本次完整规则输入（rules 与 appendix 是本次生效规则；只修订 selected/ 中的已选 Checker，不要改用其他版本）："
         if selected_source
         else "本次完整规则输入（rules 与 appendix 是本次生效规则，预置来源只用于选择参考实现）："
     )
     parts = [
-        guide,
         starting_point,
         "",
         rule_heading,
@@ -724,26 +766,25 @@ def _prompt(
     ]
     formal = _formal_requirement(rule)
     if formal:
-        parts.insert(5, "")
-        parts.insert(6, formal)
+        parts.insert(4, "")
+        parts.insert(5, formal)
     preview = _development_previews(audit_file, group_context, None if layout is None else layout.previews)
     if preview:
         parts.extend(["", preview])
     if development_feedback:
         parts.extend(["", "用户反馈与已确认训练样本：", development_feedback])
-    if rule.appendix:
-        parts.extend(["", "上述 appendix 是本次已确认附录，是规则的一部分，不是上次结论或系统建议。"])
+    if group_context is not None and any(item.audit_id != audit_file.audit_id for item in group_context.by_audit_id.values()):
+        parts.extend(["", f"本组有关联文件。条款涉及关联文件时，先读取技能 {SKILL} 的 references/cross-file.md。"])
     if prior:
-        parts.extend(["", "可作起点的旧程序。必须按本次输入重新核对，不能直接沿用到其他文件：", _encoded(prior).decode()])
+        parts.extend(["", "可作起点的旧程序：", _encoded(prior).decode()])
     if feedback and feedback_kind == "review":
         parts.extend(["", feedback])
     elif feedback and feedback_kind == "partial":
         parts.extend(["", feedback])
     elif feedback:
         parts.extend(["", "上次试跑失败：", feedback[:6000], "修复读取或实现错误后，按同一规则重新判断；保留修订依据。"])
-    parts.extend(["", "NG、UNABLE 和 NA 可以是最终结果。不要为了让全部条款变成 PASS 而修改判断。"])
     if layout is not None:
-        parts.extend(["", "" if layout.native else PDF_GUIDE.read_text(encoding="utf-8"), "", layout.instructions])
+        parts.extend(["", "" if layout.native else f"本次含 PDF：先读取技能 {SKILL} 的 references/pdf-reading.md。", "", layout.instructions])
     return "\n".join(parts)
 
 
@@ -1115,6 +1156,7 @@ def develop_checker(
                 for name, source in draft.files.items():
                     if import_violations(ast.parse(source)):
                         raise CheckerTrialError(f"checker_cross_version_import: {name}")
+            type_check(draft.files, stage / "typecheck")
             results = run_program(
                 encoded,
                 stage / "program",

@@ -7,12 +7,16 @@ from agent.auditor import SemanticRuntime
 from agent.checker_program import input_digest
 from agent.checker_spec import CheckerArtifact
 from agent.client import DeepError
-from agent.execution.guest_model import ModelProtocolError
+from agent.execution.guest_model import DEEP_AGENT, ModelProtocolError
 from agent.protocol import ExecuteRequest, FrozenFile
 from agent.run import ExecutionContext
 from audit.contracts import AuditInput, RuleInput
 from audit.kinds import PpapDocumentType
 from openpyxl import Workbook
+
+# Pi loads these natively; the prompt carries only this run's inputs.
+SHIPPED = (DEEP_AGENT / "AGENTS.md").read_text(encoding="utf-8")
+PDF_REFERENCE = (DEEP_AGENT / "skills" / "ppap-semantic-audit" / "references" / "pdf-reading.md").read_text(encoding="utf-8")
 
 REVISION = "checker-test-revision"
 VALID_PROGRAM = """
@@ -1486,9 +1490,8 @@ def test_confirmed_appendix_enters_development_and_execution(tmp_path: Path) -> 
         context=ExecutionContext(),
     )
 
-    assert "本次已确认附录" in developer.prompts[0]
     assert "空值不是通过" in developer.prompts[0]
-    assert "不是上次结论" in developer.prompts[0]
+    assert "本次已确认附录" in SHIPPED and "不是上次结论" in SHIPPED
     results = host.execute_checker(
         request(),
         artifact,
@@ -1556,24 +1559,25 @@ def test_development_prompt_names_framework_modules_and_hides_acceptance_samples
     host.adapt_checker(request(), audit_file(path), rules(), raw, role="target", context=ExecutionContext())
 
     prompt = developer.prompts[0]
-    assert "from audit.checker_lib.nio.excel_agent import ExcelAgent, rule" in prompt
-    assert "from audit.engine.rule_engine.fluent import Table" in prompt
-    assert "from documents.pdf import PdfSpec" in prompt
-    assert "不要按文档类型或文件名选择预设" in prompt
+    assert "from audit.checker_lib.nio.excel_agent import ExcelAgent, rule" in SHIPPED
+    assert "from audit.engine.rule_engine.fluent import Table" in SHIPPED
+    assert "from documents.pdf import PdfSpec" in SHIPPED
+    assert "不要按文档类型或文件名选择预设" in SHIPPED
+    assert "## 判断" not in prompt
     assert "/opt/agent/" not in prompt
     assert "tests/corpus" not in prompt
     assert str(path) not in prompt
     assert "用文件工具" not in prompt
-    assert "resource=RESOURCE" in prompt
-    assert "进入同一个 `ctx.resource`" in prompt
-    assert "CLAUSE_BOUND_CHECKS = True" in prompt
-    assert "ctx.bind_workbook(workbook, 关联文件版本ID)" in prompt
-    assert "ctx.note_cell(表名, 行号, 列号, file_version_id=关联文件版本ID)" in prompt
-    assert "ctx.ask(" in prompt
-    assert "未定义数据区规范" in prompt
-    assert "不要读取 `unreadable`" in prompt
-    assert "`state` 只能是 `known`、`blank`、`missing` 或 `unresolved`" in prompt
-    assert "ColumnModel" in prompt
+    assert "resource=RESOURCE" in SHIPPED
+    assert "进入同一个 `ctx.resource`" in SHIPPED
+    assert "CLAUSE_BOUND_CHECKS = True" in SHIPPED
+    assert "ctx.bind_workbook(workbook, 关联文件版本ID)" in SHIPPED
+    assert "ctx.note_cell(表名, 行号, 列号, file_version_id=关联文件版本ID)" in SHIPPED
+    assert "ctx.ask(" in SHIPPED
+    assert "未定义数据区规范" in SHIPPED
+    assert "不要读取 `unreadable`" in SHIPPED
+    assert "`state` 只能是 `known`、`blank`、`missing` 或 `unresolved`" in SHIPPED
+    assert "ColumnModel" in SHIPPED
 
 
 def test_development_prompt_previews_the_sheet_without_making_a_verdict(tmp_path: Path) -> None:
@@ -1689,7 +1693,8 @@ def test_development_prompt_previews_a_related_workbook_and_a_pdf(tmp_path: Path
     assert "不要把这里的单元格记到目标文件" in prompt
     assert "关联文件 related-pdf，角色 reference" in prompt
     assert "这是 PDF。这里没有单元格预览。" in prompt
-    assert "# PDF 资源适配" in prompt
+    assert "references/pdf-reading.md" in prompt and "# PDF 资源适配" in PDF_REFERENCE
+    assert "references/cross-file.md" in prompt
     assert "template-pdf-spec.py" in prompt
 
 
@@ -2790,7 +2795,7 @@ def test_a_program_without_clause_binding_is_revised_before_it_is_fixed(tmp_path
     artifact = host.adapt_checker(request(), audit_file(path), rules(), raw, role="target", context=ExecutionContext())
 
     assert developer.calls == 3
-    assert "CLAUSE_BOUND_CHECKS = True" in developer.prompts[1]
+    assert "CLAUSE_BOUND_CHECKS = True" in SHIPPED
     assert artifact.files["checker.py"] == VALID_PROGRAM.encode()
 
 
@@ -3624,7 +3629,7 @@ def test_a_new_file_rechecks_the_old_program_and_the_same_input_does_not(tmp_pat
     opened = next_host.execute(next_spec, {"version-2": second_raw}, context=ExecutionContext())
 
     assert "FROM-FILE-A" in next_developer.prompts[0]
-    assert "不能直接沿用到其他文件" in next_developer.prompts[0]
+    assert "可作起点的旧程序" in next_developer.prompts[0] and "不能直接沿用到其他文件" in SHIPPED
     assert opened.findings[0].suggestions == "来自新文件"
     assert "adapt-checker" in next_runtime.operations
 
@@ -3651,7 +3656,7 @@ def test_a_new_file_rechecks_the_old_program_and_the_same_input_does_not(tmp_pat
     other = other_host.execute(other_spec, {"version-2": second_raw}, context=ExecutionContext())
 
     assert "来自新文件" in other_developer.prompts[0]
-    assert "不能直接沿用到其他文件" in other_developer.prompts[0]
+    assert "可作起点的旧程序" in other_developer.prompts[0]
     assert "adapt-checker" in other_runtime.operations
     assert other.findings[0].suggestions == "未确定工序范围"
     control_body = {
@@ -3700,7 +3705,7 @@ def test_a_new_file_rechecks_the_old_program_and_the_same_input_does_not(tmp_pat
 
     assert "来自新文件" in third_developer.prompts[0]
     assert "FROM-FILE-A" not in third_developer.prompts[0]
-    assert "不能直接沿用到其他文件" in third_developer.prompts[0]
+    assert "可作起点的旧程序" in third_developer.prompts[0]
     assert "adapt-checker" in third_runtime.operations
     assert third.findings[0].suggestions == "来自第三份"
 

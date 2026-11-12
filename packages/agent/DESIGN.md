@@ -293,7 +293,7 @@ Agent 可以按原规则纠正实现。仍有合理歧义或需要改变业务�
 | [证据读取](../audit/src/audit/evidence.py)、[定位与候选](../audit/src/audit/models.py)、[局部观察](../audit/src/audit/checker_tools.py) | 保留 snapshot、定位和窄字段观察。旧 Hole 模块已无消费者，不再保留。 |
 | `audit.models` 中已有语义类型 | 核对并复用适用的概念、关系及谓词类型；待补形式解释、回译和值域/投影约束。类型存在不等于已接入 checker；不恢复无消费者的计划执行体系 |
 | [AuditRuntime](../audit/src/audit/engine/runtime.py) 与 [执行环境](src/agent/execution) | 复用能力注入、隔离、网关、预算和反馈；调整 guest 的开发与执行载荷 |
-| [auditor](src/agent/auditor.py)、[协议](src/agent/protocol.py) 与 [skill](src/agent/skill) | 已编排 adapt / execute、保存固定程序并提供原框架开发指南；后续在同一路径接入形式解释与语义资源 |
+| [auditor](src/agent/auditor.py)、[协议](src/agent/protocol.py) 与 [deep_agent](src/agent/deep_agent) | 已编排 adapt / execute、保存固定程序；Pi 从 deep_agent 原生加载固定要求（AGENTS.md）与参考技能；后续在同一路径接入形式解释与语义资源 |
 | 现有 product 结果及反馈映射 | 复用附录、候选、确认回执和新轮次；待补同源回译、语义推荐及版本输入，不新增确认账本 |
 | 旧 Deep 的 RulePlan / AuditTrace 主执行路径 | 已被固定 checker 路径替代；不恢复第二套求值器 |
 | 通用单条 checker 模板、独立且提前冻结的 PDF layout 阶段 | 删除重复入口；由当前条款生成起始类，PDF 资源随同一 checker 循环适配 |

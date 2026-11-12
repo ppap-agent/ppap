@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-const runner = fileURLToPath(new URL("./pi-runner.mjs", import.meta.url));
+const runner = fileURLToPath(new URL("./pi-runner.ts", import.meta.url));
 function respond(response, item, number, status = "completed", reportUsage = true) {
   response.writeHead(200, { "Content-Type": "text/event-stream" });
   const send = (event) => response.write(`data: ${JSON.stringify(event)}\n\n`);
@@ -34,7 +34,7 @@ const textItem = { type: "message", id: "msg_1", role: "assistant", status: "com
 const writeItem = { type: "function_call", id: "fc_1", call_id: "call_1", name: "write",
   arguments: JSON.stringify({ path: "checker.py", content: "def create_audit(audit_file, rule, group_context=None): return None\n" }) };
 
-async function runFixture(t, handler, addressSpaceLimit = false) {
+async function runFixture(t, handler, addressSpaceLimit = false, { workAgents = false, homeAgents = true } = {}) {
   const work = await mkdtemp(join(tmpdir(), "ppap-pi-test-"));
   t.after(() => rm(work, { recursive: true, force: true }));
   let calls = 0;
@@ -48,7 +48,12 @@ async function runFixture(t, handler, addressSpaceLimit = false) {
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise((resolve) => server.close(resolve)));
-  await mkdir(join(work, "home"));
+  // The adapter installs the shipped AGENTS.md and skills into Pi's agent directory.
+  await mkdir(join(work, "home", "skills", "ppap-test-skill"), { recursive: true });
+  if (homeAgents) await writeFile(join(work, "home", "AGENTS.md"), "PPAP-FIXED-RULES: unknown never becomes PASS.\n");
+  await writeFile(join(work, "home", "skills", "ppap-test-skill", "SKILL.md"),
+    "---\nname: ppap-test-skill\ndescription: PPAP-SKILL-MARKER reading guide.\n---\n\n# Guide\n");
+  if (workAgents) await writeFile(join(work, "AGENTS.md"), "Injected by a file in the work directory.\n");
   await writeFile(join(work, "prompt.txt"), "Write checker.py, then return its completion receipt.");
   await writeFile(join(work, "request.json"), JSON.stringify({
     home: join(work, "home"), prompt: join(work, "prompt.txt"), token: "test-grant-secret",
@@ -133,4 +138,26 @@ test("Pi cannot report success for truncated output", async (t) => {
   assert.equal(run.calls, 1);
   assert.equal(run.code, 1);
   assert.equal(run.result.is_error, true);
+});
+
+test("Pi loads the shipped AGENTS.md and skills natively and names them", async (t) => {
+  const run = await runFixture(t, (response, calls) => respond(response, calls === 1 ? writeItem : textItem, calls));
+  assert.equal(run.code, 0);
+  assert.deepEqual(run.events.find((event) => event.type === "resources"), { type: "resources", context_files: ["AGENTS.md"], skills: ["ppap-test-skill"] });
+  const sent = JSON.stringify(run.bodies[0]);
+  assert.ok(sent.includes("PPAP-FIXED-RULES"));
+  assert.ok(sent.includes("PPAP-SKILL-MARKER"));
+});
+
+test("A context file in the work directory is never loaded: the stage fails before any model call", async (t) => {
+  const run = await runFixture(t, (response, calls) => respond(response, textItem, calls), false, { workAgents: true });
+  assert.equal(run.calls, 0);
+  assert.equal(run.code, 1);
+  assert.equal(run.result.is_error, true);
+});
+
+test("Without the shipped AGENTS.md the stage fails before any model call", async (t) => {
+  const run = await runFixture(t, (response, calls) => respond(response, textItem, calls), false, { homeAgents: false });
+  assert.equal(run.calls, 0);
+  assert.equal(run.code, 1);
 });

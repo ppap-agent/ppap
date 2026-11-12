@@ -210,8 +210,11 @@ def run_pi(work: Path, effort: str, *, max_turns: int = 16, timeout: float = 900
     node = shutil.which("node")
     if node is None or not (ROOT / "deploy/deep/node_modules/@earendil-works/pi-coding-agent").is_dir():
         raise SystemExit("Pi requires Node >=22.19 and npm ci --ignore-scripts --prefix deploy/deep")
+    from agent.execution.guest_model import install_deep_agent
+
     home = work / "pi-home"
     home.mkdir(mode=0o700)
+    install_deep_agent(home)
     with tempfile.TemporaryDirectory(prefix="ppap-pi-") as temporary:
         with local_gateway(Path(temporary) / "g.sock", upstream=base_url, model=model, provider_key=key, requests=max_turns) as gateway:
             execution_id = uuid4()
@@ -225,7 +228,7 @@ def run_pi(work: Path, effort: str, *, max_turns: int = 16, timeout: float = 900
             env.update(HOME=str(home), PI_CODING_AGENT_DIR=str(home), PI_OFFLINE="1", PI_TELEMETRY="0")
             env["PATH"] = str(ROOT / ".venv/bin") + os.pathsep + env.get("PATH", "")
             with (work / "stdout.jsonl").open("xb") as stdout, (work / "stderr.log").open("xb") as stderr:
-                process = subprocess.Popen([node, str(ROOT / "deploy/deep/pi-runner.mjs"), str(request)], cwd=work, env=env, stdout=stdout, stderr=stderr, start_new_session=True)
+                process = subprocess.Popen([node, str(ROOT / "deploy/deep/pi-runner.ts"), str(request)], cwd=work, env=env, stdout=stdout, stderr=stderr, start_new_session=True)
                 try:
                     code = process.wait(timeout=timeout)
                 finally:
@@ -368,7 +371,7 @@ def _execution_revision() -> str:
             if path.is_file() and path.suffix in {".py", ".md"}:
                 hasher.update(str(path.relative_to(ROOT)).encode())
                 hasher.update(path.read_bytes())
-    for name in ("pi-runner.mjs", "package-lock.json"):
+    for name in ("pi-runner.ts", "package-lock.json"):
         hasher.update((ROOT / "deploy/deep" / name).read_bytes())
     return "lab-" + hasher.hexdigest()
 

@@ -97,3 +97,16 @@ def test_missing_or_invalid_usage_does_not_reject_a_completed_stage(tmp_path, gu
         draft = runner.run(tmp_path, "develop", CheckerDraft, 10**12, reasoning_effort="low")
     assert draft.submitted and draft.files == {"checker.py": SOURCE}
     assert (runner.input_tokens, runner.output_tokens, runner.usage_known) == (0, 0, False)
+
+
+def test_each_run_gets_the_shipped_agents_file_and_skills_read_only(tmp_path):
+    from agent.execution.guest_model import DEEP_AGENT, install_deep_agent
+
+    home = tmp_path / "pi-home"
+    home.mkdir()
+    install_deep_agent(home)
+    assert (home / "AGENTS.md").read_bytes() == (DEEP_AGENT / "AGENTS.md").read_bytes()
+    shipped = sorted(path.relative_to(DEEP_AGENT / "skills") for path in (DEEP_AGENT / "skills").rglob("*.md"))
+    assert sorted(path.relative_to(home / "skills") for path in (home / "skills").rglob("*.md")) == shipped
+    assert {"ppap-semantic-audit/SKILL.md", "ppap-semantic-audit/references/cross-file.md"} <= {str(path) for path in shipped}
+    assert all(not path.stat().st_mode & 0o222 for path in [home / "AGENTS.md", *(home / "skills").rglob("*.md")])

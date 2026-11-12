@@ -1,6 +1,6 @@
 # 工具命令
 
-优先复用已生成的 documents.json。读取工具只提供观察；正式计算及报告使用同一 evaluator。
+读取工具只提供观察，帮助编写检查程序；正式结果只来自固定 checker 的执行。documents.json 由下面的 inspect 生成。
 
 ```sh
 python -m audit.document_tools view documents.json --document DOCUMENT_ID --table Sheet1 --rows 1:15 --columns A:F
@@ -16,13 +16,6 @@ view 输出 JSONL。第一行为来源、请求范围、当前 offset、total_re
 默认每页 stdout 至多 16000 UTF-8 字节，可用 --max-bytes 调整，最小为 4096。next_offset 不为 null 时，用相同原件、document、table、rows、columns、pages 及该 offset 继续；offset 是展示记录位置，不是物理行号。next_offset=null 只表示本次所选视图已展示完成，不能证明整个审核已完成。先按规则选择必要区域，确认需要扩大时再改变行列范围；不要为消除分页而打印整个 snapshot。
 
 超长单条记录用 kind=json_fragment 显式分段，record_id 标识原记录，part 从 0 开始，parts 为总段数。收齐后按 part 顺序连接 text，再解析一次 JSON 即得到原始完整记录；不能将一段当作完整字段或页面，也不能按截短文字确认不存在。分段不会改变原快照、公式未知状态或程序求值范围。
-
-## 正式求值
-
-```sh
-```
-
-默认从工作目录读取 documents.json、plans.json、targets.json，可用同名参数指定路径。输出完整 report、observations 和 needs。标准输出只含数量及至多 8 个问题 ID；view 显示必要局部上下文。answers 只回答这些 ID，改绑定或版本后须重算。缺回答是未知，协议错误不是零差异。
 
 ## 可选探索
 
