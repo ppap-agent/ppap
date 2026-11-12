@@ -68,6 +68,13 @@ _READINGS = {
     },
     "長度至少 10℃": {"sections": [{"title": "比对", "items": ["長度大于或等于 10℃ → 通过；小于 10℃ → 不通过"]}], "review": [], "suggested_clause": ""},
     "日期必须填写": {"sections": [{"title": "检查", "items": ["日期已填写 → 通过；未填写 → 不通过"]}], "review": [], "suggested_clause": ""},
+    "当零件为外购件，且附有检验报告则通过，否则不通过": {"sections": [{"title": "检查", "items": ["附有检验报告 → 通过；没有 → 不通过"]}], "review": [], "suggested_clause": ""},
+    "外观要美观": {"sections": [{"title": "检查", "items": ["外观美观 → 通过；不美观 → 不通过"]}], "review": [], "suggested_clause": ""},
+    "文件要有编号，且版面整洁": {
+        "sections": [{"title": "检查", "items": ["文件有编号 → 通过；没有编号 → 不通过", "版面整洁 → 通过；不整洁 → 不通过"]}],
+        "review": [],
+        "suggested_clause": "",
+    },
 }
 _REVISED = {"sections": [{"title": "检查", "items": ["文档编号至少关联一条记录 → 通过；没有 → 不通过"]}], "review": [], "suggested_clause": ""}
 
@@ -127,7 +134,8 @@ def formalization_browser(auth_store_factory, tmp_path, request):
     models = TenantModelStore(admin)
     models.put(alice.tenant_id, models.candidate(alice.tenant_id, SecretStr("test-only-no-provider-called"), base_url="https://models.example.test", text_model="test-model"), operator="test")
     rule_id, file_id, version_id = str(uuid4()), str(uuid4()), str(uuid4())
-    rules = [
+    # A test may pass its own clauses: (id, text, source checked).
+    rules = getattr(request, "param", None) or [
         ("c1", "文档要有编号", True),
         ("c2", "键和名称要对应", True),
         ("c3", "長度至少 10℃", False),
@@ -492,4 +500,133 @@ def test_rule_program_is_generated_from_confirmed_check_points_against_the_real_
         open_rule(page, "无检查规则")
         expect(page.get_by_text("要有名称").first).to_be_visible()
         expect(program_card).to_have_count(0)
+        browser.close()
+
+
+_UNDECIDABLE = [
+    ("c1", "当零件为外购件，且附有检验报告则通过，否则不通过", True),
+    ("c2", "外观要美观", True),
+    ("c3", "文件要有编号，且版面整洁", True),
+]
+
+
+@pytest.mark.parametrize("formalization_browser", [_UNDECIDABLE], indirect=True)
+def test_a_person_chooses_a_reading_and_rejects_what_has_no_criterion(formalization_browser):
+    pytest.importorskip("playwright")
+    from playwright.sync_api import expect, sync_playwright
+
+    f = formalization_browser
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        context = browser.new_context()
+        context.add_cookies([{"name": SESSION_COOKIE, "value": f.session, "url": f.web, "httpOnly": True}])
+        page = context.new_page()
+        page.set_default_timeout(20000)
+        page.goto(f.web + "/requirements")
+        open_rule(page, "编号规则")
+        program_card = page.get_by_role("region", name="检查程序", exact=True)
+        program_card.get_by_role("button", name="生成检查程序", exact=True).click()
+        wizard = page.get_by_role("region", name="逐条确认", exact=True)
+        nav = wizard.get_by_role("navigation", name="条款", exact=True)
+        shown = {"c1": "外购件", "c2": "外观要美观", "c3": "版面整洁"}
+
+        def clause(clause_id: str):
+            nav.get_by_role("button").filter(has_text=shown[clause_id]).click()
+            return wizard.get_by_role("article", name=f"条款 {clause_id}", exact=True)
+
+        def settled(clause_id: str, label: str):
+            # Deciding a clause moves on to the next open one; the clause list shows the decision first.
+            expect(nav.get_by_role("button").filter(has_text=shown[clause_id])).to_contain_text(label)
+            return clause(clause_id)
+
+        def detail(clause_id: str) -> dict:
+            response = httpx.get(f"{f.api}/rules/{f.rule_id}/formalizations/{clause_id}", cookies={SESSION_COOKIE: f.session}, timeout=10)
+            assert response.status_code == 200, response.text
+            return response.json()
+
+        wizard.get_by_role("button", name="开始整理", exact=True).click()
+        expect(clause("c3")).to_contain_text("版面整洁 → 通过")
+        assert f.script.calls == 3
+
+        # "当 X，且 Y 则通过": the system asks whether X is a requirement or the scope; the model never chooses.
+        c1 = clause("c1")
+        question = c1.get_by_role("group", name="“零件为外购件”是必须满足的要求，还是选定检查范围的条件？", exact=True)
+        expect(question).to_be_visible()
+        expect(question).to_contain_text("反例：不满足“零件为外购件”、但满足“附有检验报告”的行或文件不在检查范围内，不因此判不通过。")
+        expect(c1.get_by_role("button", name="确认", exact=True)).to_have_count(0)
+        expect(c1.get_by_role("button", name="确认选择", exact=True)).to_be_disabled()
+        # Not sure yet: the question stays open and the clause cannot be confirmed.
+        before = len(detail("c1")["candidates"])
+        c1.get_by_role("button", name="暂不确定", exact=True).click()
+        for _ in range(100):
+            if len(detail("c1")["candidates"]) > before:
+                break
+            time.sleep(0.1)
+        undecided = detail("c1")["candidates"][-1]
+        assert undecided["completeness"] == "partial"
+        assert [item["id"] for item in undecided["unresolved"]] == ["condition-scope-1", "undecided"]
+        page.reload()
+        c1 = clause("c1")
+        question = c1.get_by_role("group", name="“零件为外购件”是必须满足的要求，还是选定检查范围的条件？", exact=True)
+        expect(question).to_be_visible()
+        expect(c1.get_by_role("button", name="确认", exact=True)).to_have_count(0)
+        question.get_by_role("radio", name=re.compile("^选定检查范围的条件")).check()
+        c1.get_by_role("button", name="确认选择", exact=True).click()
+        expect(c1).to_contain_text("已选理解")
+        expect(c1).to_contain_text("选定检查范围的条件：只检查满足“零件为外购件”的行或文件")
+        c1.get_by_role("button", name="确认", exact=True).click()
+        expect(settled("c1", "已确认").get_by_role("button", name="撤销确认", exact=True)).to_be_visible()
+        chosen = detail("c1")["candidates"][-1]
+        assert chosen["completeness"] == "complete" and chosen["unresolved"] == []
+        assert {"unresolved_id": "condition-scope-1", "choice_id": "scope"} in [item.get("clarification") for item in chosen["obligations"]]
+
+        # A whole clause without a criterion is rejected with a reason; rejecting calls no model.
+        calls = f.script.calls
+        c2 = clause("c2")
+        c2.get_by_role("button", name="没有判定标准", exact=True).click()
+        rejecting = c2.get_by_role("region", name="拒绝", exact=True)
+        rejecting.get_by_role("radio", name="整条拒绝", exact=True).check()
+        expect(rejecting.get_by_role("button", name="拒绝", exact=True)).to_be_disabled()
+        rejecting.get_by_role("textbox", name="原因：哪些地方没有判定标准", exact=True).fill("“美观”没有可度量的标准")
+        rejecting.get_by_role("button", name="拒绝", exact=True).click()
+        rejected = c2.get_by_role("region", name="已拒绝", exact=True)
+        expect(rejected).to_contain_text("整条已拒绝：没有可程序化的判定标准")
+        expect(rejected).to_contain_text("原因：“美观”没有可度量的标准")
+        expect(c2.get_by_role("button", name="写得不对", exact=True)).to_have_count(0)
+        c2.get_by_role("button", name="确认拒绝", exact=True).click()
+        expect(settled("c2", "已拒绝").get_by_role("button", name="撤销确认", exact=True)).to_be_visible()
+        assert detail("c2")["state"] == "rejected"
+        assert f.script.calls == calls
+
+        # Rejecting one point keeps the others to be checked as usual.
+        c3 = clause("c3")
+        c3.get_by_role("button", name="没有判定标准", exact=True).click()
+        rejecting = c3.get_by_role("region", name="拒绝", exact=True)
+        rejecting.get_by_role("checkbox", name="版面整洁 → 通过；不整洁 → 不通过", exact=True).check()
+        rejecting.get_by_role("textbox", name="原因：哪些地方没有判定标准", exact=True).fill("“整洁”没有判定标准")
+        rejecting.get_by_role("button", name="拒绝", exact=True).click()
+        expect(c3.get_by_role("region", name="已拒绝", exact=True)).to_contain_text("以下部分已拒绝：没有可程序化的判定标准")
+        c3.get_by_role("button", name="确认", exact=True).click()
+        expect(settled("c3", "已确认").get_by_role("button", name="撤销确认", exact=True)).to_be_visible()
+        expect(nav.get_by_text("已确认 3 / 3", exact=True)).to_be_visible()
+        partial = detail("c3")
+        assert partial["state"] == "confirmed" and f.script.calls == calls
+        reading = partial["candidates"][-1]
+        assert [item["scope"] for item in reading["rejections"]] == ["part"]
+        assert [item["text"] for item in reading["obligations"]] == ["文件有编号 → 通过；没有编号 → 不通过"]
+
+        # The confirmed choice and both rejections are handed to the program with the readings.
+        page.get_by_label("选择示例文件").set_input_files({"name": "示例.txt", "mimeType": "text/plain", "buffer": "编号 A-001".encode()})
+        with page.expect_response(lambda response: response.request.method == "POST" and response.url.endswith("/checker-generations")) as started:
+            wizard.get_by_role("button", name="生成检查程序", exact=True).click()
+        assert started.value.status == 200, started.value.text()
+        expect(program_card.get_by_text("可用于审核", exact=True)).to_be_visible(timeout=60000)
+        with f.store._conn() as conn:
+            (head,) = conn.execute("SELECT current_revision_id::text FROM product.tenant_suite_heads WHERE tenant_id=%s AND suite_key=%s", (f.tenant_id, f.suite_key)).fetchone()
+        from product.store.suites import SuiteStore
+
+        handed = json.loads(SuiteStore(f.store.settings, f.store.objects, role="migrator").resolve_suite(head, f.tenant_id).files["rules.json"])["formalizations"]
+        assert [item["scope"] for item in handed["c2"]["rejections"]] == ["clause"]
+        assert [item["scope"] for item in handed["c3"]["rejections"]] == ["part"]
+        assert "选定检查范围的条件" in json.dumps(handed["c1"], ensure_ascii=False)
         browser.close()

@@ -433,7 +433,8 @@ function ClauseCheckPoints({ruleVersionId, clauseId, prepare, onAdopt, onReport,
         ...(currentConfirmation ? {expected_current_confirmation_id: currentConfirmation.id} : {}),
       })
       if (!stillShown(origin)) return
-      setPending(candidate.id)
+      // A fresh key: the candidate just confirmed may be the one already loaded (a rejection), which would not reload.
+      setPending(crypto.randomUUID())
       onConfirmed()
     } catch (cause) {
       if (stillShown(origin)) setError(message(cause))
