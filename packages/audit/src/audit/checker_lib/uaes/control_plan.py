@@ -465,7 +465,12 @@ class UaesControlPlanAgent(UaesExcelAgent):
     @rule("CP身份字段图纸身份及最后更改日期")
     def rule_6(self, ctx: RuleContext):
         self.plan_sheets(ctx)
-        failures, unknown = [], []
+        failures: list[str] = []
+        unknown: list[str] = []
+        absent: list[str] = []
+        # A spreadsheet's title block is read cell by cell: a label in none of its cells is absent from it.
+        # A PDF converts only what its tables hold, so a label it does not show stays unread.
+        pdf = str(self.audit_file.file_url).lower().endswith(".pdf")
         for label, aliases in (
             ("供应商名称", resources.SUPPLIER_NAME),
             ("供应商代码", resources.SUPPLIER_CODE),
@@ -477,9 +482,11 @@ class UaesControlPlanAgent(UaesExcelAgent):
         ):
             found = self.plan_fields(ctx, aliases)
             if not found:
-                unknown.append(label)
+                (unknown if pdf else absent).append(label)
             elif "日期" not in label and all(compact(value) in _PLACEHOLDERS for value, _place in found):
                 failures.append(f"{label}（{found[0][1]}）为“{found[0][0] or '空'}”")
+        if absent:
+            failures.insert(0, f"表头缺少{'、'.join(absent)}字段")
         if unknown:
             unknown = [f"表头未能定位{'、'.join(unknown)}字段"]
         try:

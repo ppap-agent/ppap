@@ -280,9 +280,10 @@ class UaesPfmeaAgent(UaesExcelAgent):
         # Rejected with the user: the clause gives no checkable standard for these parts.
         raise unable(_REJECTED)
 
-    def batch_lists(self, ctx: RuleContext, part: str, project: str | None) -> tuple[list[tuple[str, int, str, str, str]], list[str]]:
+    def batch_lists(self, ctx: RuleContext, part: str, project: str | None) -> tuple[list[tuple[str, int, str, str, str]], list[str], list[str]]:
+        """(characteristics of the paired lists, lists whose project cannot be compared, of those the lists that state no project)."""
         """Marked characteristics of the same-round lists for this part and project, and the lists whose project is unknown."""
-        found, undetermined = [], []
+        found, undetermined, unstated = [], [], []
         lists = {item.audit_id: item for kind in _LISTS for item in self.batch_files(kind)}
         for item in lists.values():
             with self.reading(ctx, item, special_list):
@@ -315,9 +316,30 @@ class UaesPfmeaAgent(UaesExcelAgent):
                 theirs = self.project(sheets)
                 if project is None or theirs is None:
                     undetermined.append(label)
+                    if theirs is None and self.states_no_project(item):
+                        unstated.append(label)
                 elif theirs == project:
                     found.extend(rows)
-        return found, undetermined
+        return found, undetermined, unstated
+
+    @staticmethod
+    def states_no_project(item: Any) -> bool:
+        """Whether a same-round list names no project anywhere: a PDF's whole text layer, or every cell of a workbook."""
+        path = str(item.file_url)
+        if path.lower().endswith(".pdf"):
+            import fitz
+
+            with fitz.open(path) as document:
+                text = compact("".join(page.get_text() for page in document))
+        else:
+            from audit.checker_lib.excel import load_workbook
+
+            book = load_workbook(path)
+            try:
+                text = compact("".join(str(cell) for sheet in book.worksheets for row in sheet.iter_rows(values_only=True) for cell in row if cell is not None))
+            finally:
+                book.close()
+        return not any(compact(label) in text for label in (*_PROJECT_LABELS, "project"))
 
     @rule("特殊特性清单全部产品过程特性和一致标识")
     def rule_3(self, ctx: RuleContext):
@@ -343,8 +365,11 @@ class UaesPfmeaAgent(UaesExcelAgent):
             return "NG", "同批次没有特殊特性清单，请提交同项目、同物料编号的特殊特性清单后一起复审。"
         part = self.part_number(ctx)
         project = self.project(self.sheets(ctx))
-        characteristics, undetermined = self.batch_lists(ctx, part, project)
+        characteristics, undetermined, unstated = self.batch_lists(ctx, part, project)
         if not characteristics:
+            if unstated and len(unstated) == len(undetermined):
+                # The list states no project at all: 同项目 cannot be established ("无法辨识则不通过").
+                return "NG", f"{'、'.join(unstated)}有零件号{part}的特性，但清单没有项目字段，无法按条款要求的同项目、同物料编号配对，请补充项目后复审。"
             if undetermined:
                 side = "PFMEA与" if project is None else ""
                 raise unable(f"{'、'.join(undetermined)}有零件号{part}的特性，但{side}清单未写明项目（或为占位值），条款要求同项目、同物料编号，尚不能确认是同一份对端，需人工复核。")

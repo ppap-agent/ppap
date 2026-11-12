@@ -174,14 +174,10 @@ def _line_inside(start: Any, end: Any, cell: list[float], tolerance: float) -> b
     return low < high
 
 
-def _rectangle_inside(rect: Any, cell: list[float], tolerance: float, *, filled: bool, grid_aligned: bool) -> bool:
+def _rectangle_inside(rect: Any, cell: list[float], tolerance: float, *, filled: bool, stroked: bool) -> bool:
     # A rectangle surrounding the entire cell is a border / uniform background.
     # This is a geometric distinction, independent of colour and field meaning.
     if rect[0] <= cell[0] + tolerance and rect[1] <= cell[1] + tolerance and rect[2] >= cell[2] - tolerance and rect[3] >= cell[3] - tolerance:
-        return False
-    # A background aligned with another grid region can spill slightly over a
-    # reconstructed neighbour edge. Do not mistake that sliver for cell content.
-    if filled and grid_aligned and min(min(rect[axis + 2], cell[axis + 2]) - max(rect[axis], cell[axis]) for axis in (0, 1)) <= tolerance:
         return False
     # Exported table rules can be filled thin rectangles rather than strokes.
     # Require a full edge; crossing only one corner does not establish a rule.
@@ -193,15 +189,50 @@ def _rectangle_inside(rect: Any, cell: list[float], tolerance: float, *, filled:
             and rect[along + 2] >= cell[along + 2] - tolerance
         ):
             return False
+    # A neighbour's background or rule can spill over a shared edge: it enters by a sliver and reaches well beyond it.
+    # A thin bar straddling a reconstructed boundary is neither cell's spill and stays a mark in both.
+    for axis in (0, 1):
+        inside = min(rect[axis + 2], cell[axis + 2]) - max(rect[axis], cell[axis])
+        if filled and 0 < inside <= tolerance and (rect[axis + 2] - rect[axis]) - inside > tolerance:
+            return False
     if filled and _intersects(rect, cell):
         return True
+    # A fill-only rectangle draws no outline: its edges are not strokes.
     corners = ((rect[0], rect[1]), (rect[2], rect[1]), (rect[2], rect[3]), (rect[0], rect[3]))
-    return any(_line_inside(corners[index], corners[(index + 1) % 4], cell, tolerance) for index in range(4))
+    return stroked and any(_line_inside(corners[index], corners[(index + 1) % 4], cell, tolerance) for index in range(4))
 
 
-def _vector_inside(path: dict[str, Any], cell: list[float], tolerance: float, aligned_fills: set[tuple[float, ...]]) -> bool:
+def _line_rectangles(items: list[Any]) -> list[list[float]] | None:
+    """The rectangles a path of straight lines fills, one per closed axis-aligned subpath; None if any subpath is not one."""
+    subpaths: list[list[Any]] = []
+    current: list[Any] | None = None
+    for item in items:
+        if item[0] != "l":
+            return None
+        if current is None or current[-1] != item[1]:
+            current = [item[1]]
+            subpaths.append(current)
+        current.append(item[2])
+        # A subpath closes when it returns to its start; the next one may begin at that same point.
+        if len(current) > 3 and current[-1] == current[0]:
+            current = None
+    rectangles = []
+    for points in subpaths:
+        corners = points[:-1] if points[-1] == points[0] else points
+        xs, ys = {point.x for point in corners}, {point.y for point in corners}
+        if len(corners) != 4 or len(xs) != 2 or len(ys) != 2 or any(a.x != b.x and a.y != b.y for a, b in zip(corners, corners[1:] + corners[:1])):
+            return None
+        rectangles.append([min(xs), min(ys), max(xs), max(ys)])
+    return rectangles
+
+
+def _vector_inside(path: dict[str, Any], cell: list[float], tolerance: float) -> bool:
     """Keep unexplained path geometry; never infer a graphic's business meaning."""
     items, filled = path["items"], path.get("fill") is not None
+    # Exported grids fill their rules as one path of thin rectangles drawn with lines: judge each as a rectangle.
+    if filled and (rectangles := _line_rectangles(items)) is not None:
+        stroked = path.get("color") is not None
+        return any(_rectangle_inside(rect, cell, tolerance, filled=True, stroked=stroked) for rect in rectangles)
     # General fills can cover a cell even when every contour is outside it.
     # Only axis-aligned rectangle fills have the background exception above.
     if filled and any(item[0] != "re" for item in items) and _intersects(path["rect"], cell):
@@ -210,7 +241,7 @@ def _vector_inside(path: dict[str, Any], cell: list[float], tolerance: float, al
     for item in items:
         kind = item[0]
         if kind == "re":
-            if _rectangle_inside(item[1], cell, tolerance, filled=filled, grid_aligned=tuple(item[1]) in aligned_fills):
+            if _rectangle_inside(item[1], cell, tolerance, filled=filled, stroked=path.get("color") is not None):
                 return True
         elif kind == "l":
             if _line_inside(item[1], item[2], cell, tolerance):
@@ -265,7 +296,7 @@ def converted_cell_sources(extraction: Any) -> dict[tuple[int, int, int], tuple[
 def graphic_inside(path: str, page_number: int, bbox: list[float], tolerance: float) -> bool:
     """Whether an image or a non-border stroke lies inside one cell of a PDF page."""
     drawings, images = _page_graphics(path, page_number)
-    return any(_intersects(bbox, image) for image in images) or any(_vector_inside(drawing, bbox, tolerance, set()) for drawing in drawings)
+    return any(_intersects(bbox, image) for image in images) or any(_vector_inside(drawing, bbox, tolerance) for drawing in drawings)
 
 
 @functools.lru_cache(maxsize=32)
@@ -304,15 +335,6 @@ def _table(grid: Any, page: Any, limits: ReadLimits, geometry_tolerance: float) 
     number = page.number + 1
     images = [image["bbox"] for image in page.get_image_info()]
     drawings = page.get_drawings()
-    aligned_fills = {
-        tuple(item[1])
-        for drawing in drawings
-        if drawing.get("fill") is not None
-        for item in drawing["items"]
-        if item[0] == "re"
-        if all(item[1][axis + 2] - item[1][axis] > 2 * geometry_tolerance for axis in (0, 1))
-        and all(any(abs(item[1][edge] - bound) <= geometry_tolerance for bound in axes) for edges, axes in (((0, 2), grid.cols), ((1, 3), grid.rows)) for edge in edges)
-    }
 
     # Index paths by grid row band. A path can only reach a cell its bounds overlap,
     # so this narrows the candidates without changing any per-cell decision.
@@ -326,7 +348,7 @@ def _table(grid: Any, page: Any, limits: ReadLimits, geometry_tolerance: float) 
         bbox = [grid.cols[column], grid.rows[row], grid.cols[last_column + 1], grid.rows[last_row + 1]]
         overlap = any(_intersects(bbox, image) for image in images)
         candidates = sorted({index for band in range(row, last_row + 1) for index in bands[band] if bounds[index][0] <= bbox[2] and bounds[index][2] >= bbox[0]})
-        vector_paths = [index + 1 for index in candidates if _vector_inside(drawings[index], bbox, geometry_tolerance, aligned_fills)]
+        vector_paths = [index + 1 for index in candidates if _vector_inside(drawings[index], bbox, geometry_tolerance)]
         if not valid_pdf_bbox(bbox, page.rect.width, page.rect.height):
             state = "unknown_geometry"
         elif not reconstructed:
