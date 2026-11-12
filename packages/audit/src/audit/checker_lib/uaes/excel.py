@@ -121,8 +121,16 @@ class UaesExcelAgent(ExcelAgent):
             raise unable(str(exc)) from None
         except MissingFact as exc:
             return "NG", str(exc)
-        except ModelUnavailable:
-            raise unable("当前模型不可用，所需原件事实尚未核实。") from None
+        except ModelUnavailable as exc:
+            # Only a missing model grant leaves the fact open; a failed or uncertain request is a technical fault.
+            if exc.code == "personal_model_unavailable":
+                raise unable("当前个人模型凭据不可用，所需原件事实尚未核实。") from None
+            raise GuardStop(Decision.ERR, "原件模型请求失败或结果尚未确认，尚未取得业务结论。") from None
+        except GuardStop:
+            raise
+        except Exception as exc:
+            # A provider's own text never reaches the finding.
+            raise GuardStop(Decision.ERR, f"原件读取失败（{type(exc).__name__}），尚未取得业务结论。") from None
 
     def _finalize_audit_result(self, result: Any, *, rule_no: int, phase: Any, ctx: RuleContext | None = None) -> Any:
         result = super()._finalize_audit_result(result, rule_no=rule_no, phase=phase, ctx=ctx)
@@ -199,13 +207,16 @@ class UaesExcelAgent(ExcelAgent):
         return isinstance(value, str) and value.startswith("=")
 
     def unread_pages(self) -> list[int]:
-        """Pages of a PDF original without a text layer: nothing on them reaches the converted workbook."""
+        """Scanned pages of a PDF original, which are not read: no text layer, or one picture covering the page.
+
+        Words typed over a scan do not make the scanned content readable.
+        """
         if not str(self.audit_file.file_url).lower().endswith(".pdf"):
             return []
         import fitz
 
         with fitz.open(str(self.audit_file.file_url)) as document:
-            return [page.number + 1 for page in document if not page.get_text().strip()]
+            return [page.number + 1 for page in document if not page.get_text().strip() or any(abs(fitz.Rect(image["bbox"]) & page.rect) >= 0.8 * abs(page.rect) for image in page.get_image_info())]
 
     @staticmethod
     def extent(sheet: Sheet) -> tuple[int, int]:

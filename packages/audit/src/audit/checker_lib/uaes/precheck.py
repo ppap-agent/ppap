@@ -74,8 +74,9 @@ def structural_facts(agent):
         checks = {
             "U17:S2": selection("安全及政府条例"),
             "U17:S6": selection("是否报告了受客户关注的材料信息"),
-            "U17:S9": formal_structure(agent.rule_4),
-            "U17:S10": formal_structure(agent.rule_5),
+            # The warrant's boxes are read by no reader: a scanned warrant is not read (UaesWarrantAgent).
+            "U17:S9": formal_structure(lambda: ("UNABLE", "提交原因勾选尚未从原件读取。")),
+            "U17:S10": formal_structure(lambda: ("UNABLE", "要求提交的等级勾选尚未从原件读取。")),
             "U17:S3": all_of(text("供方制造厂资料"), text("买方资料")),
             "U17:S4": field("公司名称"),
             "U17:S5": all_of(field("采购方及部门"), field("采购方代码"), field("应用")),

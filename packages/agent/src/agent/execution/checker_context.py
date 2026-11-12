@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 from audit.checker_lib.nio.excel_agent import ExcelAgent
+from audit.checker_lib.uaes.excel import UaesExcelAgent
 from audit.checker_lib.uaes.native import UaesSourceAgent
 from audit.contracts import AuditInput, RuleInput
 from audit.engine.checkers.rule_declarations import _agent_for_target, discover_declared_rules
@@ -110,12 +111,19 @@ def write_starting_point(work: Path, audit_file: AuditInput, rule: RuleInput) ->
             ]
         )
     (work / "template-checker.py").write_text("\n".join(lines), encoding="utf-8")
+    if native:
+        # Only the UAES photo/DOCX carriers still read through the snapshot reader.
+        reading = "本次是 UAES 原生载体（照片/DOCX）：方法无 ctx 参数，沿用 native()/related()/witness() 与 check(ith) 的证据收尾。"
+    else:
+        reading = "方法带 ctx 参数，用原资源和 Fluent API（Table(ctx)…）读取；布局不同在 resources.py 的 RESOURCE 中补别名。"
+        if issubclass(base, UaesExcelAgent):
+            reading += "UAES 未知事实用 GuardStop(Decision.UNABLE, ...)（audit.checker_lib.uaes.excel.unable）；原件签字、印章等图像事实用 self.visual() / self.stamp()。"
     return "\n".join(
         [
             f"本次参考：{reference.__module__}.{reference.__name__}。执行基类：{base.__module__}.{base.__name__}。",
             "先读 reference-checker.py 中相关方法和 reference-resources.json（若存在）。辅助函数仍可从原模块导入。",
             "template-checker.py 已按本次条款装配入口。布局不同先适配资源。",
-            "UAES 原生方法无 ctx 参数，沿用 native()/related()/witness() 与 check(ith) 的证据收尾；其他 ExcelAgent 路径继续使用原资源和 Fluent API。",
+            reading,
             "V4 的 reference-bindings.json（若存在）是原始条款 ID → 方法名的参考映射。逐条核对本次规则和附录后复用或修订；相同 ID 不证明修改后的条款语义不变。",
             "条款含义不同则调整实现。文档类型和方法编号不证明规则相同，参考源码不决定本次判定。",
             methods or "没有对应的人工规则方法；使用原 ExcelAgent 和 Fluent API 实现本次条款。",

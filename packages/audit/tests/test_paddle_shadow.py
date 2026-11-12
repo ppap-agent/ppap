@@ -548,26 +548,6 @@ def test_psw_late_result_cannot_be_attributed_to_changed_frozen_rules(tmp_path, 
     assert observation.evidence.sources == ()
 
 
-def test_uaes_psw_existing_checker_consumes_selected_stamp_and_field_shadows(tmp_path):
-    from audit.checker_lib.uaes.warrant import UaesWarrantAgent
-    from audit.engine.checkers.paddle_evidence import psw_shadow_clause_id
-    from audit.presets import preset_rule_body
-
-    path = source(tmp_path)
-    rule = RuleInput(rule_id="frozen-uaes-psw", **preset_rule_body("UAES", "U17"))
-    checker = UaesWarrantAgent(AuditInput(audit_id="frozen-version", file_url=str(path), project_id="project-a"), rule)
-    baseline = [checker.check(0).model_dump(), checker.check(2).model_dump()]
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    selected = [ShadowTarget("frozen-version", digest, psw_shadow_clause_id(rule, number), 2) for number in (1, 3)]
-    service = Service()
-    session = PaddleShadowSession(service, project_id="project-a", targets=selected)
-    with paddle_shadow_scope(session):
-        actual = [checker.check(0).model_dump(), checker.check(2).model_dump()]
-    assert actual == baseline
-    assert session.request_count == len(service.calls) == 1
-    assert [item.state for item in session.observations] == ["known", "known"]
-
-
 @pytest.mark.parametrize("known", [False, True])
 @pytest.mark.parametrize("change", ["elapsed", "cancel", "source"])
 def test_native_read_must_revalidate_the_scope_before_skip_or_dispatch(tmp_path, monkeypatch, known, change):
