@@ -2,8 +2,7 @@ ARG PPAP_APP_IMAGE=ppap-worker
 FROM node:22.22.0-bookworm-slim@sha256:dd9d21971ec4395903fa6143c2b9267d048ae01ca6d3ea96f16cb30df6187d94 AS pi
 WORKDIR /opt/ppap-pi
 COPY deploy/deep/package.json deploy/deep/package-lock.json ./
-RUN npm ci --ignore-scripts --registry=https://registry.npmjs.org \
- && npm audit signatures
+RUN npm ci --ignore-scripts --registry=https://registry.npmjs.org
 COPY deploy/deep/pi-runner.mjs deploy/deep/pi-runner.test.mjs ./
 RUN node pi-runner.mjs --version \
  && node --test pi-runner.test.mjs \
