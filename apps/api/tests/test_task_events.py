@@ -84,3 +84,19 @@ def test_committed_job_changes_are_delivered_and_lease_renewals_are_not(auth_sto
         assert subscriber.queue.empty()
 
     asyncio.run(scenario())
+
+
+def test_owner_lookup_reuses_one_connection_and_never_caches_a_missing_task(auth_store_factory):
+    hub = TaskEventHub(auth_store_factory())
+    missing = str(uuid.uuid4())
+    assert hub._owner(missing) is None
+    # The creating transaction may still be in flight: a later notice looks again.
+    assert missing not in hub._owners
+    first = hub._lookup
+    assert first is not None and not first.closed
+    hub._owner(str(uuid.uuid4()))
+    assert hub._lookup is first
+    # A broken lookup connection is replaced instead of dropping list notices.
+    first.close()
+    assert hub._owner(missing) is None and hub._lookup is not None and not hub._lookup.closed
+    hub._lookup.close()

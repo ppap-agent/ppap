@@ -50,7 +50,8 @@ class TaskEventHub:
         self._lock = threading.Lock()
         self._tasks: dict[str, set[Subscriber]] = {}
         self._users: dict[tuple[str, str], set[Subscriber]] = {}
-        self._owners: OrderedDict[str, str | None] = OrderedDict()
+        self._owners: OrderedDict[str, str] = OrderedDict()
+        self._lookup: psycopg.Connection | None = None
         self._thread: threading.Thread | None = None
 
     def subscribe_task(self, task_id: str, subscriber: Subscriber) -> None:
@@ -123,23 +124,27 @@ class TaskEventHub:
                 member.push(item)
 
     def _owner(self, task_id: str) -> str | None:
-        """The user whose task list shows this task (creator with a read grant); cached."""
+        """The task's creator, whose task list shows it. The list read itself applies authorization."""
         if task_id in self._owners:
             self._owners.move_to_end(task_id)
             return self._owners[task_id]
-        owner = None
-        try:
-            with psycopg.connect(self.store.settings.dsn("api"), autocommit=True, connect_timeout=2) as conn:
-                row = conn.execute(
-                    """SELECT d.created_by FROM product.audit_drafts d
-                       WHERE d.id = %s AND d.task_fingerprint IS NOT NULL
-                         AND EXISTS (SELECT 1 FROM product.resource_grants g
-                                     WHERE g.resource_id = d.id AND g.user_id = d.created_by AND g.capability IN ('read', 'review'))""",
-                    (task_id,),
-                ).fetchone()
-            owner = str(row[0]) if row else None
-        except Exception:  # noqa: BLE001 - an unknown owner only skips the list notice
+        row = None
+        # Called only from the listener thread: one lookup connection, rebuilt once on failure.
+        for attempt in range(2):
+            try:
+                if self._lookup is None or self._lookup.closed:
+                    self._lookup = psycopg.connect(self.store.settings.dsn("api"), autocommit=True)
+                row = self._lookup.execute("SELECT created_by FROM product.audit_drafts WHERE id = %s", (task_id,)).fetchone()
+                break
+            except Exception:  # noqa: BLE001 - an unknown owner only skips this list notice
+                logger.warning("task_events_owner_lookup_failed", extra={"task_id": task_id, "attempt": attempt}, exc_info=True)
+                if self._lookup is not None:
+                    self._lookup.close()
+                self._lookup = None
+        if not row or row[0] is None:
+            # Not cached: a missing row may be a task whose creating transaction is still in flight.
             return None
+        owner = str(row[0])
         self._owners[task_id] = owner
         while len(self._owners) > 4096:
             self._owners.popitem(last=False)
