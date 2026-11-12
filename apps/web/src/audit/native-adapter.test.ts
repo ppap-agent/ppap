@@ -155,25 +155,46 @@ test('native usage reads the enterprise projection with filters and never report
     assert.equal(init?.credentials, 'include')
     calls.push(String(input)); return json(page)
   }
-  assert.deepEqual(await nativeUsageAdapter.readUsage({range: '90d', search: '图纸 & Alice', page: 2, page_size: 10}), page)
+  assert.deepEqual(await nativeUsageAdapter.readUsage({range: '90d', search: '图纸 & Alice', settlement: 'pending', page: 2, page_size: 10}), page)
   assert.equal(calls.length, 1)
   const url = new URL(calls[0], 'https://example.test')
   assert.equal(url.pathname, '/audit-usage')
   assert.equal(url.searchParams.get('range'), '90d')
   assert.equal(url.searchParams.get('search'), '图纸 & Alice')
+  assert.equal(url.searchParams.get('settlement'), 'pending')
   assert.equal(url.searchParams.get('page'), '2')
+})
+
+test('native usage export asks for every matching entry and the balance never turns an unread quota into zero', async () => {
+  const calls: string[] = []
+  globalThis.fetch = async (input, init) => {
+    assert.equal(init?.credentials, 'include')
+    calls.push(String(input))
+    return String(input).startsWith('/audit-usage/export') ? new Response('\ufeff时间', {headers: {'Content-Type': 'text/csv'}}) : json({unavailable: true, user_quota: 0})
+  }
+  const blob = await nativeUsageAdapter.exportUsage!({range: 'all', search: '图纸', settlement: 'trial', page: 3, page_size: 10})
+  // The byte-order mark stays in the saved bytes so Excel opens the Chinese text as UTF-8.
+  assert.deepEqual([...new Uint8Array(await blob.arrayBuffer())].slice(0, 3), [0xef, 0xbb, 0xbf])
+  const url = new URL(calls[0], 'https://example.test')
+  assert.deepEqual([url.pathname, url.searchParams.get('range'), url.searchParams.get('search'), url.searchParams.get('settlement'), url.searchParams.has('page')], ['/audit-usage/export', 'all', '图纸', 'trial', false])
+  assert.equal(await nativeUsageAdapter.readBalance!(), null)
+  globalThis.fetch = async () => json({user_quota: 1200, enabled: true})
+  assert.equal(await nativeUsageAdapter.readBalance!(), 1200)
+  globalThis.fetch = async () => json({error: 'denied'}, 403)
+  await assert.rejects(nativeUsageAdapter.exportUsage!({range: '30d', search: '', settlement: '', page: 1, page_size: 10}), (error: Error & {status?: number}) => error.status === 403)
 })
 
 test('native archive preserves filters and the exact selected historical result', async () => {
   const calls: string[] = []
   globalThis.fetch = async input => {calls.push(String(input)); return json({})}
-  await nativeArchiveAdapter.listDocuments({search: 'A & B', category_id: null, document_type: null, customer: '客户', initiator: null, from_date: null, through_date: null, page: 2, page_size: 10})
+  await nativeArchiveAdapter.listDocuments({search: 'A & B', category_id: null, document_type: null, customer: '客户', initiator: null, from_date: null, through_date: null, result: 'NG', page: 2, page_size: 10})
   await nativeArchiveAdapter.listHistory('document/a')
   await nativeArchiveAdapter.readHistory('document/a', {task_id: 'old-task', round_id: 'old-round', file_version_id: 'old-version', result_attempt: 2})
   const query = new URL(calls[0], 'https://example.test').searchParams
   assert.equal(query.get('search'), 'A & B')
   assert.equal(query.get('customer'), '客户')
   assert.equal(query.get('page'), '2')
+  assert.equal(query.get('result'), 'NG')
   assert.equal(query.has('category_id'), false)
   assert.equal(calls[1], '/audit-archive/document%2Fa/history')
   assert.equal(calls[2], '/audit-archive/document%2Fa/history/result?task_id=old-task&round_id=old-round&file_version_id=old-version&result_attempt=2')
@@ -184,7 +205,7 @@ test('archive reads time out without replay and allow an explicit read of the sa
   const calls: {url: string; method: string}[] = []
   const reference = {task_id: 'old-task', round_id: 'old-round', file_version_id: 'old-version', result_attempt: 2}
   const reads = [
-    () => nativeArchiveAdapter.listDocuments({search: '', category_id: null, document_type: null, customer: null, initiator: null, from_date: null, through_date: null, page: 1, page_size: 10}),
+    () => nativeArchiveAdapter.listDocuments({search: '', category_id: null, document_type: null, customer: null, initiator: null, from_date: null, through_date: null, result: null, page: 1, page_size: 10}),
     () => nativeArchiveAdapter.listHistory('document/a'),
     () => nativeArchiveAdapter.readHistory('document/a', reference),
   ]

@@ -399,12 +399,17 @@ def test_archive_summary_matches_frozen_detail_and_preserves_default_and_revocat
     assert history["document"] == document
     assert history["default_reference"]["task_id"] == tasks[0]["id"]
     assert document["latest_completed"]["reference"] == history["default_reference"]
+    # The result filter selects by the conclusion the row shows, before paging.
+    listed = {result: [item["document_id"] for item in client.get("/audit-archive", params={"result": result}).json()["documents"]] for result in ("PASS", "NG", "UNKNOWN", "none", "active")}
+    assert [result for result, ids in listed.items() if document["document_id"] in ids] == [document["latest_completed"]["conclusion"]]
+    assert client.get("/audit-archive", params={"result": "MAYBE"}).status_code == 422
     for entry, task in zip(history["entries"], reversed(tasks)):
         detail = client.get(history_path + "/result", params={key: value for key, value in entry["reference"].items() if value is not None})
         assert detail.status_code == 200, detail.text
         assert detail.json()["entry"] == entry
         audit = task["files"][0]["audit"]
         assert {key: entry[key] for key in ("execution", "conclusion", "report")} == {key: audit[key] for key in ("execution", "conclusion", "report")}
+        assert entry["rule_title"] == audit["rule"]["title"]
         assert entry["conclusion"] != "PASS"
     frozen = history["entries"][-1]["reference"]
     with migrator._conn() as conn:
@@ -966,6 +971,15 @@ def test_charged_task_allocates_only_matched_selected_files_and_p8_counts_files(
         assert usage["summary"]["consumption_count"]["value"] == 2
         assert usage["summary"]["charged_points"]["value"] == 750
         assert usage["summary"]["pending_points"]["value"] == 250
+        states = ("charged", "pending", "processing", "unknown", "trial")
+        assert sum(charged.get("/audit-usage", params={"settlement": state}).json()["total"] for state in states) == 2
+        assert charged.get("/audit-usage", params={"settlement": "paid"}).status_code == 400
+        exported = charged.get("/audit-usage/export")
+        assert exported.status_code == 200, exported.text
+        assert exported.headers["content-type"].startswith("text/csv")
+        assert exported.content.startswith(b"\xef\xbb\xbf")
+        lines = exported.content.decode("utf-8-sig").splitlines()
+        assert lines[0] == "时间,订单号,文档名称,扣费状态,发起人,扣费点数" and len(lines) == 3
     finally:
         charged.close()
         http.close()

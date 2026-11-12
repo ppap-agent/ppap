@@ -37,6 +37,19 @@ export function readSharedArchive(requestId: string, artifact: components['schem
 
 export const nativeUsageAdapter: AuditUsageAdapter = {
   readUsage: query => request(`/audit-usage?${new URLSearchParams(Object.entries(query).map(([key, value]) => [key, String(value)]))}`),
+  async exportUsage(query) {
+    const response = await fetch(`${apiUrl}/audit-usage/export?${new URLSearchParams({range: query.range, search: query.search, settlement: query.settlement})}`, {method: 'GET', credentials: 'include'})
+    if (!response.ok) {
+      if (response.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event('ppap-session-expired'))
+      throw withResponseTrace(Object.assign(new Error('用量明细导出失败，请重试。'), {status: response.status}), response)
+    }
+    return response.blob()
+  },
+  // The partner AI balance as Feishu reports it now; null when Feishu could not be read, never a guessed 0.
+  async readBalance() {
+    const quota = await request<components['schemas']['QuotaEstimate']>('/integrations/feishu/usage/quota')
+    return quota.unavailable || typeof quota.user_quota !== 'number' ? null : quota.user_quota
+  },
 }
 
 async function readWithDeadline<T>(read: (signal: AbortSignal) => Promise<T>, message: string): Promise<T> {
@@ -245,6 +258,17 @@ export function createNativeAuditAdapter(options: {customers: string[]; personal
     return {validation_id: job.id, validation: {state: job.status === 'failed' ? 'error' as const : 'checking' as const, reasons: [job.status === 'failed' ? '文件文件检查失败，请核对原文件。' : '正在检查文件内容…']}, ...purpose}
   }
   return {
+    precheck: {
+      read: (id, signal) => request(`${taskPath(id)}/precheck`, 'GET', undefined, signal),
+      report: id => readWithDeadline(async signal => {
+        const response = await fetch(`${apiUrl}${taskPath(id)}/precheck/report`, {method: 'GET', credentials: 'include', signal})
+        if (!response.ok) {
+          if (response.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event('ppap-session-expired'))
+          throw withResponseTrace(new Error('预检报告暂时无法生成。'), response)
+        }
+        return response.blob()
+      }, '生成预检报告超时，请重试。'),
+    },
     notifications: {
       read: id => request(`${taskPath(id)}/notification`),
       save: (id, enabled, revision) => request(`${taskPath(id)}/notification`, 'PUT', {enabled, expected_revision: revision}),

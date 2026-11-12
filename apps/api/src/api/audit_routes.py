@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -99,6 +99,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
         initiator: str | None = None,
         from_date: date | None = None,
         through_date: date | None = None,
+        result: Literal["PASS", "NG", "UNKNOWN", "none", "active"] | None = None,
         page: int = Query(1, ge=1),
         page_size: int = Query(10, ge=10, le=10),
     ) -> JSONResponse:
@@ -115,6 +116,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
             "initiator": initiator,
             "from_date": from_date.isoformat() if from_date else None,
             "through_date": through_date.isoformat() if through_date else None,
+            "result": result,
             "page": page,
             "page_size": page_size,
         }
@@ -534,17 +536,47 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
         rows = store.list_usage_events(principal, limit + 1, offset, since, until)
         return JSONResponse({"events": rows[:limit], "next_offset": offset + limit if len(rows) > limit else None})
 
+    usage_settlements = {"", "charged", "pending", "processing", "unknown", "trial"}
+
     @app.get("/audit-usage", response_model=wc.AuditUsagePage)
-    def audit_usage(request: Request, range: str = "30d", search: str = Query("", max_length=200), page: int = Query(1, ge=1), page_size: int = Query(10, ge=10, le=10)) -> JSONResponse:
+    def audit_usage(
+        request: Request,
+        range: str = "30d",
+        search: str = Query("", max_length=200),
+        settlement: str = "",
+        page: int = Query(1, ge=1),
+        page_size: int = Query(10, ge=10, le=10),
+    ) -> JSONResponse:
         principal, denied = require_principal(request)
         if denied:
             return denied
         if range not in {"7d", "30d", "90d", "all"}:
             return JSONResponse({"error": "invalid_usage_range"}, status_code=400)
+        if settlement not in usage_settlements:
+            return JSONResponse({"error": "invalid_usage_settlement"}, status_code=400)
         try:
-            return JSONResponse(store.list_audit_usage(principal, {"range": range, "search": search, "page": page, "page_size": page_size}))
+            return JSONResponse(store.list_audit_usage(principal, {"range": range, "search": search, "settlement": settlement, "page": page, "page_size": page_size}))
         except (KeyError, ValueError) as exc:
             return fail(exc)
+
+    @app.get("/audit-usage/export", response_class=Response, responses={200: {"content": {"text/csv": {"schema": {"type": "string", "format": "binary"}}}}})
+    def audit_usage_export(request: Request, range: str = "30d", search: str = Query("", max_length=200), settlement: str = ""):
+        """Every entry the usage list would show for the same range, search and settlement, as CSV."""
+        from product.store.usage import usage_csv
+
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        if range not in {"7d", "30d", "90d", "all"}:
+            return JSONResponse({"error": "invalid_usage_range"}, status_code=400)
+        if settlement not in usage_settlements:
+            return JSONResponse({"error": "invalid_usage_settlement"}, status_code=400)
+        try:
+            page = store.list_audit_usage(principal, {"range": range, "search": search, "settlement": settlement, "page": 1, "page_size": 10}, every_entry=True)
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+        filename = f"用量明细-{page['through_date']}.csv"
+        return Response(usage_csv(page), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": attachment_content_disposition(filename), "Cache-Control": "private, no-store"})
 
     @app.put("/rounds/{round_id}/review-document-pairs", response_model=wc.ReviewDocumentPairs, openapi_extra=wc.openapi_body(wc.DocumentPair))
     def review_document_pair(round_id: str, body: dict, request: Request):

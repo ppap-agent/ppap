@@ -4,7 +4,7 @@ import type {components} from '../generated/openapi'
 import {historyReportReady, historyShareMatches, readArchiveAddress, resultKey, type HistoryEntry} from './archive-contract.ts'
 
 const reference = {task_id: 'task-1', round_id: 'round-1', file_version_id: 'version-1', result_attempt: 2}
-const entry: HistoryEntry = {document_id: 'document-1', reference, sequence: 3, audited_at: '', initiator: '示例', execution: 'completed', conclusion: 'PASS', source_revision: 'B', report_access: {state: 'allowed', reason: null}, report: {report_id: 'report-1', state: 'ready', reason: null, generated_at: '2026-10-16T00:00:00Z', artifact: {artifact_id: 'pdf-1', filename: '样例.pdf', content_type: 'application/pdf', byte_size: 10}}}
+const entry: HistoryEntry = {document_id: 'document-1', reference, sequence: 3, audited_at: '', initiator: '示例', execution: 'completed', conclusion: 'PASS', rule_title: '控制计划审核规则', source_revision: 'B', report_access: {state: 'allowed', reason: null}, report: {report_id: 'report-1', state: 'ready', reason: null, generated_at: '2026-10-16T00:00:00Z', artifact: {artifact_id: 'pdf-1', filename: '样例.pdf', content_type: 'application/pdf', byte_size: 10}}}
 
 test('archive addresses preserve the complete result identity and reject ambiguous reports', () => {
   const query = new URLSearchParams({archiveDoc: 'document-1', auditRef: resultKey(reference), archiveReport: '1'})

@@ -2121,6 +2121,7 @@ class AuthStore:
                 "initiator": principal.display_name,
                 "execution": audit["execution"],
                 "conclusion": audit["conclusion"],
+                "rule_title": (audit.get("rule") or {}).get("title"),
                 "source_revision": None,
                 "report": audit["report"],
                 "report_access": {"state": "allowed", "reason": None},
@@ -2131,7 +2132,7 @@ class AuthStore:
             metadata = {**metadata, **((file.get("display_info") or {}).get("values") or {})}
             if not details:
                 metadata = {**metadata, **(row[9] or {})}
-            completed = next((row for row in reversed(record["entries"]) if row["execution"] == "completed" and row["conclusion"] in {"PASS", "NG"}), None)
+            completed = next((row for row in reversed(record["entries"]) if row["execution"] == "completed" and row["conclusion"] in {"PASS", "NG", "UNKNOWN"}), None)
             record["document"] = {
                 "document_id": document_id,
                 "provider": "feishu",
@@ -2145,7 +2146,7 @@ class AuthStore:
         return records
 
     def list_audit_archive(self, principal: Principal, query: dict) -> dict:
-        from .archive import archive_page
+        from .archive import archive_matches, archive_page, archive_result_states
 
         with self._conn() as conn, conn.transaction():
             conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
@@ -2162,9 +2163,16 @@ class AuthStore:
                     "latest_completed": None,
                     "latest_activity": {"initiator": principal.display_name, "audited_at": row[4].isoformat()},
                 }
-            page = archive_page(list(summaries.values()), query)
-            selected = {document["document_id"] for document in page["documents"]}
-            records = self._archive_records(conn, principal, [row for row in rows if self._archive_document_id(principal, row) in selected])
+            results = None
+            if query.get("result"):
+                # A result comes from the frozen rounds, so only documents passing every other filter are projected before paging.
+                candidates = {document_id for document_id, document in summaries.items() if archive_matches(document, query)}
+                records = self._archive_records(conn, principal, [row for row in rows if self._archive_document_id(principal, row) in candidates])
+                results = {document_id: archive_result_states(record["document"]) for document_id, record in records.items()}
+            page = archive_page(list(summaries.values()), query, results)
+            if results is None:
+                selected = {document["document_id"] for document in page["documents"]}
+                records = self._archive_records(conn, principal, [row for row in rows if self._archive_document_id(principal, row) in selected])
             page["documents"] = [records[document["document_id"]]["document"] for document in page["documents"]]
             return page
 
@@ -5170,7 +5178,7 @@ class AuthStore:
             rows = self._usage_rows(conn, principal, limit, offset, since, until)
         return [self.usage_event_public(row) for row in rows]
 
-    def list_audit_usage(self, principal: Principal, query: dict) -> dict:
+    def list_audit_usage(self, principal: Principal, query: dict, *, every_entry: bool = False) -> dict:
         from .usage import usage_page
 
         with self._conn() as conn, conn.transaction():
@@ -5202,7 +5210,7 @@ class AuthStore:
             else:
                 free = {key: {"value": None, "reason": "尚未确认当前企业的用量项目与免费额度。"} for key in ("free_total", "free_remaining")}
             archive = {(str(row[0]), str(row[1])): {"document_id": self._archive_document_id(principal, row), "sequence": row[5]} for row in self._archive_rows(conn, principal)}
-            return usage_page(rows, query, {"id": principal.tenant_id, "name": tenant[0]}, free, archive, _now())
+            return usage_page(rows, query, {"id": principal.tenant_id, "name": tenant[0]}, free, archive, _now(), every_entry=every_entry)
 
     def _usage_rows(self, conn, principal, limit, offset, since, until):
         with conn.cursor(row_factory=dict_row) as cur:

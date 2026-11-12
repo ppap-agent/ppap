@@ -81,11 +81,13 @@ from api.formalization_routes import register_formalization_routes
 from api.mcp_confirmation import require_approved_source
 from api.notifications import run_task_notifications
 from api.office_routes import register_office_routes
+from api.precheck_routes import register_precheck_routes
 from api.report_routes import register_report_routes
 from api.rule_routes import register_rule_routes
 from api.sharing_routes import register_sharing_routes
 from api.suite_routes import register_suite_routes
 from api.support_routes import register_support_routes
+from api.template_routes import register_template_routes
 from api.usage_reporting import report_usage, run_pending_usage
 
 Probe = Callable[[Settings], dict[str, str]]
@@ -855,6 +857,8 @@ def create_app(
         if target_count is None:
             if partner is None:
                 body = quota_unavailable("检查额度异常", "检查AI包额度时发生异常")
+                # user_quota 0 here is not a balance; readers must not show it as one.
+                body["unavailable"] = True
                 body["remaining_trial_ai_points"] = remaining
                 body["usage_charge_enabled"] = settings.usage_charge_enabled
                 return JSONResponse(body)
@@ -943,6 +947,7 @@ def create_app(
         return query_tenant_ai_item(http, session.access_token, settings.feishu_ai_item_id)
 
     register_audit_routes(app, store, principal_of, quota_for)
+    register_precheck_routes(app, store, principal_of)
     from api.fact_answers import register_fact_answer_routes
 
     register_fact_answer_routes(app, store, principal_of)
@@ -953,6 +958,7 @@ def create_app(
     register_formalization_routes(app, store, principal_of)
     register_suite_routes(app, store, principal_of)
     register_support_routes(app, principal_of, settings)
+    register_template_routes(app, store, session_of, http, settings)
     register_sharing_routes(app, store, session_of, http, settings)
     wc.add_ui_contract(app)
     if settings.mcp_enabled:

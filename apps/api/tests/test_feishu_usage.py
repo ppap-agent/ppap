@@ -220,6 +220,7 @@ class FeishuUsageTests(unittest.TestCase):
         self.assertEqual(body["user_quota"], 80)
         self.assertTrue(body["ai_package_purchased"])
         self.assertTrue(body["quota_sufficient"])
+        self.assertNotIn("unavailable", body)
         self.assertEqual(body["remaining_trial_ai_points"], 10000)
         self.assertEqual(body["message"], "AI额度充足")
         recorded = self._seed_event(
@@ -251,6 +252,7 @@ class FeishuUsageTests(unittest.TestCase):
         self.assertFalse(body["quota_sufficient"])
         self.assertEqual(body["user_quota"], 0)
         self.assertEqual(body["message"], "检查额度异常")
+        self.assertTrue(body["unavailable"])
         self.assertEqual(body["remaining_trial_ai_points"], 10000)
 
     def test_unpurchased_package_keeps_partner_fields(self):

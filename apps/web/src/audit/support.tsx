@@ -14,6 +14,8 @@ export type AuditSupportAdapter = {
 /** Read-only display data captured when support opens, not another operation store. */
 export type SupportSnapshot = {scenario: string; traceId?: string; facts?: readonly {label: string; value: string}[]}
 export const SupportEntryContext = createContext<((snapshot: SupportSnapshot) => void) | null>(null)
+// The support group, hours and response time are the product's own service promise and need no configuration read.
+const supportGroup = 'PPAP Audit 用户支持群'
 
 export function AuditSupport({adapter, snapshot, pageReference, returnTargets, onClose}: {adapter?: AuditSupportAdapter; snapshot: SupportSnapshot; pageReference: string; returnTargets: readonly (HTMLElement | null)[]; onClose: () => void}) {
   const {scenario, traceId, facts = []} = snapshot
@@ -41,10 +43,14 @@ export function AuditSupport({adapter, snapshot, pageReference, returnTargets, o
   const copyText = [scenario, `本页参考编号：${pageReference}`, ...(traceId ? [`服务请求编号：${traceId}`] : []), ...facts.map(fact => `${fact.label}：${fact.value}`)].join('\n')
   const available = info?.state === 'configured' && Boolean(info.config_version) && Boolean(info.phone?.trim() || info.email?.trim() || qr)
   return <Dialog open onOpenChange={open => {if (!open) onClose()}}><DialogContent className="max-h-[88dvh] overflow-y-auto" onCloseAutoFocus={event => {event.preventDefault(); [...returnTargets, document.getElementById('audit-main')].find(element => element?.isConnected && element.getClientRects().length)?.focus()}} onEscapeKeyDown={event => {if (zoom) {event.preventDefault(); setZoom(false)}}}><DialogHeader><DialogTitle>联系我们</DialogTitle><DialogDescription className="sr-only">获取帮助与联系方式。</DialogDescription></DialogHeader>
+    <div className="space-y-3"><dl className="space-y-3 text-sm">
+      <div><dt className="text-muted-foreground">飞书群</dt><dd className="flex flex-wrap items-center justify-between gap-2"><span>{supportGroup}（在飞书搜索群名加入）</span><Button variant="outline" size="sm" onClick={() => void copy(supportGroup)}>复制群名</Button></dd></div>
+      <div><dt className="text-muted-foreground">服务时间</dt><dd>{info?.service_hours?.trim() || '工作日 9:00–18:00'}</dd></div>
+      <div><dt className="text-muted-foreground">响应时效</dt><dd>工作日 4 小时内响应</dd></div>
+    </dl><p className="text-sm text-muted-foreground">如需补充客户模板，请在文件模板页点击「更多模板，请补充」提交材料。</p></div>
     {loading ? <ReadSkeleton label="正在读取服务信息…" kind={'detail'}/> : !available ? <div className="space-y-3"><p>服务信息暂不可用</p><Button variant="outline" onClick={() => setRetry(value => value + 1)}>重新读取服务信息</Button></div> : <dl className="space-y-4 text-sm">
       {info?.phone && <div><dt className="text-muted-foreground">电话</dt><dd className="flex flex-wrap items-center justify-between gap-2"><span className="break-all">{info.phone}</span><Button variant="outline" size="sm" onClick={() => void copy(info.phone!)}>复制电话</Button></dd></div>}
       {info?.email && <div><dt className="text-muted-foreground">邮箱</dt><dd className="flex flex-wrap items-center justify-between gap-2"><span className="break-all">{/^[^\s@?\r\n]+@[^\s@?\r\n]+\.[^\s@?\r\n]+$/.test(info.email) ? <a className="underline" href={`mailto:${encodeURIComponent(info.email)}`}>{info.email}</a> : info.email}</span><Button variant="outline" size="sm" onClick={() => void copy(info.email!)}>复制邮箱</Button></dd></div>}
-      {info?.service_hours && <div><dt className="text-muted-foreground">服务时间</dt><dd>{info.service_hours}</dd></div>}
       {qr && <div><dt className="text-muted-foreground">飞书服务二维码</dt><dd><Dialog open={zoom} onOpenChange={setZoom}><DialogTrigger asChild><Button variant="ghost" className="h-auto" aria-label="放大服务二维码"><img className="size-32 object-contain" src={qr} alt="已配置的飞书服务二维码"/></Button></DialogTrigger><DialogContent><DialogHeader><DialogTitle>服务二维码</DialogTitle><DialogDescription>请核对企业提供的服务信息。</DialogDescription></DialogHeader><img className="w-full object-contain" src={qr} alt="放大的飞书服务二维码"/></DialogContent></Dialog></dd></div>}
     </dl>}
     <div className="space-y-2 border-t pt-4">

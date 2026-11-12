@@ -14,6 +14,10 @@ tests
 **/prototypes
 docs
 assets
+# The API serves only the built-in template library from assets.
+!assets/li/templates
+!assets/nio/templates
+!assets/uaes/templates
 **/__pycache__
 **/*.pyc
 .env

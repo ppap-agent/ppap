@@ -25,6 +25,9 @@ def test_production_context_keeps_runtime_files_and_excludes_research(local_outp
             "packages/agent/src/agent/skill/references/commands.md",
             "apps/api/src/module.py",
             ".env.example",
+            "assets/li/templates/APQP-过程流程图.xlsx",
+            "assets/nio/templates/10 控制计划.xlsx",
+            "assets/uaes/templates/零件追溯检查单-模板 20250609.xlsx",
         ]
         excluded = [
             "tests/root.py",
@@ -35,6 +38,9 @@ def test_production_context_keeps_runtime_files_and_excludes_research(local_outp
             "packages/agent/prototypes/typed_evidence_holes/test_local_grok_runner.py",
             "packages/agent/prototypes/typed_evidence_holes/oracle/expected.json",
             ".env",
+            "assets/li/rules/08 过程流程图.docx",
+            "assets/corpus/oracle.json",
+            "assets/uaes/prechecks/rule.json",
         ]
         if local_output:
             excluded.extend(

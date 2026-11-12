@@ -1,3 +1,4 @@
+import {fixtureTemplates} from './audit-templates'
 import {createRoot} from 'react-dom/client'
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react'
 import '../src/index.css'
@@ -55,6 +56,7 @@ let drivePageReads = 0
 const accepted = new Map<string, ReturnType<typeof fixtureAcceptance>>()
 const confirmationInputs = new Map<string, AuditTask>()
 const taskStore = new Map<string, AuditTask>()
+const templateFixture = fixtureTemplates(scene)
 const displayAdapter = fixtureDisplay(taskStore, scene)
 const reportAdapter = fixtureReports(taskStore, scene)
 const sharingAdapter = fixtureSharing(taskStore, scene)
@@ -78,6 +80,19 @@ function sample(index: number): AuditTaskFile {
 const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' | 'drive'>> = {
   readRound: readHistoricalRound,
   ruleChoices: async () => documents.map((document, index) => ({id: `preview-rule-${index + 1}`, title: document.rule})),
+  // Fixture precheck: the first matched file carries one warning so both levels show.
+  precheck: {
+    async read(id) {
+      const files = (taskStore.get(id)?.files ?? []).filter(row => row.selection === 'selected')
+      const first = files.find(row => row.match?.state === 'matched')
+      const warnings = first ? [{number: 'W-01', code: 'W02', title: '字段为空或未识别', level: 'warn' as const, file_version_id: first.file.id, filename: first.file.original_filename, location: first.file.original_filename, evidence: '(空)', problem: '文件中未识别到零件号。', action: '在文件表头填写零件号，与图纸和其他 PPAP 文件保持一致。', responsibility: '材料侧', scope: 'file' as const}] : []
+      const level = (row: AuditTaskFile) => row.match?.state === 'reference' ? 'reference' as const : row.match?.state === 'unmatched' ? 'unmatched' as const : row.file.id === first?.file.id ? 'warn' as const : 'ok' as const
+      const rows = files.map(row => ({file_version_id: row.file.id, filename: row.file.original_filename, level: level(row), document_type: row.match?.document_type ?? null, customer: row.match?.metadata.customer ?? null}))
+      const count = (value: string) => rows.filter(row => row.level === value).length
+      return {outline_version: 'PPAP-00 v0.14', conclusion: 'pass', files: rows, blocks: [], warnings, statuses: [], counts: {ok: count('ok'), warn: count('warn'), block: 0, unmatched: count('unmatched'), reference: count('reference'), pending: 0}}
+    },
+    report: async () => new Blob(['%PDF-1.4 preview'], {type: 'application/pdf'}),
+  },
   notifications: {
     async read(id) {
       const task = taskStore.get(id)
@@ -543,7 +558,7 @@ function Preview() {
     },
   }), [])
   const content = <>{window.parent === window && <p role="note" className="border-b px-4 py-2 text-xs text-muted-foreground">模拟预览 · 不连接现网</p>}{(automaticObservation || delayedDisplay || scene.startsWith('recognition-') || scene.startsWith('task-list-controlled') || scene.startsWith('restore-review-edit') || ['checking-loading', 'matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'upload-resume', 'restore-loading', 'restore-race', 'reports-pdf-race', 'reports-generate-race', 'reports-share-race', 'reports-share-directory-loading', 'archive-history-race', 'archive-history-loads', 'usage-race', 'original-loading', 'support-loading'].includes(scene)) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>预览事件</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}
-    <AuditIntake adapter={controlled} autoObserve={automaticObservation} reportAdapter={controlledReports} sharingAdapter={controlledSharing} archiveAdapter={controlledArchive} usageAdapter={controlledUsage} supportAdapter={controlledSupport} displayAdapter={scene.startsWith('restore-display-') ? controlledDisplay : undefined} renderOriginal={(file, evidence) => scene.startsWith('original-') && file.original_filename.endsWith('.xlsx') ? <FixtureRemoteOriginal key={file.id} file={file} office={originalOffice}/> : <FixtureOriginal file={file} evidence={evidence}/>}/></>
+    <AuditIntake templateAdapter={templateFixture} adapter={controlled} autoObserve={automaticObservation} reportAdapter={controlledReports} sharingAdapter={controlledSharing} archiveAdapter={controlledArchive} usageAdapter={controlledUsage} supportAdapter={controlledSupport} displayAdapter={scene.startsWith('restore-display-') ? controlledDisplay : undefined} renderOriginal={(file, evidence) => scene.startsWith('original-') && file.original_filename.endsWith('.xlsx') ? <FixtureRemoteOriginal key={file.id} file={file} office={originalOffice}/> : <FixtureOriginal file={file} evidence={evidence}/>}/></>
   return scene.startsWith('restore-review-edit') ? <AuditReviewProvider adapter={reviewAdapter}>{content}</AuditReviewProvider> : content
 }
 function HistoricalPreview() {

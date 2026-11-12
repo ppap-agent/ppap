@@ -108,7 +108,7 @@ def test_customer_catalog_refresh_keeps_the_restored_task_and_file_selection(pag
     assert page.url == WEB + "/tasks/original-task"
     assert reads == ["GET", "GET"]
 
-    expect(page.get_by_role("link", name="文件模板（在飞书新窗口打开）", exact=True)).to_have_attribute("href", "https://icoastline.feishu.cn/wiki/M5KqwJYWDiuUYNkGoiXcL1bgnbe")
+    expect(page.get_by_role("button", name="文件模板", exact=True)).to_be_visible()
 
 
 def test_disabled_login_has_no_dead_authorization_link_and_can_recheck_configuration(page):

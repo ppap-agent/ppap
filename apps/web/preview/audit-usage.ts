@@ -7,12 +7,12 @@ const unknown = {value: null, reason: '暂未取得完整数据。'}
 export function fixtureUsage(archive: AuditArchiveAdapter, scene: string): AuditUsageAdapter {
   let reads = 0
   let entries: UsageEntry[] | null = null
-  return {readUsage: async query => {
+  const adapter: AuditUsageAdapter = {readUsage: async query => {
     reads += 1
     if (scene === 'usage-error' && reads === 1 || scene === 'usage-refresh-error' && reads > 1) throw new Error('preview_usage_unavailable')
     if (scene === 'usage-denied' || scene === 'usage-revoked' && reads > 1) throw Object.assign(new Error('preview_usage_denied'), {status: 403})
     if (!entries) {
-      const catalog = await archive.listDocuments({search: '', category_id: null, document_type: null, customer: null, initiator: null, from_date: null, through_date: null, page: 1, page_size: 10})
+      const catalog = await archive.listDocuments({search: '', category_id: null, document_type: null, customer: null, initiator: null, from_date: null, through_date: null, result: null, page: 1, page_size: 10})
       const second = await archive.listDocuments({...catalog.query, page: 2})
       entries = await Promise.all([...catalog.documents, ...second.documents].map(async (document, index): Promise<UsageEntry> => {
         const history = await archive.listHistory(document.document_id), entry = index === 0 ? history.entries.find(row => row.sequence === 2)! : history.entries[0]
@@ -27,7 +27,7 @@ export function fixtureUsage(archive: AuditArchiveAdapter, scene: string): Audit
     if (uncertain) values[2].settlement = {state: 'unknown', reason: '扣费结果待确认。'}
     if (scene === 'usage-unmapped') {values[0].document_id = null; values[0].audit_sequence = null; values[0].audit_access = {state: 'unknown', reason: '尚未确认文档关联。'}}
     const from = query.range === '7d' ? '2026-10-10' : query.range === '30d' ? '2026-09-17' : query.range === '90d' ? '2026-07-19' : null
-    const filtered = (scene === 'usage-empty' ? [] : values).filter(row => (!from || row.occurred_at.slice(0, 10) >= from) && `${row.filename} ${row.initiator}`.includes(query.search))
+    const filtered = (scene === 'usage-empty' ? [] : values).filter(row => (!from || row.occurred_at.slice(0, 10) >= from) && `${row.filename} ${row.initiator}`.includes(query.search) && (!query.settlement || row.settlement.state === query.settlement))
     const result: UsagePage = {organization_id: scene === 'usage-foreign' && reads > 1 ? 'other-org' : 'preview-org', organization_name: '示例质量团队', query: structuredClone(query), from_date: from, through_date: '2026-10-16', summary: {month: '2026-10', timezone: 'Asia/Shanghai', as_of: '2026-10-16T09:00:00+08:00', consumption_count: known(12), charged_points: uncertain ? unknown : known(4500), pending_points: uncertain ? unknown : known(1500), free_remaining: scene === 'usage-quota-unknown' ? unknown : known(300), free_total: scene === 'usage-quota-unknown' ? unknown : known(1000)}, entries: filtered.slice((query.page - 1) * 10, query.page * 10), total: filtered.length, notices: scene === 'usage-ai-disabled' ? ['ai_disabled'] : scene === 'usage-no-package' ? ['no_package'] : scene === 'usage-paid-insufficient' ? ['paid_insufficient'] : []}
     if (scene === 'usage-empty') result.summary = {...result.summary, consumption_count: known(0), charged_points: known(0), pending_points: known(0), free_remaining: known(1000)}
     if (scene === 'usage-unmapped') {
@@ -51,4 +51,18 @@ export function fixtureUsage(archive: AuditArchiveAdapter, scene: string): Audit
     }
     return result
   }}
+  return {...adapter,
+    // The fixture exports what the list would show across every page, the same columns as the service.
+    exportUsage: async query => {
+      const rows: string[][] = []
+      for (let page = 1; ; page += 1) {
+        const result = await adapter.readUsage({...query, page})
+        rows.push(...result.entries.map(row => [row.occurred_at.slice(0, 16).replace('T', ' '), row.orders.map(order => order.order_id).join('；'), row.filename, {charged: '已扣费', pending: '待扣费', processing: '扣费处理中', unknown: '待确认', trial: '免费额度已扣'}[row.settlement.state], row.initiator, String(row.points)]))
+        if (page * 10 >= result.total) break
+      }
+      const cell = (value: string) => /[",\r\n]/.test(value) ? `"${value.replaceAll('"', '""')}"` : value
+      return new Blob(['\ufeff' + [['时间', '订单号', '文档名称', '扣费状态', '发起人', '扣费点数'], ...rows].map(row => row.map(cell).join(',')).join('\r\n') + '\r\n'], {type: 'text/csv'})
+    },
+    readBalance: async () => scene === 'usage-quota-unknown' ? null : 12000,
+  }
 }

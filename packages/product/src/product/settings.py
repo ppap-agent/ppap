@@ -94,6 +94,8 @@ class Settings(BaseSettings):
     support_email: str = Field(default="", alias="PPAP_SUPPORT_EMAIL", max_length=320)
     support_service_hours: str = Field(default="", alias="PPAP_SUPPORT_SERVICE_HOURS", max_length=200)
     support_qr_file: str = Field(default="", alias="PPAP_SUPPORT_QR_FILE")
+    # Directory holding `<company>/templates`: the repository `assets` locally, `/app/assets` in the image.
+    template_root: str = Field(default="assets", alias="PPAP_TEMPLATE_ROOT")
 
     # Checker/OCR names kept from the migrated engine. Product code still reads llm_*.
     APP_NAME: str = "PPAP"

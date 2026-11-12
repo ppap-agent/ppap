@@ -14,8 +14,10 @@ const titles: Record<string, string> = {
   ambiguous_available_rules: '有多份适用规则，请先确认审核依据',
 }
 
-export function MatchingFeedback({gaps, candidates, onCheck, onRules, onRemove}: {
+export function MatchingFeedback({gaps, candidates, onCheck, onRules, onRemove, onTemplates}: {
   gaps: string[]; candidates?: {id: string; title: string}[]; onCheck: () => void; onRules?: () => void; onRemove?: () => void
+  /** In-app template library: open it, or open its submission straight away. */
+  onTemplates?: (submit: boolean) => void
 }) {
   const reason = gaps.find(gap => Object.hasOwn(titles, gap))
   const needsInput = reason === 'matching_customer_required' || reason === 'matching_customer_conflict' || reason === 'matching_document_type_required'
@@ -25,8 +27,10 @@ export function MatchingFeedback({gaps, candidates, onCheck, onRules, onRemove}:
     <div className="flex flex-wrap gap-2 pt-2">
       {needsInput && <Button size="sm" onClick={onCheck}>{reason === 'matching_customer_required' || reason === 'matching_customer_conflict' ? '返回核对客户' : '返回核对文件'}</Button>}
       {!needsInput && onRules && <Button size="sm" onClick={onRules}>{reason === 'matching_rules_customer_unassigned' || reason === 'ambiguous_available_rules' ? '核对规则范围与版本' : '上传对应规则'}</Button>}
-      <Button asChild variant="link" size="sm"><a href={TEMPLATE_GUIDE_URL} target="_blank" rel="noopener noreferrer">查看模板<ExternalLink aria-hidden="true"/></a></Button>
-      <Button asChild variant="link" size="sm"><a href={TEMPLATE_CONTACT_URL} target="_blank" rel="noopener noreferrer">模板反馈<ExternalLink aria-hidden="true"/></a></Button>
+      {onTemplates ? <><Button variant="link" size="sm" onClick={() => onTemplates(false)}>查看标准模板</Button><Button variant="link" size="sm" onClick={() => onTemplates(true)}>反馈对应模板</Button></> : <>
+        <Button asChild variant="link" size="sm"><a href={TEMPLATE_GUIDE_URL} target="_blank" rel="noopener noreferrer">查看模板<ExternalLink aria-hidden="true"/></a></Button>
+        <Button asChild variant="link" size="sm"><a href={TEMPLATE_CONTACT_URL} target="_blank" rel="noopener noreferrer">模板反馈<ExternalLink aria-hidden="true"/></a></Button>
+      </>}
       {onRemove && <Button variant="ghost" size="sm" onClick={onRemove}>移除</Button>}
     </div>
   </AlertDescription></Alert>

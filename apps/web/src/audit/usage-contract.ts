@@ -6,7 +6,14 @@ export type UsagePage = components['schemas']['AuditUsagePage']
 export type UsageEntry = components['schemas']['AuditUsageEntry']
 export type UsageMetric = components['schemas']['AuditUsageMetric']
 /** Read projection only. No reporting, charging, quota reset or local ledger. */
-export type AuditUsageAdapter = {readUsage: (query: UsageQuery) => Promise<UsagePage>}
+export type AuditUsageAdapter = {
+  readUsage: (query: UsageQuery) => Promise<UsagePage>
+  /** Every entry matching range, search and settlement as a UTF-8 CSV, not only the visible page. */
+  exportUsage?: (query: UsageQuery) => Promise<Blob>
+  /** Feishu partner AI points balance; null when Feishu could not be read. */
+  readBalance?: () => Promise<number | null>
+}
+export const settlementStates = ['charged', 'pending', 'processing', 'unknown', 'trial'] as const
 export const usageNotices = {
   ai_disabled: '飞书AI包开关已关闭，请联系管理员在飞书管理后台启用或联系我们获取免费额度',
   no_package: '提示：试用额度不足，且未采购飞书AI包，请联系管理员在飞书管理后台进行充值或联系我们获取免费额度',
@@ -34,7 +41,7 @@ export function validUsagePage(page: UsagePage, query: UsageQuery, organization?
   return page.entries.every(row => {
     const reference = row.reference, allocation = row.allocation
     const date = localDate(row.occurred_at, summary.timezone)
-    if (!date || date > page.through_date || page.from_date && date < page.from_date || !['charged', 'pending', 'processing', 'unknown', 'trial'].includes(row.settlement.state) || !['allowed', 'denied', 'deleted', 'unknown'].includes(row.audit_access.state)) return false
+    if (!date || date > page.through_date || page.from_date && date < page.from_date || query.settlement && row.settlement.state !== query.settlement || !['charged', 'pending', 'processing', 'unknown', 'trial'].includes(row.settlement.state) || !['allowed', 'denied', 'deleted', 'unknown'].includes(row.audit_access.state)) return false
     if (row.settlement.state === 'trial' && (allocation.free_points !== 500 || allocation.paid_points !== 0)) return false
     if (row.settlement.state === 'charged') {
       if (!row.debited_at || !validTime(row.debited_at) || Date.parse(row.debited_at) < Date.parse(row.occurred_at) || Date.parse(row.debited_at) > Date.parse(summary.as_of) || !row.orders.length || !allocation.paid_points) return false
@@ -44,12 +51,13 @@ export function validUsagePage(page: UsagePage, query: UsageQuery, organization?
   })
 }
 export function readUsageQuery(search: string): UsageQuery {
-  const params = new URLSearchParams(search), range = params.get('usageRange'), page = Number(params.get('usagePage'))
-  return {range: range === '7d' || range === '90d' || range === 'all' ? range : '30d', search: params.get('usageSearch') || '', page: Number.isSafeInteger(page) && page > 0 ? page : 1, page_size: 10}
+  const params = new URLSearchParams(search), range = params.get('usageRange'), page = Number(params.get('usagePage')), state = params.get('usageState')
+  return {range: range === '7d' || range === '90d' || range === 'all' ? range : '30d', search: params.get('usageSearch') || '', settlement: settlementStates.find(value => value === state) || '', page: Number.isSafeInteger(page) && page > 0 ? page : 1, page_size: 10}
 }
 export function writeUsageQuery(query: UsageQuery) {
   const url = new URL(location.href)
   url.searchParams.set('usageRange', query.range); url.searchParams.set('usageSearch', query.search); url.searchParams.set('usagePage', String(query.page))
+  if (query.settlement) url.searchParams.set('usageState', query.settlement); else url.searchParams.delete('usageState')
   history.replaceState(history.state, '', url)
-  if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-view', view: 'usage', usageRange: query.range, usageSearch: query.search, usagePage: String(query.page), archiveDoc: url.searchParams.get('archiveDoc'), auditRef: url.searchParams.get('auditRef'), archiveReport: url.searchParams.get('archiveReport')}, location.origin)
+  if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-view', view: 'usage', usageRange: query.range, usageSearch: query.search, usagePage: String(query.page), usageState: query.settlement, archiveDoc: url.searchParams.get('archiveDoc'), auditRef: url.searchParams.get('auditRef'), archiveReport: url.searchParams.get('archiveReport')}, location.origin)
 }

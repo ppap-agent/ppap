@@ -26,7 +26,9 @@ class TemplateLinksPreviewTests(unittest.TestCase):
                     if width < 1024:
                         page.get_by_role("button", name="打开产品导航", exact=True).click()
                     nav = page.get_by_role("navigation", name="产品导航", exact=True).filter(visible=True)
-                    expect(nav.get_by_role("link", name="文件模板（在飞书新窗口打开）", exact=True)).to_have_attribute("href", GUIDE)
+                    # The template library is a page of the product; the upload draft stays behind it.
+                    nav.get_by_role("button", name="文件模板", exact=True).click()
+                    expect(page.get_by_role("navigation", name="客户", exact=True)).to_be_visible()
                     page.close()
             browser.close()
 
@@ -38,12 +40,10 @@ class TemplateLinksPreviewTests(unittest.TestCase):
             page.get_by_role("button", name="使用三类文件示例", exact=True).click()
             page.get_by_role("button", name="开始识别", exact=True).click()
             expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
-            for name, url in (("查看模板", GUIDE), ("模板反馈", CONTACT)):
-                links = page.get_by_role("link", name=name, exact=True)
-                # All three files are stopped for one reason, so they share one set of links.
-                expect(links).to_have_count(1)
-                for link in links.all():
-                    expect(link).to_have_attribute("href", url)
-                    expect(link).to_have_attribute("target", "_blank")
+            for name in ("查看标准模板", "反馈对应模板"):
+                # All three files are stopped for one reason, so they share one set of entries.
+                expect(page.get_by_role("button", name=name, exact=True)).to_have_count(1)
             expect(page.get_by_role("button", name="结束任务", exact=True)).to_be_enabled()
+            page.get_by_role("button", name="反馈对应模板", exact=True).click()
+            expect(page.get_by_role("dialog", name="补充模板", exact=True)).to_be_visible()
             browser.close()

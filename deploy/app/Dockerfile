@@ -72,10 +72,16 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     /app/.venv/bin/python -c "import api, product, audit.engine, worker"; \
     /app/.venv/bin/python -c "from product.settings import Settings; from product.db import connect; from worker.deep_controller import open_store; from agent.source import authorize_execution; assert callable(authorize_execution(Settings(), connect=connect, open_store=open_store))"
 
+# Read-only built-in template library (PPAP_TEMPLATE_ROOT).
+COPY assets/li/templates /app/assets/li/templates
+COPY assets/nio/templates /app/assets/nio/templates
+COPY assets/uaes/templates /app/assets/uaes/templates
+
 ARG PPAP_BUILD_SHA=
 ARG PPAP_SERVICE=api
 ENV PPAP_BUILD_SHA=${PPAP_BUILD_SHA}
 ENV PPAP_SERVICE=${PPAP_SERVICE}
 ENV PATH="/app/.venv/bin:${PATH}"
+ENV PPAP_TEMPLATE_ROOT=/app/assets
 EXPOSE 8080
 ENTRYPOINT ["/app/entrypoint.sh"]

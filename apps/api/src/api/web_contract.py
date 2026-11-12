@@ -1351,6 +1351,7 @@ class AuditHistoryEntry(TypedDict):
     initiator: str
     execution: Literal["queued", "running", "completed", "review_failed"]
     conclusion: Literal["PASS", "NG", "UNKNOWN"] | None
+    rule_title: str | None
     source_revision: str | None
     report: AuditFileReport
     report_access: AuditArchiveAccess
@@ -1390,6 +1391,7 @@ class AuditArchiveQuery(TypedDict):
     initiator: str | None
     from_date: str | None
     through_date: str | None
+    result: Literal["PASS", "NG", "UNKNOWN", "none", "active"] | None
     page: int
     page_size: Literal[10]
 
@@ -1451,6 +1453,7 @@ class AuditUploadItem(TypedDict):
 class AuditUsageQuery(TypedDict):
     range: Literal["7d", "30d", "90d", "all"]
     search: str
+    settlement: Literal["", "charged", "pending", "processing", "unknown", "trial"]
     page: int
     page_size: Literal[10]
 
@@ -1562,6 +1565,66 @@ class AuditSupportInfo(TypedDict):
     email: str | None
     service_hours: str | None
     qr_available: bool
+
+
+class LibraryTemplate(TypedDict):
+    """One built-in customer template; `filename` is the clean download name."""
+
+    id: str
+    name: str
+    document_type: str
+    extension: str
+    filename: str
+    byte_size: int
+
+
+class LibraryCustomer(TypedDict):
+    id: str
+    name: str
+    templates: list[LibraryTemplate]
+
+
+class TemplateLibrary(TypedDict):
+    customers: list[LibraryCustomer]
+
+
+class TemplateSaveRequest(TypedDict):
+    folder_token: str
+    template_ids: NotRequired[list[str]]
+
+
+class TemplateSaveResult(TypedDict):
+    """saved: written now; exists: a same-name file was already there; failed: nothing was written; unknown: Feishu has not confirmed."""
+
+    template_id: str
+    filename: str
+    state: Literal["saved", "exists", "failed", "unknown"]
+    file_token: str | None
+    reason: str | None
+
+
+class TemplateSaveResponse(TypedDict):
+    customer_id: str
+    folder_token: str
+    results: list[TemplateSaveResult]
+
+
+class TemplateSubmissionFile(TypedDict):
+    file_id: str
+    version_id: str
+
+
+class TemplateSubmissionRequest(TypedDict):
+    request_id: str
+    customer: NotRequired[str | None]
+    files: list[TemplateSubmissionFile]
+
+
+class TemplateSubmissionReceipt(TypedDict):
+    request_id: str
+    state: Literal["received"]
+    file_count: int
+    created_at: str
 
 
 def add_ui_contract(app: FastAPI) -> None:

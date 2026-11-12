@@ -1,5 +1,7 @@
 """Read-only file obligations from the existing usage ledger."""
 
+import csv
+import io
 import uuid
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -13,7 +15,11 @@ def _time(value) -> datetime | None:
     return parsed if parsed.tzinfo is not None else None
 
 
-def usage_page(rows: list[dict], query: dict, organization: dict, free: dict, archive: dict, as_of: datetime) -> dict:
+SETTLEMENT_LABELS = {"charged": "已扣费", "pending": "待扣费", "processing": "扣费处理中", "unknown": "待确认", "trial": "免费额度已扣"}
+
+
+def usage_page(rows: list[dict], query: dict, organization: dict, free: dict, archive: dict, as_of: datetime, *, every_entry: bool = False) -> dict:
+    """One page of entries, or with `every_entry` every entry matching the query (for export)."""
     local = as_of.astimezone(ZoneInfo("Asia/Shanghai"))
     through = local.date()
     start = through - timedelta(days=int(query["range"][:-1]) - 1) if query["range"] != "all" else None
@@ -86,7 +92,13 @@ def usage_page(rows: list[dict], query: dict, organization: dict, free: dict, ar
         return day <= through and (start is None or day >= start)
 
     filtered = sorted(
-        (row for row in entries if in_range(row) and query["search"].casefold() in (row["filename"] + " " + row["initiator"]).casefold()),
+        (
+            row
+            for row in entries
+            if in_range(row)
+            and query["search"].casefold() in (row["filename"] + " " + row["initiator"]).casefold()
+            and (not query.get("settlement") or row["settlement"]["state"] == query["settlement"])
+        ),
         key=lambda row: (row["occurred_at"], row["usage_id"]),
         reverse=True,
     )
@@ -111,7 +123,7 @@ def usage_page(rows: list[dict], query: dict, organization: dict, free: dict, ar
             "pending_points": unknown if uncertain else {"value": pending, "reason": None},
             **free,
         },
-        "entries": filtered[offset : offset + 10],
+        "entries": filtered if every_entry else filtered[offset : offset + 10],
         "total": len(filtered),
         "from_date": start.isoformat() if start else None,
         "through_date": through.isoformat(),
@@ -122,3 +134,22 @@ def usage_page(rows: list[dict], query: dict, organization: dict, free: dict, ar
             "reason": "此时间范围还有未关联到单份文件的历史费用，已保留在原账本；不能据此表判断全部历史消费。" if omitted else None,
         },
     }
+
+
+def _cell(value: str) -> str:
+    # A spreadsheet must not run a filename or name as a formula.
+    return "'" + value if value[:1] in {"=", "+", "-", "@", "\t", "\r"} else value
+
+
+def usage_csv(page: dict) -> str:
+    """UTF-8 with BOM so Excel reads the Chinese headers and names."""
+    zone = ZoneInfo(page["summary"]["timezone"])
+    out = io.StringIO()
+    out.write("\ufeff")
+    writer = csv.writer(out, lineterminator="\r\n")
+    writer.writerow(["时间", "订单号", "文档名称", "扣费状态", "发起人", "扣费点数"])
+    for row in page["entries"]:
+        occurred = datetime.fromisoformat(row["occurred_at"]).astimezone(zone).strftime("%Y-%m-%d %H:%M")
+        orders = "；".join(order["order_id"] for order in row["orders"])
+        writer.writerow([occurred, _cell(orders), _cell(row["filename"]), SETTLEMENT_LABELS[row["settlement"]["state"]], _cell(row["initiator"]), row["points"]])
+    return out.getvalue()

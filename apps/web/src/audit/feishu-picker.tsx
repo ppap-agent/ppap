@@ -27,7 +27,7 @@ const nativeSources = new Map<string, {format: 'excel' | 'word'; label: string}>
 ])
 const supported = (file: DriveFile) => nativeSources.has(file.type) || file.type === 'file' && /\.(xlsx|xls|xlsm|doc|docx|pdf)$/i.test(file.name)
 
-export function FeishuFolderPicker({source, files, onChoose, onClose}: {source: DrivePickerSource; files: File[]; onChoose: (folder: {token: string; name: string}) => void; onClose: () => void}) {
+export function FeishuFolderPicker({source, files, onChoose, onClose, description = '选择存放位置。每次新上传都会创建独立文件，不覆盖同名文件。', confirmLabel = '上传到此文件夹', busy = false}: {source: DrivePickerSource; files: readonly {name: string}[]; onChoose: (folder: {token: string; name: string}) => void; onClose: () => void; description?: string; confirmLabel?: string; busy?: boolean}) {
   const [path, setPath] = useState<FolderPath>([])
   const [listing, setListing] = useState<FolderState>(emptyFolder)
   const [revision, setRevision] = useState(0)
@@ -55,7 +55,7 @@ export function FeishuFolderPicker({source, files, onChoose, onClose}: {source: 
     return () => {alive.current = false; epoch.current += 1}
   }, [source, revision])
   return <Dialog open onOpenChange={open => {if (!open) onClose()}}><DialogContent className="max-h-[90dvh] grid-rows-[auto_auto_minmax(0,1fr)_auto] overflow-hidden" onCloseAutoFocus={event => {event.preventDefault(); document.getElementById('audit-main')?.focus()}}>
-    <DialogHeader><DialogTitle>保存到飞书</DialogTitle><DialogDescription>选择存放位置。每次新上传都会创建独立文件，不覆盖同名文件。</DialogDescription></DialogHeader>
+    <DialogHeader><DialogTitle>保存到飞书</DialogTitle><DialogDescription>{description}</DialogDescription></DialogHeader>
     <nav aria-label="上传目录" className="flex flex-wrap items-center gap-1">{path.map((folder, index) => <Button key={folder.token} variant="ghost" size="sm" disabled={index === path.length - 1} onClick={() => void load(path.slice(0, index + 1))}>{index > 0 && <ChevronRight/>}{folder.name}</Button>)}</nav>
     <ScrollArea className="min-h-40 max-h-[55dvh] min-w-0"><section aria-label="选择上传目录" className="space-y-4 pr-3">
       <ItemGroup>{listing.files.map(folder => <Item key={folder.token} size="xs" asChild><Button variant="ghost" className="h-auto min-h-11 w-full justify-start whitespace-normal text-left" aria-label={`打开文件夹 ${folder.name}`} onClick={() => void load([...path, {token: folder.token, name: folder.name}])}><Folder className="shrink-0"/><span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{folder.name}</span><ChevronRight className="shrink-0"/></Button></Item>)}</ItemGroup>
@@ -63,7 +63,7 @@ export function FeishuFolderPicker({source, files, onChoose, onClose}: {source: 
       {listing.nextPage && !listing.loading && !listing.error && <Button variant="outline" size="sm" onClick={() => void load(path, listing.nextPage)}>更多文件夹</Button>}
       <section className="space-y-2 border-t pt-4"><h3 className="text-sm font-medium">本次上传 · {files.length} 份</h3><ItemGroup>{files.map((file, index) => <Item key={index} size="xs"><ItemContent className="min-w-0"><FileName name={file.name}/></ItemContent></Item>)}</ItemGroup></section>
     </section></ScrollArea>
-    <DialogFooter><DialogClose asChild><Button variant="outline">取消</Button></DialogClose><Button disabled={!current || listing.loading || Boolean(listing.error)} onClick={() => current && onChoose({...current, name: path.map(folder => folder.name).join(' / ')})}>上传到此文件夹</Button></DialogFooter>
+    <DialogFooter><DialogClose asChild><Button variant="outline">取消</Button></DialogClose><Button disabled={busy || !current || listing.loading || Boolean(listing.error)} onClick={() => current && onChoose({...current, name: path.map(folder => folder.name).join(' / ')})}>{confirmLabel}</Button></DialogFooter>
   </DialogContent></Dialog>
 }
 

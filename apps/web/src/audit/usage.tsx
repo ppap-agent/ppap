@@ -2,12 +2,13 @@ import {ReadSkeleton} from '../components/read-skeleton'
 // Stitch: projects/13261964020862199279/screens/3deae156470647bda90de9665bafccff
 import {useEffect, useRef, useState} from 'react'
 import {createPortal} from 'react-dom'
-import {RefreshCw} from 'lucide-react'
+import {Download, RefreshCw} from 'lucide-react'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Badge} from '../components/ui/badge'
 import {Progress} from '../components/ui/progress'
 import {Button} from '../components/ui/button'
 import {Input} from '../components/ui/input'
+import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '../components/ui/select'
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../components/ui/table'
 import {FileName} from '../journey/file-name'
 import {Segmented} from '../components/segmented'
@@ -18,7 +19,7 @@ import type {AuditReportAdapter} from './report-contract'
 import type {AuditSharingAdapter} from './sharing-contract'
 import {sameSnapshot} from './result-projection'
 import {readAuditRoute} from './routes'
-import {readUsageQuery, writeUsageQuery, usageNotices, validUsagePage, type AuditUsageAdapter, type UsagePage, type UsageMetric, type UsageQuery} from './usage-contract'
+import {readUsageQuery, settlementStates, writeUsageQuery, usageNotices, validUsagePage, type AuditUsageAdapter, type UsagePage, type UsageMetric, type UsageQuery} from './usage-contract'
 
 const states = {charged: '已扣费', pending: '待扣费', processing: '扣费处理中', unknown: '待确认', trial: '免费额度已扣'}
 const stateTone = {charged: 'success', pending: 'info', processing: 'info', unknown: 'warning', trial: 'secondary'} as const
@@ -30,6 +31,7 @@ export function AuditUsage({active, adapter, archiveAdapter, reportAdapter, shar
   const [query, setQuery] = useState(() => readUsageQuery(location.search)), [search, setSearch] = useState(query.search), [page, setPage] = useState<UsagePage | null>(null)
   const [loading, setLoading] = useState(false), [error, setError] = useState(''), [reload, setReload] = useState(0), [address, setAddress] = useState(() => readArchiveAddress(location.search)), [route, setRoute] = useState(0)
   const epoch = useRef(0), organization = useRef('')
+  const [exporting, setExporting] = useState(false), [exportError, setExportError] = useState(''), [balance, setBalance] = useState<number | null | undefined>(undefined)
   useEffect(() => {
     if (!active) return
     const changed = () => {
@@ -52,6 +54,23 @@ export function AuditUsage({active, adapter, archiveAdapter, reportAdapter, shar
     }).catch(failure => {if (epoch.current === run) {const status = failure instanceof Error && 'status' in failure ? failure.status : null; if (status === 401 || status === 403) setPage(null); setError(status === 401 ? '登录已失效。恢复登录后再读取用量。' : status === 403 ? '当前账号无权读取企业用量。' : '用量读取失败，当前余额和结算状态待确认。')}}).finally(() => {if (epoch.current === run) setLoading(false)})
     return () => {epoch.current += 1}
   }, [active, adapter, query, reload])
+  // The Feishu balance is read beside the ledger; a failed read hides the line rather than showing a guessed number.
+  useEffect(() => {
+    if (!active || !adapter?.readBalance) return
+    let current = true
+    void adapter.readBalance().then(value => {if (current) setBalance(value)}).catch(() => {if (current) setBalance(undefined)})
+    return () => {current = false}
+  }, [active, adapter, reload])
+  async function exportEntries() {
+    if (!adapter?.exportUsage || exporting) return
+    setExporting(true); setExportError('')
+    let url = ''
+    try {
+      const blob = await adapter.exportUsage(structuredClone(query))
+      url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `用量明细-${page?.through_date || 'export'}.csv`; link.click()
+    } catch {setExportError('用量明细导出未完成，请重试。')}
+    finally {if (url) URL.revokeObjectURL(url); setExporting(false)}
+  }
   function filter(update: Partial<UsageQuery>) {const next = {...query, ...update, page: update.page || 1}; epoch.current += 1; setQuery(next); writeUsageQuery(next)}
   function navigate(documentId: string | null, reference: typeof address.reference, report = false, replace = false) {writeArchiveAddress(documentId, reference, report, replace, 'usage'); setAddress(readArchiveAddress(location.search))}
   if (!active) return null
@@ -62,11 +81,13 @@ export function AuditUsage({active, adapter, archiveAdapter, reportAdapter, shar
   const price = current?.entries[0]?.points
   const metrics: [string, string, string | null | undefined][] = [['本月消费次数', metricText(summary?.consumption_count), summary?.consumption_count.reason], ['本月已扣点数', metricText(summary?.charged_points), summary?.charged_points.reason || (price ? `${price} 点 / 份文件` : null)], ['本月待扣点数', metricText(summary?.pending_points), summary?.pending_points.reason], ['免费额度剩余/总额', `${metricText(summary?.free_remaining)} / ${metricText(summary?.free_total)}`, summary?.free_remaining.reason || summary?.free_total.reason]]
   const refresh = <Button variant="outline" type="button" disabled={loading} onClick={() => setReload(value => value + 1)}><RefreshCw/>刷新用量</Button>
-  return <section className="min-w-0 space-y-6" aria-label="企业用量记录">{headerActions ? <><h1 className="sr-only">用量记录</h1>{createPortal(refresh, headerActions)}</> : <header className="space-y-2"><h1 className="text-2xl font-semibold">用量记录</h1></header>}
-    {/* Until the first summary arrives the loading line below speaks; no dashes stand in for numbers. */}{summary && <section aria-label="自然月用量汇总" className="space-y-3"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-sm font-medium text-muted-foreground">{summary.month} 月用量 · {zoneLabel(summary.timezone)}</h2><p className="text-xs text-muted-foreground">{page?.organization_name && !page.organization_name.startsWith('feishu:') && <>{page.organization_name} · </>}<time dateTime={summary.as_of}>更新于 {timeText(summary.as_of, summary.timezone)}</time></p></div>{(loading || error) && <p role="status" className="text-sm">以下是上次已读汇总，尚未确认当前状态。</p>}<div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{metrics.map(([title, value, reason]) => <div role="group" aria-label={title} key={title} className="min-w-0 rounded-lg border bg-card px-4 py-4"><p className="text-sm text-muted-foreground">{title}</p><p className="mt-2 break-words text-2xl font-semibold tabular-nums">{value}{title !== '本月消费次数' && !value.includes('—') && <span className="ml-1 text-sm font-normal text-muted-foreground">点</span>}</p>{title === '免费额度剩余/总额' && summary.free_remaining.value != null && summary.free_total.value ? <Progress className="mt-3 h-1.5" aria-label="免费额度剩余比例" value={Math.min(100, summary.free_remaining.value / summary.free_total.value * 100)}/> : null}{reason && <p className="mt-2 text-xs text-muted-foreground">{reason}</p>}</div>)}</div></section>}
+  const exportButton = adapter?.exportUsage && <Button variant="outline" type="button" disabled={exporting || !current?.total} onClick={() => void exportEntries()}><Download/>{exporting ? '正在导出…' : '导出明细'}</Button>
+  return <section className="min-w-0 space-y-6" aria-label="企业用量记录">{headerActions ? <><h1 className="sr-only">用量记录</h1>{createPortal(<>{exportButton}{refresh}</>, headerActions)}</> : <header className="flex flex-wrap items-end justify-between gap-3"><h1 className="text-2xl font-semibold">用量记录</h1>{exportButton}</header>}
+    {exportError && <Alert variant="destructive"><AlertTitle>导出未完成</AlertTitle><AlertDescription>{exportError}<Button variant="outline" disabled={exporting} onClick={() => void exportEntries()}>重新导出</Button></AlertDescription></Alert>}
+    {/* Until the first summary arrives the loading line below speaks; no dashes stand in for numbers. */}{summary && <section aria-label="自然月用量汇总" className="space-y-3"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-sm font-medium text-muted-foreground">{summary.month} 月用量 · {zoneLabel(summary.timezone)}</h2><p className="text-xs text-muted-foreground">{balance !== undefined && <>{balance === null ? '飞书通用 AI 点数余额暂时无法读取' : `飞书通用 AI 点数余额 ${balance.toLocaleString('zh-CN')} 点`} · </>}{page?.organization_name && !page.organization_name.startsWith('feishu:') && <>{page.organization_name} · </>}<time dateTime={summary.as_of}>更新于 {timeText(summary.as_of, summary.timezone)}</time></p></div>{(loading || error) && <p role="status" className="text-sm">以下是上次已读汇总，尚未确认当前状态。</p>}<div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{metrics.map(([title, value, reason]) => <div role="group" aria-label={title} key={title} className="min-w-0 rounded-lg border bg-card px-4 py-4"><p className="text-sm text-muted-foreground">{title}</p><p className="mt-2 break-words text-2xl font-semibold tabular-nums">{value}{title !== '本月消费次数' && !value.includes('—') && <span className="ml-1 text-sm font-normal text-muted-foreground">点</span>}</p>{title === '免费额度剩余/总额' && summary.free_remaining.value != null && summary.free_total.value ? <Progress className="mt-3 h-1.5" aria-label="免费额度剩余比例" value={Math.min(100, summary.free_remaining.value / summary.free_total.value * 100)}/> : null}{reason && <p className="mt-2 text-xs text-muted-foreground">{reason}</p>}</div>)}</div></section>}
     {current?.notices.map(notice => <Alert key={notice}><AlertTitle>额度提示</AlertTitle><AlertDescription>{usageNotices[notice]}<Button variant="outline" onClick={() => onSupport(usageNotices[notice])}>联系我们</Button></AlertDescription></Alert>)}
     {current?.unattributed && current.unattributed.slice_count > 0 && <Alert><AlertTitle>另有 {current.unattributed.points.toLocaleString('zh-CN')} 点历史费用待确认</AlertTitle><AlertDescription>{current.unattributed.reason}</AlertDescription></Alert>}
-    <form aria-label="筛选用量记录" className="flex flex-wrap items-center gap-2" onSubmit={event => {event.preventDefault(); filter({search: search.trim()})}}><Segmented label="用量时间范围" value={query.range} options={ranges} onChange={range => filter({range})}/><div className="ml-auto flex min-w-0 basis-full gap-2 sm:basis-auto"><Input aria-label="搜索文件名或发起人" className="min-w-0 flex-1 sm:w-64" value={search} placeholder="搜索文件名或发起人" onChange={event => setSearch(event.target.value)}/>{/* On a phone Enter searches; the button would take a row of its own. */}<Button variant="outline" type="submit" className="max-sm:hidden">搜索</Button>{!headerActions && refresh}</div></form>
+    <form aria-label="筛选用量记录" className="flex flex-wrap items-center gap-2" onSubmit={event => {event.preventDefault(); filter({search: search.trim()})}}><Segmented label="用量时间范围" value={query.range} options={ranges} onChange={range => filter({range})}/><div className="w-36 max-sm:w-full"><Select value={query.settlement || 'all'} onValueChange={value => filter({settlement: settlementStates.find(state => state === value) || ''})}><SelectTrigger aria-label="全部扣费状态" className="w-full"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="all">全部扣费状态</SelectItem>{settlementStates.map(state => <SelectItem key={state} value={state}>{states[state]}</SelectItem>)}</SelectContent></Select></div><div className="ml-auto flex min-w-0 basis-full gap-2 sm:basis-auto"><Input aria-label="搜索文件名或发起人" className="min-w-0 flex-1 sm:w-64" value={search} placeholder="搜索文件名或发起人" onChange={event => setSearch(event.target.value)}/>{/* On a phone Enter searches; the button would take a row of its own. */}<Button variant="outline" type="submit" className="max-sm:hidden">搜索</Button>{!headerActions && refresh}</div></form>
     {loading && <ReadSkeleton label="正在读取企业用量…" kind={current ? 'inline' : 'table'}/>}{error && <Alert variant="destructive"><AlertTitle>用量读取未完成</AlertTitle><AlertDescription>{error}<Button variant="outline" onClick={() => setReload(value => value + 1)}>重新读取用量</Button></AlertDescription></Alert>}
     {current && <div className="min-w-0 space-y-3">
       {error && <p role="status">下方保留上次读取的记录，不代表当前余额或最新结算。</p>}

@@ -3,7 +3,7 @@ import test from 'node:test'
 import {validUsagePage, type UsageEntry, type UsagePage} from './usage-contract.ts'
 
 const known = (value: number) => ({value, reason: null})
-const query = {range: '30d' as const, search: '', page: 1, page_size: 10 as const}
+const query = {range: '30d' as const, search: '', settlement: '' as const, page: 1, page_size: 10 as const}
 const entry: UsageEntry = {usage_id: 'business-1', occurred_at: '2026-10-10T10:00:00+08:00', debited_at: '2026-10-10T10:00:00+08:00', filename: 'a.xlsx', audit_sequence: 1, initiator: 'Li', points: 500, allocation: {free_points: 200, paid_points: 300, reason: null}, orders: [{order_id: 'provider-order', confirmed_at: '2026-10-10T10:00:00+08:00'}], order_reason: null, settlement: {state: 'charged', reason: null}, reference: {task_id: 'task-1', round_id: 'round-1', file_version_id: 'version-1', result_attempt: 1}, document_id: 'document-1', audit_access: {state: 'allowed', reason: null}}
 const page: UsagePage = {organization_id: 'org-1', organization_name: 'A', query, summary: {month: '2026-10', timezone: 'Asia/Shanghai', as_of: '2026-10-16T10:00:00+08:00', consumption_count: known(12), charged_points: known(4500), pending_points: known(1500), free_remaining: known(300), free_total: known(1000)}, entries: [entry], total: 1, from_date: '2026-09-17', through_date: '2026-10-16', notices: []}
 
@@ -36,6 +36,11 @@ test('unmapped history keeps its fee without inventing an audit sequence or hidi
 test('settlement certainty cannot contradict the allocation or declared date window', () => {
   assert.equal(validUsagePage({...page, entries: [{...entry, settlement: {state: 'trial', reason: null}, allocation: {free_points: 0, paid_points: 500, reason: null}}]}, query), false)
   assert.equal(validUsagePage({...page, entries: [{...entry, occurred_at: '2026-09-16T10:00:00+08:00'}]}, query), false)
+})
+
+test('a settlement filter cannot show an entry in another state', () => {
+  assert.equal(validUsagePage({...page, query: {...query, settlement: 'charged'}, entries: [entry]}, {...query, settlement: 'charged'}), true)
+  assert.equal(validUsagePage({...page, query: {...query, settlement: 'pending'}, entries: [entry]}, {...query, settlement: 'pending'}), false)
 })
 
 test('usage projections bind organization, query and natural month and keep unknown distinct from zero', () => {

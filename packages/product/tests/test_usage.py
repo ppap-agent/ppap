@@ -155,3 +155,26 @@ def test_pagination_and_initiator_search_keep_the_exact_authorized_history_refer
     assert selected["audit_sequence"] == 3
     assert selected["audit_access"]["state"] == "allowed"
     assert all(row["audit_access"]["state"] == "denied" for row in combined if row != selected)
+
+
+def test_settlement_filter_and_export_cover_every_matching_entry_not_one_page():
+    from product.store.usage import usage_csv
+
+    trial = [fee(f"round-{index:02d}", filename=f"文件{index:02d}.xlsx", created_at=f"2026-10-31T{index:02d}:00:00+00:00") for index in range(12)]
+    pending = fee("round-paid", filename="=HYPERLINK(1).xlsx", initiator="张工", is_free_trial=False, external_status="pending")
+    rows = [*trial, pending]
+    query = {**QUERY, "settlement": "trial"}
+    page = usage_page(rows, query, ORG, FREE, {}, AS_OF)
+    assert (page["total"], len(page["entries"])) == (12, 10)
+    assert {row["settlement"]["state"] for row in page["entries"]} == {"trial"}
+    assert usage_page(rows, {**QUERY, "settlement": "pending"}, ORG, FREE, {}, AS_OF)["total"] == 1
+    every = usage_page(rows, query, ORG, FREE, {}, AS_OF, every_entry=True)
+    assert len(every["entries"]) == 12 and every["summary"] == page["summary"]
+
+    text = usage_csv(usage_page(rows, QUERY, ORG, FREE, {}, AS_OF, every_entry=True))
+    assert text.startswith("﻿时间,订单号,文档名称,扣费状态,发起人,扣费点数\r\n")
+    lines = text.lstrip("﻿").splitlines()
+    assert len(lines) == 14
+    # Times are Beijing time; a formula-looking name stays text.
+    assert lines[1] == "2026-11-01 00:00,,'=HYPERLINK(1).xlsx,待扣费,张工,500"
+    assert lines[-1] == "2026-10-31 08:00,,文件00.xlsx,免费额度已扣,Alice,500"

@@ -520,6 +520,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/audit-tasks/{task_id}/precheck": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Audit Task Precheck */
+        get: operations["audit_task_precheck_audit_tasks__task_id__precheck_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-tasks/{task_id}/precheck/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Audit Task Precheck Report */
+        get: operations["audit_task_precheck_report_audit_tasks__task_id__precheck_report_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit-tasks/{task_id}/recognitions/{request_id}": {
         parameters: {
             query?: never;
@@ -597,6 +631,26 @@ export interface paths {
         };
         /** Audit Usage */
         get: operations["audit_usage_audit_usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-usage/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Audit Usage Export
+         * @description Every entry the usage list would show for the same range, search and settlement, as CSV.
+         */
+        get: operations["audit_usage_export_audit_usage_export_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2160,6 +2214,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/template-library": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Template Library */
+        get: operations["template_library_template_library_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/template-library/{customer_id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Template Archive */
+        get: operations["template_archive_template_library__customer_id__archive_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/template-library/{customer_id}/feishu": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Template Save To Feishu */
+        post: operations["template_save_to_feishu_template_library__customer_id__feishu_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/template-library/{customer_id}/files/{template_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Template Download */
+        get: operations["template_download_template_library__customer_id__files__template_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/template-submissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Template Submission */
+        post: operations["template_submission_template_submissions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/usage": {
         parameters: {
             query?: never;
@@ -2378,6 +2517,8 @@ export interface components {
              * @constant
              */
             page_size: 10;
+            /** Result */
+            result: ("PASS" | "NG" | "UNKNOWN" | "none" | "active") | null;
             /** Search */
             search: string;
             /** Through Date */
@@ -2643,6 +2784,8 @@ export interface components {
             reference: components["schemas"]["AuditResultReference"];
             report: components["schemas"]["AuditFileReport"];
             report_access: components["schemas"]["AuditArchiveAccess"];
+            /** Rule Title */
+            rule_title: string | null;
             /** Sequence */
             sequence: number;
             /** Source Revision */
@@ -3204,6 +3347,25 @@ export interface components {
             validation_id?: string;
             validation_scope?: components["schemas"]["FileValidationScope"];
         };
+        /** AuditTaskPrecheck */
+        AuditTaskPrecheck: {
+            /** Blocks */
+            blocks: components["schemas"]["PrecheckFinding"][];
+            /**
+             * Conclusion
+             * @enum {string}
+             */
+            conclusion: "pass" | "fail" | "not_run";
+            counts: components["schemas"]["PrecheckCounts"];
+            /** Files */
+            files: components["schemas"]["PrecheckFile"][];
+            /** Outline Version */
+            outline_version: string;
+            /** Statuses */
+            statuses: components["schemas"]["PrecheckStatus"][];
+            /** Warnings */
+            warnings: components["schemas"]["PrecheckFinding"][];
+        };
         /** AuditTaskSummary */
         AuditTaskSummary: {
             /** Completion Reason */
@@ -3405,6 +3567,11 @@ export interface components {
             range: "7d" | "30d" | "90d" | "all";
             /** Search */
             search: string;
+            /**
+             * Settlement
+             * @enum {string}
+             */
+            settlement: "" | "charged" | "pending" | "processing" | "unknown" | "trial";
         };
         /** AuditUsageSettlement */
         AuditUsageSettlement: {
@@ -4327,6 +4494,33 @@ export interface components {
         LatestFileValidation: {
             validation: components["schemas"]["FileValidationJob"] | null;
         };
+        /** LibraryCustomer */
+        LibraryCustomer: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Templates */
+            templates: components["schemas"]["LibraryTemplate"][];
+        };
+        /**
+         * LibraryTemplate
+         * @description One built-in customer template; `filename` is the clean download name.
+         */
+        LibraryTemplate: {
+            /** Byte Size */
+            byte_size: number;
+            /** Document Type */
+            document_type: string;
+            /** Extension */
+            extension: string;
+            /** Filename */
+            filename: string;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+        };
         /** MatchingCandidate */
         MatchingCandidate: {
             /** Id */
@@ -4519,6 +4713,106 @@ export interface components {
             page: number;
             /** Region */
             region?: (number | null)[];
+        };
+        /** PrecheckCounts */
+        PrecheckCounts: {
+            /** Block */
+            block: number;
+            /** Ok */
+            ok: number;
+            /** Pending */
+            pending: number;
+            /** Reference */
+            reference: number;
+            /** Unmatched */
+            unmatched: number;
+            /** Warn */
+            warn: number;
+        };
+        /** PrecheckCriterion */
+        PrecheckCriterion: {
+            /** Code */
+            code: string | null;
+            /** Criterion */
+            criterion: string;
+            /** Criterion Id */
+            criterion_id: string;
+            /** Evidence */
+            evidence: string;
+            /** Location */
+            location: string;
+            /** Reason */
+            reason: string;
+            /** Result */
+            result: string;
+            /** Source */
+            source: string;
+        };
+        /** PrecheckFile */
+        PrecheckFile: {
+            /** Criteria */
+            criteria?: components["schemas"]["PrecheckCriterion"][];
+            /** Customer */
+            customer: string | null;
+            /** Document Type */
+            document_type: string | null;
+            /** Entry Key */
+            entry_key?: string | null;
+            /** File Version Id */
+            file_version_id: string;
+            /** Filename */
+            filename: string;
+            /**
+             * Level
+             * @enum {string}
+             */
+            level: "ok" | "warn" | "block" | "unmatched" | "reference" | "pending";
+        };
+        /** PrecheckFinding */
+        PrecheckFinding: {
+            /** Action */
+            action: string;
+            /** Code */
+            code: string;
+            /** Evidence */
+            evidence: string;
+            /** File Version Id */
+            file_version_id: string;
+            /** Filename */
+            filename: string;
+            /**
+             * Level
+             * @enum {string}
+             */
+            level: "block" | "warn";
+            /** Location */
+            location: string;
+            /** Number */
+            number: string;
+            /** Problem */
+            problem: string;
+            /** Responsibility */
+            responsibility: string;
+            /**
+             * Scope
+             * @enum {string}
+             */
+            scope: "file" | "content";
+            /** Title */
+            title: string;
+        };
+        /** PrecheckStatus */
+        PrecheckStatus: {
+            /** Code */
+            code: string;
+            /** File Version Id */
+            file_version_id: string;
+            /** Filename */
+            filename: string;
+            /** Note */
+            note: string;
+            /** Scope */
+            scope?: string;
         };
         /** PresenceRuleBody */
         PresenceRuleBody: {
@@ -5508,6 +5802,53 @@ export interface components {
             /** Part Number */
             part_number?: string;
         };
+        /** TemplateLibrary */
+        TemplateLibrary: {
+            /** Customers */
+            customers: components["schemas"]["LibraryCustomer"][];
+        };
+        /** TemplateSaveResponse */
+        TemplateSaveResponse: {
+            /** Customer Id */
+            customer_id: string;
+            /** Folder Token */
+            folder_token: string;
+            /** Results */
+            results: components["schemas"]["TemplateSaveResult"][];
+        };
+        /**
+         * TemplateSaveResult
+         * @description saved: written now; exists: a same-name file was already there; failed: nothing was written; unknown: Feishu has not confirmed.
+         */
+        TemplateSaveResult: {
+            /** File Token */
+            file_token: string | null;
+            /** Filename */
+            filename: string;
+            /** Reason */
+            reason: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "saved" | "exists" | "failed" | "unknown";
+            /** Template Id */
+            template_id: string;
+        };
+        /** TemplateSubmissionReceipt */
+        TemplateSubmissionReceipt: {
+            /** Created At */
+            created_at: string;
+            /** File Count */
+            file_count: number;
+            /** Request Id */
+            request_id: string;
+            /**
+             * State
+             * @constant
+             */
+            state: "received";
+        };
         /** UsageEvent */
         UsageEvent: {
             /** Ai Item Id */
@@ -5629,6 +5970,7 @@ export interface operations {
                 initiator?: string | null;
                 page?: number;
                 page_size?: number;
+                result?: ("PASS" | "NG" | "UNKNOWN" | "none" | "active") | null;
                 search?: string;
                 through_date?: string | null;
             };
@@ -7001,6 +7343,68 @@ export interface operations {
             };
         };
     };
+    audit_task_precheck_audit_tasks__task_id__precheck_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditTaskPrecheck"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    audit_task_precheck_report_audit_tasks__task_id__precheck_report_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/pdf": string;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     audit_tasks_recognition_get_audit_tasks__task_id__recognitions__request_id__get: {
         parameters: {
             query?: never;
@@ -7168,6 +7572,7 @@ export interface operations {
                 page_size?: number;
                 range?: string;
                 search?: string;
+                settlement?: string;
             };
             header?: never;
             path?: never;
@@ -7182,6 +7587,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuditUsagePage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    audit_usage_export_audit_usage_export_get: {
+        parameters: {
+            query?: {
+                range?: string;
+                search?: string;
+                settlement?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
                 };
             };
             /** @description Validation Error */
@@ -10920,6 +11358,178 @@ export interface operations {
                     "image/jpeg": string;
                     "image/png": string;
                     "image/webp": string;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    template_library_template_library_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateLibrary"];
+                };
+            };
+        };
+    };
+    template_archive_template_library__customer_id__archive_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                customer_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/zip": string;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    template_save_to_feishu_template_library__customer_id__feishu_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                customer_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Folder Token */
+                    folder_token: string;
+                    /** Template Ids */
+                    template_ids?: string[];
+                } & {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateSaveResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    template_download_template_library__customer_id__files__template_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                customer_id: string;
+                template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    template_submission_template_submissions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Customer */
+                    customer?: string | null;
+                    /** Files */
+                    files: {
+                        /** File Id */
+                        file_id: string;
+                        /** Version Id */
+                        version_id: string;
+                    }[];
+                    /** Request Id */
+                    request_id: string;
+                } & {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateSubmissionReceipt"];
                 };
             };
             /** @description Validation Error */

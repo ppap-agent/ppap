@@ -63,7 +63,7 @@ class TaskNavigationPreviewTests(unittest.TestCase):
             expect(menu.get_by_role("navigation", name="产品导航", exact=True)).to_be_visible()
             for label in ("工作台", "审核文件", "用量记录", "联系我们"):
                 expect(menu.get_by_role("button", name=label, exact=True)).to_be_visible()
-            expect(menu.get_by_role("link", name="文件模板（在飞书新窗口打开）", exact=True)).to_be_visible()
+            expect(menu.get_by_role("button", name="文件模板", exact=True)).to_be_visible()
             expect(menu.get_by_role("navigation", name="任务列表", exact=True)).to_have_count(0)
             expect(menu.get_by_role("button", name="新建审核任务", exact=True)).to_have_count(0)
             page.keyboard.press("Escape")
