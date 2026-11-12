@@ -38,7 +38,7 @@ def validation_request(version, request_id=None):
     return {"request_id": request_id or str(uuid.uuid4()), "source_file_id": version["file_id"], "source_file_version_id": version["id"]}
 
 
-def test_precheck_is_recoverable_without_creating_an_audit(validation_system):
+def test_file_validation_is_recoverable_without_creating_an_audit(validation_system):
     client, worker = validation_system
     output = io.BytesIO()
     book = Workbook()
@@ -54,10 +54,10 @@ def test_precheck_is_recoverable_without_creating_an_audit(validation_system):
     assert accepted.json()["id"] == request_id
     assert accepted.json()["status"] == "queued"
     assert client.post("/file-validations", json=body).json() == accepted.json()
-    claimed = worker.claim_job("precheck-worker")
+    claimed = worker.claim_job("validation-worker")
     assert claimed.kind == "file_validation"
-    with patch("documents.ai.run_json", side_effect=AssertionError("precheck_must_not_call_model")):
-        process_claimed(worker, claimed, "precheck-worker")
+    with patch("documents.ai.run_json", side_effect=AssertionError("file_validation_must_not_call_model")):
+        process_claimed(worker, claimed, "validation-worker")
     recovered = client.get(f"/file-validations/{request_id}")
     assert recovered.status_code == 200
     assert recovered.json()["source_file_version_id"] == version["id"]
@@ -76,8 +76,8 @@ def test_saved_but_damaged_file_is_not_a_valid_input(validation_system):
     assert client.get(path + "/validation").json() == {"validation": None}
     body = validation_request(version)
     assert client.post("/file-validations", json=body).status_code == 202
-    claimed = worker.claim_job("precheck-worker")
-    process_claimed(worker, claimed, "precheck-worker")
+    claimed = worker.claim_job("validation-worker")
+    process_claimed(worker, claimed, "validation-worker")
     result = client.get(f"/file-validations/{body['request_id']}").json()
     assert result["status"] == "succeeded"
     assert result["result"] == {"state": "invalid", "reasons": ["文件加密或异常，无法识别"]}
@@ -124,7 +124,7 @@ def test_unknown_check_is_not_automatically_restarted_and_only_owner_can_complet
     assert client.get(path).json() == confirmed
 
 
-def test_precheck_requires_ready_source_and_current_file_access(validation_system):
+def test_file_validation_requires_ready_source_and_current_file_access(validation_system):
     client, _ = validation_system
     version = client.post("/files", json={"original_filename": "report.xlsx", "byte_size": 1}).json()
     body = validation_request(version)

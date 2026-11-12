@@ -143,14 +143,3 @@ class DevelopmentEnvelope(BaseModel):
     tenant_id: str = Field(min_length=36, max_length=36)
     attempt: int = Field(ge=1, strict=True)
     lease_owner: str = Field(min_length=1, max_length=200)
-
-
-class PrecheckEnvelope(BaseModel):
-    """A leased persistent task only; programs and originals never enter RPC."""
-
-    model_config = ConfigDict(extra="forbid")
-    op: Literal["precheck"]
-    job_id: str = Field(pattern=r"^[0-9a-fA-F-]{36}$")
-    tenant_id: str = Field(pattern=r"^[0-9a-fA-F-]{36}$")
-    attempt: int = Field(ge=1, strict=True)
-    lease_owner: str = Field(min_length=1, max_length=200)

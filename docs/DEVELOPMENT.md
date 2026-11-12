@@ -387,16 +387,6 @@ Key 只从标准输入读取，不打印。保存前先用该 Key 完成一次�
 
 Deep（Pi）只通过本地网关取得短期 Grant，Guest 内没有真实 Key。网关按冻结身份为每个请求选模型：Pi 的请求用编码模型，Checker 试跑中的文本与视觉调用分别用冻结的文本、视觉模型，并补上部署选项（如视觉 `reasoning.effort=none`）。每个 Attempt 只有一个请求次数熔断 `PPAP_DEEP_MODEL_MAX_REQUESTS`（默认 200），用于停止失控循环：触发后不发布产物，按资源上限结束。没有累计 Token/Turn 预算，缺少 usage 回执不拒绝有效产物；墙钟时限、容器资源限制、取消与产物身份核对保持不变。SDK 可对瞬时错误做少量重试，由请求熔断兜底。
 
-## Checker Core 免费预检
-
-预检排队与正式受理共用 `freeze_selected_targets`，在 Suite 发布锁下冻结当前采用的修订、Checker 摘要、Binding、规则/附录及关联 Suite 摘要。预检不创建 Round，不改变收费或通知。发布新修订后旧预检仍可按原快照读取，但不再标为当前，也不能作为新修订的阻断依据。
-
-Suite 的 `checker.py` 可以提供 `precheck(context)`，返回准备事实列表；标准 Suite 的该入口复用原有客户准备检查。没有入口明确显示未检查，不回退历史路由，也不执行正式 `check` 代替预检。参考文件保留已识别的文档类型和固定版本，不创建收费目标。预检不调用模型；模型 scope 明确不可用，原生读取不能完成的项目保持未知、未检查或错误。
-
-Worker 只发送预检 Job、租户、attempt 和 lease owner。Controller 从持久 Job 核验身份并加载冻结原件和 Suite 字节，再由已有 `ContainerRuntime` 降权 guest 执行；企业 Python 不能在 Worker 或 Controller import。`execute-precheck` 不签发模型 grant，不进入付费调用/用量日志。执行前后及执行期间都核对租约，晚到结果不能覆盖新 attempt。
-
-Guest 提交的准备事实均不能自证 `certified`。既有硬阻断仍要求精确输入/执行/Suite 身份、已确认的关键缺陷、允许的阻断代码及原件定位；正式 NG 不升级为预检阻断。`tests/integration/product/test_v4_precheck_platform.py` 检查真实 PostgreSQL/API 身份、历史、免费和阻断合同，`packages/agent/tests/test_suite_prechecks.py` 检查冻结程序、无模型能力与 guest 消息合同；受控测试不替代生产 guest 的操作系统隔离验收。
-
 ## 自定义规则与 Suite
 
 `POST /rules` 将已授权规则原件发布为企业自己的不可变 Suite，不需要官方基线或预设文档类型。首次发布只保存规则和没有可执行入口的固定占位文件，所有条款覆盖均为 `unsupported`，没有回归证明，不自动调用付费模型，也不复用历史 profile 路由。默认指针、发布记录和 RuleVersion 在同一事务内提交；这是仅发布规则，不是强制执行未经验证的代码。

@@ -94,33 +94,6 @@ def test_each_source_accepts_and_freezes_its_actual_customer_checker(auth_store_
             assert row["match"]["state"] == "matched", (source.entry_id, row["match"])
             assert row["match"]["rule"]["body"]["preset_key"] == source.entry_id
         assert task["estimated_points"] == 500 * expected_count
-        precheck = worker.claim_job("routes-precheck")
-        assert precheck.kind == "task_precheck"
-        guest_calls = core_system.calls
-        process_claimed(worker, precheck, "routes-precheck")
-        assert core_system.calls == guest_calls + 1
-        frozen_precheck = client.get(path).json()["precheck"]
-        assert frozen_precheck["status"] == "succeeded", frozen_precheck
-        facts = [fact for row in frozen_precheck["result"]["files"] for fact in row["facts"]]
-        assert facts, frozen_precheck
-        if customer == "UAES":
-            # UAES runs its own prechecks; none of them may error.
-            for row in frozen_precheck["result"]["files"]:
-                assert not row["coverage"]["by_status"].get("error"), row["coverage"]
-        # Other companies have no prechecks: every expected check stays not checked.
-        for row in [] if customer == "UAES" else frozen_precheck["result"]["files"]:
-            assert not [fact for fact in row["facts"] if ":dependency:" in fact.get("id", "")], row
-            by_id = {fact["id"]: fact for fact in row["facts"]}
-            assert by_id["coverage"]["status"] == "not_checked", row
-            assert by_id["coverage"]["message"] == "此 Suite 尚未实现免费准备检查；不能视为通过。"
-            assert by_id["engineering"] == {
-                **by_id["engineering"],
-                "status": "handoff",
-                "code": "S03",
-                "message": "正式工程结论由正式审核处理；预检未声明覆盖全部规则。",
-            }
-            assert row["coverage"]["by_status"]["not_checked"] == row["coverage"]["expected"], row["coverage"]
-            assert not row["coverage"]["by_status"].get("error"), row["coverage"]
         confirmed = client.post(
             path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0, "expected_confirmation_basis_digest": client.get(path).json()["confirmation_basis_digest"]}
         )
@@ -145,7 +118,6 @@ def test_each_source_accepts_and_freezes_its_actual_customer_checker(auth_store_
             photo = next(identity for identity, (source, _, _) in originals.items() if source.entry_id == "U13")
             photo_findings = [finding for finding in round["findings"] if finding["locator"]["file_version_id"] == photo]
             assert photo_findings and all(finding["status"] == "UNABLE" for finding in photo_findings), photo_findings
-        assert client.get(path + "/prechecks/" + frozen_precheck["id"]).json() == frozen_precheck
         for _, original_path, data in originals.values():
             assert client.get(original_path + "/download").content == data
         with admin._conn() as conn:

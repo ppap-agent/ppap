@@ -226,30 +226,6 @@ def test_legacy_heads_reject_new_admission_until_explicit_directory_publish(cuto
         with pytest.raises(ValueError, match="suite_version_confirmation_required"):
             _admit(suites, conn, tenant_pin, pinned_key, preparation=True)
         selected = _admit(suites, conn, tenant_directory, directory_key, preparation=False)
-        from types import SimpleNamespace
-
-        from product.store.prechecks import freeze_task_precheck
-
-        precheck = freeze_task_precheck(
-            suites,
-            conn,
-            SimpleNamespace(tenant_id=tenant_open, user_id=user),
-            {
-                "id": str(uuid.uuid4()),
-                "input_revision": 1,
-                "customer_preference": None,
-                "analysis_mode": "standard",
-                "files": [
-                    {
-                        "selection": "selected",
-                        "file": {"id": "file-1"},
-                        "match": {"state": "matched", "rule": {"body": {"suite_key": official_key}}},
-                    }
-                ],
-            },
-        )
-        assert precheck["files"][0]["suite_target"] is None
-        assert precheck["files"][0]["rule_execution"] == {"mode": "unavailable", "reason": "suite_version_confirmation_required"}
     assert calls == []
     assert selected[0].suite_revision_id == selected_directory.id
     assert selected[0].suite_digest == selected_directory.resolved_digest

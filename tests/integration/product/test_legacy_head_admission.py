@@ -211,17 +211,12 @@ def test_api_refuses_a_carrier_pin_and_the_worker_runs_the_directory_revision(au
 
 
 def _carrier_files():
-    checker = (
-        b"from audit.standard_library import check_clause, prepare_target\n"
-        b"RESOURCES = {'carriers': {}, 'methods': {'C1': 'check'}}\n"
-        b"def check(context):\n    return check_clause(context, RESOURCES)\n"
-        b"def precheck(context):\n    return prepare_target(context, RESOURCES)\n"
-    )
+    checker = b"from audit.standard_library import check_clause\nRESOURCES = {'carriers': {}, 'methods': {'C1': 'check'}}\ndef check(context):\n    return check_clause(context, RESOURCES)\n"
     rules = {"title": "旧", "rules": [{"id": "C1"}], "checker_binding": {"C1": "checker:check"}}
     return {"checker.py": checker, "rules.json": json.dumps(rules).encode()}
 
 
-def test_http_refuses_an_official_carrier_head_and_records_precheck_confirmation(auth_store_factory, core_system, monkeypatch):
+def test_http_refuses_an_official_carrier_head_and_requires_version_confirmation(auth_store_factory, core_system, monkeypatch):
     from audit.presets import preset_document_type, preset_rule
     from audit.standard_suites import library_revision
 
@@ -348,18 +343,8 @@ def test_http_refuses_an_official_carrier_head_and_records_precheck_confirmation
         assert current.status_code == 200, current.text
         matched = current.json()["files"][0]
         assert matched.get("match", {}).get("state") == "matched", matched.get("match")
-        directory_precheck = client.post(
-            f"/audit-tasks/{task.json()['id']}/prechecks",
-            json={"request_id": str(uuid4()), "expected_revision": current.json()["input_revision"]},
-        )
-        assert directory_precheck.status_code == 202, directory_precheck.text
-        prepared = directory_precheck.json()["input"]["files"][0]
-        assert prepared["suite_target"]["suite_revision_id"] == installed["UAES:U08"]
-        assert prepared["rule_execution"].get("reason") != "suite_version_confirmation_required"
-        process_claimed(worker, worker.claim_job("official-directory-precheck"), "official-directory-precheck")
+        assert "suite_version_confirmation_required" not in matched["match"].get("gaps", [])
         assert calls == []
-        current = client.get("/audit-tasks/" + task.json()["id"])
-        assert current.status_code == 200, current.text
         switched = client.put(
             "/suites/UAES:U08/active",
             json={"revision_id": pinned["UAES:U08"].id, "expected_revision": 1, "operation_id": str(uuid4()), "force_unverified": True},
@@ -371,17 +356,9 @@ def test_http_refuses_an_official_carrier_head_and_records_precheck_confirmation
                 "UPDATE product.tenant_suite_heads SET current_revision_id=%s WHERE tenant_id=%s AND suite_key='UAES:U08'",
                 (pinned["UAES:U08"].id, principal.tenant_id),
             )
-        precheck = client.post(
-            f"/audit-tasks/{task.json()['id']}/prechecks",
-            json={"request_id": str(uuid4()), "expected_revision": current.json()["input_revision"]},
-        )
-        assert precheck.status_code == 202, precheck.text
-        body = precheck.json()
-        execution = body["input"]["files"][0]["rule_execution"]
-        assert execution == {"mode": "unavailable", "reason": "suite_version_confirmation_required"}, body
-        process_claimed(worker, worker.claim_job("official-precheck"), "official-precheck")
         current = client.get("/audit-tasks/" + task.json()["id"])
         assert current.status_code == 200, current.text
+        assert "suite_version_confirmation_required" in current.json()["files"][0]["match"]["gaps"]
         confirmed = client.post(
             f"/audit-tasks/{task.json()['id']}/confirm",
             json={

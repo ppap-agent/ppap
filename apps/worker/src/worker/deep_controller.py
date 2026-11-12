@@ -20,7 +20,6 @@ from product.store.store import AuthStore
 from product.store.suites import SuiteStore
 
 from worker.checker_optimizer import development_handler
-from worker.precheck_controller import precheck_handler
 
 STOP = threading.Event()
 
@@ -74,7 +73,6 @@ def main() -> int:
                 executor_revision_for_request=lambda spec: runtime_revision(settings.deep_execution_revision(spec.model_identity), library_revision()),
                 authorize=authorize_execution(settings, connect=connect, open_store=open_store),
                 readiness=runtime.ready,
-                precheck_handler=precheck_handler(store, runtime),
                 configuration=settings.deep_execution_policy().runtime_identity(),
                 development_handler=development_handler(store, runtime),
             ),

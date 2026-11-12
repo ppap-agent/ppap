@@ -11,7 +11,7 @@ export type AuditAcceptanceAdapter = {
 }
 type Observation = {staleBasisDigest?: string; requestId: string; phase: 'sending' | 'unknown' | 'reading' | 'accepted' | 'rejected'; message: string; traceId?: string}
 
-/** Validate the server's effective scope without deriving gate decisions from precheck facts. */
+/** Validate the server's effective scope without deriving gate decisions locally. */
 export function confirmationScope(task: Task) {
   const scope = task.confirmation_scope
   if (!scope || !Array.isArray(scope.target_file_version_ids) || !Array.isArray(scope.reference_file_version_ids) || !Array.isArray(scope.excluded_files)) return null

@@ -148,13 +148,6 @@ class UaesCapabilityAgent(UaesExcelAgent):
     DOCUMENT_MODULE = capability
     EXTRA_RESOURCE = combine(capability.DOCUMENT, pgqp1.DOCUMENT, capability.PGQP1_PROCESS)
 
-    def precheck(self):
-        """Preparation facts still come from the snapshot reader."""
-        from .native import UaesSourceAgent
-        from .precheck_l1 import precheck_capacity
-
-        return precheck_capacity(UaesSourceAgent(self.audit_file, self.rule, group_context=self.group_context))
-
     @property
     def pdf(self) -> bool:
         return str(self.audit_file.file_url).lower().endswith(".pdf")

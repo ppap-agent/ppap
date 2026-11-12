@@ -47,12 +47,6 @@ class UaesRecordAgent(UaesExcelAgent):
     DOCUMENT_MODULE: Any = resources.TEXT
     EXTRA_RESOURCE = combine(resources.NO_TABLE)
 
-    def precheck(self):
-        """Preparation facts still come from the snapshot reader."""
-        from .precheck import structural_facts
-
-        return structural_facts(UaesSourceAgent(self.audit_file, self.rule, group_context=self.group_context))
-
     def _finalize_audit_result(self, result: Any, *, rule_no: int, phase: Any, ctx: RuleContext | None = None) -> Any:
         result = super()._finalize_audit_result(result, rule_no=rule_no, phase=phase, ctx=ctx)
         if result.evidence is not None:
@@ -145,8 +139,6 @@ class UaesRecordAgent(UaesExcelAgent):
 
 
 class UaesPackagingAgent(UaesRecordAgent):
-    PRECHECK_METHODS = {"U09:1": "rule_1"}
-
     def titled(self, ctx: RuleContext) -> bool:
         """ "包装方案" as a title: a sheet name, a cell of a sheet's first rows, or the opening text of a PDF."""
         wanted = compact(resources.PACKAGING_TITLE)
@@ -195,7 +187,6 @@ class UaesControlledDocumentAgent(UaesRecordAgent):
 
 
 class UaesEngineeringHistoryAgent(UaesRecordAgent):
-    PRECHECK_METHODS = {"U11:1": "rule_1"}
     DOCUMENT_MODULE = resources.ENGINEERING_HISTORY
     EXTRA_RESOURCE = combine(resources.ENGINEERING_HISTORY.DOCUMENT)
     FIELDS = ("项目", "零件号", "变更内容", "变更原因", "时间")
@@ -228,7 +219,6 @@ class UaesEngineeringHistoryAgent(UaesRecordAgent):
 
 
 class UaesTraceabilityAgent(UaesRecordAgent):
-    PRECHECK_METHODS = {"U18:1": "rule_1"}
     DOCUMENT_MODULE = resources.TRACEABILITY
 
     @staticmethod
@@ -290,8 +280,6 @@ class UaesTraceabilityAgent(UaesRecordAgent):
 
 
 class UaesTrialAgent(UaesRecordAgent):
-    PRECHECK_METHODS = {"U15:1": "rule_1"}
-
     @rule("试装流转记录和两类实际勾选结论")
     def rule_1(self, ctx: RuleContext):
         missing = [area for area in resources.TRIAL_AREAS if not self.mentioned(ctx, area)]
@@ -358,11 +346,6 @@ class UaesLabQualificationAgent(UaesRecordAgent):
 
 
 class UaesMeasurementComparisonAgent(UaesRecordAgent):
-    def precheck(self):
-        from .precheck_l1 import precheck_measurement
-
-        return precheck_measurement(UaesSourceAgent(self.audit_file, self.rule, group_context=self.group_context))
-
     def sign_off(self, ctx: RuleContext) -> list[Cell] | None:
         """The last row writing all four sign-off labels: the report's foot."""
         labels = [compact(label) for label in resources.COMPARISON_SIGNERS]
@@ -395,8 +378,6 @@ class UaesMeasurementComparisonAgent(UaesRecordAgent):
 
 
 class UaesPhotoAgent(UaesSourceAgent):
-    PRECHECK_METHODS = {"U13:1": "rule_1"}
-
     SUPPORTED_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".pdf"})
 
     @rule("可读取照片载体与人工确认提示")
@@ -416,8 +397,6 @@ class UaesPhotoAgent(UaesSourceAgent):
 
 
 class UaesPackagingDocxAgent(UaesSourceAgent):
-    PRECHECK_METHODS = {"U09:1": "rule_1"}
-
     @rule("包装方案标题与六个内容块")
     def rule_1(self):
         facts = self.native()
@@ -428,8 +407,6 @@ class UaesPackagingDocxAgent(UaesSourceAgent):
 
 
 class UaesEngineeringHistoryDocxAgent(UaesSourceAgent):
-    PRECHECK_METHODS = {"U11:1": "rule_1"}
-
     @rule("工程更改一览表及五类字段")
     def rule_1(self):
         facts = self.native()
@@ -446,8 +423,6 @@ class UaesEngineeringHistoryDocxAgent(UaesSourceAgent):
 
 
 class UaesTraceabilityDocxAgent(UaesSourceAgent):
-    PRECHECK_METHODS = {"U18:1": "rule_1"}
-
     @rule("供应商零件追溯五个区域须有实际内容")
     def rule_1(self):
         facts = self.native()
@@ -490,11 +465,6 @@ class UaesLabQualificationDocxAgent(UaesSourceAgent):
 
 
 class UaesMeasurementComparisonDocxAgent(UaesSourceAgent):
-    def precheck(self):
-        from .precheck_l1 import precheck_measurement
-
-        return precheck_measurement(self)
-
     @rule("测量比较报告四方原件签字")
     def rule_1(self):
         facts = self.native()

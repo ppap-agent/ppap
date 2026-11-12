@@ -142,10 +142,6 @@ def _process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> 
             return process_checker_optimization(store, claimed, ident)
         if claimed.kind in {"report_pdf", "report_zip"}:
             return process_report_job(store, claimed, ident)
-        if claimed.kind == "task_precheck":
-            from worker.prechecks import process_task_precheck
-
-            return process_task_precheck(store, claimed, ident)
         if claimed.kind in FILE_PREPARATION_KINDS:
             return process_file_job(store, claimed, ident, rule_ai)
         if claimed.kind != "audit" or not claimed.round_id:

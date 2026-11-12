@@ -17,14 +17,3 @@ def test_original_uaes_inspection_reference_without_supplier_readings_is_not_a_p
     # column is one with readings, so the empty template is not a PASS.
     assert result.status == "NG", result.suggestions
     assert "没有任何实测值" in result.suggestions
-
-
-def test_original_uaes_measurement_example_is_not_real_supplier_data():
-    from audit.checker_lib.uaes.precheck_l1 import Facts, _mcr_records
-
-    root = Path(__file__).resolve().parents[4]
-    path = root / "assets/uaes/templates/F-PU-166_测量比较报告_Measure Comparison Report_V02.xls (1).xls"
-    facts = Facts(AuditInput(audit_id="offline-reference", file_url=str(path)))
-    observed = facts.observe("U02:M-06", lambda: _mcr_records(facts))
-    assert observed["status"] == "defect"
-    assert observed["code"] == "B04"

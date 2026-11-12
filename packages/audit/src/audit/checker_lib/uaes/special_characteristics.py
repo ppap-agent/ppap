@@ -8,7 +8,6 @@ from audit.checker_lib.nio.excel_agent import rule
 from audit.engine.rule_engine import Decision, RuleContext, Sheet, Table
 
 from .excel import UaesExcelAgent, compact, unable
-from .native import MissingFact, UaesSourceAgent, UnknownFact
 from .resources import combine
 from .resources import special_list as resources
 
@@ -36,15 +35,8 @@ class UaesSpecialCharacteristicsAgent(UaesExcelAgent):
     SUPPORTED_EXTENSIONS = frozenset({".xlsx", ".xls", ".xlsm", ".pdf"})
     # Leaves bind each clause to its method by the clause's own ID; every cell read is evidence.
     SOURCE_CLAUSE_IDS = True
-    PRECHECK_METHODS = {"U12:1": "rule_1", "U12:2": "rule_2"}
     DOCUMENT_MODULE = resources
     EXTRA_RESOURCE = combine(resources.DOCUMENT)
-
-    def precheck(self):
-        """Preparation facts still come from the snapshot reader; its U12 identity and row facts run these clauses."""
-        from .precheck import structural_facts
-
-        return structural_facts(_Preparation(self))
 
     def unreadable(self) -> str | None:
         if self.untabled():
@@ -109,33 +101,3 @@ class UaesSpecialCharacteristicsAgent(UaesExcelAgent):
                 described = f"（特性“{name or value}”）" if name or value else ""
                 return "NG", f"{where}{described}{label}为空。"
         return "PASS", f"特殊特性清单全部{len(rows)}个特性行的序号、特性名称、特性值、特性类别均已填写。"
-
-
-class _Preparation(UaesSourceAgent):
-    """The snapshot reader's U12 structure facts, with the identity and row facts taken from the clauses."""
-
-    def __init__(self, carrier: UaesSpecialCharacteristicsAgent):
-        super().__init__(carrier.audit_file, carrier.rule, group_context=carrier.group_context)
-        self.carrier = carrier
-
-    def _clause(self, method: str) -> tuple[str, str]:
-        from audit.engine.checkers.rule_declarations import discover_declared_rules
-
-        names = [name for name, _description in discover_declared_rules(type(self.carrier))]
-        result = self.carrier.check(names.index(method))
-        if result is None:
-            raise unable(f"条款{method}没有执行结果，需人工复核。")
-        if result.evidence is not None:
-            self._evidence_sources.extend(source for source in result.evidence.sources if source not in self._evidence_sources)
-        return result.status, result.suggestions
-
-    def identity(self, name):
-        status, message = self._clause("rule_1")
-        if status == "NG":
-            raise MissingFact(message)
-        if status != "PASS":
-            raise UnknownFact(message)
-        return message
-
-    def rule_2(self):
-        return self._clause("rule_2")

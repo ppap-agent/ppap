@@ -685,10 +685,10 @@ class AuditPreviewTests(unittest.TestCase):
                     page.close()
             browser.close()
 
-    def test_certified_partial_scope_is_visible_and_gate_changes_require_new_confirmation(self):
+    def test_partial_scope_is_visible_and_gate_changes_require_new_confirmation(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            for scene in ("confirm-precheck-partial", "confirm-gate-changed"):
+            for scene in ("confirm-gate-changed",):
                 with self.subTest(scene=scene):
                     page = browser.new_page(viewport={"width": 1440, "height": 1000})
                     try:
@@ -711,7 +711,7 @@ class AuditPreviewTests(unittest.TestCase):
                             self.assertEqual(parse_qs(urlparse(page.url).query)["acceptRequest"], old_request)
                         expect(scope).to_contain_text("进入审核 2 份")
                         expect(scope).to_contain_text("PFMEA.xlsx")
-                        expect(scope).to_contain_text("已认证的预检阻断：原件没有可审核内容")
+                        expect(scope).to_contain_text("当前是历史检查版本，需确认目录版本后才能审核")
                         expect(page.get_by_role("heading", name="PFMEA.xlsx", exact=True)).to_be_visible()
                         expect(page.get_by_text("预计 1000 点", exact=True)).to_be_visible()
                         expect(page.get_by_role("button", name="读取审核结果", exact=True, include_hidden=True)).to_have_count(0)
@@ -721,7 +721,7 @@ class AuditPreviewTests(unittest.TestCase):
                         expect(queue.get_by_text("PFMEA.xlsx", exact=True)).to_have_count(0)
                         removed = page.get_by_role("region", name="已移除文件", exact=True)
                         expect(removed).to_contain_text("PFMEA.xlsx")
-                        expect(removed).to_contain_text("已认证的预检阻断：原件没有可审核内容")
+                        expect(removed).to_contain_text("当前是历史检查版本，需确认目录版本后才能审核")
                         self.assertEqual(parse_qs(urlparse(page.url).query)["task"], original_task)
                         if scene == "confirm-gate-changed":
                             self.assertNotEqual(parse_qs(urlparse(page.url).query)["acceptRequest"], old_request)

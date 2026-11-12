@@ -16,14 +16,14 @@ export function writeAuditAddress(url: URL | string, mode: 'push' | 'replace' = 
 }
 
 /** A refresh must read the original command receipt, never create another command. */
-export function requestAddress(url: URL, taskId: string, kind: 'recognitionRequest' | 'acceptRequest' | 'precheckRequest', requestId: string): string {
+export function requestAddress(url: URL, taskId: string, kind: 'recognitionRequest' | 'acceptRequest', requestId: string): string {
   const next = new URL(url)
   if (next.pathname.startsWith('/preview/') || next.pathname === '/__preview') next.searchParams.set('task', taskId)
   else {next.pathname = taskAddress(taskId); next.searchParams.delete('task')}
   next.searchParams.delete('view'); next.searchParams.set(kind, requestId)
   return next.pathname + next.search + next.hash
 }
-export function rememberRequest(taskId: string, kind: 'recognitionRequest' | 'acceptRequest' | 'precheckRequest', requestId: string) {
+export function rememberRequest(taskId: string, kind: 'recognitionRequest' | 'acceptRequest', requestId: string) {
   if (typeof window === 'undefined') return
   const url = new URL(location.href), route = readAuditRoute(url)
   if (route.surface === 'audit' && (!route.taskId || route.taskId === taskId)) writeAuditAddress(requestAddress(url, taskId, kind, requestId))

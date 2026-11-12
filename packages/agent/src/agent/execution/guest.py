@@ -96,11 +96,6 @@ def run_entrypoint(inputs: Path, work: Path, credentials: Path) -> None:
     from agent.execution.guest_model import PiRunner
 
     manifest = read_json(inputs, ("manifest.json",), 1024 * 1024)
-    if manifest.get("operation") == "execute-precheck":
-        from agent.precheck_program import run_precheck_manifest
-
-        run_precheck_manifest(inputs, work)
-        return
     if manifest.get("operation") == "execute-audit":
         from agent.core_program import run_audit_manifest
 

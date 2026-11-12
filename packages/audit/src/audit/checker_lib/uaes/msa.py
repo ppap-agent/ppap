@@ -86,13 +86,6 @@ class UaesMsaAgent(UaesExcelAgent):
                 values.extend(str(other.value()).strip() for other in sheet.scan_non_empty(row_min=cell.row_index, row_max=cell.row_index, col_min=cell.col_index + 1, col_max=columns))
         return values or UaesExcelAgent.labelled(sheet, resources.ATTRIBUTE_CONCLUSION)
 
-    def precheck(self):
-        """Preparation facts still come from the snapshot reader."""
-        from .native import UaesSourceAgent
-        from .precheck_l1 import precheck_msa
-
-        return precheck_msa(UaesSourceAgent(self.audit_file, self.rule, group_context=self.group_context))
-
     @rule("MSA计划逐编号行除备注外内容完整")
     def rule_1(self, ctx: RuleContext):
         plans = Table(ctx).find_sheets("MSA计划表", on_missing=Decision.IGNORE)

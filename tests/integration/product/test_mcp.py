@@ -444,7 +444,7 @@ def test_prepare_task_reads_original_identity_after_reply_loss_and_restart(mcp_a
         validation_id = str(uuid4())
         validation = {"request_id": validation_id, "source_file_id": file["file_id"], "source_file_version_id": file["id"]}
         assert call(client, token, "validate_file", request_id=validation_id, body=validation)["status"] == "ok"
-        process_claimed(worker, worker.claim_job("prepare-precheck"), "prepare-precheck")
+        process_claimed(worker, worker.claim_job("prepare-validation"), "prepare-validation")
         body = {
             "request_id": request_id,
             "analysis_mode": "standard",
@@ -498,7 +498,7 @@ def completed_mcp_task(client, store, token, core_system, *, publish_new_rule=Tr
     validation_id = str(uuid4())
     checked = call(client, token, "validate_file", request_id=validation_id, body={"request_id": validation_id, "source_file_id": file["file_id"], "source_file_version_id": file["id"]})
     assert checked["status"] == "ok", checked
-    process_claimed(worker, worker.claim_job("share-precheck"), "share-precheck")
+    process_claimed(worker, worker.claim_job("share-validation"), "share-validation")
     publish = {
         "request_id": str(uuid4()),
         "body": {
@@ -1199,7 +1199,7 @@ def test_pkce_failure_does_not_consume_code_and_unregistered_redirect_is_rejecte
         assert "location" not in rejected.headers
 
 
-def test_mcp_precheck_rule_publication_prepare_and_human_confirm_once(mcp_app, core_system):
+def test_mcp_validation_rule_publication_prepare_and_human_confirm_once(mcp_app, core_system):
     app, store = mcp_app
     worker = build_product_store(store.settings, objects=store.objects, role="worker")
     with TestClient(app, base_url="http://127.0.0.1:8080") as client:
@@ -1209,8 +1209,8 @@ def test_mcp_precheck_rule_publication_prepare_and_human_confirm_once(mcp_app, c
         vid = str(uuid4())
         validation = call(client, token, "validate_file", request_id=vid, body={"request_id": vid, "source_file_id": file["file_id"], "source_file_version_id": file["id"]})
         assert validation["status"] == "ok", validation
-        job = worker.claim_job("mcp-precheck")
-        process_claimed(worker, job, "mcp-precheck")
+        job = worker.claim_job("mcp-validation")
+        process_claimed(worker, job, "mcp-validation")
         assert call(client, token, "get_validation", validation_id=vid)["data"]["value"]["status"] == "succeeded"
         rid = str(uuid4())
         rule_body = {

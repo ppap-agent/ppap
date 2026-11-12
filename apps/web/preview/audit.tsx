@@ -312,14 +312,14 @@ function fixtureMatch(files: AuditTaskFile[], mode: AuditTask['analysis_mode'], 
     const count = matchedFiles.filter(row => row.selection === 'selected' && row.match?.state === 'matched' && row.match.rule).length
     // Fixture display only. Real estimates and acceptance scope remain Product API-owned.
     const task: AuditTask = {confirmation_scope: {target_file_version_ids: matchedFiles.filter(row => row.selection === 'selected' && row.match?.state === 'matched' && row.match.rule).map(row => row.file.id).sort(), reference_file_version_ids: matchedFiles.filter(row => row.selection === 'selected' && row.match?.state === 'reference').map(row => row.file.id).sort(), excluded_files: matchedFiles.flatMap(row => row.selection === 'removed' ? [{file_version_id: row.file.id, reason: row.removal_reason!}] : row.selection === 'selected' && row.match?.state === 'unmatched' ? [{file_version_id: row.file.id, reason: '未匹配到规则，不进入本轮审核'}] : []).sort((a, b) => a.file_version_id.localeCompare(b.file_version_id))}, confirmation_basis_digest: count ? 'a'.repeat(64) : null, id: previous?.id || requestId, number, state: 'pending_confirm', analysis_mode: mode, created_at: previous?.created_at || '2026-10-16T00:00:00Z', updated_at: '2026-10-16T00:00:00Z', source_draft_id: null, round_id: null, customer_preference: customer, files: matchedFiles, completion_reason: null, estimated_points: scene === 'error' ? null : count * 500, input_revision: previous?.input_revision ?? 0, recognition_request_id: requestId}
-    return scene === 'confirm-precheck-partial' ? fixtureGate(task) : task
+    return task
 }
 
 function fixtureGate(task: AuditTask): AuditTask {
   const next = structuredClone(task), blocked = next.files[0].file.id
   const scope = next.confirmation_scope!
   scope.target_file_version_ids = scope.target_file_version_ids.filter(id => id !== blocked)
-  scope.excluded_files = [...scope.excluded_files, {file_version_id: blocked, reason: '已认证的预检阻断：原件没有可审核内容'}].sort((a, b) => a.file_version_id.localeCompare(b.file_version_id))
+  scope.excluded_files = [...scope.excluded_files, {file_version_id: blocked, reason: '当前是历史检查版本，需确认目录版本后才能审核'}].sort((a, b) => a.file_version_id.localeCompare(b.file_version_id))
   return {...next, confirmation_basis_digest: 'b'.repeat(64), estimated_points: scope.target_file_version_ids.length * 500}
 }
 

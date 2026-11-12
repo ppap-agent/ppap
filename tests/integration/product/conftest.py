@@ -262,8 +262,6 @@ def core_system(monkeypatch, tmp_path):
 
     from agent.client import DeepClient
     from agent.core_program import CoreRuntime, run_audit_manifest
-    from agent.precheck_program import execute_precheck, run_precheck_manifest
-    from agent.protocol import PrecheckEnvelope
     from agent.run import Controller, ExecutionContext
     from agent.source import authorize_execution, object_file_source
     from audit.checker_core import runtime_revision
@@ -271,7 +269,6 @@ def core_system(monkeypatch, tmp_path):
     from product.fixtures import RULE_A
     from product.store.suite_releases import SuiteReleaseStore, current_selection
     from product.store.suites import SuiteStore
-    from worker.precheck_controller import precheck_handler
 
     class ControlledCore:
         def __init__(self):
@@ -285,9 +282,6 @@ def core_system(monkeypatch, tmp_path):
         def run(self, job, inputs, work, deadline, cancelled):
             assert not cancelled.is_set()
             self.calls += 1
-            if job.operation == "execute-precheck":
-                run_precheck_manifest(inputs, work)
-                return
             self.audit_jobs.append(job)
             grants = tmp_path / f"grants-{self.calls}"
             grants.mkdir()
@@ -328,9 +322,6 @@ def core_system(monkeypatch, tmp_path):
             else:
                 run_audit_manifest(inputs, work, grants)
 
-        def execute_precheck(self, payload, snapshot, sources, programs, context):
-            return execute_precheck(self, payload, snapshot, sources, programs, context)
-
         def install(self, store, *, controlled_model=False, guest_process=False):
             if guest_process and controlled_model:
                 raise ValueError("Controlled model transport patches cannot cross the guest process boundary")
@@ -356,7 +347,6 @@ def core_system(monkeypatch, tmp_path):
                 # with the model identity frozen at acceptance.
                 executor_revision_for_request=lambda spec, started=settings.model_copy(): runtime_revision(started.deep_execution_revision(spec.model_identity), library_revision()),
                 authorize=authorize_execution(settings, connect=connect, open_store=lambda _: worker),
-                precheck_handler=precheck_handler(worker, self),
             )
 
             def execute(_client, spec, *, cancelled=None, on_progress=None):
@@ -367,14 +357,7 @@ def core_system(monkeypatch, tmp_path):
                     context.on_progress = on_progress
                 return self.controller.handle(spec, context)
 
-            def precheck(_client, request, *, cancelled=None):
-                context = ExecutionContext()
-                if cancelled is not None:
-                    context.cancelled = cancelled
-                return self.controller.precheck_handler(PrecheckEnvelope.model_validate(request), context)
-
             monkeypatch.setattr(DeepClient, "execute", execute)
-            monkeypatch.setattr(DeepClient, "precheck", precheck)
             return self
 
         def adopt(self, store, rule_id, code, binding=None, *, subject="alice"):

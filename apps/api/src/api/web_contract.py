@@ -1313,28 +1313,6 @@ class AuditNotificationPreferenceRequest(TypedDict):
     expected_revision: int
 
 
-class PrecheckRequest(TypedDict):
-    request_id: str
-    expected_revision: int
-
-
-class PrecheckReceipt(TypedDict):
-    request_id: NotRequired[str]
-    id: str
-    task_id: str
-    input_revision: int
-    current: bool
-    status: Literal["queued", "leased", "unknown", "succeeded", "failed", "cancelled"]
-    input: dict[str, Any]
-    result: dict[str, Any] | None
-    created_at: str
-    updated_at: str
-
-
-class PrecheckHistory(TypedDict):
-    snapshots: list[PrecheckReceipt]
-
-
 class AuditTaskConfirmationExclusion(TypedDict):
     file_version_id: str
     reason: str
@@ -1352,7 +1330,6 @@ class AuditTask(AuditTaskIdentity):
     confirmation_basis_digest: str | None
     confirmation_scope: AuditTaskConfirmationScope | None
     files: list[AuditTaskFile]
-    precheck: NotRequired[PrecheckReceipt | None]
     execution: NotRequired[Literal["queued", "running", "completed", "failed"]]
     has_execution_error: NotRequired[bool]
     acceptance: NotRequired[AuditAcceptance]

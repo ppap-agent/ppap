@@ -227,7 +227,6 @@ const confirmationRefusals: Record<string, string> = {
   invalid_task_confirmation: '本次确认信息无效，审核没有开始。请核对当前任务。',
   target_required: '没有可进入审核的文件，本次确认未被接收。',
   customer_scope_conflict: '本次文件属于不同客户，审核没有开始。请按客户分开任务后再确认。',
-  precheck_blocked: '预检发现已认证的阻断问题，审核没有开始。请处理问题后重新预检。',
 }
 
 /** This adapter owns transport only. Task, rules and execution remain server facts. */
@@ -294,16 +293,6 @@ export function createNativeAuditAdapter(options: {deepOffered: boolean; custome
       const replaced = new Set(rules.map(rule => rule.predecessor_id))
       // The same template keys the rules page shows, so a person picks a template by the name they already know.
       return rules.filter(rule => rule.kind === 'engine' && !replaced.has(rule.id)).map(rule => ({id: rule.id, title: rule.title, type: rule.type ?? undefined, template: ruleTemplateKey(rule)}))
-    },
-    precheck: {
-      async history(id) {return (await request<components['schemas']['PrecheckHistory']>(`${taskPath(id)}/prechecks`)).snapshots},
-      read: (id, snapshot) => request(`${taskPath(id)}/prechecks/${encoded(snapshot)}`),
-      retry: (task, requestId) => request(`${taskPath(task.id)}/prechecks`, 'POST', {request_id: requestId, expected_revision: task.input_revision ?? 0}),
-      async report(id, snapshot) {
-        const response = await fetch(`${apiUrl}${taskPath(id)}/prechecks/${encoded(snapshot)}/report`, {credentials: 'include'})
-        if (!response.ok || !response.headers.get('Content-Type')?.toLowerCase().startsWith('text/html')) throw new Error('预检记录尚不可读取。')
-        return response.blob()
-      },
     },
     prepareReaudit: roundId => request(`/rounds/${encoded(roundId)}/reaudit-inputs`),
     match: (files, mode, customer, previous, requestId, predecessorId, preparation) => request<AuditTask>('/audit-tasks', 'POST', {

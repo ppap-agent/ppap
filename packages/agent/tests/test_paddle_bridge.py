@@ -178,11 +178,3 @@ def test_audit_requires_explicit_model_permission_for_paddle(tmp_path, monkeypat
     with upstream(monkeypatch) as calls, paddle_bridge(directory, time.monotonic() + 30, threading.Event()) as environment:
         assert environment == {}
         assert calls == []
-
-
-def test_free_precheck_never_receives_paddle_capability(tmp_path, monkeypatch):
-    directory, _ = inputs(tmp_path)
-    (directory / "manifest.json").write_text(json.dumps({"operation": "execute-precheck", "source_paths": {"source": "source.bin"}}))
-    with upstream(monkeypatch) as calls, paddle_bridge(directory, time.monotonic() + 30, threading.Event()) as environment:
-        assert environment == {}
-        assert calls == []

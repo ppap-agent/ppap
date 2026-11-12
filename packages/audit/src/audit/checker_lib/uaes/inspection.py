@@ -118,13 +118,6 @@ class UaesInspectionAgent(UaesExcelAgent):
     DOCUMENT_MODULE = resources
     EXTRA_RESOURCE = combine(resources.DOCUMENT)
 
-    def precheck(self):
-        """Preparation facts still come from the snapshot reader."""
-        from .native import UaesSourceAgent
-        from .precheck_l1 import precheck_inspection
-
-        return precheck_inspection(UaesSourceAgent(self.audit_file, self.rule, group_context=self.group_context))
-
     def reports(self, ctx: RuleContext, title: str) -> list[Report]:
         found = []
         for sheet in Table(ctx).find_sheets(title, on_missing=Decision.IGNORE):

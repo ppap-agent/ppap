@@ -195,7 +195,7 @@ def print_page(page, *, asset_diagnostics=(), screenshot=None):
 
 
 @pytest.mark.parametrize("running_product", ["UAES", "理想", "蔚来"], indirect=True)
-def test_customer_intake_to_original_issue_and_frozen_precheck_export(running_product, core_system, request, observe_browser_assets):
+def test_customer_intake_to_original_issue(running_product, core_system, request, observe_browser_assets):
     web, session, errors, _admin, _principal = running_product
     customer = request.node.callspec.params["running_product"]
     with sync_playwright() as playwright:
@@ -239,26 +239,13 @@ def test_customer_intake_to_original_issue_and_frozen_precheck_export(running_pr
             expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
             page.get_by_role("button", name="开始识别", exact=True).click()
             expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_enabled(timeout=30000)
-            snapshot_region = page.get_by_role("region", name="免费内容预检", exact=True)
-            expect(snapshot_region).to_be_visible()
-            expect(snapshot_region).to_contain_text("检查已完成", timeout=30000)
-            # Polling and reload read the same actual database record.
+            # Reload reads the same actual database record.
             page.reload()
             expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_enabled()
-            with page.expect_download() as downloaded:
-                page.get_by_role("button", name="导出此预检记录", exact=True).click()
-            export = Path(downloaded.value.path()).read_text()
-            assert "预检" in export and "特殊特性清单.xlsx" in export
-            snapshot_region.get_by_role("button", name="预检历史", exact=True).click()
-            expect(snapshot_region.get_by_role("list", name="预检历史", exact=True)).to_be_visible()
-            snapshot_region.get_by_role("button", name=re.compile("^资料第 1 版")).click()
             page.get_by_role("button", name="开始审核", exact=True).click()
             issue = "不符合"
             result_file = page.get_by_role("button", name=re.compile(rf"^特殊特性清单\.xlsx {issue}"))
             expect(result_file).to_be_visible(timeout=30000)
-            # After the audit starts the precheck stays reachable behind its record button.
-            expect(page.get_by_role("region", name="免费内容预检", exact=True)).to_have_count(0)
-            expect(page.get_by_role("button", name="预检记录", exact=True)).to_be_visible()
             result_file.click()
             page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name=re.compile("^不符合")).click()
             page.get_by_role("button", name=re.compile("^查看依据 ")).first.click()
@@ -304,9 +291,9 @@ def test_customer_intake_to_original_issue_and_frozen_precheck_export(running_pr
                 fresh.close()
                 restored = page.request.get(web + "/api/audit-tasks/" + frozen_task["id"]).json()
                 assert restored["customer_preference"] == frozen["customer_preference"] == "UAES"
-                assert restored["round_id"] == frozen["round_id"] and restored["precheck"]["input"] == frozen["precheck"]["input"]
+                assert restored["round_id"] == frozen["round_id"] and restored["files"] == frozen["files"]
                 assert page.url == old_url
-            assert core_system.calls >= 2, "Precheck and audit must both execute through Core"
+            assert core_system.calls >= 1, "The audit must execute through Core"
             assert not errors, errors
         except BaseException:
             print_page(page, asset_diagnostics=asset_diagnostics, screenshot=str(Path("/tmp") / f"ppap-v4-real-browser-{customer}.png"))

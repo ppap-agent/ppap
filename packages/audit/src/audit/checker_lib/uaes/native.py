@@ -26,7 +26,8 @@ from audit.engine.rule_engine.context import GuardStop
 from audit.evidence import EvidenceBudget, cell_locator
 from audit.fact_questions import BooleanFactEvaluation, FactQuestion
 from audit.kinds import PpapDocumentType
-from audit.precheck.pfmea_local import pair_identity
+
+from .identity import pair_identity
 
 
 class UnknownFact(Exception):
@@ -629,11 +630,6 @@ class UaesSourceAgent(BaseAgent):
         except (ExcelRegionRenderError, ValueError):
             return None
         return observed.get("footer")
-
-    def precheck(self):
-        from .precheck import structural_facts
-
-        return structural_facts(self)
 
     def visual_result(self, fields, description):
         values = self.visual_pdf(fields)

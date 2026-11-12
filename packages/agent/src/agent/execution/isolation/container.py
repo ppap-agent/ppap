@@ -34,7 +34,6 @@ from agent.execution.budget import MAX_INPUT_FILES, MAX_INPUT_TOTAL
 from agent.execution.gateway import grant_request
 from agent.execution.guest_model import ModelGrant
 from agent.execution.secure_files import read_json, read_regular
-from agent.precheck_program import PrecheckJobSpec
 
 from .progress import Progress
 from .storage import write_json
@@ -426,7 +425,7 @@ class ContainerRuntime:
 
     def run(
         self,
-        spec: SubmissionSpec | CompileSpec | SnapshotSpec | CheckerJobSpec | AuditJobSpec | PrecheckJobSpec,
+        spec: SubmissionSpec | CompileSpec | SnapshotSpec | CheckerJobSpec | AuditJobSpec,
         inputs: Path,
         work: Path,
         deadline: float,

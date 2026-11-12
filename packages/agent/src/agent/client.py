@@ -130,14 +130,6 @@ class DeepClient:
             raise DeepError("deep_protocol_invalid")
         return raw["receipt"]
 
-    def precheck(self, request, *, cancelled: threading.Event | None = None) -> dict:
-        from agent.protocol import PrecheckEnvelope
-
-        raw = self._request(PrecheckEnvelope.model_validate(request).model_dump(), cancelled=cancelled)
-        if set(raw) != {"op", "result"} or raw["op"] != "precheck_result" or not isinstance(raw["result"], dict):
-            raise DeepError("deep_protocol_invalid")
-        return raw["result"]
-
     def _request(self, payload: dict, *, cancelled=None, on_progress=None) -> dict:
         deadline = time.monotonic() + self.timeout
         _check_active(deadline, cancelled)

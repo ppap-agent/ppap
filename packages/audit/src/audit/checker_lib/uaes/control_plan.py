@@ -127,12 +127,6 @@ class UaesControlPlanAgent(UaesExcelAgent):
     DOCUMENT_MODULE = resources
     EXTRA_RESOURCE = combine(resources.DOCUMENT, pgqp1.DOCUMENT, pgqp1_counterpart.DOCUMENT, flowchart_counterpart.DOCUMENT, pfmea_counterpart.DOCUMENT)
 
-    def precheck(self):
-        """Preparation facts still come from the snapshot reader."""
-        from .native import UaesSourceAgent
-
-        return UaesSourceAgent(self.audit_file, self.rule, group_context=self.group_context).precheck()
-
     def _execute_rule_check(self, rule_no: int):
         result = super()._execute_rule_check(rule_no)
         from audit.engine.checkers.paddle_evidence import observe_shadow

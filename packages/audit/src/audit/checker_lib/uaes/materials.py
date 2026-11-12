@@ -26,7 +26,7 @@ def _identity(value: Any) -> str:
 
 
 def _placeholder(value: str) -> bool:
-    from audit.precheck.pfmea_local import pair_identity
+    from .identity import pair_identity
 
     return not pair_identity(value) or bool(re.search(r"x{3,}", value, re.I))
 
@@ -111,13 +111,6 @@ def _covers(anchors: list[tuple[int, int, int, int]], rows: tuple[int, int], col
 class UaesMaterialsAgent(UaesExcelAgent):
     DOCUMENT_MODULE = resources
     EXTRA_RESOURCE = combine(resources.DOCUMENT)
-
-    def precheck(self):
-        """Preparation facts still come from the snapshot reader."""
-        from .native import UaesSourceAgent
-        from .precheck_l1 import precheck_materials
-
-        return precheck_materials(UaesSourceAgent(self.audit_file, self.rule, group_context=self.group_context))
 
     def lists(self, ctx: RuleContext) -> list[Sheet]:
         sheets = Table(ctx).find_sheets("材料清单", on_missing=Decision.IGNORE)

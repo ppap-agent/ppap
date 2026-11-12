@@ -192,23 +192,6 @@ def test_reference_only_task_cannot_become_a_paid_target_from_suite_projection(s
     assert client.get("/usage").json()["events"] == []
 
 
-def test_explicit_precheck_uses_projected_suite_without_legacy_profile(system, core_system):
-    client, worker, _, _ = system
-    path, _ = prepare(system, core_system, "蔚来", "N04", choose_customer=False)
-    task = client.get(path).json()
-    assert task["customer_preference"] is None
-    assert task["files"][0]["match"]["rule"]["body"]["suite_key"] == "蔚来:N04"
-    assert "rule_profile" not in task["files"][0]["match"]["rule"]["body"]
-    response = client.post(path + "/prechecks", json={"request_id": str(uuid.uuid4()), "expected_revision": 0})
-    assert response.status_code == 202, response.text
-    receipt = response.json()
-    assert receipt["input"]["files"][0]["rule"] == task["files"][0]["match"]["rule"]
-    process_claimed(worker, worker.claim_job("explicit-precheck"), "explicit-precheck")
-    loaded = client.get(path + "/prechecks/" + receipt["id"]).json()
-    assert loaded["status"] == "succeeded", loaded
-    assert client.get("/rounds").json()["rounds"] == []
-
-
 def confirmation(task, *, request_id=None):
     return {
         "request_id": request_id or str(uuid.uuid4()),
@@ -428,85 +411,6 @@ def test_confirmation_holds_publication_lock_until_frozen_round_commits(system, 
         assert replay.json()[key] == accepted[key]
 
 
-def certify_precheck_block(system, receipt, version_id):
-    from product.standard_policy import config_digest
-    from psycopg.types.json import Jsonb
-
-    _, _, admin, _ = system
-    source = next(row for row in receipt["input"]["files"] if row["file"]["id"] == version_id)
-    # Controlled certified evidence tests admission only, not checker accuracy.
-    result = {
-        "input_fingerprint": config_digest(receipt["input"]),
-        "execution_revision": receipt["input"]["execution_revision"],
-        "files": [
-            {
-                "file_version_id": version_id,
-                "rule_version_id": source["rule"]["id"],
-                "suite_execution": source["rule_execution"],
-                "facts": [
-                    {
-                        "source_id": "N04:S1",
-                        "status": "defect",
-                        "certainty": "confirmed",
-                        "critical": True,
-                        "certified": True,
-                        "code": "B05",
-                        "evidence": {"sources": [{"locator": json.dumps({"file_version_id": version_id, "cell": "A1"}), "excerpt": "independently confirmed missing identity"}]},
-                    }
-                ],
-            }
-        ],
-    }
-    with admin._conn() as conn:
-        conn.execute("UPDATE engine.jobs SET result=%s WHERE id=%s AND status='succeeded'", (Jsonb(result), receipt["id"]))
-
-
-@pytest.mark.parametrize("all_blocked", [False, True])
-def test_scope_keeps_references_and_excludes_only_certified_targets(system, core_system, all_blocked):
-    client, worker, admin, _ = system
-    admin.settings.precheck_gate_enforced = True
-    path, _ = prepare(system, core_system, "蔚来", "N04", copies=2 if all_blocked else 3, last_reference=True)
-    before = client.get(path).json()
-    assert before["confirmation_basis_digest"]
-    process_claimed(worker, worker.claim_job("precheck"), "precheck")
-    receipt = client.get(path).json()["precheck"]
-    bad = before["files"][0]["file"]["id"]
-    certify_precheck_block(system, receipt, bad)
-    current = client.get(path).json()
-    scope = current["confirmation_scope"]
-    assert current["input_revision"] == before["input_revision"]
-    assert current["confirmation_basis_digest"] != before["confirmation_basis_digest"]
-    assert all(file["selection"] == "selected" for file in current["files"])
-    assert scope["reference_file_version_ids"] == [before["files"][-1]["file"]["id"]]
-    assert scope["excluded_files"] == [{"file_version_id": bad, "reason": "预检已确认的阻断缺陷，需修正后重新提交"}]
-    assert scope["target_file_version_ids"] == ([] if all_blocked else [before["files"][1]["file"]["id"]])
-    assert current["estimated_points"] == (0 if all_blocked else 500)
-    refused = client.post(path + "/confirm", json=confirmation(before))
-    assert refused.status_code == 409 and refused.json()["error"] == "task_confirmation_changed"
-    assert_no_admission(system)
-    command = confirmation(current)
-    response = client.post(path + "/confirm", json=command)
-    if all_blocked:
-        assert response.status_code == 409 and response.json()["error"] == "precheck_blocked"
-        assert_no_admission(system)
-        return
-    assert response.status_code == 201, response.text
-    accepted = response.json()
-    assert accepted["confirmation_scope"] == scope
-    assert accepted["estimated_points"] == 500
-    excluded = next(file for file in accepted["files"] if file["file"]["id"] == bad)
-    assert excluded["selection"] == "removed" and excluded["removal_reason"] == scope["excluded_files"][0]["reason"] and excluded["audit"] is None
-    assert len([file for file in accepted["files"] if file["audit"]]) == 1
-    assert accepted["files"][-1]["match"]["state"] == "reference" and accepted["files"][-1]["audit"] is None
-    assert client.get("/usage").json()["events"] == []
-    # Later mutable preparation cannot rewrite the accepted range.
-    with admin._conn() as conn:
-        conn.execute("UPDATE engine.jobs SET result='{}'::jsonb WHERE id=%s", (receipt["id"],))
-    replay = client.post(path + "/confirm", json=command)
-    assert replay.status_code == 201 and replay.json()["confirmation_scope"] == scope
-    assert replay.json()["files"] == accepted["files"]
-
-
 def test_http_acceptance_and_card_enqueue_serialize_one_original_intent(system, core_system, monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
@@ -690,9 +594,6 @@ def test_operator_recovers_stale_suite_preparation_and_original_confirmation_rec
         "samples_not_rerun": False,
     }
     assert current["confirmation_scope"] == verified["confirmation_scope"]
-    preparation = client.post(path + "/prechecks", json={"request_id": str(uuid.uuid4()), "expected_revision": current["input_revision"]})
-    assert preparation.status_code == 202, preparation.text
-    assert preparation.json()["input"]["files"][0]["rule"] == file["match"]["rule"]
     command = confirmation(current)
     # Simulate losing the refusal response: only an independent read is used to
     # settle the original operation, and the journey ends with a fresh admission.

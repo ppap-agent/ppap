@@ -1,6 +1,6 @@
 ------------------------ MODULE FileValidationReceipt ------------------------
 EXTENDS Naturals
-\* Focused #165 obligation: one precheck request, two source versions and two
+\* Focused #165 obligation: one file validation request, two source versions and two
 \* workers. Submit linearizes at the existing job INSERT/conflict check; result
 \* publication is a separate fenced UPDATE. Lease loss is not proof of failure.
 \* Parsing, file/object authorization, persisted bytes and transport delivery

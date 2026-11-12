@@ -10,9 +10,9 @@ from typing import Any
 
 from audit.checker_lib.nio.excel_agent import rule
 from audit.engine.rule_engine import Decision, RuleContext, Sheet, Table
-from audit.precheck.pfmea_local import pair_identity
 
 from .excel import UaesExcelAgent, compact, unable
+from .identity import pair_identity
 from .resources import combine, pgqp1, special_list
 from .resources import pfmea as resources
 
@@ -64,13 +64,6 @@ class UaesPfmeaAgent(UaesExcelAgent):
     SOURCE_CLAUSE_IDS = True
     DOCUMENT_MODULE = resources
     EXTRA_RESOURCE = combine(resources.DOCUMENT, special_list.DOCUMENT, pgqp1.DOCUMENT)
-
-    def precheck(self):
-        """Preparation facts still come from the snapshot reader."""
-        from .native import UaesSourceAgent
-        from .precheck import structural_facts
-
-        return structural_facts(UaesSourceAgent(self.audit_file, self.rule, group_context=self.group_context))
 
     def unreadable(self) -> str | None:
         if self.untabled():

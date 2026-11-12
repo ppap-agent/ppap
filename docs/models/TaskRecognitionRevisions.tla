@@ -14,7 +14,7 @@ EXTENDS Integers, Sequences, FiniteSets
 \* one-shot model's InputsStayFrozen applies outside this revision extension.
 \* Cross-Task isolation remains in TaskRecognition; it is not rechecked here.
 \*
-\* Acceptance is one row-lock/CAS transaction: validate original precheck
+\* Acceptance is one row-lock/CAS transaction: validate original file validation
 \* receipts, freeze candidates, create jobs, and replace the current input and
 \* references. Only the rematch receipt lives in the first selected file's
 \* job, whose ID equals request_id. The initial receipt is the draft's immutable

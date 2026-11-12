@@ -45,13 +45,6 @@ class UaesApprovalAgent(UaesExcelAgent):
     # The English halves of the bilingual role and date labels on the cover.
     LABEL_WORDS = {"日期", "date", "team", "leader", "checked", "approved", "by"}
 
-    def precheck(self):
-        """Preparation facts still come from the snapshot reader."""
-        from .native import UaesSourceAgent
-        from .precheck import structural_facts
-
-        return structural_facts(UaesSourceAgent(self.audit_file, self.rule, group_context=self.group_context))
-
     def pdf(self) -> bool:
         return str(self.audit_file.file_url).lower().endswith(".pdf")
 

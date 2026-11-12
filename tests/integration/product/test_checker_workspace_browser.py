@@ -48,7 +48,6 @@ from psycopg.types.json import Jsonb
 from pydantic import SecretStr
 from worker import process_claimed
 from worker.checker_optimizer import development_handler
-from worker.precheck_controller import precheck_handler
 
 ROOT = Path(__file__).resolve().parents[3]
 GUEST = ROOT / "tests/integration/product/_checker_workspace_guest.py"
@@ -172,11 +171,6 @@ class NativeGuest:
             print("Guest failure:", result.stderr.decode()[-3000:], flush=True)
         assert result.returncode == 0, result.stderr.decode()[-3000:]
 
-    def execute_precheck(self, payload, snapshot, sources, programs, context):
-        from agent.precheck_program import execute_precheck
-
-        return execute_precheck(self, payload, snapshot, sources, programs, context)
-
 
 def workbook(value, index):
     book = Workbook()
@@ -258,7 +252,6 @@ def workspace_product(auth_store_factory, tmp_path, request, monkeypatch):
         readiness=lambda: True,
         configuration=settings.deep_execution_policy().runtime_identity(),
         development_handler=development_handler(worker, runtime),
-        precheck_handler=precheck_handler(worker, guest),
     )
     rpc = None
     if os.environ.get("PPAP_CHECKER_BROWSER_LOCAL_TRANSPORT") == "1":

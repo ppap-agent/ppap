@@ -520,7 +520,7 @@ test('a lost display-save reply reads only its original request and absence rema
   assert.deepEqual(calls, ['POST /audit-tasks/task-a/display-info', 'GET /audit-tasks/task-a/display-info/display-a', 'GET /audit-tasks/task-a/display-info/display-a'])
 })
 
-test('native precheck reads the original validation after a lost submit reply without resubmitting', async () => {
+test('native file validation reads the original validation after a lost submit reply without resubmitting', async () => {
   const calls: {url: string; method: string}[] = []
   let validationId = ''
   globalThis.fetch = async (input, init) => {
@@ -544,7 +544,7 @@ test('native precheck reads the original validation after a lost submit reply wi
   assert.equal(calls.filter(call => call.method === 'POST').length, 1)
 })
 
-test('native precheck refuses a result for another validation request', async () => {
+test('native file validation refuses a result for another validation request', async () => {
   globalThis.fetch = async () => json({id: 'another-request', source_file_id: 'file-a', source_file_version_id: 'version-a', status: 'completed', result: {state: 'valid', reasons: []}})
   const adapter = createNativeAuditAdapter({deepOffered: false, customers: []})
   await assert.rejects(adapter.readValidation({...file, validation_id: 'original-request'}), /预检查结果不属于这份文件版本、用途或原请求/)
@@ -605,10 +605,9 @@ test('a refusal cannot overwrite an already accepted round found by readback', a
   assert.deepEqual(current.acceptance, {request_id: 'accept-original', state: 'accepted', reason: null})
 })
 
-test('customer conflicts and certified precheck blocks are explicit no-write refusals', async () => {
+test('customer conflicts are explicit no-write refusals', async () => {
   for (const [code, reason] of [
     ['customer_scope_conflict', '本次文件属于不同客户，审核没有开始。请按客户分开任务后再确认。'],
-    ['precheck_blocked', '预检发现已认证的阻断问题，审核没有开始。请处理问题后重新预检。'],
   ]) {
     const calls: string[] = []
     globalThis.fetch = async (url, init) => {
@@ -703,25 +702,6 @@ test('saved original validation identity restores its server-owned photo scope',
   const result = await createNativeAuditAdapter({deepOffered: false, customers: ['UAES']}).readValidation({...file, validation_id: 'saved'})
   assert.deepEqual(result.validation_scope, scope)
 })
-
-test('precheck history and same-snapshot export use authenticated read-only task routes', async () => {
-  const calls: string[] = []
-  const receipt = {id: 'snapshot', task_id: task.id, request_id: 'original-request', input_revision: 2, current: true, status: 'succeeded', input: {}, result: {}, created_at: 'now', updated_at: 'now'}
-  globalThis.fetch = async (input, init) => {
-    const url = String(input)
-    calls.push(`${init?.method || 'GET'} ${url}`)
-    assert.equal(init?.credentials, 'include')
-    if (url.endsWith('/report')) return new Response('<!doctype html><p>frozen</p>', {headers: {'Content-Type': 'text/html; charset=utf-8'}})
-    if (url.endsWith('/prechecks')) return json({snapshots: [receipt]})
-    return json(receipt)
-  }
-  const adapter = createNativeAuditAdapter({deepOffered: false, customers: []}).precheck!
-  assert.deepEqual(await adapter.history(task.id), [receipt])
-  assert.deepEqual(await adapter.read(task.id, 'original-request'), receipt)
-  assert.match(await (await adapter.report(task.id, 'snapshot')).text(), /frozen/)
-  assert.deepEqual(calls, ['GET /audit-tasks/task-a/prechecks', 'GET /audit-tasks/task-a/prechecks/original-request', 'GET /audit-tasks/task-a/prechecks/snapshot/report'])
-})
-
 
 test('validation write loss keeps its original readback identity across adapter replacement', async () => {
   let id = ''

@@ -118,7 +118,7 @@ function partial(): Task {
     {...structuredClone(file), file: {...file.file, id: 'file-e'}, selection: 'removed', removal_reason: '识别前移除'},
     {...structuredClone(file), file: {...file.file, id: 'file-f'}, match: {...file.match!, state: 'unmatched', rule: null}},
   )
-  task.confirmation_scope = {target_file_version_ids: ['file-a'], reference_file_version_ids: ['file-c'], excluded_files: [{file_version_id: 'file-b', reason: '已认证的预检阻断：原件无内容'}, {file_version_id: 'file-e', reason: '识别前移除'}, {file_version_id: 'file-f', reason: '未匹配到规则，不进入本轮审核'}]}
+  task.confirmation_scope = {target_file_version_ids: ['file-a'], reference_file_version_ids: ['file-c'], excluded_files: [{file_version_id: 'file-b', reason: '当前是历史检查版本，需确认目录版本后才能审核'}, {file_version_id: 'file-e', reason: '识别前移除'}, {file_version_id: 'file-f', reason: '未匹配到规则，不进入本轮审核'}]}
   return task
 }
 
@@ -222,7 +222,7 @@ test('an inspectable stale Suite becomes confirmable after explicit recovery of 
 test('the server included scope stays confirmable when a stale Suite belongs to an excluded file', async () => {
   const task = pending(), results: Task[] = []
   task.files.push({...structuredClone(task.files[0]), file: {...task.files[0].file, id: 'file-excluded'}, suite_admission: {state: 'validation_required', suite_key: 'suite-other', suite_revision_id: 'revision-other', verification_status: 'stale', force_unverified: false, samples_not_rerun: false}})
-  task.confirmation_scope!.excluded_files.push({file_version_id: 'file-excluded', reason: '预检已确认的阻断缺陷，需修正后重新提交'})
+  task.confirmation_scope!.excluded_files.push({file_version_id: 'file-excluded', reason: '当前是历史检查版本，需确认目录版本后才能审核'})
   assert.deepEqual(suiteAdmissionBlocks(task), [])
   const controller = createTaskAcceptance({confirm: async (input, id) => accepted(input, id), readTask: async () => task}, result => results.push(result))
   await controller.confirm(task)

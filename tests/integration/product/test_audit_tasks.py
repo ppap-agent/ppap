@@ -57,7 +57,7 @@ def checked_file(client, worker, name="控制计划.xlsx", document_type="控制
     assert client.post(path + "/finalize").status_code == 200
     validation_id = str(uuid.uuid4())
     assert client.post("/file-validations", json={"request_id": validation_id, "source_file_id": version["file_id"], "source_file_version_id": version["id"]}).status_code == 202
-    process_claimed(worker, worker.claim_job("precheck"), "precheck")
+    process_claimed(worker, worker.claim_job("file-validation"), "file-validation")
     return {"file_version_id": version["id"], "validation_id": validation_id, "selection": "selected", "removal_reason": None}
 
 
@@ -1108,7 +1108,7 @@ def test_confirmation_and_rematching_serialize_on_the_same_task_revision(matched
         assert current["round_id"] is None
 
 
-def test_removed_file_needs_no_precheck_or_hidden_matching_work(task_system):
+def test_removed_file_needs_no_file_validation_or_hidden_matching_work(task_system):
     client, worker = task_system
     file = checked_file(client, worker)
     excluded = client.post("/files", json={"original_filename": "已排除.xlsx", "byte_size": 3}).json()
@@ -1749,7 +1749,7 @@ def test_superseded_queued_recognition_does_not_read_the_file_or_call_the_model(
     assert client.get(f"/audit-tasks/{task['id']}").json()["state"] == "pending_confirm"
 
 
-def test_rematching_requires_retained_file_provenance_and_exact_prechecks(task_system):
+def test_rematching_requires_retained_file_provenance_and_exact_file_validations(task_system):
     client, worker = task_system
     first, second = checked_file(client, worker), checked_file(client, worker, "另一份.xlsx")
     body = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [first, second]}
@@ -1757,7 +1757,7 @@ def test_rematching_requires_retained_file_provenance_and_exact_prechecks(task_s
     revise = {**body, "request_id": str(uuid.uuid4()), "task_id": task["id"], "expected_revision": 0}
     assert client.post("/audit-tasks", json={**revise, "files": [second]}).json() == {"error": "task_file_provenance_required"}
     wrong_receipt = [{**first, "validation_id": second["validation_id"]}, second]
-    assert client.post("/audit-tasks", json={**revise, "files": wrong_receipt}).json() == {"error": "precheck_required"}
+    assert client.post("/audit-tasks", json={**revise, "files": wrong_receipt}).json() == {"error": "file_validation_required"}
     assert client.get(f"/audit-tasks/{task['id']}").json() == task
     unknown_id = str(uuid.uuid4())
     assert client.get(f"/audit-tasks/{unknown_id}/recognitions/{unknown_id}").json()["state"] == "unknown"
@@ -2091,7 +2091,7 @@ def test_private_task_cannot_be_read_through_its_round_or_original_by_a_tenant_p
     assert client.put(round_path + "/reviews", json={"item_key": "1", "judgment": "confirm", "rationale": "peer", "next_step": "", "version": 0}).status_code == 403
 
 
-def test_task_creation_requires_the_exact_completed_precheck_receipt(task_system):
+def test_task_creation_requires_the_exact_completed_file_validation_receipt(task_system):
     client, worker = task_system
     first = checked_file(client, worker)
     other = checked_file(client, worker, "另一份.xlsx")

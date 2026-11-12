@@ -52,8 +52,6 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
                 "task_input_locked",
                 "validation_scope_mismatch",
                 "customer_scope_conflict",
-                "precheck_blocked",
-                "precheck_not_ready",
                 "task_not_ready",
                 "task_not_zero_match",
                 "task_revision_conflict",
@@ -62,7 +60,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
                 "suite_version_confirmation_required",
                 "suite_artifact_missing",
                 "task_file_provenance_required",
-                "precheck_required",
+                "file_validation_required",
                 "audit_task_charging_unavailable",
                 "usage_quota_unavailable",
                 "usage_ai_disabled",
@@ -174,53 +172,6 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
             return denied
         try:
             return JSONResponse(store.get_audit_task(principal, task_id, request_id))
-        except (KeyError, ValueError) as exc:
-            return fail(exc)
-
-    @app.post("/audit-tasks/{task_id}/prechecks", response_model=wc.PrecheckReceipt, status_code=202, openapi_extra=wc.openapi_body(wc.PrecheckRequest))
-    def precheck_request(task_id: str, body: dict, request: Request):
-        principal, denied = require_principal(request)
-        if denied:
-            return denied
-        try:
-            return JSONResponse(store.request_task_precheck(principal, task_id, body.get("request_id"), body.get("expected_revision")), status_code=202)
-        except (KeyError, ValueError) as exc:
-            return fail(exc)
-
-    @app.get("/audit-tasks/{task_id}/prechecks", response_model=wc.PrecheckHistory)
-    def precheck_history(task_id: str, request: Request):
-        principal, denied = require_principal(request)
-        if denied:
-            return denied
-        try:
-            return JSONResponse(store.list_task_prechecks(principal, task_id))
-        except (KeyError, ValueError) as exc:
-            return fail(exc)
-
-    @app.get("/audit-tasks/{task_id}/prechecks/{snapshot_id}", response_model=wc.PrecheckReceipt)
-    def precheck_read(task_id: str, snapshot_id: str, request: Request):
-        principal, denied = require_principal(request)
-        if denied:
-            return denied
-        try:
-            return JSONResponse(store.get_task_precheck(principal, task_id, snapshot_id))
-        except (KeyError, ValueError) as exc:
-            return fail(exc)
-
-    @app.get("/audit-tasks/{task_id}/prechecks/{snapshot_id}/report", response_class=Response)
-    def precheck_report(task_id: str, snapshot_id: str, request: Request):
-        from product.prechecks import render_precheck_record
-
-        principal, denied = require_principal(request)
-        if denied:
-            return denied
-        try:
-            receipt = store.get_task_precheck(principal, task_id, snapshot_id)
-            if receipt["status"] not in {"succeeded", "failed", "cancelled"}:
-                raise ValueError("precheck_not_ready")
-            return Response(
-                render_precheck_record(receipt), media_type="text/html", headers={"Cache-Control": "private, no-store", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'"}
-            )
         except (KeyError, ValueError) as exc:
             return fail(exc)
 

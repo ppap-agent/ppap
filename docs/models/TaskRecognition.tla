@@ -16,7 +16,7 @@ EXTENDS Naturals, Sequences, FiniteSets
 \* recognition display is omitted: it does not authorize pending_confirm/End.
 \* There is no fairness, liveness, timing, authorization, parser, model-quality,
 \* Task-number allocation, formal confirmation or paid-review claim here.
-\* Unselected and precheck-removed versions are provenance, never job inputs.
+\* Unselected and validation-removed versions are provenance, never job inputs.
 \* The model fixes the first Task input; rematching/revision is outside scope.
 \* TaskRecognitionRevisions models that extension for one existing Task;
 \* InputsStayFrozen here remains a one-shot, initial-request obligation.

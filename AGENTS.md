@@ -41,6 +41,6 @@ KISS 不等于把迁移人为切成最小碎片。如果一个内聚 package、�
 
 按 [context-reduce](https://github.com/ronhuafeng/skills-release/tree/main/catalog/engineering/context-reduce) 执行：只读本次 owning Issue、直接相关的源码、测试和仍生效的文档入口；非必要不读旧分支、历史设计、旧 Issue、agent 日志或迁移记录。复用当前权威，消除无当前消费者的代码、兼容层、额外概念、重复文档和对应测试；用小范围测试守住真实不变量，重要外部效应必须读回验证。
 
-**Checker 按公司组织，均为需保留的资产，不是 legacy code。** 检查程序目录叶子在 `audit/checkers/<公司>/`（`uaes`、`li`、`nio`），各自运行 `audit/checker_lib/<公司>/` 中的读取实现（原 v4 UAES、v2 理想、v3 蔚来）；预检在 `audit/precheck/`，只用于 UAES。这些源码、规则、资源，以及对应的测试、fixtures、样本（`assets/<公司>/`）和人工 Oracle（`assets/corpus/`）必须保留，不得删除、清空或篡改，也不得改写已入库的不可变 Revision。`context-reduce` 的清理范围仅限有证据表明无当前必要性的旧执行基础设施、隐式 fallback、重复注册/映射、无效兼容层及其独立的过期说明。叶子只通过声明的资源调用本公司的实现，不调用其他公司的实现；不另建历史软件兼容机制。现有租户授权、冻结原件/代码/结果、证据定位、未知不得 PASS 等正确性边界保持不变。
+**Checker 按公司组织，均为需保留的资产，不是 legacy code。** 检查程序目录叶子在 `audit/checkers/<公司>/`（`uaes`、`li`、`nio`），各自运行 `audit/checker_lib/<公司>/` 中的读取实现（原 v4 UAES、v2 理想、v3 蔚来）。原 UAES 免费预检（`audit/precheck/`）已按产品负责人决定（2026-11-11）整体移除，不再是需保留的资产；`assets/uaes/prechecks` 中的预检规则原件仍保留。这些源码、规则、资源，以及对应的测试、fixtures、样本（`assets/<公司>/`）和人工 Oracle（`assets/corpus/`）必须保留，不得删除、清空或篡改，也不得改写已入库的不可变 Revision。`context-reduce` 的清理范围仅限有证据表明无当前必要性的旧执行基础设施、隐式 fallback、重复注册/映射、无效兼容层及其独立的过期说明。叶子只通过声明的资源调用本公司的实现，不调用其他公司的实现；不另建历史软件兼容机制。现有租户授权、冻结原件/代码/结果、证据定位、未知不得 PASS 等正确性边界保持不变。
 
 开发命令见 [DEVELOPMENT](docs/DEVELOPMENT.md)，选择和运行测试时见 [tests/README](tests/README.md)。

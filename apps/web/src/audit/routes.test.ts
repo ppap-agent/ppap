@@ -52,10 +52,3 @@ test('lost command recovery keeps task and request identities through refresh an
   const confirmation = requestAddress(new URL('https://ppap.test/audit?task=t'), 't', 'acceptRequest', 'request-b')
   assert.equal(canonicalAddress(new URL(confirmation, 'https://ppap.test')), '/tasks/t?acceptRequest=request-b')
 })
-
-
-test('a precheck readback identity survives canonical task navigation', () => {
-  const prepared = requestAddress(new URL('https://ppap.test/tasks/t'), 't', 'precheckRequest', 'request-c')
-  assert.equal(prepared, '/tasks/t?precheckRequest=request-c')
-  assert.equal(canonicalAddress(new URL(prepared, 'https://ppap.test')), prepared)
-})
