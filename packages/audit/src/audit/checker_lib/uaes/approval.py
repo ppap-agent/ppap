@@ -155,7 +155,7 @@ class UaesApprovalAgent(UaesExcelAgent):
         right = min((rect.x0 for rect in vertical if rect.x0 >= heading.x1), default=None)
         top = min((rect.y1 for rect in horizontal if rect.y0 >= under and rect.x0 < heading.x0 and rect.x1 > heading.x1), default=None)
         bottom = min((rect.y0 for rect in horizontal if rect.y0 >= max(rect.y1 for rect in tryout) and rect.x0 < heading.x0 and rect.x1 > heading.x1), default=None)
-        if None in (left, right, top, bottom):
+        if left is None or right is None or top is None or bottom is None:
             return None
         cells = fitz.Rect(left + 1.5, top + 1.5, right - 1.5, bottom - 1.5)
 
@@ -249,7 +249,8 @@ class UaesApprovalAgent(UaesExcelAgent):
 
     def deviation_lists(self, ctx: RuleContext, part: str, name: str) -> list:
         """The lists (None for this file) whose header names this part number and part name among its own."""
-        found, unknown = [], []
+        found: list[Any] = []
+        unknown: list[Any] = []
         if self.list_matches(ctx, part, name):
             found.append(None)
         for item in related_by_content(self, ("偏差认可汇总", "偏差")).items:

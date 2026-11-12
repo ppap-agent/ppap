@@ -279,8 +279,8 @@ class UaesPfmeaAgent(UaesExcelAgent):
             by_condition.setdefault(condition, (item, tuple(scores)))
             consequence = (compact(item.values["失效模式"]), compact(effect))
             if all(consequence) and consequence in by_effect and by_effect[consequence][1] != s:
-                first, earlier = by_effect[consequence]
-                return "NG", f"{first.where()}与{item.where()}失效模式“{item.values['失效模式']}”及失效后果“{effect}”相同（空白格沿用上一行），严重度S却分别为{earlier}与{s}。"
+                first, severity = by_effect[consequence]
+                return "NG", f"{first.where()}与{item.where()}失效模式“{item.values['失效模式']}”及失效后果“{effect}”相同（空白格沿用上一行），严重度S却分别为{severity}与{s}。"
             by_effect.setdefault(consequence, (item, s))
         if gaps:
             raise unable("、".join(gaps[:3]) + "，这些行的评分尚未读取，需人工复核；其余行" + _REJECTED)

@@ -4,9 +4,11 @@ Each document module declares (sheets, sections, columns); a carrier combines th
 documents its clauses read into one resource.
 """
 
+from typing import Any
+
 from documents.pdf import GroupingMode, GroupingSpec, OutputSpec, PdfSpec, StitchMode, StitchSpec
 
-from audit.engine.rule_engine.contracts import RuleResourceModel, index_rule_resource
+from audit.engine.rule_engine.contracts import RuleResource, RuleResourceModel, index_rule_resource
 
 # Correctness first: search headers and scan rows over the whole used sheet, never a small
 # window. A sheet formatted to its last row reports a near-infinite used range, so cap at 10,000.
@@ -17,12 +19,12 @@ WHOLE_SHEET_COLS = 10_000
 # then each page on its own (the basic reading).
 # Embedded pictures are placed on the converted sheets as well (the converter leaves this off),
 # with no small count cap and no size floor: a stamp or a tick mark may be a tiny picture.
-PICTURES = {"preserve_pdf_embedded_images": True, "embedded_image_max_per_sheet": 10_000, "embedded_image_min_bytes": 0}
+PICTURES: dict[str, Any] = {"preserve_pdf_embedded_images": True, "embedded_image_max_per_sheet": 10_000, "embedded_image_min_bytes": 0}
 STITCHED = PdfSpec(grouping=GroupingSpec(mode=GroupingMode.ALL_PAGES), output=OutputSpec(**PICTURES))
 PER_PAGE = PdfSpec(grouping=GroupingSpec(mode=GroupingMode.ALL_PAGES), stitch=StitchSpec(mode=StitchMode.NO_STITCH), output=OutputSpec(**PICTURES))
 
 
-def combine(*documents) -> object:
+def combine(*documents) -> RuleResource:
     """One resource with the sheets, sections and columns of the documents a carrier reads.
 
     Documents may share a declaration (one PGQP1 sheet read by several carriers); a
@@ -30,7 +32,7 @@ def combine(*documents) -> object:
     """
     parts = []
     for index in range(3):
-        merged = {}
+        merged: dict[str, Any] = {}
         for document in documents:
             for item in document[index]:
                 if merged.setdefault(item.canonical_name, item) != item:

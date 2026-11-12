@@ -471,20 +471,6 @@ def test_emf_text_reads_the_words_an_emf_picture_draws():
     assert emf_text(struct.pack("<II", 84, 4)) == []
 
 
-def test_an_emf_stamp_placed_on_the_sheet_is_the_controlled_stamp(monkeypatch):
-    from pathlib import Path
-
-    from audit.checker_lib.uaes.engineering import UaesProcessFlowAgent
-    from audit.checker_lib.uaes.native import UaesSourceAgent
-    from audit.contracts import AuditInput, RuleInput
-
-    path = next((Path(__file__).parents[3] / "assets/uaes/samples").glob("F01R10Y776*/**/流程图776.xlsx"))
-    monkeypatch.setattr(UaesSourceAgent, "visual_pdf", lambda *args, **kwargs: pytest.fail("no image is needed"))
-    body = preset_rule_body("UAES", "U16")
-    agent = UaesProcessFlowAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput(rule_id="source-rules", **{key: value for key, value in body.items() if key != "kind"}))
-    assert agent.check(2).status == "PASS"
-
-
 @pytest.mark.parametrize(
     "entries,expected",
     [

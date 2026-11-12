@@ -279,7 +279,7 @@ class UaesMaterialsAgent(UaesExcelAgent):
         """Every cell value of a spreadsheet drawing (read as evidence of its version); None for a PDF."""
         if str(item.file_url).lower().endswith(".pdf"):
             return None
-        values = []
+        values: list[Any] = []
         with self.reading(ctx, item, drawing_for_materials):
             for worksheet in ctx.workbook.worksheets:
                 sheet = Sheet(ctx, worksheet)

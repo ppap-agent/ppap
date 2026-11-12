@@ -1,10 +1,12 @@
 """Process capability study originals (U06); aliases read from UAES corpus files."""
 
+from typing import Any
+
 from audit.engine.rule_engine.contracts import ColumnModel, SectionModel, SheetModel
 
 from . import PER_PAGE, STITCHED, WHOLE_SHEET_COLS, WHOLE_SHEET_ROWS
 
-_WHOLE = dict(header_search_max_row=WHOLE_SHEET_ROWS, header_search_max_col=WHOLE_SHEET_COLS, row_stop_on_first_blank=False, row_max_blank_streak=WHOLE_SHEET_ROWS)
+_WHOLE: dict[str, Any] = dict(header_search_max_row=WHOLE_SHEET_ROWS, header_search_max_col=WHOLE_SHEET_COLS, row_stop_on_first_blank=False, row_max_blank_streak=WHOLE_SHEET_ROWS)
 
 # A capability study: one certification report per characteristic sheet (776, A40, V040), a 目录
 # sheet that lists every characteristic with its CPK/PPK result and target (776, A40), and in the

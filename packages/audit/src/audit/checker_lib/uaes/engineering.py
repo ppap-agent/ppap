@@ -401,22 +401,21 @@ class UaesCapabilityAgent(UaesExcelAgent):
                 return self.covered(sheets[0], directory, names, process_rows, process_only=process_only)
         return "NG", f"同批次没有零件号为{part}且包含PGQP1表的采购件质量计划（同批次采购件质量计划：{'、'.join(others)}），缺项文件。"
 
-    def directory_rows(self, directory: Sheet) -> tuple[set[str], list[int]]:
+    def directory_rows(self, directory: Sheet) -> tuple[set[str], list[int] | None]:
         """Characteristic names of the directory, and the rows it marks as process characteristics."""
         section = self.section(directory, "能力汇总区")
         columns = section.columns(optional=("能力特性", "过程特性标记"))
         if "能力特性" not in columns:
             raise unable(f"目录“{directory.title}”中未能定位特性名称列（工程名），检查程序未能读取目录条目，需人工复核。")
-        names, process_rows = set(), []
+        names: set[str] = set()
+        process_rows: list[int] = []
         for row in section.rows_from(columns):
             if not row.is_present("能力特性"):
                 continue
             names.add(compact(row.value("能力特性")))
             if "过程特性标记" in columns and compact(row.value("过程特性标记")):
                 process_rows.append(row.row_index)
-        if "过程特性标记" not in columns:
-            process_rows = None
-        return names, process_rows
+        return names, process_rows if "过程特性标记" in columns else None
 
     def covered(self, plan: Sheet, directory: Sheet, names: set[str], process_rows, *, process_only: bool):
         if process_only:

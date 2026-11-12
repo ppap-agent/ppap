@@ -59,7 +59,7 @@ class UaesRecordAgent(UaesExcelAgent):
             return result
         from audit.contracts import AuditEvidence, EvidenceDiagnostic
 
-        suffix = Path(str(self.audit_file.file_url)).suffix.lower().lstrip(".")
+        suffix: Any = Path(str(self.audit_file.file_url)).suffix.lower().lstrip(".")
         # Nothing was read: an explicit empty evidence, so no reader can mistake it for a read.
         evidence = AuditEvidence(
             required="structure_or_visual",

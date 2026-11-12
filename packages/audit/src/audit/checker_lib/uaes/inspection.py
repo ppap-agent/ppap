@@ -249,6 +249,7 @@ class UaesInspectionAgent(UaesExcelAgent):
 
     def verdict(self, report: Report, row: int) -> bool | None:
         """True when the row's result is OK, False when it is NOT OK, None when nothing confirms either."""
+        assert report.ok_column is not None
         chosen = compact(report.sheet.cell(row, report.ok_column).value()).rstrip(".")
         if report.nok_column is None:
             return True if chosen in _PASSED else False if chosen in _REJECTED else None
@@ -328,7 +329,8 @@ class UaesInspectionAgent(UaesExcelAgent):
 
     def identity(self, ctx: RuleContext) -> tuple[str, str]:
         """The part number and name written in the report headers ("Part Number/零件号： F01R10YA40")."""
-        parts, names = set(), set()
+        parts: set[str] = set()
+        names: set[str] = set()
         for title in resources.REPORTS:
             for sheet in Table(ctx).find_sheets(title, on_missing=Decision.IGNORE):
                 parts.update(value for value in self.labelled(sheet, ("Part Number/零件号",)) if value)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import Any
 
 from audit.checker_lib.nio.excel_agent import rule
 from audit.engine.rule_engine import Decision, RuleContext, Sheet, Table
@@ -76,7 +77,7 @@ class UaesMsaAgent(UaesExcelAgent):
     def kappa_conclusions(sheet: Sheet) -> list[str]:
         """Every appraiser's conclusion; a 计数型MSA sheet without appraiser rows states one closing conclusion."""
         wanted = {label.casefold() for label in resources.KAPPA_CONCLUSION}
-        values = []
+        values: list[Any] = []
         rows, columns = UaesExcelAgent.extent(sheet)
         for cell in sheet.scan_non_empty(row_min=1, row_max=rows, col_min=1, col_max=columns):
             # The appraiser rows read "Conclusion"; the colon-ended "Conclusion:" is the summary line.

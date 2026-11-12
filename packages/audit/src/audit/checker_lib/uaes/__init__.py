@@ -1,5 +1,7 @@
 """Explicit UAES source entry to actual customer Checker implementations."""
 
+from typing import Any
+
 from .approval import UaesApprovalAgent
 from .control_plan import UaesControlPlanAgent
 from .engineering import UaesCapabilityAgent, UaesProcessFlowAgent
@@ -20,7 +22,7 @@ from .records import (
 from .special_characteristics import UaesSpecialCharacteristicsAgent
 from .warrant import UaesWarrantAgent
 
-CLASS_BY_ENTRY = {
+CLASS_BY_ENTRY: dict[str, type[Any]] = {
     "U01": UaesInspectionAgent,
     "U04": UaesMaterialsAgent,
     "U05": UaesMsaAgent,

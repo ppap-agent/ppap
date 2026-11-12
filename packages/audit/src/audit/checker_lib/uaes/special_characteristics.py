@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from audit.checker_lib.nio.excel_agent import rule
 from audit.engine.rule_engine import Decision, RuleContext, Sheet, Table
 
@@ -14,7 +16,7 @@ _REQUIRED = {"特性编号": "编号/序号", "特性名称": "产品特性/过�
 _NAMES = ("特性名称", "过程特性名称")
 
 
-def characteristic_rows(agent: UaesExcelAgent, ctx: RuleContext) -> list[tuple[str, object, dict]]:
+def characteristic_rows(agent: UaesExcelAgent, ctx: RuleContext) -> list[tuple[str, Any, dict]]:
     """(sheet title, row, resolved columns) of every row that numbers, names or values a characteristic."""
     found = []
     for sheet in Table(ctx).find_sheets("特殊特性清单", on_missing=Decision.IGNORE):
@@ -121,6 +123,8 @@ class _Preparation(UaesSourceAgent):
 
         names = [name for name, _description in discover_declared_rules(type(self.carrier))]
         result = self.carrier.check(names.index(method))
+        if result is None:
+            raise unable(f"条款{method}没有执行结果，需人工复核。")
         if result.evidence is not None:
             self._evidence_sources.extend(source for source in result.evidence.sources if source not in self._evidence_sources)
         return result.status, result.suggestions

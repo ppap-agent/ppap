@@ -64,6 +64,7 @@ class UaesExcelAgent(ExcelAgent):
                 chosen = (*self._convert_pdf(path, spec), spec)
             except PdfSourceError:
                 continue
+            assert self._rule_resource is not None
             probe = RuleContext(None, chosen[1], self._rule_resource)
             if any(probe.find_sheets(name, on_missing=Decision.IGNORE) for name in sheets):
                 break
@@ -109,7 +110,7 @@ class UaesExcelAgent(ExcelAgent):
         """A controlled stamp: the words an EMF picture draws, else an image of the original."""
         return self._from_legacy(lambda agent: agent.controlled_stamp())
 
-    def _from_legacy(self, read: Any) -> tuple[str, str]:
+    def _from_legacy(self, read: Any) -> Any:
         from documents.model_access import ModelUnavailable
 
         from .native import MissingFact, UnknownFact
@@ -131,11 +132,12 @@ class UaesExcelAgent(ExcelAgent):
         sources, legacy._evidence_sources = tuple(legacy._evidence_sources), []
         from audit.contracts import AuditEvidence, EvidenceDiagnostic
 
+        extension: Any = Path(str(self.audit_file.file_url)).suffix.lower().lstrip(".")
         evidence = result.evidence or AuditEvidence(
             required="structure_or_visual",
             used="none",
-            source_format=Path(str(self.audit_file.file_url)).suffix.lower().lstrip("."),
-            prepared_format=Path(str(self.audit_file.file_url)).suffix.lower().lstrip("."),
+            source_format=extension,
+            prepared_format=extension,
             sources=(),
             diagnostics=(EvidenceDiagnostic(code="uaes_source_fact", stage="evaluation", severity="info", message="客户原始条款的实际执行结果；未知事实未转为通过。"),),
         )
@@ -171,8 +173,8 @@ class UaesExcelAgent(ExcelAgent):
         if "_cell_sources" not in self.__dict__:
             # The same layout extracts the same grids the converted workbook was written from.
             extraction = extract_pdf_tables(Path(path).read_bytes(), spec=spec)
-            groups = [group for group in extraction.groups if group.success and group.table_grid is not None]
-            shapes = [(len(group.table_grid.rows) - 1, len(group.table_grid.cols) - 1) for group in groups]
+            grids = [group.table_grid for group in extraction.groups if group.success and group.table_grid is not None]
+            shapes = [(len(grid.rows) - 1, len(grid.cols) - 1) for grid in grids]
             written = [(sheet_.max_row, sheet_.max_column) for sheet_ in self._workbook_cache.worksheets]
             self._cell_sources = converted_cell_sources(extraction) if all(r <= rows and c <= cols for (r, c), (rows, cols) in zip(written, shapes)) and len(shapes) == len(written) else {}
             self._cell_tolerance = extraction.spec.extraction.line_tolerance

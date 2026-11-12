@@ -338,7 +338,7 @@ class UaesControlPlanAgent(UaesExcelAgent):
         path = str(self.audit_file.file_url)
         sheets = self.plan_sheets(ctx)
         if path.lower().endswith((".xlsx", ".xlsm")):
-            labels = []
+            labels: list[tuple[str, bool]] = []
             for sheet in sheets:
                 labels += ctx.ops.get_checkbox_labels(sheet.ws, path) or []
             staged = [(caption, state) for caption, state in labels if _stage(caption)]

@@ -13,6 +13,7 @@ import struct
 import zipfile
 from dataclasses import dataclass, field
 from posixpath import dirname, join, normpath
+from typing import Any
 from xml.etree import ElementTree as ET
 
 from audit.engine.rule_engine import Decision, RuleContext, Sheet, Table
@@ -107,9 +108,9 @@ class FlowChart:
             last = rows[-1]
         for operation in operations:
             seen = set()
-            for row in operation.rows:
+            for line in operation.rows:
                 for column in self.lanes:
-                    anchor = self.anchor(row, column)
+                    anchor = self.anchor(line, column)
                     if anchor in seen:
                         continue
                     seen.add(anchor)
@@ -118,7 +119,7 @@ class FlowChart:
                         operation.marks.extend((column, symbol) for symbol in text)
                     # A PDF lane holds drawn arrows the cells do not carry; a sheet cell covered
                     # by a picture or shape (not a connector line) may hide a symbol.
-                    operation.unread_lane |= self.pdf or self.drawings_in((row, column, row, column))
+                    operation.unread_lane |= self.pdf or self.drawings_in((line, column, line, column))
         return operations, last
 
     def operation_rows(self) -> list[int]:
@@ -377,7 +378,8 @@ def _xls_drawings(path: str, title: str) -> list[Drawing]:
         records.append((kind, stream[position + 4 : position + 4 + size]))
         position += 4 + size
     # Substreams in order: the workbook globals, then one per sheet; drawing data continues over records.
-    sheet, depth, data, previous = -1, 0, {}, None
+    sheet, depth, previous = -1, 0, None
+    data: dict[Any, Any] = {}
     for kind, payload in records:
         if kind == 0x0809:
             # An embedded chart opens a substream inside its sheet's.
