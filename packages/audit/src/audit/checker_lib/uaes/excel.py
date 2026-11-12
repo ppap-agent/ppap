@@ -148,8 +148,70 @@ class UaesExcelAgent(ExcelAgent):
         return title
 
     def stamp(self) -> tuple[str, str]:
-        """A controlled stamp: the words an EMF picture draws, else an image of the original."""
-        return self._from_legacy(lambda agent: agent.controlled_stamp())
+        """A controlled stamp: the words an EMF picture draws, else an image of the original.
+
+        On a PDF original the clause fails when neither the image model nor Paddle's seal detection on every
+        page finds one (product owner); a seal Paddle locates without the word 受控 is left for review.
+        """
+        from audit.engine.runtime import get_runtime
+
+        status, message = self._from_legacy(lambda agent: agent.controlled_stamp())
+        if status == "PASS" or not str(self.audit_file.file_url).lower().endswith(".pdf"):
+            return status, message
+        runtime = get_runtime()
+        if runtime is not None and not callable(getattr(runtime, "read_ocr_visual_facts", None)):
+            # The image model did not look here, so it did not "not find" a stamp.
+            return status, message
+        seals = self.paddle_seals()
+        if seals is None:
+            return status, message
+        if any(compact(text) in {"受控", "受控章", "受控文件"} for texts in seals for text in texts):
+            return "PASS", "Paddle印章检测在原页定位到受控章。"
+        if seals:
+            raise unable("Paddle印章检测在原页定位到印章，但未识别出“受控”字样，需人工复核是否为受控章。")
+        return "NG", "LLM OCR与Paddle印章检测均未在原件中找到受控章，判不通过，请人工复核。"
+
+    def paddle_seals(self) -> list[list[str]] | None:
+        """The recognised words of each seal Paddle's seal detection locates on any page of this PDF original.
+
+        Every page is read; None when one cannot be, since an unread page proves no absence.
+        """
+        path = str(self.audit_file.file_url)
+        if not path.lower().endswith(".pdf"):
+            return None
+        import fitz
+        from documents.ocr.paddle.reader import PaddleEvidenceUnavailable, read_pdf_page_evidence
+
+        from audit.engine.runtime import get_runtime
+        from audit.pdf_tables import valid_pdf_bbox
+
+        def read(agent: Any) -> list[list[str]] | None:
+            digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+            # Shared with the image reads of the same original, which cache Paddle pages by (digest, page).
+            cache = agent.__dict__.setdefault("_paddle_page_cache", {})
+            reader = getattr(get_runtime(), "read_paddle_page", None)
+            with fitz.open(path) as document:
+                count = len(document)
+            seals = []
+            for number in range(1, count + 1):
+                if (digest, number) not in cache:
+                    try:
+                        cache[(digest, number)] = reader(path, number) if callable(reader) else read_pdf_page_evidence(path, number)
+                    except PaddleEvidenceUnavailable:
+                        cache[(digest, number)] = None
+                value = cache[(digest, number)]
+                if value is None:
+                    return None
+                page = value["pages"][0]
+                frame = page.get("frame") or {}
+                for index, seal in enumerate(page.get("seals", [])):
+                    if seal.get("detected") is True and valid_pdf_bbox(seal.get("pdf_bbox"), frame.get("pdf_width"), frame.get("pdf_height")):
+                        locator = {"kind": "pdf_region", "page": number, "bbox": seal["pdf_bbox"], "element": "seal", "element_index": index, "engine": value.get("engine")}
+                        agent.witness(locator, "Paddle检测到此区域存在印章", visual=True)
+                        seals.append([str(text) for text in seal.get("recognized_text", [])])
+            return seals
+
+        return self._from_legacy(read)
 
     def _from_legacy(self, read: Any) -> Any:
         from documents.model_access import ModelUnavailable

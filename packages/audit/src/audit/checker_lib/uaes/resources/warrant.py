@@ -2,7 +2,7 @@
 
 The UAES corpus warrant (CFG-1001) is a scan. Its page is transcribed once into this schema: what is printed
 or written in each field and which boxes are marked. The model transcribes; the clauses decide in code.
-The seal is not transcribed here: Paddle's seal detection locates it.
+The transcription also says whether an ink seal is seen; Paddle's seal detection locates one.
 """
 
 from . import PER_PAGE, STITCHED
@@ -50,6 +50,7 @@ SIGNATURE = ("supplier_authorized_signature", "供方代表签字（Supplier Aut
 REASON = ("reason_for_submission", "提交原因（Reason for Submission）")
 REASON_OTHER = ("reason_other_text", "“其它----请说明（Other - please specify）”旁边的说明")
 LEVEL = ("requested_submission_level", "要求提交的等级（Requested Submission Level）")
+SEAL = ("ink_seal", "页面上用印泥盖的实际印章")
 
 SCHEMA = _object(
     **{name: _FIELD for name in IDENTITY},
@@ -60,6 +61,7 @@ SCHEMA = _object(
     **{SUBSTANCES[0]: _CHOICE, IMDS[0]: _FIELD},
     **{SIGNATURE[0]: _object(present=_MARK, handwritten=_MARK, value=_TEXT)},
     **{REASON[0]: _CHOICE, REASON_OTHER[0]: _FIELD, LEVEL[0]: _CHOICE},
+    **{SEAL[0]: _MARK},
 )
 
 PROMPT = (
@@ -68,6 +70,7 @@ PROMPT = (
     "value：照原样转写栏中填写的内容（打印或手写均可），栏位空白写空字符串，看不清写 null。\n"
     "options：按表单顺序列出该组的每一个选项；实际被勾选（√、×、涂黑等）为 true，明确未勾选为 false，看不清为 null。\n"
     "供方代表签字：handwritten 只在签字栏中有实际手写签名时为 true；打印姓名、电子/数字签名文字或空白为 false；value 转写签字栏中的可见文字。\n"
+    "ink_seal：页面上任何位置有用印泥盖的实际印章为 true；表头印刷的品牌标志、电子/数字签名文字框、勾选框不算印章；确认没有为 false，看不清为 null。\n"
     "字段与表单标签的对应：\n"
     + "\n".join(
         f"{name}: {label}"

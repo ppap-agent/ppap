@@ -2,7 +2,8 @@
 
 The only UAES PSW original is a one-page scan (CFG-1001 with some typed overlays): its fields, boxes and
 signature exist only as an image. The page is transcribed once into a fixed JSON schema by the image model;
-every clause decides from that transcription in code. The seal is located by Paddle's seal detection.
+every clause decides from that transcription in code. A seal is found by Paddle's seal detection; when neither it
+nor the transcription finds one, the clause fails.
 A text-layer warrant, whose layout this checker has not declared, is not guessed at.
 """
 
@@ -119,19 +120,6 @@ class UaesWarrantAgent(UaesExcelAgent):
         locator = {"kind": "pdf_page", "page": 1, "source_sha256": self._digest, "engine": "ocr_llm", "fact": fact}
         self.legacy().witness(locator, value, visual=True)
 
-    def seal(self) -> bool | None:
-        """Paddle's seal detection: True where it locates a seal; None otherwise, since no detection proves no seal."""
-        from audit.engine.checkers.visual_facts import VisualFactsUnavailable, _read_paddle_visual_facts
-
-        def read(agent: Any) -> bool | None:
-            cache = agent.__dict__.setdefault("_paddle_page_cache", {})
-            return _read_paddle_visual_facts(self.audit_file, {"seal": "印章"}, agent.witness, cache=cache)["seal"]
-
-        try:
-            return self._from_legacy(read)
-        except VisualFactsUnavailable as exc:
-            raise unable(f"{exc}") from None
-
     @rule("PSW基础身份两个工程日期及法规唯一选择")
     def rule_1(self, ctx: RuleContext):
         reading = _Reading(self)
@@ -168,9 +156,16 @@ class UaesWarrantAgent(UaesExcelAgent):
                 self.note(name, self.transcription()[name].get("value") or "手写签名")
         if reading.failed or reading.unknown:
             return reading.decided("")
-        if self.seal() is not True:
-            raise unable("零件提交保证书有供方代表手写签字；Paddle印章检测未在原页定位到印章，未检出不能证明没有印章，需人工复核。")
-        return "PASS", "零件提交保证书有供方代表手写签字，Paddle在原页定位到印章。"
+        seals = self.paddle_seals()
+        if seals:
+            return "PASS", "零件提交保证书有供方代表手写签字，Paddle在原页定位到印章。"
+        seen = self.transcription().get(resources.SEAL[0])
+        if seals == [] and seen is not True:
+            # Neither the image model nor Paddle's seal detection finds one: the clause fails (product owner).
+            return "NG", "零件提交保证书有供方代表手写签字，但LLM OCR与Paddle印章检测均未找到印章，判不通过，请人工复核。"
+        if seals == []:
+            raise unable("零件提交保证书有供方代表手写签字；图像转写认为有印章，但Paddle印章检测未在原页定位到印章，需人工复核。")
+        raise unable("零件提交保证书有页面未能完成Paddle印章检测，需人工复核。")
 
     @rule("提交原因选择与其它说明")
     def rule_4(self, ctx: RuleContext):
