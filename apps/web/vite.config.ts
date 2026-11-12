@@ -96,5 +96,7 @@ export default defineConfig({
     strictPort: true,
     hmr: docker ? {host: '127.0.0.1', clientPort: 4173} : undefined,
     watch: docker ? {usePolling: true, interval: 300} : undefined,
+    // Preview browser tests open pages from four workers at once; transform the entries before the first page waits on a cold server.
+    warmup: preview ? {clientFiles: ['./preview/*.tsx']} : undefined,
   },
 })

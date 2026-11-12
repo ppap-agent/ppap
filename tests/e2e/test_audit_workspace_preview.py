@@ -152,7 +152,8 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             expect(ng).to_have_attribute("aria-pressed", "true")
             expect(details.get_by_role("region", name="审核总结", exact=True)).to_have_count(0)
             expect(details.get_by_text("不符合 1 · 符合 1", exact=True)).to_have_count(0)
-            expect(queue).not_to_contain_text("示例 PFMEA 规则")
+            # Each file card names its customer and rule once; the counts stay as list filters.
+            expect(queue.get_by_role("button", name=re.compile("^PFMEA.xlsx "))).to_contain_text("示例客户 · 示例 PFMEA 规则 · v1")
             expect(page.get_by_role("banner").or_(page.locator("header")).first).not_to_contain_text("共 6 项")
             expect(details.get_by_role("row")).to_have_count(2)
             chips.get_by_role("button", name=re.compile("^符合")).click()
@@ -193,9 +194,10 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
                     for file in queue.get_by_role("button").all():
                         self.assertEqual(file.evaluate("element => getComputedStyle(element).borderRadius"), "0px")
                     expect(page.get_by_role("banner").get_by_role("button", name="审核报告", exact=True)).to_be_visible()
-                    # At the narrowest desktop the product navigation folds to its icon rail.
-                    if width == 1280:
-                        self.assertEqual(page.get_by_role("complementary", name="产品侧栏", exact=True).evaluate("element => element.getBoundingClientRect().width"), 64)
+                    # The product navigation starts folded to its icon rail at every desktop width.
+                    sidebar = page.get_by_role("complementary", name="产品侧栏", exact=True)
+                    expect(sidebar.get_by_role("button", name="展开产品导航", exact=True)).to_be_visible()
+                    self.assertEqual(sidebar.evaluate("element => element.getBoundingClientRect().width"), 72)
                     expect(page.get_by_role("dialog")).to_have_count(0)
                     page.close()
             browser.close()

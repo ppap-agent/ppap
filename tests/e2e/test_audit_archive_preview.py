@@ -308,7 +308,12 @@ class AuditArchivePreviewTests(unittest.TestCase):
                     page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready&view=archive&archiveDoc=preview-archive-A001")
                     heading = page.get_by_role("heading", name="控制计划.xlsx", exact=True)
                     expect(heading).to_be_visible()
-                    expect(page.get_by_role("main").get_by_text("控制计划.xlsx", exact=True)).to_have_count(1)
+                    # One title; beyond it the name appears only as the 文件名称 field of the file information overview.
+                    main = page.get_by_role("main")
+                    overview = main.get_by_role("region", name="文件信息概览", exact=True)
+                    expect(overview.get_by_text("控制计划.xlsx", exact=True)).to_have_count(1)
+                    expect(main.get_by_role("heading", name="控制计划.xlsx", exact=True)).to_have_count(1)
+                    expect(main.get_by_text("控制计划.xlsx", exact=True)).to_have_count(2)
                     rail = page.get_by_role("complementary", name="历史版本", exact=True)
                     expect(rail.get_by_role("button", name="选择第 3 次审核", exact=True)).to_have_attribute("aria-pressed", "true")
                     details = page.get_by_role("region", name="审核详情", exact=True)

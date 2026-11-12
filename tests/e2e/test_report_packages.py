@@ -65,7 +65,18 @@ def test_archive_zip_refresh_reads_original_cross_task_package_and_downloads_fix
                     }
                 )
             elif path == "/audit-archive":
-                query = {"search": "", "category_id": None, "document_type": None, "customer": None, "initiator": None, "from_date": None, "through_date": None, "page": 1, "page_size": 10}
+                query = {
+                    "search": "",
+                    "category_id": None,
+                    "document_type": None,
+                    "customer": None,
+                    "initiator": None,
+                    "from_date": None,
+                    "through_date": None,
+                    "result": None,
+                    "page": 1,
+                    "page_size": 10,
+                }
                 route.fulfill(json={"query": query, "documents": [], "total": 0, "document_count": 0, "categories": [], "customer_groups": [], "document_types": [], "customers": [], "initiators": []})
             elif path == "/audit-report-packages/original-request":
                 if hold_next_read[0]:
@@ -84,6 +95,8 @@ def test_archive_zip_refresh_reads_original_cross_task_package_and_downloads_fix
         page.route("**/api/**", api)
         page.goto(WEB + "/audit?view=archive&packageRequest=original-request")
         package = page.get_by_role("region", name="ZIP 工作", exact=True)
+        # The archive list has its own read alert; this is the one that names the ZIP request.
+        zip_alert = page.get_by_role("alert").filter(has=page.get_by_text("ZIP 暂不可用", exact=True))
 
         def record():
             package.get_by_role("button", name="打包记录", exact=True).click()
@@ -105,7 +118,7 @@ def test_archive_zip_refresh_reads_original_cross_task_package_and_downloads_fix
 
         unavailable[0] = True
         page.reload()
-        expect(page.get_by_role("alert")).to_contain_text("未能读取此打包请求")
+        expect(zip_alert).to_contain_text("未能读取此打包请求")
         expect(package).to_have_count(0)
         unavailable[0] = False
         page.get_by_role("button", name="重新读取 ZIP", exact=True).click()
@@ -114,7 +127,7 @@ def test_archive_zip_refresh_reads_original_cross_task_package_and_downloads_fix
         details.get_by_role("button", name="关闭", exact=True).click()
         mismatch[0] = True
         page.reload()
-        expect(page.get_by_role("alert")).to_contain_text("未能读取此打包请求")
+        expect(zip_alert).to_contain_text("未能读取此打包请求")
         expect(package).to_have_count(0)
         assert not any(method != "GET" for method, _path in calls)
         mismatch[0] = False

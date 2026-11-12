@@ -75,15 +75,22 @@ class PageHeaderPreviewTests(unittest.TestCase):
             page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task&report=preview-recovery-version-1")
             bar = page.get_by_role("banner")
             expect(bar.get_by_role("button", name="读取报告状态", exact=True)).to_be_visible()
+            # The page title heads the report list beside the reader, not a second row above both.
             title = page.get_by_role("heading", name="审核报告", exact=True)
-            self.assertLessEqual(title.bounding_box()["height"], 2)
+            expect(title).to_be_visible()
             current = page.get_by_role("region", name="当前报告", exact=True)
             filename = current.get_by_role("heading", name="控制计划.xlsx", exact=True)
             toolbar = current.get_by_role("toolbar", name="PDF 阅读工具", exact=True)
             expect(toolbar).to_be_visible()
             bottom = bar.bounding_box()["y"] + bar.bounding_box()["height"]
-            self.assertLessEqual(filename.bounding_box()["y"] - bottom, 32)
-            self.assertLessEqual(toolbar.bounding_box()["y"] - bottom, 90)
+            reader = current.bounding_box()
+            self.assertLessEqual(reader["y"] - bottom, 32)
+            # The list title and the reader start on the same row, side by side.
+            self.assertLessEqual(abs(title.bounding_box()["y"] - reader["y"]), 16)
+            self.assertLess(title.bounding_box()["x"] + title.bounding_box()["width"], reader["x"])
+            # Only the reader's own header (report name, time, actions; it wraps at this width) sits above the PDF tools.
+            self.assertLess(filename.bounding_box()["y"], toolbar.bounding_box()["y"])
+            self.assertLessEqual(toolbar.bounding_box()["y"] - reader["y"], 128)
             browser.close()
 
     def test_workbench_and_usage_share_the_page_bar_without_previous_page_actions(self):

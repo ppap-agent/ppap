@@ -13,6 +13,8 @@ from playwright.sync_api import expect, sync_playwright  # noqa: E402
 from .conftest import pick_audit_files  # noqa: E402
 
 WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
+# The picker names the automatic choice with its description, as the person reads it.
+AUTO_CUSTOMER = re.compile(r"^自动识别\s*按文件内容匹配客户规则$")
 
 
 class PreparationHTTP:
@@ -502,7 +504,7 @@ def test_customer_mode_keeps_task_selection_separate_from_confirmed_default():
         expect(page.get_by_text("企业默认：蔚来", exact=True)).to_be_visible()
         assert len(server.default_writes) == 2
         choice.click()
-        page.get_by_role("option", name="自动识别", exact=True).click()
+        page.get_by_role("option", name=AUTO_CUSTOMER).click()
         page.get_by_role("button", name="重新读取企业默认", exact=True).click()
         expect(choice).to_contain_text("自动识别")
         assert len(server.default_writes) == 2
@@ -543,7 +545,7 @@ def test_explicit_auto_selection_can_continue_while_default_read_is_pending():
         choice = page.get_by_role("combobox", name="审核客户", exact=True)
         expect(choice).to_contain_text("请选择本次审核客户")
         choice.click()
-        page.get_by_role("option", name="自动识别", exact=True).click()
+        page.get_by_role("option", name=AUTO_CUSTOMER).click()
         expect(page.get_by_role("button", name="选择本地文件", exact=True)).to_be_enabled()
         expect(choice).to_contain_text("自动识别")
         pending.pop().fulfill(json={"customer_preference": "UAES", "revision": 3})
