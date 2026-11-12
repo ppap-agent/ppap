@@ -10,8 +10,8 @@ import {nativeCheckerReleaseAdapter, type CheckerActive, type CheckerRevision} f
 type Related = (suiteKey: string) => {label: string; open: () => void} | undefined
 
 /** The card at the top of a rule page frames a rule's program: whether audits can use it, which version, and the one next step. */
-export function StatusCard({badge, tone = 'outline', title, children, action}: {badge: string; tone?: 'success' | 'warning' | 'outline'; title: string; children?: ReactNode; action?: ReactNode}) {
-  return <section aria-label="检查程序" className="flex flex-wrap items-start justify-between gap-4 rounded-lg border bg-muted/30 px-5 py-4">
+export function StatusCard({badge, tone = 'outline', title, children, action, label = '检查程序'}: {badge: string; tone?: 'success' | 'warning' | 'outline'; title: string; children?: ReactNode; action?: ReactNode; label?: string}) {
+  return <section aria-label={label} className="flex flex-wrap items-start justify-between gap-4 rounded-lg border bg-muted/30 px-5 py-4">
     <div className="min-w-0 flex-1 space-y-1.5">
       <p className="flex flex-wrap items-center gap-2"><Badge shape="square" variant={tone}>{badge}</Badge><span className="font-medium">{title}</span></p>
       {children && <div className="space-y-1 text-sm text-muted-foreground">{children}</div>}

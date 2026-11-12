@@ -888,3 +888,22 @@ def test_a_rejection_is_a_confirmable_reading_that_keeps_only_the_defined_parts(
     assert _summary("c1", row(whole), current, "d")["rejections"][0]["reason"] == "原文只问是否满足要求"
     assert _summary("c1", row(part), current, "d")["state"] == "confirmed"
     assert _summary("c1", row(whole), current, "changed")["state"] == "source_changed"
+
+
+def test_each_clause_is_counted_by_what_it_waits_for_from_a_person():
+    from product.store.formalizations import _attention
+
+    running, ended = {"state": "running", "lease_expired": False}, {"state": "failed", "lease_expired": False}
+    ready = {"assumptions": [{"id": "suggestion", "kind": "suggested_clause", "text": "改写"}]}
+    open_standard = {"assumptions": [{"id": "r1", "text": "签字须是手签还是电子签？"}]}
+    assert _attention("confirmed", ready, running) == "decided"
+    assert _attention("rejected", None, None) == "decided"
+    assert _attention("candidate", ready, running) == "running"
+    # A reading lost with its Worker is not reported as still running.
+    assert _attention("not_started", None, {**running, "lease_expired": True}) == "failed"
+    assert _attention("needs_clarification", ready, None) == "question"
+    assert _attention("candidate", open_standard, ended) == "review"
+    # The suggested wording alone asks the person nothing.
+    assert _attention("candidate", ready, None) == "ready"
+    assert _attention("source_changed", ready, ended) == "failed"
+    assert _attention("not_started", None, None) == "waiting"

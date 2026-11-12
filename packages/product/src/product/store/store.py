@@ -37,7 +37,7 @@ from psycopg.types.json import Jsonb
 from product.checker_verification import frozen_checker_verification
 from product.db import connect
 from product.feishu import CardAction, UserTokens
-from product.feishu_notifications import optimization_notification_card, task_notification_card
+from product.feishu_notifications import formalization_notification_card, optimization_notification_card, task_notification_card
 from product.feishu_personal_upload import PersonalDriveClient, UploadRejected, UploadUnknown
 from product.feishu_usage import FeishuUsageError, PartnerAiItem, audit_usage_points, remaining_trial_points, split_trial_and_partner
 from product.files import (
@@ -1853,7 +1853,11 @@ class AuthStore:
             )[0]
             conn.execute("INSERT INTO engine.attempts (id, job_id, attempt, worker_id) VALUES (gen_random_uuid(), %s, %s, %s)", (row[0], attempt, worker_ident))
             claimed = ClaimedJob(str(row[0]), "feishu_notification", row[3], attempt, str(row[2]) if row[2] else None, str(row[1]))
-            if row[3].get("stage") == "optimization_completed":
+            if row[3].get("stage") == "formalization_ready":
+                from product.store.formalizations import FormalizationStore
+
+                identities = FormalizationStore(self).notification_recipients(conn, row[1], _as_uuid(str(row[3].get("operation_id") or "")), self.settings.feishu_app_id)
+            elif row[3].get("stage") == "optimization_completed":
                 identities = conn.execute(
                     """SELECT i.user_id, i.provider, i.app_id, i.tenant_key, i.subject, m.role, i.display_name
                     FROM product.checker_optimizations o JOIN product.tenants t ON t.id=o.tenant_id
@@ -1919,10 +1923,11 @@ class AuthStore:
     def start_task_notification(self, claimed: ClaimedJob, worker_ident: str, principal: Principal) -> dict | None:
         task_id, stage = _as_uuid(str(claimed.payload.get("task_id") or "")), claimed.payload.get("stage")
         package_id = _as_uuid(str(claimed.payload.get("package_id") or "")) if stage == "zip_ready" else None
-        operation_id = _as_uuid(str(claimed.payload.get("operation_id") or "")) if stage == "optimization_completed" else None
-        if stage not in {"confirmation", "started", "completed", "zip_ready", "optimization_completed"}:
+        operation_scoped = stage in {"optimization_completed", "formalization_ready"}
+        operation_id = _as_uuid(str(claimed.payload.get("operation_id") or "")) if operation_scoped else None
+        if stage not in {"confirmation", "started", "completed", "zip_ready", "optimization_completed", "formalization_ready"}:
             raise ValueError("invalid_notification_scope")
-        if stage == "optimization_completed" and not operation_id or stage != "optimization_completed" and not task_id or stage == "zip_ready" and not package_id:
+        if operation_scoped and not operation_id or not operation_scoped and not task_id or stage == "zip_ready" and not package_id:
             raise ValueError("invalid_notification_scope")
         with self._conn() as conn, conn.transaction():
             if stage == "confirmation":
@@ -1946,6 +1951,10 @@ class AuthStore:
 
                     operation, sample = CheckerDevelopmentStore(self).notification_context(conn, principal, operation_id)
                     card = optimization_notification_card(operation, sample, self.settings.canonical_web_url())
+                elif stage == "formalization_ready":
+                    from product.store.formalizations import FormalizationStore
+
+                    card = formalization_notification_card(FormalizationStore(self).notification_context(conn, principal, operation_id), self.settings.canonical_web_url())
                 else:
                     assert task_id is not None
                     draft = self._recognition_owner(conn, principal, task_id, lock=True)
@@ -1977,7 +1986,7 @@ class AuthStore:
             if reason:
                 self._finish_task_notification(conn, claimed, worker_ident, {"state": "suppressed", "reason": reason, "message_id": None}, before_dispatch=True)
                 return None
-            if stage != "optimization_completed":
+            if not operation_scoped:
                 card = task_notification_card(task, stage, self.settings.canonical_web_url(), report_package, confirmation_id=claimed.id if self.settings.feishu_verification_token.strip() else None)
             dispatch = {"receive_id": principal.subject, "card": card}
             saved = {"dispatch": dispatch}

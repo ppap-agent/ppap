@@ -225,6 +225,50 @@ def optimization_notification_card(operation: dict, sample: dict, web_url: str) 
     }
 
 
+# What each clause waits for, in the order a person should take them up.
+_ATTENTION_LABELS = (
+    ("question", "要选择"),
+    ("review", "要补充标准"),
+    ("ready", "可以直接确认"),
+    ("failed", "没整理出来"),
+    ("waiting", "还没整理"),
+    ("running", "还在整理"),
+    ("decided", "已处理"),
+)
+
+
+def formalization_notification_card(context: dict, web_url: str) -> dict:
+    """One card per saved rule version: how many clauses wait for which decision, and where to make it."""
+    counts = context["counts"]
+    title = "规则条款整理好了，等你处理"
+    lines = [f"**{_markdown(context['title'] or '规则')}** 共 {context['total']} 条条款。"]
+    lines.append(" · ".join(f"{label} **{counts[key]}** 条" for key, label in _ATTENTION_LABELS if counts.get(key)))
+    lines.append("没处理的条款，审核时交给人判断；拒绝的条款固定为无法判断。都不会判为通过。")
+    target = web_url.rstrip("/") + "/requirements?" + urlencode({"requirement": context["root_rule_version_id"], "reqVersion": context["rule_version_id"]})
+    link = web_url.rstrip("/") + "/enter-current?" + urlencode({"return_to": target})
+    return {
+        "schema": "2.0",
+        "config": {"update_multi": True, "summary": {"content": title}},
+        "header": {"template": "blue", "title": {"tag": "plain_text", "content": title}},
+        "body": {
+            "direction": "vertical",
+            "padding": "16px",
+            "vertical_spacing": "12px",
+            "elements": [
+                {"tag": "markdown", "content": "<br>".join(lines)},
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "去处理"},
+                    "type": "primary_filled",
+                    "size": "large",
+                    "width": "fill",
+                    "behaviors": [{"type": "open_url", "default_url": link}],
+                },
+            ],
+        },
+    }
+
+
 def send_task_notification(http, tenant_token: str, notification_id: str, receive_id: str, card: dict) -> dict:
     try:
         response = http.post(

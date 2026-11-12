@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import Body, FastAPI, Request
 from fastapi.responses import JSONResponse
 from product.files import ObjectMissing
+from product.logs import emit
 from product.rules import document_types, latest_rule_versions, normalize_document_type
+from product.store.formalizations import FormalizationStore
 from worker.intake.rule_sources import rule_sources, validate_registration_sources
 
 from api import web_contract as wc
@@ -168,6 +171,12 @@ def register_rule_routes(app: FastAPI, store, principal_of, require_file_read):
             return JSONResponse({"error": str(exc)}, status_code=409 if str(exc) in {"file_not_ready", "suite_head_conflict", "idempotency_conflict"} else 400)
         except ObjectMissing:
             return JSONResponse({"error": "rule_source_unavailable"}, status_code=409)
+        try:
+            # Every clause is read in the background now, so the person finds decisions, not waiting, when they look.
+            FormalizationStore(store).prepare_all(principal, published["id"])
+        except Exception:
+            # The version is saved either way; each clause can still be read on request.
+            emit("formalization_batch_unavailable", level=logging.WARNING)
         return JSONResponse(published, status_code=201)
 
     @app.get("/rules/{rule_version_id}", response_model=wc.RuleDetail)

@@ -12,7 +12,7 @@ import {Skeleton} from '../components/ui/skeleton'
 import {Textarea} from '../components/ui/textarea'
 import {message} from '../journey/remote'
 import {ProgramStatus, StatusCard} from './program-status'
-import {canRequestFormalization, checkPointLines, formalizationFailure, formalizationReceiptMatches, sameFormalizationTarget, textForCandidate, visibleFormalizationReadings} from '../journey/requirement-formalization-contract'
+import {attentionLabels, attentionSummary, canRequestFormalization, checkPointLines, formalizationFailure, formalizationReceiptMatches, sameFormalizationTarget, textForCandidate, visibleFormalizationReadings} from '../journey/requirement-formalization-contract'
 
 type Detail = components['schemas']['ClauseFormalizationView']
 type Receipt = components['schemas']['OperationReceipt']
@@ -50,14 +50,48 @@ export function RuleProgramCard({ruleVersionId, onPrepare}: {ruleVersionId: stri
   if (view.program === 'unavailable') return null
   const operation = view.operation
   const working = operation && (running(operation.state) || operation.state === 'unknown') ? <GenerationProgress initial={operation} onChanged={reload}/> : null
-  if (view.program !== 'missing' && view.suite_key) {
+  const updating = view.program !== 'missing' && Boolean(view.suite_key)
+  const summary = <CheckPointSummary ruleVersionId={ruleVersionId} onOpen={() => onPrepare(updating)}/>
+  if (updating) {
     const fresh = operation?.state === 'completed' && operation.candidate_revision_id && operation.candidate_revision_id !== view.current_revision_id ? operation.candidate_revision_id : null
-    return <ProgramStatus suiteKey={view.suite_key} offered={fresh} onUpdate={working ? undefined : () => onPrepare(true)} extra={working} onChanged={reload}/>
+    return <>{summary}<ProgramStatus suiteKey={view.suite_key!} offered={fresh} onUpdate={working ? undefined : () => onPrepare(true)} extra={working} onChanged={reload}/></>
   }
-  if (working) return <StatusCard badge="生成中" title="正在生成检查程序">{working}</StatusCard>
-  return <StatusCard badge="未生成" title="还不能用于审核" action={<Button onClick={() => onPrepare(false)}>生成检查程序</Button>}>
+  if (working) return <>{summary}<StatusCard badge="生成中" title="正在生成检查程序">{working}</StatusCard></>
+  return <>{summary}<StatusCard badge="未生成" title="还不能用于审核" action={<Button onClick={() => onPrepare(false)}>生成检查程序</Button>}>
     {operation && (operation.state === 'failed' || operation.state === 'stopped') && <p className="text-foreground">上次生成没有完成：{generationFailure(operation)}</p>}
     {operation?.state === 'completed' && <p className="text-foreground">上次生成期间规则改过，没有启用。请重新生成。</p>}
+  </StatusCard></>
+}
+
+/**
+ * What the clauses of this version wait for. Saving a version reads every clause in the background, so the
+ * person finds decisions here, grouped the way they take them up, and opens the steps to make them.
+ */
+function CheckPointSummary({ruleVersionId, onOpen}: {ruleVersionId: string; onOpen: () => void}) {
+  const [clauses, setClauses] = useState<{attention?: string}[] | null>(null)
+  const [tick, setTick] = useState(0)
+  useEffect(() => {
+    const controller = new AbortController()
+    void request<{rule_version_id: string; clauses: {attention?: string}[]}>(`/rules/${ruleVersionId}/formalizations`, 'GET', undefined, controller.signal)
+      .then(value => {if (!controller.signal.aborted && value.rule_version_id === ruleVersionId) setClauses(value.clauses)})
+      // A rule that cannot be read is reported by the program card beside this one.
+      .catch(() => {})
+    return () => controller.abort()
+  }, [ruleVersionId, tick])
+  const summary = clauses ? attentionSummary(clauses) : null
+  // Only while readings are in flight; each read is the whole list, so a missed one is caught up by the next.
+  useEffect(() => {
+    if (!summary?.running) return
+    const timer = window.setTimeout(() => setTick(value => value + 1), 10000)
+    return () => window.clearTimeout(timer)
+  }, [summary?.running, tick])
+  if (!summary || (summary.open === 0 && summary.running === 0)) return null
+  const {counts, open, running: reading} = summary
+  return <StatusCard label="条款整理" badge={reading ? '整理中' : '等你处理'} tone={reading ? 'outline' : 'warning'} title={reading ? `正在整理 ${reading} 条条款` : `${open} 条条款等你处理`}
+    action={open > 0 && <Button onClick={onOpen}>去处理</Button>}>
+    <p className="text-foreground">{attentionLabels.filter(([key]) => counts[key]).map(([key, label]) => `${label} ${counts[key]} 条`).join(' · ')}</p>
+    {reading > 0 && <p>可以离开页面，整理完回来处理。</p>}
+    <p>没处理的条款，审核时交给人判断；拒绝的条款固定为无法判断。都不会判为通过。</p>
   </StatusCard>
 }
 
@@ -107,7 +141,9 @@ export function ProgramWizard({ruleVersionId, ruleTitle, version, updating, onCl
 /** Where a clause stands, as the list beside the clause shows it. */
 type Status = 'waiting' | 'running' | 'failed' | 'question' | 'review' | 'ready' | 'confirmed' | 'rejected'
 type Report = {state: string; status: Status; text: string}
-const statusLabel: Record<Status, string> = {waiting: '待整理', running: '整理中', failed: '没整理出来', question: '要选择', review: '有疑问', ready: '待确认', confirmed: '已确认', rejected: '已拒绝'}
+const statusLabel: Record<Status, string> = {waiting: '待整理', running: '整理中', failed: '没整理出来', question: '要选择', review: '要补充标准', ready: '待确认', confirmed: '已确认', rejected: '已拒绝'}
+/** The decisions a person can jump to, in the order to take them up. */
+const jumpOrder: Status[] = ['question', 'review', 'ready', 'failed']
 
 function StatusMark({status}: {status?: Status}) {
   if (!status) return null
@@ -161,7 +197,7 @@ function Changes({parts}: {parts: {text: string; added: boolean}[]}) {
   return <p className="whitespace-pre-wrap break-words leading-relaxed">{parts.map((part, index) => part.added ? <mark key={index} className="rounded-sm bg-success/15 px-0.5 text-foreground">{part.text}</mark> : <span key={index} className="text-muted-foreground">{part.text}</span>)}</p>
 }
 
-/** Every clause is prepared on request and confirmed one at a time; the example file and the start stay in reach at the bottom. */
+/** Every clause is read when the version is saved, or here on request, and confirmed one at a time; the example file and the start stay in reach at the bottom. */
 function CheckPoints({ruleVersionId, action, onStarted, onAdopt}: {ruleVersionId: string; action: string; onStarted: () => void; onAdopt: Adopt}) {
   const [clauses, setClauses] = useState<string[] | null>(null)
   const [readError, setReadError] = useState('')
@@ -240,11 +276,13 @@ function CheckPoints({ruleVersionId, action, onStarted, onAdopt}: {ruleVersionId
   }
   const status = confirmed === 0 ? '至少确认一条，才能生成。' : !example ? '还要一份示例文件。' : confirmed < total ? `还有 ${total - confirmed} 条没确认，审核时这几条交给人判断。` : '都确认好了。'
   const currentStatus = reports[current]?.status
+  const jumps = jumpOrder.map(kind => ({kind, ids: clauses?.filter(id => reports[id]?.status === kind) ?? []})).filter(item => item.ids.length)
   return <section aria-label="逐条确认" className="space-y-5">
     {readError && <div role="alert" className="flex flex-wrap items-center gap-3"><span>暂时读不到。{readError}</span><Button variant="outline" size="sm" onClick={() => setAttempt(value => value + 1)}>重新读取</Button></div>}
     {!clauses && !readError && <Skeleton className="h-64 w-full"/>}
     {carryable.length > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3"><span>上一版确认过的 {carryable.length} 条，原文没变。</span><Button disabled={carrying} onClick={() => void carryOver()}>沿用这 {carryable.length} 条</Button></div>}
     {waiting > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3"><span>{waiting} 条还没整理。</span><Button onClick={() => setPrepare(value => value + 1)}>开始整理</Button></div>}
+    {jumps.length > 0 && <nav aria-label="按要做的事跳转" className="flex flex-wrap items-center gap-2"><span className="text-muted-foreground">先处理：</span>{jumps.map(({kind, ids}) => <Button key={kind} variant="outline" size="sm" onClick={() => show(ids.find(id => clauses!.indexOf(id) > index) ?? ids[0]!)}>{statusLabel[kind]} {ids.length}</Button>)}</nav>}
     {total > 0 && <div className="grid gap-8 lg:grid-cols-[16rem_minmax(0,1fr)]">
       <nav aria-label="条款" className="space-y-3 self-start max-lg:hidden lg:sticky lg:top-6">
         <div className="flex items-center gap-3 px-3 text-muted-foreground"><span className="shrink-0 tabular-nums">已确认 {confirmed} / {total}</span><Progress aria-label="已确认的条款" value={confirmed * 100 / total}/></div>

@@ -37,6 +37,8 @@ def _require_clause_text(clause: dict) -> None:
 
 # Derives each carried confirmation from its request, so a replay adds nothing.
 _CARRY = UUID("3c1f9d7e-52a8-4b6e-9f0d-7a2e6c4b8d15")
+# One batch of readings per saved rule version.
+_BATCH = UUID("8a6d2f4e-1c9b-4e7a-b3d5-6f0e2a9c7b41")
 
 
 def source_binding(rule: dict, clause_id: str) -> tuple[dict, str]:
@@ -88,31 +90,164 @@ class FormalizationStore:
         rule = self._visible_rule(principal, rule_version_id)
         with self.store._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
             _member(conn, principal)
-            cur.execute(
-                """SELECT * FROM product.rule_formalizations
-                   WHERE tenant_id=%s AND rule_version_id=%s ORDER BY clause_id, formalization_revision""",
-                (principal.tenant_id, rule["id"]),
-            )
-            candidates = cur.fetchall()
-            cur.execute(
-                """SELECT * FROM product.rule_formalization_confirmations
-                   WHERE tenant_id=%s AND rule_version_id=%s AND current""",
-                (principal.tenant_id, rule["id"]),
-            )
-            confirmed = {row["clause_id"]: row for row in cur.fetchall()}
-        grouped: dict[str, list] = {}
-        for row in candidates:
-            grouped.setdefault(row["clause_id"], []).append(row)
-        clauses = []
-        for clause in rule["body"].get("rules") or []:
-            rows = grouped.get(str(clause["id"]), [])
-            latest = rows[-1] if rows else None
-            current = confirmed.get(str(clause["id"]))
-            _bound, digest = source_binding(rule, str(clause["id"]))
-            clauses.append(_summary(str(clause["id"]), latest, current, digest))
-        with self.store._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+            clauses, grouped = self._clauses(cur, principal.tenant_id, rule)
             carryable = [clause_id for clause_id, _row in self._carryable(cur, principal, rule, grouped)]
         return {"rule_version_id": rule["id"], "clauses": clauses, "carryable": carryable}
+
+    def _clauses(self, cur, tenant_id: str, rule: dict) -> tuple[list[dict], dict[str, list]]:
+        """Each clause's state, and what it waits for from a person, with every reading grouped by clause."""
+        cur.execute(
+            """SELECT * FROM product.rule_formalizations
+               WHERE tenant_id=%s AND rule_version_id=%s ORDER BY clause_id, formalization_revision""",
+            (tenant_id, rule["id"]),
+        )
+        grouped: dict[str, list] = {}
+        for row in cur.fetchall():
+            grouped.setdefault(row["clause_id"], []).append(row)
+        cur.execute(
+            "SELECT * FROM product.rule_formalization_confirmations WHERE tenant_id=%s AND rule_version_id=%s AND current",
+            (tenant_id, rule["id"]),
+        )
+        confirmed = {row["clause_id"]: row for row in cur.fetchall()}
+        # The newest reading request of any member: only its state is used, never its receipt.
+        cur.execute(
+            """SELECT DISTINCT ON (o.clause_id) o.clause_id, o.state, o.source_rule_digest, o.model_started_at,
+                      (j.lease_until IS NOT NULL AND j.lease_until < now()) AS lease_expired
+               FROM product.rule_formalization_operations o LEFT JOIN engine.jobs j ON j.id=o.job_id
+               WHERE o.tenant_id=%s AND o.rule_version_id=%s ORDER BY o.clause_id, o.created_at DESC""",
+            (tenant_id, rule["id"]),
+        )
+        operations = {row["clause_id"]: row for row in cur.fetchall()}
+        clauses = []
+        for clause in rule["body"].get("rules") or []:
+            clause_id = str(clause["id"])
+            rows = grouped.get(clause_id, [])
+            latest = rows[-1] if rows else None
+            _bound, digest = source_binding(rule, clause_id)
+            summary = _summary(clause_id, latest, confirmed.get(clause_id), digest)
+            operation = operations.get(clause_id)
+            summary["attention"] = _attention(summary["state"], latest, operation if operation and operation["source_rule_digest"] == digest else None)
+            clauses.append(summary)
+        return clauses, grouped
+
+    def prepare_all(self, principal, rule_version_id: str) -> dict:
+        """Read every clause of a newly saved uploaded rule at once, so the person decides instead of waiting.
+
+        The readings form one batch per version; a replay queues nothing twice. A clause that already has a
+        reading or one in flight, has no text, or carries a confirmation from the previous version is left
+        alone. Without a usable text model nothing is queued; each clause can still be read on request.
+        """
+        rule = self._visible_rule(principal, rule_version_id)
+        if not str((rule.get("body") or {}).get("suite_key") or "").startswith("custom:"):
+            return {"batch_id": None, "queued": []}
+        self._require_source(principal, rule)
+        selection = self.store.model_selection(principal.tenant_id)
+        if not selection.access("text").api_key.get_secret_value():
+            return {"batch_id": None, "queued": []}
+        identity = selection.identity
+        batch = str(uuid5(_BATCH, f"{principal.tenant_id}:{rule['id']}"))
+        queued = []
+        with self.store._conn() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+            _member(conn, principal)
+            # One transaction: no reading of the batch can end before all of them are queued.
+            _lock(conn, f"rule-formalization-batch:{principal.tenant_id}:{rule['id']}")
+            cur.execute("SELECT clause_id FROM product.rule_formalizations WHERE tenant_id=%s AND rule_version_id=%s", (principal.tenant_id, rule["id"]))
+            grouped: dict[str, list] = {}
+            for row in cur.fetchall():
+                grouped.setdefault(row["clause_id"], []).append(row)
+            cur.execute(
+                """SELECT clause_id, source_rule_digest FROM product.rule_formalization_operations
+                   WHERE tenant_id=%s AND rule_version_id=%s AND state IN ('queued','running','unknown','completed')""",
+                (principal.tenant_id, rule["id"]),
+            )
+            busy = {(row["clause_id"], row["source_rule_digest"]) for row in cur.fetchall()}
+            carried = {clause_id for clause_id, _row in self._carryable(cur, principal, rule, grouped)}
+            for clause in rule["body"].get("rules") or []:
+                clause_id = str(clause.get("id"))
+                text = clause.get("rule_to_check")
+                if clause_id in grouped or clause_id in carried or not isinstance(text, str) or not text.strip():
+                    continue
+                _clause, digest = source_binding(rule, clause_id)
+                if (clause_id, digest) in busy:
+                    continue
+                # The same request a person makes with "开始整理", so that click reads this one back.
+                fingerprint = _digest(
+                    {
+                        "rule_version_id": rule["id"],
+                        "clause_id": clause_id,
+                        "expected_source_digest": digest,
+                        "based_on_candidate_id": None,
+                        "clarification_answer": {},
+                        "user_instruction": None,
+                        "expected_model_revision": None,
+                    }
+                )
+                operation_id, job_id = str(uuid4()), uuid4()
+                conn.execute(
+                    "INSERT INTO engine.jobs(id,tenant_id,kind,payload,status) VALUES (%s,%s,'rule_formalization',%s,'queued')",
+                    (job_id, principal.tenant_id, Jsonb({"operation_id": operation_id, "initiating_user_id": principal.user_id, "model_identity": identity})),
+                )
+                conn.execute(
+                    """INSERT INTO product.rule_formalization_operations(
+                           operation_id,tenant_id,initiating_user_id,rule_version_id,clause_id,request_fingerprint,
+                           source_rule_digest,model_identity,job_id,state,batch_id)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'queued',%s)""",
+                    (operation_id, principal.tenant_id, principal.user_id, rule["id"], clause_id, fingerprint, digest, Jsonb(identity), job_id, batch),
+                )
+                queued.append(clause_id)
+        return {"batch_id": batch if queued else None, "queued": queued}
+
+    def _close_batch(self, conn, row) -> None:
+        """The batch's last reading to end queues its one notification; nothing is sent while any is in flight."""
+        _lock(conn, f"rule-formalization-batch:{row['tenant_id']}:{row['rule_version_id']}")
+        if conn.execute(
+            "SELECT 1 FROM product.rule_formalization_operations WHERE tenant_id=%s AND batch_id=%s AND state IN ('queued','running') LIMIT 1",
+            (row["tenant_id"], row["batch_id"]),
+        ).fetchone():
+            return
+        conn.execute(
+            """INSERT INTO engine.jobs (id, tenant_id, kind, payload, status, result)
+               VALUES (gen_random_uuid(), %s, 'feishu_notification', %s, 'queued', %s) ON CONFLICT DO NOTHING""",
+            (row["tenant_id"], Jsonb({"stage": "formalization_ready", "operation_id": str(row["batch_id"])}), Jsonb({"state": "queued", "reason": None})),
+        )
+
+    def notification_recipients(self, conn, tenant_id: str, batch_id: str | None, app_id: str) -> list:
+        """The member who saved the version; the batch has exactly one initiator."""
+        return conn.execute(
+            """SELECT DISTINCT i.user_id, i.provider, i.app_id, i.tenant_key, i.subject, m.role, i.display_name
+               FROM product.rule_formalization_operations o JOIN product.tenants t ON t.id=o.tenant_id
+               JOIN product.memberships m ON m.tenant_id=t.id AND m.user_id=o.initiating_user_id
+               JOIN product.identities i ON i.user_id=o.initiating_user_id AND i.provider=t.provider AND i.tenant_key=t.external_key
+               WHERE o.batch_id=%s AND o.tenant_id=%s AND i.app_id=%s AND m.role='member'""",
+            (batch_id, tenant_id, app_id),
+        ).fetchall()
+
+    def notification_context(self, conn, principal, batch_id: str | None) -> dict:
+        """What the person now has to decide, read under the recipient's current access when the card is made."""
+        _member(conn, principal)
+        if batch_id is None:
+            raise KeyError("access_denied")
+        found = conn.execute(
+            "SELECT rule_version_id FROM product.rule_formalization_operations WHERE tenant_id=%s AND batch_id=%s AND initiating_user_id=%s LIMIT 1",
+            (principal.tenant_id, _id(batch_id), principal.user_id),
+        ).fetchone()
+        if found is None:
+            raise KeyError("access_denied")
+        rule = self._visible_rule(principal, str(found[0]))
+        root = rule
+        seen = {str(rule["id"])}
+        while root.get("predecessor_id") and str(root["predecessor_id"]) not in seen:
+            previous = self.store.get_rule(principal.tenant_id, str(root["predecessor_id"]))
+            if previous is None:
+                break
+            seen.add(str(previous["id"]))
+            root = previous
+        with conn.cursor(row_factory=dict_row) as cur:
+            clauses, _grouped = self._clauses(cur, principal.tenant_id, rule)
+        counts: dict[str, int] = {}
+        for clause in clauses:
+            counts[clause["attention"]] = counts.get(clause["attention"], 0) + 1
+        return {"rule_version_id": str(rule["id"]), "root_rule_version_id": str(root["id"]), "title": rule.get("title") or "", "total": len(clauses), "counts": counts}
 
     def _carryable(self, cur, principal, rule: dict, grouped: dict) -> list[tuple[str, dict]]:
         """Clauses this version states exactly as its predecessor did, whose tidied text was confirmed there."""
@@ -606,6 +741,8 @@ class FormalizationStore:
                    WHERE operation_id=%s AND state IN ('queued','running')""",
                 (state, candidate_id, Jsonb(usage_record), failure, row["operation_id"]),
             )
+            if row.get("batch_id"):
+                self._close_batch(conn, row)
             conn.execute(
                 "UPDATE engine.jobs SET status=%s, result=%s, lease_until=NULL, updated_at=now() WHERE id=%s AND attempt=%s AND lease_owner=%s AND status='leased'",
                 ("succeeded" if state == "completed" else "failed", Jsonb({"operation_id": str(row["operation_id"]), "state": state, "failure": failure}), claimed.id, claimed.attempt, worker_ident),
@@ -814,6 +951,22 @@ def _summary(clause_id: str, latest, current, source_digest: str | None = None) 
         "confirmed_at": current["confirmed_at"].isoformat() if current and hasattr(current["confirmed_at"], "isoformat") else None,
         "rejections": [] if latest is None else list(latest.get("rejections") or []),
     }
+
+
+def _attention(state: str, latest, operation) -> str:
+    """What a clause waits for from a person: decide, choose a reading, supply a standard, confirm, or retry."""
+    if state in {"confirmed", "rejected"}:
+        return "decided"
+    if operation is not None and operation["state"] in {"queued", "running"} and not operation["lease_expired"]:
+        return "running"
+    if state in {"needs_clarification", "partial"}:
+        return "question"
+    if state == "candidate":
+        # Questions about a standard the clause never states; the suggested wording alone asks nothing.
+        return "review" if any(isinstance(item, dict) and item.get("kind") != "suggested_clause" for item in latest.get("assumptions") or []) else "ready"
+    if operation is not None and operation["state"] != "completed":
+        return "failed"
+    return "waiting"
 
 
 def _candidate(row: dict) -> dict:

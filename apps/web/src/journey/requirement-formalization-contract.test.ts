@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {canRequestFormalization, checkPointLines, formalizationFailure, formalizationReceiptMatches, sameFormalizationTarget, textForCandidate, visibleFormalizationReadings} from './requirement-formalization-contract.ts'
+import {attentionSummary, canRequestFormalization, checkPointLines, formalizationFailure, formalizationReceiptMatches, sameFormalizationTarget, textForCandidate, visibleFormalizationReadings} from './requirement-formalization-contract.ts'
 
 const view = {ruleVersionId: 'rule-1', clauseId: 'c1'}
 
@@ -69,4 +69,12 @@ test('check points are listed once, without the numbering the text already carri
   assert.deepEqual(checkPointLines('o1：每一条都有编号。\no2：编号不重复。', ['o1', 'o2']), ['每一条都有编号。', '编号不重复。'])
   // An incomplete reading hides its diagnostics; it cannot be confirmed, but its reading stays visible.
   assert.deepEqual(checkPointLines('尚不能确定：\n- uncovered_obligation：s\n- 义务 o1 没有被形式表达式覆盖（kind_not_in_expression：s）\n\n候选理解（未确认）：\no1：至少一条记录有编号。\n已声明前提：编号印在页脚', ['o1']), ['至少一条记录有编号。', '已声明前提：编号印在页脚'])
+})
+
+test('the rule page counts each clause by what it waits for; an unknown state still waits', () => {
+  const summary = attentionSummary([{attention: 'question'}, {attention: 'ready'}, {attention: 'ready'}, {attention: 'running'}, {attention: 'decided'}, {}])
+  assert.deepEqual(summary.counts, {question: 1, ready: 2, running: 1, decided: 1, waiting: 1})
+  assert.equal(summary.open, 4)
+  assert.equal(summary.running, 1)
+  assert.deepEqual(attentionSummary([{attention: 'decided'}]), {counts: {decided: 1}, open: 0, running: 0})
 })

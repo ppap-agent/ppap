@@ -60,3 +60,18 @@ export function formalizationReceiptMatches(view: FormalizationView, receipt: Fo
   if (view.candidateId && receipt.candidate_id !== view.candidateId) return false
   return true
 }
+
+/** What a clause waits for from a person, as the server classifies it. */
+export type Attention = 'question' | 'review' | 'ready' | 'failed' | 'waiting' | 'running' | 'decided'
+/** In the order a person should take them up; decided clauses come last. */
+export const attentionLabels: [Attention, string][] = [['question', '要选择'], ['review', '要补充标准'], ['ready', '可以直接确认'], ['failed', '没整理出来'], ['waiting', '还没整理'], ['running', '还在整理'], ['decided', '已处理']]
+
+/** Counts per decision, and whether anything still waits for the person or the model. */
+export function attentionSummary(clauses: {attention?: string}[]): {counts: Partial<Record<Attention, number>>; open: number; running: number} {
+  const counts: Partial<Record<Attention, number>> = {}
+  for (const clause of clauses) {
+    const key = attentionLabels.some(([value]) => value === clause.attention) ? clause.attention as Attention : 'waiting'
+    counts[key] = (counts[key] ?? 0) + 1
+  }
+  return {counts, open: clauses.length - (counts.decided ?? 0) - (counts.running ?? 0), running: counts.running ?? 0}
+}

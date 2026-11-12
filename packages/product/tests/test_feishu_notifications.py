@@ -327,3 +327,19 @@ def test_confirmation_card_displays_only_server_admission_scope_and_exclusion_re
     assert f"预计点数：{0 if all_blocked else 500}" in text
     callbacks = [element for element in card["body"]["elements"] if any(behavior["type"] == "callback" for behavior in element.get("behaviors", []))]
     assert len(callbacks) == (0 if all_blocked else 1)
+
+
+def test_formalization_card_lists_decisions_in_order_and_links_to_the_rule():
+    from urllib.parse import parse_qs, urlsplit
+
+    from product.feishu_notifications import formalization_notification_card
+
+    context = {"rule_version_id": "v2", "root_rule_version_id": "v1", "title": "签字*规则", "total": 4, "counts": {"ready": 2, "question": 1, "decided": 1}}
+    card = formalization_notification_card(context, "https://ppap.example.test/")
+    assert card["schema"] == "2.0"
+    text = card["body"]["elements"][0]["content"]
+    assert text.index("要选择 **1** 条") < text.index("可以直接确认 **2** 条") < text.index("已处理 **1** 条")
+    assert "要补充标准" not in text and "签字&#42;规则" in text
+    link = card["body"]["elements"][1]["behaviors"][0]["default_url"]
+    target = parse_qs(urlsplit(link).query)["return_to"][0]
+    assert target == "https://ppap.example.test/requirements?requirement=v1&reqVersion=v2"
