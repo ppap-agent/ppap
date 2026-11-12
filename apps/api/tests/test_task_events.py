@@ -1,0 +1,86 @@
+import asyncio
+import json
+import uuid
+
+import pytest
+from api import task_events
+from api.task_events import Subscriber, TaskEventHub, _stream
+
+
+class FakeRequest:
+    def __init__(self) -> None:
+        self.closed = False
+
+    async def is_disconnected(self) -> bool:
+        return self.closed
+
+
+def test_a_change_reaches_the_task_and_its_owner_but_not_other_users():
+    async def scenario():
+        hub = TaskEventHub(store=None)  # type: ignore[arg-type]
+        hub._ensure_listener = lambda: None  # type: ignore[method-assign]
+        hub._owner = lambda task_id: "owner"  # type: ignore[method-assign]
+        loop = asyncio.get_running_loop()
+        on_task, owner, other_user, other_task = (Subscriber(loop) for _ in range(4))
+        hub.subscribe_task("t1", on_task)
+        hub.subscribe_task("t2", other_task)
+        hub.subscribe_user("tenant", "owner", owner)
+        hub.subscribe_user("tenant", "someone", other_user)
+        hub._dispatch(json.dumps({"tenant": "tenant", "task": "t1", "kind": "progress"}))
+        await asyncio.sleep(0)
+        assert on_task.queue.get_nowait() == {"kind": "progress", "task": "t1"}
+        assert owner.queue.get_nowait() == {"kind": "progress", "task": "t1"}
+        assert other_user.queue.empty() and other_task.queue.empty()
+        hub.unsubscribe(on_task)
+        hub._dispatch(json.dumps({"tenant": "tenant", "task": "t1", "kind": "state"}))
+        await asyncio.sleep(0)
+        assert on_task.queue.empty()
+
+    asyncio.run(scenario())
+
+
+def test_the_stream_starts_ready_coalesces_changes_and_keeps_alive(monkeypatch):
+    monkeypatch.setattr(task_events, "HEARTBEAT_SECONDS", 0.05)
+    monkeypatch.setattr(task_events, "COALESCE_SECONDS", 0.01)
+
+    async def scenario():
+        request, subscriber, unsubscribed = FakeRequest(), Subscriber(asyncio.get_running_loop()), []
+        frames = _stream(request, subscriber, lambda: True, lambda: unsubscribed.append(True))
+        assert "event: ready" in await frames.__anext__()
+        assert await frames.__anext__() == ": ping\n\n"
+        subscriber.queue.put_nowait({"kind": "progress", "task": "t1"})
+        subscriber.queue.put_nowait({"kind": "state", "task": "t1"})
+        change = await frames.__anext__()
+        assert change.startswith("event: change") and json.loads(change.split("data: ", 1)[1]) == {"kinds": ["progress", "state"], "tasks": ["t1"]}
+        request.closed = True
+        with pytest.raises(StopAsyncIteration):
+            await frames.__anext__()
+        assert unsubscribed == [True]
+
+    asyncio.run(scenario())
+
+
+def test_committed_job_changes_are_delivered_and_lease_renewals_are_not(auth_store_factory):
+    store = auth_store_factory()
+
+    async def scenario():
+        hub = TaskEventHub(store)
+        task_id, tenant_id, job_id = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+        subscriber = Subscriber(asyncio.get_running_loop())
+        hub.subscribe_task(task_id, subscriber)
+        # The listener announces itself with a resync once LISTEN is active.
+        assert await asyncio.wait_for(subscriber.queue.get(), timeout=10) == {"kind": "resync"}
+
+        def write(sql: str, *args) -> None:
+            with store._conn() as conn:
+                conn.execute(sql, args)
+
+        await asyncio.to_thread(write, "INSERT INTO engine.jobs (id, tenant_id, kind, payload, status) VALUES (%s, %s, 'audit', %s, 'queued')", job_id, tenant_id, json.dumps({"task_id": task_id}))
+        assert await asyncio.wait_for(subscriber.queue.get(), timeout=10) == {"kind": "state", "task": task_id}
+        await asyncio.to_thread(write, "UPDATE engine.jobs SET lease_until = now() WHERE id = %s", job_id)
+        await asyncio.to_thread(write, "UPDATE engine.jobs SET status = 'leased' WHERE id = %s", job_id)
+        # Only the status change arrives; the lease renewal before it sent nothing.
+        assert await asyncio.wait_for(subscriber.queue.get(), timeout=10) == {"kind": "state", "task": task_id}
+        assert subscriber.queue.empty()
+
+    asyncio.run(scenario())

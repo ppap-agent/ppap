@@ -29,6 +29,7 @@ import {useMinWidth, type OriginalRenderer} from './review-content'
 import {clauseLabel, sameFrozenInputs, sameSnapshot, progressRegressed, taskProgressError, allTaskReportsReady, reconcileTaskNotification} from './result-projection'
 import type {AuditNotificationAdapter} from './completion-notification'
 import {canObserveTask, useTaskObservation} from './task-observation'
+import type {TaskEvents} from './task-events'
 import {uploadName, useUploads, type UploadAdapter, type UploadRow} from './uploads'
 import {TransferList} from './transfer-list'
 import type {AuditReportAdapter} from './report-contract'
@@ -63,6 +64,8 @@ export type AuditTask = components['schemas']['AuditTask']
 export type AuditTaskFile = components['schemas']['AuditTaskFile']
 export type AuditIntakeAdapter = AuditAcceptanceAdapter & AuditRecognitionAdapter & UploadAdapter & {
   preparation?: PreparationAdapter
+  /** Live task change notices; without them the page reads on a timer. */
+  events?: TaskEvents
   samples?: () => AuditTaskFile[]
   drive?: DrivePickerSource
   customerDefaults?: CustomerDefaultAdapter
@@ -190,6 +193,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const latestTasks = useRef(tasks); latestTasks.current = tasks
   const [query, setQuery] = useState(''), [filter, setFilter] = useState('all')
   // The task list beside PPAP Audit. Below 1440px it folds itself while one file or a report is open; the person may fold or open it.
+  const listEvents = adapter.events?.tasks
   const [railChoice, setRailChoice] = useState<'auto' | 'open' | 'folded'>('auto')
   const [fileOpen, setFileOpen] = useState(false), wideRail = useMinWidth(1440)
   // The sheet closes as support opens, so its own button is gone by the time focus returns.
@@ -759,7 +763,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   }, [reviewEditor?.revision])
   // The report center observes the same task until its PDF reaches a terminal state.
   const observedTaskEpoch = task ? taskReadEpoch.current.get(task.id) : undefined
-  useTaskObservation(task?.id, autoObserve && surface === 'audit' && !recovery && step === 'match' && canObserveTask(task), () => task && activeTaskId.current === task.id && surfaceRef.current === 'audit' && stepRef.current === 'match' && taskReadEpoch.current.get(task.id) === observedTaskEpoch ? readMatching(task) : Promise.resolve(null))
+  const observation = useTaskObservation(task?.id, autoObserve && surface === 'audit' && !recovery && step === 'match' && canObserveTask(task), () => task && activeTaskId.current === task.id && surfaceRef.current === 'audit' && stepRef.current === 'match' && taskReadEpoch.current.get(task.id) === observedTaskEpoch ? readMatching(task) : Promise.resolve(null), adapter.events?.task)
   // Even an empty successful read belongs to its search and state filter.
   const taskListState = filter === 'all' ? null : filter as AuditTask['state']
   const taskListScope = JSON.stringify([query, taskListState])
@@ -794,19 +798,28 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const loadTasksCurrent = useRef(loadTasks); loadTasksCurrent.current = loadTasks
   useEffect(() => {
     if (surface !== 'audit') return
-    // A slow read is never aborted by tab focus or polling; the next read waits for it to settle.
-    let controller: AbortController | undefined, reading = false
-    const read = (silent = true) => {
-      if (document.hidden || reading) return
+    // A slow read is never aborted by tab focus or a notice; a change during a read reads once more.
+    let controller: AbortController | undefined, reading = false, again = false, alive = true
+    let poll: number | undefined, settle: number | undefined
+    const read = (silent = true, notice = false) => {
+      if (!alive || document.hidden) return
+      // Timers and focus never queue a read; only a change notice during a read reads once more.
+      if (reading) {if (notice) again = true; return}
       controller = new AbortController(); reading = true
-      void loadTasksCurrent.current(0, controller.signal, silent).finally(() => {reading = false})
+      void loadTasksCurrent.current(0, controller.signal, silent).finally(() => {reading = false; if (again) {again = false; read(true, true)}})
     }
     const timer = window.setTimeout(() => read(false), query ? 200 : 0)
-    const poll = window.setInterval(read, 15000)
+    // Without live notices the list is read every 15 seconds.
+    const startPolling = () => {if (alive && poll === undefined) poll = window.setInterval(read, 15000)}
+    const unsubscribe = listEvents ? listEvents({
+      onReady: () => read(true, true),
+      onChange: () => {window.clearTimeout(settle); settle = window.setTimeout(() => read(true, true), 300)},
+      onUnavailable: startPolling,
+    }) : (startPolling(), undefined)
     const visible = () => read()
     document.addEventListener('visibilitychange', visible)
-    return () => {window.clearTimeout(timer); window.clearInterval(poll); document.removeEventListener('visibilitychange', visible); controller?.abort(); listEpoch.current += 1}
-  }, [query, filter, surface])
+    return () => {alive = false; window.clearTimeout(timer); window.clearTimeout(settle); window.clearInterval(poll); unsubscribe?.(); document.removeEventListener('visibilitychange', visible); controller?.abort(); listEpoch.current += 1}
+  }, [query, filter, surface, listEvents])
   const shownTasks = summaries.filter(row => (filter === 'all' || row.state === filter) && `${row.number} ${subjectLabel(row.subject)} ${row.files.map(file => file.file.original_filename).join(' ')}`.toLowerCase().includes(query.toLowerCase()))
   function showSurface(value: ProductSurface) {
     if (surfaceRef.current === 'audit' && value !== 'audit') retainAuditAddress()
@@ -982,7 +995,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
         {recognitionState?.phase === 'rejected' && <Alert data-request-id={recognitionState.requestId}><AlertTitle>本次识别未被接收</AlertTitle><AlertDescription><p>{recognitionState.message}</p>{task?.id === recognitionState.taskId && <Button variant="outline" onClick={readCurrentRecognition}>读取当前任务</Button>}{recognitionSupport}</AlertDescription></Alert>}
         {recognitionState?.phase === 'conflict' && <Alert data-request-id={recognitionState.requestId}><AlertTitle>任务输入版本已更新</AlertTitle><AlertDescription><p>{recognitionState.message}</p><Button variant="outline" onClick={readCurrentRecognition}>读取当前任务</Button></AlertDescription></Alert>}
         {task && task.state !== 'completed' && endStatus[task.id] === 'unknown' && <Alert><AlertTitle>结束结果待确认</AlertTitle><AlertDescription><p>尚未确认任务已结束。请读取同一任务，不要重复结束。</p>{readStatus[task.id]?.error && <p>{readStatus[task.id].error}</p>}<Button variant="outline" disabled={readStatus[task.id]?.busy} onClick={() => void readMatching(task)}>读取任务状态</Button></AlertDescription></Alert>}
-        {recovery ? <TaskRecovery recovery={recovery} report={reportView} onRead={() => void recover(recovery.id, recovery.state === 'unauthenticated')} onSupport={() => openSupport({scenario: '读取审核任务', traceId: recovery.traceId, facts: [{label: '任务标识', value: recovery.id}, {label: '服务说明', value: recovery.message}]})}/> : workbench && task ? <AuditWorkspace onFileOpen={setFileOpen} readRound={adapter.readRound} onReaudit={adapter.prepareReaudit ? () => void prepareReaudit(task.round_id!) : undefined} headerActions={surface === 'audit' ? pageActions : null} key={task.id} task={task} busy={readStatus[task.id]?.busy || false} readError={readStatus[task.id]?.error || ''} onReadSupport={() => contactReadSupport(task)} onRead={() => void readMatching(task)} onChange={saveTask} renderOriginal={renderOriginal} reportAdapter={reportAdapter} notificationAdapter={adapter.notifications} onReportChange={changeReport} onReportView={setReportView} sharingAdapter={sharingAdapter} onEditDisplay={displayAdapter ? file => displayEditor.open({task_id: task.id, round_id: task.round_id!, file_version_id: file.file.id}, file) : undefined}/> : task?.state === 'completed' ? <section className="space-y-4 py-8"><Check className="size-8"/><h1 className="text-2xl font-semibold">任务已结束</h1><p>{task.files.every(row => row.selection !== 'selected') ? '未选择待审文件，未开始审核' : task.files.filter(row => row.selection === 'selected').every(row => row.match?.state === 'reference') ? '仅保留比对资料，未开始审核' : '未匹配到可用规则，未开始审核'}</p><p className="text-muted-foreground">未产生审核费用，也没有生成报告。</p><AuditExcludedFiles files={task.files}/><Button onClick={newTask}>新建审核任务<ArrowRight/></Button></section> : <>
+        {recovery ? <TaskRecovery recovery={recovery} report={reportView} onRead={() => void recover(recovery.id, recovery.state === 'unauthenticated')} onSupport={() => openSupport({scenario: '读取审核任务', traceId: recovery.traceId, facts: [{label: '任务标识', value: recovery.id}, {label: '服务说明', value: recovery.message}]})}/> : workbench && task ? <AuditWorkspace live={observation === 'live'} onFileOpen={setFileOpen} readRound={adapter.readRound} onReaudit={adapter.prepareReaudit ? () => void prepareReaudit(task.round_id!) : undefined} headerActions={surface === 'audit' ? pageActions : null} key={task.id} task={task} busy={readStatus[task.id]?.busy || false} readError={readStatus[task.id]?.error || ''} onReadSupport={() => contactReadSupport(task)} onRead={() => void readMatching(task)} onChange={saveTask} renderOriginal={renderOriginal} reportAdapter={reportAdapter} notificationAdapter={adapter.notifications} onReportChange={changeReport} onReportView={setReportView} sharingAdapter={sharingAdapter} onEditDisplay={displayAdapter ? file => displayEditor.open({task_id: task.id, round_id: task.round_id!, file_version_id: file.file.id}, file) : undefined}/> : task?.state === 'completed' ? <section className="space-y-4 py-8"><Check className="size-8"/><h1 className="text-2xl font-semibold">任务已结束</h1><p>{task.files.every(row => row.selection !== 'selected') ? '未选择待审文件，未开始审核' : task.files.filter(row => row.selection === 'selected').every(row => row.match?.state === 'reference') ? '仅保留比对资料，未开始审核' : '未匹配到可用规则，未开始审核'}</p><p className="text-muted-foreground">未产生审核费用，也没有生成报告。</p><AuditExcludedFiles files={task.files}/><Button onClick={newTask}>新建审核任务<ArrowRight/></Button></section> : <>
         {!task && preparationStatus.id === activeUploadDraftId.current && preparationStatus.phase === 'reading' && <section role="status" aria-label="正在恢复上传准备" className="space-y-4"><h1 className="sr-only">上传准备</h1><ReadSkeleton label="正在恢复上传的文件…" kind="list" rows={3}/></section>}
         {!task && preparationStatus.id === activeUploadDraftId.current && preparationStatus.phase === 'saving' && <p role="status" className="text-sm text-muted-foreground">正在保存上传准备…</p>}
         {!task && preparationStatus.id === activeUploadDraftId.current && preparationStatus.phase === 'error' && <Alert variant="destructive"><AlertTitle>上传准备待确认</AlertTitle><AlertDescription><p>{preparationStatus.message}</p><div className="mt-3 flex flex-wrap gap-2"><Button variant="outline" onClick={() => void readPreparation(activeUploadDraftId.current!)}>读取准备记录</Button>{preparationStatus.conflict && <Button variant="outline" onClick={() => {retainDraft(); void readPreparation(activeUploadDraftId.current!, true)}}>载入已保存资料</Button>}</div></AlertDescription></Alert>}

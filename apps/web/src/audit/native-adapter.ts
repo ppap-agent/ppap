@@ -1,4 +1,5 @@
 import {apiUrl, readLocalUpload, request, uploadLocalVersion, withResponseTrace, type FeishuFileImportRequest} from '../api.ts'
+import {nativeTaskEvents} from './task-events.ts'
 import type {components, operations} from '../generated/openapi.ts'
 import type {AuditIntakeAdapter, AuditTask} from './intake.tsx'
 import type {AuditReviewAdapter} from './review-editor'
@@ -258,6 +259,7 @@ export function createNativeAuditAdapter(options: {customers: string[]; personal
     return {validation_id: job.id, validation: {state: job.status === 'failed' ? 'error' as const : 'checking' as const, reasons: [job.status === 'failed' ? '文件文件检查失败，请核对原文件。' : '正在检查文件内容…']}, ...purpose}
   }
   return {
+    events: nativeTaskEvents,
     precheck: {
       read: (id, signal) => request(`${taskPath(id)}/precheck`, 'GET', undefined, signal),
       report: id => readWithDeadline(async signal => {

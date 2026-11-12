@@ -335,6 +335,8 @@ def task_round_view(task: dict, round: dict, reports: dict[str, dict] | None = N
     return {
         **task,
         "round_id": round["id"],
+        # When the accepted Round was created: live views count elapsed time from here.
+        "round_started_at": round.get("created_at"),
         # The accepted Round's mode is the truth once a Task is accepted.
         "deep_mode": bool(round.get("deep_mode")),
         "execution": round["execution"],

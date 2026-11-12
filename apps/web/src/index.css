@@ -7,6 +7,8 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --animate-pixel-on: pixel-on 650ms ease-in-out infinite;
+  --animate-shimmer: shimmer 2.4s linear infinite;
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
@@ -155,5 +157,28 @@
   }
 }
 
+/* The running label sweeps from foreground to muted and back. */
+@utility shimmer-label {
+  background-image: linear-gradient(90deg, var(--foreground) 40%, var(--muted-foreground) 50%, var(--foreground) 60%);
+  background-size: 200% 100%;
+  background-clip: text;
+  color: transparent;
+}
+
 @layer components {
+  /* Chevron wavefront: each pixel step lights up 90ms after the previous one. */
+  [data-pixel-step="1"] { animation-delay: 90ms; }
+  [data-pixel-step="2"] { animation-delay: 180ms; }
+  [data-pixel-step="3"] { animation-delay: 270ms; }
+  [data-pixel-step="4"] { animation-delay: 360ms; }
+}
+
+/* Live progress: the pixel loader's cells and the running label's sweep. */
+@keyframes pixel-on {
+  0%, 100% { opacity: 0.15; }
+  35% { opacity: 1; }
+}
+@keyframes shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
 }

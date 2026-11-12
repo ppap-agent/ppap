@@ -1374,6 +1374,7 @@ class AuditTask(AuditTaskIdentity):
     acceptance: NotRequired[AuditAcceptance]
     progress: NotRequired[AuditProgress]
     completion_estimate: NotRequired[AuditCompletionEstimate | None]
+    round_started_at: NotRequired[str | None]
     notification_enabled: NotRequired[bool]
     notification_revision: NotRequired[int]
     usage_notice: NotRequired[str | None]

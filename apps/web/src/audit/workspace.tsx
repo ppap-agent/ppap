@@ -26,6 +26,7 @@ import {FactQuestions} from './fact-questions'
 import {factMachineFindings} from './fact-answers-contract'
 import {conclusionLabel, executionLabel, reportLabel, resultLabel, resultTone, uncoveredLabel, type ResultTone} from './status-labels'
 import {deepModeTitle, deepReviewNotice} from './deep-mode'
+import {LiveProgress} from './live-progress'
 
 type Task = components['schemas']['AuditTask']
 type Round = components['schemas']['Round']
@@ -41,7 +42,7 @@ export function AuditExcludedFiles({files}: {files: Task['files']}) {
 /** Reads the original Round of a re-audit, for showing which files changed. */
 export type ReadRound = (id: string, signal: AbortSignal) => Promise<components['schemas']['Round']>
 
-export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, onChange, renderOriginal, reportAdapter, notificationAdapter, onReportChange, onReportView, sharingAdapter, onEditDisplay, headerActions, onReaudit, readRound, onFileOpen}: {onFileOpen?: (open: boolean) => void; task: Task; busy: boolean; readError: string; onReadSupport: () => void; onRead: () => void; onChange: (task: Task) => void; renderOriginal?: OriginalRenderer; reportAdapter?: AuditReportAdapter; notificationAdapter?: AuditNotificationAdapter; onReportChange: (task: Task) => void; onReportView: (open: boolean) => void; sharingAdapter?: AuditSharingAdapter; onEditDisplay?: (file: components['schemas']['AuditTaskFile']) => void; headerActions?: HTMLElement | null; onReaudit?: () => void; readRound?: ReadRound}) {
+export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, onChange, renderOriginal, reportAdapter, notificationAdapter, onReportChange, onReportView, sharingAdapter, onEditDisplay, headerActions, onReaudit, readRound, onFileOpen, live = false}: {live?: boolean; onFileOpen?: (open: boolean) => void; task: Task; busy: boolean; readError: string; onReadSupport: () => void; onRead: () => void; onChange: (task: Task) => void; renderOriginal?: OriginalRenderer; reportAdapter?: AuditReportAdapter; notificationAdapter?: AuditNotificationAdapter; onReportChange: (task: Task) => void; onReportView: (open: boolean) => void; sharingAdapter?: AuditSharingAdapter; onEditDisplay?: (file: components['schemas']['AuditTaskFile']) => void; headerActions?: HTMLElement | null; onReaudit?: () => void; readRound?: ReadRound}) {
   const openSupport = useContext(SupportEntryContext)
   const queue = task.files.filter(row => row.selection === 'selected')
   const progressIssue = taskProgressError(task)
@@ -109,7 +110,7 @@ export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, on
   }
   const running = task.state !== 'completed' && !progressIssue && itemsTotal > 0
   const overview = <section aria-label="全部文件概览" className="min-w-0 space-y-4 p-6">
-    {running && <section aria-label="审核进度" className="space-y-2 rounded-lg border bg-card p-4"><div className="flex flex-wrap items-baseline justify-between gap-2"><p className="font-medium">正在审核</p><p className="text-sm tabular-nums text-muted-foreground">审核项 {itemsDone}/{itemsTotal} 已结束</p></div><Progress aria-label="审核项完成进度" value={Math.min(100, itemsDone / itemsTotal * 100)}/></section>}
+    {running && <section aria-label="审核进度" className="space-y-2 rounded-lg border bg-card p-4"><div className="flex flex-wrap items-baseline justify-between gap-2"><LiveProgress label={task.deep_mode ? "正在深度审核" : "正在审核"} since={task.round_started_at} live={live}/><p className="text-sm tabular-nums text-muted-foreground">审核项 {itemsDone}/{itemsTotal} 已结束</p></div><Progress aria-label="审核项完成进度" value={Math.min(100, itemsDone / itemsTotal * 100)}/></section>}
     {issues.length > 0 && <section aria-label="需关注的审核项" className="space-y-3 rounded-lg border bg-card p-4"><h2 className="font-medium">需关注 · {issues.length} 项</h2>
       {/* Grouped by file, worst file first, so each row names only the clause. */}
       {shownIssueGroups.map(group => <section key={group.row.file.id} aria-label={group.row.file.original_filename} className="space-y-1"><h3 className="text-xs font-medium text-muted-foreground">{group.row.file.original_filename} · {group.items.length} 项</h3><ul className="divide-y">{group.items.map(check => <li key={check.rule_item.id}><Button variant="ghost" size="sm" className="h-auto min-h-8 w-full min-w-0 justify-start whitespace-normal" title={check.rule_item.id} onClick={() => openIssue(group.row.file.id, check.rule_item.id)}><span className={`size-2 shrink-0 rounded-full ${check.finding?.status === 'NG' && check.coverage === 'executed' && check.execution === 'completed' ? 'bg-destructive' : 'bg-warning'}`} aria-hidden="true"/><span className="min-w-0 flex-1 text-left text-sm">{`${issueLabel(check)} · ${clauseLabel(group.row.audit?.checks.map(item => item.rule_item) ?? [], check.rule_item.id)}`}</span><ArrowRight aria-hidden="true" className="text-muted-foreground"/></Button></li>)}</ul></section>)}

@@ -87,6 +87,7 @@ from api.rule_routes import register_rule_routes
 from api.sharing_routes import register_sharing_routes
 from api.suite_routes import register_suite_routes
 from api.support_routes import register_support_routes
+from api.task_events import register_task_event_routes
 from api.template_routes import register_template_routes
 from api.usage_reporting import report_usage, run_pending_usage
 
@@ -948,6 +949,7 @@ def create_app(
 
     register_audit_routes(app, store, principal_of, quota_for)
     register_precheck_routes(app, store, principal_of)
+    register_task_event_routes(app, store, principal_of)
     from api.fact_answers import register_fact_answer_routes
 
     register_fact_answer_routes(app, store, principal_of)

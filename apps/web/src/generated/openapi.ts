@@ -346,6 +346,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/audit-task-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Audit Task List Events */
+        get: operations["audit_task_list_events_audit_task_events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit-tasks": {
         parameters: {
             query?: never;
@@ -460,6 +477,23 @@ export interface paths {
         put?: never;
         /** Audit Tasks End */
         post: operations["audit_tasks_end_audit_tasks__task_id__end_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-tasks/{task_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Audit Task Events */
+        get: operations["audit_task_events_audit_tasks__task_id__events_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3125,6 +3159,8 @@ export interface components {
             report_share?: components["schemas"]["AuditReportShare"] | null;
             /** Round Id */
             round_id: string | null;
+            /** Round Started At */
+            round_started_at?: string | null;
             /** Source Draft Id */
             source_draft_id: string | null;
             /**
@@ -6402,6 +6438,26 @@ export interface operations {
             };
         };
     };
+    audit_task_list_events_audit_task_events_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+        };
+    };
     audit_tasks_list_audit_tasks_get: {
         parameters: {
             query?: {
@@ -6762,6 +6818,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuditTask"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    audit_task_events_audit_tasks__task_id__events_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
                 };
             };
             /** @description Validation Error */
