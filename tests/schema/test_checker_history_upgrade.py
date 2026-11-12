@@ -45,7 +45,10 @@ def test_pre_core_rounds_and_human_reviews_survive_full_upgrade_and_replay(schem
         tables = ("audit_rounds", "round_inputs", "findings", "reviews", "resource_grants", "file_versions")
 
         def read():
-            return {table: json.loads(sql(f"SELECT jsonb_agg(to_jsonb(t) - 'checker_history' - 'review_document_pairs' - 'review_hint_action') FROM product.{table} t")) for table in tables}
+            return {
+                table: json.loads(sql(f"SELECT jsonb_agg(to_jsonb(t) - 'checker_history' - 'review_document_pairs' - 'review_hint_action' - 'analysis_mode') FROM product.{table} t"))
+                for table in tables
+            }
 
         original = read()
         schema_tools.require(schema_tools.apply(database), "upgrade actual pre-Core history")
