@@ -28,7 +28,7 @@ BODY = {
 
 @unittest.skipUnless(sync_playwright, "playwright not installed")
 class UiA11yTests(unittest.TestCase):
-    def test_keyboard_focus_motion_and_viewports(self):
+    def test_keyboard_focus_and_motion(self):
         from playwright.sync_api import expect
 
         with sync_playwright() as playwright:
@@ -93,26 +93,6 @@ class UiA11yTests(unittest.TestCase):
             media = page.evaluate("() => ({pointer: matchMedia('(pointer: coarse)').matches, motion: matchMedia('(prefers-reduced-motion: reduce)').matches})")
             self.assertTrue(media["pointer"])
             self.assertTrue(media["motion"])
-            page.set_viewport_size({"width": 390, "height": 844})
-            expect(page.locator("aside")).to_be_hidden()
-            trigger = page.get_by_role("button", name="打开产品导航", exact=True)
-            trigger.focus()
-            page.keyboard.press("Enter")
-            navigation = page.get_by_role("dialog").get_by_role("navigation", name="产品导航", exact=True)
-            expect(navigation).to_be_visible()
-            box = navigation.get_by_role("button", name="工作台", exact=True).bounding_box()
-            self.assertIsNotNone(box)
-            self.assertGreaterEqual(box["height"], 44)
-            files_box = navigation.get_by_role("button", name="审核文件", exact=True).bounding_box()
-            self.assertEqual(box["y"], files_box["y"])
-            self.assertGreater(files_box["x"], box["x"] + box["width"])
-            self.assertGreaterEqual(box["height"], 96)
-            expect(navigation.get_by_role("button", name="工作台", exact=True)).to_have_attribute("aria-current", "page")
-            expect(navigation.get_by_role("button", name="联系我们", exact=True)).to_be_visible()
-            page.keyboard.press("Escape")
-            expect(page.get_by_role("dialog")).to_have_count(0)
-            expect(trigger).to_be_focused()
-            self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 390)
             expect(page.get_by_role("heading", level=1)).to_have_count(1)
             directory = []
             page.route("**/api/rule-library", lambda route: directory.append(route))

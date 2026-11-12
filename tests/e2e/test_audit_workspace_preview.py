@@ -15,7 +15,7 @@ PREVIEW = os.environ.get("PPAP_PREVIEW_URL", "").rstrip("/")
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires the explicit UI preview and Playwright")
 class AuditWorkspacePreviewTests(unittest.TestCase):
-    def test_wide_review_docks_evidence_beside_the_list_and_narrow_queue_collapses(self):
+    def test_wide_review_docks_evidence_beside_the_list(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page(viewport={"width": 1440, "height": 960})
@@ -32,10 +32,7 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             expect(page.get_by_role("heading", name="第 2 条 · 记录完整性", exact=True)).to_be_visible()
             page.keyboard.press("k")
             expect(page.get_by_role("heading", name=re.compile(r"^第 1 条 · "))).to_be_visible()
-            page.set_viewport_size({"width": 390, "height": 844})
             page.keyboard.press("Escape")
-            expect(queue).to_be_hidden()
-            page.get_by_role("button", name=re.compile("^切换文件")).click()
             expect(queue).to_be_visible()
             browser.close()
 
@@ -87,7 +84,7 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             page = browser.new_page(viewport={"width": 1440, "height": 960})
             page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task")
             page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button").first.click()
-            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="工作台", exact=True).click()
+            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
             page.get_by_role("button", name="继续当前审核", exact=True).click()
             page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name=re.compile("^不符合")).click()
             page.get_by_role("button", name="逐条复核", exact=True).click()
@@ -107,7 +104,7 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
     def test_escape_closes_only_the_display_editor_and_returns_focus_to_file_info(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page = browser.new_page(viewport={"width": 1280, "height": 844})
             page.goto(PREVIEW + "/preview/audit.html?scene=restore-display-ready&task=preview-recovery-task")
             page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button").first.click()
             page.get_by_role("button", name="文件信息", exact=True).click()
@@ -168,7 +165,7 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
     def test_responsive_results_keep_full_files_and_single_line_actions(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            for width in (1440, 1079, 390):
+            for width in (1440, 1280):
                 with self.subTest(width=width):
                     page = browser.new_page(viewport={"width": width, "height": 960})
                     page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task")
@@ -181,23 +178,23 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
                     page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name=re.compile("^全部")).click()
                     actions = page.get_by_role("button", name=re.compile("^查看依据 "))
                     expect(actions).to_have_count(2)
-                    # Phones show cards whose whole face is the action; tables keep one-line actions.
-                    for action in actions.all() if width >= 640 else []:
+                    # Table rows keep one-line actions.
+                    for action in actions.all():
                         self.assertEqual(action.evaluate("element => getComputedStyle(element).whiteSpace"), "nowrap")
                         self.assertGreaterEqual(action.evaluate("element => element.closest('td').getBoundingClientRect().width"), 112)
                     self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), width)
-                    if width >= 900:
-                        details = page.get_by_role("region", name="审核详情", exact=True)
-                        heading = page.get_by_role("heading", name="审核结果", exact=True).bounding_box()
-                        table = details.get_by_role("table").bounding_box()
-                        self.assertLess(table["y"] - heading["y"], 260)
-                        title = details.get_by_role("heading", name=re.compile(r"^审核项 \(")).bounding_box()
-                        search = details.get_by_role("textbox", name="搜索审核项", exact=True).bounding_box()
-                        self.assertLessEqual(abs(title["y"] + title["height"] / 2 - search["y"] - search["height"] / 2), 4)
-                        for file in queue.get_by_role("button").all():
-                            self.assertEqual(file.evaluate("element => getComputedStyle(element).borderRadius"), "0px")
-                        expect(page.get_by_role("banner").get_by_role("button", name="报告中心", exact=True)).to_be_visible()
-                    if width == 1079:
+                    details = page.get_by_role("region", name="审核详情", exact=True)
+                    heading = page.get_by_role("heading", name="审核结果", exact=True).bounding_box()
+                    table = details.get_by_role("table").bounding_box()
+                    self.assertLess(table["y"] - heading["y"], 260)
+                    title = details.get_by_role("heading", name=re.compile(r"^审核项 \(")).bounding_box()
+                    search = details.get_by_role("textbox", name="搜索审核项", exact=True).bounding_box()
+                    self.assertLessEqual(abs(title["y"] + title["height"] / 2 - search["y"] - search["height"] / 2), 4)
+                    for file in queue.get_by_role("button").all():
+                        self.assertEqual(file.evaluate("element => getComputedStyle(element).borderRadius"), "0px")
+                    expect(page.get_by_role("banner").get_by_role("button", name="报告中心", exact=True)).to_be_visible()
+                    # At the narrowest desktop the product navigation folds to its icon rail.
+                    if width == 1280:
                         self.assertEqual(page.get_by_role("complementary", name="产品侧栏", exact=True).evaluate("element => element.getBoundingClientRect().width"), 64)
                     expect(page.get_by_role("dialog")).to_have_count(0)
                     page.close()
@@ -230,7 +227,7 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
     def test_cross_file_original_keeps_the_selected_clause_and_report(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 1079, "height": 853})
+            page = browser.new_page(viewport={"width": 1280, "height": 853})
             page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task")
             page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button").first.click()
             page.get_by_role("button", name="查看依据 1.1", exact=True).click()
@@ -246,15 +243,14 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             page.get_by_role("button", name="报告中心", exact=True).click()
             expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
             page.get_by_role("link", name="返回审核结果", exact=True).click()
-            # Below the wide layout the queue folds into the results header while a file is open.
-            page.get_by_role("button", name=re.compile("^切换文件")).click()
+            # The file queue stays beside the open file.
             expect(page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button")).to_have_count(3)
             browser.close()
 
     def test_reference_stays_visible_without_becoming_an_audit_or_a_report(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page = browser.new_page(viewport={"width": 1280, "height": 844})
             page.goto(PREVIEW + "/preview/audit.html?scene=with-reference")
             page.get_by_role("button", name="使用三类文件示例", exact=True).click()
             page.get_by_role("button", name="开始识别", exact=True).click()

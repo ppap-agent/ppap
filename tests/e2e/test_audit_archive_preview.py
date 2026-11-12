@@ -27,10 +27,9 @@ class AuditArchivePreviewTests(unittest.TestCase):
         identity = heading.locator("xpath=ancestor::header")
         details = page.get_by_role("region", name="审核详情", exact=True)
         information = page.get_by_role("region", name="本次审核信息", exact=True)
-        wide = page.viewport_size["width"] >= 1280
         rail = page.get_by_role("complementary", name="历史版本", exact=True)
-        expect(rail).to_have_count(1 if wide else 0)
-        selector = rail.locator('[aria-pressed="true"]') if wide else page.get_by_role("button", name="历史审核记录", exact=True)
+        expect(rail).to_have_count(1)
+        selector = rail.locator('[aria-pressed="true"]')
         report = details.get_by_role("button", name="查看报告", exact=True)
         search = details.get_by_role("textbox", name="搜索审核项", exact=True)
         filters = details.get_by_role("group", name="审核结果筛选", exact=True)
@@ -63,20 +62,12 @@ class AuditArchivePreviewTests(unittest.TestCase):
         self.assertGreaterEqual(information_box["y"], identity_box["y"] + identity_box["height"])
         self.assertGreaterEqual(reader_box["y"], information_box["y"] + information_box["height"])
         self.assertEqual(reader_box["x"] + reader_box["width"], identity_box["x"] + identity_box["width"], "Results must end at the available reader's right edge")
-        if wide:
-            rail_box = rail.bounding_box()
-            self.assertEqual(rail_box["x"], identity_box["x"], "The round rail starts at the reader's left edge")
-            self.assertEqual(reader_box["x"], rail_box["x"] + rail_box["width"], "Results start right after the round rail")
-        else:
-            self.assertEqual(reader_box["x"], identity_box["x"], "Without the rail, results start at the reader's left edge")
-        # The table's scrollport fills the result region's content box. On narrow screens the
-        # columns may scroll inside it, but must not widen the page or disappear through clipping.
+        rail_box = rail.bounding_box()
+        self.assertEqual(rail_box["x"], identity_box["x"], "The round rail starts at the reader's left edge")
+        self.assertEqual(reader_box["x"], rail_box["x"] + rail_box["width"], "Results start right after the round rail")
+        # The table's scrollport fills the result region's content box. Wide columns may
+        # scroll inside it, but must not widen the page or disappear through clipping.
         items = details.get_by_role("region", name="审核项", exact=True)
-        if page.viewport_size["width"] < 640:
-            # Phones read results as cards, so the verdict is never clipped by a table scrollport.
-            expect(items.get_by_role("list", name="审核项列表", exact=True)).to_be_visible()
-            self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), page.viewport_size["width"])
-            return
         geometry = items.evaluate("""el => {
             const box = el.getBoundingClientRect(), style = getComputedStyle(el);
             const table = el.querySelector('table'), scrollport = table.parentElement, frame = scrollport.parentElement;
@@ -97,24 +88,23 @@ class AuditArchivePreviewTests(unittest.TestCase):
         self.assertGreaterEqual(geometry["tableWidth"], geometry["portWidth"])
         self.assertTrue(geometry["scrollable"], "Wide result columns need a usable local scrollport")
         self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), page.viewport_size["width"])
-        if page.viewport_size["width"] >= 1024:
-            # Desktop's initial view must show a complete named result vertically, not
-            # merely a table border. Wide columns remain reachable through the local scrollport.
-            row = details.get_by_role("row").filter(has=page.get_by_role("button", name="查看依据 2.1", exact=True))
-            expect(row).to_be_in_viewport()
-            visible = row.evaluate("""el => {
-                const row = el.getBoundingClientRect();
-                let top = 0, bottom = innerHeight;
-                for (let ancestor = el.parentElement; ancestor; ancestor = ancestor.parentElement) {
-                    if (getComputedStyle(ancestor).overflowY === 'visible') continue;
-                    const box = ancestor.getBoundingClientRect();
-                    top = Math.max(top, box.top + ancestor.clientTop);
-                    bottom = Math.min(bottom, box.top + ancestor.clientTop + ancestor.clientHeight);
-                }
-                return {rowTop: row.top, rowBottom: row.bottom, top, bottom};
-            }""")
-            self.assertGreaterEqual(visible["rowTop"], visible["top"])
-            self.assertLessEqual(visible["rowBottom"], visible["bottom"], "The first result must be readable without vertical scrolling or ancestor clipping")
+        # The initial view must show a complete named result vertically, not merely a
+        # table border. Wide columns remain reachable through the local scrollport.
+        row = details.get_by_role("row").filter(has=page.get_by_role("button", name="查看依据 2.1", exact=True))
+        expect(row).to_be_in_viewport()
+        visible = row.evaluate("""el => {
+            const row = el.getBoundingClientRect();
+            let top = 0, bottom = innerHeight;
+            for (let ancestor = el.parentElement; ancestor; ancestor = ancestor.parentElement) {
+                if (getComputedStyle(ancestor).overflowY === 'visible') continue;
+                const box = ancestor.getBoundingClientRect();
+                top = Math.max(top, box.top + ancestor.clientTop);
+                bottom = Math.min(bottom, box.top + ancestor.clientTop + ancestor.clientHeight);
+            }
+            return {rowTop: row.top, rowBottom: row.bottom, top, bottom};
+        }""")
+        self.assertGreaterEqual(visible["rowTop"], visible["top"])
+        self.assertLessEqual(visible["rowBottom"], visible["bottom"], "The first result must be readable without vertical scrolling or ancestor clipping")
 
     def test_natural_file_route_restores_list_and_exact_history_on_back_and_forward(self):
         with sync_playwright() as playwright:
@@ -222,7 +212,7 @@ class AuditArchivePreviewTests(unittest.TestCase):
             expect(events.get_by_text("文件档案清单", exact=True)).to_have_count(1)
             events.get_by_role("button", name=re.compile("返回示例读取 ")).click()
             expect(page.get_by_role("table", name="审核文件列表", exact=True)).to_be_visible()
-            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="工作台", exact=True).click()
+            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
             expect(events.get_by_text("审核任务清单", exact=True)).to_have_count(1)
             expect(events.get_by_text("文件档案清单", exact=True)).to_have_count(0)
             browser.close()
@@ -230,14 +220,14 @@ class AuditArchivePreviewTests(unittest.TestCase):
     def test_file_table_owns_the_width_and_keeps_actions_on_one_line(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            for width in (1440, 1079, 390):
+            for width in (1440, 1280):
                 with self.subTest(width=width):
                     page = browser.new_page(viewport={"width": width, "height": 960})
                     page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready&view=archive")
                     table = page.get_by_role("table", name="审核文件列表", exact=True)
                     expect(table).to_be_visible()
-                    # From lg the model and part tree is a side panel; below it opens from the toolbar.
-                    expect(page.get_by_role("navigation", name="车型与零件", exact=True)).to_have_count(1 if width >= 1024 else 0)
+                    # The model and part tree is a side panel beside the table.
+                    expect(page.get_by_role("complementary", name="文件分类", exact=True).get_by_role("navigation", name="车型与零件", exact=True)).to_have_count(1)
                     first = table.get_by_role("row", name=re.compile("档案 A001"))
                     filename = first.get_by_text("控制计划.xlsx", exact=True)
                     expect(filename).to_be_visible()
@@ -248,32 +238,24 @@ class AuditArchivePreviewTests(unittest.TestCase):
                         if action.is_visible():
                             self.assertEqual(action.evaluate("element => getComputedStyle(element).whiteSpace"), "nowrap")
                     self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), width)
-                    if width >= 1024:
-                        # The shown audit time belongs to completed round 3, not active round 4.
-                        expect(first.locator("time")).to_have_attribute("datetime", "2026-10-15T09:00:00+08:00")
+                    # The shown audit time belongs to completed round 3, not active round 4.
+                    expect(first.locator("time")).to_have_attribute("datetime", "2026-10-15T09:00:00+08:00")
                     page.close()
             browser.close()
 
-    def test_classification_is_on_demand_and_returns_keyboard_focus(self):
+    def test_classification_side_panel_filters_and_clears_the_category(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 900, "height": 853})
+            page = browser.new_page(viewport={"width": 1280, "height": 853})
             page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready&view=archive")
-            trigger = page.get_by_role("button", name="车型与零件", exact=True)
-            trigger.focus()
-            page.keyboard.press("Enter")
-            panel = page.get_by_role("dialog", name="车型与零件", exact=True)
-            panel.get_by_role("button", name="尾门导流板 2", exact=True).click()
-            expect(panel).to_have_count(0)
-            expect(trigger).to_be_focused()
+            panel = page.get_by_role("complementary", name="文件分类", exact=True).get_by_role("navigation", name="车型与零件", exact=True)
+            choice = panel.get_by_role("button", name="尾门导流板 2", exact=True)
+            choice.click()
+            expect(choice).to_have_attribute("aria-current", "true")
             expect(page.get_by_role("table", name="审核文件列表", exact=True).get_by_role("row")).to_have_count(3)
             expect(page.get_by_role("button", name="移除分类筛选", exact=True)).to_contain_text("CETUS / 尾门导流板")
             page.get_by_role("button", name="移除分类筛选", exact=True).click()
             expect(page.get_by_text("共 12 份文件", exact=True)).to_be_visible()
-            trigger.click()
-            page.keyboard.press("Escape")
-            expect(panel).to_have_count(0)
-            expect(trigger).to_be_focused()
             browser.close()
 
     def test_filters_search_and_history_return_keep_selected_report_versions(self):
@@ -311,21 +293,16 @@ class AuditArchivePreviewTests(unittest.TestCase):
     def test_history_uses_one_filename_and_a_full_width_result_reader(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            # Representative desktop/mobile and the original 1079px regression, plus both
-            # sides of sm identity reflow, lg product navigation and xl provenance reflow.
-            for width in (1440, 1079, 390, 639, 640, 1023, 1024, 1279, 1280):
+            # Representative desktop and the minimum supported desktop width.
+            for width in (1440, 1280):
                 with self.subTest(width=width):
                     page = browser.new_page(viewport={"width": width, "height": 960})
                     page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready&view=archive&archiveDoc=preview-archive-A001")
                     heading = page.get_by_role("heading", name="控制计划.xlsx", exact=True)
                     expect(heading).to_be_visible()
                     expect(page.get_by_role("main").get_by_text("控制计划.xlsx", exact=True)).to_have_count(1)
-                    if width >= 1280:
-                        rail = page.get_by_role("complementary", name="历史版本", exact=True)
-                        expect(rail.get_by_role("button", name="选择第 3 次审核", exact=True)).to_have_attribute("aria-pressed", "true")
-                    else:
-                        expect(page.get_by_role("navigation", name="历次审核", exact=True)).to_have_count(0)
-                        expect(page.get_by_role("button", name="历史审核记录", exact=True)).to_contain_text("第 3 次审核")
+                    rail = page.get_by_role("complementary", name="历史版本", exact=True)
+                    expect(rail.get_by_role("button", name="选择第 3 次审核", exact=True)).to_have_attribute("aria-pressed", "true")
                     details = page.get_by_role("region", name="审核详情", exact=True)
                     expect(details.get_by_role("button", name="查看报告", exact=True)).to_be_enabled()
                     expect(details.get_by_role("button", name="符合 2", exact=True)).to_be_visible()
@@ -342,7 +319,7 @@ class AuditArchivePreviewTests(unittest.TestCase):
         filename = "控制计划-尾门扰流板总成-客户联合评审批准版本-图纸修订RevC-量产阶段检查记录.xlsx"
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            for width in (1440, 1079, 390):
+            for width in (1440, 1280):
                 with self.subTest(width=width):
                     page = browser.new_page(viewport={"width": width, "height": 960})
                     page.goto(PREVIEW + "/preview/audit.html?scene=archive-long-filename&view=archive&archiveDoc=preview-archive-A001")
@@ -352,18 +329,9 @@ class AuditArchivePreviewTests(unittest.TestCase):
                     page.get_by_role("region", name="审核详情", exact=True).get_by_role("button", name="查看报告", exact=True).click()
                     expect(page.get_by_role("region", name="当前报告", exact=True).get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
                     page.get_by_role("button", name="返回本次审核", exact=True).click()
-                    if width >= 1280:
-                        choice = page.get_by_role("complementary", name="历史版本", exact=True).get_by_role("button", name="选择第 2 次审核", exact=True)
-                        choice.click()
-                        expect(choice).to_have_attribute("aria-pressed", "true")
-                    else:
-                        selector = page.get_by_role("button", name="历史审核记录", exact=True)
-                        selector.focus()
-                        page.keyboard.press("Enter")
-                        history = page.get_by_role("dialog", name="历史审核记录", exact=True)
-                        history.get_by_role("button", name="选择第 2 次审核", exact=True).click()
-                        expect(selector).to_contain_text("第 2 次审核")
-                        expect(selector).to_be_focused()
+                    choice = page.get_by_role("complementary", name="历史版本", exact=True).get_by_role("button", name="选择第 2 次审核", exact=True)
+                    choice.click()
+                    expect(choice).to_have_attribute("aria-pressed", "true")
                     expect(heading).to_be_visible()
                     expect(page.get_by_text("原件修订：Rev B", exact=True)).to_be_visible()
                     page.close()
@@ -372,19 +340,15 @@ class AuditArchivePreviewTests(unittest.TestCase):
     def test_history_selector_keeps_exact_old_reference_through_reload_and_report(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 1079, "height": 853})
+            page = browser.new_page(viewport={"width": 1280, "height": 853})
             page.goto(PREVIEW + "/preview/audit.html?scene=archive-task-allowed&view=archive&archiveDoc=preview-archive-A001")
-            trigger = page.get_by_role("button", name="历史审核记录", exact=True)
-            expect(trigger).to_contain_text("第 3 次审核")
-            trigger.focus()
-            page.keyboard.press("Enter")
-            panel = page.get_by_role("dialog", name="历史审核记录", exact=True)
-            expect(panel.get_by_role("navigation", name="历次审核", exact=True).get_by_role("button")).to_have_count(4)
+            panel = page.get_by_role("complementary", name="历史版本", exact=True)
+            expect(panel.get_by_role("navigation", name="历次审核", exact=True).get_by_role("button", name=re.compile("^选择第"))).to_have_count(4)
             expect(panel.get_by_role("button", name="选择第 3 次审核", exact=True)).to_have_attribute("aria-pressed", "true")
             expect(panel.get_by_role("button", name="选择第 1 次审核", exact=True)).to_contain_text("审核异常")
-            panel.get_by_role("button", name="选择第 2 次审核", exact=True).click()
-            expect(panel).to_have_count(0)
-            expect(trigger).to_be_focused()
+            second = panel.get_by_role("button", name="选择第 2 次审核", exact=True)
+            second.click()
+            expect(second).to_have_attribute("aria-pressed", "true")
             expect(page.get_by_text("原件修订：Rev B", exact=True)).to_be_visible()
             old_reference = parse_qs(urlparse(page.url).query)["auditRef"]
             page.reload()
@@ -403,21 +367,18 @@ class AuditArchivePreviewTests(unittest.TestCase):
             expect(information.get_by_text("Rev B", exact=True)).to_be_visible()
             page.keyboard.press("Escape")
             expect(info).to_be_focused()
-            for width in (390, 1079):
-                page.set_viewport_size({"width": width, "height": 853})
-                expect(preview.get_by_role("button", name="报告信息", exact=True)).to_be_visible()
-                self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), width)
-                self.assertEqual(parse_qs(urlparse(page.url).query)["auditRef"], old_reference)
+            self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 1280)
+            self.assertEqual(parse_qs(urlparse(page.url).query)["auditRef"], old_reference)
             page.get_by_role("button", name="返回本次审核", exact=True).click()
-            expect(trigger).to_contain_text("第 2 次审核")
+            expect(panel.get_by_role("button", name="选择第 2 次审核", exact=True)).to_have_attribute("aria-pressed", "true")
             expect(page.get_by_role("button", name="打开来源任务", exact=True)).to_be_enabled()
             self.assertEqual(parse_qs(urlparse(page.url).query)["auditRef"], old_reference)
             browser.close()
 
-    def test_mobile_filter_sheet_keeps_dates_and_controls_inside_the_viewport(self):
+    def test_filter_sheet_keeps_dates_and_controls_inside_the_viewport(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page = browser.new_page(viewport={"width": 1280, "height": 844})
             page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready&view=archive&theme=dark")
             trigger = page.get_by_role("button", name="更多筛选", exact=True)
             trigger.click()
@@ -429,5 +390,5 @@ class AuditArchivePreviewTests(unittest.TestCase):
             expect(trigger).to_contain_text("2")
             expect(page.get_by_role("button", name="移除开始日期筛选", exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="移除结束日期筛选", exact=True)).to_be_visible()
-            self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 390)
+            self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 1280)
             browser.close()

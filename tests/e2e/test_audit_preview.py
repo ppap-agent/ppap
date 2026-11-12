@@ -40,7 +40,6 @@ def close_workspace_panel(page):
         page.get_by_role("dialog", name="文件信息", exact=True, include_hidden=True),
         page.get_by_role("dialog", name="完成通知设置", exact=True, include_hidden=True),
         page.get_by_role("dialog", name="审核任务", exact=True, include_hidden=True),
-        page.get_by_role("dialog", name="历史审核记录", exact=True, include_hidden=True),
     ):
         panel = panel.and_(page.locator('[data-state="open"]'))
         if not panel.is_visible():
@@ -94,43 +93,32 @@ def audit_details(page):
     return page.get_by_role("region", name="审核详情", exact=True)
 
 
+def clause_row(page, clause):
+    return page.get_by_role("region", name="审核项", exact=True).get_by_role("row").filter(has=page.get_by_role("button", name="查看依据 " + clause, exact=True))
+
+
 def history_rail(page):
-    """Wide screens (>= 1280px) list the rounds in a rail; narrower ones use the sheet."""
+    """The rounds are listed in the "历史版本" rail."""
     expect(page.get_by_role("region", name="文档历史审核", exact=True)).to_be_attached()
     rail = page.get_by_role("complementary", name="历史版本", exact=True)
-    return rail if rail.is_visible() else None
+    expect(rail).to_be_visible()
+    return rail
 
 
 def history_records(page):
-    rail = history_rail(page)
-    if rail:
-        return rail
-    panel = page.get_by_role("dialog", name="历史审核记录", exact=True)
-    if not panel.is_visible():
-        close_workspace_panel(page)
-        page.get_by_role("button", name="历史审核记录", exact=True).click()
-    return panel
+    return history_rail(page)
 
 
 def select_history(page, sequence):
-    panel = history_records(page)
-    panel.get_by_role("button", name=f"选择第 {sequence} 次审核", exact=True).click()
-    if not history_rail(page):
-        expect(panel).to_have_count(0)
+    history_records(page).get_by_role("button", name=f"选择第 {sequence} 次审核", exact=True).click()
 
 
 def expect_history_current(page, sequence):
-    rail = history_rail(page)
-    if rail:
-        expect(rail.get_by_role("button", name=f"选择第 {sequence} 次审核", exact=True)).to_have_attribute("aria-pressed", "true")
-    else:
-        expect(page.get_by_role("button", name="历史审核记录", exact=True)).to_contain_text(f"第 {sequence} 次审核")
+    expect(history_rail(page).get_by_role("button", name=f"选择第 {sequence} 次审核", exact=True)).to_have_attribute("aria-pressed", "true")
 
 
 def expect_history_selected(page, sequence):
     expect_history_current(page, sequence)
-    panel = history_records(page)
-    expect(panel.get_by_role("button", name=f"选择第 {sequence} 次审核", exact=True)).to_have_attribute("aria-pressed", "true")
     close_workspace_panel(page)
 
 
@@ -304,7 +292,7 @@ class AuditPreviewTests(unittest.TestCase):
     def test_cloud_file_rows_align_and_large_selections_keep_controls_on_screen(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            for width, height in ((1440, 900), (768, 1024), (390, 844)):
+            for width, height in ((1440, 900),):
                 with self.subTest(width=width):
                     page = browser.new_page(viewport={"width": width, "height": height})
                     page.set_default_timeout(5000)
@@ -318,12 +306,8 @@ class AuditPreviewTests(unittest.TestCase):
                     row_name = current.get_by_text(first_name, exact=True)
                     picker.evaluate("node => Promise.all(node.getAnimations({subtree: true}).map(animation => animation.finished.catch(() => {})))")
                     bounds = picker.bounding_box()
-                    gutter = 15 if width >= 640 else 0
-                    self.assertGreaterEqual(bounds["x"], gutter)
-                    self.assertLessEqual(bounds["x"] + bounds["width"], width - gutter)
-                    if width < 640:
-                        self.assertAlmostEqual(bounds["width"], width, delta=1)
-                        self.assertAlmostEqual(bounds["height"], height, delta=1)
+                    self.assertGreaterEqual(bounds["x"], 15)
+                    self.assertLessEqual(bounds["x"] + bounds["width"], width - 15)
                     folder_text = folder.get_by_text("客户项目", exact=True).bounding_box()
                     file_text = row_name.bounding_box()
                     self.assertAlmostEqual(folder_text["x"], file_text["x"], delta=1)
@@ -472,7 +456,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(picker.get_by_role("checkbox", name="选择飞书文件 控制计划.xlsx", exact=True)).to_be_checked()
             search.fill("")
             expect(picker.get_by_role("button", name="展开文件夹 客户项目", exact=True)).to_be_visible()
-            page.set_viewport_size({"width": 390, "height": 844})
+            page.set_viewport_size({"width": 1280, "height": 800})
             selected = picker.get_by_role("region", name="已选文件", exact=True)
             expect(selected.get_by_text("控制计划.xlsx", exact=True)).to_be_visible()
             expect(selected.get_by_text("我的云盘 / 客户项目 / 补充资料", exact=True)).to_be_visible()
@@ -529,7 +513,7 @@ class AuditPreviewTests(unittest.TestCase):
     def test_cloud_folders_are_navigable_and_selection_survives_folder_changes(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html?scene=drive-folders")
             page.get_by_role("button", name="从飞书选择", exact=True).click()
@@ -604,7 +588,7 @@ class AuditPreviewTests(unittest.TestCase):
     def test_zip_notification_link_stays_with_its_package_after_latest_status_changes(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html?scene=reports-zip-link&task=preview-report-task&report=1&packageRequest=preview-linked-zip")
             linked = page.get_by_role("region", name="通知中的 ZIP", exact=True)
@@ -815,7 +799,7 @@ class AuditPreviewTests(unittest.TestCase):
     def test_manual_judgment_requires_a_frozen_citation_and_denied_save_does_not_claim_success(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html?scene=round-history-review-denied")
             page.get_by_role("region", name="未对应条款的历史记录", exact=True).get_by_role("button", name="记录人工复核", exact=True).click()
@@ -887,7 +871,7 @@ class AuditPreviewTests(unittest.TestCase):
     def test_manual_review_unknown_reply_is_read_back_after_close_without_replacing_input(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html?scene=round-history-review-unknown")
             records = page.get_by_role("region", name="未对应条款的历史记录", exact=True)
@@ -906,7 +890,6 @@ class AuditPreviewTests(unittest.TestCase):
             editor.get_by_role("button", name="完成", exact=True).click()
             expect(records.get_by_text("第 2 次复核", exact=True)).to_be_visible()
             expect(records.get_by_text("已查阅本轮原件。", exact=True)).to_be_visible()
-            self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 390)
             browser.close()
 
     def test_optional_manual_review_saves_a_frozen_cross_file_citation_without_changing_machine_results(self):
@@ -936,7 +919,7 @@ class AuditPreviewTests(unittest.TestCase):
     def test_round_reader_rejects_old_responses_after_an_a_b_a_switch(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html?scene=round-history-race")
             page.get_by_role("button", name="切换历史审核", exact=True).click()
@@ -948,7 +931,6 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_text("历史记录 3", exact=True)).to_be_visible()
             expect(page.get_by_text("历史记录 1", exact=True)).to_have_count(0)
             expect(page.get_by_text("历史记录 2", exact=True)).to_have_count(0)
-            self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 390)
             browser.close()
 
     def test_round_reader_rejects_wrong_round_identity_and_outside_review_citations(self):
@@ -1299,7 +1281,7 @@ class AuditPreviewTests(unittest.TestCase):
     def test_recognition_support_copies_its_service_trace_and_keeps_the_original_request(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 390, "height": 844}, permissions=["clipboard-read", "clipboard-write"])
+            page = browser.new_page(viewport={"width": 1440, "height": 1000}, permissions=["clipboard-read", "clipboard-write"])
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html?scene=recognition-traced")
             page.get_by_role("button", name="使用三类文件示例", exact=True).click()
@@ -1316,7 +1298,6 @@ class AuditPreviewTests(unittest.TestCase):
             self.assertIn(request_id, copied)
             self.assertIn("preview-recognition-service-170", copied)
             self.assertIn("PFMEA.xlsx", copied)
-            self.assertLessEqual(support.evaluate("element => element.scrollWidth"), 390)
             support.get_by_role("button", name="关闭", exact=True).click()
             expect(trigger).to_be_focused()
             expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_disabled()
@@ -1514,9 +1495,9 @@ class AuditPreviewTests(unittest.TestCase):
         notice = "提示：飞书AI包额度不足，本次消耗将于充值后自动扣费，请联系管理员或联系我们获取免费额度"
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            for scene, width in (("restore-usage-notice", 390), ("restore-usage-completed", 1440)):
+            for scene in ("restore-usage-notice", "restore-usage-completed"):
                 with self.subTest(scene=scene):
-                    page = browser.new_page(viewport={"width": width, "height": 1000}, permissions=["clipboard-read", "clipboard-write"])
+                    page = browser.new_page(viewport={"width": 1440, "height": 1000}, permissions=["clipboard-read", "clipboard-write"])
                     page.set_default_timeout(5000)
                     page.goto(PREVIEW + f"/preview/audit.html?scene={scene}&task=preview-recovery-task")
                     page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button", name=re.compile("控制计划.xlsx")).click()
@@ -1552,10 +1533,9 @@ class AuditPreviewTests(unittest.TestCase):
                     details.get_by_role("button", name="查看报告", exact=True).click()
                     expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
                     page.get_by_role("link", name="返回审核结果", exact=True).click()
-                    if width >= 1024:
-                        page.get_by_role("button", name="联系我们", exact=True).click()
-                        expect(dialog.get_by_role("region", name="操作信息", exact=True)).to_have_count(0)
-                        page.keyboard.press("Escape")
+                    page.get_by_role("button", name="联系我们", exact=True).click()
+                    expect(dialog.get_by_role("region", name="操作信息", exact=True)).to_have_count(0)
+                    page.keyboard.press("Escape")
                     page.close()
             browser.close()
 
@@ -1578,11 +1558,11 @@ class AuditPreviewTests(unittest.TestCase):
             expect(expand).to_be_focused()
             self.assertLess(sidebar.bounding_box()["width"], wide)
             navigation = sidebar.get_by_role("navigation", name="产品导航", exact=True)
-            for label in ("工作台", "审核文件", "用量记录"):
+            for label in ("PPAP Audit", "审核文件", "用量记录"):
                 expect(navigation.get_by_role("button", name=label, exact=True)).to_be_visible()
-            expect(navigation.get_by_role("button", name="工作台", exact=True)).to_have_attribute("aria-current", "page")
-            navigation.get_by_role("button", name="文件模板", exact=True).hover()
-            expect(page.get_by_role("tooltip", name="文件模板", exact=True)).to_be_visible()
+            expect(navigation.get_by_role("button", name="PPAP Audit", exact=True)).to_have_attribute("aria-current", "page")
+            navigation.get_by_role("button", name="模板库", exact=True).hover()
+            expect(page.get_by_role("tooltip", name="模板库", exact=True)).to_be_visible()
             support_trigger = sidebar.get_by_role("button", name="联系我们", exact=True)
             support_trigger.click()
             page.get_by_role("dialog", name="联系我们", exact=True).get_by_role("button", name="关闭", exact=True).click()
@@ -1591,7 +1571,7 @@ class AuditPreviewTests(unittest.TestCase):
                 navigation.get_by_role("button", name=label, exact=True).click()
                 expect(page.get_by_role("heading", name=heading, exact=True)).to_be_visible()
                 expect(navigation.get_by_role("button", name=label, exact=True)).to_have_attribute("aria-current", "page")
-            navigation.get_by_role("button", name="工作台", exact=True).click()
+            navigation.get_by_role("button", name="PPAP Audit", exact=True).click()
             page.get_by_role("button", name="继续当前审核", exact=True).click()
             self.assertEqual(page.url, address)
             expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
@@ -1603,10 +1583,10 @@ class AuditPreviewTests(unittest.TestCase):
             close_workspace_panel(page)
             expand.press("Enter")
             expect(collapse).to_be_focused()
-            expect(navigation.get_by_text("文件模板", exact=True)).to_be_visible()
+            expect(navigation.get_by_text("模板库", exact=True)).to_be_visible()
             browser.close()
 
-    def test_navigation_collapse_keeps_mobile_labels_report_and_task_access(self):
+    def test_navigation_collapse_keeps_report_and_task_access(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page(viewport={"width": 1440, "height": 1000})
@@ -1621,36 +1601,19 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("dialog", name="审核任务", exact=True).get_by_role("navigation", name="任务列表", exact=True).get_by_role("button")).to_have_count(1)
             page.keyboard.press("Escape")
             expect(page.get_by_role("button", name="打开审核任务", exact=True)).to_be_focused()
-            sidebar.get_by_role("button", name="文件模板", exact=True).hover()
-            expect(page.get_by_role("tooltip", name="文件模板", exact=True)).to_be_visible()
-            page.set_viewport_size({"width": 390, "height": 844})
-            expect(sidebar).to_have_count(0)
-            expect(page.get_by_role("tooltip", name="文件模板", exact=True)).to_have_count(0)
-            page.get_by_role("button", name="打开产品导航", exact=True).click()
-            sheet = page.get_by_role("dialog", name="产品导航", exact=True)
-            for label in ("工作台", "审核文件", "文件模板", "用量记录"):
-                expect(sheet.get_by_role("navigation", name="产品导航", exact=True).get_by_text(label, exact=True)).to_be_visible()
-            expect(sheet.get_by_role("button", name="联系我们", exact=True)).to_be_visible()
-            page.keyboard.press("Escape")
-            expect(sheet).to_have_count(0)
-            expect(page.get_by_role("button", name="打开产品导航", exact=True)).to_be_focused()
-            page.get_by_role("button", name="打开产品导航", exact=True).click()
-            expect(sheet.get_by_role("button", name="文件模板", exact=True)).to_be_visible()
-            page.keyboard.press("Escape")
-            expect(sheet).to_have_count(0)
+            sidebar.get_by_role("button", name="模板库", exact=True).hover()
+            expect(page.get_by_role("tooltip", name="模板库", exact=True)).to_be_visible()
             self.assertEqual(page.url, report_address)
             expect(page.get_by_role("heading", name="审核报告", exact=True)).to_be_visible()
             page.get_by_role("link", name="返回审核结果", exact=True).click()
-            page.set_viewport_size({"width": 1024, "height": 900})
+            page.set_viewport_size({"width": 1280, "height": 900})
             expect(sidebar).to_be_visible()
             expect(page.get_by_role("button", name="展开产品导航", exact=True)).to_be_visible()
             self.assertEqual(sidebar.bounding_box()["width"], compact_width)
-            expect(page.get_by_role("complementary", name="审核任务", exact=True)).to_be_hidden()
+            expect(page.get_by_role("complementary", name="审核任务", exact=True)).to_have_count(0)
             page.get_by_role("button", name="打开审核任务", exact=True).click()
             expect(page.get_by_role("dialog", name="审核任务", exact=True).get_by_role("navigation", name="任务列表", exact=True).get_by_role("button")).to_have_count(1)
             page.keyboard.press("Escape")
-            page.set_viewport_size({"width": 1280, "height": 900})
-            expect(page.get_by_role("complementary", name="审核任务", exact=True)).to_have_count(0)
             expect(page.get_by_role("button", name="打开审核任务", exact=True)).to_be_visible()
             expect(page.get_by_role("heading", name="审核结果", exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="展开产品导航", exact=True)).to_be_visible()
@@ -1807,7 +1770,7 @@ class AuditPreviewTests(unittest.TestCase):
             dialog.get_by_role("textbox", name="客户", exact=True).fill("主题切换后保留")
             dialog.get_by_role("button", name="保存显示信息", exact=True).click()
             page.get_by_role("button", name="切换明暗主题", exact=True).click()
-            page.get_by_role("button", name="手机", exact=True).click()
+            page.get_by_role("button", name="自适应", exact=True).click()
             expect(dialog.get_by_role("textbox", name="客户", exact=True)).to_have_value("主题切换后保留")
             dialog.get_by_role("button", name="关闭，稍后核对", exact=True).click()
             expect(dialog).to_have_count(0)
@@ -1936,10 +1899,10 @@ class AuditPreviewTests(unittest.TestCase):
             expect(dialog.get_by_role("button", name="保存显示信息", exact=True)).to_be_disabled()
             browser.close()
 
-    def test_display_dialog_is_keyboard_accessible_on_a_narrow_screen_and_can_clear_fields(self):
+    def test_display_dialog_is_keyboard_accessible_and_can_clear_fields(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html?scene=restore-display-ready&task=preview-recovery-task")
             file_information(page)
@@ -1958,7 +1921,6 @@ class AuditPreviewTests(unittest.TestCase):
             info = page.get_by_role("region", name="本次审核文件信息", exact=True)
             expect(info.get_by_text("—", exact=True)).to_have_count(5)
             expect(trigger).to_be_focused()
-            expect(page.locator("body")).to_have_js_property("scrollWidth", 390)
             read_results(page)
             expect(info.get_by_text("—", exact=True)).to_have_count(5)
             browser.close()
@@ -2082,7 +2044,7 @@ class AuditPreviewTests(unittest.TestCase):
             new_task(product)
             product.get_by_role("button", name="使用三类文件示例", exact=True).click()
             page.get_by_role("button", name="切换明暗主题", exact=True).click()
-            page.get_by_role("button", name="手机", exact=True).click()
+            page.get_by_role("button", name="自适应", exact=True).click()
             page.go_back()
             expect(product.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
             expect(product.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True)).not_to_be_checked()
@@ -2174,7 +2136,7 @@ class AuditPreviewTests(unittest.TestCase):
             page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task")
             page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button").first.click()
-            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="工作台", exact=True).click()
+            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
             page.get_by_role("button", name="继续当前审核", exact=True).click()
             page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name=re.compile("^不符合")).click()
             open_basis(page)
@@ -2198,7 +2160,7 @@ class AuditPreviewTests(unittest.TestCase):
             page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task&report=1")
             expect(page.get_by_role("link", name="返回审核结果", exact=True)).to_be_visible()
-            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="工作台", exact=True).click()
+            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
             page.get_by_role("button", name="新建审核", exact=True).click()
             page.get_by_role("button", name="使用三类文件示例", exact=True).click()
             page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True).uncheck()
@@ -2233,7 +2195,7 @@ class AuditPreviewTests(unittest.TestCase):
                     elif view == "archive":
                         page.get_by_role("row", name=re.compile("档案 A001")).get_by_role("button", name="查看审核记录", exact=True).click()
                         expect_history_current(page, 3)
-                    navigation.get_by_role("button", name="工作台", exact=True).click()
+                    navigation.get_by_role("button", name="PPAP Audit", exact=True).click()
                     page.get_by_role("button", name="继续当前审核", exact=True).click()
                     page.get_by_role("button", name="开始识别", exact=True).click()
                     expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
@@ -2245,7 +2207,7 @@ class AuditPreviewTests(unittest.TestCase):
                     expect(page.get_by_role("heading", name="工作台", exact=True)).to_be_visible()
                     page.go_back()
                     expect(page).to_have_url(re.compile(f"[?&]view={view}"))
-                    navigation.get_by_role("button", name="工作台", exact=True).click()
+                    navigation.get_by_role("button", name="PPAP Audit", exact=True).click()
                     page.get_by_role("button", name="继续当前审核", exact=True).click()
                     expect(page).to_have_url(original_recognition_address(task_url))
                     expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
@@ -2416,10 +2378,10 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_text("被静默替换的客户", exact=True)).to_have_count(0)
             browser.close()
 
-    def test_narrow_file_information_keeps_part_name_distinct_from_part_number(self):
+    def test_file_information_keeps_part_name_distinct_from_part_number(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html?scene=restore-progress&task=preview-recovery-task")
             file_information(page)
@@ -2428,7 +2390,6 @@ class AuditPreviewTests(unittest.TestCase):
             expect(info.get_by_text("车型", exact=True).locator("..").get_by_text("示例车型", exact=True)).to_be_visible()
             expect(info.get_by_text("零件号", exact=True).locator("..").get_by_text("P-204", exact=True)).to_be_visible()
             expect(info.get_by_text("零件名称", exact=True).locator("..").get_by_text("尾门导流板", exact=True)).to_be_visible()
-            self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 390)
             page.goto(PREVIEW + "/preview/audit.html")
             page.get_by_role("button", name="使用三类文件示例", exact=True).click()
             page.get_by_role("button", name="开始识别", exact=True).click()
@@ -2449,7 +2410,7 @@ class AuditPreviewTests(unittest.TestCase):
             browser = playwright.chromium.launch()
             for scene, message in cases:
                 with self.subTest(scene=scene):
-                    page = browser.new_page(viewport={"width": 390, "height": 844})
+                    page = browser.new_page(viewport={"width": 1440, "height": 1000})
                     page.set_default_timeout(5000)
                     page.goto(PREVIEW + "/preview/audit.html?scene=" + scene + "&task=preview-recovery-task")
                     expect(page.get_by_role("region", name="任务时间估计", exact=True).get_by_text(message, exact=True)).to_be_visible()
@@ -2740,7 +2701,7 @@ class AuditPreviewTests(unittest.TestCase):
     def test_a_missing_candidate_rule_is_not_silently_confirmed_as_an_unmatched_file(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html?scene=match-rule-missing")
             page.get_by_role("button", name="使用三类文件示例", exact=True).click()
@@ -2808,7 +2769,7 @@ class AuditPreviewTests(unittest.TestCase):
     def test_partial_audit_restores_frozen_evidence_then_updates_the_selected_clause(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(5000)
             address = PREVIEW + "/preview/audit.html?scene=restore-progress&task=preview-recovery-task"
             page.goto(address)
@@ -2816,8 +2777,7 @@ class AuditPreviewTests(unittest.TestCase):
             detail = audit_details(page)
             expect(detail.get_by_text("已结束 1/2 项", exact=True)).to_be_visible()
             expect(detail.get_by_role("button", name="不符合 1", exact=True)).to_be_visible()
-            # Phones list items as cards; each card still carries its verdict.
-            expect(detail.get_by_role("list", name="审核项列表", exact=True).get_by_role("button", name="查看依据 1.2", exact=True)).to_contain_text("审核中")
+            expect(clause_row(page, "1.2")).to_contain_text("审核中")
             expect(detail.get_by_role("button", name="查看报告", exact=True)).to_be_disabled()
             open_basis(page)
             page.get_by_role("button", name="核对 控制计划.xlsx", exact=True).click()
@@ -2828,15 +2788,12 @@ class AuditPreviewTests(unittest.TestCase):
             expect(evidence_sheet(page).get_by_text("本项审核中…", exact=True)).to_be_visible()
             expect(evidence_sheet(page).get_by_role("button", name=re.compile("核对 "))).to_have_count(0)
             close_workspace_panel(page)
-            page.get_by_role("button", name=re.compile("^切换文件")).click()
             page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button", name=re.compile("控制计划.xlsx")).click()
             expect(detail.get_by_text("已结束 0/2 项", exact=True)).to_be_visible()
-            cards = detail.get_by_role("list", name="审核项列表", exact=True)
-            expect(cards.get_by_role("button", name="查看依据 2.1", exact=True)).to_contain_text("审核中")
-            expect(cards.get_by_role("button", name="查看依据 2.2", exact=True)).to_contain_text("排队中")
+            expect(clause_row(page, "2.1")).to_contain_text("审核中")
+            expect(clause_row(page, "2.2")).to_contain_text("排队中")
             page.reload()
             expect(page.get_by_role("status").filter(has_text="文件已结束 0/3")).to_be_visible()
-            page.get_by_role("button", name=re.compile("^切换文件")).click()
             queue = page.get_by_role("navigation", name="文件队列", exact=True)
             expect(queue.get_by_role("button", name=re.compile("控制计划.xlsx"))).to_have_attribute("aria-pressed", "true")
             expect(detail.get_by_text("已结束 0/2 项", exact=True)).to_be_visible()
@@ -2852,7 +2809,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(evidence_sheet(page).get_by_role("heading", name="第 2 条 · 记录完整性", exact=True)).to_be_visible()
             close_workspace_panel(page)
             expect(page.get_by_role("status").filter(has_text="文件已结束 3/3")).to_be_visible()
-            expect(detail.get_by_role("list", name="审核项列表", exact=True).get_by_role("button", name="查看依据 1.2", exact=True)).to_contain_text("无法判断")
+            expect(clause_row(page, "1.2")).to_contain_text("无法判断")
             expect(detail.get_by_text("已结束 2/2 项", exact=True)).to_have_count(0)
             expect(detail.get_by_role("button", name="不符合 1", exact=True)).to_be_visible()
             expect(detail.get_by_text("无法判断 1", exact=True)).to_be_visible()
@@ -2863,7 +2820,7 @@ class AuditPreviewTests(unittest.TestCase):
     def test_matched_rule_comparison_gap_survives_back_without_changing_the_selected_files(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html?scene=matching-gaps")
             page.get_by_role("button", name="使用三类文件示例", exact=True).click()
@@ -2893,7 +2850,7 @@ class AuditPreviewTests(unittest.TestCase):
     def test_original_late_configuration_cannot_replace_a_new_read_or_another_file(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html?scene=original-loading")
             page.get_by_role("button", name="使用三类文件示例", exact=True).click()
@@ -2931,7 +2888,7 @@ class AuditPreviewTests(unittest.TestCase):
 
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html?scene=original-error")
             page.get_by_role("button", name="使用三类文件示例", exact=True).click()
@@ -3080,7 +3037,7 @@ class AuditPreviewTests(unittest.TestCase):
         cases = [{"archiveReport": "1"}, {"auditRef": reference}, {"auditRef": "broken"}, {"auditRef": ""}, {"archiveDoc": "", "auditRef": reference}]
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(5000)
             for fields in cases:
                 with self.subTest(fields=fields):
@@ -3098,25 +3055,6 @@ class AuditPreviewTests(unittest.TestCase):
                         self.assertNotIn(key, parse_qs(urlparse(page.url).query, keep_blank_values=True))
             page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready&view=archive&archiveDoc=preview-archive-A001")
             expect_history_current(page, 3)
-            browser.close()
-
-    def test_archive_small_screen_keeps_filename_readable_and_history_in_sheet(self):
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 390, "height": 844})
-            page.set_default_timeout(5000)
-            page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready&view=archive")
-            row = page.get_by_role("row", name=re.compile("档案 A001"))
-            name = row.get_by_text("控制计划.xlsx", exact=True)
-            expect(name).to_be_visible()
-            self.assertGreater(row.get_by_role("cell").nth(1).bounding_box()["width"], 250)
-            self.assertLess(name.bounding_box()["height"], 30)
-            self.assertTrue(page.locator("body").evaluate("node => node.scrollWidth <= window.innerWidth"))
-            row.get_by_role("button", name="查看审核记录", exact=True).click()
-            page.get_by_role("button", name="历史审核记录", exact=True).click()
-            page.get_by_role("dialog").get_by_role("button", name="选择第 2 次审核", exact=True).click()
-            expect(page.get_by_role("dialog")).to_have_count(0)
-            expect(page.get_by_text("原件修订：Rev B", exact=True)).to_be_visible()
             browser.close()
 
     def test_archive_package_keeps_cross_task_versions_after_selection_changes(self):
@@ -3404,10 +3342,10 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("button", name="下一页", exact=True)).to_be_enabled()
             browser.close()
 
-    def test_mobile_single_file_share_uses_current_pdf_and_restores_trigger_focus(self):
+    def test_single_file_share_uses_current_pdf_and_restores_trigger_focus(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html?scene=reports-share-ready&task=preview-report-task&report=1")
             page.get_by_role("button", name="分享", exact=True).click()
@@ -3481,7 +3419,7 @@ class AuditPreviewTests(unittest.TestCase):
     def test_reopened_share_revalidates_retained_targets_before_sending(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 390, "height": 900})
+            page = browser.new_page(viewport={"width": 1440, "height": 900})
             page.set_default_timeout(5000)
             open_reports(page, "reports-share-directory-loading")
             page.get_by_role("button", name="分享", exact=True).click()
@@ -3942,7 +3880,7 @@ class AuditPreviewTests(unittest.TestCase):
             dialog = page.get_by_role("dialog", name="分享审核报告", exact=True)
             expect(dialog.get_by_text("PFMEA.xlsx-审核报告", exact=True)).to_be_visible()
             expect(dialog.get_by_text("控制计划.xlsx-审核报告", exact=True)).to_have_count(0)
-            for width in (390, 790, 1440):
+            for width in (1280, 1440):
                 page.set_viewport_size({"width": width, "height": 853})
                 action = dialog.get_by_role("button", name="选择接收人后发送", exact=True)
                 expect(action).to_be_visible()
@@ -4232,23 +4170,6 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("region", name="当前报告", exact=True).get_by_text("生成中", exact=True)).to_have_count(0)
             browser.close()
 
-    def test_report_list_on_mobile_preserves_batch_selection(self):
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 390, "height": 844})
-            page.set_default_timeout(5000)
-            open_reports(page, "reports-ready")
-            page.get_by_role("button", name="文件报告 · 3 份", exact=True).click()
-            page.get_by_role("checkbox", name="选择报告 控制计划.xlsx", exact=True).check()
-            page.get_by_role("button", name="控制计划.xlsx 就绪", exact=True).click()
-            expect(page.get_by_role("heading", name="控制计划.xlsx", exact=True)).to_be_visible()
-            page.get_by_role("button", name="文件报告 · 3 份", exact=True).click()
-            expect(page.get_by_role("checkbox", name="选择报告 控制计划.xlsx", exact=True)).to_be_checked()
-            page.keyboard.press("Escape")
-            expect(page.get_by_role("button", name="下载所选 1 份报告", exact=True)).to_be_enabled()
-            self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 390)
-            browser.close()
-
     def test_report_recovery_policy_does_not_block_other_ready_downloads(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
@@ -4359,7 +4280,7 @@ class AuditPreviewTests(unittest.TestCase):
                     page.get_by_role("button", name="开始审核", exact=True).click()
                     task_url = page.url
                     self.assertIn("acceptRequest", parse_qs(urlparse(task_url).query))
-                    page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="工作台", exact=True).click()
+                    page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
                     if return_via == "history":
                         page.go_back()
                     else:
@@ -4428,7 +4349,7 @@ class AuditPreviewTests(unittest.TestCase):
     def test_opening_an_existing_report_or_task_keeps_its_context_while_loading(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            for width, report in ((1012, "preview-recovery-version-1"), (390, "")):
+            for width, report in ((1012, "preview-recovery-version-1"), (1440, "")):
                 with self.subTest(width=width, report=report):
                     page = browser.new_page(viewport={"width": width, "height": 853})
                     page.set_default_timeout(5000)
@@ -4495,9 +4416,9 @@ class AuditPreviewTests(unittest.TestCase):
     def test_harness_keeps_the_task_link_and_reads_it_after_page_reload(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 1100, "height": 1000})
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(5000)
-            page.goto(PREVIEW + "/__preview?page=audit&scene=restore-pending&width=390")
+            page.goto(PREVIEW + "/__preview?page=audit&scene=restore-pending&width=1280")
             product = page.frame_locator("#product")
             expect(product.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
             expect(page).to_have_url(re.compile("task=preview-recovery-task"))
@@ -4524,7 +4445,7 @@ class AuditPreviewTests(unittest.TestCase):
     def test_recovery_errors_do_not_create_a_task_and_login_can_read_the_original(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html?scene=restore-denied&task=preview-recovery-task")
             expect(page.get_by_text("当前账号无权访问此任务。", exact=True)).to_be_visible()
@@ -4616,7 +4537,7 @@ class AuditPreviewTests(unittest.TestCase):
     def test_drive_continuation_keeps_the_original_request_and_late_receipt_cannot_undo_removal(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            for width in (390, 1280):
+            for width in (1280,):
                 for removed in (False, True):
                     with self.subTest(width=width, removed=removed):
                         page = browser.new_page(viewport={"width": width, "height": 900})
@@ -4751,7 +4672,7 @@ class AuditPreviewTests(unittest.TestCase):
     def test_notification_unknown_save_is_read_back_without_claiming_or_repeating_a_send(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html?scene=restore-notification-save-unknown&task=preview-recovery-task")
             notification = notification_control(page)
@@ -4846,18 +4767,6 @@ class AuditPreviewTests(unittest.TestCase):
             expect(unselected.get_by_text("控制计划.xlsx", exact=True)).to_be_visible()
             expect(removed.get_by_text("过程流程图.pdf", exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="核对 控制计划.xlsx", exact=True)).to_have_count(0)
-            page.set_viewport_size({"width": 390, "height": 844})
-            page.get_by_role("button", name=re.compile("^切换文件")).click()
-            files = page.get_by_role("complementary").filter(has=queue)
-            expect(files.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button")).to_have_count(1)
-            unselected = files.get_by_role("region", name="未选择文件", exact=True)
-            expect(unselected.get_by_text("控制计划.xlsx", exact=True)).to_be_visible()
-            expect(unselected.get_by_role("button")).to_have_count(0)
-            removed = files.get_by_role("region", name="已移除文件", exact=True)
-            expect(removed.get_by_text("过程流程图.pdf", exact=True)).to_be_visible()
-            expect(removed.get_by_text("未匹配到规则，不进入本轮审核", exact=True)).to_be_visible()
-            expect(removed.get_by_role("button")).to_have_count(0)
-            expect(page.get_by_role("heading", name="已移除文件", exact=True)).to_have_count(1)
             browser.close()
 
     def test_changed_rule_body_with_the_same_id_does_not_accept_a_receipt(self):
@@ -4960,10 +4869,10 @@ class AuditPreviewTests(unittest.TestCase):
             self.assertNotIn("preview-confirm-service-170", page.evaluate("navigator.clipboard.readText()"))
             browser.close()
 
-    def test_cross_file_evidence_preserves_clause_and_missing_locator_is_explicit_on_mobile(self):
+    def test_cross_file_evidence_preserves_clause_and_missing_locator_is_explicit(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html")
             page.get_by_role("button", name="使用三类文件示例").click()
@@ -4983,11 +4892,9 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("button", name="核对 PFMEA.xlsx", exact=True).click()
             expect(original.get_by_text("文字不清晰，无法定位原件。", exact=True)).to_be_visible()
             close_workspace_panel(page)
-            page.get_by_role("button", name=re.compile("^切换文件")).click()
             queue = page.get_by_role("navigation", name="文件队列", exact=True)
             queue.get_by_role("button", name="控制计划.xlsx", exact=False).click()
             expect(page.get_by_role("heading", name="控制计划.xlsx", exact=True)).to_be_visible()
-            self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 390)
             browser.close()
 
     def test_inconsistent_results_cannot_show_a_trusted_conclusion_or_open_report(self):
@@ -5063,7 +4970,7 @@ class AuditPreviewTests(unittest.TestCase):
             browser = playwright.chromium.launch()
             page = browser.new_page()
             page.set_default_timeout(5000)
-            page.goto(PREVIEW + "/__preview?page=audit&scene=drive-loading&width=390")
+            page.goto(PREVIEW + "/__preview?page=audit&scene=drive-loading&width=1440")
             product = page.frame_locator("#product")
             product.get_by_role("button", name="从飞书选择", exact=True).click()
             picker = product.get_by_role("dialog", name="从飞书选择文件", exact=True)
@@ -5165,7 +5072,7 @@ class AuditPreviewTests(unittest.TestCase):
     def test_feishu_selection_search_and_cancel_keep_the_same_check_list(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html")
             trigger = page.get_by_role("button", name="从飞书选择", exact=True)
@@ -5183,7 +5090,6 @@ class AuditPreviewTests(unittest.TestCase):
             picker.get_by_role("button", name="取消", exact=True).click()
             expect(page.get_by_text("PFMEA.xlsx", exact=True)).to_be_visible()
             expect(page.get_by_text("控制计划.xlsx", exact=True)).to_be_visible()
-            self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 390)
             browser.close()
 
     def test_removing_exceptions_keeps_pending_files_and_rereads_only_that_file(self):
@@ -5278,17 +5184,16 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("heading", name="已移除文件", exact=True)).to_be_visible()
             browser.close()
 
-    def test_local_bytes_are_not_claimed_as_validated_and_narrow_layout_is_usable(self):
+    def test_local_bytes_are_not_claimed_as_validated(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html")
             pick_audit_files(page, {"name": "not-a-real-document.pdf", "mimeType": "application/pdf", "buffer": b"broken"})
             expect(page.get_by_text("文件待检查。", exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_disabled()
             self.assertEqual(page.locator("h1").count(), 1)
-            self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 390)
             page.get_by_role("button", name="打开审核任务", exact=True).click()
             expect(page.get_by_role("dialog", name="审核任务", exact=True)).to_be_visible()
             page.keyboard.press("Escape")
@@ -5315,14 +5220,14 @@ class AuditPreviewTests(unittest.TestCase):
             browser = playwright.chromium.launch()
             page = browser.new_page()
             page.set_default_timeout(5000)
-            page.goto(PREVIEW + "/__preview?page=audit&width=820&theme=light")
+            page.goto(PREVIEW + "/__preview?page=audit&width=1280&theme=light")
             product = page.frame_locator("#product")
             product.get_by_role("button", name="使用三类文件示例").click()
             product.get_by_role("button", name="开始识别", exact=True).click()
             page.get_by_role("button", name="切换明暗主题", exact=True).click()
             expect(product.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
             expect(product.locator("html")).to_have_class("dark")
-            for width in (390, 820, 1440):
+            for width in (1440, 1280):
                 page.get_by_label("自定义宽度（像素）").fill(str(width))
                 page.get_by_label("自定义宽度（像素）").press("Tab")
                 page.wait_for_function("target => Math.abs(document.querySelector('#product').contentDocument.documentElement.clientWidth - target) <= 2", arg=width)

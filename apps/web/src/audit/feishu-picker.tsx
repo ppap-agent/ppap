@@ -1,6 +1,5 @@
 import {ReadSkeleton} from '../components/read-skeleton'
 // Stitch: projects/13261964020862199279/screens/639a2a5ebe7841d1adfc76ae28577f93
-// Mobile: projects/13261964020862199279/screens/719e87ef8fb9452e9955b8c2762fd62d
 import {useEffect, useId, useRef, useState} from 'react'
 import {ChevronRight, Folder, Search, X} from 'lucide-react'
 import type {components} from '../generated/openapi'
@@ -128,7 +127,7 @@ export function FeishuPicker({source, onAdd, onClose, trigger}: {source: DrivePi
             <CollapsibleTrigger asChild><Item size="xs" asChild className="min-h-11"><Button variant="ghost" className="h-auto w-full justify-start whitespace-normal text-left" aria-label={`${open ? '收起' : '展开'}文件夹 ${file.name}`}>
               <ChevronRight className={`size-4 shrink-0 text-muted-foreground ${open ? 'rotate-90' : ''}`}/><ItemContent className="min-w-0"><span className="flex min-w-0 items-start gap-2"><Folder className="mt-0.5 size-4 shrink-0 text-muted-foreground"/><span className="min-w-0 [overflow-wrap:anywhere]">{file.name}</span></span></ItemContent>
             </Button></Item></CollapsibleTrigger>
-            <CollapsibleContent><div className="ml-3 border-l pl-1 sm:ml-4 sm:pl-2">{listing([...path, {token: file.token, name: file.name}])}</div></CollapsibleContent>
+            <CollapsibleContent><div className="ml-4 border-l pl-2">{listing([...path, {token: file.token, name: file.name}])}</div></CollapsibleContent>
           </Collapsible>
         }
         const checkboxId = `${id}-${ancestors.map(encodeURIComponent).join('/')}-${encodeURIComponent(file.token)}`
@@ -143,19 +142,19 @@ export function FeishuPicker({source, onAdd, onClose, trigger}: {source: DrivePi
       {(state.error || state.nextPage) && <div className="px-2 py-2"><Button variant="outline" size="sm" className="min-h-11" disabled={state.loading} onClick={() => void load(token, state.nextPage || undefined)}>{state.error ? '重新读取文件' : '加载更多'}</Button></div>}
     </>
   }
-  return <Dialog open onOpenChange={open => {if (!open) onClose()}}><DialogContent layout="file-picker" showCloseButton={false} className="h-dvh max-h-dvh w-full max-w-none grid-rows-[auto_auto_minmax(0,1fr)_auto] overflow-hidden sm:h-[min(46rem,calc(100dvh-2rem))] sm:w-[calc(100%-2rem)] sm:max-w-5xl" onCloseAutoFocus={event => {event.preventDefault(); (trigger?.isConnected ? trigger : document.getElementById('audit-main'))?.focus()}}>
+  return <Dialog open onOpenChange={open => {if (!open) onClose()}}><DialogContent layout="file-picker" showCloseButton={false} className="h-[min(46rem,calc(100dvh-2rem))] max-h-dvh w-[calc(100%-2rem)] max-w-none grid-rows-[auto_auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-5xl" onCloseAutoFocus={event => {event.preventDefault(); (trigger?.isConnected ? trigger : document.getElementById('audit-main'))?.focus()}}>
     <div className="px-4 py-3"><DialogHeader><div className="flex items-center justify-between gap-3"><div><DialogTitle>从飞书选择文件</DialogTitle><DialogDescription className="sr-only">选择要添加的 Excel、Word 或 PDF 文件。</DialogDescription></div><DialogClose asChild><Button variant="ghost" size="icon" className="size-11 shrink-0" aria-label="关闭"><X/></Button></DialogClose></div></DialogHeader></div>
     <div className="px-4 pb-4"><Label htmlFor={`${id}-search`} className="sr-only">搜索飞书文件名</Label><div className="flex items-center gap-2"><Search aria-hidden="true" className="size-4 shrink-0 text-muted-foreground"/><Input id={`${id}-search`} className="h-11" placeholder="搜索文件名" value={query} onChange={event => {setQuery(event.target.value); setFilterExpansion(new Map())}}/></div></div>
-    <div className={`grid min-h-0 border-y md:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] md:grid-rows-1 ${picked.length ? 'grid-rows-[minmax(0,1.1fr)_minmax(0,1fr)]' : 'grid-rows-[minmax(0,1fr)_auto]'}`}>
-      <section aria-label="云盘文件" className="flex min-h-0 min-w-0 flex-col px-2 sm:px-4">
+    <div className="grid min-h-0 grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] grid-rows-1 border-y">
+      <section aria-label="云盘文件" className="flex min-h-0 min-w-0 flex-col px-4">
         <div className="flex min-h-12 items-center px-2"><h2 className="text-sm font-medium">我的云盘</h2></div>
         <ScrollArea type="auto" className="min-h-0 flex-1"><div className="pb-2">{listing(root)}</div></ScrollArea>
       </section>
-      <section aria-label="已选文件" className="flex min-h-0 min-w-0 flex-col border-t px-2 md:border-t-0 md:border-l sm:px-4">
+      <section aria-label="已选文件" className="flex min-h-0 min-w-0 flex-col border-l px-4">
         <div className="flex min-h-12 items-center justify-between gap-2 px-2"><h2 className="text-sm font-medium">已选文件 <span aria-live="polite" className="text-muted-foreground">{picked.length}</span></h2>{picked.length > 0 && <Button variant="ghost" size="sm" className="min-h-11" onClick={() => setSelected([])}>清空选择</Button>}</div>
         {picked.length ? <ScrollArea type="auto" className="min-h-0 flex-1"><div className="pb-2"><ItemGroup>{picked.map(({file, folder}) => <Item role="listitem" key={file.token} size="xs" className="items-start"><ItemContent className="min-w-0"><FileName name={file.name} format={nativeSources.get(file.type)?.format}/><ItemDescription wrap>{folder}</ItemDescription></ItemContent><ItemActions><Button variant="ghost" size="icon" className="size-11 shrink-0" aria-label={`取消选择 ${file.name}`} onClick={() => unselect(file.token)}><X/></Button></ItemActions></Item>)}</ItemGroup></div></ScrollArea> : <p className="px-2 pb-4 text-sm text-muted-foreground">尚未选择文件</p>}
       </section>
     </div>
-    <DialogFooter className="m-0 flex-row items-center justify-between sm:justify-between"><span/><div className="flex gap-2"><Button variant="outline" className="min-h-11" onClick={onClose}>取消</Button><Button className="min-h-11" disabled={!picked.length} onClick={() => onAdd(picked.map(row => row.file))}>添加 {picked.length} 份文件</Button></div></DialogFooter>
+    <DialogFooter className="m-0 flex-row items-center justify-between"><span/><div className="flex gap-2"><Button variant="outline" className="min-h-11" onClick={onClose}>取消</Button><Button className="min-h-11" disabled={!picked.length} onClick={() => onAdd(picked.map(row => row.file))}>添加 {picked.length} 份文件</Button></div></DialogFooter>
   </DialogContent></Dialog>
 }

@@ -13,7 +13,7 @@ pytestmark = pytest.mark.skipif(sync_playwright is None, reason="requires e2e de
 WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
 
 
-@pytest.mark.parametrize("width", [1440, 768, 390])
+@pytest.mark.parametrize("width", [1440])
 @pytest.mark.parametrize("recover_with_cloud", [False, True])
 def test_choose_folder_cancel_and_resume_keep_original_upload_request(width, recover_with_cloud):
     with sync_playwright() as playwright:

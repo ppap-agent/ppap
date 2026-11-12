@@ -214,7 +214,7 @@ class PreparationHTTP:
         return {"id": key, "source_file_id": version["file_id"], "source_file_version_id": version["id"], "status": "completed", "result": {"state": "valid", "reasons": []}}
 
 
-@pytest.mark.parametrize("width", [1440, 390])
+@pytest.mark.parametrize("width", [1440])
 @pytest.mark.parametrize("lose_prepare_reply", [False, True])
 def test_unknown_upload_and_other_success_survive_a_fresh_page(width, lose_prepare_reply):
     with sync_playwright() as playwright:
@@ -472,7 +472,7 @@ def test_prepared_ordinary_task_resolves_an_explicit_candidate_in_the_same_task(
 def test_customer_mode_keeps_task_selection_separate_from_confirmed_default():
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
-        page = browser.new_page(viewport={"width": 390, "height": 844})
+        page = browser.new_page(viewport={"width": 1440, "height": 954})
         server = PreparationHTTP()
         server.customer_default = {"customer_preference": "UAES", "revision": 2}
         server.install(page)
@@ -605,7 +605,7 @@ class PhotoHTTP(PreparationHTTP):
         return value
 
 
-@pytest.mark.parametrize("width", [1440, 390])
+@pytest.mark.parametrize("width", [1440])
 def test_photo_purpose_is_explicit_and_lost_reply_reads_same_scope(width):
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()

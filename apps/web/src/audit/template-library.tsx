@@ -88,14 +88,14 @@ export function TemplateLibraryPage({adapter, headerActions, onRules}: {adapter:
       setActionError('保存结果尚未确认。请先在飞书目录中查看；再次保存时会先核对同名文件，不会重复保存。'); setPicking(false)
     } finally {setSaving(false)}
   }
-  const title = headerActions ? <h1 className="sr-only">文件模板</h1> : <header><h1 className="text-2xl font-semibold">文件模板</h1></header>
-  if (loading && !library) return <section aria-label="文件模板" className="space-y-4">{title}<ReadSkeleton label="正在读取模板库…" kind="table"/></section>
-  if (error && !library) return <section aria-label="文件模板" className="space-y-4">{title}<Alert variant="destructive"><AlertTitle>模板库未能读取</AlertTitle><AlertDescription><p>{error}</p><Button variant="outline" size="sm" onClick={() => setReload(value => value + 1)}>重新读取模板库</Button></AlertDescription></Alert></section>
+  const title = headerActions ? <h1 className="sr-only">模板库</h1> : <header><h1 className="text-2xl font-semibold">模板库</h1></header>
+  if (loading && !library) return <section aria-label="模板库" className="space-y-4">{title}<ReadSkeleton label="正在读取模板库…" kind="table"/></section>
+  if (error && !library) return <section aria-label="模板库" className="space-y-4">{title}<Alert variant="destructive"><AlertTitle>模板库未能读取</AlertTitle><AlertDescription><p>{error}</p><Button variant="outline" size="sm" onClick={() => setReload(value => value + 1)}>重新读取模板库</Button></AlertDescription></Alert></section>
   const shownSave = saved && customer && saved.customer === customer.id ? saved : null
   const unsettled = shownSave?.results.filter(row => row.state !== 'saved') ?? [], open = unsettled.filter(row => row.state === 'failed' || row.state === 'unknown').length
-  return <section aria-label="文件模板" className="space-y-4">
+  return <section aria-label="模板库" className="space-y-4">
     {title}
-    <div className="grid gap-4 md:grid-cols-[minmax(0,16rem)_minmax(0,1fr)]">
+    <div className="grid grid-cols-[minmax(0,16rem)_minmax(0,1fr)] gap-4">
       <nav aria-label="客户" className="flex min-w-0 flex-col gap-2">
         {customers.map((row, index) => <button key={row.id} type="button" aria-pressed={row.id === customer?.id} onClick={() => {setSelected(row.id); setActionError('')}} className="flex min-h-11 min-w-0 items-center gap-3 rounded-lg border bg-card p-3 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 aria-pressed:border-primary aria-pressed:bg-primary/5">
           <Avatar name={row.name} index={index}/>
@@ -117,10 +117,10 @@ export function TemplateLibraryPage({adapter, headerActions, onRules}: {adapter:
         {shownSave && <Alert variant={open ? 'destructive' : 'default'}><AlertTitle>{open ? `已保存 ${shownSave.results.filter(row => row.state === 'saved').length} 份，${open} 份未完成` : '模板已在所选飞书目录中'}</AlertTitle><AlertDescription><p>保存位置：{shownSave.folder}</p>{unsettled.length > 0 && <ul className="space-y-1">{unsettled.map(row => <li key={row.template_id}>{row.filename}：{saveStates[row.state]}{row.state !== 'exists' && row.reason ? `。${row.reason}` : ''}</li>)}</ul>}</AlertDescription></Alert>}
         <div className="overflow-hidden rounded-xl border bg-card">
           {customer.templates.length ? <Table>
-            <TableHeader variant="muted"><TableRow><TableHead>模板名称</TableHead><TableHead className="max-sm:hidden">文件类型</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader>
+            <TableHeader variant="muted"><TableRow><TableHead>模板名称</TableHead><TableHead>文件类型</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader>
             <TableBody>{customer.templates.map(template => <TableRow key={template.id}>
-              <TableCell className="whitespace-normal"><FileName name={template.filename} colored/><span className="mt-1 block text-xs text-muted-foreground sm:hidden">{template.document_type}</span></TableCell>
-              <TableCell className="max-sm:hidden"><span className="text-muted-foreground">{template.document_type}</span></TableCell>
+              <TableCell className="whitespace-normal"><FileName name={template.filename} colored/></TableCell>
+              <TableCell><span className="text-muted-foreground">{template.document_type}</span></TableCell>
               <TableCell className="text-right"><Button variant="ghost" size="sm" aria-label={`下载 ${template.filename}`} disabled={Boolean(busy)} onClick={() => void run(template.id, async () => saveBlob(await adapter.download(customer.id, template.id), template.filename), `${template.filename} 暂时无法下载，请重试。`)}><Download aria-hidden="true"/>{busy === template.id ? '下载中…' : '下载'}</Button></TableCell>
             </TableRow>)}</TableBody>
           </Table> : <p className="p-6 text-sm text-muted-foreground">该客户暂未提供模板。</p>}

@@ -38,7 +38,7 @@ export function AutomationBadge({automation}: {automation: Automation}) {
 export function RulesTrail({items}: {items: {label: string; href?: string}[]}) {
   return <nav aria-label="位置" className="flex min-w-0 flex-wrap items-center gap-1.5 text-sm text-muted-foreground">{items.map((item, index) => <Fragment key={`${index}:${item.label}`}>
     {index > 0 && <ChevronRight aria-hidden="true" className="size-3.5 shrink-0"/>}
-    {item.href ? <a className="min-h-9 content-center underline-offset-4 hover:text-foreground hover:underline max-md:min-h-11" href={item.href} onClick={event => followRulesLink(event, item.href!)}>{item.label}</a> : <span aria-current="page" className="break-words text-foreground">{item.label}</span>}
+    {item.href ? <a className="min-h-9 content-center underline-offset-4 hover:text-foreground hover:underline" href={item.href} onClick={event => followRulesLink(event, item.href!)}>{item.label}</a> : <span aria-current="page" className="break-words text-foreground">{item.label}</span>}
   </Fragment>)}</nav>
 }
 
@@ -59,8 +59,8 @@ export function TemplateBrowser({templates, selectedKey, loading, failed, catalo
   // Before the read finishes only this browser's drafts are known; a partial list would look complete.
   if (loading) return <ReadSkeleton label="正在读取规则模板…" kind="list" rows={5}/>
   const template = selectedKey ? templates.find(item => item.key === selectedKey) : shown[0] ?? templates[0]
-  return <div className="grid gap-4 lg:grid-cols-[17rem_minmax(0,1fr)]">
-    <aside aria-label="规则模板列表" className="min-w-0 space-y-4 self-start lg:rounded-lg lg:border lg:bg-card lg:p-3">
+  return <div className="grid grid-cols-[17rem_minmax(0,1fr)] gap-4">
+    <aside aria-label="规则模板列表" className="min-w-0 space-y-4 self-start rounded-lg border bg-card p-3">
       <div role="search" className="relative"><span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground"><Search aria-hidden="true" className="size-3.5"/></span><Input aria-label="搜索规则模板" type="search" iconStart placeholder="搜索模板或文件类型" maxLength={200} value={query} onChange={event => setQuery(event.target.value)}/></div>
       {(['system', 'enterprise'] as const).map(source => {
         const group = shown.filter(item => item.source === source)
@@ -68,7 +68,7 @@ export function TemplateBrowser({templates, selectedKey, loading, failed, catalo
         return <section key={source} aria-label={source === 'system' ? '系统提供' : '本企业'} className="space-y-2">
           <h2 className="px-1 text-xs font-medium text-muted-foreground">{source === 'system' ? '系统提供' : '本企业'}</h2>
           {/* Below lg the cards stack above the chosen template, two to a row where they fit. */}
-          <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">{group.map(item => {
+          <ul className="grid gap-2">{group.map(item => {
             const pending = pendingRows(item).length, href = rulesAddress({template: item.key}), current = item.key === template?.key
             return <li key={item.key}><a aria-current={current ? 'page' : undefined} className={cn('flex min-h-16 items-start gap-3 rounded-lg border bg-card px-3 py-3 transition-colors hover:border-primary/40 focus-visible:outline-ring', current && 'border-primary bg-primary/5')} href={href} onClick={event => followRulesLink(event, href)}>
               <TemplateAvatar name={item.name}/>
@@ -90,7 +90,7 @@ function rowHref(row: TemplateRow) {
 
 function TemplateDetail({template, catalogKnown}: {template: RuleTemplate; catalogKnown: boolean}) {
   const pending = pendingRows(template)
-  return <section aria-label={`${template.name} 的规则`} className="space-y-5 rounded-lg border bg-card p-4 sm:p-5">
+  return <section aria-label={`${template.name} 的规则`} className="space-y-5 rounded-lg border bg-card p-5">
     <header className="flex items-center gap-3">
       <TemplateAvatar name={template.name} className="size-11 text-base"/>
       <div className="min-w-0 space-y-0.5"><div className="flex flex-wrap items-center gap-2"><h2 className="break-words text-lg font-semibold">{template.name}</h2><Badge shape="square" variant="outline">{template.source === 'system' ? '系统提供' : '本企业'}</Badge></div><p className="text-sm text-muted-foreground">{summaryLine(template, catalogKnown)}</p></div>
@@ -134,7 +134,7 @@ export function SystemRuleDetail({ruleId, template, row, actions, program}: {rul
         <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground"><Badge shape="square" variant="outline">系统提供</Badge><span>{read.rule.body.rules?.length ?? 0} 条</span>{row && <AutomationBadge automation={row.automation}/>}</div>
       </header>
       {program}
-      <section aria-label="规则条款" className="divide-y border-t">{(read.rule.body.rules ?? []).map((clause, index) => <article key={clause.id} aria-label={`第 ${index + 1} 条`} className="grid grid-cols-[1.5rem_minmax(0,1fr)] gap-x-3 py-5 sm:gap-x-4">
+      <section aria-label="规则条款" className="divide-y border-t">{(read.rule.body.rules ?? []).map((clause, index) => <article key={clause.id} aria-label={`第 ${index + 1} 条`} className="grid grid-cols-[1.5rem_minmax(0,1fr)] gap-x-4 py-5">
         <span className="pt-0.5 text-xs tabular-nums text-muted-foreground" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
         <div className="min-w-0 space-y-1">{clause.category && <h2 className="break-words font-medium">{clause.category}</h2>}<p className="whitespace-pre-wrap break-words leading-relaxed">{clause.rule_to_check}</p></div>
       </article>)}</section>

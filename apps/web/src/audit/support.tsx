@@ -47,7 +47,7 @@ export function AuditSupport({adapter, snapshot, pageReference, returnTargets, o
       <div><dt className="text-muted-foreground">飞书群</dt><dd className="flex flex-wrap items-center justify-between gap-2"><span>{supportGroup}（在飞书搜索群名加入）</span><Button variant="outline" size="sm" onClick={() => void copy(supportGroup)}>复制群名</Button></dd></div>
       <div><dt className="text-muted-foreground">服务时间</dt><dd>{info?.service_hours?.trim() || '工作日 9:00–18:00'}</dd></div>
       <div><dt className="text-muted-foreground">响应时效</dt><dd>工作日 4 小时内响应</dd></div>
-    </dl><p className="text-sm text-muted-foreground">如需补充客户模板，请在文件模板页点击「更多模板，请补充」提交材料。</p></div>
+    </dl><p className="text-sm text-muted-foreground">如需补充客户模板，请在模板库点击「更多模板，请补充」提交材料。</p></div>
     {loading ? <ReadSkeleton label="正在读取服务信息…" kind={'detail'}/> : !available ? <div className="space-y-3"><p>服务信息暂不可用</p><Button variant="outline" onClick={() => setRetry(value => value + 1)}>重新读取服务信息</Button></div> : <dl className="space-y-4 text-sm">
       {info?.phone && <div><dt className="text-muted-foreground">电话</dt><dd className="flex flex-wrap items-center justify-between gap-2"><span className="break-all">{info.phone}</span><Button variant="outline" size="sm" onClick={() => void copy(info.phone!)}>复制电话</Button></dd></div>}
       {info?.email && <div><dt className="text-muted-foreground">邮箱</dt><dd className="flex flex-wrap items-center justify-between gap-2"><span className="break-all">{/^[^\s@?\r\n]+@[^\s@?\r\n]+\.[^\s@?\r\n]+$/.test(info.email) ? <a className="underline" href={`mailto:${encodeURIComponent(info.email)}`}>{info.email}</a> : info.email}</span><Button variant="outline" size="sm" onClick={() => void copy(info.email!)}>复制邮箱</Button></dd></div>}

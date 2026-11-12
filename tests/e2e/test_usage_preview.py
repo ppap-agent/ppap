@@ -12,12 +12,8 @@ if PREVIEW:
 
 def expect_history(surface, sequence):
     expect(surface.get_by_role("region", name="文档历史审核", exact=True)).to_be_visible()
-    # Wide screens list the rounds in a rail; narrower ones name the current round on the sheet trigger.
     rail = surface.get_by_role("complementary", name="历史版本", exact=True)
-    if rail.is_visible():
-        expect(rail.get_by_role("button", name=f"选择第 {sequence} 次审核", exact=True)).to_have_attribute("aria-pressed", "true")
-    else:
-        expect(surface.get_by_role("button", name="历史审核记录", exact=True)).to_contain_text(f"第 {sequence} 次审核")
+    expect(rail.get_by_role("button", name=f"选择第 {sequence} 次审核", exact=True)).to_have_attribute("aria-pressed", "true")
     expect(surface.get_by_role("region", name="审核详情", exact=True)).to_be_visible()
 
 
@@ -52,8 +48,7 @@ class UsagePreviewTests(unittest.TestCase):
     def test_cross_month_debit_keeps_one_original_acceptance_and_a_separate_debit_time(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            # Phones get cards instead of the table; 768 is the narrowest width that keeps the table.
-            for width in (1440, 768):
+            for width in (1440,):
                 page = browser.new_page(viewport={"width": width, "height": 900})
                 page.goto(PREVIEW + "/preview/audit.html?scene=usage-cross-month&view=usage&usageRange=all")
                 table = page.get_by_role("table", name="逐文件用量记录", exact=True)
@@ -71,27 +66,6 @@ class UsagePreviewTests(unittest.TestCase):
                     expect(page.get_by_role("group", name=label, exact=True)).to_contain_text("0")
                 self.assertTrue(page.evaluate("document.documentElement.scrollWidth <= innerWidth"))
                 page.close()
-            browser.close()
-
-    def test_returning_to_usage_unmounts_the_inactive_archive_history_sheet(self):
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch()
-            page = browser.new_page()
-            page.goto(PREVIEW + "/__preview?page=audit&scene=usage-ready&view=usage&width=390")
-            preview = page.frame_locator("iframe")
-            preview.get_by_role("button", name="打开产品导航", exact=True).click()
-            preview.get_by_role("navigation", name="产品导航").get_by_role("button", name="审核文件", exact=True).click()
-            preview.get_by_role("row", name=re.compile("档案 A001")).get_by_role("button", name="查看审核记录", exact=True).click()
-            expect_history(preview, 3)
-            preview.get_by_role("button", name="历史审核记录", exact=True).click()
-            expect(preview.get_by_role("dialog", name="历史审核记录", exact=True)).to_be_visible()
-            page.frames[1].evaluate("history.go(-2)")
-            expect(preview.get_by_role("dialog", name="历史审核记录", exact=True)).to_have_count(0)
-            expect(preview.get_by_role("list", name="逐文件用量记录卡片", exact=True)).to_be_visible()
-            page.get_by_role("button", name="切换明暗主题", exact=True).click()
-            page.reload()
-            expect(preview.get_by_role("list", name="逐文件用量记录卡片", exact=True)).to_be_visible()
-            self.assertIn("view=usage", page.url)
             browser.close()
 
     def test_service_notices_keep_the_three_confirmed_texts_and_open_shared_support(self):
@@ -129,7 +103,7 @@ class UsagePreviewTests(unittest.TestCase):
                 expect(page.get_by_role("group", name="用量时间范围", exact=True).get_by_role("button", name="全部记录", exact=True)).to_have_attribute("aria-pressed", "true")
                 expect(page.get_by_text("共 12 笔 · 第 2/2 页", exact=True)).to_be_visible()
                 expect(page.get_by_role("row", name="消费记录 示例消费-11", exact=True)).to_be_visible()
-                page.get_by_role("navigation", name="产品导航").get_by_role("button", name="工作台", exact=True).click()
+                page.get_by_role("navigation", name="产品导航").get_by_role("button", name="PPAP Audit", exact=True).click()
                 page.get_by_role("button", name="新建审核", exact=True).click()
                 page.get_by_role("button", name="联系我们", exact=True).click()
                 expect(dialog.get_by_text("当前场景：上传与文件核对", exact=True)).to_be_visible()
@@ -177,10 +151,10 @@ class UsagePreviewTests(unittest.TestCase):
             expect(page.get_by_role("region", name="文档历史审核", exact=True)).to_have_count(0)
             browser.close()
 
-    def test_range_paging_empty_and_mobile_layout_keep_monthly_scope(self):
+    def test_range_paging_and_empty_filter_keep_monthly_scope(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page = browser.new_page(viewport={"width": 1280, "height": 844})
             page.goto(PREVIEW + "/preview/audit.html?scene=usage-ready&view=usage")
             for label in ("最近 7 天", "最近 90 天", "全部记录"):
                 page.get_by_role("group", name="用量时间范围", exact=True).get_by_role("button", name=label, exact=True).click()
@@ -189,7 +163,7 @@ class UsagePreviewTests(unittest.TestCase):
             expect(page.get_by_text("共 12 笔 · 第 2/2 页", exact=True)).to_be_visible()
             self.assertTrue(page.evaluate("document.documentElement.scrollWidth <= innerWidth"))
             page.get_by_role("textbox", name="搜索文件名或发起人", exact=True).fill("没有这个文件")
-            # On a phone the search button is hidden; Enter submits the same filter.
+            # Enter submits the same filter as the search button.
             page.get_by_role("textbox", name="搜索文件名或发起人", exact=True).press("Enter")
             expect(page.get_by_text("当前筛选下没有消费记录。", exact=True)).to_be_visible()
             expect(page.get_by_role("group", name="本月消费次数", exact=True)).to_contain_text("12")
@@ -216,38 +190,13 @@ class UsagePreviewTests(unittest.TestCase):
             self.assertNotIn("auditRef=", page.url)
             browser.close()
 
-    def test_cross_entry_browser_back_unmounts_mobile_history_portals(self):
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch()
-            page = browser.new_page()
-            page.goto(PREVIEW + "/__preview?page=audit&scene=usage-ready&view=archive&width=390")
-            preview = page.frame_locator("iframe")
-            preview.get_by_role("button", name="打开产品导航", exact=True).click()
-            preview.get_by_role("navigation", name="产品导航").get_by_role("button", name="用量记录", exact=True).click()
-            cards = preview.get_by_role("list", name="逐文件用量记录卡片", exact=True)
-            entry = cards.get_by_role("listitem").filter(has=preview.get_by_text("控制计划.xlsx", exact=True)).filter(has_text="示例李工")
-            expect(entry).to_have_count(1)
-            expect(entry).to_contain_text("500 点")
-            entry.get_by_role("button", name="打开该次审核", exact=True).click()
-            expect_history(preview, 2)
-            self.assertIn("archiveDoc=preview-archive-A001", page.frames[1].url)
-            preview.get_by_role("button", name="历史审核记录", exact=True).click()
-            expect(preview.get_by_role("dialog", name="历史审核记录", exact=True)).to_be_visible()
-            page.frames[1].evaluate("history.go(-2)")
-            expect(preview.get_by_role("dialog", name="历史审核记录", exact=True)).to_have_count(0)
-            expect(preview.get_by_role("table", name="审核文件列表", exact=True)).to_be_visible()
-            page.get_by_role("button", name="切换明暗主题", exact=True).click()
-            page.reload()
-            expect(preview.get_by_role("table", name="审核文件列表", exact=True)).to_be_visible()
-            browser.close()
-
     def test_returning_to_usage_rechecks_authority_instead_of_reusing_a_hidden_account(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page()
             page.goto(PREVIEW + "/preview/audit.html?scene=usage-revoked&view=usage")
             expect(page.get_by_role("row", name="消费记录 示例消费-1", exact=True)).to_be_visible()
-            page.get_by_role("navigation", name="产品导航").get_by_role("button", name="工作台", exact=True).click()
+            page.get_by_role("navigation", name="产品导航").get_by_role("button", name="PPAP Audit", exact=True).click()
             page.get_by_role("navigation", name="产品导航").get_by_role("button", name="用量记录", exact=True).click()
             expect(page.get_by_role("alert")).to_contain_text("当前账号无权读取企业用量。")
             expect(page.get_by_role("table", name="逐文件用量记录", exact=True)).to_have_count(0)

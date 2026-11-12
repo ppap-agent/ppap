@@ -6,4 +6,4 @@ import {fixtureTemplates} from './audit-templates'
 
 // Explicit UI fixture; `?scene=templates-error` or `?scene=templates-no-feishu`.
 const adapter = fixtureTemplates(new URLSearchParams(location.search).get('scene') || '')
-createRoot(document.getElementById('root')!).render(<main id="audit-main" tabIndex={-1} className="mx-auto max-w-6xl p-4 md:p-8"><TemplateLibraryPage adapter={adapter}/><Toaster/></main>)
+createRoot(document.getElementById('root')!).render(<main id="audit-main" tabIndex={-1} className="mx-auto max-w-6xl p-8"><TemplateLibraryPage adapter={adapter}/><Toaster/></main>)

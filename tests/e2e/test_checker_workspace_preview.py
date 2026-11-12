@@ -346,12 +346,12 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
             self.assertTrue(any(row[:2] == ("GET", "/checker-optimizations/" + operation_id) for row in fixture.calls))
             browser.close()
 
-    def test_mobile_manual_evidence_lost_feedback_edit_and_delete(self):
+    def test_manual_evidence_lost_feedback_edit_and_delete(self):
         with sync_playwright() as playwright:
             browser = self.browser(playwright)
             fixture = CheckerHttpFixture()
             fixture.lose_feedback = True
-            page = self.open(browser, fixture, 390)
+            page = self.open(browser, fixture)
             self.answer(page)
             expect(page.get_by_text("样本保存结果尚未确定，请查看原操作，不要重复提交。", exact=True)).to_be_visible()
             page.reload()
@@ -375,5 +375,4 @@ class CheckerWorkspacePreviewTests(unittest.TestCase):
             expect(page.get_by_text("样本已删除，相关验证需要重新执行。已有报告不变。", exact=True)).to_be_visible()
             self.assertEqual(fixture.feedback, [])
             self.assertFalse(any("optimizations" in row[1] and row[0] == "POST" for row in fixture.calls))
-            self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 390)
             browser.close()

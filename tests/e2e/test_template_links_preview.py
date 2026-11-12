@@ -16,18 +16,16 @@ class TemplateLinksPreviewTests(unittest.TestCase):
     def test_template_and_contact_open_separately_without_losing_the_upload_draft(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            for width in (1440, 390):
+            for width in (1440,):
                 with self.subTest(width=width):
                     page = browser.new_page(viewport={"width": width, "height": 900})
                     page.context.route(GUIDE + "**", lambda route: route.fulfill(body="<h1>模板使用说明</h1>", content_type="text/html; charset=utf-8"))
                     page.goto(PREVIEW + "/preview/audit.html")
                     page.get_by_role("button", name="使用三类文件示例", exact=True).click()
                     page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True).uncheck()
-                    if width < 1024:
-                        page.get_by_role("button", name="打开产品导航", exact=True).click()
                     nav = page.get_by_role("navigation", name="产品导航", exact=True).filter(visible=True)
                     # The template library is a page of the product; the upload draft stays behind it.
-                    nav.get_by_role("button", name="文件模板", exact=True).click()
+                    nav.get_by_role("button", name="模板库", exact=True).click()
                     expect(page.get_by_role("navigation", name="客户", exact=True)).to_be_visible()
                     page.close()
             browser.close()

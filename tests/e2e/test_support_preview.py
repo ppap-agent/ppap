@@ -17,19 +17,16 @@ class SupportPreviewTests(unittest.TestCase):
     def test_late_support_read_after_back_cannot_fill_a_reopened_dialog(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 1280, "height": 900})
-            page.goto(PREVIEW + "/__preview?page=audit&scene=support-loading&width=390")
+            page = browser.new_page(viewport={"width": 1440, "height": 900})
+            page.goto(PREVIEW + "/__preview?page=audit&scene=support-loading&width=1280")
             preview = page.frame_locator("iframe")
             pick_audit_files(preview, {"name": "本次未提交.xlsx", "mimeType": "application/octet-stream", "buffer": b"sample"})
-            preview.get_by_role("button", name="打开产品导航", exact=True).click()
             preview.get_by_role("button", name="用量记录", exact=True).click()
-            preview.get_by_role("button", name="打开产品导航", exact=True).click()
             preview.get_by_role("button", name="联系我们", exact=True).click()
             dialog = preview.get_by_role("dialog", name="联系我们", exact=True)
             expect(dialog.get_by_role("status")).to_contain_text("正在读取服务信息")
             page.go_back()
             expect(dialog).to_have_count(0)
-            preview.get_by_role("button", name="打开产品导航", exact=True).click()
             preview.get_by_role("button", name="联系我们", exact=True).click()
             expect(dialog.get_by_role("status")).to_contain_text("正在读取服务信息")
             page.get_by_role("button", name="返回一次示例读取", exact=True).click()
@@ -72,10 +69,9 @@ class SupportPreviewTests(unittest.TestCase):
     def test_configured_support_can_copy_contacts_and_enlarge_the_sample_image(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            context = browser.new_context(viewport={"width": 390, "height": 844}, permissions=["clipboard-read", "clipboard-write"])
+            context = browser.new_context(viewport={"width": 1280, "height": 900}, permissions=["clipboard-read", "clipboard-write"])
             page = context.new_page()
             page.goto(PREVIEW + "/preview/audit.html?scene=support-ready")
-            page.get_by_role("button", name="打开产品导航", exact=True).click()
             page.get_by_role("button", name="联系我们", exact=True).click()
             dialog = page.get_by_role("dialog", name="联系我们", exact=True)
             expect(dialog.get_by_text("示例电话（不可拨打）", exact=True)).to_be_visible()
@@ -132,19 +128,17 @@ class SupportPreviewTests(unittest.TestCase):
             expect(dialog.get_by_role("button", name="重新读取服务信息", exact=True)).to_be_enabled()
             browser.close()
 
-    def test_global_support_is_available_on_mobile_and_preserves_current_upload(self):
+    def test_global_support_preserves_current_upload_and_returns_focus(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page = browser.new_page(viewport={"width": 1280, "height": 900})
             page.goto(PREVIEW + "/preview/audit.html")
             pick_audit_files(page, {"name": "保留草稿.xlsx", "mimeType": "application/octet-stream", "buffer": b"sample"})
-            page.get_by_role("button", name="打开产品导航", exact=True).click()
             page.get_by_role("button", name="联系我们", exact=True).click()
             dialog = page.get_by_role("dialog", name="联系我们", exact=True)
             expect(dialog.get_by_text("服务信息暂不可用", exact=True)).to_be_visible()
             expect(dialog.get_by_role("textbox", name="页面参考编号", exact=True)).to_have_value(re.compile(r"^client-[a-zA-Z0-9-]+$"))
             dialog.get_by_role("button", name="关闭", exact=True).click()
             expect(page.get_by_text("保留草稿.xlsx", exact=True).first).to_be_visible()
-            expect(page.get_by_role("button", name="打开产品导航", exact=True)).to_be_focused()
-            self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 390)
+            expect(page.get_by_role("button", name="联系我们", exact=True)).to_be_focused()
             browser.close()

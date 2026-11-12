@@ -296,7 +296,7 @@ def test_a_legacy_round_without_a_task_keeps_its_result_without_inventing_a_repo
 def test_round_report_generation_status_reaches_the_existing_report_recovery_ui(state, label):
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
-        page = browser.new_page(viewport={"width": 390, "height": 844})
+        page = browser.new_page(viewport={"width": 1280, "height": 844})
         calls, _content = round_report_routes(page, report_state=state)
         page.goto(WEB + f"/audit?round={ROUND}&file={VERSION}")
         page.get_by_role("button", name="查看报告", exact=True).click()
@@ -309,7 +309,7 @@ def test_round_report_generation_status_reaches_the_existing_report_recovery_ui(
             expect(preview.get_by_role("button", name="重生成同一结果", exact=True)).to_be_disabled()
         assert not any(path.endswith("/pdf") for _method, path in calls)
         assert all(method == "GET" for method, _path in calls)
-        assert page.evaluate("document.documentElement.scrollWidth") <= 390
+        assert page.evaluate("document.documentElement.scrollWidth") <= 1280
         browser.close()
 
 
@@ -334,7 +334,4 @@ def test_all_pass_frozen_verification_remains_visible_in_result_focus_and_report
         expect(page.get_by_role("region", name="当前报告").get_by_role("note", name="本轮验证状态")).to_contain_text(verification["notice"])
         page.go_back()
         expect(page.get_by_role("region", name="审核详情").get_by_role("note", name="本轮验证状态")).to_contain_text(verification["notice"])
-        page.set_viewport_size({"width": 390, "height": 844})
-        expect(page.get_by_role("note", name="本轮验证状态")).to_be_visible()
-        assert page.evaluate("document.documentElement.scrollWidth") <= 390
         browser.close()

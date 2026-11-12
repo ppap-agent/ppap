@@ -24,15 +24,10 @@ WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
 def open_customer_requirements(page):
     from playwright.sync_api import expect
 
-    button = page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="审核规则", exact=True)
-    menu = page.get_by_role("button", name="打开产品导航", exact=True)
+    button = page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="审核规则库", exact=True)
     # The login shell also has a banner; wait for authorized product navigation.
-    button.or_(menu).wait_for(state="visible")
-    if button.is_visible():
-        button.click()
-    else:
-        menu.click()
-        page.get_by_role("dialog", name="产品导航", exact=True).get_by_role("button", name="审核规则", exact=True).click()
+    button.wait_for(state="visible")
+    button.click()
     expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
 
 
@@ -81,12 +76,12 @@ BODY = {
 
 @unittest.skipUnless(sync_playwright, "playwright not installed")
 class RuleInteractionTests(unittest.TestCase):
-    def test_rule_navigation_waits_for_authorized_shell_on_desktop_and_mobile(self):
+    def test_rule_navigation_waits_for_authorized_shell(self):
         from playwright.sync_api import expect
 
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            for width in (1440, 390):
+            for width in (1440,):
                 with self.subTest(width=width):
                     page = browser.new_page(viewport={"width": width, "height": 1000})
                     try:
@@ -102,10 +97,8 @@ class RuleInteractionTests(unittest.TestCase):
                             page.wait_for_timeout(10)
                         self.assertEqual(len(held), 1)
                         self.assertTrue(page.get_by_role("banner").is_visible())
-                        desktop = page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="审核规则", exact=True)
-                        mobile = page.get_by_role("button", name="打开产品导航", exact=True)
+                        desktop = page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="审核规则库", exact=True)
                         self.assertFalse(desktop.is_visible())
-                        self.assertFalse(mobile.is_visible())
 
                         def authorize():
                             # Keep the first readiness probe in the login shell. The next
@@ -113,7 +106,6 @@ class RuleInteractionTests(unittest.TestCase):
                             probes.append(True)
                             if len(probes) == 2:
                                 self.assertFalse(desktop.is_visible())
-                                self.assertFalse(mobile.is_visible())
                                 held.pop().fallback()
 
                         page.add_locator_handler(page.get_by_text("正在确认登录状态…", exact=True), authorize, no_wait_after=True, times=2)
@@ -430,7 +422,7 @@ class RuleInteractionTests(unittest.TestCase):
             page.goto(WEB + "/requirements?rulesArea=requirements")
             with page.expect_request(lambda request: request.method == "PUT" and request.url.endswith("/blob")):
                 page.get_by_label("上传共用规则文件").set_input_files({"name": "迟到规则.json", "mimeType": "application/json", "buffer": b"{}"})
-            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="工作台", exact=True).click()
+            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
             address = page.url
             held[0].fulfill(json={**state["source"], "status": "ready"})
             # The late reply lands as an unsorted draft in the hidden rules page, without leaving this page.
@@ -509,7 +501,7 @@ class RuleInteractionTests(unittest.TestCase):
                     state["hold_save_reply"] = True
                     with page.expect_request(lambda request: request.method == "POST" and request.url.endswith("/api/rules")):
                         page.get_by_role("button", name="保存版本", exact=True).click()
-                    page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="工作台", exact=True).click()
+                    page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
                     if destination == "list":
                         open_customer_requirements(page)
                     elif destination == "same-draft":
@@ -558,7 +550,7 @@ class RuleInteractionTests(unittest.TestCase):
             page.get_by_role("button", name="创建新版本", exact=True).click()
             page.get_by_label("版本号", exact=True).fill("v3")
             address = page.url
-            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="工作台", exact=True).click()
+            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
             page.go_back()
             expect(page.get_by_label("版本号", exact=True)).to_have_value("v3")
             self.assertEqual(page.url, address)
@@ -730,7 +722,7 @@ class RuleInteractionTests(unittest.TestCase):
             self.check_requirement(page)
             with page.expect_response("**/api/audit-customers"):
                 page.get_by_role("button", name="保存版本", exact=True).click()
-            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="工作台", exact=True).click()
+            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
             page.get_by_role("button", name="继续当前审核", exact=True).click()
             retry.click()
             expect(page.get_by_role("checkbox", name="选择 未知回执.xlsx", exact=True)).to_be_checked()
@@ -768,7 +760,7 @@ class RuleInteractionTests(unittest.TestCase):
             self.assertEqual(len(state["saves"]), 1)
             self.assertEqual(state["saves"][0]["body"]["customers"], ["测试客户"])
             self.assertEqual(state["saves"][0]["source_file_version_id"], state["source"]["id"])
-            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="工作台", exact=True).click()
+            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
             page.get_by_role("button", name="继续当前审核", exact=True).click()
             page.get_by_role("combobox", name="审核客户", exact=True).click()
             expect(page.get_by_role("option", name="测试客户", exact=True)).to_be_visible()
@@ -782,20 +774,19 @@ class RuleInteractionTests(unittest.TestCase):
             self.assertFalse(any(path.startswith(("/audit-tasks", "/drafts", "/rounds")) for method, path in state["writes"]))
             browser.close()
 
-    def test_native_rule_draft_survives_navigation_and_mobile_deep_link(self):
+    def test_native_rule_draft_survives_navigation_and_deep_link(self):
         from playwright.sync_api import expect
 
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
             state = self.requirement_routes(page)
             self.native_rule_routes(page, state)
             page.goto(WEB + "/requirements?rulesArea=requirements")
             expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
             page.get_by_label("上传共用规则文件").set_input_files({"name": "草稿规则.json", "mimeType": "application/json", "buffer": b"{}"})
             page.get_by_label("规则名称", exact=True).fill("未发布的规则草稿")
-            page.get_by_role("button", name="打开产品导航", exact=True).click()
-            page.get_by_role("dialog").get_by_role("button", name="工作台", exact=True).click()
+            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
             expect(page.get_by_role("heading", name="工作台", exact=True)).to_be_visible()
             open_customer_requirements(page)
             open_rule(page, "未发布的规则草稿")
@@ -804,7 +795,6 @@ class RuleInteractionTests(unittest.TestCase):
             expect(page.get_by_label("规则名称", exact=True)).to_have_value("未发布的规则草稿")
             self.assertEqual(state["parses"], [])
             self.assertEqual(state["saves"], [])
-            self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 390)
             browser.close()
 
     def native_rule_routes(self, page, state):
@@ -984,7 +974,7 @@ class RuleInteractionTests(unittest.TestCase):
             page.get_by_role("tab", name="版本记录", exact=True).click()
             back_to_templates(page)
             page.get_by_role("searchbox", name="搜索规则模板", exact=True).fill("待核对")
-            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="工作台", exact=True).click()
+            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
             page.get_by_role("button", name="继续当前审核", exact=True).click()
             expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
             expect(selected).not_to_be_checked()

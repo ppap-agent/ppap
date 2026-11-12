@@ -8,10 +8,8 @@ import {ArrowDown, ArrowRight, ArrowUp, ArrowUpDown, Columns3} from 'lucide-reac
 import {Badge} from '../components/ui/badge'
 import {Button} from '../components/ui/button'
 import {ReadSkeleton} from '../components/read-skeleton'
-import {Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle} from '../components/ui/card'
 import {DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger} from '../components/ui/dropdown-menu'
 import {Progress} from '../components/ui/progress'
-import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '../components/ui/select'
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../components/ui/table'
 import {FileCollection, type FileReference} from './file-collection'
 import {displayTime} from '../helpers'
@@ -104,35 +102,22 @@ export function WorkItemsTable({items, onOpen, label, loading, readFailed, hasMo
   ]), [])
   const table = useTable({features, data: items, columns, getRowId: item => item.id, initialState: {sorting: [{id: 'time', desc: true}]}, enableSortingRemoval: false, enableMultiSort: false})
   const rows = table.getRowModel().rows
-  const order = table.state.sorting[0]
   const initialLoading = loading && !items.length
   const empty = readFailed ? '此列表尚未能完整读取，请重新读取。' : hasMore ? '已加载记录中暂无此类审核。' : label === '全部' || label === '全部任务' ? '还没有审核任务。' : `没有${label}的任务。`
-  return <div className="@container space-y-4">
+  return <div className="space-y-4">
     <div className="flex flex-wrap items-center gap-2">
       {toolbar}
-      <div className="flex items-center gap-2 @min-[45rem]:ml-auto">
-        <Select value={`${order?.id || 'time'}.${order?.desc ? 'desc' : 'asc'}`} onValueChange={value => {const [id, direction] = value.split('.'); table.setSorting([{id, desc: direction === 'desc'}])}}>
-          <SelectTrigger aria-label="审核记录排序" className="@min-[45rem]:hidden"><SelectValue/></SelectTrigger>
-          <SelectContent><SelectItem value="time.desc">时间从新到旧</SelectItem><SelectItem value="time.asc">时间从旧到新</SelectItem><SelectItem value="title.asc">资料名称升序</SelectItem><SelectItem value="title.desc">资料名称降序</SelectItem><SelectItem value="review.asc">复核进度升序</SelectItem><SelectItem value="review.desc">复核进度降序</SelectItem></SelectContent>
-        </Select>
+      <div className="ml-auto flex items-center gap-2">
         <DropdownMenu><DropdownMenuTrigger asChild><Button variant="outline" size="icon" aria-label="选择显示列" title="选择显示列"><Columns3/></Button></DropdownMenuTrigger><DropdownMenuContent align="end">{table.getAllLeafColumns().filter(column => column.getCanHide()).map(column => <DropdownMenuCheckboxItem key={column.id} checked={column.getIsVisible()} onCheckedChange={value => column.toggleVisibility(Boolean(value))} onSelect={event => event.preventDefault()}>{columnLabels[column.id]}</DropdownMenuCheckboxItem>)}</DropdownMenuContent></DropdownMenu>
       </div>
     </div>
-    {/* Until the first rows arrive, a header over grey bars says nothing; the loading line below speaks instead. */}{rows.length > 0 && <div className="hidden overflow-hidden rounded-lg border bg-card @min-[45rem]:block">
+    {/* Until the first rows arrive, a header over grey bars says nothing; the loading line below speaks instead. */}{rows.length > 0 && <div className="overflow-hidden rounded-lg border bg-card">
       <Table className="table-fixed" aria-label={`${label}审核记录`}>
         <TableHeader variant="muted">{table.getHeaderGroups().map(group => <TableRow key={group.id}>{group.headers.map(header => <TableHead key={header.id} scope="col" aria-sort={header.column.getIsSorted() === 'asc' ? 'ascending' : header.column.getIsSorted() === 'desc' ? 'descending' : undefined} className={header.column.id === 'title' ? 'w-auto' : header.column.id === 'actions' ? 'w-28 text-right' : header.column.id === 'state' ? 'w-64' : header.column.id === 'time' ? 'w-32' : 'w-28'}>{header.isPlaceholder ? null : <table.FlexRender header={header}/>}</TableHead>)}</TableRow>)}</TableHeader>
         <TableBody>{rows.map(row => <TableRow key={row.id} className="cursor-pointer" onClick={openRow(row.original)}>{row.getVisibleCells().map(cell => <TableCell key={cell.id} className={`align-top whitespace-normal ${cell.column.id === 'actions' ? 'text-right' : ''}`}><table.FlexRender cell={cell}/></TableCell>)}</TableRow>)}</TableBody>
       </Table>
     </div>}
-    {!rows.length && <div className="hidden @min-[45rem]:block">{initialLoading ? <ReadSkeleton label="正在读取审核记录…" kind="list" rows={4}/> : <p role="status" className="py-10 text-center text-sm text-muted-foreground">{empty}</p>}</div>}
-    <div className="space-y-3 @min-[45rem]:hidden" role={rows.length ? 'list' : undefined} aria-label={rows.length ? `${label}审核记录卡片` : undefined}>
-      {rows.map(({original: item}) => <Card key={item.id} size="sm" role="listitem" className="cursor-pointer" onClick={openRow(item)}>
-        <CardHeader>{workTitle(item) && <CardTitle className="min-w-0 [overflow-wrap:anywhere]">{workTitle(item)}</CardTitle>}{item.files?.length ? <FileCollection files={item.files} context={item.title} limit={2}/> : null}{item.context && <CardDescription className="break-words">{item.context}</CardDescription>}</CardHeader>
-        {(table.getColumn('state')?.getIsVisible() || table.getColumn('review')?.getIsVisible()) && <CardContent><div className="flex flex-wrap items-center justify-between gap-4">{table.getColumn('state')?.getIsVisible() && <Results item={item}/>} {table.getColumn('review')?.getIsVisible() && item.review && <div className="space-y-1.5"><p className="text-xs text-muted-foreground">人工复核</p><ReviewCount item={item}/></div>}</div></CardContent>}
-        <CardFooter><div className="flex w-full flex-wrap items-center justify-between gap-2">{table.getColumn('time')?.getIsVisible() ? <ItemTime item={item}/> : <span/>}{action(item)}</div></CardFooter>
-      </Card>)}
-      {!rows.length && (initialLoading ? <ReadSkeleton label="正在读取审核记录…" kind="list" rows={4}/> : <p role="status" className="py-10 text-center text-sm text-muted-foreground">{empty}</p>)}
-    </div>
+    {!rows.length && <div>{initialLoading ? <ReadSkeleton label="正在读取审核记录…" kind="list" rows={4}/> : <p role="status" className="py-10 text-center text-sm text-muted-foreground">{empty}</p>}</div>}
     <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
       {!initialLoading && hasMore && <p role="status">显示 {rows.length} 项 · 已加载 {items.length} 项{hasMore && <span className="ml-2">排序与状态筛选仅作用于已加载记录</span>}</p>}
       {busy && !initialLoading && <ReadSkeleton label="正在读取审核记录…" kind="inline"/>}

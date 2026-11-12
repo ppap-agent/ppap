@@ -1,13 +1,13 @@
 # Web Client
 
 
-浏览器/PWA 与飞书 H5 使用同一个 PPAP 产品客户端。生产构建包含 `/manifest.webmanifest`、应用图标和根作用域 service worker；service worker 只缓存应用壳与静态资源，不缓存 API 响应、上传内容、审核结果或 Office 签名地址。离线时只允许查看已加载页面，上传、审核提交和复核会明确提示需要联网。isolated-dev 先设置 `PPAP_BUILD_SHA=${PPAP_BUILD_SHA:-local}` 并执行 `docker buildx bake`，再通过 `docker compose -f deploy/isolated-dev/compose.yaml up --no-build -d --wait` 启动本地 Web。
+桌面浏览器与飞书 H5 使用同一个 PPAP 产品客户端，只支持桌面宽度（最小 1280px），不提供手机/平板布局、PWA 安装或 service worker 离线缓存；离线时请求直接提示需要联网。isolated-dev 先设置 `PPAP_BUILD_SHA=${PPAP_BUILD_SHA:-local}` 并执行 `docker buildx bake`，再通过 `docker compose -f deploy/isolated-dev/compose.yaml up --no-build -d --wait` 启动本地 Web。
 
 ## 当前 main
 
 唯一产品界面是 React + TypeScript，源码位于 `src/`，不设 `/v2` 或新旧界面切换。`/` 为审核准备与工作区，`/audit-files` 为审核结果，`/rules` 为规则库，`/usage` 只读展示用量。数据通过 `src/api.ts` 调用 Product API；前端不另建身份或业务存储。
 
-账户操作统一在导航底部；正常产品页面不显示开发工具或内部上报状态。隔离测试身份只在显式访问 `/dev` 且 API profile 为 `isolated-dev` 时可用。桌面并排显示检查与原件，窄屏切换两者并保留当前检查项；列表在手机上显示为带字段名的记录卡片。
+账户操作统一在导航底部；正常产品页面不显示开发工具或内部上报状态。隔离测试身份只在显式访问 `/dev` 且 API profile 为 `isolated-dev` 时可用。检查与原件并排显示。
 
 在本目录运行 `pnpm install --frozen-lockfile`、`pnpm dev` 或 `pnpm build`。开发服务器从本地 4173 端口代理读取 runtime-config；Docker 构建运行同一套类型检查与 Vite 构建，将产物交给 nginx。Docs-addon 的 `/addon` 宿主适配仍保留，继续进入同一产品 API，不是第二套 PC 界面。
 
@@ -45,7 +45,7 @@
 
 决定后的“交付工作区”可准备和下载 ZIP：上传文件按原字节附入，合成 HTML 单独标为示例；本次要求来源有上传原件时一并附上。用户排除的资料写入包内清单，固定决定与历史包不随新勾选改变。生成与下载都会核对原件；丢失或内容不符会停止，不会产生部分成功包。取消或关闭工作区后，晚到读取不再发布包或请求下载；已请求浏览器下载不等于送达。飞书交付仍是模拟。开发者已用两份合成 TXT 实际上传，走通一条自定义要求的人工判断、限定批准、ZIP 下载及返回工作台路径，并比对包内原件字节。这些是限定路径的自查，不代表全部旅程验收。
 
-预览台原有的产品页面仍可通过页面选择器访问，使用同一套 React 页面和样式；这些页面可切换数据场景（有数据、空状态、错误、长列表）、手机/平板/桌面/自定义宽度与明暗主题。可独立打开当前页面；产品内导航也可正常使用。原有示例数据在 `preview/fixtures.ts`，只用于视觉与交互检查，不代表真实审核结论。
+预览台原有的产品页面仍可通过页面选择器访问，使用同一套 React 页面和样式；这些页面可切换数据场景（有数据、空状态、错误、长列表）、桌面/自适应/自定义宽度（最小 1280px）与明暗主题。可独立打开当前页面；产品内导航也可正常使用。原有示例数据在 `preview/fixtures.ts`，只用于视觉与交互检查，不代表真实审核结论。
 
 这个入口只由单独的 Vite 开发命令在回环地址启动，不进入生产构建。该端口上的 Product API 请求只由本地模拟接口处理，写操作被拒绝；它不连接数据库、对象存储、飞书或 OnlyOffice。真实上传、审核、复核和原件排版仍须使用 isolated-dev 或 remote-dev。预览宽度只模拟布局断点，不模拟设备浏览器行为。
 

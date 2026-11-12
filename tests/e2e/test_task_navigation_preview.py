@@ -51,23 +51,12 @@ class TaskNavigationPreviewTests(unittest.TestCase):
             expect(product.get_by_role("heading", name="审核结果", exact=True)).to_be_visible()
             browser.close()
 
-    def test_mobile_global_menu_and_task_switcher_have_separate_content_and_focus(self):
+    def test_task_switcher_has_only_task_content_and_returns_focus(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 768, "height": 1024})
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html?scene=restore-notification-tasks&task=preview-recovery-task")
-            menu_trigger = page.get_by_role("button", name="打开产品导航", exact=True)
-            menu_trigger.click()
-            menu = page.get_by_role("dialog", name="产品导航", exact=True)
-            expect(menu.get_by_role("navigation", name="产品导航", exact=True)).to_be_visible()
-            for label in ("工作台", "审核文件", "用量记录", "联系我们"):
-                expect(menu.get_by_role("button", name=label, exact=True)).to_be_visible()
-            expect(menu.get_by_role("button", name="文件模板", exact=True)).to_be_visible()
-            expect(menu.get_by_role("navigation", name="任务列表", exact=True)).to_have_count(0)
-            expect(menu.get_by_role("button", name="新建审核任务", exact=True)).to_have_count(0)
-            page.keyboard.press("Escape")
-            expect(menu_trigger).to_be_focused()
             task_trigger = page.get_by_role("button", name="打开审核任务", exact=True)
             task_trigger.click()
             switcher = page.get_by_role("dialog", name="审核任务", exact=True)
@@ -115,11 +104,11 @@ class TaskNavigationPreviewTests(unittest.TestCase):
                 "&packageRequest=original-package&file=preview-recovery-version-1&clause=2&focus=compare"
             )
             trail = page.get_by_role("navigation", name="当前位置", exact=True)
-            expect(trail.get_by_role("link", name="工作台", exact=True)).to_be_visible()
+            expect(trail.get_by_role("link", name="PPAP Audit", exact=True)).to_be_visible()
             result_link = trail.get_by_role("link", name="返回审核结果", exact=True)
             expect(result_link).to_have_text("PPAP-报告示例")
             expect(trail.get_by_text("审核报告", exact=True)).to_be_visible()
-            expect(page.locator("#audit-main").get_by_role("button", name="工作台", exact=True)).to_have_count(0)
+            expect(page.locator("#audit-main").get_by_role("button", name="PPAP Audit", exact=True)).to_have_count(0)
             result_link.click()
             query = parse_qs(urlparse(page.url).query)
             self.assertNotIn("report", query)

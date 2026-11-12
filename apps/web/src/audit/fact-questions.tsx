@@ -117,7 +117,7 @@ export function FactQuestions({roundId, files, findings = [], fileVersionId, ada
   // Nothing to answer means nothing to show; a first read in progress does not claim a row either.
   if (!pending && !error && (!view || !questions.length && !answers.length && !results.length)) return null
   const filename = (id: string) => files.find(file => file.id === id)?.original_filename || '本轮原件'
-  return <section aria-label="原件事实确认" className="min-w-0 border-b px-6 py-2 max-sm:px-4" data-fact-answer-state={saving ? 'saving' : pending ? 'unknown' : 'ready'}>
+  return <section aria-label="原件事实确认" className="min-w-0 border-b px-6 py-2" data-fact-answer-state={saving ? 'saving' : pending ? 'unknown' : 'ready'}>
     <Disclosure open={expanded || Boolean(error)} onOpenChange={setExpanded} summary={<><span className="font-medium">原件事实确认</span><span className="ml-3 text-muted-foreground">{pending ? '回答结果待确认' : error ? '读取失败' : loading && !view ? '读取中…' : `待确认 ${questions.filter(question => !question.answered).length} 项 · 人工确认结果 ${results.length} 项`}</span></>}>
     <div className="space-y-4 py-4">
     <header className="flex items-start justify-between gap-3"><div><h2 className="text-lg font-semibold">核对原件中的事实</h2></div><Button variant="ghost" size="icon" aria-label="读取最新事实问题" disabled={loading || saving} onClick={() => void read()}><RefreshCw className={loading ? 'animate-spin' : ''}/></Button></header>

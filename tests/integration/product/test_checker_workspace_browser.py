@@ -446,7 +446,7 @@ def answer(page, f, round_, expected):
     expect(page.get_by_text("已加入待修复，没有改写本轮结果。", exact=True)).to_be_visible()
 
 
-@pytest.mark.parametrize("viewport", [{"width": 1440, "height": 1000}, {"width": 390, "height": 844}], ids=["desktop", "mobile"])
+@pytest.mark.parametrize("viewport", [{"width": 1440, "height": 1000}], ids=["desktop"])
 def test_feedback_optimize_verify_publish_reaudit_and_rollback(workspace_product, viewport, observe_browser_assets):
     from playwright.sync_api import expect, sync_playwright
 
@@ -1084,7 +1084,7 @@ def test_first_uaes_adoption_from_rule_library_freezes_dependencies(workspace_pr
             browser.close()
 
 
-@pytest.mark.parametrize("viewport", [{"width": 1440, "height": 1000}, {"width": 390, "height": 844}], ids=["desktop", "mobile"])
+@pytest.mark.parametrize("viewport", [{"width": 1440, "height": 1000}], ids=["desktop"])
 def test_directory_revision_selection_pi_and_rollback_keep_exact_frozen_sources(workspace_product, tmp_path, monkeypatch, viewport):
     """Real directory/API/PG/Silo/UDS/guest; only authorship uses the existing controlled author."""
     import shutil

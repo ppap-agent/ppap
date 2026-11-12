@@ -23,7 +23,7 @@ export function usePrecheck(adapter: PrecheckAdapter | undefined, task: Task | n
 const cards = [['ok', '合规', 'text-success'], ['warn', '警告', 'text-warning'], ['block', '阻断', 'text-destructive'], ['unmatched', '未匹配', 'text-muted-foreground'], ['reference', '比对资料', 'text-primary']] as const
 
 export function PrecheckCounts({result}: {result: Precheck}) {
-  return <dl aria-label="预检结果统计" className="grid grid-cols-2 gap-3 sm:grid-cols-5">{cards.map(([level, label, tone]) => <div key={level} className="flex flex-col-reverse rounded-lg border bg-card px-4 py-3 text-center"><dt className="text-xs text-muted-foreground">{label}</dt><dd className={`text-2xl font-semibold tabular-nums ${tone}`}>{result.counts[level]}</dd></div>)}</dl>
+  return <dl aria-label="预检结果统计" className="grid grid-cols-5 gap-3">{cards.map(([level, label, tone]) => <div key={level} className="flex flex-col-reverse rounded-lg border bg-card px-4 py-3 text-center"><dt className="text-xs text-muted-foreground">{label}</dt><dd className={`text-2xl font-semibold tabular-nums ${tone}`}>{result.counts[level]}</dd></div>)}</dl>
 }
 
 /** What the precheck found for one file, under its name in the matching list. */

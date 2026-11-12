@@ -22,7 +22,7 @@ function TableHeader({ className, variant = "default", ...props }: React.Compone
   return (
     <thead
       data-slot="table-header"
-      className={cn("[&_tr]:border-b", variant === "muted" && "bg-muted/30", className)}
+      className={cn("[&_tr]:border-b", variant === "muted" && "bg-header [&_th]:font-semibold [&_th]:text-[13px]", className)}
       {...props}
     />
   )

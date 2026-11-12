@@ -80,7 +80,7 @@ export function PdfSource({url, name, onCite}: {url: string; name: string; onCit
     Object.assign(value.overlay.style, {left: `${value.canvas.offsetLeft + Math.min(...x)}px`, top: `${value.canvas.offsetTop + Math.min(...y)}px`, width: `${Math.abs(x[1] - x[0])}px`, height: `${Math.abs(y[1] - y[0])}px`})
   }
   return <div className={"flex flex-col h-full min-h-95"}>
-    <div className={"flex shrink-0 flex-wrap gap-1 py-1 px-2 border-b max-md:gap-0"} role="toolbar" aria-label="PDF 阅读工具">
+    <div className={"flex shrink-0 flex-wrap gap-1 py-1 px-2 border-b"} role="toolbar" aria-label="PDF 阅读工具">
       <Button variant="ghost" size="icon-sm" aria-label="上一页" disabled={!pdf || page === 1} onClick={() => setPage(value => value - 1)}><ChevronLeft/></Button>
       <label className={"flex items-center gap-1 whitespace-nowrap text-xs"}>第 <Input aria-label="PDF 页码" type="number" min={1} max={pdf?.numPages ?? 1} value={page} disabled={!pdf} onChange={event => {const next = Number(event.target.value); if (pdf && Number.isInteger(next) && next >= 1 && next <= pdf.numPages) setPage(next)}}/> / {pdf?.numPages ?? '—'} 页</label>
       <Button variant="ghost" size="icon-sm" aria-label="下一页" disabled={!pdf || page >= pdf.numPages} onClick={() => setPage(value => value + 1)}><ChevronRight/></Button>

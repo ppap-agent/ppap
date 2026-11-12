@@ -284,8 +284,8 @@ function CheckPoints({ruleVersionId, action, onStarted, onAdopt}: {ruleVersionId
     {carryable.length > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card px-4 py-3"><span>上一版确认过的 {carryable.length} 条，原文没变。</span><Button disabled={carrying} onClick={() => void carryOver()}>沿用这 {carryable.length} 条</Button></div>}
     {waiting > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card px-4 py-3"><span>{waiting} 条还没整理。</span><Button onClick={() => setPrepare(value => value + 1)}>开始整理</Button></div>}
     {jumps.length > 0 && <nav aria-label="按要做的事跳转" className="flex flex-wrap items-center gap-2"><span className="text-muted-foreground">先处理：</span>{jumps.map(({kind, ids}) => <Button key={kind} variant="outline" size="sm" onClick={() => show(ids.find(id => clauses!.indexOf(id) > index) ?? ids[0]!)}>{statusLabel[kind]} {ids.length}</Button>)}</nav>}
-    {total > 0 && <div className="grid gap-8 lg:grid-cols-[16rem_minmax(0,1fr)]">
-      <nav aria-label="条款" className="space-y-3 self-start max-lg:hidden lg:sticky lg:top-6">
+    {total > 0 && <div className="grid grid-cols-[16rem_minmax(0,1fr)] gap-8">
+      <nav aria-label="条款" className="sticky top-6 space-y-3 self-start">
         <div className="flex items-center gap-3 px-3 text-muted-foreground"><span className="shrink-0 tabular-nums">已确认 {confirmed} / {total}</span><Progress aria-label="已确认的条款" value={confirmed * 100 / total}/></div>
         <ol className="max-h-[calc(100dvh-8rem)] space-y-0.5 overflow-y-auto">{clauses!.map((clauseId, position) => <li key={clauseId}>
           <button type="button" aria-current={clauseId === current ? 'step' : undefined} onClick={() => show(clauseId)}
@@ -298,7 +298,7 @@ function CheckPoints({ruleVersionId, action, onStarted, onAdopt}: {ruleVersionId
       </nav>
       <div ref={detail} className="min-w-0 scroll-mt-6 space-y-3">
         <div className="flex items-center justify-between gap-3">
-          <p className="flex items-center gap-2 font-medium"><span>第 {index + 1} 条</span><span className="font-normal text-muted-foreground">共 {total} 条<span className="lg:hidden">，已确认 {confirmed} 条</span></span>{currentStatus && <Badge shape="square" variant={currentStatus === 'confirmed' ? 'success' : currentStatus === 'rejected' ? 'secondary' : currentStatus === 'review' || currentStatus === 'question' ? 'warning' : 'outline'}>{statusLabel[currentStatus]}</Badge>}</p>
+          <p className="flex items-center gap-2 font-medium"><span>第 {index + 1} 条</span><span className="font-normal text-muted-foreground">共 {total} 条</span>{currentStatus && <Badge shape="square" variant={currentStatus === 'confirmed' ? 'success' : currentStatus === 'rejected' ? 'secondary' : currentStatus === 'review' || currentStatus === 'question' ? 'warning' : 'outline'}>{statusLabel[currentStatus]}</Badge>}</p>
           <div className="flex gap-1">
             <Button variant="ghost" size="icon" aria-label="上一条" disabled={index <= 0} onClick={() => show(clauses![index - 1]!)}><ChevronLeft/></Button>
             <Button variant="ghost" size="icon" aria-label="下一条" disabled={index >= total - 1} onClick={() => show(clauses![index + 1]!)}><ChevronRight/></Button>
@@ -310,7 +310,7 @@ function CheckPoints({ruleVersionId, action, onStarted, onAdopt}: {ruleVersionId
         </div>)}
       </div>
     </div>}
-    {total > 0 && <footer className="sticky bottom-0 z-10 -mx-6 flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-t bg-background/95 px-6 py-4 backdrop-blur-sm max-sm:-mx-4 max-sm:px-4">
+    {total > 0 && <footer className="sticky bottom-0 z-10 -mx-6 flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-t bg-background/95 px-6 py-4 backdrop-blur-sm">
       <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
         <input hidden ref={picker} type="file" aria-label="选择示例文件" onChange={event => {const file = event.target.files?.[0]; if (file) void upload(file); event.target.value = ''}}/>
         {example
@@ -483,7 +483,7 @@ function ClauseCheckPoints({ruleVersionId, clauseId, prepare, onAdopt, onReport,
   useEffect(() => {if (detail && status) onReport({state: detail.state, status, text: clauseText})}, [detail?.state, status, clauseText])
   const parts = suggestion ? insertions(clauseText, suggestion) : []
   const longOriginal = clauseText.length > 360
-  return <article aria-label={`条款 ${clauseId}`} className="space-y-6 rounded-lg border bg-card px-5 py-5 sm:px-6">
+  return <article aria-label={`条款 ${clauseId}`} className="space-y-6 rounded-lg border bg-card px-6 py-5">
     <section className="space-y-2">
       <h3 className="font-medium">原文</h3>
       {detail ? <p className={`whitespace-pre-wrap break-words leading-relaxed ${longOriginal && !original ? 'line-clamp-6' : ''}`}>{clauseText}</p> : !readError && <Skeleton className="h-4 w-3/4"/>}

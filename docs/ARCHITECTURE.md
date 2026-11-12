@@ -3,7 +3,7 @@
 产品语义见 [Northstar](NORTHSTAR.md)；当前实现事实以源码和测试为准。
 
 ```text
-Web / PWA / 飞书入口
+Web（桌面）/ 飞书入口
         |
    apps/api
       /      \\

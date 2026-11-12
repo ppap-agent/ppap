@@ -27,10 +27,9 @@
     .label { color: #737373; font-size: 12px; margin-right: 3px; }
     .spacer { flex: 1; }
     .stage { display: flex; justify-content: safe center; flex: 1; min-height: 0; overflow-x: auto; padding: 20px; }
-    .device { flex: 0 0 var(--frame-width); width: var(--frame-width); min-width: 280px; height: calc(100dvh - 145px); min-height: 560px; overflow: hidden; background: #fff; border: 1px solid #d4d4d4; border-radius: 12px; box-shadow: 0 8px 28px #0000000c; transition: width .18s ease; }
+    .device { flex: 0 0 var(--frame-width); width: var(--frame-width); min-width: 1280px; height: calc(100dvh - 145px); min-height: 560px; overflow: hidden; background: #fff; border: 1px solid #d4d4d4; border-radius: 12px; box-shadow: 0 8px 28px #0000000c; transition: width .18s ease; }
     .device.fluid { flex: 1; }
     iframe { width: 100%; height: 100%; border: 0; display: block; }
-    @media (max-width: 750px) { .top { padding: 12px; } .stage { padding: 8px; } .device { height: calc(100dvh - 205px); min-height: 500px; border-radius: 8px; } .spacer { display: none; } }
   </style>
 </head>
 <body>
@@ -57,7 +56,7 @@
           <optgroup label="原件读取"><option value="original-error">原件读取失败后重读</option><option value="original-loading">原件读取响应迟到</option><option value="original-unavailable">内嵌预览不可用</option></optgroup>
           <optgroup label="支持配置"><option value="support-ready">支持配置与图片放大</option><option value="support-empty">支持配置为空</option><option value="support-error">支持配置读取失败后恢复</option><option value="support-qr-error">支持图片读取失败</option><option value="support-loading">支持配置迟到与返回</option></optgroup>
           <optgroup label="企业用量"><option value="usage-ready">逐文件用量记录</option><option value="usage-empty">无消费记录</option><option value="usage-unknown">扣费结果待核对</option><option value="usage-quota-unknown">额度读取未知</option><option value="usage-error">用量读取失败后恢复</option><option value="usage-refresh-error">刷新失败保留上次观察</option><option value="usage-denied">企业用量无权读取</option><option value="usage-revoked">读取后撤权</option><option value="usage-foreign">拒绝其他企业响应</option><option value="usage-invalid">用量投影身份冲突</option><option value="usage-unmapped">消费文档关联未知</option><option value="usage-race">用量查询响应迟到</option><option value="usage-ai-disabled">飞书 AI 开关关闭提示</option><option value="usage-no-package">试用不足未采购提示</option><option value="usage-paid-insufficient">飞书额度不足提示</option></optgroup></select></label>
-        <div class="group" role="group" aria-label="预览宽度"><span class="label">宽度</span><button data-width="390" type="button">手机</button><button data-width="820" type="button">平板</button><button data-width="1440" type="button">桌面</button><button data-width="fluid" type="button">自适应</button><input id="custom-width" type="number" min="280" max="2400" step="1" aria-label="自定义宽度（像素）" title="自定义宽度（像素）" /></div>
+        <div class="group" role="group" aria-label="预览宽度"><span class="label">宽度</span><button data-width="1440" type="button">桌面</button><button data-width="fluid" type="button">自适应</button><input id="custom-width" type="number" min="1280" max="2400" step="1" aria-label="自定义宽度（像素）" title="自定义宽度（像素）" /></div>
         <div class="spacer"></div>
         <button id="theme" type="button" aria-label="切换明暗主题">深色</button>
         <button id="refresh" type="button">刷新</button>
@@ -69,12 +68,12 @@
   </div>
   <script>
     const paths = {audit: '/preview/audit.html'};
-    const choices = {scene: Array.from(document.querySelectorAll('#scene option'), option => option.value), width: ['390', '820', '1440', 'fluid'], theme: ['light', 'dark']};
+    const choices = {scene: Array.from(document.querySelectorAll('#scene option'), option => option.value), width: ['1440', 'fluid'], theme: ['light', 'dark']};
     const query = new URLSearchParams(location.search);
     const savedWidth = Number(query.get('width'));
     const sceneView = query.get('scene')?.startsWith('archive-') ? 'archive' : query.get('scene')?.startsWith('usage-') ? 'usage' : '';
     const initialView = query.has('view') ? ['archive', 'usage'].includes(query.get('view')) ? query.get('view') : '' : sceneView;
-    const state = {page: paths[query.get('page')] ? query.get('page') : 'audit', scene: choices.scene.includes(query.get('scene')) ? query.get('scene') : 'populated', width: Number.isInteger(savedWidth) && savedWidth >= 280 && savedWidth <= 2400 ? String(savedWidth) : 'fluid', theme: choices.theme.includes(query.get('theme')) ? query.get('theme') : 'light', task: query.get('task') || (query.get('scene')?.startsWith('restore-') ? 'preview-recovery-task' : query.get('scene')?.startsWith('reports-') ? 'preview-report-task' : ''), view: initialView, archiveDoc: query.get('archiveDoc') || '', auditRef: query.get('auditRef') || '', archiveReport: query.get('archiveReport') || '', report: query.get('report') ?? (query.get('scene')?.startsWith('reports-') ? '1' : ''), usageRange: query.get('usageRange') || '', usageSearch: query.get('usageSearch') || '', usagePage: query.get('usagePage') || ''};
+    const state = {page: paths[query.get('page')] ? query.get('page') : 'audit', scene: choices.scene.includes(query.get('scene')) ? query.get('scene') : 'populated', width: Number.isInteger(savedWidth) && savedWidth >= 1280 && savedWidth <= 2400 ? String(savedWidth) : 'fluid', theme: choices.theme.includes(query.get('theme')) ? query.get('theme') : 'light', task: query.get('task') || (query.get('scene')?.startsWith('restore-') ? 'preview-recovery-task' : query.get('scene')?.startsWith('reports-') ? 'preview-report-task' : ''), view: initialView, archiveDoc: query.get('archiveDoc') || '', auditRef: query.get('auditRef') || '', archiveReport: query.get('archiveReport') || '', report: query.get('report') ?? (query.get('scene')?.startsWith('reports-') ? '1' : ''), usageRange: query.get('usageRange') || '', usageSearch: query.get('usageSearch') || '', usagePage: query.get('usagePage') || ''};
     state.packageRequest = query.get('packageRequest') || '';
     const frame = document.getElementById('product');
     const device = document.getElementById('device');
@@ -115,7 +114,7 @@
     }
     document.getElementById('scene').addEventListener('change', event => { state.scene = event.target.value; state.task = state.scene.startsWith('restore-') ? 'preview-recovery-task' : state.scene.startsWith('reports-') ? 'preview-report-task' : ''; state.report = state.scene.startsWith('reports-') ? '1' : ''; state.packageRequest = ''; state.view = state.scene.startsWith('archive-') ? 'archive' : state.scene.startsWith('usage-') ? 'usage' : ''; state.archiveDoc = ''; state.auditRef = ''; state.archiveReport = ''; state.usageRange = ''; state.usageSearch = ''; state.usagePage = ''; render(true); });
     for (const button of document.querySelectorAll('[data-width]')) button.addEventListener('click', () => { state.width = button.dataset.width; render(false); });
-    custom.addEventListener('change', () => { const width = Number(custom.value); if (Number.isFinite(width) && width >= 280 && width <= 2400) { state.width = String(width); render(false); } else render(false); });
+    custom.addEventListener('change', () => { const width = Number(custom.value); if (Number.isFinite(width) && width >= 1280 && width <= 2400) { state.width = String(width); render(false); } else render(false); });
     document.getElementById('theme').addEventListener('click', () => { state.theme = state.theme === 'light' ? 'dark' : 'light'; render(state.page !== 'audit'); });
     document.getElementById('refresh').addEventListener('click', () => { frame.contentWindow.location.reload(); });
     for (const button of document.querySelectorAll('[data-read]')) button.addEventListener('click', () => frame.contentWindow.postMessage({type: 'ppap-preview-read', failed: button.dataset.read === 'fail'}, location.origin));

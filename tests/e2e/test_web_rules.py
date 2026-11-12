@@ -146,7 +146,7 @@ class RulePreparationTests(unittest.TestCase):
             page = browser.new_page()
             page.set_default_timeout(5000)
             api = isolated_dev_login(page, WEB)
-            page.get_by_role("navigation", name="产品导航").get_by_role("button", name="审核规则", exact=True).click()
+            page.get_by_role("navigation", name="产品导航").get_by_role("button", name="审核规则库", exact=True).click()
             expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
             page.get_by_role("button", name="上传规则", exact=True).click()
             page.get_by_label("上传共用规则文件").set_input_files({"name": "控制计划规则.json", "mimeType": "application/json", "buffer": source_bytes})

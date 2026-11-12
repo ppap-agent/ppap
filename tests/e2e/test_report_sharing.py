@@ -196,9 +196,7 @@ def test_shared_report_switch_download_and_denied_revisit_never_open_private_inp
             late.value.finished()
             page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
             assert len(downloads) == 2
-        page.set_viewport_size({"width": 390, "height": 844})
         expect(page.get_by_role("heading", name="审核报告", exact=True)).to_be_visible()
-        assert page.evaluate("document.documentElement.scrollWidth") <= 390
         assert page.locator("h1").count() == 1
         denied[0] = True
         page.reload()

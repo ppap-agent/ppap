@@ -129,7 +129,4 @@ class FactQuestionsPreviewTests(unittest.TestCase):
             expect(results).to_contain_text("王工")
             expect(results).to_contain_text("看不清")
             expect(section.get_by_role("article", name="量产阶段是否已勾选？", exact=True)).to_have_count(0)
-            page.set_viewport_size({"width": 390, "height": 844})
-            expect(section.get_by_role("heading", name="核对原件中的事实", exact=True)).to_be_visible()
-            assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
             browser.close()

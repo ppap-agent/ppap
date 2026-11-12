@@ -116,11 +116,10 @@ def task_routes(page, partial_error):
 
 
 @pytest.mark.parametrize("partial_error", [False, True], ids=["normal-ng", "execution-error"])
-@pytest.mark.parametrize("width", [1440, 390])
-def test_category_and_explicit_queue_survive_task_back_and_reload(partial_error, width):
+def test_category_and_explicit_queue_survive_task_back_and_reload(partial_error):
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
-        page = browser.new_page(viewport={"width": width, "height": 960})
+        page = browser.new_page(viewport={"width": 1440, "height": 960})
         page.set_default_timeout(5000)
         calls, summary, held = task_routes(page, partial_error)
         page.goto(WEB + "/workbench")
@@ -128,7 +127,7 @@ def test_category_and_explicit_queue_survive_task_back_and_reload(partial_error,
         expected, other = ("需要处理", "已完成") if partial_error else ("已完成", "需要处理")
 
         def row_for(label):
-            return page.get_by_role("table").get_by_role("row").filter(has_text="PPAP-状态核对") if width > 720 else page.get_by_role("list", name=label + "审核记录卡片", exact=True)
+            return page.get_by_role("table").get_by_role("row").filter(has_text="PPAP-状态核对")
 
         page.get_by_role("tab", name=re.compile("^" + other)).click()
         expect(row_for(other)).to_have_count(0)
@@ -161,21 +160,17 @@ def test_category_and_explicit_queue_survive_task_back_and_reload(partial_error,
         browser.close()
 
 
-@pytest.mark.parametrize("width", [1440, 390])
-def test_queue_tracks_history_entries_without_leaving_the_workbench(width):
+def test_queue_tracks_history_entries_without_leaving_the_workbench():
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
-        page = browser.new_page(viewport={"width": width, "height": 960})
+        page = browser.new_page(viewport={"width": 1440, "height": 960})
         page.set_default_timeout(5000)
         calls, _summary, _held = task_routes(page, False)
         page.goto(WEB + "/workbench")
         completed = page.get_by_role("tab", name=re.compile("^已完成"))
         attention = page.get_by_role("tab", name=re.compile("^需要处理"))
         completed.click()
-        menu = page.get_by_role("button", name="打开产品导航", exact=True)
-        if menu.is_visible():
-            menu.click()
-        page.get_by_role("button", name="工作台", exact=True).click()
+        page.get_by_role("button", name="PPAP Audit", exact=True).click()
         attention.click()
         page.go_back()
         expect(completed).to_have_attribute("aria-selected", "true")
@@ -201,7 +196,7 @@ def test_opened_task_remains_visible_until_its_workbench_list_is_complete():
         page.route("**/api/audit-tasks?*", read_tasks)
         page.goto(WEB + "/tasks/" + TASK)
         expect(page.get_by_role("region", name="全部文件概览", exact=True)).to_be_visible()
-        page.get_by_role("navigation", name="当前位置", exact=True).get_by_role("link", name="工作台", exact=True).click()
+        page.get_by_role("navigation", name="当前位置", exact=True).get_by_role("link", name="PPAP Audit", exact=True).click()
         expect(page.get_by_role("heading", name="工作台", exact=True)).to_be_visible()
         table = page.get_by_role("table", name="全部任务审核记录", exact=True)
         expect(table.get_by_role("row").filter(has_text="PPAP-另一任务")).to_be_visible()

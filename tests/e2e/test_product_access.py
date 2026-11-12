@@ -108,7 +108,7 @@ def test_customer_catalog_refresh_keeps_the_restored_task_and_file_selection(pag
     assert page.url == WEB + "/tasks/original-task"
     assert reads == ["GET", "GET"]
 
-    expect(page.get_by_role("button", name="文件模板", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="模板库", exact=True)).to_be_visible()
 
 
 def test_disabled_login_has_no_dead_authorization_link_and_can_recheck_configuration(page):
@@ -204,9 +204,8 @@ def test_authorization_failure_keeps_task_and_requires_an_explicit_new_login(pag
     assert host_posts == []
 
 
-@pytest.mark.parametrize("viewport", [(1280, 720), (390, 844)])
-def test_native_account_usage_and_logout_keep_the_task_report_address(page, viewport):
-    page.set_viewport_size({"width": viewport[0], "height": viewport[1]})
+def test_native_account_usage_and_logout_keep_the_task_report_address(page):
+    page.set_viewport_size({"width": 1280, "height": 720})
     login_config(page)
     page.route("**/api/me", lambda route: route.fulfill(json=PRINCIPAL))
     page.route("**/api/audit-customers", lambda route: route.fulfill(json={"customers": []}))
@@ -235,9 +234,7 @@ def test_native_account_usage_and_logout_keep_the_task_report_address(page, view
     assert address.path == "/usage"
     assert parse_qs(address.query) == {}
     assert address.fragment == "original-clause"
-    if viewport[0] < 1024:
-        page.get_by_role("button", name="打开产品导航").click()
-    page.get_by_role("button", name="工作台", exact=True).click()
+    page.get_by_role("button", name="PPAP Audit", exact=True).click()
     page.get_by_role("button", name="继续当前审核", exact=True).click()
     assert page.url == WEB + "/tasks/original-task?report=frozen-report#original-clause"
     account.click()
