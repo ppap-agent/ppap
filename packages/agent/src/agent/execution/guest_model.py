@@ -7,6 +7,7 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 import time
 from collections.abc import Mapping
 from pathlib import Path
@@ -187,10 +188,14 @@ class ModelRunner:
             )
         try:
             terminal = self._run(work, artifact_prompt, deadline, reasoning_effort=cast(ReasoningEffort, reasoning_effort))
-        except ModelProtocolError:
+        except ModelProtocolError as failed:
             if not checker_stage:
                 raise
-            return read_checker_draft(work, schema)
+            try:
+                return read_checker_draft(work, schema)
+            except ModelProtocolError as missing:
+                # Keep why the model stage ended; "missing_artifact" alone hides it.
+                raise ModelProtocolError(f"{missing}; {failed}") from failed
         if checker_stage:
             return read_checker_draft(work, schema, terminal)
         try:
@@ -242,7 +247,8 @@ class PiRunner(ModelRunner):
         request.write_text(json.dumps(config), encoding="utf-8")
         request.chmod(0o600)
         env = {
-            "PATH": "/usr/local/bin:/usr/bin:/bin",
+            # Pi inspects originals with the same Python (and libraries) that runs the checker.
+            "PATH": str(Path(sys.executable).parent) + ":/usr/local/bin:/usr/bin:/bin",
             "HOME": str(home),
             "LANG": "C.UTF-8",
             "PI_CODING_AGENT_DIR": str(home),
@@ -280,6 +286,7 @@ class PiRunner(ModelRunner):
                     process.kill()
                 process.wait()
         terminal = None
+        last_assistant: dict[str, Any] = {}
         try:
             output = read_regular(work, ("stdout.jsonl",), 16 * 1024 * 1024)
         except ValueError:
@@ -291,12 +298,14 @@ class PiRunner(ModelRunner):
                 event = json.loads(line, object_pairs_hook=unique_object, parse_constant=reject_constant)
             except ValueError:
                 raise ModelProtocolError("Invalid Pi event") from None
+            if isinstance(event, dict) and event.get("type") == "message_end" and isinstance(event.get("message"), dict):
+                last_assistant = event["message"]
             if isinstance(event, dict) and event.get("type") == "result":
                 if terminal is not None:
                     raise ModelProtocolError("Duplicate terminal model result")
                 terminal = event
         if terminal is None:
-            raise ModelProtocolError("Missing terminal model result")
+            raise ModelProtocolError("Missing terminal model result (exit " + str(process.returncode) + ")")
         # Usage and tool counts are observations. Missing counts never reject a stage.
         usage = terminal.get("usage")
         counts = [usage.get(name) if isinstance(usage, dict) else None for name in ("input_tokens", "output_tokens")]
@@ -310,5 +319,8 @@ class PiRunner(ModelRunner):
             if type(value) is int and value >= 0:
                 setattr(self, name, getattr(self, name) + value)
         if process.returncode != 0 or terminal.get("stop_reason") != "end_turn" or terminal.get("is_error") is not False or terminal.get("subtype") != "success":
-            raise ModelProtocolError("Model stage failed")
+            # Provider error text is bounded and never carries the grant token (the runner redacts it).
+            reason = str(last_assistant.get("stopReason") or "")
+            error = str(last_assistant.get("errorMessage") or "")[:160]
+            raise ModelProtocolError(f"Model stage failed (turns {terminal.get('num_turns')}, last stop {reason or '-'}{': ' + error if error else ''})")
         return terminal

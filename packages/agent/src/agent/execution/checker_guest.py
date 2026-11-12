@@ -573,6 +573,8 @@ def _review_feedback(results: list[AuditResultItem]) -> str:
             _result_brief(results),
             "这些结果只说明程序跑完，不说明业务判断正确。",
             "修复读取或实现错误后可以改变判定；业务标准仍以本次条款为准。",
+            "核对后没有发现读取或实现错误时，不要修改任何文件，直接再次提交同一程序（回执不带 clauses），程序即被固定。"
+            "发现错误时只改出错的那一处，再完整试跑一次。只为风格、注释、导入顺序或重构而改动，会让核对重新开始。",
         )
     )
 
@@ -1154,8 +1156,8 @@ def develop_checker(
             encoded = _validate_source(draft.files)
             if selected or require_independent:
                 for name, source in draft.files.items():
-                    if import_violations(ast.parse(source)):
-                        raise CheckerTrialError(f"checker_cross_version_import: {name}")
+                    if violations := import_violations(ast.parse(source)):
+                        raise CheckerTrialError(f"checker_cross_version_import: {name} 第 {'; 第 '.join(violations[:5])}。只能导入 AGENTS.md「目录叶子」允许的模块。")
             type_check(draft.files, stage / "typecheck")
             results = run_program(
                 encoded,

@@ -2,6 +2,8 @@
 
 import json
 import os
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -65,6 +67,8 @@ def test_pi_uses_scoped_grant_and_accounts_for_completed_work(tmp_path, guest):
     env = process.call_args.kwargs["env"]
     assert "UNRELATED_SECRET" not in env and env["PYTHONPATH"] == "/trusted/packages"
     assert env["PI_OFFLINE"] == "1" and env["PI_TELEMETRY"] == "0"
+    # Pi inspects originals with the checker's own Python; the image has no system python3.
+    assert env["PATH"].split(":")[0] == str(Path(sys.executable).parent)
     assert process.call_args.kwargs["start_new_session"] is False
 
 
