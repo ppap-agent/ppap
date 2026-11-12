@@ -143,3 +143,20 @@ def test_task_merges_content_findings_and_registers_uncovered_types():
     assert levels == {"cp": ("block", "L08"), "gauge": ("ok", None)}
     assert result["files"][0]["criteria"] == content["cp"] and result["conclusion"] == "fail"
     assert entry_criteria("L08")[0].startswith("PPAP-10")
+
+
+def test_an_asterisk_marking_a_special_characteristic_is_not_a_template_placeholder():
+    # PPAP-07 PRE-09 c: "＊" left from a template blocks; under 特别特性 it marks the row (sample F01R10Y776 目录 sheet).
+    marked = xlsx(("NO", "工程名", "规格", "特别特性"), ("", "", "", "产品"), (1, "2#电机舱直径", "Φ34.22±0.04", "*"), (2, "6#轴孔直径", "Φ8.12±0.0125", "*"))
+    assert results(marked, "cpk.xlsx", "U06")["PRE-09"]["result"] == "满足"
+    left = xlsx(("NO", "工程名", "Cpk"), (1, "2#电机舱直径", "*"))
+    outcome = results(left, "cpk.xlsx", "U06")["PRE-09"]
+    assert (outcome["result"], outcome["code"]) == ("不满足", "B05")
+
+
+def test_uaes_material_fields_accept_the_aliases_of_the_t12_field_table():
+    # PPAP-T12 §6: 物料名称 also as 产品名称; 物料编号 only as 物料号 / 物料编码 / 料号 (零件号 is not one).
+    table = xlsx(("序号", "产品名称/零件号", "特殊特性名称", "特性值", "特性类别"), (1, "F01RD0YA41毛坯壳体", "3#孔径", "4XΦ7.1", "3"))
+    found = results(table, "特殊特性清单.xlsx", "U12")
+    assert found["U12:S1"]["result"] == "满足"
+    assert (found["U12:S2"]["result"], found["U12:S2"]["code"]) == ("不满足", "B05")

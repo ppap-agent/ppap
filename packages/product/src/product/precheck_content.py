@@ -759,8 +759,9 @@ L2: dict[str, Check] = {
     "U11:S4": columns(("变更内容简述", "变更内容", "更改内容")),
     "U11:S5": columns(("变更原因", "更改原因")),
     "U11:S6": columns(("时间", "日期")),
-    "U12:S1": fields(("物料名称",)),
-    "U12:S2": fields(("物料编号",)),
+    # Aliases from PPAP-T12 §6 field-name table (UAES only).
+    "U12:S1": fields(("物料名称", "物料名", "材料名称", "产品名称")),
+    "U12:S2": fields(("物料编号", "物料号", "物料编码", "料号")),
     "U12:S3": columns(("编号", "序号")),
     "U12:S4": columns(("产品特性", "过程特性", "特殊特性名称")),
     "U12:S5": columns(("特性及公差", "特性值")),
@@ -1021,13 +1022,25 @@ def _value_scan(code: str, values: set[str], what: str, *, pattern: str = "") ->
     return Check(run)
 
 
+MARKER_WORDS = ("特性", "特殊", "class", "类别", "符号", "标识")
+
+
+def _marker_column(grid: Grid, r: int, c: int, cell: str) -> bool:
+    """An asterisk under a special-characteristic or class heading marks the row; it is not a template placeholder."""
+    if norm(cell) != "*":
+        return False
+    # Stacked headings: the group name ("特别特性") sits above the column name ("产品").
+    titles = [grid.cell(row, c) for row in range(r - 1, -1, -1) if norm(grid.cell(row, c)) not in {"", "*"}][:3]
+    return any(_hit(title, MARKER_WORDS) for title in titles)
+
+
 def _capability_residue() -> Check:
     """07 PRE-09: error values (a, B05), ##### overflow (b, W02), template placeholders (c, B05), non-standard NA (e, W03)."""
 
     def run(ctx: Ctx, miss: str, last: str) -> Outcome:
         groups = [
             ("B05", "错误值", _scan(ctx.doc, lambda cell: norm(cell).startswith(ERROR_VALUES))),
-            ("B05", "模板占位符", _scan(ctx.doc, lambda cell: norm(cell) in {"xx", "--", "待填", "tbd", "?", "*"})),
+            ("B05", "模板占位符", [hit for hit in _scan(ctx.doc, lambda cell: norm(cell) in {"xx", "--", "待填", "tbd", "?", "*"}) if not _marker_column(*hit)]),
             ("W02", "显示溢出 #####", _scan(ctx.doc, lambda cell: bool(re.fullmatch(r"#{3,}", norm(cell))))),
             ("W03", "不规范的不适用写法（应写 NA）", _scan(ctx.doc, lambda cell: norm(cell) == "n/a")),
         ]
