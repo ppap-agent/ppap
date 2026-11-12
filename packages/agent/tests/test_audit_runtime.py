@@ -468,3 +468,29 @@ def test_host_rejects_guest_fabrication_for_unavailable_sources(mutation):
         result["findings"][-1]["evidence_file_version_ids"] = ["target-1", "target-0"]
     with pytest.raises(AuditRunError, match="audit_output_(availability_mismatch|unavailable_source)"):
         _validate_output(snapshot, result, unavailable_sources=unavailable)
+
+
+def test_rejected_clauses_run_nothing_and_never_pass():
+    program = PROGRAM.replace(b"status='PASS'", b"status='NG' if context.clause_id == 'defect' else 'PASS'").replace(
+        b"context.cache['count'] =", b"context.cache.setdefault('ran', []).append(context.clause_id)\n    context.cache['count'] ="
+    )
+    snapshot, sources, programs = request(program, ("whole", "part", "defect", "plain"), targets=1)
+    reason = {"scope": "part", "parts": ["O 与预防控制匹配"], "reason": "何为有效预防没有定义"}
+    rules = dict(snapshot.targets[0].to_dict()["rules"])
+    rules["formalizations"] = {
+        "whole": {"clause_id": "whole", "rejections": [{"id": "x1", "scope": "clause", "parts": [], "reason": "原文只问是否满足要求"}]},
+        "part": {"clause_id": "part", "rejections": [{"id": "x1", **reason}]},
+        "defect": {"clause_id": "defect", "rejections": [{"id": "x1", **reason}]},
+        # A snapshot naming another clause is not this clause's decision.
+        "plain": {"clause_id": "other", "rejections": [{"id": "x1", "scope": "clause", "parts": [], "reason": "不属于本条"}]},
+    }
+    target = snapshot.targets[0]
+    frozen = FrozenTarget(target.file_version_id, target.suite_revision_id, target.suite_key, target.suite_digest, rules, target.binding)
+    snapshot = ExecutionSnapshot("tenant", "initiator", snapshot.inputs, (frozen,), "runtime", "library", {}, round_id="round")
+    result = run_audit(snapshot, sources, programs)
+    by_clause = {row["clause_id"]: row for row in result["findings"]}
+    assert {clause: row["status"] for clause, row in by_clause.items()} == {"whole": "UNABLE", "part": "UNABLE", "defect": "NG", "plain": "PASS"}
+    assert "整条条款（原因：原文只问是否满足要求）" in by_clause["whole"]["suggestions"] and "请人工复核" in by_clause["whole"]["suggestions"]
+    assert by_clause["part"]["suggestions"].startswith("已定义部分：") and "O 与预防控制匹配（原因：何为有效预防没有定义）" in by_clause["part"]["suggestions"]
+    # The whole rejection asked the program nothing; the counter starts at the next clause.
+    assert by_clause["part"]["suggestions"].startswith("已定义部分：" + str(os.getpid()) + ":1")

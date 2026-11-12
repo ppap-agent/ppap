@@ -32,6 +32,20 @@ class ConfirmationCreate(BaseModel):
     expected_current_confirmation_id: str | None = None
 
 
+class RejectionCreate(BaseModel):
+    """A person's decision that the clause, or parts of it, gives no criterion a program can check."""
+
+    model_config = ConfigDict(extra="forbid")
+    operation_id: str
+    expected_source_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    based_on_candidate_id: str | None = None
+    scope: Literal["clause", "part"]
+    reason: str = Field(min_length=1, max_length=1000)
+    parts: list[str] = Field(default_factory=list, max_length=10)
+    obligation_ids: list[str] = Field(default_factory=list, max_length=40)
+    unresolved_ids: list[str] = Field(default_factory=list, max_length=20)
+
+
 class MaterializeCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     operation_id: str
@@ -52,6 +66,14 @@ class FormalizationQuestion(BaseModel):
     choices: list[FormalizationChoice] | None = None
 
 
+class FormalizationRejection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    scope: Literal["clause", "part"]
+    parts: list[str]
+    reason: str
+
+
 class FormalizationCandidate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str
@@ -65,6 +87,7 @@ class FormalizationCandidate(BaseModel):
     obligations: list[Any]
     assumptions: list[Any]
     unresolved: list[FormalizationQuestion]
+    rejections: list[FormalizationRejection] = []
     cnl_text: str
     cnl_renderer_version: str
     formal_digest: str
@@ -185,7 +208,7 @@ def register_formalization_routes(app: FastAPI, store, principal_of):
             return JSONResponse({"error": "clause_not_found"}, status_code=404)
         if code in _CONFLICTS:
             return JSONResponse({"error": code}, status_code=409)
-        if code == "model_consumption_refused":
+        if code in {"model_consumption_refused", "invalid_rejection"}:
             return JSONResponse({"error": code}, status_code=422)
         return JSONResponse({"error": "invalid_formalization"}, status_code=422)
 
@@ -227,6 +250,18 @@ def register_formalization_routes(app: FastAPI, store, principal_of):
             return error
         try:
             return JSONResponse(formalizations.read_operation(current, operation_id), headers={"Cache-Control": "private, no-store"})
+        except (KeyError, ValueError, ModelUnavailable) as exc:
+            return fail(exc)
+
+    @app.post("/rules/{rule_version_id}/formalizations/{clause_id}/rejections", status_code=201, response_model=FormalizationCandidate, responses=_WRITE_PROBLEMS)
+    def reject_formalization(rule_version_id: str, clause_id: str, request: Request, body: RejectionCreate):
+        """No model call: the rejection is a new reading the person then confirms."""
+        current, error = principal(request)
+        if error:
+            return error
+        try:
+            candidate = formalizations.reject(current, rule_version_id, clause_id, body.model_dump(mode="json"))
+            return JSONResponse(candidate, status_code=201, headers={"Cache-Control": "private, no-store"})
         except (KeyError, ValueError, ModelUnavailable) as exc:
             return fail(exc)
 

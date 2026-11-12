@@ -33,7 +33,11 @@ def _canonical(payload: dict) -> str:
 
 
 def formal_digest(spec: dict) -> str:
-    return _canonical({key: spec[key] for key in FORMAL_DIGEST_KEYS})
+    payload = {key: spec[key] for key in FORMAL_DIGEST_KEYS}
+    # Parts a person rejected are meaning too. A reading without any keeps its earlier digest.
+    if spec.get("rejections"):
+        payload["rejections"] = spec["rejections"]
+    return _canonical(payload)
 
 
 def display_digest(cnl: str, formal_digest_value: str, unresolved: list, completeness: str, *, renderer: str = CNL_RENDERER_VERSION) -> str:

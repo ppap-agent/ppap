@@ -264,6 +264,36 @@ def clause_ids(rules: Mapping[str, Any]) -> tuple[str, ...]:
     return ids  # type: ignore[return-value]
 
 
+def clause_rejections(rules: Mapping[str, Any], clause_id: str) -> tuple[Mapping[str, Any], ...]:
+    """Parts of one clause a person rejected, in its confirmed snapshot, because they give no checkable criterion."""
+    specs = rules.get("formalizations")
+    item = specs.get(clause_id) if isinstance(specs, Mapping) else None
+    found = item.get("rejections") if isinstance(item, Mapping) and item.get("clause_id") == clause_id else None
+    return tuple(entry for entry in found or () if isinstance(entry, Mapping)) if isinstance(found, (list, tuple)) else ()
+
+
+def rejected_whole(rejections: Sequence[Mapping[str, Any]]) -> bool:
+    return any(item.get("scope") == "clause" for item in rejections)
+
+
+def rejection_basis(rejections: Sequence[Mapping[str, Any]]) -> str:
+    """The basis an UNABLE carries: what was rejected, why, and that a person must review it."""
+    stated = []
+    for item in rejections:
+        parts = "；".join(str(part) for part in item.get("parts") or ()) or ("整条条款" if item.get("scope") == "clause" else "部分内容")
+        stated.append(f"{parts}（原因：{item.get('reason') or '未写明'}）")
+    return "已按用户决定拒绝自动判定，无可程序化判定标准：" + "；".join(stated) + "。请人工复核。"
+
+
+def without_rejected_pass(result: dict, rejections: Sequence[Mapping[str, Any]]) -> dict:
+    """A rejected part was never checked, so the clause cannot pass. A defect in the defined parts stays NG."""
+    if not rejections or result.get("status") != "PASS":
+        return result
+    checked = str(result.get("suggestions") or "").strip()
+    basis = rejection_basis(rejections)
+    return {**result, "status": "UNABLE", "suggestions": f"已定义部分：{checked}\n{basis}" if checked else basis}
+
+
 SEVERITIES = ("A", "B", "C")
 # A reason must state the actual consequence, not a stance.
 _EMPTY_REASONS = {"按经验", "经验判断", "综合判断", "综合考虑", "酌情", "视情况"}

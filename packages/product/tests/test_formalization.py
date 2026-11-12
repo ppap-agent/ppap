@@ -818,3 +818,73 @@ def test_a_clause_without_a_separable_condition_is_not_asked(clause_text):
 
     read = accept_text_points(_POINTS, source_rule_version_id="rule-1", clause_id="c1", clause_text=clause_text)
     assert read["completeness"] == "complete" and read["spec"]["unresolved"] == []
+
+
+def test_a_rejection_is_a_confirmable_reading_that_keeps_only_the_defined_parts():
+    from product.formalization.text import accept_text_points, carried_rejections, reject_reading, text_prompts
+    from product.store.formalizations import _summary
+
+    clause_text = "当“批号”列下内容不为空，且同行的“数量”内容不为空则通过，否则不通过。"
+    points = json.dumps({"sections": [{"title": "检查", "items": ["“批号”“数量”非空 → 通过", "数量合理 → 通过"]}], "review": ["何为合理？"], "suggested_clause": ""}, ensure_ascii=False)
+    asked = accept_text_points(points, source_rule_version_id="rule-1", clause_id="c1", clause_text=clause_text)
+    question = asked["spec"]["unresolved"][0]["id"]
+    assert asked["completeness"] == "partial"
+    plain = accept_text_points(points, source_rule_version_id="rule-1", clause_id="c1", clause_text="批号与数量非空")
+    # A reading with nothing rejected keeps the digest it had before rejections existed.
+    assert (
+        "rejections" not in plain["spec"]
+        and plain["display_digest"] == accept_text_points(points, source_rule_version_id="rule-1", clause_id="c1", clause_text="批号与数量非空", rejections=[])["display_digest"]
+    )
+
+    part = reject_reading(asked["spec"], scope="part", reason="何为合理没有判定标准", obligation_ids=["p2"], unresolved_ids=[question], source_rule_version_id="rule-1", clause_id="c1")
+    assert part["completeness"] == "complete" and part["spec"]["unresolved"] == []
+    assert [item["id"] for item in part["spec"]["obligations"]] == ["p1"]
+    assert part["spec"]["rejections"] == [{"id": "x1", "scope": "part", "parts": ["数量合理 → 通过", asked["spec"]["unresolved"][0]["reason"]], "reason": "何为合理没有判定标准"}]
+    assert "已拒绝（无可程序化判定标准）：数量合理 → 通过；" in part["cnl_text"] and "待澄清：何为合理？" in part["cnl_text"]
+    assert (
+        part["formal_digest"]
+        != reject_reading(asked["spec"], scope="part", reason="另一个原因", obligation_ids=["p2"], unresolved_ids=[question], source_rule_version_id="rule-1", clause_id="c1")["formal_digest"]
+    )
+    # A question left open keeps the reading partial; the rejection settles only what it names.
+    assert reject_reading(asked["spec"], scope="part", reason="原因", obligation_ids=["p2"], source_rule_version_id="rule-1", clause_id="c1")["completeness"] == "partial"
+
+    # A later rewrite keeps the rejected parts out and the rejection on.
+    carried = carried_rejections(part["spec"])
+    again = accept_text_points(points, source_rule_version_id="rule-1", clause_id="c1", clause_text="批号与数量非空", rejections=carried)
+    assert again["spec"]["rejections"] == part["spec"]["rejections"]
+    assert "数量合理 → 通过" in json.loads(text_prompts(clause_text="批号与数量非空", rejected=carried[0]["parts"])[1].split("\n", 1)[1])["rejected_parts"]
+
+    whole = reject_reading(None, scope="clause", reason="原文只问是否满足要求", source_rule_version_id="rule-1", clause_id="c1")
+    assert whole["completeness"] == "complete" and whole["spec"]["obligations"] == [] and whole["spec"]["unresolved"] == []
+    assert whole["cnl_text"] == "已拒绝（无可程序化判定标准）：整条条款。原因：原文只问是否满足要求"
+    assert carried_rejections(whole["spec"]) == []
+
+    for bad in (
+        {"scope": "part", "reason": " ", "obligation_ids": ["p2"]},
+        {"scope": "part", "reason": "原因"},
+        {"scope": "part", "reason": "原因", "obligation_ids": ["p1", "p2"]},
+        {"scope": "part", "reason": "原因", "obligation_ids": ["p9"]},
+        {"scope": "clause", "reason": "原因", "obligation_ids": ["p1"]},
+        {"scope": "maybe", "reason": "原因", "parts": ["x"]},
+    ):
+        with pytest.raises(FormalizationError) as refused:
+            reject_reading(asked["spec"], source_rule_version_id="rule-1", clause_id="c1", **bad)
+        assert refused.value.code == "invalid_rejection"
+
+    def row(reading):
+        return {
+            "id": "a",
+            "formalization_revision": 1,
+            "completeness": reading["completeness"],
+            "unresolved": reading["spec"]["unresolved"],
+            "rejections": reading["spec"].get("rejections") or [],
+            "display_digest": reading["display_digest"],
+            "source_rule_digest": "d",
+        }
+
+    current = {"candidate_id": "a", "formalization_revision": 1, "confirmed_at": None, "source_rule_digest": "d"}
+    assert _summary("c1", row(whole), None, "d")["state"] == "candidate"
+    assert _summary("c1", row(whole), current, "d")["state"] == "rejected"
+    assert _summary("c1", row(whole), current, "d")["rejections"][0]["reason"] == "原文只问是否满足要求"
+    assert _summary("c1", row(part), current, "d")["state"] == "confirmed"
+    assert _summary("c1", row(whole), current, "changed")["state"] == "source_changed"

@@ -383,3 +383,42 @@ def test_prompt_keeps_policy_pairs_and_does_not_follow_embedded_instructions():
         _audit(), _rule(formalizations=pairs["unique"]), file_sha256="a" * 64, role="target"
     )
     assert effective_rule_digest(_rule(formalizations=pairs["exact"])) != effective_rule_digest(_rule(formalizations=pairs["normalized"]))
+
+
+def _rejected(rejections: list[dict], obligations: list[dict]) -> dict:
+    from audit.formal_digest import TEXT_RENDERER_VERSION
+
+    body = {
+        "format_version": "1",
+        "formal_profile": "rule-text-v1",
+        "owl_content": None,
+        "clif_content": None,
+        "vocabulary": {},
+        "source_rule_version_id": "rule-1",
+        "clause_id": "c1",
+        "obligations": obligations,
+        "unresolved": [],
+        "assumptions": [],
+        "rejections": rejections,
+    }
+    item = {**body, "rule_version_id": "rule-1", "completeness": "complete", "cnl_text": "要点与拒绝", "cnl_renderer_version": TEXT_RENDERER_VERSION, "formal_digest": formal_digest(body)}
+    item["display_digest"] = display_digest(item["cnl_text"], item["formal_digest"], [], "complete", renderer=TEXT_RENDERER_VERSION)
+    return {"c1": item}
+
+
+def test_a_rejected_clause_asks_for_no_check_logic_and_no_model():
+    whole = _rejected([{"id": "x1", "scope": "clause", "parts": [], "reason": "原文只问是否满足要求"}], [])
+    prompt = _prompt(_rule(formalizations=whole), None, None, _audit(), None)
+    assert "条款 c1 已被用户整条拒绝" in prompt and "原文只问是否满足要求" in prompt
+    assert "不要为该条款编写任何检查逻辑，也不要调用模型判断" in prompt and "固定给出 UNABLE" in prompt
+    assert "尚无已确认形式化语义" not in prompt
+
+    part = _rejected([{"id": "x1", "scope": "part", "parts": ["O 与预防控制匹配"], "reason": "何为有效预防没有定义"}], [{"id": "p1", "text": "S 在 1 至 10"}])
+    prompt = _prompt(_rule(formalizations=part), None, None, _audit(), None)
+    assert "S 在 1 至 10" in prompt and "O 与预防控制匹配（原因：何为有效预防没有定义）" in prompt
+    assert "不要为这些部分编写检查逻辑，也不要调用模型判断它们" in prompt and "运行时会因被拒绝部分把它改为 UNABLE" in prompt
+
+    # A rejection is meaning: dropping it from a sealed snapshot breaks the seal.
+    stripped = {"c1": {**part["c1"], "rejections": []}}
+    prompt = _prompt(_rule(formalizations=stripped), None, None, _audit(), None)
+    assert "形式快照未通过核验" in prompt and "S 在 1 至 10" not in prompt

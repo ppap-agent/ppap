@@ -6,6 +6,7 @@ import type {components} from '../generated/openapi'
 import {Badge} from '../components/ui/badge'
 import {Button} from '../components/ui/button'
 import {Progress} from '../components/ui/progress'
+import {Checkbox} from '../components/ui/checkbox'
 import {RadioGroup, RadioGroupItem} from '../components/ui/radio-group'
 import {Skeleton} from '../components/ui/skeleton'
 import {Textarea} from '../components/ui/textarea'
@@ -15,6 +16,7 @@ import {canRequestFormalization, checkPointLines, formalizationFailure, formaliz
 
 type Detail = components['schemas']['ClauseFormalizationView']
 type Receipt = components['schemas']['OperationReceipt']
+type Rejection = components['schemas']['FormalizationRejection']
 type Generation = components['schemas']['OptimizationReceipt']
 type GenerationView = components['schemas']['GenerationView']
 type Target = {ruleVersionId: string; clauseId: string}
@@ -22,6 +24,9 @@ type Adopt = (clauseId: string, text: string, note: string) => void
 
 const running = (state?: string) => state === 'queued' || state === 'running'
 const unprepared = (state?: string) => state === 'not_started' || state === 'source_changed'
+const REJECTED = '已拒绝（无可程序化判定标准）：'
+/** Confirmed, or confirmed as rejected: either way the person has decided this clause. */
+const decided = (status?: Status) => status === 'confirmed' || status === 'rejected'
 
 /**
  * An uploaded rule's program on top of its page: generate it when there is none, follow a generation,
@@ -100,13 +105,13 @@ export function ProgramWizard({ruleVersionId, ruleTitle, version, updating, onCl
 }
 
 /** Where a clause stands, as the list beside the clause shows it. */
-type Status = 'waiting' | 'running' | 'failed' | 'question' | 'review' | 'ready' | 'confirmed'
+type Status = 'waiting' | 'running' | 'failed' | 'question' | 'review' | 'ready' | 'confirmed' | 'rejected'
 type Report = {state: string; status: Status; text: string}
-const statusLabel: Record<Status, string> = {waiting: '待整理', running: '整理中', failed: '没整理出来', question: '要选择', review: '有疑问', ready: '待确认', confirmed: '已确认'}
+const statusLabel: Record<Status, string> = {waiting: '待整理', running: '整理中', failed: '没整理出来', question: '要选择', review: '有疑问', ready: '待确认', confirmed: '已确认', rejected: '已拒绝'}
 
 function StatusMark({status}: {status?: Status}) {
   if (!status) return null
-  const mark = status === 'confirmed' ? <Check className="size-4 text-success"/>
+  const mark = decided(status) ? <Check className={`size-4 ${status === 'rejected' ? 'text-muted-foreground' : 'text-success'}`}/>
     : status === 'running' ? <Loader2 className="size-4 animate-spin text-muted-foreground motion-reduce:animate-none"/>
     : <span className={`size-2 rounded-full ${status === 'review' || status === 'question' ? 'bg-warning' : status === 'failed' ? 'bg-destructive' : status === 'ready' ? 'bg-foreground' : 'border border-muted-foreground/60'}`}/>
   return <span className="flex size-4 shrink-0 items-center justify-center" title={statusLabel[status]}>{mark}<span className="sr-only">{statusLabel[status]}</span></span>
@@ -182,7 +187,7 @@ function CheckPoints({ruleVersionId, action, onStarted, onAdopt}: {ruleVersionId
     return () => controller.abort()
   }, [ruleVersionId, attempt])
   const total = clauses?.length ?? 0
-  const confirmed = clauses?.filter(id => reports[id]?.status === 'confirmed').length ?? 0
+  const confirmed = clauses?.filter(id => decided(reports[id]?.status)).length ?? 0
   const waiting = clauses?.filter(id => unprepared(reports[id]?.state)).length ?? 0
   const current = clauses?.includes(selected) ? selected : clauses?.[0] ?? ''
   const index = clauses?.indexOf(current) ?? -1
@@ -190,7 +195,7 @@ function CheckPoints({ruleVersionId, action, onStarted, onAdopt}: {ruleVersionId
   useEffect(() => {
     if (placed.current || !clauses?.length || clauses.some(id => !reports[id])) return
     placed.current = true
-    setSelected(clauses.find(id => reports[id]?.status !== 'confirmed') ?? clauses[0]!)
+    setSelected(clauses.find(id => !decided(reports[id]?.status)) ?? clauses[0]!)
   }, [clauses, reports])
   function show(clauseId: string) {
     placed.current = true
@@ -202,7 +207,7 @@ function CheckPoints({ruleVersionId, action, onStarted, onAdopt}: {ruleVersionId
     if (!clauses) return
     const from = clauses.indexOf(after)
     const rest = [...clauses.slice(from + 1), ...clauses.slice(0, from)]
-    const target = rest.find(id => reports[id]?.status !== 'confirmed')
+    const target = rest.find(id => !decided(reports[id]?.status))
     if (target) show(target)
   }
   /** Unchanged clauses confirmed in the previous version are confirmed here in one step; each can still be withdrawn. */
@@ -254,7 +259,7 @@ function CheckPoints({ruleVersionId, action, onStarted, onAdopt}: {ruleVersionId
       </nav>
       <div ref={detail} className="min-w-0 scroll-mt-6 space-y-3">
         <div className="flex items-center justify-between gap-3">
-          <p className="flex items-center gap-2 font-medium"><span>第 {index + 1} 条</span><span className="font-normal text-muted-foreground">共 {total} 条<span className="lg:hidden">，已确认 {confirmed} 条</span></span>{currentStatus && <Badge shape="square" variant={currentStatus === 'confirmed' ? 'success' : currentStatus === 'review' || currentStatus === 'question' ? 'warning' : 'outline'}>{statusLabel[currentStatus]}</Badge>}</p>
+          <p className="flex items-center gap-2 font-medium"><span>第 {index + 1} 条</span><span className="font-normal text-muted-foreground">共 {total} 条<span className="lg:hidden">，已确认 {confirmed} 条</span></span>{currentStatus && <Badge shape="square" variant={currentStatus === 'confirmed' ? 'success' : currentStatus === 'rejected' ? 'secondary' : currentStatus === 'review' || currentStatus === 'question' ? 'warning' : 'outline'}>{statusLabel[currentStatus]}</Badge>}</p>
           <div className="flex gap-1">
             <Button variant="ghost" size="icon" aria-label="上一条" disabled={index <= 0} onClick={() => show(clauses![index - 1]!)}><ChevronLeft/></Button>
             <Button variant="ghost" size="icon" aria-label="下一条" disabled={index >= total - 1} onClick={() => show(clauses![index + 1]!)}><ChevronRight/></Button>
@@ -289,6 +294,8 @@ function ClauseCheckPoints({ruleVersionId, clauseId, prepare, onAdopt, onReport,
   const [revision, setRevision] = useState(''), [revisionCandidate, setRevisionCandidate] = useState('')
   const [editing, setEditing] = useState(false), [original, setOriginal] = useState(false), [whole, setWhole] = useState(false)
   const [locked, setLocked] = useState(false)
+  const [rejecting, setRejecting] = useState<'clause' | 'part' | null>(null)
+  const [rejectPoints, setRejectPoints] = useState<string[]>([]), [rejectQuestions, setRejectQuestions] = useState<string[]>([]), [rejectParts, setRejectParts] = useState(''), [rejectReason, setRejectReason] = useState('')
   const busy = useRef(false)
   const prepared = useRef(prepare)
   const shown = useRef<Target>({ruleVersionId, clauseId})
@@ -326,7 +333,9 @@ function ClauseCheckPoints({ruleVersionId, clauseId, prepare, onAdopt, onReport,
   const readings = visibleFormalizationReadings(detail?.state ?? '', detail?.candidates ?? [])
   const candidate = readings.current
   const question = candidate?.unresolved[0]
-  const confirmed = detail?.state === 'confirmed'
+  const confirmed = detail?.state === 'confirmed' || detail?.state === 'rejected'
+  const rejections: Rejection[] = candidate?.rejections ?? []
+  const wholeRejected = rejections.some(item => item.scope === 'clause')
   const waiting = running(operation?.state) || operation?.state === 'unknown'
   const selectedChoice = textForCandidate(candidate?.id, choiceCandidate, choice)
   const selectedRevision = textForCandidate(candidate?.id, revisionCandidate, revision)
@@ -392,6 +401,25 @@ function ClauseCheckPoints({ruleVersionId, clauseId, prepare, onAdopt, onReport,
       if (stillShown(origin)) setError(message(cause))
     } finally {finish()}
   }
+  /** No model call: the decision becomes a reading of its own, which the person then confirms. */
+  async function reject() {
+    if (!detail || !rejecting || !rejectReason.trim() || !begin()) return
+    const origin = {ruleVersionId, clauseId}
+    const latest = detail.candidates.at(-1)
+    setError('')
+    try {
+      const parts = rejectParts.split(/\n/).map(item => item.trim()).filter(Boolean)
+      const made = await request<{id: string}>(`/rules/${ruleVersionId}/formalizations/${encodeURIComponent(clauseId)}/rejections`, 'POST', {
+        operation_id: crypto.randomUUID(), expected_source_digest: detail.source_rule_digest, scope: rejecting, reason: rejectReason.trim(), parts,
+        ...(latest ? {based_on_candidate_id: latest.id} : {}),
+        ...(rejecting === 'part' ? {obligation_ids: rejectPoints, unresolved_ids: rejectQuestions} : {}),
+      })
+      if (!stillShown(origin)) return
+      setRejecting(null); setRejectPoints([]); setRejectQuestions([]); setRejectParts(''); setRejectReason('')
+      setPending(made.id)
+    } catch (cause) {if (stillShown(origin)) setError(message(cause))}
+    finally {finish()}
+  }
   async function revoke() {
     const current = detail?.confirmations.find(item => item.current)
     if (!current || !begin()) return
@@ -405,11 +433,13 @@ function ClauseCheckPoints({ruleVersionId, clauseId, prepare, onAdopt, onReport,
   }
   const lines = candidate ? checkPointLines(candidate.cnl_text, (candidate.obligations as {id?: unknown}[]).flatMap(item => typeof item?.id === 'string' ? [item.id] : [])) : []
   // Ambiguities the original leaves open are listed apart from the points; nothing resolves them for the person.
-  const points = lines.filter(line => !line.startsWith('待澄清：')), review = lines.filter(line => line.startsWith('待澄清：')).map(line => line.slice('待澄清：'.length))
+  const points = lines.filter(line => !line.startsWith('待澄清：') && !line.startsWith(REJECTED)), review = lines.filter(line => line.startsWith('待澄清：')).map(line => line.slice('待澄清：'.length))
+  const questionChoices = (candidate?.unresolved ?? []).filter(item => item.id !== 'undecided')
+  const pointChoices = ((candidate?.obligations ?? []) as {id?: unknown; text?: unknown}[]).flatMap(item => typeof item?.id === 'string' && typeof item.text === 'string' ? [{id: item.id, text: item.text}] : [])
   const suggestion = ((candidate?.assumptions ?? []) as {kind?: unknown; text?: unknown}[]).find(item => item?.kind === 'suggested_clause' && typeof item.text === 'string')?.text as string | undefined
   const clauseText = detail?.clause_text ?? ''
   const failed = !candidate && ((operation?.state === 'failed' && operation.failure !== 'source_changed') || operation?.state === 'stopped' || operation?.state === 'unknown')
-  const status: Status | null = !detail ? null : running(operation?.state) ? 'running' : confirmed ? 'confirmed' : failed ? 'failed' : !candidate ? 'waiting' : question ? 'question' : review.length ? 'review' : 'ready'
+  const status: Status | null = !detail ? null : running(operation?.state) ? 'running' : confirmed ? (detail.state === 'rejected' ? 'rejected' : 'confirmed') : failed ? 'failed' : !candidate ? 'waiting' : question ? 'question' : review.length ? 'review' : 'ready'
   useEffect(() => {if (detail && status) onReport({state: detail.state, status, text: clauseText})}, [detail?.state, status, clauseText])
   const parts = suggestion ? insertions(clauseText, suggestion) : []
   const longOriginal = clauseText.length > 360
@@ -423,7 +453,7 @@ function ClauseCheckPoints({ruleVersionId, clauseId, prepare, onAdopt, onReport,
     {running(operation?.state) ? <div role="status" className="space-y-2.5"><p className="flex items-center gap-2 text-muted-foreground"><Loader2 aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none"/>正在整理，大约一两分钟。</p><Skeleton className="h-4 w-full"/><Skeleton className="h-4 w-2/3"/></div>
       : operation?.state === 'unknown' ? <div role="status" className="flex flex-wrap items-center gap-3"><span>还不知道整理结果。刷新看看，不要重新开始。</span><Button variant="outline" size="sm" onClick={() => reread(operation.operation_id)}>刷新</Button></div>
       : (operation?.state === 'failed' && operation.failure !== 'source_changed') || operation?.state === 'stopped' ? <div role="status" className="flex flex-wrap items-center gap-3"><span>{operation.state === 'stopped' ? '这条没整理出来。' : formalizationFailure(operation.failure)}</span><Button variant="outline" size="sm" disabled={locked} onClick={() => void generate({})}>再试一次</Button></div>
-      : detail && !candidate && !error && unprepared(detail.state) ? <div className="flex flex-wrap items-center gap-3"><span className="text-muted-foreground">还没整理。</span><Button variant="outline" size="sm" disabled={locked} onClick={() => void generate({})}>整理这条</Button></div>
+      : detail && !candidate && !error && unprepared(detail.state) ? <div className="flex flex-wrap items-center gap-3"><span className="text-muted-foreground">还没整理。</span><Button variant="outline" size="sm" disabled={locked} onClick={() => void generate({})}>整理这条</Button>{!rejecting && <Button variant="ghost" size="sm" disabled={locked} onClick={() => setRejecting('clause')}>没有判定标准</Button>}</div>
       : null}
     {error && <div role="alert" className="flex flex-wrap items-center gap-3 text-destructive"><span>{error}</span>{!candidate && detail && <Button variant="outline" size="sm" disabled={locked} onClick={() => void generate({})}>再试一次</Button>}{candidate && <Button variant="outline" size="sm" onClick={() => {setError(''); setPending(crypto.randomUUID())}}>重新读取</Button>}</div>}
     {candidate && !waiting && !question && <>
@@ -439,21 +469,26 @@ function ClauseCheckPoints({ruleVersionId, clauseId, prepare, onAdopt, onReport,
           </div>
         </div>}
       </section>}
-      <section className="space-y-3">
+      {rejections.length > 0 && <section aria-label="已拒绝" className="space-y-2 rounded-md border bg-muted/40 px-4 py-4">
+        <h3 className="font-medium">{wholeRejected ? '整条已拒绝：没有可程序化的判定标准' : '以下部分已拒绝：没有可程序化的判定标准'}</h3>
+        <ul className="list-disc space-y-1.5 pl-5">{rejections.map(item => <li key={item.id} className="break-words">{item.parts.length ? item.parts.join('；') : '整条条款'}<span className="block text-muted-foreground">原因：{item.reason}</span></li>)}</ul>
+        <p className="text-muted-foreground">审核时{wholeRejected ? '这条' : '这些部分'}不生成检查、不调用模型，结果固定为无法判断，交给人工复核。</p>
+      </section>}
+      {points.length > 0 && <section className="space-y-3">
         <h3 className="font-medium">检查步骤</h3>
         <div className="space-y-4">{groupPoints(points).map((group, position) => <div key={position} className="space-y-1.5">
           {group.title && <h4 className="text-muted-foreground">{group.title}</h4>}
           <ul className="list-disc space-y-1.5 pl-5 leading-relaxed">{group.items.map((point, item) => <li key={item} className="break-words">{point.replace(/^【[^】]{1,12}】\s*/, '')}</li>)}</ul>
         </div>)}</div>
-      </section>
+      </section>}
       {incomplete && <p role="status" className="text-muted-foreground">这条还不完整。</p>}
       {(editing || incomplete) && <div className="grid gap-2">
         <label className="grid gap-1.5">哪里写得不对？<Textarea className="min-h-20" maxLength={2000} value={selectedRevision} onChange={event => {setRevisionCandidate(candidate.id); setRevision(event.target.value)}}/></label>
         <div className="flex justify-end gap-2">{!incomplete && <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>取消</Button>}<Button variant="outline" size="sm" disabled={!selectedRevision.trim() || locked} onClick={() => void generate({based_on_candidate_id: candidate.id, user_instruction: selectedRevision.trim()})}>重新整理</Button></div>
       </div>}
       <footer className="flex flex-wrap items-center justify-between gap-2 border-t pt-4">
-        {!editing && !incomplete && !confirmed ? <Button variant="outline" disabled={locked} onClick={() => setEditing(true)}>写得不对</Button> : <span/>}
-        {confirmed ? <Button variant="outline" disabled={locked} onClick={() => void revoke()}>撤销确认</Button> : <Button disabled={locked || incomplete || candidate.unresolved.length > 0} onClick={() => void confirm()}>{review.length ? '保持原文，确认' : '确认'}</Button>}
+        {!editing && !incomplete && !confirmed && !rejecting ? <span className="flex flex-wrap gap-2">{!wholeRejected && <Button variant="outline" disabled={locked} onClick={() => setEditing(true)}>写得不对</Button>}{!wholeRejected && <Button variant="ghost" disabled={locked} onClick={() => setRejecting('part')}>没有判定标准</Button>}</span> : <span/>}
+        {confirmed ? <Button variant="outline" disabled={locked} onClick={() => void revoke()}>撤销确认</Button> : <Button disabled={locked || incomplete || candidate.unresolved.length > 0} onClick={() => void confirm()}>{wholeRejected ? '确认拒绝' : review.length ? '保持原文，确认' : '确认'}</Button>}
       </footer>
     </>}
     {question && !waiting && <fieldset className="space-y-3"><legend className="mb-3 font-medium">{question.reason}</legend>
@@ -461,9 +496,27 @@ function ClauseCheckPoints({ruleVersionId, clauseId, prepare, onAdopt, onReport,
         {(question.choices ?? []).map(item => <label key={item.id} className="flex min-h-11 items-start gap-3 rounded-md border px-3 py-3"><RadioGroupItem value={item.id} className="mt-0.5"/><span>{item.summary}{item.counterexample && <span className="mt-1 block text-xs text-muted-foreground">反例：{item.counterexample}</span>}</span></label>)}
       </RadioGroup>
       <div className="flex flex-wrap justify-end gap-2 border-t pt-4">
+        {!rejecting && <Button variant="ghost" disabled={locked} onClick={() => setRejecting('clause')}>没有判定标准</Button>}
         <Button variant="ghost" disabled={locked} onClick={() => void generate({based_on_candidate_id: candidate?.id, clarification_answer: {unresolved_id: question.id, choice_id: 'undecided'}})}>暂不确定</Button>
         <Button disabled={!selectedChoice || locked} onClick={() => void generate({based_on_candidate_id: candidate?.id, clarification_answer: {unresolved_id: question.id, choice_id: selectedChoice}})}>确认选择</Button>
       </div>
     </fieldset>}
+    {rejecting && !waiting && <section aria-label="拒绝" className="space-y-3 border-t pt-4">
+      <h3 className="font-medium">拒绝：原文没有可程序化的判定标准</h3>
+      {pointChoices.length > 0 && <RadioGroup value={rejecting} onValueChange={value => setRejecting(value as 'clause' | 'part')}>
+        <label className="flex items-center gap-3"><RadioGroupItem value="part"/>只拒绝其中一部分，其余照常检查</label>
+        <label className="flex items-center gap-3"><RadioGroupItem value="clause"/>整条拒绝</label>
+      </RadioGroup>}
+      {rejecting === 'part' && <fieldset className="space-y-2"><legend className="mb-2 text-muted-foreground">勾选没有判定标准的要点</legend>
+        {pointChoices.map(item => <label key={item.id} className="flex items-start gap-3"><Checkbox className="mt-0.5" checked={rejectPoints.includes(item.id)} onCheckedChange={value => setRejectPoints(previous => value === true ? [...previous, item.id] : previous.filter(id => id !== item.id))}/><span className="break-words">{item.text}</span></label>)}
+        {questionChoices.map(item => <label key={item.id} className="flex items-start gap-3"><Checkbox className="mt-0.5" checked={rejectQuestions.includes(item.id)} onCheckedChange={value => setRejectQuestions(previous => value === true ? [...previous, item.id] : previous.filter(id => id !== item.id))}/><span className="break-words">待选择：{item.reason}</span></label>)}
+      </fieldset>}
+      <label className="grid gap-1.5">{rejecting === 'part' ? '要点里没有单列的部分（每行一项，可不填）' : '拒绝的内容（可不填，默认整条）'}<Textarea className="min-h-16" maxLength={3000} value={rejectParts} onChange={event => setRejectParts(event.target.value)}/></label>
+      <label className="grid gap-1.5">原因：哪些地方没有判定标准<Textarea className="min-h-20" maxLength={1000} value={rejectReason} onChange={event => setRejectReason(event.target.value)}/></label>
+      <div className="flex justify-end gap-2">
+        <Button variant="ghost" size="sm" onClick={() => setRejecting(null)}>取消</Button>
+        <Button variant="outline" size="sm" disabled={!rejectReason.trim() || locked || (rejecting === 'part' && !rejectPoints.length && !rejectQuestions.length && !rejectParts.trim())} onClick={() => void reject()}>拒绝</Button>
+      </div>
+    </section>}
   </article>
 }

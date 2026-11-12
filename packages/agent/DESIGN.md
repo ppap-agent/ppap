@@ -194,7 +194,7 @@ def create_audit(
 
 条款形式化的数据合同见 [DATA_MODEL](../../docs/DATA_MODEL.md)。它不是 Checker 执行器。
 
-已确认且完整的快照可以在用户明确交接时写入指定 Suite candidate 的 `rules.json` 顶层 `formalizations`。Optimizer 提示只读这份冻结快照。没有这份快照时，原规则路径不变。
+已确认且完整的快照可以在用户明确交接时写入指定 Suite candidate 的 `rules.json` 顶层 `formalizations`。Optimizer 提示只读这份冻结快照。没有这份快照时，原规则路径不变。快照中的 `rejections` 是用户拒绝、没有可程序化判定标准的部分：提示要求不为它们写检查逻辑、不调用模型；`audit_runtime` 对整条拒绝不运行程序并给出 UNABLE，对部分拒绝把 PASS 改为 UNABLE，均附拒绝原因。
 
 
 对用户规则尝试严格表达，保留原文及来源；形式表达是可核对的解释，不能冒充原文。每个条款至少明确以下内容：

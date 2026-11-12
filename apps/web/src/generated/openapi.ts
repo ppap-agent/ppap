@@ -1987,6 +1987,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/rules/{rule_version_id}/formalizations/{clause_id}/rejections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reject Formalization
+         * @description No model call: the rejection is a new reading the person then confirms.
+         */
+        post: operations["reject_formalization_rules__rule_version_id__formalizations__clause_id__rejections_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/rules/parse": {
         parameters: {
             query?: never;
@@ -4446,6 +4466,11 @@ export interface components {
             owl_content: string;
             /** Parent Candidate Id */
             parent_candidate_id?: string | null;
+            /**
+             * Rejections
+             * @default []
+             */
+            rejections: components["schemas"]["FormalizationRejection"][];
             /** Source Rule Digest */
             source_rule_digest: string;
             /** Unresolved */
@@ -4514,6 +4539,20 @@ export interface components {
             id: string;
             /** Reason */
             reason: string;
+        };
+        /** FormalizationRejection */
+        FormalizationRejection: {
+            /** Id */
+            id: string;
+            /** Parts */
+            parts: string[];
+            /** Reason */
+            reason: string;
+            /**
+             * Scope
+             * @enum {string}
+             */
+            scope: "clause" | "part";
         };
         /** GenerationView */
         GenerationView: {
@@ -4886,6 +4925,31 @@ export interface components {
             usage_charge_enabled?: boolean;
             /** User Quota */
             user_quota?: number;
+        };
+        /**
+         * RejectionCreate
+         * @description A person's decision that the clause, or parts of it, gives no criterion a program can check.
+         */
+        RejectionCreate: {
+            /** Based On Candidate Id */
+            based_on_candidate_id?: string | null;
+            /** Expected Source Digest */
+            expected_source_digest: string;
+            /** Obligation Ids */
+            obligation_ids?: string[];
+            /** Operation Id */
+            operation_id: string;
+            /** Parts */
+            parts?: string[];
+            /** Reason */
+            reason: string;
+            /**
+             * Scope
+             * @enum {string}
+             */
+            scope: "clause" | "part";
+            /** Unresolved Ids */
+            unresolved_ids?: string[];
         };
         /** RelatedAuditTask */
         RelatedAuditTask: {
@@ -10819,6 +10883,78 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OperationReceipt"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FormalizationProblem"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FormalizationProblem"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FormalizationProblem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FormalizationProblem"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FormalizationProblem"];
+                };
+            };
+        };
+    };
+    reject_formalization_rules__rule_version_id__formalizations__clause_id__rejections_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                clause_id: string;
+                rule_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RejectionCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FormalizationCandidate"];
                 };
             };
             /** @description Unauthorized */

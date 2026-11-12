@@ -129,6 +129,7 @@ const messages: Record<string,string> = {
   source_unreadable: '规则原件已不可用，暂时不能整理或确认这条规则。',
   suite_key_mismatch: '这条规则不能写入所选检查版本。',
   invalid_formalization: '这条没整理出来。',
+  invalid_rejection: '拒绝要写明原因，并说明拒绝的是整条还是哪些部分；要点都拒绝时请整条拒绝。',
   clause_not_found: '没有这条条款。',
   model_unavailable: '服务暂时不可用，请稍后重试；如持续出现，请联系管理员。',
   model_consumption_refused: '暂时无法处理，请稍后重试。',

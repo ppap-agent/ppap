@@ -15,7 +15,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from product.formalization.spec import FormalizationError
-from product.formalization.text import accept_text_points, clarified
+from product.formalization.text import accept_text_points, carried_rejections, clarified, reject_reading
 
 
 def _id(value: str) -> str:
@@ -173,6 +173,7 @@ class FormalizationStore:
                     "obligations": previous["obligations"],
                     "unresolved": previous["unresolved"],
                     "assumptions": previous["assumptions"],
+                    "rejections": previous["rejections"],
                 }
                 formal = formal_digest(spec)
                 checked = {
@@ -460,12 +461,79 @@ class FormalizationStore:
             )
             return _confirmation(cur.fetchone())
 
+    def reject(self, principal, rule_version_id: str, clause_id: str, body: dict) -> dict:
+        """Record that a clause, or parts of it, gives no criterion a program can check. No model is called.
+
+        The decision is a new immutable reading made on the latest one; the person confirms it like any reading.
+        """
+        rule = self._visible_rule(principal, rule_version_id)
+        self._require_source(principal, rule)
+        clause, digest = source_binding(rule, clause_id)
+        _require_clause_text(clause)
+        operation_id = _id(body["operation_id"])
+        if body.get("expected_source_digest") != digest:
+            raise ValueError("source_changed")
+        based_on = _id(body["based_on_candidate_id"]) if body.get("based_on_candidate_id") else None
+        with self.store._conn() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+            _member(conn, principal)
+            _lock(conn, f"rule-formalization:{principal.tenant_id}:{rule['id']}:{clause_id}")
+            base = None
+            if based_on:
+                cur.execute(
+                    "SELECT * FROM product.rule_formalizations WHERE id=%s AND tenant_id=%s AND rule_version_id=%s AND clause_id=%s",
+                    (based_on, principal.tenant_id, rule["id"], clause_id),
+                )
+                base = cur.fetchone()
+                if base is None:
+                    raise ValueError("candidate_stale")
+            try:
+                checked = reject_reading(
+                    base,
+                    scope=body["scope"],
+                    reason=body["reason"],
+                    parts=body.get("parts"),
+                    obligation_ids=body.get("obligation_ids"),
+                    unresolved_ids=body.get("unresolved_ids"),
+                    source_rule_version_id=str(rule["id"]),
+                    clause_id=clause_id,
+                )
+            except FormalizationError as exc:
+                raise ValueError(exc.code) from None
+            cur.execute("SELECT * FROM product.rule_formalizations WHERE tenant_id=%s AND operation_id=%s", (principal.tenant_id, operation_id))
+            prior = cur.fetchone()
+            if prior:
+                same = (str(prior["rule_version_id"]), prior["clause_id"], prior["parent_candidate_id"] and str(prior["parent_candidate_id"]), prior["formal_digest"])
+                if same != (str(rule["id"]), clause_id, based_on, checked["formal_digest"]) or str(prior["created_by"]) != principal.user_id:
+                    raise ValueError("operation_conflict")
+                return _candidate(prior)
+            cur.execute(
+                "SELECT id, source_rule_digest FROM product.rule_formalizations WHERE tenant_id=%s AND rule_version_id=%s AND clause_id=%s ORDER BY formalization_revision DESC LIMIT 1",
+                (principal.tenant_id, rule["id"], clause_id),
+            )
+            latest = cur.fetchone()
+            if (latest and str(latest["id"]) != based_on) or (latest is None and based_on):
+                raise ValueError("candidate_stale")
+            # A part is cut from the earlier reading, so that reading must state the current source.
+            if base is not None and body["scope"] == "part" and base["source_rule_digest"] != digest:
+                raise ValueError("source_changed")
+            row = {
+                "tenant_id": principal.tenant_id,
+                "rule_version_id": rule["id"],
+                "clause_id": clause_id,
+                "based_on_candidate_id": based_on,
+                "initiating_user_id": principal.user_id,
+                "operation_id": operation_id,
+            }
+            candidate_id = self._insert_candidate(cur, row, checked, digest)
+            cur.execute("SELECT * FROM product.rule_formalizations WHERE id=%s", (candidate_id,))
+            return _candidate(cur.fetchone())
+
     def parent_snapshot(self, row) -> dict | None:
         if not row.get("based_on_candidate_id"):
             return None
         with self.store._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
-                """SELECT formal_profile, obligations, owl_content, clif_content, formal_digest FROM product.rule_formalizations
+                """SELECT formal_profile, obligations, owl_content, clif_content, formal_digest, rejections FROM product.rule_formalizations
                    WHERE id=%s AND tenant_id=%s AND rule_version_id=%s AND clause_id=%s""",
                 (row["based_on_candidate_id"], row["tenant_id"], row["rule_version_id"], row["clause_id"]),
             )
@@ -513,8 +581,15 @@ class FormalizationStore:
                     clause, digest = source_binding(rule, row["clause_id"])
                     if digest != row["source_rule_digest"]:
                         raise FormalizationError("source_changed")
-                    decided = clarified(self.parent_snapshot(row), row.get("clarification"))
-                    checked = accept_text_points(raw, source_rule_version_id=str(row["rule_version_id"]), clause_id=row["clause_id"], clause_text=clause.get("rule_to_check") or "", decided=decided)
+                    parent = self.parent_snapshot(row)
+                    checked = accept_text_points(
+                        raw,
+                        source_rule_version_id=str(row["rule_version_id"]),
+                        clause_id=row["clause_id"],
+                        clause_text=clause.get("rule_to_check") or "",
+                        decided=clarified(parent, row.get("clarification")),
+                        rejections=carried_rejections(parent),
+                    )
                     candidate_id = self._insert_candidate(cur, row, checked, digest)
                     state, failure = "completed", None
                 except FormalizationError as exc:
@@ -553,8 +628,8 @@ class FormalizationStore:
             """INSERT INTO product.rule_formalizations(
                    id,tenant_id,rule_version_id,clause_id,formalization_revision,parent_candidate_id,source_rule_digest,
                    formal_profile,owl_content,clif_content,vocabulary,obligations,assumptions,unresolved,completeness,
-                   cnl_text,cnl_renderer_version,formal_digest,display_digest,created_by,operation_id)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                   cnl_text,cnl_renderer_version,formal_digest,display_digest,created_by,operation_id,rejections)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             (
                 candidate_id,
                 row["tenant_id"],
@@ -577,6 +652,7 @@ class FormalizationStore:
                 checked["display_digest"],
                 row["initiating_user_id"],
                 row["operation_id"],
+                Jsonb(spec.get("rejections") or []),
             ),
         )
         return candidate_id
@@ -659,6 +735,8 @@ class FormalizationStore:
                     "display_digest": row["display_digest"],
                     "confirmed_by": str(row["confirmed_by"]),
                     "confirmed_at": row["confirmed_at"].isoformat(),
+                    # Parts with no checkable criterion: the checker writes nothing for them and they never pass.
+                    **({"rejections": row["rejections"]} if row["rejections"] else {}),
                 }
             if not snapshot:
                 raise ValueError("not_confirmable")
@@ -719,7 +797,7 @@ def _summary(clause_id: str, latest, current, source_digest: str | None = None) 
     elif latest is None:
         state = "not_started"
     elif current and str(current["candidate_id"]) == str(latest["id"]) and current["formalization_revision"] == latest["formalization_revision"]:
-        state = "confirmed"
+        state = "rejected" if any(item.get("scope") == "clause" for item in latest.get("rejections") or []) else "confirmed"
     elif latest["unresolved"]:
         state = "needs_clarification"
     elif latest["completeness"] != "complete":
@@ -734,6 +812,7 @@ def _summary(clause_id: str, latest, current, source_digest: str | None = None) 
         "candidate_id": None if latest is None else str(latest["id"]),
         "display_digest": None if latest is None else latest["display_digest"],
         "confirmed_at": current["confirmed_at"].isoformat() if current and hasattr(current["confirmed_at"], "isoformat") else None,
+        "rejections": [] if latest is None else list(latest.get("rejections") or []),
     }
 
 
@@ -750,6 +829,7 @@ def _candidate(row: dict) -> dict:
         "obligations": row["obligations"],
         "assumptions": row["assumptions"],
         "unresolved": row["unresolved"],
+        "rejections": row["rejections"],
         "cnl_text": row["cnl_text"],
         "cnl_renderer_version": row["cnl_renderer_version"],
         "formal_digest": row["formal_digest"],
@@ -825,6 +905,7 @@ def _row_from_public(item: dict) -> dict:
         "formalization_revision": item["formalization_revision"],
         "completeness": item["completeness"],
         "unresolved": item["unresolved"],
+        "rejections": item.get("rejections") or [],
         "display_digest": item["display_digest"],
         "source_rule_digest": item.get("source_rule_digest"),
     }

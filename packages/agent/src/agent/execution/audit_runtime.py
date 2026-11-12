@@ -24,7 +24,7 @@ from types import MappingProxyType, ModuleType
 from typing import Any
 from uuid import uuid4
 
-from audit.checker_core import ExecutionSnapshot, FrozenTarget, checker_digest, clause_ids, validate_results
+from audit.checker_core import ExecutionSnapshot, FrozenTarget, checker_digest, clause_ids, clause_rejections, rejected_whole, rejection_basis, validate_results, without_rejected_pass
 from audit.contracts import AuditInput, AuditResultItem, GroupContextInput, RuleInput, UnavailableSourceError
 from audit.engine.rule_engine.context import GuardStop
 from audit.engine.runtime import bind_runtime
@@ -251,6 +251,11 @@ def run_audit(
                             selected_entrypoint = target.binding.entrypoints.get(clause)
                             if selected_entrypoint is None:
                                 continue
+                            rejections = clause_rejections(target.rules, clause)
+                            if rejected_whole(rejections):
+                                # A clause rejected for want of a checkable criterion runs nothing and asks no model.
+                                results.append(_evidence_references(_error(clause, "UNABLE", rejection_basis(rejections)), target.file_version_id))
+                                continue
                             context = CheckerContext(
                                 snapshot,
                                 target,
@@ -287,7 +292,7 @@ def run_audit(
                             except Exception as exc:
                                 # Exception messages may contain originals or credentials.
                                 item = _error(clause, "ERR", f"checker_failure:{type(exc).__name__}")
-                            data = _evidence_references(item, target.file_version_id)
+                            data = without_rejected_pass(_evidence_references(item, target.file_version_id), rejections)
                             returned_clause = data.get("clause_id")
                             if isinstance(returned_clause, str) and returned_clause != clause and returned_clause in target.binding.entrypoints:
                                 # A known clause is still not authority for this call.
