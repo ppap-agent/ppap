@@ -141,7 +141,7 @@ test('completion notification settings use the private revisioned API and never 
   const preference = {task_id: task.id, enabled: false, revision: 3, available: true, can_change: true, delivery: {state: 'not_due', reason: null}}
   const calls: {url: string; method: string; body: unknown}[] = []
   globalThis.fetch = async (input, options) => {calls.push({url: String(input), method: options?.method || 'GET', body: options?.body ? JSON.parse(String(options.body)) : null}); return json(preference)}
-  const adapter = createNativeAuditAdapter({deepOffered: false, customers: []}).notifications!
+  const adapter = createNativeAuditAdapter({customers: []}).notifications!
   assert.deepEqual(await adapter.read(task.id), preference)
   assert.deepEqual(await adapter.save(task.id, false, 2), preference)
   assert.deepEqual(calls, [{url: '/audit-tasks/task-a/notification', method: 'GET', body: null}, {url: '/audit-tasks/task-a/notification', method: 'PUT', body: {enabled: false, expected_revision: 2}}])
@@ -261,27 +261,8 @@ test('a PDF read cannot become successful after its deadline even when fetch com
   await assert.rejects(read, {name: 'TimeoutError'})
 })
 
-test('Deep selection reaches task recognition and survives readback without starting an audit', async () => {
-  const adapter = createNativeAuditAdapter({deepOffered: true, customers: []})
-  const deepTask = {...task, analysis_mode: 'deep' as const}
-  const calls: string[] = []
-  globalThis.fetch = async (input, init) => {
-    calls.push(`${init?.method || 'GET'} ${input}`)
-    if (init?.method === 'POST') {
-      assert.equal(String(input), '/audit-tasks')
-      assert.equal(JSON.parse(String(init.body)).analysis_mode, 'deep')
-    }
-    return json(deepTask)
-  }
-  assert.equal(adapter.deepOffered, true)
-  const matched = await adapter.match([file], 'deep', null, null, 'recognition-deep')
-  assert.equal(matched.analysis_mode, 'deep')
-  assert.equal((await adapter.readTask(matched.id)).analysis_mode, 'deep')
-  assert.deepEqual(calls, ['POST /audit-tasks', 'GET /audit-tasks/task-a'])
-})
-
 test('native Drive selection pages through the real API and reads back a lost import reply', async () => {
-  const adapter = createNativeAuditAdapter({deepOffered: false, customers: []})
+  const adapter = createNativeAuditAdapter({customers: []})
   const id = '0a3b1077-f018-4cac-be45-16599020f20e'
   const source = {token: 'source-token', name: 'report.xlsx', type: 'file'}
   const ready = {...file.file, id, sha256: 'a'.repeat(64)}
@@ -305,7 +286,7 @@ test('native Drive selection pages through the real API and reads back a lost im
 })
 
 test('native Drive unknown results permit readback, never an automatic second import', async () => {
-  const adapter = createNativeAuditAdapter({deepOffered: false, customers: []})
+  const adapter = createNativeAuditAdapter({customers: []})
   const id = '0a3b1077-f018-4cac-be45-16599020f20e'
   let posts = 0, reads = 0
   globalThis.fetch = async (_input, init) => {
@@ -320,7 +301,7 @@ test('native Drive unknown results permit readback, never an automatic second im
 })
 
 test('native Drive distinguishes a missing user grant from an unclassified provider failure', async () => {
-  const adapter = createNativeAuditAdapter({deepOffered: false, customers: []})
+  const adapter = createNativeAuditAdapter({customers: []})
   globalThis.fetch = async () => json({error: 'feishu_user_token_missing'}, 409)
   await assert.rejects(adapter.drive!.list(), {message: 'authorization_required'})
   const rejected = await adapter.upload({kind: 'feishu', file: {token: 'token', name: 'file.pdf', type: 'file'}}, 'request')
@@ -482,7 +463,7 @@ test('server quota refusals remain explicit rejections for confirmation and ZIP 
       calls.push(`${init?.method} ${input}`)
       return init?.method === 'POST' ? json({error: code}, 409) : json(task)
     }
-    const confirmation = await createNativeAuditAdapter({deepOffered: false, customers: []}).confirm(task, 'accept-a')
+    const confirmation = await createNativeAuditAdapter({customers: []}).confirm(task, 'accept-a')
     assert.equal(confirmation.acceptance?.state, 'rejected')
     assert.equal(confirmation.round_id, null)
     const recovery = await nativeReportAdapter.retryPackage!(failed, 'recovery-a')
@@ -538,7 +519,7 @@ test('native file validation reads the original validation after a lost submit r
     assert.equal(url, `/file-validations/${validationId}`)
     return json({id: validationId, source_file_id: 'file-a', source_file_version_id: 'version-a', status: 'completed', result: {state: 'valid', reasons: []}})
   }
-  const adapter = createNativeAuditAdapter({deepOffered: false, customers: []})
+  const adapter = createNativeAuditAdapter({customers: []})
   await assert.rejects(adapter.readValidation(file), /reply lost/)
   assert.deepEqual(await adapter.readValidation(file), {validation_id: validationId, validation: {state: 'valid', reasons: []}})
   assert.equal(calls.filter(call => call.method === 'POST').length, 1)
@@ -546,7 +527,7 @@ test('native file validation reads the original validation after a lost submit r
 
 test('native file validation refuses a result for another validation request', async () => {
   globalThis.fetch = async () => json({id: 'another-request', source_file_id: 'file-a', source_file_version_id: 'version-a', status: 'completed', result: {state: 'valid', reasons: []}})
-  const adapter = createNativeAuditAdapter({deepOffered: false, customers: []})
+  const adapter = createNativeAuditAdapter({customers: []})
   await assert.rejects(adapter.readValidation({...file, validation_id: 'original-request'}), /文件检查结果不属于这份文件版本、用途或原请求/)
 })
 
@@ -559,7 +540,7 @@ test('native matching sends all provenance and its exact input revision without 
     assert.deepEqual(JSON.parse(String(init?.body)), {request_id: 'recognition-a', task_id: 'task-a', expected_revision: 2, analysis_mode: 'standard', customer_preference: null, files: [{file_version_id: 'version-a', validation_id: 'validation-a', selection: 'selected', removal_reason: null}, {file_version_id: 'version-b', validation_id: 'validation-b', selection: 'removed', removal_reason: '文件加密'}]})
     return json({...task, files: rows, state: 'matching', input_revision: 3, recognition_request_id: 'recognition-a'})
   }
-  const next = await createNativeAuditAdapter({deepOffered: false, customers: []}).match(rows, 'standard', null, task, 'recognition-a')
+  const next = await createNativeAuditAdapter({customers: []}).match(rows, 'standard', null, task, 'recognition-a')
   assert.equal(next.id, 'task-a')
   assert.equal(next.input_revision, 3)
   assert.equal(next.files[1].selection, 'removed')
@@ -576,7 +557,7 @@ test('a lost native confirmation reply can only be read by its original request,
     assert.equal(String(url), '/audit-tasks/task-a?request_id=accept-a')
     return json({...task, state: 'reviewing', round_id: 'round-a', acceptance: {request_id: 'accept-a', state: 'accepted', reason: null}})
   }
-  const adapter = createNativeAuditAdapter({deepOffered: false, customers: []})
+  const adapter = createNativeAuditAdapter({customers: []})
   await assert.rejects(adapter.confirm(task, 'accept-a'), /reply lost/)
   const recovered = await adapter.readTask('task-a', 'accept-a')
   assert.equal(recovered.round_id, 'round-a')
@@ -591,7 +572,7 @@ test('an explicit no-write confirmation refusal reads the current task and offer
     assert.equal(String(url), '/audit-tasks/task-a?request_id=accept-a')
     return json(task)
   }
-  const adapter = createNativeAuditAdapter({deepOffered: false, customers: []})
+  const adapter = createNativeAuditAdapter({customers: []})
   const refused = await adapter.confirm(task, 'accept-a')
   assert.deepEqual(refused.acceptance, {request_id: 'accept-a', state: 'rejected', reason: '当前环境尚未开放本次审核计费，审核没有开始。'})
   assert.equal(refused.round_id, null)
@@ -600,7 +581,7 @@ test('an explicit no-write confirmation refusal reads the current task and offer
 
 test('a refusal cannot overwrite an already accepted round found by readback', async () => {
   globalThis.fetch = async (_url, init) => init?.method === 'POST' ? json({error: 'task_input_locked'}, 409) : json({...task, state: 'reviewing', round_id: 'round-a', acceptance: {request_id: 'accept-original', state: 'accepted', reason: null}})
-  const current = await createNativeAuditAdapter({deepOffered: false, customers: []}).confirm(task, 'accept-new')
+  const current = await createNativeAuditAdapter({customers: []}).confirm(task, 'accept-new')
   assert.equal(current.round_id, 'round-a')
   assert.deepEqual(current.acceptance, {request_id: 'accept-original', state: 'accepted', reason: null})
 })
@@ -614,7 +595,7 @@ test('customer conflicts are explicit no-write refusals', async () => {
       calls.push(`${init?.method} ${url}`)
       return init?.method === 'POST' ? json({error: code}, 409) : json(task)
     }
-    const current = await createNativeAuditAdapter({deepOffered: false, customers: []}).confirm(task, 'accept-a')
+    const current = await createNativeAuditAdapter({customers: []}).confirm(task, 'accept-a')
     assert.deepEqual(current.acceptance, {request_id: 'accept-a', state: 'rejected', reason})
     assert.equal(current.round_id, null)
     assert.deepEqual(calls, ['POST /audit-tasks/task-a/confirm', 'GET /audit-tasks/task-a?request_id=accept-a'])
@@ -627,7 +608,7 @@ test('a superseded rule requires recognition again instead of silently accepting
     if (init?.method === 'POST') {posts += 1; return json({error: 'rule_candidate_expired'}, 409)}
     return json(task)
   }
-  const current = await createNativeAuditAdapter({deepOffered: false, customers: []}).confirm(task, 'accept-stale')
+  const current = await createNativeAuditAdapter({customers: []}).confirm(task, 'accept-stale')
   assert.equal(current.round_id, null)
   assert.deepEqual(current.acceptance, {request_id: 'accept-stale', state: 'rejected', reason: '匹配的规则已有新版本，审核没有开始。请返回上一步重新识别，再核对规则。'})
   assert.equal(posts, 1)
@@ -635,7 +616,7 @@ test('a superseded rule requires recognition again instead of silently accepting
 
 test('missing confirmation basis cannot be posted or manufactured by the native adapter', async () => {
   globalThis.fetch = async () => {assert.fail('no confirmation without server basis')}
-  await assert.rejects(createNativeAuditAdapter({deepOffered: false, customers: []}).confirm({...task, confirmation_basis_digest: null}, 'accept-a'), /读取当前审核依据/)
+  await assert.rejects(createNativeAuditAdapter({customers: []}).confirm({...task, confirmation_basis_digest: null}, 'accept-a'), /读取当前审核依据/)
 })
 
 test('changed server basis is a definite refusal and only the viewed digest is submitted', async () => {
@@ -647,7 +628,7 @@ test('changed server basis is a definite refusal and only the viewed digest is s
     assert.equal(String(url), '/audit-tasks/task-a?request_id=accept-stale')
     return json({...fresh, acceptance: {request_id: 'accept-stale', state: 'rejected', reason: '审核依据已变化。'}})
   }
-  const result = await createNativeAuditAdapter({deepOffered: false, customers: []}).confirm(task, 'accept-stale')
+  const result = await createNativeAuditAdapter({customers: []}).confirm(task, 'accept-stale')
   assert.equal(result.acceptance!.state, 'rejected')
   assert.equal(result.confirmation_basis_digest, fresh.confirmation_basis_digest)
   assert.equal(result.round_id, null)
@@ -658,7 +639,7 @@ test('authorization, server and unknown refusals do not grant another confirmati
   for (const [status, code] of [[401, 'unauthenticated'], [403, 'access_denied'], [500, 'audit_task_charging_unavailable'], [409, 'unrecognized_conflict']] as const) {
     const calls: string[] = []
     globalThis.fetch = async (url, init) => {calls.push(`${init?.method} ${url}`); return json({error: code}, status)}
-    await assert.rejects(createNativeAuditAdapter({deepOffered: false, customers: []}).confirm(task, 'accept-a'))
+    await assert.rejects(createNativeAuditAdapter({customers: []}).confirm(task, 'accept-a'))
     assert.deepEqual(calls, ['POST /audit-tasks/task-a/confirm'])
   }
 })
@@ -680,7 +661,7 @@ test('photo validation binds purpose to its own lost-reply identity and cannot r
     assert.equal(url, `/file-validations/${photoId}`)
     return json({id: photoId, scope, source_file_id: 'file-a', source_file_version_id: 'version-a', status: 'succeeded', result: {state: 'valid', reasons: []}})
   }
-  const adapter = createNativeAuditAdapter({deepOffered: false, customers: ['UAES']})
+  const adapter = createNativeAuditAdapter({customers: ['UAES']})
   await assert.rejects(adapter.readValidation(file, scope), /lost/)
   const result = await adapter.readValidation(file, scope)
   assert.equal(result.validation_id, photoId)
@@ -691,7 +672,7 @@ test('photo validation binds purpose to its own lost-reply identity and cannot r
 test('a photo receipt cannot authorize ordinary validation or another original', async () => {
   const scope = {customer_preference: 'UAES', preset_key: 'U13'} as const
   globalThis.fetch = async () => json({id: 'original', scope, source_file_id: 'file-a', source_file_version_id: 'version-a', status: 'succeeded', result: {state: 'valid', reasons: []}})
-  const adapter = createNativeAuditAdapter({deepOffered: false, customers: []})
+  const adapter = createNativeAuditAdapter({customers: []})
   await assert.rejects(adapter.readValidation({...file, validation_id: 'original'}, null), /用途/)
   await assert.rejects(adapter.readValidation({...file, file: {...file.file, id: 'other'}, validation_id: 'original', validation_scope: scope}, scope), /文件检查结果不属于这份文件版本、用途或原请求/)
 })
@@ -699,7 +680,7 @@ test('a photo receipt cannot authorize ordinary validation or another original',
 test('saved original validation identity restores its server-owned photo scope', async () => {
   const scope = {customer_preference: 'UAES', preset_key: 'U13'} as const
   globalThis.fetch = async () => json({id: 'saved', scope, source_file_id: 'file-a', source_file_version_id: 'version-a', status: 'succeeded', result: {state: 'valid', reasons: []}})
-  const result = await createNativeAuditAdapter({deepOffered: false, customers: ['UAES']}).readValidation({...file, validation_id: 'saved'})
+  const result = await createNativeAuditAdapter({customers: ['UAES']}).readValidation({...file, validation_id: 'saved'})
   assert.deepEqual(result.validation_scope, scope)
 })
 
@@ -712,10 +693,10 @@ test('validation write loss keeps its original readback identity across adapter 
     return json({id, source_file_id: 'file-a', source_file_version_id: 'version-a', status: 'succeeded', result: {state: 'valid', reasons: []}})
   }
   let saved = ''
-  try {await createNativeAuditAdapter({deepOffered: false, customers: []}).readValidation(file)}
+  try {await createNativeAuditAdapter({customers: []}).readValidation(file)}
   catch (error) {saved = (error as Error & {validationRequestId: string}).validationRequestId}
   assert.equal(saved, id)
-  assert.equal((await createNativeAuditAdapter({deepOffered: false, customers: []}).readValidation({...file, validation_id: saved})).validation_id, id)
+  assert.equal((await createNativeAuditAdapter({customers: []}).readValidation({...file, validation_id: saved})).validation_id, id)
 })
 
 
@@ -726,7 +707,7 @@ test('a Suite validation refusal reads the durable original receipt with its rec
     calls.push(`${init?.method} ${url}`)
     return init?.method === 'POST' ? json({error: 'suite_validation_required'}, 409) : json({...task, acceptance})
   }
-  const adapter = createNativeAuditAdapter({deepOffered: false, customers: []})
+  const adapter = createNativeAuditAdapter({customers: []})
   const recovered = await adapter.confirm(task, 'accept-suite')
   assert.deepEqual(recovered.acceptance, acceptance)
   assert.deepEqual(calls, ['POST /audit-tasks/task-a/confirm', 'GET /audit-tasks/task-a?request_id=accept-suite'])

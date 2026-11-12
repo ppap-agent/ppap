@@ -100,7 +100,7 @@ def task_routes(page, partial_error):
         if route.request.method != "GET":
             route.fulfill(status=405, json={"error": "read_only_test"})
         elif path == "/public-config":
-            route.fulfill(json={"profile": "isolated-dev", "login": "isolated-dev", "current_access": "allowed", "deep_offered": False, "usage_charge_enabled": False})
+            route.fulfill(json={"profile": "isolated-dev", "login": "isolated-dev", "current_access": "allowed", "usage_charge_enabled": False})
         elif path == "/me":
             route.fulfill(json={"display_name": "测试用户", "tenant_id": "test-tenant", "user_id": "test-user", "membership": "member"})
         elif path == "/audit-tasks":

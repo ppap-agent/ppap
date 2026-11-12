@@ -1413,7 +1413,6 @@ class RuleInteractionTests(unittest.TestCase):
                         "api_url": WEB + "/api",
                         "profile": "isolated-dev",
                         "login": "isolated-dev",
-                        "deep_offered": False,
                         "feishu_app_id": "",
                         "current_access": "allowed",
                         "usage_charge_enabled": False,

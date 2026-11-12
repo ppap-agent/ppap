@@ -86,7 +86,6 @@ export function dateLabel(value?: string | null) {
 }
 export let apiUrl = ''
 export let profile = ''
-export let deepOffered = false
 export let feishuAppId = ''
 export let personalDriveUpload = false
 export async function connect() {
@@ -94,7 +93,6 @@ export async function connect() {
   apiUrl = runtime.api_url
   const config = await request<PublicConfig>('/public-config')
   apiUrl = runtime.api_url || config.api_url; profile = config.profile
-  deepOffered = config.deep_offered === true
   feishuAppId = config.feishu_app_id || ''
   personalDriveUpload = config.personal_drive_upload === true
   return config
@@ -106,7 +104,7 @@ const messages: Record<string,string> = {
   rule_source_unverified: '条款出处与原件不一致。请重新选择原文位置并核对，草稿未发布。',
   rule_source_unavailable: '暂时无法读取可定位的原文。请核对原文件是否可读取。',
   invalid_analysis_mode: '请选择标准或深度审核。',
-  deep_not_available: '当前环境不提供深度审核。',
+  deep_not_available: '深度审核已下线，请使用标准审核。',
   model_configuration_changed: '系统设置已更新，本次操作未被接收。请重新开始。',
   feedback_revision_conflict: '规则说明已被更新，请读取最新依据后再核对。',
   feedback_scope_conflict: '本次说明超出了可修改范围，请核对文件与要求。',

@@ -2,13 +2,9 @@
 
 完整交付与现网验收由 [#206](https://github.com/ppap-agent/ppap/issues/206) 拥有。本文说明服务合同，不代替该 Issue 中的客户路径和客户端验收结果。
 
-## Deep 接入与协议能力
+## 审核接入与协议能力
 
-`/mcp` 是唯一客户端入口，由锁定的 FastMCP / MCP SDK 提供 Streamable HTTP、工具、Resources 和 Prompts。`prepare_task(analysis_mode="deep")` 与 `confirm_task` 启动首次审核；`read_audit` 读取问题、证据、说明与修订；`apply_rule_change` 保存明确修改；`start_analysis` 按已保存说明受理新轮次；`get_rule_change` 读回业务操作回执。所有入口复用 Web 的反馈应用与授权。
-
-规则修改和重新分析复用现有 `confirmation_required` 网页确认：用户核对请求、来源、范围和执行意图后批准，再由客户端重放完全相同的调用。浏览器不直接执行操作。确认绑定输入快照，产品事务继续检查修订与问题指纹；依据变化必须重新核对。无需配置第二个 MCP 服务，也不要求客户端支持 Tasks 或 Elicitation。
-
-`apply_rule_change` 使用固定 UUID `body.operation_id`，其余工具参数由 Schema 提供。未知响应先用 `get_rule_change` 读取原业务回执及其中的 `analysis_round_id`，再用 `get_round` 读取执行状态；不得换 ID 盲目重发。说明可仅保存、保存并分析或移除后明确重算。机器结果、人工复核和旧轮次不覆盖。业务合同见 [Deep 产品设计](../packages/agent/PRODUCT.md)。真实第三方客户端联调不由本地协议测试替代。
+`/mcp` 是唯一客户端入口，由锁定的 FastMCP / MCP SDK 提供 Streamable HTTP、工具、Resources 和 Prompts。`prepare_task` 与 `confirm_task` 启动审核，只执行已验证的 Suite；`analysis_mode="deep"` 被拒绝（`deep_not_available`）。深度审核及其反馈工具（`read_audit`、`apply_rule_change`、`start_analysis`、`get_rule_change`）已下线（[#322](https://github.com/ppap-agent/ppap/issues/322)）；规则澄清走规则整理，检查程序改进走探索模式。真实第三方客户端联调不由本地协议测试替代。
 
 ## 服务与授权
 

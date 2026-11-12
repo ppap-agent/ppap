@@ -15,7 +15,6 @@ from audit.standard_suites import library_revision
 from product.db import connect
 from product.settings import load_settings
 from product.storage import S3Objects
-from product.store.checker_development import CheckerDevelopmentStore
 from product.store.store import AuthStore
 from product.store.suites import SuiteStore
 
@@ -54,7 +53,6 @@ def main() -> int:
     signal.signal(signal.SIGINT, _stop)
     store = open_store(settings)
     suites = SuiteStore(settings, objects, role="worker")
-    development = CheckerDevelopmentStore(store)
     with runtime_from_env(
         settings,
         objects,
@@ -62,7 +60,6 @@ def main() -> int:
         model_access_for_request=lambda spec, purpose: model_access(store, spec, purpose),
         snapshot_for_request=lambda spec: suites.read_snapshot(spec.round_id, spec.tenant_id),
         suite_for_revision=suites.resolve_suite,
-        save_round_artifacts=development.save_round_artifacts,
     ) as runtime:
         server = UnixControllerServer(
             socket_path,

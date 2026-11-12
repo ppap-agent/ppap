@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 from agent.client import DeepError
-from agent.core_program import AuditJobSpec, CoreRuntime, generated_snapshot, run_audit_manifest, snapshot_development_inputs, write_audit_manifest
+from agent.core_program import AuditJobSpec, CoreRuntime, run_audit_manifest, write_audit_manifest
 from agent.protocol import ExecuteRequest, FrozenFile
 from agent.run import Controller, ExecutionContext
 from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest
@@ -58,6 +58,25 @@ def setup(unbound=False, *, mode="standard"):
     )
     suite = SimpleNamespace(revision=SimpleNamespace(resolved_digest="a" * 64), files=programs)
     return snapshot, sources, {digest: programs}, spec, suite
+
+
+def development_input(snapshot, sources, target="file-a", *, rules_by_id=None):
+    """Trial inputs as development freezes them: one target plus its authorized group."""
+    from agent.checker_development import FrozenDevelopmentInput
+    from audit.contracts import AuditInput, GroupContextInput, RuleInput
+
+    audits = {
+        row.file_version_id: AuditInput(audit_id=row.file_version_id, file_url=row.filename, file_metadata={"file_version_id": row.file_version_id, "original_filename": row.filename})
+        for row in snapshot.inputs
+    }
+    by_type: dict = {}
+    for row in snapshot.inputs:
+        if row.document_type:
+            by_type.setdefault(row.document_type, []).append(audits[row.file_version_id])
+    frozen = next(row for row in snapshot.targets if row.file_version_id == target)
+    rule = RuleInput.model_validate({**frozen.rules, "rule_id": frozen.suite_revision_id})
+    group = GroupContextInput(task_group_id=snapshot.round_id, by_audit_id=audits, by_doc_type=by_type, rules_by_id=rules_by_id or {})
+    return FrozenDevelopmentInput(audits[target], rule, sources[target], "target", group, dict(sources))
 
 
 class ControlledGuest:
@@ -110,52 +129,6 @@ def test_host_refuses_changed_suite_bytes(tmp_path):
     assert runtime.runtime.calls == 0
 
 
-def test_deep_generates_and_executes_all_targets_in_one_guest(tmp_path, monkeypatch):
-    from agent.checker_spec import CheckerArtifact
-
-    snapshot, sources, _, spec, suite = setup(mode="deep")
-    generated = []
-
-    def develop(**kwargs):
-        generated.append(kwargs["audit_file"].audit_id)
-        assert kwargs["prior_files"]["checker.py"] == CODE.decode()
-        return CheckerArtifact(input_digest=kwargs["digest"], executor_revision=kwargs["executor_revision"], entrypoint="checker:create_audit", files={"checker.py": FACTORY})
-
-    monkeypatch.setattr("agent.execution.checker_guest.develop_checker", develop)
-    monkeypatch.setattr("agent.execution.guest_model.PiRunner", lambda grant: SimpleNamespace(wall_seconds=100))
-    saved = []
-
-    def persist(passed_spec, original, artifacts):
-        saved.append((passed_spec, original, artifacts))
-        return {key: {"suite_revision_id": "generated-" + key, "suite_digest": "b" * 64} for key in artifacts}
-
-    runner = ControlledGuest(tmp_path)
-    runtime = CoreRuntime(runner, lambda _spec: snapshot, lambda *_: suite, save_round_artifacts=persist)
-    controller = Controller(runtime, lambda identity, limit: sources[identity], executor_revision="runtime", protocol_revision="protocol")
-    result = controller.handle(spec)
-    assert runner.calls == 1
-    assert generated == ["file-a", "file-b"]
-    assert saved[0][1] == snapshot
-    assert len(result.findings) == 4
-    assert {row["suite_revision_id"] for row in result.coverage.rule_items} == {"generated-file-a", "generated-file-b"}
-    assert {row["verification_status"] for row in result.coverage.rule_items} == {"unverified"}
-    assert result.coverage.checker_execution["input_digest"] == snapshot.input_digest
-    assert "create_audit" not in result.model_dump_json()
-
-
-def test_generated_artifact_must_bind_exact_frozen_inputs():
-    from agent.checker_spec import CheckerArtifact
-
-    snapshot, sources, *_ = setup()
-    inputs = snapshot_development_inputs(snapshot, sources)
-    artifacts = {key: CheckerArtifact(input_digest=item.digest, executor_revision="runtime", entrypoint="checker:create_audit", files={"checker.py": FACTORY}) for key, item in inputs.items()}
-    effective = generated_snapshot(snapshot, sources, artifacts)
-    assert {target.verification for target in effective.targets} == {"unverified"}
-    artifacts["file-a"] = artifacts["file-a"].model_copy(update={"input_digest": "f" * 64})
-    with pytest.raises(DeepError, match="deep_output_identity_mismatch"):
-        generated_snapshot(snapshot, sources, artifacts)
-
-
 def test_manifest_rejects_paths_and_hash_changes(tmp_path):
     snapshot, sources, programs, *_ = setup()
     inputs = tmp_path / "inputs"
@@ -198,12 +171,24 @@ def check(context):
     assert "outer-key" not in json.dumps(result)
 
 
-def test_offline_and_model_jobs_have_separate_replay_identities(tmp_path):
-    snapshot, sources, programs, *_ = setup()
+def test_offline_and_model_jobs_have_separate_replay_identities():
+    snapshot, *_ = setup()
     assert AuditJobSpec.from_snapshot(snapshot).execution_id != AuditJobSpec.from_snapshot(snapshot, allow_model_calls=False).execution_id
-    write_audit_manifest(tmp_path / "inputs", snapshot, sources, programs, analysis_mode="deep", allow_model_calls=False)
-    with pytest.raises(ValueError, match="audit_generation_requires_model"):
+
+
+def test_audit_manifest_never_generates_checkers(tmp_path):
+    # Audit-time checker generation was retired (#322); a late Deep job cannot run.
+    snapshot, sources, programs, *_ = setup()
+    with pytest.raises(DeepError, match="deep_audit_retired"):
+        write_audit_manifest(tmp_path / "rejected", snapshot, sources, programs, analysis_mode="deep")
+    assert not (tmp_path / "rejected").exists()
+    write_audit_manifest(tmp_path / "inputs", snapshot, sources, programs, allow_model_calls=False)
+    manifest = json.loads((tmp_path / "inputs" / "manifest.json").read_text())
+    manifest["spec"] = AuditJobSpec.from_snapshot(snapshot, "deep", allow_model_calls=False).model_dump(mode="json")
+    (tmp_path / "inputs" / "manifest.json").write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="deep_audit_retired"):
         run_audit_manifest(tmp_path / "inputs", tmp_path / "work", tmp_path / "nonexistent-grants")
+    assert not (tmp_path / "work" / "result").exists()
 
 
 @pytest.mark.parametrize("allow_model_calls", [False, True])
@@ -260,7 +245,7 @@ def test_fixed_development_trials_do_not_give_models_oracle_inputs(tmp_path, mon
     from agent.checker_spec import CheckerArtifact
 
     snapshot, sources, _, spec, suite = setup()
-    inputs = snapshot_development_inputs(snapshot, sources)["file-a"]
+    inputs = development_input(snapshot, sources)
     artifact = CheckerArtifact(input_digest=inputs.digest, executor_revision="runtime", entrypoint="checker:create_audit", files={"checker.py": FACTORY})
     runtime = CoreRuntime(ControlledGuest(tmp_path), lambda _spec: snapshot, lambda *_: suite)
     observed = []
@@ -324,25 +309,26 @@ def test_development_freezes_reference_type_and_rules_without_requiring_a_rule()
 
     from agent.checker_spec import CheckerArtifact
     from agent.core_program import development_snapshot
+    from audit.contracts import RuleInput
 
     snapshot, sources, _, spec, _ = setup()
     reference = replace(snapshot.inputs[-1], document_type="过程流程图")
     snapshot = replace(snapshot, inputs=(*snapshot.inputs[:-1], reference))
-    prepared = snapshot_development_inputs(snapshot, sources)["file-a"]
-    assert prepared.group_context.by_doc_type["过程流程图"][0].audit_id == "reference"
-    assert "reference" not in prepared.group_context.rules_by_id
+    prepared = development_input(snapshot, sources)
     artifact = CheckerArtifact(input_digest=prepared.digest, executor_revision="runtime", entrypoint="checker:create_audit", files={"checker.py": FACTORY})
     frozen, _ = development_snapshot(prepared, artifact, spec)
-    assert next(row for row in frozen.inputs if row.file_version_id == "reference").document_type == "过程流程图"
-    rules = {"type": "过程流程图", "rules": [{"id": "P1", "rule_to_check": "工序顺序"}]}
-    reference = replace(reference, rule_revision_id="reference-rules", rules=rules, appendix=({"text": "已确认附录"},))
-    with_rules = replace(snapshot, inputs=(*snapshot.inputs[:-1], reference))
-    assert with_rules.input_digest != snapshot.input_digest
-    prepared = snapshot_development_inputs(with_rules, sources)["file-a"]
-    restored = prepared.group_context.rules_by_id["reference"]
-    assert restored.rule_id == "reference-rules"
-    assert restored.rules[0]["id"] == "P1"
-    assert restored.appendix == [{"text": "已确认附录"}]
+    row = next(row for row in frozen.inputs if row.file_version_id == "reference")
+    assert row.document_type == "过程流程图"
+    assert row.rules is None
+    rules = RuleInput(rule_id="reference-rules", type="过程流程图", rules=[{"id": "P1", "rule_to_check": "工序顺序"}], appendix=[{"text": "已确认附录"}])
+    with_rules = development_input(snapshot, sources, rules_by_id={"reference": rules})
+    assert with_rules.digest != prepared.digest
+    frozen_with_rules, _ = development_snapshot(with_rules, artifact, spec)
+    assert frozen_with_rules.input_digest != frozen.input_digest
+    restored = next(row for row in frozen_with_rules.inputs if row.file_version_id == "reference")
+    assert restored.rule_revision_id == "reference-rules"
+    assert restored.rules["rules"][0]["id"] == "P1"
+    assert restored.appendix == ({"text": "已确认附录"},)
 
 
 def test_standard_missing_target_never_imports_its_program_and_keeps_other_results(tmp_path):
@@ -457,6 +443,9 @@ def test_authorization_and_deep_missing_inputs_still_fail_before_guest(tmp_path)
 
     controller = Controller(runtime, source, executor_revision="runtime", protocol_revision="protocol")
     with pytest.raises(DeepError, match="deep_input_missing"):
+        controller.handle(spec)
+    controller = Controller(runtime, lambda identity, limit: sources[identity], executor_revision="runtime", protocol_revision="protocol")
+    with pytest.raises(DeepError, match="deep_audit_retired"):
         controller.handle(spec)
     assert guest.calls == 0
 

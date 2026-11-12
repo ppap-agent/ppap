@@ -201,26 +201,6 @@ def seed_usage_event_factory():
     return insert_usage_event
 
 
-EXPLANATION = "本控制计划中的作业单元编号表示工序编号；按原始编号逐字对应，不合并不同编号。"
-QUESTION_ID = "cp-operation-code"
-CANDIDATE_ID = "operation-code"
-
-
-def change_payload(view, uploaded, *, intent="save_and_analyze"):
-    return {
-        "operation_id": str(uuid.uuid4()),
-        "expected_revision": view["revision"],
-        "question_id": QUESTION_ID,
-        "expected_question_fingerprint": view["clarifications"][0]["fingerprint"],
-        "candidate_id": CANDIDATE_ID,
-        "kind": "interpretation",
-        "content": EXPLANATION,
-        "scope": {"document_ids": [uploaded["CP"]["id"]], "rule_ids": ["R1", "R2"]},
-        "intent": intent,
-        "confirmation_source": "synthetic",
-    }
-
-
 @pytest.fixture(scope="session")
 def v4_objects():
     """Use suite-owned Silo without changing host networking while browsers run."""

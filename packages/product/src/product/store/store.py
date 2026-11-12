@@ -12,7 +12,6 @@ from typing import Any, cast
 
 import psycopg
 from audit.audits import (
-    ANALYSIS_DEEP,
     ANALYSIS_STANDARD,
     DRAFT_ACCEPTED,
     DRAFT_OPEN,
@@ -3239,10 +3238,9 @@ class AuthStore:
         return str(row[0]) if row else None
 
     def _offered_analysis_mode(self, value, allow_reject: bool = True) -> str:
+        """Only Standard audits are accepted; Deep generation now belongs to 探索模式, not to an audit."""
         mode = normalize_analysis_mode(value)
-        if mode != ANALYSIS_DEEP:
-            return mode
-        if self.settings and self.settings.deep_offered():
+        if mode == ANALYSIS_STANDARD:
             return mode
         if allow_reject:
             raise ValueError("deep_not_available")
@@ -3414,26 +3412,6 @@ class AuthStore:
         from .fact_answers import export_answers
 
         return export_answers(self, principal, round_id)
-
-    def read_deep_feedback(self, principal: Principal, round_id: str) -> dict:
-        from .deep_feedback import read_feedback
-
-        return read_feedback(self, principal, round_id)
-
-    def apply_rule_change(self, principal: Principal, round_id: str, payload: dict, *, usage_policy=None) -> dict:
-        from .deep_feedback import apply_change
-
-        return apply_change(self, principal, round_id, payload, usage_policy=usage_policy)
-
-    def read_rule_change(self, principal: Principal, round_id: str, operation_id: str) -> dict | None:
-        from .deep_feedback import read_change
-
-        return read_change(self, principal, round_id, operation_id)
-
-    def export_deep_feedback(self, principal: Principal, round_id: str) -> dict:
-        from .deep_feedback import export_feedback
-
-        return export_feedback(self, principal, round_id)
 
     def get_report(self, principal: Principal, round_id: str, fingerprint: str) -> dict | None:
         with self._conn() as conn:
@@ -4532,15 +4510,13 @@ class AuthStore:
         items: list[dict] | None,
         task_revision: int | None = None,
         usage_policy=None,
-        feedback_inputs: list[dict] | None = None,
         expected_confirmation_basis_digest: str | None = None,
         require_confirmation_basis: bool = False,
         expected_model_revision: Any = _MODEL_REVISION_UNSPECIFIED,
     ) -> dict:
         # Serialize one tenant/key before reading existing acceptance, including
         # competing requests from different drafts. Hash collisions only serialize.
-        if feedback_inputs is None:
-            self._reject_task_predecessor(conn, predecessor_id)
+        self._reject_task_predecessor(conn, predecessor_id)
         conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (principal.tenant_id + ":" + key,))
         existing = conn.execute(
             """
@@ -4652,22 +4628,14 @@ class AuthStore:
                 "SELECT analysis_mode FROM product.audit_rounds WHERE id = %s",
                 (predecessor_id,),
             ).fetchone()
-            analysis_mode = normalize_analysis_mode(mode_row[0] if mode_row else ANALYSIS_STANDARD)
+            # Re-auditing a historical Deep round runs the validated Suites.
+            analysis_mode = self._offered_analysis_mode(mode_row[0] if mode_row else ANALYSIS_STANDARD, allow_reject=False)
         if items is None:
             items = []
         prepared = self._bound_audit_items(conn, principal, items)
         for item in prepared:
             item["frozen_metadata"] = recognized_metadata.get(item["file_version_id"], {})
             item["document_type"] = recognized_types.get(item["file_version_id"]) or (item.get("rule_body") or {}).get("type")
-        if feedback_inputs is not None:
-            if analysis_mode != ANALYSIS_DEEP or source_draft_id is not None:
-                raise ValueError("deep_feedback_requires_deep")
-            from product.store.deep_feedback import normalize_feedback_body
-
-            overrides = {item["file_version_id"]: item for item in feedback_inputs}
-            for item in prepared:
-                if item["role"] == "target":
-                    item["rule_body"] = normalize_feedback_body(overrides[item["file_version_id"]]["rule_body"])
         require_targets(prepared)
         fingerprint = request_fingerprint(prepared)
         if existing:
@@ -4683,7 +4651,7 @@ class AuthStore:
         round_id = str(uuid.uuid4())
         from product.store.suites import SuiteStore, freeze_round_execution
 
-        snapshot = freeze_round_execution(self, conn, principal, round_id=round_id, prepared=prepared, analysis_mode=analysis_mode, require_rule_match=feedback_inputs is not None)
+        snapshot = freeze_round_execution(self, conn, principal, round_id=round_id, prepared=prepared, analysis_mode=analysis_mode)
         if expected_model_revision is not _MODEL_REVISION_UNSPECIFIED and expected_model_revision != snapshot.model_identity.get("revision"):
             raise ValueError("model_configuration_changed")
         execution_payload: dict[str, Any] = {

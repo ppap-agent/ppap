@@ -230,7 +230,7 @@ const confirmationRefusals: Record<string, string> = {
 }
 
 /** This adapter owns transport only. Task, rules and execution remain server facts. */
-export function createNativeAuditAdapter(options: {deepOffered: boolean; customers: string[]; personalDriveUpload?: boolean}): AuditIntakeAdapter {
+export function createNativeAuditAdapter(options: {customers: string[]; personalDriveUpload?: boolean}): AuditIntakeAdapter {
   const validations = new Map<string, string>()
   type Scope = components['schemas']['FileValidationScope']
   const sameScope = (left?: Scope | null, right?: Scope | null) => (!left && !right) || Boolean(left && right && left.customer_preference === right.customer_preference && left.preset_key === right.preset_key)
@@ -245,7 +245,6 @@ export function createNativeAuditAdapter(options: {deepOffered: boolean; custome
     return {validation_id: job.id, validation: {state: job.status === 'failed' ? 'error' as const : 'checking' as const, reasons: [job.status === 'failed' ? '文件文件检查失败，请核对原文件。' : '正在检查文件内容…']}, ...purpose}
   }
   return {
-    deepOffered: options.deepOffered,
     notifications: {
       read: id => request(`${taskPath(id)}/notification`),
       save: (id, enabled, revision) => request(`${taskPath(id)}/notification`, 'PUT', {enabled, expected_revision: revision}),

@@ -63,7 +63,6 @@ export type AuditIntakeAdapter = AuditAcceptanceAdapter & AuditRecognitionAdapte
   drive?: DrivePickerSource
   customerDefaults?: CustomerDefaultAdapter
   customers?: {value: string; label: string}[]
-  deepOffered?: boolean
   notifications?: AuditNotificationAdapter
   autoValidate?: boolean
   /** The newest version of every rule, for choosing one by hand when recognition picked the wrong one. */
@@ -169,7 +168,8 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const [step, setStepState] = useState<'upload' | 'check' | 'match'>('upload')
   const stepRef = useRef(step)
   function setStep(next: typeof step) {stepRef.current = next; setStepState(next)}
-  const [mode, setMode] = useState<AuditTask['analysis_mode']>('standard')
+  // Only Standard audits are accepted (#322); a restored or re-audited Deep task becomes Standard.
+  const mode: AuditTask['analysis_mode'] = 'standard'
   const [customer, setCustomerState] = useState('auto')
   const currentCustomer = useRef(customer); currentCustomer.current = customer
   const customerInitialized = useRef(Boolean(readAuditRoute(new URL(location.href)).taskId || new URL(location.href).searchParams.has('uploadDraft')))
@@ -404,7 +404,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
         const prior = memory.uploads.find(item => item.receipt.request_id === row.receipt.request_id)
         if (prior?.input.kind === 'local' && row.input.kind === 'local' && prior.input.file instanceof File && prior.input.sha256 === row.input.sha256) row.input = prior.input
       }
-      setTask(null); setFiles(restored); setMode(value.analysis_mode); setCustomer(value.customer_preference || 'auto'); setPredecessorId(value.predecessor_id || undefined)
+      setTask(null); setFiles(restored); setCustomer(value.customer_preference || 'auto'); setPredecessorId(value.predecessor_id || undefined)
       setStep(transfers.length || restored.length ? 'check' : 'upload'); setError(''); uploads.restore(transfers)
       setPreparationStatus({id, phase: 'ready', message: ''})
       for (const row of transfers) uploads.read(row.id)
@@ -427,7 +427,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     if (!keepSurface) retainAuditAddress()
     if (window.parent !== window && !keepSurface) window.parent.postMessage({type: 'ppap-audit-task', task: id, report: null}, location.origin)
   }
-  function newTask() {restoreEpoch.current += 1; setRecovery(null); retainDraft(); clearReads(); activeTaskId.current = null; activeUploadDraftId.current = crypto.randomUUID(); setPreparationStatus({id: null, phase: 'idle', message: ''}); setFiles([]); setTask(null); setLocalFiles([]); setStep('upload'); setMode('standard'); customerInitialized.current = false; setCustomerReady(!adapter.customerDefaults); setCustomerState('auto'); setPredecessorId(undefined); setError(''); setSheet(false); taskAddress(null)}
+  function newTask() {restoreEpoch.current += 1; setRecovery(null); retainDraft(); clearReads(); activeTaskId.current = null; activeUploadDraftId.current = crypto.randomUUID(); setPreparationStatus({id: null, phase: 'idle', message: ''}); setFiles([]); setTask(null); setLocalFiles([]); setStep('upload'); customerInitialized.current = false; setCustomerReady(!adapter.customerDefaults); setCustomerState('auto'); setPredecessorId(undefined); setError(''); setSheet(false); taskAddress(null)}
   function taskResultsAddress() {
     const url = new URL(location.href)
     url.searchParams.delete('report'); url.searchParams.delete('packageRequest')
@@ -454,7 +454,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
       const prepared = await adapter.prepareReaudit(roundId)
       if (epoch !== draftEpoch.current) return
       if (prepared.predecessor_id !== roundId) throw new Error('重审来源不一致。')
-      setFiles(prepared.files); setMode(prepared.analysis_mode); setCustomer(prepared.customer_preference || 'auto'); setPredecessorId(roundId); setStep('check')
+      setFiles(prepared.files); setCustomer(prepared.customer_preference || 'auto'); setPredecessorId(roundId); setStep('check')
     } catch {if (epoch === draftEpoch.current) setError('未能查看原审核的固定输入。原任务没有改变，请返回原任务后重试。')}
     finally {setPreparingReaudit(false)}
   }
@@ -485,7 +485,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
       setPredecessorId(current.predecessor_id)
       const saved = !current.round_id && current.acceptance?.state !== 'pending' ? drafts.current.get(current.id) : undefined
       if (saved) uploads.restore(saved.uploads)
-      setFiles(structuredClone(saved ? mergeFileIntent(saved.files, current.files) : current.files)); setMode(saved?.mode ?? current.analysis_mode); setCustomer(saved?.customer ?? current.customer_preference ?? 'auto'); setStep(saved?.step ?? 'match'); setRecovery(null)
+      setFiles(structuredClone(saved ? mergeFileIntent(saved.files, current.files) : current.files)); setCustomer(saved?.customer ?? current.customer_preference ?? 'auto'); setStep(saved?.step ?? 'match'); setRecovery(null)
     } catch (failure) {
       if (restoreEpoch.current !== epoch) return
       invalidateDisplayAccess(id)
@@ -534,7 +534,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
       if (params.has('uploadDraft') && preparation.current) {setTask(null); setFiles([]); setStep('upload'); setError(''); void readPreparation(draftId, true); return}
       if (recognition.get(draftId)) recognitionTargets.current.set(draftId, {epoch: draftEpoch.current, uploadId: draftId})
       if (saved) uploads.restore(saved.uploads)
-      setTask(null); setFiles(structuredClone(saved?.files ?? [])); setMode(saved?.mode ?? 'standard'); if (saved) setCustomer(saved.customer); else {customerInitialized.current = false; setCustomerReady(!adapter.customerDefaults); setCustomerState('auto')} setStep(saved?.step ?? 'upload'); setError('')
+      setTask(null); setFiles(structuredClone(saved?.files ?? [])); if (saved) setCustomer(saved.customer); else {customerInitialized.current = false; setCustomerReady(!adapter.customerDefaults); setCustomerState('auto')} setStep(saved?.step ?? 'upload'); setError('')
       setPredecessorId(saved?.predecessorId)
     }
   }
@@ -926,7 +926,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
           {waiting.length > 0 && <section className="space-y-3 border-t pt-5"><h2 className="font-semibold">等待文件检查 · {waiting.length} 份</h2>{table(waiting, false)}</section>}
           {exceptions.length > 0 && <section className="space-y-3 border-t pt-5"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-semibold">异常文件 · {exceptions.length} 份</h2><Button variant="outline" size="sm" onClick={() => exceptions.forEach(row => remove(row.file.id))}>一键移除异常文件</Button></div>{table(exceptions, false)}</section>}
           {task && <AuditExcludedFiles files={files.filter(row => row.selection === 'removed')}/>}
-          <footer className="sticky bottom-0 z-10 -mx-6 space-y-4 border-t bg-background/95 px-6 py-4 backdrop-blur-sm max-sm:-mx-4 max-sm:px-4"><p role="status" className="text-muted-foreground">{canEnd ? '没有待审目标，可以结束任务，不收费、不生成报告。' : blocked || `已选择 ${selected.length} 份文件，开始识别后逐份匹配规则。`}</p><div className="flex flex-wrap items-center justify-between gap-4">{adapter.deepOffered !== false && <div className="grid gap-1"><Label><Checkbox checked={mode === 'deep'} onCheckedChange={value => setMode(value === true ? 'deep' : 'standard')}/>深度模式</Label></div>}<div className="ml-auto flex gap-2"><Button variant="outline" onClick={() => setStep('upload')}><ArrowLeft/>上一步</Button>{canEnd && task ? <Button disabled={recognitionLocked || Boolean(endStatus[task.id])} onClick={() => {setStep('match'); void endTask(task)}}>结束任务</Button> : <Button disabled={Boolean(blocked) || recognitionLocked || recognitionNeedsCurrent} onClick={startMatching}>{recognitionState?.phase === 'sending' ? '正在提交识别…' : recognitionState?.phase === 'rejected' || recognitionState?.phase === 'conflict' ? '重新开始识别' : '开始识别'}<ArrowRight/></Button>}</div></div></footer>
+          <footer className="sticky bottom-0 z-10 -mx-6 space-y-4 border-t bg-background/95 px-6 py-4 backdrop-blur-sm max-sm:-mx-4 max-sm:px-4"><p role="status" className="text-muted-foreground">{canEnd ? '没有待审目标，可以结束任务，不收费、不生成报告。' : blocked || `已选择 ${selected.length} 份文件，开始识别后逐份匹配规则。`}</p><div className="flex flex-wrap items-center justify-between gap-4"><div className="ml-auto flex gap-2"><Button variant="outline" onClick={() => setStep('upload')}><ArrowLeft/>上一步</Button>{canEnd && task ? <Button disabled={recognitionLocked || Boolean(endStatus[task.id])} onClick={() => {setStep('match'); void endTask(task)}}>结束任务</Button> : <Button disabled={Boolean(blocked) || recognitionLocked || recognitionNeedsCurrent} onClick={startMatching}>{recognitionState?.phase === 'sending' ? '正在提交识别…' : recognitionState?.phase === 'rejected' || recognitionState?.phase === 'conflict' ? '重新开始识别' : '开始识别'}<ArrowRight/></Button>}</div></div></footer>
         </>}
         {step === 'match' && task && <>
           <div className="flex flex-wrap items-center gap-2 tabular-nums" role="status"><Badge variant="secondary">{task.state === 'matching' ? `识别中 ${matchingFiles.filter(row => row.match && ['matched', 'unmatched', 'reference', 'failed'].includes(row.match.state)).length}/${matchingFiles.length}` : taskLabels[task.state]}</Badge><span className="text-muted-foreground">{matchingFiles.length} 份文件{task.state === 'matching' ? ` · ${matched.length} 份匹配到规则` : ''}</span></div>

@@ -50,7 +50,6 @@ def test_archive_zip_refresh_reads_original_cross_task_package_and_downloads_fix
                         "profile": "isolated-dev",
                         "login": "feishu",
                         "feishu_app_id": "test",
-                        "deep_offered": False,
                         "current_access": "allowed",
                         "usage_charge_enabled": False,
                     }

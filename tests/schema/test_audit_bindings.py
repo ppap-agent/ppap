@@ -1543,7 +1543,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(self.display_client.get(path, params=old["reference"]).status_code, 403)
         self.assertEqual(self.store.list_usage_events(self.alice), before)
 
-    def prepared_display_task(self, files=None, *, analysis_mode="standard", complete_audit=True, per_file_rules=False, confirm=True):
+    def prepared_display_task(self, files=None, *, complete_audit=True, per_file_rules=False, confirm=True):
         from api.audit_routes import register_audit_routes
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
@@ -1565,7 +1565,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
             self.assertEqual(job.kind, "file_validation")
             self.assertTrue(worker.complete_job(job, "display-test", {"state": "valid", "reasons": []}, "succeeded"))
             inputs.append({"file_version_id": file.id, "validation_id": key, "selection": "selected", "removal_reason": None})
-        task = self.store.create_audit_task(self.alice, {"request_id": str(uuid.uuid4()), "analysis_mode": analysis_mode, "customer_preference": None, "files": inputs})
+        task = self.store.create_audit_task(self.alice, {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": inputs})
         for _ in files:
             job = worker.claim_job("display-test")
             self.assertEqual(job.kind, "file_analysis")
@@ -1831,7 +1831,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
             version = self.store.create_staging(self.alice, filename, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", len(raw))
             self.store.put_blob(version, raw)
             versions.append(self.store.finalize_version(version))
-        _files, task, worker = self.prepared_display_task(versions, analysis_mode="deep", complete_audit=False, per_file_rules=len(versions) > 1)
+        _files, task, worker = self.prepared_display_task(versions, complete_audit=False, per_file_rules=len(versions) > 1)
         job = worker.claim_job("verified-query")
         work = worker.round_work(task["round_id"])
         spec = spec_from_work(work, job.payload["executor"], job.payload["executor_revision"], DEEP_PROTOCOL_REVISION).model_copy(update={"job_id": job.id, "attempt": job.attempt})

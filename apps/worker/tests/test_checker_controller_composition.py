@@ -1,4 +1,4 @@
-"""Production composition binds both audited artifacts and optimization RPC."""
+"""Production composition binds the optimization RPC; audits never persist generated checkers."""
 
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from worker import deep_controller
 
 
-def test_controller_wires_development_and_round_artifact_persistence(monkeypatch):
+def test_controller_wires_development_without_round_artifact_persistence(monkeypatch):
     policy = SimpleNamespace(runtime_identity=lambda: {"model": "test-model"})
     settings = SimpleNamespace(deep_controller_socket="/not-opened-in-this-controlled-test", deep_execution_revision=lambda: "runtime", deep_execution_policy=lambda: policy)
     store = SimpleNamespace(settings=settings, objects=object(), role="worker")
@@ -48,7 +48,5 @@ def test_controller_wires_development_and_round_artifact_persistence(monkeypatch
     monkeypatch.setattr(deep_controller.signal, "signal", lambda *args: None)
     assert deep_controller.main() == 0
     assert captured["controller"].development_handler is handler
-    persist = captured["save_round_artifacts"]
-    assert persist.__self__.store is store
-    assert persist.__name__ == "save_round_artifacts"
+    assert "save_round_artifacts" not in captured
     assert captured["started"] and captured["closed"]

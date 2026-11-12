@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test, {afterEach} from 'node:test'
-import {apiUrl, connect, deepOffered, feishuAppId, profile, readLocalUpload, request, requestTrace, upload, uploadLocalVersion, UploadResultUnknown, type Material} from './api.ts'
+import {apiUrl, connect, feishuAppId, profile, readLocalUpload, request, requestTrace, upload, uploadLocalVersion, UploadResultUnknown, type Material} from './api.ts'
 
 const originalFetch = globalThis.fetch
 Object.defineProperty(globalThis, 'navigator', {value: {onLine: true}, configurable: true})
@@ -44,11 +44,11 @@ test('rule source rejection explains the required correction without claiming pu
   await assert.rejects(request('/rules', 'POST', {}), /请重新选择原文位置并核对，草稿未发布/)
 })
 
-test('connect reads runtime config then public-config and gates deep mode', async () => {
+test('connect reads runtime config then public-config', async () => {
   const calls = installFetch(url => {
     if (url === '/runtime-config.json') return jsonResponse({api_url: 'http://api.example'})
     if (url === 'http://api.example/public-config') {
-      return jsonResponse({api_url: 'http://api.example', profile: 'isolated-dev', deep_offered: true, feishu_app_id: 'cli_app'})
+      return jsonResponse({api_url: 'http://api.example', profile: 'isolated-dev', feishu_app_id: 'cli_app'})
     }
     throw new Error('unexpected ' + url)
   })
@@ -56,21 +56,7 @@ test('connect reads runtime config then public-config and gates deep mode', asyn
   assert.deepEqual(calls.map(call => call.url), ['/runtime-config.json', 'http://api.example/public-config'])
   assert.equal(apiUrl, 'http://api.example')
   assert.equal(profile, 'isolated-dev')
-  assert.equal(deepOffered, true)
   assert.equal(feishuAppId, 'cli_app')
-})
-
-test('connect leaves deep mode off unless public-config offers it', async () => {
-  installFetch(url => {
-    if (url === '/runtime-config.json') return jsonResponse({api_url: 'http://api.example'})
-    if (url === 'http://api.example/public-config') {
-      return jsonResponse({api_url: 'http://api.example', profile: 'production'})
-    }
-    throw new Error('unexpected ' + url)
-  })
-  await connect()
-  assert.equal(deepOffered, false)
-  assert.equal(profile, 'production')
 })
 
 test('connect returns the server login capability instead of inferring it from a successful connection', async () => {
@@ -83,7 +69,7 @@ test('product requests send cookies and no custom token header', async () => {
   installFetch(url => {
     if (url === '/runtime-config.json') return jsonResponse({api_url: 'http://api.example'})
     if (url === 'http://api.example/public-config') {
-      return jsonResponse({api_url: 'http://api.example', profile: 'isolated-dev', deep_offered: false})
+      return jsonResponse({api_url: 'http://api.example', profile: 'isolated-dev'})
     }
     throw new Error('unexpected ' + url)
   })

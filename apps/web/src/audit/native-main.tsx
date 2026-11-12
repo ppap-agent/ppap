@@ -1,7 +1,7 @@
 import {useEffect, useState} from 'react'
 import {createRoot} from 'react-dom/client'
 import '../index.css'
-import {deepOffered, personalDriveUpload, request} from '../api'
+import {personalDriveUpload, request} from '../api'
 import {sourceLocation} from '../helpers'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Button} from '../components/ui/button'
@@ -30,7 +30,7 @@ function NativeWorkbench(props: WorkbenchProps) {
 }
 
 function NativeAudit() {
-  const [adapter, setAdapter] = useState<AuditIntakeAdapter>(() => ({...createNativeAuditAdapter({deepOffered, personalDriveUpload, customers: []}), readRound}))
+  const [adapter, setAdapter] = useState<AuditIntakeAdapter>(() => ({...createNativeAuditAdapter({personalDriveUpload, customers: []}), readRound}))
   const [error, setError] = useState(''), [revision, setRevision] = useState(0)
   useEffect(() => {
     const address = new URL(location.href)
@@ -49,7 +49,7 @@ function NativeAudit() {
 }
 
 const readRound: ReadRound = (id, signal) => request(`/rounds/${encodeURIComponent(id)}?read_view=true`, 'GET', undefined, signal)
-// The former separate deep-analysis page is now the deep mode of an ordinary audit.
+// Old Deep entry links (retired with Deep audits, #322) open a new ordinary task.
 if (['prepareDeep', 'deepDraft', 'deepAccept'].some(key => new URL(location.href).searchParams.has(key))) location.replace('/tasks/new')
 const shareId = new URL(location.href).searchParams.get('share')
 history.replaceState(history.state, '', canonicalAddress(new URL(location.href)))

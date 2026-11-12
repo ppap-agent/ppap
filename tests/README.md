@@ -12,7 +12,6 @@
 - `integration/product`: cross-owner production-store contracts
 - `integration/runtime`: production runtime and backup/restore
 - `e2e`: Python Playwright full-product black-box paths
-- `live`: explicit real-environment validation that is outside the default merge contract; not a bucket for every external-backed test
 
 CI consumes these physical owners. It does not maintain a second test manifest.
 
@@ -260,19 +259,13 @@ success with these overrides is not S3 or UDS acceptance. `--local-postgres` cre
 disposable TCP-only cluster. If a browser cannot launch, `-k http_receipts` runs the real
 HTTP/PG/Worker/trial/publication chain without claiming browser coverage.
 
-## Live
-
-`tests/live` is explicit-only. For the current Deep live smoke:
-
-```sh
-PPAP_DEEP_LIVE=1 uv run --no-sync pytest tests/live/test_deep_isolated.py
-```
+## Outside the CI Gate
 
 The separate InsForge native lifecycle remains path-filtered / manual / scheduled. It is not part of the default `CI Gate`. LLM readiness and Feishu readiness keep `workflow_dispatch` and add a weekly schedule; they probe real credentials and endpoints and stay outside the default `CI Gate`.
 
 ## CI Gate
 
-The default merge contract is the required groups: Web, Repository contract, Python modules, Distribution closure, Schema, Corpus, and Product integration. Being external-backed does not make a test optional or live; Corpus stays a required CI Gate child even when a cache miss calls real OCR / model capability. pytest does not inject the repository root via `pythonpath`; production imports come from uv workspace packaging. `tests/live` is opt-in real-environment validation, not the set of all external tests. The final `CI Gate` runs no tests; it succeeds only when every required group succeeds. Repository-side merge-contract semantics are therefore stable even when internal matrix groups evolve; whether the hosting plan can enforce `CI Gate` through branch protection/rulesets is a separate platform capability.
+The default merge contract is the required groups: Web, Repository contract, Python modules, Distribution closure, Schema, Corpus, and Product integration. Being external-backed does not make a test optional or live; Corpus stays a required CI Gate child even when a cache miss calls real OCR / model capability. pytest does not inject the repository root via `pythonpath`; production imports come from uv workspace packaging. The final `CI Gate` runs no tests; it succeeds only when every required group succeeds. Repository-side merge-contract semantics are therefore stable even when internal matrix groups evolve; whether the hosting plan can enforce `CI Gate` through branch protection/rulesets is a separate platform capability.
 
 ### Feedback grouping controlled comparison (#258)
 

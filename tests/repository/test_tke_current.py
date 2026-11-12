@@ -89,7 +89,7 @@ class TkeCurrentDeployTests(unittest.TestCase):
         self.assertEqual(config["data"]["PPAP_DEEP_EXECUTOR_REVISION"], "ppap-deep-v2")
         self.assertEqual(config["data"]["PPAP_DEEP_RUNTIME"], "container-only")
         self.assertEqual(config["data"]["PPAP_DEEP_SANDBOX_PROFILE"], "off")
-        self.assertEqual(config["data"]["PPAP_DEEP_CUSTOMER_ENABLED"], "true")
+        self.assertNotIn("PPAP_DEEP_CUSTOMER_ENABLED", config["data"])
         images = [container["image"] for doc in docs for container in _containers(doc) if container.get("image")]
         app_containers = [container for doc in docs for container in _containers(doc) if container.get("name") in {"api", "worker", "deep", "web"}]
         app_images = [container["image"] for container in app_containers]

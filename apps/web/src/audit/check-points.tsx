@@ -56,7 +56,7 @@ export function RuleProgramCard({ruleVersionId, onPrepare}: {ruleVersionId: stri
     const fresh = operation?.state === 'completed' && operation.candidate_revision_id && operation.candidate_revision_id !== view.current_revision_id ? operation.candidate_revision_id : null
     return <>{summary}<ProgramStatus suiteKey={view.suite_key!} offered={fresh} onUpdate={working ? undefined : () => onPrepare(true)} extra={working} onChanged={reload}/></>
   }
-  if (working) return <>{summary}<StatusCard badge="生成中" title="正在生成检查程序">{working}</StatusCard></>
+  if (working) return <>{summary}<StatusCard badge="生成中" title="探索模式正在生成检查程序">{working}</StatusCard></>
   return <>{summary}<StatusCard badge="未生成" title="还不能用于审核" action={<Button onClick={() => onPrepare(false)}>生成检查程序</Button>}>
     {operation && (operation.state === 'failed' || operation.state === 'stopped') && <p className="text-foreground">上次生成没有完成：{generationFailure(operation)}</p>}
     {operation?.state === 'completed' && <p className="text-foreground">上次生成期间规则改过，没有启用。请重新生成。</p>}
@@ -133,6 +133,7 @@ export function ProgramWizard({ruleVersionId, ruleTitle, version, updating, onCl
     <header className="space-y-1">
       <Button variant="ghost" size="sm" className="-ml-2 max-w-full" onClick={onClose}><ArrowLeft/><span className="truncate">{ruleTitle} · 版本 {version}</span></Button>
       <h2 className="text-2xl font-semibold tracking-tight">{title}</h2>
+      <p className="text-sm text-muted-foreground">探索模式：用已确认的条款和样本生成检查程序，人工采用后才用于审核。</p>
     </header>
     <CheckPoints ruleVersionId={ruleVersionId} action={title} onStarted={onClose} onAdopt={onAdopt}/>
   </div>

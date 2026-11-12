@@ -150,7 +150,6 @@ def round_report_routes(page, *, report_state="ready", access="allowed", task_de
                     "profile": "isolated-dev",
                     "login": "isolated-dev",
                     "feishu_app_id": "",
-                    "deep_offered": False,
                     "current_access": "allowed",
                     "usage_charge_enabled": False,
                 }

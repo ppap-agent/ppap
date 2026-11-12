@@ -943,9 +943,6 @@ def create_app(
         return query_tenant_ai_item(http, session.access_token, settings.feishu_ai_item_id)
 
     register_audit_routes(app, store, principal_of, quota_for)
-    from api.deep_feedback import register_deep_feedback_routes
-
-    register_deep_feedback_routes(app, store, principal_of, quota_for)
     from api.fact_answers import register_fact_answer_routes
 
     register_fact_answer_routes(app, store, principal_of)

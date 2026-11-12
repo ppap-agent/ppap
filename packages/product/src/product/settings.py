@@ -86,7 +86,6 @@ class Settings(BaseSettings):
     deep_controller_socket: str = Field(default="", alias="PPAP_DEEP_CONTROLLER_SOCKET")
     deep_executor_revision: str = Field(default="", alias="PPAP_DEEP_EXECUTOR_REVISION")
     deep_sandbox_profile: str = Field(default="off", alias="PPAP_DEEP_SANDBOX_PROFILE")
-    deep_customer_enabled: bool = Field(default=False, alias="PPAP_DEEP_CUSTOMER_ENABLED")
     current_tenant_allowlist: str = Field(default="", alias="PPAP_CURRENT_TENANT_ALLOWLIST")
     usage_charge_enabled: bool = Field(default=True, alias="PPAP_USAGE_CHARGE_ENABLED")
     mcp_enabled: bool = Field(default=False, alias="PPAP_MCP_ENABLED")
@@ -306,9 +305,6 @@ class Settings(BaseSettings):
                     origins.append(extra)
         return origins
 
-    def deep_offered(self) -> bool:
-        return self.profile == "isolated-dev" or self.deep_customer_enabled
-
     def allowed_tenant_keys(self) -> frozenset[str]:
         return frozenset(part.strip() for part in self.current_tenant_allowlist.split(",") if part.strip())
 
@@ -321,7 +317,6 @@ class Settings(BaseSettings):
             "git_sha": self.git_sha,
             "profile": self.profile,
             "api_url": self.public_api_url.rstrip("/"),
-            "deep_offered": self.deep_offered(),
             "feishu_app_id": self.feishu_app_id,
             "current_access": "allowlist" if self.allowed_tenant_keys() else "open",
             "usage_charge_enabled": self.usage_charge_enabled,

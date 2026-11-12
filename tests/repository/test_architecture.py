@@ -21,7 +21,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PRODUCTION_ROOTS = ("packages", "apps")
-ROOT_TEST_GROUPS = {"repository", "schema", "corpus", "integration", "e2e", "live"}
+ROOT_TEST_GROUPS = {"repository", "schema", "corpus", "integration", "e2e"}
 ROOT_TEST_DATA_DIRS = {"fixtures"}
 GUEST_ENV = ROOT / "packages/agent/src/agent/execution/isolation/container.py"
 FORBIDDEN_IMPORT = re.compile(r"^(?:from|import)\s+(?:tests(?:\.|\s|$)|test_|store_fixture\b|sample_rule\b|memory_objects\b|conftest\b)")

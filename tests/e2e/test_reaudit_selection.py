@@ -47,7 +47,6 @@ def reaudit_routes(page, *, accept=False):
                     "profile": "isolated-dev",
                     "login": "isolated-dev",
                     "feishu_app_id": "",
-                    "deep_offered": False,
                     "current_access": "allowed",
                     "usage_charge_enabled": False,
                 }

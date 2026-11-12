@@ -14,7 +14,6 @@ from product.mcp import McpError
 from pydantic import Field
 
 from api import web_contract as wc
-from api.deep_feedback import RuleChangeRequest
 from api.mcp_gateway import DataPage, PageRequest, Reply, page_result
 
 READ = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
@@ -314,51 +313,6 @@ def register_tools(mcp, gateway, authority):
     async def get_reaudit_inputs(round_id: UUID, page: PageRequest | None = None) -> Reply[DataPage]:
         """Read the complete frozen input set. Replacement and explicit rule reuse belong to a new linked task."""
         return await read("audits:read", f"/rounds/{round_id}/reaudit-inputs", page)
-
-    @mcp.tool(annotations=READ)
-    async def read_audit(round_id: UUID, page: PageRequest | None = None) -> Reply[DataPage]:
-        """Read Deep questions, evidence, confirmed explanations, revision and analysis history."""
-        return await read("audits:read", f"/audit-rounds/{round_id}/deep-feedback", page)
-
-    @mcp.tool(annotations=UPDATE)
-    async def apply_rule_change(round_id: UUID, body: RuleChangeRequest) -> Reply[dict]:
-        """Confirm an exact scoped explanation/change. save_only preserves results; save_and_analyze starts a new round.
-
-        Use a UUID operation_id. Open confirmation_url, then repeat the exact call after user approval.
-        On unknown outcome read get_rule_change with the original operation_id; never invent a replacement ID.
-        """
-        try:
-            UUID(body.operation_id)
-        except ValueError:
-            return Reply(status="error", error="invalid_feedback_request", request_id=body.operation_id)
-        try:
-            actor = await authority()
-            actor.require("audits:read")
-            if body.content or body.remove_appendix_ids:
-                actor.require("rules:write")
-        except McpError as exc:
-            return Reply(status="error", error=exc.code, request_id=body.operation_id)
-        scope = "audits:execute" if body.intent == "save_and_analyze" else "audits:write"
-        return await write(
-            scope,
-            "apply_rule_change",
-            body.operation_id,
-            f"/audit-rounds/{round_id}/rule-changes",
-            body.model_dump(exclude_none=True),
-            probes=[f"/audit-rounds/{round_id}/deep-feedback"],
-            confirm=True,
-            result_path=lambda _: f"/audit-rounds/{round_id}/rule-changes/{body.operation_id}",
-        )
-
-    @mcp.tool(annotations=UPDATE)
-    async def start_analysis(round_id: UUID, operation_id: UUID, expected_revision: int) -> Reply[dict]:
-        """Request explicit Deep reanalysis with saved explanations. Requires user confirmation; does not edit old results."""
-        return await apply_rule_change(round_id, RuleChangeRequest(operation_id=str(operation_id), expected_revision=expected_revision, intent="save_and_analyze"))
-
-    @mcp.tool(annotations=READ)
-    async def get_rule_change(round_id: UUID, operation_id: UUID) -> Reply[DataPage]:
-        """Read the durable business receipt after response loss. Null does not authorize another operation."""
-        return await read("audits:read", f"/audit-rounds/{round_id}/rule-changes/{operation_id}")
 
     @mcp.tool(annotations=READ)
     async def get_round(round_id: UUID, page: PageRequest | None = None) -> Reply[DataPage]:

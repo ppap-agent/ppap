@@ -133,25 +133,6 @@ def test_freeze_validation_stales_text_and_direct_dependencies_not_library():
         freeze_execution(**args)
 
 
-def test_feedback_normalization_preserves_suite_provenance_and_only_normalizes_appendix():
-    from product.store.deep_feedback import normalize_feedback_body
-
-    rules = {
-        "kind": "engine",
-        "rule_profile": "v4",
-        "suite_key": "UAES:U08",
-        "checker_binding": {"R1": "checker:check"},
-        "rules": [{"id": "R1", "rule_to_check": "Exact source wording"}],
-        "appendix": [],
-    }
-    normalized = normalize_feedback_body(rules)
-    assert normalized == rules
-    normalized["rules"][0]["rule_to_check"] = "mutated"
-    assert rules["rules"][0]["rule_to_check"] == "Exact source wording"
-    with pytest.raises(ValueError, match="invalid_rule_appendix"):
-        normalize_feedback_body({**rules, "appendix": [{"id": "invalid"}]})
-
-
 def test_optional_program_tombstone_preserves_base_and_cannot_delete_required_assets():
     assets = baseline()
     assets.add("with-resource", owner="a", base="official", files={"resources.py": b"VALUE = 1"})

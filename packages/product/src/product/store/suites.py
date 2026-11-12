@@ -281,7 +281,7 @@ def programless_suite_keys(conn, tenant_id: str, suite_keys) -> set[str]:
     return {key for key in keys if programs.get(key) in {None, content_digest(UNIMPLEMENTED_CHECKER_SOURCE)}}
 
 
-def freeze_selected_targets(store, conn, tenant_id: str, prepared: list[dict], *, require_rule_match: bool = False, preparation: bool = False) -> tuple[FrozenTarget, ...]:
+def freeze_selected_targets(store, conn, tenant_id: str, prepared: list[dict], *, preparation: bool = False) -> tuple[FrozenTarget, ...]:
     """Resolve the same adopted immutable Suite for preparation and acceptance.
 
     Preparation may inspect unverified source without publishing it or approving
@@ -290,7 +290,6 @@ def freeze_selected_targets(store, conn, tenant_id: str, prepared: list[dict], *
     from audit.standard_suites import library_revision
 
     from product.legacy_head_cutover import legacy_carrier_program
-    from product.store.rule_impact import semantic_rule_packet
     from product.store.suite_releases import current_selection
 
     suites = SuiteStore(store.settings, store.objects, store.role)
@@ -313,11 +312,6 @@ def freeze_selected_targets(store, conn, tenant_id: str, prepared: list[dict], *
             raise ValueError("suite_version_confirmation_required")
         rules = json.loads(suite.files["rules.json"])
         appendix = tuple(json.loads(suite.files.get("appendix.json", b"[]")))
-        if require_rule_match and rule_digest(semantic_rule_packet(body), body.get("appendix", [])) != rule_digest(semantic_rule_packet(rules), appendix):
-            # A feedback request explicitly confirms these clauses/appendices.
-            # Replacing them with the current Suite would execute different rules
-            # from the user's confirmation, even when that Suite was forced on.
-            raise ValueError("suite_feedback_rules_changed")
         # The accepted rule version is provenance. Actual rules are the adopted
         # immutable Suite, including enterprise edits, never the mutable preset.
         entrypoints = rules.get("checker_binding")
@@ -378,7 +372,7 @@ def freeze_selected_targets(store, conn, tenant_id: str, prepared: list[dict], *
     return tuple(targets)
 
 
-def freeze_round_execution(store, conn, principal, *, round_id: str, prepared: list[dict], analysis_mode: str, require_rule_match: bool = False) -> ExecutionSnapshot:
+def freeze_round_execution(store, conn, principal, *, round_id: str, prepared: list[dict], analysis_mode: str) -> ExecutionSnapshot:
     """Resolve the adopted Suite under the publication lock during Round acceptance.
 
     No missing seed, invalid source or stale proof silently falls back to a legacy
@@ -387,12 +381,12 @@ def freeze_round_execution(store, conn, principal, *, round_id: str, prepared: l
     """
     from audit.standard_suites import library_revision
 
-    if analysis_mode not in {"standard", "deep"}:
+    if analysis_mode != "standard":
         raise ValueError("invalid_analysis_mode")
     library = library_revision()
     identity = store.model_identity(principal.tenant_id, conn=conn)
     policy = store.settings.deep_execution_policy(identity)
-    targets = freeze_selected_targets(store, conn, principal.tenant_id, prepared, require_rule_match=require_rule_match)
+    targets = freeze_selected_targets(store, conn, principal.tenant_id, prepared)
     return ExecutionSnapshot(
         tenant_id=principal.tenant_id,
         initiating_user_id=principal.user_id,

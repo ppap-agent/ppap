@@ -114,7 +114,6 @@ class SettingsTests(unittest.TestCase):
             PPAP_WEB_URL="http://127.0.0.1:4173",
         ):
             settings = Settings()
-        self.assertFalse(settings.deep_offered())
         self.assertEqual(settings.public_config()["profile"], "remote-dev")
         self.assertIn("http://localhost:4173", settings.web_origins())
         TestClient = __import__("fastapi.testclient", fromlist=["TestClient"]).TestClient
@@ -237,10 +236,9 @@ class ApiSurfaceTests(unittest.TestCase):
 
     def test_public_config_has_no_secrets(self):
         body = self.client.get("/public-config").json()
-        self.assertEqual(set(body), {"git_sha", "profile", "api_url", "login", "deep_offered", "feishu_app_id", "current_access", "usage_charge_enabled", "personal_drive_upload"})
+        self.assertEqual(set(body), {"git_sha", "profile", "api_url", "login", "feishu_app_id", "current_access", "usage_charge_enabled", "personal_drive_upload"})
         self.assertEqual(body["current_access"], "open")
         self.assertTrue(body["usage_charge_enabled"])
-        self.assertTrue(body["deep_offered"])
         self.assertIn("feishu_app_id", body)
         blob = " ".join(str(value).lower() for value in body.values())
         self.assertNotIn("ppap_isolated_dev", blob)

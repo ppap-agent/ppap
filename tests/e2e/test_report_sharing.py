@@ -90,7 +90,6 @@ def test_shared_report_switch_download_and_denied_revisit_never_open_private_inp
                         "profile": "isolated-dev",
                         "login": "feishu",
                         "feishu_app_id": "test-app",
-                        "deep_offered": False,
                         "current_access": "allowed",
                         "usage_charge_enabled": False,
                     }
@@ -302,7 +301,6 @@ def test_directory_timeout_retries_the_same_page_and_ignores_its_late_reply():
                         "profile": "isolated-dev",
                         "login": "feishu",
                         "feishu_app_id": "test-app",
-                        "deep_offered": False,
                         "current_access": "allowed",
                         "usage_charge_enabled": False,
                     }

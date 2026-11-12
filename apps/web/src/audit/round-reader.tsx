@@ -13,7 +13,6 @@ import {HistoricalFindings} from './historical-findings'
 import {sameSnapshot} from './result-projection'
 import {ReviewEditorContext} from './review-editor'
 import {writeAuditAddress} from './routes'
-import {DeepFeedback} from './deep-feedback'
 import {FactQuestions} from './fact-questions'
 
 type Round = components['schemas']['Round']
@@ -21,7 +20,6 @@ export type ReadRound = (id: string, signal: AbortSignal) => Promise<Round>
 
 export function AuditRoundReader({roundId, readRound, renderOriginal, onReaudit, onReport, headerActions, returnHref = '/workbench'}: {roundId: string; readRound: ReadRound; renderOriginal?: OriginalRenderer; onReaudit?: () => void; onReport?: (taskId: string, fileVersionId: string) => void; headerActions?: HTMLElement | null; returnHref?: string}) {
   const reviewEditor = useContext(ReviewEditorContext)
-  const [basisChanged, setBasisChanged] = useState(false)
   const [round, setRound] = useState<Round | null>(null), [error, setError] = useState(''), [revision, setRevision] = useState(0), [selected, setSelected] = useState(() => new URL(location.href).searchParams.get('file') || '')
   useEffect(() => {
     const controller = new AbortController()
@@ -62,8 +60,7 @@ export function AuditRoundReader({roundId, readRound, renderOriginal, onReaudit,
     </header>}
     {error ? <Alert variant="destructive"><AlertTitle>历史审核暂不可用</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : !view ? <ReadSkeleton label="正在读取本轮审核…" kind={'detail'}/> : <>
       {round?.execution === 'completed' && <FactQuestions key={`facts:${roundId}`} roundId={roundId} files={view.files.map(row => row.file)} findings={round.findings}/>}
-      {round?.analysis_mode === 'deep' && <DeepFeedback key={roundId} roundId={roundId} files={view.files.map(row => row.file)} rules={view.files.flatMap(row => row.rule?.body.kind === 'engine' ? row.rule.body.rules.map(rule => ({documentId: row.file.id, filename: row.file.original_filename, rule})) : [])} renderOriginal={renderOriginal} onBasisChanged={setBasisChanged}/>}
-      {basisChanged && <h2 className="text-lg font-semibold">此前输入的审核结果</h2>}
+      
       <nav aria-label="本轮文件" className="flex flex-wrap gap-2">{view.files.map(row => <Button key={row.file.id} variant={file?.file.id === row.file.id ? 'secondary' : 'ghost'} className="h-auto max-w-full whitespace-normal text-left" aria-pressed={file?.file.id === row.file.id} onClick={() => selectFile(row.file.id)}><FileName name={row.file.original_filename}/>{row.role === 'reference' && <span className="text-xs text-muted-foreground">比对资料</span>}</Button>)}</nav>
       {file ? file.role === 'target' ? <AuditReviewContent onReaudit={onReaudit} key={`${roundId}:${file.file.id}`} file={file} roundId={roundId} frozenRule={file.rule} frozenFileVersionIds={versions} originals={originals} renderOriginal={renderOriginal} reportAccess={reportSource?.access} onReport={onReport && reportTaskId ? () => onReport(reportTaskId, file.file.id) : undefined}/> : <section aria-label="本轮比对原件" className="space-y-4"><h2 className="font-semibold"><FileName name={file.file.original_filename}/></h2>{renderOriginal ? renderOriginal(file.file, null, roundId) : <p>原件暂不可预览。</p>}</section> : <p>本轮没有可读取的文件。</p>}
       <HistoricalFindings findings={view.unassigned_findings} roundId={roundId} resultAttempt={round?.result_attempt ?? null} versions={versions} originals={originals} renderOriginal={renderOriginal} title="未归属文件的历史记录"/>

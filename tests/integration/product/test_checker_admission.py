@@ -78,14 +78,11 @@ class Admission:
         platform.publish_official(revision.id, expected_revision=0, expected_validation_revision=result["write_revision"])
         return result
 
-    def draft(self, mode="standard"):
-        draft = self.store.create_draft(self.alice, items=self.items)
-        if mode != "standard":
-            self.store.save_draft(self.alice, draft["id"], items=None, analysis_mode=mode)
-        return draft["id"]
+    def draft(self):
+        return self.store.create_draft(self.alice, items=self.items)["id"]
 
-    def accept(self, mode="standard"):
-        draft_id = self.draft(mode)
+    def accept(self):
+        draft_id = self.draft()
         return self.store.accept_draft(self.alice, draft_id, "accept:" + draft_id)
 
     def snapshot(self, round_id):
@@ -100,7 +97,6 @@ class Admission:
                     "product.checker_execution_snapshots",
                     "engine.jobs",
                     "product.usage_events",
-                    "product.deep_rule_changes",
                 )
             )
 
@@ -182,46 +178,41 @@ def test_admission_integrity_failures_never_queue_a_round(admission, fault):
     assert a.store.get_draft(draft)["status"] == "open"
 
 
-def test_confirmed_feedback_appendix_cannot_be_silently_replaced_by_adopted_suite(admission):
+def test_standard_round_freezes_the_explicitly_adopted_appendix(admission):
     a = admission
     a.verify()
-    source = a.accept("deep")
-    original = a.snapshot(source["id"]).to_dict()
-    payload = {
-        "operation_id": str(uuid.uuid4()),
-        "expected_revision": 0,
-        "kind": "interpretation",
-        "content": "确认后的编号解释",
-        "scope": {"document_ids": [a.target.id], "rule_ids": ["R1"]},
-        "intent": "save_only",
-        "confirmation_source": "synthetic",
-    }
-    saved = a.store.apply_rule_change(a.alice, source["id"], payload)
-    before = a.counts()
-    followup = {"operation_id": str(uuid.uuid4()), "expected_revision": saved["revision"], "intent": "save_and_analyze"}
-    with pytest.raises(ValueError, match="suite_feedback_rules_changed"):
-        a.store.apply_rule_change(a.alice, source["id"], followup)
-    assert a.counts() == before
-    assert a.snapshot(source["id"]).to_dict() == original
-    view = a.store.read_deep_feedback(a.alice, source["id"])
-    assert view["appendix"][0]["content"] == payload["content"]
-    assert view["current_round_id"] == source["id"]
-    # Explicitly adopting matching appendix bytes creates a distinct unverified
-    # Suite; feedback then freezes those exact bytes, never its old verified proof.
-    candidate = a.releases.save_candidate(a.alice, a.official.id, {"appendix.json": json.dumps(saved["appendix"], ensure_ascii=False)})
+    appendix = [{"id": "confirmed", "kind": "interpretation", "content": "确认后的编号解释", "scope": {"document_ids": [a.target.id], "rule_ids": ["R1"]}, "confirmation_source": "synthetic"}]
+    # Adopting appendix bytes creates a distinct unverified Suite; the round
+    # freezes those exact bytes, never the old verified proof.
+    candidate = a.releases.save_candidate(a.alice, a.official.id, {"appendix.json": json.dumps(appendix, ensure_ascii=False)})
     a.releases.publish(a.bob, KEY, candidate["id"], 0, str(uuid.uuid4()), force_unverified=True)
-    new = a.store.apply_rule_change(a.alice, source["id"], followup)
-    frozen = a.snapshot(new["analysis_round_id"])
+    frozen = a.snapshot(a.accept()["id"])
+    assert frozen.targets[0].suite_revision_id == candidate["id"]
     assert frozen.targets[0].verification == "unverified"
-    assert frozen.to_dict()["targets"][0]["appendix"] == saved["appendix"]
+    assert frozen.to_dict()["targets"][0]["appendix"] == appendix
 
 
-@pytest.mark.parametrize("mode", ["standard", "deep"])
-@pytest.mark.parametrize("boundary", ["expired", "null"])
-def test_all_audits_reject_expired_renewal_progress_and_completion(admission, mode, boundary):
+def test_deep_acceptance_is_not_offered_and_queues_nothing(admission):
     a = admission
     a.verify()
-    source = a.accept(mode)
+    draft = a.draft()
+    with pytest.raises(ValueError, match="^deep_not_available$"):
+        a.store.save_draft(a.alice, draft, items=None, analysis_mode="deep")
+    # An open draft saved as Deep before #322 cannot be accepted as Deep either.
+    with a.store._conn() as conn:
+        conn.execute("UPDATE product.audit_drafts SET analysis_mode='deep' WHERE id=%s", (draft,))
+    before = a.counts()
+    with pytest.raises(ValueError, match="^deep_not_available$"):
+        a.store.accept_draft(a.alice, draft, "deep:" + draft)
+    assert a.counts() == before
+    assert a.store.get_draft(draft)["status"] == "open"
+
+
+@pytest.mark.parametrize("boundary", ["expired", "null"])
+def test_all_audits_reject_expired_renewal_progress_and_completion(admission, boundary):
+    a = admission
+    a.verify()
+    source = a.accept()
     first = a.store.claim_job("old-worker")
     assert first.round_id == source["id"]
     with a.store._conn() as conn:

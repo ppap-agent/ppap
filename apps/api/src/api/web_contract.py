@@ -52,7 +52,6 @@ class PublicConfig(TypedDict):
     git_sha: str
     profile: str
     api_url: str
-    deep_offered: bool
     feishu_app_id: str
     current_access: str
     usage_charge_enabled: bool

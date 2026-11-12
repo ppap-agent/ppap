@@ -16,7 +16,6 @@ services:
       PPAP_PG_API_USER: ${PPAP_REMOTE_PG_API_USER:?run through deploy/remote-dev/run.sh}
       PPAP_PG_API_PASSWORD: ${PPAP_REMOTE_PG_API_PASSWORD:?run through deploy/remote-dev/run.sh}
       PPAP_CURRENT_TENANT_ALLOWLIST: ${PPAP_REMOTE_TENANT_ALLOWLIST?run through deploy/remote-dev/run.sh}
-      PPAP_DEEP_CUSTOMER_ENABLED: ${PPAP_REMOTE_DEEP_CUSTOMER_ENABLED:?run through deploy/remote-dev/run.sh}
       PPAP_DEEP_EXECUTOR_REVISION: ${PPAP_REMOTE_DEEP_EXECUTOR_REVISION:?run through deploy/remote-dev/run.sh}
       PPAP_DEEP_SANDBOX_PROFILE: ${PPAP_REMOTE_DEEP_SANDBOX_PROFILE:?run through deploy/remote-dev/run.sh}
       PPAP_S3_ENDPOINT: http://host.docker.internal:19000

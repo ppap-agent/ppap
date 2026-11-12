@@ -10,14 +10,16 @@ from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
+from agent.checker_development import FrozenDevelopmentInput
 from agent.checker_program import CheckerManifest
 from agent.checker_spec import CheckerArtifact, CheckerJobSpec
 from agent.client import DeepError
-from agent.core_program import CoreRuntime, development_snapshot, snapshot_development_inputs, write_audit_manifest
+from agent.core_program import CoreRuntime, development_snapshot, write_audit_manifest
 from agent.execution.isolation.container import ContainerRuntime
 from agent.protocol import ExecuteRequest
 from agent.run import ExecutionContext
 from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest
+from audit.contracts import AuditInput, RuleInput
 from audit.protocol import ControllerFault
 
 
@@ -184,7 +186,9 @@ def test_model_enabled_core_fixed_trials_already_bind_the_frozen_operation(tmp_p
 
 def test_trusted_host_keeps_job_identity_across_attempts_not_across_new_operations(tmp_path, monkeypatch):
     snapshot, sources, _ = frozen_trial()
-    inputs = snapshot_development_inputs(snapshot, sources)["file"]
+    target = snapshot.targets[0]
+    audit = AuditInput(audit_id="file", file_url="file.txt", file_metadata={"file_version_id": "file", "original_filename": "file.txt"})
+    inputs = FrozenDevelopmentInput(audit, RuleInput.model_validate({**target.rules, "rule_id": target.suite_revision_id}), sources["file"], related_bytes=dict(sources))
     captured = []
 
     def capture(job, staged, *_args, **_kwargs):

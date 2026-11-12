@@ -32,7 +32,6 @@ def task_notification_card(task: dict, stage: str, web_url: str, report_package:
         excluded = {row["file_version_id"]: row["reason"] for row in scope["excluded_files"]} if scope else {}
         matched = len(scope["target_file_version_ids"]) if scope else sum((row.get("match") or {}).get("state") == "matched" for row in targets)
         blocks.append(f"已匹配 **{matched} 份**，共 {len(targets)} 份。<br>请核对匹配结果，再决定是否开始审核。")
-        blocks.append("**审核模式** · " + {"standard": "标准审核", "deep": "深度审核"}.get(task.get("analysis_mode", "standard"), "待核对"))
         for row in files:
             match = row.get("match") or {}
             if row["selection"] == "selected" and match.get("state") == "reference":

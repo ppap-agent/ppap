@@ -361,6 +361,6 @@ Agent 可以按原规则纠正实现。仍有合理歧义或需要改变业务�
 - 逐行列与页眉继承在规则允许时表达同一对象关系；明确要求列存在时不能互相替代。
 - 概念映射、实例关系和值域确认分别生效；新增、替换或移除确认后，旧结果保留、新依据重新计算，原件冲突仍可导致 NG。
 
-[规则合同回归](../audit/tests/test_v3_rule_contracts.py) 和 [稀疏扫描回归](../audit/tests/test_sparse_sheet_scan.py) 保护原实现；[checker 程序测试](tests/test_checker_program.py) 验证当前开发与执行接口，包括宿主/guest 与直接 API 的附录传递、范围筛选、修改和移除后的产物失效。确认保存与轮次合同见 [反馈集成测试](../../tests/integration/product/test_deep_feedback_contract.py)，它不代替新语义的完整产品旅程。完整范围按 [测试入口](../../tests/README.md) 执行。
+[规则合同回归](../audit/tests/test_v3_rule_contracts.py) 和 [稀疏扫描回归](../audit/tests/test_sparse_sheet_scan.py) 保护原实现；[checker 程序测试](tests/test_checker_program.py) 验证当前开发与执行接口，包括宿主/guest 与直接 API 的附录传递、范围筛选、修改和移除后的产物失效。完整范围按 [测试入口](../../tests/README.md) 执行。
 
 受控 runner 测试证明协议和失败处理，真实模型任务验证诊断及适配能力，两者证据分开。评估逐项正确性、漏检、误报、证据与范围、未解决问题、成本和迭代次数；测试数量或 PASS 比例不能单独证明审核成功。
