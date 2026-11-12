@@ -7,7 +7,7 @@ metadata:
     k8s-app: ppap-current
 data:
   PPAP_PROFILE: production
-  PPAP_BUILD_SHA: c9b7b2023d7d81411c3f8810b75d2a0075737042
+  PPAP_BUILD_SHA: ffff7b0b02d8058bd22a2657d94fb1c316476227
   PPAP_WEB_URL: https://ppap.icoastline.com
   PPAP_PUBLIC_API_URL: https://ppap.icoastline.com/ppap
   PPAP_ONLYOFFICE_URL: https://ppap.icoastline.com/office
@@ -22,10 +22,8 @@ data:
   PPAP_S3_ENDPOINT: http://ppap-current-silo:9000
   PPAP_S3_REGION: us-east-1
   PPAP_S3_BUCKET: ppap-objects
-  LLM_MODEL: gpt-6.1-sol
-  LLM_BASE_URL: https://api.trustedtunnel.app/backend-api/codex
-  PPAP_DEEP_LLM_BASE_URL: https://api.trustedtunnel.app/backend-api/codex
-  PPAP_DEEP_LLM_MODEL: gpt-6.1-sol
+  LLM_MODEL: grok-4.7
+  LLM_BASE_URL: https://grok.trustedtunnel.app/v1
   PPAP_DEEP_REASONING_EFFORT: medium
   PPAP_TENANT_MODEL_ALLOWED_BASE_URLS: https://grok.trustedtunnel.app/v1
   PPAP_DEEP_MODEL_MAX_REQUESTS: "200"
@@ -415,7 +413,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: api
-          image: icoastline.tencentcloudcr.com/ppap-feishu/current-api@sha256:05358efb0510dad231b0e38929f0aebb652d7f521c798f4c034b778f7d640cd5
+          image: icoastline.tencentcloudcr.com/ppap-feishu/current-api@sha256:adf3600b5d8529429436932a88c0cd3bd8a40fa79dca956a044bfbdce70c716e
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
@@ -545,7 +543,7 @@ spec:
           emptyDir: {}
       containers:
         - name: deep
-          image: icoastline.tencentcloudcr.com/ppap-feishu/current-deep@sha256:15dc4eec7048ffe1a7f136b693e14708dee93553ff389f2537969061a945afca
+          image: icoastline.tencentcloudcr.com/ppap-feishu/current-deep@sha256:7107ba8aa0925299b9051f333f0e8de5259a591464ab377d166d04562b90a85d
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
@@ -586,11 +584,6 @@ spec:
                 secretKeyRef:
                   name: ppap-current
                   key: PPAP_S3_SECRET_KEY
-            - name: PPAP_DEEP_LLM_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: ppap-current-deep-model-v1
-                  key: PPAP_DEEP_LLM_API_KEY
             # The trusted Controller holds the platform text and vision keys for checker
             # trials; guests receive only a local grant.
             - name: LLM_API_KEY
@@ -632,7 +625,7 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 3
         - name: worker
-          image: icoastline.tencentcloudcr.com/ppap-feishu/current-worker@sha256:7d536facd26c87d8d3f037c81742bce96ad2767052231bbcba4cf99cd65bd27f
+          image: icoastline.tencentcloudcr.com/ppap-feishu/current-worker@sha256:1851165e1118e1e52f4a1f18e632c58e02810c99392aaa16eeb0521b5a5dd071
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
@@ -750,7 +743,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: web
-          image: icoastline.tencentcloudcr.com/ppap-feishu/current-web@sha256:f14009f99c0932afddae89e63960c74182568fcaa8e1c21546a3dbe8c48d4053
+          image: icoastline.tencentcloudcr.com/ppap-feishu/current-web@sha256:de4bd2593e5bfba7e4b592bdcbb1b0fb5f8fc4727e0a21febe43ed1f4340e6d9
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 4173

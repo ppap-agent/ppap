@@ -89,7 +89,7 @@ export KUBECONFIG="$HOME/Projects/work/hax/runtime/tke-cls-6e71r2cz/headscale-ip
 |---|---|---|
 | `LLM_MODEL`、`LLM_BASE_URL` | ConfigMap `ppap-current` | API、Worker；Deep 沿用其需要的公共配置 |
 | `LLM_API_KEY` | Secret `ppap-current-text-model-v1` | API、Worker、Deep Controller（Checker 试跑的文本调用经本地网关）|
-| `PPAP_DEEP_LLM_API_KEY` | Secret `ppap-current-deep-model-v1` | Deep Controller |
+| `PPAP_DEEP_LLM_API_KEY` | Secret `ppap-current-deep-model-v1`（当前未引用） | 仅在设置 Deep 专用端点时注入 Deep Controller |
 | `OCR_MODEL_NAME`、`OCR_OPENAI_BASE_URL`、`OCR_OPENAI_EXTRA_BODY_JSON`、`PADDLE_OCR_URL` | Secret `ppap-current` | API、Worker、Deep 的配置身份 |
 | `OCR_OPENAI_API_KEY` | Secret `ppap-current` | API、Worker、Deep Controller；不向 Deep guest 注入 |
 | `PADDLE_TOKEN` | Secret `ppap-current` | API、Worker；不向 Deep guest 注入 |
@@ -198,6 +198,6 @@ python3 deploy/tke/build-current.py <full-source-sha> --provider unregistry
 
 ## Deep 配置
 
-`PPAP_DEEP_LLM_BASE_URL`、`PPAP_DEEP_LLM_MODEL`、`PPAP_DEEP_REASONING_EFFORT` 属于 Deep。普通规则提取使用 `LLM_BASE_URL`、`LLM_MODEL`，二者分别配置。Deep 凭据只注入 Controller；普通文本凭据通过独立 Secret 注入 API 和 Worker。
+现网 Deep 沿用 `LLM_BASE_URL`、`LLM_MODEL` 与 `LLM_API_KEY`（2026-11-12 起不再使用单独的 Deep 端点）。只有需要 Deep 专用模型时才同时设置 `PPAP_DEEP_LLM_BASE_URL`、`PPAP_DEEP_LLM_MODEL`，并在 Deep Controller 显式引用 `PPAP_DEEP_LLM_API_KEY`；代码拒绝只有 Deep 密钥而没有 Deep 端点的配置。`PPAP_DEEP_REASONING_EFFORT` 属于 Deep。
 
 Worker 与 Deep Controller 共享 `/run/ppap-deep` 的 UDS。配置变更后直接重启其 Deployment；UDS 可用只表示进程连通，不证明真实 Deep 审核成功。当前 `container-only` / sandbox `off` 的能力边界仍见 `deploy/deep/README.md`。
