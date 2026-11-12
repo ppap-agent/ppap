@@ -410,13 +410,13 @@ test('out-of-round evidence and contradictory counts invalidate trusted output',
   audit.counts.ng_count = 1
   assert.match(error(task), /数量与明细不一致/)
 })
-test('unknown and failed checks cannot earn PASS or a formal report', () => {
+test('an unknown check keeps the report as 无法判断 but never earns PASS; a failed check has no report', () => {
   const task = projection(), audit = task.files[0].audit!
   audit.checks[0].finding!.status = 'UNABLE'; audit.checks[0].evidence_verified = false
   audit.counts = {pass_count: 0, ng_count: 0, unknown_count: 1, not_covered_count: 0, error_count: 0}
   assert.match(error(task), /结论为“符合”，但审核项结果不完整/)
   audit.conclusion = 'UNKNOWN'
-  assert.match(error(task), /暂不生成正式报告/)
+  assert.equal(error(task), '')
   audit.execution = 'review_failed'; audit.checks[0].execution = 'failed'
   audit.counts = {...audit.counts, unknown_count: 0, error_count: 1}
   assert.match(error(task), /暂不生成正式报告/)

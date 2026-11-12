@@ -46,5 +46,5 @@ export function historyShareMatches(entry: HistoryEntry, share?: components['sch
 }
 export function historyReportReady(entry: HistoryEntry): boolean {
   const report = entry.report
-  return Boolean(historyReportReference(entry) && entry.execution === 'completed' && ['PASS', 'NG'].includes(entry.conclusion || '') && entry.report_access.state === 'allowed' && report.state === 'ready' && report.generated_at && report.artifact?.artifact_id && report.artifact.content_type === 'application/pdf' && report.artifact.byte_size > 0)
+  return Boolean(historyReportReference(entry) && entry.execution === 'completed' && ['PASS', 'NG', 'UNKNOWN'].includes(entry.conclusion || '') && entry.report_access.state === 'allowed' && report.state === 'ready' && report.generated_at && report.artifact?.artifact_id && report.artifact.content_type === 'application/pdf' && report.artifact.byte_size > 0)
 }

@@ -27,7 +27,8 @@ test('an explicit historical result requires its document identity', () => {
 test('history report availability does not imply original or private-task access', () => {
   assert.equal(historyReportReady(entry), true)
   assert.equal(historyReportReady({...entry, execution: 'running'}), false)
-  assert.equal(historyReportReady({...entry, conclusion: 'UNKNOWN'}), false)
+  assert.equal(historyReportReady({...entry, conclusion: 'UNKNOWN'}), true)
+  assert.equal(historyReportReady({...entry, conclusion: null}), false)
   assert.equal(historyReportReady({...entry, report_access: {state: 'denied', reason: null}}), false)
   assert.equal(historyReportReady({...entry, report: {...entry.report, artifact: null}}), false)
 })

@@ -159,10 +159,12 @@ export function frozenResultError(roundId: string | null, row: ReviewFile, froze
   }
   const {na_count, ...observedCounts} = audit.counts
   if (!sameSnapshot(counts, observedCounts) || na_count !== undefined && na_count !== notApplicable) return '审核项数量与明细不一致，请刷新。'
-  const complete = rules.length > 0 && audit.execution === 'completed' && valid.length === rules.length && valid.every(item => ['PASS', 'NG', 'NA'].includes(item.finding!.status))
+  // Every clause has a result; one the checker could not decide stays 无法判断 in the report, but never lets the file conform.
+  const reportable = rules.length > 0 && audit.execution === 'completed' && valid.length === rules.length && valid.every(item => ['PASS', 'NG', 'NA', 'UNABLE'].includes(item.finding!.status))
+  const complete = reportable && valid.every(item => item.finding!.status !== 'UNABLE')
   if (audit.progress.completed !== audit.checks.filter(item => ['completed', 'failed'].includes(item.execution)).length) return '审核进度与审核项状态不一致，请刷新。'
   if (audit.conclusion === 'PASS' && (!complete || valid.some(item => item.finding?.status === 'NG'))) return '结论为“符合”，但审核项结果不完整，请刷新。'
   if (audit.conclusion === 'NG' && !valid.some(item => item.finding?.status === 'NG')) return '结论为“不符合”，但找不到不符合的审核项，请刷新。'
-  if (audit.report.state !== 'not_eligible' && (!complete || !['PASS', 'NG'].includes(audit.conclusion || ''))) return '还有审核项没有结果，暂不生成正式报告。'
+  if (audit.report.state !== 'not_eligible' && (!reportable || !['PASS', 'NG', 'UNKNOWN'].includes(audit.conclusion || ''))) return '还有审核项没有结果，暂不生成正式报告。'
   return ''
 }
