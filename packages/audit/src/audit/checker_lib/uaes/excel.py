@@ -116,24 +116,30 @@ class UaesExcelAgent(ExcelAgent):
         from .native import MissingFact, UnknownFact
 
         try:
-            return read(self.legacy())
+            observed = read(self.legacy())
         except UnknownFact as exc:
             raise unable(str(exc)) from None
         except MissingFact as exc:
-            return "NG", str(exc)
+            observed = "NG", str(exc)
         except ModelUnavailable as exc:
             # Only a missing model grant leaves the fact open; a failed or uncertain request is a technical fault.
-            if exc.code == "personal_model_unavailable":
-                raise unable("当前个人模型凭据不可用，所需原件事实尚未核实。") from None
+            if exc.code in ModelUnavailable.UNGRANTED:
+                raise unable("当前没有可用的模型，所需原件事实尚未核实。") from None
             raise GuardStop(Decision.ERR, "原件模型请求失败或结果尚未确认，尚未取得业务结论。") from None
         except GuardStop:
             raise
         except Exception as exc:
             # A provider's own text never reaches the finding.
             raise GuardStop(Decision.ERR, f"原件读取失败（{type(exc).__name__}），尚未取得业务结论。") from None
+        # A fact read from the original is a check made, as a Fluent read is.
+        self._legacy_reads = self.__dict__.get("_legacy_reads", 0) + 1
+        return observed
 
     def _finalize_audit_result(self, result: Any, *, rule_no: int, phase: Any, ctx: RuleContext | None = None) -> Any:
         result = super()._finalize_audit_result(result, rule_no=rule_no, phase=phase, ctx=ctx)
+        reads = self.__dict__.pop("_legacy_reads", 0)
+        if reads and result.status == "PASS" and not result.checks_performed:
+            result = result.model_copy(update={"checks_performed": reads})
         legacy = self.__dict__.get("_legacy")
         if legacy is None or not legacy._evidence_sources:
             return result

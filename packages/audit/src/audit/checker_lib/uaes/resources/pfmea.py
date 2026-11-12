@@ -30,15 +30,15 @@ DOCUMENT = (
     ),
     (
         # "Process/Function/ Requirements 工序/功能/要求" (776/A40), "项目 / 功能\nItem/Function" (V040),
-        # "Process Step /\nFunction\n过程步骤 / 功能" (脱敏版).
-        ColumnModel(canonical_name="功能", section_name=_AREA, aliases=("工序/功能/要求", "项目 / 功能", "过程步骤 / 功能")),
+        # "Process Step /\nFunction\n过程步骤 / 功能" (脱敏版), "项目/功能\nItem/Function" (通用表单模板).
+        ColumnModel(canonical_name="功能", section_name=_AREA, aliases=("工序/功能/要求", "项目 / 功能", "过程步骤 / 功能", "项目/功能")),
         ColumnModel(canonical_name="要求", section_name=_AREA, aliases=("Requirement\n要求",)),
         ColumnModel(canonical_name="失效模式", section_name=_AREA, aliases=("潜在的故障模式", "潜在失效模式")),
         ColumnModel(canonical_name="失效后果", section_name=_AREA, aliases=("潜在的故障影响", "潜在失效后果", "潜在失效影响")),
-        ColumnModel(canonical_name="严重度", section_name=_AREA, aliases=("SEV严重度", "严重度", "Severity 严重度")),
+        ColumnModel(canonical_name="严重度", section_name=_AREA, aliases=("SEV严重度", "严重度", "Severity 严重度", "严重度Severity")),
         ColumnModel(canonical_name="类别", section_name=_AREA, aliases=("CLASS类别", "级别", "Classification 类分")),
-        ColumnModel(canonical_name="失效起因", section_name=_AREA, aliases=("潜在的引起故障的机理", "潜在失效起因 / 机理", "潜在失效原因")),
-        ColumnModel(canonical_name="频度", section_name=_AREA, aliases=("OCC频度", "频度", "Occurrence 频度")),
+        ColumnModel(canonical_name="失效起因", section_name=_AREA, aliases=("潜在的引起故障的机理", "潜在失效起因 / 机理", "潜在失效原因", "潜在失效起因/机理")),
+        ColumnModel(canonical_name="频度", section_name=_AREA, aliases=("OCC频度", "频度", "Occurrence 频度", "频度Occurrence")),
         ColumnModel(
             canonical_name="预防控制",
             section_name=_AREA,

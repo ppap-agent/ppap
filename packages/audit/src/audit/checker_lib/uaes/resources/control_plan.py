@@ -30,8 +30,9 @@ DOCUMENT = (
         ColumnModel(canonical_name="CP特性编号", section_name="控制计划区", aliases=("序号", "编号")),
         ColumnModel(canonical_name="CP产品特性", section_name="控制计划区", aliases=("产品特性", "产品", "产品(Production)")),
         ColumnModel(canonical_name="CP过程特性", section_name="控制计划区", aliases=("过程特性", "过程", "过程(Process)")),
-        # 特殊特性 (776/A40), 特殊特性分类 (CPO-45), "特殊/特性/\n分类\n(Special\nChar.\nClass)" (V040).
-        ColumnModel(canonical_name="CP特殊特性", section_name="控制计划区", aliases=("特殊特性", "特殊特性分类", "特殊/特性/")),
+        # 特殊特性 (776/A40), 特殊特性分类 (CPO-45), "特殊/特性/\n分类\n(Special\nChar.\nClass)" (V040),
+        # "特殊/特性/分类 (Special Char.\nClass)" (通用表单模板).
+        ColumnModel(canonical_name="CP特殊特性", section_name="控制计划区", aliases=("特殊特性", "特殊特性分类", "特殊/特性/", "特殊/特性/分类")),
         # "TOLERANCE 规格/描述" (776/A40), 产品/过程规格/公差 (CPO-45), 产品/过程规范/公差 (V040).
         ColumnModel(canonical_name="CP规格公差", section_name="控制计划区", aliases=("规格/描述", "产品/过程规格/公差", "产品/过程规范/公差")),
         ColumnModel(canonical_name="CP频率", section_name="控制计划区", aliases=("频率",)),

@@ -412,7 +412,17 @@ def test_native_electronic_pdf_development_and_fixed_visual_guard(tmp_path, monk
     assert {"A1", "B1", "A2", "B2"} <= {json.loads(source.locator).get("cell") for source in results[0].evidence.sources if source.locator.startswith("{")}
 
 
-FAILURES = [("personal_model_unavailable", "UNABLE"), ("personal_model_request_failed", "ERR"), ("personal_model_request_uncertain", "ERR"), ("other", "ERR"), ("io", "ERR"), ("service", "ERR")]
+# No grant at all (the default code) is as open as a missing personal key; only request faults are ERR.
+FAILURES = [
+    ("personal_model_unavailable", "UNABLE"),
+    ("model_unavailable", "UNABLE"),
+    ("platform_model_unconfigured", "UNABLE"),
+    ("personal_model_request_failed", "ERR"),
+    ("personal_model_request_uncertain", "ERR"),
+    ("other", "ERR"),
+    ("io", "ERR"),
+    ("service", "ERR"),
+]
 
 
 def raise_failure(failure):

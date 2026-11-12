@@ -542,8 +542,8 @@ class UaesSourceAgent(BaseAgent):
         except GuardStop as exc:
             status, message = exc.status, exc.message
         except ModelUnavailable as exc:
-            if exc.code == "personal_model_unavailable":
-                status, message = "UNABLE", "当前个人模型凭据不可用，所需原件事实尚未核实。"
+            if exc.code in ModelUnavailable.UNGRANTED:
+                status, message = "UNABLE", "当前没有可用的模型，所需原件事实尚未核实。"
             else:
                 status, message = "ERR", "原件模型请求失败或结果尚未确认，尚未取得业务结论。"
         except Exception as exc:

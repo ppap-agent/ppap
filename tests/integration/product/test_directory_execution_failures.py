@@ -105,8 +105,9 @@ def test_u08_api_worker_keeps_selected_source_under_failures(auth_store_factory,
         book = Workbook()
         book.active.title = "控制计划"
         book.active.append(["控制计划"])
-        book.active.append(["工序名称/操作描述", "机器/装置/夹具/工装", "特性类型"])
-        book.active.append(["装配", "压机", "CC"])
+        # Headers as UAES control plans write them (776/A40): the plan table needs its evaluation column.
+        book.active.append(["工序名称/操作描述", "设备/工装", "特殊特性", "评价/测量技术"])
+        book.active.append(["装配", "压机", "CC", "目视"])
         stream = io.BytesIO()
         book.save(stream)
         book.close()

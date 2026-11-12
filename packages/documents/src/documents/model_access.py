@@ -32,6 +32,9 @@ ISOLATED_DEV_LLM_MODEL = "gpt-5.6-luna"  # pragma: allowlist secret
 class ModelUnavailable(RuntimeError):
     """No usable model for this call; no provider payload or secret in errors."""
 
+    # Codes meaning no model is granted or configured for this call: the fact stays open, it is no fault.
+    UNGRANTED = frozenset({"model_unavailable", "personal_model_unavailable", "tenant_model_unavailable", "platform_model_unconfigured"})
+
     def __init__(self, code: str = "model_unavailable") -> None:
         self.code = code
         super().__init__(code)
