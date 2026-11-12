@@ -68,6 +68,8 @@ def test_one_transcription_decides_every_clause(scanned):
     assert "印章" in results[2].suggestions
     assert calls == ["psw"]
     assert all(result.evidence and result.evidence.sources for result in (results[0], results[1], results[3], results[4]))
+    # The one transcription serves every clause; each pass still counts the facts it read, or the runtime refuses it.
+    assert all(result.checks_performed for result in results if result.status == "PASS")
 
 
 def test_an_unreadable_value_is_unable_but_a_known_violation_still_fails(scanned):

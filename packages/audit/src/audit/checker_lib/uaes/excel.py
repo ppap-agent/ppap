@@ -116,11 +116,11 @@ class UaesExcelAgent(ExcelAgent):
         from .native import MissingFact, UnknownFact
 
         try:
-            observed = read(self.legacy())
+            return read(self.legacy())
         except UnknownFact as exc:
             raise unable(str(exc)) from None
         except MissingFact as exc:
-            observed = "NG", str(exc)
+            return "NG", str(exc)
         except ModelUnavailable as exc:
             # Only a missing model grant leaves the fact open; a failed or uncertain request is a technical fault.
             if exc.code in ModelUnavailable.UNGRANTED:
@@ -131,15 +131,9 @@ class UaesExcelAgent(ExcelAgent):
         except Exception as exc:
             # A provider's own text never reaches the finding.
             raise GuardStop(Decision.ERR, f"原件读取失败（{type(exc).__name__}），尚未取得业务结论。") from None
-        # A fact read from the original is a check made, as a Fluent read is.
-        self._legacy_reads = self.__dict__.get("_legacy_reads", 0) + 1
-        return observed
 
     def _finalize_audit_result(self, result: Any, *, rule_no: int, phase: Any, ctx: RuleContext | None = None) -> Any:
         result = super()._finalize_audit_result(result, rule_no=rule_no, phase=phase, ctx=ctx)
-        reads = self.__dict__.pop("_legacy_reads", 0)
-        if reads and result.status == "PASS" and not result.checks_performed:
-            result = result.model_copy(update={"checks_performed": reads})
         legacy = self.__dict__.get("_legacy")
         if legacy is None or not legacy._evidence_sources:
             return result
@@ -157,7 +151,9 @@ class UaesExcelAgent(ExcelAgent):
         )
         merged = (*evidence.sources, *(source for source in sources if source not in evidence.sources))
         used = "both" if len({source.kind for source in merged}) > 1 else merged[0].kind
-        return result.model_copy(update={"evidence": evidence.model_copy(update={"sources": merged, "used": used})})
+        # Each fact this clause read from the original image is a check made, as a Fluent read is.
+        performed = (result.checks_performed or 0) + len(sources)
+        return result.model_copy(update={"evidence": evidence.model_copy(update={"sources": merged, "used": used}), "checks_performed": performed})
 
     @staticmethod
     def section(sheet: Sheet, name: str):
