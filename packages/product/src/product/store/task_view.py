@@ -234,12 +234,16 @@ def _counts(checks: list[dict]) -> dict:
     return counts
 
 
+REPORTED_STATUSES = frozenset({"PASS", "NG", "NA", "UNABLE"})
+
+
 def report_eligible(checks: list[dict], failed: bool, unmapped: list[dict]) -> bool:
+    """Every clause has a result; one the checker could not decide stays 无法判断 in the report."""
     return (
         bool(checks)
         and not failed
         and not unmapped
-        and all(check["execution"] == "completed" and check["coverage"] == "executed" and check["finding"] is not None and check["finding"]["status"] in {"PASS", "NG", "NA"} for check in checks)
+        and all(check["execution"] == "completed" and check["coverage"] == "executed" and check["finding"] is not None and check["finding"]["status"] in REPORTED_STATUSES for check in checks)
     )
 
 
@@ -269,7 +273,8 @@ def file_round_audit(round: dict, frozen: dict) -> dict:
     file_has_error = finished and (file_failed or any(check["execution"] == "failed" for check in checks) or any(finding["status"] == "ERR" for finding in unmapped))
     counts = _counts(checks)
     complete = report_eligible(checks, file_has_error, unmapped)
-    conclusion = ("NG" if counts["ng_count"] else "PASS" if complete and counts["pass_count"] else "UNKNOWN") if finished else None
+    # An undecided clause never lets the file conform.
+    conclusion = ("NG" if counts["ng_count"] else "PASS" if complete and counts["pass_count"] and not counts["unknown_count"] else "UNKNOWN") if finished else None
     return {
         "round_id": round["id"],
         "file_version_id": version_id,

@@ -110,6 +110,8 @@ def test_controlled_stamp_uses_located_paddle_seal_facts_not_preprinted_labels(t
         result = agent.check(0)
         second = agent.check(0)
     assert result.status == second.status == expected
+    # A pass resting on the read seal is a check made; the runtime refuses a pass with none.
+    assert expected != "PASS" or result.checks_performed == second.checks_performed == 1
     assert reads == [(str(path), 1)] and calls == []
     assert result.evidence.used == ("visual" if detected else "none")
     assert all(source.kind == "visual" for source in result.evidence.sources)

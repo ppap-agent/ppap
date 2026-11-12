@@ -448,6 +448,26 @@ class TaskRoundViewTests(unittest.TestCase):
         audit = task_round_view(task_input(), round)["files"][0]["audit"]
         self.assertEqual((audit["conclusion"], audit["counts"]["unknown_count"]), ("UNKNOWN", 1))
         self.assertEqual(audit["report"]["state"], "not_eligible")
+        # An undecided clause stays 无法判断 in the formal report; it never makes the file conform.
+        self.assertTrue(report_eligible(audit["checks"], False, audit["unmapped_findings"]))
+        round["findings"][0]["status"] = "ERR"
+        audit = task_round_view(task_input(), round)["files"][0]["audit"]
+        self.assertFalse(report_eligible(audit["checks"], False, audit["unmapped_findings"]))
+
+    def test_a_pass_beside_an_undecided_clause_is_not_a_conforming_file(self):
+        round = verified_round("PASS")
+        round["inputs"][0]["rule"]["body"]["rules"].append({"id": "clause-b", "category": "控制计划", "rule_to_check": "核对检验方法"})
+        coverage, finding = deepcopy(round["coverage"]["rule_items"][0]), deepcopy(round["findings"][0])
+        coverage.update(id="clause-b", rule_item_id="clause-b", item_key="version-a:rule:clause-b", status="UNABLE", rule_to_check="核对检验方法")
+        finding.update(item_key="version-a:rule:clause-b", item="核对检验方法", status="UNABLE")
+        finding["locator"].update(rule_item_id="clause-b")
+        finding["locator"]["semantic"].update(clause_id="clause-b", rule_text="核对检验方法")
+        round["coverage"]["rule_items"].append(coverage)
+        round["findings"].append(finding)
+        audit = task_round_view(task_input(), round)["files"][0]["audit"]
+        self.assertEqual((audit["counts"]["pass_count"], audit["counts"]["unknown_count"]), (1, 1))
+        self.assertTrue(report_eligible(audit["checks"], False, audit["unmapped_findings"]))
+        self.assertEqual(audit["conclusion"], "UNKNOWN")
 
     def test_duplicate_validation_coverage_or_findings_are_not_verified(self):
         for field in ("coverage", "findings"):

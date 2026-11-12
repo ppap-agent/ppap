@@ -114,7 +114,7 @@ def register_sharing_routes(app, store, session_of, http, settings):
                                 "tag": "text",
                                 "text": source["name"]
                                 + "："
-                                + ("通过" if source["conclusion"] == "PASS" else "不符合")
+                                + {"PASS": "通过", "NG": "不符合"}.get(source["conclusion"], "尚有未确定项")
                                 + ("\n" + source["checker_verification"]["notice"] if source.get("checker_verification") else ""),
                             }
                         ]

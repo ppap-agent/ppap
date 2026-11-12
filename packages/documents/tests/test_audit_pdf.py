@@ -364,3 +364,17 @@ def test_levels_order_remediation_and_overrides_are_explained():
         assert order == sorted(order)
         groups = remediation[remediation.index("合并为一条。") :]
         assert groups.index("A类") < groups.index("B类") < groups.index("C类") < groups.index("未定级")
+
+
+def test_an_undecided_clause_is_counted_and_keeps_minor_failures_from_a_conditional_pass():
+    source = _graded_source([("C", None)])
+    undecided = deepcopy(source["audit"]["checks"][0])
+    undecided["rule_item"] = {"id": "2", "category": "签字", "rule_to_check": "必须有签字"}
+    undecided["finding"] = {"status": "UNABLE", "suggestions": "签字区域未能读取，需人工复核。"}
+    source["audit"]["checks"].append(undecided)
+    source["audit"]["counts"] = {"pass_count": 0, "ng_count": 1, "unknown_count": 1}
+    with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
+        pages = _pages(document)
+    assert "无法判断1项" in pages[0]
+    assert "总评：不通过" in pages[0] and "有条件通过" not in "".join(pages)
+    assert "签字区域未能读取，需人工复核。" in "".join(pages)

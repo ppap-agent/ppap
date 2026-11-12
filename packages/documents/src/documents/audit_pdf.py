@@ -96,7 +96,8 @@ def _rating(audit: dict) -> str:
     failed = [check for check in audit["checks"] if check["finding"]["status"] == "NG"]
     if audit["conclusion"] == "PASS" and not failed:
         return "通过"
-    if audit["conclusion"] == "NG" and failed and all(_level(check) == "C" for check in failed):
+    undecided = any(check["finding"]["status"] == "UNABLE" for check in audit["checks"])
+    if audit["conclusion"] == "NG" and failed and not undecided and all(_level(check) == "C" for check in failed):
         return "有条件通过"
     return "不通过" if failed else CONCLUSION.get(audit["conclusion"], audit["conclusion"])
 
@@ -124,7 +125,8 @@ def _cover(source: dict, audited_on: str) -> str:
             "<h1>PPAP 审核报告</h1>",
             f"<h2>{_text(source['filename'])}</h2>",
             f"<p>审核结论：<b>{_text(CONCLUSION.get(audit['conclusion'], audit['conclusion']))}</b>　总评：<b>{_rating(audit)}</b></p>",
-            f"<p>共 {len(audit['checks'])} 项：符合 {counts['pass_count']} 项，不符合 {counts['ng_count']} 项，不适用 {counts.get('na_count', 0)} 项。</p>",
+            f"<p>共 {len(audit['checks'])} 项：符合 {counts['pass_count']} 项，不符合 {counts['ng_count']} 项，"
+            f"无法判断 {counts.get('unknown_count', 0)} 项，不适用 {counts.get('na_count', 0)} 项。</p>",
             *([f"<p><b>{_verification_notice(audit['checker_verification'])}</b></p>"] if audit.get("checker_verification") else []),
             f"<table>{table}</table>",
             "<p class='meta'>供应商名称、PPAP 版本与 SQE 工程师请下载后自行补充。</p>",
@@ -139,8 +141,8 @@ def _overview(source: dict) -> str:
     parts = [
         "<h1>1 检查概览</h1>",
         f"<p>审核结论：<b>{_text(CONCLUSION.get(audit['conclusion'], audit['conclusion']))}</b>　总评：<b>{_rating(audit)}</b></p>",
-        "<table><tr><th>检查项</th><th>符合</th><th>不符合</th><th>不适用</th></tr>",
-        f"<tr><td>{len(audit['checks'])}</td><td>{counts['pass_count']}</td><td>{counts['ng_count']}</td><td>{counts.get('na_count', 0)}</td></tr></table>",
+        "<table><tr><th>检查项</th><th>符合</th><th>不符合</th><th>无法判断</th><th>不适用</th></tr>",
+        f"<tr><td>{len(audit['checks'])}</td><td>{counts['pass_count']}</td><td>{counts['ng_count']}</td><td>{counts.get('unknown_count', 0)}</td><td>{counts.get('na_count', 0)}</td></tr></table>",
     ]
     failed = [check for check in audit["checks"] if check["finding"]["status"] == "NG"]
     if failed:
