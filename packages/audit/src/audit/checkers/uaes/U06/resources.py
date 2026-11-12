@@ -4,7 +4,6 @@ RESOURCE = {
     "customer": "UAES",
     "preset_key": "U06",
     "carriers": {
-        ".docx": "audit.checker_lib.uaes.engineering:UaesCapabilityAgent",
         ".pdf": "audit.checker_lib.uaes.engineering:UaesCapabilityAgent",
         ".xls": "audit.checker_lib.uaes.engineering:UaesCapabilityAgent",
         ".xlsm": "audit.checker_lib.uaes.engineering:UaesCapabilityAgent",

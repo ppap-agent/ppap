@@ -117,15 +117,22 @@ def test_controlled_stamp_uses_located_paddle_seal_facts_not_preprinted_labels(t
 
 
 # U04:3 names 同项目、同物料编号 only; customer and revision do not pair the drawing.
-@pytest.mark.parametrize(("variant", "expected"), [("same", "PASS"), ("wrong_part", "UNABLE"), ("wrong_customer", "PASS"), ("wrong_revision", "PASS"), ("duplicate", "UNABLE"), ("unreadable", "ERR")])
+# A fully read drawing of another part number is not this part's drawing: the clause fails.
+@pytest.mark.parametrize(("variant", "expected"), [("same", "PASS"), ("wrong_part", "NG"), ("wrong_customer", "PASS"), ("wrong_revision", "PASS"), ("duplicate", "UNABLE"), ("unreadable", "ERR")])
 def test_materials_only_pairs_current_unique_matching_originals(tmp_path, variant, expected):
     from audit.checker_lib.uaes.materials import UaesMaterialsAgent
     from audit.contracts import GroupContextInput
 
     def original(filename, *, part="P12345", customer="UAES", revision="A"):
         book = Workbook()
-        book.active.title = "图纸" if "图纸" in filename else "材料清单"
-        for row in [["零件号", part], ["零件名称", "支架"], ["客户名称", customer], ["版本", revision], ["项目", "M1"]]:
+        if "图纸" in filename:
+            book.active.title = "图纸"
+            rows = [["零件号", part], ["零件名称", "支架"], ["客户名称", customer], ["版本", revision], ["项目", "M1"]]
+        else:
+            # The UAES list template: each header label written "中文:\nEnglish:" with its value beside it.
+            book.active.title = "M1项目 材料及分供方清单"
+            rows = [["UAES项目编号：\nUAES Project No.:", "M1"], ["零件名称:\nPart Name: ", "支架"], ["零件号:\nPart No:", part]]
+        for row in rows:
             book.active.append(row)
         path = tmp_path / filename
         book.save(path)
@@ -185,11 +192,11 @@ def test_pfmea_scores_use_original_columns_not_action_results(tmp_path):
         "OCC频度",
         "Current Process Controls Prevention目前的预防控制",
         "Current Process Controls Detection 目前的探测控制",
-        "DET探测度",
+        "D\nE\nT\n探测度",
     ]
     sheet.append([*labels, "Actions Results 措施结果", None, None])
     sheet.merge_cells("I2:K2")
-    sheet.append([*labels, "SEV严重度", "OCC频度", "DET探测度"])
+    sheet.append([*labels, "S\nEV严重度", "O\nCC频度", "D\nE\nT\n探测度"])
     sheet.append(["壳体裂纹", "导致整车召回", 3, "压铸参数异常", 4, "参数监控", "100%在线检测", 2, 3, 2, 2])
     path = tmp_path / "source.xlsx"
     book.save(path)
@@ -209,9 +216,10 @@ def control_plan(tmp_path, rows):
     sheet = book.active
     sheet.title = "控制计划"
     sheet.append(["控制计划"])
-    sheet.append(["工序名称", "生产设备", "特殊特性"])
+    # Every characteristic row of a control plan names its evaluation/measurement technique.
+    sheet.append(["工序名称/操作描述", "生产设备", "特殊特性", "评价/测量技术"])
     for row in rows:
-        sheet.append(row)
+        sheet.append([*row, "目视"])
     path = tmp_path / "cp.xlsx"
     book.save(path)
     book.close()
@@ -235,7 +243,7 @@ def test_pfmea_continuation_rows_have_their_scores_checked(tmp_path):
     sheet = book.active
     sheet.title = "PFMEA"
     sheet.append(["PFMEA"])
-    sheet.append(["失效模式", "失效后果", "严重度", "失效原因", "发生度", "预防控制", "探测控制", "探测度"])
+    sheet.append(["潜在失效模式", "潜在失效后果", "严重度", "潜在失效原因", "频度", "预防\nPrevent", "探测\nDetect", "探测度"])
     sheet.append(["裂纹", "外观不良", 5, "参数异常", 3, "参数监控", "目视", 6])
     # A further control of the same failure mode leaves mode and cause blank.
     sheet.append([None, None, 5, None, 3, "首件确认", "CMM", 11])
@@ -285,7 +293,7 @@ def test_pfmea_blank_failure_mode_reads_its_own_group_not_another(tmp_path):
     sheet = book.active
     sheet.title = "PFMEA"
     sheet.append(["PFMEA"])
-    sheet.append(["失效模式", "失效后果", "严重度", "失效原因", "发生度", "预防控制", "探测控制", "探测度"])
+    sheet.append(["潜在失效模式", "潜在失效后果", "严重度", "潜在失效原因", "频度", "预防\nPrevent", "探测\nDetect", "探测度"])
     # Each failure mode is written once; its further causes leave it blank.
     sheet.append(["裂纹", "外观不良", 5, "参数异常", 3, "参数监控", "目视", 6])
     sheet.append([None, "外观不良", 5, "排气不良", 3, "模具评审", "试模记录", 3])
@@ -320,7 +328,7 @@ def agent_for(tmp_path, agent_cls, entry, sheets):
 def test_control_plan_reads_equipment_tooling_as_production_resources(tmp_path):
     from audit.checker_lib.uaes.control_plan import UaesControlPlanAgent
 
-    agent = agent_for(tmp_path, UaesControlPlanAgent, "U08", {"控制计划": [["控制计划"], ["工序名称/操作描述", "设备/工装"], ["压铸", None], ["机加工", "CNC"]]})
+    agent = agent_for(tmp_path, UaesControlPlanAgent, "U08", {"控制计划": [["控制计划"], ["工序名称/操作描述", "设备/工装", "评价/测量技术"], ["压铸", None, "目视"], ["机加工", "CNC", "卡尺"]]})
     result = agent.check(0)
     assert result.status == "NG", result.suggestions
     assert "压铸" in result.suggestions
@@ -330,7 +338,7 @@ def test_control_plan_reads_equipment_tooling_as_production_resources(tmp_path):
 def test_control_plan_type_is_the_one_marked_option(tmp_path, options, status):
     from audit.checker_lib.uaes.control_plan import UaesControlPlanAgent
 
-    agent = agent_for(tmp_path, UaesControlPlanAgent, "U08", {"控制计划": [["控制计划"], [options], ["工序名称", "特殊特性"], ["压铸", "3"]]})
+    agent = agent_for(tmp_path, UaesControlPlanAgent, "U08", {"控制计划": [["控制计划"], [options], ["工序名称/操作描述", "特殊特性", "评价/测量技术"], ["压铸", "3", "目视"]]})
     assert agent.check(2).status == status
 
 
@@ -398,7 +406,7 @@ def test_a_part_number_is_the_labelled_value_that_has_digits(tmp_path, sheets, e
 
 
 def _flow_chart(*operations, legend=("加工", "搬运", "贮存", "检验"), symbols=("◇", "○", "△", "□")):
-    rows = [["工序号", *legend, "过程描述"], [None, *symbols, None]]
+    rows = [["STP工序号", *legend, "OPERATION DESCRIPTION过程描述"], [None, *symbols, None]]
     for step, description, lane in operations:
         rows.append([step, *(symbols[index] if index == lane else None for index in range(len(legend))), description])
     return {"PFD": rows}
@@ -433,7 +441,7 @@ def test_flow_chart_symbol_outside_the_legend_fails(tmp_path):
 def test_flow_chart_without_any_key_operation_mark_fails_without_an_image(tmp_path, monkeypatch):
     from audit.checker_lib.uaes.engineering import UaesProcessFlowAgent
 
-    monkeypatch.setattr(UaesProcessFlowAgent, "visual_result", lambda *args, **kwargs: pytest.fail("no image is needed"))
+    monkeypatch.setattr(UaesProcessFlowAgent, "visual", lambda *args, **kwargs: pytest.fail("no image is needed"))
     agent = agent_for(tmp_path, UaesProcessFlowAgent, "U16", _flow_chart((10, "进料检验", 3), (20, "机加工", 0)))
     assert agent.check(0).status == "NG"
 
@@ -443,7 +451,7 @@ def test_flow_chart_key_mark_leaves_only_the_other_facts_to_the_image(tmp_path, 
     from audit.checker_lib.uaes.engineering import UaesProcessFlowAgent
 
     asked = []
-    monkeypatch.setattr(UaesProcessFlowAgent, "visual_result", lambda self, fields, description: asked.append(set(fields)) or ("PASS", description))
+    monkeypatch.setattr(UaesProcessFlowAgent, "visual", lambda self, fields, description: asked.append(set(fields)) or ("PASS", description))
     agent = agent_for(tmp_path, UaesProcessFlowAgent, "U16", _flow_chart((10, "进料检验", 3), (20, f"机加工 {mark}", 0)))
     agent.check(0)
     assert asked == [{"characteristic_marks", "legend"}]
@@ -467,10 +475,11 @@ def test_an_emf_stamp_placed_on_the_sheet_is_the_controlled_stamp(monkeypatch):
     from pathlib import Path
 
     from audit.checker_lib.uaes.engineering import UaesProcessFlowAgent
+    from audit.checker_lib.uaes.native import UaesSourceAgent
     from audit.contracts import AuditInput, RuleInput
 
     path = next((Path(__file__).parents[3] / "assets/uaes/samples").glob("F01R10Y776*/**/流程图776.xlsx"))
-    monkeypatch.setattr(UaesProcessFlowAgent, "visual_pdf", lambda *args, **kwargs: pytest.fail("no image is needed"))
+    monkeypatch.setattr(UaesSourceAgent, "visual_pdf", lambda *args, **kwargs: pytest.fail("no image is needed"))
     body = preset_rule_body("UAES", "U16")
     agent = UaesProcessFlowAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput(rule_id="source-rules", **{key: value for key, value in body.items() if key != "kind"}))
     assert agent.check(2).status == "PASS"

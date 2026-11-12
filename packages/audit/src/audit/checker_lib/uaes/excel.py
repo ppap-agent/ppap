@@ -23,6 +23,8 @@ class UaesExcelAgent(ExcelAgent):
 
     # The resource module of the document this carrier audits: its DOCUMENT and PDF_SPECS.
     DOCUMENT_MODULE: Any = None
+    # Formats the engine reads as tables; a DOCX carrier stays on its own reader.
+    SUPPORTED_EXTENSIONS = frozenset({".xlsx", ".xls", ".xlsm", ".pdf"})
 
     def _resolve_resource_doc_type(self):
         # The resources registered for li/nio document types are not UAES's templates.

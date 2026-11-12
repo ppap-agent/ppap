@@ -6,13 +6,14 @@ from audit.contracts import AuditInput, RuleInput
 from audit.presets import preset_rule_body
 from openpyxl import Workbook
 
-HEADERS = ["特性名称", "CPK结果值", "PPK结果值", "CPK目标值", "PPK目标值", "反应计划"]
+# The 目录 summary headings of the UAES corpus (776/A40).
+HEADERS = ["工程名", "结果\n(CPK)", "结果\n(PPK)", "目标\n(CPK)", "目标\n(PPK)", "反应计划"]
 
 
 def checked(tmp_path, rows, *, headers=HEADERS):
     book = Workbook()
     sheet = book.active
-    sheet.title = "能力值汇总"
+    sheet.title = "目录"
     sheet.append(headers)
     for row in rows:
         sheet.append(row)

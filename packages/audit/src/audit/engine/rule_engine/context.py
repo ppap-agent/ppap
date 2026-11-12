@@ -148,6 +148,7 @@ class RuleContext:
         self._file_version_id = str(file_version_id or "").strip()
         self._workbook_versions: dict[int, str] = {}
         self._version_workbooks: dict[str, Any] = {}
+        self._dimensions: dict[int, tuple[int, int]] = {}
 
     @property
     def resource(self) -> RuleResource:
@@ -233,7 +234,11 @@ class RuleContext:
             worksheet = workbook[title]
         except Exception:
             return
-        if row > int(getattr(worksheet, "max_row", 0) or 0) or column > int(getattr(worksheet, "max_column", 0) or 0):
+        # openpyxl recounts a sheet's dimensions on every access; measure each sheet once.
+        dimensions = self._dimensions.get(id(worksheet))
+        if dimensions is None:
+            dimensions = self._dimensions[id(worksheet)] = (int(getattr(worksheet, "max_row", 0) or 0), int(getattr(worksheet, "max_column", 0) or 0))
+        if row > dimensions[0] or column > dimensions[1]:
             return
         merged = self._ops.get_detailed_merge_info(worksheet, row, column)
         source = worksheet.cell(row=merged.min_row, column=merged.min_col) if merged else worksheet.cell(row=row, column=column)

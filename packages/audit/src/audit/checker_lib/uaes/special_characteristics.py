@@ -1,78 +1,137 @@
-"""U12 native facts; physical merged rows and uncalculated formulas stay visible."""
+"""U12 special characteristic list: part identity and the four required columns of every characteristic row."""
+
+from __future__ import annotations
 
 from audit.checker_lib.nio.excel_agent import rule
+from audit.engine.rule_engine import Decision, RuleContext, Sheet, Table
 
-from .native import MissingFact, UaesSourceAgent, UnknownFact, blank, header, key
+from .excel import UaesExcelAgent, compact, unable
+from .native import MissingFact, UaesSourceAgent, UnknownFact
+from .resources import combine
+from .resources import special_list as resources
 
-_ALIASES = {
-    "编号": ("编号", "序号"),
-    "特性名称": ("产品特性", "过程特性", "特殊特性名称"),
-    "特性值": ("特性及公差", "特性值"),
-    "特性类别": ("特性类型", "特性类别"),
-}
-
-
-# The same synonyms the other UAES checks accept for a part's name and number.
-_IDENTITY = {
-    "物料名称": ("物料名称", "零件名称", "产品名称", "产品名称/零件号"),
-    "物料编号": ("物料编号", "零件号", "零件编号", "产品件号", "产品名称/零件号"),
-}
+_REQUIRED = {"特性编号": "编号/序号", "特性名称": "产品特性/过程特性/特殊特性名称", "特性值": "特性及公差/特性值", "特性类别": "特性类型/特性类别"}
+_NAMES = ("特性名称", "过程特性名称")
 
 
-class UaesSpecialCharacteristicsAgent(UaesSourceAgent):
+def characteristic_rows(agent: UaesExcelAgent, ctx: RuleContext) -> list[tuple[str, object, dict]]:
+    """(sheet title, row, resolved columns) of every row that numbers, names or values a characteristic."""
+    found = []
+    for sheet in Table(ctx).find_sheets("特殊特性清单", on_missing=Decision.IGNORE):
+        section = agent.section(sheet, "特殊特性区")
+        columns = section.columns(optional=("特性编号", "零件", *_NAMES, "特性值", "特性类别"))
+        for row in section.rows_from(columns):
+            found.append((sheet.title, row, columns))
+    return found
+
+
+def filled(row, name: str, columns: dict) -> bool:
+    return name in columns and bool(compact(row.value(name)))
+
+
+class UaesSpecialCharacteristicsAgent(UaesExcelAgent):
+    # Tables of spreadsheets and PDFs; a Word original has no table this reader can load.
+    SUPPORTED_EXTENSIONS = frozenset({".xlsx", ".xls", ".xlsm", ".pdf"})
+    # Leaves bind each clause to its method by the clause's own ID; every cell read is evidence.
+    SOURCE_CLAUSE_IDS = True
     PRECHECK_METHODS = {"U12:1": "rule_1", "U12:2": "rule_2"}
+    DOCUMENT_MODULE = resources
+    EXTRA_RESOURCE = combine(resources.DOCUMENT)
 
-    def identity(self, name):
-        facts = self.native()
-        aliases = _IDENTITY[name]
-        # A list can state the identity once per numbered row instead of once in its header.
-        try:
-            rows = facts.rows({"编号": _ALIASES["编号"], "value": aliases}, title=("特殊特性", "特性清单"), anchor=("编号",))
-        except (MissingFact, UnknownFact):
-            rows = None
-        if rows:
-            for row in rows:
-                if blank(row["value"]):
-                    raise MissingFact(f"第{row.row}行{name}为空。")
-            return str(rows[0]["value"])
-        try:
-            return facts.field(aliases)
-        except UnknownFact:
-            # Only a readable, truly empty immediate value is a proven empty
-            # field. A missing/visual/ambiguous value remains unknown.
-            for table in facts.tables():
-                for row in range(1, min(10, table["rows"]) + 1):
-                    for column in range(1, min(24, table["cols"])):
-                        item = facts.readers[table["id"]].cell(row, column)
-                        if item.get("state") == "known" and header(item.get("value"), aliases):
-                            merge = next((span for span in table.get("merges", []) if span[0] <= row <= span[2] and span[1] <= column <= span[3]), None)
-                            next_column = merge[3] + 1 if merge else column + 1
-                            if next_column <= table["cols"] and blank(facts.cell(table, row, next_column)):
-                                raise MissingFact(name + "对应内容为空。") from None
-            raise
+    def precheck(self):
+        """Preparation facts still come from the snapshot reader; its U12 identity and row facts run these clauses."""
+        from .precheck import structural_facts
+
+        return structural_facts(_Preparation(self))
+
+    def unreadable(self) -> str | None:
+        if self.untabled():
+            return "PDF原件未能读出表格"
+        if pages := self.unread_pages():
+            return f"原件第{'、'.join(map(str, pages))}页没有文字层"
+        return None
 
     @rule("物料名称与编号必填")
-    def rule_1(self):
-        for name in ("物料名称", "物料编号"):
-            self.identity(name)
-        return "PASS", "已从原件核实物料名称与编号实际内容。"
+    def rule_1(self, ctx: RuleContext):
+        rows = characteristic_rows(self, ctx)
+        per_row = [(title, row) for title, row, columns in rows if "零件" in columns]
+        if per_row:
+            # "产品名称/零件号" names each characteristic's part: both fields, once per row.
+            for title, row in per_row:
+                if not compact(row.value("零件")):
+                    if self.uncomputed(Sheet(ctx, row.ws), row.row_index, row.columns["零件"].header_col):
+                        raise unable(f"“{title}”第{row.row_index}行产品名称/零件号是没有计算结果的公式，需人工复核。")
+                    return "NG", f"特殊特性清单“{title}”第{row.row_index}行产品名称/零件号为空。"
+            return "PASS", f"特殊特性清单“产品名称/零件号”列在全部{len(per_row)}个特性行均已填写（物料名称与编号）。"
+        names, numbers = [], []
+        # A list without the per-row column states its part once, as labelled header fields of any sheet.
+        for sheet in (Sheet(ctx, ws) for ws in ctx.workbook.worksheets):
+            names.extend(self.labelled(sheet, resources.PART_NAME))
+            numbers.extend(self.labelled(sheet, resources.PART_NUMBER))
+        names = [value for value in names if compact(value)]
+        numbers = [value for value in numbers if compact(value)]
+        if names and numbers:
+            return "PASS", f"特殊特性清单物料名称“{names[0]}”、物料编号“{numbers[0]}”均已填写。"
+        if reason := self.unreadable():
+            raise unable(f"{reason}，尚不能确认物料名称与物料编号，需人工复核。")
+        missing = "、".join(label for label, values in (("物料名称", names), ("物料编号", numbers)) if not values)
+        return "NG", f"特殊特性清单没有填写{missing}（未见物料名称/产品名称、物料编号/零件号字段或其内容为空）。"
 
     @rule("特殊特性列与全部物理行必填")
+    def rule_2(self, ctx: RuleContext):
+        sheets = Table(ctx).find_sheets("特殊特性清单", on_missing=Decision.IGNORE)
+        if not sheets:
+            if reason := self.unreadable():
+                raise unable(f"{reason}，尚不能确认特殊特性清单的四列，需人工复核。")
+            raise unable("未能定位特殊特性清单的表头（编号/序号、特性名称、特性值、特性类别），检查程序未能读取，需人工复核。")
+        rows = characteristic_rows(self, ctx)
+        for sheet in sheets:
+            section = self.section(sheet, "特殊特性区")
+            columns = section.columns(optional=("特性编号", *_NAMES, "特性值", "特性类别"))
+            missing = [label for name, label in _REQUIRED.items() if name not in columns and not (name == "特性名称" and "过程特性名称" in columns)]
+            if missing:
+                return "NG", f"特殊特性清单“{sheet.title}”缺少{'、'.join(missing)}列。"
+        if not rows:
+            raise unable("特殊特性清单没有可读取的特性行，不能按空范围通过。")
+        for title, row, columns in rows:
+            name = next((str(row.value(column)).strip() for column in _NAMES if filled(row, column, columns)), "")
+            value = str(row.value("特性值")).strip() if filled(row, "特性值", columns) else ""
+            where = f"特殊特性清单“{title}”第{row.row_index}行"
+            # Reading 1 (product owner): every row that writes a characteristic needs its serial number.
+            for column, label in (("特性编号", "编号/序号"), (None, "特性名称"), ("特性值", "特性值"), ("特性类别", "特性类别")):
+                present = bool(name) if column is None else filled(row, column, columns)
+                if present:
+                    continue
+                if column is not None and self.uncomputed(Sheet(ctx, row.ws), row.row_index, columns[column].header_col):
+                    raise unable(f"{where}{label}是没有计算结果的公式，需人工复核。")
+                described = f"（特性“{name or value}”）" if name or value else ""
+                return "NG", f"{where}{described}{label}为空。"
+        return "PASS", f"特殊特性清单全部{len(rows)}个特性行的序号、特性名称、特性值、特性类别均已填写。"
+
+
+class _Preparation(UaesSourceAgent):
+    """The snapshot reader's U12 structure facts, with the identity and row facts taken from the clauses."""
+
+    def __init__(self, carrier: UaesSpecialCharacteristicsAgent):
+        super().__init__(carrier.audit_file, carrier.rule, group_context=carrier.group_context)
+        self.carrier = carrier
+
+    def _clause(self, method: str) -> tuple[str, str]:
+        from audit.engine.checkers.rule_declarations import discover_declared_rules
+
+        names = [name for name, _description in discover_declared_rules(type(self.carrier))]
+        result = self.carrier.check(names.index(method))
+        if result.evidence is not None:
+            self._evidence_sources.extend(source for source in result.evidence.sources if source not in self._evidence_sources)
+        return result.status, result.suggestions
+
+    def identity(self, name):
+        status, message = self._clause("rule_1")
+        if status == "NG":
+            raise MissingFact(message)
+        if status != "PASS":
+            raise UnknownFact(message)
+        return message
+
     def rule_2(self):
-        # Every populated characteristic row belongs to the scope. A readable
-        # empty number is a missing required field, not an absent business row.
-        rows = self.native().rows(_ALIASES, title=("特殊特性", "特性清单"))
-        count = 0
-        for row in rows:
-            number = row["编号"]
-            if any(key(number).startswith(marker) for marker in ("编制/日期", "审核/日期", "编制人", "批准人")):
-                break
-            if blank(number):
-                return "NG", "特性业务行编号为空。"
-            count += 1
-            for name in ("特性名称", "特性值", "特性类别"):
-                if blank(row[name]):
-                    return "NG", f"已编号特性行{name}为空。"
-        if not count:
-            raise UnknownFact("没有可核实特性业务行，不能按空范围通过。")
-        return "PASS", "已读取全部物理业务行的编号、特性名称、值和类别。"
+        return self._clause("rule_2")

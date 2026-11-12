@@ -10,20 +10,19 @@ from audit.kinds import PpapDocumentType
 from audit.presets import preset_rule_body
 from openpyxl import Workbook
 
+PFMEA_HEADER = ["工序/功能/要求", "潜在失效模式", "潜在失效后果", "SEV严重度", "CLASS类别", "潜在失效原因", "OCC频度", "目前的探测控制", "探测度"]
 
-def original(tmp_path, version, *, target=False, title="特殊特性清单", part="P1", customer="UAES", revision="A", project="M1"):
+
+def original(tmp_path, version, *, target=False, title="特殊特性清单", part="P1", customer="UAES", revision="A", project="M1", mark="CC"):
     path = tmp_path / (version + ".xlsx")
     book = Workbook()
     book.active.title = "PFMEA" if target else title
-    for row in [
-        ["客户", customer],
-        ["零件号", part],
-        ["零件名称", "支架"],
-        ["版本", revision],
-        ["项目", project],
-        ["功能/要求", "特殊特性"] if target else ["特性名称", "特性类别"],
-        ["孔径", "CC"],
-    ]:
+    rows = [["客户", customer], ["零件号", part], ["零件名称", "支架"], ["版本", revision], ["项目", project]]
+    if target:
+        rows += [PFMEA_HEADER, ["孔径", "孔径超差", "装配不良", 7, "CC", "刀具磨损", 3, "CMM", 4]]
+    else:
+        rows += [["序号", "特殊特性名称", "特性值", "特性类别"], [1, "孔径", "10±0.1", mark]]
+    for row in rows:
         book.active.append(row)
     book.save(path)
     book.close()
@@ -40,11 +39,16 @@ def check(target, references, *, typed=True):
     return UaesPfmeaAgent(target, rule, group).check(2)
 
 
-@pytest.mark.parametrize("typed", [True, False])
-def test_renamed_original_uses_frozen_type_or_original_title_and_keeps_both_citations(tmp_path, typed):
-    result = check(original(tmp_path, "target", target=True), [original(tmp_path, "reference")], typed=typed)
+def test_renamed_original_uses_its_frozen_type_and_keeps_both_citations(tmp_path):
+    result = check(original(tmp_path, "target", target=True), [original(tmp_path, "reference")])
     assert result.status == "PASS", result.suggestions
     assert {json.loads(source.locator)["file_version_id"] for source in result.evidence.sources} == {"target", "reference"}
+
+
+def test_untyped_original_can_neither_be_counted_nor_excluded(tmp_path):
+    # Only a frozen type identifies a counterpart; an untyped original keeps the clause unknown, never NG.
+    result = check(original(tmp_path, "target", target=True), [original(tmp_path, "reference")], typed=False)
+    assert result.status == "UNABLE", result.suggestions
 
 
 def test_filename_alone_cannot_turn_an_untyped_unrelated_original_into_a_counterpart(tmp_path):
@@ -54,11 +58,12 @@ def test_filename_alone_cannot_turn_an_untyped_unrelated_original_into_a_counter
     assert result.status == "UNABLE"
 
 
-@pytest.mark.parametrize("changes", [{"part": "P2"}, {"project": "M2"}, {"project": None}])
-def test_counterpart_must_share_the_identities_its_clause_names(tmp_path, changes):
-    # U07:3 asks for 同项目、同物料编号 and nothing else.
+@pytest.mark.parametrize(("changes", "expected"), [({"part": "P2"}, "NG"), ({"project": "M2"}, "NG"), ({"project": None}, "UNABLE")])
+def test_counterpart_must_share_the_identities_its_clause_names(tmp_path, changes, expected):
+    # U07:3 asks for 同项目、同物料编号 and nothing else: another part or project is no counterpart
+    # (the list is missing), an unstated project cannot be confirmed.
     result = check(original(tmp_path, "target", target=True), [original(tmp_path, "reference", **changes)])
-    assert result.status == "UNABLE", result.suggestions
+    assert result.status == expected, result.suggestions
 
 
 @pytest.mark.parametrize("changes", [{"customer": "理想"}, {"customer": None}, {"revision": "B"}, {"revision": None}])
@@ -73,9 +78,10 @@ def test_matching_part_placeholders_never_establish_a_formal_pair(tmp_path, part
     assert result.status == "UNABLE"
 
 
-def test_multiple_typed_counterparts_remain_unknown(tmp_path):
-    result = check(original(tmp_path, "target", target=True), [original(tmp_path, "one"), original(tmp_path, "two")])
-    assert result.status == "UNABLE"
+@pytest.mark.parametrize(("second", "expected"), [("CC", "PASS"), ("SC", "NG")])
+def test_every_typed_counterpart_is_reconciled(tmp_path, second, expected):
+    result = check(original(tmp_path, "target", target=True), [original(tmp_path, "one"), original(tmp_path, "two", mark=second)])
+    assert result.status == expected, result.suggestions
 
 
 def test_typed_and_untyped_counterparts_cannot_hide_a_second_candidate(tmp_path):
@@ -117,7 +123,7 @@ def test_reference_field_value_is_not_an_untyped_source_title(tmp_path):
 
 @pytest.mark.parametrize("title", ["特殊特性清单", "特殊特性清单 V2.1", "APQP-特殊特性清单", "Process special characteristic list", "特殊特性清单（Process special characteristic list）"])
 @pytest.mark.parametrize("label", [None, "文件名称"])
-def test_native_merged_title_and_own_title_field_can_identify_untyped_counterpart(tmp_path, title, label):
+def test_native_merged_title_does_not_identify_untyped_counterpart(tmp_path, title, label):
     from openpyxl import load_workbook
 
     reference = original(tmp_path, "reference", title="其他报告")
@@ -131,9 +137,9 @@ def test_native_merged_title_and_own_title_field_can_identify_untyped_counterpar
         book.active.merge_cells("A1:D1")
     book.save(reference.file_url)
     book.close()
+    # A title read from an untyped original no longer identifies it: the clause stays unknown.
     result = check(original(tmp_path, "target", target=True), [reference], typed=False)
-    assert result.status == "PASS", result.suggestions
-    assert any(source.excerpt == title for source in result.evidence.sources)
+    assert result.status == "UNABLE", result.suggestions
 
 
 def test_explicit_typed_counterpart_does_not_need_an_untyped_title_match(tmp_path):
@@ -168,7 +174,7 @@ def test_docx_native_title_keeps_split_field_context(tmp_path, label, expected):
     reference = AuditInput(audit_id="reference", file_url=str(path))
     target = original(tmp_path, "target", target=True)
     result = check(target, [reference], typed=False)
-    assert result.status == expected, result.suggestions
+    assert result.status == "UNABLE", result.suggestions
 
     from audit.precheck.dependencies import dependency_facts
 

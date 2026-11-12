@@ -4,7 +4,6 @@ RESOURCE = {
     "customer": "UAES",
     "preset_key": "U07",
     "carriers": {
-        ".docx": "audit.checker_lib.uaes.fmea:UaesPfmeaAgent",
         ".pdf": "audit.checker_lib.uaes.fmea:UaesPfmeaAgent",
         ".xls": "audit.checker_lib.uaes.fmea:UaesPfmeaAgent",
         ".xlsm": "audit.checker_lib.uaes.fmea:UaesPfmeaAgent",
