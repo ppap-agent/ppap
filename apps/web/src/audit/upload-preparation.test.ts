@@ -3,7 +3,6 @@ import test from 'node:test'
 import type {components} from '../generated/openapi.ts'
 import {createUploadPreparation, describeUploads, restoreUploads, type UploadPreparation, type PreparationAdapter} from './upload-preparation.ts'
 import {canResumeUpload, canRetryUpload, type UploadRow} from './uploads.ts'
-import {workbenchItems} from './workbench-items.ts'
 
 const value: UploadPreparation = {version: 1, customer_preference: null, predecessor_id: null, uploads: [], files: []}
 const draft = (revision: number | null, input = value, taskId: string | null = null) => ({id: 'original-draft', task_id: taskId, status: 'open', items: [], upload_preparation: input, preparation_revision: revision, predecessor_id: null, case_context: {}, writeback: {available: false}, updated_at: '2026-10-22'} as components['schemas']['Draft'])
@@ -72,15 +71,6 @@ test('restored upload intent never pretends to retain local bytes or a successfu
   assert.equal(restored.input.file instanceof File, false)
   assert.equal(canRetryUpload({...restored, removed: false, receipt: {...restored.receipt, state: 'failed', retry_allowed: true}}), false)
   assert.equal(canResumeUpload({...restored, removed: false, receipt: {...restored.receipt, state: 'uploading', resume_allowed: true}}), false)
-})
-
-test('preparation drafts reopen in the upload flow; drafts of the retired pages are not listed', () => {
-  const prepared = draft(0, {...value, uploads: [{request_id: 'pending', name: '待核对.xlsx', kind: 'feishu', removed: false, drive_file: {token: 'source', name: '待核对.xlsx', type: 'file'}}]})
-  const items = workbenchItems([], [prepared, {...prepared, id: 'legacy', upload_preparation: null}])
-  assert.equal(items[0].href, '/tasks/new?uploadDraft=original-draft')
-  assert.deepEqual(items[0].files?.map(row => row.name), ['待核对.xlsx'])
-  assert.equal(items.length, 1)
-  assert.equal(workbenchItems([], [{...prepared, task_id: prepared.id}]).length, 0)
 })
 
 test('foreign draft receipts cannot replace the requested preparation', async () => {

@@ -279,7 +279,7 @@ class FeishuDocsAddonTests(unittest.TestCase):
         writeback = self.client.post(f"/integrations/feishu/rounds/{round_id}/writeback")
         self.assertEqual(writeback.status_code, 200, writeback.text)
         self.assertTrue(writeback.json()["inserted"])
-        self.assertIn(f"/?round={round_id}", writeback.json()["return_url"])
+        self.assertTrue(writeback.json()["return_url"].endswith(f"/tasks/{done['source_draft_id']}"))
         self.assertTrue(any("/drive/v1/files/xlsx-token/download" in url for _method, url in self.feishu.calls))
         self.assertTrue(any("/documents/current-doc/" in url for _method, url in self.feishu.calls))
         self.assertFalse(any("/documents/xlsx-token/" in url for _method, url in self.feishu.calls))

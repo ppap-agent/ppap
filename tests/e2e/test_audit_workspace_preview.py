@@ -1,4 +1,4 @@
-"""Current workbench layout and read-only result interactions, using existing DTO fixtures."""
+"""Current task results layout and read-only result interactions, using existing DTO fixtures."""
 
 import os
 import re
@@ -78,23 +78,28 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             expect(page.get_by_role("region", name="审核详情", exact=True).get_by_role("table")).to_be_visible()
             browser.close()
 
-    def test_workbench_back_and_resume_preserve_visible_clause_filter_and_focus(self):
+    def test_leaving_the_task_and_returning_preserves_visible_clause_filter_and_focus(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page(viewport={"width": 1440, "height": 960})
             page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task")
             page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button").first.click()
-            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
-            page.get_by_role("button", name="继续当前审核", exact=True).click()
             page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name=re.compile("^不符合")).click()
             page.get_by_role("button", name="逐条复核", exact=True).click()
             focus = page.get_by_role("region", name="专注复核", exact=True)
             focus.get_by_role("button", name="下一待复核", exact=True).click()
             expect(focus.get_by_role("heading", name="第 2 条 · 记录完整性", exact=True)).to_be_visible()
             address = page.url
+            navigation = page.get_by_role("navigation", name="产品导航", exact=True)
+            navigation.get_by_role("button", name="用量记录", exact=True).click()
+            expect(page.get_by_role("heading", name="用量记录", exact=True)).to_be_visible()
             page.go_back()
-            expect(page.get_by_role("heading", name="工作台", exact=True)).to_be_visible()
-            page.get_by_role("button", name="继续当前审核", exact=True).click()
+            expect(page).to_have_url(address)
+            expect(focus.get_by_role("heading", name="第 2 条 · 记录完整性", exact=True)).to_be_visible()
+            # PPAP Audit in the product navigation returns to the same task position.
+            navigation.get_by_role("button", name="审核文件", exact=True).click()
+            expect(page.get_by_role("heading", name="审核文件", level=1, exact=True)).to_be_visible()
+            navigation.get_by_role("button", name="PPAP Audit", exact=True).click()
             expect(page).to_have_url(address)
             expect(focus.get_by_role("heading", name="第 2 条 · 记录完整性", exact=True)).to_be_visible()
             page.get_by_role("button", name="返回审核项", exact=True).click()

@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {components} from '../generated/openapi.ts'
 import {reconcileTaskSummary, subjectLabel, summarizeTask, taskIsBehindSummary, taskSubject} from './task-summary.ts'
-import {workbenchItems} from './workbench-items.ts'
 
 test('task summaries preserve every file identity and selection without result bodies', () => {
   const task: components['schemas']['AuditTask'] = {confirmation_basis_digest: null, confirmation_scope: null, id: 'task', number: 'PPAP-1', state: 'pending_confirm', created_at: '2026-10-01', updated_at: '2026-10-01', round_id: null, completion_reason: null, source_draft_id: 'task', customer_preference: null, estimated_points: 0, input_revision: 2,
@@ -21,25 +20,21 @@ test('task summaries preserve every file identity and selection without result b
   assert.equal(taskIsBehindSummary(task, completed), true)
   assert.equal(taskIsBehindSummary(task, summary), false)
 })
-test('opening partial execution faults preserves the Round terminal state and workbench queue', () => {
+test('opening partial execution faults preserves the Round terminal state', () => {
   const base = {id: 't', number: 'PPAP-1', state: 'completed', round_id: 'r', created_at: '2026-10-22', updated_at: '2026-10-22', completion_reason: 'processed', execution: 'completed', has_execution_error: true,
     files: [{selection: 'selected', file: {id: 'v', original_filename: 'a.xlsx'}, audit: {execution: 'review_failed', checks: [{execution: 'failed', coverage: 'execution_error', finding: null}]}}]} as unknown as components['schemas']['AuditTask']
   const summarized = summarizeTask(base)
   assert.equal(summarized.execution, 'completed')
   assert.equal(summarized.has_execution_error, true)
-  assert.equal(workbenchItems([summarized])[0].task, 'attention')
   const legacy = {...base}; delete legacy.execution; delete legacy.has_execution_error
   assert.equal(summarizeTask(legacy).execution, undefined)
   assert.equal(summarizeTask(legacy).has_execution_error, true)
   const loading = {...legacy, state: 'reviewing' as const, files: []}
   assert.equal(summarizeTask(loading).execution, undefined)
-  assert.equal(workbenchItems([summarizeTask(loading)])[0].task, 'running')
   const explicit = {...base, has_execution_error: false}
   assert.equal(summarizeTask(explicit).has_execution_error, false)
-  assert.equal(workbenchItems([summarizeTask(explicit)])[0].task, 'completed')
   const running = {...legacy, state: 'reviewing' as const, execution: 'running' as const}
   assert.equal(summarizeTask(running).has_execution_error, false)
-  assert.equal(workbenchItems([summarizeTask(running)])[0].task, 'running')
 })
 
 test('the task title comes from the first selected file that names a customer, model or part, preferring corrected display values', () => {

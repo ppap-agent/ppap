@@ -103,8 +103,8 @@ class UsagePreviewTests(unittest.TestCase):
                 expect(page.get_by_role("group", name="用量时间范围", exact=True).get_by_role("button", name="全部记录", exact=True)).to_have_attribute("aria-pressed", "true")
                 expect(page.get_by_role("navigation", name="分页", exact=True).get_by_role("button", name="第 2 页", exact=True)).to_have_attribute("aria-current", "page")
                 expect(page.get_by_role("row", name="消费记录 示例消费-11", exact=True)).to_be_visible()
+                # PPAP Audit opens the new-audit page directly.
                 page.get_by_role("navigation", name="产品导航").get_by_role("button", name="PPAP Audit", exact=True).click()
-                page.get_by_role("button", name="新建审核", exact=True).click()
                 page.get_by_role("button", name="联系我们", exact=True).click()
                 expect(dialog.get_by_text("当前场景：上传与文件核对", exact=True)).to_be_visible()
                 expect(dialog).not_to_contain_text(notice)

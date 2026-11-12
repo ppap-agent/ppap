@@ -33,40 +33,6 @@ class PageHeaderPreviewTests(unittest.TestCase):
             self.assertGreater(recovery.get_by_role("heading", name="报告暂时无法打开", exact=True).bounding_box()["height"], 2)
             browser.close()
 
-    def test_return_to_historical_round_removes_the_hidden_task_report_actions(self):
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 1057, "height": 853})
-            page.set_default_timeout(5000)
-            address = PREVIEW + "/preview/audit.html?scene=reports-ready&round=history-round"
-            page.goto(address)
-            expect(page.get_by_role("region", name="历史审核", exact=True)).to_be_visible()
-            bar = page.get_by_role("banner")
-            title = page.get_by_role("heading", name="历史审核", exact=True)
-            self.assertLessEqual(title.bounding_box()["height"], 2)
-            bar.get_by_role("button", name="历史操作", exact=True).click()
-            expect(page.get_by_role("menuitem", name="返回工作台", exact=True)).to_have_attribute("href", "/workbench")
-            page.get_by_role("menuitem", name="重新读取", exact=True).click()
-            expect(page).to_have_url(address)
-            page.get_by_role("button", name="打开审核任务", exact=True).click()
-            page.get_by_role("navigation", name="任务列表", exact=True).get_by_role("button").filter(has_text="PPAP-报告示例").click()
-            page.get_by_role("button", name="审核报告", exact=True).click()
-            bar = page.get_by_role("banner")
-            expect(bar.get_by_role("button", name="读取报告状态", exact=True)).to_be_visible()
-            expect(bar.get_by_role("button", name="历史操作", exact=True)).to_have_count(0)
-            page.go_back()
-            expect(page).to_have_url(address)
-            expect(page.get_by_role("region", name="历史审核", exact=True)).to_be_visible()
-            expect(bar.get_by_role("button", name="读取报告状态", exact=True)).to_have_count(0)
-            expect(page.get_by_role("navigation", name="当前位置", exact=True).get_by_text("历史审核", exact=True)).to_be_visible()
-            expect(bar.get_by_role("link", name="返回审核结果", exact=True)).to_have_count(0)
-            expect(bar.get_by_role("button", name="历史操作", exact=True)).to_be_visible()
-            page.go_forward()
-            expect(page.get_by_role("region", name="当前报告", exact=True)).to_be_visible()
-            expect(bar.get_by_role("link", name="返回审核结果", exact=True)).to_have_text("PPAP-报告示例")
-            expect(bar.get_by_role("button", name="读取报告状态", exact=True)).to_be_visible()
-            browser.close()
-
     def test_report_reader_starts_under_the_page_bar_without_a_second_title_row(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
@@ -93,7 +59,7 @@ class PageHeaderPreviewTests(unittest.TestCase):
             self.assertLessEqual(toolbar.bounding_box()["y"] - reader["y"], 128)
             browser.close()
 
-    def test_workbench_and_usage_share_the_page_bar_without_previous_page_actions(self):
+    def test_audit_and_usage_share_the_page_bar_without_previous_page_actions(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page(viewport={"width": 1057, "height": 853})
@@ -106,10 +72,10 @@ class PageHeaderPreviewTests(unittest.TestCase):
             expect(page.get_by_text("记录每份文件的审核消耗，可按时间范围筛选并导出明细", exact=True)).to_be_visible()
             expect(page.get_by_role("region", name="自然月用量汇总", exact=True)).to_be_visible()
             page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
-            expect(bar.get_by_role("button", name="新建审核", exact=True)).to_be_visible()
+            # PPAP Audit is the new-audit page; the usage page's own action does not follow.
+            expect(bar.get_by_role("navigation", name="当前位置", exact=True).get_by_text("新建审核", exact=True)).to_be_visible()
             expect(bar.get_by_role("button", name="刷新用量", exact=True)).to_have_count(0)
-            self.assertLessEqual(page.get_by_role("heading", name="工作台", exact=True).bounding_box()["height"], 2)
-            bar.get_by_role("button", name="新建审核", exact=True).click()
+            expect(page.get_by_role("heading", name="用量记录", exact=True)).to_have_count(0)
             expect(page.get_by_label("选择审核文件", exact=True)).to_be_attached()
             browser.close()
 

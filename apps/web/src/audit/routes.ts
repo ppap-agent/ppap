@@ -1,7 +1,7 @@
-export type ProductSurface = 'workbench' | 'audit' | 'archive' | 'requirements' | 'usage' | 'templates'
+export type ProductSurface = 'audit' | 'archive' | 'requirements' | 'usage' | 'templates'
 
 const paths: Record<ProductSurface, string> = {
-  workbench: '/workbench', audit: '/tasks/new', archive: '/files', requirements: '/requirements', usage: '/usage', templates: '/templates',
+  audit: '/tasks/new', archive: '/files', requirements: '/requirements', usage: '/usage', templates: '/templates',
 }
 
 export const taskAddress = (id: string | null) => id ? `/tasks/${encodeURIComponent(id)}` : paths.audit
@@ -36,7 +36,8 @@ export function readAuditRoute(url: URL): {surface: ProductSurface; taskId: stri
   const natural = (Object.entries(paths) as [ProductSurface, string][]).find(([, value]) => value === path)
   if (natural) return {surface: natural[0], taskId: null}
   const view = url.searchParams.get('view')
-  const surface = view && Object.hasOwn(paths, view) ? view as ProductSurface : url.searchParams.has('task') || url.searchParams.has('round') || ['/audit', '/__audit-native', '/audit.html', '/preview/audit.html'].includes(path) ? 'audit' : 'workbench'
+  // PPAP Audit is the new-audit page; an address naming no other page lands there.
+  const surface = view && Object.hasOwn(paths, view) ? view as ProductSurface : 'audit'
   return {surface, taskId: url.searchParams.get('task')}
 }
 
@@ -44,15 +45,13 @@ export function readAuditRoute(url: URL): {surface: ProductSurface; taskId: stri
 export function canonicalAddress(url: URL): string {
   const next = new URL(url)
   if (next.searchParams.has('share')) return next.pathname + next.search + next.hash
-  // Addresses of the retired first-generation pages land on their current counterparts.
-  const retiredDraft = ['case', 'draft'].some(key => next.searchParams.has(key))
+  // First-generation addresses (drafts, cases) are no longer read; they land on PPAP Audit.
+  // A Round link (Feishu write-back, review hints) opens the task that Round belongs to.
+  const retired = ['case', 'draft'].some(key => next.searchParams.has(key))
   for (const key of ['case', 'draft', 'stage', 'resume']) next.searchParams.delete(key)
-  if (next.searchParams.has('round')) {
-    next.pathname = '/audit'
-    return next.pathname + next.search + next.hash
-  }
+  if (next.searchParams.has('round')) next.searchParams.delete('task')
   if (next.pathname === '/rules') next.pathname = surfaceAddress('requirements')
-  else if (next.pathname === '/dev' || retiredDraft) next.pathname = surfaceAddress('workbench')
+  else if (next.pathname === '/dev' || retired || next.searchParams.has('round')) next.pathname = surfaceAddress('audit')
   const {surface, taskId} = readAuditRoute(next)
   next.pathname = surface === 'audit' ? taskAddress(taskId) : surfaceAddress(surface)
   next.searchParams.delete('view')

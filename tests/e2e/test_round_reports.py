@@ -1,4 +1,4 @@
-"""Read a frozen Round's existing report through the authorized native Task UI."""
+"""Read a frozen Round's existing report from its Task in the authorized native UI."""
 
 import copy
 import json
@@ -17,7 +17,7 @@ VERSION = "00000000-0000-4000-8000-000000000003"
 REPORT = "00000000-0000-4000-8000-000000000004"
 
 
-def round_report_routes(page, *, report_state="ready", access="allowed", task_denied=False, verification=None):
+def round_report_routes(page, *, report_state="ready", verification=None):
     import fitz
 
     pdf = fitz.open()
@@ -70,9 +70,6 @@ def round_report_routes(page, *, report_state="ready", access="allowed", task_de
         audit["conclusion"] = audit["checks"][0]["finding"]["status"] = "PASS"
         audit["counts"].update(pass_count=1, ng_count=0)
         audit["summary"] = {"conclusion": "PASS", "text": "符合 1 项。", "corrective_actions": [], "extended_suggestions": []}
-    historical_audit = copy.deepcopy(audit)
-    if access != "allowed":
-        historical_audit["report"] = {"state": "not_eligible", "report_id": None, "reason": "正式报告暂不可用"}
     round = {
         "id": ROUND,
         "execution": "completed",
@@ -99,13 +96,11 @@ def round_report_routes(page, *, report_state="ready", access="allowed", task_de
         ],
         "findings": [{**finding, "item_key": VERSION + ":rule:1"}],
         "read_view": {
-            "files": [{"file": version, "role": "target", "rule": rule, "audit": historical_audit}],
+            "files": [{"file": version, "role": "target", "rule": rule, "audit": copy.deepcopy(audit)}],
             "unassigned_findings": [],
-            "report_source": {"task_id": TASK if access == "allowed" else None, "access": {"state": access, "reason": None if access == "allowed" else "当前账号不能读取来源任务的报告。"}},
+            "report_source": {"task_id": TASK, "access": {"state": "allowed", "reason": None}},
         },
     }
-    if access is None:
-        round["read_view"].pop("report_source")
     task = {
         "id": TASK,
         "number": "PPAP-原审核",
@@ -167,7 +162,7 @@ def round_report_routes(page, *, report_state="ready", access="allowed", task_de
         elif path == "/audit-tasks":
             route.fulfill(json={"tasks": [], "next_offset": None})
         elif path == "/audit-tasks/" + TASK:
-            route.fulfill(status=403, json={"error": "access_denied"}) if task_denied else route.fulfill(json=task)
+            route.fulfill(json=task)
         elif path == f"/audit-tasks/{TASK}/reports/{REPORT}/pdf":
             assert parse_qs(urlsplit(request.url).query) == {"round_id": [ROUND], "file_version_id": [VERSION], "result_attempt": ["1"], "artifact_id": [REPORT + ":1"]}
             route.fulfill(body=content, content_type="application/pdf")
@@ -178,13 +173,13 @@ def round_report_routes(page, *, report_state="ready", access="allowed", task_de
     return calls, content
 
 
-def test_round_opens_its_frozen_existing_report_and_back_preserves_historical_context():
+def test_task_opens_its_frozen_existing_report_and_return_preserves_result_context():
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         page = browser.new_page(viewport={"width": 1057, "height": 853})
         page.set_default_timeout(5000)
         calls, content = round_report_routes(page)
-        address = WEB + f"/audit?round={ROUND}&file={VERSION}&clause=1&focus=review&checkFilter=ng"
+        address = WEB + f"/tasks/{TASK}?file={VERSION}&clause=1&focus=review&checkFilter=ng"
         page.goto(address)
         expect(page.get_by_role("heading", name="原控制计划.xlsx", exact=True)).to_be_visible()
         expect(page.get_by_role("region", name="专注复核", exact=True)).to_be_visible()
@@ -197,7 +192,8 @@ def test_round_opens_its_frozen_existing_report_and_back_preserves_historical_co
             page.get_by_role("button", name="下载当前报告", exact=True).click()
         with open(download.value.path(), "rb") as source:
             assert source.read() == content
-        page.go_back()
+        # Opening the report replaces the task entry; the breadcrumb returns to the same result position.
+        page.get_by_role("navigation", name="当前位置", exact=True).get_by_role("link", name="返回审核结果", exact=True).click()
         expect(page).to_have_url(address)
         expect(page.get_by_role("heading", name="原控制计划.xlsx", exact=True)).to_be_visible()
         expect(page.get_by_role("region", name="专注复核", exact=True)).to_be_visible()
@@ -206,13 +202,13 @@ def test_round_opens_its_frozen_existing_report_and_back_preserves_historical_co
         browser.close()
 
 
-def test_embedded_native_round_report_keeps_the_selected_report_when_its_host_reloads():
+def test_embedded_native_task_report_keeps_the_selected_report_when_its_host_reloads():
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         page = browser.new_page()
         page.set_default_timeout(5000)
         calls, _content = round_report_routes(page)
-        initial = f"/audit?round={ROUND}&file={VERSION}"
+        initial = f"/tasks/{TASK}?file={VERSION}"
         # The external host only carries the existing public navigation message.
         host = """<iframe title="原生客户端" id="product" style="width:100%;height:90vh"></iframe><script>
         const frame = document.getElementById('product');
@@ -240,65 +236,13 @@ def test_embedded_native_round_report_keeps_the_selected_report_when_its_host_re
         browser.close()
 
 
-@pytest.mark.parametrize("access", ["denied", "unavailable"])
-def test_round_report_access_failure_is_not_presented_as_a_missing_report(access):
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.launch()
-        page = browser.new_page()
-        calls, _content = round_report_routes(page, access=access)
-        page.goto(WEB + f"/audit?round={ROUND}&file={VERSION}")
-        expect(page.get_by_role("heading", name="原控制计划.xlsx", exact=True)).to_be_visible()
-        expect(page.get_by_role("button", name="查看报告", exact=True)).to_be_disabled()
-        expect(page.get_by_role("region", name="审核详情", exact=True)).to_contain_text("当前账号不能读取来源任务的报告。")
-        expect(page.get_by_text("无正式报告", exact=False)).to_have_count(0)
-        assert not any(path.startswith("/audit-tasks/" + TASK) for _method, path in calls)
-        assert all(method == "GET" for method, _path in calls)
-        browser.close()
-
-
-def test_round_report_rechecks_task_access_after_the_historical_projection_was_read():
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.launch()
-        page = browser.new_page()
-        calls, _content = round_report_routes(page, task_denied=True)
-        address = WEB + f"/audit?round={ROUND}&file={VERSION}"
-        page.goto(address)
-        page.get_by_role("button", name="查看报告", exact=True).click()
-        expect(page.get_by_role("heading", name="无法访问此任务", exact=True)).to_be_visible()
-        expect(page.get_by_role("toolbar", name="PDF 阅读工具", exact=True)).to_have_count(0)
-        assert not any(path.endswith("/pdf") for _method, path in calls)
-        page.go_back()
-        expect(page).to_have_url(address)
-        expect(page.get_by_role("heading", name="原控制计划.xlsx", exact=True)).to_be_visible()
-        assert all(method == "GET" for method, _path in calls)
-        browser.close()
-
-
-def test_a_legacy_round_without_a_task_keeps_its_result_without_inventing_a_report():
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.launch()
-        page = browser.new_page()
-        calls, _content = round_report_routes(page, access=None)
-        page.goto(WEB + f"/audit?round={ROUND}&file={VERSION}")
-        expect(page.get_by_role("heading", name="原控制计划.xlsx", exact=True)).to_be_visible()
-        checks = page.get_by_role("region", name="审核项", exact=True)
-        row = checks.get_by_role("row").filter(has_text="原签字要求")
-        expect(row).to_have_count(1)
-        expect(row).to_contain_text("不符合")
-        expect(page.get_by_role("button", name="查看报告", exact=True)).to_be_disabled()
-        expect(page.get_by_text("正式报告暂不可用", exact=False)).to_be_visible()
-        assert not any(path.startswith("/audit-tasks/" + TASK) for _method, path in calls)
-        assert all(method == "GET" for method, _path in calls)
-        browser.close()
-
-
 @pytest.mark.parametrize("state,label", [("pending", "待生成"), ("generating", "生成中"), ("failed", "生成失败")])
 def test_round_report_generation_status_reaches_the_existing_report_recovery_ui(state, label):
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         page = browser.new_page(viewport={"width": 1280, "height": 844})
         calls, _content = round_report_routes(page, report_state=state)
-        page.goto(WEB + f"/audit?round={ROUND}&file={VERSION}")
+        page.goto(WEB + f"/tasks/{TASK}?file={VERSION}")
         page.get_by_role("button", name="查看报告", exact=True).click()
         preview = page.get_by_role("region", name="当前报告", exact=True)
         expect(preview.get_by_role("heading", name="原控制计划.xlsx", exact=True)).to_be_visible()
@@ -323,7 +267,7 @@ def test_all_pass_frozen_verification_remains_visible_in_result_focus_and_report
         page = browser.new_page(viewport={"width": 1057, "height": 853})
         page.set_default_timeout(5000)
         round_report_routes(page, verification=verification)
-        page.goto(WEB + f"/audit?round={ROUND}&file={VERSION}&clause=1")
+        page.goto(WEB + f"/tasks/{TASK}?file={VERSION}&clause=1")
         notice = page.get_by_role("note", name="本轮验证状态")
         expect(notice).to_contain_text(verification["notice"])
         expect(notice).to_contain_text("部分判定的证据未经验证")
@@ -332,6 +276,6 @@ def test_all_pass_frozen_verification_remains_visible_in_result_focus_and_report
         expect(notice).to_contain_text(verification["notice"])
         page.get_by_role("button", name="查看报告", exact=True).click()
         expect(page.get_by_role("region", name="当前报告").get_by_role("note", name="本轮验证状态")).to_contain_text(verification["notice"])
-        page.go_back()
+        page.get_by_role("navigation", name="当前位置", exact=True).get_by_role("link", name="返回审核结果", exact=True).click()
         expect(page.get_by_role("region", name="审核详情").get_by_role("note", name="本轮验证状态")).to_contain_text(verification["notice"])
         browser.close()

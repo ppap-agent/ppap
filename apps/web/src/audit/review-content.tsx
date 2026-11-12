@@ -51,7 +51,7 @@ function checkTone(check: Evaluation): ResultTone {
 
 const verdictAccent: Partial<Record<ResultTone, string>> = {destructive: 'border-l-destructive', warning: 'border-l-warning', success: 'border-l-success'}
 
-function useMinWidth(width: number) {
+export function useMinWidth(width: number) {
   const [matches, setMatches] = useState(() => window.matchMedia(`(min-width: ${width}px)`).matches)
   useEffect(() => {
     const media = window.matchMedia(`(min-width: ${width}px)`)

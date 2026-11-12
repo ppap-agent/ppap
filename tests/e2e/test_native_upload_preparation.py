@@ -112,8 +112,8 @@ class PreparationHTTP:
                 for row in snapshot["upload_preparation"]["files"]
             ]
             route.fulfill(json=snapshot)
-        elif path in ("/drafts", "/rounds", "/audit-tasks") and method == "GET":
-            route.fulfill(json={"drafts": [], "rounds": [], "tasks": [], "next_offset": None})
+        elif path == "/audit-tasks" and method == "GET":
+            route.fulfill(json={"tasks": [], "next_offset": None})
         elif path == "/files" and method == "POST":
             body = route.request.post_data_json
             assert self.draft is not None

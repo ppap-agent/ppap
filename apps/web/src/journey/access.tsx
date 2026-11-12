@@ -97,7 +97,7 @@ export function ProductAccess({children, recordValidators = emptyValidators, rec
     <header className={"flex items-center gap-3 p-6"}><ClipboardCheck/><strong>PPAP</strong></header>
     <main className={"m-auto flex w-full max-w-md flex-col gap-5 px-6 pb-16"}>
       {/* A signed-in user should not see a sign-in screen while the session is still being read. */}
-      {!ready ? <p role="status" className="flex items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 aria-hidden="true" className="size-4 animate-spin motion-reduce:animate-none"/>正在确认登录状态…</p> : <div className="space-y-2"><h1 className={"text-2xl font-semibold tracking-tight"}>登录审核工作台</h1><p className="text-sm text-muted-foreground">按客户规则逐项审核 PPAP 文件，结果保留原件证据与报告。登录后回到当前页面。</p></div>}
+      {!ready ? <p role="status" className="flex items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 aria-hidden="true" className="size-4 animate-spin motion-reduce:animate-none"/>正在确认登录状态…</p> : <div className="space-y-2"><h1 className={"text-2xl font-semibold tracking-tight"}>登录 PPAP Audit</h1><p className="text-sm text-muted-foreground">按客户规则逐项审核 PPAP 文件，结果保留原件证据与报告。登录后回到当前页面。</p></div>}
       {!ready ? null : error ? <>
         <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>
         <Button onClick={() => setRevision(value => value + 1)}>{canSignIn ? '重试' : '重试'}</Button>

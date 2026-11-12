@@ -7,16 +7,11 @@ import json
 import os
 import time
 import unittest
-import uuid
 from types import SimpleNamespace
-from urllib.parse import urlsplit
 from zipfile import BadZipFile
 
 import pytest
 from openpyxl import Workbook
-from product.fixtures import RULE_A
-
-from .conftest import isolated_dev_login
 
 try:
     from playwright.sync_api import expect, sync_playwright
@@ -109,45 +104,6 @@ class WebAuditLoopTests(unittest.TestCase):
             self.assertTrue(href and href.rstrip("/").endswith("audit-files"))
             self.assertNotIn(".html", href)
             expect(page.get_by_test_id("addon-submit")).to_be_disabled()
-            browser.close()
-
-    def test_audit_files_path_loads_history_after_login(self):
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch()
-            page = browser.new_page()
-            page.set_default_timeout(5000)
-            api = isolated_dev_login(page, WEB)
-            name = f"history-{uuid.uuid4().hex[:8]}.txt"
-            created = page.request.post(f"{api}/files", data={"original_filename": name, "content_type": "text/plain", "byte_size": 7})
-            self.assertEqual(created.status, 201)
-            version = created.json()
-            path = f"{api}/files/{version['file_id']}/versions/{version['id']}"
-            uploaded = page.request.put(path + "/blob", data=b"history", headers={"Content-Type": "text/plain"})
-            self.assertEqual(uploaded.status, 200)
-            self.assertEqual(page.request.post(path + "/finalize").status, 200)
-            draft = page.request.post(f"{api}/drafts", data={})
-            self.assertEqual(draft.status, 201)
-            draft_id = draft.json()["id"]
-            saved = page.request.put(f"{api}/drafts/{draft_id}", data={"items": [{"file_version_id": version["id"], "role": "target", "rule_version_id": RULE_A}]})
-            self.assertEqual(saved.status, 200)
-            accepted = page.request.post(f"{api}/drafts/{draft_id}/accept", data={"idempotency_key": str(uuid.uuid4())})
-            self.assertEqual(accepted.status, 201)
-            round_id = accepted.json()["id"]
-
-            requests = []
-            page.on("request", lambda request: requests.append((request.method, urlsplit(request.url).path)))
-            page.goto(f"{WEB}/audit-files")
-            expect(page.get_by_role("heading", name="工作台", exact=True)).to_be_visible()
-            page.get_by_role("textbox", name="搜索审核任务", exact=True).fill(name)
-            history = page.get_by_role("table", name="全部任务审核记录", exact=True)
-            row = history.get_by_role("row").filter(has_text=name)
-            expect(row).to_have_count(1)
-            expect(row.get_by_role("link")).to_have_attribute("href", f"/audit?round={round_id}")
-            expect(page.get_by_role("alert")).to_have_count(0)
-            self.assertIn(("GET", urlsplit(api + "/rounds").path), requests)
-            self.assertIn(("GET", urlsplit(api + "/drafts").path), requests)
-            self.assertEqual([method for method, _ in requests if method in {"POST", "PUT", "PATCH", "DELETE"}], [])
-            self.assertEqual(urlsplit(page.url).path, "/workbench")
             browser.close()
 
 

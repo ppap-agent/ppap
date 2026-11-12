@@ -137,16 +137,16 @@ def test_initial_anonymous_probe_does_not_discard_a_successful_host_login(page):
         route.fulfill(json=PRINCIPAL)
 
     page.route("**/api/login/feishu/host", host_login)
-    page.goto(WEB + "/?view=workbench")
+    page.goto(WEB + "/tasks/new")
     expect(page.get_by_role("button", name="登录恢复测试，账号菜单")).to_be_visible()
-    expect(page.get_by_role("heading", name="登录审核工作台")).to_have_count(0)
+    expect(page.get_by_role("heading", name="登录 PPAP Audit")).to_have_count(0)
     assert codes == [{"code": "controlled-host-code"}]
 
 
 def test_disabled_new_login_does_not_revoke_an_existing_authenticated_session(page):
     login_config(page, "disabled")
     page.route("**/api/me", lambda route: route.fulfill(json=PRINCIPAL))
-    page.goto(WEB + "/?view=workbench")
+    page.goto(WEB + "/tasks/new")
     expect(page.get_by_role("button", name="登录恢复测试，账号菜单")).to_be_visible()
     expect(page.get_by_role("link", name="使用飞书登录")).to_have_count(0)
 
@@ -154,19 +154,19 @@ def test_disabled_new_login_does_not_revoke_an_existing_authenticated_session(pa
 def test_a_business_401_still_hides_the_authenticated_product_without_restarting_host_login(page):
     login_config(page)
     page.route("**/api/me", lambda route: route.fulfill(json=PRINCIPAL))
-    page.route("**/api/drafts?*", lambda route: route.fulfill(json={"drafts": [], "next_offset": None}))
-    page.route("**/api/rounds?*", lambda route: route.fulfill(json={"rounds": [], "next_offset": None}))
+    # A further page of tasks gives the task rail an explicit business read to start.
+    page.route("**/api/audit-tasks?*", lambda route: route.fulfill(json={"tasks": [], "next_offset": 50}))
     page.add_init_script("window.__PPAP_FEISHU_HOST__ = {login: async () => 'must-not-request'}")
     host_posts = []
     page.route("**/api/login/feishu/host", lambda route: (host_posts.append(route.request.url), route.fulfill(json=PRINCIPAL)))
-    page.goto(WEB + "/?view=workbench")
+    page.goto(WEB + "/tasks/new")
     expect(page.get_by_role("button", name="登录恢复测试，账号菜单")).to_be_visible()
-    refresh = page.get_by_role("button", name="刷新任务列表")
-    expect(refresh).to_be_enabled()
+    more = page.get_by_role("navigation", name="审核任务列表", exact=True).get_by_role("button", name="加载更多任务", exact=True)
+    expect(more).to_be_enabled()
     before = page.url
-    page.route("**/api/drafts?*", lambda route: route.fulfill(status=401, json={"error": "unauthenticated"}))
-    refresh.click()
-    expect(page.get_by_role("heading", name="登录审核工作台")).to_be_visible()
+    page.route("**/api/audit-tasks?*", lambda route: route.fulfill(status=401, json={"error": "unauthenticated"}))
+    more.click()
+    expect(page.get_by_role("heading", name="登录 PPAP Audit")).to_be_visible()
     expect(page.get_by_role("button", name="登录恢复测试，账号菜单")).to_have_count(0)
     expect(page.get_by_role("link", name="使用飞书登录")).to_be_visible()
     assert page.url == before
@@ -185,7 +185,7 @@ def test_a_business_401_still_hides_the_authenticated_product_without_restarting
 )
 @pytest.mark.parametrize(
     "path,canonical",
-    [("/?view=workbench", "/workbench?task=original-task#original-clause"), ("/audit?report=frozen-report", "/tasks/original-task?report=frozen-report#original-clause")],
+    [("/?view=workbench", "/tasks/original-task#original-clause"), ("/audit?report=frozen-report", "/tasks/original-task?report=frozen-report#original-clause")],
 )
 def test_authorization_failure_keeps_task_and_requires_an_explicit_new_login(page, reason, message, path, canonical):
     login_config(page)
@@ -235,11 +235,10 @@ def test_native_account_usage_and_logout_keep_the_task_report_address(page):
     assert parse_qs(address.query) == {}
     assert address.fragment == "original-clause"
     page.get_by_role("button", name="PPAP Audit", exact=True).click()
-    page.get_by_role("button", name="继续当前审核", exact=True).click()
     assert page.url == WEB + "/tasks/original-task?report=frozen-report#original-clause"
     account.click()
     page.get_by_role("menuitem", name="退出登录").click()
-    expect(page.get_by_role("heading", name="登录审核工作台")).to_be_visible()
+    expect(page.get_by_role("heading", name="登录 PPAP Audit")).to_be_visible()
     assert logged_out == ["POST"]
     expect(account).to_have_count(0)
     link = page.get_by_role("link", name="使用飞书登录")

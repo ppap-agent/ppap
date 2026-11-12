@@ -28,20 +28,20 @@ test('archive and rules aliases retain exact detail and historical version', () 
   assert.equal(canonicalAddress(new URL('https://ppap.test/?view=requirements&requirement=r&reqVersion=draft')), '/requirements?requirement=r&reqVersion=draft')
 })
 
-test('retired first-generation addresses land on their current pages; shares stay as they are', () => {
+test('retired first-generation addresses land on PPAP Audit; Round links keep their target; shares stay as they are', () => {
   assert.equal(canonicalAddress(new URL('https://ppap.test/?share=s&report=p')), '/?share=s&report=p')
-  for (const search of ['?round=r', '?case=d&round=r', '?round=r&stage=decision', '?round=r&resume=changes']) assert.equal(canonicalAddress(new URL('https://ppap.test/' + search)), '/audit?round=r')
-  assert.equal(canonicalAddress(new URL('https://ppap.test/?round=r&clause=c&focus=review')), '/audit?round=r&clause=c&focus=review')
-  for (const path of ['/?case=d', '/?draft=d&stage=decision', '/dev']) assert.equal(canonicalAddress(new URL(path, 'https://ppap.test')), '/workbench')
+  for (const search of ['?round=r', '?case=d&round=r', '?round=r&stage=decision', '?round=r&resume=changes']) assert.equal(canonicalAddress(new URL('https://ppap.test/' + search)), '/tasks/new?round=r')
+  // A Round link keeps the exact file and clause; the page opens that Round's task.
+  assert.equal(canonicalAddress(new URL('https://ppap.test/audit?round=r&file=f&clause=c&basis=1')), '/tasks/new?round=r&file=f&clause=c&basis=1')
+  for (const path of ['/?case=d', '/?draft=d&stage=decision', '/dev']) assert.equal(canonicalAddress(new URL(path, 'https://ppap.test')), '/tasks/new')
   assert.equal(canonicalAddress(new URL('https://ppap.test/rules')), '/requirements')
 })
 
-test('home and new task are distinct; navigation does not carry unrelated detail', () => {
-  assert.equal(canonicalAddress(new URL('https://ppap.test/')), '/workbench')
-  assert.equal(canonicalAddress(new URL('https://ppap.test/audit-files?q=steel')), '/workbench?q=steel')
+test('home opens PPAP Audit; navigation does not carry unrelated detail', () => {
+  for (const path of ['/', '/?view=workbench']) assert.equal(canonicalAddress(new URL(path, 'https://ppap.test')), '/tasks/new')
+  assert.equal(canonicalAddress(new URL('https://ppap.test/audit-files?q=steel')), '/tasks/new?q=steel')
   assert.equal(taskAddress('t1'), '/tasks/t1')
   assert.equal(taskAddress(null), '/tasks/new')
-  assert.equal(surfaceAddress('workbench'), '/workbench')
   assert.equal(surfaceAddress('archive'), '/files')
   assert.equal(readAuditRoute(new URL('https://ppap.test/tasks/new')).taskId, null)
 })

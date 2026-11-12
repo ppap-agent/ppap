@@ -21,7 +21,6 @@ import {displayReadFixture, fixtureDisplay} from './audit-display'
 import {fileDisplayValues} from '../src/audit/display-info-contract'
 import {usageNotices} from '../src/audit/usage-contract'
 import {auditReportFilename, reportReference} from '../src/audit/result-projection'
-import {AuditRoundReader} from '../src/audit/round-reader'
 import {fixtureRound, fixtureReviewRound} from './audit-rounds'
 import {AuditReviewProvider, type AuditReviewAdapter} from '../src/audit/review-editor'
 import {FactAnswersContext} from '../src/audit/fact-answers-context'
@@ -569,52 +568,4 @@ function Preview() {
     <AuditIntake rules={(active, headerActions) => <AuditRules active={active} headerActions={headerActions} onPublished={() => {}}/>} templateAdapter={templateFixture} adapter={controlled} autoObserve={automaticObservation} reportAdapter={controlledReports} sharingAdapter={controlledSharing} archiveAdapter={controlledArchive} usageAdapter={controlledUsage} supportAdapter={controlledSupport} displayAdapter={scene.startsWith('restore-display-') ? controlledDisplay : undefined} renderOriginal={(file, evidence) => scene.startsWith('original-') && file.original_filename.endsWith('.xlsx') ? <FixtureRemoteOriginal key={file.id} file={file} office={originalOffice}/> : <FixtureOriginal file={file} evidence={evidence}/>}/></>
   return scene.startsWith('restore-review-edit') ? <AuditReviewProvider adapter={reviewAdapter}>{content}</AuditReviewProvider> : content
 }
-function HistoricalPreview() {
-  const [roundId, setRoundId] = useState('history-round'), [reads, setReads] = useState<{id: number; finish: () => void}[]>([])
-  const rounds = useRef(new Map<string, components['schemas']['Round']>())
-  const conflicted = useRef(new Set<string>())
-  const [reviewReplies, setReviewReplies] = useState<{id: number; finish: () => void}[]>([])
-  const saves = useRef(0)
-  useEffect(() => {
-    const deliver = (event: MessageEvent) => {
-      if (event.source !== window.parent || event.origin !== location.origin || event.data?.type !== 'ppap-preview-read') return
-      const reply = reviewReplies[0]
-      if (reply) {reply.finish(); setReviewReplies(rows => rows.filter(row => row.id !== reply.id))}
-    }
-    window.addEventListener('message', deliver)
-    return () => window.removeEventListener('message', deliver)
-  }, [reviewReplies])
-  const sequence = useRef(0)
-  const read = useCallback(async (id: string) => {
-    if (!rounds.current.has(id)) rounds.current.set(id, await readHistoricalRound(id))
-    const number = ++sequence.current, value = structuredClone(rounds.current.get(id)!)
-    if (scene === 'round-history-wrong') value.id = 'another-round'
-    const finding = value.read_view!.files[0].audit!.unmapped_findings![0]
-    if (scene === 'round-history-outside') finding.review!.citations![0].file_version_id = 'outside-this-round'
-    if (scene !== 'round-history-race') return value
-    finding.item = `历史记录 ${number}`
-    return new Promise<typeof value>(resolve => setReads(rows => [...rows, {id: number, finish: () => resolve(value)}]))
-  }, [])
-  const reviewAdapter = useMemo<AuditReviewAdapter>(() => ({
-    read,
-    save: async (id, request) => {
-      if (scene === 'round-history-review-denied') throw Object.assign(new Error('access_denied'), {status: 403})
-      const value = rounds.current.get(id)!, existing = reviewOf(value, request.item_key)
-      if ((existing?.version || 0) !== request.version) throw Object.assign(new Error('review_conflict'), {status: 409})
-      const conflict = scene === 'round-history-review-conflict' && !conflicted.current.has(request.item_key)
-      const review = {...request, version: request.version + 1, ...(conflict ? {rationale: '另一位工程师已核对。'} : {})}
-      for (const finding of value.findings) if (finding.item_key === request.item_key) finding.review = review
-      for (const file of value.read_view!.files) {
-        for (const finding of file.audit?.unmapped_findings || []) if (finding.item_key === request.item_key) finding.review = review
-        for (const check of file.audit?.checks || []) if (check.review_item_key === request.item_key) check.review = review
-      }
-      if (conflict) {conflicted.current.add(request.item_key); throw Object.assign(new Error('review_conflict'), {status: 409})}
-      if (scene === 'round-history-review-unknown') throw new Error('preview_reply_lost')
-      if (scene === 'round-history-review-race') {const number = ++saves.current; return new Promise<typeof value>(resolve => setReviewReplies(rows => [...rows, {id: number, finish: () => resolve(structuredClone(value))}]))}
-      return structuredClone(value)
-    },
-  }), [read])
-  const content = <>{scene === 'round-history-race' && <aside aria-label="预览事件控制" className="flex flex-wrap gap-2 p-3"><Button onClick={() => setRoundId(value => value === 'history-round' ? 'another-round' : 'history-round')}>切换历史审核</Button>{reads.map(row => <Button key={row.id} onClick={() => {row.finish(); setReads(rows => rows.filter(item => item.id !== row.id))}}>返回历史读取 {row.id}</Button>)}</aside>}{scene === 'round-history-review-race' && <aside aria-label="预览事件控制">{reviewReplies.map(reply => <Button key={reply.id} onClick={() => {reply.finish(); setReviewReplies(rows => rows.filter(row => row.id !== reply.id))}}>返回复核保存 {reply.id}</Button>)}</aside>}<AuditRoundReader roundId={roundId} readRound={read} returnHref="/preview/audit.html" renderOriginal={(file, evidence) => <FixtureOriginal file={file} evidence={evidence}/>}/></>
-  return scene.startsWith('round-history-review') ? <AuditReviewProvider adapter={reviewAdapter}>{content}</AuditReviewProvider> : content
-}
-createRoot(document.getElementById('app')!).render(<FactAnswersContext.Provider value={factAnswersAdapter}>{scene.startsWith('round-history') ? <HistoricalPreview/> : <Preview/>}</FactAnswersContext.Provider>)
+createRoot(document.getElementById('app')!).render(<FactAnswersContext.Provider value={factAnswersAdapter}><Preview/></FactAnswersContext.Provider>)

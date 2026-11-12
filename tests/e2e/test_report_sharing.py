@@ -128,7 +128,7 @@ def test_shared_report_switch_download_and_denied_revisit_never_open_private_inp
 
         page.route("**/api/**", api)
         page.goto(WEB + "/audit?share=shared-one")
-        expect(page.get_by_role("link", name="返回审核工作台", exact=True)).to_have_attribute("href", "/workbench")
+        expect(page.get_by_role("link", name="返回 PPAP Audit", exact=True)).to_have_attribute("href", "/tasks/new")
         navigation = page.get_by_role("navigation", name="分享的报告")
         expect(navigation.get_by_role("button")).to_have_count(2)
         expect(page.get_by_role("heading", name="控制计划.xlsx", exact=True)).to_be_visible()
@@ -312,8 +312,8 @@ def test_directory_timeout_retries_the_same_page_and_ignores_its_late_reply():
                         "identity": {"provider": "feishu", "app_id": "test-app", "tenant_key": "test-tenant", "subject": "test-user"},
                     }
                 )
-            elif path in {"/drafts", "/rounds", "/audit-tasks"}:
-                route.fulfill(json={"tasks" if path == "/audit-tasks" else path.removeprefix("/"): [], "next_offset": None})
+            elif path == "/audit-tasks":
+                route.fulfill(json={"tasks": [], "next_offset": None})
             elif path == "/audit-tasks/" + task_id:
                 route.fulfill(json=task)
             elif path == f"/audit-tasks/{task_id}/reports/{report_id}/pdf":

@@ -52,7 +52,7 @@ class WebAliasTests(unittest.TestCase):
                 self.assertEqual(_fetch(name, "/addon"), (200, "addon-page"))
                 for path in ("/audit?task=frozen-task&report=frozen-file", "/audit.html", "/__audit-native?view=usage"):
                     self.assertEqual(_fetch(name, path), (200, "native-audit"))
-                for path in ("/workbench", "/files", "/requirements", "/templates", "/usage", "/tasks/new", "/tasks/frozen-task?file=frozen-file&clause=c1"):
+                for path in ("/files", "/requirements", "/templates", "/usage", "/tasks/new", "/tasks/frozen-task?file=frozen-file&clause=c1"):
                     self.assertEqual(_fetch(name, path), (200, "native-audit"))
                     address, _, query = path.partition("?")
                     self.assertEqual(_fetch(name, address + "/" + ("?" + query if query else "")), (200, "native-audit"))
@@ -66,6 +66,8 @@ class WebAliasTests(unittest.TestCase):
                 self.assertEqual(_redirect(name, "/addon/"), "/addon")
                 self.assertEqual(_redirect(name, "/rules/"), "/rules")
                 self.assertEqual(_fetch(name, "/missing-customer-path")[0], 404)
+                # The workbench page is retired; its address is no longer served.
+                self.assertEqual(_fetch(name, "/workbench")[0], 404)
                 self.assertEqual(_fetch(name, "/v2")[0], 404)
                 self.assertNotIn("workbench", _fetch(name, "/missing-customer-path")[1])
             finally:

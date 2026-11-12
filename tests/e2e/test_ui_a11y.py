@@ -62,8 +62,6 @@ class UiA11yTests(unittest.TestCase):
                     }
                 ),
             )
-            page.route("**/api/drafts?*", lambda route: route.fulfill(json={"drafts": [], "next_offset": None}))
-            page.route("**/api/rounds?*", lambda route: route.fulfill(json={"rounds": [], "next_offset": None}))
             page.route("**/api/audit-tasks?*", lambda route: route.fulfill(json={"tasks": [], "next_offset": None}))
             page.route("**/api/rules", lambda route: route.fulfill(json={"rules": []}))
             page.route("**/api/rule-types", lambda route: route.fulfill(json={"types": ["控制计划"]}))
@@ -71,7 +69,8 @@ class UiA11yTests(unittest.TestCase):
             session = context.new_cdp_session(page)
             session.send("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 1})
             page.goto(WEB)
-            expect(page.get_by_role("heading", name="工作台", exact=True)).to_be_visible()
+            # The home address opens PPAP Audit, the new-audit page.
+            expect(page.get_by_role("heading", name="PPAP Audit", level=1, exact=True)).to_be_visible()
             expect(page.locator("aside").get_by_role("navigation", name="产品导航", exact=True)).to_be_visible()
             page.keyboard.press("Tab")
             focused = page.evaluate(
@@ -286,10 +285,6 @@ class UiA11yTests(unittest.TestCase):
                     )
                 elif path == f"/files/{SOURCE}/versions/{VERSION}":
                     route.fulfill(json=source, headers=cors)
-                elif path == "/drafts":
-                    route.fulfill(json={"drafts": [], "next_offset": None}, headers=cors)
-                elif path == "/rounds":
-                    route.fulfill(json={"rounds": [], "next_offset": None}, headers=cors)
                 else:
                     unexpected.append(path)
                     route.fulfill(status=404, json={"error": "unexpected_test_request"}, headers=cors)

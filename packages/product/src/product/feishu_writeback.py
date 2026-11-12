@@ -7,6 +7,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 from typing import cast
+from urllib.parse import quote
 
 from audit.audits import ERR, EXEC_COMPLETED, FINDING_STATUSES, NA, NG, PASS, TARGET, UNABLE
 from audit.models import public_locator
@@ -77,9 +78,11 @@ def drive_comments_url(file_token: str) -> str:
     return OPEN_API + "/drive/v1/files/" + file_token + "/comments?file_type=docx"
 
 
-def round_return_url(web_url: str, round_id: str) -> str:
+def round_return_url(web_url: str, round_body: dict) -> str:
+    """The Round's own task page; a Round without a task opens through its Round link."""
     base = (web_url or "").rstrip("/")
-    return base + "/?round=" + round_id
+    task_id = str(round_body.get("source_draft_id") or "")
+    return base + ("/tasks/" + quote(task_id, safe="") if task_id else "/?round=" + quote(str(round_body["id"]), safe=""))
 
 
 def _finding_version(finding: dict) -> str:

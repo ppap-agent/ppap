@@ -440,7 +440,7 @@ def create_app(
         return response
 
     def _enter_edition(request: Request, edition: str, return_to: str = "") -> RedirectResponse | JSONResponse:
-        default = settings.canonical_web_url() + ("/workbench" if edition == "current" else "/")
+        default = settings.canonical_web_url() + ("/tasks/new" if edition == "current" else "/")
         target = safe_return_to(return_to, settings)
         if not return_to.strip() or target != return_to or urlsplit(target).path in {"/enter-current", "/enter-legacy"}:
             target = default
@@ -896,7 +896,7 @@ def create_app(
         file_token = str(stored.get("object_ref") or "").strip()
         if not file_token:
             return JSONResponse({"error": "writeback_target_missing"}, status_code=409)
-        return_url = round_return_url(settings.canonical_web_url(), round_body["id"])
+        return_url = round_return_url(settings.canonical_web_url(), round_body)
         try:
             require_approved_source(request, f"/rounds/{round_id}", round_body)
             result = write_round_history(http, session.access_token, file_token, round_body, return_url)

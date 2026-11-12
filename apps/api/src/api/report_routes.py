@@ -32,7 +32,7 @@ def register_report_routes(app, store, session_of, http, settings):
         try:
             if request.method == "POST":
                 require_approved_source(request, f"/rounds/{round_id}", body)
-            blocks = report_blocks(body, round_return_url(settings.canonical_web_url(), round_id))
+            blocks = report_blocks(body, round_return_url(settings.canonical_web_url(), body))
         except McpError as exc:
             return None, None, None, JSONResponse({"error": exc.code}, status_code=exc.status)
         except FeishuWritebackError as exc:

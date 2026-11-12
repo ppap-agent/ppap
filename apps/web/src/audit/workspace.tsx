@@ -24,7 +24,6 @@ import {fileDisplayValues} from './display-info-contract'
 import {displayTime} from '../helpers'
 import {FactQuestions} from './fact-questions'
 import {factMachineFindings} from './fact-answers-contract'
-import type {ReadRound} from './round-reader'
 import {conclusionLabel, executionLabel, reportLabel, resultLabel, resultTone, uncoveredLabel, type ResultTone} from './status-labels'
 
 type Task = components['schemas']['AuditTask']
@@ -38,7 +37,10 @@ export function AuditExcludedFiles({files}: {files: Task['files']}) {
   })}</div>
 }
 
-export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, onChange, renderOriginal, reportAdapter, notificationAdapter, onReportChange, onReportView, sharingAdapter, onEditDisplay, headerActions, onReaudit, readRound, taskRail}: {taskRail?: ReactNode; task: Task; busy: boolean; readError: string; onReadSupport: () => void; onRead: () => void; onChange: (task: Task) => void; renderOriginal?: OriginalRenderer; reportAdapter?: AuditReportAdapter; notificationAdapter?: AuditNotificationAdapter; onReportChange: (task: Task) => void; onReportView: (open: boolean) => void; sharingAdapter?: AuditSharingAdapter; onEditDisplay?: (file: components['schemas']['AuditTaskFile']) => void; headerActions?: HTMLElement | null; onReaudit?: () => void; readRound?: ReadRound}) {
+/** Reads the original Round of a re-audit, for showing which files changed. */
+export type ReadRound = (id: string, signal: AbortSignal) => Promise<components['schemas']['Round']>
+
+export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, onChange, renderOriginal, reportAdapter, notificationAdapter, onReportChange, onReportView, sharingAdapter, onEditDisplay, headerActions, onReaudit, readRound, onFileOpen}: {onFileOpen?: (open: boolean) => void; task: Task; busy: boolean; readError: string; onReadSupport: () => void; onRead: () => void; onChange: (task: Task) => void; renderOriginal?: OriginalRenderer; reportAdapter?: AuditReportAdapter; notificationAdapter?: AuditNotificationAdapter; onReportChange: (task: Task) => void; onReportView: (open: boolean) => void; sharingAdapter?: AuditSharingAdapter; onEditDisplay?: (file: components['schemas']['AuditTaskFile']) => void; headerActions?: HTMLElement | null; onReaudit?: () => void; readRound?: ReadRound}) {
   const openSupport = useContext(SupportEntryContext)
   const queue = task.files.filter(row => row.selection === 'selected')
   const progressIssue = taskProgressError(task)
@@ -84,6 +86,7 @@ export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, on
     if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-task', task: task.id, report: id, packageRequest: url.searchParams.get('packageRequest')}, location.origin)
   }
   const file = selected ? queue.find(row => row.file.id === selected) : undefined
+  useEffect(() => {onFileOpen?.(Boolean(file)); return () => onFileOpen?.(false)}, [Boolean(file)])
   const previousFile = file && previousFiles.find(row => row.file.id === file.file.id || row.file.id === file.replacement_of_file_version_id || row.file.file_id === file.file.file_id)
   // The overview leads with what is still running and which finished items need a person.
   const itemsDone = targets.reduce((sum, row) => sum + (row.audit?.progress.completed ?? 0), 0)
@@ -140,7 +143,7 @@ export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, on
       {progressIssue && <Alert variant="destructive"><AlertTitle>任务进度需要核对</AlertTitle><AlertDescription>{progressIssue} 各文件的有效依据仍保留，请重新读取审核结果。</AlertDescription></Alert>}
       {task.usage_notice && <Alert><AlertTitle>用量提示</AlertTitle><AlertDescription>{task.usage_notice}{openSupport && <Button variant="outline" size="sm" onClick={() => openSupport({scenario: '审核用量提示', facts: [{label: '任务标识', value: task.id}, {label: '任务编号', value: task.number}, ...(task.round_id ? [{label: '审核轮次', value: task.round_id}] : []), {label: '服务提示', value: task.usage_notice!}]})}>联系支持</Button>}</AlertDescription></Alert>}{readError && <Alert variant="destructive"><AlertTitle>结果暂时无法读取</AlertTitle><AlertDescription><p>{readError} 原有结果与选择仍保留。</p><Button variant="outline" size="sm" onClick={onReadSupport}>联系支持</Button></AlertDescription></Alert>}
       </div>
-      <div className={`grid min-h-0 min-w-0 flex-1 ${taskRail && !file ? 'grid-cols-[18rem_20rem_minmax(0,1fr)]' : 'grid-cols-[20rem_minmax(0,1fr)]'}`}>{/* Tasks sit beside the overview; inside one file the width goes to its items and basis. */}{taskRail && !file && <aside aria-label="审核任务" className="min-w-0 overflow-y-auto border-r bg-card">{taskRail}</aside>}<aside className="min-w-0 overflow-y-auto border-r bg-card">{fileQueue}</aside><div className="min-w-0 overflow-y-auto">{file && task.round_id ? file.match?.state === 'reference' ? <section className="min-w-0 space-y-4 p-6" aria-label="比对资料原件"><h2 className="font-semibold"><FileName name={file.file.original_filename}/></h2>{renderOriginal?.(file.file, null, task.round_id)}</section> : <AuditReviewContent onReaudit={onReaudit} previous={previousFile?.audit ? {label: '上次审核', checks: previousFile.audit.checks} : null} key={`${task.round_id}:${file.file.id}`} file={file} roundId={task.round_id} taskId={task.id} frozenFileVersionIds={queue.map(row => row.file.id)} originals={queue.map(row => ({file_version_id: row.file.id, file: row.file, access: {state: 'allowed', reason: null}}))} renderOriginal={renderOriginal} onReport={() => showReport(file.file.id)} onEditDisplay={onEditDisplay ? () => onEditDisplay(file) : undefined} facts={[{label: '创建时间', value: displayTime(task.created_at)}]}/> : overview}</div></div>
+      <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[20rem_minmax(0,1fr)]"><aside className="min-w-0 overflow-y-auto border-r bg-card">{fileQueue}</aside><div className="min-w-0 overflow-y-auto">{file && task.round_id ? file.match?.state === 'reference' ? <section className="min-w-0 space-y-4 p-6" aria-label="比对资料原件"><h2 className="font-semibold"><FileName name={file.file.original_filename}/></h2>{renderOriginal?.(file.file, null, task.round_id)}</section> : <AuditReviewContent onReaudit={onReaudit} previous={previousFile?.audit ? {label: '上次审核', checks: previousFile.audit.checks} : null} key={`${task.round_id}:${file.file.id}`} file={file} roundId={task.round_id} taskId={task.id} frozenFileVersionIds={queue.map(row => row.file.id)} originals={queue.map(row => ({file_version_id: row.file.id, file: row.file, access: {state: 'allowed', reason: null}}))} renderOriginal={renderOriginal} onReport={() => showReport(file.file.id)} onEditDisplay={onEditDisplay ? () => onEditDisplay(file) : undefined} facts={[{label: '创建时间', value: displayTime(task.created_at)}]}/> : overview}</div></div>
     </div>
   </section>
 }

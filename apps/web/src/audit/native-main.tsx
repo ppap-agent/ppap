@@ -12,23 +12,15 @@ import {AuditIntake, type AuditIntakeAdapter} from './intake'
 import {createNativeTemplateLibraryAdapter} from './template-library-adapter'
 import {createNativeAuditAdapter, nativeArchiveAdapter, nativeDisplayAdapter, nativeReportAdapter, nativeReviewAdapter, nativeSharingAdapter, nativeSupportAdapter, nativeUsageAdapter, readAuditCustomers} from './native-adapter'
 import type {OriginalRenderer} from './review-content'
-import type {ReadRound} from './round-reader'
+import type {ReadRound} from './workspace'
 import {AuditReviewProvider} from './review-editor'
 import {SharedReports} from './shared-reports'
 import {AuditRules} from './rules'
-import {AuditWorkbench, type WorkbenchProps} from './workbench'
-import {workbenchItems} from './workbench-items'
 import {canonicalAddress, readAuditRoute} from './routes'
-import {useWorkbenchData} from '../journey/workbench-data'
 import {TEMPLATE_GUIDE_URL} from './template-links'
 import {Toaster} from '../components/toast'
 
 const renderOriginal: OriginalRenderer = (file, evidence, roundId) => <div className="flex h-[65dvh] min-h-96 min-w-0"><RemoteSourcePane file={{file_id: file.file_id, file_version_id: file.id, original_filename: file.original_filename, role: 'target', rule_version_id: null}} roundId={roundId} focus={evidence?.locator ? {location: sourceLocation({locator: evidence.locator}), requestId: 0} : undefined}/></div>
-
-function NativeWorkbench(props: WorkbenchProps) {
-  const legacy = useWorkbenchData(props.query, true, true)
-  return <AuditWorkbench {...props} legacyItems={workbenchItems([], legacy.drafts?.rows, legacy.rounds?.rows)} countsKnown={props.countsKnown && legacy.drafts !== null && legacy.rounds !== null} loading={props.loading || legacy.loading} errors={[...props.errors, ...legacy.errors]} busy={props.busy || Boolean(legacy.busy)} more={props.more || legacy.more} onMore={() => {if (props.more) props.onMore(); if (legacy.more) legacy.loadMore()}} onRefresh={() => {props.onRefresh(); legacy.refresh()}}/>
-}
 
 function NativeAudit() {
   const [adapter, setAdapter] = useState<AuditIntakeAdapter>(() => ({...createNativeAuditAdapter({personalDriveUpload, customers: []}), readRound}))
@@ -46,7 +38,7 @@ function NativeAudit() {
     }).catch(cause => {if (active) setError(cause instanceof Error ? cause.message : '无法读取审核规则。')})
     return () => {active = false}
   }, [revision])
-  return <>{error && <Alert variant="destructive"><AlertTitle>客户规则目录未能刷新</AlertTitle><AlertDescription><p>已保存的规则和当前待审文件仍保留。</p><Button variant="outline" onClick={() => setRevision(value => value + 1)}>重新读取客户目录</Button></AlertDescription></Alert>}<AuditIntake adapter={adapter} templateAdapter={templateAdapter} renderWorkbench={props => <NativeWorkbench {...props}/>} onRefreshCustomers={() => setRevision(value => value + 1)} rules={(active, headerActions) => <AuditRules headerActions={headerActions} active={active} onPublished={() => setRevision(value => value + 1)}/>} archiveAdapter={nativeArchiveAdapter} usageAdapter={nativeUsageAdapter} displayAdapter={nativeDisplayAdapter} reportAdapter={nativeReportAdapter} sharingAdapter={nativeSharingAdapter} supportAdapter={nativeSupportAdapter} renderOriginal={renderOriginal}/></>
+  return <>{error && <Alert variant="destructive"><AlertTitle>客户规则目录未能刷新</AlertTitle><AlertDescription><p>已保存的规则和当前待审文件仍保留。</p><Button variant="outline" onClick={() => setRevision(value => value + 1)}>重新读取客户目录</Button></AlertDescription></Alert>}<AuditIntake adapter={adapter} templateAdapter={templateAdapter} onRefreshCustomers={() => setRevision(value => value + 1)} rules={(active, headerActions) => <AuditRules headerActions={headerActions} active={active} onPublished={() => setRevision(value => value + 1)}/>} archiveAdapter={nativeArchiveAdapter} usageAdapter={nativeUsageAdapter} displayAdapter={nativeDisplayAdapter} reportAdapter={nativeReportAdapter} sharingAdapter={nativeSharingAdapter} supportAdapter={nativeSupportAdapter} renderOriginal={renderOriginal}/></>
 }
 
 const templateAdapter = createNativeTemplateLibraryAdapter({personalDriveUpload})

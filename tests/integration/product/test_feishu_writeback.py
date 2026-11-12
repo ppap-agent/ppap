@@ -493,7 +493,9 @@ class FeishuWritebackTests(unittest.TestCase):
         self.assertTrue(body["inserted"])
         self.assertFalse(body["commented"])
         self.assertEqual(body["round_id"], round_id)
-        self.assertEqual(body["return_url"], f"http://127.0.0.1:4173/?round={round_id}")
+        # The return link opens the task the Round belongs to.
+        task_id = self.client.get(f"/rounds/{round_id}").json()["source_draft_id"]
+        self.assertEqual(body["return_url"], f"http://127.0.0.1:4173/tasks/{task_id}")
         insert = next(call for call in self.feishu.calls if call[0] == "POST" and call[1].endswith("/children"))
         self.assertIn("/documents/docx-token/blocks/docx-token/children", insert[1])
         self.assertEqual(insert[2]["index"], 0)
