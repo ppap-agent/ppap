@@ -125,9 +125,8 @@ class UaesMsaAgent(UaesExcelAgent):
 
     @rule("计划每行量具类型编号与全部GRR/Kappa结论")
     def rule_2(self, ctx: RuleContext):
-        plan = self.plan_rows(ctx)
-        if not plan:
-            plans = []
+        plans = [rows] if (rows := self.plan_rows(ctx)) else []
+        if not plans:
             for item in self.batch_files(_MSA):
                 with self.reading(ctx, item, resources):
                     rows = self.plan_rows(ctx)
@@ -137,15 +136,13 @@ class UaesMsaAgent(UaesExcelAgent):
                 if self.untabled() or self.unread_pages():
                     raise unable("PDF原件未能读出表格，尚不能确认是否有测量系统分析计划表，需人工复核。")
                 return "NG", "文件及同批次原件中没有测量系统分析计划表。"
-            if len({tuple((name, _identity(number)) for name, number, _where in rows) for rows in plans}) > 1:
-                raise unable("同批次有多份内容不同的测量系统分析计划，尚不能确定按哪一份核对，需人工复核。")
-            plan = plans[0]
         reports = self.reports(ctx)
         if not reports:
             if self.untabled() or self.unread_pages():
                 raise unable("PDF原件未能读出表格，尚不能确认是否有重复性及再现性报告或Kappa报告，需人工复核。")
             return "NG", "文件及同批次原件中没有重复性及再现性报告或Kappa报告。"
-        for name, number, where in plan:
+        # Several same-round plans are each checked: any plan row without its report fails (product owner).
+        for name, number, where in (row for rows in plans for row in rows):
             kind = "Kappa" if any(term in name for term in _COUNTING) else "GRR"
             if _identity(number) in _PLACEHOLDERS:
                 return "NG", f"MSA计划{where}{name}量具编号为“{number}”，无法对应编号相同的{kind}报告。"
@@ -187,9 +184,10 @@ class UaesMsaAgent(UaesExcelAgent):
             return "PASS", "PGQP1重要特性中没有通止规、塞规、塞尺类计数型量具。"
         if not self.kappas(ctx):
             return "NG", "PGQP1重要特性使用计数型量具，但同批次没有Kappa报告。"
-        # PGQP1 names the gauge type only; the clause pairs a Kappa study by its gauge number.
+        # PGQP1 names the gauge type only: without a gauge number no same-number Kappa study can be paired,
+        # and the clause fails what cannot be established ("无法辨识则不通过").
         item, gauge = gauges[0]
-        raise unable(f"PGQP1重要特性“{item}”使用{gauge}，但PGQP1没有写量具编号，尚不能对应同编号的Kappa报告，需人工复核。")
+        return "NG", f"PGQP1重要特性“{item}”使用{gauge}，但PGQP1没有写量具编号，无法对应同零件号、同量具编号的Kappa报告；请补充量具编号或提交对应Kappa文件后人工复核。"
 
     @rule("CP出货或GP12人工检测同名或综合检具Kappa")
     def rule_4(self, ctx: RuleContext):
@@ -222,9 +220,10 @@ class UaesMsaAgent(UaesExcelAgent):
         for operation, method, where, between in manual:
             if any(compact("综合检具") in report.names or any(name and name in compact(method) for name in report.names) for report in kappas):
                 continue
-            if any(not report.names for report in kappas):
-                raise unable(f"控制计划{where}“{operation}”采用{method}，同批次Kappa报告未写量具名称，尚不能确认量具名称相同或为综合检具，需人工复核。")
             if between:
                 raise unable(f"控制计划{where}“{operation}”采用{method}，同批次没有量具名称相同或为综合检具的Kappa报告{open_}。")
+            if any(not report.names for report in kappas):
+                # A Kappa report read without any gauge name cannot be the same-name one: "无法辨识则不通过".
+                return "NG", f"控制计划{where}“{operation}”采用{method}，同批次Kappa报告未写量具名称，无法确认量具名称相同或为综合检具；请人工复核Kappa与该检测的对应关系。"
             return "NG", f"控制计划{where}“{operation}”采用{method}，同批次没有量具名称相同或为综合检具的Kappa报告。"
         return "PASS", "控制计划出货检验/GP12的人为检测均有量具名称相同或为综合检具的Kappa报告。"
