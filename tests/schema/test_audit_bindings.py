@@ -1916,7 +1916,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
             text = "".join(page.get_text() for page in pdf)
             self.assertIn("必须填写零件号", text)
             self.assertIn("P-1", text)
-            self.assertIn("共1项：符合1项，不符合0项，不适用0项。", "".join(text.split()))
+            self.assertIn("共1项：符合1项，不符合0项，无法判断0项，不适用0项。", "".join(text.split()))
             self.assertIn("部分判定的证据未经验证", text)
         for field, value in (("round_id", str(uuid.uuid4())), ("file_version_id", str(uuid.uuid4())), ("result_attempt", 2), ("artifact_id", "other-artifact")):
             self.assertEqual(self.display_client.get(pdf_path, params={**query, field: value}).status_code, 403)
