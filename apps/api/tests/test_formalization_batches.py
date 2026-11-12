@@ -6,6 +6,7 @@ The scripted model proves the software contract. It is not model-quality accepta
 import json
 from uuid import uuid4
 
+import pytest
 from cryptography.fernet import Fernet
 from documents.ai import AIError, AIResult
 from fastapi.testclient import TestClient
@@ -136,3 +137,40 @@ def create_app_for(settings, api):
     from api import create_app
 
     return create_app(settings, auth_store=api)
+
+
+def test_audits_go_first_and_a_full_reading_pool_still_takes_them(auth_store_factory):
+    settings = Settings(feishu_app_id="formalization-claims", git_sha="c" * 40, usage_charge_enabled=False)
+    store = auth_store_factory(settings)
+    alice = store.upsert_feishu_identity("formalization-claims", "alice")
+    worker = build_product_store(settings, objects=store.objects, role="worker")
+    queued = {}
+    with store._conn() as conn:
+        # Oldest first: two batch readings, a person's own reading, then an audit.
+        for minutes, name, kind, payload in (
+            (4, "batch-1", "rule_formalization", {"batch": "b"}),
+            (3, "batch-2", "rule_formalization", {"batch": "b"}),
+            (2, "manual", "rule_formalization", {}),
+            (1, "audit", "audit", {}),
+        ):
+            queued[name] = str(uuid4())
+            conn.execute(
+                "INSERT INTO engine.jobs(id,tenant_id,kind,payload,status,created_at) VALUES (%s,%s,%s,%s,'queued',now() - make_interval(mins => %s))",
+                (queued[name], alice.tenant_id, kind, Jsonb(payload), minutes),
+            )
+    names = {value: key for key, value in queued.items()}
+
+    def claim(room: str = "any"):
+        claimed = worker.claim_job("claims", formalizations=room)
+        return None if claimed is None else names[claimed.id]
+
+    # The audit was queued last and still goes first.
+    assert claim() == "audit"
+    # A person's own reading goes before a batch queued earlier.
+    assert claim() == "manual"
+    # A worker whose pool holds its share of batch readings takes no more of them; a full pool takes none.
+    assert claim("manual") is None
+    assert claim("none") is None
+    assert claim() == "batch-1"
+    with pytest.raises(ValueError):
+        worker.claim_job("claims", formalizations="all")

@@ -279,6 +279,19 @@ def run_core_round(store: AuthStore, claimed, work, ident: str = "") -> tuple[di
         return failure_result("deep_execution_failed"), "failed"
 
 
+def formalization_room(running) -> str:
+    """Which readings this worker may still take, given whether each one it runs came from a saved version's batch.
+
+    A full pool only stops more readings; audits and other jobs are still claimed.
+    """
+    from product.rules import BATCH_FORMALIZATIONS, PARALLEL_FORMALIZATIONS
+
+    running = list(running)
+    if len(running) >= PARALLEL_FORMALIZATIONS:
+        return "none"
+    return "manual" if sum(1 for batch in running if batch) >= BATCH_FORMALIZATIONS else "any"
+
+
 def run() -> None:
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
@@ -296,12 +309,10 @@ def run() -> None:
     from product.rules import PARALLEL_FORMALIZATIONS
 
     side = ThreadPoolExecutor(max_workers=PARALLEL_FORMALIZATIONS, thread_name_prefix="ppap-formalization")
-    running: set = set()
+    # Each reading in flight, and whether it came from a saved version's batch.
+    running: dict = {}
     while not STOP:
-        running = {future for future in running if not future.done()}
-        if len(running) >= PARALLEL_FORMALIZATIONS:
-            time.sleep(0.2)
-            continue
+        running = {future: batch for future, batch in running.items() if not future.done()}
         try:
             with connect(settings, "worker") as conn:
                 conn.execute(
@@ -313,12 +324,12 @@ def run() -> None:
                     """,
                     (ident, started, settings.git_sha),
                 )
-            claimed = store.claim_job(ident)
+            claimed = store.claim_job(ident, formalizations=formalization_room(running.values()))
         except Exception:
             time.sleep(2)
             continue
         if claimed and claimed.kind == "rule_formalization":
-            running.add(side.submit(process_claimed, store, claimed, ident))
+            running[side.submit(process_claimed, store, claimed, ident)] = bool((claimed.payload or {}).get("batch"))
             continue
         if claimed:
             process_claimed(store, claimed, ident)

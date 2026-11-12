@@ -17,6 +17,8 @@ FILE_PREPARATION_KINDS = ("rule_parse", "file_analysis", "file_validation")
 # Check points are short calls run side by side in one worker; a program generation is a long Deep run.
 BACKGROUND_JOB_KINDS = ("rule_formalization", "checker_optimization")
 PARALLEL_FORMALIZATIONS = 4
+# Of those, readings queued by saving a version leave the rest for a person's own request.
+BATCH_FORMALIZATIONS = 2
 BACKGROUND_JOBS_PER_TENANT = 2
 MAX_RULE_TEXT = 20000  # The migrated extraction prompt accepts this much source text.
 

@@ -3910,13 +3910,22 @@ class AuthStore:
             str(head[4]) if head[4] else "",
         )
 
-    def claim_job(self, worker_ident: str) -> ClaimedJob | None:
+    def claim_job(self, worker_ident: str, *, formalizations: str = "any") -> ClaimedJob | None:
+        """The oldest claimable job, audits and other foreground work first.
+
+        `formalizations` is how many more readings the caller can run: "any", "manual" (none from a
+        saved version's batch) or "none". A person's own reading goes before a batch's.
+        """
+        if formalizations not in {"any", "manual", "none"}:
+            raise ValueError("invalid_formalization_room")
         with self._conn() as conn:
             with conn.transaction():
                 row = conn.execute(
                     """
                     SELECT id, kind, payload, tenant_id FROM engine.jobs j
-                    WHERE kind <> ALL(%s) AND (
+                    WHERE kind <> ALL(%s)
+                    AND NOT (kind = 'rule_formalization' AND (%s = 'none' OR (%s = 'manual' AND payload ? 'batch')))
+                    AND (
                         (status = 'queued' AND (lease_until IS NULL OR lease_until < now()))
                         OR (status = 'leased' AND kind <> ALL(%s) AND lease_until IS NOT NULL AND lease_until < now())
                     ) AND NOT (
@@ -3925,12 +3934,14 @@ class AuthStore:
                             WHERE busy.tenant_id = j.tenant_id AND busy.kind = j.kind AND busy.status = 'leased' AND busy.lease_until > now()
                         ) >= CASE j.kind WHEN 'rule_formalization' THEN %s ELSE %s END
                     )
-                    ORDER BY kind = ANY(%s), created_at
+                    ORDER BY kind = ANY(%s), kind = 'rule_formalization' AND payload ? 'batch', created_at
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1
                     """,
                     (
                         ["feishu_notification", "task_confirmation"],
+                        formalizations,
+                        formalizations,
                         [*FILE_PREPARATION_KINDS, "checker_optimization", "rule_formalization"],
                         list(BACKGROUND_JOB_KINDS),
                         PARALLEL_FORMALIZATIONS,

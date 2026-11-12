@@ -33,7 +33,9 @@ class WorkerLoopTests(unittest.TestCase):
             finally:
                 events.append("connection_closed")
 
-        def claim_job(ident):
+        def claim_job(ident, *, formalizations):
+            # Nothing is reading yet, so any job may be taken.
+            self.assertEqual(formalizations, "any")
             events.append("claim")
             return claimed
 

@@ -185,7 +185,8 @@ class FormalizationStore:
                 operation_id, job_id = str(uuid4()), uuid4()
                 conn.execute(
                     "INSERT INTO engine.jobs(id,tenant_id,kind,payload,status) VALUES (%s,%s,'rule_formalization',%s,'queued')",
-                    (job_id, principal.tenant_id, Jsonb({"operation_id": operation_id, "initiating_user_id": principal.user_id, "model_identity": identity})),
+                    # Marked so workers take a person's own reading first and keep room for one.
+                    (job_id, principal.tenant_id, Jsonb({"operation_id": operation_id, "initiating_user_id": principal.user_id, "model_identity": identity, "batch": batch})),
                 )
                 conn.execute(
                     """INSERT INTO product.rule_formalization_operations(
