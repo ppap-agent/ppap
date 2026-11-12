@@ -53,15 +53,15 @@ class UaesExcelAgent(ExcelAgent):
         with ctx.reading(cache[version], version):
             yield ctx
 
-    def convert(self, path: str, document: Any) -> tuple[Any, Any]:
-        """A PDF converted with the first of the document's layouts that yields one of its sheets; else the last that converted."""
+    def convert(self, path: str, document: Any) -> tuple[Any, Any, Any]:
+        """(artifact, workbook, spec): the first of the document's layouts that yields one of its sheets; else the last that converted."""
         from audit.engine.checkers.pdf_evidence import PdfSourceError
 
         sheets = [sheet.canonical_name for sheet in document.DOCUMENT[0]]
         chosen = None
         for spec in document.PDF_SPECS:
             try:
-                chosen = self._convert_pdf(path, spec)
+                chosen = (*self._convert_pdf(path, spec), spec)
             except PdfSourceError:
                 continue
             probe = RuleContext(None, chosen[1], self._rule_resource)
@@ -72,7 +72,7 @@ class UaesExcelAgent(ExcelAgent):
             from openpyxl import Workbook
 
             self.__dict__.setdefault("_untabled", set()).add(path)
-            return None, Workbook()
+            return None, Workbook(), None
         return chosen
 
     def untabled(self) -> bool:
@@ -90,7 +90,7 @@ class UaesExcelAgent(ExcelAgent):
         return any(compact(word) in text for word in words)
 
     def _load_pdf_workbook(self, file_url: str) -> Any:
-        self._conversion_artifact, self._workbook_cache = self.convert(file_url, type(self).DOCUMENT_MODULE)
+        self._conversion_artifact, self._workbook_cache, self._pdf_spec = self.convert(file_url, type(self).DOCUMENT_MODULE)
         return self._workbook_cache
 
     def legacy(self) -> Any:
@@ -152,6 +152,37 @@ class UaesExcelAgent(ExcelAgent):
             if stop.decision != Decision.NG:
                 raise
             raise unable(f"工作表“{sheet.title}”中未能定位{name}的表头，检查程序未能读取，需人工复核。") from None
+
+    def drawn(self, sheet: Sheet, row: int, column: int) -> bool | None:
+        """Whether a cell converted from this PDF original holds an image or a stroke on its page; None when it cannot be placed.
+
+        A blank converted cell is not blank on the page when a graphic fills it; a PDF converts text only.
+        """
+        path = str(self.audit_file.file_url)
+        if not path.lower().endswith(".pdf") or sheet.ws.parent is not self._workbook_cache:
+            return False
+        spec = self.__dict__.get("_pdf_spec")
+        if spec is None:
+            return None
+        from documents.pdf import extract_pdf_tables
+
+        from audit.pdf_tables import converted_cell_sources, graphic_inside
+
+        if "_cell_sources" not in self.__dict__:
+            # The same layout extracts the same grids the converted workbook was written from.
+            extraction = extract_pdf_tables(Path(path).read_bytes(), spec=spec)
+            groups = [group for group in extraction.groups if group.success and group.table_grid is not None]
+            shapes = [(len(group.table_grid.rows) - 1, len(group.table_grid.cols) - 1) for group in groups]
+            written = [(sheet_.max_row, sheet_.max_column) for sheet_ in self._workbook_cache.worksheets]
+            self._cell_sources = converted_cell_sources(extraction) if all(r <= rows and c <= cols for (r, c), (rows, cols) in zip(written, shapes)) and len(shapes) == len(written) else {}
+            self._cell_tolerance = extraction.spec.extraction.line_tolerance
+        merged = sheet.ctx.ops.get_detailed_merge_info(sheet.ws, row, column)
+        anchor = (merged.min_row, merged.min_col) if merged else (row, column)
+        found = self._cell_sources.get((self._workbook_cache.sheetnames.index(sheet.title), *anchor))
+        if found is None:
+            return None
+        page, bbox = found
+        return graphic_inside(path, page, bbox, self._cell_tolerance)
 
     def uncomputed(self, sheet: Sheet, row: int, column: int) -> bool:
         """A formula whose result the original does not store reads blank, yet its value is unknown."""

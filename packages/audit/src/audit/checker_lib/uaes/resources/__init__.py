@@ -4,7 +4,7 @@ Each document module declares (sheets, sections, columns); a carrier combines th
 documents its clauses read into one resource.
 """
 
-from documents.pdf import GroupingMode, GroupingSpec, PdfSpec, StitchMode, StitchSpec
+from documents.pdf import GroupingMode, GroupingSpec, OutputSpec, PdfSpec, StitchMode, StitchSpec
 
 from audit.engine.rule_engine.contracts import RuleResourceModel, index_rule_resource
 
@@ -15,8 +15,11 @@ WHOLE_SHEET_COLS = 10_000
 
 # Layouts every document can fall back to, after its own: one table over all pages,
 # then each page on its own (the basic reading).
-STITCHED = PdfSpec(grouping=GroupingSpec(mode=GroupingMode.ALL_PAGES))
-PER_PAGE = PdfSpec(grouping=GroupingSpec(mode=GroupingMode.ALL_PAGES), stitch=StitchSpec(mode=StitchMode.NO_STITCH))
+# Embedded pictures are placed on the converted sheets as well (the converter leaves this off),
+# with no small count cap and no size floor: a stamp or a tick mark may be a tiny picture.
+PICTURES = {"preserve_pdf_embedded_images": True, "embedded_image_max_per_sheet": 10_000, "embedded_image_min_bytes": 0}
+STITCHED = PdfSpec(grouping=GroupingSpec(mode=GroupingMode.ALL_PAGES), output=OutputSpec(**PICTURES))
+PER_PAGE = PdfSpec(grouping=GroupingSpec(mode=GroupingMode.ALL_PAGES), stitch=StitchSpec(mode=StitchMode.NO_STITCH), output=OutputSpec(**PICTURES))
 
 
 def combine(*documents) -> object:

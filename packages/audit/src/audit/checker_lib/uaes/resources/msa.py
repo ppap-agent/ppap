@@ -4,7 +4,7 @@ from documents.pdf import GroupingMode, GroupingSpec, OutputMode, OutputSpec, Pd
 
 from audit.engine.rule_engine.contracts import ColumnModel, SectionModel, SheetModel
 
-from . import PER_PAGE, STITCHED, WHOLE_SHEET_COLS, WHOLE_SHEET_ROWS
+from . import PER_PAGE, PICTURES, STITCHED, WHOLE_SHEET_COLS, WHOLE_SHEET_ROWS
 
 # Measurement system analysis: the plan, GR&R analysis reports and Kappa (attribute) studies.
 DOCUMENT = (
@@ -68,7 +68,7 @@ PDF_SPECS = (
                 TitleSectionRule(label="Kappa Attribute Report", all_of=("MSA—Attribute Report",)),
             ),
         ),
-        output=OutputSpec(mode=OutputMode.SHEET_PER_GROUP, sheet_name_mode=SheetNameMode.GROUP_LABEL),
+        output=OutputSpec(mode=OutputMode.SHEET_PER_GROUP, sheet_name_mode=SheetNameMode.GROUP_LABEL, **PICTURES),
     ),
     STITCHED,
     PER_PAGE,

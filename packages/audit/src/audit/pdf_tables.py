@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import math
 import re
@@ -235,6 +236,45 @@ def _vector_inside(path: dict[str, Any], cell: list[float], tolerance: float, al
         elif _intersects(path["rect"], cell):
             return True
     return bool(path.get("closePath") and first is not None and last is not None and _line_inside(last, first, cell, tolerance))
+
+
+def converted_cell_sources(extraction: Any) -> dict[tuple[int, int, int], tuple[int, list[float]]]:
+    """(sheet index, row, column) of each converted workbook cell -> (page number, cell bbox) on its original page."""
+    from documents.pdf._stitch import _build_boundary_index_map, _remap_cell_columns
+
+    sources: dict[tuple[int, int, int], tuple[int, list[float]]] = {}
+    groups = [group for group in extraction.groups if group.success and group.table_grid is not None]
+    skip_headers = extraction.spec.stitch.drop_repeated_header
+    for sheet, group in enumerate(groups):
+        offset = 0
+        pages = [page for page in group.page_results if page.success and page.page_index in group.pages]
+        for index, page in enumerate(pages):
+            grid = page.table_grid
+            skip = int(skip_headers and index > 0)
+            boundaries = _build_boundary_index_map(grid.cols, group.table_grid.cols)
+            for cell in grid.cells:
+                if cell.row_end < skip:
+                    continue
+                first, _last = _remap_cell_columns(cell, boundaries)
+                bbox = [grid.cols[cell.col_start], grid.rows[cell.row_start], grid.cols[cell.col_end + 1], grid.rows[cell.row_end + 1]]
+                sources[(sheet, max(cell.row_start, skip) - skip + offset + 1, first + 1)] = (page.page_index + 1, bbox)
+            offset += len(grid.rows) - 1 - skip
+    return sources
+
+
+def graphic_inside(path: str, page_number: int, bbox: list[float], tolerance: float) -> bool:
+    """Whether an image or a non-border stroke lies inside one cell of a PDF page."""
+    drawings, images = _page_graphics(path, page_number)
+    return any(_intersects(bbox, image) for image in images) or any(_vector_inside(drawing, bbox, tolerance, set()) for drawing in drawings)
+
+
+@functools.lru_cache(maxsize=32)
+def _page_graphics(path: str, page_number: int) -> tuple[list[dict[str, Any]], list[list[float]]]:
+    import fitz
+
+    with fitz.open(path) as document:
+        page = document[page_number - 1]
+        return page.get_drawings(), [list(image["bbox"]) for image in page.get_image_info()]
 
 
 def _path_bounds(path: dict[str, Any]) -> tuple[float, float, float, float]:

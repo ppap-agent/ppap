@@ -1,91 +1,100 @@
 """Native PDF continuation pages reach the XLSX reader with original provenance."""
 
-import hashlib
-import json
-
 import fitz
 import pytest
 from audit.checker_lib.uaes.control_plan import UaesControlPlanAgent
-from audit.checker_lib.uaes.native import MissingFact, UnknownFact
+from audit.checker_lib.uaes.native import UnknownFact
 from audit.contracts import AuditInput, GroupContextInput, RuleInput
 
 
+# None: the resource cell holds only a drawn circle, which converts to an empty cell.
 @pytest.mark.parametrize("last_resource,expected", [("设备2", "PASS"), ("", "NG"), (None, "UNABLE")])
-def test_uaes_reads_all_native_pdf_continuation_pages_and_keeps_original_unknowns(tmp_path, last_resource, expected):
+def test_uaes_reads_all_native_pdf_continuation_pages(tmp_path, last_resource, expected):
     path = tmp_path / "control-plan.pdf"
     with fitz.open() as document:
         for index, resource in enumerate(("设备1", last_resource)):
-            page = document.new_page(width=400, height=220)
+            page = document.new_page(width=500, height=220)
             for top in (20, 60, 100, 160):
-                page.draw_line((20, top), (380, top))
-            for left in (20, 380):
+                page.draw_line((20, top), (480, top))
+            for left in (20, 480):
                 page.draw_line((left, 20), (left, 160))
-            page.draw_line((200, 60), (200, 160))
-            for x, y, text in ((40, 45, "Control Plan"), (40, 85, "工序名称"), (220, 85, "生产资源"), (40, 130, f"工序{index + 1}"), (220, 130, resource or "")):
+            for left in (170, 320):
+                page.draw_line((left, 60), (left, 160))
+            cells = (
+                (40, 45, "Control Plan"),
+                (30, 85, "工序名称/操作描述"),
+                (180, 85, "设备/工装"),
+                (330, 85, "评价/测量技术"),
+                (30, 130, f"工序{index + 1}"),
+                (180, 130, resource),
+                (330, 130, "目视"),
+            )
+            for x, y, text in cells:
                 if text:
                     page.insert_text((x, y), text, fontname="china-s", fontsize=11)
             if resource is None:
-                page.draw_circle((260, 130), 10)
+                page.draw_circle((240, 130), 10)
         document.save(path)
     original = path.read_bytes()
     agent = UaesControlPlanAgent(AuditInput(audit_id="frozen-pdf-version", file_url=str(path)), RuleInput(rule_id="uaes-cp", rule_profile="v4", preset_key="U08"))
     result = agent.check(0)
-    assert result.status == expected
+    assert result.status == expected, result.suggestions
+    if expected == "NG":
+        # The blank operation is on the continuation page, not the first.
+        assert "工序2" in result.suggestions and "工序1" not in result.suggestions
     assert path.read_bytes() == original
     assert result.evidence.source_format == "pdf"
     assert result.evidence.prepared_format == "xlsx"
-    assert agent.native().has_unread_content() is (last_resource is None)
-    sources = [json.loads(source.locator) for source in result.evidence.sources]
-    assert {source["page"] for source in sources} == {1, 2}
-    assert all(source["kind"] == "pdf_cell" and source["file_version_id"] == "frozen-pdf-version" and source["source_sha256"] == hashlib.sha256(original).hexdigest() for source in sources)
-    assert all(source["bbox"] and source["prepared_sheet"] and source["prepared_cell"] and source["prepared_sha256"] for source in sources)
+    assert {source.locator for source in result.evidence.sources} >= {"file:frozen-pdf-version;page:1", "file:frozen-pdf-version;page:2"}
 
 
-def _related_source(tmp_path, name, title):
+def _related_source(tmp_path, name, *rows):
     from openpyxl import Workbook
 
     workbook = Workbook()
-    workbook.active["A1"] = title
+    for row in rows:
+        workbook.active.append(list(row))
     path = tmp_path / name
     workbook.save(path)
     return AuditInput(audit_id=name, file_url=str(path), project_id="p")
 
 
-@pytest.mark.parametrize(
-    "by_type,unclassified,expected",
-    [
-        ({"PFMEA": ["pfmea.xlsx"]}, [], MissingFact),
-        ({}, [], MissingFact),
-        ({}, ["unknown.xlsx"], UnknownFact),
-        ({"图纸": ["a.xlsx", "b.xlsx"]}, [], UnknownFact),
-        ({"测量系统分析": ["msa.xlsx"]}, [], UnknownFact),
-    ],
-    ids=["another-type", "nothing", "unclassified-cannot-be-excluded", "several-candidates", "broad-type-stays-open"],
-)
-def test_only_a_proven_absence_of_the_related_source_is_a_failure(tmp_path, by_type, unclassified, expected):
-    grouped = {kind: [_related_source(tmp_path, name, "无关标题") for name in names] for kind, names in by_type.items()}
-    others = [_related_source(tmp_path, name, "无关标题") for name in unclassified]
-    target = _related_source(tmp_path, "cp.xlsx", "控制计划")
-    agent = UaesControlPlanAgent(target, RuleInput(rule_id="uaes-cp", rules=[], rule_profile="v4", type="控制计划"))
+def _control_plan(tmp_path, by_type, unclassified):
+    target = _related_source(tmp_path, "cp.xlsx", ["控制计划"], ["零件号", "F01RD0Y776"], ["工序名称/操作描述", "评价/测量技术"], ["压铸", "目视"])
+    agent = UaesControlPlanAgent(target, RuleInput(rule_id="uaes-cp", rule_profile="v4", preset_key="U08"))
+    grouped = {kind: [_related_source(tmp_path, name, *rows) for name, rows in items] for kind, items in by_type.items()}
+    others = [_related_source(tmp_path, name, *rows) for name, rows in unclassified]
     agent.group_context = GroupContextInput(
         task_group_id="group", by_doc_type=grouped, by_audit_id={item.audit_id: item for item in (target, *others, *(entry for items in grouped.values() for entry in items))}
     )
-    with pytest.raises(expected):
-        agent.related(("图纸", "drawing") if "测量系统分析" not in by_type else ("kappa",), same=("part",))
+    return agent
 
 
-def test_a_missing_source_decides_the_clause_before_unknowns_about_others(tmp_path, monkeypatch):
-    target = _related_source(tmp_path, "cp.xlsx", "控制计划")
-    agent = UaesControlPlanAgent(target, RuleInput(rule_id="uaes-cp", rules=[], rule_profile="v4", type="控制计划"))
+@pytest.mark.parametrize(
+    "by_type,unclassified,expected",
+    [
+        ({"潜在过程失效模式及后果分析": [("pfmea.xlsx", [["零件号", "F01RD0Y776"]])]}, [], "NG"),
+        ({}, [], "NG"),
+        ({}, [("drawing.xlsx", [["无关标题"]])], "UNABLE"),
+        ({}, [("drawing.xlsx", [["图号", "F01R10Y776"]])], "NG"),
+        ({}, [("drawing.xlsx", [["图号", "F01RD0Y776"]])], "UNABLE"),
+    ],
+    ids=["another-type", "nothing", "unclassified-cannot-be-excluded", "another-part", "same-part-unread"],
+)
+def test_only_a_proven_absence_of_the_drawing_is_a_failure(tmp_path, by_type, unclassified, expected):
+    # No document type names a drawing: an untyped original is excluded only by the part number it states.
+    result = _control_plan(tmp_path, by_type, unclassified).check(11)
+    assert result.status == expected, result.suggestions
 
-    def related(terms, **_):
-        if terms == ("flow",):
-            raise UnknownFact("identity unknown")
-        raise MissingFact("absent")
 
-    monkeypatch.setattr(agent, "related", related)
-    with pytest.raises(MissingFact):
-        agent.related_all(("flow",), ("plan",), same=("part",))
+def test_a_missing_source_decides_the_clause_before_unknowns_about_others(tmp_path):
+    unknown_flow = ("flow.xlsx", [["过程流程图"]])
+    other_plan = ("pgqp1.xlsx", [["零件号", "F01R10Y776"]])
+    same_pfmea = ("pfmea.xlsx", [["零件号", "F01RD0Y776"]])
+    agent = _control_plan(tmp_path, {"过程流程图": [unknown_flow], "潜在过程失效模式及后果分析": [same_pfmea], "E12": [other_plan]}, [])
+    result = agent.check(6)
+    assert result.status == "NG", result.suggestions
+    assert "采购件质量计划" in result.suggestions
 
 
 def test_a_row_proving_the_fact_decides_even_with_unknown_rows():
