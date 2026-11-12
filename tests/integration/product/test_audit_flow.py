@@ -142,7 +142,6 @@ class AuditFlowTests(unittest.TestCase):
         self.assertEqual(prepared["id"], request_id)
         self.assertEqual(prepared["status"], "open")
         self.assertEqual(prepared["predecessor_id"], original["id"])
-        self.assertEqual(prepared["analysis_mode"], original["analysis_mode"])
         self.assertCountEqual([{key: item[key] for key in ("file_version_id", "role", "rule_version_id")} for item in prepared["items"]], inputs)
         self.assertEqual(prepared["case_context"], payload["case_context"])
         self.assertEqual(self.client.get(f"/drafts/{request_id}").json(), prepared)

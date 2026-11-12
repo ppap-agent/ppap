@@ -68,8 +68,8 @@ def prepare_fact_round(auth_store_factory, tmp_path, monkeypatch):
     with store._conn() as conn:
         conn.execute("INSERT INTO product.resources(id,tenant_id,kind) VALUES(%s,%s,'audit_round')", (rid, alice.tenant_id))
         conn.execute(
-            """INSERT INTO product.audit_rounds(id,tenant_id,created_by,idempotency_key,request_fingerprint,execution,result_attempt,analysis_mode)
-                        VALUES(%s,%s,%s,%s,'fact-source','completed',1,'standard')""",
+            """INSERT INTO product.audit_rounds(id,tenant_id,created_by,idempotency_key,request_fingerprint,execution,result_attempt)
+                        VALUES(%s,%s,%s,%s,'fact-source','completed',1)""",
             (rid, alice.tenant_id, alice.user_id, rid),
         )
         conn.execute("INSERT INTO product.rule_versions(id,tenant_id,title,body) VALUES(%s,%s,'原件事实检查',%s)", (rule_id, alice.tenant_id, Jsonb(rules)))

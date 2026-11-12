@@ -81,7 +81,7 @@ def test_each_source_accepts_and_freezes_its_actual_customer_checker(auth_store_
             process_claimed(worker, claimed, "routes-validation")
             files.append({"file_version_id": file["id"], "validation_id": request["request_id"], "selection": "selected", "removal_reason": None})
             originals[file["id"]] = (source, path, data)
-        accepted = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": customer, "files": files})
+        accepted = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "customer_preference": customer, "files": files})
         assert accepted.status_code == 202, accepted.text
         path = "/audit-tasks/" + accepted.json()["id"]
         for _ in sources:

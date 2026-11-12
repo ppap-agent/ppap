@@ -37,7 +37,7 @@
 先应用编号 SQL migrations。平台标准规则源仍使用 `python -m product.seed_standard_suites`（默认只列出；显式 `--apply` 才安装），不生成 Oracle 验证或自动发布。客户历史按精确 tenant UUID 单独处理：
 
 ```sh
-# migrator + 只读原件/旧 Artifact、可写 suites 对象凭据；默认事务 READ ONLY，无对象写入
+# migrator DB + 只读原件对象凭据；默认事务 READ ONLY，无对象写入
 uv run --no-sync python -m scripts.import_checker_history --tenant-id TENANT_UUID
 # 人工核对上一步的 complete/blocked、数量、源摘要后，显式确认该计划
 uv run --no-sync python -m scripts.import_checker_history --tenant-id TENANT_UUID --apply --expect-digest PLAN_DIGEST
@@ -45,10 +45,8 @@ uv run --no-sync python -m scripts.import_checker_history --tenant-id TENANT_UUI
 uv run --no-sync python -m scripts.import_checker_history --tenant-id TENANT_UUID --round-id ROUND_UUID --verify-user-id USER_UUID
 ```
 
-可重复传 `--round-id` 限定集合。空租户不写任何内容；未知租户、错误/非历史 Round 选择拒绝。缺损记录单独输出 `blocked` 并返回退出码 2，不阻止其他完整 Round 导入。计划摘要绑定冻结 DB 来源和已存 Artifact 原始字节；来源改变后必须重新 dry-run。
+可重复传 `--round-id` 限定集合。空租户不写任何内容；未知租户、错误/非历史 Round 选择拒绝。缺损记录单独输出 `blocked` 并返回退出码 2，不阻止其他完整 Round 导入。计划摘要绑定冻结 DB 来源和原件核对结果；来源改变后必须重新 dry-run。
 
-历史身份追加在原 `round_inputs.checker_history`，不是新轮次台账，也不是可执行 `checker_execution_snapshots`。标准审核没有可证实的历史代码字节时保留来源摘要并明确 `code_identity=unavailable`。Deep 只读取由原 tenant、job、结果 attempt、executor revision 和完整冻结输入推导出的精确 Artifact 对象键；不扫描桶、不读取跨输入复用缓存、不从最新版规则推断代码。无法验证的旧输入格式、未知执行身份、缺失/损坏原件或 Artifact 留为 `blocked`，不虚构绑定。
+历史身份追加在原 `round_inputs.checker_history`，不是新轮次台账，也不是可执行 `checker_execution_snapshots`。旧轮次没有可证实的历史代码字节，身份只保留来源摘要、文件摘要、规则摘要和执行来源，并明确 `code_identity=unavailable`、始终 `unverified`；不从最新版规则推断代码，不创建 Suite。缺失/损坏原件、非终态或规则缺失留为 `blocked`，不虚构绑定。历史 Deep Artifact 已随 Deep 数据删除（#322），不再导入。
 
-已存 Artifact 按原程序字节迁入 `history_only` Suite，冻结规则对应显式 factory binding；只表示 `saved_not_execution_proof`，始终 `unverified`，不代表执行过或通过人工 Oracle。归档 Suite 不进入企业候选目录、详情、发布或新版本继承，防止扩大原 Round/文件可见范围。历史读回沿原权限，复读原件、原 Artifact 和迁入 Suite 的字节并核对摘要。导入后原来源丢失或被替换仍报错，不因归档副本存在而隐藏损坏。
-
-每个 Round 的 Suite SQL 和身份写入同事务提交。对象存储先写内容寻址对象；中断可能留下无引用对象，重试会核对字节并复用，不删除源对象。已完整导入的 Round 读回为 `verified`（这里只指导入身份一致，不是算法验证），不会再创建 Suite。保留原 stdout 供人工核对；它不含规则正文、原件内容、密钥或对象 URL。修复缺失来源后重新 dry-run/apply；冲突或不确定结果先读回，不能清空身份重试。
+历史读回沿原权限，复读原件字节并核对摘要；导入后原件丢失或被替换仍报错。每个 Round 的身份写入在单事务内提交。已完整导入的 Round 读回为 `verified`（这里只指导入身份一致，不是算法验证）。保留原 stdout 供人工核对；它不含规则正文、原件内容、密钥或对象 URL。修复缺失来源后重新 dry-run/apply；冲突或不确定结果先读回，不能清空身份重试。

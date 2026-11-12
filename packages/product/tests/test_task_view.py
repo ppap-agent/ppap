@@ -28,7 +28,7 @@ def task_input():
 
 def verified_round(status="NG"):
     round = frozen_round()
-    round.update(analysis_mode="deep", executor="ppap-deep", executor_revision="deep-v1", result_job_id="job-1")
+    round.update(executor="ppap-deep", executor_revision="deep-v1", result_job_id="job-1")
     round["coverage"]["verification"] = {
         "method": "host_source_trace_v1",
         "round_id": "round-1",
@@ -193,7 +193,7 @@ class TaskRoundViewTests(unittest.TestCase):
 
         def body(locator: dict) -> dict:
             return {
-                "analysis_mode": "deep",
+                "executor": "ppap-deep",
                 "execution": "completed",
                 "inputs": [
                     {
@@ -332,7 +332,6 @@ class TaskRoundViewTests(unittest.TestCase):
         for status in ("PASS", "NG"):
             with self.subTest(status=status):
                 round = verified_round(status)
-                round["analysis_mode"] = "standard"
                 round["coverage"].pop("verification")
                 round["findings"][0]["locator"].pop("semantic")
                 before = deepcopy(round)
@@ -387,7 +386,6 @@ class TaskRoundViewTests(unittest.TestCase):
             (("coverage", "verification", "attempt"), True),
             (("coverage", "verification", "executor_revision"), "another-revision"),
             (("coverage", "verification", "semantic_engine_revision"), "not-a-revision"),
-            (("analysis_mode",), "standard"),
             (("coverage", "rule_items", 0, "rule_version_id"), "another-rule"),
             (("coverage", "rule_items", 0, "rule_item_id"), "another-clause"),
             (("coverage", "rule_items", 0, "item_key"), "another-result"),

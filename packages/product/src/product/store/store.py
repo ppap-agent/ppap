@@ -12,7 +12,6 @@ from typing import Any, cast
 
 import psycopg
 from audit.audits import (
-    ANALYSIS_STANDARD,
     DRAFT_ACCEPTED,
     DRAFT_OPEN,
     EXEC_COMPLETED,
@@ -22,7 +21,6 @@ from audit.audits import (
     ClaimedJob,
     RoundInput,
     RoundWork,
-    normalize_analysis_mode,
     normalize_idempotency_key,
     normalize_review,
     normalize_role,
@@ -414,7 +412,6 @@ class AuthStore:
             """SELECT r.id, r.tenant_id, r.kind, EXISTS (
                     SELECT 1 FROM product.audit_rounds a JOIN product.audit_drafts d ON d.id = a.source_draft_id
                     WHERE a.id = r.id AND d.task_fingerprint IS NOT NULL)
-                    OR EXISTS (SELECT 1 FROM product.deep_rule_changes c WHERE c.analysis_round_id = r.id)
                 FROM product.resources r WHERE r.id = %s""",
             (parsed,),
         ).fetchone()
@@ -960,8 +957,7 @@ class AuthStore:
                 """SELECT f.id, f.file_id, f.tenant_id, f.original_filename, f.content_type, f.byte_size, f.sha256, f.object_key, f.status,
                     r.id, r.tenant_id, r.kind,
                     EXISTS (SELECT 1 FROM product.audit_rounds a JOIN product.audit_drafts d ON d.id = a.source_draft_id
-                        WHERE a.id = r.id AND d.task_fingerprint IS NOT NULL)
-                    OR EXISTS (SELECT 1 FROM product.deep_rule_changes c WHERE c.analysis_round_id=r.id),
+                        WHERE a.id = r.id AND d.task_fingerprint IS NOT NULL),
                     ARRAY(SELECT g.capability FROM product.resource_grants g WHERE g.resource_id = r.id AND g.user_id = %s),
                     EXISTS (SELECT 1 FROM product.rule_versions rv WHERE rv.tenant_id = f.tenant_id AND rv.source_file_version_id = f.id)
                 FROM product.file_versions f JOIN product.resources r ON r.id = %s
@@ -1195,15 +1191,15 @@ class AuthStore:
         if not resource or resource.kind != "audit_round" or not can_read(principal, resource, self._grants(conn, predecessor_id, principal.user_id)):
             raise KeyError("missing")
         row = conn.execute(
-            """SELECT r.execution, r.analysis_mode, d.customer_preference,
+            """SELECT r.execution, d.customer_preference,
             CASE WHEN d.task_fingerprint IS NOT NULL THEN d.id END
             FROM product.audit_rounds r LEFT JOIN product.audit_drafts d ON d.id = r.source_draft_id WHERE r.id = %s""",
             (predecessor_id,),
         ).fetchone()
         if not row or row[0] not in {"completed", "failed"}:
             raise ValueError("reaudit_source_not_finished")
-        if row[3]:
-            self._recognition_owner(conn, principal, str(row[3]))
+        if row[2]:
+            self._recognition_owner(conn, principal, str(row[2]))
         materials = conn.execute(
             """SELECT i.file_version_id, i.role, i.rule_version_id, i.rule_title, i.rule_body, j.result
             FROM product.round_inputs i JOIN product.audit_rounds r ON r.id = i.round_id
@@ -1213,9 +1209,8 @@ class AuthStore:
             (predecessor_id,),
         ).fetchall()
         return {
-            "analysis_mode": row[1],
-            "customer_preference": row[2],
-            "task_id": str(row[3]) if row[3] else None,
+            "customer_preference": row[1],
+            "task_id": str(row[2]) if row[2] else None,
             "inputs": {
                 str(item[0]): {
                     "role": item[1],
@@ -1269,7 +1264,7 @@ class AuthStore:
                         **({"preferred_rule_version_id": rule["id"], "rule_options": options} if rule else {"reference_only": True}),
                     }
                 )
-            return {"predecessor_id": predecessor_id, "analysis_mode": source["analysis_mode"], "customer_preference": source["customer_preference"], "files": files}
+            return {"predecessor_id": predecessor_id, "customer_preference": source["customer_preference"], "files": files}
 
     def create_audit_task(self, principal: Principal, body: dict, *, usage_policy=None) -> dict:
         request_id = _as_uuid(str(body.get("request_id") or ""))
@@ -1289,7 +1284,6 @@ class AuthStore:
             raise ValueError("invalid_task_request")
         if revising and (type(expected) is not int or expected < 0):
             raise ValueError("invalid_task_revision")
-        mode = self._offered_analysis_mode(body.get("analysis_mode"))
         normalized: list[dict[str, Any]] = []
         for raw in files:
             if not isinstance(raw, dict):
@@ -1326,14 +1320,15 @@ class AuthStore:
                 normalized[-1]["reference_only"] = True
         if not any(row["selection"] == "selected" for row in normalized):
             raise ValueError("selected_file_required")
-        inputs = {"files": normalized, "analysis_mode": mode, "customer_preference": customer}
+        inputs = {"files": normalized, "customer_preference": customer}
         if predecessor:
             inputs["predecessor_id"] = predecessor
         if revising:
             inputs.update(task_id=task_id, expected_revision=expected)
         if promoting:
             inputs.update(source_draft_id=task_id, expected_draft_revision=preparation_revision)
-        fingerprint = hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
+        # The former mode stays in the hash so replays of existing Task requests keep their identity.
+        fingerprint = hashlib.sha256(json.dumps({**inputs, "analysis_mode": "standard"}, sort_keys=True).encode()).hexdigest()
         with self._conn() as conn, conn.transaction():
             conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("recognition-request:" + request_id,))
             conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("recognition:" + task_id,))
@@ -1362,8 +1357,8 @@ class AuthStore:
                 self._recognition_inputs(conn, principal, task_id, normalized, customer, revision, request_id, fingerprint)
                 conn.execute(
                     """UPDATE product.audit_drafts SET input_revision = %s, recognition_request_id = %s,
-                    analysis_mode = %s, customer_preference = %s, updated_at = now() WHERE id = %s""",
-                    (revision, request_id, mode, customer, task_id),
+                    customer_preference = %s, updated_at = now() WHERE id = %s""",
+                    (revision, request_id, customer, task_id),
                 )
                 return self._recognition_public(conn, principal, task_id)
             existing = conn.execute("SELECT task_fingerprint FROM product.audit_drafts WHERE id = %s", (task_id,)).fetchone()
@@ -1415,17 +1410,17 @@ class AuthStore:
             ]
             if promoting:
                 conn.execute(
-                    """UPDATE product.audit_drafts SET analysis_mode = %s, task_fingerprint = %s, task_day = %s,
+                    """UPDATE product.audit_drafts SET task_fingerprint = %s, task_day = %s,
                     task_sequence = %s, customer_preference = %s, predecessor_id = %s, input_revision = 0,
                     recognition_request_id = %s, updated_at = now() WHERE id = %s""",
-                    (mode, fingerprint, day, sequence, customer, predecessor, request_id, task_id),
+                    (fingerprint, day, sequence, customer, predecessor, request_id, task_id),
                 )
             else:
                 conn.execute("INSERT INTO product.resources (id, tenant_id, kind) VALUES (%s, %s, 'audit_draft')", (task_id, principal.tenant_id))
                 conn.execute(
-                    """INSERT INTO product.audit_drafts (id, tenant_id, created_by, status, analysis_mode, task_fingerprint, task_day, task_sequence, customer_preference, predecessor_id)
-                    VALUES (%s, %s, %s, 'open', %s, %s, %s, %s, %s, %s)""",
-                    (task_id, principal.tenant_id, principal.user_id, mode, fingerprint, day, sequence, customer, predecessor),
+                    """INSERT INTO product.audit_drafts (id, tenant_id, created_by, status, task_fingerprint, task_day, task_sequence, customer_preference, predecessor_id)
+                    VALUES (%s, %s, %s, 'open', %s, %s, %s, %s, %s)""",
+                    (task_id, principal.tenant_id, principal.user_id, fingerprint, day, sequence, customer, predecessor),
                 )
                 conn.execute(
                     "INSERT INTO product.resource_grants (resource_id, user_id, capability) VALUES (%s, %s, 'read'), (%s, %s, 'review')", (task_id, principal.user_id, task_id, principal.user_id)
@@ -2603,7 +2598,6 @@ class AuthStore:
             "id": task_id,
             "number": f"PPAP-{draft['task_day']:%Y%m%d}-{draft['task_sequence']:03d}",
             "state": "completed" if draft["task_completion_reason"] else "matching" if matching else "pending_confirm",
-            "analysis_mode": draft["analysis_mode"],
             "created_at": draft["created_at"].isoformat(),
             "updated_at": updated.isoformat(),
             "source_draft_id": task_id,
@@ -2755,7 +2749,6 @@ class AuthStore:
                     "tenant_id": principal.tenant_id,
                     "created_by": principal.user_id,
                     "input_revision": task["input_revision"],
-                    "analysis_mode": task["analysis_mode"],
                     "customer_preference": task["customer_preference"],
                     "estimated_points": task["estimated_points"],
                     "library_revision": library,
@@ -2775,7 +2768,7 @@ class AuthStore:
         with self._conn() as conn, conn.transaction():
             conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
             rows = conn.execute(
-                """WITH visible AS (SELECT d.id, d.input_revision, d.analysis_mode, d.created_at,
+                """WITH visible AS (SELECT d.id, d.input_revision, d.created_at,
                 GREATEST(d.updated_at, r.created_at,
                     (SELECT max(j.updated_at) FROM product.draft_items i JOIN engine.jobs j ON j.id = i.analysis_job_id WHERE i.draft_id = d.id),
                     (SELECT max(j.updated_at) FROM engine.jobs j WHERE j.audit_round_id = r.id AND j.kind IN ('audit', 'report_pdf')),
@@ -2810,20 +2803,19 @@ class AuthStore:
             grouped: dict[str, list] = {}
             for file in files:
                 grouped.setdefault(str(file[0]), []).append({"file": self._version_from_row(file[2:]).public(), "selection": file[1]})
-            histories = {row["id"]: row for row in self._round_histories(conn, [str(row[8]) for row in rows if row[8]])}
+            histories = {row["id"]: row for row in self._round_histories(conn, [str(row[7]) for row in rows if row[7]])}
             return [
                 {
                     "id": str(row[0]),
                     "input_revision": row[1],
-                    "analysis_mode": row[2],
-                    "created_at": row[3].isoformat(),
-                    "updated_at": row[4].isoformat(),
-                    "number": f"PPAP-{row[5]:%Y%m%d}-{row[6]:03d}",
-                    "completion_reason": row[7] or ("processed" if row[8] and row[9] == "completed" else None),
-                    "round_id": str(row[8]) if row[8] else None,
-                    "state": row[9],
+                    "created_at": row[2].isoformat(),
+                    "updated_at": row[3].isoformat(),
+                    "number": f"PPAP-{row[4]:%Y%m%d}-{row[5]:03d}",
+                    "completion_reason": row[6] or ("processed" if row[7] and row[8] == "completed" else None),
+                    "round_id": str(row[7]) if row[7] else None,
+                    "state": row[8],
                     "files": grouped.get(str(row[0]), []),
-                    **({key: histories[str(row[8])][key] for key in ("execution", "has_execution_error", "result_counts", "reviewed_count", "uncovered_count")} if row[8] else {}),
+                    **({key: histories[str(row[7])][key] for key in ("execution", "has_execution_error", "result_counts", "reviewed_count", "uncovered_count")} if row[7] else {}),
                 }
                 for row in rows
             ]
@@ -3116,7 +3108,6 @@ class AuthStore:
         if preparation is not None:
             if items is not None or case_context is not None or predecessor_id or request_id is None:
                 raise ValueError("invalid_upload_preparation")
-            self._offered_analysis_mode(preparation["analysis_mode"])
             context = {PREPARATION_KEY: preparation}
         if predecessor_id:
             resource = self.resource(predecessor_id)
@@ -3158,24 +3149,16 @@ class AuthStore:
                 if conn.execute("SELECT 1 FROM product.resources WHERE id = %s", (draft_id,)).fetchone():
                     raise KeyError("missing")
                 prepared = self._preparation_items(conn, principal, preparation) if preparation is not None else self._bound_audit_items(conn, principal, items or [], require_rules=False)
-                mode = preparation["analysis_mode"] if preparation is not None else ANALYSIS_STANDARD
-                if predecessor_id:
-                    inherited = conn.execute(
-                        "SELECT analysis_mode FROM product.audit_rounds WHERE id = %s",
-                        (predecessor_id,),
-                    ).fetchone()
-                    if inherited:
-                        mode = self._offered_analysis_mode(inherited[0], allow_reject=False)
                 conn.execute(
                     "INSERT INTO product.resources (id, tenant_id, kind) VALUES (%s, %s, 'audit_draft')",
                     (draft_id, principal.tenant_id),
                 )
                 conn.execute(
                     """
-                    INSERT INTO product.audit_drafts (id, tenant_id, created_by, status, predecessor_id, analysis_mode, case_context)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO product.audit_drafts (id, tenant_id, created_by, status, predecessor_id, case_context)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     """,
-                    (draft_id, principal.tenant_id, principal.user_id, DRAFT_OPEN, predecessor_id, mode, Jsonb(context)),
+                    (draft_id, principal.tenant_id, principal.user_id, DRAFT_OPEN, predecessor_id, Jsonb(context)),
                 )
                 conn.execute(
                     """
@@ -3237,21 +3220,11 @@ class AuthStore:
             ).fetchone()
         return str(row[0]) if row else None
 
-    def _offered_analysis_mode(self, value, allow_reject: bool = True) -> str:
-        """Only Standard audits are accepted; Deep generation now belongs to 探索模式, not to an audit."""
-        mode = normalize_analysis_mode(value)
-        if mode == ANALYSIS_STANDARD:
-            return mode
-        if allow_reject:
-            raise ValueError("deep_not_available")
-        return ANALYSIS_STANDARD
-
     def save_draft(
         self,
         principal: Principal,
         draft_id: str,
         items: list[dict] | None,
-        analysis_mode: str | None = None,
         writeback_target=None,
         case_context: dict | None = None,
         *,
@@ -3279,7 +3252,7 @@ class AuthStore:
                 previous_preparation = (draft[4] or {}).get(PREPARATION_KEY)
                 if upload_preparation is not None or previous_preparation is not None:
                     self._require_preparation_owner(conn, principal, parsed)
-                    if previous_preparation is None or upload_preparation is None or any(value is not None for value in (items, analysis_mode, case_context)):
+                    if previous_preparation is None or upload_preparation is None or any(value is not None for value in (items, case_context)):
                         raise ValueError("invalid_upload_preparation")
                     if type(expected_revision) is not int or expected_revision < 0:
                         raise ValueError("invalid_draft_revision")
@@ -3287,7 +3260,6 @@ class AuthStore:
                         raise ValueError("draft_revision_conflict")
                     preparation = normalize_preparation(upload_preparation)
                     validate_preparation_update(previous_preparation, preparation)
-                    mode = self._offered_analysis_mode(preparation["analysis_mode"])
                     prepared = self._preparation_items(conn, principal, preparation)
                     if writeback_target is not None:
                         # The target belongs to the same revision as the saved
@@ -3298,8 +3270,8 @@ class AuthStore:
                     for row in prepared:
                         conn.execute("INSERT INTO product.draft_items (draft_id, file_version_id, role) VALUES (%s, %s, 'reference')", (parsed, row["file_version_id"]))
                     conn.execute(
-                        "UPDATE product.audit_drafts SET case_context = %s, input_revision = input_revision + 1, analysis_mode = %s, updated_at = now() WHERE id = %s",
-                        (Jsonb({PREPARATION_KEY: preparation}), mode, parsed),
+                        "UPDATE product.audit_drafts SET case_context = %s, input_revision = input_revision + 1, updated_at = now() WHERE id = %s",
+                        (Jsonb({PREPARATION_KEY: preparation}), parsed),
                     )
                     return cast(dict, self._draft_public(conn, parsed))
                 if items is not None:
@@ -3313,13 +3285,7 @@ class AuthStore:
                             """,
                             (parsed, row["file_version_id"], row["role"], row["rule_version_id"]),
                         )
-                if analysis_mode is not None:
-                    mode = self._offered_analysis_mode(analysis_mode)
-                    conn.execute(
-                        "UPDATE product.audit_drafts SET analysis_mode = %s, updated_at = now() WHERE id = %s",
-                        (mode, parsed),
-                    )
-                elif items is not None:
+                if items is not None:
                     conn.execute("UPDATE product.audit_drafts SET updated_at = now() WHERE id = %s", (parsed,))
                 if writeback_target is not None:
                     self.save_draft_writeback(conn, parsed, normalize_external_ref(writeback_target) if writeback_target else None)
@@ -3464,7 +3430,7 @@ class AuthStore:
                    FROM product.audit_rounds r
                    LEFT JOIN product.audit_drafts d ON d.id = r.source_draft_id
                    WHERE r.tenant_id = %s
-                     AND ((d.task_fingerprint IS NULL AND NOT EXISTS (SELECT 1 FROM product.deep_rule_changes c WHERE c.analysis_round_id=r.id)) OR EXISTS (SELECT 1 FROM product.resource_grants g
+                     AND (d.task_fingerprint IS NULL OR EXISTS (SELECT 1 FROM product.resource_grants g
                          WHERE g.resource_id = r.id AND g.user_id = %s AND g.capability IN ('read', 'review')))
                      AND (%s = '' OR r.execution = %s)
                      AND (NOT %s OR EXISTS (
@@ -3637,7 +3603,7 @@ class AuthStore:
         with self._conn() as conn:
             head = conn.execute(
                 """
-                SELECT id, tenant_id, result_attempt, analysis_mode, created_by
+                SELECT id, tenant_id, result_attempt, created_by
                 FROM product.audit_rounds WHERE id = %s
                 """,
                 (parsed,),
@@ -3679,8 +3645,7 @@ class AuthStore:
                 for row in rows
             ],
             head[2],
-            normalize_analysis_mode(head[3]),
-            str(head[4]) if head[4] else "",
+            str(head[3]) if head[3] else "",
         )
 
     def claim_job(self, worker_ident: str, *, formalizations: str = "any") -> ClaimedJob | None:
@@ -3900,7 +3865,7 @@ class AuthStore:
                 return True
 
     def _queue_file_reports(self, conn, claimed: ClaimedJob, result: dict) -> None:
-        head = conn.execute("SELECT source_draft_id, analysis_mode FROM product.audit_rounds WHERE id = %s AND tenant_id = %s", (claimed.round_id, claimed.tenant_id)).fetchone()
+        head = conn.execute("SELECT source_draft_id FROM product.audit_rounds WHERE id = %s AND tenant_id = %s", (claimed.round_id, claimed.tenant_id)).fetchone()
         if not head or not head[0] or not conn.execute("SELECT id FROM product.audit_drafts WHERE id = %s AND task_fingerprint IS NOT NULL", (head[0],)).fetchone():
             return
         rows = conn.execute(
@@ -3919,7 +3884,6 @@ class AuthStore:
         ]
         round = {
             "id": claimed.round_id,
-            "analysis_mode": head[1],
             "execution": "completed",
             "result_attempt": claimed.attempt,
             "result_job_id": claimed.id,
@@ -4520,17 +4484,16 @@ class AuthStore:
         conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (principal.tenant_id + ":" + key,))
         existing = conn.execute(
             """
-            SELECT id, request_fingerprint, predecessor_id, analysis_mode, source_draft_id, created_by FROM product.audit_rounds
+            SELECT id, request_fingerprint, predecessor_id, source_draft_id, created_by FROM product.audit_rounds
             WHERE tenant_id = %s AND idempotency_key = %s
             """,
             (principal.tenant_id, key),
         ).fetchone()
-        if existing and str(existing[4]) != source_draft_id and conn.execute("SELECT 1 FROM product.audit_drafts WHERE id = %s AND task_fingerprint IS NOT NULL", (existing[4],)).fetchone():
+        if existing and str(existing[3]) != source_draft_id and conn.execute("SELECT 1 FROM product.audit_drafts WHERE id = %s AND task_fingerprint IS NOT NULL", (existing[3],)).fetchone():
             raise ValueError("idempotency_conflict")
         draft_status = None
         recognized_metadata: dict[str, dict] = {}
         recognized_types: dict[str, str | None] = {}
-        analysis_mode = ANALYSIS_STANDARD
         if source_draft_id:
             draft = conn.execute(
                 """
@@ -4549,7 +4512,7 @@ class AuthStore:
             if task_revision is not None:
                 owned = self._recognition_owner(conn, principal, source_draft_id)
                 predecessor_id = str(owned["predecessor_id"]) if owned["predecessor_id"] else None
-                if existing and (str(existing[4]) != source_draft_id or str(existing[5]) != principal.user_id):
+                if existing and (str(existing[3]) != source_draft_id or str(existing[4]) != principal.user_id):
                     raise ValueError("idempotency_conflict")
                 if owned["input_revision"] != task_revision:
                     raise ValueError("task_revision_conflict")
@@ -4618,18 +4581,6 @@ class AuthStore:
                     (source_draft_id,),
                 ).fetchall()
                 items = [{"file_version_id": str(row[0]), "role": row[1], "rule_version_id": str(row[2]) if row[2] else None} for row in rows]
-            mode_row = conn.execute(
-                "SELECT analysis_mode FROM product.audit_drafts WHERE id = %s",
-                (source_draft_id,),
-            ).fetchone()
-            analysis_mode = normalize_analysis_mode(mode_row[0] if mode_row else ANALYSIS_STANDARD)
-        elif predecessor_id:
-            mode_row = conn.execute(
-                "SELECT analysis_mode FROM product.audit_rounds WHERE id = %s",
-                (predecessor_id,),
-            ).fetchone()
-            # Re-auditing a historical Deep round runs the validated Suites.
-            analysis_mode = self._offered_analysis_mode(mode_row[0] if mode_row else ANALYSIS_STANDARD, allow_reject=False)
         if items is None:
             items = []
         prepared = self._bound_audit_items(conn, principal, items)
@@ -4642,16 +4593,15 @@ class AuthStore:
             resource = self._resource(conn, str(existing[0]))
             if resource is None or not can_read(principal, resource, self._grants(conn, str(existing[0]), principal.user_id)):
                 raise KeyError("missing")
-            if existing[1] != fingerprint or (str(existing[2]) if existing[2] else None) != predecessor_id or existing[3] != analysis_mode:
+            if existing[1] != fingerprint or (str(existing[2]) if existing[2] else None) != predecessor_id:
                 raise ValueError("idempotency_conflict")
             return cast(dict, self._round_public(conn, str(existing[0])))
-        analysis_mode = self._offered_analysis_mode(analysis_mode)
         if source_draft_id and draft_status == DRAFT_ACCEPTED:
             raise ValueError("draft_already_accepted")
         round_id = str(uuid.uuid4())
         from product.store.suites import SuiteStore, freeze_round_execution
 
-        snapshot = freeze_round_execution(self, conn, principal, round_id=round_id, prepared=prepared, analysis_mode=analysis_mode)
+        snapshot = freeze_round_execution(self, conn, principal, round_id=round_id, prepared=prepared)
         if expected_model_revision is not _MODEL_REVISION_UNSPECIFIED and expected_model_revision != snapshot.model_identity.get("revision"):
             raise ValueError("model_configuration_changed")
         execution_payload: dict[str, Any] = {
@@ -4672,9 +4622,9 @@ class AuthStore:
             INSERT INTO product.audit_rounds (
                 id, tenant_id, created_by, source_draft_id, predecessor_id,
                 idempotency_key,
-                request_fingerprint, execution, analysis_mode
+                request_fingerprint, execution
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 round_id,
@@ -4685,7 +4635,6 @@ class AuthStore:
                 key,
                 fingerprint,
                 EXEC_QUEUED,
-                analysis_mode,
             ),
         )
         for row in prepared:
@@ -4806,7 +4755,7 @@ class AuthStore:
     def _draft_public(self, conn, draft_id: str) -> dict | None:
         row = conn.execute(
             """
-            SELECT d.id, d.tenant_id, d.status, d.updated_at, d.predecessor_id, d.analysis_mode, d.case_context, d.input_revision, d.task_fingerprint
+            SELECT d.id, d.tenant_id, d.status, d.updated_at, d.predecessor_id, d.case_context, d.input_revision, d.task_fingerprint
             FROM product.audit_drafts d
             WHERE d.id = %s
             """,
@@ -4830,11 +4779,10 @@ class AuthStore:
             "status": row[2],
             "updated_at": row[3].isoformat(),
             "predecessor_id": str(row[4]) if row[4] else None,
-            "analysis_mode": normalize_analysis_mode(row[5]),
-            "case_context": {key: value for key, value in (row[6] or {}).items() if key != PREPARATION_KEY},
-            "upload_preparation": (row[6] or {}).get(PREPARATION_KEY),
-            "preparation_revision": row[7] if PREPARATION_KEY in (row[6] or {}) and row[8] is None else None,
-            "task_id": str(row[0]) if row[8] is not None else None,
+            "case_context": {key: value for key, value in (row[5] or {}).items() if key != PREPARATION_KEY},
+            "upload_preparation": (row[5] or {}).get(PREPARATION_KEY),
+            "preparation_revision": row[6] if PREPARATION_KEY in (row[5] or {}) and row[7] is None else None,
+            "task_id": str(row[0]) if row[7] is not None else None,
             "writeback": public_target(self.draft_writeback(conn, str(row[0]))),
             "items": [
                 {
@@ -4855,7 +4803,7 @@ class AuthStore:
             return []
         with conn.pipeline():
             rounds = conn.execute(
-                """SELECT r.id, r.execution, r.predecessor_id, r.created_at, r.analysis_mode, r.case_context, r.coverage,
+                """SELECT r.id, r.execution, r.predecessor_id, r.created_at, r.case_context, r.coverage,
                 r.source_draft_id, CASE WHEN d.task_fingerprint IS NOT NULL THEN d.id END,
                 GREATEST(r.created_at,
                     (SELECT max(j.updated_at) FROM engine.jobs j WHERE j.audit_round_id = r.id),
@@ -4899,7 +4847,7 @@ class AuthStore:
                 result_counts[status] = int(n)
                 if status != "NA":
                     reviewable_keys.update(keys)
-        coverage_items = (row[6] or {}).get("rule_items", [])
+        coverage_items = (row[5] or {}).get("rule_items", [])
         uncovered = [item for item in coverage_items if isinstance(item, dict) and item.get("coverage") != "executed" and item.get("item_key") not in finding_keys]
         uncovered_count = len(uncovered)
         reviewable_keys.update(f"coverage:{item.get('file_version_id')}:{item.get('id')}" for item in uncovered)
@@ -4921,7 +4869,7 @@ class AuthStore:
             for key, judgment, rationale, citations in reviews
         )
         try:
-            registration = json.loads((row[5] or {}).get("registration", "{}"))
+            registration = json.loads((row[4] or {}).get("registration", "{}"))
             scope = registration.get("scope", {}) if isinstance(registration, dict) else {}
             scope = scope if isinstance(scope, dict) else {}
         except (ValueError, TypeError):
@@ -4930,13 +4878,12 @@ class AuthStore:
         return {
             "id": str(row[0]),
             "execution": row[1],
-            "has_execution_error": has_execution_error(row[1], row[6] or {}, findings),
-            "source_draft_id": str(row[7]) if row[7] else None,
-            "task_id": str(row[8]) if row[8] else None,
-            "updated_at": row[9].isoformat() if row[9] is not None else None,
+            "has_execution_error": has_execution_error(row[1], row[5] or {}, findings),
+            "source_draft_id": str(row[6]) if row[6] else None,
+            "task_id": str(row[7]) if row[7] else None,
+            "updated_at": row[8].isoformat() if row[8] is not None else None,
             "predecessor_id": str(row[2]) if row[2] else None,
             "created_at": row[3].isoformat() if row[3] is not None else None,
-            "analysis_mode": normalize_analysis_mode(row[4]),
             "inputs": [
                 {
                     "role": item[0],
@@ -4958,7 +4905,7 @@ class AuthStore:
         with conn.pipeline():
             round_read = conn.execute(
                 """SELECT id, execution, coverage, predecessor_id,
-                       source_draft_id, result_attempt, created_at, analysis_mode, case_context,
+                       source_draft_id, result_attempt, created_at, case_context,
                        EXISTS (SELECT 1 FROM product.audit_drafts d WHERE d.id = source_draft_id AND d.task_fingerprint IS NOT NULL),
                        (SELECT json_build_object('provider', provider, 'object_kind', object_kind, 'object_ref', object_ref)
                         FROM product.round_writeback_targets WHERE round_id = a.id), a.review_document_pairs
@@ -5023,14 +4970,13 @@ class AuthStore:
             "coverage": coverage,
             "predecessor_id": str(row[3]) if row[3] else None,
             "source_draft_id": str(row[4]) if row[4] else None,
-            "preparation_allowed": row[1] == EXEC_FAILED and not row[9],
+            "preparation_allowed": row[1] == EXEC_FAILED and not row[8],
             "result_attempt": row[5],
             "result_job_id": str(job[3]) if job else None,
             "created_at": row[6].isoformat() if row[6] is not None else None,
-            "analysis_mode": normalize_analysis_mode(row[7]),
-            "case_context": row[8] or {},
-            "writeback": public_target(row[10]),
-            "review_document_pairs": row[11],
+            "case_context": row[7] or {},
+            "writeback": public_target(row[9]),
+            "review_document_pairs": row[10],
             **_executor_public(payload),
             "progress": progress,
             "failure": diagnostic.get("failure"),
@@ -5079,7 +5025,7 @@ class AuthStore:
                 for item in inputs
             }
             view = round_read_view(body, versions)
-            if row[9] and principal is not None:
+            if row[8] and principal is not None:
                 task_id = str(row[4])
                 try:
                     self._recognition_owner(conn, principal, task_id)

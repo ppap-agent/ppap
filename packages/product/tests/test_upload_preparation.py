@@ -10,7 +10,6 @@ from product.store.upload_preparation import normalize_preparation, preparation_
 def preparation():
     return {
         "version": 1,
-        "analysis_mode": "standard",
         "customer_preference": None,
         "predecessor_id": None,
         "uploads": [{"request_id": str(uuid4()), "kind": "local", "name": "控制计划.xlsx", "byte_size": 8, "sha256": "a" * 64, "removed": False}],
@@ -24,7 +23,7 @@ def test_preparation_retains_unknown_upload_and_ready_selection_without_inventin
     saved = normalize_preparation(raw)
     assert saved == fixed and raw == fixed
     assert "state" not in saved["uploads"][0]
-    assert preparation_inputs(saved) == {"files": fixed["files"], "analysis_mode": "standard", "customer_preference": None}
+    assert preparation_inputs(saved) == {"files": fixed["files"], "customer_preference": None}
     selected = preparation_inputs(saved)
     selected["files"].clear()
     assert saved == fixed
@@ -97,3 +96,10 @@ def test_feishu_intent_preserves_source_and_same_request_without_claiming_it_was
     raw = preparation()
     raw["uploads"] = [{"request_id": str(uuid4()), "kind": "feishu", "name": "云端控制计划", "drive_file": {"token": "original-doc", "name": "云端控制计划", "type": "sheet"}, "removed": False}]
     assert normalize_preparation(raw)["uploads"] == raw["uploads"]
+
+
+def test_a_sent_mode_key_is_ignored():
+    raw = preparation()
+    legacy = {**deepcopy(raw), "analysis_mode": "deep"}
+    assert normalize_preparation(legacy) == normalize_preparation(raw)
+    assert "analysis_mode" not in preparation_inputs(legacy)

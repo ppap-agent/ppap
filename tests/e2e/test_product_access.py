@@ -48,7 +48,6 @@ def test_customer_catalog_refresh_keeps_the_restored_task_and_file_selection(pag
         "id": "original-task",
         "number": "PPAP-20261019-001",
         "state": "pending_confirm",
-        "analysis_mode": "standard",
         "created_at": "2026-10-19T00:00:00Z",
         "updated_at": "2026-10-19T00:00:00Z",
         "source_draft_id": "original-task",

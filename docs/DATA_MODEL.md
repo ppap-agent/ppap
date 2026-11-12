@@ -72,7 +72,6 @@ Deep 的规则附录是明确输入，由用户确认的解释、映射或标准
 
 ```text
 audit_round
-  -> analysis_mode (standard | deep; 草稿可改，受理后冻结)
   -> target file_version_id + frozen rule_version (id/title/body)
   -> reference file_version_id (无审核规则，仅上下文)
   -> job/attempt（冻结 executor / executor_revision）
@@ -80,7 +79,7 @@ audit_round
   -> human reviews
 ```
 
-`analysis_mode` 属于草稿和轮次，不是文件或规则属性。缺省 `standard`。相同幂等键、相同文件版本/角色/规则绑定、但不同 `analysis_mode` 视为冲突。`request_fingerprint` 仍只覆盖文件版本/角色/规则绑定，不把模式塞进指纹。SHA-256 只用于 Deep 执行完整性校验，不替代 `file_version_id`。
+审核只有一种，没有审核模式（#322）。生产 Deep 数据删除后，migration 0070 删除了 `audit_drafts.analysis_mode` / `audit_rounds.analysis_mode` 列、`deep_rule_changes` 与 `checker_round_artifacts` 表，并清除已保存上传准备里的 `analysis_mode` 键。API 不接收也不返回审核模式；旧客户端仍发送的 `analysis_mode` 被忽略。`request_fingerprint` 只覆盖文件版本/角色/规则绑定。SHA-256 只用于执行完整性校验，不替代 `file_version_id`。
 
 新 Deep 受理将 `DeepExecutionPolicy` 的实际配置摘要写入既有 job 的 `executor_revision`；`protocol_revision` 仅标识传输协议。API、Worker 与 runtime 共用非密钥策略字段及计算方法，包含应用、模型配置、隔离与资源配置和显式标签。执行端在读取缓存、启动 guest 或模型工作前核对实际摘要；配置变化不能自动替换旧轮次的策略。原确认重放返回原回执，旧结果不补标或重写；旧标签本身不能证明配置冻结。模型配置摘要不保证远端权重不变或输出逐位复现。
 
@@ -100,7 +99,7 @@ audit_round
 
 实际返回的 PASS/NG 决定计数、文件结论和报告。证据核验标记、定位、摘录及检查范围说明是独立信息；缺失不抹掉实际结果，也不阻止完整结果生成报告。真正缺少结果、UNABLE 或 ERR 仍不能生成完整 PASS/NG 报告。人工复核与机器结果分开保存。
 
-相同租户、相同幂等键、相同文件版本/角色/规则绑定与 `analysis_mode` 返回同一轮次；同键不同请求冲突。幂等键不是授权，返回既有轮次前仍检查对象权限。创建轮次、冻结输入和创建执行工作在一个 PostgreSQL 事务内完成。
+相同租户、相同幂等键、相同文件版本/角色/规则绑定与前轮返回同一轮次；同键不同请求冲突。幂等键不是授权，返回既有轮次前仍检查对象权限。创建轮次、冻结输入和创建执行工作在一个 PostgreSQL 事务内完成。
 
 Worker 用租约/attempt fencing 防止晚到结果覆盖当前结果。技术重试保持轮次不变；用户主动重审创建新轮次。
 

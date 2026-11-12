@@ -55,8 +55,8 @@ def test_rule_live_scenario_uses_uploaded_rule_text_and_explicit_reconfirmation(
         conn.execute("INSERT INTO product.rule_versions(id,tenant_id,title,body) VALUES(%s,%s,'原规则',%s)", (rule_id, alice.tenant_id, Jsonb({**rules, "suite_revision_id": base.id})))
         conn.execute("INSERT INTO product.resources(id,tenant_id,kind) VALUES(%s,%s,'audit_round')", (rid, alice.tenant_id))
         conn.execute(
-            """INSERT INTO product.audit_rounds(id,tenant_id,created_by,idempotency_key,request_fingerprint,execution,result_attempt,analysis_mode)
-               VALUES(%s,%s,%s,%s,'protocol-baseline','completed',1,'standard')""",
+            """INSERT INTO product.audit_rounds(id,tenant_id,created_by,idempotency_key,request_fingerprint,execution,result_attempt)
+               VALUES(%s,%s,%s,%s,'protocol-baseline','completed',1)""",
             (rid, alice.tenant_id, alice.user_id, rid),
         )
         conn.execute(

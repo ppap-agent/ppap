@@ -34,9 +34,6 @@ def _text(value, maximum=500) -> str:
 def normalize_preparation(value) -> dict:
     if not isinstance(value, dict) or type(value.get("version")) is not int or value["version"] != 1:
         raise ValueError("invalid_upload_preparation")
-    mode = value.get("analysis_mode")
-    if mode not in ("standard", "deep"):
-        raise ValueError("invalid_upload_preparation")
     customer = value.get("customer_preference")
     if customer is not None:
         _text(customer)
@@ -94,7 +91,7 @@ def normalize_preparation(value) -> dict:
         normalized_files.append(row)
     if len({row["request_id"] for row in normalized_uploads}) != len(normalized_uploads) or len({row["file_version_id"] for row in normalized_files}) != len(normalized_files):
         raise ValueError("invalid_upload_preparation")
-    result = {"version": 1, "analysis_mode": mode, "customer_preference": customer, "predecessor_id": predecessor, "uploads": normalized_uploads, "files": normalized_files}
+    result = {"version": 1, "customer_preference": customer, "predecessor_id": predecessor, "uploads": normalized_uploads, "files": normalized_files}
     if len(json.dumps(result, ensure_ascii=False).encode()) > 262144:
         raise ValueError("invalid_upload_preparation")
     return result
@@ -112,7 +109,7 @@ def validate_preparation_update(previous: dict, current: dict) -> None:
 
 
 def preparation_inputs(preparation: dict) -> dict:
-    result = {key: deepcopy(preparation[key]) for key in ("files", "analysis_mode", "customer_preference")}
+    result = {key: deepcopy(preparation[key]) for key in ("files", "customer_preference")}
     if preparation["predecessor_id"]:
         result["predecessor_id"] = preparation["predecessor_id"]
     return result

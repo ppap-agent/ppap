@@ -40,7 +40,7 @@ export function suiteAdmissionBlocks(task: Task) {
 }
 
 function acceptedSnapshot(before: Task, after: Task, requestId: string) {
-  if (after.id !== before.id || after.acceptance?.request_id !== requestId || after.acceptance.state !== 'accepted' || !after.round_id || !['reviewing', 'completed'].includes(after.state) || after.analysis_mode !== before.analysis_mode) return false
+  if (after.id !== before.id || after.acceptance?.request_id !== requestId || after.acceptance.state !== 'accepted' || !after.round_id || !['reviewing', 'completed'].includes(after.state)) return false
   if (after.state === 'completed' ? after.completion_reason !== 'processed' : after.completion_reason !== null) return false
   const scope = confirmationScope(before)
   if (!scope?.target_file_version_ids.length || !sameSnapshot(scope, after.confirmation_scope)) return false

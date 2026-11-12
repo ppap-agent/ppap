@@ -171,7 +171,7 @@ class OpenAPIContractTests(unittest.TestCase):
         spec = app.openapi()
         schemas = spec["components"]["schemas"]
         self.assertEqual(schemas["Draft"]["properties"]["upload_preparation"]["anyOf"][0]["$ref"], "#/components/schemas/AuditUploadPreparation")
-        self.assertEqual(set(schemas["AuditUploadPreparation"]["required"]), {"version", "analysis_mode", "customer_preference", "predecessor_id", "uploads", "files"})
+        self.assertEqual(set(schemas["AuditUploadPreparation"]["required"]), {"version", "customer_preference", "predecessor_id", "uploads", "files"})
         self.assertEqual(schemas["AuditPreparedUpload"]["properties"]["removed"]["type"], "boolean")
         self.assertEqual(schemas["Draft"]["properties"]["task_id"]["anyOf"][0]["type"], "string")
         create = _request_schema(spec["paths"]["/drafts"]["post"])
@@ -230,7 +230,7 @@ class OpenAPIContractTests(unittest.TestCase):
         self.assertEqual(set(_request_schema(confirmation)["required"]), {"request_id", "expected_revision", "expected_confirmation_basis_digest"})
         self.assertEqual(_request_schema(confirmation)["properties"]["expected_confirmation_basis_digest"]["type"], "string")
         request = _request_schema(app.openapi()["paths"]["/audit-tasks"]["post"])
-        self.assertEqual(set(request["required"]), {"request_id", "analysis_mode", "customer_preference", "files"})
+        self.assertEqual(set(request["required"]), {"request_id", "customer_preference", "files"})
         self.assertEqual(set(request["properties"]["files"]["items"]["required"]), {"file_version_id", "validation_id", "selection", "removal_reason"})
 
     def test_file_validation_is_a_runtime_contract_separate_from_matching_and_audit(self):

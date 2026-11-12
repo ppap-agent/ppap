@@ -704,7 +704,6 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
                 "request_id": str(uuid.uuid4()),
                 "task_id": task["id"],
                 "expected_revision": 0,
-                "analysis_mode": "standard",
                 "customer_preference": None,
                 "files": [{"file_version_id": row["file"]["id"], "validation_id": row["validation_id"], "selection": row["selection"], "removal_reason": None} for row in task["files"]],
             },
@@ -1390,7 +1389,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
             rows = self.store.list_audit_tasks(self.alice)
         self.assertEqual(connections.call_count, 1)
         summary = next(row for row in rows if row["id"] == task["id"])
-        for key in ("id", "number", "state", "round_id", "input_revision", "analysis_mode", "created_at", "completion_reason"):
+        for key in ("id", "number", "state", "round_id", "input_revision", "created_at", "completion_reason"):
             self.assertEqual(summary[key], expected[key])
         self.assertEqual(summary["files"], [{"file": row["file"], "selection": row["selection"]} for row in expected["files"]])
         self.assertNotIn("progress", summary)
@@ -1565,7 +1564,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
             self.assertEqual(job.kind, "file_validation")
             self.assertTrue(worker.complete_job(job, "display-test", {"state": "valid", "reasons": []}, "succeeded"))
             inputs.append({"file_version_id": file.id, "validation_id": key, "selection": "selected", "removal_reason": None})
-        task = self.store.create_audit_task(self.alice, {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": inputs})
+        task = self.store.create_audit_task(self.alice, {"request_id": str(uuid.uuid4()), "customer_preference": None, "files": inputs})
         for _ in files:
             job = worker.claim_job("display-test")
             self.assertEqual(job.kind, "file_analysis")

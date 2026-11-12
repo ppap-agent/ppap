@@ -11,7 +11,6 @@ from fastapi import FastAPI
 from product.standard_policy import StandardExecutionPolicy
 from pydantic import ConfigDict, Field, TypeAdapter
 
-AnalysisMode = Literal["standard", "deep"]
 FindingStatus = Literal["PASS", "NG", "ERR", "UNABLE", "NA"]
 MaterialRole = Literal["target", "reference"]
 CoverageState = Literal["mapped", "unsupported", "executed", "execution_error"]
@@ -330,7 +329,6 @@ class Draft(TypedDict):
     items: list[MaterialWire]
     updated_at: str
     predecessor_id: str | None
-    analysis_mode: AnalysisMode
     writeback: WritebackTarget
     case_context: NotRequired[CaseContext]
     upload_preparation: NotRequired[AuditUploadPreparation | None]
@@ -363,7 +361,6 @@ class AuditUploadDriveFile(TypedDict):
 
 class AuditUploadPreparation(TypedDict):
     version: Literal[1]
-    analysis_mode: AnalysisMode
     customer_preference: str | None
     predecessor_id: str | None
     uploads: list[AuditPreparedUpload]
@@ -392,7 +389,6 @@ class WritebackTargetRequest(TypedDict):
 
 class DraftSaveRequest(TypedDict, total=False):
     items: list[DraftInputItem]
-    analysis_mode: AnalysisMode
     writeback_target: WritebackTargetRequest | None
     case_context: CaseContext
     upload_preparation: AuditUploadPreparation
@@ -658,7 +654,6 @@ class Round(TypedDict):
     result_attempt: int | None
     result_job_id: NotRequired[str | None]
     created_at: str | None
-    analysis_mode: AnalysisMode
     writeback: WritebackTarget
     case_context: NotRequired[CaseContext]
     progress: RoundProgress | None
@@ -692,7 +687,6 @@ class RoundSummary(TypedDict):
     predecessor_id: str | None
     created_at: str | None
     updated_at: NotRequired[str | None]
-    analysis_mode: AnalysisMode
     inputs: list[RoundSummaryInput]
     result_counts: dict[str, int]
     reviewed_count: int
@@ -1196,7 +1190,6 @@ class AuditTaskIdentity(TypedDict):
     id: str
     number: str
     state: Literal["matching", "pending_confirm", "reviewing", "completed"]
-    analysis_mode: AnalysisMode
     created_at: str
     updated_at: str
     source_draft_id: str | None
@@ -1223,7 +1216,6 @@ class AuditRecognitionInput(TypedDict):
 
 class AuditRecognitionRequest(TypedDict):
     request_id: str
-    analysis_mode: AnalysisMode
     customer_preference: str | None
     files: list[AuditRecognitionInput]
     task_id: NotRequired[str]
@@ -1235,7 +1227,6 @@ class AuditRecognitionRequest(TypedDict):
 
 class AuditReauditInputs(TypedDict):
     predecessor_id: str
-    analysis_mode: AnalysisMode
     customer_preference: str | None
     files: list[AuditRecognitionFile]
 
@@ -1280,7 +1271,6 @@ class AuditTaskSummary(TypedDict):
     number: str
     state: Literal["matching", "pending_confirm", "reviewing", "completed"]
     input_revision: int
-    analysis_mode: AnalysisMode
     created_at: str
     updated_at: str
     round_id: str | None

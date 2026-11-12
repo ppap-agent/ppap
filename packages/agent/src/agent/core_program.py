@@ -36,22 +36,19 @@ class AuditJobSpec(BaseModel):
     execution_id: UUID
     input_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
     executor_revision: str = Field(min_length=1)
-    analysis_mode: Literal["standard", "deep"] = "standard"
     allow_model_calls: bool = True
     unavailable_sources: tuple[str, ...] = ()
 
     @classmethod
-    def from_snapshot(
-        cls, snapshot: ExecutionSnapshot, analysis_mode: Literal["standard", "deep"] = "standard", allow_model_calls: bool = True, unavailable_sources: frozenset[str] = frozenset()
-    ) -> AuditJobSpec:
+    def from_snapshot(cls, snapshot: ExecutionSnapshot, allow_model_calls: bool = True, unavailable_sources: frozenset[str] = frozenset()) -> AuditJobSpec:
         unavailable = tuple(sorted(unavailable_sources))
         # A restored object cannot replay the outcome of an unavailable attempt.
         availability = ":" + json.dumps(unavailable, separators=(",", ":")) if unavailable else ""
+        # "standard" keeps execution ids of existing audits stable; there is one audit kind.
         return cls(
-            execution_id=uuid5(NAMESPACE_URL, "ppap-audit:" + analysis_mode + ":" + str(allow_model_calls) + ":" + snapshot.input_digest + availability),
+            execution_id=uuid5(NAMESPACE_URL, "ppap-audit:standard:" + str(allow_model_calls) + ":" + snapshot.input_digest + availability),
             input_digest=snapshot.input_digest,
             executor_revision=snapshot.runtime_revision,
-            analysis_mode=analysis_mode,
             allow_model_calls=allow_model_calls,
             unavailable_sources=unavailable,
         )
@@ -63,13 +60,9 @@ def write_audit_manifest(
     sources: dict[str, bytes],
     programs: dict[str, dict[str, bytes]],
     *,
-    analysis_mode: Literal["standard", "deep"] = "standard",
     allow_model_calls: bool = True,
     unavailable_sources: frozenset[str] = frozenset(),
 ) -> AuditJobSpec:
-    if analysis_mode != "standard":
-        # Generating checkers at audit time was retired; 探索模式 develops them (#322).
-        raise DeepError("deep_audit_retired")
     snapshot.validate_sources(sources, unavailable=unavailable_sources)
     expected = {target.binding.checker_digest for target in snapshot.targets}
     if set(programs) != expected or any(checker_digest(files) != digest for digest, files in programs.items()):
@@ -100,7 +93,7 @@ def write_audit_manifest(
             staged = f"program-{index}-{name}"
             stage(staged, body)
             program_paths[digest][name] = staged
-    job = AuditJobSpec.from_snapshot(snapshot, analysis_mode, allow_model_calls, unavailable_sources)
+    job = AuditJobSpec.from_snapshot(snapshot, allow_model_calls, unavailable_sources)
     raw = json.dumps(
         {"operation": "execute-audit", "spec": job.model_dump(mode="json"), "snapshot": snapshot.to_dict(), "source_paths": source_paths, "program_paths": program_paths}, ensure_ascii=False
     ).encode()
@@ -130,10 +123,8 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
     snapshot = ExecutionSnapshot.from_dict(manifest["snapshot"])
     job = AuditJobSpec.model_validate(manifest["spec"])
     unavailable = frozenset(job.unavailable_sources)
-    if job != AuditJobSpec.from_snapshot(snapshot, job.analysis_mode, job.allow_model_calls, unavailable):
+    if job != AuditJobSpec.from_snapshot(snapshot, job.allow_model_calls, unavailable):
         raise ValueError("audit_manifest_identity_mismatch")
-    if job.analysis_mode != "standard":
-        raise ValueError("deep_audit_retired")
     total = 0
 
     def read(name: str) -> bytes:
@@ -194,7 +185,6 @@ class CoreRuntime(SemanticRuntime):
         programs: dict[str, dict[str, bytes]],
         context: ExecutionContext,
         *,
-        analysis_mode: Literal["standard", "deep"] = "standard",
         allow_model_calls: bool = True,
     ) -> dict:
         from agent.execution.audit_runtime import _validate_output
@@ -204,7 +194,7 @@ class CoreRuntime(SemanticRuntime):
             root = Path(root_name)
             work, inputs = root / "work", root / "inputs"
             work.mkdir()
-            job = write_audit_manifest(inputs, snapshot, sources, programs, analysis_mode=analysis_mode, allow_model_calls=allow_model_calls, unavailable_sources=context.unavailable_sources)
+            job = write_audit_manifest(inputs, snapshot, sources, programs, allow_model_calls=allow_model_calls, unavailable_sources=context.unavailable_sources)
             try:
                 self.runtime.run(job, inputs, work, time.monotonic() + self.timeout, context.cancelled)
                 result = read_json(work, ("result", "bundle.json"), MAX_BUNDLE)
@@ -245,7 +235,7 @@ class CoreRuntime(SemanticRuntime):
                 raise DeepError("deep_integrity_mismatch")
             programs[target.binding.checker_digest] = code
         context.progress({"phase": "checking"})
-        result = self.execute_snapshot(snapshot, files, programs, context, analysis_mode=spec.analysis_mode)
+        result = self.execute_snapshot(snapshot, files, programs, context)
         context.progress({"phase": "validating"})
         return core_response(spec, snapshot, result)
 

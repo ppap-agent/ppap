@@ -401,7 +401,6 @@ def create_round(page, f, value, index):
             f.web + "/api/audit-tasks",
             data={
                 "request_id": str(uuid4()),
-                "analysis_mode": "standard",
                 "customer_preference": None,
                 "files": [{"file_version_id": uploaded["id"], "validation_id": validation["id"], "selection": "selected", "removal_reason": None}],
             },
@@ -713,7 +712,6 @@ def test_workspace_http_receipts_use_real_trials_and_frozen_reaudit(workspace_pr
                     data={
                         "request_id": str(uuid4()),
                         "predecessor_id": original["id"],
-                        "analysis_mode": "standard",
                         "customer_preference": prepared["customer_preference"],
                         "files": [
                             {

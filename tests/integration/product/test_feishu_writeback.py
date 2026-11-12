@@ -263,7 +263,7 @@ class HistorySemanticsTests(unittest.TestCase):
 
     def test_deep_unable_and_na_are_not_written_as_pass(self):
         body = {
-            "analysis_mode": "deep",
+            "executor": "ppap-deep",
             "execution": "completed",
             "inputs": [
                 {
@@ -332,7 +332,7 @@ class HistorySemanticsTests(unittest.TestCase):
 
     def test_deep_global_failure_does_not_create_a_fake_finding(self):
         body = {
-            "analysis_mode": "deep",
+            "executor": "ppap-deep",
             "execution": "failed",
             "failure": {"code": "MODEL_TIMEOUT"},
             "inputs": [{"role": "target", "file_version_id": "v1", "original_filename": "plan.xlsx"}],

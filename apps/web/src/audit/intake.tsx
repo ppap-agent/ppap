@@ -88,7 +88,7 @@ const productLinks = [
 ] as const
 type ProductSurface = Exclude<typeof productLinks[number]['view'], 'templates'> | 'audit'
 const sizeLabel = (bytes: number) => bytes < 1024 * 1024 ? `${Math.ceil(bytes / 1024)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-type IntakeDraft = {files: AuditTaskFile[]; uploads: UploadRow[]; mode: AuditTask['analysis_mode']; customer: string; step: 'upload' | 'check' | 'match'; predecessorId?: string}
+type IntakeDraft = {files: AuditTaskFile[]; uploads: UploadRow[]; customer: string; step: 'upload' | 'check' | 'match'; predecessorId?: string}
 const replacementRemovalReason = '本次使用补件替换；原件此前已选中'
 const legacyReplacementRemovalReason = '本次使用补件替换'
 function reconcileReplacements(files: AuditTaskFile[]): AuditTaskFile[] {
@@ -168,8 +168,6 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const [step, setStepState] = useState<'upload' | 'check' | 'match'>('upload')
   const stepRef = useRef(step)
   function setStep(next: typeof step) {stepRef.current = next; setStepState(next)}
-  // Only Standard audits are accepted (#322); a restored or re-audited Deep task becomes Standard.
-  const mode: AuditTask['analysis_mode'] = 'standard'
   const [customer, setCustomerState] = useState('auto')
   const currentCustomer = useRef(customer); currentCustomer.current = customer
   const customerInitialized = useRef(Boolean(readAuditRoute(new URL(location.href)).taskId || new URL(location.href).searchParams.has('uploadDraft')))
@@ -233,11 +231,11 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const [preparationStatus, setPreparationStatus] = useState<{id: string | null; phase: 'idle' | 'reading' | 'saving' | 'ready' | 'error'; message: string; conflict?: boolean}>({id: null, phase: 'idle', message: ''})
   const preparingMatch = useRef<number | null>(null)
   const [preparingMatchEpoch, setPreparingMatchEpoch] = useState<number | null>(null)
-  const preparationInput = useRef({files, mode, customer, predecessorId})
-  preparationInput.current = {files, mode, customer, predecessorId}
+  const preparationInput = useRef({files, customer, predecessorId})
+  preparationInput.current = {files, customer, predecessorId}
   function preparationValue(rows: UploadRow[]): UploadPreparation {
     const input = preparationInput.current
-    return JSON.parse(JSON.stringify({version: 1, analysis_mode: input.mode, customer_preference: input.customer === 'auto' ? null : input.customer, predecessor_id: input.predecessorId ?? null, uploads: describeUploads(rows), files: preparationFiles(input.files)}))
+    return JSON.parse(JSON.stringify({version: 1, customer_preference: input.customer === 'auto' ? null : input.customer, predecessor_id: input.predecessorId ?? null, uploads: describeUploads(rows), files: preparationFiles(input.files)}))
   }
   async function persistPreparation(rows: UploadRow[]) {
     const id = activeUploadDraftId.current, session = preparation.current, epoch = draftEpoch.current
@@ -276,8 +274,8 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   // Results settle file by file, so rows keep their place until recognition has finished.
   const matchGroups = task?.state === 'matching' ? [{title: '', rows: matchingFiles}] : [{title: '需要处理', rows: needsHandling}, {title: '已匹配', rows: matched}, {title: '比对资料', rows: references}, {title: '等待识别', rows: matchingFiles.filter(matchPending)}].filter(group => group.rows.length)
   const noMatches = Boolean(task?.state === 'pending_confirm' && !matched.length && files.every(row => row.selection !== 'selected' || row.match?.state === 'unmatched' || row.match?.state === 'reference'))
-  const recognitionDirty = Boolean(task && !task.round_id && (task.analysis_mode !== mode || task.customer_preference !== (customer === 'auto' ? null : customer) || !onlyUnmatchedRemovals(task.files, files)))
-  const endInputsDirty = Boolean(task && (task.analysis_mode !== mode || task.customer_preference !== (customer === 'auto' ? null : customer) || !onlyEndExclusions(task.files, files)))
+  const recognitionDirty = Boolean(task && !task.round_id && (task.customer_preference !== (customer === 'auto' ? null : customer) || !onlyUnmatchedRemovals(task.files, files)))
+  const endInputsDirty = Boolean(task && (task.customer_preference !== (customer === 'auto' ? null : customer) || !onlyEndExclusions(task.files, files)))
   const canEnd = noMatches && !endInputsDirty
   const workbench = task?.state === 'reviewing' || task?.state === 'completed' && task.completion_reason === 'processed'
   const navigationCollapsed = navigationMode === 'collapsed' || navigationMode === 'auto' && workbench && surface === 'audit' && !wideNavigation
@@ -334,7 +332,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     if (!preparation.current || task || surface !== 'audit' || !activeUploadDraftId.current || ['reading', 'error'].includes(preparationStatus.phase) || preparingMatch.current === draftEpoch.current) return
     if (!files.length && !uploads.rows.length || uploads.rows.some(row => row.busy && row.input.kind === 'local' && !row.input.sha256)) return
     void persistPreparation(uploads.snapshot()).catch(() => {})
-  }, [files, mode, customer, predecessorId, uploads.rows, task, surface])
+  }, [files, customer, predecessorId, uploads.rows, task, surface])
   function readRecognition() {
     recognitionTargets.current.set(recognitionKey, {epoch: draftEpoch.current, uploadId: activeUploadDraftId.current})
     void recognition.read(recognitionKey)
@@ -342,7 +340,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   function readCurrentRecognition() {
     if (!recognitionState) return
     const id = recognitionState.taskId, uploadId = activeUploadDraftId.current
-    const snapshot: IntakeDraft = {files: structuredClone(files), uploads: uploads.snapshot(), mode, customer, step: 'check', predecessorId}
+    const snapshot: IntakeDraft = {files: structuredClone(files), uploads: uploads.snapshot(), customer, step: 'check', predecessorId}
     taskAddress(id); void recover(id)
     drafts.current.set(id, snapshot)
     if (uploadId) uploadDrafts.current.set(uploadId, {taskId: id})
@@ -364,7 +362,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   }
   function retainDraft() {
     if (workbench || recovery) return
-    const snapshot = {files: structuredClone(files), uploads: uploads.snapshot(), mode, customer, step, predecessorId}
+    const snapshot = {files: structuredClone(files), uploads: uploads.snapshot(), customer, step, predecessorId}
     if (task) drafts.current.set(task.id, snapshot)
     else if (activeUploadDraftId.current) uploadDrafts.current.set(activeUploadDraftId.current, snapshot)
   }
@@ -622,7 +620,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     if (blocked || confirmationLocked || inputLocked || recognitionNeedsCurrent || workbench || preparingMatch.current === draftEpoch.current) return
     const key = task?.id || activeUploadDraftId.current || crypto.randomUUID()
     if (!task && !activeUploadDraftId.current) activeUploadDraftId.current = key
-    const epoch = draftEpoch.current, input = {files: structuredClone(files), mode, customer: customer === 'auto' ? null : customer, previous: task, predecessorId}
+    const epoch = draftEpoch.current, input = {files: structuredClone(files), customer: customer === 'auto' ? null : customer, previous: task, predecessorId}
     preparingMatch.current = epoch
     setPreparingMatchEpoch(epoch)
     let saved: components['schemas']['Draft'] | null = null

@@ -3,7 +3,7 @@ import test from 'node:test'
 import {workbenchItems} from './workbench-items.ts'
 import type {components} from '../generated/openapi.ts'
 type Task = components['schemas']['AuditTaskSummary']
-const completed = {id: 't', number: 'PPAP-1', state: 'completed', round_id: 'r', analysis_mode: 'standard', execution: 'completed', updated_at: '2026-10-21', result_counts: {NG: 2}, reviewed_count: 0, uncovered_count: 0,
+const completed = {id: 't', number: 'PPAP-1', state: 'completed', round_id: 'r', execution: 'completed', updated_at: '2026-10-21', result_counts: {NG: 2}, reviewed_count: 0, uncovered_count: 0,
   files: ['a', 'b'].map(id => ({selection: 'selected', file: {id, original_filename: '同名.xlsx'}}))} as Task
 test('completed NG is not a mandatory manual-review queue; every file identity remains visible', () => {
   const row = workbenchItems([completed])[0]

@@ -45,7 +45,7 @@ def authorize_execution(settings: Any, *, connect: Callable, open_store: Callabl
         if work is None or work.tenant_id != spec.tenant_id:
             raise DeepError("deep_input_unauthorized")
         expected = spec_from_work(work, spec.executor, spec.executor_revision, spec.protocol_revision, checker_snapshot_digest=spec.checker_snapshot_digest)
-        if expected.files != spec.files or expected.initiating_user_id != spec.initiating_user_id or expected.analysis_mode != spec.analysis_mode:
+        if expected.files != spec.files or expected.initiating_user_id != spec.initiating_user_id:
             raise DeepError("deep_input_unauthorized")
 
     return authorize

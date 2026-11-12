@@ -919,7 +919,7 @@ def run(report_path):
             uploaded = client.upload(f"sample-{ordinal}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", raw)
             require(uploaded["sha256"] == hashlib.sha256(raw).hexdigest(), "uploaded_source_identity_mismatch")
             draft = client.request("POST", "/drafts", status=201)
-            client.request("PUT", f"/drafts/{draft['id']}", payload={"analysis_mode": "standard", "items": [{"file_version_id": uploaded["id"], "role": "target", "rule_version_id": rule_id}]})
+            client.request("PUT", f"/drafts/{draft['id']}", payload={"items": [{"file_version_id": uploaded["id"], "role": "target", "rule_version_id": rule_id}]})
             accepted = client.request("POST", f"/drafts/{draft['id']}/accept", payload={"idempotency_key": str(uuid4())}, status=201)
             result = client.poll(f"/rounds/{accepted['id']}", lambda row: row.get("execution") in {"completed", "failed"})
             require(result.get("execution") == "completed", "baseline_not_executed")

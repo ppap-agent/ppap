@@ -5,8 +5,8 @@ import {createUploadPreparation, describeUploads, restoreUploads, type UploadPre
 import {canResumeUpload, canRetryUpload, type UploadRow} from './uploads.ts'
 import {workbenchItems} from './workbench-items.ts'
 
-const value: UploadPreparation = {version: 1, analysis_mode: 'standard', customer_preference: null, predecessor_id: null, uploads: [], files: []}
-const draft = (revision: number | null, input = value, taskId: string | null = null) => ({id: 'original-draft', task_id: taskId, status: 'open', items: [], upload_preparation: input, preparation_revision: revision, analysis_mode: 'standard', predecessor_id: null, case_context: {}, writeback: {available: false}, updated_at: '2026-10-22'} as components['schemas']['Draft'])
+const value: UploadPreparation = {version: 1, customer_preference: null, predecessor_id: null, uploads: [], files: []}
+const draft = (revision: number | null, input = value, taskId: string | null = null) => ({id: 'original-draft', task_id: taskId, status: 'open', items: [], upload_preparation: input, preparation_revision: revision, predecessor_id: null, case_context: {}, writeback: {available: false}, updated_at: '2026-10-22'} as components['schemas']['Draft'])
 const noFile = async () => {throw new Error('unexpected_file_read')}
 
 test('preparation saves are ordered by acknowledged server revision', async () => {

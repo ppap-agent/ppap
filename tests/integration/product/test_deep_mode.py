@@ -2,7 +2,7 @@
 
 Transport is controlled in-process. The real Core manifest, adopted checker
 execution and leased persistence run; this is not OS isolation, UDS transport,
-provider quality or container acceptance. Audits accept Standard only (#322).
+provider quality or container acceptance. There is one kind of audit (#322).
 """
 
 from __future__ import annotations
@@ -28,18 +28,7 @@ from agent.protocol import ExecuteRequest, RequestEnvelope
 from agent.run import Controller, ExecutionContext
 from agent.source import authorize_execution, object_file_source
 from api import create_app
-from audit.audits import (
-    ANALYSIS_DEEP,
-    ANALYSIS_STANDARD,
-    DEEP_PROTOCOL_REVISION,
-    EXECUTOR_DEEP,
-    EXECUTOR_STANDARD,
-    STANDARD_EXECUTOR_REVISION,
-    ClaimedJob,
-    frozen_executor,
-    job_payload,
-    request_fingerprint,
-)
+from audit.audits import DEEP_PROTOCOL_REVISION, ClaimedJob, request_fingerprint
 from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest, runtime_revision
 from audit.standard_suites import library_revision
 from fastapi.testclient import TestClient
@@ -173,11 +162,6 @@ class DeepProtocolTests(unittest.TestCase):
             {"file_version_id": "00000000-0000-4000-8000-000000000001", "role": "target", "rule_version_id": RULE_A},
         ]
         self.assertEqual(request_fingerprint(items), request_fingerprint(items))
-        self.assertEqual(frozen_executor("standard"), (EXECUTOR_STANDARD, STANDARD_EXECUTOR_REVISION))
-        self.assertEqual(frozen_executor("deep"), (EXECUTOR_DEEP, DEEP_PROTOCOL_REVISION))
-        payload = job_payload("r1", "deep")
-        self.assertEqual(payload["executor"], EXECUTOR_DEEP)
-        self.assertEqual(payload["executor_revision"], DEEP_PROTOCOL_REVISION)
 
 
 class CoreControllerTests(unittest.TestCase):
@@ -240,7 +224,6 @@ class CoreControllerTests(unittest.TestCase):
                 items.append({"file_version_id": row["id"], "role": "target", "rule_version_id": rule_version_id})
         saved = self.client.put(f"/drafts/{draft}", json={"items": items})
         self.assertEqual(saved.status_code, 200, saved.text)
-        self.assertEqual(saved.json()["analysis_mode"], ANALYSIS_STANDARD)
         accepted = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": key})
         self.assertEqual(accepted.status_code, 201, accepted.text)
         return accepted.json()["id"]
@@ -302,12 +285,6 @@ class CoreControllerTests(unittest.TestCase):
             update={"job_id": claimed.id, "attempt": claimed.attempt, "model_identity": dict(claimed.payload["model_identity"])}
         )
 
-    def test_default_draft_is_standard(self):
-        self._login()
-        draft = self.client.post("/drafts")
-        self.assertEqual(draft.status_code, 201)
-        self.assertEqual(draft.json()["analysis_mode"], ANALYSIS_STANDARD)
-
     def test_controller_rejects_changed_identity_and_frozen_inputs_before_object_reads(self):
         self._login()
         target = self._upload("report.xlsx", b"target-bytes")
@@ -340,7 +317,6 @@ class CoreControllerTests(unittest.TestCase):
             "initiator": spec.model_copy(update={"initiating_user_id": other_spec.initiating_user_id}),
             "snapshot": spec.model_copy(update={"checker_snapshot_digest": "0" * 64}),
             "missing model identity": spec.model_copy(update={"model_identity": {}}),
-            "mode": spec.model_copy(update={"analysis_mode": ANALYSIS_DEEP}),
             "invalid identity": spec.model_copy(update={"tenant_id": "not-a-uuid"}),
             "round": spec.model_copy(update={"round_id": other_round}),
             "job": spec.model_copy(update={"job_id": other_claimed.id}),
@@ -480,46 +456,17 @@ class CoreControllerTests(unittest.TestCase):
         self.assertEqual(diagnostic["usage"], {"input_tokens": 7})
         self.assertFalse(self.store.audit_progress(second, "w2", {"phase": "validating"}))
 
-    def test_deep_is_not_offered_and_an_old_deep_draft_is_not_accepted(self):
-        self._login()
-        self.assertNotIn("deep_offered", self.client.get("/public-config").json())
-        target = self._upload("report.xlsx", b"target-bytes")
-        draft = self.client.post("/drafts").json()["id"]
-        blocked = self.client.put(f"/drafts/{draft}", json={"items": [{"file_version_id": target["id"], "role": "target", "rule_version_id": RULE_A}], "analysis_mode": ANALYSIS_DEEP})
-        self.assertEqual(blocked.status_code, 409)
-        self.assertEqual(blocked.json()["error"], "deep_not_available")
-        saved = self.client.put(f"/drafts/{draft}", json={"items": [{"file_version_id": target["id"], "role": "target", "rule_version_id": RULE_A}]})
-        self.assertEqual(saved.status_code, 200, saved.text)
-        # A draft saved as Deep before #322 is not accepted as Deep, and queues nothing.
-        self._execute("UPDATE product.audit_drafts SET analysis_mode=%s WHERE id=%s", (ANALYSIS_DEEP, draft))
-        before = self._scalar("SELECT count(*) FROM engine.jobs")
-        rejected = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "old-deep-draft"})
-        self.assertEqual(rejected.status_code, 409)
-        self.assertEqual(rejected.json()["error"], "deep_not_available")
-        self.assertEqual(self._scalar("SELECT count(*) FROM product.audit_rounds"), 0)
-        self.assertEqual(self._scalar("SELECT count(*) FROM engine.jobs"), before)
-
-    def test_reaudit_of_a_historical_deep_round_runs_standard(self):
+    def test_a_sent_mode_is_ignored(self):
         self._login()
         target = self._upload("report.xlsx", b"target-bytes")
-        round_id = self._accept(target, key="historical-deep")
-        # Historical Deep rounds stay readable; a re-audit runs the adopted Suites.
-        self._execute("UPDATE product.audit_rounds SET analysis_mode=%s WHERE id=%s", (ANALYSIS_DEEP, round_id))
-        nxt = self.client.post("/drafts", json={"predecessor_id": round_id}).json()
-        self.assertEqual(nxt["analysis_mode"], ANALYSIS_STANDARD)
-        saved = self.client.put(f"/drafts/{nxt['id']}", json={"items": [{"file_version_id": target["id"], "role": "target", "rule_version_id": RULE_A}]})
-        self.assertEqual(saved.status_code, 200, saved.text)
-        second = self.client.post(f"/drafts/{nxt['id']}/accept", json={"idempotency_key": "historical-deep-2"})
-        self.assertEqual(second.status_code, 201, second.text)
-        self.assertEqual(second.json()["analysis_mode"], ANALYSIS_STANDARD)
-        self.assertEqual(self.client.get(f"/rounds/{round_id}").json()["analysis_mode"], ANALYSIS_DEEP)
-
-    def test_invalid_analysis_mode_is_rejected(self):
-        self._login()
         draft = self.client.post("/drafts").json()["id"]
-        blocked = self.client.put(f"/drafts/{draft}", json={"analysis_mode": "semantic"})
-        self.assertEqual(blocked.status_code, 400)
-        self.assertEqual(blocked.json()["error"], "invalid_analysis_mode")
+        items = [{"file_version_id": target["id"], "role": "target", "rule_version_id": RULE_A}]
+        saved = self.client.put(f"/drafts/{draft}", json={"items": items, "analysis_mode": "deep"})
+        self.assertEqual(saved.status_code, 200, saved.text)
+        self.assertNotIn("analysis_mode", saved.json())
+        accepted = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "sent-mode"})
+        self.assertEqual(accepted.status_code, 201, accepted.text)
+        self.assertNotIn("analysis_mode", accepted.json())
 
     def test_core_ready_does_not_require_deep(self):
         self.assertEqual(report(self.settings)["deep"], {"state": "disabled"})

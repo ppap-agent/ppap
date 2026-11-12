@@ -120,12 +120,12 @@ class Controller:
                 try:
                     data = self.file_source(item.file_version_id, remaining)
                 except DeepError as exc:
-                    if exc.code == "deep_input_missing" and spec.executor == "ppap-checker-core" and spec.analysis_mode == "standard":
+                    if exc.code == "deep_input_missing" and spec.executor == "ppap-checker-core":
                         unavailable.add(item.file_version_id)
                         continue
                     raise
                 except (ObjectMissing, FileNotFoundError) as exc:
-                    if spec.executor == "ppap-checker-core" and spec.analysis_mode == "standard":
+                    if spec.executor == "ppap-checker-core":
                         unavailable.add(item.file_version_id)
                         continue
                     raise DeepError("deep_input_missing") from exc

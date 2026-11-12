@@ -6,6 +6,7 @@ suite owns UID/capability/process testing; this does not claim OS isolation.
 
 import hashlib
 import json
+import uuid
 from types import SimpleNamespace
 
 import pytest
@@ -31,7 +32,7 @@ def create_audit(audit_file, rule, group_context):
 """
 
 
-def setup(unbound=False, *, mode="standard"):
+def setup(unbound=False):
     programs = {"checker.py": CODE}
     digest = checker_digest(programs)
     sources = {"file-a": b"a", "file-b": b"b", "reference": b"reference"}
@@ -51,7 +52,6 @@ def setup(unbound=False, *, mode="standard"):
         tenant_id="tenant",
         initiating_user_id="initiator",
         job_id="job",
-        analysis_mode=mode,
         checker_snapshot_digest=snapshot.input_digest,
         model_identity=dict(snapshot.model_identity),
         files=[FrozenFile(file_version_id=row.file_version_id, role=row.role, filename=row.filename, sha256=row.sha256, rule_body=rules if row.role == "target" else None) for row in inputs],
@@ -176,19 +176,13 @@ def test_offline_and_model_jobs_have_separate_replay_identities():
     assert AuditJobSpec.from_snapshot(snapshot).execution_id != AuditJobSpec.from_snapshot(snapshot, allow_model_calls=False).execution_id
 
 
-def test_audit_manifest_never_generates_checkers(tmp_path):
-    # Audit-time checker generation was retired (#322); a late Deep job cannot run.
-    snapshot, sources, programs, *_ = setup()
-    with pytest.raises(DeepError, match="deep_audit_retired"):
-        write_audit_manifest(tmp_path / "rejected", snapshot, sources, programs, analysis_mode="deep")
-    assert not (tmp_path / "rejected").exists()
-    write_audit_manifest(tmp_path / "inputs", snapshot, sources, programs, allow_model_calls=False)
-    manifest = json.loads((tmp_path / "inputs" / "manifest.json").read_text())
-    manifest["spec"] = AuditJobSpec.from_snapshot(snapshot, "deep", allow_model_calls=False).model_dump(mode="json")
-    (tmp_path / "inputs" / "manifest.json").write_text(json.dumps(manifest))
-    with pytest.raises(ValueError, match="deep_audit_retired"):
-        run_audit_manifest(tmp_path / "inputs", tmp_path / "work", tmp_path / "nonexistent-grants")
-    assert not (tmp_path / "work" / "result").exists()
+def test_execution_id_derivation_is_unchanged_for_existing_executions():
+    snapshot, *_ = setup()
+    for allow_model_calls in (True, False):
+        expected = uuid.uuid5(uuid.NAMESPACE_URL, f"ppap-audit:standard:{allow_model_calls}:{snapshot.input_digest}")
+        assert AuditJobSpec.from_snapshot(snapshot, allow_model_calls=allow_model_calls).execution_id == expected
+    missing = uuid.uuid5(uuid.NAMESPACE_URL, f'ppap-audit:standard:False:{snapshot.input_digest}:["file-a"]')
+    assert AuditJobSpec.from_snapshot(snapshot, allow_model_calls=False, unavailable_sources=frozenset({"file-a"})).execution_id == missing
 
 
 @pytest.mark.parametrize("allow_model_calls", [False, True])
@@ -424,8 +418,8 @@ def test_missing_input_tolerance_never_downgrades_other_failures(tmp_path, failu
     assert guest.calls == 0
 
 
-def test_authorization_and_deep_missing_inputs_still_fail_before_guest(tmp_path):
-    snapshot, sources, _, spec, suite = setup(mode="deep")
+def test_authorization_fails_before_reading_or_guest(tmp_path):
+    snapshot, _, _, spec, suite = setup()
     guest = ControlledGuest(tmp_path)
     runtime = CoreRuntime(guest, lambda _: snapshot, lambda *_: suite)
     reads = []
@@ -437,16 +431,6 @@ def test_authorization_and_deep_missing_inputs_still_fail_before_guest(tmp_path)
     with pytest.raises(DeepError, match="deep_input_unauthorized"):
         controller.handle(spec)
     assert not reads
-
-    def source(*args):
-        raise DeepError("deep_input_missing")
-
-    controller = Controller(runtime, source, executor_revision="runtime", protocol_revision="protocol")
-    with pytest.raises(DeepError, match="deep_input_missing"):
-        controller.handle(spec)
-    controller = Controller(runtime, lambda identity, limit: sources[identity], executor_revision="runtime", protocol_revision="protocol")
-    with pytest.raises(DeepError, match="deep_audit_retired"):
-        controller.handle(spec)
     assert guest.calls == 0
 
 

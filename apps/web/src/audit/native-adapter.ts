@@ -294,9 +294,8 @@ export function createNativeAuditAdapter(options: {customers: string[]; personal
       return rules.filter(rule => rule.kind === 'engine' && !replaced.has(rule.id)).map(rule => ({id: rule.id, title: rule.title, type: rule.type ?? undefined, template: ruleTemplateKey(rule)}))
     },
     prepareReaudit: roundId => request(`/rounds/${encoded(roundId)}/reaudit-inputs`),
-    match: (files, mode, customer, previous, requestId, predecessorId, preparation) => request<AuditTask>('/audit-tasks', 'POST', {
+    match: (files, customer, previous, requestId, predecessorId, preparation) => request<AuditTask>('/audit-tasks', 'POST', {
       request_id: requestId,
-      analysis_mode: mode,
       customer_preference: customer,
       ...(previous ? {task_id: previous.id, expected_revision: previous.input_revision ?? 0} : {}),
       ...(!previous && preparation ? {source_draft_id: preparation.id, expected_draft_revision: preparation.revision} : {}),

@@ -125,6 +125,17 @@ class SchemaUpgradeTests(unittest.TestCase):
             )
             self.schema.require(ticket, "read preserved ticket")
             self.assertEqual(ticket.stdout.strip(), b"upgrade-test-ticket|t")
+            # One kind of audit (#322): the mode columns and Deep-only tables are gone.
+            deep = self.schema.psql(
+                self.schema.migrator_user(),
+                self.schema.migrator_password(),
+                previous,
+                "-Atc",
+                "SELECT (SELECT count(*) FROM information_schema.columns WHERE table_schema='product' AND column_name='analysis_mode')"
+                " + (SELECT count(*) FROM pg_tables WHERE schemaname='product' AND tablename IN ('deep_rule_changes','checker_round_artifacts'))",
+            )
+            self.schema.require(deep, "read removed audit mode schema")
+            self.assertEqual(deep.stdout.strip(), b"0")
 
             tables = self.schema.psql(
                 self.schema.migrator_user(),

@@ -31,24 +31,13 @@ def _results(store, conn, principal, body):
         return []
     targets = {target.file_version_id: target for target in snapshot.targets}
     inputs = {item.file_version_id: item for item in snapshot.inputs}
-    artifacts = {
-        str(row[0]): str(row[1])
-        for row in conn.execute(
-            """SELECT file_version_id, suite_revision_id FROM product.checker_round_artifacts
-           WHERE round_id=%s AND tenant_id=%s AND result_attempt=%s""",
-            (body["id"], principal.tenant_id, body["result_attempt"]),
-        ).fetchall()
-    }
     results = []
     for frozen in body["inputs"]:
         version = frozen["file_version_id"]
         target, source = targets.get(version), inputs.get(version)
         if frozen["role"] != "target" or target is None or source is None or not frozen["rule"]:
             continue
-        # Deep's generated artifact, not its starting Suite, owns its result.
-        suite = artifacts.get(version) or (target.suite_revision_id if body["analysis_mode"] != "deep" else None)
-        if suite is None:
-            continue
+        suite = target.suite_revision_id
         for check in file_round_audit(body, frozen)["checks"]:
             finding = check["finding"]
             if finding and check["execution"] == "completed" and check["coverage"] == "executed":

@@ -51,3 +51,22 @@ def create_test_database(host: str, port: int, migrations: Path) -> str:
         for migration in files:
             conn.execute(migration.read_text(encoding="utf-8"))
     return name
+
+
+def freeze_round_suite(store, principal, round_id: str, version_id: str, sha256: str, suite_revision_id: str) -> None:
+    """Record the Suite of a directly inserted test round, as acceptance would."""
+    import json
+
+    from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest
+
+    from product.store.suites import SuiteStore
+
+    suites = SuiteStore(store.settings, store.objects, role=store.role)
+    suite = suites.resolve_suite(suite_revision_id, principal.tenant_id)
+    revision = suite.revision
+    code = checker_digest({path: body for path, body in suite.files.items() if path in {"checker.py", "resources.py"}})
+    target = FrozenTarget(version_id, revision.id, revision.suite_key, revision.resolved_digest, json.loads(suite.files["rules.json"]), RuleBinding(revision.suite_key, code, {}))
+    inputs = (FrozenInput(version_id, sha256, "target", "sample.xlsx"),)
+    snapshot = ExecutionSnapshot(principal.tenant_id, principal.user_id, inputs, (target,), "fixture", "fixture", {}, round_id=round_id)
+    with store._conn() as conn:
+        suites.save_snapshot(conn, snapshot=snapshot)

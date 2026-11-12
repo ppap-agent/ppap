@@ -141,7 +141,7 @@ class ReportBlocksTests(unittest.TestCase):
 
     def test_deep_report_keeps_status_scope_typed_sources_and_rule_authority(self):
         body = {
-            "analysis_mode": "deep",
+            "executor": "ppap-deep",
             "execution": "completed",
             "inputs": [
                 {
@@ -215,7 +215,7 @@ class ReportBlocksTests(unittest.TestCase):
             ]
         ]
         body = {
-            "analysis_mode": "deep",
+            "executor": "ppap-deep",
             "execution": "completed",
             "inputs": [
                 {

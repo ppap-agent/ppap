@@ -447,7 +447,6 @@ def test_prepare_task_reads_original_identity_after_reply_loss_and_restart(mcp_a
         process_claimed(worker, worker.claim_job("prepare-validation"), "prepare-validation")
         body = {
             "request_id": request_id,
-            "analysis_mode": "standard",
             "customer_preference": None,
             "files": [{"file_version_id": file["id"], "validation_id": validation_id, "selection": "selected", "removal_reason": None}],
         }
@@ -547,7 +546,6 @@ def completed_mcp_task(client, store, token, core_system, *, publish_new_rule=Tr
     request_id = str(uuid4())
     inputs = {
         "request_id": request_id,
-        "analysis_mode": "standard",
         "customer_preference": None,
         "files": [{"file_version_id": file["id"], "validation_id": validation_id, "selection": "selected", "removal_reason": None}],
     }
@@ -706,7 +704,7 @@ def test_mcp_preparation_carries_writeback_target_through_restart_acceptance_and
             token = tokens["access_token"]
 
             def prepare_draft(inputs):
-                preparation = {"version": 1, "predecessor_id": None, "uploads": [], **{key: inputs[key] for key in ("files", "analysis_mode", "customer_preference")}}
+                preparation = {"version": 1, "predecessor_id": None, "uploads": [], **{key: inputs[key] for key in ("files", "customer_preference")}}
                 draft_id = str(uuid4())
                 created = call(client, token, "create_draft", request_id=draft_id, body={"upload_preparation": preparation})
                 assert created["status"] == "ok" and created["data"]["id"] == draft_id
@@ -842,7 +840,6 @@ def test_mcp_review_replacement_and_linked_reaudit_preserve_frozen_suite_history
         request_id = str(uuid4())
         body = {
             "request_id": request_id,
-            "analysis_mode": "standard",
             "customer_preference": prepared["customer_preference"],
             "predecessor_id": round_id,
             "files": [
@@ -1233,7 +1230,6 @@ def test_mcp_validation_rule_publication_prepare_and_human_confirm_once(mcp_app,
             "request_id": request_id,
             "body": {
                 "request_id": request_id,
-                "analysis_mode": "standard",
                 "customer_preference": None,
                 "files": [{"file_version_id": file["id"], "validation_id": vid, "selection": "selected", "removal_reason": None}],
             },

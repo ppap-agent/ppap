@@ -168,7 +168,7 @@ def writeback_state(round_body: dict) -> str:
     for row in findings:
         semantic = _semantic(row)
         if not semantic:
-            if core_round or round_body.get("analysis_mode") == "deep":
+            if core_round:
                 return "round_incomplete"
             continue
         checker_execution = semantic.get("verification_scope") == "checker_execution"
@@ -192,7 +192,7 @@ def writeback_state(round_body: dict) -> str:
             return "round_incomplete"
         body = rule.get("body") if isinstance(rule, dict) else None
         clauses = body.get("rules") if isinstance(body, dict) else None
-        if (checker_execution or round_body.get("analysis_mode") == "deep") and not isinstance(clauses, list):
+        if checker_execution and not isinstance(clauses, list):
             return "round_incomplete"
         if isinstance(clauses, list):
             matches = [item for item in clauses if isinstance(item, dict) and item.get("id") == semantic.get("clause_id")]

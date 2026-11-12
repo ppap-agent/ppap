@@ -21,7 +21,6 @@ export type WorkItem = {
   id: string; href: string; title: string; context: string; state: string; next: string; detail: string
   received: boolean; updatedAt: string
   task?: 'attention' | 'review' | 'prepare' | 'running' | 'completed'
-  mode?: string
   counts?: Partial<Record<'NG' | 'UNABLE' | 'ERR' | 'PASS' | 'uncovered', number>>
   review?: {saved: number; total: number}
   files?: FileReference[]
@@ -88,7 +87,7 @@ export function WorkItemsTable({items, onOpen, label, loading, readFailed, hasMo
       enableHiding: false,
       sortFn: (a, b) => a.original.title.localeCompare(b.original.title, 'zh-CN', {numeric: true}),
       header: ({column}) => <SortHeading label="审核资料" sorted={column.getIsSorted()} onSort={column.getToggleSortingHandler()}/>,
-      cell: ({row}) => <div className="min-w-0 space-y-1">{workTitle(row.original) && <p className="font-medium leading-5 [overflow-wrap:anywhere]">{workTitle(row.original)}</p>}{row.original.files?.length ? <FileCollection files={row.original.files} context={row.original.title} limit={2}/> : null}{(row.original.context || row.original.mode) && <p className="break-words text-xs leading-5 text-muted-foreground">{[row.original.context, row.original.mode].filter(Boolean).join(' · ')}</p>}</div>,
+      cell: ({row}) => <div className="min-w-0 space-y-1">{workTitle(row.original) && <p className="font-medium leading-5 [overflow-wrap:anywhere]">{workTitle(row.original)}</p>}{row.original.files?.length ? <FileCollection files={row.original.files} context={row.original.title} limit={2}/> : null}{row.original.context && <p className="break-words text-xs leading-5 text-muted-foreground">{row.original.context}</p>}</div>,
     }),
     helper.accessor('state', {header: '检查结果', enableSorting: false, filterFn: 'equalsString', cell: ({row}) => <Results item={row.original}/>}),
     helper.accessor(row => row.review && row.review.total > 0 ? row.review.saved / row.review.total : -1, {
@@ -128,7 +127,7 @@ export function WorkItemsTable({items, onOpen, label, loading, readFailed, hasMo
     {!rows.length && <div className="hidden @min-[45rem]:block">{initialLoading ? <ReadSkeleton label="正在读取审核记录…" kind="list" rows={4}/> : <p role="status" className="py-10 text-center text-sm text-muted-foreground">{empty}</p>}</div>}
     <div className="space-y-3 @min-[45rem]:hidden" role={rows.length ? 'list' : undefined} aria-label={rows.length ? `${label}审核记录卡片` : undefined}>
       {rows.map(({original: item}) => <Card key={item.id} size="sm" role="listitem" className="cursor-pointer" onClick={openRow(item)}>
-        <CardHeader>{workTitle(item) && <CardTitle className="min-w-0 [overflow-wrap:anywhere]">{workTitle(item)}</CardTitle>}{item.files?.length ? <FileCollection files={item.files} context={item.title} limit={2}/> : null}{(item.context || item.mode) && <CardDescription className="break-words">{[item.context, item.mode].filter(Boolean).join(' · ')}</CardDescription>}</CardHeader>
+        <CardHeader>{workTitle(item) && <CardTitle className="min-w-0 [overflow-wrap:anywhere]">{workTitle(item)}</CardTitle>}{item.files?.length ? <FileCollection files={item.files} context={item.title} limit={2}/> : null}{item.context && <CardDescription className="break-words">{item.context}</CardDescription>}</CardHeader>
         {(table.getColumn('state')?.getIsVisible() || table.getColumn('review')?.getIsVisible()) && <CardContent><div className="flex flex-wrap items-center justify-between gap-4">{table.getColumn('state')?.getIsVisible() && <Results item={item}/>} {table.getColumn('review')?.getIsVisible() && item.review && <div className="space-y-1.5"><p className="text-xs text-muted-foreground">人工复核</p><ReviewCount item={item}/></div>}</div></CardContent>}
         <CardFooter><div className="flex w-full flex-wrap items-center justify-between gap-2">{table.getColumn('time')?.getIsVisible() ? <ItemTime item={item}/> : <span/>}{action(item)}</div></CardFooter>
       </Card>)}

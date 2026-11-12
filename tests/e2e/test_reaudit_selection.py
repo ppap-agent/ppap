@@ -64,7 +64,7 @@ def reaudit_routes(page, *, accept=False):
         elif path == "/audit-customers":
             route.fulfill(json={"customers": []})
         elif path == f"/rounds/{ROUND}/reaudit-inputs":
-            route.fulfill(json={"predecessor_id": ROUND, "analysis_mode": "standard", "customer_preference": None, "files": files})
+            route.fulfill(json={"predecessor_id": ROUND, "customer_preference": None, "files": files})
         elif path == "/audit-tasks" and request.method == "GET":
             route.fulfill(json={"tasks": [], "next_offset": None})
         elif path == "/drafts" and request.method == "POST":
@@ -78,7 +78,6 @@ def reaudit_routes(page, *, accept=False):
                 "upload_preparation": deepcopy(body["upload_preparation"]),
                 "preparation_revision": 0,
                 "items": [],
-                "analysis_mode": "standard",
                 "predecessor_id": ROUND,
                 "case_context": {},
                 "writeback": {"available": False},
@@ -168,7 +167,6 @@ def reaudit_routes(page, *, accept=False):
                 "source_draft_id": body["source_draft_id"],
                 "predecessor_id": ROUND,
                 "round_id": None,
-                "analysis_mode": body["analysis_mode"],
                 "customer_preference": body["customer_preference"],
                 "created_at": "2026-10-20T00:00:00Z",
                 "updated_at": "2026-10-20T00:00:00Z",

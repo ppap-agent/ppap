@@ -11,6 +11,7 @@ from agent.checker_spec import CheckerArtifact
 from agent.run import ExecutionContext
 from audit.checker_validation import CaseEvaluation, ClauseEvaluation, SuiteValidationReport
 from openpyxl import Workbook
+from product.fixtures import freeze_round_suite
 from product.store.suites import SuiteStore
 from psycopg.types.json import Jsonb
 from worker.checker_optimizer import development_handler
@@ -65,8 +66,8 @@ def _add_feedback(f, suite_id, rules, clause_id, index=0):
         )
         conn.execute("INSERT INTO product.rule_versions(id,tenant_id,title,body) VALUES (%s,%s,'selected',%s)", (rule_id, f.alice.tenant_id, Jsonb(rules)))
         conn.execute(
-            """INSERT INTO product.audit_rounds(id,tenant_id,created_by,idempotency_key,request_fingerprint,execution,result_attempt,analysis_mode)
-               VALUES (%s,%s,%s,%s,'test','completed',1,'deep')""",
+            """INSERT INTO product.audit_rounds(id,tenant_id,created_by,idempotency_key,request_fingerprint,execution,result_attempt)
+               VALUES (%s,%s,%s,%s,'test','completed',1)""",
             (round_id, f.alice.tenant_id, f.alice.user_id, round_id),
         )
         conn.execute(
@@ -79,11 +80,7 @@ def _add_feedback(f, suite_id, rules, clause_id, index=0):
                VALUES (%s,%s,%s,'rule','selected','PASS',%s)""",
             (uuid4(), round_id, clause_id, Jsonb({"file_version_id": version_id, "rule_item_id": clause_id})),
         )
-        conn.execute(
-            """INSERT INTO product.checker_round_artifacts(round_id,file_version_id,result_attempt,tenant_id,suite_revision_id,program_digest,input_digest)
-               VALUES (%s,%s,1,%s,%s,%s,%s)""",
-            (round_id, version_id, f.alice.tenant_id, suite_id, "a" * 64, "b" * 64),
-        )
+    freeze_round_suite(f.store, f.alice, round_id, version_id, digest, suite_id)
     payload = {
         "operation_id": str(uuid4()),
         "file_version_id": version_id,

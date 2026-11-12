@@ -2,7 +2,7 @@
 
 import audit.policy as deep_policy
 import pytest
-from audit.audits import ANALYSIS_STANDARD, DEEP_PROTOCOL_REVISION, job_payload
+from audit.audits import DEEP_PROTOCOL_REVISION
 from product.settings import Settings
 
 
@@ -32,7 +32,6 @@ def test_standard_does_not_require_a_deep_policy_or_valid_build_identity(monkeyp
     monkeypatch.setenv("PPAP_PROFILE", "isolated-dev")
     settings = Settings(git_sha="", deep_sandbox_profile="unsupported")
     assert settings.public_config()["usage_charge_enabled"] is True
-    assert job_payload("round-a", ANALYSIS_STANDARD)["executor"] == "ppap-standard"
     with pytest.raises(ValueError):
         settings.deep_execution_revision()
 

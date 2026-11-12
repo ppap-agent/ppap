@@ -332,7 +332,6 @@ def test_http_refuses_an_official_carrier_head_and_requires_version_confirmation
             "/audit-tasks",
             json={
                 "request_id": str(uuid4()),
-                "analysis_mode": "standard",
                 "customer_preference": "UAES",
                 "files": [{"file_version_id": version["id"], "validation_id": validation["request_id"], "selection": "selected", "removal_reason": None}],
             },

@@ -7,16 +7,16 @@ import {rememberRequest} from './routes.ts'
 type Task = components['schemas']['AuditTask']
 export type AuditRecognitionRead = components['schemas']['AuditRecognitionRead']
 export type AuditRecognitionAdapter = {
-  match: (files: Task['files'], mode: Task['analysis_mode'], customer: string | null, previous: Task | null, requestId: string, predecessorId?: string, preparation?: {id: string; revision: number}) => Promise<Task>
+  match: (files: Task['files'], customer: string | null, previous: Task | null, requestId: string, predecessorId?: string, preparation?: {id: string; revision: number}) => Promise<Task>
   readRecognition: (taskId: string, requestId: string) => Promise<AuditRecognitionRead>
 }
-type RecognitionInput = {files: Task['files']; mode: Task['analysis_mode']; customer: string | null; previous: Task | null; predecessorId?: string; preparation?: {id: string; revision: number}}
+type RecognitionInput = {files: Task['files']; customer: string | null; previous: Task | null; predecessorId?: string; preparation?: {id: string; revision: number}}
 export type RecognitionObservation = {requestId: string; taskId: string; phase: 'sending' | 'reading' | 'unknown' | 'accepted' | 'rejected' | 'conflict'; message: string; traceId?: string; currentRevision?: number; currentState?: Task['state']}
 const unknownMessage = '识别请求结果尚未确认。文件与选择已保留；请查看原请求结果，不要重复开始识别。'
 
 function acceptedInput(input: RecognitionInput, next: Task, requestId: string, taskId: string) {
   const revision = input.previous ? (input.previous.input_revision ?? 0) + 1 : 0
-  return next.id === taskId && next.recognition_request_id === requestId && next.input_revision === revision && next.analysis_mode === input.mode && next.customer_preference === input.customer && (next.predecessor_id || null) === (input.predecessorId || null) && !next.round_id && ['matching', 'pending_confirm'].includes(next.state) && next.files.length === input.files.length && input.files.every(file => next.files.some(row => sameSnapshot(row.file, file.file) && row.selection === file.selection && row.removal_reason === file.removal_reason && row.validation_id === file.validation_id && row.preferred_rule_version_id === file.preferred_rule_version_id && Boolean(row.reference_only) === Boolean(file.reference_only) && (file.selection !== 'selected' || row.replacement_of_file_version_id === file.replacement_of_file_version_id)))
+  return next.id === taskId && next.recognition_request_id === requestId && next.input_revision === revision && next.customer_preference === input.customer && (next.predecessor_id || null) === (input.predecessorId || null) && !next.round_id && ['matching', 'pending_confirm'].includes(next.state) && next.files.length === input.files.length && input.files.every(file => next.files.some(row => sameSnapshot(row.file, file.file) && row.selection === file.selection && row.removal_reason === file.removal_reason && row.validation_id === file.validation_id && row.preferred_rule_version_id === file.preferred_rule_version_id && Boolean(row.reference_only) === Boolean(file.reference_only) && (file.selection !== 'selected' || row.replacement_of_file_version_id === file.replacement_of_file_version_id)))
 }
 
 /** Keeps each recognition command and its immutable input until its receipt is known. */
@@ -39,7 +39,7 @@ export function createTaskRecognition(adapter: AuditRecognitionAdapter, onAccept
     const operation = remember(key, frozen, {requestId, taskId, ...trace, phase: readOnly ? 'reading' : 'sending', message: readOnly ? current!.observation.message : ''})
     try {
       const receipt = readOnly ? await adapter.readRecognition(taskId, requestId) : null
-      const next = readOnly ? receipt?.task : await adapter.match(structuredClone(frozen.files), frozen.mode, frozen.customer, structuredClone(frozen.previous), requestId, frozen.predecessorId, frozen.preparation)
+      const next = readOnly ? receipt?.task : await adapter.match(structuredClone(frozen.files), frozen.customer, structuredClone(frozen.previous), requestId, frozen.predecessorId, frozen.preparation)
       if (operations.get(key) !== operation) return
       const acceptedRevision = frozen.previous ? (frozen.previous.input_revision ?? 0) + 1 : 0
       if (receipt?.state === 'accepted' && receipt.request_id === requestId && receipt.task_id === taskId && receipt.input_revision === acceptedRevision && next?.id === taskId && ((next.input_revision ?? -1) > acceptedRevision || next.input_revision === acceptedRevision && ['reviewing', 'completed'].includes(next.state))) {

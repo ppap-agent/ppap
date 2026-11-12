@@ -1,5 +1,5 @@
 import {useCallback, useEffect, useRef, useState} from 'react'
-import {request, type Draft, type DraftSaveRequest, type Material, type Round} from '../api'
+import {request, type DraftSaveRequest, type Material, type Round} from '../api'
 
 export function useRemote<T>(path: string | null, interval = 0) {
   const [value, setData] = useState<T | null>(null)
@@ -40,7 +40,7 @@ export function useRemote<T>(path: string | null, interval = 0) {
 
 export const message = (cause: unknown) => cause instanceof TypeError && /fetch/i.test(cause.message) ? '暂时无法连接服务，请重新读取。' : cause instanceof Error ? cause.message : '操作未完成，请稍后重试。'
 export const inputItems = (items: Material[]): NonNullable<DraftSaveRequest['items']> => items.map(item => ({file_version_id: item.file_version_id, role: item.role, rule_version_id: item.role === 'target' ? item.rule_version_id : null}))
-export const draftPlan = (draft: {items: Material[]; analysis_mode: Draft['analysis_mode']}) => JSON.stringify({analysis_mode: draft.analysis_mode, items: inputItems(draft.items).sort((a, b) => a.file_version_id.localeCompare(b.file_version_id))})
+export const draftPlan = (draft: {items: Material[]}) => JSON.stringify({items: inputItems(draft.items).sort((a, b) => a.file_version_id.localeCompare(b.file_version_id))})
 export type Acceptance = {key: string; plan: string}
 export function acceptanceKey(userId: string, draftId: string) {return `ppap-live:accept:${userId}:${draftId}`}
 export function readAcceptance(storageKey: string): Acceptance | null {
@@ -51,5 +51,5 @@ export function readAcceptance(storageKey: string): Acceptance | null {
   return {key: value.key, plan: value.plan}
 }
 export function sameAcceptedPlan(round: Round, draftId: string, plan: string) {
-  return round.source_draft_id === draftId && draftPlan({items: round.inputs, analysis_mode: round.analysis_mode}) === plan
+  return round.source_draft_id === draftId && draftPlan({items: round.inputs}) === plan
 }

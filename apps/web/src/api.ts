@@ -18,7 +18,6 @@ export type WritebackTarget = Schema<'WritebackTarget'>
 export type QuotaEstimate = Schema<'QuotaEstimate'>
 export type Round = Schema<'Round'>
 export type Draft = Schema<'Draft'>
-export type AnalysisMode = NonNullable<Draft['analysis_mode']>
 export type AnalysisJob = Schema<'AnalysisJob'>
 export type LatestAnalysis = Schema<'LatestAnalysis'>
 export type RuleParseJob = Schema<'RuleParseJob'>
@@ -80,7 +79,6 @@ export class UploadResultUnknown extends Error {
 }
 export const resultLabels:Record<FindingStatus,string> = {PASS:'通过', NG:'不符合', ERR:'检查异常', UNABLE:'无法判断', NA:'不适用'}
 export const executionLabels:Record<string,string> = {queued:'排队中', running:'检查中', completed:'检查完成', failed:'执行失败'}
-export const analysisModeLabels:Record<AnalysisMode,string> = {standard:'标准', deep:'深度'}
 export function dateLabel(value?: string | null) {
   return value ? new Intl.DateTimeFormat('zh-CN', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(value)) : '—'
 }
@@ -103,8 +101,6 @@ const messages: Record<string,string> = {
   draft_already_accepted: '此草稿已提交，请打开对应审核。', rule_parse_failed: '规则解析失败，请检查原文件或文档类型。',
   rule_source_unverified: '条款出处与原件不一致。请重新选择原文位置并核对，草稿未发布。',
   rule_source_unavailable: '暂时无法读取可定位的原文。请核对原文件是否可读取。',
-  invalid_analysis_mode: '请选择标准或深度审核。',
-  deep_not_available: '深度审核已下线，请使用标准审核。',
   model_configuration_changed: '系统设置已更新，本次操作未被接收。请重新开始。',
   feedback_revision_conflict: '规则说明已被更新，请读取最新依据后再核对。',
   feedback_scope_conflict: '本次说明超出了可修改范围，请核对文件与要求。',

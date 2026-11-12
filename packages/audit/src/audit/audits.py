@@ -28,13 +28,6 @@ FINDING_STATUSES = {PASS, NG, ERR, UNABLE, NA}
 KIND_PRESENCE = "presence"
 KIND_ENGINE = "engine"
 
-ANALYSIS_STANDARD = "standard"
-ANALYSIS_DEEP = "deep"
-ANALYSIS_MODES = {ANALYSIS_STANDARD, ANALYSIS_DEEP}
-
-EXECUTOR_STANDARD = "ppap-standard"
-EXECUTOR_DEEP = "ppap-deep"
-STANDARD_EXECUTOR_REVISION = "in-repo-engine-v1"
 DEEP_PROTOCOL_REVISION = "ppap-deep-v2"
 
 
@@ -52,26 +45,6 @@ def normalize_role(value: Any) -> str:
     if role not in ROLES:
         raise ValueError("invalid_role")
     return role
-
-
-def normalize_analysis_mode(value: Any) -> str:
-    mode = str(value or ANALYSIS_STANDARD).strip() or ANALYSIS_STANDARD
-    if mode not in ANALYSIS_MODES:
-        raise ValueError("invalid_analysis_mode")
-    return mode
-
-
-def frozen_executor(analysis_mode: str, deep_revision: str = "") -> tuple[str, str]:
-    mode = normalize_analysis_mode(analysis_mode)
-    if mode == ANALYSIS_DEEP:
-        revision = str(deep_revision or "").strip() or DEEP_PROTOCOL_REVISION
-        return EXECUTOR_DEEP, revision
-    return EXECUTOR_STANDARD, STANDARD_EXECUTOR_REVISION
-
-
-def job_payload(round_id: str, analysis_mode: str, deep_revision: str = "") -> dict[str, str]:
-    executor, revision = frozen_executor(analysis_mode, deep_revision)
-    return {"round_id": round_id, "executor": executor, "executor_revision": revision}
 
 
 def request_fingerprint(items: list[dict]) -> str:
@@ -113,7 +86,6 @@ class RoundWork:
     tenant_id: str
     inputs: list[RoundInput]
     result_attempt: int | None = None
-    analysis_mode: str = ANALYSIS_STANDARD
     initiating_user_id: str = ""
 
 

@@ -263,7 +263,6 @@ def test_directory_timeout_retries_the_same_page_and_ignores_its_late_reply():
             "state": "completed",
             "confirmation_basis_digest": None,
             "confirmation_scope": None,
-            "analysis_mode": "standard",
             "created_at": "2026-10-20T00:00:00Z",
             "updated_at": "2026-10-20T00:00:00Z",
             "source_draft_id": task_id,

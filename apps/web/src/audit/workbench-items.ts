@@ -15,7 +15,7 @@ export function workbenchItems(tasks: TaskSummary[], drafts: components['schemas
       task: (hasExecutionError(task) ? 'attention' : task.state === 'completed' ? 'completed' : task.state === 'pending_confirm' ? 'attention' : 'running') as WorkItem['task'],
       counts: task.result_counts ? {...task.result_counts, uncovered: task.uncovered_count || 0} : undefined,
       review: task.result_counts ? {saved: task.reviewed_count || 0, total: Object.entries(task.result_counts).reduce((total, [status, count]) => total + (status === 'NA' ? 0 : count), task.uncovered_count || 0)} : undefined,
-      received: Boolean(task.round_id), updatedAt: task.updated_at, mode: task.analysis_mode === 'deep' ? '深度审核' : undefined,
+      received: Boolean(task.round_id), updatedAt: task.updated_at,
       files: task.files.filter(row => row.selection === 'selected').map(row => ({id: row.file.id, name: row.file.original_filename})),
     })),
     ...drafts.filter(draft => draft.upload_preparation && draft.status !== 'accepted' && !draft.task_id && !acceptedDrafts.has(draft.id)).map(draft => ({

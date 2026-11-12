@@ -45,7 +45,6 @@ def test_partial_history_failure_stops_without_replay_or_later_batches(timeout):
 
 def _core_round(status="PASS"):
     return {
-        "analysis_mode": "standard",
         "executor": "ppap-checker-core",
         "execution": "completed",
         "inputs": [
@@ -80,12 +79,10 @@ def _core_round(status="PASS"):
     }
 
 
-@pytest.mark.parametrize("mode", ["standard", "deep"])
-def test_core_assertions_allow_writeback_without_fabricating_scan_scope(mode):
+def test_core_assertions_allow_writeback_without_fabricating_scan_scope():
     from product.feishu_writeback import history_text, report_blocks, writeback_state
 
     body = _core_round()
-    body["analysis_mode"] = mode
     assert writeback_state(body) == "ready"
     assert "审核结果：PASS" in history_text(body)
     text = json.dumps(report_blocks(body), ensure_ascii=False)

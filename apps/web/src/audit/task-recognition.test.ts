@@ -5,16 +5,16 @@ import {createTaskRecognition, type AuditRecognitionAdapter} from './task-recogn
 
 type Task = components['schemas']['AuditTask']
 const files: Task['files'] = [{file: {id: 'version-a', file_id: 'file-a', original_filename: 'a.xlsx', content_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', byte_size: 10, status: 'ready', sha256: null}, selection: 'selected', removal_reason: null, validation: {state: 'valid', reasons: []}, match: null}]
-const input = () => ({files: structuredClone(files), mode: 'standard' as const, customer: null, previous: null})
+const input = () => ({files: structuredClone(files), customer: null, previous: null})
 function task(requestId: string): Task {
-  return {confirmation_basis_digest: null, confirmation_scope: null, id: requestId, number: 'PPAP-20261016-001', state: 'matching', analysis_mode: 'standard', customer_preference: null, source_draft_id: null, round_id: null, completion_reason: null, estimated_points: null, created_at: '2026-10-16T00:00:00Z', updated_at: '2026-10-16T00:00:00Z', files: structuredClone(files), input_revision: 0, recognition_request_id: requestId}
+  return {confirmation_basis_digest: null, confirmation_scope: null, id: requestId, number: 'PPAP-20261016-001', state: 'matching', customer_preference: null, source_draft_id: null, round_id: null, completion_reason: null, estimated_points: null, created_at: '2026-10-16T00:00:00Z', updated_at: '2026-10-16T00:00:00Z', files: structuredClone(files), input_revision: 0, recognition_request_id: requestId}
 }
 
 test('a prepared draft retains its own task identity when the recognition reply is lost', async () => {
   const commands: unknown[] = [], reads: unknown[] = [], accepted: Task[] = []
   const preparation = {id: 'prepared-draft', revision: 4}
   const recognition = createTaskRecognition({
-    match: async (_files, _mode, _customer, _previous, requestId, _predecessor, source) => {
+    match: async (_files, _customer, _previous, requestId, _predecessor, source) => {
       commands.push({requestId, source}); throw new Error('reply lost')
     },
     readRecognition: async (taskId, requestId) => {
@@ -37,7 +37,7 @@ test('a prepared draft retains its own task identity when the recognition reply 
 test('a lost recognition reply retains its input and can only read the original request', async () => {
   const requests: string[] = [], receipts: string[] = [], accepted: Task[] = []
   const adapter: AuditRecognitionAdapter = {
-    match: async (_files, _mode, _customer, _previous, requestId) => {requests.push(requestId); throw new Error('reply lost')},
+    match: async (_files, _customer, _previous, requestId) => {requests.push(requestId); throw new Error('reply lost')},
     readRecognition: async (taskId, requestId) => {receipts.push(requestId); return {task_id: taskId, request_id: requestId, state: 'accepted', input_revision: 0, task: task(requestId)}},
   }
   const recognition = createTaskRecognition(adapter, next => accepted.push(next))
@@ -58,7 +58,7 @@ test('a lost recognition reply retains its input and can only read the original 
 test('recognition keeps a service trace with its own unresolved request and clears it after recovery', async () => {
   let reads = 0
   const recognition = createTaskRecognition({
-    match: async (_files, _mode, customer) => {throw customer === 'A' ? Object.assign(new Error('unavailable'), {traceId: 'recognition-service-a'}) : new TypeError('offline')},
+    match: async (_files, customer) => {throw customer === 'A' ? Object.assign(new Error('unavailable'), {traceId: 'recognition-service-a'}) : new TypeError('offline')},
     readRecognition: async (taskId, requestId) => ++reads === 1 ? {task_id: taskId, request_id: requestId, state: 'unknown', input_revision: null, task: null} : {task_id: taskId, request_id: requestId, state: 'accepted', input_revision: 0, task: {...task(requestId), customer_preference: 'A'}},
   }, () => {})
   await recognition.start('draft-a', {...input(), customer: 'A'})
@@ -80,7 +80,7 @@ test('recognition keeps a service trace with its own unresolved request and clea
 test('an accepted receipt cannot replace the submitted file snapshot', async () => {
   const accepted: Task[] = []
   const recognition = createTaskRecognition({
-    match: async (_files, _mode, _customer, _previous, requestId) => {
+    match: async (_files, _customer, _previous, requestId) => {
       const next = task(requestId)
       next.files[0].file.original_filename = 'different.xlsx'
       return next
@@ -94,7 +94,7 @@ test('an accepted receipt cannot replace the submitted file snapshot', async () 
 test('recognition receipt must retain the explicit re-audit source and rule choice', async () => {
   const accepted: Task[] = []
   const recognition = createTaskRecognition({
-    match: async (_files, _mode, _customer, _previous, requestId) => task(requestId),
+    match: async (_files, _customer, _previous, requestId) => task(requestId),
     readRecognition: async () => {throw new Error('not read')},
   }, next => accepted.push(next))
   const draft = {...input(), predecessorId: 'original-round'}
@@ -109,7 +109,7 @@ test('recognition accepts the server-normalized removal reason without losing th
   draft.files.push({...structuredClone(files[0]), file: {...files[0].file, id: 'version-b', file_id: 'file-b'}, selection: 'removed', removal_reason: '  文件加密  '})
   const accepted: Task[] = []
   const recognition = createTaskRecognition({
-    match: async (submitted, _mode, _customer, _previous, requestId) => ({...task(requestId), files: submitted.map(row => ({...row, removal_reason: row.removal_reason?.trim() || null}))}),
+    match: async (submitted, _customer, _previous, requestId) => ({...task(requestId), files: submitted.map(row => ({...row, removal_reason: row.removal_reason?.trim() || null}))}),
     readRecognition: async () => {throw new Error('not read')},
   }, next => accepted.push(next))
   await recognition.start('draft-a', draft)

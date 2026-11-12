@@ -47,7 +47,6 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
                 "file_not_ready",
                 "review_conflict",
                 "review_hint_response_conflict",
-                "deep_not_available",
                 "model_configuration_changed",
                 "task_input_locked",
                 "validation_scope_mismatch",
@@ -464,7 +463,6 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
         if denied:
             return denied
         items = body.get("items") if "items" in body else None
-        analysis_mode = body.get("analysis_mode") if "analysis_mode" in body else None
         writeback_target = body.get("writeback_target") if "writeback_target" in body else None
         if "rule_version_id" in body:
             return JSONResponse({"error": "per_target_rules_required"}, status_code=400)
@@ -473,7 +471,6 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
                 principal,
                 draft_id,
                 items,
-                analysis_mode,
                 writeback_target,
                 body.get("case_context"),
                 upload_preparation=body.get("upload_preparation"),

@@ -24,7 +24,7 @@ test('known ZIP rejections stay distinct from lost acceptance replies', async ()
 })
 Object.defineProperty(globalThis, 'navigator', {value: {onLine: true}, configurable: true})
 const file: Task['files'][number] = {file: {id: 'version-a', file_id: 'file-a', original_filename: 'a.xlsx', content_type: 'application/octet-stream', byte_size: 3, status: 'ready', sha256: null}, selection: 'selected', removal_reason: null, validation: {state: 'pending', reasons: []}, match: null}
-const task: Task = {id: 'task-a', number: 'PPAP-20261016-001', state: 'pending_confirm', analysis_mode: 'standard', created_at: '2026-10-16T00:00:00Z', updated_at: '2026-10-16T00:00:00Z', source_draft_id: 'task-a', round_id: null, customer_preference: null, completion_reason: null, estimated_points: 0, files: [file], input_revision: 2, confirmation_basis_digest: 'a'.repeat(64), confirmation_scope: null}
+const task: Task = {id: 'task-a', number: 'PPAP-20261016-001', state: 'pending_confirm', created_at: '2026-10-16T00:00:00Z', updated_at: '2026-10-16T00:00:00Z', source_draft_id: 'task-a', round_id: null, customer_preference: null, completion_reason: null, estimated_points: 0, files: [file], input_revision: 2, confirmation_basis_digest: 'a'.repeat(64), confirmation_scope: null}
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {status, headers: {'Content-Type': 'application/json'}})
 afterEach(() => {globalThis.fetch = fetchBefore})
 
@@ -537,10 +537,10 @@ test('native matching sends all provenance and its exact input revision without 
   globalThis.fetch = async (url, init) => {
     assert.equal(String(url), '/audit-tasks')
     assert.equal(init?.method, 'POST')
-    assert.deepEqual(JSON.parse(String(init?.body)), {request_id: 'recognition-a', task_id: 'task-a', expected_revision: 2, analysis_mode: 'standard', customer_preference: null, files: [{file_version_id: 'version-a', validation_id: 'validation-a', selection: 'selected', removal_reason: null}, {file_version_id: 'version-b', validation_id: 'validation-b', selection: 'removed', removal_reason: '文件加密'}]})
+    assert.deepEqual(JSON.parse(String(init?.body)), {request_id: 'recognition-a', task_id: 'task-a', expected_revision: 2, customer_preference: null, files: [{file_version_id: 'version-a', validation_id: 'validation-a', selection: 'selected', removal_reason: null}, {file_version_id: 'version-b', validation_id: 'validation-b', selection: 'removed', removal_reason: '文件加密'}]})
     return json({...task, files: rows, state: 'matching', input_revision: 3, recognition_request_id: 'recognition-a'})
   }
-  const next = await createNativeAuditAdapter({customers: []}).match(rows, 'standard', null, task, 'recognition-a')
+  const next = await createNativeAuditAdapter({customers: []}).match(rows, null, task, 'recognition-a')
   assert.equal(next.id, 'task-a')
   assert.equal(next.input_revision, 3)
   assert.equal(next.files[1].selection, 'removed')

@@ -74,7 +74,7 @@ def confirmation_command(client, path, expected_revision):
 
 
 def upload_preparation(files=()):
-    return {"version": 1, "analysis_mode": "standard", "customer_preference": None, "predecessor_id": None, "uploads": [], "files": list(files)}
+    return {"version": 1, "customer_preference": None, "predecessor_id": None, "uploads": [], "files": list(files)}
 
 
 def test_preparation_writeback_target_uses_the_same_revision_and_promotion_lock(task_system):
@@ -100,7 +100,7 @@ def test_preparation_writeback_target_uses_the_same_revision_and_promotion_lock(
     winner = targets[next(index for index, response in enumerate(results) if response.status_code == 200)]
     assert stored_target() == winner
     assert client.get(path).json()["preparation_revision"] == 1
-    request = {"request_id": str(uuid.uuid4()), "source_draft_id": draft_id, "expected_draft_revision": 1, "analysis_mode": "standard", "customer_preference": None, "files": [file]}
+    request = {"request_id": str(uuid.uuid4()), "source_draft_id": draft_id, "expected_draft_revision": 1, "customer_preference": None, "files": [file]}
     with ThreadPoolExecutor(max_workers=2) as pool:
         saving = pool.submit(save, targets[2], 1)
         promoting = pool.submit(client.post, "/audit-tasks", json=request)
@@ -193,7 +193,7 @@ def test_native_preparation_promotes_the_same_draft_once_and_late_writes_cannot_
     preparation = upload_preparation([file])
     draft_id, request_id = str(uuid.uuid4()), str(uuid.uuid4())
     assert client.post("/drafts", json={"request_id": draft_id, "upload_preparation": preparation}).status_code == 201
-    body = {"request_id": request_id, "source_draft_id": draft_id, "expected_draft_revision": 0, "analysis_mode": "standard", "customer_preference": None, "files": [file]}
+    body = {"request_id": request_id, "source_draft_id": draft_id, "expected_draft_revision": 0, "customer_preference": None, "files": [file]}
     assert client.post("/audit-tasks", json={**body, "files": [{**file, "selection": "unselected"}, file]}).status_code == 409
     with ThreadPoolExecutor(max_workers=2) as pool:
         replies = list(pool.map(lambda _: client.post("/audit-tasks", json=body), range(2)))
@@ -226,7 +226,7 @@ def test_native_preparation_save_and_promotion_have_one_revision_winner(task_sys
     preparation = upload_preparation([file])
     draft_id = str(uuid.uuid4())
     assert client.post("/drafts", json={"request_id": draft_id, "upload_preparation": preparation}).status_code == 201
-    request = {"request_id": str(uuid.uuid4()), "source_draft_id": draft_id, "expected_draft_revision": 0, "analysis_mode": "standard", "customer_preference": None, "files": [file]}
+    request = {"request_id": str(uuid.uuid4()), "source_draft_id": draft_id, "expected_draft_revision": 0, "customer_preference": None, "files": [file]}
     with ThreadPoolExecutor(max_workers=2) as pool:
         save = pool.submit(client.put, f"/drafts/{draft_id}", json={"expected_revision": 0, "upload_preparation": preparation})
         promote = pool.submit(client.post, "/audit-tasks", json=request)
@@ -254,7 +254,7 @@ def test_native_preparation_saved_removal_reason_matches_the_recognition_normali
     assert saved.status_code == 200, saved.text
     assert saved.json()["upload_preparation"]["files"][1]["removal_reason"] == "用户移除"
     assert client.get(f"/drafts/{draft_id}").json() == saved.json()
-    body = {"request_id": str(uuid.uuid4()), "source_draft_id": draft_id, "expected_draft_revision": 1, "analysis_mode": "standard", "customer_preference": None, "files": requested["files"]}
+    body = {"request_id": str(uuid.uuid4()), "source_draft_id": draft_id, "expected_draft_revision": 1, "customer_preference": None, "files": requested["files"]}
     promoted = client.post("/audit-tasks", json=body)
     assert promoted.status_code == 202, promoted.text
     task = promoted.json()
@@ -282,13 +282,13 @@ def test_native_preparation_does_not_expand_creator_or_tenant_access(task_system
     assert client.get(f"/drafts/{draft_id}").status_code == 403
     assert client.get("/drafts").json()["drafts"] == []
     assert client.put(f"/drafts/{draft_id}", json={"expected_revision": 0, "upload_preparation": preparation}).status_code == 403
-    request = {"request_id": str(uuid.uuid4()), "source_draft_id": draft_id, "expected_draft_revision": 0, "analysis_mode": "standard", "customer_preference": None, "files": preparation["files"]}
+    request = {"request_id": str(uuid.uuid4()), "source_draft_id": draft_id, "expected_draft_revision": 0, "customer_preference": None, "files": preparation["files"]}
     assert client.post("/audit-tasks", json=request).status_code == 403
     assert client.get(f"/audit-tasks/{draft_id}/recognitions/{request['request_id']}").status_code == 403
 
 
 def assert_task_summary(summary, task):
-    expected = {key: task[key] for key in ("id", "number", "state", "input_revision", "analysis_mode", "created_at", "round_id", "completion_reason")}
+    expected = {key: task[key] for key in ("id", "number", "state", "input_revision", "created_at", "round_id", "completion_reason")}
     expected["files"] = [{"file": row["file"], "selection": row["selection"]} for row in task["files"]]
     assert {key: summary[key] for key in expected} == expected
     if task["round_id"]:
@@ -319,7 +319,7 @@ def matched_task(task_system):
     worker.settings.usage_charge_enabled = False
     file = checked_file(client, worker)
     rule = publish_rule(client, file)
-    body = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [file]}
+    body = {"request_id": str(uuid.uuid4()), "customer_preference": None, "files": [file]}
     task = client.post("/audit-tasks", json=body).json()
     process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=MetadataAI())
     return client, worker, f"/audit-tasks/{task['id']}", body, rule
@@ -948,7 +948,7 @@ def test_charged_task_allocates_only_matched_selected_files_and_p8_counts_files(
     files[-1]["selection"] = "unselected"
     files.append(checked_file(client, worker, "过程流程图.xlsx", "过程流程图"))
     publish_rule(client, files[0])
-    task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": files}).json()
+    task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "customer_preference": None, "files": files}).json()
     for _ in range(3):
         process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=MetadataAI())
     worker.settings.feishu_free_trial_quota_points = 750
@@ -1119,7 +1119,6 @@ def test_removed_file_needs_no_file_validation_or_hidden_matching_work(task_syst
         "/audit-tasks",
         json={
             "request_id": str(uuid.uuid4()),
-            "analysis_mode": "standard",
             "customer_preference": None,
             "files": [file, {"file_version_id": excluded["id"], "validation_id": None, "selection": "removed", "removal_reason": "上传后已排除"}],
         },
@@ -1140,7 +1139,7 @@ def test_confirmation_excludes_unmatched_and_unselected_files_from_the_frozen_ro
     unmatched = checked_file(client, worker, "过程流程图.xlsx", "过程流程图")
     unselected = {**checked_file(client, worker, "另一份控制计划.xlsx"), "selection": "unselected"}
     rule = publish_rule(client, selected)
-    body = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [selected, unmatched, unselected]}
+    body = {"request_id": str(uuid.uuid4()), "customer_preference": None, "files": [selected, unmatched, unselected]}
     task = client.post("/audit-tasks", json=body).json()
     for _ in range(2):
         process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=MetadataAI())
@@ -1183,7 +1182,7 @@ def test_queue_insert_failure_rolls_back_the_task_round_and_frozen_inputs(matche
 def test_recognition_is_persistent_and_zero_match_ends_without_an_audit(task_system):
     client, worker = task_system
     file = checked_file(client, worker)
-    body = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [file]}
+    body = {"request_id": str(uuid.uuid4()), "customer_preference": None, "files": [file]}
     response = client.post("/audit-tasks", json=body)
     assert response.status_code == 202
     task = response.json()
@@ -1236,7 +1235,7 @@ def test_customer_recovery_rematches_and_finishes_the_original_task_without_chan
         def __call__(self, operation, **request):
             return AIResult({}) if operation == "document_metadata_extraction" else super().__call__(operation, **request)
 
-    body = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [file]}
+    body = {"request_id": str(uuid.uuid4()), "customer_preference": None, "files": [file]}
     task = client.post("/audit-tasks", json=body).json()
     path = f"/audit-tasks/{task['id']}"
     process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=CustomerUnknownAI())
@@ -1280,10 +1279,10 @@ def test_customer_recovery_rematches_and_finishes_the_original_task_without_chan
 def test_legacy_draft_operations_cannot_replace_or_accept_a_recognition_task(task_system):
     client, worker = task_system
     file = checked_file(client, worker)
-    body = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [file]}
+    body = {"request_id": str(uuid.uuid4()), "customer_preference": None, "files": [file]}
     task = client.post("/audit-tasks", json=body).json()
     draft = task["source_draft_id"]
-    replaced = client.put(f"/drafts/{draft}", json={"items": [], "analysis_mode": "standard"})
+    replaced = client.put(f"/drafts/{draft}", json={"items": []})
     assert replaced.status_code == 409
     assert replaced.json() == {"error": "task_input_locked"}
     accepted = client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "legacy-bypass"})
@@ -1530,7 +1529,7 @@ def test_explicit_candidate_resolves_ambiguity_without_selecting_the_first_rule(
     file = checked_file(client, worker)
     publish_rule(client, file, title="规则 A")
     chosen = publish_rule(client, file, title="规则 B")
-    body = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [{**file, "preferred_rule_version_id": chosen["id"]}]}
+    body = {"request_id": str(uuid.uuid4()), "customer_preference": None, "files": [{**file, "preferred_rule_version_id": chosen["id"]}]}
     task = client.post("/audit-tasks", json=body)
     assert task.status_code == 202
     process_claimed(worker, worker.claim_job("explicit"), "explicit", rule_ai=MetadataAI())
@@ -1552,7 +1551,7 @@ def test_native_preparation_ambiguity_is_resolved_by_explicit_rematching_before_
     original_objects = dict(worker.objects.data)
     promoted = client.post(
         "/audit-tasks",
-        json={"request_id": str(uuid.uuid4()), "source_draft_id": draft_id, "expected_draft_revision": 1, "analysis_mode": "standard", "customer_preference": None, "files": [file]},
+        json={"request_id": str(uuid.uuid4()), "source_draft_id": draft_id, "expected_draft_revision": 1, "customer_preference": None, "files": [file]},
     )
     assert promoted.status_code == 202, promoted.text
     task = promoted.json()
@@ -1574,7 +1573,6 @@ def test_native_preparation_ambiguity_is_resolved_by_explicit_rematching_before_
         "request_id": str(uuid.uuid4()),
         "task_id": draft_id,
         "expected_revision": 0,
-        "analysis_mode": "standard",
         "customer_preference": None,
         "files": [{**file, "preferred_rule_version_id": chosen["id"]}],
     }
@@ -1591,7 +1589,7 @@ def test_native_preparation_ambiguity_is_resolved_by_explicit_rematching_before_
     result = accepted.json()
     frozen = client.get(f"/rounds/{result['round_id']}").json()
     assert result["id"] == draft_id and result["source_draft_id"] == draft_id
-    assert frozen["source_draft_id"] == draft_id and frozen["analysis_mode"] == "standard"
+    assert frozen["source_draft_id"] == draft_id
     assert len(frozen["inputs"]) == 1
     source = frozen["inputs"][0]
     assert source["file_version_id"] == file["file_version_id"] and source["role"] == "target"
@@ -1621,7 +1619,7 @@ def test_concurrent_creation_coalesces_and_changed_inputs_cannot_replace_it(task
     client, worker = task_system
     file = checked_file(client, worker)
     other = checked_file(client, worker, "另一份控制计划.xlsx")
-    body = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [file]}
+    body = {"request_id": str(uuid.uuid4()), "customer_preference": None, "files": [file]}
     with ThreadPoolExecutor(max_workers=2) as pool:
         responses = list(pool.map(lambda _: client.post("/audit-tasks", json=body), range(2)))
     assert [response.status_code for response in responses] == [202, 202]
@@ -1648,7 +1646,7 @@ def test_rematching_keeps_the_task_and_ignores_a_previous_revision_result(task_s
     client, worker = task_system
     first = checked_file(client, worker)
     replacement = checked_file(client, worker, "新版控制计划.xlsx")
-    body = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [first, replacement]}
+    body = {"request_id": str(uuid.uuid4()), "customer_preference": None, "files": [first, replacement]}
     task = client.post("/audit-tasks", json=body).json()
     old_jobs = [worker.claim_job("old") for _ in range(2)]
     revised = {**body, "request_id": str(uuid.uuid4()), "task_id": task["id"], "expected_revision": 0, "files": [{**first, "selection": "removed", "removal_reason": "由新版替换"}, replacement]}
@@ -1679,7 +1677,7 @@ def test_rematching_keeps_the_task_and_ignores_a_previous_revision_result(task_s
 def test_recognition_receipts_survive_lost_responses_and_keep_their_original_revision(task_system):
     client, worker = task_system
     file = checked_file(client, worker)
-    body = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [file]}
+    body = {"request_id": str(uuid.uuid4()), "customer_preference": None, "files": [file]}
     task = client.post("/audit-tasks", json=body).json()
     request_id = str(uuid.uuid4())
     path = f"/audit-tasks/{task['id']}/recognitions/"
@@ -1704,7 +1702,7 @@ def test_recognition_receipts_survive_lost_responses_and_keep_their_original_rev
 def test_competing_revisions_and_stale_zero_match_end_cannot_replace_current_input(task_system):
     client, worker = task_system
     file = checked_file(client, worker)
-    body = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [file]}
+    body = {"request_id": str(uuid.uuid4()), "customer_preference": None, "files": [file]}
     task = client.post("/audit-tasks", json=body).json()
     process_claimed(worker, worker.claim_job("initial"), "initial", rule_ai=MetadataAI())
     revisions = [{**body, "task_id": task["id"], "expected_revision": 0, "request_id": str(uuid.uuid4()), "customer_preference": customer} for customer in ("客户A", "客户B")]
@@ -1733,7 +1731,7 @@ def test_competing_revisions_and_stale_zero_match_end_cannot_replace_current_inp
 def test_superseded_queued_recognition_does_not_read_the_file_or_call_the_model(task_system):
     client, worker = task_system
     file = checked_file(client, worker)
-    body = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [file]}
+    body = {"request_id": str(uuid.uuid4()), "customer_preference": None, "files": [file]}
     task = client.post("/audit-tasks", json=body).json()
     revised = {**body, "request_id": str(uuid.uuid4()), "task_id": task["id"], "expected_revision": 0}
     assert client.post("/audit-tasks", json=revised).status_code == 202
@@ -1752,7 +1750,7 @@ def test_superseded_queued_recognition_does_not_read_the_file_or_call_the_model(
 def test_rematching_requires_retained_file_provenance_and_exact_file_validations(task_system):
     client, worker = task_system
     first, second = checked_file(client, worker), checked_file(client, worker, "另一份.xlsx")
-    body = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [first, second]}
+    body = {"request_id": str(uuid.uuid4()), "customer_preference": None, "files": [first, second]}
     task = client.post("/audit-tasks", json=body).json()
     revise = {**body, "request_id": str(uuid.uuid4()), "task_id": task["id"], "expected_revision": 0}
     assert client.post("/audit-tasks", json={**revise, "files": [second]}).json() == {"error": "task_file_provenance_required"}
@@ -1766,7 +1764,7 @@ def test_rematching_requires_retained_file_provenance_and_exact_file_validations
 def test_recognition_request_collision_does_not_expose_another_tenants_job(task_system):
     client, worker = task_system
     file = checked_file(client, worker)
-    body = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [file]}
+    body = {"request_id": str(uuid.uuid4()), "customer_preference": None, "files": [file]}
     task = client.post("/audit-tasks", json=body).json()
     assert worker.claim_job("held-original") is not None
     task = client.get(f"/audit-tasks/{task['id']}").json()
@@ -1785,7 +1783,7 @@ def test_unselected_and_removed_files_keep_provenance_without_recognition(task_s
     files = [checked_file(client, worker, name) for name in ("控制计划.xlsx", "未选择.xlsx", "已移除.xlsx")]
     files[1]["selection"] = "unselected"
     files[2].update(selection="removed", removal_reason="本次不审核")
-    body = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": files}
+    body = {"request_id": str(uuid.uuid4()), "customer_preference": None, "files": files}
     task = client.post("/audit-tasks", json=body).json()
     assert [row["selection"] for row in task["files"]] == ["selected", "unselected", "removed"]
     assert [row["file"]["id"] for row in task["files"]] == [row["file_version_id"] for row in files]
@@ -1867,7 +1865,7 @@ def test_explicit_customer_scope_and_reference_survive_acceptance_and_recovery(t
     assert client.get(f"/rules/{legacy['id']}").json() == legacy
     listed = {row["id"]: row for row in client.get("/rules").json()["rules"]}
     assert (listed[legacy["id"]]["customer_scope"], listed[confirmed["id"]]["customer_scope"]) == ("unconfirmed", "all")
-    task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [target, reference]}).json()
+    task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "customer_preference": None, "files": [target, reference]}).json()
     for _ in range(2):
         process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=MetadataAI())
     path = f"/audit-tasks/{task['id']}"
@@ -1954,7 +1952,7 @@ def test_two_tasks_bind_their_own_jobs_and_candidate_versions(task_system):
     client, worker = task_system
     file = checked_file(client, worker)
     old = publish_rule(client, file)
-    body = {"analysis_mode": "standard", "customer_preference": None, "files": [file]}
+    body = {"customer_preference": None, "files": [file]}
     first = client.post("/audit-tasks", json={**body, "request_id": str(uuid.uuid4())}).json()
     new = publish_rule(client, file, predecessor=old["id"], title="客户控制计划第二版")
     second = client.post("/audit-tasks", json={**body, "request_id": str(uuid.uuid4())}).json()
@@ -1983,7 +1981,7 @@ def test_three_document_types_match_their_own_rules_without_accepting_an_audit(t
         file = checked_file(client, worker, document_type + ".xlsx", document_type)
         files.append(file)
         rules.append(publish_rule(client, file, title="客户" + document_type, document_type=document_type))
-    response = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": files})
+    response = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "customer_preference": None, "files": files})
     assert response.status_code == 202
     task = response.json()
     for _ in files:
@@ -2009,7 +2007,7 @@ def test_confirmation_freezes_three_matched_targets_once_and_restores_the_same_r
         rules.append(publish_rule(client, file, title="客户" + document_type, document_type=document_type))
     for rule in rules:
         core_system.adopt(worker, rule["id"], PART_NUMBER_CHECKER)
-    task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": files}).json()
+    task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "customer_preference": None, "files": files}).json()
     for _ in files:
         process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=MetadataAI())
     path = f"/audit-tasks/{task['id']}"
@@ -2069,7 +2067,7 @@ def test_private_task_cannot_be_read_through_its_round_or_original_by_a_tenant_p
     worker.settings.usage_charge_enabled = False
     file = checked_file(client, worker)
     publish_rule(client, file)
-    task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [file]}).json()
+    task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "customer_preference": None, "files": [file]}).json()
     process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=MetadataAI())
     path = f"/audit-tasks/{task['id']}"
     command = confirmation_command(client, path, 0)
@@ -2095,7 +2093,7 @@ def test_task_creation_requires_the_exact_completed_file_validation_receipt(task
     client, worker = task_system
     first = checked_file(client, worker)
     other = checked_file(client, worker, "另一份.xlsx")
-    request = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [{**first, "validation_id": other["validation_id"]}]}
+    request = {"request_id": str(uuid.uuid4()), "customer_preference": None, "files": [{**first, "validation_id": other["validation_id"]}]}
     assert client.post("/audit-tasks", json=request).status_code == 409
     assert client.get("/audit-tasks").json()["tasks"] == []
     assert worker.claim_job("not-accepted") is None
@@ -2112,7 +2110,7 @@ def test_ambiguous_rules_are_not_reported_as_definitive_zero_match(task_system):
     file = checked_file(client, worker)
     first = publish_rule(client, file)
     second = publish_rule(client, file, title="另一套同时生效的客户控制计划")
-    task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [file]}).json()
+    task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "customer_preference": None, "files": [file]}).json()
     process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=MetadataAI())
     path = f"/audit-tasks/{task['id']}"
     recovered = client.get(path).json()
@@ -2127,7 +2125,7 @@ def test_ambiguous_rules_are_not_reported_as_definitive_zero_match(task_system):
 def test_reference_only_task_can_end_without_a_round_report_or_charge(task_system):
     client, worker = task_system
     file = checked_file(client, worker, "特殊特性清单.xlsx", "过程特殊特性清单")
-    task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [file]}).json()
+    task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "customer_preference": None, "files": [file]}).json()
     process_claimed(worker, worker.claim_job("reference-only"), "reference-only", rule_ai=MetadataAI())
     path = "/audit-tasks/" + task["id"]
     recognized = client.get(path).json()
@@ -2152,7 +2150,7 @@ def test_task_reads_and_job_reads_require_the_private_draft_owner(task_system, a
     source_id = client.get(f"/file-validations/{file['validation_id']}").json()["source_file_id"]
     standalone = client.post("/file-analyses", json={"request_id": str(uuid.uuid4()), "source_file_id": source_id, "source_file_version_id": file["file_version_id"]}).json()
     process_claimed(worker, worker.claim_job("standalone"), "standalone", rule_ai=MetadataAI())
-    body = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [file]}
+    body = {"request_id": str(uuid.uuid4()), "customer_preference": None, "files": [file]}
     task = client.post("/audit-tasks", json=body).json()
     job = worker.claim_job("recognition")
     migrator = auth_store_factory(worker.settings, objects=worker.objects, reset=False)
@@ -2181,7 +2179,7 @@ def test_task_reads_and_job_reads_require_the_private_draft_owner(task_system, a
 def test_failed_and_unknown_recognition_are_not_definitive_zero_matches(task_system):
     client, worker = task_system
     file = checked_file(client, worker)
-    task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [file]}).json()
+    task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "customer_preference": None, "files": [file]}).json()
     job = worker.claim_job("original")
     # Inject a lost heartbeat through the database boundary; no replacement worker.
     with worker._conn() as conn:
@@ -2212,7 +2210,7 @@ def test_user_can_end_after_unselecting_all_matched_targets(task_system):
     client, worker = task_system
     file = checked_file(client, worker)
     publish_rule(client, file)
-    task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [file]}).json()
+    task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "customer_preference": None, "files": [file]}).json()
     process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=MetadataAI())
     path = f"/audit-tasks/{task['id']}"
     assert client.get(path).json()["files"][0]["match"]["state"] == "matched"
@@ -2235,7 +2233,7 @@ def test_zero_target_end_rejects_foreign_or_stale_selection_intent(task_system):
     client, worker = task_system
     file = checked_file(client, worker)
     publish_rule(client, file)
-    task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [file]}).json()
+    task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "customer_preference": None, "files": [file]}).json()
     process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=MetadataAI())
     path = f"/audit-tasks/{task['id']}"
     for ids in ([str(uuid.uuid4())], [file["file_version_id"], file["file_version_id"]], "not-a-list"):
@@ -2256,7 +2254,7 @@ def test_v4_preset_t12_can_be_a_target_without_changing_legacy_reference_behavio
     client.cookies.set(SESSION_COOKIE, store.create_session(principal))
     worker = build_product_store(settings, objects=store.objects, role="worker")
     file = checked_file(client, worker, "特殊特性清单.xlsx", "过程特殊特性清单")
-    task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": "蔚来", "files": [file]}).json()
+    task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "customer_preference": "蔚来", "files": [file]}).json()
     process_claimed(worker, worker.claim_job("v4-recognition"), "v4-recognition", rule_ai=MetadataAI())
     path = "/audit-tasks/" + task["id"]
     recognized = client.get(path).json()
@@ -2278,7 +2276,7 @@ def test_v4_t12_explicit_reference_remains_free_and_restores_its_role(auth_store
     client.cookies.set(SESSION_COOKIE, store.create_session(principal))
     worker = build_product_store(settings, objects=store.objects, role="worker")
     file = checked_file(client, worker, "特殊特性清单.xlsx", "过程特殊特性清单")
-    command = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": "蔚来", "files": [{**file, "reference_only": True}]}
+    command = {"request_id": str(uuid.uuid4()), "customer_preference": "蔚来", "files": [{**file, "reference_only": True}]}
     response = client.post("/audit-tasks", json=command)
     assert response.status_code == 202, response.text
     process_claimed(worker, worker.claim_job("v4-reference"), "v4-reference", rule_ai=MetadataAI())

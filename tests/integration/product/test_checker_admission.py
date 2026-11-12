@@ -192,22 +192,6 @@ def test_standard_round_freezes_the_explicitly_adopted_appendix(admission):
     assert frozen.to_dict()["targets"][0]["appendix"] == appendix
 
 
-def test_deep_acceptance_is_not_offered_and_queues_nothing(admission):
-    a = admission
-    a.verify()
-    draft = a.draft()
-    with pytest.raises(ValueError, match="^deep_not_available$"):
-        a.store.save_draft(a.alice, draft, items=None, analysis_mode="deep")
-    # An open draft saved as Deep before #322 cannot be accepted as Deep either.
-    with a.store._conn() as conn:
-        conn.execute("UPDATE product.audit_drafts SET analysis_mode='deep' WHERE id=%s", (draft,))
-    before = a.counts()
-    with pytest.raises(ValueError, match="^deep_not_available$"):
-        a.store.accept_draft(a.alice, draft, "deep:" + draft)
-    assert a.counts() == before
-    assert a.store.get_draft(draft)["status"] == "open"
-
-
 @pytest.mark.parametrize("boundary", ["expired", "null"])
 def test_all_audits_reject_expired_renewal_progress_and_completion(admission, boundary):
     a = admission

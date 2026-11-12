@@ -67,7 +67,6 @@ def test_choose_folder_cancel_and_resume_keep_original_upload_request(width, rec
                     items=[],
                     upload_preparation=body["upload_preparation"],
                     preparation_revision=0,
-                    analysis_mode="standard",
                     predecessor_id=None,
                     case_context={},
                     writeback={"available": False},

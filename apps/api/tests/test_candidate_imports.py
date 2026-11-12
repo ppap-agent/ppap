@@ -1,6 +1,5 @@
 """Candidate guards use real tenant transactions and controlled, model-free authors."""
 
-import hashlib
 import io
 import json
 from types import SimpleNamespace
@@ -12,12 +11,12 @@ from agent.checker_spec import CheckerArtifact
 from agent.protocol import DevelopmentEnvelope
 from agent.run import ExecutionContext
 from api import create_app
-from audit.checker_core import checker_digest
 from audit.checker_validation import CaseEvaluation, ClauseEvaluation, SuiteValidationReport
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from product import build_product_store
 from product.files import ObjectExists, ObjectMissing
+from product.fixtures import freeze_round_suite
 from product.identity import SESSION_COOKIE
 from product.settings import Settings
 from product.store.checker_development import CheckerDevelopmentStore
@@ -155,7 +154,7 @@ def test_api_selected_pi_passes_full_sources_and_host_rejects_a_guest_bypass(aut
             conn.execute("INSERT INTO product.resources(id,tenant_id,kind) VALUES(%s,%s,'audit_round')", (round_id, f.principal.tenant_id))
             conn.execute("INSERT INTO product.resource_grants(resource_id,user_id,capability) VALUES(%s,%s,'review')", (round_id, f.principal.user_id))
             conn.execute(
-                "INSERT INTO product.audit_rounds(id,tenant_id,created_by,idempotency_key,request_fingerprint,execution,result_attempt,analysis_mode) VALUES(%s,%s,%s,%s,'test','completed',1,'deep')",
+                "INSERT INTO product.audit_rounds(id,tenant_id,created_by,idempotency_key,request_fingerprint,execution,result_attempt) VALUES(%s,%s,%s,%s,'test','completed',1)",
                 (round_id, f.principal.tenant_id, f.principal.user_id, round_id),
             )
             conn.execute(
@@ -166,10 +165,7 @@ def test_api_selected_pi_passes_full_sources_and_host_rejects_a_guest_bypass(aut
                 "INSERT INTO product.findings(id,round_id,item_key,classification,item,status,locator) VALUES(%s,%s,'R1','rule','Threshold','PASS',%s)",
                 (uuid4(), round_id, Jsonb({"file_version_id": version.id, "rule_item_id": "R1"})),
             )
-            conn.execute(
-                "INSERT INTO product.checker_round_artifacts(round_id,file_version_id,result_attempt,tenant_id,suite_revision_id,program_digest,input_digest) VALUES(%s,%s,1,%s,%s,%s,%s)",
-                (round_id, version.id, f.principal.tenant_id, f.selected.id, checker_digest({"checker.py": FACTORY, "resources.py": b"VALUE = 1\n"}), hashlib.sha256(raw).hexdigest()),
-            )
+        freeze_round_suite(f.store, f.principal, round_id, version.id, version.sha256, f.selected.id)
         response = f.client.post(
             f"/audit-rounds/{round_id}/checker-feedback",
             json={

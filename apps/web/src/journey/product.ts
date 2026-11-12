@@ -148,7 +148,7 @@ export function roundEvidence(round: Round, basis: RequirementBasis | null): Dec
   for (const coverage of round.coverage.rule_items ?? []) {
     if (coverage.item_key && rows.some(row => row.id === coverage.item_key)) continue
     if (coverage.coverage === 'executed') continue
-    rows.push({id: `coverage:${coverage.file_version_id}:${coverage.id}`, displayId: coverage.id, title: coverage.category || coverage.rule_to_check.slice(0, 48), requirement: coverage.rule_to_check, result: '未覆盖', explanation: coverage.reason === 'manual-only' ? '标准检查尚未确认此条款的执行映射，可由人工核对或选择深度审核。' : coverage.reason || '本条要求未完成自动检查。', sources: []})
+    rows.push({id: `coverage:${coverage.file_version_id}:${coverage.id}`, displayId: coverage.id, title: coverage.category || coverage.rule_to_check.slice(0, 48), requirement: coverage.rule_to_check, result: '未覆盖', explanation: coverage.reason === 'manual-only' ? '检查程序尚未确认此条款的执行映射，请人工核对。' : coverage.reason || '本条要求未完成自动检查。', sources: []})
   }
   if (!rows.length) rows.push({id: 'no-result', title: '本轮检查结果', requirement: basis?.source.title || '本轮要求', result: round.execution === 'failed' ? '执行失败' : '未覆盖', explanation: round.failure?.message || '本轮没有可核对的逐项结果。', sources: []})
   return rows

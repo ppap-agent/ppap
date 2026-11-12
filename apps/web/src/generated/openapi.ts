@@ -2710,11 +2710,6 @@ export interface components {
         };
         /** AuditReauditInputs */
         AuditReauditInputs: {
-            /**
-             * Analysis Mode
-             * @enum {string}
-             */
-            analysis_mode: "standard" | "deep";
             /** Customer Preference */
             customer_preference: string | null;
             /** Files */
@@ -3109,11 +3104,6 @@ export interface components {
          */
         AuditTask: {
             acceptance?: components["schemas"]["AuditAcceptance"];
-            /**
-             * Analysis Mode
-             * @enum {string}
-             */
-            analysis_mode: "standard" | "deep";
             completion_estimate?: components["schemas"]["AuditCompletionEstimate"] | null;
             /** Completion Reason */
             completion_reason: ("no_matching_rules" | "processed") | null;
@@ -3216,11 +3206,6 @@ export interface components {
         };
         /** AuditTaskSummary */
         AuditTaskSummary: {
-            /**
-             * Analysis Mode
-             * @enum {string}
-             */
-            analysis_mode: "standard" | "deep";
             /** Completion Reason */
             completion_reason: ("no_matching_rules" | "processed") | null;
             /** Created At */
@@ -3308,11 +3293,6 @@ export interface components {
         };
         /** AuditUploadPreparation */
         AuditUploadPreparation: {
-            /**
-             * Analysis Mode
-             * @enum {string}
-             */
-            analysis_mode: "standard" | "deep";
             /** Customer Preference */
             customer_preference: string | null;
             /** Files */
@@ -3659,11 +3639,6 @@ export interface components {
         };
         /** Draft */
         Draft: {
-            /**
-             * Analysis Mode
-             * @enum {string}
-             */
-            analysis_mode: "standard" | "deep";
             case_context?: components["schemas"]["CaseContext"];
             /** Id */
             id: string;
@@ -4785,11 +4760,6 @@ export interface components {
         };
         /** Round */
         Round: {
-            /**
-             * Analysis Mode
-             * @enum {string}
-             */
-            analysis_mode: "standard" | "deep";
             case_context?: components["schemas"]["CaseContext"];
             coverage: components["schemas"]["Coverage"];
             /** Created At */
@@ -4856,11 +4826,6 @@ export interface components {
         };
         /** RoundSummary */
         RoundSummary: {
-            /**
-             * Analysis Mode
-             * @enum {string}
-             */
-            analysis_mode: "standard" | "deep";
             /** Case Scope */
             case_scope: string;
             /** Case Title */
@@ -6676,11 +6641,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /**
-                     * Analysis Mode
-                     * @enum {string}
-                     */
-                    analysis_mode: "standard" | "deep";
                     /** Customer Preference */
                     customer_preference: string | null;
                     /** Expected Draft Revision */
@@ -7392,11 +7352,6 @@ export interface operations {
                     request_id?: string;
                     /** AuditUploadPreparation */
                     upload_preparation?: {
-                        /**
-                         * Analysis Mode
-                         * @enum {string}
-                         */
-                        analysis_mode: "standard" | "deep";
                         /** Customer Preference */
                         customer_preference: string | null;
                         /** Files */
@@ -7532,11 +7487,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /**
-                     * Analysis Mode
-                     * @enum {string}
-                     */
-                    analysis_mode?: "standard" | "deep";
                     /** CaseContext */
                     case_context?: {
                         /**
@@ -7563,11 +7513,6 @@ export interface operations {
                     }[];
                     /** AuditUploadPreparation */
                     upload_preparation?: {
-                        /**
-                         * Analysis Mode
-                         * @enum {string}
-                         */
-                        analysis_mode: "standard" | "deep";
                         /** Customer Preference */
                         customer_preference: string | null;
                         /** Files */

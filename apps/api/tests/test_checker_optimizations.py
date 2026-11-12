@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from product import build_product_store
 from product.files import ObjectExists, ObjectMissing
+from product.fixtures import freeze_round_suite
 from product.identity import SESSION_COOKIE
 from product.settings import Settings
 from product.store.checker_development import CheckerDevelopmentStore
@@ -131,8 +132,8 @@ def fixture(auth_store_factory, *, count=4, resources=False):
             )
             conn.execute("INSERT INTO product.rule_versions(id,tenant_id,title,body) VALUES (%s,%s,'threshold',%s)", (rule_id, alice.tenant_id, Jsonb(RULES)))
             conn.execute(
-                """INSERT INTO product.audit_rounds(id,tenant_id,created_by,idempotency_key,request_fingerprint,execution,result_attempt,analysis_mode)
-                            VALUES (%s,%s,%s,%s,'test','completed',1,'deep')""",
+                """INSERT INTO product.audit_rounds(id,tenant_id,created_by,idempotency_key,request_fingerprint,execution,result_attempt)
+                            VALUES (%s,%s,%s,%s,'test','completed',1)""",
                 (round_id, alice.tenant_id, alice.user_id, round_id),
             )
             conn.execute(
@@ -145,11 +146,7 @@ def fixture(auth_store_factory, *, count=4, resources=False):
                             VALUES (%s,%s,'R1','rule','threshold','PASS',%s)""",
                 (uuid4(), round_id, Jsonb({"file_version_id": version_id, "rule_item_id": clause_id})),
             )
-            conn.execute(
-                """INSERT INTO product.checker_round_artifacts(round_id,file_version_id,result_attempt,tenant_id,suite_revision_id,program_digest,input_digest)
-                            VALUES (%s,%s,1,%s,%s,%s,%s)""",
-                (round_id, version_id, alice.tenant_id, suite.id, "a" * 64, "b" * 64),
-            )
+        freeze_round_suite(store, alice, round_id, version_id, digest, suite.id)
         payload = {
             "operation_id": str(uuid4()),
             "file_version_id": version_id,
