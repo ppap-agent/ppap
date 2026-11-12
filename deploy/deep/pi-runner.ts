@@ -95,6 +95,9 @@ try {
     // A transient provider failure may be retried a little; the gateway bounds requests.
     retry: { enabled: true, maxRetries: 2, baseDelayMs: 1000, provider: { maxRetries: 0 } },
     cacheWarming: "off",
+    // Resizing runs one worker isolate per image; several at once exceed the guest's address-space
+    // limit (V8 "Failed to reserve virtual memory for CodeRange"). Images go to the model as read.
+    images: { autoResize: false },
   }, { projectTrusted: false });
   const modelRuntime = await ModelRuntime.create({
     authPath: config.home + "/auth.json", modelsPath: null, refreshOnCreate: false,
