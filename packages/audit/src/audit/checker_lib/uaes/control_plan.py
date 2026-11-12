@@ -449,18 +449,57 @@ class UaesControlPlanAgent(UaesExcelAgent):
         examples = "、".join(f"{row.where}“{row.cells['CP特殊特性']}”" for row in marked[:3])
         return "PASS", f"控制计划“特性类型/特殊特性”列有{len(marked)}行写有特性标记，如{examples}。"
 
+    def racetrack_symbols(self, ctx: RuleContext) -> frozenset[str] | None:
+        """The symbols the plan's footnote legend frames as race tracks, transcribed from its pictures; None without one."""
+        from .fmea import marks
+
+        if not str(self.audit_file.file_url).lower().endswith((".xlsx", ".xlsm")):
+            return None
+        for sheet in self.plan_sheets(ctx):
+            height, width = self.extent(sheet)
+            legend = {cell.row_index for cell in sheet.scan_non_empty(row_min=1, row_max=height, col_min=1, col_max=width) if compact(resources.LEGEND_TITLE) in compact(cell.value())}
+            pictures = [image for image in getattr(sheet.ws, "_images", []) if image.anchor._from.row + 1 in legend]
+            if not pictures:
+                continue
+            symbols: set[str] = set()
+            for picture in pictures:
+                seen = self.transcribe(picture._data(), resources.LEGEND_PROMPT, resources.LEGEND_SCHEMA, "控制计划表尾特性符号图例")
+                if seen.get("symbol") is None or seen.get("racetrack_frame") is None:
+                    raise unable("控制计划表尾“内部过程特性符号”图例的符号未能从图片辨识，尚不能确定哪些标记是跑道尺寸，需人工复核。")
+                if seen["racetrack_frame"]:
+                    symbols |= marks(seen["symbol"])
+            return frozenset(symbols)
+        return None
+
     @rule("跑道尺寸过程能力控制")
     def rule_5(self, ctx: RuleContext):
+        from .fmea import marks, own_class
+
         rows = self.plan(ctx)
-        racetrack = [row for row in rows if "跑道" in row.text(*_CHARACTERISTIC, "CP特殊特性")]
-        if not racetrack:
+        symbols = self.racetrack_symbols(ctx)
+
+        def racetrack(row: PlanRow) -> bool:
+            # Capability control belongs to the process: an outgoing or GP12 inspection re-checks the dimension.
+            if any(word in compact(name) for name in (row.operation, *row.candidates) for word in ("出货检验", "outgoinginspection", "gp12")):
+                return False
+            if "跑道" in row.text(*_CHARACTERISTIC, "CP特殊特性"):
+                return True
+            # A row marked with a legend race-track symbol, or naming that class after its characteristic ("71#平行度5").
+            stated = marks(row.cells.get("CP特殊特性")) | frozenset().union(*(marks(own_class(row.cells.get(name))) for name in _CHARACTERISTIC))
+            return bool(symbols and stated & symbols)
+
+        racetracks = [row for row in rows if racetrack(row)]
+        if not racetracks:
+            if symbols:
+                return "NA", f"控制计划图例以跑道框标示{'、'.join(sorted(symbols))}类特性，但没有任何行标注这些符号，没有跑道尺寸，本条不适用。"
             raise unable(
                 "控制计划没有用文字标明哪些尺寸是跑道尺寸（跑道框是图纸或特性符号上的图形标注），检查程序不能从控制计划确定跑道尺寸的范围，尚不能判断其是否都有X-R图/SPC管控，需人工对照图纸复核。"
             )
-        lacking = [row for row in racetrack if not any(term in compact(row.text("CP控制方法", "CP频率")) for term in _SPC)]
+        lacking = [row for row in racetracks if not any(term in compact(row.text("CP控制方法", "CP频率")) for term in _SPC)]
         if lacking:
-            return "NG", f"控制计划{lacking[0].where}跑道尺寸“{lacking[0].text(*_CHARACTERISTIC).strip()}”的控制方法/频率没有X-R图或SPC管控。"
-        return "PASS", f"控制计划标明的{len(racetrack)}个跑道尺寸行都有X-R图/SPC管控。"
+            listed = "、".join(f"{row.where}“{row.text(*_CHARACTERISTIC).strip()}”" for row in lacking[:6])
+            return "NG", f"控制计划过程工序共{len(racetracks)}个跑道尺寸行，其中{len(lacking)}行的控制方法/频率没有X-R图或SPC管控：{listed}{'等' if len(lacking) > 6 else ''}。"
+        return "PASS", f"控制计划过程工序的{len(racetracks)}个跑道尺寸行都有X-R图/SPC管控。"
 
     @rule("CP身份字段图纸身份及最后更改日期")
     def rule_6(self, ctx: RuleContext):

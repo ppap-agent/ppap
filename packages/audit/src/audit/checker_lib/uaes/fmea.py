@@ -41,6 +41,12 @@ def marks(value: Any) -> frozenset[str]:
     return frozenset(re.findall(r"[a-z]+|\d+|[^\w\s,，、/;；.]", compact(value)))
 
 
+def own_class(name: Any) -> str:
+    """The class the 776/A40 forms append to a characteristic's numbered name: "71#平行度5" is 5, "72#位置度3,5" is 3,5."""
+    match = re.search(r"^\s*\d+#.*[一-鿿]\s*(\d+(?:\s*[,，]\s*\d+)*)\s*$", str(name or ""))
+    return match.group(1) if match else ""
+
+
 @dataclass
 class Item:
     """One failure item row of a PFMEA table; blank cells continue the item above as the form writes them."""
@@ -353,10 +359,9 @@ class UaesPfmeaAgent(UaesExcelAgent):
             return "NG", "PFMEA“特殊特性/分类”列全部为空，没有任何行标注关键/重要/特殊特性符号。"
         vocabulary = frozenset().union(*(marks(item.values["类别"]) for item in marked))
         for item in items:
-            # The 776/A40 forms append a characteristic's own class to its name: "71#平行度5", "72#位置度3,5".
-            match = re.search(r"^\s*\d+#.*[一-鿿]\s*(\d+(?:\s*[,，]\s*\d+)*)\s*$", item.values.get("功能", ""))
-            if match and marks(match.group(1)) <= vocabulary and not marks(item.values.get("类别", "")):
-                return "NG", f"{item.where()}“{item.values['功能']}”自标为{match.group(1)}类特性，但特殊特性/分类列为空，已知关键特性未标识。"
+            own = own_class(item.values.get("功能", ""))
+            if own and marks(own) <= vocabulary and not marks(item.values.get("类别", "")):
+                return "NG", f"{item.where()}“{item.values['功能']}”自标为{own}类特性，但特殊特性/分类列为空，已知关键特性未标识。"
         self.require_readable(_LISTS)
         unknown = self.untyped()
         if not any(self.batch_files(kind) for kind in _LISTS):

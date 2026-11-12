@@ -52,3 +52,17 @@ VERSION = ("版本号", "版本")
 DATES = ("受控日期", "创建日期", "修订日期", "修改日期", "日期(编制)", "日期(修订)", "首次编制日期", "最近修订日期")
 PART_NAME = ("零件名称", "产品名称", "零件名称/描述", "产品名称/描述")
 PART_NUMBER = ("零件号",)
+
+# The footnote legend of the 776/A40 plans: "内部过程特性符号" beside pictures of each symbol framed as a race track.
+LEGEND_TITLE = "内部过程特性符号"
+LEGEND_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["symbol", "racetrack_frame"],
+    "properties": {"symbol": {"type": ["string", "null"]}, "racetrack_frame": {"type": ["boolean", "null"]}},
+}
+LEGEND_PROMPT = (
+    "这是控制计划表尾图例里的一个特性符号图片。请按 JSON Schema 转写，只转写，不判断。\n"
+    "symbol：图中符号的文字或数字（如 3、5、SC），照原样转写；看不清写 null。\n"
+    "racetrack_frame：符号外框是跑道形（两端为半圆、上下为直线的长圆形框）为 true，是其他形状或没有外框为 false，看不清为 null。"
+)
