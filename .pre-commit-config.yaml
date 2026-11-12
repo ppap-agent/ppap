@@ -1,4 +1,4 @@
-# Same ruff contract as CI. Uses the workspace ruff, not a second copy.
+# Same ruff and mypy contract as CI. Uses the workspace tools, not a second copy.
 repos:
   - repo: local
     hooks:
@@ -12,3 +12,10 @@ repos:
         entry: uv run --no-sync ruff format
         language: system
         types_or: [python, pyi]
+      # Same mypy contract as CI: the whole [tool.mypy] file set, not just staged files.
+      - id: mypy
+        name: mypy
+        entry: uv run --no-sync mypy
+        language: system
+        types_or: [python, pyi]
+        pass_filenames: false
