@@ -130,6 +130,9 @@ class SectionModel(BaseModel):
     row_stop_on_first_blank: bool = True
     row_max_blank_streak: int = Field(default=8, ge=1)
     row_stop_markers: tuple[str, ...] = ()
+    # Columns written once for a run of rows (an operation over its characteristic rows):
+    # an empty cell takes the nearest filled cell above it within the section.
+    row_carry_columns: tuple[str, ...] = ()
     groups: tuple[SectionGroupModel, ...] = ()
 
     @field_validator("header_anchors")

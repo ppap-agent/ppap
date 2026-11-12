@@ -1,0 +1,194 @@
+"""UAES clause checks on the shared rule engine, reading only UAES's own resource."""
+
+from __future__ import annotations
+
+import hashlib
+import re
+import unicodedata
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Iterator
+
+from audit.checker_lib.nio.excel_agent import ExcelAgent
+from audit.engine.rule_engine import Decision, GuardStop, RuleContext, Sheet
+
+
+def compact(value: Any) -> str:
+    """Comparable text: width-folded, spaces removed, case-folded, trailing colon dropped."""
+    return "".join(unicodedata.normalize("NFKC", "" if value is None else str(value)).split()).casefold().rstrip(":：")
+
+
+class UaesExcelAgent(ExcelAgent):
+    """A UAES carrier: its sheets, sections and columns come from its EXTRA_RESOURCE only."""
+
+    # The resource module of the document this carrier audits: its DOCUMENT and PDF_SPECS.
+    DOCUMENT_MODULE: Any = None
+
+    def _resolve_resource_doc_type(self):
+        # The resources registered for li/nio document types are not UAES's templates.
+        return None
+
+    def batch_files(self, kind: str) -> list[Any]:
+        """Same-round originals of one UAES type, other than this file."""
+        if self.group_context is None:
+            return []
+        return [item for item in self.group_context.get_files_by_type(kind) if item.audit_id != self.audit_file.audit_id]
+
+    @contextmanager
+    def reading(self, ctx: RuleContext, item: Any, document: Any) -> Iterator[RuleContext]:
+        """Read one frozen same-round original with this resource; its cells are evidence of its version."""
+        from audit.checker_lib.nio.cross_file_extractors import _load_workbook_auto
+
+        metadata = getattr(item, "file_metadata", None) or {}
+        version = str(metadata.get("file_version_id") or item.audit_id)
+        cache = self.__dict__.setdefault("_uaes_related", {})
+        if version not in cache:
+            source = Path(str(item.file_url))
+            expected = metadata.get("source_sha256") or metadata.get("sha256")
+            if expected and hashlib.sha256(source.read_bytes()).hexdigest() != expected:
+                raise OSError("本轮冻结关联资料已变化，不能完成本项核对。")
+            cache[version] = self.convert(str(source), document)[1] if source.suffix.lower() == ".pdf" else _load_workbook_auto(str(source))
+        with ctx.reading(cache[version], version):
+            yield ctx
+
+    def convert(self, path: str, document: Any) -> tuple[Any, Any]:
+        """A PDF converted with the first of the document's layouts that yields one of its sheets; else the last that converted."""
+        from audit.engine.checkers.pdf_evidence import PdfSourceError
+
+        sheets = [sheet.canonical_name for sheet in document.DOCUMENT[0]]
+        chosen = None
+        for spec in document.PDF_SPECS:
+            try:
+                chosen = self._convert_pdf(path, spec)
+            except PdfSourceError:
+                continue
+            probe = RuleContext(None, chosen[1], self._rule_resource)
+            if any(probe.find_sheets(name, on_missing=Decision.IGNORE) for name in sheets):
+                break
+        if chosen is None:
+            # No layout found a table: nothing is read as a table; clauses decide on the text layer.
+            from openpyxl import Workbook
+
+            self.__dict__.setdefault("_untabled", set()).add(path)
+            return None, Workbook()
+        return chosen
+
+    def untabled(self) -> bool:
+        """Whether this PDF original yielded no table under any of its document's layouts."""
+        return str(self.audit_file.file_url) in self.__dict__.get("_untabled", set())
+
+    def pdf_mentions(self, *words: str) -> bool:
+        """Whether the text layer of this PDF original names any of `words`."""
+        if not str(self.audit_file.file_url).lower().endswith(".pdf"):
+            return False
+        import fitz
+
+        with fitz.open(str(self.audit_file.file_url)) as document:
+            text = compact("".join(page.get_text() for page in document))
+        return any(compact(word) in text for word in words)
+
+    def _load_pdf_workbook(self, file_url: str) -> Any:
+        self._conversion_artifact, self._workbook_cache = self.convert(file_url, type(self).DOCUMENT_MODULE)
+        return self._workbook_cache
+
+    def legacy(self) -> Any:
+        """The snapshot reader, kept only for facts an image of the original shows (signatures, seals, drawn marks)."""
+        if "_legacy" not in self.__dict__:
+            from .native import UaesSourceAgent
+
+            self._legacy = UaesSourceAgent(self.audit_file, self.rule, group_context=self.group_context)
+        return self._legacy
+
+    def visual(self, fields: dict[str, str], description: str) -> tuple[str, str]:
+        """Image facts of the original, each asked as a yes/no question."""
+        return self._from_legacy(lambda agent: agent.visual_result(fields, description))
+
+    def stamp(self) -> tuple[str, str]:
+        """A controlled stamp: the words an EMF picture draws, else an image of the original."""
+        return self._from_legacy(lambda agent: agent.controlled_stamp())
+
+    def _from_legacy(self, read: Any) -> tuple[str, str]:
+        from documents.model_access import ModelUnavailable
+
+        from .native import MissingFact, UnknownFact
+
+        try:
+            return read(self.legacy())
+        except UnknownFact as exc:
+            raise unable(str(exc)) from None
+        except MissingFact as exc:
+            return "NG", str(exc)
+        except ModelUnavailable:
+            raise unable("当前模型不可用，所需原件事实尚未核实。") from None
+
+    def _finalize_audit_result(self, result: Any, *, rule_no: int, phase: Any, ctx: RuleContext | None = None) -> Any:
+        result = super()._finalize_audit_result(result, rule_no=rule_no, phase=phase, ctx=ctx)
+        legacy = self.__dict__.get("_legacy")
+        if legacy is None or not legacy._evidence_sources:
+            return result
+        sources, legacy._evidence_sources = tuple(legacy._evidence_sources), []
+        from audit.contracts import AuditEvidence, EvidenceDiagnostic
+
+        evidence = result.evidence or AuditEvidence(
+            required="structure_or_visual",
+            used="none",
+            source_format=Path(str(self.audit_file.file_url)).suffix.lower().lstrip("."),
+            prepared_format=Path(str(self.audit_file.file_url)).suffix.lower().lstrip("."),
+            sources=(),
+            diagnostics=(EvidenceDiagnostic(code="uaes_source_fact", stage="evaluation", severity="info", message="客户原始条款的实际执行结果；未知事实未转为通过。"),),
+        )
+        merged = (*evidence.sources, *(source for source in sources if source not in evidence.sources))
+        used = "both" if len({source.kind for source in merged}) > 1 else merged[0].kind
+        return result.model_copy(update={"evidence": evidence.model_copy(update={"sources": merged, "used": used})})
+
+    @staticmethod
+    def section(sheet: Sheet, name: str):
+        """The named data area of a found sheet; failing to locate its header is a reading gap, not a finding."""
+        try:
+            return sheet.section(name)
+        except GuardStop as stop:
+            if stop.decision != Decision.NG:
+                raise
+            raise unable(f"工作表“{sheet.title}”中未能定位{name}的表头，检查程序未能读取，需人工复核。") from None
+
+    def uncomputed(self, sheet: Sheet, row: int, column: int) -> bool:
+        """A formula whose result the original does not store reads blank, yet its value is unknown."""
+        path = str(self.audit_file.file_url)
+        if not path.lower().endswith((".xlsx", ".xlsm")) or sheet.ws.parent is not self._workbook_cache:
+            return False
+        if "_formulas" not in self.__dict__:
+            from audit.checker_lib.excel import load_workbook
+
+            self._formulas = load_workbook(path, formulas=True)
+        value = self._formulas[sheet.title].cell(row, column).value
+        return isinstance(value, str) and value.startswith("=")
+
+    def unread_pages(self) -> list[int]:
+        """Pages of a PDF original without a text layer: nothing on them reaches the converted workbook."""
+        if not str(self.audit_file.file_url).lower().endswith(".pdf"):
+            return []
+        import fitz
+
+        with fitz.open(str(self.audit_file.file_url)) as document:
+            return [page.number + 1 for page in document if not page.get_text().strip()]
+
+    @staticmethod
+    def labelled(sheet: Sheet, aliases: tuple[str, ...], *, row_max: int = 160, col_max: int = 60) -> list[str]:
+        """Values written right of each label cell, or after "label:" inside the same cell."""
+        wanted = {compact(alias) for alias in aliases}
+        values = []
+        for cell in sheet.scan_non_empty(row_min=1, row_max=row_max, col_min=1, col_max=col_max):
+            raw = unicodedata.normalize("NFKC", str(cell.value()))
+            if compact(raw) in wanted:
+                found = cell.find_right(max_offset=8)
+                if found is not None:
+                    values.append(str(found.value()).strip())
+                continue
+            match = re.match(r"\s*(.+?)\s*[:：]\s*(.+)", raw, re.S)
+            if match and compact(match.group(1)) in wanted:
+                values.append(match.group(2).strip())
+        return values
+
+
+def unable(message: str) -> GuardStop:
+    return GuardStop(Decision.UNABLE, message)

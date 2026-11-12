@@ -247,7 +247,14 @@ class Row(_RecordMixin):
 
     def cell(self, column_name: str) -> Any:
         column = self.columns[column_name]
-        return _remember_cell(self.ctx, self.ws, _anchored_cell(self.ctx, self.ws, self.row_index, column.header_col))
+        cell = _anchored_cell(self.ctx, self.ws, self.row_index, column.header_col)
+        if column_name in self.ctx.resource.sections[self.section.section_name].row_carry_columns and not self.ctx.ops.is_filled(cell.value):
+            for above in range(self.row_index - 1, column.data_start_row - 1, -1):
+                candidate = _anchored_cell(self.ctx, self.ws, above, column.header_col)
+                if self.ctx.ops.is_filled(candidate.value):
+                    cell = candidate
+                    break
+        return _remember_cell(self.ctx, self.ws, cell)
 
     def _resolved_column(self, column_name: str, *, strict: bool = True) -> ResolvedColumn | None:
         column = self.columns.get(column_name)

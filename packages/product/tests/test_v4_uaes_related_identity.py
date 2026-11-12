@@ -231,7 +231,9 @@ def test_msa_broad_type_keeps_its_actual_kappa_subtype_available(tmp_path):
     )
     body = preset_rule_body("UAES", "U05")
     rule = RuleInput(rule_id="frozen-rule", **{name: value for name, value in body.items() if name != "kind"})
-    assert UaesMsaAgent(target, rule, group).related(("kappa",), same=("part",)).version == "reference"
+    agent = UaesMsaAgent(target, rule, group)
+    # A broad MSA type still lends its Kappa report to the clauses that pair one.
+    assert [report.where for report in agent.kappas(agent.rule_ctx(agent._load_workbook()))] == ["“Kappa分析报告”"]
 
 
 @pytest.mark.parametrize(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, NoReturn, Protocol
 
@@ -190,6 +191,17 @@ class RuleContext:
             return
         self._workbook_versions[id(workbook)] = version
         self._version_workbooks[version] = workbook
+
+    @contextmanager
+    def reading(self, workbook: Any, file_version_id: str) -> Iterator[RuleContext]:
+        """Read a related workbook with this resource; its cells stay evidence of that file version."""
+        self.bind_workbook(workbook, file_version_id)
+        saved = (self._workbook, self._sheet_cache, self._field_block_cache, self._field_cache)
+        self._workbook, self._sheet_cache, self._field_block_cache, self._field_cache = workbook, {}, {}, {}
+        try:
+            yield self
+        finally:
+            self._workbook, self._sheet_cache, self._field_block_cache, self._field_cache = saved
 
     def version_for_worksheet(self, worksheet: Any) -> str:
         workbook = getattr(worksheet, "parent", None)
