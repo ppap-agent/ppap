@@ -4,7 +4,7 @@ from documents.pdf import GroupingMode, GroupingSpec, OutputMode, OutputSpec, Pd
 
 from audit.engine.rule_engine.contracts import ColumnModel, SectionModel, SheetModel
 
-from . import PER_PAGE, STITCHED
+from . import PER_PAGE, STITCHED, WHOLE_SHEET_COLS, WHOLE_SHEET_ROWS
 
 # Measurement system analysis: the plan, GR&R analysis reports and Kappa (attribute) studies.
 DOCUMENT = (
@@ -18,6 +18,8 @@ DOCUMENT = (
     ),
     (
         SectionModel(
+            header_search_max_row=WHOLE_SHEET_ROWS,
+            header_search_max_col=WHOLE_SHEET_COLS,
             canonical_name="MSA计划区",
             sheet_name="MSA计划表",
             header_anchors=("序号", "量具名称", "计划日期"),
@@ -27,10 +29,20 @@ DOCUMENT = (
             sheet_identity_anchors=("计划日期",),
             row_anchors=("序号",),
             row_stop_on_first_blank=False,
-            row_max_blank_streak=12,
+            row_max_blank_streak=WHOLE_SHEET_ROWS,
             row_stop_markers=("编制/日期", "审核/日期", "编制人", "批准人"),
         ),
-        SectionModel(canonical_name="Kappa试验区", sheet_name="Kappa报告", header_anchors=("A-1", "B-1"), header_hit=2, row_anchors=("A-1",)),
+        SectionModel(
+            canonical_name="Kappa试验区",
+            sheet_name="Kappa报告",
+            header_anchors=("A-1", "B-1"),
+            header_hit=2,
+            row_anchors=("A-1",),
+            header_search_max_row=WHOLE_SHEET_ROWS,
+            header_search_max_col=WHOLE_SHEET_COLS,
+            row_stop_on_first_blank=False,
+            row_max_blank_streak=WHOLE_SHEET_ROWS,
+        ),
     ),
     (
         ColumnModel(canonical_name="序号", section_name="MSA计划区", aliases=("序号", "NO", "No.")),

@@ -37,7 +37,12 @@ def test_engineering_history_accepts_declared_business_aliases(tmp_path):
 def test_traceability_area_labels_do_not_replace_their_content(tmp_path):
     labels = ["基本信息", "分供方追溯", "生产过程追溯", "交付追溯", "追溯状态总结"]
     result = checked(tmp_path, UaesTraceabilityAgent, "U18", [["供应商零件追溯"]] + [[label, None if label == "分供方追溯" else "实际追溯内容"] for label in labels], title="供应商零件追溯")
-    assert result.status == "UNABLE"
+    # A fully read area with nothing but its heading is a definite gap, never a pass.
+    assert result.status == "NG", result.suggestions
+    assert "分供方追溯" in result.suggestions
+    filled = checked(tmp_path, UaesTraceabilityAgent, "U18", [["供应商零件追溯"]] + [[label, "实际追溯内容"] for label in labels], title="供应商零件追溯")
+    assert filled.status == "PASS", filled.suggestions
+    assert filled.evidence and filled.evidence.sources
 
 
 @pytest.mark.parametrize(("date_text", "expected"), [("2099-12-31", "UNABLE"), ("2000-01-01", "NG"), ("not readable", "UNABLE")])

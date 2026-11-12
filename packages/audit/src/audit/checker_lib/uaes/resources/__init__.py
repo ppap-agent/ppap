@@ -8,6 +8,11 @@ from documents.pdf import GroupingMode, GroupingSpec, PdfSpec, StitchMode, Stitc
 
 from audit.engine.rule_engine.contracts import RuleResourceModel, index_rule_resource
 
+# Correctness first: search headers and scan rows over the whole used sheet, never a small
+# window. A sheet formatted to its last row reports a near-infinite used range, so cap at 10,000.
+WHOLE_SHEET_ROWS = 10_000
+WHOLE_SHEET_COLS = 10_000
+
 # Layouts every document can fall back to, after its own: one table over all pages,
 # then each page on its own (the basic reading).
 STITCHED = PdfSpec(grouping=GroupingSpec(mode=GroupingMode.ALL_PAGES))

@@ -173,11 +173,19 @@ class UaesExcelAgent(ExcelAgent):
             return [page.number + 1 for page in document if not page.get_text().strip()]
 
     @staticmethod
-    def labelled(sheet: Sheet, aliases: tuple[str, ...], *, row_max: int = 160, col_max: int = 60) -> list[str]:
-        """Values written right of each label cell, or after "label:" inside the same cell."""
+    def extent(sheet: Sheet) -> tuple[int, int]:
+        """The rows and columns to scan: the used range, capped where a sheet's formatting runs to infinity."""
+        from .resources import WHOLE_SHEET_COLS, WHOLE_SHEET_ROWS
+
+        return min(sheet.ws.max_row, WHOLE_SHEET_ROWS), min(sheet.ws.max_column, WHOLE_SHEET_COLS)
+
+    @staticmethod
+    def labelled(sheet: Sheet, aliases: tuple[str, ...]) -> list[str]:
+        """Values written right of each label cell, or after "label:" inside the same cell, anywhere on the sheet."""
         wanted = {compact(alias) for alias in aliases}
         values = []
-        for cell in sheet.scan_non_empty(row_min=1, row_max=row_max, col_min=1, col_max=col_max):
+        rows, columns = UaesExcelAgent.extent(sheet)
+        for cell in sheet.scan_non_empty(row_min=1, row_max=rows, col_min=1, col_max=columns):
             raw = unicodedata.normalize("NFKC", str(cell.value()))
             if compact(raw) in wanted:
                 found = cell.find_right(max_offset=8)

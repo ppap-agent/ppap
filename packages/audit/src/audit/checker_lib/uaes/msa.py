@@ -77,10 +77,11 @@ class UaesMsaAgent(UaesExcelAgent):
         """Every appraiser's conclusion; a 计数型MSA sheet without appraiser rows states one closing conclusion."""
         wanted = {label.casefold() for label in resources.KAPPA_CONCLUSION}
         values = []
-        for cell in sheet.scan_non_empty(row_min=1, row_max=200, col_min=1, col_max=30):
+        rows, columns = UaesExcelAgent.extent(sheet)
+        for cell in sheet.scan_non_empty(row_min=1, row_max=rows, col_min=1, col_max=columns):
             # The appraiser rows read "Conclusion"; the colon-ended "Conclusion:" is the summary line.
             if "".join(str(cell.value()).split()).casefold() in wanted:
-                values.extend(str(other.value()).strip() for other in sheet.scan_non_empty(row_min=cell.row_index, row_max=cell.row_index, col_min=cell.col_index + 1, col_max=30))
+                values.extend(str(other.value()).strip() for other in sheet.scan_non_empty(row_min=cell.row_index, row_max=cell.row_index, col_min=cell.col_index + 1, col_max=columns))
         return values or UaesExcelAgent.labelled(sheet, resources.ATTRIBUTE_CONCLUSION)
 
     def precheck(self):
@@ -105,9 +106,10 @@ class UaesMsaAgent(UaesExcelAgent):
             section = self.section(sheet, "MSA计划区")
             header, serial_column = section.resolved.header_row, section.column("序号").header_col
             # Every heading except 备注 must be filled on each business row, the serial first.
-            headings = [cell for cell in sheet.scan_non_empty(row_min=header, row_max=header, col_min=1, col_max=60) if "备注" not in compact(cell.value())]
+            rows, columns = self.extent(sheet)
+            headings = [cell for cell in sheet.scan_non_empty(row_min=header, row_max=header, col_min=1, col_max=columns) if "备注" not in compact(cell.value())]
             names = [compact(cell.value()) for cell in headings]
-            for row in range(header + 1, sheet.ws.max_row + 1):
+            for row in range(header + 1, rows + 1):
                 cells = [sheet.cell(row, heading.col_index) for heading in headings]
                 values = [compact(cell.value()) for cell in cells]
                 if any(compact(sheet.cell(row, serial_column).value()).startswith(marker) for marker in ("编制/日期", "审核/日期", "编制人", "批准人")):
