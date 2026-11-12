@@ -429,7 +429,8 @@ class UaesCapabilityAgent(UaesExcelAgent):
             if not row.is_present("特性项目") or not mark:
                 continue
             if re.search(r"\d", mark):
-                raise unable(f"PGQP1“SC/特殊特性”列第{row.row_index}行写的是“{mark}”（特性值），不是特殊特性标记，检查程序不能确定哪些特性被标记为特殊特性，需人工复核。")
+                # Which characteristics are marked special cannot be told: the clause fails ("无法辨识则不通过", product owner).
+                return "NG", f"PGQP1“SC/特殊特性”列第{row.row_index}行写的是“{mark}”（特性值），不是特殊特性标记，无法辨识哪些特性被标记为特殊特性，按“无法辨识则不通过”判不通过，请人工复核。"
             special.append((row.row_index, str(row.value("特性项目")).strip()))
         if not special:
             raise unable("同零件号PGQP1没有被标记为特殊特性的特性，不能按空范围通过，需人工复核。")
