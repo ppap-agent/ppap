@@ -43,7 +43,7 @@ class AuditIntakeClosureTests(unittest.TestCase):
             page.goto(PREVIEW + "/preview/audit.html?scene=restore-card-rejected&task=preview-recovery-task")
             expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
             expect(page.get_by_role("alert")).to_contain_text("本次未被接收")
-            expect(page.get_by_role("alert")).to_contain_text("文件或审核模式已变化，请打开页面核对。")
+            expect(page.get_by_role("alert")).to_contain_text("文件或客户选择已变化，请打开页面核对。")
             expect(page.get_by_role("button", name="读取提交结果", exact=True)).to_have_count(0)
             expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_enabled()
             page.get_by_role("button", name="开始审核", exact=True).click()

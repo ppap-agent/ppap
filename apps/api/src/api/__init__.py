@@ -319,7 +319,7 @@ def create_app(
             except ValueError as error:
                 message = {
                     "rule_candidate_expired": "规则已更新，本次未受理。请打开页面重新识别并核对。",
-                    "task_revision_conflict": "文件或审核模式已变化，本次未受理。请打开页面核对。",
+                    "task_revision_conflict": "文件或客户选择已变化，本次未受理。请打开页面核对。",
                     "usage_quota_unavailable": "当前无法确认用量，未开始审核。请打开页面查看。",
                     "usage_ai_disabled": "飞书AI包开关已关闭，未开始审核。请联系管理员。",
                     "usage_balance_empty": "当前没有可用额度，未开始审核。请联系管理员。",
@@ -334,7 +334,7 @@ def create_app(
                 reason = receipt.get("reason")
                 safe_reasons = (
                     "规则已更新，请打开页面重新识别并核对。",
-                    "文件或审核模式已变化，请打开页面核对。",
+                    "文件或客户选择已变化，请打开页面核对。",
                     "当前无法确认用量，请打开页面核对后重新确认。",
                     "飞书AI包开关已关闭，请联系管理员。",
                     "当前没有可用额度，请联系管理员。",

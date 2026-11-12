@@ -1982,7 +1982,7 @@ class AuthStore:
             except (ValueError, KeyError) as error:
                 reason = {
                     "rule_candidate_expired": "规则已更新，请打开页面重新识别并核对。",
-                    "task_revision_conflict": "文件或审核模式已变化，请打开页面核对。",
+                    "task_revision_conflict": "文件或客户选择已变化，请打开页面核对。",
                     "task_confirmation_changed": "审核依据已更新，本次未受理。请打开页面刷新并核对后重新确认。",
                     "suite_validation_required": "当前检查版本需要重新验证，本次未受理。请打开页面，在检查版本工作区重新验证并发布，或明确确认采用未验证版本。",
                     "usage_quota_unavailable": "当前无法确认用量，请打开页面核对后重新确认。",

@@ -23,7 +23,6 @@ class TemplateLinksPreviewTests(unittest.TestCase):
                     page.goto(PREVIEW + "/preview/audit.html")
                     page.get_by_role("button", name="使用三类文件示例", exact=True).click()
                     page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True).uncheck()
-                    page.get_by_role("checkbox", name="深度模式", exact=True).check()
                     if width < 1024:
                         page.get_by_role("button", name="打开产品导航", exact=True).click()
                     nav = page.get_by_role("navigation", name="产品导航", exact=True).filter(visible=True)
