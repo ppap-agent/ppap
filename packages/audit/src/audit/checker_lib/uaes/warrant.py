@@ -111,16 +111,8 @@ class UaesWarrantAgent(UaesExcelAgent):
             if len(document) != 1:
                 raise unable(f"零件提交保证书有{len(document)}页，检查程序尚未声明多页保证书的读取范围，需人工复核。")
             image = document[0].get_pixmap(dpi=200).tobytes("png")
-        from audit.engine.checkers.ocr_visual_facts import request_ocr_visual_facts
-        from audit.engine.runtime import get_runtime
-
-        runtime = get_runtime()
-        hook = getattr(runtime, "read_ocr_visual_facts", None)
-        if runtime is not None and not callable(hook):
-            raise unable("当前运行环境不提供原件图像转写，零件提交保证书尚未核实，需人工复核。")
-        request = hook if callable(hook) else request_ocr_visual_facts
         self._digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
-        return self._from_legacy(lambda _agent: request(images=[image], prompt=resources.PROMPT, response_schema={"name": "psw", "schema": resources.SCHEMA}))
+        return self.transcribe(image, resources.PROMPT, resources.SCHEMA, "零件提交保证书")
 
     def note(self, fact: str, value: str) -> None:
         """A transcribed value is evidence of page 1 of this original."""

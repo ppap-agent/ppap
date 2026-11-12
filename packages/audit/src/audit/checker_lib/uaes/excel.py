@@ -106,6 +106,47 @@ class UaesExcelAgent(ExcelAgent):
         """Image facts of the original, each asked as a yes/no question."""
         return self._from_legacy(lambda agent: agent.visual_result(fields, description))
 
+    def transcribe(self, image: bytes, prompt: str, schema: dict[str, Any], subject: str) -> dict[str, Any]:
+        """One image of an original transcribed into `schema` by the image model; the model transcribes, code decides."""
+        from audit.engine.checkers.ocr_visual_facts import request_ocr_visual_facts
+        from audit.engine.runtime import get_runtime
+
+        runtime = get_runtime()
+        hook = getattr(runtime, "read_ocr_visual_facts", None)
+        if runtime is not None and not callable(hook):
+            raise unable(f"当前运行环境不提供原件图像转写，{subject}尚未核实，需人工复核。")
+        request = hook if callable(hook) else request_ocr_visual_facts
+        return self._from_legacy(lambda _agent: request(images=[image], prompt=prompt, response_schema={"name": "transcription", "schema": schema}))
+
+    def drawing_title(self, item: Any) -> dict[str, Any]:
+        """The title block of a same-round PDF drawing, transcribed once from the bottom right of its first page.
+
+        A drawing's title block is often lettered with vector strokes that never reach the text layer.
+        Its transcription is evidence of that drawing's own version.
+        """
+        version = str((getattr(item, "file_metadata", None) or {}).get("file_version_id") or item.audit_id)
+        cache = self.__dict__.setdefault("_drawing_titles", {})
+        if version not in cache:
+            import fitz
+
+            from .resources import drawing_title
+
+            try:
+                with fitz.open(str(item.file_url)) as document:
+                    page = document[0]
+                    area = fitz.Rect(page.rect.x1 * 0.55, page.rect.y1 * 0.7, page.rect.x1, page.rect.y1)
+                    image = page.get_pixmap(dpi=min(200, int(2400 * 72 / area.width)), clip=area).tobytes("png")
+                title = self.transcribe(image, drawing_title.PROMPT, drawing_title.SCHEMA, f"图纸{Path(str(item.file_url)).name}的标题栏")
+                cache[version] = (title, {"kind": "pdf_region", "page": 1, "bbox": [area.x0, area.y0, area.x1, area.y1], "engine": "ocr_llm", "fact": "drawing_number"})
+            except GuardStop as stop:
+                cache[version] = stop
+        if isinstance(cache[version], GuardStop):
+            raise cache[version]
+        title, locator = cache[version]
+        # Each clause that relies on the title block carries it as its own evidence.
+        self.legacy().witness(locator, title.get("drawing_number") or "", version, visual=True)
+        return title
+
     def stamp(self) -> tuple[str, str]:
         """A controlled stamp: the words an EMF picture draws, else an image of the original."""
         return self._from_legacy(lambda agent: agent.controlled_stamp())

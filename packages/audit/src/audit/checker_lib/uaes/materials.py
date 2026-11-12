@@ -306,6 +306,9 @@ class UaesMaterialsAgent(UaesExcelAgent):
             finally:
                 book.close()
             return None if drawn else False
-        # A PDF drawing's title block is often vector graphics without a text layer; a text layer that does not
-        # name the part leaves its number unread. Asking an image reader to confirm an expected number is not a reading.
-        return None
+        # A PDF drawing's title block is often lettered with strokes outside the text layer: its number is
+        # transcribed from the image (not confirmed against the expected one), and compared here.
+        number = self.drawing_title(item).get("drawing_number")
+        if not number:
+            return None
+        return _identity(part) in _identity(number)

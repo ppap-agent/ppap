@@ -328,6 +328,10 @@ class UaesControlPlanAgent(UaesExcelAgent):
                 raise
             except Exception:
                 parts = set()
+            if not parts and name.lower().endswith(".pdf"):
+                # A title block lettered with strokes is outside the text layer: read the drawing number from its image.
+                number = self.drawing_title(item).get("drawing_number") or ""
+                parts = set(_PART.findall("".join(unicodedata.normalize("NFKC", number).split()).upper()))
             if mine in parts:
                 same.append(name)
             elif parts:
