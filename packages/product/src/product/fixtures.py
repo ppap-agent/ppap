@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 TENANT_A = "00000000-0000-4000-8000-00000000000a"
 TENANT_B = "00000000-0000-4000-8000-00000000000b"
 USER_ALICE = "00000000-0000-4000-8000-0000000000a1"
@@ -28,21 +30,24 @@ def test_database_name() -> str:
     return "ppap_test_" + os.environ.get("PYTEST_XDIST_WORKER", "main")
 
 
-def create_test_database(host: str, port: int) -> str:
-    """Drop, recreate and migrate this process's test database from the repository migrations."""
-    from pathlib import Path
+def create_test_database(host: str, port: int, migrations: Path) -> str:
+    """Drop, recreate and migrate this process's test database from the repository's `migrations` directory.
 
+    The caller names the directory: an installed package has no repository beside it.
+    """
     import psycopg
     from psycopg import sql
 
     from product.settings import ISOLATED_DEV_SECRET
 
+    files = sorted(migrations.glob("[0-9][0-9][0-9][0-9]_*.sql"))
+    if not files:
+        raise RuntimeError(f"no migrations in {migrations}; refusing to create an empty test database")
     name = test_database_name()
     with psycopg.connect(host=host, port=port, dbname="postgres", user="ppap", password=ISOLATED_DEV_SECRET, autocommit=True) as conn:
         conn.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(name)))
         conn.execute(sql.SQL("CREATE DATABASE {} OWNER ppap_migrator").format(sql.Identifier(name)))
-    migrations = Path(__file__).resolve().parents[4] / "migrations"
     with psycopg.connect(host=host, port=port, dbname=name, user="ppap_migrator", password=ISOLATED_DEV_SECRET, autocommit=True) as conn:
-        for migration in sorted(migrations.glob("[0-9][0-9][0-9][0-9]_*.sql")):
+        for migration in files:
             conn.execute(migration.read_text(encoding="utf-8"))
     return name

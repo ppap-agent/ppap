@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from pathlib import Path
 
 import pytest
 from product import build_product_store
@@ -77,7 +78,7 @@ def make_auth_store(
     settings.pg_port = int(os.environ.get("PGPORT", "5432"))
     settings.pg_database = test_database_name()
     if settings.pg_database not in _CREATED:
-        create_test_database(settings.pg_host, settings.pg_port)
+        create_test_database(settings.pg_host, settings.pg_port, Path(__file__).resolve().parents[3] / "migrations")
         _CREATED.add(settings.pg_database)
     settings.pg_migrator_user = "ppap_migrator"
     settings.pg_migrator_password = ISOLATED_DEV_SECRET
