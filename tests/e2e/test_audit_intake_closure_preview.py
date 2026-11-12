@@ -68,7 +68,7 @@ class AuditIntakeClosureTests(unittest.TestCase):
                     page.get_by_role("button", name="返回示例读取 1", exact=True).click()
                 else:
                     page.get_by_role("button", name="读取传输 等待回执.pdf", exact=True).click()
-                expect(page.get_by_role("heading", name="等待预检查 · 1 份", exact=True)).to_be_visible()
+                expect(page.get_by_role("heading", name="等待文件检查 · 1 份", exact=True)).to_be_visible()
                 expect(page.get_by_text("等待回执.pdf", exact=True)).to_be_visible()
             browser.close()
 
@@ -148,7 +148,7 @@ class AuditIntakeClosureTests(unittest.TestCase):
             picker.get_by_role("button", name="添加 1 份文件", exact=True).click()
             expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
             expect(page.get_by_role("checkbox", name="选择 PFMEA.xlsx", exact=True)).not_to_be_checked()
-            expect(page.get_by_role("heading", name="等待预检查 · 1 份", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="等待文件检查 · 1 份", exact=True)).to_be_visible()
             browser.close()
 
     def test_all_unselected_targets_can_end_without_another_recognition(self):

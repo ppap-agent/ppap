@@ -117,7 +117,7 @@ const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' 
     if (scene === 'reports-all-ready') return files.slice(0, 2)
     if (scene === 'recognition-provenance-union' || scene === 'recognition-recovery-current') return [files[0]]
     if (scene === 'checking' || scene === 'checking-loading') {
-      files[1].validation = {state: 'checking', reasons: ['示例：等待预检查结果']}
+      files[1].validation = {state: 'checking', reasons: ['示例：等待文件检查结果']}
       files[2].validation = {state: 'invalid', reasons: ['示例：文件加密，不能读取']}
     }
     if (scene === 'invalid') files.push({...sample(0), file: {...sample(0).file, original_filename: '加密文件.xlsx'}, validation: {state: 'invalid', reasons: ['文件加密或异常，无法识别']}})
@@ -435,7 +435,7 @@ function Preview() {
     },
     readValidation: async row => {
       const result = await adapter.readValidation(row)
-      return scene === 'checking-loading' ? defer(`预检查结果 · ${row.file.original_filename}`, result) : result
+      return scene === 'checking-loading' ? defer(`文件检查结果 · ${row.file.original_filename}`, result) : result
     },
     upload: async (input, requestId) => {
       const result = await adapter.upload(input, requestId)

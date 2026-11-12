@@ -236,13 +236,13 @@ export function createNativeAuditAdapter(options: {deepOffered: boolean; custome
   const sameScope = (left?: Scope | null, right?: Scope | null) => (!left && !right) || Boolean(left && right && left.customer_preference === right.customer_preference && left.preset_key === right.preset_key)
   const validationKey = (version: string, scope?: Scope | null) => `${version}:${scope ? 'UAES:U13' : 'ordinary'}`
   function validation(job: ValidationJob, file: AuditTask['files'][number], requestId?: string, scope?: Scope | null, restore = false) {
-    if (requestId && job.id !== requestId || !job.id || job.source_file_id !== file.file.file_id || job.source_file_version_id !== file.file.id || !restore && !sameScope(job.scope, scope)) throw new Error('预检查结果不属于这份文件版本、用途或原请求。')
-    if (job.scope && (job.scope.customer_preference !== 'UAES' || job.scope.preset_key !== 'U13')) throw new Error('预检查结果的用途无法核实。')
+    if (requestId && job.id !== requestId || !job.id || job.source_file_id !== file.file.file_id || job.source_file_version_id !== file.file.id || !restore && !sameScope(job.scope, scope)) throw new Error('文件检查结果不属于这份文件版本、用途或原请求。')
+    if (job.scope && (job.scope.customer_preference !== 'UAES' || job.scope.preset_key !== 'U13')) throw new Error('文件检查结果的用途无法核实。')
     validations.set(validationKey(file.file.id, job.scope), job.id)
     const result = job.result
     const purpose = job.scope ? {validation_scope: job.scope} : {}
     if (result && 'state' in result) return {validation_id: job.id, validation: result, ...purpose}
-    return {validation_id: job.id, validation: {state: job.status === 'failed' ? 'error' as const : 'checking' as const, reasons: [job.status === 'failed' ? '文件预检查失败，请核对原文件。' : '正在检查文件内容…']}, ...purpose}
+    return {validation_id: job.id, validation: {state: job.status === 'failed' ? 'error' as const : 'checking' as const, reasons: [job.status === 'failed' ? '文件文件检查失败，请核对原文件。' : '正在检查文件内容…']}, ...purpose}
   }
   return {
     deepOffered: options.deepOffered,
@@ -284,7 +284,7 @@ export function createNativeAuditAdapter(options: {deepOffered: boolean; custome
       catch (failure) {
         // Preserve readback identity in the prepared file even if this adapter
         // is replaced after a customer-directory refresh or a page reload.
-        throw Object.assign(failure instanceof Error ? failure : new Error('预检查结果尚未核对。'), {validationRequestId: id})
+        throw Object.assign(failure instanceof Error ? failure : new Error('文件检查结果尚未核对。'), {validationRequestId: id})
       }
     },
     async ruleChoices(signal) {
