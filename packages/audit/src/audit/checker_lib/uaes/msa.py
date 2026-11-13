@@ -195,13 +195,14 @@ class UaesMsaAgent(UaesExcelAgent):
         if plan is None:
             return "NG", "同批次没有控制计划。"
         # (operation, method, place, whether the drawing leaves the row between that operation and a neighbour)
-        manual = []
+        manual, read = [], 0
         with self.reading(ctx, plan, control_plan):
             for sheet in Table(ctx).find_sheets("控制计划", on_missing=Decision.IGNORE):
                 section = self.section(sheet, "控制计划区")
                 rows = list(section.rows("评价测量技术"))
                 if not rows:
                     continue
+                read += len(rows)
                 owners = operation_owners(sheet, section.columns("工序名称")["工序名称"].header_col, range(rows[0].row_index, rows[-1].row_index + 1), set())
                 for row in rows:
                     names, method = owners.get(row.row_index, ()), str(row.value("评价测量技术") or "")
@@ -209,6 +210,9 @@ class UaesMsaAgent(UaesExcelAgent):
                     if outgoing and any(term in method for term in _HUMAN):
                         # AIAG control plans name the gauge in the evaluation/measurement technique column.
                         manual.append((outgoing[0], method.strip(), f"“{sheet.title}”第{row.row_index}行", len(names) > 1))
+        if not read:
+            # An empty scope proves no absence of manual checks.
+            raise unable("控制计划中未读到评价测量技术行，尚不能确认出货检验/GP12工序是否有人工检测，需人工复核。")
         if not manual:
             return "PASS", "控制计划出货检验/GP12工序没有人工、目视、目测检测。"
         open_ = "，该行位于两个工序名称之间且原件没有分隔线，尚不能确定是否属于该工序，需人工复核"

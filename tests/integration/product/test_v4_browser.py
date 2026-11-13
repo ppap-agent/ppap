@@ -75,6 +75,11 @@ def original(customer):
     return stream.getvalue()
 
 
+def customer_option(page, label):
+    """A customer choice is named by the customer, then its rule coverage."""
+    return page.get_by_role("option", name=re.compile("^" + re.escape(label) + "( 已支持 |$)"))
+
+
 @pytest.fixture
 def running_product(auth_store_factory, v4_objects, core_system, tmp_path, request):
     customer = request.param
@@ -210,9 +215,9 @@ def test_customer_intake_to_original_issue(running_product, core_system, request
             picker = page.get_by_role("combobox", name="审核客户", exact=True)
             expect(picker).to_be_visible()
             picker.click()
-            page.get_by_role("option", name="理想" if customer != "理想" else "蔚来", exact=True).click()
+            customer_option(page, "理想" if customer != "理想" else "蔚来").click()
             picker.click()
-            page.get_by_role("option", name="UAES（联电）" if customer == "UAES" else customer, exact=True).click()
+            customer_option(page, "UAES（联电）" if customer == "UAES" else customer).click()
             default = page.request.get(web + "/api/audit-customers/default")
             assert default.status == 200 and default.json()["customer_preference"] is None
             if customer == "UAES":
@@ -228,10 +233,10 @@ def test_customer_intake_to_original_issue(running_product, core_system, request
                 page.goto(web + "/tasks/new")
                 expect(picker).to_contain_text("UAES（联电）")
                 picker.click()
-                page.get_by_role("option", name="理想", exact=True).click()
+                customer_option(page, "理想").click()
                 assert page.request.get(web + "/api/audit-customers/default").json() == saved_default
                 picker.click()
-                page.get_by_role("option", name="UAES（联电）", exact=True).click()
+                customer_option(page, "UAES（联电）").click()
             source_bytes = original(customer)
             with page.expect_file_chooser() as choose:
                 page.get_by_role("button", name="选择本地文件", exact=True).click()
@@ -283,7 +288,7 @@ def test_customer_intake_to_original_issue(running_product, core_system, request
                 fresh.goto(web + "/tasks/new")
                 expect(fresh.get_by_role("combobox", name="审核客户", exact=True)).to_contain_text("UAES（联电）")
                 fresh.get_by_role("combobox", name="审核客户", exact=True).click()
-                fresh.get_by_role("option", name="理想", exact=True).click()
+                customer_option(fresh, "理想").click()
                 fresh.get_by_role("button", name="设为企业默认", exact=True).click()
                 fresh.get_by_role("button", name="确认更改", exact=True).click()
                 expect(fresh.get_by_role("status")).to_contain_text("已保存企业默认")

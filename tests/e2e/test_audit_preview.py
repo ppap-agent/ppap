@@ -1683,6 +1683,7 @@ class AuditPreviewTests(unittest.TestCase):
             dialog = page.get_by_role("dialog", name="更正显示信息", exact=True)
             dialog.get_by_role("textbox", name="客户", exact=True).fill("已保存客户")
             dialog.get_by_role("button", name="保存显示信息", exact=True).click()
+            expect(dialog).not_to_be_visible()
             read_results(page)
             expect(page.get_by_text("结果暂时无法读取", exact=True)).to_be_visible()
             file_information(page)
