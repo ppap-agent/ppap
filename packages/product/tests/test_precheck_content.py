@@ -39,7 +39,7 @@ def test_packaged_rules_match_the_rule_documents_they_were_extracted_from():
     sources = [(spec["source"], spec["source_sha256"]) for spec in l1["specs"].values()] + [(l2["source"], l2["source_sha256"])]
     drift = [name for name, digest in sources if hashlib.sha256((ASSETS / name).read_bytes()).hexdigest() != digest]
     assert drift == [], f"rule documents changed since extraction, re-extract l1.json / l2.json: {drift}"
-    assert set(l1["routing"]) | set(l2["entries"]) == set(ENTRIES) and len(ENTRIES) == 41
+    assert set(l1["routing"]) | set(l2["entries"]) == set(ENTRIES)
     for spec, checks in L1.items():
         assert set(checks) <= {item["criterion_id"] for item in l1["specs"][spec]["criteria"]}
     assert set(L2) <= {item["id"] for rows in l2["entries"].values() for item in rows}

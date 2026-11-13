@@ -17,7 +17,6 @@ import {AuditReviewProvider} from './review-editor'
 import {SharedReports} from './shared-reports'
 import {AuditRules} from './rules'
 import {canonicalAddress, readAuditRoute} from './routes'
-import {TEMPLATE_GUIDE_URL} from './template-links'
 import {Toaster} from '../components/toast'
 
 const renderOriginal: OriginalRenderer = (file, evidence, roundId) => <div className="flex h-[65dvh] min-h-96 min-w-0"><RemoteSourcePane file={{file_id: file.file_id, file_version_id: file.id, original_filename: file.original_filename, role: 'target', rule_version_id: null}} roundId={roundId} focus={evidence?.locator ? {location: sourceLocation({locator: evidence.locator}), requestId: 0} : undefined}/></div>

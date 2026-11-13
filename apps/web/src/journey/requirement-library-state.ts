@@ -11,15 +11,9 @@ export type RequirementUse = {id: string; title: string; basis: RequirementBasis
 
 export const scopeLabel = (scope: RequirementScope) => `${scope.allCustomers ? '不限定客户' : scope.customer || '客户待确认'} · ${scope.allParts ? '不限定零件' : scope.part || '零件待确认'} · ${scope.allRevisions ? '不限定图纸修订' : scope.revision ? `图纸 Rev ${scope.revision}` : '图纸修订待确认'}`
 export const scopeFields = [{key: 'customer', flag: 'allCustomers', label: '客户'}, {key: 'part', flag: 'allParts', label: '零件'}, {key: 'revision', flag: 'allRevisions', label: '图纸修订'}] as const
-export const scopeMatches = (left: RequirementScope, right: RequirementScope) => scopeFields.every(({key, flag}) => right[flag] || left[key].trim().toLowerCase() === right[key].trim().toLowerCase())
 export const clauseContent = (clause: RequirementClause) => JSON.stringify([clause.title, clause.text, clause.original, clause.source, clause.location, clause.provenance ?? null])
 export function sourceContent(basis: RequirementBasis) {
   return JSON.stringify([basis.source, basis.clauses.map(clauseContent), basis.conflict])
-}
-export function copyForCase(collection: RequirementCollection, version: RequirementVersion): RequirementBasis {
-  const basis = structuredClone(version.basis)
-  basis.source.id = version.id
-  return {...basis, confirmed: null, library: {collectionId: collection.id, versionId: version.id, content: sourceContent(basis)}, clauses: basis.clauses.map(clause => ({...clause, applicability: 'pending', reason: ''}))}
 }
 export function libraryDraftIssues(collection: RequirementCollection): string[] {
   const draft = collection.draft

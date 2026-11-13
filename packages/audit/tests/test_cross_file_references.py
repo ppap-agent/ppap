@@ -1,7 +1,5 @@
 """Current V3 reference extraction uses real files and preserves source identity."""
 
-from types import SimpleNamespace
-
 import fitz
 import pytest
 from audit.checker_lib.nio.cross_file_extractors import extract_rows_from_file
@@ -10,7 +8,6 @@ from audit.contracts import (
     GroupContextInput,
     RuleInput,
 )
-from audit.engine.app_runtime import run_audit_engine
 from audit.engine.runtime import bind_runtime
 from audit.kinds import PpapDocumentType
 from documents.contracts import ConversionArtifact
@@ -130,8 +127,7 @@ def test_two_level_characteristic_headers_preserve_only_data_and_original_row_nu
     [("valid", 10, "PASS"), ("valid", 99, "NG"), ("rejected", 10, "ERR"), ("corrupt", 10, "ERR"), ("raised", 10, "ERR"), ("missing-columns", 10, "NG")],
     ids=["matching-process", "different-process", "conversion-rejected", "corrupt-workbook", "converter-exception", "readable-missing-columns"],
 )
-@pytest.mark.parametrize("context_form", ["typed", "attributes"])
-def test_app_runtime_compares_actual_pdf_reference_rows_and_cleans_all_conversion_files(tmp_path, monkeypatch, conversion_state, operation, expected, context_form):
+def test_actual_pdf_reference_rows_are_compared_and_all_conversion_files_cleaned(tmp_path, monkeypatch, run_checks, conversion_state, operation, expected):
     plan_path = tmp_path / "plan.xlsx"
     workbook = Workbook()
     workbook.active.title = "控制计划"
@@ -146,9 +142,6 @@ def test_app_runtime_compares_actual_pdf_reference_rows_and_cleans_all_conversio
     original_bytes = source.read_bytes()
     flow = AuditInput(audit_id="flow", file_url=str(source))
     group = GroupContextInput(task_group_id="submitted-group", by_doc_type={"过程流程图": [flow]}, by_audit_id={"flow": flow})
-    if context_form == "attributes":
-        flow = SimpleNamespace(audit_id="flow", file_url=str(source))
-        group = SimpleNamespace(task_group_id="submitted-group", by_doc_type={PpapDocumentType.PROCESS_FLOW_CHART: [flow]}, by_audit_id={"flow": flow})
     converted_paths = []
     seen_sources = []
 
@@ -175,7 +168,7 @@ def test_app_runtime_compares_actual_pdf_reference_rows_and_cleans_all_conversio
         converted_paths.extend([converted, auxiliary])
         return ConversionArtifact(success=True, xlsx_path=str(converted), temp_files=[str(converted), str(auxiliary)])
 
-    # Use the real app runtime, pipeline, parser and checker. Only external
+    # Use the real pipeline, parser and checker. Only external
     # conversion is controlled; each request gets its own temporary artifact.
     monkeypatch.setattr("documents.conversion.pipeline.convert_pdf_to_excel_auto", convert)
     rules = RuleInput(
@@ -185,7 +178,7 @@ def test_app_runtime_compares_actual_pdf_reference_rows_and_cleans_all_conversio
         rules=[{"id": str(index), "category": "local_excel_check", "rule_to_check": f"规则 {index}"} for index in range(1, 12)],
     )
 
-    results = run_audit_engine(AuditInput(audit_id="plan", file_url=str(plan_path)), rules, group)
+    results = run_checks(AuditInput(audit_id="plan", file_url=str(plan_path)), rules, group)
 
     assert len(results) == 11
     comparison = results[1]
@@ -207,13 +200,12 @@ def test_app_runtime_compares_actual_pdf_reference_rows_and_cleans_all_conversio
     assert source.read_bytes() == original_bytes
 
 
-@pytest.mark.parametrize("context_form", ["typed", "attributes"])
 @pytest.mark.parametrize(
     ("unavailable", "expected"),
     [({}, "NG"), ({"unreadable-flow": "过程流程图"}, "ERR"), ({"unknown-unreadable": None}, "ERR")],
     ids=["not-provided", "unreadable-related-file", "unreadable-unknown-type"],
 )
-def test_public_runtime_preserves_unavailable_context_without_reclassifying_business_absence(tmp_path, context_form, unavailable, expected):
+def test_unavailable_context_is_preserved_without_reclassifying_business_absence(tmp_path, run_checks, unavailable, expected):
     plan_path = tmp_path / "control-plan.xlsx"
     workbook = Workbook()
     workbook.active.title = "控制计划"
@@ -225,8 +217,6 @@ def test_public_runtime_preserves_unavailable_context_without_reclassifying_busi
     workbook.close()
     original = plan_path.read_bytes()
     group = GroupContextInput(task_group_id="frozen-group", unavailable_files=unavailable)
-    if context_form == "attributes":
-        group = SimpleNamespace(task_group_id="frozen-group", by_doc_type={}, by_audit_id={}, rules_by_id={}, unavailable_files=unavailable)
     rules = RuleInput(
         rule_id="confirmed-plan-rules",
         rule_profile="v3",
@@ -234,7 +224,7 @@ def test_public_runtime_preserves_unavailable_context_without_reclassifying_busi
         rules=[{"id": str(index), "category": "local_excel_check", "rule_to_check": f"规则 {index}"} for index in range(1, 12)],
     )
 
-    results = run_audit_engine(AuditInput(audit_id="plan", file_url=str(plan_path)), rules, group)
+    results = run_checks(AuditInput(audit_id="plan", file_url=str(plan_path)), rules, group)
 
     assert len(results) == 11
     assert results[1].status == expected
@@ -257,8 +247,8 @@ def test_public_runtime_preserves_unavailable_context_without_reclassifying_busi
     ids=["plan-flow", "plan-pfmea", "plan-characteristics", "pfmea-flow", "flow-characteristics"],
 )
 @pytest.mark.parametrize("conversion_state", ["rejected", "corrupt", "raised", "missing-columns", "not-provided"])
-def test_public_runtime_preserves_reference_read_failures_across_direct_loader_consumers(
-    tmp_path, monkeypatch, document_type, reference_type, affected_rules, rule_count, independent_rule, independent_status, conversion_state
+def test_reference_read_failures_are_preserved_across_direct_loader_consumers(
+    tmp_path, monkeypatch, run_checks, document_type, reference_type, affected_rules, rule_count, independent_rule, independent_status, conversion_state
 ):
     target = tmp_path / "target.xlsx"
     workbook = Workbook()
@@ -318,7 +308,7 @@ def test_public_runtime_preserves_reference_read_failures_across_direct_loader_c
         rules=[{"id": str(index), "category": "local_excel_check", "rule_to_check": f"规则 {index}"} for index in range(1, rule_count + 1)],
     )
 
-    results = run_audit_engine(AuditInput(audit_id="target", file_url=str(target)), rules, group)
+    results = run_checks(AuditInput(audit_id="target", file_url=str(target)), rules, group)
 
     assert len(results) == rule_count
     expected = "NG" if conversion_state in {"missing-columns", "not-provided"} else "ERR"

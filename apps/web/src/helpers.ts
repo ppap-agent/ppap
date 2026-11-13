@@ -1,17 +1,4 @@
-import type {Finding, Rule, SemanticSource} from './api'
-
-export function latestRules(rules: Rule[]) {
-  const previous = new Set(rules.map(rule => rule.predecessor_id).filter(Boolean))
-  return rules.filter(rule => !previous.has(rule.id))
-}
-
-export function matchesFilter(item: Finding, status: string) {
-  return status === 'unreviewed' ? !item.review : status === 'attention' ? ['NG', 'ERR', 'UNABLE'].includes(item.status) : !status || item.status === status
-}
-
-export function findingShortTitle(item: Finding, fallbackNumber: number) {
-  return `${fallbackNumber} · ${item.classification || '条款'}`
-}
+import type {SemanticSource} from './api'
 
 function pdfPageLocation(page: number, region?: Array<number | null>) {
   if (!region) return `第 ${page} 页`
@@ -28,37 +15,6 @@ export function sourceLocation(source: Pick<SemanticSource, 'locator'>) {
   if (place.kind === 'pdf_page') return pdfPageLocation(place.page, place.region)
   if (place.kind === 'docx_paragraph') return `段落 ${place.paragraph}`
   return `表格 ${place.table} · 行 ${place.row} · 列 ${place.column}`
-}
-
-export function parseExcerptCells(text: string) {
-  return text.split(/\s+\|\s+(?=[A-Z]{1,3}\d+:)/).map(part => {
-    const match = part.match(/^([A-Z]{1,3}\d+):\s*([\s\S]*)$/)
-    return {address: match?.[1] || '', value: match?.[2] ?? part, formula: match?.[2]?.startsWith('=') || false}
-  })
-}
-
-export interface WorkspacePosition {
-  file: string
-  finding: string
-  filter: string
-  view: string
-  panel: string
-  scroll: number
-}
-
-export function workspaceStorageKey(roundId: string) {
-  return 'ppap-view:' + roundId
-}
-
-export function parseWorkspacePosition(raw: string | null): WorkspacePosition | null {
-  if (!raw) return null
-  try {
-    const saved = JSON.parse(raw) as WorkspacePosition
-    if (!saved || typeof saved.file !== 'string') return null
-    return saved
-  } catch {
-    return null
-  }
 }
 
 const analysisNotices: Record<string, string | null> = {
@@ -87,8 +43,6 @@ export function analysisNotice(notice: string): string | null {
   if (Object.hasOwn(analysisNotices, notice)) return analysisNotices[notice]
   return /\p{Script=Han}/u.test(notice) ? notice : '识别信息需要核对，请读取识别结果；若仍有异常，请联系支持。'
 }
-
-export const reviewJudgments = ['认可机器判断', '有异议', '待确认'] as const
 
 /** One way to show a moment everywhere: to the minute, 24-hour, and without the year when it is this year. */
 export function displayTime(value: string | number | Date): string {

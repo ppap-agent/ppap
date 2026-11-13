@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 from agent.client import DeepError
-from agent.core_program import AuditJobSpec, CoreRuntime, run_audit_manifest
+from agent.core_program import CoreRuntime, run_audit_manifest
 from agent.deep_review import CORRECTED_PREFIX, CitedEvidence, DeepReview, OriginalReader, check_evidence
 from agent.protocol import ExecuteRequest, FrozenFile
 from agent.run import Controller
@@ -138,12 +138,6 @@ def by_clause(result):
 
 def confirm(target, rows, stage):
     return [{"clause_id": row["clause_id"], "decision": "confirmed", "reason": "原件与程序结论相符"} for row in rows]
-
-
-def test_execution_ids_are_unchanged_by_deep_review():
-    snapshot, *_ = build()
-    assert AuditJobSpec.from_snapshot(snapshot).execution_id == uuid.uuid5(uuid.NAMESPACE_URL, f"ppap-audit:standard:True:{snapshot.input_digest}")
-    assert AuditJobSpec.from_snapshot(snapshot, analysis_mode="deep").execution_id == uuid.uuid5(uuid.NAMESPACE_URL, f"ppap-audit:deep:True:{snapshot.input_digest}")
 
 
 def test_a_checked_correction_replaces_the_verdict_and_keeps_the_program_one(tmp_path, monkeypatch):

@@ -1,17 +1,14 @@
 """Historical class routing, not selection of a directory Checker Revision.
 
-Consumers remain engine/app_runtime, source rule declarations, and the explicit
-from-scratch reference reader in agent.execution.checker_context. Frozen Suite
-execution uses Checker Core and does not choose a class here on failure.
+Consumers are source rule declarations and the explicit from-scratch reference
+reader in agent.execution.checker_context. Frozen Suite execution uses Checker
+Core and does not choose a class here on failure.
 """
 
 from __future__ import annotations
 
-import os
 from enum import Enum
-from pathlib import Path
-from typing import Any, Iterable, Optional, Type
-from urllib.parse import unquote, urlparse
+from typing import Any, Optional, Type
 
 from documents.files import get_file_extension_from_url
 
@@ -94,8 +91,6 @@ from audit.rule_profile import RULE_PROFILE_V2, RULE_PROFILE_V3, RULE_PROFILE_V4
 EXCEL_EXTENSIONS = {".xlsx", ".xls", ".xlsm"}
 PDF_EXTENSIONS = {".pdf"}
 DOCX_EXTENSIONS = {".docx"}
-LEGACY_DOC_EXTENSIONS = {".doc"}
-AUDIT_TASK_EXTENSIONS = EXCEL_EXTENSIONS | PDF_EXTENSIONS | DOCX_EXTENSIONS | LEGACY_DOC_EXTENSIONS
 
 
 class _AuditFileKind(str, Enum):
@@ -104,40 +99,19 @@ class _AuditFileKind(str, Enum):
     EXCEL = "excel"
     PDF = "pdf"
     DOCX = "docx"
-    DOC = "doc"
     UNSUPPORTED = "unsupported"
-
-
-def _audit_file_kind_from_extension(extension: str) -> _AuditFileKind:
-    if extension in EXCEL_EXTENSIONS:
-        return _AuditFileKind.EXCEL
-    if extension in PDF_EXTENSIONS:
-        return _AuditFileKind.PDF
-    if extension == ".docx":
-        return _AuditFileKind.DOCX
-    if extension == ".doc":
-        return _AuditFileKind.DOC
-    return _AuditFileKind.UNSUPPORTED
 
 
 def _resolve_audit_file_kind(file_url: str) -> _AuditFileKind:
     """Classify an audit file from its decoded URL or local-path suffix."""
     extension = get_file_extension_from_url(str(file_url)).lower()
-    return _audit_file_kind_from_extension(extension)
-
-
-def get_audit_file_compatibility_error(file_url: str) -> Optional[str]:
-    """Return an actionable error when the current audit runtime cannot route a file."""
-    decoded_path = unquote(urlparse(str(file_url)).path)
-    extension = Path(decoded_path).suffix.lower()
-    file_kind = _audit_file_kind_from_extension(extension)
-    if file_kind in {_AuditFileKind.EXCEL, _AuditFileKind.PDF, _AuditFileKind.DOCX, _AuditFileKind.DOC}:
-        return None
-
-    filename = os.path.basename(decoded_path)
-    display_name = filename or str(file_url)
-    display_extension = extension or "无扩展名"
-    return f"审核文件 '{display_name}' 使用不支持的审核格式 '{display_extension}'；当前仅支持 DOC、DOCX、PDF 或 Excel。"
+    if extension in EXCEL_EXTENSIONS:
+        return _AuditFileKind.EXCEL
+    if extension in PDF_EXTENSIONS:
+        return _AuditFileKind.PDF
+    if extension in DOCX_EXTENSIONS:
+        return _AuditFileKind.DOCX
+    return _AuditFileKind.UNSUPPORTED
 
 
 V2_EXCEL_AGENTS: dict[PpapDocumentType, Type[BaseAgent]] = {
@@ -184,22 +158,6 @@ V2_DOCX_AGENTS: dict[PpapDocumentType, Type[BaseAgent]] = {
     PpapDocumentType.EQUIPMENT_LIST: EquipmentListDocxAgent,
     PpapDocumentType.PSW: PswDocxAgent,
 }
-
-
-def get_document_type_from_rule(rule: Any) -> Optional[PpapDocumentType]:
-    """Infer PPAP document type from rule.type string."""
-    rule_type = getattr(rule, "type", None)
-    if not rule_type:
-        return None
-
-    doc_type = PpapDocumentType.from_string(str(rule_type))
-    if doc_type == PpapDocumentType.UNKNOWN:
-        return None
-    return doc_type
-
-
-def iter_supported_doc_types() -> Iterable[PpapDocumentType]:
-    return set(V2_EXCEL_AGENTS.keys()) | set(V2_PDF_AGENTS.keys()) | set(V3_OVERLAY_EXCEL_AGENTS.keys()) | set(V3_OVERLAY_PDF_AGENTS.keys())
 
 
 def _pick_agent_map(
@@ -253,8 +211,3 @@ def resolve_engine_agent_class(
     if primary_map is None:
         return None
     return primary_map.get(doc_type)
-
-
-EXCEL_AGENTS = V2_EXCEL_AGENTS
-PDF_AGENTS = V2_PDF_AGENTS
-DOCX_AGENTS = V2_DOCX_AGENTS

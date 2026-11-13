@@ -21,7 +21,3 @@ def test_a_type_error_goes_back_to_the_next_trial_with_its_location(tmp_path):
     with pytest.raises(CheckerTrialError) as raised:
         type_check({"checker.py": checker}, tmp_path, pyright=PYRIGHT)
     assert "checker.py:2" in str(raised.value) and "reportUndefinedVariable" in str(raised.value)
-
-
-def test_outside_the_deep_image_there_is_nothing_to_run(tmp_path):
-    type_check({"checker.py": "x: int = 'not an int'\n"}, tmp_path, pyright=tmp_path / "missing")

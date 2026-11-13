@@ -87,9 +87,5 @@ def severity(verdict: RuleVerdict, gap_status: str = "") -> str:
     return KNOWN_GAP if gap_status and (verdict.actual or "ERR") == gap_status else BLOCKING
 
 
-def failing_verdicts(verdicts: list[RuleVerdict]) -> list[RuleVerdict]:
-    return [item for item in verdicts if item.kind != MATCH]
-
-
 def format_verdicts(verdicts: list[RuleVerdict]) -> str:
     return "\n".join(f"{item.file_name} rule {item.rule_index}: {item.kind} expected={item.expected} actual={item.actual or '-'} {item.detail}".rstrip() for item in verdicts)

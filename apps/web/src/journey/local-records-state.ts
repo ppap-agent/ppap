@@ -34,10 +34,6 @@ export function createBackup(validators: RecordValidators, currentInput = false)
   if (currentInput) for (const item of unsavedDrafts()) if (item.raw) records.set(item.key, item.raw)
   return {format: 'ppap-local-records', version: 1, at: new Date().toISOString(), source: currentInput ? 'current-input' : 'saved', records: [...records].map(([key, raw]) => ({key, raw}))}
 }
-export function inputBackup(): Backup {
-  // Explicit emergency export when the storage adapter itself cannot be read.
-  return {format: 'ppap-local-records', version: 1, at: new Date().toISOString(), source: 'current-input', records: unsavedDrafts().flatMap(item => item.raw ? [{key: item.key, raw: item.raw}] : [])}
-}
 export function parseBackup(text: string): Backup {
   if (text.length > 10 * 1024 * 1024) throw new Error('备份超过 10 MB，未读取或写入本机记录。')
   let data: unknown

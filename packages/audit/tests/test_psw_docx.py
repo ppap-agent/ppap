@@ -7,8 +7,7 @@ from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
 
 import pytest
 from audit.contracts import AuditInput, RuleInput
-from audit.engine import run_audit
-from audit.engine.app_runtime import run_audit_engine
+from audit.engine.runtime import bind_runtime
 from audit.kinds import PpapDocumentType
 from docx import Document, oxml
 from PIL import Image
@@ -113,13 +112,15 @@ class WordVisualRuntime:
 
 
 @pytest.fixture(params=["v2", "v3"])
-def audit(request):
+def audit(request, monkeypatch, run_checks):
+    monkeypatch.setattr("documents.ai.run_json", lambda *args, **kwargs: pytest.fail("DOCX must not call the text model"))
+
     def check(path, runtime):
-        results = run_audit(
-            AuditInput(audit_id="psw-word", file_url=str(path)),
-            RuleInput(rule_id="confirmed-psw-rules", rule_profile=request.param, type=PpapDocumentType.PSW.get_type_name(), rules=[{"id": str(index)} for index in range(1, 11)]),
-            runtime=runtime,
-        )
+        with bind_runtime(runtime):
+            results = run_checks(
+                AuditInput(audit_id="psw-word", file_url=str(path)),
+                RuleInput(rule_id="confirmed-psw-rules", rule_profile=request.param, type=PpapDocumentType.PSW.get_type_name(), rules=[{"id": str(index)} for index in range(1, 11)]),
+            )
         assert runtime.unexpected_calls == []
         assert runtime.calls == []
         return results
@@ -140,6 +141,8 @@ def test_native_word_fields_and_controls_remain_known_while_visuals_stay_unconfi
     assert results[0].evidence.source_format == "docx"
     assert results[2].evidence.used == "none"
     assert results[2].evidence.sources == ()
+    assert results[4].evidence.used == "structure"
+    assert results[4].evidence.diagnostics[0].code == "psw.visual.unconfirmed"
     assert runtime.calls == []
 
 
@@ -153,29 +156,6 @@ def test_missing_stamp_images_and_required_checkmarks_do_not_invent_passes(tmp_p
     assert [results[index].status for index in (2, 4, 6, 7)] == ["NG", "NG", "NG", "NG"]
     assert runtime.calls == []
     assert results[2].evidence.used == "structure"
-
-
-@pytest.mark.parametrize("profile", ["v2", "v3"])
-def test_docx_native_fields_remain_known_and_unsupported_visual_facts_stay_unable(tmp_path, monkeypatch, profile):
-    path = tmp_path / "psw.docx"
-    psw_document().save(path)
-    original = path.read_bytes()
-    attempts = []
-
-    def reject(self, **kwargs):
-        attempts.append(kwargs)
-        raise AssertionError("DOCX must not call LLM vision")
-
-    monkeypatch.setattr("documents.ai.run_json", reject)
-    results = run_audit_engine(
-        AuditInput(audit_id="psw-word-native", file_url=str(path)),
-        RuleInput(rule_id="confirmed-psw-rules", rule_profile=profile, type=PpapDocumentType.PSW.get_type_name(), rules=[{"id": str(index)} for index in range(1, 11)]),
-    )
-    assert [result.status for result in results] == ["PASS", "PASS", "UNABLE", "PASS", "UNABLE", "PASS", "PASS", "PASS", "PASS", "PASS"]
-    assert attempts == []
-    assert path.read_bytes() == original
-    assert results[4].evidence.used == "structure"
-    assert results[4].evidence.diagnostics[0].code == "psw.visual.unconfirmed"
 
 
 @pytest.mark.parametrize("control", ["nested-checkbox", "generic-checkbox-character"])
@@ -284,7 +264,7 @@ def add_graphic_footnote(document):
 
 
 @pytest.mark.parametrize("profile", ["v2", "v3"])
-def test_unparsed_graphic_footnote_does_not_prove_an_absent_stamp(tmp_path, monkeypatch, profile):
+def test_unparsed_graphic_footnote_does_not_prove_an_absent_stamp(tmp_path, monkeypatch, run_checks, profile):
     from documents.word import extract_docx_structure
 
     path = tmp_path / "footnote-seal.docx"
@@ -294,7 +274,7 @@ def test_unparsed_graphic_footnote_does_not_prove_an_absent_stamp(tmp_path, monk
     assert parsed.valid and not parsed.visual_evidence
     for name in ("PPAP_MODEL_VISION_MODEL", "PPAP_MODEL_VISION_API_KEY", "PPAP_MODEL_VISION_BASE_URL"):
         monkeypatch.setenv(name, "")
-    results = run_audit_engine(
+    results = run_checks(
         AuditInput(audit_id="word-with-opaque-footnote", file_url=str(path)),
         RuleInput(rule_id="psw-footnote", rule_profile=profile, type=PpapDocumentType.PSW.get_type_name(), rules=[{"id": str(i)} for i in range(1, 11)]),
     )

@@ -66,10 +66,6 @@ class WebAliasTests(unittest.TestCase):
                 self.assertEqual(_redirect(name, "/addon/"), "/addon")
                 self.assertEqual(_redirect(name, "/rules/"), "/rules")
                 self.assertEqual(_fetch(name, "/missing-customer-path")[0], 404)
-                # The workbench page is retired; its address is no longer served.
-                self.assertEqual(_fetch(name, "/workbench")[0], 404)
-                self.assertEqual(_fetch(name, "/v2")[0], 404)
-                self.assertNotIn("workbench", _fetch(name, "/missing-customer-path")[1])
             finally:
                 _run(["docker", "rm", "-f", name])
 

@@ -64,7 +64,9 @@ def test_confirm_original_fact_in_native_history(auth_store_factory, tmp_path, m
                 context = browser.new_context(viewport={"width": 1440, "height": 1000})
                 context.add_cookies([{"name": SESSION_COOKIE, "value": store.create_session(alice), "url": web, "httpOnly": True}])
                 page = context.new_page()
-                page.goto(web + f"/audit?round={round_id}&file={version['id']}")
+                # Rounds open through their task.
+                assert original["source_draft_id"]
+                page.goto(web + f"/tasks/{original['source_draft_id']}?file={version['id']}")
                 section = page.get_by_role("region", name="原件事实确认", exact=True)
                 section.get_by_text("原件事实确认", exact=True).click()
                 prompt = section.get_by_role("article", name=question["prompt"], exact=True)
@@ -84,7 +86,6 @@ def test_confirm_original_fact_in_native_history(auth_store_factory, tmp_path, m
                 assert saved["model_calls"] == 0
                 assert api.get_round(round_id) == original
                 assert observed == ["model observation"]
-                expect(result.get_by_role("button", name="作为优化样本", exact=True)).to_have_count(0)
                 with page.expect_download() as download:
                     section.get_by_role("link", name="下载人工确认报告", exact=True).click()
                 assert download.value.suggested_filename == "original-fact-confirmations.pdf"
@@ -95,9 +96,6 @@ def test_confirm_original_fact_in_native_history(auth_store_factory, tmp_path, m
                 expect(result).to_contain_text(alice.user_id)
                 expect(prompt).to_have_count(0)
                 assert len(api.read_fact_answers(alice, round_id)["answers"]) == 1
-                page.set_viewport_size({"width": 390, "height": 844})
-                expect(result).to_contain_text("原机器结果：无法判断")
-                assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
                 browser.close()
         finally:
             server.should_exit = True

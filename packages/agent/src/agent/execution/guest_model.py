@@ -77,10 +77,6 @@ class ModelGrant(Artifact):
 
 def sandbox_profile() -> str:
     isolation = os.environ.get("PPAP_GUEST_ISOLATION")
-    if isolation == "gvisor":
-        if os.getuid() != 10001 or not Path("/proc/gvisor/kernel_is_gvisor").is_file():
-            raise ModelProtocolError("Model runner requires the configured outer isolation")
-        return "off"
     if isolation == "container-only":
         profile = os.environ.get("PPAP_GUEST_SANDBOX")
         if os.getuid() != 10001 or profile not in {"off", "ppap"}:

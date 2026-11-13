@@ -5,16 +5,11 @@ from datetime import date
 
 import pytest
 from audit.engine.checkers.psw_visual_evidence import (
-    PSW_RULE_FIELDS,
     decide_disposition_visual_rule,
     evaluate_psw_observation,
 )
 
 _TODAY = date(2026, 10, 2)
-
-
-def test_only_visual_psw_rules_have_fact_requirements() -> None:
-    assert set(PSW_RULE_FIELDS) == {3, 5, 7, 8, 9, 10}
 
 
 def _observation(**overrides: object) -> dict[str, object]:

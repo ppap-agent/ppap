@@ -96,10 +96,3 @@ def test_feishu_intent_preserves_source_and_same_request_without_claiming_it_was
     raw = preparation()
     raw["uploads"] = [{"request_id": str(uuid4()), "kind": "feishu", "name": "云端控制计划", "drive_file": {"token": "original-doc", "name": "云端控制计划", "type": "sheet"}, "removed": False}]
     assert normalize_preparation(raw)["uploads"] == raw["uploads"]
-
-
-def test_a_sent_mode_key_is_ignored():
-    raw = preparation()
-    legacy = {**deepcopy(raw), "analysis_mode": "deep"}
-    assert normalize_preparation(legacy) == normalize_preparation(raw)
-    assert "analysis_mode" not in preparation_inputs(legacy)

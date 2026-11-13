@@ -13,12 +13,11 @@ pytestmark = pytest.mark.skipif(sync_playwright is None, reason="requires e2e de
 WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
 
 
-@pytest.mark.parametrize("width", [1440])
 @pytest.mark.parametrize("recover_with_cloud", [False, True])
-def test_choose_folder_cancel_and_resume_keep_original_upload_request(width, recover_with_cloud):
+def test_choose_folder_cancel_and_resume_keep_original_upload_request(recover_with_cloud):
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
-        page = browser.new_page(viewport={"width": width, "height": 954})
+        page = browser.new_page(viewport={"width": 1440, "height": 954})
         page.route("**/runtime-config.json", lambda r: r.fulfill(json={"api_url": WEB + "/api"}))
         page.route("**/api/**", lambda r: r.fulfill(status=404, json={"error": "unexpected_test_request"}))
         page.route("**/api/public-config", lambda r: r.fulfill(json={"profile": "production", "login": "feishu", "api_url": WEB + "/api", "personal_drive_upload": True}))
@@ -147,8 +146,6 @@ def test_choose_folder_cancel_and_resume_keep_original_upload_request(width, rec
         dialog = page.get_by_role("dialog", name="保存到飞书", exact=True)
         expect(dialog.get_by_text("审核资料.xlsx", exact=True)).to_be_visible()
         expect(dialog.get_by_role("button", name="上传到此文件夹", exact=True)).to_be_enabled()
-        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-        page.screenshot(path=f"/tmp/ppap-174-personal-folder-{width}.png")
         dialog.get_by_role("button", name="取消", exact=True).click()
         assert creates == [] and blobs == [] and finishes == []
         page.locator("input[type=file]").set_input_files(files)

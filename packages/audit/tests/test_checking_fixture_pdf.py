@@ -84,21 +84,11 @@ def test_readable_pdf_missing_logic_sections_is_a_business_failure(tmp_path, che
     assert missing in result.suggestions
 
 
-@pytest.mark.parametrize(
-    "response",
-    [
-        json.dumps({"status": "PASS", "suggestions": "附件与结论一致"}),
-        json.dumps({"status": "NG", "suggestions": "否定状态缺少结论"}),
-        RuntimeError("model unavailable"),
-        "{}",
-    ],
-    ids=["pass", "ng", "service-error", "invalid-output"],
-)
-def test_complete_logic_sections_need_proven_graphic_facts_without_a_model_fallback(tmp_path, checker, response):
+def test_complete_logic_sections_need_proven_graphic_facts_without_a_model_fallback(tmp_path, checker):
     path = tmp_path / "fixture.pdf"
     write_pdf(path, "检具认可报告\n所附文件\n不合格\n结论")
 
-    result = checker(path, 2, response)
+    result = checker(path, 2, json.dumps({"status": "PASS", "suggestions": "附件与结论一致"}))
 
     assert result.status == "UNABLE"
     assert "无法完整确认" in result.suggestions

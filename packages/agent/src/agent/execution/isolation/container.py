@@ -7,7 +7,6 @@ not promise a separate filesystem or network namespace for terminal tools.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
@@ -23,13 +22,12 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
-from uuid import UUID, uuid5
+from uuid import UUID
 
 from audit.policy import GUEST_UID, PI_VERSION, DeepExecutionPolicy
-from audit.protocol import CompileSpec, ControllerFault, GuestFault, SnapshotSpec, SubmissionSpec
+from audit.protocol import ControllerFault, GuestFault
 from pydantic import Field
 
-from agent.checker_spec import CheckerJobSpec
 from agent.core_program import AuditJobSpec
 from agent.execution.activity import ACTIVITY_FILE, Activity, parse_steps
 from agent.execution.budget import MAX_INPUT_FILES, MAX_INPUT_TOTAL
@@ -162,7 +160,7 @@ class ContainerRuntime:
     def ready(self, operation: str = "audit") -> bool:
         if self.degraded or not self.config.python_executable.is_file() or not self.config.agent_executable.is_file():
             return False
-        return operation == "snapshot" or self.config.gateway_socket.is_socket()
+        return self.config.gateway_socket.is_socket()
 
     def _stage_inputs(self, source: Path, destination: Path) -> None:
         if not source.is_absolute() or not source.is_dir():
@@ -397,7 +395,7 @@ class ContainerRuntime:
                 if usage.get("budget_exhausted") is True:
                     raise ControllerFault("RESOURCE_LIMIT")
                 fault = GuestFault.model_validate(decoded)
-                raise ControllerFault(fault.code, fault.diagnostic)
+                raise ControllerFault(fault.code)
             if model_operation:
                 if usage.get("budget_exhausted") is True:
                     raise ControllerFault("RESOURCE_LIMIT")
@@ -416,36 +414,9 @@ class ContainerRuntime:
         except (OSError, ValueError, TypeError, KeyError):
             raise ControllerFault("MODEL_PROTOCOL_ERROR") from None
 
-    def validate_recovery(
-        self,
-        spec: SubmissionSpec,
-        *,
-        job_id: str,
-        source_attempt: int,
-        current_attempt: int,
-    ) -> None:
-        """The latest durable attempt, not a chosen old source, owns replay."""
-        job_key = hashlib.sha256(job_id.encode()).hexdigest()
-        runtime_id = uuid5(spec.execution_id, f"{job_key}:{current_attempt}")
-        if (self.journal / (runtime_id.hex + ".json")).exists():
-            return  # Repeated completed recovery only reads its saved result.
-        try:
-            previous = read_json(self.attempts, (spec.execution_id.hex + ".json",), 8192)
-            allowed = (
-                source_attempt < current_attempt
-                and previous.get("uncertain") is False
-                and type(previous.get("attempt")) is int
-                and previous["attempt"] == source_attempt
-                and previous.get("job_key") == job_key
-            )
-        except (OSError, ValueError, AttributeError):
-            allowed = False
-        if not allowed:
-            raise ControllerFault("MODEL_PROTOCOL_ERROR")
-
     def run(
         self,
-        spec: SubmissionSpec | CompileSpec | SnapshotSpec | CheckerJobSpec | AuditJobSpec,
+        spec: AuditJobSpec,
         inputs: Path,
         work: Path,
         deadline: float,
@@ -454,34 +425,6 @@ class ContainerRuntime:
         on_activity: Callable[[Activity], None] | None = None,
     ) -> None:
         runtime_id = spec.execution_id
-        runtime_attempt, source_attempt, job_key = 1, None, ""
-        if isinstance(spec, SubmissionSpec):
-            from agent.execution.guest import Manifest
-
-            manifest = Manifest.model_validate(read_json(inputs, ("manifest.json",), 1024 * 1024))
-            if manifest.spec != spec:
-                raise ControllerFault("INPUT_INTEGRITY_ERROR")
-            if manifest.runtime_attempt is not None and manifest.runtime_job_id is not None:
-                runtime_attempt = manifest.runtime_attempt
-                source_attempt = manifest.runtime_source_attempt
-                job_key = hashlib.sha256(manifest.runtime_job_id.encode()).hexdigest()
-                if source_attempt is not None:
-                    runtime_id = uuid5(spec.execution_id, f"{job_key}:{runtime_attempt}")
-        elif isinstance(spec, CheckerJobSpec) and spec.operation == "adapt-checker":
-            from agent.checker_program import CheckerManifest
-
-            try:
-                checker_manifest = CheckerManifest.model_validate(read_json(inputs, ("manifest.json",), 1024 * 1024))
-            except (OSError, ValueError):
-                raise ControllerFault("INPUT_INTEGRITY_ERROR") from None
-            if checker_manifest.spec != spec or checker_manifest.operation != spec.operation or not checker_manifest.runtime_job_id or spec.execution_id != spec.expected_execution_id():
-                raise ControllerFault("INPUT_INTEGRITY_ERROR")
-            # The program/input identity is reusable, but paid development is
-            # not: a new explicit operation can have different prior/feedback.
-            # Never include the technical attempt, which would bypass an
-            # uncertain operation's existing fence and repeat provider work.
-            job_key = hashlib.sha256(checker_manifest.runtime_job_id.encode()).hexdigest()
-            runtime_id = uuid5(spec.execution_id, job_key)
         while True:
             remaining = deadline - time.monotonic()
             if cancelled.is_set() or remaining <= 0:
@@ -493,18 +436,11 @@ class ContainerRuntime:
                 raise ControllerFault("ISOLATION_UNAVAILABLE")
             if cancelled.is_set() or time.monotonic() >= deadline:
                 raise ControllerFault("CANCELLED" if cancelled.is_set() else "MODEL_TIMEOUT")
-            model_operation = (
-                isinstance(spec, (SubmissionSpec, CompileSpec))
-                or (isinstance(spec, AuditJobSpec) and spec.allow_model_calls)
-                or (isinstance(spec, CheckerJobSpec) and spec.operation == "adapt-checker")
-            )
+            model_operation = spec.allow_model_calls
             saved = self.journal / (runtime_id.hex + ".json")
             if model_operation and saved.exists():
                 write_json(work / "result" / "bundle.json", read_json(self.journal, (saved.name,), MAX_OUTPUT))
                 return
-            audit_marker = self.attempts / (spec.execution_id.hex + ".json") if isinstance(spec, SubmissionSpec) else None
-            if isinstance(spec, SubmissionSpec) and source_attempt is not None:
-                self.validate_recovery(spec, job_id=manifest.runtime_job_id or "", source_attempt=source_attempt, current_attempt=runtime_attempt)
             attempt = self.attempts / (runtime_id.hex + ".json")
             if model_operation and attempt.exists():
                 raise ControllerFault("MODEL_PROTOCOL_ERROR")
@@ -513,8 +449,6 @@ class ContainerRuntime:
             try:
                 if model_operation:
                     write_json(attempt, {})
-                    if audit_marker is not None:
-                        write_json(audit_marker, {"attempt": runtime_attempt, "job_key": job_key, "uncertain": True})
                     self._write_grant(runtime_id, run)
                 self._execute(run, deadline, cancelled, on_progress, runtime_id, on_activity)
                 if cancelled.is_set() or time.monotonic() >= deadline:
@@ -541,15 +475,6 @@ class ContainerRuntime:
                             final_usage = self._seal_usage(runtime_id, deadline, cancelled, drain=False)
                         except ControllerFault:
                             pass
-                    if audit_marker is not None:
-                        # The fence stays unknown until the grant is closed with no
-                        # request in flight. A later attempt cannot skip an
-                        # unfinished or newer source.
-                        try:
-                            settled = final_usage is not None and final_usage.get("in_flight") is False
-                            write_json(audit_marker, {"attempt": runtime_attempt, "job_key": job_key, "uncertain": not settled})
-                        except (OSError, ValueError, TypeError):
-                            pass  # The pre-send unknown marker remains authoritative.
                 shutil.rmtree(run)
         finally:
             self.slot.release()

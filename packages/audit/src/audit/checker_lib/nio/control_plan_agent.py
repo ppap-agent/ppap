@@ -179,11 +179,11 @@ class ControlPlanAgent(ExcelAgent):
         from documents.excel.visual import has_region_graphics, renderable_xlsx
         from openpyxl.utils.cell import get_column_letter
 
-        from audit.engine.app_runtime import _load_file_bytes
         from audit.engine.checkers.excel_field_evidence import observe_excel_region
+        from audit.engine.file_bytes import load_file_bytes
 
         self._stage_graphics_evidence = None
-        content, _ = _load_file_bytes(str(self.audit_file.file_url))
+        content, _ = load_file_bytes(str(self.audit_file.file_url))
         structural = self._read_stage_boxes(content, sheet, stage_cells)
         if structural is not None:
             return structural

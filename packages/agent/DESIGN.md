@@ -1,10 +1,10 @@
 # Deep：开发任务专用的审核 Checker
 
-> 现状（2026-11-12）：客户审核中的深度模式不再写程序，改为复核 Suite 程序的结论（见 [DATA_MODEL](../../docs/DATA_MODEL.md) 深度模式一节）。本文的开发流程只用于平台离线开发检查程序（`scripts/deep_lab.py`），Pi 的开发要求在 `deep_agent/skills/ppap-semantic-audit/references/checker-development.md`。
+> 客户审核中的深度模式不写程序，改为复核 Suite 程序的结论（见 [DATA_MODEL](../../docs/DATA_MODEL.md) 深度模式一节）。本文的开发流程只用于平台离线开发检查程序（`scripts/deep_lab.py`），Pi 的开发要求在 `deep_agent/skills/ppap-semantic-audit/references/checker-development.md`。
 
 本文定义 checker 路径的合同；具体行为以源码和测试为准。**Deep 根据本次 rules 和文件，开发、试跑并交付一组可独立执行的 checker。** 原 checker、资源类型和 Fluent API 是直接使用的实现基础。允许重构职责和接口，已有算法与有效行为继续保留。
 
-本文拥有任务 checker 的接口、资源语义与开发流程；[PRODUCT](PRODUCT.md) 拥有用户确认旅程，[DATA_MODEL](../../docs/DATA_MODEL.md) 拥有输入、确认与轮次的数据不变量，部署与授权沿用 [ARCHITECTURE 的执行边界](../../docs/ARCHITECTURE.md#执行)。当前实现是固定 checker，不是 RulePlan / AuditTrace。条款形式化的数据合同见 DATA_MODEL。第 6 节区分现有能力与验证缺口。
+本文拥有任务 checker 的接口、资源语义与开发流程；[DATA_MODEL](../../docs/DATA_MODEL.md) 拥有输入、确认与轮次的数据不变量，部署与授权沿用 [ARCHITECTURE 的执行边界](../../docs/ARCHITECTURE.md#执行)。当前实现是固定 checker，不是 RulePlan / AuditTrace。条款形式化的数据合同见 DATA_MODEL。实验命令见 [DEVELOPMENT](../../docs/DEVELOPMENT.md#本地-deep-checker-实验)；实现状态以源码和测试为准。
 
 ## 1. 任务接口
 
@@ -128,7 +128,7 @@ ValidPartRef(n, t, scope, version) =
 
 若 P001 的名称是“支架/安装支架”，P002 的名称是“壳体”，P001 与“壳体”的组合不能因为两个值分别出现过而通过。文件中观察到一个新值，只能产生候选，不能自动扩大合法值域；主数据范围不完整时，未命中不能直接证明非法。`filled_tokens` 表示原读取合同中的填写判定，不是合法值枚举。
 
-`Present`、`ValidPartRef` 和 `HasColumn` 分开使用。规则只要求非空时，不能自动增加主数据一致性检查。用户可提出表达、实体及值域候选；确认、修改或移除的产品行为见 [PRODUCT 的确认旅程](PRODUCT.md#2-未来用户旅程)。初次落地复用有范围的附录与现有产物存储，不先建全局 ontology 服务。
+`Present`、`ValidPartRef` 和 `HasColumn` 分开使用。规则只要求非空时，不能自动增加主数据一致性检查。用户可提出表达、实体及值域候选；初次落地复用有范围的附录与现有产物存储，不先建全局 ontology 服务。
 
 ### Excel 与 PDF 的同一开发路径
 
@@ -280,89 +280,3 @@ Agent 可以按原规则纠正实现。仍有合理歧义或需要改变业务�
 宿主核对输入及产物身份、条款完整性、来源与运行记录。**程序可执行、可重放不证明语义正确。** `host_source_trace_v1` 不能表示 Python checker 已验证；产品映射的 `evidence_verified` 为 false。
 
 产品确认、授权、输入版本、轮次与尝试、人工复核及恢复操作继续遵守开头引用的合同。Deep 只将实际诊断和待确认问题接入现有通路。
-
-## 5. 复用、调整与删除
-
-此表是改动位置的唯一清单；接口和行为要求由前文定义。
-
-| 现有位置 | 处理方式 |
-|---|---|
-| [审核合同](../audit/src/audit/contracts.py) | 复用输入、条款、结果、证据及附录字段；已统一为 `RuleInput.appendix`，其他字段按实际缺口扩展 |
-| [现有 checkers](../audit/src/audit/checkers) 与 [engine](../audit/src/audit/engine/engine.py) | 已复用算法、单项执行和共享文档生命周期；继续提取适用前提、扫描经验与反例，不按 legacy 标签删除有效实现 |
-| [声明发现](../audit/src/audit/engine/checkers/rule_declarations.py) 与 [规则覆盖](../audit/src/audit/rule_coverage.py) | Deep 已按条款绑定并动态装配；Standard 的固定顺序合同保持。索引兼容入口仅在消费者迁完后删除 |
-| [资源模型](../audit/src/audit/engine/rule_engine/contracts.py) 与 [Fluent 实现](../audit/src/audit/engine/rule_engine/fluent.py) | 直接复用资源、解析、扫描及断言；在原上下文增加实际执行记录，按需补诊断 |
-| [文档能力](../documents/src/documents) 与 [PDF 配置](../documents/src/documents/pdf/spec.py) | 复用格式处理、预设和提取结果，接收任务配置并保留来源映射 |
-| [证据读取](../audit/src/audit/evidence.py)、[定位与候选](../audit/src/audit/models.py)、[局部观察](../audit/src/audit/checker_tools.py) | 保留 snapshot、定位和窄字段观察。旧 Hole 模块已无消费者，不再保留。 |
-| `audit.models` 中已有语义类型 | 核对并复用适用的概念、关系及谓词类型；待补形式解释、回译和值域/投影约束。类型存在不等于已接入 checker；不恢复无消费者的计划执行体系 |
-| [AuditRuntime](../audit/src/audit/engine/runtime.py) 与 [执行环境](src/agent/execution) | 复用能力注入、隔离、网关、预算和反馈；调整 guest 的开发与执行载荷 |
-| [auditor](src/agent/auditor.py)、[协议](src/agent/protocol.py) 与 [deep_agent](src/agent/deep_agent) | 已编排 adapt / execute、保存固定程序；Pi 从 deep_agent 原生加载固定要求（AGENTS.md）与参考技能；后续在同一路径接入形式解释与语义资源 |
-| 现有 product 结果及反馈映射 | 复用附录、候选、确认回执和新轮次；待补同源回译、语义推荐及版本输入，不新增确认账本 |
-| 旧 Deep 的 RulePlan / AuditTrace 主执行路径 | 已被固定 checker 路径替代；不恢复第二套求值器 |
-| 通用单条 checker 模板、独立且提前冻结的 PDF layout 阶段 | 删除重复入口；由当前条款生成起始类，PDF 资源随同一 checker 循环适配 |
-
-删除按实际职责和消费者判断，不按整个文件或目录判断。历史产物继续可读；旧尝试按固定版本完成或明确失败。历史可读性不要求永久运行两套审核核心。
-
-## 6. 实现状态与验证
-
-本节说明代码能力和证据边界；工作进展仍由 Issue / PR 管理。待实现项不能由现有接口测试推定为已经完成。
-
-| 能力 | 当前状态 | 仍需实现或验证 |
-|---|---|---|
-| 任务专用 checker、动态条款数量、资源注入与原 Fluent API | 已实现，受控测试覆盖绑定、完整性、诊断、修订及固定执行 | 更广规则与文件的语义正确性需分别验证 |
-| V4 规则输入、客户 Resolver、整组上下文与 UAES 逐条调用 | 已实现；受控 runner 与合成 Excel/PDF 文件覆盖多目标关联、条款增删与重排、资源适配、证据隔离、guest 执行和重放 | 尚未用真实模型验证 V4 多客户开发成功率；尚未完成容器与产品端到端验收，视觉观察固定仍待实现 |
-| 规则内容变化使旧产物失效 | 已实现正文及生效附录等输入摘要；附录统一入口，修改/移除后的旧产物拒绝执行，可作新适配起点 | 明确提供新旧规则差异；扩大规则语义的反例覆盖 |
-| Excel 诊断、布局适配与重放 | 已有真实模型的原表和移位表验证 | 局部样本不证明任意布局或新规则成功率 |
-| 电子版 PDF 配置、执行与重放 | 已有真实模型实验；结果未用独立人工预期评分 | 审核准确性未据此验收；扫描版仍不在本轮范围 |
-| 严格形式解释及同源回译 | 数据合同见 [DATA_MODEL](../../docs/DATA_MODEL.md)。不执行 OWL/CLIF | 模型语义质量未验收。模型输出不能改已确认约束 |
-| Ontology projection / layout binding | 已有概念类型、资源模型和有效人工算法；尚未连成此语义合同 | 语义引用、身份/值域及其范围/版本、确认后的输入固定 |
-| 用户确认与新轮次 | 已有附录保存/移除、作用范围、回执及保存并分析合同 | 新语义候选与形式化接入后的 checker → 产品 → 新 checker 完整旅程验证 |
-
-前端与 MCP 消费经过 `checker_response` / `product_result` 映射的结果、覆盖和澄清问题；`CheckerArtifact` 的程序文件与试跑记录仍是内部执行产物，没有面向用户的程序查看接口。现有前端读取冻结轮次和同一反馈服务，统一 `/mcp` 可启动 Deep、读取结果与问题、确认规则修改并显式重审，复用现有网页确认回执和反馈业务事务。以上结果合同测试不等于浏览器、真实模型和 MCP 客户端的完整联调。
-
-规则变化通过 `--source fixed.xlsx --rules rule-input.json --expected expected.json --prior artifact.json` 实测。`--rules` 接收完整 `RuleInput`，冻结本次规则，并取消原样本预期；`--expected` 是宿主独立评分输入，不提供给模型。适配与异地重放均读取冻结规则。预期必须先独立确定，不能从生成代码推导；新旧代码都能运行不是验收标准。命令见 [DEVELOPMENT](../../docs/DEVELOPMENT.md)。
-
-2026-11-03（UTC）的真实模型实验使用 Grok 4.7（high，开发阶段最多 128 轮），固定 Excel 的“测量记录”页：两条记录的“偏差值”为 0.05、0.15，“审核偏差”为 0.30、0.40。目标及三份参考文件的字节保持不变。每次变化从旧 checker 诊断、适配，再固定执行；独立预期只供宿主评分。已验证的规则变化如下：
-
-| 变化 | 独立预期与实测结果 |
-|---|---|
-| 基线：全部偏差值 ≤ 0.2 | R1 PASS |
-| 阈值改为 0.1 | R1 NG，指出第 3 行的 0.15 |
-| 列名改写为“偏差数值（对应表头‘偏差值’）” | R1 PASS，仍读取原列 |
-| 明确改读“审核偏差”列，阈值保持 0.2 | R1 NG，指出两行的 0.30、0.40 |
-| 从阈值 0.1 的“全部”改为“至少一条” | R1 PASS，以第 2 行的 0.05 为满足条件的证据 |
-| 一条增为三条并重排为 R2、R1、R3 | NG、PASS、PASS；R3 检查数据行数等于 2，无缺项或多余项 |
-| 从三条删回 R1 | 仅 R1 PASS，无残留 R2/R3 |
-
-以上七个场景均通过无模型凭据的新进程重放，完整结果一致。生成程序复用 `ExcelAgent`、`RuleResource` 与原 `Table` Fluent API。此证据仅覆盖一个简单、含明确列绑定的合成 Excel；不证明模糊列名、复杂规则或任意文件的成功率。单次开发仍需数分钟，尚未验证生产延迟与成本。
-
-2026-11-03 的第二组实验使用真实 Blanc Spoiler 特殊特性清单及原三份参考文件，保持文件字节和条款身份 R1 不变。原件第 4、5 行都是“产品”特性：前者控制方法为预防性防错、频次 NA；后者为年度试验、频次每年1次。Grok 4.7 从基线 checker 适配各变体，继续复用 `ProcessSpecialCharacteristicAgent`、资源定义和 Fluent API。规则及独立预期见 [实验输入](../../tests/fixtures/deep_lab/real_rule_changes/)，命令见 DEVELOPMENT。
-
-| 本次条款要求 | 独立预期 | 真实模型验证 |
-|---|---|---|
-| 全部对象频次为每年1次 | NG | 通过；指出第 4 行 NA |
-| 只检查年度试验对象的频次 | PASS | 通过；实际纳入 1 条 |
-| 全部对象，但预防性防错豁免频次 | PASS | 通过；识别 2 条并豁免 1 条 |
-| 仅检查“过程”分类，空范围无法判断 | UNABLE | 通过；确认两条均非过程对象 |
-| 必须至少有一条“过程”对象 | NG | 未完成；模型服务 HTTP 402 中断 |
-| 从独立检测报告判断合格，缺报告无法判断 | UNABLE | 未完成；模型服务 HTTP 402 中断 |
-| 明确要求提交独立检测报告 | NG | 未完成；模型服务 HTTP 402 中断 |
-
-已完成四项均核对目标与参考文件摘要，并通过无模型凭据的完整结果重放。后三项不是语义错误或通过证据；服务返回额度耗尽，候选没有固定为正式产物。实验 runner 现在保留候选、将服务 HTTP 错误单独报告并停止，不把它当作可由 checker 修订解决的问题；此改动不表示产品容器 runner 的故障恢复已验收。
-
-仍需完成空集合必需项及缺参考资料的真实模型验证，并扩大到更大对象集合、嵌套例外、模糊条件、损坏或错误版本参考文件。四项通过不等于整个真实样本的原始业务审核通过，也不证明生产成本与延迟达标。
-
-通过 `scripts/deep_lab.py --recipe checker` 验证真实模型开发；通过 `--prior artifact.json --variant shifted-table` 对保留标题、将表格和合并区域下移的副本进行诊断与适配。实验保存程序、完整执行结果及评分，并在无模型凭据的新进程中复制输入、重载产物和重放，比较完整结果。模型没有参考状态；人工预期只用于运行后的评分。实验运行器与产品共用候选读取、开发循环及固定执行，仍不代替容器隔离和产品端到端验收。
-
-保留以下验收证据：
-
-- 任意有效规则集合与检查对象一一对应，漏项和重复失败；每项可独立重跑，共享资源而不共享上次断言状态。
-- 原 checker 与资源回归不退化；新布局的证据指向新文件，跨文件、层级和重复对象不被错误过滤。
-- PDF 保留原件位置与转换缺口；定位失败、读失败、预算用尽和未执行项不成为 PASS。
-- 固定产物与其输入、框架版本及执行结果一致，确认后的新输入走原产品流程。
-- 形式表达、回译与 checker 对同一反例保持一致；不能因必填属性缺失而漏掉已识别对象。
-- 逐行列与页眉继承在规则允许时表达同一对象关系；明确要求列存在时不能互相替代。
-- 概念映射、实例关系和值域确认分别生效；新增、替换或移除确认后，旧结果保留、新依据重新计算，原件冲突仍可导致 NG。
-
-[规则合同回归](../audit/tests/test_v3_rule_contracts.py) 和 [稀疏扫描回归](../audit/tests/test_sparse_sheet_scan.py) 保护原实现；[checker 程序测试](tests/test_checker_program.py) 验证当前开发与执行接口，包括宿主/guest 与直接 API 的附录传递、范围筛选、修改和移除后的产物失效。完整范围按 [测试入口](../../tests/README.md) 执行。
-
-受控 runner 测试证明协议和失败处理，真实模型任务验证诊断及适配能力，两者证据分开。评估逐项正确性、漏检、误报、证据与范围、未解决问题、成本和迭代次数；测试数量或 PASS 比例不能单独证明审核成功。

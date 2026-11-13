@@ -1,6 +1,5 @@
 import base64
 import io
-import json
 
 import fitz
 import pytest
@@ -31,57 +30,6 @@ def stamp_rules(profile):
     )
 
 
-def check_original_image(monkeypatch, agent_profile, source, observation=None):
-    profile, agent_class, pdf_module = agent_profile
-    seen_images = []
-
-    def convert(file_ref, *, enable_cache=True, doc_type=None):
-        assert file_ref.location == source
-        assert enable_cache is True
-        return ConversionArtifact(success=False)
-
-    def analyze(self, **kwargs):
-        seen_images.extend(kwargs["image_base64_list"])
-        return json.dumps(observation if observation is not None else {"psw_stamp_ends_with_company": True})
-
-    monkeypatch.setattr(pdf_module, "convert_pdf_to_excel_auto", convert)
-    monkeypatch.setattr("documents.ai.run_json", analyze)
-    with bind_runtime(None):
-        agent = agent_class(AuditInput(audit_id="original", file_url=source), stamp_rules(profile))
-        result = agent.check(2)
-    assert result is not None
-    return result, seen_images
-
-
-def test_unsupported_local_image_rule_has_no_model_fallback(tmp_path, monkeypatch, agent_profile):
-    path = tmp_path / "original.png"
-    Image.new("RGB", (8, 8), "white").save(path)
-
-    result, images = check_original_image(monkeypatch, agent_profile, str(path))
-
-    assert result.status == "UNABLE"
-    assert images == []
-
-
-def test_unsupported_signed_image_rule_does_not_download_for_a_model(tmp_path, monkeypatch, agent_profile):
-    path = tmp_path / "original.png"
-    Image.new("RGB", (12, 12), (0, 128, 255)).save(path)
-    source = "https://files.example.test/original.png?signature=fixture"
-    _, _, pdf_module = agent_profile
-
-    def download(url, *, max_file_size):
-        assert url == source
-        assert max_file_size == 100 * 1024 * 1024
-        return path.read_bytes(), ".png"
-
-    monkeypatch.setattr(pdf_module, "download_file_sync", download)
-
-    result, images = check_original_image(monkeypatch, agent_profile, source)
-
-    assert result.status == "UNABLE"
-    assert images == []
-
-
 @pytest.fixture
 def original_pdf(tmp_path):
     path = tmp_path / "original.pdf"
@@ -92,19 +40,6 @@ def original_pdf(tmp_path):
             page.insert_text((10, 20), title, fontsize=10)
         document.save(path)
     return path
-
-
-@pytest.mark.parametrize("stamp_present", [True, False])
-def test_failed_conversion_does_not_recover_a_verdict_from_unrequested_model_facts(original_pdf, monkeypatch, agent_profile, stamp_present):
-    result, images = check_original_image(
-        monkeypatch,
-        agent_profile,
-        str(original_pdf),
-        {"psw_stamp_ends_with_company": stamp_present, "authorization_table_present": False},
-    )
-
-    assert result.status == "UNABLE"
-    assert images == []
 
 
 @pytest.mark.parametrize(("keyword", "expected_colors"), [("Authorization", [(51, 179, 77)]), ("Not in this document", [(255, 255, 255), (51, 179, 77), (51, 77, 204)])])

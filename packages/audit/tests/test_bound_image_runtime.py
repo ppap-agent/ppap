@@ -1,8 +1,6 @@
 """The public shared image check uses the caller's runtime and original pages."""
 
-import base64
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from io import BytesIO
 from threading import Thread
 
 import fitz
@@ -12,7 +10,6 @@ from audit.contracts import AuditInput, RuleInput
 from audit.engine.runtime import bind_runtime, get_runtime
 from documents.files import download_file_sync
 from documents.images.image import extract_images_from_bytes
-from PIL import Image
 
 
 class OriginalImageRuntime:
@@ -97,16 +94,3 @@ def test_public_image_check_keeps_unsupported_semantics_unknown_without_external
     assert get_runtime() is None
     assert calls == [] and reads == []
     assert runtime is None or runtime.rendered == []
-
-
-def test_original_page_rendering_utility_still_preserves_the_source_pixels(image_source):
-    url, _content, reads = image_source
-    runtime = OriginalImageRuntime()
-    pages = runtime.render_pdf_images(url)
-    assert runtime.rendered == [(url, True)]
-    assert reads == ["/original.pdf?version=frozen"]
-    assert len(pages) == 2
-    for encoded, expected in zip(pages, ((255, 0, 0), (0, 0, 255)), strict=True):
-        with Image.open(BytesIO(base64.b64decode(encoded.split(",", 1)[-1]))) as image:
-            actual = image.convert("RGB").getpixel((image.width // 2, image.height // 2))
-            assert all(abs(observed - target) < 10 for observed, target in zip(actual, expected, strict=True))

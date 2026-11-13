@@ -17,7 +17,6 @@ from audit.checker_core import ExecutionSnapshot, checker_digest
 from audit.protocol import ControllerFault
 from pydantic import BaseModel, ConfigDict, Field
 
-from agent.auditor import FAULTS, SemanticRuntime
 from agent.client import DeepError
 from agent.execution.budget import DEEP_REVIEW_SECONDS, MAX_INPUT_FILES, MAX_INPUT_TOTAL
 from agent.execution.secure_files import read_json, read_regular
@@ -26,6 +25,18 @@ from agent.run import ExecutionContext
 MAX_MANIFEST = 4 * 1024 * 1024
 MAX_BUNDLE = 16 * 1024 * 1024
 AnalysisMode = Literal["standard", "deep"]
+FAULTS = {
+    "INPUT_INTEGRITY_ERROR": "deep_integrity_mismatch",
+    "PARSER_LIMIT": "deep_parser_limit",
+    "MODEL_TIMEOUT": "deep_timeout",
+    "MODEL_PROTOCOL_ERROR": "deep_model_protocol",
+    "OUTPUT_VALIDATION_ERROR": "deep_output_invalid",
+    "EVIDENCE_VALIDATION_ERROR": "deep_output_invalid",
+    "RESOURCE_LIMIT": "deep_budget_exhausted",
+    "CANCELLED": "deep_cancelled",
+    "ISOLATION_UNAVAILABLE": "deep_runtime_unavailable",
+    "CONTROLLER_UNAVAILABLE": "deep_runtime_unavailable",
+}
 
 
 class AuditJobSpec(BaseModel):
@@ -180,7 +191,7 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
     (work / "result" / "bundle.json").write_bytes(encoded)
 
 
-class CoreRuntime(SemanticRuntime):
+class CoreRuntime:
     """Trusted host adapter: resolve immutable content, then run one audit guest."""
 
     def __init__(self, runtime: Any, snapshot_for_request, suite_for_revision, *, objects=None, timeout: float = 2400) -> None:

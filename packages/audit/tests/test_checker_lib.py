@@ -1,5 +1,6 @@
 """Shared checker_lib identity, import lint, and direct helper delegation."""
 
+import ast
 import json
 import shutil
 import subprocess
@@ -8,7 +9,7 @@ from pathlib import Path
 
 import pytest
 from audit.checker_core import ValidationRecord, checker_digest
-from audit.checker_lib.imports import directory_import_violations
+from audit.checker_lib.imports import import_violations
 from audit.standard_suites import hash_library, library_files, library_revision, load_predefined_checkers
 
 _AUDIT = Path(__file__).resolve().parents[1] / "src" / "audit"
@@ -112,56 +113,37 @@ def test_implementation_edit_expires_proofs_and_company_leaf_edit_does_not(tmp_p
     assert checker_digest({"checker.py": checker.read_bytes(), "resources.py": leaf_files["resources.py"]}) == leaf_after
 
 
-def test_installed_directory_leaves_have_no_legacy_checker_imports():
-    assert directory_import_violations(_CHECKERS) == ()
-    checker = (_CHECKERS / "uaes" / "U08" / "checker.py").read_text(encoding="utf-8")
-    assert "audit.checker_lib.agents" in checker
-    assert "resolve_engine_agent_class" not in checker
-    assert "audit.checkers" not in checker
-
-
-def test_import_lint_flags_static_and_dynamic_legacy_imports(tmp_path):
-    leaf = tmp_path / "uaes" / "U08"
-    leaf.mkdir(parents=True)
-    (leaf / "checker.py").write_text(
-        "\n".join(
-            [
-                "import audit.checkers.v4.uaes",
-                "from audit.checkers.v2.base_agent import BaseAgent",
-                "from audit import checkers",
-                "from audit.standard_library import check_clause, check_factory",
-                "from importlib import import_module",
-                "import importlib",
-                "import_module('audit.checkers.v3.excel_agent')",
-                "importlib.import_module('audit.checkers.v4.uaes.native')",
-                "import_module('audit.checker_lib.excel')",
-                "name = 'audit.checkers.v2'",
-                "import_module(name)",
-                "# import audit.engine.checkers.visual_facts",
-                "",
-            ]
-        ),
-        encoding="utf-8",
+def test_import_lint_flags_static_and_dynamic_legacy_imports():
+    source = "\n".join(
+        [
+            "import audit.checkers.v4.uaes",
+            "from audit.checkers.v2.base_agent import BaseAgent",
+            "from audit import checkers",
+            "from audit.standard_library import check_clause, check_factory",
+            "from importlib import import_module",
+            "import importlib",
+            "import_module('audit.checkers.v3.excel_agent')",
+            "importlib.import_module('audit.checkers.v4.uaes.native')",
+            "import_module('audit.checker_lib.excel')",
+            "name = 'audit.checkers.v2'",
+            "import_module(name)",
+            "import audit.checker_lib.nio.excel_agent",
+            "# import audit.engine.checkers.visual_facts",
+            "",
+        ]
     )
-    (leaf / "resources.py").write_text("from audit.checkers.v3.excel_agent import ExcelAgent\nRESOURCE = {}\n", encoding="utf-8")
-    clean = tmp_path / "uaes" / "U99"
-    clean.mkdir()
-    (clean / "checker.py").write_text("# from audit.checkers.v4.uaes import Agent\nfrom audit.checker_lib.excel import load_workbook\n", encoding="utf-8")
-    legacy = tmp_path / "v4"
-    legacy.mkdir()
-    (legacy / "__init__.py").write_text("import audit.checkers.v2.base_agent\n", encoding="utf-8")
-    problems = "\n".join(directory_import_violations(tmp_path))
+    problems = "\n".join(import_violations(ast.parse(source)))
     assert "audit.checkers.v4.uaes" in problems
     assert "audit.checkers.v2.base_agent" in problems
     assert "audit.checkers" in problems
     assert "audit.standard_library.check_clause" in problems
     assert "audit.checkers.v3.excel_agent" in problems
     assert "audit.checkers.v4.uaes.native" in problems
+    assert "audit.checker_lib.nio.excel_agent" in problems
     assert "non_literal_import" in problems
-    assert "resources.py" in problems
-    assert "U99" not in problems
-    assert "v4/__init__.py" not in problems
     assert "audit.checker_lib.excel" not in problems
+    assert "audit.engine.checkers.visual_facts" not in problems
+    assert import_violations(ast.parse("# from audit.checkers.v4.uaes import Agent\nfrom audit.checker_lib.excel import load_workbook\n")) == ()
 
 
 @pytest.mark.parametrize(
@@ -179,14 +161,6 @@ def test_loader_rejects_imports_the_lint_reports(tmp_path, source):
     (leaf / "rules.json").write_text(json.dumps(rules), encoding="utf-8")
     with pytest.raises(ValueError, match="predefined_legacy_checker_import"):
         load_predefined_checkers(tmp_path)
-
-
-def test_loading_directory_leaves_does_not_fill_the_v3_overlay():
-    from audit.checker_lib.nio import V3_OVERLAY_DOCX_AGENTS, V3_OVERLAY_EXCEL_AGENTS, V3_OVERLAY_PDF_AGENTS
-
-    before = (dict(V3_OVERLAY_EXCEL_AGENTS), dict(V3_OVERLAY_PDF_AGENTS), dict(V3_OVERLAY_DOCX_AGENTS))
-    load_predefined_checkers()
-    assert (dict(V3_OVERLAY_EXCEL_AGENTS), dict(V3_OVERLAY_PDF_AGENTS), dict(V3_OVERLAY_DOCX_AGENTS)) == before
 
 
 def test_table_and_workbook_helpers_read_without_a_checker_class(tmp_path):
@@ -219,28 +193,7 @@ def test_table_and_workbook_helpers_read_without_a_checker_class(tmp_path):
     formulas.close()
 
 
-def test_pdf_and_visual_helpers_delegate_to_existing_readers(monkeypatch):
-    def tables(source, *, spec=None):
-        return ("tables", source, spec)
-
-    def convert(source, output_path, *, spec=None):
-        return ("convert", source, output_path, spec)
-
-    def region(*args, **kwargs):
-        return {"args": args, "whole_field": kwargs.get("whole_field")}
-
-    monkeypatch.setattr("documents.pdf.extract_pdf_tables", tables)
-    monkeypatch.setattr("documents.pdf.convert_pdf_to_excel", convert)
-    monkeypatch.setattr("audit.engine.checkers.excel_field_evidence.observe_excel_region", region)
-    from audit.checker_lib.pdf import convert_pdf_to_excel, read_tables
-    from audit.checker_lib.visual import observe_excel_region
-
-    assert read_tables("in.pdf", spec="spec") == ("tables", "in.pdf", "spec")
-    assert convert_pdf_to_excel("in.pdf", "out.xlsx", spec="spec") == ("convert", "in.pdf", "out.xlsx", "spec")
-    assert observe_excel_region("sheet", whole_field=False) == {"args": ("sheet",), "whole_field": False}
-
-
-def test_whole_field_observation_does_not_import_a_v4_checker(tmp_path):
+def test_whole_field_observation_reads_the_rendered_field_region(tmp_path):
     script = tmp_path / "whole_field.py"
     sheet = tmp_path / "sheet.xlsx"
     script.write_text(
@@ -312,8 +265,7 @@ result = observe_excel_region(
     whole_field=True,
 )
 opened.close()
-legacy = sorted(name for name in sys.modules if name == "audit.checkers" or name.startswith("audit.checkers."))
-print(json.dumps({"result": result, "seen": seen, "legacy": legacy}))
+print(json.dumps({"result": result, "seen": seen}))
 """.lstrip(),
         encoding="utf-8",
     )
@@ -325,7 +277,6 @@ print(json.dumps({"result": result, "seen": seen, "legacy": legacy}))
     assert "SUBMISSION RESULTS" in payload["seen"]["context"]
     assert payload["seen"]["module"] == "audit.engine.checkers.pdf_field_region"
     assert payload["seen"]["box"][1] < payload["seen"]["box"][2] - 10
-    assert payload["legacy"] == []
 
 
 def test_structure_evidence_records_the_frozen_file_without_a_pass():

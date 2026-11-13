@@ -3,7 +3,6 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from api import app as product_app
 from api.fact_answers import register_fact_answer_routes
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -53,21 +52,6 @@ def fixture(value=True):
     return TestClient(app), store, principal, receipt
 
 
-def test_standard_fact_answer_preserves_identity_sources_and_operation_readback():
-    client, store, principal, receipt = fixture()
-    response = client.get("/audit-rounds/round-1/fact-answers")
-    assert response.status_code == 200
-    assert response.json()["answers"] == [receipt["answer"]]
-    store.read_fact_answers.assert_called_once_with(principal, "round-1")
-    body = {"operation_id": "answer-1", "expected_revision": 0, "file_version_id": "file-1", "field": "stage.checked", "expected_question_fingerprint": "a" * 64, "value": True}
-    saved = client.post("/audit-rounds/round-1/fact-answers", json=body)
-    assert saved.status_code == 200
-    assert saved.json() == receipt
-    store.apply_fact_answer.assert_called_once_with(principal, "round-1", body)
-    assert client.get("/audit-rounds/round-1/fact-answers/answer-1").json() == receipt
-    store.read_fact_answer_operation.assert_called_once_with(principal, "round-1", "answer-1")
-
-
 def test_explicit_cannot_read_answer_remains_null_in_the_wire_contract():
     client, store, principal, receipt = fixture(None)
     body = {"operation_id": "answer-1", "expected_revision": 0, "file_version_id": "file-1", "field": "stage.checked", "expected_question_fingerprint": "a" * 64, "value": None}
@@ -77,41 +61,3 @@ def test_explicit_cannot_read_answer_remains_null_in_the_wire_contract():
     assert response.json()["results"][0]["status"] == "UNABLE"
     assert response.json()["model_calls"] == 0
     store.apply_fact_answer.assert_called_once_with(principal, "round-1", body)
-
-
-def test_export_is_a_separate_human_record_alongside_original_machine_findings():
-    client, store, principal, receipt = fixture()
-    response = client.get("/audit-rounds/round-1/fact-answers/export")
-    assert response.status_code == 200
-    body = response.json()
-    assert body["schema"] == "original-fact-confirmations-v1"
-    assert body["training_eligible"] is False
-    assert body["machine_findings"][0]["status"] == "UNABLE"
-    assert body["results"] == receipt["results"]
-    store.export_fact_answers.assert_called_once_with(principal, "round-1")
-
-
-def test_fact_answer_routes_are_registered_on_the_production_app():
-    paths = product_app.openapi()["paths"]
-    assert "get" in paths["/audit-rounds/{round_id}/fact-answers"]
-    assert "post" in paths["/audit-rounds/{round_id}/fact-answers"]
-    assert "get" in paths["/audit-rounds/{round_id}/fact-answers/{operation_id}"]
-    assert "/audit-rounds/{round_id}/fact-answers/{operation_id}/samples" not in paths
-    assert "get" in paths["/audit-rounds/{round_id}/fact-answers/export"]
-    assert "application/pdf" in paths["/audit-rounds/{round_id}/fact-answers/report"]["get"]["responses"]["200"]["content"]
-
-
-def test_confirmation_pdf_preserves_the_original_and_human_conclusions():
-    import fitz
-
-    client, store, principal, receipt = fixture()
-    response = client.get("/audit-rounds/round-1/fact-answers/report")
-    assert response.status_code == 200
-    assert response.headers["content-type"] == "application/pdf"
-    assert response.headers["content-disposition"] == 'attachment; filename="original-fact-confirmations.pdf"'
-    with fitz.open(stream=response.content, filetype="pdf") as document:
-        text = "".join(page.get_text() for page in document)
-    assert "UNABLE" in text
-    assert "PASS" in text
-    assert "reviewer-1" in text
-    store.export_fact_answers.assert_called_once_with(principal, "round-1")

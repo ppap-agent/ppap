@@ -115,51 +115,15 @@ def test_manifest_rejects_paths_and_hash_changes(tmp_path):
         write_audit_manifest(tmp_path / "other", snapshot, {**sources, "file-a": b"tampered"}, programs)
 
 
-def test_offline_manifest_needs_no_grant_and_cannot_inherit_personal_key(tmp_path):
-    from dataclasses import replace
-
-    from documents.model_access import ModelAccess, model_access_scope
-    from pydantic import SecretStr
-
-    code = b"""from audit.contracts import AuditResultItem
-from documents.model_access import current_model_access, ModelUnavailable
-
-def check(context):
-    try:
-        current_model_access()
-    except ModelUnavailable:
-        return AuditResultItem(classification="rule", item=context.clause_id, priority="P0", status="UNABLE",
-                               suggestions="No model access", clause_id=context.clause_id)
-    raise AssertionError("Hidden evaluation inherited a personal model key")
-"""
-    snapshot, sources, *_ = setup()
-    digest = checker_digest({"checker.py": code})
-    snapshot = replace(snapshot, targets=tuple(replace(target, binding=replace(target.binding, checker_digest=digest)) for target in snapshot.targets))
-    write_audit_manifest(tmp_path / "inputs", snapshot, sources, {digest: {"checker.py": code}}, allow_model_calls=False)
-    with model_access_scope(ModelAccess(api_key=SecretStr("outer-key-never-for-the-hidden-trial"), model="test-model", base_url="https://models.example.test")):
-        run_audit_manifest(tmp_path / "inputs", tmp_path / "work", tmp_path / "nonexistent-grants")
-    result = json.loads((tmp_path / "work" / "result" / "bundle.json").read_text())
-    assert len(result["findings"]) == 4
-    assert {row["suggestions"] for row in result["findings"]} == {"No model access"}
-    assert "outer-key" not in json.dumps(result)
-
-
-def test_offline_and_model_jobs_have_separate_replay_identities():
-    snapshot, *_ = setup()
-    assert AuditJobSpec.from_snapshot(snapshot).execution_id != AuditJobSpec.from_snapshot(snapshot, allow_model_calls=False).execution_id
-
-
 def test_execution_id_derivation_is_unchanged_for_existing_executions():
     snapshot, *_ = setup()
-    for allow_model_calls in (True, False):
-        expected = uuid.uuid5(uuid.NAMESPACE_URL, f"ppap-audit:standard:{allow_model_calls}:{snapshot.input_digest}")
-        assert AuditJobSpec.from_snapshot(snapshot, allow_model_calls=allow_model_calls).execution_id == expected
-    missing = uuid.uuid5(uuid.NAMESPACE_URL, f'ppap-audit:standard:False:{snapshot.input_digest}:["file-a"]')
-    assert AuditJobSpec.from_snapshot(snapshot, allow_model_calls=False, unavailable_sources=frozenset({"file-a"})).execution_id == missing
+    assert AuditJobSpec.from_snapshot(snapshot).execution_id == uuid.uuid5(uuid.NAMESPACE_URL, f"ppap-audit:standard:True:{snapshot.input_digest}")
+    assert AuditJobSpec.from_snapshot(snapshot, analysis_mode="deep").execution_id == uuid.uuid5(uuid.NAMESPACE_URL, f"ppap-audit:deep:True:{snapshot.input_digest}")
+    missing = uuid.uuid5(uuid.NAMESPACE_URL, f'ppap-audit:standard:True:{snapshot.input_digest}:["file-a"]')
+    assert AuditJobSpec.from_snapshot(snapshot, unavailable_sources=frozenset({"file-a"})).execution_id == missing
 
 
-@pytest.mark.parametrize("allow_model_calls", [False, True])
-def test_manifest_model_permission_controls_visual_runtime(tmp_path, monkeypatch, allow_model_calls):
+def test_model_job_reads_visual_facts_through_its_grant(tmp_path, monkeypatch):
     from dataclasses import replace
 
     calls = []
@@ -179,48 +143,12 @@ def check(context):
     snapshot, sources, *_ = setup()
     digest = checker_digest({"checker.py": code})
     snapshot = replace(snapshot, targets=tuple(replace(target, binding=replace(target.binding, checker_digest=digest)) for target in snapshot.targets))
-    job = write_audit_manifest(tmp_path / "inputs", snapshot, sources, {digest: {"checker.py": code}}, allow_model_calls=allow_model_calls)
-    if allow_model_calls:
-        ControlledGuest(tmp_path).run(job, tmp_path / "inputs", tmp_path / "work", None, None)
-    else:
-        run_audit_manifest(tmp_path / "inputs", tmp_path / "work", tmp_path / "nonexistent-grants")
+    job = write_audit_manifest(tmp_path / "inputs", snapshot, sources, {digest: {"checker.py": code}})
+    ControlledGuest(tmp_path).run(job, tmp_path / "inputs", tmp_path / "work", None, None)
     result = json.loads((tmp_path / "work" / "result" / "bundle.json").read_text())
     assert len(result["findings"]) == 4
-    if allow_model_calls:
-        assert {row["status"] for row in result["findings"]} == {"PASS"}
-        assert calls and set(calls) == {"ocr"}
-    else:
-        assert {row["status"] for row in result["findings"]} == {"UNABLE"}
-        assert calls == []
-
-
-def test_container_offline_audit_never_issues_a_model_grant(tmp_path, monkeypatch):
-    import threading
-    import time
-
-    from agent.execution.isolation.container import ContainerRuntime
-
-    snapshot, *_ = setup()
-    runtime = object.__new__(ContainerRuntime)
-    runtime.slot = threading.Semaphore(1)
-    runtime.degraded = False
-    runtime.journal, runtime.attempts = tmp_path / "journal", tmp_path / "attempts"
-    run = tmp_path / "run"
-    run.mkdir()
-    exported = []
-    monkeypatch.setattr(runtime, "_new_run_dir", lambda *args: run)
-    monkeypatch.setattr(runtime, "_execute", lambda *args: None)
-    monkeypatch.setattr(runtime, "_export", lambda run, work, model_operation, *args, **kwargs: exported.append(model_operation))
-
-    def forbidden(*args, **kwargs):
-        raise AssertionError("Offline audit must not issue or settle a model grant")
-
-    monkeypatch.setattr(runtime, "_write_grant", forbidden)
-    monkeypatch.setattr(runtime, "_seal_usage", forbidden)
-    runtime.run(AuditJobSpec.from_snapshot(snapshot, allow_model_calls=False), tmp_path / "inputs", tmp_path / "work", time.monotonic() + 10, threading.Event())
-    assert exported == [False]
-    assert not run.exists()
-    assert not runtime.attempts.exists()
+    assert {row["status"] for row in result["findings"]} == {"PASS"}
+    assert calls and set(calls) == {"ocr"}
 
 
 def test_standard_missing_target_never_imports_its_program_and_keeps_other_results(tmp_path):
@@ -338,9 +266,9 @@ def test_unavailable_sources_are_explicit_disjoint_and_change_attempt_identity(t
     reduced = {key: value for key, value in sources.items() if key not in missing}
     snapshot.validate_sources(reduced, unavailable=missing)
     complete = AuditJobSpec.from_snapshot(snapshot)
-    incomplete = write_audit_manifest(tmp_path / "inputs", snapshot, reduced, programs, unavailable_sources=missing, allow_model_calls=False)
+    incomplete = write_audit_manifest(tmp_path / "inputs", snapshot, reduced, programs, unavailable_sources=missing)
     assert incomplete.input_digest == complete.input_digest == snapshot.input_digest
-    assert incomplete.execution_id != AuditJobSpec.from_snapshot(snapshot, allow_model_calls=False).execution_id
+    assert incomplete.execution_id != complete.execution_id
     for data, unavailable in [(reduced, frozenset()), (sources, missing), (reduced, frozenset({"foreign"}))]:
         with pytest.raises(ValueError, match="snapshot_sources_mismatch"):
             snapshot.validate_sources(data, unavailable=unavailable)

@@ -4,7 +4,6 @@ from types import MappingProxyType
 from audit.checker_lib.nio.excel_agent import ExcelAgent, rule
 from audit.checker_lib.nio.process_flow_chart_excel_agent import ProcessFlowChartExcelAgent
 from audit.contracts import AuditInput, RuleInput, RuleItem
-from audit.engine.engine import _execute_agent, run_audit
 from audit.engine.rule_engine.context import RuleContext
 from audit.engine.rule_engine.contracts import DomainTokensModel, RuleResource, SheetModel
 from audit.engine.rule_engine.fluent import Table
@@ -27,6 +26,14 @@ def rule_input(*items: tuple[str, str]) -> RuleInput:
         type=PpapDocumentType.PROCESS_FLOW_CHART.get_type_name(),
         rules=[{"id": clause_id, "category": category, "rule_to_check": category} for clause_id, category in items],
     )
+
+
+def bound_results(agent_type, audit: AuditInput, rule: RuleInput) -> list:
+    agent = agent_type(audit, rule)
+    try:
+        return [check.check() for check in agent.checks or ()]
+    finally:
+        agent.close()
 
 
 class SampleAudit(ExcelAgent):
@@ -61,13 +68,6 @@ class SummaryAudit(SampleAudit):
     def rule_2(self, ctx: RuleContext) -> tuple[str, str]:
         ctx.record_ng("已收集的不合格")
         return "NG", ctx.build_ng_summary()
-
-
-class DropAudit(SampleAudit):
-    def _execute_rule_check(self, rule_no: int):
-        if rule_no == 1:
-            return None
-        return super()._execute_rule_check(rule_no)
 
 
 class QuestionAudit(ExcelAgent):
@@ -129,26 +129,14 @@ def test_effective_clauses_bind_by_id_and_keep_identity(tmp_path: Path) -> None:
     assert results[1].status == "NA"
 
 
-def test_engine_reports_binding_gaps_and_none_without_dropping_them(tmp_path: Path) -> None:
-    missing = _execute_agent(
-        SampleAudit,
-        AuditInput(audit_id="target", file_url=str(tmp_path / "missing.xlsx")),
-        rule_input(("Z", "不存在的条款")),
-        None,
-        None,
-    )
+def test_binding_gaps_are_reported_without_dropping_them(tmp_path: Path) -> None:
+    missing = bound_results(SampleAudit, AuditInput(audit_id="target", file_url=str(tmp_path / "missing.xlsx")), rule_input(("Z", "不存在的条款")))
     assert [result.clause_id for result in missing] == ["Z", "A", "B"]
     assert missing[0].status == "ERR"
     assert "没有对应的检查入口" in missing[0].suggestions
     assert all(result.status == "ERR" and "不在本次生效规则中" in result.suggestions for result in missing[1:])
 
-    duplicate = _execute_agent(
-        SampleAudit,
-        AuditInput(audit_id="target", file_url=str(tmp_path / "duplicate.xlsx")),
-        rule_input(("A", "第一项"), ("A", "第一项")),
-        None,
-        None,
-    )
+    duplicate = bound_results(SampleAudit, AuditInput(audit_id="target", file_url=str(tmp_path / "duplicate.xlsx")), rule_input(("A", "第一项"), ("A", "第一项")))
     assert [result.clause_id for result in duplicate] == ["A", "A", "B"]
     assert all("在生效规则中重复" in result.suggestions for result in duplicate[:2])
     assert duplicate[2].clause_id == "B"
@@ -163,67 +151,6 @@ def test_engine_reports_binding_gaps_and_none_without_dropping_them(tmp_path: Pa
         assert agent.calls == []
     finally:
         agent.close()
-
-    results = _execute_agent(
-        DropAudit,
-        AuditInput(audit_id="target", file_url=saved_workbook(tmp_path)),
-        rule_input(("A", "第一项"), ("B", "第二项")),
-        None,
-        None,
-    )
-    assert [(result.clause_id, result.status) for result in results] == [("A", "ERR"), ("B", "NG")]
-    assert "没有返回结果" in results[0].suggestions
-
-
-class _FaultItem:
-    def __init__(self, clause_id: str) -> None:
-        self.id = clause_id
-        self.category = clause_id
-        self.rule_to_check = clause_id
-        self.priority = "P1"
-
-
-class _BoomCheck:
-    def __init__(self) -> None:
-        self.rule_item = _FaultItem("A")
-
-    def check(self):
-        raise RuntimeError("读失败")
-
-
-class _KeptCheck:
-    def __init__(self) -> None:
-        self.rule_item = _FaultItem("B")
-
-    def check(self):
-        from audit.contracts import AuditResultItem
-
-        return AuditResultItem(classification="规则审核", item="B", priority="P1", status="NG", suggestions="已比较", clause_id="B")
-
-
-class FaultAudit:
-    def __init__(self, audit_file: AuditInput, rule: RuleInput, group_context=None) -> None:
-        del audit_file, rule, group_context
-        self.checks = (_BoomCheck(), _KeptCheck())
-
-    def close(self) -> None:
-        return None
-
-
-def test_one_clause_fault_does_not_drop_the_other_clause(tmp_path: Path) -> None:
-    results = _execute_agent(
-        FaultAudit,
-        AuditInput(audit_id="target", file_url=saved_workbook(tmp_path)),
-        rule_input(("A", "第一项"), ("B", "第二项")),
-        None,
-        None,
-    )
-
-    assert [(item.clause_id, item.status) for item in results] == [("A", "ERR"), ("B", "NG")]
-    assert "技术失败" in results[0].suggestions
-    assert "读失败" in results[0].suggestions
-    assert "已比较" in results[1].suggestions
-    assert "Audit engine execution failed" not in results[0].suggestions
 
 
 def test_an_open_question_does_not_pass_and_keeps_the_other_clause(tmp_path: Path) -> None:
@@ -378,7 +305,7 @@ def test_process_flow_clause_order_does_not_decide_which_check_runs(tmp_path: Pa
 
     categories = ProcessFlowChartExcelAgent.EXPECTED_RULE_CATEGORIES
     ordered = [("4", categories[3]), *[(str(index), categories[index - 1]) for index in range(1, 10) if index != 4]]
-    results = run_audit(AuditInput(audit_id="flow", file_url=str(path)), rule_input(*ordered))
+    results = bound_results(ProcessFlowChartExcelAgent, AuditInput(audit_id="flow", file_url=str(path)), rule_input(*ordered))
 
     assert [result.clause_id for result in results] == [str(index) for index in range(1, 10)]
     by_id = {result.clause_id: result for result in results}
@@ -1444,23 +1371,3 @@ def test_explicit_empty_scope_keeps_its_basis_and_does_not_hide_collected_ng(tmp
     assert "零断言不能判为通过" in by_id["ZERO"].suggestions
     assert second is not None
     assert second.status == "NA"
-
-
-class _UnboundPassAudit(ExcelAgent):
-    DOC_TYPE = PpapDocumentType.PROCESS_FLOW_CHART
-
-    @rule("旧通过")
-    def old_pass(self, ctx: RuleContext) -> tuple[str, str]:
-        return "PASS", "旧检查没有断言计数"
-
-
-def test_unbound_checker_zero_execution_pass_is_unchanged(tmp_path: Path) -> None:
-    agent = _UnboundPassAudit(AuditInput(audit_id="target", file_url=saved_workbook(tmp_path)), rule_input(("1", "旧通过")))
-    try:
-        result = agent.check(0)
-    finally:
-        agent.close()
-
-    assert result is not None
-    assert result.status == "PASS"
-    assert result.suggestions == "旧检查没有断言计数"

@@ -72,9 +72,8 @@ def flow_workbook() -> Workbook:
     return workbook
 
 
-def test_customer_rule_id_still_runs_the_positional_builtin_check(tmp_path):
+def test_customer_rule_id_still_runs_the_positional_builtin_check(tmp_path, run_checks):
     from audit.contracts import AuditInput, RuleInput
-    from audit.engine.engine import run_audit
     from audit.kinds import PpapDocumentType
 
     workbook = Workbook()
@@ -100,7 +99,7 @@ def test_customer_rule_id_still_runs_the_positional_builtin_check(tmp_path):
         rules=[{"id": "6", "category": "完整入料要求", "rule_to_check": "识别工序名称列"}],
     )
 
-    results = run_audit(AuditInput(audit_id="target", file_url=path), rules)
+    results = run_checks(AuditInput(audit_id="target", file_url=path), rules)
 
     assert results[0].status == "NG"
     assert "代码字段" in results[0].suggestions

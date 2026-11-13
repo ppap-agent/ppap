@@ -328,8 +328,8 @@ def test_worker_can_record_tenant_proof_but_never_official(auth_store_factory):
     official = suites.create_revision(tenant_id=None, suite_key="control-plan", files=FILES, created_by=None)
     report = proof_for(suites, alice, official)
     worker = SuiteReleaseStore(store.settings, store.objects, role="worker")
-    # The optimizer verifies its frozen job/attempt/user fence before entering
-    # this host-only completion transaction, rather than using a user HTTP route.
+    # A worker-side caller enters this host-only completion transaction directly,
+    # rather than through a user HTTP route.
     with worker._conn() as conn, conn.transaction():
         _lock(conn, alice.tenant_id)
         recorded = worker._record_validation(conn, alice.tenant_id, alice.user_id, official.id, report, 0)

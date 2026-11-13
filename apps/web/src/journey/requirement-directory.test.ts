@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {groupRequirementDirectory, publishedLibraryAfterRead, requirementDirectory} from './requirement-directory.ts'
-import {demoBasis} from './requirements-state.ts'
+import {localBasis} from './requirements-state.ts'
 import type {RequirementCollection} from './requirement-library-state.ts'
 
 const scope = {customer: '', part: '', revision: '', allCustomers: true, allParts: true, allRevisions: true}
@@ -17,11 +17,10 @@ test('the requirement directory groups explicit predecessors and retains all imm
   assert.equal(directory.find(row => row.id === 'v1')!.versions.at(-1)!.clauseCount, 27)
   assert.equal(directory.find(row => row.id === 'other')!.versions[0].documentType, '全尺寸')
   assert.equal(directory.find(row => row.id === 'other')!.versions[0].suiteKey, 'custom:other')
-  assert.equal(JSON.stringify(directory).includes('basis'), false)
 })
 
 test('directory refresh preserves local drafts and lets server metadata replace cached published labels', () => {
-  const collection: RequirementCollection = {id: 'v1', versions: [{id: 'v1', basis: demoBasis(), scope, reason: '', at: '2026-10-01', baseId: null}], draft: {id: 'draft', basis: {...demoBasis(), source: {...demoBasis().source, title: '尚未保存的修改'}}, scope, reason: '本地原因', baseId: 'v1'}}
+  const collection: RequirementCollection = {id: 'v1', versions: [{id: 'v1', basis: localBasis('原名称.xlsx'), scope, reason: '', at: '2026-10-01', baseId: null}], draft: {id: 'draft', basis: {...localBasis('原名称.xlsx'), source: {...localBasis('原名称.xlsx').source, title: '尚未保存的修改'}}, scope, reason: '本地原因', baseId: 'v1'}}
   const before = structuredClone(collection)
   const remote = groupRequirementDirectory([{id: 'v1', title: '服务端名称', version: 'v1', scope, reason: '', clause_count: 9, created_at: '2026-10-01', predecessor_id: null, document_type: '控制计划', document_type_aliases: ['控制计划', 'Control plan'], suite_key: null, source_review: 'checked'}])
   const result = requirementDirectory([collection], remote)
@@ -31,7 +30,6 @@ test('directory refresh preserves local drafts and lets server metadata replace 
   assert.equal(result[0].draft!.title, '尚未保存的修改')
   assert.deepEqual(collection, before)
 })
-
 
 test('a failed rule list does not keep the previous customer rules', () => {
   const versions = [{id: 'v1', title: '控制计划', version: 'v1', scope, reason: '', clause_count: 1, created_at: '2026-10-01', predecessor_id: null, document_type: '控制计划', document_type_aliases: ['Control plan'], suite_key: null, source_review: 'unchecked' as const}]

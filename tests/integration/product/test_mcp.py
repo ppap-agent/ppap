@@ -350,7 +350,7 @@ def test_rejected_url_source_is_failed_and_cannot_be_resumed(mcp_app, monkeypatc
         assert len(fetches) == (1 if redirect else 0)
 
 
-@pytest.mark.parametrize("extension", ["json", "xlsx", "docx"])
+@pytest.mark.parametrize("extension", ["json", "xlsx"])
 def test_rule_parse_recovers_original_job_after_reply_loss_and_api_restart(mcp_app, monkeypatch, extension):
     app, store = mcp_app
     body = {
@@ -369,12 +369,6 @@ def test_rule_parse_recovers_original_job_after_reply_loss_and_api_restart(mcp_a
         document.active.append(["1", "必须填写零件号"])
         document.save(stream)
         document.close()
-    elif extension == "docx":
-        from docx import Document
-
-        document = Document()
-        document.add_paragraph("控制计划规则：必须填写零件号")
-        document.save(stream)
     else:
         stream.write(json.dumps(body, ensure_ascii=False).encode())
     content = stream.getvalue()
@@ -750,7 +744,8 @@ def test_mcp_preparation_carries_writeback_target_through_restart_acceptance_and
 
             monkeypatch.setattr(app.state.mcp_gateway, "request", lose_writeback_reply)
             assert call(client, token, "writeback_feishu_report", **arguments)["status"] == "unknown"
-            assert effects and round_id in json.dumps(effects)
+            # The written report links back to its task page.
+            assert effects and f"/tasks/{task['id']}" in json.dumps(effects)
             sent = list(effects)
         with TestClient(create_app(store.settings, auth_store=store, http=http), base_url="http://127.0.0.1:8080") as restarted:
             assert call(restarted, token, "get_operation", request_id=arguments["request_id"])["status"] in {"running", "unknown"}

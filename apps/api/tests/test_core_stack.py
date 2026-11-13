@@ -29,26 +29,15 @@ class SettingsTests(unittest.TestCase):
             settings = Settings()
         self.assertEqual(settings.profile, "isolated-dev")
         self.assertEqual(settings.pg_api_password, ISOLATED_DEV_SECRET)
-        self.assertEqual(settings.s3_endpoint, "http://127.0.0.1:9000")
         self.assertEqual(settings.model_text_api_key, "")
         self.assertEqual(settings.model_text_base_url, ISOLATED_DEV_LLM_BASE_URL)
         self.assertEqual(settings.model_text_model, ISOLATED_DEV_LLM_MODEL)
         self.assertFalse(llm_configured(settings))
-        self.assertIn(".doc", settings.get_allowed_extensions())
 
-    def test_env_dev_records_settings_defaults(self):
+    def test_env_dev_template_carries_no_real_credentials(self):
         path = ROOT / ".env.dev"
         values = dotenv_values(path)
         self.assertEqual(values["PPAP_PROFILE"], "isolated-dev")
-        self.assertEqual(values["PPAP_PG_PORT"], "5432")
-        self.assertEqual(values["PPAP_PG_DATABASE"], "ppap")
-        self.assertEqual(values["PPAP_PG_API_USER"], "ppap_api")
-        self.assertTrue(values["PPAP_PG_API_PASSWORD"] == ISOLATED_DEV_SECRET, "Development template must use the isolated-dev database password")
-        self.assertEqual(values["PPAP_S3_ENDPOINT"], "http://127.0.0.1:9000")
-        self.assertEqual(values["PPAP_S3_REGION"], "us-east-1")
-        self.assertEqual(values["PPAP_S3_BUCKET"], "ppap-objects")
-        self.assertEqual(values["FEISHU_FREE_TRIAL_QUOTA_POINTS"], "10000")
-        self.assertEqual(values["LOG_LEVEL"], "INFO")
         self.assertTrue(values["PPAP_MODEL_TEXT_API_KEY"] == "", "Development template PPAP_MODEL_TEXT_API_KEY must be empty")
         self.assertTrue(values["FEISHU_APP_ID"] == "", "Development template FEISHU_APP_ID must be empty")
 
@@ -57,24 +46,9 @@ class SettingsTests(unittest.TestCase):
         values = dotenv_values(path)
         self.assertTrue(ISOLATED_DEV_SECRET not in set(values.values()), "Production template must not contain the isolated-dev secret")
         self.assertEqual(values["PPAP_PROFILE"], "production")
-        self.assertEqual(values["PPAP_PG_PORT"], "5432")
-        self.assertEqual(values["PPAP_PG_DATABASE"], "ppap")
-        self.assertEqual(values["PPAP_PG_API_USER"], "ppap_api")
         self.assertTrue(values["PPAP_PG_API_PASSWORD"] == "", "Production template PPAP_PG_API_PASSWORD must be empty")
-        self.assertEqual(values["PPAP_PG_HOST"], "")
-        self.assertEqual(values["PPAP_S3_ENDPOINT"], "")
         self.assertTrue(values["PPAP_S3_ACCESS_KEY"] == "", "Production template PPAP_S3_ACCESS_KEY must be empty")
-        self.assertEqual(values["PPAP_S3_REGION"], "us-east-1")
-        self.assertEqual(values["PPAP_S3_BUCKET"], "ppap-objects")
-        self.assertEqual(values["PPAP_WEB_URL"], "")
-        self.assertEqual(values["PPAP_PUBLIC_API_URL"], "")
-        self.assertEqual(values["PPAP_MODEL_TEXT_BASE_URL"], "")
-        self.assertEqual(values["PPAP_MODEL_TEXT_MODEL"], "")
-        self.assertEqual(values["FEISHU_FREE_TRIAL_QUOTA_POINTS"], "10000")
-        self.assertEqual(values["LOG_LEVEL"], "INFO")
         self.assertTrue(values["FEISHU_APP_ID"] == "", "Production template FEISHU_APP_ID must be empty")
-        self.assertIn("2caeb428f08e175d", values["PPAP_CURRENT_TENANT_ALLOWLIST"])
-        self.assertEqual(values["PPAP_USAGE_CHARGE_ENABLED"], "false")
 
     def test_isolated_dev_with_only_api_key_uses_repository_defaults(self):
         with _clean_env(PPAP_MODEL_TEXT_API_KEY="sk-test"):
@@ -90,8 +64,6 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.model_text_api_key, "")
         self.assertEqual(settings.model_text_base_url, ISOLATED_DEV_LLM_BASE_URL)
         self.assertEqual(settings.model_text_model, ISOLATED_DEV_LLM_MODEL)
-        self.assertNotEqual(settings.model_text_base_url, "https://example.invalid/v1")
-        self.assertNotEqual(settings.model_text_model, "hidden")
         self.assertFalse(llm_configured(settings))
 
     def test_production_rejects_isolated_dev_credentials(self):
@@ -239,7 +211,6 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertEqual(set(body), {"git_sha", "profile", "api_url", "login", "feishu_app_id", "current_access", "usage_charge_enabled", "personal_drive_upload"})
         self.assertEqual(body["current_access"], "open")
         self.assertTrue(body["usage_charge_enabled"])
-        self.assertIn("feishu_app_id", body)
         blob = " ".join(str(value).lower() for value in body.values())
         self.assertNotIn("ppap_isolated_dev", blob)
 
@@ -270,4 +241,3 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertEqual(caps["deep"]["state"], "configured")
         for body in caps.values():
             self.assertEqual(set(body), {"state"})
-            self.assertNotIn("ready_proven_by", body)

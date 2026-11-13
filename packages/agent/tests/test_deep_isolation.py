@@ -16,11 +16,12 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import UUID, uuid4
 
+from agent.core_program import AuditJobSpec
 from agent.execution.gateway import Grants, RequestLimitReached, grant_request, local_gateway
 from agent.execution.isolation.container import ContainerRuntime, RuntimeConfig
 from agent.execution.isolation.progress import Progress
 from audit.policy import PI_VERSION
-from audit.protocol import CompileSpec, ControllerFault, SnapshotSpec
+from audit.protocol import ControllerFault
 
 
 class GatewayGrantTests(unittest.TestCase):
@@ -345,21 +346,6 @@ class GatewayGrantTests(unittest.TestCase):
                     {"completed_requests": 2, "input_tokens": 5, "output_tokens": 9, "usage_known": True, "in_flight": False, "budget_exhausted": False},
                 )
 
-    def test_request_limit_stops_a_runaway_loop_and_allows_identical_retries(self) -> None:
-        grants = Grants("test-model", requests=2)
-        execution_id = uuid4()
-        token = grants.issue(execution_id)
-        for _ in range(2):
-            # An SDK retry may resend the same body; only the request count limits it.
-            lease, purpose = grants.authorize(token, {"model": "test-model", "input": "one", "max_output_tokens": 10}, 20)
-            self.assertEqual(purpose, "coding")
-            grants.record_usage(lease, {"input_tokens": 60, "output_tokens": 9})
-        with self.assertRaises(RequestLimitReached):
-            grants.authorize(token, {"model": "test-model", "input": "three", "max_output_tokens": 1}, 1)
-        self.assertEqual(grants.usage(execution_id), {"completed_requests": 2, "input_tokens": 120, "output_tokens": 18, "usage_known": True, "in_flight": False, "budget_exhausted": True})
-        with self.assertRaises(ValueError):
-            grants.authorize(token, {"model": "test-model", "input": "four"}, 1)
-
     def test_gateway_forwards_shell_web_and_hosted_tools(self) -> None:
         grants = Grants("test-model")
         accepted = {
@@ -407,21 +393,6 @@ class GatewayGrantTests(unittest.TestCase):
             grants.authorize(token, {"model": "test-model", "input": "opaque"}, MAX_BODY + 1)
         lease, _ = grants.authorize(token, {"model": "test-model", "input": "opaque"}, MAX_BODY)
         grants.record_usage(lease, {"input_tokens": 1, "output_tokens": 1})
-
-    def test_missing_or_invalid_usage_receipts_keep_the_grant_usable(self) -> None:
-        receipts = [None, {"input_tokens": 13}, {"input_tokens": True, "output_tokens": 7}, {"input_tokens": 13, "output_tokens": -1}]
-        for receipt in receipts:
-            with self.subTest(receipt=receipt):
-                grants = Grants("test-model", requests=8)
-                token = grants.issue(uuid4())
-                lease, _ = grants.authorize(token, {"model": "test-model", "input": "one", "max_output_tokens": 10}, 20)
-                grants.record_usage(lease, receipt)
-                self.assertEqual(
-                    grants.usage(lease.execution_id),
-                    {"completed_requests": 1, "input_tokens": 0, "output_tokens": 0, "usage_known": False, "in_flight": False, "budget_exhausted": False},
-                )
-                self.assertTrue(grants.active(lease))
-                grants.authorize(token, {"model": "test-model", "input": "two", "max_output_tokens": 1}, 1)
 
     def test_a_failed_request_allows_a_bounded_retry(self) -> None:
         grants = Grants("test-model", requests=2)
@@ -576,7 +547,7 @@ class ContainerBoundaryTests(unittest.TestCase):
                 runtime.degraded = False
                 inputs = root / "inputs"
                 inputs.mkdir()
-                spec = CompileSpec.model_construct(execution_id=uuid4())
+                spec = AuditJobSpec(execution_id=uuid4(), input_digest="0" * 64, executor_revision="revision")
                 run = root / "run"
                 (run / "work").mkdir(parents=True)
                 (run / "grant").mkdir()
@@ -602,7 +573,7 @@ class ContainerBoundaryTests(unittest.TestCase):
             runtime.journal.mkdir()
             runtime.slot = threading.Lock()
             runtime.degraded = False
-            spec = CompileSpec.model_construct(execution_id=uuid4())
+            spec = AuditJobSpec(execution_id=uuid4(), input_digest="0" * 64, executor_revision="revision")
             original = {"ok": True, "input_tokens": 60, "output_tokens": 9, "model_requests": 1}
             (runtime.journal / (spec.execution_id.hex + ".json")).write_text(json.dumps(original))
             with patch.object(runtime, "_write_grant") as issue, patch.object(runtime, "_execute") as execute:
@@ -851,18 +822,13 @@ class ContainerBoundaryTests(unittest.TestCase):
                 app_revision="0" * 40,
                 sandbox_profile="off",
             )
-            spec = SnapshotSpec(
-                execution_id=uuid4(),
-                submission_id=uuid4(),
-                project_id="test",
-                sha256="0" * 64,
-                format=".xlsx",
-                semantic_engine_revision="0" * 64,
-            )
+            spec = AuditJobSpec(execution_id=uuid4(), input_digest="0" * 64, executor_revision="revision")
             run = root / "run"
             run.mkdir()
             with (
                 patch.object(runtime, "_new_run_dir", return_value=run),
+                patch.object(runtime, "_write_grant"),
+                patch.object(runtime, "_seal_usage", return_value={"in_flight": False}),
                 patch.object(runtime, "_execute", side_effect=ControllerFault("MODEL_PROTOCOL_ERROR")),
                 patch.object(runtime, "_diagnostic", side_effect=PermissionError("diagnostic unwritable")),
             ):

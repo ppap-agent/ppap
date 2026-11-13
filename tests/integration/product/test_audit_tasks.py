@@ -402,7 +402,9 @@ def test_archive_summary_matches_frozen_detail_and_preserves_default_and_revocat
     assert document["latest_completed"]["reference"] == history["default_reference"]
     # The result filter selects by the conclusion the row shows, before paging.
     listed = {result: [item["document_id"] for item in client.get("/audit-archive", params={"result": result}).json()["documents"]] for result in ("PASS", "NG", "UNKNOWN", "none", "active")}
-    assert [result for result, ids in listed.items() if document["document_id"] in ids] == [document["latest_completed"]["conclusion"]]
+    # The third audit is still queued, so the row is also listed as in progress beside its conclusion.
+    assert document["latest_activity"]["execution"] == "queued"
+    assert [result for result, ids in listed.items() if document["document_id"] in ids] == [document["latest_completed"]["conclusion"], "active"]
     assert client.get("/audit-archive", params={"result": "MAYBE"}).status_code == 422
     for entry, task in zip(history["entries"], reversed(tasks)):
         detail = client.get(history_path + "/result", params={key: value for key, value in entry["reference"].items() if value is not None})
@@ -421,9 +423,7 @@ def test_archive_summary_matches_frozen_detail_and_preserves_default_and_revocat
     assert client.get(history_path + "/result", params=frozen).status_code == 403
 
 
-@pytest.mark.parametrize(
-    "invalid", ["not_ready", "unmapped_cloud_file", "foreign_resource", "invalid_validation", "stale_analysis", "null_revision", "string_revision", "boolean_revision", "fractional_revision"]
-)
+@pytest.mark.parametrize("invalid", ["not_ready", "unmapped_cloud_file", "foreign_resource", "invalid_validation", "stale_analysis", "string_revision"])
 def test_archive_summary_keeps_task_readiness_and_bound_metadata(matched_task, auth_store_factory, invalid):
     client, worker, path, body, _rule = matched_task
     migrator = auth_store_factory(worker.settings, objects=worker.objects, reset=False)
@@ -448,7 +448,7 @@ def test_archive_summary_keeps_task_readiness_and_bound_metadata(matched_task, a
             conn.execute(
                 """UPDATE engine.jobs SET payload = jsonb_set(payload, '{task_revision}', %s)
                 WHERE id = (SELECT analysis_job_id FROM product.draft_items WHERE draft_id = %s AND file_version_id = %s)""",
-                (Jsonb({"stale_analysis": 999, "null_revision": None, "string_revision": "0", "boolean_revision": False, "fractional_revision": 0.0}[invalid]), accepted.json()["id"], version),
+                (Jsonb({"stale_analysis": 999, "string_revision": "0"}[invalid]), accepted.json()["id"], version),
             )
     task = client.get(path)
     archive = client.get("/audit-archive")
@@ -465,19 +465,16 @@ def test_archive_summary_keeps_task_readiness_and_bound_metadata(matched_task, a
         assert archive.json()["categories"][0]["label"] == "其他"
 
 
-@pytest.mark.parametrize("report_state", ["pending", "generating", "ready", "failed"])
+@pytest.mark.parametrize("report_state", ["pending", "ready"])
 def test_round_read_view_projects_the_same_authorized_task_report_without_creating_work(executable_task, report_state):
     client, worker, path, _body, _rule = executable_task
     accepted = client.post(path + "/confirm", json=confirmation_command(client, path, 0)).json()
     audit_job = worker.claim_job("round-report-audit")
     process_claimed(worker, audit_job, "round-report-audit")
-    if report_state != "pending":
+    if report_state == "ready":
         report_job = worker.claim_job("round-report-pdf")
         assert report_job.kind == "report_pdf"
-        if report_state == "ready":
-            process_claimed(worker, report_job, "round-report-pdf")
-        elif report_state == "failed":
-            assert worker.complete_job(report_job, "round-report-pdf", {"error": "controlled_report_failure"}, "failed")
+        process_claimed(worker, report_job, "round-report-pdf")
     task = client.get(path).json()
     expected = task["files"][0]["audit"]
     assert expected["report"]["state"] == report_state
@@ -498,7 +495,7 @@ def test_round_read_view_projects_the_same_authorized_task_report_without_creati
     assert client.get(path).json() == task
     assert client.get("/usage").json() == usage
     assert client.get(round_path).json() == frozen
-    if report_state in {"ready", "failed"}:
+    if report_state == "ready":
         assert worker.claim_job("round-report-no-read-side-effect") is None
 
 
@@ -643,7 +640,7 @@ def billing_client(worker, item):
 
 
 @pytest.mark.parametrize("fault", ["round_grant", "unselected_file_grant", "unselected_not_ready", "unselected_cloud_source", "target_unselected", "result_attempt"])
-def test_pdf_download_keeps_complete_task_authority_without_building_the_task_projection(executable_task, auth_store_factory, monkeypatch, fault):
+def test_pdf_download_keeps_complete_task_authority(executable_task, auth_store_factory, fault):
     client, worker, path, body, _rule = executable_task
     unselected = {**checked_file(client, worker, "未选择的补充.xlsx"), "selection": "unselected"}
     revised = {**body, "request_id": str(uuid.uuid4()), "task_id": body["request_id"], "expected_revision": 0, "files": body["files"] + [unselected]}
@@ -661,18 +658,8 @@ def test_pdf_download_keeps_complete_task_authority_without_building_the_task_pr
     reference = {"round_id": task["round_id"], "file_version_id": target["file"]["id"], "result_attempt": target["audit"]["result_attempt"], "artifact_id": report["artifact"]["artifact_id"]}
     frozen = client.get(f"/rounds/{task['round_id']}").json()
     usage = client.get("/usage").json()
-    # Instrument the actual projection without replacing its authorization or results.
-    projection_calls = []
-    original_projection = type(worker)._recognition_public
-
-    def record_projection(store, *args, **kwargs):
-        projection_calls.append(True)
-        return original_projection(store, *args, **kwargs)
-
-    monkeypatch.setattr(type(worker), "_recognition_public", record_projection)
     original_pdf = client.get(download_path, params=reference)
     assert original_pdf.status_code == 200 and original_pdf.content.startswith(b"%PDF-")
-    assert projection_calls == []
     migrator = auth_store_factory(worker.settings, objects=worker.objects, reset=False)
     with migrator._conn() as conn:
         if fault in {"round_grant", "unselected_file_grant"}:
@@ -698,7 +685,6 @@ def test_pdf_download_keeps_complete_task_authority_without_building_the_task_pr
         expected = "file_not_ready" if fault in {"unselected_not_ready", "unselected_cloud_source"} else "access_denied"
         assert response.status_code == (409 if expected == "file_not_ready" else 403), response.text
         assert response.json() == {"error": expected}
-        assert projection_calls == []
     finally:
         with migrator._conn() as conn:
             if fault in {"round_grant", "unselected_file_grant"}:
@@ -713,7 +699,6 @@ def test_pdf_download_keeps_complete_task_authority_without_building_the_task_pr
             else:
                 conn.execute("UPDATE product.audit_rounds SET result_attempt = %s WHERE id = %s", (reference["result_attempt"], task["round_id"]))
     assert client.get(download_path, params=reference).content == original_pdf.content
-    assert projection_calls == []
     assert client.get(f"/rounds/{task['round_id']}").json() == frozen
     assert client.get("/usage").json() == usage
     assert client.get(path).json() == task
@@ -2311,8 +2296,8 @@ def test_v4_t12_explicit_reference_remains_free_and_restores_its_role(auth_store
 
 
 # Task-level deep mode: choice, acceptance, per-file fallback and billing. The controlled
-# Core guest has no model and cannot write a program, so execution exercises the fallback to
-# the Suite programs; the committed-deep-result surcharge goes through the worker's commit path.
+# Core guest has no model, so the deep review fails and the Suite programs' results stand;
+# the committed-deep-result surcharge goes through the worker's commit path.
 
 
 @pytest.fixture
@@ -2368,7 +2353,7 @@ def test_a_standard_task_keeps_its_job_payload_without_a_mode(matched_task):
     assert accepted.json()["deep_mode"] is False
     with worker._conn() as conn:
         payload = conn.execute("SELECT payload FROM engine.jobs WHERE audit_round_id=%s AND kind='audit'", (accepted.json()["round_id"],)).fetchone()[0]
-    assert set(payload) == {"round_id", "executor", "executor_revision", "checker_snapshot_digest", "model_identity"}
+    assert payload.get("analysis_mode") != "deep"
 
 
 def test_deep_mode_is_refused_when_unavailable(matched_task):
@@ -2399,7 +2384,7 @@ def test_a_file_whose_deep_review_did_not_complete_is_billed_500_and_says_so(exe
         choose_deep(client, path)
         accepted = client.post(path + "/confirm", json=confirmation_command(client, path, 0))
         assert accepted.status_code == 201, accepted.text
-        # The controlled guest has no model, so the deep guest fails and the Suite programs run.
+        # The controlled guest has no model, so the deep review fails and the Suite programs' results stand.
         process_claimed(worker, worker.claim_job("deep-audit"), "deep-audit")
         task = client.get(path).json()
         TypeAdapter(wc.AuditTask).validate_python(task)

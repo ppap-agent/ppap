@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 from audit.contracts import AuditInput, RuleInput
-from audit.engine import run_audit
+from audit.engine.runtime import bind_runtime
 from audit.kinds import PpapDocumentType
 from docx import Document
 
@@ -51,14 +51,14 @@ def equipment_document(*, supplier=True, auxiliary=False, empty_template=False, 
 
 
 @pytest.fixture(params=["v2", "v3"])
-def audit(request):
+def audit(request, run_checks):
     def check(location):
         runtime = NoConversionRuntime()
-        results = run_audit(
-            AuditInput(audit_id="equipment-word", file_url=str(location)),
-            RuleInput(rule_id="confirmed-equipment-rules", rule_profile=request.param, type=PpapDocumentType.EQUIPMENT_LIST.get_type_name(), rules=[{"id": "1"}, {"id": "2"}]),
-            runtime=runtime,
-        )
+        with bind_runtime(runtime):
+            results = run_checks(
+                AuditInput(audit_id="equipment-word", file_url=str(location)),
+                RuleInput(rule_id="confirmed-equipment-rules", rule_profile=request.param, type=PpapDocumentType.EQUIPMENT_LIST.get_type_name(), rules=[{"id": "1"}, {"id": "2"}]),
+            )
         assert runtime.calls == []
         return results
 

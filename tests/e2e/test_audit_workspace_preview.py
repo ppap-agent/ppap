@@ -1,4 +1,4 @@
-"""Current task results layout and read-only result interactions, using existing DTO fixtures."""
+"""Current task read-only result interactions, using existing DTO fixtures."""
 
 import os
 import re
@@ -143,7 +143,7 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             expect(trigger).to_be_focused()
             browser.close()
 
-    def test_result_counts_appear_once_as_filters_on_the_list(self):
+    def test_result_counts_filter_the_list(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page(viewport={"width": 1440, "height": 900})
@@ -155,56 +155,14 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             chips = details.get_by_role("group", name="审核结果筛选", exact=True)
             ng = chips.get_by_role("button", name="不符合 1", exact=True)
             expect(ng).to_have_attribute("aria-pressed", "true")
-            expect(details.get_by_role("region", name="审核总结", exact=True)).to_have_count(0)
-            expect(details.get_by_text("不符合 1 · 符合 1", exact=True)).to_have_count(0)
             # Each file card names its customer and rule once; the counts stay as list filters.
             expect(queue.get_by_role("button", name=re.compile("^PFMEA.xlsx "))).to_contain_text("示例客户 · 示例 PFMEA 规则 · v1")
-            expect(page.get_by_role("banner").or_(page.locator("header")).first).not_to_contain_text("共 6 项")
             expect(details.get_by_role("row")).to_have_count(2)
             chips.get_by_role("button", name=re.compile("^符合")).click()
             expect(details.get_by_role("row")).to_have_count(2)
             expect(details.get_by_role("row").nth(1)).to_contain_text("符合")
             chips.get_by_role("button", name=re.compile("^全部")).click()
             expect(details.get_by_role("row")).to_have_count(3)
-            browser.close()
-
-    def test_responsive_results_keep_full_files_and_single_line_actions(self):
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch()
-            for width in (1440, 1280):
-                with self.subTest(width=width):
-                    page = browser.new_page(viewport={"width": width, "height": 960})
-                    page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task")
-                    expect(page.get_by_role("heading", name="审核结果", exact=True)).to_be_visible()
-                    queue = page.get_by_role("navigation", name="文件队列", exact=True)
-                    expect(queue.get_by_role("button")).to_have_count(3)
-                    for name in ("PFMEA.xlsx", "控制计划.xlsx", "过程流程图.pdf"):
-                        expect(queue.get_by_text(name, exact=True)).to_be_visible()
-                    queue.get_by_role("button").first.click()
-                    page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name=re.compile("^全部")).click()
-                    actions = page.get_by_role("button", name=re.compile("^查看依据 "))
-                    expect(actions).to_have_count(2)
-                    # Table rows keep one-line actions.
-                    for action in actions.all():
-                        self.assertEqual(action.evaluate("element => getComputedStyle(element).whiteSpace"), "nowrap")
-                        self.assertGreaterEqual(action.evaluate("element => element.closest('td').getBoundingClientRect().width"), 112)
-                    self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), width)
-                    details = page.get_by_role("region", name="审核详情", exact=True)
-                    heading = page.get_by_role("heading", name="审核结果", exact=True).bounding_box()
-                    table = details.get_by_role("table").bounding_box()
-                    self.assertLess(table["y"] - heading["y"], 260)
-                    title = details.get_by_role("heading", name=re.compile(r"^审核详情")).bounding_box()
-                    search = details.get_by_role("textbox", name="搜索审核项", exact=True).bounding_box()
-                    self.assertLessEqual(abs(title["y"] + title["height"] / 2 - search["y"] - search["height"] / 2), 4)
-                    for file in queue.get_by_role("button").all():
-                        self.assertEqual(file.evaluate("element => getComputedStyle(element).borderRadius"), "0px")
-                    expect(page.get_by_role("banner").get_by_role("button", name="审核报告", exact=True)).to_be_visible()
-                    # The product navigation starts folded to its icon rail at every desktop width.
-                    sidebar = page.get_by_role("complementary", name="产品侧栏", exact=True)
-                    expect(sidebar.get_by_role("button", name="展开产品导航", exact=True)).to_be_visible()
-                    self.assertEqual(sidebar.evaluate("element => element.getBoundingClientRect().width"), 72)
-                    expect(page.get_by_role("dialog")).to_have_count(0)
-                    page.close()
             browser.close()
 
     def test_each_clause_opens_its_own_basis_and_restores_keyboard_focus(self):

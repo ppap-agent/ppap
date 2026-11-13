@@ -72,7 +72,6 @@ def test_public_fallback_uses_original_text_locations_and_one_clause(tmp_path, m
     assert request["operation"] == "rule_text_evidence"
     assert "DO NOT SEND" not in request["user_prompt"]
     assert "Unlocated content" not in request["user_prompt"]
-    assert "image_base64_list" not in request
 
 
 def test_same_frozen_fact_and_clause_are_not_requested_twice(tmp_path, model):

@@ -15,7 +15,7 @@ import pytest
 from agent.client import DeepError, ModelNotStarted
 from agent.execution.gateway import Gateway, Grants
 from agent.execution.guest_model import ModelGrant
-from documents.model_access import ModelAccess, ModelUnavailable, current_model_access, model_access_scoped
+from documents.model_access import ModelAccess, ModelUnavailable
 from pydantic import SecretStr
 
 
@@ -172,43 +172,6 @@ def test_revoked_late_grant_cannot_use_a_new_users_access():
         assert upstream.return_value.request.call_args.args[3]["Authorization"] == "Bearer " + bob.api_key.get_secret_value()
 
 
-def test_optimizer_authored_trials_use_same_grant_for_text_and_vision(tmp_path, monkeypatch):
-    from agent.execution.guest import run_entrypoint
-
-    inputs, work, credentials = (tmp_path / name for name in ("inputs", "work", "grant"))
-    for directory in (inputs, work, credentials):
-        directory.mkdir()
-    (inputs / "manifest.json").write_text(json.dumps({"operation": "adapt-checker"}))
-    chosen = access("custom")
-    grant = ModelGrant(
-        base_url="http://127.0.0.1:9876/v1",
-        token="temporary-local-grant-not-a-provider-key",
-        wall_seconds=100,
-        model="coding-m",
-        text_model=chosen.model,
-        vision_model="vision-m",
-        provider=chosen.provider,
-        revision=chosen.revision,
-    )
-    (credentials / "model.json").write_text(grant.model_dump_json())
-    monkeypatch.setattr("agent.execution.guest_model.PiRunner", lambda raw: SimpleNamespace(grant=ModelGrant.model_validate(raw), wall_seconds=100))
-    observed = []
-
-    def trial(*args):
-        text, vision = current_model_access("text"), current_model_access("vision")
-        observed.append(text)
-        assert text.provider == chosen.provider and text.model == chosen.model and text.revision == chosen.revision
-        assert vision.model == "vision-m" and current_model_access("coding").model == "coding-m"
-        for selected in (text, vision):
-            assert selected.base_url == grant.base_url and selected.api_key.get_secret_value() == grant.token
-            assert selected.base_url != chosen.base_url
-
-    monkeypatch.setattr("agent.checker_program.run_adapt_manifest", trial)
-    run_entrypoint(inputs, work, credentials)
-    assert len(observed) == 1
-    assert not model_access_scoped()
-
-
 def test_runtime_rejects_queued_change_but_native_work_needs_no_key(monkeypatch):
     from agent.execution import harness
     from audit.policy import DeepExecutionPolicy
@@ -228,7 +191,7 @@ def test_runtime_rejects_queued_change_but_native_work_needs_no_key(monkeypatch)
     @contextmanager
     def fake_gateway(path, **kwargs):
         assert kwargs["require_binding"] is True
-        assert kwargs["requests"] == 7 and not {"input_tokens", "output_tokens"} & set(kwargs)
+        assert kwargs["requests"] == 7
         yield SimpleNamespace(socket_path=path, http=SimpleNamespace(grants=grants))
 
     class Runtime:

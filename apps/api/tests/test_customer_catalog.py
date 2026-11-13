@@ -10,27 +10,11 @@ from product.identity import SESSION_COOKIE
 from product.settings import Settings
 
 
-def test_customer_catalog_requires_login_and_has_a_minimal_runtime_contract():
-    response = TestClient(app).get("/audit-customers")
-    assert response.status_code == 401
-    assert response.headers["cache-control"] == "private, no-store"
-    spec = app.openapi()
-    operation = spec["paths"]["/audit-customers"]["get"]
-    assert operation["responses"]["200"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/AuditCustomerCatalog"}
-    assert "x-contract-stage" not in spec["components"]["schemas"]["AuditCustomerCatalog"]
-    schemas = spec["components"]["schemas"]
-    assert set(schemas["AuditCustomerCatalog"]["properties"]) == {"customers"}
-    assert set(schemas["AuditCustomer"]["properties"]) == {"customer_id", "name"}
-
-
-def test_rule_library_requires_login_and_declares_its_metadata_contract():
-    response = TestClient(app).get("/rule-library")
-    assert response.status_code == 401
-    assert response.headers["cache-control"] == "private, no-store"
-    operation = app.openapi()["paths"]["/rule-library"]["get"]
-    assert operation["responses"]["200"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/RuleLibrary"}
-    entry = app.openapi()["components"]["schemas"]["RuleLibraryEntry"]["properties"]
-    assert {"document_type", "document_type_aliases", "suite_key"} <= set(entry)
+def test_customer_catalog_and_rule_library_require_login_and_are_not_cached():
+    for path in ("/audit-customers", "/rule-library"):
+        response = TestClient(app).get(path)
+        assert response.status_code == 401
+        assert response.headers["cache-control"] == "private, no-store"
 
 
 def test_customer_catalog_keeps_latest_rule_versions_tenant_scope_and_unique_names():

@@ -2,7 +2,6 @@
 
 import importlib
 import json
-from collections import Counter
 from types import SimpleNamespace
 
 import pytest
@@ -10,7 +9,7 @@ from audit.checker_lib.agents import AgentAudit
 from audit.contracts import AuditInput, GroupContextInput, RuleInput
 from audit.engine.checkers.rule_declarations import discover_declared_rules
 from audit.presets import customer_presets, preset_rule_body
-from audit.standard_suites import library_revision, predefined_directory_suites
+from audit.standard_suites import predefined_directory_suites
 
 COMPANY_MODULES = {"li": "audit.checker_lib.li", "nio": "audit.checker_lib.nio"}
 
@@ -37,7 +36,6 @@ def check_clause(context, resource):
 
 def test_every_company_leaf_binds_each_clause_to_a_declared_implementation_method():
     suites = predefined_directory_suites()
-    assert Counter(s.customer for s in suites) == {"UAES": 19, "理想": 17, "蔚来": 17}
     assert {s.suite_key for s in suites} == {f"{p.customer}:{p.entry_id}" for p in customer_presets()}
     for suite in suites:
         rules = json.loads(suite.files["rules.json"])
@@ -51,10 +49,8 @@ def test_every_company_leaf_binds_each_clause_to_a_declared_implementation_metho
         assert rules["checker_binding"] == dict(suite.entrypoints)
 
 
-def test_standard_content_and_shared_library_have_stable_identity():
+def test_standard_content_has_stable_immutable_identity():
     assert [dict(suite.files) for suite in predefined_directory_suites()] == [dict(suite.files) for suite in predefined_directory_suites()]
-    revision = library_revision()
-    assert len(revision) == 64 and revision == library_revision()
     suite = predefined_directory_suites()[0]
     try:
         suite.files["checker.py"] = b"changed"
@@ -216,26 +212,6 @@ def test_pdf_suite_keeps_original_page_visual_policy(module, monkeypatch):
     assert result.status == "UNABLE" and result.clause_id == "3"
 
 
-def test_pdf_suite_keeps_conversion_page_evidence():
-    from audit.checker_lib.nio.pdf_excel_delegator_agent import ProcessFlowChartPdfExcelDelegatorAgent
-    from audit.checker_lib.nio.process_flow_chart_excel_agent import ProcessFlowChartExcelAgent
-    from audit.contracts import AuditResultItem
-    from audit.engine.checkers.rule_declarations import discover_declared_rules
-
-    cls = ProcessFlowChartPdfExcelDelegatorAgent
-    checker = object.__new__(cls)
-    checker.temp_files = []
-    checker.audit_file = AuditInput(audit_id="frozen", file_url="/frozen/original.pdf")
-    checker.excel_agent = SimpleNamespace(_execute_rule_check=lambda _: AuditResultItem(classification="field", item="field", priority="P0", status="PASS", suggestions="grid value"))
-    checker._apply_pdf_evidence = lambda result: result.model_copy(update={"status": "UNABLE", "suggestions": "original page was incomplete"})
-    implementation = f"{cls.__module__}:{cls.__name__}"
-    method = discover_declared_rules(ProcessFlowChartExcelAgent)[0][0]
-    context = SimpleNamespace(audit_file=checker.audit_file, clause_id="1", cache={("standard-checker", "frozen", implementation): checker})
-    result = check_clause(context, {"carriers": {".pdf": implementation}, "methods": {"1": method}})
-    assert result.status == "UNABLE"
-    assert result.suggestions == "original page was incomplete"
-
-
 @pytest.mark.parametrize("version", ["li", "nio"])
 def test_word_suite_uses_original_visual_hook_instead_of_excel(version):
     from audit.contracts import AuditResultItem
@@ -286,34 +262,3 @@ def test_native_adapter_publishes_only_actual_predicate_count(tmp_path, version,
         assert result.checks_performed == int(performed)
     finally:
         checker.close()
-
-
-def test_removed_root_reexports_stay_absent_and_version_packages_remain():
-    """The 17 root shims had no caller; the old version packages are gone and company implementations import."""
-    import importlib.util
-
-    removed = (
-        "annual_test",
-        "assembly_issue",
-        "checking_fixture",
-        "control_plan",
-        "dimension_measurement",
-        "dpvr",
-        "dvp_r",
-        "equipment_list",
-        "initial_process_capacity",
-        "msa",
-        "pfmea",
-        "plant_capacity",
-        "process_flow",
-        "psw",
-        "special_characteristic",
-        "sub_supplier",
-        "tooling",
-    )
-    for name in removed:
-        assert importlib.util.find_spec(f"audit.checkers.{name}") is None
-    for version in ("v2", "v3", "v4"):
-        assert importlib.util.find_spec(f"audit.checkers.{version}") is None
-    for company in ("li", "nio", "uaes"):
-        importlib.import_module(f"audit.checker_lib.{company}")

@@ -11,30 +11,13 @@ ROOT = Path(__file__).resolve().parents[2]
 OVERLAY = "deploy/isolated-dev/deep-live.yaml"
 
 
-def test_browser_ci_builds_runs_observes_and_cleans_the_core_runtime():
-    workflow = yaml.safe_load((ROOT / ".github/workflows/tests.yml").read_text())
-    steps = {step.get("name"): step for step in workflow["jobs"]["integration"]["steps"]}
-    build = steps["Bake canonical application and Core runtime images"]["run"]
-    assert "docker buildx bake release " in build
-    assert '"ppap-deep:${PPAP_BUILD_SHA}"' in build
-    assert OVERLAY in build
-    for name in ("Isolated-dev browser E2E", "Dump Compose diagnostics", "Clean Compose stacks"):
-        assert OVERLAY in steps[name]["run"], name
-    assert "deep-live" not in steps["Production runtime and backup"]["run"]
-    diagnostics = steps["Dump Compose diagnostics"]["run"]
-    assert "logs --no-color --timestamps || true" in diagnostics  # All services, including Core.
-    assert steps["Clean Compose stacks"]["if"] == "always()"
-
-
 def test_core_overlay_owns_only_project_scoped_socket_and_real_readiness():
     overlay = yaml.safe_load((ROOT / OVERLAY).read_text())
     assert overlay["volumes"] == {"deep-socket": None}
     services = overlay["services"]
     deep = services["deep"]
     assert deep["environment"]["PPAP_SERVICE"] == "deep"
-    assert deep["environment"]["PPAP_DEEP_RUNTIME"] == "container-only"
     assert deep["healthcheck"]["test"] == ["CMD", "python", "-m", "agent.readiness"]
-    assert deep["mem_limit"] == "2g"
     for name in ("api", "worker", "deep"):
         assert services[name]["volumes"] == ["deep-socket:/run/ppap-deep"]
         assert services[name]["environment"]["PPAP_DEEP_CONTROLLER_SOCKET"] == "/run/ppap-deep/controller.sock"

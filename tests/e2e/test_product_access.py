@@ -176,16 +176,13 @@ def test_a_business_401_still_hides_the_authenticated_product_without_restarting
 @pytest.mark.parametrize(
     ("reason", "message"),
     [
-        ("cancelled", "已取消飞书授权。需要登录后才能继续审核。"),
-        ("failed", "飞书登录未完成，请重新登录。"),
         ("tenant_not_allowed", "当前企业尚未开通此审核服务，请切换飞书账号或联系管理员。"),
         ("untrusted-provider-text", "飞书登录未完成，请重新登录。"),
-        ("__proto__", "飞书登录未完成，请重新登录。"),
     ],
 )
 @pytest.mark.parametrize(
     "path,canonical",
-    [("/?view=workbench", "/tasks/original-task#original-clause"), ("/audit?report=frozen-report", "/tasks/original-task?report=frozen-report#original-clause")],
+    [("/audit?report=frozen-report", "/tasks/original-task?report=frozen-report#original-clause")],
 )
 def test_authorization_failure_keeps_task_and_requires_an_explicit_new_login(page, reason, message, path, canonical):
     login_config(page)

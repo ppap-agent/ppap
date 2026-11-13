@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 import os
-import subprocess
-import sys
 import unittest
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -20,8 +17,6 @@ from product.settings import Settings
 from product.store.suite_releases import SuiteReleaseStore
 from psycopg import errors, sql
 from worker import process_claimed
-
-ROOT = Path(__file__).resolve().parents[2]
 
 
 def rule_body():
@@ -596,7 +591,6 @@ class AuditFlowTests(unittest.TestCase):
         self.assertEqual([row["id"] for row in listed], [round_id])
         self.assertEqual(listed[0]["inputs"][0]["original_filename"], "report.xlsx")
         self.assertTrue(listed[0]["inputs"][0]["file_version_id"])
-        self.assertEqual(set(listed[0]["result_counts"]), {"PASS", "NG", "ERR", "UNABLE", "NA"})
         self.assertGreaterEqual(listed[0]["updated_at"], listed[0]["created_at"])
         self.assertNotIn("findings", listed[0])
         self._finish_worker()
@@ -700,25 +694,3 @@ def check(context):
         )
         self.assertEqual(replay["findings"][0]["item"], mapped_text)
         self.assertEqual(replay["inputs"][0]["rule"]["id"], published.json()["id"])
-
-
-class PresenceEvaluationTests(unittest.TestCase):
-    def test_round_payload_does_not_import_engine(self):
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                """
-import sys
-from worker import run_claimed_job
-result = run_claimed_job("audit", {"round_id": "abc"})
-assert result["note"] == "round_audit"
-assert "audit.engine.app_runtime" not in sys.modules
-""",
-            ],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)

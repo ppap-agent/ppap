@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 from audit.checker_lib.li.control_plan_agent import (
     ControlPlanAgent as V2ControlPlanAgent,
@@ -28,26 +26,8 @@ from audit.checker_lib.nio.pdf_excel_delegator_agent import (
 from audit.checker_lib.nio.psw_docx_agent import (
     PswDocxAgent as V3PswDocxAgent,
 )
-from audit.engine.routing import (
-    AUDIT_TASK_EXTENSIONS,
-    get_document_type_from_rule,
-    iter_supported_doc_types,
-    resolve_engine_agent_class,
-)
+from audit.engine.routing import resolve_engine_agent_class
 from audit.kinds import PpapDocumentType
-
-
-def test_iter_supported_doc_types_contains_known_types() -> None:
-    supported = set(iter_supported_doc_types())
-    assert PpapDocumentType.CONTROL_PLAN in supported
-    assert PpapDocumentType.PSW in supported
-    assert PpapDocumentType.DIMENSION_MEASUREMENT_REPORT in supported
-
-
-def test_audit_task_file_type_contract_includes_structured_docx() -> None:
-    assert AUDIT_TASK_EXTENSIONS == {".doc", ".docx", ".pdf", ".xls", ".xlsm", ".xlsx"}
-    assert ".ppt" not in AUDIT_TASK_EXTENSIONS
-    assert ".pptx" not in AUDIT_TASK_EXTENSIONS
 
 
 def test_resolve_engine_agent_class_pdf_path() -> None:
@@ -189,42 +169,21 @@ def test_resolve_engine_agent_class_preserves_supported_routes(
     assert resolve_engine_agent_class(PpapDocumentType.CONTROL_PLAN, file_url, rule_profile) is expected_agent
 
 
-def test_get_document_type_from_rule_cn_name() -> None:
-    rule = SimpleNamespace(type="控制计划")
-    assert get_document_type_from_rule(rule) == PpapDocumentType.CONTROL_PLAN
-
-
-def test_get_document_type_from_rule_en_name() -> None:
-    rule = SimpleNamespace(type="Control plan")
-    assert get_document_type_from_rule(rule) == PpapDocumentType.CONTROL_PLAN
-
-
-def test_get_document_type_from_rule_enum_name() -> None:
-    rule = SimpleNamespace(type="PFMEA")
-    assert get_document_type_from_rule(rule) == PpapDocumentType.PFMEA
-
-
 @pytest.mark.parametrize(
     ("rule_type", "expected"),
     [
+        ("控制计划", PpapDocumentType.CONTROL_PLAN),
+        ("Control plan", PpapDocumentType.CONTROL_PLAN),
+        ("PFMEA", PpapDocumentType.PFMEA),
         ("全功能检验报告", PpapDocumentType.DIMENSION_MEASUREMENT_REPORT),
         ("尺寸检验报告", PpapDocumentType.DIMENSION_MEASUREMENT_REPORT),
         ("特殊特性清单", PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST),
         ("检具认可报告", PpapDocumentType.CHECKING_FIXTURE_APPROVAL_REPORT),
         ("测量系统分析报告", PpapDocumentType.MSA_REPORT),
         ("CP", PpapDocumentType.CONTROL_PLAN),
+        ("not-exists", PpapDocumentType.UNKNOWN),
+        ("", PpapDocumentType.UNKNOWN),
     ],
 )
-def test_get_document_type_from_rule_aliases(rule_type: str, expected: PpapDocumentType) -> None:
-    rule = SimpleNamespace(type=rule_type)
-    assert get_document_type_from_rule(rule) == expected
-
-
-def test_get_document_type_from_rule_unknown() -> None:
-    rule = SimpleNamespace(type="not-exists")
-    assert get_document_type_from_rule(rule) is None
-
-
-def test_get_document_type_from_rule_empty() -> None:
-    rule = SimpleNamespace(type=None)
-    assert get_document_type_from_rule(rule) is None
+def test_document_type_names_and_aliases(rule_type: str, expected: PpapDocumentType) -> None:
+    assert PpapDocumentType.from_string(rule_type) is expected

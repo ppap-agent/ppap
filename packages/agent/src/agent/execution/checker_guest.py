@@ -13,13 +13,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, TypeVar
-from uuid import UUID
 
-from audit.checker_lib.imports import import_violations
 from audit.contracts import AuditInput, AuditResultItem, GroupContextInput, RuleInput
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from agent.checker_spec import CheckerArtifact, CheckerJobSpec, CheckerProgramBundle, program_digest
+from agent.checker_spec import CheckerArtifact, program_digest
 from agent.execution.checker_context import task_reference, write_starting_point
 from agent.execution.guest_model import ModelProtocolError
 
@@ -368,15 +366,6 @@ def _require_coverage(results: list[AuditResultItem], rule: RuleInput, *, allow_
     return results
 
 
-def _write_bundle(work: Path, bundle: CheckerProgramBundle) -> None:
-    output = work / "result"
-    output.mkdir(parents=True, exist_ok=True)
-    target = output / "bundle.json"
-    payload = bundle.model_dump_json().encode()
-    with target.open("xb") as stream:
-        stream.write(payload)
-
-
 def _preview_cell(value: object) -> str:
     if value is None:
         return "空白"
@@ -544,28 +533,6 @@ def _partial_feedback(clause_ids: list[str], results: list[AuditResultItem]) -> 
     )
 
 
-def _observation_questions(results: list[AuditResultItem]) -> list[str]:
-    """Keep each asked question, its candidates and sources, and the fact that no answer was chosen."""
-    encoded_items: list[str] = []
-    for result in results:
-        for question in result.clarifications or []:
-            if not isinstance(question, dict):
-                continue
-            encoded_items.append(
-                _encoded(
-                    {
-                        "answer": None,
-                        "candidates": question.get("candidates") or [],
-                        "clause_id": str(result.clause_id or question.get("clause_id") or ""),
-                        "id": question.get("id") or "",
-                        "question": question.get("question") or "",
-                        "sources": question.get("sources") or [],
-                    }
-                ).decode()
-            )
-    return encoded_items
-
-
 def _review_feedback(results: list[AuditResultItem]) -> str:
     return "\n".join(
         (
@@ -706,39 +673,6 @@ def _prompt_rule(rule: RuleInput) -> dict:
     return body
 
 
-def _model_selected_files(rule: RuleInput, source_files: Mapping[str, str]) -> dict[str, str]:
-    """Workspace copy of the selected suite. Stored bytes stay unchanged.
-
-    Formalization bodies that are not the verified snapshot for this frozen rule do not remain.
-    """
-    visible = dict(source_files)
-    raw = visible.get("rules.json")
-    if not isinstance(raw, str) or "formalizations" not in raw:
-        return visible
-    try:
-        body = json.loads(raw)
-    except json.JSONDecodeError:
-        return visible
-    specs = body.get("formalizations") if isinstance(body, dict) else None
-    if not isinstance(specs, dict):
-        return visible
-    accepted = _prompt_rule(rule).get("formalizations") or {}
-    kept: dict[str, dict] = {}
-    for clause in rule.rules:
-        clause_id = str(clause.get("id") or "")
-        if clause_id not in specs:
-            continue
-        frozen = accepted.get(clause_id)
-        item = specs.get(clause_id)
-        if isinstance(frozen, dict) and frozen.get("confirmed_guidance") != "stopped" and isinstance(item, dict) and all(item.get(key) == value for key, value in frozen.items()):
-            kept[clause_id] = frozen
-        else:
-            kept[clause_id] = {"clause_id": clause_id, "confirmed_guidance": "stopped"}
-    body["formalizations"] = kept
-    visible["rules.json"] = json.dumps(body, ensure_ascii=False)
-    return visible
-
-
 def _prompt(
     rule: RuleInput,
     feedback: str | None,
@@ -749,11 +683,10 @@ def _prompt(
     feedback_kind: str | None = None,
     layout: PdfLayout | None = None,
     starting_point: str = "",
-    development_feedback: str | None = None,
     selected_source: bool = False,
 ) -> str:
     rule_heading = (
-        "本次完整规则输入（rules 与 appendix 是本次生效规则；只修订 selected/ 中的已选 Checker，不要改用其他版本）："
+        "本次完整规则输入（rules 与 appendix 是本次生效规则；只修订已选 Checker（current-*.py），不要改用其他版本）："
         if selected_source
         else "本次完整规则输入（rules 与 appendix 是本次生效规则，预置来源只用于选择参考实现）："
     )
@@ -774,8 +707,6 @@ def _prompt(
     preview = _development_previews(audit_file, group_context, None if layout is None else layout.previews)
     if preview:
         parts.extend(["", preview])
-    if development_feedback:
-        parts.extend(["", "用户反馈与已确认训练样本：", development_feedback])
     if group_context is not None and any(item.audit_id != audit_file.audit_id for item in group_context.by_audit_id.values()):
         parts.extend(["", f"本组有关联文件。条款涉及关联文件时，先读取技能 {SKILL} 的 references/cross-file.md。"])
     if prior:
@@ -995,19 +926,6 @@ class _TargetUnread(CheckerTrialError):
     """The target PDF has no usable text grid. Do not start or continue the checker model."""
 
 
-_SELECTED_SOURCE_NAMES = frozenset({"checker.py", "rules.json", "resources.py", "appendix.json", "templates.json", "tests.json"})
-
-
-def _selected_checker_bytes(source_files: Mapping[str, str] | None) -> dict[str, str]:
-    if source_files is None:
-        return {}
-    if not isinstance(source_files, Mapping) or not {"checker.py", "rules.json"} <= source_files.keys() or not set(source_files) <= _SELECTED_SOURCE_NAMES:
-        raise CheckerProgramError("已选 Checker 源文件不完整")
-    if any(not isinstance(name, str) or not isinstance(body, str) or not body.strip() for name, body in source_files.items()):
-        raise CheckerProgramError("已选 Checker 源文件不完整")
-    return dict(source_files)
-
-
 def develop_checker(
     *,
     audit_file: AuditInput,
@@ -1019,51 +937,23 @@ def develop_checker(
     work: Path,
     deadline: float,
     prior_files: dict[str, str] | None = None,
-    source_files: Mapping[str, str] | None = None,
-    require_independent: bool = False,
-    observations: list[str] | None = None,
-    development_feedback: str | None = None,
     reasoning_effort: str = "medium",
 ) -> CheckerArtifact:
     if reasoning_effort not in {"xhigh", "high", "medium", "low"}:
         raise CheckerProgramError("不支持的 reasoning effort")
     _clause_ids(rule)
-    spec = CheckerJobSpec(execution_id=UUID(int=0), operation="adapt-checker", input_digest=digest, executor_revision=executor_revision)
-    execution_id = spec.expected_execution_id()
     feedback: str | None = None
     feedback_kind: str | None = None
     last_error: CheckerTrialError | None = None
     accepted_files: dict[str, str] | None = None
     accepted_encoded: dict[str, bytes] | None = None
-    accepted_brief: str | None = None
-    accepted_questions: list[str] = []
     previous_files: dict[str, str] | None = None
     latest_files: dict[str, str] | None = prior_files
 
-    def seal(encoded_files: dict[str, bytes], requests: int) -> CheckerArtifact:
-        artifact = CheckerArtifact(input_digest=digest, executor_revision=executor_revision, entrypoint="checker:create_audit", files=encoded_files)
-        briefs = [accepted_brief] if accepted_brief else []
-        briefs.extend(accepted_questions)
-        if observations is not None:
-            observations.extend(briefs)
-        _write_bundle(
-            work,
-            CheckerProgramBundle(
-                operation="adapt-checker",
-                execution_id=execution_id,
-                input_digest=digest,
-                executor_revision=executor_revision,
-                artifact=artifact,
-                observations=briefs,
-                input_tokens=int(getattr(runner, "input_tokens", 0) or 0),
-                output_tokens=int(getattr(runner, "output_tokens", 0) or 0),
-                model_requests=requests,
-            ),
-        )
-        return artifact
+    def seal(encoded_files: dict[str, bytes]) -> CheckerArtifact:
+        return CheckerArtifact(input_digest=digest, executor_revision=executor_revision, entrypoint="checker:create_audit", files=encoded_files)
 
-    selected = _selected_checker_bytes(source_files)
-    editing_selected = prior_files is not None or "checker.py" in selected
+    editing_selected = prior_files is not None
     if editing_selected:
         native = False
     else:
@@ -1076,7 +966,7 @@ def develop_checker(
     except _TargetUnread as exc:
         encoded = _validate_source({"checker.py": _unable_checker(str(exc))})
         run_program(encoded, work / "unable-program", audit_file, rule, group_context)
-        return seal(encoded, 0)
+        return seal(encoded)
     if prior_files:
         try:
             prior_results = run_program(_validate_source(prior_files), work / "prior-trial", audit_file, rule, group_context)
@@ -1095,13 +985,8 @@ def develop_checker(
         if latest_files is not None:
             for name, source in latest_files.items():
                 (stage / f"current-{name}").write_text(source, encoding="utf-8")
-        if selected:
-            chosen = stage / "selected"
-            chosen.mkdir()
-            for name, source in _model_selected_files(rule, selected).items():
-                (chosen / name).write_text(source, encoding="utf-8")
         if editing_selected:
-            starting_point = "修订这份已选 Checker。先读取 selected/（若存在）和 current-*.py（若存在）。不要改用其他版本的实现。"
+            starting_point = "修订这份已选 Checker。先读取 current-*.py。不要改用其他版本的实现。"
         else:
             starting_point = write_starting_point(stage, audit_file, rule)
             if latest_files is not None:
@@ -1120,7 +1005,6 @@ def develop_checker(
                     feedback_kind=feedback_kind,
                     layout=layout,
                     starting_point=starting_point,
-                    development_feedback=development_feedback,
                     selected_source=editing_selected,
                 ),
                 CheckerDraft,
@@ -1139,14 +1023,12 @@ def develop_checker(
             if draft.files != accepted_files:
                 accepted_files = None
                 accepted_encoded = None
-                accepted_brief = None
-                accepted_questions.clear()
             feedback = str(exc)
             feedback_kind = "failure"
             last_error = exc
             continue
         if draft.submitted and selection is None and accepted_files is not None and draft.files == accepted_files and accepted_encoded is not None:
-            return seal(accepted_encoded, trial + 1)
+            return seal(accepted_encoded)
         if _resources_changed(previous_files, draft.files) or _shared_definition_changed(previous_files, draft.files):
             selection = None
         previous_files = dict(draft.files)
@@ -1155,10 +1037,6 @@ def develop_checker(
             if template_checker.is_file() and draft.files.get("checker.py") == template_checker.read_text(encoding="utf-8"):
                 raise CheckerTrialError("模板尚未实现本次条款，不能固定")
             encoded = _validate_source(draft.files)
-            if selected or require_independent:
-                for name, source in draft.files.items():
-                    if violations := import_violations(ast.parse(source)):
-                        raise CheckerTrialError(f"checker_cross_version_import: {name} 第 {'; 第 '.join(violations[:5])}。只能导入 checker-development.md「目录叶子」允许的模块。")
             type_check(draft.files, stage / "typecheck")
             results = run_program(
                 encoded,
@@ -1175,8 +1053,6 @@ def develop_checker(
                 raise
             accepted_files = None
             accepted_encoded = None
-            accepted_brief = None
-            accepted_questions.clear()
             feedback = str(exc)
             feedback_kind = "failure"
             last_error = exc
@@ -1184,8 +1060,6 @@ def develop_checker(
         except ValidationError as exc:
             accepted_files = None
             accepted_encoded = None
-            accepted_brief = None
-            accepted_questions.clear()
             feedback = str(exc)
             feedback_kind = "failure"
             last_error = CheckerTrialError("程序输出不符合 checker 程序合同")
@@ -1194,16 +1068,12 @@ def develop_checker(
             if accepted_files is not None and draft.files != accepted_files:
                 accepted_files = None
                 accepted_encoded = None
-                accepted_brief = None
-                accepted_questions.clear()
             feedback = _partial_feedback(selection, results)
             feedback_kind = "partial"
             continue
         accepted_files = dict(draft.files)
         accepted_encoded = encoded
-        accepted_brief = _review_feedback(results)
-        accepted_questions[:] = _observation_questions(results)
-        feedback = accepted_brief
+        feedback = _review_feedback(results)
         feedback_kind = "review"
     # The last trial can succeed and still be unconfirmed. Only an unchanged
     # resubmit without a clause filter fixes the program. A missing confirmation
@@ -1228,16 +1098,4 @@ def execute_fixed_checker(
     if program_digest(dict(artifact.files)) != artifact.program_digest:
         raise CheckerProgramError("固定程序摘要与程序字节不一致")
     results = run_program(dict(artifact.files), work / "fixed-program", audit_file, rule, group_context, isolate_faults=True)
-    results = _require_coverage(results, rule, allow_extra=True)
-    spec = CheckerJobSpec(execution_id=UUID(int=0), operation="execute-checker", input_digest=digest, executor_revision=executor_revision)
-    _write_bundle(
-        work,
-        CheckerProgramBundle(
-            operation="execute-checker",
-            execution_id=spec.expected_execution_id(),
-            input_digest=digest,
-            executor_revision=executor_revision,
-            results=[result.model_dump(mode="json") for result in results],
-        ),
-    )
-    return results
+    return _require_coverage(results, rule, allow_extra=True)

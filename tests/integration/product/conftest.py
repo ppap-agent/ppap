@@ -330,12 +330,14 @@ def core_system(monkeypatch, tmp_path):
                 authorize=authorize_execution(settings, connect=connect, open_store=lambda _: worker),
             )
 
-            def execute(_client, spec, *, cancelled=None, on_progress=None):
+            def execute(_client, spec, *, cancelled=None, on_progress=None, on_activity=None):
                 context = ExecutionContext()
                 if cancelled is not None:
                     context.cancelled = cancelled
                 if on_progress is not None:
                     context.on_progress = on_progress
+                if on_activity is not None:
+                    context.on_activity = on_activity
                 return self.controller.handle(spec, context)
 
             monkeypatch.setattr(DeepClient, "execute", execute)

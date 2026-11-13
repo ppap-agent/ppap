@@ -10,9 +10,7 @@ export type BoundRule = Schema<'BoundRule'>
 export type Analysis = Schema<'Analysis'>
 export type RuleCoverageItem = Schema<'RuleCoverageItem'>
 export type Finding = Schema<'Finding'>
-export type FindingStatus = Finding['status']
 export type SemanticSource = Schema<'SemanticSource'>
-export type SemanticLocator = SemanticSource['locator']
 export type SemanticEvidence = Schema<'SemanticEvidence'>
 export type WritebackTarget = Schema<'WritebackTarget'>
 export type QuotaEstimate = Schema<'QuotaEstimate'>
@@ -48,15 +46,11 @@ export type RuleCandidate = Schema<'RuleCandidate'>
 export type RuleSources = Schema<'RuleSources'>
 export type HostLoginRequest = JsonBody<'login_feishu_host_login_feishu_host_post'>
 export type FileCreateRequest = JsonBody<'files_create_files_post'>
-export type FileFinalizeRequest = JsonBody<'files_finalize_files__file_id__versions__version_id__finalize_post'>
 export type FeishuFileImportRequest = JsonBody<'feishu_files_import_integrations_feishu_files_import_post'>
 export type DraftCreateRequest = JsonBody<'drafts_create_drafts_post'>
 export type DraftSaveRequest = JsonBody<'drafts_save_drafts__draft_id__put'>
 export type DraftAcceptRequest = JsonBody<'drafts_accept_drafts__draft_id__accept_post'>
-export type FileAnalysisRequest = JsonBody<'files_analyze_file_analyses_post'>
 export type ReviewRequest = JsonBody<'rounds_review_rounds__round_id__reviews_put'>
-export type RuleParseRequest = JsonBody<'rules_parse_rules_parse_post'>
-export type RulePublishRequest = JsonBody<'rules_publish_rules_post'>
 
 type MaterialWire = Schema<'MaterialWire'>
 export type Material = Omit<MaterialWire, 'rule' | 'status'> & {
@@ -76,11 +70,6 @@ export class UploadResultUnknown extends Error {
     this.material = material
     this.requestId = requestId
   }
-}
-export const resultLabels:Record<FindingStatus,string> = {PASS:'通过', NG:'不符合', ERR:'检查异常', UNABLE:'无法判断', NA:'不适用'}
-export const executionLabels:Record<string,string> = {queued:'排队中', running:'检查中', completed:'检查完成', failed:'执行失败'}
-export function dateLabel(value?: string | null) {
-  return value ? new Intl.DateTimeFormat('zh-CN', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(value)) : '—'
 }
 export let apiUrl = ''
 export let profile = ''
@@ -132,9 +121,6 @@ const messages: Record<string,string> = {
 }
 const safeRequestTrace = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9._-]{8,128}$/.test(value) ? value : undefined
 export const requestTrace = (cause: unknown) => safeRequestTrace(cause instanceof Error && 'traceId' in cause ? cause.traceId : undefined)
-export function knownRequestMessage(code?: string | null): string | undefined {
-  return code ? messages[code] : undefined
-}
 export function withResponseTrace<T extends Error>(error: T, response: Response): T {
   const traceId = safeRequestTrace(response.headers.get('X-Request-ID'))
   if (traceId) Object.assign(error, {traceId})
@@ -227,7 +213,4 @@ export async function upload(file: File, role: Material['role'], onStaged?: (mat
 }
 export function originalUrl(file: Material, roundId?: string) {
   return `${apiUrl}${roundId ? `/rounds/${encodeURIComponent(roundId)}` : ''}/files/${encodeURIComponent(file.file_id)}/versions/${encodeURIComponent(file.file_version_id)}/download`
-}
-export function bundleUrl(roundId: string) {
-  return `${apiUrl}/rounds/${encodeURIComponent(roundId)}/bundle`
 }

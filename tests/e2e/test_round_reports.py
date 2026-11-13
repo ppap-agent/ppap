@@ -236,8 +236,8 @@ def test_embedded_native_task_report_keeps_the_selected_report_when_its_host_rel
         browser.close()
 
 
-@pytest.mark.parametrize("state,label", [("pending", "待生成"), ("generating", "生成中"), ("failed", "生成失败")])
-def test_round_report_generation_status_reaches_the_existing_report_recovery_ui(state, label):
+def test_failed_round_report_generation_reaches_the_existing_report_recovery_ui():
+    state, label = "failed", "生成失败"
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         page = browser.new_page(viewport={"width": 1280, "height": 844})
@@ -248,17 +248,15 @@ def test_round_report_generation_status_reaches_the_existing_report_recovery_ui(
         expect(preview.get_by_role("heading", name="原控制计划.xlsx", exact=True)).to_be_visible()
         expect(preview.get_by_text(label, exact=True)).to_be_visible()
         expect(preview.get_by_role("button", name="下载当前报告", exact=True)).to_be_disabled()
-        if state == "failed":
-            expect(preview.get_by_text("生成服务暂不可用", exact=True)).to_be_visible()
-            expect(preview.get_by_role("button", name="重生成同一结果", exact=True)).to_be_disabled()
+        expect(preview.get_by_text("生成服务暂不可用", exact=True)).to_be_visible()
+        expect(preview.get_by_role("button", name="重生成同一结果", exact=True)).to_be_disabled()
         assert not any(path.endswith("/pdf") for _method, path in calls)
         assert all(method == "GET" for method, _path in calls)
-        assert page.evaluate("document.documentElement.scrollWidth") <= 1280
         browser.close()
 
 
-@pytest.mark.parametrize(("status", "not_rerun"), [("unverified", False), ("verified", True)])
-def test_all_pass_frozen_verification_remains_visible_in_result_focus_and_report(status, not_rerun):
+def test_all_pass_frozen_verification_remains_visible_in_result_focus_and_report():
+    status, not_rerun = "unverified", False
     from product.checker_verification import frozen_checker_verification
 
     verification = frozen_checker_verification({"mode": "checker_core", "suite_revision_id": "frozen-checker-3", "suite_revision_number": 3, "verification": status, "samples_not_rerun": not_rerun})

@@ -15,10 +15,8 @@ def test_original_native_appendices_do_not_create_unread_visual_scope_or_resolve
     digest = hashlib.sha256(original).hexdigest()
     assert digest == "24133e74c1dac80339a694863930121b9525d4b0d887f7e020b9ed82f3014c0b"
     scope = _Objects(AuditInput(audit_id="frozen-native-appendices", file_url=str(path)), digest, {})
-    assert scope.warrants == [3, 5]
     assert scope.authorization == [7]
     assert scope.unresolved_pages == set()
-    assert scope.roles[5] is None  # Guidance needs independent evidence; empty fields do not exclude it.
     identities = [args[0] for args, _kwargs in scope.sources if args[0].get("coverage") == "native_document_heading"]
     assert [item["page"] for item in identities] == [1, 6]
     with fitz.open(path) as document:

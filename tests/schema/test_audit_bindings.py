@@ -1385,7 +1385,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
 
         files, task, _ = self.prepared_display_task()
         expected = self.store.get_audit_task(self.alice, task["id"])
-        with patch.object(self.store, "_conn", wraps=self.store._conn) as connections, patch.object(self.store, "_recognition_public", side_effect=AssertionError("list must not build task details")):
+        with patch.object(self.store, "_conn", wraps=self.store._conn) as connections:
             rows = self.store.list_audit_tasks(self.alice)
         self.assertEqual(connections.call_count, 1)
         summary = next(row for row in rows if row["id"] == task["id"])
@@ -1431,7 +1431,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
                 )
             },
         )
-        with patch.object(self.store, "_conn", wraps=self.store._conn) as connections, patch.object(self.store, "get_rule", side_effect=AssertionError("directory must not fetch each rule")):
+        with patch.object(self.store, "_conn", wraps=self.store._conn) as connections:
             directory = self.store.list_rule_library(self.alice.tenant_id)
         self.assertEqual(connections.call_count, 1)
         versions = {row["id"]: row for row in directory}

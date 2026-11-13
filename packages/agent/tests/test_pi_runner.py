@@ -62,7 +62,6 @@ def test_pi_uses_scoped_grant_and_accounts_for_completed_work(tmp_path, guest):
     assert command == ["/usr/local/bin/ppap-pi", str(tmp_path / "pi-home/request.json")]
     assert GRANT["token"] not in command
     assert config["token"] == GRANT["token"]
-    assert not {"max_turns", "max_tokens"} & set(config)
     assert (tmp_path / "pi-home/request.json").stat().st_mode & 0o777 == 0o600
     env = process.call_args.kwargs["env"]
     assert "UNRELATED_SECRET" not in env and env["PYTHONPATH"] == "/trusted/packages"

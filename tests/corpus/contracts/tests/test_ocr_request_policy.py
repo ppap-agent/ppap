@@ -7,28 +7,13 @@ import json
 import documents.ai
 import pytest
 from audit.engine.checkers import ocr_visual_facts
-from corpus_contracts.replay import Recorder, configured_model_access, install, ocr_request, replay_model_access
+from corpus_contracts.replay import Recorder, install, ocr_request, replay_model_access
 from documents.ai import AIResult
 from documents.model_access import ModelAccess, model_access_scope
 from documents.ocr.env import ocr_extra_body
 from pydantic import SecretStr
 
 _SEAMS = {(ocr_visual_facts, "read_visual_facts"): ocr_visual_facts.read_visual_facts, (documents.ai, "run_json_async"): documents.ai.run_json_async}
-
-
-def test_the_vision_model_takes_the_explicit_policy_or_the_platform_default(monkeypatch):
-    for name, value in {
-        "PPAP_MODEL_VISION_API_KEY": "controlled",
-        "PPAP_MODEL_VISION_BASE_URL": "https://openrouter.ai/api/v1",
-        "PPAP_MODEL_VISION_MODEL": "deepseek/deepseek-v4.1-flash-1017",
-        "PPAP_MODEL_VISION_EXTRA_BODY_JSON": '{"reasoning":{"effort":"low"},"provider":{"sort":"latency"}}',
-    }.items():
-        monkeypatch.setenv(name, value)
-    with model_access_scope(configured_model_access()):
-        assert ocr_extra_body() == {"reasoning": {"effort": "low"}, "provider": {"sort": "latency"}}
-    monkeypatch.delenv("PPAP_MODEL_VISION_EXTRA_BODY_JSON")
-    with model_access_scope(configured_model_access()):
-        assert ocr_extra_body() == {"reasoning": {"effort": "none"}}
 
 
 def test_replay_separates_actual_ocr_options_from_default_policy(tmp_path, monkeypatch):

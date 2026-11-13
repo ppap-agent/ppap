@@ -12,14 +12,11 @@ import json
 import os
 import unittest
 from io import BytesIO
-from pathlib import Path
 from threading import Event
 from time import monotonic
 from unittest.mock import patch
 
-import agent
 import pytest
-import worker
 from agent.client import DeepClient, DeepError
 from agent.core_program import CoreRuntime, run_audit_manifest, write_audit_manifest
 from agent.execution.guest_model import ModelGrant
@@ -28,11 +25,10 @@ from agent.protocol import ExecuteRequest, RequestEnvelope
 from agent.run import Controller, ExecutionContext
 from agent.source import authorize_execution, object_file_source
 from api import create_app
-from audit.audits import DEEP_PROTOCOL_REVISION, ClaimedJob, request_fingerprint
+from audit.audits import DEEP_PROTOCOL_REVISION, ClaimedJob
 from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest, runtime_revision
 from audit.standard_suites import library_revision
 from fastapi.testclient import TestClient
-from product.capabilities import report
 from product.db import connect
 from product.fixtures import RULE_A, RULE_B
 from product.settings import Settings
@@ -148,21 +144,6 @@ class DeepProtocolTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             RequestEnvelope.model_validate({"op": "shell", "spec": spec})
 
-    def test_package_does_not_use_docker_socket(self):
-        blob = ""
-        for path in Path(agent.__file__).resolve().parent.rglob("*.py"):
-            blob += path.read_text()
-        blob += Path(worker.__file__).read_text()
-        self.assertNotIn("/var/run/docker.sock", blob)
-        self.assertNotIn("docker.sock", blob)
-        self.assertNotIn("from docker", blob)
-
-    def test_fingerprint_stays_items_only(self):
-        items = [
-            {"file_version_id": "00000000-0000-4000-8000-000000000001", "role": "target", "rule_version_id": RULE_A},
-        ]
-        self.assertEqual(request_fingerprint(items), request_fingerprint(items))
-
 
 class CoreControllerTests(unittest.TestCase):
     @pytest.fixture(autouse=True)
@@ -256,12 +237,14 @@ class CoreControllerTests(unittest.TestCase):
         path = f"controlled-core-{len(self._controllers)}"
         self._controllers[path] = controller
 
-        def transport(client, spec, *, cancelled=None, on_progress=None):
+        def transport(client, spec, *, cancelled=None, on_progress=None, on_activity=None):
             context = ExecutionContext()
             if cancelled is not None:
                 context.cancelled = cancelled
             if on_progress is not None:
                 context.on_progress = on_progress
+            if on_activity is not None:
+                context.on_activity = on_activity
             # Serialize the request and response through production envelopes.
             response = self._controllers[client.socket_path].handle_raw(
                 {"op": "execute", "spec": spec.model_dump(mode="json")},
@@ -455,26 +438,6 @@ class CoreControllerTests(unittest.TestCase):
         diagnostic = self._attempt_diagnostic(second.id, second.attempt)
         self.assertEqual(diagnostic["usage"], {"input_tokens": 7})
         self.assertFalse(self.store.audit_progress(second, "w2", {"phase": "validating"}))
-
-    def test_a_sent_mode_is_ignored(self):
-        self._login()
-        target = self._upload("report.xlsx", b"target-bytes")
-        draft = self.client.post("/drafts").json()["id"]
-        items = [{"file_version_id": target["id"], "role": "target", "rule_version_id": RULE_A}]
-        saved = self.client.put(f"/drafts/{draft}", json={"items": items, "analysis_mode": "deep"})
-        self.assertEqual(saved.status_code, 200, saved.text)
-        self.assertNotIn("analysis_mode", saved.json())
-        accepted = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "sent-mode"})
-        self.assertEqual(accepted.status_code, 201, accepted.text)
-        self.assertNotIn("analysis_mode", accepted.json())
-
-    def test_core_ready_does_not_require_deep(self):
-        self.assertEqual(report(self.settings)["deep"], {"state": "disabled"})
-        ready = self.client.get("/ready")
-        self.assertEqual(ready.status_code, 200)
-        self.settings.deep_controller_socket = "/tmp/ppap-deep.sock"
-        self.assertEqual(report(self.settings)["deep"], {"state": "configured"})
-        self.assertEqual(set(report(self.settings)["deep"]), {"state"})
 
 
 if __name__ == "__main__":

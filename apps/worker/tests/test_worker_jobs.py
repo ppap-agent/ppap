@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import unittest
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -13,9 +12,8 @@ from worker import run_claimed_job
 
 
 class ClaimedJobTests(unittest.TestCase):
-    def test_non_audit_jobs_do_not_import_the_engine(self):
-        with patch.dict(os.environ, {}, clear=False):
-            result = run_claimed_job("heartbeat", {})
+    def test_unknown_job_kind_is_unsupported(self):
+        result = run_claimed_job("heartbeat", {})
         self.assertEqual(result, {"error": "unsupported_job_kind", "note": "unsupported_job_kind"})
 
 

@@ -1,6 +1,6 @@
 # PPAP 工作入口
 
-本仓是最终产品运行仓。开始一项工作时，先读**当前 owning Issue、直接相关源码和测试**。只有改动产品语义时读 [Northstar](docs/NORTHSTAR.md) / [DATA_MODEL](docs/DATA_MODEL.md)；改架构或安全边界时再读对应文档；迁移任务按需读取 [INVENTORY](docs/INVENTORY.md) / [MIGRATION](docs/MIGRATION.md)。
+本仓是最终产品运行仓。开始一项工作时，先读**当前 owning Issue、直接相关源码和测试**。只有改动产品语义时读 [Northstar](docs/NORTHSTAR.md) / [DATA_MODEL](docs/DATA_MODEL.md)；改架构或安全边界时再读对应文档。
 
 ## 默认资产使用规则
 
@@ -12,7 +12,6 @@
 
 - 产品目标：Northstar 与当前 owning Issue。
 - 当前行为：本仓源码、数据库约束和测试。
-- 迁移 baseline：只由对应 owning Issue 拥有。
 - 配置：typed Settings、[`.env.dev`](.env.dev) / [`.env.production`](.env.production) 默认值与 [`.env.example`](.env.example)。
 - 当前工作状态：GitHub Issues / 当前 PR。
 
@@ -41,6 +40,6 @@ KISS 不等于把迁移人为切成最小碎片。如果一个内聚 package、�
 
 按 [context-reduce](https://github.com/ronhuafeng/skills-release/tree/main/catalog/engineering/context-reduce) 执行：只读本次 owning Issue、直接相关的源码、测试和仍生效的文档入口；非必要不读旧分支、历史设计、旧 Issue、agent 日志或迁移记录。复用当前权威，消除无当前消费者的代码、兼容层、额外概念、重复文档和对应测试；用小范围测试守住真实不变量，重要外部效应必须读回验证。
 
-**Checker 按公司组织，均为需保留的资产，不是 legacy code。** 检查程序目录叶子在 `audit/checkers/<公司>/`（`uaes`、`li`、`nio`），各自运行 `audit/checker_lib/<公司>/` 中的读取实现（原 v4 UAES、v2 理想、v3 蔚来）。原挂在 UAES 检查程序里的免费预检（`audit/precheck/`）已于 2026-11-11 移除；按产品负责人决定（2026-11-12），数据标准化预检以独立于检查程序的方式重建（`product.precheck*`，规则数据对齐 `assets/uaes/prechecks` 并由测试核对原文摘要），不调用检查程序、不调用模型、不改变受理，`assets/uaes/prechecks` 规则原件保留。这些源码、规则、资源，以及对应的测试、fixtures、样本（`assets/<公司>/`）和人工 Oracle（`assets/corpus/`）必须保留，不得删除、清空或篡改，也不得改写已入库的不可变 Revision。`context-reduce` 的清理范围仅限有证据表明无当前必要性的旧执行基础设施、隐式 fallback、重复注册/映射、无效兼容层及其独立的过期说明。叶子只通过声明的资源调用本公司的实现，不调用其他公司的实现；不另建历史软件兼容机制。现有租户授权、冻结原件/代码/结果、证据定位、未知不得 PASS 等正确性边界保持不变。
+**Checker 按公司组织，均为需保留的资产，不是 legacy code。** 检查程序目录叶子在 `audit/checkers/<公司>/`（`uaes`、`li`、`nio`），各自运行 `audit/checker_lib/<公司>/` 中的读取实现（原 v4 UAES、v2 理想、v3 蔚来）。数据标准化预检独立于检查程序（`product.precheck*`，规则数据对齐 `assets/uaes/prechecks` 并由测试核对原文摘要），不调用检查程序、不调用模型、不改变受理，`assets/uaes/prechecks` 规则原件保留。这些源码、规则、资源，以及对应的测试、fixtures、样本（`assets/<公司>/`）和人工 Oracle（`assets/corpus/`）必须保留，不得删除、清空或篡改，也不得改写已入库的不可变 Revision。`context-reduce` 的清理范围仅限有证据表明无当前必要性的旧执行基础设施、隐式 fallback、重复注册/映射、无效兼容层及其独立的过期说明。叶子只通过声明的资源调用本公司的实现，不调用其他公司的实现；不另建历史软件兼容机制。现有租户授权、冻结原件/代码/结果、证据定位、未知不得 PASS 等正确性边界保持不变。
 
 开发命令见 [DEVELOPMENT](docs/DEVELOPMENT.md)，选择和运行测试时见 [tests/README](tests/README.md)。

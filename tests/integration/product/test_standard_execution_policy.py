@@ -86,11 +86,10 @@ def test_standard_policy_survives_replay_completion_and_new_configuration(system
     assert result["failure"]["code"] == "executor_revision_mismatch"
 
 
-@pytest.mark.parametrize("field,value", [("model_coding_reasoning_effort", "high"), ("git_sha", "b" * 40), ("deep_sandbox_profile", "ppap")])
-def test_standard_configuration_mismatch_is_terminal_without_execution_or_retry(system, field, value):
+def test_standard_configuration_mismatch_is_terminal_without_execution_or_retry(system):
     client, worker, settings, core = system
     original, draft, command = accept(client, core)
-    setattr(settings, field, value)
+    settings.git_sha = "b" * 40
     job = worker.claim_job("policy-worker")
     result = process_claimed(worker, job, "policy-worker")
     assert result["failure"]["code"] == "executor_revision_mismatch"

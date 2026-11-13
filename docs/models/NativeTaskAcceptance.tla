@@ -2,7 +2,7 @@
 EXTENDS Integers, FiniteSets
 
 \* Focused #164/#165 obligation for the existing Draft/Accept/Round transaction,
-\* not a refinement proof for GreenfieldCheckStart or TaskRecognitionRevisions.
+\* not a refinement proof for TaskRecognitionRevisions.
 \* Projection: recognition's current Task revision becomes revision[t]; its
 \* completed matching results become InputsAt(t, revision[t]). Confirm captures
 \* that revision. A successful existing acceptance transaction freezes exactly

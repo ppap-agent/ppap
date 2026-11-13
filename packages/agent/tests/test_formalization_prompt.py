@@ -1,9 +1,5 @@
 """Frozen formalizations change the checker prompt and the rule-impact digest."""
 
-import json
-
-import pytest
-from agent.checker_development import effective_rule_digest
 from agent.checker_program import input_digest
 from agent.execution.checker_guest import _prompt
 from audit.contracts import AuditInput, RuleInput
@@ -100,82 +96,6 @@ def test_a_rejected_snapshot_on_a_related_rule_is_not_in_the_prompt():
     prompt = _prompt(_rule(), None, None, _audit(), context)
     assert "(related-ignore)" not in prompt
     assert "Ontology(RelatedRejected)" not in prompt
-
-
-def test_the_model_workspace_uses_the_selected_suite_and_drops_rejected_formalizations(tmp_path):
-    from agent.execution.checker_guest import develop_checker
-    from agent.execution.guest_model import ModelProtocolError
-
-    sealed = _snapshot()
-    rejected = {
-        **sealed["c1"],
-        "clause_id": "c2",
-        "owl_content": "Ontology(WorkspaceRejected)",
-        "clif_content": "(workspace-reject)",
-        "cnl_text": "工作区回译被替换",
-    }
-    rule = RuleInput.model_validate(
-        {
-            "rule_id": "rule-1",
-            "rules": [{"id": "c1", "rule_to_check": "每一条源至少关联一条目标"}, {"id": "c2", "rule_to_check": "第二条原文"}],
-            "appendix": [],
-            "formalizations": sealed,
-        }
-    )
-    suite = {
-        "rules": rule.model_dump(mode="json")["rules"],
-        "checker_binding": {"c1": "checker:create_audit"},
-        "formalizations": {**sealed, "c2": rejected, "hidden": {"owl_content": "Ontology(HiddenClause)", "clif_content": "(hidden-clause)"}},
-    }
-    source = {"checker.py": "def create_audit(audit_file, rule, group_context=None):\n    return []\n", "rules.json": json.dumps(suite, ensure_ascii=False)}
-    stored = source["rules.json"]
-    (tmp_path / "rules.json").write_text('{"rules":[{"id":"c1","rule_to_check":"GIT-ONLY-RULE"}]}', encoding="utf-8")
-    work = tmp_path / "work"
-    work.mkdir()
-    (work / "rules.json").write_text('{"rules":[{"rule_to_check":"WORK-GIT-RULE"}]}', encoding="utf-8")
-    target = tmp_path / "target.txt"
-    target.write_text("x", encoding="utf-8")
-
-    class Runner:
-        input_tokens = output_tokens = 0
-
-        def run(self, work, prompt, schema, deadline, *, reasoning_effort):
-            del schema, deadline, reasoning_effort
-            self.prompt = prompt
-            self.seen = (work / "selected" / "rules.json").read_text(encoding="utf-8")
-            raise ModelProtocolError("stop")
-
-    runner = Runner()
-    with pytest.raises(ModelProtocolError):
-        develop_checker(
-            audit_file=AuditInput(audit_id="file-1", file_url=str(target)),
-            rule=rule,
-            group_context=None,
-            digest="a" * 64,
-            executor_revision="test",
-            runner=runner,
-            work=work,
-            deadline=10**12,
-            source_files=source,
-        )
-    assert source["rules.json"] == stored
-    assert "GIT-ONLY-RULE" not in runner.prompt and "GIT-ONLY-RULE" not in runner.seen
-    assert "WORK-GIT-RULE" not in runner.prompt and "WORK-GIT-RULE" not in runner.seen
-    assert "(exists)" in runner.prompt and "(exists)" in runner.seen
-    assert "checker:create_audit" in runner.seen
-    for secret in ("(workspace-reject)", "Ontology(WorkspaceRejected)", "工作区回译被替换", "Ontology(HiddenClause)", "(hidden-clause)"):
-        assert secret not in runner.prompt
-        assert secret not in runner.seen
-
-
-def test_prompt_uses_the_selected_rule_body_and_does_not_read_another_rules_file(tmp_path):
-    local = tmp_path / "rules.json"
-    local.write_text(json.dumps({"rules": [{"id": "c1", "rule_to_check": "本地旧规则"}]}), encoding="utf-8")
-    before = local.read_bytes()
-    prompt = _prompt(_rule(formalizations=_snapshot()), None, None, _audit(), None)
-    assert "至少关联一条目标" in prompt
-    assert "本地旧规则" not in prompt
-    assert local.read_bytes() == before
 
 
 def test_a_clause_without_a_snapshot_is_not_given_another_clause_formula():
@@ -382,7 +302,9 @@ def test_prompt_keeps_policy_pairs_and_does_not_follow_embedded_instructions():
     assert input_digest(_audit(), _rule(formalizations=pairs["exists"]), file_sha256="a" * 64, role="target") != input_digest(
         _audit(), _rule(formalizations=pairs["unique"]), file_sha256="a" * 64, role="target"
     )
-    assert effective_rule_digest(_rule(formalizations=pairs["exact"])) != effective_rule_digest(_rule(formalizations=pairs["normalized"]))
+    assert input_digest(_audit(), _rule(formalizations=pairs["exact"]), file_sha256="a" * 64, role="target") != input_digest(
+        _audit(), _rule(formalizations=pairs["normalized"]), file_sha256="a" * 64, role="target"
+    )
 
 
 def _rejected(rejections: list[dict], obligations: list[dict]) -> dict:

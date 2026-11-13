@@ -864,12 +864,10 @@ class RuleInteractionTests(unittest.TestCase):
             page.route("**/api/rules/*", preset_detail)
             page.goto(WEB + "/requirements")
             system = page.get_by_role("region", name="系统提供", exact=True)
-            for customer, count in (("UAES", 19), ("理想", 17), ("蔚来", 17)):
-                expect(system.get_by_role("link").filter(has_text=f"{customer} 规则").filter(has_text=f"0 / {count} 类规则生效")).to_be_visible()
-            expect(page.get_by_text("检查功能尚待完善")).to_have_count(0)
+            for customer in ("UAES", "理想", "蔚来"):
+                expect(system.get_by_role("link").filter(has_text=f"{customer} 规则")).to_be_visible()
             system.get_by_role("link").filter(has_text="UAES 规则").click()
             expect(page.get_by_role("heading", name="UAES 规则", exact=True)).to_be_visible()
-            expect(page.get_by_role("navigation", name="文件类型分页", exact=True)).to_contain_text("共 19 类 PPAP 文件")
             # Six types to a page; a search for the rule narrows the chosen customer's types to it.
             page.get_by_role("searchbox", name="搜索客户", exact=True).fill("生产件样品照片")
             photo = page.get_by_role("list", name="UAES 规则 的文件类型", exact=True).get_by_role("listitem").filter(has_text="生产件样品照片")

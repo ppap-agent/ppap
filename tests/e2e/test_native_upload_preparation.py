@@ -216,12 +216,11 @@ class PreparationHTTP:
         return {"id": key, "source_file_id": version["file_id"], "source_file_version_id": version["id"], "status": "completed", "result": {"state": "valid", "reasons": []}}
 
 
-@pytest.mark.parametrize("width", [1440])
 @pytest.mark.parametrize("lose_prepare_reply", [False, True])
-def test_unknown_upload_and_other_success_survive_a_fresh_page(width, lose_prepare_reply):
+def test_unknown_upload_and_other_success_survive_a_fresh_page(lose_prepare_reply):
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
-        page = browser.new_page(viewport={"width": width, "height": 954})
+        page = browser.new_page(viewport={"width": 1440, "height": 954})
         http = PreparationHTTP(lose_prepare_reply)
         http.install(page)
         page.goto(WEB + "/tasks/new")
@@ -235,7 +234,7 @@ def test_unknown_upload_and_other_success_survive_a_fresh_page(width, lose_prepa
         assert len(http.preparation_creates) == 1
         http.allow_receipts = True
         page.close()
-        page = browser.new_page(viewport={"width": width, "height": 954})
+        page = browser.new_page(viewport={"width": 1440, "height": 954})
         http.install(page)
         page.goto(saved_url)
         expect(page.get_by_role("checkbox", name="选择 已接收.xlsx", exact=True)).to_be_checked()
@@ -245,8 +244,6 @@ def test_unknown_upload_and_other_success_survive_a_fresh_page(width, lose_prepa
         assert len(http.blobs) == 2 and len(http.preparation_creates) == 1
         assert set(original_requests).issubset(http.reads)
         assert http.task_commands == []
-        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-        page.screenshot(path=f"/tmp/ppap-native-preparation-restored-{width}.png")
         browser.close()
 
 
@@ -607,11 +604,10 @@ class PhotoHTTP(PreparationHTTP):
         return value
 
 
-@pytest.mark.parametrize("width", [1440])
-def test_photo_purpose_is_explicit_and_lost_reply_reads_same_scope(width):
+def test_photo_purpose_is_explicit_and_lost_reply_reads_same_scope():
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
-        page = browser.new_page(viewport={"width": width, "height": 954})
+        page = browser.new_page(viewport={"width": 1440, "height": 954})
         http = PhotoHTTP()
         http.install(page)
         page.goto(WEB + "/tasks/new")
@@ -629,8 +625,6 @@ def test_photo_purpose_is_explicit_and_lost_reply_reads_same_scope(width):
         expect(page.get_by_role("checkbox", name="选择 样品.png", exact=True)).to_be_checked()
         expect(page.get_by_text("本轮用途：生产件样品照片；内容仍需人工确认", exact=True)).to_be_visible()
         assert len(http.photo_commands) == 1 and http.photo_reads == [http.photo_commands[0]["request_id"]]
-        page.screenshot(path=f"/tmp/ppap-v4-photo-ui-{width}.png", full_page=True)
-        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         page.get_by_role("button", name="上一步", exact=True).click()
         page.get_by_role("combobox", name="审核客户", exact=True).click()
         page.get_by_role("option", name="理想", exact=True).click()

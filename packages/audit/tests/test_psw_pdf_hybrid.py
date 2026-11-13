@@ -15,7 +15,6 @@ from audit.contracts import (
     AuditInput,
     RuleInput,
 )
-from audit.engine.app_runtime import run_audit_engine
 from audit.engine.checkers.psw_pdf_evidence import assess_psw_conversion_evidence
 from audit.engine.checkers.psw_visual_evidence import PSW_RULE_FIELDS, evaluate_psw_observation
 from audit.engine.runtime import bind_runtime
@@ -60,6 +59,16 @@ def psw_rules(profile, *, count=10):
     )
 
 
+def run_psw(path, profile, audit_id, count):
+    """Run each PSW clause through the company agent's own ``check(index)``."""
+    agent_type = V2PswPDFAgent if profile == "v2" else V3PswPDFAgent
+    agent = agent_type(AuditInput(audit_id=audit_id, file_url=str(path)), psw_rules(profile, count=count))
+    try:
+        return [agent.check(index) for index in range(count)]
+    finally:
+        agent.close()
+
+
 @pytest.fixture
 def converted_table(tmp_path):
     path = tmp_path / "converted.xlsx"
@@ -85,7 +94,6 @@ def use_external_conversion(monkeypatch, source, outcome):
             raise outcome
         return outcome
 
-    monkeypatch.setattr("audit.engine.app_runtime.convert_pdf_to_excel_auto", convert)
     monkeypatch.setattr("audit.checker_lib.li.pdf_agent.convert_pdf_to_excel_auto", convert)
     monkeypatch.setattr("audit.checker_lib.nio.pdf_agent.convert_pdf_to_excel_auto", convert)
 
@@ -118,14 +126,9 @@ def use_established_psw_facts(monkeypatch, read):
 def test_failed_table_conversion_does_not_become_a_business_ng(original_pdf, monkeypatch, profile, error_code, expected):
     original_bytes = original_pdf.read_bytes()
 
-    def convert(file_ref, *, enable_cache=True, doc_type=None):
-        assert file_ref.location == str(original_pdf)
-        return ConversionArtifact(success=False, diagnostics={"error_code": error_code})
+    use_external_conversion(monkeypatch, original_pdf, ConversionArtifact(success=False, diagnostics={"error_code": error_code}))
 
-    monkeypatch.setattr("audit.engine.app_runtime.convert_pdf_to_excel_auto", convert)
-    monkeypatch.setattr("audit.checker_lib.li.pdf_agent.convert_pdf_to_excel_auto", convert)
-
-    results = run_audit_engine(AuditInput(audit_id="psw-conversion-failed", file_url=str(original_pdf)), psw_rules(profile, count=2))
+    results = run_psw(original_pdf, profile, "psw-conversion-failed", 2)
 
     assert [result.status for result in results] == [expected, expected]
     assert all(result.evidence is not None and result.evidence.used == "none" for result in results)
@@ -160,7 +163,7 @@ def test_table_diagnostics_do_not_replace_the_actual_weight_decision(original_pd
 
     monkeypatch.setattr("documents.ai.run_json", reject_visual)
 
-    results = run_audit_engine(AuditInput(audit_id="psw-structured", file_url=str(original_pdf)), psw_rules(profile, count=2))
+    results = run_psw(original_pdf, profile, "psw-structured", 2)
 
     assert len(results) == 2
     assert results[1].status == expected
@@ -172,7 +175,7 @@ def test_table_diagnostics_do_not_replace_the_actual_weight_decision(original_pd
 def test_converter_exception_before_an_artifact_is_an_execution_error(original_pdf, monkeypatch, profile):
     use_external_conversion(monkeypatch, original_pdf, OSError("converter unavailable"))
 
-    results = run_audit_engine(AuditInput(audit_id="psw-converter-exception", file_url=str(original_pdf)), psw_rules(profile, count=2))
+    results = run_psw(original_pdf, profile, "psw-converter-exception", 2)
 
     assert [result.status for result in results] == ["ERR", "ERR"]
     assert all(result.evidence.diagnostics[0].code == "psw.pdf.conversion_failed" for result in results)
@@ -245,7 +248,7 @@ def test_actual_converted_controls_do_not_replace_original_pdf_checkbox_facts(or
     use_external_conversion(monkeypatch, original_pdf, ConversionArtifact(success=True, xlsx_path=str(converted_table)))
 
     original = original_pdf.read_bytes()
-    results = run_audit_engine(AuditInput(audit_id="psw-converted-controls", file_url=str(original_pdf)), psw_rules(profile, count=8))
+    results = run_psw(original_pdf, profile, "psw-converted-controls", 8)
 
     assert len(results) == 8
     assert results[7].status == "UNABLE"
@@ -285,7 +288,7 @@ def test_rule_eight_unconfirmed_facts_have_no_llm_fallback(original_pdf, convert
 
     use_established_psw_facts(monkeypatch, read)
     original = original_pdf.read_bytes()
-    results = run_audit_engine(AuditInput(audit_id="psw-no-checkbox-proof", file_url=str(original_pdf)), psw_rules(profile, count=10))
+    results = run_psw(original_pdf, profile, "psw-no-checkbox-proof", 10)
 
     assert results[7].status == "UNABLE"
     assert results[7].evidence.diagnostics[0].code == "psw.visual.fact_unconfirmed"
@@ -306,7 +309,7 @@ def test_signature_rule_uses_established_facts_and_preserves_unknown(original_pd
         return {"psw_stamp_ends_with_company": None, "authorized_signature_present": signature, "psw_stamp_present": stamp}
 
     use_established_psw_facts(monkeypatch, read)
-    results = run_audit_engine(AuditInput(audit_id="psw-signature-facts", file_url=str(original_pdf)), psw_rules(profile, count=5))
+    results = run_psw(original_pdf, profile, "psw-signature-facts", 5)
     assert results[4].status == expected
     assert results[1].status == "PASS"
     assert results[4].evidence.used == "visual"
@@ -324,7 +327,7 @@ def test_visual_reader_failure_preserves_structured_results_without_retry(origin
         raise failure("private provider detail must not appear in diagnostics")
 
     use_established_psw_facts(monkeypatch, unavailable)
-    results = run_audit_engine(AuditInput(audit_id="psw-visual-failed", file_url=str(original_pdf)), psw_rules(profile, count=5))
+    results = run_psw(original_pdf, profile, "psw-visual-failed", 5)
     assert results[1].status == "PASS"
     assert [results[index].status for index in (2, 4)] == ["ERR", "ERR"]
     assert all(results[index].evidence.diagnostics[0].code == "psw.visual.runtime_error" for index in (2, 4))
@@ -342,7 +345,7 @@ def test_unavailable_facts_are_unable_without_fallback(original_pdf, monkeypatch
         raise VisualFactsUnavailable("unsupported visual semantics")
 
     use_established_psw_facts(monkeypatch, unsupported)
-    results = run_audit_engine(AuditInput(audit_id="psw-native-unavailable", file_url=str(original_pdf)), psw_rules(profile, count=5))
+    results = run_psw(original_pdf, profile, "psw-native-unavailable", 5)
     assert [results[index].status for index in (2, 4)] == ["UNABLE", "UNABLE"]
 
 

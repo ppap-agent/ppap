@@ -14,25 +14,13 @@
 | 开发、配置、运行 | [Development](docs/DEVELOPMENT.md)、[.env.dev](.env.dev)、[.env.production](.env.production)、[.env.example](.env.example) |
 | 测试 | [测试入口](tests/README.md) |
 | 安全边界 | [Security](docs/SECURITY.md) |
-| 迁移来源 | [Inventory](docs/INVENTORY.md)、[Migration](docs/MIGRATION.md) |
 
-当前实现事实以 `main` 上的源码和测试为准，不维护第二份状态台账。
+当前实现事实以 `main` 上的源码和测试为准；工作状态只在 GitHub Issues，不维护第二份状态台账。具体开发约束见 [AGENTS.md](AGENTS.md)。
 
 主要运行路径：
 
 ```text
 apps/web -> apps/api -> PostgreSQL / object storage -> apps/worker -> packages
 ```
-
-## 当前四个验收结果
-
-实施状态只在 GitHub Issues：
-
-- [#3 审核引擎与回归资产迁移](https://github.com/ppap-agent/ppap/issues/3)
-- [#7 核心审核产品流程](https://github.com/ppap-agent/ppap/issues/7)
-- [#11 飞书 PPAP 迁移](https://github.com/ppap-agent/ppap/issues/11)
-- [#15 本仓生产交付与客户入口](https://github.com/ppap-agent/ppap/issues/15)
-
-这些 Issue 是验收合同，不是实施顺序。具体迁移原则、资产使用默认和开发约束见 [AGENTS.md](AGENTS.md)；不要在 README 复制 Issue 正文或迁移 baseline。
 
 审核规则的条款形式化合同见 [DATA_MODEL](docs/DATA_MODEL.md)。模型语义质量未验收。

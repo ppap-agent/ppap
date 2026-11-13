@@ -18,7 +18,6 @@ EvidenceUse = Literal["none", "structure", "visual", "both"]
 SourceFormat = Literal["xlsx", "xls", "xlsm", "pdf", "docx", "doc", "png", "jpg", "jpeg", "webp"]
 PreparedFormat = Literal["xlsx", "xls", "xlsm", "pdf", "docx", "png"]
 
-DIAGNOSTIC_DOC_CONVERSION_FAILED = "psw.doc.conversion_failed"
 DIAGNOSTIC_PDF_CONVERSION_FAILED = "psw.pdf.conversion_failed"
 DIAGNOSTIC_STRUCTURE_INSUFFICIENT = "psw.structure.insufficient"
 DIAGNOSTIC_VISUAL_MISSING = "psw.visual.missing"
@@ -214,7 +213,6 @@ def finalize_excel_psw_result(
 
 
 __all__ = [
-    "DIAGNOSTIC_DOC_CONVERSION_FAILED",
     "DIAGNOSTIC_EVALUATION_RUNTIME_ERROR",
     "DIAGNOSTIC_EVALUATION_RULE_UNAVAILABLE",
     "DIAGNOSTIC_PDF_CONVERSION_FAILED",

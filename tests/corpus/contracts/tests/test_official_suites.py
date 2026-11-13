@@ -346,7 +346,6 @@ def test_corpus_selector_is_the_installed_u08_leaf():
 
     directory = next(suite for suite in predefined_directory_suites() if suite.source_path == "uaes/U08")
     assert oracle.suite_sources()["uaes/U08"] is directory or oracle.suite_sources()["uaes/U08"] == directory
-    assert b"audit.checkers.v" not in directory.files["checker.py"]
 
 
 def test_shared_oracle_path_is_not_stored_as_directory_identity():

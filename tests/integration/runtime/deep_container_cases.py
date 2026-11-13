@@ -1,7 +1,7 @@
-"""Run public Deep runtime contracts inside the Linux delivery image.
+"""Run execute-audit ContainerRuntime contracts inside the Linux delivery image.
 
-The external guest process and model responses are controlled. Cache cases run
-real guest parsing and validation, not model judgment or hostile-code isolation.
+The external guest process and model responses are controlled. Journal cases use
+the real gateway grant and usage receipt, not model judgment or hostile-code isolation.
 """
 
 from __future__ import annotations
@@ -20,11 +20,11 @@ from unittest.mock import patch
 from urllib.parse import urlsplit
 from uuid import uuid4
 
+from agent.core_program import AuditJobSpec
 from agent.execution.gateway import local_gateway
-from agent.execution.guest import Manifest
 from agent.execution.isolation.container import ContainerRuntime, RuntimeConfig
 from audit.policy import PI_VERSION
-from audit.protocol import ControllerFault, DocumentRef, RuleRef, SnapshotSpec, SubmissionSpec
+from audit.protocol import ControllerFault
 
 COMPLETED_EVENT = b'data: {"type":"response.completed","response":{"usage":{"input_tokens":3,"output_tokens":5}}}\n\n'
 
@@ -49,6 +49,10 @@ def request_model(work: Path, *, incomplete_response: bool = False, request_inpu
                 raise
     finally:
         connection.close()
+
+
+def audit_job(*, allow_model_calls: bool) -> AuditJobSpec:
+    return AuditJobSpec(execution_id=uuid4(), input_digest="0" * 64, executor_revision="test-revision", allow_model_calls=allow_model_calls)
 
 
 def make_runtime(root: Path) -> ContainerRuntime:
@@ -115,14 +119,7 @@ class ContainerQueueTests(unittest.TestCase):
                     self.returncode = 0
                     return 0
 
-            first_spec = SnapshotSpec(
-                execution_id=uuid4(),
-                submission_id=uuid4(),
-                project_id="test-tenant",
-                sha256="0" * 64,
-                format=".xlsx",
-                semantic_engine_revision="0" * 64,
-            )
+            first_spec = audit_job(allow_model_calls=False)
             second_spec = first_spec.model_copy(update={"execution_id": uuid4()})
             waiting_cancel = threading.Event()
             expected = "CANCELLED" if cancel else "MODEL_TIMEOUT"
@@ -190,23 +187,6 @@ class ContainerJournalTests(unittest.TestCase):
         self.inputs.mkdir()
         (self.inputs / "document.xlsx").write_bytes(b"external guest input")
 
-    def _submission(self):
-        spec = SubmissionSpec(
-            execution_id=uuid4(),
-            submission_id=uuid4(),
-            project_id="test-tenant",
-            documents=[DocumentRef(audit_id="document-1", filename="document.xlsx", sha256="0" * 64, format=".xlsx", role="target")],
-            rules=[RuleRef(rule_id="rule-1", rule_version_id="version-1", sha256="0" * 64, format=".json", plan_revision="0" * 64, clauses=[{"id": "1", "rule_to_check": "test clause"}])],
-            targets={"document-1": "rule-1"},
-            policy_revision="0" * 64,
-            semantic_engine_revision=self.runtime.engine_revision(),
-        )
-        spec = spec.model_copy(update={"execution_id": spec.expected_execution_id()})
-        manifest = Manifest(spec=spec, documents={"document-1": "document.xlsx"}, rules={"rule-1": "rule.json"}, cached_snapshots={}, cached_plans={})
-        (self.inputs / "manifest.json").write_text(manifest.model_dump_json())
-        (self.inputs / "rule.json").write_text('{"test": "controlled guest input"}')
-        return spec
-
     def _work(self, name: str) -> Path:
         work = self.root / name
         work.mkdir()
@@ -242,7 +222,7 @@ class ContainerJournalTests(unittest.TestCase):
         return lambda _args, **kwargs: ModelGuest(**kwargs)
 
     def test_successful_execution_reads_back_after_runtime_recreation_without_new_work(self):
-        spec = self._submission()
+        spec = audit_job(allow_model_calls=True)
         first = self._work("first")
         second = self._work("second")
         with patch("subprocess.Popen", side_effect=self._guest()) as spawn:
@@ -263,7 +243,7 @@ class ContainerJournalTests(unittest.TestCase):
         self.provider.request.assert_called_once()
 
     def test_concurrent_consumers_share_the_same_successful_execution(self):
-        spec = self._submission()
+        spec = audit_job(allow_model_calls=True)
         first_work = self._work("first")
         second_work = self._work("second")
         started, waiting, release = threading.Event(), threading.Event(), threading.Event()
@@ -293,7 +273,7 @@ class ContainerJournalTests(unittest.TestCase):
             self.assertEqual(json.loads((work / "result" / "bundle.json").read_text()), expected)
         self.provider.request.assert_called_once()
 
-    def test_failed_execution_does_not_replay_but_a_new_submission_can_run(self):
+    def test_failed_execution_does_not_replay_but_a_new_audit_can_run(self):
         self._assert_failed_execution_is_not_replayed(unknown=False)
 
     def test_unconfirmed_provider_completion_is_preserved_and_not_replayed(self):
@@ -316,7 +296,7 @@ class ContainerJournalTests(unittest.TestCase):
                 return SimpleNamespace(status=200, read1=read1)
 
             self.provider.getresponse.side_effect = cut_stream
-        spec = self._submission()
+        spec = audit_job(allow_model_calls=True)
         first = self._work("failed")
         with patch("subprocess.Popen", side_effect=self._guest(fault=True, incomplete_response=unknown)) as spawn:
             with self.assertRaises(ControllerFault) as failed:
@@ -346,22 +326,19 @@ class ContainerJournalTests(unittest.TestCase):
         self.provider.request.assert_called_once()
         self.assertFalse((replay / "result").exists())
 
-        # A separately accepted submission is new work, not an automatic
+        # An explicitly new audit operation is new work, not an automatic
         # retry of the failed or unconfirmed execution above.
         self.provider.getresponse.side_effect = lambda: SimpleNamespace(status=200, read1=io.BytesIO(COMPLETED_EVENT).read1)
-        original_manifest = (self.inputs / "manifest.json").read_bytes()
-        new_spec = self._submission()
+        new_spec = audit_job(allow_model_calls=True)
         self.assertNotEqual(new_spec.execution_id, spec.execution_id)
-        self.assertEqual(new_spec.documents, spec.documents)
-        self.assertEqual(new_spec.rules, spec.rules)
-        retried = self._work("new-submission")
+        self.assertEqual(new_spec.input_digest, spec.input_digest)
+        retried = self._work("new-audit")
         with patch("subprocess.Popen", side_effect=self._guest()) as spawn:
             restarted.run(new_spec, self.inputs, retried, time.monotonic() + 10, threading.Event())
             spawn.assert_called_once()
         self.assertEqual(self.provider.request.call_count, 2)
         self.assertEqual(json.loads((retried / "result" / "bundle.json").read_text()), {"external_result": "completed once", "input_tokens": 3, "output_tokens": 5, "model_requests": 1})
-        (self.inputs / "manifest.json").write_bytes(original_manifest)
-        with patch("subprocess.Popen", side_effect=AssertionError("new submission erased the failed execution")) as spawn:
+        with patch("subprocess.Popen", side_effect=AssertionError("new audit erased the failed execution")) as spawn:
             with self.assertRaises(ControllerFault) as still_failed:
                 restarted.run(spec, self.inputs, self._work("failed-after-new"), time.monotonic() + 10, threading.Event())
             self.assertEqual(still_failed.exception.code, "MODEL_PROTOCOL_ERROR")

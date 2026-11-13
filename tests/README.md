@@ -51,8 +51,7 @@ uv run --no-sync pytest packages/product/tests/test_settings_priority.py package
 uv run --no-sync pytest tests/corpus/contracts/tests
 uv run --no-sync pytest packages/agent/tests
 uv run --no-sync pytest packages/audit/tests
-uv run --no-sync pytest packages/ppap_ocr_adapter/tests
-uv run --no-sync pytest packages/product/tests
+uv run --no-sync pytest packages/documents/tests
 ```
 
 API and Worker each need the real isolated-dev PostgreSQL fixture, in separate processes:
@@ -150,7 +149,7 @@ CI 和开发环境的模型用量属于开发预算，不设限额。每个样�
 
 ### 模型回答
 
-默认回放：完整请求摘要与录制一致才复用回答，摘要包括图片内容、提示词、Schema、预算、显式选项和独立观察编号；图片尺寸只用于可读展示。不能证明图片内容的旧录制不命中，旧资产保留。缺少匹配录制时，只有显式配置测试模型才真实调用，用例通过后记录回答。用例失败时不记录，下次重新询问；因此通过用例的录制仅作逻辑回归样本，不作为准确率或稳定性统计。测试通过独立的 ModelAccess scope 授权 Core，优先使用完整 PPAP_MODEL_VISION_* 配置，其次完整 PPAP_MODEL_TEXT_* 或 PPAP_MODEL_TEXT_* 配置，同一测试的文本和视觉工具共享该凭据、endpoint 和模型。生产无凭据 scope 不受此测试逻辑影响。
+默认回放：完整请求摘要与录制一致才复用回答，摘要包括图片内容、提示词、Schema、预算、显式选项和独立观察编号；图片尺寸只用于可读展示。不能证明图片内容的旧录制不命中，旧资产保留。缺少匹配录制时，只有显式配置测试模型才真实调用，用例通过后记录回答。用例失败时不记录，下次重新询问；因此通过用例的录制仅作逻辑回归样本，不作为准确率或稳定性统计。测试通过独立的 ModelAccess scope 授权 Core，优先使用完整 PPAP_MODEL_VISION_* 配置，其次完整 PPAP_MODEL_TEXT_* 配置，同一测试的文本和视觉工具共享该凭据、endpoint 和模型。生产无凭据 scope 不受此测试逻辑影响。
 
 本地无付费验证使用 `PPAP_CORPUS_OFFLINE=1`；即使环境已有 Key，也只回放缓存，任何缺失记录都令测试失败且不会调用提供方。没有测试凭据时同样只读回放。`PPAP_CORPUS_MODEL=live` 必须有完整测试配置，不能与 offline 同时使用。回放验证取证和判定逻辑，不验证新模型或部署的能力；真实视觉验收使用预先固定的样本和运行次数，并保留全部运行结果。
 

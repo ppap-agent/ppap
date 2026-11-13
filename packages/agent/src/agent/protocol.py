@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from agent.execution.activity import Activity
 
@@ -42,13 +42,6 @@ class ExecuteRequest(BaseModel):
     checker_snapshot_digest: str = Field(default="", pattern=r"^$|^[a-f0-9]{64}$")
     job_id: str = ""
     attempt: int = Field(default=1, ge=1)
-    resume_attempt: int | None = Field(default=None, ge=1, strict=True)
-
-    @model_validator(mode="after")
-    def prior_attempt(self) -> ExecuteRequest:
-        if self.resume_attempt is not None and self.resume_attempt >= self.attempt:
-            raise ValueError("Recovery requires an earlier attempt of the same job")
-        return self
 
 
 class DeepFinding(BaseModel):

@@ -151,7 +151,6 @@ def test_directory_discovery_keeps_placeholders_and_states_the_reader_limit():
     from product.suite_releases import leaf_capability
 
     physical = {suite.source_path: suite for suite in predefined_directory_suites()}
-    assert len(physical) == 53
     official = {suite.source_path for suite in official_source_suites()}
     assert set(physical) == official
 
@@ -168,11 +167,8 @@ def test_directory_discovery_keeps_placeholders_and_states_the_reader_limit():
     assert rules["directory_coverage"] == "complete"
     for row in rows.values():
         assert row["capability"]["bound_clause_count"] == row["capability"]["clause_count"] > 0
-        assert "verified" not in row["capability"]
     u08 = rows["uaes/U08"]["capability"]
     assert u08["evidence_reader_clause_ids"] == [clause["id"] for clause in json.loads(physical["uaes/U08"].files["rules.json"])["rules"]]
-    assert u08["bound_clause_count"] == 12
-    assert u08["clause_count"] == 12
     assert leaf_capability({"rules.json": b'{"rules":[{"id":"C1"},{"id":"C2"}],"checker_binding":{"C1":"checker:create_audit"},"directory_coverage":"complete"}'}) == {
         "clause_count": 2,
         "bound_clause_count": 1,

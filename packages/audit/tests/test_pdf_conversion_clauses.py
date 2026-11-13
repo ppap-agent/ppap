@@ -1,4 +1,4 @@
-"""The public app runtime consumes real converter and original-image artifacts."""
+"""Company PDF agents decide from real converter and original-image artifacts."""
 
 import gc
 import hashlib
@@ -9,7 +9,6 @@ from audit.contracts import (
     AuditInput,
     RuleInput,
 )
-from audit.engine.app_runtime import run_audit_engine
 from documents.contracts import ConversionArtifact
 from documents.ocr.observation import current_ocr_observation
 from openpyxl import Workbook
@@ -17,7 +16,7 @@ from openpyxl import Workbook
 
 @pytest.mark.parametrize("profile", ["v2", "v3"])
 @pytest.mark.parametrize(("weight", "expected"), [(3.1897, "PASS"), (3.189, "NG")], ids=["valid-weight", "invalid-weight"])
-def test_app_runtime_pdf_conversion_uses_actual_values_and_releases_temporary_files_before_return(tmp_path, monkeypatch, profile, weight, expected):
+def test_pdf_conversion_uses_actual_values_and_releases_temporary_files_before_return(tmp_path, monkeypatch, run_checks, profile, weight, expected):
     source = tmp_path / "suppliers.pdf"
     with fitz.open() as document:
         document.new_page().insert_text((72, 72), "Supplier list")
@@ -38,8 +37,8 @@ def test_app_runtime_pdf_conversion_uses_actual_values_and_releases_temporary_fi
         assert enable_cache is True
         return ConversionArtifact(success=True, xlsx_path=str(converted), temp_files=[str(converted), str(auxiliary)])
 
-    monkeypatch.setattr("audit.engine.app_runtime.convert_pdf_to_excel_auto", convert)
     monkeypatch.setattr("audit.checker_lib.li.pdf_agent.convert_pdf_to_excel_auto", convert)
+    monkeypatch.setattr("audit.checker_lib.nio.pdf_agent.convert_pdf_to_excel_auto", convert)
     rules = RuleInput(
         rule_id="confirmed-supplier-rules",
         rule_profile=profile,
@@ -49,7 +48,7 @@ def test_app_runtime_pdf_conversion_uses_actual_values_and_releases_temporary_fi
     gc_was_enabled = gc.isenabled()
     gc.disable()
     try:
-        results = run_audit_engine(AuditInput(audit_id="suppliers", file_url=str(source)), rules)
+        results = run_checks(AuditInput(audit_id="suppliers", file_url=str(source)), rules)
 
         assert len(results) == 4
         assert results[0].status == expected
@@ -66,7 +65,7 @@ def test_app_runtime_pdf_conversion_uses_actual_values_and_releases_temporary_fi
 
 @pytest.mark.parametrize("profile", ["v2", "v3"])
 @pytest.mark.parametrize("stamp_detected", [True, False])
-def test_app_runtime_reads_psw_facts_directly_through_ocr_configuration(tmp_path, monkeypatch, profile, stamp_detected):
+def test_psw_facts_are_read_directly_through_ocr_configuration(tmp_path, monkeypatch, run_checks, profile, stamp_detected):
     from audit.engine.checkers import psw_scope
 
     source = tmp_path / "original.pdf"
@@ -129,8 +128,8 @@ def test_app_runtime_reads_psw_facts_directly_through_ocr_configuration(tmp_path
             ]
         return output
 
-    monkeypatch.setattr("audit.engine.app_runtime.convert_pdf_to_excel_auto", convert)
     monkeypatch.setattr("audit.checker_lib.li.pdf_agent.convert_pdf_to_excel_auto", convert)
+    monkeypatch.setattr("audit.checker_lib.nio.pdf_agent.convert_pdf_to_excel_auto", convert)
     monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", read)
     monkeypatch.setattr("documents.ai.run_json", lambda *a, **k: pytest.fail("PSW images must not enter text LLM"))
     rules = RuleInput(
@@ -139,7 +138,7 @@ def test_app_runtime_reads_psw_facts_directly_through_ocr_configuration(tmp_path
         type="零件提交保证书",
         rules=[{"id": str(index), "category": "local_excel_check", "rule_to_check": f"规则 {index}"} for index in range(1, 11)],
     )
-    results = run_audit_engine(AuditInput(audit_id="original-psw", file_url=str(source)), rules)
+    results = run_checks(AuditInput(audit_id="original-psw", file_url=str(source)), rules)
     assert len(results) == 10
     assert results[2].status == results[4].status == results[7].status == "UNABLE"
     assert results[4].evidence.used == ("visual" if stamp_detected else "none")
@@ -152,3 +151,27 @@ def test_app_runtime_reads_psw_facts_directly_through_ocr_configuration(tmp_path
     assert len({tuple(sorted(fields)) for fields in fact_sets}) == len(fact_sets)
     assert {"submission_any_checked", "submission_other_present"} in fact_sets
     assert source.read_bytes() == original_bytes
+
+
+@pytest.mark.parametrize("profile", ["v2", "v3"])
+@pytest.mark.parametrize(("weight", "expected"), [(3.1897, "PASS"), (3.189, "NG")])
+def test_supplier_alias_executes_the_existing_checker_on_actual_workbook_values(tmp_path, run_checks, profile, weight, expected):
+    path = tmp_path / "suppliers.xlsx"
+    workbook = Workbook()
+    workbook.active.title = "材料产品及分供方清单"
+    workbook.active.append(["零件号", "单件重量"])
+    workbook.active.append(["PART-001", weight])
+    workbook.save(path)
+    workbook.close()
+    rules = RuleInput(
+        rule_id="confirmed-supplier-rules",
+        rule_profile=profile,
+        type="材料分供方",
+        rules=[{"id": str(index), "category": "local_excel_check", "rule_to_check": f"规则 {index}"} for index in range(1, 5)],
+    )
+
+    results = run_checks(AuditInput(audit_id="supplier-alias", file_url=str(path)), rules)
+
+    assert results[0].status == expected
+    if expected == "NG":
+        assert "单件重量必须是四位小数格式" in results[0].suggestions

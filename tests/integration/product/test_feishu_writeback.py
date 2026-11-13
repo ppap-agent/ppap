@@ -261,9 +261,8 @@ class HistorySemanticsTests(unittest.TestCase):
         }
         self.assertEqual(writeback_state(errored), "round_has_errors")
 
-    def test_deep_unable_and_na_are_not_written_as_pass(self):
+    def test_unable_and_na_are_not_written_as_pass(self):
         body = {
-            "executor": "ppap-deep",
             "execution": "completed",
             "inputs": [
                 {
@@ -330,9 +329,8 @@ class HistorySemanticsTests(unittest.TestCase):
         self.assertIn("频次须明确（UNABLE）：请提供图例", comment_text(body))
         self.assertIn("参考资料适用性（NA）：此组不适用", comment_text(body))
 
-    def test_deep_global_failure_does_not_create_a_fake_finding(self):
+    def test_global_failure_does_not_create_a_fake_finding(self):
         body = {
-            "executor": "ppap-deep",
             "execution": "failed",
             "failure": {"code": "MODEL_TIMEOUT"},
             "inputs": [{"role": "target", "file_version_id": "v1", "original_filename": "plan.xlsx"}],

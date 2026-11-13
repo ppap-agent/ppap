@@ -117,13 +117,6 @@ def test_readable_source_selectors_freeze_content_addressed_execution():
             assert programs[target.binding.checker_digest] == suite.program_files
 
 
-def test_implementation_edit_preserves_reviewed_meaning_with_a_new_execution_identity():
-    suite = leaf("li/L08")
-    updated = replace(suite, files={**suite.files, "checker.py": suite.files["checker.py"] + b"\n# implementation clarification\n"})
-    assert reviewed_contract(updated) == reviewed_contract(suite)
-    assert updated.revision_digest != suite.revision_digest
-
-
 def test_reviewed_meaning_is_the_leaf_rules_not_its_program(monkeypatch):
     file = next(file for case in load_oracle() for file in case.files if file.role == "target")
     suite = file.suite()

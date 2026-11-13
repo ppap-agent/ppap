@@ -1,103 +1,30 @@
 # Web Client
 
+桌面浏览器与飞书 H5 使用同一个 PPAP 产品客户端（React + TypeScript，源码在 `src/`），只支持桌面宽度（最小 1280px），不提供手机/平板布局、PWA 或离线缓存。数据只通过 Product API 读取；JSON 类型由 OpenAPI 生成（见 [DEVELOPMENT](../../docs/DEVELOPMENT.md#web-wire-contract)）。产品地址以 `src/audit/routes.ts` 为准；Docs-addon 的 `/addon` 宿主适配进入同一产品 API。
 
-桌面浏览器与飞书 H5 使用同一个 PPAP 产品客户端，只支持桌面宽度（最小 1280px），不提供手机/平板布局、PWA 安装或 service worker 离线缓存；离线时请求直接提示需要联网。isolated-dev 先设置 `PPAP_BUILD_SHA=${PPAP_BUILD_SHA:-local}` 并执行 `docker buildx bake`，再通过 `docker compose -f deploy/isolated-dev/compose.yaml up --no-build -d --wait` 启动本地 Web。
+## 运行
 
-## 当前 main
+在本目录运行 `pnpm install --frozen-lockfile`、`pnpm dev` 或 `pnpm build`。isolated-dev 先设置 `PPAP_BUILD_SHA=${PPAP_BUILD_SHA:-local}` 并执行 `docker buildx bake`，再用 `docker compose -f deploy/isolated-dev/compose.yaml up --no-build -d --wait` 启动。开发服务器从本地 4173 端口代理读取 runtime-config；Docker 构建运行同一套类型检查与 Vite 构建，将产物交给 nginx。
 
-唯一产品界面是 React + TypeScript，源码位于 `src/`，不设 `/v2` 或新旧界面切换。`/` 为审核准备与工作区，`/audit-files` 为审核结果，`/rules` 为规则库，`/usage` 只读展示用量。数据通过 `src/api.ts` 调用 Product API；前端不另建身份或业务存储。
+`pnpm preview:workbench` 在 `http://127.0.0.1:4185/__preview` 启动本地预览台：固定 fixture 场景只用于视觉与交互检查，业务 API 请求被拒绝，不进入生产构建，不连接数据库、对象存储、飞书或 OnlyOffice。真实上传、审核、复核和原件排版使用 isolated-dev 或 remote-dev。
 
-账户操作统一在导航底部；正常产品页面不显示开发工具或内部上报状态。隔离测试身份只在显式访问 `/dev` 且 API profile 为 `isolated-dev` 时可用。检查与原件并排显示。
-
-在本目录运行 `pnpm install --frozen-lockfile`、`pnpm dev` 或 `pnpm build`。开发服务器从本地 4173 端口代理读取 runtime-config；Docker 构建运行同一套类型检查与 Vite 构建，将产物交给 nginx。Docs-addon 的 `/addon` 宿主适配仍保留，继续进入同一产品 API，不是第二套 PC 界面。
-
-### 本地预览台
-
-在 `apps/web` 运行 `pnpm preview:workbench`，打开 `http://127.0.0.1:4185/__preview`。默认进入可丢弃的单角色 React 原型：模拟企业登录后，审核团队从工作台上传资料，再核对归属与要求，继续检查、逐项人工复核、记录对外请求与回件、复审新版本、记录模拟决定及变更影响。三种概览结构可用底部切换，URL 用 `variant=action|matrix|relationship`。也可以独立打开 `http://127.0.0.1:4185/preview/concept.html`；`stage=overview|evidence|request|response|delta|decision|history` 用于单页布局预览，不代表同一笔事项已完成前置步骤。原型不请求 Product API。设计问题、Stitch 参考和模拟事实见 [原型任务书](../../docs/GREENFIELD_PPAP_PROTOTYPE_BRIEF.md)。
-
-完整旅程从 `http://127.0.0.1:4185/__preview?page=intake` 开始。工作台支持搜索、上传和继续已有工作。文件选择后才核对客户、供应商、零件、修订、地点，确认审核依据，再逐份核对文件，登记收件；未核对完可以返回工作台。固定示例入口位于“原型说明与示例”，可演示检查、澄清与复核。浏览器选择的真实文件保存到本机 IndexedDB，不上传到服务端、不做审核解析，也不会套用预设检查结论。收件说明、澄清草稿、已记录澄清和复核记录按事项 ID 保存在本机 `localStorage`，刷新后可继续；文件内容独立保存在本机；不保存真实账号或凭据。原型只支持单窗口操作，不提供跨窗口事务、自动跨设备同步或审计存证。`concept.html` 是独立布局演示，不能代替同一事项的连续旅程；没有要求快照的旧演示记录不能继续显示预设检查。
-
-上传后可先阅读原件，再核对归属；事项要求、共用要求、补件和变更沿用同一文件引用。单份上限 64 MB。PDF 使用本地 PDF.js 翻页、缩放、旋转，图片及 UTF-8 文本直接显示；文本超过 1 MB 只显示开头并明确提示。XLSX/XLSM/XLS 提供只读内容视图：工作表、合并单元格、位置、查找、行列分段、保存值与公式；不重算公式、执行宏或还原图形及打印排版。DOCX 提供正文、表格和图片阅读，分页及修订显示不保证与 Word 一致；旧版 DOC 仍须下载。所有格式保留未改动原件的下载入口。阅读和复制内容均不产生审核判断，PDF 内嵌文字也不是 OCR。读取失败不残留上个文件的内容。文件按独立上传身份及内容摘要读取；同名文件不合并。找不到原件时，只能补回内容相同的文件，新版本须重新上传。记录备份不含原件字节，记录清理也不删除本机原件；应另行保留自己的原始文件。
-
-账号菜单的“本机记录”可下载已有记录备份，选取备份后先核对，再恢复不存在的记录。内容相同则跳过；冲突、无法读取、缺少原事项或有未保存输入时阻断整份恢复，不覆盖本机历史。清理须确认列出的范围，保留登录及其他站点数据；只有已下载的备份可用于恢复。`/preview/intake.html?records=open&recordsLayout=概览与恢复|记录优先|操作与明细` 比较三种布局。读取失败不会用空白内容覆盖原记录；写入失败可重试或导出当前输入。备份不含文件字节、凭据或正式报告。应急导出若无法读取存储，可能不包含完整事项；多窗口同时操作及浏览器崩溃时不保证原子恢复。离线仅支持已经加载的页面，不保证离线刷新。
-
-统一入口的登录页使用固定虚构身份，正常进入后刷新不要求重复登录。账号菜单可退出或演示会话失效；重新进入返回原事项及已保存步骤，不重新登记或发起检查。入口的“交互原型 · 模拟身份”可选无权限、连接失败、结果未知和持续等待；等待时可取消，等待中刷新先显示未知并核对状态。没有真实 OAuth、权限隔离或批准授权。不存在或无法读取的事项链接不会生成空草稿。`/preview/intake.html?accessLayout=center|split|resume` 比较专注进入、分栏与继续工作三种入口布局；已登录时先从账号菜单退出。未提交的澄清文字随事项保存，但只有点击“记录外部答复”才形成正式答复。浏览器存储不可用时显示失败提示，不承诺刷新后的恢复。
-
-完成收件登记后进入“检查准备”，不会自动开始检查。用户核对要求覆盖、选择 Standard／Deep，并查看明确标注的示例估算。`checkLayout=覆盖优先|方案优先|检查简报` 比较三种结构；“演示受理与额度情形”可操作额度不足、读取失败、回执丢失和持续等待。未知状态只能核对；确认未受理才重试同一请求，受理成功只显示一笔预留。离开、刷新和返回保留方案与请求号；进度和复核承接检查号与方式。修改条款或没有对应模拟结果的文件不会得到旧通过结论。
-
-当前 P8 用量设计入口为 `/__preview?page=audit&view=usage&scene=usage-ready`，使用自然月四卡、逐文件消费流水和冻结历史审核；预览台已移除旧的用量页面入口。旧统一旅程内的 2000 点本机模拟仍供未接入的检查准备使用，不是新企业权益或 P8 事实来源，待真实业务接入时再吸收。P8 的读取合同、异常场景和测试命令见 [开发说明](../../docs/DEVELOPMENT.md#ui-first-交互预览)。
-
-补件登记后先查看新旧依据，再准备复查；要求变更先核对条款变化，再准备复查。未发请求的变更可返回修改；请求发出后固定原件版本、要求和方式。已知示例原件重新计算跨文件关系、可读性和尺寸，不复制历史通过；关联的新上传文件及超出示例范围的条款明确保留未覆盖。
-
-“审核依据”在同一事项内选择已有要求或上传文件，再确认条款正文、来源位置和适用性。不适用须写理由；客户要求与内部模板冲突须明确裁定依据。要求文件无法解析时，可保留文件记录并人工录入；原型不执行真实提取。确认快照固定到后续收件、进度和复核，改范围或正文须重新确认。已登记要求只读，历史记录不会补造来源。`basisLayout=clauses|source|guided` 比较条款优先、原文对照与逐项核对三种结构。改标题不会改变已知示例条款含义；改正文、出处或选用尚无模拟结果的条款显示未覆盖。这不是生产规则匹配算法或任意条款执行能力。
-
-工作台的“审核要求”保存可复用来源版本：先上传，再人工核对范围、条款和出处；已保存版本只读，变更另建草稿。客户、零件和图纸修订可明确限定或声明不限定；空字段不等于通用要求。事项只能选择已保存且范围相符的版本，然后重新确认适用性；保存新版不会更换既有事项依据。事项内调整会标记“本次有调整”，不改共用版本。`/preview/intake.html?view=requirements&libraryLayout=list|focus|changes` 比较来源列表、单份聚焦和差异优先三种布局。版本和草稿仍只存此浏览器，不是团队同步或正式发布；新版本对既有事项的影响评估与重审闭环尚未完成。
-
-“证据复核”要求审核员逐项选择维持、推翻或暂缓，并填写判断依据；推翻的条目不进入补正请求。请求只记录系统外联系，不发送消息。“登记回件”分为选择补件文件、逐份核对类型／修订／事项归属、登记逐项答复；也可仅登记说明或异议。允许多次部分回件，每批保留来源、文件、修改原因与未答复项。修改文件登记信息会撤销核对状态及答复关联。补件复审按当前文件重新检查相关要求，展示此前与本批依据及供应商原话；只有完整固定示例执行预设判断，真实文件、多个未定当前版本或改变的示例保持无法判断。检查失败可重试，其他条款结果保留。条款优先、证据对照、批次历史通过 `recheckLayout=requirements|comparison|history` 切换。
-
-从“使用 P-204 示例资料包”走完初次问题复核后，可以先补控制计划、再补清晰流程图和 Rev B 实测报告。两批记录累积到同一事项，逐项人工确认后可按三条限定要求批准。此后继续上传变化文件会创建新批次、重新检查并重新复核，不继承旧批准；历史批次与决定明确标识，报告固定原决定快照。HTML 报告和 JSON 依据记录包含收件来源、各批文件与供应商说明。此模拟仅覆盖图纸 Rev B 的固定三条要求；新图纸修订及要求版本变化尚未打通。
-
-工作台的“原型说明与示例”提供“完整资料 · 可批准路径”和“尺寸超差 · 不批准路径”。二者从相同的归属、要求、收件、检查流程进入“决定与交付”，不强迫无问题资料先发补正请求。示例只覆盖已确认的三条要求：文件工序一致、工序号可读、Rev B 孔径三件实测。机器结果与人工判断分别保留；未知、未覆盖和超差不能靠确认按钮变成通过。决定人、理由及范围确认完成后，可固定本轮决定，生成并下载 HTML 报告（可浏览器打印）及 JSON 依据记录。报告生成失败可重试；请求下载不等于已送达，可另行人工登记系统外交付。决定草稿、报告状态、交付草稿和记录可刷新恢复；没有真实签署、权限验证或外部发送。`decisionLayout=evidence|desk|steps` 比较依据优先、决定工作台、分步确认。
-
-自己上传的资料完成归属、要求和收件核对后，可选“开始人工核对”，不必先启动没有模拟结果的机器检查。人工可阅读原件，逐条记录满足、不满足或仍无法判断；独立判断须选定文件版本、原件位置、摘录和理由，再点击“记录本项判断”。编辑后须重新记录；文件或要求变化不能沿用旧确认。全部适用要求有当前有效、已记录的满足判断后，才可模拟批准限定范围。机器原状态仍保留。报告和依据记录包含人工引用；工作台可直接继续复核或查看已有决定。这不验证人工摘录内容或实际生产能力。
-
-自定义要求的人工复核中，可针对未解决条款记录补正请求，下载文本后通过系统外渠道联系供应商。回件先上传，再核对修订、替代或补充用途与对应请求；允许部分回件和只有说明。每批登记后重新核对全部适用条款，不继承旧判断；历史保留供应商原话、旧判断及原件版本。`followupLayout=requests|desk|steps` 比较请求优先、并列工作台和分步登记。已走通两项自定义要求、三批回件、重新人工确认和限定批准。“变化与重审”的后续轮次也接入此路径：下一轮从最新登记的资料和说明开始；未登记回件阻止新轮次开始，历史轮次只读。可直接人工复核，不产生机器通过或检查消费。当前每条要求只有一个请求，不支持追加／修订／撤销请求；固定三条示例仍有独立补件流程。没有真实机器审核或消息发送。
-
-决定后的“交付工作区”可准备和下载 ZIP：上传文件按原字节附入，合成 HTML 单独标为示例；本次要求来源有上传原件时一并附上。用户排除的资料写入包内清单，固定决定与历史包不随新勾选改变。生成与下载都会核对原件；丢失或内容不符会停止，不会产生部分成功包。取消或关闭工作区后，晚到读取不再发布包或请求下载；已请求浏览器下载不等于送达。飞书交付仍是模拟。开发者已用两份合成 TXT 实际上传，走通一条自定义要求的人工判断、限定批准、ZIP 下载及返回工作台路径，并比对包内原件字节。这些是限定路径的自查，不代表全部旅程验收。
-
-预览台原有的产品页面仍可通过页面选择器访问，使用同一套 React 页面和样式；这些页面可切换数据场景（有数据、空状态、错误、长列表）、桌面/自适应/自定义宽度（最小 1280px）与明暗主题。可独立打开当前页面；产品内导航也可正常使用。原有示例数据在 `preview/fixtures.ts`，只用于视觉与交互检查，不代表真实审核结论。
-
-这个入口只由单独的 Vite 开发命令在回环地址启动，不进入生产构建。该端口上的 Product API 请求只由本地模拟接口处理，写操作被拒绝；它不连接数据库、对象存储、飞书或 OnlyOffice。真实上传、审核、复核和原件排版仍须使用 isolated-dev 或 remote-dev。预览宽度只模拟布局断点，不模拟设备浏览器行为。
-
-设计约束运行 `pnpm lint`。页面直接使用 `src/components/ui` 中的 shadcn/ui 源码组件、Tailwind v4 主题和产品语义组合；`src/ui/domain.tsx` 只保留审核工作区、证据阅读和 OnlyOffice 等 PPAP 专属组合，不提供通用基础控件。ESLint `no-restricted-imports` 禁止 `@insforge/sdk`、`@insforge/*` 与 PostgREST 客户端；跨文件产品 invariant（legacy API 路径、ledger 表名、Dockerfile 产物边界）仍由 `src/webContract.test.ts` 拥有。`pnpm typecheck`、`pnpm test`、`pnpm lint` 与 `pnpm build` 是前端合并门槛。helper、路由、reducer 与 public-config 门控由 `pnpm test` 覆盖。跨栈浏览器路径由仓库根目录的 Python Playwright（`tests/e2e`）对着 isolated-dev 产品栈执行，含 route mock 的规则互斥与 deep-mode 控件。
-
-## 规则准备
-
-多选文件默认参与审核；取消文件行的“审核”勾选后，该文件作为联合审核参考资料。上传自动完成文件准备；后台任务提取客户、型号、零件并建议匹配规则，用户确认后提交。首页从 API 读取当前用户可访问的未提交草稿；URL 可回访草稿和审核，刷新不重新上传或提交。再次审核的来源轮次保存在草稿中，不依赖浏览器 URL。进入规则详情前保存当前资料，详情提供返回审核准备入口。
-
-规则准备入口是 `/rules`：选择文档类型并上传 Excel、Word、文本 PDF、Markdown 或结构化 JSON → Worker 解析 → 核对适用范围，修正文件类型、名称与检查条目 → 保存规则。搜索、客户与历史版本筛选合并在列表上方，默认展示最新版本。`/rules?rule=<id>` 可直接回访详情。已保存规则可上传新版本，原版本与旧审核引用保持不变；来源原件独立检查文件权限。
-
-解析复用 `engine.jobs` 保存执行状态与预览结果，不创建第二份规则事实。URL 中的解析任务标识可用于回访，刷新只读取同一任务，不会重新调用模型。租约失联显示“结果未知”，不自动重领；原 Worker 仍可返回迟到结果。用户可以显式新建任务重跑，但原任务可能仍完成，也可能再次消耗模型费用。规则解析每次模型调用超时为 120 秒，不做 SDK 或空响应自动重试。页面在导入、读取和发布期间统一禁用编辑操作，避免迟到响应混入另一个候选版本。
-
-导入和编辑保存客户规则版本。受理后冻结所选规则条目；能映射到内置检查的条目机器执行，其余条目进入未覆盖。实际覆盖以结果中的检查项和未覆盖清单为准。
-
-超过提取 prompt 的 20000 字符上限会要求拆分，类型未知且超过分类 prompt 的 4000 字符上限会要求先选择类型，不静默截断。旧 `.doc` 需先转为 `.docx`。
+`pnpm typecheck`、`pnpm test`、`pnpm lint` 与 `pnpm build` 是前端合并门槛。页面直接使用 `src/components/ui` 中的 shadcn/ui 源码组件和 Tailwind v4 主题；`src/ui/domain.tsx` 只放 PPAP 专属组合。ESLint 禁止 `@insforge/*` 与 PostgREST 客户端；跨文件产品 invariant 由 `src/webContract.test.ts` 拥有。跨栈浏览器路径由仓库根目录的 Python Playwright（`tests/e2e`）执行。
 
 ## 原件预览
 
-PDF、图片直接预览；Office 格式可连接独立 OnlyOffice DocumentServer，只读查看，无 Java 服务或编辑回写。未配置或服务不可用时显示提取文字与原件下载入口。Office 排版与文字摘录可以切换；保存复核不重新加载同一文件版本。按 [OnlyOffice 配置](https://api.onlyoffice.com/docs/docs-api/usage-api/config/editor/customization/customization-standard-branding/) 关闭姓名询问及宏执行；若工作簿靠宏显示工作表，网页只展示其当前可见状态，可用文字摘录辅助核对。
-
-本地可叠加 `deploy/isolated-dev/onlyoffice.yaml`。先在当前终端设置独立的随机 `PPAP_ONLYOFFICE_SECRET`，再用相同变量启动 API 和 DocumentServer，例如：
+PDF、图片直接预览；Office 格式可连接独立 OnlyOffice DocumentServer 只读查看，未配置或不可用时显示提取文字与原件下载入口。本地可叠加 `deploy/isolated-dev/onlyoffice.yaml`，用同一个随机 `PPAP_ONLYOFFICE_SECRET` 启动 API 和 DocumentServer：
 
 ```sh
 export PPAP_ONLYOFFICE_SECRET="$(openssl rand -hex 32)"
 docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/onlyoffice.yaml up -d --wait
 ```
 
-命令在仓库根目录执行；若已有 Compose 项目或配置 overlay，应保留相同项目名及配置文件。DocumentServer 仅绑定本机 8082；允许访问 Docker 私网只是本地联调配置。生产需使用受信任的 DocumentServer、HTTPS 和独立密钥，不直接沿用此 overlay。
+DocumentServer 仅绑定本机 8082；生产需使用受信任的 DocumentServer、HTTPS 和独立密钥，不直接沿用此 overlay。
 
-## 最终责任
+## 飞书授权
 
-普通网页登录请求 `offline_access`，以获取刷新凭据；报告授权在其基础上增加文档写权限。Cookie 与数据库会话的固定上限为 12 小时，不随请求无限延长。有效会话中的飞书 access token 到期后由 API 刷新；无刷新凭据的旧会话仍受 access token 有效期限制，需要重新授权一次。重启 API 不清除 PostgreSQL 会话。部署后应只检查刷新凭据是否存在及到期时间，不输出凭据本身。
-
-报告通过当前用户身份创建飞书文档，分享由飞书处理。若飞书返回 `99991679`，表示缺少用户授权（[官方说明](https://open.feishu.cn/document/faq/trouble-shooting/how-to-resolve-error-99991679)）。报告页提供显式授权入口，请求 `docx:document:create` 和 `docx:document:write_only`；开放平台也需已启用对应用户身份权限。普通登录不请求这些写权限，授权完成不会自动创建报告。只有明确拒绝且尚未创建文档时允许手动重试；超时或内容写入结果未知时先核对文档。
-
-- 产品导航和呈现
-- 文件/资料集准备
-- 审核提交和结果回访
-- 原文定位、预览与下一步
-- 人工复核
-- 用量/历史视图
-- 浏览器与飞书宿主的必要平台适配
+普通登录请求 `offline_access`；需要创建报告文档时显式请求 `docx:document:create` 与 `docx:document:write_only`，普通登录不请求写权限。Cookie 与数据库会话上限 12 小时；会话内的飞书 access token 由 API 刷新，日志不输出凭据。
 
 ## Boundary
 
-Web 只调用 Product API。它不能：
-
-- 调 Worker / legacy engine tasks API
-- 直接访问 PostgreSQL/PostgREST 或 InsForge Database/Storage SDK
-- 持有对象存储管理凭据
-- 建立飞书专属业务台账或第二套 ledger
-- 嵌入服务端 Feishu / Partner AI Secret
-
-UI 可以在不降低 #11 baseline 客户能力的前提下重构；具体前端工具链见 [DEVELOPMENT](../../docs/DEVELOPMENT.md)。
+Web 只调用 Product API。它不能调用 Worker、直接访问 PostgreSQL/PostgREST 或 InsForge Database/Storage SDK、持有对象存储管理凭据、建立第二套业务台账，或嵌入服务端 Feishu / Partner AI Secret。

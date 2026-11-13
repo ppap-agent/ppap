@@ -2,7 +2,7 @@
 // and projects/13261964020862199279/screens/de9558b8e43347e2a006989d2b41b790.
 import {useEffect, useRef, useState, type Dispatch, type MouseEvent, type ReactNode, type SetStateAction} from 'react'
 import {createPortal} from 'react-dom'
-import {ArrowLeft, ArrowRight, BookOpen, Check, ChevronDown, GitBranch, Info, Loader2, Plus, Trash2, UploadCloud} from 'lucide-react'
+import {ArrowLeft, ArrowRight, BookOpen, Check, GitBranch, Info, Loader2, Plus, Trash2, UploadCloud} from 'lucide-react'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Badge} from '../components/ui/badge'
 import {Button} from '../components/ui/button'

@@ -98,11 +98,3 @@ class TestRuleProfilePublish(unittest.TestCase):
         assert candidate["body"]["rule_profile"] == RULE_PROFILE_V3
         published = self._publish(candidate)
         assert published["body"]["rule_profile"] == RULE_PROFILE_V3
-
-    def test_default_token_parses_and_publishes_as_v2(self):
-        payload = {"kind": "engine", "type": "控制计划", "rule_profile": "default", "rules": [_item()]}
-        source = self._upload("default-token.json", json.dumps(payload).encode())
-        candidate = self._parse(source)
-        assert candidate["body"]["rule_profile"] == RULE_PROFILE_V2
-        published = self._publish(candidate)
-        assert published["body"]["rule_profile"] == RULE_PROFILE_V2

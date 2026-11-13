@@ -30,9 +30,7 @@
 - `app_ticket` 通过新版 `POST /integrations/feishu/events` 独立接收，使用现有 `FEISHU_VERIFICATION_TOKEN` 与应用 ID 校验，保存至自己的 PostgreSQL；不调用 UAC、不读取旧 Redis、不增加转发或轮询。沿用 HTTPS + Verification Token 模式；配置加密回调前必须另行支持并验证解密，当前遇到加密体明确拒绝。事件 P1 `ts` 为秒（最多十八位小数），P2 `header.create_time` 为毫秒，统一为 Decimal 秒并以 PostgreSQL numeric 保存，避免浮点或微秒舍入丢失顺序；缺失、非法或超过本机时间五分钟的时间戳拒绝。单条 guarded upsert 只接受更晚的事件，重复、迟到或同时间不同值不替换，也不刷新接收时间；时间相同无法判断新旧，须观察后续推送或显式请求重推，不自行给 ticket 排序。应用 ID 存在冲突则拒绝。数据库成功提交后才返回成功，响应丢失可安全重投。
 - 旧回调尚未切换时，已授权的人工联调可只读共享 UAC 当前票据；这不是新版运行时回退。先核对 UAC 与目标应用身份，再确认实际键名、键和值的编码：普通字符串键与 Java 序列化键可以同名并存，旧字符串值不能证明 UAC 正在使用它。票据须通过真实应用／租户 token 交换验证；后续权限还要独立读取实际授权并调用对应接口。只读诊断不写旧缓存、不改旧回调，也不因缓存存在或 token 可用就宣称分享权限已经生效。
 - `GET /capabilities` 的 `app_ticket` 只表示本地是否有记录，不证明票据仍有效、定时推送已连通或能够调用飞书；`app_ticket_event_timestamp` 是秒级 Unix 时间戳字符串，`app_ticket_received_at` 是 ISO 写入时间，均不含密钥，重复事件不能刷新它们。迁移保留原票据，但不伪造其事件时间；未带事件时间的历史初始化不能覆盖已经由回调更新的记录。正式切换与连续更新验收见 [TKE 配置](../deploy/tke/README.md#飞书回调切换尚未执行)。
-- `FeishuTicketUpdates.tla` 是一个应用、两个事件修订和一个异应用的有限 Safety 检查；正向配置为 3 个不同状态、深度 2。两个故障配置分别暴露旧值覆盖（`LatestWins`，深度 3）与错绑应用（`AppBound`，深度 2）。它不证明鉴权、时间戳含义、SQL 持久性、飞书自动投递或响应时限。API/真实 PostgreSQL 测试检查认证、原子排序和重新建立存储连接后的读回，不证明实际平台投递或数据库故障恢复。
 - 预览切流用 `PPAP_CURRENT_TENANT_ALLOWLIST`（逗号分隔的 Feishu `tenant_key`）。空名单不限制。生产目录写入海岸线租户。`PPAP_USAGE_CHARGE_ENABLED=false` 时受理不写 `usage_events`；预计点数按匹配文件和标准单价计算，不是已扣费回执。
-- 已有组织内配置可以直接用于迁移/开发；终态配置归本仓 Settings。
 - 新增配置项前先确认它代表独立运行决策，而不是可推导内部细节。
 
 本地开发也可作为现网的本地客户端：本地 Web 通过产品 API 使用同一份真实数据；需要验证未部署的服务代码时，本地候选 API 可连接现网 PostgreSQL、对象存储与飞书。浏览器不直连数据库，租户与对象授权仍由 API 执行。共享数据不代表新旧代码或 Schema 自动兼容，连接前须核对候选所需接口与数据库结构；这种联调不运行初始化、迁移、测试重置或额外 Worker。写入仍是真实业务操作，不能因入口在本地而视作模拟；会产生收费、通知或审核受理的动作须按本次联调范围控制。
@@ -47,7 +45,7 @@
 
 ## 按规则读取审核证据
 
-当前合同由 [Issue #246](https://github.com/ppap-agent/ppap/issues/246) 拥有。所有适用审核使用同一流程：规则确定所需事实 → 原生提取 → 按具体缺口使用 LLM OCR → 固定程序/有来源的文本语义检查。没有新旧流程开关，不把发布批准变成运行时分支。生产启用仍须产品负责人明确确认；开发完成不等于已部署。
+所有适用审核使用同一流程：规则确定所需事实 → 原生提取 → 按具体缺口使用 LLM OCR → 固定程序/有来源的文本语义检查。没有新旧流程开关，不把发布批准变成运行时分支。
 
 - 原生 Excel、PDF 文字和可靠表格优先。非扫描 PDF 的表格审核先走 PDF→Excel，保留原 PDF SHA、页码、单元格和区域映射；没有可靠转换或页面未覆盖时，不能退到 OCR 猜表格并报告通过。空的 OCR 结果不证明没有内容。
 - 印章、签字、实际勾选、照片及复杂图形事实使用原图和专用 OCR 模型。PSW、V4、检具、尺寸和通用图像规则复用同一事实入口；专属规则用代码判定，通用规则将可定位观察交给文本语义检查。
@@ -58,85 +56,25 @@
 - 文本模型只接收相关条款和有原件位置的片段，引用须回查；部分范围不能声称全篇通过。不能用语义分析补造视觉内容或替代缺失 AP 标准表。
 - 实际 OCR SDK 回执并入现有审核用量；有回执才记录 token、供应商费用及耗时，缺回执为未知。供应商费用不是客户业务收费。原件文字、模型隐藏推理和密钥不得写入诊断日志。
 
+Excel 的图形事实通过 `audit.engine.checkers.excel_field_evidence` 读取。XLS 先经既有 LibreOffice 隔离转换为 XLSX，保留原始绘图部分；单元格、控件和可靠原生文字优先使用。按字段文字、合并范围和相邻字段确定区域，必要时由 `documents.excel.visual` 渲染；Excel 与 PDF 共用 `pdf_field_region` 的栏目边界。签字字段不读取印刷姓名、日期或客户签字，保证书盖章与授权表盖章分别取证。缺少标签且需要证明没有盖章时，覆盖完整适用工作表，包含原生单元格范围外的绘图；不能凭局部未找到就确认不存在。模型只返回事实，坐标、文件版本和来源摘要由程序保存；未知仍为 UNABLE，调用或解析错误为 ERR。同一字段复用成功或失败结果，不自动重试。
+
+UAES 目录叶子的条款在各自叶子中实现，只从 `checker_lib` 复用原件读取和取证，不调用其他版本的业务类。PFMEA 经验教训、评分描述及 CP 追溯/FIFO 措施使用有原文引用的文本语义检查；数字、日期及跨文件身份由代码检查。原图只用于实际图形事实。通用视觉读取最多十页或十个工作表；单页/单表读取不能证明多页全图关系。当前跨页仅支持调用者明确声明的“存在”事实，完整范围都为否才支持否定；全图一致性、所有签章齐全等联合事实在多页时保持未知。DOCX 的原生内容可以读取，尚无可靠位置的图形事实返回 UNABLE。扫描表格不补做整份转录。原件或模型配置变化、调用失败与事实未知分别报告，不自动重试或转成 PASS。
+
+尺寸审核把检查数据、判定标准、单位和结果绑定到同一原始记录。明确的不同量纲不能直接比较；支持的同量纲单位先换算，单位无法可靠确定时返回 UNABLE。跨文件读取绑定本轮冻结文件版本，完整匹配零件标识及工序号，保留两份原件的单元格位置。不同文档的修订计数不要求相同；两份原件都明确声明同零件的工程更改水平时，冲突不能通过。身份不足不能支持 PASS，也不借用相近编号的记录。历史文件、规则与结果不变。
+
 离线回放和真实调用分别报告。人工样本答案只作差异参考，不是绝对真值；不能为匹配标签把未知硬改为 PASS/NG。确定的误判、权限和数据完整性仍是必须修复的问题。当前实现测试与真实效果验收入口见 [测试入口](../tests/README.md)。
 
 ## 当前命令
 
-Local 与 CI 使用同一 ownership。CI 不再维护与目录结构脱节的测试分类。
-
 提交前在本仓库执行一次 `uv run --no-sync pre-commit install`。之后每次提交对暂存的 Python 文件运行与 CI 相同的 `ruff check --fix` 和 `ruff format`。`mypy` 仍只在 CI 的 Repository contract 中运行。
-
-Repository contract：
 
 数据库 migration ordering authority 只有 numbered filenames。Compose / InsForge / TKE / Schema CI 共用 `migrations/apply.sh`；仓库不存在 `apply.sql` 或第二份顺序清单。
 
 TKE 的 Kubernetes authority 是 `deploy/tke/kustomization.yaml`。部署入口是[原生部署命令](../deploy/tke/README.md#authoritative-release-procedure)，直接使用 `kubectl` 更新并重启；默认先执行更新，遇到错误再诊断，不运行 Python 部署编排或自动预加载。构建由 `build-current.py` 独立负责。CI 通过 `render-current.sh` 使用固定版本 Kustomize 生成清单并执行 kubeconform。edition proxy 的 nginx 内容只存在于 `deploy/tke/edition-proxy.conf`，ConfigMap 由 Kustomize `configMapGenerator` 生成。
 
-```sh
-uv sync --locked
-git show --format= --check HEAD -- . ':!assets' ':!tests/corpus/fixtures'
-uv run --no-sync python -m compileall -q packages services tests
-node deploy/insforge/verify-config.mjs
-docker compose -f deploy/isolated-dev/compose.yaml config --quiet >/dev/null
-docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example config --quiet >/dev/null
-docker buildx bake --print >/dev/null
-docker buildx bake --check
-uv run --no-sync python -m pytest tests/repository
-```
+测试归属、各组运行命令、Distribution closure、CI 分组与默认 merge contract 见 [测试入口](../tests/README.md)。本机 PostgreSQL 集成测试可加 `--local-postgres`：创建并清理本次独占的临时 cluster（默认用 PATH 上的 postgres，macOS 备用 Homebrew postgresql@17，或用 `PPAP_TEST_PG_BIN` 指定 server 目录），不接入共享开发数据库，无需 Docker；依赖缺失会失败而不是 skip。
 
-Distribution closure：
-
-```sh
-# 不先执行 root uv sync；脚本为目标 member 构建 wheel closure，
-# 在 /tmp clean venv 中安装、从非 repo cwd import，并运行 owner tests。
-python3 scripts/validate_distribution.py --discover
-python3 scripts/validate_distribution.py --member audit
-
-# regression proof：删除一个真实 dependency declaration 必须 fail closed。
-python3 scripts/validate_distribution.py --prove-missing-dependency
-```
-
-service member 运行 owner tests 时需要与 CI 相同的 isolated-dev PostgreSQL fixture。root `uv sync --locked` 仍用于快速 workspace 开发，但不再作为 distribution correctness proof。
-
-Python module groups：
-
-```sh
-# One pytest process per physical owner. CI discovers every packages/*/tests, apps/api/tests, apps/worker/tests, and apps/mcp-client/tests.
-uv run --no-sync pytest packages/product/tests
-uv run --no-sync pytest packages/product/tests/test_settings_priority.py packages/audit/tests/test_token_tracker.py
-uv run --no-sync pytest tests/corpus/contracts/tests
-uv run --no-sync pytest packages/agent/tests
-uv run --no-sync pytest packages/audit/tests
-uv run --no-sync pytest packages/ppap_ocr_adapter/tests
-uv run --no-sync pytest packages/product/tests
-
-export COMPOSE_PROJECT_NAME=ppap-api
-docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
-docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
-uv run --no-sync pytest apps/api/tests
-export COMPOSE_PROJECT_NAME=ppap-worker
-uv run --no-sync pytest apps/worker/tests
-docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
-```
-
-Root system contracts：
-
-```sh
-# Own PostgreSQL + Silo for the entire parallel suite; focused runs: tests/README.md
-python3 -m scripts.ci_shards integration
-
-export COMPOSE_PROJECT_NAME=ppap-schema
-docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
-docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
-uv run --no-sync pytest tests/schema
-docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
-```
-
-Browser E2E 是 Python Playwright（`uv run --no-sync pytest tests/e2e`），对着 isolated-dev。生产 runtime/backup 是 `uv run --no-sync pytest tests/integration/runtime`。Corpus 的理想、蔚来、UAES 数据集、Pairs 和 PSW 命令见 [测试入口](../tests/README.md)。回归和 PSW 分别由 `tests/corpus/regressions` 与 `tests/corpus/psw` 的物理目录发现；纯 Corpus contract tests 跟随 `corpus-contracts` owner。
-
-默认 merge contract 是 required groups：Web、Repository contract、Python modules、Distribution closure、Schema、Corpus、Product integration。`CI Gate` 只汇总这些 required groups，不把“是否 deterministic”当成入 Gate 的条件。Corpus 即使 cache miss 调用真实 OCR / model 仍是 required。当前不做 change-aware path skipping。InsForge native lifecycle 不进入默认 Gate。
-
-single-owner Python tests 位于各自 `packages/*/tests`、`apps/api/tests`、`apps/worker/tests` 或 `apps/mcp-client/tests`。pytest fixture lifecycle 直接由 owner `conftest.py` 提供；不动态加载 sibling support/test modules，也不通过 `request.instance` 建立注入框架。根 `tests/` 只保留 `repository`、`schema`、`corpus`、`integration`、`e2e`、`live` 六类 system-level authority。`tests/integration/product/conftest.py` 通过 pytest-native fixtures 提供该 suite 的数据库 reset/fixture seeding 与 `MemoryObjects` object-storage boundary fake，不实现第二套产品状态机；仓库明确不保留 `store_fixture.py` 这类 test-module import seam。API / Worker tests 各自保留 owner-local copy，不把 integration 当 library。pytest 不注入仓库根 `pythonpath`。
+GitHub Actions 的外部模型测试使用 `CI_LLM_API_KEY`、`CI_LLM_BASE_URL` 和 `CI_LLM_MODEL` 三项仓库 Secret，与生产配置分开；真实模型用量属于测试运行，不以缓存伪造模型成功。
 
 ## POC 规则资产导出
 
@@ -175,19 +113,6 @@ CI 以项目原生 metadata / lockfile 为 authority，不再另写一套安装�
 
 Product integration 的 runtime/backup 与 E2E 通过 `bash scripts/run-compose-tests.sh <pytest-directory> <compose-options>` 启动：先由 Docker 分配 loopback 临时端口，再固定实际端口并同步 API/Web 的公开地址后执行测试，备份恢复仍使用同一组地址。`PPAP_API_HOST_PORT`、`PPAP_WEB_HOST_PORT` 只控制宿主映射，默认仍为 `8080`/`4173`；脚本不清理其他任务或常驻服务，workflow 保留失败诊断及本任务的 `always()` 清理。
 
-#15 剩余：把本仓客户入口切到 current `ppap`；compose 验证不等于客户 cut-over。不拆除 `ppap-agent`：它是算法验证基地和参考实现，并继续服务其它用户。
-
-## 迁移工作
-
-选择迁移粒度时以**最快形成稳定客户路径且降低终态上下文**为准。一个 package/能力域整体迁入更快时就整体迁入；迁入后立即把 tests/config 归本仓并删除跨仓长期依赖和无消费者代码。
-
-Engine migration 的具体 baseline 见 #3；飞书 capability baseline 见 #11。不要把旧算法已有 failure 变成迁移 blocker。
-
-## 最短交付路径
-
-当前 Issue → 复用/迁入现成资产 → 跑 baseline/当前测试 → 修新增 regression 或产品缺口 → 必要真实环境验证 → 当前 PR → 尽快打通客户路径。
-
-
 ## Web wire contract
 
 FastAPI/Pydantic OpenAPI is the machine authority for Web JSON wire shapes. The Web does not maintain a second DTO registry.
@@ -202,110 +127,19 @@ That command serializes the real FastAPI `app.openapi()` schema and pipes it to 
 
 UI-first contracts without a runtime operation are explicit OpenAPI components marked `x-contract-stage: ui-draft`. They share the same generation path, but do not document fake endpoints or imply persistence, matching, billing, or authorization has been implemented. Preview adapters stay outside the production build entries.
 
-本地文件上传可在 `POST /files` 或新版本请求中提供成对的 `request_id` 与 `sha256`。该请求固定调用人、元信息和内容摘要，`FileVersion.id` 就是请求 ID；重放不创建第二版本。`GET /file-uploads/{request_id}` 只读原请求，未读到记录仍是 unknown，不许可新请求重传。服务明确返回 `resume_allowed` 时，用户可用原请求和相同内容继续；绑定上传的 `PUT /blob` 幂等并完成该版本，已就绪内容不能替换。旧无请求 ID 的三步上传仍保留。文件大小上限为 200 MiB；本地读取/散列与 API 仍使用整份文件，不承诺流式传输或跨设备恢复未传完的字节。
-
-文件内容预检查使用 `POST /file-validations`（同一 `request_id`、文件与版本幂等受理）及 `GET /file-validations/{validation_id}` 读回。`GET /files/{file_id}/versions/{version_id}/validation` 可恢复该版本最新的检查请求；每次读取仍检查当前文件权限。它复用现有 Worker 队列，不创建草稿、审核轮次或用量记录，也不调用模型或匹配规则。任务租约失效显示 `unknown`，不自动重新领取；原 Worker 的有效回执仍可收敛。
-
-`FileVersion.ready` 只表示原件已保存；预检查 job 的 `succeeded` 只表示检查已完成。只有其 `result.state=valid` 才表示可进入后续识别。损坏、加密、无内容与检查基础设施错误分开表达，安全预算超限为 `error`，不是文件审核 NG。OOXML 检查有展开量、条目及 XML 访问预算；旧 DOC 保留既有 25 MiB 受限转换上限。该接口不表示 200 MB 上传链路、新版任务持久化或后续审核已经全部接通。
-
-确认前的任务使用 `POST /audit-tasks`、`GET /audit-tasks` 和 `GET /audit-tasks/{id}`。创建请求固定文件版本、每份预检查回执、选中/未选/已移除来源、模式和客户倾向；同一请求 ID 不允许替换输入。它复用私有 `audit_drafts` 和逐文件识别 job，在同一事务分配 UTC 日编号并入队，不创建审核轮次或消费。Worker 只消费创建时冻结的生效候选；按客户×文件类型及已明确确认的不限客户范围匹配，不用范围未确认的规则兜底。读取固定 job，不取该文件最新识别；提取/模型失败与未匹配分开。
-
-`GET /audit-tasks` 只返回任务摘要及完整文件身份、选择状态，不构造规则正文、审核结果或报告；打开任务后再读 `/audit-tasks/{id}`。摘要不能替换完整任务快照；若恢复回执落后于已知摘要，重新读完整详情，不拼接两个修订的字段。原件读取在同一连接内核对当前授权、文件及版本；轮次入口还核对冻结输入归属，不复用过期授权。
-
-返回修改后，仍用 `POST /audit-tasks`，同时提交原 `task_id`、当前 `expected_revision` 和新的 `request_id`。初始输入修订为 0；重新识别在同一事务增加修订、保存完整来源并替换逐文件 job 引用。旧 job 回执只归原 job；Worker 读到旧代次时跳过文件解析和模型调用，已开始的外部调用不承诺可取消。`GET /audit-tasks/{id}/recognitions/{request_id}` 读取原请求受理回执及当前任务；回执修订与当前输入修订可以不同。`unknown` 不证明请求未受理，不能据此自动重发或生成新请求。
-
-`POST /audit-tasks/{id}/end` 必须带 `expected_revision`，仅结束全部选中文件已明确未匹配的任务；失败或未知不能当作零匹配。该动作可同时保存未匹配文件的 `removals`（版本与原因），不要求再次识别，也不产生审核或消费。任务沿用私有草稿授权，不出现在旧草稿清单，也不能通过旧草稿修改/受理接口绕过固定输入。已移除来源可以没有预检查回执；这不允许选中文件跳过预检查。
-
-`POST /audit-tasks/{id}/confirm` 接收 `request_id`、`expected_revision` 和待确认任务返回的 `expected_confirmation_basis_digest`（取自 `confirmation_basis_digest`），复用同一受理事务冻结当前修订中每份选中且已匹配的文件/规则，并创建唯一 Round 与原执行 job；未匹配来源在该事务中记为移除，不进入执行。待确认视图采用当前企业 Suite；受理在发布锁内重算确认依据，正文、代码、关联 Suite 或验证风险改变时明确拒绝，且不创建 Round、审核 job 或用量。待确认的 `confirmation_scope` 是服务端按当前认证预检计算的实际目标、比对资料和排除理由，原文件选择不改；范围和预检依据参与摘要，已受理后从冻结 Round 与持久排除记录恢复同一范围。已受理的同一请求重放仍返回原冻结回执；新的确认不能缺少依据摘要。`GET /audit-tasks/{id}?request_id=...` 只读原确认结果，未查到成功回执仍为待核对，不是重发许可。新 Task Round 使用显式对象授权，不通过旧同租户 Round 入口开放原件，也不允许旧 resubmit 绕过任务约束；旧 Round 的共享口径不变。收费政策未定期间，新的确认接口仅在 `PPAP_USAGE_CHARGE_ENABLED=false` 下开放，不能据此宣称逐文件收费已完成。
-
-登录入口使用 `/public-config.login`，禁用新登录不撤销已有合法会话。首次匿名 `/me` 的 401 不使随后的宿主登录结果失效；已登录业务请求的 401 仍隐藏产品。OAuth 失败只使用已消费的服务端 state 返回原任务及有限错误码，不携带 provider 原始错误、不自动再次授权；伪造或重放 state 仍回安全默认入口。返回地址不恢复尚未提交的浏览器文件字节。`ProductAccessBootstrap.tla` 只检查一次匿名探测、宿主成功返回和已登录失效的有限 Safety，不证明真实 OAuth、Cookie、跨标签页或最终完成。
-
-V3.1 的 `/audit` 与 `/__audit-native` 共用 `audit.html → src/audit/native-main.tsx`，开发服务器与正式 Web 构建均使用这一入口，默认首页不切换；4185 仍是独立 fixtures。复用同一个 `AuditIntake`、登录、上传、预检查、Task/Round 读取和原件阅读器。新版入口仅走网络，不提供离线壳。集群经 edition proxy 打开时，先使用 `/enter-current?return_to=<同源完整审核地址>` 登录并选择 current，再返回精确的任务/报告 URL；该路由仍执行租户名单限制，不授予任务访问权。真实 Round 投影保留机器观察、覆盖与独立人工记录；P5 并列展示已保存的人工判断、理由、版本及冻结文件引用，不改变机器结论或报告资格，也不将人工位置文字伪装为自动定位。实际 PASS/NG 与证据完整性分开：缺少定位或证据验证标记仅单独提示，不改判、不单独阻止任务结束或报告生成。Standard 在同一个 job/attempt 内隔离逐文件读取、准备和执行异常，保留其他文件结果；不可读取的冻结文件不进入可用上下文，依赖它的查询产生执行错误，不冒充未提交文档。Task 与历史 Round 阅读共用文件异常投影，单条错误不覆盖其他已完成条款。Deep 的逐文件隔离与整体跨文件语义审核质量仍待验证；PDF/ZIP、飞书与用量的实现及验收状态以各 owning Issue 为准。
-
-`/audit?view=requirements` 提供用户上传审核规则的入口，复用现有 `RequirementLibraryPanel` 和 `/rules` 的原件上传、条款解析、人工核对、版本发布与读回，不另建规则库。上传原件不等于规则已生效；保存版本后刷新客户匹配目录，既有任务仍使用原冻结版本。刷新只更新目录，不重建持有预检查请求身份的适配器。规则页切换、搜索和版本导航须保留外层 `history.state`，避免返回审核时丢失未确认文件及勾选。隐藏面板的迟到上传或保存只更新记录，不能切换页面或对象；重新打开同一草稿详情时可采用其已保存回执。本机草稿恢复后返回原生规则入口，不跳入预览页。
-
-规则目录先读 `/rule-library` 的当前租户元信息；仅打开所选版本时读取正文与原件元信息，版本比较再读明确的前置版本。版本按显式 predecessor 分组，同范围独立规则不合并。离开面板后停止新读取，返回时刷新；取消或错身份的回执不能显示为当前版本，读取已发布版本不能替换本机草稿。
-
-`/__audit-native?round=<id>` 复用 P5 阅读已授权的历史 Round，不要求补建 Task 或事项。`GET /rounds/{id}?read_view=true` 从本轮冻结输入提供文件级结果与原件元信息；普通 Round 读取响应保持不变。旧 engine/presence 和无明确条款关联的 Finding、人工记录单独保留，不猜测条款关系、不增加正式报告资格；原件继续走本轮授权路径。返回入口仍指向同一 Round 的原审核页面。
-
-P5 与历史阅读器的“记录人工复核”复用 `PUT /rounds/{id}/reviews`，保存原始记录键、已读版本、判断、理由、建议及本轮冻结引用。响应丢失先读回；未知请求在当前页面内跨弹窗／文件切换保留，只允许核对后显式重试相同内容。版本冲突需明确采用服务器版本再编辑；刷新后以服务器记录为准，不承诺恢复未提交输入。保存成功使旧任务读取失效，再读取当前 Task／Round；人工记录不改写机器结果或报告资格。
-
-Deep checker 结果不写入 `host_source_trace_v1`。共享文件投影的 `evidence_verified` 为 false。按 #163 最新 D1，证据标记不决定 PASS/NG：实际检查器结果仍照实展示，定位和范围缺口单独提示。
-
-新 Task 的完整审核结果自动进入现有 `report_pdf` 队列，Worker 用 PyMuPDF 生成带中文与冻结来源位置的逐文件 PDF，再以当前 attempt 发布对象元信息。P5 与 PDF 共用实际条款结果的计数总结；可选证据缺失只作信息提示，不改变 PASS/NG，不另调用模型生成结论或编造整改建议。下载文件名按 Unicode 字符限制为 255 字符，缩短来源名称时保留 `-审核报告.pdf` 后缀；名称不是报告身份。`/__audit-native` 的现有 P6 通过完整 Task/Round/FileVersion/result-attempt/report/artifact 引用下载；仍按当前 Task 与原件权限鉴权，不代表组织报告分享政策已获批。明确关闭业务计费的环境允许创建人显式恢复失败 PDF：复用同一报告与冻结输入，以新生成 attempt 发布；回执丢失只读取原请求，不重审、不重开已完成 Task。计费启用时拒绝新的恢复请求，已受理回执仍可读，不据此确定 D4 收费政策。飞书及独立档案仍未接通；不把旧整轮飞书报告当成此 PDF。`FileAuditReports.tla` 是三份输入、两次生成尝试的有限 Safety 模型，五个故障配置分别检查迟到发布、输入错绑、不符合报告资格的输入、过早完成与恢复重开任务；不保证请求回执、对象存储响应、最终完成或自动清理。
-
-P6 的首次 ZIP 使用 `POST /audit-report-packages`，以请求 ID 读取状态并下载指定 package/artifact。工作复用已就绪 PDF，不重新审核或调用计费接口；Task 完成状态不因打包而重开。相同规范化报告集合只建一次工作；每个请求单独保存回执，响应丢失只读取原请求，失败集合不能换创建请求 ID 重建。明确关闭业务计费时，现有重试操作调用 `POST /audit-report-packages/{source_request_id}/retries`，绑定原包与已读 attempt；同包别名竞争只受理当前失败代次，原冻结 PDF 集合不变。恢复回执继续用原恢复请求 ID 读取，迟到 Worker 不能发布；私有旧 attempt 对象可能保留，不声称已清理。档案允许创建人从自己的多个私有任务中选择报告；创建、读回、恢复与下载均检查全部来源任务、轮次与报告权限，跨任务包不投影到任一任务报告中心。组织内分享仍使用独立分享授权，不因拥有 ZIP 而授予私有任务或原件权限。最多 100 份且总量不超过 200 MiB，逐份校验后写临时 ZIP；任一来源失败只报告该项，绝不发布部分 ZIP。包内名称有唯一序号且限 255 个 UTF-8 字节，`报告清单.txt` 保存实际名称与冻结引用。`ReportPackageAcceptance.tla` 检查两个请求、两个规范化集合的首次绑定与单次入队；`ReportPackageRecovery.tla` 检查两个调用者、三个生成代次的恢复新鲜度、冻结集合与迟到发布，三个故障配置分别破坏对应不变量。二者都是有限 Safety 检查，不证明实际字节、权限、计费、外部 I/O 或最终完成。
-
-V3.1 原有“联系我们”浮层通过已登录的 `GET /support` 读取服务配置；`PPAP_SUPPORT_PHONE`、`PPAP_SUPPORT_EMAIL`、`PPAP_SUPPORT_SERVICE_HOURS` 只填写已确认可公开的信息。可选 `PPAP_SUPPORT_QR_FILE` 是 API 进程内可读的本地文件路径；容器使用时需将该资产以只读方式挂载或随镜像提供，不将宿主路径自动变成公开 URL。二维码只接受单帧 PNG/JPEG/WebP，最多 2 MiB、4 Mi 像素；读取固定 `config_version`，联系方式或图片变化后旧请求返回冲突，需重新读取配置。两项接口不缓存、不创建任务、用量或工单；未配置联系方式且无可用图片时明确显示不可用。此接线不表示真实客服资料已确认，也不表示模板库或运营提报已接通。
-
-确认、识别和任务读取失败时，求助快照保留该操作已收到的 `X-Request-ID`，与业务请求编号及 `client-*` 页面参考编号分开；无响应头、离线或本地校验失败不制造服务编号。快照只在用户打开支持时捕获，晚到回执和服务配置读取不改写它，也不将诊断编号写入审核结果。
-
-真实联调入口的“补充模板”复用既有文件上传、原请求读回和固定版本下载；ZIP、Excel、Word、图片附件只保存原字节，不解压执行、不创建审核或消费。暂存且服务明确允许继续时，用户可显式继续同一请求与原文件；关闭弹窗保留本页附件，刷新恢复未提交草稿不在此承诺内。查看／下载先读取授权的版本元信息，再核对下载内容的类型、长度、响应 SHA-256 与实际摘要。附件上传不等于运营收到：未提供真实提报与回执读取接口时禁用提交，不生成虚假未知回执或成功态。目标多维表格与真实落表、原提交读回仍待接通；`feedback-attachments`、`feedback-upload-resume` 仅验证对应界面交互。
-
-`GET /audit-customers` 只读当前租户的最新发布规则链，按 engine 规则中的明确客户聚合上传页的客户选项。客户键与匹配器同用去空白、casefold，不是飞书身份或文件夹权限，也不从历史规则恢复已失效客户。
-
-模板入口统一打开[《PPAP Audit 模板使用说明》](https://icoastline.feishu.cn/wiki/M5KqwJYWDiuUYNkGoiXcL1bgnbe)，模板反馈跳到该文档的「联系我们」章节。链接由 `apps/web/src/audit/template-links.ts` 持有，在新窗口打开，不改变当前任务、客户、文件选择或审核草稿。文档的内容、附件与访问权限由飞书管理；产品不复制目录、不代理模板下载，也不自动接收反馈材料。审核规则上传与模板文档是不同入口。
-
-自动匹配分别报告客户未知、类型未知、缺少该类型规则、缺少客户对应规则、客户范围未确认及多个适用候选；多候选不按时间、顺序或模型排名静默选择。客户为空不等于“不限定客户”：只有保存版本中的明确确认使其具备不限客户的匹配资格，范围未确认的版本和草稿不参与。返回核对或保存规则后，显式重新识别同一任务才更新候选快照，不改写旧结果或已冻结轮次。打开客户下拉框会重读目录，不重建上传页面或改变勾选。特殊特性清单作为固定版本的比对资料随本轮保留，不单独审核、计费或生成报告。
-
-真实联调的飞书选择复用当前用户的云文件列表与导入接口。导入携带 `request_id` 时，现有文件版本上传记录先绑定发起人、源 token/type；同请求并发读取同一版本，不再次导出。首次捕获的文件名、类型、长度和摘要在持锁会话的事务中核对并固定，再写对象；失去锁会话的旧处理器不能另连写回。响应丢失读取 `/file-uploads/{request_id}`，仅服务允许时显式继续同一请求。已保存字节优先完成原版本；原字节未保存且远端内容已变化时失败，不替换为新内容。导入后仍需预检查，不自动创建审核或用量；这不决定跨任务档案身份或组织分享政策。`FeishuImportReceipts.tla` 只检查两个处理器、两个源、两个摘要下的源绑定和字节不变 Safety，含失锁后的迟到 provider 回应及对象写入；不证明实际 OAuth、SQL 锁、飞书导出、存储耐久性或最终完成。
-
-飞书选择器按 Stitch `639a2a5ebe7841d1adfc76ae28577f93` 实现目录树与完整已选清单。文件夹只展开／收起，不递归勾选；各目录独立按需读取、翻页和重试，收起后保留本窗口缓存，迟到响应不能重开目录或进入新窗口。已选集合逐行呈现完整文件名、类型图标与选择时的目录，可逐个取消或清空，不因筛选、翻页、收起目录或窗口缩放而丢失。搜索只筛选已加载文件，保留匹配项的父目录，不调用全盘搜索；清除筛选恢复原展开状态。左右分栏；搜索和添加固定，长清单各自滚动。确认添加仍走原真实飞书导入与原请求恢复接口；浏览或取消不导入、不创建审核。`drive-tree` 验证并列目录、同源文件去重及分页失败恢复，`drive-folders-late` 验证收起或关闭后迟到读取；预览不证明实际飞书授权或导出。识别前的移除只编辑上传选择，不显示任务移除历史；开始识别后仍保留排除依据，不将排除文件放入执行或费用输入。
+具体路由与请求/响应形状以 OpenAPI 为准，行为（请求 ID 幂等、未知回执只读回不重发、对象授权、冻结引用）由 `apps/api/tests`、`tests/integration/product` 与 `tests/e2e` 守护；产品不变量见 [DATA_MODEL](DATA_MODEL.md)。
 
 ## UI-first 交互预览
 
-在 `apps/web` 运行 `pnpm preview:workbench`，打开 `http://127.0.0.1:4185/__preview?page=audit`。场景切换会重置页面；宽度与主题切换保留当前交互。识别中和飞书读取中场景用预览台的“返回一次示例读取／令一次示例读取失败”控制响应，包括弹窗内的读取，不用定时器假装真实进度。
+在 `apps/web` 运行 `pnpm preview:workbench`，打开 `http://127.0.0.1:4185/__preview`。预览使用固定 fixture adapter，不代理业务 API，生产构建不包含它；场景只证明界面交互，不证明真实上传、OAuth、解析、匹配、审核、收费或持久化。预览测试在仓库根目录运行（需 `e2e` dependency group）：
 
-Web 只支持桌面宽度（最小 1280px）。产品导航可折叠为带文字提示的图标栏，仍保留产品入口和联系我们；折叠仅改变本页显示，不重建任务或写入业务状态。1280px 时审核结果页自动收起产品导航，报告页仍可打开任务列表。
+```sh
+PPAP_PREVIEW_URL=http://127.0.0.1:4185 uv run --no-sync pytest tests/e2e -k preview -q
+```
 
-`matching-gaps` 在取消选择控制计划后，显示 PFMEA 已匹配规则但缺少跨文件比对资料；返回补选后再识别可清除提示。`restore-progress` 恢复固定样例的部分结果：有效 NG 与运行、排队项分开，刷新不推进样例，主动“读取审核结果”后才显示最终结果。`restore-task-conflict`、`restore-report-conflict` 分别演示文件未结束或首次报告仍生成时，任务汇总误报完成；有效逐文件依据和已就绪报告仍保留。带原请求回执的报告重生成不重开审核任务。这些场景不代表任意上传已保存或真实审核已经执行。
+## 本地 Deep checker 实验
 
-开始识别前的上传草稿按每次“新建审核”分别保留在本页内存，浏览器历史仅记录草稿 ID。返回可恢复文件、选择、模式和传输回执；在途回执先读取原请求，不自动重传。草稿创建任务后，旧历史入口只恢复该任务，不再独立创建第二个任务。刷新与跨设备恢复仍依赖真实业务持久化，不能由本地草稿替代。`checking-loading` 可手动交付预检查迟到响应，验证离开并返回后旧响应失效。
-
-`observe-matching`、`restore-observe` 演示当前可见任务的自动读取；每次返回仍由事件控制条显式交付，不用计时器生成进度。界面默认每 3 秒读一次，隐藏或离开面板暂停，重新可见/聚焦补拉；失败按 6/12/24/30 秒退避，成功恢复基础间隔。未知的报告生成、ZIP 或分享请求保留专用核对入口，不由通用自动读取覆盖。`restore-observe-regression`、`restore-observe-missing-progress` 演示拒绝同轮较早或缺失的进度，`restore-observe-unresolved` 演示未知报告请求的暂停；`match-rule-missing` 演示缺少候选规则时禁止确认。其他手动场景显式关闭自动读取，以便单独控制原来的交互。
-
-`restore-estimate` 展示服务合同中的任务结束时间区间及观察时间；结束包含 D3 规定的首次报告处理。`restore-estimate-overdue`、`restore-estimate-invalid`、`restore-estimate-reversed` 分别演示上界已过、缺少时区和区间倒序；无可靠估计时明确说明，不用浏览器倒计时增加审核计数。过期说明随现有读取或界面操作更新，终态不再展示进行中的估计。固定样例仅验证显示，不代表真实服务已能预测耗时。P4/P5 与历史文件信息区分零件名称 `part` 和可选零件号 `part_number`；`confirm-metadata-conflict` 演示拒绝确认回执静默替换识别信息，历史详情使用所选轮次的信息，不取档案顶部的信息替代。
-
-原件读取使用 `scene=original-error`、`original-loading` 或 `original-unavailable`，选择三类文件示例后进入审核并核对 Excel 原件。它们复用产品原件阅读器，演示读取失败、重读和乱序返回；下载仅返回该冻结版本的明确示例 XLSX，不是客户原件，也不验证真实 Office、排版或定位。任意上传不生成替代原件，不向产品 API 发送示例身份。
-
-`restore-display-ready` 演示 D8 的四字段显示更正；原始识别信息仍可展开核对，冻结文件、规则、结果与既有报告不变。`restore-display-rejected/unknown/conflict/loading/denied/stale/read-failed` 分别演示明确拒绝、未知结果、版本冲突、迟到回执、撤权、旧投影和读取失败。未决保存关闭后保留原请求，只读回、不自动重发；此恢复限于当前页面生命周期。`archive-display` 按所选历史轮次显示更正，不能编辑。预览使用 `task=preview-recovery-task`，或在预览台选择对应场景。
-
-真实联调入口的同一编辑器使用 `POST /audit-tasks/{id}/display-info` 保存、`GET /audit-tasks/{id}/display-info/{request_id}` 读回原请求。请求使用规范 UUID 和完整四字段快照；`null` 清空字段。服务在同一事务核对私有任务所有权、Task/Round 当前 review 许可和显示修订，保存不创建审核、用量或报告。撤销 review 后可按保留的 read 许可核对旧回执，但不能新保存；读权限也失效时拒绝读回。读取不到原请求仍是 unknown，不许可自动重发。Task 重新读取及 API 重启后使用数据库中的显示更正；历史 Round 原始信息不改写，文件档案的真实更正投影仍待接入。
-
-文件档案及历次审核使用 `scene=archive-ready`。`archive-task-allowed` 单独演示有来源任务读取许可时，经完整 P5/报告页返回所选历史，不改开最新审核。历史报告地址包含完整冻结结果引用，切换主题和刷新后仍读取同一次审核；这只恢复固定样例，不表示任意上传已持久化。档案、来源任务、原件和报告分别使用服务提供的访问结果，不从一项权限推定另一项权限。
-
-档案列表采用 Stitch `bfd8b8db93484b159a6ce9d171447c80`，历史详情采用 `bf7f2f7d5c4742a193c29da18e7688bf`。文件表格占主区全宽，完整文件名与客户／车型／零件信息同列；分类和高级筛选使用 Sheet，最新完成审核与进行中的轮次分开。历史页只显示一次所选原件名称，通过“历史审核记录”切换轮次，复用当前审核工作台的结果、依据、原件和报告组件。筛选、分页和返回不替换已选报告的冻结引用；时间使用服务返回的审核时间，不将其声称为完成时间。两页在窄桌面自动收起产品导航，用户仍可手动展开。
-
-历史读取复用同一只读事务，批量核对文件、权限、预检查和规则；独立轮次查询经同一连接批量发送。首次历史深链不重建阅读器，不读取隐藏的档案或任务列表，不等待客户目录；指定详情与历史清单并行读取，但仍由清单确认选择，旧读取不能覆盖新选择。请求日志只使用本请求已认证的身份，不额外查库，也不跨请求复用认证。
-
-历史链接带 `auditRef` 或 `archiveReport=1` 却缺少文档身份时，显示可返回的错误，不静默显示档案列表；只有文档身份的正常入口仍可打开默认历史。
-
-`reports-zip-failed` 在同一固定报告集合中显示逐报告准备状态与失败原因；改变当前勾选不改变旧包明细。`reports-zip-write-failed/pending-failed/legacy/no-retry` 分别区分最终 ZIP 写入失败、尚未确认、未提供逐项状态及服务未允许重试。`reports-zip-outcome-*` 故意返回缺项、重复、错误报告引用、空失败原因或矛盾就绪状态；只读原请求即可恢复，不重新打包。下载与文件分享使用同一明细校验；“打包准备完成”不表示有部分 ZIP 可下载，也不改变单 PDF 状态。这些仍是 UI-draft 合同与受控预览，不确定真实重试或收费政策。
-
-`reports-zip-foreign` 在读取报告状态时返回内部自洽但属于其他任务／轮次的 ZIP；任务页拒绝下载、读回该包或另行打包，重新读取任务可恢复正确范围。当前勾选不决定旧包范围，档案页仍可跨任务打包授权的固定历史报告。
-
-报告分享的未发送草稿在当前报告页内保留接收人与交付方式；更换冻结报告范围或选择“新的分享”才重置。重开会重新核对目录，未读到的接收人保持待核对，可单独核对或移除；目录失败不允许发送，旧读取迟到也不能恢复资格。`reports-share-directory-org-changed` 演示组织变化后重新选择，`reports-share-external` 演示关闭期间读到另一笔未决请求：原请求优先，读回成功仍保留其结果，不自动发送旧草稿。这不承诺刷新、跨设备保存或真实飞书授权与送达。
-
-支持浮层使用 `support-ready`、`support-error`、`support-qr-error` 和 `support-loading`，分别走查复制/邮箱链接/图片放大、读取恢复、图片失败和返回后迟到读取。电话不可拨打，邮箱是保留的 `.invalid` 地址，图片明确不是服务二维码；不代表已取得真实客服配置或完成飞书连接。Browser Back 关闭旧浮层并保留当前文件，二维码放大关闭后回到触发按钮。
-
-`restore-usage-notice` 与 `restore-usage-completed` 分别演示审核中、已结束任务的用量提示。从提示联系支持可复制当前任务、轮次和原提示；关闭后保留文件、条款与筛选，不执行扣费或重审。
-
-报告分享、审核受理等未确认或失败操作可进入同一支持浮层，复制打开时的原请求、尝试及固定对象信息。支持快照只读，不自动重发、发送附件或创建工单。关闭后优先回原按钮，按钮消失时回原弹窗；普通全局支持不保留上一次操作信息。本页 `client-` 编号只是参考，不冒充服务端 trace。
-
-用量记录使用 `__preview?page=audit&view=usage&scene=usage-ready`。四卡读取服务提供的自然月汇总，不由明细筛选计算；每行固定一份文件的一次 500 点业务消费，免费／付费分配和技术重试不增加行数。历史入口复用冻结审核引用，不回退最新结果。`usage-quota-unknown`、`usage-revoked`、`usage-race` 分别演示未知额度、撤权和迟到读取；只读刷新不触发外部收费。这是共享 DTO 与明确样例，不是现有整轮用量账的逐文件投影，也不验证真实结算。
-
-在仓库根目录运行 `PPAP_PREVIEW_URL=http://127.0.0.1:4185 uv run --no-sync pytest tests/e2e/test_audit_preview.py tests/e2e/test_template_links_preview.py tests/e2e/test_support_preview.py tests/e2e/test_usage_preview.py -q`。需安装 `e2e` dependency group。这些测试只证明界面交互；不证明真实上传、OAuth、解析、匹配、审核、收费或持久化。预览服务不代理业务 API，生产入口不包含 fixture adapter；真实产品浏览器测试不因此替换或跳过。
-
-上述预览测试未配置 `PPAP_PREVIEW_URL` 时，可在未安装 Playwright 的环境中收集，并按原条件跳过；显式配置地址时必须安装 `e2e` group，缺少依赖会使收集失败。
-
-### 本机 PostgreSQL 集成测试
-
-`--local-postgres` 创建并清理本次独占的临时 cluster，不接入默认或共享开发数据库。默认寻找 PATH 上的 postgres，macOS 备用为 Homebrew postgresql@17；可用 PPAP_TEST_PG_BIN 指定包含 postgres/initdb/pg_ctl/psql 的完整 server 目录。libpq 只有客户端工具，不足以创建 cluster。无需 Docker；依赖缺失会失败，不以 skip 验收。
-
-
-### 本地 Deep checker 实验
-
-`scripts/deep_lab.py` 使用已有人工 checker、资源定义及 Fluent API 开发任务程序。先验证 Excel，再验证电子版 PDF；扫描版暂不纳入本轮。默认使用 Pi 1.5.0，并从本地 `.env` 的完整 `PPAP_MODEL_CODING_*` 配置读取模型与认证；未提供覆盖时沿用 `PPAP_MODEL_TEXT_*`。先运行 `npm ci --ignore-scripts --prefix deploy/deep`，Node.js 必须至少为 22.19。只有显式 `--runner grok` 才使用旧 `.grok/config.toml`。不要提交认证配置或实验日志。
+`scripts/deep_lab.py` 使用已有人工 checker、资源定义及 Fluent API 开发任务程序。用于平台离线开发检查程序；覆盖 Excel 与电子版 PDF，扫描版不纳入。默认使用 Pi 1.5.0，并从本地 `.env` 的完整 `PPAP_MODEL_CODING_*` 配置读取模型与认证；未提供覆盖时沿用 `PPAP_MODEL_TEXT_*`。先运行 `npm ci --ignore-scripts --prefix deploy/deep`，Node.js 必须至少为 22.19。只有显式 `--runner grok` 才使用旧 `.grok/config.toml`。不要提交认证配置或实验日志。
 
 ```sh
 uv run --no-sync python scripts/deep_lab.py --recipe checker --seq 11 --effort high
@@ -318,41 +152,15 @@ uv run --no-sync python scripts/deep_lab.py --recipe checker --seq 11 --effort h
   --expected /absolute/path/to/expected.json --prior /absolute/path/to/artifact.json
 ```
 
-规则变化实验使用 `--rules` 提供完整 `RuleInput` JSON，条款 ID 可保持不变而正文变化。`--expected` 是独立的 `{条款ID: 状态}` JSON，只由宿主评分读取，不复制到模型开发目录。修改规则后默认停用原 corpus 答案；未提供独立预期时明确不评分。规则随本次输入保存，迁移目录后的重放使用同一规则。各场景保持源文件字节、版本身份及参考资料不变，用旧产物先诊断再适配；条款数量变化同时检查缺项、重复和多余结果。
-
-真实特殊特性清单的复杂规则变体保存在 `tests/fixtures/deep_lab/real_rule_changes/`，使用默认 Blanc Spoiler 样本和原参考文件，不传 `--source`。先运行基线，再用其 `artifact.json` 适配各变体；每次仅一条 `R1`，以排除条款数量变化的干扰：
-
-```bash
-uv run --no-sync python scripts/deep_lab.py --recipe checker --effort high \
-  --rules tests/fixtures/deep_lab/real_rule_changes/baseline.json \
-  --expected tests/fixtures/deep_lab/real_rule_changes/baseline-expected.json
-uv run --no-sync python scripts/deep_lab.py --recipe checker --effort high \
-  --rules tests/fixtures/deep_lab/real_rule_changes/scope.json \
-  --expected tests/fixtures/deep_lab/real_rule_changes/scope-expected.json \
-  --prior /absolute/path/to/baseline/artifact.json
-```
-
-其他变体为 `exception`、`empty_unknown`、`empty_required`、`missing_unknown`、`missing_required`，预期文件均为同名加 `-expected.json`。预期依据是原件第 4、5 行；缺参考场景沿用同一资料组，其中没有年度禁用物质检测报告。更换样本或参考文件后必须先重新确认预期，不能直接沿用本组答案。
-
-`shifted-table` 保留首行标题，将第 2 行起的表格与合并区域下移 20 行；拒绝含公式或跨越该边界的合并单元格，避免改变业务含义。`renamed-sheet` 则只修改工作表名。两种变体均使用副本，不改变原件与规则。每轮模型交互默认最多 128 次，可用 `--max-turns` 调整，总开发时间上限仍为 40 分钟。`--source` 将所选规则应用到新文件，并明确停止沿用原文件的人工评分；执行与重放仍必须成功。每次运行在 `output/checker/` 下保留候选、诊断、`artifact.json`、`execution.json`、独立进程的 `replay.json` 及可用的原 oracle 评分。模型只能用规则、原件和实现作适配依据；不能读取评分预期。重放过程不继承模型凭据，输入移到新目录，完整结果须一致。CLI 运行退出失败时，汇总不能按评分相同计为成功。
-
-模型终态明确报告服务 HTTP 错误时，实验以 `deep_model_http_<状态码>` 停止，保留已有候选，汇总保留该错误而非仅报告缺少结果。候选不能当作已固定产物；额度或服务恢复后显式重新运行未完成场景。
+规则变化实验用 `--rules` 提供完整 `RuleInput` JSON，`--expected` 是独立的 `{条款ID: 状态}` 评分输入，只由宿主读取，不复制给模型；示例输入在 `tests/fixtures/deep_lab/real_rule_changes/`。每次运行在 `output/checker/` 下保留候选、诊断、`artifact.json`、`execution.json` 与独立进程的 `replay.json`；重放不继承模型凭据，完整结果须一致。模型服务 HTTP 错误以 `deep_model_http_<状态码>` 停止，候选不当作已固定产物。
 
 这是本地质量实验，默认使用本地 Pi 进程和现有短期授权网关；不证明产品 guest 隔离或生产端到端行为。固定执行只使用原生读取与明确的 `PdfSpec`，不自动转入 OCR。
-
-GitHub Actions 的外部模型测试使用 `CI_LLM_API_KEY`、`CI_LLM_BASE_URL` 和 `CI_LLM_MODEL` 三项仓库 Secret，与生产 Standard 配置分开。当前 CI 使用已授权的 Codex Responses 服务，避免调用已耗尽额度的 Grok；真实模型用量仍属于测试运行，不以缓存伪造模型成功。
-
-Excel 的图形事实通过 `audit.engine.checkers.excel_field_evidence` 读取。XLS 先经既有 LibreOffice 隔离转换为 XLSX，保留原始绘图部分；单元格、控件和可靠原生文字优先使用。按字段文字、合并范围和相邻字段确定区域，必要时由 `documents.excel.visual` 渲染；Excel 与 PDF 共用 `pdf_field_region` 的栏目边界。签字字段不读取印刷姓名、日期或客户签字，保证书盖章与授权表盖章分别取证。缺少标签且需要证明没有盖章时，覆盖完整适用工作表，包含原生单元格范围外的绘图；不能凭局部未找到就确认不存在。模型只返回事实，坐标、文件版本和来源摘要由程序保存；未知仍为 UNABLE，调用或解析错误为 ERR。同一字段复用成功或失败结果，不自动重试。
-
-UAES 目录叶子的后续验收由 [Issue #295](https://github.com/ppap-agent/ppap/issues/295) 拥有，首轮实现见 [#289](https://github.com/ppap-agent/ppap/issues/289)。条款在各自叶子中实现，只从 `checker_lib` 复用原件读取和取证，不调用其他版本的业务类。PFMEA 经验教训、评分描述及 CP 追溯/FIFO 措施使用有原文引用的文本语义检查；数字、日期及跨文件身份由代码检查。原图只用于实际图形事实。通用视觉读取最多十页或十个工作表；单页/单表读取不能证明多页全图关系。当前跨页仅支持调用者明确声明的“存在”事实，完整范围都为否才支持否定；全图一致性、所有签章齐全等联合事实在多页时保持未知。DOCX 的原生内容可以读取，尚无可靠位置的图形事实返回 UNABLE。扫描表格不补做整份转录。原件或模型配置变化、调用失败与事实未知分别报告，不自动重试或转成 PASS。
-
-尺寸审核把检查数据、判定标准、单位和结果绑定到同一原始记录。明确的不同量纲不能直接比较；支持的同量纲单位先换算，单位无法可靠确定时返回 UNABLE。跨文件读取绑定本轮冻结文件版本，完整匹配零件标识及工序号，保留两份原件的单元格位置。不同文档的修订计数不要求相同；两份原件都明确声明同零件的工程更改水平时，冲突不能通过。身份不足不能支持 PASS，也不借用相近编号的记录。历史文件、规则与结果不变。
 
 ## Checker Core 官方发布
 
 官方 Suite 的安装、回归与发布是三个动作。仓库自带的目录叶子已离线验证，`product.seed_standard_suites --apply --publish-defaults` 在入库后直接把每个叶子设为官方默认（`repository_default`，不需要语料证明行），已有官方指针的规则组不会被覆盖，关联叶子先发布；企业未自选时自动跟随，显示为已验证。`product.seed_standard_suites --apply` 只保存 `checkers/<客户>/<规则组>/` 目录叶子的不可变候选，不安装 `standard_suites()` 或历史 generic carrier，也不因相同 `suite_key` 选择旧 carrier。企业 `PUT /suites/{key}/active` 即使带 `force_unverified` 也不能把历史 carrier 设为下一个头；数据库里已有的 carrier 头保持不动，新审核和预检会要求确认目录版本。关联套件的当前头如果是 carrier，企业采用和官方发布同样拒绝，不会改用同名的其他版本。平台以 migrator 角色调用 `SuiteReleaseStore.record_official_validation` 保存独立回归证明，再调用 `publish_official(revision_id, expected_revision=..., expected_validation_revision=...)` 发布。发布前用 `official_active(suite_key)` 读取官方指针修订；首次为 0，验证修订取刚确认的证明。发布在同一事务内重查证明、当前关联 Suite、共享库版本及对象字节，并以 CAS 更新唯一官方指针。过期发布请求须先读回，不自动用新修订重发。验证或保存新候选不会替换当前官方版本；回滚也须显式发布准确旧版本。
 
-首次启用先按关联依赖顺序验证并发布官方 Suite，再受理跟随官方版本的审核。迁移 `0048_official_suite_heads.sql` 不把既有 latest 或验证记录猜成发布批准，未激活的官方源仍可按 revision 查看；既有企业固定指针和历史 Round 不变。没有固定企业版本的租户仅跟随已发布官方指针，企业明确固定某个官方或企业 revision 后不会被后续官方发布覆盖。官方或企业指针若仍指向旧 carrier，新受理和预检拒绝并要求确认版本，不自动改选同 key 的目录版本，也不解除已有 pin。显式发布只影响之后的新 Round。已冻结 Round 继续使用原修订。
+首次启用先按关联依赖顺序验证并发布官方 Suite，再受理跟随官方版本的审核。既有 latest 或验证记录不被当作发布批准，未激活的官方源仍可按 revision 查看。没有固定企业版本的租户仅跟随已发布官方指针，企业明确固定某个官方或企业 revision 后不会被后续官方发布覆盖。官方或企业指针若仍指向旧 carrier，新受理和预检拒绝并要求确认版本，不自动改选同 key 的目录版本，也不解除已有 pin。显式发布只影响之后的新 Round。已冻结 Round 继续使用原修订。
 
 ## 企业首次采用检查版本
 
@@ -380,7 +188,7 @@ Key 只从标准输入读取，不打印。保存前先用该 Key 完成一次�
 
 普通模型请求（文件识别、规则提取/形式化、规则匹配、文字证据、视觉事实）统一经 `documents.ai.run_json`，底层为 PydanticAI 的 OpenAI Responses 模型：文本用 Prompted JSON 输出，视觉用原生 JSON Schema；Codex 端点（`/backend-api/codex`）以流式读取。单次调用最多一次输出校正，不做传输重试，失败只返回代码（`timeout`、`invalid_output`、`provider_status`、`request_failed`）。Schema 合法不等于业务正确，PPAP 仍执行原有业务校验，未知不得 PASS。Token 用量只在 provider 回报时记录，缺失记为未知，不影响结果有效性。
 
-Deep（Pi）只通过本地网关取得短期 Grant，Guest 内没有真实 Key。网关按冻结身份为每个请求选模型：Pi 的请求用编码模型，Checker 试跑中的文本与视觉调用分别用冻结的文本、视觉模型，并补上部署选项（如视觉 `reasoning.effort=none`）。每个 Attempt 只有一个请求次数熔断 `PPAP_DEEP_MODEL_MAX_REQUESTS`（默认 200），用于停止失控循环：触发后不发布产物，按资源上限结束。没有累计 Token/Turn 预算，缺少 usage 回执不拒绝有效产物；墙钟时限、容器资源限制、取消与产物身份核对保持不变。SDK 可对瞬时错误做少量重试，由请求熔断兜底。
+Deep（Pi）只通过本地网关取得短期 Grant，Guest 内没有真实 Key。网关按冻结身份为每个请求选模型：Pi 的请求用编码模型，Suite 程序中的文本与视觉调用分别用冻结的文本、视觉模型，并补上部署选项（如视觉 `reasoning.effort=none`）。每个 Attempt 只有一个请求次数熔断 `PPAP_DEEP_MODEL_MAX_REQUESTS`（默认 200），用于停止失控循环：触发后按资源上限结束。没有累计 Token/Turn 预算，缺少 usage 回执不拒绝有效结果；墙钟时限、容器资源限制与取消保持不变。SDK 可对瞬时错误做少量重试，由请求熔断兜底。
 
 ## 自定义规则与 Suite
 
@@ -400,7 +208,7 @@ Deep（Pi）只通过本地网关取得短期 Grant，Guest 内没有真实 Key�
 ## 建议复核（确定性提示）
 
 结果页在同一企业、当前用户仍可读取的冻结轮次中，比较同一原件内容、实际执行的 Suite revision 和条款身份。
-同文件比较最多读取最近 50 个匹配内容的已完成轮次，每轮最多显示 3 个提示。Deep 使用本次 result_attempt 的实际生成 artifact，不用起始 Suite 代替。
+同文件比较最多读取最近 50 个匹配内容的已完成轮次，每轮最多显示 3 个提示。
 提示不调用模型，不改机器结果、人工复核、覆盖或报告资格。尚不启用依赖样本量的统计类信号。
 
 同轮 PDF/Excel 关系由结果页的“关联同一文档的 PDF 与 Excel”明确确认，API 为 `PUT /rounds/{id}/review-document-pairs`。
@@ -409,3 +217,15 @@ Deep（Pi）只通过本地网关取得短期 Grant，Guest 内没有真实 Key�
 
 忽略或采纳通过 `PUT /rounds/{id}/review-hints` 保存到已有 finding 的独立回执字段，绑定完整对比对象及两边的 result_attempt。
 采纳只保存回执，不启动模型、不改机器结果。`GET /review-hints/responses` 返回当前用户可读轮次保留的采纳/忽略回执计数和比例，分母为已明确处理的提示，不把读取当作曝光。
+
+## Checker 历史身份导入
+
+`python -m scripts.import_checker_history` 只为本仓既有、终态、尚无 Core admission snapshot 的 Round 追加历史身份（`round_inputs.checker_history`，`code_identity=unavailable`、始终 `unverified`）；不创建 Round/Job、不执行代码或模型、不收费、不通知、不改机器结果或人工复核。生产运行须单独授权，不随应用启动执行。参数与安全默认见 `--help`：
+
+```sh
+uv run --no-sync python -m scripts.import_checker_history --tenant-id TENANT_UUID        # 只读 dry-run
+uv run --no-sync python -m scripts.import_checker_history --tenant-id TENANT_UUID --apply --expect-digest PLAN_DIGEST
+uv run --no-sync python -m scripts.import_checker_history --tenant-id TENANT_UUID --round-id ROUND_UUID --verify-user-id USER_UUID
+```
+
+缺损记录输出 `blocked` 并返回退出码 2；来源改变后须重新 dry-run，冲突或不确定结果先读回，不清空身份重试。

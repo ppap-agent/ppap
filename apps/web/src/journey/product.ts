@@ -1,8 +1,7 @@
-import {request, type FileVersion, type Material, type Round, type RuleCandidate, type RuleDetail, type RulesList, type RuleBody} from '../api.ts'
+import {request, type FileVersion, type Material, type RuleCandidate, type RuleDetail, type RulesList, type RuleBody} from '../api.ts'
 import {clauseSourceReady, isRequirementBasis, localBasis, type RequirementBasis} from './requirements-state.ts'
 import type {RequirementCollection, RequirementVersion} from './requirement-library-state.ts'
 import {sourceContent} from './requirement-library-state.ts'
-import type {DecisionEvidence, DecisionInput} from './decision-input'
 
 export function parsedBasis(basis: RequirementBasis, candidate: RuleCandidate): RequirementBasis {
   return {...basis, confirmed: null, source: {...basis.source, title: candidate.title, version: basis.source.version || 'v1', state: 'ready'},
@@ -134,26 +133,4 @@ export function sourceLocation(locator: Record<string, unknown>) {
   if (locator.kind === 'docx_paragraph') return `段落 ${locator.paragraph}`
   if (locator.kind === 'docx_cell') return `表 ${locator.table} · 行 ${locator.row} · 列 ${locator.column}`
   return '位置待核对'
-}
-export function roundEvidence(round: Round, basis: RequirementBasis | null): DecisionEvidence[] {
-  const results = {PASS: '满足', NG: '不满足', ERR: '执行失败', UNABLE: '无法判断', NA: '不适用'} as const
-  const rows: DecisionEvidence[] = round.findings.map(finding => {
-    const semantic = finding.locator?.semantic
-    const clause = basis?.clauses.find(row => row.id === (semantic?.clause_id || finding.locator?.rule_item_id))
-    return {id: finding.item_key, displayId: semantic?.clause_id || finding.locator?.rule_item_id, title: clause?.title || finding.classification || finding.item,
-      requirement: semantic?.rule_text || clause?.text || finding.classification,
-      result: results[finding.status], explanation: [finding.item, finding.suggestions].filter(Boolean).join('\n'),
-      sources: semantic?.sources.map(source => ({file: source.filename, fileVersionId: source.file_version_id, location: sourceLocation(source.locator as Record<string, unknown>), excerpt: source.excerpt})) ?? (finding.locator ? [{file: finding.locator.filename || '来源待核对', fileVersionId: finding.locator.file_version_id, location: finding.locator.locator || '位置待核对', excerpt: ''}] : [])}
-  })
-  for (const coverage of round.coverage.rule_items ?? []) {
-    if (coverage.item_key && rows.some(row => row.id === coverage.item_key)) continue
-    if (coverage.coverage === 'executed') continue
-    rows.push({id: `coverage:${coverage.file_version_id}:${coverage.id}`, displayId: coverage.id, title: coverage.category || coverage.rule_to_check.slice(0, 48), requirement: coverage.rule_to_check, result: '未覆盖', explanation: coverage.reason === 'manual-only' ? '检查程序尚未确认此条款的执行映射，请人工核对。' : coverage.reason || '本条要求未完成自动检查。', sources: []})
-  }
-  if (!rows.length) rows.push({id: 'no-result', title: '本轮检查结果', requirement: basis?.source.title || '本轮要求', result: round.execution === 'failed' ? '执行失败' : '未覆盖', explanation: round.failure?.message || '本轮没有可核对的逐项结果。', sources: []})
-  return rows
-}
-export function roundInput(round: Round, basis: RequirementBasis | null, scope: string, clarification: string | null): DecisionInput {
-  return {receiptId: round.id, roundId: round.id, scope, basis, clarification,
-    files: round.inputs.map(material => ({name: material.original_filename, revision: '已固定版本', sourceVersion: 1, material, roundId: round.id})), evidence: roundEvidence(round, basis)}
 }

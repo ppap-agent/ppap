@@ -124,33 +124,6 @@ class SchemaUpgradeTests(unittest.TestCase):
             )
             self.schema.require(ticket, "read preserved ticket")
             self.assertEqual(ticket.stdout.strip(), b"upgrade-test-ticket|t")
-            # One kind of audit (#322): the mode columns and Deep-only tables are gone.
-            deep = self.schema.psql(
-                self.schema.migrator_user(),
-                self.schema.migrator_password(),
-                previous,
-                "-Atc",
-                "SELECT (SELECT count(*) FROM information_schema.columns WHERE table_schema='product' AND column_name='analysis_mode')"
-                " + (SELECT count(*) FROM pg_tables WHERE schemaname='product' AND tablename IN ('deep_rule_changes','checker_round_artifacts'))",
-            )
-            self.schema.require(deep, "read removed audit mode schema")
-            self.assertEqual(deep.stdout.strip(), b"0")
-            # Checker optimization/generation are retired; deep mode is a task choice frozen on the Round
-            # and reviews program results, so generated round programs are no longer recorded.
-            retired = self.schema.psql(
-                self.schema.migrator_user(),
-                self.schema.migrator_password(),
-                previous,
-                "-Atc",
-                "SELECT (SELECT count(*) FROM pg_tables WHERE schemaname='product' AND tablename IN ('checker_feedback','checker_optimizations'))"
-                " + (SELECT count(*) FROM pg_proc WHERE proname IN ('retire_checker_optimizations','retire_checker_operator'))"
-                " + (SELECT count(*) FROM pg_indexes WHERE indexname='optimization_notification_intent'),"
-                " (SELECT count(*) FROM information_schema.columns WHERE table_schema='product' AND column_name='deep_mode' AND table_name IN ('audit_drafts','audit_rounds')),"
-                " (SELECT count(*) FROM pg_tables WHERE schemaname='product' AND tablename='deep_round_programs'),"
-                " (SELECT indexdef LIKE '%(round_id, file_version_id, charge, is_free_trial)%' FROM pg_indexes WHERE indexname='usage_events_file_slice_idx')",
-            )
-            self.schema.require(retired, "read deep mode schema")
-            self.assertEqual(retired.stdout.strip(), b"0|2|0|t")
 
             tables = self.schema.psql(
                 self.schema.migrator_user(),

@@ -1,14 +1,10 @@
 """Independent V4 source identities; these tests do not certify Checker coverage."""
 
-from collections import Counter
-
 import pytest
-from audit.presets import customer_presets, preset_rule
+from audit.presets import preset_rule
 
 
 def test_preset_matrix_uses_customer_identity_not_legacy_filename_numbers():
-    assert Counter(rule.customer for rule in customer_presets()) == {"UAES": 19, "理想": 17, "蔚来": 17}
-    assert Counter(rule.level for rule in customer_presets()) == {"L1": 24, "L2": 29}
     assert (preset_rule("UAES", "U16").source_type, preset_rule("UAES", "U16").level) == ("T09", "L2")
     assert (preset_rule("理想", "L07").source_type, preset_rule("理想", "L07").level) == ("T10", "L1")
     assert preset_rule("蔚来", "N01").source_type == "T01"

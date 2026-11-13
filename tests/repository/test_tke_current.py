@@ -76,20 +76,13 @@ class TkeCurrentDeployTests(unittest.TestCase):
         for name in WORKLOADS:
             self.assertIn(name, names)
         blob = json.dumps(docs)
-        self.assertNotIn("ppap.api.xixifusi.online", blob)
-        self.assertNotIn("ppap-agent.xixifusi.online", blob)
         self.assertNotIn("docker.sock", blob)
         self.assertNotIn("/var/run/docker", blob)
-        self.assertNotIn('"/v2"', blob)
         self.assertEqual(list(_find(docs, "nodeSelector")), [])
         self.assertIn("cbs", list(_find(docs, "storageClassName")))
         config = next(doc for doc in docs if doc.get("kind") == "ConfigMap" and doc["metadata"]["name"] == "ppap-current")
         self.assertEqual(config["metadata"]["namespace"], "ppap-test")
         self.assertEqual(config["data"]["PPAP_USAGE_CHARGE_ENABLED"], "false")
-        self.assertEqual(config["data"]["PPAP_DEEP_EXECUTOR_REVISION"], "ppap-deep-v2")
-        self.assertEqual(config["data"]["PPAP_DEEP_RUNTIME"], "container-only")
-        self.assertEqual(config["data"]["PPAP_DEEP_SANDBOX_PROFILE"], "off")
-        self.assertNotIn("PPAP_DEEP_CUSTOMER_ENABLED", config["data"])
         images = [container["image"] for doc in docs for container in _containers(doc) if container.get("image")]
         app_containers = [container for doc in docs for container in _containers(doc) if container.get("name") in {"api", "worker", "deep", "web"}]
         app_images = [container["image"] for container in app_containers]
@@ -116,13 +109,10 @@ class TkeCurrentDeployTests(unittest.TestCase):
         init_db = next(container for doc in docs if doc.get("metadata", {}).get("name") == "ppap-current-init-db" for container in _containers(doc) if container.get("name") == "init-db")
         init_command = "\n".join(init_db.get("args") or [])
         self.assertIn("sh /migrations/apply.sh", init_command)
-        self.assertNotIn("apply.sql", init_command)
 
         command = "\n".join(worker.get("args") or [])
         self.assertIn('until [ -S "$PPAP_DEEP_CONTROLLER_SOCKET" ]', command)
-        self.assertIn("warning: deep controller socket unavailable after 60s; starting Worker so Standard remains available", command)
         self.assertIn("exec python -m worker.main", command)
-        self.assertNotIn("deep controller socket missing", command)
         deep = next(container for doc in docs if doc.get("metadata", {}).get("name") == "ppap-current-worker" for container in _containers(doc) if container.get("name") == "deep")
         self.assertEqual(next(item["value"] for item in deep["env"] if item["name"] == "PPAP_SERVICE"), "deep")
         self.assertEqual(deep.get("readinessProbe", {}).get("exec", {}).get("command"), ["python", "-m", "agent.readiness"])

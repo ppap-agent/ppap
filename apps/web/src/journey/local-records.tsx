@@ -3,36 +3,14 @@ import {Collapsible, CollapsibleTrigger, CollapsibleContent} from '../components
 // Stitch: projects/13261964020862199279/screens/a0caaf69f431417481379fdd52f2075a.
 // Same account dialog, three task hierarchies via ?recordsLayout=...; no cloud sync.
 import {useEffect, useRef, useState} from 'react'
-import {ArrowLeft, ArrowRight, Download, FolderClock, RefreshCw, Upload, WifiOff} from 'lucide-react'
+import {ArrowLeft, ArrowRight, Download, FolderClock, RefreshCw, Upload} from 'lucide-react'
 import {Button} from '../components/ui/button'
 import {Checkbox} from '../components/ui/checkbox'
 import {Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle} from '../components/ui/dialog'
-import {draftEvent, retryDraftSaves, unsavedDrafts} from './saved-draft'
-import {clearRecords, createBackup, downloadRecords, inputBackup, localRecords, parseBackup, previewRestore, restoreBackup, type Backup, type LocalRecord, type RecordValidators} from './local-records-state'
+import {draftEvent, unsavedDrafts} from './saved-draft'
+import {clearRecords, createBackup, downloadRecords, localRecords, parseBackup, previewRestore, restoreBackup, type Backup, type LocalRecord, type RecordValidators} from './local-records-state'
 const layouts = ['概览与恢复', '记录优先', '操作与明细']
 const stamp = (at: string) => at ? new Date(at).toLocaleString('zh-CN', {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false}) : '保存时间未知'
-export function LocalSaveNotice({onOpen, validators}: {onOpen: () => void; validators: RecordValidators}) {
-  const [failures, setFailures] = useState(unsavedDrafts)
-  const [offline, setOffline] = useState(!navigator.onLine)
-  const [notice, setNotice] = useState('')
-  useEffect(() => {
-    const sync = () => setFailures(unsavedDrafts()), network = () => setOffline(!navigator.onLine)
-    const leaving = (event: BeforeUnloadEvent) => {if (unsavedDrafts().some(item => item.raw)) {event.preventDefault(); event.returnValue = ''}}
-    window.addEventListener(draftEvent, sync); window.addEventListener('online', network); window.addEventListener('offline', network); window.addEventListener('beforeunload', leaving)
-    return () => {window.removeEventListener(draftEvent, sync); window.removeEventListener('online', network); window.removeEventListener('offline', network); window.removeEventListener('beforeunload', leaving)}
-  }, [])
-  function saveInput() {
-    try {downloadRecords(createBackup(validators, true), '当前输入备份'); setNotice('已请求下载当前输入备份；请确认下载文件。尚未改变本机保存状态。')}
-    catch {downloadRecords(inputBackup(), '未保存输入'); setNotice('已请求下载未保存输入。由于本机记录不可读取，此文件不是完整事项备份。')}
-  }
-  if (!failures.length && !offline) return null
-  return <div className={"relative z-45 flex flex-wrap items-center gap-y-2 gap-x-3 py-3 px-6 bg-muted-foreground border-b text-foreground text-sm [&_>_div]:flex-1 [&_>_div]:min-w-55 [&_>_div]:grid [&_>_div]:gap-1 [&_strong]:flex [&_strong]:items-center [&_strong]:gap-1.5 [&_span]:text-muted-foreground"} role={failures.length ? 'alert' : 'status'}>
-    <div>{failures.length ? <><strong>有记录尚未保存或无法读取</strong><span>{failures.some(item => item.raw) ? '原有记录未被替换。不要刷新，先保存或导出当前输入。' : '原记录未被改动。请先导出检查；恢复读取后可重新打开页面。'}</span></> : <><strong><WifiOff size={16}/>当前处于离线状态</strong><span>已打开页面可继续本机操作；刷新或关闭后不保证能重新打开。</span></>}{notice && <span>{notice}</span>}</div>
-    {failures.some(item => item.raw) && <><Button variant="outline" onClick={retryDraftSaves}>重试保存</Button><Button variant="outline" onClick={saveInput}>导出当前输入</Button></>}
-    <Button variant="ghost" onClick={onOpen}>本机记录</Button>
-    {failures.length > 0 && failures.every(item => !item.raw) && <Button variant="outline" onClick={() => location.reload()}>重新打开页面</Button>}
-  </div>
-}
 export function LocalRecordsDialog({open, onOpenChange, validators, returnTo = isPreview() ? '/preview/intake.html' : '/'}: {open: boolean; onOpenChange: (open: boolean) => void; validators: RecordValidators; returnTo?: string}) {
   const [snapshot, setSnapshot] = useState(() => localRecords(validators))
   const [backup, setBackup] = useState<Backup | null>(null)

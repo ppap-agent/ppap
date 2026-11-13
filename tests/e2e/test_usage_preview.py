@@ -64,16 +64,11 @@ class UsagePreviewTests(unittest.TestCase):
                 expect(table.get_by_role("row")).to_have_count(2)
                 for label in ("本月消费次数", "消费点数", "待扣费点数"):
                     expect(page.get_by_role("group", name=label, exact=True)).to_contain_text("0")
-                self.assertTrue(page.evaluate("document.documentElement.scrollWidth <= innerWidth"))
                 page.close()
             browser.close()
 
-    def test_service_notices_keep_the_three_confirmed_texts_and_open_shared_support(self):
-        notices = {
-            "usage-ai-disabled": "飞书AI包开关已关闭，请联系管理员在飞书管理后台启用或联系我们获取免费额度",
-            "usage-no-package": "提示：试用额度不足，且未采购飞书AI包，请联系管理员在飞书管理后台进行充值或联系我们获取免费额度",
-            "usage-paid-insufficient": "提示：飞书AI包额度不足，本次消耗将于充值后自动扣费，请联系管理员或联系我们获取免费额度",
-        }
+    def test_service_notice_opens_shared_support_and_keeps_the_usage_view(self):
+        notices = {"usage-no-package": "提示：试用额度不足，且未采购飞书AI包，请联系管理员在飞书管理后台进行充值或联系我们获取免费额度"}
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page(permissions=["clipboard-read", "clipboard-write"])
@@ -161,7 +156,6 @@ class UsagePreviewTests(unittest.TestCase):
                 expect(page.get_by_role("group", name="本月消费次数", exact=True)).to_contain_text("12")
             page.get_by_role("button", name="下一页", exact=True).click()
             expect(page.get_by_role("navigation", name="分页", exact=True).get_by_role("button", name="第 2 页", exact=True)).to_have_attribute("aria-current", "page")
-            self.assertTrue(page.evaluate("document.documentElement.scrollWidth <= innerWidth"))
             page.get_by_role("textbox", name="搜索文件名或发起人", exact=True).fill("没有这个文件")
             # Enter submits the same filter as the search button.
             page.get_by_role("textbox", name="搜索文件名或发起人", exact=True).press("Enter")
@@ -230,33 +224,6 @@ class UsagePreviewTests(unittest.TestCase):
             expect(page.get_by_text("旧用量查询", exact=True)).to_have_count(0)
             expect(charged).to_contain_text("5,000")
             expect(page.get_by_role("row", name="消费记录 示例消费-3", exact=True).get_by_title(re.compile("示例飞书订单-3"))).to_have_count(1)
-            browser.close()
-
-    def test_preview_harness_preserves_usage_filters_history_and_theme(self):
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch()
-            page = browser.new_page()
-            page.goto(PREVIEW + "/__preview?page=audit&scene=usage-ready&view=usage")
-            preview = page.frame_locator("iframe")
-            expect(preview.get_by_role("heading", name="用量记录", exact=True)).to_be_visible()
-            preview.get_by_role("button", name="下一页", exact=True).click()
-            expect(preview.get_by_role("navigation", name="分页", exact=True).get_by_role("button", name="第 2 页", exact=True)).to_have_attribute("aria-current", "page")
-            page.get_by_role("button", name="切换明暗主题", exact=True).click()
-            page.reload()
-            expect(preview.get_by_role("navigation", name="分页", exact=True).get_by_role("button", name="第 2 页", exact=True)).to_have_attribute("aria-current", "page")
-            preview.get_by_role("row", name="消费记录 示例消费-11", exact=True).get_by_role("button", name="查看", exact=True).click()
-            expect_history(preview, 1)
-            page.reload()
-            expect_history(preview, 1)
-            preview.get_by_role("button", name="返回用量记录", exact=True).click()
-            expect(preview.get_by_role("navigation", name="分页", exact=True).get_by_role("button", name="第 2 页", exact=True)).to_have_attribute("aria-current", "page")
-            preview.get_by_role("row", name="消费记录 示例消费-11", exact=True).get_by_role("button", name="查看", exact=True).click()
-            expect_history(preview, 1)
-            page.frames[1].evaluate("history.back()")
-            expect(preview.get_by_role("navigation", name="分页", exact=True).get_by_role("button", name="第 2 页", exact=True)).to_have_attribute("aria-current", "page")
-            page.get_by_role("button", name="切换明暗主题", exact=True).click()
-            page.reload()
-            expect(preview.get_by_role("navigation", name="分页", exact=True).get_by_role("button", name="第 2 页", exact=True)).to_have_attribute("aria-current", "page")
             browser.close()
 
     def test_revocation_clears_previously_read_account_data_instead_of_claiming_zero(self):

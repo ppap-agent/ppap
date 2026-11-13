@@ -1,24 +1,11 @@
 from __future__ import annotations
 
-import gc
-import re
-import shutil
-import tempfile
-from functools import partial
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from threading import Thread
-from typing import Any
 
 import pytest
 from audit.checker_lib.li.psw_excel_agent import PswExcelAgent
-from audit.contracts import (
-    AuditInput,
-    AuditResultItem,
-    RuleInput,
-)
-from audit.engine import run_audit
-from audit.engine.app_runtime import _AppAuditRuntime, run_audit_engine
+from audit.checker_lib.li.psw_pdf_agent import PswPDFAgent
+from audit.contracts import AuditInput, RuleInput
 from audit.engine.rule_engine import Table
 from audit.kinds import PpapDocumentType
 from corpus_contracts.psw_cross_format_regression import (
@@ -26,43 +13,20 @@ from corpus_contracts.psw_cross_format_regression import (
     PswAuditSnapshot,
     compare_psw_snapshots,
 )
-from documents.contracts import (
-    ConversionArtifact,
-    FileRef,
-)
-from documents.word import (
-    WordTableBlock,
-    convert_legacy_doc_to_docx,
-    extract_docx_structure,
-)
+from documents.contracts import FileRef
+from documents.conversion import convert_pdf_to_excel_auto
 from openpyxl import load_workbook
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _PAIR_ROOT = _REPO_ROOT / "assets" / "li" / "samples" / "模拟测试文件V2-01" / "16-零件提交保证书" / "16-零件提交保证书-上海亚大"
-_LEGACY_DOC = _REPO_ROOT / "tests" / "corpus" / "fixtures" / "legacy_doc" / "psw.doc"
 
 
-class _DeterministicRuntime(_AppAuditRuntime):
-    def __init__(self) -> None:
-        self.pdf_artifact: ConversionArtifact | None = None
-
-    def convert_pdf_to_excel(
-        self,
-        file_ref: Any,
-        *,
-        enable_cache: bool = True,
-    ) -> ConversionArtifact:
-        artifact = ConversionArtifact.model_validate(
-            super().convert_pdf_to_excel(
-                file_ref,
-                enable_cache=enable_cache,
-            )
-        )
-        self.pdf_artifact = artifact
-        return artifact
-
-    def read_ocr_visual_facts(self, *, images, prompt, response_schema):
-        return _controlled_visual_facts(response_schema, len(images), prompt)
+def _run(agent_type, audit: AuditInput, rules: RuleInput) -> list:
+    agent = agent_type(audit, rules)
+    try:
+        return [agent.check(index) for index in range(len(rules.rules))]
+    finally:
+        agent.close()
 
 
 def _controlled_visual_facts(response_schema, image_count, prompt=""):
@@ -150,44 +114,16 @@ def _xlsx_key_fields(path: Path) -> dict[str, str]:
     }
 
 
-def _word_key_fields(docx_content: bytes) -> dict[str, str]:
-    document = extract_docx_structure(docx_content)
-    text = " ".join(cell.text for block in document.blocks if isinstance(block, WordTableBlock) for cell in block.cells)
-
-    def match(pattern: str) -> str:
-        found = re.search(pattern, text)
-        return found.group(1).strip() if found else ""
-
-    return {
-        "part_number": match(r"零件号[\s：:]*([A-Za-z0-9_-]+)"),
-        "supplier": match(r"供应商名称/代码\s*([^\s]+)"),
-        "weight": match(r"重量[\s：:]*([0-9]+(?:\.[0-9]+)?)"),
-    }
-
-
-def _core_results(results: list[Any]) -> tuple[AuditResultItem, ...]:
-    return tuple(AuditResultItem.model_validate(result.model_dump()) for result in results)
-
-
-def test_real_xlsx_pdf_pair_runs_extraction_and_audit_before_comparison() -> None:
+def test_real_xlsx_pdf_pair_runs_extraction_and_audit_before_comparison(monkeypatch: pytest.MonkeyPatch) -> None:
     xlsx_path = _PAIR_ROOT.with_suffix(".xlsx")
     pdf_path = _PAIR_ROOT.with_suffix(".pdf")
-    runtime = _DeterministicRuntime()
+    monkeypatch.setattr(
+        "audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", lambda **request: _controlled_visual_facts(request["response_schema"], len(request["images"]), request["prompt"])
+    )
     rules = _psw_rules()
-    artifact = runtime.convert_pdf_to_excel(
-        FileRef(location=str(pdf_path)),
-        enable_cache=True,
-    )
-    xlsx_results = run_audit(
-        AuditInput(audit_id="paired-xlsx", file_url=str(xlsx_path)),
-        rules,
-        runtime=runtime,
-    )
-    pdf_results = run_audit(
-        AuditInput(audit_id="paired-pdf", file_url=str(pdf_path)),
-        rules,
-        runtime=runtime,
-    )
+    artifact = convert_pdf_to_excel_auto(FileRef(location=str(pdf_path)), enable_cache=True)
+    xlsx_results = _run(PswExcelAgent, AuditInput(audit_id="paired-xlsx", file_url=str(xlsx_path)), rules)
+    pdf_results = _run(PswPDFAgent, AuditInput(audit_id="paired-pdf", file_url=str(pdf_path)), rules)
 
     assert artifact is not None and artifact.success and artifact.xlsx_path
     reference = PswAuditSnapshot(
@@ -216,94 +152,6 @@ def test_real_xlsx_pdf_pair_runs_extraction_and_audit_before_comparison() -> Non
         [(index, result.status, result.suggestions) for index, result in enumerate(pdf_results, 1)],
     )
     assert all(result.evidence is not None for result in xlsx_results + pdf_results)
-
-
-@pytest.fixture(params=["local", "http"])
-def legacy_doc_source(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch):
-    if request.param == "local":
-        yield str(_LEGACY_DOC)
-        return
-
-    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
-    handler = partial(SimpleHTTPRequestHandler, directory=str(_LEGACY_DOC.parent))
-    with ThreadingHTTPServer(("127.0.0.1", 0), handler) as server:
-        thread = Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        try:
-            yield f"http://127.0.0.1:{server.server_port}/psw.doc?sig=test"
-        finally:
-            server.shutdown()
-            thread.join()
-
-
-@pytest.mark.parametrize("profile", ["v2", "v3"])
-def test_real_doc_and_its_converted_docx_have_equivalent_results_and_release_temporary_files(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    legacy_doc_source: str,
-    profile: str,
-) -> None:
-    executable = shutil.which("soffice") or shutil.which("libreoffice")
-    assert executable is not None, "required PSW runtime must provide LibreOffice"
-    monkeypatch.setenv("LEGACY_DOC_CONVERTER_EXECUTABLE", executable)
-    monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "controlled-ocr")
-    monkeypatch.setenv("PPAP_MODEL_VISION_API_KEY", "controlled")
-    monkeypatch.setenv("PPAP_MODEL_VISION_BASE_URL", "https://ocr.invalid/v1")
-    monkeypatch.setattr(
-        "audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", lambda **request: _controlled_visual_facts(request["response_schema"], len(request["images"]), request["prompt"])
-    )
-    runtime_temp = tmp_path / "conversion-temporary"
-    runtime_temp.mkdir()
-    monkeypatch.setattr(tempfile, "tempdir", str(runtime_temp))
-    original_bytes = _LEGACY_DOC.read_bytes()
-
-    converted = convert_legacy_doc_to_docx(
-        original_bytes,
-        _LEGACY_DOC.name,
-    )
-    docx_path = tmp_path / "psw-converted.docx"
-    docx_path.write_bytes(converted)
-    rules = _psw_rules().model_copy(update={"rule_profile": profile})
-
-    was_enabled = gc.isenabled()
-    gc.disable()
-    try:
-        doc_results = run_audit_engine(
-            AuditInput(audit_id="customer-doc", file_url=legacy_doc_source),
-            rules,
-        )
-        assert list(runtime_temp.iterdir()) == []
-        monkeypatch.setenv("LEGACY_DOC_CONVERTER_EXECUTABLE", str(tmp_path / "unavailable-converter"))
-        docx_results = run_audit_engine(
-            AuditInput(audit_id="converted-docx", file_url=str(docx_path)),
-            rules,
-        )
-        assert list(runtime_temp.iterdir()) == []
-    finally:
-        if was_enabled:
-            gc.enable()
-        gc.collect()
-    key_fields = _word_key_fields(converted)
-    reference = PswAuditSnapshot(
-        source_format="docx",
-        key_fields=key_fields,
-        results=_core_results(docx_results),
-    )
-    candidate = PswAuditSnapshot(
-        source_format="doc",
-        key_fields=_word_key_fields(converted),
-        results=_core_results(doc_results),
-    )
-
-    diff = compare_psw_snapshots(reference, candidate)
-
-    assert all(key_fields.values())
-    assert diff.kind == DifferenceKind.EQUIVALENT
-    assert all(result.evidence is not None for result in doc_results + docx_results)
-    assert {result.evidence.source_format for result in doc_results if result.evidence} == {"doc"}
-    assert {result.evidence.source_format for result in docx_results if result.evidence} == {"docx"}
-    assert _LEGACY_DOC.read_bytes() == original_bytes
-    assert docx_path.read_bytes() == converted
 
 
 def _li_psw_suite():
@@ -336,11 +184,12 @@ def test_psw_xlsx_product_round_keeps_engine_statuses() -> None:
 
     suite, implementation_rules = _li_psw_suite()
     body = json.loads(suite.files["rules.json"])
-    engine_results = run_audit(
+    engine_results = _run(
+        PswExcelAgent,
         AuditInput(audit_id="psw-xlsx-engine", file_url=str(xlsx_path)),
         RuleInput(rule_id="psw-xlsx", rule_profile=RULE_PROFILE_V2, type=doc_type, rules=implementation_rules),
     )
-    # Rules 3 and 5 read the seal and signature visually; the direct engine call has no model replay,
+    # Rules 3 and 5 read the seal and signature visually; the direct agent call has no model replay,
     # so only the deterministic rules are compared here. The PDF test covers the visual rules.
     visual = {3, 5}
     expected = {index: str(getattr(result, "status", "") or "").upper() for index, result in enumerate(engine_results, 1) if index not in visual}

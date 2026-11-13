@@ -3,16 +3,13 @@
 import hashlib
 import io
 import json
-from pathlib import Path
 
 import fitz
 import pytest
-from agent.checker_program import adapt, checker_start_prefix, checker_type_start_prefix, execute, group_context_for_spec, input_digest, rule_for_file
-from agent.client import DeepError
+from agent.checker_program import adapt, execute, input_digest
 from agent.execution.checker_context import write_starting_point
 from agent.execution.checker_guest import CheckerTrialError, run_program
 from agent.execution.checker_native import bind_native_checks
-from agent.protocol import ExecuteRequest, FrozenFile
 from audit.checker_lib.nio.excel_agent import rule as check_rule
 from audit.checker_lib.uaes.excel import unable
 from audit.checker_lib.uaes.native import UnknownFact
@@ -23,20 +20,8 @@ from audit.presets import preset_rule, preset_rule_body, validate_preset_body
 from openpyxl import Workbook
 
 
-def frozen(version, entry="U12", *, customer="UAES", role="target", raw=b"file", **body):
-    return FrozenFile(
-        file_version_id=version,
-        file_id="file-" + version,
-        filename=version + ".xlsx",
-        role=role,
-        sha256=hashlib.sha256(raw).hexdigest(),
-        rule_version_id="rule-" + version,
-        rule_body={**preset_rule_body(customer, entry), **body},
-    )
-
-
-def request(*files):
-    return ExecuteRequest(protocol_revision="test", round_id="round", tenant_id="tenant", job_id="job", executor="ppap-deep", executor_revision="v4-test", files=list(files))
+def preset(entry="U12", *, customer="UAES") -> RuleInput:
+    return RuleInput.model_validate({**preset_rule_body(customer, entry), "rule_id": "rule-target"})
 
 
 def workbook(rows, sheet="特殊特性清单"):
@@ -82,7 +67,7 @@ def program(work, target, rule, actions):
     ],
 )
 def test_starting_point_uses_customer_resolver_and_source_bindings(tmp_path, customer, entry, module, filename):
-    rule = rule_for_file(frozen("target", entry, customer=customer))
+    rule = preset(entry, customer=customer)
     target = AuditInput(audit_id="target", file_url=filename)
     guide = write_starting_point(tmp_path, target, rule)
     assert module in guide
@@ -98,57 +83,28 @@ def test_starting_point_uses_customer_resolver_and_source_bindings(tmp_path, cus
     assert ("无 ctx 参数" in guide) is native
 
 
-def test_complete_rules_and_all_roles_enter_the_group_without_losing_source_identity():
-    first = frozen("first", models=["M1"], parts=["P1"], appendix=[{"text": "当前约定", "scope": {"document_ids": ["first"]}}, {"text": "别的文件", "scope": {"document_ids": ["other"]}}])
-    peer = frozen("peer", "U07")
-    photo = frozen("photo", "U13", role="reference")
-    group = group_context_for_spec(request(first, peer, photo))
-    assert set(group.by_audit_id) == {"first", "peer", "photo"}
-    assert group.by_doc_type["E07"][0].audit_id == "photo"
-    assert group.by_audit_id["first"].file_metadata["v4_source_type"] == "T12"
-    rule = group.rules_by_id["first"]
-    assert (rule.customers, rule.models, rule.parts, rule.preset_key) == (["UAES"], ["M1"], ["P1"], "U12")
-    assert [item["text"] for item in rule.appendix] == ["当前约定"]
-    # Applicability is not an observation of the uploaded document's customer.
-    assert group.by_audit_id["first"].customer is None
-    assert group_context_for_spec(request(first)).by_audit_id.keys() == {"first"}
-    with pytest.raises(DeepError, match="deep_input_invalid"):
-        group_context_for_spec(request(first, first))
-
-
 @pytest.mark.parametrize("change", [{"customers": ["other"]}, {"models": ["M2"]}, {"parts": ["P2"]}, {"preset_key": "U07"}])
-def test_complete_rule_identity_invalidates_fixed_and_same_rule_starts(change):
+def test_complete_rule_identity_invalidates_a_fixed_program(change):
     target = AuditInput(audit_id="target", file_url="target.xlsx")
-    rule = rule_for_file(frozen("target"))
-    revised = rule.model_copy(update=change)
+    rule = preset()
     args = dict(file_sha256="a" * 64, role="target")
-    assert input_digest(target, rule, **args) != input_digest(target, revised, **args)
-    assert checker_start_prefix("tenant", "rev", rule) != checker_start_prefix("tenant", "rev", revised)
-    if "models" not in change and "parts" not in change:
-        assert checker_type_start_prefix("tenant", "rev", rule) != checker_type_start_prefix("tenant", "rev", revised)
-
-
-@pytest.mark.parametrize("change", [{"customers": []}, {"customers": ["UAES", "蔚来"]}, {"preset_key": "unknown"}])
-def test_untrusted_v4_source_is_rejected_before_development(change):
-    with pytest.raises(DeepError, match="deep_input_invalid"):
-        rule_for_file(frozen("target", **change))
+    assert input_digest(target, rule, **args) != input_digest(target, rule.model_copy(update=change), **args)
 
 
 def test_preset_clauses_are_identified_by_their_ids():
-    item = frozen("target")
-    item.rule_body["rules"][0]["rule_to_check"] = "只检查物料编号"
-    assert rule_for_file(item).rules[0]["rule_to_check"] == "只检查物料编号"
-    validate_preset_body(item.rule_body)
-    item.rule_body["rules"][0]["id"] = "other"
+    body = preset_rule_body("UAES", "U12")
+    body["rules"][0]["rule_to_check"] = "只检查物料编号"
+    validate_preset_body(body)
+    body["rules"][0]["id"] = "other"
     with pytest.raises(ValueError, match="invalid_preset_clauses"):
-        validate_preset_body(item.rule_body)
+        validate_preset_body(body)
 
 
 @pytest.mark.parametrize("count", [1, 2, 3])
 def test_uaes_checks_follow_effective_clause_count_order_and_native_evidence(tmp_path, count):
     path = tmp_path / "special.xlsx"
     special_file(path, value="")
-    rule = rule_for_file(frozen("target"))
+    rule = preset()
     clauses = [*rule.rules, {**rule.rules[0], "id": "extra", "category": "重复身份核对"}][:count]
     rule = rule.model_copy(update={"rules": clauses})
     target = AuditInput(audit_id="target", file_url=str(path))
@@ -259,7 +215,7 @@ def test_prior_diagnosis_and_resource_adaptation_reuse_the_original_algorithm(tm
     # A layout whose headers the UAES resource does not know: the original algorithm cannot locate the table.
     path.write_bytes(workbook([["No.", "Characteristic", "Spec", "Class", "Part"], [1, "孔径", "10±0.1", "CC", "支架 P12345"]]))
     target = AuditInput(audit_id="target", file_url=str(path))
-    rule = rule_for_file(frozen("target"))
+    rule = preset()
     rule = rule.model_copy(update={"rules": rule.rules[:1]})
     old = program(tmp_path / "old", target, rule, ["return super().rule_1(ctx)"])
     prior = CheckerArtifact(input_digest="a" * 64, executor_revision="previous", entrypoint="checker:create_audit", files={"checker.py": old})
@@ -295,85 +251,6 @@ def test_prior_diagnosis_and_resource_adaptation_reuse_the_original_algorithm(tm
     assert {json.loads(item.locator)["file_version_id"] for item in results[0].evidence.sources} == {"target"}
 
 
-def test_v4_round_develops_replays_and_uses_other_targets_as_related_sources(tmp_path):
-    from agent.auditor import SemanticRuntime
-    from agent.checker_program import run_adapt_manifest, run_execute_manifest
-    from agent.run import ExecutionContext
-    from audit.storage_errors import ObjectExists, ObjectMissing
-
-    class MemoryObjects:
-        def __init__(self):
-            self.items = {}
-
-        def get(self, key, *, max_bytes):
-            if key not in self.items:
-                raise ObjectMissing(key)
-            return self.items[key]
-
-        def put_exclusive(self, key, body, content_type):
-            if key in self.items:
-                raise ObjectExists(key)
-            self.items[key] = body
-
-    class Runtime:
-        adapts_checkers = True
-
-        def engine_revision(self):
-            return spec.executor_revision
-
-        def run(self, job, inputs, work, deadline, cancelled, on_progress=None):
-            if job.operation == "adapt-checker":
-                run_adapt_manifest(inputs, work, developer, deadline)
-            else:
-                assert job.operation == "execute-checker"
-                run_execute_manifest(inputs, work)
-
-    # U07:3 pairs the list by 同项目、同物料编号.
-    identity = [["项目", "M1"], ["零件号", "P1"], ["零件名称", "支架"]]
-    pfmea_raw = workbook([*identity, ["工序/功能/要求", "潜在失效模式", "潜在失效起因", "严重度", "频度", "探测度", "CLASS类别"], ["孔径", "孔径超差", "钻头磨损", 7, 3, 4, "CC"]], "PFMEA")
-    special_raw = workbook([*identity, ["物料名称", "支架"], ["物料编号", "P1"], ["编号", "产品特性", "特性值", "特性类别"], [1, "孔径", "10±0.1", "CC"]])
-    pfmea_rule = preset_rule_body("UAES", "U07")["rules"][2]
-    special_rule = preset_rule_body("UAES", "U12")["rules"][0]
-    pfmea = frozen("pfmea", "U07", raw=pfmea_raw, rules=[pfmea_rule], models=["M1"], parts=["P1"])
-    special = frozen("special", raw=special_raw, rules=[special_rule])
-    spec = request(pfmea, special)
-    blobs = {"pfmea": pfmea_raw, "special": special_raw}
-
-    class Developer:
-        input_tokens = output_tokens = 0
-        calls = 0
-
-        def run(self, work, prompt, schema, deadline, *, reasoning_effort):
-            self.calls += 1
-            view = json.loads(prompt.split("本次文件：\n", 1)[1].split("\n", 1)[0])
-            version = view["audit_id"]
-            assert {item["audit_id"] for item in view["related"]} == set(blobs)
-            assert {item["role"] for item in view["related"]} == {"target"}
-            for item in view["related"]:
-                assert Path(item["file_url"]).read_bytes() == blobs[item["audit_id"]]
-                assert item["rule"]["customers"] == ["UAES"]
-            assert '"models":["M1"]' in prompt and '"parts":["P1"]' in prompt
-            source = (work / "template-checker.py").read_text()
-            action = "return super().rule_3(ctx)" if version == "pfmea" else "return super().rule_1(ctx)"
-            return schema.model_validate({"entrypoint": "checker:create_audit", "files": {"checker.py": source.replace("raise NotImplementedError('核对本次条款后实现')", action)}})
-
-    developer = Developer()
-    host = SemanticRuntime(Runtime(), MemoryObjects(), timeout=30)
-    first = host.execute(spec, blobs, context=ExecutionContext())
-    assert [item.status for item in first.findings] == ["PASS", "PASS"], [(item.status, item.suggestions) for item in first.findings]
-    assert developer.calls == 4
-    second = host.execute(spec, blobs, context=ExecutionContext())
-    assert second.findings == first.findings
-    assert developer.calls == 4
-    locators = first.findings[0].locator["semantic"]["sources"]
-    assert {item["file_version_id"] for item in locators} == {"pfmea", "special"}
-    group = group_context_for_spec(spec)
-    target, rule = group.by_audit_id["pfmea"], group.rules_by_id["pfmea"]
-    original = input_digest(target, rule, file_sha256=pfmea.sha256, role="target", group_context=group)
-    changed = special.model_copy(update={"sha256": "f" * 64})
-    assert original != input_digest(target, rule, file_sha256=pfmea.sha256, role="target", group_context=group_context_for_spec(request(pfmea, changed)))
-
-
 def test_native_electronic_pdf_development_and_fixed_visual_guard(tmp_path, monkeypatch):
     path = tmp_path / "source.pdf"
     doc = fitz.open()
@@ -389,7 +266,7 @@ def test_native_electronic_pdf_development_and_fixed_visual_guard(tmp_path, monk
     doc.save(path)
     doc.close()
     monkeypatch.setattr("documents.ai.run_json", lambda *args, **kwargs: pytest.fail("fixed checker must not call a model"))
-    rule = rule_for_file(frozen("target"))
+    rule = preset()
     rule = rule.model_copy(update={"rules": [rule.rules[0], {**rule.rules[0], "id": "stamp", "category": "受控章", "rule_to_check": "须有实际受控章"}]})
     target = AuditInput(audit_id="target", file_url=str(path))
 

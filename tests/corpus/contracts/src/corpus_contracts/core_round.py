@@ -44,17 +44,6 @@ def bind_suite(suite: StandardSuite, rules: dict, aliases: dict[str, str]) -> St
     return replace(suite, files=files, entrypoints=binding)
 
 
-def unsupported_suite(rules: dict) -> StandardSuite:
-    files = {
-        "checker.py": b'"""No generated checker yet; all clauses are unsupported."""\n',
-        "rules.json": json.dumps({**rules, "checker_binding": {}}, ensure_ascii=False).encode(),
-        "appendix.json": b"[]",
-        "templates.json": b"[]",
-        "tests.json": b"[]",
-    }
-    return StandardSuite("fixture:unbound", rules.get("type", ""), "", "", (), files, {}, "")
-
-
 def freeze_suite_round(work: RoundWork, blobs: dict[str, bytes], *, suites: dict[str, StandardSuite], document_types: dict[str, str] | None = None):
     """Freeze only caller-selected suites and explicitly identified reference types."""
     targets, inputs, programs, frozen_items = [], [], {}, []

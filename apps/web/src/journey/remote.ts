@@ -1,5 +1,5 @@
 import {useCallback, useEffect, useRef, useState} from 'react'
-import {request, type DraftSaveRequest, type Material, type Round} from '../api'
+import {request} from '../api'
 
 export function useRemote<T>(path: string | null, interval = 0) {
   const [value, setData] = useState<T | null>(null)
@@ -39,17 +39,3 @@ export function useRemote<T>(path: string | null, interval = 0) {
 }
 
 export const message = (cause: unknown) => cause instanceof TypeError && /fetch/i.test(cause.message) ? '暂时无法连接服务，请重新读取。' : cause instanceof Error ? cause.message : '操作未完成，请稍后重试。'
-export const inputItems = (items: Material[]): NonNullable<DraftSaveRequest['items']> => items.map(item => ({file_version_id: item.file_version_id, role: item.role, rule_version_id: item.role === 'target' ? item.rule_version_id : null}))
-export const draftPlan = (draft: {items: Material[]}) => JSON.stringify({items: inputItems(draft.items).sort((a, b) => a.file_version_id.localeCompare(b.file_version_id))})
-export type Acceptance = {key: string; plan: string}
-export function acceptanceKey(userId: string, draftId: string) {return `ppap-live:accept:${userId}:${draftId}`}
-export function readAcceptance(storageKey: string): Acceptance | null {
-  const raw = localStorage.getItem(storageKey)
-  if (!raw) return null
-  const value: unknown = JSON.parse(raw)
-  if (!value || typeof value !== 'object' || !('key' in value) || !('plan' in value) || typeof value.key !== 'string' || typeof value.plan !== 'string') throw new Error('检查请求记录无法读取，请先核对服务器接收状态。')
-  return {key: value.key, plan: value.plan}
-}
-export function sameAcceptedPlan(round: Round, draftId: string, plan: string) {
-  return round.source_draft_id === draftId && draftPlan({items: round.inputs}) === plan
-}

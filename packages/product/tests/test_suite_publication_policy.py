@@ -57,7 +57,6 @@ def test_partial_official_directory_cannot_be_forced_into_the_active_head():
     assert adoption_block(partial, verified=False, force_unverified=True) == "partial_directory_suite_not_adoptable"
     poisoned = {**files, "checker.py": files["checker.py"] + b'\n# check_clause\nNOTE = "check_clause"\n'}
     poisoned_suite = _resolved(poisoned, tenant_id=None, related=directory.related_suite_keys)
-    assert b"check_clause" in poisoned["checker.py"]
     assert adoption_block(poisoned_suite, verified=True, force_unverified=True) == "partial_directory_suite_not_adoptable"
     assert adoption_block(poisoned_suite, verified=False, force_unverified=True) == "partial_directory_suite_not_adoptable"
 

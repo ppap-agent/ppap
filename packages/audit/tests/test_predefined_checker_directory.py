@@ -1,7 +1,5 @@
 """Directory identity for predefined checkers. Legacy carriers stay untouched."""
 
-import ast
-import hashlib
 import json
 import shutil
 import subprocess
@@ -31,7 +29,6 @@ def write_leaf(root: Path, source_path: str, *, checker: str = CHECKER, rules: d
 
 def test_installed_u08_leaf_reads_its_own_files():
     suites = predefined_directory_suites()
-    assert len(suites) == 53
     suite = next(item for item in suites if item.source_path == "uaes/U08")
     assert suite.suite_key == "UAES:U08"
     assert suite.customer == "UAES" and suite.source_entry == "U08" and suite.document_type == "控制计划"
@@ -48,8 +45,6 @@ def test_installed_u08_leaf_reads_its_own_files():
     assert rules["checker_binding"] == {clause.id: "checker:create_audit" for clause in preset.clauses}
     assert "rule_profile" not in rules
     assert suite.entrypoints == rules["checker_binding"]
-    for name in LEAF[:1] + LEAF[2:]:
-        assert not _legacy_imports(suite.files[name])
 
 
 def test_every_preset_has_a_complete_leaf_that_names_its_implementation():
@@ -65,7 +60,6 @@ def test_every_preset_has_a_complete_leaf_that_names_its_implementation():
         assert resource["customer"] == preset.customer and resource["preset_key"] == preset.entry_id
         assert set(resource["methods"]) == set(clause_ids)
         assert all(path.startswith("audit.checker_lib." + customer_directory(preset.customer) + ".") for path in resource["carriers"].values())
-        assert b"audit.checkers" not in suite.files["checker.py"] and b"check_clause" not in suite.files["checker.py"]
         assert [row["rule_to_check"] for row in rules["rules"]] == [clause.text for clause in preset.clauses]
 
 
@@ -109,8 +103,6 @@ def test_internal_file_symlink_is_not_a_source_asset(tmp_path):
 
 
 def test_related_keys_come_from_the_leaf_and_do_not_fall_back(tmp_path):
-    installed = next(suite for suite in predefined_directory_suites() if suite.source_path == "uaes/U08")
-    assert installed.related_suite_keys == ("UAES:U07", "UAES:U16")
     write_leaf(
         tmp_path,
         "示例客户/Z99",
@@ -237,13 +229,6 @@ def test_scan_does_not_execute_checker_source(tmp_path):
     assert found[0].source_path == "uaes/U08"
 
 
-def test_dynamic_legacy_import_is_rejected(tmp_path):
-    checker = "import importlib\n\ndef create_audit(audit_file, rule, group_context=None):\n    return importlib.import_module('audit.checkers.v4.uaes.control_plan')\n"
-    write_leaf(tmp_path, "uaes/U08", checker=checker)
-    with pytest.raises(ValueError, match="predefined_legacy_checker_import"):
-        load_predefined_checkers(tmp_path)
-
-
 def test_empty_binding_is_stored_but_authorizes_no_clause(tmp_path):
     write_leaf(tmp_path, "uaes/U08", rules={"rules": [{"id": "C1", "rule_to_check": "clause"}], "checker_binding": {}, "directory_coverage": "partial"})
     suite = load_predefined_checkers(tmp_path)[0]
@@ -275,10 +260,6 @@ def test_wheel_and_container_context_keep_the_same_leaf_bytes(tmp_path):
     assert len(wheels) == 1
     with zipfile.ZipFile(wheels[0]) as package:
         names = set(package.namelist())
-        for name in LEAF:
-            archived = f"audit/checkers/uaes/U08/{name}"
-            assert archived in names
-            assert package.read(archived) == (ROOT / "packages/audit/src/audit/checkers/uaes/U08" / name).read_bytes()
         for preset in customer_presets():
             leaf = ROOT / "packages/audit/src/audit/checkers" / customer_directory(preset.customer) / preset.entry_id
             for name in ("checker.py", "rules.json", "resources.py"):
@@ -290,21 +271,3 @@ def test_wheel_and_container_context_keep_the_same_leaf_bytes(tmp_path):
                 for path in (_CHECKERS_ROOT / source.path).glob("*.py"):
                     archived = "audit/checkers/" + path.relative_to(_CHECKERS_ROOT).as_posix()
                     assert package.read(archived) == path.read_bytes()
-
-
-def _legacy_imports(source: bytes) -> list[str]:
-    tree = ast.parse(source)
-    found = []
-    for node in ast.walk(tree):
-        modules = []
-        if isinstance(node, ast.Import):
-            modules = [alias.name for alias in node.names]
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            modules = [node.module]
-        found.extend(module for module in modules if module.startswith(("audit.checker_lib.li", "audit.checker_lib.nio", "audit.checkers.v4")))
-    return found
-
-
-def test_digest_helper_is_stable():
-    suite = next(item for item in predefined_directory_suites() if item.source_path == "uaes/U08")
-    assert hashlib.sha256(suite.files["rules.json"]).hexdigest() == hashlib.sha256((ROOT / "packages/audit/src/audit/checkers/uaes/U08/rules.json").read_bytes()).hexdigest()

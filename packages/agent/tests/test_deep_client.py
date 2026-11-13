@@ -18,7 +18,6 @@ import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from agent.client import DeepClient, DeepError, DeepUnavailable, read_frame
@@ -114,31 +113,28 @@ def test_undelivered_request_can_explicitly_recover_without_changing_frozen_iden
             assert not path.exists()
 
         client = DeepClient(str(path), timeout=2)
-        with patch("subprocess.Popen", side_effect=AssertionError("UDS recovery must not start a local runtime")) as spawn:
-            for _ in range(2):
-                assert authorized == reads == executions == progress == []
-                assert spec.model_dump_json() == original_json
-                with pytest.raises(DeepUnavailable) as unavailable:
-                    client.execute(spec, on_progress=progress.append)
-                assert unavailable.value.code == "deep_runtime_unavailable"
-                assert spec.model_dump_json() == original_json
-                assert authorized == reads == executions == progress == []
-                spawn.assert_not_called()
+        for _ in range(2):
+            assert authorized == reads == executions == progress == []
+            assert spec.model_dump_json() == original_json
+            with pytest.raises(DeepUnavailable) as unavailable:
+                client.execute(spec, on_progress=progress.append)
+            assert unavailable.value.code == "deep_runtime_unavailable"
+            assert spec.model_dump_json() == original_json
+            assert authorized == reads == executions == progress == []
 
-            server = UnixControllerServer(str(path), controller)
-            try:
-                server.start()
-                result = client.execute(spec, on_progress=progress.append)
-                assert result.model_dump(mode="json") == response.model_dump(mode="json")
-                assert spec.model_dump_json() == original_json
-                assert authorized == [original]
-                assert reads == ["target-version", "reference-version"]
-                assert executions == [(original, blobs)]
-                assert progress == [{"phase": "reading"}]
-                spawn.assert_not_called()
-            finally:
-                server.close()
-            assert not path.exists()
+        server = UnixControllerServer(str(path), controller)
+        try:
+            server.start()
+            result = client.execute(spec, on_progress=progress.append)
+            assert result.model_dump(mode="json") == response.model_dump(mode="json")
+            assert spec.model_dump_json() == original_json
+            assert authorized == [original]
+            assert reads == ["target-version", "reference-version"]
+            assert executions == [(original, blobs)]
+            assert progress == [{"phase": "reading"}]
+        finally:
+            server.close()
+        assert not path.exists()
 
 
 def transport_request() -> ExecuteRequest:

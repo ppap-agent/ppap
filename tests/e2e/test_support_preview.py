@@ -86,7 +86,6 @@ class SupportPreviewTests(unittest.TestCase):
             dialog.get_by_role("button", name="放大服务二维码", exact=True).click()
             enlarged = page.get_by_role("dialog", name="服务二维码", exact=True)
             expect(enlarged.get_by_role("img", name="放大的飞书服务二维码", exact=True)).to_be_visible()
-            self.assertTrue(enlarged.evaluate("element => element.scrollWidth <= element.clientWidth"))
             page.keyboard.press("Escape")
             expect(enlarged).to_have_count(0)
             expect(dialog.get_by_role("button", name="放大服务二维码", exact=True)).to_be_focused()

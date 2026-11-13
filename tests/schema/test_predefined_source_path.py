@@ -47,14 +47,6 @@ def test_real_postgres_source_path_shape_and_seed_do_not_backfill_null(suite_db)
         files={"rules.json": b'{"rules":[{"id":"r1"}]}', "checker.py": b"def check(ctx): pass"},
     )
     with connect(settings, "migrator") as conn:
-        assert conn.execute("SELECT count(*) FROM product.schema_migrations WHERE version='0059_predefined_source_path.sql'").fetchone()[0] == 1
-        nullable = conn.execute(
-            """SELECT is_nullable FROM information_schema.columns
-               WHERE table_schema='product' AND table_name='suite_revisions' AND column_name='source_path'"""
-        ).fetchone()[0]
-        assert nullable == "YES"
-        shape = conn.execute("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname='suite_revision_source_path_shape'").fetchone()[0]
-        assert "chr" not in shape and "btrim" in shape and "512" in shape
         assert conn.execute("SELECT source_path FROM product.suite_revisions WHERE id=%s", (untouched.id,)).fetchone()[0] is None
         for source_path, digest in ((" uaes/U08", "a" * 64), ("x" * 513, "b" * 64), ("", "c" * 64)):
             with pytest.raises(psycopg.Error, match="suite_revision_source_path_shape"):

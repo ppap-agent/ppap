@@ -196,7 +196,6 @@ def test_interrupted_identical_candidate_is_not_a_confirmation(tmp_path):
             deadline=10**12,
         )
     assert developer.calls == 6
-    assert not (tmp_path / "adapt/result/bundle.json").exists()
 
 
 def test_visual_capability_gap_is_unable_in_the_original_single_check_finalizer(tmp_path):

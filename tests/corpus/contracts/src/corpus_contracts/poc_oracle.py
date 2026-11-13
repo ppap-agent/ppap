@@ -10,12 +10,6 @@ from audit.kinds import PpapDocumentType, cross_file_doc_type_name
 
 from corpus_contracts.oracle import load_oracle
 
-RULE_GROUPS = 12
-RULE_BLOCK_SIZE = 5
-FIRST_RULE_COL = 3
-VALID_POC_SEQ_ORDER = ("1", "8", "9", "10", "11")
-VALID_POC_SEQS = set(VALID_POC_SEQ_ORDER)
-
 POC_SEQ_TO_DOC_TYPE = {
     "1": PpapDocumentType.DIMENSION_MEASUREMENT_REPORT,
     "8": PpapDocumentType.PROCESS_FLOW_CHART,
@@ -46,38 +40,6 @@ class PocCase:
     def __post_init__(self) -> None:
         if not self.expected:
             raise AssertionError(f"V3 oracle incomplete: file={self.file_name} seq={self.file_seq} has 0 PASS/NG expectations")
-
-
-@dataclass(frozen=True)
-class BundleContext:
-    bundle_id: str
-    cases: List[PocCase]
-
-
-@dataclass(frozen=True)
-class SimpleAuditFile:
-    file_url: str
-    audit_id: str
-    customer: str | None = None
-    model: str | None = None
-    part: str | None = None
-    file_metadata: Dict | None = None
-    content: str = ""
-
-
-def parse_seq_filter(raw: str | None) -> set[str] | None:
-    if raw is None:
-        return None
-    cleaned = raw.strip()
-    if not cleaned:
-        return None
-
-    seq_set = {segment.strip() for segment in cleaned.split(",") if segment.strip()}
-    invalid = sorted(seq_set - VALID_POC_SEQS, key=int)
-    if invalid:
-        valid = ",".join(VALID_POC_SEQ_ORDER)
-        raise ValueError(f"Invalid --seq values: {invalid}. Valid seq values: {valid}")
-    return seq_set
 
 
 def build_bundle_map(cases: Iterable[PocCase]) -> Dict[str, List[PocCase]]:

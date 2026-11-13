@@ -1,31 +1,14 @@
 // Explicit synthetic document content. Callers must establish demo provenance first.
 // These are reading fixtures, not parsed uploads or machine-check results.
 import type {LocalFileRef} from './local-files'
-import {isObject} from './saved-draft'
 export type SourceFile = {name: string; revision: string; sourceVersion: number; pending?: boolean; localFile?: LocalFileRef; material?: import('../api').Material; roundId?: string}
 export type SourceFocus = {location: string; requestId: number}
 export type DemoDocument = SourceFile & {
   origin: string; kind: 'flow' | 'control' | 'dimension'
   process?: string; readable?: boolean; measurements?: number[]
 }
-export type DemoFlavor = 'flow-blurred' | 'flow-clear' | 'flow-changed' | 'control-conflict' | 'control-clear' | 'dimension-old' | 'dimension-clear' | 'dimension-outlier'
-export function validDemoDocument(value: unknown): value is DemoDocument {
-  return isObject(value) && ['name', 'revision', 'origin'].every(key => typeof value[key] === 'string') && Number.isInteger(value.sourceVersion)
-    && Number(value.sourceVersion) >= 0 && !value.localFile && ['flow', 'control', 'dimension'].includes(String(value.kind))
-    && (value.process === undefined || typeof value.process === 'string') && (value.readable === undefined || typeof value.readable === 'boolean')
-    && (value.measurements === undefined || Array.isArray(value.measurements) && value.measurements.every(Number.isFinite))
-}
-export const mergeDocuments = (...groups: DemoDocument[][]) => [...new Map(groups.flat().map(doc => [sourceKey(doc), doc])).values()]
 export const sourceKey = (file: SourceFile) => JSON.stringify([file.name, file.revision, file.sourceVersion, Boolean(file.pending), ...(file.material ? [file.material.file_version_id] : file.localFile ? [file.localFile.id] : [])])
 export const sourceVersionLabel = (file: SourceFile) => file.pending ? '待登记' : file.material ? '本轮固定版本' : `文件 v${file.sourceVersion}`
-export function demoDocument(file: SourceFile, flavor: DemoFlavor, origin: string): DemoDocument {
-  return {...file, origin,
-    kind: flavor.startsWith('flow') ? 'flow' : flavor.startsWith('control') ? 'control' : 'dimension',
-    process: flavor === 'control-conflict' || flavor === 'flow-changed' ? '表面处理' : '热处理',
-    readable: flavor !== 'flow-blurred',
-    measurements: flavor === 'dimension-clear' ? [10.02, 10.04, 9.98] : flavor === 'dimension-outlier' ? [10.02, 10.14, 9.98] : undefined,
-  }
-}
 export function documentRows(doc: DemoDocument) {
   if (doc.kind === 'dimension') return [
     {key: 'B2', cells: ['B2', '图纸修订', doc.revision]},

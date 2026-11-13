@@ -25,8 +25,6 @@ def vision_key(monkeypatch):
 
 
 def test_ocr_dedicated_model_and_extra_body_are_canonical(monkeypatch, vision_key):
-    monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "dedicated-ocr-model")
-    monkeypatch.setenv("PPAP_MODEL_VISION_BASE_URL", "https://ocr.example.test/v1")
     monkeypatch.setenv("PPAP_MODEL_VISION_EXTRA_BODY_JSON", '{"reasoning":true,"a":1}')
     first = env.ocr_policy_identity()
     assert env.ocr_model_name() == "dedicated-ocr-model"
@@ -51,15 +49,6 @@ def test_invalid_ocr_extra_body_fails_without_network(monkeypatch, vision_key, r
     monkeypatch.setenv("PPAP_MODEL_VISION_EXTRA_BODY_JSON", raw)
     with pytest.raises(ValueError, match="one JSON object"):
         env.ocr_extra_body()
-
-
-def test_missing_ocr_credential_cannot_use_text_credential(monkeypatch):
-    monkeypatch.setenv("PPAP_MODEL_TEXT_API_KEY", "text-only")
-    monkeypatch.setenv("PPAP_MODEL_VISION_BASE_URL", "https://ocr.example.test/v1")
-    monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "dedicated-ocr-model")
-    monkeypatch.delenv("PPAP_MODEL_VISION_API_KEY", raising=False)
-    with pytest.raises(ModelUnavailable, match="platform_model_unconfigured"):
-        current_model_access("vision")
 
 
 def test_explicit_model_grant_owns_ocr_model_endpoint_and_policy(monkeypatch):

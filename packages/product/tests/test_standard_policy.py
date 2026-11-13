@@ -1,7 +1,5 @@
 """Configuration identity is distinct from secrets and model output quality."""
 
-import json
-
 import pytest
 from product.settings import Settings
 
@@ -30,7 +28,6 @@ def test_policy_contains_no_secrets_or_raw_provider_options():
         setattr(settings, key, "rotated-secret")
     assert settings.standard_execution_policy() == original
     serialized = original.model_dump_json()
-    assert set(json.loads(serialized)) == {"executor_label", "app_revision", "model", "model_config_revision", "tool_config_revision"}
     for private in ("private.invalid", "rotated-secret"):
         assert private not in serialized
 

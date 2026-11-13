@@ -114,10 +114,6 @@ class NativeGuest:
         self.model_identity = dict(model_identity) if model_identity is not None else None
         self.jobs = jobs if jobs is not None else []
 
-    @property
-    def adaptations(self):
-        return self.jobs.count("adapt-checker")
-
     def for_identity(self, identity):
         return NativeGuest(self.settings, identity, jobs=self.jobs)
 
@@ -132,11 +128,10 @@ class NativeGuest:
         self.jobs.append(job.operation)
         grants = work / "grants"
         grants.mkdir()
-        if job.operation in {"execute-audit", "adapt-checker"}:
+        if job.operation == "execute-audit":
             assert self.model_identity is not None
             manifest = json.loads((inputs / "manifest.json").read_text())
-            if job.operation == "execute-audit":
-                assert manifest["snapshot"]["model_identity"] == self.model_identity
+            assert manifest["snapshot"]["model_identity"] == self.model_identity
             (grants / "model.json").write_text(
                 json.dumps(
                     {
@@ -242,12 +237,14 @@ def workspace_product(auth_store_factory, tmp_path, request, monkeypatch):
         from agent.client import DeepClient, DeepError
         from agent.run import ExecutionContext
 
-        def request_locally(client, payload, *, cancelled=None, on_progress=None):
+        def request_locally(client, payload, *, cancelled=None, on_progress=None, on_activity=None):
             context = ExecutionContext()
             if cancelled is not None:
                 context.cancelled = cancelled
             if on_progress is not None:
                 context.on_progress = on_progress
+            if on_activity is not None:
+                context.on_activity = on_activity
             raw = controller.handle_raw(json.loads(json.dumps(payload)), context)
             if raw.get("op") == "error":
                 raise DeepError(raw["code"])

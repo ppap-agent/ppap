@@ -89,8 +89,6 @@ class SemanticBoundaryTests(unittest.TestCase):
             def finish_file(work, prompt, deadline, **kwargs):
                 del work, deadline, kwargs
                 self.assertEqual(prompt, "develop")
-                self.assertNotIn("execution.json", prompt)
-                self.assertNotIn("available tools", prompt)
                 (Path(directory) / "checker.py").write_text("def create_audit(audit_file, rule, group_context=None):\n    return None\n", encoding="utf-8")
                 (Path(directory) / "resources.py").write_text("RESOURCE = None\n", encoding="utf-8")
                 raise ModelProtocolError("Model stage failed")
@@ -250,15 +248,6 @@ class SemanticBoundaryTests(unittest.TestCase):
             with patch("agent.execution.guest_model.os.getuid", return_value=0):
                 with self.assertRaises(ModelProtocolError):
                     sandbox_profile()
-
-    def test_gvisor_still_requires_kernel_marker_and_guest_uid(self) -> None:
-        with patch.dict(os.environ, {"PPAP_GUEST_ISOLATION": "gvisor"}, clear=True):
-            with patch("agent.execution.guest_model.os.getuid", return_value=10001):
-                with patch("agent.execution.guest_model.Path.is_file", return_value=True):
-                    self.assertEqual(sandbox_profile(), "off")
-                with patch("agent.execution.guest_model.Path.is_file", return_value=False):
-                    with self.assertRaises(ModelProtocolError):
-                        sandbox_profile()
 
     def test_published_source_cannot_omit_effective_clause(self) -> None:
         clause = {"id": "R1", "rule_to_check": "First"}

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test, {afterEach} from 'node:test'
 import type {components} from '../generated/openapi.ts'
-import {createNativeAuditAdapter, nativeArchiveAdapter, nativeDisplayAdapter, nativeReportAdapter, nativeSharingAdapter, nativeSupportAdapter, nativeUsageAdapter, sharedReportAdapter, readSharedArchive, readAuditCustomers} from './native-adapter.ts'
+import {createNativeAuditAdapter, nativeArchiveAdapter, nativeDisplayAdapter, nativeReportAdapter, nativeSharingAdapter, nativeSupportAdapter, nativeUsageAdapter, sharedReportAdapter, readSharedArchive} from './native-adapter.ts'
 import {readReportPdf, readReportZip} from './report-contract.ts'
 import {requestTrace} from '../api.ts'
 
@@ -135,16 +135,6 @@ test('a shared report is read only from its frozen artifact and checked against 
   assert.equal(url.searchParams.get('artifact_id'), artifact.artifact_id)
   responseDigest = 'a'.repeat(64)
   await assert.rejects(adapter.readPdf(reference, artifact), /报告内容与所选版本不同/)
-})
-
-test('completion notification settings use the private revisioned API and never confirm an audit', async () => {
-  const preference = {task_id: task.id, enabled: false, revision: 3, available: true, can_change: true, delivery: {state: 'not_due', reason: null}}
-  const calls: {url: string; method: string; body: unknown}[] = []
-  globalThis.fetch = async (input, options) => {calls.push({url: String(input), method: options?.method || 'GET', body: options?.body ? JSON.parse(String(options.body)) : null}); return json(preference)}
-  const adapter = createNativeAuditAdapter({customers: []}).notifications!
-  assert.deepEqual(await adapter.read(task.id), preference)
-  assert.deepEqual(await adapter.save(task.id, false, 2), preference)
-  assert.deepEqual(calls, [{url: '/audit-tasks/task-a/notification', method: 'GET', body: null}, {url: '/audit-tasks/task-a/notification', method: 'PUT', body: {enabled: false, expected_revision: 2}}])
 })
 
 test('native usage reads the enterprise projection with filters and never reports a charge', async () => {
@@ -330,17 +320,6 @@ test('native Drive distinguishes a missing user grant from an unclassified provi
   assert.equal(rejected.retry_allowed, false)
   globalThis.fetch = async () => json({error: 'feishu_folder_failed'}, 502)
   await assert.rejects(adapter.drive!.list(), error => error instanceof Error && error.message !== 'authorization_required')
-})
-
-test('native customer choices read the authenticated tenant rule directory', async () => {
-  const original = globalThis.fetch
-  globalThis.fetch = async (input, init) => {
-    assert.equal(String(input), '/audit-customers')
-    assert.equal(init?.credentials, 'include')
-    return json({customers: [{customer_id: 'customer-a', name: '客户 A'}]})
-  }
-  try {assert.deepEqual(await readAuditCustomers(), {customers: [{customer_id: 'customer-a', name: '客户 A'}]})}
-  finally {globalThis.fetch = original}
 })
 
 test('native support reads authenticated configuration and only its displayed image version', async () => {

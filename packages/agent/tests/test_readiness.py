@@ -7,7 +7,6 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
-from agent.auditor import SemanticRuntime
 from agent.execution.isolation.container import ContainerRuntime
 from agent.readiness import probe
 from agent.run import Controller, UnconfiguredRuntime, UnixControllerServer
@@ -28,8 +27,7 @@ def test_live_readiness_tracks_runtime_degraded_and_missing_tools():
             runtime = object.__new__(ContainerRuntime)
             runtime.config = SimpleNamespace(python_executable=tool, agent_executable=tool, gateway_socket=root / "gateway")
             runtime.degraded = False
-            semantic = SemanticRuntime(runtime, None)
-            controller = Controller(UnconfiguredRuntime(), forbidden, authorize=forbidden, readiness=semantic.ready)
+            controller = Controller(UnconfiguredRuntime(), forbidden, authorize=forbidden, readiness=runtime.ready)
             server = UnixControllerServer(str(root / "controller"), controller)
             server.start()
             try:

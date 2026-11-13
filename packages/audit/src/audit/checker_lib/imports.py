@@ -6,13 +6,9 @@ Stored historical programs are not reclassified by it.
 from __future__ import annotations
 
 import ast
-import re
-from pathlib import Path
 
-_VERSION_DIRECTORY = re.compile(r"^v[0-9]+$")
-_LEAF_SOURCES = frozenset({"checker.py", "resources.py"})
 _DYNAMIC = frozenset({"import_module", "__import__"})
-_LEGACY_FACADES = frozenset({"audit.engine", "audit.engine.routing", "audit.engine.engine", "audit.engine.app_runtime", "audit.standard_library"})
+_LEGACY_FACADES = frozenset({"audit.engine", "audit.engine.routing", "audit.standard_library"})
 
 
 # Company reader implementations run only through a leaf's declared resource, never by import.
@@ -59,24 +55,3 @@ def import_violations(tree: ast.AST) -> tuple[str, ...]:
             elif _forbidden(node.args[0].value):
                 found.append(f"{node.lineno}: {node.args[0].value}")
     return tuple(found)
-
-
-def _scan(path: Path) -> tuple[str, ...]:
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    return tuple(f"{path}:{item}" for item in import_violations(tree))
-
-
-def directory_import_violations(root: Path) -> tuple[str, ...]:
-    """Static imports and literal ``import_module`` / ``__import__`` calls.
-
-    Customer directories hold the leaves; the historical ``v2``/``v3``/``v4`` packages are skipped.
-    """
-    problems: list[str] = []
-    if not root.is_dir():
-        return ()
-    for customer in sorted(path for path in root.iterdir() if path.is_dir() and not _VERSION_DIRECTORY.fullmatch(path.name)):
-        for path in sorted(customer.rglob("*")):
-            if path.name not in _LEAF_SOURCES or not path.is_file() or path.is_symlink():
-                continue
-            problems.extend(_scan(path))
-    return tuple(problems)
