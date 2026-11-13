@@ -89,8 +89,9 @@ export KUBECONFIG="$HOME/Projects/work/hax/runtime/tke-cls-6e71r2cz/headscale-ip
 |---|---|---|
 | `PPAP_MODEL_TEXT_MODEL`、`PPAP_MODEL_TEXT_BASE_URL` | ConfigMap `ppap-current` | API、Worker；Deep 沿用其需要的公共配置 |
 | `PPAP_MODEL_TEXT_API_KEY` | Secret `ppap-current-text-model-v1` | API、Worker、Deep Controller（Checker 试跑的文本调用经本地网关）|
-| `PPAP_MODEL_CODING_API_KEY` | Secret `ppap-current-deep-model-v1`（当前未引用） | 仅在设置 Deep 专用端点时注入 Deep Controller |
+| `PPAP_MODEL_CODING_*` | 当前未设置：Coding 使用文本模型 | 需要 Deep 专用端点时，新建 Secret 存放 `PPAP_MODEL_CODING_API_KEY` 并只在 Deep Controller 显式引用 |
 | `PPAP_MODEL_VISION_MODEL`、`PPAP_MODEL_VISION_BASE_URL`、`PPAP_MODEL_VISION_EXTRA_BODY_JSON`、`PPAP_PADDLE_URL` | Secret `ppap-current` | API、Worker、Deep 的配置身份 |
+| `PPAP_PADDLE_TOKEN` | Secret `ppap-current` | API、Worker、Deep Controller（paddle bridge）；不向 Deep guest 注入 |
 | `PPAP_MODEL_VISION_API_KEY` | Secret `ppap-current` | API、Worker、Deep Controller；不向 Deep guest 注入 |
 | `PPAP_PADDLE_TOKEN` | Secret `ppap-current` | API、Worker；不向 Deep guest 注入 |
 | `PPAP_TENANT_MODEL_ALLOWED_BASE_URLS`、`PPAP_DEEP_MODEL_MAX_REQUESTS` | ConfigMap `ppap-current` | API、Worker、Deep（企业 Key 的允许地址；每个 Deep Attempt 的请求次数熔断）|
