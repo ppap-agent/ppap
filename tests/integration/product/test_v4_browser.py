@@ -268,7 +268,11 @@ def test_customer_intake_to_original_issue(running_product, core_system, request
             assert original_response.status == 200
             assert original_response.body() == source_bytes
             page.keyboard.press("Escape")
-            page.get_by_role("button", name="报告中心", exact=True).click()
+            basis = page.get_by_role("article", name="条款判定依据", exact=True)
+            if basis.is_visible():
+                page.keyboard.press("Escape")
+                expect(basis).not_to_be_visible()
+            page.get_by_role("button", name="审核报告", exact=True).click()
             report_download = page.get_by_role("button", name="下载当前报告", exact=True)
             expect(report_download).to_be_enabled(timeout=30000)
             with page.expect_download() as report_file:
